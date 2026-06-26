@@ -5,6 +5,7 @@ import {
   UserCheck, CalendarCheck, CreditCard, Link2, Wallet, ShieldCheck, Users, Rocket, type LucideIcon
 } from 'lucide-react'
 import { Modal, Button, CustomSelect, NumberInput } from '@/components/common'
+import { useLabels } from '@/contexts/LabelsContext'
 import type { ConversationalAIProviderId } from '@/constants/conversationalAIProviders'
 import { useAccountCurrency } from '@/hooks'
 import { calendarsService, type Calendar as CalendarRecord } from '@/services/calendarsService'
@@ -201,6 +202,10 @@ export function AgentCreationWizard({ isOpen, onClose, onComplete, onSkipToManua
   const [calendars, setCalendars] = useState<CalendarRecord[]>([])
   const [testResetKey, setTestResetKey] = useState(0)
   const [accountCurrency] = useAccountCurrency()
+  const { labels } = useLabels()
+  const existingContactsLabel = (labels.customers || 'contactos').trim().toLowerCase()
+  const existingContactSingular = (labels.customer || 'contacto').trim().toLowerCase()
+  const newContactsLabel = (labels.leads || labels.lead || 'contactos').trim().toLowerCase()
 
   // Reinicia el wizard cada vez que se abre y carga los calendarios reales.
   useEffect(() => {
@@ -463,21 +468,23 @@ export function AgentCreationWizard({ isOpen, onClose, onComplete, onSkipToManua
 
           {step === 'scope' && (
             <>
-              <h2 className={styles.title}>¿Y con los contactos que ya tienes?</h2>
-              <p className={styles.help}>Esto es por seguridad: muchos de tus contactos ya son clientes. Decide si este asistente también puede escribirles, o si solo atiende a los nuevos para no mezclarse.</p>
+              <h2 className={styles.title}>¿Y con los {existingContactsLabel} que ya tienes?</h2>
+              <p className={styles.help}>
+                {`Esto es por seguridad: muchos de tus ${existingContactsLabel} ya son ${existingContactSingular}. Decide si este asistente también puede escribirles, o si solo atiende a ${newContactsLabel} nuevos para no mezclarse.`}
+              </p>
               <div className={styles.options}>
                 <OptionCard
                   active={draft.contactScope === 'new_only'}
                   Icon={ShieldCheck}
                   label="Solo los nuevos desde hoy"
-                  example="Ignora a tus contactos de antes. Solo atiende a quien te escriba de ahora en adelante. (Lo más seguro.)"
+                  example={`Ignora tus ${existingContactsLabel} de antes. Solo atiende a quien te escriba de ahora en adelante. (Lo más seguro.)`}
                   onClick={() => patch({ contactScope: 'new_only' })}
                 />
                 <OptionCard
                   active={draft.contactScope === 'all'}
                   Icon={Users}
                   label="Atender a todos"
-                  example="Puede tomar tanto a tus contactos actuales como a los nuevos. Útil si quieres que se haga cargo de todo."
+                  example={`Puede tomar tanto a ${existingContactsLabel} actuales como a ${newContactsLabel} nuevos. Útil si quieres que se haga cargo de todo.`}
                   onClick={() => patch({ contactScope: 'all' })}
                 />
               </div>
@@ -499,7 +506,12 @@ export function AgentCreationWizard({ isOpen, onClose, onComplete, onSkipToManua
                   <RecapRow label="Calendario" value={calendars.find((c) => c.id === draft.calendarId)?.name || 'El que tenga hueco'} />
                 )}
                 {cobroRecap && <RecapRow label="Cobro" value={cobroRecap} />}
-                <RecapRow label="Atiende a" value={draft.contactScope === 'new_only' ? 'Solo contactos nuevos' : 'Todos (nuevos y actuales)'} />
+                <RecapRow
+                  label="Atiende a"
+                  value={draft.contactScope === 'new_only'
+                    ? `Solo ${newContactsLabel} nuevos`
+                    : `Todos (${newContactsLabel} nuevos y ${existingContactsLabel} actuales)`}
+                />
                 <RecapRow label="Pide datos" value={draft.requiredData.trim() ? 'Sí' : 'No por ahora'} />
               </div>
             </>

@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useRef, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import { AlertTriangle, ArrowLeft, Bot, CheckCircle2, ChevronDown, CircleSlash, FileText, Image as ImageIcon, KeyRound, Pause, PauseCircle, Play, Plus, RotateCcw, ShieldCheck, Target, Trash2, UserCheck, Users, Video, X } from 'lucide-react'
 import { Badge, Button, Card, CustomSelect, KpiCard, Modal, NumberInput, PageHeader, TabList, TagPicker } from '@/components/common'
+import { useLabels } from '@/contexts/LabelsContext'
 import {
   PhoneChatPreview,
   PhoneChatPreviewAttachmentMenu,
@@ -3089,13 +3090,13 @@ const AgentCard: React.FC<AgentCardProps> = ({ agent, aiProviders, calendars, pr
                 onChange={(event) => onChange({ contactScope: (event.target.value || 'all') as ConversationalContactScope })}
                 portal
               >
-                <option value="all">Cualquier chat (incluye contactos que ya tenías)</option>
-                <option value="new_only">Solo contactos nuevos desde ahora</option>
+                <option value="all">Cualquier chat (incluye {existingContactsLabel} que ya tenías)</option>
+                <option value="new_only">Solo {newContactsLabel} nuevos desde ahora</option>
               </CustomSelect>
               <p className={styles.helper}>
                 {agent.contactScope === 'new_only'
-                  ? 'Medida de seguridad: ignora a tus contactos de antes; solo atiende a quien llegue desde ahora.'
-                  : 'Puede tomar tanto a tus contactos actuales como a los nuevos.'}
+                  ? `Medida de seguridad: ignora a tus ${existingContactsLabel} de antes; solo atiende a quien llegue desde ahora.`
+                  : `Puede tomar tanto a ${existingContactsLabel} actuales como a ${newContactsLabel} nuevos.`}
               </p>
             </div>
             <ConditionBuilder
@@ -3423,7 +3424,10 @@ export const ConversationalAgentSettings: React.FC<ConversationalAgentSettingsPr
   const { agentId: routeAgentIdParam } = useParams<{ agentId?: string }>()
   const routeAgentId = routeAgentIdParam ? decodeURIComponent(routeAgentIdParam) : ''
   const { showToast, showConfirm } = useNotification()
+  const { labels } = useLabels()
   const openAIAvailability = useAIAgentAvailability()
+  const existingContactsLabel = (labels.customers || 'contactos').trim().toLowerCase()
+  const newContactsLabel = (labels.leads || labels.lead || 'contactos').trim().toLowerCase()
   const [config, setConfig] = useState<ConversationalAgentConfig | null>(null)
   const [agents, setAgents] = useState<ConversationalAgentDef[]>([])
   const [aiProviders, setAIProviders] = useState<ConversationalAIProviderStatus[]>([])
@@ -4248,7 +4252,8 @@ export const ConversationalAgentSettings: React.FC<ConversationalAgentSettingsPr
         <div className={styles.scopePromptModal}>
           <p className={styles.scopePromptText}>
             Una cosa rápida de seguridad: ¿este asistente también puede escribirles a los
-            contactos que <strong>ya tienes</strong>, o solo a los nuevos de ahora en adelante?
+            {existingContactsLabel}
+            que <strong>ya tienes</strong>, o solo a {newContactsLabel} nuevos de ahora en adelante?
           </p>
           <div className={styles.scopePromptActions}>
             <Button variant="secondary" onClick={() => confirmScopeAndCreate('new_only')} disabled={creating}>
