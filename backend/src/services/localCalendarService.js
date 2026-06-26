@@ -79,6 +79,10 @@ const CALENDAR_FORM_FIELD_TYPES = new Set([
   'email',
   'date'
 ])
+// (CAL-CONTENT) Bloques de CONTENIDO (no-campos) que también se muestran en el formulario del
+// calendario: título, subtítulo, texto, imagen y video. Mismo origen (Sitios) que los campos.
+const CALENDAR_FORM_CONTENT_BLOCK_TYPES = new Set(['title', 'subtitle', 'text', 'image', 'video'])
+const CALENDAR_FORM_ALL_BLOCK_TYPES = new Set([...CALENDAR_FORM_FIELD_TYPES, ...CALENDAR_FORM_CONTENT_BLOCK_TYPES])
 const CALENDAR_SLUG_MAX_LENGTH = 80
 
 function makeId(prefix) {
@@ -399,6 +403,9 @@ function normalizeCalendarBookingDisplayConfig(value = {}, fallback = {}) {
     fontFamily: normalizeCalendarBookingFontFamily(displaySource.fontFamily || displaySource.font_family),
     allowTimezoneSelection: parseBoolean(displaySource.allowTimezoneSelection ?? displaySource.allow_timezone_selection, true),
     defaultTimezone: defaultTimezone && isValidTimezone(defaultTimezone) ? defaultTimezone : '',
+    // (CAL-FLOW) Orden del flujo: 'after' (default) = calendario y luego formulario; 'before' =
+    // primero el formulario (con su calificación) y al completarlo aparece el calendario.
+    formPosition: cleanString(displaySource.formPosition || displaySource.form_position).toLowerCase() === 'before' ? 'before' : 'after',
     colors: deriveCalendarBookingPalette(
       fallbackAccent,
       pickColor('background', 'backgroundColor', 'background_color')
@@ -1395,7 +1402,8 @@ function resolveCalendarOptionDisqualify(option = {}) {
 
 function normalizeCalendarFormBlock(row = {}, pages = []) {
   const blockType = cleanString(row.block_type || row.blockType)
-  if (!CALENDAR_FORM_FIELD_TYPES.has(blockType)) return null
+  if (!CALENDAR_FORM_ALL_BLOCK_TYPES.has(blockType)) return null
+  const isContent = CALENDAR_FORM_CONTENT_BLOCK_TYPES.has(blockType)
 
   const settings = parseJson(row.settings_json || row.settings, {})
   const options = parseJson(row.options_json || row.options, [])
@@ -1405,7 +1413,8 @@ function normalizeCalendarFormBlock(row = {}, pages = []) {
   return {
     id: cleanString(row.id),
     blockType,
-    label: cleanString(row.label) || 'Pregunta',
+    isContent,
+    label: cleanString(row.label) || (isContent ? '' : 'Pregunta'),
     placeholder: cleanString(row.placeholder),
     required: Boolean(Number(row.required || 0)),
     content: cleanString(row.content),
@@ -1528,9 +1537,9 @@ export async function getCalendarBookingFormDefinition(calendar = {}) {
         SELECT id, block_type, label, content, placeholder, required, options_json, settings_json, sort_order
         FROM public_site_blocks
         WHERE site_id = ?
-          AND block_type IN (${Array.from(CALENDAR_FORM_FIELD_TYPES).map(() => '?').join(',')})
+          AND block_type IN (${Array.from(CALENDAR_FORM_ALL_BLOCK_TYPES).map(() => '?').join(',')})
         ORDER BY sort_order ASC, created_at ASC
-      `, [site.id, ...Array.from(CALENDAR_FORM_FIELD_TYPES)]).catch(() => [])
+      `, [site.id, ...Array.from(CALENDAR_FORM_ALL_BLOCK_TYPES)]).catch(() => [])
       const fields = rows
         .map(row => normalizeCalendarFormBlock(row, pages))
         .filter(Boolean)
@@ -1645,6 +1654,72 @@ function renderCalendarFieldInput(field = {}) {
   return `<input id="${id}" name="${id}" type="text" placeholder="${placeholder}" ${required}>`
 }
 
+// (CAL-CONTENT) Convierte una URL de video a su embed (YouTube/Vimeo) o detecta video directo.
+function calendarVideoEmbedUrl(rawUrl) {
+  const url = cleanString(rawUrl)
+  if (!url) return ''
+  try {
+    const u = new URL(url)
+    if (!['http:', 'https:'].includes(u.protocol)) return ''
+    const host = u.hostname.replace(/^www\./, '').toLowerCase()
+    if (host === 'youtu.be') {
+      const id = u.pathname.split('/').filter(Boolean)[0]
+      return id ? `https://www.youtube.com/embed/${encodeURIComponent(id)}` : ''
+    }
+    if (host.endsWith('youtube.com')) {
+      if (u.pathname.startsWith('/embed/')) return `https://www.youtube.com${u.pathname}`
+      const id = u.searchParams.get('v')
+      return id ? `https://www.youtube.com/embed/${encodeURIComponent(id)}` : ''
+    }
+    if (host.endsWith('vimeo.com')) {
+      if (u.pathname.startsWith('/video/') || host.startsWith('player.')) return `https://player.vimeo.com${u.pathname.startsWith('/video/') ? u.pathname : `/video${u.pathname}`}`
+      const id = u.pathname.split('/').filter(Boolean).pop()
+      return /^\d+$/.test(id || '') ? `https://player.vimeo.com/video/${id}` : ''
+    }
+    return ''
+  } catch {
+    return ''
+  }
+}
+
+function renderCalendarVideoBlock(rawUrl, label = '') {
+  const url = cleanString(rawUrl)
+  if (!url) return ''
+  // Video directo (archivo): se reproduce con <video>.
+  if (/\.(mp4|webm|ogg|mov|m4v)(\?|#|$)/i.test(url)) {
+    const safe = safeCalendarImageUrl(url)
+    return safe
+      ? `<div class="calContentVideo"><video src="${escapeHtml(safe)}" controls playsinline preload="metadata"></video></div>`
+      : ''
+  }
+  // YouTube / Vimeo: embed en iframe.
+  const embed = calendarVideoEmbedUrl(url)
+  return embed
+    ? `<div class="calContentVideo calContentVideoEmbed"><iframe src="${escapeHtml(embed)}" loading="lazy" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture" allowfullscreen sandbox="allow-scripts allow-same-origin allow-popups allow-presentation"></iframe></div>`
+    : ''
+}
+
+// (CAL-CONTENT) Renderiza un bloque de contenido (no-campo) del formulario en el calendario.
+function renderCalendarContentBlock(block = {}) {
+  const type = block.blockType
+  const settings = block.settings || {}
+  const content = cleanString(block.content)
+  const label = cleanString(block.label)
+  const text = content || label
+
+  if (type === 'title') return text ? `<h3 class="calContentTitle">${escapeHtml(text)}</h3>` : ''
+  if (type === 'subtitle') return text ? `<p class="calContentSubtitle">${escapeHtml(text)}</p>` : ''
+  if (type === 'text') return text ? `<p class="calContentText">${escapeHtml(text)}</p>` : ''
+  if (type === 'image') {
+    const url = safeCalendarImageUrl(settings.mediaUrl || settings.media_url || content)
+    return url
+      ? `<figure class="calContentImage"><img src="${escapeHtml(url)}" alt="${escapeHtml(label || 'Imagen')}" loading="lazy"></figure>`
+      : ''
+  }
+  if (type === 'video') return renderCalendarVideoBlock(settings.mediaUrl || settings.media_url || content, label)
+  return ''
+}
+
 function renderCalendarBookingForm(bookingForm = {}) {
   const pages = Array.isArray(bookingForm.pages) && bookingForm.pages.length
     ? bookingForm.pages
@@ -1661,14 +1736,21 @@ function renderCalendarBookingForm(bookingForm = {}) {
       ${pages.map((page, index) => {
         const pageFields = fields.filter(field => field.pageId === page.id)
         const pageQuestions = pageFields.length
-          ? pageFields.map(field => `
+          ? pageFields.map(field => {
+            // (CAL-CONTENT) Bloques de contenido (título/texto/imagen/video): sin label ni input,
+            // se muestran tal cual en el orden definido en el formulario.
+            if (field.isContent) {
+              const html = renderCalendarContentBlock(field)
+              return html ? `<div class="calendarContentBlock" data-block-type="${escapeHtml(field.blockType)}">${html}</div>` : ''
+            }
+            return `
             <section class="calendarQuestion" data-field-id="${escapeHtml(field.id)}" data-field-type="${escapeHtml(field.blockType)}" data-required="${field.required ? 'true' : 'false'}" data-validation="${escapeHtml(getCalendarFieldValidation(field))}">
               <label for="${escapeHtml(field.id)}">${escapeHtml(field.label || 'Pregunta')}${field.required ? '<span class="requiredMark">*</span>' : ''}</label>
               ${field.content ? `<p class="fieldHelp">${escapeHtml(field.content)}</p>` : ''}
               ${renderCalendarFieldInput(field)}
               <p class="fieldError" hidden>Esta respuesta es requerida.</p>
             </section>
-          `).join('')
+          `}).join('')
           : '<p class="fieldHelp">Esta pantalla no tiene preguntas.</p>'
 
         return `
@@ -1733,6 +1815,8 @@ export function normalizeCalendarBookingSubmission(bookingForm = {}, body = {}) 
   let notes = cleanString(body.notes)
 
   for (const field of fields) {
+    // (CAL-CONTENT) Los bloques de contenido (video/texto/imagen) no son respuestas.
+    if (field.isContent) continue
     const rawValue = getBodyValue(field)
     const value = Array.isArray(rawValue)
       ? rawValue.map(item => cleanString(item)).filter(Boolean)
@@ -1855,7 +1939,8 @@ export function renderPublicCalendarHtml(calendar, { host = '', embedded = false
     showDuration: resolveDisplayToggle('showDuration', bookingDisplay.showDuration !== false),
     showConfirmation: resolveDisplayToggle('showConfirmation', bookingDisplay.showConfirmation !== false),
     allowTimezoneSelection: resolveDisplayToggle('allowTimezoneSelection', bookingDisplay.allowTimezoneSelection !== false),
-    fontFamily: overrideFontFamily ? normalizeCalendarBookingFontFamily(overrideFontFamily) : bookingDisplay.fontFamily
+    fontFamily: overrideFontFamily ? normalizeCalendarBookingFontFamily(overrideFontFamily) : bookingDisplay.fontFamily,
+    formPosition: (useCustomStyle && (style.formPosition === 'before' || style.formPosition === 'after')) ? style.formPosition : bookingDisplay.formPosition
   }
   const fontStack = getCalendarBookingFontStack(effectiveBookingDisplay.fontFamily)
   const coverImage = safeCalendarImageUrl(style.coverImage, calendar.calendarCoverImage || calendar.calendar_cover_image || '')
@@ -2023,6 +2108,16 @@ export function renderPublicCalendarHtml(calendar, { host = '', embedded = false
     .formPage{display:grid;gap:16px}
     .formPage h3{font-size:.95rem}
     .calendarQuestion{display:grid;gap:7px}
+    .calendarContentBlock{display:grid;gap:6px}
+    .calContentTitle{margin:0;color:var(--heading);font-size:1.05rem;font-weight:600;letter-spacing:-.01em}
+    .calContentSubtitle{margin:0;color:var(--muted);font-size:.95rem;line-height:1.5}
+    .calContentText{margin:0;color:var(--ink);font-size:.92rem;line-height:1.6;white-space:pre-line}
+    .calContentImage{margin:0}
+    .calContentImage img{display:block;width:100%;height:auto;border-radius:var(--field-radius);border:1px solid var(--line)}
+    .calContentVideo{position:relative;width:100%;border-radius:var(--field-radius);overflow:hidden;background:#000;border:1px solid var(--line)}
+    .calContentVideo video{display:block;width:100%;height:auto}
+    .calContentVideoEmbed{aspect-ratio:16/9}
+    .calContentVideoEmbed iframe{position:absolute;inset:0;width:100%;height:100%;border:0}
     .fieldHelp,.fieldError{margin:0;font-size:.82rem;line-height:1.4}
     .fieldHelp{color:var(--muted)}
     .fieldError{color:var(--danger);font-weight:500}
@@ -2055,6 +2150,8 @@ export function renderPublicCalendarHtml(calendar, { host = '', embedded = false
     .shell.bookingDisqualified .intro,.shell.bookingDisqualified .calendarPane,.shell.bookingDisqualified .timesPane{display:none}
     .shell.bookingDisqualified .successPane{display:flex}
     .shell.bookingDisqualified .successIcon{background:var(--control-bg);color:var(--muted)}
+    .shell.formGate .changeSlot{display:none}
+    .shell.formCompleted .formHeader,.shell.formCompleted .formPage,.shell.formCompleted [data-form-next],.shell.formCompleted [data-form-back]{display:none}
     .successCard{max-width:480px;display:flex;flex-direction:column;align-items:center;gap:18px}
     .successCard .successIcon{width:74px;height:74px;border-radius:999px;display:grid;place-items:center;background:var(--accent-soft);color:var(--accent)}
     .successCard .successMessage{margin:0;font-size:1.22rem;line-height:1.55;font-weight:600;color:var(--heading);white-space:pre-line}
@@ -2246,6 +2343,11 @@ export function renderPublicCalendarHtml(calendar, { host = '', embedded = false
       let visibleMonth = new Date();
       let formPageIndex = 0;
       let immediateDisqualified = false;
+      // (CAL-FLOW) Formulario primero: el formulario es un "gate" antes del calendario.
+      const formFirst = !!(calendar.bookingDisplay && calendar.bookingDisplay.formPosition === 'before');
+      let gatePassed = false;
+      let gateResponses = {};
+      let gateFormData = null;
       visibleMonth.setDate(1);
       let slotsByDate = new Map();
       const displayConfig = calendar.bookingDisplay || {};
@@ -2627,11 +2729,14 @@ export function renderPublicCalendarHtml(calendar, { host = '', embedded = false
           if (!response.ok || payload.success === false) throw new Error(payload.error || 'No se pudieron cargar horarios');
           ingestSlots(payload.data || []);
           renderMonth();
-          if (selectedDateKey && selectedDateKey.startsWith(monthKey(visibleMonth))) {
-            renderSlotsForDate(selectedDateKey);
-          } else {
-            selectedDateKey = '';
-            renderSlotsForDate('');
+          // (CAL-FLOW) Durante el "gate" (formulario primero sin completar) no cambiamos de paso.
+          if (!(formFirst && !gatePassed)) {
+            if (selectedDateKey && selectedDateKey.startsWith(monthKey(visibleMonth))) {
+              renderSlotsForDate(selectedDateKey);
+            } else {
+              selectedDateKey = '';
+              renderSlotsForDate('');
+            }
           }
         } catch (error) {
           slotsByDate = new Map();
@@ -2692,14 +2797,59 @@ export function renderPublicCalendarHtml(calendar, { host = '', embedded = false
           setMessage(rule.message || 'Por tus respuestas, por ahora no podemos agendar tu cita.', 'error');
         } else if (immediateDisqualified) {
           immediateDisqualified = false;
-          if (submit) submit.disabled = !selectedSlot;
+          // En el "gate" (formulario primero) el botón "Continuar" no depende del horario.
+          if (submit) submit.disabled = (formFirst && !gatePassed) ? false : !selectedSlot;
           setMessage('');
         }
       };
       form && form.addEventListener('change', evaluateDisqualification);
 
+      // (CAL-FLOW) Muestra el formulario PRIMERO (gate). Al completarlo (Continuar) se revela el calendario.
+      const enterGate = () => {
+        if (!shell || !form) return;
+        gatePassed = false;
+        setStep('form');
+        shell.classList.add('formGate');
+        shell.classList.remove('formCompleted');
+        form.classList.add('visible');
+        formPageIndex = 0;
+        renderFormPage();
+        if (selectedTitle) selectedTitle.textContent = 'Cuéntanos un poco de ti';
+        if (selectedSubtitle) selectedSubtitle.textContent = 'Completa para ver los horarios disponibles.';
+        evaluateDisqualification();
+        if (submit) { submit.hidden = false; submit.disabled = immediateDisqualified; submit.textContent = 'Continuar'; }
+      };
+
       form.addEventListener('submit', async (event) => {
         event.preventDefault();
+
+        // (CAL-FLOW) GATE (formulario primero): "Continuar" valida + califica y revela el calendario.
+        if (formFirst && !gatePassed) {
+          if (!getPageFields(formPages.length - 1).every(validateField)) return;
+          if (immediateDisqualified) {
+            const rule = readSelectedDisqualifyRule();
+            if (rule && rule.redirectUrl) {
+              showSuccessScreen('Gracias por tus respuestas.', { disqualified: true });
+              window.setTimeout(() => { try { window.location.assign(rule.redirectUrl); } catch (_) {} }, 1000);
+              return;
+            }
+            showSuccessScreen((rule && rule.message) || 'Por ahora no podemos agendar tu cita.', { disqualified: true });
+            return;
+          }
+          // Guardamos las respuestas del gate (el formulario se ocultará/reiniciará en los siguientes pasos).
+          gateResponses = collectResponses();
+          gateFormData = new FormData(form);
+          gatePassed = true;
+          shell.classList.remove('formGate');
+          shell.classList.add('formCompleted');
+          setStep('calendar');
+          setMessage('');
+          if (selectedTitle) selectedTitle.textContent = 'Selecciona una fecha';
+          if (selectedSubtitle) selectedSubtitle.textContent = 'Elige un día disponible para continuar.';
+          try { window.scrollTo({ top: 0, behavior: 'smooth' }); } catch (_) {}
+          return;
+        }
+
         if (!selectedSlot) {
           setMessage('Selecciona un horario primero.', 'error');
           return;
@@ -2717,9 +2867,10 @@ export function renderPublicCalendarHtml(calendar, { host = '', embedded = false
           return;
         }
 
-        if (!getPageFields(formPages.length - 1).every(validateField)) return;
-        const responses = collectResponses();
-        const formData = new FormData(form);
+        // En "formulario primero" los datos ya se validaron y recolectaron en el gate.
+        if (!formFirst && !getPageFields(formPages.length - 1).every(validateField)) return;
+        const responses = formFirst ? gateResponses : collectResponses();
+        const formData = formFirst ? (gateFormData || new FormData(form)) : new FormData(form);
 
         if (calendar.preview) {
           setMessage('Vista previa del sitio: no se creo ninguna cita.', 'preview');
@@ -2794,6 +2945,8 @@ export function renderPublicCalendarHtml(calendar, { host = '', embedded = false
 
       renderTimezoneControl();
       loadSlots();
+      // (CAL-FLOW) Si el formulario va primero, mostramos el gate al cargar.
+      if (formFirst) enterGate();
     })();
   </script>
 </body>

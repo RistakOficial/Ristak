@@ -114,8 +114,11 @@ export interface CalendarBookingDisplayConfig {
   fontFamily: CalendarBookingFontFamily;
   allowTimezoneSelection: boolean;
   defaultTimezone: string;
+  formPosition: CalendarBookingFormPosition;
   colors: CalendarBookingDisplayColors;
 }
+
+export type CalendarBookingFormPosition = 'before' | 'after';
 
 export interface Calendar {
   id: string;

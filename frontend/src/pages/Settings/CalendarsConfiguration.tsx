@@ -495,6 +495,7 @@ const createDefaultCalendarBookingDisplay = (): CalendarBookingDisplayConfig => 
   fontFamily: 'system',
   allowTimezoneSelection: true,
   defaultTimezone: '',
+  formPosition: 'after',
   colors: { ...CALENDAR_BOOKING_DISPLAY_COLOR_DEFAULTS }
 })
 
@@ -521,6 +522,7 @@ const normalizeCalendarBookingDisplay = (
     fontFamily: normalizeCalendarBookingFontFamily(source.fontFamily || defaults.fontFamily),
     allowTimezoneSelection: source.allowTimezoneSelection !== false,
     defaultTimezone: normalizeCalendarTimezoneValue(source.defaultTimezone),
+    formPosition: source.formPosition === 'before' ? 'before' : 'after',
     colors
   }
 }
@@ -2903,6 +2905,21 @@ export const CalendarsConfiguration: React.FC = () => {
                   <small>Nombre siempre es obligatorio. Teléfono o correo debe quedar activo para confirmar la cita.</small>
                 </div>
               )}
+
+              <div className={pageStyles.editorField}>
+                <span>Orden del flujo</span>
+                <CustomSelect
+                  value={bookingDisplayConfig.formPosition}
+                  onValueChange={(value) => updateBookingDisplayConfig({ formPosition: value === 'before' ? 'before' : 'after' })}
+                  options={[
+                    { value: 'after', label: 'Primero el calendario, luego el formulario' },
+                    { value: 'before', label: 'Primero el formulario, luego el calendario' }
+                  ]}
+                />
+                <small>
+                  Con “primero el formulario” la persona contesta antes de ver los horarios; si tu formulario descalifica, no llegará a agendar.
+                </small>
+              </div>
             </div>
           </section>
 
