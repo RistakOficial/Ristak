@@ -18961,13 +18961,11 @@
   font-weight: 400;
 }
 
-/* ── Config adaptable del form/calendario: inline cuando cabe, popover cuando no ── */
-.editorToolbarConfigInline {
-  display: contents;
-}
-
+/* ── Config del form/calendario: SIEMPRE en el popover "Configuración" (todas las pantallas) ── */
 .editorToolbarConfigCollapsed {
-  display: none;
+  display: inline-flex;
+  align-items: center;
+  flex: 0 0 auto;
   min-width: 0;
 }
 
@@ -19069,6 +19067,15 @@
 
 .editorToolbarConfigPanel .formToolbarField > span {
   font-size: 0.72rem;
+}
+
+/* Bloque del píxel de Meta dentro del panel: apila el evento + los parámetros. */
+.editorToolbarConfigPanel .formPixelToolbarControls {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  width: 100%;
+  min-width: 0;
 }
 
 .editorToolbarConfigPanel .formToolbarField input,
@@ -21181,35 +21188,11 @@
   }
 }
 
-/* Config adaptable del form/calendario: en cuanto el toolbar baja de 1500px
-   (mismo punto donde el form-mode ya pedía ~1600px y empezaba a hacer scroll),
-   los ajustes pesados — qué formulario, "Al enviar"/"Al agendar", URL/página
-   destino — se ocultan inline y se mueven al popover "Configuración", que vive
-   porteado en <body> y por eso NUNCA se recorta ni se va a scroll. Quedan a un
-   clic. Los selectores de página (navegación) siguen inline y visibles. */
-@container editorbar (max-width: 1500px) {
-  .pageFrame .containerFocused:has(.builder) .editorToolbarConfigInline {
-    display: none;
-  }
-
-  .pageFrame .containerFocused:has(.builder) .editorToolbarConfigCollapsed {
-    display: inline-flex;
-    align-items: center;
-    flex: 0 0 auto;
-  }
-
-  /* Con la config ya colapsada, el chip "Editando…" sobra: el disparador del
-     popover ya muestra el form/calendario activo. Lo ocultamos para ganar aire. */
-  .pageFrame .containerFocused:has(.builder) .editorUnifiedToolbarFormMode .formModeStatus {
-    display: none;
-  }
-
-  /* Lo poco que queda inline (selectores de página + botón Configuración) se
-     acomoda en varias líneas si hace falta, en vez de irse a scroll horizontal:
-     así nada queda fuera de vista. */
-  .pageFrame .containerFocused:has(.builder) .editorToolbarFormControls {
-    flex-wrap: wrap;
-    overflow: visible;
-    row-gap: 8px;
-  }
+/* La config del form/calendario vive SIEMPRE en el popover "Configuración"
+   (.editorToolbarConfigCollapsed, visible en todas las pantallas). La fila inline
+   que queda — chip "Editando…" + selectores de página + botón Configuración — es
+   ligera; que envuelva en vez de esconder nada cuando el toolbar se angosta. */
+.pageFrame .containerFocused:has(.builder) .editorToolbarFormControls {
+  flex-wrap: wrap;
+  row-gap: 8px;
 }
