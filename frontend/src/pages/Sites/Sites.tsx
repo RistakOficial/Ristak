@@ -7895,7 +7895,11 @@ export const Sites: React.FC = () => {
     [sites]
   )
   const forms = useMemo(
-    () => sites.filter(site => site.siteType === 'standard_form' || site.siteType === 'interactive_form'),
+    // El formulario de sistema del calendario (librarySource 'calendar') NO es un
+    // formulario del usuario: se oculta de la biblioteca de Formularios y de TODOS los
+    // selectores de embed/respuestas/video-gate. Las citas siguen guardando contacto por
+    // su propio camino, así que ocultarlo no afecta el funcionamiento.
+    () => sites.filter(site => (site.siteType === 'standard_form' || site.siteType === 'interactive_form') && getSiteLibrarySource(site) !== 'calendar'),
     [sites]
   )
   const sitesById = useMemo(

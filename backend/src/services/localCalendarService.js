@@ -274,7 +274,8 @@ function normalizeCalendarBookingDefaultFields(value = {}) {
       required: Boolean(emailEnabled)
     },
     notes: {
-      enabled: source.notesEnabled ?? source.notes?.enabled ?? true,
+      // Apagado por defecto: solo prendido si el calendario lo guardó explícitamente.
+      enabled: source.notesEnabled ?? source.notes?.enabled ?? false,
       required: false
     }
   }

@@ -420,7 +420,8 @@ const createDefaultCalendarBookingFields = (): CalendarBookingDefaultFields => (
   name: { enabled: true, required: true },
   phone: { enabled: true, required: true },
   email: { enabled: true, required: true },
-  notes: { enabled: true, required: false }
+  // Notas públicas ("detalles adicionales") apagadas por defecto: casi nadie las usa.
+  notes: { enabled: false, required: false }
 })
 
 const normalizeCalendarBookingDefaultFields = (value?: Partial<CalendarBookingDefaultFields> | null): CalendarBookingDefaultFields => {
@@ -440,7 +441,8 @@ const normalizeCalendarBookingDefaultFields = (value?: Partial<CalendarBookingDe
       required: emailEnabled
     },
     notes: {
-      enabled: fields.notes?.enabled !== false,
+      // Apagado por defecto: solo se muestra si el calendario lo prendió explícitamente.
+      enabled: fields.notes?.enabled === true,
       required: false
     }
   }
