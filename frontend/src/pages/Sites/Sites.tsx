@@ -5250,7 +5250,9 @@ const normalizeOption = (option: string | SiteBlockOption, index: number): SiteB
     redirectUrl: option.redirectUrl || '',
     submitBeforeAction: true,
     tag: option.tag || '',
-    category: option.category || ''
+    category: option.category || '',
+    warnBeforeDisqualify: option.warnBeforeDisqualify === true,
+    disqualifyNoticeMessage: option.disqualifyNoticeMessage || ''
   }
 }
 
@@ -15775,6 +15777,8 @@ const makeImportedActionStep = (action: ImportedButtonAction, patch: Partial<Imp
   buttonPageId: patch.buttonPageId || '',
   buttonMessage: patch.buttonMessage || '',
   automationName: patch.automationName || '',
+  warnBeforeDisqualify: patch.warnBeforeDisqualify === true,
+  disqualifyNoticeMessage: patch.disqualifyNoticeMessage || '',
 })
 
 const duplicateImportedFieldOption = (option: ImportedFormFieldOption, index: number): ImportedFormFieldOption => {
@@ -15799,7 +15803,9 @@ const normalizeImportedActionStep = (value: unknown, fallbackId = ''): ImportedB
     buttonUrl: String(record.buttonUrl || record.button_url || record.url || ''),
     buttonPageId: String(record.buttonPageId || record.button_page_id || record.pageId || ''),
     buttonMessage: String(record.buttonMessage || record.button_message || record.message || ''),
-    automationName: String(record.automationName || record.automation_name || record.automation || '')
+    automationName: String(record.automationName || record.automation_name || record.automation || ''),
+    warnBeforeDisqualify: record.warnBeforeDisqualify === true || record.warn_before_disqualify === true,
+    disqualifyNoticeMessage: String(record.disqualifyNoticeMessage || record.disqualify_notice_message || '')
   })
 }
 
@@ -16306,7 +16312,9 @@ const serializeImportedCodeButtonActions = (actions: ImportedButtonActionStep[])
     buttonUrl: step.buttonUrl?.trim() || '',
     buttonPageId: step.buttonPageId?.trim() || '',
     buttonMessage: step.buttonMessage?.trim() || '',
-    automationName: step.automationName?.trim() || ''
+    automationName: step.automationName?.trim() || '',
+    warnBeforeDisqualify: step.warnBeforeDisqualify === true,
+    disqualifyNoticeMessage: step.disqualifyNoticeMessage?.trim() || ''
   }))
 )
 
@@ -17689,6 +17697,33 @@ const ImportedFieldOptionsEditor: React.FC<{
               name={`${namePrefix}-disqualify-${index}`}
               {...importedEditorNoAutocompleteAttrs}
               onChange={(event) => onPatch(index, patchImportedOptionActionStep(option, { buttonMessage: event.target.value }))}
+            />
+          </label>
+        )}
+        {getImportedOptionQuickAction(option) === 'disqualify' && (
+          <div className={styles.optionSwitchRow}>
+            <div>
+              <strong>Avisar al contacto antes de descalificar</strong>
+              <small>Muestra una nota debajo al elegir esta respuesta. No lo descalifica hasta que envíe.</small>
+            </div>
+            <Switch
+              checked={option.actions?.[0]?.warnBeforeDisqualify === true}
+              disabled={disabled}
+              onChange={(next) => onPatch(index, patchImportedOptionActionStep(option, { warnBeforeDisqualify: next }))}
+              aria-label="Avisar al contacto antes de descalificar"
+            />
+          </div>
+        )}
+        {getImportedOptionQuickAction(option) === 'disqualify' && option.actions?.[0]?.warnBeforeDisqualify && (
+          <label className={styles.importedFieldOptionAction}>
+            <span>¿Qué quieres que diga el aviso?</span>
+            <input
+              value={option.actions?.[0]?.disqualifyNoticeMessage || ''}
+              disabled={disabled}
+              placeholder="Con esta respuesta es posible que no califiques para continuar."
+              name={`${namePrefix}-disqualify-notice-${index}`}
+              {...importedEditorNoAutocompleteAttrs}
+              onChange={(event) => onPatch(index, patchImportedOptionActionStep(option, { disqualifyNoticeMessage: event.target.value }))}
             />
           </label>
         )}
@@ -35204,6 +35239,9 @@ const OptionsRulesEditor: React.FC<OptionsRulesEditorProps> = ({ block, blocks, 
       redirectUrl: action === 'redirect' || keepsDisqualifyDestination ? option.redirectUrl || '' : '',
       submitBeforeAction: exitRuleActions.has(action) ? true : undefined,
       message: disqualifyRuleActions.has(action) ? option.message || '' : '',
+      // El aviso previo solo aplica a reglas de descalificación; al salir de ellas se limpia.
+      warnBeforeDisqualify: disqualifyRuleActions.has(action) ? option.warnBeforeDisqualify === true : false,
+      disqualifyNoticeMessage: disqualifyRuleActions.has(action) ? option.disqualifyNoticeMessage || '' : '',
       tag: '',
       category: ''
     }
@@ -35311,6 +35349,33 @@ const OptionsRulesEditor: React.FC<OptionsRulesEditorProps> = ({ block, blocks, 
                 value={option.message || ''}
                 placeholder={visibleAction === 'disqualify' ? 'Gracias. Por ahora no califica.' : 'Gracias. Tu información fue recibida.'}
                 onChange={(event) => patchOption(index, { message: event.target.value })}
+                onBlur={onSave}
+              />
+            </label>
+          )}
+
+          {isDisqualifyAction && (
+            <div className={styles.optionSwitchRow}>
+              <div>
+                <strong>Avisar al contacto antes de descalificar</strong>
+                <small>Muestra una nota debajo al elegir esta respuesta. No lo descalifica hasta que avance o envíe.</small>
+              </div>
+              <Switch
+                checked={option.warnBeforeDisqualify === true}
+                onChange={(next) => { patchOption(index, { warnBeforeDisqualify: next }); onSave() }}
+                aria-label="Avisar al contacto antes de descalificar"
+              />
+            </div>
+          )}
+
+          {isDisqualifyAction && option.warnBeforeDisqualify && (
+            <label className={styles.field}>
+              <span>¿Qué quieres que diga el aviso?</span>
+              <textarea
+                rows={2}
+                value={option.disqualifyNoticeMessage || ''}
+                placeholder="Con esta respuesta es posible que no califiques para continuar."
+                onChange={(event) => patchOption(index, { disqualifyNoticeMessage: event.target.value })}
                 onBlur={onSave}
               />
             </label>

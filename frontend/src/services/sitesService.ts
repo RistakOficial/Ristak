@@ -76,6 +76,10 @@ export interface SiteBlockOption {
   submitBeforeAction?: boolean
   tag?: string
   category?: string
+  // Aviso previo a la descalificación: cuando la opción descalifica, muestra una
+  // nota debajo al seleccionarla (la descalificación real ocurre al enviar/avanzar).
+  warnBeforeDisqualify?: boolean
+  disqualifyNoticeMessage?: string
 }
 
 export type SiteTemplateId =
@@ -825,6 +829,9 @@ export interface ImportedButtonActionStep {
   buttonPageId?: string
   buttonMessage?: string
   automationName?: string
+  // Aviso previo a la descalificación (opción de formulario importado).
+  warnBeforeDisqualify?: boolean
+  disqualifyNoticeMessage?: string
 }
 
 export interface ImportedEditableContentUpdate {
