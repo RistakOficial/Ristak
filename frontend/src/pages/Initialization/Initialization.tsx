@@ -104,8 +104,6 @@ const STEP_META: Record<InitStepId, StepMeta> = {
   }
 }
 
-const HIDE_CONFIRM_WORD = 'OCULTAR'
-
 const STEP_PERMISSION_KEYS: Partial<Record<InitStepId, PermissionKey[]>> = {
   'facebook-page': ['campaigns'],
   instagram: ['campaigns'],
@@ -299,7 +297,7 @@ export const Initialization: React.FC = () => {
         message="Esta página dejará de mostrarse en el menú y ya no te redirigiremos aquí al entrar. Podrás seguir conectando integraciones desde Configuración."
         confirmText="Ocultar"
         cancelText="Cancelar"
-        typeToConfirm={HIDE_CONFIRM_WORD}
+        typeToConfirm="OCULTAR"
         onConfirm={handleConfirmHide}
       />
     </div>

@@ -401,7 +401,7 @@ export const Costs: React.FC = () => {
   const handleDelete = (cost: Cost) => {
     showConfirm(
       'Eliminar costo',
-      `¿Estás seguro de eliminar "${cost.name}"?`,
+      `Se eliminará el costo "${cost.name}" y dejará de aplicarse en tus reportes. Esta acción no se puede deshacer.`,
       async () => {
         try {
           await costsService.deleteCost(cost.id)
@@ -412,7 +412,9 @@ export const Costs: React.FC = () => {
         }
       },
       'Eliminar',
-      'Cancelar'
+      'Cancelar',
+      undefined,
+      { typeToConfirm: 'ELIMINAR' }
     )
   }
 

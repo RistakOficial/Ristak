@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react'
 import { createPortal } from 'react-dom'
 import { useLocation, useNavigate, useSearchParams } from 'react-router-dom'
-import { KpiCard, Card, Button, Table, DateRangePicker, ContactSearchInput, PageContainer, PageHeader, TabList, TreeFilter, RecordPaymentModal, Badge, DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, Loading, NumberInput, CustomSelect } from '@/components/common'
+import { KpiCard, Card, Button, Table, DateRangePicker, ContactSearchInput, PageContainer, PageHeader, TabList, TreeFilter, RecordPaymentModal, Badge, DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, Loading, NumberInput, CustomSelect, Modal } from '@/components/common'
 import type { Column } from '@/components/common'
 import { useNotification } from '@/contexts/NotificationContext'
 import { Contact } from '@/types'
@@ -364,8 +364,6 @@ const PAYMENT_PLAN_STATUS_ORDER = [
 const PAYMENT_PLAN_PAID_STATUSES = new Set(['paid', 'succeeded', 'completed', 'complete', 'fulfilled', 'success', 'registered'])
 const PAYMENT_PLAN_IGNORED_PAYMENT_STATUSES = new Set(['cancelled', 'canceled', 'deleted', 'void'])
 
-const DELETE_CONFIRMATION_WORD = 'ELIMINAR'
-
 const isHighLevelTransaction = (transaction: Transaction) => {
   const provider = String(transaction.paymentProvider || '').toLowerCase()
   const method = String(transaction.method || '').toLowerCase()
@@ -621,7 +619,6 @@ export const Transactions: React.FC = () => {
   const [paymentTableTab, setPaymentTableTab] = useState<PaymentsTableTab>(routeState.tab)
   const [selectedTransactionIds, setSelectedTransactionIds] = useState<string[]>([])
   const [transactionsPendingDeletion, setTransactionsPendingDeletion] = useState<Transaction[]>([])
-  const [transactionDeleteConfirmation, setTransactionDeleteConfirmation] = useState('')
   const [deletingTransactions, setDeletingTransactions] = useState(false)
 
   // Los planes de pago pueden programarse con Stripe o HighLevel.
@@ -1220,8 +1217,12 @@ export const Transactions: React.FC = () => {
       const providerLabel = getPaymentPlanProviderLabel(plan)
       showConfirm(
         'Cancelar plan de pago',
-        `¿Seguro que quieres cancelar ${planName}? ${providerLabel} dejará de cobrar este plan.`,
-        () => runPaymentPlanAction(plan, action, 'Plan cancelado', 'El plan quedó cancelado y se actualizó la lista.')
+        `¿Seguro que quieres cancelar ${planName}? ${providerLabel} dejará de cobrar este plan. Esta acción no se puede deshacer.`,
+        () => runPaymentPlanAction(plan, action, 'Plan cancelado', 'El plan quedó cancelado y se actualizó la lista.'),
+        'Cancelar plan',
+        'Cancelar',
+        undefined,
+        { typeToConfirm: 'CANCELAR' }
       )
       return
     }
@@ -1230,8 +1231,12 @@ export const Transactions: React.FC = () => {
       const providerLabel = getPaymentPlanProviderLabel(plan)
       showConfirm(
         'Eliminar plan de pago',
-        `¿Seguro que quieres eliminar ${planName}? Esta acción lo marca como eliminado en ${providerLabel} y en Ristak.`,
-        () => runPaymentPlanAction(plan, action, 'Plan eliminado', 'El plan quedó eliminado y se actualizó la lista.')
+        `¿Seguro que quieres eliminar ${planName}? Esta acción lo marca como eliminado en ${providerLabel} y en Ristak. Esta acción no se puede deshacer.`,
+        () => runPaymentPlanAction(plan, action, 'Plan eliminado', 'El plan quedó eliminado y se actualizó la lista.'),
+        'Eliminar plan',
+        'Cancelar',
+        undefined,
+        { typeToConfirm: 'ELIMINAR' }
       )
       return
     }
@@ -1560,19 +1565,16 @@ export const Transactions: React.FC = () => {
     if (targetTransactions.length === 0) return
 
     setTransactionsPendingDeletion(targetTransactions)
-    setTransactionDeleteConfirmation('')
   }
 
   const closeTransactionDeleteModal = () => {
     if (deletingTransactions) return
 
     setTransactionsPendingDeletion([])
-    setTransactionDeleteConfirmation('')
   }
 
   const handleConfirmDeleteTransactions = async () => {
     if (transactionsPendingDeletion.length === 0) return
-    if (transactionDeleteConfirmation.trim().toUpperCase() !== DELETE_CONFIRMATION_WORD) return
 
     setDeletingTransactions(true)
     const deletingIds = transactionsPendingDeletion.map(transaction => transaction.id)
@@ -1597,7 +1599,6 @@ export const Transactions: React.FC = () => {
 
     setDeletingTransactions(false)
     setTransactionsPendingDeletion([])
-    setTransactionDeleteConfirmation('')
 
     if (failedTransactions.length > 0) {
       showToast(
@@ -1636,8 +1637,13 @@ export const Transactions: React.FC = () => {
           fetchData()
         } catch (error) {
           showToast('error', 'No se pudo anular el pago', 'Hubo un problema al intentar anular el pago. Intenta nuevamente.')
+          return false
         }
-      }
+      },
+      'Anular pago',
+      'Cancelar',
+      undefined,
+      { typeToConfirm: 'ANULAR' }
     )
   }
 
@@ -1652,8 +1658,13 @@ export const Transactions: React.FC = () => {
           fetchData()
         } catch (error: any) {
           showToast('error', 'No se pudo reembolsar el pago', error?.message || 'Hubo un problema al marcar el pago como reembolsado.')
+          return false
         }
-      }
+      },
+      'Reembolsar',
+      'Cancelar',
+      undefined,
+      { typeToConfirm: 'REEMBOLSAR' }
     )
   }
 
@@ -2820,61 +2831,18 @@ export const Transactions: React.FC = () => {
         )}
       </Card>
 
-      {isClient && transactionsPendingDeletion.length > 0 && createPortal(
-        <div className={styles.modalOverlay} data-overlay="" onClick={closeTransactionDeleteModal}>
-          <div
-            className={styles.modal}
-            data-modal=""
-            data-modal-shell="legacy"
-            data-modal-size="sm"
-            data-modal-type="confirm"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <div className={styles.modalHeader} data-modal-header="">
-              <div>
-                <h2>Eliminar pago{transactionsPendingDeletion.length === 1 ? '' : 's'}</h2>
-                <p className={styles.modalSubtitle}>Esta acción borra los registros seleccionados y no se puede deshacer.</p>
-              </div>
-              <button
-                className={styles.closeButton}
-                onClick={closeTransactionDeleteModal}
-                disabled={deletingTransactions}
-                type="button"
-              >
-                <X size={20} />
-              </button>
-            </div>
-            <p>
-              Vas a eliminar <strong>{transactionsPendingDeletion.length}</strong> pago{transactionsPendingDeletion.length === 1 ? '' : 's'}.
-              Para confirmar, escribe <strong>{DELETE_CONFIRMATION_WORD}</strong> en la caja de abajo.
-            </p>
-            <div className={styles.formGroup}>
-              <label>Palabra de confirmación</label>
-              <input
-                value={transactionDeleteConfirmation}
-                onChange={(event) => setTransactionDeleteConfirmation(event.target.value)}
-                placeholder={DELETE_CONFIRMATION_WORD}
-                disabled={deletingTransactions}
-                autoFocus
-              />
-            </div>
-            <div className={styles.formActions} data-modal-footer="">
-              <Button type="button" variant="ghost" onClick={closeTransactionDeleteModal} disabled={deletingTransactions}>
-                Cancelar
-              </Button>
-              <Button
-                variant="danger"
-                onClick={handleConfirmDeleteTransactions}
-                loading={deletingTransactions}
-                disabled={transactionDeleteConfirmation.trim().toUpperCase() !== DELETE_CONFIRMATION_WORD || deletingTransactions}
-              >
-                Sí, eliminar
-              </Button>
-            </div>
-          </div>
-        </div>,
-        document.body
-      )}
+      <Modal
+        isOpen={transactionsPendingDeletion.length > 0}
+        onClose={closeTransactionDeleteModal}
+        type="confirm"
+        size="sm"
+        title={`Eliminar pago${transactionsPendingDeletion.length === 1 ? '' : 's'}`}
+        message={`Vas a eliminar ${transactionsPendingDeletion.length} pago${transactionsPendingDeletion.length === 1 ? '' : 's'}. Esta acción borra los registros seleccionados y no se puede deshacer.`}
+        confirmText="Eliminar"
+        cancelText="Cancelar"
+        typeToConfirm="ELIMINAR"
+        onConfirm={handleConfirmDeleteTransactions}
+      />
 
       {isClient && modal.type && createPortal(
         <div className={styles.modalOverlay} data-overlay="" onClick={closeTransactionModal}>

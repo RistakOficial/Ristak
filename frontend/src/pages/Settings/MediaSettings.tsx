@@ -1161,12 +1161,14 @@ export const MediaSettings: React.FC = () => {
   const handleDeleteAsset = (asset: MediaAsset) => {
     showConfirm(
       'Eliminar archivo',
-      `Se quitará ${getAssetDisplayName(asset)} de Media y del storage conectado.`,
+      `Se quitará ${getAssetDisplayName(asset)} de Media y del storage conectado. Esta acción no se puede deshacer.`,
       () => {
         void deleteAsset(asset)
       },
       'Eliminar',
-      'Cancelar'
+      'Cancelar',
+      undefined,
+      { typeToConfirm: 'ELIMINAR' }
     )
   }
 
@@ -1200,24 +1202,28 @@ export const MediaSettings: React.FC = () => {
     const filesToDelete = filesInsideFolder(folder.path)
     showConfirm(
       'Eliminar carpeta',
-      `Se quitarán ${filesToDelete.length} archivo${filesToDelete.length === 1 ? '' : 's'} dentro de ${folder.name}.`,
+      `Se quitarán ${filesToDelete.length} archivo${filesToDelete.length === 1 ? '' : 's'} dentro de ${folder.name} de Media y del storage conectado. Esta acción no se puede deshacer.`,
       () => {
         void deleteFiles(filesToDelete, 'Carpeta eliminada', `${folder.name} ya no aparecerá en Media.`)
       },
       'Eliminar',
-      'Cancelar'
+      'Cancelar',
+      undefined,
+      { typeToConfirm: 'ELIMINAR' }
     )
   }
 
   const handleDeleteSelected = () => {
     showConfirm(
       'Eliminar selección',
-      `Se quitarán ${selectedFileCount} archivo${selectedFileCount === 1 ? '' : 's'} de Media y del storage conectado.`,
+      `Se quitarán ${selectedFileCount} archivo${selectedFileCount === 1 ? '' : 's'} de Media y del storage conectado. Esta acción no se puede deshacer.`,
       () => {
         void deleteFiles(selectedFiles, 'Selección eliminada', 'Los archivos seleccionados ya no aparecerán en Media.')
       },
       'Eliminar',
-      'Cancelar'
+      'Cancelar',
+      undefined,
+      { typeToConfirm: 'ELIMINAR' }
     )
   }
 

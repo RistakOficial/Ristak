@@ -125,6 +125,7 @@ legacy identificada; no es permiso para copiar ese estilo en pantallas nuevas.
 | Ruta / slug con prefijo fijo | `<PathInput prefix="…">` | un wrapper con prefijo + `<input className={styles.input}>` que crea doble contenedor |
 | Menú | `<DropdownMenu>` | — |
 | Modal / overlay | `<Modal>` (recipe `[data-overlay]`/`[data-modal]`) | un `position:fixed` a mano |
+| Confirmar borrar/desconectar/revocar | `showConfirm(...)` del `NotificationContext` (o `<Modal type="confirm" typeToConfirm="…">`) — ver §4.1 | `window.confirm`, un modal de confirmación a mano, copiar el JSX de otro borrado |
 | Card / KPI | `<Card>` / `<KpiCard>` (llevan `data-ristak-card`) | — |
 | Tabla | `<Table>` (o la receta §6) | una `<table>` desde cero |
 | Header / contenedor de página | `<PageHeader>` / `<PageContainer>` | un header a mano |
@@ -136,6 +137,83 @@ Responsive: sí se permite ajustar ancho, densidad y orden visual para ventanas
 chicas usando `flex`, `grid`, `minmax`, `clamp`, `min-width: 0`, container/media
 queries y variables del componente. Lo que no se permite es crear otro estilo
 visual por página para "resolver" pantallas chicas.
+
+### 4.1 Confirmaciones destructivas (borrar / desconectar / revocar) — el ÚNICO patrón
+
+Toda confirmación previa a una acción **destructiva o irreversible** usa **el mismo
+elemento y las mismas reglas**, sin excepción. No hay "modal de borrado propio" por
+pantalla. Está prohibido `window.confirm`, prohibido portalar un overlay a mano y
+prohibido copiar el JSX/CSS de otro modal de borrado.
+
+**1 · El elemento.** Siempre el `Modal` canónico, por una de dos vías:
+- **Preferida:** el helper `showConfirm(...)` del `NotificationContext`
+  (`useNotification()`). Monta el `<Modal type="confirm">` global; no montas nada.
+- **Inline `<Modal type="confirm" …>`** solo si necesitas `size`, `children` o un
+  layout propio (p. ej. una barra de progreso durante un borrado masivo). Sigue
+  siendo el mismo componente, con `typeToConfirm`/`confirmText` estándar.
+
+**2 · La palabra a teclear (`typeToConfirm`) → MAYÚSCULAS y es el VERBO de la acción.**
+La validación del Modal ignora mayúsculas y acentos, pero el **valor canónico se
+escribe en mayúsculas** para que el label y el placeholder se vean iguales en toda
+la app:
+
+| Acción | `typeToConfirm` |
+| --- | --- |
+| Borrar / eliminar cualquier dato | `ELIMINAR` |
+| Desconectar una integración | `DESCONECTAR` |
+| Revocar una credencial / token | `REVOCAR` |
+| Regenerar un token | `GENERAR` |
+| Otro verbo de riesgo (apagar/ocultar…) | el verbo en mayúsculas (`APAGAR`, `OCULTAR`) |
+
+**3 · Cuándo SÍ se pide teclear la palabra (por riesgo).** No todo borrado la pide;
+se decide por impacto, no por capricho:
+- **SÍ (obligatorio `typeToConfirm`):** borrados irreversibles de un registro/entidad
+  (contacto, pago, suscripción, plan, sitio, campo, etiqueta, plantilla, enlace,
+  dominio, archivo/carpeta de Media, automatización, acceso de usuario, token);
+  borrados **masivos** (varios a la vez); borrados **en cascada** (borran datos
+  relacionados: campo→sus valores, etiqueta→de todos los contactos, sitio→sus
+  respuestas, calendario→sus citas); **desconectar integraciones** / revocar
+  credenciales; acciones **financieras** irreversibles (anular, reembolsar,
+  cancelar/eliminar plan); **borrado permanente**; y toggles de alto impacto
+  declarados peligrosos (apagar anti-bloqueos, etc.).
+- **NO (basta un clic):** acciones reversibles o de bajo impacto, fáciles de rehacer
+  — borrar una cita/horario/recordatorio sueltos, quitar un chat de la vista (regresa
+  solo), borrar pasos en el editor con Ctrl+Z, archivar/restaurar, y **desagrupar una
+  carpeta sin borrar su contenido**.
+
+**4 · Copia y botón estándar (siempre igual):**
+- `title`: **verbo + objeto** → `Eliminar contacto`, `Desconectar WhatsApp`,
+  `Revocar token`.
+- `message`: una o dos frases — qué se borra + impacto + **"Esta acción no se puede
+  deshacer."**. **Nunca** escribas "Escribe ELIMINAR para confirmar" dentro del
+  `message`: el Modal ya pinta ese label automáticamente. Duplicarlo = el usuario lo
+  ve dos veces (bug).
+- `confirmText`: **el verbo** (`Eliminar`, `Desconectar`, `Revocar`, `Generar token`…).
+  Esto vuelve el botón **rojo (danger) automáticamente**. Prohibido dejar el default
+  `Aceptar` en una confirmación destructiva (ni se pone rojo ni comunica).
+- `cancelText`: `Cancelar`.
+- El **rojo lo decide solo** el Modal a partir del verbo; no fuerces `variant="danger"`
+  salvo en una `secondaryAction` destructiva.
+
+**Snippet canónico (cópialo, no inventes):**
+```ts
+const { showConfirm } = useNotification()
+showConfirm(
+  'Eliminar contacto',                                            // title: verbo + objeto
+  'Vas a eliminar este contacto y su historial. Esta acción no se puede deshacer.',
+  () => deleteContact(id),          // onConfirm — async ok; return false deja el modal abierto en error
+  'Eliminar',                       // confirmText: el verbo → botón rojo automático
+  'Cancelar',                       // cancelText
+  undefined,                        // onCancel
+  { typeToConfirm: 'ELIMINAR' },    // por riesgo; OMITE este 7º arg para una confirmación de un solo clic
+)
+```
+
+`typeToConfirm` **solo** existe dentro del 7º argumento `options`; no es un parámetro
+suelto de `showConfirm`. Para `<Modal>` inline es el prop `typeToConfirm="ELIMINAR"`.
+
+**Móvil/Automatizaciones:** la regla es la misma, pero los flujos `Phone*` /
+`data-phone-*` no se tocan desde un cambio de escritorio (§5.8).
 
 ---
 
@@ -168,6 +246,13 @@ visual por página para "resolver" pantallas chicas.
 10. **Onyx:** el panel lateral es **siempre oscuro**; su texto/menús deben
     forzar contraste claro en ambos modos (ya hay reglas en `index.css`; no las
     rompas).
+11. **Confirmación destructiva fuera del patrón único (§4.1).** Prohibido
+    `window.confirm`, un modal de borrado portaleado a mano, o copiar el JSX de
+    otro borrado. Prohibido la palabra `typeToConfirm` en minúsculas o que no sea
+    el verbo de la acción. Prohibido duplicar "Escribe ELIMINAR para confirmar"
+    dentro del `message` (el Modal ya lo pinta). Prohibido `confirmText='Aceptar'`
+    en algo destructivo (no se pone rojo). Prohibido ejecutar un borrado
+    irreversible/masivo/de integración sin `typeToConfirm`.
 
 ---
 
@@ -217,4 +302,8 @@ una isla.
 10. `npm run design:audit` pasa sin violaciones nuevas.
 11. El responsive para ventanas chicas sigue funcionando con reglas fluidas, no
    con estilos visuales paralelos.
+12. Toda confirmación de borrar/desconectar/revocar sigue el patrón único (§4.1):
+   `showConfirm`/`<Modal type="confirm">`, palabra en MAYÚSCULAS = verbo, copia y
+   botón estándar, `typeToConfirm` por riesgo. Cero `window.confirm` y cero modales
+   de borrado a mano.
 12. No tocaste `Phone*`, Automatizaciones, ni el layout/flujo.

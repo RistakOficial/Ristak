@@ -182,7 +182,7 @@ export const APIAccessSettings: React.FC = () => {
     if (apiTokenMetadata?.hasToken) {
       showConfirm(
         'Generar nuevo API token',
-        'Esto invalida el token actual. ¿Generar uno nuevo?',
+        'Se invalidará el token actual y cualquier sistema externo conectado con él dejará de funcionar hasta usar el nuevo. Esta acción no se puede deshacer.',
         () => {
           void rotateApiToken()
         },
@@ -240,7 +240,7 @@ export const APIAccessSettings: React.FC = () => {
 
     showConfirm(
       'Revocar API token',
-      'Esto desactiva el acceso externo con este token. ¿Revocarlo?',
+      'Se desactivará el acceso externo con este token y cualquier sistema conectado con él dejará de funcionar. Esta acción no se puede deshacer.',
       () => {
         void revokeApiToken()
       },

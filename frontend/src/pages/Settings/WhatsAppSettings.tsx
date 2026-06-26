@@ -1509,7 +1509,7 @@ export const WhatsAppSettings: React.FC = () => {
         isOpen={qrDripDisableConfirmOpen}
         onClose={() => setQrDripDisableConfirmOpen(false)}
         title="Apagar anti-bloqueos de WhatsApp"
-        message={`Si apagas esto, los mensajes automáticos por QR pueden salir todos juntos y WhatsApp puede restringir o bloquear el número. Escribe ${QR_DRIP_DISABLE_CONFIRM_WORD} para confirmar.`}
+        message="Si apagas esto, los mensajes automáticos por QR pueden salir todos juntos y WhatsApp puede restringir o bloquear el número."
         type="confirm"
         confirmText="Apagar sistema"
         cancelText="Mantener encendido"

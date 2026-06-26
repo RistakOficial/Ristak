@@ -666,7 +666,7 @@ export const BlockedSlotModal: React.FC<BlockedSlotModalProps> = ({
       title="Quitar ausencia"
       message="¿Seguro que quieres quitar esta ausencia? Volverás a estar disponible en ese tiempo."
       type="confirm"
-      confirmText="Eliminar"
+      confirmText="Quitar"
       cancelText="Cancelar"
       onConfirm={handleConfirmDelete}
     />

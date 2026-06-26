@@ -293,9 +293,9 @@ const CHAT_LIST_AUTO_LOAD_GAP_PX = 320
 // conversaciones (no solo las recientes) sin depender del scroll. Pasado el tope, el resto se
 // sigue cargando con el prefetch por scroll (protege cuentas enormes / rendimiento de render).
 const CHAT_LIST_BACKGROUND_LOAD_CAP = 500
-const BULK_CHAT_ARCHIVE_CONFIRM_WORD = 'archivar'
-const BULK_CHAT_RESTORE_CONFIRM_WORD = 'restaurar'
-const BULK_CHAT_REMOVE_CONFIRM_WORD = 'eliminar'
+const BULK_CHAT_ARCHIVE_CONFIRM_WORD = 'ARCHIVAR'
+const BULK_CHAT_RESTORE_CONFIRM_WORD = 'RESTAURAR'
+const BULK_CHAT_REMOVE_CONFIRM_WORD = 'ELIMINAR'
 const MAX_IMAGE_ATTACHMENT_BYTES = 8 * 1024 * 1024
 const MAX_DOCUMENT_ATTACHMENT_BYTES = 20 * 1024 * 1024
 const DOCUMENT_ATTACHMENT_ACCEPT = [

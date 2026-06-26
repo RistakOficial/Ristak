@@ -1007,7 +1007,7 @@ export const MessageTemplates: React.FC<MessageTemplatesProps> = ({
     const total = templatesToDelete.length
     showConfirm(
       'Eliminar selección',
-      `Se eliminarán ${total} plantilla${total === 1 ? '' : 's'}.`,
+      `Se eliminarán ${total} plantilla${total === 1 ? '' : 's'}. Esta acción no se puede deshacer.`,
       async () => {
         setBulkWorking(true)
         try {
@@ -1110,7 +1110,7 @@ export const MessageTemplates: React.FC<MessageTemplatesProps> = ({
   const confirmDeleteTemplate = (template: MessageTemplate) => {
     showConfirm(
       'Eliminar plantilla',
-      `Se eliminará ${template.name}.`,
+      `Se eliminará ${template.name}. Esta acción no se puede deshacer.`,
       async () => {
         try {
           await messageTemplatesService.deleteTemplate(template.id)
@@ -1121,7 +1121,9 @@ export const MessageTemplates: React.FC<MessageTemplatesProps> = ({
         }
       },
       'Eliminar',
-      'Cancelar'
+      'Cancelar',
+      undefined,
+      { typeToConfirm: 'ELIMINAR' }
     )
   }
 

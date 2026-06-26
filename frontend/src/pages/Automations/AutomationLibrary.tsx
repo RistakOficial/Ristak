@@ -204,7 +204,7 @@ export const AutomationLibrary: React.FC<AutomationLibraryProps> = ({
       .join(', ')
     showConfirm(
       ids.length > 1 ? `Eliminar ${ids.length} automatizaciones` : 'Eliminar automatización',
-      `Vas a eliminar ${names}. Esta acción no se puede deshacer. Escribe "eliminar" para confirmar.`,
+      `Vas a eliminar ${names}. Esta acción no se puede deshacer.`,
       () => {
         void Promise.all(ids.map((id) => automationsService.deleteAutomation(id)))
           .then(async () => {
@@ -218,14 +218,14 @@ export const AutomationLibrary: React.FC<AutomationLibraryProps> = ({
       'Eliminar',
       'Cancelar',
       undefined,
-      { typeToConfirm: 'eliminar' }
+      { typeToConfirm: 'ELIMINAR' }
     )
   }
 
   const deleteFolder = (folder: AutomationFolder) => {
     showConfirm(
       'Eliminar carpeta',
-      `Las automatizaciones de "${folder.name}" no se eliminan: vuelven a la lista principal. Escribe "eliminar" para confirmar.`,
+      `Las automatizaciones de "${folder.name}" no se eliminan: vuelven a la lista principal.`,
       () => {
         void automationsService
           .deleteFolder(folder.id)
@@ -237,9 +237,7 @@ export const AutomationLibrary: React.FC<AutomationLibraryProps> = ({
           .catch(() => showToast('error', 'No se pudo eliminar la carpeta'))
       },
       'Eliminar',
-      'Cancelar',
-      undefined,
-      { typeToConfirm: 'eliminar' }
+      'Cancelar'
     )
   }
 

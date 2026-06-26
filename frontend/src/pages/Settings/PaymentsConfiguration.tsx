@@ -1271,7 +1271,19 @@ export const PaymentsConfiguration: React.FC = () => {
     }
   }
 
-  const handleDisconnectStripeMode = async (mode: StripeModeId) => {
+  const handleDisconnectStripeMode = (mode: StripeModeId) => {
+    showConfirm(
+      'Desconectar Stripe',
+      `Se borrarán las credenciales de ${stripeModeLabels[mode].title.toLowerCase()} y Stripe dejará de usarse para nuevos cobros en ese modo. Esta acción no se puede deshacer.`,
+      () => disconnectStripeMode(mode),
+      'Desconectar',
+      'Cancelar',
+      undefined,
+      { typeToConfirm: 'DESCONECTAR' }
+    )
+  }
+
+  const disconnectStripeMode = async (mode: StripeModeId) => {
     const otherMode = mode === 'live' ? 'test' : 'live'
     const otherModeHasConfig = stripeModeIsSaved(otherMode) || stripeModeIsComplete(otherMode)
 
@@ -1325,7 +1337,19 @@ export const PaymentsConfiguration: React.FC = () => {
     }
   }
 
-  const handleDisconnectConektaMode = async (mode: StripeModeId) => {
+  const handleDisconnectConektaMode = (mode: StripeModeId) => {
+    showConfirm(
+      'Desconectar Conekta',
+      `Se borrarán las credenciales de ${conektaModeLabels[mode].title.toLowerCase()} y Conekta dejará de usarse para nuevos cobros en ese modo. Esta acción no se puede deshacer.`,
+      () => disconnectConektaMode(mode),
+      'Desconectar',
+      'Cancelar',
+      undefined,
+      { typeToConfirm: 'DESCONECTAR' }
+    )
+  }
+
+  const disconnectConektaMode = async (mode: StripeModeId) => {
     const otherMode = mode === 'live' ? 'test' : 'live'
     const otherModeHasConfig = conektaModeIsSaved(otherMode) || conektaModeIsComplete(otherMode)
 
@@ -1377,7 +1401,19 @@ export const PaymentsConfiguration: React.FC = () => {
     }
   }
 
-  const handleDisconnectMercadoPago = async () => {
+  const handleDisconnectMercadoPago = () => {
+    showConfirm(
+      'Desconectar Mercado Pago',
+      'Se borrará la conexión de la cuenta y Ristak dejará de usarla para nuevos cobros. Esta acción no se puede deshacer.',
+      () => disconnectMercadoPago(),
+      'Desconectar',
+      'Cancelar',
+      undefined,
+      { typeToConfirm: 'DESCONECTAR' }
+    )
+  }
+
+  const disconnectMercadoPago = async () => {
     setDisconnectingMercadoPago(true)
     try {
       const config = await mercadoPagoPaymentsService.deleteConfig()

@@ -207,7 +207,7 @@ export const TriggerLinks: React.FC = () => {
   const handleDeleteLink = (link: TriggerLink) => {
     showConfirm(
       'Eliminar enlace',
-      `El enlace "${link.name}" dejará de funcionar. Los disparos históricos se conservan para consulta interna.`,
+      `El enlace "${link.name}" dejará de funcionar. Los disparos históricos se conservan para consulta interna. Esta acción no se puede deshacer.`,
       () => {
         const archive = async () => {
           try {
@@ -234,7 +234,7 @@ export const TriggerLinks: React.FC = () => {
     const total = linksToDelete.length
     showConfirm(
       'Eliminar enlaces seleccionados',
-      `Se eliminarán ${total} enlace${total === 1 ? '' : 's'} de disparo. Sus URLs públicas dejarán de funcionar y los disparos históricos se conservarán para consulta interna.`,
+      `Se eliminarán ${total} enlace${total === 1 ? '' : 's'} de disparo. Sus URLs públicas dejarán de funcionar y los disparos históricos se conservarán para consulta interna. Esta acción no se puede deshacer.`,
       () => {
         const archive = async () => {
           setDeletingLinks(true)

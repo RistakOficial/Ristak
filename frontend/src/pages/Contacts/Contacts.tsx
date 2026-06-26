@@ -600,7 +600,7 @@ const ContactsTable: React.FC = () => {
   const location = useLocation()
   const [searchParams, setSearchParams] = useSearchParams()
   const routeState = useMemo(() => parseContactsRoute(location.pathname), [location.pathname])
-  const { showToast } = useNotification()
+  const { showToast, showConfirm } = useNotification()
   const { labels } = useLabels()
   const { formatLocalDateShort } = useTimezone()
   const { locationId, accessToken } = useAuth()
@@ -1765,17 +1765,31 @@ const ContactsTable: React.FC = () => {
     }
   }
 
-  const handlePermanentDeleteContact = async (id: string) => {
-    setTrashActingId(id)
-    try {
-      await contactsService.permanentlyDeleteContact(id)
-      setTrashedContacts((cur) => cur.filter((c) => c.id !== id))
-      showToast('success', 'Eliminado permanentemente', 'El contacto se borró. Sus pagos se conservaron en el historial.')
-    } catch {
-      showToast('error', 'Error', 'No se pudo borrar el contacto')
-    } finally {
-      setTrashActingId(null)
-    }
+  const handlePermanentDeleteContact = (id: string) => {
+    const contact = trashedContacts.find((c) => c.id === id)
+    const label = contact?.full_name || contact?.email || contact?.phone || 'este contacto'
+
+    showConfirm(
+      'Eliminar permanentemente',
+      `Vas a eliminar permanentemente a ${label}. El contacto se borra de la base (sus pagos se conservan en el historial). Esta acción no se puede deshacer.`,
+      async () => {
+        setTrashActingId(id)
+        try {
+          await contactsService.permanentlyDeleteContact(id)
+          setTrashedContacts((cur) => cur.filter((c) => c.id !== id))
+          showToast('success', 'Eliminado permanentemente', 'El contacto se borró. Sus pagos se conservaron en el historial.')
+        } catch {
+          showToast('error', 'Error', 'No se pudo borrar el contacto')
+          return false
+        } finally {
+          setTrashActingId(null)
+        }
+      },
+      'Eliminar',
+      'Cancelar',
+      undefined,
+      { typeToConfirm: 'ELIMINAR' }
+    )
   }
 
   const closeContactDeleteModal = () => {
@@ -2534,91 +2548,69 @@ const ContactsTable: React.FC = () => {
         document.body
       )}
 
-      {isClient && contactsPendingDeletion.length > 0 && createPortal(
-        <div className={styles.modalOverlay} data-overlay="" onClick={closeContactDeleteModal}>
-          <div
-            className={styles.modal}
-            data-modal=""
-            data-modal-shell="legacy"
-            data-modal-size="sm"
-            data-modal-type="confirm"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <div className={styles.modalHeader} data-modal-header="">
-              <div>
-                <h2>Eliminar contacto{contactsPendingDeletion.length === 1 ? '' : 's'}</h2>
-                <p className={styles.modalSubtitle}>Esta acción borra la información seleccionada y no se puede deshacer.</p>
-              </div>
-              <button
-                className={styles.closeButton}
-                onClick={closeContactDeleteModal}
-                disabled={deletingContacts}
-                type="button"
+      <Modal
+        isOpen={contactsPendingDeletion.length > 0}
+        onClose={closeContactDeleteModal}
+        title={`Eliminar contacto${contactsPendingDeletion.length === 1 ? '' : 's'}`}
+        size="sm"
+        showCloseButton={!deletingContacts}
+      >
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+          {deletingContacts ? (
+            /* (CNT-011) Durante el borrado mostramos progreso (X de N) y barra + opción de cancelar. */
+            <>
+              <p style={{ margin: 0, color: 'var(--text-dim)', lineHeight: 1.5 }}>
+                Eliminando <strong>{deleteProgress}</strong> de <strong>{contactsPendingDeletion.length}</strong> contacto{contactsPendingDeletion.length === 1 ? '' : 's'}…
+              </p>
+              <div
+                className={styles.bulkProgressTrack}
+                aria-label={`Progreso ${deleteProgress} de ${contactsPendingDeletion.length}`}
               >
-                <X size={20} />
-              </button>
-            </div>
-            {deletingContacts ? (
-              /* (CNT-011) Durante el borrado mostramos progreso (X de N) y barra. */
-              <>
-                <p>
-                  Eliminando <strong>{deleteProgress}</strong> de <strong>{contactsPendingDeletion.length}</strong> contacto{contactsPendingDeletion.length === 1 ? '' : 's'}…
-                </p>
-                <div
-                  className={styles.bulkProgressTrack}
-                  aria-label={`Progreso ${deleteProgress} de ${contactsPendingDeletion.length}`}
-                >
-                  <span
-                    style={{
-                      width: `${contactsPendingDeletion.length > 0 ? Math.round((deleteProgress / contactsPendingDeletion.length) * 100) : 0}%`
-                    }}
-                  />
-                </div>
-              </>
-            ) : (
-              <>
-                <p>
-                  Vas a eliminar <strong>{contactsPendingDeletion.length}</strong> contacto{contactsPendingDeletion.length === 1 ? '' : 's'}.
-                  Para confirmar, escribe <strong>{DELETE_CONFIRMATION_WORD}</strong> en la caja de abajo.
-                </p>
-                <div className={styles.formGroup}>
-                  <label>Palabra de confirmación</label>
-                  <input
-                    value={contactDeleteConfirmation}
-                    onChange={(event) => setContactDeleteConfirmation(event.target.value)}
-                    placeholder={DELETE_CONFIRMATION_WORD}
-                    disabled={deletingContacts}
-                    autoFocus
-                  />
-                </div>
-              </>
-            )}
-            <div className={styles.formActions} data-modal-footer="">
-              {deletingContacts ? (
-                /* (CNT-011) Botón de cancelar el borrado masivo en curso. */
+                <span
+                  style={{
+                    width: `${contactsPendingDeletion.length > 0 ? Math.round((deleteProgress / contactsPendingDeletion.length) * 100) : 0}%`
+                  }}
+                />
+              </div>
+              <div className={styles.formActions}>
                 <Button type="button" variant="secondary" onClick={handleCancelBulkDelete}>
                   Cancelar borrado
                 </Button>
-              ) : (
-                <>
-                  <Button type="button" variant="ghost" onClick={closeContactDeleteModal} disabled={deletingContacts}>
-                    Cancelar
-                  </Button>
-                  <Button
-                    variant="danger"
-                    onClick={handleConfirmDeleteContacts}
-                    loading={deletingContacts}
-                    disabled={contactDeleteConfirmation.trim().toUpperCase() !== DELETE_CONFIRMATION_WORD || deletingContacts}
-                  >
-                    Sí, eliminar
-                  </Button>
-                </>
-              )}
-            </div>
-          </div>
-        </div>,
-        document.body
-      )}
+              </div>
+            </>
+          ) : (
+            <>
+              <p style={{ margin: 0, color: 'var(--text-dim)', lineHeight: 1.5 }}>
+                Vas a eliminar <strong>{contactsPendingDeletion.length}</strong> contacto{contactsPendingDeletion.length === 1 ? '' : 's'}. Esta acción borra la información seleccionada y no se puede deshacer.
+              </p>
+              <div className={styles.formGroup}>
+                <label>Escribe <strong>{DELETE_CONFIRMATION_WORD}</strong> para confirmar:</label>
+                <input
+                  value={contactDeleteConfirmation}
+                  onChange={(event) => setContactDeleteConfirmation(event.target.value)}
+                  placeholder={DELETE_CONFIRMATION_WORD}
+                  disabled={deletingContacts}
+                  autoFocus
+                  autoComplete="off"
+                  spellCheck={false}
+                />
+              </div>
+              <div className={styles.formActions}>
+                <Button type="button" variant="ghost" onClick={closeContactDeleteModal}>
+                  Cancelar
+                </Button>
+                <Button
+                  variant="danger"
+                  onClick={handleConfirmDeleteContacts}
+                  disabled={contactDeleteConfirmation.trim().toUpperCase() !== DELETE_CONFIRMATION_WORD}
+                >
+                  Eliminar
+                </Button>
+              </div>
+            </>
+          )}
+        </div>
+      </Modal>
       </div>
     </PageContainer>
   )

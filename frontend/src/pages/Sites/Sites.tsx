@@ -10833,7 +10833,9 @@ export const Sites: React.FC = () => {
         void deleteSite()
       },
       'Eliminar',
-      'Cancelar'
+      'Cancelar',
+      undefined,
+      { typeToConfirm: 'ELIMINAR' }
     )
   }
 
@@ -24382,10 +24384,12 @@ const SitesMediaPickerModal: React.FC<{
     event.stopPropagation()
     showConfirm(
       'Eliminar archivo',
-      `Esto eliminará "${getMediaPickerAssetName(asset)}" de Media. Los sitios que ya usen su URL podrían dejar de mostrarlo.`,
+      `Esto eliminará "${getMediaPickerAssetName(asset)}" de Media. Los sitios que ya usen su URL podrían dejar de mostrarlo. Esta acción no se puede deshacer.`,
       () => { void deleteAsset(asset) },
       'Eliminar',
-      'Cancelar'
+      'Cancelar',
+      undefined,
+      { typeToConfirm: 'ELIMINAR' }
     )
   }
 

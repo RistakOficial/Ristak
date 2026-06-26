@@ -2205,8 +2205,9 @@ export const MetaAdsIntegration: React.FC = () => {
           }
         }}
         title="Eliminar configuración de Meta"
-        message="¿Estás seguro que quieres eliminar la configuración actual de Meta?"
+        message="Se eliminará el token, la cuenta de anuncios, el pixel, la Página e Instagram, y se apagarán Messenger e Instagram DM. Esta acción no se puede deshacer."
         type="confirm"
+        typeToConfirm="ELIMINAR"
         confirmText={isDisconnectingMeta ? 'Eliminando...' : 'Eliminar'}
         cancelText="Cancelar"
         onConfirm={() => {
