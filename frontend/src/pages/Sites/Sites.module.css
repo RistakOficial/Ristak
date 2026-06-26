@@ -16291,6 +16291,17 @@
   white-space: nowrap;
 }
 
+/* Etiqueta de alcance ("Sitio /" · "Formulario /") DENTRO del botón de páginas,
+   en vez de un texto suelto afuera que empujaba y robaba espacio en el toolbar. */
+.pagesDropdownScope {
+  flex: none;
+  margin-right: 6px;
+  color: var(--color-text-tertiary);
+  font-size: 0.82rem;
+  font-weight: 500;
+  white-space: nowrap;
+}
+
 .pagesDropdownChevron {
   transition: transform 0.16s ease;
 }
@@ -18488,17 +18499,6 @@
   flex: 0 1 224px;
   display: flex;
   align-items: center;
-}
-
-.editorPageScopeLabel {
-  flex: none;
-  margin-right: 7px;
-  font-size: 10.5px;
-  font-weight: 800;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
-  color: var(--color-text-secondary);
-  white-space: nowrap;
 }
 
 .editorPageSelectorSlot .pagesDropdown {
