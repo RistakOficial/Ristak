@@ -16880,8 +16880,11 @@ function buildEmbeddedFormSourceTheme(site = {}) {
   const accent = renderOverrides.accent || v.accent
   const accentStrong = renderOverrides.accent ? `color-mix(in srgb, ${renderOverrides.accent} 86%, #000)` : v.accentStrong
   const ring = renderOverrides.accent ? `color-mix(in srgb, ${renderOverrides.accent} 22%, transparent)` : v.ring
-  const baseFont = template.font
-  const display = `'Inter Tight', ${template.font}`
+  const bodyFont = sanitizeCssFont(theme.siteBodyFontFamily) || template.font
+  const siteTitleFont = sanitizeCssFont(theme.siteHeadingFontFamily)
+  const siteSubtitleFont = sanitizeCssFont(theme.siteSubheadingFontFamily)
+  const baseFont = bodyFont
+  const display = `'Inter Tight', ${bodyFont}`
   const storedPageMaxWidth = Number(theme?.pageMaxWidth)
   const pageMaxWidth = isLandingType && storedPageMaxWidth === 1160
     ? 1440
@@ -16919,6 +16922,8 @@ function buildEmbeddedFormSourceTheme(site = {}) {
   const vars = [
     `--rstk-font:${baseFont}`,
     `--rstk-display:${display}`,
+    siteTitleFont ? `--rstk-site-title-font:${siteTitleFont}` : '',
+    siteSubtitleFont ? `--rstk-site-subtitle-font:${siteSubtitleFont}` : '',
     '--rstk-ease:cubic-bezier(.16,.84,.44,1)',
     `--rstk-page-bg:${pageBg}`,
     backgroundPaint ? `--rstk-block-bg:${backgroundPaint}` : '',
@@ -18302,14 +18307,14 @@ const RSTK_BASE_CSS = `
   form{width:100%;display:grid;gap:18px;background:transparent;border:0;box-shadow:none;padding:0;margin:0}
   .rstk-kind-landing form{gap:0}
 
-  .rstk-headline{margin:0;font-weight:var(--rstk-heading-weight);font-size:clamp(1.7rem,4.6vw,3rem);line-height:1.05;letter-spacing:0}
+  .rstk-headline{margin:0;font-family:var(--rstk-block-font,var(--rstk-site-title-font,inherit));font-weight:var(--rstk-heading-weight);font-size:clamp(1.7rem,4.6vw,3rem);line-height:1.05;letter-spacing:0}
   .rstk-kind-landing .rstk-headline{font-size:clamp(2rem,5.4vw,3.6rem)}
-  .rstk-subheading{margin:0;color:var(--rstk-muted);font-size:clamp(1rem,2vw,1.18rem);max-width:var(--rstk-content-max,60ch)}
+  .rstk-subheading{margin:0;font-family:var(--rstk-block-font,var(--rstk-site-subtitle-font,inherit));color:var(--rstk-muted);font-size:clamp(1rem,2vw,1.18rem);max-width:var(--rstk-content-max,60ch)}
   .rstk-kicker{margin:0;color:var(--rstk-accent);font-size:.78rem;font-weight:800;text-transform:uppercase;letter-spacing:.09em}
   .rstk-text{margin:0;color:color-mix(in srgb,var(--rstk-ink) 80%,transparent);max-width:var(--rstk-content-max,66ch)}
   .rstk-hero,.rstk-section-break,.rstk-cta,.rstk-section-list,.rstk-countdown,.rstk-embedded-form{display:grid;gap:14px;justify-items:var(--rstk-block-justify,stretch);text-align:var(--rstk-block-align,inherit)}
   .rstk-hero{gap:16px}
-  .rstk-section-break h2,.rstk-section-list h2,.rstk-cta h2,.rstk-embedded-form h2{margin:0;font-size:clamp(1.25rem,2.6vw,1.7rem);font-weight:var(--rstk-heading-weight);letter-spacing:0}
+  .rstk-section-break h2,.rstk-section-list h2,.rstk-cta h2,.rstk-embedded-form h2{margin:0;font-family:var(--rstk-block-font,var(--rstk-site-title-font,inherit));font-size:clamp(1.25rem,2.6vw,1.7rem);font-weight:var(--rstk-heading-weight);letter-spacing:0}
   .rstk-countdown{width:100%;max-width:var(--rstk-content-max,720px);margin-left:var(--rstk-content-margin-left,0);margin-right:var(--rstk-content-margin-right,0)}
   .rstk-countdown-title,.rstk-countdown-note{margin:0}
   .rstk-countdown-title{color:var(--rstk-block-text,var(--rstk-ink));font-weight:var(--rstk-block-weight,700);font-size:var(--rstk-block-size,1.05rem);line-height:var(--rstk-block-line-height,1.35)}
@@ -18603,9 +18608,9 @@ const RSTK_BASE_CSS = `
   .rstk-kind-landing .rstk-page{max-width:none;margin:0;border-radius:var(--rstk-page-radius,0);overflow:hidden}
   .rstk-kind-landing .rstk-shell{gap:0;padding-top:0}
   .rstk-kind-landing .rstk-section-column{gap:0}
-  .rstk-kind-landing .rstk-headline{font-family:var(--rstk-display);font-size:clamp(2.3rem,5.6vw,4rem);line-height:1.03;letter-spacing:0;background:none;color:var(--rstk-block-text,var(--rstk-ink))}
+  .rstk-kind-landing .rstk-headline{font-family:var(--rstk-block-font,var(--rstk-site-title-font,var(--rstk-display)));font-size:clamp(2.3rem,5.6vw,4rem);line-height:1.03;letter-spacing:0;background:none;color:var(--rstk-block-text,var(--rstk-ink))}
   .rstk-kind-landing .rstk-subheading{font-size:clamp(1.05rem,1.7vw,1.28rem);max-width:var(--rstk-content-max,60ch);line-height:1.6}
-  .rstk-kind-landing h2{font-family:var(--rstk-display)}
+  .rstk-kind-landing h2{font-family:var(--rstk-block-font,var(--rstk-site-title-font,var(--rstk-display)))}
   .rstk-kind-landing .rstk-text{font-size:1.06rem;line-height:1.7}
 
   .rstk-kind-landing .rstk-kicker{display:inline-flex;align-items:center;gap:8px;width:fit-content;padding:7px 14px 7px 12px;border:var(--rstk-block-border-width,0) solid var(--rstk-block-border,var(--rstk-border));border-radius:999px;background:var(--rstk-block-bg,transparent);color:var(--rstk-muted);font-size:.72rem;font-weight:700;letter-spacing:0;text-transform:uppercase}
@@ -18617,7 +18622,7 @@ const RSTK_BASE_CSS = `
   .rstk-kind-landing .rstk-hero .rstk-subheading{margin-left:var(--rstk-content-margin-left,auto);margin-right:var(--rstk-content-margin-right,auto)}
 
   .rstk-kind-landing .rstk-section-break{min-height:clamp(160px,24vw,360px);align-content:center;padding:clamp(28px,5vw,76px) clamp(20px,4vw,56px)}
-  .rstk-kind-landing .rstk-section-break h2{font-family:var(--rstk-display);font-size:clamp(2rem,4.6vw,3.4rem);line-height:1.08}
+  .rstk-kind-landing .rstk-section-break h2{font-family:var(--rstk-block-font,var(--rstk-site-title-font,var(--rstk-display)));font-size:clamp(2rem,4.6vw,3.4rem);line-height:1.08}
   .rstk-kind-landing .rstk-section-break p{max-width:var(--rstk-content-max,58ch);margin:0;color:color-mix(in srgb,var(--rstk-block-text,var(--rstk-ink)) 74%,transparent)}
 
   .rstk-kind-landing .rstk-section-list{gap:clamp(20px,3vw,38px)}
@@ -18945,8 +18950,11 @@ function buildStyleSheet(template, maxWidth, overrides = {}, pageVars = {}) {
   const accent = overrides.accent || v.accent
   const accentStrong = overrides.accent ? `color-mix(in srgb, ${overrides.accent} 86%, #000)` : v.accentStrong
   const ring = overrides.accent ? `color-mix(in srgb, ${overrides.accent} 22%, transparent)` : v.ring
-  const baseFont = template.font
-  const display = `'Inter Tight', ${template.font}`
+  const bodyFont = sanitizeCssFont((pageVars.theme || {}).siteBodyFontFamily) || template.font
+  const siteTitleFont = sanitizeCssFont((pageVars.theme || {}).siteHeadingFontFamily)
+  const siteSubtitleFont = sanitizeCssFont((pageVars.theme || {}).siteSubheadingFontFamily)
+  const baseFont = bodyFont
+  const display = `'Inter Tight', ${bodyFont}`
   const pageImage = pageVars.pageImage || v.pageImage
   const pageOverlay = pageVars.pageOverlay || 'none'
   const pageBg = pageVars.pageBg || v.pageBg
@@ -18959,6 +18967,8 @@ function buildStyleSheet(template, maxWidth, overrides = {}, pageVars = {}) {
 	  :root{
     --rstk-font:${baseFont};
     --rstk-display:${display};
+    ${siteTitleFont ? `--rstk-site-title-font:${siteTitleFont};` : ''}
+    ${siteSubtitleFont ? `--rstk-site-subtitle-font:${siteSubtitleFont};` : ''}
     --rstk-ease:cubic-bezier(.16,.84,.44,1);
     --rstk-page-bg:${pageBg};
     --rstk-page-image:${pageImage};
@@ -20521,7 +20531,7 @@ export async function renderPublicSiteHtml(site, { pageId, pagePath, trackingEna
     buildVideoStreamAssetsByStorageUrl(videoLookupBlocks, { enabled: !noTrack }),
     buildVideoStorageAssetsByStreamVideoId(videoLookupBlocks, { enabled: true })
   ])
-	  const renderContext = { site, pageId: activePage?.id, pages, isInteractive, isLandingType, isStandardForm: isStandardFormType, submitText, submitSubtitle, continueText, nextText, backText, phoneLocale, linkStyle, websiteMode, noTrack, preview, videoStreamAssetsByStorageUrl, videoStorageAssetsByStreamVideoId, videoActionTargetIds, videoActionInitialHiddenTargetIds, countdownActionTargetIds, formStyleContext: { baseFont: template.font, v: renderVars, accent: renderAccent, ink: renderInk, muted: renderMuted, pageBg: pageBg || renderVars.pageBg } }
+	  const renderContext = { site, pageId: activePage?.id, pages, isInteractive, isLandingType, isStandardForm: isStandardFormType, submitText, submitSubtitle, continueText, nextText, backText, phoneLocale, linkStyle, websiteMode, noTrack, preview, videoStreamAssetsByStorageUrl, videoStorageAssetsByStreamVideoId, videoActionTargetIds, videoActionInitialHiddenTargetIds, countdownActionTargetIds, formStyleContext: { baseFont: sanitizeCssFont(theme.siteBodyFontFamily) || template.font, v: renderVars, accent: renderAccent, ink: renderInk, muted: renderMuted, pageBg: pageBg || renderVars.pageBg } }
   const bodyBlocks = isLandingType
     ? renderLandingBlocks(blocks, renderContext)
     : blocks.map(block => renderPublicBlock(block, renderContext)).join('\n')

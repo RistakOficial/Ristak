@@ -33467,6 +33467,25 @@ const PageInspector: React.FC<{
         />
       </div>
       </AccordionSection>
+      <AccordionSection id="page-typography" title="Tipografía del sitio">
+        {([
+          { key: 'siteHeadingFontFamily', label: 'Título' },
+          { key: 'siteSubheadingFontFamily', label: 'Subtítulo' },
+          { key: 'siteBodyFontFamily', label: 'Texto' }
+        ] as const).map(({ key, label }) => {
+          const current = getThemeString(theme, key)
+          return (
+            <label key={key} className={styles.field}>
+              <span>{label}</span>
+              <CustomSelect value={current} onChange={(event) => onPatchTheme({ [key]: event.target.value } as Partial<SiteTheme>)} onBlur={onSaveSite}>
+                {getFontOptionsWithCurrent(current).map(option => (
+                  <option key={option.label} value={option.value}>{option.label}</option>
+                ))}
+              </CustomSelect>
+            </label>
+          )
+        })}
+      </AccordionSection>
     </div>
     </AccordionGroup>
   )
