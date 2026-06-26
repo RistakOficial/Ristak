@@ -14160,6 +14160,10 @@ function normalizePageList(rawPages = []) {
         page?.metaEventParameters || page?.meta_event_parameters,
         metaEventName
       )
+      // Evento Meta "al agendar" del calendario embebido (el SITIO es master). Separado del
+      // evento del formulario porque una pagina puede tener form Y calendario a la vez.
+      const metaCalendarEventName = normalizeSiteMetaEventName(page?.metaCalendarEventName || page?.meta_calendar_event_name, { allowNone: true, fallback: SITE_META_NO_EVENT })
+      const metaCalendarEnabled = Boolean(normalizeBoolean(page?.metaCalendarEnabled ?? page?.meta_calendar_enabled)) && metaCalendarEventName !== SITE_META_NO_EVENT
       const parentPageId = cleanString(page?.parentPageId || page?.parent_page_id)
       const slug = slugifyPageSegment(page?.slug)
       const buttonText = cleanString(page?.buttonText || page?.button_text)
@@ -14172,6 +14176,7 @@ function normalizePageList(rawPages = []) {
         metaCapiEnabled: Boolean(normalizeBoolean(page?.metaCapiEnabled ?? page?.meta_capi_enabled)),
         metaEventName,
         metaTrigger: normalizeSiteMetaTrigger(page?.metaTrigger || page?.meta_trigger),
+        ...(metaCalendarEnabled ? { metaCalendarEnabled: true, metaCalendarEventName } : {}),
         ...(hasSiteMetaEventParameters(metaEventParameters) ? { metaEventParameters } : {}),
         ...(parentPageId ? { parentPageId } : {}),
         ...(slug ? { slug } : {}),
@@ -16141,6 +16146,19 @@ function getCalendarEmbedLayoutValue() {
   return 'classic'
 }
 
+// El SITIO es master del evento Meta del calendario embebido: resuelve el evento "al agendar"
+// configurado en la pagina dueña del bloque (Ajustes del sitio). Devuelve '' si no aplica
+// (Meta del sitio apagado, preview, o pagina sin evento de calendario) → el calendario usa el suyo.
+function resolveCalendarMetaOverrideEventName(context = {}) {
+  const site = context.site
+  if (!site || !normalizeBoolean(site.metaCapiEnabled) || context.preview) return ''
+  const pages = Array.isArray(site?.theme?.pages) ? site.theme.pages : []
+  const page = pages.find(p => cleanString(p?.id) === cleanString(context.pageId))
+  if (!page || !normalizeBoolean(page.metaCalendarEnabled ?? page.meta_calendar_enabled)) return ''
+  const eventName = normalizeSiteMetaEventName(page.metaCalendarEventName || page.meta_calendar_event_name, { allowNone: true, fallback: SITE_META_NO_EVENT })
+  return eventName === SITE_META_NO_EVENT ? '' : eventName
+}
+
 function appendCalendarEmbedParams(value, settings = {}, options = {}) {
   const raw = cleanString(value)
   if (!raw) return raw
@@ -16157,6 +16175,9 @@ function appendCalendarEmbedParams(value, settings = {}, options = {}) {
     parsed.searchParams.set('designMode', designMode)
     if (options.preview) parsed.searchParams.set('editor_preview', '1')
     if (options.bookingBridge) parsed.searchParams.set('bookingBridge', '1')
+    // Override del evento Meta del sitio (el sitio es master del calendario embebido).
+    // Solo viaja el nombre del evento; los parametros se heredan del calendario.
+    if (options.metaOverrideEventName) parsed.searchParams.set('metaCalEvent', cleanString(options.metaOverrideEventName))
     parsed.searchParams.set('layout', layout)
     if (coverImage) parsed.searchParams.set('coverImage', coverImage)
 
@@ -17375,9 +17396,14 @@ function renderContentBlock(block, context = {}) {
 
     const calendarName = cleanString(settings.calendarName || settings.calendar_name || block.label || 'Calendario')
     const calendarCompletionRedirect = getCalendarEmbedCompletionRedirect(block, context)
+    // El SITIO es master: si la pagina dueña del calendario configuro un evento "al agendar"
+    // (con Meta del sitio encendido), ese evento overridea el del calendario embebido. Sin
+    // override, el calendario usa su propio evento (fallback, no mudo). No se propaga en preview.
+    const calendarMetaOverrideEventName = resolveCalendarMetaOverrideEventName(context)
     const baseCalendarSrc = appendCalendarEmbedParams(`/calendar/${encodeURIComponent(calendarSlug)}?test=1`, settings, {
       preview: context.preview,
-      bookingBridge: Boolean(calendarCompletionRedirect)
+      bookingBridge: Boolean(calendarCompletionRedirect),
+      metaOverrideEventName: calendarMetaOverrideEventName
     })
     const calendarSrc = context.noTrack ? appendNoTrackParam(baseCalendarSrc) : baseCalendarSrc
     const calendarRedirectAttr = calendarCompletionRedirect ? ` data-rstk-calendar-redirect="${escapeHtml(calendarCompletionRedirect)}"` : ''
@@ -19202,7 +19228,7 @@ async function buildMetaPixelSnippet(site, trackingEnabled, activePage = null, p
   return { head: buildMetaPixelBaseScript(pixelId), body }
 }
 
-function getCalendarSiteMetaEventConfig(calendar = {}) {
+function getCalendarSiteMetaEventConfig(calendar = {}, siteOverride = null) {
   const source = calendar.customEvents && typeof calendar.customEvents === 'object'
     ? calendar.customEvents
     : calendar.custom_events && typeof calendar.custom_events === 'object'
@@ -19218,6 +19244,21 @@ function getCalendarSiteMetaEventConfig(calendar = {}) {
     : rawChannel === 'smart'
       ? 'smart'
       : 'site'
+
+  // El SITIO es master: si trae un override de evento valido, FUERZA canal 'site' y
+  // enabled=true (aunque el calendario tenga Meta apagado o en whatsapp), y usa ese
+  // evento. Los parametros se heredan del calendario (pruned al evento override).
+  const overrideEventName = siteOverride && siteOverride.eventName
+    ? normalizeSiteMetaEventName(siteOverride.eventName, { allowNone: true, fallback: SITE_META_NO_EVENT })
+    : SITE_META_NO_EVENT
+  if (overrideEventName && overrideEventName !== SITE_META_NO_EVENT) {
+    return {
+      enabled: true,
+      channel: 'site',
+      eventName: overrideEventName,
+      parameters: pruneSiteMetaEventParametersForEvent(source.parameters || source.eventParameters || source.event_parameters || {}, overrideEventName)
+    }
+  }
 
   return {
     enabled: normalizeBoolean(source.enabled) === 1,
@@ -19243,8 +19284,8 @@ function buildCalendarMetaBaseCustomData(calendar = {}, appointment = {}, extra 
   }
 }
 
-export async function buildCalendarMetaPixelSnippet(calendar = {}, { trackingEnabled = true, preview = false } = {}) {
-  const config = getCalendarSiteMetaEventConfig(calendar)
+export async function buildCalendarMetaPixelSnippet(calendar = {}, { trackingEnabled = true, preview = false, siteOverride = null } = {}) {
+  const config = getCalendarSiteMetaEventConfig(calendar, siteOverride)
   // El pixel base (init + PageView) solo necesita que el Meta del calendario esté
   // activado, aunque no haya un evento de conversión configurado (solo PageView).
   // Con código de Test Events activo se fuerza aunque esté en anti-tracking (no en preview).
@@ -23175,8 +23216,8 @@ async function sendSitePageMetaEvent({ site, page, eventName, eventId, contactId
   }
 }
 
-export async function sendCalendarBookingSiteMetaEvent({ calendar, appointment, contactId, contact = {}, requestMeta = {} }) {
-  const config = getCalendarSiteMetaEventConfig(calendar)
+export async function sendCalendarBookingSiteMetaEvent({ calendar, appointment, contactId, contact = {}, requestMeta = {}, siteOverride = null }) {
+  const config = getCalendarSiteMetaEventConfig(calendar, siteOverride)
   const eventId = `calendar_${cleanString(calendar?.id) || 'unknown'}_${cleanString(appointment?.id) || crypto.randomUUID()}`
 
   const testModeActive = await isMetaTestModeActive()

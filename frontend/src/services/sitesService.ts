@@ -115,6 +115,10 @@ export interface SitePage {
   metaEventName?: string
   metaTrigger?: SiteMetaTrigger
   metaEventParameters?: SiteMetaEventParameters
+  // Evento Meta "al agendar" del calendario embebido en esta pagina (el sitio es master).
+  // Separado del evento del formulario porque una pagina puede tener form Y calendario.
+  metaCalendarEnabled?: boolean
+  metaCalendarEventName?: string
 }
 
 export interface SiteMetaCustomParameter {

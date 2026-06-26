@@ -1349,14 +1349,21 @@ export async function createPublicAppointment(req, res) {
 
     const customEvents = localCalendarService.normalizeCalendarCustomEventsConfig(calendar.customEvents || {});
     let metaEvent = null;
-    const resolvedCustomEvent = customEvents.enabled
-      ? await resolveCalendarCustomEventChannel({ customEvents, contactId })
-      : { channel: 'whatsapp', reason: 'global_whatsapp_config' };
+    let metaFiredViaSite = false;
 
-    if (customEvents.enabled && resolvedCustomEvent.channel === 'site') {
-      const siteCustomEvents = getCustomEventsForResolvedChannel(customEvents, 'site');
+    // El SITIO es master del evento Meta "al agendar" del calendario embebido: si el sitio
+    // contenedor propago un evento (metaCalEvent -> body.meta.siteEventName), fuerza el disparo
+    // por canal Meta web (site) con ese evento, aunque el calendario tenga Meta apagado o en
+    // whatsapp. Anti-spoofing: solo se aceptan eventos de la whitelist. El mismo event_id que
+    // el pixel (calendar_{calId}_{apptId}) garantiza que Meta deduplique a 1 conversion.
+    const CALENDAR_META_OVERRIDE_EVENTS = new Set(['Schedule', 'Lead', 'Contact', 'CompleteRegistration', 'FormSubmitted']);
+    const rawSiteEventName = typeof body?.meta?.siteEventName === 'string' ? body.meta.siteEventName.trim() : '';
+    const siteEventNameOverride = CALENDAR_META_OVERRIDE_EVENTS.has(rawSiteEventName) ? rawSiteEventName : '';
+
+    if (siteEventNameOverride) {
+      metaFiredViaSite = true;
       metaEvent = await sendCalendarBookingSiteMetaEvent({
-        calendar: { ...calendar, customEvents: siteCustomEvents },
+        calendar,
         appointment,
         contactId,
         contact: {
@@ -1364,21 +1371,45 @@ export async function createPublicAppointment(req, res) {
           phone: bookingSubmission.contact.phone,
           email: bookingSubmission.contact.email
         },
-        requestMeta: buildPublicCalendarMetaRequest(req, body)
+        requestMeta: buildPublicCalendarMetaRequest(req, body),
+        siteOverride: { eventName: siteEventNameOverride }
       }).catch(error => {
-        logger.warn(`[Calendars Controller] No se pudo disparar evento Meta web para cita publica: ${error.message}`);
+        logger.warn(`[Calendars Controller] No se pudo disparar evento Meta (override de sitio) para cita publica: ${error.message}`);
         return null;
       });
     } else {
-      metaEvent = await triggerWhatsappAppointmentBookedEvent(contactId, {
-        calendarId: calendar.id,
-        calendarName: calendar.name,
-        appointmentId: appointment.id,
-        customEvents: customEvents.enabled ? getCustomEventsForResolvedChannel(customEvents, 'whatsapp') : undefined
-      }).catch(error => {
-        logger.warn(`[Calendars Controller] No se pudo disparar evento WhatsApp para cita publica: ${error.message}`);
-        return null;
-      });
+      const resolvedCustomEvent = customEvents.enabled
+        ? await resolveCalendarCustomEventChannel({ customEvents, contactId })
+        : { channel: 'whatsapp', reason: 'global_whatsapp_config' };
+
+      if (customEvents.enabled && resolvedCustomEvent.channel === 'site') {
+        metaFiredViaSite = true;
+        const siteCustomEvents = getCustomEventsForResolvedChannel(customEvents, 'site');
+        metaEvent = await sendCalendarBookingSiteMetaEvent({
+          calendar: { ...calendar, customEvents: siteCustomEvents },
+          appointment,
+          contactId,
+          contact: {
+            fullName: bookingSubmission.contact.name,
+            phone: bookingSubmission.contact.phone,
+            email: bookingSubmission.contact.email
+          },
+          requestMeta: buildPublicCalendarMetaRequest(req, body)
+        }).catch(error => {
+          logger.warn(`[Calendars Controller] No se pudo disparar evento Meta web para cita publica: ${error.message}`);
+          return null;
+        });
+      } else {
+        metaEvent = await triggerWhatsappAppointmentBookedEvent(contactId, {
+          calendarId: calendar.id,
+          calendarName: calendar.name,
+          appointmentId: appointment.id,
+          customEvents: customEvents.enabled ? getCustomEventsForResolvedChannel(customEvents, 'whatsapp') : undefined
+        }).catch(error => {
+          logger.warn(`[Calendars Controller] No se pudo disparar evento WhatsApp para cita publica: ${error.message}`);
+          return null;
+        });
+      }
     }
 
     await sendCalendarAppointmentNotification(appointment, {
@@ -1397,10 +1428,10 @@ export async function createPublicAppointment(req, res) {
         appointment,
         message: bookingCompletion.message,
         bookingCompletion,
-        metaEvent: customEvents.enabled && resolvedCustomEvent.channel === 'site' && metaEvent?.eventId
+        metaEvent: metaFiredViaSite && metaEvent?.eventId
           ? {
               eventId: metaEvent.eventId,
-              eventName: metaEvent.eventName || getCustomEventsForResolvedChannel(customEvents, 'site').eventName,
+              eventName: metaEvent.eventName || siteEventNameOverride || getCustomEventsForResolvedChannel(customEvents, 'site').eventName,
               appointmentId: appointment.id,
               status: appointment.appointmentStatus || appointment.status || 'booked'
             }
