@@ -3748,7 +3748,6 @@ export const CalendarsConfiguration: React.FC = () => {
   const renderCalendarsTab = () => (
     <div className={pageStyles.tabPanel}>
       <div className={pageStyles.panelToolbar}>
-        {renderCalendarSourceSelect()}
         <Button
           className={pageStyles.toolbarCreate}
           variant="outline"
@@ -3761,12 +3760,8 @@ export const CalendarsConfiguration: React.FC = () => {
           <Plus size={16} />
           Crear calendario
         </Button>
+        {renderCalendarSourceSelect()}
       </div>
-
-      <details className={pageStyles.compactHelp}>
-        <summary>¿Qué significa “conversión”?</summary>
-        <p>Los calendarios marcados alimentan citas en reportes, campañas, viaje del cliente y eventos de Meta/WhatsApp. Si no marcas ninguno, Ristak toma todos.</p>
-      </details>
 
       {calendars.length > 0 ? (
         <div className={pageStyles.calendarList}>
