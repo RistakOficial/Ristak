@@ -12173,6 +12173,7 @@ export const Sites: React.FC = () => {
 
   const editorPageSelector = editorSite && hasEditablePages(editorSite) ? (
     <FunnelPagesPanel
+      scopeLabel="Sitio"
       pages={pages}
       activePageId={activePage?.id || DEFAULT_FUNNEL_PAGE_ID}
       locked={!canManagePages(editorSite) || editorAIGenerating}
@@ -12203,6 +12204,7 @@ export const Sites: React.FC = () => {
   // el editor de sitios tenga las mismas funciones de páginas que el editor standalone.
   const editorFormPageSelector = formEditMode ? (
     <FunnelPagesPanel
+      scopeLabel="Formulario"
       pages={formEditPages}
       activePageId={activeEmbeddedFormPage?.id || formEditPages[0]?.id || DEFAULT_FUNNEL_PAGE_ID}
       locked={editorAIGenerating}
@@ -12290,24 +12292,22 @@ export const Sites: React.FC = () => {
                   </div>
                   {formEditMode && (
                     <div className={`${styles.editorToolbarTools} ${styles.editorToolbarFormControls}`} aria-label="Herramientas de formulario">
-                      {editorPageSelector && (
-                        <div className={styles.editorPageSelectorSlot}>
-                          <span className={styles.editorPageScopeLabel}>Sitio</span>
-                          {editorPageSelector}
-                        </div>
-                      )}
-                      {editorFormPageSelector && (
-                        <div className={styles.editorPageSelectorSlot}>
-                          <span className={styles.editorPageScopeLabel}>Formulario</span>
-                          {editorFormPageSelector}
-                        </div>
-                      )}
                       <div className={styles.formModeStatus}>
                         <span aria-hidden="true" />
                         <FormInput size={15} />
                         <strong>Editando formulario</strong>
                         <small>{formEditBlock?.content || formEditBlock?.label || 'Formulario'}</small>
                       </div>
+                      {editorPageSelector && (
+                        <div className={styles.editorPageSelectorSlot}>
+                          {editorPageSelector}
+                        </div>
+                      )}
+                      {editorFormPageSelector && (
+                        <div className={styles.editorPageSelectorSlot}>
+                          {editorFormPageSelector}
+                        </div>
+                      )}
                       {formEditBlock && (
                         <FormToolbarConfigSlot
                           site={editorSite}
@@ -12327,18 +12327,17 @@ export const Sites: React.FC = () => {
                   )}
                   {calendarEditMode && calendarEditBlock && (
                     <div className={`${styles.editorToolbarTools} ${styles.editorToolbarFormControls}`} aria-label="Herramientas de calendario">
-                      {editorPageSelector && (
-                        <div className={styles.editorPageSelectorSlot}>
-                          <span className={styles.editorPageScopeLabel}>Sitio</span>
-                          {editorPageSelector}
-                        </div>
-                      )}
                       <div className={styles.formModeStatus}>
                         <span aria-hidden="true" />
                         <CalendarDays size={15} />
                         <strong>Editando calendario</strong>
                         <small>{getSettingString(calendarEditBlock.settings || {}, 'calendarName') || calendarEditBlock.label || 'Calendario'}</small>
                       </div>
+                      {editorPageSelector && (
+                        <div className={styles.editorPageSelectorSlot}>
+                          {editorPageSelector}
+                        </div>
+                      )}
                       <CalendarToolbarConfigSlot
                         block={calendarEditBlock}
                         calendars={calendars}
@@ -26563,6 +26562,7 @@ const HeaderToolbarModal: React.FC<{
 interface FunnelPagesPanelProps {
   pages: SitePage[]
   activePageId: string
+  scopeLabel?: string
   locked?: boolean
   colorFinalPages?: boolean
   isFixedPage?: (page: SitePage) => boolean
@@ -26587,6 +26587,7 @@ interface FunnelPagesPanelProps {
 const FunnelPagesPanel: React.FC<FunnelPagesPanelProps> = ({
   pages,
   activePageId,
+  scopeLabel,
   locked = false,
   colorFinalPages = false,
   isFixedPage = () => false,
@@ -26764,6 +26765,7 @@ const FunnelPagesPanel: React.FC<FunnelPagesPanelProps> = ({
       >
         <FileText size={15} />
         <span className={styles.pagesDropdownTriggerText}>
+          {scopeLabel && <span className={styles.pagesDropdownScope}>{scopeLabel} /</span>}
           <strong>{activePage?.title || 'Página 1'}</strong>
         </span>
         <ChevronDown size={15} className={styles.pagesDropdownChevron} />
@@ -32076,6 +32078,72 @@ const FormCompletionSettingsControls: React.FC<{
 
 const FORM_EMBED_DRAFT_SOURCE_VALUE = '__embedded_form_draft__'
 
+// Control del píxel de Meta dentro del popover de configuración del formulario.
+// Reusa el evento a NIVEL DE SITIO (site.metaEventName + site.metaCapiEnabled +
+// theme.metaEventParameters) que el backend YA dispara al enviar el formulario,
+// así que no hace falta tocar backend. Elegir un evento prende CAPI; "Sin evento"
+// lo apaga (un solo control, autosuficiente).
+const FormPixelSettingsControls: React.FC<{
+  site: PublicSite
+  onPatchSite: (patch: Partial<PublicSite>) => void
+  onPatchTheme: (patch: Partial<SiteTheme>) => void
+  onSaveSite: () => void
+}> = ({ site, onPatchSite, onPatchTheme, onSaveSite }) => {
+  const theme = site.theme || {}
+  const eventName = site.metaCapiEnabled ? normalizeMetaEventName(site.metaEventName, 'none') : 'none'
+  const hasConversion = eventName !== 'none'
+  const [paramsOpen, setParamsOpen] = useState(false)
+
+  return (
+    <div className={styles.formPixelToolbarControls}>
+      <label className={`${styles.field} ${styles.formToolbarField}`}>
+        <span>Píxel de Facebook al enviar</span>
+        <CustomSelect
+          value={eventName}
+          dropdownMinWidth={260}
+          onChange={(event) => {
+            const metaEventName = event.target.value
+            onPatchSite({ metaEventName, metaCapiEnabled: metaEventName !== 'none' })
+            onPatchTheme({ metaEventParameters: pruneMetaEventParametersForEvent(theme.metaEventParameters, metaEventName) })
+            window.setTimeout(onSaveSite, 0)
+          }}
+          onBlur={onSaveSite}
+        >
+          {metaEventOptions.map(option => (
+            <option key={option.value} value={option.value}>{option.label}</option>
+          ))}
+        </CustomSelect>
+      </label>
+      {hasConversion && (
+        <div className={styles.metaParametersInspector}>
+          <button
+            type="button"
+            className={[
+              styles.metaParametersInspectorToggle,
+              paramsOpen ? styles.metaParametersInspectorToggleActive : '',
+              hasMetaEventParameters(theme.metaEventParameters) ? styles.metaParametersInspectorToggleFilled : ''
+            ].filter(Boolean).join(' ')}
+            aria-expanded={paramsOpen}
+            onClick={() => setParamsOpen(open => !open)}
+          >
+            <Settings2 size={14} />
+            <span>Parámetros Meta</span>
+            <ChevronDown size={13} />
+          </button>
+          {paramsOpen && (
+            <MetaEventParametersEditor
+              eventName={eventName}
+              parameters={theme.metaEventParameters}
+              onChange={(metaEventParameters) => onPatchTheme({ metaEventParameters })}
+              onCommit={onSaveSite}
+            />
+          )}
+        </div>
+      )}
+    </div>
+  )
+}
+
 const FormEmbedToolbarControls: React.FC<{
   site: PublicSite
   block: SiteBlock
@@ -32151,24 +32219,13 @@ const FormEmbedToolbarControls: React.FC<{
         }}
         onSave={onSave}
       />
-      {metaPixelConnected && (
-        <label className={`${styles.field} ${styles.formToolbarField}`}>
-          <span>Evento Meta al enviar</span>
-          <CustomSelect
-            value={normalizeMetaEventName(site.metaEventName, 'none')}
-            onChange={(event) => {
-              const metaEventName = event.target.value
-              onPatchSite({ metaEventName, metaCapiEnabled: metaEventName !== 'none' })
-              onPatchTheme({ metaEventParameters: pruneMetaEventParametersForEvent((site.theme || {}).metaEventParameters, metaEventName) })
-              window.setTimeout(onSaveSite, 0)
-            }}
-            onBlur={onSaveSite}
-          >
-            {metaEventOptions.map(option => (
-              <option key={option.value} value={option.value}>{option.label}</option>
-            ))}
-          </CustomSelect>
-        </label>
+      {metaPixelConnected && isFormSite(site) && (
+        <FormPixelSettingsControls
+          site={site}
+          onPatchSite={onPatchSite}
+          onPatchTheme={onPatchTheme}
+          onSaveSite={onSaveSite}
+        />
       )}
     </div>
   )
@@ -32267,7 +32324,7 @@ const ToolbarConfigPopover: React.FC<{
     const rect = trigger.getBoundingClientRect()
     const pad = 12
     const gap = 6
-    const width = Math.min(320, window.innerWidth - pad * 2)
+    const width = Math.min(360, window.innerWidth - pad * 2)
     const left = Math.min(Math.max(pad, rect.right - width), window.innerWidth - width - pad)
     const top = Math.min(rect.bottom + gap, window.innerHeight - pad)
     setPanelStyle({
@@ -32366,23 +32423,19 @@ const FormToolbarConfigSlot: React.FC<{
   onPatchTheme: (patch: Partial<SiteTheme>) => void
   onSaveSite: () => void
 }> = (props) => {
-  const controls = <FormEmbedToolbarControls {...props} />
   const sourceId = getEmbeddedFormSourceId(props.block)
   const sourceName =
     (sourceId ? props.forms.find(form => form.id === sourceId)?.name : '') ||
     (sourceId ? getSettingString(props.block.settings || {}, 'embeddedSiteName') : '') ||
     'Configuración'
   return (
-    <>
-      <div className={styles.editorToolbarConfigInline}>{controls}</div>
-      <ToolbarConfigPopover
-        label={sourceName}
-        title="Configuración del formulario"
-        icon={<SlidersHorizontal size={15} />}
-      >
-        {controls}
-      </ToolbarConfigPopover>
-    </>
+    <ToolbarConfigPopover
+      label={sourceName}
+      title="Configuración del formulario"
+      icon={<SlidersHorizontal size={15} />}
+    >
+      <FormEmbedToolbarControls {...props} />
+    </ToolbarConfigPopover>
   )
 }
 
@@ -32393,19 +32446,15 @@ const CalendarToolbarConfigSlot: React.FC<{
   onPatchSettings: (patch: Record<string, unknown>) => void
   onSave: () => void
 }> = (props) => {
-  const controls = <CalendarEmbedToolbarControls {...props} />
   const calendarName = getSettingString(props.block.settings || {}, 'calendarName') || 'Configuración'
   return (
-    <>
-      <div className={styles.editorToolbarConfigInline}>{controls}</div>
-      <ToolbarConfigPopover
-        label={calendarName}
-        title="Configuración del calendario"
-        icon={<SlidersHorizontal size={15} />}
-      >
-        {controls}
-      </ToolbarConfigPopover>
-    </>
+    <ToolbarConfigPopover
+      label={calendarName}
+      title="Configuración del calendario"
+      icon={<SlidersHorizontal size={15} />}
+    >
+      <CalendarEmbedToolbarControls {...props} />
+    </ToolbarConfigPopover>
   )
 }
 
@@ -33144,17 +33193,7 @@ const PageInspector: React.FC<{
   onPatchTheme: (patch: Partial<SiteTheme>) => void
   onSaveSite: () => void
 }> = ({ site, pages, activePageId, metaPixelConnected, onPatchSite, onPatchTheme, onSaveSite }) => {
-  const [formMetaParamsOpen, setFormMetaParamsOpen] = useState(false)
   const theme = site.theme || {}
-  const formEventName = normalizeMetaEventName(site.metaEventName, 'none')
-  const formHasConversion = formEventName !== 'none'
-  const formHasParameters = hasMetaEventParameters(theme.metaEventParameters)
-
-  useEffect(() => {
-    if (!site.metaCapiEnabled || !formHasConversion) {
-      setFormMetaParamsOpen(false)
-    }
-  }, [formHasConversion, site.metaCapiEnabled])
 
   const pageConfigContent = (
     <AccordionGroup>
@@ -33180,64 +33219,8 @@ const PageInspector: React.FC<{
           </p>
         </AccordionSection>
       )}
-      {metaPixelConnected && isFormSite(site) && (
-        <AccordionSection id="page-conversion" title="Conversión del formulario">
-          <div className={`${styles.metaCard} ${formHasConversion && site.metaCapiEnabled ? styles.metaCardActive : ''}`}>
-            <span className={styles.metaMark} aria-hidden="true">∞</span>
-            <div className={styles.metaCardInfo}>
-              <strong>{formHasConversion ? 'Evento de submit' : 'Sin evento'}</strong>
-              <small>{!site.metaCapiEnabled ? 'Requiere Meta del sitio' : formHasConversion ? 'Se envía al enviar formulario' : 'Solo PageView global'}</small>
-            </div>
-          </div>
-          <label className={styles.field}>
-            <span>Evento de submit</span>
-            <CustomSelect
-              value={formEventName}
-              disabled={!site.metaCapiEnabled}
-              onChange={(event) => {
-                const metaEventName = event.target.value
-                onPatchSite({ metaEventName })
-                onPatchTheme({
-                  metaEventParameters: pruneMetaEventParametersForEvent(theme.metaEventParameters, metaEventName)
-                })
-              }}
-              onBlur={onSaveSite}
-            >
-              {metaEventOptions.map(option => (
-                <option key={option.value} value={option.value}>{option.label}</option>
-              ))}
-            </CustomSelect>
-          </label>
-          {formHasConversion && (
-            <div className={styles.metaParametersInspector}>
-              <button
-                type="button"
-                className={[
-                  styles.metaParametersInspectorToggle,
-                  formMetaParamsOpen ? styles.metaParametersInspectorToggleActive : '',
-                  formHasParameters ? styles.metaParametersInspectorToggleFilled : ''
-                ].filter(Boolean).join(' ')}
-                disabled={!site.metaCapiEnabled}
-                aria-expanded={formMetaParamsOpen}
-                onClick={() => setFormMetaParamsOpen(open => !open)}
-              >
-                <Settings2 size={14} />
-                <span>Parámetros Meta</span>
-                <ChevronDown size={13} />
-              </button>
-              {formMetaParamsOpen && (
-                <MetaEventParametersEditor
-                  eventName={formEventName}
-                  parameters={theme.metaEventParameters}
-                  disabled={!site.metaCapiEnabled}
-                  onChange={(metaEventParameters) => onPatchTheme({ metaEventParameters })}
-                  onCommit={onSaveSite}
-                />
-              )}
-            </div>
-          )}
-        </AccordionSection>
-      )}
+      {/* La "Conversión del formulario" (evento del píxel de Meta al enviar) se movió
+          al popover "Configuración" del toolbar — ver FormPixelSettingsControls. */}
     </AccordionGroup>
   )
 

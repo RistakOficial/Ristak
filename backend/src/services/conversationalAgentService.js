@@ -48,6 +48,25 @@ export const SUCCESS_ACTIONS = [
 const VALID_OBJECTIVES = new Set(CONVERSATIONAL_OBJECTIVES.map((item) => item.id))
 const VALID_SUCCESS_ACTIONS = new Set(SUCCESS_ACTIONS.map((item) => item.id))
 const VALID_AGENT_IDENTITY_MODES = new Set(['business', 'user', 'custom', 'agent'])
+// Persuasión: qué tanto empuja al cierre (alto = guion de fábrica completo).
+// Lenguaje: registro con el que habla (intermedio = calibración natural por defecto).
+const VALID_PERSUASION_LEVELS = new Set(['low', 'medium', 'high'])
+const VALID_LANGUAGE_LEVELS = new Set(['professional', 'intermediate', 'colloquial'])
+const DEFAULT_PERSUASION_LEVEL = 'high'
+const DEFAULT_LANGUAGE_LEVEL = 'intermediate'
+
+export function normalizeConversationalPersuasionLevel(value, fallback = DEFAULT_PERSUASION_LEVEL) {
+  const normalized = String(value || '').trim().toLowerCase()
+  if (VALID_PERSUASION_LEVELS.has(normalized)) return normalized
+  return VALID_PERSUASION_LEVELS.has(fallback) ? fallback : DEFAULT_PERSUASION_LEVEL
+}
+
+export function normalizeConversationalLanguageLevel(value, fallback = DEFAULT_LANGUAGE_LEVEL) {
+  const normalized = String(value || '').trim().toLowerCase()
+  if (VALID_LANGUAGE_LEVELS.has(normalized)) return normalized
+  return VALID_LANGUAGE_LEVELS.has(fallback) ? fallback : DEFAULT_LANGUAGE_LEVEL
+}
+
 const DEFAULT_SUCCESS_ACTION = 'ready_for_human'
 const VALID_STATUSES = new Set(['active', 'paused', 'human', 'skipped', 'completed', 'discarded'])
 const CONVERSATION_PAUSE_DURATION_MS = 24 * 60 * 60 * 1000
@@ -170,6 +189,8 @@ function mapConfigRow(row) {
       defaultCalendarId: null,
       closingStrategyMode: 'system',
       closingStrategyCustom: '',
+      persuasionLevel: DEFAULT_PERSUASION_LEVEL,
+      languageLevel: DEFAULT_LANGUAGE_LEVEL,
       updatedAt: null
     }
   }
@@ -195,6 +216,8 @@ function mapConfigRow(row) {
     defaultCalendarId: row.default_calendar_id || null,
     closingStrategyMode: row.closing_strategy_mode === 'custom' ? 'custom' : 'system',
     closingStrategyCustom: row.closing_strategy_custom || '',
+    persuasionLevel: normalizeConversationalPersuasionLevel(row.persuasion_level),
+    languageLevel: normalizeConversationalLanguageLevel(row.language_level),
     updatedAt: row.updated_at || null
   }
 }
@@ -232,7 +255,13 @@ export async function saveConversationalAgentConfig(input = {}) {
       : (input.closingStrategyMode === 'custom' ? 'custom' : 'system'),
     closingStrategyCustom: input.closingStrategyCustom === undefined
       ? current.closingStrategyCustom
-      : String(input.closingStrategyCustom || '').slice(0, 8000)
+      : String(input.closingStrategyCustom || '').slice(0, 8000),
+    persuasionLevel: input.persuasionLevel === undefined
+      ? current.persuasionLevel
+      : normalizeConversationalPersuasionLevel(input.persuasionLevel),
+    languageLevel: input.languageLevel === undefined
+      ? current.languageLevel
+      : normalizeConversationalLanguageLevel(input.languageLevel)
   }
 
   const existing = await db.get('SELECT id FROM conversational_agent_config WHERE id = 1')
@@ -243,13 +272,15 @@ export async function saveConversationalAgentConfig(input = {}) {
           required_data = ?, handoff_rules = ?, extra_instructions = ?,
           allow_emojis = ?, hide_attended = ?, hide_attended_notifications = ?, default_calendar_id = ?,
           closing_strategy_mode = ?, closing_strategy_custom = ?,
+          persuasion_level = ?, language_level = ?,
           updated_at = CURRENT_TIMESTAMP
       WHERE id = 1
     `, [
       next.enabled ? 1 : 0, next.aiProvider, next.model, next.objective, next.customObjective, next.successAction,
       next.requiredData, next.handoffRules, next.extraInstructions,
       next.allowEmojis ? 1 : 0, 0, next.hideAttendedNotifications ? 1 : 0, next.defaultCalendarId,
-      next.closingStrategyMode, next.closingStrategyCustom
+      next.closingStrategyMode, next.closingStrategyCustom,
+      next.persuasionLevel, next.languageLevel
     ])
   } else {
     await db.run(`
@@ -257,13 +288,15 @@ export async function saveConversationalAgentConfig(input = {}) {
         id, enabled, ai_provider, model, objective, custom_objective, success_action,
         required_data, handoff_rules, extra_instructions,
         allow_emojis, hide_attended, hide_attended_notifications, default_calendar_id,
-        closing_strategy_mode, closing_strategy_custom
-      ) VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        closing_strategy_mode, closing_strategy_custom,
+        persuasion_level, language_level
+      ) VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `, [
       next.enabled ? 1 : 0, next.aiProvider, next.model, next.objective, next.customObjective, next.successAction,
       next.requiredData, next.handoffRules, next.extraInstructions,
       next.allowEmojis ? 1 : 0, 0, next.hideAttendedNotifications ? 1 : 0, next.defaultCalendarId,
-      next.closingStrategyMode, next.closingStrategyCustom
+      next.closingStrategyMode, next.closingStrategyCustom,
+      next.persuasionLevel, next.languageLevel
     ])
   }
 
@@ -2014,6 +2047,8 @@ function mapAgentRow(row) {
     defaultCalendarId: row.default_calendar_id || null,
     closingStrategyMode: row.closing_strategy_mode === 'custom' ? 'custom' : 'system',
     closingStrategyCustom: row.closing_strategy_custom || '',
+    persuasionLevel: normalizeConversationalPersuasionLevel(row.persuasion_level),
+    languageLevel: normalizeConversationalLanguageLevel(row.language_level),
     responseDelay: normalizeAgentResponseDelay(parseJsonField(row.response_delay_config, null)),
     replyDelivery: normalizeAgentReplyDeliveryForConfig(parseJsonField(row.reply_delivery_config, null)),
     followUp: normalizeAgentFollowUp(parseJsonField(row.follow_up_config, null)),
@@ -2355,6 +2390,12 @@ function agentInputToRowValues(input, base) {
     closingStrategyCustom: input.closingStrategyCustom === undefined
       ? base.closingStrategyCustom
       : String(input.closingStrategyCustom || '').slice(0, 8000),
+    persuasionLevel: input.persuasionLevel === undefined
+      ? normalizeConversationalPersuasionLevel(base.persuasionLevel)
+      : normalizeConversationalPersuasionLevel(input.persuasionLevel),
+    languageLevel: input.languageLevel === undefined
+      ? normalizeConversationalLanguageLevel(base.languageLevel)
+      : normalizeConversationalLanguageLevel(input.languageLevel),
     responseDelay: input.responseDelay === undefined
       ? normalizeAgentResponseDelay(base.responseDelay)
       : normalizeAgentResponseDelay(input.responseDelay),
@@ -2393,6 +2434,8 @@ const ACTIVE_AGENT_RUNTIME_CONFIG_KEYS = new Set([
   'defaultCalendarId',
   'closingStrategyMode',
   'closingStrategyCustom',
+  'persuasionLevel',
+  'languageLevel',
   'responseDelay',
   'replyDelivery',
   'followUp',
@@ -2423,6 +2466,8 @@ const DEFAULT_AGENT_BASE = {
   defaultCalendarId: null,
   closingStrategyMode: 'system',
   closingStrategyCustom: '',
+  persuasionLevel: DEFAULT_PERSUASION_LEVEL,
+  languageLevel: DEFAULT_LANGUAGE_LEVEL,
   responseDelay: DEFAULT_RESPONSE_DELAY_CONFIG,
   replyDelivery: DEFAULT_REPLY_DELIVERY_CONFIG,
   followUp: DEFAULT_FOLLOW_UP_CONFIG,
@@ -2700,8 +2745,9 @@ export async function createConversationalAgent(input = {}) {
       success_extras, required_data, handoff_rules, extra_instructions,
       allow_emojis, hide_attended, hide_attended_notifications,
       default_calendar_id, closing_strategy_mode, closing_strategy_custom,
+      persuasion_level, language_level,
       response_delay_config, reply_delivery_config, follow_up_config, goal_workflow_config, entry_filters
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `, [
     id, next.name, next.enabled ? 1 : 0, next.aiProvider, next.model,
     next.identityMode, next.identityUserId, next.identityUserName, next.identityCustomName,
@@ -2710,6 +2756,7 @@ export async function createConversationalAgent(input = {}) {
     next.extraInstructions, next.allowEmojis ? 1 : 0,
     0, next.hideAttendedNotifications ? 1 : 0, next.defaultCalendarId,
     next.closingStrategyMode, next.closingStrategyCustom,
+    next.persuasionLevel, next.languageLevel,
     JSON.stringify(next.responseDelay), JSON.stringify(next.replyDelivery), JSON.stringify(next.followUp), JSON.stringify(next.goalWorkflow), JSON.stringify(next.filters)
   ])
   await recordConversationalAgentEvent({ eventType: 'agent_created', detail: { agentId: id, name: next.name } })
@@ -2738,7 +2785,8 @@ export async function updateConversationalAgent(agentId, input = {}) {
         success_action = ?, success_extras = ?, required_data = ?, handoff_rules = ?,
         extra_instructions = ?, allow_emojis = ?, hide_attended = ?, hide_attended_notifications = ?,
         default_calendar_id = ?,
-        closing_strategy_mode = ?, closing_strategy_custom = ?, response_delay_config = ?,
+        closing_strategy_mode = ?, closing_strategy_custom = ?,
+        persuasion_level = ?, language_level = ?, response_delay_config = ?,
         reply_delivery_config = ?, follow_up_config = ?, goal_workflow_config = ?, entry_filters = ?,
         updated_at = CURRENT_TIMESTAMP
     WHERE id = ?
@@ -2750,6 +2798,7 @@ export async function updateConversationalAgent(agentId, input = {}) {
     next.extraInstructions, next.allowEmojis ? 1 : 0,
     0, next.hideAttendedNotifications ? 1 : 0, next.defaultCalendarId,
     next.closingStrategyMode, next.closingStrategyCustom,
+    next.persuasionLevel, next.languageLevel,
     JSON.stringify(next.responseDelay), JSON.stringify(next.replyDelivery), JSON.stringify(next.followUp), JSON.stringify(next.goalWorkflow), JSON.stringify(next.filters),
     agentId
   ])

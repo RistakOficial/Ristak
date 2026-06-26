@@ -318,13 +318,21 @@ export const Appointments: React.FC = () => {
   useEffect(() => {
     let cancelled = false;
     const loadReminderSettings = async () => {
+      // CRÍTICO: los recordatorios. Si esto falla, sí es un error real del panel.
       const overview = await appointmentRemindersService.getOverview();
-      const templateBundle = await messageTemplatesService.getBundle();
       if (cancelled) return;
       setReminders(overview.reminders);
       setReminderSenders(overview.senders);
       setReminderChannels(overview.channels);
-      setReminderTemplates(templateBundle.templates);
+
+      // OPCIONAL: las plantillas viven detrás del permiso de WhatsApp (settings_whatsapp).
+      // Si no hay acceso o fallan, NO deben tumbar todo el panel de mensajes automáticos.
+      try {
+        const templateBundle = await messageTemplatesService.getBundle();
+        if (!cancelled) setReminderTemplates(templateBundle.templates);
+      } catch {
+        if (!cancelled) setReminderTemplates([]);
+      }
     };
 
     loadReminderSettings()
@@ -912,7 +920,14 @@ export const Appointments: React.FC = () => {
       await loadEvents();
       await loadUpcomingEvents();
     } catch (error) {
-      showToast('error', 'No se pudo crear la cita', 'Intenta nuevamente más tarde.');
+      // Mostramos el motivo REAL del backend (p.ej. "Ese horario ya alcanzó el límite",
+      // "Esta función no está incluida en tu plan", "Fecha de inicio inválida") en vez de
+      // un genérico, para que el usuario entienda y no se quede a ciegas.
+      const detail = (error as Error)?.message;
+      const friendly = detail && !/^API Error:/i.test(detail)
+        ? detail
+        : 'Intenta nuevamente más tarde.';
+      showToast('error', 'No se pudo crear la cita', friendly);
     } finally {
       setLoading(false);
     }

@@ -1849,6 +1849,61 @@ function buildEmojiUsageInstruction(config = {}) {
   return ''
 }
 
+// Persuasión: modula CUÁNTO empuja el agente hacia el cierre. Se monta ENCIMA del
+// guion de fábrica (que se sigue renderizando como base), así cuando el guion se
+// actualice, los tres niveles heredan el cambio sin clonar nada.
+// 'high' = fábrica tal cual (no agrega nada). 'medium' y 'low' recalibran.
+function normalizePromptPersuasionLevel(value) {
+  const normalized = String(value || '').trim().toLowerCase()
+  return ['low', 'medium', 'high'].includes(normalized) ? normalized : 'high'
+}
+
+function normalizePromptLanguageLevel(value) {
+  const normalized = String(value || '').trim().toLowerCase()
+  return ['professional', 'intermediate', 'colloquial'].includes(normalized) ? normalized : 'intermediate'
+}
+
+export function buildPersuasionDirective(config = {}) {
+  const level = normalizePromptPersuasionLevel(config?.persuasionLevel)
+  if (level === 'high') return ''
+  if (level === 'low') {
+    return `## Intensidad de persuasión: ANFITRIÓN (baja) — MANDA sobre la estrategia de cierre de arriba
+Reinterpreta TODO lo de arriba en clave de buen asesor, no de cerrador:
+- Tu trabajo es atender increíble: resolver dudas, dar el valor/precio, horarios e info clara y humana. Punto.
+- NO persigas el cierre, no empujes, no construyas deseo ni urgencia, no apliques "pull" insistente ni encadenes preguntas para llevar a la meta. Si la persona solo quería info, dásela y déjala respirar.
+- Haz como mucho UNA pregunta breve y solo cuando de verdad necesites un dato para ayudar mejor.
+- Ejecuta la acción de avance (agendar, cobrar, pasar a humano) ÚNICAMENTE si la persona lo pide explícito y claro ("quiero agendar", "cómo pago", "sí, vamos"). Si no lo pide con todas sus letras, no avances: sigue atendiendo.
+- Mantén toda la calidez, la humanidad y el estilo/registro de abajo. Lo único que baja es la intención de venta.`
+  }
+  // medium
+  return `## Intensidad de persuasión: ESTRATEGA (media) — recalibra la estrategia de cierre de arriba
+Aplica la estrategia de arriba a media intensidad, con mano ligera:
+- Mantén calidez, espejo y descubrimiento natural, pero sin interrogar ni forzar el "problema real": descubre lo esencial y suelta.
+- Acompaña y guía al siguiente paso con tacto, SIN presión, sin urgencia inventada y sin "pull" insistente. Primero resolver y aportar valor; cerrar viene después.
+- Lleva al avance cuando la persona muestre interés real y sus dudas importantes ya estén resueltas; si todavía no, sigue aportando sin empujar.
+- Nada de cadenas de preguntas de cierre una tras otra. Una conversación que ayuda, no una que persigue.`
+}
+
+// Lenguaje: modula CÓMO suena (registro). Fuerza la calibración de registro del guion
+// (sección 7.7). 'intermediate' = comportamiento natural por defecto (no agrega nada).
+export function buildLanguageRegisterDirective(config = {}) {
+  const level = normalizePromptLanguageLevel(config?.languageLevel)
+  if (level === 'professional') {
+    return `## Registro de lenguaje: EJECUTIVO (manda sobre la calibración de registro de arriba)
+- Habla pulido, formal y cuidado, pero SIEMPRE humano y cálido (jamás acartonado ni de robot).
+- Frases completas y bien escritas. Cero abreviaciones de chat, cero modismos corrientes, casi sin recortes ni erratas.
+- Conserva la cercanía y el resto del estilo; solo sube el nivel de pulcritud y formalidad, como quien trata con un cliente premium o un asunto serio.`
+  }
+  if (level === 'colloquial') {
+    return `## Registro de lenguaje: CALLEJERO (manda sobre la calibración de registro de arriba)
+- Habla bien suelto, relajado y cotidiano, como mensaje entre cuates de la misma región: exprime al máximo natural el lenguaje coloquial regional y la cultura textual regional de abajo.
+- Permite recortes, frases cortas, ritmo informal y modismos locales que suenen naturales. Suelto, no vulgar: nada de sonar corriente o "naco".
+- Mantén claridad y confianza: informal no significa ininteligible.`
+  }
+  // intermediate (Cómplice): natural y cercano, deja que el guion calibre solo.
+  return ''
+}
+
 export function buildConversationalInstructions({ config, businessContext, brandVoice, businessName, timezone, nowIso, contactName, channel = 'chat', advancedClosingContext = null, accountLocale = {}, followUpContext = null }) {
   const sections = []
   const channelLabel = getClosingChannelLabel(channel)
@@ -1969,6 +2024,9 @@ ${config.requiredData}`)
     if (businessAdaptiveSection) sections.push(businessAdaptiveSection)
     const closingContextSection = buildAdvancedClosingContextSection(closingContextWithRegionalParameters)
     if (closingContextSection) sections.push(closingContextSection)
+    // Modula la intensidad de cierre del guion de fábrica (sólo aplica sobre la estrategia de fábrica).
+    const persuasionDirective = buildPersuasionDirective(config)
+    if (persuasionDirective) sections.push(persuasionDirective)
   }
 
   const emojiUsageInstruction = buildEmojiUsageInstruction(config)
@@ -1985,6 +2043,10 @@ ${config.requiredData}`)
 ${emojiUsageInstruction ? `- ${emojiUsageInstruction}\n` : ''}- No uses signos de admiración ni interrogación invertidos (¡ ¿). No saludos forzados. No prometas resultados garantizados.
 - Evita frases de robot: "agradecemos su interés", "permítame", "será canalizado", "procederé a".
 - Si la conversación ya cerró y solo contestan por educación, responde mínimo ("va", "claro").`)
+
+  // Fuerza el registro elegido por el negocio por encima de la calibración del guion.
+  const languageDirective = buildLanguageRegisterDirective(config)
+  if (languageDirective) sections.push(languageDirective)
 
   sections.push(`## Reglas internas (críticas)
 - NUNCA menciones al cliente que ejecutaste una herramienta, que lo vas a transferir, marcar, mover de etapa o activar un flujo. La conversación debe sentirse natural.
