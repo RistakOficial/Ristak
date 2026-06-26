@@ -1042,8 +1042,6 @@ export const AppointmentModal: React.FC<AppointmentModalProps> = ({
           notes: notesWithGuests,
           address: formData.address,
           timeZone: formData.timeZone,
-          startTime: '',
-          endTime: '',
           contactId: formData.contactId // SIEMPRE incluir contactId
         };
 
@@ -1052,15 +1050,17 @@ export const AppointmentModal: React.FC<AppointmentModalProps> = ({
           payload.assignedUserId = formData.assignedUserId;
         }
 
-        if (formData.startTime) {
-          const startIso = toIsoForSave(formData.startTime, formData.timeZone);
-          if (startIso) payload.startTime = startIso;
+        // Convertir fecha/hora a ISO. Si la conversión falla, NO mandamos cadenas vacías
+        // al backend (provocaban un error confuso "Fecha de inicio inválida"): avisamos claro.
+        const startIso = formData.startTime ? toIsoForSave(formData.startTime, formData.timeZone) : null;
+        const endIso = formData.endTime ? toIsoForSave(formData.endTime, formData.timeZone) : null;
+        if (!startIso || !endIso) {
+          showToast('error', 'Horario inválido', 'Selecciona una fecha y hora válidas para la cita.');
+          setIsSaving(false);
+          return;
         }
-
-        if (formData.endTime) {
-          const endIso = toIsoForSave(formData.endTime, formData.timeZone);
-          if (endIso) payload.endTime = endIso;
-        }
+        payload.startTime = startIso;
+        payload.endTime = endIso;
 
         await onSave(payload);
       } else {

@@ -260,12 +260,34 @@ async function getRecentReminderFailures() {
 }
 
 export async function getAppointmentRemindersOverview() {
-  await backfillMissingReminderTemplates()
+  // (PANEL-FIX) El panel de "mensajes automáticos" no debe caerse entero por un fallo
+  // en un paso de enriquecimiento (rellenar plantillas, remitentes de WhatsApp o el
+  // historial de fallos). Lo ÚNICO crítico es leer los recordatorios; lo demás degrada
+  // suave para que la lista siempre se muestre aunque WhatsApp/plantillas fallen.
+  try {
+    await backfillMissingReminderTemplates()
+  } catch (error) {
+    logger.warn(`[Recordatorios] No se pudieron rellenar plantillas por defecto (no crítico): ${error.message}`)
+  }
+
   const rows = await db.all('SELECT * FROM appointment_reminders ORDER BY position ASC, created_at ASC')
-  const senders = await listSenderOptions()
+
+  let senders = []
+  try {
+    senders = await listSenderOptions()
+  } catch (error) {
+    logger.warn(`[Recordatorios] No se pudieron cargar remitentes de WhatsApp (no crítico): ${error.message}`)
+  }
   const whatsappConnected = senders.some(sender => sender.apiEnabled || sender.qrConnected)
+
   // (NOTI-008) Adjuntamos los fallos recientes a cada recordatorio para que la UI los exponga.
-  const failuresByReminder = await getRecentReminderFailures()
+  let failuresByReminder = new Map()
+  try {
+    failuresByReminder = await getRecentReminderFailures()
+  } catch (error) {
+    logger.warn(`[Recordatorios] No se pudo cargar el historial de fallos (no crítico): ${error.message}`)
+  }
+
   const reminders = rows.map(normalizeReminderRow).map(reminder => ({
     ...reminder,
     failures: failuresByReminder.get(reminder.id) || { errorCount: 0, lastErrorAt: null, lastErrorMessage: null }

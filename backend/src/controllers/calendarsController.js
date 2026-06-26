@@ -1269,12 +1269,23 @@ export async function createPublicAppointment(req, res) {
       formName: bookingSubmission.formName,
       formResponses: bookingSubmission.responses
     };
-    const renderedTemplates = await renderCalendarAppointmentTemplates({
-      calendar,
-      appointmentData: publicAppointmentData,
-      titleTemplate: calendar.eventTitle || calendar.name || 'Cita',
-      notesTemplate: calendar.notes || publicAppointmentData.notes
-    });
+    // El render de variables de plantilla es cosmético y NUNCA debe impedir agendar
+    // desde el calendario público: si falla, degradamos a valores planos.
+    let renderedTemplates;
+    try {
+      renderedTemplates = await renderCalendarAppointmentTemplates({
+        calendar,
+        appointmentData: publicAppointmentData,
+        titleTemplate: calendar.eventTitle || calendar.name || 'Cita',
+        notesTemplate: calendar.notes || publicAppointmentData.notes
+      });
+    } catch (error) {
+      logger.warn(`[Calendars Controller] No se pudieron renderizar plantillas de cita pública, uso valores planos: ${error.message}`);
+      renderedTemplates = {
+        title: calendar.eventTitle || calendar.name || 'Cita',
+        notes: calendar.notes || publicAppointmentData.notes || ''
+      };
+    }
     let appointment = await localCalendarService.createLocalAppointment({
       ...publicAppointmentData,
       locationId: context.locationId || calendar.locationId,
@@ -1621,12 +1632,23 @@ export async function createAppointment(req, res) {
     const { accessToken, locationId, ...appointmentData } = req.body;
     const context = await getHighLevelContext(req, { locationId, accessToken });
     const localCalendar = await localCalendarService.getLocalCalendar(appointmentData.calendarId || appointmentData.calendar_id);
-    const renderedTemplates = await renderCalendarAppointmentTemplates({
-      calendar: localCalendar || {},
-      appointmentData,
-      titleTemplate: appointmentData.title || localCalendar?.eventTitle || localCalendar?.name || 'Cita',
-      notesTemplate: localCalendar?.notes || appointmentData.notes || appointmentData.description || ''
-    });
+    // El render de variables de plantilla (título/notas) es cosmético y NUNCA debe
+    // impedir crear la cita: si falla, degradamos a valores planos.
+    let renderedTemplates;
+    try {
+      renderedTemplates = await renderCalendarAppointmentTemplates({
+        calendar: localCalendar || {},
+        appointmentData,
+        titleTemplate: appointmentData.title || localCalendar?.eventTitle || localCalendar?.name || 'Cita',
+        notesTemplate: localCalendar?.notes || appointmentData.notes || appointmentData.description || ''
+      });
+    } catch (error) {
+      logger.warn(`[Calendars Controller] No se pudieron renderizar plantillas de cita, uso valores planos: ${error.message}`);
+      renderedTemplates = {
+        title: appointmentData.title || localCalendar?.eventTitle || localCalendar?.name || 'Cita',
+        notes: localCalendar?.notes || appointmentData.notes || appointmentData.description || ''
+      };
+    }
     const localAppointmentData = {
       ...appointmentData,
       title: renderedTemplates.title,
@@ -1639,11 +1661,19 @@ export async function createAppointment(req, res) {
     const forceDoubleBooking = appointmentData.ignoreAppointmentConflicts === true
       || appointmentData.confirmDoubleBooking === true;
     if (!forceDoubleBooking && (localCalendar?.id || appointmentData.calendarId || appointmentData.calendar_id)) {
-      const availability = await localCalendarService.checkSlotAvailability(
-        localCalendar?.id || appointmentData.calendarId || appointmentData.calendar_id,
-        localAppointmentData.startTime || localAppointmentData.start_time,
-        localAppointmentData.endTime || localAppointmentData.end_time
-      );
+      // El chequeo de cupo solo debe BLOQUEAR ante un conflicto real (409). Si la propia
+      // verificación falla por un error inesperado, NO impedimos crear la cita (fail-open):
+      // el límite anti-doble-reserva es una salvaguarda, no una puerta que tumbe el agendado.
+      let availability = { available: true };
+      try {
+        availability = await localCalendarService.checkSlotAvailability(
+          localCalendar?.id || appointmentData.calendarId || appointmentData.calendar_id,
+          localAppointmentData.startTime || localAppointmentData.start_time,
+          localAppointmentData.endTime || localAppointmentData.end_time
+        );
+      } catch (error) {
+        logger.warn(`[Calendars Controller] No se pudo verificar disponibilidad del slot, permito crear: ${error.message}`);
+      }
       if (!availability.available) {
         return res.status(409).json({
           success: false,
