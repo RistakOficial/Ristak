@@ -186,6 +186,17 @@ export function StepArt({ kind }: { kind: string }) {
           <Sparkle x={120} y={26} s={5} />
         </Frame>
       )
+    case 'scope':
+      return (
+        <Frame>
+          <ellipse cx="80" cy="100" rx="44" ry="8" {...soft} />
+          <path d="M80 20 l30 12 v22 c0 22 -16 34 -30 42 c-14 -8 -30 -20 -30 -42 v-22 z" {...soft} />
+          <path d="M80 20 l30 12 v22 c0 22 -16 34 -30 42 c-14 -8 -30 -20 -30 -42 v-22 z" {...line} />
+          <path d="M66 56 l10 11 l20 -23" {...line} />
+          <Sparkle x={118} y={30} s={5} />
+          <Sparkle x={40} y={36} s={5} />
+        </Frame>
+      )
     default:
       return <Frame><circle cx="80" cy="58" r="30" {...soft} /></Frame>
   }

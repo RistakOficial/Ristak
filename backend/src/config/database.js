@@ -4514,6 +4514,8 @@ async function initTables() {
         closing_strategy_custom TEXT,
         persuasion_level TEXT DEFAULT 'high',
         language_level TEXT DEFAULT 'intermediate',
+        contact_scope TEXT DEFAULT 'all',
+        contact_scope_cutoff_at DATETIME,
         response_delay_config TEXT,
         reply_delivery_config TEXT,
         follow_up_config TEXT,
@@ -4537,7 +4539,9 @@ async function initTables() {
       ['follow_up_config', 'TEXT'],
       ['goal_workflow_config', 'TEXT'],
       ['persuasion_level', "TEXT DEFAULT 'high'"],
-      ['language_level', "TEXT DEFAULT 'intermediate'"]
+      ['language_level', "TEXT DEFAULT 'intermediate'"],
+      ['contact_scope', "TEXT DEFAULT 'all'"],
+      ['contact_scope_cutoff_at', 'DATETIME']
     ]) {
       try {
         if (usePostgres) {

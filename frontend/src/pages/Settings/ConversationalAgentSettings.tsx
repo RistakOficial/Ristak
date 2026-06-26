@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
-import { AlertTriangle, ArrowLeft, Bot, CheckCircle2, ChevronDown, CircleSlash, FileText, Image as ImageIcon, KeyRound, Pause, PauseCircle, Play, Plus, RotateCcw, Target, Trash2, UserCheck, Users, Video, X } from 'lucide-react'
+import { AlertTriangle, ArrowLeft, Bot, CheckCircle2, ChevronDown, CircleSlash, FileText, Image as ImageIcon, KeyRound, Pause, PauseCircle, Play, Plus, RotateCcw, ShieldCheck, Target, Trash2, UserCheck, Users, Video, X } from 'lucide-react'
 import { Badge, Button, Card, CustomSelect, KpiCard, Modal, NumberInput, PageHeader, TabList, TagPicker } from '@/components/common'
 import {
   PhoneChatPreview,
@@ -49,6 +49,7 @@ import {
   type ConversationalAgentDefInput,
   type ConversationalAgentEntryConflict,
   type ConversationalAgentMetrics,
+  type ConversationalContactScope,
   type ConversationalLanguageLevel,
   type ConversationalPersuasionLevel,
   type ConversationalAgentTestAttachment,
@@ -3081,6 +3082,22 @@ const AgentCard: React.FC<AgentCardProps> = ({ agent, aiProviders, calendars, pr
             <p className={styles.agentSectionHint}>
               Elige en qué chats puede entrar. Ejemplo: sólo cuando venga de una página, una etiqueta o cualquier chat nuevo.
             </p>
+            <div className={styles.field}>
+              <label className={styles.label}>¿A quién puede atender?</label>
+              <CustomSelect
+                value={agent.contactScope}
+                onChange={(event) => onChange({ contactScope: (event.target.value || 'all') as ConversationalContactScope })}
+                portal
+              >
+                <option value="all">Cualquier chat (incluye contactos que ya tenías)</option>
+                <option value="new_only">Solo contactos nuevos desde ahora</option>
+              </CustomSelect>
+              <p className={styles.helper}>
+                {agent.contactScope === 'new_only'
+                  ? 'Medida de seguridad: ignora a tus contactos de antes; solo atiende a quien llegue desde ahora.'
+                  : 'Puede tomar tanto a tus contactos actuales como a los nuevos.'}
+              </p>
+            </div>
             <ConditionBuilder
               groups={agent.filters.entry.groups}
               mode="entry"
@@ -3420,6 +3437,7 @@ export const ConversationalAgentSettings: React.FC<ConversationalAgentSettingsPr
   const [loading, setLoading] = useState(true)
   const [creating, setCreating] = useState(false)
   const [wizardOpen, setWizardOpen] = useState(false)
+  const [scopePrompt, setScopePrompt] = useState(false)
   const [resettingAgentSkipsId, setResettingAgentSkipsId] = useState<string | null>(null)
   const [selectedAgentId, setSelectedAgentId] = useState<string | null>(() => routeAgentId || null)
   const [providerModalId, setProviderModalId] = useState<ConversationalAIProviderId | null>(null)
@@ -3714,13 +3732,19 @@ export const ConversationalAgentSettings: React.FC<ConversationalAgentSettingsPr
     setWizardOpen(true)
   }
 
-  // Atajo: crea un agente en blanco y salta directo al editor (sin wizard).
-  const handleCreateAgent = async () => {
+  // Atajo: crea un agente (casi en blanco) y salta directo al editor (sin wizard).
+  const handleCreateAgent = async (overrides: ConversationalAgentDefInput = {}) => {
     if (!businessPromptReady) {
       showToast('warning', 'Prompt interno pendiente', promptBlockerText)
       return
     }
-    await runCreateAgent()
+    await runCreateAgent(overrides)
+  }
+
+  // Modo avanzado: antes del formulario largo preguntamos SOLO el alcance de contactos.
+  const confirmScopeAndCreate = (contactScope: 'all' | 'new_only') => {
+    setScopePrompt(false)
+    void handleCreateAgent({ contactScope })
   }
 
   // El wizard ya arma el ConversationalAgentDefInput completo (incluye goalWorkflow,
@@ -4208,12 +4232,35 @@ export const ConversationalAgentSettings: React.FC<ConversationalAgentSettingsPr
         isOpen={wizardOpen}
         onClose={() => setWizardOpen(false)}
         onComplete={handleWizardComplete}
-        onSkipToManual={() => { setWizardOpen(false); void handleCreateAgent() }}
+        onSkipToManual={() => { setWizardOpen(false); setScopePrompt(true) }}
         creating={creating}
         defaultName={`Agente ${agents.length + 1}`}
         aiProvider={getKnownConversationalAIProvider(config?.aiProvider)}
         model={getKnownConversationalModel(getKnownConversationalAIProvider(config?.aiProvider), config?.model || getDefaultConversationalModel(getKnownConversationalAIProvider(config?.aiProvider)))}
       />
+      <Modal
+        isOpen={scopePrompt}
+        onClose={() => setScopePrompt(false)}
+        type="custom"
+        size="sm"
+        title="Antes de armarlo a mano…"
+      >
+        <div className={styles.scopePromptModal}>
+          <p className={styles.scopePromptText}>
+            Una cosa rápida de seguridad: ¿este asistente también puede escribirles a los
+            contactos que <strong>ya tienes</strong>, o solo a los nuevos de ahora en adelante?
+          </p>
+          <div className={styles.scopePromptActions}>
+            <Button variant="secondary" onClick={() => confirmScopeAndCreate('new_only')} disabled={creating}>
+              <ShieldCheck size={16} /> Solo los nuevos
+            </Button>
+            <Button variant="primary" onClick={() => confirmScopeAndCreate('all')} loading={creating} disabled={creating}>
+              <Users size={16} /> Todos, incluidos los de antes
+            </Button>
+          </div>
+          <p className={styles.scopePromptHint}>Lo puedes cambiar después en la configuración del asistente.</p>
+        </div>
+      </Modal>
     </div>
   )
 }

@@ -2,7 +2,7 @@ import React, { useEffect, useMemo, useState } from 'react'
 import {
   ArrowLeft, ArrowRight, Sparkles, Calendar, ShoppingBag, ClipboardList, Filter, Wand2,
   Building2, User, Coffee, Compass, Target, Briefcase, Smile, MessageCircle,
-  UserCheck, CalendarCheck, CreditCard, Link2, Wallet, Rocket, type LucideIcon
+  UserCheck, CalendarCheck, CreditCard, Link2, Wallet, ShieldCheck, Users, Rocket, type LucideIcon
 } from 'lucide-react'
 import { Modal, Button, CustomSelect, NumberInput } from '@/components/common'
 import type { ConversationalAIProviderId } from '@/constants/conversationalAIProviders'
@@ -15,6 +15,7 @@ import {
   type AgentIdentityMode,
   type AgentSalesPaymentMode,
   type ConversationalAgentDefInput,
+  type ConversationalContactScope,
   type ConversationalLanguageLevel,
   type ConversationalObjective,
   type ConversationalPersuasionLevel,
@@ -39,6 +40,8 @@ export interface AgentWizardDraft {
   paymentMode: AgentSalesPaymentMode
   askDeposit: boolean
   depositAmount: number | null
+  // Seguridad: ¿atiende a tus contactos existentes o solo a los nuevos desde ahora?
+  contactScope: ConversationalContactScope
 }
 
 interface Choice<T extends string> {
@@ -99,7 +102,7 @@ const actionChoicesByObjective: Record<ConversationalObjective, Array<Choice<Con
 
 type StepId =
   | 'welcome' | 'name' | 'objective' | 'identity' | 'persuasion' | 'language'
-  | 'action' | 'calendar' | 'payment' | 'data' | 'recap' | 'test'
+  | 'action' | 'calendar' | 'payment' | 'data' | 'scope' | 'recap' | 'test'
 
 // Reglas if/if-not: el calendario solo si la IA agenda; el cobro solo si la IA agenda
 // (anticipo de cita) o si la IA cobra una venta.
@@ -124,7 +127,8 @@ function buildInitialDraft(defaultName: string): AgentWizardDraft {
     calendarId: null,
     paymentMode: 'full_payment',
     askDeposit: false,
-    depositAmount: null
+    depositAmount: null,
+    contactScope: 'all'
   }
 }
 
@@ -173,6 +177,7 @@ export function buildOverridesFromDraft(
     languageLevel: draft.languageLevel,
     goalWorkflow: buildGoalWorkflowFromDraft(draft, accountCurrency),
     defaultCalendarId: isCitasBooking(draft) ? draft.calendarId : null,
+    contactScope: draft.contactScope,
     // Proveedor/modelo: así la PRUEBA usa exactamente la misma IA que el agente creado.
     ...(defaults.aiProvider ? { aiProvider: defaults.aiProvider } : {}),
     ...(defaults.model ? { model: defaults.model } : {})
@@ -219,7 +224,7 @@ export function AgentCreationWizard({ isOpen, onClose, onComplete, onSkipToManua
       'welcome', 'name', 'objective', 'identity', 'persuasion', 'language', 'action',
       ...(showCalendar ? ['calendar'] as StepId[] : []),
       ...(showPayment ? ['payment'] as StepId[] : []),
-      'data', 'recap', 'test'
+      'data', 'scope', 'recap', 'test'
     ]
   }, [draft.objective, draft.successAction])
 
@@ -456,6 +461,29 @@ export function AgentCreationWizard({ isOpen, onClose, onComplete, onSkipToManua
             </>
           )}
 
+          {step === 'scope' && (
+            <>
+              <h2 className={styles.title}>¿Y con los contactos que ya tienes?</h2>
+              <p className={styles.help}>Esto es por seguridad: muchos de tus contactos ya son clientes. Decide si este asistente también puede escribirles, o si solo atiende a los nuevos para no mezclarse.</p>
+              <div className={styles.options}>
+                <OptionCard
+                  active={draft.contactScope === 'new_only'}
+                  Icon={ShieldCheck}
+                  label="Solo los nuevos desde hoy"
+                  example="Ignora a tus contactos de antes. Solo atiende a quien te escriba de ahora en adelante. (Lo más seguro.)"
+                  onClick={() => patch({ contactScope: 'new_only' })}
+                />
+                <OptionCard
+                  active={draft.contactScope === 'all'}
+                  Icon={Users}
+                  label="Atender a todos"
+                  example="Puede tomar tanto a tus contactos actuales como a los nuevos. Útil si quieres que se haga cargo de todo."
+                  onClick={() => patch({ contactScope: 'all' })}
+                />
+              </div>
+            </>
+          )}
+
           {step === 'recap' && (
             <>
               <h2 className={styles.title}>¡Así quedó tu asistente! 🚀</h2>
@@ -471,6 +499,7 @@ export function AgentCreationWizard({ isOpen, onClose, onComplete, onSkipToManua
                   <RecapRow label="Calendario" value={calendars.find((c) => c.id === draft.calendarId)?.name || 'El que tenga hueco'} />
                 )}
                 {cobroRecap && <RecapRow label="Cobro" value={cobroRecap} />}
+                <RecapRow label="Atiende a" value={draft.contactScope === 'new_only' ? 'Solo contactos nuevos' : 'Todos (nuevos y actuales)'} />
                 <RecapRow label="Pide datos" value={draft.requiredData.trim() ? 'Sí' : 'No por ahora'} />
               </div>
             </>
