@@ -369,6 +369,18 @@ const metaTriggerOptions: Array<{ value: SiteMetaTrigger; label: string }> = [
   { value: 'form_submit', label: 'Al enviar formulario' }
 ]
 
+// Eventos permitidos para "Al agendar cita" del calendario embebido. Solo eventos sin
+// parametros obligatorios (Purchase/ViewContent exigen value+currency); en v1 el sitio
+// overridea el NOMBRE del evento y los parametros se heredan del calendario.
+const metaCalendarEventOptions = [
+  { value: 'none', label: 'Usar el del calendario' },
+  { value: 'Schedule', label: 'Schedule' },
+  { value: 'Lead', label: 'Lead' },
+  { value: 'Contact', label: 'Contact' },
+  { value: 'CompleteRegistration', label: 'CompleteRegistration' },
+  { value: 'FormSubmitted', label: 'FormSubmitted' }
+]
+
 const normalizeMetaEventName = (value?: string, fallback = 'Lead') =>
   metaEventOptions.some(option => option.value === value) ? value || fallback : fallback
 
@@ -4504,6 +4516,9 @@ const normalizePagesForSave = (pages: SitePage[]) =>
     metaCapiEnabled: Boolean(page.metaCapiEnabled),
     metaEventName: normalizeMetaEventName(page.metaEventName, 'none'),
     metaTrigger: normalizeMetaTrigger(page.metaTrigger),
+    ...(page.metaCalendarEnabled && page.metaCalendarEventName && page.metaCalendarEventName !== 'none'
+      ? { metaCalendarEnabled: true, metaCalendarEventName: page.metaCalendarEventName }
+      : {}),
     ...(hasMetaEventParameters(page.metaEventParameters)
       ? { metaEventParameters: pruneMetaEventParametersForEvent(page.metaEventParameters, page.metaEventName) }
       : {})
@@ -12571,6 +12586,8 @@ export const Sites: React.FC = () => {
                         onSaveSite={saveEditorToolbarSettingsSite}
                         onOpenSeo={() => setSeoModalOpen(true)}
                         onOpenHeader={() => setHeaderModalOpen(current => !current)}
+                        pageHasForm={isFormSite(editorToolbarSettingsSite) || (Boolean(editorToolbarSettingsActivePage) && blocks.some(block => block.blockType === 'form_embed' && getBlockPageId(block, editorToolbarSettingsPages) === editorToolbarSettingsActivePage?.id))}
+                        pageHasCalendar={Boolean(editorToolbarSettingsActivePage) && blocks.some(block => block.blockType === 'calendar_embed' && getBlockPageId(block, editorToolbarSettingsPages) === editorToolbarSettingsActivePage?.id)}
                       />
                     </div>
                   )}
@@ -12705,6 +12722,8 @@ export const Sites: React.FC = () => {
                   onOpenSeo={() => setLibrarySettingsSeoOpen(true)}
                   onOpenHeader={() => setLibrarySettingsHeaderOpen(true)}
                   onBeforeOpenNested={() => setLibrarySettingsModalOpen(false)}
+                  pageHasForm={isFormSite(librarySettingsSite) || (Boolean(librarySettingsActivePage) && (librarySettingsSite.blocks || []).some(block => block.blockType === 'form_embed' && getBlockPageId(block, librarySettingsPages) === librarySettingsActivePage?.id))}
+                  pageHasCalendar={Boolean(librarySettingsActivePage) && (librarySettingsSite.blocks || []).some(block => block.blockType === 'calendar_embed' && getBlockPageId(block, librarySettingsPages) === librarySettingsActivePage?.id)}
                 />
               )}
             </div>
@@ -26193,6 +26212,8 @@ const MetaPageConversionSettingsPanel: React.FC<{
   pages: SitePage[]
   activePage: SitePage
   disabled?: boolean
+  pageHasForm?: boolean
+  pageHasCalendar?: boolean
   onPatchSite: (patch: Partial<PublicSite>) => void
   onPatchTheme: (patch: Partial<SiteTheme>) => void
   onSaveSite: () => void | Promise<void>
@@ -26201,6 +26222,8 @@ const MetaPageConversionSettingsPanel: React.FC<{
   pages,
   activePage,
   disabled,
+  pageHasForm,
+  pageHasCalendar,
   onPatchSite,
   onPatchTheme,
   onSaveSite
@@ -26212,6 +26235,14 @@ const MetaPageConversionSettingsPanel: React.FC<{
     : 'none'
   const activePageHasConversion = activePageEventName !== 'none'
   const activePageHasParameters = hasMetaEventParameters(activePage.metaEventParameters)
+  // "Al enviar formulario" solo se ofrece si la pagina tiene formulario (no confundir);
+  // si ya hay un trigger form_submit guardado se conserva para no perder la config.
+  const showFormSubmitTrigger = Boolean(pageHasForm) || normalizeMetaTrigger(activePage.metaTrigger) === 'form_submit'
+  const availableTriggerOptions = metaTriggerOptions.filter(option => option.value !== 'form_submit' || showFormSubmitTrigger)
+  // Evento Meta "al agendar" del calendario embebido de esta pagina (el sitio es master).
+  const activePageCalendarEventName = activePage.metaCalendarEnabled
+    ? normalizeMetaEventName(activePage.metaCalendarEventName, 'none')
+    : 'none'
 
   useEffect(() => {
     if (!metaEnabled || !activePageHasConversion) setParamsOpen(false)
@@ -26266,7 +26297,7 @@ const MetaPageConversionSettingsPanel: React.FC<{
               saveSoon()
             }}
           >
-            {metaTriggerOptions.map(option => (
+            {availableTriggerOptions.map(option => (
               <option key={option.value} value={option.value}>{option.label}</option>
             ))}
           </CustomSelect>
@@ -26319,6 +26350,29 @@ const MetaPageConversionSettingsPanel: React.FC<{
           onChange={(metaEventParameters) => patchActivePage({ metaEventParameters })}
           onCommit={saveSoon}
         />
+      )}
+
+      {pageHasCalendar && (
+        <label className={styles.editorSettingsField}>
+          <span>Al agendar cita</span>
+          <CustomSelect
+            value={activePageCalendarEventName}
+            disabled={disabled || !metaEnabled}
+            portal
+            onChange={(event) => {
+              const value = event.target.value
+              patchActivePage({
+                metaCalendarEventName: value,
+                metaCalendarEnabled: value !== 'none'
+              })
+              saveSoon()
+            }}
+          >
+            {metaCalendarEventOptions.map(option => (
+              <option key={option.value} value={option.value}>{option.label}</option>
+            ))}
+          </CustomSelect>
+        </label>
       )}
     </div>
   )
@@ -26450,6 +26504,8 @@ const SiteSettingsPanelContent: React.FC<{
   onOpenSeo: () => void
   onOpenHeader: () => void
   onBeforeOpenNested?: () => void
+  pageHasForm?: boolean
+  pageHasCalendar?: boolean
 }> = ({
   site,
   pages,
@@ -26458,6 +26514,8 @@ const SiteSettingsPanelContent: React.FC<{
   seoIssues,
   metaPixelConnected,
   disabled,
+  pageHasForm,
+  pageHasCalendar,
   canEditHeader,
   routeValue,
   routePlaceholder,
@@ -26552,6 +26610,8 @@ const SiteSettingsPanelContent: React.FC<{
               pages={pages}
               activePage={activePage}
               disabled={disabled}
+              pageHasForm={pageHasForm}
+              pageHasCalendar={pageHasCalendar}
               onPatchSite={onPatchSite}
               onPatchTheme={onPatchTheme}
               onSaveSite={onSaveSite}
@@ -26603,6 +26663,8 @@ const EditorSettingsDropdown: React.FC<{
   onSaveSite: () => void | Promise<void>
   onOpenSeo: () => void
   onOpenHeader: () => void
+  pageHasForm?: boolean
+  pageHasCalendar?: boolean
 }> = (props) => {
   const [open, setOpen] = useState(false)
   const dropdownRef = useRef<HTMLDivElement | null>(null)

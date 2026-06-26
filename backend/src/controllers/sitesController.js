@@ -874,9 +874,15 @@ export async function publicSiteHostMiddleware(req, res, next) {
       }
       const bookingForm = await getCalendarBookingFormDefinition(calendar)
       const isPreview = req.query?.editor_preview === '1' || req.query?.preview === '1'
+      // Override del evento Meta propagado por el sitio contenedor (sitio = master del
+      // calendario embebido). Solo se confia en el query param en contexto embebido.
+      const calendarMetaOverride = (req.query?.embed === '1' || req.query?.test === '1') && typeof req.query?.metaCalEvent === 'string'
+        ? req.query.metaCalEvent.trim()
+        : ''
       const metaPixelSnippet = await buildCalendarMetaPixelSnippet(calendar, {
         trackingEnabled: !requestHasNoTrack(req),
-        preview: isPreview
+        preview: isPreview,
+        siteOverride: calendarMetaOverride ? { eventName: calendarMetaOverride } : null
       })
 
       // No cachear el HTML público: cambios de pixel/tracking deben reflejarse

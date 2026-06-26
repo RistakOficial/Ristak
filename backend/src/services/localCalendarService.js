@@ -2643,6 +2643,8 @@ export function renderPublicCalendarHtml(calendar, { host = '', embedded = false
         pageUrl: window.location.href,
         referrer: document.referrer,
         params: Object.fromEntries(new URL(window.location.href).searchParams.entries()),
+        // Override del evento Meta propagado por el sitio (sitio = master del calendario embebido).
+        siteEventName: new URL(window.location.href).searchParams.get('metaCalEvent') || '',
         fbp: readCookie('_fbp'),
         fbc: readCookie('_fbc')
       });
