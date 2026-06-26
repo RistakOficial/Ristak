@@ -21003,8 +21003,8 @@
 }
 
 .editorPreviewLoadingViewport {
-  min-height: calc(100vh - var(--header-height) - 154px);
-  max-height: calc(100vh - var(--header-height) - 154px);
+  min-height: calc(100vh - var(--header-height) - 32px);
+  max-height: calc(100vh - var(--header-height) - 32px);
   display: grid;
   place-items: center;
   overflow: hidden;
