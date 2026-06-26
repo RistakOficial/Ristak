@@ -17536,7 +17536,7 @@ function renderFieldBlock(block, _interactive = false, pageId = '', context = {}
   const required = block.required ? '<span class="rstk-required">*</span>' : ''
 
   return `
-    <section class="rstk-field" data-block-id="${escapeHtml(block.id)}" data-page-id="${escapeHtml(pageId)}" data-required="${block.required ? 'true' : 'false'}" data-field-type="${escapeHtml(block.blockType)}" data-validation="${escapeHtml(getNativeFieldValidation(block))}">
+    <section class="rstk-field${getFieldOwnStyleClass(block)}" data-block-id="${escapeHtml(block.id)}" data-page-id="${escapeHtml(pageId)}" data-required="${block.required ? 'true' : 'false'}" data-field-type="${escapeHtml(block.blockType)}" data-validation="${escapeHtml(getNativeFieldValidation(block))}">
       <label for="${escapeHtml(block.id)}">${label}${required}</label>
       ${block.content ? `<p class="rstk-help">${escapeHtml(block.content)}</p>` : ''}
       ${renderFieldInput(block, context)}
@@ -18586,6 +18586,46 @@ const RSTK_BASE_CSS = `
 	  .rstk-kind-form.rstk-choice-segmented .rstk-option:has(input:checked),.rstk-choice-segmented .rstk-embedded-form .rstk-option:has(input:checked){z-index:1;background:var(--rstk-form-choice-selected-border,var(--rstk-accent));border-color:var(--rstk-form-choice-selected-border,var(--rstk-accent));color:var(--rstk-on-accent)}
 	  .rstk-kind-form.rstk-choice-grid .rstk-option input,.rstk-kind-form.rstk-choice-button .rstk-option input,.rstk-kind-form.rstk-choice-check .rstk-option input,.rstk-kind-form.rstk-choice-segmented .rstk-option input,.rstk-choice-grid .rstk-embedded-form .rstk-option input,.rstk-choice-button .rstk-embedded-form .rstk-option input,.rstk-choice-check .rstk-embedded-form .rstk-option input,.rstk-choice-segmented .rstk-embedded-form .rstk-option input{position:absolute;opacity:0;pointer-events:none}
 
+  /* Estilo de opciones/lista/caja POR CAMPO (override del global). Aditivo: el
+     estilo global sigue intacto; un campo con override lleva en su .rstk-field
+     la clase .rstk-fieldstyled (reset a base) + la variante. Gana por orden.
+     LOCKSTEP con frontend sitesCanvas.css y getFieldOwnStyleClass (Sites.tsx/este archivo). */
+  .rstk-field.rstk-fieldstyled .rstk-options{display:grid;grid-template-columns:none;flex-wrap:nowrap;gap:10px}
+  .rstk-field.rstk-fieldstyled .rstk-option{position:static;gap:11px;min-height:var(--rstk-form-field-height,50px);border-width:var(--rstk-form-field-border-width,1px);border-radius:var(--rstk-form-field-radius,var(--rstk-field-radius,var(--rstk-radius)));background:var(--rstk-form-field-bg,var(--rstk-input-bg));box-shadow:none;justify-content:flex-start;text-align:left;flex:0 1 auto;margin-left:0;padding:var(--rstk-form-field-pad-y,13px) var(--rstk-form-field-pad-x,14px)}
+  .rstk-field.rstk-fieldstyled .rstk-option input{position:static;opacity:1;pointer-events:auto}
+  .rstk-field.rstk-fieldstyled .rstk-option::after{content:none}
+  .rstk-field.rstk-fieldstyled select{border-width:var(--rstk-form-field-border-width,1px);border-radius:var(--rstk-form-field-radius,var(--rstk-field-radius,var(--rstk-radius)));background-color:var(--rstk-form-field-bg,var(--rstk-input-bg));padding-left:9px;padding-right:42px}
+  .rstk-field.rstk-fieldstyled > input,.rstk-field.rstk-fieldstyled > textarea{border-width:var(--rstk-form-field-border-width,1px);border-color:var(--rstk-form-field-border,var(--rstk-input-border));border-radius:var(--rstk-form-field-radius,var(--rstk-field-radius,var(--rstk-radius)));background:var(--rstk-form-field-bg,var(--rstk-input-bg));padding-left:var(--rstk-form-field-pad-x,14px);padding-right:var(--rstk-form-field-pad-x,14px)}
+  .rstk-field.rstk-choice-cards .rstk-option{position:relative;gap:0;padding-left:var(--rstk-form-field-pad-x,14px);box-shadow:inset 4px 0 0 transparent}
+  .rstk-field.rstk-choice-cards .rstk-option input{position:absolute;opacity:0;pointer-events:none}
+  .rstk-field.rstk-choice-cards .rstk-option:has(input:checked){box-shadow:inset 4px 0 0 var(--rstk-form-choice-selected-border,var(--rstk-accent))}
+  .rstk-field.rstk-choice-pills .rstk-options{display:flex;flex-wrap:wrap;gap:8px}
+  .rstk-field.rstk-choice-pills .rstk-option{position:relative;flex:0 1 auto;min-height:40px;border-radius:999px;padding:9px 16px;gap:0}
+  .rstk-field.rstk-choice-pills .rstk-option input{position:absolute;opacity:0;pointer-events:none}
+  .rstk-field.rstk-choice-minimal .rstk-option{min-height:38px;border-width:0 0 var(--rstk-form-field-border-width,1px);border-radius:0;background:transparent;padding-inline:0}
+  .rstk-field.rstk-choice-grid .rstk-options{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .rstk-field.rstk-choice-grid .rstk-option{justify-content:center;text-align:center;gap:0}
+  .rstk-field.rstk-choice-grid .rstk-option input{position:absolute;opacity:0;pointer-events:none}
+  .rstk-field.rstk-choice-button .rstk-option{justify-content:center;text-align:center;gap:0}
+  .rstk-field.rstk-choice-button .rstk-option input{position:absolute;opacity:0;pointer-events:none}
+  .rstk-field.rstk-choice-button .rstk-option:has(input:checked){background:var(--rstk-form-choice-selected-border,var(--rstk-accent));border-color:var(--rstk-form-choice-selected-border,var(--rstk-accent));color:var(--rstk-on-accent)}
+  .rstk-field.rstk-choice-check .rstk-option{justify-content:space-between;gap:12px;border-width:0 0 var(--rstk-form-field-border-width,1px);border-radius:0;background:transparent;padding-inline:0}
+  .rstk-field.rstk-choice-check .rstk-option input{position:absolute;opacity:0;pointer-events:none}
+  .rstk-field.rstk-choice-check .rstk-option::after{content:'';flex:0 0 auto;width:20px;height:20px;border-radius:999px;border:2px solid var(--rstk-form-field-border,var(--rstk-input-border));box-sizing:border-box}
+  .rstk-field.rstk-choice-check .rstk-option:has(input:checked)::after{border-color:var(--rstk-form-choice-selected-border,var(--rstk-accent));background:var(--rstk-form-choice-selected-border,var(--rstk-accent));box-shadow:inset 0 0 0 3px var(--rstk-form-field-bg,var(--rstk-input-bg))}
+  .rstk-field.rstk-choice-segmented .rstk-options{display:flex;flex-wrap:wrap;gap:0}
+  .rstk-field.rstk-choice-segmented .rstk-option{position:relative;flex:1 1 0;justify-content:center;text-align:center;gap:0;border-radius:0;margin-left:calc(-1 * var(--rstk-form-field-border-width,1px))}
+  .rstk-field.rstk-choice-segmented .rstk-option input{position:absolute;opacity:0;pointer-events:none}
+  .rstk-field.rstk-choice-segmented .rstk-option:first-child{margin-left:0}
+  .rstk-field.rstk-choice-segmented .rstk-option:has(input:checked){z-index:1;background:var(--rstk-form-choice-selected-border,var(--rstk-accent));border-color:var(--rstk-form-choice-selected-border,var(--rstk-accent));color:var(--rstk-on-accent)}
+  .rstk-field.rstk-select-filled select{background-color:color-mix(in srgb,var(--rstk-form-field-bg,transparent) 88%,var(--rstk-accent) 12%)}
+  .rstk-field.rstk-select-underline select{border-width:0 0 var(--rstk-form-field-border-width,1px);border-radius:0;background-color:transparent;padding-left:0;padding-right:36px}
+  .rstk-field.rstk-select-soft select{border-radius:999px;background-color:color-mix(in srgb,var(--rstk-form-field-bg,var(--rstk-input-bg)) 90%,var(--rstk-accent) 10%);padding-left:20px}
+  .rstk-field.rstk-input-underline > input,.rstk-field.rstk-input-underline > textarea{border-width:0 0 var(--rstk-form-field-border-width,1px);border-radius:0;background:transparent;padding-left:0;padding-right:0}
+  .rstk-field.rstk-input-filled > input,.rstk-field.rstk-input-filled > textarea{border-width:0 0 var(--rstk-form-field-border-width,1px);border-color:var(--rstk-form-field-border,var(--rstk-input-border));border-radius:var(--rstk-form-field-radius,var(--rstk-field-radius,var(--rstk-radius))) var(--rstk-form-field-radius,var(--rstk-field-radius,var(--rstk-radius))) 0 0;background:color-mix(in srgb,var(--rstk-muted) 10%,transparent)}
+  .rstk-field.rstk-input-soft > input{border-radius:999px;border-color:transparent;background:color-mix(in srgb,var(--rstk-muted) 8%,transparent);padding-left:calc(var(--rstk-form-field-pad-x,14px) + 6px);padding-right:calc(var(--rstk-form-field-pad-x,14px) + 6px)}
+  .rstk-field.rstk-input-soft > textarea{border-radius:20px;border-color:transparent;background:color-mix(in srgb,var(--rstk-muted) 8%,transparent)}
+
   .rstk-embed{width:100%;min-height:var(--rstk-embed-height,360px);display:block;border:var(--rstk-block-border-width,1px) solid var(--rstk-block-border,var(--rstk-border));border-radius:var(--rstk-block-radius,var(--rstk-radius));background:var(--rstk-block-bg,var(--rstk-surface2))}
   .rstk-calendar-embed{width:var(--rstk-media-width,100%);min-height:var(--rstk-embed-height,760px);margin-left:var(--rstk-media-margin-left,0);margin-right:var(--rstk-media-margin-right,0);border:var(--rstk-calendar-frame-border-width,0) solid var(--rstk-calendar-frame-border,transparent);border-radius:var(--rstk-media-radius,0);background:transparent;box-shadow:none}
   iframe.rstk-embed{overflow:hidden}
@@ -18927,6 +18967,26 @@ function normalizeFormSelectStyle(value) {
 function normalizeFormInputStyle(value) {
   const raw = cleanString(value)
   return ['box', 'underline', 'filled', 'soft'].includes(raw) ? raw : 'box'
+}
+
+// Espejo del frontend getFieldOwnStyleClass: estilo elegido SOLO para este campo
+// (override del estilo global). Vacío = hereda el global. Devuelve el sufijo de
+// clases para <section class="rstk-field">: rstk-fieldstyled (resetea residuos del
+// global) + la variante. Debe ir en lockstep con sitesCanvas.css / Sites.tsx.
+function getFieldOwnStyleClass(block) {
+  const settings = (block && block.settings) || {}
+  let variant = ''
+  if (block.blockType === 'radio' || block.blockType === 'checkboxes') {
+    const raw = cleanString(settings.choiceStyle)
+    if (raw) variant = `rstk-choice-${normalizeFormChoiceStyle(raw)}`
+  } else if (block.blockType === 'dropdown') {
+    const raw = cleanString(settings.selectStyle)
+    if (raw) variant = `rstk-select-${normalizeFormSelectStyle(raw)}`
+  } else {
+    const raw = cleanString(settings.inputStyle)
+    if (raw) variant = `rstk-input-${normalizeFormInputStyle(raw)}`
+  }
+  return variant ? ` rstk-fieldstyled ${variant}` : ''
 }
 
 function buildFormThemeStyleVars(theme, { baseFont, v, accent, ink, muted }) {

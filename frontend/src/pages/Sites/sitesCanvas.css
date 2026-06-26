@@ -1443,6 +1443,63 @@
 .rstkCanvas.rstk-choice-check .rstk-embedded-form .rstk-option input,
 .rstkCanvas.rstk-choice-segmented .rstk-embedded-form .rstk-option input { position: absolute; opacity: 0; pointer-events: none; }
 
+/* ============================================================
+   Estilo de opciones/lista/caja POR CAMPO (override del global).
+   Aditivo: el estilo global del lienzo sigue intacto. Un campo que define su
+   propio estilo lleva en su .rstk-field la clase .rstk-fieldstyled (reset a base
+   para no heredar residuos del estilo global) + la variante elegida. Va al final
+   para ganar por orden a las reglas globales (misma especificidad). En lockstep
+   con backend sitesService.js y Sites.tsx (getFieldOwnStyleClass).
+   ============================================================ */
+.rstkCanvas .rstk-field.rstk-fieldstyled .rstk-options { display: grid; grid-template-columns: none; flex-wrap: nowrap; gap: 10px; }
+.rstkCanvas .rstk-field.rstk-fieldstyled .rstk-option { position: static; gap: 11px; min-height: var(--rstk-form-field-height, 50px); border-width: var(--rstk-form-field-border-width, 1px); border-radius: var(--rstk-form-field-radius, var(--rstk-field-radius, var(--rstk-radius))); background: var(--rstk-form-field-bg, var(--rstk-input-bg)); box-shadow: none; justify-content: flex-start; text-align: left; flex: 0 1 auto; margin-left: 0; padding: var(--rstk-form-field-pad-y, 13px) var(--rstk-form-field-pad-x, 14px); }
+.rstkCanvas .rstk-field.rstk-fieldstyled .rstk-option input { position: static; opacity: 1; pointer-events: auto; }
+.rstkCanvas .rstk-field.rstk-fieldstyled .rstk-option::after { content: none; }
+.rstkCanvas .rstk-field.rstk-fieldstyled select { border-width: var(--rstk-form-field-border-width, 1px); border-radius: var(--rstk-form-field-radius, var(--rstk-field-radius, var(--rstk-radius))); background-color: var(--rstk-form-field-bg, var(--rstk-input-bg)); padding-left: 9px; padding-right: 42px; }
+.rstkCanvas .rstk-field.rstk-fieldstyled > input,
+.rstkCanvas .rstk-field.rstk-fieldstyled > textarea { border-width: var(--rstk-form-field-border-width, 1px); border-color: var(--rstk-form-field-border, var(--rstk-input-border)); border-radius: var(--rstk-form-field-radius, var(--rstk-field-radius, var(--rstk-radius))); background: var(--rstk-form-field-bg, var(--rstk-input-bg)); padding-left: var(--rstk-form-field-pad-x, 14px); padding-right: var(--rstk-form-field-pad-x, 14px); }
+
+/* Opciones: tarjeta con barra lateral */
+.rstkCanvas .rstk-field.rstk-choice-cards .rstk-option { position: relative; gap: 0; padding-left: var(--rstk-form-field-pad-x, 14px); box-shadow: inset 4px 0 0 transparent; }
+.rstkCanvas .rstk-field.rstk-choice-cards .rstk-option input { position: absolute; opacity: 0; pointer-events: none; }
+.rstkCanvas .rstk-field.rstk-choice-cards .rstk-option:has(input:checked) { box-shadow: inset 4px 0 0 var(--rstk-form-choice-selected-border, var(--rstk-accent)); }
+/* Opciones: píldoras */
+.rstkCanvas .rstk-field.rstk-choice-pills .rstk-options { display: flex; flex-wrap: wrap; gap: 8px; }
+.rstkCanvas .rstk-field.rstk-choice-pills .rstk-option { position: relative; flex: 0 1 auto; min-height: 40px; border-radius: 999px; padding: 9px 16px; gap: 0; }
+.rstkCanvas .rstk-field.rstk-choice-pills .rstk-option input { position: absolute; opacity: 0; pointer-events: none; }
+/* Opciones: línea simple */
+.rstkCanvas .rstk-field.rstk-choice-minimal .rstk-option { min-height: 38px; border-width: 0 0 var(--rstk-form-field-border-width, 1px); border-radius: 0; background: transparent; padding-inline: 0; }
+/* Opciones: cuadrícula 2 columnas */
+.rstkCanvas .rstk-field.rstk-choice-grid .rstk-options { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.rstkCanvas .rstk-field.rstk-choice-grid .rstk-option { justify-content: center; text-align: center; gap: 0; }
+.rstkCanvas .rstk-field.rstk-choice-grid .rstk-option input { position: absolute; opacity: 0; pointer-events: none; }
+/* Opciones: botones sólidos */
+.rstkCanvas .rstk-field.rstk-choice-button .rstk-option { justify-content: center; text-align: center; gap: 0; }
+.rstkCanvas .rstk-field.rstk-choice-button .rstk-option input { position: absolute; opacity: 0; pointer-events: none; }
+.rstkCanvas .rstk-field.rstk-choice-button .rstk-option:has(input:checked) { background: var(--rstk-form-choice-selected-border, var(--rstk-accent)); border-color: var(--rstk-form-choice-selected-border, var(--rstk-accent)); color: var(--rstk-on-accent); }
+/* Opciones: lista con palomita */
+.rstkCanvas .rstk-field.rstk-choice-check .rstk-option { justify-content: space-between; gap: 12px; border-width: 0 0 var(--rstk-form-field-border-width, 1px); border-radius: 0; background: transparent; padding-inline: 0; }
+.rstkCanvas .rstk-field.rstk-choice-check .rstk-option input { position: absolute; opacity: 0; pointer-events: none; }
+.rstkCanvas .rstk-field.rstk-choice-check .rstk-option::after { content: ''; flex: 0 0 auto; width: 20px; height: 20px; border-radius: 999px; border: 2px solid var(--rstk-form-field-border, var(--rstk-input-border)); box-sizing: border-box; }
+.rstkCanvas .rstk-field.rstk-choice-check .rstk-option:has(input:checked)::after { border-color: var(--rstk-form-choice-selected-border, var(--rstk-accent)); background: var(--rstk-form-choice-selected-border, var(--rstk-accent)); box-shadow: inset 0 0 0 3px var(--rstk-form-field-bg, var(--rstk-input-bg)); }
+/* Opciones: segmentado */
+.rstkCanvas .rstk-field.rstk-choice-segmented .rstk-options { display: flex; flex-wrap: wrap; gap: 0; }
+.rstkCanvas .rstk-field.rstk-choice-segmented .rstk-option { position: relative; flex: 1 1 0; justify-content: center; text-align: center; gap: 0; border-radius: 0; margin-left: calc(-1 * var(--rstk-form-field-border-width, 1px)); }
+.rstkCanvas .rstk-field.rstk-choice-segmented .rstk-option input { position: absolute; opacity: 0; pointer-events: none; }
+.rstkCanvas .rstk-field.rstk-choice-segmented .rstk-option:first-child { margin-left: 0; }
+.rstkCanvas .rstk-field.rstk-choice-segmented .rstk-option:has(input:checked) { z-index: 1; background: var(--rstk-form-choice-selected-border, var(--rstk-accent)); border-color: var(--rstk-form-choice-selected-border, var(--rstk-accent)); color: var(--rstk-on-accent); }
+/* Lista desplegable */
+.rstkCanvas .rstk-field.rstk-select-filled select { background-color: color-mix(in srgb, var(--rstk-form-field-bg, transparent) 88%, var(--rstk-accent) 12%); }
+.rstkCanvas .rstk-field.rstk-select-underline select { border-width: 0 0 var(--rstk-form-field-border-width, 1px); border-radius: 0; background-color: transparent; padding-left: 0; padding-right: 36px; }
+.rstkCanvas .rstk-field.rstk-select-soft select { border-radius: 999px; background-color: color-mix(in srgb, var(--rstk-form-field-bg, var(--rstk-input-bg)) 90%, var(--rstk-accent) 10%); padding-left: 20px; }
+/* Caja de texto */
+.rstkCanvas .rstk-field.rstk-input-underline > input,
+.rstkCanvas .rstk-field.rstk-input-underline > textarea { border-width: 0 0 var(--rstk-form-field-border-width, 1px); border-radius: 0; background: transparent; padding-left: 0; padding-right: 0; }
+.rstkCanvas .rstk-field.rstk-input-filled > input,
+.rstkCanvas .rstk-field.rstk-input-filled > textarea { border-width: 0 0 var(--rstk-form-field-border-width, 1px); border-color: var(--rstk-form-field-border, var(--rstk-input-border)); border-radius: var(--rstk-form-field-radius, var(--rstk-field-radius, var(--rstk-radius))) var(--rstk-form-field-radius, var(--rstk-field-radius, var(--rstk-radius))) 0 0; background: color-mix(in srgb, var(--rstk-muted) 10%, transparent); }
+.rstkCanvas .rstk-field.rstk-input-soft > input { border-radius: 999px; border-color: transparent; background: color-mix(in srgb, var(--rstk-muted) 8%, transparent); padding-left: calc(var(--rstk-form-field-pad-x, 14px) + 6px); padding-right: calc(var(--rstk-form-field-pad-x, 14px) + 6px); }
+.rstkCanvas .rstk-field.rstk-input-soft > textarea { border-radius: 20px; border-color: transparent; background: color-mix(in srgb, var(--rstk-muted) 8%, transparent); }
+
 /* Keep app dark/light mode out of the page being designed. Global app styles use
    hardening selectors like `html body select` and themed checkbox/radio rules,
    so the canvas needs its own stronger boundary. */
