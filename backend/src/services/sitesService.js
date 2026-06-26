@@ -14580,7 +14580,11 @@ function getFormSubmitMetaEventName(site, pageId) {
     if (page?.metaCapiEnabled && normalizeSiteMetaTrigger(page.metaTrigger) === 'form_submit') {
       return normalizeSiteMetaEventName(page.metaEventName, { allowNone: true, fallback: SITE_META_NO_EVENT })
     }
-    if (site.siteType === 'landing_page') return SITE_META_NO_EVENT
+    // Un landing con formulario embebido configura su evento "Al enviar" a nivel de
+    // sitio (site.metaEventName) desde el popover del formulario, igual que un
+    // formulario standalone. Sin un override por página, ese evento de sitio debe
+    // dispararse en el submit; antes el landing devolvía SITE_META_NO_EVENT y el
+    // píxel/CAPI nunca se disparaba aunque el usuario lo hubiera configurado.
   }
 
   return normalizeSiteMetaEventName(site?.metaEventName, { allowNone: true })
@@ -14592,9 +14596,9 @@ function getFormSubmitMetaEventParameters(site, pageId, eventName) {
     if (page?.metaCapiEnabled && normalizeSiteMetaTrigger(page.metaTrigger) === 'form_submit') {
       return pruneSiteMetaEventParametersForEvent(page?.metaEventParameters, eventName)
     }
-    if (site.siteType === 'landing_page') {
-      return pruneSiteMetaEventParametersForEvent(page?.metaEventParameters, eventName)
-    }
+    // Mismo criterio que getFormSubmitMetaEventName: sin override por página, el
+    // landing usa los parámetros a nivel de sitio (theme.metaEventParameters) que
+    // escribe el popover del formulario embebido, para que coincidan con el evento.
   }
 
   return pruneSiteMetaEventParametersForEvent(site?.theme?.metaEventParameters || site?.theme?.meta_event_parameters, eventName)
@@ -17302,7 +17306,7 @@ function renderContentBlock(block, context = {}) {
       <section class="rstk-embedded-form" id="form">
         ${renderEmbeddedItems()}
         ${fields.length ? `
-          <div class="rstk-actions rstk-embed-actions">
+          <div class="rstk-actions rstk-embed-actions"${context.revealFormActionControlled ? ' data-rstk-form-action-area data-rstk-video-action-hidden="true" aria-hidden="true"' : ''}>
             ${hasEmbeddedPages ? `<button type="button" class="rstk-secondary" data-embedded-back hidden>${escapeHtml(context.backText || 'Anterior')}</button>` : ''}
             ${hasEmbeddedPages ? `<button type="button" data-embedded-next>${nextButtonContent}</button>` : ''}
             <button type="submit" data-submit${hasEmbeddedPages ? ' hidden' : ''}>${submitButtonContent}</button>
@@ -20526,12 +20530,18 @@ export async function renderPublicSiteHtml(site, { pageId, pagePath, trackingEna
   const videoActionTargetIds = collectVideoActionTargetIds(videoLookupBlocks)
   const videoActionInitialHiddenTargetIds = collectVideoActionInitialHiddenTargetIds(videoLookupBlocks)
   const countdownActionTargetIds = collectCountdownActionTargetIds(videoLookupBlocks)
+  // Un video puede revelar el botón de envío/continuar al llegar a cierto punto.
+  // Aplica al formulario estándar (su propio submitArea) y también a landings con
+  // un formulario embebido (marcamos el área de acciones del embed para que el
+  // runtime de acciones de video la encuentre dentro del form[data-site-form]).
+  // Antes solo cubría estándar, por eso el botón se quedaba visible en el embed.
+  const revealFormActionControlled = !preview && (isStandardFormType || isLandingType) && hasVideoRevealFormActionRule(blocks)
   const noTrack = !trackingEnabled || preview
   const [videoStreamAssetsByStorageUrl, videoStorageAssetsByStreamVideoId] = await Promise.all([
     buildVideoStreamAssetsByStorageUrl(videoLookupBlocks, { enabled: !noTrack }),
     buildVideoStorageAssetsByStreamVideoId(videoLookupBlocks, { enabled: true })
   ])
-	  const renderContext = { site, pageId: activePage?.id, pages, isInteractive, isLandingType, isStandardForm: isStandardFormType, submitText, submitSubtitle, continueText, nextText, backText, phoneLocale, linkStyle, websiteMode, noTrack, preview, videoStreamAssetsByStorageUrl, videoStorageAssetsByStreamVideoId, videoActionTargetIds, videoActionInitialHiddenTargetIds, countdownActionTargetIds, formStyleContext: { baseFont: sanitizeCssFont(theme.siteBodyFontFamily) || template.font, v: renderVars, accent: renderAccent, ink: renderInk, muted: renderMuted, pageBg: pageBg || renderVars.pageBg } }
+	  const renderContext = { site, pageId: activePage?.id, pages, isInteractive, isLandingType, isStandardForm: isStandardFormType, revealFormActionControlled, submitText, submitSubtitle, continueText, nextText, backText, phoneLocale, linkStyle, websiteMode, noTrack, preview, videoStreamAssetsByStorageUrl, videoStorageAssetsByStreamVideoId, videoActionTargetIds, videoActionInitialHiddenTargetIds, countdownActionTargetIds, formStyleContext: { baseFont: sanitizeCssFont(theme.siteBodyFontFamily) || template.font, v: renderVars, accent: renderAccent, ink: renderInk, muted: renderMuted, pageBg: pageBg || renderVars.pageBg } }
   const bodyBlocks = isLandingType
     ? renderLandingBlocks(blocks, renderContext)
     : blocks.map(block => renderPublicBlock(block, renderContext)).join('\n')
@@ -20539,10 +20549,9 @@ export async function renderPublicSiteHtml(site, { pageId, pagePath, trackingEna
     ? Object.fromEntries(collectFieldBlockPageEntries(isStandardFormType ? (Array.isArray(site.blocks) ? site.blocks : []) : blocks, pages))
     : {}
 
-  // Cuando un video de la página revela el botón en cierto momento, marcamos el
-  // bloque de acciones y lo dejamos oculto de salida (sin parpadeo). El runtime
-  // de acciones de video lo muestra al llegar el video al punto configurado.
-  const revealFormActionControlled = !preview && isStandardFormType && hasVideoRevealFormActionRule(blocks)
+  // El bloque de acciones se marca oculto de salida (sin parpadeo) cuando un video
+  // revela el botón; revealFormActionControlled ya se calculó arriba (cubre estándar
+  // y landing con formulario embebido). El runtime de video lo muestra al llegar.
   const submitArea = hasFormActions && !isLandingType
     ? `
       <div class="rstk-actions"${revealFormActionControlled ? ' data-rstk-form-action-area data-rstk-video-action-hidden="true" aria-hidden="true"' : ''}>

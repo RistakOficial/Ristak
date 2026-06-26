@@ -32204,9 +32204,10 @@ const FORM_EMBED_DRAFT_SOURCE_VALUE = '__embedded_form_draft__'
 
 // Control del píxel de Meta dentro del popover de configuración del formulario.
 // Reusa el evento a NIVEL DE SITIO (site.metaEventName + site.metaCapiEnabled +
-// theme.metaEventParameters) que el backend YA dispara al enviar el formulario,
-// así que no hace falta tocar backend. Elegir un evento prende CAPI; "Sin evento"
-// lo apaga (un solo control, autosuficiente).
+// theme.metaEventParameters), que el backend dispara al enviar el formulario tanto
+// en formularios standalone como en landings con formulario embebido
+// (getFormSubmitMetaEventName cae al evento de sitio cuando la página no define un
+// override "Al enviar"). Elegir un evento prende CAPI; "Sin evento" lo apaga.
 const FormPixelSettingsControls: React.FC<{
   site: PublicSite
   onPatchSite: (patch: Partial<PublicSite>) => void
