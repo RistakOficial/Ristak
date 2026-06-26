@@ -742,6 +742,7 @@ export const CalendarsConfiguration: React.FC = () => {
     bookingCompletion: createDefaultCalendarBookingCompletion(),
     bookingDisplay: createDefaultCalendarBookingDisplay(),
     customEvents: createDefaultCalendarCustomEvents(),
+    autoConfirm: true,
     antiTrackingEnabled: true
   })
 
@@ -1593,6 +1594,7 @@ export const CalendarsConfiguration: React.FC = () => {
         bookingCompletion: createDefaultCalendarBookingCompletion(),
         bookingDisplay: createDefaultCalendarBookingDisplay(),
         customEvents: createDefaultCalendarCustomEvents(),
+        autoConfirm: true,
         antiTrackingEnabled: true
       })
       await loadCalendars()
