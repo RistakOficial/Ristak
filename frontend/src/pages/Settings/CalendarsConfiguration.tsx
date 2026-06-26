@@ -279,7 +279,7 @@ const CALENDAR_WIZARD_STEPS: Array<{
   { id: 'availability', label: 'Disponibilidad', description: 'Duración y espacios.' },
   { id: 'rules', label: 'Reglas', description: 'Límites de reserva.' },
   { id: 'form', label: 'Formulario', description: 'Preguntas y cierre.' },
-  { id: 'reminders', label: 'Recordatorios', description: 'Mensajes automáticos.' },
+  { id: 'reminders', label: 'Recordatorios y confirmaciones', description: 'Mensajes automáticos.' },
   { id: 'advanced', label: 'Avanzado', description: 'Notas e integraciones.' },
   { id: 'events', label: 'Eventos', description: 'Meta Pixel y WhatsApp.' },
   { id: 'design', label: 'Estilos y diseños', description: 'Vista, colores y tipografía.' }
@@ -495,6 +495,7 @@ const createDefaultCalendarBookingDisplay = (): CalendarBookingDisplayConfig => 
   fontFamily: 'system',
   allowTimezoneSelection: true,
   defaultTimezone: '',
+  formPosition: 'after',
   colors: { ...CALENDAR_BOOKING_DISPLAY_COLOR_DEFAULTS }
 })
 
@@ -521,6 +522,7 @@ const normalizeCalendarBookingDisplay = (
     fontFamily: normalizeCalendarBookingFontFamily(source.fontFamily || defaults.fontFamily),
     allowTimezoneSelection: source.allowTimezoneSelection !== false,
     defaultTimezone: normalizeCalendarTimezoneValue(source.defaultTimezone),
+    formPosition: source.formPosition === 'before' ? 'before' : 'after',
     colors
   }
 }
@@ -2903,6 +2905,21 @@ export const CalendarsConfiguration: React.FC = () => {
                   <small>Nombre siempre es obligatorio. Teléfono o correo debe quedar activo para confirmar la cita.</small>
                 </div>
               )}
+
+              <div className={pageStyles.editorField}>
+                <span>Orden del flujo</span>
+                <CustomSelect
+                  value={bookingDisplayConfig.formPosition}
+                  onValueChange={(value) => updateBookingDisplayConfig({ formPosition: value === 'before' ? 'before' : 'after' })}
+                  options={[
+                    { value: 'after', label: 'Primero el calendario, luego el formulario' },
+                    { value: 'before', label: 'Primero el formulario, luego el calendario' }
+                  ]}
+                />
+                <small>
+                  Con “primero el formulario” la persona contesta antes de ver los horarios; si tu formulario descalifica, no llegará a agendar.
+                </small>
+              </div>
             </div>
           </section>
 
@@ -2957,7 +2974,7 @@ export const CalendarsConfiguration: React.FC = () => {
               {currentStep.id === 'reminders' && (
                 <section className={pageStyles.editorSection}>
                   <div className={pageStyles.editorSectionHeader}>
-                    <strong>Recordatorios automáticos</strong>
+                    <strong>Recordatorios y confirmaciones</strong>
                     <span>Configura los mismos mensajes automáticos de la página de Citas desde este wizard.</span>
                   </div>
                   <div className={pageStyles.editorFields}>
@@ -2997,7 +3014,7 @@ export const CalendarsConfiguration: React.FC = () => {
                                   <ReminderIcon size={16} aria-hidden="true" />
                                 </span>
                                 <div className={pageStyles.reminderCopy}>
-                                  <strong>{formatReminderOffsetLabel(reminder.offsetValue, reminder.offsetUnit)}</strong>
+                                  <strong>{formatReminderOffsetLabel(reminder.offsetValue, reminder.offsetUnit, reminder.timingAnchor)}</strong>
                                   <span>
                                     {reminder.messageType === 'confirmation'
                                       ? `Confirmación de cita${reminder.aiEnabled ? ' · IA' : ''}`

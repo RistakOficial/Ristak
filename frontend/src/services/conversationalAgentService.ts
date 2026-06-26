@@ -8,6 +8,7 @@ export type ConversationSignal = 'ready_for_human' | 'ready_to_schedule' | 'read
 export type ClosingStrategyMode = 'system' | 'custom'
 export type ConversationalPersuasionLevel = 'low' | 'medium' | 'high'
 export type ConversationalLanguageLevel = 'professional' | 'intermediate' | 'colloquial'
+export type ConversationalContactScope = 'all' | 'new_only'
 export type AgentResponseDelayMode = 'none' | 'fixed' | 'random'
 export type AgentResponseDelayUnit = 'seconds' | 'minutes'
 export type AgentReplyDeliveryMode = 'single' | 'split'
@@ -299,6 +300,8 @@ export interface ConversationalAgentDef {
   closingStrategyCustom: string
   persuasionLevel: ConversationalPersuasionLevel
   languageLevel: ConversationalLanguageLevel
+  contactScope: ConversationalContactScope
+  contactScopeCutoffAt?: string | null
   systemClosingStrategy?: string
   responseDelay: AgentResponseDelayConfig
   replyDelivery: AgentReplyDeliveryConfig
@@ -466,7 +469,7 @@ const COMPLETION_SIGNAL_META: Record<Exclude<ConversationSignal, 'discarded'>, {
 }
 const COMPLETION_SIGNAL_SET = new Set<Exclude<ConversationSignal, 'discarded'>>(Object.keys(COMPLETION_SIGNAL_META) as Array<Exclude<ConversationSignal, 'discarded'>>)
 
-const DEFAULT_AGENT_GOAL_WORKFLOW: AgentGoalWorkflowConfig = {
+export const DEFAULT_AGENT_GOAL_WORKFLOW: AgentGoalWorkflowConfig = {
   appointments: {
     owner: 'human',
     calendarId: null,
@@ -600,6 +603,8 @@ function normalizeAgentDef<T extends ConversationalAgentDef>(agent: T): T {
     successAction: normalizeConversationalSuccessAction(agent.successAction),
     persuasionLevel: normalizeConversationalPersuasionLevel(agent.persuasionLevel),
     languageLevel: normalizeConversationalLanguageLevel(agent.languageLevel),
+    contactScope: agent.contactScope === 'new_only' ? 'new_only' : 'all',
+    contactScopeCutoffAt: agent.contactScopeCutoffAt ?? null,
     followUp: {
       ...DEFAULT_AGENT_FOLLOW_UP,
       ...((agent.followUp || {}) as Partial<AgentFollowUpConfig>),

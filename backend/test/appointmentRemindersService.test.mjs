@@ -281,3 +281,102 @@ test('recordatorios no mandan texto normal si la plantilla no está aprobada y Q
     })
   })
 })
+
+test('confirmaciones "después de agendar" salen para reservas de Ristak pero no para citas sincronizadas de Google', async () => {
+  await withYCloudMessageCapture(async (captures) => {
+    const suffix = randomUUID()
+    const phoneRistak = `+52157${Date.now().toString().slice(-8)}`
+    const phoneGoogle = `+52158${Date.now().toString().slice(-8)}`
+    const contactRistak = `contact_ab_ristak_${suffix}`
+    const contactGoogle = `contact_ab_google_${suffix}`
+    const apptRistak = `appt_ab_ristak_${suffix}`
+    const apptGoogle = `appt_ab_google_${suffix}`
+    const phoneNumberId = `phone_ab_${suffix}`
+    const existingReminders = await db.all('SELECT id, enabled FROM appointment_reminders')
+    let reminderId = ''
+    const template = await createReminderTemplate({ suffix, ycloudStatus: 'APPROVED' })
+
+    // Agendó hace 6 min; con +5 min el envío venció hace 1 min (dentro de la gracia).
+    const bookedAt = DateTime.utc().minus({ minutes: 6 }).toISO()
+    const startTime = DateTime.utc().plus({ days: 2 }).toISO()
+    const endTime = DateTime.fromISO(startTime).plus({ hours: 1 }).toISO()
+
+    await db.run('UPDATE appointment_reminders SET enabled = 0')
+
+    try {
+      await db.run(`
+        INSERT INTO whatsapp_api_phone_numbers (
+          id, waba_id, phone_number, display_phone_number, verified_name,
+          is_default_sender, api_send_enabled, qr_send_enabled, qr_status, status
+        ) VALUES (?, ?, ?, ?, ?, 1, 1, 0, 'disconnected', 'CONNECTED')
+      `, [phoneNumberId, 'waba_appointment_reminder_test', '+526561234567', '+52 656 123 4567', 'Ristak Test'])
+
+      await db.run(`
+        INSERT INTO contacts (id, phone, first_name, full_name, preferred_whatsapp_phone_number_id)
+        VALUES (?, ?, 'Ana', 'Ana Test', ?)
+      `, [contactRistak, phoneRistak, phoneNumberId])
+      await db.run(`
+        INSERT INTO contacts (id, phone, first_name, full_name, preferred_whatsapp_phone_number_id)
+        VALUES (?, ?, 'Beto', 'Beto Test', ?)
+      `, [contactGoogle, phoneGoogle, phoneNumberId])
+
+      await db.run(`
+        INSERT INTO appointments (
+          id, calendar_id, contact_id, title, status, appointment_status,
+          start_time, end_time, date_added, source
+        ) VALUES (?, 'calendar_test', ?, 'Consulta', 'pending', 'pending', ?, ?, ?, 'public_calendar')
+      `, [apptRistak, contactRistak, startTime, endTime, bookedAt])
+      await db.run(`
+        INSERT INTO appointments (
+          id, calendar_id, contact_id, title, status, appointment_status,
+          start_time, end_time, date_added, source
+        ) VALUES (?, 'calendar_test', ?, 'Consulta', 'pending', 'pending', ?, ?, ?, 'google')
+      `, [apptGoogle, contactGoogle, startTime, endTime, bookedAt])
+
+      const reminder = await createAppointmentReminder({
+        name: `Confirmación ${suffix}`,
+        messageType: 'confirmation',
+        timingAnchor: 'after_booking',
+        templateId: template.id,
+        offsetValue: 5,
+        offsetUnit: 'minutes',
+        smartEnabled: false,
+        senderMode: 'default',
+        aiEnabled: false
+      })
+      reminderId = reminder.id
+
+      const result = await processDueAppointmentReminders({ batchSize: 5 })
+
+      assert.equal(result.sent, 1)
+      assert.equal(captures.length, 1)
+
+      const sentRistak = await db.get(
+        'SELECT status FROM appointment_reminder_sends WHERE appointment_id = ?',
+        [apptRistak]
+      )
+      assert.equal(sentRistak?.status, 'sent')
+
+      // La cita de Google nunca debe reclamarse ni enviarse.
+      const sentGoogle = await db.get(
+        'SELECT status FROM appointment_reminder_sends WHERE appointment_id = ?',
+        [apptGoogle]
+      )
+      assert.ok(!sentGoogle, 'la cita sincronizada de Google no debe tener registro de envío')
+    } finally {
+      await db.run('DELETE FROM appointment_reminder_sends WHERE appointment_id IN (?, ?)', [apptRistak, apptGoogle])
+      if (reminderId) await db.run('DELETE FROM appointment_reminders WHERE id = ?', [reminderId])
+      for (const row of existingReminders) {
+        await db.run('UPDATE appointment_reminders SET enabled = ? WHERE id = ?', [row.enabled, row.id])
+      }
+      await db.run('DELETE FROM appointments WHERE id IN (?, ?)', [apptRistak, apptGoogle])
+      await db.run('DELETE FROM contacts WHERE id IN (?, ?)', [contactRistak, contactGoogle])
+      await db.run('DELETE FROM whatsapp_api_messages WHERE phone IN (?, ?) OR to_phone IN (?, ?)', [phoneRistak, phoneGoogle, phoneRistak, phoneGoogle])
+      await db.run('DELETE FROM whatsapp_api_contacts WHERE phone IN (?, ?)', [phoneRistak, phoneGoogle])
+      await db.run('DELETE FROM whatsapp_api_template_sends WHERE template_name = ?', [template.name])
+      await db.run('DELETE FROM whatsapp_api_templates WHERE name = ?', [template.name])
+      await db.run('DELETE FROM whatsapp_message_templates WHERE id = ?', [template.id])
+      await db.run('DELETE FROM whatsapp_api_phone_numbers WHERE id = ?', [phoneNumberId])
+    }
+  })
+})

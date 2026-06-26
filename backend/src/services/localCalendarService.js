@@ -79,6 +79,10 @@ const CALENDAR_FORM_FIELD_TYPES = new Set([
   'email',
   'date'
 ])
+// (CAL-CONTENT) Bloques de CONTENIDO (no-campos) que también se muestran en el formulario del
+// calendario: título, subtítulo, texto, imagen y video. Mismo origen (Sitios) que los campos.
+const CALENDAR_FORM_CONTENT_BLOCK_TYPES = new Set(['title', 'subtitle', 'text', 'image', 'video'])
+const CALENDAR_FORM_ALL_BLOCK_TYPES = new Set([...CALENDAR_FORM_FIELD_TYPES, ...CALENDAR_FORM_CONTENT_BLOCK_TYPES])
 const CALENDAR_SLUG_MAX_LENGTH = 80
 
 function makeId(prefix) {
@@ -399,6 +403,9 @@ function normalizeCalendarBookingDisplayConfig(value = {}, fallback = {}) {
     fontFamily: normalizeCalendarBookingFontFamily(displaySource.fontFamily || displaySource.font_family),
     allowTimezoneSelection: parseBoolean(displaySource.allowTimezoneSelection ?? displaySource.allow_timezone_selection, true),
     defaultTimezone: defaultTimezone && isValidTimezone(defaultTimezone) ? defaultTimezone : '',
+    // (CAL-FLOW) Orden del flujo: 'after' (default) = calendario y luego formulario; 'before' =
+    // primero el formulario (con su calificación) y al completarlo aparece el calendario.
+    formPosition: cleanString(displaySource.formPosition || displaySource.form_position).toLowerCase() === 'before' ? 'before' : 'after',
     colors: deriveCalendarBookingPalette(
       fallbackAccent,
       pickColor('background', 'backgroundColor', 'background_color')
@@ -1335,9 +1342,68 @@ function normalizeCalendarFormPages(theme = {}) {
   return normalized.length ? normalized : [{ id: CALENDAR_DEFAULT_PAGE_ID, title: 'Formulario', sortOrder: 0 }]
 }
 
+// (CAL-QUAL) Acciones de calificación que SÍ bloquean el agendado (espejo del motor de
+// Sitios). Solo nos importan las de descalificación; las de lead (frío/tibio/caliente) y
+// "continue" no impiden agendar. Aceptamos alias en español como en sitesService.
+const CALENDAR_DISQUALIFY_ACTIONS = new Set(['disqualify', 'disqualify_after_submit'])
+const CALENDAR_OPTION_ACTION_ALIASES = {
+  descalificar: 'disqualify',
+  descalificar_contacto: 'disqualify',
+  descalificar_inmediatamente: 'disqualify',
+  no_calificado: 'disqualify',
+  no_califica: 'disqualify',
+  descalificar_al_finalizar: 'disqualify_after_submit',
+  descalificar_al_finalizar_formulario: 'disqualify_after_submit'
+}
+
+function normalizeCalendarOptionAction(value) {
+  const raw = cleanString(value).toLowerCase()
+  if (!raw) return ''
+  const resolved = CALENDAR_OPTION_ACTION_ALIASES[raw] || raw
+  return CALENDAR_DISQUALIFY_ACTIONS.has(resolved) ? resolved : ''
+}
+
+function safeCalendarRedirectUrl(value) {
+  const raw = cleanString(value)
+  if (!raw || raw.length > 1200 || /[<>"']/.test(raw)) return ''
+  if (/^\/(?!\/)/.test(raw)) return raw // ruta relativa del mismo sitio
+  try {
+    const parsed = new URL(raw)
+    return ['http:', 'https:'].includes(parsed.protocol) ? parsed.toString() : ''
+  } catch {
+    return ''
+  }
+}
+
+// Resuelve si una opción descalifica (soporta { action } único o { actions:[...] } de Sitios).
+function resolveCalendarOptionDisqualify(option = {}) {
+  const single = normalizeCalendarOptionAction(option?.action)
+  if (single) {
+    return {
+      action: single,
+      message: cleanString(option?.message),
+      redirectUrl: safeCalendarRedirectUrl(option?.redirectUrl || option?.redirect_url || option?.url || option?.siteUrl || option?.site_url)
+    }
+  }
+  if (Array.isArray(option?.actions)) {
+    for (const entry of option.actions) {
+      const act = normalizeCalendarOptionAction(entry?.action)
+      if (act) {
+        return {
+          action: act,
+          message: cleanString(entry?.message || option?.message),
+          redirectUrl: safeCalendarRedirectUrl(entry?.redirectUrl || entry?.redirect_url || entry?.url || option?.redirectUrl)
+        }
+      }
+    }
+  }
+  return null
+}
+
 function normalizeCalendarFormBlock(row = {}, pages = []) {
   const blockType = cleanString(row.block_type || row.blockType)
-  if (!CALENDAR_FORM_FIELD_TYPES.has(blockType)) return null
+  if (!CALENDAR_FORM_ALL_BLOCK_TYPES.has(blockType)) return null
+  const isContent = CALENDAR_FORM_CONTENT_BLOCK_TYPES.has(blockType)
 
   const settings = parseJson(row.settings_json || row.settings, {})
   const options = parseJson(row.options_json || row.options, [])
@@ -1347,15 +1413,27 @@ function normalizeCalendarFormBlock(row = {}, pages = []) {
   return {
     id: cleanString(row.id),
     blockType,
-    label: cleanString(row.label) || 'Pregunta',
+    isContent,
+    label: cleanString(row.label) || (isContent ? '' : 'Pregunta'),
     placeholder: cleanString(row.placeholder),
     required: Boolean(Number(row.required || 0)),
     content: cleanString(row.content),
     options: Array.isArray(options)
-      ? options.map((option, index) => ({
-        label: cleanString(option?.label || option?.value || `Opcion ${index + 1}`),
-        value: cleanString(option?.value || option?.label || `opcion_${index + 1}`)
-      })).filter(option => option.label)
+      ? options.map((option, index) => {
+        const out = {
+          label: cleanString(option?.label || option?.value || `Opcion ${index + 1}`),
+          value: cleanString(option?.value || option?.label || `opcion_${index + 1}`)
+        }
+        // (CAL-QUAL) Preservamos la regla de descalificación de la opción para poder
+        // evaluarla en el cliente (UX inmediata) y revalidarla en el servidor (seguridad).
+        const dq = resolveCalendarOptionDisqualify(option)
+        if (dq) {
+          out.action = dq.action
+          out.disqualifyMessage = dq.message
+          out.disqualifyRedirectUrl = dq.redirectUrl
+        }
+        return out
+      }).filter(option => option.label)
       : [],
     settings: settings && typeof settings === 'object' && !Array.isArray(settings) ? settings : {},
     pageId: resolvedPageId,
@@ -1444,13 +1522,24 @@ export async function getCalendarBookingFormDefinition(calendar = {}) {
     if (site?.id) {
       const theme = parseJson(site.theme_json, {})
       const pages = normalizeCalendarFormPages(theme)
+      // (CAL-QUAL) Config de descalificación a nivel formulario (respeta lo que dice el
+      // formulario de Sitios): si está en "redirigir", usamos esa URL como fallback cuando
+      // la opción no trae su propia redirección/mensaje.
+      const dqCompletion = cleanString(theme.formDisqualifiedCompletionAction || theme.form_disqualified_completion_action).toLowerCase()
+      const formDisqualification = {
+        action: dqCompletion === 'redirect_url' ? 'redirect' : 'message',
+        redirectUrl: dqCompletion === 'redirect_url'
+          ? safeCalendarRedirectUrl(theme.formDisqualifiedRedirectUrl || theme.form_disqualified_redirect_url)
+          : '',
+        message: cleanString(theme.formDisqualifiedMessage || theme.form_disqualified_message)
+      }
       const rows = await db.all(`
         SELECT id, block_type, label, content, placeholder, required, options_json, settings_json, sort_order
         FROM public_site_blocks
         WHERE site_id = ?
-          AND block_type IN (${Array.from(CALENDAR_FORM_FIELD_TYPES).map(() => '?').join(',')})
+          AND block_type IN (${Array.from(CALENDAR_FORM_ALL_BLOCK_TYPES).map(() => '?').join(',')})
         ORDER BY sort_order ASC, created_at ASC
-      `, [site.id, ...Array.from(CALENDAR_FORM_FIELD_TYPES)]).catch(() => [])
+      `, [site.id, ...Array.from(CALENDAR_FORM_ALL_BLOCK_TYPES)]).catch(() => [])
       const fields = rows
         .map(row => normalizeCalendarFormBlock(row, pages))
         .filter(Boolean)
@@ -1468,6 +1557,7 @@ export async function getCalendarBookingFormDefinition(calendar = {}) {
           siteType: site.site_type || 'standard_form',
           pages,
           fields,
+          disqualification: formDisqualification,
           defaultFields: config.defaultFields
         }
       }
@@ -1502,6 +1592,11 @@ function renderCalendarFieldInput(field = {}) {
   const required = field.required ? 'required' : ''
   const options = Array.isArray(field.options) ? field.options : []
   const validation = getCalendarFieldValidation(field)
+  // (CAL-QUAL) Adjunta la regla de descalificación a cada opción que la tenga, para que el
+  // cliente la evalúe al seleccionarla. El servidor SIEMPRE revalida (no confía en el cliente).
+  const optionRuleAttr = (option) => option && option.action
+    ? ` data-rule="${escapeHtml(JSON.stringify({ action: option.action, message: option.disqualifyMessage || '', redirectUrl: option.disqualifyRedirectUrl || '' }))}"`
+    : ''
 
   if (field.blockType === 'paragraph') {
     return `<textarea id="${id}" name="${id}" rows="3" placeholder="${placeholder}" ${required}></textarea>`
@@ -1525,7 +1620,7 @@ function renderCalendarFieldInput(field = {}) {
     return `
       <select id="${id}" name="${id}" ${required}>
         <option value="">Selecciona una opcion</option>
-        ${options.map(option => `<option value="${escapeHtml(option.value)}">${escapeHtml(option.label)}</option>`).join('')}
+        ${options.map(option => `<option value="${escapeHtml(option.value)}"${optionRuleAttr(option)}>${escapeHtml(option.label)}</option>`).join('')}
       </select>
     `
   }
@@ -1534,7 +1629,7 @@ function renderCalendarFieldInput(field = {}) {
       <div class="options">
         ${options.map((option, index) => `
           <label class="option">
-            <input type="radio" name="${id}" value="${escapeHtml(option.value)}" ${required && index === 0 ? 'required' : ''}>
+            <input type="radio" name="${id}" value="${escapeHtml(option.value)}" ${required && index === 0 ? 'required' : ''}${optionRuleAttr(option)}>
             <span>${escapeHtml(option.label)}</span>
           </label>
         `).join('')}
@@ -1546,7 +1641,7 @@ function renderCalendarFieldInput(field = {}) {
       <div class="options">
         ${options.map(option => `
           <label class="option">
-            <input type="checkbox" name="${id}" value="${escapeHtml(option.value)}" data-checkbox-group="${id}">
+            <input type="checkbox" name="${id}" value="${escapeHtml(option.value)}" data-checkbox-group="${id}"${optionRuleAttr(option)}>
             <span>${escapeHtml(option.label)}</span>
           </label>
         `).join('')}
@@ -1557,6 +1652,72 @@ function renderCalendarFieldInput(field = {}) {
     return `<input id="${id}" name="${id}" type="url" inputmode="url" placeholder="${placeholder}" ${required}>`
   }
   return `<input id="${id}" name="${id}" type="text" placeholder="${placeholder}" ${required}>`
+}
+
+// (CAL-CONTENT) Convierte una URL de video a su embed (YouTube/Vimeo) o detecta video directo.
+function calendarVideoEmbedUrl(rawUrl) {
+  const url = cleanString(rawUrl)
+  if (!url) return ''
+  try {
+    const u = new URL(url)
+    if (!['http:', 'https:'].includes(u.protocol)) return ''
+    const host = u.hostname.replace(/^www\./, '').toLowerCase()
+    if (host === 'youtu.be') {
+      const id = u.pathname.split('/').filter(Boolean)[0]
+      return id ? `https://www.youtube.com/embed/${encodeURIComponent(id)}` : ''
+    }
+    if (host.endsWith('youtube.com')) {
+      if (u.pathname.startsWith('/embed/')) return `https://www.youtube.com${u.pathname}`
+      const id = u.searchParams.get('v')
+      return id ? `https://www.youtube.com/embed/${encodeURIComponent(id)}` : ''
+    }
+    if (host.endsWith('vimeo.com')) {
+      if (u.pathname.startsWith('/video/') || host.startsWith('player.')) return `https://player.vimeo.com${u.pathname.startsWith('/video/') ? u.pathname : `/video${u.pathname}`}`
+      const id = u.pathname.split('/').filter(Boolean).pop()
+      return /^\d+$/.test(id || '') ? `https://player.vimeo.com/video/${id}` : ''
+    }
+    return ''
+  } catch {
+    return ''
+  }
+}
+
+function renderCalendarVideoBlock(rawUrl, label = '') {
+  const url = cleanString(rawUrl)
+  if (!url) return ''
+  // Video directo (archivo): se reproduce con <video>.
+  if (/\.(mp4|webm|ogg|mov|m4v)(\?|#|$)/i.test(url)) {
+    const safe = safeCalendarImageUrl(url)
+    return safe
+      ? `<div class="calContentVideo"><video src="${escapeHtml(safe)}" controls playsinline preload="metadata"></video></div>`
+      : ''
+  }
+  // YouTube / Vimeo: embed en iframe.
+  const embed = calendarVideoEmbedUrl(url)
+  return embed
+    ? `<div class="calContentVideo calContentVideoEmbed"><iframe src="${escapeHtml(embed)}" loading="lazy" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture" allowfullscreen sandbox="allow-scripts allow-same-origin allow-popups allow-presentation"></iframe></div>`
+    : ''
+}
+
+// (CAL-CONTENT) Renderiza un bloque de contenido (no-campo) del formulario en el calendario.
+function renderCalendarContentBlock(block = {}) {
+  const type = block.blockType
+  const settings = block.settings || {}
+  const content = cleanString(block.content)
+  const label = cleanString(block.label)
+  const text = content || label
+
+  if (type === 'title') return text ? `<h3 class="calContentTitle">${escapeHtml(text)}</h3>` : ''
+  if (type === 'subtitle') return text ? `<p class="calContentSubtitle">${escapeHtml(text)}</p>` : ''
+  if (type === 'text') return text ? `<p class="calContentText">${escapeHtml(text)}</p>` : ''
+  if (type === 'image') {
+    const url = safeCalendarImageUrl(settings.mediaUrl || settings.media_url || content)
+    return url
+      ? `<figure class="calContentImage"><img src="${escapeHtml(url)}" alt="${escapeHtml(label || 'Imagen')}" loading="lazy"></figure>`
+      : ''
+  }
+  if (type === 'video') return renderCalendarVideoBlock(settings.mediaUrl || settings.media_url || content, label)
+  return ''
 }
 
 function renderCalendarBookingForm(bookingForm = {}) {
@@ -1575,14 +1736,21 @@ function renderCalendarBookingForm(bookingForm = {}) {
       ${pages.map((page, index) => {
         const pageFields = fields.filter(field => field.pageId === page.id)
         const pageQuestions = pageFields.length
-          ? pageFields.map(field => `
+          ? pageFields.map(field => {
+            // (CAL-CONTENT) Bloques de contenido (título/texto/imagen/video): sin label ni input,
+            // se muestran tal cual en el orden definido en el formulario.
+            if (field.isContent) {
+              const html = renderCalendarContentBlock(field)
+              return html ? `<div class="calendarContentBlock" data-block-type="${escapeHtml(field.blockType)}">${html}</div>` : ''
+            }
+            return `
             <section class="calendarQuestion" data-field-id="${escapeHtml(field.id)}" data-field-type="${escapeHtml(field.blockType)}" data-required="${field.required ? 'true' : 'false'}" data-validation="${escapeHtml(getCalendarFieldValidation(field))}">
               <label for="${escapeHtml(field.id)}">${escapeHtml(field.label || 'Pregunta')}${field.required ? '<span class="requiredMark">*</span>' : ''}</label>
               ${field.content ? `<p class="fieldHelp">${escapeHtml(field.content)}</p>` : ''}
               ${renderCalendarFieldInput(field)}
               <p class="fieldError" hidden>Esta respuesta es requerida.</p>
             </section>
-          `).join('')
+          `}).join('')
           : '<p class="fieldHelp">Esta pantalla no tiene preguntas.</p>'
 
         return `
@@ -1609,6 +1777,10 @@ export function normalizeCalendarBookingSubmission(bookingForm = {}, body = {}) 
     : {}
   const normalizedResponses = {}
   const errors = []
+  // (CAL-QUAL) Estado de calificación recalculado en el servidor (no confiamos en el cliente).
+  let disqualified = false
+  let disqualifyMessage = ''
+  let disqualifyRedirectUrl = ''
 
   const getBodyValue = (field) => {
     if (Object.prototype.hasOwnProperty.call(responses, field.id)) return responses[field.id]
@@ -1643,6 +1815,8 @@ export function normalizeCalendarBookingSubmission(bookingForm = {}, body = {}) 
   let notes = cleanString(body.notes)
 
   for (const field of fields) {
+    // (CAL-CONTENT) Los bloques de contenido (video/texto/imagen) no son respuestas.
+    if (field.isContent) continue
     const rawValue = getBodyValue(field)
     const value = Array.isArray(rawValue)
       ? rawValue.map(item => cleanString(item)).filter(Boolean)
@@ -1665,6 +1839,21 @@ export function normalizeCalendarBookingSubmission(bookingForm = {}, body = {}) 
 
     normalizedResponses[field.id] = value
 
+    // (CAL-QUAL) Si el valor elegido cae sobre una opción descalificadora, la cita NO se agenda.
+    if (!empty && Array.isArray(field.options) && field.options.length) {
+      const chosen = (Array.isArray(value) ? value : [value]).map(item => cleanString(item).toLowerCase())
+      for (const option of field.options) {
+        if (!option.action) continue
+        const optValue = cleanString(option.value).toLowerCase()
+        const optLabel = cleanString(option.label).toLowerCase()
+        if (chosen.includes(optValue) || chosen.includes(optLabel)) {
+          disqualified = true
+          if (!disqualifyMessage && option.disqualifyMessage) disqualifyMessage = option.disqualifyMessage
+          if (!disqualifyRedirectUrl && option.disqualifyRedirectUrl) disqualifyRedirectUrl = option.disqualifyRedirectUrl
+        }
+      }
+    }
+
     if (!fullName && matchesField(field, [/full.?name/, /nombre/, /name/])) fullName = valueAsText(value)
     if (!phone && (validation === 'phone' || matchesField(field, [/phone/, /tel[eé]fono/, /whatsapp/]))) phone = valueAsText(value)
     if (!email && (validation === 'email' || matchesField(field, [/email/, /correo/]))) email = valueAsText(value)
@@ -1673,6 +1862,14 @@ export function normalizeCalendarBookingSubmission(bookingForm = {}, body = {}) 
 
   if (!fullName) errors.push('El nombre es requerido')
   if (!phone && !email) errors.push('Se requiere telefono o correo')
+
+  // (CAL-QUAL) Fallback a la config de descalificación del formulario (Sitios) cuando la
+  // opción no trae su propio mensaje/redirección.
+  if (disqualified) {
+    const formDq = bookingForm.disqualification || {}
+    if (!disqualifyRedirectUrl && formDq.action === 'redirect' && formDq.redirectUrl) disqualifyRedirectUrl = formDq.redirectUrl
+    if (!disqualifyMessage && formDq.message) disqualifyMessage = formDq.message
+  }
 
   const responseLines = fields
     .map(field => {
@@ -1689,7 +1886,10 @@ export function normalizeCalendarBookingSubmission(bookingForm = {}, body = {}) 
     responseSummary: responseLines.join('\n'),
     formId: bookingForm.formId || '',
     formName: bookingForm.formName || '',
-    errors
+    errors,
+    disqualified,
+    disqualifyMessage,
+    disqualifyRedirectUrl
   }
 }
 
@@ -1739,7 +1939,8 @@ export function renderPublicCalendarHtml(calendar, { host = '', embedded = false
     showDuration: resolveDisplayToggle('showDuration', bookingDisplay.showDuration !== false),
     showConfirmation: resolveDisplayToggle('showConfirmation', bookingDisplay.showConfirmation !== false),
     allowTimezoneSelection: resolveDisplayToggle('allowTimezoneSelection', bookingDisplay.allowTimezoneSelection !== false),
-    fontFamily: overrideFontFamily ? normalizeCalendarBookingFontFamily(overrideFontFamily) : bookingDisplay.fontFamily
+    fontFamily: overrideFontFamily ? normalizeCalendarBookingFontFamily(overrideFontFamily) : bookingDisplay.fontFamily,
+    formPosition: (useCustomStyle && (style.formPosition === 'before' || style.formPosition === 'after')) ? style.formPosition : bookingDisplay.formPosition
   }
   const fontStack = getCalendarBookingFontStack(effectiveBookingDisplay.fontFamily)
   const coverImage = safeCalendarImageUrl(style.coverImage, calendar.calendarCoverImage || calendar.calendar_cover_image || '')
@@ -1907,6 +2108,16 @@ export function renderPublicCalendarHtml(calendar, { host = '', embedded = false
     .formPage{display:grid;gap:16px}
     .formPage h3{font-size:.95rem}
     .calendarQuestion{display:grid;gap:7px}
+    .calendarContentBlock{display:grid;gap:6px}
+    .calContentTitle{margin:0;color:var(--heading);font-size:1.05rem;font-weight:600;letter-spacing:-.01em}
+    .calContentSubtitle{margin:0;color:var(--muted);font-size:.95rem;line-height:1.5}
+    .calContentText{margin:0;color:var(--ink);font-size:.92rem;line-height:1.6;white-space:pre-line}
+    .calContentImage{margin:0}
+    .calContentImage img{display:block;width:100%;height:auto;border-radius:var(--field-radius);border:1px solid var(--line)}
+    .calContentVideo{position:relative;width:100%;border-radius:var(--field-radius);overflow:hidden;background:#000;border:1px solid var(--line)}
+    .calContentVideo video{display:block;width:100%;height:auto}
+    .calContentVideoEmbed{aspect-ratio:16/9}
+    .calContentVideoEmbed iframe{position:absolute;inset:0;width:100%;height:100%;border:0}
     .fieldHelp,.fieldError{margin:0;font-size:.82rem;line-height:1.4}
     .fieldHelp{color:var(--muted)}
     .fieldError{color:var(--danger);font-weight:500}
@@ -1935,6 +2146,12 @@ export function renderPublicCalendarHtml(calendar, { host = '', embedded = false
     .shell.bookingDone{grid-template-columns:1fr}
     .shell.bookingDone .intro,.shell.bookingDone .calendarPane,.shell.bookingDone .timesPane{display:none}
     .shell.bookingDone .successPane{display:flex}
+    .shell.bookingDisqualified{grid-template-columns:1fr}
+    .shell.bookingDisqualified .intro,.shell.bookingDisqualified .calendarPane,.shell.bookingDisqualified .timesPane{display:none}
+    .shell.bookingDisqualified .successPane{display:flex}
+    .shell.bookingDisqualified .successIcon{background:var(--control-bg);color:var(--muted)}
+    .shell.formGate .changeSlot{display:none}
+    .shell.formCompleted .formHeader,.shell.formCompleted .formPage,.shell.formCompleted [data-form-next],.shell.formCompleted [data-form-back]{display:none}
     .successCard{max-width:480px;display:flex;flex-direction:column;align-items:center;gap:18px}
     .successCard .successIcon{width:74px;height:74px;border-radius:999px;display:grid;place-items:center;background:var(--accent-soft);color:var(--accent)}
     .successCard .successMessage{margin:0;font-size:1.22rem;line-height:1.55;font-weight:600;color:var(--heading);white-space:pre-line}
@@ -1990,7 +2207,7 @@ export function renderPublicCalendarHtml(calendar, { host = '', embedded = false
 
       <section class="successPane" data-success-pane>
         <div class="successCard">
-          <div class="successIcon" aria-hidden="true">
+          <div class="successIcon" data-success-icon aria-hidden="true">
             <svg viewBox="0 0 24 24" width="36" height="36"><path d="M20 6 9 17l-5-5" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg>
           </div>
           <p class="successMessage" data-success-message></p>
@@ -2125,6 +2342,12 @@ export function renderPublicCalendarHtml(calendar, { host = '', embedded = false
       let selectedDateKey = '';
       let visibleMonth = new Date();
       let formPageIndex = 0;
+      let immediateDisqualified = false;
+      // (CAL-FLOW) Formulario primero: el formulario es un "gate" antes del calendario.
+      const formFirst = !!(calendar.bookingDisplay && calendar.bookingDisplay.formPosition === 'before');
+      let gatePassed = false;
+      let gateResponses = {};
+      let gateFormData = null;
       visibleMonth.setDate(1);
       let slotsByDate = new Map();
       const displayConfig = calendar.bookingDisplay || {};
@@ -2194,15 +2417,22 @@ export function renderPublicCalendarHtml(calendar, { host = '', embedded = false
         }
       };
 
-      const showSuccessScreen = (text) => {
+      const showSuccessScreen = (text, opts) => {
+        const disqualified = !!(opts && opts.disqualified);
         if (successMessageEl) successMessageEl.textContent = text || '';
+        const iconEl = document.querySelector('[data-success-icon]');
+        if (iconEl) {
+          iconEl.innerHTML = disqualified
+            ? '<svg viewBox="0 0 24 24" width="34" height="34" aria-hidden="true"><circle cx="12" cy="12" r="9" fill="none" stroke="currentColor" stroke-width="2"/><path d="M12 7.5v5.5" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"/><circle cx="12" cy="16.6" r="1.3" fill="currentColor"/></svg>'
+            : '<svg viewBox="0 0 24 24" width="36" height="36" aria-hidden="true"><path d="M20 6 9 17l-5-5" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+        }
         if (form) {
           form.reset();
           form.classList.remove('visible');
         }
         if (shell) {
-          shell.classList.remove('dateSelected', 'bookingActive');
-          shell.classList.add('bookingDone');
+          shell.classList.remove('dateSelected', 'bookingActive', 'bookingDone', 'bookingDisqualified');
+          shell.classList.add(disqualified ? 'bookingDisqualified' : 'bookingDone');
         }
         try { window.scrollTo({ top: 0, behavior: 'smooth' }); } catch (err) {}
       };
@@ -2442,7 +2672,8 @@ export function renderPublicCalendarHtml(calendar, { host = '', embedded = false
         form.classList.add('visible');
         formPageIndex = 0;
         renderFormPage();
-        submit.disabled = false;
+        evaluateDisqualification();
+        submit.disabled = immediateDisqualified;
         submit.textContent = calendar.preview ? 'Vista previa sin agendar' : 'Agendar cita';
         selectedTitle.textContent = 'Confirma tu cita';
         selectedSubtitle.textContent = formatDay(selectedSlot) + ' a las ' + formatTime(selectedSlot);
@@ -2498,11 +2729,14 @@ export function renderPublicCalendarHtml(calendar, { host = '', embedded = false
           if (!response.ok || payload.success === false) throw new Error(payload.error || 'No se pudieron cargar horarios');
           ingestSlots(payload.data || []);
           renderMonth();
-          if (selectedDateKey && selectedDateKey.startsWith(monthKey(visibleMonth))) {
-            renderSlotsForDate(selectedDateKey);
-          } else {
-            selectedDateKey = '';
-            renderSlotsForDate('');
+          // (CAL-FLOW) Durante el "gate" (formulario primero sin completar) no cambiamos de paso.
+          if (!(formFirst && !gatePassed)) {
+            if (selectedDateKey && selectedDateKey.startsWith(monthKey(visibleMonth))) {
+              renderSlotsForDate(selectedDateKey);
+            } else {
+              selectedDateKey = '';
+              renderSlotsForDate('');
+            }
           }
         } catch (error) {
           slotsByDate = new Map();
@@ -2535,16 +2769,108 @@ export function renderPublicCalendarHtml(calendar, { host = '', embedded = false
         loadSlots();
       });
 
+      // (CAL-QUAL) Evaluación de calificación en el cliente (UX inmediata). El servidor SIEMPRE
+      // revalida; esto solo mejora la experiencia bloqueando en cuanto eligen una respuesta que
+      // descalifica ('disqualify'). Las de 'disqualify_after_submit' las resuelve el servidor.
+      const parseDisqualifyRule = (raw) => {
+        if (!raw) return null;
+        try { const r = JSON.parse(raw); return r && r.action ? r : null; } catch (_) { return null; }
+      };
+      const readSelectedDisqualifyRule = () => {
+        if (!form) return null;
+        const selected = Array.from(form.querySelectorAll('input[data-rule]:checked'));
+        form.querySelectorAll('select').forEach((select) => {
+          const opt = select.selectedOptions && select.selectedOptions[0];
+          if (opt && opt.dataset && opt.dataset.rule) selected.push(opt);
+        });
+        for (const el of selected) {
+          const rule = parseDisqualifyRule(el.dataset.rule);
+          if (rule && rule.action === 'disqualify') return rule;
+        }
+        return null;
+      };
+      const evaluateDisqualification = () => {
+        const rule = readSelectedDisqualifyRule();
+        if (rule) {
+          immediateDisqualified = true;
+          if (submit) submit.disabled = true;
+          setMessage(rule.message || 'Por tus respuestas, por ahora no podemos agendar tu cita.', 'error');
+        } else if (immediateDisqualified) {
+          immediateDisqualified = false;
+          // En el "gate" (formulario primero) el botón "Continuar" no depende del horario.
+          if (submit) submit.disabled = (formFirst && !gatePassed) ? false : !selectedSlot;
+          setMessage('');
+        }
+      };
+      form && form.addEventListener('change', evaluateDisqualification);
+
+      // (CAL-FLOW) Muestra el formulario PRIMERO (gate). Al completarlo (Continuar) se revela el calendario.
+      const enterGate = () => {
+        if (!shell || !form) return;
+        gatePassed = false;
+        setStep('form');
+        shell.classList.add('formGate');
+        shell.classList.remove('formCompleted');
+        form.classList.add('visible');
+        formPageIndex = 0;
+        renderFormPage();
+        if (selectedTitle) selectedTitle.textContent = 'Cuéntanos un poco de ti';
+        if (selectedSubtitle) selectedSubtitle.textContent = 'Completa para ver los horarios disponibles.';
+        evaluateDisqualification();
+        if (submit) { submit.hidden = false; submit.disabled = immediateDisqualified; submit.textContent = 'Continuar'; }
+      };
+
       form.addEventListener('submit', async (event) => {
         event.preventDefault();
+
+        // (CAL-FLOW) GATE (formulario primero): "Continuar" valida + califica y revela el calendario.
+        if (formFirst && !gatePassed) {
+          if (!getPageFields(formPages.length - 1).every(validateField)) return;
+          if (immediateDisqualified) {
+            const rule = readSelectedDisqualifyRule();
+            if (rule && rule.redirectUrl) {
+              showSuccessScreen('Gracias por tus respuestas.', { disqualified: true });
+              window.setTimeout(() => { try { window.location.assign(rule.redirectUrl); } catch (_) {} }, 1000);
+              return;
+            }
+            showSuccessScreen((rule && rule.message) || 'Por ahora no podemos agendar tu cita.', { disqualified: true });
+            return;
+          }
+          // Guardamos las respuestas del gate (el formulario se ocultará/reiniciará en los siguientes pasos).
+          gateResponses = collectResponses();
+          gateFormData = new FormData(form);
+          gatePassed = true;
+          shell.classList.remove('formGate');
+          shell.classList.add('formCompleted');
+          setStep('calendar');
+          setMessage('');
+          if (selectedTitle) selectedTitle.textContent = 'Selecciona una fecha';
+          if (selectedSubtitle) selectedSubtitle.textContent = 'Elige un día disponible para continuar.';
+          try { window.scrollTo({ top: 0, behavior: 'smooth' }); } catch (_) {}
+          return;
+        }
+
         if (!selectedSlot) {
           setMessage('Selecciona un horario primero.', 'error');
           return;
         }
 
-        if (!getPageFields(formPages.length - 1).every(validateField)) return;
-        const responses = collectResponses();
-        const formData = new FormData(form);
+        // No calificó (descalificación inmediata): mostramos el mensaje y no agendamos.
+        if (immediateDisqualified) {
+          const rule = readSelectedDisqualifyRule();
+          if (rule && rule.redirectUrl) {
+            showSuccessScreen('Gracias por tus respuestas.', { disqualified: true });
+            window.setTimeout(() => { try { window.location.assign(rule.redirectUrl); } catch (_) {} }, 1000);
+            return;
+          }
+          showSuccessScreen((rule && rule.message) || 'Por ahora no podemos agendar tu cita.', { disqualified: true });
+          return;
+        }
+
+        // En "formulario primero" los datos ya se validaron y recolectaron en el gate.
+        if (!formFirst && !getPageFields(formPages.length - 1).every(validateField)) return;
+        const responses = formFirst ? gateResponses : collectResponses();
+        const formData = formFirst ? (gateFormData || new FormData(form)) : new FormData(form);
 
         if (calendar.preview) {
           setMessage('Vista previa del sitio: no se creo ninguna cita.', 'preview');
@@ -2576,6 +2902,18 @@ export function renderPublicCalendarHtml(calendar, { host = '', embedded = false
             })
           });
           const payload = await response.json();
+          // (CAL-QUAL) El servidor descalificó: no se agendó. Mostramos el mensaje del
+          // formulario (o redirigimos) en vez de un error rojo.
+          if (payload && payload.disqualified) {
+            selectedSlot = '';
+            if (payload.redirectUrl) {
+              showSuccessScreen('Gracias por tus respuestas.', { disqualified: true });
+              window.setTimeout(() => { try { window.location.assign(payload.redirectUrl); } catch (_) {} }, 1200);
+              return;
+            }
+            showSuccessScreen(payload.message || 'Gracias por tus respuestas. Por ahora no podemos agendar tu cita.', { disqualified: true });
+            return;
+          }
           if (!response.ok || payload.success === false) throw new Error(payload.error || 'No se pudo agendar');
           trackCalendarMetaEvent(payload.data?.metaEvent);
           const completionRedirectUrl = getCompletionRedirectUrl();
@@ -2607,6 +2945,8 @@ export function renderPublicCalendarHtml(calendar, { host = '', embedded = false
 
       renderTimezoneControl();
       loadSlots();
+      // (CAL-FLOW) Si el formulario va primero, mostramos el gate al cargar.
+      if (formFirst) enterGate();
     })();
   </script>
 </body>

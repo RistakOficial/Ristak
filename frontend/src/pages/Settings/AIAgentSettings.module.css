@@ -4,6 +4,33 @@
   gap: 18px;
 }
 
+/* Mini-modal de "alcance de contactos" en modo avanzado */
+.scopePromptModal {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+.scopePromptText {
+  margin: 0;
+  font-size: 14px;
+  line-height: 1.55;
+  color: var(--text-dim);
+}
+.scopePromptText strong {
+  color: var(--text);
+  font-weight: 600;
+}
+.scopePromptActions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+.scopePromptHint {
+  margin: 0;
+  font-size: 12.5px;
+  color: var(--text-mute);
+}
+
 .header {
   display: flex;
   align-items: flex-start;
