@@ -1116,11 +1116,11 @@ export const Appointments: React.FC = () => {
 
   // === BLOCKED SLOTS HANDLERS ===
 
-  // Abrir el modal para CREAR un bloqueo nuevo (botón "Bloquear fechas").
+  // Abrir el modal para CREAR una ausencia nueva (botón "Marcar ausencia").
   // Prellena el rango con el día que se está viendo en el calendario.
   const handleOpenCreateBlockedSlot = () => {
     if (!selectedCalendar) {
-      showToast('warning', 'Selecciona un calendario', 'Debes elegir un calendario activo antes de bloquear fechas.');
+      showToast('warning', 'Selecciona un calendario', 'Debes elegir un calendario activo antes de marcar una ausencia.');
       return;
     }
 
@@ -1152,11 +1152,11 @@ export const Appointments: React.FC = () => {
         },
         accessToken || undefined
       );
-      showToast('success', 'Horario bloqueado', 'El horario se bloqueó correctamente.');
+      showToast('success', 'Ausencia marcada', 'Listo, no podrán agendarte en ese tiempo.');
       setIsBlockedSlotModalOpen(false);
       await loadBlockedSlots();
     } catch (error) {
-      showToast('error', 'No se pudo bloquear el horario', 'Intenta nuevamente más tarde.');
+      showToast('error', 'No se pudo marcar la ausencia', 'Intenta nuevamente más tarde.');
       throw error;
     } finally {
       setLoading(false);
@@ -1176,11 +1176,11 @@ export const Appointments: React.FC = () => {
 
     try {
       await calendarsService.updateBlockedSlot(eventId, payload, accessToken || undefined);
-      showToast('success', 'Horario actualizado', 'Los cambios se guardaron correctamente.');
+      showToast('success', 'Ausencia actualizada', 'Los cambios se guardaron correctamente.');
       setIsBlockedSlotModalOpen(false);
       await loadBlockedSlots();
     } catch (error) {
-      showToast('error', 'Error al actualizar', 'No se pudo guardar el horario. Intenta nuevamente.');
+      showToast('error', 'Error al actualizar', 'No se pudo guardar la ausencia. Intenta nuevamente.');
       throw error;
     }
   };
@@ -1191,11 +1191,11 @@ export const Appointments: React.FC = () => {
 
     try {
       await calendarsService.deleteBlockedSlot(blockedSlotId, accessToken || undefined);
-      showToast('success', 'Bloqueo eliminado', 'El horario se desbloqueó correctamente.');
+      showToast('success', 'Ausencia eliminada', 'Volviste a estar disponible en ese tiempo.');
       setIsBlockedSlotModalOpen(false);
       await loadBlockedSlots();
     } catch (error) {
-      showToast('error', 'Error al eliminar', 'No se pudo eliminar el bloqueo. Intenta nuevamente.');
+      showToast('error', 'Error al quitar', 'No se pudo quitar la ausencia. Intenta nuevamente.');
       throw error;
     }
   };
@@ -1680,7 +1680,7 @@ export const Appointments: React.FC = () => {
                 onClick={handleOpenCreateBlockedSlot}
                 leftIcon={<Lock size={16} />}
               >
-                Bloquear fechas
+                Marcar ausencia
               </Button>
             </div>
 
@@ -1910,7 +1910,7 @@ export const Appointments: React.FC = () => {
                             if (dayBlockedSlots.length > 0) {
                               // Tooltip con info de cada bloqueo: "10:00-11:30 (Título) | 14:00-15:00 (Título 2)"
                               const tooltipContent = dayBlockedSlots.map(slot => {
-                                const title = slot.reason || 'Bloqueado';
+                                const title = slot.reason || 'Ausencia';
                                 const timeRange = `${slot.startTime}-${slot.endTime}`;
                                 return `${timeRange} (${title})`;
                               }).join(' | ');
@@ -1923,7 +1923,7 @@ export const Appointments: React.FC = () => {
                                   onClick={(e) => { e.stopPropagation(); handleBlockedSlotClick(dayBlockedSlots[0] as any); }}
                                 >
                                   <Lock size={12} className={styles.blockedIcon} />
-                                  <span>{dayBlockedSlots.length} bloqueado{dayBlockedSlots.length > 1 ? 's' : ''}</span>
+                                  <span>{dayBlockedSlots.length} ausencia{dayBlockedSlots.length > 1 ? 's' : ''}</span>
                                 </div>
                               );
                             }
@@ -2111,7 +2111,7 @@ export const Appointments: React.FC = () => {
                                   top: `${top}%`,
                                   height: `${height}%`
                                 }}
-                                title={`Bloqueado: ${slot.reason || 'No disponible'} - Click para editar`}
+                                title={`${slot.reason || 'No disponible'} · Clic para editar`}
                                 onClick={() => handleBlockedSlotClick(slot as any)}
                               >
                                 <div className={styles.blockedSlotLabel}>
@@ -2287,7 +2287,7 @@ export const Appointments: React.FC = () => {
                             height: `${height}%`
                           }}
                           onClick={() => handleBlockedSlotClick(slot as any)}
-                          title={`Bloqueado: ${slot.reason || 'No disponible'} - Click para editar`}
+                          title={`${slot.reason || 'No disponible'} · Clic para editar`}
                         >
                           <div className={styles.blockedSlotLabel}>
                             🔒 {slot.startTime} - {slot.endTime}
