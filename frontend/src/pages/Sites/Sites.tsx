@@ -12421,10 +12421,6 @@ export const Sites: React.FC = () => {
                           activePageId={activePage?.id || DEFAULT_FUNNEL_PAGE_ID}
                           onPatchSettings={(patch) => patchBlockSettingsLocal(formEditBlock, patch)}
                           onSave={() => { void handleSaveBlock(formEditBlock.id) }}
-                          metaPixelConnected={metaPixelConnected}
-                          onPatchSite={patchEditorToolbarSettingsSite}
-                          onPatchTheme={patchEditorToolbarSettingsTheme}
-                          onSaveSite={saveEditorToolbarSettingsSite}
                         />
                       )}
                     </div>
@@ -32253,73 +32249,10 @@ const FormCompletionSettingsControls: React.FC<{
 
 const FORM_EMBED_DRAFT_SOURCE_VALUE = '__embedded_form_draft__'
 
-// Control del píxel de Meta dentro del popover de configuración del formulario.
-// Reusa el evento a NIVEL DE SITIO (site.metaEventName + site.metaCapiEnabled +
-// theme.metaEventParameters), que el backend dispara al enviar el formulario tanto
-// en formularios standalone como en landings con formulario embebido
-// (getFormSubmitMetaEventName cae al evento de sitio cuando la página no define un
-// override "Al enviar"). Elegir un evento prende CAPI; "Sin evento" lo apaga.
-const FormPixelSettingsControls: React.FC<{
-  site: PublicSite
-  onPatchSite: (patch: Partial<PublicSite>) => void
-  onPatchTheme: (patch: Partial<SiteTheme>) => void
-  onSaveSite: () => void
-}> = ({ site, onPatchSite, onPatchTheme, onSaveSite }) => {
-  const theme = site.theme || {}
-  const eventName = site.metaCapiEnabled ? normalizeMetaEventName(site.metaEventName, 'none') : 'none'
-  const hasConversion = eventName !== 'none'
-  const [paramsOpen, setParamsOpen] = useState(false)
-
-  return (
-    <div className={styles.formPixelToolbarControls}>
-      <label className={`${styles.field} ${styles.formToolbarField}`}>
-        <span>Píxel de Facebook al enviar</span>
-        <CustomSelect
-          value={eventName}
-          dropdownMinWidth={260}
-          onChange={(event) => {
-            const metaEventName = event.target.value
-            onPatchSite({ metaEventName, metaCapiEnabled: metaEventName !== 'none' })
-            onPatchTheme({ metaEventParameters: pruneMetaEventParametersForEvent(theme.metaEventParameters, metaEventName) })
-            window.setTimeout(onSaveSite, 0)
-          }}
-          onBlur={onSaveSite}
-        >
-          {metaEventOptions.map(option => (
-            <option key={option.value} value={option.value}>{option.label}</option>
-          ))}
-        </CustomSelect>
-      </label>
-      {hasConversion && (
-        <div className={styles.metaParametersInspector}>
-          <button
-            type="button"
-            className={[
-              styles.metaParametersInspectorToggle,
-              paramsOpen ? styles.metaParametersInspectorToggleActive : '',
-              hasMetaEventParameters(theme.metaEventParameters) ? styles.metaParametersInspectorToggleFilled : ''
-            ].filter(Boolean).join(' ')}
-            aria-expanded={paramsOpen}
-            onClick={() => setParamsOpen(open => !open)}
-          >
-            <Settings2 size={14} />
-            <span>Parámetros Meta</span>
-            <ChevronDown size={13} />
-          </button>
-          {paramsOpen && (
-            <MetaEventParametersEditor
-              eventName={eventName}
-              parameters={theme.metaEventParameters}
-              onChange={(metaEventParameters) => onPatchTheme({ metaEventParameters })}
-              onCommit={onSaveSite}
-            />
-          )}
-        </div>
-      )}
-    </div>
-  )
-}
-
+// Nota: el evento del píxel de Meta "Al enviar" NO se configura aquí. El sitio es el
+// master absoluto: getFormSubmitMetaEventName lee el evento a nivel de la página/sitio
+// contenedor (Ajustes del sitio → Meta Pixel + CAPI → "Al enviar formulario"), nunca el
+// del formulario embebido/importado. Por eso el form_embed no expone control de Meta.
 const FormEmbedToolbarControls: React.FC<{
   site: PublicSite
   block: SiteBlock
@@ -32328,11 +32261,7 @@ const FormEmbedToolbarControls: React.FC<{
   activePageId: string
   onPatchSettings: (patch: Record<string, unknown>) => void
   onSave: () => void
-  metaPixelConnected: boolean
-  onPatchSite: (patch: Partial<PublicSite>) => void
-  onPatchTheme: (patch: Partial<SiteTheme>) => void
-  onSaveSite: () => void
-}> = ({ site, block, forms, pages, activePageId, onPatchSettings, onSave, metaPixelConnected, onPatchSite, onPatchTheme, onSaveSite }) => {
+}> = ({ site, block, forms, pages, activePageId, onPatchSettings, onSave }) => {
   const settings = block.settings || {}
   const selectedFormId = getEmbeddedFormSourceId(block)
   const selectedForm = selectedFormId ? forms.find(form => form.id === selectedFormId) : null
@@ -32395,19 +32324,6 @@ const FormEmbedToolbarControls: React.FC<{
         }}
         onSave={onSave}
       />
-      {/* El evento del píxel "Al enviar" se guarda a nivel del sitio contenedor
-          (metaEventName/metaCapiEnabled/theme.metaEventParameters), que es lo que el
-          backend dispara al enviar — tanto en form standalone como en form embebido
-          dentro de un landing. Un form_embed SOLO vive en landings (isFormSite=false),
-          así que NO se puede gatear con isFormSite o el control nunca aparece. */}
-      {metaPixelConnected && (
-        <FormPixelSettingsControls
-          site={site}
-          onPatchSite={onPatchSite}
-          onPatchTheme={onPatchTheme}
-          onSaveSite={onSaveSite}
-        />
-      )}
     </div>
   )
 }
@@ -32599,10 +32515,6 @@ const FormToolbarConfigSlot: React.FC<{
   activePageId: string
   onPatchSettings: (patch: Record<string, unknown>) => void
   onSave: () => void
-  metaPixelConnected: boolean
-  onPatchSite: (patch: Partial<PublicSite>) => void
-  onPatchTheme: (patch: Partial<SiteTheme>) => void
-  onSaveSite: () => void
 }> = (props) => {
   const sourceId = getEmbeddedFormSourceId(props.block)
   const sourceName =
