@@ -10,7 +10,7 @@ import { PhoneDateTimeField } from '@/components/phone/ui/PhoneDateTimeField';
 import { formatTimeLabel } from '@/components/phone/ui/PhoneTimeField';
 import { PhoneDurationField, formatDurationLabel } from '@/components/phone/ui/PhoneDurationField';
 import { PhoneSegmentedTabs, PhoneSheet } from '@/components/phone/ui';
-import { CalendarEvent, Calendar, calendarsService, FreeSlot, BlockedSlot } from '@/services/calendarsService';
+import { CalendarEvent, Calendar, calendarsService, FreeSlot, BlockedSlot, RawBlockedSlot } from '@/services/calendarsService';
 import { apiUrl } from '@/services/apiBaseUrl';
 import { useNotification } from '@/contexts/NotificationContext';
 import { useTimezone } from '@/contexts/TimezoneContext';
@@ -934,7 +934,7 @@ export const AppointmentModal: React.FC<AppointmentModalProps> = ({
   /**
    * Verificar si el horario seleccionado está bloqueado
    */
-  const checkIfTimeIsBlocked = async (startTime: string, endTime: string): Promise<BlockedSlot | null> => {
+  const checkIfTimeIsBlocked = async (startTime: string, endTime: string): Promise<RawBlockedSlot | null> => {
     if (allowHighLevelOverlap) return null;
     if (!calendar || !accessToken || !locationId) return null;
 
@@ -963,11 +963,12 @@ export const AppointmentModal: React.FC<AppointmentModalProps> = ({
 
       // Verificar si hay conflicto con algún blocked slot
       for (const slot of blockedSlots) {
-        if (slot.date !== dateKey) continue;
+        if ((slot as any).date !== dateKey) continue;
 
         // Comparar horarios (formato "HH:mm")
-        const slotStart = slot.startTime;
-        const slotEnd = slot.endTime;
+        const slotStart = (slot as any).startTime as string | undefined;
+        const slotEnd = (slot as any).endTime as string | undefined;
+        if (!slotStart || !slotEnd) continue;
 
         // Verificar si hay solapamiento
         // El evento está bloqueado si:
@@ -2220,7 +2221,7 @@ export const AppointmentModal: React.FC<AppointmentModalProps> = ({
     <Modal
       isOpen={isClient && showDeleteConfirm}
       onClose={() => setShowDeleteConfirm(false)}
-      title="¿Estás seguro?"
+      title="Eliminar cita"
       message={`¿Deseas eliminar la cita ${formData.title || event?.title || 'Sin título'}? Esta acción no se puede deshacer.`}
       type="confirm"
       confirmText="Eliminar"

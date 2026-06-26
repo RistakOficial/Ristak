@@ -411,10 +411,12 @@ export const AIAgentSettings: React.FC = () => {
   const handleDeleteToken = () => {
     showConfirm(
       'Eliminar token',
-      'Se borrará sólo el token de OpenAI. El modelo y la descripción del negocio se quedan guardados.',
+      'Se borrará el token de OpenAI y Ristak AI dejará de usarlo para voz y chat. El modelo y la descripción del negocio se conservan. Esta acción no se puede deshacer.',
       deleteToken,
       'Eliminar',
-      'Cancelar'
+      'Cancelar',
+      undefined,
+      { typeToConfirm: 'ELIMINAR' }
     )
   }
 

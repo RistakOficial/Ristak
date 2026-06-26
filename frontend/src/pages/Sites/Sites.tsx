@@ -7895,7 +7895,11 @@ export const Sites: React.FC = () => {
     [sites]
   )
   const forms = useMemo(
-    () => sites.filter(site => site.siteType === 'standard_form' || site.siteType === 'interactive_form'),
+    // El formulario de sistema del calendario (librarySource 'calendar') NO es un
+    // formulario del usuario: se oculta de la biblioteca de Formularios y de TODOS los
+    // selectores de embed/respuestas/video-gate. Las citas siguen guardando contacto por
+    // su propio camino, así que ocultarlo no afecta el funcionamiento.
+    () => sites.filter(site => (site.siteType === 'standard_form' || site.siteType === 'interactive_form') && getSiteLibrarySource(site) !== 'calendar'),
     [sites]
   )
   const sitesById = useMemo(
@@ -10829,7 +10833,9 @@ export const Sites: React.FC = () => {
         void deleteSite()
       },
       'Eliminar',
-      'Cancelar'
+      'Cancelar',
+      undefined,
+      { typeToConfirm: 'ELIMINAR' }
     )
   }
 
@@ -24378,10 +24384,12 @@ const SitesMediaPickerModal: React.FC<{
     event.stopPropagation()
     showConfirm(
       'Eliminar archivo',
-      `Esto eliminará "${getMediaPickerAssetName(asset)}" de Media. Los sitios que ya usen su URL podrían dejar de mostrarlo.`,
+      `Esto eliminará "${getMediaPickerAssetName(asset)}" de Media. Los sitios que ya usen su URL podrían dejar de mostrarlo. Esta acción no se puede deshacer.`,
       () => { void deleteAsset(asset) },
       'Eliminar',
-      'Cancelar'
+      'Cancelar',
+      undefined,
+      { typeToConfirm: 'ELIMINAR' }
     )
   }
 

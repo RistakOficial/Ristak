@@ -269,7 +269,7 @@ export const SessionsTable: React.FC<SessionsTableProps> = ({
 
     showConfirm(
       'Eliminar sesiones',
-      `¿Estás seguro de eliminar ${selectedIds.size} sesión(es)? Esta acción no se puede deshacer.`,
+      `Se eliminarán ${selectedIds.size} sesión(es) de tracking de forma permanente. Esta acción no se puede deshacer.`,
       async () => {
         try {
           await trackingService.deleteSessions(Array.from(selectedIds))
@@ -283,7 +283,9 @@ export const SessionsTable: React.FC<SessionsTableProps> = ({
         }
       },
       'Eliminar',
-      'Cancelar'
+      'Cancelar',
+      undefined,
+      { typeToConfirm: 'ELIMINAR' }
     )
   }
 

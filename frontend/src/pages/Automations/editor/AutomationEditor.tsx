@@ -1346,7 +1346,7 @@ export const AutomationEditor: React.FC = () => {
     if (!current) return
     showConfirm(
       'Eliminar automatización',
-      `¿Seguro que quieres eliminar "${current.name}"? Esta acción no se puede deshacer.`,
+      `Se eliminará "${current.name}" junto con su flujo y configuración. Esta acción no se puede deshacer.`,
       () => {
         void automationsService
           .deleteAutomation(current.id)
@@ -1357,7 +1357,9 @@ export const AutomationEditor: React.FC = () => {
           .catch(() => showToast('error', 'No se pudo eliminar la automatización'))
       },
       'Eliminar',
-      'Cancelar'
+      'Cancelar',
+      undefined,
+      { typeToConfirm: 'ELIMINAR' }
     )
   }
 

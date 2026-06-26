@@ -189,7 +189,7 @@ export const Domains: React.FC = () => {
   const confirmRemoveDomain = () => {
     showConfirm(
       'Eliminar dominio',
-      `Se quitará ${savedDomain} de tu cuenta y tus páginas dejarán de abrirse con ese dominio. Puedes volver a conectarlo cuando quieras.`,
+      `Se quitará ${savedDomain} de tu cuenta y tus páginas dejarán de abrirse con ese dominio. Esta acción no se puede deshacer.`,
       async () => {
         setRemoving(true)
         try {
@@ -203,14 +203,16 @@ export const Domains: React.FC = () => {
         }
       },
       'Eliminar',
-      'Cancelar'
+      'Cancelar',
+      undefined,
+      { typeToConfirm: 'ELIMINAR' }
     )
   }
 
   const confirmRemoveAppDomain = () => {
     showConfirm(
       'Eliminar dominio de app',
-      `Se quitará ${savedAppDomain} del CRM. Puedes volver a conectarlo cuando quieras.`,
+      `Se quitará ${savedAppDomain} del CRM y el dashboard dejará de abrirse con ese dominio. Esta acción no se puede deshacer.`,
       async () => {
         setRemovingApp(true)
         try {
@@ -224,7 +226,9 @@ export const Domains: React.FC = () => {
         }
       },
       'Eliminar',
-      'Cancelar'
+      'Cancelar',
+      undefined,
+      { typeToConfirm: 'ELIMINAR' }
     )
   }
 

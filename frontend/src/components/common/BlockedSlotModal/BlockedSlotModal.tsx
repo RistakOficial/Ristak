@@ -35,94 +35,11 @@ interface User {
 const DEFAULT_TIMEZONE = Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
 
 const INITIAL_FORM_STATE = {
-  title: 'Horario bloqueado',
+  title: 'Ausencia',
   startTime: '',
   endTime: '',
   timeZone: DEFAULT_TIMEZONE,
   assignedUserId: ''
-};
-
-const getTimeZoneParts = (date: Date, timeZone: string) => {
-  const formatter = new Intl.DateTimeFormat('en-US', {
-    timeZone,
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit',
-    hour: '2-digit',
-    minute: '2-digit',
-    second: '2-digit',
-    hour12: false
-  });
-
-  const parts = formatter.formatToParts(date);
-  const result: Record<string, number> = {};
-  for (const part of parts) {
-    if (part.type !== 'literal') {
-      result[part.type] = Number(part.value);
-    }
-  }
-  return result;
-};
-
-const toLocalInputValue = (isoString: string, timeZone: string): string => {
-  try {
-    const date = new Date(isoString);
-    if (isNaN(date.getTime())) return '';
-
-    const parts = getTimeZoneParts(date, timeZone);
-    if (!parts) return '';
-
-    const year = parts.year || date.getFullYear();
-    const month = String(parts.month || date.getMonth() + 1).padStart(2, '0');
-    const day = String(parts.day || date.getDate()).padStart(2, '0');
-    const hour = String(parts.hour || date.getHours()).padStart(2, '0');
-    const minute = String(parts.minute || date.getMinutes()).padStart(2, '0');
-
-    return `${year}-${month}-${day}T${hour}:${minute}`;
-  } catch {
-    return '';
-  }
-};
-
-const convertLocalInputToISO = (localInput: string, timeZone: string): string | null => {
-  if (!localInput) return null;
-
-  try {
-    const [datePart, timePart] = localInput.split('T');
-    const [year, month, day] = datePart.split('-').map(Number);
-    const [hour, minute] = timePart.split(':').map(Number);
-
-    const dateString = `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}T${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')}:00`;
-
-    const localDate = new Date(dateString);
-    if (isNaN(localDate.getTime())) return null;
-
-    const formatter = new Intl.DateTimeFormat('en-US', {
-      timeZone,
-      year: 'numeric',
-      month: '2-digit',
-      day: '2-digit',
-      hour: '2-digit',
-      minute: '2-digit',
-      second: '2-digit',
-      hour12: false,
-      timeZoneName: 'short'
-    });
-
-    const parts = formatter.formatToParts(localDate);
-    const tzParts: Record<string, string> = {};
-    parts.forEach(p => {
-      if (p.type !== 'literal') tzParts[p.type] = p.value;
-    });
-
-    const utcDate = new Date(`${tzParts.year}-${tzParts.month}-${tzParts.day}T${tzParts.hour}:${tzParts.minute}:${tzParts.second}Z`);
-    const offset = (localDate.getTime() - utcDate.getTime()) / 60000;
-    const finalDate = new Date(localDate.getTime() - offset * 60000);
-
-    return finalDate.toISOString();
-  } catch {
-    return null;
-  }
 };
 
 // Presets de bloqueo rápido
@@ -155,7 +72,7 @@ const BLOCKING_PRESETS: BlockingPreset[] = [
   {
     value: 'full_day',
     label: 'Todo el día',
-    description: 'Bloquea todo el día (24 horas)',
+    description: 'No disponible todo el día',
     showStartDate: true,
     showStartTime: false,
     showEndDate: false,
@@ -166,7 +83,7 @@ const BLOCKING_PRESETS: BlockingPreset[] = [
   {
     value: 'morning',
     label: 'Media mañana',
-    description: 'Bloquea 4 horas desde la hora que elijas',
+    description: '4 horas desde la hora que elijas',
     showStartDate: true,
     showStartTime: true,
     showEndDate: false,
@@ -177,7 +94,7 @@ const BLOCKING_PRESETS: BlockingPreset[] = [
   {
     value: 'afternoon',
     label: 'Media tarde',
-    description: 'Bloquea 4 horas desde la hora que elijas',
+    description: '4 horas desde la hora que elijas',
     showStartDate: true,
     showStartTime: true,
     showEndDate: false,
@@ -399,14 +316,12 @@ export const BlockedSlotModal: React.FC<BlockedSlotModalProps> = ({
         return;
     }
 
-    // Convertir a formato ISO local para los inputs datetime-local
-    const startISO = startDate.toISOString();
-    const endISO = endDate.toISOString();
-
+    // DateTimePicker consume/emite ISO (hora local del navegador). Le pasamos ISO directo
+    // para NO doble-convertir la zona horaria (ese era el bug que desfasaba la hora del bloqueo).
     setFormData({
       ...formData,
-      startTime: toLocalInputValue(startISO, formData.timeZone),
-      endTime: toLocalInputValue(endISO, formData.timeZone)
+      startTime: startDate.toISOString(),
+      endTime: endDate.toISOString()
     });
   };
 
@@ -428,13 +343,12 @@ export const BlockedSlotModal: React.FC<BlockedSlotModalProps> = ({
       try {
         const startDate = new Date(value);
         if (!isNaN(startDate.getTime())) {
-          // Calcular end time según la duración
+          // Calcular end time según la duración (ISO directo para DateTimePicker)
           const endDate = new Date(startDate.getTime() + currentPreset.duration * 60 * 60 * 1000);
-          const endISO = endDate.toISOString();
           setFormData({
             ...formData,
             startTime: value,
-            endTime: toLocalInputValue(endISO, formData.timeZone)
+            endTime: endDate.toISOString()
           });
         }
       } catch (error) {
@@ -447,28 +361,34 @@ export const BlockedSlotModal: React.FC<BlockedSlotModalProps> = ({
   // Inicializar formulario
   useEffect(() => {
     if (isOpen) {
+      // Siempre arrancar en "Personalizado": en edición garantiza que se vean ambos
+      // selectores (inicio y fin); en creación es el modo neutro por defecto.
+      setSelectedPreset('custom');
       if (isCreateMode) {
         // Modo crear: usar defaults
         setFormData({
-          title: 'Horario bloqueado',
+          title: 'Ausencia',
           startTime: defaultStart || '',
           endTime: defaultEnd || '',
           timeZone: defaultTimeZone,
           assignedUserId: users[0]?.id || ''
         });
       } else if (blockedSlot) {
-        // Modo editar: cargar datos del blocked slot
-        const startTimeLocal = blockedSlot.date && blockedSlot.startTime
-          ? toLocalInputValue(`${blockedSlot.date}T${blockedSlot.startTime}:00`, defaultTimeZone)
-          : '';
-        const endTimeLocal = blockedSlot.date && blockedSlot.endTime
-          ? toLocalInputValue(`${blockedSlot.date}T${blockedSlot.endTime}:00`, defaultTimeZone)
-          : '';
+        // Modo editar: DateTimePicker consume ISO directo (hora local del navegador).
+        // Preferimos el instante REAL del bloqueo (startIso/endIso); si no, lo reconstruimos.
+        const startTimeValue = blockedSlot.startIso
+          || (blockedSlot.date && blockedSlot.startTime
+            ? new Date(`${blockedSlot.date}T${blockedSlot.startTime}:00`).toISOString()
+            : '');
+        const endTimeValue = blockedSlot.endIso
+          || (blockedSlot.date && blockedSlot.endTime
+            ? new Date(`${blockedSlot.date}T${blockedSlot.endTime}:00`).toISOString()
+            : '');
 
         setFormData({
-          title: blockedSlot.reason || 'Horario bloqueado',
-          startTime: startTimeLocal,
-          endTime: endTimeLocal,
+          title: blockedSlot.reason || 'Ausencia',
+          startTime: startTimeValue,
+          endTime: endTimeValue,
           timeZone: defaultTimeZone,
           assignedUserId: blockedSlot.blockedBy || users[0]?.id || ''
         });
@@ -477,6 +397,7 @@ export const BlockedSlotModal: React.FC<BlockedSlotModalProps> = ({
       // Reset al cerrar
       setFormData(INITIAL_FORM_STATE);
       setShowDeleteConfirm(false);
+      setSelectedPreset('custom');
     }
   }, [isOpen, isCreateMode, blockedSlot, defaultStart, defaultEnd, defaultTimeZone, users]);
 
@@ -496,13 +417,13 @@ export const BlockedSlotModal: React.FC<BlockedSlotModalProps> = ({
 
       // Si NO hay assignedUserId y el calendario SÍ tiene team members, mostrar error
       if (!formData.assignedUserId && hasTeamMembers) {
-        showToast('error', 'Usuario requerido', 'Debes seleccionar un usuario para asignar el bloqueo');
+        showToast('error', 'Usuario requerido', 'Debes seleccionar un usuario para la ausencia');
         setIsSaving(false);
         return;
       }
 
       const payload: any = {
-        title: formData.title.trim() || 'Horario bloqueado'
+        title: formData.title.trim() || 'Ausencia'
       };
 
       // IMPORTANTE: El API de HighLevel usa lógica EXCLUSIVA (XOR):
@@ -520,15 +441,19 @@ export const BlockedSlotModal: React.FC<BlockedSlotModalProps> = ({
         payload.calendarId = calendar?.id;
       }
 
-      if (formData.startTime) {
-        const startIso = convertLocalInputToISO(formData.startTime, formData.timeZone);
-        if (startIso) payload.startTime = startIso;
+      // formData.startTime / endTime ya son ISO (DateTimePicker emite ISO). No reconvertir
+      // por zona horaria: hacerlo desfasaba la hora del bloqueo.
+      const startIso = formData.startTime ? new Date(formData.startTime).toISOString() : null;
+      const endIso = formData.endTime ? new Date(formData.endTime).toISOString() : null;
+
+      if (startIso && endIso && new Date(endIso).getTime() <= new Date(startIso).getTime()) {
+        showToast('error', 'Rango inválido', 'La hora de fin debe ser posterior a la de inicio');
+        setIsSaving(false);
+        return;
       }
 
-      if (formData.endTime) {
-        const endIso = convertLocalInputToISO(formData.endTime, formData.timeZone);
-        if (endIso) payload.endTime = endIso;
-      }
+      if (startIso) payload.startTime = startIso;
+      if (endIso) payload.endTime = endIso;
 
       if (isCreateMode) {
         // Agregar calendarId y locationId solo en modo crear
@@ -573,7 +498,7 @@ export const BlockedSlotModal: React.FC<BlockedSlotModalProps> = ({
       <Modal
         isOpen={isOpen}
         onClose={onClose}
-        title={isCreateMode ? 'Bloquear horario' : 'Editar horario bloqueado'}
+        title={isCreateMode ? 'Marcar ausencia' : 'Editar ausencia'}
         size="sm"
         type="custom"
         flushContent
@@ -584,12 +509,12 @@ export const BlockedSlotModal: React.FC<BlockedSlotModalProps> = ({
           {/* Título/Razón */}
           <div className={styles.field}>
             <label className={styles.label}>
-              Título o razón
+              Motivo
             </label>
             <input
               type="text"
               className={styles.input}
-              placeholder="Ej: Reunión interna, Almuerzo, Fuera de oficina..."
+              placeholder="Ej: Vacaciones, día festivo, fuera de oficina..."
               value={formData.title}
               onChange={(e) => setFormData({ ...formData, title: e.target.value })}
             />
@@ -599,7 +524,7 @@ export const BlockedSlotModal: React.FC<BlockedSlotModalProps> = ({
           {isCreateMode && (
             <div className={styles.field}>
               <label className={styles.label}>
-                Opciones de bloqueo rápido
+                Opciones rápidas
               </label>
               <div className={styles.presetsGrid}>
                 {BLOCKING_PRESETS.map((preset) => (
@@ -728,7 +653,7 @@ export const BlockedSlotModal: React.FC<BlockedSlotModalProps> = ({
               onClick={handleSave}
               disabled={isSaving}
             >
-              {isSaving ? 'Guardando...' : isCreateMode ? 'Crear bloqueo' : 'Guardar cambios'}
+              {isSaving ? 'Guardando...' : isCreateMode ? 'Guardar ausencia' : 'Guardar cambios'}
             </Button>
           </div>
         </div>
@@ -738,10 +663,10 @@ export const BlockedSlotModal: React.FC<BlockedSlotModalProps> = ({
     <Modal
       isOpen={isClient && showDeleteConfirm}
       onClose={() => setShowDeleteConfirm(false)}
-      title="Confirmar eliminación"
-      message="¿Estás seguro de que deseas eliminar este horario bloqueado? Esta acción no se puede deshacer."
+      title="Quitar ausencia"
+      message="¿Seguro que quieres quitar esta ausencia? Volverás a estar disponible en ese tiempo."
       type="confirm"
-      confirmText="Eliminar"
+      confirmText="Quitar"
       cancelText="Cancelar"
       onConfirm={handleConfirmDelete}
     />

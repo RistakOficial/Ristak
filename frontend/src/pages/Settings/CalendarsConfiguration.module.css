@@ -207,8 +207,8 @@
   gap: 14px;
 }
 
-/* Toolbar de la lista: selector de origen a la izquierda y acción de crear
-   siempre alineada a la derecha (sin encimarse aunque falte el selector). */
+/* Toolbar de la lista: acción de crear a la izquierda, justo bajo el
+   encabezado, y el selector de origen (si lo hay) a continuación. */
 .panelToolbar {
   display: flex;
   align-items: center;
@@ -216,11 +216,6 @@
   gap: 10px;
   flex-wrap: wrap;
   padding: 4px 0 2px;
-}
-
-.toolbarCreate {
-  margin-left: auto;
-  flex-shrink: 0;
 }
 
 .sourceControl {
@@ -260,51 +255,6 @@
   flex-shrink: 0;
   color: var(--color-text-tertiary);
   pointer-events: none;
-}
-
-.compactHelp {
-  padding: 0;
-  border: 0;
-  border-radius: 0;
-  color: var(--color-text-secondary);
-  background: transparent;
-}
-
-.compactHelp summary {
-  display: flex;
-  align-items: center;
-  gap: 9px;
-  color: var(--color-text-secondary);
-  font-size: 12px;
-  font-weight: 550;
-  cursor: pointer;
-  list-style: none;
-}
-
-.compactHelp summary::-webkit-details-marker {
-  display: none;
-}
-
-.compactHelp summary::before {
-  content: '';
-  width: 6px;
-  height: 6px;
-  margin-left: 2px;
-  border-right: 1.5px solid currentColor;
-  border-bottom: 1.5px solid currentColor;
-  transform: rotate(-45deg);
-  opacity: 0.55;
-  transition: transform 0.15s ease;
-}
-
-.compactHelp[open] summary::before {
-  transform: rotate(45deg);
-}
-
-.compactHelp p {
-  margin: 8px 0 0 18px;
-  font-size: 12px;
-  line-height: 1.55;
 }
 
 .notificationsPanel {
@@ -3026,13 +2976,8 @@
   .sourceControl,
   .sourceSelect,
   .formActions,
-  .supportLinks,
-  .toolbarCreate {
+  .supportLinks {
     width: 100%;
-  }
-
-  .toolbarCreate {
-    margin-left: 0;
   }
 
   .serviceEmailBox {

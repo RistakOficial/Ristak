@@ -224,7 +224,7 @@ export const VariableFields: React.FC = () => {
   const handleDeleteField = (field: VariableField) => {
     showConfirm(
       'Eliminar campo variable',
-      `El parámetro ${field.parameter} dejará de resolverse en mensajes nuevos.`,
+      `El parámetro ${field.parameter} dejará de resolverse en mensajes nuevos. Esta acción no se puede deshacer.`,
       () => {
         const archive = async () => {
           try {
@@ -251,7 +251,7 @@ export const VariableFields: React.FC = () => {
     const total = fieldsToDelete.length
     showConfirm(
       'Eliminar campos variables seleccionados',
-      `Se eliminarán ${total} campo${total === 1 ? '' : 's'} variable${total === 1 ? '' : 's'}. Sus parámetros dejarán de resolverse en mensajes nuevos.`,
+      `Se eliminarán ${total} campo${total === 1 ? '' : 's'} variable${total === 1 ? '' : 's'}. Sus parámetros dejarán de resolverse en mensajes nuevos. Esta acción no se puede deshacer.`,
       () => {
         const archive = async () => {
           setDeletingFields(true)
