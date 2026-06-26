@@ -1736,6 +1736,7 @@ type EmbeddedFormCanvasEditorBridge = {
   onDropField: (event: React.DragEvent<HTMLElement>, insertIndex: number) => void
   onDragLeave: (event: React.DragEvent<HTMLElement>) => void
   onMoveField: (fieldId: string, direction: BlockMoveDirection) => void
+  onDuplicateField?: (fieldId: string) => void
   onDeleteField: (fieldId: string) => void
 }
 
@@ -6938,6 +6939,8 @@ function FormEmbedEditorPanel({
   popupBlocks,
   metaPixelConnected,
   importedPopupDetected,
+  connectedSocialProfiles,
+  loadingSocialProfiles,
   pages,
   activePageId,
   sitePages,
@@ -6969,6 +6972,8 @@ function FormEmbedEditorPanel({
   popupBlocks: SiteBlock[]
   metaPixelConnected: boolean
   importedPopupDetected: boolean
+  connectedSocialProfiles: ConnectedSocialProfile[]
+  loadingSocialProfiles: boolean
   pages: SitePage[]
   activePageId: string
   sitePages: SitePage[]
@@ -7133,6 +7138,21 @@ function FormEmbedEditorPanel({
       )
     }
 
+    if (activeField.blockType === 'social_profile') {
+      // Mismo editor de perfil de red social que el standalone (marca, plataforma,
+      // perfil conectado, avatar, seguidores, verificado, escala).
+      return (
+        <SocialProfileSettings
+          site={site}
+          settings={activeFieldSettings}
+          connectedSocialProfiles={connectedSocialProfiles}
+          loadingSocialProfiles={loadingSocialProfiles}
+          onPatchSettings={patchActiveFieldSettings}
+          onSave={onSave}
+        />
+      )
+    }
+
     const textLabel = activeField.blockType === 'title'
       ? 'Texto del título'
       : activeField.blockType === 'subtitle'
@@ -7238,6 +7258,17 @@ function FormEmbedEditorPanel({
             <label className={styles.field}>
               <span>Texto dentro del campo</span>
               <input value={activeField.placeholder} onChange={(event) => patchActiveField({ placeholder: event.target.value })} onBlur={onSave} />
+            </label>
+          )}
+
+          {!activeFieldSystemPreset && (
+            <label className={styles.field}>
+              <span>Nombre interno</span>
+              <input
+                value={getSettingString(activeFieldSettings, 'internalName')}
+                onChange={(event) => patchActiveFieldSettings({ internalName: event.target.value })}
+                onBlur={onSave}
+              />
             </label>
           )}
 
@@ -11196,6 +11227,32 @@ export const Sites: React.FC = () => {
     patchEmbeddedFormFieldsLocal(nextFields, nextActive)
   }
 
+  const duplicateEmbeddedFormField = (fieldId: string) => {
+    const context = getCurrentEmbeddedFormContext()
+    if (!context) return
+    const source = context.fields.find(item => item.id === fieldId)
+    if (!source) return
+    const now = new Date().toISOString()
+    const baseInternal = getSettingString(source.settings || {}, 'internalName') || source.label || 'campo'
+    const clone: SiteBlock = {
+      ...source,
+      id: `embedded_${crypto.randomUUID()}`,
+      settings: {
+        ...(source.settings || {}),
+        internalName: makeUniqueInternalName(baseInternal, context.fields)
+      },
+      createdAt: now,
+      updatedAt: now
+    }
+    const sourceIndex = context.fields.findIndex(item => item.id === fieldId)
+    const nextFields = [
+      ...context.fields.slice(0, sourceIndex + 1),
+      clone,
+      ...context.fields.slice(sourceIndex + 1)
+    ]
+    patchEmbeddedFormFieldsLocal(nextFields, clone.id)
+  }
+
   const moveEmbeddedFormField = (fieldId: string, direction: BlockMoveDirection) => {
     const context = getCurrentEmbeddedFormContext()
     if (!context) return
@@ -12140,6 +12197,7 @@ export const Sites: React.FC = () => {
     onDropField: handleEmbeddedFormFieldDrop,
     onDragLeave: handleEmbeddedFormFieldDragLeave,
     onMoveField: moveEmbeddedFormField,
+    onDuplicateField: duplicateEmbeddedFormField,
     onDeleteField: removeEmbeddedFormField
   } : null
 
@@ -13004,6 +13062,8 @@ export const Sites: React.FC = () => {
                     popupBlocks={popupBlocks}
                     metaPixelConnected={metaPixelConnected}
                     importedPopupDetected={importedPopupDetected}
+                    connectedSocialProfiles={connectedSocialProfiles}
+                    loadingSocialProfiles={loadingSocialProfiles}
                     pages={formEditPages}
                     activePageId={activeEmbeddedFormPage?.id || DEFAULT_FUNNEL_PAGE_ID}
                     sitePages={pages}
@@ -31663,6 +31723,18 @@ const EmbeddedFormCanvasFields: React.FC<{
                   >
                     <ArrowDown size={13} />
                   </button>
+                  {editor.onDuplicateField && (
+                    <button
+                      type="button"
+                      onClick={(event) => {
+                        event.stopPropagation()
+                        editor.onDuplicateField?.(field.id)
+                      }}
+                      aria-label="Duplicar elemento"
+                    >
+                      <Copy size={13} />
+                    </button>
+                  )}
                   <button
                     type="button"
                     onClick={(event) => {
@@ -31920,6 +31992,12 @@ const FormFieldGlobalStyleControls: React.FC<{
 
   return (
     <AccordionSection id="form-field-global" title="Diseño global de campos">
+      <label className={styles.field}>
+        <span>Estilo de caja</span>
+        <CustomSelect value={normalizeFormInputStyle(theme.formInputStyle)} onChange={(event) => onPatchTheme({ formInputStyle: event.target.value as FormInputStyle })} onBlur={onSaveSite}>
+          {formInputStyleOptions.map(option => <option key={option.value} value={option.value}>{option.label}</option>)}
+        </CustomSelect>
+      </label>
       <div className={styles.twoColumn}>
         <ColorField label="Pregunta" value={getThemePaint(theme, 'formLabelColor', getThemePaint(theme, 'textColor', inputText))} allowGradient onChange={(value) => onPatchTheme({ formLabelColor: value })} onCommit={onSaveSite} />
         <ColorField label="Ayuda" value={getThemePaint(theme, 'formHelpColor', '#64748b')} allowGradient onChange={(value) => onPatchTheme({ formHelpColor: value })} onCommit={onSaveSite} />
