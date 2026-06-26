@@ -3122,20 +3122,54 @@ export async function resolveOrCreateContactForGoogleAppointment({ email, name, 
   return contactId
 }
 
+// Normaliza un día a número 0..6 (igual que Date.getDay(): 0=domingo).
+// Acepta number o string ("1") y la convención ISO 7=domingo -> 0.
+function normalizeWeekDay(value) {
+  const n = Number(value)
+  if (!Number.isFinite(n)) return null
+  if (n === 7) return 0
+  return n >= 0 && n <= 6 ? n : null
+}
+
 function getCalendarOpenIntervals(calendar, date) {
   const openHours = normalizeOpenHours(calendar.openHours || calendar.open_hours)
   const jsDay = date.getDay()
 
+  // Horario por defecto (Lun-Vie 9-17) cuando NO hay openHours configurados.
+  const defaultIntervalsForDay = () =>
+    (jsDay === 0 || jsDay === 6) ? [] : [{ openHour: 9, openMinute: 0, closeHour: 17, closeMinute: 0 }]
+
   if (!openHours.length) {
-    if (jsDay === 0 || jsDay === 6) return []
-    return [{ openHour: 9, openMinute: 0, closeHour: 17, closeMinute: 0 }]
+    return defaultIntervalsForDay()
   }
 
+  let matchedAnyDay = false
   const intervals = []
   for (const schedule of openHours) {
-    const days = Array.isArray(schedule.daysOfTheWeek) ? schedule.daysOfTheWeek : []
+    if (!schedule || typeof schedule !== 'object') continue
+    // Días: soporta { daysOfTheWeek:[...] } y la forma plana { day } / { dayOfWeek }.
+    // OJO: los valores pueden venir como strings ("1") desde selects/JSON; por eso
+    // normalizamos a número antes de comparar (antes esto dejaba el calendario sin
+    // NINGÚN horario disponible, "todos los días en gris").
+    const rawDays = Array.isArray(schedule.daysOfTheWeek)
+      ? schedule.daysOfTheWeek
+      : (schedule.day !== undefined ? [schedule.day]
+        : (schedule.dayOfWeek !== undefined ? [schedule.dayOfWeek] : []))
+    const days = rawDays.map(normalizeWeekDay).filter(day => day !== null)
+    matchedAnyDay = matchedAnyDay || days.length > 0
     if (!days.includes(jsDay)) continue
-    intervals.push(...(Array.isArray(schedule.hours) ? schedule.hours : []))
+    // Horas: { hours:[...] } o la propia entrada plana con openHour/closeHour.
+    const hours = Array.isArray(schedule.hours) && schedule.hours.length
+      ? schedule.hours
+      : [schedule]
+    intervals.push(...hours)
+  }
+
+  // Salvaguarda anti-bloqueo: si había openHours pero NINGUNA entrada tenía días
+  // utilizables (formato no reconocido), degradamos al horario por defecto en vez de
+  // dejar el calendario público sin un solo día agendable.
+  if (!matchedAnyDay) {
+    return defaultIntervalsForDay()
   }
 
   return intervals
