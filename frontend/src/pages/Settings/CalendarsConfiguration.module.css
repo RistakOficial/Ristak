@@ -205,6 +205,9 @@
   display: flex;
   flex-direction: column;
   gap: 14px;
+  /* Aire extra entre el encabezado (título + subtítulo + botones) y la lista de
+     calendarios, que ahora cuelga directo del header. */
+  margin-top: 14px;
 }
 
 /* Toolbar de la lista: acción de crear a la izquierda, justo bajo el
