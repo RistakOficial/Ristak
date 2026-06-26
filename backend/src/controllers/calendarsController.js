@@ -1601,11 +1601,16 @@ export async function updateBlockedSlot(req, res) {
     const { id } = req.params;
     const { accessToken, ...updateData } = req.body;
 
+    // (APT-004) Sin HighLevel: actualizar el bloqueo NATIVO local (calendarios Ristak/Google).
     if (!accessToken) {
-      return res.status(400).json({
-        success: false,
-        error: 'Se requiere accessToken'
-      });
+      const startTime = updateData.startTime || updateData.start_time || updateData.startTimeUtc || null;
+      const endTime = updateData.endTime || updateData.end_time || updateData.endTimeUtc || null;
+      const title = updateData.title ?? updateData.reason ?? updateData.name;
+      const ok = await localCalendarService.updateLocalBlockedSlot({ id, startTime, endTime, title });
+      if (!ok) {
+        return res.status(404).json({ success: false, error: 'Bloqueo no encontrado' });
+      }
+      return res.json({ success: true, data: { id, startTime, endTime, title } });
     }
 
     const blockedSlot = await calendarService.updateBlockedSlot(id, updateData, accessToken);
@@ -2048,11 +2053,13 @@ export async function deleteBlockedSlot(req, res) {
     const { id } = req.params;
     const { accessToken } = req.query;
 
+    // (APT-004) Sin HighLevel: eliminar el bloqueo NATIVO local (calendarios Ristak/Google).
     if (!accessToken) {
-      return res.status(400).json({
-        success: false,
-        error: 'Se requiere accessToken'
-      });
+      const ok = await localCalendarService.deleteLocalBlockedSlot(id);
+      if (!ok) {
+        return res.status(404).json({ success: false, error: 'Bloqueo no encontrado' });
+      }
+      return res.json({ success: true, message: 'Blocked slot eliminado exitosamente' });
     }
 
     await calendarService.deleteBlockedSlot(id, accessToken);
