@@ -3747,21 +3747,11 @@ export const CalendarsConfiguration: React.FC = () => {
 
   const renderCalendarsTab = () => (
     <div className={pageStyles.tabPanel}>
-      <div className={pageStyles.panelToolbar}>
-        <Button
-          className={pageStyles.toolbarCreate}
-          variant="outline"
-          size="small"
-          onClick={() => {
-            setShowCreateModal(true)
-            navigate('/settings/calendars/new')
-          }}
-        >
-          <Plus size={16} />
-          Crear calendario
-        </Button>
-        {renderCalendarSourceSelect()}
-      </div>
+      {highLevelConnected && (
+        <div className={pageStyles.panelToolbar}>
+          {renderCalendarSourceSelect()}
+        </div>
+      )}
 
       {calendars.length > 0 ? (
         <div className={pageStyles.calendarList}>
@@ -4003,6 +3993,17 @@ export const CalendarsConfiguration: React.FC = () => {
   const renderCalendarHeaderActions = () => (
     <div className={pageStyles.headerActionGroup}>
       {renderGoogleHeaderAction()}
+      <button
+        type="button"
+        className={pageStyles.googleHeaderButton}
+        onClick={() => {
+          setShowCreateModal(true)
+          navigate('/settings/calendars/new')
+        }}
+      >
+        <Plus size={16} />
+        <span>Crear calendario</span>
+      </button>
     </div>
   )
 

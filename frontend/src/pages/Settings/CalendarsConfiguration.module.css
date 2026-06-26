@@ -218,10 +218,6 @@
   padding: 4px 0 2px;
 }
 
-.toolbarCreate {
-  flex-shrink: 0;
-}
-
 .sourceControl {
   display: inline-grid;
   grid-template-columns: auto auto minmax(150px, 1fr);
@@ -2980,13 +2976,8 @@
   .sourceControl,
   .sourceSelect,
   .formActions,
-  .supportLinks,
-  .toolbarCreate {
+  .supportLinks {
     width: 100%;
-  }
-
-  .toolbarCreate {
-    margin-left: 0;
   }
 
   .serviceEmailBox {
