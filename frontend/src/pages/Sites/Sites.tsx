@@ -12171,6 +12171,7 @@ export const Sites: React.FC = () => {
 
   const editorPageSelector = editorSite && hasEditablePages(editorSite) ? (
     <FunnelPagesPanel
+      scopeLabel="Sitio"
       pages={pages}
       activePageId={activePage?.id || DEFAULT_FUNNEL_PAGE_ID}
       locked={!canManagePages(editorSite) || editorAIGenerating}
@@ -12201,6 +12202,7 @@ export const Sites: React.FC = () => {
   // el editor de sitios tenga las mismas funciones de páginas que el editor standalone.
   const editorFormPageSelector = formEditMode ? (
     <FunnelPagesPanel
+      scopeLabel="Formulario"
       pages={formEditPages}
       activePageId={activeEmbeddedFormPage?.id || formEditPages[0]?.id || DEFAULT_FUNNEL_PAGE_ID}
       locked={editorAIGenerating}
@@ -12299,13 +12301,11 @@ export const Sites: React.FC = () => {
                       </div>
                       {editorPageSelector && (
                         <div className={styles.editorPageSelectorSlot}>
-                          <span className={styles.editorPageScopeLabel}>Sitio</span>
                           {editorPageSelector}
                         </div>
                       )}
                       {editorFormPageSelector && (
                         <div className={styles.editorPageSelectorSlot}>
-                          <span className={styles.editorPageScopeLabel}>Formulario</span>
                           {editorFormPageSelector}
                         </div>
                       )}
@@ -12336,7 +12336,6 @@ export const Sites: React.FC = () => {
                       </div>
                       {editorPageSelector && (
                         <div className={styles.editorPageSelectorSlot}>
-                          <span className={styles.editorPageScopeLabel}>Sitio</span>
                           {editorPageSelector}
                         </div>
                       )}
@@ -26564,6 +26563,7 @@ const HeaderToolbarModal: React.FC<{
 interface FunnelPagesPanelProps {
   pages: SitePage[]
   activePageId: string
+  scopeLabel?: string
   locked?: boolean
   colorFinalPages?: boolean
   isFixedPage?: (page: SitePage) => boolean
@@ -26588,6 +26588,7 @@ interface FunnelPagesPanelProps {
 const FunnelPagesPanel: React.FC<FunnelPagesPanelProps> = ({
   pages,
   activePageId,
+  scopeLabel,
   locked = false,
   colorFinalPages = false,
   isFixedPage = () => false,
@@ -26765,6 +26766,7 @@ const FunnelPagesPanel: React.FC<FunnelPagesPanelProps> = ({
       >
         <FileText size={15} />
         <span className={styles.pagesDropdownTriggerText}>
+          {scopeLabel && <span className={styles.pagesDropdownScope}>{scopeLabel} /</span>}
           <strong>{activePage?.title || 'Página 1'}</strong>
         </span>
         <ChevronDown size={15} className={styles.pagesDropdownChevron} />
