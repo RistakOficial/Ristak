@@ -7466,6 +7466,7 @@ function FormEmbedEditorPanel({
           onPatchTheme={onPatchTheme}
           onSaveSite={onSaveSite}
         />
+        <FormTypographyGlobalControls site={site} title="Tipografía del formulario" onPatchTheme={onPatchTheme} onSaveSite={onSaveSite} />
       </div>
       {formElementDesignContent ? (
         <div className={styles.settingsGroup}>
