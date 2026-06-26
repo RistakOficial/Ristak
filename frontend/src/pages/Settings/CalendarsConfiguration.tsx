@@ -279,7 +279,7 @@ const CALENDAR_WIZARD_STEPS: Array<{
   { id: 'availability', label: 'Disponibilidad', description: 'Duración y espacios.' },
   { id: 'rules', label: 'Reglas', description: 'Límites de reserva.' },
   { id: 'form', label: 'Formulario', description: 'Preguntas y cierre.' },
-  { id: 'reminders', label: 'Recordatorios', description: 'Mensajes automáticos.' },
+  { id: 'reminders', label: 'Recordatorios y confirmaciones', description: 'Mensajes automáticos.' },
   { id: 'advanced', label: 'Avanzado', description: 'Notas e integraciones.' },
   { id: 'events', label: 'Eventos', description: 'Meta Pixel y WhatsApp.' },
   { id: 'design', label: 'Estilos y diseños', description: 'Vista, colores y tipografía.' }
@@ -2957,7 +2957,7 @@ export const CalendarsConfiguration: React.FC = () => {
               {currentStep.id === 'reminders' && (
                 <section className={pageStyles.editorSection}>
                   <div className={pageStyles.editorSectionHeader}>
-                    <strong>Recordatorios automáticos</strong>
+                    <strong>Recordatorios y confirmaciones</strong>
                     <span>Configura los mismos mensajes automáticos de la página de Citas desde este wizard.</span>
                   </div>
                   <div className={pageStyles.editorFields}>
@@ -2997,7 +2997,7 @@ export const CalendarsConfiguration: React.FC = () => {
                                   <ReminderIcon size={16} aria-hidden="true" />
                                 </span>
                                 <div className={pageStyles.reminderCopy}>
-                                  <strong>{formatReminderOffsetLabel(reminder.offsetValue, reminder.offsetUnit)}</strong>
+                                  <strong>{formatReminderOffsetLabel(reminder.offsetValue, reminder.offsetUnit, reminder.timingAnchor)}</strong>
                                   <span>
                                     {reminder.messageType === 'confirmation'
                                       ? `Confirmación de cita${reminder.aiEnabled ? ' · IA' : ''}`

@@ -11,6 +11,7 @@ import { logger } from '../utils/logger.js'
 import {
   DEFAULT_REMINDER_TEXT,
   DEFAULT_CONFIRMATION_TEXT,
+  OFFSET_UNIT_MS,
   parseHHMM,
   formatOffsetLabel,
   offsetToMs,
@@ -28,7 +29,13 @@ const SEEDED_CONFIG_KEY = 'appointment_reminders_seeded'
 const SEND_GRACE_MS = 3 * 60 * 60 * 1000
 
 const MESSAGE_TYPES = new Set(['reminder', 'confirmation'])
-const OFFSET_UNITS = new Set(['minutes', 'hours', 'days'])
+// Ancla de envío: 'before_appointment' = X antes del inicio de la cita (clásico);
+// 'after_booking' = X después de agendar (confirmaciones de reservas por URL pública).
+const TIMING_ANCHORS = new Set(['before_appointment', 'after_booking'])
+const BEFORE_OFFSET_UNITS = new Set(['minutes', 'hours', 'days'])
+// Después de agendar el tope es 24h, por eso se permiten segundos pero no días.
+const AFTER_OFFSET_UNITS = new Set(['seconds', 'minutes', 'hours'])
+const MAX_AFTER_BOOKING_MS = 24 * 60 * 60 * 1000
 const SENDER_MODES = new Set(['contact', 'default', 'specific'])
 const SMART_OVERFLOWS = new Set(['before', 'next_day'])
 const NO_CONFIRM_ACTIONS = new Set(['no_action', 'cancel_appointment', 'notify_push'])
@@ -91,15 +98,38 @@ function nowIso() {
   return new Date().toISOString()
 }
 
+// Normaliza unidad/valor del offset según el ancla. Antes de la cita: minutos/horas/días,
+// mínimo 1 (opcionalmente tope 60). Después de agendar: segundos/minutos/horas, permite 0
+// (inmediato) y se recorta a 24h como máximo.
+function normalizeOffsetForAnchor(timingAnchor, rawUnit, rawValue, { clampMax = false } = {}) {
+  if (timingAnchor === 'after_booking') {
+    const offsetUnit = AFTER_OFFSET_UNITS.has(cleanString(rawUnit)) ? cleanString(rawUnit) : 'minutes'
+    let offsetValue = Math.max(0, Math.round(Number(rawValue) || 0))
+    const unitMs = OFFSET_UNIT_MS[offsetUnit] || OFFSET_UNIT_MS.minutes
+    if (clampMax && unitMs > 0 && offsetValue * unitMs > MAX_AFTER_BOOKING_MS) {
+      offsetValue = Math.floor(MAX_AFTER_BOOKING_MS / unitMs)
+    }
+    return { timingAnchor, offsetUnit, offsetValue }
+  }
+  const offsetUnit = BEFORE_OFFSET_UNITS.has(cleanString(rawUnit)) ? cleanString(rawUnit) : 'days'
+  const offsetValue = clampMax
+    ? Math.max(1, Math.min(60, Math.round(Number(rawValue) || 1)))
+    : Math.max(1, Math.round(Number(rawValue) || 1))
+  return { timingAnchor: 'before_appointment', offsetUnit, offsetValue }
+}
+
 function normalizeReminderRow(row = {}) {
   if (!row) return null
-  const offsetUnit = OFFSET_UNITS.has(cleanString(row.offset_unit)) ? cleanString(row.offset_unit) : 'days'
-  const offsetValue = Math.max(1, Math.round(Number(row.offset_value) || 1))
+  const { timingAnchor, offsetUnit, offsetValue } = normalizeOffsetForAnchor(
+    TIMING_ANCHORS.has(cleanString(row.timing_anchor)) ? cleanString(row.timing_anchor) : 'before_appointment',
+    row.offset_unit,
+    row.offset_value
+  )
   const templateName = cleanString(row.template_name || row.resolved_template_name)
   const templateLanguage = cleanString(row.template_language || row.resolved_template_language) || 'es_MX'
   return {
     id: cleanString(row.id),
-    name: cleanString(row.name) || formatOffsetLabel(offsetValue, offsetUnit),
+    name: cleanString(row.name) || formatOffsetLabel(offsetValue, offsetUnit, timingAnchor),
     enabled: Number(row.enabled || 0) === 1,
     messageType: MESSAGE_TYPES.has(cleanString(row.message_type)) ? cleanString(row.message_type) : 'reminder',
     aiEnabled: Number(row.ai_enabled || 0) === 1,
@@ -109,6 +139,7 @@ function normalizeReminderRow(row = {}) {
     templateId: cleanString(row.template_id) || null,
     templateName: templateName || null,
     templateLanguage,
+    timingAnchor,
     offsetValue,
     offsetUnit,
     messageText: cleanString(row.message_text),
@@ -305,14 +336,18 @@ function sanitizeReminderInput(input = {}, base = {}) {
   const merged = { ...base, ...input }
 
   const messageType = MESSAGE_TYPES.has(cleanString(merged.messageType)) ? cleanString(merged.messageType) : 'reminder'
-  const offsetUnit = OFFSET_UNITS.has(cleanString(merged.offsetUnit)) ? cleanString(merged.offsetUnit) : 'days'
-  const offsetValue = Math.max(1, Math.min(60, Math.round(Number(merged.offsetValue) || 1)))
+  const { timingAnchor, offsetUnit, offsetValue } = normalizeOffsetForAnchor(
+    TIMING_ANCHORS.has(cleanString(merged.timingAnchor)) ? cleanString(merged.timingAnchor) : 'before_appointment',
+    merged.offsetUnit,
+    merged.offsetValue,
+    { clampMax: true }
+  )
   const smartStart = parseHHMM(merged.smartStart, null) ? cleanString(merged.smartStart) : '09:00'
   const smartEnd = parseHHMM(merged.smartEnd, null) ? cleanString(merged.smartEnd) : '21:00'
   const templateLanguage = cleanString(merged.templateLanguage) || 'es_MX'
 
   return {
-    name: cleanString(merged.name) || formatOffsetLabel(offsetValue, offsetUnit),
+    name: cleanString(merged.name) || formatOffsetLabel(offsetValue, offsetUnit, timingAnchor),
     enabled: merged.enabled === false ? 0 : 1,
     messageType,
     aiEnabled: merged.aiEnabled === false ? 0 : 1,
@@ -322,6 +357,7 @@ function sanitizeReminderInput(input = {}, base = {}) {
     templateId: cleanString(merged.templateId) || null,
     templateName: cleanString(merged.templateName),
     templateLanguage,
+    timingAnchor,
     offsetValue,
     offsetUnit,
     messageText: cleanString(merged.messageText) ||
@@ -347,14 +383,14 @@ export async function createAppointmentReminder(input = {}) {
     INSERT INTO appointment_reminders (
       id, name, enabled, message_type, ai_enabled, channel, sender_mode,
       sender_phone_number_id, template_id, template_name, template_language,
-      qr_fallback_enabled, offset_value, offset_unit, message_text,
+      qr_fallback_enabled, timing_anchor, offset_value, offset_unit, message_text,
       smart_enabled, smart_start, smart_end, smart_overflow, no_confirm_action,
       confirmation_success_action, bypass_automations, position
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `, [
     id, data.name, data.enabled, data.messageType, data.aiEnabled, data.channel,
     data.senderMode, data.senderPhoneNumberId, data.templateId, data.templateName,
-    data.templateLanguage, data.qrFallbackEnabled, data.offsetValue, data.offsetUnit,
+    data.templateLanguage, data.qrFallbackEnabled, data.timingAnchor, data.offsetValue, data.offsetUnit,
     data.messageText, data.smartEnabled, data.smartStart, data.smartEnd,
     data.smartOverflow, data.noConfirmAction, data.confirmationSuccessAction, data.bypassAutomations,
     Number(positionRow?.next || 0)
@@ -371,24 +407,24 @@ export async function updateAppointmentReminder(reminderId, input = {}) {
   const base = normalizeReminderRow(existing)
   const data = await resolveReminderTemplateSelection(sanitizeReminderInput(input, base))
 
-  // Si cambia el tiempo y el nombre era el autogenerado, regenerarlo.
-  const autoName = formatOffsetLabel(base.offsetValue, base.offsetUnit)
+  // Si cambia el tiempo/ancla y el nombre era el autogenerado, regenerarlo.
+  const autoName = formatOffsetLabel(base.offsetValue, base.offsetUnit, base.timingAnchor)
   const name = (cleanString(input.name) || (base.name === autoName
-    ? formatOffsetLabel(data.offsetValue, data.offsetUnit)
+    ? formatOffsetLabel(data.offsetValue, data.offsetUnit, data.timingAnchor)
     : data.name))
 
   await db.run(`
     UPDATE appointment_reminders
     SET name = ?, enabled = ?, message_type = ?, ai_enabled = ?, sender_mode = ?,
       sender_phone_number_id = ?, template_id = ?, template_name = ?, template_language = ?,
-      qr_fallback_enabled = ?, offset_value = ?, offset_unit = ?, message_text = ?,
+      qr_fallback_enabled = ?, timing_anchor = ?, offset_value = ?, offset_unit = ?, message_text = ?,
       smart_enabled = ?, smart_start = ?, smart_end = ?, smart_overflow = ?,
       no_confirm_action = ?, confirmation_success_action = ?, bypass_automations = ?, updated_at = CURRENT_TIMESTAMP
     WHERE id = ?
   `, [
     name, data.enabled, data.messageType, data.aiEnabled, data.senderMode,
     data.senderPhoneNumberId, data.templateId, data.templateName, data.templateLanguage,
-    data.qrFallbackEnabled, data.offsetValue, data.offsetUnit, data.messageText,
+    data.qrFallbackEnabled, data.timingAnchor, data.offsetValue, data.offsetUnit, data.messageText,
     data.smartEnabled, data.smartStart, data.smartEnd, data.smartOverflow,
     data.noConfirmAction, data.confirmationSuccessAction, data.bypassAutomations, id
   ])
@@ -601,10 +637,23 @@ function shouldFallbackToQrAfterTemplateError(error) {
 // registrados para que el cron vuelva a calcular y reenviar el recordatorio en la nueva
 // fecha. La llave de dedup es (reminder_id|appointment_id) y no incluye start_time, así que
 // sin esto un recordatorio ya 'sent' nunca se recalcularía para la hora nueva.
+//
+// PERO solo aplica a los recordatorios anclados al inicio de la cita (before_appointment):
+// reprogramar cambia start_time. Las confirmaciones "después de agendar" se anclan a
+// date_added (que NO cambia al reprogramar), así que sus envíos 'sent' se conservan; si los
+// borráramos, el cron volvería a reclamar el par (reminder|cita) y reenviaría la MISMA
+// confirmación al cliente.
 export async function clearAppointmentReminderSends(appointmentId) {
   const id = cleanString(appointmentId)
   if (!id) return 0
-  const res = await db.run('DELETE FROM appointment_reminder_sends WHERE appointment_id = ?', [id])
+  const res = await db.run(`
+    DELETE FROM appointment_reminder_sends
+    WHERE appointment_id = ?
+      AND reminder_id IN (
+        SELECT id FROM appointment_reminders
+        WHERE COALESCE(timing_anchor, 'before_appointment') != 'after_booking'
+      )
+  `, [id])
   return Number(res?.changes || 0)
 }
 
@@ -667,19 +716,48 @@ export async function processDueAppointmentReminders({ batchSize = 25 } = {}) {
 
   const timezone = await getAccountTimezone()
   const now = DateTime.utc()
-  // El ajuste inteligente puede mover el envío hasta ~1 día; margen de 2 días.
-  const maxLookaheadMs = Math.max(...reminders.map(offsetToMs)) + 2 * 24 * 60 * 60 * 1000
+
+  // Dos anclas distintas exigen dos ventanas de búsqueda:
+  //  - Antes de la cita: se busca por start_time próximo (clásico).
+  //  - Después de agendar: se ancla a date_added (la reserva), así que se buscan
+  //    reservas RECIENTES sin importar qué tan lejos esté la cita.
+  const beforeReminders = reminders.filter(reminder => reminder.timingAnchor !== 'after_booking')
+  const afterReminders = reminders.filter(reminder => reminder.timingAnchor === 'after_booking')
+
+  const clauses = []
+  const params = []
+
+  if (beforeReminders.length) {
+    // El ajuste inteligente puede mover el envío hasta ~1 día; margen de 2 días.
+    const beforeLookaheadMs = Math.max(...beforeReminders.map(offsetToMs)) + 2 * 24 * 60 * 60 * 1000
+    clauses.push('(a.start_time > ? AND a.start_time <= ?)')
+    params.push(now.toISO(), now.plus({ milliseconds: beforeLookaheadMs }).toISO())
+  }
+
+  let afterSince = null
+  if (afterReminders.length) {
+    // Offset máx 24h + gracia de envío + 1 día de holgura por la confirmación inteligente.
+    const afterWindowMs = Math.max(...afterReminders.map(offsetToMs)) + SEND_GRACE_MS + 24 * 60 * 60 * 1000
+    afterSince = now.minus({ milliseconds: afterWindowMs })
+    // Solo reservas hechas EN Ristak (URL pública/admin). Las citas sincronizadas desde
+    // Google/GHL traen date_added = fecha de creación externa y la persona nunca agendó
+    // con nosotros: no debe llegarles una confirmación.
+    clauses.push("(a.date_added IS NOT NULL AND a.date_added >= ? AND a.start_time > ? AND LOWER(COALESCE(a.source, 'ristak')) NOT IN ('google', 'ghl'))")
+    params.push(afterSince.toISO(), now.toISO())
+  }
+
+  if (!clauses.length) return { sent: 0, errors: 0, skipped: 0 }
 
   const appointments = await db.all(`
-    SELECT a.id, a.title, a.start_time, a.appointment_status, a.status, a.contact_id,
+    SELECT a.id, a.title, a.start_time, a.date_added, a.source, a.appointment_status, a.status, a.contact_id,
       c.phone, c.first_name, c.last_name, c.full_name, c.preferred_whatsapp_phone_number_id
     FROM appointments a
     JOIN contacts c ON c.id = a.contact_id
-    WHERE a.start_time > ? AND a.start_time <= ?
-      AND a.deleted_at IS NULL
+    WHERE a.deleted_at IS NULL
       AND COALESCE(c.phone, '') != ''
       AND LOWER(COALESCE(a.appointment_status, a.status, '')) NOT IN ('cancelled', 'canceled', 'noshow', 'invalid')
-  `, [now.toISO(), now.plus({ milliseconds: maxLookaheadMs }).toISO()])
+      AND (${clauses.join(' OR ')})
+  `, params)
 
   if (!appointments.length) return { sent: 0, errors: 0, skipped: 0 }
 
@@ -709,7 +787,18 @@ export async function processDueAppointmentReminders({ batchSize = 25 } = {}) {
       const status = cleanString(appointment.appointment_status || appointment.status).toLowerCase()
       if (reminder.messageType === 'confirmation' && status === 'confirmed') continue
 
-      const sendAt = computeReminderSendAt(appointment.start_time, reminder, timezone)
+      // Las confirmaciones "después de agendar" solo aplican a reservas hechas EN Ristak.
+      // (La cita pudo entrar a la ventana por OTRO recordatorio anclado al inicio, así que
+      // este guard es la verdad última, no solo el SQL.) Además, reservas viejas no las
+      // disparan: evita marcar 'skipped' en masa para citas agendadas hace mucho.
+      if (reminder.timingAnchor === 'after_booking') {
+        const apptSource = cleanString(appointment.source).toLowerCase() || 'ristak'
+        if (apptSource === 'google' || apptSource === 'ghl') continue
+        const bookedAt = DateTime.fromISO(cleanString(appointment.date_added).replace(' ', 'T'), { zone: 'utc' })
+        if (!bookedAt.isValid || (afterSince && bookedAt < afterSince)) continue
+      }
+
+      const sendAt = computeReminderSendAt(appointment.start_time, reminder, timezone, appointment.date_added)
       if (!sendAt || sendAt > now) continue
 
       // (NOTI-002/CRON-003) Reclamar ANTES de enviar. Si otra instancia ya reclamó este
