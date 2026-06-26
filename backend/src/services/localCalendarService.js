@@ -1979,7 +1979,7 @@ export function renderPublicCalendarHtml(calendar, { host = '', embedded = false
         <div class="selectedDate">
           <h3 data-selected-title>Selecciona una fecha</h3>
           <p data-selected-subtitle>Los horarios aparecerán aquí.</p>
-          <button class="changeSlot" type="button" data-change-slot aria-label="Volver"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m15 18-6-6 6-6" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>Volver</button>
+          <button class="changeSlot" type="button" data-change-slot aria-label="Cambiar fecha"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m15 18-6-6 6-6" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg><span data-change-label>Cambiar fecha</span></button>
         </div>
         <div class="slotList" data-slots>
           <div class="slotEmpty">Elige un día con disponibilidad.</div>
@@ -2182,10 +2182,14 @@ export function renderPublicCalendarHtml(calendar, { host = '', embedded = false
         shell.classList.toggle('dateSelected', step === 'slots');
         shell.classList.toggle('bookingActive', step === 'form');
         if (changeSlotButton) {
-          // Botón "Volver" contextual: en el formulario regresa a los horarios; en los
-          // horarios regresa al calendario. Mantenemos la flecha + texto fijo (no
-          // reescribimos textContent para no borrar el ícono SVG).
-          changeSlotButton.setAttribute('aria-label', step === 'form' ? 'Volver a horarios' : 'Volver al calendario');
+          // Botón contextual para regresar un paso (intuitivo: dice QUÉ vas a cambiar):
+          //  - en el formulario → "Cambiar fecha y hora" (regresa a elegir horario)
+          //  - en los horarios   → "Cambiar fecha" (regresa al calendario)
+          // Solo tocamos el <span> del texto para NO borrar el ícono de flecha (SVG).
+          const backText = step === 'form' ? 'Cambiar fecha y hora' : 'Cambiar fecha';
+          const labelEl = changeSlotButton.querySelector('[data-change-label]');
+          if (labelEl) labelEl.textContent = backText;
+          changeSlotButton.setAttribute('aria-label', backText);
         }
       };
 
