@@ -1,4 +1,4 @@
-import React, { useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import React, { useCallback, useContext, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { useLocation, useNavigate, useSearchParams } from 'react-router-dom'
 import {
   DndContext,
@@ -6723,13 +6723,20 @@ const computeFormElementPopoverPosition = (anchorSelector: string): { left: numb
   const pad = 12
   const popoverWidth = Math.min(430, Math.max(320, window.innerWidth - pad * 2))
   const popoverHeightEstimate = Math.min(620, Math.max(280, window.innerHeight - pad * 2))
+  // El borde derecho útil es el del lienzo (.rstkCanvas), no el del viewport:
+  // así la caja salta al lado izquierdo del bloque antes de encimarse con la
+  // barra de propiedades (que vive a la derecha del lienzo). En pantallas que
+  // apilan el layout, el lienzo ocupa todo el ancho y esto degrada al viewport.
+  const canvasRect = document.querySelector<HTMLElement>('.rstkCanvas')?.getBoundingClientRect()
+  const rightBound = canvasRect ? Math.min(window.innerWidth - pad, canvasRect.right - pad) : window.innerWidth - pad
+  const leftBound = canvasRect ? Math.max(pad, canvasRect.left + pad) : pad
   const rightSideLeft = rect.right + 14
   const leftSideLeft = rect.left - popoverWidth - 14
-  const hasRoomRight = rightSideLeft + popoverWidth <= window.innerWidth - pad
+  const hasRoomRight = rightSideLeft + popoverWidth <= rightBound
   const rawLeft = hasRoomRight ? rightSideLeft : leftSideLeft
   const rawTop = rect.top - 4
   return {
-    left: Math.max(pad, Math.min(rawLeft, window.innerWidth - popoverWidth - pad)),
+    left: Math.max(leftBound, Math.min(rawLeft, rightBound - popoverWidth)),
     top: Math.max(pad, Math.min(rawTop, window.innerHeight - popoverHeightEstimate - pad))
   }
 }
@@ -6855,14 +6862,19 @@ const AccordionSection: React.FC<{
   defaultOpen?: boolean
 }> = ({ id, title, children, defaultOpen = true }) => {
   const ctx = useContext(AccordionContext)
+  // Clave de contexto GLOBALMENTE única por instancia (useId) — el prop `id`
+  // queda solo como etiqueta legible (data-accordion-id); así nunca chocan dos
+  // secciones aunque reusen el mismo nombre en distintos grupos.
+  const reactId = useId()
+  const sectionKey = `${id}-${reactId}`
   const [localOpen, setLocalOpen] = useState(defaultOpen)
-  const open = ctx ? ctx.openId === id : localOpen
+  const open = ctx ? ctx.openId === sectionKey : localOpen
   const handleToggle = () => {
-    if (ctx) ctx.toggle(id)
+    if (ctx) ctx.toggle(sectionKey)
     else setLocalOpen(prev => !prev)
   }
   return (
-    <div className={styles.accordionSection} data-open={open ? 'true' : 'false'}>
+    <div className={styles.accordionSection} data-open={open ? 'true' : 'false'} data-accordion-id={id}>
       <button
         type="button"
         className={styles.accordionHeader}
@@ -34329,12 +34341,11 @@ const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
   onSave,
   onDeselect
 }) => {
-  // For form sites the selected element's behaviour/logic moves to a floating
-  // box pinned to the block on the canvas; landings keep the inspector intact.
-  // Video blocks are excluded: their form gate has its own floating editor.
-  // Hook runs unconditionally (before the early returns) per the rules of hooks.
-  const formElementPopoverSelectionKey =
-    isFormSite(site) && block && block.blockType !== 'video' ? block.id : ''
+  // La edición ("Editar") de CUALQUIER bloque seleccionado se mueve a una caja
+  // flotante anclada al bloque en el lienzo; el inspector derecho queda solo con
+  // Diseño. El hook corre incondicionalmente (antes de los early returns) por las
+  // reglas de los hooks.
+  const formElementPopoverSelectionKey = block ? block.id : ''
   const { position: elementPopoverPosition, style: elementPopoverStyle } = useFormElementPopover(
     formElementPopoverSelectionKey,
     FORM_ELEMENT_POPOVER_ANCHOR_BLOCK,
@@ -34690,10 +34701,10 @@ const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
     />
   ) : null
 
-  // On form sites the element's content/logic ("Editar") moves to the floating
-  // box; the inspector keeps design only. Landings keep the full Editar/Diseño.
-  // Video blocks keep the inspector (their gate has its own floating editor).
-  const useFormElementBox = isFormSite(site) && block.blockType !== 'video'
+  // La edición de contenido/lógica ("Editar") siempre va a la caja flotante; el
+  // inspector conserva Diseño (+ Acciones de video). Incluye video por decisión
+  // del dueño (su editor de gate sigue teniendo su propia caja).
+  const useFormElementBox = Boolean(block)
   const videoActionsTab = videoActionsContent
     ? [{ value: 'videoActions' as InspectorTabId, label: 'Acciones de video', icon: <Clock3 size={14} />, content: videoActionsContent }]
     : []
@@ -34713,7 +34724,7 @@ const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
       {useFormElementBox && elementPopoverPosition && (
         <FormElementLogicPopover
           style={elementPopoverStyle}
-          title="Configuración del elemento"
+          title={blockLabels[block.blockType] || 'Editar elemento'}
           onDeselect={onDeselect || NOOP}
         >
           {editContent}
