@@ -32395,7 +32395,12 @@ const FormEmbedToolbarControls: React.FC<{
         }}
         onSave={onSave}
       />
-      {metaPixelConnected && isFormSite(site) && (
+      {/* El evento del píxel "Al enviar" se guarda a nivel del sitio contenedor
+          (metaEventName/metaCapiEnabled/theme.metaEventParameters), que es lo que el
+          backend dispara al enviar — tanto en form standalone como en form embebido
+          dentro de un landing. Un form_embed SOLO vive en landings (isFormSite=false),
+          así que NO se puede gatear con isFormSite o el control nunca aparece. */}
+      {metaPixelConnected && (
         <FormPixelSettingsControls
           site={site}
           onPatchSite={onPatchSite}
