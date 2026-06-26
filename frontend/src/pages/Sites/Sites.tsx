@@ -6922,10 +6922,15 @@ function FormEmbedEditorPanel({
   activeElement,
   customFields,
   customFieldFolders,
+  forms,
+  popupBlocks,
+  metaPixelConnected,
+  importedPopupDetected,
   pages,
   activePageId,
   sitePages,
   activeSitePageId,
+  onPatchSite,
   onPatchSettings,
   onPatchTheme,
   onPatchField,
@@ -6948,10 +6953,15 @@ function FormEmbedEditorPanel({
   activeElement: EmbeddedFormActiveElement
   customFields: CustomFieldDefinition[]
   customFieldFolders: CustomFieldFolder[]
+  forms: PublicSite[]
+  popupBlocks: SiteBlock[]
+  metaPixelConnected: boolean
+  importedPopupDetected: boolean
   pages: SitePage[]
   activePageId: string
   sitePages: SitePage[]
   activeSitePageId: string
+  onPatchSite: (patch: Partial<PublicSite>) => void
   onPatchBlock: (patch: Partial<SiteBlock>) => void
   onPatchSettings: (patch: Record<string, unknown>) => void
   onPatchTheme: (patch: Partial<SiteTheme>) => void
@@ -7066,6 +7076,28 @@ function FormEmbedEditorPanel({
             <VideoPlayerSettingsControls
               settings={activeFieldSettings}
               mediaUrl={getSettingString(activeFieldSettings, 'mediaUrl')}
+              onPatchSettings={patchActiveFieldSettings}
+              onSave={onSave}
+            />
+          )}
+          {mediaKind === 'video' && activeField && (
+            /* Mismas "Acciones de video" que el editor standalone: reglas por tiempo para
+               mostrar/ocultar elementos del formulario, redirigir o ir a otra página. */
+            <VideoActionsPanel
+              site={site}
+              block={activeField}
+              blocks={fields}
+              popupBlocks={popupBlocks}
+              pages={pages}
+              activePageId={activeFieldPageId}
+              importedPopupDetected={importedPopupDetected}
+              metaPixelConnected={metaPixelConnected}
+              forms={forms}
+              customFields={customFields}
+              customFieldFolders={customFieldFolders}
+              onCustomFieldCreated={onCustomFieldCreated}
+              onPatchSite={onPatchSite}
+              onSaveSite={onSaveSite}
               onPatchSettings={patchActiveFieldSettings}
               onSave={onSave}
             />
@@ -12953,10 +12985,15 @@ export const Sites: React.FC = () => {
                     activeElement={activeEmbeddedFormSubmitSelected ? 'submit' : activeEmbeddedFormField ? 'field' : 'form'}
                     customFields={customFields}
                     customFieldFolders={customFieldFolders}
+                    forms={forms}
+                    popupBlocks={popupBlocks}
+                    metaPixelConnected={metaPixelConnected}
+                    importedPopupDetected={importedPopupDetected}
                     pages={formEditPages}
                     activePageId={activeEmbeddedFormPage?.id || DEFAULT_FUNNEL_PAGE_ID}
                     sitePages={pages}
                     activeSitePageId={activePage?.id || DEFAULT_FUNNEL_PAGE_ID}
+                    onPatchSite={updateSelectedSite}
                     onPatchBlock={(patch) => patchSelectedBlock(patch)}
                     onPatchSettings={(patch) => patchSelectedBlockSettings(patch)}
                     onPatchTheme={patchEmbeddedFormSourceTheme}
