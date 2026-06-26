@@ -1886,10 +1886,15 @@ export function renderPublicCalendarHtml(calendar, { host = '', embedded = false
     .timezoneControl select{min-height:38px;max-width:min(320px,100%);font-size:.88rem}
     .timesPane{border-left:1px solid var(--line);padding:38px 24px;display:grid;grid-template-rows:auto minmax(0,1fr);gap:18px}
     .selectedDate{display:grid;gap:6px;min-height:58px}
-    .changeSlot{display:none;justify-self:start;min-height:36px;border:1px solid var(--line);border-radius:var(--slot-radius);background:var(--control-bg);color:var(--accent);font-size:.85rem;font-weight:600;padding:0 14px;cursor:pointer;transition:background .15s}
-    .changeSlot:hover{background:var(--accent-soft)}
+    .changeSlot{display:none;justify-self:start;align-items:center;gap:6px;min-height:34px;border:1px solid var(--line);border-radius:999px;background:var(--control-bg);color:var(--muted);font-size:.84rem;font-weight:500;padding:0 14px 0 10px;cursor:pointer;transition:background .15s,color .15s,border-color .15s}
+    .changeSlot svg{width:16px;height:16px;flex:none}
+    .changeSlot:hover{background:var(--accent-soft);color:var(--accent);border-color:color-mix(in srgb,var(--accent) 30%,var(--line))}
     .shell.dateSelected .changeSlot,.shell.bookingActive .changeSlot{display:inline-flex;align-items:center;justify-content:center}
-    .slotList{display:grid;align-content:start;gap:10px;max-height:330px;overflow:auto;padding-right:2px}
+    .slotList{display:grid;align-content:start;gap:10px;min-height:0;overflow-y:auto;padding-right:6px;scrollbar-width:thin;scrollbar-color:color-mix(in srgb,var(--muted) 32%,transparent) transparent}
+    .slotList::-webkit-scrollbar{width:8px}
+    .slotList::-webkit-scrollbar-track{background:transparent}
+    .slotList::-webkit-scrollbar-thumb{background:color-mix(in srgb,var(--muted) 32%,transparent);border-radius:999px;border:2px solid transparent;background-clip:padding-box}
+    .slotList::-webkit-scrollbar-thumb:hover{background:color-mix(in srgb,var(--muted) 52%,transparent);background-clip:padding-box}
     .slot{width:100%;min-height:48px;border:1px solid color-mix(in srgb,var(--accent) 28%,var(--line));border-radius:var(--slot-radius);background:var(--slot-bg);color:var(--slot-text);font-weight:550;font-size:.95rem;cursor:pointer;transition:background .15s,color .15s,border-color .15s}
     .slot:hover,.slot.selected{background:var(--accent);border-color:var(--accent);color:var(--selected-text)}
     .slotEmpty{display:grid;place-items:center;min-height:160px;border:1px dashed var(--line);border-radius:12px;color:var(--muted);text-align:center;padding:18px}
@@ -1932,7 +1937,7 @@ export function renderPublicCalendarHtml(calendar, { host = '', embedded = false
     .successCard{max-width:480px;display:flex;flex-direction:column;align-items:center;gap:18px}
     .successCard .successIcon{width:74px;height:74px;border-radius:999px;display:grid;place-items:center;background:var(--accent-soft);color:var(--accent)}
     .successCard .successMessage{margin:0;font-size:1.22rem;line-height:1.55;font-weight:600;color:var(--heading);white-space:pre-line}
-    @media (max-width:1020px){.shell,.shell.dateSelected,.shell.bookingActive{grid-template-columns:320px minmax(360px,1fr)}.timesPane{grid-column:2;border-left:0;border-top:1px solid var(--line);padding-top:24px}.slotList{grid-template-columns:repeat(auto-fit,minmax(132px,1fr));max-height:none}.shell.bookingActive .timesPane{border-left:0;max-width:none}}
+    @media (max-width:1100px){.shell,.shell.dateSelected,.shell.bookingActive{grid-template-columns:300px minmax(0,1fr)}.shell.noIntro,.shell.noIntro.dateSelected,.shell.noIntro.bookingActive{grid-template-columns:minmax(0,1fr)}.shell.dateSelected .calendarPane{display:none}.timesPane{border-left:1px solid var(--line);border-top:0;max-width:none;width:auto}.shell.dateSelected .timesPane{padding:clamp(28px,3vw,38px) clamp(24px,2.5vw,30px)}.slotList{grid-template-columns:repeat(auto-fill,minmax(150px,1fr))}}
     @media (max-width:760px){.page{width:100%;padding:0;place-items:stretch}.shell,.shell.dateSelected,.shell.bookingActive,.shell.noIntro,.shell.noIntro.dateSelected,.shell.noIntro.bookingActive{grid-template-columns:1fr;min-height:100vh;border:0;border-radius:0;box-shadow:none}.shell.dateSelected .intro,.shell.dateSelected .calendarPane,.shell.bookingActive .intro,.shell.bookingActive .calendarPane{display:none}.shell.dateSelected .timesPane,.shell.bookingActive .timesPane{grid-column:auto;border-top:0}.intro,.calendarPane,.timesPane{padding:26px 22px;border-right:0;border-left:0}.intro{gap:14px}.calendarPane,.timesPane{border-top:1px solid var(--line)}.avatar{width:72px;height:72px;font-size:2rem;border-radius:16px}.days{gap:6px 2px}.day{width:40px;height:40px}.slotList{grid-template-columns:repeat(auto-fill,minmax(118px,1fr));max-height:none}input,textarea,select{font-size:16px;min-height:48px}.formActions button.submit{flex:1 1 100%}}
     @media (max-width:430px){.page{padding:0}.intro,.calendarPane,.timesPane{padding:22px 18px}.day{width:38px;height:38px}.weekdays{font-size:.66rem}.slotList{grid-template-columns:1fr}h1{font-size:1.5rem}h2{font-size:1.2rem}}
   </style>
@@ -1974,7 +1979,7 @@ export function renderPublicCalendarHtml(calendar, { host = '', embedded = false
         <div class="selectedDate">
           <h3 data-selected-title>Selecciona una fecha</h3>
           <p data-selected-subtitle>Los horarios aparecerán aquí.</p>
-          <button class="changeSlot" type="button" data-change-slot>Cambiar horario</button>
+          <button class="changeSlot" type="button" data-change-slot aria-label="Volver"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m15 18-6-6 6-6" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>Volver</button>
         </div>
         <div class="slotList" data-slots>
           <div class="slotEmpty">Elige un día con disponibilidad.</div>
@@ -2177,9 +2182,10 @@ export function renderPublicCalendarHtml(calendar, { host = '', embedded = false
         shell.classList.toggle('dateSelected', step === 'slots');
         shell.classList.toggle('bookingActive', step === 'form');
         if (changeSlotButton) {
-          const label = step === 'form' ? 'Cambiar horario' : 'Ver meses';
-          changeSlotButton.textContent = label;
-          changeSlotButton.setAttribute('aria-label', label);
+          // Botón "Volver" contextual: en el formulario regresa a los horarios; en los
+          // horarios regresa al calendario. Mantenemos la flecha + texto fijo (no
+          // reescribimos textContent para no borrar el ícono SVG).
+          changeSlotButton.setAttribute('aria-label', step === 'form' ? 'Volver a horarios' : 'Volver al calendario');
         }
       };
 
