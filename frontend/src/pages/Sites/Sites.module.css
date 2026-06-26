@@ -1849,12 +1849,37 @@
   gap: 12px;
 }
 
+/* La barra de título doble como agarradera para mover la caja. */
+.formElementLogicBarDraggable {
+  cursor: grab;
+  touch-action: none;
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+.formElementLogicBarDraggable:active {
+  cursor: grabbing;
+}
+
 .formElementLogicBar > span {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
   font-size: 11px;
   font-weight: var(--font-weight-semibold);
   letter-spacing: 0.05em;
   text-transform: uppercase;
   color: var(--text-mute);
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.formElementLogicGrip {
+  flex: 0 0 auto;
+  color: var(--text-mute);
+  opacity: 0.75;
 }
 
 .formElementLogicBar > button {

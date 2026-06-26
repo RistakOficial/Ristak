@@ -3650,6 +3650,26 @@ const normalizeFormInputStyle = (value: unknown): FormInputStyle => {
   return formInputStyleOptions.some(option => option.value === raw) ? raw as FormInputStyle : 'box'
 }
 
+// Estilo elegido SOLO para este campo (override del estilo global del formulario).
+// Vacío = el campo hereda el estilo global del lienzo (comportamiento de siempre).
+// Devuelve el sufijo de clases para el <section class="rstk-field">: el marcador
+// rstk-fieldstyled (resetea los residuos del estilo global) + la variante concreta.
+const getFieldOwnStyleClass = (block: SiteBlock): string => {
+  const settings = block.settings || {}
+  let variant = ''
+  if (block.blockType === 'radio' || block.blockType === 'checkboxes') {
+    const raw = getSettingString(settings, 'choiceStyle')
+    if (raw) variant = `rstk-choice-${normalizeFormChoiceStyle(raw)}`
+  } else if (block.blockType === 'dropdown') {
+    const raw = getSettingString(settings, 'selectStyle')
+    if (raw) variant = `rstk-select-${normalizeFormSelectStyle(raw)}`
+  } else if (fieldBlockTypes.has(block.blockType)) {
+    const raw = getSettingString(settings, 'inputStyle')
+    if (raw) variant = `rstk-input-${normalizeFormInputStyle(raw)}`
+  }
+  return variant ? ` rstk-fieldstyled ${variant}` : ''
+}
+
 const normalizeSocialPlatform = (value: unknown): SocialPlatform => {
   const raw = String(value || '').trim()
   return socialPlatformOptions.some(option => option.value === raw) ? raw as SocialPlatform : 'facebook'
@@ -6819,30 +6839,40 @@ const computeFormElementPopoverPosition = (anchorSelector: string): { left: numb
 // canvas. selectionKey changes when the selection changes (empty = nothing
 // selected); anchorSelector picks the active node; onDeselect closes on Escape.
 const useFormElementPopover = (selectionKey: string, anchorSelector: string, onDeselect: () => void) => {
-  const [position, setPosition] = useState<{ left: number; top: number } | null>(null)
+  const [autoPosition, setAutoPosition] = useState<{ left: number; top: number } | null>(null)
+  // Posición fijada por el usuario al arrastrar la caja. Mientras exista, manda
+  // sobre la posición automática y el reflujo (scroll/resize) deja de recalcular,
+  // para no pelear contra el arrastre. Se limpia al cambiar de elemento.
+  const [manualPosition, setManualPosition] = useState<{ left: number; top: number } | null>(null)
+  const manualPositionRef = useRef<{ left: number; top: number } | null>(null)
+  manualPositionRef.current = manualPosition
 
   const recompute = useCallback(() => {
     if (!selectionKey) {
-      setPosition(null)
+      setAutoPosition(null)
       return
     }
+    if (manualPositionRef.current) return
     const next = computeFormElementPopoverPosition(anchorSelector)
-    if (next) setPosition(next)
+    if (next) setAutoPosition(next)
   }, [selectionKey, anchorSelector])
 
   // Recompute on selection change (deferred a frame so the canvas applied the
-  // active class) and gently bring the element into view.
+  // active class) and gently bring the element into view. A new selection always
+  // starts from the smart auto position, dropping any previous manual drag.
   useLayoutEffect(() => {
+    setManualPosition(null)
     if (!selectionKey) {
-      setPosition(null)
+      setAutoPosition(null)
       return undefined
     }
     const raf = window.requestAnimationFrame(() => {
       document.querySelector<HTMLElement>(anchorSelector)?.scrollIntoView({ block: 'nearest' })
-      recompute()
+      const next = computeFormElementPopoverPosition(anchorSelector)
+      if (next) setAutoPosition(next)
     })
     return () => window.cancelAnimationFrame(raf)
-  }, [selectionKey, anchorSelector, recompute])
+  }, [selectionKey, anchorSelector])
 
   // Keep it pinned while scrolling/resizing, and close it with Escape.
   useEffect(() => {
@@ -6869,6 +6899,7 @@ const useFormElementPopover = (selectionKey: string, anchorSelector: string, onD
     }
   }, [selectionKey, recompute, onDeselect])
 
+  const position = manualPosition || autoPosition
   const style = position
     ? ({
       ['--imported-element-popover-left' as string]: `${position.left}px`,
@@ -6876,7 +6907,7 @@ const useFormElementPopover = (selectionKey: string, anchorSelector: string, onD
     } as React.CSSProperties)
     : undefined
 
-  return { position, style }
+  return { position, style, setManualPosition }
 }
 
 // The floating box itself: same visual shell as the site builder's inline
@@ -6886,24 +6917,80 @@ const FormElementLogicPopover: React.FC<{
   style?: React.CSSProperties
   title: string
   onDeselect: () => void
+  onManualPosition?: (position: { left: number; top: number }) => void
   children: React.ReactNode
-}> = ({ style, title, onDeselect, children }) => (
-  <div
-    className={`${styles.importedElementPopoverShell} ${styles.formElementLogicPopover}`}
-    style={style}
-    role="dialog"
-    aria-label="Configurar elemento del formulario"
-    onPointerDown={(event) => event.stopPropagation()}
-  >
-    <div className={styles.formElementLogicBar}>
-      <span>{title}</span>
-      <button type="button" onClick={onDeselect} aria-label="Cerrar configuración del elemento">
-        <X size={15} />
-      </button>
+}> = ({ style, title, onDeselect, onManualPosition, children }) => {
+  const shellRef = useRef<HTMLDivElement>(null)
+  const dragRef = useRef<{ pointerId: number; offsetX: number; offsetY: number } | null>(null)
+  const draggable = Boolean(onManualPosition)
+
+  // Arrastre por la barra de título. Se fija la posición en coordenadas de
+  // viewport (la caja es position: fixed) y se acota para que NUNCA salga de la
+  // pantalla. No arranca desde el botón de cerrar.
+  const handleDragStart = (event: React.PointerEvent<HTMLDivElement>) => {
+    if (!onManualPosition || (event.target as HTMLElement).closest('button')) return
+    const shell = shellRef.current
+    if (!shell) return
+    const rect = shell.getBoundingClientRect()
+    dragRef.current = {
+      pointerId: event.pointerId,
+      offsetX: event.clientX - rect.left,
+      offsetY: event.clientY - rect.top
+    }
+    event.currentTarget.setPointerCapture(event.pointerId)
+    event.preventDefault()
+  }
+
+  const handleDragMove = (event: React.PointerEvent<HTMLDivElement>) => {
+    const drag = dragRef.current
+    const shell = shellRef.current
+    if (!drag || !shell || event.pointerId !== drag.pointerId || !onManualPosition) return
+    const rect = shell.getBoundingClientRect()
+    const pad = 8
+    const maxLeft = Math.max(pad, window.innerWidth - rect.width - pad)
+    const maxTop = Math.max(pad, window.innerHeight - rect.height - pad)
+    const left = Math.min(Math.max(event.clientX - drag.offsetX, pad), maxLeft)
+    const top = Math.min(Math.max(event.clientY - drag.offsetY, pad), maxTop)
+    onManualPosition({ left, top })
+  }
+
+  const handleDragEnd = (event: React.PointerEvent<HTMLDivElement>) => {
+    const drag = dragRef.current
+    if (!drag || event.pointerId !== drag.pointerId) return
+    dragRef.current = null
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+      event.currentTarget.releasePointerCapture(event.pointerId)
+    }
+  }
+
+  return (
+    <div
+      ref={shellRef}
+      className={`${styles.importedElementPopoverShell} ${styles.formElementLogicPopover}`}
+      style={style}
+      role="dialog"
+      aria-label="Configurar elemento del formulario"
+      onPointerDown={(event) => event.stopPropagation()}
+    >
+      <div
+        className={`${styles.formElementLogicBar} ${draggable ? styles.formElementLogicBarDraggable : ''}`}
+        onPointerDown={handleDragStart}
+        onPointerMove={handleDragMove}
+        onPointerUp={handleDragEnd}
+        onPointerCancel={handleDragEnd}
+      >
+        <span>
+          {draggable && <GripVertical size={14} className={styles.formElementLogicGrip} aria-hidden />}
+          {title}
+        </span>
+        <button type="button" onClick={onDeselect} aria-label="Cerrar configuración del elemento">
+          <X size={15} />
+        </button>
+      </div>
+      <div className={styles.importedButtonActionBox}>{children}</div>
     </div>
-    <div className={styles.importedButtonActionBox}>{children}</div>
-  </div>
-)
+  )
+}
 
 // ============================================================
 // Inspector accordion — secciones colapsables del panel derecho.
@@ -7080,7 +7167,7 @@ function FormEmbedEditorPanel({
   // keeps only the design controls.
   const showElementPopover = isSubmitSelected || Boolean(activeField)
   const elementPopoverSelectionKey = isSubmitSelected ? 'submit' : (activeField?.id || '')
-  const { position: elementPopoverPosition, style: elementPopoverStyle } = useFormElementPopover(
+  const { position: elementPopoverPosition, style: elementPopoverStyle, setManualPosition: setElementPopoverPosition } = useFormElementPopover(
     elementPopoverSelectionKey,
     FORM_ELEMENT_POPOVER_ANCHOR_EMBEDDED,
     onDeselect
@@ -7512,6 +7599,7 @@ function FormEmbedEditorPanel({
       />
       {activeBlockIsField && (
         <>
+          <FieldOwnStyleControls site={site} block={activeField} onPatchSettings={patchActiveFieldSettings} onSave={onSave} />
           <FormTypographyGlobalControls site={site} title="Tipografía de campos" onPatchTheme={onPatchTheme} onSaveSite={onSaveSite} />
           <FormFieldGlobalStyleControls site={site} onPatchTheme={onPatchTheme} onSaveSite={onSaveSite} />
           {isChoiceBlock(activeField.blockType) && (
@@ -7559,6 +7647,7 @@ function FormEmbedEditorPanel({
           style={elementPopoverStyle}
           title={isSubmitSelected ? 'Botón de envío' : 'Configuración del elemento'}
           onDeselect={onDeselect}
+          onManualPosition={setElementPopoverPosition}
         >
           {editContent}
         </FormElementLogicPopover>
@@ -31719,7 +31808,7 @@ const FieldControlPreview: React.FC<{ block: SiteBlock }> = ({ block }) => {
 
 // Read-only field preview (rstk markup) for embedded form fields on the canvas.
 const FieldStaticPreview: React.FC<{ block: SiteBlock }> = ({ block }) => (
-  <section className={getBlockStyleClassName(block, 'rstk-field')} style={getBlockCanvasStyle(block)}>
+  <section className={getBlockStyleClassName(block, `rstk-field${getFieldOwnStyleClass(block)}`)} style={getBlockCanvasStyle(block)}>
     <label>{block.label || 'Pregunta'}{block.required ? <span className="rstk-required">*</span> : null}</label>
     {block.content ? <p className="rstk-help">{block.content}</p> : null}
     <FieldControlPreview block={block} />
@@ -31974,7 +32063,7 @@ const FieldPreview: React.FC<{
     settings.customFieldSkip !== true
   )
   return (
-    <section className="rstk-field">
+    <section className={`rstk-field${getFieldOwnStyleClass(block)}`}>
       <label>
         <InlineEditable as="span" value={block.label} placeholder="Pregunta" disabled={!editable} onChange={(value) => onPatchBlock({ label: value })} onCommit={onSave} />
         {block.required ? <span className="rstk-required">*</span> : null}
@@ -32162,6 +32251,61 @@ const FormOptionGlobalStyleControls: React.FC<{
           <ColorField label="Borde activo" value={getThemePaint(theme, 'formChoiceSelectedBorder', defaultAccent)} allowGradient onChange={(value) => onPatchTheme({ formChoiceSelectedBorder: value })} onCommit={onSaveSite} />
         </div>
       )}
+    </AccordionSection>
+  )
+}
+
+// Estilo SOLO de este campo (override del estilo global). Aparece como sección
+// dedicada al seleccionar un campo de opciones/lista/caja, con los mismos presets
+// que el formulario global pero guardados por bloque (settings.choiceStyle /
+// selectStyle / inputStyle). Vacío = "Igual al formulario" (hereda el global).
+// En lockstep con getFieldOwnStyleClass (frontend + backend) y el CSS por-campo.
+const FieldOwnStyleControls: React.FC<{
+  site: PublicSite
+  block: SiteBlock
+  onPatchSettings: (patch: Record<string, unknown>) => void
+  onSave: () => void
+}> = ({ site, block, onPatchSettings, onSave }) => {
+  const theme = site.theme || {}
+  const settings = block.settings || {}
+  let label: string
+  let settingKey: 'choiceStyle' | 'selectStyle' | 'inputStyle'
+  let options: ReadonlyArray<{ value: string; label: string }>
+  let globalValue: string
+  if (block.blockType === 'radio' || block.blockType === 'checkboxes') {
+    label = 'Estilo de las opciones'
+    settingKey = 'choiceStyle'
+    options = formChoiceStyleOptions
+    globalValue = normalizeFormChoiceStyle(theme.formChoiceStyle)
+  } else if (block.blockType === 'dropdown') {
+    label = 'Estilo de la lista'
+    settingKey = 'selectStyle'
+    options = formSelectStyleOptions
+    globalValue = normalizeFormSelectStyle(theme.formSelectStyle)
+  } else {
+    label = 'Estilo de la caja'
+    settingKey = 'inputStyle'
+    options = formInputStyleOptions
+    globalValue = normalizeFormInputStyle(theme.formInputStyle)
+  }
+  const current = getSettingString(settings, settingKey)
+  const globalLabel = options.find(option => option.value === globalValue)?.label || globalValue
+  return (
+    <AccordionSection id="field-own-style" title="Estilo de este campo">
+      <label className={styles.field}>
+        <span>{label}</span>
+        <CustomSelect
+          value={current}
+          onChange={(event) => {
+            onPatchSettings({ [settingKey]: event.target.value })
+            window.setTimeout(onSave, 0)
+          }}
+          onBlur={onSave}
+        >
+          <option value="">Igual al formulario ({globalLabel})</option>
+          {options.map(option => <option key={option.value} value={option.value}>{option.label}</option>)}
+        </CustomSelect>
+      </label>
     </AccordionSection>
   )
 }
@@ -34814,7 +34958,7 @@ const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
   // Diseño. El hook corre incondicionalmente (antes de los early returns) por las
   // reglas de los hooks.
   const formElementPopoverSelectionKey = block ? block.id : ''
-  const { position: elementPopoverPosition, style: elementPopoverStyle } = useFormElementPopover(
+  const { position: elementPopoverPosition, style: elementPopoverStyle, setManualPosition: setElementPopoverPosition } = useFormElementPopover(
     formElementPopoverSelectionKey,
     FORM_ELEMENT_POPOVER_ANCHOR_BLOCK,
     onDeselect || NOOP
@@ -35114,6 +35258,10 @@ const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
         onSave={onSave}
       />
 
+      {isField && (
+        <FieldOwnStyleControls site={site} block={block} onPatchSettings={onPatchSettings} onSave={onSave} />
+      )}
+
       {isFormSite(site) && isField && (
         <FormGlobalStyleControls site={site} onPatchTheme={onPatchTheme} onSaveSite={onSaveSite} />
       )}
@@ -35194,6 +35342,7 @@ const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
           style={elementPopoverStyle}
           title={blockLabels[block.blockType] || 'Editar elemento'}
           onDeselect={onDeselect || NOOP}
+          onManualPosition={setElementPopoverPosition}
         >
           {editContent}
         </FormElementLogicPopover>
@@ -35745,7 +35894,7 @@ const VideoFormGateSettingsPanel: React.FC<{
     onActiveBlockChange?.('')
   }, [onActiveBlockChange])
   const videoGatePopoverSelectionKey = activeElement === 'submit' ? 'submit' : (activeQuestion?.id || '')
-  const { position: elementPopoverPosition, style: elementPopoverStyle } = useFormElementPopover(
+  const { position: elementPopoverPosition, style: elementPopoverStyle, setManualPosition: setElementPopoverPosition } = useFormElementPopover(
     videoGatePopoverSelectionKey,
     FORM_ELEMENT_POPOVER_ANCHOR_EMBEDDED,
     handleVideoGateDeselect
@@ -36526,6 +36675,7 @@ const VideoFormGateSettingsPanel: React.FC<{
                   style={elementPopoverStyle}
                   title={activeElement === 'submit' ? 'Botón del formulario' : 'Configuración del elemento'}
                   onDeselect={handleVideoGateDeselect}
+                  onManualPosition={setElementPopoverPosition}
                 >
                   {videoFormGateElementEditor}
                 </FormElementLogicPopover>
