@@ -65,7 +65,7 @@ import { triggerLinksService, type TriggerLink } from '@/services/triggerLinksSe
 import apiClient from '@/services/apiClient'
 import { formatCurrency } from '@/utils/format'
 import { ConditionBuilder } from './ConditionBuilder'
-import { AgentCreationWizard, type AgentWizardDraft } from './AgentCreationWizard'
+import { AgentCreationWizard } from './AgentCreationWizard'
 import styles from './AIAgentSettings.module.css'
 
 const AUTOSAVE_DELAY_MS = 900
@@ -3723,18 +3723,9 @@ export const ConversationalAgentSettings: React.FC<ConversationalAgentSettingsPr
     await runCreateAgent()
   }
 
-  const handleWizardComplete = async (draft: AgentWizardDraft) => {
-    const overrides: ConversationalAgentDefInput = {
-      name: draft.name.trim() || `Agente ${agents.length + 1}`,
-      objective: draft.objective,
-      customObjective: draft.objective === 'custom' ? draft.customObjective.trim() : '',
-      identityMode: draft.identityMode,
-      identityCustomName: draft.identityMode === 'custom' ? draft.identityCustomName.trim() : '',
-      successAction: draft.successAction,
-      requiredData: draft.requiredData.trim(),
-      persuasionLevel: draft.persuasionLevel,
-      languageLevel: draft.languageLevel
-    }
+  // El wizard ya arma el ConversationalAgentDefInput completo (incluye goalWorkflow,
+  // anticipos/pagos y calendario). Aquí solo lo creamos.
+  const handleWizardComplete = async (overrides: ConversationalAgentDefInput) => {
     const agent = await runCreateAgent(overrides)
     if (agent) setWizardOpen(false)
   }

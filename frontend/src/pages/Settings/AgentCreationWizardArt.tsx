@@ -157,6 +157,35 @@ export function StepArt({ kind }: { kind: string }) {
           <Sparkle x={40} y={40} s={5} />
         </Frame>
       )
+    case 'calendar':
+      return (
+        <Frame>
+          <ellipse cx="80" cy="100" rx="46" ry="8" {...soft} />
+          <rect x="42" y="28" width="76" height="62" rx="10" {...soft} />
+          <rect x="42" y="28" width="76" height="62" rx="10" {...line} />
+          <path d="M42 46 h76" {...line} />
+          <path d="M58 24 v10 M102 24 v10" {...line} />
+          <path d="M64 68 l8 9 l18 -20" {...line} />
+          <circle cx="56" cy="60" r="2.6" fill="var(--text-mute)" />
+          <circle cx="104" cy="60" r="2.6" fill="var(--text-mute)" />
+          <circle cx="104" cy="78" r="2.6" fill="var(--text-mute)" />
+        </Frame>
+      )
+    case 'payment':
+      return (
+        <Frame>
+          <ellipse cx="80" cy="100" rx="46" ry="8" {...soft} />
+          <rect x="40" y="40" width="80" height="50" rx="11" {...soft} />
+          <rect x="40" y="40" width="80" height="50" rx="11" {...line} />
+          <path d="M40 56 h80" {...line} />
+          <rect x="96" y="66" width="20" height="14" rx="4" {...muted} />
+          <circle cx="106" cy="73" r="3" fill="var(--accent)" />
+          <circle cx="92" cy="26" r="12" {...soft} />
+          <circle cx="92" cy="26" r="12" {...line} />
+          <path d="M92 20 v12 M88 23 h6 a2.5 2.5 0 0 1 0 5 h-6 M88 28 h6" {...muted} />
+          <Sparkle x={120} y={26} s={5} />
+        </Frame>
+      )
     default:
       return <Frame><circle cx="80" cy="58" r="30" {...soft} /></Frame>
   }
