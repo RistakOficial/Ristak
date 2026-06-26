@@ -1243,6 +1243,18 @@ export async function createPublicAppointment(req, res) {
       });
     }
 
+    // (CAL-QUAL) Calificación: si las respuestas descalifican al prospecto, NO se agenda.
+    // Respondemos 200 con un payload de descalificación para que el cliente muestre el
+    // mensaje del formulario (o redirija). No se crea contacto ni cita.
+    if (bookingSubmission.disqualified) {
+      return res.status(200).json({
+        success: false,
+        disqualified: true,
+        message: bookingSubmission.disqualifyMessage || 'Gracias por tus respuestas. Por ahora no podemos agendar tu cita.',
+        redirectUrl: bookingSubmission.disqualifyRedirectUrl || ''
+      });
+    }
+
     const contactId = await upsertPublicCalendarContact({
       calendar,
       host,

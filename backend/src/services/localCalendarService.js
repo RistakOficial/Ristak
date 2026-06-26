@@ -1334,6 +1334,64 @@ function normalizeCalendarFormPages(theme = {}) {
   return normalized.length ? normalized : [{ id: CALENDAR_DEFAULT_PAGE_ID, title: 'Formulario', sortOrder: 0 }]
 }
 
+// (CAL-QUAL) Acciones de calificación que SÍ bloquean el agendado (espejo del motor de
+// Sitios). Solo nos importan las de descalificación; las de lead (frío/tibio/caliente) y
+// "continue" no impiden agendar. Aceptamos alias en español como en sitesService.
+const CALENDAR_DISQUALIFY_ACTIONS = new Set(['disqualify', 'disqualify_after_submit'])
+const CALENDAR_OPTION_ACTION_ALIASES = {
+  descalificar: 'disqualify',
+  descalificar_contacto: 'disqualify',
+  descalificar_inmediatamente: 'disqualify',
+  no_calificado: 'disqualify',
+  no_califica: 'disqualify',
+  descalificar_al_finalizar: 'disqualify_after_submit',
+  descalificar_al_finalizar_formulario: 'disqualify_after_submit'
+}
+
+function normalizeCalendarOptionAction(value) {
+  const raw = cleanString(value).toLowerCase()
+  if (!raw) return ''
+  const resolved = CALENDAR_OPTION_ACTION_ALIASES[raw] || raw
+  return CALENDAR_DISQUALIFY_ACTIONS.has(resolved) ? resolved : ''
+}
+
+function safeCalendarRedirectUrl(value) {
+  const raw = cleanString(value)
+  if (!raw || raw.length > 1200 || /[<>"']/.test(raw)) return ''
+  if (/^\/(?!\/)/.test(raw)) return raw // ruta relativa del mismo sitio
+  try {
+    const parsed = new URL(raw)
+    return ['http:', 'https:'].includes(parsed.protocol) ? parsed.toString() : ''
+  } catch {
+    return ''
+  }
+}
+
+// Resuelve si una opción descalifica (soporta { action } único o { actions:[...] } de Sitios).
+function resolveCalendarOptionDisqualify(option = {}) {
+  const single = normalizeCalendarOptionAction(option?.action)
+  if (single) {
+    return {
+      action: single,
+      message: cleanString(option?.message),
+      redirectUrl: safeCalendarRedirectUrl(option?.redirectUrl || option?.redirect_url || option?.url || option?.siteUrl || option?.site_url)
+    }
+  }
+  if (Array.isArray(option?.actions)) {
+    for (const entry of option.actions) {
+      const act = normalizeCalendarOptionAction(entry?.action)
+      if (act) {
+        return {
+          action: act,
+          message: cleanString(entry?.message || option?.message),
+          redirectUrl: safeCalendarRedirectUrl(entry?.redirectUrl || entry?.redirect_url || entry?.url || option?.redirectUrl)
+        }
+      }
+    }
+  }
+  return null
+}
+
 function normalizeCalendarFormBlock(row = {}, pages = []) {
   const blockType = cleanString(row.block_type || row.blockType)
   if (!CALENDAR_FORM_FIELD_TYPES.has(blockType)) return null
@@ -1351,10 +1409,21 @@ function normalizeCalendarFormBlock(row = {}, pages = []) {
     required: Boolean(Number(row.required || 0)),
     content: cleanString(row.content),
     options: Array.isArray(options)
-      ? options.map((option, index) => ({
-        label: cleanString(option?.label || option?.value || `Opcion ${index + 1}`),
-        value: cleanString(option?.value || option?.label || `opcion_${index + 1}`)
-      })).filter(option => option.label)
+      ? options.map((option, index) => {
+        const out = {
+          label: cleanString(option?.label || option?.value || `Opcion ${index + 1}`),
+          value: cleanString(option?.value || option?.label || `opcion_${index + 1}`)
+        }
+        // (CAL-QUAL) Preservamos la regla de descalificación de la opción para poder
+        // evaluarla en el cliente (UX inmediata) y revalidarla en el servidor (seguridad).
+        const dq = resolveCalendarOptionDisqualify(option)
+        if (dq) {
+          out.action = dq.action
+          out.disqualifyMessage = dq.message
+          out.disqualifyRedirectUrl = dq.redirectUrl
+        }
+        return out
+      }).filter(option => option.label)
       : [],
     settings: settings && typeof settings === 'object' && !Array.isArray(settings) ? settings : {},
     pageId: resolvedPageId,
@@ -1443,6 +1512,17 @@ export async function getCalendarBookingFormDefinition(calendar = {}) {
     if (site?.id) {
       const theme = parseJson(site.theme_json, {})
       const pages = normalizeCalendarFormPages(theme)
+      // (CAL-QUAL) Config de descalificación a nivel formulario (respeta lo que dice el
+      // formulario de Sitios): si está en "redirigir", usamos esa URL como fallback cuando
+      // la opción no trae su propia redirección/mensaje.
+      const dqCompletion = cleanString(theme.formDisqualifiedCompletionAction || theme.form_disqualified_completion_action).toLowerCase()
+      const formDisqualification = {
+        action: dqCompletion === 'redirect_url' ? 'redirect' : 'message',
+        redirectUrl: dqCompletion === 'redirect_url'
+          ? safeCalendarRedirectUrl(theme.formDisqualifiedRedirectUrl || theme.form_disqualified_redirect_url)
+          : '',
+        message: cleanString(theme.formDisqualifiedMessage || theme.form_disqualified_message)
+      }
       const rows = await db.all(`
         SELECT id, block_type, label, content, placeholder, required, options_json, settings_json, sort_order
         FROM public_site_blocks
@@ -1467,6 +1547,7 @@ export async function getCalendarBookingFormDefinition(calendar = {}) {
           siteType: site.site_type || 'standard_form',
           pages,
           fields,
+          disqualification: formDisqualification,
           defaultFields: config.defaultFields
         }
       }
@@ -1501,6 +1582,11 @@ function renderCalendarFieldInput(field = {}) {
   const required = field.required ? 'required' : ''
   const options = Array.isArray(field.options) ? field.options : []
   const validation = getCalendarFieldValidation(field)
+  // (CAL-QUAL) Adjunta la regla de descalificación a cada opción que la tenga, para que el
+  // cliente la evalúe al seleccionarla. El servidor SIEMPRE revalida (no confía en el cliente).
+  const optionRuleAttr = (option) => option && option.action
+    ? ` data-rule="${escapeHtml(JSON.stringify({ action: option.action, message: option.disqualifyMessage || '', redirectUrl: option.disqualifyRedirectUrl || '' }))}"`
+    : ''
 
   if (field.blockType === 'paragraph') {
     return `<textarea id="${id}" name="${id}" rows="3" placeholder="${placeholder}" ${required}></textarea>`
@@ -1524,7 +1610,7 @@ function renderCalendarFieldInput(field = {}) {
     return `
       <select id="${id}" name="${id}" ${required}>
         <option value="">Selecciona una opcion</option>
-        ${options.map(option => `<option value="${escapeHtml(option.value)}">${escapeHtml(option.label)}</option>`).join('')}
+        ${options.map(option => `<option value="${escapeHtml(option.value)}"${optionRuleAttr(option)}>${escapeHtml(option.label)}</option>`).join('')}
       </select>
     `
   }
@@ -1533,7 +1619,7 @@ function renderCalendarFieldInput(field = {}) {
       <div class="options">
         ${options.map((option, index) => `
           <label class="option">
-            <input type="radio" name="${id}" value="${escapeHtml(option.value)}" ${required && index === 0 ? 'required' : ''}>
+            <input type="radio" name="${id}" value="${escapeHtml(option.value)}" ${required && index === 0 ? 'required' : ''}${optionRuleAttr(option)}>
             <span>${escapeHtml(option.label)}</span>
           </label>
         `).join('')}
@@ -1545,7 +1631,7 @@ function renderCalendarFieldInput(field = {}) {
       <div class="options">
         ${options.map(option => `
           <label class="option">
-            <input type="checkbox" name="${id}" value="${escapeHtml(option.value)}" data-checkbox-group="${id}">
+            <input type="checkbox" name="${id}" value="${escapeHtml(option.value)}" data-checkbox-group="${id}"${optionRuleAttr(option)}>
             <span>${escapeHtml(option.label)}</span>
           </label>
         `).join('')}
@@ -1608,6 +1694,10 @@ export function normalizeCalendarBookingSubmission(bookingForm = {}, body = {}) 
     : {}
   const normalizedResponses = {}
   const errors = []
+  // (CAL-QUAL) Estado de calificación recalculado en el servidor (no confiamos en el cliente).
+  let disqualified = false
+  let disqualifyMessage = ''
+  let disqualifyRedirectUrl = ''
 
   const getBodyValue = (field) => {
     if (Object.prototype.hasOwnProperty.call(responses, field.id)) return responses[field.id]
@@ -1664,6 +1754,21 @@ export function normalizeCalendarBookingSubmission(bookingForm = {}, body = {}) 
 
     normalizedResponses[field.id] = value
 
+    // (CAL-QUAL) Si el valor elegido cae sobre una opción descalificadora, la cita NO se agenda.
+    if (!empty && Array.isArray(field.options) && field.options.length) {
+      const chosen = (Array.isArray(value) ? value : [value]).map(item => cleanString(item).toLowerCase())
+      for (const option of field.options) {
+        if (!option.action) continue
+        const optValue = cleanString(option.value).toLowerCase()
+        const optLabel = cleanString(option.label).toLowerCase()
+        if (chosen.includes(optValue) || chosen.includes(optLabel)) {
+          disqualified = true
+          if (!disqualifyMessage && option.disqualifyMessage) disqualifyMessage = option.disqualifyMessage
+          if (!disqualifyRedirectUrl && option.disqualifyRedirectUrl) disqualifyRedirectUrl = option.disqualifyRedirectUrl
+        }
+      }
+    }
+
     if (!fullName && matchesField(field, [/full.?name/, /nombre/, /name/])) fullName = valueAsText(value)
     if (!phone && (validation === 'phone' || matchesField(field, [/phone/, /tel[eé]fono/, /whatsapp/]))) phone = valueAsText(value)
     if (!email && (validation === 'email' || matchesField(field, [/email/, /correo/]))) email = valueAsText(value)
@@ -1672,6 +1777,14 @@ export function normalizeCalendarBookingSubmission(bookingForm = {}, body = {}) 
 
   if (!fullName) errors.push('El nombre es requerido')
   if (!phone && !email) errors.push('Se requiere telefono o correo')
+
+  // (CAL-QUAL) Fallback a la config de descalificación del formulario (Sitios) cuando la
+  // opción no trae su propio mensaje/redirección.
+  if (disqualified) {
+    const formDq = bookingForm.disqualification || {}
+    if (!disqualifyRedirectUrl && formDq.action === 'redirect' && formDq.redirectUrl) disqualifyRedirectUrl = formDq.redirectUrl
+    if (!disqualifyMessage && formDq.message) disqualifyMessage = formDq.message
+  }
 
   const responseLines = fields
     .map(field => {
@@ -1688,7 +1801,10 @@ export function normalizeCalendarBookingSubmission(bookingForm = {}, body = {}) 
     responseSummary: responseLines.join('\n'),
     formId: bookingForm.formId || '',
     formName: bookingForm.formName || '',
-    errors
+    errors,
+    disqualified,
+    disqualifyMessage,
+    disqualifyRedirectUrl
   }
 }
 
@@ -1934,6 +2050,10 @@ export function renderPublicCalendarHtml(calendar, { host = '', embedded = false
     .shell.bookingDone{grid-template-columns:1fr}
     .shell.bookingDone .intro,.shell.bookingDone .calendarPane,.shell.bookingDone .timesPane{display:none}
     .shell.bookingDone .successPane{display:flex}
+    .shell.bookingDisqualified{grid-template-columns:1fr}
+    .shell.bookingDisqualified .intro,.shell.bookingDisqualified .calendarPane,.shell.bookingDisqualified .timesPane{display:none}
+    .shell.bookingDisqualified .successPane{display:flex}
+    .shell.bookingDisqualified .successIcon{background:var(--control-bg);color:var(--muted)}
     .successCard{max-width:480px;display:flex;flex-direction:column;align-items:center;gap:18px}
     .successCard .successIcon{width:74px;height:74px;border-radius:999px;display:grid;place-items:center;background:var(--accent-soft);color:var(--accent)}
     .successCard .successMessage{margin:0;font-size:1.22rem;line-height:1.55;font-weight:600;color:var(--heading);white-space:pre-line}
@@ -1989,7 +2109,7 @@ export function renderPublicCalendarHtml(calendar, { host = '', embedded = false
 
       <section class="successPane" data-success-pane>
         <div class="successCard">
-          <div class="successIcon" aria-hidden="true">
+          <div class="successIcon" data-success-icon aria-hidden="true">
             <svg viewBox="0 0 24 24" width="36" height="36"><path d="M20 6 9 17l-5-5" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg>
           </div>
           <p class="successMessage" data-success-message></p>
@@ -2124,6 +2244,7 @@ export function renderPublicCalendarHtml(calendar, { host = '', embedded = false
       let selectedDateKey = '';
       let visibleMonth = new Date();
       let formPageIndex = 0;
+      let immediateDisqualified = false;
       visibleMonth.setDate(1);
       let slotsByDate = new Map();
       const displayConfig = calendar.bookingDisplay || {};
@@ -2193,15 +2314,22 @@ export function renderPublicCalendarHtml(calendar, { host = '', embedded = false
         }
       };
 
-      const showSuccessScreen = (text) => {
+      const showSuccessScreen = (text, opts) => {
+        const disqualified = !!(opts && opts.disqualified);
         if (successMessageEl) successMessageEl.textContent = text || '';
+        const iconEl = document.querySelector('[data-success-icon]');
+        if (iconEl) {
+          iconEl.innerHTML = disqualified
+            ? '<svg viewBox="0 0 24 24" width="34" height="34" aria-hidden="true"><circle cx="12" cy="12" r="9" fill="none" stroke="currentColor" stroke-width="2"/><path d="M12 7.5v5.5" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"/><circle cx="12" cy="16.6" r="1.3" fill="currentColor"/></svg>'
+            : '<svg viewBox="0 0 24 24" width="36" height="36" aria-hidden="true"><path d="M20 6 9 17l-5-5" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+        }
         if (form) {
           form.reset();
           form.classList.remove('visible');
         }
         if (shell) {
-          shell.classList.remove('dateSelected', 'bookingActive');
-          shell.classList.add('bookingDone');
+          shell.classList.remove('dateSelected', 'bookingActive', 'bookingDone', 'bookingDisqualified');
+          shell.classList.add(disqualified ? 'bookingDisqualified' : 'bookingDone');
         }
         try { window.scrollTo({ top: 0, behavior: 'smooth' }); } catch (err) {}
       };
@@ -2441,7 +2569,8 @@ export function renderPublicCalendarHtml(calendar, { host = '', embedded = false
         form.classList.add('visible');
         formPageIndex = 0;
         renderFormPage();
-        submit.disabled = false;
+        evaluateDisqualification();
+        submit.disabled = immediateDisqualified;
         submit.textContent = calendar.preview ? 'Vista previa sin agendar' : 'Agendar cita';
         selectedTitle.textContent = 'Confirma tu cita';
         selectedSubtitle.textContent = formatDay(selectedSlot) + ' a las ' + formatTime(selectedSlot);
@@ -2534,10 +2663,56 @@ export function renderPublicCalendarHtml(calendar, { host = '', embedded = false
         loadSlots();
       });
 
+      // (CAL-QUAL) Evaluación de calificación en el cliente (UX inmediata). El servidor SIEMPRE
+      // revalida; esto solo mejora la experiencia bloqueando en cuanto eligen una respuesta que
+      // descalifica ('disqualify'). Las de 'disqualify_after_submit' las resuelve el servidor.
+      const parseDisqualifyRule = (raw) => {
+        if (!raw) return null;
+        try { const r = JSON.parse(raw); return r && r.action ? r : null; } catch (_) { return null; }
+      };
+      const readSelectedDisqualifyRule = () => {
+        if (!form) return null;
+        const selected = Array.from(form.querySelectorAll('input[data-rule]:checked'));
+        form.querySelectorAll('select').forEach((select) => {
+          const opt = select.selectedOptions && select.selectedOptions[0];
+          if (opt && opt.dataset && opt.dataset.rule) selected.push(opt);
+        });
+        for (const el of selected) {
+          const rule = parseDisqualifyRule(el.dataset.rule);
+          if (rule && rule.action === 'disqualify') return rule;
+        }
+        return null;
+      };
+      const evaluateDisqualification = () => {
+        const rule = readSelectedDisqualifyRule();
+        if (rule) {
+          immediateDisqualified = true;
+          if (submit) submit.disabled = true;
+          setMessage(rule.message || 'Por tus respuestas, por ahora no podemos agendar tu cita.', 'error');
+        } else if (immediateDisqualified) {
+          immediateDisqualified = false;
+          if (submit) submit.disabled = !selectedSlot;
+          setMessage('');
+        }
+      };
+      form && form.addEventListener('change', evaluateDisqualification);
+
       form.addEventListener('submit', async (event) => {
         event.preventDefault();
         if (!selectedSlot) {
           setMessage('Selecciona un horario primero.', 'error');
+          return;
+        }
+
+        // No calificó (descalificación inmediata): mostramos el mensaje y no agendamos.
+        if (immediateDisqualified) {
+          const rule = readSelectedDisqualifyRule();
+          if (rule && rule.redirectUrl) {
+            showSuccessScreen('Gracias por tus respuestas.', { disqualified: true });
+            window.setTimeout(() => { try { window.location.assign(rule.redirectUrl); } catch (_) {} }, 1000);
+            return;
+          }
+          showSuccessScreen((rule && rule.message) || 'Por ahora no podemos agendar tu cita.', { disqualified: true });
           return;
         }
 
@@ -2575,6 +2750,18 @@ export function renderPublicCalendarHtml(calendar, { host = '', embedded = false
             })
           });
           const payload = await response.json();
+          // (CAL-QUAL) El servidor descalificó: no se agendó. Mostramos el mensaje del
+          // formulario (o redirigimos) en vez de un error rojo.
+          if (payload && payload.disqualified) {
+            selectedSlot = '';
+            if (payload.redirectUrl) {
+              showSuccessScreen('Gracias por tus respuestas.', { disqualified: true });
+              window.setTimeout(() => { try { window.location.assign(payload.redirectUrl); } catch (_) {} }, 1200);
+              return;
+            }
+            showSuccessScreen(payload.message || 'Gracias por tus respuestas. Por ahora no podemos agendar tu cita.', { disqualified: true });
+            return;
+          }
           if (!response.ok || payload.success === false) throw new Error(payload.error || 'No se pudo agendar');
           trackCalendarMetaEvent(payload.data?.metaEvent);
           const completionRedirectUrl = getCompletionRedirectUrl();
