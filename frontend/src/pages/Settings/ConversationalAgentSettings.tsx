@@ -4211,6 +4211,8 @@ export const ConversationalAgentSettings: React.FC<ConversationalAgentSettingsPr
         onSkipToManual={() => { setWizardOpen(false); void handleCreateAgent() }}
         creating={creating}
         defaultName={`Agente ${agents.length + 1}`}
+        aiProvider={getKnownConversationalAIProvider(config?.aiProvider)}
+        model={getKnownConversationalModel(getKnownConversationalAIProvider(config?.aiProvider), config?.model || getDefaultConversationalModel(getKnownConversationalAIProvider(config?.aiProvider)))}
       />
     </div>
   )

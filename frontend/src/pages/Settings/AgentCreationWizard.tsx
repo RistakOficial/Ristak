@@ -5,6 +5,7 @@ import {
   UserCheck, CalendarCheck, CreditCard, Link2, Wallet, Rocket, type LucideIcon
 } from 'lucide-react'
 import { Modal, Button, CustomSelect, NumberInput } from '@/components/common'
+import type { ConversationalAIProviderId } from '@/constants/conversationalAIProviders'
 import { useAccountCurrency } from '@/hooks'
 import { calendarsService, type Calendar as CalendarRecord } from '@/services/calendarsService'
 import { formatCurrency } from '@/utils/format'
@@ -20,6 +21,7 @@ import {
   type ConversationalSuccessAction
 } from '@/services/conversationalAgentService'
 import { StepArt } from './AgentCreationWizardArt'
+import { WizardTestChat } from './WizardTestChat'
 import styles from './AgentCreationWizard.module.css'
 
 export interface AgentWizardDraft {
@@ -97,7 +99,7 @@ const actionChoicesByObjective: Record<ConversationalObjective, Array<Choice<Con
 
 type StepId =
   | 'welcome' | 'name' | 'objective' | 'identity' | 'persuasion' | 'language'
-  | 'action' | 'calendar' | 'payment' | 'data' | 'recap'
+  | 'action' | 'calendar' | 'payment' | 'data' | 'recap' | 'test'
 
 // Reglas if/if-not: el calendario solo si la IA agenda; el cobro solo si la IA agenda
 // (anticipo de cita) o si la IA cobra una venta.
@@ -153,7 +155,12 @@ function buildGoalWorkflowFromDraft(draft: AgentWizardDraft, accountCurrency: st
   return wf
 }
 
-export function buildOverridesFromDraft(draft: AgentWizardDraft, accountCurrency: string, fallbackName: string): ConversationalAgentDefInput {
+export function buildOverridesFromDraft(
+  draft: AgentWizardDraft,
+  accountCurrency: string,
+  fallbackName: string,
+  defaults: { aiProvider?: ConversationalAIProviderId; model?: string } = {}
+): ConversationalAgentDefInput {
   return {
     name: draft.name.trim() || fallbackName,
     objective: draft.objective,
@@ -165,7 +172,10 @@ export function buildOverridesFromDraft(draft: AgentWizardDraft, accountCurrency
     persuasionLevel: draft.persuasionLevel,
     languageLevel: draft.languageLevel,
     goalWorkflow: buildGoalWorkflowFromDraft(draft, accountCurrency),
-    defaultCalendarId: isCitasBooking(draft) ? draft.calendarId : null
+    defaultCalendarId: isCitasBooking(draft) ? draft.calendarId : null,
+    // Proveedor/modelo: así la PRUEBA usa exactamente la misma IA que el agente creado.
+    ...(defaults.aiProvider ? { aiProvider: defaults.aiProvider } : {}),
+    ...(defaults.model ? { model: defaults.model } : {})
   }
 }
 
@@ -176,18 +186,22 @@ interface Props {
   onSkipToManual?: () => void
   creating?: boolean
   defaultName?: string
+  aiProvider?: ConversationalAIProviderId
+  model?: string
 }
 
-export function AgentCreationWizard({ isOpen, onClose, onComplete, onSkipToManual, creating = false, defaultName = '' }: Props) {
+export function AgentCreationWizard({ isOpen, onClose, onComplete, onSkipToManual, creating = false, defaultName = '', aiProvider, model }: Props) {
   const [stepIndex, setStepIndex] = useState(0)
   const [draft, setDraft] = useState<AgentWizardDraft>(() => buildInitialDraft(defaultName))
   const [calendars, setCalendars] = useState<CalendarRecord[]>([])
+  const [testResetKey, setTestResetKey] = useState(0)
   const [accountCurrency] = useAccountCurrency()
 
   // Reinicia el wizard cada vez que se abre y carga los calendarios reales.
   useEffect(() => {
     if (!isOpen) return
     setStepIndex(0)
+    setTestResetKey((k) => k + 1)
     setDraft(buildInitialDraft(defaultName))
     let alive = true
     calendarsService.getCalendars()
@@ -205,7 +219,7 @@ export function AgentCreationWizard({ isOpen, onClose, onComplete, onSkipToManua
       'welcome', 'name', 'objective', 'identity', 'persuasion', 'language', 'action',
       ...(showCalendar ? ['calendar'] as StepId[] : []),
       ...(showPayment ? ['payment'] as StepId[] : []),
-      'data', 'recap'
+      'data', 'recap', 'test'
     ]
   }, [draft.objective, draft.successAction])
 
@@ -216,10 +230,17 @@ export function AgentCreationWizard({ isOpen, onClose, onComplete, onSkipToManua
 
   const safeIndex = Math.min(stepIndex, activeSteps.length - 1)
   const step = activeSteps[safeIndex]
-  const isQuestion = step !== 'welcome' && step !== 'recap'
-  const totalQuestions = activeSteps.length - 2 // sin bienvenida ni resumen
+  const isQuestion = step !== 'welcome' && step !== 'recap' && step !== 'test'
+  // El denominador es dinámico a propósito: al elegir que la IA agende/cobre aparecen
+  // pasos reales nuevos, así que "Pregunta X de N" sube N de forma honesta.
+  const totalQuestions = activeSteps.length - 3 // sin bienvenida, resumen ni prueba
   const questionNumber = isQuestion ? safeIndex : null
   const actionChoices = actionChoicesByObjective[draft.objective] || actionChoicesByObjective.citas
+
+  const reconfigure = () => {
+    setTestResetKey((k) => k + 1)
+    setStepIndex(0)
+  }
 
   const patch = (next: Partial<AgentWizardDraft>) => setDraft((current) => ({ ...current, ...next }))
 
@@ -228,15 +249,21 @@ export function AgentCreationWizard({ isOpen, onClose, onComplete, onSkipToManua
     patch({ objective, successAction: firstAction, ...(objective === 'custom' ? {} : { customObjective: '' }) })
   }
 
+  const needsDepositAmount = (isCitasBooking(draft) && draft.askDeposit) || (isVentasCharging(draft) && draft.paymentMode === 'deposit')
+
   const canAdvance = useMemo(() => {
     if (step === 'name') return draft.name.trim().length > 0
     if (step === 'objective' && draft.objective === 'custom') return draft.customObjective.trim().length > 0
+    // Si pide anticipo/pago, exige el monto: sin él el backend deja el avance atascado.
+    if (step === 'payment' && needsDepositAmount) return Number(draft.depositAmount) > 0
     return true
-  }, [step, draft])
+  }, [step, draft, needsDepositAmount])
+
+  const currentOverrides = () => buildOverridesFromDraft(draft, accountCurrency, defaultName || draft.name || 'Agente', { aiProvider, model })
 
   const goNext = () => setStepIndex((i) => Math.min(i + 1, activeSteps.length - 1))
   const goBack = () => setStepIndex((i) => Math.max(i - 1, 0))
-  const finish = () => { void onComplete(buildOverridesFromDraft(draft, accountCurrency, defaultName || draft.name || 'Agente')) }
+  const finish = () => { void onComplete(currentOverrides()) }
 
   const labelOf = <T extends string>(choices: Array<Choice<T>>, value: T) => choices.find((c) => c.value === value)?.label || ''
   const money = (amount: number | null) => (amount && amount > 0 ? formatCurrency(amount, accountCurrency) : 'monto pendiente')
@@ -260,7 +287,7 @@ export function AgentCreationWizard({ isOpen, onClose, onComplete, onSkipToManua
         )}
 
         <div className={styles.body}>
-          <div className={styles.art}><StepArt kind={step} /></div>
+          {step !== 'test' && <div className={styles.art}><StepArt kind={step} /></div>}
 
           {step === 'welcome' && (
             <>
@@ -448,6 +475,21 @@ export function AgentCreationWizard({ isOpen, onClose, onComplete, onSkipToManua
               </div>
             </>
           )}
+
+          {step === 'test' && (
+            <>
+              <h2 className={styles.title}>Pruébalo antes de soltarlo 🎙️</h2>
+              <p className={styles.help}>Aquí está tu asistente, vivito. Escríbele como si fueras un cliente: mándale un mensaje, déjale una <strong>nota de voz</strong>, súbele una <strong>foto</strong> o un comprobante. Pruébalo a lo bestia para ver cómo responde ANTES de activarlo.</p>
+              <div className={styles.testChat}>
+                <WizardTestChat
+                  key={testResetKey}
+                  agentName={draft.name}
+                  getConfig={currentOverrides}
+                />
+              </div>
+              <p className={styles.fieldHint}>Tip: pídele una cita, pregúntale precios, o mándale un audio a ver si te entiende. Si algo no te late, reconfigúralo.</p>
+            </>
+          )}
         </div>
 
         <div className={styles.footer}>
@@ -457,7 +499,13 @@ export function AgentCreationWizard({ isOpen, onClose, onComplete, onSkipToManua
           <div className={styles.footerRight}>
             {step === 'welcome' && <Button variant="primary" onClick={goNext}>Empezar <ArrowRight size={16} /></Button>}
             {questionNumber !== null && <Button variant="primary" onClick={goNext} disabled={!canAdvance}>Siguiente <ArrowRight size={16} /></Button>}
-            {step === 'recap' && <Button variant="primary" onClick={finish} loading={creating} disabled={creating}><Rocket size={16} /> Crear asistente</Button>}
+            {step === 'recap' && <Button variant="primary" onClick={goNext}>Probar mi asistente <ArrowRight size={16} /></Button>}
+            {step === 'test' && (
+              <>
+                <Button variant="ghost" onClick={reconfigure} disabled={creating}>No me late, reconfigurar</Button>
+                <Button variant="primary" onClick={finish} loading={creating} disabled={creating}><Rocket size={16} /> Me encanta, créalo</Button>
+              </>
+            )}
           </div>
         </div>
       </div>
@@ -480,7 +528,7 @@ function MoneyField({ label, amount, currency, onChange }: { label: string; amou
           placeholder="0"
         />
       </div>
-      <p className={styles.fieldHint}>Se usa la moneda de tu cuenta ({currency}). La puedes dejar en blanco y ponerla después.</p>
+      <p className={styles.fieldHint}>Se usa la moneda de tu cuenta ({currency}). Pon el monto que cobras de anticipo para continuar.</p>
     </div>
   )
 }

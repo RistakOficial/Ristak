@@ -199,6 +199,13 @@
   padding-left: 28px;
 }
 
+.testChat {
+  width: 100%;
+  display: flex;
+  justify-content: center;
+  margin-top: 6px;
+}
+
 /* Bienvenida */
 .welcomeList {
   display: flex;
