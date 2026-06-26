@@ -10369,7 +10369,7 @@
 }
 
 .inspectorTabBody {
-  padding-top: 14px;
+  padding-top: 24px;
 }
 
 .inspectorEmptyText {
@@ -17762,7 +17762,7 @@
 
 .pageFrame .containerFocused .sitesShellFocused .propertiesBody {
   gap: 0;
-  padding: 14px 12px 24px;
+  padding: 24px 12px 24px;
 }
 
 .pageFrame .containerFocused .sitesShellFocused .propertiesBody > :is(
