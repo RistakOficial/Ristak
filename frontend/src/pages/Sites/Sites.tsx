@@ -6759,24 +6759,58 @@ const computeFormElementPopoverPosition = (anchorSelector: string): { left: numb
   if (!anchor) return null
   const rect = anchor.getBoundingClientRect()
   const pad = 12
+  const gap = 14
   const popoverWidth = Math.min(430, Math.max(320, window.innerWidth - pad * 2))
-  const popoverHeightEstimate = Math.min(620, Math.max(280, window.innerHeight - pad * 2))
-  // El borde derecho útil es el del lienzo (.rstkCanvas), no el del viewport:
-  // así la caja salta al lado izquierdo del bloque antes de encimarse con la
-  // barra de propiedades (que vive a la derecha del lienzo). En pantallas que
-  // apilan el layout, el lienzo ocupa todo el ancho y esto degrada al viewport.
+  const popoverHeight = Math.min(620, Math.max(280, window.innerHeight - pad * 2))
+
+  // Área segura donde puede vivir la caja: horizontalmente acotada al lienzo
+  // (.rstkCanvas) para NUNCA tapar los paneles laterales (bloques a la izquierda,
+  // propiedades a la derecha), y verticalmente al alto visible del lienzo para no
+  // meterse bajo la barra superior. En layouts apilados (lienzo a todo el ancho)
+  // degrada al viewport.
   const canvasRect = document.querySelector<HTMLElement>('.rstkCanvas')?.getBoundingClientRect()
-  const rightBound = canvasRect ? Math.min(window.innerWidth - pad, canvasRect.right - pad) : window.innerWidth - pad
-  const leftBound = canvasRect ? Math.max(pad, canvasRect.left + pad) : pad
-  const rightSideLeft = rect.right + 14
-  const leftSideLeft = rect.left - popoverWidth - 14
-  const hasRoomRight = rightSideLeft + popoverWidth <= rightBound
-  const rawLeft = hasRoomRight ? rightSideLeft : leftSideLeft
-  const rawTop = rect.top - 4
-  return {
-    left: Math.max(leftBound, Math.min(rawLeft, rightBound - popoverWidth)),
-    top: Math.max(pad, Math.min(rawTop, window.innerHeight - popoverHeightEstimate - pad))
+  const areaLeft = canvasRect ? Math.max(pad, canvasRect.left + pad) : pad
+  const areaRight = canvasRect ? Math.min(window.innerWidth - pad, canvasRect.right - pad) : window.innerWidth - pad
+  const areaTop = Math.max(pad, canvasRect ? canvasRect.top + pad : pad)
+  const areaBottom = Math.min(window.innerHeight - pad, canvasRect ? canvasRect.bottom - pad : window.innerHeight - pad)
+
+  const clampLeft = (l: number) => Math.max(areaLeft, Math.min(l, areaRight - popoverWidth))
+  const clampTop = (t: number) => Math.max(areaTop, Math.min(t, areaBottom - popoverHeight))
+
+  // Cuánto se encimaría una caja en (left, top) sobre el elemento editado.
+  const overlapArea = (left: number, top: number) => {
+    const ox = Math.max(0, Math.min(left + popoverWidth, rect.right) - Math.max(left, rect.left))
+    const oy = Math.max(0, Math.min(top + popoverHeight, rect.bottom) - Math.max(top, rect.top))
+    return ox * oy
   }
+
+  // Movimiento inteligente: probamos colocarla pegada al elemento por cada lado
+  // (derecha → izquierda → abajo → arriba) y nos quedamos con el primero que
+  // quepa SIN taparlo. Así una caja angosta salta de lado y una ancha (un
+  // calendario, p. ej.) baja debajo del bloque en vez de encimarse.
+  const sideTop = clampTop(rect.top - 4)
+  const centeredLeft = clampLeft(rect.left + rect.width / 2 - popoverWidth / 2)
+  const candidates = [
+    { left: rect.right + gap, top: sideTop, fits: rect.right + gap + popoverWidth <= areaRight },
+    { left: rect.left - popoverWidth - gap, top: sideTop, fits: rect.left - popoverWidth - gap >= areaLeft },
+    { left: centeredLeft, top: rect.bottom + gap, fits: rect.bottom + gap + popoverHeight <= areaBottom },
+    { left: centeredLeft, top: rect.top - popoverHeight - gap, fits: rect.top - popoverHeight - gap >= areaTop }
+  ]
+  const clean = candidates.find(candidate => candidate.fits)
+  if (clean) return { left: clampLeft(clean.left), top: clampTop(clean.top) }
+
+  // El elemento llena el área útil (calendario a todo lo ancho y alto): no hay
+  // hueco libre, así que anclamos la caja a la esquina del lienzo que MENOS lo
+  // tape, en vez de plantarla siempre encima del bloque.
+  const corners = [
+    { left: areaRight - popoverWidth, top: areaBottom - popoverHeight },
+    { left: areaRight - popoverWidth, top: areaTop },
+    { left: areaLeft, top: areaBottom - popoverHeight },
+    { left: areaLeft, top: areaTop }
+  ].map(corner => ({ left: clampLeft(corner.left), top: clampTop(corner.top) }))
+  return corners.reduce((best, corner) => (
+    overlapArea(corner.left, corner.top) < overlapArea(best.left, best.top) ? corner : best
+  ), corners[0])
 }
 
 // Pins a floating box next to the currently-selected element on the form
@@ -7113,6 +7147,7 @@ function FormEmbedEditorPanel({
               customFields={customFields}
               customFieldFolders={customFieldFolders}
               onCustomFieldCreated={onCustomFieldCreated}
+              enableVideoFormGateAction
               onPatchSite={onPatchSite}
               onSaveSite={onSaveSite}
               onPatchSettings={patchActiveFieldSettings}
@@ -7480,6 +7515,8 @@ function FormEmbedEditorPanel({
           {isChoiceBlock(activeField.blockType) && (
             <FormOptionGlobalStyleControls site={site} onPatchTheme={onPatchTheme} onSaveSite={onSaveSite} />
           )}
+          {/* Botón de envío global, visible al editar cualquier campo (como el standalone). */}
+          <FormSubmitGlobalStyleControls site={site} onPatchTheme={onPatchTheme} onSaveSite={onSaveSite} />
         </>
       )}
     </>
@@ -7858,7 +7895,11 @@ export const Sites: React.FC = () => {
     [sites]
   )
   const forms = useMemo(
-    () => sites.filter(site => site.siteType === 'standard_form' || site.siteType === 'interactive_form'),
+    // El formulario de sistema del calendario (librarySource 'calendar') NO es un
+    // formulario del usuario: se oculta de la biblioteca de Formularios y de TODOS los
+    // selectores de embed/respuestas/video-gate. Las citas siguen guardando contacto por
+    // su propio camino, así que ocultarlo no afecta el funcionamiento.
+    () => sites.filter(site => (site.siteType === 'standard_form' || site.siteType === 'interactive_form') && getSiteLibrarySource(site) !== 'calendar'),
     [sites]
   )
   const sitesById = useMemo(
@@ -33429,6 +33470,25 @@ const PageInspector: React.FC<{
           onCommit={onSaveSite}
         />
       </div>
+      </AccordionSection>
+      <AccordionSection id="page-typography" title="Tipografía del sitio">
+        {([
+          { key: 'siteHeadingFontFamily', label: 'Título' },
+          { key: 'siteSubheadingFontFamily', label: 'Subtítulo' },
+          { key: 'siteBodyFontFamily', label: 'Texto' }
+        ] as const).map(({ key, label }) => {
+          const current = getThemeString(theme, key)
+          return (
+            <label key={key} className={styles.field}>
+              <span>{label}</span>
+              <CustomSelect value={current} onChange={(event) => onPatchTheme({ [key]: event.target.value } as Partial<SiteTheme>)} onBlur={onSaveSite}>
+                {getFontOptionsWithCurrent(current).map(option => (
+                  <option key={option.label} value={option.value}>{option.label}</option>
+                ))}
+              </CustomSelect>
+            </label>
+          )
+        })}
       </AccordionSection>
     </div>
     </AccordionGroup>

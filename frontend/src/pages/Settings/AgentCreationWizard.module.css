@@ -75,13 +75,14 @@
 .optionCard {
   display: flex;
   gap: 13px;
-  align-items: flex-start;
+  align-items: center;
   width: 100%;
   padding: 13px 14px;
   border: 1px solid var(--border);
   border-radius: var(--radius-card);
   background: var(--surface);
   cursor: pointer;
+  text-align: left;
   transition: border-color 0.15s ease, background 0.15s ease, box-shadow 0.15s ease;
 }
 .optionCard:hover {
@@ -108,20 +109,24 @@
   color: var(--on-accent);
 }
 .optionBody {
+  flex: 1 1 auto;
   display: flex;
   flex-direction: column;
   gap: 3px;
   min-width: 0;
+  text-align: left;
 }
 .optionLabel {
   font-size: 15px;
   font-weight: 600;
   color: var(--text);
+  text-align: left;
 }
 .optionExample {
   font-size: 13px;
   line-height: 1.45;
   color: var(--text-dim);
+  text-align: left;
 }
 
 /* Campos de texto */

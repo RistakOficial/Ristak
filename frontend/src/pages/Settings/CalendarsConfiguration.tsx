@@ -420,7 +420,8 @@ const createDefaultCalendarBookingFields = (): CalendarBookingDefaultFields => (
   name: { enabled: true, required: true },
   phone: { enabled: true, required: true },
   email: { enabled: true, required: true },
-  notes: { enabled: true, required: false }
+  // Notas públicas ("detalles adicionales") apagadas por defecto: casi nadie las usa.
+  notes: { enabled: false, required: false }
 })
 
 const normalizeCalendarBookingDefaultFields = (value?: Partial<CalendarBookingDefaultFields> | null): CalendarBookingDefaultFields => {
@@ -440,7 +441,8 @@ const normalizeCalendarBookingDefaultFields = (value?: Partial<CalendarBookingDe
       required: emailEnabled
     },
     notes: {
-      enabled: fields.notes?.enabled !== false,
+      // Apagado por defecto: solo se muestra si el calendario lo prendió explícitamente.
+      enabled: fields.notes?.enabled === true,
       required: false
     }
   }
@@ -3748,7 +3750,6 @@ export const CalendarsConfiguration: React.FC = () => {
   const renderCalendarsTab = () => (
     <div className={pageStyles.tabPanel}>
       <div className={pageStyles.panelToolbar}>
-        {renderCalendarSourceSelect()}
         <Button
           className={pageStyles.toolbarCreate}
           variant="outline"
@@ -3761,12 +3762,8 @@ export const CalendarsConfiguration: React.FC = () => {
           <Plus size={16} />
           Crear calendario
         </Button>
+        {renderCalendarSourceSelect()}
       </div>
-
-      <details className={pageStyles.compactHelp}>
-        <summary>¿Qué significa “conversión”?</summary>
-        <p>Los calendarios marcados alimentan citas en reportes, campañas, viaje del cliente y eventos de Meta/WhatsApp. Si no marcas ninguno, Ristak toma todos.</p>
-      </details>
 
       {calendars.length > 0 ? (
         <div className={pageStyles.calendarList}>

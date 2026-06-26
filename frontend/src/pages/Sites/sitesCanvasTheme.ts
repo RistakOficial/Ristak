@@ -482,8 +482,11 @@ export const buildCanvasTheme = (site: PublicSite, device: 'desktop' | 'mobile' 
   const accent = overrides.accent || v.accent
   const accentStrong = overrides.accent ? `color-mix(in srgb, ${overrides.accent} 86%, #000)` : v.accentStrong
   const ring = overrides.accent ? `color-mix(in srgb, ${overrides.accent} 22%, transparent)` : v.ring
-  const baseFont = template.font
-  const display = `'Inter Tight', ${template.font}`
+  const bodyFont = sanitizeCssFont(theme.siteBodyFontFamily) || template.font
+  const siteTitleFont = sanitizeCssFont(theme.siteHeadingFontFamily)
+  const siteSubtitleFont = sanitizeCssFont(theme.siteSubheadingFontFamily)
+  const baseFont = bodyFont
+  const display = `'Inter Tight', ${bodyFont}`
 
   const storedPageMaxWidth = Number(theme?.pageMaxWidth)
   const pageMaxWidth = isLandingType && storedPageMaxWidth === 1160
@@ -512,6 +515,8 @@ export const buildCanvasTheme = (site: PublicSite, device: 'desktop' | 'mobile' 
     '--rstk-color-scheme': template.mode,
     '--rstk-font': baseFont,
     '--rstk-display': display,
+    ...(siteTitleFont ? { '--rstk-site-title-font': siteTitleFont } : {}),
+    ...(siteSubtitleFont ? { '--rstk-site-subtitle-font': siteSubtitleFont } : {}),
     '--rstk-ease': 'cubic-bezier(.16,.84,.44,1)',
     '--rstk-page-bg': pageBg,
     '--rstk-page-image': pageImage,

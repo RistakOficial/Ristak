@@ -220,6 +220,9 @@ export interface SiteTheme {
   submitWidth?: number
   submitAlign?: 'left' | 'center' | 'right' | 'full'
   formFontFamily?: string
+  siteHeadingFontFamily?: string
+  siteSubheadingFontFamily?: string
+  siteBodyFontFamily?: string
   formLabelSize?: number
   formInputSize?: number
   formHelpSize?: number

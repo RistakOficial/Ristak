@@ -9,6 +9,7 @@ import {
   getAutomationReviewStatus,
   loadAutomationReferenceCatalogs
 } from './automationReferenceResolver.js'
+import { CALENDAR_DEFAULT_FORM_SITE_ID } from './localCalendarService.js'
 
 const usePostgres = !!process.env.DATABASE_URL
 const flowPlaceholder = usePostgres ? '?::jsonb' : '?'
@@ -591,6 +592,12 @@ function mapAutomationFormOption({ id, name, siteId, siteName, kind, status, upd
 }
 
 function addAutomationFormOption(options, seen, option) {
+  // El formulario de sistema del calendario (citas) NO es un formulario del usuario:
+  // se oculta del catálogo de formularios de Automatizaciones (disparos/objetivos).
+  // Las citas guardan contacto por su propio camino, así que no se rompe nada. No
+  // tocamos el resolver de campos (listAutomationFormFieldsCatalog) para no romper
+  // automatizaciones que ya estuvieran apuntando a este id.
+  if (option?.id === CALENDAR_DEFAULT_FORM_SITE_ID || option?.siteId === CALENDAR_DEFAULT_FORM_SITE_ID) return
   const mapped = mapAutomationFormOption(option)
   if (!mapped.id || seen.has(mapped.id)) return
   seen.add(mapped.id)

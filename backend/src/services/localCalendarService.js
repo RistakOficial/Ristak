@@ -274,7 +274,8 @@ function normalizeCalendarBookingDefaultFields(value = {}) {
       required: Boolean(emailEnabled)
     },
     notes: {
-      enabled: source.notesEnabled ?? source.notes?.enabled ?? true,
+      // Apagado por defecto: solo prendido si el calendario lo guardó explícitamente.
+      enabled: source.notesEnabled ?? source.notes?.enabled ?? false,
       required: false
     }
   }
@@ -1979,7 +1980,7 @@ export function renderPublicCalendarHtml(calendar, { host = '', embedded = false
         <div class="selectedDate">
           <h3 data-selected-title>Selecciona una fecha</h3>
           <p data-selected-subtitle>Los horarios aparecerán aquí.</p>
-          <button class="changeSlot" type="button" data-change-slot aria-label="Volver"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m15 18-6-6 6-6" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>Volver</button>
+          <button class="changeSlot" type="button" data-change-slot aria-label="Cambiar fecha"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m15 18-6-6 6-6" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg><span data-change-label>Cambiar fecha</span></button>
         </div>
         <div class="slotList" data-slots>
           <div class="slotEmpty">Elige un día con disponibilidad.</div>
@@ -2182,10 +2183,14 @@ export function renderPublicCalendarHtml(calendar, { host = '', embedded = false
         shell.classList.toggle('dateSelected', step === 'slots');
         shell.classList.toggle('bookingActive', step === 'form');
         if (changeSlotButton) {
-          // Botón "Volver" contextual: en el formulario regresa a los horarios; en los
-          // horarios regresa al calendario. Mantenemos la flecha + texto fijo (no
-          // reescribimos textContent para no borrar el ícono SVG).
-          changeSlotButton.setAttribute('aria-label', step === 'form' ? 'Volver a horarios' : 'Volver al calendario');
+          // Botón contextual para regresar un paso (intuitivo: dice QUÉ vas a cambiar):
+          //  - en el formulario → "Cambiar fecha y hora" (regresa a elegir horario)
+          //  - en los horarios   → "Cambiar fecha" (regresa al calendario)
+          // Solo tocamos el <span> del texto para NO borrar el ícono de flecha (SVG).
+          const backText = step === 'form' ? 'Cambiar fecha y hora' : 'Cambiar fecha';
+          const labelEl = changeSlotButton.querySelector('[data-change-label]');
+          if (labelEl) labelEl.textContent = backText;
+          changeSlotButton.setAttribute('aria-label', backText);
         }
       };
 
@@ -3323,6 +3328,32 @@ export async function listLocalBlockedSlots({ calendarId = null, startTime = nul
   )
 }
 
+export async function updateLocalBlockedSlot({ id, startTime = null, endTime = null, title } = {}) {
+  const cleanId = cleanString(id)
+  if (!cleanId) throw new Error('Se requiere el id del bloqueo')
+  const zone = await getAccountTimezone()
+  const sets = []
+  const params = []
+  if (startTime != null) {
+    const startIso = normalizeToUtcIso(startTime, zone)
+    if (!startIso || Number.isNaN(new Date(startIso).getTime())) throw new Error('Horario de bloqueo inválido')
+    sets.push('start_time = ?'); params.push(startIso)
+  }
+  if (endTime != null) {
+    const endIso = normalizeToUtcIso(endTime, zone)
+    if (!endIso || Number.isNaN(new Date(endIso).getTime())) throw new Error('Horario de bloqueo inválido')
+    sets.push('end_time = ?'); params.push(endIso)
+  }
+  if (title !== undefined) {
+    sets.push('title = ?')
+    params.push(title ? cleanString(title) : null)
+  }
+  if (!sets.length) return false
+  params.push(cleanId)
+  const result = await db.run(`UPDATE blocked_slots SET ${sets.join(', ')} WHERE id = ?`, params)
+  return result.changes > 0
+}
+
 export async function deleteLocalBlockedSlot(id) {
   const result = await db.run('DELETE FROM blocked_slots WHERE id = ?', [cleanString(id)])
   return result.changes > 0
@@ -3344,6 +3375,21 @@ export async function getLocalFreeSlots(calendarId, startDate, endDate, timezone
   const rangeStart = startDay.toUTC().toISO()
   const rangeEnd = endDay.endOf('day').toUTC().toISO()
   const existing = await listLocalAppointments({ startTime: rangeStart, endTime: rangeEnd, calendarId })
+
+  // (APT-004) Excluir los horarios bloqueados nativos del listado de slots libres.
+  // Sin esto, el calendario público seguiría ofreciendo horarios que el dueño bloqueó
+  // (el admin ya lo validaba en checkSlotAvailability, pero el booking público no).
+  let blockedRanges = []
+  try {
+    const blocks = await listLocalBlockedSlots({ calendarId, startTime: rangeStart, endTime: rangeEnd })
+    blockedRanges = blocks.map(b => [
+      new Date(b.startTime).getTime(),
+      new Date(b.endTime || b.startTime).getTime()
+    ])
+  } catch (error) {
+    // Fail-open: si la migración de blocked_slots aún no corre, no filtrar nada.
+    blockedRanges = []
+  }
 
   const durationMinutes = Math.max(1, toInt(calendar.slotDuration, 60))
   const intervalMinutes = Math.max(1, toInt(calendar.slotInterval, durationMinutes))
@@ -3383,8 +3429,9 @@ export async function getLocalFreeSlots(calendarId, startDate, endDate, timezone
           new Date(event.endTime || event.startTime).getTime()
         )).length
         const hasConflict = Number.isFinite(appointmentLimit) && overlappingAppointments >= appointmentLimit
+        const isBlocked = blockedRanges.some(([blockStart, blockEnd]) => overlaps(slotStartMs, slotEndMs, blockStart, blockEnd))
 
-        if (!hasConflict && slotStartMs >= nowMs) {
+        if (!hasConflict && !isBlocked && slotStartMs >= nowMs) {
           const slotIso = slot.toUTC().toISO()
           if (!seenSlots.has(slotIso)) {
             slots.push(slotIso)
