@@ -1736,6 +1736,7 @@ type EmbeddedFormCanvasEditorBridge = {
   onDropField: (event: React.DragEvent<HTMLElement>, insertIndex: number) => void
   onDragLeave: (event: React.DragEvent<HTMLElement>) => void
   onMoveField: (fieldId: string, direction: BlockMoveDirection) => void
+  onDuplicateField?: (fieldId: string) => void
   onDeleteField: (fieldId: string) => void
 }
 
@@ -6758,24 +6759,58 @@ const computeFormElementPopoverPosition = (anchorSelector: string): { left: numb
   if (!anchor) return null
   const rect = anchor.getBoundingClientRect()
   const pad = 12
+  const gap = 14
   const popoverWidth = Math.min(430, Math.max(320, window.innerWidth - pad * 2))
-  const popoverHeightEstimate = Math.min(620, Math.max(280, window.innerHeight - pad * 2))
-  // El borde derecho útil es el del lienzo (.rstkCanvas), no el del viewport:
-  // así la caja salta al lado izquierdo del bloque antes de encimarse con la
-  // barra de propiedades (que vive a la derecha del lienzo). En pantallas que
-  // apilan el layout, el lienzo ocupa todo el ancho y esto degrada al viewport.
+  const popoverHeight = Math.min(620, Math.max(280, window.innerHeight - pad * 2))
+
+  // Área segura donde puede vivir la caja: horizontalmente acotada al lienzo
+  // (.rstkCanvas) para NUNCA tapar los paneles laterales (bloques a la izquierda,
+  // propiedades a la derecha), y verticalmente al alto visible del lienzo para no
+  // meterse bajo la barra superior. En layouts apilados (lienzo a todo el ancho)
+  // degrada al viewport.
   const canvasRect = document.querySelector<HTMLElement>('.rstkCanvas')?.getBoundingClientRect()
-  const rightBound = canvasRect ? Math.min(window.innerWidth - pad, canvasRect.right - pad) : window.innerWidth - pad
-  const leftBound = canvasRect ? Math.max(pad, canvasRect.left + pad) : pad
-  const rightSideLeft = rect.right + 14
-  const leftSideLeft = rect.left - popoverWidth - 14
-  const hasRoomRight = rightSideLeft + popoverWidth <= rightBound
-  const rawLeft = hasRoomRight ? rightSideLeft : leftSideLeft
-  const rawTop = rect.top - 4
-  return {
-    left: Math.max(leftBound, Math.min(rawLeft, rightBound - popoverWidth)),
-    top: Math.max(pad, Math.min(rawTop, window.innerHeight - popoverHeightEstimate - pad))
+  const areaLeft = canvasRect ? Math.max(pad, canvasRect.left + pad) : pad
+  const areaRight = canvasRect ? Math.min(window.innerWidth - pad, canvasRect.right - pad) : window.innerWidth - pad
+  const areaTop = Math.max(pad, canvasRect ? canvasRect.top + pad : pad)
+  const areaBottom = Math.min(window.innerHeight - pad, canvasRect ? canvasRect.bottom - pad : window.innerHeight - pad)
+
+  const clampLeft = (l: number) => Math.max(areaLeft, Math.min(l, areaRight - popoverWidth))
+  const clampTop = (t: number) => Math.max(areaTop, Math.min(t, areaBottom - popoverHeight))
+
+  // Cuánto se encimaría una caja en (left, top) sobre el elemento editado.
+  const overlapArea = (left: number, top: number) => {
+    const ox = Math.max(0, Math.min(left + popoverWidth, rect.right) - Math.max(left, rect.left))
+    const oy = Math.max(0, Math.min(top + popoverHeight, rect.bottom) - Math.max(top, rect.top))
+    return ox * oy
   }
+
+  // Movimiento inteligente: probamos colocarla pegada al elemento por cada lado
+  // (derecha → izquierda → abajo → arriba) y nos quedamos con el primero que
+  // quepa SIN taparlo. Así una caja angosta salta de lado y una ancha (un
+  // calendario, p. ej.) baja debajo del bloque en vez de encimarse.
+  const sideTop = clampTop(rect.top - 4)
+  const centeredLeft = clampLeft(rect.left + rect.width / 2 - popoverWidth / 2)
+  const candidates = [
+    { left: rect.right + gap, top: sideTop, fits: rect.right + gap + popoverWidth <= areaRight },
+    { left: rect.left - popoverWidth - gap, top: sideTop, fits: rect.left - popoverWidth - gap >= areaLeft },
+    { left: centeredLeft, top: rect.bottom + gap, fits: rect.bottom + gap + popoverHeight <= areaBottom },
+    { left: centeredLeft, top: rect.top - popoverHeight - gap, fits: rect.top - popoverHeight - gap >= areaTop }
+  ]
+  const clean = candidates.find(candidate => candidate.fits)
+  if (clean) return { left: clampLeft(clean.left), top: clampTop(clean.top) }
+
+  // El elemento llena el área útil (calendario a todo lo ancho y alto): no hay
+  // hueco libre, así que anclamos la caja a la esquina del lienzo que MENOS lo
+  // tape, en vez de plantarla siempre encima del bloque.
+  const corners = [
+    { left: areaRight - popoverWidth, top: areaBottom - popoverHeight },
+    { left: areaRight - popoverWidth, top: areaTop },
+    { left: areaLeft, top: areaBottom - popoverHeight },
+    { left: areaLeft, top: areaTop }
+  ].map(corner => ({ left: clampLeft(corner.left), top: clampTop(corner.top) }))
+  return corners.reduce((best, corner) => (
+    overlapArea(corner.left, corner.top) < overlapArea(best.left, best.top) ? corner : best
+  ), corners[0])
 }
 
 // Pins a floating box next to the currently-selected element on the form
@@ -6938,6 +6973,8 @@ function FormEmbedEditorPanel({
   popupBlocks,
   metaPixelConnected,
   importedPopupDetected,
+  connectedSocialProfiles,
+  loadingSocialProfiles,
   pages,
   activePageId,
   sitePages,
@@ -6969,6 +7006,8 @@ function FormEmbedEditorPanel({
   popupBlocks: SiteBlock[]
   metaPixelConnected: boolean
   importedPopupDetected: boolean
+  connectedSocialProfiles: ConnectedSocialProfile[]
+  loadingSocialProfiles: boolean
   pages: SitePage[]
   activePageId: string
   sitePages: SitePage[]
@@ -7108,6 +7147,7 @@ function FormEmbedEditorPanel({
               customFields={customFields}
               customFieldFolders={customFieldFolders}
               onCustomFieldCreated={onCustomFieldCreated}
+              enableVideoFormGateAction
               onPatchSite={onPatchSite}
               onSaveSite={onSaveSite}
               onPatchSettings={patchActiveFieldSettings}
@@ -7130,6 +7170,21 @@ function FormEmbedEditorPanel({
             onBlur={onSave}
           />
         </label>
+      )
+    }
+
+    if (activeField.blockType === 'social_profile') {
+      // Mismo editor de perfil de red social que el standalone (marca, plataforma,
+      // perfil conectado, avatar, seguidores, verificado, escala).
+      return (
+        <SocialProfileSettings
+          site={site}
+          settings={activeFieldSettings}
+          connectedSocialProfiles={connectedSocialProfiles}
+          loadingSocialProfiles={loadingSocialProfiles}
+          onPatchSettings={patchActiveFieldSettings}
+          onSave={onSave}
+        />
       )
     }
 
@@ -7238,6 +7293,17 @@ function FormEmbedEditorPanel({
             <label className={styles.field}>
               <span>Texto dentro del campo</span>
               <input value={activeField.placeholder} onChange={(event) => patchActiveField({ placeholder: event.target.value })} onBlur={onSave} />
+            </label>
+          )}
+
+          {!activeFieldSystemPreset && (
+            <label className={styles.field}>
+              <span>Nombre interno</span>
+              <input
+                value={getSettingString(activeFieldSettings, 'internalName')}
+                onChange={(event) => patchActiveFieldSettings({ internalName: event.target.value })}
+                onBlur={onSave}
+              />
             </label>
           )}
 
@@ -7449,6 +7515,8 @@ function FormEmbedEditorPanel({
           {isChoiceBlock(activeField.blockType) && (
             <FormOptionGlobalStyleControls site={site} onPatchTheme={onPatchTheme} onSaveSite={onSaveSite} />
           )}
+          {/* Botón de envío global, visible al editar cualquier campo (como el standalone). */}
+          <FormSubmitGlobalStyleControls site={site} onPatchTheme={onPatchTheme} onSaveSite={onSaveSite} />
         </>
       )}
     </>
@@ -11196,6 +11264,32 @@ export const Sites: React.FC = () => {
     patchEmbeddedFormFieldsLocal(nextFields, nextActive)
   }
 
+  const duplicateEmbeddedFormField = (fieldId: string) => {
+    const context = getCurrentEmbeddedFormContext()
+    if (!context) return
+    const source = context.fields.find(item => item.id === fieldId)
+    if (!source) return
+    const now = new Date().toISOString()
+    const baseInternal = getSettingString(source.settings || {}, 'internalName') || source.label || 'campo'
+    const clone: SiteBlock = {
+      ...source,
+      id: `embedded_${crypto.randomUUID()}`,
+      settings: {
+        ...(source.settings || {}),
+        internalName: makeUniqueInternalName(baseInternal, context.fields)
+      },
+      createdAt: now,
+      updatedAt: now
+    }
+    const sourceIndex = context.fields.findIndex(item => item.id === fieldId)
+    const nextFields = [
+      ...context.fields.slice(0, sourceIndex + 1),
+      clone,
+      ...context.fields.slice(sourceIndex + 1)
+    ]
+    patchEmbeddedFormFieldsLocal(nextFields, clone.id)
+  }
+
   const moveEmbeddedFormField = (fieldId: string, direction: BlockMoveDirection) => {
     const context = getCurrentEmbeddedFormContext()
     if (!context) return
@@ -12140,6 +12234,7 @@ export const Sites: React.FC = () => {
     onDropField: handleEmbeddedFormFieldDrop,
     onDragLeave: handleEmbeddedFormFieldDragLeave,
     onMoveField: moveEmbeddedFormField,
+    onDuplicateField: duplicateEmbeddedFormField,
     onDeleteField: removeEmbeddedFormField
   } : null
 
@@ -13004,6 +13099,8 @@ export const Sites: React.FC = () => {
                     popupBlocks={popupBlocks}
                     metaPixelConnected={metaPixelConnected}
                     importedPopupDetected={importedPopupDetected}
+                    connectedSocialProfiles={connectedSocialProfiles}
+                    loadingSocialProfiles={loadingSocialProfiles}
                     pages={formEditPages}
                     activePageId={activeEmbeddedFormPage?.id || DEFAULT_FUNNEL_PAGE_ID}
                     sitePages={pages}
@@ -31663,6 +31760,18 @@ const EmbeddedFormCanvasFields: React.FC<{
                   >
                     <ArrowDown size={13} />
                   </button>
+                  {editor.onDuplicateField && (
+                    <button
+                      type="button"
+                      onClick={(event) => {
+                        event.stopPropagation()
+                        editor.onDuplicateField?.(field.id)
+                      }}
+                      aria-label="Duplicar elemento"
+                    >
+                      <Copy size={13} />
+                    </button>
+                  )}
                   <button
                     type="button"
                     onClick={(event) => {
@@ -31920,6 +32029,12 @@ const FormFieldGlobalStyleControls: React.FC<{
 
   return (
     <AccordionSection id="form-field-global" title="Diseño global de campos">
+      <label className={styles.field}>
+        <span>Estilo de caja</span>
+        <CustomSelect value={normalizeFormInputStyle(theme.formInputStyle)} onChange={(event) => onPatchTheme({ formInputStyle: event.target.value as FormInputStyle })} onBlur={onSaveSite}>
+          {formInputStyleOptions.map(option => <option key={option.value} value={option.value}>{option.label}</option>)}
+        </CustomSelect>
+      </label>
       <div className={styles.twoColumn}>
         <ColorField label="Pregunta" value={getThemePaint(theme, 'formLabelColor', getThemePaint(theme, 'textColor', inputText))} allowGradient onChange={(value) => onPatchTheme({ formLabelColor: value })} onCommit={onSaveSite} />
         <ColorField label="Ayuda" value={getThemePaint(theme, 'formHelpColor', '#64748b')} allowGradient onChange={(value) => onPatchTheme({ formHelpColor: value })} onCommit={onSaveSite} />
