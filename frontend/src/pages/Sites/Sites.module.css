@@ -6784,6 +6784,33 @@
   min-width: 0;
 }
 
+/* Fila "etiqueta + Switch" dentro del editor de opciones
+   (p.ej. "Avisar al contacto antes de descalificar"). */
+.optionSwitchRow {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 12px;
+}
+
+.optionSwitchRow > div {
+  min-width: 0;
+  display: grid;
+  gap: 3px;
+}
+
+.optionSwitchRow strong {
+  color: var(--text);
+  font-size: 0.85rem;
+  font-weight: 650;
+}
+
+.optionSwitchRow small {
+  color: var(--text-dim);
+  font-size: 0.76rem;
+  line-height: 1.35;
+}
+
 .optionRulesHeader {
   display: flex;
   align-items: center;

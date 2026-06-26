@@ -2341,6 +2341,8 @@ function normalizeImportedActionStep(input = {}, index = 0) {
   const buttonPageId = cleanString(source.buttonPageId || source.button_page_id || source.pageId || source.page_id)
   const buttonMessage = limitString(cleanString(source.buttonMessage || source.button_message || source.message), 500)
   const automationName = limitString(cleanString(source.automationName || source.automation_name || source.automation || source.label), 140)
+  const warnBeforeDisqualify = normalizeBoolean(source.warnBeforeDisqualify ?? source.warn_before_disqualify)
+  const disqualifyNoticeMessage = limitString(cleanString(source.disqualifyNoticeMessage || source.disqualify_notice_message), 300)
 
   if (action === 'url' && !safeHref(buttonUrl, '')) {
     const error = new Error('Usa una URL válida para el botón')
@@ -2360,7 +2362,9 @@ function normalizeImportedActionStep(input = {}, index = 0) {
     buttonUrl,
     buttonPageId,
     buttonMessage,
-    automationName
+    automationName,
+    warnBeforeDisqualify,
+    disqualifyNoticeMessage
   }
 }
 
@@ -12558,6 +12562,7 @@ function renderVideoFormGateFieldBlock(block, context = {}) {
       <label for="${escapeHtml(block.id)}">${label}${required}</label>
       ${block.content ? `<p class="rstk-help">${escapeHtml(block.content)}</p>` : ''}
       ${renderFieldInput(block, context)}
+      ${['dropdown', 'radio', 'checkboxes'].includes(block.blockType) ? '<p class="rstk-disqualify-notice" data-disqualify-notice hidden></p>' : ''}
       <p class="rstk-error" hidden>Esta respuesta es requerida.</p>
     </section>
   `
@@ -13362,23 +13367,30 @@ function buildVideoFormGateRuntimeScript(blocks = []) {
           });
         nextButton && nextButton.addEventListener('click', continueFromGroup);
         submitButton && submitButton.addEventListener('click', finalSubmit);
+        // Al elegir una opción que descalifica solo mostramos un aviso debajo del
+        // campo; la descalificación ocurre al avanzar/enviar, no al elegir.
+        const updateGateDisqualifyNotice = field => {
+          if (!field || !field.querySelector) return;
+          const notice = field.querySelector('[data-disqualify-notice]');
+          if (!notice) return;
+          const warnRule = readSelectedRules(field).find(item => (
+            (item.action === 'disqualify' || item.action === 'disqualify_after_submit') && item.warnBeforeDisqualify === true
+          )) || null;
+          if (warnRule) {
+            notice.textContent = warnRule.disqualifyNoticeMessage || 'Con esta respuesta es posible que no califiques para continuar.';
+            notice.hidden = false;
+          } else {
+            notice.textContent = '';
+            notice.hidden = true;
+          }
+          syncGateFit();
+        };
         gate.addEventListener('change', event => {
           const target = event.target;
           if (!target || !target.closest || state.submitting) return;
           if (!target.matches('input[type="radio"], input[type="checkbox"], select')) return;
-          if (target.matches('input[type="checkbox"]') && !target.checked) return;
-            const field = target.closest('[data-rstk-video-form-field]');
-            if (!field) return;
-            const rule = readSelectedRules(field).find(item => item.action === 'disqualify') || null;
-            if (!rule) return;
-            if (!validateField(field)) {
-              syncGateFit();
-              return;
-            }
-          submitGate(rule, {
-            fieldId: field.getAttribute('data-block-id') || '',
-            immediateDisqualify: true
-          });
+          const field = target.closest('[data-rstk-video-form-field]');
+          if (field) updateGateDisqualifyNotice(field);
         });
         const isPreviewVideoPlayback = () => (
           video?.dataset?.rstkVideoPreviewing === 'true' ||
@@ -13996,7 +14008,9 @@ function normalizeOption(option) {
       redirectUrl: safeHref(option.redirectUrl || option.redirect_url || option.siteUrl || option.site_url || option.url || option.sitio, ''),
       submitBeforeAction: normalizeSubmitBeforeAction(option.submitBeforeAction ?? option.submit_before_action ?? option.saveBeforeAction ?? option.save_before_action),
       tag: cleanString(option.tag),
-      category: cleanString(option.category)
+      category: cleanString(option.category),
+      warnBeforeDisqualify: normalizeBoolean(option.warnBeforeDisqualify ?? option.warn_before_disqualify),
+      disqualifyNoticeMessage: limitString(cleanString(option.disqualifyNoticeMessage || option.disqualify_notice_message), 300)
     }
   }
 
@@ -14012,7 +14026,9 @@ function normalizeOption(option) {
     redirectUrl: '',
     submitBeforeAction: true,
     tag: '',
-    category: ''
+    category: '',
+    warnBeforeDisqualify: false,
+    disqualifyNoticeMessage: ''
   }
 }
 
@@ -14032,7 +14048,9 @@ function optionRuleAttributes(option) {
     redirectUrl: safeHref(option.redirectUrl, ''),
     submitBeforeAction: ['redirect', 'site_page'].includes(action) ? true : option.submitBeforeAction !== false,
     tag: option.tag || '',
-    category: option.category || ''
+    category: option.category || '',
+    warnBeforeDisqualify: option.warnBeforeDisqualify === true,
+    disqualifyNoticeMessage: option.disqualifyNoticeMessage || ''
   }
 
   return `data-rule="${escapeHtml(JSON.stringify(rule))}"`
@@ -17498,6 +17516,7 @@ function renderFieldBlock(block, _interactive = false, pageId = '', context = {}
       <label for="${escapeHtml(block.id)}">${label}${required}</label>
       ${block.content ? `<p class="rstk-help">${escapeHtml(block.content)}</p>` : ''}
       ${renderFieldInput(block, context)}
+      ${['dropdown', 'radio', 'checkboxes'].includes(block.blockType) ? '<p class="rstk-disqualify-notice" data-disqualify-notice hidden></p>' : ''}
       <p class="rstk-error" hidden>Esta respuesta es requerida.</p>
     </section>
   `
@@ -18449,6 +18468,7 @@ const RSTK_BASE_CSS = `
 	  .rstk-video-form-gate .rstk-option{width:100%;max-width:100%;min-width:0;min-height:clamp(38px,8cqw,var(--rstk-form-field-height,50px));border-width:var(--rstk-form-field-border-width,1px);border-color:var(--rstk-form-field-border,var(--rstk-input-border));border-radius:var(--rstk-form-field-radius,var(--rstk-field-radius,var(--rstk-radius)));background:var(--rstk-form-field-bg,var(--rstk-input-bg));color:var(--rstk-form-field-text,var(--rstk-input-ink));font-family:var(--rstk-form-font,var(--rstk-font));font-size:clamp(.84rem,2.2cqw,var(--rstk-form-input-size,1rem));font-style:var(--rstk-form-font-style,normal);font-weight:var(--rstk-form-weight,500);text-decoration:var(--rstk-form-text-decoration,none);padding:clamp(9px,2cqw,var(--rstk-form-field-pad-y,13px)) clamp(10px,2.4cqw,var(--rstk-form-field-pad-x,14px))}
 	  .rstk-video-form-gate .rstk-option:has(input:checked){border-color:var(--rstk-form-choice-selected-border,var(--rstk-accent));background:var(--rstk-form-choice-selected-bg,color-mix(in srgb,var(--rstk-accent) 8%,transparent))}
 	  .rstk-video-form-gate .rstk-error{margin:0;color:#dc2626;font-size:clamp(.72rem,1.8cqw,.84rem);font-weight:700}
+	  .rstk-video-form-gate .rstk-disqualify-notice{margin:0;padding:clamp(7px,1.6cqw,9px) clamp(9px,2cqw,12px);border-radius:8px;border:1px solid color-mix(in srgb,#d97706 38%,transparent);background:color-mix(in srgb,#d97706 12%,transparent);color:var(--rstk-ink,#1f2937);font-size:clamp(.72rem,1.8cqw,.84rem);font-weight:600;line-height:1.4}
 	  .rstk-video-form-actions{display:flex;align-items:center;justify-content:var(--rstk-submit-justify,center);gap:8px;min-width:0}
 	  .rstk-video-form-actions button{box-sizing:border-box;width:var(--rstk-submit-width,fit-content);max-width:100%;min-width:min(128px,46%);min-height:clamp(38px,7.5cqw,var(--rstk-submit-height,48px));border:var(--rstk-submit-border-width,1px) solid var(--rstk-submit-border,var(--rstk-accent));border-radius:var(--rstk-submit-radius,var(--rstk-btn-radius));background:var(--rstk-submit-bg,var(--rstk-accent));color:var(--rstk-submit-text,var(--rstk-on-accent));font-family:var(--rstk-form-font,var(--rstk-font));font-size:clamp(.84rem,2.1cqw,var(--rstk-submit-size,.98rem));font-weight:var(--rstk-btn-weight,800);cursor:pointer;flex:0 1 var(--rstk-submit-width,fit-content);padding:var(--rstk-submit-pad-y,9px) var(--rstk-submit-pad-x,14px)}
 	  .rstk-video-form-actions .rstk-secondary{background:transparent;color:var(--rstk-ink);border:1px solid var(--rstk-form-field-border,var(--rstk-input-border))}
@@ -18553,6 +18573,7 @@ const RSTK_BASE_CSS = `
 	  .rstk-kind-form .rstk-actions [data-submit],.rstk-embedded-form .rstk-actions [data-submit]{min-height:var(--rstk-submit-height,var(--rstk-button-height,50px));border-width:var(--rstk-submit-border-width,var(--rstk-button-border-width,1px));border-color:var(--rstk-submit-border,var(--rstk-button-border,var(--rstk-accent)));border-radius:var(--rstk-submit-radius,var(--rstk-btn-radius));background:var(--rstk-submit-bg,var(--rstk-accent));color:var(--rstk-submit-text,var(--rstk-on-accent));flex-direction:column;gap:2px;font-size:var(--rstk-submit-size,var(--rstk-button-size,1.02rem));padding:var(--rstk-submit-pad-y,var(--rstk-button-pad-y,8px)) var(--rstk-submit-pad-x,var(--rstk-button-pad-x,22px));flex:0 1 var(--rstk-submit-width,fit-content);width:var(--rstk-submit-width,fit-content)}
 	  .rstk-actions [data-back]{flex:0 0 auto;min-width:120px}
   .rstk-error{margin:2px 0 0;color:#dc2626;font-size:.85rem;font-weight:650}
+  .rstk-disqualify-notice{margin:6px 0 0;padding:8px 11px;border-radius:8px;border:1px solid color-mix(in srgb,#d97706 38%,transparent);background:color-mix(in srgb,#d97706 12%,transparent);color:var(--rstk-ink,#1f2937);font-size:.82rem;font-weight:600;line-height:1.4}
   .rstk-submit-message{margin:0;color:var(--rstk-muted);font-weight:650;text-align:center}
 
   .rstk-progress{display:grid;gap:8px}
@@ -19403,26 +19424,35 @@ function buildImportedFormCaptureScript(site, imported, { pageId = DEFAULT_FUNNE
 
       Array.from(document.querySelectorAll('form')).forEach((form, index) => {
         form.setAttribute('data-rstk-import-form', 'true');
-        // "Descalificar inmediatamente": selecting the option submits right away
-        // so the contact queda registrado como no calificado sin esperar al envio.
+        // Al elegir una opción que descalifica solo mostramos un aviso debajo del
+        // campo; la descalificación real ocurre al enviar, no al elegir.
+        const clearImportedNotice = () => {
+          const notice = form.querySelector('[data-rstk-disqualify-notice]');
+          if (notice) { notice.hidden = true; notice.textContent = ''; }
+        };
+        const showImportedNotice = (anchor, text) => {
+          let notice = form.querySelector('[data-rstk-disqualify-notice]');
+          if (!notice) {
+            notice = document.createElement('div');
+            notice.setAttribute('data-rstk-disqualify-notice', 'true');
+            notice.style.cssText = 'margin:8px 0 0;padding:8px 11px;border-radius:8px;border:1px solid rgba(217,119,6,.4);background:rgba(217,119,6,.1);color:inherit;font:600 13px/1.4 inherit';
+          }
+          notice.textContent = text;
+          notice.hidden = false;
+          const ref = anchor && anchor.closest ? (anchor.closest('label, .field, .form-field, .form-group, .rstk-field') || anchor) : anchor;
+          if (ref && ref.parentNode) ref.parentNode.insertBefore(notice, ref.nextSibling);
+          else form.appendChild(notice);
+        };
         form.addEventListener('change', (event) => {
           const target = event.target;
           if (!target || !target.matches) return;
-          let immediate = null;
-          if (target.matches('input[type="radio"], input[type="checkbox"]') && target.checked) {
-            immediate = parseChoiceActions(target).find(item => item.action === 'disqualify') || null;
-          } else if (target.tagName === 'SELECT') {
-            const selected = Array.from(target.selectedOptions || []);
-            for (const option of selected) {
-              immediate = parseChoiceActions(option).find(item => item.action === 'disqualify') || null;
-              if (immediate) break;
-            }
-          }
-          if (!immediate) return;
-          form.dataset.rstkImmediateDisqualify = 'true';
-          showImportedMessageOnly(form, immediate.buttonMessage || 'Gracias. Por ahora no califica.');
-          if (typeof form.requestSubmit === 'function') form.requestSubmit();
-          else form.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
+          if (!target.matches('input[type="radio"], input[type="checkbox"], select')) return;
+          const warnAction = collectSelectedChoiceActions(form).find(item => (
+            (item.action === 'disqualify' || item.action === 'disqualify_after_submit') &&
+            (item.warnBeforeDisqualify === true || item.warn_before_disqualify === true)
+          )) || null;
+          if (warnAction) showImportedNotice(target, warnAction.disqualifyNoticeMessage || warnAction.disqualify_notice_message || 'Con esta respuesta es posible que no califiques para continuar.');
+          else clearImportedNotice();
         });
         form.addEventListener('submit', async (event) => {
           event.preventDefault();
@@ -19433,6 +19463,10 @@ function buildImportedFormCaptureScript(site, imported, { pageId = DEFAULT_FUNNE
             const rawFields = collectRawFields(form);
             const selectedChoiceActions = collectSelectedChoiceActions(form);
             const disqualifyingAction = selectedChoiceActions.find(item => item.action === 'disqualify' || item.action === 'disqualify_after_submit') || null;
+            // "Descalificar inmediatamente" corta el flujo al enviar (oculta el form);
+            // "al enviar" deja terminar y solo registra al contacto como no calificado.
+            const immediateDisqualifyChoice = Boolean(disqualifyingAction && disqualifyingAction.action === 'disqualify');
+            if (immediateDisqualifyChoice) form.dataset.rstkImmediateDisqualify = 'true';
             const response = await fetch('/api/sites/public/submit', {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
@@ -19480,27 +19514,33 @@ function buildImportedFormCaptureScript(site, imported, { pageId = DEFAULT_FUNNE
                 email: submission.contactEmail || ''
               });
             }
-            form.reset();
-            setMessage(form, submission.message || 'Listo. Recibimos tu información.', 'success');
-            window.dispatchEvent(new CustomEvent('ristak:submitted', { detail: submission }));
-            if (submission.status !== 'disqualified') {
-              const navigationAction = selectedChoiceActions.find(item => (
-                (item.action === 'url' && item.buttonUrl) ||
-                (item.action === 'specific_page' && item.buttonPageId)
-              ));
-              if (navigationAction && typeof window.ristakRunImportedActions === 'function') {
-                window.setTimeout(() => {
-                  window.ristakRunImportedActions(form, [navigationAction], { source: 'choice_option' });
-                }, 200);
+            if (immediateDisqualifyChoice) {
+              showImportedMessageOnly(form, (disqualifyingAction && disqualifyingAction.buttonMessage) || submission.message || 'Gracias. Por ahora no califica.');
+              window.dispatchEvent(new CustomEvent('ristak:submitted', { detail: submission }));
+            } else {
+              form.reset();
+              clearImportedNotice();
+              setMessage(form, submission.message || 'Listo. Recibimos tu información.', 'success');
+              window.dispatchEvent(new CustomEvent('ristak:submitted', { detail: submission }));
+              if (submission.status !== 'disqualified') {
+                const navigationAction = selectedChoiceActions.find(item => (
+                  (item.action === 'url' && item.buttonUrl) ||
+                  (item.action === 'specific_page' && item.buttonPageId)
+                ));
+                if (navigationAction && typeof window.ristakRunImportedActions === 'function') {
+                  window.setTimeout(() => {
+                    window.ristakRunImportedActions(form, [navigationAction], { source: 'choice_option' });
+                  }, 200);
+                }
               }
-            }
-            if (selectedChoiceActions.length && window.ristakRunImportedActions) {
-              const followUpActions = selectedChoiceActions.filter(item => item.action !== 'submit');
-              if (followUpActions.length) {
-                await window.ristakRunImportedActions(form, followUpActions, {
-                  source: 'choice_option',
-                  submission
-                });
+              if (selectedChoiceActions.length && window.ristakRunImportedActions) {
+                const followUpActions = selectedChoiceActions.filter(item => item.action !== 'submit');
+                if (followUpActions.length) {
+                  await window.ristakRunImportedActions(form, followUpActions, {
+                    source: 'choice_option',
+                    submission
+                  });
+                }
               }
             }
           } catch (error) {
@@ -21462,25 +21502,33 @@ export async function renderPublicSiteHtml(site, { pageId, pagePath, trackingEna
         return embeddedForm ? embeddedForm.querySelector('[data-message]') || message : message;
       };
 
-      const handleImmediateRuleChange = (event) => {
-        if (form.dataset.ruleSubmit === 'true') return;
+      // Al elegir una opción que descalifica solo mostramos un aviso debajo del
+      // campo; la descalificación real ocurre al avanzar/enviar, no al elegir.
+      const DISQUALIFY_NOTICE_FALLBACK = ${JSON.stringify('Con esta respuesta es posible que no califiques para continuar.')};
+      const updateDisqualifyNotice = (field) => {
+        if (!field || !field.querySelector) return;
+        const notice = field.querySelector('[data-disqualify-notice]');
+        if (!notice) return;
+        const warnRule = readSelectedRules(field).find(item => (
+          (item.action === 'disqualify' || item.action === 'disqualify_after_submit') && item.warnBeforeDisqualify === true
+        )) || null;
+        if (warnRule) {
+          notice.textContent = warnRule.disqualifyNoticeMessage || DISQUALIFY_NOTICE_FALLBACK;
+          notice.hidden = false;
+        } else {
+          notice.textContent = '';
+          notice.hidden = true;
+        }
+      };
+      const handleDisqualifyNoticeChange = (event) => {
         const target = event.target;
         if (!target || !target.closest) return;
         if (!target.matches('input[type="radio"], input[type="checkbox"], select')) return;
-        if (target.matches('input[type="checkbox"]') && !target.checked) return;
         const field = target.closest('.rstk-field');
-        if (!field) return;
-        const rule = readSelectedRules(field).find(item => item.action === 'disqualify') || null;
-        if (!rule) return;
-        const fieldPageId = field.getAttribute('data-page-id') || getCurrentPageId();
-        const fieldId = field.getAttribute('data-block-id') || '';
-        handleBlockingRule(rule, fieldPageId, getFieldMessageTarget(field), {
-          immediate: true,
-          fieldId
-        });
+        if (field) updateDisqualifyNotice(field);
       };
 
-      form.addEventListener('change', handleImmediateRuleChange);
+      form.addEventListener('change', handleDisqualifyNoticeChange);
 
       const embeddedForms = Array.from(form.querySelectorAll('[data-embedded-form-pages]')).map((host) => {
         const pageContents = Array.from(host.querySelectorAll('[data-embedded-page-content]'));
@@ -21529,7 +21577,7 @@ export async function renderPublicSiteHtml(site, { pageId, pagePath, trackingEna
           if (!currentFields.every(validateField)) return;
           const rules = currentFields.flatMap((field) => readSelectedRules(field)).filter(item => item.action && item.action !== 'continue');
           const blockingRule = rules.find(item => item.action === 'show_message' || item.action === 'disqualify' || item.action === 'end_form' || item.action === 'redirect' || item.action === 'site_page');
-          if (blockingRule && handleBlockingRule(blockingRule, state.pageIds[state.index] || '', state.message)) return;
+          if (blockingRule && handleBlockingRule(blockingRule, state.pageIds[state.index] || '', state.message, blockingRule.action === 'disqualify' ? { immediate: true } : {})) return;
           const jumpRule = rules.find(item => item.action === 'jump' && item.targetBlockId);
           const targetPageId = jumpRule && jumpRule.targetBlockId ? targetBlockPageMap[jumpRule.targetBlockId] : '';
           const targetIndex = state.pageIds.indexOf(targetPageId);
@@ -21548,7 +21596,7 @@ export async function renderPublicSiteHtml(site, { pageId, pagePath, trackingEna
         if (!currentFields.every(validateField)) return;
         const rules = currentFields.flatMap((field) => readSelectedRules(field)).filter(item => item.action && item.action !== 'continue');
         const blockingRule = rules.find(item => item.action === 'show_message' || item.action === 'disqualify' || item.action === 'end_form' || item.action === 'redirect' || item.action === 'site_page');
-        if (blockingRule && handleBlockingRule(blockingRule, getCurrentPageId(), message)) return;
+        if (blockingRule && handleBlockingRule(blockingRule, getCurrentPageId(), message, blockingRule.action === 'disqualify' ? { immediate: true } : {})) return;
         const jumpRule = rules.find(item => item.action === 'jump' && item.targetBlockId);
         if (jumpRule && jumpRule.targetBlockId) {
           const targetField = fields.find(field => field.getAttribute('data-block-id') === jumpRule.targetBlockId);
@@ -21570,7 +21618,7 @@ export async function renderPublicSiteHtml(site, { pageId, pagePath, trackingEna
         const blockingRule = rules.find(item => item.action === 'show_message' || item.action === 'disqualify' || item.action === 'end_form' || item.action === 'redirect' || item.action === 'site_page');
         if (blockingRule) {
           if (shouldSubmitRule(blockingRule)) writeStoredResponses(mergedResponses);
-          if (handleBlockingRule(blockingRule, pageId, message)) return;
+          if (handleBlockingRule(blockingRule, pageId, message, blockingRule.action === 'disqualify' ? { immediate: true } : {})) return;
         }
 
         writeStoredResponses(mergedResponses);
@@ -21613,6 +21661,13 @@ export async function renderPublicSiteHtml(site, { pageId, pagePath, trackingEna
         const responses = isStandardForm
           ? { ...readStoredResponses(), ...getCurrentResponses() }
           : getCurrentResponses();
+
+        // Regla de descalificación efectivamente seleccionada: ahora que ya no se
+        // descalifica al elegir, el mensaje terminal se muestra aquí, al enviar.
+        const selectedDisqualifyRule = fields
+          .flatMap((field) => readSelectedRules(field))
+          .find(item => item.action === 'disqualify' || item.action === 'disqualify_after_submit') || null;
+        const terminalDisqualify = immediateDisqualify || Boolean(selectedDisqualifyRule && selectedDisqualifyRule.action === 'disqualify');
 
         const url = new URL(window.location.href);
         const storedParams = window.ristakPreservedParams ? window.ristakPreservedParams() : {};
@@ -21675,7 +21730,7 @@ export async function renderPublicSiteHtml(site, { pageId, pagePath, trackingEna
               email: submission.contactEmail || ''
             });
           }
-          if (!immediateDisqualify) {
+          if (!terminalDisqualify) {
             form.reset();
             initPhoneCountryFields();
             index = 0;
@@ -21715,6 +21770,17 @@ export async function renderPublicSiteHtml(site, { pageId, pagePath, trackingEna
           }
           if (nextPageUrl && (completionAction === 'next_page' || ((completionAction === 'next_page_if_qualified' || completionAction === 'redirect_qualified') && qualifies))) {
             window.location.href = preserveUrl(nextPageUrl);
+            return;
+          }
+          if (!qualifies) {
+            // Descalificado sin redirect configurado: muestra el mensaje de la regla.
+            // "Descalificar inmediatamente" oculta el formulario; "al enviar" lo deja.
+            const dqText = (selectedDisqualifyRule && selectedDisqualifyRule.message) || (data && data.data && data.data.message) || 'Gracias. Por ahora no califica.';
+            if (selectedDisqualifyRule && selectedDisqualifyRule.action === 'disqualify') {
+              showOnlyRuleMessage(message, dqText);
+            } else if (message) {
+              message.textContent = dqText;
+            }
             return;
           }
           if (message) message.textContent = (data && data.data && data.data.message) || ${JSON.stringify('Listo. Recibimos tu información.')};
