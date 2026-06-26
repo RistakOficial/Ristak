@@ -2169,13 +2169,16 @@ html body :is(.rstkCanvas.rstk-kind-form.rstk-choice-grid, .rstkCanvas.rstk-kind
 }
 
 .rstkCanvas .rstkEmbeddedFormSourceFrame {
-  /* Aísla el formulario embebido de la alineación del bloque anfitrión: si el bloque
-     form_embed está alineado al centro en el sitio, su --rstk-block-align NO debe
-     heredarse a los campos (que deben quedar a la izquierda, como en el standalone). */
+  /* Aísla el formulario embebido de la alineación del sitio anfitrión: corta la herencia
+     de la PROPIEDAD text-align del landing (que centraba títulos/subtítulos). Baseline
+     'left' = el del body.rstk-kind-form standalone; si el form fuente es centrado,
+     '.rstk-centered .rstk-shell' (mayor especificidad) lo vuelve a centrar. Así el
+     embebido sigue SOLO la alineación de su form fuente, nunca la del sitio. */
   --rstk-block-align: initial;
   --rstk-block-justify: initial;
   --rstk-content-margin-left: initial;
   --rstk-content-margin-right: initial;
+  text-align: var(--rstk-block-align, left);
   position: relative;
   isolation: isolate;
   min-height: auto;
@@ -2230,15 +2233,9 @@ html body :is(.rstkCanvas.rstk-kind-form.rstk-choice-grid, .rstkCanvas.rstk-kind
   width: 100%;
   margin: 0 auto;
 }
-/* El TEXTO del encabezado usa su propia alineación (textAlign del bloque), no la del
-   formulario. La alineación del formulario solo mueve la POSICIÓN de los bloques. */
-.rstkCanvas .rstkEmbeddedFormSourceFrame .rstk-headline,
-.rstkCanvas .rstkEmbeddedFormSourceFrame .rstk-subheading,
-.rstkCanvas .rstkEmbeddedFormSourceFrame .rstk-text {
-  /* inherit: sin alineación propia, el título sigue la del shell (centrada en
-     plantillas centradas), como el standalone; con textAlign propio, lo respeta. */
-  text-align: var(--rstk-block-align, inherit);
-}
+/* El text-align del contenido embebido lo dan las reglas del standalone (.rstk-block-style
+   para alineación por-bloque, y la herencia del shell para el default), igual que en el
+   formulario standalone. El frame ya corta la herencia del sitio anfitrión. */
 /* Bloque genérico a ancho completo (full-bleed por viewport, recortado al lienzo). */
 .rstkCanvas .rstk-frame:has(.rstkBlockFullWidth),
 .rstkCanvas.rstk-kind-form .rstk-shell:has(.rstkBlockFullWidth),
@@ -2275,10 +2272,15 @@ html body :is(.rstkCanvas.rstk-kind-form.rstk-choice-grid, .rstkCanvas.rstk-kind
   background: transparent;
 }
 
+/* Contenido del formulario embebido: igual al standalone. font-family var(--rstk-font)
+   (NO --rstk-display) y line-height 1.5 del subtítulo replican EXACTO lo que renderiza
+   el formulario standalone; estas reglas existen para neutralizar las del sitio anfitrión
+   (.rstk-kind-landing .rstk-headline, más grandes), no para divergir. La protección del
+   gradiente de texto vive en la regla .rstkPageTextGradient. */
 .rstkCanvas .rstkEmbeddedFormSourceFrame .rstk-headline {
   margin: 0;
   color: var(--rstk-ink);
-  font-family: var(--rstk-display);
+  font-family: var(--rstk-font);
   font-size: clamp(1.7rem, 4.6vw, 3rem);
   font-weight: var(--rstk-heading-weight);
   line-height: 1.05;
@@ -2291,7 +2293,7 @@ html body :is(.rstkCanvas.rstk-kind-form.rstk-choice-grid, .rstkCanvas.rstk-kind
   margin: 0;
   color: var(--rstk-muted);
   font-size: clamp(1rem, 2vw, 1.18rem);
-  line-height: 1.45;
+  line-height: 1.5;
   max-width: var(--rstk-content-max, 60ch);
   background-image: none;
   -webkit-text-fill-color: currentColor;
