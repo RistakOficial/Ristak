@@ -7113,6 +7113,7 @@ function FormEmbedEditorPanel({
               customFields={customFields}
               customFieldFolders={customFieldFolders}
               onCustomFieldCreated={onCustomFieldCreated}
+              enableVideoFormGateAction
               onPatchSite={onPatchSite}
               onSaveSite={onSaveSite}
               onPatchSettings={patchActiveFieldSettings}
@@ -7480,6 +7481,8 @@ function FormEmbedEditorPanel({
           {isChoiceBlock(activeField.blockType) && (
             <FormOptionGlobalStyleControls site={site} onPatchTheme={onPatchTheme} onSaveSite={onSaveSite} />
           )}
+          {/* Botón de envío global, visible al editar cualquier campo (como el standalone). */}
+          <FormSubmitGlobalStyleControls site={site} onPatchTheme={onPatchTheme} onSaveSite={onSaveSite} />
         </>
       )}
     </>
