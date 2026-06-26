@@ -5044,6 +5044,7 @@ async function initTables() {
         template_name TEXT,
         template_language TEXT DEFAULT 'es_MX',
         qr_fallback_enabled INTEGER DEFAULT 0,
+        timing_anchor TEXT DEFAULT 'before_appointment',
         offset_value INTEGER DEFAULT 1,
         offset_unit TEXT DEFAULT 'days',
         message_text TEXT,
@@ -5157,6 +5158,10 @@ async function initTables() {
 
     try {
       await db.run('ALTER TABLE appointment_reminders ADD COLUMN qr_fallback_enabled INTEGER DEFAULT 0')
+    } catch (_) { /* columna ya existe */ }
+
+    try {
+      await db.run("ALTER TABLE appointment_reminders ADD COLUMN timing_anchor TEXT DEFAULT 'before_appointment'")
     } catch (_) { /* columna ya existe */ }
 
     try {

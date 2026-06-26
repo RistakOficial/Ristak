@@ -11,6 +11,7 @@ export const DEFAULT_CONFIRMATION_TEXT =
   '{{contact.first_name}}, solo para confirmar tu cita mañana a las {{cita.hora}}. ¿Confirmamos?\n\nEs necesario RESPONDER para evitar errores en la agenda'
 
 export const OFFSET_UNIT_MS = {
+  seconds: 1000,
   minutes: 60 * 1000,
   hours: 60 * 60 * 1000,
   days: 24 * 60 * 60 * 1000
@@ -30,8 +31,14 @@ export function parseHHMM(value, fallback) {
   return { hour, minute }
 }
 
-export function formatOffsetLabel(offsetValue, offsetUnit) {
+export function formatOffsetLabel(offsetValue, offsetUnit, timingAnchor = 'before_appointment') {
   const value = Number(offsetValue) || 0
+  if (timingAnchor === 'after_booking') {
+    if (value <= 0) return 'Al agendar'
+    if (offsetUnit === 'seconds') return value === 1 ? '1 seg después de agendar' : `${value} seg después de agendar`
+    if (offsetUnit === 'hours') return value === 1 ? '1 hora después de agendar' : `${value} horas después de agendar`
+    return `${value} min después de agendar`
+  }
   if (offsetUnit === 'minutes') return `${value} min antes`
   if (offsetUnit === 'hours') return value === 1 ? '1 hora antes' : `${value} horas antes`
   return value === 1 ? '1 día antes' : `${value} días antes`
@@ -42,13 +49,62 @@ export function offsetToMs(reminder) {
 }
 
 /**
- * Calcula el instante UTC en que debe salir el mensaje para una cita.
- * Aplica la ventana de horario inteligente en la zona horaria de la cuenta:
- * si el envío cae fuera de la ventana, se adelanta al día anterior antes de
- * cerrar la ventana ('before') o se pospone al inicio del día siguiente
- * ('next_day'), según la preferencia del usuario.
+ * Confirmaciones ancladas al momento de agendar (date_added), no al inicio de la
+ * cita: sirven sobre todo para reservas hechas por la URL pública. El envío es
+ * "agendó + offset" (offset 0 = inmediato). La "confirmación inteligente" usa la
+ * misma ventana horaria: si cae antes de abrir, se manda al abrir ese día; si cae
+ * después de cerrar, 'before' lo recorta al cierre de hoy y 'next_day' lo abre
+ * mañana. Nunca antes de agendar ni —si se puede evitar— después de la cita.
  */
-export function computeReminderSendAt(startTimeIso, reminder, timezone) {
+function computeAfterBookingSendAt(startTimeIso, bookingTimeIso, reminder, timezone) {
+  const booking = DateTime.fromISO(cleanString(bookingTimeIso).replace(' ', 'T'), { zone: 'utc' })
+  if (!booking.isValid) return null
+
+  const raw = booking.plus({ milliseconds: offsetToMs(reminder) })
+  let sendAt = raw
+
+  if (reminder.smartEnabled) {
+    const startParts = parseHHMM(reminder.smartStart, { hour: 9, minute: 0 })
+    const endParts = parseHHMM(reminder.smartEnd, { hour: 21, minute: 0 })
+    const local = sendAt.setZone(timezone)
+    const windowStart = local.set({ hour: startParts.hour, minute: startParts.minute, second: 0, millisecond: 0 })
+    const windowEnd = local.set({ hour: endParts.hour, minute: endParts.minute, second: 0, millisecond: 0 })
+
+    if (windowEnd > windowStart) {
+      let adjusted = local
+      if (local < windowStart) {
+        adjusted = windowStart
+      } else if (local > windowEnd) {
+        adjusted = reminder.smartOverflow === 'next_day' ? windowStart.plus({ days: 1 }) : windowEnd
+      }
+      sendAt = adjusted.toUTC()
+    }
+
+    // Nunca antes del momento en que agendó.
+    if (sendAt < booking) sendAt = booking
+  }
+
+  // Si el ajuste empuja la confirmación más allá del inicio de la cita, pierde
+  // sentido: se respeta el tiempo simple (agendó + offset) para que llegue antes.
+  const start = DateTime.fromISO(cleanString(startTimeIso).replace(' ', 'T'), { zone: 'utc' })
+  if (start.isValid && sendAt >= start) sendAt = raw
+
+  return sendAt
+}
+
+/**
+ * Calcula el instante UTC en que debe salir el mensaje para una cita.
+ * Con timingAnchor 'after_booking' se ancla al momento de agendar (bookingTimeIso).
+ * Por defecto ('before_appointment') aplica la ventana de horario inteligente en
+ * la zona horaria de la cuenta: si el envío cae fuera de la ventana, se adelanta
+ * al día anterior antes de cerrar la ventana ('before') o se pospone al inicio del
+ * día siguiente ('next_day'), según la preferencia del usuario.
+ */
+export function computeReminderSendAt(startTimeIso, reminder, timezone, bookingTimeIso) {
+  if (reminder.timingAnchor === 'after_booking') {
+    return computeAfterBookingSendAt(startTimeIso, bookingTimeIso, reminder, timezone)
+  }
+
   const start = DateTime.fromISO(cleanString(startTimeIso).replace(' ', 'T'), { zone: 'utc' })
   if (!start.isValid) return null
 

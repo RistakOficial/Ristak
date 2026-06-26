@@ -9,7 +9,9 @@ import {
   type ReminderConfirmationSuccessAction,
   type ReminderChannelOption,
   type ReminderNoConfirmAction,
+  type ReminderOffsetUnit,
   type ReminderSenderOption,
+  type ReminderTimingAnchor,
   formatReminderOffsetLabel
 } from '@/services/appointmentRemindersService'
 import type { MessageTemplate } from '@/services/messageTemplatesService'
@@ -39,6 +41,34 @@ const OFFSET_UNIT_OPTIONS = [
   { value: 'hours', label: 'Horas' },
   { value: 'days', label: 'Días' }
 ]
+
+// Después de agendar el tope es 24h, por eso van segundos/minutos/horas (sin días).
+const AFTER_OFFSET_UNIT_OPTIONS = [
+  { value: 'seconds', label: 'Segundos' },
+  { value: 'minutes', label: 'Minutos' },
+  { value: 'hours', label: 'Horas' }
+]
+
+const TIMING_ANCHOR_OPTIONS: { value: ReminderTimingAnchor; label: string }[] = [
+  { value: 'before_appointment', label: 'Antes de la cita' },
+  { value: 'after_booking', label: 'Después de haber agendado' }
+]
+
+const MAX_AFTER_BOOKING_MS = 24 * 60 * 60 * 1000
+const AFTER_OFFSET_UNIT_MS: Record<string, number> = {
+  seconds: 1000,
+  minutes: 60 * 1000,
+  hours: 60 * 60 * 1000
+}
+
+// Tope de cada unidad para no pasar de 24h después de agendar.
+const maxAfterOffsetValue = (unit: ReminderOffsetUnit): number => (
+  Math.floor(MAX_AFTER_BOOKING_MS / (AFTER_OFFSET_UNIT_MS[unit] || AFTER_OFFSET_UNIT_MS.minutes))
+)
+
+const clampAfterOffsetValue = (value: number, unit: ReminderOffsetUnit): number => (
+  Math.max(1, Math.min(maxAfterOffsetValue(unit), Math.round(value)))
+)
 
 const DEFAULT_TEMPLATE_NAME_BY_TYPE = {
   reminder: 'recordatorio_cita_un_dia_antes',
@@ -152,6 +182,7 @@ export const AppointmentReminderModal: React.FC<AppointmentReminderModalProps> =
       templateName: reminder.templateName || '',
       templateLanguage: reminder.templateLanguage || 'es_MX',
       qrFallbackEnabled: reminder.qrFallbackEnabled,
+      timingAnchor: reminder.timingAnchor || 'before_appointment',
       offsetValue: reminder.offsetValue,
       offsetUnit: reminder.offsetUnit,
       messageText: reminder.messageText,
@@ -243,12 +274,75 @@ export const AppointmentReminderModal: React.FC<AppointmentReminderModalProps> =
     label: sender.name ? `${sender.phone} · ${sender.name}` : sender.phone
   })), [senders])
 
+  const timingAnchor: ReminderTimingAnchor = draft.timingAnchor || 'before_appointment'
+  const isAfterBooking = timingAnchor === 'after_booking'
+  const isImmediate = isAfterBooking && (Number(draft.offsetValue) || 0) <= 0
   const offsetLabel = formatReminderOffsetLabel(
-    Number(draft.offsetValue) || 1,
-    (draft.offsetUnit as AppointmentReminder['offsetUnit']) || 'days'
+    Number(draft.offsetValue) || (isAfterBooking ? 0 : 1),
+    (draft.offsetUnit as ReminderOffsetUnit) || (isAfterBooking ? 'minutes' : 'days'),
+    timingAnchor
   )
 
   if (!reminder) return null
+
+  // Cambiar el ancla resetea a un default sensato: después de agendar arranca en
+  // 5 minutos (confirmación) y antes de la cita vuelve al clásico 1 día.
+  const changeTimingAnchor = (nextAnchor: ReminderTimingAnchor) => {
+    if (nextAnchor === timingAnchor) return
+    if (nextAnchor === 'after_booking') {
+      // "Después de agendar" es una confirmación: además de fijar el tipo, hay que
+      // reapuntar la plantilla a la de confirmación (como hace changeMessageType), si
+      // todavía estaba en la de recordatorio o no había ninguna elegida.
+      const nextName = DEFAULT_TEMPLATE_NAME_BY_TYPE.confirmation
+      const previousName = DEFAULT_TEMPLATE_NAME_BY_TYPE[(draft.messageType as AppointmentReminder['messageType']) || 'reminder']
+      const shouldSwitchTemplate = !draft.templateId || selectedTemplate?.name === previousName
+      const nextTemplate = visibleTemplates.find(template => template.name === nextName) || null
+      setDraft(prev => ({
+        ...prev,
+        timingAnchor: 'after_booking',
+        messageType: 'confirmation',
+        offsetValue: 5,
+        offsetUnit: 'minutes',
+        ...(shouldSwitchTemplate && nextTemplate
+          ? {
+              templateId: nextTemplate.id,
+              templateName: nextTemplate.name,
+              templateLanguage: nextTemplate.language
+            }
+          : {})
+      }))
+    } else {
+      setDraft(prev => ({
+        ...prev,
+        timingAnchor: 'before_appointment',
+        offsetValue: 1,
+        offsetUnit: 'days'
+      }))
+    }
+  }
+
+  // "Inmediatamente" = offset 0; "Pasado un tiempo" = arranca en 5 minutos.
+  const changeAfterTimingMode = (mode: 'immediate' | 'delay') => {
+    if (mode === 'immediate') {
+      set('offsetValue', 0)
+      return
+    }
+    const unit = (draft.offsetUnit as ReminderOffsetUnit) || 'minutes'
+    const safeUnit = unit === 'days' ? 'minutes' : unit
+    setDraft(prev => ({
+      ...prev,
+      offsetUnit: safeUnit,
+      offsetValue: clampAfterOffsetValue(Number(prev.offsetValue) || 5, safeUnit)
+    }))
+  }
+
+  const changeAfterOffsetUnit = (nextUnit: ReminderOffsetUnit) => {
+    setDraft(prev => ({
+      ...prev,
+      offsetUnit: nextUnit,
+      offsetValue: clampAfterOffsetValue(Number(prev.offsetValue) || 1, nextUnit)
+    }))
+  }
 
   const selectTemplate = (templateId: string) => {
     const template = visibleTemplates.find(item => item.id === templateId)
@@ -472,25 +566,86 @@ export const AppointmentReminderModal: React.FC<AppointmentReminderModalProps> =
           {/* Tiempo de envío */}
           <section className={styles.section}>
             <h4 className={styles.sectionTitle}>¿Cuándo se envía?</h4>
-            <div className={styles.offsetRow}>
-              <NumberInput
-                className={styles.offsetInput}
-                min={1}
-                max={60}
-                value={draft.offsetValue ?? 1}
-                onValueChange={(value) => set('offsetValue', Math.max(1, Math.round(value)))}
-                aria-label="Cantidad de tiempo antes de la cita"
+
+            <div className={styles.field}>
+              <label className={styles.fieldLabel}>Punto de partida</label>
+              <CustomSelect
+                value={timingAnchor}
+                options={TIMING_ANCHOR_OPTIONS}
+                onValueChange={(value) => changeTimingAnchor(value as ReminderTimingAnchor)}
+                aria-label="Momento base del envío"
+                portal
               />
-              <div className={styles.offsetUnit}>
-                <CustomSelect
-                  value={draft.offsetUnit || 'days'}
-                  options={OFFSET_UNIT_OPTIONS}
-                  onValueChange={(value) => set('offsetUnit', value as AppointmentReminderInput['offsetUnit'])}
-                  aria-label="Unidad de tiempo"
-                />
-              </div>
-              <span className={styles.offsetSuffix}>antes de la cita ({offsetLabel})</span>
+              <span className={styles.helpText}>
+                {isAfterBooking
+                  ? 'El tiempo se cuenta desde que la persona agenda. Ideal para confirmar citas hechas por la URL pública.'
+                  : 'El tiempo se cuenta hacia atrás desde la hora de la cita.'}
+              </span>
             </div>
+
+            {isAfterBooking ? (
+              <>
+                <div className={styles.offsetRow}>
+                  <div className={styles.offsetUnit}>
+                    <CustomSelect
+                      value={isImmediate ? 'immediate' : 'delay'}
+                      options={[
+                        { value: 'immediate', label: 'Inmediatamente al agendar' },
+                        { value: 'delay', label: 'Pasado un tiempo' }
+                      ]}
+                      onValueChange={(value) => changeAfterTimingMode(value as 'immediate' | 'delay')}
+                      aria-label="Cuándo enviar después de agendar"
+                    />
+                  </div>
+                  {!isImmediate && (
+                    <>
+                      <NumberInput
+                        className={styles.offsetInput}
+                        min={1}
+                        max={maxAfterOffsetValue((draft.offsetUnit as ReminderOffsetUnit) || 'minutes')}
+                        value={draft.offsetValue ?? 5}
+                        onValueChange={(value) => set('offsetValue', clampAfterOffsetValue(value, (draft.offsetUnit as ReminderOffsetUnit) || 'minutes'))}
+                        aria-label="Cantidad de tiempo después de agendar"
+                      />
+                      <div className={styles.offsetUnit}>
+                        <CustomSelect
+                          value={draft.offsetUnit || 'minutes'}
+                          options={AFTER_OFFSET_UNIT_OPTIONS}
+                          onValueChange={(value) => changeAfterOffsetUnit(value as ReminderOffsetUnit)}
+                          aria-label="Unidad de tiempo"
+                        />
+                      </div>
+                      <span className={styles.offsetSuffix}>después de agendar</span>
+                    </>
+                  )}
+                </div>
+                <span className={styles.helpText}>
+                  {isImmediate
+                    ? 'Se envía apenas la persona agende (en cuanto el sistema lo detecte, en menos de un minuto).'
+                    : `Máximo 24 horas. Quedará como “${offsetLabel}”.`}
+                </span>
+              </>
+            ) : (
+              <div className={styles.offsetRow}>
+                <NumberInput
+                  className={styles.offsetInput}
+                  min={1}
+                  max={60}
+                  value={draft.offsetValue ?? 1}
+                  onValueChange={(value) => set('offsetValue', Math.max(1, Math.round(value)))}
+                  aria-label="Cantidad de tiempo antes de la cita"
+                />
+                <div className={styles.offsetUnit}>
+                  <CustomSelect
+                    value={draft.offsetUnit || 'days'}
+                    options={OFFSET_UNIT_OPTIONS}
+                    onValueChange={(value) => set('offsetUnit', value as AppointmentReminderInput['offsetUnit'])}
+                    aria-label="Unidad de tiempo"
+                  />
+                </div>
+                <span className={styles.offsetSuffix}>antes de la cita ({offsetLabel})</span>
+              </div>
+            )}
 
             <label className={styles.checkboxRow}>
               <input
@@ -499,11 +654,11 @@ export const AppointmentReminderModal: React.FC<AppointmentReminderModalProps> =
                 onChange={(e) => set('smartEnabled', e.target.checked)}
               />
               <span>
-                <span className={styles.switchLabel}>Recordatorio inteligente</span>
+                <span className={styles.switchLabel}>{isAfterBooking ? 'Confirmación inteligente' : 'Recordatorio inteligente'}</span>
                 <span className={styles.helpText}>
-                  Si la cita cae en un horario incómodo (por ejemplo, agendada a las 5 de la madrugada),
-                  el mensaje se mueve automáticamente a una hora adecuada para no escribirle al contacto
-                  en horas indebidas.
+                  {isAfterBooking
+                    ? 'Si el envío cae en un horario incómodo (por ejemplo, agendaron a las 3 de la madrugada), el mensaje se mueve automáticamente a una hora adecuada para no escribirle al contacto en horas indebidas.'
+                    : 'Si la cita cae en un horario incómodo (por ejemplo, agendada a las 5 de la madrugada), el mensaje se mueve automáticamente a una hora adecuada para no escribirle al contacto en horas indebidas.'}
                 </span>
               </span>
             </label>
@@ -539,7 +694,7 @@ export const AppointmentReminderModal: React.FC<AppointmentReminderModalProps> =
                       checked={(draft.smartOverflow || 'before') === 'before'}
                       onChange={() => set('smartOverflow', 'before')}
                     />
-                    <span>Enviarlo antes, sin dejar que acabe el día anterior</span>
+                    <span>{isAfterBooking ? 'Enviarlo en cuanto cierre el horario de ese día' : 'Enviarlo antes, sin dejar que acabe el día anterior'}</span>
                   </label>
                   <label className={styles.radioRow}>
                     <input
@@ -548,7 +703,7 @@ export const AppointmentReminderModal: React.FC<AppointmentReminderModalProps> =
                       checked={draft.smartOverflow === 'next_day'}
                       onChange={() => set('smartOverflow', 'next_day')}
                     />
-                    <span>Enviarlo después, empezando el día siguiente</span>
+                    <span>{isAfterBooking ? 'Enviarlo a la apertura del día siguiente' : 'Enviarlo después, empezando el día siguiente'}</span>
                   </label>
                 </div>
               </div>

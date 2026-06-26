@@ -2399,7 +2399,7 @@ export const Appointments: React.FC = () => {
                     </div>
                     <div className={styles.automationCopy}>
                       <div className={styles.automationTitle}>
-                        {formatReminderOffsetLabel(reminder.offsetValue, reminder.offsetUnit)}
+                        {formatReminderOffsetLabel(reminder.offsetValue, reminder.offsetUnit, reminder.timingAnchor)}
                       </div>
                       <div className={styles.automationDetail}>
                         {reminder.messageType === 'confirmation'

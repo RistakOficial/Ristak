@@ -5,7 +5,9 @@ import apiClient from './apiClient'
 // ---------------------------------------------------------------------------
 
 export type ReminderMessageType = 'reminder' | 'confirmation'
-export type ReminderOffsetUnit = 'minutes' | 'hours' | 'days'
+// 'before_appointment' = X antes del inicio de la cita; 'after_booking' = X después de agendar.
+export type ReminderTimingAnchor = 'before_appointment' | 'after_booking'
+export type ReminderOffsetUnit = 'seconds' | 'minutes' | 'hours' | 'days'
 export type ReminderSenderMode = 'contact' | 'default' | 'specific'
 export type ReminderSmartOverflow = 'before' | 'next_day'
 export type ReminderNoConfirmAction = 'no_action' | 'cancel_appointment' | 'notify_push'
@@ -23,6 +25,7 @@ export interface AppointmentReminder {
   templateId: string | null
   templateName: string | null
   templateLanguage: string
+  timingAnchor: ReminderTimingAnchor
   offsetValue: number
   offsetUnit: ReminderOffsetUnit
   messageText: string
@@ -62,7 +65,17 @@ export interface AppointmentRemindersOverview {
 
 export type AppointmentReminderInput = Partial<Omit<AppointmentReminder, 'id' | 'position' | 'createdAt' | 'updatedAt'>>
 
-export const formatReminderOffsetLabel = (offsetValue: number, offsetUnit: ReminderOffsetUnit): string => {
+export const formatReminderOffsetLabel = (
+  offsetValue: number,
+  offsetUnit: ReminderOffsetUnit,
+  timingAnchor: ReminderTimingAnchor = 'before_appointment'
+): string => {
+  if (timingAnchor === 'after_booking') {
+    if (!offsetValue || offsetValue <= 0) return 'Al agendar'
+    if (offsetUnit === 'seconds') return offsetValue === 1 ? '1 seg después de agendar' : `${offsetValue} seg después de agendar`
+    if (offsetUnit === 'hours') return offsetValue === 1 ? '1 hora después de agendar' : `${offsetValue} horas después de agendar`
+    return `${offsetValue} min después de agendar`
+  }
   if (offsetUnit === 'minutes') return `${offsetValue} min antes`
   if (offsetUnit === 'hours') return offsetValue === 1 ? '1 hora antes' : `${offsetValue} horas antes`
   return offsetValue === 1 ? '1 día antes' : `${offsetValue} días antes`
