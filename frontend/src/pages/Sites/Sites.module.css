@@ -12315,8 +12315,10 @@
 
 /* ============================================================
    Inspector accordion — secciones colapsables del panel derecho.
-   El título reutiliza .panelSubheader (hereda tipografía/divisor/tema
-   de las 4 familias claro/oscuro). Solo tokens, cero hex/rgba nuevos.
+   Cada encabezado es una FILA tipo control (fondo + borde + chevron de
+   acento) para que se lea claramente como "clic para desplegar", incluso
+   para alguien que abre el editor por primera vez. El título reutiliza
+   .panelSubheader (tipografía/tema de las 4 familias). Solo tokens.
    ============================================================ */
 .accordionSection {
   display: grid;
@@ -12330,52 +12332,73 @@
   gap: 10px;
   width: 100%;
   min-width: 0;
-  border: 0;
-  background: transparent;
-  padding: 0;
+  border: 1px solid var(--sites-editor-section-border, var(--color-border-subtle));
+  border-radius: var(--design-control-radius, 10px);
+  background: color-mix(in srgb, var(--design-panel-bg, var(--color-background-secondary)) 78%, var(--color-background-tertiary) 22%);
+  padding: 11px 13px;
   font: inherit;
-  color: inherit;
+  color: var(--color-text-primary);
   text-align: left;
   cursor: pointer;
+  transition: background 0.16s ease, border-color 0.16s ease;
 }
 
+.accordionHeader:hover {
+  background: color-mix(in srgb, var(--color-primary) 10%, var(--design-panel-bg, var(--color-background-secondary)));
+  border-color: color-mix(in srgb, var(--color-primary) 34%, var(--sites-editor-section-border, var(--color-border-subtle)));
+}
+
+.accordionHeader:focus-visible {
+  outline: 2px solid var(--color-primary);
+  outline-offset: 2px;
+}
+
+/* Sección abierta: el encabezado se "enciende" con un toque de acento. */
+.accordionSection[data-open="true"] .accordionHeader {
+  background: color-mix(in srgb, var(--color-primary) 8%, var(--design-panel-bg, var(--color-background-secondary)));
+  border-color: color-mix(in srgb, var(--color-primary) 30%, var(--sites-editor-section-border, var(--color-border-subtle)));
+}
+
+/* El título dentro del botón: sin el divisor/borde heredado (ahora el
+   contenedor ya comunica que es clicable). */
 .accordionHeader .panelSubheader {
   flex: 1 1 auto;
   min-width: 0;
+  border-bottom: 0;
+  color: inherit;
 }
 
 .accordionChevron {
   flex: 0 0 auto;
-  color: var(--design-section-title, var(--color-text-tertiary));
-  opacity: 0.65;
-  transition: transform 0.16s ease, opacity 0.16s ease;
-}
-
-.accordionHeader:hover .accordionChevron,
-.accordionSection[data-open="true"] .accordionChevron {
-  opacity: 1;
+  color: var(--color-primary);
+  transition: transform 0.18s ease;
 }
 
 .accordionSection[data-open="true"] .accordionChevron {
   transform: rotate(180deg);
 }
 
-.accordionHeader:hover .panelSubheader,
-.accordionHeader:focus-visible .panelSubheader {
-  color: var(--color-text-primary);
-}
-
-.accordionHeader:focus-visible {
-  outline: 2px solid var(--accent, var(--color-primary));
-  outline-offset: 2px;
-  border-radius: var(--radius-ctl, 8px);
-}
-
 .accordionBody {
   display: grid;
   gap: 10px;
   min-width: 0;
-  padding-top: 12px;
+  padding: 13px 4px 4px;
+}
+
+/* Quita la línea-divisor que .panelSubheader pinta en modo enfocado: dentro
+   del botón-tarjeta se vería como separador estático y confunde. */
+.pageFrame .containerFocused .sitesShellFocused .propertiesBody .accordionHeader .panelSubheader::after {
+  display: none;
+}
+
+/* Separación entre tarjetas que cuelgan directo del panel (modo enfocado
+   pone gap:0 y delega el espaciado por sección). */
+.pageFrame .containerFocused .sitesShellFocused .propertiesBody > .accordionSection {
+  margin-top: 8px;
+}
+
+.pageFrame .containerFocused .sitesShellFocused .propertiesBody > .accordionSection:first-child {
+  margin-top: 0;
 }
 
 .gradientCreateButton,
@@ -17737,8 +17760,7 @@
   .formGlobalControls,
   .customFieldBinding,
   .optionRules,
-  .propertiesActions,
-  .accordionSection
+  .propertiesActions
 ) {
   margin-top: 16px;
   border-top: 1px solid var(--sites-editor-section-border);
@@ -17751,8 +17773,7 @@
   .formGlobalControls,
   .customFieldBinding,
   .optionRules,
-  .propertiesActions,
-  .accordionSection
+  .propertiesActions
 ) {
   margin-top: 0;
   border-top: 0;
