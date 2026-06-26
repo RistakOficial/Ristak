@@ -7376,10 +7376,9 @@ function FormEmbedEditorPanel({
       <div className={styles.settingsGroup}>
         <div className={styles.optionRulesHeader}>
           <strong>Páginas del formulario</strong>
-          <button type="button" onClick={onAddPage}>
-            <Plus size={14} />
+          <Button type="button" variant="secondary" size="sm" leftIcon={<Plus size={14} />} onClick={onAddPage}>
             Página
-          </button>
+          </Button>
         </div>
         <div className={styles.embeddedPageTabs}>
           {pages.map(page => (
@@ -7418,10 +7417,9 @@ function FormEmbedEditorPanel({
                 onBlur={onSave}
               />
             </label>
-            <button type="button" onClick={() => onDeletePage(activePage.id)} disabled={pages.length <= 1}>
-              <Trash2 size={14} />
+            <Button type="button" variant="danger" size="sm" leftIcon={<Trash2 size={14} />} onClick={() => onDeletePage(activePage.id)} disabled={pages.length <= 1} style={{ justifySelf: 'start' }}>
               Eliminar página
-            </button>
+            </Button>
           </div>
         )}
       </div>
@@ -8088,6 +8086,10 @@ export const Sites: React.FC = () => {
       ? 'publish'
       : 'save'
     : null
+  // El estado de publicación vive en el botón (sin badge aparte): "Publicado"
+  // (neutro) solo cuando ya está publicado y sin cambios pendientes; si no,
+  // "Publicar" con el acento de acción.
+  const sitePublishedAndClean = editorSite?.status === 'published' && !hasUnsavedChanges
   const editorRouteLoading = loading && !editorSite && Boolean(routeState.siteId) && (routeState.section === 'landings' || routeState.section === 'forms')
   const editorActive = Boolean(editorSite) || editorRouteLoading
   const isFocusedSitesMode = createFlow !== 'closed' || editorActive
@@ -12287,9 +12289,6 @@ export const Sites: React.FC = () => {
                       </label>
                     )}
                     {editorHistoryControls}
-                    {editorSite.status !== 'draft' && !formEditMode && (
-                      <Badge variant={getStatusVariant(editorSite, domainConfig)}>{getStatusLabel(editorSite, domainConfig)}</Badge>
-                    )}
                   </div>
                   {formEditMode && (
                     <div className={`${styles.editorToolbarTools} ${styles.editorToolbarFormControls}`} aria-label="Herramientas de formulario">
@@ -12423,13 +12422,13 @@ export const Sites: React.FC = () => {
                       </Button>
                       <Button
                         size="md"
-                        className={`${styles.editorPublishButton} ${editorDirtyActionTarget === 'publish' ? styles.editorDirtyActionButton : ''}`}
+                        className={`${styles.editorPublishButton} ${sitePublishedAndClean ? styles.editorPublishButtonDone : ''} ${editorDirtyActionTarget === 'publish' ? styles.editorDirtyActionButton : ''}`}
                         onClick={() => handleSaveSite('published')}
                         disabled={editorAIGenerating || saving}
-                        aria-label="Publicar"
+                        aria-label={sitePublishedAndClean ? 'Publicado' : 'Publicar'}
                       >
-                        <Send size={15} />
-                        <span className={styles.editorActionLabel}>Publicar</span>
+                        {sitePublishedAndClean ? <CheckCircle2 size={15} /> : <Send size={15} />}
+                        <span className={styles.editorActionLabel}>{sitePublishedAndClean ? 'Publicado' : 'Publicar'}</span>
                       </Button>
                     </div>
                   </div>
@@ -35082,10 +35081,9 @@ const OptionsRulesEditor: React.FC<OptionsRulesEditorProps> = ({ block, blocks, 
     <div className={styles.optionRules}>
       <div className={styles.optionRulesHeader}>
         <strong>Opciones y reglas</strong>
-        <button type="button" onClick={addOption}>
-          <Plus size={14} />
+        <Button type="button" variant="secondary" size="sm" leftIcon={<Plus size={14} />} onClick={addOption}>
           Agregar
-        </button>
+        </Button>
       </div>
       {options.map((option, index) => {
         const visibleAction = getVisibleRuleAction(option.action)
@@ -35179,10 +35177,9 @@ const OptionsRulesEditor: React.FC<OptionsRulesEditorProps> = ({ block, blocks, 
             </label>
           )}
 
-          <button type="button" className={styles.removeOption} onClick={() => removeOption(index)}>
-            <Trash2 size={14} />
+          <Button type="button" variant="danger" size="sm" leftIcon={<Trash2 size={14} />} onClick={() => removeOption(index)} style={{ justifySelf: 'start' }}>
             Quitar opción
-          </button>
+          </Button>
         </div>
         )
       })}
@@ -36643,17 +36640,19 @@ const LandingBlockSettings: React.FC<LandingBlockSettingsProps> = ({ site, block
 
     return (
       <div className={styles.settingsGroup}>
-        <button
+        <Button
           type="button"
-          className={styles.inlineCreateButton}
+          variant="secondary"
+          size="sm"
+          leftIcon={<Plus size={15} />}
+          style={{ justifySelf: 'start' }}
           onClick={() => {
             onPatchSettings(createEmbeddedFormDraftSettings(site.id))
             window.setTimeout(onSave, 0)
           }}
         >
-          <Plus size={15} />
           Crear formulario básico
-        </button>
+        </Button>
         {embeddedBlocks.length > 0 && (
           <p className={styles.muted}>{embeddedBlocks.length} elementos guardados en este componente.</p>
         )}

@@ -6776,6 +6776,14 @@
   gap: 10px;
 }
 
+/* El editor de opciones/reglas vive también en la caja flotante (sin las
+   protecciones del shell enfocado); min-width:0 evita que las tarjetas se
+   salgan del contenedor por una etiqueta larga del CustomSelect. */
+.optionRules,
+.optionRuleCard {
+  min-width: 0;
+}
+
 .optionRulesHeader {
   display: flex;
   align-items: center;
@@ -6787,7 +6795,7 @@
   color: var(--color-text-primary);
 }
 
-.optionRulesHeader button,
+.optionRulesHeader button:not([data-btn]),
 .inlineCreateButton,
 .removeOption {
   min-height: 34px;
@@ -18638,6 +18646,16 @@
   background: rgba(var(--color-primary-rgb), 0.18) !important;
 }
 
+/* Estado "Publicado": ya en vivo y sin cambios -> botón neutro (no CTA). */
+.editorPublishButtonDone,
+.editorPublishButtonDone:hover:not(:disabled) {
+  min-width: 112px;
+  border-color: var(--design-control-border) !important;
+  background: var(--design-control-bg) !important;
+  color: var(--color-text-secondary) !important;
+  box-shadow: none !important;
+}
+
 .editorDirtyActionButton {
   position: relative;
 }
@@ -19310,7 +19328,7 @@
   gap: 9px;
 }
 
-.embeddedPageEditor button {
+.embeddedPageEditor button:not([data-btn]) {
   width: 100%;
   min-height: 34px;
   display: inline-flex;
@@ -19325,13 +19343,13 @@
   font-weight: 500;
 }
 
-.embeddedPageEditor button:hover:not(:disabled) {
+.embeddedPageEditor button:not([data-btn]):hover:not(:disabled) {
   border-color: rgba(239, 68, 68, 0.28);
   background: rgba(239, 68, 68, 0.08);
   color: var(--color-status-error);
 }
 
-.embeddedPageEditor button:disabled {
+.embeddedPageEditor button:not([data-btn]):disabled {
   cursor: not-allowed;
   opacity: 0.44;
 }
