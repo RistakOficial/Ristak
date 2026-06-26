@@ -1818,7 +1818,7 @@ export function renderPublicCalendarHtml(calendar, { host = '', embedded = false
   <style>
     :root{--accent:${escapeHtml(accent)};--accent-soft:color-mix(in srgb,var(--accent) 10%,transparent);--ink:${escapeHtml(fieldText)};--heading:${escapeHtml(textColor)};--muted:${escapeHtml(mutedColor)};--line:${escapeHtml(lineColor)};--bg:${embedded ? 'transparent' : escapeHtml(backgroundColor)};--surface:${embedded ? 'transparent' : escapeHtml(surfaceColor)};--control-bg:${escapeHtml(controlBg)};--slot-bg:${escapeHtml(slotBg)};--slot-text:${escapeHtml(slotText)};--selected-text:${escapeHtml(selectedText)};--field-bg:${escapeHtml(fieldBg)};--field-text:${escapeHtml(fieldText)};--field-border:${escapeHtml(fieldBorder)};--button-text:${escapeHtml(buttonText)};--slot-radius:${slotRadius}px;--field-radius:${fieldRadius}px;--font-family:${fontStack};--danger:#b42318;--ok:#047857}
     *{box-sizing:border-box}
-    body{margin:0;min-height:100vh;background:var(--bg);color:var(--ink);font-family:var(--font-family);letter-spacing:0;line-height:1.5}
+    body{margin:0;min-height:100vh;background:var(--bg);color:var(--ink);font-family:var(--font-family);letter-spacing:0;line-height:1.55;-webkit-font-smoothing:antialiased;-moz-osx-font-smoothing:grayscale;text-rendering:optimizeLegibility}
     body.rstk-calendar-embedded{min-height:0;background:transparent}
     button,input,textarea{font:inherit}
     .page{min-height:100vh;width:min(1180px,calc(100% - 32px));margin:0 auto;padding:clamp(24px,4vw,54px) 0;display:grid;place-items:center}
@@ -1853,70 +1853,74 @@ export function renderPublicCalendarHtml(calendar, { host = '', embedded = false
     .shell.bookingActive .timesPane{border-left:1px solid var(--line);max-width:520px;width:100%}
     .shell.layout-compact.bookingActive .intro,.shell.layout-compact.bookingActive .timesPane,.shell.layout-stacked.bookingActive .timesPane{border-left:0}
     .shell.bookingActive .slotList{display:none}
-    .intro{position:relative;padding:38px 34px;border-right:1px solid var(--line);display:grid;align-content:start;gap:20px}
-    .avatar{width:104px;height:104px;border-radius:4px;background:linear-gradient(135deg,var(--accent-soft),var(--control-bg));border:1px solid var(--line);display:grid;place-items:center;color:var(--accent);font-size:3rem;font-weight:850;overflow:hidden}
+    .intro{position:relative;padding:clamp(28px,3vw,40px) clamp(26px,2.6vw,36px);border-right:1px solid var(--line);display:grid;align-content:start;gap:18px}
+    .avatar{width:84px;height:84px;border-radius:18px;background:linear-gradient(140deg,var(--accent-soft),var(--control-bg));border:1px solid var(--line);display:grid;place-items:center;color:var(--accent);font-size:2.3rem;font-weight:600;overflow:hidden}
     .avatar img{width:100%;height:100%;display:block;object-fit:cover}
-    .host{margin:8px 0 0;color:var(--muted);font-size:.95rem;font-weight:750}
-    h1{margin:0;color:var(--heading);font-size:clamp(1.75rem,3vw,2.35rem);line-height:1.08;letter-spacing:0;font-weight:850}
-    h2{margin:0;color:var(--heading);font-size:1.45rem;line-height:1.2;font-weight:800}
-    h3{margin:0;color:var(--heading);font-size:1rem;font-weight:800}
+    .host{margin:6px 0 0;color:var(--muted);font-size:.72rem;font-weight:500;letter-spacing:.14em;text-transform:uppercase}
+    h1{margin:0;color:var(--heading);font-size:clamp(1.55rem,2.6vw,2.05rem);line-height:1.12;letter-spacing:-.022em;font-weight:600}
+    h2{margin:0;color:var(--heading);font-size:1.28rem;line-height:1.25;letter-spacing:-.012em;font-weight:600}
+    h3{margin:0;color:var(--heading);font-size:1rem;font-weight:600;letter-spacing:-.005em}
     p{margin:0;color:var(--muted)}
-    .description{font-size:.98rem}
-    .meta{display:grid;gap:12px;margin-top:6px;color:var(--muted);font-weight:750}
+    .description{font-size:.94rem;line-height:1.6}
+    .meta{display:grid;gap:13px;margin-top:4px;color:var(--muted);font-size:.92rem;font-weight:450}
     .meta span{display:flex;align-items:center;gap:10px}
     .calendarPane{padding:38px 36px;display:grid;grid-template-rows:auto auto 1fr auto;gap:24px}
     .paneTitle{display:grid;gap:6px}
     .monthBar{display:grid;grid-template-columns:42px 1fr 42px;align-items:center;gap:12px}
-    .monthBar strong{text-align:center;font-size:1.08rem;font-weight:750;color:var(--heading)}
-    .navBtn{width:42px;height:42px;border:0;border-radius:999px;background:var(--control-bg);color:var(--muted);display:grid;place-items:center;cursor:pointer}
+    .monthBar strong{text-align:center;font-size:1.02rem;font-weight:600;letter-spacing:-.01em;color:var(--heading);text-transform:capitalize}
+    .navBtn{width:40px;height:40px;border:0;border-radius:999px;background:var(--control-bg);color:var(--muted);display:grid;place-items:center;cursor:pointer;transition:background .15s,color .15s}
     .navBtn:hover,.navBtn:focus-visible{background:var(--accent-soft);color:var(--accent);outline:0}
     .weekdays,.days{display:grid;grid-template-columns:repeat(7,1fr);justify-items:center}
-    .weekdays{gap:8px;color:var(--heading);font-size:.78rem;font-weight:750;text-transform:uppercase}
-    .days{gap:10px 8px}
-    .day{width:44px;height:44px;border:0;border-radius:999px;background:transparent;color:var(--muted);cursor:default;font-weight:650}
-    .day.available{color:var(--accent);cursor:pointer;font-weight:800}
-    .day.available:hover,.day.available:focus-visible{background:var(--accent-soft);outline:0}
+    .weekdays{gap:8px;color:var(--muted);font-size:.7rem;font-weight:500;letter-spacing:.06em;text-transform:uppercase}
+    .days{gap:8px 6px}
+    .day{width:44px;height:44px;border:0;border-radius:999px;background:transparent;color:var(--muted);cursor:default;font-weight:450;font-size:.95rem;transition:background .15s,color .15s}
+    .day.available{color:var(--heading);cursor:pointer;font-weight:500}
+    .day.available:hover,.day.available:focus-visible{background:var(--accent-soft);color:var(--accent);outline:0}
     .day.selected{background:var(--accent);color:var(--selected-text)}
     .day.today:not(.selected){box-shadow:inset 0 0 0 1px var(--accent)}
     .day.outside{visibility:hidden}
     .day:disabled{opacity:.34}
-    .timezone{display:flex;align-items:flex-start;gap:10px;color:var(--muted);font-size:.92rem;font-weight:650}
+    .timezone{display:flex;align-items:flex-start;gap:10px;color:var(--muted);font-size:.9rem;font-weight:450}
     .timezoneControl{display:grid;gap:8px;min-width:0}
     .timezoneControl strong{color:var(--ink)}
     .timezoneControl select{min-height:38px;max-width:min(320px,100%);font-size:.88rem}
     .timesPane{border-left:1px solid var(--line);padding:38px 24px;display:grid;grid-template-rows:auto minmax(0,1fr);gap:18px}
     .selectedDate{display:grid;gap:6px;min-height:58px}
-    .changeSlot{display:none;justify-self:start;min-height:34px;border:1px solid var(--line);border-radius:var(--slot-radius);background:var(--control-bg);color:var(--accent);font-size:.86rem;font-weight:800;padding:0 12px;cursor:pointer}
+    .changeSlot{display:none;justify-self:start;min-height:36px;border:1px solid var(--line);border-radius:var(--slot-radius);background:var(--control-bg);color:var(--accent);font-size:.85rem;font-weight:600;padding:0 14px;cursor:pointer;transition:background .15s}
+    .changeSlot:hover{background:var(--accent-soft)}
     .shell.dateSelected .changeSlot,.shell.bookingActive .changeSlot{display:inline-flex;align-items:center;justify-content:center}
     .slotList{display:grid;align-content:start;gap:10px;max-height:330px;overflow:auto;padding-right:2px}
-    .slot{width:100%;min-height:46px;border:1px solid var(--accent);border-radius:var(--slot-radius);background:var(--slot-bg);color:var(--slot-text);font-weight:800;cursor:pointer}
-    .slot:hover,.slot.selected{background:var(--accent);color:var(--selected-text)}
+    .slot{width:100%;min-height:48px;border:1px solid color-mix(in srgb,var(--accent) 28%,var(--line));border-radius:var(--slot-radius);background:var(--slot-bg);color:var(--slot-text);font-weight:550;font-size:.95rem;cursor:pointer;transition:background .15s,color .15s,border-color .15s}
+    .slot:hover,.slot.selected{background:var(--accent);border-color:var(--accent);color:var(--selected-text)}
     .slotEmpty{display:grid;place-items:center;min-height:160px;border:1px dashed var(--line);border-radius:12px;color:var(--muted);text-align:center;padding:18px}
-    form{display:none;gap:12px;border-top:1px solid var(--line);padding-top:16px}
+    form{display:none;gap:18px;border-top:1px solid var(--line);padding-top:22px}
     form.visible{display:grid}
-    .formHeader{display:grid;gap:4px}
+    .formHeader{display:grid;gap:5px;margin-bottom:2px}
     .formHeader h2{margin:0}
-    .formHeader p{font-size:.88rem;font-weight:750}
-    .formPage{display:grid;gap:12px}
+    .formHeader p{font-size:.86rem;font-weight:450}
+    .formPage{display:grid;gap:16px}
     .formPage h3{font-size:.95rem}
-    .calendarQuestion{display:grid;gap:6px}
-    .fieldHelp,.fieldError{margin:0;font-size:.82rem;line-height:1.35}
+    .calendarQuestion{display:grid;gap:7px}
+    .fieldHelp,.fieldError{margin:0;font-size:.82rem;line-height:1.4}
     .fieldHelp{color:var(--muted)}
-    .fieldError{color:var(--danger);font-weight:750}
-    .requiredMark{color:var(--accent);margin-left:4px}
-    label{display:grid;gap:5px;font-size:.82rem;font-weight:750;color:var(--heading)}
-    input,textarea,select{width:100%;border:1px solid var(--field-border);border-radius:var(--field-radius);background:var(--field-bg);color:var(--field-text);padding:10px 11px;outline:none}
+    .fieldError{color:var(--danger);font-weight:500}
+    .requiredMark{color:var(--accent);margin-left:3px;font-weight:500}
+    label{display:block;font-size:.8rem;font-weight:500;letter-spacing:0;color:var(--heading)}
+    input,textarea,select{width:100%;border:1px solid var(--field-border);border-radius:var(--field-radius);background:var(--field-bg);color:var(--field-text);font-size:.95rem;padding:12px 14px;min-height:46px;outline:none;transition:border-color .15s,box-shadow .15s}
     textarea{resize:vertical}
     input:focus,textarea:focus,select:focus{border-color:var(--accent);box-shadow:0 0 0 3px color-mix(in srgb,var(--accent) 16%,transparent)}
     .options{display:grid;gap:8px}
-    .option{display:flex;align-items:center;gap:9px;min-height:38px;border:1px solid var(--field-border);border-radius:var(--field-radius);background:var(--field-bg);padding:8px 10px;cursor:pointer}
+    .option{display:flex;align-items:center;gap:10px;min-height:44px;border:1px solid var(--field-border);border-radius:var(--field-radius);background:var(--field-bg);padding:9px 12px;font-size:.92rem;font-weight:450;cursor:pointer;transition:border-color .15s}
+    .option:hover{border-color:var(--accent)}
     .option input{width:auto}
-    .formActions{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
-    button.submit,button.secondary{min-height:44px;border-radius:var(--slot-radius);font-weight:850;cursor:pointer}
+    .formActions{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-top:2px}
+    button.submit,button.secondary{min-height:48px;border-radius:var(--slot-radius);font-size:.95rem;font-weight:600;cursor:pointer;transition:filter .15s,opacity .15s}
     button.submit{border:1px solid var(--accent);background:var(--accent);color:var(--button-text);flex:1 1 180px}
-    button.secondary{border:1px solid var(--line);background:var(--control-bg);color:var(--accent);padding:0 14px}
-    button:disabled{opacity:.58;cursor:not-allowed}
-    .message{min-height:20px;font-size:.88rem;font-weight:750;color:var(--muted)}
+    button.submit:not(:disabled):hover{filter:brightness(.95)}
+    button.secondary{border:1px solid var(--line);background:var(--control-bg);color:var(--accent);padding:0 16px}
+    button.secondary:hover{background:var(--accent-soft)}
+    button:disabled{opacity:.5;cursor:not-allowed}
+    .message{min-height:20px;font-size:.86rem;font-weight:450;color:var(--muted)}
     .message.error{color:var(--danger)}
     .message.ok{color:var(--ok)}
     .message.preview{color:var(--muted)}
@@ -1929,7 +1933,8 @@ export function renderPublicCalendarHtml(calendar, { host = '', embedded = false
     .successCard .successIcon{width:74px;height:74px;border-radius:999px;display:grid;place-items:center;background:var(--accent-soft);color:var(--accent)}
     .successCard .successMessage{margin:0;font-size:1.22rem;line-height:1.55;font-weight:600;color:var(--heading);white-space:pre-line}
     @media (max-width:1020px){.shell,.shell.dateSelected,.shell.bookingActive{grid-template-columns:320px minmax(360px,1fr)}.timesPane{grid-column:2;border-left:0;border-top:1px solid var(--line);padding-top:24px}.slotList{grid-template-columns:repeat(auto-fit,minmax(132px,1fr));max-height:none}.shell.bookingActive .timesPane{border-left:0;max-width:none}}
-    @media (max-width:760px){.page{width:min(100% - 18px,1180px);padding:14px 0;place-items:start}.shell,.shell.dateSelected,.shell.bookingActive,.shell.noIntro,.shell.noIntro.dateSelected,.shell.noIntro.bookingActive{grid-template-columns:1fr;min-height:0;border-radius:14px}.shell.dateSelected .intro,.shell.dateSelected .calendarPane,.shell.bookingActive .intro,.shell.bookingActive .calendarPane{display:none}.shell.dateSelected .timesPane,.shell.bookingActive .timesPane{grid-column:auto;border-top:0}.intro,.calendarPane,.timesPane{padding:24px 20px;border-right:0}.calendarPane,.timesPane{border-top:1px solid var(--line)}.avatar{width:82px;height:82px;font-size:2.25rem}.days{gap:6px 4px}.day{width:38px;height:38px}.slotList{grid-template-columns:1fr}}
+    @media (max-width:760px){.page{width:100%;padding:0;place-items:stretch}.shell,.shell.dateSelected,.shell.bookingActive,.shell.noIntro,.shell.noIntro.dateSelected,.shell.noIntro.bookingActive{grid-template-columns:1fr;min-height:100vh;border:0;border-radius:0;box-shadow:none}.shell.dateSelected .intro,.shell.dateSelected .calendarPane,.shell.bookingActive .intro,.shell.bookingActive .calendarPane{display:none}.shell.dateSelected .timesPane,.shell.bookingActive .timesPane{grid-column:auto;border-top:0}.intro,.calendarPane,.timesPane{padding:26px 22px;border-right:0;border-left:0}.intro{gap:14px}.calendarPane,.timesPane{border-top:1px solid var(--line)}.avatar{width:72px;height:72px;font-size:2rem;border-radius:16px}.days{gap:6px 2px}.day{width:40px;height:40px}.slotList{grid-template-columns:repeat(auto-fill,minmax(118px,1fr));max-height:none}input,textarea,select{font-size:16px;min-height:48px}.formActions button.submit{flex:1 1 100%}}
+    @media (max-width:430px){.page{padding:0}.intro,.calendarPane,.timesPane{padding:22px 18px}.day{width:38px;height:38px}.weekdays{font-size:.66rem}.slotList{grid-template-columns:1fr}h1{font-size:1.5rem}h2{font-size:1.2rem}}
   </style>
 </head>
 <body class="${[embedded ? 'rstk-calendar-embedded' : '', preview ? 'rstk-calendar-preview' : '', `rstk-calendar-layout-${layout}`].filter(Boolean).join(' ')}">
