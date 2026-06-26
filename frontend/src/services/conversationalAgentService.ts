@@ -6,6 +6,8 @@ export type ConversationalSuccessAction = 'book_appointment' | 'ready_for_human'
 export type ConversationStatus = 'active' | 'paused' | 'human' | 'skipped' | 'completed' | 'discarded'
 export type ConversationSignal = 'ready_for_human' | 'ready_to_schedule' | 'ready_to_buy' | 'appointment_booked' | 'purchase_completed' | 'discarded'
 export type ClosingStrategyMode = 'system' | 'custom'
+export type ConversationalPersuasionLevel = 'low' | 'medium' | 'high'
+export type ConversationalLanguageLevel = 'professional' | 'intermediate' | 'colloquial'
 export type AgentResponseDelayMode = 'none' | 'fixed' | 'random'
 export type AgentResponseDelayUnit = 'seconds' | 'minutes'
 export type AgentReplyDeliveryMode = 'single' | 'split'
@@ -173,6 +175,8 @@ export interface ConversationalAgentConfig {
   defaultCalendarId: string | null
   closingStrategyMode: ClosingStrategyMode
   closingStrategyCustom: string
+  persuasionLevel: ConversationalPersuasionLevel
+  languageLevel: ConversationalLanguageLevel
   updatedAt: string | null
   objectives?: Array<{ id: string; label: string }>
   successActions?: Array<{ id: string; label: string }>
@@ -197,6 +201,8 @@ export interface ConversationalAgentConfigInput {
   defaultCalendarId?: string | null
   closingStrategyMode?: ClosingStrategyMode
   closingStrategyCustom?: string
+  persuasionLevel?: ConversationalPersuasionLevel
+  languageLevel?: ConversationalLanguageLevel
 }
 
 export type ConditionCategory =
@@ -291,6 +297,8 @@ export interface ConversationalAgentDef {
   defaultCalendarId: string | null
   closingStrategyMode: ClosingStrategyMode
   closingStrategyCustom: string
+  persuasionLevel: ConversationalPersuasionLevel
+  languageLevel: ConversationalLanguageLevel
   systemClosingStrategy?: string
   responseDelay: AgentResponseDelayConfig
   replyDelivery: AgentReplyDeliveryConfig
@@ -547,6 +555,16 @@ function normalizeShortText(value?: unknown, maxLength = 160) {
   return String(value || '').trim().slice(0, maxLength)
 }
 
+function normalizeConversationalPersuasionLevel(value?: unknown): ConversationalPersuasionLevel {
+  const level = String(value || '').trim().toLowerCase()
+  return level === 'low' || level === 'medium' || level === 'high' ? level : 'high'
+}
+
+function normalizeConversationalLanguageLevel(value?: unknown): ConversationalLanguageLevel {
+  const level = String(value || '').trim().toLowerCase()
+  return level === 'professional' || level === 'intermediate' || level === 'colloquial' ? level : 'intermediate'
+}
+
 function normalizeAgentConfig<T extends ConversationalAgentConfig | null | undefined>(config: T): T {
   if (!config) return config
   return {
@@ -580,6 +598,8 @@ function normalizeAgentDef<T extends ConversationalAgentDef>(agent: T): T {
     identityUserName: normalizeShortText(agent.identityUserName),
     identityCustomName: normalizeShortText(agent.identityCustomName),
     successAction: normalizeConversationalSuccessAction(agent.successAction),
+    persuasionLevel: normalizeConversationalPersuasionLevel(agent.persuasionLevel),
+    languageLevel: normalizeConversationalLanguageLevel(agent.languageLevel),
     followUp: {
       ...DEFAULT_AGENT_FOLLOW_UP,
       ...((agent.followUp || {}) as Partial<AgentFollowUpConfig>),

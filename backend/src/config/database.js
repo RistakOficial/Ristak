@@ -4457,6 +4457,8 @@ async function initTables() {
         default_calendar_id TEXT,
         closing_strategy_mode TEXT DEFAULT 'system',
         closing_strategy_custom TEXT,
+        persuasion_level TEXT DEFAULT 'high',
+        language_level TEXT DEFAULT 'intermediate',
         created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
         updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
       )
@@ -4468,7 +4470,9 @@ async function initTables() {
       ['model', "TEXT DEFAULT 'gpt-5.4-nano'"],
       ['hide_attended_notifications', 'INTEGER'],
       ['closing_strategy_mode', "TEXT DEFAULT 'system'"],
-      ['closing_strategy_custom', 'TEXT']
+      ['closing_strategy_custom', 'TEXT'],
+      ['persuasion_level', "TEXT DEFAULT 'high'"],
+      ['language_level', "TEXT DEFAULT 'intermediate'"]
     ]) {
       try {
         if (usePostgres) {
@@ -4508,6 +4512,8 @@ async function initTables() {
         default_calendar_id TEXT,
         closing_strategy_mode TEXT DEFAULT 'system',
         closing_strategy_custom TEXT,
+        persuasion_level TEXT DEFAULT 'high',
+        language_level TEXT DEFAULT 'intermediate',
         response_delay_config TEXT,
         reply_delivery_config TEXT,
         follow_up_config TEXT,
@@ -4529,7 +4535,9 @@ async function initTables() {
       ['response_delay_config', 'TEXT'],
       ['reply_delivery_config', 'TEXT'],
       ['follow_up_config', 'TEXT'],
-      ['goal_workflow_config', 'TEXT']
+      ['goal_workflow_config', 'TEXT'],
+      ['persuasion_level', "TEXT DEFAULT 'high'"],
+      ['language_level', "TEXT DEFAULT 'intermediate'"]
     ]) {
       try {
         if (usePostgres) {

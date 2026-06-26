@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import { AlertTriangle, ArrowLeft, Bot, CheckCircle2, ChevronDown, CircleSlash, FileText, Image as ImageIcon, KeyRound, Pause, PauseCircle, Play, Plus, RotateCcw, Target, Trash2, UserCheck, Users, Video, X } from 'lucide-react'
-import { Badge, Button, Card, CustomSelect, KpiCard, Modal, NumberInput, PageHeader, TagPicker } from '@/components/common'
+import { Badge, Button, Card, CustomSelect, KpiCard, Modal, NumberInput, PageHeader, TabList, TagPicker } from '@/components/common'
 import {
   PhoneChatPreview,
   PhoneChatPreviewAttachmentMenu,
@@ -49,6 +49,8 @@ import {
   type ConversationalAgentDefInput,
   type ConversationalAgentEntryConflict,
   type ConversationalAgentMetrics,
+  type ConversationalLanguageLevel,
+  type ConversationalPersuasionLevel,
   type ConversationalAgentTestAttachment,
   type ConversationalAgentTestMessage,
   type ConversationalAgentTestResult,
@@ -80,6 +82,30 @@ const objectiveOptions: Array<{ value: ConversationalObjective; label: string; d
   { value: 'filtrar', label: 'Filtrar curiosos', description: 'Debe ver si la persona sí va en serio. Ejemplo: separar quien pregunta nomás por ver.' },
   { value: 'custom', label: 'Objetivo propio', description: 'Escribe tú la meta. Ejemplo: que pida una propuesta formal.' }
 ]
+
+// Persuasión: qué tanto empuja el agente al cierre. Se monta sobre el guion de fábrica.
+const persuasionLevelTabs: Array<{ value: ConversationalPersuasionLevel; label: string; description: string }> = [
+  { value: 'low', label: 'Anfitrión', description: 'Atiende, resuelve y da precios claros. Cero presión: sólo agenda o cobra si la persona lo pide con todas sus letras.' },
+  { value: 'medium', label: 'Estratega', description: 'Lee, descubre lo esencial y guía con tacto hacia el siguiente paso, sin presionar.' },
+  { value: 'high', label: 'Cerrador', description: 'Tu guion de fábrica al 100: puro pull, estatus y cierre con criterio.' }
+]
+const persuasionLevelHelp: Record<ConversationalPersuasionLevel, string> = {
+  low: 'Modo asesor práctico: informa increíble y deja respirar. Avanza sólo cuando la persona lo pide explícito.',
+  medium: 'Punto medio: acompaña y guía con mano ligera, prioriza resolver antes que cerrar.',
+  high: 'Máxima intensidad de cierre, tal cual el guion de fábrica que ya tienes configurado.'
+}
+
+// Lenguaje: el registro con el que habla. Fuerza la calibración del guion.
+const languageLevelTabs: Array<{ value: ConversationalLanguageLevel; label: string; description: string }> = [
+  { value: 'professional', label: 'Ejecutivo', description: 'Pulido, formal y cuidado, pero siempre humano. Para marcas premium y tratos serios.' },
+  { value: 'intermediate', label: 'Cómplice', description: 'Natural y cercano, ni acartonado ni vulgar. El punto dulce (recomendado).' },
+  { value: 'colloquial', label: 'Callejero', description: 'Suelto y bien regional, como mensaje entre cuates. Lo más libre.' }
+]
+const languageLevelHelp: Record<ConversationalLanguageLevel, string> = {
+  professional: 'Sube la pulcritud: frases completas, sin abreviaciones ni modismos corrientes.',
+  intermediate: 'Deja que el agente calibre el tono al interlocutor y al giro del negocio, como hoy.',
+  colloquial: 'Baja el registro: recortes, modismos locales y ritmo informal de la región.'
+}
 
 const agentIdentityModeOptions: Array<{ value: AgentIdentityMode; label: string; description: string }> = [
   { value: 'business', label: 'Representante del negocio', description: 'Habla como equipo: nosotros te podemos ayudar.' },
@@ -3153,6 +3179,32 @@ const AgentCard: React.FC<AgentCardProps> = ({ agent, aiProviders, calendars, pr
                   />
                 )}
               </QuestionSelectRow>
+
+              <div className={styles.configQuestion}>
+                <div className={styles.field}>
+                  <label className={styles.label}>Qué tan persuasivo debe ser</label>
+                  <TabList
+                    fullWidth
+                    tabs={persuasionLevelTabs}
+                    activeTab={agent.persuasionLevel}
+                    onTabChange={(value) => onChange({ persuasionLevel: value as ConversationalPersuasionLevel })}
+                  />
+                  <p className={styles.helper}>{persuasionLevelHelp[agent.persuasionLevel]}</p>
+                </div>
+              </div>
+
+              <div className={styles.configQuestion}>
+                <div className={styles.field}>
+                  <label className={styles.label}>Cómo debe hablar</label>
+                  <TabList
+                    fullWidth
+                    tabs={languageLevelTabs}
+                    activeTab={agent.languageLevel}
+                    onTabChange={(value) => onChange({ languageLevel: value as ConversationalLanguageLevel })}
+                  />
+                  <p className={styles.helper}>{languageLevelHelp[agent.languageLevel]}</p>
+                </div>
+              </div>
             </div>
           </div>
 
