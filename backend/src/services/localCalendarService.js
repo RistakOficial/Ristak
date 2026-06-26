@@ -2897,21 +2897,27 @@ export async function getLocalAppointment(appointmentId) {
 }
 
 export async function listLocalAppointments({ startTime, endTime, calendarId } = {}) {
-  const conditions = ["COALESCE(sync_status, '') != 'pending_delete'", 'deleted_at IS NULL']
+  // IMPORTANTE: esta consulta hace JOIN con `contacts`, y AMBAS tablas (appointments y
+  // contacts) tienen columnas `deleted_at`/`sync_status`. En Postgres, referenciarlas sin
+  // el alias de tabla lanza «column reference "deleted_at" is ambiguous» y revienta el
+  // listado de citas (admin) y el cálculo de horarios públicos (free-slots). Por eso TODAS
+  // las condiciones van calificadas con `a.` (la tabla appointments). SQLite no se queja,
+  // pero producción usa Postgres.
+  const conditions = ["COALESCE(a.sync_status, '') != 'pending_delete'", 'a.deleted_at IS NULL']
   const params = []
 
   if (startTime) {
-    conditions.push('start_time >= ?')
+    conditions.push('a.start_time >= ?')
     params.push(new Date(Number(startTime) || startTime).toISOString())
   }
 
   if (endTime) {
-    conditions.push('start_time <= ?')
+    conditions.push('a.start_time <= ?')
     params.push(new Date(Number(endTime) || endTime).toISOString())
   }
 
   if (calendarId) {
-    conditions.push('calendar_id = ?')
+    conditions.push('a.calendar_id = ?')
     params.push(calendarId)
   }
 
