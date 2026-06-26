@@ -466,7 +466,7 @@ const COMPLETION_SIGNAL_META: Record<Exclude<ConversationSignal, 'discarded'>, {
 }
 const COMPLETION_SIGNAL_SET = new Set<Exclude<ConversationSignal, 'discarded'>>(Object.keys(COMPLETION_SIGNAL_META) as Array<Exclude<ConversationSignal, 'discarded'>>)
 
-const DEFAULT_AGENT_GOAL_WORKFLOW: AgentGoalWorkflowConfig = {
+export const DEFAULT_AGENT_GOAL_WORKFLOW: AgentGoalWorkflowConfig = {
   appointments: {
     owner: 'human',
     calendarId: null,
