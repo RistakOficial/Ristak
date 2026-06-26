@@ -17320,6 +17320,24 @@ function renderContentBlock(block, context = {}) {
       `rstk-select-${normalizeFormSelectStyle(embeddedTheme.formSelectStyle)}`,
       `rstk-input-${normalizeFormInputStyle(embeddedTheme.formInputStyle)}`
     ].filter(Boolean).join(' ')
+    // Pantallas de resultado del formulario fuente (Calificado / No calificado),
+    // que en standalone son páginas propias (page-2 / page-3). En el embed se
+    // renderizan inline ocultas y el runtime las muestra al enviar según califique
+    // (un landing no puede navegar a esas páginas porque viven inlined aquí).
+    const embeddedResultItems = (pageId, defaultBlocks) => {
+      const own = (Array.isArray(settings.embeddedBlocks) ? settings.embeddedBlocks : [])
+        .filter(item => cleanString(item?.settings?.pageId || item?.settings?.page_id) === pageId && EMBEDDED_FORM_CONTENT_BLOCK_TYPES.has(item?.blockType))
+        .sort((a, b) => (Number(a?.sortOrder) || 0) - (Number(b?.sortOrder) || 0))
+      return own.length ? own : defaultBlocks(settings.embeddedSiteId || '')
+    }
+    const renderEmbeddedResult = (status, pageId, defaultBlocks) => {
+      const items = embeddedResultItems(pageId, defaultBlocks)
+      if (!items.length) return ''
+      return `
+          <div class="rstk-embedded-form-result" data-embedded-form-result="${escapeHtml(status)}" hidden>
+            ${items.map(item => renderEmbeddedItem(item, pageId)).join('\n')}
+          </div>`
+    }
     const embeddedSection = `
       <section class="rstk-embedded-form" id="form">
         ${renderEmbeddedItems()}
@@ -17330,6 +17348,8 @@ function renderContentBlock(block, context = {}) {
             <button type="submit" data-submit${hasEmbeddedPages ? ' hidden' : ''}>${submitButtonContent}</button>
           </div>
           <p class="rstk-submit-message" data-message role="status"></p>
+          ${renderEmbeddedResult('qualified', FORM_THANK_YOU_PAGE_ID, getDefaultFormThankYouBlocks)}
+          ${renderEmbeddedResult('disqualified', FORM_DISQUALIFIED_PAGE_ID, getDefaultFormDisqualifiedBlocks)}
         ` : ''}
       </section>
     `
@@ -18335,7 +18355,8 @@ const RSTK_BASE_CSS = `
   .rstk-subheading{margin:0;font-family:var(--rstk-block-font,var(--rstk-site-subtitle-font,inherit));color:var(--rstk-muted);font-size:clamp(1rem,2vw,1.18rem);max-width:var(--rstk-content-max,60ch)}
   .rstk-kicker{margin:0;color:var(--rstk-accent);font-size:.78rem;font-weight:800;text-transform:uppercase;letter-spacing:.09em}
   .rstk-text{margin:0;color:color-mix(in srgb,var(--rstk-ink) 80%,transparent);max-width:var(--rstk-content-max,66ch)}
-  .rstk-hero,.rstk-section-break,.rstk-cta,.rstk-section-list,.rstk-countdown,.rstk-embedded-form{display:grid;gap:14px;justify-items:var(--rstk-block-justify,stretch);text-align:var(--rstk-block-align,inherit)}
+  .rstk-hero,.rstk-section-break,.rstk-cta,.rstk-section-list,.rstk-countdown,.rstk-embedded-form,.rstk-embedded-form-result{display:grid;gap:14px;justify-items:var(--rstk-block-justify,stretch);text-align:var(--rstk-block-align,inherit)}
+  .rstk-embedded-form-result{width:100%;place-items:center;text-align:center}
   .rstk-hero{gap:16px}
   .rstk-section-break h2,.rstk-section-list h2,.rstk-cta h2,.rstk-embedded-form h2{margin:0;font-family:var(--rstk-block-font,var(--rstk-site-title-font,inherit));font-size:clamp(1.25rem,2.6vw,1.7rem);font-weight:var(--rstk-heading-weight);letter-spacing:0}
   .rstk-countdown{width:100%;max-width:var(--rstk-content-max,720px);margin-left:var(--rstk-content-margin-left,0);margin-right:var(--rstk-content-margin-right,0)}
@@ -21511,6 +21532,25 @@ export async function renderPublicSiteHtml(site, { pageId, pagePath, trackingEna
         return embeddedForm ? embeddedForm.querySelector('[data-message]') || message : message;
       };
 
+      // Muestra la pantalla de resultado embebida (Calificado / No calificado),
+      // ocultando el resto del formulario. Es el equivalente en un landing de navegar
+      // a las páginas de resultado del formulario standalone. Devuelve false si no hay
+      // formulario embebido o esa pantalla no existe (p.ej. en un formulario standalone).
+      const showEmbeddedResult = (status) => {
+        const host = form.querySelector('.rstk-embedded-form');
+        if (!host) return false;
+        const result = host.querySelector('[data-embedded-form-result="' + status + '"]');
+        if (!result) return false;
+        Array.from(host.children).forEach((child) => {
+          child.hidden = child !== result;
+        });
+        result.hidden = false;
+        if (typeof result.scrollIntoView === 'function') {
+          try { result.scrollIntoView({ behavior: 'smooth', block: 'nearest' }); } catch (_) {}
+        }
+        return true;
+      };
+
       // Al elegir una opción que descalifica solo mostramos un aviso debajo del
       // campo; la descalificación real ocurre al avanzar/enviar, no al elegir.
       const DISQUALIFY_NOTICE_FALLBACK = ${JSON.stringify('Con esta respuesta es posible que no califiques para continuar.')};
@@ -21767,6 +21807,29 @@ export async function renderPublicSiteHtml(site, { pageId, pagePath, trackingEna
             return;
           }
           const qualifies = submission.status !== 'disqualified';
+          // Formulario embebido con "Usar reglas del formulario": replica las pantallas
+          // de resultado del formulario standalone (Calificado / No calificado) inline,
+          // salvo que el propio formulario defina un redirect (ése sí manda). En un
+          // formulario standalone showEmbeddedResult no encuentra .rstk-embedded-form y
+          // devuelve false, así que el flujo a páginas reales de resultado sigue intacto.
+          if (completionUsesFormRules) {
+            // "Redirigir siempre" del formulario manda califique o no (como standalone).
+            if (completionAction === 'redirect' && qualifiedRedirectUrl) {
+              window.location.href = preserveUrl(qualifiedRedirectUrl);
+              return;
+            }
+            if (!qualifies && disqualifiedCompletionAction === 'redirect_url' && disqualifiedRedirectUrl) {
+              window.location.href = preserveUrl(disqualifiedRedirectUrl);
+              return;
+            }
+            if (qualifies && completionAction === 'redirect_qualified' && qualifiedRedirectUrl) {
+              window.location.href = preserveUrl(qualifiedRedirectUrl);
+              return;
+            }
+            // El resto de "reglas del formulario" (ir a página de gracias / no calificado)
+            // se replica como pantalla inline, ya que el landing no navega a esas páginas.
+            if (showEmbeddedResult(qualifies ? 'qualified' : 'disqualified')) return;
+          }
           if (completionAction === 'redirect' && qualifiedRedirectUrl) {
             window.location.href = preserveUrl(qualifiedRedirectUrl);
             return;
@@ -21792,8 +21855,11 @@ export async function renderPublicSiteHtml(site, { pageId, pagePath, trackingEna
             return;
           }
           if (!qualifies) {
-            // Descalificado sin redirect configurado: muestra el mensaje de la regla.
-            // "Descalificar inmediatamente" oculta el formulario; "al enviar" lo deja.
+            // Un descalificado nunca debe ver el mensaje de éxito. Preferimos la pantalla
+            // de No calificado embebida (equivalente a la página del formulario standalone);
+            // si no hay (p.ej. formulario standalone que no navegó, o sin pantalla), usamos
+            // el mensaje de la regla. "Descalificar inmediatamente" oculta el formulario.
+            if (showEmbeddedResult('disqualified')) return;
             const dqText = (selectedDisqualifyRule && selectedDisqualifyRule.message) || (data && data.data && data.data.message) || 'Gracias. Por ahora no califica.';
             if (selectedDisqualifyRule && selectedDisqualifyRule.action === 'disqualify') {
               showOnlyRuleMessage(message, dqText);
