@@ -1,4 +1,5 @@
 import React, { useCallback, useContext, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 import { useLocation, useNavigate, useSearchParams } from 'react-router-dom'
 import {
   DndContext,
@@ -131,6 +132,7 @@ import { useAIAgentAvailability, useAppConfig, useUrlDateRangeSync } from '@/hoo
 import { useMediaUploadQueue } from '@/hooks/useMediaUploadQueue'
 import { setSearchParam } from '@/utils/urlState'
 import { hasLicenseFeature } from '@/utils/accessControl'
+import { getFloatingLayerZIndex } from '@/utils/layering'
 import {
   blockLabels,
   fieldBlockTypes,
@@ -3286,6 +3288,7 @@ type ButtonStylePresetId = string
 type SocialPlatform = 'facebook' | 'instagram' | 'tiktok' | 'threads'
 type FormChoiceStyle = NonNullable<SiteTheme['formChoiceStyle']>
 type FormSelectStyle = NonNullable<SiteTheme['formSelectStyle']>
+type FormInputStyle = NonNullable<SiteTheme['formInputStyle']>
 type FormContentAlign = NonNullable<SiteTheme['formContentAlign']>
 
 const horizontalAlignOptions: Array<{ value: HorizontalAlign; label: string; icon: React.ReactNode }> = [
@@ -3599,13 +3602,25 @@ const formChoiceStyleOptions: Array<{ value: FormChoiceStyle; label: string }> =
   { value: 'native', label: 'Clasico con circulo' },
   { value: 'cards', label: 'Fila seleccionada' },
   { value: 'pills', label: 'Pildoras' },
-  { value: 'minimal', label: 'Línea simple' }
+  { value: 'minimal', label: 'Línea simple' },
+  { value: 'grid', label: 'Cuadrícula (2 columnas)' },
+  { value: 'button', label: 'Botones sólidos' },
+  { value: 'check', label: 'Lista con palomita' },
+  { value: 'segmented', label: 'Segmentado' }
 ]
 
 const formSelectStyleOptions: Array<{ value: FormSelectStyle; label: string }> = [
   { value: 'classic', label: 'Clasico' },
   { value: 'filled', label: 'Relleno moderno' },
-  { value: 'underline', label: 'Línea inferior' }
+  { value: 'underline', label: 'Línea inferior' },
+  { value: 'soft', label: 'Suave redondeado' }
+]
+
+const formInputStyleOptions: Array<{ value: FormInputStyle; label: string }> = [
+  { value: 'box', label: 'Caja con borde' },
+  { value: 'underline', label: 'Línea inferior' },
+  { value: 'filled', label: 'Relleno suave' },
+  { value: 'soft', label: 'Pastilla redonda' }
 ]
 
 const socialPlatformOptions: Array<{ value: SocialPlatform; label: string }> = [
@@ -3627,6 +3642,11 @@ const normalizeFormChoiceStyle = (value: unknown): FormChoiceStyle => {
 const normalizeFormSelectStyle = (value: unknown): FormSelectStyle => {
   const raw = String(value || '').trim()
   return formSelectStyleOptions.some(option => option.value === raw) ? raw as FormSelectStyle : 'classic'
+}
+
+const normalizeFormInputStyle = (value: unknown): FormInputStyle => {
+  const raw = String(value || '').trim()
+  return formInputStyleOptions.some(option => option.value === raw) ? raw as FormInputStyle : 'box'
 }
 
 const normalizeSocialPlatform = (value: unknown): SocialPlatform => {
@@ -6250,7 +6270,9 @@ const defaultBlockPayload = (blockType: SiteBlockType, siteOrId: PublicSite | st
     label,
     content: isField ? '' : label,
     placeholder: isField ? (blockType === 'dropdown' ? 'Selecciona una opción' : 'Escribe aquí') : '',
-    required: false,
+    // Los campos del formulario nacen obligatorios por defecto (el autor puede
+    // desmarcar "Campo requerido"). Los bloques de contenido ignoran este flag.
+    required: isField,
     options: isChoiceBlock(blockType)
       ? [
           { label: 'Opción 1', value: 'Opción 1', action: 'continue' as SiteOptionAction },
@@ -6322,14 +6344,28 @@ const getEmbeddedFormSourceId = (block?: SiteBlock | null) => {
 }
 
 const getEmbeddedFormThemeOverride = (block?: SiteBlock | null): Partial<SiteTheme> | null => {
-  const theme = block?.settings?.embeddedTheme
-  if (theme && typeof theme === 'object' && !Array.isArray(theme)) {
-    return {
-      ...createDefaultEmbeddedFormThemeOverride(),
-      ...(theme as Partial<SiteTheme>)
+  const raw = block?.settings?.embeddedTheme
+  const themeObj = (raw && typeof raw === 'object' && !Array.isArray(raw))
+    ? { ...(raw as Partial<SiteTheme>) }
+    : null
+  // Formulario IMPORTADO (referencia a un formulario ya guardado): se respeta su
+  // marco/diseño REAL tal cual; NO se le fuerza el borde transparente (ese era un
+  // default de lienzo NUEVO que pisaba el marco del fuente y lo reacomodaba).
+  if (getEmbeddedFormSourceId(block)) {
+    if (!themeObj) return {}
+    // Auto-sana importados viejos: descarta el borde transparente auto-inyectado
+    // para que vuelva a verse el marco del formulario fuente.
+    if (themeObj.pageBorderColor === 'transparent') {
+      delete themeObj.pageBorderWidth
+      delete themeObj.pageBorderColor
     }
+    return themeObj
   }
-  return createDefaultEmbeddedFormThemeOverride()
+  // Lienzo NUEVO creado directamente en el embebido: conserva el default.
+  return {
+    ...createDefaultEmbeddedFormThemeOverride(),
+    ...(themeObj || {})
+  }
 }
 
 const getEditableEmbeddedFormPages = (block: SiteBlock, forms: PublicSite[]): SitePage[] => {
@@ -6511,6 +6547,7 @@ const EMBEDDED_FORM_PROXY_THEME_KEYS: Array<keyof SiteTheme> = [
   'formChoiceSelectedBg',
   'formChoiceSelectedBorder',
   'formSelectStyle',
+  'formInputStyle',
   'formQualifiedRedirectUrl',
   'formDisqualifiedCompletionAction',
   'formDisqualifiedRedirectUrl',
@@ -6897,10 +6934,15 @@ function FormEmbedEditorPanel({
   activeElement,
   customFields,
   customFieldFolders,
+  forms,
+  popupBlocks,
+  metaPixelConnected,
+  importedPopupDetected,
   pages,
   activePageId,
   sitePages,
   activeSitePageId,
+  onPatchSite,
   onPatchSettings,
   onPatchTheme,
   onPatchField,
@@ -6923,10 +6965,15 @@ function FormEmbedEditorPanel({
   activeElement: EmbeddedFormActiveElement
   customFields: CustomFieldDefinition[]
   customFieldFolders: CustomFieldFolder[]
+  forms: PublicSite[]
+  popupBlocks: SiteBlock[]
+  metaPixelConnected: boolean
+  importedPopupDetected: boolean
   pages: SitePage[]
   activePageId: string
   sitePages: SitePage[]
   activeSitePageId: string
+  onPatchSite: (patch: Partial<PublicSite>) => void
   onPatchBlock: (patch: Partial<SiteBlock>) => void
   onPatchSettings: (patch: Record<string, unknown>) => void
   onPatchTheme: (patch: Partial<SiteTheme>) => void
@@ -7041,6 +7088,28 @@ function FormEmbedEditorPanel({
             <VideoPlayerSettingsControls
               settings={activeFieldSettings}
               mediaUrl={getSettingString(activeFieldSettings, 'mediaUrl')}
+              onPatchSettings={patchActiveFieldSettings}
+              onSave={onSave}
+            />
+          )}
+          {mediaKind === 'video' && activeField && (
+            /* Mismas "Acciones de video" que el editor standalone: reglas por tiempo para
+               mostrar/ocultar elementos del formulario, redirigir o ir a otra página. */
+            <VideoActionsPanel
+              site={site}
+              block={activeField}
+              blocks={fields}
+              popupBlocks={popupBlocks}
+              pages={pages}
+              activePageId={activeFieldPageId}
+              importedPopupDetected={importedPopupDetected}
+              metaPixelConnected={metaPixelConnected}
+              forms={forms}
+              customFields={customFields}
+              customFieldFolders={customFieldFolders}
+              onCustomFieldCreated={onCustomFieldCreated}
+              onPatchSite={onPatchSite}
+              onSaveSite={onSaveSite}
               onPatchSettings={patchActiveFieldSettings}
               onSave={onSave}
             />
@@ -12241,7 +12310,7 @@ export const Sites: React.FC = () => {
                         <small>{formEditBlock?.content || formEditBlock?.label || 'Formulario'}</small>
                       </div>
                       {formEditBlock && (
-                        <FormEmbedToolbarControls
+                        <FormToolbarConfigSlot
                           site={editorSite}
                           block={formEditBlock}
                           forms={forms}
@@ -12267,7 +12336,7 @@ export const Sites: React.FC = () => {
                         <strong>Editando calendario</strong>
                         <small>{getSettingString(calendarEditBlock.settings || {}, 'calendarName') || calendarEditBlock.label || 'Calendario'}</small>
                       </div>
-                      <CalendarEmbedToolbarControls
+                      <CalendarToolbarConfigSlot
                         block={calendarEditBlock}
                         calendars={calendars}
                         onPatchSettings={(patch) => patchBlockSettingsLocal(calendarEditBlock, patch)}
@@ -12928,10 +12997,15 @@ export const Sites: React.FC = () => {
                     activeElement={activeEmbeddedFormSubmitSelected ? 'submit' : activeEmbeddedFormField ? 'field' : 'form'}
                     customFields={customFields}
                     customFieldFolders={customFieldFolders}
+                    forms={forms}
+                    popupBlocks={popupBlocks}
+                    metaPixelConnected={metaPixelConnected}
+                    importedPopupDetected={importedPopupDetected}
                     pages={formEditPages}
                     activePageId={activeEmbeddedFormPage?.id || DEFAULT_FUNNEL_PAGE_ID}
                     sitePages={pages}
                     activeSitePageId={activePage?.id || DEFAULT_FUNNEL_PAGE_ID}
+                    onPatchSite={updateSelectedSite}
                     onPatchBlock={(patch) => patchSelectedBlock(patch)}
                     onPatchSettings={(patch) => patchSelectedBlockSettings(patch)}
                     onPatchTheme={patchEmbeddedFormSourceTheme}
@@ -31141,7 +31215,8 @@ const CanvasPreviewBlock: React.FC<CanvasPreviewBlockProps> = ({
                     embeddedSiteId: undefined,
                     embeddedBlocks: undefined,
                     embeddedPages: undefined,
-                    embeddedTheme: createDefaultEmbeddedFormThemeOverride()
+                    // Importado: sin override de theme, para que llegue idéntico al fuente.
+                    embeddedTheme: undefined
                   })
                   window.setTimeout(save, 0)
                 }}
@@ -31228,8 +31303,12 @@ const CanvasPreviewBlock: React.FC<CanvasPreviewBlockProps> = ({
             calendars={calendars}
           />
         ) : (
-          resolvedItems.length
-            ? resolvedItems.map(item => (
+          // Deseleccionado: pintar SOLO los ítems de la página activa (la 1ª por
+          // defecto), igual que el render en vivo, que oculta el resto de páginas.
+          // Si usáramos resolvedItems se apilarían TODAS las páginas a la vez y se
+          // duplicaría el contenido por página (p. ej. el perfil social). Espejo backend.
+          visibleEditorItems.length
+            ? visibleEditorItems.map(item => (
               <EmbeddedFormStaticBlockPreview
                 key={item.id}
                 block={item}
@@ -32034,7 +32113,8 @@ const FormEmbedToolbarControls: React.FC<{
               embeddedSiteName: undefined,
               embeddedBlocks: undefined,
               embeddedPages: undefined,
-              embeddedTheme: createDefaultEmbeddedFormThemeOverride(),
+              // Importado: sin override de theme, para que llegue idéntico al fuente.
+              embeddedTheme: undefined,
               embeddedSiteType: undefined
             })
             commitSoon()
@@ -32137,6 +32217,165 @@ const CalendarEmbedToolbarControls: React.FC<{
         )}
       </div>
     </div>
+  )
+}
+
+// Popover reutilizable para el toolbar del editor: un disparador compacto +
+// un panel flotante (porteado a <body>, así escapa del overflow del toolbar).
+// Click-afuera respeta los dropdowns porteados (CustomSelect) para que elegir
+// una opción dentro del panel no lo cierre.
+const ToolbarConfigPopover: React.FC<{
+  label: string
+  title: string
+  icon?: React.ReactNode
+  children: React.ReactNode
+}> = ({ label, title, icon, children }) => {
+  const [open, setOpen] = useState(false)
+  const triggerRef = useRef<HTMLButtonElement>(null)
+  const panelRef = useRef<HTMLDivElement>(null)
+  const [panelStyle, setPanelStyle] = useState<React.CSSProperties>({})
+
+  const reposition = useCallback(() => {
+    const trigger = triggerRef.current
+    if (!trigger) return
+    const rect = trigger.getBoundingClientRect()
+    const pad = 12
+    const gap = 6
+    const width = Math.min(320, window.innerWidth - pad * 2)
+    const left = Math.min(Math.max(pad, rect.right - width), window.innerWidth - width - pad)
+    const top = Math.min(rect.bottom + gap, window.innerHeight - pad)
+    setPanelStyle({
+      position: 'fixed',
+      top,
+      left,
+      width,
+      maxHeight: Math.max(160, window.innerHeight - top - pad),
+      zIndex: getFloatingLayerZIndex(trigger, 'popover'),
+    } as React.CSSProperties)
+  }, [])
+
+  useLayoutEffect(() => {
+    if (!open) return
+    reposition()
+    const onResize = () => setOpen(false)
+    window.addEventListener('scroll', reposition, true)
+    window.addEventListener('resize', onResize)
+    return () => {
+      window.removeEventListener('scroll', reposition, true)
+      window.removeEventListener('resize', onResize)
+    }
+  }, [open, reposition])
+
+  useEffect(() => {
+    if (!open) return
+    const onPointerDown = (event: MouseEvent) => {
+      const target = event.target as Node | null
+      if (!target) return
+      if (triggerRef.current?.contains(target)) return
+      if (panelRef.current?.contains(target)) return
+      if (target instanceof Element && target.closest('[data-ristak-dropdown-panel]')) return
+      setOpen(false)
+    }
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setOpen(false)
+    }
+    document.addEventListener('mousedown', onPointerDown)
+    document.addEventListener('keydown', onKeyDown)
+    return () => {
+      document.removeEventListener('mousedown', onPointerDown)
+      document.removeEventListener('keydown', onKeyDown)
+    }
+  }, [open])
+
+  return (
+    <div className={styles.editorToolbarConfigCollapsed}>
+      <button
+        ref={triggerRef}
+        type="button"
+        className={`${styles.editorToolbarConfigTrigger} ${open ? styles.editorToolbarConfigTriggerOpen : ''}`}
+        onClick={() => setOpen(value => !value)}
+        aria-haspopup="dialog"
+        aria-expanded={open}
+        title={title}
+        data-ristak-dropdown-trigger
+      >
+        {icon}
+        <span className={styles.editorToolbarConfigTriggerLabel}>{label}</span>
+        <ChevronDown size={15} className={open ? styles.editorToolbarConfigChevronOpen : ''} />
+      </button>
+      {open && createPortal(
+        <div
+          ref={panelRef}
+          className={styles.editorToolbarConfigPanel}
+          style={panelStyle}
+          data-ristak-dropdown-panel
+          role="dialog"
+          aria-label={title}
+        >
+          <div className={styles.editorToolbarConfigPanelTitle}>
+            {icon}
+            <span>{title}</span>
+          </div>
+          {children}
+        </div>,
+        document.body
+      )}
+    </div>
+  )
+}
+
+// Slot adaptable del formulario: muestra los controles inline cuando hay
+// espacio; en pantalla angosta (container query) se ocultan y aparecen dentro
+// del popover "Configuración". El disparador muestra el formulario activo.
+const FormToolbarConfigSlot: React.FC<{
+  site: PublicSite
+  block: SiteBlock
+  forms: PublicSite[]
+  pages: SitePage[]
+  activePageId: string
+  onPatchSettings: (patch: Record<string, unknown>) => void
+  onSave: () => void
+}> = (props) => {
+  const controls = <FormEmbedToolbarControls {...props} />
+  const sourceId = getEmbeddedFormSourceId(props.block)
+  const sourceName =
+    (sourceId ? props.forms.find(form => form.id === sourceId)?.name : '') ||
+    (sourceId ? getSettingString(props.block.settings || {}, 'embeddedSiteName') : '') ||
+    'Configuración'
+  return (
+    <>
+      <div className={styles.editorToolbarConfigInline}>{controls}</div>
+      <ToolbarConfigPopover
+        label={sourceName}
+        title="Configuración del formulario"
+        icon={<SlidersHorizontal size={15} />}
+      >
+        {controls}
+      </ToolbarConfigPopover>
+    </>
+  )
+}
+
+// Espejo del slot anterior para el bloque de calendario.
+const CalendarToolbarConfigSlot: React.FC<{
+  block: SiteBlock
+  calendars: CalendarType[]
+  onPatchSettings: (patch: Record<string, unknown>) => void
+  onSave: () => void
+}> = (props) => {
+  const controls = <CalendarEmbedToolbarControls {...props} />
+  const calendarName = getSettingString(props.block.settings || {}, 'calendarName') || 'Configuración'
+  return (
+    <>
+      <div className={styles.editorToolbarConfigInline}>{controls}</div>
+      <ToolbarConfigPopover
+        label={calendarName}
+        title="Configuración del calendario"
+        icon={<SlidersHorizontal size={15} />}
+      >
+        {controls}
+      </ToolbarConfigPopover>
+    </>
   )
 }
 
@@ -32503,11 +32742,19 @@ const FormGlobalStyleControls: React.FC<{
 
       <div className={styles.twoColumn}>
         <label className={styles.field}>
+          <span>Estilo de caja</span>
+          <CustomSelect value={normalizeFormInputStyle(theme.formInputStyle)} onChange={(event) => onPatchTheme({ formInputStyle: event.target.value as FormInputStyle })} onBlur={onSaveSite}>
+            {formInputStyleOptions.map(option => <option key={option.value} value={option.value}>{option.label}</option>)}
+          </CustomSelect>
+        </label>
+        <label className={styles.field}>
           <span>Estilo opciones</span>
           <CustomSelect value={normalizeFormChoiceStyle(theme.formChoiceStyle)} onChange={(event) => onPatchTheme({ formChoiceStyle: event.target.value as FormChoiceStyle })} onBlur={onSaveSite}>
             {formChoiceStyleOptions.map(option => <option key={option.value} value={option.value}>{option.label}</option>)}
           </CustomSelect>
         </label>
+      </div>
+      <div className={styles.twoColumn}>
         <label className={styles.field}>
           <span>Estilo lista</span>
           <CustomSelect value={normalizeFormSelectStyle(theme.formSelectStyle)} onChange={(event) => onPatchTheme({ formSelectStyle: event.target.value as FormSelectStyle })} onBlur={onSaveSite}>

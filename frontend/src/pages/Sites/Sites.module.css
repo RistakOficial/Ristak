@@ -18961,6 +18961,122 @@
   font-weight: 400;
 }
 
+/* ── Config adaptable del form/calendario: inline cuando cabe, popover cuando no ── */
+.editorToolbarConfigInline {
+  display: contents;
+}
+
+.editorToolbarConfigCollapsed {
+  display: none;
+  min-width: 0;
+}
+
+.editorToolbarConfigTrigger {
+  height: var(--editor-control-h, 40px);
+  min-height: var(--editor-control-h, 40px);
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  max-width: 230px;
+  padding: 0 12px;
+  border: 1px solid var(--ristak-dropdown-border);
+  border-radius: var(--design-control-radius, 8px);
+  background: var(--ristak-dropdown-bg);
+  color: var(--color-text-primary);
+  font-size: 12px;
+  font-weight: 500;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: border-color var(--transition-fast), background-color var(--transition-fast), box-shadow var(--transition-fast);
+}
+
+.editorToolbarConfigTrigger:hover {
+  border-color: var(--ristak-dropdown-border-hover);
+  background: var(--ristak-dropdown-bg-hover);
+}
+
+.editorToolbarConfigTriggerOpen {
+  border-color: var(--ristak-dropdown-border-focus);
+  box-shadow: var(--ristak-dropdown-ring);
+}
+
+.editorToolbarConfigTrigger > svg {
+  flex: 0 0 auto;
+  color: var(--color-text-tertiary);
+}
+
+.editorToolbarConfigTriggerLabel {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.editorToolbarConfigChevronOpen {
+  transform: rotate(180deg);
+}
+
+.editorToolbarConfigPanel {
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  padding: 14px;
+  background: var(--surface-solid, var(--surface));
+  border: 1px solid var(--ristak-dropdown-border);
+  border-radius: var(--ristak-dropdown-radius);
+  box-shadow: var(--ristak-dropdown-panel-shadow);
+  overflow-y: auto;
+}
+
+.editorToolbarConfigPanelTitle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--color-text-tertiary);
+  font-size: 0.72rem;
+  font-weight: 500;
+}
+
+.editorToolbarConfigPanelTitle > svg {
+  flex: 0 0 auto;
+}
+
+/* Reutiliza los mismos controles del toolbar, pero apilados dentro del panel. */
+.editorToolbarConfigPanel .formEmbedToolbarControls,
+.editorToolbarConfigPanel .formCompletionToolbarControls {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 14px;
+  width: 100%;
+  min-width: 0;
+  flex: initial;
+}
+
+.editorToolbarConfigPanel .formToolbarField,
+.editorToolbarConfigPanel .formSourceToolbarField,
+.editorToolbarConfigPanel .formCompletionToolbarControls .formToolbarField {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 6px;
+  width: 100%;
+  min-width: 0;
+  flex: initial;
+}
+
+.editorToolbarConfigPanel .formToolbarField > span {
+  font-size: 0.72rem;
+}
+
+.editorToolbarConfigPanel .formToolbarField input,
+.editorToolbarConfigPanel .formToolbarField :global([data-ristak-dropdown-trigger]) {
+  width: 100%;
+  min-width: 0;
+}
+
 @keyframes formModePulse {
   70% { box-shadow: 0 0 0 8px rgba(var(--color-primary-rgb), 0); }
   100% { box-shadow: 0 0 0 0 rgba(var(--color-primary-rgb), 0); }
@@ -21062,5 +21178,38 @@
   .pageFrame .containerFocused:has(.builder) .editorToolbarTools {
     border-inline: 0;
     padding-inline: 0;
+  }
+}
+
+/* Config adaptable del form/calendario: en cuanto el toolbar baja de 1500px
+   (mismo punto donde el form-mode ya pedía ~1600px y empezaba a hacer scroll),
+   los ajustes pesados — qué formulario, "Al enviar"/"Al agendar", URL/página
+   destino — se ocultan inline y se mueven al popover "Configuración", que vive
+   porteado en <body> y por eso NUNCA se recorta ni se va a scroll. Quedan a un
+   clic. Los selectores de página (navegación) siguen inline y visibles. */
+@container editorbar (max-width: 1500px) {
+  .pageFrame .containerFocused:has(.builder) .editorToolbarConfigInline {
+    display: none;
+  }
+
+  .pageFrame .containerFocused:has(.builder) .editorToolbarConfigCollapsed {
+    display: inline-flex;
+    align-items: center;
+    flex: 0 0 auto;
+  }
+
+  /* Con la config ya colapsada, el chip "Editando…" sobra: el disparador del
+     popover ya muestra el form/calendario activo. Lo ocultamos para ganar aire. */
+  .pageFrame .containerFocused:has(.builder) .editorUnifiedToolbarFormMode .formModeStatus {
+    display: none;
+  }
+
+  /* Lo poco que queda inline (selectores de página + botón Configuración) se
+     acomoda en varias líneas si hace falta, en vez de irse a scroll horizontal:
+     así nada queda fuera de vista. */
+  .pageFrame .containerFocused:has(.builder) .editorToolbarFormControls {
+    flex-wrap: wrap;
+    overflow: visible;
+    row-gap: 8px;
   }
 }
