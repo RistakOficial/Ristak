@@ -295,11 +295,24 @@ export interface FreeSlot {
 
 export interface BlockedSlot {
   id?: string;         // ID del blocked slot (para editar/eliminar)
-  date: string;        // YYYY-MM-DD
-  startTime: string;   // HH:mm
+  date: string;        // YYYY-MM-DD (día concreto donde se pinta el bloqueo)
+  startTime: string;   // HH:mm (hora local de la cuenta dentro de ese día)
   endTime: string;     // HH:mm
   reason?: string;
   blockedBy?: string;
+  startIso?: string;   // Instante ISO real del inicio del bloqueo completo (para editar)
+  endIso?: string;     // Instante ISO real del fin del bloqueo completo (para editar)
+}
+
+// Forma CRUDA que devuelve el backend para los bloqueos nativos (Ristak/Google):
+// instantes ISO en UTC + título. El front la normaliza a BlockedSlot[] para pintar.
+export interface RawBlockedSlot {
+  id?: string;
+  calendarId?: string | null;
+  startTime?: string;  // ISO UTC
+  endTime?: string;    // ISO UTC
+  title?: string | null;
+  [key: string]: any;  // HighLevel puede traer campos extra
 }
 
 function isCalendarSettingsPath(pathname = '') {
@@ -503,9 +516,9 @@ export const calendarsService = {
     startTime: number,
     endTime: number,
     accessToken?: string
-  ): Promise<BlockedSlot[]> {
+  ): Promise<RawBlockedSlot[]> {
     try {
-      const data = await apiClient.get<BlockedSlot[]>(`/calendars/${calendarId}/blocked-slots`, {
+      const data = await apiClient.get<RawBlockedSlot[]>(`/calendars/${calendarId}/blocked-slots`, {
         params: {
           locationId,
           startTime: startTime.toString(),
@@ -520,13 +533,14 @@ export const calendarsService = {
   },
 
   /**
-   * Crear un nuevo blocked slot
+   * Crear un nuevo blocked slot.
+   * accessToken es opcional: sin él, el backend crea un bloqueo NATIVO local (Ristak/Google).
    */
-  async createBlockedSlot(blockData: any, accessToken: string): Promise<any> {
+  async createBlockedSlot(blockData: any, accessToken?: string): Promise<any> {
     try {
       const data = await apiClient.post('/calendars/block-slots', {
         ...blockData,
-        accessToken
+        ...(accessToken ? { accessToken } : {})
       });
       return data;
     } catch (error) {
@@ -535,17 +549,18 @@ export const calendarsService = {
   },
 
   /**
-   * Actualizar un blocked slot existente
+   * Actualizar un blocked slot existente.
+   * accessToken es opcional: sin él, actualiza el bloqueo NATIVO local.
    */
   async updateBlockedSlot(
     eventId: string,
     updateData: any,
-    accessToken: string
+    accessToken?: string
   ): Promise<any> {
     try {
       const data = await apiClient.put(`/calendars/block-slots/${eventId}`, {
         ...updateData,
-        accessToken
+        ...(accessToken ? { accessToken } : {})
       });
       return data;
     } catch (error) {
@@ -604,10 +619,10 @@ export const calendarsService = {
   /**
    * Eliminar un blocked slot (horario bloqueado)
    */
-  async deleteBlockedSlot(blockedSlotId: string, accessToken: string): Promise<boolean> {
+  async deleteBlockedSlot(blockedSlotId: string, accessToken?: string): Promise<boolean> {
     try {
       await apiClient.delete(`/calendars/block-slots/${blockedSlotId}`, {
-        params: { accessToken }
+        params: accessToken ? { accessToken } : {}
       });
       return true;
     } catch (error) {

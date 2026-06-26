@@ -2,12 +2,12 @@ import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react'
 import { createPortal } from 'react-dom';
 import { useLocation, useNavigate, useSearchParams } from 'react-router-dom';
 import { KpiCard, Card, Button, PageContainer, PageHeader, AppointmentModal, BlockedSlotModal, TabList, Loading, SearchField, CustomSelect } from '@/components/common';
-import { ChevronLeft, ChevronRight, Plus, ChevronDown, Settings, Bell, Sparkles, Copy } from 'lucide-react';
+import { ChevronLeft, ChevronRight, Plus, ChevronDown, Settings, Bell, Sparkles, Copy, Lock } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
 import { useNotification } from '@/contexts/NotificationContext';
 import { useTheme } from '@/contexts/ThemeContext';
 import { useAppConfig } from '@/hooks';
-import { calendarsService, type Calendar, type CalendarEvent, type AppointmentStats, type BlockedSlot } from '@/services/calendarsService';
+import { calendarsService, type Calendar, type CalendarEvent, type AppointmentStats, type BlockedSlot, type RawBlockedSlot } from '@/services/calendarsService';
 import { Badge } from '@/components/common/Badge';
 import { getAppointmentStatusBadge } from '@/utils/statusBadges';
 import { formatTime12h } from '@/utils/format'
@@ -150,6 +150,52 @@ const formatDateKey = (date: Date): string => {
   const month = String(date.getMonth() + 1).padStart(2, '0');
   const day = String(date.getDate()).padStart(2, '0');
   return `${year}-${month}-${day}`;
+};
+
+// Convierte los bloqueos crudos del backend (instantes ISO en UTC) en segmentos por día
+// para pintarlos en la rejilla, usando la zona horaria de la cuenta. Un bloqueo que abarca
+// varios días (p.ej. "esta semana" o "este mes") se divide en una banda por cada día.
+const expandBlockedSlots = (
+  raw: RawBlockedSlot[],
+  timeZone: string
+): (BlockedSlot & { id?: string })[] => {
+  const segments: (BlockedSlot & { id?: string })[] = [];
+  const pad = (n: number) => String(n).padStart(2, '0');
+  const hhmm = (d: Date) => `${pad(d.getHours())}:${pad(d.getMinutes())}`;
+  const sameYMD = (a: Date, b: Date) =>
+    a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth() && a.getDate() === b.getDate();
+
+  for (const block of raw || []) {
+    const startIso = block.startTime || (block as any).start_time;
+    const endIso = block.endTime || (block as any).end_time || startIso;
+    if (!startIso) continue;
+
+    const startWall = toDateInTimeZone(startIso, timeZone) ?? new Date(startIso);
+    const endWall = toDateInTimeZone(endIso, timeZone) ?? new Date(endIso);
+    if (!startWall || !endWall || Number.isNaN(startWall.getTime()) || Number.isNaN(endWall.getTime())) continue;
+
+    const reason = (block.title ?? (block as any).reason ?? '') || '';
+    const id = block.id;
+
+    // Iterar día por día (en la hora-pared de la cuenta) entre el inicio y el fin.
+    let day = new Date(startWall.getFullYear(), startWall.getMonth(), startWall.getDate());
+    const lastDay = new Date(endWall.getFullYear(), endWall.getMonth(), endWall.getDate());
+    let guard = 0;
+    while (day.getTime() <= lastDay.getTime() && guard < 366) {
+      guard += 1;
+      const isFirst = sameYMD(day, startWall);
+      const isLast = sameYMD(day, endWall);
+      const segStart = isFirst ? hhmm(startWall) : '00:00';
+      const segEnd = isLast ? hhmm(endWall) : '24:00';
+      // Saltar segmentos de altura cero (p.ej. fin exactamente a medianoche del último día).
+      if (segStart !== segEnd) {
+        segments.push({ id, date: formatDateKey(day), startTime: segStart, endTime: segEnd, reason, startIso, endIso });
+      }
+      day = new Date(day.getFullYear(), day.getMonth(), day.getDate() + 1);
+    }
+  }
+
+  return segments;
 };
 
 const appointmentViews: ViewMode[] = ['month', 'week', 'day'];
@@ -624,7 +670,7 @@ export const Appointments: React.FC = () => {
       // Usar el mismo rango de fechas que loadEvents
       const { startTime, endTime } = getDateRange();
 
-      const blockedSlotsData = await calendarsService.getBlockedSlots(
+      const rawBlockedSlots = await calendarsService.getBlockedSlots(
         selectedCalendar.id,
         locationId || '',
         startTime,
@@ -632,12 +678,13 @@ export const Appointments: React.FC = () => {
         accessToken || undefined
       );
 
-      setBlockedSlots(blockedSlotsData);
+      // Normalizar a segmentos por día en la zona de la cuenta (multi-día → una banda por día).
+      setBlockedSlots(expandBlockedSlots(rawBlockedSlots, timezone));
     } catch (error) {
       // Error silencioso - si falla, simplemente no se muestran blocked slots
       setBlockedSlots([]);
     }
-  }, [locationId, accessToken, selectedCalendar, getDateRange]);
+  }, [locationId, accessToken, selectedCalendar, getDateRange, timezone]);
 
   // useEffects - ejecutar después de declarar las funciones
   // Cargar calendarios al montar (incluye defaultCalendarId para reaccionar a cambios de configuración)
@@ -649,8 +696,7 @@ export const Appointments: React.FC = () => {
   useEffect(() => {
     if (selectedCalendar) {
       loadEvents();
-      // DESACTIVADO TEMPORALMENTE - Blocked Slots
-      // loadBlockedSlots();
+      loadBlockedSlots();
     }
   }, [selectedCalendar, currentDate, viewMode, locationId, accessToken, loadEvents, loadBlockedSlots]);
 
@@ -1070,19 +1116,41 @@ export const Appointments: React.FC = () => {
 
   // === BLOCKED SLOTS HANDLERS ===
 
+  // Abrir el modal para CREAR un bloqueo nuevo (botón "Bloquear fechas").
+  // Prellena el rango con el día que se está viendo en el calendario.
+  const handleOpenCreateBlockedSlot = () => {
+    if (!selectedCalendar) {
+      showToast('warning', 'Selecciona un calendario', 'Debes elegir un calendario activo antes de bloquear fechas.');
+      return;
+    }
+
+    const baseDate = selectedDate ?? currentDate;
+    const { start: startISO, end: endISO } = buildCreateDefaultTimes(baseDate, 0);
+
+    setCreateDefaults({
+      start: startISO,
+      end: endISO,
+      timeZone: timezone,
+      title: ''
+    });
+    setIsCreateBlockedSlotMode(true);
+    setSelectedBlockedSlot(null);
+    setIsBlockedSlotModalOpen(true);
+  };
+
   // Crear nuevo blocked slot
   const handleCreateBlockedSlot = async (payload: any) => {
-    if (!selectedCalendar || !locationId || !accessToken) return;
+    if (!selectedCalendar) return;
 
     try {
       setLoading(true);
       await calendarsService.createBlockedSlot(
         {
           calendarId: selectedCalendar.id,
-          locationId,
+          ...(locationId ? { locationId } : {}),
           ...payload
         },
-        accessToken
+        accessToken || undefined
       );
       showToast('success', 'Horario bloqueado', 'El horario se bloqueó correctamente.');
       setIsBlockedSlotModalOpen(false);
@@ -1104,10 +1172,10 @@ export const Appointments: React.FC = () => {
 
   // Actualizar blocked slot
   const handleUpdateBlockedSlot = async (payload: any, eventId?: string) => {
-    if (!accessToken || !eventId) return;
+    if (!eventId) return;
 
     try {
-      await calendarsService.updateBlockedSlot(eventId, payload, accessToken);
+      await calendarsService.updateBlockedSlot(eventId, payload, accessToken || undefined);
       showToast('success', 'Horario actualizado', 'Los cambios se guardaron correctamente.');
       setIsBlockedSlotModalOpen(false);
       await loadBlockedSlots();
@@ -1119,10 +1187,10 @@ export const Appointments: React.FC = () => {
 
   // Eliminar blocked slot
   const handleDeleteBlockedSlot = async (blockedSlotId: string) => {
-    if (!accessToken) return;
+    if (!blockedSlotId) return;
 
     try {
-      await calendarsService.deleteBlockedSlot(blockedSlotId, accessToken);
+      await calendarsService.deleteBlockedSlot(blockedSlotId, accessToken || undefined);
       showToast('success', 'Bloqueo eliminado', 'El horario se desbloqueó correctamente.');
       setIsBlockedSlotModalOpen(false);
       await loadBlockedSlots();
@@ -1607,16 +1675,13 @@ export const Appointments: React.FC = () => {
               >
                 Programar
               </Button>
-              {/* DESACTIVADO TEMPORALMENTE - Blocked Slots
               <Button
                 variant="secondary"
                 onClick={handleOpenCreateBlockedSlot}
-                size="sm"
+                leftIcon={<Lock size={16} />}
               >
-                <Lock size={16} />
-                <span className={styles.buttonText}>Bloquear</span>
+                Bloquear fechas
               </Button>
-              */}
             </div>
 
             <TabList
@@ -1839,13 +1904,11 @@ export const Appointments: React.FC = () => {
                           {cell.events.length > 3 && (
                             <div className={styles.eventMore}>+{cell.events.length - 3} más</div>
                           )}
-                          {/* DESACTIVADO TEMPORALMENTE - Blocked Slots Indicator
                           {(() => {
-                            const dateKey = cell.date.toISOString().split('T')[0];
+                            const dateKey = formatDateKey(cell.date);
                             const dayBlockedSlots = blockedSlotsByDate[dateKey] || [];
                             if (dayBlockedSlots.length > 0) {
-                              // Generar tooltip con info detallada de cada blocked slot
-                              // Formato: "10:00-11:30 (Título) | 14:00-15:00 (Título 2)"
+                              // Tooltip con info de cada bloqueo: "10:00-11:30 (Título) | 14:00-15:00 (Título 2)"
                               const tooltipContent = dayBlockedSlots.map(slot => {
                                 const title = slot.reason || 'Bloqueado';
                                 const timeRange = `${slot.startTime}-${slot.endTime}`;
@@ -1857,6 +1920,7 @@ export const Appointments: React.FC = () => {
                                   className={styles.blockedSlotsIndicator}
                                   title={tooltipContent}
                                   data-tooltip="true"
+                                  onClick={(e) => { e.stopPropagation(); handleBlockedSlotClick(dayBlockedSlots[0] as any); }}
                                 >
                                   <Lock size={12} className={styles.blockedIcon} />
                                   <span>{dayBlockedSlots.length} bloqueado{dayBlockedSlots.length > 1 ? 's' : ''}</span>
@@ -1865,7 +1929,6 @@ export const Appointments: React.FC = () => {
                             }
                             return null;
                           })()}
-                          */}
                         </div>
                       </div>
                     );
@@ -2026,7 +2089,9 @@ export const Appointments: React.FC = () => {
 
                         {/* Blocked slots posicionados */}
                         {(() => {
-                          const dateKey = columnDate.toISOString().split('T')[0];
+                          // La columna ya es un día de calendario; su etiqueta (YYYY-MM-DD) casa
+                          // con el `date` del bloqueo (asignado en la zona de la cuenta).
+                          const dateKey = formatDateKey(columnDate);
                           const dayBlockedSlots = blockedSlotsByDate[dateKey] || [];
 
                           return dayBlockedSlots.map((slot, idx) => {
@@ -2199,7 +2264,7 @@ export const Appointments: React.FC = () => {
 
                   {/* Blocked slots del día */}
                   {(() => {
-                    const dateKey = currentDate.toISOString().split('T')[0];
+                    const dateKey = formatDateKey(currentDate);
                     const dayBlockedSlots = blockedSlotsByDate[dateKey] || [];
 
                     return dayBlockedSlots.map((slot, idx) => {

@@ -42,89 +42,6 @@ const INITIAL_FORM_STATE = {
   assignedUserId: ''
 };
 
-const getTimeZoneParts = (date: Date, timeZone: string) => {
-  const formatter = new Intl.DateTimeFormat('en-US', {
-    timeZone,
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit',
-    hour: '2-digit',
-    minute: '2-digit',
-    second: '2-digit',
-    hour12: false
-  });
-
-  const parts = formatter.formatToParts(date);
-  const result: Record<string, number> = {};
-  for (const part of parts) {
-    if (part.type !== 'literal') {
-      result[part.type] = Number(part.value);
-    }
-  }
-  return result;
-};
-
-const toLocalInputValue = (isoString: string, timeZone: string): string => {
-  try {
-    const date = new Date(isoString);
-    if (isNaN(date.getTime())) return '';
-
-    const parts = getTimeZoneParts(date, timeZone);
-    if (!parts) return '';
-
-    const year = parts.year || date.getFullYear();
-    const month = String(parts.month || date.getMonth() + 1).padStart(2, '0');
-    const day = String(parts.day || date.getDate()).padStart(2, '0');
-    const hour = String(parts.hour || date.getHours()).padStart(2, '0');
-    const minute = String(parts.minute || date.getMinutes()).padStart(2, '0');
-
-    return `${year}-${month}-${day}T${hour}:${minute}`;
-  } catch {
-    return '';
-  }
-};
-
-const convertLocalInputToISO = (localInput: string, timeZone: string): string | null => {
-  if (!localInput) return null;
-
-  try {
-    const [datePart, timePart] = localInput.split('T');
-    const [year, month, day] = datePart.split('-').map(Number);
-    const [hour, minute] = timePart.split(':').map(Number);
-
-    const dateString = `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}T${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')}:00`;
-
-    const localDate = new Date(dateString);
-    if (isNaN(localDate.getTime())) return null;
-
-    const formatter = new Intl.DateTimeFormat('en-US', {
-      timeZone,
-      year: 'numeric',
-      month: '2-digit',
-      day: '2-digit',
-      hour: '2-digit',
-      minute: '2-digit',
-      second: '2-digit',
-      hour12: false,
-      timeZoneName: 'short'
-    });
-
-    const parts = formatter.formatToParts(localDate);
-    const tzParts: Record<string, string> = {};
-    parts.forEach(p => {
-      if (p.type !== 'literal') tzParts[p.type] = p.value;
-    });
-
-    const utcDate = new Date(`${tzParts.year}-${tzParts.month}-${tzParts.day}T${tzParts.hour}:${tzParts.minute}:${tzParts.second}Z`);
-    const offset = (localDate.getTime() - utcDate.getTime()) / 60000;
-    const finalDate = new Date(localDate.getTime() - offset * 60000);
-
-    return finalDate.toISOString();
-  } catch {
-    return null;
-  }
-};
-
 // Presets de bloqueo rápido
 type PresetType = 'custom' | 'full_day' | 'morning' | 'afternoon' | 'this_week' | 'next_week' | 'this_month';
 
@@ -399,14 +316,12 @@ export const BlockedSlotModal: React.FC<BlockedSlotModalProps> = ({
         return;
     }
 
-    // Convertir a formato ISO local para los inputs datetime-local
-    const startISO = startDate.toISOString();
-    const endISO = endDate.toISOString();
-
+    // DateTimePicker consume/emite ISO (hora local del navegador). Le pasamos ISO directo
+    // para NO doble-convertir la zona horaria (ese era el bug que desfasaba la hora del bloqueo).
     setFormData({
       ...formData,
-      startTime: toLocalInputValue(startISO, formData.timeZone),
-      endTime: toLocalInputValue(endISO, formData.timeZone)
+      startTime: startDate.toISOString(),
+      endTime: endDate.toISOString()
     });
   };
 
@@ -428,13 +343,12 @@ export const BlockedSlotModal: React.FC<BlockedSlotModalProps> = ({
       try {
         const startDate = new Date(value);
         if (!isNaN(startDate.getTime())) {
-          // Calcular end time según la duración
+          // Calcular end time según la duración (ISO directo para DateTimePicker)
           const endDate = new Date(startDate.getTime() + currentPreset.duration * 60 * 60 * 1000);
-          const endISO = endDate.toISOString();
           setFormData({
             ...formData,
             startTime: value,
-            endTime: toLocalInputValue(endISO, formData.timeZone)
+            endTime: endDate.toISOString()
           });
         }
       } catch (error) {
@@ -447,6 +361,9 @@ export const BlockedSlotModal: React.FC<BlockedSlotModalProps> = ({
   // Inicializar formulario
   useEffect(() => {
     if (isOpen) {
+      // Siempre arrancar en "Personalizado": en edición garantiza que se vean ambos
+      // selectores (inicio y fin); en creación es el modo neutro por defecto.
+      setSelectedPreset('custom');
       if (isCreateMode) {
         // Modo crear: usar defaults
         setFormData({
@@ -457,18 +374,21 @@ export const BlockedSlotModal: React.FC<BlockedSlotModalProps> = ({
           assignedUserId: users[0]?.id || ''
         });
       } else if (blockedSlot) {
-        // Modo editar: cargar datos del blocked slot
-        const startTimeLocal = blockedSlot.date && blockedSlot.startTime
-          ? toLocalInputValue(`${blockedSlot.date}T${blockedSlot.startTime}:00`, defaultTimeZone)
-          : '';
-        const endTimeLocal = blockedSlot.date && blockedSlot.endTime
-          ? toLocalInputValue(`${blockedSlot.date}T${blockedSlot.endTime}:00`, defaultTimeZone)
-          : '';
+        // Modo editar: DateTimePicker consume ISO directo (hora local del navegador).
+        // Preferimos el instante REAL del bloqueo (startIso/endIso); si no, lo reconstruimos.
+        const startTimeValue = blockedSlot.startIso
+          || (blockedSlot.date && blockedSlot.startTime
+            ? new Date(`${blockedSlot.date}T${blockedSlot.startTime}:00`).toISOString()
+            : '');
+        const endTimeValue = blockedSlot.endIso
+          || (blockedSlot.date && blockedSlot.endTime
+            ? new Date(`${blockedSlot.date}T${blockedSlot.endTime}:00`).toISOString()
+            : '');
 
         setFormData({
           title: blockedSlot.reason || 'Horario bloqueado',
-          startTime: startTimeLocal,
-          endTime: endTimeLocal,
+          startTime: startTimeValue,
+          endTime: endTimeValue,
           timeZone: defaultTimeZone,
           assignedUserId: blockedSlot.blockedBy || users[0]?.id || ''
         });
@@ -477,6 +397,7 @@ export const BlockedSlotModal: React.FC<BlockedSlotModalProps> = ({
       // Reset al cerrar
       setFormData(INITIAL_FORM_STATE);
       setShowDeleteConfirm(false);
+      setSelectedPreset('custom');
     }
   }, [isOpen, isCreateMode, blockedSlot, defaultStart, defaultEnd, defaultTimeZone, users]);
 
@@ -520,15 +441,19 @@ export const BlockedSlotModal: React.FC<BlockedSlotModalProps> = ({
         payload.calendarId = calendar?.id;
       }
 
-      if (formData.startTime) {
-        const startIso = convertLocalInputToISO(formData.startTime, formData.timeZone);
-        if (startIso) payload.startTime = startIso;
+      // formData.startTime / endTime ya son ISO (DateTimePicker emite ISO). No reconvertir
+      // por zona horaria: hacerlo desfasaba la hora del bloqueo.
+      const startIso = formData.startTime ? new Date(formData.startTime).toISOString() : null;
+      const endIso = formData.endTime ? new Date(formData.endTime).toISOString() : null;
+
+      if (startIso && endIso && new Date(endIso).getTime() <= new Date(startIso).getTime()) {
+        showToast('error', 'Rango inválido', 'La hora de fin debe ser posterior a la de inicio');
+        setIsSaving(false);
+        return;
       }
 
-      if (formData.endTime) {
-        const endIso = convertLocalInputToISO(formData.endTime, formData.timeZone);
-        if (endIso) payload.endTime = endIso;
-      }
+      if (startIso) payload.startTime = startIso;
+      if (endIso) payload.endTime = endIso;
 
       if (isCreateMode) {
         // Agregar calendarId y locationId solo en modo crear
