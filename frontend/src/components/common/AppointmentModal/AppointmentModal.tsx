@@ -2220,7 +2220,7 @@ export const AppointmentModal: React.FC<AppointmentModalProps> = ({
     <Modal
       isOpen={isClient && showDeleteConfirm}
       onClose={() => setShowDeleteConfirm(false)}
-      title="¿Estás seguro?"
+      title="Eliminar cita"
       message={`¿Deseas eliminar la cita ${formData.title || event?.title || 'Sin título'}? Esta acción no se puede deshacer.`}
       type="confirm"
       confirmText="Eliminar"

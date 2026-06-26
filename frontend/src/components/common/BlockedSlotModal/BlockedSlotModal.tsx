@@ -738,7 +738,7 @@ export const BlockedSlotModal: React.FC<BlockedSlotModalProps> = ({
     <Modal
       isOpen={isClient && showDeleteConfirm}
       onClose={() => setShowDeleteConfirm(false)}
-      title="Confirmar eliminación"
+      title="Eliminar horario bloqueado"
       message="¿Estás seguro de que deseas eliminar este horario bloqueado? Esta acción no se puede deshacer."
       type="confirm"
       confirmText="Eliminar"

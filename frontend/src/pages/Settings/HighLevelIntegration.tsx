@@ -39,7 +39,7 @@ interface IntegrationStatus {
 }
 
 export const HighLevelIntegration: React.FC = () => {
-  const { showToast } = useNotification()
+  const { showToast, showConfirm } = useNotification()
   const { theme } = useTheme()
   const [loading, setLoading] = useState(false)
   const [checkingStatus, setCheckingStatus] = useState(false)
@@ -198,14 +198,23 @@ export const HighLevelIntegration: React.FC = () => {
     }
   }
 
-  const handleDeleteFilter = async (id: string, text: string) => {
-    try {
-      await hiddenContactsService.deleteFilter(id)
-      setHiddenFilters(prev => prev.filter(f => f.id !== id))
-      showToast('success', 'Filtro eliminado', `El filtro "${text}" fue eliminado`)
-    } catch (error) {
-      showToast('error', 'Error', 'No se pudo eliminar el filtro')
-    }
+  const handleDeleteFilter = (id: string, text: string) => {
+    showConfirm(
+      'Eliminar filtro',
+      `Vas a eliminar el filtro "${text}". Esta acción no se puede deshacer.`,
+      async () => {
+        try {
+          await hiddenContactsService.deleteFilter(id)
+          setHiddenFilters(prev => prev.filter(f => f.id !== id))
+          showToast('success', 'Filtro eliminado', `El filtro "${text}" fue eliminado`)
+        } catch (error) {
+          showToast('error', 'Error', 'No se pudo eliminar el filtro')
+          return false
+        }
+      },
+      'Eliminar',
+      'Cancelar'
+    )
   }
 
   const handleOpenHiddenContactsModal = () => {

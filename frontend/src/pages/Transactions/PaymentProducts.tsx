@@ -290,7 +290,7 @@ export const PaymentProducts: React.FC = () => {
   const handleDeleteProduct = (product: ProductItem) => {
     showConfirm(
       'Eliminar producto',
-      `Se quitará "${product.name}" de la lista para cobrar. Los pagos anteriores no se borran.`,
+      `Se quitará "${product.name}" de la lista para cobrar. Los pagos anteriores no se borran. Esta acción no se puede deshacer.`,
       () => {
         void deleteProduct(product)
       },

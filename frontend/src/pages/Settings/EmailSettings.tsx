@@ -284,7 +284,9 @@ export const EmailSettings: React.FC = () => {
         }
       },
       'Desconectar',
-      'Cancelar'
+      'Cancelar',
+      undefined,
+      { typeToConfirm: 'DESCONECTAR' }
     )
   }
 

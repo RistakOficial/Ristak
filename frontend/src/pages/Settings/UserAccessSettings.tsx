@@ -483,7 +483,7 @@ const AccessMatrix: React.FC<AccessMatrixProps> = ({ role, accessConfig, disable
 
 export const UserAccessSettings: React.FC = () => {
   const { user } = useAuth()
-  const { showToast } = useNotification()
+  const { showToast, showConfirm } = useNotification()
   const [members, setMembers] = useState<TeamUser[]>([])
   const [loading, setLoading] = useState(true)
   const [savingCreate, setSavingCreate] = useState(false)
@@ -654,24 +654,34 @@ export const UserAccessSettings: React.FC = () => {
     }
   }
 
-  const handleDelete = async () => {
+  const handleDelete = () => {
     if (!selectedMember) return
 
-    if (!window.confirm(`¿Borrar el acceso de ${selectedMember.fullName || selectedMember.email || selectedMember.phone}?`)) {
-      return
-    }
+    const member = selectedMember
+    const label = member.fullName || member.email || member.phone
 
-    try {
-      setDeleting(true)
-      await userAccessService.deleteUser(selectedMember.id)
-      setMembers((current) => current.filter((member) => member.id !== selectedMember.id))
-      setSelectedId(null)
-      showToast('success', 'Acceso borrado', 'Esa persona ya no podrá entrar al CRM.')
-    } catch (error: any) {
-      showToast('error', 'No se pudo borrar', error?.message || 'Intenta otra vez.')
-    } finally {
-      setDeleting(false)
-    }
+    showConfirm(
+      'Eliminar acceso',
+      `Vas a eliminar el acceso de ${label}. Esa persona ya no podrá entrar al CRM. Esta acción no se puede deshacer.`,
+      async () => {
+        try {
+          setDeleting(true)
+          await userAccessService.deleteUser(member.id)
+          setMembers((current) => current.filter((m) => m.id !== member.id))
+          setSelectedId(null)
+          showToast('success', 'Acceso eliminado', 'Esa persona ya no podrá entrar al CRM.')
+        } catch (error: any) {
+          showToast('error', 'No se pudo eliminar', error?.message || 'Intenta otra vez.')
+          return false
+        } finally {
+          setDeleting(false)
+        }
+      },
+      'Eliminar',
+      'Cancelar',
+      undefined,
+      { typeToConfirm: 'ELIMINAR' }
+    )
   }
 
   return (

@@ -3649,7 +3649,7 @@ export const ConversationalAgentSettings: React.FC<ConversationalAgentSettingsPr
     const provider = getConversationalAIProviderOption(providerId)
     showConfirm(
       `Eliminar ${provider.label}`,
-      `Los agentes que usen ${provider.label} volverán a OpenAI para que no se queden sin responder.`,
+      `Se borra la conexión con ${provider.label} y su API key. Los agentes que la usen volverán a OpenAI para no quedarse sin responder. Esta acción no se puede deshacer.`,
       async () => {
         try {
           const providers = await conversationalAgentService.deleteAIProvider(providerId)
@@ -3761,7 +3761,7 @@ export const ConversationalAgentSettings: React.FC<ConversationalAgentSettingsPr
   const handleDeleteAgent = (agent: ConversationalAgentDef) => {
     showConfirm(
       `Eliminar "${agent.name}"`,
-      'Las conversaciones que atendía quedarán libres para que otro agente (o un humano) las tome.',
+      'Se borra este agente y su configuración. Las conversaciones que atendía quedarán libres para que otro agente (o un humano) las tome. Esta acción no se puede deshacer.',
       async () => {
         try {
           await conversationalAgentService.deleteAgent(agent.id)
