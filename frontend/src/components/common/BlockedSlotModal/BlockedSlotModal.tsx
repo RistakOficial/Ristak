@@ -35,7 +35,7 @@ interface User {
 const DEFAULT_TIMEZONE = Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
 
 const INITIAL_FORM_STATE = {
-  title: 'Horario bloqueado',
+  title: 'Ausencia',
   startTime: '',
   endTime: '',
   timeZone: DEFAULT_TIMEZONE,
@@ -72,7 +72,7 @@ const BLOCKING_PRESETS: BlockingPreset[] = [
   {
     value: 'full_day',
     label: 'Todo el día',
-    description: 'Bloquea todo el día (24 horas)',
+    description: 'No disponible todo el día',
     showStartDate: true,
     showStartTime: false,
     showEndDate: false,
@@ -83,7 +83,7 @@ const BLOCKING_PRESETS: BlockingPreset[] = [
   {
     value: 'morning',
     label: 'Media mañana',
-    description: 'Bloquea 4 horas desde la hora que elijas',
+    description: '4 horas desde la hora que elijas',
     showStartDate: true,
     showStartTime: true,
     showEndDate: false,
@@ -94,7 +94,7 @@ const BLOCKING_PRESETS: BlockingPreset[] = [
   {
     value: 'afternoon',
     label: 'Media tarde',
-    description: 'Bloquea 4 horas desde la hora que elijas',
+    description: '4 horas desde la hora que elijas',
     showStartDate: true,
     showStartTime: true,
     showEndDate: false,
@@ -367,7 +367,7 @@ export const BlockedSlotModal: React.FC<BlockedSlotModalProps> = ({
       if (isCreateMode) {
         // Modo crear: usar defaults
         setFormData({
-          title: 'Horario bloqueado',
+          title: 'Ausencia',
           startTime: defaultStart || '',
           endTime: defaultEnd || '',
           timeZone: defaultTimeZone,
@@ -386,7 +386,7 @@ export const BlockedSlotModal: React.FC<BlockedSlotModalProps> = ({
             : '');
 
         setFormData({
-          title: blockedSlot.reason || 'Horario bloqueado',
+          title: blockedSlot.reason || 'Ausencia',
           startTime: startTimeValue,
           endTime: endTimeValue,
           timeZone: defaultTimeZone,
@@ -417,13 +417,13 @@ export const BlockedSlotModal: React.FC<BlockedSlotModalProps> = ({
 
       // Si NO hay assignedUserId y el calendario SÍ tiene team members, mostrar error
       if (!formData.assignedUserId && hasTeamMembers) {
-        showToast('error', 'Usuario requerido', 'Debes seleccionar un usuario para asignar el bloqueo');
+        showToast('error', 'Usuario requerido', 'Debes seleccionar un usuario para la ausencia');
         setIsSaving(false);
         return;
       }
 
       const payload: any = {
-        title: formData.title.trim() || 'Horario bloqueado'
+        title: formData.title.trim() || 'Ausencia'
       };
 
       // IMPORTANTE: El API de HighLevel usa lógica EXCLUSIVA (XOR):
@@ -498,7 +498,7 @@ export const BlockedSlotModal: React.FC<BlockedSlotModalProps> = ({
       <Modal
         isOpen={isOpen}
         onClose={onClose}
-        title={isCreateMode ? 'Bloquear horario' : 'Editar horario bloqueado'}
+        title={isCreateMode ? 'Marcar ausencia' : 'Editar ausencia'}
         size="sm"
         type="custom"
         flushContent
@@ -509,12 +509,12 @@ export const BlockedSlotModal: React.FC<BlockedSlotModalProps> = ({
           {/* Título/Razón */}
           <div className={styles.field}>
             <label className={styles.label}>
-              Título o razón
+              Motivo
             </label>
             <input
               type="text"
               className={styles.input}
-              placeholder="Ej: Reunión interna, Almuerzo, Fuera de oficina..."
+              placeholder="Ej: Vacaciones, día festivo, fuera de oficina..."
               value={formData.title}
               onChange={(e) => setFormData({ ...formData, title: e.target.value })}
             />
@@ -524,7 +524,7 @@ export const BlockedSlotModal: React.FC<BlockedSlotModalProps> = ({
           {isCreateMode && (
             <div className={styles.field}>
               <label className={styles.label}>
-                Opciones de bloqueo rápido
+                Opciones rápidas
               </label>
               <div className={styles.presetsGrid}>
                 {BLOCKING_PRESETS.map((preset) => (
@@ -653,7 +653,7 @@ export const BlockedSlotModal: React.FC<BlockedSlotModalProps> = ({
               onClick={handleSave}
               disabled={isSaving}
             >
-              {isSaving ? 'Guardando...' : isCreateMode ? 'Crear bloqueo' : 'Guardar cambios'}
+              {isSaving ? 'Guardando...' : isCreateMode ? 'Guardar ausencia' : 'Guardar cambios'}
             </Button>
           </div>
         </div>
@@ -663,8 +663,8 @@ export const BlockedSlotModal: React.FC<BlockedSlotModalProps> = ({
     <Modal
       isOpen={isClient && showDeleteConfirm}
       onClose={() => setShowDeleteConfirm(false)}
-      title="Confirmar eliminación"
-      message="¿Estás seguro de que deseas eliminar este horario bloqueado? Esta acción no se puede deshacer."
+      title="Quitar ausencia"
+      message="¿Seguro que quieres quitar esta ausencia? Volverás a estar disponible en ese tiempo."
       type="confirm"
       confirmText="Eliminar"
       cancelText="Cancelar"
