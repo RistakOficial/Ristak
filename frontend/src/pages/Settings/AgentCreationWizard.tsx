@@ -143,7 +143,7 @@ export function AgentCreationWizard({ isOpen, onClose, onComplete, onSkipToManua
   const labelOf = <T extends string>(choices: Array<Choice<T>>, value: T) => choices.find((c) => c.value === value)?.label || ''
 
   return (
-    <Modal isOpen={isOpen} onClose={onClose} type="custom" size="lg" flushContent title="Nuevo asistente">
+    <Modal isOpen={isOpen} onClose={onClose} type="custom" size="md" flushContent title="Nuevo asistente">
       <div className={styles.wizard}>
         {questionNumber !== null && (
           <div className={styles.progress}>
