@@ -31291,8 +31291,12 @@ const CanvasPreviewBlock: React.FC<CanvasPreviewBlockProps> = ({
             calendars={calendars}
           />
         ) : (
-          resolvedItems.length
-            ? resolvedItems.map(item => (
+          // Deseleccionado: pintar SOLO los ítems de la página activa (la 1ª por
+          // defecto), igual que el render en vivo, que oculta el resto de páginas.
+          // Si usáramos resolvedItems se apilarían TODAS las páginas a la vez y se
+          // duplicaría el contenido por página (p. ej. el perfil social). Espejo backend.
+          visibleEditorItems.length
+            ? visibleEditorItems.map(item => (
               <EmbeddedFormStaticBlockPreview
                 key={item.id}
                 block={item}
