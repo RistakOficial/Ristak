@@ -21537,6 +21537,16 @@ export async function renderPublicSiteHtml(site, { pageId, pagePath, trackingEna
           const currentFields = getEmbeddedPageFields(state);
           if (!currentFields.every(validateField)) return;
           const rules = currentFields.flatMap((field) => readSelectedRules(field)).filter(item => item.action && item.action !== 'continue');
+          // "Ir a página específica" hacia una página del propio formulario embebido:
+          // esas páginas viven inlined dentro de este form (no son páginas reales del
+          // landing), así que el ?page= no resuelve y mandaba al inicio. Se trata como
+          // un salto interno entre páginas del formulario, igual que en standalone.
+          const embeddedSitePageRule = rules.find(item => item.action === 'site_page' && item.targetPageId && state.pageIds.indexOf(item.targetPageId) >= 0);
+          if (embeddedSitePageRule) {
+            state.index = state.pageIds.indexOf(embeddedSitePageRule.targetPageId);
+            renderEmbeddedForm(state);
+            return;
+          }
           const blockingRule = rules.find(item => item.action === 'show_message' || item.action === 'disqualify' || item.action === 'end_form' || item.action === 'redirect' || item.action === 'site_page');
           if (blockingRule && handleBlockingRule(blockingRule, state.pageIds[state.index] || '', state.message)) return;
           const jumpRule = rules.find(item => item.action === 'jump' && item.targetBlockId);
