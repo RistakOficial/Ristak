@@ -1,0 +1,260 @@
+.wizard {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+/* Barra de progreso superior */
+.progress {
+  padding: 4px 22px 0;
+}
+.progressText {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--text-mute);
+}
+.progressTrack {
+  height: 6px;
+  margin-top: 8px;
+  border-radius: var(--radius-pill);
+  background: var(--surface-2);
+  overflow: hidden;
+}
+.progressFill {
+  height: 100%;
+  border-radius: var(--radius-pill);
+  background: var(--accent);
+  transition: width 0.35s cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+/* Cuerpo de cada paso */
+.body {
+  padding: 18px 22px 8px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  text-align: center;
+}
+.art {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  margin-bottom: 2px;
+}
+.title {
+  margin: 0;
+  font-size: 21px;
+  font-weight: 700;
+  line-height: 1.25;
+  color: var(--text);
+}
+.help {
+  margin: 0;
+  max-width: 460px;
+  font-size: 14px;
+  line-height: 1.55;
+  color: var(--text-dim);
+}
+.help strong {
+  color: var(--text);
+  font-weight: 600;
+}
+
+/* Lista de opciones (tarjetas con ícono + ejemplo) */
+.options {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-top: 4px;
+  text-align: left;
+}
+.optionCard {
+  display: flex;
+  gap: 13px;
+  align-items: flex-start;
+  width: 100%;
+  padding: 13px 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-card);
+  background: var(--surface);
+  cursor: pointer;
+  transition: border-color 0.15s ease, background 0.15s ease, box-shadow 0.15s ease;
+}
+.optionCard:hover {
+  border-color: var(--border-strong);
+}
+.optionCardActive {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+  box-shadow: var(--shadow-xs);
+}
+.optionIcon {
+  flex-shrink: 0;
+  width: 40px;
+  height: 40px;
+  display: grid;
+  place-items: center;
+  border-radius: var(--radius-ctl);
+  background: var(--accent-soft);
+  color: var(--accent);
+  transition: background 0.15s ease, color 0.15s ease;
+}
+.optionCardActive .optionIcon {
+  background: var(--accent);
+  color: var(--on-accent);
+}
+.optionBody {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+}
+.optionLabel {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--text);
+}
+.optionExample {
+  font-size: 13px;
+  line-height: 1.45;
+  color: var(--text-dim);
+}
+
+/* Campos de texto */
+.input,
+.textarea {
+  width: 100%;
+  margin-top: 4px;
+  padding: 11px 13px;
+  font-size: 15px;
+  color: var(--text);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-ctl);
+  outline: none;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+  font-family: inherit;
+}
+.textarea {
+  resize: vertical;
+  min-height: 96px;
+  line-height: 1.5;
+}
+.input:focus,
+.textarea:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
+.input::placeholder,
+.textarea::placeholder {
+  color: var(--text-mute);
+}
+.fieldHint {
+  margin: 0;
+  width: 100%;
+  font-size: 12.5px;
+  color: var(--text-mute);
+}
+
+/* Bienvenida */
+.welcomeList {
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+  margin-top: 6px;
+  width: 100%;
+  max-width: 420px;
+}
+.welcomeItem {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  font-size: 14px;
+  color: var(--text-dim);
+  text-align: left;
+}
+.welcomeItem svg {
+  flex-shrink: 0;
+  color: var(--accent);
+}
+.skipLink {
+  margin-top: 10px;
+  background: none;
+  border: none;
+  padding: 4px;
+  font-size: 13px;
+  color: var(--text-mute);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  cursor: pointer;
+  transition: color 0.15s ease;
+}
+.skipLink:hover:not(:disabled) {
+  color: var(--text-dim);
+}
+.skipLink:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+/* Resumen final */
+.recapList {
+  width: 100%;
+  margin-top: 4px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-card);
+  overflow: hidden;
+  background: var(--surface);
+}
+.recapRow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  padding: 11px 14px;
+  border-top: 1px solid var(--border);
+}
+.recapRow:first-child {
+  border-top: none;
+}
+.recapKey {
+  font-size: 13px;
+  color: var(--text-mute);
+  flex-shrink: 0;
+}
+.recapVal {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text);
+  text-align: right;
+}
+
+/* Footer pegado abajo */
+.footer {
+  position: sticky;
+  bottom: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 14px 22px;
+  margin-top: 6px;
+  border-top: 1px solid var(--border);
+  background: var(--surface);
+}
+.footerRight {
+  margin-left: auto;
+  display: flex;
+  gap: 8px;
+}
+
+@media (max-width: 560px) {
+  .progress { padding-left: 16px; padding-right: 16px; }
+  .body { padding-left: 16px; padding-right: 16px; }
+  .footer { padding-left: 16px; padding-right: 16px; }
+  .title { font-size: 19px; }
+}

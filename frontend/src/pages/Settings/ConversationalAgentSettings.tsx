@@ -65,6 +65,7 @@ import { triggerLinksService, type TriggerLink } from '@/services/triggerLinksSe
 import apiClient from '@/services/apiClient'
 import { formatCurrency } from '@/utils/format'
 import { ConditionBuilder } from './ConditionBuilder'
+import { AgentCreationWizard, type AgentWizardDraft } from './AgentCreationWizard'
 import styles from './AIAgentSettings.module.css'
 
 const AUTOSAVE_DELAY_MS = 900
@@ -3418,6 +3419,7 @@ export const ConversationalAgentSettings: React.FC<ConversationalAgentSettingsPr
   const [filterOptions, setFilterOptions] = useState<AgentFilterOptions | undefined>(undefined)
   const [loading, setLoading] = useState(true)
   const [creating, setCreating] = useState(false)
+  const [wizardOpen, setWizardOpen] = useState(false)
   const [resettingAgentSkipsId, setResettingAgentSkipsId] = useState<string | null>(null)
   const [selectedAgentId, setSelectedAgentId] = useState<string | null>(() => routeAgentId || null)
   const [providerModalId, setProviderModalId] = useState<ConversationalAIProviderId | null>(null)
@@ -3666,17 +3668,15 @@ export const ConversationalAgentSettings: React.FC<ConversationalAgentSettingsPr
     )
   }
 
-  const handleCreateAgent = async () => {
-    if (!businessPromptReady) {
-      showToast('warning', 'Prompt interno pendiente', promptBlockerText)
-      return
-    }
+  // Núcleo de creación reutilizable: lo usan el wizard guiado y el atajo "a mano".
+  const runCreateAgent = async (overrides: ConversationalAgentDefInput = {}) => {
     setCreating(true)
     const defaultProvider = getKnownConversationalAIProvider(config?.aiProvider)
     const draftInput: ConversationalAgentDefInput = {
       name: `Agente ${agents.length + 1}`,
       aiProvider: defaultProvider,
-      model: getKnownConversationalModel(defaultProvider, config?.model || getDefaultConversationalModel(defaultProvider))
+      model: getKnownConversationalModel(defaultProvider, config?.model || getDefaultConversationalModel(defaultProvider)),
+      ...overrides
     }
     try {
       const agent = await conversationalAgentService.createAgent(draftInput)
@@ -3688,19 +3688,55 @@ export const ConversationalAgentSettings: React.FC<ConversationalAgentSettingsPr
       setSelectedAgentId(agent.id)
       navigate(buildConversationalAgentPath(agent.id, routeBase))
       void refreshMetrics()
+      return agent
     } catch (error: any) {
       if (isConversationalAgentEntryConflictError(error)) {
+        setWizardOpen(false)
         setActivationConflict({
           message: error.message,
           conflicts: error.conflicts || [],
           pausedDraftInput: { ...draftInput, enabled: false }
         })
-        return
+        return null
       }
       showToast('error', 'No se pudo crear', error?.message || 'Error al crear el agente')
+      return null
     } finally {
       setCreating(false)
     }
+  }
+
+  const openCreateWizard = () => {
+    if (!businessPromptReady) {
+      showToast('warning', 'Prompt interno pendiente', promptBlockerText)
+      return
+    }
+    setWizardOpen(true)
+  }
+
+  // Atajo: crea un agente en blanco y salta directo al editor (sin wizard).
+  const handleCreateAgent = async () => {
+    if (!businessPromptReady) {
+      showToast('warning', 'Prompt interno pendiente', promptBlockerText)
+      return
+    }
+    await runCreateAgent()
+  }
+
+  const handleWizardComplete = async (draft: AgentWizardDraft) => {
+    const overrides: ConversationalAgentDefInput = {
+      name: draft.name.trim() || `Agente ${agents.length + 1}`,
+      objective: draft.objective,
+      customObjective: draft.objective === 'custom' ? draft.customObjective.trim() : '',
+      identityMode: draft.identityMode,
+      identityCustomName: draft.identityMode === 'custom' ? draft.identityCustomName.trim() : '',
+      successAction: draft.successAction,
+      requiredData: draft.requiredData.trim(),
+      persuasionLevel: draft.persuasionLevel,
+      languageLevel: draft.languageLevel
+    }
+    const agent = await runCreateAgent(overrides)
+    if (agent) setWizardOpen(false)
   }
 
   const handleCreatePausedConflictDraft = async () => {
@@ -4015,7 +4051,7 @@ export const ConversationalAgentSettings: React.FC<ConversationalAgentSettingsPr
               )}
             </div>
             <Button
-              onClick={handleCreateAgent}
+              onClick={openCreateWizard}
               loading={creating}
               disabled={loading || creating || !businessPromptReady}
               title={!businessPromptReady ? promptBlockerText : undefined}
@@ -4093,7 +4129,7 @@ export const ConversationalAgentSettings: React.FC<ConversationalAgentSettingsPr
           </div>
           <h3>Aún no tienes agentes</h3>
           <p>Crea uno y configura qué chats debe tomar, cómo debe responder y cuándo debe pedir ayuda.</p>
-          <Button onClick={handleCreateAgent} loading={creating} disabled={creating}>
+          <Button onClick={openCreateWizard} loading={creating} disabled={creating}>
             <Plus size={16} />
             Nuevo agente
           </Button>
@@ -4177,6 +4213,14 @@ export const ConversationalAgentSettings: React.FC<ConversationalAgentSettingsPr
       )}
       {renderProviderModal()}
       {renderActivationConflictModal()}
+      <AgentCreationWizard
+        isOpen={wizardOpen}
+        onClose={() => setWizardOpen(false)}
+        onComplete={handleWizardComplete}
+        onSkipToManual={() => { setWizardOpen(false); void handleCreateAgent() }}
+        creating={creating}
+        defaultName={`Agente ${agents.length + 1}`}
+      />
     </div>
   )
 }
