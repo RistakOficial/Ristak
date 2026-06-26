@@ -67,6 +67,13 @@ export function normalizeConversationalLanguageLevel(value, fallback = DEFAULT_L
   return VALID_LANGUAGE_LEVELS.has(fallback) ? fallback : DEFAULT_LANGUAGE_LEVEL
 }
 
+// Alcance de contactos: 'all' = atiende a todos (comportamiento histórico); 'new_only' =
+// solo contactos creados a partir del corte (medida de seguridad para no mezclar a los
+// clientes que ya existían cuando se creó/configuró el agente).
+export function normalizeContactScope(value) {
+  return String(value || '').trim().toLowerCase() === 'new_only' ? 'new_only' : 'all'
+}
+
 const DEFAULT_SUCCESS_ACTION = 'ready_for_human'
 const VALID_STATUSES = new Set(['active', 'paused', 'human', 'skipped', 'completed', 'discarded'])
 const CONVERSATION_PAUSE_DURATION_MS = 24 * 60 * 60 * 1000
@@ -2049,6 +2056,8 @@ function mapAgentRow(row) {
     closingStrategyCustom: row.closing_strategy_custom || '',
     persuasionLevel: normalizeConversationalPersuasionLevel(row.persuasion_level),
     languageLevel: normalizeConversationalLanguageLevel(row.language_level),
+    contactScope: normalizeContactScope(row.contact_scope),
+    contactScopeCutoffAt: row.contact_scope_cutoff_at || null,
     responseDelay: normalizeAgentResponseDelay(parseJsonField(row.response_delay_config, null)),
     replyDelivery: normalizeAgentReplyDeliveryForConfig(parseJsonField(row.reply_delivery_config, null)),
     followUp: normalizeAgentFollowUp(parseJsonField(row.follow_up_config, null)),
@@ -2088,7 +2097,13 @@ export function shouldMigrateLegacyConversationalAgentConfig(legacy) {
  * La config default vacía no se migra, así una cuenta nueva empieza sin agentes.
  */
 async function backfillLegacyConversationStatesToPrimaryAgent() {
-  const primaryAgent = await db.get('SELECT id FROM conversational_agents ORDER BY position ASC, created_at ASC LIMIT 1').catch(() => null)
+  // Excluye agentes 'new_only': no deben adoptar conversaciones legacy de contactos viejos
+  // (eso saltaría el corte de seguridad, porque la adopción ocurre antes de matchAgentForMessage).
+  const primaryAgent = await db.get(`
+    SELECT id FROM conversational_agents
+    WHERE COALESCE(contact_scope, 'all') <> 'new_only'
+    ORDER BY position ASC, created_at ASC LIMIT 1
+  `).catch(() => null)
   if (!primaryAgent?.id) return
   await db.run(`
     UPDATE conversational_agent_state
@@ -2396,6 +2411,21 @@ function agentInputToRowValues(input, base) {
     languageLevel: input.languageLevel === undefined
       ? normalizeConversationalLanguageLevel(base.languageLevel)
       : normalizeConversationalLanguageLevel(input.languageLevel),
+    contactScope: input.contactScope === undefined
+      ? normalizeContactScope(base.contactScope)
+      : normalizeContactScope(input.contactScope),
+    // El corte se SELLA cuando el scope queda en 'new_only' y aún no lo tenía; al volver
+    // a 'all' se limpia. Así editar/reactivar el agente no mueve el corte sin querer.
+    contactScopeCutoffAt: (() => {
+      const nextScope = input.contactScope === undefined
+        ? normalizeContactScope(base.contactScope)
+        : normalizeContactScope(input.contactScope)
+      if (nextScope !== 'new_only') return null
+      if (normalizeContactScope(base.contactScope) === 'new_only' && base.contactScopeCutoffAt) {
+        return base.contactScopeCutoffAt
+      }
+      return new Date().toISOString()
+    })(),
     responseDelay: input.responseDelay === undefined
       ? normalizeAgentResponseDelay(base.responseDelay)
       : normalizeAgentResponseDelay(input.responseDelay),
@@ -2436,6 +2466,7 @@ const ACTIVE_AGENT_RUNTIME_CONFIG_KEYS = new Set([
   'closingStrategyCustom',
   'persuasionLevel',
   'languageLevel',
+  'contactScope',
   'responseDelay',
   'replyDelivery',
   'followUp',
@@ -2468,6 +2499,8 @@ const DEFAULT_AGENT_BASE = {
   closingStrategyCustom: '',
   persuasionLevel: DEFAULT_PERSUASION_LEVEL,
   languageLevel: DEFAULT_LANGUAGE_LEVEL,
+  contactScope: 'all',
+  contactScopeCutoffAt: null,
   responseDelay: DEFAULT_RESPONSE_DELAY_CONFIG,
   replyDelivery: DEFAULT_REPLY_DELIVERY_CONFIG,
   followUp: DEFAULT_FOLLOW_UP_CONFIG,
@@ -2745,9 +2778,9 @@ export async function createConversationalAgent(input = {}) {
       success_extras, required_data, handoff_rules, extra_instructions,
       allow_emojis, hide_attended, hide_attended_notifications,
       default_calendar_id, closing_strategy_mode, closing_strategy_custom,
-      persuasion_level, language_level,
+      persuasion_level, language_level, contact_scope, contact_scope_cutoff_at,
       response_delay_config, reply_delivery_config, follow_up_config, goal_workflow_config, entry_filters
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `, [
     id, next.name, next.enabled ? 1 : 0, next.aiProvider, next.model,
     next.identityMode, next.identityUserId, next.identityUserName, next.identityCustomName,
@@ -2756,7 +2789,7 @@ export async function createConversationalAgent(input = {}) {
     next.extraInstructions, next.allowEmojis ? 1 : 0,
     0, next.hideAttendedNotifications ? 1 : 0, next.defaultCalendarId,
     next.closingStrategyMode, next.closingStrategyCustom,
-    next.persuasionLevel, next.languageLevel,
+    next.persuasionLevel, next.languageLevel, next.contactScope, next.contactScopeCutoffAt,
     JSON.stringify(next.responseDelay), JSON.stringify(next.replyDelivery), JSON.stringify(next.followUp), JSON.stringify(next.goalWorkflow), JSON.stringify(next.filters)
   ])
   await recordConversationalAgentEvent({ eventType: 'agent_created', detail: { agentId: id, name: next.name } })
@@ -2786,7 +2819,8 @@ export async function updateConversationalAgent(agentId, input = {}) {
         extra_instructions = ?, allow_emojis = ?, hide_attended = ?, hide_attended_notifications = ?,
         default_calendar_id = ?,
         closing_strategy_mode = ?, closing_strategy_custom = ?,
-        persuasion_level = ?, language_level = ?, response_delay_config = ?,
+        persuasion_level = ?, language_level = ?,
+        contact_scope = ?, contact_scope_cutoff_at = ?, response_delay_config = ?,
         reply_delivery_config = ?, follow_up_config = ?, goal_workflow_config = ?, entry_filters = ?,
         updated_at = CURRENT_TIMESTAMP
     WHERE id = ?
@@ -2799,6 +2833,7 @@ export async function updateConversationalAgent(agentId, input = {}) {
     0, next.hideAttendedNotifications ? 1 : 0, next.defaultCalendarId,
     next.closingStrategyMode, next.closingStrategyCustom,
     next.persuasionLevel, next.languageLevel,
+    next.contactScope, next.contactScopeCutoffAt,
     JSON.stringify(next.responseDelay), JSON.stringify(next.replyDelivery), JSON.stringify(next.followUp), JSON.stringify(next.goalWorkflow), JSON.stringify(next.filters),
     agentId
   ])
@@ -3416,6 +3451,34 @@ export function exitRulesMatch(agent, ctx) {
  * Encuentra el primer agente habilitado (en orden de posición) cuyas reglas de
  * entrada se cumplen y cuyas reglas de salida NO aplican ya de inicio.
  */
+// Parsea timestamps de forma determinista. SQLite devuelve CURRENT_TIMESTAMP como
+// "YYYY-MM-DD HH:MM:SS" SIN zona; Date.parse lo leería como hora LOCAL y desfasaría el
+// corte. Aquí ese formato se interpreta como UTC (igual que el cutoff, que es toISOString).
+function parseTimestampMsUtc(value) {
+  if (value == null) return NaN
+  if (value instanceof Date) return value.getTime()
+  let s = String(value).trim()
+  if (!s) return NaN
+  if (/^\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}:\d{2}/.test(s) && !/(z|[+-]\d{2}:?\d{2})$/i.test(s)) {
+    s = `${s.replace(' ', 'T')}Z`
+  }
+  return Date.parse(s)
+}
+
+// Medida de seguridad: un agente con contactScope 'new_only' NO debe tomar contactos
+// que ya existían cuando se selló su corte. Fail-open: si falta el corte o la fecha del
+// contacto, NO bloquea (preferimos atender de más que silenciar al agente por un dato faltante).
+export function contactIsOutOfScopeForAgent(agent, ctx) {
+  if (normalizeContactScope(agent?.contactScope) !== 'new_only') return false
+  const cutoff = agent?.contactScopeCutoffAt
+  const createdAt = ctx?.contactInfo?.createdAt
+  if (!cutoff || !createdAt) return false
+  const created = parseTimestampMsUtc(createdAt)
+  const cut = parseTimestampMsUtc(cutoff)
+  if (!Number.isFinite(created) || !Number.isFinite(cut)) return false
+  return created < cut // el contacto nació ANTES del corte → este agente lo ignora
+}
+
 export async function matchAgentForMessage({ contactId, messageText = '', channel = 'whatsapp', excludeAgentId = null, excludeAgentIds = [], ruleContext = null } = {}) {
   const agents = (await listConversationalAgents()).filter((agent) => agent.enabled)
   if (!agents.length) return null
@@ -3429,6 +3492,7 @@ export async function matchAgentForMessage({ contactId, messageText = '', channe
   for (const agent of agents) {
     if (excluded.has(agent.id)) continue
     if (!entryRulesMatch(agent, ctx)) continue
+    if (contactIsOutOfScopeForAgent(agent, ctx)) continue
     if (exitRulesMatch(agent, ctx)) continue
     return agent
   }

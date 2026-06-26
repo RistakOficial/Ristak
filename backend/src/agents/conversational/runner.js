@@ -28,6 +28,7 @@ import {
   releaseAgentFromConversation,
   buildRuleContext,
   exitRulesMatch,
+  contactIsOutOfScopeForAgent,
   normalizeConversationalAgentModel,
   getAgentResponseDelayMs,
   getAgentFollowUpSteps,
@@ -1433,6 +1434,19 @@ async function resolveInboundAgentForContact({ contactId, messageText, channel, 
         contactId,
         eventType: 'agent_released',
         detail: { agentId: agentConfig.id, name: agentConfig.name, reason: 'exit_rules' }
+      })
+      continue
+    }
+
+    // Seguridad: si el agente pasó a "solo nuevos" y este contacto ya existía antes del
+    // corte, suéltalo aunque tuviera asignación pegajosa (no lo dejes grandfathered).
+    if (contactIsOutOfScopeForAgent(agentConfig, ruleContext)) {
+      releasedAgentIds.add(agentConfig.id)
+      await releaseAgentFromConversation(contactId, agentConfig.id, { updatedBy: 'agent' })
+      await recordConversationalAgentEvent({
+        contactId,
+        eventType: 'agent_released',
+        detail: { agentId: agentConfig.id, name: agentConfig.name, reason: 'contact_out_of_scope' }
       })
       continue
     }
