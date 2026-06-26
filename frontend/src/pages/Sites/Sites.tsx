@@ -28809,6 +28809,22 @@ const getFontOptionsWithCurrent = (currentFontFamily: string) =>
     ? [...GOOGLE_FONT_OPTIONS, { label: 'Fuente actual', value: currentFontFamily }]
     : GOOGLE_FONT_OPTIONS
 
+// Al cambiar la tipografía global del sitio se restablecen los overrides de
+// fuente por elemento (form, calendario, bloques) para que TODO siga la
+// tipografía de la página. Quita solo las claves de fuente del bloque.
+const stripBlockFontOverrides = (block: SiteBlock): SiteBlock => {
+  const next: Record<string, unknown> = { ...(block.settings || {}) }
+  delete next.fontFamily
+  delete next.buttonFontFamily
+  delete next.calendarFontFamily
+  if (next.embeddedTheme && typeof next.embeddedTheme === 'object') {
+    const embeddedTheme = { ...(next.embeddedTheme as Record<string, unknown>) }
+    delete embeddedTheme.formFontFamily
+    next.embeddedTheme = embeddedTheme
+  }
+  return { ...block, settings: next }
+}
+
 const getTextDecorationTokens = (value: unknown): TextDecorationToken[] => {
   const raw = String(value || '')
   return (['underline', 'line-through'] as TextDecorationToken[]).filter(token => raw.split(/\s+/).includes(token))
@@ -33481,7 +33497,20 @@ const PageInspector: React.FC<{
           return (
             <label key={key} className={styles.field}>
               <span>{label}</span>
-              <CustomSelect value={current} onChange={(event) => onPatchTheme({ [key]: event.target.value } as Partial<SiteTheme>)} onBlur={onSaveSite}>
+              <CustomSelect
+                value={current}
+                onChange={(event) => {
+                  const value = event.target.value
+                  // Reset maestro: la fuente de la página manda; se limpian los
+                  // overrides del formulario y de cada bloque para que todo la siga.
+                  onPatchTheme({ [key]: value, formFontFamily: '' } as Partial<SiteTheme>)
+                  if (site.blocks && site.blocks.length) {
+                    onPatchSite({ blocks: site.blocks.map(stripBlockFontOverrides) })
+                  }
+                  window.setTimeout(onSaveSite, 0)
+                }}
+                onBlur={onSaveSite}
+              >
                 {getFontOptionsWithCurrent(current).map(option => (
                   <option key={option.label} value={option.value}>{option.label}</option>
                 ))}
