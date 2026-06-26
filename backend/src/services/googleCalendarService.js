@@ -487,6 +487,7 @@ async function getGoogleEvent(eventId, { config = null, calendarId = null } = {}
 
 function mapGoogleEventStatus(event = {}) {
   if (event.status === 'cancelled') return 'cancelled'
+  if (event.status === 'tentative') return 'pending'
   return 'confirmed'
 }
 
@@ -880,7 +881,12 @@ function buildGoogleEventPayload(appointment = {}, timezone = 'UTC') {
       dateTime: normalizeToUtcIso(appointment.endTime || appointment.startTime, timezone),
       timeZone: timezone
     },
-    status: status === 'cancelled' || status === 'canceled' ? 'cancelled' : 'confirmed',
+    // Una cita pendiente (auto_confirm apagado, sin confirmar aún) vive en Google como
+    // 'tentative', no 'confirmed': así no aparenta estar confirmada hasta que el contacto,
+    // el equipo o una automatización la confirme y se re-sincronice como 'confirmed'.
+    status: status === 'cancelled' || status === 'canceled'
+      ? 'cancelled'
+      : (status === 'pending' ? 'tentative' : 'confirmed'),
     extendedProperties: {
       private: privateProperties
     }

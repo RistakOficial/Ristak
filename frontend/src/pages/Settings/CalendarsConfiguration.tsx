@@ -1494,6 +1494,7 @@ export const CalendarsConfiguration: React.FC = () => {
         allowBookingForUnit: selectedCalendar.allowBookingForUnit || 'days',
         appoinmentPerSlot: selectedCalendar.appoinmentPerSlot,
         appoinmentPerDay: selectedCalendar.appoinmentPerDay,
+        autoConfirm: selectedCalendar.autoConfirm !== false,
         bookingForm,
         bookingCompletion,
         bookingDisplay,
@@ -2326,7 +2327,7 @@ export const CalendarsConfiguration: React.FC = () => {
                   {bookingDisplayConfig.showConfirmation && (
                     <small>
                       <CheckCircle size={14} />
-                      Confirmación {selectedCalendar.autoConfirm ? 'automática' : 'pendiente'}
+                      Confirmación {selectedCalendar.autoConfirm !== false ? 'automática' : 'pendiente'}
                     </small>
                   )}
                 </div>
@@ -2511,6 +2512,27 @@ export const CalendarsConfiguration: React.FC = () => {
                       })}
 
                       <div className={pageStyles.editorField}>
+                        <span>Confirmación</span>
+                        <div className={styles.toggleContainer}>
+                          <button
+                            type="button"
+                            className={`${styles.toggle} ${selectedCalendar.autoConfirm !== false ? styles.toggleActive : ''}`}
+                            onClick={() => updateSelectedCalendar({ autoConfirm: !(selectedCalendar.autoConfirm !== false) })}
+                            aria-pressed={selectedCalendar.autoConfirm !== false}
+                            aria-label={selectedCalendar.autoConfirm !== false ? 'Quitar confirmación automática' : 'Confirmar citas automáticamente'}
+                          >
+                            <span className={styles.toggleThumb} />
+                          </button>
+                          <span className={`${styles.toggleLabel} ${selectedCalendar.autoConfirm !== false ? styles.toggleLabelActive : ''}`}>
+                            {selectedCalendar.autoConfirm !== false ? 'Confirmar automáticamente' : 'Queda pendiente'}
+                          </span>
+                        </div>
+                        <small>
+                          Encendido: cada cita queda confirmada al agendar y se manda a Google como confirmada. Apagado: queda pendiente hasta que el contacto la confirme, la confirmes tú o una automatización.
+                        </small>
+                      </div>
+
+                      <div className={pageStyles.editorField}>
                         <span>Conversión</span>
                         <div className={styles.toggleContainer}>
                           <button
@@ -2536,7 +2558,7 @@ export const CalendarsConfiguration: React.FC = () => {
                   <section className={pageStyles.editorSection}>
                     <div className={pageStyles.editorSectionHeader}>
                       <strong>Agenda y zona horaria</strong>
-                      <span>Define cómo se interpretan los horarios y la confirmación antes de mostrar el calendario público.</span>
+                      <span>Define cómo se interpretan los horarios antes de mostrar el calendario público.</span>
                     </div>
                     <div className={pageStyles.editorFields}>
                       <label className={pageStyles.editorField}>
@@ -2568,20 +2590,6 @@ export const CalendarsConfiguration: React.FC = () => {
                         </div>
                       </div>
 
-                      <div className={pageStyles.editorField}>
-                        <span>Confirmación de la cita</span>
-                        <div className={pageStyles.displaySwitchRow}>
-                          <div>
-                            <strong>Mostrar confirmación</strong>
-                            <small>Muestra si la cita queda automática o pendiente en la vista pública.</small>
-                          </div>
-                          <Switch
-                            checked={bookingDisplayConfig.showConfirmation}
-                            onChange={(showConfirmation) => updateBookingDisplayConfig({ showConfirmation })}
-                            aria-label="Mostrar confirmación de la cita"
-                          />
-                        </div>
-                      </div>
                     </div>
                   </section>
                 </>

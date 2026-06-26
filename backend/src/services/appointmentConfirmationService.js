@@ -19,6 +19,20 @@ function nowIso() {
   return new Date().toISOString()
 }
 
+// Tras cambiar el estado de una cita (confirmar/cancelar) hay que reflejarlo en Google:
+// una cita pendiente vive como 'tentative' y al confirmarse debe pasar a 'confirmed'
+// (o borrarse si se cancela). Import dinámico para evitar ciclos; un fallo de sync nunca
+// debe tumbar la confirmación.
+async function resyncAppointmentToGoogle(appointmentId) {
+  if (!appointmentId) return
+  try {
+    const { syncAppointmentToGoogle } = await import('./googleCalendarService.js')
+    await syncAppointmentToGoogle(appointmentId)
+  } catch (error) {
+    logger.warn(`[Confirmación IA] No se pudo re-sincronizar la cita ${appointmentId} con Google: ${error.message}`)
+  }
+}
+
 function parseMessages(raw) {
   try {
     const parsed = JSON.parse(raw || '[]')
@@ -222,6 +236,7 @@ async function processConfirmationWindow(win) {
       SET appointment_status = 'confirmed', status = 'confirmed', date_updated = CURRENT_TIMESTAMP
       WHERE id = ? AND LOWER(COALESCE(appointment_status, status, '')) NOT IN ('confirmed')
     `, [appointmentId])
+    await resyncAppointmentToGoogle(appointmentId)
     await executeConfirmationSuccessAction({
       contactId,
       appointmentId,
@@ -317,6 +332,7 @@ async function executeNoConfirmAction({ contactId, appointmentId, action, result
       SET appointment_status = 'cancelled', status = 'cancelled', date_updated = CURRENT_TIMESTAMP
       WHERE id = ?
     `, [appointmentId])
+    await resyncAppointmentToGoogle(appointmentId)
     logger.info(`[Confirmación IA] Cita ${appointmentId} cancelada por acción automática (resultado: ${result})`)
   }
 
@@ -380,6 +396,7 @@ export async function maybeConfirmAppointmentFromReply({ contactId, text } = {})
     SET appointment_status = 'confirmed', status = 'confirmed', date_updated = CURRENT_TIMESTAMP
     WHERE id = ?
   `, [pending.appointment_id])
+  await resyncAppointmentToGoogle(pending.appointment_id)
 
   logger.info(`[Citas] IA confirmó la cita ${pending.appointment_id} por respuesta del contacto ${id}`)
   return { appointmentId: pending.appointment_id }
