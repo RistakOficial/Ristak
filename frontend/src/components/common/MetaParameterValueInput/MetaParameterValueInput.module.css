@@ -1,9 +1,6 @@
 .root {
+  position: relative;
   min-width: 0;
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(104px, 0.34fr);
-  gap: 6px;
-  align-items: center;
 }
 
 .root input {
@@ -14,7 +11,7 @@
   border-radius: var(--radius-ctl);
   background: var(--surface);
   color: var(--text);
-  padding: 0 10px;
+  padding: 0 36px 0 10px;
   font: inherit;
   font-size: 12px;
   font-weight: 500;
@@ -36,12 +33,152 @@
   opacity: 0.62;
 }
 
-.variableSelect {
+.mapButton {
+  position: absolute;
+  top: 50%;
+  right: 6px;
+  width: 24px;
+  height: 24px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--text-mute);
+  cursor: pointer;
+  transform: translateY(-50%);
+}
+
+.mapButton:hover,
+.mapButtonActive {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+.mapButton:focus-visible {
+  outline: none;
+  box-shadow: var(--ristak-focus-ring);
+}
+
+.mapButton:disabled {
+  cursor: not-allowed;
+  opacity: 0.56;
+}
+
+.popover {
+  position: fixed;
+  z-index: var(--z-index-modal-tooltip, var(--z-index-tooltip));
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-card);
+  background: var(--surface-solid, var(--surface));
+  box-shadow: var(--shadow-pop);
+  overflow: hidden;
+}
+
+.popoverBody {
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 6px;
+  scrollbar-gutter: stable;
+}
+
+.categoryGroup + .categoryGroup {
+  margin-top: 2px;
+}
+
+.categoryButton {
+  width: 100%;
+  min-height: 38px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text-mute);
+  cursor: pointer;
+  padding: 8px 10px;
+  text-align: left;
+  font: var(--label-font);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: var(--label-spacing);
+  text-transform: var(--label-transform);
+}
+
+.categoryButton:hover {
+  background: var(--surface-hover);
+  color: var(--text-dim);
+}
+
+.categoryButton span {
+  flex: 1;
   min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.categoryButton strong {
+  min-width: 22px;
+  border-radius: var(--radius-pill);
+  background: var(--surface-2);
+  color: var(--text-mute);
+  padding: 3px 6px;
+  text-align: center;
+  font-size: 11px;
+  line-height: 1;
+}
+
+.variableList {
+  display: grid;
+  gap: 2px;
+  padding: 0 0 4px 18px;
+}
+
+.variableButton {
+  width: 100%;
+  min-height: 38px;
+  display: grid;
+  gap: 2px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text);
+  cursor: pointer;
+  padding: 7px 9px;
+  text-align: left;
+}
+
+.variableButton:hover {
+  background: var(--surface-hover);
+}
+
+.variableButton span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12.5px;
+  font-weight: 500;
+}
+
+.variableButton small {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-mute);
+  font-size: 10.5px;
+  font-family: var(--font-mono);
 }
 
 @media (max-width: 560px) {
-  .root {
-    grid-template-columns: minmax(0, 1fr);
+  .popover {
+    max-width: calc(100vw - 20px);
   }
 }
