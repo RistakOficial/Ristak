@@ -2086,7 +2086,11 @@ export function renderPublicCalendarHtml(calendar, { host = '', embedded = false
     .timezoneControl{display:grid;gap:8px;min-width:0}
     .timezoneControl strong{color:var(--ink)}
     .timezoneControl select{min-height:38px;max-width:min(320px,100%);font-size:.88rem}
-    .timesPane{border-left:1px solid var(--line);padding:38px 24px;display:grid;grid-template-rows:auto minmax(0,1fr);gap:18px}
+    .timezoneStep{padding:12px 0 2px}
+    .timezoneStep .timezoneControl{width:100%}
+    .timezoneStep .timezoneControl > span:first-child{color:var(--heading);font-weight:600}
+    .timezoneStep[hidden]{display:none}
+    .timesPane{border-left:1px solid var(--line);padding:38px 24px;display:grid;grid-template-rows:auto auto minmax(0,1fr);gap:18px}
     .selectedDate{display:grid;gap:6px;min-height:58px}
     .changeSlot{display:none;justify-self:start;align-items:center;gap:6px;min-height:34px;border:1px solid var(--line);border-radius:999px;background:var(--control-bg);color:var(--muted);font-size:.84rem;font-weight:500;padding:0 14px 0 10px;cursor:pointer;transition:background .15s,color .15s,border-color .15s}
     .changeSlot svg{width:16px;height:16px;flex:none}
@@ -2184,12 +2188,11 @@ export function renderPublicCalendarHtml(calendar, { host = '', embedded = false
           <span>Dom</span><span>Lun</span><span>Mar</span><span>Mié</span><span>Jue</span><span>Vie</span><span>Sáb</span>
         </div>
         <div class="days" data-days></div>
-        <div class="timezone">
+        <div class="timezone" data-calendar-timezone${effectiveBookingDisplay.allowTimezoneSelection ? ' hidden' : ''}>
           <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><circle cx="12" cy="12" r="9" fill="none" stroke="currentColor" stroke-width="2"/><path d="M3 12h18M12 3c3 3.5 3 14.5 0 18M12 3c-3 3.5-3 14.5 0 18" fill="none" stroke="currentColor" stroke-width="1.6"/></svg>
           <span class="timezoneControl">
             <span>Zona horaria</span>
             <strong data-timezone></strong>
-            ${effectiveBookingDisplay.allowTimezoneSelection ? '<select data-timezone-select aria-label="Cambiar zona horaria"></select>' : ''}
           </span>
         </div>
       </section>
@@ -2200,6 +2203,13 @@ export function renderPublicCalendarHtml(calendar, { host = '', embedded = false
           <p data-selected-subtitle>Los horarios aparecerán aquí.</p>
           <button class="changeSlot" type="button" data-change-slot aria-label="Cambiar fecha"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m15 18-6-6 6-6" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg><span data-change-label>Cambiar fecha</span></button>
         </div>
+        ${effectiveBookingDisplay.allowTimezoneSelection ? `<div class="timezone timezoneStep" data-timezone-step hidden>
+          <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><circle cx="12" cy="12" r="9" fill="none" stroke="currentColor" stroke-width="2"/><path d="M3 12h18M12 3c3 3.5 3 14.5 0 18M12 3c-3 3.5-3 14.5 0 18" fill="none" stroke="currentColor" stroke-width="1.6"/></svg>
+          <span class="timezoneControl">
+            <span>Confirma tu zona horaria</span>
+            <select data-timezone-select aria-label="Confirmar zona horaria"></select>
+          </span>
+        </div>` : ''}
         <div class="slotList" data-slots>
           <div class="slotEmpty">Elige un día con disponibilidad.</div>
         </div>
@@ -2327,6 +2337,7 @@ export function renderPublicCalendarHtml(calendar, { host = '', embedded = false
       const nextButton = document.querySelector('[data-next]');
       const timezoneLabel = document.querySelector('[data-timezone]');
       const timezoneSelect = document.querySelector('[data-timezone-select]');
+      const timezoneStep = document.querySelector('[data-timezone-step]');
       const selectedTitle = document.querySelector('[data-selected-title]');
       const selectedSubtitle = document.querySelector('[data-selected-subtitle]');
       const changeSlotButton = document.querySelector('[data-change-slot]');
@@ -2639,6 +2650,7 @@ export function renderPublicCalendarHtml(calendar, { host = '', embedded = false
       const renderSlotsForDate = (key) => {
         const slots = slotsByDate.get(key) || [];
         resetForm(key ? 'slots' : 'calendar');
+        if (timezoneStep) timezoneStep.hidden = !key;
 
         if (!key) {
           selectedTitle.textContent = 'Selecciona una fecha';

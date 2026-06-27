@@ -173,6 +173,36 @@ test('public calendar applies per-embed display overrides from style params', ()
   assert.doesNotMatch(hiddenName, /<h1>Agenda overrides<\/h1>/)
 })
 
+test('public calendar asks for timezone after date selection when visitor timezone is enabled', () => {
+  const calendar = {
+    id: 'calendar-timezone-step',
+    slug: 'agenda-timezone-step',
+    name: 'Agenda timezone',
+    slotDuration: 30,
+    eventColor: '#146FC5'
+  }
+
+  const selectableTimezone = renderPublicCalendarHtml(calendar)
+  assert.match(selectableTimezone, /<div class="timezone" data-calendar-timezone hidden>/)
+  assert.match(selectableTimezone, /<div class="timezone timezoneStep" data-timezone-step hidden>/)
+  assert.match(selectableTimezone, /<span>Confirma tu zona horaria<\/span>/)
+  assert.match(selectableTimezone, /<select data-timezone-select aria-label="Confirmar zona horaria"><\/select>/)
+  assert.match(selectableTimezone, /if \(timezoneStep\) timezoneStep\.hidden = !key;/)
+  assert.ok(
+    selectableTimezone.indexOf('data-selected-subtitle') < selectableTimezone.indexOf('data-timezone-step') &&
+      selectableTimezone.indexOf('data-timezone-step') < selectableTimezone.indexOf('data-slots'),
+    'timezone confirmation should render between the selected date summary and available times'
+  )
+
+  const fixedTimezone = renderPublicCalendarHtml({
+    ...calendar,
+    bookingDisplay: { allowTimezoneSelection: false }
+  })
+  assert.doesNotMatch(fixedTimezone, /Confirma tu zona horaria/)
+  assert.doesNotMatch(fixedTimezone, /<div class="timezone timezoneStep"/)
+  assert.match(fixedTimezone, /<div class="timezone" data-calendar-timezone>/)
+})
+
 test('public calendar carries booking completion behavior into the booking widget', () => {
   const completion = normalizeCalendarBookingCompletionConfig({
     bookingCompletion: {
