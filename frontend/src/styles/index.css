@@ -3748,12 +3748,9 @@ body[data-phone-chat-theme='active'] [class*='chatSwipeContent'] {
   body[data-dir^='c'] [data-ristak-sidebar-nav-item]:hover {
     background: rgba(255, 255, 255, 0.07);
   }
-  /* Onyx: los menús flotantes del panel (usuario/notificaciones) heredan el texto
-     claro re-escalado; en modo claro su fondo era blanco -> texto blanco invisible.
-     Les damos superficie oscura sólida (coherente con el panel siempre oscuro de
-     Onyx) para que se lean en ambos modos. */
-  body[data-dir^='c'] [data-ristak-user-menu],
-  body[data-dir^='c'] [data-ristak-notification-menu] {
+  /* Onyx: el menú de usuario nace del panel lateral, que siempre es oscuro, así
+     que conserva una superficie sólida propia sin contaminar menús del topbar. */
+  body[data-dir^='c'] [data-ristak-user-menu] {
     background: #14181f !important;
     border-color: rgba(255, 255, 255, 0.14) !important;
     --color-background-secondary: #14181f;
