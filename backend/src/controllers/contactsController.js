@@ -792,6 +792,8 @@ const buildPageVisitJourneyEvent = (session, { contactCreatedAt } = {}) => ({
     first_page_url: session.first_page_url,
     last_page_url: session.last_page_url,
     event_names: Array.isArray(session.event_names) ? session.event_names : [],
+    session_ids: Array.isArray(session.session_ids) ? session.session_ids : [],
+    visible_session_count: toFiniteNumber(session.visible_session_count),
     tracking_session_ids: Array.isArray(session.tracking_session_ids) ? session.tracking_session_ids : [],
     ...buildPreRegistrationJourneyMeta(session.started_at, contactCreatedAt)
   }
@@ -842,12 +844,126 @@ const getJourneySessionMergeScore = (session = {}) => {
 const getJourneySessionPageKey = (session = {}) =>
   normalizeJourneyPageUrl(session.page_url || session.landing_page)
 
+const getJourneyVisitDayKey = (session = {}) => {
+  const value = cleanString(session.started_at || session.created_at)
+  return value.split(/[T\s]/)[0] || ''
+}
+
+const getJourneyVisitSourceKey = (session = {}) =>
+  cleanString(
+    getSessionSourceLabel(session) ||
+    session.source_platform ||
+    session.site_source_name ||
+    session.utm_source ||
+    session.channel ||
+    'unknown'
+  ).toLowerCase()
+
+const getJourneyVisitSurfaceKey = (session = {}) =>
+  cleanString(
+    session.public_page_id ||
+    session.form_site_id ||
+    session.site_id ||
+    normalizeJourneyPagePath(session.page_url || session.landing_page) ||
+    getJourneySessionPageKey(session) ||
+    'unknown'
+  ).toLowerCase()
+
+const getJourneyVisitGroupKey = (session = {}) =>
+  [
+    getJourneyVisitDayKey(session),
+    getJourneyVisitSourceKey(session),
+    getJourneyVisitSurfaceKey(session)
+  ].join(':')
+
 const pickJourneySessionBaseRow = (rows = []) => {
   const sorted = [...rows].sort((left, right) => getJourneySessionTime(left) - getJourneySessionTime(right))
   return sorted.find(row => cleanString(row.event_name).toLowerCase() !== 'session_end' && getJourneySessionPageKey(row)) ||
     sorted.find(row => cleanString(row.event_name).toLowerCase() !== 'session_end') ||
     sorted[0] ||
     {}
+}
+
+const hasSessionSummaryCount = (row = {}, field) => hasOwn(row, field)
+
+const mergeJourneySessionSummaries = (summaries = [], { useBestMatch = true } = {}) => {
+  const chronological = [...summaries].sort((left, right) => getJourneySessionTime(left) - getJourneySessionTime(right))
+  const base = { ...pickJourneySessionBaseRow(chronological) }
+  const byBestData = [...chronological].sort((left, right) => getJourneySessionMergeScore(right) - getJourneySessionMergeScore(left))
+  byBestData.forEach(row => copyMissingSessionFields(base, row))
+
+  if (useBestMatch) {
+    const bestMatchRow = [...chronological].sort((left, right) =>
+      toFiniteNumber(right.match_confidence) - toFiniteNumber(left.match_confidence)
+    )[0]
+    if (bestMatchRow && toFiniteNumber(bestMatchRow.match_confidence) >= toFiniteNumber(base.match_confidence)) {
+      base.match_method = bestMatchRow.match_method || base.match_method
+      base.match_confidence = bestMatchRow.match_confidence
+      base.identity_evidence_json = bestMatchRow.identity_evidence_json || base.identity_evidence_json
+    }
+  }
+
+  const first = chronological[0]
+  const last = chronological[chronological.length - 1]
+  const pageRows = chronological.filter(row => getJourneySessionPageKey(row))
+  const uniquePageKeys = [...new Set(chronological.flatMap(row =>
+    Array.isArray(row.page_keys) && row.page_keys.length
+      ? row.page_keys.map(cleanString)
+      : [getJourneySessionPageKey(row)]
+  ).filter(Boolean))]
+  const eventNames = [...new Set(chronological.flatMap(row =>
+    Array.isArray(row.event_names) && row.event_names.length
+      ? row.event_names.map(cleanString)
+      : [cleanString(row.event_name)]
+  ).filter(Boolean))]
+  const trackingSessionIds = [...new Set(chronological.flatMap(row =>
+    Array.isArray(row.tracking_session_ids) && row.tracking_session_ids.length
+      ? row.tracking_session_ids.map(cleanString)
+      : [cleanString(row.id)]
+  ).filter(Boolean))]
+  const sessionIds = [...new Set(chronological.flatMap(row =>
+    Array.isArray(row.session_ids) && row.session_ids.length
+      ? row.session_ids.map(cleanString)
+      : [cleanString(row.session_id)]
+  ).filter(Boolean))]
+  const firstPage = pageRows[0]
+  const lastPage = pageRows[pageRows.length - 1]
+  const startedAt = first?.session_started_at || first?.started_at || first?.created_at || base.started_at
+  const endedAt = last?.session_ended_at || last?.started_at || last?.created_at || startedAt
+  const startedTime = new Date(startedAt || 0).getTime()
+  const endedTime = new Date(endedAt || 0).getTime()
+  const durationSeconds = Number.isFinite(startedTime) && Number.isFinite(endedTime) && endedTime > startedTime
+    ? Math.round((endedTime - startedTime) / 1000)
+    : 0
+
+  return {
+    ...base,
+    started_at: startedAt,
+    created_at: first?.created_at || base.created_at,
+    session_event_count: chronological.reduce(
+      (total, row) => total + (hasSessionSummaryCount(row, 'session_event_count') ? Math.max(1, toFiniteNumber(row.session_event_count)) : 1),
+      0
+    ),
+    session_page_view_count: chronological.reduce(
+      (total, row) => total + (hasSessionSummaryCount(row, 'session_page_view_count') ? toFiniteNumber(row.session_page_view_count) : (isJourneySessionViewEvent(row) ? 1 : 0)),
+      0
+    ),
+    session_conversion_count: chronological.reduce(
+      (total, row) => total + (hasSessionSummaryCount(row, 'session_conversion_count') ? toFiniteNumber(row.session_conversion_count) : (isJourneySessionConversionEvent(row) ? 1 : 0)),
+      0
+    ),
+    session_started_at: startedAt,
+    session_ended_at: endedAt,
+    session_duration_seconds: durationSeconds,
+    pages_visited: uniquePageKeys.length,
+    page_keys: uniquePageKeys,
+    first_page_url: firstPage?.first_page_url || firstPage?.page_url || firstPage?.landing_page || base.first_page_url || base.page_url || base.landing_page,
+    last_page_url: lastPage?.last_page_url || lastPage?.page_url || lastPage?.landing_page || firstPage?.page_url || firstPage?.landing_page || base.last_page_url || base.page_url || base.landing_page,
+    event_names: eventNames,
+    tracking_session_ids: trackingSessionIds,
+    session_ids: sessionIds,
+    visible_session_count: sessionIds.length || chronological.length
+  }
 }
 
 const summarizeJourneySessionRows = (rows = []) => {
@@ -865,55 +981,23 @@ const summarizeJourneySessionRows = (rows = []) => {
     }
   })
 
-  return [...groups.values()]
-    .map((group) => {
-      const chronological = [...group].sort((left, right) => getJourneySessionTime(left) - getJourneySessionTime(right))
-      const base = { ...pickJourneySessionBaseRow(chronological) }
-      const byBestData = [...chronological].sort((left, right) => getJourneySessionMergeScore(right) - getJourneySessionMergeScore(left))
-      byBestData.forEach(row => copyMissingSessionFields(base, row))
+  const sessionSummaries = [...groups.values()]
+    .map(mergeJourneySessionSummaries)
+    .sort((left, right) => getJourneySessionTime(left) - getJourneySessionTime(right))
 
-      const bestMatchRow = [...chronological].sort((left, right) =>
-        toFiniteNumber(right.match_confidence) - toFiniteNumber(left.match_confidence)
-      )[0]
-      if (bestMatchRow && toFiniteNumber(bestMatchRow.match_confidence) >= toFiniteNumber(base.match_confidence)) {
-        base.match_method = bestMatchRow.match_method || base.match_method
-        base.match_confidence = bestMatchRow.match_confidence
-        base.identity_evidence_json = bestMatchRow.identity_evidence_json || base.identity_evidence_json
-      }
+  const visibleGroups = new Map()
+  sessionSummaries.forEach((summary) => {
+    const key = getJourneyVisitGroupKey(summary)
+    const bucket = visibleGroups.get(key)
+    if (bucket) {
+      bucket.push(summary)
+    } else {
+      visibleGroups.set(key, [summary])
+    }
+  })
 
-      const first = chronological[0]
-      const last = chronological[chronological.length - 1]
-      const pageRows = chronological.filter(row => getJourneySessionPageKey(row))
-      const uniquePageKeys = [...new Set(pageRows.map(getJourneySessionPageKey).filter(Boolean))]
-      const eventNames = [...new Set(chronological.map(row => cleanString(row.event_name)).filter(Boolean))]
-      const trackingSessionIds = [...new Set(chronological.map(row => cleanString(row.id)).filter(Boolean))]
-      const firstPage = pageRows[0]
-      const lastPage = pageRows[pageRows.length - 1]
-      const startedAt = first?.started_at || first?.created_at || base.started_at
-      const endedAt = last?.started_at || last?.created_at || startedAt
-      const startedTime = new Date(startedAt || 0).getTime()
-      const endedTime = new Date(endedAt || 0).getTime()
-      const durationSeconds = Number.isFinite(startedTime) && Number.isFinite(endedTime) && endedTime > startedTime
-        ? Math.round((endedTime - startedTime) / 1000)
-        : 0
-
-      return {
-        ...base,
-        started_at: startedAt,
-        created_at: first?.created_at || base.created_at,
-        session_event_count: chronological.length,
-        session_page_view_count: chronological.filter(isJourneySessionViewEvent).length,
-        session_conversion_count: chronological.filter(isJourneySessionConversionEvent).length,
-        session_started_at: startedAt,
-        session_ended_at: endedAt,
-        session_duration_seconds: durationSeconds,
-        pages_visited: uniquePageKeys.length,
-        first_page_url: firstPage?.page_url || firstPage?.landing_page || base.page_url || base.landing_page,
-        last_page_url: lastPage?.page_url || lastPage?.landing_page || firstPage?.page_url || firstPage?.landing_page || base.page_url || base.landing_page,
-        event_names: eventNames,
-        tracking_session_ids: trackingSessionIds
-      }
-    })
+  return [...visibleGroups.values()]
+    .map(group => mergeJourneySessionSummaries(group, { useBestMatch: group.length === 1 }))
     .sort((left, right) => getJourneySessionTime(left) - getJourneySessionTime(right))
 }
 

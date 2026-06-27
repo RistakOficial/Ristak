@@ -891,6 +891,106 @@ test('contact journey summarizes tracking rows into one page visit per session',
   }
 })
 
+test('contact journey rolls same-day visits into one visible web summary', async () => {
+  const id = randomUUID()
+  const contactId = `journey_visible_visit_${id}`
+  const phone = `+52995${Date.now().toString().slice(-7)}`
+  const visitorId = `visitor_visible_${id}`
+  const firstSessionId = `session_visible_first_${id}`
+  const secondSessionId = `session_visible_second_${id}`
+
+  await cleanup(contactId, phone)
+
+  try {
+    await insertRow('contacts', {
+      id: contactId,
+      phone,
+      email: `visible-${id}@ristak.test`,
+      full_name: 'Cliente Visita Visible',
+      first_name: 'Cliente',
+      source: 'native_site',
+      visitor_id: visitorId,
+      created_at: '2026-06-16T11:00:00.000Z',
+      updated_at: '2026-06-16T11:00:00.000Z'
+    })
+
+    await insertRow('sessions', {
+      id: `session_visible_first_page_${id}`,
+      session_id: firstSessionId,
+      visitor_id: visitorId,
+      contact_id: contactId,
+      full_name: 'Cliente Visita Visible',
+      email: `visible-${id}@ristak.test`,
+      event_name: 'page_view',
+      started_at: '2026-06-16T10:00:00.000Z',
+      created_at: '2026-06-16T10:00:00.000Z',
+      page_url: 'https://demo.ristak.test/landing',
+      referrer_url: 'https://facebook.com/ads/click',
+      utm_source: 'facebook',
+      utm_medium: 'paid',
+      campaign_id: `campaign_visible_${id}`,
+      campaign_name: 'Campaña Visible',
+      ad_id: `ad_visible_${id}`,
+      ad_name: 'Anuncio Visible',
+      tracking_source: 'native_site',
+      site_id: `site_visible_${id}`,
+      site_name: 'Sitio Visible',
+      public_page_id: `page_visible_${id}`,
+      public_page_title: 'Landing Visible'
+    })
+
+    await insertRow('sessions', {
+      id: `session_visible_first_end_${id}`,
+      session_id: firstSessionId,
+      visitor_id: visitorId,
+      contact_id: contactId,
+      full_name: 'Cliente Visita Visible',
+      email: `visible-${id}@ristak.test`,
+      event_name: 'session_end',
+      started_at: '2026-06-16T10:05:00.000Z',
+      created_at: '2026-06-16T10:05:00.000Z'
+    })
+
+    await insertRow('sessions', {
+      id: `session_visible_second_page_${id}`,
+      session_id: secondSessionId,
+      visitor_id: visitorId,
+      contact_id: contactId,
+      full_name: 'Cliente Visita Visible',
+      email: `visible-${id}@ristak.test`,
+      event_name: 'page_view',
+      started_at: '2026-06-16T10:15:00.000Z',
+      created_at: '2026-06-16T10:15:00.000Z',
+      page_url: 'https://demo.ristak.test/landing',
+      referrer_url: 'https://facebook.com/ads/click',
+      utm_source: 'facebook',
+      utm_medium: 'paid',
+      tracking_source: 'native_site',
+      site_id: `site_visible_${id}`,
+      site_name: 'Sitio Visible',
+      public_page_id: `page_visible_${id}`,
+      public_page_title: 'Landing Visible'
+    })
+
+    const journey = await readJourney(contactId)
+    const pageVisits = journey.filter(event => event.type === 'page_visit')
+
+    assert.equal(pageVisits.length, 1)
+    assert.equal(pageVisits[0].date, '2026-06-16T10:00:00.000Z')
+    assert.equal(pageVisits[0].data.session_event_count, 3)
+    assert.equal(pageVisits[0].data.session_page_view_count, 2)
+    assert.equal(pageVisits[0].data.pages_visited, 1)
+    assert.equal(pageVisits[0].data.session_duration_seconds, 900)
+    assert.equal(pageVisits[0].data.visible_session_count, 2)
+    assert.deepEqual(pageVisits[0].data.session_ids, [firstSessionId, secondSessionId])
+    assert.deepEqual(pageVisits[0].data.event_names, ['page_view', 'session_end'])
+    assert.equal(pageVisits[0].data.first_page_url, 'https://demo.ristak.test/landing')
+    assert.equal(pageVisits[0].data.last_page_url, 'https://demo.ristak.test/landing')
+  } finally {
+    await cleanup(contactId, phone)
+  }
+})
+
 test('contact journey exposes pre-registration tracking attribution and match evidence', async () => {
   const id = randomUUID()
   const contactId = `journey_pre_registration_${id}`
