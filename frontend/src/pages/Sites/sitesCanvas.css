@@ -699,9 +699,16 @@
 }
 .rstkCanvas .rstk-video-form-gate-preview .rstk-error {
   margin: 0;
-  color: #dc2626;
+  color: var(--rstk-form-error, var(--neg, var(--rstk-accent)));
   font-size: clamp(.72rem, 1.8cqw, .84rem);
   font-weight: 700;
+}
+.rstkCanvas .rstk-video-form-gate-preview .rstk-video-form-field[data-invalid] input,
+.rstkCanvas .rstk-video-form-gate-preview .rstk-video-form-field[data-invalid] textarea,
+.rstkCanvas .rstk-video-form-gate-preview .rstk-video-form-field[data-invalid] select,
+.rstkCanvas .rstk-video-form-gate-preview .rstk-video-form-field[data-invalid] .rstk-option {
+  border-color: var(--rstk-form-error, var(--neg, var(--rstk-accent))) !important;
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--rstk-form-error, var(--neg, var(--rstk-accent))) 16%, transparent);
 }
 .rstkCanvas .rstk-video-form-gate-preview .rstk-video-form-actions {
   display: flex;
@@ -1310,7 +1317,7 @@
   font-weight: var(--rstk-form-weight, 500);
   text-decoration: var(--rstk-form-text-decoration, none);
 }
-.rstkCanvas .rstk-required { color: #dc2626; margin-left: 3px; }
+.rstkCanvas .rstk-required { color: var(--rstk-form-error, var(--neg, var(--rstk-accent))); margin-left: 3px; }
 .rstkCanvas .rstk-help { margin: 0; color: var(--rstk-muted); font-size: .9rem; }
 .rstkCanvas.rstk-kind-form .rstk-help,
 .rstkCanvas .rstk-embedded-form .rstk-help {
@@ -1319,6 +1326,12 @@
   font-size: var(--rstk-form-help-size, .9rem);
   font-style: var(--rstk-form-font-style, normal);
   text-decoration: var(--rstk-form-text-decoration, none);
+}
+.rstkCanvas .rstk-error {
+  margin: 2px 0 0;
+  color: var(--rstk-form-error, var(--neg, var(--rstk-accent)));
+  font-size: .85rem;
+  font-weight: 650;
 }
 .rstkCanvas input, .rstkCanvas textarea, .rstkCanvas select {
   width: 100%; border: 1px solid var(--rstk-input-border); border-radius: var(--rstk-field-radius, var(--rstk-radius));
@@ -1344,9 +1357,18 @@
   text-decoration: var(--rstk-form-text-decoration, none);
   padding: var(--rstk-form-field-pad-y, 13px) var(--rstk-form-field-pad-x, 14px);
 }
+.rstkCanvas .rstk-field[data-invalid] > input,
+.rstkCanvas .rstk-field[data-invalid] > textarea,
+.rstkCanvas .rstk-field[data-invalid] > select,
+.rstkCanvas .rstk-field[data-invalid] .rstk-phone-input > input,
+.rstkCanvas .rstk-field[data-invalid] .rstk-phone-input > select,
+.rstkCanvas .rstk-field[data-invalid] .rstk-option {
+  border-color: var(--rstk-form-error, var(--neg, var(--rstk-accent))) !important;
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--rstk-form-error, var(--neg, var(--rstk-accent))) 14%, transparent);
+}
 .rstkCanvas .rstk-phone-input {
   display: grid;
-  grid-template-columns: minmax(98px, clamp(98px, 18%, 108px)) minmax(0, 1fr);
+  grid-template-columns: minmax(132px, clamp(132px, 24%, 142px)) minmax(0, 1fr);
   gap: 8px;
   align-items: stretch;
   max-width: 100%;
@@ -2314,12 +2336,12 @@ html body :is(.rstkCanvas.rstk-kind-form.rstk-choice-grid, .rstkCanvas.rstk-kind
 
 @media (max-width: 640px) {
   .rstkCanvas .rstk-list-grid { grid-template-columns: 1fr; }
-  .rstkCanvas .rstk-phone-input { grid-template-columns: minmax(96px, 104px) minmax(0, 1fr); }
+  .rstkCanvas .rstk-phone-input { grid-template-columns: minmax(124px, 132px) minmax(0, 1fr); }
   .rstkCanvas .rstk-phone-input[data-phone-country-hidden] { grid-template-columns: minmax(0, 1fr); }
 }
 
 @media (max-width: 340px) {
-  .rstkCanvas .rstk-phone-input { grid-template-columns: minmax(96px, 104px) minmax(0, 1fr); }
+  .rstkCanvas .rstk-phone-input { grid-template-columns: 1fr; }
   .rstkCanvas .rstk-phone-input[data-phone-country-hidden] { grid-template-columns: minmax(0, 1fr); }
 }
 

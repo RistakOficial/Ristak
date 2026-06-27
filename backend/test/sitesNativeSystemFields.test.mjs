@@ -183,6 +183,12 @@ test('native form URL validation renders a real URL validator', async () => {
     assert.match(html, /data-validation="url"/)
     assert.match(html, /type="url"/)
     assert.match(html, /Ingresa una URL válida\./)
+    assert.match(html, /data-field-error aria-live="polite"/)
+    assert.match(html, /Te falta completar: /)
+    assert.match(html, /Selecciona una opción en: /)
+    assert.match(html, /data-invalid/)
+    assert.match(html, /aria-invalid/)
+    assert.match(html, /validateFields\(fieldsToValidate\)/)
   } finally {
     if (site?.id) {
       await deleteSite(site.id).catch(() => undefined)

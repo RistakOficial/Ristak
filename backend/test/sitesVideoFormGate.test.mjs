@@ -106,6 +106,10 @@ test('video form gate defaults to a dark readable theme and compact phone prefix
   assert.match(html, /\.rstk-video-form-gate \.rstk-phone-input > select\{[^}]*var\(--rstk-form-field-bg,var\(--rstk-input-bg\)\)[^}]*color:var\(--rstk-form-field-text,var\(--rstk-input-ink\)\)/)
   assert.match(html, /\.rstk-video-form-gate-panel\{[^}]*height:auto;[^}]*--rstk-video-form-item-gap:clamp\(8px,2cqw,14px\)[^}]*grid-template-rows:auto auto minmax\(0,max-content\) auto auto/)
   assert.match(html, /\.rstk-video-form-gate-fit-expanded \.rstk-video-form-gate-panel,[^}]*\.rstk-video-gate-active\.rstk-video-form-gate-fit-expanded \.rstk-video-form-gate-panel\{height:100%;grid-template-rows:auto auto minmax\(0,1fr\) auto auto\}/)
+  assert.match(html, /data-field-error aria-live="polite"/)
+  assert.match(html, /Te falta completar: /)
+  assert.match(html, /data-invalid/)
+  assert.match(html, /validateFields\(currentFields\)/)
 })
 
 test('video form gate light theme swaps contrast and video overlay background', async () => {

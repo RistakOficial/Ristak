@@ -30483,7 +30483,7 @@ const VideoFormGateCanvasPreview: React.FC<{
                     </label>
                     {item.content ? <p className="rstk-help">{item.content}</p> : null}
                     <FieldControlPreview block={item} />
-                    <p className="rstk-error" hidden>Esta respuesta es requerida.</p>
+                    <p className="rstk-error" data-field-error="true" aria-live="polite" hidden>Esta respuesta es requerida.</p>
                   </section>
                 ) : (
                   <div key={item.id} className="rstk-video-form-content">
