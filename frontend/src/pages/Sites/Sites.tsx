@@ -26402,7 +26402,7 @@ const MetaPageConversionSettingsPanel: React.FC<{
 
   return (
     <div className={styles.editorSettingsMetaControls}>
-      <div className={`${styles.editorSettingsMetaRow} ${metaEnabled ? styles.editorSettingsMetaRowActive : ''}`}>
+      <div className={styles.editorSettingsFlatRow}>
         <span className={styles.editorSettingsMetaLogo} aria-hidden="true">
           <MetaBrandMark size={18} />
         </span>
@@ -26855,7 +26855,7 @@ const SiteSettingsPanelContent: React.FC<{
       </section>
 
       <section className={styles.editorSettingsSection}>
-        <div className={`${styles.editorSettingsMetaRow} ${antiTrackingEnabled ? styles.editorSettingsMetaRowActive : ''}`}>
+        <div className={styles.editorSettingsFlatRow}>
           <span className={styles.editorSettingsSectionIcon} aria-hidden="true"><EyeOff size={15} /></span>
           <div>
             <strong>Antitracking</strong>
@@ -26904,7 +26904,7 @@ const SiteSettingsPanelContent: React.FC<{
               onSaveSite={onSaveSite}
             />
           ) : (
-            <div className={styles.editorSettingsMetaRow}>
+            <div className={styles.editorSettingsFlatRow}>
               <span className={styles.editorSettingsMetaLogo} aria-hidden="true">
                 <MetaBrandMark size={18} />
               </span>
@@ -26956,6 +26956,7 @@ const EditorSettingsDropdown: React.FC<{
 }> = (props) => {
   const [open, setOpen] = useState(false)
   const dropdownRef = useRef<HTMLDivElement | null>(null)
+  const panelRef = useRef<HTMLDivElement | null>(null)
   const { disabled, seoIssues } = props
 
   useEffect(() => {
@@ -26976,6 +26977,25 @@ const EditorSettingsDropdown: React.FC<{
     return () => {
       document.removeEventListener('mousedown', handleMouseDown)
       window.removeEventListener('keydown', handleKeyDown)
+    }
+  }, [open])
+
+  useEffect(() => {
+    if (!open) return
+
+    const isolatePanelScroll: EventListener = (event) => {
+      const panel = panelRef.current
+      const target = event.target
+      if (!panel || !(target instanceof Node) || !panel.contains(target)) return
+      event.stopPropagation()
+      event.stopImmediatePropagation()
+    }
+
+    window.addEventListener('wheel', isolatePanelScroll, { capture: true, passive: false })
+    window.addEventListener('touchmove', isolatePanelScroll, { capture: true, passive: false })
+    return () => {
+      window.removeEventListener('wheel', isolatePanelScroll, true)
+      window.removeEventListener('touchmove', isolatePanelScroll, true)
     }
   }, [open])
 
@@ -27001,6 +27021,7 @@ const EditorSettingsDropdown: React.FC<{
 
       {open && (
         <div
+          ref={panelRef}
           className={styles.editorSettingsPanel}
           data-ristak-dropdown-panel
           onWheelCapture={(event) => event.stopPropagation()}

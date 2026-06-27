@@ -521,7 +521,7 @@ const normalizeCalendarBookingPayment = (
 const isPaymentGateToggleEnabled = (value?: Partial<PaymentGateConfig> | null) =>
   Boolean(normalizePaymentGateConfig(value).enabled)
 
-const siteBlocksHavePaymentGateEnabled = (blocks?: PublicSite['blocks']) => (
+const siteBlocksHavePaymentGateEnabled = (blocks?: PublicSite['blocks']): boolean => (
   Array.isArray(blocks) && blocks.some(block => {
     if (block.blockType === 'payment' && isPaymentGateToggleEnabled(block.settings?.paymentGate as Partial<PaymentGateConfig> | null)) return true
     const embeddedBlocks = block.settings?.embeddedBlocks
@@ -529,7 +529,7 @@ const siteBlocksHavePaymentGateEnabled = (blocks?: PublicSite['blocks']) => (
   })
 )
 
-const siteHasPaymentGateEnabled = (site?: PublicSite | null) =>
+const siteHasPaymentGateEnabled = (site?: PublicSite | null): boolean =>
   isPaymentGateToggleEnabled(site?.theme?.paymentGate) || siteBlocksHavePaymentGateEnabled(site?.blocks)
 
 const normalizeCalendarBookingPaymentPosition = (value: unknown): CalendarBookingPaymentPosition => (

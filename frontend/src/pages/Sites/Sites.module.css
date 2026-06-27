@@ -14979,12 +14979,11 @@
   left: 0;
   z-index: var(--z-index-popover);
   width: min(520px, calc(100vw - 32px));
-  max-height: min(640px, calc(100dvh - 96px));
-  display: grid;
-  gap: 0;
+  max-height: min(76dvh, calc(100dvh - 92px));
+  display: block;
   overflow-x: hidden;
   overflow-y: auto;
-  overscroll-behavior: contain;
+  overscroll-behavior-y: contain;
   touch-action: pan-y;
   border: 1px solid var(--ristak-dropdown-border, rgba(148, 163, 184, 0.24));
   border-radius: var(--design-control-radius, var(--radius-md));
@@ -15090,6 +15089,43 @@
   background: rgba(var(--color-primary-rgb), 0.1);
 }
 
+.editorSettingsFlatRow {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: 32px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  padding: 2px 0;
+}
+
+.editorSettingsFlatRow > div {
+  min-width: 0;
+  display: grid;
+  gap: 3px;
+}
+
+.editorSettingsFlatRow strong {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--color-text-primary);
+  font-size: 13px;
+  font-weight: var(--font-weight-bold, 700);
+  line-height: 1.1;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.editorSettingsFlatRow small {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--color-text-tertiary);
+  font-size: 12px;
+  font-weight: var(--font-weight-semibold, 600);
+  line-height: 1.2;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .editorSettingsSectionIcon,
 .editorSettingsMetaLogo {
   width: 32px;
@@ -15128,7 +15164,7 @@
 .editorSettingsMetaControls {
   min-width: 0;
   display: grid;
-  gap: 12px;
+  gap: 10px;
 }
 
 .editorSettingsMetaSummaryButton {
@@ -15187,18 +15223,25 @@
 .editorSettingsMetaDetails {
   min-width: 0;
   display: grid;
-  gap: 12px;
+  gap: 0;
+  padding-top: 8px;
 }
 
 .editorSettingsMetaStaticTrigger,
 .editorSettingsMetaDetectedItem {
   min-width: 0;
   display: grid;
-  gap: 10px;
-  border: 1px solid var(--design-control-border);
-  border-radius: var(--design-control-radius);
-  background: var(--design-control-bg);
-  padding: 10px;
+  gap: 9px;
+  border: 0;
+  border-top: 1px solid var(--border);
+  border-radius: 0;
+  background: transparent;
+  padding: 12px 0 0;
+}
+
+.editorSettingsMetaDetails > :first-child {
+  border-top: 0;
+  padding-top: 0;
 }
 
 .editorSettingsMetaStaticTrigger > div,
@@ -15235,7 +15278,7 @@
 .editorSettingsMetaDetectedList {
   min-width: 0;
   display: grid;
-  gap: 10px;
+  gap: 0;
 }
 
 .editorSettingsMetaDetectedHeader {
