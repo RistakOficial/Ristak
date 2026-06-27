@@ -6956,7 +6956,9 @@ function FormEmbedEditorPanel({
   const activeFieldSystemPreset = activeBlockIsField ? getSystemFormFieldPresetForBlock(activeField) : null
   const showActiveFieldTypographyInEdit = shouldShowBlockTypographyInEdit(activeField)
   const shouldOpenActiveFieldContentByDefault = shouldOpenTextContentInEdit(activeField)
+  const shouldOpenActiveFieldRulesByDefault = Boolean(activeField && isChoiceBlock(activeField.blockType))
   const activeFieldContentSectionTitle = shouldOpenActiveFieldContentByDefault ? 'Texto' : 'Contenido'
+  const selectedFieldAccordionKey = `${activeElement}:${activeField?.id || 'none'}:${activeField?.blockType || 'none'}`
   const activeFieldPageId = activeField ? getBlockPageId(activeField, pages) : activePage?.id || DEFAULT_FUNNEL_PAGE_ID
   const ruleFieldBlocks = fields.filter(field => fieldBlockTypes.has(field.blockType))
   const patchActiveField = (patch: Partial<SiteBlock>) => {
@@ -7119,7 +7121,7 @@ function FormEmbedEditorPanel({
 
   const selectedFieldContent = (
     <div className={styles.settingsGroup}>
-      <AccordionGroup>
+      <AccordionGroup key={selectedFieldAccordionKey}>
         {isFormSurfaceSelected ? (
           <AccordionSection id="embedded-form-selected" title="Formulario">
             <InspectorEmptyState>Usa la pestaña Formulario para ajustar fondo, separación, borde y ancho.</InspectorEmptyState>
@@ -7288,7 +7290,7 @@ function FormEmbedEditorPanel({
             />
 
             {isChoiceBlock(activeField.blockType) && (
-              <AccordionSection id="embedded-field-options" title="Opciones y reglas">
+              <AccordionSection id="embedded-field-options" title="Opciones y reglas" defaultGroupOpen={shouldOpenActiveFieldRulesByDefault}>
                 <OptionsRulesEditor
                   block={activeField}
                   blocks={ruleFieldBlocks}
@@ -34824,6 +34826,7 @@ const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
   const isPrimaryTextBlock = ['headline', 'title'].includes(block.blockType)
   const isSecondaryTextBlock = ['subheading', 'subtitle', 'description'].includes(block.blockType)
   const shouldOpenContentEditorByDefault = shouldOpenTextContentInEdit(block)
+  const shouldOpenChoiceRulesByDefault = isChoiceBlock(block.blockType)
   const systemFieldPreset = getSystemFormFieldPresetForBlock(block)
   const showTypographyInEdit = shouldShowBlockTypographyInEdit(block)
   const showBlockNameFirst = showTypographyInEdit || isField || block.blockType === SECTION_BLOCK_TYPE || block.blockType === 'countdown'
@@ -35084,7 +35087,7 @@ const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
       {fieldEditControls}
 
       {choiceEditControls && (
-        <AccordionSection id="edit-options" title="Opciones y reglas">
+        <AccordionSection id="edit-options" title="Opciones y reglas" defaultGroupOpen={shouldOpenChoiceRulesByDefault}>
           {choiceEditControls}
         </AccordionSection>
       )}
@@ -35697,6 +35700,8 @@ const VideoFormGateSettingsPanel: React.FC<{
   const activeQuestionSettings = activeQuestion?.settings || {}
   const activeQuestionPreset = activeQuestion ? getSystemFormFieldPresetForBlock(activeQuestion) : null
   const activeQuestionIsField = Boolean(activeQuestion && fieldBlockTypes.has(activeQuestion.blockType))
+  const shouldOpenActiveQuestionRulesByDefault = Boolean(activeQuestion && isChoiceBlock(activeQuestion.blockType))
+  const videoFormGateAccordionKey = `${activeElement}:${activeQuestion?.id || 'none'}:${activeQuestion?.blockType || 'none'}`
   const showActiveQuestionTypographyInEdit = shouldShowBlockTypographyInEdit(activeQuestion)
   const videoGateTheme = useMemo(() => buildVideoFormGateSourceTheme(site, settings), [site, settings])
   const videoGateSite = useMemo(() => ({
@@ -36098,7 +36103,7 @@ const VideoFormGateSettingsPanel: React.FC<{
       </div>
 
       {enabled && (
-        <AccordionGroup>
+        <AccordionGroup key={videoFormGateAccordionKey}>
           <AccordionSection id="vg-origen" title="Origen del formulario">
             <label className={styles.field}>
               <span>Formulario base</span>
@@ -36342,7 +36347,7 @@ const VideoFormGateSettingsPanel: React.FC<{
             </AccordionSection>
           )}
 
-          <AccordionSection id="vg-elementos" title="Elementos">
+          <AccordionSection id="vg-elementos" title="Elementos" defaultGroupOpen={shouldOpenActiveQuestionRulesByDefault}>
             <div className={styles.videoFormGateSectionHeader}>
               <span>{questions.length} {questions.length === 1 ? 'elemento' : 'elementos'}</span>
             </div>
@@ -36380,7 +36385,7 @@ const VideoFormGateSettingsPanel: React.FC<{
               </button>
             </div>
 
-            <AccordionGroup>
+            <AccordionGroup key={videoFormGateAccordionKey}>
             {(() => {
               const videoFormGateElementEditor = activeElement === 'submit' ? selectedSubmitContent : activeQuestion ? (
               <div className={styles.videoFormGateQuestionEditor}>
@@ -36477,7 +36482,7 @@ const VideoFormGateSettingsPanel: React.FC<{
                     />
 
                     {isChoiceBlock(activeQuestion.blockType) && (
-                      <AccordionSection id="vg-element-options" title="Opciones y reglas">
+                      <AccordionSection id="vg-element-options" title="Opciones y reglas" defaultGroupOpen={shouldOpenActiveQuestionRulesByDefault}>
                         <OptionsRulesEditor
                           block={activeQuestion}
                           blocks={questions.filter(item => fieldBlockTypes.has(item.blockType))}
