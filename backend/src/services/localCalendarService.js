@@ -2079,7 +2079,7 @@ export function renderPublicCalendarHtml(calendar, { host = '', embedded = false
     .day.available{color:var(--heading);cursor:pointer;font-weight:500}
     .day.available:hover,.day.available:focus-visible{background:var(--accent-soft);color:var(--accent);outline:0}
     .day.selected{background:var(--accent);color:var(--selected-text)}
-    .day.today:not(.selected){box-shadow:inset 0 0 0 1px var(--accent)}
+    .day.today.available:not(.selected){box-shadow:inset 0 0 0 1px var(--accent)}
     .day.outside{visibility:hidden}
     .day:disabled{opacity:.34}
     .timezone{display:flex;align-items:flex-start;gap:10px;color:var(--muted);font-size:.9rem;font-weight:450}
@@ -2622,6 +2622,20 @@ export function renderPublicCalendarHtml(calendar, { host = '', embedded = false
         }).join('');
       };
 
+      const isSelectableDateKey = (key) => {
+        if (!key || !key.startsWith(monthKey(visibleMonth))) return false;
+        const slots = slotsByDate.get(key) || [];
+        if (!slots.length) return false;
+        const [year, month, day] = key.split('-').map(Number);
+        const date = new Date(year, month - 1, day);
+        date.setHours(0, 0, 0, 0);
+        return date >= today;
+      };
+
+      const getNearestAvailableDateKey = () => Array.from(slotsByDate.keys())
+        .filter(isSelectableDateKey)
+        .sort()[0] || '';
+
       const renderSlotsForDate = (key) => {
         const slots = slotsByDate.get(key) || [];
         resetForm(key ? 'slots' : 'calendar');
@@ -2758,12 +2772,16 @@ export function renderPublicCalendarHtml(calendar, { host = '', embedded = false
           renderMonth();
           // (CAL-FLOW) Durante el "gate" (formulario primero sin completar) no cambiamos de paso.
           if (!(formFirst && !gatePassed)) {
-            if (selectedDateKey && selectedDateKey.startsWith(monthKey(visibleMonth))) {
+            if (isSelectableDateKey(selectedDateKey)) {
               renderSlotsForDate(selectedDateKey);
             } else {
-              selectedDateKey = '';
+              selectedDateKey = getNearestAvailableDateKey();
+              renderMonth();
               renderSlotsForDate('');
             }
+          } else if (!isSelectableDateKey(selectedDateKey)) {
+            selectedDateKey = getNearestAvailableDateKey();
+            renderMonth();
           }
         } catch (error) {
           slotsByDate = new Map();

@@ -47,6 +47,26 @@ test('public calendar widget keeps the month visible while slots load or fail', 
   assert.equal(serviceSource.includes("daysEl.innerHTML = '';"), false)
 })
 
+test('public calendar widget highlights the nearest selectable date after slots load', async () => {
+  const serviceSource = await readFile(join(backendRoot, 'src/services/localCalendarService.js'), 'utf8')
+
+  assert.match(
+    serviceSource,
+    /\.day\.today\.available:not\(\.selected\)/,
+    'today should only look highlighted when it is actually selectable'
+  )
+  assert.match(
+    serviceSource,
+    /const getNearestAvailableDateKey = \(\) => Array\.from\(slotsByDate\.keys\(\)\)\n\s+\.filter\(isSelectableDateKey\)\n\s+\.sort\(\)\[0\] \|\| '';/,
+    'widget should find the first available future date in the visible month'
+  )
+  assert.match(
+    serviceSource,
+    /selectedDateKey = getNearestAvailableDateKey\(\);\n\s+renderMonth\(\);\n\s+renderSlotsForDate\(''\);/,
+    'widget should paint the selected day without jumping into the slot step'
+  )
+})
+
 test('public calendar free slots use Ristak local availability only', async () => {
   const controllerSource = await readFile(join(backendRoot, 'src/controllers/calendarsController.js'), 'utf8')
   const match = controllerSource.match(/async function getCalendarFreeSlotsForPublic[\s\S]*?\n}\n\n\/\*\*/)
