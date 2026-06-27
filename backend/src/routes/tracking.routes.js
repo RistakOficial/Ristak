@@ -1,6 +1,8 @@
 import express from 'express'
 import {
   servePixel,
+  serveMetaParamBuilderClient,
+  serveMetaParamBuilderClientIp,
   collectEvent,
   collectVideoEvent,
   syncVisitorToHighLevel,
@@ -30,6 +32,8 @@ const router = express.Router()
 
 // Servir pixel JavaScript
 publicTrackingRoutes.get('/snip.js', servePixel)
+publicTrackingRoutes.get('/meta-param-builder.js', serveMetaParamBuilderClient)
+publicTrackingRoutes.get('/meta-param-builder-ip', serveMetaParamBuilderClientIp)
 
 // Recibir eventos del pixel
 publicTrackingRoutes.post('/collect', collectEvent)

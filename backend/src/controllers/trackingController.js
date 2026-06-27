@@ -9,10 +9,15 @@ import { fetchAppointmentsForContacts, fetchPaymentsForContacts, getGroupExpress
 import { getMessageAnalyticsSummary, getWhatsAppApiAnalyticsSummary } from '../services/originDistributionService.js'
 import { nonTestPaymentCondition, SUCCESS_PAYMENT_STATUSES } from '../utils/paymentMode.js'
 import { getNoTrackReason } from '../utils/noTracking.js'
+import {
+  collectMetaParameterSignals,
+  getMetaParameterBuilderClientBundle,
+  setMetaParameterCookies
+} from '../services/metaParameterManagerService.js'
 import fetch from 'node-fetch'
 
 const isPostgres = Boolean(process.env.DATABASE_URL)
-const TRACKING_SNIPPET_VERSION = '11' // Incrementar cuando cambies el código del snippet (TRK-009: visitor_id fuera de la URL)
+const TRACKING_SNIPPET_VERSION = '12' // Incrementar cuando cambies el código del snippet
 const SUCCESS_PAYMENT_STATUS_SQL = SUCCESS_PAYMENT_STATUSES
   .map(status => `'${String(status).replace(/'/g, "''")}'`)
   .join(', ')
@@ -258,6 +263,8 @@ export async function servePixel(req, res) {
     const protocol = host.includes('localhost') ? 'http' : 'https'
     const BASE = `${protocol}://${host}`
     const ENDPOINT = `${BASE}/collect`
+    const PARAM_BUILDER_URL = `${BASE}/meta-param-builder.js`
+    const PARAM_BUILDER_IP_URL = `${BASE}/meta-param-builder-ip`
 
     // Generar el código del pixel dinámicamente
     const pixelCode = `
@@ -265,11 +272,14 @@ export async function servePixel(req, res) {
   'use strict';
 
   var ENDPOINT = '${ENDPOINT}';
+  var PARAM_BUILDER_URL = '${PARAM_BUILDER_URL}';
+  var PARAM_BUILDER_IP_URL = '${PARAM_BUILDER_IP_URL}';
   var lastTrackedUrl = window.location.href;
   var pageViewTimer = null;
   var VISITOR_COOKIE_NAME = 'ristak_vid';
   var SESSION_COOKIE_NAME = 'ristak_sid';
   var VISITOR_COOKIE_MAX_AGE = 60 * 60 * 24 * 365;
+  var metaParamBuilderPromise = null;
 
   function valueMeansNoTrack(value, trackingParam) {
     if (value === null || typeof value === 'undefined') return false;
@@ -629,6 +639,36 @@ export async function servePixel(req, res) {
     return cookies;
   }
 
+  function initMetaParamBuilder() {
+    if (metaParamBuilderPromise) return metaParamBuilderPromise;
+    metaParamBuilderPromise = new Promise(function(resolve) {
+      try {
+        if (window.clientParamBuilder && window.clientParamBuilder.processAndCollectAllParams) {
+          resolve(window.clientParamBuilder);
+          return;
+        }
+        var script = document.createElement('script');
+        script.async = true;
+        script.src = PARAM_BUILDER_URL;
+        script.onload = function() { resolve(window.clientParamBuilder || null); };
+        script.onerror = function() { resolve(null); };
+        (document.head || document.documentElement).appendChild(script);
+      } catch (error) {
+        resolve(null);
+      }
+    }).then(function(builder) {
+      if (!builder || !builder.processAndCollectAllParams) return null;
+      var getIpFn = function() {
+        return fetch(PARAM_BUILDER_IP_URL, { credentials: 'same-origin' })
+          .then(function(response) { return response.ok ? response.json() : {}; })
+          .then(function(payload) { return payload.client_ip_address || ''; })
+          .catch(function() { return ''; });
+      };
+      return builder.processAndCollectAllParams(window.location.href, getIpFn).catch(function() { return null; });
+    });
+    return metaParamBuilderPromise;
+  }
+
   // Detectar y guardar contact_id de HighLevel desde _ud
   function syncHighLevelContact() {
     try {
@@ -822,6 +862,7 @@ export async function servePixel(req, res) {
   // pero NO volvemos a escribirlo en window.location.
 
   // TRK-009: persistir el visitor_id en cliente al cargar (sin tocar la URL).
+  initMetaParamBuilder();
   getVisitorId();
   lastTrackedUrl = window.location.href;
   setupSpaNavigationTracking();
@@ -864,6 +905,23 @@ export async function servePixel(req, res) {
     logger.error('Error sirviendo pixel:', error)
     res.status(500).json({ error: 'Error generando pixel' })
   }
+}
+
+export async function serveMetaParamBuilderClient(req, res) {
+  try {
+    const bundle = await getMetaParameterBuilderClientBundle()
+    res.setHeader('Content-Type', 'application/javascript; charset=utf-8')
+    res.setHeader('Cache-Control', 'public, max-age=86400, immutable')
+    res.send(bundle)
+  } catch (error) {
+    logger.error('Error sirviendo Meta parameter builder:', error)
+    res.status(500).type('application/javascript').send('')
+  }
+}
+
+export function serveMetaParamBuilderClientIp(req, res) {
+  res.setHeader('Cache-Control', 'no-store')
+  res.json({ client_ip_address: getRequestIp(req) || '' })
 }
 
 /**
@@ -917,6 +975,29 @@ export async function collectEvent(req, res) {
     }
 
     const user_agent = req.headers['user-agent'] || null
+    const metaSignals = collectMetaParameterSignals({
+      req,
+      requestMeta: {
+        ip,
+        userAgent: user_agent,
+        meta: {
+          ...(data || {}),
+          pageUrl: data?.url,
+          params: data || {},
+          fbc: data?.fbc,
+          fbp: data?.fbp
+        }
+      },
+      sourceUrl: data?.url
+    })
+    setMetaParameterCookies(res, metaSignals.cookiesToSet, req)
+
+    const enrichedData = {
+      ...(data || {}),
+      ...(metaSignals.fbc && !data?.fbc ? { fbc: metaSignals.fbc } : {}),
+      ...(metaSignals.fbp && !data?.fbp ? { fbp: metaSignals.fbp } : {}),
+      ...(metaSignals.clientIpAddress && !data?.client_ip_address ? { client_ip_address: metaSignals.clientIpAddress } : {})
+    }
 
     // (TRK-001) /collect es público: el contact_id del body es atacante-controlado.
     // Verificar que el contacto EXISTE antes de aceptarlo. Si no existe (o es inválido),
@@ -942,8 +1023,8 @@ export async function collectEvent(req, res) {
 
     // Extraer full_name si viene en data.contact_name (solo si el contacto fue verificado)
     let full_name = null
-    if (verifiedContactId && data && data.contact_name) {
-      full_name = data.contact_name
+    if (verifiedContactId && enrichedData && enrichedData.contact_name) {
+      full_name = enrichedData.contact_name
     }
 
     const sessionData = {
@@ -953,7 +1034,7 @@ export async function collectEvent(req, res) {
       full_name,
       event_name,
       ts,
-      data: data || {},
+      data: enrichedData,
       ip,
       user_agent
     }

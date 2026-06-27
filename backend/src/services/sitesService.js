@@ -36,6 +36,10 @@ import {
 } from './mediaStorageService.js'
 import { getMetaConfig } from './metaAdsService.js'
 import { createSession, getVisitorIdentityExpression, linkVisitorToContact, unifyVisitorIds } from './trackingService.js'
+import {
+  buildMetaBrowserUserData,
+  buildMetaParameterUserData
+} from './metaParameterManagerService.js'
 
 export const SITE_TYPES = new Set(['standard_form', 'interactive_form', 'landing_page'])
 const FORM_SITE_TYPES = new Set(['standard_form', 'interactive_form'])
@@ -14967,9 +14971,12 @@ function buildNativeSiteTrackingScript(context) {
     (() => {
       const RSTK_CONTEXT = ${scriptJson(context)};
       const ENDPOINT = '/collect';
+      const PARAM_BUILDER_URL = '/meta-param-builder.js';
+      const PARAM_BUILDER_IP_URL = '/meta-param-builder-ip';
       const VISITOR_COOKIE_NAME = 'ristak_vid';
       const SESSION_COOKIE_NAME = 'ristak_sid';
       const VISITOR_COOKIE_MAX_AGE = 60 * 60 * 24 * 365;
+      let metaParamBuilderPromise = null;
       const valueMeansNoTrack = (value, trackingParam = false) => {
         if (value === null || typeof value === 'undefined') return false;
         const normalized = String(value).trim().toLowerCase();
@@ -15035,6 +15042,34 @@ function buildNativeSiteTrackingScript(context) {
           if (window.location && window.location.protocol === 'https:') attrs += '; Secure';
           document.cookie = name + '=' + encodeURIComponent(value) + attrs;
         } catch (_) {}
+      };
+
+      const initMetaParamBuilder = () => {
+        if (metaParamBuilderPromise) return metaParamBuilderPromise;
+        metaParamBuilderPromise = new Promise((resolve) => {
+          try {
+            if (window.clientParamBuilder && window.clientParamBuilder.processAndCollectAllParams) {
+              resolve(window.clientParamBuilder);
+              return;
+            }
+            const script = document.createElement('script');
+            script.async = true;
+            script.src = PARAM_BUILDER_URL;
+            script.onload = () => resolve(window.clientParamBuilder || null);
+            script.onerror = () => resolve(null);
+            (document.head || document.documentElement).appendChild(script);
+          } catch (_) {
+            resolve(null);
+          }
+        }).then((builder) => {
+          if (!builder || !builder.processAndCollectAllParams) return null;
+          const getIpFn = () => fetch(PARAM_BUILDER_IP_URL, { credentials: 'same-origin' })
+            .then((response) => response.ok ? response.json() : {})
+            .then((payload) => payload.client_ip_address || '')
+            .catch(() => '');
+          return builder.processAndCollectAllParams(window.location.href, getIpFn).catch(() => null);
+        });
+        return metaParamBuilderPromise;
       };
 
       const getUrlVisitorId = () => {
@@ -15259,6 +15294,7 @@ function buildNativeSiteTrackingScript(context) {
       window.ristakNativeRememberContact = rememberContact;
       window.ristakNativeTrack = sendEvent;
 
+      initMetaParamBuilder();
       const emitView = () => sendEvent('native_site_view');
       if (document.readyState === 'complete' || document.readyState === 'interactive') {
         setTimeout(emitView, 0);
@@ -22963,6 +22999,12 @@ function resolveMetaEventSourceUrl(site, requestMeta = {}) {
   return firstCleanString([meta.pageUrl, meta.page_url, meta.url, tracking.url]) || `https://${site.domain}`
 }
 
+function getMetaSourceUrlFromRequestMeta(requestMeta = {}) {
+  const meta = getMetaRequestPayload(requestMeta)
+  const tracking = getMetaTrackingPayload(meta)
+  return firstCleanString([meta.pageUrl, meta.page_url, meta.sourceUrl, meta.source_url, meta.url, tracking.url])
+}
+
 function resolveMetaFbclid(meta = {}) {
   const params = getMetaParamsPayload(meta)
   const tracking = getMetaTrackingPayload(meta)
@@ -23030,21 +23072,12 @@ function pruneEmptyMetaUserData(userData = {}) {
 }
 
 function buildMetaBaseUserData({ contactId, requestMeta, eventTimeMs } = {}) {
-  const meta = getMetaRequestPayload(requestMeta)
-  const tracking = getMetaTrackingPayload(meta)
   const externalId = resolveMetaExternalId({ contactId, requestMeta })
-  return pruneEmptyMetaUserData({
-    external_id: externalId ? hashValue(externalId) : undefined,
-    client_ip_address: requestMeta?.ip || undefined,
-    client_user_agent: firstCleanString([
-      requestMeta?.userAgent,
-      meta.userAgent,
-      meta.user_agent,
-      tracking.user_agent,
-      tracking.userAgent
-    ]) || undefined,
-    fbp: resolveMetaFbp(meta) || undefined,
-    fbc: resolveMetaFbc(meta, eventTimeMs) || undefined
+  return buildMetaBrowserUserData({
+    req: requestMeta?.req,
+    requestMeta,
+    externalId,
+    sourceUrl: getMetaSourceUrlFromRequestMeta(requestMeta)
   })
 }
 
@@ -23152,12 +23185,13 @@ async function sendSiteLeadMetaEvent({ site, submissionId, submittedPageId, cont
 
   const eventTimeMs = resolveMetaEventTimeMs(requestMeta)
   const names = splitName(contact.fullName)
-  const userData = pruneEmptyMetaUserData({
-    ...buildMetaBaseUserData({ contactId, requestMeta, eventTimeMs }),
-    em: hashValue(contact.email),
-    ph: hashValue(contact.phone, normalizePhoneForHash),
-    fn: hashValue(names.firstName),
-    ln: hashValue(names.lastName)
+  const userData = buildMetaParameterUserData({
+    req: requestMeta?.req,
+    requestMeta,
+    contact,
+    names,
+    externalId: resolveMetaExternalId({ contactId, requestMeta }),
+    sourceUrl: resolveMetaEventSourceUrl(site, requestMeta)
   })
 
   if (!userData.em && !userData.ph && !userData.external_id) {
@@ -23384,20 +23418,17 @@ export async function sendCalendarBookingSiteMetaEvent({ calendar, appointment, 
 
   const fullName = cleanString(contact.fullName || contact.full_name || contact.name)
   const names = splitName(fullName)
-  const userData = {
-    em: hashValue(contact.email),
-    ph: hashValue(contact.phone, normalizePhoneForHash),
-    fn: hashValue(names.firstName),
-    ln: hashValue(names.lastName),
-    external_id: hashValue(contactId),
-    client_ip_address: requestMeta.ip || undefined,
-    client_user_agent: requestMeta.userAgent || undefined,
-    fbp: cleanString(requestMeta.meta?.fbp) || undefined,
-    fbc: cleanString(requestMeta.meta?.fbc) || undefined
-  }
-
-  Object.keys(userData).forEach(key => {
-    if (!userData[key]) delete userData[key]
+  const userData = buildMetaParameterUserData({
+    req: requestMeta?.req,
+    requestMeta,
+    contact: {
+      ...contact,
+      fullName,
+      id: contactId
+    },
+    names,
+    externalId: contactId,
+    sourceUrl: cleanString(requestMeta.meta?.pageUrl) || cleanString(requestMeta.meta?.sourceUrl) || ''
   })
 
   if (!userData.em && !userData.ph && !userData.external_id && !userData.fbp && !userData.fbc) {
@@ -24029,6 +24060,7 @@ async function createImportedSubmissionFromRequest({ req, body, site, host, prev
     contactId,
     contact,
     requestMeta: {
+      req,
       ip: getClientIp(req),
       userAgent: req.headers['user-agent'] || '',
       meta
@@ -24346,6 +24378,7 @@ export async function createSubmissionFromRequest(req, body = {}, options = {}) 
     contactId,
     contact: inferredContact,
     requestMeta: {
+      req,
       ip: getClientIp(req),
       userAgent: req.headers['user-agent'] || '',
       meta
@@ -24452,6 +24485,7 @@ export async function createMetaPageEventFromRequest(req, body = {}, options = {
       eventId,
       contactId,
       requestMeta: {
+        req,
         ip: getClientIp(req),
         userAgent: req.headers['user-agent'] || '',
         meta
@@ -24479,6 +24513,7 @@ export async function createMetaPageEventFromRequest(req, body = {}, options = {
     eventId,
     contactId,
     requestMeta: {
+      req,
       ip: getClientIp(req),
       userAgent: req.headers['user-agent'] || '',
       meta

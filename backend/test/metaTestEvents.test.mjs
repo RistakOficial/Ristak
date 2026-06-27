@@ -115,9 +115,10 @@ test('sendMetaTestEvent posts CAPI payload with test_event_code', async () => {
     assert.equal(payload.data[0].custom_data.order_id, 'ORD-TEST-001')
     assert.equal(payload.data[0].custom_data.content_type, 'product')
     assert.equal(payload.data[0].custom_data.ad_source, 'test')
-    assert.equal(payload.data[0].user_data.client_ip_address, '203.0.113.10')
+    assert.match(payload.data[0].user_data.client_ip_address, /^203\.0\.113\.10\.[A-Za-z0-9]{8}$/)
     assert.equal(payload.data[0].user_data.client_user_agent, 'node-test')
-    assert.match(payload.data[0].user_data.external_id, /^[a-f0-9]{64}$/)
+    assert.match(payload.data[0].user_data.external_id, /^[a-f0-9]{64}\.[A-Za-z0-9]{8}$/)
+    assert.match(payload.data[0].user_data.fbp, /^fb\.\d+\.\d+\.\d+\.[A-Za-z0-9]{8}$/)
     assert.equal(payload.data[0].custom_data.conversion_type, 'settings_test_event')
   } finally {
     if (metaServer) await new Promise(resolve => metaServer.close(resolve))

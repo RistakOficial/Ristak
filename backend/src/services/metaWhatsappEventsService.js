@@ -1,4 +1,3 @@
-import crypto from 'crypto'
 import fetch from 'node-fetch'
 import { db, getAppConfig } from '../config/database.js'
 import { API_URLS } from '../config/constants.js'
@@ -7,6 +6,7 @@ import { getMetaConfig } from './metaAdsService.js'
 import { getActiveMetaTestEventCode } from '../utils/metaTestCode.js'
 import { nonTestPaymentCondition } from '../utils/paymentMode.js'
 import { buildPhoneMatchCandidates } from '../utils/phoneUtils.js'
+import { buildMetaParameterUserData } from './metaParameterManagerService.js'
 
 const CONFIG_KEYS = {
   scheduleEnabled: 'meta_whatsapp_schedule_enabled',
@@ -173,26 +173,6 @@ function normalizePaymentMetaPurchaseEventConfig(value = null) {
   }
 }
 
-function normalizeForHash(value) {
-  const clean = cleanString(value).toLowerCase()
-  return clean || null
-}
-
-function normalizePhoneForHash(value) {
-  const clean = cleanString(value)
-  if (!clean) return null
-
-  const digits = clean.replace(/[^\d]/g, '')
-  return digits || null
-}
-
-function hashValue(value, normalizer = normalizeForHash) {
-  const normalized = normalizer(value)
-  if (!normalized) return null
-
-  return crypto.createHash('sha256').update(normalized).digest('hex')
-}
-
 function jsonForLog(value) {
   try {
     return JSON.stringify(value ?? null)
@@ -333,17 +313,12 @@ function deriveNames(contact = {}) {
 
 function buildUserData(contact) {
   const { firstName, lastName } = deriveNames(contact)
-  const userData = {
-    ph: hashValue(contact.phone, normalizePhoneForHash),
-    external_id: hashValue(contact.id),
-    em: hashValue(contact.email),
-    fn: hashValue(firstName),
-    ln: hashValue(lastName)
-  }
-
-  return Object.fromEntries(
-    Object.entries(userData).filter(([, value]) => Boolean(value))
-  )
+  return buildMetaParameterUserData({
+    contact,
+    names: { firstName, lastName },
+    externalId: contact.id,
+    includeBrowserSignals: false
+  })
 }
 
 function normalizeBusinessMessagingEventName(value) {

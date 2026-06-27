@@ -36,6 +36,7 @@ import { clearMetaIntegrationCredentials } from '../services/integrationCredenti
 import { getVisitorIdentityExpression } from '../services/trackingService.js';
 import { signScopedToken, verifyScopedToken } from '../utils/auth.js';
 import { getActiveMetaTestEventCode } from '../utils/metaTestCode.js';
+import { buildMetaBrowserUserData } from '../services/metaParameterManagerService.js';
 
 const SUCCESS_PAYMENT_STATUSES = new Set([
   'succeeded',
@@ -114,12 +115,6 @@ function isMaskedSecret(value) {
 function maskSecret(value) {
   const cleanValue = cleanString(value);
   return cleanValue ? `${MASKED_SECRET_PREFIX}${cleanValue.slice(-8)}` : '';
-}
-
-function hashMetaTestValue(value) {
-  const cleanValue = cleanString(value).toLowerCase();
-  if (!cleanValue) return null;
-  return crypto.createHash('sha256').update(cleanValue).digest('hex');
 }
 
 function normalizeMetaTestEventName(value) {
@@ -711,12 +706,16 @@ async function performMetaCapiTestEvent({ req, metaConfig, eventName, eventParam
     return { ok: false, status: 400, error: 'Usa un nombre de evento válido, por ejemplo LeadSubmitted', eventId, eventName };
   }
 
-  const userData = {
-    client_ip_address: getRequestIp(req) || undefined,
-    client_user_agent: cleanString(req.headers?.['user-agent']) || 'Ristak Meta CAPI Test',
-    external_id: hashMetaTestValue(`ristak_meta_test_${datasetId}`)
-  };
-  Object.keys(userData).forEach(key => { if (!userData[key]) delete userData[key]; });
+  const userData = buildMetaBrowserUserData({
+    req,
+    requestMeta: {
+      ip: getRequestIp(req),
+      userAgent: cleanString(req.headers?.['user-agent']) || 'Ristak Meta CAPI Test',
+      meta: { pageUrl: eventSourceUrl }
+    },
+    externalId: `ristak_meta_test_${datasetId}`,
+    sourceUrl: eventSourceUrl
+  });
 
   const payload = {
     test_event_code: testEventCode,
