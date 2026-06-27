@@ -20405,8 +20405,8 @@ function buildImportedFormCaptureScript(site, imported, { pageId = DEFAULT_FUNNE
             const rawFields = collectRawFields(form);
             const selectedChoiceActions = collectSelectedChoiceActions(form);
             const disqualifyingAction = selectedChoiceActions.find(item => item.action === 'disqualify' || item.action === 'disqualify_after_submit') || null;
-            // "Descalificar inmediatamente" corta el flujo al enviar (oculta el form);
-            // "al enviar" deja terminar y solo registra al contacto como no calificado.
+            // "Descalificar en esta página" corta el flujo al enviar (oculta el form);
+            // "al terminar formulario" deja terminar y registra al contacto como no calificado.
             const immediateDisqualifyChoice = Boolean(disqualifyingAction && disqualifyingAction.action === 'disqualify');
             if (immediateDisqualifyChoice) form.dataset.rstkImmediateDisqualify = 'true';
             const response = await fetch('/api/sites/public/submit', {
@@ -22500,6 +22500,19 @@ export async function renderPublicSiteHtml(site, { pageId, pagePath, trackingEna
         }
         return [];
       };
+      const getSelectedRules = (fieldsToRead) => fieldsToRead
+        .flatMap((field) => readSelectedRules(field).map(rule => ({
+          ...rule,
+          fieldId: field.getAttribute('data-block-id') || '',
+          fieldPageId: field.getAttribute('data-page-id') || getCurrentPageId()
+        })));
+      const getBlockingRule = (rules) => rules.find(item => (
+        item.action === 'show_message' ||
+        item.action === 'disqualify' ||
+        item.action === 'end_form' ||
+        item.action === 'redirect' ||
+        item.action === 'site_page'
+      ));
 
       const isValidUrlValue = (raw) => {
         const value = String(raw || '').trim();
@@ -22686,8 +22699,8 @@ export async function renderPublicSiteHtml(site, { pageId, pagePath, trackingEna
         return true;
       };
 
-      // "Descalificar inmediatamente" navega al instante, salvo cuando se configuró
-      // aviso previo; en ese caso solo se muestra la nota debajo del campo.
+      // Al elegir una opción que descalifica solo mostramos el aviso debajo del
+      // campo; la descalificación real ocurre al avanzar/enviar esa página.
       const DISQUALIFY_NOTICE_FALLBACK = ${JSON.stringify('Con esta respuesta es posible que no califiques para continuar.')};
       const updateDisqualifyNotice = (field) => {
         if (!field || !field.querySelector) return;
@@ -22710,13 +22723,6 @@ export async function renderPublicSiteHtml(site, { pageId, pagePath, trackingEna
         if (!target.matches('input[type="radio"], input[type="checkbox"], select')) return;
         const field = target.closest('.rstk-field');
         if (!field) return;
-        const immediateRule = readSelectedRules(field).find(item => item.action === 'disqualify' && item.warnBeforeDisqualify !== true) || null;
-        if (immediateRule && validateField(field)) {
-          const fieldPageId = field.getAttribute('data-page-id') || getCurrentPageId();
-          const fieldId = field.getAttribute('data-block-id') || '';
-          const targetMessage = getFieldMessageTarget(field);
-          if (handleBlockingRule(immediateRule, fieldPageId, targetMessage, { immediate: true, fieldId })) return;
-        }
         updateDisqualifyNotice(field);
       };
 
@@ -22776,7 +22782,7 @@ export async function renderPublicSiteHtml(site, { pageId, pagePath, trackingEna
 	        state.nextButton && state.nextButton.addEventListener('click', () => {
 	          const currentFields = getEmbeddedPageFields(state);
 	          if (!validateFields(currentFields)) return;
-          const rules = currentFields.flatMap((field) => readSelectedRules(field)).filter(item => item.action && item.action !== 'continue');
+          const rules = getSelectedRules(currentFields).filter(item => item.action && item.action !== 'continue');
           // "Ir a página específica" hacia una página del propio formulario embebido:
           // esas páginas viven inlined dentro de este form (no son páginas reales del
           // landing), así que el ?page= no resuelve y mandaba al inicio. Se trata como
@@ -22787,8 +22793,8 @@ export async function renderPublicSiteHtml(site, { pageId, pagePath, trackingEna
             renderEmbeddedForm(state);
             return;
           }
-          const blockingRule = rules.find(item => item.action === 'show_message' || item.action === 'disqualify' || item.action === 'end_form' || item.action === 'redirect' || item.action === 'site_page');
-          if (blockingRule && handleBlockingRule(blockingRule, state.pageIds[state.index] || '', state.message, blockingRule.action === 'disqualify' ? { immediate: true } : {})) return;
+          const blockingRule = getBlockingRule(rules);
+          if (blockingRule && handleBlockingRule(blockingRule, state.pageIds[state.index] || '', state.message, blockingRule.action === 'disqualify' ? { immediate: true, fieldId: blockingRule.fieldId || '' } : {})) return;
           const jumpRule = rules.find(item => item.action === 'jump' && item.targetBlockId);
           const targetPageId = jumpRule && jumpRule.targetBlockId ? targetBlockPageMap[jumpRule.targetBlockId] : '';
           const targetIndex = state.pageIds.indexOf(targetPageId);
@@ -22805,9 +22811,9 @@ export async function renderPublicSiteHtml(site, { pageId, pagePath, trackingEna
 	      nextButton && nextButton.addEventListener('click', () => {
 	        const currentFields = getPageFields(getCurrentPageId());
 	        if (!validateFields(currentFields)) return;
-        const rules = currentFields.flatMap((field) => readSelectedRules(field)).filter(item => item.action && item.action !== 'continue');
-        const blockingRule = rules.find(item => item.action === 'show_message' || item.action === 'disqualify' || item.action === 'end_form' || item.action === 'redirect' || item.action === 'site_page');
-        if (blockingRule && handleBlockingRule(blockingRule, getCurrentPageId(), message, blockingRule.action === 'disqualify' ? { immediate: true } : {})) return;
+        const rules = getSelectedRules(currentFields).filter(item => item.action && item.action !== 'continue');
+        const blockingRule = getBlockingRule(rules);
+        if (blockingRule && handleBlockingRule(blockingRule, getCurrentPageId(), message, blockingRule.action === 'disqualify' ? { immediate: true, fieldId: blockingRule.fieldId || '' } : {})) return;
         const jumpRule = rules.find(item => item.action === 'jump' && item.targetBlockId);
         if (jumpRule && jumpRule.targetBlockId) {
           const targetField = fields.find(field => field.getAttribute('data-block-id') === jumpRule.targetBlockId);
@@ -22825,11 +22831,11 @@ export async function renderPublicSiteHtml(site, { pageId, pagePath, trackingEna
 	        if (!validateFields(currentFields)) return;
         const currentResponses = getCurrentResponses();
         const mergedResponses = { ...readStoredResponses(), ...currentResponses };
-        const rules = currentFields.flatMap((field) => readSelectedRules(field)).filter(item => item.action && item.action !== 'continue');
-        const blockingRule = rules.find(item => item.action === 'show_message' || item.action === 'disqualify' || item.action === 'end_form' || item.action === 'redirect' || item.action === 'site_page');
+        const rules = getSelectedRules(currentFields).filter(item => item.action && item.action !== 'continue');
+        const blockingRule = getBlockingRule(rules);
         if (blockingRule) {
           if (shouldSubmitRule(blockingRule)) writeStoredResponses(mergedResponses);
-          if (handleBlockingRule(blockingRule, pageId, message, blockingRule.action === 'disqualify' ? { immediate: true } : {})) return;
+          if (handleBlockingRule(blockingRule, pageId, message, blockingRule.action === 'disqualify' ? { immediate: true, fieldId: blockingRule.fieldId || '' } : {})) return;
         }
 
         writeStoredResponses(mergedResponses);
@@ -22946,14 +22952,17 @@ export async function renderPublicSiteHtml(site, { pageId, pagePath, trackingEna
           return;
         }
 
+        const submitRules = getSelectedRules(fields).filter(item => item.action && item.action !== 'continue');
+        const immediateSubmitRule = !ruleSubmit ? submitRules.find(item => item.action === 'disqualify') || null : null;
+        if (immediateSubmitRule && handleBlockingRule(immediateSubmitRule, rulePageId, message, { immediate: true, fieldId: immediateSubmitRule.fieldId || ruleFieldId })) return;
+
         const responses = isStandardForm
           ? { ...readStoredResponses(), ...getCurrentResponses() }
           : getCurrentResponses();
 
         // Regla de descalificación efectivamente seleccionada para envíos finales
         // o para configuraciones que esperan hasta enviar.
-        const selectedDisqualifyRule = fields
-          .flatMap((field) => readSelectedRules(field))
+        const selectedDisqualifyRule = submitRules
           .find(item => item.action === 'disqualify' || item.action === 'disqualify_after_submit') || null;
         const terminalDisqualify = immediateDisqualify || Boolean(selectedDisqualifyRule && selectedDisqualifyRule.action === 'disqualify');
 
@@ -23065,7 +23074,7 @@ export async function renderPublicSiteHtml(site, { pageId, pagePath, trackingEna
             // Un descalificado nunca debe ver el mensaje de éxito. Preferimos la pantalla
             // de No calificado embebida (equivalente a la página del formulario standalone);
             // si no hay (p.ej. formulario standalone que no navegó, o sin pantalla), usamos
-            // el mensaje de la regla. "Descalificar inmediatamente" oculta el formulario.
+            // el mensaje de la regla. "Descalificar en esta página" oculta el formulario.
             if (showEmbeddedResult('disqualified')) return;
             const dqText = (selectedDisqualifyRule && selectedDisqualifyRule.message) || submission.message || 'Gracias. Por ahora no califica.';
             if (selectedDisqualifyRule && selectedDisqualifyRule.action === 'disqualify') {

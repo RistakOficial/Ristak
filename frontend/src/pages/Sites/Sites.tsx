@@ -603,8 +603,8 @@ const ruleActions: Array<{ value: SiteOptionAction; label: string }> = [
   { value: 'jump', label: 'Saltar a una pregunta' },
   { value: 'site_page', label: 'Dirigir a página del sitio' },
   { value: 'redirect', label: 'Dirigir a URL externa' },
-  { value: 'disqualify', label: 'Descalificar inmediatamente' },
-  { value: 'disqualify_after_submit', label: 'Descalificar al enviar' }
+  { value: 'disqualify', label: 'Descalificar al avanzar en esta página' },
+  { value: 'disqualify_after_submit', label: 'Descalificar al terminar formulario' }
 ]
 const visibleRuleActionValues = new Set<SiteOptionAction>(ruleActions.map(action => action.value))
 const normalizeVisibleRuleAction = (action?: SiteOptionAction): SiteOptionAction => (
@@ -36300,7 +36300,7 @@ const OptionsRulesEditor: React.FC<OptionsRulesEditorProps> = ({ block, blocks, 
             <div className={styles.optionSwitchRow}>
               <div>
                 <strong>Avisar al contacto antes de descalificar</strong>
-                <small>Muestra una nota debajo al elegir esta respuesta. No lo descalifica hasta que avance o envíe.</small>
+                <small>Muestra una nota debajo al elegir esta respuesta. La regla se aplica al avanzar en esta página o al terminar el formulario, según lo configurado.</small>
               </div>
               <Switch
                 checked={option.warnBeforeDisqualify === true}

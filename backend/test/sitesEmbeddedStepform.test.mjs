@@ -683,7 +683,7 @@ test('standalone standard form keeps honoring its own result redirect', async ()
   assert.ok(resetIndex > redirectBeforeResetIndex, 'form reset must not run before redirect decisions')
 })
 
-test('immediate disqualify choices navigate without redirect copy', async () => {
+test('immediate disqualify choices run when advancing, not when selecting', async () => {
   const site = {
     id: 'site_immediate_disqualify_choice',
     name: 'Formulario descalificacion inmediata',
@@ -727,6 +727,9 @@ test('immediate disqualify choices navigate without redirect copy', async () => 
   assert.doesNotMatch(html, /Redirigiendo\.\.\./)
   assert.match(html, /const getImmediateDisqualifyUrl = \(rule\) =>/)
   assert.match(html, /const submitSubmissionInBackground = \(payload\) =>/)
-  assert.match(html, /const immediateRule = readSelectedRules\(field\)\.find\(item => item\.action === 'disqualify' && item\.warnBeforeDisqualify !== true\) \|\| null;/)
-  assert.match(html, /handleBlockingRule\(immediateRule, fieldPageId, targetMessage, \{ immediate: true, fieldId \}\)/)
+  assert.doesNotMatch(html, /const immediateRule = readSelectedRules\(field\)/)
+  assert.doesNotMatch(html, /handleBlockingRule\(immediateRule/)
+  assert.ok(html.includes("const immediateSubmitRule = !ruleSubmit ? submitRules.find(item => item.action === 'disqualify') || null : null;"))
+  assert.ok(html.includes("handleBlockingRule(immediateSubmitRule, rulePageId, message, { immediate: true, fieldId: immediateSubmitRule.fieldId || ruleFieldId })"))
+  assert.ok(html.includes("handleBlockingRule(blockingRule, getCurrentPageId(), message, blockingRule.action === 'disqualify' ? { immediate: true, fieldId: blockingRule.fieldId || '' } : {})"))
 })
