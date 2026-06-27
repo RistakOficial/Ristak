@@ -563,7 +563,7 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
   const [remainingInstallments, setRemainingInstallments] = useState<InstallmentDraft[]>(defaultPartialInstallments)
   const [autoDistributeRemaining, setAutoDistributeRemaining] = useState(true)
 
-  // Business details (required by GHL)
+  // Business details used by payment documents and optional gateway syncs.
   const [businessName, setBusinessName] = useState('Mi Negocio')
   const [businessEmail, setBusinessEmail] = useState('')
   const [logoUrl, setLogoUrl] = useState('')
@@ -612,9 +612,8 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
   const [loadingPaymentLinkDeliveryOptions, setLoadingPaymentLinkDeliveryOptions] = useState(false)
   const [sendingPaymentLinkChannel, setSendingPaymentLinkChannel] = useState<PaymentLinkDeliveryChannelKey | null>(null)
 
-  // Estado de conexión con HighLevel. Cuando NO está conectado, Ristak opera en
-  // modo local: productos y pagos manuales siguen funcionando; enlaces y
-  // parcialidades remotas quedan desactivados.
+  // Estado de conexión con pasarelas. Ristak opera sin HighLevel; cada gateway
+  // habilita sólo las acciones que realmente soporta.
   const [highLevelConnected, setHighLevelConnected] = useState(false)
   const [stripeConnected, setStripeConnected] = useState(false)
   const [conektaConnected, setConektaConnected] = useState(false)
@@ -1705,7 +1704,7 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
     summary: InvoiceSummary,
     channels: Record<string, boolean>
   ) => {
-    const response = await fetch(apiUrl('/api/highlevel/payment-flows/installments'), {
+    const response = await fetch(apiUrl('/api/transactions/payment-flows/installments'), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(buildPartialFlowPayload(payload, summary, channels))

@@ -2356,9 +2356,9 @@ async function initTables() {
     await db.run('CREATE INDEX IF NOT EXISTS idx_conekta_payment_sources_contact ON conekta_payment_sources(contact_id, mode)')
     await db.run('CREATE INDEX IF NOT EXISTS idx_conekta_payment_sources_customer ON conekta_payment_sources(conekta_customer_id)')
 
-    // Tabla local de planes de pago / invoice schedules de HighLevel.
-    // GoHighLevel sigue siendo la integración activa, pero guardamos un espejo local
-    // para reportes, respaldo y lectura cuando GHL no esté disponible.
+    // Tabla local de planes de pago de Ristak.
+    // Las integraciones opcionales pueden sincronizar espejos remotos, pero la
+    // lectura y reportes no dependen de GoHighLevel.
     await db.run(`
       CREATE TABLE IF NOT EXISTS payment_plans (
         id TEXT PRIMARY KEY,
@@ -3345,6 +3345,8 @@ async function initTables() {
 
     // Tabla de flujos de pago por parcialidades.
     // Guarda el estado de autorización/tarjeta sin contaminar la tabla de pagos reales.
+    // El default highlevel conserva flujos legacy; Stripe, Conekta y Mercado Pago
+    // escriben payment_provider explicito cuando son los dueños del plan.
     await db.run(`
       CREATE TABLE IF NOT EXISTS payment_flows (
         id TEXT PRIMARY KEY,

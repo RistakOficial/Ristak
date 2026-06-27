@@ -156,17 +156,17 @@ export const transactionsService = {
   },
 
   async getPaymentPlans(): Promise<PaymentPlan[]> {
-    const data = await apiClient.get<PaymentPlan[]>('/highlevel/invoices/schedules')
+    const data = await apiClient.get<PaymentPlan[]>('/transactions/payment-plans')
     return data
   },
 
   async getPaymentPlan(id: string): Promise<PaymentPlan> {
-    const data = await apiClient.get<PaymentPlan>(`/highlevel/invoices/schedules/${id}`)
+    const data = await apiClient.get<PaymentPlan>(`/transactions/payment-plans/${id}`)
     return data
   },
 
   async createPaymentPlan(payload: Record<string, any>): Promise<PaymentPlan> {
-    const data = await apiClient.post<PaymentPlan>('/highlevel/invoices/schedules', {
+    const data = await apiClient.post<PaymentPlan>('/transactions/payment-plans', {
       payload,
       scheduleNow: true
     })
@@ -174,7 +174,7 @@ export const transactionsService = {
   },
 
   async updatePaymentPlan(id: string, payload: Record<string, any>): Promise<PaymentPlan> {
-    const data = await apiClient.put<PaymentPlan>(`/highlevel/invoices/schedules/${id}`, {
+    const data = await apiClient.put<PaymentPlan>(`/transactions/payment-plans/${id}`, {
       payload,
       updateAndSchedule: true
     })
@@ -182,7 +182,7 @@ export const transactionsService = {
   },
 
   async actionPaymentPlan(id: string, action: string, payload: Record<string, any> = {}): Promise<PaymentPlan> {
-    const data = await apiClient.post<PaymentPlan>(`/highlevel/invoices/schedules/${id}/action`, {
+    const data = await apiClient.post<PaymentPlan>(`/transactions/payment-plans/${id}/action`, {
       action,
       payload
     })

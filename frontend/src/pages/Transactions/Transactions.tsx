@@ -621,9 +621,9 @@ export const Transactions: React.FC = () => {
   const [transactionsPendingDeletion, setTransactionsPendingDeletion] = useState<Transaction[]>([])
   const [deletingTransactions, setDeletingTransactions] = useState(false)
 
-  // Los planes de pago pueden programarse con Stripe, Conekta o HighLevel.
+  // Los planes de pago pertenecen a Ristak y pueden programarse con Stripe, Conekta o HighLevel opcional.
   // Mercado Pago queda disponible para links y suscripciones, no parcialidades.
-  // La lista histórica sigue leyendo schedules de HighLevel cuando está conectado.
+  // La lista histórica lee planes locales y espejos remotos cuando una integración opcional los sincroniza.
   const { connected: highLevelConnected, loading: highLevelLoading } = useHighLevelConnected()
   const [stripeConnected, setStripeConnected] = useState(false)
   const [conektaConnected, setConektaConnected] = useState(false)

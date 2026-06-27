@@ -1753,7 +1753,7 @@ const PAYMENT_OPERATION_TOOL_NAMES = new Set([
   ...PAYMENT_MUTATION_TOOL_NAMES,
   'lookup_business_reference',
   'lookup_contact_payment_profile',
-  'lookup_highlevel_products'
+  'lookup_payment_products'
 ])
 const PAYMENT_OPERATION_ALLOWED_TOOL_NAMES = new Set([
   ...PAYMENT_OPERATION_TOOL_NAMES,
@@ -5750,7 +5750,7 @@ async function loadGhlProductPrices(ghlClient, productId) {
     .filter(price => price.id || price.amount > 0 || price.name)
 }
 
-async function executeLookupHighLevelProducts(args = {}, highLevelConnection) {
+async function executeLookupPaymentProducts(args = {}, highLevelConnection) {
   const limit = Math.min(100, Math.max(1, Number(args.limit || PRODUCT_LOOKUP_LIMIT)))
   const query = cleanText(String(args.query || args.productHint || args.productName || args.name || ''), 180)
   const productId = cleanText(String(args.productId || args.product_id || ''), 180)
@@ -7696,7 +7696,7 @@ function buildPaymentDeliveryClarificationOptions(contact = {}) {
   }
 
   if (hasEmail && hasPhone) {
-    addOption('Todos', 'Envía por correo y teléfono si HighLevel lo permite.', 'all', 'Envíalo por todos los canales disponibles.')
+    addOption('Todos', 'Envía por correo y teléfono cuando el proveedor lo permita.', 'all', 'Envíalo por todos los canales disponibles.')
   }
 
   if (hasPhone) {
@@ -7860,7 +7860,7 @@ async function buildPaymentProductSelectionRequiredOutput({ highLevelConnection,
   let lookupError = ''
 
   try {
-    lookup = await executeLookupHighLevelProducts({
+    lookup = await executeLookupPaymentProducts({
       includePrices: true,
       limit: PRODUCT_LOOKUP_LIMIT
     }, highLevelConnection)
@@ -7872,7 +7872,7 @@ async function buildPaymentProductSelectionRequiredOutput({ highLevelConnection,
 
   return {
     ok: false,
-    action: 'lookup_highlevel_products',
+    action: 'lookup_payment_products',
     error: lookupError || 'Falta elegir qué producto se va a cobrar.',
     missingFields: ['producto'],
     askOneAtATime: true,
@@ -8028,7 +8028,7 @@ async function resolvePaymentProductArgs(args = {}, highLevelConnection = {}, me
   }
 
   const useCustomAmount = hasCustomPaymentAmount(args, messages)
-  const lookup = await executeLookupHighLevelProducts({
+  const lookup = await executeLookupPaymentProducts({
     productName: productHint,
     includePrices: !useCustomAmount,
     limit: PRODUCT_LOOKUP_LIMIT
@@ -8039,7 +8039,7 @@ async function resolvePaymentProductArgs(args = {}, highLevelConnection = {}, me
       ok: false,
       output: {
         ...lookup,
-        action: 'lookup_highlevel_products',
+        action: 'lookup_payment_products',
         missingFields: ['producto'],
         askOneAtATime: true
       }
@@ -8051,7 +8051,7 @@ async function resolvePaymentProductArgs(args = {}, highLevelConnection = {}, me
       ok: false,
       output: {
         ok: false,
-        action: 'lookup_highlevel_products',
+        action: 'lookup_payment_products',
         error: lookup.error || `No encontré el producto "${productHint}" en Ristak.`,
         missingFields: ['producto']
       }
@@ -8066,7 +8066,7 @@ async function resolvePaymentProductArgs(args = {}, highLevelConnection = {}, me
       ok: false,
       output: {
         ...lookup,
-        action: 'lookup_highlevel_products',
+        action: 'lookup_payment_products',
         error: 'Encontré productos, pero necesito que elijas cuál usar para este cobro.',
         missingFields: ['producto'],
         askOneAtATime: true
@@ -8079,7 +8079,7 @@ async function resolvePaymentProductArgs(args = {}, highLevelConnection = {}, me
       ok: false,
       output: {
         ...lookup,
-        action: 'lookup_highlevel_products',
+        action: 'lookup_payment_products',
         missingFields: ['precio'],
         askOneAtATime: true
       }
@@ -11969,7 +11969,7 @@ async function executeMetaCampaignDraftTool(args = {}) {
   }
 }
 
-function buildHighLevelTools(highLevelConnection, options = {}) {
+function buildOperationalTools(highLevelConnection, options = {}) {
   const highLevelConfigured = Boolean(highLevelConnection?.configured)
   const tools = []
 
@@ -12071,7 +12071,7 @@ function buildHighLevelTools(highLevelConnection, options = {}) {
     },
     {
       type: 'function',
-      name: 'lookup_highlevel_products',
+      name: 'lookup_payment_products',
       description: 'Busca y lista productos/precios guardados en el catalogo de Ristak. Si GoHighLevel esta conectado, el catalogo local se sincroniza con GHL sin duplicar. Usala cuando el usuario mencione explicitamente producto, producto guardado o quiera ver productos/precios. No la uses para cobros normales con monto, numero o descripcion libre. En flujos de cobro, este lookup nunca es respuesta final: despues de elegir producto/precio u "otro precio", continua con create_single_payment_link o create_installment_payment_flow. Si hay productos parecidos o varios precios, devuelve opciones para que el usuario elija.',
       parameters: {
         type: 'object',
@@ -13279,8 +13279,8 @@ async function callOpenAIResponseWithActionTools(apiKey, {
             operationalMemory,
             resolvedPaymentContact: operationalMemory.paymentContact
           })
-        } else if (call.name === 'lookup_highlevel_products') {
-          output = await executeLookupHighLevelProducts(call.arguments, highLevelConnection)
+        } else if (call.name === 'lookup_payment_products') {
+          output = await executeLookupPaymentProducts(call.arguments, highLevelConnection)
         } else if (call.name === 'lookup_highlevel_endpoint') {
           output = lookupHighLevelEndpoint(call.arguments)
         } else if (call.name === 'manage_highlevel_appointment') {
@@ -14021,7 +14021,7 @@ const PAYMENT_WORKFLOW_PROMPT = [
   '- Para pagos programados, no asumas hoy si el usuario dijo programar/agendar/cargo futuro y no dio fecha; pregunta la fecha exacta.',
   '- Si el usuario menciona "producto de X", "producto X" o corrige "no, el producto...", conserva contacto/fechas/monto y resuelve ese producto del catalogo Ristak antes de pedir tarjeta o confirmación final. La búsqueda de producto no es el final del flujo.',
   '- Si el usuario dice sólo "un producto" o "cóbrale un producto" sin decir cuál, primero muestra/pide el producto. No hables de tarjeta, link ni canal todavía.',
-  '- Si el usuario elige "otro precio" o da un monto personalizado para un producto, usa ese producto con el monto personalizado y continúa con create_single_payment_link o create_installment_payment_flow; no te quedes sólo en lookup_highlevel_products.',
+  '- Si el usuario elige "otro precio" o da un monto personalizado para un producto, usa ese producto con el monto personalizado y continúa con create_single_payment_link o create_installment_payment_flow; no te quedes sólo en lookup_payment_products.',
   '- Nunca digas "listo", "quedó", "se creó", "se programó", "se envió" o "se cobró" si la última herramienta de pago no devolvió ok:true de una mutación real. Si sólo hubo búsqueda, aclaración o error, di que todavía no quedó creado y pregunta el siguiente dato.',
   '- Si falta algo indispensable, pregunta una sola cosa a la vez. No hagas listas de varias preguntas pendientes.',
   '- Cuando el usuario elija una opción/botón del flujo, trátala como respuesta válida al paso actual. Avanza con una respuesta corta y no vuelvas a pegar el resumen completo salvo que sea la revisión final.',
@@ -15136,9 +15136,9 @@ async function createAutonomousDatabaseReply(apiKey, { messages, viewContext, ru
     agentRoute?.highLevelRestReadIntent ||
     contactActionRequest
   )
-  const rawHighLevelTools = metaAdsOperationalIntent || !needsOperationalTools
+  const rawOperationalTools = metaAdsOperationalIntent || !needsOperationalTools
     ? []
-    : buildHighLevelTools(highLevelConnection, {
+    : buildOperationalTools(highLevelConnection, {
         paymentActionRequest,
         contactActionRequest,
         highLevelToolIntent,
@@ -15148,15 +15148,15 @@ async function createAutonomousDatabaseReply(apiKey, { messages, viewContext, ru
   const paymentToolNames = paymentFinalConfirmationRequest
     ? PAYMENT_MUTATION_TOOL_NAMES
     : PAYMENT_OPERATION_ALLOWED_TOOL_NAMES
-  const highLevelTools = paymentOperationRequest
-    ? rawHighLevelTools.filter(tool => tool?.type === 'function' && paymentToolNames.has(tool.name))
+  const operationalTools = paymentOperationRequest
+    ? rawOperationalTools.filter(tool => tool?.type === 'function' && paymentToolNames.has(tool.name))
     : agentRoute?.requiresHighLevelTools || agentRoute?.highLevelRestReadIntent
-      ? highLevelConnection?.configured ? rawHighLevelTools : []
+      ? highLevelConnection?.configured ? rawOperationalTools : []
       : contactActionRequest
-        ? rawHighLevelTools.filter(tool => tool?.type === 'function' && CRM_CONTACT_TOOL_NAMES.has(tool.name))
+        ? rawOperationalTools.filter(tool => tool?.type === 'function' && CRM_CONTACT_TOOL_NAMES.has(tool.name))
         : []
-  const agentTools = [...webSearchTools, ...highLevelTools, ...metaCampaignBuilderTools]
-  const toolsRequireActionLoop = highLevelTools.length > 0 || metaCampaignBuilderTools.length > 0
+  const agentTools = [...webSearchTools, ...operationalTools, ...metaCampaignBuilderTools]
+  const toolsRequireActionLoop = operationalTools.length > 0 || metaCampaignBuilderTools.length > 0
   const operationalReferenceContext = agentRoute?.requiresHighLevelTools || agentRoute?.requiresPaymentTools
     ? await buildOperationalReferenceContext({
         runtimeContext,
@@ -15187,7 +15187,7 @@ async function createAutonomousDatabaseReply(apiKey, { messages, viewContext, ru
 
   const instructions = buildSpecialistAgentInstructions(agentConfig, latestUserMessage)
   const responseTuning = buildAgentResponseTuning({
-    usesActionTools: highLevelTools.length > 0 || metaCampaignBuilderTools.length > 0,
+    usesActionTools: operationalTools.length > 0 || metaCampaignBuilderTools.length > 0,
     latestMessageFromButton
   })
   const includeHighLevelContext = Boolean(agentRoute?.requiresHighLevelTools || agentRoute?.highLevelRestReadIntent)
@@ -15307,7 +15307,7 @@ async function createAutonomousDatabaseReply(apiKey, { messages, viewContext, ru
             paymentContact: paymentOperationalMemory?.resolvedContact || crmOperationalMemory?.resolvedContact || null,
             crmContact: crmOperationalMemory?.resolvedContact || paymentOperationalMemory?.resolvedContact || null
           },
-          forceInitialToolCall: paymentOperationRequest || Boolean(highLevelToolIntent && highLevelTools.length && !paymentOperationRequest)
+          forceInitialToolCall: paymentOperationRequest || Boolean(highLevelToolIntent && operationalTools.length && !paymentOperationRequest)
         })
       : await callOpenAIResponse(apiKey, {
           model,
@@ -15343,8 +15343,8 @@ async function createAutonomousDatabaseReply(apiKey, { messages, viewContext, ru
       maxOutputTokens: latestMessageFromButton && !paymentOperationRequest && !webSearchTools.length ? 900 : webSearchTools.length ? 2200 : 1800
     })
   } catch (error) {
-    const fallbackTools = [...highLevelTools]
-    const fallbackNeedsActionLoop = highLevelTools.length > 0
+    const fallbackTools = [...operationalTools]
+    const fallbackNeedsActionLoop = operationalTools.length > 0
     const fallbackInstructions = [
       instructions,
       webSearchTools.length ? 'La busqueda online no estuvo disponible en este intento. Responde sin inventar contexto externo.' : ''
@@ -15415,7 +15415,8 @@ async function createAutonomousDatabaseReply(apiKey, { messages, viewContext, ru
     clarificationOptions: finalClarificationOptions,
     debug: {
       queryCount: queryResults.length,
-      highLevelToolsEnabled: highLevelTools.length > 0,
+      operationalToolsEnabled: operationalTools.length > 0,
+      highLevelToolsEnabled: Boolean(includeHighLevelContext && highLevelConnection?.configured),
       metaAdsOperationsEnabled: false,
       agentRoute: agentRoute || null
     }
