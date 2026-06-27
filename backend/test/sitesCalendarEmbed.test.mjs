@@ -190,6 +190,7 @@ test('public calendar asks for timezone after date selection when visitor timezo
   assert.match(selectableTimezone, /\.timezoneStep\{display:grid;justify-items:center;text-align:center;gap:8px;padding:12px 0 2px\}/)
   assert.match(selectableTimezone, /\.timezoneStep \.timezoneControl\{width:min\(320px,100%\);justify-items:center\}/)
   assert.match(selectableTimezone, /\.timezoneStep \.timezoneControl select\{width:100%;max-width:280px\}/)
+  assert.match(selectableTimezone, /\.timezoneStep \.timezoneControl select\{appearance:none;-webkit-appearance:none;padding-right:42px;line-height:1\.2;background-image:linear-gradient\(45deg,transparent 50%,var\(--field-text\) 50%\),linear-gradient\(135deg,var\(--field-text\) 50%,transparent 50%\);background-position:calc\(100% - 16px\) calc\(50% - 2px\),calc\(100% - 11px\) calc\(50% - 2px\);background-size:5px 5px,5px 5px;background-repeat:no-repeat\}/)
   assert.match(selectableTimezone, /<span>Confirma tu zona horaria<\/span>/)
   assert.match(selectableTimezone, /<select data-timezone-select aria-label="Confirmar zona horaria"><\/select>/)
   assert.match(selectableTimezone, /if \(timezoneStep\) timezoneStep\.hidden = !key;/)

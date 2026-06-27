@@ -2188,6 +2188,7 @@ export function renderPublicCalendarHtml(calendar, { host = '', embedded = false
     .requiredMark{color:var(--accent);margin-left:3px;font-weight:500}
     label{display:block;font-size:.8rem;font-weight:500;letter-spacing:0;color:var(--heading)}
     input,textarea,select{width:100%;border:1px solid var(--field-border);border-radius:var(--field-radius);background:var(--field-bg);color:var(--field-text);font-size:.95rem;padding:12px 14px;min-height:46px;outline:none;transition:border-color .15s,box-shadow .15s}
+    .timezoneStep .timezoneControl select{appearance:none;-webkit-appearance:none;padding-right:42px;line-height:1.2;background-image:linear-gradient(45deg,transparent 50%,var(--field-text) 50%),linear-gradient(135deg,var(--field-text) 50%,transparent 50%);background-position:calc(100% - 16px) calc(50% - 2px),calc(100% - 11px) calc(50% - 2px);background-size:5px 5px,5px 5px;background-repeat:no-repeat}
     textarea{resize:vertical}
     input:focus,textarea:focus,select:focus{border-color:var(--accent);box-shadow:0 0 0 3px color-mix(in srgb,var(--accent) 16%,transparent)}
     .options{display:grid;gap:8px}
