@@ -1,4 +1,4 @@
-# Servicio Backend De Calendarios HighLevel
+# Servicio Backend De Calendarios Ristak / HighLevel Opcional
 
 Documentación del módulo backend actual:
 
@@ -6,7 +6,7 @@ Documentación del módulo backend actual:
 - `backend/src/controllers/calendarsController.js`
 - `backend/src/routes/calendars.routes.js`
 
-## API Externa
+## API Externa De HighLevel
 
 - Base URL: `https://services.leadconnectorhq.com`
 - Header Version: `2021-04-15`
@@ -55,7 +55,7 @@ Lista eventos/citas por rango en timestamp ms. `calendarId` es opcional.
 
 ### `getAppointment(eventId, accessToken)`
 
-Obtiene detalle de una cita. El controlador usa `ghlClient` para este endpoint porque ya tiene token configurado.
+Obtiene detalle de una cita remota de HighLevel. Para citas propias de Ristak, el controlador puede responder desde la base local.
 
 ### `getFreeSlots(calendarId, startDate, endDate, accessToken, timezone = 'America/Mexico_City')`
 
@@ -114,15 +114,15 @@ Los endpoints devuelven normalmente:
 
 ## Requisitos
 
-El frontend obtiene `locationId` y `accessToken` desde `AuthContext`, que a su vez consulta:
+Ristak puede operar calendarios, citas y bloqueos con datos locales aunque HighLevel no esté conectado. Si se quiere sincronizar con HighLevel, el frontend obtiene `locationId` y `accessToken` desde `AuthContext`, que a su vez consulta:
 
 ```http
 GET /api/integrations/status
 ```
 
-Para que calendarios funcionen:
+Para que la sincronización con HighLevel funcione:
 
-- HighLevel debe estar configurado en Settings.
+- HighLevel debe estar configurado en Settings sólo para recursos remotos o sincronizados con esa integración.
 - El token debe tener permisos para calendarios, eventos, usuarios y citas.
 - Para productos/pagos relacionados, algunos flujos requieren scopes adicionales fuera de este módulo.
 

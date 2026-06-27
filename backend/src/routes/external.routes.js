@@ -1,6 +1,6 @@
 import express from 'express'
 import crypto from 'crypto'
-import { db } from '../config/database.js'
+import { db, getHighLevelConfig } from '../config/database.js'
 import {
   getFunnelData,
   getMetrics as getDashboardMetrics,
@@ -32,7 +32,10 @@ import { getExternalApiAppId } from '../utils/apiTokens.js'
 import { getGHLClient } from '../services/ghlClient.js'
 import {
   finalizePreparedPhoneUpsert,
+  generateContactId,
+  getGhlContactIdForLocalContact,
   isRistakContactId,
+  linkContactToGhl,
   prepareContactPhoneUpsert,
   resolveOrCreateContactForGhl
 } from '../services/contactIdentityService.js'
@@ -328,6 +331,42 @@ async function upsertLocalContact(contact = {}) {
   return db.get('SELECT * FROM contacts WHERE id = ?', [id])
 }
 
+function getOptionalHighLevelSyncStatus(status, error = null) {
+  const message = error?.message || error || ''
+  return {
+    provider: 'local',
+    status: 'local-only',
+    optionalHighLevel: {
+      provider: 'highlevel',
+      status,
+      optional: true,
+      ...(message ? { error: String(message).slice(0, 500) } : {})
+    }
+  }
+}
+
+function getSyncedHighLevelStatus(id) {
+  return {
+    provider: 'highlevel',
+    status: 'synced',
+    optional: true,
+    id
+  }
+}
+
+async function getOptionalHighLevelClient() {
+  const config = await getHighLevelConfig().catch(() => null)
+  if (!config?.api_token || !config?.location_id) {
+    return { client: null, sync: getOptionalHighLevelSyncStatus('not_configured') }
+  }
+
+  try {
+    return { client: await getGHLClient(), sync: null }
+  } catch (error) {
+    return { client: null, sync: getOptionalHighLevelSyncStatus('error', error) }
+  }
+}
+
 function normalizeGhlApiPath(path) {
   const normalizedPath = String(path || '').trim()
   if (!normalizedPath.startsWith('/') || normalizedPath.startsWith('//') || normalizedPath.includes('..') || /^https?:\/\//i.test(normalizedPath)) {
@@ -346,7 +385,7 @@ async function getOpenApiSpec(req, res) {
     info: {
       title: 'Ristak External API',
       version: '1.0.0',
-      description: 'API autenticada para consultar y modificar datos de Ristak desde sistemas externos autorizados, con sincronización hacia GoHighLevel cuando el recurso tiene espejo.'
+      description: 'API autenticada para consultar y modificar datos propios de Ristak desde sistemas externos autorizados. GoHighLevel es una sincronización opcional cuando el recurso tiene espejo.'
     },
     'x-ristak-app-id': appId,
     servers: origin ? [{ url: origin }] : undefined,
@@ -404,7 +443,7 @@ async function getOpenApiSpec(req, res) {
         },
         post: {
           operationId: 'createRistakDataRow',
-          summary: 'Crea una fila. En contacts sincroniza primero con GoHighLevel y guarda el espejo local',
+          summary: 'Crea una fila local en Ristak. En contacts intenta sincronizar con GoHighLevel sólo si esa integración opcional está disponible',
           parameters: [
             { name: 'table', in: 'path', required: true, schema: { type: 'string' } }
           ],
@@ -432,7 +471,7 @@ async function getOpenApiSpec(req, res) {
         },
         put: {
           operationId: 'replaceRistakDataRow',
-          summary: 'Actualiza una fila. En contacts sincroniza con GoHighLevel antes de guardar local',
+          summary: 'Actualiza una fila local en Ristak. En contacts intenta sincronizar con GoHighLevel sólo si esa integración opcional está disponible',
           parameters: [
             { name: 'table', in: 'path', required: true, schema: { type: 'string' } },
             { name: 'id', in: 'path', required: true, schema: { type: 'string' } },
@@ -450,7 +489,7 @@ async function getOpenApiSpec(req, res) {
         },
         patch: {
           operationId: 'patchRistakDataRow',
-          summary: 'Actualiza parcialmente una fila. En contacts sincroniza con GoHighLevel antes de guardar local',
+          summary: 'Actualiza parcialmente una fila local en Ristak. En contacts intenta sincronizar con GoHighLevel sólo si esa integración opcional está disponible',
           parameters: [
             { name: 'table', in: 'path', required: true, schema: { type: 'string' } },
             { name: 'id', in: 'path', required: true, schema: { type: 'string' } },
@@ -468,7 +507,7 @@ async function getOpenApiSpec(req, res) {
         },
         delete: {
           operationId: 'deleteRistakDataRow',
-          summary: 'Elimina una fila. En contacts elimina primero en GoHighLevel y después el espejo local',
+          summary: 'Elimina una fila local en Ristak. En contacts intenta eliminar el espejo de GoHighLevel sólo si esa integración opcional está disponible',
           parameters: [
             { name: 'table', in: 'path', required: true, schema: { type: 'string' } },
             { name: 'id', in: 'path', required: true, schema: { type: 'string' } },
@@ -901,30 +940,54 @@ async function createExternalContact(req, res) {
       return res.status(400).json({ success: false, error: 'full_name, email o phone requerido' })
     }
 
-    const ghlClient = await getGHLClient()
-    const ghlResult = await ghlClient.createContact({
-      name: payload.full_name || payload.email || payload.phone,
-      email: payload.email,
-      phone: payload.phone
-    })
-    const ghlContact = ghlResult.contact || ghlResult
-    const localContact = await upsertLocalContact({
+    let localContact = await upsertLocalContact({
       ...payload,
-      ...ghlContact,
-      id: ghlContact.id || payload.id
+      id: payload.id || generateContactId()
     })
 
-    res.status(201).json({
-      success: true,
-      data: sanitizeForExternal(localContact),
-      sync: {
-        provider: 'highlevel',
-        status: 'synced',
-        id: ghlContact.id || payload.id
+    const { client: ghlClient, sync: fallbackSync } = await getOptionalHighLevelClient()
+    if (!ghlClient) {
+      return res.status(201).json({
+        success: true,
+        data: sanitizeForExternal(localContact),
+        sync: fallbackSync
+      })
+    }
+
+    try {
+      const ghlResult = await ghlClient.createContact({
+        name: payload.full_name || payload.email || payload.phone,
+        email: payload.email,
+        phone: payload.phone
+      })
+      const ghlContact = ghlResult.contact || ghlResult
+      const ghlContactId = ghlContact.id || ghlContact._id || null
+      if (!ghlContactId) {
+        throw new Error('GoHighLevel no devolvió ID del contacto sincronizado.')
       }
-    })
+
+      await linkContactToGhl(localContact.id, ghlContactId)
+      localContact = await upsertLocalContact({
+        ...localContact,
+        ...payload,
+        ...ghlContact,
+        id: localContact.id
+      })
+
+      return res.status(201).json({
+        success: true,
+        data: sanitizeForExternal(localContact),
+        sync: getSyncedHighLevelStatus(ghlContactId)
+      })
+    } catch (error) {
+      return res.status(201).json({
+        success: true,
+        data: sanitizeForExternal(localContact),
+        sync: getOptionalHighLevelSyncStatus('error', error)
+      })
+    }
   } catch (error) {
-    res.status(502).json({ success: false, error: `No se pudo sincronizar con GoHighLevel: ${error.message}` })
+    res.status(400).json({ success: false, error: error.message })
   }
 }
 
@@ -995,24 +1058,62 @@ async function updateExternalContact(req, res) {
       return res.status(400).json({ success: false, error: 'No hay campos permitidos para actualizar' })
     }
 
-    const ghlClient = await getGHLClient()
-    const ghlResult = await ghlClient.updateContact(id, ghlUpdateData)
-    const ghlContact = ghlResult.contact || ghlResult
-    const localContact = await upsertLocalContact({
+    let localContact = await upsertLocalContact({
       ...existing,
       ...payload,
-      ...ghlContact,
       ...(source.customFields !== undefined ? { customFields: source.customFields } : {}),
       id
     })
 
-    res.json({
-      success: true,
-      data: sanitizeForExternal(localContact),
-      sync: { provider: 'highlevel', status: 'synced', id }
-    })
+    const { client: ghlClient, sync: fallbackSync } = await getOptionalHighLevelClient()
+    if (!ghlClient) {
+      return res.json({
+        success: true,
+        data: sanitizeForExternal(localContact),
+        sync: fallbackSync
+      })
+    }
+
+    try {
+      const ghlContactId = await getGhlContactIdForLocalContact(id)
+      const syncPayload = {
+        name: payload.full_name || localContact.full_name || localContact.email || localContact.phone,
+        email: payload.email || localContact.email,
+        phone: payload.phone || localContact.phone,
+        ...ghlUpdateData
+      }
+      const ghlResult = ghlContactId
+        ? await ghlClient.updateContact(ghlContactId, ghlUpdateData)
+        : await ghlClient.createContact(syncPayload)
+      const ghlContact = ghlResult.contact || ghlResult
+      const syncedGhlContactId = ghlContact.id || ghlContact._id || ghlContactId || null
+      if (!syncedGhlContactId) {
+        throw new Error('GoHighLevel no devolvió ID del contacto sincronizado.')
+      }
+
+      await linkContactToGhl(localContact.id, syncedGhlContactId)
+      localContact = await upsertLocalContact({
+        ...localContact,
+        ...payload,
+        ...ghlContact,
+        ...(source.customFields !== undefined ? { customFields: source.customFields } : {}),
+        id: localContact.id
+      })
+
+      return res.json({
+        success: true,
+        data: sanitizeForExternal(localContact),
+        sync: getSyncedHighLevelStatus(syncedGhlContactId)
+      })
+    } catch (error) {
+      return res.json({
+        success: true,
+        data: sanitizeForExternal(localContact),
+        sync: getOptionalHighLevelSyncStatus('error', error)
+      })
+    }
   } catch (error) {
-    res.status(502).json({ success: false, error: `No se pudo sincronizar con GoHighLevel: ${error.message}` })
+    res.status(400).json({ success: false, error: error.message })
   }
 }
 
@@ -1069,17 +1170,42 @@ async function deleteExternalContact(req, res) {
     const existing = await db.get('SELECT id, full_name FROM contacts WHERE id = ?', [id])
     if (!existing) return res.status(404).json({ success: false, error: 'Contacto no encontrado' })
 
-    const ghlClient = await getGHLClient()
-    await ghlClient.deleteContact(id)
+    const ghlContactId = await getGhlContactIdForLocalContact(id)
     await db.run('DELETE FROM contacts WHERE id = ?', [id])
 
-    res.json({
-      success: true,
-      data: sanitizeForExternal(existing),
-      sync: { provider: 'highlevel', status: 'synced', id }
-    })
+    const { client: ghlClient, sync: fallbackSync } = await getOptionalHighLevelClient()
+    if (!ghlClient) {
+      return res.json({
+        success: true,
+        data: sanitizeForExternal(existing),
+        sync: fallbackSync
+      })
+    }
+
+    if (!ghlContactId) {
+      return res.json({
+        success: true,
+        data: sanitizeForExternal(existing),
+        sync: getOptionalHighLevelSyncStatus('not_linked')
+      })
+    }
+
+    try {
+      await ghlClient.deleteContact(ghlContactId)
+      return res.json({
+        success: true,
+        data: sanitizeForExternal(existing),
+        sync: getSyncedHighLevelStatus(ghlContactId)
+      })
+    } catch (error) {
+      return res.json({
+        success: true,
+        data: sanitizeForExternal(existing),
+        sync: getOptionalHighLevelSyncStatus('error', error)
+      })
+    }
   } catch (error) {
-    res.status(502).json({ success: false, error: `No se pudo sincronizar con GoHighLevel: ${error.message}` })
+    res.status(400).json({ success: false, error: error.message })
   }
 }
 

@@ -582,6 +582,38 @@ export async function listLocalProducts({ limit = 100, offset = 0, query = '', i
   return { products, total: products.length }
 }
 
+async function markLocalProductSyncError(productId, error) {
+  const message = cleanString(error?.message || error).slice(0, 1000)
+  await db.run(
+    `UPDATE products
+     SET sync_status = 'error',
+         sync_error = ?,
+         updated_at = CURRENT_TIMESTAMP
+     WHERE id = ?`,
+    [message, productId]
+  )
+  await db.run(
+    `UPDATE product_prices
+     SET sync_status = 'error',
+         sync_error = ?,
+         updated_at = CURRENT_TIMESTAMP
+     WHERE product_id = ? AND COALESCE(sync_status, 'pending') != 'synced'`,
+    [message, productId]
+  )
+}
+
+async function markLocalPriceSyncError(priceId, error) {
+  const message = cleanString(error?.message || error).slice(0, 1000)
+  await db.run(
+    `UPDATE product_prices
+     SET sync_status = 'error',
+         sync_error = ?,
+         updated_at = CURRENT_TIMESTAMP
+     WHERE id = ?`,
+    [message, priceId]
+  )
+}
+
 export async function createLocalProduct(input = {}, options = {}) {
   const product = await upsertLocalProduct(input, {
     source: 'ristak',
@@ -617,16 +649,11 @@ export async function createLocalProduct(input = {}, options = {}) {
     try {
       const syncResult = await syncProductWithSavedConfig(product.id)
       if (highLevelConnected && syncResult?.skipped) {
-        throw new Error('HighLevel esta conectado, pero no se pudo iniciar la sincronización del producto.')
+        throw new Error('No se pudo iniciar la sincronización opcional del producto con HighLevel.')
       }
     } catch (error) {
-      if (highLevelConnected) {
-        await db.run('DELETE FROM product_prices WHERE product_id = ?', [product.id])
-        await db.run('DELETE FROM products WHERE id = ?', [product.id])
-        throw new Error(`No se creo el producto porque HighLevel esta conectado y debe quedar espejado: ${error.message}`)
-      }
-
-      logger.warn(`No se pudo sincronizar producto local ${product.id}: ${error.message}`)
+      await markLocalProductSyncError(product.id, error)
+      logger.warn(`Producto local ${product.id} guardado en Ristak; la sincronización opcional con HighLevel falló: ${error.message}`)
     }
   }
 
@@ -650,15 +677,11 @@ export async function createLocalPrice(productId, input = {}, options = {}) {
     try {
       const syncResult = await syncProductWithSavedConfig(price.product_id)
       if (highLevelConnected && syncResult?.skipped) {
-        throw new Error('HighLevel esta conectado, pero no se pudo iniciar la sincronización del precio.')
+        throw new Error('No se pudo iniciar la sincronización opcional del precio con HighLevel.')
       }
     } catch (error) {
-      if (highLevelConnected) {
-        await db.run('DELETE FROM product_prices WHERE id = ?', [price.id])
-        throw new Error(`No se creo el precio porque HighLevel esta conectado y debe quedar espejado: ${error.message}`)
-      }
-
-      logger.warn(`No se pudo sincronizar precio local ${price.id}: ${error.message}`)
+      await markLocalPriceSyncError(price.id, error)
+      logger.warn(`Precio local ${price.id} guardado en Ristak; la sincronización opcional con HighLevel falló: ${error.message}`)
     }
   }
 
@@ -731,14 +754,11 @@ export async function updateLocalProduct(productId, input = {}, options = {}) {
     try {
       const syncResult = await syncProductWithSavedConfig(existing.id)
       if (highLevelConnected && syncResult?.skipped) {
-        throw new Error('HighLevel esta conectado, pero no se pudo iniciar la sincronización del producto.')
+        throw new Error('No se pudo iniciar la sincronización opcional del producto con HighLevel.')
       }
     } catch (error) {
-      if (highLevelConnected) {
-        throw new Error(`No se actualizo el producto en HighLevel: ${error.message}`)
-      }
-
-      logger.warn(`No se pudo sincronizar producto actualizado ${existing.id}: ${error.message}`)
+      await markLocalProductSyncError(existing.id, error)
+      logger.warn(`Producto local ${existing.id} actualizado en Ristak; la sincronización opcional con HighLevel falló: ${error.message}`)
     }
   }
 
