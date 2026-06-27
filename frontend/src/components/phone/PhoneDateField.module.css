@@ -8,6 +8,10 @@
   z-index: 14;
 }
 
+.hostInlineOpen {
+  z-index: var(--z-index-popover);
+}
+
 .trigger {
   display: inline-flex;
   align-items: center;

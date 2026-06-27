@@ -195,8 +195,15 @@ export const PhoneDateField: React.FC<PhoneDateFieldProps> = ({
     </>
   )
 
+  const hostClassName = [
+    styles.host,
+    useInlinePanel ? styles.hostInline : '',
+    open && useInlinePanel ? styles.hostInlineOpen : '',
+    className
+  ].filter(Boolean).join(' ')
+
   return (
-    <div ref={hostRef} className={`${styles.host} ${useInlinePanel ? styles.hostInline : ''} ${className}`}>
+    <div ref={hostRef} className={hostClassName}>
       <button
         type="button"
         className={`${styles.trigger} ${buttonClassName}`}
