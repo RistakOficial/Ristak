@@ -186,6 +186,7 @@ const MERCADOPAGO_PLAN_PAYMENT_METHOD_OPTIONS = [
   { value: 'check', label: 'Cheque' },
   { value: 'other', label: 'Otro' }
 ]
+const OFFLINE_PLAN_PAYMENT_METHODS = new Set(['cash', 'bank_transfer', 'transfer', 'deposit', 'check', 'other', 'manual', 'offline'])
 const STRIPE_PLAN_FREQUENCY_OPTIONS = [
   { value: 'custom', label: 'Personalizada' },
   { value: 'daily', label: 'Diaria' },
@@ -197,6 +198,15 @@ const STRIPE_PLAN_FREQUENCY_OPTIONS = [
 const toDateInputValue = (value?: string | null): string => {
   if (!value) return formatDateToISO(new Date())
   return String(value).split('T')[0]
+}
+
+const getTodayInputValue = () => formatDateToISO(new Date())
+
+const isDateBeforeToday = (value?: string | null) => Boolean(value && value < getTodayInputValue())
+
+const clampDateToToday = (value?: string | null) => {
+  const today = getTodayInputValue()
+  return value && value >= today ? value : today
 }
 
 const toDateTimeInputValue = (value?: string | null): string => {
@@ -267,6 +277,13 @@ const getDefaultPlanMethod = (provider: LocalCheckoutPlanProvider) => (
 const getStripePlanMethodLabel = (method?: string | null, provider: LocalCheckoutPlanProvider = 'stripe') => {
   const normalized = getEditablePlanMethod(method, provider)
   return getPlanMethodOptions(provider).find(option => option.value === normalized)?.label || normalized
+}
+
+const isOfflinePlanPaymentMethod = (method?: string | null) => OFFLINE_PLAN_PAYMENT_METHODS.has(String(method || '').toLowerCase())
+
+const getEditablePlanDate = (value: string | null | undefined, method: string | null | undefined, locked?: boolean) => {
+  const date = toDateInputValue(value)
+  return locked || isOfflinePlanPaymentMethod(method) ? date : clampDateToToday(date)
 }
 
 const createStripePlanDraftId = () => `draft_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`
@@ -660,34 +677,38 @@ export const Transactions: React.FC = () => {
       : null
     const firstAmount = Number(firstPayment?.amount || 0)
     const firstStatus = String(firstPayment?.status || 'pending').toLowerCase()
+    const firstMethod = getEditablePlanMethod(firstPayment?.method || firstPayment?.paymentMethod, provider)
+    const firstLocked = isStripePlanPaymentLocked(firstStatus) || (provider === 'mercadopago' && Boolean(firstPayment?.paymentLink || firstPayment?.preferenceId))
 
     setStripePlanFirstPaymentDraft(firstAmount > 0 ? {
       localId: 'stripe_first_payment',
       id: 'stripe_first_payment',
       label: 'Primer pago',
       amount: normalizeDraftAmount(firstAmount),
-      dueDate: toDateInputValue(firstPayment?.date || firstPayment?.dueDate || plan.startDate),
-      method: getEditablePlanMethod(firstPayment?.method || firstPayment?.paymentMethod, provider),
+      dueDate: getEditablePlanDate(firstPayment?.date || firstPayment?.dueDate || plan.startDate, firstMethod, firstLocked),
+      method: firstMethod,
       status: firstStatus || 'pending',
       paymentId: firstPayment?.paymentId || null,
-      locked: isStripePlanPaymentLocked(firstStatus) || (provider === 'mercadopago' && Boolean(firstPayment?.paymentLink || firstPayment?.preferenceId))
+      locked: firstLocked
     } : null)
 
     const installments = Array.isArray(schedule.installments) ? schedule.installments : []
     setStripePlanInstallmentDrafts(installments.map((item: Record<string, any>, index: number) => {
       const status = String(item.status || 'pending').toLowerCase()
       const id = String(item.id || `stripe_installment_${index + 1}`)
+      const method = getEditablePlanMethod(item.paymentMethod || item.method, provider)
+      const locked = isStripePlanPaymentLocked(status) || (provider === 'mercadopago' && Boolean(item.preferenceId || item.paymentUrl))
 
       return {
         localId: id,
         id: item.id ? String(item.id) : undefined,
         label: `Pago ${Number(item.sequence || index + 1)}`,
         amount: normalizeDraftAmount(item.amount),
-        dueDate: toDateInputValue(item.dueDate || item.date || item.scheduledAt || plan.nextRunAt),
-        method: getEditablePlanMethod(item.paymentMethod || item.method, provider),
+        dueDate: getEditablePlanDate(item.dueDate || item.date || item.scheduledAt || plan.nextRunAt, method, locked),
+        method,
         status,
         paymentId: item.paymentId || null,
-        locked: isStripePlanPaymentLocked(status) || (provider === 'mercadopago' && Boolean(item.preferenceId || item.paymentUrl))
+        locked
       }
     }))
   }, [])
@@ -991,7 +1012,14 @@ export const Transactions: React.FC = () => {
   }
 
   const updateStripeFirstPaymentDraft = (updates: Partial<StripePlanPaymentDraft>) => {
-    setStripePlanFirstPaymentDraft(prev => prev && !prev.locked ? { ...prev, ...updates } : prev)
+    setStripePlanFirstPaymentDraft(prev => {
+      if (!prev || prev.locked) return prev
+      const next = { ...prev, ...updates }
+      if (!isOfflinePlanPaymentMethod(next.method) && isDateBeforeToday(next.dueDate)) {
+        next.dueDate = getTodayInputValue()
+      }
+      return next
+    })
   }
 
   const removeStripeFirstPaymentDraft = () => {
@@ -1007,7 +1035,7 @@ export const Transactions: React.FC = () => {
       id: 'stripe_first_payment',
       label: 'Primer pago',
       amount: '',
-      dueDate: toDateInputValue(paymentPlanModal.plan?.startDate || paymentPlanModal.plan?.nextRunAt),
+      dueDate: clampDateToToday(toDateInputValue(paymentPlanModal.plan?.startDate || paymentPlanModal.plan?.nextRunAt)),
       method: getDefaultPlanMethod(provider),
       status: 'pending',
       paymentId: null,
@@ -1018,7 +1046,13 @@ export const Transactions: React.FC = () => {
   const updateStripeInstallmentDraft = (localId: string, updates: Partial<StripePlanPaymentDraft>) => {
     setStripePlanInstallmentDrafts(prev => prev.map(installment => (
       installment.localId === localId && !installment.locked
-        ? { ...installment, ...updates }
+        ? (() => {
+            const next = { ...installment, ...updates }
+            if (!isOfflinePlanPaymentMethod(next.method) && isDateBeforeToday(next.dueDate)) {
+              next.dueDate = getTodayInputValue()
+            }
+            return next
+          })()
         : installment
     )))
   }
@@ -1027,7 +1061,7 @@ export const Transactions: React.FC = () => {
     setStripePlanInstallmentDrafts(prev => {
       const provider = getLocalCheckoutPlanProvider(paymentPlanModal.plan)
       const nextIndex = prev.length + 1
-      const nextDueDate = getNextPlanDueDate(prev, paymentPlanModal.plan?.nextRunAt || paymentPlanModal.plan?.startDate)
+      const nextDueDate = clampDateToToday(getNextPlanDueDate(prev, paymentPlanModal.plan?.nextRunAt || paymentPlanModal.plan?.startDate))
 
       return [
         ...prev,
@@ -1084,6 +1118,14 @@ export const Transactions: React.FC = () => {
         return
       }
 
+      const pastAutomaticDate = installments.find(installment => (
+        !isOfflinePlanPaymentMethod(installment.method) && isDateBeforeToday(installment.dueDate)
+      ))
+      if (pastAutomaticDate) {
+        showToast('error', 'Fecha inválida', 'Los cobros automáticos no pueden programarse en fechas pasadas.')
+        return
+      }
+
       const payload: Record<string, any> = {
         name,
         title,
@@ -1100,10 +1142,16 @@ export const Transactions: React.FC = () => {
           return
         }
 
+        const firstPaymentMethod = stripePlanFirstPaymentDraft.method || defaultMethod
+        if (!isOfflinePlanPaymentMethod(firstPaymentMethod) && isDateBeforeToday(stripePlanFirstPaymentDraft.dueDate)) {
+          showToast('error', 'Fecha inválida', 'El primer pago automático no puede programarse en una fecha pasada.')
+          return
+        }
+
         payload.firstPayment = {
           amount: firstPaymentAmount,
           dueDate: stripePlanFirstPaymentDraft.dueDate,
-          method: stripePlanFirstPaymentDraft.method || defaultMethod
+          method: firstPaymentMethod
         }
       } else if (Number(schedule.firstPayment?.amount || 0) > 0) {
         payload.firstPayment = null
@@ -1141,6 +1189,11 @@ export const Transactions: React.FC = () => {
     payload.termsNotes = termsNotes || null
 
     if (executeAt) {
+      if (isDateBeforeToday(executeAt.slice(0, 10))) {
+        showToast('error', 'Fecha inválida', 'El próximo cobro no puede programarse en una fecha pasada.')
+        return
+      }
+
       payload.schedule = payload.schedule && typeof payload.schedule === 'object'
         ? { ...payload.schedule }
         : {}
@@ -1323,6 +1376,16 @@ export const Transactions: React.FC = () => {
 
     if (!startDate) {
       showToast('error', 'Fecha requerida', 'Elige cuándo debe iniciar el plan de pago.')
+      return
+    }
+
+    if (isDateBeforeToday(startDate)) {
+      showToast('error', 'Fecha inválida', 'Los planes de pago no pueden iniciar en fechas pasadas.')
+      return
+    }
+
+    if (scheduleMode === 'recurring' && endType === 'by' && endDate < startDate) {
+      showToast('error', 'Fecha final inválida', 'La fecha final no puede ser anterior al inicio del plan.')
       return
     }
 
@@ -2264,6 +2327,7 @@ export const Transactions: React.FC = () => {
                 type="date"
                 value={draft.dueDate}
                 onChange={(event) => options.onUpdate({ dueDate: event.currentTarget.value })}
+                min={isOfflinePlanPaymentMethod(draft.method) ? undefined : getTodayInputValue()}
                 required
               />
             )}
@@ -3116,6 +3180,7 @@ export const Transactions: React.FC = () => {
                       <input
                         name="endDate"
                         type="date"
+                        min={getTodayInputValue()}
                         required
                       />
                     </div>
@@ -3221,6 +3286,7 @@ export const Transactions: React.FC = () => {
                     name="startDate"
                     type="date"
                     defaultValue={formatDateToISO(new Date())}
+                    min={getTodayInputValue()}
                     required
                   />
                 </div>
@@ -3362,6 +3428,7 @@ export const Transactions: React.FC = () => {
                         <input
                           name="executeAt"
                           type="datetime-local"
+                          min={`${getTodayInputValue()}T00:00`}
                           defaultValue={toDateTimeInputValue(paymentPlanModal.plan.nextRunAt || paymentPlanModal.plan.startDate)}
                         />
                       </div>

@@ -52,6 +52,7 @@ const INACTIVE_INVOICE_SCHEDULE_STATUSES = new Set([
   'paused',
   'void'
 ]);
+const DEFAULT_PAYMENT_TIMEZONE = 'America/Mexico_City';
 const GHL_CHAT_CHANNELS = {
   whatsapp_api: {
     key: 'whatsapp_api',
@@ -89,6 +90,35 @@ const GHL_CHAT_CHANNELS = {
     label: 'Webchat',
     transport: 'ghl_webchat',
     localTable: 'whatsapp'
+  }
+};
+
+const todayDateOnly = () => new Intl.DateTimeFormat('en-CA', {
+  timeZone: DEFAULT_PAYMENT_TIMEZONE,
+  year: 'numeric',
+  month: '2-digit',
+  day: '2-digit'
+}).format(new Date());
+
+const toDateOnly = (value) => {
+  if (!value) return '';
+  const text = String(value).trim();
+  const match = text.match(/^(\d{4}-\d{2}-\d{2})/);
+  if (match) return match[1];
+
+  const date = new Date(text);
+  return Number.isNaN(date.getTime()) ? '' : date.toISOString().slice(0, 10);
+};
+
+const assertInvoiceScheduleDateNotPast = (payload = {}) => {
+  const schedule = payload.schedule && typeof payload.schedule === 'object' ? payload.schedule : {};
+  const rrule = schedule.rrule && typeof schedule.rrule === 'object' ? schedule.rrule : {};
+  const scheduledDate = toDateOnly(rrule.startDate || schedule.executeAt || payload.dueDate || payload.issueDate);
+
+  if (scheduledDate && scheduledDate < todayDateOnly()) {
+    const error = new Error('Los planes de pago no pueden programarse en fechas pasadas.');
+    error.status = 400;
+    throw error;
   }
 };
 const GHL_CHAT_CHANNEL_ALIASES = {
@@ -3139,6 +3169,8 @@ export const createInvoiceSchedule = async (req, res) => {
       });
     }
 
+    assertInvoiceScheduleDateNotPast(payload);
+
     const ghlClient = await getGHLClient();
 
     // El frontend manda el ID local de Ristak; la API de GHL necesita el suyo.
@@ -3193,7 +3225,7 @@ export const createInvoiceSchedule = async (req, res) => {
     });
   } catch (error) {
     logger.error(`Error creando invoice schedule: ${error.message}`);
-    res.status(500).json({
+    res.status(error.status || 500).json({
       success: false,
       error: error.message || 'Error al crear plan de pago'
     });
@@ -3398,6 +3430,8 @@ export const updateInvoiceSchedule = async (req, res) => {
       });
     }
 
+    assertInvoiceScheduleDateNotPast(payload);
+
     const localSchedule = await getLocalInvoiceSchedule(scheduleId);
     if (isStripeLocalInvoiceSchedule(localSchedule)) {
       await updateStripePaymentPlanSchedule(scheduleId, payload);
@@ -3464,7 +3498,7 @@ export const updateInvoiceSchedule = async (req, res) => {
     });
   } catch (error) {
     logger.error(`Error actualizando invoice schedule ${req.params.scheduleId}: ${error.message}`);
-    res.status(500).json({
+    res.status(error.status || 500).json({
       success: false,
       error: error.message || 'Error al actualizar plan de pago'
     });

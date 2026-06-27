@@ -25,6 +25,26 @@ function suffix(label = 'stress') {
   return `${label}_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`
 }
 
+function todayDateOnly() {
+  return new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'America/Mexico_City',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit'
+  }).format(new Date())
+}
+
+function addDaysDateOnly(days) {
+  const date = new Date()
+  date.setDate(date.getDate() + days)
+  return new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'America/Mexico_City',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit'
+  }).format(date)
+}
+
 async function configureStripe({ webhookSecret = '' } = {}) {
   await initializeMasterKey()
   await saveAccountLocaleSettings({ countryCode: 'MX', currency: 'MXN', dialCode: '52' })
@@ -314,6 +334,8 @@ test('planes Stripe: cobra calendario irregular, deja meses sin cobro y no dupli
 
   try {
     await configureStripe()
+    const dueToday = todayDateOnly()
+    const futureDueDate = addDaysDateOnly(45)
 
     const plan = await createStripePaymentPlan({
       contact,
@@ -324,9 +346,9 @@ test('planes Stripe: cobra calendario irregular, deja meses sin cobro y no dupli
       firstPayment: { enabled: false },
       remainingFrequency: 'custom',
       remainingPayments: [
-        { sequence: 1, amount: 1200, percentage: 12, dueDate: '2000-01-10', frequency: 'custom' },
-        { sequence: 2, amount: 3300, percentage: 33, dueDate: '2000-03-10', frequency: 'custom' },
-        { sequence: 3, amount: 5500, percentage: 55, dueDate: '2099-06-10', frequency: 'custom' }
+        { sequence: 1, amount: 1200, percentage: 12, dueDate: dueToday, frequency: 'custom' },
+        { sequence: 2, amount: 3300, percentage: 33, dueDate: dueToday, frequency: 'custom' },
+        { sequence: 3, amount: 5500, percentage: 55, dueDate: futureDueDate, frequency: 'custom' }
       ]
     }, { baseUrl: 'https://example.test' })
 
@@ -385,6 +407,8 @@ test('planes Stripe: cobra primer pago inmediato con tarjeta guardada y deja fut
 
   try {
     await configureStripe()
+    const dueToday = todayDateOnly()
+    const futureDueDate = addDaysDateOnly(30)
 
     const plan = await createStripePaymentPlan({
       contact,
@@ -395,11 +419,11 @@ test('planes Stripe: cobra primer pago inmediato con tarjeta guardada y deja fut
       firstPayment: {
         enabled: true,
         amount: 800,
-        date: '2000-01-01',
+        date: dueToday,
         method: 'saved_card'
       },
       remainingPayments: [
-        { sequence: 1, amount: 2200, percentage: null, dueDate: '2099-02-01', frequency: 'monthly' }
+        { sequence: 1, amount: 2200, percentage: null, dueDate: futureDueDate, frequency: 'monthly' }
       ]
     }, { baseUrl: 'https://example.test' })
 
@@ -437,6 +461,7 @@ test('planes Stripe: payment ya pagado sincroniza parcialidad sin recobrar tarje
 
   try {
     await configureStripe()
+    const dueToday = todayDateOnly()
 
     const plan = await createStripePaymentPlan({
       contact,
@@ -446,7 +471,7 @@ test('planes Stripe: payment ya pagado sincroniza parcialidad sin recobrar tarje
       paymentMethodId: savedMethodId,
       firstPayment: { enabled: false },
       remainingPayments: [
-        { sequence: 1, amount: 450, dueDate: '2000-01-01', frequency: 'monthly' }
+        { sequence: 1, amount: 450, dueDate: dueToday, frequency: 'monthly' }
       ]
     }, { baseUrl: 'https://example.test' })
 
@@ -482,6 +507,7 @@ test('planes Stripe: tarjeta con requires_action marca error y evita reintentos 
 
   try {
     await configureStripe()
+    const dueToday = todayDateOnly()
 
     const plan = await createStripePaymentPlan({
       contact,
@@ -491,7 +517,7 @@ test('planes Stripe: tarjeta con requires_action marca error y evita reintentos 
       paymentMethodId: savedMethodId,
       firstPayment: { enabled: false },
       remainingPayments: [
-        { sequence: 1, amount: 777, dueDate: '2000-01-01', frequency: 'monthly' }
+        { sequence: 1, amount: 777, dueDate: dueToday, frequency: 'monthly' }
       ]
     }, { baseUrl: 'https://example.test' })
 

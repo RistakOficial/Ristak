@@ -146,6 +146,16 @@ function todayDateOnly() {
   }).format(new Date())
 }
 
+function assertDateNotInPast(value, message) {
+  const date = normalizeDateOnly(value)
+  if (date < todayDateOnly()) {
+    const error = new Error(message)
+    error.status = 400
+    throw error
+  }
+  return date
+}
+
 function dateOnlySql(expression) {
   return process.env.DATABASE_URL ? `(${expression})::date` : `DATE(${expression})`
 }
@@ -1131,6 +1141,14 @@ function validatePlanPayload(input = {}) {
     throw error
   }
 
+  const firstPaymentEnabled = input.firstPayment?.enabled !== false && Number(input.firstPayment?.amount || 0) > 0
+  const firstPaymentMethod = firstPaymentEnabled ? cleanString(input.firstPayment?.method || 'mercadopago') : 'none'
+  const firstPaymentDate = firstPaymentEnabled ? normalizeDateOnly(input.firstPayment?.date) : null
+
+  if (firstPaymentDate && !MANUAL_PLAN_PAYMENT_METHODS.has(firstPaymentMethod)) {
+    assertDateNotInPast(firstPaymentDate, 'El primer pago automático no puede programarse en una fecha pasada.')
+  }
+
   return {
     contact: {
       id: cleanString(contact.id),
@@ -1146,16 +1164,16 @@ function validatePlanPayload(input = {}) {
     lineItems: Array.isArray(input.lineItems) ? input.lineItems : [],
     remainingFrequency: cleanString(input.remainingFrequency || 'custom'),
     firstPayment: {
-      enabled: input.firstPayment?.enabled !== false && Number(input.firstPayment?.amount || 0) > 0,
+      enabled: firstPaymentEnabled,
       amount: normalizePositiveAmount(input.firstPayment?.amount || 0, 0),
-      date: normalizeDateOnly(input.firstPayment?.date),
-      method: cleanString(input.firstPayment?.method || 'mercadopago')
+      date: firstPaymentDate,
+      method: firstPaymentMethod
     },
     remainingPayments: remainingPayments.map((payment, index) => ({
       sequence: Number(payment.sequence || index + 1),
       amount: normalizePositiveAmount(payment.amount),
       percentage: payment.percentage === null || payment.percentage === undefined ? null : Number(payment.percentage),
-      dueDate: normalizeDateOnly(payment.dueDate),
+      dueDate: assertDateNotInPast(payment.dueDate, 'Los pagos futuros automáticos no pueden programarse en fechas pasadas.'),
       frequency: cleanString(payment.frequency || input.remainingFrequency || 'custom')
     }))
   }
@@ -1471,6 +1489,10 @@ export async function updateMercadoPagoPaymentPlanSchedule(flowId, input = {}, {
     }
 
     const method = normalizeMercadoPagoPlanPaymentMethod(submitted.paymentMethod || submitted.method)
+    if (method.automatic) {
+      assertDateNotInPast(dueDate, 'Las parcialidades automáticas no pueden programarse en fechas pasadas.')
+    }
+
     const installmentId = existing?.id || createId('mp_installment')
     const paymentId = existing?.payment_id || createId('mp_plan_payment')
     const paymentMode = existing?.payment_mode || metadata.mercadoPagoMode || metadata.paymentMode || 'test'
@@ -1650,9 +1672,14 @@ export async function updateMercadoPagoPaymentPlanSchedule(flowId, input = {}, {
     } else {
       firstPaymentAmount = firstPaymentInputAmount
       firstPaymentDate = normalizeDateOnly(firstPayment.dueDate || firstPayment.date || firstPaymentDate)
+      const firstPaymentMethodInput = cleanString(firstPayment.method || firstPayment.paymentMethod || firstPaymentMethod || 'mercadopago').toLowerCase()
       const normalizedFirstPaymentMethod = normalizeMercadoPagoFirstPaymentMethod(
-        firstPayment.method || firstPayment.paymentMethod || firstPaymentMethod || 'mercadopago'
+        firstPaymentMethodInput
       )
+      if (MERCADOPAGO_CHECKOUT_METHODS.has(firstPaymentMethodInput)) {
+        assertDateNotInPast(firstPaymentDate, 'El primer pago automático no puede programarse en una fecha pasada.')
+      }
+
       firstPaymentMethod = normalizedFirstPaymentMethod.flowMethod
       let firstPaymentPaymentId = flow.first_payment_invoice_id || null
       let firstPaymentStatusNext = firstPaymentStatus && firstPaymentStatus !== 'not_required'

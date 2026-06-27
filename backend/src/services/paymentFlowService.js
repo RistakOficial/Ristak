@@ -85,6 +85,16 @@ function todayDateOnly(timezone = DEFAULT_PAYMENT_TIMEZONE) {
   return DateTime.now().setZone(zone).toISODate()
 }
 
+function assertDateNotInPast(value, message, timezone = DEFAULT_PAYMENT_TIMEZONE) {
+  const normalizedDate = normalizeDateOnly(value, timezone)
+  if (normalizedDate < todayDateOnly(timezone)) {
+    const error = new Error(message)
+    error.status = 400
+    throw error
+  }
+  return normalizedDate
+}
+
 function resolveInvoiceDates(dueDate, fallbackDueDate, timezone = DEFAULT_PAYMENT_TIMEZONE) {
   const issueDate = todayDateOnly(timezone)
   const requestedDueDate = normalizeDateOnly(dueDate || fallbackDueDate || issueDate, timezone)
@@ -1841,6 +1851,19 @@ export async function createInstallmentPaymentFlow(payload) {
     forceNewCardAuthorization ||
     (!alreadyHasAuthorizedCard && (!firstPaymentEnabled || firstPaymentIsOffline))
   )
+
+  if (firstPaymentEnabled && !firstPaymentIsOffline) {
+    assertDateNotInPast(firstPaymentDate, 'Los pagos automáticos no pueden programarse en fechas pasadas.')
+  }
+
+  if (remainingAutomatic) {
+    for (const payment of remainingPayments) {
+      assertDateNotInPast(
+        payment.dueDate || payment.due_date,
+        'Los pagos restantes automáticos no pueden programarse en fechas pasadas.'
+      )
+    }
+  }
 
   if (firstPaymentUsesStoredCard && !firstPaymentStoredCardShouldRecordNow) {
     throw new Error('Para programar un primer pago futuro con tarjeta guardada, envíalo como pago automático restante, no como primer pago inmediato.')

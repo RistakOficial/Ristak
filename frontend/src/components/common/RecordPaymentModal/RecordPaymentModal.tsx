@@ -3308,6 +3308,7 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
                           <span className={styles.cellLabel}>Fecha de cobro</span>
                           <PhoneDateField
                             value={installment.dueDate}
+                            min={toDateInputValue(new Date())}
                             onChange={(value) => updateRemainingInstallment(installment.id, { dueDate: value })}
                             disabled={remainingFrequency !== 'custom'}
                             title={`Fecha de parcialidad ${installment.sequence}`}

@@ -30,6 +30,7 @@ const SUBSCRIPTION_PREFIX = 'rstk_sub'
 const DEFAULT_CURRENCY = 'MXN'
 const DEFAULT_INTERVAL = 'monthly'
 const DEFAULT_STATUS = 'active'
+const DEFAULT_PAYMENT_TIMEZONE = 'America/Mexico_City'
 
 const ACTIVE_STATUSES = new Set(['active', 'trialing'])
 const PAUSED_STATUSES = new Set(['paused'])
@@ -106,6 +107,43 @@ function nullableDate(value) {
   if (!Number.isNaN(date.getTime())) return date.toISOString()
 
   return cleaned
+}
+
+function todayDateOnly() {
+  return new Intl.DateTimeFormat('en-CA', {
+    timeZone: DEFAULT_PAYMENT_TIMEZONE,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit'
+  }).format(new Date())
+}
+
+function toDateOnly(value) {
+  if (!value) return null
+  const text = cleanString(value)
+  const match = text.match(/^(\d{4}-\d{2}-\d{2})/)
+  if (match) return match[1]
+
+  const date = new Date(text)
+  return Number.isNaN(date.getTime()) ? null : date.toISOString().slice(0, 10)
+}
+
+function assertSubscriptionDatesNotInPast(row = {}) {
+  const today = todayDateOnly()
+  const startDate = toDateOnly(row.start_date)
+  const nextRunAt = toDateOnly(row.next_run_at)
+
+  if (startDate && startDate < today) {
+    const error = new Error('Las suscripciones automáticas no pueden iniciar en fechas pasadas.')
+    error.status = 400
+    throw error
+  }
+
+  if (nextRunAt && nextRunAt < today) {
+    const error = new Error('El próximo cobro de una suscripción automática no puede estar en una fecha pasada.')
+    error.status = 400
+    throw error
+  }
 }
 
 function parseJson(value, fallback = null) {
@@ -591,6 +629,7 @@ export async function createSubscription(payload = {}) {
 
   if (!row.name) throw new Error('El nombre de la suscripción es obligatorio.')
   if (!row.amount || row.amount <= 0) throw new Error('El monto de la suscripción debe ser mayor a cero.')
+  assertSubscriptionDatesNotInPast(row)
   row = await attachStripeSubscriptionIfNeeded(row, payload)
   row = await attachMercadoPagoSubscriptionIfNeeded(row, payload)
   row = await attachConektaSubscriptionIfNeeded(row, payload)
@@ -695,6 +734,7 @@ export async function updateSubscription(subscriptionId, payload = {}) {
 
   if (!row.name) throw new Error('El nombre de la suscripción es obligatorio.')
   if (!row.amount || row.amount <= 0) throw new Error('El monto de la suscripción debe ser mayor a cero.')
+  assertSubscriptionDatesNotInPast(row)
   row = await syncStripeSubscriptionUpdateIfNeeded(row, existing)
   row = await syncMercadoPagoSubscriptionUpdateIfNeeded(row, existing)
   row = await syncConektaSubscriptionUpdateIfNeeded(row, existing, payload)
@@ -834,6 +874,7 @@ export async function actionSubscription(subscriptionId, action, payload = {}) {
     }
 
     const nextRunAt = nullableDate(payload.nextRunAt ?? payload.next_run_at ?? existing.next_run_at) || new Date().toISOString()
+    assertSubscriptionDatesNotInPast({ start_date: existing.start_date, next_run_at: nextRunAt })
     await db.run(
       `UPDATE subscriptions
        SET status = 'active',

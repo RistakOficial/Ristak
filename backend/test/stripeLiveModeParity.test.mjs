@@ -21,17 +21,26 @@ function suffix(label = 'live_parity') {
   return `${label}_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`
 }
 
+function todayDateOnly() {
+  return new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'America/Mexico_City',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit'
+  }).format(new Date())
+}
+
 async function snapshotStripeConfig(callback) {
   const previousRows = await db.all(
-    "SELECT config_key, config_value FROM app_config WHERE config_key LIKE 'stripe_%'"
+    "SELECT config_key, config_value FROM app_config WHERE config_key LIKE 'stripe_%' OR config_key = 'payments_settings'"
   )
   const previousEnv = Object.fromEntries(STRIPE_ENV_KEYS.map((key) => [key, process.env[key]]))
 
   try {
-    await db.run("DELETE FROM app_config WHERE config_key LIKE 'stripe_%'")
+    await db.run("DELETE FROM app_config WHERE config_key LIKE 'stripe_%' OR config_key = 'payments_settings'")
     return await callback()
   } finally {
-    await db.run("DELETE FROM app_config WHERE config_key LIKE 'stripe_%'")
+    await db.run("DELETE FROM app_config WHERE config_key LIKE 'stripe_%' OR config_key = 'payments_settings'")
     for (const row of previousRows) {
       await db.run(`
         INSERT INTO app_config (config_key, config_value, updated_at)
@@ -385,7 +394,7 @@ test('Stripe live parity: configuración manual live usa customer y tarjeta live
         paymentMethodId: liveSavedMethodId,
         firstPayment: { enabled: false },
         remainingPayments: [
-          { sequence: 1, amount: 250, dueDate: '2000-01-01', frequency: 'monthly' },
+          { sequence: 1, amount: 250, dueDate: todayDateOnly(), frequency: 'monthly' },
           { sequence: 2, amount: 750, dueDate: '2099-01-01', frequency: 'monthly' }
         ]
       }, { baseUrl: 'https://app.example.com' })

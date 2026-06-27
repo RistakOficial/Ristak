@@ -65,6 +65,11 @@
   -webkit-tap-highlight-color: transparent;
 }
 
+.todayButton:disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
+}
+
 .popoverPanel {
   position: absolute;
   top: calc(100% + 8px);
@@ -118,6 +123,11 @@
   -webkit-tap-highlight-color: transparent;
 }
 
+.monthRow button:disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
+}
+
 .monthRow span {
   overflow: hidden;
   font-size: 18px;
@@ -155,12 +165,16 @@
   padding-bottom: 4px;
 }
 
-.days button {
+.days button,
+.emptyDay {
   display: inline-flex;
   align-items: center;
   justify-content: center;
   aspect-ratio: 1;
   min-width: 0;
+}
+
+.days button {
   border: 0;
   border-radius: 999px;
   color: var(--phone-chat-text, #111111);
@@ -168,6 +182,10 @@
   font-size: 16px;
   font-weight: 760;
   -webkit-tap-highlight-color: transparent;
+}
+
+.emptyDay {
+  pointer-events: none;
 }
 
 .days button:disabled {

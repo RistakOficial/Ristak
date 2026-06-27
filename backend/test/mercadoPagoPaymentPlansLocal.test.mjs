@@ -15,6 +15,21 @@ import { savePaymentSettings } from '../src/services/paymentSettingsService.js'
 import { encrypt } from '../src/utils/encryption.js'
 import { initializeMasterKey } from '../src/utils/encryption.js'
 
+function dateOnlyInDays(days) {
+  const date = new Date()
+  date.setDate(date.getDate() + days)
+  return new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'America/Mexico_City',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit'
+  }).format(date)
+}
+
+function localIsoInDays(days) {
+  return `${dateOnlyInDays(days)}T10:00:00.000-06:00`
+}
+
 async function snapshotMercadoPagoConfig(callback) {
   const previousRows = await db.all(
     "SELECT config_key, config_value FROM app_config WHERE config_key LIKE 'mercadopago_%' OR config_key = 'payments_settings'"
@@ -243,6 +258,8 @@ test('Mercado Pago crea suscripcion recurrente real con preapproval pendiente', 
       contactId: `contact_mp_sub_${suffix}`,
       subscriptionId: ''
     }
+    const startDate = dateOnlyInDays(1)
+    const nextPaymentDate = localIsoInDays(31)
     const calls = []
 
     setMercadoPagoFetchForTest(async (url, options = {}) => {
@@ -274,7 +291,7 @@ test('Mercado Pago crea suscripcion recurrente real con preapproval pendiente', 
           auto_recurring: body.auto_recurring,
           payer_id: 'payer_123',
           status: 'pending',
-          next_payment_date: '2026-07-21T10:00:00.000-06:00'
+          next_payment_date: nextPaymentDate
         })
       }
     })
@@ -292,7 +309,7 @@ test('Mercado Pago crea suscripcion recurrente real con preapproval pendiente', 
         amount: 149,
         intervalType: 'monthly',
         intervalCount: 1,
-        startDate: '2026-06-21',
+        startDate,
         paymentMethod: 'mercadopago_subscription',
         paymentProvider: 'mercadopago',
         status: 'incomplete'
@@ -333,6 +350,8 @@ test('Mercado Pago registra cobro recurrente por webhook subscription_authorized
       contactId: `contact_mp_sub_pay_${suffix}`,
       subscriptionId: `rstk_sub_mp_pay_${suffix}`
     }
+    const startDate = dateOnlyInDays(1)
+    const nextPaymentDate = localIsoInDays(31)
 
     setMercadoPagoFetchForTest(async (url, options = {}) => {
       assert.equal(options.headers?.Authorization, 'Bearer TEST-access-token')
@@ -350,7 +369,7 @@ test('Mercado Pago registra cobro recurrente por webhook subscription_authorized
           external_reference: ids.subscriptionId,
           currency_id: 'MXN',
           transaction_amount: '199.50',
-          debit_date: '2026-07-21T10:00:00.000-06:00',
+          debit_date: nextPaymentDate,
           status: 'processed',
           summarized: 'charged',
           payment: {
@@ -384,8 +403,8 @@ test('Mercado Pago registra cobro recurrente por webhook subscription_authorized
         'Membresia MP cobrada',
         '',
         199.5,
-        '2026-06-21',
-        '2026-07-21T10:00:00.000-06:00',
+        startDate,
+        nextPaymentDate,
         'mp_preapproval_pay_1'
       ]
     )

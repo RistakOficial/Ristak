@@ -121,6 +121,15 @@ function getTodayInputValue() {
   return new Date().toISOString().slice(0, 10)
 }
 
+function isDateBeforeToday(value?: string | null) {
+  return Boolean(value && value < getTodayInputValue())
+}
+
+function clampDateToToday(value?: string | null) {
+  const today = getTodayInputValue()
+  return value && value >= today ? value : today
+}
+
 function createEmptyForm(): SubscriptionFormState {
   const today = getTodayInputValue()
 
@@ -398,8 +407,8 @@ export const PaymentSubscriptions: React.FC = () => {
       amount: subscription.amount ? String(subscription.amount) : '',
       intervalType: (subscription.intervalType as SubscriptionInterval) || 'monthly',
       intervalCount: String(subscription.intervalCount || 1),
-      startDate: toDateInputValue(subscription.startDate) || getTodayInputValue(),
-      nextRunAt: toDateInputValue(subscription.nextRunAt) || getTodayInputValue(),
+      startDate: clampDateToToday(toDateInputValue(subscription.startDate)),
+      nextRunAt: clampDateToToday(toDateInputValue(subscription.nextRunAt)),
       status: (subscription.status as SubscriptionStatus) || 'active',
       paymentMethod: subscription.paymentMethod || 'stripe_saved_card',
       paymentProvider: resolvePaymentProvider(subscription.paymentProvider)
@@ -434,7 +443,12 @@ export const PaymentSubscriptions: React.FC = () => {
   }
 
   const patchForm = (field: keyof SubscriptionFormState, value: string) => {
-    setForm((current) => ({ ...current, [field]: value }))
+    setForm((current) => ({
+      ...current,
+      [field]: field === 'startDate' || field === 'nextRunAt'
+        ? clampDateToToday(value)
+        : value
+    }))
   }
 
   const validateSubscriptionDetails = () => {
@@ -499,6 +513,11 @@ export const PaymentSubscriptions: React.FC = () => {
 
     if (provider === 'conekta' && form.intervalType === 'daily') {
       showToast('warning', 'Frecuencia no soportada', 'Conekta no acepta suscripciones diarias. Usa semanal, mensual o anual.')
+      return null
+    }
+
+    if (isDateBeforeToday(form.startDate) || (provider !== 'mercadopago' && isDateBeforeToday(form.nextRunAt))) {
+      showToast('warning', 'Fecha inválida', 'Las suscripciones automáticas no pueden iniciar ni cobrarse en fechas pasadas.')
       return null
     }
 
@@ -1002,6 +1021,7 @@ export const PaymentSubscriptions: React.FC = () => {
                   value={form.startDate}
                   onChange={(event) => patchForm('startDate', event.target.value)}
                   type="date"
+                  min={getTodayInputValue()}
                 />
               </div>
 
@@ -1012,6 +1032,7 @@ export const PaymentSubscriptions: React.FC = () => {
                     value={form.nextRunAt}
                     onChange={(event) => patchForm('nextRunAt', event.target.value)}
                     type="date"
+                    min={getTodayInputValue()}
                   />
                 </div>
               )}

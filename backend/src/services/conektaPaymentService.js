@@ -119,6 +119,16 @@ function isDueTodayOrPast(value) {
   return normalizeDateOnly(value) <= todayDateOnly()
 }
 
+function assertDateNotInPast(value, message) {
+  const date = normalizeDateOnly(value)
+  if (date < todayDateOnly()) {
+    const error = new Error(message)
+    error.status = 400
+    throw error
+  }
+  return date
+}
+
 function dateOnlySql(expression) {
   return isPostgresRuntime ? `(${expression})::date` : `DATE(${expression})`
 }
@@ -1169,6 +1179,8 @@ function normalizeConektaPaymentPlanPayload(input = {}) {
   const firstPayment = input.firstPayment || {}
   const firstPaymentEnabled = normalizeBoolean(firstPayment.enabled, true)
   const firstPaymentAmount = firstPaymentEnabled ? Number(firstPayment.amount || 0) : 0
+  const firstPaymentMethod = firstPaymentEnabled ? cleanString(firstPayment.method || 'card') : 'none'
+  const firstPaymentDate = firstPaymentEnabled ? normalizeDateOnly(firstPayment.date) : null
   const remainingPayments = Array.isArray(input.remainingPayments) ? input.remainingPayments : []
   const cardSetupAmount = normalizePositiveAmount(input.cardSetupAmount, 25)
 
@@ -1204,14 +1216,20 @@ function normalizeConektaPaymentPlanPayload(input = {}) {
       throw error
     }
 
+    const dueDate = assertDateNotInPast(payment.dueDate, 'Los pagos futuros automáticos no pueden programarse en fechas pasadas.')
+
     return {
       sequence: Number(payment.sequence || index + 1),
       amount: Math.round(amount * 100) / 100,
       percentage: payment.percentage ?? null,
-      dueDate: normalizeDateOnly(payment.dueDate),
+      dueDate,
       frequency: cleanString(payment.frequency || input.remainingFrequency || 'custom') || 'custom'
     }
   })
+
+  if (firstPaymentEnabled && !MANUAL_PLAN_PAYMENT_METHODS.has(firstPaymentMethod)) {
+    assertDateNotInPast(firstPaymentDate, 'El primer pago automático no puede programarse en una fecha pasada.')
+  }
 
   const remainingTotal = normalizedRemaining.reduce((sum, payment) => sum + payment.amount, 0)
   const planTotal = Math.round((remainingTotal + firstPaymentAmount) * 100) / 100
@@ -1235,8 +1253,8 @@ function normalizeConektaPaymentPlanPayload(input = {}) {
     firstPayment: {
       enabled: firstPaymentEnabled,
       amount: Math.round(firstPaymentAmount * 100) / 100,
-      date: firstPaymentEnabled ? normalizeDateOnly(firstPayment.date) : null,
-      method: firstPaymentEnabled ? cleanString(firstPayment.method || 'card') : 'none'
+      date: firstPaymentDate,
+      method: firstPaymentMethod
     },
     remainingPayments: normalizedRemaining,
     remainingFrequency: cleanString(input.remainingFrequency || 'custom') || 'custom',
@@ -2386,6 +2404,10 @@ export async function updateConektaPaymentPlanSchedule(flowId, input = {}) {
     }
 
     const method = normalizePlanEditablePaymentMethod(submitted.paymentMethod || submitted.method, hasSavedCard)
+    if (method.automatic) {
+      assertDateNotInPast(dueDate, 'Las parcialidades automáticas no pueden programarse en fechas pasadas.')
+    }
+
     const status = resolveEditableInstallmentStatus({
       currentStatus: existingStatus,
       automatic: method.automatic,
@@ -2573,10 +2595,15 @@ export async function updateConektaPaymentPlanSchedule(flowId, input = {}) {
     } else {
       firstPaymentAmount = firstPaymentInputAmount
       firstPaymentDate = normalizeDateOnly(firstPayment.dueDate || firstPayment.date || firstPaymentDate)
+      const firstPaymentMethodInput = cleanString(firstPayment.method || firstPayment.paymentMethod || firstPaymentMethod || 'conekta_auto').toLowerCase()
       const normalizedFirstPaymentMethod = normalizePlanEditableFirstPaymentMethod(
-        firstPayment.method || firstPayment.paymentMethod || firstPaymentMethod || 'conekta_auto',
+        firstPaymentMethodInput,
         hasSavedCard
       )
+      if (AUTOMATIC_PLAN_PAYMENT_METHODS.has(firstPaymentMethodInput)) {
+        assertDateNotInPast(firstPaymentDate, 'El primer pago automático no puede programarse en una fecha pasada.')
+      }
+
       firstPaymentMethod = normalizedFirstPaymentMethod.flowMethod
       const nextFirstPaymentStatus = firstPaymentStatus && firstPaymentStatus !== 'not_required'
         ? firstPaymentStatus

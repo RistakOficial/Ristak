@@ -47,6 +47,30 @@ function formatDateInput(date: Date) {
   return `${year}-${month}-${day}`
 }
 
+function startOfDay(date: Date) {
+  return new Date(date.getFullYear(), date.getMonth(), date.getDate())
+}
+
+function isDateBefore(left: Date, right: Date) {
+  return startOfDay(left).getTime() < startOfDay(right).getTime()
+}
+
+function isMonthBefore(left: Date, right: Date) {
+  return (
+    left.getFullYear() < right.getFullYear() ||
+    (left.getFullYear() === right.getFullYear() && left.getMonth() < right.getMonth())
+  )
+}
+
+function clampViewDate(viewDate: Date, minDate?: Date | null) {
+  if (!minDate || !isMonthBefore(viewDate, minDate)) return viewDate
+  return minDate
+}
+
+function getSafeViewDate(selectedDate?: Date | null, minDate?: Date | null) {
+  return clampViewDate(selectedDate || minDate || new Date(), minDate)
+}
+
 function getCalendarDays(viewDate: Date) {
   const year = viewDate.getFullYear()
   const month = viewDate.getMonth()
@@ -96,13 +120,21 @@ export const PhoneDateField: React.FC<PhoneDateFieldProps> = ({
   const hostRef = useRef<HTMLDivElement | null>(null)
   const selectedDate = useMemo(() => parseDateInput(value), [value])
   const minDate = useMemo(() => parseDateInput(min), [min])
+  const selectedDateIsBlocked = Boolean(selectedDate && minDate && isDateBefore(selectedDate, minDate))
+  const activeSelectedDate = selectedDateIsBlocked ? null : selectedDate
+  const displayValue = selectedDateIsBlocked ? '' : value
   const [open, setOpen] = useState(false)
   const [wideViewport, setWideViewport] = useState(() => (
     typeof window !== 'undefined' ? window.matchMedia('(min-width: 768px)').matches : false
   ))
-  const [viewDate, setViewDate] = useState<Date>(() => selectedDate || minDate || new Date())
+  const [viewDate, setViewDate] = useState<Date>(() => getSafeViewDate(activeSelectedDate, minDate))
   const days = useMemo(() => getCalendarDays(viewDate), [viewDate])
   const today = useMemo(() => new Date(), [])
+  const previousMonthDisabled = Boolean(minDate && isMonthBefore(
+    new Date(viewDate.getFullYear(), viewDate.getMonth() - 1, 1),
+    minDate
+  ))
+  const todayBlocked = Boolean(minDate && isDateBefore(today, minDate))
   const useInlinePanel = inlineOnWide && wideViewport
 
   useEffect(() => {
@@ -116,8 +148,8 @@ export const PhoneDateField: React.FC<PhoneDateFieldProps> = ({
 
   useEffect(() => {
     if (!open) return
-    setViewDate(selectedDate || minDate || new Date())
-  }, [minDate, open, selectedDate])
+    setViewDate(getSafeViewDate(activeSelectedDate, minDate))
+  }, [activeSelectedDate, minDate, open])
 
   useEffect(() => {
     if (!open || !useInlinePanel) return undefined
@@ -142,14 +174,13 @@ export const PhoneDateField: React.FC<PhoneDateFieldProps> = ({
 
   const changeMonth = (delta: number) => {
     setViewDate((current) => {
-      const next = new Date(current)
-      next.setMonth(current.getMonth() + delta)
-      return next
+      const next = new Date(current.getFullYear(), current.getMonth() + delta, 1)
+      return clampViewDate(next, minDate)
     })
   }
 
   const selectDate = (date: Date) => {
-    if (minDate && date < minDate) return
+    if (minDate && isDateBefore(date, minDate)) return
     onChange(formatDateInput(date))
     setOpen(false)
   }
@@ -157,7 +188,12 @@ export const PhoneDateField: React.FC<PhoneDateFieldProps> = ({
   const calendarPanel = (
     <>
       <div className={styles.monthRow}>
-        <button type="button" onClick={() => changeMonth(-1)} aria-label="Mes anterior">
+        <button
+          type="button"
+          onClick={() => changeMonth(-1)}
+          aria-label="Mes anterior"
+          disabled={previousMonthDisabled}
+        >
           <ChevronLeft size={20} />
         </button>
         <span>{MONTHS[viewDate.getMonth()]} {viewDate.getFullYear()}</span>
@@ -174,9 +210,19 @@ export const PhoneDateField: React.FC<PhoneDateFieldProps> = ({
         {days.map((date) => {
           const dateValue = formatDateInput(date)
           const outside = date.getMonth() !== viewDate.getMonth()
-          const selected = isSameDay(date, selectedDate)
+          const selected = isSameDay(date, activeSelectedDate)
           const current = isSameDay(date, today)
-          const blocked = Boolean(minDate && date < minDate)
+          const blocked = Boolean(minDate && isDateBefore(date, minDate))
+
+          if (blocked) {
+            return (
+              <span
+                key={dateValue}
+                className={styles.emptyDay}
+                aria-hidden="true"
+              />
+            )
+          }
 
           return (
             <button
@@ -214,8 +260,8 @@ export const PhoneDateField: React.FC<PhoneDateFieldProps> = ({
         onClick={() => !disabled && setOpen((current) => !current)}
       >
         <CalendarDays size={17} />
-        <span className={selectedDate ? styles.value : styles.placeholder}>
-          {formatDisplayDate(value, placeholder)}
+        <span className={activeSelectedDate ? styles.value : styles.placeholder}>
+          {formatDisplayDate(displayValue, placeholder)}
         </span>
       </button>
 
@@ -224,7 +270,12 @@ export const PhoneDateField: React.FC<PhoneDateFieldProps> = ({
           <div className={styles.popoverPanel} role="dialog" aria-label={ariaLabel || title}>
             <div className={styles.popoverHeader}>
               <strong>{title}</strong>
-              <button type="button" className={styles.todayButton} onClick={() => selectDate(new Date())}>
+              <button
+                type="button"
+                className={styles.todayButton}
+                onClick={() => selectDate(new Date())}
+                disabled={todayBlocked}
+              >
                 Hoy
               </button>
             </div>
@@ -238,7 +289,12 @@ export const PhoneDateField: React.FC<PhoneDateFieldProps> = ({
           title={title}
           ariaLabel={ariaLabel || title}
           headerRight={(
-            <button type="button" className={styles.todayButton} onClick={() => selectDate(new Date())}>
+            <button
+              type="button"
+              className={styles.todayButton}
+              onClick={() => selectDate(new Date())}
+              disabled={todayBlocked}
+            >
               Hoy
             </button>
           )}
