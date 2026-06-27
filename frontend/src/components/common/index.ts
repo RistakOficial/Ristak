@@ -53,6 +53,10 @@ export type { BadgeVariant } from './Badge'
 export { ChatMessageSurface } from './ChatMessageSurface'
 export type { ChatMessageSurfaceProps } from './ChatMessageSurface'
 export { CustomSelect } from './CustomSelect'
+export { MetaParameterValueInput }
+  from './MetaParameterValueInput/MetaParameterValueInput'
+export type { MetaParameterVariable }
+  from './MetaParameterValueInput/MetaParameterValueInput'
 export { TagPicker, useContactTags } from './TagPicker'
 export { NumberInput } from './NumberInput'
 export type { NumberInputProps } from './NumberInput'

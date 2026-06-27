@@ -48,6 +48,8 @@ import {
   isPaymentGateEnabled,
   normalizePaymentGateConfig
 } from './publicPaymentGateService.js'
+import { renderTemplate } from './automationEngine.js'
+import { getVariableFieldValueMap } from './variableFieldsService.js'
 
 export const SITE_TYPES = new Set(['standard_form', 'interactive_form', 'landing_page'])
 const FORM_SITE_TYPES = new Set(['standard_form', 'interactive_form'])
@@ -223,14 +225,15 @@ const SITE_META_TRIGGERS = new Set(['page_view', 'form_submit', 'calendar_schedu
 const SITE_META_SUBMIT_CONDITIONS = new Set(['always', 'qualified_only'])
 const SITE_TYPES_WITH_PAGE_META = new Set(['landing_page', 'interactive_form', 'standard_form'])
 const SITE_META_PARAMETER_FIELDS = {
-  Lead: ['value', 'predictedLtv', 'currency', 'status'],
-  Schedule: ['value', 'predictedLtv', 'currency', 'status'],
-  FormSubmitted: ['value', 'predictedLtv', 'currency', 'status'],
-  CompleteRegistration: ['value', 'predictedLtv', 'currency', 'status'],
-  Contact: ['value', 'predictedLtv', 'currency', 'status'],
-  Purchase: ['value', 'currency', 'orderId', 'contentIds', 'contentName', 'contentType', 'numItems'],
-  ViewContent: ['value', 'currency', 'contentName', 'contentCategory', 'contentIds', 'contentType']
+  Lead: ['value', 'predictedLtv'],
+  Schedule: ['value', 'predictedLtv'],
+  FormSubmitted: ['value', 'predictedLtv'],
+  CompleteRegistration: ['value', 'predictedLtv'],
+  Contact: ['value', 'predictedLtv'],
+  Purchase: ['value', 'orderId', 'contentIds', 'contentName', 'contentType', 'numItems'],
+  ViewContent: ['value', 'contentName', 'contentCategory', 'contentIds', 'contentType']
 }
+const SITE_META_LEGACY_SYSTEM_PARAMETER_FIELDS = ['currency', 'status']
 const SITE_META_PARAMETER_ALIASES = {
   value: ['value', 'conversionValue', 'conversion_value'],
   predictedLtv: ['predictedLtv', 'predicted_ltv', 'leadValue', 'lead_value', 'prospectValue', 'prospect_value'],
@@ -705,7 +708,7 @@ function pruneSiteMetaEventParametersForEvent(parameters = {}, eventName = SITE_
   const normalized = normalizeSiteMetaEventParameters(parameters)
   const fields = getMetaParameterFieldsForEvent(eventName)
   if (!fields.length) return {}
-  const allowed = new Set(fields)
+  const allowed = new Set([...fields, ...SITE_META_LEGACY_SYSTEM_PARAMETER_FIELDS])
   const pruned = {}
 
   allowed.forEach(key => {
@@ -735,23 +738,146 @@ function parseMetaContentIds(value) {
     .slice(0, 50)
 }
 
-function buildSiteMetaConfiguredCustomData(parameters = {}, eventName = SITE_META_NO_EVENT) {
+function contactCustomFieldBagFromRow(row = {}) {
+  const bag = {}
+  parseContactCustomFields(row?.custom_fields || row?.customFields || row?.custom_fields_json).forEach((field = {}) => {
+    const key = cleanString(field.fieldKey || field.field_key || field.key || field.id)
+    if (!key) return
+    bag[key] = field.value ?? ''
+  })
+  return bag
+}
+
+function normalizeContactForMetaTemplate(contact = {}, contactId = '') {
+  const fullName = cleanString(contact.fullName || contact.full_name || contact.name)
+  const names = splitName(fullName)
+  const firstName = cleanString(contact.firstName || contact.first_name) || names.firstName
+  const lastName = cleanString(contact.lastName || contact.last_name) || names.lastName
+  return {
+    id: cleanString(contact.id || contactId),
+    firstName,
+    lastName,
+    first_name: firstName,
+    last_name: lastName,
+    fullName: fullName || [firstName, lastName].filter(Boolean).join(' '),
+    full_name: fullName || [firstName, lastName].filter(Boolean).join(' '),
+    name: fullName || [firstName, lastName].filter(Boolean).join(' '),
+    phone: cleanString(contact.phone),
+    email: cleanString(contact.email),
+    source: cleanString(contact.source),
+    created_at: cleanString(contact.created_at || contact.createdAt),
+    updated_at: cleanString(contact.updated_at || contact.updatedAt),
+    customFields: contact.customFields && typeof contact.customFields === 'object'
+      ? contact.customFields
+      : contactCustomFieldBagFromRow(contact)
+  }
+}
+
+async function loadContactForMetaTemplate(contactId, fallback = {}) {
+  const id = cleanString(contactId || fallback?.id)
+  if (!id) return normalizeContactForMetaTemplate(fallback, id)
+  const row = await db.get('SELECT * FROM contacts WHERE id = ? LIMIT 1', [id]).catch(() => null)
+  return normalizeContactForMetaTemplate(row || fallback, id)
+}
+
+function buildSiteMetaTemplateContext({
+  site = {},
+  page = null,
+  contact = {},
+  contactId = '',
+  requestMeta = {},
+  accountCurrency = '',
+  formResponses = null,
+  mappedFields = null,
+  rawFields = null,
+  derivedFields = null,
+  appointment = null,
+  calendar = null,
+  payment = null,
+  variableFields = {}
+} = {}) {
+  const meta = requestMeta?.meta && typeof requestMeta.meta === 'object' ? requestMeta.meta : {}
+  const paymentGate = meta.paymentGate && typeof meta.paymentGate === 'object' ? meta.paymentGate : {}
+  const rules = meta.rules && typeof meta.rules === 'object' ? meta.rules : {}
+  const normalizedContact = normalizeContactForMetaTemplate(contact, contactId)
+  const resolvedFormResponses = formResponses ||
+    meta.formResponses ||
+    meta.form_responses ||
+    meta.automationFormResponses ||
+    meta.automation_form_responses ||
+    {}
+  const resolvedPayment = payment || {
+    id: cleanString(paymentGate.publicPaymentId || paymentGate.public_payment_id),
+    public_id: cleanString(paymentGate.publicPaymentId || paymentGate.public_payment_id),
+    amount: paymentGate.amount,
+    currency: cleanString(paymentGate.currency || accountCurrency),
+    status: paymentGate.status || (paymentGate.required ? 'paid' : ''),
+    provider: paymentGate.provider || paymentGate.gateway || ''
+  }
+  const resolvedAppointment = appointment || {}
+  const resolvedCalendar = calendar || {}
+
+  return {
+    contact: normalizedContact,
+    contactId: normalizedContact.id || contactId,
+    siteId: site.id || '',
+    siteName: site.name || '',
+    pageId: page?.id || meta.pageId || meta.page_id || '',
+    pageTitle: page?.title || '',
+    currency: accountCurrency || resolvedPayment.currency || '',
+    formId: meta.formSiteId || meta.form_site_id || site.id || '',
+    formName: meta.formSiteName || meta.form_site_name || site.name || '',
+    formStatus: meta.formStatus || meta.form_status || rules.status || '',
+    formDisqualified: meta.formDisqualified ?? meta.form_disqualified ?? rules.disqualified ?? false,
+    submissionId: meta.submissionId || meta.submission_id || '',
+    submittedAt: meta.submittedAt || meta.submitted_at || '',
+    formResponses: resolvedFormResponses,
+    form_responses: resolvedFormResponses,
+    responses: resolvedFormResponses,
+    mappedFields: mappedFields || meta.mappedFields || meta.mapped_fields || {},
+    rawFields: rawFields || meta.rawFields || meta.raw_fields || {},
+    derivedFields: derivedFields || meta.derivedFields || meta.derived_fields || {},
+    variable: variableFields && typeof variableFields === 'object' ? variableFields : {},
+    payment: resolvedPayment,
+    paymentId: resolvedPayment.id || resolvedPayment.public_id || '',
+    amount: resolvedPayment.amount ?? '',
+    currencyCode: resolvedPayment.currency || accountCurrency || '',
+    paymentStatus: resolvedPayment.status || '',
+    appointment: resolvedAppointment,
+    appointmentId: resolvedAppointment.id || resolvedAppointment.appointmentId || '',
+    appointmentDate: resolvedAppointment.date || resolvedAppointment.startTime || resolvedAppointment.start_time || '',
+    appointmentTime: resolvedAppointment.time || resolvedAppointment.startTime || resolvedAppointment.start_time || '',
+    appointmentStatus: resolvedAppointment.status || '',
+    calendar: resolvedCalendar,
+    calendarId: resolvedCalendar.id || resolvedAppointment.calendarId || resolvedAppointment.calendar_id || '',
+    calendarName: resolvedCalendar.name || resolvedAppointment.calendarName || resolvedAppointment.calendar_name || ''
+  }
+}
+
+function renderSiteMetaParameterValue(value, templateContext = {}) {
+  const source = cleanString(value)
+  if (!source) return ''
+  if (!source.includes('{{')) return source
+  return cleanString(renderTemplate(source, templateContext, { preserveUnknown: false }))
+}
+
+function buildSiteMetaConfiguredCustomData(parameters = {}, eventName = SITE_META_NO_EVENT, templateContext = {}) {
   const pruned = pruneSiteMetaEventParametersForEvent(parameters, eventName)
   const customData = {}
 
-  const value = parseMetaNumber(pruned.value)
+  const value = parseMetaNumber(renderSiteMetaParameterValue(pruned.value, templateContext))
   if (value !== null) customData.value = value
 
-  const predictedLtv = parseMetaNumber(pruned.predictedLtv)
+  const predictedLtv = parseMetaNumber(renderSiteMetaParameterValue(pruned.predictedLtv, templateContext))
   if (predictedLtv !== null) customData.predicted_ltv = predictedLtv
 
   const currency = cleanString(pruned.currency).toUpperCase().slice(0, 3)
   if (/^[A-Z]{3}$/.test(currency)) customData.currency = currency
 
-  const contentIds = parseMetaContentIds(pruned.contentIds)
+  const contentIds = parseMetaContentIds(renderSiteMetaParameterValue(pruned.contentIds, templateContext))
   if (contentIds.length) customData.content_ids = contentIds
 
-  const numItems = parseMetaNumber(pruned.numItems)
+  const numItems = parseMetaNumber(renderSiteMetaParameterValue(pruned.numItems, templateContext))
   if (numItems !== null) customData.num_items = Math.max(0, Math.round(numItems))
 
   ;[
@@ -762,14 +888,14 @@ function buildSiteMetaConfiguredCustomData(parameters = {}, eventName = SITE_MET
     ['status', 'status'],
     ['searchString', 'search_string']
   ].forEach(([sourceKey, targetKey]) => {
-    const value = cleanString(pruned[sourceKey])
+    const value = renderSiteMetaParameterValue(pruned[sourceKey], templateContext)
     if (value) customData[targetKey] = value
   })
 
   if (Array.isArray(pruned.custom)) {
     pruned.custom.forEach(parameter => {
       const key = normalizeSiteMetaCustomParameterKey(parameter.key)
-      const value = cleanString(parameter.value)
+      const value = renderSiteMetaParameterValue(parameter.value, templateContext)
       if (key && value) customData[key] = value
     })
   }
@@ -23166,51 +23292,50 @@ function automationImportedFormId(siteId, importedFormId) {
   return site && form ? `${site}:imported:${form}` : ''
 }
 
-function emitSiteSubmissionAutomationEvents({ contactResult, formEvent, contactChangedFields = [] }) {
+async function emitSiteSubmissionAutomationEvents({ contactResult, formEvent, contactChangedFields = [] }) {
   const contactId = contactResult?.contactId || formEvent?.contactId
-  import('./automationEngine.js')
-    .then(async (engine) => {
-      if (contactId) {
-        const contactEvent = {
-          contactId,
-          source: 'form',
-          contactChangeSource: 'form',
-          formId: formEvent.formId,
-          formName: formEvent.formName,
-          automationFormId: formEvent.automationFormId,
-          siteId: formEvent.siteId,
-          siteName: formEvent.siteName,
-          formSiteId: formEvent.formSiteId,
-          formSiteName: formEvent.formSiteName,
-          importedFormId: formEvent.importedFormId,
-          importedFormName: formEvent.importedFormName,
-          submissionId: formEvent.submissionId,
-          formStatus: formEvent.formStatus,
-          status: formEvent.status,
-          formDisqualified: formEvent.formDisqualified,
-          submittedAt: formEvent.submittedAt,
-          formResponses: formEvent.formResponses
-        }
-        if (contactResult?.created) {
-          await engine.handleAutomationEvent('contact-created', contactEvent)
-        } else {
-          await engine.handleAutomationEvent('contact-updated', {
-            ...contactEvent,
-            changedFields: [...new Set([
-              ...(contactResult?.changedFields || []),
-              ...contactChangedFields,
-              'formSubmission',
-              'publicSiteSubmission',
-              'updatedAt'
-            ].filter(Boolean))]
-          })
-        }
+  try {
+    const engine = await import('./automationEngine.js')
+    if (contactId) {
+      const contactEvent = {
+        contactId,
+        source: 'form',
+        contactChangeSource: 'form',
+        formId: formEvent.formId,
+        formName: formEvent.formName,
+        automationFormId: formEvent.automationFormId,
+        siteId: formEvent.siteId,
+        siteName: formEvent.siteName,
+        formSiteId: formEvent.formSiteId,
+        formSiteName: formEvent.formSiteName,
+        importedFormId: formEvent.importedFormId,
+        importedFormName: formEvent.importedFormName,
+        submissionId: formEvent.submissionId,
+        formStatus: formEvent.formStatus,
+        status: formEvent.status,
+        formDisqualified: formEvent.formDisqualified,
+        submittedAt: formEvent.submittedAt,
+        formResponses: formEvent.formResponses
       }
-      await engine.handleAutomationEvent('form-submitted', formEvent)
-    })
-    .catch(error => {
-      logger.warn(`No se pudieron disparar automatizaciones de formulario: ${error.message}`)
-    })
+      if (contactResult?.created) {
+        await engine.handleAutomationEvent('contact-created', contactEvent)
+      } else {
+        await engine.handleAutomationEvent('contact-updated', {
+          ...contactEvent,
+          changedFields: [...new Set([
+            ...(contactResult?.changedFields || []),
+            ...contactChangedFields,
+            'formSubmission',
+            'publicSiteSubmission',
+            'updatedAt'
+          ].filter(Boolean))]
+        })
+      }
+    }
+    await engine.handleAutomationEvent('form-submitted', formEvent)
+  } catch (error) {
+    logger.warn(`No se pudieron disparar automatizaciones de formulario: ${error.message}`)
+  }
 }
 
 async function upsertContactFromSubmissionWithResult({ site, contact, meta }) {
@@ -23777,11 +23902,24 @@ async function sendSiteLeadMetaEvent({ site, submissionId, submittedPageId, cont
 
   const eventTimeMs = resolveMetaEventTimeMs(requestMeta)
   const { sourceUrl, signals } = collectSiteMetaSignals(site, requestMeta)
-  const names = splitName(contact.fullName)
+  const accountLocale = await getAccountLocaleSettings().catch(() => null)
+  const variableFields = await getVariableFieldValueMap().catch(() => ({}))
+  const templateContact = await loadContactForMetaTemplate(contactId, contact)
+  const names = splitName(templateContact.fullName)
+  const templateContext = buildSiteMetaTemplateContext({
+    site,
+    page: getSitePage(site, submittedPageId),
+    contact: templateContact,
+    contactId,
+    requestMeta,
+    accountCurrency: accountLocale?.currency || 'MXN',
+    variableFields
+  })
+  const formDisqualified = isDisqualifiedSiteFormSubmission(requestMeta)
   const userData = buildMetaParameterUserData({
     req: requestMeta?.req,
     requestMeta,
-    contact,
+    contact: templateContact,
     names,
     externalId: resolveMetaExternalId({ contactId, requestMeta }),
     sourceUrl,
@@ -23814,13 +23952,17 @@ async function sendSiteLeadMetaEvent({ site, submissionId, submittedPageId, cont
           conversion_type: videoGateMetaConfig ? 'video_form_gate_submit' : 'form_submit',
           site_id: site.id,
           site_name: site.name,
-          ...(videoGateMetaConfig ? {
-            video_block_id: videoGateMetaConfig.block?.id || '',
-            video_block_label: videoGateMetaConfig.block?.label || ''
-          } : {}),
-          content_name: site.title || site.name
-        }, buildSiteMetaConfiguredCustomData(configuredParameters, eventName))
-      }
+	          ...(videoGateMetaConfig ? {
+	            video_block_id: videoGateMetaConfig.block?.id || '',
+	            video_block_label: videoGateMetaConfig.block?.label || ''
+	          } : {}),
+	          currency: accountLocale?.currency || 'MXN',
+	          status: formDisqualified ? 'disqualified' : 'qualified',
+	          form_status: templateContext.formStatus || (formDisqualified ? 'disqualified' : 'received'),
+	          form_disqualified: formDisqualified,
+	          content_name: site.title || site.name
+	        }, buildSiteMetaConfiguredCustomData(configuredParameters, eventName, templateContext))
+	      }
     ]
   }
 
@@ -23894,6 +24036,17 @@ async function sendSitePageMetaEvent({ site, page, eventName, eventId, contactId
   const eventTimeMs = resolveMetaEventTimeMs(requestMeta)
   const { sourceUrl, signals } = collectSiteMetaSignals(site, requestMeta)
   const userData = buildMetaBaseUserData({ contactId, requestMeta, eventTimeMs, sourceUrl, signals })
+  const accountLocale = await getAccountLocaleSettings().catch(() => null)
+  const variableFields = await getVariableFieldValueMap().catch(() => ({}))
+  const templateContext = buildSiteMetaTemplateContext({
+    site,
+    page,
+    contact: {},
+    contactId,
+    requestMeta,
+    accountCurrency: accountLocale?.currency || 'MXN',
+    variableFields
+  })
 
   if (!userData.client_ip_address && !userData.client_user_agent && !userData.fbp && !userData.fbc && !userData.external_id) {
     await logMetaEvent({
@@ -23921,11 +24074,12 @@ async function sendSitePageMetaEvent({ site, page, eventName, eventId, contactId
           conversion_type: 'page_view',
           site_id: site.id,
           site_name: site.name,
-          public_page_id: page?.id || '',
-          public_page_title: page?.title || '',
-          content_name: page?.title || site.title || site.name
-        }, buildSiteMetaConfiguredCustomData(page?.metaEventParameters, eventName))
-      }
+	          public_page_id: page?.id || '',
+	          public_page_title: page?.title || '',
+	          currency: accountLocale?.currency || 'MXN',
+	          content_name: page?.title || site.title || site.name
+	        }, buildSiteMetaConfiguredCustomData(page?.metaEventParameters, eventName, templateContext))
+	      }
     ]
   }
 
@@ -24011,7 +24165,8 @@ export async function sendCalendarBookingSiteMetaEvent({ calendar, appointment, 
     return { sent: false, reason: 'missing_meta_config', eventId, eventName: config.eventName }
   }
 
-  const fullName = cleanString(contact.fullName || contact.full_name || contact.name)
+  const templateContact = await loadContactForMetaTemplate(contactId, contact)
+  const fullName = cleanString(templateContact.fullName || templateContact.full_name || templateContact.name)
   const names = splitName(fullName)
   const sourceUrl = getMetaSourceUrlFromRequestMeta(requestMeta)
   const signals = collectMetaParameterSignals({
@@ -24023,7 +24178,7 @@ export async function sendCalendarBookingSiteMetaEvent({ calendar, appointment, 
     req: requestMeta?.req,
     requestMeta,
     contact: {
-      ...contact,
+      ...templateContact,
       fullName,
       id: contactId
     },
@@ -24046,9 +24201,21 @@ export async function sendCalendarBookingSiteMetaEvent({ calendar, appointment, 
   }
 
   const accountLocale = await getAccountLocaleSettings().catch(() => null)
+  const variableFields = await getVariableFieldValueMap().catch(() => ({}))
+  const templateContext = buildSiteMetaTemplateContext({
+    site: siteOverride || {},
+    page: null,
+    contact: templateContact,
+    contactId,
+    requestMeta,
+    accountCurrency: accountLocale?.currency || 'MXN',
+    appointment,
+    calendar,
+    variableFields
+  })
   const customData = mergeSiteMetaCustomData(
     buildCalendarMetaBaseCustomData(calendar, appointment, { currency: accountLocale?.currency || 'MXN' }),
-    buildSiteMetaConfiguredCustomData(config.parameters, config.eventName)
+    buildSiteMetaConfiguredCustomData(config.parameters, config.eventName, templateContext)
   )
   const payload = {
     data: [
@@ -24156,6 +24323,18 @@ async function sendSiteVideoActionMetaEvent({ site, block, rule, eventName, para
 
   const pageId = cleanString(requestMeta.meta?.pageId || requestMeta.meta?.page_id)
   const page = getSitePage(site, pageId)
+  const accountLocale = await getAccountLocaleSettings().catch(() => null)
+  const variableFields = await getVariableFieldValueMap().catch(() => ({}))
+  const templateContact = await loadContactForMetaTemplate(contactId, {})
+  const templateContext = buildSiteMetaTemplateContext({
+    site,
+    page,
+    contact: templateContact,
+    contactId,
+    requestMeta,
+    accountCurrency: accountLocale?.currency || 'MXN',
+    variableFields
+  })
   const payload = {
     data: [
       {
@@ -24174,11 +24353,12 @@ async function sendSiteVideoActionMetaEvent({ site, block, rule, eventName, para
           public_page_title: page?.title || '',
           video_block_id: block?.id || '',
           video_block_label: block?.label || '',
-          video_action_id: rule?.id || '',
-          video_action_time_seconds: Number(rule?.timeSeconds || requestMeta.meta?.videoActionTimeSeconds || 0) || 0,
-          content_name: block?.label || page?.title || site.title || site.name
-        }, buildSiteMetaConfiguredCustomData(parameters, eventName))
-      }
+	          video_action_id: rule?.id || '',
+	          video_action_time_seconds: Number(rule?.timeSeconds || requestMeta.meta?.videoActionTimeSeconds || 0) || 0,
+	          currency: accountLocale?.currency || 'MXN',
+	          content_name: block?.label || page?.title || site.title || site.name
+	        }, buildSiteMetaConfiguredCustomData(parameters, eventName, templateContext))
+	      }
     ]
   }
 
@@ -24611,6 +24791,20 @@ async function createImportedSubmissionFromRequest({ req, body, site, host, prev
   const importedAutomationFormId = layers.formMapping?.formId || importedFormId
   const importedAutomationFormName = layers.formMapping?.formTitle || site.name || ''
   const importedSourceFormSiteId = getImportedFormMappingSourceSiteId(layers.formMapping)
+  const automationFormResponses = buildImportedAutomationFormResponses({
+    rawFields: layers.rawFields,
+    mappedFields: layers.mappedFields
+  })
+
+  Object.assign(meta, {
+    submissionId,
+    formStatus: submissionStatus,
+    formDisqualified: submissionStatus === 'disqualified',
+    formResponses: automationFormResponses,
+    rawFields: layers.rawFields,
+    mappedFields: layers.mappedFields,
+    derivedFields: layers.derivedFields
+  })
 
   await db.run(`
     INSERT INTO public_site_submissions (
@@ -24631,7 +24825,7 @@ async function createImportedSubmissionFromRequest({ req, body, site, host, prev
     submissionStatus
   ])
 
-  emitSiteSubmissionAutomationEvents({
+  await emitSiteSubmissionAutomationEvents({
     contactResult,
     formEvent: {
       contactId,
@@ -24649,20 +24843,18 @@ async function createImportedSubmissionFromRequest({ req, body, site, host, prev
       status: submissionStatus,
       formDisqualified: submissionStatus === 'disqualified',
       submittedAt: meta.submittedAt,
-      formResponses: buildImportedAutomationFormResponses({
-        rawFields: layers.rawFields,
-        mappedFields: layers.mappedFields
-      })
+      formResponses: automationFormResponses
     },
     contactChangedFields: customFieldChangeKeys(layers.customFields)
   })
+  const latestContactForMeta = await loadContactForMetaTemplate(contactId, contact)
 
   const capi = await sendSiteLeadMetaEvent({
     site,
     submissionId,
     submittedPageId: DEFAULT_FUNNEL_PAGE_ID,
     contactId,
-    contact,
+    contact: latestContactForMeta,
     requestMeta: {
       req,
       ip: getClientIp(req),
@@ -25173,6 +25365,20 @@ export async function createSubmissionFromRequest(req, body = {}, options = {}) 
   }
   const submissionId = crypto.randomUUID()
   const nativeFormContext = videoFormGateContext || getNativeFormContext(site, submissionBlocks)
+  const automationFormResponses = buildNativeAutomationFormResponses({
+    blocks: submissionBlocks,
+    responses
+  })
+
+  Object.assign(meta, {
+    submissionId,
+    formStatus: ruleEvaluation.status,
+    formDisqualified: ruleEvaluation.status === 'disqualified' || ruleEvaluation.disqualified === true,
+    formResponses: automationFormResponses,
+    rawFields: nativeLayers.rawFields,
+    mappedFields,
+    derivedFields: nativeLayers.derivedFields
+  })
 
   await db.run(`
     INSERT INTO public_site_submissions (
@@ -25193,7 +25399,7 @@ export async function createSubmissionFromRequest(req, body = {}, options = {}) 
     ruleEvaluation.status
   ])
 
-  emitSiteSubmissionAutomationEvents({
+  await emitSiteSubmissionAutomationEvents({
     contactResult,
     formEvent: {
       contactId,
@@ -25208,21 +25414,19 @@ export async function createSubmissionFromRequest(req, body = {}, options = {}) 
       status: ruleEvaluation.status,
       formDisqualified: ruleEvaluation.status === 'disqualified' || ruleEvaluation.disqualified === true,
       submittedAt: meta.submittedAt,
-      formResponses: buildNativeAutomationFormResponses({
-        blocks: submissionBlocks,
-        responses
-      }),
+      formResponses: automationFormResponses,
       immediateDisqualify: immediateDisqualifySubmit
     },
     contactChangedFields: customFieldChangeKeys(preparedCustomFields)
   })
+  const latestContactForMeta = await loadContactForMetaTemplate(contactId, inferredContact)
 
   const capi = await sendSiteLeadMetaEvent({
     site,
     submissionId,
     submittedPageId: effectiveSubmittedPageId,
     contactId,
-    contact: inferredContact,
+    contact: latestContactForMeta,
     requestMeta: {
       req,
       ip: getClientIp(req),

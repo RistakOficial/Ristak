@@ -7,6 +7,7 @@ import {
   Clock,
   Copy,
   CreditCard,
+  ChevronDown,
   ExternalLink,
   FileCheck2,
   Image,
@@ -17,8 +18,10 @@ import {
   Paintbrush,
   PackageCheck,
   Percent,
+  Plus,
   ReceiptText,
   ShieldCheck,
+  SlidersHorizontal,
   Sparkles,
   Trash2,
   Unplug,
@@ -35,7 +38,9 @@ import {
   PaymentPlatformLogo,
   type PaymentPlatformLogoId,
   SegmentTabs,
-  Switch
+  Switch,
+  MetaParameterValueInput,
+  type MetaParameterVariable
 } from '@/components/common'
 import { useNotification } from '@/contexts/NotificationContext'
 import { useAccountCurrency, useAppConfig } from '@/hooks'
@@ -78,6 +83,11 @@ import {
   gigstackProductKeyOptions,
   gigstackUnitOptions
 } from '@/utils/gigstackFiscalCatalog'
+import {
+  BASE_VARIABLES,
+  loadAllVariables,
+  type FlowVariable
+} from '@/pages/Automations/editor/variablesCatalog'
 import styles from './PaymentsConfiguration.module.css'
 
 type PaymentsSectionId = 'checkout' | 'receipt' | 'meta' | 'automations' | 'gateways' | 'taxes'
@@ -184,6 +194,45 @@ const paymentModeLabels: Record<PaymentModeId, { title: string; badge: string; d
 }
 const PAYMENT_META_DEFAULT_PURCHASE_EVENT_NAME = 'Purchase'
 const PAYMENT_META_DEFAULT_EVENT_CHANNEL: PaymentMetaPurchaseEventChannel = 'smart'
+const PAYMENT_META_PARAMETER_VARIABLE_CATEGORIES = new Set([
+  'contact',
+  'custom',
+  'variable',
+  'payment',
+  'conversation',
+  'automation'
+])
+const PAYMENT_META_PARAMETER_VARIABLE_LABELS: Record<string, string> = {
+  contact: 'Contacto',
+  custom: 'Campos personalizados',
+  variable: 'Campos del sistema',
+  payment: 'Pago',
+  conversation: 'Conversación',
+  automation: 'Automatización'
+}
+const toPaymentMetaParameterVariable = (variable: FlowVariable): MetaParameterVariable => ({
+  fieldId: variable.fieldId,
+  label: variable.label,
+  category: variable.category,
+  categoryLabel: variable.categoryLabel || PAYMENT_META_PARAMETER_VARIABLE_LABELS[variable.category]
+})
+const cleanPaymentMetaParameterString = (value: unknown) => String(value ?? '').trim()
+const normalizePaymentMetaPurchaseEventParameter = (
+  parameter?: Partial<PaymentMetaPurchaseEventParameter> | null
+): PaymentMetaPurchaseEventParameter => ({
+  id: cleanPaymentMetaParameterString(parameter?.id) || `payment-meta-param-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+  key: cleanPaymentMetaParameterString(parameter?.key)
+    .replace(/[^a-zA-Z0-9_]/g, '_')
+    .replace(/_+/g, '_')
+    .replace(/^_+|_+$/g, '')
+    .slice(0, 64),
+  value: cleanPaymentMetaParameterString(parameter?.value)
+})
+const createPaymentMetaPurchaseEventParameter = (): PaymentMetaPurchaseEventParameter => ({
+  id: `payment-meta-param-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+  key: '',
+  value: ''
+})
 const conektaModeLabels: Record<StripeModeId, { title: string; description: string; publicPlaceholder: string; privatePlaceholder: string }> = {
   test: {
     title: 'Modo prueba',
@@ -225,13 +274,18 @@ const normalizePaymentMetaPurchaseEventParameters = (
   value?: Partial<PaymentMetaPurchaseEventParameters> | null
 ): PaymentMetaPurchaseEventParameters => {
   const source = value || {}
+  const custom = Array.isArray(source.custom)
+    ? source.custom
+      .map(normalizePaymentMetaPurchaseEventParameter)
+      .slice(0, 12)
+    : []
 
   return {
     sendValue: parseBooleanLike(source.sendValue, true),
     usePaymentPlanTotalValue: parseBooleanLike(source.usePaymentPlanTotalValue, true),
-    value: '',
-    predictedLtv: '',
-    custom: []
+    value: cleanPaymentMetaParameterString(source.value),
+    predictedLtv: cleanPaymentMetaParameterString(source.predictedLtv),
+    custom
   }
 }
 
@@ -519,6 +573,8 @@ export const PaymentsConfiguration: React.FC = () => {
     'meta_payment_purchase_event_config',
     createDefaultPaymentMetaPurchaseEventConfig()
   )
+  const [paymentMetaParamsOpen, setPaymentMetaParamsOpen] = useState(false)
+  const [loadedMetaVariables, setLoadedMetaVariables] = useState<FlowVariable[]>(BASE_VARIABLES)
   const checkoutLogoInputRef = useRef<HTMLInputElement>(null)
   const receiptLogoInputRef = useRef<HTMLInputElement>(null)
   const latestSettingsRef = useRef(settings)
@@ -537,10 +593,37 @@ export const PaymentsConfiguration: React.FC = () => {
     () => normalizePaymentMetaPurchaseEventConfig(paymentMetaPurchaseEventConfigRaw),
     [paymentMetaPurchaseEventConfigRaw]
   )
+  const paymentMetaPurchaseEventHasParameters = useMemo(() => {
+    const parameters = paymentMetaPurchaseEventConfig.parameters
+    return Boolean(
+      cleanPaymentMetaParameterString(parameters.value) ||
+      cleanPaymentMetaParameterString(parameters.predictedLtv) ||
+      parameters.custom.some(parameter => parameter.key || parameter.value)
+    )
+  }, [paymentMetaPurchaseEventConfig.parameters])
+  const paymentMetaParameterVariables = useMemo(() => {
+    const variables = loadedMetaVariables
+      .filter(variable => PAYMENT_META_PARAMETER_VARIABLE_CATEGORIES.has(variable.category))
+      .map(toPaymentMetaParameterVariable)
+    const seen = new Set<string>()
+    return variables.filter((variable) => {
+      if (!variable.fieldId || seen.has(variable.fieldId)) return false
+      seen.add(variable.fieldId)
+      return true
+    })
+  }, [loadedMetaVariables])
 
   useEffect(() => {
     latestSettingsRef.current = settings
   }, [settings])
+
+  useEffect(() => {
+    let cancelled = false
+    void loadAllVariables().then((variables) => {
+      if (!cancelled) setLoadedMetaVariables(variables)
+    })
+    return () => { cancelled = true }
+  }, [])
 
   useEffect(() => {
     const nextSection = getInitialSection(location.pathname)
@@ -1532,6 +1615,34 @@ export const PaymentsConfiguration: React.FC = () => {
     }).catch(() => {})
   }
 
+  const updatePaymentMetaPurchaseEventParameterRow = (
+    parameterId: string,
+    patch: Partial<PaymentMetaPurchaseEventParameter>
+  ) => {
+    const custom = paymentMetaPurchaseEventConfig.parameters.custom
+      .map(parameter => parameter.id === parameterId
+        ? normalizePaymentMetaPurchaseEventParameter({ ...parameter, ...patch })
+        : parameter
+      )
+    updatePaymentMetaPurchaseEventParameters({ custom })
+  }
+
+  const addPaymentMetaPurchaseEventParameterRow = () => {
+    setPaymentMetaParamsOpen(true)
+    updatePaymentMetaPurchaseEventParameters({
+      custom: [
+        ...paymentMetaPurchaseEventConfig.parameters.custom,
+        createPaymentMetaPurchaseEventParameter()
+      ]
+    })
+  }
+
+  const removePaymentMetaPurchaseEventParameterRow = (parameterId: string) => {
+    updatePaymentMetaPurchaseEventParameters({
+      custom: paymentMetaPurchaseEventConfig.parameters.custom.filter(parameter => parameter.id !== parameterId)
+    })
+  }
+
   const getAutoSaveLabel = () => {
     if (savingSettings || autoSaveState === 'saving') return 'Guardando cambios...'
     if (autoSaveState === 'error') return 'No se pudo guardar'
@@ -1848,6 +1959,95 @@ export const PaymentsConfiguration: React.FC = () => {
               'Encendido por default. Solo aplica a planes de pagos: Meta recibe el total del plan en la primera parcialidad y las siguientes parcialidades del mismo plan no se vuelven a registrar.',
               paymentMetaPurchaseEventConfig.parameters.usePaymentPlanTotalValue,
               handlePaymentMetaPurchaseEventPlanTotalValueChange
+            )}
+
+            <button
+              type="button"
+              className={[
+                styles.paymentMetaEventInlineToggle,
+                paymentMetaParamsOpen ? styles.paymentMetaEventInlineToggleActive : '',
+                paymentMetaPurchaseEventHasParameters ? styles.paymentMetaEventInlineToggleFilled : ''
+              ].filter(Boolean).join(' ')}
+              aria-expanded={paymentMetaParamsOpen}
+              onClick={() => setPaymentMetaParamsOpen(open => !open)}
+            >
+              <SlidersHorizontal size={14} />
+              <span>Parámetros opcionales</span>
+              <ChevronDown size={13} />
+            </button>
+
+            {paymentMetaParamsOpen && (
+              <div className={styles.paymentMetaEventParameterPanel}>
+                <div className={styles.paymentMetaEventCurrencyNote}>
+                  <span>Moneda de la cuenta</span>
+                  <strong>{accountCurrency}</strong>
+                  <small>Se manda automáticamente con el evento.</small>
+                </div>
+
+                <div className={styles.paymentMetaEventParameterGrid}>
+                  <label>
+                    <span className={styles.paymentMetaEventParameterLabel}>Valor de conversión alterno</span>
+                    <MetaParameterValueInput
+                      value={paymentMetaPurchaseEventConfig.parameters.value}
+                      placeholder="Ej. {{payment.amount}}"
+                      inputMode="decimal"
+                      variables={paymentMetaParameterVariables}
+                      onChange={(value) => updatePaymentMetaPurchaseEventParameters({ value })}
+                    />
+                  </label>
+                  <label>
+                    <span className={styles.paymentMetaEventParameterLabel}>LTV estimado</span>
+                    <MetaParameterValueInput
+                      value={paymentMetaPurchaseEventConfig.parameters.predictedLtv}
+                      placeholder="Ej. {{contact.custom.valor_ltv}}"
+                      inputMode="decimal"
+                      variables={paymentMetaParameterVariables}
+                      onChange={(predictedLtv) => updatePaymentMetaPurchaseEventParameters({ predictedLtv })}
+                    />
+                  </label>
+                </div>
+
+                <div className={styles.paymentMetaEventCustomParameterHeader}>
+                  <span className={styles.paymentMetaEventFieldTitle}>Parámetros extra</span>
+                  <Button variant="secondary" size="sm" onClick={addPaymentMetaPurchaseEventParameterRow}>
+                    <Plus size={14} />
+                    Añadir parámetro
+                  </Button>
+                </div>
+
+                <div className={styles.paymentMetaEventCustomParameterList}>
+                  {paymentMetaPurchaseEventConfig.parameters.custom.length ? (
+                    paymentMetaPurchaseEventConfig.parameters.custom.map(parameter => (
+                      <div key={parameter.id} className={styles.paymentMetaEventCustomParameterRow}>
+                        <input
+                          className={styles.input}
+                          value={parameter.key}
+                          onChange={(event) => updatePaymentMetaPurchaseEventParameterRow(parameter.id, { key: event.target.value })}
+                          placeholder="nombre_parametro"
+                        />
+                        <MetaParameterValueInput
+                          value={parameter.value}
+                          onChange={(value) => updatePaymentMetaPurchaseEventParameterRow(parameter.id, { value })}
+                          placeholder="valor"
+                          variables={paymentMetaParameterVariables}
+                        />
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => removePaymentMetaPurchaseEventParameterRow(parameter.id)}
+                          aria-label="Eliminar parámetro"
+                        >
+                          <Trash2 size={14} />
+                        </Button>
+                      </div>
+                    ))
+                  ) : (
+                    <p className={styles.paymentMetaEventCustomParameterEmpty}>
+                      Sin parámetros extra. Ristak manda los datos base del pago automáticamente.
+                    </p>
+                  )}
+                </div>
+              </div>
             )}
 
             {paymentMetaPurchaseEventConfig.parameters.usePaymentPlanTotalValue && (

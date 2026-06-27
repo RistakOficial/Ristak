@@ -1,0 +1,47 @@
+.root {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(104px, 0.34fr);
+  gap: 6px;
+  align-items: center;
+}
+
+.root input {
+  width: 100%;
+  min-width: 0;
+  height: 34px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-ctl);
+  background: var(--surface);
+  color: var(--text);
+  padding: 0 10px;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 500;
+  letter-spacing: 0;
+  outline: none;
+}
+
+.root input::placeholder {
+  color: var(--text-mute);
+}
+
+.root input:focus {
+  border-color: var(--accent);
+  box-shadow: var(--ristak-focus-ring);
+}
+
+.root input:disabled {
+  cursor: not-allowed;
+  opacity: 0.62;
+}
+
+.variableSelect {
+  min-width: 0;
+}
+
+@media (max-width: 560px) {
+  .root {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}

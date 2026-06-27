@@ -18,7 +18,9 @@ import {
   DropdownMenuTrigger,
   DropdownMenuContent,
   DropdownMenuItem,
-  DropdownMenuSeparator
+  DropdownMenuSeparator,
+  MetaParameterValueInput,
+  type MetaParameterVariable
 } from '@/components/common'
 import {
   ArrowLeft,
@@ -86,7 +88,9 @@ import {
 import { sitesService, type PublicSite } from '@/services/sitesService'
 import AppointmentReminderModal from '@/pages/Appointments/AppointmentReminderModal'
 import {
+  BASE_VARIABLES,
   FlowVariablesContext,
+  loadAllVariables,
   type FlowVariable
 } from '@/pages/Automations/editor/variablesCatalog'
 import {
@@ -308,6 +312,22 @@ const CALENDAR_TEMPLATE_EXTRA_VARIABLES: FlowVariable[] = [
   { fieldId: 'calendar.google_calendar', label: 'Calendario de Google ligado', category: 'calendar' },
   { fieldId: 'calendar.google_calendar_id', label: 'ID del calendario de Google', category: 'calendar' }
 ]
+const CALENDAR_META_PARAMETER_VARIABLE_CATEGORIES = new Set([
+  'contact',
+  'custom',
+  'variable',
+  'appointment',
+  'calendar',
+  'payment',
+  'conversation',
+  'automation'
+])
+const toCalendarMetaParameterVariable = (variable: FlowVariable): MetaParameterVariable => ({
+  fieldId: variable.fieldId,
+  label: variable.label,
+  category: variable.category,
+  categoryLabel: variable.categoryLabel || CALENDAR_TEMPLATE_EXTRA_CATEGORIES.find(category => category.id === variable.category)?.label
+})
 const normalizeCalendarColor = (value?: string | null) => {
   const raw = String(value || '').trim()
   if (HEX_COLOR_PATTERN.test(raw)) return raw.toLowerCase()
@@ -827,6 +847,7 @@ export const CalendarsConfiguration: React.FC = () => {
   const [calendarPreviewSlot, setCalendarPreviewSlot] = useState(CALENDAR_PREVIEW_SLOTS[1].value)
   const [calendarPreviewTimezone, setCalendarPreviewTimezone] = useState(() => detectCalendarPreviewTimezone())
   const [calendarMetaParamsOpen, setCalendarMetaParamsOpen] = useState(false)
+  const [loadedMetaVariables, setLoadedMetaVariables] = useState<FlowVariable[]>(BASE_VARIABLES)
   const [savingConfig, setSavingConfig] = useState(false)
   const [savingActiveCalendarId, setSavingActiveCalendarId] = useState<string | null>(null)
   const [deletingCalendarId, setDeletingCalendarId] = useState<string | null>(null)
@@ -1123,6 +1144,29 @@ export const CalendarsConfiguration: React.FC = () => {
     categories: CALENDAR_TEMPLATE_EXTRA_CATEGORIES,
     variables: CALENDAR_TEMPLATE_EXTRA_VARIABLES
   }), [])
+
+  useEffect(() => {
+    let cancelled = false
+    void loadAllVariables().then((variables) => {
+      if (!cancelled) setLoadedMetaVariables(variables)
+    })
+    return () => { cancelled = true }
+  }, [])
+
+  const calendarMetaParameterVariables = useMemo(() => {
+    const variables = [
+      ...loadedMetaVariables
+        .filter(variable => CALENDAR_META_PARAMETER_VARIABLE_CATEGORIES.has(variable.category))
+        .map(toCalendarMetaParameterVariable),
+      ...CALENDAR_TEMPLATE_EXTRA_VARIABLES.map(toCalendarMetaParameterVariable)
+    ]
+    const seen = new Set<string>()
+    return variables.filter((variable) => {
+      if (!variable.fieldId || seen.has(variable.fieldId)) return false
+      seen.add(variable.fieldId)
+      return true
+    })
+  }, [loadedMetaVariables])
 
   const findConnectedGoogleCalendar = (
     calendarList: CalendarType[] = calendars,
@@ -3556,11 +3600,11 @@ export const CalendarsConfiguration: React.FC = () => {
                                       {CALENDAR_META_PARAMETER_FIELDS.map(field => (
                                         <label key={field.key}>
                                           <span className={pageStyles.eventParameterLabel}>{field.label}</span>
-                                          <input
-                                            className={styles.input}
+                                          <MetaParameterValueInput
                                             value={String(customEventsConfig.parameters[field.key] || '')}
-                                            onChange={(event) => updateCustomEventParameters({ [field.key]: event.target.value } as Partial<CalendarCustomEventParameters>)}
+                                            onChange={(value) => updateCustomEventParameters({ [field.key]: value } as Partial<CalendarCustomEventParameters>)}
                                             placeholder={field.placeholder}
+                                            variables={calendarMetaParameterVariables}
                                           />
                                         </label>
                                       ))}
@@ -3583,11 +3627,11 @@ export const CalendarsConfiguration: React.FC = () => {
                                               onChange={(event) => updateCustomEventParameterRow(parameter.id, { key: event.target.value })}
                                               placeholder="nombre_parametro"
                                             />
-                                            <input
-                                              className={styles.input}
+                                            <MetaParameterValueInput
                                               value={parameter.value}
-                                              onChange={(event) => updateCustomEventParameterRow(parameter.id, { value: event.target.value })}
+                                              onChange={(value) => updateCustomEventParameterRow(parameter.id, { value })}
                                               placeholder="valor"
+                                              variables={calendarMetaParameterVariables}
                                             />
                                             <Button
                                               variant="ghost"

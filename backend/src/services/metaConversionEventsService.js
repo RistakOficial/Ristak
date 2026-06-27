@@ -8,6 +8,9 @@ import { nonTestPaymentCondition } from '../utils/paymentMode.js'
 import { buildPhoneMatchCandidates } from '../utils/phoneUtils.js'
 import { getAccountCurrency } from '../utils/accountLocale.js'
 import { buildMetaParameterUserData, sanitizeMetaUrlForEvent } from './metaParameterManagerService.js'
+import { parseContactCustomFields } from '../utils/contactCustomFields.js'
+import { renderTemplate } from './automationEngine.js'
+import { getVariableFieldValueMap } from './variableFieldsService.js'
 
 const CONFIG_KEYS = {
   scheduleEnabled: 'meta_whatsapp_schedule_enabled',
@@ -156,6 +159,73 @@ function normalizePaymentMetaPurchaseEventParameters(value = {}) {
     predictedLtv: cleanString(source.predictedLtv || source.predicted_ltv),
     custom
   }
+}
+
+function paymentContactCustomFieldBag(contact = {}) {
+  const bag = {}
+  parseContactCustomFields(contact?.custom_fields || contact?.customFields).forEach((field = {}) => {
+    const key = cleanString(field.fieldKey || field.field_key || field.key || field.id)
+    if (!key) return
+    bag[key] = field.value ?? ''
+  })
+  return bag
+}
+
+function normalizeContactForPaymentMetaTemplate(contact = {}, contactId = '') {
+  const fullName = cleanString(contact.fullName || contact.full_name || contact.name)
+  const firstName = cleanString(contact.firstName || contact.first_name) || fullName.split(' ')[0] || ''
+  const lastName = cleanString(contact.lastName || contact.last_name)
+  return {
+    id: cleanString(contact.id || contactId),
+    firstName,
+    lastName,
+    first_name: firstName,
+    last_name: lastName,
+    fullName,
+    full_name: fullName,
+    name: fullName || firstName,
+    phone: cleanString(contact.phone),
+    email: cleanString(contact.email),
+    customFields: paymentContactCustomFieldBag(contact)
+  }
+}
+
+function buildPaymentMetaTemplateContext({ contact = {}, contactId = '', payment = {}, currency = '', variableFields = {} } = {}) {
+  const metadata = getPaymentMetadata(payment)
+  const amount = payment.amount ?? metadata.amount ?? ''
+  const status = payment.status || payment.paymentStatus || payment.payment_status || metadata.status || ''
+  const product = payment.title || payment.description || metadata.product || metadata.product_name || metadata.content_name || ''
+  const normalizedCurrency = normalizeMetaCurrency(currency || payment.currency || metadata.currency || PAYMENT_META_DEFAULT_CURRENCY)
+  return {
+    contact: normalizeContactForPaymentMetaTemplate(contact, contactId),
+    contactId: cleanString(contactId || contact?.id),
+    variable: variableFields && typeof variableFields === 'object' ? variableFields : {},
+    payment: {
+      ...payment,
+      id: payment.id || payment.payment_id || metadata.payment_id || '',
+      public_id: payment.public_payment_id || payment.publicPaymentId || metadata.public_payment_id || '',
+      amount,
+      currency: normalizedCurrency,
+      status,
+      product,
+      provider: payment.provider || payment.payment_provider || metadata.provider || '',
+      paymentProvider: payment.provider || payment.payment_provider || metadata.provider || '',
+      payment_method: payment.payment_method || payment.paymentMethod || metadata.payment_method || '',
+      date: payment.created_at || payment.createdAt || payment.paid_at || payment.paidAt || ''
+    },
+    paymentId: payment.id || payment.payment_id || metadata.payment_id || '',
+    amount,
+    currency: normalizedCurrency,
+    paymentStatus: status,
+    product
+  }
+}
+
+function renderPaymentMetaParameterValue(value, templateContext = {}) {
+  const source = cleanString(value)
+  if (!source) return ''
+  if (!source.includes('{{')) return source
+  return cleanString(renderTemplate(source, templateContext, { preserveUnknown: false }))
 }
 
 function normalizePaymentMetaPurchaseEventConfig(value = null) {
@@ -544,9 +614,10 @@ async function buildPaymentPurchaseEventContext(contactId, payment = {}, payment
 
 function buildPaymentMetaPurchaseEventCustomData(parameters = {}, payment = {}, options = {}) {
   const normalizedParameters = normalizePaymentMetaPurchaseEventParameters(parameters)
-  const normalizedAmount = parseMetaNumber(normalizedParameters.value)
+  const templateContext = options.templateContext || {}
+  const normalizedAmount = parseMetaNumber(renderPaymentMetaParameterValue(normalizedParameters.value, templateContext))
   const paymentAmount = parseMetaNumber(payment.amount)
-  const predictedLtv = parseMetaNumber(normalizedParameters.predictedLtv)
+  const predictedLtv = parseMetaNumber(renderPaymentMetaParameterValue(normalizedParameters.predictedLtv, templateContext))
   const currency = normalizeMetaCurrency(options.currency)
   const metadata = getPaymentMetadata(payment)
   const paymentPlan = pickPaymentPlanMetadata(metadata)
@@ -556,7 +627,7 @@ function buildPaymentMetaPurchaseEventCustomData(parameters = {}, payment = {}, 
   }
 
   const finalValue = normalizedParameters.sendValue === false
-    ? null
+    ? normalizedAmount
     : (paymentAmount ?? normalizedAmount)
   if (finalValue !== null) {
     customData.value = finalValue
@@ -692,7 +763,7 @@ function buildPaymentMetaPurchaseEventCustomData(parameters = {}, payment = {}, 
   if (Array.isArray(normalizedParameters.custom)) {
     normalizedParameters.custom.forEach((parameter) => {
       const key = normalizePaymentMetaPurchaseEventCustomParameterKey(parameter.key)
-      const value = cleanString(parameter.value)
+      const value = renderPaymentMetaParameterValue(parameter.value, templateContext)
       if (!key || !value) return
       customData[key] = value
     })
@@ -733,8 +804,18 @@ export async function buildMetaPublicPurchasePixelEvent(payment = {}, options = 
   const accountCurrency = await getPaymentMetaCurrency()
   const eventContext = await buildPaymentPurchaseEventContext(contactId, payment, paymentMetaConfig)
   if (eventContext.skip) return { sent: false, reason: eventContext.reason, eventId: eventContext.eventId }
+  const contact = await getContactForMetaEvent(contactId)
+  const variableFields = await getVariableFieldValueMap().catch(() => ({}))
+  const templateContext = buildPaymentMetaTemplateContext({
+    contact,
+    contactId,
+    payment: eventContext.payment || payment,
+    currency: accountCurrency,
+    variableFields
+  })
   const customData = buildPaymentMetaPurchaseEventCustomData(paymentMetaConfig.parameters, eventContext.payment || payment, {
     currency: accountCurrency,
+    templateContext,
     ...(eventContext.customDataOptions || {})
   })
 
@@ -1488,8 +1569,18 @@ export async function triggerMetaPaymentPurchaseEvent(contactId, payment = {}) {
   if (eventContext.skip) return { sent: false, reason: eventContext.reason, eventId: eventContext.eventId }
   const eventId = eventContext.eventId
   const accountCurrency = await getPaymentMetaCurrency()
+  const contact = await getContactForMetaEvent(contactId)
+  const variableFields = await getVariableFieldValueMap().catch(() => ({}))
+  const templateContext = buildPaymentMetaTemplateContext({
+    contact,
+    contactId,
+    payment: eventContext.payment || payment,
+    currency: accountCurrency,
+    variableFields
+  })
   const customData = buildPaymentMetaPurchaseEventCustomData(paymentMetaConfig.parameters, eventContext.payment || payment, {
     currency: accountCurrency,
+    templateContext,
     ...(eventContext.customDataOptions || {})
   })
 
@@ -1505,7 +1596,7 @@ export async function triggerMetaPaymentPurchaseEvent(contactId, payment = {}) {
   }
 
   const smartChannel = paymentMetaConfig.channel === 'smart'
-    ? hasWhatsappAttributionSignal(await getLatestWhatsappAttribution(await getContactForMetaEvent(contactId)))
+    ? hasWhatsappAttributionSignal(await getLatestWhatsappAttribution(contact))
     : false
 
   if (smartChannel) {

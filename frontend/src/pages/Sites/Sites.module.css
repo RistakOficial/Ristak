@@ -15807,25 +15807,25 @@
   text-transform: uppercase;
 }
 
-.metaParameterField input,
-.metaCustomParameterRow input {
+.metaParameterField > input,
+.metaCustomParameterRow > input {
   width: 100%;
   min-width: 0;
-  height: 30px;
-  border: 1px solid rgba(148, 163, 184, 0.22);
-  border-radius: 7px;
-  background: var(--color-background-primary);
-  color: var(--color-text-primary);
+  height: 34px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-ctl);
+  background: var(--surface);
+  color: var(--text);
   padding: 0 8px;
   font-size: 0.72rem;
   font-weight: 720;
   outline: none;
 }
 
-.metaParameterField input:focus,
-.metaCustomParameterRow input:focus {
-  border-color: var(--ristak-focus-border, rgba(var(--color-primary-rgb), 0.5));
-  box-shadow: var(--ristak-focus-ring, 0 0 0 3px rgba(var(--color-primary-rgb), 0.12));
+.metaParameterField > input:focus,
+.metaCustomParameterRow > input:focus {
+  border-color: var(--accent);
+  box-shadow: var(--ristak-focus-ring);
 }
 
 .metaCustomParameters {
@@ -15835,27 +15835,27 @@
 
 .metaCustomParameterRow {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) 30px;
+  grid-template-columns: minmax(0, 0.52fr) minmax(0, 1fr) 34px;
   gap: 6px;
   align-items: center;
 }
 
 .metaCustomParameterRow button {
-  width: 30px;
-  height: 30px;
+  width: 34px;
+  height: 34px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  border: 1px solid rgba(148, 163, 184, 0.2);
-  border-radius: 7px;
-  background: var(--color-background-primary);
-  color: var(--color-text-tertiary);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-ctl);
+  background: var(--surface);
+  color: var(--text-mute);
   cursor: pointer;
 }
 
 .metaCustomParameterRow button:hover:not(:disabled) {
-  border-color: var(--color-status-error);
-  color: var(--color-status-error);
+  border-color: var(--neg);
+  color: var(--neg);
 }
 
 .metaCustomParameterRow button:disabled {

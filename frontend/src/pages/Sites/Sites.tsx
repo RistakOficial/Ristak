@@ -126,7 +126,9 @@ import {
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuTrigger,
-  MediaUploadTray
+  MediaUploadTray,
+  MetaParameterValueInput,
+  type MetaParameterVariable
 } from '@/components/common'
 import { useDateRange } from '@/contexts/DateRangeContext'
 import { useNotification } from '@/contexts/NotificationContext'
@@ -197,6 +199,11 @@ import {
   type CustomFieldOption,
   type SaveCustomFieldInput
 } from '@/services/customFieldsService'
+import {
+  BASE_VARIABLES,
+  loadAllVariables,
+  type FlowVariable
+} from '@/pages/Automations/editor/variablesCatalog'
 import { COUNTRY_OPTIONS, getCountryDefaults, getCountryFlagEmoji, getDetectedAccountLocaleDefaults } from '@/utils/accountLocale'
 import styles from './Sites.module.css'
 import customFieldModalStyles from '../Settings/CustomFields.module.css'
@@ -391,44 +398,40 @@ const normalizeMetaBoolean = (value: unknown) => (
   value === true || value === 1 || value === '1' || value === 'true' || value === 'yes' || value === 'on'
 )
 
-type SiteMetaParameterFieldKey = Exclude<keyof SiteMetaEventParameters, 'custom'>
+type SiteMetaParameterFieldKey = Exclude<keyof SiteMetaEventParameters, 'custom' | 'currency' | 'status'>
 
 const metaParameterFieldLabels: Record<SiteMetaParameterFieldKey, string> = {
   value: 'Valor conversion',
   predictedLtv: 'Valor lead',
-  currency: 'Moneda',
   contentName: 'Contenido',
   contentCategory: 'Categoría',
   contentIds: 'IDs contenido',
   contentType: 'Tipo contenido',
   numItems: 'Cantidad',
   orderId: 'Orden',
-  status: 'Estado',
   searchString: 'Búsqueda'
 }
 
 const metaParameterFieldPlaceholders: Record<SiteMetaParameterFieldKey, string> = {
   value: '1200',
   predictedLtv: '3500',
-  currency: 'MXN',
   contentName: 'Oferta principal',
   contentCategory: 'Consulta',
   contentIds: 'sku-1, sku-2',
   contentType: 'product',
   numItems: '1',
   orderId: 'ORD-123',
-  status: 'qualified',
   searchString: 'servicio premium'
 }
 
 const metaParameterFieldsByEvent: Record<string, SiteMetaParameterFieldKey[]> = {
-  Lead: ['value', 'predictedLtv', 'currency', 'status'],
-  Schedule: ['value', 'predictedLtv', 'currency', 'status'],
-  FormSubmitted: ['value', 'predictedLtv', 'currency', 'status'],
-  CompleteRegistration: ['value', 'predictedLtv', 'currency', 'status'],
-  Contact: ['value', 'predictedLtv', 'currency', 'status'],
-  Purchase: ['value', 'currency', 'orderId', 'contentIds', 'contentName', 'contentType', 'numItems'],
-  ViewContent: ['value', 'currency', 'contentName', 'contentCategory', 'contentIds', 'contentType']
+  Lead: ['value', 'predictedLtv'],
+  Schedule: ['value', 'predictedLtv'],
+  FormSubmitted: ['value', 'predictedLtv'],
+  CompleteRegistration: ['value', 'predictedLtv'],
+  Contact: ['value', 'predictedLtv'],
+  Purchase: ['value', 'orderId', 'contentIds', 'contentName', 'contentType', 'numItems'],
+  ViewContent: ['value', 'contentName', 'contentCategory', 'contentIds', 'contentType']
 }
 
 const getMetaParameterFieldsForEvent = (eventName?: string): SiteMetaParameterFieldKey[] =>
@@ -450,7 +453,7 @@ const normalizeMetaEventParameters = (parameters?: SiteMetaEventParameters | nul
     const key = fieldKey as SiteMetaParameterFieldKey
     const value = cleanMetaParameterString(source[key])
     if (value) {
-      normalized[key] = key === 'currency' ? value.toUpperCase().slice(0, 3) : value
+      normalized[key] = value
     }
   })
 
@@ -485,6 +488,114 @@ const pruneMetaEventParametersForEvent = (parameters?: SiteMetaEventParameters |
 
   if (normalized.custom?.length) pruned.custom = normalized.custom
   return pruned
+}
+
+const metaParameterVariableCategories = new Set([
+  'contact',
+  'custom',
+  'variable',
+  'form',
+  'appointment',
+  'payment',
+  'conversation',
+  'automation'
+])
+
+const toMetaParameterVariable = (variable: FlowVariable): MetaParameterVariable => ({
+  fieldId: variable.fieldId,
+  label: variable.label,
+  category: variable.category,
+  categoryLabel: variable.categoryLabel
+})
+
+const sanitizeMetaVariablePathSegment = (value: unknown, fallback = 'campo') => {
+  const normalized = String(value ?? '')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '_')
+    .replace(/^_+|_+$/g, '')
+  return normalized || fallback
+}
+
+const getMetaFormFieldVariableKey = (block: SiteBlock) => {
+  const settings = block.settings || {}
+  return sanitizeMetaVariablePathSegment(
+    settings.customFieldKey ||
+    settings.custom_field_key ||
+    settings.internalName ||
+    settings.internal_name ||
+    settings.systemFieldKey ||
+    settings.system_field_key ||
+    block.label ||
+    block.content ||
+    block.placeholder ||
+    block.id,
+    block.id || 'campo'
+  )
+}
+
+const collectMetaFormFieldBlocks = (blocks: SiteBlock[] = []): SiteBlock[] => {
+  const output: SiteBlock[] = []
+  blocks.forEach((block) => {
+    if (fieldBlockTypes.has(block.blockType)) output.push(block)
+    const nestedBlocks = Array.isArray(block.settings?.embeddedBlocks)
+      ? block.settings.embeddedBlocks as SiteBlock[]
+      : []
+    if (nestedBlocks.length) output.push(...collectMetaFormFieldBlocks(nestedBlocks))
+  })
+  return output
+}
+
+const buildSiteFormMetaParameterVariables = (site?: PublicSite | null): MetaParameterVariable[] => (
+  collectMetaFormFieldBlocks(site?.blocks || [])
+    .sort((left, right) => Number(left.sortOrder || 0) - Number(right.sortOrder || 0))
+    .flatMap((block) => {
+      const label = String(block.label || block.content || block.placeholder || blockLabels[block.blockType] || 'Campo').trim()
+      const fieldKey = getMetaFormFieldVariableKey(block)
+      const variables: MetaParameterVariable[] = [{
+        fieldId: `form.responses.${fieldKey}`,
+        label: `Respuesta: ${label}`,
+        category: 'form',
+        categoryLabel: 'Formulario'
+      }]
+      if (block.id) {
+        variables.push({
+          fieldId: `form.answers_by_id.${block.id}`,
+          label: `${label} (ID)`,
+          category: 'form',
+          categoryLabel: 'Formulario'
+        })
+      }
+      return variables
+    })
+)
+
+const useMetaParameterVariables = (site?: PublicSite | null) => {
+  const [loadedVariables, setLoadedVariables] = useState<FlowVariable[]>(BASE_VARIABLES)
+
+  useEffect(() => {
+    let cancelled = false
+    void loadAllVariables().then((variables) => {
+      if (!cancelled) setLoadedVariables(variables)
+    })
+    return () => { cancelled = true }
+  }, [])
+
+  return useMemo(() => {
+    const variables = [
+      ...loadedVariables
+        .filter(variable => metaParameterVariableCategories.has(variable.category))
+        .map(toMetaParameterVariable),
+      ...buildSiteFormMetaParameterVariables(site)
+    ]
+    const seen = new Set<string>()
+    return variables.filter((variable) => {
+      if (!variable.fieldId || seen.has(variable.fieldId)) return false
+      seen.add(variable.fieldId)
+      return true
+    })
+  }, [loadedVariables, site])
 }
 
 const ruleActions: Array<{ value: SiteOptionAction; label: string }> = [
@@ -26113,10 +26224,11 @@ const SeoOptimizationModal: React.FC<{
 const MetaEventParametersEditor: React.FC<{
   eventName: string
   parameters?: SiteMetaEventParameters
+  variables?: MetaParameterVariable[]
   disabled?: boolean
   onChange: (parameters: SiteMetaEventParameters) => void
   onCommit: () => void
-}> = ({ eventName, parameters, disabled, onChange, onCommit }) => {
+}> = ({ eventName, parameters, variables = [], disabled, onChange, onCommit }) => {
   const fields = getMetaParameterFieldsForEvent(eventName)
   const normalized = normalizeMetaEventParameters(parameters)
   const customRows = normalized.custom || []
@@ -26131,9 +26243,7 @@ const MetaEventParametersEditor: React.FC<{
 
   const patchField = (key: SiteMetaParameterFieldKey, value: string) => {
     const next: SiteMetaEventParameters = { ...normalized }
-    const cleanValue = key === 'currency'
-      ? cleanMetaParameterString(value).toUpperCase().slice(0, 3)
-      : cleanMetaParameterString(value)
+    const cleanValue = cleanMetaParameterString(value)
     if (cleanValue) {
       next[key] = cleanValue
     } else {
@@ -26178,12 +26288,13 @@ const MetaEventParametersEditor: React.FC<{
         {fields.map(fieldKey => (
           <label key={fieldKey} className={styles.metaParameterField}>
             <span>{metaParameterFieldLabels[fieldKey]}</span>
-            <input
+            <MetaParameterValueInput
               value={normalized[fieldKey] || ''}
               placeholder={metaParameterFieldPlaceholders[fieldKey]}
               disabled={disabled}
               inputMode={fieldKey === 'value' || fieldKey === 'predictedLtv' || fieldKey === 'numItems' ? 'decimal' : undefined}
-              onChange={(event) => patchField(fieldKey, event.target.value)}
+              variables={variables}
+              onChange={(value) => patchField(fieldKey, value)}
               onBlur={onCommit}
             />
           </label>
@@ -26202,11 +26313,12 @@ const MetaEventParametersEditor: React.FC<{
                 onChange={(event) => patchCustomRow(index, { key: event.target.value })}
                 onBlur={onCommit}
               />
-              <input
+              <MetaParameterValueInput
                 value={parameter.value}
                 placeholder="valor"
                 disabled={disabled}
-                onChange={(event) => patchCustomRow(index, { value: event.target.value })}
+                variables={variables}
+                onChange={(value) => patchCustomRow(index, { value })}
                 onBlur={onCommit}
               />
               <button
@@ -26299,6 +26411,7 @@ const MetaPageConversionSettingsPanel: React.FC<{
 }) => {
   const [detailsOpen, setDetailsOpen] = useState(false)
   const [calendarParamsOpen, setCalendarParamsOpen] = useState<Record<string, boolean>>({})
+  const metaParameterVariables = useMetaParameterVariables(site)
   const metaEnabled = Boolean(site.metaCapiEnabled)
   const activePageEventName = activePage.metaCapiEnabled
     ? normalizeMetaEventName(activePage.metaEventName, 'none')
@@ -26476,6 +26589,7 @@ const MetaPageConversionSettingsPanel: React.FC<{
                   <MetaFormSubmitSettingsPanel
                     site={site}
                     disabled={disabled}
+                    variables={metaParameterVariables}
                     onPatchSite={onPatchSite}
                     onPatchTheme={onPatchTheme}
                     onSaveSite={onSaveSite}
@@ -26537,6 +26651,7 @@ const MetaPageConversionSettingsPanel: React.FC<{
                       <MetaEventParametersEditor
                         eventName={eventName}
                         parameters={config.parameters}
+                        variables={metaParameterVariables}
                         disabled={disabled}
                         onChange={(metaEventParameters) => patchCalendarParameters(surface.id, metaEventParameters)}
                         onCommit={saveSoon}
@@ -26556,12 +26671,14 @@ const MetaPageConversionSettingsPanel: React.FC<{
 const MetaFormSubmitSettingsPanel: React.FC<{
   site: PublicSite
   disabled?: boolean
+  variables?: MetaParameterVariable[]
   onPatchSite: (patch: Partial<PublicSite>) => void
   onPatchTheme: (patch: Partial<SiteTheme>) => void
   onSaveSite: () => void | Promise<void>
 }> = ({
   site,
   disabled,
+  variables = [],
   onPatchSite,
   onPatchTheme,
   onSaveSite
@@ -26654,6 +26771,7 @@ const MetaFormSubmitSettingsPanel: React.FC<{
         <MetaEventParametersEditor
           eventName={activeEventName}
           parameters={submitParameters}
+          variables={variables}
           disabled={disabled}
           onChange={(metaEventParameters) => onPatchTheme({ metaEventParameters })}
           onCommit={saveSoon}
@@ -26671,6 +26789,7 @@ const MetaVideoEventSettings: React.FC<{
   eventEnabled: boolean
   eventName?: string
   parameters?: SiteMetaEventParameters
+  variables?: MetaParameterVariable[]
   disabled?: boolean
   onToggle: (enabled: boolean) => void
   onChangeEvent: (eventName: string) => void
@@ -26684,6 +26803,7 @@ const MetaVideoEventSettings: React.FC<{
   eventEnabled,
   eventName,
   parameters,
+  variables = [],
   disabled,
   onToggle,
   onChangeEvent,
@@ -26762,6 +26882,7 @@ const MetaVideoEventSettings: React.FC<{
         <MetaEventParametersEditor
           eventName={activeEventName}
           parameters={parameters}
+          variables={variables}
           disabled={disabled}
           onChange={onChangeParameters}
           onCommit={onCommit}
@@ -34623,6 +34744,7 @@ const VideoActionsPanel: React.FC<{
   onVideoFormGateSubmitSelect
 }) => {
   const settings = block.settings || {}
+  const metaParameterVariables = useMetaParameterVariables(site)
   const allRules = useMemo(() => getVideoActionRules(settings), [settings])
   const rules = useMemo(
     () => allRules.filter(rule => (
@@ -35131,6 +35253,7 @@ const VideoActionsPanel: React.FC<{
               eventEnabled={rule.metaCapiEnabled !== false}
               eventName={rule.metaEventName}
               parameters={rule.metaEventParameters}
+              variables={metaParameterVariables}
               onToggle={(enabled) => {
                 if (enabled) enableSiteMetaIfNeeded()
                 patchRule(rule.id, {
@@ -36250,6 +36373,11 @@ const VideoFormGateSettingsPanel: React.FC<{
     siteType: 'standard_form' as SiteType,
     theme: videoGateTheme
   }), [site, videoGateTheme])
+  const videoGateMetaVariableSite = useMemo(() => ({
+    ...videoGateSite,
+    blocks: questions
+  }), [questions, videoGateSite])
+  const metaParameterVariables = useMetaParameterVariables(videoGateMetaVariableSite)
   const selectQuestion = (fieldId: string) => {
     onActiveBlockChange?.(fieldId)
     if (activeBlockId === undefined) setActiveQuestionId(fieldId)
@@ -36829,6 +36957,7 @@ const VideoFormGateSettingsPanel: React.FC<{
                 eventEnabled={videoFormGateMetaEnabled}
                 eventName={videoFormGateMetaEventName}
                 parameters={videoFormGateMetaParameters}
+                variables={metaParameterVariables}
                 onToggle={(enabled) => {
                   if (enabled) enableSiteMetaIfNeeded()
                   patchAndSaveSoon({
