@@ -2128,11 +2128,13 @@ export function renderPublicCalendarHtml(calendar, { host = '', embedded = false
     .day.outside{visibility:hidden}
     .day:disabled{opacity:.34}
     .timezone{display:flex;align-items:flex-start;gap:10px;color:var(--muted);font-size:.9rem;font-weight:450}
+    .timezone[hidden]{display:none}
     .timezoneControl{display:grid;gap:8px;min-width:0}
     .timezoneControl strong{color:var(--ink)}
     .timezoneControl select{min-height:38px;max-width:min(320px,100%);font-size:.88rem}
-    .timezoneStep{padding:12px 0 2px}
-    .timezoneStep .timezoneControl{width:100%}
+    .timezoneStep{display:grid;justify-items:center;text-align:center;gap:8px;padding:12px 0 2px}
+    .timezoneStep .timezoneControl{width:min(320px,100%);justify-items:center}
+    .timezoneStep .timezoneControl select{width:100%;max-width:280px}
     .timezoneStep .timezoneControl > span:first-child{color:var(--heading);font-weight:600}
     .timezoneStep[hidden]{display:none}
     .timesPane{border-left:1px solid var(--line);padding:38px 24px;display:grid;grid-template-rows:auto auto minmax(0,1fr);gap:18px}
