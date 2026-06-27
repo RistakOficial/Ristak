@@ -365,8 +365,7 @@ const metaEventOptions = [
 ]
 
 const metaTriggerOptions: Array<{ value: SiteMetaTrigger; label: string }> = [
-  { value: 'page_view', label: 'Al aterrizar' },
-  { value: 'form_submit', label: 'Al terminar formulario' },
+  { value: 'page_view', label: 'Al aterrizar esta página' },
   { value: 'calendar_schedule', label: 'Al agendar' }
 ]
 
@@ -12383,7 +12382,6 @@ export const Sites: React.FC = () => {
                         onSaveSite={saveEditorToolbarSettingsSite}
                         onOpenSeo={() => setSeoModalOpen(true)}
                         onOpenHeader={() => setHeaderModalOpen(current => !current)}
-                        pageHasForm={isFormSite(editorToolbarSettingsSite) || (Boolean(editorToolbarSettingsActivePage) && blocks.some(block => block.blockType === 'form_embed' && getBlockPageId(block, editorToolbarSettingsPages) === editorToolbarSettingsActivePage?.id))}
                         pageHasCalendar={Boolean(editorToolbarSettingsActivePage) && blocks.some(block => block.blockType === 'calendar_embed' && getBlockPageId(block, editorToolbarSettingsPages) === editorToolbarSettingsActivePage?.id)}
                       />
                     </div>
@@ -12519,7 +12517,6 @@ export const Sites: React.FC = () => {
                   onOpenSeo={() => setLibrarySettingsSeoOpen(true)}
                   onOpenHeader={() => setLibrarySettingsHeaderOpen(true)}
                   onBeforeOpenNested={() => setLibrarySettingsModalOpen(false)}
-                  pageHasForm={isFormSite(librarySettingsSite) || (Boolean(librarySettingsActivePage) && (librarySettingsSite.blocks || []).some(block => block.blockType === 'form_embed' && getBlockPageId(block, librarySettingsPages) === librarySettingsActivePage?.id))}
                   pageHasCalendar={Boolean(librarySettingsActivePage) && (librarySettingsSite.blocks || []).some(block => block.blockType === 'calendar_embed' && getBlockPageId(block, librarySettingsPages) === librarySettingsActivePage?.id)}
                 />
               )}
@@ -26007,7 +26004,6 @@ const MetaPageConversionSettingsPanel: React.FC<{
   pages: SitePage[]
   activePage: SitePage
   disabled?: boolean
-  pageHasForm?: boolean
   pageHasCalendar?: boolean
   onPatchSite: (patch: Partial<PublicSite>) => void
   onPatchTheme: (patch: Partial<SiteTheme>) => void
@@ -26017,7 +26013,6 @@ const MetaPageConversionSettingsPanel: React.FC<{
   pages,
   activePage,
   disabled,
-  pageHasForm,
   pageHasCalendar,
   onPatchSite,
   onPatchTheme,
@@ -26030,14 +26025,16 @@ const MetaPageConversionSettingsPanel: React.FC<{
     : 'none'
   const activePageHasConversion = activePageEventName !== 'none'
   const activePageHasParameters = hasMetaEventParameters(activePage.metaEventParameters)
-  const activeTrigger = normalizeMetaTrigger(activePage.metaTrigger)
-  const showFormSubmitTrigger = Boolean(pageHasForm) || activeTrigger === 'form_submit'
+  const normalizedActiveTrigger = normalizeMetaTrigger(activePage.metaTrigger)
+  const activeTrigger = normalizedActiveTrigger === 'form_submit' ? 'page_view' : normalizedActiveTrigger
   const showCalendarScheduleTrigger = Boolean(pageHasCalendar) || activeTrigger === 'calendar_schedule'
   const availableTriggerOptions = metaTriggerOptions.filter(option => {
-    if (option.value === 'form_submit') return showFormSubmitTrigger
     if (option.value === 'calendar_schedule') return showCalendarScheduleTrigger
     return true
   })
+  const activeTriggerDescription = activeTrigger === 'calendar_schedule'
+    ? 'Al agendar desde esta página se envía este evento.'
+    : 'Al aterrizar esta página se envía este evento.'
 
   const saveSoon = useCallback(() => {
     window.setTimeout(() => { void onSaveSite() }, 0)
@@ -26058,14 +26055,9 @@ const MetaPageConversionSettingsPanel: React.FC<{
   useEffect(() => {
     if (!metaEnabled || !activePageHasConversion) return
 
-    let nextTrigger = activeTrigger
-    if (activeTrigger === 'form_submit' && !showFormSubmitTrigger) {
-      nextTrigger = showCalendarScheduleTrigger ? 'calendar_schedule' : 'page_view'
-    } else if (activeTrigger === 'calendar_schedule' && !showCalendarScheduleTrigger) {
-      nextTrigger = showFormSubmitTrigger ? 'form_submit' : 'page_view'
-    } else if (activeTrigger === 'page_view' && (pageHasForm || pageHasCalendar)) {
-      nextTrigger = pageHasForm ? 'form_submit' : 'calendar_schedule'
-    }
+    const nextTrigger = activeTrigger === 'calendar_schedule' && !showCalendarScheduleTrigger
+      ? 'page_view'
+      : activeTrigger
 
     if (nextTrigger === activeTrigger) return
 
@@ -26089,11 +26081,9 @@ const MetaPageConversionSettingsPanel: React.FC<{
     activeTrigger,
     metaEnabled,
     pageHasCalendar,
-    pageHasForm,
     patchActivePage,
     saveSoon,
-    showCalendarScheduleTrigger,
-    showFormSubmitTrigger
+    showCalendarScheduleTrigger
   ])
 
   const patchMetaTrigger = (nextTrigger: SiteMetaTrigger) => {
@@ -26120,7 +26110,7 @@ const MetaPageConversionSettingsPanel: React.FC<{
         </span>
         <div>
           <strong>Meta Pixel + CAPI</strong>
-          <small>{metaEnabled ? 'Encendido para visitas y conversiones' : 'Apagado para esta página'}</small>
+          <small>{metaEnabled ? (activePageHasConversion ? activeTriggerDescription : 'Sin evento de conversión en esta página') : 'Apagado para este sitio'}</small>
         </div>
         <label className={styles.metaSwitch}>
           <input
@@ -26139,7 +26129,7 @@ const MetaPageConversionSettingsPanel: React.FC<{
 
       <div className={styles.editorSettingsTwoColumn}>
         <label className={styles.editorSettingsField}>
-          <span>Cuando</span>
+          <span>Disparador</span>
           <CustomSelect
             value={activeTrigger}
             disabled={disabled || !metaEnabled || !activePageHasConversion}
@@ -26163,6 +26153,7 @@ const MetaPageConversionSettingsPanel: React.FC<{
             onChange={(event) => {
               const metaEventName = event.target.value
               patchActivePage({
+                metaTrigger: activeTrigger,
                 metaEventName,
                 metaCapiEnabled: metaEventName !== 'none',
                 metaCalendarEnabled: activeTrigger === 'calendar_schedule' && metaEventName !== 'none',
@@ -26201,6 +26192,100 @@ const MetaPageConversionSettingsPanel: React.FC<{
           parameters={activePage.metaEventParameters}
           disabled={disabled}
           onChange={(metaEventParameters) => patchActivePage({ metaEventParameters })}
+          onCommit={saveSoon}
+        />
+      )}
+    </div>
+  )
+}
+
+const MetaFormSubmitSettingsPanel: React.FC<{
+  site: PublicSite
+  disabled?: boolean
+  onPatchSite: (patch: Partial<PublicSite>) => void
+  onPatchTheme: (patch: Partial<SiteTheme>) => void
+  onSaveSite: () => void | Promise<void>
+}> = ({
+  site,
+  disabled,
+  onPatchSite,
+  onPatchTheme,
+  onSaveSite
+}) => {
+  const [paramsOpen, setParamsOpen] = useState(false)
+  const metaEnabled = Boolean(site.metaCapiEnabled)
+  const activeEventName = metaEnabled
+    ? normalizeMetaEventName(site.metaEventName, 'none')
+    : 'none'
+  const active = metaEnabled && activeEventName !== 'none'
+  const submitParameters = site.theme?.metaEventParameters
+  const hasParameters = hasMetaEventParameters(submitParameters)
+
+  const saveSoon = useCallback(() => {
+    window.setTimeout(() => { void onSaveSite() }, 0)
+  }, [onSaveSite])
+
+  useEffect(() => {
+    if (!active) setParamsOpen(false)
+  }, [active])
+
+  const patchSubmitEvent = (metaEventName: string) => {
+    onPatchSite({ metaEventName })
+    onPatchTheme({
+      metaEventParameters: pruneMetaEventParametersForEvent(submitParameters, metaEventName)
+    })
+    saveSoon()
+  }
+
+  return (
+    <div className={styles.editorSettingsMetaControls}>
+      <div className={`${styles.editorSettingsMetaRow} ${active ? styles.editorSettingsMetaRowActive : ''}`}>
+        <span className={styles.editorSettingsMetaLogo} aria-hidden="true">
+          <MetaBrandMark size={18} />
+        </span>
+        <div>
+          <strong>Evento al enviar formulario</strong>
+          <small>{active ? 'Al completar el formulario se envía este evento.' : 'Sin evento al completar el formulario.'}</small>
+        </div>
+      </div>
+
+      <label className={styles.editorSettingsField}>
+        <span>Evento</span>
+        <CustomSelect
+          value={activeEventName}
+          disabled={disabled || !metaEnabled}
+          portal
+          onChange={(event) => patchSubmitEvent(event.target.value)}
+          onBlur={saveSoon}
+        >
+          {metaEventOptions.map(option => (
+            <option key={option.value} value={option.value}>{option.label}</option>
+          ))}
+        </CustomSelect>
+      </label>
+
+      <button
+        type="button"
+        className={[
+          styles.editorSettingsInlineToggle,
+          paramsOpen ? styles.editorSettingsInlineToggleActive : '',
+          hasParameters ? styles.editorSettingsInlineToggleFilled : ''
+        ].filter(Boolean).join(' ')}
+        disabled={disabled || !active}
+        aria-expanded={paramsOpen}
+        onClick={() => setParamsOpen(open => !open)}
+      >
+        <Settings2 size={14} />
+        <span>Parámetros</span>
+        <ChevronDown size={13} />
+      </button>
+
+      {paramsOpen && active && (
+        <MetaEventParametersEditor
+          eventName={activeEventName}
+          parameters={submitParameters}
+          disabled={disabled}
+          onChange={(metaEventParameters) => onPatchTheme({ metaEventParameters })}
           onCommit={saveSoon}
         />
       )}
@@ -26334,7 +26419,6 @@ const SiteSettingsPanelContent: React.FC<{
   onOpenSeo: () => void
   onOpenHeader: () => void
   onBeforeOpenNested?: () => void
-  pageHasForm?: boolean
   pageHasCalendar?: boolean
 }> = ({
   site,
@@ -26344,7 +26428,6 @@ const SiteSettingsPanelContent: React.FC<{
   seoIssues,
   metaPixelConnected,
   disabled,
-  pageHasForm,
   pageHasCalendar,
   canEditHeader,
   routeValue,
@@ -26440,7 +26523,6 @@ const SiteSettingsPanelContent: React.FC<{
               pages={pages}
               activePage={activePage}
               disabled={disabled}
-              pageHasForm={pageHasForm}
               pageHasCalendar={pageHasCalendar}
               onPatchSite={onPatchSite}
               onPatchTheme={onPatchTheme}
@@ -26457,6 +26539,18 @@ const SiteSettingsPanelContent: React.FC<{
               </div>
             </div>
           )}
+        </section>
+      )}
+
+      {metaPixelConnected && isFormSite(site) && (
+        <section className={styles.editorSettingsSection}>
+          <MetaFormSubmitSettingsPanel
+            site={site}
+            disabled={disabled}
+            onPatchSite={onPatchSite}
+            onPatchTheme={onPatchTheme}
+            onSaveSite={onSaveSite}
+          />
         </section>
       )}
 
@@ -26493,7 +26587,6 @@ const EditorSettingsDropdown: React.FC<{
   onSaveSite: () => void | Promise<void>
   onOpenSeo: () => void
   onOpenHeader: () => void
-  pageHasForm?: boolean
   pageHasCalendar?: boolean
 }> = (props) => {
   const [open, setOpen] = useState(false)
@@ -32318,9 +32411,9 @@ const FormCompletionSettingsControls: React.FC<{
 const FORM_EMBED_DRAFT_SOURCE_VALUE = '__embedded_form_draft__'
 
 // Nota: el evento del píxel de Meta "Al enviar" NO se configura aquí. El sitio es el
-// master absoluto: getFormSubmitMetaEventName lee el evento a nivel de la página/sitio
-// contenedor (Ajustes del sitio → Meta Pixel + CAPI → "Al terminar formulario"), nunca el
-// del formulario embebido/importado. Por eso el form_embed no expone control de Meta.
+// master absoluto: getFormSubmitMetaEventName lee el evento global del sitio/formulario
+// contenedor (Ajustes → Evento al enviar formulario), nunca el del formulario
+// embebido/importado. Por eso el form_embed no expone control de Meta.
 const FormEmbedToolbarControls: React.FC<{
   site: PublicSite
   block: SiteBlock
@@ -33380,8 +33473,6 @@ const PageInspector: React.FC<{
           </p>
         </AccordionSection>
       )}
-      {/* La "Conversión del formulario" (evento del píxel de Meta al enviar) se movió
-          al popover "Configuración" del toolbar — ver FormPixelSettingsControls. */}
     </AccordionGroup>
   )
 

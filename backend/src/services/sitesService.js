@@ -14617,14 +14617,9 @@ function getFormSubmitMetaEventName(site, pageId) {
     if (page?.metaCapiEnabled && normalizeSiteMetaTrigger(page.metaTrigger) === 'form_submit') {
       return normalizeSiteMetaEventName(page.metaEventName, { allowNone: true, fallback: SITE_META_NO_EVENT })
     }
-    if (page?.metaCapiEnabled && normalizeSiteMetaTrigger(page.metaTrigger) !== 'form_submit') {
-      return SITE_META_NO_EVENT
-    }
-    // Un landing con formulario embebido configura su evento "Al enviar" a nivel de
-    // sitio (site.metaEventName) desde el popover del formulario, igual que un
-    // formulario standalone. Sin un override por página, ese evento de sitio debe
-    // dispararse en el submit; antes el landing devolvía SITE_META_NO_EVENT y el
-    // píxel/CAPI nunca se disparaba aunque el usuario lo hubiera configurado.
+    // Los eventos de página (page_view / calendar_schedule) son independientes:
+    // no deben apagar ni reemplazar el evento global que se manda al enviar el
+    // formulario. Solo se conserva form_submit como compatibilidad legacy.
   }
 
   return normalizeSiteMetaEventName(site?.metaEventName, { allowNone: true })
@@ -14636,12 +14631,8 @@ function getFormSubmitMetaEventParameters(site, pageId, eventName) {
     if (page?.metaCapiEnabled && normalizeSiteMetaTrigger(page.metaTrigger) === 'form_submit') {
       return pruneSiteMetaEventParametersForEvent(page?.metaEventParameters, eventName)
     }
-    if (page?.metaCapiEnabled && normalizeSiteMetaTrigger(page.metaTrigger) !== 'form_submit') {
-      return {}
-    }
-    // Mismo criterio que getFormSubmitMetaEventName: sin override por página, el
-    // landing usa los parámetros a nivel de sitio (theme.metaEventParameters) que
-    // escribe el popover del formulario embebido, para que coincidan con el evento.
+    // Mismo criterio que getFormSubmitMetaEventName: sin override legacy por
+    // página, el submit usa los parámetros globales del sitio/formulario.
   }
 
   return pruneSiteMetaEventParametersForEvent(site?.theme?.metaEventParameters || site?.theme?.meta_event_parameters, eventName)
