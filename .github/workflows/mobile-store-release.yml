@@ -77,11 +77,11 @@ jobs:
       - name: Fetch iOS store credentials
         env:
           INSTALLER_URL: ${{ github.event.inputs.installer_url }}
-          MOBILE_RELEASE_TOKEN: ${{ github.event.inputs.mobile_release_token }}
         run: |
+          MOBILE_RELEASE_TOKEN="$(jq -r '.inputs.mobile_release_token // empty' "$GITHUB_EVENT_PATH")"
+          echo "::add-mask::$MOBILE_RELEASE_TOKEN"
           test -n "$INSTALLER_URL"
           test -n "$MOBILE_RELEASE_TOKEN"
-          echo "::add-mask::$MOBILE_RELEASE_TOKEN"
           curl --fail-with-body -sS -X POST "${INSTALLER_URL%/}/api/webhooks/mobile-release/credentials" \
             -H "Content-Type: application/json" \
             -H "x-mobile-release-token: $MOBILE_RELEASE_TOKEN" \
@@ -279,12 +279,12 @@ jobs:
         if: always()
         env:
           INSTALLER_URL: ${{ github.event.inputs.installer_url }}
-          MOBILE_RELEASE_TOKEN: ${{ github.event.inputs.mobile_release_token }}
         run: |
+          MOBILE_RELEASE_TOKEN="$(jq -r '.inputs.mobile_release_token // empty' "$GITHUB_EVENT_PATH")"
+          echo "::add-mask::$MOBILE_RELEASE_TOKEN"
           if [ -z "$INSTALLER_URL" ] || [ -z "$MOBILE_RELEASE_TOKEN" ]; then
             exit 0
           fi
-          echo "::add-mask::$MOBILE_RELEASE_TOKEN"
           STATUS="${{ job.status }}"
           jq -n \
             --arg platform ios \
@@ -328,11 +328,11 @@ jobs:
       - name: Fetch Android store credentials
         env:
           INSTALLER_URL: ${{ github.event.inputs.installer_url }}
-          MOBILE_RELEASE_TOKEN: ${{ github.event.inputs.mobile_release_token }}
         run: |
+          MOBILE_RELEASE_TOKEN="$(jq -r '.inputs.mobile_release_token // empty' "$GITHUB_EVENT_PATH")"
+          echo "::add-mask::$MOBILE_RELEASE_TOKEN"
           test -n "$INSTALLER_URL"
           test -n "$MOBILE_RELEASE_TOKEN"
-          echo "::add-mask::$MOBILE_RELEASE_TOKEN"
           curl --fail-with-body -sS -X POST "${INSTALLER_URL%/}/api/webhooks/mobile-release/credentials" \
             -H "Content-Type: application/json" \
             -H "x-mobile-release-token: $MOBILE_RELEASE_TOKEN" \
@@ -394,12 +394,12 @@ jobs:
         if: always()
         env:
           INSTALLER_URL: ${{ github.event.inputs.installer_url }}
-          MOBILE_RELEASE_TOKEN: ${{ github.event.inputs.mobile_release_token }}
         run: |
+          MOBILE_RELEASE_TOKEN="$(jq -r '.inputs.mobile_release_token // empty' "$GITHUB_EVENT_PATH")"
+          echo "::add-mask::$MOBILE_RELEASE_TOKEN"
           if [ -z "$INSTALLER_URL" ] || [ -z "$MOBILE_RELEASE_TOKEN" ]; then
             exit 0
           fi
-          echo "::add-mask::$MOBILE_RELEASE_TOKEN"
           STATUS="${{ job.status }}"
           jq -n \
             --arg platform android \
