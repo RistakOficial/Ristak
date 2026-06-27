@@ -1780,7 +1780,7 @@ function renderCalendarBookingForm(bookingForm = {}) {
   const headerHtml = showHeader
     ? `<div class="formHeader" data-form-header="${isCustom ? 'minimal' : 'full'}">
         ${isCustom ? '' : `<h2>${escapeHtml(bookingForm.formName || 'Tus datos')}</h2>`}
-        ${hasPages ? `<p data-form-progress>Pantalla 1 de ${pages.length}</p>` : ''}
+        ${hasPages ? `<p data-form-progress aria-live="polite">Pantalla 1 de ${pages.length}</p>` : ''}
       </div>`
     : ''
 
@@ -1809,7 +1809,6 @@ function renderCalendarBookingForm(bookingForm = {}) {
 
         return `
           <div class="formPage" data-form-page="${escapeHtml(page.id)}"${index === 0 ? '' : ' hidden'}>
-            ${hasPages ? `<h3>${escapeHtml(page.title || `Pantalla ${index + 1}`)}</h3>` : ''}
             ${pageQuestions}
           </div>
         `
@@ -2174,14 +2173,13 @@ export function renderPublicCalendarHtml(calendar, { host = '', embedded = false
     .slotEmpty{display:grid;place-items:center;min-height:160px;border:1px dashed var(--line);border-radius:12px;color:var(--muted);text-align:center;padding:18px}
     form{display:none;gap:18px;border-top:1px solid var(--line);padding-top:22px}
     form.visible{display:grid}
-    .formHeader{display:grid;gap:5px;margin-bottom:2px}
+    .formHeader{display:grid;justify-items:start;gap:8px;margin-bottom:6px}
     .formHeader h2{margin:0}
-    .formHeader p{font-size:.86rem;font-weight:450}
-    .formHeader[data-form-header="minimal"]{margin-bottom:-2px}
-    .formHeader[data-form-header="minimal"] p{font-size:.82rem;color:var(--muted)}
+    .formHeader p{margin:0}
+    .formHeader [data-form-progress]{display:inline-flex;align-items:center;justify-content:center;min-height:28px;border:1px solid color-mix(in srgb,var(--accent) 24%,var(--line));border-radius:999px;background:var(--accent-soft);color:var(--accent);padding:4px 10px;font-size:.74rem;font-weight:600;line-height:1;letter-spacing:.04em;text-transform:uppercase}
+    .formHeader[data-form-header="minimal"]{margin-bottom:4px}
     .formPage{display:grid;gap:16px}
     .formPage[hidden]{display:none}
-    .formPage h3{font-size:.95rem}
     .calendarQuestion{display:grid;gap:7px}
     .calendarContentBlock{display:grid;gap:6px}
     .calContentTitle{margin:0;color:var(--heading);font-size:1.05rem;font-weight:600;letter-spacing:-.01em}
