@@ -12320,6 +12320,10 @@
   min-width: 0;
 }
 
+.accordionSection[data-open="true"] {
+  gap: 12px;
+}
+
 .accordionHeader {
   display: flex;
   align-items: center;
@@ -12376,7 +12380,7 @@
   display: grid;
   gap: 10px;
   min-width: 0;
-  padding: 13px 4px 4px;
+  padding: 2px 4px 4px;
 }
 
 /* Quita la línea-divisor que .panelSubheader pinta en modo enfocado: dentro

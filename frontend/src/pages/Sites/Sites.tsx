@@ -6813,16 +6813,23 @@ function FormModePalette({
 interface AccordionContextValue {
   openId: string | null
   toggle: (id: string) => void
+  registerDefaultOpen: (id: string) => void
 }
 
 const AccordionContext = React.createContext<AccordionContextValue | null>(null)
 
 const AccordionGroup: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [openId, setOpenId] = useState<string | null>(null)
+  const defaultOpenAppliedRef = useRef(false)
   const toggle = useCallback((id: string) => {
     setOpenId(prev => (prev === id ? null : id))
   }, [])
-  const value = useMemo(() => ({ openId, toggle }), [openId, toggle])
+  const registerDefaultOpen = useCallback((id: string) => {
+    if (defaultOpenAppliedRef.current) return
+    defaultOpenAppliedRef.current = true
+    setOpenId(id)
+  }, [])
+  const value = useMemo(() => ({ openId, toggle, registerDefaultOpen }), [openId, toggle, registerDefaultOpen])
   return <AccordionContext.Provider value={value}>{children}</AccordionContext.Provider>
 }
 
@@ -6831,7 +6838,8 @@ const AccordionSection: React.FC<{
   title: React.ReactNode
   children: React.ReactNode
   defaultOpen?: boolean
-}> = ({ id, title, children, defaultOpen = true }) => {
+  defaultGroupOpen?: boolean
+}> = ({ id, title, children, defaultOpen = true, defaultGroupOpen = false }) => {
   const ctx = useContext(AccordionContext)
   // Clave de contexto GLOBALMENTE única por instancia (useId) — el prop `id`
   // queda solo como etiqueta legible (data-accordion-id); así nunca chocan dos
@@ -6840,6 +6848,10 @@ const AccordionSection: React.FC<{
   const sectionKey = `${id}-${reactId}`
   const [localOpen, setLocalOpen] = useState(defaultOpen)
   const open = ctx ? ctx.openId === sectionKey : localOpen
+  useEffect(() => {
+    if (!ctx || !defaultGroupOpen) return
+    ctx.registerDefaultOpen(sectionKey)
+  }, [ctx, defaultGroupOpen, sectionKey])
   const handleToggle = () => {
     if (ctx) ctx.toggle(sectionKey)
     else setLocalOpen(prev => !prev)
@@ -6932,6 +6944,8 @@ function FormEmbedEditorPanel({
   const activeBlockIsField = Boolean(activeField && fieldBlockTypes.has(activeField.blockType))
   const activeFieldSystemPreset = activeBlockIsField ? getSystemFormFieldPresetForBlock(activeField) : null
   const showActiveFieldTypographyInEdit = shouldShowBlockTypographyInEdit(activeField)
+  const shouldOpenActiveFieldContentByDefault = shouldOpenTextContentInEdit(activeField)
+  const activeFieldContentSectionTitle = shouldOpenActiveFieldContentByDefault ? 'Texto' : 'Contenido'
   const activeFieldPageId = activeField ? getBlockPageId(activeField, pages) : activePage?.id || DEFAULT_FUNNEL_PAGE_ID
   const ruleFieldBlocks = fields.filter(field => fieldBlockTypes.has(field.blockType))
   const patchActiveField = (patch: Partial<SiteBlock>) => {
@@ -7105,7 +7119,7 @@ function FormEmbedEditorPanel({
           </AccordionSection>
         ) : !activeBlockIsField ? (
           <>
-            <AccordionSection id="embedded-element-content" title="Contenido">
+            <AccordionSection id="embedded-element-content" title={activeFieldContentSectionTitle} defaultGroupOpen={shouldOpenActiveFieldContentByDefault}>
               <div className={styles.formFieldEditorHeader}>
                 <div>
                   <strong>Elemento seleccionado</strong>
@@ -28759,8 +28773,21 @@ const editTabTypographyBlockTypes = new Set<SiteBlockType>([
   'faq'
 ])
 
+const textContentEditBlockTypes = new Set<SiteBlockType>([
+  'headline',
+  'title',
+  'subheading',
+  'subtitle',
+  'description',
+  'text'
+])
+
 const shouldShowBlockTypographyInEdit = (block?: SiteBlock | null) => Boolean(
   block && editTabTypographyBlockTypes.has(block.blockType)
+)
+
+const shouldOpenTextContentInEdit = (block?: SiteBlock | null) => Boolean(
+  block && textContentEditBlockTypes.has(block.blockType)
 )
 
 const fontWeightEditorOptions = [
@@ -29043,6 +29070,7 @@ const InlineBlockStyleControls: React.FC<{
   const supportsMedia = showDesignControls && !surfaceOnly && (block.blockType === 'image' || block.blockType === 'video')
   const supportsCards = showDesignControls && !surfaceOnly && ['benefits', 'testimonials', 'services', 'faq'].includes(block.blockType)
   const supportsCountdown = showDesignControls && !surfaceOnly && block.blockType === 'countdown'
+  const textSectionTitle = mode === 'typography' ? 'Formato' : 'Texto'
   const defaultBorderWidth = getBlockBorderWidthFallback(site, block)
   const blockTextPaint = getSettingPaint(settings, 'blockText', getPageTextPaint(site))
   const currentFontFamily = getSettingString(settings, 'fontFamily')
@@ -29053,7 +29081,7 @@ const InlineBlockStyleControls: React.FC<{
   return (
     <div className={styles.blockStyleControls} onClick={(event) => event.stopPropagation()}>
       {supportsTextStyle && (
-        <AccordionSection id="block-text" title="Texto">
+        <AccordionSection id="block-text" title={textSectionTitle}>
           <TypographyFormatInspector
             target="text"
             settings={settings}
@@ -34765,11 +34793,14 @@ const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
   const hasListCopy = ['benefits', 'testimonials', 'services', 'faq'].includes(block.blockType)
   const isPrimaryTextBlock = ['headline', 'title'].includes(block.blockType)
   const isSecondaryTextBlock = ['subheading', 'subtitle', 'description'].includes(block.blockType)
+  const shouldOpenContentEditorByDefault = shouldOpenTextContentInEdit(block)
   const systemFieldPreset = getSystemFormFieldPresetForBlock(block)
   const showTypographyInEdit = shouldShowBlockTypographyInEdit(block)
   const showBlockNameFirst = showTypographyInEdit || isField || block.blockType === SECTION_BLOCK_TYPE || block.blockType === 'countdown'
+  const showTextContentBeforeTypography = showBlockNameFirst && shouldOpenContentEditorByDefault
   const isMediaBlock = block.blockType === 'image' || block.blockType === 'video'
   const showContentField = block.blockType !== 'calendar_embed' && block.blockType !== 'button' && !isMediaBlock
+  const contentSectionTitle = shouldOpenContentEditorByDefault ? 'Texto' : 'Contenido'
   const contentLabel = isField
     ? 'Texto de ayuda'
     : block.blockType === SECTION_BLOCK_TYPE
@@ -34947,30 +34978,35 @@ const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
     </>
   )
 
+  const contentAccordion = (
+    <AccordionSection id="edit-content" title={contentSectionTitle} defaultGroupOpen={shouldOpenContentEditorByDefault}>
+      {contentField}
+
+      {block.blockType === 'hero' && (
+        <label className={styles.field}>
+          <span>Kicker</span>
+          <input value={getSettingString(settings, 'kicker')} onChange={(event) => onPatchSettings({ kicker: event.target.value })} onBlur={onSave} />
+        </label>
+      )}
+
+      {(block.blockType === 'hero' || block.blockType === 'cta') && (
+        <label className={styles.field}>
+          <span>Subtítulo</span>
+          <textarea rows={2} value={getSettingString(settings, 'subtitle')} onChange={(event) => onPatchSettings({ subtitle: event.target.value })} onBlur={onSave} />
+        </label>
+      )}
+
+      {!showBlockNameFirst && blockNameField}
+    </AccordionSection>
+  )
+
   const editContent = (
     <AccordionGroup>
       {showBlockNameFirst && blockNameField}
+      {showTextContentBeforeTypography && contentAccordion}
       {showBlockNameFirst && editTypographyControls}
 
-      <AccordionSection id="edit-content" title="Contenido">
-        {contentField}
-
-        {block.blockType === 'hero' && (
-          <label className={styles.field}>
-            <span>Kicker</span>
-            <input value={getSettingString(settings, 'kicker')} onChange={(event) => onPatchSettings({ kicker: event.target.value })} onBlur={onSave} />
-          </label>
-        )}
-
-        {(block.blockType === 'hero' || block.blockType === 'cta') && (
-          <label className={styles.field}>
-            <span>Subtítulo</span>
-            <textarea rows={2} value={getSettingString(settings, 'subtitle')} onChange={(event) => onPatchSettings({ subtitle: event.target.value })} onBlur={onSave} />
-          </label>
-        )}
-
-        {!showBlockNameFirst && blockNameField}
-      </AccordionSection>
+      {!showTextContentBeforeTypography && contentAccordion}
 
       {hasButtonCopy && (
         <AccordionSection id="edit-button" title="Botón">
