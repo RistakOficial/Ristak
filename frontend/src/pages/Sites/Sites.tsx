@@ -26406,23 +26406,27 @@ const MetaPageConversionSettingsPanel: React.FC<{
         <span className={styles.editorSettingsMetaLogo} aria-hidden="true">
           <MetaBrandMark size={18} />
         </span>
-        <button
-          type="button"
-          className={styles.editorSettingsMetaSummaryButton}
-          disabled={disabled || !metaEnabled}
-          aria-expanded={detailsOpen}
-          onClick={() => setDetailsOpen(open => !open)}
-        >
-          <strong>Meta Pixel + CAPI</strong>
+        <div className={styles.editorSettingsMetaHeaderContent}>
+          <div className={styles.editorSettingsMetaTitleLine}>
+            <button
+              type="button"
+              className={styles.editorSettingsMetaSummaryButton}
+              disabled={disabled || !metaEnabled}
+              aria-expanded={detailsOpen}
+              onClick={() => setDetailsOpen(open => !open)}
+            >
+              <strong>Meta Pixel + CAPI</strong>
+            </button>
+            <Switch
+              checked={metaEnabled}
+              disabled={disabled}
+              onChange={handleMetaEnabledChange}
+              aria-label="Activar medición de Meta"
+            />
+          </div>
           <small>{summaryText}</small>
-        </button>
+        </div>
         <div className={styles.editorSettingsMetaActions}>
-          <Switch
-            checked={metaEnabled}
-            disabled={disabled}
-            onChange={handleMetaEnabledChange}
-            aria-label="Activar medición de Meta"
-          />
           <button
             type="button"
             className={`${styles.editorSettingsMetaChevron} ${detailsOpen ? styles.editorSettingsMetaChevronOpen : ''}`}

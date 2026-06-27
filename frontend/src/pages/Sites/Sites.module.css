@@ -15164,13 +15164,13 @@
 .editorSettingsMetaControls {
   min-width: 0;
   display: grid;
-  gap: 10px;
+  gap: 14px;
 }
 
 .editorSettingsMetaSummaryButton {
   min-width: 0;
-  display: grid;
-  gap: 3px;
+  display: inline-flex;
+  align-items: center;
   border: 0;
   background: transparent;
   color: inherit;
@@ -15183,10 +15183,37 @@
   cursor: default;
 }
 
+.editorSettingsMetaHeaderContent {
+  min-width: 0;
+  display: grid;
+  gap: 4px;
+}
+
+.editorSettingsMetaTitleLine {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: minmax(0, max-content) auto;
+  align-items: center;
+  justify-content: start;
+  gap: 10px;
+}
+
+.editorSettingsMetaHeaderContent > small {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--color-text-tertiary);
+  font-size: 12px;
+  font-weight: var(--font-weight-semibold, 600);
+  line-height: 1.2;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .editorSettingsMetaActions {
   display: inline-flex;
   align-items: center;
-  gap: 8px;
+  justify-content: flex-end;
+  gap: 0;
 }
 
 .editorSettingsMetaChevron {
@@ -15223,29 +15250,33 @@
 .editorSettingsMetaDetails {
   min-width: 0;
   display: grid;
-  gap: 0;
-  padding-top: 8px;
+  gap: 18px;
+  padding-top: 2px;
 }
 
 .editorSettingsMetaStaticTrigger,
 .editorSettingsMetaDetectedItem {
   min-width: 0;
   display: grid;
-  gap: 9px;
+  gap: 11px;
   border: 0;
-  border-top: 1px solid var(--border);
   border-radius: 0;
   background: transparent;
-  padding: 12px 0 0;
+  padding: 0;
 }
 
 .editorSettingsMetaDetails > :first-child {
-  border-top: 0;
   padding-top: 0;
 }
 
 .editorSettingsMetaStaticTrigger > div,
 .editorSettingsMetaDetectedHeader {
+  min-width: 0;
+  display: grid;
+  gap: 3px;
+}
+
+.editorSettingsMetaDetectedHeader > div {
   min-width: 0;
   display: grid;
   gap: 3px;
@@ -15278,7 +15309,7 @@
 .editorSettingsMetaDetectedList {
   min-width: 0;
   display: grid;
-  gap: 0;
+  gap: 18px;
 }
 
 .editorSettingsMetaDetectedHeader {
