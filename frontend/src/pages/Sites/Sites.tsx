@@ -6802,230 +6802,6 @@ function FormModePalette({
   )
 }
 
-// Selector that matches the currently-selected element on the form canvas.
-// Embedded/video-gate forms render fields via EmbeddedFormCanvasFields; the
-// standalone form canvas selects top-level blocks with .rstkSelActive.
-const FORM_ELEMENT_POPOVER_ANCHOR_EMBEDDED =
-  '.rstkEmbeddedFormFieldActive, .rstkEmbeddedFormItemActive, .rstkEmbeddedFormSubmitActive'
-const FORM_ELEMENT_POPOVER_ANCHOR_BLOCK = '.rstkSelActive'
-const NOOP = () => {}
-
-const computeFormElementPopoverPosition = (anchorSelector: string): { left: number; top: number } | null => {
-  const anchor = document.querySelector<HTMLElement>(anchorSelector)
-  if (!anchor) return null
-  const rect = anchor.getBoundingClientRect()
-  const pad = 12
-  const gap = 14
-  const popoverWidth = Math.min(430, Math.max(320, window.innerWidth - pad * 2))
-  const popoverHeight = Math.min(620, Math.max(280, window.innerHeight - pad * 2))
-
-  // Área segura donde puede vivir la caja: horizontalmente acotada al lienzo
-  // (.rstkCanvas) para NUNCA tapar los paneles laterales (bloques a la izquierda,
-  // propiedades a la derecha), y verticalmente al alto visible del lienzo para no
-  // meterse bajo la barra superior. En layouts apilados (lienzo a todo el ancho)
-  // degrada al viewport.
-  const canvasRect = document.querySelector<HTMLElement>('.rstkCanvas')?.getBoundingClientRect()
-  const areaLeft = canvasRect ? Math.max(pad, canvasRect.left + pad) : pad
-  const areaRight = canvasRect ? Math.min(window.innerWidth - pad, canvasRect.right - pad) : window.innerWidth - pad
-  const areaTop = Math.max(pad, canvasRect ? canvasRect.top + pad : pad)
-  const areaBottom = Math.min(window.innerHeight - pad, canvasRect ? canvasRect.bottom - pad : window.innerHeight - pad)
-
-  const clampLeft = (l: number) => Math.max(areaLeft, Math.min(l, areaRight - popoverWidth))
-  const clampTop = (t: number) => Math.max(areaTop, Math.min(t, areaBottom - popoverHeight))
-
-  // Cuánto se encimaría una caja en (left, top) sobre el elemento editado.
-  const overlapArea = (left: number, top: number) => {
-    const ox = Math.max(0, Math.min(left + popoverWidth, rect.right) - Math.max(left, rect.left))
-    const oy = Math.max(0, Math.min(top + popoverHeight, rect.bottom) - Math.max(top, rect.top))
-    return ox * oy
-  }
-
-  // Movimiento inteligente: probamos colocarla pegada al elemento por cada lado
-  // (derecha → izquierda → abajo → arriba) y nos quedamos con el primero que
-  // quepa SIN taparlo. Así una caja angosta salta de lado y una ancha (un
-  // calendario, p. ej.) baja debajo del bloque en vez de encimarse.
-  const sideTop = clampTop(rect.top - 4)
-  const centeredLeft = clampLeft(rect.left + rect.width / 2 - popoverWidth / 2)
-  const candidates = [
-    { left: rect.right + gap, top: sideTop, fits: rect.right + gap + popoverWidth <= areaRight },
-    { left: rect.left - popoverWidth - gap, top: sideTop, fits: rect.left - popoverWidth - gap >= areaLeft },
-    { left: centeredLeft, top: rect.bottom + gap, fits: rect.bottom + gap + popoverHeight <= areaBottom },
-    { left: centeredLeft, top: rect.top - popoverHeight - gap, fits: rect.top - popoverHeight - gap >= areaTop }
-  ]
-  const clean = candidates.find(candidate => candidate.fits)
-  if (clean) return { left: clampLeft(clean.left), top: clampTop(clean.top) }
-
-  // El elemento llena el área útil (calendario a todo lo ancho y alto): no hay
-  // hueco libre, así que anclamos la caja a la esquina del lienzo que MENOS lo
-  // tape, en vez de plantarla siempre encima del bloque.
-  const corners = [
-    { left: areaRight - popoverWidth, top: areaBottom - popoverHeight },
-    { left: areaRight - popoverWidth, top: areaTop },
-    { left: areaLeft, top: areaBottom - popoverHeight },
-    { left: areaLeft, top: areaTop }
-  ].map(corner => ({ left: clampLeft(corner.left), top: clampTop(corner.top) }))
-  return corners.reduce((best, corner) => (
-    overlapArea(corner.left, corner.top) < overlapArea(best.left, best.top) ? corner : best
-  ), corners[0])
-}
-
-// Pins a floating box next to the currently-selected element on the form
-// canvas. selectionKey changes when the selection changes (empty = nothing
-// selected); anchorSelector picks the active node; onDeselect closes on Escape.
-const useFormElementPopover = (selectionKey: string, anchorSelector: string, onDeselect: () => void) => {
-  const [autoPosition, setAutoPosition] = useState<{ left: number; top: number } | null>(null)
-  // Posición fijada por el usuario al arrastrar la caja. Mientras exista, manda
-  // sobre la posición automática y el reflujo (scroll/resize) deja de recalcular,
-  // para no pelear contra el arrastre. Se limpia al cambiar de elemento.
-  const [manualPosition, setManualPosition] = useState<{ left: number; top: number } | null>(null)
-  const manualPositionRef = useRef<{ left: number; top: number } | null>(null)
-  manualPositionRef.current = manualPosition
-
-  const recompute = useCallback(() => {
-    if (!selectionKey) {
-      setAutoPosition(null)
-      return
-    }
-    if (manualPositionRef.current) return
-    const next = computeFormElementPopoverPosition(anchorSelector)
-    if (next) setAutoPosition(next)
-  }, [selectionKey, anchorSelector])
-
-  // Recompute on selection change (deferred a frame so the canvas applied the
-  // active class) and gently bring the element into view. A new selection always
-  // starts from the smart auto position, dropping any previous manual drag.
-  useLayoutEffect(() => {
-    setManualPosition(null)
-    if (!selectionKey) {
-      setAutoPosition(null)
-      return undefined
-    }
-    const raf = window.requestAnimationFrame(() => {
-      document.querySelector<HTMLElement>(anchorSelector)?.scrollIntoView({ block: 'nearest' })
-      const next = computeFormElementPopoverPosition(anchorSelector)
-      if (next) setAutoPosition(next)
-    })
-    return () => window.cancelAnimationFrame(raf)
-  }, [selectionKey, anchorSelector])
-
-  // Keep it pinned while scrolling/resizing, and close it with Escape.
-  useEffect(() => {
-    if (!selectionKey) return undefined
-    let frame = 0
-    const handleReflow = () => {
-      if (frame) return
-      frame = window.requestAnimationFrame(() => {
-        frame = 0
-        recompute()
-      })
-    }
-    const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') onDeselect()
-    }
-    window.addEventListener('scroll', handleReflow, true)
-    window.addEventListener('resize', handleReflow)
-    window.addEventListener('keydown', handleKeyDown)
-    return () => {
-      window.removeEventListener('scroll', handleReflow, true)
-      window.removeEventListener('resize', handleReflow)
-      window.removeEventListener('keydown', handleKeyDown)
-      if (frame) window.cancelAnimationFrame(frame)
-    }
-  }, [selectionKey, recompute, onDeselect])
-
-  const position = manualPosition || autoPosition
-  const style = position
-    ? ({
-      ['--imported-element-popover-left' as string]: `${position.left}px`,
-      ['--imported-element-popover-top' as string]: `${position.top}px`
-    } as React.CSSProperties)
-    : undefined
-
-  return { position, style, setManualPosition }
-}
-
-// The floating box itself: same visual shell as the site builder's inline
-// element editor, with a small header bar + close button. Holds the element's
-// behaviour/logic controls while the right inspector keeps design only.
-const FormElementLogicPopover: React.FC<{
-  style?: React.CSSProperties
-  title: string
-  onDeselect: () => void
-  onManualPosition?: (position: { left: number; top: number }) => void
-  children: React.ReactNode
-}> = ({ style, title, onDeselect, onManualPosition, children }) => {
-  const shellRef = useRef<HTMLDivElement>(null)
-  const dragRef = useRef<{ pointerId: number; offsetX: number; offsetY: number } | null>(null)
-  const draggable = Boolean(onManualPosition)
-
-  // Arrastre por la barra de título. Se fija la posición en coordenadas de
-  // viewport (la caja es position: fixed) y se acota para que NUNCA salga de la
-  // pantalla. No arranca desde el botón de cerrar.
-  const handleDragStart = (event: React.PointerEvent<HTMLDivElement>) => {
-    if (!onManualPosition || (event.target as HTMLElement).closest('button')) return
-    const shell = shellRef.current
-    if (!shell) return
-    const rect = shell.getBoundingClientRect()
-    dragRef.current = {
-      pointerId: event.pointerId,
-      offsetX: event.clientX - rect.left,
-      offsetY: event.clientY - rect.top
-    }
-    event.currentTarget.setPointerCapture(event.pointerId)
-    event.preventDefault()
-  }
-
-  const handleDragMove = (event: React.PointerEvent<HTMLDivElement>) => {
-    const drag = dragRef.current
-    const shell = shellRef.current
-    if (!drag || !shell || event.pointerId !== drag.pointerId || !onManualPosition) return
-    const rect = shell.getBoundingClientRect()
-    const pad = 8
-    const maxLeft = Math.max(pad, window.innerWidth - rect.width - pad)
-    const maxTop = Math.max(pad, window.innerHeight - rect.height - pad)
-    const left = Math.min(Math.max(event.clientX - drag.offsetX, pad), maxLeft)
-    const top = Math.min(Math.max(event.clientY - drag.offsetY, pad), maxTop)
-    onManualPosition({ left, top })
-  }
-
-  const handleDragEnd = (event: React.PointerEvent<HTMLDivElement>) => {
-    const drag = dragRef.current
-    if (!drag || event.pointerId !== drag.pointerId) return
-    dragRef.current = null
-    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
-      event.currentTarget.releasePointerCapture(event.pointerId)
-    }
-  }
-
-  return (
-    <div
-      ref={shellRef}
-      className={`${styles.importedElementPopoverShell} ${styles.formElementLogicPopover}`}
-      style={style}
-      role="dialog"
-      aria-label="Configurar elemento del formulario"
-      onPointerDown={(event) => event.stopPropagation()}
-    >
-      <div
-        className={`${styles.formElementLogicBar} ${draggable ? styles.formElementLogicBarDraggable : ''}`}
-        onPointerDown={handleDragStart}
-        onPointerMove={handleDragMove}
-        onPointerUp={handleDragEnd}
-        onPointerCancel={handleDragEnd}
-      >
-        <span>
-          {draggable && <GripVertical size={14} className={styles.formElementLogicGrip} aria-hidden />}
-          {title}
-        </span>
-        <button type="button" onClick={onDeselect} aria-label="Cerrar configuración del elemento">
-          <X size={15} />
-        </button>
-      </div>
-      <div className={styles.importedButtonActionBox}>{children}</div>
-    </div>
-  )
-}
-
 // ============================================================
 // Inspector accordion — secciones colapsables del panel derecho.
 // AccordionGroup = apertura EXCLUSIVA (abrir una cierra las demás);
@@ -7115,8 +6891,7 @@ function FormEmbedEditorPanel({
   onAddPage,
   onPatchPage,
   onRenamePage,
-  onDeletePage,
-  onDeselect
+  onDeletePage
 }: {
   site: PublicSite
   block: SiteBlock
@@ -7150,7 +6925,6 @@ function FormEmbedEditorPanel({
   onPatchPage: (pageId: string, patch: Partial<SitePage>) => void
   onRenamePage: (pageId: string, title: string) => void
   onDeletePage: (pageId: string) => void
-  onDeselect: () => void
 }) {
   const settings = block.settings || {}
   const activePage = pages.find(page => page.id === activePageId) || pages[0] || null
@@ -7194,18 +6968,7 @@ function FormEmbedEditorPanel({
   const isSubmitSelected = activeElement === 'submit'
   const isFormSurfaceSelected = activeElement === 'form'
   const activePageButtonPlaceholder = activePage ? getFormPageActionLabel(site, pages, activePage.id) : ''
-
-  // Floating element editor: the behaviour/logic of the selected form element
-  // (label, type, rules, option actions…) lives in a small box pinned next to
-  // the element on the canvas instead of the right inspector. The right panel
-  // keeps only the design controls.
-  const showElementPopover = isSubmitSelected || Boolean(activeField)
-  const elementPopoverSelectionKey = isSubmitSelected ? 'submit' : (activeField?.id || '')
-  const { position: elementPopoverPosition, style: elementPopoverStyle, setManualPosition: setElementPopoverPosition } = useFormElementPopover(
-    elementPopoverSelectionKey,
-    FORM_ELEMENT_POPOVER_ANCHOR_EMBEDDED,
-    onDeselect
-  )
+  const showElementEditor = isSubmitSelected || Boolean(activeField)
 
   const renderActiveContentControls = () => {
     if (!activeField) return null
@@ -7675,39 +7438,28 @@ function FormEmbedEditorPanel({
   )
 
   return (
-    <>
-      {showElementPopover && elementPopoverPosition && (
-        <FormElementLogicPopover
-          style={elementPopoverStyle}
-          title={isSubmitSelected ? 'Botón de envío' : 'Configuración del elemento'}
-          onDeselect={onDeselect}
-          onManualPosition={setElementPopoverPosition}
-        >
-          {editContent}
-        </FormElementLogicPopover>
-      )}
-      <InspectorTabbedPanel
-        title="Componente de formulario"
-        subtitle="Se guarda con el sitio web"
-        className={styles.formModePanel}
-        defaultTab="formDesign"
-        ariaLabel="Editor de componente de formulario"
-        header={(
-          <div className={styles.formModePanelHeader}>
-            <span className={styles.formModeIcon}><FormInput size={18} /></span>
-            <div>
-              <strong>Componente de formulario</strong>
-              <small>{showElementPopover ? 'Diseño del elemento seleccionado' : 'Diseño y páginas del formulario'}</small>
-            </div>
+    <InspectorTabbedPanel
+      title="Componente de formulario"
+      subtitle="Se guarda con el sitio web"
+      className={styles.formModePanel}
+      defaultTab={showElementEditor ? 'edit' : 'formDesign'}
+      ariaLabel="Editor de componente de formulario"
+      header={(
+        <div className={styles.formModePanelHeader}>
+          <span className={styles.formModeIcon}><FormInput size={18} /></span>
+          <div>
+            <strong>Componente de formulario</strong>
+            <small>{showElementEditor ? 'Editar el elemento seleccionado' : 'Diseño y páginas del formulario'}</small>
           </div>
-        )}
-        tabs={[
-          { value: 'formDesign', label: 'Diseño', icon: <Sparkles size={14} />, content: formDesignContent },
-          { value: 'blockDesign', label: 'Bloque', icon: <LayoutTemplate size={14} />, content: blockDesignContent },
-          { value: 'settings', label: 'Páginas', icon: <FileText size={14} />, content: pagesContent }
-        ]}
-      />
-    </>
+        </div>
+      )}
+      tabs={[
+        { value: 'edit', label: 'Editar', icon: <Pencil size={14} />, content: editContent },
+        { value: 'formDesign', label: 'Diseño', icon: <Sparkles size={14} />, content: formDesignContent },
+        { value: 'blockDesign', label: 'Bloque', icon: <LayoutTemplate size={14} />, content: blockDesignContent },
+        { value: 'settings', label: 'Páginas', icon: <FileText size={14} />, content: pagesContent }
+      ]}
+    />
   )
 }
 
@@ -12322,20 +12074,6 @@ export const Sites: React.FC = () => {
     }
   }
 
-  // Stable reference so the floating element editor doesn't re-subscribe its
-  // scroll/resize/keydown listeners on every parent render.
-  const handleEmbeddedFormDeselect = useCallback(() => {
-    setActiveEmbeddedFormSubmitSelected(false)
-    setActiveEmbeddedFormFieldId('')
-  }, [])
-
-  // Deselect the standalone-form canvas block (closes its floating logic box).
-  const handleCanvasBlockDeselect = useCallback(() => {
-    selectEditorBlock(PAGE_SELECTED_ID)
-  }, [selectEditorBlock])
-
-  // Stable reference so the video-gate floating editor doesn't re-subscribe its
-  // listeners on every parent render.
   const handleVideoFormGateActiveBlockChange = useCallback((blockId: string) => {
     setActiveVideoFormGateSubmitSelected(false)
     setActiveVideoFormGateBlockId(blockId)
@@ -13251,7 +12989,6 @@ export const Sites: React.FC = () => {
                     onPatchPage={patchEmbeddedFormPage}
                     onRenamePage={renameEmbeddedFormPage}
                     onDeletePage={deleteEmbeddedFormPage}
-                    onDeselect={handleEmbeddedFormDeselect}
                   />
                 ) : (
                   <PropertiesPanel
@@ -13286,7 +13023,6 @@ export const Sites: React.FC = () => {
                     onVideoFormGateActiveBlockChange={handleVideoFormGateActiveBlockChange}
                     onVideoFormGateSubmitSelect={() => setActiveVideoFormGateSubmitSelected(true)}
                     onSave={() => handleSaveBlock()}
-                    onDeselect={handleCanvasBlockDeselect}
                   />
                 )}
 
@@ -32223,7 +31959,6 @@ interface PropertiesPanelProps {
   onVideoFormGateActiveBlockChange?: (blockId: string) => void
   onVideoFormGateSubmitSelect?: () => void
   onSave: () => void
-  onDeselect?: () => void
 }
 
 const FormTypographyGlobalControls: React.FC<{
@@ -34983,20 +34718,8 @@ const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
   videoFormGateActiveElement,
   onVideoFormGateActiveBlockChange,
   onVideoFormGateSubmitSelect,
-  onSave,
-  onDeselect
+  onSave
 }) => {
-  // La edición ("Editar") de CUALQUIER bloque seleccionado se mueve a una caja
-  // flotante anclada al bloque en el lienzo; el inspector derecho queda solo con
-  // Diseño. El hook corre incondicionalmente (antes de los early returns) por las
-  // reglas de los hooks.
-  const formElementPopoverSelectionKey = block ? block.id : ''
-  const { position: elementPopoverPosition, style: elementPopoverStyle, setManualPosition: setElementPopoverPosition } = useFormElementPopover(
-    formElementPopoverSelectionKey,
-    FORM_ELEMENT_POPOVER_ANCHOR_BLOCK,
-    onDeselect || NOOP
-  )
-
   if (surfaceSelectionId === POPUP_SELECTED_ID) {
     return (
       <PopupInspector
@@ -35350,44 +35073,23 @@ const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
     />
   ) : null
 
-  // La edición de contenido/lógica ("Editar") siempre va a la caja flotante; el
-  // inspector conserva Diseño (+ Acciones de video). Incluye video por decisión
-  // del dueño (su editor de gate sigue teniendo su propia caja).
-  const useFormElementBox = Boolean(block)
   const videoActionsTab = videoActionsContent
     ? [{ value: 'videoActions' as InspectorTabId, label: 'Acciones de video', icon: <Clock3 size={14} />, content: videoActionsContent }]
     : []
-  const inspectorTabs: InspectorTab[] = useFormElementBox
-    ? [
-        { value: 'design', label: 'Diseño', icon: <Sparkles size={14} />, content: designContent },
-        ...videoActionsTab
-      ]
-    : [
-        { value: 'edit', label: 'Editar', icon: <Pencil size={14} />, content: editContent },
-        { value: 'design', label: 'Diseño', icon: <Sparkles size={14} />, content: designContent },
-        ...videoActionsTab
-      ]
+  const inspectorTabs: InspectorTab[] = [
+    { value: 'edit', label: 'Editar', icon: <Pencil size={14} />, content: editContent },
+    { value: 'design', label: 'Diseño', icon: <Sparkles size={14} />, content: designContent },
+    ...videoActionsTab
+  ]
 
   return (
-    <>
-      {useFormElementBox && elementPopoverPosition && (
-        <FormElementLogicPopover
-          style={elementPopoverStyle}
-          title={blockLabels[block.blockType] || 'Editar elemento'}
-          onDeselect={onDeselect || NOOP}
-          onManualPosition={setElementPopoverPosition}
-        >
-          {editContent}
-        </FormElementLogicPopover>
-      )}
-      <InspectorTabbedPanel
-        key={`${block.id}:${block.blockType}`}
-        title="Propiedades"
-        subtitle={blockLabels[block.blockType]}
-        defaultTab={useFormElementBox ? 'design' : 'edit'}
-        tabs={inspectorTabs}
-      />
-    </>
+    <InspectorTabbedPanel
+      key={`${block.id}:${block.blockType}`}
+      title="Propiedades"
+      subtitle={blockLabels[block.blockType]}
+      defaultTab="edit"
+      tabs={inspectorTabs}
+    />
   )
 }
 
@@ -35919,19 +35621,6 @@ const VideoFormGateSettingsPanel: React.FC<{
   const selectSubmit = () => {
     onSubmitSelect?.()
   }
-
-  // Floating element editor for the video form: the selected element's config
-  // pins to its node on the video-gate canvas when one is visible (otherwise it
-  // falls back to rendering inline in this panel).
-  const handleVideoGateDeselect = useCallback(() => {
-    onActiveBlockChange?.('')
-  }, [onActiveBlockChange])
-  const videoGatePopoverSelectionKey = activeElement === 'submit' ? 'submit' : (activeQuestion?.id || '')
-  const { position: elementPopoverPosition, style: elementPopoverStyle, setManualPosition: setElementPopoverPosition } = useFormElementPopover(
-    videoGatePopoverSelectionKey,
-    FORM_ELEMENT_POPOVER_ANCHOR_EMBEDDED,
-    handleVideoGateDeselect
-  )
 
   useEffect(() => {
     if (!enabled) return
@@ -36703,16 +36392,7 @@ const VideoFormGateSettingsPanel: React.FC<{
               if (!videoFormGateElementEditor) {
                 return <p className={styles.muted}>Arrastra un elemento desde la barra izquierda para configurar el formulario de video.</p>
               }
-              return elementPopoverPosition ? (
-                <FormElementLogicPopover
-                  style={elementPopoverStyle}
-                  title={activeElement === 'submit' ? 'Botón del formulario' : 'Configuración del elemento'}
-                  onDeselect={handleVideoGateDeselect}
-                  onManualPosition={setElementPopoverPosition}
-                >
-                  {videoFormGateElementEditor}
-                </FormElementLogicPopover>
-              ) : videoFormGateElementEditor
+              return videoFormGateElementEditor
             })()}
             </AccordionGroup>
           </AccordionSection>
