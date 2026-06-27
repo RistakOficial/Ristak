@@ -12,6 +12,36 @@ interface ContactJourneyProps {
   contactId: string
 }
 
+type TooltipSection =
+  | 'Resumen'
+  | 'Ruta'
+  | 'Origen'
+  | 'Anuncio'
+  | 'Tracking'
+  | 'Dispositivo'
+  | 'Identidad'
+  | 'Video'
+  | 'Mensaje'
+  | 'Cita'
+  | 'Pago'
+  | 'Detalles'
+
+type TooltipItemKind = 'text' | 'metric' | 'url' | 'id'
+
+interface TooltipItem {
+  label: string
+  value: string
+  detail?: string
+  section?: TooltipSection
+  kind?: TooltipItemKind
+}
+
+interface TooltipPosition {
+  top: number
+  left: number
+  placement: 'top' | 'bottom'
+}
+
 const GENERIC_TRAFFIC_SOURCES = new Set(['directo', 'desconocido', 'otro'])
 const OUTBOUND_JOURNEY_MESSAGE_DIRECTIONS = new Set([
   'outbound',
@@ -132,30 +162,33 @@ const formatVideoTimeRange = (video: Record<string, any>, timezone?: string): st
 }
 
 const appendVideoTooltipItems = (
-  items: { label: string; value: string }[],
+  items: TooltipItem[],
   videos: Record<string, any>[],
   timezone?: string,
   includePage = false
 ) => {
   videos.slice(0, 3).forEach((video, index) => {
     const suffix = videos.length > 1 ? ` ${index + 1}` : ''
-    items.push({ label: `Video${suffix}`, value: getVideoDisplayTitle(video) })
-    items.push({ label: `Visto${suffix}`, value: formatVideoProgressSummary(video) })
-    items.push({ label: `Tramo${suffix}`, value: formatVideoPositionRange(video) })
+    items.push({ label: `Video${suffix}`, value: getVideoDisplayTitle(video), section: 'Video' })
+    items.push({ label: `Visto${suffix}`, value: formatVideoProgressSummary(video), section: 'Video', kind: 'metric' })
+    items.push({ label: `Tramo${suffix}`, value: formatVideoPositionRange(video), section: 'Video', kind: 'metric' })
 
     const timeRange = formatVideoTimeRange(video, timezone)
     if (timeRange) {
-      items.push({ label: `Horario${suffix}`, value: timeRange })
+      items.push({ label: `Horario${suffix}`, value: timeRange, section: 'Video' })
     }
 
     const page = video.public_page_title || video.page_url
     if (includePage && page) {
-      items.push({ label: `Página${suffix}`, value: String(page) })
+      appendTooltipItem(items, `Página${suffix}`, page, undefined, {
+        section: 'Ruta',
+        kind: video.public_page_title ? 'text' : 'url'
+      })
     }
   })
 
   if (videos.length > 3) {
-    items.push({ label: 'Videos extra', value: `${videos.length - 3} más` })
+    items.push({ label: 'Videos extra', value: `${videos.length - 3} más`, section: 'Video', kind: 'metric' })
   }
 }
 
@@ -181,15 +214,60 @@ const MATCH_METHOD_LABELS: Record<string, string> = {
   anonymous: 'Anónimo'
 }
 
+const formatTooltipUrl = (value: string): { value: string; detail?: string } => {
+  const trimmed = value.trim()
+  if (!trimmed) return { value: '' }
+  const urlCandidate = /^www\./i.test(trimmed) ? `https://${trimmed}` : trimmed
+
+  try {
+    const parsed = new URL(urlCandidate, urlCandidate.startsWith('/') ? 'https://ristak.local' : undefined)
+    const host = parsed.hostname === 'ristak.local' ? '' : parsed.hostname.replace(/^www\./, '')
+    const pathname = decodeURIComponent(parsed.pathname || '/').replace(/\/+$/, '') || '/'
+    const shortPath = pathname.length > 62 ? `${pathname.slice(0, 34)}...${pathname.slice(-20)}` : pathname
+    const label = [host, shortPath === '/' && host ? '' : shortPath].filter(Boolean).join('')
+    const params = Array.from(parsed.searchParams.entries())
+    const trackedParams = params
+      .map(([key]) => key)
+      .filter(key => /^utm_|^(fbclid|gclid|ttclid|msclkid|wbraid|gbraid)$/i.test(key))
+      .slice(0, 4)
+    const detail = [
+      params.length > 0 ? `${params.length} parámetros` : '',
+      trackedParams.length > 0 ? trackedParams.join(', ') : ''
+    ].filter(Boolean).join(' · ')
+
+    return { value: label || trimmed, detail: detail || undefined }
+  } catch {
+    return { value: trimmed }
+  }
+}
+
+const formatTooltipIdentifier = (value: string): { value: string; detail?: string } => {
+  const trimmed = value.trim()
+  if (trimmed.length <= 52) return { value: trimmed }
+  return {
+    value: `${trimmed.slice(0, 20)}...${trimmed.slice(-14)}`,
+    detail: `${trimmed.length} caracteres`
+  }
+}
+
 const appendTooltipItem = (
-  items: { label: string; value: string }[],
+  items: TooltipItem[],
   label: string,
   value: unknown,
-  formatter?: (value: string) => string
+  formatter?: (value: string) => string,
+  options: { section?: TooltipSection; kind?: TooltipItemKind } = {}
 ) => {
   if (!hasMeaningfulValue(value)) return
   const text = String(value).trim()
-  items.push({ label, value: formatter ? formatter(text) : text })
+  if (options.kind === 'url') {
+    items.push({ label, ...formatTooltipUrl(text), section: options.section, kind: 'url' })
+    return
+  }
+  if (options.kind === 'id') {
+    items.push({ label, ...formatTooltipIdentifier(text), section: options.section, kind: 'id' })
+    return
+  }
+  items.push({ label, value: formatter ? formatter(text) : text, section: options.section, kind: options.kind })
 }
 
 const formatMinutesBeforeContact = (minutesValue: unknown): string => {
@@ -261,6 +339,10 @@ const formatSessionSummary = (data: Record<string, any>): string => {
   return parts.join(' · ')
 }
 
+const appendMetricTooltipItem = (items: TooltipItem[], label: string, value: unknown, section: TooltipSection = 'Resumen') => {
+  appendTooltipItem(items, label, value, undefined, { section, kind: 'metric' })
+}
+
 const getIdentityEvidenceSummary = (evidence: unknown): string => {
   if (!evidence || typeof evidence !== 'object' || Array.isArray(evidence)) return ''
   const data = evidence as Record<string, any>
@@ -279,26 +361,26 @@ const getIdentityEvidenceSummary = (evidence: unknown): string => {
   return parts.join(' · ')
 }
 
-const appendPreRegistrationTooltipItems = (items: { label: string; value: string }[], data: Record<string, any>) => {
+const appendPreRegistrationTooltipItems = (items: TooltipItem[], data: Record<string, any>) => {
   if (!data.is_pre_registration) return
   const summary = formatMinutesBeforeContact(data.minutes_before_contact)
-  appendTooltipItem(items, 'Antes del registro', summary || 'Sí')
+  appendMetricTooltipItem(items, 'Antes del registro', summary || 'Sí')
 }
 
-const appendMatchTooltipItems = (items: { label: string; value: string }[], data: Record<string, any>) => {
+const appendMatchTooltipItems = (items: TooltipItem[], data: Record<string, any>) => {
   const method = formatMatchMethod(data.match_method)
-  if (method) appendTooltipItem(items, 'Match', method)
+  if (method) appendTooltipItem(items, 'Match', method, undefined, { section: 'Identidad' })
 
   const confidence = formatMatchConfidence(data.match_confidence)
-  if (confidence) appendTooltipItem(items, 'Confianza', confidence)
+  if (confidence) appendMetricTooltipItem(items, 'Confianza', confidence, 'Identidad')
 
   const evidence = getIdentityEvidenceSummary(data.identity_evidence)
-  if (evidence) appendTooltipItem(items, 'Evidencia', evidence)
+  if (evidence) appendTooltipItem(items, 'Evidencia', evidence, undefined, { section: 'Identidad' })
 }
 
-const appendClickIdTooltipItems = (items: { label: string; value: string }[], data: Record<string, any>) => {
+const appendClickIdTooltipItems = (items: TooltipItem[], data: Record<string, any>) => {
   CLICK_ID_TOOLTIP_FIELDS.forEach(([field, label]) => {
-    appendTooltipItem(items, label, data[field])
+    appendTooltipItem(items, label, data[field], undefined, { section: 'Tracking', kind: 'id' })
   })
 }
 
@@ -550,7 +632,7 @@ const getEventDescription = (event?: JourneyEvent | null): string => {
   return ''
 }
 
-const getTooltipContent = (event?: JourneyEvent | null, timezone?: string) => {
+const getTooltipContent = (event?: JourneyEvent | null, timezone?: string): TooltipItem[] => {
   if (!event) {
     return []
   }
@@ -558,65 +640,74 @@ const getTooltipContent = (event?: JourneyEvent | null, timezone?: string) => {
   const { type } = event
   const data = getEventData(event)
 
-  const items: { label: string; value: string }[] = []
+  const items: TooltipItem[] = []
 
   if (type === 'page_visit') {
     appendPreRegistrationTooltipItems(items, data)
-    appendTooltipItem(items, 'Resumen de sesión', formatSessionSummary(data))
-    appendTooltipItem(items, 'Duración', formatSessionDuration(data.session_duration_seconds))
-    appendTooltipItem(items, 'Página', data.public_page_title || data.landing_page || data.page_url)
-    if (data.first_page_url && data.last_page_url && String(data.first_page_url) !== String(data.last_page_url)) {
-      appendTooltipItem(items, 'Primera página', data.first_page_url)
-      appendTooltipItem(items, 'Última página', data.last_page_url)
+    appendMetricTooltipItem(items, 'Sesión', formatSessionSummary(data))
+    appendMetricTooltipItem(items, 'Duración', formatSessionDuration(data.session_duration_seconds))
+    {
+      const visibleSessionCount = Math.round(getNumberValue(data.visible_session_count))
+      if (visibleSessionCount > 1) {
+        appendMetricTooltipItem(items, 'Visitas visibles', visibleSessionCount)
+      }
     }
-    appendTooltipItem(items, 'URL', data.page_url)
-    appendTooltipItem(items, 'Formulario', data.form_site_name)
-    appendTooltipItem(items, 'Sitio', data.site_name)
+    appendTooltipItem(items, 'Página', data.public_page_title || data.landing_page || data.page_url, undefined, {
+      section: 'Ruta',
+      kind: data.public_page_title ? 'text' : 'url'
+    })
+    if (data.first_page_url && data.last_page_url && String(data.first_page_url) !== String(data.last_page_url)) {
+      appendTooltipItem(items, 'Primera página', data.first_page_url, undefined, { section: 'Ruta', kind: 'url' })
+      appendTooltipItem(items, 'Última página', data.last_page_url, undefined, { section: 'Ruta', kind: 'url' })
+    }
+    appendTooltipItem(items, 'URL', data.page_url, undefined, { section: 'Ruta', kind: 'url' })
+    appendTooltipItem(items, 'Formulario', data.form_site_name, undefined, { section: 'Ruta' })
+    appendTooltipItem(items, 'Sitio', data.site_name, undefined, { section: 'Ruta' })
     const source = getEventSourceLabel(event)
     if (source) {
-      items.push({ label: 'Fuente', value: source })
+      items.push({ label: 'Fuente', value: source, section: 'Origen' })
     }
-    appendTooltipItem(items, 'Referrer', data.referrer_url)
-    appendTooltipItem(items, 'Canal', data.channel)
-    appendTooltipItem(items, 'UTM source', data.utm_source, formatUrlParameter)
-    appendTooltipItem(items, 'UTM medium', data.utm_medium, formatUrlParameter)
+    appendTooltipItem(items, 'Referrer', data.referrer_url, undefined, { section: 'Origen', kind: 'url' })
+    appendTooltipItem(items, 'Canal', data.channel, undefined, { section: 'Origen' })
+    appendTooltipItem(items, 'UTM source', data.utm_source, formatUrlParameter, { section: 'Origen' })
+    appendTooltipItem(items, 'UTM medium', data.utm_medium, formatUrlParameter, { section: 'Origen' })
     if (data.campaign_name || data.utm_campaign) {
-      items.push({ label: 'Campaña', value: formatUrlParameter(data.campaign_name || data.utm_campaign) })
+      items.push({ label: 'Campaña', value: formatUrlParameter(data.campaign_name || data.utm_campaign), section: 'Anuncio' })
     }
-    appendTooltipItem(items, 'Campaña ID', data.campaign_id)
+    appendTooltipItem(items, 'Campaña ID', data.campaign_id, undefined, { section: 'Anuncio', kind: 'id' })
     if (data.adset_name) {
-      items.push({ label: 'Conjunto de anuncios', value: data.adset_name })
+      items.push({ label: 'Conjunto de anuncios', value: data.adset_name, section: 'Anuncio' })
     }
-    appendTooltipItem(items, 'Conjunto ID', data.adset_id)
-    appendTooltipItem(items, 'Grupo anuncio', data.ad_group_name)
-    appendTooltipItem(items, 'Grupo ID', data.ad_group_id)
+    appendTooltipItem(items, 'Conjunto ID', data.adset_id, undefined, { section: 'Anuncio', kind: 'id' })
+    appendTooltipItem(items, 'Grupo anuncio', data.ad_group_name, undefined, { section: 'Anuncio' })
+    appendTooltipItem(items, 'Grupo ID', data.ad_group_id, undefined, { section: 'Anuncio', kind: 'id' })
     if (data.ad_name || data.utm_content) {
-      items.push({ label: 'Anuncio', value: formatUrlParameter(data.ad_name || data.utm_content) })
+      items.push({ label: 'Anuncio', value: formatUrlParameter(data.ad_name || data.utm_content), section: 'Anuncio' })
     }
     if (data.ad_id) {
-      items.push({ label: 'ID Anuncio', value: data.ad_id })
+      appendTooltipItem(items, 'ID Anuncio', data.ad_id, undefined, { section: 'Anuncio', kind: 'id' })
     }
-    appendTooltipItem(items, 'Creativo', data.creative_id)
-    appendTooltipItem(items, 'Placement', data.placement)
-    appendTooltipItem(items, 'Red', data.network)
-    appendTooltipItem(items, 'Match Ads', data.match_type)
-    appendTooltipItem(items, 'Keyword', data.keyword)
-    appendTooltipItem(items, 'Búsqueda', data.search_query)
-    appendTooltipItem(items, 'Posición', data.ad_position)
+    appendTooltipItem(items, 'Creativo', data.creative_id, undefined, { section: 'Anuncio', kind: 'id' })
+    appendTooltipItem(items, 'Placement', data.placement, undefined, { section: 'Anuncio' })
+    appendTooltipItem(items, 'Red', data.network, undefined, { section: 'Anuncio' })
+    appendTooltipItem(items, 'Match Ads', data.match_type, undefined, { section: 'Anuncio' })
+    appendTooltipItem(items, 'Keyword', data.keyword, undefined, { section: 'Anuncio' })
+    appendTooltipItem(items, 'Búsqueda', data.search_query, undefined, { section: 'Anuncio' })
+    appendTooltipItem(items, 'Posición', data.ad_position, undefined, { section: 'Anuncio' })
     appendClickIdTooltipItems(items, data)
     if (data.device_type) {
-      items.push({ label: 'Dispositivo', value: data.device_type })
+      items.push({ label: 'Dispositivo', value: data.device_type, section: 'Dispositivo' })
     }
     if (data.browser) {
       const browser = [data.browser, data.browser_version].filter(Boolean).join(' ')
-      items.push({ label: 'Navegador', value: browser })
+      items.push({ label: 'Navegador', value: browser, section: 'Dispositivo' })
     }
-    appendTooltipItem(items, 'Sistema', data.os)
-    appendTooltipItem(items, 'Idioma', data.language)
-    appendTooltipItem(items, 'Zona horaria', data.timezone)
+    appendTooltipItem(items, 'Sistema', data.os, undefined, { section: 'Dispositivo' })
+    appendTooltipItem(items, 'Idioma', data.language, undefined, { section: 'Dispositivo' })
+    appendTooltipItem(items, 'Zona horaria', data.timezone, undefined, { section: 'Dispositivo' })
     if (data.geo_city || data.geo_region || data.geo_country) {
       const location = [data.geo_city, data.geo_region, data.geo_country].filter(Boolean).join(', ')
-      items.push({ label: 'Ubicación', value: location })
+      items.push({ label: 'Ubicación', value: location, section: 'Dispositivo' })
     }
     appendMatchTooltipItems(items, data)
     appendVideoTooltipItems(items, getVideoEngagements(event), timezone)
@@ -630,137 +721,136 @@ const getTooltipContent = (event?: JourneyEvent | null, timezone?: string) => {
 
   if (type === 'whatsapp_message') {
     if (data.is_ad_attributed) {
-      items.push({ label: 'Origen', value: data.ad_platform || getEventSourceLabel(event) || 'Anuncio' })
+      items.push({ label: 'Origen', value: data.ad_platform || getEventSourceLabel(event) || 'Anuncio', section: 'Origen' })
     }
     if (data.campaign_name) {
-      items.push({ label: 'Campaña', value: formatUrlParameter(data.campaign_name) })
+      items.push({ label: 'Campaña', value: formatUrlParameter(data.campaign_name), section: 'Anuncio' })
     }
     if (data.adset_name) {
-      items.push({ label: 'Conjunto de anuncios', value: formatUrlParameter(data.adset_name) })
+      items.push({ label: 'Conjunto de anuncios', value: formatUrlParameter(data.adset_name), section: 'Anuncio' })
     }
-    if (data.referral_source_app) {
-      items.push({ label: 'App origen', value: data.referral_source_app })
-    }
-    if (data.referral_entry_point) {
-      items.push({ label: 'Entrada', value: data.referral_entry_point })
-    }
-    if (data.referral_source_type) {
-      items.push({ label: 'Tipo origen', value: data.referral_source_type })
-    }
-    if (data.referral_source_url) {
-      items.push({ label: 'URL origen', value: data.referral_source_url })
-    }
-    if (data.message_text) {
-      items.push({ label: 'Mensaje', value: data.message_text })
-    }
+    appendTooltipItem(items, 'App origen', data.referral_source_app, undefined, { section: 'Origen' })
+    appendTooltipItem(items, 'Entrada', data.referral_entry_point, undefined, { section: 'Origen' })
+    appendTooltipItem(items, 'Tipo origen', data.referral_source_type, undefined, { section: 'Origen' })
+    appendTooltipItem(items, 'URL origen', data.referral_source_url, undefined, { section: 'Origen', kind: 'url' })
+    appendTooltipItem(items, 'Mensaje', data.message_text, undefined, { section: 'Mensaje' })
     {
       const adName = data.attribution_ad_name || data.referral_headline
       if (adName) {
-        items.push({ label: 'Anuncio', value: formatUrlParameter(adName) })
+        items.push({ label: 'Anuncio', value: formatUrlParameter(adName), section: 'Anuncio' })
       }
     }
-    if (data.referral_body) {
-      items.push({ label: 'Detalle anuncio', value: data.referral_body })
-    }
-    if (data.referral_image_url) {
-      items.push({ label: 'Imagen anuncio', value: data.referral_image_url })
-    }
-    if (data.referral_video_url) {
-      items.push({ label: 'Video anuncio', value: data.referral_video_url })
-    }
-    if (data.referral_thumbnail_url) {
-      items.push({ label: 'Miniatura anuncio', value: data.referral_thumbnail_url })
-    }
-    if (data.phone) {
-      items.push({ label: 'Teléfono', value: data.phone })
-    }
+    appendTooltipItem(items, 'Detalle anuncio', data.referral_body, undefined, { section: 'Anuncio' })
+    appendTooltipItem(items, 'Imagen anuncio', data.referral_image_url, undefined, { section: 'Anuncio', kind: 'url' })
+    appendTooltipItem(items, 'Video anuncio', data.referral_video_url, undefined, { section: 'Anuncio', kind: 'url' })
+    appendTooltipItem(items, 'Miniatura anuncio', data.referral_thumbnail_url, undefined, { section: 'Anuncio', kind: 'url' })
+    appendTooltipItem(items, 'Teléfono', data.phone, undefined, { section: 'Mensaje' })
     {
       const adId = data.attribution_ad_id || data.referral_source_id
       if (adId) {
-        items.push({ label: 'ID anuncio', value: adId })
+        appendTooltipItem(items, 'ID anuncio', adId, undefined, { section: 'Anuncio', kind: 'id' })
       }
     }
-    if (data.referral_ctwa_clid) {
-      items.push({ label: 'CTWA CLID', value: data.referral_ctwa_clid })
-    }
+    appendTooltipItem(items, 'CTWA CLID', data.referral_ctwa_clid, undefined, { section: 'Tracking', kind: 'id' })
   }
 
   if (type === 'contact_created') {
     const source = getEventSourceLabel(event) || data.source
     if (source) {
-      items.push({ label: 'Fuente', value: source })
+      items.push({ label: 'Fuente', value: source, section: 'Origen' })
     }
     if (data.conversion_channel === 'web') {
-      items.push({ label: 'Canal', value: 'Sitio web' })
+      items.push({ label: 'Canal', value: 'Sitio web', section: 'Origen' })
     }
     if (data.campaign_name) {
-      items.push({ label: 'Campaña', value: data.campaign_name })
+      items.push({ label: 'Campaña', value: data.campaign_name, section: 'Anuncio' })
     }
-    appendTooltipItem(items, 'Campaña ID', data.campaign_id)
+    appendTooltipItem(items, 'Campaña ID', data.campaign_id, undefined, { section: 'Anuncio', kind: 'id' })
     if (data.adset_name) {
-      items.push({ label: 'Conjunto de anuncios', value: data.adset_name })
+      items.push({ label: 'Conjunto de anuncios', value: data.adset_name, section: 'Anuncio' })
     }
-    appendTooltipItem(items, 'Conjunto ID', data.adset_id)
-    appendTooltipItem(items, 'Grupo anuncio', data.ad_group_name)
-    appendTooltipItem(items, 'Grupo ID', data.ad_group_id)
+    appendTooltipItem(items, 'Conjunto ID', data.adset_id, undefined, { section: 'Anuncio', kind: 'id' })
+    appendTooltipItem(items, 'Grupo anuncio', data.ad_group_name, undefined, { section: 'Anuncio' })
+    appendTooltipItem(items, 'Grupo ID', data.ad_group_id, undefined, { section: 'Anuncio', kind: 'id' })
     if (data.attribution_ad_name) {
-      items.push({ label: 'Anuncio', value: formatUrlParameter(data.attribution_ad_name) })
+      items.push({ label: 'Anuncio', value: formatUrlParameter(data.attribution_ad_name), section: 'Anuncio' })
     }
     if (data.attribution_ad_id) {
-      items.push({ label: 'ID Anuncio', value: data.attribution_ad_id })
+      appendTooltipItem(items, 'ID Anuncio', data.attribution_ad_id, undefined, { section: 'Anuncio', kind: 'id' })
     }
-    appendTooltipItem(items, 'Página', data.public_page_title || data.landing_page || data.page_url)
-    appendTooltipItem(items, 'Formulario', data.form_site_name)
-    appendTooltipItem(items, 'Sitio', data.site_name)
-    appendTooltipItem(items, 'Referrer', data.referrer_url)
-    appendTooltipItem(items, 'UTM source', data.utm_source, formatUrlParameter)
-    appendTooltipItem(items, 'UTM medium', data.utm_medium, formatUrlParameter)
-    appendTooltipItem(items, 'UTM term', data.utm_term, formatUrlParameter)
-    appendTooltipItem(items, 'UTM content', data.utm_content, formatUrlParameter)
-    appendTooltipItem(items, 'Placement', data.placement)
-    appendTooltipItem(items, 'Keyword', data.keyword)
-    appendTooltipItem(items, 'Búsqueda', data.search_query)
+    appendTooltipItem(items, 'Página', data.public_page_title || data.landing_page || data.page_url, undefined, {
+      section: 'Ruta',
+      kind: data.public_page_title ? 'text' : 'url'
+    })
+    appendTooltipItem(items, 'Formulario', data.form_site_name, undefined, { section: 'Ruta' })
+    appendTooltipItem(items, 'Sitio', data.site_name, undefined, { section: 'Ruta' })
+    appendTooltipItem(items, 'Referrer', data.referrer_url, undefined, { section: 'Origen', kind: 'url' })
+    appendTooltipItem(items, 'UTM source', data.utm_source, formatUrlParameter, { section: 'Origen' })
+    appendTooltipItem(items, 'UTM medium', data.utm_medium, formatUrlParameter, { section: 'Origen' })
+    appendTooltipItem(items, 'UTM term', data.utm_term, formatUrlParameter, { section: 'Origen' })
+    appendTooltipItem(items, 'UTM content', data.utm_content, formatUrlParameter, { section: 'Origen' })
+    appendTooltipItem(items, 'Placement', data.placement, undefined, { section: 'Anuncio' })
+    appendTooltipItem(items, 'Keyword', data.keyword, undefined, { section: 'Anuncio' })
+    appendTooltipItem(items, 'Búsqueda', data.search_query, undefined, { section: 'Anuncio' })
     appendClickIdTooltipItems(items, data)
     appendMatchTooltipItems(items, data)
   }
 
   if (type === 'appointment' || type === 'appointment_confirmation') {
-    if (data.title) {
-      items.push({ label: 'Título', value: data.title })
-    }
-    if (data.status) {
-      items.push({ label: 'Estado', value: data.status })
-    }
+    appendTooltipItem(items, 'Título', data.title, undefined, { section: 'Cita' })
+    appendTooltipItem(items, 'Estado', data.status, undefined, { section: 'Cita' })
     if (data.start_time && data.end_time) {
       const timeOpts: Intl.DateTimeFormatOptions = { hour: '2-digit', minute: '2-digit', ...(timezone ? { timeZone: timezone } : {}) }
       const start = new Date(data.start_time).toLocaleTimeString('es-MX', timeOpts)
       const end = new Date(data.end_time).toLocaleTimeString('es-MX', timeOpts)
-      items.push({ label: 'Horario', value: `${start} - ${end}` })
+      items.push({ label: 'Horario', value: `${start} - ${end}`, section: 'Cita', kind: 'metric' })
     }
-    if (data.address) {
-      items.push({ label: 'Ubicación', value: data.address })
-    }
-    if (data.notes) {
-      items.push({ label: 'Notas', value: data.notes })
-    }
+    appendTooltipItem(items, 'Ubicación', data.address, undefined, { section: 'Cita' })
+    appendTooltipItem(items, 'Notas', data.notes, undefined, { section: 'Cita' })
   }
 
   if (type === 'payment') {
     if (data.amount) {
-      items.push({ label: 'Monto', value: formatCurrency(data.amount) })
+      items.push({ label: 'Monto', value: formatCurrency(data.amount), section: 'Pago', kind: 'metric' })
     }
-    if (data.title) {
-      items.push({ label: 'Concepto', value: data.title })
-    }
-    if (data.type) {
-      items.push({ label: 'Tipo', value: data.type })
-    }
-    if (data.payment_provider) {
-      items.push({ label: 'Proveedor', value: data.payment_provider })
-    }
+    appendTooltipItem(items, 'Concepto', data.title, undefined, { section: 'Pago' })
+    appendTooltipItem(items, 'Tipo', data.type, undefined, { section: 'Pago' })
+    appendTooltipItem(items, 'Proveedor', data.payment_provider, undefined, { section: 'Pago' })
   }
 
   return items
+}
+
+const TOOLTIP_SECTION_ORDER: TooltipSection[] = [
+  'Resumen',
+  'Ruta',
+  'Origen',
+  'Anuncio',
+  'Tracking',
+  'Dispositivo',
+  'Identidad',
+  'Video',
+  'Mensaje',
+  'Cita',
+  'Pago',
+  'Detalles'
+]
+
+const groupTooltipItems = (items: TooltipItem[]): Array<{ title: TooltipSection; items: TooltipItem[] }> => {
+  const grouped = new Map<TooltipSection, TooltipItem[]>()
+  items.forEach(item => {
+    const section = item.section || 'Detalles'
+    const sectionItems = grouped.get(section)
+    if (sectionItems) {
+      sectionItems.push(item)
+    } else {
+      grouped.set(section, [item])
+    }
+  })
+
+  return TOOLTIP_SECTION_ORDER
+    .map(section => ({ title: section, items: grouped.get(section) || [] }))
+    .filter(section => section.items.length > 0)
 }
 
 const hasMeaningfulValue = (value: unknown): boolean => {
@@ -889,13 +979,36 @@ const buildDisplayJourney = (events: JourneyEvent[], timezone: string): JourneyE
   )
 }
 
+const getTooltipPositionFromRect = (rect: DOMRect): TooltipPosition => {
+  const margin = 16
+  const halfTooltipWidth = 220
+  const estimatedHeight = 360
+  const spaceAbove = rect.top
+  const spaceBelow = window.innerHeight - rect.bottom
+  const placement: TooltipPosition['placement'] = spaceAbove > estimatedHeight || spaceAbove > spaceBelow ? 'top' : 'bottom'
+  const left = Math.min(
+    Math.max(rect.left + rect.width / 2, halfTooltipWidth + margin),
+    window.innerWidth - halfTooltipWidth - margin
+  )
+  const top = placement === 'top'
+    ? Math.max(margin, rect.top - 12)
+    : Math.min(window.innerHeight - margin, rect.bottom + 12)
+
+  return { top, left, placement }
+}
+
+const getTooltipTransform = (placement: TooltipPosition['placement']): string =>
+  placement === 'top' ? 'translate(-50%, -100%)' : 'translate(-50%, 0)'
+
 export const ContactJourney = ({ contactId }: ContactJourneyProps) => {
   const { timezone, formatLocalDateShort, formatLocalDateTime } = useTimezone()
   const journeyRef = useRef<HTMLDivElement>(null)
+  const tooltipRef = useRef<HTMLDivElement>(null)
   const [journey, setJourney] = useState<JourneyEvent[]>([])
   const [loading, setLoading] = useState(true)
+  const [activeEventIndex, setActiveEventIndex] = useState<number | null>(null)
   const [hoveredEventIndex, setHoveredEventIndex] = useState<number | null>(null)
-  const [tooltipPosition, setTooltipPosition] = useState<{ top: number; left: number } | null>(null)
+  const [tooltipPosition, setTooltipPosition] = useState<TooltipPosition | null>(null)
 
   useEffect(() => {
     const loadJourney = async () => {
@@ -908,8 +1021,47 @@ export const ContactJourney = ({ contactId }: ContactJourneyProps) => {
     loadJourney()
   }, [contactId])
 
+  useEffect(() => {
+    setActiveEventIndex(null)
+    setHoveredEventIndex(null)
+    setTooltipPosition(null)
+  }, [contactId])
+
+  useEffect(() => {
+    if (activeEventIndex === null) return
+
+    const closeTooltip = () => {
+      setActiveEventIndex(null)
+      setHoveredEventIndex(null)
+      setTooltipPosition(null)
+    }
+
+    const handlePointerDown = (event: PointerEvent) => {
+      const target = event.target
+      if (!(target instanceof Node)) return
+      if (tooltipRef.current?.contains(target)) return
+      if (target instanceof Element && target.closest('[data-contact-journey-event]')) return
+      closeTooltip()
+    }
+
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        closeTooltip()
+      }
+    }
+
+    document.addEventListener('pointerdown', handlePointerDown)
+    document.addEventListener('keydown', handleKeyDown)
+
+    return () => {
+      document.removeEventListener('pointerdown', handlePointerDown)
+      document.removeEventListener('keydown', handleKeyDown)
+    }
+  }, [activeEventIndex])
+
   // Agrupa contacto/WhatsApp a un solo evento por día local antes de pintar.
   const displayJourney = useMemo(() => buildDisplayJourney(journey, timezone), [journey, timezone])
+  const visibleTooltipIndex = activeEventIndex ?? hoveredEventIndex
 
   if (loading) {
     return (
@@ -950,22 +1102,43 @@ export const ContactJourney = ({ contactId }: ContactJourneyProps) => {
           const hasAttachedVideo = event.type !== 'video_playback' && getVideoEngagements(event).length > 0
 
           const tooltipItems = getTooltipContent(event, timezone)
+          const tooltipSections = groupTooltipItems(tooltipItems)
+          const isTooltipPinned = activeEventIndex === index
+          const isTooltipVisible = visibleTooltipIndex === index && tooltipItems.length > 0
 
           return (
             <div key={index} className={styles.eventWrapper}>
               <div
                 className={styles.event}
+                role="button"
+                tabIndex={0}
+                aria-expanded={isTooltipPinned}
+                data-active={isTooltipPinned ? 'true' : undefined}
+                data-contact-journey-event
                 onMouseEnter={(e) => {
                   const rect = e.currentTarget.getBoundingClientRect()
                   setHoveredEventIndex(index)
-                  setTooltipPosition({
-                    top: rect.top - 20,
-                    left: rect.left + rect.width / 2
-                  })
+                  if (activeEventIndex === null) {
+                    setTooltipPosition(getTooltipPositionFromRect(rect))
+                  }
                 }}
                 onMouseLeave={() => {
                   setHoveredEventIndex(null)
-                  setTooltipPosition(null)
+                  if (activeEventIndex === null) {
+                    setTooltipPosition(null)
+                  }
+                }}
+                onClick={(e) => {
+                  setTooltipPosition(getTooltipPositionFromRect(e.currentTarget.getBoundingClientRect()))
+                  setHoveredEventIndex(index)
+                  setActiveEventIndex(index)
+                }}
+                onKeyDown={(e) => {
+                  if (e.key !== 'Enter' && e.key !== ' ') return
+                  e.preventDefault()
+                  setTooltipPosition(getTooltipPositionFromRect(e.currentTarget.getBoundingClientRect()))
+                  setHoveredEventIndex(index)
+                  setActiveEventIndex(index)
                 }}
               >
                 <div className={`${styles.eventDot} ${styles[color]}`}>
@@ -989,25 +1162,40 @@ export const ContactJourney = ({ contactId }: ContactJourneyProps) => {
               </div>
 
               {/* Tooltip */}
-              {hoveredEventIndex === index && tooltipPosition && tooltipItems.length > 0 && createPortal(
+              {isTooltipVisible && tooltipPosition && createPortal(
                 <div
-                  className={styles.eventTooltip}
+                  ref={tooltipRef}
+                  className={[styles.eventTooltip, isTooltipPinned ? styles.eventTooltipPinned : ''].filter(Boolean).join(' ')}
                   style={{
                     top: `${tooltipPosition.top}px`,
                     left: `${tooltipPosition.left}px`,
                     position: 'fixed',
-                    transform: 'translate(-50%, -100%)',
+                    transform: getTooltipTransform(tooltipPosition.placement),
                     zIndex: getFloatingLayerZIndex(journeyRef.current, 'tooltip')
                   }}
                 >
-                  <div className={styles.tooltipTitle}>{getEventTitle(event)}</div>
-                  <div className={styles.tooltipDate}>{formatLocalDateTime(event.date)}</div>
-                  {tooltipItems.map((item, idx) => (
-                    <div key={idx} className={styles.tooltipItem}>
-                      <span className={styles.tooltipLabel}>{item.label}:</span>
-                      <span className={styles.tooltipValue}>{item.value}</span>
-                    </div>
-                  ))}
+                  <div className={styles.tooltipHeader}>
+                    <div className={styles.tooltipTitle}>{getEventTitle(event)}</div>
+                    <div className={styles.tooltipDate}>{formatLocalDateTime(event.date)}</div>
+                  </div>
+                  <div className={styles.tooltipSections}>
+                    {tooltipSections.map(section => (
+                      <section key={section.title} className={styles.tooltipSection}>
+                        <div className={styles.tooltipSectionTitle}>{section.title}</div>
+                        <div className={styles.tooltipList}>
+                          {section.items.map((item, idx) => (
+                            <div key={`${item.label}-${idx}`} className={styles.tooltipItem} data-kind={item.kind || 'text'}>
+                              <span className={styles.tooltipLabel}>{item.label}</span>
+                              <span className={styles.tooltipValue}>
+                                <span className={styles.tooltipValueText}>{item.value}</span>
+                                {item.detail && <span className={styles.tooltipDetail}>{item.detail}</span>}
+                              </span>
+                            </div>
+                          ))}
+                        </div>
+                      </section>
+                    ))}
+                  </div>
                 </div>,
                 document.body
               )}
