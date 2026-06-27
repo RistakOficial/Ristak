@@ -212,6 +212,7 @@ const SITE_META_NO_EVENT = 'none'
 const SITE_META_EVENTS = new Set(['Lead', 'Schedule', 'Purchase', 'FormSubmitted', 'ViewContent', 'CompleteRegistration', 'Contact'])
 const META_STANDARD_PIXEL_EVENTS = new Set(['Lead', 'Schedule', 'Purchase', 'ViewContent', 'CompleteRegistration', 'Contact'])
 const SITE_META_TRIGGERS = new Set(['page_view', 'form_submit', 'calendar_schedule'])
+const SITE_META_SUBMIT_CONDITIONS = new Set(['always', 'qualified_only'])
 const SITE_TYPES_WITH_PAGE_META = new Set(['landing_page', 'interactive_form', 'standard_form'])
 const SITE_META_PARAMETER_FIELDS = {
   Lead: ['value', 'predictedLtv', 'currency', 'status'],
@@ -798,6 +799,11 @@ function normalizeFormCompletionAction(value, fallback = 'form_default') {
 function normalizeFormDisqualifiedCompletionAction(value, fallback = 'disqualified_page') {
   const action = cleanString(value)
   return ['disqualified_page', 'redirect_url'].includes(action) ? action : fallback
+}
+
+function normalizeSiteMetaSubmitCondition(value, fallback = 'always') {
+  const condition = cleanString(value)
+  return SITE_META_SUBMIT_CONDITIONS.has(condition) ? condition : fallback
 }
 
 function normalizeSubmitIncompleteOnExit(theme = {}) {
@@ -8139,6 +8145,13 @@ export async function createSite(input = {}) {
   } else {
     delete theme.metaEventParameters
   }
+  const initialMetaSubmitCondition = normalizeSiteMetaSubmitCondition(theme.metaSubmitCondition || theme.meta_submit_condition)
+  delete theme.meta_submit_condition
+  if (initialMetaSubmitCondition === 'qualified_only') {
+    theme.metaSubmitCondition = initialMetaSubmitCondition
+  } else {
+    delete theme.metaSubmitCondition
+  }
   const status = validateSiteStatus(input.status || 'draft')
 
   await db.run(`
@@ -10354,6 +10367,13 @@ export async function updateSite(siteId, input = {}) {
     nextTheme.metaEventParameters = nextMetaEventParameters
   } else {
     delete nextTheme.metaEventParameters
+  }
+  const nextMetaSubmitCondition = normalizeSiteMetaSubmitCondition(nextTheme.metaSubmitCondition || nextTheme.meta_submit_condition)
+  delete nextTheme.meta_submit_condition
+  if (nextMetaSubmitCondition === 'qualified_only') {
+    nextTheme.metaSubmitCondition = nextMetaSubmitCondition
+  } else {
+    delete nextTheme.metaSubmitCondition
   }
 
   await db.run(`
@@ -14636,6 +14656,25 @@ function getFormSubmitMetaEventParameters(site, pageId, eventName) {
   }
 
   return pruneSiteMetaEventParametersForEvent(site?.theme?.metaEventParameters || site?.theme?.meta_event_parameters, eventName)
+}
+
+function getFormSubmitMetaCondition(site) {
+  return normalizeSiteMetaSubmitCondition(site?.theme?.metaSubmitCondition || site?.theme?.meta_submit_condition)
+}
+
+function isDisqualifiedSiteFormSubmission(requestMeta = {}) {
+  const meta = requestMeta?.meta && typeof requestMeta.meta === 'object' ? requestMeta.meta : {}
+  const rules = meta.rules && typeof meta.rules === 'object' ? meta.rules : {}
+  const status = cleanString(meta.status || meta.formStatus || meta.form_status || rules.status).toLowerCase()
+  const disqualifiedFlags = [
+    meta.disqualified,
+    meta.formDisqualified,
+    meta.form_disqualified,
+    rules.disqualified
+  ]
+
+  return status === 'disqualified' ||
+    disqualifiedFlags.some(value => normalizeBoolean(value) === 1)
 }
 
 function resolveButtonHref(settings = {}, context = {}) {
@@ -19235,6 +19274,7 @@ async function buildMetaPixelSnippet(site, trackingEnabled, activePage = null, p
   if (!pixelId) return empty
 
   const submitEventName = getFormSubmitMetaEventName(site, activePage?.id)
+  const submitCondition = getFormSubmitMetaCondition(site)
   const pageMeta = getPageMetaConfig(site, activePage?.id)
   const pageViewEventName = pageMeta?.trigger === 'page_view' ? pageMeta.eventName : ''
   const submitConfiguredCustomData = buildSiteMetaConfiguredCustomData(
@@ -19301,6 +19341,15 @@ async function buildMetaPixelSnippet(site, trackingEnabled, activePage = null, p
       if (!payload.fbc) payload.fbc = base.fbc;
       return payload;
     };
+    const RISTAK_META_SUBMIT_CONDITION = ${JSON.stringify(submitCondition)};
+    const ristakMetaSubmitIsDisqualified = function(customData) {
+      const data = customData && typeof customData === 'object' ? customData : {};
+      const status = String(data.status || data.formStatus || data.form_status || '').toLowerCase();
+      const flags = [data.disqualified, data.formDisqualified, data.form_disqualified];
+      return status === 'disqualified' || flags.some(function(value) {
+        return value === true || String(value || '').toLowerCase() === 'true' || String(value || '') === '1';
+      });
+    };
     window.ristakMetaTrackSiteEvent = function(eventName, eventId, customData) {
       if (!window.fbq) return;
       const normalizedEventName = eventName || ${JSON.stringify(submitEventName)};
@@ -19320,10 +19369,12 @@ async function buildMetaPixelSnippet(site, trackingEnabled, activePage = null, p
       }
     };
     window.ristakMetaTrackSiteSubmit = function(eventId, customData, eventName) {
+      const submitCustomData = Object.assign({}, ${scriptJson(submitConfiguredCustomData)}, customData || {});
+      if (RISTAK_META_SUBMIT_CONDITION === 'qualified_only' && ristakMetaSubmitIsDisqualified(submitCustomData)) return;
       window.ristakMetaTrackSiteEvent(
         eventName || ${JSON.stringify(submitEventName)},
         eventId,
-        Object.assign({}, ${scriptJson(submitConfiguredCustomData)}, customData || {})
+        submitCustomData
       );
     };
     window.ristakMetaSendServerEvent = function(payload) {
@@ -23218,6 +23269,18 @@ async function sendSiteLeadMetaEvent({ site, submissionId, submittedPageId, cont
   }
 
   const submissionRules = requestMeta?.meta?.rules && typeof requestMeta.meta.rules === 'object' ? requestMeta.meta.rules : {}
+  const submitCondition = videoGateMetaConfig ? 'always' : getFormSubmitMetaCondition(site)
+  if (submitCondition === 'qualified_only' && isDisqualifiedSiteFormSubmission(requestMeta)) {
+    await logMetaEvent({
+      contactId,
+      eventType,
+      metaEventName: eventName,
+      eventId,
+      status: 'skipped',
+      errorMessage: 'Formulario descalificado por condicion de calificacion'
+    })
+    return { sent: false, reason: 'qualified_only_disqualified', eventId, eventName }
+  }
   const videoGateDisqualified = isVideoGateSubmission && (
     cleanString(submissionRules.status) === 'disqualified' ||
     normalizeBoolean(submissionRules.disqualified) === 1

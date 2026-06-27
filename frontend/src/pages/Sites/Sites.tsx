@@ -162,6 +162,7 @@ import {
   type SiteLibraryFolder,
   type SiteMetaCustomParameter,
   type SiteMetaEventParameters,
+  type SiteMetaSubmitCondition,
   type SiteMetaTrigger,
   type SiteOptionAction,
   type SitePage,
@@ -369,6 +370,11 @@ const metaTriggerOptions: Array<{ value: SiteMetaTrigger; label: string }> = [
   { value: 'calendar_schedule', label: 'Al agendar' }
 ]
 
+const metaSubmitConditionOptions: Array<{ value: SiteMetaSubmitCondition; label: string }> = [
+  { value: 'always', label: 'Enviar siempre' },
+  { value: 'qualified_only', label: 'Solo si califica' }
+]
+
 const normalizeMetaEventName = (value?: string, fallback = 'Lead') =>
   metaEventOptions.some(option => option.value === value) ? value || fallback : fallback
 
@@ -379,6 +385,9 @@ const normalizeEnabledMetaEventName = (value?: string) => {
 
 const normalizeMetaTrigger = (value?: string): SiteMetaTrigger =>
   value === 'form_submit' || value === 'calendar_schedule' ? value : 'page_view'
+
+const normalizeMetaSubmitCondition = (value?: unknown): SiteMetaSubmitCondition =>
+  value === 'qualified_only' ? 'qualified_only' : 'always'
 
 const normalizeMetaBoolean = (value: unknown) => (
   value === true || value === 1 || value === '1' || value === 'true' || value === 'yes' || value === 'on'
@@ -6615,6 +6624,8 @@ const EMBEDDED_FORM_PROXY_THEME_KEYS: Array<keyof SiteTheme> = [
   'formChoiceSelectedBorder',
   'formSelectStyle',
   'formInputStyle',
+  'metaEventParameters',
+  'metaSubmitCondition',
   'formQualifiedRedirectUrl',
   'formDisqualifiedCompletionAction',
   'formDisqualifiedRedirectUrl',
@@ -26219,7 +26230,16 @@ const MetaFormSubmitSettingsPanel: React.FC<{
     : 'none'
   const active = metaEnabled && activeEventName !== 'none'
   const submitParameters = site.theme?.metaEventParameters
+  const submitCondition = normalizeMetaSubmitCondition(
+    site.theme?.metaSubmitCondition ||
+    (site.theme as (SiteTheme & { meta_submit_condition?: unknown }) | undefined)?.meta_submit_condition
+  )
   const hasParameters = hasMetaEventParameters(submitParameters)
+  const statusText = active
+    ? submitCondition === 'qualified_only'
+      ? 'Solo se envía si la persona califica.'
+      : 'Se envía cada vez que alguien completa el formulario.'
+    : 'Sin evento al completar el formulario.'
 
   const saveSoon = useCallback(() => {
     window.setTimeout(() => { void onSaveSite() }, 0)
@@ -26237,6 +26257,11 @@ const MetaFormSubmitSettingsPanel: React.FC<{
     saveSoon()
   }
 
+  const patchSubmitCondition = (metaSubmitCondition: SiteMetaSubmitCondition) => {
+    onPatchTheme({ metaSubmitCondition })
+    saveSoon()
+  }
+
   return (
     <div className={styles.editorSettingsMetaControls}>
       <div className={`${styles.editorSettingsMetaRow} ${active ? styles.editorSettingsMetaRowActive : ''}`}>
@@ -26245,24 +26270,41 @@ const MetaFormSubmitSettingsPanel: React.FC<{
         </span>
         <div>
           <strong>Evento al enviar formulario</strong>
-          <small>{active ? 'Al completar el formulario se envía este evento.' : 'Sin evento al completar el formulario.'}</small>
+          <small>{statusText}</small>
         </div>
       </div>
 
-      <label className={styles.editorSettingsField}>
-        <span>Evento</span>
-        <CustomSelect
-          value={activeEventName}
-          disabled={disabled || !metaEnabled}
-          portal
-          onChange={(event) => patchSubmitEvent(event.target.value)}
-          onBlur={saveSoon}
-        >
-          {metaEventOptions.map(option => (
-            <option key={option.value} value={option.value}>{option.label}</option>
-          ))}
-        </CustomSelect>
-      </label>
+      <div className={styles.editorSettingsTwoColumn}>
+        <label className={styles.editorSettingsField}>
+          <span>Evento</span>
+          <CustomSelect
+            value={activeEventName}
+            disabled={disabled || !metaEnabled}
+            portal
+            onChange={(event) => patchSubmitEvent(event.target.value)}
+            onBlur={saveSoon}
+          >
+            {metaEventOptions.map(option => (
+              <option key={option.value} value={option.value}>{option.label}</option>
+            ))}
+          </CustomSelect>
+        </label>
+
+        <label className={styles.editorSettingsField}>
+          <span>Enviar cuando</span>
+          <CustomSelect
+            value={submitCondition}
+            disabled={disabled || !active}
+            portal
+            onChange={(event) => patchSubmitCondition(event.target.value as SiteMetaSubmitCondition)}
+            onBlur={saveSoon}
+          >
+            {metaSubmitConditionOptions.map(option => (
+              <option key={option.value} value={option.value}>{option.label}</option>
+            ))}
+          </CustomSelect>
+        </label>
+      </div>
 
       <button
         type="button"
