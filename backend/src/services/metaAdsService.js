@@ -1,5 +1,5 @@
 import fetch from 'node-fetch'
-import { db, getAppConfig } from '../config/database.js'
+import { db, getAppConfig, setAppConfig } from '../config/database.js'
 import { logger } from '../utils/logger.js'
 import { encrypt, decrypt, isEncrypted } from '../utils/encryption.js'
 import { API_URLS, META_INSIGHTS_FIELDS, PAGINATION } from '../config/constants.js'
@@ -16,6 +16,24 @@ let syncProgress = {
   monthsCurrent: 0
 }
 let isMetaFullSyncRunning = false
+
+const META_CONVERSION_EVENT_CONFIG_KEYS = {
+  scheduleEnabled: 'meta_whatsapp_schedule_enabled',
+  purchaseEnabled: 'meta_whatsapp_purchase_enabled',
+  paymentPurchaseEventConfig: 'meta_payment_purchase_event_config'
+}
+
+const DEFAULT_PAYMENT_PURCHASE_EVENT_CONFIG = {
+  enabled: true,
+  channel: 'site',
+  eventName: 'Purchase',
+  parameters: {
+    sendValue: true,
+    value: '',
+    predictedLtv: '',
+    custom: []
+  }
+}
 
 export function getMetaSyncProgress() {
   return syncProgress
@@ -71,6 +89,96 @@ function normalizeId(value) {
   if (value === null || value === undefined) return null
   const normalized = String(value).trim()
   return normalized || null
+}
+
+function parseJsonConfig(value, fallback = null) {
+  if (!value) return fallback
+  if (typeof value === 'object') return value
+
+  try {
+    return JSON.parse(value)
+  } catch {
+    return fallback
+  }
+}
+
+function parseBooleanConfig(value, fallback = false) {
+  if (value === null || value === undefined || value === '') return fallback
+  if (typeof value === 'boolean') return value
+  if (typeof value === 'number') return value === 1
+
+  const normalized = String(value).trim().toLowerCase()
+  if (!normalized) return fallback
+  if (['1', 'true', 'yes', 'on', 'enabled'].includes(normalized)) return true
+  if (['0', 'false', 'no', 'off', 'disabled'].includes(normalized)) return false
+  return fallback
+}
+
+function normalizePaymentPurchaseEventConfigForMetaConnection(value) {
+  const existing = parseJsonConfig(value, {})
+  const source = existing && typeof existing === 'object' && !Array.isArray(existing)
+    ? existing
+    : {}
+  const sourceParameters = source.parameters && typeof source.parameters === 'object' && !Array.isArray(source.parameters)
+    ? source.parameters
+    : {}
+  const channel = normalizeId(source.channel || source.conversionChannel || source.conversion_channel)
+  const customParameters = Array.isArray(sourceParameters.custom)
+    ? sourceParameters.custom
+    : Array.isArray(sourceParameters.customParameters)
+      ? sourceParameters.customParameters
+      : Array.isArray(sourceParameters.custom_parameters)
+        ? sourceParameters.custom_parameters
+        : []
+
+  return {
+    ...DEFAULT_PAYMENT_PURCHASE_EVENT_CONFIG,
+    ...source,
+    enabled: true,
+    channel: ['site', 'whatsapp', 'smart'].includes(channel)
+      ? channel
+      : DEFAULT_PAYMENT_PURCHASE_EVENT_CONFIG.channel,
+    eventName: normalizeId(source.eventName || source.event_name) || DEFAULT_PAYMENT_PURCHASE_EVENT_CONFIG.eventName,
+    parameters: {
+      ...DEFAULT_PAYMENT_PURCHASE_EVENT_CONFIG.parameters,
+      ...sourceParameters,
+      sendValue: parseBooleanConfig(
+        sourceParameters.sendValue ?? sourceParameters.send_value,
+        DEFAULT_PAYMENT_PURCHASE_EVENT_CONFIG.parameters.sendValue
+      ),
+      value: normalizeId(sourceParameters.value) || DEFAULT_PAYMENT_PURCHASE_EVENT_CONFIG.parameters.value,
+      predictedLtv: normalizeId(sourceParameters.predictedLtv || sourceParameters.predicted_ltv) || DEFAULT_PAYMENT_PURCHASE_EVENT_CONFIG.parameters.predictedLtv,
+      custom: customParameters
+    }
+  }
+}
+
+export async function ensureMetaConversionEventsEnabledForConnectedPixel({
+  accessToken = '',
+  pixelId = ''
+} = {}) {
+  if (!normalizeId(accessToken) || !normalizeId(pixelId)) {
+    return { enabled: false, reason: 'missing_token_or_pixel' }
+  }
+
+  const existingPaymentConfig = await getAppConfig(META_CONVERSION_EVENT_CONFIG_KEYS.paymentPurchaseEventConfig)
+  const paymentPurchaseEventConfig = normalizePaymentPurchaseEventConfigForMetaConnection(existingPaymentConfig)
+
+  await Promise.all([
+    setAppConfig(META_CONVERSION_EVENT_CONFIG_KEYS.scheduleEnabled, '1'),
+    setAppConfig(META_CONVERSION_EVENT_CONFIG_KEYS.purchaseEnabled, '1'),
+    setAppConfig(
+      META_CONVERSION_EVENT_CONFIG_KEYS.paymentPurchaseEventConfig,
+      JSON.stringify(paymentPurchaseEventConfig)
+    )
+  ])
+
+  return {
+    enabled: true,
+    scheduleEnabled: true,
+    purchaseEnabled: true,
+    paymentPurchaseEventConfig
+  }
 }
 
 function getCreativeVideoId(creative = {}) {
@@ -666,6 +774,14 @@ export async function saveMetaConfig(adAccountId, accessToken, pixelId = null, p
     ])
 
     logger.success('Configuración de Meta guardada en BD local (System User Token + Pixel)')
+
+    const conversionEventsResult = await ensureMetaConversionEventsEnabledForConnectedPixel({
+      accessToken,
+      pixelId
+    })
+    if (conversionEventsResult.enabled) {
+      logger.info('Eventos de Meta para calendarios y pagos activados automáticamente por token + pixel conectados')
+    }
 
     // Sincronizar custom values en HighLevel (no bloquear si falla)
     // Incluye Pixel API Token si fue generado o proporcionado
