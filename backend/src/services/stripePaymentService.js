@@ -15,6 +15,7 @@ import {
 import { calculatePaymentTax, getPaymentGatewayMode, getPaymentSettings, getPublicPaymentSettings, savePaymentSettings } from './paymentSettingsService.js'
 import { queuePaymentAutomationMessage } from './paymentAutomationsService.js'
 import { registerGigstackPaymentForTransactionInBackground } from './gigstackInvoiceService.js'
+import { buildMetaPublicPurchasePixelEvent } from './metaConversionEventsService.js'
 
 const CONFIG_KEYS = {
   enabled: 'stripe_enabled',
@@ -1545,6 +1546,19 @@ function mapPublicPayment(row, config, baseUrl = '', settings = null, paymentPla
   }
 }
 
+async function attachMetaPublicPurchaseEvent(publicPayment, row) {
+  if (!publicPayment || !row) return publicPayment
+  const metaPurchaseEvent = await buildMetaPublicPurchasePixelEvent({
+    ...row,
+    amount: publicPayment.amount,
+    currency: publicPayment.currency,
+    status: publicPayment.status,
+    paymentUrl: publicPayment.paymentUrl,
+    eventSourceUrl: publicPayment.paymentUrl
+  })
+  return metaPurchaseEvent ? { ...publicPayment, metaPurchaseEvent } : publicPayment
+}
+
 function normalizePublicPaymentPlanInstallment(installment = {}, addedIds = new Set()) {
   const id = cleanString(installment.id || installment.installmentId)
   return {
@@ -1929,7 +1943,10 @@ export async function getPublicStripePayment(publicPaymentId, { baseUrl, sync = 
 
   const paymentSettings = await getPublicPaymentSettings()
   const paymentPlan = await buildPublicPaymentPlanSummary(row)
-  return mapPublicPayment(row, config, baseUrl, paymentSettings, paymentPlan)
+  return attachMetaPublicPurchaseEvent(
+    mapPublicPayment(row, config, baseUrl, paymentSettings, paymentPlan),
+    row
+  )
 }
 
 export async function createStripePaymentIntent(publicPaymentId, options = {}) {

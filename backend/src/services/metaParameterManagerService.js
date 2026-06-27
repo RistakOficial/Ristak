@@ -33,12 +33,156 @@ function safeObject(value) {
   return value && typeof value === 'object' && !Array.isArray(value) ? value : {}
 }
 
+const META_URL_PII_KEYS = new Set([
+  'address',
+  'apellido',
+  'apellidos',
+  'city',
+  'correo',
+  'correo_electronico',
+  'dob',
+  'email',
+  'em',
+  'e_mail',
+  'first_name',
+  'fn',
+  'full_name',
+  'gender',
+  'last_name',
+  'ln',
+  'mail',
+  'name',
+  'nombre',
+  'nombres',
+  'phone',
+  'ph',
+  'postal_code',
+  'state',
+  'street',
+  'telefono',
+  'tel',
+  'whatsapp',
+  'zip'
+])
+
 function getMetaPayload(requestMeta = {}) {
   return safeObject(requestMeta?.meta || requestMeta)
 }
 
 function getMetaTrackingPayload(meta = {}) {
   return safeObject(meta.tracking)
+}
+
+function parseJson(value, fallback = {}) {
+  if (!value) return fallback
+  if (typeof value === 'object') return value
+  try {
+    return JSON.parse(value)
+  } catch {
+    return fallback
+  }
+}
+
+function normalizeLookupKey(value) {
+  return cleanString(value)
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^a-z0-9]/g, '')
+}
+
+function parseContactCustomFields(value) {
+  const source = parseJson(value, {})
+  if (Array.isArray(source)) {
+    return source.reduce((acc, field = {}) => {
+      if (!field || typeof field !== 'object') return acc
+      const key = firstCleanString([
+        field.key,
+        field.name,
+        field.fieldKey,
+        field.field_key,
+        field.label,
+        field.id
+      ])
+      const fieldValue = firstCleanString([
+        field.value,
+        field.fieldValue,
+        field.field_value,
+        field.text,
+        field.answer
+      ])
+      if (!key || !fieldValue) return acc
+      acc[key] = fieldValue
+      acc[normalizeLookupKey(key)] = fieldValue
+      return acc
+    }, {})
+  }
+
+  if (source && typeof source === 'object') {
+    return Object.entries(source).reduce((acc, [key, value]) => {
+      const cleanedKey = cleanString(key)
+      const cleanedValue = cleanString(value)
+      if (!cleanedKey || !cleanedValue) return acc
+      acc[cleanedKey] = cleanedValue
+      acc[normalizeLookupKey(cleanedKey)] = cleanedValue
+      return acc
+    }, {})
+  }
+
+  return {}
+}
+
+function getContactDataValue(contact = {}, aliases = []) {
+  const customFields = parseContactCustomFields(contact.custom_fields || contact.customFields)
+  for (const alias of aliases) {
+    const key = cleanString(alias)
+    const normalizedKey = normalizeLookupKey(alias)
+    const value = firstCleanString([
+      contact[key],
+      contact[normalizedKey],
+      contact[key.replace(/_([a-z])/g, (_, letter) => letter.toUpperCase())],
+      customFields[key],
+      customFields[normalizedKey]
+    ])
+    if (value) return value
+  }
+  return ''
+}
+
+function splitMetaUrlAppendix(value = '') {
+  const cleaned = cleanString(value)
+  const match = /^(.*?)(\.[A-Za-z0-9]{8})$/.exec(cleaned)
+  if (!match) return { url: cleaned, appendix: '' }
+  return { url: match[1], appendix: match[2] }
+}
+
+function shouldRemoveMetaUrlParam(key = '') {
+  const normalized = cleanString(key).toLowerCase()
+  const lookupKey = normalizeLookupKey(normalized)
+  return META_URL_PII_KEYS.has(normalized) ||
+    META_URL_PII_KEYS.has(lookupKey) ||
+    /(email|correo|phone|telefono|whatsapp|nombre|name|apellido|address|street|postal|zip|dob|birth|gender)/i.test(normalized)
+}
+
+export function sanitizeMetaUrlForEvent(value = '') {
+  const cleaned = cleanString(value)
+  if (!cleaned) return ''
+
+  const { url: urlWithoutAppendix, appendix } = splitMetaUrlAppendix(cleaned)
+  try {
+    const parsed = new URL(urlWithoutAppendix)
+    parsed.username = ''
+    parsed.password = ''
+    parsed.hash = ''
+    const keysToDelete = []
+    parsed.searchParams.forEach((_, key) => {
+      if (shouldRemoveMetaUrlParam(key)) keysToDelete.push(key)
+    })
+    keysToDelete.forEach(key => parsed.searchParams.delete(key))
+    return `${parsed.toString()}${appendix}`
+  } catch {
+    return `${urlWithoutAppendix.split('?')[0].split('#')[0]}${appendix}`
+  }
 }
 
 function parseCookieHeader(cookieHeader = '') {
@@ -250,9 +394,9 @@ export function collectMetaParameterSignals({ req = null, requestMeta = {}, sour
     fbp: builder.getFbp() || null,
     clientIpAddress: builder.getClientIpAddress() || null,
     clientUserAgent: getUserAgent(req, requestMeta) || null,
-    eventSourceUrl: builder.getEventSourceUrl() || resolvedSourceUrl || null,
-    referrerUrl: builder.getReferrerUrl() || getMetaReferrer(requestMeta, req) || null,
-    sourceUrl: resolvedSourceUrl || null,
+    eventSourceUrl: sanitizeMetaUrlForEvent(builder.getEventSourceUrl() || resolvedSourceUrl || null) || null,
+    referrerUrl: sanitizeMetaUrlForEvent(builder.getReferrerUrl() || getMetaReferrer(requestMeta, req) || null) || null,
+    sourceUrl: sanitizeMetaUrlForEvent(resolvedSourceUrl || null) || null,
     requestUri: getRequestUri({ req, sourceUrl: resolvedSourceUrl }),
     scheme: getRequestScheme({ req, sourceUrl: resolvedSourceUrl }),
     cookiesToSet: builder.getCookiesToSet()
@@ -326,6 +470,12 @@ export function buildMetaParameterUserData({
     contact.contactId,
     contact.contact_id
   ])
+  const city = getContactDataValue(contact, ['city', 'ct', 'ciudad', 'address_city', 'billing_city', 'shipping_city'])
+  const state = getContactDataValue(contact, ['state', 'st', 'estado', 'province', 'region', 'address_state', 'billing_state', 'shipping_state'])
+  const zipCode = getContactDataValue(contact, ['zip', 'postal_code', 'postcode', 'codigo_postal', 'cp', 'billing_postal_code', 'shipping_postal_code'])
+  const country = getContactDataValue(contact, ['country', 'country_code', 'pais', 'address_country', 'billing_country', 'shipping_country'])
+  const dateOfBirth = getContactDataValue(contact, ['date_of_birth', 'dob', 'birthdate', 'birthday', 'fecha_nacimiento'])
+  const gender = getContactDataValue(contact, ['gender', 'genero', 'sexo'])
 
   return pruneEmptyUserData({
     external_id: normalizeAndHashMetaPii(resolvedExternalId, PII_DATA_TYPE.EXTERNAL_ID),
@@ -333,6 +483,12 @@ export function buildMetaParameterUserData({
     ph: normalizeAndHashMetaPii(contact.phone, PII_DATA_TYPE.PHONE),
     fn: normalizeAndHashMetaPii(firstName, PII_DATA_TYPE.FIRST_NAME),
     ln: normalizeAndHashMetaPii(lastName, PII_DATA_TYPE.LAST_NAME),
+    ct: normalizeAndHashMetaPii(city, PII_DATA_TYPE.CITY),
+    st: normalizeAndHashMetaPii(state, PII_DATA_TYPE.STATE),
+    zp: normalizeAndHashMetaPii(zipCode, PII_DATA_TYPE.ZIP_CODE),
+    country: normalizeAndHashMetaPii(country, PII_DATA_TYPE.COUNTRY),
+    db: normalizeAndHashMetaPii(dateOfBirth, PII_DATA_TYPE.DATE_OF_BIRTH),
+    ge: normalizeAndHashMetaPii(gender, PII_DATA_TYPE.GENDER),
     client_ip_address: signals.clientIpAddress || undefined,
     client_user_agent: signals.clientUserAgent || undefined,
     fbc: signals.fbc || undefined,

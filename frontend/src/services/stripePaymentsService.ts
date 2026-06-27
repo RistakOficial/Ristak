@@ -105,6 +105,13 @@ export interface StripePaymentLinkPayload {
   lineItems?: Array<Record<string, unknown>>
 }
 
+export interface PublicMetaPurchaseEvent {
+  pixelId: string
+  eventName: string
+  eventId: string
+  customData?: Record<string, unknown>
+}
+
 export interface PublicStripePaymentPlanInstallment {
   id: string
   sequence: number
@@ -189,6 +196,7 @@ export interface PublicStripePayment {
     totalAmount: number
   } | null
   settings?: PublicPaymentSettings | null
+  metaPurchaseEvent?: PublicMetaPurchaseEvent | null
 }
 
 export interface StripePaymentIntentResponse {

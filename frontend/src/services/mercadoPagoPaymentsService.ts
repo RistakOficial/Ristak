@@ -69,6 +69,13 @@ export interface MercadoPagoPaymentLinkPayload {
   lineItems?: Array<Record<string, unknown>>
 }
 
+export interface PublicMetaPurchaseEvent {
+  pixelId: string
+  eventName: string
+  eventId: string
+  customData?: Record<string, unknown>
+}
+
 export interface PublicMercadoPagoPayment {
   id: string
   publicPaymentId: string
@@ -110,6 +117,7 @@ export interface PublicMercadoPagoPayment {
     totalAmount: number
   } | null
   settings?: PublicPaymentSettings | null
+  metaPurchaseEvent?: PublicMetaPurchaseEvent | null
 }
 
 export interface MercadoPagoCardPaymentPayload {

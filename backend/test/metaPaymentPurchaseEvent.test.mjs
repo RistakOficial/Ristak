@@ -120,9 +120,23 @@ test('payment Purchase CAPI event uses real payment amount and account currency'
         await db.run('DELETE FROM meta_conversion_event_logs WHERE contact_id = ?', [contactId])
         await db.run('DELETE FROM contacts WHERE id = ?', [contactId])
         await db.run(
-          `INSERT INTO contacts (id, email, full_name, phone, source, created_at, updated_at)
-           VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
-          [contactId, 'buyer@example.test', 'Buyer Demo', '+525512345678', 'test']
+          `INSERT INTO contacts (id, email, full_name, phone, source, custom_fields, created_at, updated_at)
+           VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+          [
+            contactId,
+            'buyer@example.test',
+            'Buyer Demo',
+            '+525512345678',
+            'test',
+            JSON.stringify({
+              city: 'Ciudad Juarez',
+              state: 'Chihuahua',
+              postal_code: '32000',
+              country: 'MX',
+              date_of_birth: '1990-01-31',
+              gender: 'f'
+            })
+          ]
         )
 
         await db.run(`
@@ -174,7 +188,26 @@ test('payment Purchase CAPI event uses real payment amount and account currency'
           amount: 123.45,
           currency: 'MXN',
           status: 'paid',
-          eventSourceUrl: 'https://checkout.example.test/pay/payment_meta_purchase_1'
+          payment_provider: 'stripe',
+          payment_method: 'stripe',
+          public_payment_id: 'public_payment_1',
+          reference: 'order-123',
+          title: 'Consultoria Premium',
+          metadata_json: JSON.stringify({
+            lineItems: [
+              {
+                id: 'svc-001',
+                name: 'Consultoria Premium',
+                quantity: 2,
+                unitPrice: 61.725
+              }
+            ],
+            paymentPlan: {
+              flowId: 'flow_123',
+              installmentId: 'installment_1'
+            }
+          }),
+          eventSourceUrl: 'https://checkout.example.test/pay/payment_meta_purchase_1?email=buyer@example.test&phone=525512345678&fbclid=fb.123'
         })
 
         assert.equal(result.sent, true)
@@ -182,14 +215,32 @@ test('payment Purchase CAPI event uses real payment amount and account currency'
 
         const payload = JSON.parse(metaCalls[0].body)
         assert.equal(payload.data[0].event_name, 'Purchase')
-        assert.equal(payload.data[0].event_source_url, 'https://checkout.example.test/pay/payment_meta_purchase_1')
+        assert.equal(payload.data[0].action_source, 'website')
+        assert.equal(payload.data[0].event_source_url, 'https://checkout.example.test/pay/payment_meta_purchase_1?fbclid=fb.123')
         assert.equal(payload.data[0].event_id, `purchase_contact_${contactId}`)
         assert.equal(payload.data[0].custom_data.value, 123.45)
         assert.equal(payload.data[0].custom_data.currency, 'USD')
         assert.equal(payload.data[0].custom_data.checkout_source, 'public_payment')
         assert.equal(payload.data[0].custom_data.payment_id, 'payment_meta_purchase_1')
+        assert.equal(payload.data[0].custom_data.order_id, 'order-123')
         assert.equal(payload.data[0].custom_data.payment_status, 'paid')
+        assert.equal(payload.data[0].custom_data.payment_provider, 'stripe')
+        assert.equal(payload.data[0].custom_data.payment_method, 'stripe')
+        assert.equal(payload.data[0].custom_data.public_payment_id, 'public_payment_1')
+        assert.equal(payload.data[0].custom_data.payment_plan_id, 'flow_123')
+        assert.equal(payload.data[0].custom_data.installment_id, 'installment_1')
+        assert.deepEqual(payload.data[0].custom_data.content_ids, ['svc-001'])
+        assert.deepEqual(payload.data[0].custom_data.contents, [{ id: 'svc-001', quantity: 2, item_price: 61.73 }])
+        assert.equal(payload.data[0].custom_data.content_type, 'product')
+        assert.equal(payload.data[0].custom_data.content_name, 'Consultoria Premium')
+        assert.equal(payload.data[0].custom_data.num_items, 2)
         assert.match(payload.data[0].user_data.em, /^[a-f0-9]{64}\.[A-Za-z0-9]{8}$/)
+        assert.match(payload.data[0].user_data.ct, /^[a-f0-9]{64}\.[A-Za-z0-9]{8}$/)
+        assert.match(payload.data[0].user_data.st, /^[a-f0-9]{64}\.[A-Za-z0-9]{8}$/)
+        assert.match(payload.data[0].user_data.zp, /^[a-f0-9]{64}\.[A-Za-z0-9]{8}$/)
+        assert.match(payload.data[0].user_data.country, /^[a-f0-9]{64}\.[A-Za-z0-9]{8}$/)
+        assert.match(payload.data[0].user_data.db, /^[a-f0-9]{64}\.[A-Za-z0-9]{8}$/)
+        assert.match(payload.data[0].user_data.ge, /^[a-f0-9]{64}\.[A-Za-z0-9]{8}$/)
       })
     })
   } finally {

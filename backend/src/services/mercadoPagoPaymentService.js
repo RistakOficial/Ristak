@@ -15,6 +15,7 @@ import { calculatePaymentTax, getPaymentGatewayMode, getPublicPaymentSettings } 
 import { registerGigstackPaymentForTransactionInBackground } from './gigstackInvoiceService.js'
 // (PAY2-003) Encolar el comprobante automático tras un pago de Mercado Pago (igual que Conekta).
 import { queuePaymentAutomationMessage } from './paymentAutomationsService.js'
+import { buildMetaPublicPurchasePixelEvent } from './metaConversionEventsService.js'
 
 const CONFIG_KEYS = {
   enabled: 'mercadopago_enabled',
@@ -653,6 +654,19 @@ function mapPublicPayment(row, config, baseUrl = '', settings = null) {
   }
 }
 
+async function attachMetaPublicPurchaseEvent(publicPayment, row) {
+  if (!publicPayment || !row) return publicPayment
+  const metaPurchaseEvent = await buildMetaPublicPurchasePixelEvent({
+    ...row,
+    amount: publicPayment.amount,
+    currency: publicPayment.currency,
+    status: publicPayment.status,
+    paymentUrl: publicPayment.paymentUrl,
+    eventSourceUrl: publicPayment.paymentUrl
+  })
+  return metaPurchaseEvent ? { ...publicPayment, metaPurchaseEvent } : publicPayment
+}
+
 function buildPreferencePayload(row, { baseUrl = '' } = {}) {
   const metadata = parseJson(row.metadata_json, {})
   const publicPaymentId = row.public_payment_id
@@ -1005,7 +1019,10 @@ export async function getPublicMercadoPagoPayment(publicPaymentId, { baseUrl } =
   if (!row || row.payment_provider !== 'mercadopago') return null
 
   const paymentSettings = await getPublicPaymentSettings()
-  return mapPublicPayment(row, config, baseUrl, paymentSettings)
+  return attachMetaPublicPurchaseEvent(
+    mapPublicPayment(row, config, baseUrl, paymentSettings),
+    row
+  )
 }
 
 export async function ensurePublicMercadoPagoPreference(publicPaymentId, { baseUrl } = {}) {

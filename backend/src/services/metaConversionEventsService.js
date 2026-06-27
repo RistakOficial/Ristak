@@ -7,7 +7,7 @@ import { getActiveMetaTestEventCode } from '../utils/metaTestCode.js'
 import { nonTestPaymentCondition } from '../utils/paymentMode.js'
 import { buildPhoneMatchCandidates } from '../utils/phoneUtils.js'
 import { getAccountCurrency } from '../utils/accountLocale.js'
-import { buildMetaParameterUserData } from './metaParameterManagerService.js'
+import { buildMetaParameterUserData, sanitizeMetaUrlForEvent } from './metaParameterManagerService.js'
 
 const CONFIG_KEYS = {
   scheduleEnabled: 'meta_whatsapp_schedule_enabled',
@@ -38,6 +38,17 @@ const PAYMENT_META_EVENT_OPTIONS = new Set([
   'CompleteRegistration',
   'ViewContent',
   DEFAULT_PAYMENT_WHATSAPP_EVENT_NAME
+])
+const META_ACTION_SOURCES = new Set([
+  'app',
+  'business_messaging',
+  'chat',
+  'email',
+  'other',
+  'phone_call',
+  'physical_store',
+  'system_generated',
+  'website'
 ])
 
 const CONTACT_SENT_FIELDS = {
@@ -228,12 +239,191 @@ function extractPaymentMetaEventSourceUrl(payment = {}) {
   return sourceUrl || ''
 }
 
+function normalizeMetaActionSource(value, fallback = 'website') {
+  const actionSource = cleanString(value).toLowerCase()
+  if (META_ACTION_SOURCES.has(actionSource)) return actionSource
+  if (!fallback) return ''
+  return META_ACTION_SOURCES.has(fallback) ? fallback : 'website'
+}
+
+function resolvePaymentMetaActionSource(payment = {}, eventSourceUrl = '') {
+  const explicit = normalizeMetaActionSource(payment.actionSource || payment.action_source || payment.metaActionSource || payment.meta_action_source, '')
+  if (explicit) return explicit
+
+  const method = cleanString(payment.payment_method || payment.paymentMethod || payment.method).toLowerCase()
+  const provider = cleanString(payment.payment_provider || payment.provider).toLowerCase()
+  const source = cleanString(payment.source).toLowerCase()
+
+  if (eventSourceUrl || payment.public_payment_id || payment.publicPaymentId || payment.payment_url || payment.paymentUrl) {
+    return 'website'
+  }
+  if (/call|phone|telefono/.test(method) || /call|phone|telefono/.test(source)) {
+    return 'phone_call'
+  }
+  if (/cash|efectivo|transfer|bank|deposit|manual|offline|check/.test(method) || /manual|offline|cash/.test(provider)) {
+    return 'physical_store'
+  }
+  return 'system_generated'
+}
+
+function firstPaymentValue(values = []) {
+  for (const value of values) {
+    if (value === null || value === undefined) continue
+    const cleaned = cleanString(value)
+    if (cleaned) return cleaned
+  }
+  return ''
+}
+
+function asArray(value) {
+  if (!value) return []
+  if (Array.isArray(value)) return value
+  if (typeof value === 'string') {
+    const parsed = parseJson(value, null)
+    if (Array.isArray(parsed)) return parsed
+    return value.split(',').map(item => cleanString(item)).filter(Boolean)
+  }
+  return []
+}
+
+function getPaymentMetadata(payment = {}) {
+  return parseJson(payment.metadata_json || payment.metadataJson || payment.metadata, {})
+}
+
+function normalizeMetaContentId(value = '') {
+  return cleanString(value).slice(0, 100)
+}
+
+function normalizeMetaQuantity(value) {
+  const quantity = Number(value)
+  if (!Number.isFinite(quantity) || quantity <= 0) return 1
+  return Math.max(1, Math.trunc(quantity))
+}
+
+function normalizeMetaItemPrice(value) {
+  const price = parseMetaNumber(value)
+  return price !== null && price >= 0 ? Math.round(price * 100) / 100 : null
+}
+
+function extractPaymentLineItems(payment = {}, metadata = {}) {
+  const sources = [
+    payment.lineItems,
+    payment.line_items,
+    payment.items,
+    metadata.lineItems,
+    metadata.line_items,
+    metadata.items,
+    metadata.products,
+    metadata.invoiceItems,
+    metadata.invoice_items
+  ]
+  for (const source of sources) {
+    const items = asArray(source)
+    if (items.length) return items
+  }
+  return []
+}
+
+function buildMetaContentItems(payment = {}, metadata = {}, fallbackValue = null) {
+  const lineItems = extractPaymentLineItems(payment, metadata)
+  if (!lineItems.length) {
+    const fallbackId = normalizeMetaContentId(payment.id || payment.public_payment_id || payment.reference || metadata.public_payment_id)
+    const fallbackName = firstPaymentValue([payment.title, payment.description, metadata.title, metadata.description])
+    if (!fallbackId && !fallbackName) return []
+    return [{
+      id: fallbackId || normalizeMetaContentId(fallbackName),
+      name: fallbackName,
+      quantity: 1,
+      itemPrice: fallbackValue !== null && fallbackValue !== undefined ? Math.round(Number(fallbackValue) * 100) / 100 : null
+    }]
+  }
+
+  return lineItems
+    .map((item = {}, index) => {
+      if (typeof item !== 'object') {
+        const value = normalizeMetaContentId(item)
+        return value ? { id: value, name: value, quantity: 1, itemPrice: null } : null
+      }
+      const id = normalizeMetaContentId(
+        item.id ||
+        item.sku ||
+        item.product_id ||
+        item.productId ||
+        item.price_id ||
+        item.priceId ||
+        item.content_id ||
+        item.contentId ||
+        `${payment.id || payment.public_payment_id || 'payment'}_${index + 1}`
+      )
+      const quantity = normalizeMetaQuantity(item.quantity || item.qty || item.count)
+      const itemPrice = normalizeMetaItemPrice(
+        item.item_price ||
+        item.itemPrice ||
+        item.unit_price ||
+        item.unitPrice ||
+        item.price ||
+        item.amount
+      )
+      const name = firstPaymentValue([item.name, item.title, item.description, item.label])
+      return id || name ? { id: id || normalizeMetaContentId(name), name, quantity, itemPrice } : null
+    })
+    .filter(Boolean)
+}
+
+function buildMetaContentIds(payment = {}, metadata = {}, contentItems = []) {
+  const explicitIds = [
+    ...asArray(payment.content_ids || payment.contentIds),
+    ...asArray(metadata.content_ids || metadata.contentIds)
+  ].map(normalizeMetaContentId).filter(Boolean)
+  const itemIds = contentItems.map(item => normalizeMetaContentId(item.id)).filter(Boolean)
+  return [...new Set([...explicitIds, ...itemIds])].slice(0, 100)
+}
+
+function buildPaymentOrderId(payment = {}, metadata = {}) {
+  return firstPaymentValue([
+    payment.orderId,
+    payment.order_id,
+    payment.reference,
+    payment.public_payment_id,
+    payment.publicPaymentId,
+    payment.stripe_payment_intent_id,
+    payment.stripePaymentIntentId,
+    payment.stripe_charge_id,
+    payment.conekta_order_id,
+    payment.conektaOrderId,
+    payment.conekta_charge_id,
+    payment.conektaChargeId,
+    payment.mercadopago_payment_id,
+    payment.mercadoPagoPaymentId,
+    payment.mercadopago_preference_id,
+    payment.mercadoPagoPreferenceId,
+    payment.ghl_invoice_id,
+    payment.invoice_number,
+    metadata.orderId,
+    metadata.order_id,
+    metadata.public_payment_id,
+    metadata.ristak_payment_id,
+    metadata.invoiceId,
+    metadata.invoice_id
+  ])
+}
+
+function pickPaymentPlanMetadata(metadata = {}) {
+  return metadata.paymentPlan && typeof metadata.paymentPlan === 'object'
+    ? metadata.paymentPlan
+    : metadata.payment_plan && typeof metadata.payment_plan === 'object'
+      ? metadata.payment_plan
+      : {}
+}
+
 function buildPaymentMetaPurchaseEventCustomData(parameters = {}, payment = {}, options = {}) {
   const normalizedParameters = normalizePaymentMetaPurchaseEventParameters(parameters)
   const normalizedAmount = parseMetaNumber(normalizedParameters.value)
   const paymentAmount = parseMetaNumber(payment.amount)
   const predictedLtv = parseMetaNumber(normalizedParameters.predictedLtv)
   const currency = normalizeMetaCurrency(options.currency)
+  const metadata = getPaymentMetadata(payment)
+  const paymentPlan = pickPaymentPlanMetadata(metadata)
   const customData = {
     source: 'ristak_payment',
     conversion_type: EVENT_TYPES.purchase
@@ -254,14 +444,98 @@ function buildPaymentMetaPurchaseEventCustomData(parameters = {}, payment = {}, 
     customData.currency = currency
   }
 
-  const paymentId = cleanString(payment.id || payment.reference || payment.ghl_invoice_id || payment.paymentId || payment.payment_id)
+  const paymentId = firstPaymentValue([
+    payment.id,
+    payment.paymentId,
+    payment.payment_id,
+    metadata.ristak_payment_id,
+    metadata.payment_id
+  ])
   if (paymentId) {
     customData.payment_id = paymentId
+  }
+
+  const orderId = buildPaymentOrderId(payment, metadata)
+  if (orderId) {
+    customData.order_id = orderId
   }
 
   const paymentStatus = cleanString(payment.status)
   if (paymentStatus) {
     customData.payment_status = paymentStatus
+  }
+
+  const paymentProvider = firstPaymentValue([payment.payment_provider, payment.provider, metadata.provider])
+  if (paymentProvider) {
+    customData.payment_provider = paymentProvider
+  }
+
+  const paymentMethod = firstPaymentValue([payment.payment_method, payment.paymentMethod, metadata.payment_method])
+  if (paymentMethod) {
+    customData.payment_method = paymentMethod
+  }
+
+  const publicPaymentId = firstPaymentValue([payment.public_payment_id, payment.publicPaymentId, metadata.public_payment_id])
+  if (publicPaymentId) {
+    customData.public_payment_id = publicPaymentId
+  }
+
+  const invoiceNumber = firstPaymentValue([payment.invoice_number, payment.invoiceNumber, metadata.invoice_number])
+  if (invoiceNumber) {
+    customData.invoice_number = invoiceNumber
+  }
+
+  const subscriptionId = firstPaymentValue([
+    payment.subscription_id,
+    payment.subscriptionId,
+    payment.stripe_subscription_id,
+    payment.conekta_subscription_id,
+    payment.mercadopago_subscription_id,
+    metadata.subscription_id,
+    metadata.subscriptionId,
+    paymentPlan.subscriptionId,
+    paymentPlan.subscription_id
+  ])
+  if (subscriptionId) {
+    customData.subscription_id = subscriptionId
+  }
+
+  const paymentPlanId = firstPaymentValue([paymentPlan.flowId, paymentPlan.flow_id, payment.flow_id, metadata.flow_id])
+  if (paymentPlanId) {
+    customData.payment_plan_id = paymentPlanId
+  }
+
+  const installmentId = firstPaymentValue([paymentPlan.installmentId, paymentPlan.installment_id, payment.installment_id, metadata.installment_id])
+  if (installmentId) {
+    customData.installment_id = installmentId
+  }
+
+  const contentItems = buildMetaContentItems(payment, metadata, finalValue)
+  const contentIds = buildMetaContentIds(payment, metadata, contentItems)
+  if (contentIds.length) {
+    customData.content_ids = contentIds
+  }
+  const contents = contentItems
+    .map(item => ({
+      id: normalizeMetaContentId(item.id),
+      quantity: item.quantity,
+      ...(item.itemPrice !== null && item.itemPrice !== undefined ? { item_price: item.itemPrice } : {})
+    }))
+    .filter(item => item.id)
+  if (contents.length) {
+    customData.contents = contents
+    customData.content_type = firstPaymentValue([metadata.content_type, metadata.contentType]) || 'product'
+    customData.num_items = contents.reduce((total, item) => total + normalizeMetaQuantity(item.quantity), 0)
+  }
+  const contentName = firstPaymentValue([
+    metadata.content_name,
+    metadata.contentName,
+    payment.title,
+    payment.description,
+    contentItems[0]?.name
+  ])
+  if (contentName) {
+    customData.content_name = contentName
   }
 
   if (Array.isArray(normalizedParameters.custom)) {
@@ -274,6 +548,48 @@ function buildPaymentMetaPurchaseEventCustomData(parameters = {}, payment = {}, 
   }
 
   return customData
+}
+
+function prunePublicMetaPixelCustomData(customData = {}) {
+  return Object.fromEntries(
+    Object.entries(customData).filter(([, value]) => {
+      if (Array.isArray(value)) return value.length > 0
+      return value !== null && value !== undefined && value !== ''
+    })
+  )
+}
+
+export async function buildMetaPublicPurchasePixelEvent(payment = {}, options = {}) {
+  if (!isSuccessfulPaymentStatus(payment.status)) return null
+
+  const paymentMode = cleanString(payment.payment_mode || payment.paymentMode).toLowerCase()
+  if (paymentMode === 'test') return null
+
+  const contactId = cleanString(
+    options.contactId ||
+    payment.contact_id ||
+    payment.contactId ||
+    payment.contact?.id
+  )
+  if (!contactId) return null
+
+  const paymentMetaConfig = await getPaymentMetaPurchaseEventConfig()
+  if (!paymentMetaConfig.enabled || paymentMetaConfig.channel !== 'site') return null
+
+  const metaConfig = await getMetaCapiConfig()
+  if (!metaConfig.datasetId) return null
+
+  const accountCurrency = await getPaymentMetaCurrency()
+  const customData = buildPaymentMetaPurchaseEventCustomData(paymentMetaConfig.parameters, payment, {
+    currency: accountCurrency
+  })
+
+  return {
+    pixelId: metaConfig.datasetId,
+    eventName: paymentMetaConfig.eventName || DEFAULT_PAYMENT_EVENT_NAME,
+    eventId: `purchase_contact_${contactId}`,
+    customData: prunePublicMetaPixelCustomData(customData)
+  }
 }
 
 async function getPaymentMetaPurchaseEventConfig() {
@@ -469,6 +785,7 @@ async function getContactForMetaEvent(contactId) {
        full_name,
        first_name,
        last_name,
+       custom_fields,
        attribution_ctwa_clid,
        attribution_ad_id,
        attribution_ad_name,
@@ -775,7 +1092,8 @@ async function sendMetaSiteEvent({
   metaEventName,
   eventId,
   customData,
-  eventSourceUrl = ''
+  eventSourceUrl = '',
+  actionSource = 'website'
 }) {
   const contact = await getContactForMetaEvent(contactId)
 
@@ -826,7 +1144,7 @@ async function sendMetaSiteEvent({
       {
         event_name: metaEventName,
         event_time: Math.floor(Date.now() / 1000),
-        action_source: 'website',
+        action_source: normalizeMetaActionSource(actionSource, 'website'),
         event_id: eventId,
         user_data: userData,
         custom_data: customData || {}
@@ -834,7 +1152,7 @@ async function sendMetaSiteEvent({
     ]
   }
 
-  const normalizedEventSourceUrl = cleanString(eventSourceUrl)
+  const normalizedEventSourceUrl = sanitizeMetaUrlForEvent(eventSourceUrl)
   if (normalizedEventSourceUrl) {
     payload.data[0].event_source_url = normalizedEventSourceUrl
   }
@@ -1008,7 +1326,8 @@ export async function triggerMetaPaymentPurchaseEvent(contactId, payment = {}) {
       : DEFAULT_PAYMENT_WHATSAPP_EVENT_NAME
   )
   const eventId = `purchase_contact_${contactId}`
-  const eventSourceUrl = extractPaymentMetaEventSourceUrl(payment)
+  const eventSourceUrl = sanitizeMetaUrlForEvent(extractPaymentMetaEventSourceUrl(payment))
+  const actionSource = resolvePaymentMetaActionSource(payment, eventSourceUrl)
   const accountCurrency = await getPaymentMetaCurrency()
   const customData = buildPaymentMetaPurchaseEventCustomData(paymentMetaConfig.parameters, payment, {
     currency: accountCurrency
@@ -1048,7 +1367,8 @@ export async function triggerMetaPaymentPurchaseEvent(contactId, payment = {}) {
     metaEventName: siteMetaEventName,
     eventId,
     customData,
-    eventSourceUrl
+    eventSourceUrl,
+    actionSource
   })
 }
 
@@ -1058,7 +1378,7 @@ export async function triggerMetaPurchaseEventForPaymentRow(paymentId) {
   }
 
   const payment = await db.get(
-    `SELECT id, contact_id, amount, currency, status
+    `SELECT *
      FROM payments
      WHERE id = ?
        AND amount > 0

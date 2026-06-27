@@ -32,6 +32,12 @@ type StripePromise = ReturnType<typeof loadStripe>
 type PublicPaymentData = PublicStripePayment | PublicMercadoPagoPayment | PublicConektaPayment
 type DocumentThemeMode = 'light' | 'dark'
 type MercadoPagoBrickController = { unmount?: () => void }
+type MetaPixelFn = ((...args: unknown[]) => void) & {
+  callMethod?: (...args: unknown[]) => void
+  queue?: unknown[]
+  loaded?: boolean
+  version?: string
+}
 type MercadoPagoBrickBuilder = {
   create: (
     type: 'cardPayment',
@@ -79,13 +85,17 @@ declare global {
   interface Window {
     MercadoPago?: MercadoPagoConstructor
     ConektaCheckoutComponents?: ConektaCheckoutComponents
+    fbq?: MetaPixelFn
+    _fbq?: MetaPixelFn
   }
 }
 
 const MERCADOPAGO_SDK_SRC = 'https://sdk.mercadopago.com/js/v2'
 const CONEKTA_CHECKOUT_SDK_SRC = 'https://pay.conekta.com/v1.0/js/conekta-checkout.min.js'
+const META_PIXEL_SDK_SRC = 'https://connect.facebook.net/en_US/fbevents.js'
 let mercadoPagoSdkPromise: Promise<void> | null = null
 let conektaCheckoutSdkPromise: Promise<void> | null = null
+let metaPixelSdkPromise: Promise<void> | null = null
 const STRIPE_SPANISH_COUNTRIES = new Set([
   'AR', 'BO', 'CL', 'CO', 'CR', 'CU', 'DO', 'EC', 'ES', 'GT', 'HN', 'MX', 'NI', 'PA', 'PE', 'PR', 'PY', 'SV', 'UY', 'VE'
 ])
@@ -312,6 +322,87 @@ function loadConektaCheckoutSdk() {
   })
 
   return conektaCheckoutSdkPromise
+}
+
+function ensureMetaPixelStub() {
+  if (typeof window === 'undefined') return
+  if (window.fbq) return
+
+  const fbq = function (...args: unknown[]) {
+    if (fbq.callMethod) {
+      fbq.callMethod(...args)
+    } else {
+      fbq.queue?.push(args)
+    }
+  } as MetaPixelFn
+  fbq.queue = []
+  fbq.loaded = true
+  fbq.version = '2.0'
+  window.fbq = fbq
+  window._fbq = fbq
+}
+
+function loadMetaPixelSdk() {
+  if (typeof window === 'undefined') return Promise.reject(new Error('Meta Pixel solo se puede cargar en el navegador.'))
+  ensureMetaPixelStub()
+  if (metaPixelSdkPromise) return metaPixelSdkPromise
+
+  metaPixelSdkPromise = new Promise((resolve, reject) => {
+    const existingScript = document.querySelector<HTMLScriptElement>(`script[src="${META_PIXEL_SDK_SRC}"]`)
+    if (existingScript) {
+      existingScript.addEventListener('load', () => resolve(), { once: true })
+      existingScript.addEventListener('error', () => reject(new Error('No se pudo cargar Meta Pixel.')), { once: true })
+      window.setTimeout(() => resolve(), 0)
+      return
+    }
+
+    const script = document.createElement('script')
+    script.async = true
+    script.src = META_PIXEL_SDK_SRC
+    script.addEventListener('load', () => resolve(), { once: true })
+    script.addEventListener('error', () => reject(new Error('No se pudo cargar Meta Pixel.')), { once: true })
+    document.head.appendChild(script)
+  })
+
+  return metaPixelSdkPromise
+}
+
+function normalizeMetaPixelCustomData(value?: Record<string, unknown>) {
+  const source = value && typeof value === 'object' ? value : {}
+  return Object.fromEntries(
+    Object.entries(source).filter(([, entry]) => {
+      if (Array.isArray(entry)) return entry.length > 0
+      return entry !== null && entry !== undefined && entry !== ''
+    })
+  )
+}
+
+async function fireMetaPurchasePixelEvent(payment: PublicPaymentData) {
+  const metaPurchaseEvent = payment.metaPurchaseEvent
+  if (!metaPurchaseEvent?.pixelId || !metaPurchaseEvent.eventId) return
+  if (typeof window === 'undefined') return
+
+  const storageKey = `ristak-meta-purchase:${payment.publicPaymentId}:${metaPurchaseEvent.pixelId}:${metaPurchaseEvent.eventId}`
+  try {
+    if (window.sessionStorage.getItem(storageKey)) return
+  } catch {
+    // sessionStorage puede fallar en navegadores restrictivos; Pixel sigue siendo idempotente por eventID.
+  }
+
+  await loadMetaPixelSdk()
+  window.fbq?.('init', metaPurchaseEvent.pixelId)
+  window.fbq?.(
+    'track',
+    metaPurchaseEvent.eventName || 'Purchase',
+    normalizeMetaPixelCustomData(metaPurchaseEvent.customData),
+    { eventID: metaPurchaseEvent.eventId }
+  )
+
+  try {
+    window.sessionStorage.setItem(storageKey, '1')
+  } catch {
+    // No bloqueamos el checkout por storage.
+  }
 }
 
 function createPaymentAttemptKey(publicPaymentId: string) {
@@ -838,6 +929,7 @@ export const PublicPayment: React.FC = () => {
   const { theme } = useTheme()
   const restoreThemeRef = useRef<DocumentThemeMode>(theme)
   const autoReceiptPrintRef = useRef('')
+  const metaPurchasePixelRef = useRef('')
   const [payment, setPayment] = useState<PublicPaymentData | null>(null)
   const [intent, setIntent] = useState<StripePaymentIntentResponse | null>(null)
   const [loading, setLoading] = useState(true)
@@ -1007,6 +1099,17 @@ export const PublicPayment: React.FC = () => {
 
     return () => window.clearTimeout(timer)
   }, [payment, isPaid, receiptDownloadRequested])
+
+  useEffect(() => {
+    if (!payment || !isPaid || !payment.metaPurchaseEvent) return
+    const eventKey = `${payment.publicPaymentId}:${payment.metaPurchaseEvent.pixelId}:${payment.metaPurchaseEvent.eventId}`
+    if (metaPurchasePixelRef.current === eventKey) return
+    metaPurchasePixelRef.current = eventKey
+
+    fireMetaPurchasePixelEvent(payment).catch(() => {
+      metaPurchasePixelRef.current = ''
+    })
+  }, [payment, isPaid])
 
   if (loading) {
     return (

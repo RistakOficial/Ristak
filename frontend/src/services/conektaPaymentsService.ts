@@ -53,6 +53,13 @@ export interface ConektaPaymentLinkPayload {
   lineItems?: Array<Record<string, unknown>>
 }
 
+export interface PublicMetaPurchaseEvent {
+  pixelId: string
+  eventName: string
+  eventId: string
+  customData?: Record<string, unknown>
+}
+
 export interface PublicConektaPayment {
   id: string
   publicPaymentId: string
@@ -94,6 +101,7 @@ export interface PublicConektaPayment {
     totalAmount: number
   } | null
   settings?: PublicPaymentSettings | null
+  metaPurchaseEvent?: PublicMetaPurchaseEvent | null
 }
 
 export interface ConektaPublicCardPaymentPayload {

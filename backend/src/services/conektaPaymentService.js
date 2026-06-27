@@ -9,6 +9,7 @@ import { calculatePaymentTax, getPaymentGatewayMode, getPublicPaymentSettings } 
 import { queuePaymentAutomationMessage } from './paymentAutomationsService.js'
 import { registerGigstackPaymentForTransactionInBackground } from './gigstackInvoiceService.js'
 import { getPaymentPlanAuditSummary } from './paymentRecordSafetyService.js'
+import { buildMetaPublicPurchasePixelEvent } from './metaConversionEventsService.js'
 
 const CONFIG_KEYS = {
   enabled: 'conekta_enabled',
@@ -507,6 +508,19 @@ function mapPublicPayment(row, config, baseUrl = '', settings = null) {
   }
 }
 
+async function attachMetaPublicPurchaseEvent(publicPayment, row) {
+  if (!publicPayment || !row) return publicPayment
+  const metaPurchaseEvent = await buildMetaPublicPurchasePixelEvent({
+    ...row,
+    amount: publicPayment.amount,
+    currency: publicPayment.currency,
+    status: publicPayment.status,
+    paymentUrl: publicPayment.paymentUrl,
+    eventSourceUrl: publicPayment.paymentUrl
+  })
+  return metaPurchaseEvent ? { ...publicPayment, metaPurchaseEvent } : publicPayment
+}
+
 function buildContactName(contact = {}, fallback = {}) {
   return cleanString(contact.full_name)
     || cleanString(`${contact.first_name || ''} ${contact.last_name || ''}`)
@@ -916,7 +930,10 @@ export async function getPublicConektaPayment(publicPaymentId, { baseUrl } = {})
   if (!row || row.payment_provider !== 'conekta') return null
   const config = await getConektaPaymentConfig({ mode: row.payment_mode || '' })
   const paymentSettings = await getPublicPaymentSettings()
-  return mapPublicPayment(row, config, baseUrl, paymentSettings)
+  return attachMetaPublicPurchaseEvent(
+    mapPublicPayment(row, config, baseUrl, paymentSettings),
+    row
+  )
 }
 
 export async function createPublicConektaCardPayment(publicPaymentId, input = {}, { baseUrl } = {}) {
