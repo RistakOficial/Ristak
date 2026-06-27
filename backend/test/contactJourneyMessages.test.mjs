@@ -734,6 +734,163 @@ test('contact journey annotates page visits with matched video playback', async 
   }
 })
 
+test('contact journey summarizes tracking rows into one page visit per session', async () => {
+  const id = randomUUID()
+  const contactId = `journey_session_summary_${id}`
+  const phone = `+52997${Date.now().toString().slice(-7)}`
+  const visitorId = `visitor_summary_${id}`
+  const sessionId = `session_summary_${id}`
+  const nextSessionId = `session_summary_next_${id}`
+
+  await cleanup(contactId, phone)
+
+  try {
+    await insertRow('contacts', {
+      id: contactId,
+      phone,
+      email: `summary-${id}@ristak.test`,
+      full_name: 'Cliente Sesión Resumida',
+      first_name: 'Cliente',
+      source: 'native_site',
+      visitor_id: visitorId,
+      created_at: '2026-06-16T10:10:00.000Z',
+      updated_at: '2026-06-16T10:10:00.000Z'
+    })
+
+    await insertRow('sessions', {
+      id: `session_summary_start_${id}`,
+      session_id: sessionId,
+      visitor_id: visitorId,
+      contact_id: contactId,
+      full_name: 'Cliente Sesión Resumida',
+      email: `summary-${id}@ristak.test`,
+      event_name: 'session_start',
+      started_at: '2026-06-16T10:00:00.000Z',
+      created_at: '2026-06-16T10:00:00.000Z',
+      page_url: 'https://demo.ristak.test/landing?utm_source=facebook',
+      referrer_url: 'https://facebook.com/ads/click',
+      utm_source: 'facebook',
+      utm_medium: 'paid',
+      campaign_id: `campaign_${id}`,
+      campaign_name: 'Campaña Demo',
+      adset_id: `adset_${id}`,
+      adset_name: 'Audiencia Demo',
+      ad_id: `ad_${id}`,
+      ad_name: 'Anuncio Demo',
+      tracking_source: 'native_site',
+      site_id: `site_${id}`,
+      site_name: 'Sitio Demo',
+      public_page_id: `page_${id}`,
+      public_page_title: 'Landing Demo'
+    })
+
+    await insertRow('sessions', {
+      id: `session_summary_page_${id}`,
+      session_id: sessionId,
+      visitor_id: visitorId,
+      contact_id: contactId,
+      full_name: 'Cliente Sesión Resumida',
+      email: `summary-${id}@ristak.test`,
+      event_name: 'page_view',
+      started_at: '2026-06-16T10:03:00.000Z',
+      created_at: '2026-06-16T10:03:00.000Z',
+      page_url: 'https://demo.ristak.test/landing/detalle?utm_source=facebook',
+      referrer_url: 'https://demo.ristak.test/landing?utm_source=facebook',
+      utm_source: 'facebook',
+      utm_medium: 'paid',
+      tracking_source: 'native_site',
+      site_id: `site_${id}`,
+      site_name: 'Sitio Demo',
+      public_page_id: `page_${id}`,
+      public_page_title: 'Landing Demo'
+    })
+
+    await insertRow('sessions', {
+      id: `session_summary_conversion_${id}`,
+      session_id: sessionId,
+      visitor_id: visitorId,
+      contact_id: contactId,
+      full_name: 'Cliente Sesión Resumida',
+      email: `summary-${id}@ristak.test`,
+      event_name: 'native_site_conversion',
+      started_at: '2026-06-16T10:05:00.000Z',
+      created_at: '2026-06-16T10:05:00.000Z',
+      page_url: 'https://demo.ristak.test/landing#form',
+      referrer_url: 'https://facebook.com/ads/click',
+      utm_source: 'facebook',
+      utm_medium: 'paid',
+      campaign_id: `campaign_${id}`,
+      campaign_name: 'Campaña Demo',
+      adset_id: `adset_${id}`,
+      adset_name: 'Audiencia Demo',
+      ad_id: `ad_${id}`,
+      ad_name: 'Anuncio Demo',
+      tracking_source: 'native_site',
+      site_id: `site_${id}`,
+      site_name: 'Sitio Demo',
+      form_site_id: `form_${id}`,
+      form_site_name: 'Formulario Demo',
+      public_page_id: `page_${id}`,
+      public_page_title: 'Landing Demo',
+      conversion_type: 'form_submit',
+      submission_id: `submission_${id}`,
+      match_method: 'direct_contact_id',
+      match_confidence: 100,
+      identity_evidence_json: JSON.stringify({ directContact: true })
+    })
+
+    await insertRow('sessions', {
+      id: `session_summary_end_${id}`,
+      session_id: sessionId,
+      visitor_id: visitorId,
+      contact_id: contactId,
+      full_name: 'Cliente Sesión Resumida',
+      email: `summary-${id}@ristak.test`,
+      event_name: 'session_end',
+      started_at: '2026-06-16T10:06:00.000Z',
+      created_at: '2026-06-16T10:06:00.000Z'
+    })
+
+    await insertRow('sessions', {
+      id: `session_summary_next_${id}`,
+      session_id: nextSessionId,
+      visitor_id: visitorId,
+      contact_id: contactId,
+      full_name: 'Cliente Sesión Resumida',
+      email: `summary-${id}@ristak.test`,
+      event_name: 'page_view',
+      started_at: '2026-06-17T11:00:00.000Z',
+      created_at: '2026-06-17T11:00:00.000Z',
+      page_url: 'https://demo.ristak.test/gracias',
+      tracking_source: 'native_site',
+      site_id: `site_${id}`,
+      site_name: 'Sitio Demo'
+    })
+
+    const journey = await readJourney(contactId)
+    const pageVisits = journey.filter(event => event.type === 'page_visit')
+    const summaryVisit = pageVisits.find(event => event.data.session_id === sessionId)
+
+    assert.equal(pageVisits.length, 2)
+    assert.ok(summaryVisit)
+    assert.equal(summaryVisit.date, '2026-06-16T10:00:00.000Z')
+    assert.equal(summaryVisit.data.session_event_count, 4)
+    assert.equal(summaryVisit.data.session_page_view_count, 2)
+    assert.equal(summaryVisit.data.session_conversion_count, 1)
+    assert.equal(summaryVisit.data.pages_visited, 3)
+    assert.equal(summaryVisit.data.session_duration_seconds, 360)
+    assert.equal(summaryVisit.data.first_page_url, 'https://demo.ristak.test/landing?utm_source=facebook')
+    assert.equal(summaryVisit.data.last_page_url, 'https://demo.ristak.test/landing#form')
+    assert.equal(summaryVisit.data.form_site_id, `form_${id}`)
+    assert.equal(summaryVisit.data.submission_id, `submission_${id}`)
+    assert.equal(summaryVisit.data.match_method, 'direct_contact_id')
+    assert.equal(summaryVisit.data.match_confidence, 100)
+    assert.deepEqual(summaryVisit.data.event_names, ['session_start', 'page_view', 'native_site_conversion', 'session_end'])
+  } finally {
+    await cleanup(contactId, phone)
+  }
+})
+
 test('contact journey exposes pre-registration tracking attribution and match evidence', async () => {
   const id = randomUUID()
   const contactId = `journey_pre_registration_${id}`

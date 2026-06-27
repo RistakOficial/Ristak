@@ -223,6 +223,44 @@ const formatMatchConfidence = (value: unknown): string => {
   return `${confidence}%`
 }
 
+const formatCountLabel = (count: number, singular: string, plural: string): string =>
+  `${count} ${count === 1 ? singular : plural}`
+
+const formatSessionDuration = (secondsValue: unknown): string => {
+  const seconds = Math.max(0, Math.round(getNumberValue(secondsValue)))
+  if (seconds <= 0) return ''
+  if (seconds < 60) return `${seconds} s`
+
+  const minutes = Math.floor(seconds / 60)
+  const remainingSeconds = seconds % 60
+  if (minutes < 60) {
+    return remainingSeconds > 0 ? `${minutes} min ${remainingSeconds} s` : `${minutes} min`
+  }
+
+  const hours = Math.floor(minutes / 60)
+  const remainingMinutes = minutes % 60
+  return remainingMinutes > 0 ? `${hours} h ${remainingMinutes} min` : `${hours} h`
+}
+
+const formatSessionSummary = (data: Record<string, any>): string => {
+  const pagesVisited = Math.round(getNumberValue(data.pages_visited))
+  const events = Math.round(getNumberValue(data.session_event_count))
+  const conversions = Math.round(getNumberValue(data.session_conversion_count))
+  const parts: string[] = []
+
+  if (pagesVisited > 0) {
+    parts.push(formatCountLabel(pagesVisited, 'página', 'páginas'))
+  }
+  if (events > 1) {
+    parts.push(formatCountLabel(events, 'evento', 'eventos'))
+  }
+  if (conversions > 0) {
+    parts.push(formatCountLabel(conversions, 'conversión', 'conversiones'))
+  }
+
+  return parts.join(' · ')
+}
+
 const getIdentityEvidenceSummary = (evidence: unknown): string => {
   if (!evidence || typeof evidence !== 'object' || Array.isArray(evidence)) return ''
   const data = evidence as Record<string, any>
@@ -524,7 +562,13 @@ const getTooltipContent = (event?: JourneyEvent | null, timezone?: string) => {
 
   if (type === 'page_visit') {
     appendPreRegistrationTooltipItems(items, data)
+    appendTooltipItem(items, 'Resumen de sesión', formatSessionSummary(data))
+    appendTooltipItem(items, 'Duración', formatSessionDuration(data.session_duration_seconds))
     appendTooltipItem(items, 'Página', data.public_page_title || data.landing_page || data.page_url)
+    if (data.first_page_url && data.last_page_url && String(data.first_page_url) !== String(data.last_page_url)) {
+      appendTooltipItem(items, 'Primera página', data.first_page_url)
+      appendTooltipItem(items, 'Última página', data.last_page_url)
+    }
     appendTooltipItem(items, 'URL', data.page_url)
     appendTooltipItem(items, 'Formulario', data.form_site_name)
     appendTooltipItem(items, 'Sitio', data.site_name)

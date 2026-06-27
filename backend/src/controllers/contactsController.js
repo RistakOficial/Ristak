@@ -781,9 +781,140 @@ const buildPageVisitJourneyEvent = (session, { contactCreatedAt } = {}) => ({
     match_method: session.match_method,
     match_confidence: toFiniteNumber(session.match_confidence),
     identity_evidence: parseJourneyJsonObject(session.identity_evidence_json),
+    session_event_count: toFiniteNumber(session.session_event_count),
+    session_page_view_count: toFiniteNumber(session.session_page_view_count),
+    session_conversion_count: toFiniteNumber(session.session_conversion_count),
+    session_started_at: session.session_started_at,
+    session_ended_at: session.session_ended_at,
+    session_duration_seconds: toFiniteNumber(session.session_duration_seconds),
+    pages_visited: toFiniteNumber(session.pages_visited),
+    first_page_url: session.first_page_url,
+    last_page_url: session.last_page_url,
+    event_names: Array.isArray(session.event_names) ? session.event_names : [],
+    tracking_session_ids: Array.isArray(session.tracking_session_ids) ? session.tracking_session_ids : [],
     ...buildPreRegistrationJourneyMeta(session.started_at, contactCreatedAt)
   }
 })
+
+const JOURNEY_SESSION_VIEW_EVENTS = new Set(['session_start', 'page_view', 'native_site_view'])
+
+const getJourneySessionTime = (session = {}) => {
+  const time = new Date(session.started_at || session.created_at || 0).getTime()
+  return Number.isFinite(time) ? time : 0
+}
+
+const isJourneySessionViewEvent = (session = {}) =>
+  JOURNEY_SESSION_VIEW_EVENTS.has(cleanString(session.event_name).toLowerCase())
+
+const isJourneySessionConversionEvent = (session = {}) => Boolean(
+  cleanString(session.submission_id) ||
+  WEB_CONVERSION_EVENT_PATTERN.test(cleanString(session.conversion_type)) ||
+  WEB_CONVERSION_EVENT_PATTERN.test(cleanString(session.event_name))
+)
+
+const hasMeaningfulSessionValue = (value) => {
+  if (value === null || value === undefined) return false
+  if (typeof value === 'string') {
+    const trimmed = value.trim()
+    return trimmed.length > 0 && trimmed !== 'null' && trimmed !== 'undefined'
+  }
+  return true
+}
+
+const copyMissingSessionFields = (target, source = {}) => {
+  Object.entries(source).forEach(([key, value]) => {
+    if (!hasMeaningfulSessionValue(target[key]) && hasMeaningfulSessionValue(value)) {
+      target[key] = value
+    }
+  })
+}
+
+const getJourneySessionMergeScore = (session = {}) => {
+  let score = getWebSessionScore(session)
+  if (cleanString(session.page_url) || cleanString(session.landing_page)) score += 20
+  if (isJourneySessionViewEvent(session)) score += 10
+  if (isJourneySessionConversionEvent(session)) score += 30
+  if (cleanString(session.event_name).toLowerCase() === 'session_end') score -= 50
+  return score
+}
+
+const getJourneySessionPageKey = (session = {}) =>
+  normalizeJourneyPageUrl(session.page_url || session.landing_page)
+
+const pickJourneySessionBaseRow = (rows = []) => {
+  const sorted = [...rows].sort((left, right) => getJourneySessionTime(left) - getJourneySessionTime(right))
+  return sorted.find(row => cleanString(row.event_name).toLowerCase() !== 'session_end' && getJourneySessionPageKey(row)) ||
+    sorted.find(row => cleanString(row.event_name).toLowerCase() !== 'session_end') ||
+    sorted[0] ||
+    {}
+}
+
+const summarizeJourneySessionRows = (rows = []) => {
+  if (!rows.length) return []
+
+  const groups = new Map()
+  rows.forEach((row) => {
+    const key = cleanString(row.session_id) || cleanString(row.id)
+    if (!key) return
+    const bucket = groups.get(key)
+    if (bucket) {
+      bucket.push(row)
+    } else {
+      groups.set(key, [row])
+    }
+  })
+
+  return [...groups.values()]
+    .map((group) => {
+      const chronological = [...group].sort((left, right) => getJourneySessionTime(left) - getJourneySessionTime(right))
+      const base = { ...pickJourneySessionBaseRow(chronological) }
+      const byBestData = [...chronological].sort((left, right) => getJourneySessionMergeScore(right) - getJourneySessionMergeScore(left))
+      byBestData.forEach(row => copyMissingSessionFields(base, row))
+
+      const bestMatchRow = [...chronological].sort((left, right) =>
+        toFiniteNumber(right.match_confidence) - toFiniteNumber(left.match_confidence)
+      )[0]
+      if (bestMatchRow && toFiniteNumber(bestMatchRow.match_confidence) >= toFiniteNumber(base.match_confidence)) {
+        base.match_method = bestMatchRow.match_method || base.match_method
+        base.match_confidence = bestMatchRow.match_confidence
+        base.identity_evidence_json = bestMatchRow.identity_evidence_json || base.identity_evidence_json
+      }
+
+      const first = chronological[0]
+      const last = chronological[chronological.length - 1]
+      const pageRows = chronological.filter(row => getJourneySessionPageKey(row))
+      const uniquePageKeys = [...new Set(pageRows.map(getJourneySessionPageKey).filter(Boolean))]
+      const eventNames = [...new Set(chronological.map(row => cleanString(row.event_name)).filter(Boolean))]
+      const trackingSessionIds = [...new Set(chronological.map(row => cleanString(row.id)).filter(Boolean))]
+      const firstPage = pageRows[0]
+      const lastPage = pageRows[pageRows.length - 1]
+      const startedAt = first?.started_at || first?.created_at || base.started_at
+      const endedAt = last?.started_at || last?.created_at || startedAt
+      const startedTime = new Date(startedAt || 0).getTime()
+      const endedTime = new Date(endedAt || 0).getTime()
+      const durationSeconds = Number.isFinite(startedTime) && Number.isFinite(endedTime) && endedTime > startedTime
+        ? Math.round((endedTime - startedTime) / 1000)
+        : 0
+
+      return {
+        ...base,
+        started_at: startedAt,
+        created_at: first?.created_at || base.created_at,
+        session_event_count: chronological.length,
+        session_page_view_count: chronological.filter(isJourneySessionViewEvent).length,
+        session_conversion_count: chronological.filter(isJourneySessionConversionEvent).length,
+        session_started_at: startedAt,
+        session_ended_at: endedAt,
+        session_duration_seconds: durationSeconds,
+        pages_visited: uniquePageKeys.length,
+        first_page_url: firstPage?.page_url || firstPage?.landing_page || base.page_url || base.landing_page,
+        last_page_url: lastPage?.page_url || lastPage?.landing_page || firstPage?.page_url || firstPage?.landing_page || base.page_url || base.landing_page,
+        event_names: eventNames,
+        tracking_session_ids: trackingSessionIds
+      }
+    })
+    .sort((left, right) => getJourneySessionTime(left) - getJourneySessionTime(right))
+}
 
 const attachVideoEngagementsToPageVisits = (sessionEntries, videoEngagements) => {
   const attached = new Set()
@@ -4195,7 +4326,8 @@ export const getContactJourney = async (req, res) => {
     }
 
     const videoEngagements = await loadContactVideoEngagements(contact)
-    const sessionJourneyEntries = sessions.map(session => ({
+    const sessionSummaries = summarizeJourneySessionRows(sessions)
+    const sessionJourneyEntries = sessionSummaries.map(session => ({
       session,
       event: buildPageVisitJourneyEvent(session, { contactCreatedAt: contact.created_at })
     }))
