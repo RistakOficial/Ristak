@@ -34202,7 +34202,7 @@ type CustomFieldQuickDraft = {
   fieldKey: string
   dataType: CustomFieldDataType
   folderId: string
-  options: string[]
+  options: CustomFieldOption[]
 }
 
 const customFieldEditorTypes: Array<{ value: CustomFieldDataType; label: string; detail: string }> = [
@@ -34231,11 +34231,23 @@ const normalizeCustomFieldKey = (value: string) => {
   return normalized || 'campo_personalizado'
 }
 
-const customFieldOptionsFromLabels = (labels: string[]): CustomFieldOption[] => (
-  labels
-    .map(label => label.trim())
-    .filter(Boolean)
-    .map(label => ({ label, value: normalizeCustomFieldKey(label) }))
+const shouldSyncCustomFieldOptionValue = (option: CustomFieldOption) => {
+  const label = option.label.trim()
+  const value = option.value.trim()
+  return !value || value === label || value === normalizeCustomFieldKey(label)
+}
+
+const customFieldOptionsFromDraft = (options: CustomFieldOption[]): CustomFieldOption[] => (
+  options
+    .map(option => ({
+      label: (option.label || option.value || '').trim(),
+      value: (option.value || option.label || '').trim()
+    }))
+    .filter(option => option.label || option.value)
+    .map(option => ({
+      label: option.label || option.value,
+      value: option.value || option.label
+    }))
 )
 
 const customFieldTokenPreview = (fieldKey: string) => `{{custom.${fieldKey || 'campo_personalizado'}}}`
@@ -34261,7 +34273,12 @@ const makeCustomFieldDraftForBlock = (block: SiteBlock): CustomFieldQuickDraft =
   const label = block.label || 'Campo personalizado'
   const dataType = customFieldDataTypeForBlock(block.blockType)
   const options = isChoiceBlock(block.blockType)
-    ? getOptions(block).map(option => String(option.label || option.value || '')).filter(Boolean)
+    ? getOptions(block)
+      .map(option => ({
+        label: String(option.label || option.value || '').trim(),
+        value: String(option.value || option.label || '').trim()
+      }))
+      .filter(option => option.label || option.value)
     : []
 
   return {
@@ -34278,15 +34295,20 @@ const makeCustomFieldDraftForBlock = (block: SiteBlock): CustomFieldQuickDraft =
 const buildBlockOptionsFromCustomField = (block: SiteBlock, field: CustomFieldDefinition): SiteBlockOption[] => {
   const existing = getOptions(block)
   return (field.options || [])
-    .map(option => String(option.label || option.value || '').trim())
-    .filter(Boolean)
-    .map((label, index) => {
+    .map(option => ({
+      label: String(option.label || option.value || '').trim(),
+      value: String(option.value || option.label || '').trim()
+    }))
+    .filter(option => option.label || option.value)
+    .map((fieldOption, index) => {
+      const label = fieldOption.label || fieldOption.value
+      const value = fieldOption.value || label
       const prior = existing.find(item => String(item.label || '').trim().toLowerCase() === label.toLowerCase())
       return {
         ...(prior || {}),
         id: prior?.id || `option-${index}-${normalizeCustomFieldKey(label)}`,
         label,
-        value: label,
+        value,
         action: prior?.action || 'continue'
       }
     })
@@ -34338,7 +34360,7 @@ const buildCustomFieldPayload = (
   const label = draft.label.trim()
   const fieldKey = normalizeCustomFieldKey(draft.fieldKey || label)
   const options = customFieldChoiceTypes.has(draft.dataType)
-    ? customFieldOptionsFromLabels(draft.options)
+    ? customFieldOptionsFromDraft(draft.options)
     : []
 
   if (!label) {
@@ -34423,13 +34445,22 @@ const CustomFieldBindingControl: React.FC<{
   }
 
   const addCreatorOption = () => {
-    setCreatorDraft(current => ({ ...current, options: [...current.options, ''] }))
+    setCreatorDraft(current => ({ ...current, options: [...current.options, { label: '', value: '' }] }))
   }
 
-  const updateCreatorOption = (index: number, value: string) => {
+  const updateCreatorOption = (index: number, patch: Partial<CustomFieldOption>) => {
     setCreatorDraft(current => ({
       ...current,
-      options: current.options.map((option, optionIndex) => optionIndex === index ? value : option)
+      options: current.options.map((option, optionIndex) => {
+        if (optionIndex !== index) return option
+        if (patch.label === undefined) return { ...option, ...patch }
+        const nextLabel = patch.label
+        return {
+          ...option,
+          ...patch,
+          value: shouldSyncCustomFieldOptionValue(option) ? normalizeCustomFieldKey(nextLabel) : option.value
+        }
+      })
     }))
   }
 
@@ -34584,7 +34615,7 @@ const CustomFieldBindingControl: React.FC<{
                     const dataType = event.target.value as CustomFieldDataType
                     patchCreatorDraft({
                       dataType,
-                      options: customFieldChoiceTypes.has(dataType) && creatorDraft.options.length === 0 ? [''] : creatorDraft.options
+                      options: customFieldChoiceTypes.has(dataType) && creatorDraft.options.length === 0 ? [{ label: '', value: '' }] : creatorDraft.options
                     })
                   }}
                 >
@@ -34615,11 +34646,22 @@ const CustomFieldBindingControl: React.FC<{
                   <div className={customFieldModalStyles.optionList}>
                     {creatorDraft.options.map((option, index) => (
                       <div key={index} className={customFieldModalStyles.optionRow}>
-                        <input
-                          value={option}
-                          placeholder={`Opción ${index + 1}`}
-                          onChange={(event) => updateCreatorOption(index, event.target.value)}
-                        />
+                        <label className={customFieldModalStyles.optionInput}>
+                          <span>Texto visible</span>
+                          <input
+                            value={option.label}
+                            placeholder={`Opción ${index + 1}`}
+                            onChange={(event) => updateCreatorOption(index, { label: event.target.value })}
+                          />
+                        </label>
+                        <label className={customFieldModalStyles.optionInput}>
+                          <span>Valor interno</span>
+                          <input
+                            value={option.value}
+                            placeholder="Ej. 3000"
+                            onChange={(event) => updateCreatorOption(index, { value: event.target.value })}
+                          />
+                        </label>
                         <button
                           type="button"
                           className={customFieldModalStyles.optionRemove}
@@ -34634,7 +34676,7 @@ const CustomFieldBindingControl: React.FC<{
                   <Button type="button" variant="secondary" size="sm" leftIcon={<Plus size={14} />} onClick={addCreatorOption}>
                     Agregar opción
                   </Button>
-                  <small>Cada opción es una respuesta que el contacto podrá elegir.</small>
+                  <small>El contacto ve el texto visible. El valor interno es lo que se guarda y se puede mapear en Meta o automatizaciones.</small>
                 </div>
               )}
             </div>
@@ -35874,6 +35916,15 @@ const OptionsRulesEditor: React.FC<OptionsRulesEditorProps> = ({ block, blocks, 
     onPatchBlock({ options: next })
   }
 
+  const patchOptionLabel = (index: number, option: SiteBlockOption, label: string) => {
+    const currentValue = String(option.value || '')
+    const currentLabel = String(option.label || '')
+    patchOption(index, {
+      label,
+      value: !currentValue || currentValue === currentLabel ? label : currentValue
+    })
+  }
+
   const addOption = () => {
     onPatchBlock({
       options: [
@@ -35949,27 +36000,36 @@ const OptionsRulesEditor: React.FC<OptionsRulesEditorProps> = ({ block, blocks, 
         <div key={option.id || index} className={styles.optionRuleCard}>
           <div className={styles.twoColumn}>
             <label className={styles.field}>
-              <span>Opción</span>
+              <span>Opción visible</span>
               <input
                 value={option.label}
-                onChange={(event) => patchOption(index, { label: event.target.value, value: event.target.value })}
+                onChange={(event) => patchOptionLabel(index, option, event.target.value)}
                 onBlur={onSave}
               />
             </label>
             <label className={styles.field}>
-              <span>Regla</span>
-              <CustomSelect
-                value={visibleAction}
-                onChange={(event) => {
-                  const action = event.target.value as SiteOptionAction
-                  patchOption(index, buildRuleActionPatch(option, action))
-                }}
+              <span>Valor interno</span>
+              <input
+                value={option.value || ''}
+                placeholder="Ej. 3000"
+                onChange={(event) => patchOption(index, { value: event.target.value })}
                 onBlur={onSave}
-              >
-                {ruleActions.map(action => <option key={action.value} value={action.value}>{action.label}</option>)}
-              </CustomSelect>
+              />
             </label>
           </div>
+          <label className={styles.field}>
+            <span>Regla</span>
+            <CustomSelect
+              value={visibleAction}
+              onChange={(event) => {
+                const action = event.target.value as SiteOptionAction
+                patchOption(index, buildRuleActionPatch(option, action))
+              }}
+              onBlur={onSave}
+            >
+              {ruleActions.map(action => <option key={action.value} value={action.value}>{action.label}</option>)}
+            </CustomSelect>
+          </label>
 
           {isDisqualifyAction && (
             <label className={styles.field}>

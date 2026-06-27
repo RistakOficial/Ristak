@@ -79,6 +79,8 @@ const DATA_TYPES = new Set([
   'json'
 ])
 
+const CHOICE_DATA_TYPES = new Set(['dropdown', 'radio', 'checkboxes', 'select', 'multiselect', 'checkbox'])
+
 const SYNC_TARGETS = new Set(['local', 'highlevel', 'none'])
 
 const cleanString = (value) => String(value || '').trim()
@@ -741,17 +743,9 @@ export async function prepareContactCustomFieldsForStorage(fields = [], context 
   return normalizeContactCustomFields({ customFields: enrichedFields })
 }
 
-function normalizeOptionsForComparison(options = []) {
-  return normalizeOptions(options).map(option => ({
-    label: option.label || '',
-    value: option.value || ''
-  }))
-}
-
 function assertImmutableFieldIdentity(current, input = {}) {
   const hasKeyInput = input.key !== undefined || input.fieldKey !== undefined || input.field_key !== undefined
   const hasTypeInput = input.dataType !== undefined || input.type !== undefined || input.data_type !== undefined
-  const hasOptionsInput = input.options !== undefined
 
   if (hasKeyInput) {
     const nextKey = normalizeContactCustomFieldKey(input.key || input.fieldKey || input.field_key)
@@ -766,16 +760,6 @@ function assertImmutableFieldIdentity(current, input = {}) {
     const nextDataType = normalizeDataType(input.dataType || input.type || input.data_type)
     if (nextDataType !== current.dataType) {
       const error = new Error('El tipo del campo no se puede cambiar después de crearlo.')
-      error.status = 400
-      throw error
-    }
-  }
-
-  if (hasOptionsInput) {
-    const nextOptionsJson = jsonString(normalizeOptionsForComparison(input.options))
-    const currentOptionsJson = jsonString(normalizeOptionsForComparison(current.options))
-    if (nextOptionsJson !== currentOptionsJson) {
-      const error = new Error('Las opciones del campo no se pueden cambiar después de crearlo.')
       error.status = 400
       throw error
     }
@@ -812,12 +796,21 @@ export async function updateContactCustomFieldDefinition(definitionId, input = {
     : current.folderId || null
   const folder = await assertFolderExists(nextFolderId)
   const nextFieldGroup = folder?.name || limitString(input.fieldGroup || input.field_group || current.fieldGroup || 'general', 120)
+  const hasOptionsInput = input.options !== undefined
+  const nextOptions = hasOptionsInput ? normalizeOptions(input.options) : current.options
+
+  if (hasOptionsInput && !CHOICE_DATA_TYPES.has(normalizeDataType(current.dataType))) {
+    const error = new Error('Este tipo de campo no usa opciones.')
+    error.status = 400
+    throw error
+  }
 
   await db.run(`
     UPDATE contact_custom_field_definitions SET
       label = ?,
       folder_id = ?,
       field_group = ?,
+      options_json = ?,
       archived = ?,
       updated_at = CURRENT_TIMESTAMP
     WHERE id = ?
@@ -825,6 +818,7 @@ export async function updateContactCustomFieldDefinition(definitionId, input = {
     limitString(input.label || input.name || current.label, 180),
     nextFolderId,
     nextFieldGroup,
+    hasOptionsInput ? jsonString(nextOptions) : jsonString(current.options || []),
     input.archived === undefined ? (current.archived ? 1 : 0) : (input.archived ? 1 : 0),
     id
   ])

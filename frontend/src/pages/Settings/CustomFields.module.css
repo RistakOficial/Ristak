@@ -743,14 +743,26 @@
 }
 
 .optionRow {
-  display: flex;
-  align-items: center;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(120px, 0.72fr) auto;
+  align-items: end;
   gap: 8px;
 }
 
-.optionRow input {
-  flex: 1;
-  width: auto;
+.optionInput {
+  display: grid;
+  min-width: 0;
+  gap: 5px;
+}
+
+.optionInput span {
+  color: var(--color-text-tertiary);
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.optionInput input {
+  width: 100%;
   min-width: 0;
 }
 
@@ -772,4 +784,14 @@
 .optionRemove:hover {
   color: var(--neg);
   border-color: var(--neg);
+}
+
+@media (max-width: 640px) {
+  .optionRow {
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+
+  .optionInput:nth-child(2) {
+    grid-column: 1 / -1;
+  }
 }

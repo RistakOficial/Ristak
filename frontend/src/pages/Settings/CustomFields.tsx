@@ -34,7 +34,7 @@ type FieldDraft = {
   fieldKey: string
   dataType: CustomFieldDataType
   folderId: string
-  options: string[]
+  options: CustomFieldOption[]
 }
 
 type FolderDraft = {
@@ -76,15 +76,32 @@ const normalizeFieldKey = (value: string) => {
   return normalized || 'campo_personalizado'
 }
 
-const labelsToOptions = (labels: string[]): CustomFieldOption[] => (
-  labels
-    .map(label => label.trim())
-    .filter(Boolean)
-    .map(label => ({ label, value: normalizeFieldKey(label) }))
+const shouldSyncOptionValue = (option: CustomFieldOption) => {
+  const label = option.label.trim()
+  const value = option.value.trim()
+  return !value || value === label || value === normalizeFieldKey(label)
+}
+
+const draftOptionsToPayloadOptions = (options: CustomFieldOption[]): CustomFieldOption[] => (
+  options
+    .map(option => ({
+      label: option.label.trim(),
+      value: (option.value || option.label).trim()
+    }))
+    .filter(option => option.label || option.value)
+    .map(option => ({
+      label: option.label || option.value,
+      value: option.value || option.label
+    }))
 )
 
-const optionsToLabels = (options: CustomFieldOption[] = []) => (
-  options.map(option => option.label || option.value).filter(Boolean)
+const optionsToDraftOptions = (options: CustomFieldOption[] = []) => (
+  options
+    .map(option => ({
+      label: (option.label || option.value || '').trim(),
+      value: (option.value || option.label || '').trim()
+    }))
+    .filter(option => option.label || option.value)
 )
 
 const getTypeLabel = (type: string) => (
@@ -220,7 +237,7 @@ export const CustomFields: React.FC = () => {
       fieldKey: field.fieldKey || field.key,
       dataType: field.dataType,
       folderId: field.folderId || '',
-      options: optionsToLabels(field.options)
+      options: optionsToDraftOptions(field.options)
     })
     setEditorOpen(true)
   }
@@ -249,13 +266,22 @@ export const CustomFields: React.FC = () => {
   }
 
   const addDraftOption = () => {
-    setDraft(current => ({ ...current, options: [...current.options, ''] }))
+    setDraft(current => ({ ...current, options: [...current.options, { label: '', value: '' }] }))
   }
 
-  const updateDraftOption = (index: number, value: string) => {
+  const updateDraftOption = (index: number, patch: Partial<CustomFieldOption>) => {
     setDraft(current => ({
       ...current,
-      options: current.options.map((option, optionIndex) => optionIndex === index ? value : option)
+      options: current.options.map((option, optionIndex) => {
+        if (optionIndex !== index) return option
+        if (patch.label === undefined) return { ...option, ...patch }
+        const nextLabel = patch.label
+        return {
+          ...option,
+          ...patch,
+          value: shouldSyncOptionValue(option) ? normalizeFieldKey(nextLabel) : option.value
+        }
+      })
     }))
   }
 
@@ -286,7 +312,7 @@ export const CustomFields: React.FC = () => {
   const buildPayload = (): SaveCustomFieldInput | null => {
     const label = draft.label.trim()
     const fieldKey = editingField ? normalizeFieldKey(draft.fieldKey) : normalizeFieldKey(label)
-    const options = choiceTypes.has(draft.dataType) ? labelsToOptions(draft.options) : []
+    const options = choiceTypes.has(draft.dataType) ? draftOptionsToPayloadOptions(draft.options) : []
 
     if (!label) {
       showToast('warning', 'Falta nombre', 'Ponle un nombre al campo.')
@@ -323,7 +349,16 @@ export const CustomFields: React.FC = () => {
           showToast('warning', 'Falta nombre', 'Ponle un nombre al campo.')
           return
         }
-        await customFieldsService.updateField(editingField.definitionId, { label })
+        const patch: Partial<SaveCustomFieldInput> = { label }
+        if (choiceTypes.has(draft.dataType)) {
+          const options = draftOptionsToPayloadOptions(draft.options)
+          if (options.length === 0) {
+            showToast('warning', 'Faltan opciones', 'Agrega al menos una opción para este tipo de campo.')
+            return
+          }
+          patch.options = options
+        }
+        await customFieldsService.updateField(editingField.definitionId, patch)
         showToast('success', 'Campo actualizado', 'Ya quedo guardado.')
       } else {
         const payload = buildPayload()
@@ -816,7 +851,7 @@ export const CustomFields: React.FC = () => {
                     const dataType = event.target.value as CustomFieldDataType
                     patchDraft({
                       dataType,
-                      options: choiceTypes.has(dataType) && draft.options.length === 0 ? [''] : draft.options
+                      options: choiceTypes.has(dataType) && draft.options.length === 0 ? [{ label: '', value: '' }] : draft.options
                     })
                   }}
                 >
@@ -828,7 +863,7 @@ export const CustomFields: React.FC = () => {
 
               <div className={styles.typeHint}>
                 <ChevronRight size={15} />
-                <span>{editingField ? 'El tipo y sus opciones no se pueden cambiar después de crear el campo.' : fieldTypes.find(type => type.value === draft.dataType)?.detail}</span>
+                <span>{editingField ? 'El tipo no se puede cambiar después de crear el campo.' : fieldTypes.find(type => type.value === draft.dataType)?.detail}</span>
               </div>
 
               {!editingField && (
@@ -843,17 +878,28 @@ export const CustomFields: React.FC = () => {
                 </label>
               )}
 
-              {!editingField && choiceTypes.has(draft.dataType) && (
+              {choiceTypes.has(draft.dataType) && (
                 <div className={styles.field}>
                   <span>Opciones</span>
                   <div className={styles.optionList}>
                     {draft.options.map((option, index) => (
                       <div key={index} className={styles.optionRow}>
-                        <input
-                          value={option}
-                          placeholder={`Opción ${index + 1}`}
-                          onChange={(event) => updateDraftOption(index, event.target.value)}
-                        />
+                        <label className={styles.optionInput}>
+                          <span>Texto visible</span>
+                          <input
+                            value={option.label}
+                            placeholder={`Opción ${index + 1}`}
+                            onChange={(event) => updateDraftOption(index, { label: event.target.value })}
+                          />
+                        </label>
+                        <label className={styles.optionInput}>
+                          <span>Valor interno</span>
+                          <input
+                            value={option.value}
+                            placeholder="Ej. 3000"
+                            onChange={(event) => updateDraftOption(index, { value: event.target.value })}
+                          />
+                        </label>
                         <button
                           type="button"
                           className={styles.optionRemove}
@@ -868,7 +914,7 @@ export const CustomFields: React.FC = () => {
                   <Button type="button" variant="secondary" size="sm" leftIcon={<Plus size={14} />} onClick={addDraftOption}>
                     Agregar opción
                   </Button>
-                  <small>Cada opción es una respuesta que el contacto podrá elegir.</small>
+                  <small>El contacto ve el texto visible. El valor interno es lo que se guarda y se puede mapear en Meta o automatizaciones.</small>
                 </div>
               )}
             </div>
