@@ -61,8 +61,8 @@ export function ensureUTC(date: string | Date): string {
   const str = String(date).trim()
   if (!str) return new Date(NaN).toISOString()
 
-  // Ya trae zona explícita (Z o ±HH:MM)
-  if (/(?:Z|[+-]\d{2}:?\d{2})$/i.test(str)) {
+  // Ya trae zona explícita (Z, ±HH, ±HHMM o ±HH:MM)
+  if (/(?:Z|[+-]\d{2}(?::?\d{2})?)$/i.test(str)) {
     const parsed = new Date(str)
     return Number.isNaN(parsed.getTime()) ? str : parsed.toISOString()
   }

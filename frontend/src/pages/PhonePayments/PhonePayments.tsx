@@ -13,6 +13,7 @@ import apiClient from '@/services/apiClient'
 import { getPhoneDailyCacheKey, readPhoneDailyCache, writePhoneDailyCache } from '@/services/phoneDailyCache'
 import { transactionsService, type Transaction } from '@/services/transactionsService'
 import { isLocalPhonePreviewHost } from '@/utils/phoneAccess'
+import { ensureUTC } from '@/utils/timezone'
 import styles from './PhonePayments.module.css'
 
 const PORTABLE_WIDTH_QUERY = '(max-width: 1366px)'
@@ -122,12 +123,13 @@ function formatCurrency(value: number, currency = 'MXN') {
   }).format(value || 0)
 }
 
-function formatPaymentDate(value?: string | null) {
+function formatPaymentDate(value?: string | null, timezone = 'America/Mexico_City') {
   if (!value) return 'Sin fecha'
-  const date = new Date(value)
+  const date = new Date(ensureUTC(value))
   if (Number.isNaN(date.getTime())) return 'Sin fecha'
 
   return new Intl.DateTimeFormat('es-MX', {
+    timeZone: timezone,
     day: 'numeric',
     month: 'short',
     hour: 'numeric',
@@ -946,7 +948,7 @@ export const PhonePayments: React.FC = () => {
                                 <small>{getContactLabel(payment)}</small>
                               </span>
                               <span className={styles.recentPaymentMeta}>
-                                <span>{formatPaymentDate(payment.date || payment.createdAt)}</span>
+                                <span>{formatPaymentDate(payment.date || payment.createdAt, timezone)}</span>
                                 <small>{getPaymentMethodLabel(payment.method)} · {getPaymentStatusLabel(payment.status)}</small>
                               </span>
                               {selected && <Check size={18} className={styles.recentPaymentCheck} aria-hidden="true" />}

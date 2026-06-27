@@ -1,6 +1,7 @@
 import React from 'react'
 import { Modal } from '../Modal'
-import { formatCurrency, formatDate } from '@/utils/format'
+import { useTimezone } from '@/contexts/TimezoneContext'
+import { formatCurrency } from '@/utils/format'
 import styles from './TransactionsModal.module.css'
 
 interface Transaction {
@@ -33,6 +34,8 @@ export const TransactionsModal: React.FC<TransactionsModalProps> = ({
   transactions,
   loading = false
 }) => {
+  const { formatLocalDateShort } = useTimezone()
+
   if (!isOpen) return null
 
   const totalAmount = transactions.reduce((sum, t) => sum + (t.amount || 0), 0)
@@ -123,7 +126,7 @@ export const TransactionsModal: React.FC<TransactionsModalProps> = ({
                     <div className={styles.detailItem}>
                       <span className={styles.detailLabel}>Fecha</span>
                       <span className={styles.detailValue}>
-                        {formatDate(new Date(transaction.date))}
+                        {formatLocalDateShort(transaction.date)}
                       </span>
                     </div>
                     {transaction.payment_method && (
