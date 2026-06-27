@@ -89,6 +89,14 @@ function getViewportLongSide() {
   return Math.max(viewportWidth, viewportHeight)
 }
 
+function isIPadLikeDevice(userAgent: string, maxTouchPoints: number) {
+  if (/iPad/i.test(userAgent)) return true
+
+  // iPadOS can identify itself as Macintosh, especially inside WebKit/native shells.
+  // Do not let a resized iPad window fall back to the phone layout.
+  return /Macintosh/i.test(userAgent) && maxTouchPoints > 1
+}
+
 function isPrivateIPv4Address(hostname: string) {
   const parts = hostname.split('.').map((part) => Number(part))
   if (parts.length !== 4 || parts.some((part) => !Number.isInteger(part) || part < 0 || part > 255)) return false
@@ -131,9 +139,7 @@ export function isCellphoneDevice() {
   const userAgent = navigator.userAgent || ''
   const maxTouchPoints = navigator.maxTouchPoints || 0
   const screenShortSide = getScreenShortSide()
-  const iPadDesktopMode = /Macintosh/i.test(userAgent)
-    && maxTouchPoints > 1
-    && screenShortSide >= IPAD_DESKTOP_SHORT_SIDE_LIMIT
+  const iPadDesktopMode = isIPadLikeDevice(userAgent, maxTouchPoints)
   const tabletUserAgent = TABLET_USER_AGENT_PATTERN.test(userAgent) || iPadDesktopMode
 
   if (tabletUserAgent) return false
@@ -151,27 +157,27 @@ export function isCellphoneDevice() {
 
 export function isTabletDevice() {
   if (typeof window === 'undefined' || typeof navigator === 'undefined') return false
-  if (isCellphoneDevice()) return false
 
   const userAgent = navigator.userAgent || ''
   const maxTouchPoints = navigator.maxTouchPoints || 0
   const screenShortSide = getScreenShortSide()
   const viewportShortSide = getViewportShortSide()
   const coarsePointer = window.matchMedia?.(COARSE_POINTER_QUERY).matches ?? false
-  const iPadDesktopMode = /Macintosh/i.test(userAgent)
-    && maxTouchPoints > 1
-    && screenShortSide >= IPAD_DESKTOP_SHORT_SIDE_LIMIT
+  const iPadDesktopMode = isIPadLikeDevice(userAgent, maxTouchPoints)
   const tabletUserAgent = TABLET_USER_AGENT_PATTERN.test(userAgent) || iPadDesktopMode
   const tabletSizedScreen = screenShortSide >= IPAD_DESKTOP_SHORT_SIDE_LIMIT
     && screenShortSide <= TABLET_SHORT_SIDE_LIMIT
     && viewportShortSide >= IPAD_DESKTOP_SHORT_SIDE_LIMIT
 
-  return tabletUserAgent || (tabletSizedScreen && maxTouchPoints > 0 && coarsePointer)
+  if (tabletUserAgent) return true
+  if (isCellphoneDevice()) return false
+
+  return tabletSizedScreen && maxTouchPoints > 0 && coarsePointer
 }
 
 export function getPortableDeviceMode(): PortableDeviceMode {
-  if (isCellphoneDevice()) return 'phone'
   if (isTabletDevice()) return 'tablet'
+  if (isCellphoneDevice()) return 'phone'
   return 'desktop'
 }
 
