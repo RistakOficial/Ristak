@@ -6,6 +6,7 @@ import { getMetaConfig } from './metaAdsService.js'
 import { getActiveMetaTestEventCode } from '../utils/metaTestCode.js'
 import { nonTestPaymentCondition } from '../utils/paymentMode.js'
 import { buildPhoneMatchCandidates } from '../utils/phoneUtils.js'
+import { getAccountCurrency } from '../utils/accountLocale.js'
 import { buildMetaParameterUserData } from './metaParameterManagerService.js'
 
 const CONFIG_KEYS = {
@@ -188,6 +189,19 @@ function parseMetaNumber(value) {
   return Number.isFinite(number) ? number : null
 }
 
+function normalizeMetaCurrency(value) {
+  const currency = cleanString(value).toUpperCase().slice(0, 3)
+  return /^[A-Z]{3}$/.test(currency) ? currency : PAYMENT_META_DEFAULT_CURRENCY
+}
+
+async function getPaymentMetaCurrency() {
+  try {
+    return normalizeMetaCurrency(await getAccountCurrency())
+  } catch {
+    return PAYMENT_META_DEFAULT_CURRENCY
+  }
+}
+
 function hasWhatsappAttributionSignal(whatsappAttribution = null) {
   if (!whatsappAttribution) return false
 
@@ -213,12 +227,12 @@ function extractPaymentMetaEventSourceUrl(payment = {}) {
   return sourceUrl || ''
 }
 
-function buildPaymentMetaPurchaseEventCustomData(parameters = {}, payment = {}) {
+function buildPaymentMetaPurchaseEventCustomData(parameters = {}, payment = {}, options = {}) {
   const normalizedParameters = normalizePaymentMetaPurchaseEventParameters(parameters)
   const normalizedAmount = parseMetaNumber(normalizedParameters.value)
   const paymentAmount = parseMetaNumber(payment.amount)
   const predictedLtv = parseMetaNumber(normalizedParameters.predictedLtv)
-  const currency = cleanString(payment.currency || PAYMENT_META_DEFAULT_CURRENCY).toUpperCase().slice(0, 3)
+  const currency = normalizeMetaCurrency(options.currency)
   const customData = {
     source: 'ristak_payment',
     conversion_type: EVENT_TYPES.purchase
@@ -226,7 +240,7 @@ function buildPaymentMetaPurchaseEventCustomData(parameters = {}, payment = {}) 
 
   const finalValue = normalizedParameters.sendValue === false
     ? null
-    : (normalizedAmount ?? paymentAmount)
+    : (paymentAmount ?? normalizedAmount)
   if (finalValue !== null) {
     customData.value = finalValue
   }
@@ -994,7 +1008,10 @@ export async function triggerWhatsappFirstPurchaseEvent(contactId, payment = {})
   )
   const eventId = `purchase_contact_${contactId}`
   const eventSourceUrl = extractPaymentMetaEventSourceUrl(payment)
-  const customData = buildPaymentMetaPurchaseEventCustomData(paymentMetaConfig.parameters, payment)
+  const accountCurrency = await getPaymentMetaCurrency()
+  const customData = buildPaymentMetaPurchaseEventCustomData(paymentMetaConfig.parameters, payment, {
+    currency: accountCurrency
+  })
 
   if (paymentMetaConfig.channel === 'whatsapp') {
     return sendMetaWhatsappEvent({

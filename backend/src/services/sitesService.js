@@ -38,7 +38,8 @@ import { getMetaConfig } from './metaAdsService.js'
 import { createSession, getVisitorIdentityExpression, linkVisitorToContact, unifyVisitorIds } from './trackingService.js'
 import {
   buildMetaBrowserUserData,
-  buildMetaParameterUserData
+  buildMetaParameterUserData,
+  collectMetaParameterSignals
 } from './metaParameterManagerService.js'
 
 export const SITE_TYPES = new Set(['standard_form', 'interactive_form', 'landing_page'])
@@ -23046,6 +23047,27 @@ function getMetaSourceUrlFromRequestMeta(requestMeta = {}) {
   return firstCleanString([meta.pageUrl, meta.page_url, meta.sourceUrl, meta.source_url, meta.url, tracking.url])
 }
 
+function collectSiteMetaSignals(site, requestMeta = {}) {
+  const sourceUrl = resolveMetaEventSourceUrl(site, requestMeta)
+  const signals = collectMetaParameterSignals({
+    req: requestMeta?.req,
+    requestMeta,
+    sourceUrl
+  })
+
+  return { sourceUrl, signals }
+}
+
+function buildMetaEventUrlFields(signals = {}, fallbackSourceUrl = '') {
+  const eventSourceUrl = firstCleanString([signals.eventSourceUrl, fallbackSourceUrl])
+  const referrerUrl = cleanString(signals.referrerUrl)
+
+  return {
+    ...(eventSourceUrl ? { event_source_url: eventSourceUrl } : {}),
+    ...(referrerUrl ? { referrer_url: referrerUrl } : {})
+  }
+}
+
 function resolveMetaFbclid(meta = {}) {
   const params = getMetaParamsPayload(meta)
   const tracking = getMetaTrackingPayload(meta)
@@ -23112,13 +23134,14 @@ function pruneEmptyMetaUserData(userData = {}) {
   return userData
 }
 
-function buildMetaBaseUserData({ contactId, requestMeta, eventTimeMs } = {}) {
+function buildMetaBaseUserData({ contactId, requestMeta, eventTimeMs, sourceUrl = '', signals = null } = {}) {
   const externalId = resolveMetaExternalId({ contactId, requestMeta })
   return buildMetaBrowserUserData({
     req: requestMeta?.req,
     requestMeta,
     externalId,
-    sourceUrl: getMetaSourceUrlFromRequestMeta(requestMeta)
+    sourceUrl: sourceUrl || getMetaSourceUrlFromRequestMeta(requestMeta),
+    collectedSignals: signals
   })
 }
 
@@ -23225,6 +23248,7 @@ async function sendSiteLeadMetaEvent({ site, submissionId, submittedPageId, cont
   }
 
   const eventTimeMs = resolveMetaEventTimeMs(requestMeta)
+  const { sourceUrl, signals } = collectSiteMetaSignals(site, requestMeta)
   const names = splitName(contact.fullName)
   const userData = buildMetaParameterUserData({
     req: requestMeta?.req,
@@ -23232,7 +23256,8 @@ async function sendSiteLeadMetaEvent({ site, submissionId, submittedPageId, cont
     contact,
     names,
     externalId: resolveMetaExternalId({ contactId, requestMeta }),
-    sourceUrl: resolveMetaEventSourceUrl(site, requestMeta)
+    sourceUrl,
+    collectedSignals: signals
   })
 
   if (!userData.em && !userData.ph && !userData.external_id) {
@@ -23253,7 +23278,7 @@ async function sendSiteLeadMetaEvent({ site, submissionId, submittedPageId, cont
         event_name: eventName,
         event_time: Math.floor(eventTimeMs / 1000),
         action_source: 'website',
-        event_source_url: resolveMetaEventSourceUrl(site, requestMeta),
+        ...buildMetaEventUrlFields(signals, sourceUrl),
         event_id: eventId,
         user_data: userData,
         custom_data: mergeSiteMetaCustomData({
@@ -23339,7 +23364,8 @@ async function sendSitePageMetaEvent({ site, page, eventName, eventId, contactId
   }
 
   const eventTimeMs = resolveMetaEventTimeMs(requestMeta)
-  const userData = buildMetaBaseUserData({ contactId, requestMeta, eventTimeMs })
+  const { sourceUrl, signals } = collectSiteMetaSignals(site, requestMeta)
+  const userData = buildMetaBaseUserData({ contactId, requestMeta, eventTimeMs, sourceUrl, signals })
 
   if (!userData.client_ip_address && !userData.client_user_agent && !userData.fbp && !userData.fbc && !userData.external_id) {
     await logMetaEvent({
@@ -23359,7 +23385,7 @@ async function sendSitePageMetaEvent({ site, page, eventName, eventId, contactId
         event_name: eventName,
         event_time: Math.floor(eventTimeMs / 1000),
         action_source: 'website',
-        event_source_url: resolveMetaEventSourceUrl(site, requestMeta),
+        ...buildMetaEventUrlFields(signals, sourceUrl),
         event_id: eventId,
         user_data: userData,
         custom_data: mergeSiteMetaCustomData({
@@ -23459,6 +23485,12 @@ export async function sendCalendarBookingSiteMetaEvent({ calendar, appointment, 
 
   const fullName = cleanString(contact.fullName || contact.full_name || contact.name)
   const names = splitName(fullName)
+  const sourceUrl = getMetaSourceUrlFromRequestMeta(requestMeta)
+  const signals = collectMetaParameterSignals({
+    req: requestMeta?.req,
+    requestMeta,
+    sourceUrl
+  })
   const userData = buildMetaParameterUserData({
     req: requestMeta?.req,
     requestMeta,
@@ -23469,7 +23501,8 @@ export async function sendCalendarBookingSiteMetaEvent({ calendar, appointment, 
     },
     names,
     externalId: contactId,
-    sourceUrl: cleanString(requestMeta.meta?.pageUrl) || cleanString(requestMeta.meta?.sourceUrl) || ''
+    sourceUrl,
+    collectedSignals: signals
   })
 
   if (!userData.em && !userData.ph && !userData.external_id && !userData.fbp && !userData.fbc) {
@@ -23495,7 +23528,7 @@ export async function sendCalendarBookingSiteMetaEvent({ calendar, appointment, 
         event_name: config.eventName,
         event_time: Math.floor(Date.now() / 1000),
         action_source: 'website',
-        event_source_url: cleanString(requestMeta.meta?.pageUrl) || cleanString(requestMeta.meta?.sourceUrl) || undefined,
+        ...buildMetaEventUrlFields(signals, sourceUrl),
         event_id: eventId,
         user_data: userData,
         custom_data: customData
@@ -23578,7 +23611,8 @@ async function sendSiteVideoActionMetaEvent({ site, block, rule, eventName, para
   }
 
   const eventTimeMs = resolveMetaEventTimeMs(requestMeta)
-  const userData = buildMetaBaseUserData({ contactId, requestMeta, eventTimeMs })
+  const { sourceUrl, signals } = collectSiteMetaSignals(site, requestMeta)
+  const userData = buildMetaBaseUserData({ contactId, requestMeta, eventTimeMs, sourceUrl, signals })
 
   if (!userData.client_ip_address && !userData.client_user_agent && !userData.fbp && !userData.fbc && !userData.external_id) {
     await logMetaEvent({
@@ -23600,7 +23634,7 @@ async function sendSiteVideoActionMetaEvent({ site, block, rule, eventName, para
         event_name: eventName,
         event_time: Math.floor(eventTimeMs / 1000),
         action_source: 'website',
-        event_source_url: resolveMetaEventSourceUrl(site, requestMeta),
+        ...buildMetaEventUrlFields(signals, sourceUrl),
         event_id: eventId,
         user_data: userData,
         custom_data: mergeSiteMetaCustomData({

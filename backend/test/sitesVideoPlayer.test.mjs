@@ -595,7 +595,7 @@ test('page view meta event endpoint enriches browser match data', async () => {
     assert.equal(payload.data[0].event_name, 'ViewContent')
     assert.equal(payload.data[0].event_time, 1700000005)
     assert.equal(payload.data[0].event_id, 'site_page_view_test_event')
-    assert.equal(payload.data[0].event_source_url, 'https://example.test/landing?fbclid=fbclid-page-view')
+    assert.match(payload.data[0].event_source_url, /^https:\/\/example\.test\/landing\?fbclid=fbclid-page-view\.[A-Za-z0-9]{8}$/)
     assert.equal(payload.data[0].user_data.client_user_agent, 'node-test')
     assert.match(payload.data[0].user_data.fbp, /^fb\.\d+\.\d+\.\d+\.[A-Za-z0-9]{8}$/)
     assert.match(payload.data[0].user_data.fbc, /^fb\.1\.\d+\.fbclid-page-view\.[A-Za-z0-9]{8}$/)

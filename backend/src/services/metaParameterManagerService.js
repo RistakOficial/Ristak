@@ -5,6 +5,7 @@ import { logger } from '../utils/logger.js'
 const require = createRequire(import.meta.url)
 const {
   ParamBuilder,
+  PlainDataObject,
   PII_DATA_TYPE
 } = require('capi-param-builder-nodejs')
 
@@ -221,20 +222,25 @@ function getUserAgent(req = null, requestMeta = {}) {
   ])
 }
 
+function buildMetaRequestContext({ req = null, requestMeta = {}, sourceUrl = '' } = {}) {
+  return new PlainDataObject(
+    getRequestHost({ req, sourceUrl }),
+    buildQueryParams({ req, requestMeta, sourceUrl }),
+    buildMetaCookieBag({ req, requestMeta }),
+    getMetaReferrer(requestMeta, req) || null,
+    getForwardedFor(req) || null,
+    getRemoteAddress(req, requestMeta) || null,
+    getRequestScheme({ req, sourceUrl }) || null,
+    getRequestUri({ req, sourceUrl }) || null
+  )
+}
+
 export function collectMetaParameterSignals({ req = null, requestMeta = {}, sourceUrl = '' } = {}) {
   const resolvedSourceUrl = sourceUrl || getMetaSourceUrl(requestMeta)
-  const host = getRequestHost({ req, sourceUrl: resolvedSourceUrl })
   const builder = new ParamBuilder()
 
   try {
-    builder.processRequest(
-      host,
-      buildQueryParams({ req, requestMeta, sourceUrl: resolvedSourceUrl }),
-      buildMetaCookieBag({ req, requestMeta }),
-      getMetaReferrer(requestMeta, req),
-      getForwardedFor(req),
-      getRemoteAddress(req, requestMeta)
-    )
+    builder.processRequestFromContext(buildMetaRequestContext({ req, requestMeta, sourceUrl: resolvedSourceUrl }))
   } catch (error) {
     logger.warn(`Meta parameter manager no pudo procesar request: ${error.message}`)
   }
@@ -244,6 +250,8 @@ export function collectMetaParameterSignals({ req = null, requestMeta = {}, sour
     fbp: builder.getFbp() || null,
     clientIpAddress: builder.getClientIpAddress() || null,
     clientUserAgent: getUserAgent(req, requestMeta) || null,
+    eventSourceUrl: builder.getEventSourceUrl() || resolvedSourceUrl || null,
+    referrerUrl: builder.getReferrerUrl() || getMetaReferrer(requestMeta, req) || null,
     sourceUrl: resolvedSourceUrl || null,
     requestUri: getRequestUri({ req, sourceUrl: resolvedSourceUrl }),
     scheme: getRequestScheme({ req, sourceUrl: resolvedSourceUrl }),
@@ -304,10 +312,11 @@ export function buildMetaParameterUserData({
   externalId = '',
   sourceUrl = '',
   extraUserData = {},
-  includeBrowserSignals = true
+  includeBrowserSignals = true,
+  collectedSignals = null
 } = {}) {
   const signals = includeBrowserSignals
-    ? collectMetaParameterSignals({ req, requestMeta, sourceUrl })
+    ? (collectedSignals || collectMetaParameterSignals({ req, requestMeta, sourceUrl }))
     : {}
   const firstName = firstCleanString([names.firstName, names.first_name, contact.firstName, contact.first_name])
   const lastName = firstCleanString([names.lastName, names.last_name, contact.lastName, contact.last_name])
@@ -332,14 +341,15 @@ export function buildMetaParameterUserData({
   })
 }
 
-export function buildMetaBrowserUserData({ req = null, requestMeta = {}, externalId = '', sourceUrl = '' } = {}) {
+export function buildMetaBrowserUserData({ req = null, requestMeta = {}, externalId = '', sourceUrl = '', collectedSignals = null } = {}) {
   return buildMetaParameterUserData({
     req,
     requestMeta,
     sourceUrl,
     externalId,
     contact: {},
-    names: {}
+    names: {},
+    collectedSignals
   })
 }
 
