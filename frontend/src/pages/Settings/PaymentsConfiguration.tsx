@@ -1918,9 +1918,24 @@ export const PaymentsConfiguration: React.FC = () => {
 
             {renderSwitchRow(
               'Usar total del plan de pagos',
-              'Cuando el cobro pertenece a un plan, Meta recibe el total del plan una sola vez en lugar de cada parcialidad. Los pagos siguientes del mismo plan se saltan.',
+              'Encendido por default. Solo aplica a planes de pagos: Meta recibe el total del plan en la primera parcialidad y las siguientes parcialidades del mismo plan no se vuelven a registrar.',
               paymentMetaPurchaseEventConfig.parameters.usePaymentPlanTotalValue,
               handlePaymentMetaPurchaseEventPlanTotalValueChange
+            )}
+
+            {paymentMetaPurchaseEventConfig.parameters.usePaymentPlanTotalValue && (
+              <div className={styles.paymentMetaEventSmartHint}>
+                <Info size={16} />
+                <div>
+                  <strong>Cómo se reportan los planes de pagos</strong>
+                  <small>
+                    Si el pago pertenece a un plan, Ristak manda a Meta el valor total del plan como compra.
+                    Ese plan queda marcado con un identificador propio, así que los siguientes pagos parciales
+                    se omiten para no duplicar conversiones ni inflar ingresos. Si apagas esta opción, cada pago
+                    se reporta con el monto cobrado en ese momento.
+                  </small>
+                </div>
+              </div>
             )}
 
             <div className={styles.paymentMetaEventSmartHint}>
