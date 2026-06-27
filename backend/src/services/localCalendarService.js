@@ -2106,6 +2106,7 @@ export function renderPublicCalendarHtml(calendar, { host = '', embedded = false
     .formHeader h2{margin:0}
     .formHeader p{font-size:.86rem;font-weight:450}
     .formPage{display:grid;gap:16px}
+    .formPage[hidden]{display:none}
     .formPage h3{font-size:.95rem}
     .calendarQuestion{display:grid;gap:7px}
     .calendarContentBlock{display:grid;gap:6px}
@@ -2497,7 +2498,30 @@ export function renderPublicCalendarHtml(calendar, { host = '', embedded = false
         return page ? Array.from(page.querySelectorAll('.calendarQuestion')) : Array.from(form.querySelectorAll('.calendarQuestion'));
       };
 
-      const validateCurrentPage = () => getPageFields().every(validateField);
+      const findFirstInvalidPageIndex = (endIndex = formPages.length - 1) => {
+        const maxIndex = Math.max(0, Math.min(endIndex, formPages.length - 1));
+        for (let index = 0; index <= maxIndex; index += 1) {
+          if (!getPageFields(index).every(validateField)) return index;
+        }
+        return -1;
+      };
+
+      const validatePagesThrough = (endIndex = formPages.length - 1) => {
+        const invalidPageIndex = findFirstInvalidPageIndex(endIndex);
+        if (invalidPageIndex < 0) return true;
+        formPageIndex = invalidPageIndex;
+        renderFormPage();
+        const firstInvalid = getPageFields(invalidPageIndex).find(field => !validateField(field));
+        const focusTarget = firstInvalid ? firstInvalid.querySelector('input, textarea, select, button') : null;
+        if (focusTarget && typeof focusTarget.focus === 'function') {
+          try { focusTarget.focus({ preventScroll: true }); } catch (_) { focusTarget.focus(); }
+        }
+        try { form.scrollIntoView({ block: 'start', behavior: 'smooth' }); } catch (_) {}
+        return false;
+      };
+
+      const validateCurrentPage = () => validatePagesThrough(formPageIndex);
+      const validateAllPages = () => validatePagesThrough(formPages.length - 1);
 
       const renderFormPage = () => {
         if (!formPages.length) return;
@@ -2675,6 +2699,7 @@ export function renderPublicCalendarHtml(calendar, { host = '', embedded = false
         formPageIndex = 0;
         renderFormPage();
         evaluateDisqualification();
+        if (formFirst && gatePassed && submit) submit.hidden = false;
         submit.disabled = immediateDisqualified;
         submit.textContent = calendar.preview ? 'Vista previa sin agendar' : 'Agendar cita';
         selectedTitle.textContent = 'Confirma tu cita';
@@ -2819,7 +2844,7 @@ export function renderPublicCalendarHtml(calendar, { host = '', embedded = false
         if (selectedTitle) selectedTitle.textContent = 'Cuéntanos un poco de ti';
         if (selectedSubtitle) selectedSubtitle.textContent = 'Completa para ver los horarios disponibles.';
         evaluateDisqualification();
-        if (submit) { submit.hidden = false; submit.disabled = immediateDisqualified; submit.textContent = 'Continuar'; }
+        if (submit) { submit.disabled = immediateDisqualified; submit.textContent = 'Continuar'; }
       };
 
       form.addEventListener('submit', async (event) => {
@@ -2827,7 +2852,7 @@ export function renderPublicCalendarHtml(calendar, { host = '', embedded = false
 
         // (CAL-FLOW) GATE (formulario primero): "Continuar" valida + califica y revela el calendario.
         if (formFirst && !gatePassed) {
-          if (!getPageFields(formPages.length - 1).every(validateField)) return;
+          if (!validateAllPages()) return;
           if (immediateDisqualified) {
             const rule = readSelectedDisqualifyRule();
             if (rule && rule.redirectUrl) {
@@ -2870,7 +2895,7 @@ export function renderPublicCalendarHtml(calendar, { host = '', embedded = false
         }
 
         // En "formulario primero" los datos ya se validaron y recolectaron en el gate.
-        if (!formFirst && !getPageFields(formPages.length - 1).every(validateField)) return;
+        if (!formFirst && !validateAllPages()) return;
         const responses = formFirst ? gateResponses : collectResponses();
         const formData = formFirst ? (gateFormData || new FormData(form)) : new FormData(form);
 

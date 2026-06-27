@@ -220,8 +220,63 @@ test('public calendar opens date-first and steps into slots then form', () => {
   assert.match(html, /resetForm\(key \? 'slots' : 'calendar'\)/)
   assert.match(html, /setStep\('form'\)/)
   assert.match(html, /\.shell\.dateSelected \.intro,\.shell\.dateSelected \.calendarPane/)
-  assert.match(html, /Ver meses/)
-  assert.match(html, /Cambiar horario/)
+  assert.match(html, /data-change-label>Cambiar fecha<\/span>/)
+  assert.match(html, /Cambiar fecha y hora/)
+})
+
+test('public calendar custom multipage booking form renders as real steps', () => {
+  const html = renderPublicCalendarHtml({
+    id: 'calendar-custom-form-steps',
+    slug: 'agenda-custom-form-steps',
+    name: 'Agenda con formulario',
+    slotDuration: 30,
+    eventColor: '#146FC5',
+    bookingDisplay: { formPosition: 'before' }
+  }, {
+    bookingForm: {
+      mode: 'custom',
+      formId: 'form_custom_steps',
+      formName: 'Solicitud',
+      siteType: 'interactive_form',
+      pages: [
+        { id: 'screen-1', title: 'Bienvenida', sortOrder: 0 },
+        { id: 'screen-2', title: 'Datos', sortOrder: 1 }
+      ],
+      fields: [
+        {
+          id: 'headline',
+          blockType: 'title',
+          isContent: true,
+          label: '',
+          content: 'Primera pantalla',
+          pageId: 'screen-1',
+          sortOrder: 0
+        },
+        {
+          id: 'email',
+          blockType: 'email',
+          label: 'Correo',
+          placeholder: 'tu@email.com',
+          required: true,
+          content: '',
+          options: [],
+          pageId: 'screen-2',
+          sortOrder: 0
+        }
+      ]
+    }
+  })
+
+  assert.match(html, /\.formPage\[hidden\]\{display:none\}/)
+  assert.match(html, /data-form-progress>Pantalla 1 de 2<\/p>/)
+  assert.match(html, /<div class="formPage" data-form-page="screen-1">/)
+  assert.match(html, /<div class="formPage" data-form-page="screen-2" hidden>/)
+  assert.match(html, /<button class="submit" type="button" data-form-next>Siguiente<\/button>/)
+  assert.match(html, /<button class="submit" type="submit" hidden disabled data-submit>Selecciona un horario<\/button>/)
+  assert.match(html, /const validateAllPages = \(\) => validatePagesThrough\(formPages\.length - 1\);/)
+  assert.match(html, /if \(submit\) \{ submit\.disabled = immediateDisqualified; submit\.textContent = 'Continuar'; \}/)
+  assert.doesNotMatch(html, /submit\.hidden = false; submit\.disabled = immediateDisqualified; submit\.textContent = 'Continuar';/)
+  assert.match(html, /if \(formFirst && gatePassed && submit\) submit\.hidden = false;/)
 })
 
 test('public calendar normalizes custom Meta events for site appointments', () => {
