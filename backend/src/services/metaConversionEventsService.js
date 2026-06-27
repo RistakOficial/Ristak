@@ -28,17 +28,6 @@ const DEFAULT_PAYMENT_EVENT_NAME = 'Purchase'
 const DEFAULT_PAYMENT_EVENT_CHANNEL = 'smart'
 const PAYMENT_META_DEFAULT_CURRENCY = 'MXN'
 const PAYMENT_META_MAX_CUSTOM_PARAMETERS = 12
-const PAYMENT_META_EVENT_OPTIONS = new Set([
-  'Purchase',
-  'AddPaymentInfo',
-  'Schedule',
-  'Lead',
-  'Contact',
-  'FormSubmitted',
-  'CompleteRegistration',
-  'ViewContent',
-  DEFAULT_PAYMENT_WHATSAPP_EVENT_NAME
-])
 const META_ACTION_SOURCES = new Set([
   'app',
   'business_messaging',
@@ -172,19 +161,11 @@ function normalizePaymentMetaPurchaseEventParameters(value = {}) {
 function normalizePaymentMetaPurchaseEventConfig(value = null) {
   const source = parseJson(value, {})
   const eventSource = source && typeof source === 'object' && !Array.isArray(source) ? source : {}
-  const channel = cleanString(
-    eventSource.channel || eventSource.conversionChannel || eventSource.conversion_channel || DEFAULT_PAYMENT_EVENT_CHANNEL
-  ).toLowerCase()
-  const eventName = cleanString(eventSource.eventName || eventSource.event_name)
 
   return {
     enabled: parseBoolean(eventSource.enabled, false),
-    channel: channel === 'whatsapp' ? 'whatsapp' : channel === 'smart' ? 'smart' : DEFAULT_PAYMENT_EVENT_CHANNEL,
-    eventName: channel === 'whatsapp'
-      ? normalizeBusinessMessagingEventName(eventName || DEFAULT_PAYMENT_WHATSAPP_EVENT_NAME)
-      : PAYMENT_META_EVENT_OPTIONS.has(eventName)
-        ? eventName
-        : DEFAULT_PAYMENT_EVENT_NAME,
+    channel: DEFAULT_PAYMENT_EVENT_CHANNEL,
+    eventName: DEFAULT_PAYMENT_EVENT_NAME,
     parameters: normalizePaymentMetaPurchaseEventParameters(eventSource.parameters || {})
   }
 }

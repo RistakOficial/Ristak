@@ -15,14 +15,11 @@ import {
   KeyRound,
   Loader2,
   Paintbrush,
-  Plus,
   PackageCheck,
   Percent,
   ReceiptText,
   ShieldCheck,
-  SlidersHorizontal,
   Sparkles,
-  ChevronDown,
   Trash2,
   Unplug,
   WalletCards
@@ -202,24 +199,6 @@ const conektaModeLabels: Record<StripeModeId, { title: string; description: stri
   }
 }
 
-const PAYMENT_META_EVENT_OPTIONS = [
-  { value: 'Schedule', label: 'Schedule · cita agendada' },
-  { value: 'Lead', label: 'Lead · lead nuevo' },
-  { value: 'Contact', label: 'Contact · contacto iniciado' },
-  { value: 'FormSubmitted', label: 'FormSubmitted · formulario enviado' },
-  { value: 'CompleteRegistration', label: 'CompleteRegistration · registro completo' },
-  { value: 'ViewContent', label: 'ViewContent · visita de contenido' },
-  { value: PAYMENT_META_DEFAULT_PURCHASE_EVENT_NAME, label: 'Purchase · compra' },
-  { value: 'AddPaymentInfo', label: 'AddPaymentInfo · información de pago' }
-]
-const PAYMENT_META_PARAMETER_FIELDS: Array<{
-  key: 'value' | 'predictedLtv'
-  label: string
-  placeholder: string
-}> = [
-  { key: 'value', label: 'Valor monetario', placeholder: '2500' },
-  { key: 'predictedLtv', label: 'LTV estimado', placeholder: '12000' }
-]
 const parseBooleanLike = (value: unknown, fallback = false) => {
   if (typeof value === 'boolean') return value
   if (typeof value === 'number') return value === 1
@@ -229,12 +208,6 @@ const parseBooleanLike = (value: unknown, fallback = false) => {
 
   return ['1', 'true', 'yes', 'on', 'enabled'].includes(normalized)
 }
-const createDefaultPaymentMetaPurchaseEventParameter = (): PaymentMetaPurchaseEventParameter => ({
-  id: `meta-pp-${Date.now()}-${Math.random().toString(16).slice(2)}`,
-  key: '',
-  value: ''
-})
-
 const createDefaultPaymentMetaPurchaseEventConfig = (): PaymentMetaPurchaseEventConfig => ({
   enabled: false,
   channel: PAYMENT_META_DEFAULT_EVENT_CHANNEL,
@@ -252,45 +225,27 @@ const normalizePaymentMetaPurchaseEventParameters = (
   value?: Partial<PaymentMetaPurchaseEventParameters> | null
 ): PaymentMetaPurchaseEventParameters => {
   const source = value || {}
-  const custom = Array.isArray(source.custom)
-    ? source.custom
-      .map(parameter => ({
-        id: String(parameter.id || `meta-pp-${Date.now()}-${Math.random().toString(16).slice(2)}`),
-        key: String(parameter.key || '').trim(),
-        value: String(parameter.value || '').trim()
-      }))
-      .slice(0, 12)
-    : []
 
   return {
     sendValue: parseBooleanLike(source.sendValue, true),
     usePaymentPlanTotalValue: parseBooleanLike(source.usePaymentPlanTotalValue, true),
-    value: String(source.value || '').trim(),
-    predictedLtv: String(source.predictedLtv || '').trim(),
-    custom
+    value: '',
+    predictedLtv: '',
+    custom: []
   }
 }
 
 const normalizePaymentMetaPurchaseEventConfig = (
   value?: Partial<PaymentMetaPurchaseEventConfig> | null
 ): PaymentMetaPurchaseEventConfig => {
-  const eventName = String(value?.eventName || '').trim()
   const channel = PAYMENT_META_DEFAULT_EVENT_CHANNEL
 
   return {
     enabled: Boolean(value?.enabled),
     channel,
-    eventName: PAYMENT_META_EVENT_OPTIONS.some(option => option.value === eventName)
-      ? eventName
-      : PAYMENT_META_DEFAULT_PURCHASE_EVENT_NAME,
+    eventName: PAYMENT_META_DEFAULT_PURCHASE_EVENT_NAME,
     parameters: normalizePaymentMetaPurchaseEventParameters(value?.parameters)
   }
-}
-
-const hasPaymentMetaPurchaseEventParameters = (parameters?: PaymentMetaPurchaseEventParameters | null) => {
-  const normalized = normalizePaymentMetaPurchaseEventParameters(parameters)
-  return PAYMENT_META_PARAMETER_FIELDS.some(field => Boolean(normalized[field.key])) ||
-    normalized.custom.some(parameter => parameter.key || parameter.value)
 }
 
 const taxCountryOptions = [
@@ -560,7 +515,6 @@ export const PaymentsConfiguration: React.FC = () => {
   const [whatsappAvailability, setWhatsappAvailability] = useState<WhatsAppConnectionAvailability>(defaultWhatsAppAvailability)
   const [paymentWhatsappTemplates, setPaymentWhatsappTemplates] = useState<WhatsAppApiTemplate[]>([])
   const [loadingPaymentWhatsappTemplates, setLoadingPaymentWhatsappTemplates] = useState(false)
-  const [paymentMetaPurchaseEventParamsOpen, setPaymentMetaPurchaseEventParamsOpen] = useState(false)
   const [paymentMetaPurchaseEventConfigRaw, setPaymentMetaPurchaseEventConfig] = useAppConfig(
     'meta_payment_purchase_event_config',
     createDefaultPaymentMetaPurchaseEventConfig()
@@ -582,10 +536,6 @@ export const PaymentsConfiguration: React.FC = () => {
   const paymentMetaPurchaseEventConfig = useMemo(
     () => normalizePaymentMetaPurchaseEventConfig(paymentMetaPurchaseEventConfigRaw),
     [paymentMetaPurchaseEventConfigRaw]
-  )
-  const paymentMetaPurchaseEventHasParameters = useMemo(
-    () => hasPaymentMetaPurchaseEventParameters(paymentMetaPurchaseEventConfig.parameters),
-    [paymentMetaPurchaseEventConfig.parameters]
   )
 
   useEffect(() => {
@@ -1582,29 +1532,6 @@ export const PaymentsConfiguration: React.FC = () => {
     }).catch(() => {})
   }
 
-  const addPaymentMetaPurchaseEventCustomParameter = () => {
-    const currentParameters = paymentMetaPurchaseEventConfig.parameters.custom || []
-    updatePaymentMetaPurchaseEventParameters({
-      custom: [...currentParameters, createDefaultPaymentMetaPurchaseEventParameter()]
-    })
-  }
-
-  const updatePaymentMetaPurchaseEventCustomRow = (parameterId: string, patch: Partial<PaymentMetaPurchaseEventParameter>) => {
-    const currentParameters = paymentMetaPurchaseEventConfig.parameters.custom || []
-    updatePaymentMetaPurchaseEventParameters({
-      custom: currentParameters.map((parameter) => (
-        parameter.id === parameterId ? { ...parameter, ...patch } : parameter
-      ))
-    })
-  }
-
-  const removePaymentMetaPurchaseEventCustomRow = (parameterId: string) => {
-    const currentParameters = paymentMetaPurchaseEventConfig.parameters.custom || []
-    updatePaymentMetaPurchaseEventParameters({
-      custom: currentParameters.filter((parameter) => parameter.id !== parameterId)
-    })
-  }
-
   const getAutoSaveLabel = () => {
     if (savingSettings || autoSaveState === 'saving') return 'Guardando cambios...'
     if (autoSaveState === 'error') return 'No se pudo guardar'
@@ -1885,7 +1812,7 @@ export const PaymentsConfiguration: React.FC = () => {
         <div className={styles.sectionHeader}>
           <div>
             <h2>Evento de Meta al completar pago</h2>
-            <p>Elige cómo quieres enviar la conversión de compras al momento de pagar.</p>
+            <p>Activa el evento estándar de compra para pagos completados. En esta sección siempre se envía Purchase.</p>
           </div>
           <Badge variant="info">
             <Sparkles size={14} />
@@ -1941,6 +1868,17 @@ export const PaymentsConfiguration: React.FC = () => {
             <div className={styles.paymentMetaEventSmartHint}>
               <Info size={16} />
               <div>
+                <strong>Evento enviado: Purchase</strong>
+                <small>
+                  Para pagos completados no se elige otro evento ni se agregan eventos personalizados.
+                  Ristak usa el evento estándar Purchase para mantener los reportes de compras limpios y comparables en Meta.
+                </small>
+              </div>
+            </div>
+
+            <div className={styles.paymentMetaEventSmartHint}>
+              <Info size={16} />
+              <div>
                 <strong>Modo inteligente</strong>
                 <small>
                   Si el contacto nació por WhatsApp con atribución, se manda LeadSubmitted por Business Messaging.
@@ -1949,102 +1887,6 @@ export const PaymentsConfiguration: React.FC = () => {
               </div>
             </div>
 
-            <label className={styles.paymentMetaEventField}>
-              <span className={styles.paymentMetaEventFieldTitle}>Evento de Meta</span>
-              <CustomSelect
-                value={paymentMetaPurchaseEventConfig.eventName}
-                onValueChange={(value) => updatePaymentMetaPurchaseEventConfig({ eventName: value })}
-                options={PAYMENT_META_EVENT_OPTIONS}
-              />
-              <small>Usa Purchase para reportes de conversión de compras cuando el pago no venga de WhatsApp.</small>
-            </label>
-
-            <div className={styles.paymentMetaEventField}>
-              <button
-                type="button"
-                className={[
-                  styles.paymentMetaEventInlineToggle,
-                  paymentMetaPurchaseEventParamsOpen ? styles.paymentMetaEventInlineToggleActive : '',
-                  paymentMetaPurchaseEventHasParameters ? styles.paymentMetaEventInlineToggleFilled : ''
-                ].filter(Boolean).join(' ')}
-                aria-expanded={paymentMetaPurchaseEventParamsOpen}
-                onClick={() => setPaymentMetaPurchaseEventParamsOpen(open => !open)}
-              >
-                <SlidersHorizontal size={14} />
-                <span>Parámetros opcionales</span>
-                <ChevronDown size={13} />
-              </button>
-
-              {paymentMetaPurchaseEventParamsOpen && (
-                <div className={styles.paymentMetaEventParameterPanel}>
-                  <div className={styles.paymentMetaEventCurrencyNote}>
-                    <span>Moneda del contacto</span>
-                    <strong>{accountCurrency}</strong>
-                    <small>Se usa para convertir y calcular métricas en Meta.</small>
-                  </div>
-
-                  <div className={styles.paymentMetaEventParameterGrid}>
-                    {PAYMENT_META_PARAMETER_FIELDS.map(field => (
-                      <label key={field.key}>
-                        <span className={styles.paymentMetaEventParameterLabel}>{field.label}</span>
-                        <input
-                          disabled={field.key === 'value' && !paymentMetaPurchaseEventConfig.parameters.sendValue}
-                          value={String(paymentMetaPurchaseEventConfig.parameters[field.key] || '')}
-                          onChange={(event) => updatePaymentMetaPurchaseEventParameters({ [field.key]: event.target.value } as Partial<PaymentMetaPurchaseEventParameters>)}
-                          placeholder={field.placeholder}
-                        />
-                        {field.key === 'value' && !paymentMetaPurchaseEventConfig.parameters.sendValue ? (
-                          <small>Activa “Incluir monto del pago” para enviarlo.</small>
-                        ) : null}
-                      </label>
-                    ))}
-                  </div>
-
-                  <div className={styles.paymentMetaEventCustomParameterHeader}>
-                    <span className={styles.paymentMetaEventFieldTitle}>Parámetros extra</span>
-                    <Button variant="secondary" size="small" onClick={addPaymentMetaPurchaseEventCustomParameter}>
-                      <Plus size={14} />
-                      Añadir parámetro
-                    </Button>
-                  </div>
-
-                  <div className={styles.paymentMetaEventCustomParameterList}>
-                    {(paymentMetaPurchaseEventConfig.parameters.custom || []).length ? (
-                      (paymentMetaPurchaseEventConfig.parameters.custom || []).map(parameter => (
-                        <div key={parameter.id} className={styles.paymentMetaEventCustomParameterRow}>
-                          <input
-                            value={parameter.key}
-                            onChange={(event) => updatePaymentMetaPurchaseEventCustomRow(parameter.id, { key: event.target.value })}
-                            placeholder="nombre_parametro"
-                          />
-                          <input
-                            value={parameter.value}
-                            onChange={(event) => updatePaymentMetaPurchaseEventCustomRow(parameter.id, { value: event.target.value })}
-                            placeholder="valor"
-                          />
-                          <Button
-                            variant="ghost"
-                            size="small"
-                            onClick={() => removePaymentMetaPurchaseEventCustomRow(parameter.id)}
-                            aria-label="Eliminar parámetro"
-                          >
-                            <Trash2 size={14} />
-                          </Button>
-                        </div>
-                      ))
-                    ) : (
-                      <p className={styles.paymentMetaEventCustomParameterEmpty}>
-                        Sin parámetros extra. Puedes usar esto para enviar campos personalizados por cada pago.
-                      </p>
-                    )}
-                  </div>
-
-                  <small>
-                    Si no escribes nada aquí, Ristak manda al menos el evento, moneda y tipo de conversión para Meta.
-                  </small>
-                </div>
-              )}
-            </div>
           </div>
         )}
 
