@@ -65,6 +65,7 @@ export const CONTENT_BLOCK_TYPES = new Set([
   'countdown',
   'embed',
   'calendar_embed',
+  'payment',
   'section',
   'header_panel',
   'footer_panel',
@@ -92,7 +93,7 @@ export const FIELD_BLOCK_TYPES = new Set([
   'email',
   'date'
 ])
-const EMBEDDED_FORM_CONTENT_BLOCK_TYPES = new Set(['title', 'subtitle', 'text', 'image', 'video', 'embed', 'social_profile'])
+const EMBEDDED_FORM_CONTENT_BLOCK_TYPES = new Set(['title', 'subtitle', 'text', 'image', 'video', 'embed', 'payment', 'social_profile'])
 const EMBEDDED_FORM_BLOCK_TYPES = new Set([...FIELD_BLOCK_TYPES, ...EMBEDDED_FORM_CONTENT_BLOCK_TYPES])
 const VIDEO_FORM_GATE_CONTENT_BLOCK_TYPES = new Set(['title', 'subtitle', 'text', 'image'])
 const VIDEO_FORM_GATE_BLOCK_TYPES = new Set([...FIELD_BLOCK_TYPES, ...VIDEO_FORM_GATE_CONTENT_BLOCK_TYPES])
@@ -14823,7 +14824,9 @@ function getLandingEmbeddedFormSubmissionContext(site, blocks = []) {
   return {
     formSiteId: cleanString(settings.embeddedSiteId || settings.formSiteId || settings.form_site_id) || `${site.id}:form_embed:${formBlock.id}`,
     formSiteName: cleanString(settings.embeddedSiteName || settings.formSiteName || settings.form_site_name) || cleanString(formBlock.label) || `Formulario de ${site.name}`,
-    formTheme
+    formTheme,
+    formBlockId: formBlock.id,
+    blocks: Array.isArray(settings.embeddedBlocks) ? settings.embeddedBlocks : []
   }
 }
 
@@ -16601,8 +16604,8 @@ function renderBlockStyleVars(block) {
   const countdownUnitRadius = blockSettingNumber(settings, 'countdownUnitRadius', 0, 48)
   const countdownUnitGap = blockSettingNumber(settings, 'countdownUnitGap', 0, 48)
   const sectionGap = blockSettingNumber(settings, 'sectionGap', 0, 400)
-  const blockHasNativeBorder = ['hero', 'section', 'cta', 'benefits', 'testimonials', 'services', 'faq', 'form_embed', 'image', 'video', 'countdown', 'embed', 'calendar_embed'].includes(block.blockType)
-  const supportsButton = ['hero', 'button', 'cta', 'form_embed'].includes(block.blockType)
+  const blockHasNativeBorder = ['hero', 'section', 'cta', 'benefits', 'testimonials', 'services', 'faq', 'form_embed', 'image', 'video', 'countdown', 'embed', 'calendar_embed', 'payment'].includes(block.blockType)
+  const supportsButton = ['hero', 'button', 'cta', 'form_embed', 'payment'].includes(block.blockType)
   const isCalendarEmbed = block.blockType === 'calendar_embed'
 
   if (!isCalendarEmbed && blockBg) {
@@ -17221,6 +17224,69 @@ function renderCountdownBlock(block = {}) {
   `
 }
 
+function normalizePaymentBlockLayout(value) {
+  const raw = cleanString(value).toLowerCase()
+  return raw === 'banner' || raw === 'minimal' ? raw : 'card'
+}
+
+function getPaymentGateFromBlock(block = {}) {
+  const settings = block?.settings && typeof block.settings === 'object' ? block.settings : {}
+  return normalizePaymentGateConfig(settings.paymentGate || settings.payment_gate || {})
+}
+
+function isPaymentBlockEnabled(block = {}) {
+  return block?.blockType === 'payment' && isPaymentGateEnabled(getPaymentGateFromBlock(block))
+}
+
+function getPaymentGatewayLabel(gateway = '') {
+  const raw = cleanString(gateway).toLowerCase()
+  if (raw === 'mercadopago') return 'Mercado Pago'
+  if (raw === 'conekta') return 'Conekta'
+  return 'Stripe'
+}
+
+function formatPaymentAmount(amount, currency = 'MXN') {
+  const numeric = Number(amount)
+  const safeCurrency = /^[A-Z]{3}$/.test(cleanString(currency).toUpperCase()) ? cleanString(currency).toUpperCase() : 'MXN'
+  if (!Number.isFinite(numeric) || numeric <= 0) return 'Monto pendiente'
+  try {
+    return new Intl.NumberFormat('es-MX', {
+      style: 'currency',
+      currency: safeCurrency
+    }).format(numeric)
+  } catch (error) {
+    return `${numeric.toFixed(2)} ${safeCurrency}`
+  }
+}
+
+function renderPaymentBlock(block = {}, context = {}) {
+  const settings = block.settings || {}
+  const paymentGate = getPaymentGateFromBlock(block)
+  if (!isPaymentGateEnabled(paymentGate)) return ''
+  const layout = normalizePaymentBlockLayout(settings.paymentLayout || settings.payment_layout)
+  const pages = Array.isArray(context.pages) ? context.pages : normalizeSitePages(context.site)
+  const pageId = getBlockPageId(block, pages)
+  const productName = cleanString(paymentGate.productName || block.content || block.label) || 'Pago requerido'
+  const description = cleanString(paymentGate.description || paymentGate.pendingMessage) || 'Completa el pago para continuar.'
+  const buttonLabel = cleanString(paymentGate.buttonText) || 'Completar pago'
+
+  return `
+    <section class="rstk-payment-block rstk-payment-${escapeHtml(layout)}" data-rstk-payment-block data-payment-page-id="${escapeHtml(pageId)}" data-payment-block-id="${escapeHtml(block.id || '')}">
+      <div class="rstk-payment-panel">
+        <div class="rstk-payment-copy">
+          <span class="rstk-payment-kicker">${escapeHtml(getPaymentGatewayLabel(paymentGate.gateway))}</span>
+          <strong>${escapeHtml(productName)}</strong>
+          ${description ? `<p>${escapeHtml(description)}</p>` : ''}
+        </div>
+        <div class="rstk-payment-side">
+          <span class="rstk-payment-amount">${escapeHtml(formatPaymentAmount(paymentGate.amount, paymentGate.currency))}</span>
+          <button type="button" class="rstk-button-link" data-rstk-payment-submit>${renderSubmitButtonContent(buttonLabel, '', settings)}</button>
+        </div>
+      </div>
+    </section>
+  `
+}
+
 function renderContentBlock(block, context = {}) {
   const content = escapeHtml(block.content)
   const settings = block.settings || {}
@@ -17335,6 +17401,10 @@ function renderContentBlock(block, context = {}) {
     return renderCountdownBlock(block)
   }
 
+  if (block.blockType === 'payment') {
+    return renderPaymentBlock(block, context)
+  }
+
   if (block.blockType === 'button') {
     const buttonUrl = resolveButtonHref(settings, context)
     const buttonActionAttrs = renderButtonActionAttributes(settings)
@@ -17417,6 +17487,7 @@ function renderContentBlock(block, context = {}) {
         return EMBEDDED_FORM_BLOCK_TYPES.has(item?.blockType) && (!rawPageId || embeddedPageIds.has(rawPageId))
       })
     const fields = collectFieldBlocks(embeddedItems)
+    const hasEmbeddedPaymentBlock = Boolean(findEnabledPaymentBlockContext(embeddedItems, embeddedSiteForCopy))
     const hasEmbeddedPages = embeddedPages.length > 1
     const firstEmbeddedPageId = embeddedPages[0]?.id || DEFAULT_FUNNEL_PAGE_ID
     const lastEmbeddedPageId = embeddedPages[embeddedPages.length - 1]?.id || firstEmbeddedPageId
@@ -17513,7 +17584,7 @@ function renderContentBlock(block, context = {}) {
     const embeddedSection = `
       <section class="rstk-embedded-form" id="form">
         ${renderEmbeddedItems()}
-        ${fields.length ? `
+        ${fields.length || hasEmbeddedPaymentBlock ? `
           <div class="rstk-actions rstk-embed-actions"${context.revealFormActionControlled ? ' data-rstk-form-action-area data-rstk-video-action-hidden="true" aria-hidden="true"' : ''}>
             ${hasEmbeddedPages ? `<button type="button" class="rstk-secondary" data-embedded-back hidden>${escapeHtml(context.backText || 'Anterior')}</button>` : ''}
             ${hasEmbeddedPages ? `<button type="button" data-embedded-next>${nextButtonContent}</button>` : ''}
@@ -18700,7 +18771,7 @@ const RSTK_BASE_CSS = `
   .rstk-site-panel-footer .rstk-site-panel-links{justify-content:center}
 
   .rstk-field{display:grid;gap:8px;text-align:left}
-  .rstk-kind-form .rstk-field,.rstk-kind-form .rstk-options,.rstk-kind-form .rstk-actions,.rstk-embedded-form .rstk-field,.rstk-embedded-form .rstk-options,.rstk-embedded-form .rstk-actions{width:min(100%,var(--rstk-form-field-width,560px));justify-self:var(--rstk-form-field-justify,center);text-align:var(--rstk-block-align,left)}
+  .rstk-kind-form .rstk-field,.rstk-kind-form .rstk-options,.rstk-kind-form .rstk-actions,.rstk-kind-form .rstk-payment-block,.rstk-embedded-form .rstk-field,.rstk-embedded-form .rstk-options,.rstk-embedded-form .rstk-actions,.rstk-embedded-form .rstk-payment-block{width:min(100%,var(--rstk-form-field-width,560px));justify-self:var(--rstk-form-field-justify,center);text-align:var(--rstk-block-align,left)}
   .rstk-embedded-form > .rstk-help{width:min(100%,620px);justify-self:center}
   .rstk-embedded-pages,.rstk-embedded-pages [data-embedded-page-content]{width:min(100%,var(--rstk-form-field-width,560px));justify-self:var(--rstk-form-field-justify,center);display:grid;gap:14px}
   .rstk-block-style.rstk-field,.rstk-block-style > .rstk-field{width:min(100%,var(--rstk-field-width,100%));justify-self:center}
@@ -18827,6 +18898,18 @@ const RSTK_BASE_CSS = `
   .rstk-disqualify-notice{margin:6px 0 0;padding:8px 11px;border-radius:8px;border:1px solid color-mix(in srgb,#d97706 38%,transparent);background:color-mix(in srgb,#d97706 12%,transparent);color:var(--rstk-ink,#1f2937);font-size:.82rem;font-weight:600;line-height:1.4}
   .rstk-submit-message{margin:0;color:var(--rstk-muted);font-weight:650;text-align:center}
   .rstk-submit-message .rstk-payment-action{display:inline-flex;align-items:center;justify-content:center;min-height:42px;margin:10px auto 0;border:1px solid var(--rstk-submit-border,var(--rstk-accent));border-radius:var(--rstk-submit-radius,var(--rstk-btn-radius));background:var(--rstk-submit-bg,var(--rstk-accent));color:var(--rstk-submit-text,var(--rstk-on-accent));font-weight:800;text-decoration:none;padding:8px 16px}
+  .rstk-payment-block{width:100%;display:grid;justify-self:var(--rstk-form-field-justify,stretch);text-align:var(--rstk-block-align,left)}
+  .rstk-payment-panel{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:center;gap:18px;width:100%;border:var(--rstk-block-border-width,1px) solid var(--rstk-block-border,var(--rstk-border));border-radius:var(--rstk-block-radius,var(--rstk-radius));background:var(--rstk-block-bg,var(--rstk-surface));color:var(--rstk-block-text,var(--rstk-ink));padding:clamp(16px,3vw,24px)}
+  .rstk-payment-copy{min-width:0;display:grid;gap:5px}
+  .rstk-payment-kicker{color:color-mix(in srgb,var(--rstk-block-text,var(--rstk-ink)) 58%,var(--rstk-muted) 42%);font-size:.78rem;font-weight:750;letter-spacing:0;text-transform:uppercase}
+  .rstk-payment-copy strong{color:var(--rstk-block-text,var(--rstk-ink));font-size:clamp(1.05rem,2vw,1.35rem);font-weight:850;line-height:1.1}
+  .rstk-payment-copy p{margin:0;color:color-mix(in srgb,var(--rstk-block-text,var(--rstk-ink)) 60%,var(--rstk-muted) 40%)}
+  .rstk-payment-side{min-width:min(220px,100%);display:grid;gap:10px;justify-items:end}
+  .rstk-payment-amount{color:var(--rstk-block-text,var(--rstk-ink));font-size:clamp(1.05rem,2.1vw,1.5rem);font-weight:850;font-variant-numeric:tabular-nums;line-height:1}
+  .rstk-payment-block .rstk-button-link{justify-self:var(--rstk-button-justify,end);width:var(--rstk-button-width,fit-content);margin-left:var(--rstk-button-margin-left,auto);margin-right:var(--rstk-button-margin-right,0)}
+  .rstk-payment-banner .rstk-payment-panel{border-left-width:max(var(--rstk-block-border-width,1px),4px);background:color-mix(in srgb,var(--rstk-block-bg,var(--rstk-surface)) 88%,var(--rstk-accent) 12%)}
+  .rstk-payment-minimal .rstk-payment-panel{grid-template-columns:minmax(0,1fr);border-width:0;background:transparent;padding:0}
+  .rstk-payment-minimal .rstk-payment-side{justify-items:start}
 
   .rstk-progress{display:grid;gap:8px}
   .rstk-progress-track{height:6px;border-radius:999px;background:color-mix(in srgb,var(--rstk-ink) 12%,transparent);overflow:hidden}
@@ -18836,6 +18919,9 @@ const RSTK_BASE_CSS = `
   @media (max-width:640px){
     .rstk-list-grid{grid-template-columns:1fr}
     .rstk-countdown-grid{grid-template-columns:repeat(2,minmax(0,1fr))}
+    .rstk-payment-panel{grid-template-columns:1fr}
+    .rstk-payment-side{justify-items:stretch}
+    .rstk-payment-block .rstk-button-link{width:100%;margin-inline:0}
     .rstk-site-panel{align-items:flex-start;flex-direction:column}
     .rstk-site-panel-footer{align-items:center}
     .rstk-site-panel-links{justify-content:flex-start}
@@ -20760,6 +20846,8 @@ export async function renderPublicSiteHtml(site, { pageId, pagePath, trackingEna
     blocks = await hydrateEmbeddedForms(blocks)
   }
   const fieldBlocks = collectFieldBlocks(blocks)
+  const hasPaymentBlocks = Boolean(findEnabledPaymentBlockContext(blocks, site))
+  const hasTopLevelPaymentBlocks = blocks.some(block => isPaymentBlockEnabled(block))
   const interactivePageIds = isInteractive
     ? pages
       .filter(page => blocks.some(block => getBlockPageId(block, pages) === page.id))
@@ -20775,7 +20863,7 @@ export async function renderPublicSiteHtml(site, { pageId, pagePath, trackingEna
   const standardFormNextPage = isStandardFormIntermediatePage ? standardFormContentPages[standardFormPageIndex + 1] : null
   const nativeFormContext = getNativeFormContext(site, blocks)
   const hasForm = fieldBlocks.length > 0
-  const hasFormActions = hasForm || (isInteractive && interactivePageCount > 1) || isStandardFormContentPage
+  const hasFormActions = hasForm || hasPaymentBlocks || (isInteractive && interactivePageCount > 1) || isStandardFormContentPage
   const landingCompletionConfig = isLandingType ? getFormCompletionConfig(site, blocks, { site, pageId: activePage?.id, linkStyle }) : null
   const completionAction = landingCompletionConfig
     ? landingCompletionConfig.completionAction
@@ -20849,7 +20937,7 @@ export async function renderPublicSiteHtml(site, { pageId, pagePath, trackingEna
 	    textPaint,
 	    theme
 	  })
-  const footer = (hasForm && !isLandingType) ? renderLegalFooter(brand) : ''
+  const footer = ((hasForm || hasPaymentBlocks) && !isLandingType) ? renderLegalFooter(brand) : ''
   const bodyClass = [
     `rstk-tpl-${template.id}`,
     `rstk-${template.mode}`,
@@ -20900,6 +20988,9 @@ export async function renderPublicSiteHtml(site, { pageId, pagePath, trackingEna
       </div>
       <p class="rstk-submit-message" data-message role="status"></p>
     `
+    : ''
+  const standalonePaymentMessageArea = isLandingType && hasTopLevelPaymentBlocks
+    ? '<p class="rstk-submit-message" data-message role="status"></p>'
     : ''
   const nativeTrackingScript = trackingEnabled
     ? buildNativeSiteTrackingScript({
@@ -20955,6 +21046,7 @@ export async function renderPublicSiteHtml(site, { pageId, pagePath, trackingEna
         <form data-site-form data-site-id="${escapeHtml(site.id)}" data-page-id="${escapeHtml(activePage?.id || '')}" novalidate>
           ${bodyBlocks}
           ${submitArea}
+          ${standalonePaymentMessageArea}
         </form>
         ${footer}
       </div>
@@ -21895,6 +21987,16 @@ export async function renderPublicSiteHtml(site, { pageId, pagePath, trackingEna
         const fieldPageId = field.getAttribute('data-page-id') || '';
         return fieldPageId === targetPageId;
       });
+      const pageHasPaymentBlock = (targetPageId) => Array.from(form.querySelectorAll('[data-rstk-payment-block]')).some((block) => {
+        const blockPageId = block.getAttribute('data-payment-page-id') || '';
+        return !blockPageId || blockPageId === targetPageId;
+      });
+      form.querySelectorAll('[data-rstk-payment-submit]').forEach((button) => {
+        button.addEventListener('click', () => {
+          if (button.disabled) return;
+          form.requestSubmit();
+        });
+      });
 
       const renderStep = () => {
         if (!isInteractive || stepPages.length === 0) return;
@@ -22087,6 +22189,12 @@ export async function renderPublicSiteHtml(site, { pageId, pagePath, trackingEna
         const targetUrl = targetIndex >= 0 && targetIndex !== currentIndex
           ? pageUrl(targetPageId)
           : standardFormNextPageUrl;
+        delete form.dataset.standardFormNextAfterPayment;
+        if (pageHasPaymentBlock(pageId)) {
+          if (targetUrl) form.dataset.standardFormNextAfterPayment = targetUrl;
+          form.requestSubmit();
+          return;
+        }
         if (targetUrl) {
           pauseMediaIn(document);
           window.location.href = preserveUrl(targetUrl);
@@ -22256,7 +22364,14 @@ export async function renderPublicSiteHtml(site, { pageId, pagePath, trackingEna
               conversion_type: 'form_submit'
             }, metaEventName);
           }
-          clearStoredResponses();
+          const qualifies = submission.status !== 'disqualified';
+          const keepStoredResponses = isStandardForm && isStandardFormIntermediatePage && qualifies;
+          if (!keepStoredResponses) clearStoredResponses();
+          if (keepStoredResponses) {
+            const nextAfterPayment = form.dataset.standardFormNextAfterPayment || standardFormNextPageUrl;
+            delete form.dataset.standardFormNextAfterPayment;
+            if (navigateAway(nextAfterPayment)) return;
+          }
           if (window.ristakNativeRememberContact && submission.contactId) {
             window.ristakNativeRememberContact({
               contactId: submission.contactId,
@@ -22264,7 +22379,6 @@ export async function renderPublicSiteHtml(site, { pageId, pagePath, trackingEna
               email: submission.contactEmail || ''
             });
           }
-          const qualifies = submission.status !== 'disqualified';
           // El redirect propio del formulario (calificación/descalificación del
           // standalone) solo manda cuando el embed usa "Usar reglas del formulario".
           // Con cualquier otra acción del editor de sitios, esa acción tiene prioridad.
@@ -24456,7 +24570,56 @@ async function createImportedSubmissionFromRequest({ req, body, site, host, prev
   }
 }
 
+function findEnabledPaymentBlockContext(blocks = [], site = {}, parentBlockId = '') {
+  const items = Array.isArray(blocks) ? blocks : []
+  const pages = normalizeSitePages(site)
+
+  for (const block of items) {
+    if (!block || typeof block !== 'object') continue
+    if (isPaymentBlockEnabled(block)) {
+      const paymentGate = getPaymentGateFromBlock(block)
+      return {
+        block,
+        blockId: cleanString(block.id),
+        parentBlockId: cleanString(parentBlockId),
+        blockPageId: getBlockPageId(block, pages),
+        paymentGate
+      }
+    }
+
+    const settings = block.settings || {}
+    if (Array.isArray(settings.embeddedBlocks)) {
+      const nested = findEnabledPaymentBlockContext(settings.embeddedBlocks, site, block.id)
+      if (nested) return nested
+    }
+  }
+
+  return null
+}
+
+function withPaymentBlockMetadata(paymentGate = {}, context = {}) {
+  return {
+    ...paymentGate,
+    blockId: context.blockId || '',
+    blockPageId: context.blockPageId || '',
+    parentBlockId: context.parentBlockId || ''
+  }
+}
+
 function resolveSitePaymentGateConfig(site = {}, contexts = {}) {
+  const blockCandidates = [
+    contexts.submissionBlocks,
+    contexts.videoFormGateContext?.blocks,
+    contexts.landingEmbeddedFormContext?.blocks,
+    contexts.defaultSubmissionBlocks,
+    contexts.allBlocks
+  ]
+
+  for (const blocks of blockCandidates) {
+    const context = findEnabledPaymentBlockContext(blocks, site)
+    if (context?.paymentGate) return withPaymentBlockMetadata(context.paymentGate, context)
+  }
+
   const candidates = [
     contexts.videoFormGateContext?.formTheme,
     contexts.landingEmbeddedFormContext?.formTheme,
@@ -24484,11 +24647,15 @@ function getBodyPaymentPublicId(body = {}) {
   )
 }
 
-function shouldRequireSitePaymentGate({ site, paymentGate, ruleEvaluation, isRuleSubmit, isFinalStandardFormSubmit }) {
+function shouldRequireSitePaymentGate({ site, paymentGate, ruleEvaluation, isRuleSubmit, isFinalStandardFormSubmit, submittedPageId }) {
   if (!isPaymentGateEnabled(paymentGate)) return false
   if (ruleEvaluation?.status === 'disqualified' || ruleEvaluation?.disqualified === true) return false
   if (isRuleSubmit) return false
-  if (site.siteType === 'standard_form') return Boolean(isFinalStandardFormSubmit)
+  if (site.siteType === 'standard_form') {
+    const paymentPageId = cleanString(paymentGate.blockPageId)
+    if (paymentPageId && submittedPageId && paymentPageId === submittedPageId) return true
+    return Boolean(isFinalStandardFormSubmit)
+  }
   return site.siteType === 'interactive_form' || site.siteType === 'landing_page'
 }
 
@@ -24498,7 +24665,8 @@ function paymentGateMatchesAnySiteContext(status, expected = {}) {
     : {}
   return cleanString(gate.source || status?.metadata?.source) === expected.source &&
     cleanString(gate.siteId || status?.metadata?.siteId) === expected.siteId &&
-    cleanString(gate.formSiteId || status?.metadata?.formSiteId) === expected.formSiteId
+    cleanString(gate.formSiteId || status?.metadata?.formSiteId) === expected.formSiteId &&
+    (!expected.paymentBlockId || cleanString(gate.paymentBlockId || status?.metadata?.paymentBlockId) === expected.paymentBlockId)
 }
 
 function buildSitePaymentRequiredResponse(paymentGate, paymentStatus = {}) {
@@ -24523,7 +24691,8 @@ async function resolveSitePaymentGate({ req, body, site, paymentGate, contact, n
   const expected = {
     source: 'site_form',
     siteId: site.id,
-    formSiteId: nativeFormContext.formSiteId || site.id
+    formSiteId: nativeFormContext.formSiteId || site.id,
+    paymentBlockId: cleanString(paymentGate.blockId)
   }
   const existingPublicPaymentId = getBodyPaymentPublicId(body)
 
@@ -24549,6 +24718,7 @@ async function resolveSitePaymentGate({ req, body, site, paymentGate, contact, n
       formSiteId: nativeFormContext.formSiteId || site.id,
       formSiteName: nativeFormContext.formSiteName || site.name || '',
       submittedPageId,
+      paymentBlockId: cleanString(paymentGate.blockId),
       paymentGate: expected
     }
   })
@@ -24680,7 +24850,7 @@ export async function createSubmissionFromRequest(req, body = {}, options = {}) 
       : isRuleSubmit && submittedPageId
         ? getStandardFormReachedBlocks(siteWithBlocks, blocks, submittedPageId)
         : submittedPageId
-        ? getPageBlocks(siteWithBlocks, submittedPageId)
+        ? getStandardFormReachedBlocks(siteWithBlocks, blocks, submittedPageId)
         : orderedSubmissionBlocks
     : site.siteType === 'landing_page' && submittedPageId
       ? getPageBlocks(siteWithBlocks, submittedPageId)
@@ -24778,7 +24948,13 @@ export async function createSubmissionFromRequest(req, body = {}, options = {}) 
     ? { ...site, theme: { ...(site.theme || {}), ...finalMessageTheme } }
     : site
   const nativeFormContextForPayment = videoFormGateContext || landingEmbeddedFormContext || getNativeFormContext(site, submissionBlocks)
-  const paymentGate = resolveSitePaymentGateConfig(site, { videoFormGateContext, landingEmbeddedFormContext })
+  const paymentGate = resolveSitePaymentGateConfig(siteWithBlocks, {
+    videoFormGateContext,
+    landingEmbeddedFormContext,
+    submissionBlocks,
+    defaultSubmissionBlocks,
+    allBlocks: blocks
+  })
   if (shouldSkipTracking({ req, body, meta, previewContext })) {
     return {
       submissionId: `preview_${crypto.randomUUID()}`,
@@ -24805,7 +24981,8 @@ export async function createSubmissionFromRequest(req, body = {}, options = {}) 
     paymentGate,
     ruleEvaluation,
     isRuleSubmit,
-    isFinalStandardFormSubmit
+    isFinalStandardFormSubmit,
+    submittedPageId: effectiveSubmittedPageId
   })) {
     const paymentResult = await resolveSitePaymentGate({
       req,
@@ -24841,7 +25018,8 @@ export async function createSubmissionFromRequest(req, body = {}, options = {}) 
       provider: paymentResult.status.provider,
       amount: paymentResult.status.amount,
       currency: paymentResult.status.currency,
-      paidAt: paymentResult.status.paidAt
+      paidAt: paymentResult.status.paidAt,
+      paymentBlockId: cleanString(paymentGate.blockId)
     }
   }
 

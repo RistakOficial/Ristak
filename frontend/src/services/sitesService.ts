@@ -37,6 +37,7 @@ export type SiteBlockType =
   | 'countdown'
   | 'embed'
   | 'calendar_embed'
+  | 'payment'
   | 'section'
   | 'header_panel'
   | 'footer_panel'
@@ -978,6 +979,7 @@ export const blockLabels: Record<SiteBlockType, string> = {
   countdown: 'Cuenta regresiva',
   embed: 'Código',
   calendar_embed: 'Calendario',
+  payment: 'Pago',
   section: 'Franja',
   header_panel: 'Panel superior',
   footer_panel: 'Panel inferior',
@@ -1019,6 +1021,7 @@ export const landingBlockTypes: SiteBlockType[] = [
   'services',
   'embed',
   'calendar_embed',
+  'payment',
   'social_profile',
   'form_embed',
   'faq',
@@ -1045,6 +1048,7 @@ export const formBlockTypes: SiteBlockType[] = [
   'video',
   'embed',
   'calendar_embed',
+  'payment',
   'social_profile'
 ]
 

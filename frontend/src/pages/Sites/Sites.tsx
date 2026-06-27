@@ -115,6 +115,8 @@ import {
   NumberInput,
   PathInput,
   PaymentGateControls,
+  normalizePaymentGateConfig,
+  type PaymentGateConfig as CommonPaymentGateConfig,
   CustomSelect,
   SearchField,
   Switch,
@@ -529,7 +531,7 @@ const embeddedFormFieldTypes: SiteBlockType[] = [
   'date'
 ]
 const embeddedFormFreeFieldTypes = embeddedFormFieldTypes.filter(type => type !== 'email' && type !== 'phone')
-const embeddedFormContentTypes: SiteBlockType[] = ['title', 'subtitle', 'text', 'image', 'video', 'embed', 'social_profile']
+const embeddedFormContentTypes: SiteBlockType[] = ['title', 'subtitle', 'text', 'image', 'video', 'embed', 'payment', 'social_profile']
 const embeddedFormBlockTypes: SiteBlockType[] = [...embeddedFormFieldTypes, ...embeddedFormContentTypes]
 const embeddedFormBlockTypeSet = new Set<SiteBlockType>(embeddedFormBlockTypes)
 const formFeatureBlockTypes = new Set<SiteBlockType>(['form_embed', ...embeddedFormFieldTypes])
@@ -1814,6 +1816,7 @@ const blockIcons: Partial<Record<SiteBlockType, React.ReactNode>> = {
   countdown: <Clock3 size={15} />,
   embed: <Code2 size={15} />,
   calendar_embed: <CalendarDays size={15} />,
+  payment: <DollarSign size={15} />,
   section: <LayoutTemplate size={15} />,
   header_panel: <PanelTop size={15} />,
   footer_panel: <PanelBottom size={15} />,
@@ -1843,7 +1846,7 @@ const blockIcons: Partial<Record<SiteBlockType, React.ReactNode>> = {
 const isChoiceBlock = (blockType: SiteBlockType) =>
   blockType === 'dropdown' || blockType === 'radio' || blockType === 'checkboxes'
 
-const nativeBorderBlockTypes = new Set<SiteBlockType>(['hero', 'section', 'cta', 'benefits', 'testimonials', 'services', 'faq', 'form_embed', 'image', 'video', 'countdown', 'embed', 'calendar_embed'])
+const nativeBorderBlockTypes = new Set<SiteBlockType>(['hero', 'section', 'cta', 'benefits', 'testimonials', 'services', 'faq', 'form_embed', 'image', 'video', 'countdown', 'embed', 'calendar_embed', 'payment'])
 
 const isBlockHidden = (block?: SiteBlock | null) => block?.settings?.hidden === true
 
@@ -3802,6 +3805,55 @@ const socialProfileDefaultsForSite = (site?: PublicSite | null): Record<string, 
   }
 }
 
+type PaymentBlockLayout = 'card' | 'banner' | 'minimal'
+
+const paymentBlockLayoutOptions: Array<{ value: PaymentBlockLayout; label: string }> = [
+  { value: 'card', label: 'Tarjeta' },
+  { value: 'banner', label: 'Banda' },
+  { value: 'minimal', label: 'Mínimo' }
+]
+
+const normalizePaymentBlockLayout = (value: unknown): PaymentBlockLayout => {
+  const raw = String(value || '').trim().toLowerCase()
+  return raw === 'banner' || raw === 'minimal' ? raw : 'card'
+}
+
+const defaultPaymentGateConfig = (currencyFallback = 'MXN'): CommonPaymentGateConfig => normalizePaymentGateConfig({
+  enabled: true,
+  gateway: 'stripe',
+  amount: 100,
+  currency: currencyFallback,
+  productName: 'Pago requerido',
+  description: 'Completa el pago para continuar.',
+  buttonText: 'Completar pago',
+  pendingMessage: 'Completa el pago para continuar.',
+  paidMessage: 'Pago confirmado. Continuamos.'
+}, currencyFallback)
+
+const getPaymentGateFromSettings = (settings: Record<string, unknown> = {}, currencyFallback = 'MXN') => {
+  const source = settings.paymentGate && typeof settings.paymentGate === 'object'
+    ? settings.paymentGate as Partial<CommonPaymentGateConfig>
+    : {}
+  return normalizePaymentGateConfig(source, currencyFallback)
+}
+
+const getPaymentGatewayLabel = (gateway: CommonPaymentGateConfig['gateway']) => (
+  gateway === 'mercadopago' ? 'Mercado Pago' : gateway === 'conekta' ? 'Conekta' : 'Stripe'
+)
+
+const formatPaymentAmount = (amount: number, currency: string) => {
+  const safeCurrency = /^[A-Z]{3}$/.test(currency || '') ? currency : 'MXN'
+  if (!Number.isFinite(amount) || amount <= 0) return 'Monto pendiente'
+  try {
+    return new Intl.NumberFormat('es-MX', {
+      style: 'currency',
+      currency: safeCurrency
+    }).format(amount)
+  } catch {
+    return `${amount.toFixed(2)} ${safeCurrency}`
+  }
+}
+
 const getBackgroundVisualValue = (theme: SiteTheme | undefined) => {
   if (theme?.backgroundAttachment === 'fixed' && theme.backgroundRepeat === 'repeat-x' && theme.backgroundPosition === 'center top') return 'repeat-x-fixed-top'
   if (theme?.backgroundRepeat === 'repeat') return 'repeat'
@@ -3873,6 +3925,7 @@ const textBoldDefaultBlockTypes = new Set<SiteBlockType>([
   'testimonials',
   'services',
   'faq',
+  'payment',
   'form_embed',
   'cta'
 ])
@@ -4091,7 +4144,7 @@ const getBlockCanvasStyle = (block: SiteBlock): React.CSSProperties => {
   const blockBorder = getSettingString(settings, 'blockBorderColor')
   const blockBackgroundImage = getSettingString(settings, 'blockBackgroundImage')
   const blockHasNativeBorder = nativeBorderBlockTypes.has(block.blockType)
-  const supportsButton = block.blockType === 'hero' || block.blockType === 'button' || block.blockType === 'cta' || block.blockType === 'form_embed'
+  const supportsButton = block.blockType === 'hero' || block.blockType === 'button' || block.blockType === 'cta' || block.blockType === 'form_embed' || block.blockType === 'payment'
   const isCalendarEmbed = block.blockType === 'calendar_embed'
 
   if (!isCalendarEmbed && isCssPaint(bg)) {
@@ -6250,6 +6303,22 @@ const defaultBlockPayload = (blockType: SiteBlockType, siteOrId: PublicSite | st
       label,
       content: 'Botón',
       settings: blockSettings({ buttonText: 'Continuar', buttonUrl: '#form', ...DEFAULT_BUTTON_SETTINGS })
+    }
+  }
+
+  if (blockType === 'payment') {
+    const localeDefaults = getDetectedAccountLocaleDefaults()
+    return {
+      blockType,
+      label,
+      content: 'Pago requerido',
+      settings: blockSettings({
+        paymentGate: defaultPaymentGateConfig(localeDefaults.currency || 'MXN'),
+        paymentLayout: 'card',
+        textAlign: 'left',
+        ...DEFAULT_BUTTON_SETTINGS,
+        buttonAlign: 'right'
+      })
     }
   }
 
@@ -25714,7 +25783,7 @@ const paletteGroups: Array<{ label: string; items: PaletteItem[] }> = [
   },
   {
     label: 'Contenido',
-    items: ['title', 'subtitle', 'text', 'countdown', 'image', 'video', 'button', 'benefits', 'testimonials', 'services', 'faq', 'cta', 'embed', 'calendar_embed', 'form_embed', 'social_profile']
+    items: ['title', 'subtitle', 'text', 'countdown', 'image', 'video', 'button', 'payment', 'benefits', 'testimonials', 'services', 'faq', 'cta', 'embed', 'calendar_embed', 'form_embed', 'social_profile']
       .map(blockType => ({ id: blockType, label: blockLabels[blockType as SiteBlockType], blockType: blockType as SiteBlockType }))
   }
 ]
@@ -29469,11 +29538,11 @@ const InlineBlockStyleControls: React.FC<{
   const isLandingContent = isLanding(site) && !isSection
   const showTypographyControls = mode !== 'design'
   const showDesignControls = mode !== 'typography'
-  const supportsButton = showDesignControls && !surfaceOnly && (block.blockType === 'hero' || block.blockType === 'button' || block.blockType === 'cta' || block.blockType === 'form_embed')
+  const supportsButton = showDesignControls && !surfaceOnly && (block.blockType === 'hero' || block.blockType === 'button' || block.blockType === 'cta' || block.blockType === 'form_embed' || block.blockType === 'payment')
   const supportsField = showDesignControls && !surfaceOnly && fieldBlockTypes.has(block.blockType)
   const isHardEmbed = block.blockType === 'embed' || block.blockType === 'calendar_embed'
   const isCalendarEmbed = block.blockType === 'calendar_embed'
-  const supportsTextStyle = showTypographyControls && !surfaceOnly && (fieldBlockTypes.has(block.blockType) || isSection || ['headline', 'title', 'subheading', 'subtitle', 'description', 'text', 'countdown', 'hero', 'cta', 'benefits', 'testimonials', 'services', 'faq', 'form_embed', 'social_profile'].includes(block.blockType))
+  const supportsTextStyle = showTypographyControls && !surfaceOnly && (fieldBlockTypes.has(block.blockType) || isSection || ['headline', 'title', 'subheading', 'subtitle', 'description', 'text', 'countdown', 'hero', 'cta', 'benefits', 'testimonials', 'services', 'faq', 'form_embed', 'social_profile', 'payment'].includes(block.blockType))
   const supportsMedia = showDesignControls && !surfaceOnly && (block.blockType === 'image' || block.blockType === 'video')
   const supportsCards = showDesignControls && !surfaceOnly && ['benefits', 'testimonials', 'services', 'faq'].includes(block.blockType)
   const supportsCountdown = showDesignControls && !surfaceOnly && block.blockType === 'countdown'
@@ -31611,6 +31680,30 @@ const CanvasPreviewBlock: React.FC<CanvasPreviewBlockProps> = ({
         {getSettingString(settings, 'countdownExpiredText') && (
           <p className="rstk-countdown-note">{getSettingString(settings, 'countdownExpiredText')}</p>
         )}
+      </section>
+    )
+  }
+
+  if (block.blockType === 'payment') {
+    const paymentGate = getPaymentGateFromSettings(settings)
+    const layout = normalizePaymentBlockLayout(settings.paymentLayout)
+    const productName = paymentGate.productName || block.content || block.label || 'Pago requerido'
+    const description = paymentGate.description || paymentGate.pendingMessage || 'Completa el pago para continuar.'
+    return (
+      <section className={`rstk-payment-block rstk-payment-${layout}`}>
+        <div className="rstk-payment-panel">
+          <div className="rstk-payment-copy">
+            <span className="rstk-payment-kicker">{getPaymentGatewayLabel(paymentGate.gateway)}</span>
+            <strong>{productName}</strong>
+            {description ? <p>{description}</p> : null}
+          </div>
+          <div className="rstk-payment-side">
+            <span className="rstk-payment-amount">{formatPaymentAmount(paymentGate.amount, paymentGate.currency)}</span>
+            <button type="button" className="rstk-button-link">
+              <SubmitButtonContent label={paymentGate.buttonText || 'Completar pago'} settings={settings} />
+            </button>
+          </div>
+        </div>
       </section>
     )
   }
@@ -33774,17 +33867,6 @@ const PageInspector: React.FC<{
           </p>
         </AccordionSection>
       )}
-      {(isFormSite(site) || isLanding(site)) && (
-        <AccordionSection id="page-payment-gate" title="Cobro">
-          <PaymentGateControls
-            value={theme.paymentGate}
-            title="Solicitar pago"
-            description="Bloquea el avance hasta confirmar el pago."
-            onChange={(paymentGate) => onPatchTheme({ paymentGate })}
-            onCommit={onSaveSite}
-          />
-        </AccordionSection>
-      )}
     </AccordionGroup>
   )
 
@@ -35224,6 +35306,7 @@ const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
 
   const isField = fieldBlockTypes.has(block.blockType)
   const settings = block.settings || {}
+  const paymentCurrencyFallback = getDetectedAccountLocaleDefaults().currency || 'MXN'
   const hasButtonCopy = block.blockType === 'hero' || block.blockType === 'cta' || block.blockType === 'button'
   const hasListCopy = ['benefits', 'testimonials', 'services', 'faq'].includes(block.blockType)
   const isPrimaryTextBlock = ['headline', 'title'].includes(block.blockType)
@@ -35235,7 +35318,7 @@ const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
   const showBlockNameFirst = showTypographyInEdit || isField || block.blockType === SECTION_BLOCK_TYPE || block.blockType === 'countdown'
   const showTextContentBeforeTypography = showBlockNameFirst && shouldOpenContentEditorByDefault
   const isMediaBlock = block.blockType === 'image' || block.blockType === 'video'
-  const showContentField = block.blockType !== 'calendar_embed' && block.blockType !== 'button' && !isMediaBlock
+  const showContentField = block.blockType !== 'calendar_embed' && block.blockType !== 'button' && block.blockType !== 'payment' && !isMediaBlock
   const contentSectionTitle = shouldOpenContentEditorByDefault ? 'Texto' : 'Contenido'
   const contentLabel = isField
     ? 'Texto de ayuda'
@@ -35383,6 +35466,34 @@ const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
       />
     </>
   ) : null
+  const paymentEditControls = block.blockType === 'payment' ? (
+    <>
+      <AccordionSection id="edit-payment-gate" title="Cobro" defaultGroupOpen>
+        <PaymentGateControls
+          value={getPaymentGateFromSettings(settings, paymentCurrencyFallback)}
+          title="Pasarela de pago"
+          description="La persona debe completar este pago para continuar."
+          onChange={(paymentGate) => onPatchSettings({ paymentGate })}
+          onCommit={onSave}
+          currencyFallback={paymentCurrencyFallback}
+        />
+      </AccordionSection>
+
+      <AccordionSection id="edit-payment-layout" title="Diseño del bloque">
+        <label className={styles.field}>
+          <span>Estilo de pasarela</span>
+          <CustomSelect
+            value={normalizePaymentBlockLayout(settings.paymentLayout)}
+            onValueChange={(value) => {
+              onPatchSettings({ paymentLayout: normalizePaymentBlockLayout(value) })
+              window.setTimeout(onSave, 0)
+            }}
+            options={paymentBlockLayoutOptions}
+          />
+        </label>
+      </AccordionSection>
+    </>
+  ) : null
   const choiceEditControls = isChoiceBlock(block.blockType) ? (
     <OptionsRulesEditor
       block={block}
@@ -35486,6 +35597,8 @@ const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
           </label>
         </AccordionSection>
       )}
+
+      {paymentEditControls}
 
       {fieldEditControls}
 

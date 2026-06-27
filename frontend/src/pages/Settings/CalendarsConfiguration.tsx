@@ -60,6 +60,7 @@ import {
   type CalendarBookingDefaultFields,
   type CalendarBookingFormConfig,
   type CalendarBookingPaymentConfig,
+  type CalendarBookingPaymentPosition,
   type CalendarBookingLayout,
   type CalendarBookingWidgetTheme,
   type CalendarCustomEventChannel,
@@ -520,8 +521,20 @@ const normalizeCalendarBookingPayment = (
 const isPaymentGateToggleEnabled = (value?: Partial<PaymentGateConfig> | null) =>
   Boolean(normalizePaymentGateConfig(value).enabled)
 
+const siteBlocksHavePaymentGateEnabled = (blocks?: PublicSite['blocks']) => (
+  Array.isArray(blocks) && blocks.some(block => {
+    if (block.blockType === 'payment' && isPaymentGateToggleEnabled(block.settings?.paymentGate as Partial<PaymentGateConfig> | null)) return true
+    const embeddedBlocks = block.settings?.embeddedBlocks
+    return Array.isArray(embeddedBlocks) && siteBlocksHavePaymentGateEnabled(embeddedBlocks as PublicSite['blocks'])
+  })
+)
+
 const siteHasPaymentGateEnabled = (site?: PublicSite | null) =>
-  isPaymentGateToggleEnabled(site?.theme?.paymentGate)
+  isPaymentGateToggleEnabled(site?.theme?.paymentGate) || siteBlocksHavePaymentGateEnabled(site?.blocks)
+
+const normalizeCalendarBookingPaymentPosition = (value: unknown): CalendarBookingPaymentPosition => (
+  String(value || '').trim() === 'before_form' ? 'before_form' : 'after_form'
+)
 
 const getSiteDisplayName = (site?: PublicSite | null) =>
   String(site?.name || site?.title || 'Formulario').trim() || 'Formulario'
@@ -549,6 +562,7 @@ const createDefaultCalendarBookingDisplay = (): CalendarBookingDisplayConfig => 
   allowTimezoneSelection: true,
   defaultTimezone: '',
   formPosition: 'after',
+  paymentPosition: 'after_form',
   colors: { ...CALENDAR_BOOKING_DISPLAY_COLOR_DEFAULTS }
 })
 
@@ -578,6 +592,7 @@ const normalizeCalendarBookingDisplay = (
     allowTimezoneSelection: source.allowTimezoneSelection !== false,
     defaultTimezone: normalizeCalendarTimezoneValue(source.defaultTimezone),
     formPosition: source.formPosition === 'before' ? 'before' : 'after',
+    paymentPosition: normalizeCalendarBookingPaymentPosition(source.paymentPosition || sourceRecord.payment_position || defaults.paymentPosition),
     colors
   }
 }
@@ -984,11 +999,15 @@ export const CalendarsConfiguration: React.FC = () => {
     try {
       setLoadingFormSites(true)
       const data = await sitesService.listSites()
-      const forms = data
+      const rawForms = data
         .filter(site => (
           (site.siteType === 'standard_form' || site.siteType === 'interactive_form') &&
           site.status !== 'archived'
         ))
+      const formsWithBlocks = await Promise.all(rawForms.map(site => (
+        sitesService.getSite(site.id).catch(() => site)
+      )))
+      const forms = formsWithBlocks
         .sort((left, right) => {
           const leftSystem = left.id === CALENDAR_DEFAULT_FORM_SITE_ID ? 0 : 1
           const rightSystem = right.id === CALENDAR_DEFAULT_FORM_SITE_ID ? 0 : 1
@@ -2139,6 +2158,15 @@ export const CalendarsConfiguration: React.FC = () => {
     const currentStepIndex = CALENDAR_WIZARD_STEPS.findIndex(step => step.id === calendarWizardStep)
     const safeStepIndex = currentStepIndex >= 0 ? currentStepIndex : 0
     const currentStep = CALENDAR_WIZARD_STEPS[safeStepIndex]
+    const paymentPositionOptions = bookingDisplayConfig.formPosition === 'before'
+      ? [
+          { value: 'after_form', label: 'Formulario → calendario → pago → agendar' },
+          { value: 'before_form', label: 'Formulario → pago → calendario → agendar' }
+        ]
+      : [
+          { value: 'after_form', label: 'Calendario → formulario → pago → agendar' },
+          { value: 'before_form', label: 'Calendario → pago → formulario → agendar' }
+        ]
 
     if (bookingFormConfig.customFormId && !selectedCustomForm) {
       calendarFormOptions.push({
@@ -3144,6 +3172,22 @@ export const CalendarsConfiguration: React.FC = () => {
                         currencyFallback={accountCurrency}
                       />
                     </div>
+
+                    {bookingPaymentConfig.enabled && (
+                      <div className={`${pageStyles.editorField} ${pageStyles.editorFieldWide}`}>
+                        <span>Orden del cobro</span>
+                        <CustomSelect
+                          value={bookingDisplayConfig.paymentPosition}
+                          onValueChange={(value) => updateBookingDisplayConfig({
+                            paymentPosition: normalizeCalendarBookingPaymentPosition(value)
+                          })}
+                          options={paymentPositionOptions}
+                        />
+                        <small>
+                          El pago se confirma antes de crear la cita. Ristak conserva el horario elegido para ligar el cobro con esa reserva.
+                        </small>
+                      </div>
+                    )}
                   </div>
                 </section>
               )}

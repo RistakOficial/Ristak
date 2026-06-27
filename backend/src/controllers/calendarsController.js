@@ -194,13 +194,28 @@ async function getCustomCalendarFormPaymentGate(bookingForm = {}) {
   if (!useCustomForm || !customFormId) return normalizePaymentGateConfig({});
 
   const site = await db.get(`
-    SELECT theme_json
+    SELECT id, theme_json
     FROM public_sites
     WHERE id = ?
       AND COALESCE(status, 'draft') != 'archived'
       AND site_type IN ('standard_form', 'interactive_form')
     LIMIT 1
   `, [customFormId]).catch(() => null);
+
+  const paymentRows = site?.id
+    ? await db.all(`
+      SELECT settings_json
+      FROM public_site_blocks
+      WHERE site_id = ?
+        AND block_type = 'payment'
+    `, [site.id]).catch(() => [])
+    : [];
+
+  for (const row of paymentRows) {
+    const settings = parseJsonObject(row.settings_json, {});
+    const paymentGate = normalizePaymentGateConfig(settings.paymentGate || settings.payment_gate || {});
+    if (isPaymentGateEnabled(paymentGate)) return paymentGate;
+  }
 
   const theme = parseJsonObject(site?.theme_json, {});
   return normalizePaymentGateConfig(theme.paymentGate || theme.payment_gate || {});

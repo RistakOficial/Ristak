@@ -18,7 +18,7 @@ import { normalizePhoneForAccount } from '../utils/accountLocale.js' // (GCAL-00
 import GHLClient from './ghlClient.js'
 import * as highlevelCalendarService from './highlevelCalendarService.js'
 import { getCalendarPublicBaseUrlStatus } from './sitesService.js'
-import { normalizePaymentGateConfig } from './publicPaymentGateService.js'
+import { isPaymentGateEnabled, normalizePaymentGateConfig } from './publicPaymentGateService.js'
 
 const LOCAL_CALENDAR_PREFIX = 'rstk_cal'
 const LOCAL_APPOINTMENT_PREFIX = 'rstk_appt'
@@ -85,7 +85,7 @@ const CALENDAR_FORM_FIELD_TYPES = new Set([
 ])
 // (CAL-CONTENT) Bloques de CONTENIDO (no-campos) que también se muestran en el formulario del
 // calendario: título, subtítulo, texto, imagen y video. Mismo origen (Sitios) que los campos.
-const CALENDAR_FORM_CONTENT_BLOCK_TYPES = new Set(['title', 'subtitle', 'text', 'image', 'video'])
+const CALENDAR_FORM_CONTENT_BLOCK_TYPES = new Set(['title', 'subtitle', 'text', 'image', 'video', 'payment'])
 const CALENDAR_FORM_ALL_BLOCK_TYPES = new Set([...CALENDAR_FORM_FIELD_TYPES, ...CALENDAR_FORM_CONTENT_BLOCK_TYPES])
 const CALENDAR_SLUG_MAX_LENGTH = 80
 
@@ -370,6 +370,10 @@ function normalizeCalendarBookingWidgetTheme(value) {
   return CALENDAR_BOOKING_WIDGET_THEMES.has(raw) ? raw : 'ristak'
 }
 
+function normalizeCalendarBookingPaymentPosition(value) {
+  return cleanString(value).toLowerCase() === 'before_form' ? 'before_form' : 'after_form'
+}
+
 function normalizeCalendarBookingDisplayConfig(value = {}, fallback = {}) {
   const source = value && typeof value === 'object' && !Array.isArray(value) ? value : {}
   const displaySource = source.bookingDisplay && typeof source.bookingDisplay === 'object'
@@ -416,6 +420,7 @@ function normalizeCalendarBookingDisplayConfig(value = {}, fallback = {}) {
     // (CAL-FLOW) Orden del flujo: 'after' (default) = calendario y luego formulario; 'before' =
     // primero el formulario (con su calificación) y al completarlo aparece el calendario.
     formPosition: cleanString(displaySource.formPosition || displaySource.form_position).toLowerCase() === 'before' ? 'before' : 'after',
+    paymentPosition: normalizeCalendarBookingPaymentPosition(displaySource.paymentPosition || displaySource.payment_position),
     colors: deriveCalendarBookingPalette(
       fallbackAccent,
       pickColor('background', 'backgroundColor', 'background_color')
@@ -1581,6 +1586,7 @@ export async function getCalendarBookingFormDefinition(calendar = {}) {
           AND block_type IN (${Array.from(CALENDAR_FORM_ALL_BLOCK_TYPES).map(() => '?').join(',')})
         ORDER BY sort_order ASC, created_at ASC
       `, [site.id, ...Array.from(CALENDAR_FORM_ALL_BLOCK_TYPES)]).catch(() => [])
+      const blockPaymentGate = getCalendarFormPaymentGateFromRows(rows)
       const disqualificationBlocks = rows
         .map(row => normalizeCalendarResultContentBlock(row, CALENDAR_FORM_DISQUALIFIED_PAGE_ID))
         .filter(Boolean)
@@ -1606,7 +1612,9 @@ export async function getCalendarBookingFormDefinition(calendar = {}) {
             ...formDisqualification,
             html: renderCalendarResultContentBlocks(disqualificationBlocks)
           },
-          paymentGate: normalizePaymentGateConfig(theme.paymentGate || theme.payment_gate || {}),
+          paymentGate: isPaymentGateEnabled(blockPaymentGate)
+            ? blockPaymentGate
+            : normalizePaymentGateConfig(theme.paymentGate || theme.payment_gate || {}),
           defaultFields: config.defaultFields
         }
       }
@@ -1749,6 +1757,40 @@ function renderCalendarVideoBlock(rawUrl, label = '') {
     : ''
 }
 
+function getCalendarPaymentGatewayLabel(gateway = '') {
+  const raw = cleanString(gateway).toLowerCase()
+  if (raw === 'mercadopago') return 'Mercado Pago'
+  if (raw === 'conekta') return 'Conekta'
+  return 'Stripe'
+}
+
+function formatCalendarPaymentAmount(amount, currency = 'MXN') {
+  const numeric = Number(amount)
+  const safeCurrency = /^[A-Z]{3}$/.test(cleanString(currency).toUpperCase()) ? cleanString(currency).toUpperCase() : 'MXN'
+  if (!Number.isFinite(numeric) || numeric <= 0) return 'Monto pendiente'
+  try {
+    return new Intl.NumberFormat('es-MX', { style: 'currency', currency: safeCurrency }).format(numeric)
+  } catch {
+    return `${numeric.toFixed(2)} ${safeCurrency}`
+  }
+}
+
+function getCalendarFormPaymentGateFromBlock(block = {}) {
+  const settings = block?.settings && typeof block.settings === 'object' ? block.settings : {}
+  return normalizePaymentGateConfig(settings.paymentGate || settings.payment_gate || {})
+}
+
+function getCalendarFormPaymentGateFromRows(rows = []) {
+  for (const row of Array.isArray(rows) ? rows : []) {
+    const blockType = cleanString(row.block_type || row.blockType)
+    if (blockType !== 'payment') continue
+    const settings = parseJson(row.settings_json || row.settings, {})
+    const paymentGate = normalizePaymentGateConfig(settings.paymentGate || settings.payment_gate || {})
+    if (isPaymentGateEnabled(paymentGate)) return paymentGate
+  }
+  return normalizePaymentGateConfig({})
+}
+
 // (CAL-CONTENT) Renderiza un bloque de contenido (no-campo) del formulario en el calendario.
 function renderCalendarContentBlock(block = {}) {
   const type = block.blockType
@@ -1764,9 +1806,25 @@ function renderCalendarContentBlock(block = {}) {
     const url = safeCalendarImageUrl(settings.mediaUrl || settings.media_url || content)
     return url
       ? `<figure class="calContentImage"><img src="${escapeHtml(url)}" alt="${escapeHtml(label || 'Imagen')}" loading="lazy"></figure>`
-      : ''
+    : ''
   }
   if (type === 'video') return renderCalendarVideoBlock(settings.mediaUrl || settings.media_url || content, label)
+  if (type === 'payment') {
+    const paymentGate = getCalendarFormPaymentGateFromBlock(block)
+    if (!isPaymentGateEnabled(paymentGate)) return ''
+    const productName = cleanString(paymentGate.productName || content || label) || 'Pago requerido'
+    const description = cleanString(paymentGate.description || paymentGate.pendingMessage) || 'Completa el pago para agendar.'
+    return `
+      <div class="calPaymentBlock">
+        <div>
+          <small>${escapeHtml(getCalendarPaymentGatewayLabel(paymentGate.gateway))}</small>
+          <strong>${escapeHtml(productName)}</strong>
+          <p>${escapeHtml(description)}</p>
+        </div>
+        <span>${escapeHtml(formatCalendarPaymentAmount(paymentGate.amount, paymentGate.currency))}</span>
+      </div>
+    `
+  }
   return ''
 }
 
@@ -2009,7 +2067,8 @@ export function renderPublicCalendarHtml(calendar, { host = '', embedded = false
     allowTimezoneSelection: resolveDisplayToggle('allowTimezoneSelection', bookingDisplay.allowTimezoneSelection !== false),
     fontFamily: overrideFontFamily ? normalizeCalendarBookingFontFamily(overrideFontFamily) : bookingDisplay.fontFamily,
     widgetTheme: overrideWidgetTheme ? normalizeCalendarBookingWidgetTheme(overrideWidgetTheme) : bookingDisplay.widgetTheme,
-    formPosition: (useCustomStyle && (style.formPosition === 'before' || style.formPosition === 'after')) ? style.formPosition : bookingDisplay.formPosition
+    formPosition: (useCustomStyle && (style.formPosition === 'before' || style.formPosition === 'after')) ? style.formPosition : bookingDisplay.formPosition,
+    paymentPosition: normalizeCalendarBookingPaymentPosition(useCustomStyle ? style.paymentPosition || style.payment_position || bookingDisplay.paymentPosition : bookingDisplay.paymentPosition)
   }
   const fontStack = getCalendarBookingFontStack(effectiveBookingDisplay.fontFamily)
   const widgetTheme = normalizeCalendarBookingWidgetTheme(effectiveBookingDisplay.widgetTheme)
@@ -2204,6 +2263,12 @@ export function renderPublicCalendarHtml(calendar, { host = '', embedded = false
     .calContentVideo video{display:block;width:auto;max-width:100%;height:auto;max-height:min(52vh,560px);object-fit:contain}
     .calContentVideoEmbed{aspect-ratio:16/9}
     .calContentVideoEmbed iframe{position:absolute;inset:0;width:100%;height:100%;border:0}
+    .calPaymentBlock{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:14px;align-items:center;border:1px solid var(--line);border-radius:var(--field-radius);background:var(--surface);padding:14px}
+    .calPaymentBlock div{display:grid;gap:3px;min-width:0}
+    .calPaymentBlock small{color:var(--muted);font-size:.72rem;font-weight:650;text-transform:uppercase}
+    .calPaymentBlock strong{color:var(--heading);font-size:.98rem;font-weight:650}
+    .calPaymentBlock p{margin:0;color:var(--muted);font-size:.84rem;line-height:1.4}
+    .calPaymentBlock > span{color:var(--heading);font-size:1.05rem;font-weight:700;font-variant-numeric:tabular-nums}
     .fieldHelp,.fieldError{margin:0;font-size:.82rem;line-height:1.4}
     .fieldHelp{color:var(--muted)}
     .fieldError{color:var(--danger);font-weight:500}
@@ -2283,7 +2348,7 @@ export function renderPublicCalendarHtml(calendar, { host = '', embedded = false
     body.rstk-calendar-theme-minimal .day.selected{background:transparent;color:var(--accent);box-shadow:inset 0 -2px 0 var(--accent)}
     body.rstk-calendar-theme-minimal .slot,body.rstk-calendar-theme-minimal input,body.rstk-calendar-theme-minimal textarea,body.rstk-calendar-theme-minimal select,body.rstk-calendar-theme-minimal .option{border-color:var(--line);border-radius:999px;background:transparent}
     @media (max-width:1100px){.shell,.shell.dateSelected,.shell.bookingActive{grid-template-columns:300px minmax(0,1fr)}.shell.noIntro,.shell.noIntro.dateSelected,.shell.noIntro.bookingActive{grid-template-columns:minmax(0,1fr)}.shell.dateSelected .calendarPane{display:none}.timesPane{border-left:1px solid var(--line);border-top:0;max-width:none;width:auto}.shell.dateSelected .timesPane{padding:clamp(28px,3vw,38px) clamp(24px,2.5vw,30px)}.slotList{grid-template-columns:repeat(auto-fill,minmax(150px,1fr))}}
-    @media (max-width:760px){.page{width:100%;padding:0;place-items:stretch}.shell,.shell.dateSelected,.shell.bookingActive,.shell.noIntro,.shell.noIntro.dateSelected,.shell.noIntro.bookingActive{grid-template-columns:1fr;min-height:100vh;border:0;border-radius:0;box-shadow:none}.shell.dateSelected .intro,.shell.dateSelected .calendarPane,.shell.bookingActive .intro,.shell.bookingActive .calendarPane{display:none}.shell.dateSelected .timesPane,.shell.bookingActive .timesPane{grid-column:auto;border-top:0}.intro,.calendarPane,.timesPane{padding:26px 22px;border-right:0;border-left:0}.intro{gap:14px}.calendarPane,.timesPane{border-top:1px solid var(--line)}.avatar{width:72px;height:72px;font-size:2rem;border-radius:16px}.days{gap:6px 2px}.day{width:40px;height:40px}.slotList{grid-template-columns:repeat(auto-fill,minmax(118px,1fr));max-height:none}input,textarea,select{font-size:16px;min-height:48px}.formActions button.submit{flex:1 1 100%}}
+    @media (max-width:760px){.page{width:100%;padding:0;place-items:stretch}.shell,.shell.dateSelected,.shell.bookingActive,.shell.noIntro,.shell.noIntro.dateSelected,.shell.noIntro.bookingActive{grid-template-columns:1fr;min-height:100vh;border:0;border-radius:0;box-shadow:none}.shell.dateSelected .intro,.shell.dateSelected .calendarPane,.shell.bookingActive .intro,.shell.bookingActive .calendarPane{display:none}.shell.dateSelected .timesPane,.shell.bookingActive .timesPane{grid-column:auto;border-top:0}.intro,.calendarPane,.timesPane{padding:26px 22px;border-right:0;border-left:0}.intro{gap:14px}.calendarPane,.timesPane{border-top:1px solid var(--line)}.avatar{width:72px;height:72px;font-size:2rem;border-radius:16px}.days{gap:6px 2px}.day{width:40px;height:40px}.slotList{grid-template-columns:repeat(auto-fill,minmax(118px,1fr));max-height:none}input,textarea,select{font-size:16px;min-height:48px}.calPaymentBlock{grid-template-columns:1fr}.formActions button.submit{flex:1 1 100%}}
     @media (max-width:430px){.page{padding:0}.intro,.calendarPane,.timesPane{padding:22px 18px}.day{width:38px;height:38px}.weekdays{font-size:.66rem}.slotList{grid-template-columns:1fr}h1{font-size:1.5rem}h2{font-size:1.2rem}}
   </style>
 </head>

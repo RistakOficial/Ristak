@@ -360,6 +360,91 @@
 .rstkCanvas.rstk-centered .rstk-button-link { margin-inline: auto; }
 .rstkCanvas .rstk-secondary { background: transparent !important; color: var(--rstk-ink) !important; border-color: var(--rstk-border) !important; }
 
+.rstkCanvas .rstk-payment-block {
+  width: 100%;
+  display: grid;
+  justify-self: var(--rstk-form-field-justify, stretch);
+  text-align: var(--rstk-block-align, left);
+}
+.rstkCanvas .rstk-payment-panel {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 18px;
+  width: 100%;
+  border: var(--rstk-block-border-width, 1px) solid var(--rstk-block-border, var(--rstk-border));
+  border-radius: var(--rstk-block-radius, var(--rstk-radius));
+  background: var(--rstk-block-bg, var(--rstk-surface));
+  color: var(--rstk-block-text, var(--rstk-ink));
+  padding: clamp(16px, 3vw, 24px);
+}
+.rstkCanvas .rstk-payment-copy {
+  min-width: 0;
+  display: grid;
+  gap: 5px;
+}
+.rstkCanvas .rstk-payment-kicker {
+  color: color-mix(in srgb, var(--rstk-block-text, var(--rstk-ink)) 58%, var(--rstk-muted) 42%);
+  font-size: .78rem;
+  font-weight: 750;
+  letter-spacing: 0;
+  text-transform: uppercase;
+}
+.rstkCanvas .rstk-payment-copy strong {
+  color: var(--rstk-block-text, var(--rstk-ink));
+  font-size: clamp(1.05rem, 2vw, 1.35rem);
+  font-weight: 850;
+  line-height: 1.1;
+}
+.rstkCanvas .rstk-payment-copy p {
+  margin: 0;
+  color: color-mix(in srgb, var(--rstk-block-text, var(--rstk-ink)) 60%, var(--rstk-muted) 40%);
+}
+.rstkCanvas .rstk-payment-side {
+  min-width: min(220px, 100%);
+  display: grid;
+  gap: 10px;
+  justify-items: end;
+}
+.rstkCanvas .rstk-payment-amount {
+  color: var(--rstk-block-text, var(--rstk-ink));
+  font-size: clamp(1.05rem, 2.1vw, 1.5rem);
+  font-weight: 850;
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
+}
+.rstkCanvas .rstk-payment-block .rstk-button-link {
+  justify-self: var(--rstk-button-justify, end);
+  width: var(--rstk-button-width, fit-content);
+  margin-left: var(--rstk-button-margin-left, auto);
+  margin-right: var(--rstk-button-margin-right, 0);
+}
+.rstkCanvas .rstk-payment-banner .rstk-payment-panel {
+  border-left-width: max(var(--rstk-block-border-width, 1px), 4px);
+  background: color-mix(in srgb, var(--rstk-block-bg, var(--rstk-surface)) 88%, var(--rstk-accent) 12%);
+}
+.rstkCanvas .rstk-payment-minimal .rstk-payment-panel {
+  grid-template-columns: minmax(0, 1fr);
+  border-width: 0;
+  background: transparent;
+  padding: 0;
+}
+.rstkCanvas .rstk-payment-minimal .rstk-payment-side {
+  justify-items: start;
+}
+@media (max-width: 640px) {
+  .rstkCanvas .rstk-payment-panel {
+    grid-template-columns: 1fr;
+  }
+  .rstkCanvas .rstk-payment-side {
+    justify-items: stretch;
+  }
+  .rstkCanvas .rstk-payment-block .rstk-button-link {
+    width: 100%;
+    margin-inline: 0;
+  }
+}
+
 .rstkCanvas .rstk-list-grid { display: grid; grid-template-columns: var(--rstk-list-columns, repeat(auto-fit, minmax(190px, 1fr))); gap: 12px; }
 .rstkCanvas .rstk-list-grid article { border: var(--rstk-card-border-width, var(--rstk-block-border-width, 1px)) solid var(--rstk-card-border, var(--rstk-block-border, var(--rstk-border))); border-radius: var(--rstk-card-radius, var(--rstk-radius)); background: var(--rstk-card-bg, var(--rstk-block-bg, var(--rstk-surface2))); padding: 16px; text-align: var(--rstk-card-align, left); }
 .rstkCanvas .rstk-list-grid strong { display: block; font-weight: 750; }
@@ -1056,9 +1141,11 @@
 .rstkCanvas.rstk-kind-form .rstk-field,
 .rstkCanvas.rstk-kind-form .rstk-options,
 .rstkCanvas.rstk-kind-form .rstk-actions,
+.rstkCanvas.rstk-kind-form .rstk-payment-block,
 .rstkCanvas .rstk-embedded-form .rstk-field,
 .rstkCanvas .rstk-embedded-form .rstk-options,
-.rstkCanvas .rstk-embedded-form .rstk-actions {
+.rstkCanvas .rstk-embedded-form .rstk-actions,
+.rstkCanvas .rstk-embedded-form .rstk-payment-block {
   width: min(100%, var(--rstk-form-field-width, 560px));
   justify-self: var(--rstk-form-field-justify, center);
   text-align: var(--rstk-block-align, left);

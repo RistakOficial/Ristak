@@ -99,6 +99,7 @@ export interface CalendarCustomEventsConfig {
 export type CalendarBookingLayout = 'classic' | 'compact' | 'stacked';
 export type CalendarBookingFontFamily = 'system' | 'modern' | 'serif' | 'mono';
 export type CalendarBookingWidgetTheme = 'ristak' | 'night' | 'agenda' | 'minimal';
+export type CalendarBookingPaymentPosition = 'after_form' | 'before_form';
 
 export interface CalendarBookingDisplayColors {
   accent: string;
@@ -131,6 +132,7 @@ export interface CalendarBookingDisplayConfig {
   allowTimezoneSelection: boolean;
   defaultTimezone: string;
   formPosition: CalendarBookingFormPosition;
+  paymentPosition: CalendarBookingPaymentPosition;
   colors: CalendarBookingDisplayColors;
 }
 
