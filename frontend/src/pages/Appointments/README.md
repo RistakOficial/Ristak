@@ -173,4 +173,4 @@ Si no hay calendarios de atribución configurados, backend usa todos como fallba
 - Las fechas para llamadas de eventos se envían como timestamps en milisegundos.
 - La grilla horaria calcula posiciones visuales por hora/minuto.
 - Los modales usan portal con componentes comunes; no deben usar `alert`, `confirm` ni `prompt`.
-- La página requiere HighLevel configurado; si no hay `locationId`/`accessToken`, muestra estado de configuración pendiente.
+- La página funciona con calendarios/citas de Ristak; HighLevel es una sincronización opcional y sólo debe mostrar estado pendiente cuando el usuario intenta operar recursos externos de esa integración.

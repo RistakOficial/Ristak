@@ -7,6 +7,9 @@ import { getGHLClient } from './ghlClient.js'
 import * as highLevelCalendarService from './highlevelCalendarService.js'
 import { listLocalProducts, syncProductsWithSavedConfig } from './localProductService.js'
 import { cancelScheduledInstallmentPayment, createInstallmentPaymentFlow, createOfflineContactPayment, createSinglePaymentLink, updateScheduledInstallmentPayment } from './paymentFlowService.js'
+import { createStripePaymentLink, createStripePaymentPlan, getStripePaymentConfig } from './stripePaymentService.js'
+import { createMercadoPagoPaymentLink, getMercadoPagoPaymentConfig } from './mercadoPagoPaymentService.js'
+import { createConektaPaymentLink, createConektaPaymentPlan, getConektaPaymentConfig } from './conektaPaymentService.js'
 import { recordAttendanceAttributionSignal } from './appointmentsMerge.js'
 import { triggerWhatsappAppointmentBookedEvent } from './metaWhatsappEventsService.js'
 import { PAYMENT_MODE_LIVE, PAYMENT_MODE_TEST, normalizePaymentMode, nonTestPaymentCondition } from '../utils/paymentMode.js'
@@ -1116,9 +1119,14 @@ const HIGHLEVEL_PAYMENT_RESOURCE_PATTERN = /\b(?:payment|payments|invoice|invoic
 const HIGHLEVEL_READ_OPERATION_WORD_PATTERN = /\b(?:busca|buscar|buscame|encuentra|revisa|consulta|consultar|muestra|listar|lista|trae|traeme|tráeme|obten|obtiene|obtener|get|lee|leer|ver)\b/
 const HIGHLEVEL_PAYMENT_MUTATION_WORD_PATTERN = /\b(?:post|put|patch|delete|crea|crear|actualiza|modifica|cambia|manda|envia|envía|agenda|agendar|calendariza|ejecuta|haz|hacer|agrega|agregar|quita|quitar|remueve|remover|elimina|eliminar|cobra|cobrar|cobrale|charge|registra|registrar|programa|programar|domicili)\b/
 const HIGHLEVEL_REST_API_STYLE_PATTERN = /\b(?:get|api|endpoint|endpoints|rest|path|ruta|highlevel|go\s*high\s*level|gohighlevel|ghl)\b/
+const HIGHLEVEL_EXTERNAL_ONLY_RESOURCE_PATTERN = /\b(?:workflow|workflows|flujo|flujos|automatizacion|automatización|automation|automations|oportunidad|oportunidades|opportunity|opportunities|pipeline|pipelines|media storage|archivo|archivos|imagen|imagenes|imágenes|asset|assets|folder|folders|tag|tags|etiqueta|etiquetas|nota|notas|note|notes|campo personalizado|campos personalizados|custom field|custom fields|custom value|custom values|formulario|formularios|form|forms|survey|surveys|encuesta|encuestas|funnel|funnels|embudo|embudos|blog|blogs|widget|widgets|usuario|usuarios|user|users|ubicacion|ubicación|location|locations|sub.?account|webhook|webhooks|store|stores|tienda|tiendas)\b/
 
 function mentionsHighLevelResource(question) {
   return HIGHLEVEL_API_RESOURCE_PATTERN.test(normalizeText(question))
+}
+
+function mentionsExternalHighLevelOnlyResource(question) {
+  return HIGHLEVEL_EXTERNAL_ONLY_RESOURCE_PATTERN.test(normalizeText(question))
 }
 
 function hasHighLevelOperationVerb(question) {
@@ -1127,9 +1135,13 @@ function hasHighLevelOperationVerb(question) {
 
 function isHighLevelOperationalResourceRequest(question) {
   const normalized = normalizeText(question)
-  if (!normalized || !mentionsHighLevelResource(normalized)) return false
+  if (!normalized) return false
 
-  return mentionsHighLevel(normalized) || hasHighLevelOperationVerb(normalized)
+  if (mentionsHighLevel(normalized)) {
+    return mentionsHighLevelResource(normalized) || hasHighLevelOperationVerb(normalized)
+  }
+
+  return mentionsExternalHighLevelOnlyResource(normalized) && hasHighLevelOperationVerb(normalized)
 }
 
 function isReadOnlyHighLevelPaymentApiRequest(question) {
@@ -1466,6 +1478,219 @@ function getPaymentLiveMode(highLevelConnection) {
   return normalizePaymentMode(highLevelConnection?.paymentMode, PAYMENT_MODE_LIVE) === PAYMENT_MODE_LIVE
 }
 
+function normalizePaymentAgentConnection(connection = {}) {
+  return {
+    configured: Boolean(connection?.configured),
+    token: connection?.token || null,
+    locationId: connection?.locationId || null,
+    locationData: connection?.locationData || null,
+    paymentMode: normalizePaymentMode(connection?.paymentMode, PAYMENT_MODE_LIVE)
+  }
+}
+
+const AGENT_PAYMENT_GATEWAY_LABELS = {
+  highlevel: 'GoHighLevel',
+  stripe: 'Stripe',
+  conekta: 'Conekta',
+  mercadopago: 'Mercado Pago'
+}
+
+const AGENT_PAYMENT_GATEWAY_CAPABILITY_LABELS = {
+  paymentLinks: 'links de pago',
+  installmentPlans: 'planes de pago'
+}
+
+function normalizeAgentPaymentGatewayId(value) {
+  const normalized = String(value || '').trim().toLowerCase().replace(/[\s_-]+/g, '')
+  if (!normalized || normalized === 'auto') return 'auto'
+  if (['ghl', 'gohighlevel', 'highlevel'].includes(normalized)) return 'highlevel'
+  if (normalized === 'stripe') return 'stripe'
+  if (normalized === 'conekta') return 'conekta'
+  if (['mercadopago', 'mp', 'checkoutpro'].includes(normalized)) return 'mercadopago'
+  return ''
+}
+
+function normalizeAgentPaymentBaseUrl(value) {
+  const clean = String(value || '').trim().replace(/\/+$/, '')
+  if (!clean) return ''
+
+  const withProtocol = /^https?:\/\//i.test(clean) ? clean : `https://${clean}`
+  try {
+    const parsed = new URL(withProtocol)
+    return `${parsed.protocol}//${parsed.host}`.replace(/\/+$/, '')
+  } catch {
+    return ''
+  }
+}
+
+async function getAgentPaymentBaseUrl() {
+  const envUrl = normalizeAgentPaymentBaseUrl(
+    process.env.PUBLIC_APP_URL ||
+    process.env.APP_PUBLIC_URL ||
+    process.env.FRONTEND_URL ||
+    process.env.RENDER_EXTERNAL_URL ||
+    process.env.APP_URL
+  )
+  if (envUrl) return envUrl
+
+  const appDomain = normalizeAgentPaymentBaseUrl(await getAppConfig('sites_app_domain'))
+  const verified = ['1', 'true', 'yes'].includes(String(await getAppConfig('sites_app_domain_verified') || '').trim().toLowerCase())
+  return verified ? appDomain : ''
+}
+
+function mapAgentPaymentGatewayStatus({ id, connected, mode = null, accountLabel = '', issue = '' }) {
+  const capabilities = {
+    paymentLinks: id === 'highlevel' || id === 'stripe' || id === 'conekta' || id === 'mercadopago',
+    installmentPlans: id === 'highlevel' || id === 'stripe' || id === 'conekta'
+  }
+
+  return {
+    id,
+    label: AGENT_PAYMENT_GATEWAY_LABELS[id] || id,
+    connected: Boolean(connected),
+    mode,
+    accountLabel: accountLabel || '',
+    capabilities,
+    issue: issue || ''
+  }
+}
+
+async function getAgentPaymentGatewaySnapshot() {
+  const [highLevelResult, stripeResult, conektaResult, mercadoPagoResult] = await Promise.allSettled([
+    getHighLevelConfig(),
+    getStripePaymentConfig(),
+    getConektaPaymentConfig(),
+    getMercadoPagoPaymentConfig()
+  ])
+  const highLevelConfig = highLevelResult.status === 'fulfilled' ? highLevelResult.value : null
+  const stripeConfig = stripeResult.status === 'fulfilled' ? stripeResult.value : null
+  const conektaConfig = conektaResult.status === 'fulfilled' ? conektaResult.value : null
+  const mercadoPagoConfig = mercadoPagoResult.status === 'fulfilled' ? mercadoPagoResult.value : null
+  const gateways = [
+    mapAgentPaymentGatewayStatus({
+      id: 'highlevel',
+      connected: Boolean(highLevelConfig?.api_token && highLevelConfig?.location_id),
+      mode: highLevelConfig?.ghl_invoice_mode || null,
+      accountLabel: highLevelConfig?.location_name || highLevelConfig?.location_id || '',
+      issue: highLevelResult.status === 'rejected' ? highLevelResult.reason?.message : ''
+    }),
+    mapAgentPaymentGatewayStatus({
+      id: 'stripe',
+      connected: Boolean(stripeConfig?.configured),
+      mode: stripeConfig?.mode || null,
+      accountLabel: stripeConfig?.accountLabel || stripeConfig?.connectAccountEmail || stripeConfig?.connectedAccountPreview || '',
+      issue: stripeResult.status === 'rejected' ? stripeResult.reason?.message : ''
+    }),
+    mapAgentPaymentGatewayStatus({
+      id: 'conekta',
+      connected: Boolean(conektaConfig?.configured),
+      mode: conektaConfig?.mode || null,
+      accountLabel: conektaConfig?.accountLabel || '',
+      issue: conektaResult.status === 'rejected' ? conektaResult.reason?.message : ''
+    }),
+    mapAgentPaymentGatewayStatus({
+      id: 'mercadopago',
+      connected: Boolean(mercadoPagoConfig?.configured),
+      mode: mercadoPagoConfig?.mode || null,
+      accountLabel: mercadoPagoConfig?.accountLabel || mercadoPagoConfig?.userEmail || '',
+      issue: mercadoPagoResult.status === 'rejected' ? mercadoPagoResult.reason?.message : ''
+    })
+  ]
+
+  return {
+    gateways,
+    connectedGateways: gateways.filter(gateway => gateway.connected),
+    byId: Object.fromEntries(gateways.map(gateway => [gateway.id, gateway]))
+  }
+}
+
+async function selectAgentPaymentGateway(requestedGateway, capability) {
+  const snapshot = await getAgentPaymentGatewaySnapshot()
+  const requested = normalizeAgentPaymentGatewayId(requestedGateway)
+  const capabilityLabel = AGENT_PAYMENT_GATEWAY_CAPABILITY_LABELS[capability] || 'esta acción'
+
+  if (requested && requested !== 'auto') {
+    const gateway = snapshot.byId[requested]
+    if (!gateway) {
+      return { ok: false, error: 'Pasarela no reconocida. Usa Stripe, Conekta, Mercado Pago o GoHighLevel opcional.', snapshot }
+    }
+    if (!gateway.capabilities[capability]) {
+      return { ok: false, error: `${gateway.label} no soporta ${capabilityLabel} en Ristak todavía.`, snapshot }
+    }
+    if (!gateway.connected) {
+      return { ok: false, error: `${gateway.label} no está conectada. Conéctala en Configuración > Pagos antes de usarla.`, snapshot }
+    }
+    return { ok: true, gateway, snapshot }
+  }
+
+  const eligible = snapshot.gateways.filter(gateway => gateway.connected && gateway.capabilities[capability])
+  if (eligible.length === 1) {
+    return { ok: true, gateway: eligible[0], snapshot }
+  }
+
+  if (!eligible.length) {
+    return {
+      ok: false,
+      error: `No hay pasarelas conectadas para ${capabilityLabel}. Conecta ${
+        capability === 'installmentPlans'
+          ? 'Stripe, Conekta o GoHighLevel opcional'
+          : 'Stripe, Conekta, Mercado Pago o GoHighLevel opcional'
+      } en Configuración > Pagos.`,
+      snapshot
+    }
+  }
+
+  return {
+    ok: false,
+    needsGatewaySelection: true,
+    error: `Hay varias pasarelas conectadas para ${capabilityLabel}: ${eligible.map(gateway => gateway.label).join(', ')}. Pregunta cuál quiere usar antes de ejecutar.`,
+    options: eligible.map(gateway => ({ id: gateway.id, label: gateway.label })),
+    snapshot
+  }
+}
+
+function buildAgentGatewayPaymentPayload({ contact, amount, currency, concept, dueDate }) {
+  return {
+    contactId: contact.id,
+    contactName: contact.name,
+    contactEmail: contact.email || '',
+    contactPhone: contact.phone || '',
+    amount,
+    currency,
+    concept,
+    description: concept,
+    dueDate
+  }
+}
+
+function buildAgentGatewayInstallmentPayload({
+  contact,
+  totalAmount,
+  currency,
+  concept,
+  firstPayment,
+  remainingPayments,
+  remainingAutomatic,
+  remainingFrequency,
+  paymentMethodId = ''
+}) {
+  return {
+    contactId: contact.id,
+    contactName: contact.name,
+    contactEmail: contact.email || '',
+    contactPhone: contact.phone || '',
+    totalAmount,
+    currency,
+    concept,
+    description: concept,
+    firstPayment,
+    remainingPayments,
+    remainingAutomatic,
+    remainingFrequency,
+    paymentMethodId
+  }
+}
+
 function buildHighLevelToolContext(highLevelConnection) {
   if (!highLevelConnection?.configured) {
     return 'HighLevel no está conectado en Configuración. Para ejecutar acciones en Go High Level, primero configura locationId y Private Integration Token/API token.'
@@ -1530,6 +1755,13 @@ const PAYMENT_OPERATION_TOOL_NAMES = new Set([
 ])
 const PAYMENT_OPERATION_ALLOWED_TOOL_NAMES = new Set([
   ...PAYMENT_OPERATION_TOOL_NAMES,
+  'lookup_highlevel_endpoint',
+  'highlevel_rest_request'
+])
+const HIGHLEVEL_INTEGRATION_ONLY_TOOL_NAMES = new Set([
+  'lookup_highlevel_contact',
+  'update_highlevel_contact_field',
+  'manage_highlevel_appointment',
   'lookup_highlevel_endpoint',
   'highlevel_rest_request'
 ])
@@ -6151,7 +6383,7 @@ function buildContactVerificationRequiredOutput({ contacts = [], actionText = 'h
         ? 'Muestra primero los contactos más parecidos y pide que elija uno.'
         : 'Pide confirmar si ese es el contacto correcto.',
       'Muestra nombre, apellido, correo o teléfono cuando existan.',
-      'Debajo de las opciones, agrega una línea diciendo que si no es ninguno puede pasar email, celular o ID de HighLevel.',
+      'Debajo de las opciones, agrega una línea diciendo que si no es ninguno puede pasar email, celular o ID del contacto.',
       'No digas que ya actualizaste, agregaste, metiste a workflow, taggeaste o ejecutaste algo.'
     ].join(' '),
     clarificationOptions: buildContactActionOptions(safeContacts, {
@@ -6174,7 +6406,7 @@ function buildNoContactMatchesOutput({ lookupHint = '' } = {}) {
     responseGuidance: [
       'No pidas nombre completo/ID/teléfono como primer paso si todavía no intentaste buscar; aquí ya se intentó buscar.',
       'Dile al usuario que no encontraste coincidencias claras.',
-      'Pide una pista más concreta en tono natural: email, celular o ID de HighLevel.'
+      'Pide una pista más concreta en tono natural: email, celular o ID del contacto.'
     ].join(' '),
     clarificationOptions: []
   }
@@ -6965,7 +7197,7 @@ function escapeMarkdownTableCell(value) {
 
 function buildReadOnlyContactLookupReply(resolvedContact = {}, lookupHint = '') {
   const contacts = dedupeContacts(resolvedContact.contacts || [])
-  const fallbackLine = 'Si no es ninguno, pásame su email, celular o ID de HighLevel y lo busco más fino.'
+  const fallbackLine = 'Si no es ninguno, pásame su email, celular o ID del contacto y lo busco más fino.'
 
   if (contacts.length > 1) {
     return [
@@ -6991,7 +7223,7 @@ function buildReadOnlyContactLookupReply(resolvedContact = {}, lookupHint = '') 
 
   return [
     resolvedContact.error || `Busqué contactos parecidos a "${cleanText(lookupHint, 80)}", pero no encontré coincidencias claras.`,
-    'Pásame su email, celular o ID de HighLevel y lo busco más fino.'
+    'Pásame su email, celular o ID del contacto y lo busco más fino.'
   ].join('\n')
 }
 
@@ -7890,12 +8122,7 @@ async function getStoredCardStatusForContact(contactId, paymentMode = PAYMENT_MO
 }
 
 async function executeLookupContactPaymentProfile(args = {}, highLevelConnection = {}, context = {}) {
-  if (!highLevelConnection?.configured) {
-    return {
-      ok: false,
-      error: 'Esa acción específica usa la integración opcional de GoHighLevel. Configúrala en Integraciones si quieres operar ese recurso externo.'
-    }
-  }
+  highLevelConnection = normalizePaymentAgentConnection(highLevelConnection)
 
   const resolvedContact = await resolvePaymentContact(args, context)
   if (!resolvedContact.contact) {
@@ -9745,12 +9972,7 @@ function resolveRemainingPayments(args, totalAmount, firstPayment, timezone = DE
 }
 
 async function executeCreateInstallmentPaymentFlow(args = {}, highLevelConnection, context = {}) {
-  if (!highLevelConnection?.configured) {
-    return {
-      ok: false,
-      error: 'Esa acción específica usa la integración opcional de GoHighLevel. Configúrala en Integraciones si quieres operar ese recurso externo.'
-    }
-  }
+  highLevelConnection = normalizePaymentAgentConnection(highLevelConnection)
 
   const paymentTimezone = highLevelConnection.locationData?.timezone || DEFAULT_PAYMENT_TIMEZONE
   args = enrichInstallmentPaymentArgs(args, context.messages, paymentTimezone)
@@ -9876,8 +10098,25 @@ async function executeCreateInstallmentPaymentFlow(args = {}, highLevelConnectio
   const firstPayment = resolveFirstPayment(args, totalAmount, paymentTimezone)
   const contact = resolvedContact.contact
   const concept = buildProductConcept(args, `Pago parcializado - ${contact.name}`)
+  const selectedGateway = await selectAgentPaymentGateway(args.gateway || args.provider || args.paymentGateway || args.gatewayId || args.paymentProvider, 'installmentPlans')
+  if (!selectedGateway.ok) {
+    return {
+      ok: false,
+      action: 'select_payment_gateway',
+      error: selectedGateway.error,
+      needsGatewaySelection: Boolean(selectedGateway.needsGatewaySelection),
+      gateways: selectedGateway.snapshot?.gateways || [],
+      clarificationOptions: Array.isArray(selectedGateway.options)
+        ? selectedGateway.options.map(option => ({
+            label: option.label,
+            value: `Usa ${option.id} para este plan de pagos.`
+          }))
+        : []
+    }
+  }
+  const usesHighLevelPaymentGateway = selectedGateway.gateway.id === 'highlevel'
   const remainingAutomatic = args.remainingAutomatic === false || args.automatic === false ? false : true
-  const storedCardStatus = remainingAutomatic
+  const storedCardStatus = usesHighLevelPaymentGateway && remainingAutomatic
     ? await getStoredCardStatusForContact(contact.id, highLevelConnection.paymentMode)
     : { hasAuthorizedCard: false, paymentMode: normalizePaymentMode(highLevelConnection.paymentMode, PAYMENT_MODE_LIVE) }
   const storedCardPreference = resolveStoredCardPreference(args, context.messages)
@@ -9892,6 +10131,7 @@ async function executeCreateInstallmentPaymentFlow(args = {}, highLevelConnectio
         totalAmount,
         currency,
         concept,
+        gateway: selectedGateway.gateway.label,
         firstPayment: firstPayment.enabled
           ? {
               amount: firstPayment.amount,
@@ -9929,12 +10169,12 @@ async function executeCreateInstallmentPaymentFlow(args = {}, highLevelConnectio
   const firstPaymentIsCard = firstPayment.enabled && AI_CARD_PAYMENT_METHODS.has(firstPayment.method)
   const firstPaymentIsOffline = firstPayment.enabled && AI_OFFLINE_PAYMENT_METHODS.has(firstPayment.method)
   const firstPaymentUsesStoredCard = firstPaymentIsCard && storedCardPreference === 'stored_card' && storedCardStatus.hasAuthorizedCard
-  const firstPaymentRequiresPaymentLink = firstPaymentIsCard && !firstPaymentUsesStoredCard
-  const cardSetupWillBeRequired = remainingAutomatic && !firstPaymentIsCard && (
+  const firstPaymentRequiresPaymentLink = usesHighLevelPaymentGateway && firstPaymentIsCard && !firstPaymentUsesStoredCard
+  const cardSetupWillBeRequired = usesHighLevelPaymentGateway && remainingAutomatic && !firstPaymentIsCard && (
     forceNewCardAuthorization ||
     (!storedCardStatus.hasAuthorizedCard && (!firstPayment.enabled || firstPaymentIsOffline))
   )
-  const deliveryRequired = firstPaymentRequiresPaymentLink || cardSetupWillBeRequired
+  const deliveryRequired = usesHighLevelPaymentGateway && (firstPaymentRequiresPaymentLink || cardSetupWillBeRequired)
   const deliverySelection = resolvePaymentDeliverySelection(args, context)
   const deliveryMissingDestination = deliveryRequired
     ? getPaymentDeliveryMissingDestination(deliverySelection.method, contact)
@@ -10297,6 +10537,55 @@ async function executeCreateInstallmentPaymentFlow(args = {}, highLevelConnectio
     })
   }
 
+  if (selectedGateway.gateway.id !== 'highlevel') {
+    const planPayload = buildAgentGatewayInstallmentPayload({
+      contact,
+      totalAmount,
+      currency,
+      concept,
+      firstPayment: serviceFirstPayment,
+      remainingPayments: serviceRemainingPayments,
+      remainingAutomatic,
+      remainingFrequency: remaining.frequency
+    })
+    const baseUrl = await getAgentPaymentBaseUrl()
+    const result = selectedGateway.gateway.id === 'stripe'
+      ? await createStripePaymentPlan(planPayload, { baseUrl })
+      : await createConektaPaymentPlan(planPayload, { baseUrl })
+
+    return {
+      ok: true,
+      action: 'create_installment_payment_flow',
+      gateway: selectedGateway.gateway.id,
+      gatewayLabel: selectedGateway.gateway.label,
+      flowId: result?.flowId || result?.flow?.id || null,
+      paymentLink: result?.paymentUrl || result?.firstPaymentUrl || result?.setupUrl || result?.cardSetupUrl || '',
+      message: `Plan de pagos creado con ${selectedGateway.gateway.label} usando la lógica interna de Ristak.`,
+      summary: {
+        contact: {
+          id: contact.id,
+          name: contact.name,
+          email: contact.email || null,
+          phone: contact.phone || null
+        },
+        product: productSummary,
+        totalAmount,
+        currency,
+        concept,
+        gateway: selectedGateway.gateway.label,
+        firstPayment: serviceFirstPayment,
+        remainingAutomatic,
+        remainingPayments: serviceRemainingPayments.map(payment => ({
+          sequence: payment.sequence,
+          amount: payment.amount,
+          dueDate: payment.dueDate,
+          automatic: remainingAutomatic
+        }))
+      },
+      result
+    }
+  }
+
   const result = await createInstallmentPaymentFlow({
     contact,
     totalAmount,
@@ -10333,6 +10622,7 @@ async function executeCreateInstallmentPaymentFlow(args = {}, highLevelConnectio
       totalAmount,
       currency,
       paymentMode: highLevelConnection.paymentMode,
+      gateway: selectedGateway.gateway.label,
       firstPayment: {
         amount: firstPayment.amount,
         method: firstPayment.method,
@@ -10368,12 +10658,7 @@ async function executeCreateInstallmentPaymentFlow(args = {}, highLevelConnectio
 }
 
 async function executeCreateSinglePaymentLink(args = {}, highLevelConnection, context = {}) {
-  if (!highLevelConnection?.configured) {
-    return {
-      ok: false,
-      error: 'Esa acción específica usa la integración opcional de GoHighLevel. Configúrala en Integraciones si quieres operar ese recurso externo.'
-    }
-  }
+  highLevelConnection = normalizePaymentAgentConnection(highLevelConnection)
 
   args = applyPaymentProductMemory(args, context.messages)
   const productResolution = await resolvePaymentProductArgs(args, highLevelConnection, context.messages)
@@ -10530,6 +10815,95 @@ async function executeCreateSinglePaymentLink(args = {}, highLevelConnection, co
           }
         ]
       }
+    }
+  }
+
+  const selectedGateway = storedCardPreference === 'stored_card' || requestedPaymentMethod === 'saved_card'
+    ? null
+    : await selectAgentPaymentGateway(args.gateway || args.provider || args.paymentGateway || args.gatewayId || args.paymentProvider, 'paymentLinks')
+  if (selectedGateway && !selectedGateway.ok) {
+    return {
+      ok: false,
+      action: 'select_payment_gateway',
+      error: selectedGateway.error,
+      needsGatewaySelection: Boolean(selectedGateway.needsGatewaySelection),
+      gateways: selectedGateway.snapshot?.gateways || [],
+      clarificationOptions: Array.isArray(selectedGateway.options)
+        ? selectedGateway.options.map(option => ({
+            label: option.label,
+            value: `Usa ${option.id} para este link de pago.`
+          }))
+        : []
+    }
+  }
+
+  if (selectedGateway?.gateway?.id && selectedGateway.gateway.id !== 'highlevel') {
+    if (!hasExplicitPaymentExecutionConfirmation(context.messages)) {
+      return buildPaymentConfirmationRequiredOutput({
+        action: 'create_single_payment_link',
+        summary: {
+          contact: {
+            id: contact.id,
+            name: contact.name,
+            email: contact.email || null,
+            phone: contact.phone || null
+          },
+          product: productSummary,
+          amount,
+          currency,
+          concept,
+          dueDate,
+          gateway: selectedGateway.gateway.label,
+          delivery: 'link público generado por pasarela'
+        },
+        clarificationOptions: buildPaymentConfirmationOptions('este cobro o link de pago')
+      })
+    }
+
+    const paymentPayload = buildAgentGatewayPaymentPayload({
+      contact,
+      amount,
+      currency,
+      concept,
+      dueDate
+    })
+    const baseUrl = await getAgentPaymentBaseUrl()
+    const result = selectedGateway.gateway.id === 'stripe'
+      ? await createStripePaymentLink(paymentPayload, { baseUrl })
+      : selectedGateway.gateway.id === 'conekta'
+        ? await createConektaPaymentLink(paymentPayload, { baseUrl })
+        : await createMercadoPagoPaymentLink(paymentPayload, { baseUrl })
+    const payment = result.payment || {}
+
+    return {
+      ok: true,
+      action: 'create_single_payment_link',
+      gateway: selectedGateway.gateway.id,
+      gatewayLabel: selectedGateway.gateway.label,
+      paymentId: payment.id || result.paymentId || null,
+      publicPaymentId: result.publicPaymentId || payment.publicPaymentId || null,
+      preferenceId: result.preferenceId || null,
+      paymentLink: result.paymentUrl || payment.paymentUrl || result.paymentLink || '',
+      amount: payment.amount || amount,
+      currency: payment.currency || currency,
+      status: payment.status || result.status || 'sent',
+      message: `Link de pago creado con ${selectedGateway.gateway.label} usando la lógica interna de Ristak.`,
+      summary: {
+        contact: {
+          id: contact.id,
+          name: contact.name,
+          email: contact.email || null,
+          phone: contact.phone || null
+        },
+        product: productSummary,
+        amount: payment.amount || amount,
+        currency: payment.currency || currency,
+        concept,
+        dueDate,
+        gateway: selectedGateway.gateway.label,
+        delivery: 'link público generado por pasarela'
+      },
+      result
     }
   }
 
@@ -10775,12 +11149,7 @@ async function executeCreateSinglePaymentLink(args = {}, highLevelConnection, co
 }
 
 async function executeModifyScheduledPaymentFlow(args = {}, highLevelConnection, context = {}) {
-  if (!highLevelConnection?.configured) {
-    return {
-      ok: false,
-      error: 'Esa acción específica usa la integración opcional de GoHighLevel. Configúrala en Integraciones si quieres operar ese recurso externo.'
-    }
-  }
+  highLevelConnection = normalizePaymentAgentConnection(highLevelConnection)
 
   const paymentTimezone = highLevelConnection.locationData?.timezone || DEFAULT_PAYMENT_TIMEZONE
   const resolvedContact = await resolvePaymentContact(args, context)
@@ -11040,12 +11409,7 @@ async function executeModifyScheduledPaymentFlow(args = {}, highLevelConnection,
 }
 
 async function executeRecordContactPayment(args = {}, highLevelConnection, context = {}) {
-  if (!highLevelConnection?.configured) {
-    return {
-      ok: false,
-      error: 'Esa acción específica usa la integración opcional de GoHighLevel. Configúrala en Integraciones si quieres operar ese recurso externo.'
-    }
-  }
+  highLevelConnection = normalizePaymentAgentConnection(highLevelConnection)
 
   const resolvedContact = await resolvePaymentContact(args, context)
   if (!resolvedContact.contact) {
@@ -11163,12 +11527,7 @@ async function executeRecordContactPayment(args = {}, highLevelConnection, conte
 }
 
 async function executeRecordInvoicePayment(args = {}, highLevelConnection, context = {}) {
-  if (!highLevelConnection?.configured) {
-    return {
-      ok: false,
-      error: 'Esa acción específica usa la integración opcional de GoHighLevel. Configúrala en Integraciones si quieres operar ese recurso externo.'
-    }
-  }
+  highLevelConnection = normalizePaymentAgentConnection(highLevelConnection)
 
   const invoiceId = cleanText(args.invoiceId || args.ghlInvoiceId || args.invoice_id || '', 160)
   const amount = normalizePaymentAmount(args.amount || args.totalAmount || args.total)
@@ -11483,15 +11842,14 @@ async function executeMetaCampaignDraftTool(args = {}) {
 }
 
 function buildHighLevelTools(highLevelConnection, options = {}) {
-  if (!highLevelConnection?.configured) return []
-
+  const highLevelConfigured = Boolean(highLevelConnection?.configured)
   const tools = []
 
-  if (!options.restReadIntent && !options.paymentActionRequest && (!options.contactActionRequest || options.highLevelToolIntent)) {
+  if (highLevelConfigured && !options.restReadIntent && !options.paymentActionRequest && (!options.contactActionRequest || options.highLevelToolIntent)) {
     tools.push({
       type: 'mcp',
       server_label: 'highlevel',
-      server_description: 'Official HighLevel MCP server for CRM operations: contacts, conversations, calendars, appointments, opportunities, workflows, media storage, files/images/assets, locations, social posting, blogs, email templates and related operations. For payment or invoice mutations, use the internal Ristak payment tools instead.',
+      server_description: 'Official HighLevel MCP server for optional external CRM operations when the user explicitly asks for GoHighLevel/GHL or for resources that only live there: workflows, opportunities, custom fields, tags, media storage, files/images/assets, locations, social posting, blogs, email templates and related operations. For Ristak-owned contacts, appointments, conversations, products and all payment/invoice mutations, use internal Ristak tools instead.',
       server_url: HIGHLEVEL_MCP_SERVER_URL,
       authorization: highLevelConnection.token,
       require_approval: 'always'
@@ -11502,7 +11860,7 @@ function buildHighLevelTools(highLevelConnection, options = {}) {
     {
       type: 'function',
       name: 'lookup_business_reference',
-      description: 'Resuelve referencias contextuales del negocio antes de ejecutar acciones: "el de la última cita", "la próxima cita", "este contacto", "el contacto actual". Devuelve IDs exactos de cita/contacto desde la DB local y señales útiles como email, teléfono y tarjeta guardada. Úsala antes de pagos, workflows, citas, oportunidades, mensajes o modificaciones cuando el usuario no dé un contacto/registro literal sino una referencia contextual. Si el usuario sí dio un nombre propio, usa lookup_highlevel_contact o Memoria operacional CRM, no esta referencia contextual.',
+      description: 'Resuelve referencias contextuales del negocio antes de ejecutar acciones: "el de la última cita", "la próxima cita", "este contacto", "el contacto actual". Devuelve IDs exactos de cita/contacto desde la DB local y señales útiles como email, teléfono y tarjeta guardada. Úsala antes de pagos, citas, mensajes o modificaciones cuando el usuario no dé un contacto/registro literal sino una referencia contextual. Si el usuario dio un nombre propio, resuélvelo con las herramientas internas de Ristak o Memoria operacional CRM; usa lookup_highlevel_contact sólo cuando el usuario pida operar GoHighLevel/GHL o campos externos.',
       parameters: {
         type: 'object',
         properties: {
@@ -11522,7 +11880,7 @@ function buildHighLevelTools(highLevelConnection, options = {}) {
     {
       type: 'function',
       name: 'lookup_highlevel_contact',
-      description: 'Busca un contacto por nombre/email/teléfono/ID, hace GET real del contacto en GoHighLevel y devuelve el rawContact completo junto con la lista de campos estándar y custom fields de la location. Úsala antes de cualquier acción de CRM sobre una persona: agendar cita, meter a workflow, crear oportunidad, mandar mensaje, cambiar datos de contacto o ver campos/data. Si ya hay contacto activo en memoria y el usuario pregunta "cuáles tienes", "qué campos hay" o "investiga en GHL", llama esta herramienta con ese contactId para listar campos reales y valores actuales. Si el usuario dio nombre limpio, búscalo; no pidas ID/correo/teléfono sin intentar lookup.',
+      description: 'Busca un contacto por nombre/email/teléfono/ID en GoHighLevel y devuelve el rawContact completo junto con campos estándar y custom fields de la location. Úsala sólo para operaciones explícitas de GoHighLevel/GHL o datos externos de contacto como custom fields, workflows, oportunidades o tags. No la uses como paso preventivo para pagos, citas, productos, conversaciones o contactos propios de Ristak. Si ya hay contacto activo en memoria y el usuario pregunta "cuáles tienes", "qué campos hay" o "investiga en GHL", llama esta herramienta con ese contactId para listar campos reales y valores actuales.',
       parameters: {
         type: 'object',
         properties: {
@@ -11541,7 +11899,7 @@ function buildHighLevelTools(highLevelConnection, options = {}) {
     {
       type: 'function',
       name: 'update_highlevel_contact_field',
-      description: 'Prepara y ejecuta una modificación segura de un campo de contacto en GoHighLevel. Primero busca el contacto, hace GET real, cruza campos estándar y custom fields, resuelve el campo más relevante y SIEMPRE pide confirmación antes de hacer PUT. Úsala para "modifica la ciudad", "cambia duración del programa", "actualiza este campo", etc. Si falta fieldSelector y el usuario pidió ver opciones, la herramienta devuelve campos reales y botones para elegir; no repitas "qué campo" sin mostrar esas opciones. No uses highlevel_rest_request ni MCP para cambiar contactos cuando esta herramienta puede hacerlo.',
+      description: 'Prepara y ejecuta una modificación segura de un campo externo de contacto en GoHighLevel. Primero busca el contacto, hace GET real, cruza campos estándar y custom fields, resuelve el campo más relevante y SIEMPRE pide confirmación antes de hacer PUT. Úsala sólo cuando el usuario mencione GoHighLevel/GHL, custom fields externos o pida editar un dato que vive en esa integración. Para datos propios de Ristak usa herramientas internas; no conviertas cualquier contacto en una mutación de GoHighLevel.',
       parameters: {
         type: 'object',
         properties: {
@@ -11593,7 +11951,7 @@ function buildHighLevelTools(highLevelConnection, options = {}) {
           query: { type: ['string', 'null'], description: 'Texto para buscar producto por nombre, descripción o ID. Déjalo vacío para listar productos.' },
           productHint: { type: ['string', 'null'], description: 'Alias de query cuando el usuario dio un nombre aproximado de producto.' },
           productName: { type: ['string', 'null'], description: 'Nombre exacto o aproximado del producto.' },
-          productId: { type: ['string', 'null'], description: 'ID exacto del producto de GHL si ya se conoce.' },
+          productId: { type: ['string', 'null'], description: 'ID exacto del producto guardado si ya se conoce.' },
           priceId: { type: ['string', 'null'], description: 'ID exacto del precio guardado si ya se conoce.' },
           includePrices: { type: ['boolean', 'null'], description: 'true para incluir precios del producto. Por defecto true.' },
           limit: { type: ['number', 'null'], description: 'Máximo de productos a consultar, por defecto 50.' }
@@ -11605,7 +11963,7 @@ function buildHighLevelTools(highLevelConnection, options = {}) {
     {
       type: 'function',
       name: 'manage_highlevel_appointment',
-      description: 'Gestiona citas reales de GoHighLevel usando la misma lógica de Calendarios de Ristak. Úsala ANTES de MCP o highlevel_rest_request para citas: buscar disponibilidad, agendar, reprogramar, cancelar, confirmar, marcar showed/asistió, marcar noshow/no asistió o eliminar. Resuelve contacto exacto, usa default_calendar_id si no dan calendario, crea con POST /calendars/events/appointments, reprograma/estados con PUT /calendars/events/appointments/:eventId y elimina con DELETE /calendars/events/:eventId. Para crear, cambiar estado, reprogramar, cancelar o eliminar, la herramienta pide confirmación antes de mutar. No inventes contactId ni calendarId; si hay varias opciones, devuelve la aclaración.',
+      description: 'Gestiona citas reales de GoHighLevel sólo cuando la acción es explícitamente sobre GoHighLevel/GHL o una cita sincronizada con esa integración. Las citas y calendarios propios de Ristak son el camino por defecto. Para GHL, úsala antes que MCP o highlevel_rest_request: buscar disponibilidad, agendar, reprogramar, cancelar, confirmar, marcar showed/asistió, marcar noshow/no asistió o eliminar. Resuelve contacto exacto, usa default_calendar_id si no dan calendario, crea con POST /calendars/events/appointments, reprograma/estados con PUT /calendars/events/appointments/:eventId y elimina con DELETE /calendars/events/:eventId.',
       parameters: {
         type: 'object',
         properties: {
@@ -11659,13 +12017,15 @@ function buildHighLevelTools(highLevelConnection, options = {}) {
           currency: { type: ['string', 'null'], description: 'Moneda, normalmente MXN.' },
           concept: { type: ['string', 'null'], description: 'Concepto del cobro/invoice.' },
           title: { type: ['string', 'null'], description: 'Título visible del invoice.' },
-          productId: { type: ['string', 'null'], description: 'ID del producto de GHL cuando el cobro viene de producto guardado.' },
-          productName: { type: ['string', 'null'], description: 'Nombre del producto de GHL seleccionado.' },
+          productId: { type: ['string', 'null'], description: 'ID del producto guardado cuando el cobro viene del catálogo de Ristak.' },
+          productName: { type: ['string', 'null'], description: 'Nombre del producto guardado seleccionado.' },
           priceId: { type: ['string', 'null'], description: 'ID del precio guardado seleccionado.' },
           priceName: { type: ['string', 'null'], description: 'Nombre del precio guardado seleccionado.' },
           productPrice: { type: ['number', 'null'], description: 'Precio del producto seleccionado si el usuario quiere cobrar el precio guardado.' },
           priceAmount: { type: ['number', 'null'], description: 'Alias de productPrice.' },
           priceCurrency: { type: ['string', 'null'], description: 'Moneda del precio seleccionado.' },
+          gateway: { type: ['string', 'null'], enum: ['auto', 'stripe', 'conekta', 'mercadopago', 'highlevel', null], description: 'Pasarela solicitada por el usuario. Usa auto/null si no dijo cuál.' },
+          provider: { type: ['string', 'null'], enum: ['auto', 'stripe', 'conekta', 'mercadopago', 'highlevel', null], description: 'Alias de gateway.' },
           dueDate: { type: ['string', 'null'], description: 'Fecha límite YYYY-MM-DD. Si es hoy, usa la fecha local actual.' },
           paymentMethod: { type: ['string', 'null'], enum: ['card', 'payment_link', 'direct_card', 'saved_card', null], description: 'Método de cobro con tarjeta. Usa saved_card sólo si el usuario eligió explícitamente cobrar la tarjeta guardada.' },
           method: { type: ['string', 'null'], enum: ['card', 'payment_link', 'direct_card', 'saved_card', null], description: 'Alias de paymentMethod.' },
@@ -11695,7 +12055,7 @@ function buildHighLevelTools(highLevelConnection, options = {}) {
     {
       type: 'function',
       name: 'create_installment_payment_flow',
-      description: 'Crea un cobro por parcialidades, domiciliación o cargos automáticos futuros usando la lógica interna segura de Ristak. Úsala para planes con o sin primer pago, cargos programados a tarjeta guardada, pagos programados únicos con fecha futura, órdenes de domiciliar el resto o cargos futuros como "el 10 de junio cobra 100" o "en un año cobra X y tres meses después Y". Interpreta intención humana, no sólo texto literal: "ahorita 50, te esperes un mes y luego en el siguiente cobras otra vez 50" significa primer pago hoy, un mes sin cobro y otro cargo real en el periodo posterior; "ahorita 10, próximo mes 20, te esperas un mes y luego el siguiente 20" significa hoy 10, próximo mes 20, un mes sin cobro y el último 20 al mes siguiente; "próximo mes 20, esperas un mes, 20 durante dos meses, esperas un mes, y el siguiente 50" significa cobro, hueco, dos cobros seguidos, hueco, cobro final. Si el cobro es de producto y falta producto, precio o fecha/momento, la herramienta preguntará el dato faltante y conservará lo ya dicho. Si el usuario dice "10 ahorita y luego el mismo día durante los siguientes 3 meses", eso es firstPayment hoy por 10 y remainingPayments mensuales futuros, no 3 cobros hoy. Si dice "espera un mes/dos semanas y luego cobra", ese intervalo es sin cobro: salta el periodo o fecha correspondiente con afterMonths/afterWeeks/afterDays/afterPeriods; no crees pagos de 0. En instrucciones compuestas, cuenta cada tramo: "por dos meses" son 2 cobros reales y cada "le vuelves a cobrar" posterior es otro cobro adicional; si el último dice "esta vez 20", ese 20 no reemplaza el mes anterior, es el último cobro extra. Si el usuario pide "hacer una nueva" en un hilo donde ya se resolvió contacto, reutiliza el contactId de la memoria operacional. Esta herramienta detecta tarjeta guardada en Ristak/GoHighLevel; si el primer pago es transferencia/depósito/manual lo registra offline, y si el resto es automático y falta tarjeta, envía domiciliación. Si hay tarjeta guardada no manda domiciliación salvo que el usuario pida otra tarjeta. Si se necesita enviar link de primer pago o domiciliación y el usuario no eligió canal, pregunta all/email/sms/whatsapp antes de completar el cobro. generate/none no es válido para domiciliación o tarjeta porque el formulario real requiere envío. Nunca completa el cobro sin que el usuario diga que sí al resumen.',
+      description: 'Crea un cobro por parcialidades, domiciliación o cargos automáticos futuros usando la lógica interna segura de Ristak. Úsala para planes con o sin primer pago, cargos programados a tarjeta guardada, pagos programados únicos con fecha futura, órdenes de domiciliar el resto o cargos futuros como "el 10 de junio cobra 100" o "en un año cobra X y tres meses después Y". Interpreta intención humana, no sólo texto literal: "ahorita 50, te esperes un mes y luego en el siguiente cobras otra vez 50" significa primer pago hoy, un mes sin cobro y otro cargo real en el periodo posterior; "ahorita 10, próximo mes 20, te esperas un mes y luego el siguiente 20" significa hoy 10, próximo mes 20, un mes sin cobro y el último 20 al mes siguiente; "próximo mes 20, esperas un mes, 20 durante dos meses, esperas un mes, y el siguiente 50" significa cobro, hueco, dos cobros seguidos, hueco, cobro final. Si el cobro es de producto y falta producto, precio o fecha/momento, la herramienta preguntará el dato faltante y conservará lo ya dicho. Si el usuario dice "10 ahorita y luego el mismo día durante los siguientes 3 meses", eso es firstPayment hoy por 10 y remainingPayments mensuales futuros, no 3 cobros hoy. Si dice "espera un mes/dos semanas y luego cobra", ese intervalo es sin cobro: salta el periodo o fecha correspondiente con afterMonths/afterWeeks/afterDays/afterPeriods; no crees pagos de 0. En instrucciones compuestas, cuenta cada tramo: "por dos meses" son 2 cobros reales y cada "le vuelves a cobrar" posterior es otro cobro adicional; si el último dice "esta vez 20", ese 20 no reemplaza el mes anterior, es el último cobro extra. Si el usuario pide "hacer una nueva" en un hilo donde ya se resolvió contacto, reutiliza el contactId de la memoria operacional. Esta herramienta detecta tarjeta guardada en Ristak y sus pasarelas conectadas; si el primer pago es transferencia/depósito/manual lo registra offline, y si el resto es automático y falta tarjeta, envía domiciliación. Si hay tarjeta guardada no manda domiciliación salvo que el usuario pida otra tarjeta. Si se necesita enviar link de primer pago o domiciliación y el usuario no eligió canal, pregunta all/email/sms/whatsapp antes de completar el cobro. generate/none no es válido para domiciliación o tarjeta porque el formulario real requiere envío. Nunca completa el cobro sin que el usuario diga que sí al resumen.',
       parameters: {
         type: 'object',
         properties: {
@@ -11705,13 +12065,15 @@ function buildHighLevelTools(highLevelConnection, options = {}) {
           totalAmount: { type: ['number', 'null'], description: 'Total del plan completo.' },
           currency: { type: ['string', 'null'], description: 'Moneda, normalmente MXN.' },
           concept: { type: ['string', 'null'], description: 'Concepto del cobro/invoice.' },
-          productId: { type: ['string', 'null'], description: 'ID del producto de GHL cuando el plan viene de producto guardado.' },
-          productName: { type: ['string', 'null'], description: 'Nombre del producto de GHL seleccionado.' },
+          productId: { type: ['string', 'null'], description: 'ID del producto guardado cuando el plan viene del catálogo de Ristak.' },
+          productName: { type: ['string', 'null'], description: 'Nombre del producto guardado seleccionado.' },
           priceId: { type: ['string', 'null'], description: 'ID del precio guardado seleccionado.' },
           priceName: { type: ['string', 'null'], description: 'Nombre del precio guardado seleccionado.' },
           productPrice: { type: ['number', 'null'], description: 'Precio total del producto seleccionado si el usuario quiere usar el precio guardado como total del plan.' },
           priceAmount: { type: ['number', 'null'], description: 'Alias de productPrice.' },
           priceCurrency: { type: ['string', 'null'], description: 'Moneda del precio seleccionado.' },
+          gateway: { type: ['string', 'null'], enum: ['auto', 'stripe', 'conekta', 'highlevel', null], description: 'Pasarela solicitada por el usuario para el plan. Usa auto/null si no dijo cuál.' },
+          provider: { type: ['string', 'null'], enum: ['auto', 'stripe', 'conekta', 'highlevel', null], description: 'Alias de gateway.' },
           firstPayment: {
             type: ['object', 'null'],
             description: 'Primer pago o anticipo. No inventes method: card sólo porque el usuario dijo "cóbrale"; si no mencionó tarjeta/link/transferencia/depósito/manual, deja method vacío para que Ristak detecte tarjeta guardada o pida el método.',
@@ -11948,7 +12310,9 @@ function buildHighLevelTools(highLevelConnection, options = {}) {
     }
   )
 
-  return tools
+  return highLevelConfigured
+    ? tools
+    : tools.filter(tool => tool?.type !== 'mcp' && !HIGHLEVEL_INTEGRATION_ONLY_TOOL_NAMES.has(tool?.name))
 }
 
 async function executeHighLevelRestRequest(args = {}, highLevelConnection) {
@@ -12304,8 +12668,9 @@ async function createAgentPreflightDecision(apiKey, {
     'Razona internamente: objetivo real, entidades, fuente correcta, datos faltantes, riesgo y siguiente paso útil.',
     'No devuelvas cadena de pensamiento. Devuelve sólo JSON válido, sin markdown.',
     'No copies la frase del usuario como búsqueda si hay una entidad limpia dentro. Separa persona/recurso de la tarea.',
-    'Si el usuario pide una lectura de datos de un contacto en GoHighLevel, la fuente es highlevel, el recurso es contact y el siguiente paso debe resolver el contacto antes de pedir más datos.',
-    'Para escrituras reales de CRM, dinero, citas, workflows, mensajes o datos personales, marca isMutation=true y pide confirmación si faltan IDs/valores críticos.',
+    'Ristak es la fuente base de la app. No clasifiques como highlevel una solicitud de pagos, contactos, citas, productos, conversaciones o reportes salvo que el usuario mencione explícitamente GoHighLevel/HighLevel/GHL o pida un recurso externo que sólo vive ahí.',
+    'Si el usuario pide una lectura de datos de un contacto específicamente en GoHighLevel, la fuente es highlevel, el recurso es contact y el siguiente paso debe resolver el contacto antes de pedir más datos.',
+    'Para escrituras reales de dinero, contactos, citas, workflows, mensajes o datos personales, marca isMutation=true y pide confirmación si faltan IDs/valores críticos.',
     'Campos permitidos del JSON:',
     JSON.stringify({
       intentSummary: 'una frase corta',
@@ -12334,8 +12699,8 @@ async function createAgentPreflightDecision(apiKey, {
     buildBusinessProfileContext(agentConfig),
     '',
     'Capacidades/fuentes disponibles:',
-    '- ristak_db: análisis interno, pagos registrados, citas, campañas sincronizadas, contactos, reporting.',
-    '- highlevel: CRM operativo real, contactos, custom fields, workflows, citas, mensajes, oportunidades, productos, invoices.',
+    '- ristak_db: fuente base de Ristak para análisis interno, pagos registrados, citas, campañas sincronizadas, contactos, productos, conversaciones y reporting.',
+    '- highlevel: integración opcional externa. Úsala sólo cuando el usuario mencione GoHighLevel/HighLevel/GHL o pida recursos externos como custom fields, workflows, pipelines, tags, media storage, formularios, funnels, usuarios o locations.',
     '- web: contexto externo si el usuario lo pide.',
     '',
     'Contexto de vista:',
@@ -13063,7 +13428,7 @@ function hasRecentHighLevelOperationalContext(messages = []) {
   const previousText = normalizeText(getRecentConversationTextBeforeLatestUser(messages, 10))
   if (!previousText) return false
 
-  const hasHighLevelResource = /(highlevel|go\s*high\s*level|gohighlevel|ghl|contacto|cliente|lead|persona|workflow|flujo|automatizacion|automatización|campo personalizado|custom field|campo|dato|cita|calendario|appointment|oportunidad|pipeline|mensaje|conversacion|conversación|tag|nota|producto|precio|formulario|survey|encuesta|funnel|embudo|archivo|media|usuario)/.test(previousText)
+  const hasHighLevelResource = mentionsHighLevel(previousText) || mentionsExternalHighLevelOnlyResource(previousText)
   const hasOperationalCue = /(busc|revis|consulta|muestra|lista|elige|cual|cuál|que campo|qué campo|me falta|falta|necesito|actualiz|modific|cambia|editar|mete|saca|agrega|manda|envia|envía|crea|agenda|haz|hacer|quieres que haga|sigo con la accion|sigo con la acción)/.test(previousText)
 
   return hasHighLevelResource && hasOperationalCue
@@ -13267,7 +13632,7 @@ function shouldAskContactBeforeCustomActionReadiness({
 
 function buildContactLookupFirstReply(resolvedContact = {}, lookupHint = '') {
   const contacts = dedupeContacts(resolvedContact.contacts || [])
-  const fallbackLine = 'Si no es ninguno, pásame su email, celular o ID de HighLevel y lo busco más fino.'
+  const fallbackLine = 'Si no es ninguno, pásame su email, celular o ID del contacto y lo busco más fino.'
 
   if (contacts.length > 1) {
     return [
@@ -13293,7 +13658,7 @@ function buildContactLookupFirstReply(resolvedContact = {}, lookupHint = '') {
 
   return [
     resolvedContact.error || `Busqué contactos parecidos a "${cleanText(lookupHint, 80)}", pero no encontré coincidencias claras.`,
-    'Pásame su email, celular o ID de HighLevel y lo busco más fino.'
+    'Pásame su email, celular o ID del contacto y lo busco más fino.'
   ].join('\n')
 }
 
@@ -13365,11 +13730,12 @@ function buildUnifiedAgentRoute({ messages = [], latestUserMessage = '', agentCo
   const customActionIntent = latestCustomActionExecution || customActionContinuation
   const contactMutationSafety = shouldUseContactMutationSafety(latestUserMessage) || contactMutationContinuation
   const requiresDbResearch = modelRequestsDb || (!paymentBackendOnly && !highLevelToolIntent && !customActionIntent && shouldUseInternalDatabaseContext(latestUserMessage, messages))
+  const externalHighLevelOnlyOperationalIntent = !requiresDbResearch &&
+    mentionsExternalHighLevelOnlyResource(normalized) &&
+    hasHighLevelOperationVerb(normalized)
   const highLevelOperationalIntent = !paymentBackendOnly && (
     highLevelToolIntent ||
-    customActionIntent ||
-    (!requiresDbResearch &&
-      /(workflow|flujo|automatizacion|automatización|cita|calendario|appointment|oportunidad|pipeline|mensaje|conversacion|conversación|media storage|archivo|imagen|folder|tag|producto|precio|contacto|cliente|lead|campo personalizado|custom field).*(busca|revisa|analiza|cambia|actualiza|modifica|mete|saca|crea|agenda|agenda[r]?|calendariza|manda|envia|envía|haz|hacer)|(?:busca|revisa|analiza|cambia|actualiza|modifica|mete|saca|crea|agenda|agendar|calendariza|manda|envia|envía|haz|hacer).*(workflow|flujo|automatizacion|automatización|cita|calendario|appointment|oportunidad|pipeline|mensaje|conversacion|conversación|media storage|archivo|imagen|folder|tag|producto|precio|contacto|cliente|lead|campo personalizado|custom field)/.test(normalized))
+    externalHighLevelOnlyOperationalIntent
   )
   const mutationIntent = !readOnlyContactFieldRequest && (modelRequestsMutation || paymentBackendOnly ||
     (!highLevelRestReadIntent && (
@@ -13388,12 +13754,12 @@ function buildUnifiedAgentRoute({ messages = [], latestUserMessage = '', agentCo
     action: modelRequestsClarification ? 'clarify' : mutationIntent ? 'mutate' : readIntent ? 'read' : 'answer',
     continuation: isConversationalFollowUp(messages),
     requiresDbResearch,
-    requiresHighLevelTools: paymentBackendOnly || contactMutationSafety || highLevelOperationalIntent,
+    requiresHighLevelTools: highLevelOperationalIntent,
     requiresPaymentTools: paymentBackendOnly,
     paymentBackendOnly,
     contactMutationSafety,
     highLevelRestReadIntent,
-    highLevelToolIntent: highLevelToolIntent || customActionIntent,
+    highLevelToolIntent,
     readOnlyContactFieldRequest,
     customActionIntent,
     highLevelContinuation,
@@ -13439,8 +13805,8 @@ const CRITICAL_THINKING_PROMPT = [
 
 const SOURCE_ROUTING_PROMPT = [
   'Fuentes de verdad:',
-  '- DB de Ristak: análisis de negocio, históricos, pagos registrados, citas, contactos, tracking, campañas sincronizadas, ROAS/utilidad e ingresos atribuidos.',
-  '- HighLevel/GHL: acciones reales de CRM como contactos, mensajes, workflows, citas, oportunidades, productos, invoices y pagos cuando corresponda.',
+  '- Ristak: fuente base de la app para análisis de negocio, históricos, pagos registrados, citas, contactos, productos, conversaciones, tracking, campañas sincronizadas, ROAS/utilidad e ingresos atribuidos.',
+  '- HighLevel/GHL: integración opcional externa. Úsala sólo si el usuario menciona GoHighLevel/HighLevel/GHL, pide leer/operar un recurso externo de esa integración o el registro activo ya viene de ahí. No es requisito para que Ristak funcione.',
   '- Meta Ads operativo: para campañas nuevas usa sólo el Meta Campaign Builder interno. Ese flujo crea borrador, valida, muestra preview, guarda rastro y sólo ejecuta por MCP con confirmación. No modifiques campañas reales por otra ruta.',
   '- Web search: sólo cuando el usuario pida contexto externo, mercado, tendencias, competidores, cultura, geografía, política, noticias o benchmarks.',
   'No mezcles fuentes: rentabilidad publicitaria sale de DB con atribución interna; configuración nueva de campañas pasa por el builder; inventario real de Ads Manager no se reemplaza con datos internos.'
@@ -13452,25 +13818,26 @@ const UNIFIED_CAPABILITY_PROMPT = [
   '- Para conversación normal, ideas, redacción, chistes o preguntas generales que no requieren datos privados ni acciones externas, responde sin llamar herramientas.',
   '- Para analítica interna del negocio usa la DB de Ristak y los resultados SQL disponibles. Esto incluye campañas/anuncios sincronizados, ROAS, utilidad, pagos, citas, contactos, ventas, fuentes, cohortes e históricos.',
   '- Para crear o configurar campañas nuevas de Meta Ads usa create_meta_campaign_draft. No prometas publicación real si el draft no está validado, sin preview confirmado o sin MCP de Meta conectado.',
-  '- Para GoHighLevel usa HighLevel MCP o highlevel_rest_request cuando el usuario pida recursos/acciones de CRM: media storage, imágenes, archivos, workflows, calendarios, citas, conversaciones, oportunidades, productos, tags, custom fields, usuarios o ubicaciones.',
+  '- Ristak es autónomo: contactos, pagos, citas, productos, conversaciones y reportes usan datos/herramientas internas por defecto, aunque HighLevel no esté conectado.',
+  '- Para GoHighLevel usa HighLevel MCP o highlevel_rest_request sólo cuando el usuario mencione GoHighLevel/HighLevel/GHL o pida recursos externos de esa integración: media storage, imágenes, archivos, workflows, oportunidades, tags, custom fields, usuarios, ubicaciones, formularios o funnels.',
   `- Catálogo HighLevel cubierto por rutas/MCP/REST: ${HIGHLEVEL_API_RESOURCE_CATALOG_TEXT}.`,
   `- Catálogo REST oficial de Sub-Account cargado: ${HIGHLEVEL_ENDPOINT_CATALOG_SUMMARY}.`,
-  '- Si el último mensaje menciona explícitamente GoHighLevel, GoHi Level, HighLevel o GHL y pide buscar, consultar, hacer GET/POST/PUT/PATCH/DELETE, crear o actualizar algo, usa herramientas reales de HighLevel en ese turno. Si el usuario no dice HighLevel pero pide de forma operativa un recurso claramente propio del catálogo, también usa HighLevel.',
+  '- Si el último mensaje menciona explícitamente GoHighLevel, GoHi Level, HighLevel o GHL y pide buscar, consultar, hacer GET/POST/PUT/PATCH/DELETE, crear o actualizar algo, usa herramientas reales de HighLevel en ese turno. Si no lo menciona, no conviertas contactos, pagos, citas, productos ni mensajes normales en HighLevel.',
   '- Antes de escoger herramienta, arma mentalmente un marco semántico: intención (leer/crear/actualizar/eliminar/enviar/cobrar), recurso canónico de negocio, alcance, filtros, IDs necesarios, riesgo y si es lectura o escritura. No uses una lista cerrada de frases; entiende jerga, diminutivos, errores de escritura, nombres informales y contexto de conversación.',
   '- Para cualquier escritura en GoHighLevel, primero investiga qué requiere el request: recurso exacto, endpoint/tool, IDs de path, query requerida, body requerido, valores a crear/cambiar, archivos/canales/fechas si aplican y confirmación humana. El usuario puede dar datos en cualquier orden; conserva lo dicho y pregunta sólo el siguiente dato faltante.',
-  '- Prioriza HighLevel MCP porque lista y llama tools oficiales. Si el MCP no expone lo necesario, interpreta semánticamente la intención, usa lookup_highlevel_endpoint con términos canónicos de HighLevel para encontrar el método/path documentado y luego highlevel_rest_request. No contestes desde la DB local salvo que el usuario pida Ristak/DB/reportes.',
+  '- Para solicitudes explícitas de HighLevel, prefiere HighLevel MCP porque lista y llama tools oficiales. Si el MCP no expone lo necesario, interpreta semánticamente la intención, usa lookup_highlevel_endpoint con términos canónicos de HighLevel para encontrar el método/path documentado y luego highlevel_rest_request. Para solicitudes normales de Ristak usa DB/herramientas internas.',
   '- highlevel_rest_request rechaza rutas que no estén en el catálogo Sub-Account y también bloquea escrituras con datos incompletos. Si devuelve missingFields, requestBodyRequired, readinessRequired o sugerencias, pregunta ese dato faltante; no improvises body, IDs ni valores.',
   '- Para usuarios no técnicos, no pidas que digan endpoint, método, ID técnico o nombre exacto del módulo si tú puedes inferirlo. Traduce el pedido a términos canónicos de HighLevel y busca el endpoint.',
   '- Si el usuario pide listar, ver, revisar, buscar, traer o hacer GET de un recurso de HighLevel, es lectura. Ejecuta lookup_highlevel_endpoint y luego highlevel_rest_request GET. No pidas contacto, email, teléfono ni ID salvo que el endpoint elegido tenga contactId u otro ID obligatorio en el path.',
   '- Si estás en un flujo de contacto/campo y el usuario pregunta "cuáles tienes", "cuáles hay", "investiga dentro de GHL" o similar, usa lookup_highlevel_contact con el contacto activo para leer campos estándar y custom fields reales. Lista opciones con valores actuales y luego pregunta cuál quiere cambiar.',
   '- Si una herramienta ya devolvió fields, customFieldDefinitions, products, workflows, calendars, tags u opciones, usa esos resultados para avanzar. No contestes con otra pregunta genérica si ya puedes mostrar opciones reales.',
-  '- Para citas/calendarios operativos usa manage_highlevel_appointment antes que MCP o highlevel_rest_request. Operaciones: lookup_slots, create, reschedule, cancel, confirm, showed, noshow y delete.',
+  '- Para citas/calendarios operativos de Ristak usa herramientas internas por defecto. Usa manage_highlevel_appointment antes que MCP o highlevel_rest_request sólo si el usuario pidió GoHighLevel/GHL o la cita está sincronizada con esa integración. Operaciones: lookup_slots, create, reschedule, cancel, confirm, showed, noshow y delete.',
   '- Contrato de citas GHL: agendar = POST /calendars/events/appointments; reprogramar/confirmar/cancelar/showed/noshow = PUT /calendars/events/appointments/:eventId con appointmentStatus o startTime/endTime; eliminar de verdad = DELETE /calendars/events/:eventId.',
   '- Si el usuario pide agendar y no dio hora exacta, primero busca disponibilidad con lookup_slots. Si no dio calendarId, usa el calendario predeterminado de Ristak; si hay varios y no hay default, pide que elija.',
-  '- Si una acción de CRM menciona un nombre de persona/contacto, primero resuelve ese nombre contra DB/GHL y usa el contactId real. No le pidas ID, correo o teléfono al usuario si Memoria operacional CRM ya trae resolvedContact.',
+  '- Si una acción menciona un nombre de persona/contacto, primero resuelve ese nombre contra Ristak/DB y usa el contactId real. Sólo consulta GHL si el usuario lo pidió o si necesitas un campo externo de esa integración.',
   '- Si Memoria operacional CRM o de pagos trae resolvedContact y el último mensaje no introduce un contacto distinto, úsalo como la persona activa para cualquier acción nueva: pagos, workflows, citas, mensajes, oportunidades, campos, notas o tags.',
   '- Si Memoria operacional de producto/precio trae activeProduct y el usuario corrige sólo monto/precio, conserva ese producto como concepto/producto activo. No reinicies contacto ni producto por una corrección corta.',
-  '- Para agendar citas, meter a workflow, crear oportunidades o mandar mensajes a una persona, usa el contactId resuelto por lookup_highlevel_contact, manage_highlevel_appointment o Memoria operacional CRM; no confundas ese nombre con la última/próxima cita de otro contacto.',
+  '- Para agendar citas o mandar mensajes a una persona usa el contacto resuelto en Ristak/Memoria operacional. Para workflows u oportunidades de GoHighLevel, usa lookup_highlevel_contact sólo si el usuario pidió esa integración o el flujo activo ya es GHL.',
   '- Para cualquier acción sobre una persona/contacto (pagos, citas, workflows, oportunidades, mensajes, tags, notas, campos, suscripciones o conversaciones), el último resumen confirmado es sólo una propuesta. Si el usuario corrige o agrega algo antes de la ejecución, reconstruye la propuesta completa y vuelve a preguntar. No ejecutes con una confirmación anterior.',
   '- Para acciones sobre contactos, interpreta la intención humana completa antes de escoger herramienta: conserva entidad, cambios, fechas, esperas, condiciones, canal y método ya dichos. No reduzcas una corrección corta a un comando aislado si depende del plan anterior.',
   '- Para crear, enviar, cobrar, programar, cancelar o modificar pagos, links, invoices, parcialidades, pagos manuales, tarjeta guardada o domiciliación usa las herramientas internas de Ristak porque replican la lógica real del backend. No uses MCP como atajo para mutaciones de dinero.',
@@ -14635,7 +15002,13 @@ async function createAutonomousDatabaseReply(apiKey, { messages, viewContext, ru
   const metaCampaignBuilderTools = buildMetaCampaignBuilderTools({
     enabled: Boolean(metaCampaignBuilderIntent)
   })
-  const rawHighLevelTools = metaAdsOperationalIntent
+  const needsOperationalTools = Boolean(
+    paymentOperationRequest ||
+    agentRoute?.requiresHighLevelTools ||
+    agentRoute?.highLevelRestReadIntent ||
+    contactActionRequest
+  )
+  const rawHighLevelTools = metaAdsOperationalIntent || !needsOperationalTools
     ? []
     : buildHighLevelTools(highLevelConnection, {
         paymentActionRequest,
@@ -14649,7 +15022,11 @@ async function createAutonomousDatabaseReply(apiKey, { messages, viewContext, ru
     : PAYMENT_OPERATION_ALLOWED_TOOL_NAMES
   const highLevelTools = paymentOperationRequest
     ? rawHighLevelTools.filter(tool => tool?.type === 'function' && paymentToolNames.has(tool.name))
-    : rawHighLevelTools
+    : agentRoute?.requiresHighLevelTools || agentRoute?.highLevelRestReadIntent
+      ? highLevelConnection?.configured ? rawHighLevelTools : []
+      : contactActionRequest
+        ? rawHighLevelTools.filter(tool => tool?.type === 'function' && CRM_CONTACT_TOOL_NAMES.has(tool.name))
+        : []
   const agentTools = [...webSearchTools, ...highLevelTools, ...metaCampaignBuilderTools]
   const toolsRequireActionLoop = highLevelTools.length > 0 || metaCampaignBuilderTools.length > 0
   const operationalReferenceContext = agentRoute?.requiresHighLevelTools || agentRoute?.requiresPaymentTools
@@ -14685,6 +15062,7 @@ async function createAutonomousDatabaseReply(apiKey, { messages, viewContext, ru
     usesActionTools: highLevelTools.length > 0 || metaCampaignBuilderTools.length > 0,
     latestMessageFromButton
   })
+  const includeHighLevelContext = Boolean(agentRoute?.requiresHighLevelTools || agentRoute?.highLevelRestReadIntent)
 
   const input = [
     `Fecha/hora actual local: ${runtimeContext.nowIso}`,
@@ -14696,15 +15074,23 @@ async function createAutonomousDatabaseReply(apiKey, { messages, viewContext, ru
     'Modo del agente unificado:',
     JSON.stringify(agentRoute || {}, null, 2),
     '',
-    'Conexión HighLevel para acciones en CRM:',
-    buildHighLevelToolContext(highLevelConnection),
+    'Conexión opcional HighLevel para acciones externas de CRM:',
+    includeHighLevelContext
+      ? buildHighLevelToolContext(highLevelConnection)
+      : 'No aplica para esta ruta; Ristak debe operar con sus datos y herramientas internas.',
     '',
-    'Catálogo HighLevel que debe enrutar a MCP/REST cuando el usuario lo pida:',
-    HIGHLEVEL_API_RESOURCE_CATALOG_TEXT,
-    HIGHLEVEL_ENDPOINT_CATALOG_SUMMARY,
+    'Catálogo HighLevel que debe enrutar a MCP/REST cuando el usuario lo pida explícitamente:',
+    includeHighLevelContext
+      ? HIGHLEVEL_API_RESOURCE_CATALOG_TEXT
+      : 'No aplica para esta ruta.',
+    includeHighLevelContext
+      ? HIGHLEVEL_ENDPOINT_CATALOG_SUMMARY
+      : 'No aplica para esta ruta.',
     '',
     'Sugerencias de endpoint HighLevel para el último mensaje:',
-    buildHighLevelEndpointIntentHint({ latestUserMessage, messages, agentRoute }),
+    includeHighLevelContext
+      ? buildHighLevelEndpointIntentHint({ latestUserMessage, messages, agentRoute })
+      : 'No aplica para esta ruta.',
     '',
     'Contexto operacional para referencias del usuario:',
     operationalReferenceContext ? JSON.stringify(operationalReferenceContext, null, 2) : 'No aplica para esta ruta.',
@@ -17680,7 +18066,7 @@ export async function createAgentReply({ apiKey, messages, viewContext, userId =
               ? 'La pregunta es operativa de Meta Ads y la operación directa está deshabilitada dentro de esta app.'
               : metaCampaignBuilderIntent
                 ? 'La pregunta pide crear/configurar campana Meta Ads; el agente debe usar Campaign Builder interno.'
-                : 'La pregunta no requiere plan SQL general; el agente decidirá si responde directo o usa herramientas de HighLevel/Ristak.'
+                : 'La pregunta no requiere plan SQL general; el agente decidirá si responde directo o usa herramientas internas de Ristak o integraciones opcionales.'
           ],
           queries: []
         }

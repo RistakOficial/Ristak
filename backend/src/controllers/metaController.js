@@ -3137,7 +3137,7 @@ export const syncFromHighLevel = async (req, res) => {
     if (!hlConfig || !hlConfig.location_id || !hlConfig.api_token) {
       return res.status(400).json({
         success: false,
-        error: 'No hay configuración de HighLevel. Primero debes conectar HighLevel en Settings.'
+        error: 'La sincronización opcional desde HighLevel no está configurada. Meta puede operar con su configuración local en Ristak.'
       });
     }
 

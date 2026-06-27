@@ -1859,7 +1859,7 @@ export const sendInvoice = async (req, res) => {
     if (!config || !config.location_data) {
       return res.status(400).json({
         success: false,
-        error: 'Configura tu cuenta de HighLevel antes de enviar invoices'
+        error: 'Esta opcion usa comprobantes de GoHighLevel. Conecta esa integracion opcional o crea el cobro con Stripe, Conekta o Mercado Pago desde Ristak.'
       });
     }
 
@@ -1872,7 +1872,7 @@ export const sendInvoice = async (req, res) => {
     if (!fromName || !fromEmail) {
       return res.status(400).json({
         success: false,
-        error: 'Tu perfil de HighLevel requiere nombre y correo del negocio para enviar invoices'
+        error: 'Los comprobantes de GoHighLevel necesitan nombre y correo del negocio en esa integracion opcional.'
       });
     }
 
@@ -3883,7 +3883,7 @@ export const saveInvoiceConfig = async (req, res) => {
     if (!config || !config.location_id) {
       return res.status(400).json({
         success: false,
-        error: 'Primero debes configurar tu cuenta de HighLevel'
+        error: 'Esta opcion usa GoHighLevel como integracion opcional. Para planes sin GoHighLevel, usa las pasarelas conectadas de Ristak como Stripe o Conekta.'
       });
     }
 

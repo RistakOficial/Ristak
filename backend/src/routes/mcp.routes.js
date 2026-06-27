@@ -320,7 +320,7 @@ const toolDefinitions = [
   {
     name: 'ghl_create_installment_plan',
     title: 'Create GoHighLevel installment plan',
-    description: 'Creates a Ristak/GoHighLevel installment payment flow. Requires confirm=true.',
+    description: 'Creates a Ristak installment payment flow; GoHighLevel is only used when selected as an optional connected gateway. Requires confirm=true.',
     inputSchema: {
       type: 'object',
       properties: {

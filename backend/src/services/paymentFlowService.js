@@ -467,7 +467,7 @@ async function getInvoiceSendContext() {
   `)
 
   if (!config || !config.location_data) {
-    throw new Error('Configura tu cuenta de HighLevel antes de enviar cobros')
+    throw new Error('Esta opcion usa comprobantes de GoHighLevel. Conecta esa integracion opcional o crea el cobro con Stripe, Conekta o Mercado Pago desde Ristak.')
   }
 
   const locationData = typeof config.location_data === 'string'
@@ -891,7 +891,7 @@ async function sendInvoice({ ghlClient, invoiceId, contact, channels, forceAllAv
   }
 
   if (!context.sentFrom.fromName || !context.sentFrom.fromEmail) {
-    throw new Error('Tu perfil de HighLevel requiere nombre y correo del negocio para enviar cobros')
+    throw new Error('Los comprobantes de GoHighLevel necesitan nombre y correo del negocio en esa integracion opcional.')
   }
 
   await ghlClient.sendInvoice(invoiceId, {

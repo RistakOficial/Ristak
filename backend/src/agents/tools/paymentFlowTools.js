@@ -55,11 +55,11 @@ const GATEWAY_PARAM = z.enum(['auto', 'highlevel', 'stripe', 'conekta', 'mercado
   .describe('Pasarela a usar: auto, highlevel, stripe, conekta o mercadopago. Si hay varias conectadas, pregunta al usuario cuál prefiere antes de crear el cobro.')
 
 const CHANNEL_PARAM = z.enum(['email', 'whatsapp', 'sms', 'all'])
-  .describe('Canal por el que se envía el link de HighLevel.')
+  .describe('Canal por el que se envía el link cuando la pasarela requiere envío.')
 
 const OPTIONAL_CHANNEL_PARAM = CHANNEL_PARAM
   .nullable()
-  .describe('Canal de envío si la pasarela es HighLevel: email, whatsapp, sms o all. Para Stripe/Mercado Pago puede ser null porque devuelven un enlace público.')
+  .describe('Canal de envío si la pasarela requiere entrega directa: email, whatsapp, sms o all. Para pasarelas que devuelven enlace público puede ser null.')
 
 const FIRST_PAYMENT_METHOD_PARAM = z.enum([
   'cash',
@@ -236,12 +236,12 @@ async function selectPaymentGateway(requestedGateway, capability) {
       ok: false,
       error: `No hay pasarelas conectadas para ${capabilityLabel}. Conecta ${
         capability === 'installmentPlans'
-          ? 'Stripe o GoHighLevel'
+          ? 'Stripe, Conekta o GoHighLevel opcional'
           : capability === 'subscriptions'
             ? 'Stripe o Mercado Pago'
             : capability === 'savedCardCharges'
               ? 'Stripe o Conekta'
-              : 'Stripe, Conekta, Mercado Pago o GoHighLevel'
+              : 'Stripe, Conekta, Mercado Pago o GoHighLevel opcional'
       } en Configuración > Pagos.`,
       snapshot
     }
@@ -383,7 +383,7 @@ export const listProductsTool = tool({
 
 export const getPaymentGatewaysTool = tool({
   name: 'get_payment_gateways',
-  description: 'Detecta qué pasarelas de pago están conectadas (GoHighLevel, Stripe, Conekta, Mercado Pago) y qué puede hacer cada una: links, planes, suscripciones o cobros con tarjeta guardada. Úsala antes de crear cobros si el usuario no dijo pasarela.',
+  description: 'Detecta qué pasarelas de pago están conectadas en Ristak (Stripe, Conekta, Mercado Pago y GoHighLevel opcional) y qué puede hacer cada una: links, planes, suscripciones o cobros con tarjeta guardada. Úsala antes de crear cobros si el usuario no dijo pasarela.',
   parameters: z.object({}),
   execute: async () => {
     const snapshot = await getPaymentGatewaySnapshot()
@@ -403,7 +403,7 @@ export const getPaymentGatewaysTool = tool({
 
 export const createPaymentLinkTool = tool({
   name: 'create_payment_link',
-  description: 'Crea un link de pago único con la pasarela conectada correcta (Stripe, Conekta, Mercado Pago o GoHighLevel). Antes de llamarla: 1) identifica el contacto real, 2) si hay varias pasarelas conectadas pregunta cuál usar, 3) confirma monto, concepto y canal si aplica, 4) pasa confirm=true solo cuando el usuario ya aprobó el cobro.',
+  description: 'Crea un link de pago único con la pasarela conectada correcta de Ristak (Stripe, Conekta, Mercado Pago o GoHighLevel opcional). Antes de llamarla: 1) identifica el contacto real, 2) si hay varias pasarelas conectadas pregunta cuál usar, 3) confirma monto, concepto y canal si aplica, 4) pasa confirm=true solo cuando el usuario ya aprobó el cobro.',
   parameters: z.object({
     contactId: z.string().describe('ID del contacto a cobrar (usa search_contacts)'),
     amount: z.number().positive().describe('Monto del cobro'),
@@ -474,7 +474,7 @@ export const createPaymentLinkTool = tool({
       }
 
       if (!channel) {
-        return { ok: false, error: 'Para enviar por GoHighLevel falta elegir canal: email, WhatsApp, SMS o todos.' }
+        return { ok: false, error: 'Para enviar el link falta elegir canal: email, WhatsApp, SMS o todos.' }
       }
       const result = await createSinglePaymentLink({
         contact,
@@ -506,7 +506,7 @@ export const createPaymentLinkTool = tool({
 
 export const createInstallmentPlanTool = tool({
   name: 'create_installment_plan',
-  description: 'Crea un plan de pagos por parcialidades con Stripe, Conekta o GoHighLevel: primer pago opcional + pagos restantes con fechas. Mercado Pago no soporta planes de pago en Ristak; úsalo sólo para links o suscripciones. La suma del primer pago y los restantes debe ser igual al total. Si hay varias pasarelas conectadas pregunta cuál usar. Confirma el plan completo y pasa confirm=true solo cuando ya aprobó.',
+  description: 'Crea un plan de pagos por parcialidades con las pasarelas conectadas compatibles de Ristak, normalmente Stripe o Conekta y GoHighLevel sólo si está configurado como integración opcional: primer pago opcional + pagos restantes con fechas. Mercado Pago no soporta planes de pago en Ristak; úsalo sólo para links o suscripciones. La suma del primer pago y los restantes debe ser igual al total. Si hay varias pasarelas conectadas pregunta cuál usar. Confirma el plan completo y pasa confirm=true solo cuando ya aprobó.',
   parameters: z.object({
     contactId: z.string().describe('ID del contacto'),
     totalAmount: z.number().positive().describe('Total a cobrar (debe coincidir con la suma de los pagos)'),
@@ -566,7 +566,7 @@ export const createInstallmentPlanTool = tool({
       }
 
       if (!channel) {
-        return { ok: false, error: 'Para enviar parcialidades por GoHighLevel falta elegir canal: email, WhatsApp, SMS o todos.' }
+        return { ok: false, error: 'Para enviar parcialidades falta elegir canal: email, WhatsApp, SMS o todos.' }
       }
       const result = await createInstallmentPaymentFlow({
         ...planPayload,
