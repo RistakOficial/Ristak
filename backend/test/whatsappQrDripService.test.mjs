@@ -95,22 +95,31 @@ test('reserves QR drip send slots without delaying the first message', async () 
   let nowMs = Date.UTC(2026, 5, 20, 18, 0, 0)
 
   const first = await reserveWhatsAppQrDripSlot({
+    phoneNumberId: 'qr-phone-1',
     settings: { enabled: true, delaySeconds: 30 },
     now: () => nowMs
   })
   const second = await reserveWhatsAppQrDripSlot({
+    phoneNumberId: 'qr-phone-1',
+    settings: { enabled: true, delaySeconds: 30 },
+    now: () => nowMs
+  })
+  const otherPhoneFirst = await reserveWhatsAppQrDripSlot({
+    phoneNumberId: 'qr-phone-2',
     settings: { enabled: true, delaySeconds: 30 },
     now: () => nowMs
   })
 
   nowMs += 10000
   const third = await reserveWhatsAppQrDripSlot({
+    phoneNumberId: 'qr-phone-1',
     settings: { enabled: true, delaySeconds: 30 },
     now: () => nowMs
   })
 
   assert.equal(first.delayMs, 0)
   assert.equal(second.delayMs, 30000)
+  assert.equal(otherPhoneFirst.delayMs, 0)
   assert.equal(third.delayMs, 50000)
 
   resetWhatsAppQrDripRuntimeForTest()

@@ -15,8 +15,8 @@ const DEFAULT_WHATSAPP_QR_DRIP_SETTINGS = {
   delayUnit: WHATSAPP_QR_DRIP_DEFAULT_DELAY_UNIT
 }
 
-let qrDripReservationQueue = Promise.resolve()
-let nextQrDripAvailableAt = 0
+const qrDripReservationQueues = new Map()
+const nextQrDripAvailableAtByPhone = new Map()
 let sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms))
 
 function cleanBoolean(value, fallback = false) {
@@ -49,6 +49,10 @@ function parseStoredSettings(rawValue) {
   } catch {
     return {}
   }
+}
+
+function normalizeReservationKey(phoneNumberId) {
+  return String(phoneNumberId || 'global').trim() || 'global'
 }
 
 export function normalizeWhatsAppQrDripSettings(input = {}) {
@@ -88,48 +92,55 @@ export async function saveWhatsAppQrDripSettings(input = {}) {
   })
 
   if (!next.enabled) {
-    nextQrDripAvailableAt = 0
+    qrDripReservationQueues.clear()
+    nextQrDripAvailableAtByPhone.clear()
   }
 
   return next
 }
 
-export async function reserveWhatsAppQrDripSlot({ settings = null, now = Date.now } = {}) {
+export async function reserveWhatsAppQrDripSlot({ phoneNumberId, settings = null, now = Date.now } = {}) {
   const activeSettings = normalizeWhatsAppQrDripSettings(settings || await getWhatsAppQrDripSettings())
+  const reservationKey = normalizeReservationKey(phoneNumberId)
   if (!activeSettings.enabled) {
     return {
       enabled: false,
       delayMs: 0,
       delaySeconds: activeSettings.delaySeconds,
-      sendAt: new Date(now()).toISOString()
+      sendAt: new Date(now()).toISOString(),
+      phoneNumberId: reservationKey
     }
   }
 
   const delayMsPerMessage = activeSettings.delaySeconds * 1000
-  const reservation = qrDripReservationQueue.catch(() => undefined).then(() => {
+  const currentQueue = qrDripReservationQueues.get(reservationKey) || Promise.resolve()
+  const reservation = currentQueue.catch(() => undefined).then(() => {
     const currentTime = now()
-    const sendAtMs = Math.max(nextQrDripAvailableAt, currentTime)
+    const currentAvailableAt = nextQrDripAvailableAtByPhone.get(reservationKey) || 0
+    const sendAtMs = Math.max(currentAvailableAt, currentTime)
     const delayMs = Math.max(0, sendAtMs - currentTime)
-    nextQrDripAvailableAt = sendAtMs + delayMsPerMessage
+    nextQrDripAvailableAtByPhone.set(reservationKey, sendAtMs + delayMsPerMessage)
 
     return {
       enabled: true,
       delayMs,
       delaySeconds: activeSettings.delaySeconds,
-      sendAt: new Date(sendAtMs).toISOString()
+      sendAt: new Date(sendAtMs).toISOString(),
+      phoneNumberId: reservationKey
     }
   })
 
-  qrDripReservationQueue = reservation.then(() => undefined, () => undefined)
+  qrDripReservationQueues.set(reservationKey, reservation.then(() => undefined, () => undefined))
   return reservation
 }
 
 export async function waitForWhatsAppQrDripSlot(context = {}) {
-  const reservation = await reserveWhatsAppQrDripSlot()
+  const reservation = await reserveWhatsAppQrDripSlot({ phoneNumberId: context.phoneNumberId })
   if (reservation.enabled && reservation.delayMs > 0) {
     const target = context.to ? ` para ${context.to}` : ''
     const type = context.type ? ` (${context.type})` : ''
-    logger.info(`[WhatsApp QR] Sistema anti-bloqueos espera ${Math.ceil(reservation.delayMs / 1000)}s${target}${type}`)
+    const sender = context.phoneNumberId ? ` desde ${context.phoneNumberId}` : ''
+    logger.info(`[WhatsApp QR] Sistema anti-bloqueos espera ${Math.ceil(reservation.delayMs / 1000)}s${sender}${target}${type}`)
     await sleep(reservation.delayMs)
   }
 
@@ -143,7 +154,7 @@ export function setWhatsAppQrDripSleepForTest(sleepImpl = null) {
 }
 
 export function resetWhatsAppQrDripRuntimeForTest() {
-  qrDripReservationQueue = Promise.resolve()
-  nextQrDripAvailableAt = 0
+  qrDripReservationQueues.clear()
+  nextQrDripAvailableAtByPhone.clear()
   setWhatsAppQrDripSleepForTest(null)
 }

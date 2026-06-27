@@ -1912,6 +1912,23 @@ export async function disconnectWhatsAppQrConnection({ phoneNumberId } = {}) {
   return mapSessionForResponse(row)
 }
 
+async function sendProtectedQrMessage({ sock, phone, recipient, type, payload } = {}) {
+  if (!sock?.sendMessage) {
+    throw new Error('La conexión QR no puede enviar mensajes en este momento')
+  }
+  if (!phone?.id) {
+    throw new Error('Falta el número emisor de WhatsApp QR')
+  }
+
+  await waitForWhatsAppQrDripSlot({
+    phoneNumberId: phone.id,
+    to: recipient?.verifiedPhone,
+    type
+  })
+
+  return sock.sendMessage(recipient.jid, payload)
+}
+
 export async function sendWhatsAppQrTextMessage({ phoneNumberId, from, to, text, externalId } = {}) {
   const phone = await resolveQrPhone({ phoneNumberId, from })
   const toPhone = normalizePhoneForStorage(to) || cleanString(to)
@@ -1934,12 +1951,13 @@ export async function sendWhatsAppQrTextMessage({ phoneNumberId, from, to, text,
     type: 'text',
     text: body
   })
-  await waitForWhatsAppQrDripSlot({
-    phoneNumberId: phone.id,
-    to: recipient.verifiedPhone || toPhone,
-    type: 'text'
+  const response = await sendProtectedQrMessage({
+    sock,
+    phone,
+    recipient,
+    type: 'text',
+    payload: { text: body }
   })
-  const response = await sock.sendMessage(recipient.jid, { text: body })
   const sendResult = await finalizeQrSendResponse({ response, recipient, externalId })
 
   return {
@@ -1983,15 +2001,16 @@ export async function sendWhatsAppQrImageMessage({ phoneNumberId, from, to, imag
     type: 'image',
     text: cleanCaption
   })
-  await waitForWhatsAppQrDripSlot({
-    phoneNumberId: phone.id,
-    to: recipient.verifiedPhone || toPhone,
-    type: 'image'
-  })
-  const response = await sock.sendMessage(recipient.jid, {
-    image: media.content,
-    ...(media.mimeType ? { mimetype: media.mimeType } : {}),
-    ...(cleanCaption ? { caption: cleanCaption } : {})
+  const response = await sendProtectedQrMessage({
+    sock,
+    phone,
+    recipient,
+    type: 'image',
+    payload: {
+      image: media.content,
+      ...(media.mimeType ? { mimetype: media.mimeType } : {}),
+      ...(cleanCaption ? { caption: cleanCaption } : {})
+    }
   })
   const sendResult = await finalizeQrSendResponse({ response, recipient, externalId })
 
@@ -2041,16 +2060,17 @@ export async function sendWhatsAppQrAudioMessage({ phoneNumberId, from, to, audi
     type: 'audio',
     text: ''
   })
-  await waitForWhatsAppQrDripSlot({
-    phoneNumberId: phone.id,
-    to: recipient.verifiedPhone || toPhone,
-    type: 'audio'
-  })
-  const response = await sock.sendMessage(recipient.jid, {
-    audio: media.content,
-    mimetype: mimeType,
-    ptt: true,
-    ...(seconds ? { seconds } : {})
+  const response = await sendProtectedQrMessage({
+    sock,
+    phone,
+    recipient,
+    type: 'audio',
+    payload: {
+      audio: media.content,
+      mimetype: mimeType,
+      ptt: true,
+      ...(seconds ? { seconds } : {})
+    }
   })
   const sendResult = await finalizeQrSendResponse({ response, recipient, externalId })
   const audioLink = cleanString(audioPublicUrl) || media.sourceUrl || cleanString(audioUrl)
@@ -2110,16 +2130,17 @@ export async function sendWhatsAppQrDocumentMessage({ phoneNumberId, from, to, d
     type: 'document',
     text: cleanCaption || cleanFilename
   })
-  await waitForWhatsAppQrDripSlot({
-    phoneNumberId: phone.id,
-    to: recipient.verifiedPhone || toPhone,
-    type: 'document'
-  })
-  const response = await sock.sendMessage(recipient.jid, {
-    document: media.content,
-    mimetype: documentMimeType,
-    fileName: cleanFilename,
-    ...(cleanCaption ? { caption: cleanCaption } : {})
+  const response = await sendProtectedQrMessage({
+    sock,
+    phone,
+    recipient,
+    type: 'document',
+    payload: {
+      document: media.content,
+      mimetype: documentMimeType,
+      fileName: cleanFilename,
+      ...(cleanCaption ? { caption: cleanCaption } : {})
+    }
   })
   const sendResult = await finalizeQrSendResponse({ response, recipient, externalId })
 
