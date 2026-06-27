@@ -375,6 +375,12 @@
   line-height: 1.45;
 }
 
+.paymentMetaEventControls {
+  display: grid;
+  gap: 16px;
+  margin-top: 16px;
+}
+
 .paymentMetaEventField {
   display: grid;
   gap: 7px;
