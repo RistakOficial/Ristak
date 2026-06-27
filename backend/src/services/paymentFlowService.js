@@ -203,9 +203,11 @@ function paymentOrdinalLabel(index) {
 function frequencyLabel(frequency, count) {
   const plural = count === 1 ? '' : 's'
   const labels = {
+    daily: `diario${plural}`,
     weekly: `semanal${plural === 's' ? 'es' : ''}`,
     biweekly: `quincenal${plural === 's' ? 'es' : ''}`,
     monthly: `mensual${plural === 's' ? 'es' : ''}`,
+    yearly: `anual${plural === 's' ? 'es' : ''}`,
     custom: `personalizado${plural}`
   }
 

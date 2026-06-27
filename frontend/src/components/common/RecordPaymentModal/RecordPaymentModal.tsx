@@ -117,7 +117,7 @@ type SinglePaymentAction = 'payment_link' | 'saved_card' | 'manual'
 type SinglePaymentOptionsStage = 'method' | 'gateway'
 type InstallmentValueType = 'percentage' | 'amount'
 type FirstPaymentMethod = '' | 'cash' | 'bank_transfer' | 'deposit' | 'card'
-type RemainingFrequency = 'custom' | 'weekly' | 'biweekly' | 'monthly'
+type RemainingFrequency = 'custom' | 'daily' | 'weekly' | 'biweekly' | 'monthly' | 'yearly'
 type StripePlanCardSource = 'new_card' | 'saved_card'
 type SendMethod = 'whatsapp' | 'sms' | 'email' | 'email_whatsapp' | 'email_sms' | 'all'
 type InvoiceSendMethod = 'email' | 'sms' | 'both'
@@ -139,9 +139,11 @@ const FIRST_PAYMENT_METHOD_OPTIONS = [
 ]
 
 const REMAINING_FREQUENCY_OPTIONS = [
-  { value: 'monthly', label: 'Mensual' },
-  { value: 'biweekly', label: 'Quincenal' },
+  { value: 'daily', label: 'Diario' },
   { value: 'weekly', label: 'Semanal' },
+  { value: 'biweekly', label: 'Quincenal' },
+  { value: 'monthly', label: 'Mensual' },
+  { value: 'yearly', label: 'Anual' },
   { value: 'custom', label: 'Personalizada' }
 ]
 
@@ -418,12 +420,20 @@ const defaultPartialInstallments = (): InstallmentDraft[] => {
 const getNextDueDate = (baseDate: string, frequency: RemainingFrequency, index: number) => {
   const base = baseDate ? new Date(`${baseDate}T00:00:00`) : new Date()
 
+  if (frequency === 'daily') {
+    return toDateInputValue(addDays(base, index))
+  }
+
   if (frequency === 'weekly') {
     return toDateInputValue(addDays(base, 7 * index))
   }
 
   if (frequency === 'biweekly') {
     return toDateInputValue(addDays(base, 14 * index))
+  }
+
+  if (frequency === 'yearly') {
+    return toDateInputValue(addMonths(base, 12 * index))
   }
 
   return toDateInputValue(addMonths(base, index))

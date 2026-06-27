@@ -1238,9 +1238,11 @@ function normalizeConektaPaymentPlanPayload(input = {}) {
 
 function getConektaPlanRecurrenceLabel(frequency) {
   const labels = {
+    daily: 'Diario',
     weekly: 'Semanal',
     biweekly: 'Quincenal',
     monthly: 'Mensual',
+    yearly: 'Anual',
     custom: 'Personalizado'
   }
 
