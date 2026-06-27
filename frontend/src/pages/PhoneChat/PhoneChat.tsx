@@ -3724,6 +3724,13 @@ export const PhoneChat: React.FC = () => {
   })
   const actionSheetMoving = actionSheetDismiss.dragging || actionSheetDismiss.closing || actionSheetDismiss.dragOffset > 0
   const actionSheetDragging = actionSheetDismiss.dragging || actionSheetDismiss.dragOffset > 0
+  const requestSheetToggleClose = useCallback((targetSheet: Exclude<ActionSheet, null>, contactId?: string | null) => {
+    if (sheet !== targetSheet) return false
+    if (contactId && activeContactId !== contactId) return false
+
+    actionSheetDismiss.requestClose()
+    return true
+  }, [activeContactId, actionSheetDismiss, sheet])
   const closeTagPicker = useCallback((options: { closeSheet?: boolean } = {}) => {
     if (options.closeSheet !== false) {
       actionSheetDismiss.requestClose()
@@ -6863,6 +6870,8 @@ export const PhoneChat: React.FC = () => {
   }
 
   const openAttachmentsSheet = () => {
+    if (requestSheetToggleClose('attachments')) return
+
     closeComposerChannelPicker()
     if (isWideChatDevice) {
       const rect = composerPlusRef.current?.getBoundingClientRect()
@@ -7332,6 +7341,11 @@ export const PhoneChat: React.FC = () => {
   }
 
   const handleOpenChatMore = (contact: Contact) => {
+    if (requestSheetToggleClose('chatMore', contact.id)) {
+      setChatActionContactId(null)
+      return
+    }
+
     setActiveContactId(contact.id)
     setChatActionContactId(contact.id)
     setChatMoreMode('default')
@@ -7405,6 +7419,8 @@ export const PhoneChat: React.FC = () => {
   }
 
   const handleOpenAppointmentForm = (contact?: Contact | null) => {
+    if (requestSheetToggleClose('appointment', contact?.id || activeContactId)) return
+
     if (contact?.id) {
       startConversationBottomLock(contact.id)
       runConversationOpenBottomScrollSequence()
@@ -7461,6 +7477,8 @@ export const PhoneChat: React.FC = () => {
   ])
 
   const openPaymentSheetForContact = (contact: Contact) => {
+    if (requestSheetToggleClose('payment', contact.id)) return
+
     setActiveContactId(contact.id)
     setChatActionContactId(null)
     setContactInfoOpen(false)
@@ -8237,12 +8255,16 @@ export const PhoneChat: React.FC = () => {
   )
 
   const handleOpenTemplatesSheet = () => {
+    if (requestSheetToggleClose('templates')) return
+
     setTemplateMode('choice')
     setTemplateSearch('')
     setSheet('templates')
   }
 
   const handleOpenClabeSheet = () => {
+    if (requestSheetToggleClose('clabe')) return
+
     setClabeFormOpen(false)
     setSheet('clabe')
   }
@@ -8473,6 +8495,7 @@ export const PhoneChat: React.FC = () => {
 
   const handleOpenScheduleSheet = () => {
     if (!activeContact) return
+    if (requestSheetToggleClose('schedule', activeContact.id)) return
 
     if (!messageTextRef.current.trim()) {
       showToast('warning', 'Escribe el mensaje', 'Primero escribe el texto que quieres programar.')
@@ -11829,22 +11852,8 @@ export const PhoneChat: React.FC = () => {
     )
   }
 
-  const renderConversationChannelPicker = () => {
-    if (!isWideChatDevice || !activeContact || aiAgentConversationOpen) return null
-
-    if (!outsideReplyWindow || !selectedQrReady) return null
-
-    return (
-      <span className={styles.conversationReplyWindowNotice}>
-        <Clock size={12} />
-        Fuera de 24 h · QR
-      </span>
-    )
-  }
-
   const renderSenderBar = () => {
     if (!activeContact) return null
-    if (isWideChatDevice) return null
 
     if (!outsideReplyWindow || !selectedQrReady) return null
 
@@ -15650,7 +15659,6 @@ export const PhoneChat: React.FC = () => {
                     <span>{getContactDetail(activeContact)}</span>
                   </span>
                 </button>
-                {renderConversationChannelPicker()}
               </div>
             ) : (
               <div className={styles.conversationIdentity}>
