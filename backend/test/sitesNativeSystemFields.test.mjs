@@ -196,6 +196,74 @@ test('native form URL validation renders a real URL validator', async () => {
   }
 })
 
+test('native form system email and phone validate automatically without manual validation setting', async () => {
+  const site = {
+    id: 'site_auto_system_validation',
+    name: 'Formulario validacion sistema',
+    title: 'Formulario validacion sistema',
+    description: '',
+    slug: 'form-auto-system-validation',
+    siteType: 'standard_form',
+    status: 'published',
+    theme: { template: 'ristak' },
+    blocks: [
+      {
+        id: 'legacy-system-email',
+        siteId: 'site_auto_system_validation',
+        blockType: 'short_text',
+        label: 'Correo',
+        content: '',
+        placeholder: 'correo@ejemplo.com',
+        required: true,
+        options: [],
+        sortOrder: 0,
+        settings: { systemFieldKey: 'email', internalName: 'email' },
+        createdAt: '',
+        updatedAt: ''
+      },
+      {
+        id: 'legacy-system-phone',
+        siteId: 'site_auto_system_validation',
+        blockType: 'short_text',
+        label: 'Telefono',
+        content: '',
+        placeholder: '10 digitos',
+        required: true,
+        options: [],
+        sortOrder: 1,
+        settings: { systemFieldKey: 'phone', internalName: 'phone' },
+        createdAt: '',
+        updatedAt: ''
+      },
+      {
+        id: 'manual-url',
+        siteId: 'site_auto_system_validation',
+        blockType: 'short_text',
+        label: 'Sitio',
+        content: '',
+        placeholder: 'https://ejemplo.com',
+        required: false,
+        options: [],
+        sortOrder: 2,
+        settings: { internalName: 'website', validation: 'url' },
+        createdAt: '',
+        updatedAt: ''
+      }
+    ]
+  }
+
+  const html = await renderPublicSiteHtml(site, { preview: true })
+
+  assert.match(html, /data-system-field-key="email"[^>]*data-validation="email"/)
+  assert.match(html, /data-system-field-key="phone"[^>]*data-validation="phone"/)
+  assert.match(html, /data-system-field-key=""[^>]*data-validation="url"/)
+  assert.match(html, /id="legacy-system-email" name="legacy-system-email" type="email"/)
+  assert.match(html, /id="legacy-system-phone" name="legacy-system-phone" type="tel"/)
+  assert.match(html, /const isValidEmailValue/)
+  assert.match(html, /const isLikelyPhoneValue/)
+  assert.match(html, /digits\.startsWith\('52'\)/)
+})
+
 test('native phone country selector keeps a bounded readable width', async () => {
   let site
 

@@ -628,6 +628,24 @@ const fieldValidationOptions = [
   { value: 'date', label: 'Fecha' },
   { value: 'url', label: 'URL' }
 ]
+const manualFieldValidationOptions = fieldValidationOptions.filter(option => option.value !== 'email' && option.value !== 'phone')
+const automaticFieldValidationLabels: Record<string, string> = {
+  email: 'Correo',
+  phone: 'Teléfono'
+}
+
+const getAutomaticFieldValidation = (block?: SiteBlock | null, preset?: SystemFormFieldPreset | null) => {
+  const settings = block?.settings || {}
+  const explicitValidation = String(settings.validation || settings.fieldValidation || settings.field_validation || '').toLowerCase()
+  if (explicitValidation === 'email' || explicitValidation === 'phone') return explicitValidation
+  if (preset?.validation === 'email' || preset?.validation === 'phone') return preset.validation
+  if (block?.blockType === 'email') return 'email'
+  if (block?.blockType === 'phone') return 'phone'
+  const systemFieldKey = String(settings.systemFieldKey || settings.system_field_key || '').toLowerCase()
+  if (systemFieldKey === 'email') return 'email'
+  if (systemFieldKey === 'phone') return 'phone'
+  return ''
+}
 
 const embeddedFormFieldTypes: SiteBlockType[] = [
   'short_text',
@@ -7266,6 +7284,7 @@ function FormEmbedEditorPanel({
   const activeFieldSettings = activeField?.settings || {}
   const activeBlockIsField = Boolean(activeField && fieldBlockTypes.has(activeField.blockType))
   const activeFieldSystemPreset = activeBlockIsField ? getSystemFormFieldPresetForBlock(activeField) : null
+  const activeFieldAutomaticValidation = getAutomaticFieldValidation(activeField, activeFieldSystemPreset)
   const showActiveFieldTypographyInEdit = shouldShowBlockTypographyInEdit(activeField)
   const shouldOpenActiveFieldContentByDefault = shouldOpenTextContentInEdit(activeField)
   const shouldOpenActiveFieldRulesByDefault = Boolean(activeField && isChoiceBlock(activeField.blockType))
@@ -7538,7 +7557,28 @@ function FormEmbedEditorPanel({
                 </label>
               )}
 
-              {activeFieldSystemPreset ? (
+              {activeFieldAutomaticValidation ? (
+                <>
+                  <div className={styles.systemFieldLock}>
+                    <span><Lock size={14} /></span>
+                    <div>
+                      <strong>Validación automática: {automaticFieldValidationLabels[activeFieldAutomaticValidation]}</strong>
+                      <p>Se revisa al enviar el formulario.</p>
+                    </div>
+                  </div>
+                  <label className={styles.checkboxLabel}>
+                    <input
+                      type="checkbox"
+                      checked={Boolean(activeField.required)}
+                      onChange={(event) => {
+                        patchActiveField({ required: event.target.checked })
+                        window.setTimeout(onSave, 0)
+                      }}
+                    />
+                    <span>Campo requerido</span>
+                  </label>
+                </>
+              ) : activeFieldSystemPreset ? (
                 <label className={styles.checkboxLabel}>
                   <input
                     type="checkbox"
@@ -7559,7 +7599,7 @@ function FormEmbedEditorPanel({
                       onChange={(event) => patchActiveFieldSettings({ validation: event.target.value })}
                       onBlur={onSave}
                     >
-                      {fieldValidationOptions.map(option => <option key={option.value || 'none'} value={option.value}>{option.label}</option>)}
+                      {manualFieldValidationOptions.map(option => <option key={option.value || 'none'} value={option.value}>{option.label}</option>)}
                     </CustomSelect>
                   </label>
                   <label className={styles.checkboxLabel}>
@@ -35504,6 +35544,7 @@ const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
   const shouldOpenContentEditorByDefault = shouldOpenTextContentInEdit(block)
   const shouldOpenChoiceRulesByDefault = isChoiceBlock(block.blockType)
   const systemFieldPreset = getSystemFormFieldPresetForBlock(block)
+  const blockAutomaticValidation = isField ? getAutomaticFieldValidation(block, systemFieldPreset) : ''
   const showTypographyInEdit = shouldShowBlockTypographyInEdit(block)
   const showBlockNameFirst = showTypographyInEdit || isField || block.blockType === SECTION_BLOCK_TYPE || block.blockType === 'countdown'
   const showTextContentBeforeTypography = showBlockNameFirst && shouldOpenContentEditorByDefault
@@ -35592,7 +35633,28 @@ const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
           </div>
         )}
 
-        {systemFieldPreset ? (
+        {blockAutomaticValidation ? (
+          <>
+            <div className={styles.systemFieldLock}>
+              <span><Lock size={14} /></span>
+              <div>
+                <strong>Validación automática: {automaticFieldValidationLabels[blockAutomaticValidation]}</strong>
+                <p>Se revisa al enviar el formulario.</p>
+              </div>
+            </div>
+            <label className={styles.checkboxLabel}>
+              <input
+                type="checkbox"
+                checked={block.required}
+                onChange={(event) => {
+                  onPatchBlock({ required: event.target.checked })
+                  window.setTimeout(onSave, 0)
+                }}
+              />
+              <span>Campo requerido</span>
+            </label>
+          </>
+        ) : systemFieldPreset ? (
           <label className={styles.checkboxLabel}>
             <input
               type="checkbox"
@@ -35613,7 +35675,7 @@ const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
                 onChange={(event) => onPatchSettings({ validation: event.target.value })}
                 onBlur={onSave}
               >
-                {fieldValidationOptions.map(option => <option key={option.value || 'none'} value={option.value}>{option.label}</option>)}
+                {manualFieldValidationOptions.map(option => <option key={option.value || 'none'} value={option.value}>{option.label}</option>)}
               </CustomSelect>
             </label>
             <label className={styles.checkboxLabel}>
@@ -36424,6 +36486,7 @@ const VideoFormGateSettingsPanel: React.FC<{
   const activeQuestionSettings = activeQuestion?.settings || {}
   const activeQuestionPreset = activeQuestion ? getSystemFormFieldPresetForBlock(activeQuestion) : null
   const activeQuestionIsField = Boolean(activeQuestion && fieldBlockTypes.has(activeQuestion.blockType))
+  const activeQuestionAutomaticValidation = getAutomaticFieldValidation(activeQuestion, activeQuestionPreset)
   const shouldOpenActiveQuestionRulesByDefault = Boolean(activeQuestion && isChoiceBlock(activeQuestion.blockType))
   const videoFormGateAccordionKey = `${activeElement}:${activeQuestion?.id || 'none'}:${activeQuestion?.blockType || 'none'}`
   const showActiveQuestionTypographyInEdit = shouldShowBlockTypographyInEdit(activeQuestion)
@@ -37150,7 +37213,7 @@ const VideoFormGateSettingsPanel: React.FC<{
                 {activeQuestionIsField && (
                   <>
                     <AccordionSection id="vg-element-field" title="Campo">
-                      {!activeQuestionPreset && (
+                      {!activeQuestionPreset && !activeQuestionAutomaticValidation && (
                         <div className={styles.twoColumn}>
                           <label className={styles.field}>
                             <span>Tipo de campo</span>
@@ -37161,9 +37224,28 @@ const VideoFormGateSettingsPanel: React.FC<{
                           <label className={styles.field}>
                             <span>Validación</span>
                             <CustomSelect value={getSettingString(activeQuestionSettings, 'validation')} onChange={(event) => patchQuestionSettings(activeQuestion, { validation: event.target.value })} onBlur={onSave}>
-                              {fieldValidationOptions.map(option => <option key={option.value || 'none'} value={option.value}>{option.label}</option>)}
+                              {manualFieldValidationOptions.map(option => <option key={option.value || 'none'} value={option.value}>{option.label}</option>)}
                             </CustomSelect>
                           </label>
+                        </div>
+                      )}
+
+                      {!activeQuestionPreset && activeQuestionAutomaticValidation && (
+                        <label className={styles.field}>
+                          <span>Tipo de campo</span>
+                          <CustomSelect value={activeQuestion.blockType} onChange={(event) => changeQuestionType(event.target.value as SiteBlockType)} onBlur={onSave}>
+                            {videoFormGateFieldTypes.map(type => <option key={type} value={type}>{blockLabels[type]}</option>)}
+                          </CustomSelect>
+                        </label>
+                      )}
+
+                      {activeQuestionAutomaticValidation && (
+                        <div className={styles.systemFieldLock}>
+                          <span><Lock size={14} /></span>
+                          <div>
+                            <strong>Validación automática: {automaticFieldValidationLabels[activeQuestionAutomaticValidation]}</strong>
+                            <p>Se revisa al enviar el formulario.</p>
+                          </div>
                         </div>
                       )}
 

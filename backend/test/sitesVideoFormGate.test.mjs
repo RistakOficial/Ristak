@@ -130,6 +130,48 @@ test('video form gate light theme swaps contrast and video overlay background', 
   assert.match(html, /--rstk-submit-bg:#111827/)
 })
 
+test('video form gate system email and phone validate automatically without manual validation setting', async () => {
+  const html = await renderPublicSiteHtml(videoFormGateThemeSite({
+    videoFormGateEmbeddedBlocks: [
+      {
+        id: 'video-system-email',
+        siteId: 'site_video_form_gate_theme',
+        blockType: 'short_text',
+        label: 'Correo',
+        content: '',
+        placeholder: 'correo@ejemplo.com',
+        required: true,
+        options: [],
+        sortOrder: 0,
+        settings: { pageId: 'video_form_gate', systemFieldKey: 'email', internalName: 'email' }
+      },
+      {
+        id: 'video-system-phone',
+        siteId: 'site_video_form_gate_theme',
+        blockType: 'short_text',
+        label: 'Telefono',
+        content: '',
+        placeholder: '10 digitos',
+        required: true,
+        options: [],
+        sortOrder: 1,
+        settings: { pageId: 'video_form_gate', systemFieldKey: 'phone', internalName: 'phone' }
+      }
+    ]
+  }), {
+    pageId: 'page-1',
+    trackingEnabled: false,
+    preview: true
+  })
+
+  assert.match(html, /data-rstk-video-form-field[^>]*data-system-field-key="email"[^>]*data-validation="email"/)
+  assert.match(html, /data-rstk-video-form-field[^>]*data-system-field-key="phone"[^>]*data-validation="phone"/)
+  assert.match(html, /id="video-system-email" name="video-system-email" type="email"/)
+  assert.match(html, /id="video-system-phone" name="video-system-phone" type="tel"/)
+  assert.match(html, /const isValidEmailValue/)
+  assert.match(html, /const isLikelyPhoneValue/)
+})
+
 test('video form gate renders inside the video player and posts as the source form', async () => {
   const previousConfig = {
     domain: await getAppConfig(DOMAIN_KEYS.domain),

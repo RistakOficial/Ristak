@@ -12917,11 +12917,36 @@ function buildVideoFormGateRuntimeScript(blocks = []) {
           return false;
         }
       };
+      const isValidEmailValue = raw => {
+        const value = clean(raw).toLowerCase();
+        if (!value || value.length > 254 || /\\s/.test(value)) return false;
+        const parts = value.split('@');
+        if (parts.length !== 2) return false;
+        const [local, domain] = parts;
+        if (!local || !domain || local.length > 64 || domain.length > 253) return false;
+        if (local.startsWith('.') || local.endsWith('.') || local.includes('..')) return false;
+        if (domain.includes('..')) return false;
+        const labels = domain.split('.');
+        if (labels.length < 2) return false;
+        const lastLabel = labels[labels.length - 1];
+        if (!/^[a-z]{2,63}$/.test(lastLabel)) return false;
+        return labels.every(label => /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/.test(label));
+      };
+      const isLikelyPhoneValue = raw => {
+        const digits = stripInternationalPrefix(phoneDigits(raw));
+        if (digits.length < 8 || digits.length > 15) return false;
+        const national = digits.length > 10 ? digits.slice(-10) : digits;
+        if (/^(\\d)\\1+$/.test(national)) return false;
+        if (/^(?:0123456789|1234567890)$/.test(national)) return false;
+        if (digits.startsWith('52')) return digits.length === 12;
+        if (digits.startsWith('1')) return digits.length === 11;
+        return true;
+      };
       const isValidFieldValue = (validation, value) => {
         const text = Array.isArray(value) ? value.join(',') : clean(value);
         if (!text) return true;
-        if (validation === 'email') return /^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$/.test(text);
-        if (validation === 'phone') return phoneDigits(text).length >= 7;
+        if (validation === 'email') return isValidEmailValue(text);
+        if (validation === 'phone') return isLikelyPhoneValue(text);
         if (validation === 'number') return Number.isFinite(Number(text));
         if (validation === 'currency') return Number.isFinite(Number(text)) && Number(text) >= 0;
         if (validation === 'date') return !Number.isNaN(Date.parse(text));
@@ -18044,10 +18069,13 @@ const supportedNativeFieldValidations = new Set(['email', 'phone', 'number', 'cu
 
 function getNativeFieldValidation(block = {}) {
   const settings = block.settings || {}
-  const explicit = cleanString(settings.validation || settings.fieldValidation || settings.field_validation).toLowerCase()
-  if (supportedNativeFieldValidations.has(explicit)) return explicit
+  const systemFieldKey = getNativeSystemFieldKey(block)
+  if (systemFieldKey === 'email') return 'email'
+  if (systemFieldKey === 'phone') return 'phone'
   if (block.blockType === 'email') return 'email'
   if (block.blockType === 'phone') return 'phone'
+  const explicit = cleanString(settings.validation || settings.fieldValidation || settings.field_validation).toLowerCase()
+  if (supportedNativeFieldValidations.has(explicit)) return explicit
   if (block.blockType === 'number') return 'number'
   if (block.blockType === 'currency') return 'currency'
   if (block.blockType === 'date') return 'date'
@@ -18105,6 +18133,14 @@ function renderFieldInput(block, context = {}) {
 
   if (block.blockType === 'date') {
     return `<input id="${id}" name="${id}" type="date" placeholder="${placeholder}" ${required}>`
+  }
+
+  if (validation === 'email') {
+    return `<input id="${id}" name="${id}" type="email" inputmode="email" autocomplete="email" placeholder="${placeholder}" ${required}>`
+  }
+
+  if (validation === 'phone') {
+    return `<input id="${id}" name="${id}" type="tel" inputmode="tel" autocomplete="tel" placeholder="${placeholder}" ${required}>`
   }
 
   if (block.blockType === 'dropdown') {
@@ -22341,12 +22377,37 @@ export async function renderPublicSiteHtml(site, { pageId, pagePath, trackingEna
           return false;
         }
       };
+      const isValidEmailValue = (raw) => {
+        const value = clean(raw).toLowerCase();
+        if (!value || value.length > 254 || /\\s/.test(value)) return false;
+        const parts = value.split('@');
+        if (parts.length !== 2) return false;
+        const [local, domain] = parts;
+        if (!local || !domain || local.length > 64 || domain.length > 253) return false;
+        if (local.startsWith('.') || local.endsWith('.') || local.includes('..')) return false;
+        if (domain.includes('..')) return false;
+        const labels = domain.split('.');
+        if (labels.length < 2) return false;
+        const lastLabel = labels[labels.length - 1];
+        if (!/^[a-z]{2,63}$/.test(lastLabel)) return false;
+        return labels.every(label => /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/.test(label));
+      };
+      const isLikelyPhoneValue = (raw) => {
+        const digits = stripInternationalPrefix(phoneDigits(raw));
+        if (digits.length < 8 || digits.length > 15) return false;
+        const national = digits.length > 10 ? digits.slice(-10) : digits;
+        if (/^(\\d)\\1+$/.test(national)) return false;
+        if (/^(?:0123456789|1234567890)$/.test(national)) return false;
+        if (digits.startsWith('52')) return digits.length === 12;
+        if (digits.startsWith('1')) return digits.length === 11;
+        return true;
+      };
 
       const isValidFieldValue = (validation, value) => {
         const text = Array.isArray(value) ? value.join(',') : String(value || '').trim();
         if (!text) return true;
-        if (validation === 'email') return /^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$/.test(text);
-        if (validation === 'phone') return phoneDigits(text).length >= 7;
+        if (validation === 'email') return isValidEmailValue(text);
+        if (validation === 'phone') return isLikelyPhoneValue(text);
         if (validation === 'number') return Number.isFinite(Number(text));
         if (validation === 'currency') return Number.isFinite(Number(text)) && Number(text) >= 0;
         if (validation === 'date') return !Number.isNaN(Date.parse(text));
