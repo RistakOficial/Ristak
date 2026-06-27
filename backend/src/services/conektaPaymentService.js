@@ -68,6 +68,18 @@ function sanitizeConektaText(value, fallback = 'Ristak', maxLength = 250) {
   return (sanitized || fallbackText).slice(0, maxLength)
 }
 
+function sanitizeConektaName(value, fallback = 'Cliente Ristak', maxLength = 120) {
+  const fallbackText = sanitizeConektaText(fallback, 'Cliente Ristak', maxLength)
+  const raw = cleanString(value) || fallbackText
+  const ascii = raw.normalize('NFKD').replace(/[\u0300-\u036f]/g, '')
+  const sanitized = ascii
+    .replace(/[^a-zA-Z .-]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+
+  return (sanitized || fallbackText).slice(0, maxLength)
+}
+
 function normalizeMode(value) {
   return value === 'live' ? 'live' : 'test'
 }
@@ -542,7 +554,7 @@ function buildContactName(contact = {}, fallback = {}) {
     || cleanString(contact.phone)
     || 'Cliente Ristak'
 
-  return sanitizeConektaText(name, 'Cliente Ristak', 120)
+  return sanitizeConektaName(name, 'Cliente Ristak', 120)
 }
 
 async function getConektaContact(contactId) {
@@ -770,7 +782,7 @@ function buildOrderLineItems(row) {
 function buildCustomerInfo(row, customerId = '') {
   if (customerId) return { customer_id: customerId }
   const customerInfo = {
-    name: sanitizeConektaText(
+    name: sanitizeConektaName(
       cleanString(row.contact_name) || cleanString(parseJson(row.metadata_json, {}).contactName),
       'Cliente Ristak',
       120
