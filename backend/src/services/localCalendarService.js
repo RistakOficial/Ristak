@@ -2901,12 +2901,22 @@ export function renderPublicCalendarHtml(calendar, { host = '', embedded = false
         const entry = document.cookie.split('; ').find(item => item.indexOf(prefix) === 0);
         return entry ? decodeURIComponent(entry.slice(prefix.length)) : null;
       };
+      const readSiteMetaParameters = () => {
+        try {
+          const raw = new URL(window.location.href).searchParams.get('metaCalData') || '';
+          const parsed = raw ? JSON.parse(raw) : {};
+          return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : {};
+        } catch (error) {
+          return {};
+        }
+      };
       const getMetaEventPayload = () => ({
         pageUrl: window.location.href,
         referrer: document.referrer,
         params: Object.fromEntries(new URL(window.location.href).searchParams.entries()),
         // Override del evento Meta propagado por el sitio (sitio = master del calendario embebido).
         siteEventName: new URL(window.location.href).searchParams.get('metaCalEvent') || '',
+        siteEventParameters: readSiteMetaParameters(),
         fbp: readCookie('_fbp'),
         fbc: readCookie('_fbc')
       });

@@ -108,6 +108,39 @@ test('site calendar custom mode passes editable style params for live embeds', a
   assert.equal(url.searchParams.get('fieldRadius'), '12')
 })
 
+test('site calendar embed forwards per-block Meta event and parameters', async () => {
+  const site = calendarSite()
+  site.metaCapiEnabled = true
+  site.theme.metaCalendarEvents = {
+    'calendar-block': {
+      enabled: true,
+      eventName: 'Schedule',
+      eventParameters: {
+        value: '1500',
+        currency: 'mxn',
+        status: 'qualified',
+        contentName: 'No viaja en Schedule',
+        custom: [{ key: 'pipeline_stage', value: 'demo' }]
+      }
+    }
+  }
+
+  const html = await renderPublicSiteHtml(site, {
+    pageId: 'page-1',
+    trackingEnabled: true,
+    preview: false
+  })
+
+  const url = getCalendarFrameUrl(html)
+  assert.equal(url.searchParams.get('metaCalEvent'), 'Schedule')
+  assert.deepEqual(JSON.parse(url.searchParams.get('metaCalData')), {
+    value: '1500',
+    currency: 'MXN',
+    status: 'qualified',
+    custom: [{ id: '', key: 'pipeline_stage', value: 'demo' }]
+  })
+})
+
 test('site calendar custom mode forwards display toggles and font to the live embed', async () => {
   const html = await renderPublicSiteHtml(calendarSite({
     calendarDesignMode: 'custom',

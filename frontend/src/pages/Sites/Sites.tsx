@@ -366,11 +366,6 @@ const metaEventOptions = [
   { value: 'Contact', label: 'Contact' }
 ]
 
-const metaTriggerOptions: Array<{ value: SiteMetaTrigger; label: string }> = [
-  { value: 'page_view', label: 'Al aterrizar esta página' },
-  { value: 'calendar_schedule', label: 'Al agendar' }
-]
-
 const metaSubmitConditionOptions: Array<{ value: SiteMetaSubmitCondition; label: string }> = [
   { value: 'always', label: 'Enviar al terminar formulario' },
   { value: 'qualified_only', label: 'Solo "CALIFICADOS"' }
@@ -392,10 +387,6 @@ const normalizeMetaSubmitCondition = (value?: unknown): SiteMetaSubmitCondition 
 
 const normalizeMetaBoolean = (value: unknown) => (
   value === true || value === 1 || value === '1' || value === 'true' || value === 'yes' || value === 'on'
-)
-
-const getDefaultMetaEventNameForTrigger = (trigger: SiteMetaTrigger) => (
-  trigger === 'calendar_schedule' ? 'Schedule' : 'Lead'
 )
 
 type SiteMetaParameterFieldKey = Exclude<keyof SiteMetaEventParameters, 'custom'>
@@ -4344,6 +4335,7 @@ const normalizePageList = (rawPages: SitePage[] = []): SitePage[] => {
         meta_event_parameters?: SiteMetaEventParameters
         meta_calendar_enabled?: unknown
         meta_calendar_event_name?: string
+        meta_calendar_event_parameters?: SiteMetaEventParameters
       }
       const buttonText = typeof (source?.buttonText ?? source?.button_text) === 'string'
         ? String(source.buttonText ?? source.button_text).trim()
@@ -4351,15 +4343,29 @@ const normalizePageList = (rawPages: SitePage[] = []): SitePage[] => {
       const buttonSubtitle = typeof (source?.buttonSubtitle ?? source?.button_subtitle) === 'string'
         ? String(source.buttonSubtitle ?? source.button_subtitle).trim()
         : ''
-      const metaEventName = normalizeMetaEventName(source?.metaEventName || source?.meta_event_name, 'none')
-      const metaCalendarEventName = normalizeMetaEventName(source?.metaCalendarEventName || source?.meta_calendar_event_name, 'none')
-      const metaCalendarEnabled = normalizeMetaBoolean(source?.metaCalendarEnabled ?? source?.meta_calendar_enabled) && metaCalendarEventName !== 'none'
       const rawMetaTrigger = String(source?.metaTrigger || source?.meta_trigger || '').trim()
-      const metaTrigger = rawMetaTrigger === 'form_submit'
+      const legacyCalendarTrigger = rawMetaTrigger === 'calendar_schedule'
+      const rawMetaEventName = normalizeMetaEventName(source?.metaEventName || source?.meta_event_name, 'none')
+      const metaEventName = legacyCalendarTrigger ? 'none' : rawMetaEventName
+      const metaCalendarEventName = normalizeMetaEventName(
+        source?.metaCalendarEventName || source?.meta_calendar_event_name || (legacyCalendarTrigger ? rawMetaEventName : ''),
+        'none'
+      )
+      const metaCalendarEnabled = (
+        normalizeMetaBoolean(source?.metaCalendarEnabled ?? source?.meta_calendar_enabled) ||
+        legacyCalendarTrigger
+      ) && metaCalendarEventName !== 'none'
+      const metaCalendarEventParameters = pruneMetaEventParametersForEvent(
+        source?.metaCalendarEventParameters || source?.meta_calendar_event_parameters || source?.metaEventParameters || source?.meta_event_parameters,
+        metaCalendarEventName
+      )
+      const metaEventParameters = pruneMetaEventParametersForEvent(
+        source?.metaEventParameters || source?.meta_event_parameters,
+        metaEventName
+      )
+      const metaTrigger: SiteMetaTrigger = rawMetaTrigger === 'form_submit'
         ? 'form_submit'
-        : metaCalendarEnabled
-          ? 'calendar_schedule'
-          : normalizeMetaTrigger(rawMetaTrigger)
+        : 'page_view'
 
       return {
         id: page?.id || `${DEFAULT_FUNNEL_PAGE_ID}-${index + 1}`,
@@ -4372,12 +4378,15 @@ const normalizePageList = (rawPages: SitePage[] = []): SitePage[] => {
         ...(page?.importedAssetPath ? { importedAssetPath: page.importedAssetPath } : {}),
         ...(page?.importedOriginalTitle ? { importedOriginalTitle: page.importedOriginalTitle } : {}),
         ...(page?.headerTrackingCode !== undefined ? { headerTrackingCode: page.headerTrackingCode } : {}),
-        metaCapiEnabled: normalizeMetaBoolean(source?.metaCapiEnabled ?? source?.meta_capi_enabled),
+        metaCapiEnabled: !legacyCalendarTrigger && normalizeMetaBoolean(source?.metaCapiEnabled ?? source?.meta_capi_enabled),
         metaEventName,
         metaTrigger,
         ...(metaCalendarEnabled ? { metaCalendarEnabled: true, metaCalendarEventName } : {}),
-        ...(hasMetaEventParameters(source?.metaEventParameters || source?.meta_event_parameters)
-          ? { metaEventParameters: pruneMetaEventParametersForEvent(source?.metaEventParameters || source?.meta_event_parameters, metaEventName) }
+        ...(metaCalendarEnabled && hasMetaEventParameters(metaCalendarEventParameters)
+          ? { metaCalendarEventParameters }
+          : {}),
+        ...(hasMetaEventParameters(metaEventParameters)
+          ? { metaEventParameters }
           : {})
       }
     })
@@ -4408,7 +4417,13 @@ const normalizeFormPages = (site?: PublicSite | null): SitePage[] => {
       metaEventName: normalizeMetaEventName(existing?.metaEventName, 'none'),
       metaTrigger: normalizeMetaTrigger(existing?.metaTrigger),
       ...(existing?.metaCalendarEnabled && existing.metaCalendarEventName && existing.metaCalendarEventName !== 'none'
-        ? { metaCalendarEnabled: true, metaCalendarEventName: existing.metaCalendarEventName }
+        ? {
+            metaCalendarEnabled: true,
+            metaCalendarEventName: existing.metaCalendarEventName,
+            ...(hasMetaEventParameters(existing.metaCalendarEventParameters)
+              ? { metaCalendarEventParameters: pruneMetaEventParametersForEvent(existing.metaCalendarEventParameters, existing.metaCalendarEventName) }
+              : {})
+          }
         : {}),
       ...(hasMetaEventParameters(existing?.metaEventParameters)
         ? { metaEventParameters: pruneMetaEventParametersForEvent(existing?.metaEventParameters, existing?.metaEventName) }
@@ -4544,8 +4559,14 @@ const normalizePagesForSave = (pages: SitePage[]) =>
     metaCapiEnabled: Boolean(page.metaCapiEnabled),
     metaEventName: normalizeMetaEventName(page.metaEventName, 'none'),
     metaTrigger: normalizeMetaTrigger(page.metaTrigger),
-    ...(normalizeMetaTrigger(page.metaTrigger) === 'calendar_schedule' && page.metaCalendarEnabled && page.metaCalendarEventName && page.metaCalendarEventName !== 'none'
-      ? { metaCalendarEnabled: true, metaCalendarEventName: page.metaCalendarEventName }
+    ...(page.metaCalendarEnabled && page.metaCalendarEventName && page.metaCalendarEventName !== 'none'
+      ? {
+          metaCalendarEnabled: true,
+          metaCalendarEventName: page.metaCalendarEventName,
+          ...(hasMetaEventParameters(page.metaCalendarEventParameters)
+            ? { metaCalendarEventParameters: pruneMetaEventParametersForEvent(page.metaCalendarEventParameters, page.metaCalendarEventName) }
+            : {})
+        }
       : {}),
     ...(hasMetaEventParameters(page.metaEventParameters)
       ? { metaEventParameters: pruneMetaEventParametersForEvent(page.metaEventParameters, page.metaEventName) }
@@ -6505,6 +6526,79 @@ const hasFormSubmitMetaSurface = (
   return isImportedHtmlSite(site) && hasImportedFormSubmitSurface(importData)
 }
 
+type MetaDetectedSurface = {
+  id: string
+  label: string
+  detail: string
+}
+
+const getMetaDetectedFormSurfaces = (
+  site?: PublicSite | null,
+  blocks: SiteBlock[] = [],
+  pages: SitePage[] = [],
+  activePage?: SitePage | null,
+  importData?: ImportedSiteImport | null
+): MetaDetectedSurface[] => {
+  if (!site) return []
+  if (isFormSite(site)) {
+    return [{
+      id: `form-site:${site.id}`,
+      label: 'Formulario 1',
+      detail: 'Al terminar este formulario'
+    }]
+  }
+  if (!isLanding(site)) return []
+
+  const activePageId = activePage?.id || pages[0]?.id || DEFAULT_FUNNEL_PAGE_ID
+  const formBlocks = blocks
+    .filter(block => hasConfiguredFormEmbedBlock(block) && getBlockPageId(block, pages) === activePageId)
+    .map((block, index) => {
+      const settings = block.settings || {}
+      const sourceName = getSettingString(settings, 'embeddedSiteName') ||
+        getSettingString(settings, 'formSiteName') ||
+        getSettingString(settings, 'embedded_site_name') ||
+        getSettingString(settings, 'form_site_name')
+      return {
+        id: `form-block:${block.id}`,
+        label: sourceName || block.label || `Formulario ${index + 1}`,
+        detail: getEmbeddedFormSourceId(block) ? 'Formulario embebido guardado' : 'Formulario embebido en esta página'
+      }
+    })
+
+  if (formBlocks.length) return formBlocks
+
+  if (!isImportedHtmlSite(site) || !hasImportedFormSubmitSurface(importData)) return []
+  const detectedForms = Array.isArray(importData?.detectedForms) && importData.detectedForms.length
+    ? importData.detectedForms
+    : [{ id: 'imported-form-1' }]
+
+  return detectedForms.map((form, index) => ({
+    id: `imported-form:${String(form?.id || form?.selector || index)}`,
+    label: `Formulario ${index + 1}`,
+    detail: 'Formulario detectado en el HTML importado'
+  }))
+}
+
+const getMetaDetectedCalendarSurfaces = (
+  blocks: SiteBlock[] = [],
+  pages: SitePage[] = [],
+  activePage?: SitePage | null
+): MetaDetectedSurface[] => {
+  const activePageId = activePage?.id || pages[0]?.id || DEFAULT_FUNNEL_PAGE_ID
+  return blocks
+    .filter(block => block.blockType === 'calendar_embed' && getBlockPageId(block, pages) === activePageId)
+    .map((block, index) => {
+      const settings = block.settings || {}
+      const calendarName = getSettingString(settings, 'calendarName') ||
+        getSettingString(settings, 'calendar_name')
+      return {
+        id: block.id,
+        label: calendarName || block.label || `Calendario ${index + 1}`,
+        detail: calendarName ? 'Al agendar en este calendario' : 'Selecciona un calendario para activarlo'
+      }
+    })
+}
+
 const getVideoFormGateSourceId = (block?: SiteBlock | null) => (
   getSettingString(block?.settings || {}, 'videoFormGateFormSiteId') ||
   getSettingString(block?.settings || {}, 'video_form_gate_form_site_id')
@@ -7943,6 +8037,18 @@ export const Sites: React.FC = () => {
     librarySettingsSite,
     librarySettingsSite?.blocks || [],
     librarySettingsImportData
+  )
+  const librarySettingsMetaDetectedForms = getMetaDetectedFormSurfaces(
+    librarySettingsSite,
+    librarySettingsSite?.blocks || [],
+    librarySettingsPages,
+    librarySettingsActivePage,
+    librarySettingsImportData
+  )
+  const librarySettingsMetaDetectedCalendars = getMetaDetectedCalendarSurfaces(
+    librarySettingsSite?.blocks || [],
+    librarySettingsPages,
+    librarySettingsActivePage
   )
   const canvasBlocks = useMemo(
     () => hasEditablePages(selectedSite) && activePage
@@ -12275,6 +12381,18 @@ export const Sites: React.FC = () => {
   const editorToolbarSettingsSeoIssues = editorToolbarSettingsSite ? getSeoValidationState(editorToolbarSettingsSite).totalIssues : 0
   const editorToolbarImportData = selectedImportData?.siteId === editorToolbarSettingsSite?.id ? selectedImportData : null
   const editorToolbarHasFormSubmitMetaSettings = hasFormSubmitMetaSurface(editorToolbarSettingsSite, blocks, editorToolbarImportData)
+  const editorToolbarMetaDetectedForms = getMetaDetectedFormSurfaces(
+    editorToolbarSettingsSite,
+    blocks,
+    editorToolbarSettingsPages,
+    editorToolbarSettingsActivePage,
+    editorToolbarImportData
+  )
+  const editorToolbarMetaDetectedCalendars = getMetaDetectedCalendarSurfaces(
+    blocks,
+    editorToolbarSettingsPages,
+    editorToolbarSettingsActivePage
+  )
   const patchEditorToolbarSettingsSite = updateSelectedSite
   const patchEditorToolbarSettingsTheme = patchSiteTheme
   const saveEditorToolbarSettingsSite = () => handleSaveSite(undefined, { silent: true })
@@ -12420,6 +12538,8 @@ export const Sites: React.FC = () => {
                         seoIssues={editorToolbarSettingsSeoIssues}
                         metaPixelConnected={metaPixelConnected}
                         hasFormSubmitMetaSettings={editorToolbarHasFormSubmitMetaSettings}
+                        metaDetectedForms={editorToolbarMetaDetectedForms}
+                        metaDetectedCalendars={editorToolbarMetaDetectedCalendars}
                         disabled={editorAIGenerating}
                         canEditHeader={hasEditablePages(editorToolbarSettingsSite)}
                         routeValue={getRouteEditorValue(editorToolbarSettingsSite)}
@@ -12430,7 +12550,6 @@ export const Sites: React.FC = () => {
                         onSaveSite={saveEditorToolbarSettingsSite}
                         onOpenSeo={() => setSeoModalOpen(true)}
                         onOpenHeader={() => setHeaderModalOpen(current => !current)}
-                        pageHasCalendar={Boolean(editorToolbarSettingsActivePage) && blocks.some(block => block.blockType === 'calendar_embed' && getBlockPageId(block, editorToolbarSettingsPages) === editorToolbarSettingsActivePage?.id)}
                       />
                     </div>
                   )}
@@ -12555,6 +12674,8 @@ export const Sites: React.FC = () => {
                   seoIssues={librarySettingsSeoIssues}
                   metaPixelConnected={metaPixelConnected}
                   hasFormSubmitMetaSettings={librarySettingsHasFormSubmitMetaSettings}
+                  metaDetectedForms={librarySettingsMetaDetectedForms}
+                  metaDetectedCalendars={librarySettingsMetaDetectedCalendars}
                   disabled={librarySettingsLoading}
                   canEditHeader={hasEditablePages(librarySettingsSite)}
                   routeValue={getRouteEditorValue(librarySettingsSite)}
@@ -12566,7 +12687,6 @@ export const Sites: React.FC = () => {
                   onOpenSeo={() => setLibrarySettingsSeoOpen(true)}
                   onOpenHeader={() => setLibrarySettingsHeaderOpen(true)}
                   onBeforeOpenNested={() => setLibrarySettingsModalOpen(false)}
-                  pageHasCalendar={Boolean(librarySettingsActivePage) && (librarySettingsSite.blocks || []).some(block => block.blockType === 'calendar_embed' && getBlockPageId(block, librarySettingsPages) === librarySettingsActivePage?.id)}
                 />
               )}
             </div>
@@ -26048,13 +26168,52 @@ const MetaBrandMark: React.FC<{ size?: number }> = ({ size = 18 }) => (
   </svg>
 )
 
+type MetaCalendarEventConfig = {
+  enabled?: boolean
+  eventName?: string
+  eventParameters?: SiteMetaEventParameters
+  parameters?: SiteMetaEventParameters
+}
+
+const getThemeMetaCalendarEvents = (theme?: SiteTheme | null): Record<string, MetaCalendarEventConfig> => {
+  const source = theme?.metaCalendarEvents ||
+    (theme as (SiteTheme & { meta_calendar_events?: unknown }) | undefined)?.meta_calendar_events
+  return source && typeof source === 'object' && !Array.isArray(source)
+    ? source as Record<string, MetaCalendarEventConfig>
+    : {}
+}
+
+const getCalendarSurfaceMetaConfig = (
+  site: PublicSite,
+  activePage: SitePage,
+  surfaceId: string
+): { eventName: string; parameters?: SiteMetaEventParameters } => {
+  const entry = getThemeMetaCalendarEvents(site.theme)[surfaceId]
+  if (entry) {
+    const eventName = entry.enabled === false
+      ? 'none'
+      : normalizeMetaEventName(entry.eventName, 'none')
+    return {
+      eventName,
+      parameters: entry.eventParameters || entry.parameters
+    }
+  }
+
+  return {
+    eventName: activePage.metaCalendarEnabled
+      ? normalizeMetaEventName(activePage.metaCalendarEventName, 'none')
+      : 'none',
+    parameters: activePage.metaCalendarEventParameters
+  }
+}
+
 const MetaPageConversionSettingsPanel: React.FC<{
   site: PublicSite
   pages: SitePage[]
   activePage: SitePage
   disabled?: boolean
-  pageHasCalendar?: boolean
-  showFormSubmitSettings?: boolean
+  formSurfaces: MetaDetectedSurface[]
+  calendarSurfaces: MetaDetectedSurface[]
   onPatchSite: (patch: Partial<PublicSite>) => void
   onPatchTheme: (patch: Partial<SiteTheme>) => void
   onSaveSite: () => void | Promise<void>
@@ -26063,29 +26222,41 @@ const MetaPageConversionSettingsPanel: React.FC<{
   pages,
   activePage,
   disabled,
-  pageHasCalendar,
-  showFormSubmitSettings,
+  formSurfaces,
+  calendarSurfaces,
   onPatchSite,
   onPatchTheme,
   onSaveSite
 }) => {
-  const [paramsOpen, setParamsOpen] = useState(false)
+  const [detailsOpen, setDetailsOpen] = useState(false)
+  const [calendarParamsOpen, setCalendarParamsOpen] = useState<Record<string, boolean>>({})
   const metaEnabled = Boolean(site.metaCapiEnabled)
   const activePageEventName = activePage.metaCapiEnabled
     ? normalizeMetaEventName(activePage.metaEventName, 'none')
     : 'none'
   const activePageHasConversion = activePageEventName !== 'none'
-  const activePageHasParameters = hasMetaEventParameters(activePage.metaEventParameters)
-  const normalizedActiveTrigger = normalizeMetaTrigger(activePage.metaTrigger)
-  const activeTrigger = normalizedActiveTrigger === 'form_submit' ? 'page_view' : normalizedActiveTrigger
-  const showCalendarScheduleTrigger = Boolean(pageHasCalendar) || activeTrigger === 'calendar_schedule'
-  const availableTriggerOptions = metaTriggerOptions.filter(option => {
-    if (option.value === 'calendar_schedule') return showCalendarScheduleTrigger
-    return true
-  })
-  const activeTriggerDescription = activeTrigger === 'calendar_schedule'
-    ? 'Al agendar desde esta página se envía este evento.'
-    : 'Al aterrizar esta página se envía este evento.'
+  const submitEventName = metaEnabled
+    ? normalizeMetaEventName(site.metaEventName, 'none')
+    : 'none'
+  const submitActive = submitEventName !== 'none'
+  const calendarConfigs = calendarSurfaces.map(surface => ({
+    surface,
+    config: getCalendarSurfaceMetaConfig(site, activePage, surface.id)
+  }))
+  const activeCalendarCount = calendarConfigs.filter(item => item.config.eventName !== 'none').length
+  const configuredCount = [
+    activePageHasConversion,
+    formSurfaces.length > 0 && submitActive,
+    activeCalendarCount > 0
+  ].filter(Boolean).length
+  const detectedCount = formSurfaces.length + calendarSurfaces.length
+  const summaryText = !metaEnabled
+    ? 'Apagado para este sitio'
+    : detailsOpen
+      ? `${detectedCount ? `${detectedCount} elemento${detectedCount === 1 ? '' : 's'} detectado${detectedCount === 1 ? '' : 's'}` : 'Sin formularios ni calendarios detectados'}`
+      : configuredCount
+        ? `${configuredCount} disparador${configuredCount === 1 ? '' : 'es'} configurado${configuredCount === 1 ? '' : 's'}`
+        : 'Activo sin eventos configurados'
 
   const saveSoon = useCallback(() => {
     window.setTimeout(() => { void onSaveSite() }, 0)
@@ -26100,65 +26271,63 @@ const MetaPageConversionSettingsPanel: React.FC<{
   }, [activePage.id, onPatchTheme, pages])
 
   useEffect(() => {
-    if (!metaEnabled || !activePageHasConversion) setParamsOpen(false)
-  }, [activePageHasConversion, metaEnabled])
+    if (metaEnabled) return
+    setDetailsOpen(false)
+    setCalendarParamsOpen({})
+  }, [metaEnabled])
 
-  useEffect(() => {
-    if (!metaEnabled || !activePageHasConversion) return
-
-    const nextTrigger = activeTrigger === 'calendar_schedule' && !showCalendarScheduleTrigger
-      ? 'page_view'
-      : activeTrigger
-
-    if (nextTrigger === activeTrigger) return
-
-    const nextEventName = activePageEventName === 'none'
-      ? getDefaultMetaEventNameForTrigger(nextTrigger)
-      : activePageEventName
-
-    patchActivePage({
-      metaTrigger: nextTrigger,
-      metaEventName: nextEventName,
-      metaCapiEnabled: nextEventName !== 'none',
-      metaCalendarEnabled: nextTrigger === 'calendar_schedule' && nextEventName !== 'none',
-      metaCalendarEventName: nextTrigger === 'calendar_schedule' ? nextEventName : 'none',
-      metaEventParameters: pruneMetaEventParametersForEvent(activePage.metaEventParameters, nextEventName)
-    })
+  const handleMetaEnabledChange = (enabled: boolean) => {
+    const patch: Partial<PublicSite> = { metaCapiEnabled: enabled }
+    if (enabled && formSurfaces.length > 0 && normalizeMetaEventName(site.metaEventName, 'none') === 'none') {
+      patch.metaEventName = 'Lead'
+    }
+    onPatchSite(patch)
+    setDetailsOpen(enabled)
     saveSoon()
-  }, [
-    activePage.metaEventParameters,
-    activePageEventName,
-    activePageHasConversion,
-    activeTrigger,
-    metaEnabled,
-    pageHasCalendar,
-    patchActivePage,
-    saveSoon,
-    showCalendarScheduleTrigger
-  ])
+  }
 
-  const patchMetaTrigger = (nextTrigger: SiteMetaTrigger) => {
-    const nextEventName = activePageEventName === 'none'
-      ? getDefaultMetaEventNameForTrigger(nextTrigger)
-      : activePageEventName
-
+  const patchPageViewEvent = (metaEventName: string) => {
     patchActivePage({
-      metaTrigger: nextTrigger,
-      metaEventName: nextEventName,
-      metaCapiEnabled: nextEventName !== 'none',
-      metaCalendarEnabled: nextTrigger === 'calendar_schedule' && nextEventName !== 'none',
-      metaCalendarEventName: nextTrigger === 'calendar_schedule' ? nextEventName : 'none',
-      metaEventParameters: pruneMetaEventParametersForEvent(activePage.metaEventParameters, nextEventName)
+      metaTrigger: 'page_view',
+      metaEventName,
+      metaCapiEnabled: metaEventName !== 'none',
+      metaEventParameters: undefined
     })
     saveSoon()
   }
 
-  const handleMetaEnabledChange = (enabled: boolean) => {
-    const patch: Partial<PublicSite> = { metaCapiEnabled: enabled }
-    if (enabled && showFormSubmitSettings && normalizeMetaEventName(site.metaEventName, 'none') === 'none') {
-      patch.metaEventName = 'Lead'
-    }
-    onPatchSite(patch)
+  const patchCalendarEvent = (surfaceId: string, metaEventName: string) => {
+    const current = getThemeMetaCalendarEvents(site.theme)
+    const previous = current[surfaceId]
+    onPatchTheme({
+      metaCalendarEvents: {
+        ...current,
+        [surfaceId]: {
+          enabled: metaEventName !== 'none',
+          eventName: metaEventName,
+          eventParameters: metaEventName !== 'none'
+            ? pruneMetaEventParametersForEvent(previous?.eventParameters || previous?.parameters, metaEventName)
+            : undefined
+        }
+      }
+    })
+    saveSoon()
+  }
+
+  const patchCalendarParameters = (surfaceId: string, metaEventParameters: SiteMetaEventParameters) => {
+    const current = getThemeMetaCalendarEvents(site.theme)
+    const previous = current[surfaceId]
+    const eventName = normalizeMetaEventName(previous?.eventName, 'Schedule')
+    onPatchTheme({
+      metaCalendarEvents: {
+        ...current,
+        [surfaceId]: {
+          enabled: eventName !== 'none',
+          eventName,
+          eventParameters: metaEventParameters
+        }
+      }
+    })
     saveSoon()
   }
 
@@ -26168,95 +26337,144 @@ const MetaPageConversionSettingsPanel: React.FC<{
         <span className={styles.editorSettingsMetaLogo} aria-hidden="true">
           <MetaBrandMark size={18} />
         </span>
-        <div>
+        <button
+          type="button"
+          className={styles.editorSettingsMetaSummaryButton}
+          disabled={disabled || !metaEnabled}
+          aria-expanded={detailsOpen}
+          onClick={() => setDetailsOpen(open => !open)}
+        >
           <strong>Meta Pixel + CAPI</strong>
-          <small>{metaEnabled ? (activePageHasConversion ? activeTriggerDescription : 'Sin evento de conversión en esta página') : 'Apagado para este sitio'}</small>
-        </div>
-        <Switch
-          checked={metaEnabled}
-          disabled={disabled}
-          onChange={handleMetaEnabledChange}
-          aria-label="Activar medición de Meta"
-        />
-      </div>
-
-      <div className={styles.editorSettingsTwoColumn}>
-        <label className={styles.editorSettingsField}>
-          <span>Disparador</span>
-          <CustomSelect
-            value={activeTrigger}
-            disabled={disabled || !metaEnabled || !activePageHasConversion}
-            portal
-            onChange={(event) => {
-              patchMetaTrigger(event.target.value as SiteMetaTrigger)
-            }}
-          >
-            {availableTriggerOptions.map(option => (
-              <option key={option.value} value={option.value}>{option.label}</option>
-            ))}
-          </CustomSelect>
-        </label>
-
-        <label className={styles.editorSettingsField}>
-          <span>Evento</span>
-          <CustomSelect
-            value={activePageEventName}
+          <small>{summaryText}</small>
+        </button>
+        <div className={styles.editorSettingsMetaActions}>
+          <Switch
+            checked={metaEnabled}
+            disabled={disabled}
+            onChange={handleMetaEnabledChange}
+            aria-label="Activar medición de Meta"
+          />
+          <button
+            type="button"
+            className={`${styles.editorSettingsMetaChevron} ${detailsOpen ? styles.editorSettingsMetaChevronOpen : ''}`}
             disabled={disabled || !metaEnabled}
-            portal
-            onChange={(event) => {
-              const metaEventName = event.target.value
-              patchActivePage({
-                metaTrigger: activeTrigger,
-                metaEventName,
-                metaCapiEnabled: metaEventName !== 'none',
-                metaCalendarEnabled: activeTrigger === 'calendar_schedule' && metaEventName !== 'none',
-                metaCalendarEventName: activeTrigger === 'calendar_schedule' ? metaEventName : 'none',
-                metaEventParameters: pruneMetaEventParametersForEvent(activePage.metaEventParameters, metaEventName)
-              })
-              saveSoon()
-            }}
+            aria-label={detailsOpen ? 'Ocultar ajustes de Meta' : 'Mostrar ajustes de Meta'}
+            onClick={() => setDetailsOpen(open => !open)}
           >
-            {metaEventOptions.map(option => (
-              <option key={option.value} value={option.value}>{option.label}</option>
-            ))}
-          </CustomSelect>
-        </label>
+            <ChevronDown size={14} />
+          </button>
+        </div>
       </div>
 
-      <button
-        type="button"
-        className={[
-          styles.editorSettingsInlineToggle,
-          paramsOpen ? styles.editorSettingsInlineToggleActive : '',
-          activePageHasParameters ? styles.editorSettingsInlineToggleFilled : ''
-        ].filter(Boolean).join(' ')}
-        disabled={disabled || !metaEnabled || !activePageHasConversion}
-        aria-expanded={paramsOpen}
-        onClick={() => setParamsOpen(open => !open)}
-      >
-        <Settings2 size={14} />
-        <span>Parámetros</span>
-        <ChevronDown size={13} />
-      </button>
+      {metaEnabled && detailsOpen && (
+        <div className={styles.editorSettingsMetaDetails}>
+          <div className={styles.editorSettingsMetaStaticTrigger}>
+            <div>
+              <strong>Al aterrizar esta página</strong>
+              <span>PageView fijo de esta página</span>
+            </div>
+            <label className={styles.editorSettingsField}>
+              <span>Evento</span>
+              <CustomSelect
+                value={activePageEventName}
+                disabled={disabled}
+                portal
+                onChange={(event) => patchPageViewEvent(event.target.value)}
+                onBlur={saveSoon}
+              >
+                {metaEventOptions.map(option => (
+                  <option key={option.value} value={option.value}>{option.label}</option>
+                ))}
+              </CustomSelect>
+            </label>
+          </div>
 
-      {paramsOpen && metaEnabled && activePageHasConversion && (
-        <MetaEventParametersEditor
-          eventName={activePageEventName}
-          parameters={activePage.metaEventParameters}
-          disabled={disabled}
-          onChange={(metaEventParameters) => patchActivePage({ metaEventParameters })}
-          onCommit={saveSoon}
-        />
-      )}
+          {formSurfaces.length > 0 && (
+            <div className={styles.editorSettingsMetaDetectedList}>
+              {formSurfaces.slice(0, 1).map(surface => (
+                <div key={surface.id} className={styles.editorSettingsMetaDetectedItem}>
+                  <div className={styles.editorSettingsMetaDetectedHeader}>
+                    <span className={styles.editorSettingsSectionIcon} aria-hidden="true"><FormInput size={15} /></span>
+                    <div>
+                      <strong>{surface.label}</strong>
+                      <span>{surface.detail}</span>
+                    </div>
+                  </div>
+                  <MetaFormSubmitSettingsPanel
+                    site={site}
+                    disabled={disabled}
+                    onPatchSite={onPatchSite}
+                    onPatchTheme={onPatchTheme}
+                    onSaveSite={onSaveSite}
+                  />
+                </div>
+              ))}
+            </div>
+          )}
 
-      {showFormSubmitSettings && (
-        <MetaFormSubmitSettingsPanel
-          site={site}
-          disabled={disabled}
-          onPatchSite={onPatchSite}
-          onPatchTheme={onPatchTheme}
-          onSaveSite={onSaveSite}
-        />
+          {calendarConfigs.length > 0 && (
+            <div className={styles.editorSettingsMetaDetectedList}>
+              {calendarConfigs.map(({ surface, config }, index) => {
+                const eventName = normalizeMetaEventName(config.eventName, 'none')
+                const active = eventName !== 'none'
+                const hasParameters = hasMetaEventParameters(config.parameters)
+                const paramsOpen = Boolean(calendarParamsOpen[surface.id])
+                return (
+                  <div key={surface.id} className={styles.editorSettingsMetaDetectedItem}>
+                    <div className={styles.editorSettingsMetaDetectedHeader}>
+                      <span className={styles.editorSettingsSectionIcon} aria-hidden="true"><CalendarDays size={15} /></span>
+                      <div>
+                        <strong>{surface.label || `Calendario ${index + 1}`}</strong>
+                        <span>{surface.detail}</span>
+                      </div>
+                    </div>
+                    <label className={styles.editorSettingsField}>
+                      <span>Evento al agendar</span>
+                      <CustomSelect
+                        value={eventName}
+                        disabled={disabled}
+                        portal
+                        onChange={(event) => patchCalendarEvent(surface.id, event.target.value)}
+                        onBlur={saveSoon}
+                      >
+                        {metaEventOptions.map(option => (
+                          <option key={option.value} value={option.value}>{option.label}</option>
+                        ))}
+                      </CustomSelect>
+                    </label>
+                    <button
+                      type="button"
+                      className={[
+                        styles.editorSettingsInlineToggle,
+                        paramsOpen ? styles.editorSettingsInlineToggleActive : '',
+                        hasParameters ? styles.editorSettingsInlineToggleFilled : ''
+                      ].filter(Boolean).join(' ')}
+                      disabled={disabled || !active}
+                      aria-expanded={paramsOpen}
+                      onClick={() => setCalendarParamsOpen(current => ({
+                        ...current,
+                        [surface.id]: !current[surface.id]
+                      }))}
+                    >
+                      <Settings2 size={14} />
+                      <span>Parámetros</span>
+                      <ChevronDown size={13} />
+                    </button>
+                    {paramsOpen && active && (
+                      <MetaEventParametersEditor
+                        eventName={eventName}
+                        parameters={config.parameters}
+                        disabled={disabled}
+                        onChange={(metaEventParameters) => patchCalendarParameters(surface.id, metaEventParameters)}
+                        onCommit={saveSoon}
+                      />
+                    )}
+                  </div>
+                )
+              })}
+            </div>
+          )}
+        </div>
       )}
     </div>
   )
@@ -26278,7 +26496,7 @@ const MetaFormSubmitSettingsPanel: React.FC<{
   const [paramsOpen, setParamsOpen] = useState(false)
   const metaEnabled = Boolean(site.metaCapiEnabled)
   const activeEventName = metaEnabled
-    ? normalizeMetaEventName(site.metaEventName, 'Lead')
+    ? normalizeMetaEventName(site.metaEventName, 'none')
     : 'none'
   const active = metaEnabled && activeEventName !== 'none'
   const submitParameters = site.theme?.metaEventParameters
@@ -26287,13 +26505,6 @@ const MetaFormSubmitSettingsPanel: React.FC<{
     (site.theme as (SiteTheme & { meta_submit_condition?: unknown }) | undefined)?.meta_submit_condition
   )
   const hasParameters = hasMetaEventParameters(submitParameters)
-  const statusText = !metaEnabled
-    ? 'Activa Meta Pixel + CAPI para usarlo.'
-    : active
-      ? submitCondition === 'qualified_only'
-        ? 'Se envía solo para "CALIFICADOS".'
-        : 'Se envía al terminar el formulario.'
-      : 'Apagado: no se envía al terminar.'
 
   const saveSoon = useCallback(() => {
     window.setTimeout(() => { void onSaveSite() }, 0)
@@ -26316,85 +26527,64 @@ const MetaFormSubmitSettingsPanel: React.FC<{
     saveSoon()
   }
 
-  const toggleSubmitEvent = (enabled: boolean) => {
-    patchSubmitEvent(enabled ? normalizeEnabledMetaEventName(site.metaEventName) : 'none')
-  }
-
   return (
     <>
-      <div className={styles.videoFormGateSwitchRow}>
-        <div>
-          <strong>Enviar evento al terminar formulario</strong>
-          <span>{statusText}</span>
-        </div>
-        <Switch
-          checked={active}
-          disabled={disabled || !metaEnabled}
-          onChange={toggleSubmitEvent}
-          aria-label="Enviar evento al terminar formulario"
-        />
+      <div className={styles.editorSettingsTwoColumn}>
+        <label className={styles.editorSettingsField}>
+          <span>Evento al terminar</span>
+          <CustomSelect
+            value={activeEventName}
+            disabled={disabled || !metaEnabled}
+            portal
+            onChange={(event) => patchSubmitEvent(event.target.value)}
+            onBlur={saveSoon}
+          >
+            {metaEventOptions.map(option => (
+              <option key={option.value} value={option.value}>{option.label}</option>
+            ))}
+          </CustomSelect>
+        </label>
+
+        <label className={styles.editorSettingsField}>
+          <span>Enviar cuando</span>
+          <CustomSelect
+            value={submitCondition}
+            disabled={disabled || !active}
+            portal
+            onChange={(event) => patchSubmitCondition(event.target.value as SiteMetaSubmitCondition)}
+            onBlur={saveSoon}
+          >
+            {metaSubmitConditionOptions.map(option => (
+              <option key={option.value} value={option.value}>{option.label}</option>
+            ))}
+          </CustomSelect>
+        </label>
       </div>
 
-      {active && (
-        <>
-          <div className={styles.editorSettingsTwoColumn}>
-            <label className={styles.editorSettingsField}>
-              <span>Evento</span>
-              <CustomSelect
-                value={activeEventName}
-                disabled={disabled}
-                portal
-                onChange={(event) => patchSubmitEvent(event.target.value)}
-                onBlur={saveSoon}
-              >
-                {metaEventOptions.map(option => (
-                  <option key={option.value} value={option.value}>{option.label}</option>
-                ))}
-              </CustomSelect>
-            </label>
+      <button
+        type="button"
+        className={[
+          styles.editorSettingsInlineToggle,
+          paramsOpen ? styles.editorSettingsInlineToggleActive : '',
+          hasParameters ? styles.editorSettingsInlineToggleFilled : ''
+        ].filter(Boolean).join(' ')}
+        disabled={disabled || !active}
+        aria-expanded={paramsOpen}
+        onClick={() => setParamsOpen(open => !open)}
+      >
+        <Settings2 size={14} />
+        <span>Parámetros</span>
+        <ChevronDown size={13} />
+      </button>
 
-            <label className={styles.editorSettingsField}>
-              <span>Enviar cuando</span>
-              <CustomSelect
-                value={submitCondition}
-                disabled={disabled}
-                portal
-                onChange={(event) => patchSubmitCondition(event.target.value as SiteMetaSubmitCondition)}
-                onBlur={saveSoon}
-              >
-                {metaSubmitConditionOptions.map(option => (
-                  <option key={option.value} value={option.value}>{option.label}</option>
-                ))}
-              </CustomSelect>
-            </label>
-          </div>
-
-          <button
-            type="button"
-            className={[
-              styles.editorSettingsInlineToggle,
-              paramsOpen ? styles.editorSettingsInlineToggleActive : '',
-              hasParameters ? styles.editorSettingsInlineToggleFilled : ''
-            ].filter(Boolean).join(' ')}
-            disabled={disabled}
-            aria-expanded={paramsOpen}
-            onClick={() => setParamsOpen(open => !open)}
-          >
-            <Settings2 size={14} />
-            <span>Parámetros</span>
-            <ChevronDown size={13} />
-          </button>
-
-          {paramsOpen && (
-            <MetaEventParametersEditor
-              eventName={activeEventName}
-              parameters={submitParameters}
-              disabled={disabled}
-              onChange={(metaEventParameters) => onPatchTheme({ metaEventParameters })}
-              onCommit={saveSoon}
-            />
-          )}
-        </>
+      {paramsOpen && active && (
+        <MetaEventParametersEditor
+          eventName={activeEventName}
+          parameters={submitParameters}
+          disabled={disabled}
+          onChange={(metaEventParameters) => onPatchTheme({ metaEventParameters })}
+          onCommit={saveSoon}
+        />
       )}
     </>
   )
@@ -26516,6 +26706,8 @@ const SiteSettingsPanelContent: React.FC<{
   seoIssues: number
   metaPixelConnected: boolean
   hasFormSubmitMetaSettings?: boolean
+  metaDetectedForms?: MetaDetectedSurface[]
+  metaDetectedCalendars?: MetaDetectedSurface[]
   disabled?: boolean
   canEditHeader: boolean
   routeValue: string
@@ -26527,7 +26719,6 @@ const SiteSettingsPanelContent: React.FC<{
   onOpenSeo: () => void
   onOpenHeader: () => void
   onBeforeOpenNested?: () => void
-  pageHasCalendar?: boolean
 }> = ({
   site,
   pages,
@@ -26536,8 +26727,9 @@ const SiteSettingsPanelContent: React.FC<{
   seoIssues,
   metaPixelConnected,
   hasFormSubmitMetaSettings,
+  metaDetectedForms = [],
+  metaDetectedCalendars = [],
   disabled,
-  pageHasCalendar,
   canEditHeader,
   routeValue,
   routePlaceholder,
@@ -26552,7 +26744,10 @@ const SiteSettingsPanelContent: React.FC<{
   const publicDomain = getPublicDomainPreview(domainConfig)
   const routePreview = `${publicDomain}/${routeValue || routePlaceholder}`
   const antiTrackingEnabled = site.antiTrackingEnabled !== false
-  const showFormSubmitMetaSettings = hasFormSubmitMetaSettings ?? isFormSite(site)
+  const showFormSubmitMetaSettings = hasFormSubmitMetaSettings ?? (metaDetectedForms.length > 0 || isFormSite(site))
+  const formSurfaces = showFormSubmitMetaSettings
+    ? (metaDetectedForms.length ? metaDetectedForms : getMetaDetectedFormSurfaces(site, site.blocks || [], pages, activePage))
+    : []
 
   const openNestedPanel = (callback: () => void) => {
     onBeforeOpenNested?.()
@@ -26633,8 +26828,8 @@ const SiteSettingsPanelContent: React.FC<{
               pages={pages}
               activePage={activePage}
               disabled={disabled}
-              pageHasCalendar={pageHasCalendar}
-              showFormSubmitSettings={showFormSubmitMetaSettings}
+              formSurfaces={formSurfaces}
+              calendarSurfaces={metaDetectedCalendars}
               onPatchSite={onPatchSite}
               onPatchTheme={onPatchTheme}
               onSaveSite={onSaveSite}
@@ -26677,6 +26872,8 @@ const EditorSettingsDropdown: React.FC<{
   seoIssues: number
   metaPixelConnected: boolean
   hasFormSubmitMetaSettings?: boolean
+  metaDetectedForms?: MetaDetectedSurface[]
+  metaDetectedCalendars?: MetaDetectedSurface[]
   disabled?: boolean
   canEditHeader: boolean
   routeValue: string
@@ -26687,7 +26884,6 @@ const EditorSettingsDropdown: React.FC<{
   onSaveSite: () => void | Promise<void>
   onOpenSeo: () => void
   onOpenHeader: () => void
-  pageHasCalendar?: boolean
 }> = (props) => {
   const [open, setOpen] = useState(false)
   const dropdownRef = useRef<HTMLDivElement | null>(null)
@@ -26735,7 +26931,12 @@ const EditorSettingsDropdown: React.FC<{
       </button>
 
       {open && (
-        <div className={styles.editorSettingsPanel} data-ristak-dropdown-panel>
+        <div
+          className={styles.editorSettingsPanel}
+          data-ristak-dropdown-panel
+          onWheelCapture={(event) => event.stopPropagation()}
+          onTouchMoveCapture={(event) => event.stopPropagation()}
+        >
           <SiteSettingsPanelContent
             {...props}
             onBeforeOpenNested={() => setOpen(false)}

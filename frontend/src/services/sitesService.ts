@@ -132,6 +132,7 @@ export interface SitePage {
   // La UI lo expone como otro trigger del mismo control "Cuando".
   metaCalendarEnabled?: boolean
   metaCalendarEventName?: string
+  metaCalendarEventParameters?: SiteMetaEventParameters
 }
 
 export interface SiteMetaCustomParameter {
@@ -180,6 +181,12 @@ export interface SiteTheme {
   pageMaxWidth?: number
   metaConversionTarget?: 'same_page' | 'next_page'
   metaEventParameters?: SiteMetaEventParameters
+  metaCalendarEvents?: Record<string, {
+    enabled?: boolean
+    eventName?: string
+    eventParameters?: SiteMetaEventParameters
+    parameters?: SiteMetaEventParameters
+  }>
   metaSubmitCondition?: SiteMetaSubmitCondition
   paymentGate?: PaymentGateConfig
   formCompletionAction?: SiteFormCompletionAction

@@ -14193,21 +14193,31 @@ function normalizePageList(rawPages = []) {
       const headerTrackingCode = typeof (page?.headerTrackingCode ?? page?.header_tracking_code) === 'string'
         ? page.headerTrackingCode ?? page.header_tracking_code
         : ''
-      const metaEventName = normalizeSiteMetaEventName(page?.metaEventName || page?.meta_event_name, { allowNone: true, fallback: SITE_META_NO_EVENT })
+      const rawMetaTrigger = cleanString(page?.metaTrigger || page?.meta_trigger)
+      const legacyCalendarTrigger = rawMetaTrigger === 'calendar_schedule'
+      const rawMetaEventName = normalizeSiteMetaEventName(page?.metaEventName || page?.meta_event_name, { allowNone: true, fallback: SITE_META_NO_EVENT })
+      const metaEventName = legacyCalendarTrigger ? SITE_META_NO_EVENT : rawMetaEventName
       const metaEventParameters = pruneSiteMetaEventParametersForEvent(
         page?.metaEventParameters || page?.meta_event_parameters,
         metaEventName
       )
       // Evento Meta "al agendar" del calendario embebido (el SITIO es master).
-      // En el editor se maneja como otro trigger del mismo control "Cuando".
-      const metaCalendarEventName = normalizeSiteMetaEventName(page?.metaCalendarEventName || page?.meta_calendar_event_name, { allowNone: true, fallback: SITE_META_NO_EVENT })
-      const metaCalendarEnabled = Boolean(normalizeBoolean(page?.metaCalendarEnabled ?? page?.meta_calendar_enabled)) && metaCalendarEventName !== SITE_META_NO_EVENT
-      const rawMetaTrigger = cleanString(page?.metaTrigger || page?.meta_trigger)
+      // Se mantiene compatibilidad con el trigger legacy calendar_schedule.
+      const metaCalendarEventName = normalizeSiteMetaEventName(
+        page?.metaCalendarEventName || page?.meta_calendar_event_name || (legacyCalendarTrigger ? rawMetaEventName : ''),
+        { allowNone: true, fallback: SITE_META_NO_EVENT }
+      )
+      const metaCalendarEnabled = (
+        Boolean(normalizeBoolean(page?.metaCalendarEnabled ?? page?.meta_calendar_enabled)) ||
+        legacyCalendarTrigger
+      ) && metaCalendarEventName !== SITE_META_NO_EVENT
+      const metaCalendarEventParameters = pruneSiteMetaEventParametersForEvent(
+        page?.metaCalendarEventParameters || page?.meta_calendar_event_parameters || page?.metaEventParameters || page?.meta_event_parameters,
+        metaCalendarEventName
+      )
       const metaTrigger = rawMetaTrigger === 'form_submit'
         ? 'form_submit'
-        : metaCalendarEnabled
-          ? 'calendar_schedule'
-          : normalizeSiteMetaTrigger(rawMetaTrigger)
+        : 'page_view'
       const parentPageId = cleanString(page?.parentPageId || page?.parent_page_id)
       const slug = slugifyPageSegment(page?.slug)
       const buttonText = cleanString(page?.buttonText || page?.button_text)
@@ -14217,10 +14227,13 @@ function normalizePageList(rawPages = []) {
         id: cleanString(page?.id) || `${DEFAULT_FUNNEL_PAGE_ID}-${index + 1}`,
         title: cleanString(page?.title) || `Página ${index + 1}`,
         sortOrder: Number.isFinite(Number(page?.sortOrder)) ? Number(page.sortOrder) : index,
-        metaCapiEnabled: Boolean(normalizeBoolean(page?.metaCapiEnabled ?? page?.meta_capi_enabled)),
+        metaCapiEnabled: !legacyCalendarTrigger && Boolean(normalizeBoolean(page?.metaCapiEnabled ?? page?.meta_capi_enabled)),
         metaEventName,
         metaTrigger,
         ...(metaCalendarEnabled ? { metaCalendarEnabled: true, metaCalendarEventName } : {}),
+        ...(metaCalendarEnabled && hasSiteMetaEventParameters(metaCalendarEventParameters)
+          ? { metaCalendarEventParameters }
+          : {}),
         ...(hasSiteMetaEventParameters(metaEventParameters) ? { metaEventParameters } : {}),
         ...(parentPageId ? { parentPageId } : {}),
         ...(slug ? { slug } : {}),
@@ -14258,7 +14271,13 @@ function normalizeFormPages(site) {
       metaEventName: normalizeSiteMetaEventName(existing?.metaEventName, { allowNone: true, fallback: SITE_META_NO_EVENT }),
       metaTrigger: normalizeSiteMetaTrigger(existing?.metaTrigger),
       ...(existing?.metaCalendarEnabled && existing.metaCalendarEventName && existing.metaCalendarEventName !== SITE_META_NO_EVENT
-        ? { metaCalendarEnabled: true, metaCalendarEventName: existing.metaCalendarEventName }
+        ? {
+            metaCalendarEnabled: true,
+            metaCalendarEventName: existing.metaCalendarEventName,
+            ...(hasSiteMetaEventParameters(existing?.metaCalendarEventParameters)
+              ? { metaCalendarEventParameters: pruneSiteMetaEventParametersForEvent(existing.metaCalendarEventParameters, existing.metaCalendarEventName) }
+              : {})
+          }
         : {}),
       ...(hasSiteMetaEventParameters(existing?.metaEventParameters)
         ? { metaEventParameters: pruneSiteMetaEventParametersForEvent(existing.metaEventParameters, existing.metaEventName) }
@@ -16245,17 +16264,43 @@ function getCalendarEmbedLayoutValue() {
   return 'classic'
 }
 
-// El SITIO es master del evento Meta del calendario embebido: resuelve el evento "al agendar"
-// configurado en la pagina dueña del bloque (Ajustes del sitio). Devuelve '' si no aplica
-// (Meta del sitio apagado, preview, o pagina sin evento de calendario) → el calendario usa el suyo.
-function resolveCalendarMetaOverrideEventName(context = {}) {
+// El SITIO es master del evento Meta del calendario embebido: resuelve el evento
+// "al agendar" configurado para el bloque detectado. Fallback legacy: página.
+function resolveCalendarMetaOverride(context = {}, block = {}) {
   const site = context.site
-  if (!site || !normalizeBoolean(site.metaCapiEnabled) || context.preview) return ''
+  if (!site || !normalizeBoolean(site.metaCapiEnabled) || context.preview) return null
+  const blockId = cleanString(block?.id)
+  const eventMap = site?.theme?.metaCalendarEvents && typeof site.theme.metaCalendarEvents === 'object'
+    ? site.theme.metaCalendarEvents
+    : site?.theme?.meta_calendar_events && typeof site.theme.meta_calendar_events === 'object'
+      ? site.theme.meta_calendar_events
+      : {}
+  const entry = blockId && eventMap && typeof eventMap[blockId] === 'object' ? eventMap[blockId] : null
+
+  if (entry) {
+    const disabled = entry.enabled === false ||
+      cleanString(entry.enabled).toLowerCase() === 'false' ||
+      cleanString(entry.eventName || entry.event_name) === SITE_META_NO_EVENT
+    const eventName = disabled
+      ? SITE_META_NO_EVENT
+      : normalizeSiteMetaEventName(entry.eventName || entry.event_name, { allowNone: true, fallback: SITE_META_NO_EVENT })
+    if (eventName === SITE_META_NO_EVENT) return null
+    return {
+      eventName,
+      parameters: pruneSiteMetaEventParametersForEvent(entry.eventParameters || entry.event_parameters || entry.parameters, eventName)
+    }
+  }
+
   const pages = Array.isArray(site?.theme?.pages) ? site.theme.pages : []
   const page = pages.find(p => cleanString(p?.id) === cleanString(context.pageId))
-  if (!page || !normalizeBoolean(page.metaCalendarEnabled ?? page.meta_calendar_enabled)) return ''
+  if (!page || !normalizeBoolean(page.metaCalendarEnabled ?? page.meta_calendar_enabled)) return null
   const eventName = normalizeSiteMetaEventName(page.metaCalendarEventName || page.meta_calendar_event_name, { allowNone: true, fallback: SITE_META_NO_EVENT })
-  return eventName === SITE_META_NO_EVENT ? '' : eventName
+  return eventName === SITE_META_NO_EVENT
+    ? null
+    : {
+        eventName,
+        parameters: pruneSiteMetaEventParametersForEvent(page.metaCalendarEventParameters || page.meta_calendar_event_parameters, eventName)
+      }
 }
 
 function appendCalendarEmbedParams(value, settings = {}, options = {}) {
@@ -16275,8 +16320,12 @@ function appendCalendarEmbedParams(value, settings = {}, options = {}) {
     if (options.preview) parsed.searchParams.set('editor_preview', '1')
     if (options.bookingBridge) parsed.searchParams.set('bookingBridge', '1')
     // Override del evento Meta del sitio (el sitio es master del calendario embebido).
-    // Solo viaja el nombre del evento; los parametros se heredan del calendario.
     if (options.metaOverrideEventName) parsed.searchParams.set('metaCalEvent', cleanString(options.metaOverrideEventName))
+    if (hasSiteMetaEventParameters(options.metaOverrideEventParameters)) {
+      parsed.searchParams.set('metaCalData', jsonString(
+        pruneSiteMetaEventParametersForEvent(options.metaOverrideEventParameters, options.metaOverrideEventName)
+      ))
+    }
     parsed.searchParams.set('layout', layout)
     if (coverImage) parsed.searchParams.set('coverImage', coverImage)
 
@@ -17521,11 +17570,12 @@ function renderContentBlock(block, context = {}) {
     // El SITIO es master: si la pagina dueña del calendario configuro un evento "al agendar"
     // (con Meta del sitio encendido), ese evento overridea el del calendario embebido. Sin
     // override, el calendario usa su propio evento (fallback, no mudo). No se propaga en preview.
-    const calendarMetaOverrideEventName = resolveCalendarMetaOverrideEventName(context)
+    const calendarMetaOverride = resolveCalendarMetaOverride(context, block)
     const baseCalendarSrc = appendCalendarEmbedParams(`/calendar/${encodeURIComponent(calendarSlug)}?test=1`, settings, {
       preview: context.preview,
       bookingBridge: Boolean(calendarCompletionRedirect),
-      metaOverrideEventName: calendarMetaOverrideEventName
+      metaOverrideEventName: calendarMetaOverride?.eventName,
+      metaOverrideEventParameters: calendarMetaOverride?.parameters
     })
     const calendarSrc = context.noTrack ? appendNoTrackParam(baseCalendarSrc) : baseCalendarSrc
     const calendarRedirectAttr = calendarCompletionRedirect ? ` data-rstk-calendar-redirect="${escapeHtml(calendarCompletionRedirect)}"` : ''
@@ -19460,7 +19510,10 @@ function getCalendarSiteMetaEventConfig(calendar = {}, siteOverride = null) {
       enabled: true,
       channel: 'site',
       eventName: overrideEventName,
-      parameters: pruneSiteMetaEventParametersForEvent(source.parameters || source.eventParameters || source.event_parameters || {}, overrideEventName)
+      parameters: pruneSiteMetaEventParametersForEvent(
+        siteOverride?.parameters || siteOverride?.eventParameters || source.parameters || source.eventParameters || source.event_parameters || {},
+        overrideEventName
+      )
     }
   }
 

@@ -74,6 +74,16 @@ function cleanupPreviewSessions() {
   }
 }
 
+function parseCalendarMetaParameters(value) {
+  if (!value || typeof value !== 'string') return {}
+  try {
+    const parsed = JSON.parse(value)
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : {}
+  } catch {
+    return {}
+  }
+}
+
 function getPreviewCookieName(token) {
   return `rstk_site_preview_${String(token || '').slice(0, 18).replace(/[^a-zA-Z0-9_-]/g, '')}`
 }
@@ -895,10 +905,11 @@ export async function publicSiteHostMiddleware(req, res, next) {
       const calendarMetaOverride = (req.query?.embed === '1' || req.query?.test === '1') && typeof req.query?.metaCalEvent === 'string'
         ? req.query.metaCalEvent.trim()
         : ''
+      const calendarMetaParameters = parseCalendarMetaParameters(req.query?.metaCalData)
       const metaPixelSnippet = await buildCalendarMetaPixelSnippet(calendar, {
         trackingEnabled: !requestHasNoTrack(req),
         preview: isPreview,
-        siteOverride: calendarMetaOverride ? { eventName: calendarMetaOverride } : null
+        siteOverride: calendarMetaOverride ? { eventName: calendarMetaOverride, parameters: calendarMetaParameters } : null
       })
 
       // No cachear el HTML público: cambios de pixel/tracking deben reflejarse

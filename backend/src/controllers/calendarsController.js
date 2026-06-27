@@ -1474,6 +1474,11 @@ export async function createPublicAppointment(req, res) {
     const CALENDAR_META_OVERRIDE_EVENTS = new Set(['Schedule', 'Lead', 'Contact', 'CompleteRegistration', 'FormSubmitted']);
     const rawSiteEventName = typeof body?.meta?.siteEventName === 'string' ? body.meta.siteEventName.trim() : '';
     const siteEventNameOverride = CALENDAR_META_OVERRIDE_EVENTS.has(rawSiteEventName) ? rawSiteEventName : '';
+    const siteEventParametersOverride = body?.meta?.siteEventParameters &&
+      typeof body.meta.siteEventParameters === 'object' &&
+      !Array.isArray(body.meta.siteEventParameters)
+      ? body.meta.siteEventParameters
+      : {};
 
     if (siteEventNameOverride) {
       metaFiredViaSite = true;
@@ -1487,7 +1492,7 @@ export async function createPublicAppointment(req, res) {
           email: bookingSubmission.contact.email
         },
         requestMeta: buildPublicCalendarMetaRequest(req, body),
-        siteOverride: { eventName: siteEventNameOverride }
+        siteOverride: { eventName: siteEventNameOverride, parameters: siteEventParametersOverride }
       }).catch(error => {
         logger.warn(`[Calendars Controller] No se pudo disparar evento Meta (override de sitio) para cita publica: ${error.message}`);
         return null;
