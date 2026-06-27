@@ -21,6 +21,105 @@
   row-gap: 32px;
 }
 
+.snakeTimeline {
+  display: grid;
+  gap: 6px;
+  padding: 16px 0 8px;
+  position: relative;
+  width: 100%;
+}
+
+.snakeRow {
+  display: grid;
+  grid-template-columns:
+    minmax(58px, 1fr)
+    minmax(16px, 30px)
+    minmax(58px, 1fr)
+    minmax(16px, 30px)
+    minmax(58px, 1fr)
+    minmax(16px, 30px)
+    minmax(58px, 1fr);
+  grid-template-rows: auto 26px;
+  align-items: start;
+  min-width: 0;
+}
+
+.journey[data-layout='snake'] .eventWrapper {
+  grid-row: 1;
+  justify-self: center;
+  min-width: 0;
+}
+
+.journey[data-layout='snake'] .event {
+  width: min(92px, 100%);
+}
+
+.journey[data-layout='snake'] .eventContent {
+  min-width: 0;
+  max-width: 92px;
+}
+
+.eventWrapper[data-snake-slot='0'],
+.snakeDropConnector[data-snake-slot='0'] {
+  grid-column: 1;
+}
+
+.eventWrapper[data-snake-slot='1'],
+.snakeDropConnector[data-snake-slot='1'] {
+  grid-column: 3;
+}
+
+.eventWrapper[data-snake-slot='2'],
+.snakeDropConnector[data-snake-slot='2'] {
+  grid-column: 5;
+}
+
+.eventWrapper[data-snake-slot='3'],
+.snakeDropConnector[data-snake-slot='3'] {
+  grid-column: 7;
+}
+
+.snakeConnector,
+.snakeDropConnector {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--border);
+  pointer-events: none;
+}
+
+.snakeConnector {
+  grid-row: 1;
+  justify-self: center;
+  align-self: start;
+  margin-top: 13px;
+}
+
+.snakeConnector[data-snake-connector-slot='0'] {
+  grid-column: 2;
+}
+
+.snakeConnector[data-snake-connector-slot='1'] {
+  grid-column: 4;
+}
+
+.snakeConnector[data-snake-connector-slot='2'] {
+  grid-column: 6;
+}
+
+.snakeDropConnector {
+  grid-row: 2;
+  justify-self: center;
+  align-self: start;
+  margin-top: 2px;
+}
+
+.snakeConnector svg,
+.snakeDropConnector svg {
+  width: 16px;
+  height: 16px;
+}
+
 /* Wrapper de cada evento */
 .eventWrapper {
   display: flex;

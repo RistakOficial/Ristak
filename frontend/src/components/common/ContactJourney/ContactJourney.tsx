@@ -10,6 +10,7 @@ import styles from './ContactJourney.module.css'
 
 interface ContactJourneyProps {
   contactId: string
+  layout?: 'default' | 'snake'
 }
 
 type TooltipSection =
@@ -1000,7 +1001,17 @@ const getTooltipPositionFromRect = (rect: DOMRect): TooltipPosition => {
 const getTooltipTransform = (placement: TooltipPosition['placement']): string =>
   placement === 'top' ? 'translate(-50%, -100%)' : 'translate(-50%, 0)'
 
-export const ContactJourney = ({ contactId }: ContactJourneyProps) => {
+const SNAKE_ROW_SIZE = 4
+
+const chunkJourneyRows = (events: JourneyEvent[], rowSize = SNAKE_ROW_SIZE): JourneyEvent[][] => {
+  const rows: JourneyEvent[][] = []
+  for (let index = 0; index < events.length; index += rowSize) {
+    rows.push(events.slice(index, index + rowSize))
+  }
+  return rows
+}
+
+export const ContactJourney = ({ contactId, layout = 'default' }: ContactJourneyProps) => {
   const { timezone, formatLocalDateShort, formatLocalDateTime } = useTimezone()
   const journeyRef = useRef<HTMLDivElement>(null)
   const tooltipRef = useRef<HTMLDivElement>(null)
@@ -1061,6 +1072,7 @@ export const ContactJourney = ({ contactId }: ContactJourneyProps) => {
 
   // Agrupa contacto/WhatsApp a un solo evento por día local antes de pintar.
   const displayJourney = useMemo(() => buildDisplayJourney(journey, timezone), [journey, timezone])
+  const displayRows = useMemo(() => chunkJourneyRows(displayJourney), [displayJourney])
   const visibleTooltipIndex = activeEventIndex ?? hoveredEventIndex
 
   if (loading) {
@@ -1080,135 +1092,205 @@ export const ContactJourney = ({ contactId }: ContactJourneyProps) => {
     )
   }
 
-  return (
-    <div className={styles.journey} ref={journeyRef}>
-      <h4 className={styles.title}>Viaje del Cliente</h4>
-      <div className={styles.timeline}>
-        {displayJourney.map((event, index) => {
-          if (
-            !event ||
-            typeof event !== 'object' ||
-            !('type' in event) ||
-            typeof event.type !== 'string'
-          ) {
-            return null
-          }
+  const renderJourneyEvent = (
+    event: JourneyEvent,
+    index: number,
+    options: {
+      showDefaultConnector?: boolean
+      slot?: number
+    } = {}
+  ) => {
+    if (
+      !event ||
+      typeof event !== 'object' ||
+      !('type' in event) ||
+      typeof event.type !== 'string'
+    ) {
+      return null
+    }
 
-          const iconName = getEventIcon(event)
-          const color = getEventColor(event)
-          const isLast = index === displayJourney.length - 1
-          const isAdAttributed = Boolean(event.data?.is_ad_attributed)
-          const adPlatformIcon = getAdPlatformIcon(event.data?.ad_platform)
-          const hasAttachedVideo = event.type !== 'video_playback' && getVideoEngagements(event).length > 0
+    const iconName = getEventIcon(event)
+    const color = getEventColor(event)
+    const isLast = index === displayJourney.length - 1
+    const isAdAttributed = Boolean(event.data?.is_ad_attributed)
+    const adPlatformIcon = getAdPlatformIcon(event.data?.ad_platform)
+    const hasAttachedVideo = event.type !== 'video_playback' && getVideoEngagements(event).length > 0
 
-          const tooltipItems = getTooltipContent(event, timezone)
-          const tooltipSections = groupTooltipItems(tooltipItems)
-          const isTooltipPinned = activeEventIndex === index
-          const isTooltipVisible = visibleTooltipIndex === index && tooltipItems.length > 0
+    const tooltipItems = getTooltipContent(event, timezone)
+    const tooltipSections = groupTooltipItems(tooltipItems)
+    const isTooltipPinned = activeEventIndex === index
+    const isTooltipVisible = visibleTooltipIndex === index && tooltipItems.length > 0
 
-          return (
-            <div key={index} className={styles.eventWrapper}>
-              <div
-                className={styles.event}
-                role="button"
-                tabIndex={0}
-                aria-expanded={isTooltipPinned}
-                data-active={isTooltipPinned ? 'true' : undefined}
-                data-contact-journey-event
-                onMouseEnter={(e) => {
-                  const rect = e.currentTarget.getBoundingClientRect()
-                  setHoveredEventIndex(index)
-                  if (activeEventIndex === null) {
-                    setTooltipPosition(getTooltipPositionFromRect(rect))
-                  }
-                }}
-                onMouseLeave={() => {
-                  setHoveredEventIndex(null)
-                  if (activeEventIndex === null) {
-                    setTooltipPosition(null)
-                  }
-                }}
-                onClick={(e) => {
-                  setTooltipPosition(getTooltipPositionFromRect(e.currentTarget.getBoundingClientRect()))
-                  setHoveredEventIndex(index)
-                  setActiveEventIndex(index)
-                }}
-                onKeyDown={(e) => {
-                  if (e.key !== 'Enter' && e.key !== ' ') return
-                  e.preventDefault()
-                  setTooltipPosition(getTooltipPositionFromRect(e.currentTarget.getBoundingClientRect()))
-                  setHoveredEventIndex(index)
-                  setActiveEventIndex(index)
-                }}
-              >
-                <div className={`${styles.eventDot} ${styles[color]}`}>
-                  <Icon name={iconName as any} size={18} />
-                  {isAdAttributed && (
-                    <span className={getAdPlatformBadgeClass(event.data?.ad_platform)} title={event.data?.ad_platform || 'Anuncio'}>
-                      <Icon name={adPlatformIcon as any} size={11} />
-                    </span>
-                  )}
-                  {hasAttachedVideo && (
-                    <span className={styles.videoBadge} title="Vio video" aria-label="Vio video">
-                      <Icon name="circle-play" size={11} />
-                    </span>
-                  )}
-                </div>
-                <div className={styles.eventContent}>
-                  <span className={styles.eventTitle}>{getEventTitle(event)}</span>
-                  <span className={styles.eventDescription}>{getEventDescription(event)}</span>
-                  <span className={styles.eventDate}>{formatLocalDateShort(event.date)}</span>
-                </div>
-              </div>
+    return (
+      <div
+        key={index}
+        className={styles.eventWrapper}
+        data-snake-slot={typeof options.slot === 'number' ? options.slot : undefined}
+      >
+        <div
+          className={styles.event}
+          role="button"
+          tabIndex={0}
+          aria-expanded={isTooltipPinned}
+          data-active={isTooltipPinned ? 'true' : undefined}
+          data-contact-journey-event
+          onMouseEnter={(e) => {
+            const rect = e.currentTarget.getBoundingClientRect()
+            setHoveredEventIndex(index)
+            if (activeEventIndex === null) {
+              setTooltipPosition(getTooltipPositionFromRect(rect))
+            }
+          }}
+          onMouseLeave={() => {
+            setHoveredEventIndex(null)
+            if (activeEventIndex === null) {
+              setTooltipPosition(null)
+            }
+          }}
+          onClick={(e) => {
+            setTooltipPosition(getTooltipPositionFromRect(e.currentTarget.getBoundingClientRect()))
+            setHoveredEventIndex(index)
+            setActiveEventIndex(index)
+          }}
+          onKeyDown={(e) => {
+            if (e.key !== 'Enter' && e.key !== ' ') return
+            e.preventDefault()
+            setTooltipPosition(getTooltipPositionFromRect(e.currentTarget.getBoundingClientRect()))
+            setHoveredEventIndex(index)
+            setActiveEventIndex(index)
+          }}
+        >
+          <div className={`${styles.eventDot} ${styles[color]}`}>
+            <Icon name={iconName as any} size={18} />
+            {isAdAttributed && (
+              <span className={getAdPlatformBadgeClass(event.data?.ad_platform)} title={event.data?.ad_platform || 'Anuncio'}>
+                <Icon name={adPlatformIcon as any} size={11} />
+              </span>
+            )}
+            {hasAttachedVideo && (
+              <span className={styles.videoBadge} title="Vio video" aria-label="Vio video">
+                <Icon name="circle-play" size={11} />
+              </span>
+            )}
+          </div>
+          <div className={styles.eventContent}>
+            <span className={styles.eventTitle}>{getEventTitle(event)}</span>
+            <span className={styles.eventDescription}>{getEventDescription(event)}</span>
+            <span className={styles.eventDate}>{formatLocalDateShort(event.date)}</span>
+          </div>
+        </div>
 
-              {/* Tooltip */}
-              {isTooltipVisible && tooltipPosition && createPortal(
-                <div
-                  ref={tooltipRef}
-                  className={[styles.eventTooltip, isTooltipPinned ? styles.eventTooltipPinned : ''].filter(Boolean).join(' ')}
-                  style={{
-                    top: `${tooltipPosition.top}px`,
-                    left: `${tooltipPosition.left}px`,
-                    position: 'fixed',
-                    transform: getTooltipTransform(tooltipPosition.placement),
-                    zIndex: getFloatingLayerZIndex(journeyRef.current, 'tooltip')
-                  }}
-                >
-                  <div className={styles.tooltipHeader}>
-                    <div className={styles.tooltipTitle}>{getEventTitle(event)}</div>
-                    <div className={styles.tooltipDate}>{formatLocalDateTime(event.date)}</div>
-                  </div>
-                  <div className={styles.tooltipSections}>
-                    {tooltipSections.map(section => (
-                      <section key={section.title} className={styles.tooltipSection}>
-                        <div className={styles.tooltipSectionTitle}>{section.title}</div>
-                        <div className={styles.tooltipList}>
-                          {section.items.map((item, idx) => (
-                            <div key={`${item.label}-${idx}`} className={styles.tooltipItem} data-kind={item.kind || 'text'}>
-                              <span className={styles.tooltipLabel}>{item.label}</span>
-                              <span className={styles.tooltipValue}>
-                                <span className={styles.tooltipValueText}>{item.value}</span>
-                                {item.detail && <span className={styles.tooltipDetail}>{item.detail}</span>}
-                              </span>
-                            </div>
-                          ))}
-                        </div>
-                      </section>
+        {/* Tooltip */}
+        {isTooltipVisible && tooltipPosition && createPortal(
+          <div
+            ref={tooltipRef}
+            className={[styles.eventTooltip, isTooltipPinned ? styles.eventTooltipPinned : ''].filter(Boolean).join(' ')}
+            style={{
+              top: `${tooltipPosition.top}px`,
+              left: `${tooltipPosition.left}px`,
+              position: 'fixed',
+              transform: getTooltipTransform(tooltipPosition.placement),
+              zIndex: getFloatingLayerZIndex(journeyRef.current, 'tooltip')
+            }}
+          >
+            <div className={styles.tooltipHeader}>
+              <div className={styles.tooltipTitle}>{getEventTitle(event)}</div>
+              <div className={styles.tooltipDate}>{formatLocalDateTime(event.date)}</div>
+            </div>
+            <div className={styles.tooltipSections}>
+              {tooltipSections.map(section => (
+                <section key={section.title} className={styles.tooltipSection}>
+                  <div className={styles.tooltipSectionTitle}>{section.title}</div>
+                  <div className={styles.tooltipList}>
+                    {section.items.map((item, idx) => (
+                      <div key={`${item.label}-${idx}`} className={styles.tooltipItem} data-kind={item.kind || 'text'}>
+                        <span className={styles.tooltipLabel}>{item.label}</span>
+                        <span className={styles.tooltipValue}>
+                          <span className={styles.tooltipValueText}>{item.value}</span>
+                          {item.detail && <span className={styles.tooltipDetail}>{item.detail}</span>}
+                        </span>
+                      </div>
                     ))}
                   </div>
-                </div>,
-                document.body
-              )}
-
-              {!isLast && (
-                <div className={styles.connector}>
-                  <Icon name="arrow-right" size={16} />
-                </div>
-              )}
+                </section>
+              ))}
             </div>
-          )
-        })}
+          </div>,
+          document.body
+        )}
+
+        {options.showDefaultConnector && !isLast && (
+          <div className={styles.connector}>
+            <Icon name="arrow-right" size={16} />
+          </div>
+        )}
       </div>
+    )
+  }
+
+  const timelineContent = layout === 'snake' ? (
+    <div className={styles.snakeTimeline}>
+      {displayRows.map((row, rowIndex) => {
+        const isReverseRow = rowIndex % 2 === 1
+        const rowStartIndex = rowIndex * SNAKE_ROW_SIZE
+        const rowDirection = isReverseRow ? 'reverse' : 'forward'
+
+        return (
+          <div key={rowStartIndex} className={styles.snakeRow} data-direction={rowDirection}>
+            {row.map((event, rowItemIndex) => {
+              const index = rowStartIndex + rowItemIndex
+              const slot = isReverseRow
+                ? SNAKE_ROW_SIZE - rowItemIndex - 1
+                : rowItemIndex
+
+              return renderJourneyEvent(event, index, { slot })
+            })}
+
+            {row.map((_, rowItemIndex) => {
+              if (rowItemIndex >= row.length - 1) return null
+
+              const currentSlot = isReverseRow
+                ? SNAKE_ROW_SIZE - rowItemIndex - 1
+                : rowItemIndex
+              const nextSlot = isReverseRow
+                ? SNAKE_ROW_SIZE - rowItemIndex - 2
+                : rowItemIndex + 1
+              const connectorSlot = Math.min(currentSlot, nextSlot)
+
+              return (
+                <div
+                  key={`connector-${rowStartIndex}-${rowItemIndex}`}
+                  className={styles.snakeConnector}
+                  data-snake-connector-slot={connectorSlot}
+                >
+                  <Icon name={isReverseRow ? 'arrow-left' : 'arrow-right'} size={16} />
+                </div>
+              )
+            })}
+
+            {rowStartIndex + row.length < displayJourney.length && (
+              <div
+                className={styles.snakeDropConnector}
+                data-snake-slot={isReverseRow ? 0 : row.length - 1}
+                aria-hidden="true"
+              >
+                <Icon name="arrow-down" size={16} />
+              </div>
+            )}
+          </div>
+        )
+      })}
+    </div>
+  ) : (
+    <div className={styles.timeline}>
+      {displayJourney.map((event, index) => renderJourneyEvent(event, index, { showDefaultConnector: true }))}
+    </div>
+  )
+
+  return (
+    <div className={styles.journey} data-layout={layout} ref={journeyRef}>
+      <h4 className={styles.title}>Viaje del Cliente</h4>
+      {timelineContent}
     </div>
   )
 }
