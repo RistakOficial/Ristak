@@ -2522,11 +2522,15 @@ export function renderPublicCalendarHtml(calendar, { host = '', embedded = false
           .join('');
         timezoneSelect.value = timezone;
       };
+      const setTimezoneConfirmationVisible = (visible) => {
+        if (timezoneStep) timezoneStep.hidden = !visible;
+      };
 
       const setStep = (step = 'calendar') => {
         if (!shell) return;
         shell.classList.toggle('dateSelected', step === 'slots');
         shell.classList.toggle('bookingActive', step === 'form');
+        if (step !== 'slots') setTimezoneConfirmationVisible(false);
         if (changeSlotButton) {
           // Botón contextual para regresar un paso (intuitivo: dice QUÉ vas a cambiar):
           //  - en el formulario → "Cambiar fecha y hora" (regresa a elegir horario)
@@ -2768,7 +2772,7 @@ export function renderPublicCalendarHtml(calendar, { host = '', embedded = false
       const renderSlotsForDate = (key) => {
         const slots = slotsByDate.get(key) || [];
         resetForm(key ? 'slots' : 'calendar');
-        if (timezoneStep) timezoneStep.hidden = !key;
+        setTimezoneConfirmationVisible(!!key);
 
         if (!key) {
           selectedTitle.textContent = 'Selecciona una fecha';
@@ -2847,7 +2851,7 @@ export function renderPublicCalendarHtml(calendar, { host = '', embedded = false
         submit.disabled = false;
         submit.textContent = calendar.preview ? 'Vista previa sin agendar' : 'Agendar cita';
         selectedTitle.textContent = 'Confirma tu cita';
-        selectedSubtitle.textContent = formatDay(selectedSlot) + ' a las ' + formatTime(selectedSlot);
+        selectedSubtitle.textContent = formatDay(selectedSlot) + ' a las ' + formatTime(selectedSlot) + ' | Zona horaria: ' + timezone;
         setMessage('');
       });
 

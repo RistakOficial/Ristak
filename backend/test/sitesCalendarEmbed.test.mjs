@@ -223,7 +223,10 @@ test('public calendar asks for timezone after date selection when visitor timezo
   assert.match(selectableTimezone, /\.timezoneStep \.timezoneControl select\{appearance:none;-webkit-appearance:none;padding-right:42px;line-height:1\.2;background-image:linear-gradient\(45deg,transparent 50%,var\(--field-text\) 50%\),linear-gradient\(135deg,var\(--field-text\) 50%,transparent 50%\);background-position:calc\(100% - 16px\) calc\(50% - 2px\),calc\(100% - 11px\) calc\(50% - 2px\);background-size:5px 5px,5px 5px;background-repeat:no-repeat\}/)
   assert.match(selectableTimezone, /<span>Confirma tu zona horaria<\/span>/)
   assert.match(selectableTimezone, /<select data-timezone-select aria-label="Confirmar zona horaria"><\/select>/)
-  assert.match(selectableTimezone, /if \(timezoneStep\) timezoneStep\.hidden = !key;/)
+  assert.match(selectableTimezone, /const setTimezoneConfirmationVisible = \(visible\) => \{\s*if \(timezoneStep\) timezoneStep\.hidden = !visible;\s*\};/)
+  assert.match(selectableTimezone, /if \(step !== 'slots'\) setTimezoneConfirmationVisible\(false\);/)
+  assert.match(selectableTimezone, /setTimezoneConfirmationVisible\(\!\!key\);/)
+  assert.match(selectableTimezone, /selectedSubtitle\.textContent = formatDay\(selectedSlot\) \+ ' a las ' \+ formatTime\(selectedSlot\) \+ ' \| Zona horaria: ' \+ timezone;/)
   assert.ok(
     selectableTimezone.indexOf('data-selected-subtitle') < selectableTimezone.indexOf('data-timezone-step') &&
       selectableTimezone.indexOf('data-timezone-step') < selectableTimezone.indexOf('data-slots'),
