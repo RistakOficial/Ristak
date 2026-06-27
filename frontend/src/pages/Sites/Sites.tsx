@@ -366,19 +366,8 @@ const metaEventOptions = [
 
 const metaTriggerOptions: Array<{ value: SiteMetaTrigger; label: string }> = [
   { value: 'page_view', label: 'Al aterrizar' },
-  { value: 'form_submit', label: 'Al enviar formulario' }
-]
-
-// Eventos permitidos para "Al agendar cita" del calendario embebido. Solo eventos sin
-// parametros obligatorios (Purchase/ViewContent exigen value+currency); en v1 el sitio
-// overridea el NOMBRE del evento y los parametros se heredan del calendario.
-const metaCalendarEventOptions = [
-  { value: 'none', label: 'Usar el del calendario' },
-  { value: 'Schedule', label: 'Schedule' },
-  { value: 'Lead', label: 'Lead' },
-  { value: 'Contact', label: 'Contact' },
-  { value: 'CompleteRegistration', label: 'CompleteRegistration' },
-  { value: 'FormSubmitted', label: 'FormSubmitted' }
+  { value: 'form_submit', label: 'Al terminar formulario' },
+  { value: 'calendar_schedule', label: 'Al agendar' }
 ]
 
 const normalizeMetaEventName = (value?: string, fallback = 'Lead') =>
@@ -390,7 +379,15 @@ const normalizeEnabledMetaEventName = (value?: string) => {
 }
 
 const normalizeMetaTrigger = (value?: string): SiteMetaTrigger =>
-  value === 'form_submit' ? 'form_submit' : 'page_view'
+  value === 'form_submit' || value === 'calendar_schedule' ? value : 'page_view'
+
+const normalizeMetaBoolean = (value: unknown) => (
+  value === true || value === 1 || value === '1' || value === 'true' || value === 'yes' || value === 'on'
+)
+
+const getDefaultMetaEventNameForTrigger = (trigger: SiteMetaTrigger) => (
+  trigger === 'calendar_schedule' ? 'Schedule' : 'Lead'
+)
 
 type SiteMetaParameterFieldKey = Exclude<keyof SiteMetaEventParameters, 'custom'>
 
@@ -4329,13 +4326,31 @@ const normalizePageList = (rawPages: SitePage[] = []): SitePage[] => {
   const seen = new Set<string>()
   const normalized = rawPages
     .map((page, index) => {
-      const source = page as SitePage & { button_text?: string; button_subtitle?: string }
+      const source = page as SitePage & {
+        button_text?: string
+        button_subtitle?: string
+        meta_capi_enabled?: unknown
+        meta_event_name?: string
+        meta_trigger?: string
+        meta_event_parameters?: SiteMetaEventParameters
+        meta_calendar_enabled?: unknown
+        meta_calendar_event_name?: string
+      }
       const buttonText = typeof (source?.buttonText ?? source?.button_text) === 'string'
         ? String(source.buttonText ?? source.button_text).trim()
         : ''
       const buttonSubtitle = typeof (source?.buttonSubtitle ?? source?.button_subtitle) === 'string'
         ? String(source.buttonSubtitle ?? source.button_subtitle).trim()
         : ''
+      const metaEventName = normalizeMetaEventName(source?.metaEventName || source?.meta_event_name, 'none')
+      const metaCalendarEventName = normalizeMetaEventName(source?.metaCalendarEventName || source?.meta_calendar_event_name, 'none')
+      const metaCalendarEnabled = normalizeMetaBoolean(source?.metaCalendarEnabled ?? source?.meta_calendar_enabled) && metaCalendarEventName !== 'none'
+      const rawMetaTrigger = String(source?.metaTrigger || source?.meta_trigger || '').trim()
+      const metaTrigger = rawMetaTrigger === 'form_submit'
+        ? 'form_submit'
+        : metaCalendarEnabled
+          ? 'calendar_schedule'
+          : normalizeMetaTrigger(rawMetaTrigger)
 
       return {
         id: page?.id || `${DEFAULT_FUNNEL_PAGE_ID}-${index + 1}`,
@@ -4348,11 +4363,12 @@ const normalizePageList = (rawPages: SitePage[] = []): SitePage[] => {
         ...(page?.importedAssetPath ? { importedAssetPath: page.importedAssetPath } : {}),
         ...(page?.importedOriginalTitle ? { importedOriginalTitle: page.importedOriginalTitle } : {}),
         ...(page?.headerTrackingCode !== undefined ? { headerTrackingCode: page.headerTrackingCode } : {}),
-        metaCapiEnabled: Boolean(page?.metaCapiEnabled),
-        metaEventName: normalizeMetaEventName(page?.metaEventName, 'none'),
-        metaTrigger: normalizeMetaTrigger(page?.metaTrigger),
-        ...(hasMetaEventParameters(page?.metaEventParameters)
-          ? { metaEventParameters: pruneMetaEventParametersForEvent(page?.metaEventParameters, page?.metaEventName) }
+        metaCapiEnabled: normalizeMetaBoolean(source?.metaCapiEnabled ?? source?.meta_capi_enabled),
+        metaEventName,
+        metaTrigger,
+        ...(metaCalendarEnabled ? { metaCalendarEnabled: true, metaCalendarEventName } : {}),
+        ...(hasMetaEventParameters(source?.metaEventParameters || source?.meta_event_parameters)
+          ? { metaEventParameters: pruneMetaEventParametersForEvent(source?.metaEventParameters || source?.meta_event_parameters, metaEventName) }
           : {})
       }
     })
@@ -4382,6 +4398,9 @@ const normalizeFormPages = (site?: PublicSite | null): SitePage[] => {
       metaCapiEnabled: Boolean(existing?.metaCapiEnabled),
       metaEventName: normalizeMetaEventName(existing?.metaEventName, 'none'),
       metaTrigger: normalizeMetaTrigger(existing?.metaTrigger),
+      ...(existing?.metaCalendarEnabled && existing.metaCalendarEventName && existing.metaCalendarEventName !== 'none'
+        ? { metaCalendarEnabled: true, metaCalendarEventName: existing.metaCalendarEventName }
+        : {}),
       ...(hasMetaEventParameters(existing?.metaEventParameters)
         ? { metaEventParameters: pruneMetaEventParametersForEvent(existing?.metaEventParameters, existing?.metaEventName) }
         : {})
@@ -4516,7 +4535,7 @@ const normalizePagesForSave = (pages: SitePage[]) =>
     metaCapiEnabled: Boolean(page.metaCapiEnabled),
     metaEventName: normalizeMetaEventName(page.metaEventName, 'none'),
     metaTrigger: normalizeMetaTrigger(page.metaTrigger),
-    ...(page.metaCalendarEnabled && page.metaCalendarEventName && page.metaCalendarEventName !== 'none'
+    ...(normalizeMetaTrigger(page.metaTrigger) === 'calendar_schedule' && page.metaCalendarEnabled && page.metaCalendarEventName && page.metaCalendarEventName !== 'none'
       ? { metaCalendarEnabled: true, metaCalendarEventName: page.metaCalendarEventName }
       : {}),
     ...(hasMetaEventParameters(page.metaEventParameters)
@@ -26235,29 +26254,86 @@ const MetaPageConversionSettingsPanel: React.FC<{
     : 'none'
   const activePageHasConversion = activePageEventName !== 'none'
   const activePageHasParameters = hasMetaEventParameters(activePage.metaEventParameters)
-  // "Al enviar formulario" solo se ofrece si la pagina tiene formulario (no confundir);
-  // si ya hay un trigger form_submit guardado se conserva para no perder la config.
-  const showFormSubmitTrigger = Boolean(pageHasForm) || normalizeMetaTrigger(activePage.metaTrigger) === 'form_submit'
-  const availableTriggerOptions = metaTriggerOptions.filter(option => option.value !== 'form_submit' || showFormSubmitTrigger)
-  // Evento Meta "al agendar" del calendario embebido de esta pagina (el sitio es master).
-  const activePageCalendarEventName = activePage.metaCalendarEnabled
-    ? normalizeMetaEventName(activePage.metaCalendarEventName, 'none')
-    : 'none'
+  const activeTrigger = normalizeMetaTrigger(activePage.metaTrigger)
+  const showFormSubmitTrigger = Boolean(pageHasForm) || activeTrigger === 'form_submit'
+  const showCalendarScheduleTrigger = Boolean(pageHasCalendar) || activeTrigger === 'calendar_schedule'
+  const availableTriggerOptions = metaTriggerOptions.filter(option => {
+    if (option.value === 'form_submit') return showFormSubmitTrigger
+    if (option.value === 'calendar_schedule') return showCalendarScheduleTrigger
+    return true
+  })
 
-  useEffect(() => {
-    if (!metaEnabled || !activePageHasConversion) setParamsOpen(false)
-  }, [activePageHasConversion, metaEnabled])
-
-  const saveSoon = () => {
+  const saveSoon = useCallback(() => {
     window.setTimeout(() => { void onSaveSite() }, 0)
-  }
+  }, [onSaveSite])
 
-  const patchActivePage = (patch: Partial<SitePage>) => {
+  const patchActivePage = useCallback((patch: Partial<SitePage>) => {
     onPatchTheme({
       pages: normalizePagesForSave(pages.map(page => (
         page.id === activePage.id ? { ...page, ...patch } : page
       )))
     })
+  }, [activePage.id, onPatchTheme, pages])
+
+  useEffect(() => {
+    if (!metaEnabled || !activePageHasConversion) setParamsOpen(false)
+  }, [activePageHasConversion, metaEnabled])
+
+  useEffect(() => {
+    if (!metaEnabled || !activePageHasConversion) return
+
+    let nextTrigger = activeTrigger
+    if (activeTrigger === 'form_submit' && !showFormSubmitTrigger) {
+      nextTrigger = showCalendarScheduleTrigger ? 'calendar_schedule' : 'page_view'
+    } else if (activeTrigger === 'calendar_schedule' && !showCalendarScheduleTrigger) {
+      nextTrigger = showFormSubmitTrigger ? 'form_submit' : 'page_view'
+    } else if (activeTrigger === 'page_view' && (pageHasForm || pageHasCalendar)) {
+      nextTrigger = pageHasForm ? 'form_submit' : 'calendar_schedule'
+    }
+
+    if (nextTrigger === activeTrigger) return
+
+    const nextEventName = activePageEventName === 'none'
+      ? getDefaultMetaEventNameForTrigger(nextTrigger)
+      : activePageEventName
+
+    patchActivePage({
+      metaTrigger: nextTrigger,
+      metaEventName: nextEventName,
+      metaCapiEnabled: nextEventName !== 'none',
+      metaCalendarEnabled: nextTrigger === 'calendar_schedule' && nextEventName !== 'none',
+      metaCalendarEventName: nextTrigger === 'calendar_schedule' ? nextEventName : 'none',
+      metaEventParameters: pruneMetaEventParametersForEvent(activePage.metaEventParameters, nextEventName)
+    })
+    saveSoon()
+  }, [
+    activePage.metaEventParameters,
+    activePageEventName,
+    activePageHasConversion,
+    activeTrigger,
+    metaEnabled,
+    pageHasCalendar,
+    pageHasForm,
+    patchActivePage,
+    saveSoon,
+    showCalendarScheduleTrigger,
+    showFormSubmitTrigger
+  ])
+
+  const patchMetaTrigger = (nextTrigger: SiteMetaTrigger) => {
+    const nextEventName = activePageEventName === 'none'
+      ? getDefaultMetaEventNameForTrigger(nextTrigger)
+      : activePageEventName
+
+    patchActivePage({
+      metaTrigger: nextTrigger,
+      metaEventName: nextEventName,
+      metaCapiEnabled: nextEventName !== 'none',
+      metaCalendarEnabled: nextTrigger === 'calendar_schedule' && nextEventName !== 'none',
+      metaCalendarEventName: nextTrigger === 'calendar_schedule' ? nextEventName : 'none',
+      metaEventParameters: pruneMetaEventParametersForEvent(activePage.metaEventParameters, nextEventName)
+    })
+    saveSoon()
   }
 
   return (
@@ -26289,12 +26365,11 @@ const MetaPageConversionSettingsPanel: React.FC<{
         <label className={styles.editorSettingsField}>
           <span>Cuando</span>
           <CustomSelect
-            value={normalizeMetaTrigger(activePage.metaTrigger)}
+            value={activeTrigger}
             disabled={disabled || !metaEnabled || !activePageHasConversion}
             portal
             onChange={(event) => {
-              patchActivePage({ metaTrigger: event.target.value as SiteMetaTrigger })
-              saveSoon()
+              patchMetaTrigger(event.target.value as SiteMetaTrigger)
             }}
           >
             {availableTriggerOptions.map(option => (
@@ -26314,6 +26389,8 @@ const MetaPageConversionSettingsPanel: React.FC<{
               patchActivePage({
                 metaEventName,
                 metaCapiEnabled: metaEventName !== 'none',
+                metaCalendarEnabled: activeTrigger === 'calendar_schedule' && metaEventName !== 'none',
+                metaCalendarEventName: activeTrigger === 'calendar_schedule' ? metaEventName : 'none',
                 metaEventParameters: pruneMetaEventParametersForEvent(activePage.metaEventParameters, metaEventName)
               })
               saveSoon()
@@ -26350,29 +26427,6 @@ const MetaPageConversionSettingsPanel: React.FC<{
           onChange={(metaEventParameters) => patchActivePage({ metaEventParameters })}
           onCommit={saveSoon}
         />
-      )}
-
-      {pageHasCalendar && (
-        <label className={styles.editorSettingsField}>
-          <span>Al agendar cita</span>
-          <CustomSelect
-            value={activePageCalendarEventName}
-            disabled={disabled || !metaEnabled}
-            portal
-            onChange={(event) => {
-              const value = event.target.value
-              patchActivePage({
-                metaCalendarEventName: value,
-                metaCalendarEnabled: value !== 'none'
-              })
-              saveSoon()
-            }}
-          >
-            {metaCalendarEventOptions.map(option => (
-              <option key={option.value} value={option.value}>{option.label}</option>
-            ))}
-          </CustomSelect>
-        </label>
       )}
     </div>
   )
@@ -32457,7 +32511,7 @@ const FORM_EMBED_DRAFT_SOURCE_VALUE = '__embedded_form_draft__'
 
 // Nota: el evento del píxel de Meta "Al enviar" NO se configura aquí. El sitio es el
 // master absoluto: getFormSubmitMetaEventName lee el evento a nivel de la página/sitio
-// contenedor (Ajustes del sitio → Meta Pixel + CAPI → "Al enviar formulario"), nunca el
+// contenedor (Ajustes del sitio → Meta Pixel + CAPI → "Al terminar formulario"), nunca el
 // del formulario embebido/importado. Por eso el form_embed no expone control de Meta.
 const FormEmbedToolbarControls: React.FC<{
   site: PublicSite

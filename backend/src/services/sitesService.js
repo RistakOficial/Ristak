@@ -210,7 +210,7 @@ const FORM_DISQUALIFIED_PRESET_BLOCKS = [
 const SITE_META_NO_EVENT = 'none'
 const SITE_META_EVENTS = new Set(['Lead', 'Schedule', 'Purchase', 'FormSubmitted', 'ViewContent', 'CompleteRegistration', 'Contact'])
 const META_STANDARD_PIXEL_EVENTS = new Set(['Lead', 'Schedule', 'Purchase', 'ViewContent', 'CompleteRegistration', 'Contact'])
-const SITE_META_TRIGGERS = new Set(['page_view', 'form_submit'])
+const SITE_META_TRIGGERS = new Set(['page_view', 'form_submit', 'calendar_schedule'])
 const SITE_TYPES_WITH_PAGE_META = new Set(['landing_page', 'interactive_form', 'standard_form'])
 const SITE_META_PARAMETER_FIELDS = {
   Lead: ['value', 'predictedLtv', 'currency', 'status'],
@@ -14164,10 +14164,16 @@ function normalizePageList(rawPages = []) {
         page?.metaEventParameters || page?.meta_event_parameters,
         metaEventName
       )
-      // Evento Meta "al agendar" del calendario embebido (el SITIO es master). Separado del
-      // evento del formulario porque una pagina puede tener form Y calendario a la vez.
+      // Evento Meta "al agendar" del calendario embebido (el SITIO es master).
+      // En el editor se maneja como otro trigger del mismo control "Cuando".
       const metaCalendarEventName = normalizeSiteMetaEventName(page?.metaCalendarEventName || page?.meta_calendar_event_name, { allowNone: true, fallback: SITE_META_NO_EVENT })
       const metaCalendarEnabled = Boolean(normalizeBoolean(page?.metaCalendarEnabled ?? page?.meta_calendar_enabled)) && metaCalendarEventName !== SITE_META_NO_EVENT
+      const rawMetaTrigger = cleanString(page?.metaTrigger || page?.meta_trigger)
+      const metaTrigger = rawMetaTrigger === 'form_submit'
+        ? 'form_submit'
+        : metaCalendarEnabled
+          ? 'calendar_schedule'
+          : normalizeSiteMetaTrigger(rawMetaTrigger)
       const parentPageId = cleanString(page?.parentPageId || page?.parent_page_id)
       const slug = slugifyPageSegment(page?.slug)
       const buttonText = cleanString(page?.buttonText || page?.button_text)
@@ -14179,7 +14185,7 @@ function normalizePageList(rawPages = []) {
         sortOrder: Number.isFinite(Number(page?.sortOrder)) ? Number(page.sortOrder) : index,
         metaCapiEnabled: Boolean(normalizeBoolean(page?.metaCapiEnabled ?? page?.meta_capi_enabled)),
         metaEventName,
-        metaTrigger: normalizeSiteMetaTrigger(page?.metaTrigger || page?.meta_trigger),
+        metaTrigger,
         ...(metaCalendarEnabled ? { metaCalendarEnabled: true, metaCalendarEventName } : {}),
         ...(hasSiteMetaEventParameters(metaEventParameters) ? { metaEventParameters } : {}),
         ...(parentPageId ? { parentPageId } : {}),
@@ -14217,6 +14223,9 @@ function normalizeFormPages(site) {
       metaCapiEnabled: Boolean(existing?.metaCapiEnabled),
       metaEventName: normalizeSiteMetaEventName(existing?.metaEventName, { allowNone: true, fallback: SITE_META_NO_EVENT }),
       metaTrigger: normalizeSiteMetaTrigger(existing?.metaTrigger),
+      ...(existing?.metaCalendarEnabled && existing.metaCalendarEventName && existing.metaCalendarEventName !== SITE_META_NO_EVENT
+        ? { metaCalendarEnabled: true, metaCalendarEventName: existing.metaCalendarEventName }
+        : {}),
       ...(hasSiteMetaEventParameters(existing?.metaEventParameters)
         ? { metaEventParameters: pruneSiteMetaEventParametersForEvent(existing.metaEventParameters, existing.metaEventName) }
         : {})
@@ -14607,6 +14616,9 @@ function getFormSubmitMetaEventName(site, pageId) {
     if (page?.metaCapiEnabled && normalizeSiteMetaTrigger(page.metaTrigger) === 'form_submit') {
       return normalizeSiteMetaEventName(page.metaEventName, { allowNone: true, fallback: SITE_META_NO_EVENT })
     }
+    if (page?.metaCapiEnabled && normalizeSiteMetaTrigger(page.metaTrigger) !== 'form_submit') {
+      return SITE_META_NO_EVENT
+    }
     // Un landing con formulario embebido configura su evento "Al enviar" a nivel de
     // sitio (site.metaEventName) desde el popover del formulario, igual que un
     // formulario standalone. Sin un override por página, ese evento de sitio debe
@@ -14622,6 +14634,9 @@ function getFormSubmitMetaEventParameters(site, pageId, eventName) {
     const page = getSitePage(site, pageId)
     if (page?.metaCapiEnabled && normalizeSiteMetaTrigger(page.metaTrigger) === 'form_submit') {
       return pruneSiteMetaEventParametersForEvent(page?.metaEventParameters, eventName)
+    }
+    if (page?.metaCapiEnabled && normalizeSiteMetaTrigger(page.metaTrigger) !== 'form_submit') {
+      return {}
     }
     // Mismo criterio que getFormSubmitMetaEventName: sin override por página, el
     // landing usa los parámetros a nivel de sitio (theme.metaEventParameters) que
