@@ -110,11 +110,95 @@ test('landing form embeds render multiple form pages as an inline stepform', asy
   assert.match(html, /Título interno del formulario/)
   assert.match(html, /data-block-id="field-name" data-page-id="step-1"/)
   assert.match(html, /data-block-id="field-email" data-page-id="step-2"/)
-  assert.doesNotMatch(html, /Texto de página final que no debe aparecer/)
+  assert.match(html, /data-embedded-form-result="qualified" hidden>[\s\S]*Texto de página final que no debe aparecer/)
   assert.doesNotMatch(html, /<h2>Formulario<\/h2>/)
   assert.match(html, /getEmbeddedPageFields/)
   assert.match(html, /embeddedForms\.forEach\(renderEmbeddedForm\)/)
   assert.match(html, /state\.index = 0;/)
+  assert.ok(html.includes("setHiddenAndSyncMedia(content, (content.getAttribute('data-embedded-page-content') || '') !== currentPageId);"))
+})
+
+test('multistep form runtime pauses media when switching questions', async () => {
+  const site = {
+    id: 'site_interactive_video_steps',
+    name: 'Formulario con video por paso',
+    title: 'Formulario con video por paso',
+    description: '',
+    slug: 'formulario-video-pasos',
+    siteType: 'interactive_form',
+    status: 'published',
+    theme: {
+      template: 'interactive',
+      pages: [
+        { id: 'step-video-1', title: 'Video 1', sortOrder: 0 },
+        { id: 'step-video-2', title: 'Video 2', sortOrder: 1 }
+      ]
+    },
+    blocks: [
+      {
+        id: 'video-step-1',
+        siteId: 'site_interactive_video_steps',
+        blockType: 'video',
+        label: 'Video inicial',
+        content: '',
+        placeholder: '',
+        required: false,
+        options: [],
+        sortOrder: 0,
+        settings: { pageId: 'step-video-1', mediaUrl: 'https://cdn.example.com/video-1.mp4' }
+      },
+      {
+        id: 'question-step-1',
+        siteId: 'site_interactive_video_steps',
+        blockType: 'short_text',
+        label: 'Pregunta 1',
+        content: '',
+        placeholder: 'Respuesta',
+        required: true,
+        options: [],
+        sortOrder: 1,
+        settings: { pageId: 'step-video-1' }
+      },
+      {
+        id: 'video-step-2',
+        siteId: 'site_interactive_video_steps',
+        blockType: 'video',
+        label: 'Video siguiente',
+        content: '',
+        placeholder: '',
+        required: false,
+        options: [],
+        sortOrder: 2,
+        settings: { pageId: 'step-video-2', mediaUrl: 'https://iframe.mediadelivery.net/embed/library/video-id' }
+      },
+      {
+        id: 'email-step-2',
+        siteId: 'site_interactive_video_steps',
+        blockType: 'email',
+        label: 'Correo',
+        content: '',
+        placeholder: 'correo@example.test',
+        required: true,
+        options: [],
+        sortOrder: 3,
+        settings: { pageId: 'step-video-2' }
+      }
+    ]
+  }
+
+  const html = await renderPublicSiteHtml(site, {
+    pageId: 'step-video-1',
+    trackingEnabled: false,
+    preview: true
+  })
+
+  assert.match(html, /const pauseMediaIn = \(root\) =>/)
+  assert.match(html, /media\.pause\(\)/)
+  assert.match(html, /frame\.removeAttribute\('src'\)/)
+  assert.match(html, /restorePausedMediaIn/)
+  assert.ok(html.includes('setHiddenAndSyncMedia(content, contentPageId !== currentPageId);'))
+  assert.match(html, /data-interactive-page-content="step-video-1"/)
+  assert.match(html, /data-interactive-page-content="step-video-2"/)
 })
 
 test('standard form content-only pages still render navigation actions', async () => {
@@ -591,4 +675,10 @@ test('standalone standard form keeps honoring its own result redirect', async ()
 
   assert.match(html, /const completionUsesFormRules = true;/)
   assert.match(html, /if \(submission\.redirectUrl && completionUsesFormRules\)/)
+  assert.match(html, /const navigateAway = \(targetUrl\) =>/)
+  assert.match(html, /pauseMediaIn\(document\)/)
+  const redirectBeforeResetIndex = html.indexOf('if (navigateAway(getSubmissionCompletionUrl())) return;')
+  const resetIndex = html.indexOf('form.reset();')
+  assert.ok(redirectBeforeResetIndex >= 0, 'expected completion navigation before form reset')
+  assert.ok(resetIndex > redirectBeforeResetIndex, 'form reset must not run before redirect decisions')
 })

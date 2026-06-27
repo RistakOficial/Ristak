@@ -21514,6 +21514,42 @@ export async function renderPublicSiteHtml(site, { pageId, pagePath, trackingEna
         url.searchParams.set('page', targetPageId);
         return preserveUrl(url.toString());
       };
+      const isMediaFrame = (frame) => {
+        const src = frame.getAttribute('src') || frame.dataset.rstkPausedSrc || '';
+        return Boolean(frame.closest('.rstk-video, .rstk-imported-video-slot')) ||
+          /(?:youtube\\.com|youtu\\.be|vimeo\\.com|iframe\\.mediadelivery\\.net|bunnycdn\\.com|wistia\\.|loom\\.com)/i.test(src);
+      };
+      const pauseMediaIn = (root) => {
+        if (!root || !root.querySelectorAll) return;
+        root.querySelectorAll('video,audio').forEach((media) => {
+          try { media.pause(); } catch (_) {}
+        });
+        root.querySelectorAll('iframe').forEach((frame) => {
+          if (!isMediaFrame(frame)) return;
+          const src = frame.getAttribute('src') || '';
+          if (!src) return;
+          frame.dataset.rstkPausedSrc = src;
+          frame.removeAttribute('src');
+        });
+      };
+      const restorePausedMediaIn = (root) => {
+        if (!root || !root.querySelectorAll) return;
+        root.querySelectorAll('iframe[data-rstk-paused-src]').forEach((frame) => {
+          if (frame.getAttribute('src')) {
+            delete frame.dataset.rstkPausedSrc;
+            return;
+          }
+          const src = frame.dataset.rstkPausedSrc || '';
+          delete frame.dataset.rstkPausedSrc;
+          if (src) frame.setAttribute('src', src);
+        });
+      };
+      const setHiddenAndSyncMedia = (element, hidden) => {
+        if (!element) return;
+        if (hidden) pauseMediaIn(element);
+        element.hidden = Boolean(hidden);
+        if (!hidden) restorePausedMediaIn(element);
+      };
       const isExitRule = (rule) => rule && (rule.action === 'redirect' || rule.action === 'site_page');
       const isTerminalRule = (rule) => rule && ['redirect', 'site_page', 'show_message', 'disqualify', 'disqualify_after_submit', 'end_form'].includes(rule.action);
       const shouldSubmitRule = (rule) => !isStandardForm || submitIncompleteOnExit || !isTerminalRule(rule);
@@ -21532,7 +21568,7 @@ export async function renderPublicSiteHtml(site, { pageId, pagePath, trackingEna
       const showOnlyRuleMessage = (targetMessage, text) => {
         const scope = targetMessage && targetMessage.closest ? targetMessage.closest('.rstk-embedded-form') || form : form;
         scope.querySelectorAll('.rstk-field, [data-interactive-page-content], [data-embedded-page-content]').forEach((element) => {
-          element.hidden = true;
+          setHiddenAndSyncMedia(element, true);
         });
         scope.querySelectorAll('[data-next], [data-form-next], [data-back], [data-submit], [data-embedded-next], [data-embedded-back]').forEach((element) => {
           element.hidden = true;
@@ -21551,6 +21587,7 @@ export async function renderPublicSiteHtml(site, { pageId, pagePath, trackingEna
         if (!shouldSubmitRule(rule)) {
           const targetUrl = getRuleRedirectUrl(rule);
           if (targetUrl) {
+            pauseMediaIn(document);
             window.location.href = targetUrl;
             return true;
           }
@@ -21649,7 +21686,7 @@ export async function renderPublicSiteHtml(site, { pageId, pagePath, trackingEna
         const submitCopy = getPageButtonCopy(currentPageId, submitText, submitSubtitle);
         pageContents.forEach((content) => {
           const contentPageId = content.getAttribute('data-interactive-page-content') || '';
-          content.hidden = contentPageId !== currentPageId;
+          setHiddenAndSyncMedia(content, contentPageId !== currentPageId);
         });
         if (backButton) backButton.hidden = index === 0;
         if (nextButton) {
@@ -21679,9 +21716,9 @@ export async function renderPublicSiteHtml(site, { pageId, pagePath, trackingEna
         const result = host.querySelector('[data-embedded-form-result="' + status + '"]');
         if (!result) return false;
         Array.from(host.children).forEach((child) => {
-          child.hidden = child !== result;
+          setHiddenAndSyncMedia(child, child !== result);
         });
-        result.hidden = false;
+        setHiddenAndSyncMedia(result, false);
         if (typeof result.scrollIntoView === 'function') {
           try { result.scrollIntoView({ behavior: 'smooth', block: 'nearest' }); } catch (_) {}
         }
@@ -21744,7 +21781,7 @@ export async function renderPublicSiteHtml(site, { pageId, pagePath, trackingEna
         const embeddedLabel = currentContent ? currentContent.getAttribute('data-next-label') || currentContent.getAttribute('data-submit-label') || '' : '';
         const embeddedSubtitle = currentContent ? currentContent.getAttribute('data-submit-subtitle') || '' : '';
         state.pageContents.forEach((content) => {
-          content.hidden = (content.getAttribute('data-embedded-page-content') || '') !== currentPageId;
+          setHiddenAndSyncMedia(content, (content.getAttribute('data-embedded-page-content') || '') !== currentPageId);
         });
         if (state.backButton) state.backButton.hidden = state.index === 0;
         if (state.nextButton) {
@@ -21826,6 +21863,7 @@ export async function renderPublicSiteHtml(site, { pageId, pagePath, trackingEna
           ? pageUrl(targetPageId)
           : standardFormNextPageUrl;
         if (targetUrl) {
+          pauseMediaIn(document);
           window.location.href = preserveUrl(targetUrl);
         }
       });
@@ -21873,6 +21911,16 @@ export async function renderPublicSiteHtml(site, { pageId, pagePath, trackingEna
         if (submitButton) submitButton.disabled = true;
         if (formNextButton) formNextButton.disabled = true;
         if (message) message.textContent = 'Enviando...';
+
+        let isNavigatingAway = false;
+        const navigateAway = (targetUrl) => {
+          if (!targetUrl) return false;
+          isNavigatingAway = true;
+          pauseMediaIn(document);
+          if (message) message.textContent = 'Redirigiendo...';
+          window.location.href = preserveUrl(targetUrl);
+          return true;
+        };
 
         try {
           const response = await fetch('/api/sites/public/submit', {
@@ -21926,70 +21974,36 @@ export async function renderPublicSiteHtml(site, { pageId, pagePath, trackingEna
               email: submission.contactEmail || ''
             });
           }
-          if (!terminalDisqualify) {
-            form.reset();
-            initPhoneCountryFields();
-            index = 0;
-            renderStep();
-            embeddedForms.forEach((state) => {
-              state.index = 0;
-              renderEmbeddedForm(state);
-            });
-          }
+          const qualifies = submission.status !== 'disqualified';
           // El redirect propio del formulario (calificación/descalificación del
           // standalone) solo manda cuando el embed usa "Usar reglas del formulario".
           // Con cualquier otra acción del editor de sitios, esa acción tiene prioridad.
-          if (submission.redirectUrl && completionUsesFormRules) {
-            window.location.href = preserveUrl(submission.redirectUrl);
-            return;
-          }
-          const qualifies = submission.status !== 'disqualified';
+          const getSubmissionCompletionUrl = () => {
+            if (submission.redirectUrl && completionUsesFormRules) return submission.redirectUrl;
+            if (completionUsesFormRules) {
+              // "Redirigir siempre" del formulario manda califique o no (como standalone).
+              if (completionAction === 'redirect' && qualifiedRedirectUrl) return qualifiedRedirectUrl;
+              if (!qualifies && disqualifiedCompletionAction === 'redirect_url' && disqualifiedRedirectUrl) return disqualifiedRedirectUrl;
+              if (qualifies && completionAction === 'redirect_qualified' && qualifiedRedirectUrl) return qualifiedRedirectUrl;
+            }
+            if (completionAction === 'redirect' && qualifiedRedirectUrl) return qualifiedRedirectUrl;
+            if (!qualifies && disqualifiedCompletionAction === 'redirect_url' && disqualifiedRedirectUrl) return disqualifiedRedirectUrl;
+            if (!qualifies && disqualifiedPageUrl && (completionAction === 'next_page_if_qualified' || completionAction === 'redirect_qualified' || completionAction === 'specific_page_if_qualified')) return disqualifiedPageUrl;
+            if (qualifies && completionAction === 'redirect_qualified' && qualifiedRedirectUrl) return qualifiedRedirectUrl;
+            if (qualifies && (completionAction === 'specific_page' || completionAction === 'specific_page_if_qualified') && completionTargetPageUrl) return completionTargetPageUrl;
+            if (nextPageUrl && (completionAction === 'next_page' || ((completionAction === 'next_page_if_qualified' || completionAction === 'redirect_qualified') && qualifies))) return nextPageUrl;
+            return '';
+          };
+          if (navigateAway(getSubmissionCompletionUrl())) return;
           // Formulario embebido con "Usar reglas del formulario": replica las pantallas
           // de resultado del formulario standalone (Calificado / No calificado) inline,
           // salvo que el propio formulario defina un redirect (ése sí manda). En un
           // formulario standalone showEmbeddedResult no encuentra .rstk-embedded-form y
           // devuelve false, así que el flujo a páginas reales de resultado sigue intacto.
           if (completionUsesFormRules) {
-            // "Redirigir siempre" del formulario manda califique o no (como standalone).
-            if (completionAction === 'redirect' && qualifiedRedirectUrl) {
-              window.location.href = preserveUrl(qualifiedRedirectUrl);
-              return;
-            }
-            if (!qualifies && disqualifiedCompletionAction === 'redirect_url' && disqualifiedRedirectUrl) {
-              window.location.href = preserveUrl(disqualifiedRedirectUrl);
-              return;
-            }
-            if (qualifies && completionAction === 'redirect_qualified' && qualifiedRedirectUrl) {
-              window.location.href = preserveUrl(qualifiedRedirectUrl);
-              return;
-            }
             // El resto de "reglas del formulario" (ir a página de gracias / no calificado)
             // se replica como pantalla inline, ya que el landing no navega a esas páginas.
             if (showEmbeddedResult(qualifies ? 'qualified' : 'disqualified')) return;
-          }
-          if (completionAction === 'redirect' && qualifiedRedirectUrl) {
-            window.location.href = preserveUrl(qualifiedRedirectUrl);
-            return;
-          }
-          if (!qualifies && disqualifiedCompletionAction === 'redirect_url' && disqualifiedRedirectUrl) {
-            window.location.href = preserveUrl(disqualifiedRedirectUrl);
-            return;
-          }
-          if (!qualifies && disqualifiedPageUrl && (completionAction === 'next_page_if_qualified' || completionAction === 'redirect_qualified' || completionAction === 'specific_page_if_qualified')) {
-            window.location.href = preserveUrl(disqualifiedPageUrl);
-            return;
-          }
-          if (qualifies && completionAction === 'redirect_qualified' && qualifiedRedirectUrl) {
-            window.location.href = preserveUrl(qualifiedRedirectUrl);
-            return;
-          }
-          if (qualifies && (completionAction === 'specific_page' || completionAction === 'specific_page_if_qualified') && completionTargetPageUrl) {
-            window.location.href = preserveUrl(completionTargetPageUrl);
-            return;
-          }
-          if (nextPageUrl && (completionAction === 'next_page' || ((completionAction === 'next_page_if_qualified' || completionAction === 'redirect_qualified') && qualifies))) {
-            window.location.href = preserveUrl(nextPageUrl);
-            return;
           }
           if (!qualifies) {
             // Un descalificado nunca debe ver el mensaje de éxito. Preferimos la pantalla
@@ -22005,6 +22019,16 @@ export async function renderPublicSiteHtml(site, { pageId, pagePath, trackingEna
             }
             return;
           }
+          if (!terminalDisqualify) {
+            form.reset();
+            initPhoneCountryFields();
+            index = 0;
+            renderStep();
+            embeddedForms.forEach((state) => {
+              state.index = 0;
+              renderEmbeddedForm(state);
+            });
+          }
           if (message) message.textContent = (data && data.data && data.data.message) || ${JSON.stringify('Listo. Recibimos tu información.')};
         } catch (error) {
           if (message) message.textContent = error.message || 'No se pudo enviar el formulario';
@@ -22014,8 +22038,10 @@ export async function renderPublicSiteHtml(site, { pageId, pagePath, trackingEna
           delete form.dataset.ruleAction;
           delete form.dataset.ruleFieldId;
           delete form.dataset.immediateDisqualify;
-          if (submitButton) submitButton.disabled = false;
-          if (formNextButton) formNextButton.disabled = false;
+          if (!isNavigatingAway) {
+            if (submitButton) submitButton.disabled = false;
+            if (formNextButton) formNextButton.disabled = false;
+          }
         }
       });
 
