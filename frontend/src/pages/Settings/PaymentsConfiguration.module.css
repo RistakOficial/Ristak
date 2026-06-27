@@ -397,10 +397,6 @@
   text-transform: none;
 }
 
-.paymentMetaEventChannelControl {
-  min-width: 0;
-}
-
 .paymentMetaEventSmartHint {
   display: flex;
   align-items: flex-start;
@@ -565,28 +561,6 @@
   padding: 10px 12px;
   border: 1px dashed var(--border);
   border-radius: var(--radius-ctl);
-  color: var(--text-mute);
-  font-size: 12px;
-  line-height: 1.4;
-}
-
-.paymentMetaEventWhatsappSummary {
-  display: grid;
-  gap: 4px;
-  padding: 12px;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-ctl);
-  background: var(--surface);
-}
-
-.paymentMetaEventWhatsappSummary strong {
-  color: var(--text);
-  font-size: 14px;
-  font-weight: 700;
-  line-height: 1.3;
-}
-
-.paymentMetaEventWhatsappSummary small {
   color: var(--text-mute);
   font-size: 12px;
   line-height: 1.4;

@@ -127,3 +127,55 @@ test('saving Meta token with pixel enables calendar and payment conversion event
     if (previousMetaGraphDescriptor) Object.defineProperty(API_URLS, 'META_GRAPH', previousMetaGraphDescriptor)
   }
 })
+
+test('saving Meta token creates smart payment conversion defaults when none exist', async () => {
+  const previousMetaGraphDescriptor = Object.getOwnPropertyDescriptor(API_URLS, 'META_GRAPH')
+  let metaServer
+
+  try {
+    await initializeMasterKey()
+
+    await snapshotMetaConfig(async () => {
+      await snapshotAppConfig(EVENT_CONFIG_KEYS, async () => {
+        metaServer = http.createServer((req, res) => {
+          if (req.method === 'GET' && req.url.startsWith('/act_123456')) {
+            res.writeHead(200, { 'Content-Type': 'application/json' })
+            res.end(JSON.stringify({
+              timezone_id: 90,
+              timezone_name: 'America/Mexico_City',
+              timezone_offset_hours_utc: -6
+            }))
+            return
+          }
+
+          res.writeHead(404, { 'Content-Type': 'application/json' })
+          res.end(JSON.stringify({ error: { message: 'unexpected request' } }))
+        })
+        await new Promise(resolve => metaServer.listen(0, '127.0.0.1', resolve))
+        Object.defineProperty(API_URLS, 'META_GRAPH', {
+          value: `http://127.0.0.1:${metaServer.address().port}`,
+          configurable: true
+        })
+
+        await saveMetaConfig(
+          '123456',
+          'meta-access-token',
+          'pixel-123',
+          'pixel-capi-token'
+        )
+
+        const paymentConfig = JSON.parse(await getAppConfig('meta_payment_purchase_event_config'))
+        assert.equal(paymentConfig.enabled, true)
+        assert.equal(paymentConfig.channel, 'smart')
+        assert.equal(paymentConfig.eventName, 'Purchase')
+        assert.equal(paymentConfig.parameters.sendValue, true)
+        assert.equal(paymentConfig.parameters.value, '')
+        assert.equal(paymentConfig.parameters.predictedLtv, '')
+        assert.deepEqual(paymentConfig.parameters.custom, [])
+      })
+    })
+  } finally {
+    if (metaServer) await new Promise(resolve => metaServer.close(resolve))
+    if (previousMetaGraphDescriptor) Object.defineProperty(API_URLS, 'META_GRAPH', previousMetaGraphDescriptor)
+  }
+})

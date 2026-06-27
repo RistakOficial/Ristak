@@ -25,7 +25,7 @@ const META_CONVERSION_EVENT_CONFIG_KEYS = {
 
 const DEFAULT_PAYMENT_PURCHASE_EVENT_CONFIG = {
   enabled: true,
-  channel: 'site',
+  channel: 'smart',
   eventName: 'Purchase',
   parameters: {
     sendValue: true,
