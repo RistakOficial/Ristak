@@ -357,13 +357,11 @@ function normalizeLicenseFeatures(features = {}) {
       normalized[featureKey] = explicitDependencies.every((dependency) => source[dependency] === true)
     }
     for (const dependency of dependencies) {
-      // (LIC-004) Una sub-feature enviada explícitamente por el portal SIEMPRE gana,
-      // aunque el padre esté en true. Antes el padre pisaba la sub-feature, así que un
-      // downgrade parcial ({reports:true, advanced_reports:false}) dejaba la sub-feature
-      // encendida. Solo cuando el padre es false la apagamos (no puede haber hijo activo
-      // sin su padre); y solo derivamos del padre cuando la sub-feature NO vino explícita.
+      // (LIC-004) Una sub-feature enviada explícitamente por el portal SIEMPRE gana.
+      // Si el padre tambien vino explícito en false, entonces sí apaga a sus hijos;
+      // si el padre fue derivado desde hijos separados, no debe pisar un hijo true.
       if (hasOwn.call(source, dependency)) {
-        normalized[dependency] = source[dependency] === true && normalized[featureKey] === true
+        normalized[dependency] = source[dependency] === true && (!hasExplicitFeature || normalized[featureKey] === true)
       } else {
         normalized[dependency] = normalized[featureKey] === true
       }
