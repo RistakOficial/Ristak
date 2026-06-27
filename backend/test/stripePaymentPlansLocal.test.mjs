@@ -596,7 +596,10 @@ test('cobra automáticamente parcialidades vencidas con tarjeta guardada sin dup
     assert.equal(createCalls[0].params.payment_method, stripePaymentMethodId)
     assert.equal(createCalls[0].params.off_session, true)
     assert.equal(createCalls[0].params.confirm, true)
-    assert.equal(createCalls[0].options.idempotencyKey, `ristak:${ids.installmentPaymentId}:off-session-charge`)
+    assert.match(
+      createCalls[0].options.idempotencyKey,
+      new RegExp(`^ristak:${ids.installmentPaymentId}:off-session-charge:\\d{4}-\\d{2}-\\d{2}$`)
+    )
 
     const payment = await db.get(
       'SELECT status, stripe_payment_intent_id, stripe_charge_id FROM payments WHERE id = ?',

@@ -1939,6 +1939,8 @@ export async function processDueConektaPaymentPlanCharges({ limit = 25 } = {}) {
   const dueDatePlaceholder = dateOnlyPlaceholder()
   const staleFirstPaymentSql = staleProcessingSql('f.updated_at')
   const staleInstallmentSql = staleProcessingSql('i.updated_at')
+  const staleFirstPaymentClaimSql = staleProcessingSql('updated_at')
+  const staleInstallmentClaimSql = staleProcessingSql('updated_at')
   const firstPaymentRows = await db.all(
     `SELECT
        f.id AS flow_id,
@@ -2006,7 +2008,7 @@ export async function processDueConektaPaymentPlanCharges({ limit = 25 } = {}) {
          SET first_payment_status = 'processing',
              updated_at = CURRENT_TIMESTAMP
          WHERE id = ?
-           AND (first_payment_status IN ('pending', 'scheduled') OR (first_payment_status = 'processing' AND ${staleFirstPaymentSql}))`,
+           AND (first_payment_status IN ('pending', 'scheduled') OR (first_payment_status = 'processing' AND ${staleFirstPaymentClaimSql}))`,
         [row.flow_id]
       )
       if (!(Number(claim?.changes || 0) > 0)) {
@@ -2062,7 +2064,7 @@ export async function processDueConektaPaymentPlanCharges({ limit = 25 } = {}) {
          SET status = 'processing',
              updated_at = CURRENT_TIMESTAMP
          WHERE id = ?
-           AND (status = 'scheduled' OR (status = 'processing' AND ${staleInstallmentSql}))`,
+           AND (status = 'scheduled' OR (status = 'processing' AND ${staleInstallmentClaimSql}))`,
         [row.installment_id]
       )
       if (!(Number(claim?.changes || 0) > 0)) {

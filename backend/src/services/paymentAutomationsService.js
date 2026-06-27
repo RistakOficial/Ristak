@@ -413,13 +413,13 @@ async function getReminderCandidates(settings, now, limit, paymentIds = []) {
   const paymentIdFilter = cleanPaymentIds.length
     ? `AND id IN (${cleanPaymentIds.map(() => '?').join(', ')})`
     : ''
-  // PAY2-007: no enviar recordatorios para links sin due_date.
-  // Excluimos NULL y cadena vacia a nivel SQL; el filtro JS valida que sea una fecha parseable.
+  // PAY2-007: no enviar recordatorios para links sin due_date. En PostgreSQL
+  // due_date es timestamp, así que no se puede usar TRIM() como en SQLite.
+  // El filtro JS valida que sea una fecha parseable.
   const rows = await db.all(`
     SELECT *
     FROM payments
     WHERE due_date IS NOT NULL
-      AND TRIM(due_date) != ''
       AND LOWER(COALESCE(status, 'pending')) NOT IN (${placeholders})
       ${paymentIdFilter}
     ORDER BY due_date ASC

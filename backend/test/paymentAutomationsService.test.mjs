@@ -306,3 +306,40 @@ test('cola de automatizaciones respeta recordatorios y cobros fallidos encendido
     }
   })
 })
+
+test('consulta recordatorios sin aplicar TRIM a due_date timestamp', async () => {
+  await snapshotAppConfig([PAYMENT_SETTINGS_CONFIG_KEY], async () => {
+    await setAppConfig(PAYMENT_SETTINGS_CONFIG_KEY, {
+      automations: {
+        remindersEnabled: true,
+        reminderDaysBefore: 3,
+        reminderChannel: 'whatsapp',
+        failedPaymentEnabled: false,
+        failedPaymentChannel: 'whatsapp'
+      }
+    })
+
+    const originalAll = db.all
+    const queries = []
+    db.all = async function patchedAll(sql, ...args) {
+      queries.push(String(sql || ''))
+      if (String(sql || '').includes('FROM payments')) return []
+      return originalAll.call(this, sql, ...args)
+    }
+
+    try {
+      await processDuePaymentAutomations({
+        now: new Date('2026-06-20T18:00:00.000Z'),
+        limit: 10,
+        paymentIds: ['payment_auto_pg_timestamp']
+      })
+    } finally {
+      db.all = originalAll
+    }
+
+    const reminderQuery = queries.find((query) => query.includes('FROM payments'))
+    assert.ok(reminderQuery)
+    assert.match(reminderQuery, /due_date IS NOT NULL/)
+    assert.doesNotMatch(reminderQuery, /TRIM\s*\(\s*due_date\s*\)/i)
+  })
+})

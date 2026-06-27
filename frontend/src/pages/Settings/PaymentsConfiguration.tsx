@@ -1203,7 +1203,7 @@ export const PaymentsConfiguration: React.FC = () => {
 
   const handleDisconnectStripeMode = (mode: StripeModeId) => {
     showConfirm(
-      'Desconectar Stripe',
+      'Desconectar credenciales',
       `Se borrarán las credenciales de ${stripeModeLabels[mode].title.toLowerCase()} y Stripe dejará de usarse para nuevos cobros en ese modo. Esta acción no se puede deshacer.`,
       () => disconnectStripeMode(mode),
       'Desconectar',
