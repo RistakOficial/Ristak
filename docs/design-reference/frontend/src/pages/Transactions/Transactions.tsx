@@ -363,8 +363,9 @@ export const Transactions: React.FC = () => {
   const [transactionDeleteConfirmation, setTransactionDeleteConfirmation] = useState('')
   const [deletingTransactions, setDeletingTransactions] = useState(false)
 
-  // Los planes de pago dependen de una integración de terceros (HighLevel).
-  // Sin ella, Ristak solo registra transacciones locales: no hay tab de planes.
+  // Los planes de pago usan pasarelas conectadas de Ristak (Stripe/Conekta o
+  // GoHighLevel opcional). Sin una pasarela compatible, se muestran sólo
+  // transacciones locales.
   const { connected: highLevelConnected } = useHighLevelConnected()
   const [transactionStatusFilters, setTransactionStatusFilters] = useState<StatusFilters>({})
   const [paymentPlanStatusFilters, setPaymentPlanStatusFilters] = useState<StatusFilters>({})
@@ -374,6 +375,7 @@ export const Transactions: React.FC = () => {
   const [hasLoadedTransactions, setHasLoadedTransactions] = useState(false)
   const handledOpenPaymentRef = useRef<string | null>(null)
   const handledOpenPaymentPlanRef = useRef<string | null>(null)
+  const hasCompatiblePaymentPlanGateway = highLevelConnected
 
   const navigatePaymentsTable = (nextTab: PaymentsTableTab, nextViewMode = viewMode) => {
     navigate(nextTab === 'payment-plans' ? buildPaymentPlansPath() : buildTransactionsPath(nextViewMode))
@@ -391,22 +393,22 @@ export const Transactions: React.FC = () => {
     }
   }, [paymentTableTab])
 
-  // Si la integración se desconecta, regresar a transacciones: sin HighLevel no
-  // existen planes de pago que mostrar.
+  // Si no hay pasarela compatible, regresar a transacciones para no mostrar
+  // un tab vacío de planes.
   useEffect(() => {
-    if (!highLevelConnected && paymentTableTab === 'payment-plans') {
+    if (!hasCompatiblePaymentPlanGateway && paymentTableTab === 'payment-plans') {
       setPaymentTableTab('transactions')
       navigate(buildTransactionsPath(viewMode), { replace: true })
     }
-  }, [highLevelConnected, navigate, paymentTableTab, viewMode])
+  }, [hasCompatiblePaymentPlanGateway, navigate, paymentTableTab, viewMode])
 
   useEffect(() => {
-    if (!highLevelConnected && routeState.tab === 'payment-plans') {
+    if (!hasCompatiblePaymentPlanGateway && routeState.tab === 'payment-plans') {
       return
     }
     setPaymentTableTab(current => current === routeState.tab ? current : routeState.tab)
     setViewMode(current => current === routeState.viewMode ? current : routeState.viewMode)
-  }, [highLevelConnected, routeState.tab, routeState.viewMode])
+  }, [hasCompatiblePaymentPlanGateway, routeState.tab, routeState.viewMode])
 
   useEffect(() => {
     setIsClient(true)
@@ -467,7 +469,7 @@ export const Transactions: React.FC = () => {
       const plans = await transactionsService.getPaymentPlans()
       setPaymentPlans(plans)
     } catch (error) {
-      showToast('error', 'No se pudieron cargar los planes de pago', 'HighLevel no devolvió la lista de facturas recurrentes. Intenta actualizar de nuevo.')
+      showToast('error', 'No se pudieron cargar los planes de pago', 'La pasarela conectada no devolvió la lista de planes. Intenta actualizar de nuevo.')
     } finally {
       setPaymentPlansLoading(false)
     }
@@ -483,13 +485,13 @@ export const Transactions: React.FC = () => {
     setSyncing(true)
     try {
       if (paymentTableTab === 'payment-plans') {
-        showToast('info', 'Actualizando planes de pago', 'Consultando facturas recurrentes en HighLevel...')
+        showToast('info', 'Actualizando planes de pago', 'Consultando planes en la pasarela conectada...')
         await fetchPaymentPlans()
-        showToast('success', 'Planes actualizados', 'La lista de planes de pago se actualizó desde HighLevel')
+        showToast('success', 'Planes actualizados', 'La lista de planes de pago se actualizó desde la pasarela conectada.')
         return
       }
 
-      showToast('info', 'Sincronizando pagos', 'Obteniendo TODOS los pagos desde HighLevel...')
+      showToast('info', 'Sincronizando pagos', 'Actualizando los pagos desde las pasarelas conectadas...')
 
       let startDate: string | undefined
       let endDate: string | undefined
@@ -509,7 +511,7 @@ export const Transactions: React.FC = () => {
 
       setTransactions(transactionsData)
       setSummary(summaryData)
-      showToast('success', 'Sincronización completa', 'Todos los pagos se han actualizado desde HighLevel')
+      showToast('success', 'Sincronización completa', 'Los pagos se actualizaron desde las pasarelas conectadas.')
     } catch (error) {
       showToast('error', 'Error en sincronización', 'No se pudo completar la sincronización. Intenta nuevamente.')
     } finally {
@@ -592,7 +594,7 @@ export const Transactions: React.FC = () => {
       })
     } catch (error) {
       setPaymentPlanModal(prev => ({ ...prev, loading: false }))
-      showToast('error', 'No se pudo cargar el detalle', 'Se abrió la información disponible de la tabla, pero HighLevel no devolvió el detalle completo.')
+      showToast('error', 'No se pudo cargar el detalle', 'Se abrió la información disponible de la tabla, pero la pasarela conectada no devolvió el detalle completo.')
     }
   }
 
@@ -624,11 +626,11 @@ export const Transactions: React.FC = () => {
       const updatedPlan = await transactionsService.updatePaymentPlan(paymentPlanModal.plan.id, payload)
       setPaymentPlans(prev => prev.map(plan => plan.id === updatedPlan.id ? updatedPlan : plan))
       closePaymentPlanModal()
-      showToast('success', 'Plan de pago actualizado', 'La factura recurrente se actualizó en HighLevel.')
+      showToast('success', 'Plan de pago actualizado', 'El plan se actualizó en la pasarela conectada.')
       fetchPaymentPlans()
     } catch (error: any) {
       setPaymentPlanModal(prev => ({ ...prev, saving: false }))
-      showToast('error', 'No se pudo guardar el plan', error?.message || 'HighLevel rechazó la actualización del plan de pago.')
+      showToast('error', 'No se pudo guardar el plan', error?.message || 'La pasarela conectada rechazó la actualización del plan de pago.')
     }
   }
 
@@ -659,7 +661,7 @@ export const Transactions: React.FC = () => {
       showToast('success', successTitle, successMessage)
       fetchPaymentPlans()
     } catch (error: any) {
-      showToast('error', 'No se pudo actualizar el plan', error?.message || 'HighLevel rechazó la acción para esta factura recurrente.')
+      showToast('error', 'No se pudo actualizar el plan', error?.message || 'La pasarela conectada rechazó la acción para este plan.')
     } finally {
       setPaymentPlanActionId(null)
     }
@@ -827,11 +829,11 @@ export const Transactions: React.FC = () => {
       const createdPlan = await transactionsService.createPaymentPlan(payload)
       setPaymentPlans(prev => [createdPlan, ...prev])
       closePaymentPlanCreateModal()
-      showToast('success', 'Plan programado', 'El plan de pago quedó programado en HighLevel.')
+      showToast('success', 'Plan programado', 'El plan de pago quedó programado correctamente.')
       fetchPaymentPlans()
     } catch (error: any) {
       setPaymentPlanCreateModal(prev => ({ ...prev, saving: false }))
-      showToast('error', 'No se pudo programar el plan', error?.message || 'HighLevel rechazó la creación del plan de pago.')
+      showToast('error', 'No se pudo programar el plan', error?.message || 'La pasarela conectada rechazó la creación del plan de pago.')
     }
   }
 
@@ -1315,7 +1317,7 @@ export const Transactions: React.FC = () => {
           actions.push('send')
         }
 
-        // Editar - disponible para pagos visibles; backend valida qué puede sincronizar HighLevel
+        // Editar - disponible para pagos visibles; backend valida qué puede sincronizar cada pasarela.
         if (item.status !== 'deleted') {
           actions.push('edit')
         }
@@ -2128,7 +2130,7 @@ export const Transactions: React.FC = () => {
             <div className={styles.modalHeader}>
               <div>
                 <h2>Programar plan de pago</h2>
-                <p className={styles.modalSubtitle}>Crea una factura recurrente y déjala programada en HighLevel.</p>
+                <p className={styles.modalSubtitle}>Crea un plan recurrente y déjalo programado en la pasarela conectada.</p>
               </div>
               <button
                 className={styles.closeButton}

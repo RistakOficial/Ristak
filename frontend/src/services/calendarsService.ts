@@ -1,7 +1,7 @@
 import apiClient from './apiClient';
 
 /**
- * Tipos para Calendarios y Eventos de HighLevel
+ * Tipos para calendarios y eventos de Ristak, Google y HighLevel opcional.
  */
 
 export interface CalendarTeamMember {
@@ -337,7 +337,7 @@ function getCurrentAppUrl() {
 }
 
 /**
- * Servicio para manejar Calendarios de HighLevel
+ * Servicio para manejar calendarios de Ristak, Google y HighLevel opcional.
  */
 export const calendarsService = {
   /**
@@ -413,7 +413,7 @@ export const calendarsService = {
   },
 
   /**
-   * Crear calendario local de Ristak. Si HighLevel está conectado, backend lo sincroniza.
+   * Crear calendario local de Ristak. El backend sincroniza integraciones externas sólo si están conectadas.
    */
   async createCalendar(calendarData: Partial<Calendar>, accessToken?: string): Promise<Calendar | null> {
     try {

@@ -116,7 +116,7 @@ export const ACCESS_MODULES = [
   {
     key: 'settings_integrations',
     label: 'Integraciones',
-    description: 'HighLevel, conexión CRM y configuración base.',
+    description: 'Integraciones, conexión CRM y configuración base.',
     group: 'Configuración',
     path: '/settings/highlevel'
   },

@@ -19,7 +19,7 @@ export async function verifyAndUpdateWebhooks() {
 
     const config = await getHighLevelConfig()
     if (!config?.location_id || !config?.api_token) {
-      logger.warn('⚠️ No hay configuración de HighLevel - saltando verificación de webhooks')
+      logger.warn('Sin integración opcional de HighLevel; se omite la verificación de webhooks externos')
       return
     }
 

@@ -122,7 +122,7 @@ export function startHighLevelSyncCron() {
         )
 
         if (!config || !config.location_id || !config.api_token) {
-          logger.warn('⚠️  No hay configuración de HighLevel, saltando sincronización')
+      logger.warn('Sin integración opcional de HighLevel; se omite la sincronización automática externa')
           return
         }
 

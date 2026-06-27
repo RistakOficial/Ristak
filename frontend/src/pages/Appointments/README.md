@@ -20,7 +20,7 @@ El item de menú vive en `frontend/src/components/layout/Sidebar/Sidebar.tsx` co
 
 ## Qué Hace
 
-- Lista calendarios activos de HighLevel.
+- Lista calendarios activos de Ristak, Google y HighLevel opcional.
 - Selecciona calendario por prioridad:
   1. último calendario usado en la sesión,
   2. `default_calendar_id` desde `useAppConfig`,

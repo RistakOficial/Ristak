@@ -2,11 +2,33 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 
 import { db } from '../src/config/database.js'
-import { buildContactsList } from '../src/services/analyticsService.js'
+import { buildContactsList, buildReportMetrics } from '../src/services/analyticsService.js'
 
 async function cleanupContact(contactId) {
+  await db.run('DELETE FROM appointments WHERE contact_id = ?', [contactId])
   await db.run('DELETE FROM payments WHERE contact_id = ?', [contactId])
   await db.run('DELETE FROM contacts WHERE id = ?', [contactId])
+}
+
+async function withHighLevelConfigCleared(callback) {
+  const columns = await db.all('PRAGMA table_info(highlevel_config)')
+  const columnNames = columns.map(column => column.name).filter(Boolean)
+  const rows = columnNames.length ? await db.all('SELECT * FROM highlevel_config') : []
+
+  await db.run('DELETE FROM highlevel_config')
+  try {
+    return await callback()
+  } finally {
+    await db.run('DELETE FROM highlevel_config').catch(() => undefined)
+    for (const row of rows) {
+      const placeholders = columnNames.map(() => '?').join(', ')
+      const quotedColumns = columnNames.map(column => `"${String(column).replace(/"/g, '""')}"`).join(', ')
+      await db.run(
+        `INSERT INTO highlevel_config (${quotedColumns}) VALUES (${placeholders})`,
+        columnNames.map(column => row[column])
+      ).catch(() => undefined)
+    }
+  }
 }
 
 test('sales list in all scope returns only payments inside the selected range', async () => {
@@ -93,6 +115,68 @@ test('sales list in all scope returns only payments inside the selected range', 
       attributionContact.payments.map(payment => payment.id).sort(),
       [inRangePaymentId, outsideRangePaymentId].sort()
     )
+  } finally {
+    await cleanupContact(contactId)
+  }
+})
+
+test('appointment attribution uses local Ristak appointments without HighLevel configured', async () => {
+  const suffix = `${Date.now()}-${Math.random().toString(16).slice(2)}`
+  const date = '2099-07-15'
+  const createdAt = `${date}T18:00:00.000Z`
+  const contactId = `local-appointment-contact-${suffix}`
+  const appointmentId = `local-appointment-${suffix}`
+
+  await cleanupContact(contactId)
+
+  try {
+    await withHighLevelConfigCleared(async () => {
+      await db.run(`
+        INSERT INTO contacts (
+          id, phone, email, full_name, created_at, updated_at
+        )
+        VALUES (?, ?, ?, ?, ?, ?)
+      `, [
+        contactId,
+        `+521${String(Date.now()).slice(-10)}`,
+        `local-appointment-${suffix}@local.invalid`,
+        'Contacto Cita Local',
+        createdAt,
+        createdAt
+      ])
+
+      await db.run(`
+        INSERT INTO appointments (
+          id, contact_id, title, status, appointment_status, start_time, date_added
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+      `, [
+        appointmentId,
+        contactId,
+        'Cita local sin GHL',
+        'confirmed',
+        'confirmed',
+        createdAt,
+        createdAt
+      ])
+
+      const contactsResult = await buildContactsList({
+        startDate: date,
+        endDate: date,
+        type: 'appointments',
+        scope: 'attribution'
+      })
+      assert.ok(contactsResult.contacts.some(contact => contact.id === contactId))
+
+      const report = await buildReportMetrics({
+        startDate: date,
+        endDate: date,
+        groupBy: 'day',
+        scope: 'attribution'
+      })
+      const bucket = report.metrics.find(item => item.date === date)
+      assert.equal(bucket?.appointments, 1)
+    })
   } finally {
     await cleanupContact(contactId)
   }

@@ -456,7 +456,7 @@ function normalizeThinkingSource(value: string) {
 }
 
 function addRelevantThinkingActions(actions: string[], source: string) {
-  if (/(go\s*high\s*level|gohighlevel|go\s*hi\s*level|gohi\s*level|high\s*level|highlevel|ghl|custom field|campo personalizado|custom value|valor personalizado|formulario|form submissions|respuestas de formulario|survey|encuesta|funnel|embudo|trigger link|media storage|blog|workflow|task|tarea|tag|etiqueta|nota|conversation|conversacion|conversación|oportunidad|pipeline|producto|tienda|store)/.test(source)) {
+  if (/(go\s*high\s*level|gohighlevel|go\s*hi\s*level|gohi\s*level|high\s*level|highlevel|\bghl\b|leadconnector|custom field externo|campo personalizado externo|custom value externo|valor personalizado externo)/.test(source)) {
     addThinkingAction(actions, 'Consultando HighLevel')
   }
 

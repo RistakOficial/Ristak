@@ -870,7 +870,7 @@ export const Transactions: React.FC = () => {
         return
       }
 
-      showToast('info', 'Sincronizando pagos', 'Obteniendo TODOS los pagos desde HighLevel...')
+      showToast('info', 'Sincronizando pagos', 'Actualizando pagos desde las pasarelas conectadas...')
 
       let startDate: string | undefined
       let endDate: string | undefined
@@ -890,7 +890,7 @@ export const Transactions: React.FC = () => {
 
       setTransactions(transactionsData)
       setSummary(summaryData)
-      showToast('success', 'Sincronización completa', 'Todos los pagos se han actualizado desde HighLevel')
+      showToast('success', 'Sincronización completa', 'Los pagos se actualizaron desde las pasarelas conectadas.')
     } catch (error) {
       showToast('error', 'Error en sincronización', 'No se pudo completar la sincronización. Intenta nuevamente.')
     } finally {
@@ -1153,7 +1153,7 @@ export const Transactions: React.FC = () => {
       const updatedPlan = await transactionsService.updatePaymentPlan(paymentPlanModal.plan.id, payload)
       setPaymentPlans(prev => prev.map(plan => plan.id === updatedPlan.id ? updatedPlan : plan))
       closePaymentPlanModal()
-      showToast('success', 'Plan de pago actualizado', 'La factura recurrente se actualizó en HighLevel.')
+      showToast('success', 'Plan de pago actualizado', 'El plan de pago se actualizó correctamente.')
       fetchPaymentPlans()
     } catch (error: any) {
       setPaymentPlanModal(prev => ({ ...prev, saving: false }))
@@ -1937,7 +1937,7 @@ export const Transactions: React.FC = () => {
           actions.push('send')
         }
 
-        // Editar - disponible para pagos visibles; backend valida qué puede sincronizar HighLevel
+        // Editar - disponible para pagos visibles; backend valida qué puede sincronizar cada pasarela.
         if (item.status !== 'deleted') {
           actions.push('edit')
         }

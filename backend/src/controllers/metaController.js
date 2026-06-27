@@ -3037,7 +3037,7 @@ export const saveAndSyncMeta = async (req, res) => {
         logger.warn(`Meta local guardado, pero falló sync a HighLevel: ${highLevelError.message}`);
       }
     } else {
-      logger.info('HighLevel no configurado. Meta se guardó sólo en DB local.');
+      logger.info('Sin integración opcional de HighLevel; Meta se guardó en Ristak.');
     }
 
     // 5. Iniciar sincronización de anuncios (últimos 7 días)
@@ -3564,7 +3564,7 @@ export const savePixelToken = async (req, res) => {
         // No fallar si HighLevel falla, continuar con DB
       }
     } else {
-      logger.warn('⚠️ HighLevel NO configurado. Saltando actualización de custom values.');
+      logger.warn('Sin integración opcional de HighLevel; se omite actualización de custom values externos.');
     }
 
     // 3. Actualizar en meta_config local

@@ -997,7 +997,7 @@ function AppointmentsSection({ stats, events, calendars, trend }: AppointmentsSe
         <MetricTile label="Upcoming" value={formatNumber(stats.pending)} detail="Future confirmed" tone="blue" />
         <MetricTile label="Showed" value={formatNumber(stats.showed)} detail="Completed appointments" tone="green" />
         <MetricTile label="No-show" value={formatNumber(stats.noshow)} detail="Follow-up" tone="orange" />
-        <MetricTile label="Calendars" value={formatNumber(calendars.length)} detail="Active in HighLevel" tone="purple" />
+        <MetricTile label="Calendars" value={formatNumber(calendars.length)} detail="Active in Ristak" tone="purple" />
       </div>
 
       <Panel title="Appointments by period" actionLabel="Activity">

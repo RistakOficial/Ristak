@@ -1168,7 +1168,7 @@ export async function syncLocalProductsToHighLevel(locationId, apiToken) {
       else result.updated += 1
     } catch (error) {
       result.failed += 1
-      logger.warn(`Producto ${product.id} no sincronizado a HighLevel: ${error.message}`)
+      logger.warn(`Producto ${product.id} guardado en Ristak; la sincronización opcional con HighLevel no se completó: ${error.message}`)
     }
   }
 
@@ -1192,7 +1192,7 @@ export async function syncLocalProductsToHighLevel(locationId, apiToken) {
       else result.pricesUpdated += 1
     } catch (error) {
       result.pricesFailed += 1
-      logger.warn(`Precio ${price.id} no sincronizado a HighLevel: ${error.message}`)
+      logger.warn(`Precio ${price.id} guardado en Ristak; la sincronización opcional con HighLevel no se completó: ${error.message}`)
     }
   }
 
@@ -1223,7 +1223,7 @@ export async function syncProductsWithSavedConfig(options = {}) {
   if (!config?.api_token || !config?.location_id) {
     return {
       skipped: true,
-      reason: 'HighLevel no configurado'
+      reason: 'Sincronización opcional con HighLevel no configurada'
     }
   }
 

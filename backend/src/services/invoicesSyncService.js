@@ -651,7 +651,7 @@ export async function syncLocalPaymentsToHighLevel({ paymentId, limit = 100 } = 
   try {
     client = await getGHLClient()
   } catch (error) {
-    logger.info(`HighLevel no configurado; pagos locales quedan pendientes de exportación: ${error.message}`)
+    logger.info(`Sin integración opcional de HighLevel; los pagos locales siguen disponibles en Ristak: ${error.message}`)
     return { total: 0, exported: 0, linkedDuplicates: 0, failed: 0, skippedNoConfig: true, errors: [] }
   }
 

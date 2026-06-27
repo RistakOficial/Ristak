@@ -8,14 +8,12 @@ El pixel registra visitas, UTMs, click IDs, navegador, dispositivo, referrer y e
 
 Ojo: la tabla guarda una fila por evento, no una fila agregada por sesión.
 
-## Opción Recomendada: Desde HighLevel
+## Opción Recomendada: Instalación Directa En Ristak
 
-1. En Ristak, entra a **Configuración -> HighLevel** y conecta tu cuenta.
-2. Entra a **Configuración -> Rastreo Web**.
-3. Usa un dominio personalizado o CNAME, no el dominio `*.onrender.com`.
-4. Haz click en **Sincronizar ahora**.
-5. Ristak crea/actualiza el custom value `rstktrack` en HighLevel.
-6. En el sitio/funnel de HighLevel, inserta ese custom value en el tracking code.
+1. Entra a **Configuración -> Rastreo Web**.
+2. Usa un dominio personalizado o CNAME, no el dominio `*.onrender.com`.
+3. Copia el snippet del pixel.
+4. Inserta el snippet antes de `</body>` o en el bloque global de tracking del sitio.
 
 El snippet queda parecido a:
 
@@ -25,6 +23,18 @@ El snippet queda parecido a:
 ```
 
 Si hay Meta Pixel configurado y la preferencia está activa, el snippet generado también puede incluir Meta Pixel.
+
+## Opción HighLevel Opcional
+
+Si el sitio o funnel vive en HighLevel, puedes sincronizar el snippet como custom value:
+
+1. En Ristak, entra a **Configuración -> HighLevel** y conecta tu cuenta.
+2. Entra a **Configuración -> Rastreo Web**.
+3. Haz click en **Sincronizar ahora**.
+4. Ristak crea/actualiza el custom value `rstktrack` en HighLevel.
+5. En el sitio/funnel de HighLevel, inserta ese custom value en el tracking code.
+
+HighLevel no es requisito para que el pixel funcione; sólo es una forma cómoda de instalarlo en sitios de esa plataforma.
 
 ## Opción Manual
 

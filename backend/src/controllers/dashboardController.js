@@ -722,12 +722,10 @@ export const getAppointmentsData = async (req, res) => {
     const attributionCalendarIds = await getAttributionCalendarIds();
     const config = await db.get('SELECT location_id, api_token FROM highlevel_config LIMIT 1');
 
-    // (RPT-007) Distinguir "cero real" de "integración caída": si falta el token de
-    // HighLevel solo contamos las citas que ya estén en la DB local. Lo dejamos como
-    // warning explícito para que sea observable y no un 0 silencioso. (El estado
-    // "Conecta HighLevel / Token expirado" en la UI requiere el frontend.)
+    // Ristak funciona local-first: si falta la fuente externa opcional, se omite
+    // remota opcional y se cuentan las citas ya guardadas en la DB local.
     if (!config || !config.api_token) {
-      logger.warn('[RPT-007] getAppointmentsData: sin token de HighLevel; las citas solo reflejan datos locales de la DB (posible integración caída, no cero real)');
+      logger.info('[RPT-007] getAppointmentsData: fuente externa HighLevel omitida; usando citas locales de Ristak.');
     }
 
     if (!useContactAttribution) {
@@ -778,9 +776,11 @@ export const getAppointmentsData = async (req, res) => {
     // Vista atribución: cita por fecha de creación del contacto.
     const dateExpression = getGroupExpression('created_at', groupBy, timezone);
 
-    const contactsWithAppointments = config && config.api_token
-      ? await getContactsWithAppointmentsHybrid(config.location_id, config.api_token, attributionCalendarIds)
-      : new Set();
+    const contactsWithAppointments = await getContactsWithAppointmentsHybrid(
+      config?.location_id,
+      config?.api_token,
+      attributionCalendarIds
+    );
 
     logger.info(`📊 ${contactsWithAppointments.size} contactos con citas (híbrido DB + API)`);
 
@@ -848,10 +848,10 @@ export const getAttendancesData = async (req, res) => {
     const attributionCalendarIds = await getAttributionCalendarIds();
     const config = await db.get('SELECT location_id, api_token FROM highlevel_config LIMIT 1');
 
-    // (RPT-007) Sin token de HighLevel solo contamos asistencias de la DB local; lo
-    // registramos explícito para no confundir "cero real" con "integración caída".
+    // Ristak funciona local-first: si falta la fuente externa opcional, se omite
+    // remota opcional y se cuentan asistencias locales/sticky.
     if (!config || !config.api_token) {
-      logger.warn('[RPT-007] getAttendancesData: sin token de HighLevel; las asistencias solo reflejan datos locales de la DB (posible integración caída, no cero real)');
+      logger.info('[RPT-007] getAttendancesData: fuente externa HighLevel omitida; usando asistencias locales de Ristak.');
     }
 
     const contactsWithAttendances = await getContactsWithShowedAppointmentsHybrid(
@@ -1380,11 +1380,10 @@ export const getFunnelData = async (req, res) => {
       leads: 'Interesados'
     }
 
-    // (RPT-007) Si falta el token de HighLevel, las citas/asistencias del funnel solo
-    // reflejan la DB local. Lo dejamos explícito en logs para distinguir "cero real"
-    // de "integración caída" (el estado en la UI requiere el frontend).
+    // Ristak funciona local-first: si falta la fuente externa opcional, se omite
+    // remota opcional y el funnel usa DB local/señales sticky.
     if (!hlConfig || !hlConfig.api_token) {
-      logger.warn('[RPT-007] getFunnelData: sin token de HighLevel; citas/asistencias solo reflejan datos locales de la DB (posible integración caída, no cero real)')
+      logger.info('[RPT-007] getFunnelData: fuente externa HighLevel omitida; usando citas/asistencias locales de Ristak.')
     }
 
     let labels = defaultLabels
@@ -1469,9 +1468,11 @@ export const getFunnelData = async (req, res) => {
 
     if (useContactAttribution) {
       // Vista "Último toque": Contar contactos creados en el rango que TIENEN cita (cualquier fecha)
-      const contactsWithAppointments = hlConfig && hlConfig.api_token
-        ? await getContactsWithAppointmentsHybrid(hlConfig.location_id, hlConfig.api_token, attributionCalendarIds)
-        : new Set()
+      const contactsWithAppointments = await getContactsWithAppointmentsHybrid(
+        hlConfig?.location_id,
+        hlConfig?.api_token,
+        attributionCalendarIds
+      )
 
       // Contar cuántos contactos del rango tienen cita
       // (RPT-009) '?' en vez de $1/$2 para compatibilidad SQLite/Postgres.

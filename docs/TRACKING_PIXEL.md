@@ -120,7 +120,7 @@ Con `start` y `end`, devuelve un array directo para la página Analytics:
 curl 'http://localhost:3001/api/tracking/sessions?start=2026-05-01&end=2026-05-28'
 ```
 
-El rango se resuelve con el timezone configurado en HighLevel usando `resolveDateRangeWithGHLTimezone()`.
+El rango se resuelve con el timezone configurado en Ristak. Si HighLevel está conectado y no hay timezone propio, se usa como fallback de compatibilidad mediante `resolveDateRangeWithGHLTimezone()`.
 
 ### `GET /api/tracking/sessions/:id`
 

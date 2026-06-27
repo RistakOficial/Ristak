@@ -909,7 +909,7 @@ export const Appointments: React.FC = () => {
         },
         accessToken || undefined
       );
-      showToast('success', 'Cita programada', accessToken ? 'La nueva cita se creó correctamente.' : 'La cita quedó guardada en Ristak y se sincronizará cuando conectes HighLevel.');
+      showToast('success', 'Cita programada', accessToken ? 'La nueva cita se creó correctamente.' : 'La cita quedó guardada en Ristak.');
       closeCreateModal();
       await loadEvents();
       await loadUpcomingEvents();

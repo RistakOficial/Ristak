@@ -145,7 +145,7 @@ const permissionCategories: PermissionCategory[] = [
       },
       {
         title: 'Canales',
-        description: 'HighLevel, WhatsApp y correo.',
+        description: 'Integraciones, WhatsApp y correo.',
         keys: ['settings_integrations', 'settings_whatsapp', 'settings_email']
       },
       {

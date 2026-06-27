@@ -941,7 +941,7 @@ export async function buildReportMetrics ({ startDate, endDate, groupBy = 'day',
   // - Mide el impacto de las campañas en generar leads que agendan citas
   // - Si un contacto creado en enero agenda cita en febrero, se atribuye a enero
   // Vista "Todos": Agrupa por FECHA EN QUE SE AGENDÓ LA CITA
-  // - Se agrupa por appointments.date_added (cuando se creó la cita en HighLevel)
+  // - Se agrupa por appointments.date_added (cuando se creó la cita en Ristak o se sincronizó)
   // - Refleja el flujo real de citas día a día
 
   if (useContactAttribution) {
@@ -950,9 +950,11 @@ export async function buildReportMetrics ({ startDate, endDate, groupBy = 'day',
     const config = await db.get('SELECT location_id, api_token FROM highlevel_config LIMIT 1')
     const attributionCalendarIds = await getAttributionCalendarIds()
 
-    const contactsWithAppointments = config && config.api_token
-      ? await getContactsWithAppointmentsHybrid(config.location_id, config.api_token, attributionCalendarIds)
-      : new Set()
+    const contactsWithAppointments = await getContactsWithAppointmentsHybrid(
+      config?.location_id,
+      config?.api_token,
+      attributionCalendarIds
+    )
 
     contactsRaw.forEach(contact => {
       if (contactsWithAppointments.has(contact.contact_id)) {

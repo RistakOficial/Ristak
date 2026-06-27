@@ -2403,7 +2403,7 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
       return
     }
 
-    // Modo local (sin HighLevel): registrar el pago directamente en Ristak.
+    // Modo local de Ristak: registrar el pago directamente en la base propia.
     if (!highLevelConnected) {
       if (!selectedContact) {
         showToast('error', 'Selecciona un contacto')

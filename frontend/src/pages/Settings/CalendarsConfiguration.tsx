@@ -696,8 +696,8 @@ export const CalendarsConfiguration: React.FC = () => {
   const [accountCurrencyConfig] = useAppConfig<string>(ACCOUNT_CURRENCY_CONFIG_KEY, detectedAccountLocaleDefaults.currency)
   const accountCurrency = normalizeCurrencyCode(accountCurrencyConfig, detectedAccountLocaleDefaults.currency)
 
-  // El origen de calendarios solo tiene sentido con una integración de terceros
-  // (HighLevel). Sin ella, Ristak es la única fuente posible.
+  // El origen de calendarios solo tiene sentido con integraciones externas.
+  // Sin ellas, Ristak es la fuente operativa.
   const { connected: highLevelConnected, loading: highLevelLoading } = useHighLevelConnected()
 
   // Estados locales
@@ -1560,9 +1560,7 @@ export const CalendarsConfiguration: React.FC = () => {
       showToast(
         'success',
         'Calendario creado',
-        accessToken
-          ? 'Se guardó en Ristak y se intentó sincronizar con HighLevel'
-          : 'Se guardó en Ristak y ya está disponible para operar'
+        'Se guardó en Ristak y ya está disponible para operar'
       )
 
       if (created?.id && !defaultCalendarId) {

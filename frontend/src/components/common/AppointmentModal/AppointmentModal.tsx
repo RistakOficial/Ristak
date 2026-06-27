@@ -365,7 +365,7 @@ export const AppointmentModal: React.FC<AppointmentModalProps> = ({
   // Validación de slots DESHABILITADA en modo custom: Como admin, puedes agendar en cualquier horario
   // En modo default: Solo permite seleccionar de los slots disponibles según configuración del calendario
 
-  // Cargar slots disponibles desde la API de HighLevel
+  // Cargar disponibilidad del calendario seleccionado.
   const loadFreeSlots = async () => {
     if (!calendar?.id || scheduleMode !== 'default') {
       if (!calendar?.id) setFreeSlots([]);

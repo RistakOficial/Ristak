@@ -2109,7 +2109,7 @@ export const DesktopChat: React.FC = () => {
             : message
         )))
       } else {
-        throw new Error('Conecta WhatsApp API o HighLevel para enviar mensajes desde esta pantalla.')
+        throw new Error('Conecta el canal nativo correspondiente para enviar mensajes desde esta pantalla.')
       }
       await Promise.all([
         loadConversation(activeContact.id),

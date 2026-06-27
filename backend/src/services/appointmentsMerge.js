@@ -72,7 +72,7 @@ async function loadAttendanceSignalContactIds() {
 }
 
 /**
- * Carga appointments desde API de HighLevel
+ * Carga appointments desde la API opcional de HighLevel
  * @param {string} locationId
  * @param {string} apiToken
  * @param {Array<string>} calendarIds - Calendarios a consultar (opcional)
@@ -81,7 +81,7 @@ async function loadAttendanceSignalContactIds() {
 export async function loadAppointmentsFromAPI(locationId, apiToken, calendarIds = null) {
   try {
     if (!locationId || !apiToken) {
-      logger.warn('No se proporcionó locationId o apiToken para cargar citas')
+      logger.info('Fuente externa HighLevel omitida; usando citas locales de Ristak')
       return []
     }
 
@@ -332,7 +332,7 @@ export function mergeAppointments(dbAppointments, apiAppointments, strategy = 'o
 }
 
 /**
- * Obtiene contact_ids únicos con appointments (DB + API deduplicado)
+ * Obtiene contact_ids únicos con appointments (DB local + API opcional deduplicada)
  * @param {string} locationId
  * @param {string} apiToken
  * @param {Array<string>} calendarIds - Calendarios de atribución
@@ -340,10 +340,10 @@ export function mergeAppointments(dbAppointments, apiAppointments, strategy = 'o
  */
 export async function getContactsWithAppointmentsHybrid(locationId, apiToken, calendarIds = null) {
   try {
-    // Cargar de ambas fuentes en paralelo
+    // Cargar Ristak siempre; HighLevel sólo complementa cuando está conectado.
     const [dbAppointments, apiAppointments] = await Promise.all([
       loadAppointmentsFromDB({ calendarIds }),
-      loadAppointmentsFromAPI(locationId, apiToken, calendarIds)
+      locationId && apiToken ? loadAppointmentsFromAPI(locationId, apiToken, calendarIds) : []
     ])
 
     // Combinar con deduplicación
@@ -379,6 +379,7 @@ function isShowedAppointment(appointment) {
  */
 export async function getContactsWithShowedAppointmentsHybrid(locationId, apiToken, calendarIds = null) {
   try {
+    // Cargar Ristak siempre; HighLevel sólo complementa cuando está conectado.
     const [dbAppointments, apiAppointments] = await Promise.all([
       loadAppointmentsFromDB({ calendarIds }),
       locationId && apiToken ? loadAppointmentsFromAPI(locationId, apiToken, calendarIds) : []

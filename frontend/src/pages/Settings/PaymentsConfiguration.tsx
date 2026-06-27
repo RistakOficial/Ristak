@@ -1047,7 +1047,7 @@ export const PaymentsConfiguration: React.FC = () => {
         }
       } catch (highLevelError: any) {
         if (showSuccess) {
-          showToast('warning', 'Pagos guardado', highLevelError.message || 'La configuración global se guardó, pero GoHighLevel necesita revisión.')
+          showToast('warning', 'Pagos guardado', highLevelError.message || 'La configuración global se guardó; revisa GoHighLevel sólo si usas esa integración opcional.')
         }
       }
     } catch (error: any) {

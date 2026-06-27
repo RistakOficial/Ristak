@@ -594,7 +594,7 @@ async function syncMetaCustomValues(adAccountId, accessToken, pixelId, pixelApiT
     const ghlConfig = await db.get('SELECT location_id, api_token FROM highlevel_config LIMIT 1')
 
     if (!ghlConfig || !ghlConfig.location_id || !ghlConfig.api_token) {
-      logger.warn('⚠️ No hay configuración de HighLevel. Saltando sincronización de custom values de Meta.')
+      logger.warn('Sin integración opcional de HighLevel; se omite la sincronización de custom values externos de Meta.')
       return { success: false, message: 'No HighLevel config' }
     }
 

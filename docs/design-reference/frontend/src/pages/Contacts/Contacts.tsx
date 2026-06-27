@@ -838,10 +838,10 @@ const ContactsTable: React.FC = () => {
         : contact
       ))
 
-      showToast('success', 'Campo actualizado', 'El cambio se sincronizó con GoHighLevel.')
+      showToast('success', 'Campo actualizado', 'El cambio quedó guardado en Ristak.')
       return nextCustomFields
     } catch (error) {
-      showToast('error', 'No se pudo actualizar', 'GoHighLevel no aceptó el cambio. Revisa el valor e intenta de nuevo.')
+      showToast('error', 'No se pudo actualizar', 'Revisa el valor e intenta de nuevo.')
       throw error
     }
   }

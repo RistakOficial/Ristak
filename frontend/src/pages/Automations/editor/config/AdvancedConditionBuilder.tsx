@@ -25,7 +25,7 @@ import { DrillSelect } from './DrillSelect'
 import styles from '../AutomationEditor.module.css'
 
 /**
- * Constructor avanzado de condiciones tipo HighLevel (en español):
+ * Constructor avanzado de condiciones tipo CRM (en español):
  * ramas con nombre → grupos combinables con Y/O (negables) → reglas con
  * campos reales del CRM, operadores por tipo y valores fijos o dinámicos.
  */

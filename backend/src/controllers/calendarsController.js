@@ -28,7 +28,7 @@ import {
 import { loadFirstWhatsAppAttributions } from '../services/contactSourceService.js';
 
 /**
- * Controlador para endpoints de Calendarios de HighLevel
+ * Controlador para calendarios de Ristak con sincronizaciones externas opcionales.
  */
 
 async function getSavedHighLevelConfig() {

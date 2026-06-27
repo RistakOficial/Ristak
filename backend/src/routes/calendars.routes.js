@@ -7,7 +7,7 @@ const router = express.Router();
 export const publicCalendarsRoutes = express.Router();
 
 /**
- * Rutas para la gestión de Calendarios de HighLevel
+ * Rutas para la gestión de calendarios de Ristak e integraciones opcionales.
  * Base: /api/calendars
  */
 

@@ -1126,7 +1126,7 @@ export async function syncVisitorToHighLevel(req, res) {
     const config = await getHighLevelConfig()
 
     if (!config || !config.location_id || !config.api_token) {
-      logger.warn('No hay configuración de HighLevel para sincronizar visitor_id')
+      logger.warn('Sin integración opcional de HighLevel; visitor_id queda guardado en Ristak')
       return res.json({ ok: false, message: 'No HighLevel config' })
     }
 
