@@ -12,8 +12,8 @@ import { PAYMENT_MODE_LIVE, getWebhookPaymentMode, normalizePaymentMode } from '
 import {
   isSuccessfulPaymentStatus,
   triggerWhatsappAppointmentBookedEvent,
-  triggerWhatsappFirstPurchaseEvent
-} from '../services/metaWhatsappEventsService.js';
+  triggerMetaPaymentPurchaseEvent
+} from '../services/metaConversionEventsService.js';
 import { resolveHighLevelContactCustomFields } from '../services/highlevelCustomFieldsService.js';
 import { hasContactCustomFieldsPayload } from '../utils/contactCustomFields.js';
 import {
@@ -1070,7 +1070,7 @@ export const handlePaymentWebhook = async (req, res) => {
         }
       }
 
-      await triggerWhatsappFirstPurchaseEvent(contactId, {
+      await triggerMetaPaymentPurchaseEvent(contactId, {
         amount,
         currency,
         paymentMode
@@ -1800,7 +1800,7 @@ export const handleInvoiceWebhook = async (req, res) => {
           logger.success(`Estadísticas actualizadas para contacto: ${payment.contact_id}`);
 
           if (isSuccessfulPaymentStatus(payment.status || newStatus)) {
-            await triggerWhatsappFirstPurchaseEvent(payment.contact_id, {
+            await triggerMetaPaymentPurchaseEvent(payment.contact_id, {
               amount: payment.amount,
               currency: payment.currency,
               paymentMode: payment.payment_mode

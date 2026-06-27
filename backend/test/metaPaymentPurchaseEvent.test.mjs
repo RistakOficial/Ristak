@@ -4,7 +4,7 @@ import http from 'node:http'
 
 import { db, setAppConfig } from '../src/config/database.js'
 import { API_URLS } from '../src/config/constants.js'
-import { triggerWhatsappFirstPurchaseEvent } from '../src/services/metaWhatsappEventsService.js'
+import { triggerMetaPaymentPurchaseEvent } from '../src/services/metaConversionEventsService.js'
 import { saveAccountLocaleSettings } from '../src/utils/accountLocale.js'
 import { encrypt, initializeMasterKey } from '../src/utils/encryption.js'
 
@@ -123,7 +123,7 @@ test('payment Purchase CAPI event uses real payment amount and account currency'
           configurable: true
         })
 
-        const result = await triggerWhatsappFirstPurchaseEvent(contactId, {
+        const result = await triggerMetaPaymentPurchaseEvent(contactId, {
           id: 'payment_meta_purchase_1',
           amount: 123.45,
           currency: 'MXN',

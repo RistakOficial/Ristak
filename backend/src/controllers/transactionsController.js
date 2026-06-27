@@ -8,7 +8,7 @@ import { syncAllInvoices, syncLocalPaymentsToHighLevel } from '../services/invoi
 import { refreshStripePaymentFromIntent, syncStripePaymentPlanFromLocalPayment } from '../services/stripePaymentService.js'
 import { getHiddenContactFilters, buildHiddenContactsCondition } from '../utils/hiddenContactsFilter.js'
 import { updateSingleContactStats } from '../utils/updateContactsStats.js'
-import { triggerWhatsappFirstPurchaseEvent } from '../services/metaWhatsappEventsService.js'
+import { triggerMetaPaymentPurchaseEvent } from '../services/metaConversionEventsService.js'
 import { sendPaymentNotification } from '../services/pushNotificationsService.js'
 import { queuePaymentAutomationMessage } from '../services/paymentAutomationsService.js'
 import { registerGigstackPaymentForTransactionInBackground } from '../services/gigstackInvoiceService.js'
@@ -656,7 +656,7 @@ export const createTransaction = async (req, res) => {
     await updateSingleContactStats(finalContactId)
 
     if (SUCCESS_PAYMENT_STATUSES.has(finalStatus)) {
-      await triggerWhatsappFirstPurchaseEvent(finalContactId, {
+      await triggerMetaPaymentPurchaseEvent(finalContactId, {
         amount: finalAmount,
         currency: finalCurrency,
         paymentMode: finalPaymentMode
@@ -1261,7 +1261,7 @@ export const updateTransaction = async (req, res) => {
     await Promise.all([...statsContacts].map(contact => updateSingleContactStats(contact)))
 
     if (finalContactId && statusChanged && SUCCESS_PAYMENT_STATUSES.has(finalStatus)) {
-      await triggerWhatsappFirstPurchaseEvent(finalContactId, {
+      await triggerMetaPaymentPurchaseEvent(finalContactId, {
         amount: finalAmount,
         currency: finalCurrency,
         paymentMode: finalPaymentMode
@@ -1579,7 +1579,7 @@ export const recordPayment = async (req, res) => {
     }
     if (transaction.contact_id) {
       await updateSingleContactStats(transaction.contact_id)
-      await triggerWhatsappFirstPurchaseEvent(transaction.contact_id, {
+      await triggerMetaPaymentPurchaseEvent(transaction.contact_id, {
         amount: amount || transaction.amount,
         currency: transaction.currency || 'MXN',
         paymentMode

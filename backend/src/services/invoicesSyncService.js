@@ -24,8 +24,8 @@ import {
 } from './contactIdentityService.js'
 import {
   isSuccessfulPaymentStatus,
-  triggerWhatsappFirstPurchaseEvent
-} from './metaWhatsappEventsService.js'
+  triggerMetaPaymentPurchaseEvent
+} from './metaConversionEventsService.js'
 import {
   buildInvoiceReferenceCandidates,
   normalizeInvoiceNumber
@@ -1004,7 +1004,7 @@ export async function syncInvoices({ limit = 100, offset = 0, contactId } = {}) 
           !isSuccessfulPaymentStatus(existing.status)
 
         if (transitionedToPaid) {
-          await triggerWhatsappFirstPurchaseEvent(invoiceData.contact_id, {
+          await triggerMetaPaymentPurchaseEvent(invoiceData.contact_id, {
             amount: invoiceData.amount,
             currency: invoiceData.currency,
             paymentMode: invoiceData.payment_mode
@@ -1229,7 +1229,7 @@ export async function syncAllInvoices({ contactId } = {}) {
           !isSuccessfulPaymentStatus(existing.status)
 
         if (transitionedToPaid) {
-          await triggerWhatsappFirstPurchaseEvent(invoiceData.contact_id, {
+          await triggerMetaPaymentPurchaseEvent(invoiceData.contact_id, {
             amount: invoiceData.amount,
             currency: invoiceData.currency,
             paymentMode: invoiceData.payment_mode
@@ -1414,7 +1414,7 @@ export async function syncSingleInvoice(invoiceId) {
       !isSuccessfulPaymentStatus(existing.status)
 
     if (transitionedToPaid) {
-      await triggerWhatsappFirstPurchaseEvent(invoiceData.contact_id, {
+      await triggerMetaPaymentPurchaseEvent(invoiceData.contact_id, {
         amount: invoiceData.amount,
         currency: invoiceData.currency,
         paymentMode: invoiceData.payment_mode
