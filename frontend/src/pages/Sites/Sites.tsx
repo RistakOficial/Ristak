@@ -32570,8 +32570,15 @@ const FieldCustomFieldPrompt: React.FC<{
   onSave: () => void
 }> = ({ block, binding, onPatchBlock, onSave }) => {
   const { showToast } = useNotification()
-  const [creating, setCreating] = useState(false)
+  const [creatorOpen, setCreatorOpen] = useState(false)
+  const [creatorSaving, setCreatorSaving] = useState(false)
+  const [creatorDraft, setCreatorDraft] = useState<CustomFieldQuickDraft>(() => makeCustomFieldDraftForBlock(block))
+  const [creatorFieldKeyTouched, setCreatorFieldKeyTouched] = useState(false)
   const availableFields = matchingCustomFieldsForBlock(binding.customFields, block)
+
+  useEffect(() => {
+    if (!creatorOpen) setCreatorDraft(makeCustomFieldDraftForBlock(block))
+  }, [block, creatorOpen])
 
   const bindTo = (field: CustomFieldDefinition | null) => {
     onPatchBlock(customFieldBindingPatch(block, field))
@@ -32583,20 +32590,78 @@ const FieldCustomFieldPrompt: React.FC<{
     window.setTimeout(onSave, 0)
   }
 
+  const openCreator = () => {
+    setCreatorDraft(makeCustomFieldDraftForBlock(block))
+    setCreatorFieldKeyTouched(false)
+    setCreatorOpen(true)
+  }
+
+  const closeCreator = () => {
+    if (creatorSaving) return
+    setCreatorOpen(false)
+  }
+
+  const patchCreatorDraft = (patch: Partial<CustomFieldQuickDraft>) => {
+    setCreatorDraft(current => ({ ...current, ...patch }))
+  }
+
+  const addCreatorOption = () => {
+    setCreatorDraft(current => ({ ...current, options: [...current.options, { label: '', value: '' }] }))
+  }
+
+  const updateCreatorOption = (index: number, patch: Partial<CustomFieldOption>) => {
+    setCreatorDraft(current => ({
+      ...current,
+      options: current.options.map((option, optionIndex) => {
+        if (optionIndex !== index) return option
+        if (patch.label === undefined) return { ...option, ...patch }
+        const nextLabel = patch.label
+        return {
+          ...option,
+          ...patch,
+          value: shouldSyncCustomFieldOptionValue(option) ? normalizeCustomFieldKey(nextLabel) : option.value
+        }
+      })
+    }))
+  }
+
+  const removeCreatorOption = (index: number) => {
+    setCreatorDraft(current => ({
+      ...current,
+      options: current.options.filter((_, optionIndex) => optionIndex !== index)
+    }))
+  }
+
+  const handleCreatorLabelChange = (value: string) => {
+    setCreatorDraft(current => ({
+      ...current,
+      label: value,
+      fieldKey: creatorFieldKeyTouched ? current.fieldKey : normalizeCustomFieldKey(value)
+    }))
+  }
+
+  const handleCreatorFieldKeyChange = (value: string) => {
+    setCreatorFieldKeyTouched(true)
+    setCreatorDraft(current => ({
+      ...current,
+      fieldKey: normalizeCustomFieldKeyInput(value)
+    }))
+  }
+
   const createAndBind = async () => {
-    const draft = makeCustomFieldDraftForBlock(block)
-    const payload = buildCustomFieldPayload(draft, binding.customFieldFolders, (title, message) => showToast('warning', title, message))
+    const payload = buildCustomFieldPayload(creatorDraft, binding.customFieldFolders, (title, message) => showToast('warning', title, message))
     if (!payload) return
-    setCreating(true)
+    setCreatorSaving(true)
     try {
       const field = await customFieldsService.createField(payload)
       binding.onCustomFieldCreated(field)
       bindTo(field)
+      setCreatorOpen(false)
       showToast('success', 'Campo creado', 'La respuesta se guardará en este campo.')
     } catch (error) {
       showToast('error', 'No se pudo crear', error instanceof Error ? error.message : 'Intenta de nuevo')
     } finally {
-      setCreating(false)
+      setCreatorSaving(false)
     }
   }
 
@@ -32614,7 +32679,7 @@ const FieldCustomFieldPrompt: React.FC<{
           className="rstk-field-bind-select"
           value=""
           aria-label="Asociar a un campo personalizado existente"
-          disabled={creating || availableFields.length === 0}
+          disabled={creatorSaving || availableFields.length === 0}
           onChange={(event) => {
             const field = availableFields.find(item => item.definitionId === event.target.value)
             if (field) bindTo(field)
@@ -32625,14 +32690,30 @@ const FieldCustomFieldPrompt: React.FC<{
             <option key={field.definitionId} value={field.definitionId}>{field.label}</option>
           ))}
         </select>
-        <button type="button" className="rstk-field-bind-button" onClick={() => void createAndBind()} disabled={creating}>
+        <button type="button" className="rstk-field-bind-button" onClick={openCreator} disabled={creatorSaving}>
           <Plus size={13} />
-          {creating ? 'Creando…' : 'Crear y asociar'}
+          Crear
         </button>
       </div>
-      <button type="button" className="rstk-field-bind-skip" onClick={skip} disabled={creating}>
+      <button type="button" className="rstk-field-bind-skip" onClick={skip} disabled={creatorSaving}>
         Por ahora no
       </button>
+      {creatorOpen && (
+        <CustomFieldCreatorModal
+          titleId={`sites-field-prompt-custom-field-editor-${block.id}`}
+          draft={creatorDraft}
+          folders={binding.customFieldFolders}
+          saving={creatorSaving}
+          onClose={closeCreator}
+          onSubmit={() => void createAndBind()}
+          onPatchDraft={patchCreatorDraft}
+          onLabelChange={handleCreatorLabelChange}
+          onFieldKeyChange={handleCreatorFieldKeyChange}
+          onAddOption={addCreatorOption}
+          onUpdateOption={updateCreatorOption}
+          onRemoveOption={removeCreatorOption}
+        />
+      )}
     </div>
   )
 }
@@ -34260,7 +34341,7 @@ const customFieldEditorTypes: Array<{ value: CustomFieldDataType; label: string;
 
 const customFieldChoiceTypes = new Set<CustomFieldDataType>(['radio', 'dropdown', 'checkboxes', 'select', 'multiselect'])
 
-const normalizeCustomFieldKey = (value: string) => {
+const normalizeCustomFieldKeyInput = (value: string) => {
   const normalized = value
     .normalize('NFD')
     .replace(/[\u0300-\u036f]/g, '')
@@ -34268,8 +34349,10 @@ const normalizeCustomFieldKey = (value: string) => {
     .replace(/[^a-z0-9]+/g, '_')
     .replace(/^_+|_+$/g, '')
 
-  return normalized || 'campo_personalizado'
+  return normalized
 }
+
+const normalizeCustomFieldKey = (value: string) => normalizeCustomFieldKeyInput(value) || 'campo_personalizado'
 
 const shouldSyncCustomFieldOptionValue = (option: CustomFieldOption) => {
   const label = option.label.trim()
@@ -34450,6 +34533,154 @@ const customFieldTypeLabel = (value = '') => {
   return value || 'Campo'
 }
 
+const CustomFieldCreatorModal: React.FC<{
+  titleId: string
+  draft: CustomFieldQuickDraft
+  folders: CustomFieldFolder[]
+  saving: boolean
+  onClose: () => void
+  onSubmit: () => void
+  onPatchDraft: (patch: Partial<CustomFieldQuickDraft>) => void
+  onLabelChange: (value: string) => void
+  onFieldKeyChange: (value: string) => void
+  onAddOption: () => void
+  onUpdateOption: (index: number, patch: Partial<CustomFieldOption>) => void
+  onRemoveOption: (index: number) => void
+}> = ({
+  titleId,
+  draft,
+  folders,
+  saving,
+  onClose,
+  onSubmit,
+  onPatchDraft,
+  onLabelChange,
+  onFieldKeyChange,
+  onAddOption,
+  onUpdateOption,
+  onRemoveOption
+}) => (
+  <div
+    className={customFieldModalStyles.editorOverlay}
+    role="dialog"
+    aria-modal="true"
+    aria-labelledby={titleId}
+    data-overlay
+  >
+    <section className={customFieldModalStyles.editorPanel}>
+      <div className={customFieldModalStyles.editorHeader}>
+        <div>
+          <p className={customFieldModalStyles.eyebrow}>Nuevo campo</p>
+          <h3 id={titleId}>Crear campo personalizado</h3>
+        </div>
+        <button type="button" className={customFieldModalStyles.iconButton} onClick={onClose} aria-label="Cerrar editor">
+          <X size={18} />
+        </button>
+      </div>
+
+      <div className={customFieldModalStyles.editorBody}>
+        <label className={customFieldModalStyles.field}>
+          <span>Nombre visible</span>
+          <input value={draft.label} placeholder="Ej. Presupuesto mensual" onChange={(event) => onLabelChange(event.target.value)} />
+        </label>
+
+        <label className={customFieldModalStyles.field}>
+          <span>Nombre interno</span>
+          <input
+            value={draft.fieldKey}
+            placeholder="presupuesto_mensual"
+            onChange={(event) => onFieldKeyChange(event.target.value)}
+          />
+          <small className={customFieldModalStyles.parameterPreview}>Parámetro: <code>{customFieldTokenPreview(draft.fieldKey || normalizeCustomFieldKey(draft.label))}</code></small>
+        </label>
+
+        <label className={customFieldModalStyles.field}>
+          <span>Tipo</span>
+          <CustomSelect
+            portal
+            value={draft.dataType}
+            onChange={(event) => {
+              const dataType = event.target.value as CustomFieldDataType
+              onPatchDraft({
+                dataType,
+                options: customFieldChoiceTypes.has(dataType) && draft.options.length === 0 ? [{ label: '', value: '' }] : draft.options
+              })
+            }}
+          >
+            {customFieldEditorTypes.map(type => (
+              <option key={type.value} value={type.value}>{type.label}</option>
+            ))}
+          </CustomSelect>
+        </label>
+
+        <div className={customFieldModalStyles.typeHint}>
+          <ChevronRight size={15} />
+          <span>{customFieldEditorTypes.find(type => type.value === draft.dataType)?.detail}</span>
+        </div>
+
+        <label className={customFieldModalStyles.field}>
+          <span>Carpeta</span>
+          <CustomSelect portal value={draft.folderId} onChange={(event) => onPatchDraft({ folderId: event.target.value })}>
+            <option value="">Sin carpeta</option>
+            {folders.map(folder => (
+              <option key={folder.id} value={folder.id}>{folder.name}</option>
+            ))}
+          </CustomSelect>
+        </label>
+
+        {customFieldChoiceTypes.has(draft.dataType) && (
+          <div className={customFieldModalStyles.field}>
+            <span>Opciones</span>
+            <div className={customFieldModalStyles.optionList}>
+              {draft.options.map((option, index) => (
+                <div key={index} className={customFieldModalStyles.optionRow}>
+                  <label className={customFieldModalStyles.optionInput}>
+                    <span>Texto visible</span>
+                    <input
+                      value={option.label}
+                      placeholder={`Opción ${index + 1}`}
+                      onChange={(event) => onUpdateOption(index, { label: event.target.value })}
+                    />
+                  </label>
+                  <label className={customFieldModalStyles.optionInput}>
+                    <span>Valor interno</span>
+                    <input
+                      value={option.value}
+                      placeholder="Ej. 3000"
+                      onChange={(event) => onUpdateOption(index, { value: event.target.value })}
+                    />
+                  </label>
+                  <button
+                    type="button"
+                    className={customFieldModalStyles.optionRemove}
+                    onClick={() => onRemoveOption(index)}
+                    aria-label={`Quitar opción ${index + 1}`}
+                  >
+                    <Trash2 size={15} />
+                  </button>
+                </div>
+              ))}
+            </div>
+            <Button type="button" variant="secondary" size="sm" leftIcon={<Plus size={14} />} onClick={onAddOption}>
+              Agregar opción
+            </Button>
+            <small>El contacto ve el texto visible. El valor interno es lo que se guarda y se puede mapear en Meta o automatizaciones.</small>
+          </div>
+        )}
+      </div>
+
+      <div className={customFieldModalStyles.editorActions}>
+        <Button type="button" variant="ghost" onClick={onClose}>
+          Cancelar
+        </Button>
+        <Button type="button" onClick={onSubmit} loading={saving} leftIcon={<Save size={16} />}>
+          Guardar campo
+        </Button>
+      </div>
+    </section>
+  </div>
+)
+
 const CustomFieldBindingControl: React.FC<{
   block: SiteBlock
   customFields: CustomFieldDefinition[]
@@ -34464,6 +34695,7 @@ const CustomFieldBindingControl: React.FC<{
   const [creatorOpen, setCreatorOpen] = useState(false)
   const [creatorSaving, setCreatorSaving] = useState(false)
   const [creatorDraft, setCreatorDraft] = useState<CustomFieldQuickDraft>(() => makeCustomFieldDraftForBlock(block))
+  const [creatorFieldKeyTouched, setCreatorFieldKeyTouched] = useState(false)
   const systemPreset = getSystemFormFieldPresetForBlock(block)
 
   useEffect(() => {
@@ -34472,6 +34704,7 @@ const CustomFieldBindingControl: React.FC<{
 
   const openCreator = () => {
     setCreatorDraft(makeCustomFieldDraftForBlock(block))
+    setCreatorFieldKeyTouched(false)
     setCreatorOpen(true)
   }
 
@@ -34515,7 +34748,15 @@ const CustomFieldBindingControl: React.FC<{
     setCreatorDraft(current => ({
       ...current,
       label: value,
-      fieldKey: normalizeCustomFieldKey(value)
+      fieldKey: creatorFieldKeyTouched ? current.fieldKey : normalizeCustomFieldKey(value)
+    }))
+  }
+
+  const handleCreatorFieldKeyChange = (value: string) => {
+    setCreatorFieldKeyTouched(true)
+    setCreatorDraft(current => ({
+      ...current,
+      fieldKey: normalizeCustomFieldKeyInput(value)
     }))
   }
 
@@ -34621,116 +34862,20 @@ const CustomFieldBindingControl: React.FC<{
         </p>
       )}
       {creatorOpen && (
-        <div
-          className={customFieldModalStyles.editorOverlay}
-          role="dialog"
-          aria-modal="true"
-          aria-labelledby="sites-custom-field-editor-title"
-          data-overlay
-        >
-          <section className={customFieldModalStyles.editorPanel}>
-            <div className={customFieldModalStyles.editorHeader}>
-              <div>
-                <p className={customFieldModalStyles.eyebrow}>Nuevo campo</p>
-                <h3 id="sites-custom-field-editor-title">Crear campo personalizado</h3>
-              </div>
-              <button type="button" className={customFieldModalStyles.iconButton} onClick={closeCreator} aria-label="Cerrar editor">
-                <X size={18} />
-              </button>
-            </div>
-
-            <div className={customFieldModalStyles.editorBody}>
-              <label className={customFieldModalStyles.field}>
-                <span>Nombre visible</span>
-                <input value={creatorDraft.label} placeholder="Ej. Presupuesto mensual" onChange={(event) => handleCreatorLabelChange(event.target.value)} />
-                <small className={customFieldModalStyles.parameterPreview}>Parámetro: <code>{customFieldTokenPreview(creatorDraft.fieldKey || normalizeCustomFieldKey(creatorDraft.label))}</code></small>
-              </label>
-
-              <label className={customFieldModalStyles.field}>
-                <span>Tipo</span>
-                <CustomSelect
-                  portal
-                  value={creatorDraft.dataType}
-                  onChange={(event) => {
-                    const dataType = event.target.value as CustomFieldDataType
-                    patchCreatorDraft({
-                      dataType,
-                      options: customFieldChoiceTypes.has(dataType) && creatorDraft.options.length === 0 ? [{ label: '', value: '' }] : creatorDraft.options
-                    })
-                  }}
-                >
-                  {customFieldEditorTypes.map(type => (
-                    <option key={type.value} value={type.value}>{type.label}</option>
-                  ))}
-                </CustomSelect>
-              </label>
-
-              <div className={customFieldModalStyles.typeHint}>
-                <ChevronRight size={15} />
-                <span>{customFieldEditorTypes.find(type => type.value === creatorDraft.dataType)?.detail}</span>
-              </div>
-
-              <label className={customFieldModalStyles.field}>
-                <span>Carpeta</span>
-                <CustomSelect portal value={creatorDraft.folderId} onChange={(event) => patchCreatorDraft({ folderId: event.target.value })}>
-                  <option value="">Sin carpeta</option>
-                  {customFieldFolders.map(folder => (
-                    <option key={folder.id} value={folder.id}>{folder.name}</option>
-                  ))}
-                </CustomSelect>
-              </label>
-
-              {customFieldChoiceTypes.has(creatorDraft.dataType) && (
-                <div className={customFieldModalStyles.field}>
-                  <span>Opciones</span>
-                  <div className={customFieldModalStyles.optionList}>
-                    {creatorDraft.options.map((option, index) => (
-                      <div key={index} className={customFieldModalStyles.optionRow}>
-                        <label className={customFieldModalStyles.optionInput}>
-                          <span>Texto visible</span>
-                          <input
-                            value={option.label}
-                            placeholder={`Opción ${index + 1}`}
-                            onChange={(event) => updateCreatorOption(index, { label: event.target.value })}
-                          />
-                        </label>
-                        <label className={customFieldModalStyles.optionInput}>
-                          <span>Valor interno</span>
-                          <input
-                            value={option.value}
-                            placeholder="Ej. 3000"
-                            onChange={(event) => updateCreatorOption(index, { value: event.target.value })}
-                          />
-                        </label>
-                        <button
-                          type="button"
-                          className={customFieldModalStyles.optionRemove}
-                          onClick={() => removeCreatorOption(index)}
-                          aria-label={`Quitar opción ${index + 1}`}
-                        >
-                          <Trash2 size={15} />
-                        </button>
-                      </div>
-                    ))}
-                  </div>
-                  <Button type="button" variant="secondary" size="sm" leftIcon={<Plus size={14} />} onClick={addCreatorOption}>
-                    Agregar opción
-                  </Button>
-                  <small>El contacto ve el texto visible. El valor interno es lo que se guarda y se puede mapear en Meta o automatizaciones.</small>
-                </div>
-              )}
-            </div>
-
-            <div className={customFieldModalStyles.editorActions}>
-              <Button type="button" variant="ghost" onClick={closeCreator}>
-                Cancelar
-              </Button>
-              <Button type="button" onClick={() => void handleCreateField()} loading={creatorSaving} leftIcon={<Save size={16} />}>
-                Guardar campo
-              </Button>
-            </div>
-          </section>
-        </div>
+        <CustomFieldCreatorModal
+          titleId="sites-custom-field-editor-title"
+          draft={creatorDraft}
+          folders={customFieldFolders}
+          saving={creatorSaving}
+          onClose={closeCreator}
+          onSubmit={() => void handleCreateField()}
+          onPatchDraft={patchCreatorDraft}
+          onLabelChange={handleCreatorLabelChange}
+          onFieldKeyChange={handleCreatorFieldKeyChange}
+          onAddOption={addCreatorOption}
+          onUpdateOption={updateCreatorOption}
+          onRemoveOption={removeCreatorOption}
+        />
       )}
     </AccordionSection>
   )
