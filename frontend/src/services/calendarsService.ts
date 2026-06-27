@@ -84,6 +84,7 @@ export interface CalendarCustomEventsConfig {
 
 export type CalendarBookingLayout = 'classic' | 'compact' | 'stacked';
 export type CalendarBookingFontFamily = 'system' | 'modern' | 'serif' | 'mono';
+export type CalendarBookingWidgetTheme = 'ristak' | 'night' | 'agenda' | 'minimal';
 
 export interface CalendarBookingDisplayColors {
   accent: string;
@@ -111,6 +112,7 @@ export interface CalendarBookingDisplayConfig {
   showDuration: boolean;
   showConfirmation: boolean;
   layout: CalendarBookingLayout;
+  widgetTheme: CalendarBookingWidgetTheme;
   fontFamily: CalendarBookingFontFamily;
   allowTimezoneSelection: boolean;
   defaultTimezone: string;

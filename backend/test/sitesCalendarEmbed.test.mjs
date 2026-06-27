@@ -86,6 +86,7 @@ test('site calendar custom mode passes editable style params for live embeds', a
   const html = await renderPublicSiteHtml(calendarSite({
     calendarDesignMode: 'custom',
     calendarLayout: 'compact',
+    calendarWidgetTheme: 'agenda',
     calendarAccentColor: '#ff0055',
     calendarSlotRadius: 18,
     calendarFieldRadius: 12
@@ -101,6 +102,7 @@ test('site calendar custom mode passes editable style params for live embeds', a
   assert.equal(url.searchParams.get('designMode'), 'custom')
   // Layout siempre clásico aunque se guarde 'compact'.
   assert.equal(url.searchParams.get('layout'), 'classic')
+  assert.equal(url.searchParams.get('widgetTheme'), 'agenda')
   assert.equal(url.searchParams.get('accent'), '#ff0055')
   assert.equal(url.searchParams.get('slotRadius'), '18')
   assert.equal(url.searchParams.get('fieldRadius'), '12')
@@ -143,6 +145,7 @@ test('site calendar original mode does not force display toggles or font', async
   const url = getCalendarFrameUrl(html)
   assert.equal(url.searchParams.get('showSidebar'), null)
   assert.equal(url.searchParams.get('fontFamily'), null)
+  assert.equal(url.searchParams.get('widgetTheme'), null)
 })
 
 test('public calendar applies per-embed display overrides from style params', () => {
@@ -172,6 +175,33 @@ test('public calendar applies per-embed display overrides from style params', ()
   })
   assert.match(hiddenName, /<section class="intro">/)
   assert.doesNotMatch(hiddenName, /<h1>Agenda overrides<\/h1>/)
+})
+
+test('public calendar renders configured widget themes and per-embed theme overrides', () => {
+  const calendar = {
+    id: 'calendar-widget-theme',
+    slug: 'agenda-widget-theme',
+    name: 'Agenda widget theme',
+    slotDuration: 30,
+    eventColor: '#146FC5',
+    bookingDisplay: { widgetTheme: 'night' }
+  }
+
+  const configuredTheme = renderPublicCalendarHtml(calendar, { embedded: true })
+  assert.match(configuredTheme, /rstk-calendar-theme-night/)
+  assert.match(configuredTheme, /body\.rstk-calendar-theme-night \.shell/)
+
+  const customTheme = renderPublicCalendarHtml(calendar, {
+    embedded: true,
+    style: { designMode: 'custom', widgetTheme: 'minimal' }
+  })
+  assert.match(customTheme, /rstk-calendar-theme-minimal/)
+
+  const invalidTheme = renderPublicCalendarHtml({
+    ...calendar,
+    bookingDisplay: { widgetTheme: 'space-laser' }
+  }, { embedded: true })
+  assert.match(invalidTheme, /rstk-calendar-theme-ristak/)
 })
 
 test('public calendar asks for timezone after date selection when visitor timezone is enabled', () => {

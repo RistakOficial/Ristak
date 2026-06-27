@@ -1781,6 +1781,25 @@ html body :is(.rstkCanvas.rstk-kind-form.rstk-choice-grid, .rstkCanvas.rstk-kind
   align-items: stretch;
   padding: clamp(22px, 4vw, 42px) 0;
 }
+.rstkCanvas .rstk-calendar-preview-theme-night .rstk-calendar-preview-shell {
+  gap: clamp(14px, 2vw, 24px);
+  padding: clamp(18px, 3vw, 30px);
+  border: 1px solid var(--rstk-calendar-preview-line);
+  border-radius: clamp(18px, 2.4vw, 28px);
+  background: color-mix(in srgb, var(--rstk-calendar-preview-text) 88%, transparent);
+}
+.rstkCanvas .rstk-calendar-preview-theme-agenda .rstk-calendar-preview-shell {
+  gap: 0;
+  padding: 0;
+  border: 1px solid var(--rstk-calendar-preview-line);
+  border-radius: 0;
+}
+.rstkCanvas .rstk-calendar-preview-theme-minimal .rstk-calendar-preview-shell {
+  gap: clamp(20px, 4vw, 44px);
+  padding: clamp(18px, 4vw, 38px) 0;
+  border: 0;
+  background: transparent;
+}
 .rstkCanvas .rstk-calendar-preview-compact .rstk-calendar-preview-shell {
   grid-template-columns: minmax(0, 1.2fr) minmax(178px, .62fr);
   grid-template-areas:
@@ -1811,6 +1830,25 @@ html body :is(.rstkCanvas.rstk-kind-form.rstk-choice-grid, .rstkCanvas.rstk-kind
   display: grid;
   align-content: start;
   gap: 14px;
+}
+.rstkCanvas .rstk-calendar-preview-theme-agenda .rstk-calendar-preview-intro,
+.rstkCanvas .rstk-calendar-preview-theme-agenda .rstk-calendar-preview-month,
+.rstkCanvas .rstk-calendar-preview-theme-agenda .rstk-calendar-preview-slots {
+  padding: clamp(16px, 2vw, 24px);
+}
+.rstkCanvas .rstk-calendar-preview-theme-night .rstk-calendar-preview-title,
+.rstkCanvas .rstk-calendar-preview-theme-night .rstk-calendar-preview-kicker,
+.rstkCanvas .rstk-calendar-preview-theme-night .rstk-calendar-preview-month-head strong,
+.rstkCanvas .rstk-calendar-preview-theme-night .rstk-calendar-preview-weekdays span,
+.rstkCanvas .rstk-calendar-preview-theme-night .rstk-calendar-preview-slots > strong,
+.rstkCanvas .rstk-calendar-preview-theme-night .rstk-calendar-preview-day-available {
+  color: var(--rstk-surface);
+}
+.rstkCanvas .rstk-calendar-preview-theme-night .rstk-calendar-preview-description,
+.rstkCanvas .rstk-calendar-preview-theme-night .rstk-calendar-preview-meta,
+.rstkCanvas .rstk-calendar-preview-theme-night .rstk-calendar-preview-nav,
+.rstkCanvas .rstk-calendar-preview-theme-night .rstk-calendar-preview-day {
+  color: color-mix(in srgb, var(--rstk-surface) 68%, transparent);
 }
 .rstkCanvas .rstk-calendar-preview-avatar {
   width: clamp(76px, 9vw, 104px);
@@ -1908,6 +1946,7 @@ html body :is(.rstkCanvas.rstk-kind-form.rstk-choice-grid, .rstkCanvas.rstk-kind
   min-width: 0;
   min-height: clamp(34px, 5vw, 48px);
   aspect-ratio: 1;
+  position: relative;
   display: grid;
   place-items: center;
   border-radius: 999px;
@@ -1920,6 +1959,30 @@ html body :is(.rstkCanvas.rstk-kind-form.rstk-choice-grid, .rstkCanvas.rstk-kind
 }
 .rstkCanvas .rstk-calendar-preview-day-available {
   color: var(--rstk-calendar-preview-slot-text);
+}
+.rstkCanvas .rstk-calendar-preview-theme-night .rstk-calendar-preview-day-available::after {
+  content: '';
+  position: absolute;
+  left: 50%;
+  bottom: 13%;
+  width: 4px;
+  height: 4px;
+  border-radius: 999px;
+  background: var(--rstk-calendar-preview-accent);
+  transform: translateX(-50%);
+}
+.rstkCanvas .rstk-calendar-preview-theme-agenda .rstk-calendar-preview-day {
+  border-radius: 4px;
+  background: var(--rstk-calendar-preview-control-bg);
+}
+.rstkCanvas .rstk-calendar-preview-theme-agenda .rstk-calendar-preview-day-available {
+  background: var(--rstk-calendar-preview-slot-bg);
+}
+.rstkCanvas .rstk-calendar-preview-theme-minimal .rstk-calendar-preview-day {
+  border-radius: 0;
+}
+.rstkCanvas .rstk-calendar-preview-theme-minimal .rstk-calendar-preview-day-today {
+  box-shadow: inset 0 -2px 0 var(--rstk-calendar-preview-accent);
 }
 .rstkCanvas .rstk-calendar-preview-day-today {
   box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--rstk-calendar-preview-accent) 34%, transparent);
@@ -1951,6 +2014,20 @@ html body :is(.rstkCanvas.rstk-kind-form.rstk-choice-grid, .rstkCanvas.rstk-kind
   font-weight: 820;
   line-height: 1.2;
   text-align: center;
+}
+.rstkCanvas .rstk-calendar-preview-theme-night .rstk-calendar-preview-slot {
+  border-color: color-mix(in srgb, var(--rstk-surface) 24%, transparent);
+  background: color-mix(in srgb, var(--rstk-surface) 10%, transparent);
+  color: var(--rstk-surface);
+}
+.rstkCanvas .rstk-calendar-preview-theme-agenda .rstk-calendar-preview-slot {
+  min-height: clamp(34px, 4vw, 42px);
+  border-radius: 4px;
+}
+.rstkCanvas .rstk-calendar-preview-theme-minimal .rstk-calendar-preview-slot {
+  border-color: var(--rstk-calendar-preview-line);
+  border-radius: 999px;
+  background: transparent;
 }
 @container (max-width: 820px) {
   .rstkCanvas .rstk-calendar-preview-classic .rstk-calendar-preview-shell,

@@ -57,6 +57,7 @@ import {
   type CalendarBookingDefaultFields,
   type CalendarBookingFormConfig,
   type CalendarBookingLayout,
+  type CalendarBookingWidgetTheme,
   type CalendarCustomEventChannel,
   type CalendarCustomEventParameter,
   type CalendarCustomEventParameters,
@@ -180,6 +181,12 @@ const CALENDAR_PUBLIC_LAYOUT_OPTIONS: Array<{ value: CalendarBookingLayout; labe
   { value: 'classic', label: 'Panel izquierdo y calendario' },
   { value: 'compact', label: 'Encabezado compacto' },
   { value: 'stacked', label: 'Una columna' }
+]
+const CALENDAR_PUBLIC_WIDGET_THEME_OPTIONS: Array<{ value: CalendarBookingWidgetTheme; label: string; description: string }> = [
+  { value: 'ristak', label: 'Ristak', description: 'Balanceado, limpio y flexible para cualquier negocio.' },
+  { value: 'night', label: 'Nocturno', description: 'Tarjeta oscura, slots marcados y fechas con punto.' },
+  { value: 'agenda', label: 'Agenda', description: 'Cuadricula editorial, dias cuadrados y separadores claros.' },
+  { value: 'minimal', label: 'Minimal', description: 'Superficie abierta, menos borde y controles suaves.' }
 ]
 const CALENDAR_PUBLIC_FONT_OPTIONS: Array<{ value: CalendarBookingFontFamily; label: string }> = [
   { value: 'system', label: 'Sistema' },
@@ -397,6 +404,10 @@ const normalizeCalendarBookingLayout = (value?: string | null): CalendarBookingL
   value === 'compact' || value === 'stacked' ? value : 'classic'
 )
 
+const normalizeCalendarBookingWidgetTheme = (value?: string | null): CalendarBookingWidgetTheme => (
+  value === 'night' || value === 'agenda' || value === 'minimal' ? value : 'ristak'
+)
+
 const normalizeCalendarBookingFontFamily = (value?: string | null): CalendarBookingFontFamily => (
   value === 'modern' || value === 'serif' || value === 'mono' ? value : 'system'
 )
@@ -492,6 +503,7 @@ const createDefaultCalendarBookingDisplay = (): CalendarBookingDisplayConfig => 
   showDuration: true,
   showConfirmation: true,
   layout: 'classic',
+  widgetTheme: 'ristak',
   fontFamily: 'system',
   allowTimezoneSelection: true,
   defaultTimezone: '',
@@ -505,6 +517,7 @@ const normalizeCalendarBookingDisplay = (
 ): CalendarBookingDisplayConfig => {
   const defaults = createDefaultCalendarBookingDisplay()
   const source = value || {}
+  const sourceRecord = source as Record<string, unknown>
   const sourceColors = (source.colors || {}) as Partial<CalendarBookingDisplayColors>
   const accent = normalizeCalendarDisplayColor(fallbackAccent, CALENDAR_BOOKING_DISPLAY_COLOR_DEFAULTS.accent)
   const background = normalizeCalendarDisplayColor(sourceColors.background, CALENDAR_BOOKING_DISPLAY_COLOR_DEFAULTS.background)
@@ -519,6 +532,7 @@ const normalizeCalendarBookingDisplay = (
     showDuration: source.showDuration !== false,
     showConfirmation: source.showConfirmation !== false,
     layout: normalizeCalendarBookingLayout(source.layout || defaults.layout),
+    widgetTheme: normalizeCalendarBookingWidgetTheme(String(source.widgetTheme || sourceRecord.widget_theme || defaults.widgetTheme)),
     fontFamily: normalizeCalendarBookingFontFamily(source.fontFamily || defaults.fontFamily),
     allowTimezoneSelection: source.allowTimezoneSelection !== false,
     defaultTimezone: normalizeCalendarTimezoneValue(source.defaultTimezone),
@@ -2305,6 +2319,7 @@ export const CalendarsConfiguration: React.FC = () => {
           className={pageStyles.bookingPreviewFrame}
           style={previewStyle}
           data-layout={bookingDisplayConfig.layout}
+          data-widget-theme={bookingDisplayConfig.widgetTheme}
           data-sidebar={bookingDisplayConfig.showSidebar ? 'visible' : 'hidden'}
           data-stage={calendarPreviewStep}
         >
@@ -3434,6 +3449,34 @@ export const CalendarsConfiguration: React.FC = () => {
                         options={CALENDAR_PUBLIC_LAYOUT_OPTIONS}
                       />
                     </label>
+
+                    <div className={`${pageStyles.editorField} ${pageStyles.editorFieldWide}`}>
+                      <span>Theme del widget</span>
+                      <small>Cambia la composicion visual del calendario sin depender solamente del color.</small>
+                      <div className={pageStyles.calendarThemeGrid} role="radiogroup" aria-label="Theme del widget de calendario">
+                        {CALENDAR_PUBLIC_WIDGET_THEME_OPTIONS.map(option => {
+                          const selected = bookingDisplayConfig.widgetTheme === option.value
+                          return (
+                            <button
+                              type="button"
+                              key={option.value}
+                              className={`${pageStyles.calendarThemeOption} ${selected ? pageStyles.calendarThemeOptionSelected : ''}`}
+                              data-widget-theme={option.value}
+                              aria-pressed={selected}
+                              onClick={() => updateBookingDisplayConfig({ widgetTheme: option.value })}
+                            >
+                              <span className={pageStyles.calendarThemeMock} aria-hidden="true">
+                                <span />
+                                <span />
+                                <span />
+                              </span>
+                              <strong>{option.label}</strong>
+                              <small>{option.description}</small>
+                            </button>
+                          )
+                        })}
+                      </div>
+                    </div>
 
                     <label className={pageStyles.editorField}>
                       <span>Tipografía</span>

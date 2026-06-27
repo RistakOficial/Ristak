@@ -5419,6 +5419,13 @@ const calendarEmbedFontOptions = [
   { value: 'mono', label: 'Monoespaciada' }
 ] as const
 type CalendarEmbedFontFamily = typeof calendarEmbedFontOptions[number]['value']
+const calendarEmbedThemeOptions = [
+  { value: 'ristak', label: 'Ristak', description: 'Balanceado y flexible.' },
+  { value: 'night', label: 'Nocturno', description: 'Tarjeta oscura y disponibilidad con puntos.' },
+  { value: 'agenda', label: 'Agenda', description: 'Dias cuadrados y separadores claros.' },
+  { value: 'minimal', label: 'Minimal', description: 'Superficie abierta y controles suaves.' }
+] as const
+type CalendarEmbedWidgetTheme = typeof calendarEmbedThemeOptions[number]['value']
 const CALENDAR_EMBED_FONT_STACKS: Record<CalendarEmbedFontFamily, string> = {
   system: '-apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
   modern: '"Inter", "SF Pro Display", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
@@ -5428,6 +5435,10 @@ const CALENDAR_EMBED_FONT_STACKS: Record<CalendarEmbedFontFamily, string> = {
 const getCalendarEmbedFontFamily = (settings: Record<string, unknown>): CalendarEmbedFontFamily => {
   const value = getSettingString(settings, 'calendarFontFamily')
   return value === 'modern' || value === 'serif' || value === 'mono' ? value : 'system'
+}
+const getCalendarEmbedWidgetTheme = (settings: Record<string, unknown>): CalendarEmbedWidgetTheme => {
+  const value = getSettingString(settings, 'calendarWidgetTheme')
+  return value === 'night' || value === 'agenda' || value === 'minimal' ? value : 'ristak'
 }
 
 // Toggles "qué se muestra": los MISMOS elementos que se apagan/encienden en
@@ -29621,6 +29632,21 @@ const CalendarBlockDesignControls: React.FC<{
         onChange={(value) => onPatchSettings({ mediaAlign: value })}
         onCommit={onSave}
       />
+      {customDesign && (
+        <label className={styles.field}>
+          <span>Theme del widget</span>
+          <CustomSelect
+            value={getCalendarEmbedWidgetTheme(settings)}
+            onChange={(event) => onPatchSettings({ calendarWidgetTheme: event.target.value })}
+            onBlur={onSave}
+          >
+            {calendarEmbedThemeOptions.map(option => (
+              <option key={option.value} value={option.value}>{option.label}</option>
+            ))}
+          </CustomSelect>
+          <small>{calendarEmbedThemeOptions.find(option => option.value === getCalendarEmbedWidgetTheme(settings))?.description}</small>
+        </label>
+      )}
       <div className={styles.twoColumn}>
         <DimensionField
           label="Ancho"
@@ -30989,11 +31015,15 @@ const CalendarEmbedStaticPreview: React.FC<{
   const fontFamilyKey = designMode === 'custom'
     ? getCalendarEmbedFontFamily(settings)
     : getCalendarEmbedFontFamily({ calendarFontFamily: calendarBookingDisplay.fontFamily })
+  const widgetTheme = designMode === 'custom'
+    ? getCalendarEmbedWidgetTheme(settings)
+    : getCalendarEmbedWidgetTheme({ calendarWidgetTheme: calendarBookingDisplay.widgetTheme })
   const style = { ...baseStyle, fontFamily: CALENDAR_EMBED_FONT_STACKS[fontFamilyKey] }
 
   return (
     <section
-      className={`rstk-calendar-preview rstk-calendar-preview-${layout} ${showSidebar ? '' : 'rstk-calendar-preview-no-sidebar'}`}
+      className={`rstk-calendar-preview rstk-calendar-preview-${layout} rstk-calendar-preview-theme-${widgetTheme} ${showSidebar ? '' : 'rstk-calendar-preview-no-sidebar'}`}
+      data-widget-theme={widgetTheme}
       style={style}
       aria-label={`Vista previa de ${title}`}
     >

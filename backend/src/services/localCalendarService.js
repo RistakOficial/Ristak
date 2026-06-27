@@ -28,6 +28,7 @@ const DEFAULT_CALENDAR_WHATSAPP_EVENT_NAME = 'LeadSubmitted'
 const CALENDAR_CUSTOM_EVENT_CHANNELS = new Set(['site', 'whatsapp', 'smart'])
 const CALENDAR_BOOKING_LAYOUTS = new Set(['classic', 'compact', 'stacked'])
 const CALENDAR_BOOKING_FONT_FAMILIES = new Set(['system', 'modern', 'serif', 'mono'])
+const CALENDAR_BOOKING_WIDGET_THEMES = new Set(['ristak', 'night', 'agenda', 'minimal'])
 const DEFAULT_CALENDAR_BOOKING_DISPLAY_COLORS = {
   accent: DEFAULT_EVENT_COLOR,
   background: '#f8fafc',
@@ -363,6 +364,11 @@ function normalizeCalendarBookingFontFamily(value) {
   return CALENDAR_BOOKING_FONT_FAMILIES.has(raw) ? raw : 'system'
 }
 
+function normalizeCalendarBookingWidgetTheme(value) {
+  const raw = cleanString(value).toLowerCase()
+  return CALENDAR_BOOKING_WIDGET_THEMES.has(raw) ? raw : 'ristak'
+}
+
 function normalizeCalendarBookingDisplayConfig(value = {}, fallback = {}) {
   const source = value && typeof value === 'object' && !Array.isArray(value) ? value : {}
   const displaySource = source.bookingDisplay && typeof source.bookingDisplay === 'object'
@@ -402,6 +408,7 @@ function normalizeCalendarBookingDisplayConfig(value = {}, fallback = {}) {
     showDuration: parseBoolean(displaySource.showDuration ?? displaySource.show_duration, true),
     showConfirmation: parseBoolean(displaySource.showConfirmation ?? displaySource.show_confirmation, true),
     layout: normalizeCalendarBookingLayout(displaySource.layout),
+    widgetTheme: normalizeCalendarBookingWidgetTheme(displaySource.widgetTheme || displaySource.widget_theme),
     fontFamily: normalizeCalendarBookingFontFamily(displaySource.fontFamily || displaySource.font_family),
     allowTimezoneSelection: parseBoolean(displaySource.allowTimezoneSelection ?? displaySource.allow_timezone_selection, true),
     defaultTimezone: defaultTimezone && isValidTimezone(defaultTimezone) ? defaultTimezone : '',
@@ -1979,6 +1986,7 @@ export function renderPublicCalendarHtml(calendar, { host = '', embedded = false
     useCustomStyle && style[key] !== undefined ? parseBoolean(style[key], fallback) : fallback
   )
   const overrideFontFamily = useCustomStyle ? cleanString(style.fontFamily || style.font_family) : ''
+  const overrideWidgetTheme = useCustomStyle ? cleanString(style.widgetTheme || style.widget_theme) : ''
   const effectiveBookingDisplay = {
     ...bookingDisplay,
     showSidebar: resolveDisplayToggle('showSidebar', bookingDisplay.showSidebar !== false),
@@ -1990,9 +1998,11 @@ export function renderPublicCalendarHtml(calendar, { host = '', embedded = false
     showConfirmation: resolveDisplayToggle('showConfirmation', bookingDisplay.showConfirmation !== false),
     allowTimezoneSelection: resolveDisplayToggle('allowTimezoneSelection', bookingDisplay.allowTimezoneSelection !== false),
     fontFamily: overrideFontFamily ? normalizeCalendarBookingFontFamily(overrideFontFamily) : bookingDisplay.fontFamily,
+    widgetTheme: overrideWidgetTheme ? normalizeCalendarBookingWidgetTheme(overrideWidgetTheme) : bookingDisplay.widgetTheme,
     formPosition: (useCustomStyle && (style.formPosition === 'before' || style.formPosition === 'after')) ? style.formPosition : bookingDisplay.formPosition
   }
   const fontStack = getCalendarBookingFontStack(effectiveBookingDisplay.fontFamily)
+  const widgetTheme = normalizeCalendarBookingWidgetTheme(effectiveBookingDisplay.widgetTheme)
   const coverImage = safeCalendarImageUrl(style.coverImage, calendar.calendarCoverImage || calendar.calendar_cover_image || '')
   const bookingCompletion = normalizeCalendarBookingCompletionConfig(calendar.bookingCompletion || calendar.booking_completion || {})
   const customEvents = normalizeCalendarCustomEventsConfig(calendar.customEvents || calendar.custom_events || calendar.metaEvent || calendar.meta_event || {})
@@ -2029,6 +2039,7 @@ export function renderPublicCalendarHtml(calendar, { host = '', embedded = false
       slotRadius,
       fieldRadius,
       layout,
+      widgetTheme,
       coverImage,
       fontFamily: effectiveBookingDisplay.fontFamily
     },
@@ -2130,7 +2141,7 @@ export function renderPublicCalendarHtml(calendar, { host = '', embedded = false
     .weekdays,.days{display:grid;grid-template-columns:repeat(7,1fr);justify-items:center}
     .weekdays{gap:8px;color:var(--muted);font-size:.7rem;font-weight:500;letter-spacing:.06em;text-transform:uppercase}
     .days{gap:8px 6px}
-    .day{width:44px;height:44px;border:0;border-radius:999px;background:transparent;color:var(--muted);cursor:default;font-weight:450;font-size:.95rem;transition:background .15s,color .15s}
+    .day{position:relative;width:44px;height:44px;border:0;border-radius:999px;background:transparent;color:var(--muted);cursor:default;font-weight:450;font-size:.95rem;transition:background .15s,color .15s}
     .day.available{color:var(--heading);cursor:pointer;font-weight:500}
     .day.available:hover,.day.available:focus-visible{background:var(--accent-soft);color:var(--accent);outline:0}
     .day.selected{background:var(--accent);color:var(--selected-text)}
@@ -2226,12 +2237,36 @@ export function renderPublicCalendarHtml(calendar, { host = '', embedded = false
     .successContent{width:100%;display:grid;gap:14px;text-align:left}
     .successContent[hidden]{display:none}
     .successContent .calendarContentBlock{gap:10px}
+    body.rstk-calendar-theme-night .shell{border-radius:28px;background:color-mix(in srgb,var(--heading) 90%,var(--surface) 10%);box-shadow:0 34px 90px -58px color-mix(in srgb,var(--heading) 84%,transparent)}
+    body.rstk-calendar-theme-night .intro,body.rstk-calendar-theme-night .calendarPane,body.rstk-calendar-theme-night form{background:color-mix(in srgb,var(--heading) 86%,var(--surface) 14%)}
+    body.rstk-calendar-theme-night .timesPane{background:color-mix(in srgb,var(--heading) 82%,var(--surface) 18%)}
+    body.rstk-calendar-theme-night h1,body.rstk-calendar-theme-night h2,body.rstk-calendar-theme-night h3,body.rstk-calendar-theme-night label,body.rstk-calendar-theme-night .host,body.rstk-calendar-theme-night .timezoneControl strong,body.rstk-calendar-theme-night .timezoneControl > span:first-child,body.rstk-calendar-theme-night .day.available{color:var(--surface)}
+    body.rstk-calendar-theme-night p,body.rstk-calendar-theme-night .meta,body.rstk-calendar-theme-night .weekdays,body.rstk-calendar-theme-night .timezone,body.rstk-calendar-theme-night .changeSlot,body.rstk-calendar-theme-night .day{color:color-mix(in srgb,var(--surface) 70%,transparent)}
+    body.rstk-calendar-theme-night .navBtn,body.rstk-calendar-theme-night .slot,body.rstk-calendar-theme-night input,body.rstk-calendar-theme-night textarea,body.rstk-calendar-theme-night select,body.rstk-calendar-theme-night .option{background:color-mix(in srgb,var(--surface) 12%,transparent);border-color:color-mix(in srgb,var(--surface) 18%,var(--line));color:var(--surface)}
+    body.rstk-calendar-theme-night .day.available::after{content:'';position:absolute;left:50%;bottom:6px;width:3px;height:3px;border-radius:999px;background:var(--accent);transform:translateX(-50%)}
+    body.rstk-calendar-theme-night .day.selected{background:var(--surface);color:var(--accent)}
+    body.rstk-calendar-theme-night .day.selected::after{background:var(--accent)}
+    body.rstk-calendar-theme-agenda .shell{border-radius:0;box-shadow:none}
+    body.rstk-calendar-theme-agenda .intro,body.rstk-calendar-theme-agenda .calendarPane,body.rstk-calendar-theme-agenda .timesPane{background:transparent}
+    body.rstk-calendar-theme-agenda .calendarPane{gap:18px}
+    body.rstk-calendar-theme-agenda .day{width:50px;height:50px;border-radius:4px;background:var(--control-bg);font-weight:600}
+    body.rstk-calendar-theme-agenda .day.available{background:var(--slot-bg)}
+    body.rstk-calendar-theme-agenda .day.selected{background:var(--heading);color:var(--surface)}
+    body.rstk-calendar-theme-agenda .slot,body.rstk-calendar-theme-agenda input,body.rstk-calendar-theme-agenda textarea,body.rstk-calendar-theme-agenda select,body.rstk-calendar-theme-agenda .option,body.rstk-calendar-theme-agenda button.submit,body.rstk-calendar-theme-agenda button.secondary{border-radius:4px}
+    body.rstk-calendar-theme-minimal .shell{border-color:transparent;background:transparent;box-shadow:none}
+    body.rstk-calendar-theme-minimal .intro,body.rstk-calendar-theme-minimal .calendarPane,body.rstk-calendar-theme-minimal .timesPane{background:transparent}
+    body.rstk-calendar-theme-minimal .intro{border-right:0}
+    body.rstk-calendar-theme-minimal .timesPane{border-left-color:color-mix(in srgb,var(--line) 70%,transparent)}
+    body.rstk-calendar-theme-minimal .day{border-radius:0}
+    body.rstk-calendar-theme-minimal .day.available:hover,body.rstk-calendar-theme-minimal .day.available:focus-visible{background:transparent;box-shadow:inset 0 -2px 0 var(--accent)}
+    body.rstk-calendar-theme-minimal .day.selected{background:transparent;color:var(--accent);box-shadow:inset 0 -2px 0 var(--accent)}
+    body.rstk-calendar-theme-minimal .slot,body.rstk-calendar-theme-minimal input,body.rstk-calendar-theme-minimal textarea,body.rstk-calendar-theme-minimal select,body.rstk-calendar-theme-minimal .option{border-color:var(--line);border-radius:999px;background:transparent}
     @media (max-width:1100px){.shell,.shell.dateSelected,.shell.bookingActive{grid-template-columns:300px minmax(0,1fr)}.shell.noIntro,.shell.noIntro.dateSelected,.shell.noIntro.bookingActive{grid-template-columns:minmax(0,1fr)}.shell.dateSelected .calendarPane{display:none}.timesPane{border-left:1px solid var(--line);border-top:0;max-width:none;width:auto}.shell.dateSelected .timesPane{padding:clamp(28px,3vw,38px) clamp(24px,2.5vw,30px)}.slotList{grid-template-columns:repeat(auto-fill,minmax(150px,1fr))}}
     @media (max-width:760px){.page{width:100%;padding:0;place-items:stretch}.shell,.shell.dateSelected,.shell.bookingActive,.shell.noIntro,.shell.noIntro.dateSelected,.shell.noIntro.bookingActive{grid-template-columns:1fr;min-height:100vh;border:0;border-radius:0;box-shadow:none}.shell.dateSelected .intro,.shell.dateSelected .calendarPane,.shell.bookingActive .intro,.shell.bookingActive .calendarPane{display:none}.shell.dateSelected .timesPane,.shell.bookingActive .timesPane{grid-column:auto;border-top:0}.intro,.calendarPane,.timesPane{padding:26px 22px;border-right:0;border-left:0}.intro{gap:14px}.calendarPane,.timesPane{border-top:1px solid var(--line)}.avatar{width:72px;height:72px;font-size:2rem;border-radius:16px}.days{gap:6px 2px}.day{width:40px;height:40px}.slotList{grid-template-columns:repeat(auto-fill,minmax(118px,1fr));max-height:none}input,textarea,select{font-size:16px;min-height:48px}.formActions button.submit{flex:1 1 100%}}
     @media (max-width:430px){.page{padding:0}.intro,.calendarPane,.timesPane{padding:22px 18px}.day{width:38px;height:38px}.weekdays{font-size:.66rem}.slotList{grid-template-columns:1fr}h1{font-size:1.5rem}h2{font-size:1.2rem}}
   </style>
 </head>
-<body class="${[embedded ? 'rstk-calendar-embedded' : '', preview ? 'rstk-calendar-preview' : '', `rstk-calendar-layout-${layout}`].filter(Boolean).join(' ')}">
+<body class="${[embedded ? 'rstk-calendar-embedded' : '', preview ? 'rstk-calendar-preview' : '', `rstk-calendar-layout-${layout}`, `rstk-calendar-theme-${widgetTheme}`].filter(Boolean).join(' ')}">
   <main class="page">
     <div class="shell layout-${escapeHtml(layout)}${showSidebar ? '' : ' noIntro'}">
       ${introHtml}

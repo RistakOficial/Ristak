@@ -16254,6 +16254,9 @@ function appendCalendarEmbedParams(value, settings = {}, options = {}) {
 
       const fontFamily = cleanString(settings.calendarFontFamily || settings.calendar_font_family)
       if (fontFamily) parsed.searchParams.set('fontFamily', fontFamily)
+
+      const widgetTheme = cleanString(settings.calendarWidgetTheme || settings.calendar_widget_theme)
+      if (widgetTheme) parsed.searchParams.set('widgetTheme', widgetTheme)
     }
 
     return absolute ? parsed.toString() : `${parsed.pathname}${parsed.search}${parsed.hash}`
