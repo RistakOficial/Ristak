@@ -517,6 +517,24 @@ const normalizeCalendarBookingPayment = (
   value || createDefaultCalendarBookingPayment()
 ) as CalendarBookingPaymentConfig
 
+const isPaymentGateToggleEnabled = (value?: Partial<PaymentGateConfig> | null) =>
+  Boolean(normalizePaymentGateConfig(value).enabled)
+
+const siteHasPaymentGateEnabled = (site?: PublicSite | null) =>
+  isPaymentGateToggleEnabled(site?.theme?.paymentGate)
+
+const getSiteDisplayName = (site?: PublicSite | null) =>
+  String(site?.name || site?.title || 'Formulario').trim() || 'Formulario'
+
+const findSelectedFormWithPaymentGate = (
+  bookingForm: CalendarBookingFormConfig,
+  sites: PublicSite[]
+) => {
+  if (!bookingForm.useCustomForm || !bookingForm.customFormId) return null
+  const site = sites.find(item => item.id === bookingForm.customFormId)
+  return siteHasPaymentGateEnabled(site) ? site : null
+}
+
 const createDefaultCalendarBookingDisplay = (): CalendarBookingDisplayConfig => ({
   showSidebar: true,
   showIcon: true,
@@ -1497,6 +1515,7 @@ export const CalendarsConfiguration: React.FC = () => {
       const bookingPayment = normalizeCalendarBookingPayment(selectedCalendar.bookingPayment)
       const bookingDisplay = normalizeCalendarBookingDisplay(selectedCalendar.bookingDisplay, selectedCalendar.eventColor)
       const customEvents = getSavableCalendarCustomEvents(selectedCalendar.customEvents, accountCurrency)
+      const selectedFormWithPayment = findSelectedFormWithPaymentGate(bookingForm, formSites)
       const nextSlug = normalizeCalendarSlugInput(selectedCalendar.slug || selectedCalendar.widgetSlug || selectedCalendar.name || selectedCalendar.id)
       const slugConflict = calendars.some(item => (
         item.id !== selectedCalendar.id &&
@@ -1515,6 +1534,16 @@ export const CalendarsConfiguration: React.FC = () => {
 
       if (bookingCompletion.action === 'redirect' && !isValidCalendarRedirectUrl(bookingCompletion.redirectUrl)) {
         showToast('error', 'Redirección inválida', 'Usa una URL completa con http/https o una ruta interna que empiece con /.')
+        return
+      }
+
+      if (bookingPayment.enabled && selectedFormWithPayment) {
+        showToast(
+          'error',
+          'Cobro duplicado',
+          `El formulario "${getSiteDisplayName(selectedFormWithPayment)}" ya tiene cobro activo. Desactiva el cobro del calendario o elige un formulario sin cobro.`
+        )
+        setCalendarWizardStep('payment')
         return
       }
 
@@ -2097,9 +2126,12 @@ export const CalendarsConfiguration: React.FC = () => {
     const customEventsHasParameters = hasCalendarCustomEventParameters(customEventsConfig.parameters)
     const selectedCalendarAttributed = attributionCalendarIds.includes(selectedCalendar.id)
     const selectedCustomForm = customFormSites.find(site => site.id === bookingFormConfig.customFormId)
+    const selectedCustomFormHasPayment = siteHasPaymentGateEnabled(selectedCustomForm)
+    const selectedCustomFormName = getSiteDisplayName(selectedCustomForm)
+    const calendarPaymentEnabled = Boolean(bookingPaymentConfig.enabled)
     const calendarFormOptions = customFormSites.map(site => ({
       value: site.id,
-      label: `${site.name || site.title || 'Formulario'}${site.siteType === 'interactive_form' ? ' · multistep' : ''}`
+      label: `${site.name || site.title || 'Formulario'}${site.siteType === 'interactive_form' ? ' · multistep' : ''}${siteHasPaymentGateEnabled(site) ? ' · cobra' : ''}`
     }))
     const selectedPublicPath = getCalendarSharePath(selectedCalendar)
     const selectedPublicUrl = buildCalendarShareUrl(selectedCalendar)
@@ -2129,8 +2161,18 @@ export const CalendarsConfiguration: React.FC = () => {
     }
 
     const updateBookingPaymentConfig = (nextConfig: PaymentGateConfig) => {
+      const normalizedPayment = normalizeCalendarBookingPayment(nextConfig)
+      if (normalizedPayment.enabled && selectedCustomFormHasPayment) {
+        showToast(
+          'error',
+          'Cobro duplicado',
+          `El formulario "${selectedCustomFormName}" ya tiene cobro activo. Desactiva ese cobro o usa un formulario sin cobro antes de activar cobro en el calendario.`
+        )
+        return
+      }
+
       updateSelectedCalendar({
-        bookingPayment: normalizeCalendarBookingPayment(nextConfig)
+        bookingPayment: normalizedPayment
       })
     }
 
@@ -2211,10 +2253,39 @@ export const CalendarsConfiguration: React.FC = () => {
         return
       }
 
+      const nextCustomFormId = enabled ? bookingFormConfig.customFormId || customFormSites[0]?.id || '' : ''
+      const nextCustomForm = customFormSites.find(site => site.id === nextCustomFormId)
+      if (enabled && calendarPaymentEnabled && siteHasPaymentGateEnabled(nextCustomForm)) {
+        showToast(
+          'error',
+          'Cobro duplicado',
+          `El formulario "${getSiteDisplayName(nextCustomForm)}" ya tiene cobro activo. Desactiva el cobro del calendario o elige un formulario sin cobro.`
+        )
+        return
+      }
+
       updateBookingFormConfig({
         ...bookingFormConfig,
         useCustomForm: enabled,
-        customFormId: enabled ? bookingFormConfig.customFormId || customFormSites[0]?.id || '' : ''
+        customFormId: nextCustomFormId
+      })
+    }
+
+    const handleCustomBookingFormChange = (formId: string) => {
+      const nextCustomForm = customFormSites.find(site => site.id === formId)
+      if (formId && calendarPaymentEnabled && siteHasPaymentGateEnabled(nextCustomForm)) {
+        showToast(
+          'error',
+          'Cobro duplicado',
+          `El formulario "${getSiteDisplayName(nextCustomForm)}" ya tiene cobro activo. Desactiva el cobro del calendario o elige otro formulario.`
+        )
+        return
+      }
+
+      updateBookingFormConfig({
+        ...bookingFormConfig,
+        useCustomForm: Boolean(formId),
+        customFormId: formId
       })
     }
 
@@ -2915,11 +2986,7 @@ export const CalendarsConfiguration: React.FC = () => {
                     <span>Formulario</span>
                     <CustomSelect
                       value={bookingFormConfig.customFormId}
-                      onValueChange={(value) => updateBookingFormConfig({
-                        ...bookingFormConfig,
-                        useCustomForm: Boolean(value),
-                        customFormId: value
-                      })}
+                      onValueChange={handleCustomBookingFormChange}
                       options={calendarFormOptions}
                       placeholder={loadingFormSites ? 'Cargando formularios...' : 'Elige un formulario'}
                       disabled={loadingFormSites || calendarFormOptions.length === 0}
@@ -2932,6 +2999,17 @@ export const CalendarsConfiguration: React.FC = () => {
                           : 'Si no eliges uno, Ristak usará el formulario predeterminado.'}
                     </small>
                   </div>
+
+                  {selectedCustomFormHasPayment && (
+                    <div className={pageStyles.paymentConflictNotice} role={calendarPaymentEnabled ? 'alert' : 'status'}>
+                      <Info size={16} />
+                      <span>
+                        {calendarPaymentEnabled
+                          ? `Este formulario ya tiene cobro activo. Desactiva el cobro del calendario o elige otro formulario.`
+                          : `Este formulario ya cobra desde su propia configuración. Si quieres cobrar desde el calendario, primero desactiva el cobro del formulario.`}
+                      </span>
+                    </div>
+                  )}
 
                   <div className={pageStyles.googleSyncHint}>
                     <ListChecks size={16} />
@@ -3047,6 +3125,15 @@ export const CalendarsConfiguration: React.FC = () => {
                     <span>Configura la pasarela y el valor que se solicita al reservar.</span>
                   </div>
                   <div className={pageStyles.editorFields}>
+                    {selectedCustomFormHasPayment && (
+                      <div className={pageStyles.paymentConflictNotice} role="status">
+                        <Info size={16} />
+                        <span>
+                          El formulario "{selectedCustomFormName}" ya cobra desde su propia configuración. Para cobrar desde este calendario, desactiva primero el cobro del formulario o elige otro formulario.
+                        </span>
+                      </div>
+                    )}
+
                     <div className={`${pageStyles.editorField} ${pageStyles.editorFieldWide}`}>
                       <PaymentGateControls
                         value={bookingPaymentConfig}

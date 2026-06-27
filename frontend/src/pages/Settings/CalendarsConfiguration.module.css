@@ -2159,6 +2159,31 @@
   margin-top: 1px;
 }
 
+.paymentConflictNotice {
+  display: inline-flex;
+  align-items: flex-start;
+  gap: 9px;
+  grid-column: 1 / -1;
+  min-width: 0;
+  padding: 10px 11px;
+  border: 1px solid color-mix(in srgb, var(--warn) 34%, transparent);
+  border-radius: var(--radius-ctl);
+  background: var(--warn-soft);
+  color: var(--text-dim);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.paymentConflictNotice svg {
+  flex: 0 0 auto;
+  color: var(--warn);
+  margin-top: 1px;
+}
+
+.paymentConflictNotice span {
+  min-width: 0;
+}
+
 .googleLinkedAccount {
   display: grid;
   grid-template-columns: auto minmax(0, 1fr);

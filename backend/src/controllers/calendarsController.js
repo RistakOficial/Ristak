@@ -74,6 +74,25 @@ function cleanString(value) {
   return String(value ?? '').trim();
 }
 
+function parseJsonObject(value, fallback = {}) {
+  if (!value) return fallback;
+  if (typeof value === 'object' && !Array.isArray(value)) return value;
+  try {
+    const parsed = JSON.parse(value);
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : fallback;
+  } catch {
+    return fallback;
+  }
+}
+
+function isEnabledConfigFlag(value) {
+  if (value === true || value === 1) return true;
+  if (typeof value === 'string') {
+    return ['1', 'true', 'yes', 'si', 'sí', 'on', 'enabled'].includes(value.trim().toLowerCase());
+  }
+  return false;
+}
+
 function normalizeBaseUrl(value) {
   const clean = cleanString(value).replace(/\/+$/, '');
   if (!clean) return '';
@@ -165,6 +184,40 @@ function resolveCalendarBookingPayment(calendar = {}, bookingForm = {}) {
   if (isPaymentGateEnabled(formPayment)) return formPayment;
 
   return calendarPayment;
+}
+
+async function getCustomCalendarFormPaymentGate(bookingForm = {}) {
+  const config = bookingForm && typeof bookingForm === 'object' && !Array.isArray(bookingForm) ? bookingForm : {};
+  const customFormId = cleanString(config.customFormId || config.custom_form_id || config.formId || config.form_id);
+  const useCustomForm = isEnabledConfigFlag(config.useCustomForm ?? config.use_custom_form);
+
+  if (!useCustomForm || !customFormId) return normalizePaymentGateConfig({});
+
+  const site = await db.get(`
+    SELECT theme_json
+    FROM public_sites
+    WHERE id = ?
+      AND COALESCE(status, 'draft') != 'archived'
+      AND site_type IN ('standard_form', 'interactive_form')
+    LIMIT 1
+  `, [customFormId]).catch(() => null);
+
+  const theme = parseJsonObject(site?.theme_json, {});
+  return normalizePaymentGateConfig(theme.paymentGate || theme.payment_gate || {});
+}
+
+async function findCalendarPaymentSourceConflict(existingCalendar = {}, updateData = {}) {
+  const bookingForm = updateData.bookingForm ?? updateData.booking_form ?? existingCalendar.bookingForm ?? existingCalendar.booking_form ?? {};
+  const bookingPayment = normalizePaymentGateConfig(
+    updateData.bookingPayment ?? updateData.booking_payment ?? existingCalendar.bookingPayment ?? existingCalendar.booking_payment ?? {}
+  );
+
+  if (!bookingPayment.enabled) return null;
+
+  const formPayment = await getCustomCalendarFormPaymentGate(bookingForm);
+  if (!formPayment.enabled) return null;
+
+  return { bookingPayment, formPayment };
 }
 
 async function resolveCalendarPaymentGate({ req, body, calendar, bookingPayment, bookingSubmission, start, timezone }) {
@@ -2021,14 +2074,22 @@ export async function updateCalendar(req, res) {
     const { accessToken, ...updateData } = req.body;
     const context = await getHighLevelContext(req, { accessToken });
     const existing = await localCalendarService.getLocalCalendar(id);
-    let calendar = await localCalendarService.updateLocalCalendar(id, updateData, { syncStatus: 'pending' });
-
-    if (!calendar && !existing) {
+    if (!existing) {
       return res.status(404).json({
         success: false,
         error: 'Calendario no encontrado'
       });
     }
+
+    const paymentSourceConflict = await findCalendarPaymentSourceConflict(existing, updateData);
+    if (paymentSourceConflict) {
+      return res.status(400).json({
+        success: false,
+        error: 'Ese formulario ya tiene cobro activo. Desactiva el cobro del calendario o elige un formulario sin cobro.'
+      });
+    }
+
+    let calendar = await localCalendarService.updateLocalCalendar(id, updateData, { syncStatus: 'pending' });
 
     const remoteCalendarId = existing?.ghlCalendarId || id;
     if (context.accessToken && remoteCalendarId && existing?.ghlCalendarId) {
