@@ -1707,7 +1707,7 @@ export async function reconcileMetaBusinessWithHighLevel(locationId, apiToken, o
   try {
     if (!locationId || !apiToken) {
       result.success = false
-      result.message = 'HighLevel no está configurado'
+      result.message = 'La integración opcional de HighLevel no está configurada'
       return result
     }
 

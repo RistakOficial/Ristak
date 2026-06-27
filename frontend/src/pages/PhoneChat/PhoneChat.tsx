@@ -107,6 +107,7 @@ import { subscribeToChatLiveEvents } from '@/services/chatLiveEventsService'
 import { contactTagsService, type ContactTag } from '@/services/contactTagsService'
 import { contactsService, type JourneyEvent } from '@/services/contactsService'
 import { highLevelService, type HighLevelChatChannel } from '@/services/highLevelService'
+import { getIntegrationsStatus } from '@/services/integrationsService'
 import {
   messageTemplatesService,
   type MessageTemplateCategory,
@@ -3532,6 +3533,8 @@ export const PhoneChat: React.FC = () => {
   const [schedulingMessage, setSchedulingMessage] = useState(false)
   const [cancelingScheduledMessageId, setCancelingScheduledMessageId] = useState<string | null>(null)
   const [whatsappStatus, setWhatsappStatus] = useState<WhatsAppApiStatus | null>(null)
+  const [metaMessengerConnected, setMetaMessengerConnected] = useState(false)
+  const [metaInstagramConnected, setMetaInstagramConnected] = useState(false)
   const [numberIssueOpen, setNumberIssueOpen] = useState(false)
   const [numberIssueApplyAll, setNumberIssueApplyAll] = useState(false)
   const [numberIssueSwitchingTo, setNumberIssueSwitchingTo] = useState<string | null>(null)
@@ -4312,14 +4315,28 @@ export const PhoneChat: React.FC = () => {
     ? inferredHighLevelChatChannel
     : ''
   const activeHighLevelChatChannel = activeContactHighLevelChannelOverride || inferredSocialHighLevelChannel || selectedHighLevelChatChannel
+  const activeMetaSocialChannel = activeHighLevelChatChannel === 'messenger' || activeHighLevelChatChannel === 'instagram'
+    ? activeHighLevelChatChannel
+    : ''
+  const sendingThroughMetaSocial = Boolean(
+    activeContact &&
+    activeMetaSocialChannel &&
+    !highLevelConnected &&
+    (
+      (activeMetaSocialChannel === 'messenger' && metaMessengerConnected) ||
+      (activeMetaSocialChannel === 'instagram' && metaInstagramConnected)
+    )
+  )
   const sendingThroughHighLevel = Boolean(highLevelConnected && activeContact)
   const highLevelWhatsAppFallsBackToSms = Boolean(sendingThroughHighLevel && activeHighLevelChatChannel === 'whatsapp_api' && activeContact?.phone && !highLevelWhatsAppReplyWindowOpen)
   const effectiveHighLevelChatChannel: HighLevelChatChannel = highLevelWhatsAppFallsBackToSms ? 'sms_qr' : activeHighLevelChatChannel
   const activeHighLevelChannelNeedsPhone = effectiveHighLevelChatChannel === 'whatsapp_api' || effectiveHighLevelChatChannel === 'sms_qr'
   const selectedChannelCanSend = sendingThroughHighLevel
     ? Boolean(activeContact?.id && (!activeHighLevelChannelNeedsPhone || activeContact.phone))
+    : sendingThroughMetaSocial
+    ? Boolean(activeContact?.id)
     : Boolean(activeContact?.phone)
-  const composerBlockedByReplyWindow = Boolean(outsideReplyWindow && !selectedQrReady && !sendingThroughHighLevel)
+  const composerBlockedByReplyWindow = Boolean(outsideReplyWindow && !selectedQrReady && !sendingThroughHighLevel && !sendingThroughMetaSocial)
   const hasComposerText = Boolean(messageText.trim())
   const hasComposerContent = Boolean(hasComposerText || draftAttachments.length > 0 || voiceDraft)
   const voicePanelActive = Boolean(voiceRecording || voiceProcessing || voiceDraft)
@@ -5353,8 +5370,9 @@ export const PhoneChat: React.FC = () => {
     setCalendarsLoading(cachedAvailableCalendars.length === 0)
     setAgentProductsLoading(cachedAvailableProducts.length === 0)
 
-    const [status, calendarItems, productsResponse] = await Promise.all([
+    const [status, integrationsStatus, calendarItems, productsResponse] = await Promise.all([
       whatsappApiService.getStatus().catch(() => null),
+      getIntegrationsStatus().catch(() => null),
       calendarsService.getCalendars(locationId, accessToken).catch(() => []),
       apiClient.get<{ products?: ProductItem[] }>('/products', {
         params: {
@@ -5368,6 +5386,8 @@ export const PhoneChat: React.FC = () => {
       setWhatsappStatus(status)
       writePhoneDailyCache(statusCacheKey, status, { maxEntryChars: 180_000 }, timezone) // (MOB-007)
     }
+    setMetaMessengerConnected(Boolean(integrationsStatus?.meta?.connected && integrationsStatus?.meta?.pageId))
+    setMetaInstagramConnected(Boolean(integrationsStatus?.meta?.connected && integrationsStatus?.meta?.instagramAccountId))
     if (Array.isArray(calendarItems)) {
       applyCalendars(calendarItems)
       writePhoneDailyCache(calendarsCacheKey, calendarItems, { maxEntryChars: 180_000 }, timezone) // (MOB-007)
@@ -8510,6 +8530,11 @@ export const PhoneChat: React.FC = () => {
     let channel: HighLevelChatChannel | undefined
     let transport: 'api' | 'qr' = 'api'
 
+    if (sendingThroughMetaSocial) {
+      setScheduleError('La programación para Messenger e Instagram todavía no está disponible en Meta nativo. Puedes enviarlo al momento desde Ristak.')
+      return
+    }
+
     if (sendingThroughHighLevel) {
       provider = 'highlevel'
       channel = activeHighLevelChatChannel
@@ -8763,6 +8788,99 @@ export const PhoneChat: React.FC = () => {
       })
       setSheet(null)
       setConversationAgentDropdownOpen(false)
+      return
+    }
+
+    if (sendingThroughMetaSocial && activeMetaSocialChannel) {
+      const channelLabel = GHL_CHAT_CHANNEL_LABELS[activeMetaSocialChannel]
+
+      if (!text) {
+        showToast('warning', 'Escribe algo', 'Manda un mensaje escrito desde este chat.')
+        return
+      }
+
+      if (voiceToSend || attachmentsToSend.length > 0) {
+        showToast('warning', 'Solo texto por ahora', 'Messenger e Instagram desde Meta nativo mandan texto en este chat.')
+        return
+      }
+
+      const optimisticId = `local-meta-${Date.now()}`
+      const sentAt = new Date().toISOString()
+
+      setComposerStatus('sending')
+      if (!preserveComposer) {
+        setComposerMessageText('')
+        setReplyingToMessageId(null)
+        if (composerInputRef.current) {
+          composerInputRef.current.textContent = ''
+        }
+        setDraftAttachments([])
+        stopVoicePreview(true)
+        voiceSendAfterStopRef.current = false
+        setVoiceDraft(null)
+      }
+
+      const optimisticMessage: ChatMessage = {
+        id: optimisticId,
+        text,
+        date: sentAt,
+        direction: 'outbound',
+        status: 'enviando',
+        transport: activeMetaSocialChannel
+      }
+
+      setMessages((current) => [...current, optimisticMessage])
+      setChats((current) => current.map((contact) => (
+        contact.id === activeContact.id
+          ? {
+              ...contact,
+              lastMessageText: text,
+              lastMessageDate: sentAt,
+              lastMessageDirection: 'outbound',
+              lastMessageChannel: activeMetaSocialChannel,
+              messageCount: Number(contact.messageCount || 0) + 1
+            }
+          : contact
+      )))
+
+      try {
+        const result = await whatsappApiService.sendMetaSocialText({
+          contactId: activeContact.id,
+          platform: activeMetaSocialChannel,
+          message: text,
+          externalId: optimisticId
+        })
+        const resultData = result.data || result
+        const resultStatus = String(resultData.status || '').trim() || 'sent'
+
+        setMessages((current) => current.map((message) => (
+          message.id === optimisticId
+            ? {
+                ...message,
+                id: resultData.localMessageId || message.id,
+                status: resultStatus,
+                transport: resultData.transport || activeMetaSocialChannel
+              }
+            : message
+        )))
+        showToast('success', 'Mensaje enviado', `Se envió por ${channelLabel}.`)
+        await loadConversation(activeContact.id, { silent: true, useCache: false })
+        await loadChats({ silent: true, useCache: false })
+      } catch (error: any) {
+        const errorMessage = getErrorMessage(error, 'Intenta enviar el mensaje otra vez.')
+        setMessages((current) => current.map((message) => (
+          message.id === optimisticId
+            ? { ...message, status: 'error', errorReason: errorMessage }
+            : message
+        )))
+        if (!preserveComposer && text && !messageTextRef.current.trim() && composerInputRef.current) {
+          setComposerMessageText(text)
+          composerInputRef.current.textContent = text
+        }
+        showToast('error', 'No se envió el mensaje', errorMessage)
+      } finally {
+        setComposerStatus('idle')
+      }
       return
     }
 
@@ -11611,11 +11729,16 @@ export const PhoneChat: React.FC = () => {
       return ''
     }
     if (value === 'sms_qr') {
-      if (!highLevelConnected) return 'Conecta HighLevel para usar SMS.'
+      if (!highLevelConnected) return 'Activa una integración con SMS para usar este canal.'
       if (!activeContact.phone) return 'Este contacto no tiene teléfono guardado.'
       return ''
     }
-    if (!highLevelConnected) return 'Conecta HighLevel para responder por este canal.'
+    if (value === 'messenger' && !highLevelConnected && !metaMessengerConnected) {
+      return 'Activa Messenger en Configuración > Meta Ads para responder desde Ristak.'
+    }
+    if (value === 'instagram' && !highLevelConnected && !metaInstagramConnected) {
+      return 'Activa Instagram en Configuración > Meta Ads para responder desde Ristak.'
+    }
     return ''
   }
 

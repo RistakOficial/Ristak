@@ -2870,8 +2870,8 @@ export const PaymentsConfiguration: React.FC = () => {
         <Card className={styles.noticeCard}>
           <AlertTriangle size={18} />
           <div>
-            <strong>GoHighLevel no está conectado</strong>
-            <p>Conecta GoHighLevel primero para administrar sus comprobantes desde esta pantalla.</p>
+            <strong>Comprobantes de GoHighLevel opcionales</strong>
+            <p>Esta sección sólo aplica si quieres administrar comprobantes de GoHighLevel. Los cobros de Ristak pueden operar con las pasarelas conectadas.</p>
           </div>
         </Card>
       )}

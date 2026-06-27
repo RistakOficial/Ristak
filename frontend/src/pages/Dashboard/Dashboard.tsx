@@ -1832,7 +1832,7 @@ export const Dashboard: React.FC = () => {
                   })}
                 </div>
               ) : (
-                renderEmptyOperationsState(locationId && accessToken ? 'No hay citas en el rango activo.' : 'Conecta HighLevel para ver citas aquí.')
+                renderEmptyOperationsState(locationId && accessToken ? 'No hay citas en el rango activo.' : 'No hay citas recientes en Ristak.')
               )}
             </div>
           </Card>

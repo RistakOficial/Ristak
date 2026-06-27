@@ -1,6 +1,6 @@
-# Ristak - HighLevel + Meta Ads
+# Ristak - CRM, marketing, pagos y mensajería
 
-Ristak es una app full-stack para operar un dashboard de marketing y ventas conectado a HighLevel, Meta Ads, calendarios, pagos y un pixel propio de tracking web.
+Ristak es una app full-stack autónoma para operar marketing, ventas, contactos, calendarios, pagos, mensajería y tracking web. HighLevel, Meta, Google, Stripe, Conekta y Mercado Pago funcionan como integraciones opcionales, no como dependencia central de la app.
 
 ## Stack Real
 
@@ -27,9 +27,10 @@ Deploy:
 
 - Dashboard financiero y de marketing
 - Contactos, pagos, reportes y campañas
-- Sincronización con HighLevel: contactos, citas e invoices/pagos
+- CRM propio para contactos, citas, pagos, reportes y campañas
+- Sincronización opcional con HighLevel: contactos, citas e invoices/pagos
 - Integración Meta Ads: cuentas, pixels, campañas, creatividades y métricas
-- Calendarios HighLevel: vistas mes/semana/día, citas, usuarios y horarios bloqueados
+- Calendarios Ristak con fuentes opcionales de Google Calendar y HighLevel
 - Pixel propio: `/snip.js`, `/collect` y API de sesiones
 - Analíticas con datos del tracking interno
 - Configuración persistente en `app_config` con cache en `localStorage`
@@ -99,7 +100,7 @@ Frontend:
 - El primer usuario se crea desde `/setup`; ya no existe usuario admin por defecto.
 - `ENCRYPTION_MASTER_KEY` se lee de env si existe o se genera y guarda en DB.
 - `JWT_SECRET` debe existir en producción para no usar el fallback de desarrollo.
-- Tokens de HighLevel y Meta se configuran desde Settings. Stripe se configura manualmente desde Settings con la cuenta propia del usuario y Secret keys guardadas cifradas en backend.
+- Tokens de integraciones externas se configuran desde Settings. Stripe, Conekta y Mercado Pago se configuran con la cuenta propia del usuario y secretos guardados cifrados en backend cuando aplica.
 
 ## Licencia
 

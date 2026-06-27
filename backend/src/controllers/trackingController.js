@@ -1512,7 +1512,7 @@ export async function configureTracking(req, res) {
 
     if (!ghlConfig || !ghlConfig.location_id || !ghlConfig.api_token) {
       return res.status(400).json({
-        error: 'HighLevel no está configurado. Por favor configura tu cuenta de HighLevel primero.'
+        error: 'La sincronización opcional con HighLevel no está configurada. El tracking de Ristak puede operar con su configuración local.'
       })
     }
 

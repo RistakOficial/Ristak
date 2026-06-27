@@ -49,7 +49,7 @@ export interface ContactsPageResult {
   pagination: ContactsPagination
 }
 
-export type PaymentLinkDeliveryChannelKey = 'whatsapp' | 'messenger' | 'email'
+export type PaymentLinkDeliveryChannelKey = 'whatsapp' | 'messenger' | 'instagram' | 'email'
 
 export interface PaymentLinkDeliveryChannel {
   key: PaymentLinkDeliveryChannelKey

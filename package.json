@@ -1,7 +1,7 @@
 {
-  "name": "ristak-high-level",
+  "name": "ristak",
   "version": "1.0.0",
-  "description": "Ristak - Dashboard de HighLevel + Meta Ads",
+  "description": "Ristak - CRM, marketing, pagos y mensajería con integraciones opcionales",
   "scripts": {
     "build": "cd frontend && npm install && npm run build",
     "start": "cd backend && npm install && npm start"

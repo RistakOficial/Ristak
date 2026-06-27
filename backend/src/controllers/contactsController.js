@@ -18,8 +18,9 @@ import { nonTestPaymentCondition } from '../utils/paymentMode.js'
 import { buildContactSearchClause, buildContactSearchRank } from '../utils/searchText.js'
 import { normalizeTrafficSource, normalizeWhatsAppAttributionPlatform } from '../utils/trafficSourceNormalizer.js'
 import { loadFirstWhatsAppAttributions, buildContactAttributionFields } from '../services/contactSourceService.js'
-import { findWhatsAppProfilePictureUrl, warmWhatsAppApiProfilePictures } from '../services/whatsappApiService.js'
+import { findWhatsAppProfilePictureUrl, getWhatsAppApiStatus, warmWhatsAppApiProfilePictures } from '../services/whatsappApiService.js'
 import { warmWhatsAppQrProfilePictures } from '../services/whatsappQrService.js'
+import { isMetaSocialMessagingEnabled } from '../services/metaSocialMessagingService.js'
 import {
   listContactCustomFieldDefinitions,
   prepareContactCustomFieldsForStorage,
@@ -3031,9 +3032,19 @@ export const getContactPaymentLinkDeliveryOptions = async (req, res) => {
       })
     }
 
-    const [emailStatus, highLevelConfig, metaProfiles] = await Promise.all([
+    const [
+      emailStatus,
+      whatsappStatus,
+      metaConfig,
+      messengerMessagingEnabled,
+      instagramMessagingEnabled,
+      metaProfiles
+    ] = await Promise.all([
       getEmailStatus().catch(() => ({ connected: false })),
-      db.get('SELECT location_id, api_token FROM highlevel_config LIMIT 1').catch(() => null),
+      getWhatsAppApiStatus().catch(() => ({ connected: false, phoneNumbers: [] })),
+      db.get('SELECT access_token, page_id, instagram_account_id FROM meta_config LIMIT 1').catch(() => null),
+      isMetaSocialMessagingEnabled('messenger').catch(() => false),
+      isMetaSocialMessagingEnabled('instagram').catch(() => false),
       db.all(
         `SELECT platform, profile_name, username
          FROM meta_social_contacts
@@ -3045,16 +3056,34 @@ export const getContactPaymentLinkDeliveryOptions = async (req, res) => {
 
     const email = cleanString(contact.email)
     const phone = cleanString(contact.phone)
-    const highLevelConnected = Boolean(
-      cleanString(highLevelConfig?.location_id) &&
-      cleanString(highLevelConfig?.api_token)
+    const whatsappConnected = Boolean(
+      whatsappStatus?.connected ||
+      (Array.isArray(whatsappStatus?.phoneNumbers) && whatsappStatus.phoneNumbers.some(phoneNumber => (
+        phoneNumber?.availability?.available ||
+        phoneNumber?.availability?.apiAvailable ||
+        phoneNumber?.availability?.qrReady
+      )))
+    )
+    const messengerConnected = Boolean(
+      cleanString(metaConfig?.access_token) &&
+      cleanString(metaConfig?.page_id) &&
+      messengerMessagingEnabled
+    )
+    const instagramConnected = Boolean(
+      cleanString(metaConfig?.access_token) &&
+      cleanString(metaConfig?.instagram_account_id) &&
+      instagramMessagingEnabled
     )
     const metaPlatforms = new Set(
       metaProfiles
         .map(profile => cleanString(profile.platform).toLowerCase())
         .filter(Boolean)
     )
+    const profileByPlatform = new Map(
+      metaProfiles.map(profile => [cleanString(profile.platform).toLowerCase(), profile])
+    )
     const hasMessengerProfile = metaPlatforms.has('messenger')
+    const hasInstagramProfile = metaPlatforms.has('instagram')
 
     res.json({
       success: true,
@@ -3069,25 +3098,37 @@ export const getContactPaymentLinkDeliveryOptions = async (req, res) => {
           whatsapp: {
             key: 'whatsapp',
             label: 'WhatsApp',
-            available: Boolean(highLevelConnected && phone),
-            connected: highLevelConnected,
+            available: Boolean(whatsappConnected && phone),
+            connected: whatsappConnected,
             value: phone,
             reason: !phone
               ? 'El contacto no tiene teléfono'
-              : !highLevelConnected
-                ? 'HighLevel no está conectado'
+              : !whatsappConnected
+                ? 'Conecta WhatsApp API para enviar este link desde Ristak'
                 : ''
           },
           messenger: {
             key: 'messenger',
             label: 'Messenger DM',
-            available: Boolean(highLevelConnected && hasMessengerProfile),
-            connected: highLevelConnected,
-            value: metaProfiles.find(profile => cleanString(profile.platform).toLowerCase() === 'messenger')?.profile_name || '',
-            reason: !highLevelConnected
-              ? 'HighLevel no está conectado'
-              : !hasMessengerProfile
+            available: Boolean(messengerConnected && hasMessengerProfile),
+            connected: messengerConnected,
+            value: profileByPlatform.get('messenger')?.profile_name || profileByPlatform.get('messenger')?.username || '',
+            reason: !hasMessengerProfile
                 ? 'El contacto no tiene Messenger enlazado'
+                : !messengerConnected
+                  ? 'Activa Messenger en Configuración > Meta Ads'
+                  : ''
+          },
+          instagram: {
+            key: 'instagram',
+            label: 'Instagram DM',
+            available: Boolean(instagramConnected && hasInstagramProfile),
+            connected: instagramConnected,
+            value: profileByPlatform.get('instagram')?.profile_name || profileByPlatform.get('instagram')?.username || '',
+            reason: !hasInstagramProfile
+              ? 'El contacto no tiene Instagram enlazado'
+              : !instagramConnected
+                ? 'Activa Instagram en Configuración > Meta Ads'
                 : ''
           },
           email: {

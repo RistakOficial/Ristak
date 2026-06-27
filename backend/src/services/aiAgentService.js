@@ -6914,7 +6914,7 @@ async function executeLookupHighLevelContact(args = {}, highLevelConnection = {}
   if (!highLevelConnection?.configured) {
     return {
       ok: false,
-      error: 'HighLevel no está configurado. Configura primero la integración de Go High Level.'
+      error: 'Esa acción específica usa la integración opcional de GoHighLevel. Configúrala en Integraciones si quieres operar ese recurso externo.'
     }
   }
 
@@ -7038,7 +7038,7 @@ async function createPreflightContactFieldsReplyIfApplicable({
 
   if (!highLevelConnection?.configured) {
     return {
-      reply: 'HighLevel no está configurado. Conecta GoHighLevel primero para poder leer campos personalizados del contacto.',
+      reply: 'Esa consulta específica usa campos de GoHighLevel. Ristak puede operar con sus datos propios; configura la integración opcional de GoHighLevel sólo si quieres leer esos campos externos.',
       model,
       sources: [],
       clarificationOptions: [],
@@ -7140,7 +7140,7 @@ async function executeUpdateHighLevelContactField(args = {}, highLevelConnection
   if (!highLevelConnection?.configured) {
     return {
       ok: false,
-      error: 'HighLevel no está configurado. Configura primero la integración de Go High Level.'
+      error: 'Esa acción específica usa la integración opcional de GoHighLevel. Configúrala en Integraciones si quieres operar ese recurso externo.'
     }
   }
 
@@ -7893,7 +7893,7 @@ async function executeLookupContactPaymentProfile(args = {}, highLevelConnection
   if (!highLevelConnection?.configured) {
     return {
       ok: false,
-      error: 'HighLevel no está configurado. Configura primero la integración de Go High Level.'
+      error: 'Esa acción específica usa la integración opcional de GoHighLevel. Configúrala en Integraciones si quieres operar ese recurso externo.'
     }
   }
 
@@ -9370,7 +9370,7 @@ async function executeManageHighLevelAppointment(args = {}, highLevelConnection 
     return {
       ok: false,
       action: 'manage_highlevel_appointment',
-      error: 'HighLevel no está configurado. Configura primero la integración de Go High Level.'
+      error: 'Esa acción específica usa la integración opcional de GoHighLevel. Configúrala en Integraciones si quieres operar ese recurso externo.'
     }
   }
 
@@ -9748,7 +9748,7 @@ async function executeCreateInstallmentPaymentFlow(args = {}, highLevelConnectio
   if (!highLevelConnection?.configured) {
     return {
       ok: false,
-      error: 'HighLevel no está configurado. Configura primero la integración de Go High Level.'
+      error: 'Esa acción específica usa la integración opcional de GoHighLevel. Configúrala en Integraciones si quieres operar ese recurso externo.'
     }
   }
 
@@ -10371,7 +10371,7 @@ async function executeCreateSinglePaymentLink(args = {}, highLevelConnection, co
   if (!highLevelConnection?.configured) {
     return {
       ok: false,
-      error: 'HighLevel no está configurado. Configura primero la integración de Go High Level.'
+      error: 'Esa acción específica usa la integración opcional de GoHighLevel. Configúrala en Integraciones si quieres operar ese recurso externo.'
     }
   }
 
@@ -10778,7 +10778,7 @@ async function executeModifyScheduledPaymentFlow(args = {}, highLevelConnection,
   if (!highLevelConnection?.configured) {
     return {
       ok: false,
-      error: 'HighLevel no está configurado. Configura primero la integración de Go High Level.'
+      error: 'Esa acción específica usa la integración opcional de GoHighLevel. Configúrala en Integraciones si quieres operar ese recurso externo.'
     }
   }
 
@@ -11043,7 +11043,7 @@ async function executeRecordContactPayment(args = {}, highLevelConnection, conte
   if (!highLevelConnection?.configured) {
     return {
       ok: false,
-      error: 'HighLevel no está configurado. Configura primero la integración de Go High Level.'
+      error: 'Esa acción específica usa la integración opcional de GoHighLevel. Configúrala en Integraciones si quieres operar ese recurso externo.'
     }
   }
 
@@ -11166,7 +11166,7 @@ async function executeRecordInvoicePayment(args = {}, highLevelConnection, conte
   if (!highLevelConnection?.configured) {
     return {
       ok: false,
-      error: 'HighLevel no está configurado. Configura primero la integración de Go High Level.'
+      error: 'Esa acción específica usa la integración opcional de GoHighLevel. Configúrala en Integraciones si quieres operar ese recurso externo.'
     }
   }
 
@@ -11647,7 +11647,7 @@ function buildHighLevelTools(highLevelConnection, options = {}) {
     {
       type: 'function',
       name: 'create_single_payment_link',
-      description: 'Crea y envía un link de pago único usando la lógica interna de Ristak/HighLevel, o cobra tarjeta guardada si el usuario eligió esa opción. Úsala para órdenes como "mándale link de pago", "cóbrale X", "genera invoice por X" sólo cuando sea cobro inmediato o link normal. Si el cobro es de producto y falta producto, precio o fecha/momento, la herramienta preguntará el dato faltante y conservará lo ya dicho. Si el usuario pide tarjeta directa y el contacto tiene tarjeta guardada, la herramienta preguntará si cobra la guardada o manda link; si no tiene tarjeta, el link es obligatorio. Si el usuario no eligió canal de envío (all/email/sms/whatsapp) la herramienta debe preguntar antes de crear/enviar, porque un invoice de tarjeta no debe quedarse como borrador por accidente. No uses generate/none para links de tarjeta: el formulario real requiere envío por canal. No la uses para pagos programados con fecha futura; ahí usa create_installment_payment_flow.',
+      description: 'Crea y envía un link de pago único usando la lógica interna de Ristak y sus pasarelas conectadas, o cobra tarjeta guardada si el usuario eligió esa opción. Úsala para órdenes como "mándale link de pago", "cóbrale X", "genera invoice por X" sólo cuando sea cobro inmediato o link normal. Si el cobro es de producto y falta producto, precio o fecha/momento, la herramienta preguntará el dato faltante y conservará lo ya dicho. Si el usuario pide tarjeta directa y el contacto tiene tarjeta guardada, la herramienta preguntará si cobra la guardada o manda link; si no tiene tarjeta, el link es obligatorio. Si el usuario no eligió canal de envío (all/email/sms/whatsapp) la herramienta debe preguntar antes de crear/enviar, porque un invoice de tarjeta no debe quedarse como borrador por accidente. No uses generate/none para links de tarjeta: el formulario real requiere envío por canal. No la uses para pagos programados con fecha futura; ahí usa create_installment_payment_flow.',
       parameters: {
         type: 'object',
         properties: {
@@ -11796,7 +11796,7 @@ function buildHighLevelTools(highLevelConnection, options = {}) {
     {
       type: 'function',
       name: 'modify_scheduled_payment_flow',
-      description: 'Modifica, cancela o elimina un cobro programado existente creado por Ristak/HighLevel en vez de crear otro. Úsala cuando el usuario corrige fecha, monto, recurrencia, descripción, concepto, notas, términos, texto o dice "mejor..." después de haber programado un pago. Primero resuelve si quiere modificar el cobro existente o crear otro; si elige modificar, actualiza el invoice schedule existente con updateAndSchedule/update schedule y conserva autopago/tarjeta guardada. Si pide cancelar/eliminar, usa cancel/delete schedule. No uses create_installment_payment_flow para correcciones hasta resolver modificar vs crear nuevo.',
+      description: 'Modifica, cancela o elimina un cobro programado existente creado por Ristak en vez de crear otro. Úsala cuando el usuario corrige fecha, monto, recurrencia, descripción, concepto, notas, términos, texto o dice "mejor..." después de haber programado un pago. Primero resuelve si quiere modificar el cobro existente o crear otro; si elige modificar, actualiza el schedule existente y conserva autopago/tarjeta guardada cuando la pasarela lo permita. Si pide cancelar/eliminar, usa cancel/delete schedule. No uses create_installment_payment_flow para correcciones hasta resolver modificar vs crear nuevo.',
       parameters: {
         type: 'object',
         properties: {
@@ -11955,7 +11955,7 @@ async function executeHighLevelRestRequest(args = {}, highLevelConnection) {
   if (!highLevelConnection?.configured) {
     return {
       ok: false,
-      error: 'HighLevel no está configurado.'
+      error: 'Esa acción específica usa la integración opcional de GoHighLevel. Configúrala en Integraciones si quieres operar ese recurso externo.'
     }
   }
 
@@ -17332,7 +17332,7 @@ async function buildDatabaseContext() {
 
 function buildInstructions() {
   return [
-    'Eres el Agente AI interno de Ristak, una app para administrar un negocio con datos de HighLevel, pagos, citas, contactos, publicidad, tracking web y reportes.',
+    'Eres el Agente AI interno de Ristak, una app autónoma para administrar un negocio con datos propios de Ristak, pagos, citas, contactos, publicidad, tracking web, reportes e integraciones externas opcionales.',
     'Tu trabajo es ayudar a administrar mejor el negocio: analizar datos, explicar lo que el usuario está viendo, detectar riesgos, encontrar oportunidades y proponer acciones concretas.',
     CRITICAL_THINKING_PROMPT,
     'Responde siempre en español claro, directo y accionable.',

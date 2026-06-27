@@ -1880,7 +1880,7 @@ export async function applyMercadoPagoPaymentPlanAction(flowId, action) {
 }
 
 export async function createMercadoPagoPaymentPlan(input = {}, { baseUrl } = {}) {
-  const error = new Error('Mercado Pago no está disponible para planes de pago en Ristak. Usa Stripe o HighLevel para parcialidades; Mercado Pago queda disponible para links de pago y suscripciones.')
+  const error = new Error('Mercado Pago no está disponible para planes de pago en Ristak. Usa Stripe o Conekta para parcialidades; Mercado Pago queda disponible para links de pago y suscripciones.')
   error.status = 422
   throw error
 

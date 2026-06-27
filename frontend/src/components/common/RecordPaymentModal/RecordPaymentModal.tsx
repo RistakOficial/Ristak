@@ -48,6 +48,7 @@ import {
 } from '@/services/paymentSettingsService'
 import { contactsService, type PaymentLinkDeliveryChannelKey, type PaymentLinkDeliveryOptions } from '@/services/contactsService'
 import { emailService } from '@/services/emailService'
+import { whatsappApiService } from '@/services/whatsappApiService'
 
 const DEFAULT_INVOICE_TITLE = 'Pago'
 const CONTACT_SEARCH_DELAY_MS = 90
@@ -256,7 +257,7 @@ const PHONE_SEND_METHODS = new Set<SendMethod>(['whatsapp', 'sms', 'email_whatsa
 const SMS_SEND_METHODS = new Set<SendMethod>(['sms', 'email_sms', 'all'])
 const WHATSAPP_SEND_METHODS = new Set<SendMethod>(['whatsapp', 'email_whatsapp', 'all'])
 const DEFAULT_SEND_METHOD: SendMethod = 'all'
-const PAYMENT_LINK_DELIVERY_CHANNELS: PaymentLinkDeliveryChannelKey[] = ['whatsapp', 'messenger', 'email']
+const PAYMENT_LINK_DELIVERY_CHANNELS: PaymentLinkDeliveryChannelKey[] = ['whatsapp', 'messenger', 'instagram', 'email']
 
 const getSendMethodOptions = (contact: Contact | null) => {
   const hasEmail = Boolean(contact?.email)
@@ -957,7 +958,7 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
   }
 
   // En modo local completo (sin pasarela) forzamos pago único manual.
-  // HighLevel y Stripe pueden manejar links/planes desde Ristak.
+  // Stripe, Conekta y la integración opcional de HighLevel pueden manejar planes desde Ristak.
   // Mercado Pago maneja links y suscripciones, no parcialidades.
   useEffect(() => {
     if (!highLevelConnected && !stripeConnected && !conektaConnected && !mercadoPagoConnected) {
@@ -1503,12 +1504,18 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
           externalId,
           includeSignature: true
         })
-      } else {
-        await highLevelService.sendConversationMessage({
+      } else if (channel === 'whatsapp') {
+        await whatsappApiService.sendText({
           contactId: createdPaymentLink.contact.id,
-          channel: channel === 'messenger' ? 'messenger' : 'whatsapp_api',
+          to: deliveryChannel.value || createdPaymentLink.contact.phone,
+          text: message,
+          externalId
+        })
+      } else {
+        await whatsappApiService.sendMetaSocialText({
+          contactId: createdPaymentLink.contact.id,
+          platform: channel,
           message,
-          toNumber: channel === 'whatsapp' ? (deliveryChannel.value || createdPaymentLink.contact.phone) : undefined,
           externalId
         })
       }
@@ -1963,7 +1970,7 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
       setInvoiceSummary(summary)
 
       if (activePaymentMode === 'partial') {
-        setPaymentOption(stripeConnected ? 'stripe' : 'send')
+        setPaymentOption(stripeConnected ? 'stripe' : conektaConnected ? 'conekta' : highLevelConnected ? 'send' : 'manual')
         setStripePlanCardSource('new_card')
         setStep('options')
         return
@@ -2650,7 +2657,7 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
             }
           })
 
-          showToast('success', 'Pago registrado localmente', 'Cuando conectes HighLevel, Ristak lo importará y lo enlazará para evitar duplicados.')
+          showToast('success', 'Pago registrado en Ristak', 'El pago quedó guardado y aparecerá en el historial del contacto.')
           onSuccess?.()
           onClose()
           return
@@ -3375,9 +3382,17 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
                       : firstPaymentEnabled && firstPaymentMethod === 'card'
                         ? 'Si el primer pago es con tarjeta/link de Stripe, esa tarjeta quedará guardada y activará los cobros futuros.'
                         : `Stripe enviará una liga de domiciliación por ${formatCurrency(cardSetupAmount, currency)}. El plan no se activa hasta que esa tarjeta quede autorizada.`)
-                  : (partialNeedsCardAuthorization
-                      ? `GoHighLevel validará si existe una tarjeta guardada. Si no existe, se enviará un cobro separado de ${formatCurrency(cardSetupAmount, currency)} para domiciliar. El plan no se activa hasta que esa tarjeta quede autorizada.`
-                      : 'El primer pago con tarjeta autoriza la tarjeta en GoHighLevel. El plan no se activa hasta que ese pago sea exitoso y la tarjeta quede guardada.')}
+                  : conektaConnected
+                    ? (savedConektaPaymentSources.length > 0
+                        ? 'En el siguiente paso eliges si Conekta usa una tarjeta guardada o si manda link para autorizar otra tarjeta.'
+                        : firstPaymentEnabled && firstPaymentMethod === 'card'
+                          ? 'Si el primer pago es con tarjeta/link de Conekta, esa tarjeta quedará guardada y activará los cobros futuros.'
+                          : `Conekta enviará una liga de domiciliación por ${formatCurrency(cardSetupAmount, currency)}. El plan no se activa hasta que esa tarjeta quede autorizada.`)
+                  : highLevelConnected
+                    ? (partialNeedsCardAuthorization
+                        ? `GoHighLevel validará si existe una tarjeta guardada. Si no existe, se enviará un cobro separado de ${formatCurrency(cardSetupAmount, currency)} para domiciliar. El plan no se activa hasta que esa tarjeta quede autorizada.`
+                        : 'El primer pago con tarjeta autoriza la tarjeta en GoHighLevel. El plan no se activa hasta que ese pago sea exitoso y la tarjeta quede guardada.')
+                    : 'El plan se preparará con la pasarela conectada que elijas en el siguiente paso.'}
               </span>
             </div>
           </div>
@@ -3476,7 +3491,7 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
         ? stripeAuthorizationLabel
         : paymentOption === 'conekta'
           ? conektaAuthorizationLabel
-        : partialNeedsCardAuthorization
+        : highLevelConnected && partialNeedsCardAuthorization
           ? `GoHighLevel usará tarjeta guardada si existe; si no, enviará domiciliación por ${formatCurrency(cardSetupAmount, invoiceSummary.currency)}.`
           : 'El primer pago con tarjeta funcionará como autorización.'
 
@@ -3697,7 +3712,7 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
           : defaultPaymentLinkOption === 'mercadopago'
             ? 'Usa Mercado Pago Checkout Pro para generar el link.'
             : defaultPaymentLinkOption === 'send'
-              ? 'Usa HighLevel para enviar el enlace al cliente.'
+              ? 'Usa la integración conectada para enviar el enlace al cliente.'
               : 'Conecta una pasarela para enviar enlaces de pago.'
 
     return (

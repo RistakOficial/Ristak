@@ -795,7 +795,7 @@ async function getGhlContext() {
   const config = await getHighLevelConfig()
 
   if (!config?.api_token || !config?.location_id) {
-    throw new Error('HighLevel no está configurado en Ristak')
+    throw new Error('La herramienta opcional de HighLevel no está configurada en Ristak')
   }
 
   return {
@@ -1097,7 +1097,7 @@ function mcpErrorMessage(response) {
 
 async function postHighLevelMcpMessage(config, message, sessionId = null) {
   if (!config?.api_token) {
-    throw new Error('HighLevel no está configurado en Ristak')
+    throw new Error('La herramienta opcional de HighLevel no está configurada en Ristak')
   }
 
   const response = await fetch(HIGHLEVEL_MCP_SERVER_URL, {
@@ -1166,7 +1166,7 @@ async function initializeHighLevelMcp(config) {
 async function requestHighLevelMcp(method, params = {}) {
   const config = await getHighLevelConfig()
   if (!config?.api_token) {
-    throw new Error('HighLevel no está configurado en Ristak')
+    throw new Error('La herramienta opcional de HighLevel no está configurada en Ristak')
   }
 
   let sessionId = null

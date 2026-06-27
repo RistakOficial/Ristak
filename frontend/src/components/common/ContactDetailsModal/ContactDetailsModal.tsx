@@ -29,6 +29,7 @@ import { contactsService, type JourneyEvent } from '@/services/contactsService'
 import { conversationalAgentService, type ConversationalAgentCompletionEvent } from '@/services/conversationalAgentService'
 import { emailService } from '@/services/emailService'
 import { highLevelService, type HighLevelChatChannel } from '@/services/highLevelService'
+import { getIntegrationsStatus } from '@/services/integrationsService'
 import {
   whatsappApiService,
   type ScheduledChatMessage,
@@ -811,6 +812,8 @@ export function ContactDetailsModal({
   const [emailConnected, setEmailConnected] = useState(false)
   const [emailStatusLoading, setEmailStatusLoading] = useState(false)
   const [highLevelConnected, setHighLevelConnected] = useState(false)
+  const [metaMessengerConnected, setMetaMessengerConnected] = useState(false)
+  const [metaInstagramConnected, setMetaInstagramConnected] = useState(false)
   const [highLevelStatusLoading, setHighLevelStatusLoading] = useState(false)
   const [paymentsExpanded, setPaymentsExpanded] = useState(false)
   const [refundsExpanded, setRefundsExpanded] = useState(false)
@@ -868,6 +871,8 @@ export function ContactDetailsModal({
       setEmailConnected(false)
       setEmailStatusLoading(false)
       setHighLevelConnected(false)
+      setMetaMessengerConnected(false)
+      setMetaInstagramConnected(false)
       setHighLevelStatusLoading(false)
       setPaymentsExpanded(false)
       setRefundsExpanded(false)
@@ -987,13 +992,15 @@ export function ContactDetailsModal({
     Promise.all([
       whatsappApiService.getStatus().catch(() => null),
       emailService.getStatus().catch(() => null),
-      highLevelService.getConfig().catch(() => ({ configured: false }))
+      getIntegrationsStatus().catch(() => null)
     ])
-      .then(([status, emailStatus, highLevelConfig]) => {
+      .then(([status, emailStatus, integrationsStatus]) => {
         if (cancelled) return
         setWhatsappStatus(status)
         setEmailConnected(Boolean(emailStatus?.connected))
-        setHighLevelConnected(Boolean(highLevelConfig?.configured))
+        setHighLevelConnected(Boolean(integrationsStatus?.highlevel?.connected))
+        setMetaMessengerConnected(Boolean(integrationsStatus?.meta?.connected && integrationsStatus?.meta?.pageId))
+        setMetaInstagramConnected(Boolean(integrationsStatus?.meta?.connected && integrationsStatus?.meta?.instagramAccountId))
       })
       .finally(() => {
         if (cancelled) return
@@ -1440,6 +1447,8 @@ export function ContactDetailsModal({
   const hasDetectedInstagram = detectedContactChannels.has('instagram')
   const channelStatusLoading = whatsappStatusLoading || emailStatusLoading || highLevelStatusLoading
   const whatsappApiSourcesAvailable = Boolean(whatsappStatus?.connected && availableWhatsAppPhones.some((phone) => getWhatsAppPhoneValue(phone)))
+  const canSendMessenger = metaMessengerConnected || highLevelConnected
+  const canSendInstagram = metaInstagramConnected || highLevelConnected
   const chatChannelOptions = useMemo<Array<{ value: string; label: string; disabled?: boolean; icon: ReactNode }>>(() => {
     if (!selectedContact) {
       return [{ value: 'none', label: CONTACT_CHAT_CHANNEL_LABELS.none, disabled: true, icon: renderContactChatChannelIcon('none') }]
@@ -1483,7 +1492,7 @@ export function ContactDetailsModal({
         value: 'messenger',
         label: CONTACT_CHAT_CHANNEL_LABELS.messenger,
         icon: renderContactChatChannelIcon('messenger'),
-        disabled: !highLevelConnected
+        disabled: !canSendMessenger
       })
     }
 
@@ -1492,7 +1501,7 @@ export function ContactDetailsModal({
         value: 'instagram',
         label: CONTACT_CHAT_CHANNEL_LABELS.instagram,
         icon: renderContactChatChannelIcon('instagram'),
-        disabled: !highLevelConnected
+        disabled: !canSendInstagram
       })
     }
 
@@ -1506,6 +1515,8 @@ export function ContactDetailsModal({
     hasDetectedInstagram,
     hasDetectedMessenger,
     highLevelConnected,
+    canSendInstagram,
+    canSendMessenger,
     selectedContact,
     whatsappApiSourcesAvailable
   ])
@@ -1552,9 +1563,9 @@ export function ContactDetailsModal({
     : selectedChatChannel === 'whatsapp'
     ? Boolean(selectedContact?.phone && (whatsappConnected || highLevelConnected))
     : selectedChatChannel === 'messenger'
-    ? Boolean(hasDetectedMessenger && highLevelConnected)
+    ? Boolean(hasDetectedMessenger && canSendMessenger)
     : selectedChatChannel === 'instagram'
-    ? Boolean(hasDetectedInstagram && highLevelConnected)
+    ? Boolean(hasDetectedInstagram && canSendInstagram)
     : false
   const chatHasContent = selectedChatChannel === 'email'
     ? Boolean(chatSubject.trim() && chatEmailPlainText.trim())
@@ -1576,13 +1587,15 @@ export function ContactDetailsModal({
     : selectedChatChannel === 'whatsapp' && whatsappApiSourcesAvailable && !selectedBusinessPhoneValue && !highLevelConnected
     ? 'Elige una caja de WhatsApp para responder.'
     : selectedChatChannel === 'whatsapp' && !whatsappApiSourcesAvailable && !highLevelConnected
-    ? 'Conecta WhatsApp API o HighLevel para responder por WhatsApp.'
+    ? 'Conecta WhatsApp API para responder desde Ristak.'
     : selectedChatChannel === 'messenger' && !hasDetectedMessenger
     ? 'Este contacto no tiene Messenger detectado.'
     : selectedChatChannel === 'instagram' && !hasDetectedInstagram
     ? 'Este contacto no tiene Instagram detectado.'
-    : (selectedChatChannel === 'messenger' || selectedChatChannel === 'instagram') && !highLevelConnected
-    ? 'Conecta HighLevel para responder por este canal.'
+    : selectedChatChannel === 'messenger' && !canSendMessenger
+    ? 'Activa Messenger en Configuracion > Meta Ads para responder desde Ristak.'
+    : selectedChatChannel === 'instagram' && !canSendInstagram
+    ? 'Activa Instagram en Configuracion > Meta Ads para responder desde Ristak.'
     : ''
   const canSendChatMessage = Boolean(
     selectedContact?.id &&
@@ -1701,6 +1714,44 @@ export function ContactDetailsModal({
               status: result.status || 'sent',
               transport: result.transport || message.transport,
               channel: 'whatsapp'
+            }
+          : message
+        ))
+      } else if (selectedChatChannel === 'messenger' && metaMessengerConnected) {
+        const result = await whatsappApiService.sendMetaSocialText({
+          contactId: selectedContact.id,
+          platform: 'messenger',
+          message: text,
+          externalId: optimisticId
+        })
+        const data = result.data || result
+
+        setChatMessages((current) => current.map((message) => message.id === optimisticId
+          ? {
+              ...message,
+              id: data.localMessageId || message.id,
+              status: data.status || 'sent',
+              transport: data.transport || 'messenger',
+              channel: 'messenger'
+            }
+          : message
+        ))
+      } else if (selectedChatChannel === 'instagram' && metaInstagramConnected) {
+        const result = await whatsappApiService.sendMetaSocialText({
+          contactId: selectedContact.id,
+          platform: 'instagram',
+          message: text,
+          externalId: optimisticId
+        })
+        const data = result.data || result
+
+        setChatMessages((current) => current.map((message) => message.id === optimisticId
+          ? {
+              ...message,
+              id: data.localMessageId || message.id,
+              status: data.status || 'sent',
+              transport: data.transport || 'instagram',
+              channel: 'instagram'
             }
           : message
         ))

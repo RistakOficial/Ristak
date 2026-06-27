@@ -82,6 +82,7 @@ import { contactsService, type JourneyEvent } from '@/services/contactsService'
 import { subscribeToChatLiveEvents, type ChatLiveMessageEvent } from '@/services/chatLiveEventsService'
 import { emailService } from '@/services/emailService'
 import { highLevelService, type HighLevelChatChannel } from '@/services/highLevelService'
+import { getIntegrationsStatus } from '@/services/integrationsService'
 import {
   messageTemplatesService,
   type MessageTemplateCategory,
@@ -2167,6 +2168,8 @@ export const DesktopChat: React.FC = () => {
   const [messageAudioProgress, setMessageAudioProgress] = useState<Record<string, { currentTime: number; duration: number }>>({})
   const [whatsappStatus, setWhatsappStatus] = useState<WhatsAppApiStatus | null>(null)
   const [highLevelConnected, setHighLevelConnected] = useState(false)
+  const [metaMessengerConnected, setMetaMessengerConnected] = useState(false)
+  const [metaInstagramConnected, setMetaInstagramConnected] = useState(false)
   const [emailConnected, setEmailConnected] = useState(false)
   const [conversationAgentEnabled, setConversationAgentEnabled] = useState(false)
   const [conversationAgentState, setConversationAgentState] = useState<ConversationAgentState | null>(null)
@@ -2576,6 +2579,8 @@ export const DesktopChat: React.FC = () => {
     ? [selectedBusinessPhone]
     : []
   const whatsappApiSourcesAvailable = Boolean(whatsappStatus?.connected && whatsappComposerPhones.some((phone) => getBusinessPhoneValue(phone)))
+  const canSendMessenger = metaMessengerConnected || highLevelConnected
+  const canSendInstagram = metaInstagramConnected || highLevelConnected
   const composerChannelOptions = COMPOSER_CHANNEL_OPTIONS.flatMap((option) => {
     if (option.value === 'whatsapp') {
       const whatsappDisabled = !activeContact?.phone || (!whatsappApiSourcesAvailable && !highLevelConnected)
@@ -2598,7 +2603,9 @@ export const DesktopChat: React.FC = () => {
     return [{
       ...option,
       icon: renderComposerChannelIcon(option.value),
-      disabled: !highLevelConnected || (option.value === 'messenger' ? !hasDetectedMessenger : !hasDetectedInstagram)
+      disabled: option.value === 'messenger'
+        ? !hasDetectedMessenger || !canSendMessenger
+        : !hasDetectedInstagram || !canSendInstagram
     }]
   })
   const composerRouteValue = composerChannel === 'whatsapp' && selectedBusinessPhone?.id
@@ -2608,7 +2615,9 @@ export const DesktopChat: React.FC = () => {
     ? Boolean(hasEmailAccess && activeContact?.email && emailConnected)
     : composerChannel === 'whatsapp'
     ? Boolean(activeContact?.phone && (whatsappConnected || highLevelConnected))
-    : Boolean(highLevelConnected && (composerChannel === 'messenger' ? hasDetectedMessenger : hasDetectedInstagram))
+    : composerChannel === 'messenger'
+    ? Boolean(hasDetectedMessenger && canSendMessenger)
+    : Boolean(hasDetectedInstagram && canSendInstagram)
   const composerChannelHint = !activeContact
     ? ''
     : isEmailComposer && !hasEmailAccess
@@ -2622,9 +2631,15 @@ export const DesktopChat: React.FC = () => {
     : composerChannel === 'whatsapp' && whatsappApiSourcesAvailable && !selectedBusinessPhoneValue && !highLevelConnected
     ? 'Elige una caja de WhatsApp para responder.'
     : composerChannel === 'whatsapp' && !whatsappApiSourcesAvailable && !highLevelConnected
-    ? 'Conecta WhatsApp API o HighLevel para responder por WhatsApp.'
-    : (composerChannel === 'messenger' || composerChannel === 'instagram') && !highLevelConnected
-    ? 'Conecta HighLevel para responder por este canal.'
+    ? 'Conecta WhatsApp API para responder desde Ristak.'
+    : composerChannel === 'messenger' && !hasDetectedMessenger
+    ? 'Este contacto no tiene Messenger detectado.'
+    : composerChannel === 'instagram' && !hasDetectedInstagram
+    ? 'Este contacto no tiene Instagram detectado.'
+    : composerChannel === 'messenger' && !canSendMessenger
+    ? 'Activa Messenger en Configuración > Meta Ads para responder desde Ristak.'
+    : composerChannel === 'instagram' && !canSendInstagram
+    ? 'Activa Instagram en Configuración > Meta Ads para responder desde Ristak.'
     : ''
   const hasComposerContent = isEmailComposer
     ? Boolean(emailSubject.trim() && emailPlainText.trim())
@@ -3020,9 +3035,9 @@ export const DesktopChat: React.FC = () => {
   const loadSupportData = useCallback(async () => {
     setCalendarsLoading(true)
     try {
-      const [status, highLevelConfig, emailStatus, calendarList, conversationalConfig, agentList] = await Promise.all([
+      const [status, integrationsStatus, emailStatus, calendarList, conversationalConfig, agentList] = await Promise.all([
         whatsappApiService.getStatus().catch(() => null),
-        highLevelService.getConfig().catch(() => ({ configured: false })),
+        getIntegrationsStatus().catch(() => null),
         emailService.getStatus().catch(() => null),
         calendarsService.getCalendars(locationId, accessToken).catch(() => []),
         conversationalAgentService.getConfig().catch(() => null),
@@ -3030,7 +3045,9 @@ export const DesktopChat: React.FC = () => {
       ])
       const stateList = await conversationalAgentService.listStates().catch(() => [] as ConversationAgentState[])
       setWhatsappStatus(status)
-      setHighLevelConnected(Boolean(highLevelConfig?.configured))
+      setHighLevelConnected(Boolean(integrationsStatus?.highlevel?.connected))
+      setMetaMessengerConnected(Boolean(integrationsStatus?.meta?.connected && integrationsStatus?.meta?.pageId))
+      setMetaInstagramConnected(Boolean(integrationsStatus?.meta?.connected && integrationsStatus?.meta?.instagramAccountId))
       setEmailConnected(Boolean(emailStatus?.connected))
       setConversationAgentEnabled(Boolean(conversationalConfig?.enabled))
       setAgentStates(mapAgentStatesByContactId(stateList))
@@ -3822,7 +3839,12 @@ export const DesktopChat: React.FC = () => {
     let channel: HighLevelChatChannel | undefined
     let transport: 'api' | undefined = 'api'
 
-    if (whatsappConnected && activeContact.phone) {
+    if ((composerChannel === 'messenger' || composerChannel === 'instagram') && !highLevelConnected) {
+      setScheduleError('La programación para Messenger e Instagram todavía no está disponible en Meta nativo. Puedes enviarlo al momento desde Ristak.')
+      return
+    }
+
+    if (composerChannel === 'whatsapp' && whatsappConnected && activeContact.phone) {
       provider = 'whatsapp_api'
     } else if (highLevelConnected) {
       provider = 'highlevel'
@@ -3833,7 +3855,7 @@ export const DesktopChat: React.FC = () => {
         return
       }
     } else {
-      setScheduleError('Conecta WhatsApp API o HighLevel para programar mensajes.')
+      setScheduleError('Conecta WhatsApp API para programar mensajes de WhatsApp.')
       return
     }
 
@@ -3915,6 +3937,7 @@ export const DesktopChat: React.FC = () => {
     composerText,
     draftAttachments.length,
     highLevelConnected,
+    composerChannel,
     scheduleDraft,
     scheduleEditingMessageId,
     schedulingMessage,
@@ -4710,6 +4733,32 @@ export const DesktopChat: React.FC = () => {
           transport: result.transport || message.transport,
           routingReason: result.routingReason || result.fallbackReason || message.routingReason
         } : message))
+      } else if (activeConversationChannel === 'messenger' && metaMessengerConnected) {
+        const result = await whatsappApiService.sendMetaSocialText({
+          contactId: activeContact.id,
+          platform: 'messenger',
+          message: text,
+          externalId: optimisticId
+        })
+        const data = result.data || result
+        setMessages((current) => current.map((message) => (
+          message.id === optimisticId
+            ? { ...message, id: data.localMessageId || message.id, status: data.status || 'sent', transport: data.transport || 'messenger' }
+            : message
+        )))
+      } else if (activeConversationChannel === 'instagram' && metaInstagramConnected) {
+        const result = await whatsappApiService.sendMetaSocialText({
+          contactId: activeContact.id,
+          platform: 'instagram',
+          message: text,
+          externalId: optimisticId
+        })
+        const data = result.data || result
+        setMessages((current) => current.map((message) => (
+          message.id === optimisticId
+            ? { ...message, id: data.localMessageId || message.id, status: data.status || 'sent', transport: data.transport || 'instagram' }
+            : message
+        )))
       } else if (highLevelConnected) {
         const result = await highLevelService.sendConversationMessage({
           contactId: activeContact.id,
@@ -4726,7 +4775,7 @@ export const DesktopChat: React.FC = () => {
             : message
         )))
       } else {
-        throw new Error('Conecta WhatsApp API o HighLevel para enviar mensajes desde esta pantalla.')
+        throw new Error('Conecta el canal nativo correspondiente para enviar mensajes desde esta pantalla.')
       }
       await Promise.all([
         loadConversation(activeContact.id),

@@ -335,8 +335,16 @@ export interface WhatsAppApiAudioSendPayload {
 export interface WhatsAppApiSendResponse {
   id?: string
   wamid?: string
+  localMessageId?: string
   status?: string
   transport?: 'api' | 'qr' | string
+  channel?: string
+  data?: {
+    localMessageId?: string
+    status?: string
+    transport?: string
+    channel?: string
+  }
   fallback?: boolean
   fallbackFrom?: string
   fallbackReason?: string
@@ -374,6 +382,13 @@ export interface WhatsAppApiSendResponse {
   }
 }
 
+export interface MetaSocialTextSendPayload {
+  contactId: string
+  platform: 'messenger' | 'instagram'
+  message: string
+  externalId?: string
+}
+
 export interface WhatsAppQrSession {
   id: string
   phoneNumberId: string
@@ -409,6 +424,7 @@ export const whatsappApiService = {
   setProvider: (provider: 'ycloud' | 'meta_direct') => apiClient.post<WhatsAppApiStatus>('/whatsapp-api/meta/provider', { provider }),
   testMetaDirect: () => apiClient.post<WhatsAppMetaDirectTestResponse>('/whatsapp-api/meta/test'),
   sendMetaDirectTestMessage: (payload: { to: string; text?: string }) => apiClient.post<WhatsAppApiSendResponse>('/whatsapp-api/meta/messages/test', payload),
+  sendMetaSocialText: (payload: MetaSocialTextSendPayload) => apiClient.post<WhatsAppApiSendResponse>('/whatsapp-api/meta/social/messages/text', payload),
   syncMetaDirectHistory: () => apiClient.post<WhatsAppMetaDirectTestResponse>('/whatsapp-api/meta/sync-history'),
   disconnectMetaDirect: () => apiClient.post<WhatsAppApiStatus>('/whatsapp-api/meta/disconnect'),
   connect: (payload: WhatsAppApiConnectPayload) => apiClient.post<WhatsAppApiStatus>('/whatsapp-api/connect', payload),

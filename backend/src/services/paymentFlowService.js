@@ -1588,7 +1588,7 @@ async function scheduleAutomaticInstallmentsForFlow(flow, paymentMethod, existin
   if (!Number(flow.remaining_automatic)) return []
 
   if (!paymentMethod?.customerId || !paymentMethod?.paymentMethodId) {
-    throw new Error('No hay tarjeta autorizada de GoHighLevel para programar autopagos')
+    throw new Error('No hay tarjeta autorizada en la pasarela para programar autopagos')
   }
 
   const installments = await db.all(

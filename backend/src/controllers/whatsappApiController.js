@@ -40,6 +40,7 @@ import {
   buildDefaultMessageTemplateSendComponents,
   ensureDefaultWhatsAppApiMessageTemplates
 } from '../services/messageTemplatesService.js'
+import { sendMetaSocialTextMessage } from '../services/metaSocialMessagingService.js'
 import {
   getWhatsAppQrDripSettings,
   saveWhatsAppQrDripSettings
@@ -388,6 +389,25 @@ export async function sendMetaDirectTestMessageView(req, res) {
     res.status(400).json({
       success: false,
       error: error.message || 'No se pudo enviar la prueba por Meta directo'
+    })
+  }
+}
+
+export async function sendMetaSocialTextMessageView(req, res) {
+  try {
+    const data = await sendMetaSocialTextMessage({
+      contactId: req.body?.contactId,
+      platform: req.body?.platform,
+      message: req.body?.message || req.body?.text,
+      externalId: req.body?.externalId
+    })
+    notifyHumanTakeover({ contactId: req.body?.contactId })
+    res.json({ success: true, data })
+  } catch (error) {
+    logger.error(`Error enviando DM Meta: ${error.message}`)
+    res.status(error.statusCode || 400).json({
+      success: false,
+      error: error.message || 'No se pudo enviar el mensaje por Meta'
     })
   }
 }

@@ -1562,7 +1562,7 @@ export const CalendarsConfiguration: React.FC = () => {
         'Calendario creado',
         accessToken
           ? 'Se guardó en Ristak y se intentó sincronizar con HighLevel'
-          : 'Se guardó en Ristak y se sincronizará cuando conectes HighLevel'
+          : 'Se guardó en Ristak y ya está disponible para operar'
       )
 
       if (created?.id && !defaultCalendarId) {

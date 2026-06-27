@@ -244,6 +244,206 @@ function getFallbackContactName(platform, senderId) {
   return suffix ? `${getPlatformLabel(platform)} ${suffix}` : getPlatformLabel(platform)
 }
 
+function createMetaSocialMessageError(message, statusCode = 400) {
+  const error = new Error(message)
+  error.statusCode = statusCode
+  return error
+}
+
+async function metaSocialGraphRequest(path, { method = 'GET', token, query, body } = {}) {
+  const cleanToken = cleanString(token)
+  if (!cleanToken) throw createMetaSocialMessageError('Meta no está conectado', 409)
+
+  const url = new URL(`${API_URLS.META_GRAPH}${path}`)
+  Object.entries(query || {}).forEach(([key, value]) => {
+    if (value !== undefined && value !== null && value !== '') {
+      url.searchParams.set(key, String(value))
+    }
+  })
+
+  const response = await fetch(url.toString(), {
+    method,
+    headers: {
+      Authorization: `Bearer ${cleanToken}`,
+      ...(body ? { 'Content-Type': 'application/json' } : {})
+    },
+    ...(body ? { body: JSON.stringify(body) } : {})
+  })
+  const data = await response.json().catch(() => ({}))
+
+  if (!response.ok) {
+    throw createMetaSocialMessageError(data?.error?.message || `Meta Graph respondió ${response.status}`, response.status)
+  }
+
+  return data
+}
+
+function getMetaSocialBusinessId(platform, config = {}, profile = {}) {
+  if (platform === 'instagram') {
+    return cleanString(profile.instagram_account_id) || cleanString(config.instagram_account_id)
+  }
+
+  return cleanString(profile.page_id) || cleanString(config.page_id)
+}
+
+async function saveMetaSocialOutboundMessage({ platform, contactId, profile, messageId, text, response, externalId }) {
+  const now = new Date().toISOString()
+  const cleanPlatform = platform === 'instagram' ? 'instagram' : 'messenger'
+  const remoteMessageId = cleanString(
+    messageId ||
+    response?.message_id ||
+    response?.recipient_id ||
+    response?.id ||
+    externalId
+  )
+  const localMessageId = hashId(
+    'meta_social_msg',
+    remoteMessageId
+      ? `${cleanPlatform}:${remoteMessageId}:outbound`
+      : `${cleanPlatform}:${contactId}:${text}:${now}`
+  )
+  const rawPayload = safeJson({
+    provider: 'meta',
+    platform: cleanPlatform,
+    response
+  })
+
+  await db.run(`
+    INSERT INTO meta_social_messages (
+      id, platform, meta_message_id, meta_social_contact_id, contact_id,
+      sender_id, recipient_id, page_id, instagram_account_id,
+      direction, status, message_type, message_text,
+      postback_payload, message_timestamp, raw_payload_json, referral_json, updated_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+    ON CONFLICT(id) DO UPDATE SET
+      meta_social_contact_id = COALESCE(excluded.meta_social_contact_id, meta_social_messages.meta_social_contact_id),
+      contact_id = COALESCE(excluded.contact_id, meta_social_messages.contact_id),
+      sender_id = COALESCE(NULLIF(excluded.sender_id, ''), meta_social_messages.sender_id),
+      recipient_id = COALESCE(NULLIF(excluded.recipient_id, ''), meta_social_messages.recipient_id),
+      page_id = COALESCE(NULLIF(excluded.page_id, ''), meta_social_messages.page_id),
+      instagram_account_id = COALESCE(NULLIF(excluded.instagram_account_id, ''), meta_social_messages.instagram_account_id),
+      direction = COALESCE(NULLIF(excluded.direction, ''), meta_social_messages.direction),
+      status = COALESCE(NULLIF(excluded.status, ''), meta_social_messages.status),
+      message_type = COALESCE(NULLIF(excluded.message_type, ''), meta_social_messages.message_type),
+      message_text = COALESCE(NULLIF(excluded.message_text, ''), meta_social_messages.message_text),
+      message_timestamp = COALESCE(excluded.message_timestamp, meta_social_messages.message_timestamp),
+      raw_payload_json = excluded.raw_payload_json,
+      updated_at = CURRENT_TIMESTAMP
+  `, [
+    localMessageId,
+    cleanPlatform,
+    remoteMessageId || null,
+    profile.id || null,
+    contactId,
+    getMetaSocialBusinessId(cleanPlatform, {}, profile) || null,
+    cleanString(profile.sender_id) || null,
+    cleanPlatform === 'messenger' ? cleanString(profile.page_id) || null : null,
+    cleanPlatform === 'instagram' ? cleanString(profile.instagram_account_id) || null : null,
+    'outbound',
+    'sent',
+    'text',
+    text,
+    null,
+    now,
+    rawPayload,
+    null
+  ])
+
+  publishChatMessageEvent({
+    contactId,
+    messageId: localMessageId,
+    channel: cleanPlatform,
+    provider: 'meta',
+    transport: cleanPlatform,
+    direction: 'outbound',
+    messageType: 'text',
+    messageTimestamp: now,
+    isNew: true
+  })
+
+  return {
+    localMessageId,
+    status: 'sent',
+    transport: cleanPlatform,
+    channel: cleanPlatform,
+    remoteMessageId: remoteMessageId || null
+  }
+}
+
+export async function sendMetaSocialTextMessage({ contactId, platform, message, externalId } = {}) {
+  const cleanContactId = cleanString(contactId)
+  const cleanPlatform = cleanString(platform).toLowerCase() === 'instagram' ? 'instagram' : 'messenger'
+  const body = cleanString(message)
+
+  if (!cleanContactId) throw createMetaSocialMessageError('Falta el contacto', 400)
+  if (!body) throw createMetaSocialMessageError('Falta el texto del mensaje', 400)
+
+  const enabled = await isMetaSocialMessagingEnabled(cleanPlatform)
+  if (!enabled) {
+    throw createMetaSocialMessageError(`Activa ${getPlatformLabel(cleanPlatform)} en Configuración > Meta Ads para responder por este canal.`, 409)
+  }
+
+  const config = await getMetaConfig().catch(error => {
+    logger.warn(`No se pudo leer Meta para enviar DM: ${error.message}`)
+    return null
+  })
+  if (!config?.access_token) {
+    throw createMetaSocialMessageError('Conecta Meta Ads para responder por Messenger o Instagram.', 409)
+  }
+
+  const profile = await db.get(
+    `SELECT id, sender_id, recipient_id, page_id, instagram_account_id
+     FROM meta_social_contacts
+     WHERE contact_id = ? AND platform = ?
+     ORDER BY updated_at DESC, last_seen_at DESC
+     LIMIT 1`,
+    [cleanContactId, cleanPlatform]
+  ).catch(() => null)
+
+  const recipientId = cleanString(profile?.sender_id)
+  if (!profile || !recipientId) {
+    throw createMetaSocialMessageError(`Este contacto no tiene ${getPlatformLabel(cleanPlatform)} enlazado.`, 404)
+  }
+
+  const businessId = getMetaSocialBusinessId(cleanPlatform, config, profile)
+  if (!businessId) {
+    throw createMetaSocialMessageError(
+      cleanPlatform === 'instagram'
+        ? 'Falta seleccionar la cuenta de Instagram en Meta Ads.'
+        : 'Falta seleccionar la página de Facebook en Meta Ads.',
+      409
+    )
+  }
+
+  const response = await metaSocialGraphRequest(`/${encodeURIComponent(businessId)}/messages`, {
+    method: 'POST',
+    token: config.access_token,
+    body: {
+      messaging_type: 'RESPONSE',
+      recipient: { id: recipientId },
+      message: { text: body }
+    }
+  })
+
+  const sent = await saveMetaSocialOutboundMessage({
+    platform: cleanPlatform,
+    contactId: cleanContactId,
+    profile,
+    messageId: response?.message_id || response?.id,
+    text: body,
+    response,
+    externalId
+  })
+
+  return {
+    ...sent,
+    id: sent.remoteMessageId || sent.localMessageId,
+    platform: cleanPlatform,
+    provider: 'meta',
+    data: sent
+  }
+}
+
 async function upsertLocalSocialContact({ socialMessage, profile }) {
   const contactId = hashId('meta_social_contact', `${socialMessage.platform}:${socialMessage.senderId}`)
   const platformLabel = getPlatformLabel(socialMessage.platform)

@@ -2905,7 +2905,7 @@ export const getMetaCustomValues = async (req, res) => {
         reconciliation: {
           success: true,
           action: 'local_only',
-          message: 'HighLevel no está configurado; usando Meta local'
+          message: 'Usando Meta local; HighLevel queda como integración opcional'
         }
       });
     }
@@ -3011,7 +3011,7 @@ export const saveAndSyncMeta = async (req, res) => {
     let highLevelSyncResult = {
       success: false,
       skipped: true,
-      message: 'HighLevel no está configurado; Meta quedó guardado localmente'
+      message: 'Meta quedó guardado localmente; HighLevel queda como integración opcional'
     };
 
     if (hlConfig?.location_id && hlConfig?.api_token) {

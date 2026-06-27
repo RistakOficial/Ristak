@@ -107,7 +107,7 @@ export const APIDocumentation: React.FC = () => {
         <PageHeader
           eyebrow="Ristak API Docs"
           title="Documentación API"
-          subtitle="Conecta sistemas externos para leer, crear, actualizar y borrar datos. Ristak actúa como intermediario y espejo de GoHighLevel para los recursos sincronizados."
+          subtitle="Conecta sistemas externos para leer, crear, actualizar y borrar datos de Ristak. Las integraciones externas se usan sólo cuando están conectadas."
           actions={
             <div className={styles.quickLinks}>
               <DocLink label="REST base" value={externalApiBaseUrl} onCopy={() => copyText(externalApiBaseUrl, 'REST base')} />
@@ -125,7 +125,7 @@ export const APIDocumentation: React.FC = () => {
         <aside className={styles.sidebar}>
           <a href="#auth">Autenticación</a>
           <a href="#data">Base de datos</a>
-          <a href="#sync">Espejo GoHighLevel</a>
+          <a href="#sync">Integraciones externas</a>
           <a href="#mcp">MCP</a>
           <a href="#endpoints">Endpoints</a>
         </aside>
@@ -168,15 +168,15 @@ export const APIDocumentation: React.FC = () => {
             />
           </Section>
 
-          <Section id="sync" icon={<RefreshCw size={18} />} title="Espejo GoHighLevel">
+          <Section id="sync" icon={<RefreshCw size={18} />} title="Integraciones externas">
             <p>
-              Para contactos, Ristak usa escritura directa: primero modifica GoHighLevel y después actualiza la copia local. Si GoHighLevel falla, la mutación falla para evitar que el espejo quede desfasado.
+              Ristak opera con datos propios. Si una integración como GoHighLevel está conectada, puedes usar endpoints especializados para sincronizar o proxificar recursos externos sin convertirla en requisito de la API principal.
             </p>
-            <EndpointExample method="POST" path="/api/external/contacts" description="Crea contacto en GoHighLevel y guarda el espejo local." />
-            <EndpointExample method="PUT" path="/api/external/contacts/{id}" description="Reemplaza/actualiza contacto en GoHighLevel y Ristak." />
-            <EndpointExample method="PATCH" path="/api/external/contacts/{id}" description="Actualiza parcialmente contacto en GoHighLevel y Ristak." />
-            <EndpointExample method="DELETE" path="/api/external/contacts/{id}" description="Elimina contacto en GoHighLevel y Ristak." />
-            <EndpointExample method="POST" path="/api/external/highlevel/request" description="Proxy avanzado para cualquier endpoint de GoHighLevel: GET, POST, PUT, PATCH o DELETE." />
+            <EndpointExample method="POST" path="/api/external/contacts" description="Crea un contacto autorizado desde la API externa." />
+            <EndpointExample method="PUT" path="/api/external/contacts/{id}" description="Reemplaza/actualiza un contacto autorizado." />
+            <EndpointExample method="PATCH" path="/api/external/contacts/{id}" description="Actualiza parcialmente un contacto autorizado." />
+            <EndpointExample method="DELETE" path="/api/external/contacts/{id}" description="Elimina un contacto autorizado." />
+            <EndpointExample method="POST" path="/api/external/highlevel/request" description="Proxy opcional para GoHighLevel cuando la integración está conectada." />
             <CodeBlock
               label="Proxy directo a GoHighLevel"
               value={`curl -X POST "${externalApiBaseUrl}/highlevel/request" \\
@@ -192,7 +192,7 @@ export const APIDocumentation: React.FC = () => {
 
           <Section id="mcp" icon={<Network size={18} />} title="MCP">
             <p>
-              El servidor MCP expone herramientas para explorar datos de Ristak y proxificar el MCP oficial de GoHighLevel. La lista exacta se descubre con `tools/list`.
+              El servidor MCP expone herramientas para explorar datos de Ristak y, si aplica, proxificar integraciones conectadas. La lista exacta se descubre con `tools/list`.
             </p>
             <CodeBlock
               value={`POST ${mcpServerUrl}
@@ -209,8 +209,8 @@ Content-Type: application/json
             <div className={styles.toolGrid}>
               <Tool name="list_data_tables" text="Lista tablas y columnas disponibles." />
               <Tool name="query_data_table" text="Consulta filas con filtros y paginación." />
-              <Tool name="ghl_mcp__*" text="Tools oficiales de GoHighLevel prefijadas por Ristak." />
-              <Tool name="ghl_mcp_call_tool" text="Fallback para ejecutar cualquier tool MCP de GoHighLevel por nombre." />
+              <Tool name="ghl_mcp__*" text="Tools opcionales de GoHighLevel cuando esa integración está conectada." />
+              <Tool name="ghl_mcp_call_tool" text="Fallback opcional para ejecutar tools de GoHighLevel por nombre." />
             </div>
           </Section>
 
