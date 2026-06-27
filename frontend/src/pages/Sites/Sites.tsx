@@ -7094,73 +7094,64 @@ function FormEmbedEditorPanel({
 
   const selectedFieldContent = (
     <div className={styles.settingsGroup}>
-      <div className={styles.formFieldEditorHeader}>
-        <div>
-          <strong>{isFormSurfaceSelected ? 'Formulario seleccionado' : 'Elemento seleccionado'}</strong>
-          <small>{isFormSurfaceSelected ? 'Caja y fondo del formulario' : activeField ? blockLabels[activeField.blockType] : 'Selecciona algo dentro del formulario'}</small>
-        </div>
-        {activeField && (
-          <div className={styles.formFieldActions}>
-            <button type="button" onClick={() => onDeleteField(activeField.id)} aria-label="Eliminar elemento">
-              <Trash2 size={14} />
-            </button>
-          </div>
-        )}
-      </div>
-
-      {isFormSurfaceSelected ? (
-        <InspectorEmptyState>Usa la pestaña Formulario para ajustar fondo, separación, borde y ancho.</InspectorEmptyState>
-      ) : !activeField ? (
-        <InspectorEmptyState>Selecciona un elemento del formulario para editarlo.</InspectorEmptyState>
-      ) : !activeBlockIsField ? (
-        <>
-          {activeFieldTypographyControls}
-          <label className={styles.field}>
-            <span>Página</span>
-            <CustomSelect
-              value={activeFieldPageId}
-              onChange={(event) => patchActiveFieldSettings({ pageId: event.target.value })}
-              onBlur={onSave}
-            >
-              {pages.map(page => <option key={page.id} value={page.id}>{page.title || 'Página'}</option>)}
-            </CustomSelect>
-          </label>
-          {renderActiveContentControls()}
-        </>
-      ) : (
-        <>
-          <label className={styles.field}>
-            <span>Pregunta visible</span>
-            <input value={activeField.label} onChange={(event) => patchActiveField({ label: event.target.value })} onBlur={onSave} />
-          </label>
-
-          <label className={styles.field}>
-            <span>Texto de ayuda</span>
-            <textarea rows={2} value={activeField.content} onChange={(event) => patchActiveField({ content: event.target.value })} onBlur={onSave} />
-          </label>
-
-          {activeFieldSystemPreset ? (
-            <label className={styles.field}>
-              <span>Página</span>
-              <CustomSelect
-                value={activeFieldPageId}
-                onChange={(event) => patchActiveFieldSettings({ pageId: event.target.value })}
-                onBlur={onSave}
-              >
-                {pages.map(page => <option key={page.id} value={page.id}>{page.title || 'Página'}</option>)}
-              </CustomSelect>
-            </label>
-          ) : (
-            <div className={styles.twoColumn}>
+      <AccordionGroup>
+        {isFormSurfaceSelected ? (
+          <AccordionSection id="embedded-form-selected" title="Formulario">
+            <InspectorEmptyState>Usa la pestaña Formulario para ajustar fondo, separación, borde y ancho.</InspectorEmptyState>
+          </AccordionSection>
+        ) : !activeField ? (
+          <AccordionSection id="embedded-element-empty" title="Elemento">
+            <InspectorEmptyState>Selecciona un elemento del formulario para editarlo.</InspectorEmptyState>
+          </AccordionSection>
+        ) : !activeBlockIsField ? (
+          <>
+            <AccordionSection id="embedded-element-content" title="Contenido">
+              <div className={styles.formFieldEditorHeader}>
+                <div>
+                  <strong>Elemento seleccionado</strong>
+                  <small>{blockLabels[activeField.blockType] || 'Elemento'}</small>
+                </div>
+                <div className={styles.formFieldActions}>
+                  <button type="button" onClick={() => onDeleteField(activeField.id)} aria-label="Eliminar elemento">
+                    <Trash2 size={14} />
+                  </button>
+                </div>
+              </div>
               <label className={styles.field}>
-                <span>Tipo de campo</span>
+                <span>Página</span>
                 <CustomSelect
-                  value={activeField.blockType}
-                  onChange={(event) => changeActiveFieldType(event.target.value as SiteBlockType)}
+                  value={activeFieldPageId}
+                  onChange={(event) => patchActiveFieldSettings({ pageId: event.target.value })}
                   onBlur={onSave}
                 >
-                  {embeddedFormFieldTypes.map(type => <option key={type} value={type}>{blockLabels[type]}</option>)}
+                  {pages.map(page => <option key={page.id} value={page.id}>{page.title || 'Página'}</option>)}
                 </CustomSelect>
+              </label>
+              {renderActiveContentControls()}
+            </AccordionSection>
+            {activeFieldTypographyControls}
+          </>
+        ) : (
+          <>
+            <AccordionSection id="embedded-field-content" title="Contenido">
+              <div className={styles.formFieldEditorHeader}>
+                <div>
+                  <strong>Pregunta seleccionada</strong>
+                  <small>{blockLabels[activeField.blockType] || 'Campo'}</small>
+                </div>
+                <div className={styles.formFieldActions}>
+                  <button type="button" onClick={() => onDeleteField(activeField.id)} aria-label="Eliminar elemento">
+                    <Trash2 size={14} />
+                  </button>
+                </div>
+              </div>
+              <label className={styles.field}>
+                <span>Pregunta visible</span>
+                <input value={activeField.label} onChange={(event) => patchActiveField({ label: event.target.value })} onBlur={onSave} />
+              </label>
+              <label className={styles.field}>
+                <span>Texto de ayuda</span>
+                <textarea rows={2} value={activeField.content} onChange={(event) => patchActiveField({ content: event.target.value })} onBlur={onSave} />
               </label>
               <label className={styles.field}>
                 <span>Página</span>
@@ -7172,148 +7163,170 @@ function FormEmbedEditorPanel({
                   {pages.map(page => <option key={page.id} value={page.id}>{page.title || 'Página'}</option>)}
                 </CustomSelect>
               </label>
-            </div>
-          )}
+            </AccordionSection>
 
-          {!isChoiceBlock(activeField.blockType) && (
-            <label className={styles.field}>
-              <span>Texto dentro del campo</span>
-              <input value={activeField.placeholder} onChange={(event) => patchActiveField({ placeholder: event.target.value })} onBlur={onSave} />
-            </label>
-          )}
+            {activeFieldTypographyControls}
 
-          {!activeFieldSystemPreset && (
-            <label className={styles.field}>
-              <span>Nombre interno</span>
-              <input
-                value={getSettingString(activeFieldSettings, 'internalName')}
-                onChange={(event) => patchActiveFieldSettings({ internalName: event.target.value })}
-                onBlur={onSave}
-              />
-            </label>
-          )}
+            <AccordionSection id="embedded-field-field" title="Campo">
+              {!activeFieldSystemPreset && (
+                <label className={styles.field}>
+                  <span>Tipo de campo</span>
+                  <CustomSelect
+                    value={activeField.blockType}
+                    onChange={(event) => changeActiveFieldType(event.target.value as SiteBlockType)}
+                    onBlur={onSave}
+                  >
+                    {embeddedFormFieldTypes.map(type => <option key={type} value={type}>{blockLabels[type]}</option>)}
+                  </CustomSelect>
+                </label>
+              )}
 
-          {activeFieldSystemPreset ? (
-            <label className={styles.checkboxLabel}>
-              <input
-                type="checkbox"
-                checked={Boolean(activeField.required)}
-                onChange={(event) => {
-                  patchActiveField({ required: event.target.checked })
-                  window.setTimeout(onSave, 0)
-                }}
-              />
-              <span>Campo requerido</span>
-            </label>
-          ) : (
-            <div className={styles.twoColumn}>
-              <label className={styles.field}>
-                <span>Validación</span>
-                <CustomSelect
-                  value={getSettingString(activeFieldSettings, 'validation')}
-                  onChange={(event) => patchActiveFieldSettings({ validation: event.target.value })}
-                  onBlur={onSave}
-                >
-                  {fieldValidationOptions.map(option => <option key={option.value || 'none'} value={option.value}>{option.label}</option>)}
-                </CustomSelect>
-              </label>
-              <label className={styles.checkboxLabel}>
-                <input
-                  type="checkbox"
-                  checked={Boolean(activeField.required)}
-                  onChange={(event) => {
-                    patchActiveField({ required: event.target.checked })
-                    window.setTimeout(onSave, 0)
-                  }}
-                />
-                <span>Campo requerido</span>
-              </label>
-            </div>
-          )}
+              {!isChoiceBlock(activeField.blockType) && (
+                <label className={styles.field}>
+                  <span>Texto dentro del campo</span>
+                  <input value={activeField.placeholder} onChange={(event) => patchActiveField({ placeholder: event.target.value })} onBlur={onSave} />
+                </label>
+              )}
 
-          {activeField.blockType === 'phone' && !activeFieldSystemPreset && (
-            <label className={styles.checkboxLabel}>
-              <input
-                type="checkbox"
-                checked={isPhoneCountrySelectorEnabled(activeField)}
-                onChange={(event) => {
-                  patchActiveFieldSettings({ phoneCountrySelectorEnabled: event.target.checked })
-                  window.setTimeout(onSave, 0)
-                }}
-              />
-              <span>Mostrar país y lada</span>
-            </label>
-          )}
+              {!activeFieldSystemPreset && (
+                <label className={styles.field}>
+                  <span>Nombre interno</span>
+                  <input
+                    value={getSettingString(activeFieldSettings, 'internalName')}
+                    onChange={(event) => patchActiveFieldSettings({ internalName: event.target.value })}
+                    onBlur={onSave}
+                  />
+                </label>
+              )}
 
-          <CustomFieldBindingControl
-            block={activeField}
-            customFields={customFields}
-            customFieldFolders={customFieldFolders}
-            onPatchSettings={patchActiveFieldSettings}
-            onCustomFieldCreated={onCustomFieldCreated}
-            onSave={onSave}
-            onPatchBlock={patchActiveField}
-          />
+              {activeFieldSystemPreset ? (
+                <label className={styles.checkboxLabel}>
+                  <input
+                    type="checkbox"
+                    checked={Boolean(activeField.required)}
+                    onChange={(event) => {
+                      patchActiveField({ required: event.target.checked })
+                      window.setTimeout(onSave, 0)
+                    }}
+                  />
+                  <span>Campo requerido</span>
+                </label>
+              ) : (
+                <div className={styles.twoColumn}>
+                  <label className={styles.field}>
+                    <span>Validación</span>
+                    <CustomSelect
+                      value={getSettingString(activeFieldSettings, 'validation')}
+                      onChange={(event) => patchActiveFieldSettings({ validation: event.target.value })}
+                      onBlur={onSave}
+                    >
+                      {fieldValidationOptions.map(option => <option key={option.value || 'none'} value={option.value}>{option.label}</option>)}
+                    </CustomSelect>
+                  </label>
+                  <label className={styles.checkboxLabel}>
+                    <input
+                      type="checkbox"
+                      checked={Boolean(activeField.required)}
+                      onChange={(event) => {
+                        patchActiveField({ required: event.target.checked })
+                        window.setTimeout(onSave, 0)
+                      }}
+                    />
+                    <span>Campo requerido</span>
+                  </label>
+                </div>
+              )}
 
-          {isChoiceBlock(activeField.blockType) && (
-            <OptionsRulesEditor
+              {activeField.blockType === 'phone' && !activeFieldSystemPreset && (
+                <label className={styles.checkboxLabel}>
+                  <input
+                    type="checkbox"
+                    checked={isPhoneCountrySelectorEnabled(activeField)}
+                    onChange={(event) => {
+                      patchActiveFieldSettings({ phoneCountrySelectorEnabled: event.target.checked })
+                      window.setTimeout(onSave, 0)
+                    }}
+                  />
+                  <span>Mostrar país y lada</span>
+                </label>
+              )}
+            </AccordionSection>
+
+            <CustomFieldBindingControl
               block={activeField}
-              blocks={ruleFieldBlocks}
-              pages={pages}
-              sitePages={sitePages}
-              activeSitePageId={activeSitePageId}
-              onPatchBlock={patchActiveField}
+              customFields={customFields}
+              customFieldFolders={customFieldFolders}
+              onPatchSettings={patchActiveFieldSettings}
+              onCustomFieldCreated={onCustomFieldCreated}
               onSave={onSave}
+              onPatchBlock={patchActiveField}
             />
-          )}
 
-        </>
-      )}
+            {isChoiceBlock(activeField.blockType) && (
+              <AccordionSection id="embedded-field-options" title="Opciones y reglas">
+                <OptionsRulesEditor
+                  block={activeField}
+                  blocks={ruleFieldBlocks}
+                  pages={pages}
+                  sitePages={sitePages}
+                  activeSitePageId={activeSitePageId}
+                  onPatchBlock={patchActiveField}
+                  onSave={onSave}
+                />
+              </AccordionSection>
+            )}
+          </>
+        )}
+      </AccordionGroup>
     </div>
   )
 
   const selectedSubmitContent = (
     <div className={styles.settingsGroup}>
-      <div className={styles.formFieldEditorHeader}>
-        <div>
-          <strong>Botón de envío</strong>
-          <small>Texto, navegación y acción final del formulario</small>
-        </div>
-      </div>
-      {activePage && (
-        <>
-          <label className={styles.field}>
-            <span>Texto en esta página</span>
-            <input
-              value={activePage.buttonText || ''}
-              placeholder={activePageButtonPlaceholder}
-              onChange={(event) => onPatchPage(activePage.id, { buttonText: event.target.value })}
-              onBlur={onSave}
-            />
-          </label>
-          <label className={styles.field}>
-            <span>Subtítulo en esta página</span>
-            <input
-              value={activePage.buttonSubtitle || ''}
-              placeholder={getFormPageActionSubtitle(site, pages, activePage.id) || 'Opcional'}
-              onChange={(event) => onPatchPage(activePage.id, { buttonSubtitle: event.target.value })}
-              onBlur={onSave}
-            />
-          </label>
-        </>
-      )}
-      <FormSubmitContentControls
-        site={site}
-        settings={settings}
-        embedded
-        showCompletionControls={false}
-        completionPages={sitePages}
-        activePageId={activeSitePageId}
-        onPatchTheme={onPatchTheme}
-        onPatchSettings={onPatchSettings}
-        onSaveSite={onSaveSite}
-        onSaveSettings={onSave}
-      />
+      <AccordionGroup>
+        <AccordionSection id="embedded-submit-page-copy" title="Texto del botón">
+          <div className={styles.formFieldEditorHeader}>
+            <div>
+              <strong>Botón de envío</strong>
+              <small>Texto, navegación y acción final del formulario</small>
+            </div>
+          </div>
+          {activePage && (
+            <>
+              <label className={styles.field}>
+                <span>Texto en esta página</span>
+                <input
+                  value={activePage.buttonText || ''}
+                  placeholder={activePageButtonPlaceholder}
+                  onChange={(event) => onPatchPage(activePage.id, { buttonText: event.target.value })}
+                  onBlur={onSave}
+                />
+              </label>
+              <label className={styles.field}>
+                <span>Subtítulo en esta página</span>
+                <input
+                  value={activePage.buttonSubtitle || ''}
+                  placeholder={getFormPageActionSubtitle(site, pages, activePage.id) || 'Opcional'}
+                  onChange={(event) => onPatchPage(activePage.id, { buttonSubtitle: event.target.value })}
+                  onBlur={onSave}
+                />
+              </label>
+            </>
+          )}
+        </AccordionSection>
+        <FormSubmitContentControls
+          site={site}
+          settings={settings}
+          embedded
+          showCompletionControls={false}
+          completionPages={sitePages}
+          activePageId={activeSitePageId}
+          onPatchTheme={onPatchTheme}
+          onPatchSettings={onPatchSettings}
+          onSaveSite={onSaveSite}
+          onSaveSettings={onSave}
+        />
+      </AccordionGroup>
     </div>
   )
 
@@ -34939,24 +34952,29 @@ const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
       {showBlockNameFirst && blockNameField}
       {showBlockNameFirst && editTypographyControls}
 
-      {contentField}
+      <AccordionSection id="edit-content" title="Contenido">
+        {contentField}
 
-      {block.blockType === 'hero' && (
-        <label className={styles.field}>
-          <span>Kicker</span>
-          <input value={getSettingString(settings, 'kicker')} onChange={(event) => onPatchSettings({ kicker: event.target.value })} onBlur={onSave} />
-        </label>
-      )}
+        {block.blockType === 'hero' && (
+          <label className={styles.field}>
+            <span>Kicker</span>
+            <input value={getSettingString(settings, 'kicker')} onChange={(event) => onPatchSettings({ kicker: event.target.value })} onBlur={onSave} />
+          </label>
+        )}
 
-      {(block.blockType === 'hero' || block.blockType === 'cta') && (
-        <label className={styles.field}>
-          <span>Subtítulo</span>
-          <textarea rows={2} value={getSettingString(settings, 'subtitle')} onChange={(event) => onPatchSettings({ subtitle: event.target.value })} onBlur={onSave} />
-        </label>
-      )}
+        {(block.blockType === 'hero' || block.blockType === 'cta') && (
+          <label className={styles.field}>
+            <span>Subtítulo</span>
+            <textarea rows={2} value={getSettingString(settings, 'subtitle')} onChange={(event) => onPatchSettings({ subtitle: event.target.value })} onBlur={onSave} />
+          </label>
+        )}
+
+        {!showBlockNameFirst && blockNameField}
+      </AccordionSection>
 
       {hasButtonCopy && (
-        <div className={styles.buttonEditStack}>
+        <AccordionSection id="edit-button" title="Botón">
+          <div className={styles.buttonEditStack}>
           <div className={styles.twoColumn}>
             <label className={styles.field}>
               <span>Texto del botón</span>
@@ -34977,27 +34995,33 @@ const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
             onPatchSettings={onPatchSettings}
             onSave={onSave}
           />
-        </div>
+          </div>
+        </AccordionSection>
       )}
 
-      {!showBlockNameFirst && blockNameField}
       {!showBlockNameFirst && editTypographyControls}
 
       {hasListCopy && (
-        <label className={styles.field}>
-          <span>Items (uno por línea: título | texto | autor)</span>
-          <textarea
-            rows={5}
-            value={stringifyItems(settings)}
-            onChange={(event) => onPatchSettings({ items: parseItems(event.target.value) })}
-            onBlur={onSave}
-          />
-        </label>
+        <AccordionSection id="edit-items" title="Items">
+          <label className={styles.field}>
+            <span>Items (uno por línea: título | texto | autor)</span>
+            <textarea
+              rows={5}
+              value={stringifyItems(settings)}
+              onChange={(event) => onPatchSettings({ items: parseItems(event.target.value) })}
+              onBlur={onSave}
+            />
+          </label>
+        </AccordionSection>
       )}
 
       {fieldEditControls}
 
-      {choiceEditControls}
+      {choiceEditControls && (
+        <AccordionSection id="edit-options" title="Opciones y reglas">
+          {choiceEditControls}
+        </AccordionSection>
+      )}
 
       {blockHasExtraSettingsContent && settingsContent}
     </AccordionGroup>
@@ -35884,38 +35908,40 @@ const VideoFormGateSettingsPanel: React.FC<{
 
   const selectedSubmitContent = (
     <div className={styles.videoFormGateQuestionEditor}>
-      <div className={styles.formFieldEditorHeader}>
-        <div>
-          <strong>Botón seleccionado</strong>
-          <small>Texto del avance y envío del formulario</small>
+      <AccordionSection id="vg-submit-copy" title="Texto del botón">
+        <div className={styles.formFieldEditorHeader}>
+          <div>
+            <strong>Botón seleccionado</strong>
+            <small>Texto del avance y envío del formulario</small>
+          </div>
         </div>
-      </div>
-      <label className={styles.field}>
-        <span>Botón final</span>
-        <input
-          value={getSettingString(settings, 'videoFormGateSubmitText') || VIDEO_FORM_GATE_DEFAULT_SUBMIT_TEXT}
-          onChange={(event) => patchButtonCopy({ videoFormGateSubmitText: event.target.value }, { submitText: event.target.value })}
-          onBlur={onSave}
-        />
-      </label>
-      <div className={styles.twoColumn}>
         <label className={styles.field}>
-          <span>Botón siguiente</span>
+          <span>Botón final</span>
           <input
-            value={getSettingString(settings, 'videoFormGateNextText') || VIDEO_FORM_GATE_DEFAULT_NEXT_TEXT}
-            onChange={(event) => patchButtonCopy({ videoFormGateNextText: event.target.value }, { nextText: event.target.value, continueText: event.target.value })}
+            value={getSettingString(settings, 'videoFormGateSubmitText') || VIDEO_FORM_GATE_DEFAULT_SUBMIT_TEXT}
+            onChange={(event) => patchButtonCopy({ videoFormGateSubmitText: event.target.value }, { submitText: event.target.value })}
             onBlur={onSave}
           />
         </label>
-        <label className={styles.field}>
-          <span>Botón anterior</span>
-          <input
-            value={getSettingString(settings, 'videoFormGateBackText') || VIDEO_FORM_GATE_DEFAULT_BACK_TEXT}
-            onChange={(event) => patchButtonCopy({ videoFormGateBackText: event.target.value }, { backText: event.target.value })}
-            onBlur={onSave}
-          />
-        </label>
-      </div>
+        <div className={styles.twoColumn}>
+          <label className={styles.field}>
+            <span>Botón siguiente</span>
+            <input
+              value={getSettingString(settings, 'videoFormGateNextText') || VIDEO_FORM_GATE_DEFAULT_NEXT_TEXT}
+              onChange={(event) => patchButtonCopy({ videoFormGateNextText: event.target.value }, { nextText: event.target.value, continueText: event.target.value })}
+              onBlur={onSave}
+            />
+          </label>
+          <label className={styles.field}>
+            <span>Botón anterior</span>
+            <input
+              value={getSettingString(settings, 'videoFormGateBackText') || VIDEO_FORM_GATE_DEFAULT_BACK_TEXT}
+              onChange={(event) => patchButtonCopy({ videoFormGateBackText: event.target.value }, { backText: event.target.value })}
+              onBlur={onSave}
+            />
+          </label>
+        </div>
+      </AccordionSection>
       {showDesignControls && (
         <FormSubmitGlobalStyleControls site={videoGateSite} onPatchTheme={patchVideoGateTheme} onSaveSite={onSave} />
       )}
@@ -36007,15 +36033,17 @@ const VideoFormGateSettingsPanel: React.FC<{
 
       {enabled && (
         <AccordionGroup>
-          <label className={styles.field}>
-            <span>Origen del formulario</span>
-            <CustomSelect value={selectedFormId} onChange={(event) => selectSourceForm(event.target.value)} onBlur={onSave}>
-              <option value="">Crear nuevo formulario</option>
-              {forms.filter(form => form.id !== site.id).map(form => (
-                <option key={form.id} value={form.id}>Usar formulario guardado: {form.name}</option>
-              ))}
-            </CustomSelect>
-          </label>
+          <AccordionSection id="vg-origen" title="Origen del formulario">
+            <label className={styles.field}>
+              <span>Formulario base</span>
+              <CustomSelect value={selectedFormId} onChange={(event) => selectSourceForm(event.target.value)} onBlur={onSave}>
+                <option value="">Crear nuevo formulario</option>
+                {forms.filter(form => form.id !== site.id).map(form => (
+                  <option key={form.id} value={form.id}>Usar formulario guardado: {form.name}</option>
+                ))}
+              </CustomSelect>
+            </label>
+          </AccordionSection>
 
           <AccordionSection id="vg-contenido" title="Contenido del formulario">
             {showTriggerControl && (
@@ -36290,79 +36318,87 @@ const VideoFormGateSettingsPanel: React.FC<{
             {(() => {
               const videoFormGateElementEditor = activeElement === 'submit' ? selectedSubmitContent : activeQuestion ? (
               <div className={styles.videoFormGateQuestionEditor}>
-                <div className={styles.formFieldEditorHeader}>
-                  <div>
-                    <strong>{activeQuestionIsField ? 'Pregunta seleccionada' : 'Elemento seleccionado'}</strong>
-                    <small>{blockLabels[activeQuestion.blockType] || 'Elemento'}</small>
+                <AccordionSection id="vg-element-content" title="Contenido">
+                  <div className={styles.formFieldEditorHeader}>
+                    <div>
+                      <strong>{activeQuestionIsField ? 'Pregunta seleccionada' : 'Elemento seleccionado'}</strong>
+                      <small>{blockLabels[activeQuestion.blockType] || 'Elemento'}</small>
+                    </div>
+                    <div className={styles.formFieldActions}>
+                      <button type="button" disabled={questions[0]?.id === activeQuestion.id} onClick={() => moveQuestion(activeQuestion.id, 'up')} aria-label="Subir elemento"><ArrowUp size={14} /></button>
+                      <button type="button" disabled={questions[questions.length - 1]?.id === activeQuestion.id} onClick={() => moveQuestion(activeQuestion.id, 'down')} aria-label="Bajar elemento"><ArrowDown size={14} /></button>
+                      <button type="button" onClick={() => removeQuestion(activeQuestion.id)} aria-label="Eliminar elemento"><Trash2 size={14} /></button>
+                    </div>
                   </div>
-                  <div className={styles.formFieldActions}>
-                    <button type="button" disabled={questions[0]?.id === activeQuestion.id} onClick={() => moveQuestion(activeQuestion.id, 'up')} aria-label="Subir elemento"><ArrowUp size={14} /></button>
-                    <button type="button" disabled={questions[questions.length - 1]?.id === activeQuestion.id} onClick={() => moveQuestion(activeQuestion.id, 'down')} aria-label="Bajar elemento"><ArrowDown size={14} /></button>
-                    <button type="button" onClick={() => removeQuestion(activeQuestion.id)} aria-label="Eliminar elemento"><Trash2 size={14} /></button>
-                  </div>
-                </div>
 
-                {!activeQuestionIsField ? renderActiveContentControls() : (
-                  <>
-                    <label className={styles.field}>
-                      <span>Pregunta visible</span>
-                      <input value={activeQuestion.label} onChange={(event) => patchQuestion(activeQuestion.id, { label: event.target.value })} onBlur={onSave} />
-                    </label>
-
-                    <label className={styles.field}>
-                      <span>Texto de ayuda</span>
-                      <textarea rows={2} value={activeQuestion.content} onChange={(event) => patchQuestion(activeQuestion.id, { content: event.target.value })} onBlur={onSave} />
-                    </label>
-
-                    {!activeQuestionPreset && (
-                      <div className={styles.twoColumn}>
-                        <label className={styles.field}>
-                          <span>Tipo de campo</span>
-                          <CustomSelect value={activeQuestion.blockType} onChange={(event) => changeQuestionType(event.target.value as SiteBlockType)} onBlur={onSave}>
-                            {videoFormGateFieldTypes.map(type => <option key={type} value={type}>{blockLabels[type]}</option>)}
-                          </CustomSelect>
-                        </label>
-                        <label className={styles.field}>
-                          <span>Validación</span>
-                          <CustomSelect value={getSettingString(activeQuestionSettings, 'validation')} onChange={(event) => patchQuestionSettings(activeQuestion, { validation: event.target.value })} onBlur={onSave}>
-                            {fieldValidationOptions.map(option => <option key={option.value || 'none'} value={option.value}>{option.label}</option>)}
-                          </CustomSelect>
-                        </label>
-                      </div>
-                    )}
-
-                    {!isChoiceBlock(activeQuestion.blockType) && (
+                  {!activeQuestionIsField ? renderActiveContentControls() : (
+                    <>
                       <label className={styles.field}>
-                        <span>Texto dentro del campo</span>
-                        <input value={activeQuestion.placeholder} onChange={(event) => patchQuestion(activeQuestion.id, { placeholder: event.target.value })} onBlur={onSave} />
+                        <span>Pregunta visible</span>
+                        <input value={activeQuestion.label} onChange={(event) => patchQuestion(activeQuestion.id, { label: event.target.value })} onBlur={onSave} />
                       </label>
-                    )}
 
-                    <label className={styles.checkboxLabel}>
-                      <input
-                        type="checkbox"
-                        checked={Boolean(activeQuestion.required)}
-                        onChange={(event) => {
-                          patchQuestion(activeQuestion.id, { required: event.target.checked })
-                          window.setTimeout(onSave, 0)
-                        }}
-                      />
-                      <span>Campo requerido</span>
-                    </label>
+                      <label className={styles.field}>
+                        <span>Texto de ayuda</span>
+                        <textarea rows={2} value={activeQuestion.content} onChange={(event) => patchQuestion(activeQuestion.id, { content: event.target.value })} onBlur={onSave} />
+                      </label>
+                    </>
+                  )}
+                </AccordionSection>
 
-                    {activeQuestion.blockType === 'phone' && !activeQuestionPreset && (
+                {activeQuestionIsField && (
+                  <>
+                    <AccordionSection id="vg-element-field" title="Campo">
+                      {!activeQuestionPreset && (
+                        <div className={styles.twoColumn}>
+                          <label className={styles.field}>
+                            <span>Tipo de campo</span>
+                            <CustomSelect value={activeQuestion.blockType} onChange={(event) => changeQuestionType(event.target.value as SiteBlockType)} onBlur={onSave}>
+                              {videoFormGateFieldTypes.map(type => <option key={type} value={type}>{blockLabels[type]}</option>)}
+                            </CustomSelect>
+                          </label>
+                          <label className={styles.field}>
+                            <span>Validación</span>
+                            <CustomSelect value={getSettingString(activeQuestionSettings, 'validation')} onChange={(event) => patchQuestionSettings(activeQuestion, { validation: event.target.value })} onBlur={onSave}>
+                              {fieldValidationOptions.map(option => <option key={option.value || 'none'} value={option.value}>{option.label}</option>)}
+                            </CustomSelect>
+                          </label>
+                        </div>
+                      )}
+
+                      {!isChoiceBlock(activeQuestion.blockType) && (
+                        <label className={styles.field}>
+                          <span>Texto dentro del campo</span>
+                          <input value={activeQuestion.placeholder} onChange={(event) => patchQuestion(activeQuestion.id, { placeholder: event.target.value })} onBlur={onSave} />
+                        </label>
+                      )}
+
                       <label className={styles.checkboxLabel}>
                         <input
                           type="checkbox"
-                          checked={isPhoneCountrySelectorEnabled(activeQuestion)}
+                          checked={Boolean(activeQuestion.required)}
                           onChange={(event) => {
-                            patchQuestionSettings(activeQuestion, { phoneCountrySelectorEnabled: event.target.checked })
+                            patchQuestion(activeQuestion.id, { required: event.target.checked })
                             window.setTimeout(onSave, 0)
                           }}
                         />
-                        <span>Mostrar país y lada</span>
+                        <span>Campo requerido</span>
                       </label>
-                    )}
+
+                      {activeQuestion.blockType === 'phone' && !activeQuestionPreset && (
+                        <label className={styles.checkboxLabel}>
+                          <input
+                            type="checkbox"
+                            checked={isPhoneCountrySelectorEnabled(activeQuestion)}
+                            onChange={(event) => {
+                              patchQuestionSettings(activeQuestion, { phoneCountrySelectorEnabled: event.target.checked })
+                              window.setTimeout(onSave, 0)
+                            }}
+                          />
+                          <span>Mostrar país y lada</span>
+                        </label>
+                      )}
+                    </AccordionSection>
 
                     <CustomFieldBindingControl
                       block={activeQuestion}
@@ -36375,15 +36411,17 @@ const VideoFormGateSettingsPanel: React.FC<{
                     />
 
                     {isChoiceBlock(activeQuestion.blockType) && (
-                      <OptionsRulesEditor
-                        block={activeQuestion}
-                        blocks={questions.filter(item => fieldBlockTypes.has(item.blockType))}
-                        pages={questionPages}
-                        sitePages={pages}
-                        activeSitePageId={activePageId}
-                        onPatchBlock={(patch) => patchQuestion(activeQuestion.id, patch)}
-                        onSave={onSave}
-                      />
+                      <AccordionSection id="vg-element-options" title="Opciones y reglas">
+                        <OptionsRulesEditor
+                          block={activeQuestion}
+                          blocks={questions.filter(item => fieldBlockTypes.has(item.blockType))}
+                          pages={questionPages}
+                          sitePages={pages}
+                          activeSitePageId={activePageId}
+                          onPatchBlock={(patch) => patchQuestion(activeQuestion.id, patch)}
+                          onSave={onSave}
+                        />
+                      </AccordionSection>
                     )}
                   </>
                 )}
