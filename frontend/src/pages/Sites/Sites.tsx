@@ -6477,6 +6477,33 @@ const getEditableEmbeddedFormBlocks = (block: SiteBlock, forms: PublicSite[]): S
   return embeddedBlocks
 }
 
+const hasConfiguredFormEmbedBlock = (block?: SiteBlock | null) => {
+  if (block?.blockType !== 'form_embed') return false
+  const settings = block.settings || {}
+  return Boolean(getEmbeddedFormSourceId(block)) ||
+    Array.isArray(settings.embeddedBlocks) ||
+    Array.isArray(settings.embeddedPages)
+}
+
+const hasImportedFormSubmitSurface = (importData?: ImportedSiteImport | null) => {
+  if (!importData) return false
+  if (Array.isArray(importData.detectedForms) && importData.detectedForms.length > 0) return true
+  return Array.isArray(importData.formMappings) && importData.formMappings.some(mapping => (
+    Array.isArray(mapping.fields) && mapping.fields.some(field => field.destinationType !== 'ignored' && field.ignored !== true)
+  ))
+}
+
+const hasFormSubmitMetaSurface = (
+  site?: PublicSite | null,
+  blocks: SiteBlock[] = [],
+  importData?: ImportedSiteImport | null
+) => {
+  if (isFormSite(site)) return true
+  if (!isLanding(site)) return false
+  if (blocks.some(hasConfiguredFormEmbedBlock)) return true
+  return isImportedHtmlSite(site) && hasImportedFormSubmitSurface(importData)
+}
+
 const getVideoFormGateSourceId = (block?: SiteBlock | null) => (
   getSettingString(block?.settings || {}, 'videoFormGateFormSiteId') ||
   getSettingString(block?.settings || {}, 'video_form_gate_form_site_id')
@@ -7910,6 +7937,12 @@ export const Sites: React.FC = () => {
   )
   const librarySettingsActivePage = librarySettingsPages[0] || null
   const librarySettingsSeoIssues = librarySettingsSite ? getSeoValidationState(librarySettingsSite).totalIssues : 0
+  const librarySettingsImportData = selectedImportData?.siteId === librarySettingsSite?.id ? selectedImportData : null
+  const librarySettingsHasFormSubmitMetaSettings = hasFormSubmitMetaSurface(
+    librarySettingsSite,
+    librarySettingsSite?.blocks || [],
+    librarySettingsImportData
+  )
   const canvasBlocks = useMemo(
     () => hasEditablePages(selectedSite) && activePage
       ? blocks.filter(block => !isPopupBlock(block) && (isGlobalHeaderBlock(block) || getBlockPageId(block, pages) === activePage.id))
@@ -12239,6 +12272,8 @@ export const Sites: React.FC = () => {
   const editorToolbarSettingsPages = pages
   const editorToolbarSettingsActivePage = activePage
   const editorToolbarSettingsSeoIssues = editorToolbarSettingsSite ? getSeoValidationState(editorToolbarSettingsSite).totalIssues : 0
+  const editorToolbarImportData = selectedImportData?.siteId === editorToolbarSettingsSite?.id ? selectedImportData : null
+  const editorToolbarHasFormSubmitMetaSettings = hasFormSubmitMetaSurface(editorToolbarSettingsSite, blocks, editorToolbarImportData)
   const patchEditorToolbarSettingsSite = updateSelectedSite
   const patchEditorToolbarSettingsTheme = patchSiteTheme
   const saveEditorToolbarSettingsSite = () => handleSaveSite(undefined, { silent: true })
@@ -12383,6 +12418,7 @@ export const Sites: React.FC = () => {
                         domainConfig={domainConfig}
                         seoIssues={editorToolbarSettingsSeoIssues}
                         metaPixelConnected={metaPixelConnected}
+                        hasFormSubmitMetaSettings={editorToolbarHasFormSubmitMetaSettings}
                         disabled={editorAIGenerating}
                         canEditHeader={hasEditablePages(editorToolbarSettingsSite)}
                         routeValue={getRouteEditorValue(editorToolbarSettingsSite)}
@@ -12517,6 +12553,7 @@ export const Sites: React.FC = () => {
                   domainConfig={domainConfig}
                   seoIssues={librarySettingsSeoIssues}
                   metaPixelConnected={metaPixelConnected}
+                  hasFormSubmitMetaSettings={librarySettingsHasFormSubmitMetaSettings}
                   disabled={librarySettingsLoading}
                   canEditHeader={hasEditablePages(librarySettingsSite)}
                   routeValue={getRouteEditorValue(librarySettingsSite)}
@@ -26450,6 +26487,7 @@ const SiteSettingsPanelContent: React.FC<{
   domainConfig: SitesDomainConfig
   seoIssues: number
   metaPixelConnected: boolean
+  hasFormSubmitMetaSettings?: boolean
   disabled?: boolean
   canEditHeader: boolean
   routeValue: string
@@ -26469,6 +26507,7 @@ const SiteSettingsPanelContent: React.FC<{
   domainConfig,
   seoIssues,
   metaPixelConnected,
+  hasFormSubmitMetaSettings,
   disabled,
   pageHasCalendar,
   canEditHeader,
@@ -26485,6 +26524,7 @@ const SiteSettingsPanelContent: React.FC<{
   const publicDomain = getPublicDomainPreview(domainConfig)
   const routePreview = `${publicDomain}/${routeValue || routePlaceholder}`
   const antiTrackingEnabled = site.antiTrackingEnabled !== false
+  const showFormSubmitMetaSettings = hasFormSubmitMetaSettings ?? isFormSite(site)
 
   const openNestedPanel = (callback: () => void) => {
     onBeforeOpenNested?.()
@@ -26584,7 +26624,7 @@ const SiteSettingsPanelContent: React.FC<{
         </section>
       )}
 
-      {metaPixelConnected && isFormSite(site) && (
+      {metaPixelConnected && showFormSubmitMetaSettings && (
         <section className={styles.editorSettingsSection}>
           <MetaFormSubmitSettingsPanel
             site={site}
@@ -26619,6 +26659,7 @@ const EditorSettingsDropdown: React.FC<{
   domainConfig: SitesDomainConfig
   seoIssues: number
   metaPixelConnected: boolean
+  hasFormSubmitMetaSettings?: boolean
   disabled?: boolean
   canEditHeader: boolean
   routeValue: string
