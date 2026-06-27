@@ -1768,13 +1768,18 @@ function renderCalendarBookingForm(bookingForm = {}) {
     : [{ id: CALENDAR_DEFAULT_PAGE_ID, title: 'Tus datos', sortOrder: 0 }]
   const fields = Array.isArray(bookingForm.fields) ? bookingForm.fields : []
   const hasPages = pages.length > 1
+  const isCustom = bookingForm.mode === 'custom'
+  const showHeader = !isCustom || hasPages
+  const headerHtml = showHeader
+    ? `<div class="formHeader" data-form-header="${isCustom ? 'minimal' : 'full'}">
+        ${isCustom ? '' : `<h2>${escapeHtml(bookingForm.formName || 'Tus datos')}</h2>`}
+        ${hasPages ? `<p data-form-progress>Pantalla 1 de ${pages.length}</p>` : ''}
+      </div>`
+    : ''
 
   return `
     <form data-form data-form-mode="${escapeHtml(bookingForm.mode || 'default')}">
-      <div class="formHeader">
-        <h2>${bookingForm.mode === 'custom' ? escapeHtml(bookingForm.formName || 'Tus datos') : 'Tus datos'}</h2>
-        ${hasPages ? `<p data-form-progress>Pantalla 1 de ${pages.length}</p>` : ''}
-      </div>
+      ${headerHtml}
       ${pages.map((page, index) => {
         const pageFields = fields.filter(field => field.pageId === page.id)
         const pageQuestions = pageFields.length
@@ -2094,10 +2099,15 @@ export function renderPublicCalendarHtml(calendar, { host = '', embedded = false
     .shell.layout-stacked .timesPane{grid-template-rows:auto auto}
     .shell.layout-stacked .slotList{grid-template-columns:repeat(auto-fit,minmax(132px,1fr));max-height:none}
     .shell.bookingActive{grid-template-columns:340px minmax(320px,520px);justify-content:center}
+    .shell.formGate{grid-template-columns:340px minmax(360px,620px)}
+    .shell.noIntro.formGate{grid-template-columns:minmax(320px,620px)}
     .shell.layout-compact.bookingActive{grid-template-columns:minmax(320px,520px)}
+    .shell.layout-compact.formGate{grid-template-columns:minmax(320px,620px)}
     .shell.layout-stacked.bookingActive{grid-template-columns:1fr}
+    .shell.layout-stacked.formGate{grid-template-columns:1fr}
     .shell.bookingActive .calendarPane{display:none}
     .shell.bookingActive .timesPane{border-left:1px solid var(--line);max-width:520px;width:100%}
+    .shell.formGate .timesPane{max-width:620px;padding:clamp(26px,3.4vw,40px) clamp(26px,3.2vw,44px);gap:14px}
     .shell.layout-compact.bookingActive .intro,.shell.layout-compact.bookingActive .timesPane,.shell.layout-stacked.bookingActive .timesPane{border-left:0}
     .shell.bookingActive .slotList{display:none}
     .intro{position:relative;padding:clamp(28px,3vw,40px) clamp(26px,2.6vw,36px);border-right:1px solid var(--line);display:grid;align-content:start;gap:18px}
@@ -2156,6 +2166,8 @@ export function renderPublicCalendarHtml(calendar, { host = '', embedded = false
     .formHeader{display:grid;gap:5px;margin-bottom:2px}
     .formHeader h2{margin:0}
     .formHeader p{font-size:.86rem;font-weight:450}
+    .formHeader[data-form-header="minimal"]{margin-bottom:-2px}
+    .formHeader[data-form-header="minimal"] p{font-size:.82rem;color:var(--muted)}
     .formPage{display:grid;gap:16px}
     .formPage[hidden]{display:none}
     .formPage h3{font-size:.95rem}
@@ -2166,8 +2178,8 @@ export function renderPublicCalendarHtml(calendar, { host = '', embedded = false
     .calContentText{margin:0;color:var(--ink);font-size:.92rem;line-height:1.6;white-space:pre-line}
     .calContentImage{margin:0}
     .calContentImage img{display:block;width:100%;height:auto;border-radius:var(--field-radius);border:1px solid var(--line)}
-    .calContentVideo{position:relative;width:100%;border-radius:var(--field-radius);overflow:hidden;background:#000;border:1px solid var(--line)}
-    .calContentVideo video{display:block;width:100%;height:auto}
+    .calContentVideo{position:relative;width:100%;display:grid;place-items:center;border-radius:var(--field-radius);overflow:hidden;background:color-mix(in srgb,var(--heading) 92%,var(--surface));border:1px solid var(--line)}
+    .calContentVideo video{display:block;width:auto;max-width:100%;height:auto;max-height:min(52vh,560px);object-fit:contain}
     .calContentVideoEmbed{aspect-ratio:16/9}
     .calContentVideoEmbed iframe{position:absolute;inset:0;width:100%;height:100%;border:0}
     .fieldHelp,.fieldError{margin:0;font-size:.82rem;line-height:1.4}
@@ -2202,7 +2214,10 @@ export function renderPublicCalendarHtml(calendar, { host = '', embedded = false
     .shell.bookingDisqualified .intro,.shell.bookingDisqualified .calendarPane,.shell.bookingDisqualified .timesPane{display:none}
     .shell.bookingDisqualified .successPane{display:flex}
     .shell.bookingDisqualified .successIcon{background:var(--control-bg);color:var(--muted)}
-    .shell.formGate .changeSlot{display:none}
+    .shell.formGate .selectedDate,.shell.formGate .changeSlot{display:none}
+    .shell.formGate form{border-top:0;padding-top:0;gap:14px}
+    .shell.formGate .formPage{gap:12px}
+    .shell.formGate .calContentVideo video{max-height:min(48vh,520px)}
     .shell.formCompleted .formHeader,.shell.formCompleted .formPage,.shell.formCompleted [data-form-next],.shell.formCompleted [data-form-back]{display:none}
     .successCard{max-width:480px;display:flex;flex-direction:column;align-items:center;gap:18px}
     .successCard .successIcon{width:74px;height:74px;border-radius:999px;display:grid;place-items:center;background:var(--accent-soft);color:var(--accent)}

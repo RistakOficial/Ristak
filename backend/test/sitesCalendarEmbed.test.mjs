@@ -288,6 +288,16 @@ test('public calendar custom multipage booking form renders as real steps', () =
           sortOrder: 0
         },
         {
+          id: 'intro-video',
+          blockType: 'video',
+          isContent: true,
+          label: '',
+          content: '',
+          settings: { mediaUrl: '/media/vertical-intro.mp4' },
+          pageId: 'screen-1',
+          sortOrder: 1
+        },
+        {
           id: 'email',
           blockType: 'email',
           label: 'Correo',
@@ -303,9 +313,16 @@ test('public calendar custom multipage booking form renders as real steps', () =
   })
 
   assert.match(html, /\.formPage\[hidden\]\{display:none\}/)
+  assert.match(html, /\.shell\.formGate \.selectedDate,\.shell\.formGate \.changeSlot\{display:none\}/)
+  assert.match(html, /\.shell\.formGate form\{border-top:0;padding-top:0;gap:14px\}/)
+  assert.match(html, /\.calContentVideo video\{display:block;width:auto;max-width:100%;height:auto;max-height:min\(52vh,560px\);object-fit:contain\}/)
+  assert.match(html, /\.shell\.formGate \.calContentVideo video\{max-height:min\(48vh,520px\)\}/)
+  assert.match(html, /<div class="formHeader" data-form-header="minimal">/)
   assert.match(html, /data-form-progress>Pantalla 1 de 2<\/p>/)
+  assert.doesNotMatch(html, /<h2>Solicitud<\/h2>/)
   assert.match(html, /<div class="formPage" data-form-page="screen-1">/)
   assert.match(html, /<div class="formPage" data-form-page="screen-2" hidden>/)
+  assert.match(html, /<div class="calContentVideo"><video src="\/media\/vertical-intro\.mp4" controls playsinline preload="metadata"><\/video><\/div>/)
   assert.match(html, /<button class="submit" type="button" data-form-next>Siguiente<\/button>/)
   assert.match(html, /<button class="submit" type="submit" hidden disabled data-submit>Selecciona un horario<\/button>/)
   assert.match(html, /const validateAllPages = \(\) => validatePagesThrough\(formPages\.length - 1\);/)
