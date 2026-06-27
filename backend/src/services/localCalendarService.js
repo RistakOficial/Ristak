@@ -2883,13 +2883,12 @@ export function renderPublicCalendarHtml(calendar, { host = '', embedded = false
       const initContactPrefill = async () => {
         const stored = readStoredContact();
         applyContactPrefill(stored);
-        if (!stored.contactId) return;
+        if (!stored.contactId && !stored.visitorId && !stored.sessionId) return;
 
-        const params = new URLSearchParams({
-          contactId: stored.contactId,
-          visitorId: stored.visitorId || '',
-          sessionId: stored.sessionId || ''
-        });
+        const params = new URLSearchParams();
+        if (stored.contactId) params.set('contactId', stored.contactId);
+        if (stored.visitorId) params.set('visitorId', stored.visitorId);
+        if (stored.sessionId) params.set('sessionId', stored.sessionId);
 
         try {
           const response = await fetch('/api/calendars/public/' + encodeURIComponent(calendar.slug) + '/contact-prefill?' + params.toString(), {

@@ -33,6 +33,7 @@ import {
   reorderBlocks,
   resolveConnectedAppDomainForHost,
   resolvePublicCalendarHostForHost,
+  resolvePublicPrefillContact,
   resolvePublicSiteForHost,
   restoreBlocks,
   setSitesPublicDefaultRoute,
@@ -779,6 +780,21 @@ export async function submitPublicSiteHandler(req, res) {
   } catch (error) {
     logger.warn(`Submit público rechazado: ${error.message}`)
     sendError(res, error, 'No se pudo enviar el formulario')
+  }
+}
+
+export async function publicSiteContactPrefillHandler(req, res) {
+  try {
+    const contact = await resolvePublicPrefillContact({
+      contactId: req.query?.contactId || req.query?.contact_id,
+      visitorId: req.query?.visitorId || req.query?.visitor_id,
+      sessionId: req.query?.sessionId || req.query?.session_id
+    })
+
+    res.status(200).json({ success: true, data: contact })
+  } catch (error) {
+    logger.warn(`Prefill publico de Sites rechazado: ${error.message}`)
+    sendError(res, error, 'No se pudo autollenar el contacto')
   }
 }
 

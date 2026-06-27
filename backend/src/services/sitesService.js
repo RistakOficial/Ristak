@@ -12721,9 +12721,10 @@ function hasVideoFormGates(blocks = []) {
 function renderVideoFormGateFieldBlock(block, context = {}) {
   const label = escapeHtml(block.label || 'Pregunta')
   const required = block.required ? '<span class="rstk-required">*</span>' : ''
+  const systemFieldKey = getNativeSystemFieldKey(block)
 
   return `
-    <section class="rstk-video-form-field" data-rstk-video-form-item data-rstk-video-form-field data-block-id="${escapeHtml(block.id)}" data-required="${block.required ? 'true' : 'false'}" data-field-type="${escapeHtml(block.blockType)}" data-validation="${escapeHtml(getNativeFieldValidation(block))}">
+    <section class="rstk-video-form-field" data-rstk-video-form-item data-rstk-video-form-field data-block-id="${escapeHtml(block.id)}" data-system-field-key="${escapeHtml(systemFieldKey)}" data-required="${block.required ? 'true' : 'false'}" data-field-type="${escapeHtml(block.blockType)}" data-validation="${escapeHtml(getNativeFieldValidation(block))}">
       <label for="${escapeHtml(block.id)}">${label}${required}</label>
       ${block.content ? `<p class="rstk-help">${escapeHtml(block.content)}</p>` : ''}
       ${renderFieldInput(block, context)}
@@ -13236,6 +13237,16 @@ function buildVideoFormGateRuntimeScript(blocks = []) {
             if (button) button.disabled = Boolean(disabled);
           });
         };
+        const initGateContactPrefill = () => {
+          const apply = () => {
+            if (window.ristakNativeInitContactPrefill) {
+              window.ristakNativeInitContactPrefill(gate).then(() => refreshGateLayout && refreshGateLayout()).catch(() => {});
+            }
+          };
+          apply();
+          window.setTimeout(apply, 0);
+          window.addEventListener('ristak:native-ready', apply, { once: true });
+        };
         const resetGateFit = () => {
           state.fitExpanded = false;
           host.classList.remove('rstk-video-form-gate-fit-expanded', 'rstk-video-form-gate-fit-wide');
@@ -13430,6 +13441,7 @@ function buildVideoFormGateRuntimeScript(blocks = []) {
           const targetUrl = getRuleRedirectUrl(rule);
           if (targetUrl) window.location.href = targetUrl;
         };
+        initGateContactPrefill();
         const storedCompletion = readStoredGateCompletion(gate);
         if (storedCompletion) applyCompletionAction(storedCompletion, { remembered: true });
           const submitGate = async (rule = null, options = {}) => {
@@ -15402,16 +15414,177 @@ function buildNativeSiteTrackingScript(context) {
         return data.session_id;
       };
 
+      const cleanContactText = (value) => {
+        const text = String(value || '').trim();
+        return text.length > 240 ? text.slice(0, 240) : text;
+      };
+
+      const readSavedContact = () => {
+        const local = readJson(localStorage, 'ristak');
+        const session = readJson(sessionStorage, 'ristak');
+        const visitorId = normalizeIdentityValue(local.visitor_id || local.visitorId) || getVisitorId();
+        const sessionId = normalizeIdentityValue(session.session_id || session.sessionId) || getSessionId();
+        const fullName = cleanContactText(local.contact_name || local.contactName || local.fullName || local.name);
+        return {
+          contactId: cleanContactText(local.contact_id || local.contactId),
+          name: fullName,
+          fullName,
+          firstName: cleanContactText(local.contact_first_name || local.contactFirstName || local.firstName),
+          lastName: cleanContactText(local.contact_last_name || local.contactLastName || local.lastName),
+          email: cleanContactText(local.contact_email || local.contactEmail || local.email),
+          phone: cleanContactText(local.contact_phone || local.contactPhone || local.phone),
+          visitorId,
+          sessionId
+        };
+      };
+
+      let contactPrefillPromise = null;
       const rememberContact = (contact) => {
         if (!contact || !contact.contactId) return;
         const data = readJson(localStorage, 'ristak');
         const sameContact = data.contact_id === contact.contactId;
+        const fullName = cleanContactText(contact.fullName || contact.name || contact.full_name);
         data.contact_id = contact.contactId;
-        data.contact_email = contact.email || (sameContact ? data.contact_email : null) || null;
-        data.contact_name = contact.fullName || (sameContact ? data.contact_name : null) || null;
-        data.contact_phone = contact.phone || (sameContact ? data.contact_phone : null) || null;
+        data.contact_email = cleanContactText(contact.email) || (sameContact ? data.contact_email : null) || null;
+        data.contact_name = fullName || (sameContact ? data.contact_name : null) || null;
+        data.contact_first_name = cleanContactText(contact.firstName || contact.first_name) || (sameContact ? data.contact_first_name : null) || null;
+        data.contact_last_name = cleanContactText(contact.lastName || contact.last_name) || (sameContact ? data.contact_last_name : null) || null;
+        data.contact_phone = cleanContactText(contact.phone) || (sameContact ? data.contact_phone : null) || null;
         data.contact_synced_at = new Date().toISOString();
         writeJson(localStorage, 'ristak', data);
+        contactPrefillPromise = null;
+      };
+
+      const loadContactPrefill = () => {
+        if (contactPrefillPromise) return contactPrefillPromise;
+        const stored = readSavedContact();
+        if (!stored.contactId && !stored.visitorId && !stored.sessionId) {
+          contactPrefillPromise = Promise.resolve(stored);
+          return contactPrefillPromise;
+        }
+        const params = new URLSearchParams();
+        if (stored.contactId) params.set('contactId', stored.contactId);
+        if (stored.visitorId) params.set('visitorId', stored.visitorId);
+        if (stored.sessionId) params.set('sessionId', stored.sessionId);
+        contactPrefillPromise = fetch('/api/sites/public/contact-prefill?' + params.toString(), {
+          headers: { 'Accept': 'application/json' },
+          cache: 'no-store'
+        })
+          .then(response => response.json().catch(() => ({})).then(payload => ({ response, payload })))
+          .then(({ response, payload }) => {
+            if (!response.ok || payload.success === false || !payload.data) return stored;
+            rememberContact(payload.data);
+            return Object.assign({}, stored, payload.data);
+          })
+          .catch(() => stored);
+        return contactPrefillPromise;
+      };
+
+      const labelTextFor = (field, input) => {
+        const explicitLabel = field && field.querySelector ? field.querySelector('label') : null;
+        if (explicitLabel) return explicitLabel.textContent || '';
+        const id = input && input.getAttribute ? input.getAttribute('id') : '';
+        if (!id) return '';
+        try {
+          const label = document.querySelector('label[for="' + id.replace(/["\\\\]/g, '\\\\$&') + '"]');
+          return label ? label.textContent || '' : '';
+        } catch (_) {
+          return '';
+        }
+      };
+
+      const getContactPrefillKey = (target) => {
+        if (!target) return '';
+        const field = target.matches && (target.matches('.rstk-field, [data-rstk-video-form-field], .calendarQuestion'))
+          ? target
+          : target.closest ? target.closest('.rstk-field, [data-rstk-video-form-field], .calendarQuestion') : null;
+        const input = field && field.querySelector
+          ? field.querySelector('input:not([type="radio"]):not([type="checkbox"]):not([type="hidden"]), textarea, select')
+          : target;
+        const haystack = [
+          field ? field.getAttribute('data-system-field-key') : '',
+          field ? field.getAttribute('data-block-id') : '',
+          field ? field.getAttribute('data-field-type') : '',
+          field ? field.getAttribute('data-validation') : '',
+          input && input.getAttribute ? input.getAttribute('data-rstk-field') : '',
+          input && input.getAttribute ? input.getAttribute('data-ristak-field') : '',
+          input && input.getAttribute ? input.getAttribute('data-ristack-field') : '',
+          input && input.getAttribute ? input.getAttribute('name') : '',
+          input && input.getAttribute ? input.getAttribute('id') : '',
+          input && input.getAttribute ? input.getAttribute('type') : '',
+          input && input.getAttribute ? input.getAttribute('autocomplete') : '',
+          input && input.getAttribute ? input.getAttribute('placeholder') : '',
+          input && input.getAttribute ? input.getAttribute('aria-label') : '',
+          labelTextFor(field, input)
+        ].map(value => String(value || '').toLowerCase()).join(' ');
+
+        if (haystack.includes('first_name') || haystack.includes('first-name') || haystack.includes('given-name') || haystack.includes('primer nombre')) return 'firstName';
+        if (haystack.includes('last_name') || haystack.includes('last-name') || haystack.includes('family-name') || haystack.includes('apellido')) return 'lastName';
+        if (haystack.includes('email') || haystack.includes('correo') || haystack.includes('mail')) return 'email';
+        if (haystack.includes('phone') || haystack.includes('teléfono') || haystack.includes('telefono') || haystack.includes('celular') || haystack.includes('whatsapp') || haystack.includes('tel ')) return 'phone';
+        if (haystack.includes('full_name') || haystack.includes('full-name') || haystack.includes('full name') || haystack.includes('nombre completo') || haystack.includes('nombre') || haystack.includes('name')) return 'name';
+        return '';
+      };
+
+      const setContactPrefillValue = (target, value) => {
+        const text = cleanContactText(value);
+        if (!target || !text) return false;
+        const field = target.matches && (target.matches('.rstk-field, [data-rstk-video-form-field], .calendarQuestion'))
+          ? target
+          : target.closest ? target.closest('.rstk-field, [data-rstk-video-form-field], .calendarQuestion') : null;
+        const fieldType = field ? field.getAttribute('data-field-type') || '' : '';
+        const input = field
+          ? (fieldType === 'phone'
+            ? field.querySelector('[data-phone-number-input]') || field.querySelector('input[type="tel"], input')
+            : field.querySelector('input:not([type="radio"]):not([type="checkbox"]):not([type="hidden"]), textarea'))
+          : target;
+        if (!input || !('value' in input) || String(input.value || '').trim()) return false;
+        const inputType = String(input.type || '').toLowerCase();
+        if (['radio', 'checkbox', 'hidden', 'file', 'submit', 'button', 'reset', 'image'].includes(inputType)) return false;
+        input.value = fieldType === 'phone' ? text.replace(/^\\+/, '') : text;
+        input.dispatchEvent(new Event('input', { bubbles: true }));
+        input.dispatchEvent(new Event('change', { bubbles: true }));
+        return true;
+      };
+
+      const collectPrefillTargets = (root) => {
+        const scope = root && root.querySelectorAll ? root : document;
+        const targets = [];
+        const add = (element) => {
+          if (element && targets.indexOf(element) === -1) targets.push(element);
+        };
+        if (scope.matches && scope.matches('.rstk-field, [data-rstk-video-form-field], .calendarQuestion')) add(scope);
+        scope.querySelectorAll('.rstk-field, [data-rstk-video-form-field], .calendarQuestion').forEach(add);
+        if (scope.matches && scope.matches('input, textarea, select')) add(scope);
+        scope.querySelectorAll('input, textarea, select').forEach((input) => {
+          if (input.closest('.rstk-field, [data-rstk-video-form-field], .calendarQuestion')) return;
+          add(input);
+        });
+        return targets;
+      };
+
+      const applyContactPrefill = (root, contact) => {
+        if (!contact) return false;
+        const normalized = {
+          name: cleanContactText(contact.name || contact.fullName || contact.full_name),
+          firstName: cleanContactText(contact.firstName || contact.first_name),
+          lastName: cleanContactText(contact.lastName || contact.last_name),
+          email: cleanContactText(contact.email),
+          phone: cleanContactText(contact.phone)
+        };
+        let changed = false;
+        collectPrefillTargets(root).forEach((target) => {
+          const key = getContactPrefillKey(target);
+          if (!key || !normalized[key]) return;
+          changed = setContactPrefillValue(target, normalized[key]) || changed;
+        });
+        return changed;
+      };
+
+      const initContactPrefill = (root) => {
+        const scope = root && root.querySelectorAll ? root : document;
+        applyContactPrefill(scope, readSavedContact());
+        return loadContactPrefill().then(contact => applyContactPrefill(scope, contact));
       };
 
       const getSavedContactId = () => {
@@ -15566,7 +15739,12 @@ function buildNativeSiteTrackingScript(context) {
       window.ristakNativeIdentity = () => ({ visitorId: getVisitorId(), sessionId: getSessionId(), contactId: getSavedContactId() });
       window.ristakNativeBuildData = buildTrackingData;
       window.ristakNativeRememberContact = rememberContact;
+      window.ristakNativeSavedContact = readSavedContact;
+      window.ristakNativeLoadContactPrefill = loadContactPrefill;
+      window.ristakNativeApplyContactPrefill = applyContactPrefill;
+      window.ristakNativeInitContactPrefill = initContactPrefill;
       window.ristakNativeTrack = sendEvent;
+      try { window.dispatchEvent(new CustomEvent('ristak:native-ready')); } catch (_) {}
 
       initMetaParamBuilder();
       const emitView = () => sendEvent('native_site_view');
@@ -17974,9 +18152,10 @@ function renderFieldInput(block, context = {}) {
 function renderFieldBlock(block, _interactive = false, pageId = '', context = {}) {
   const label = escapeHtml(block.label || 'Pregunta')
   const required = block.required ? '<span class="rstk-required">*</span>' : ''
+  const systemFieldKey = getNativeSystemFieldKey(block)
 
   return `
-    <section class="rstk-field${getFieldOwnStyleClass(block)}" data-block-id="${escapeHtml(block.id)}" data-page-id="${escapeHtml(pageId)}" data-required="${block.required ? 'true' : 'false'}" data-field-type="${escapeHtml(block.blockType)}" data-validation="${escapeHtml(getNativeFieldValidation(block))}">
+    <section class="rstk-field${getFieldOwnStyleClass(block)}" data-block-id="${escapeHtml(block.id)}" data-page-id="${escapeHtml(pageId)}" data-system-field-key="${escapeHtml(systemFieldKey)}" data-required="${block.required ? 'true' : 'false'}" data-field-type="${escapeHtml(block.blockType)}" data-validation="${escapeHtml(getNativeFieldValidation(block))}">
       <label for="${escapeHtml(block.id)}">${label}${required}</label>
       ${block.content ? `<p class="rstk-help">${escapeHtml(block.content)}</p>` : ''}
       ${renderFieldInput(block, context)}
@@ -20003,7 +20182,20 @@ function buildImportedFormCaptureScript(site, imported, { pageId = DEFAULT_FUNNE
         setMessage(form, text || 'Gracias. Por ahora no califica.', 'success');
       };
 
-      Array.from(document.querySelectorAll('form')).forEach((form, index) => {
+      const importedForms = Array.from(document.querySelectorAll('form'));
+      const initImportedContactPrefill = () => {
+        const apply = () => {
+          if (!window.ristakNativeInitContactPrefill) return;
+          importedForms.forEach(form => window.ristakNativeInitContactPrefill(form));
+        };
+        apply();
+        window.setTimeout(apply, 0);
+        window.addEventListener('ristak:native-ready', apply, { once: true });
+      };
+
+      initImportedContactPrefill();
+
+      importedForms.forEach((form, index) => {
         form.setAttribute('data-rstk-import-form', 'true');
         // Al elegir una opción que descalifica solo mostramos un aviso debajo del
         // campo; la descalificación real ocurre al enviar, no al elegir.
@@ -21929,6 +22121,17 @@ export async function renderPublicSiteHtml(site, { pageId, pagePath, trackingEna
         });
       };
 
+      const initContactPrefill = () => {
+        const apply = () => {
+          if (window.ristakNativeInitContactPrefill) {
+            window.ristakNativeInitContactPrefill(form);
+          }
+        };
+        apply();
+        window.setTimeout(apply, 0);
+        window.addEventListener('ristak:native-ready', apply, { once: true });
+      };
+
       // Toda navegación o redirect debe conservar los params de la URL original
       // (UTMs, fbclid, gclid, etc.); ristakPreserveParams los repone si faltan.
       const preserveUrl = (value) => (
@@ -22680,6 +22883,7 @@ export async function renderPublicSiteHtml(site, { pageId, pagePath, trackingEna
           if (!terminalDisqualify) {
             form.reset();
             initPhoneCountryFields();
+            initContactPrefill();
             index = 0;
             renderStep();
             embeddedForms.forEach((state) => {
@@ -22705,6 +22909,7 @@ export async function renderPublicSiteHtml(site, { pageId, pagePath, trackingEna
 
       initPhoneCountryFields();
       hydrateStoredResponses();
+      initContactPrefill();
       renderStep();
       embeddedForms.forEach(renderEmbeddedForm);
     })();
@@ -22835,6 +23040,105 @@ function splitName(fullName) {
     firstName: parts[0] || '',
     lastName: parts.length > 1 ? parts.slice(1).join(' ') : ''
   }
+}
+
+function mapPublicPrefillContact(row = {}) {
+  if (!row?.id) return null
+  const fullName = cleanString(row.full_name) ||
+    [row.first_name, row.last_name].map(cleanString).filter(Boolean).join(' ')
+
+  return {
+    contactId: cleanString(row.id),
+    name: fullName,
+    fullName,
+    firstName: cleanString(row.first_name),
+    lastName: cleanString(row.last_name),
+    email: cleanString(row.email),
+    phone: cleanString(row.phone)
+  }
+}
+
+export async function resolvePublicPrefillContact({ contactId, visitorId, sessionId } = {}) {
+  const id = cleanString(contactId)
+  const visitor = cleanString(visitorId)
+  const session = cleanString(sessionId)
+  if (!id && !visitor && !session) return null
+
+  if (id) {
+    const contact = await db.get(`
+      SELECT id, phone, email, full_name, first_name, last_name, visitor_id
+      FROM contacts
+      WHERE id = ?
+      LIMIT 1
+    `, [id]).catch(error => {
+      logger.warn(`No se pudo leer contacto para prefill publico ${id}: ${error.message}`)
+      return null
+    })
+    if (!contact) return null
+
+    const contactVisitorId = cleanString(contact.visitor_id)
+    const visitorMatchesContact = visitor && contactVisitorId && contactVisitorId === visitor
+    const sessionMatch = await db.get(`
+      SELECT id
+      FROM sessions
+      WHERE contact_id = ?
+        AND (
+          (? != '' AND visitor_id = ?)
+          OR (? != '' AND session_id = ?)
+        )
+      ORDER BY started_at DESC, created_at DESC
+      LIMIT 1
+    `, [id, visitor, visitor, session, session]).catch(error => {
+      logger.warn(`No se pudo verificar sesion para prefill publico ${id}: ${error.message}`)
+      return null
+    })
+
+    if (!visitorMatchesContact && !sessionMatch?.id) return null
+    return mapPublicPrefillContact(contact)
+  }
+
+  const bySession = session ? await db.get(`
+    SELECT c.id, c.phone, c.email, c.full_name, c.first_name, c.last_name
+    FROM sessions s
+    INNER JOIN contacts c ON c.id = s.contact_id
+    WHERE s.session_id = ?
+      AND s.contact_id IS NOT NULL
+      AND s.contact_id != ''
+    ORDER BY s.started_at DESC, s.created_at DESC
+    LIMIT 1
+  `, [session]).catch(error => {
+    logger.warn(`No se pudo leer contacto por sesion para prefill publico: ${error.message}`)
+    return null
+  }) : null
+  if (bySession) return mapPublicPrefillContact(bySession)
+
+  const byVisitor = visitor ? await db.get(`
+    SELECT id, phone, email, full_name, first_name, last_name
+    FROM contacts
+    WHERE visitor_id = ?
+    ORDER BY updated_at DESC, created_at DESC
+    LIMIT 1
+  `, [visitor]).catch(error => {
+    logger.warn(`No se pudo leer contacto por visitante para prefill publico: ${error.message}`)
+    return null
+  }) : null
+  if (byVisitor) return mapPublicPrefillContact(byVisitor)
+
+  const byVisitorSession = visitor ? await db.get(`
+    SELECT c.id, c.phone, c.email, c.full_name, c.first_name, c.last_name
+    FROM sessions s
+    INNER JOIN contacts c ON c.id = s.contact_id
+    WHERE s.visitor_id = ?
+      AND s.contact_id IS NOT NULL
+      AND s.contact_id != ''
+    ORDER BY s.started_at DESC, s.created_at DESC
+    LIMIT 1
+  `, [visitor]).catch(error => {
+    logger.warn(`No se pudo leer contacto por historial de visitante para prefill publico: ${error.message}`)
+    return null
+  }) : null
+
+  return mapPublicPrefillContact(byVisitorSession)
 }
 
 function getNativeSystemFieldKey(block) {

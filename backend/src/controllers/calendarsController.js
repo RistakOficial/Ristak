@@ -11,6 +11,7 @@ import { sendAppointmentConfirmationNotification, sendCalendarAppointmentNotific
 import {
   getRequestHost,
   resolvePublicCalendarHostForHost,
+  resolvePublicPrefillContact,
   sendCalendarBookingSiteMetaEvent
 } from '../services/sitesService.js';
 import { renderCalendarAppointmentTemplates } from '../services/calendarAppointmentTemplateService.js';
@@ -575,53 +576,6 @@ async function ensurePublicCalendarRequest(req, slugOrId) {
   }
 
   return { host, calendar };
-}
-
-async function getVerifiedPublicPrefillContact({ contactId, visitorId, sessionId }) {
-  const id = cleanString(contactId);
-  const visitor = cleanString(visitorId);
-  const session = cleanString(sessionId);
-  if (!id || (!visitor && !session)) return null;
-
-  const contact = await db.get(`
-    SELECT id, phone, email, full_name, first_name, last_name, visitor_id
-    FROM contacts
-    WHERE id = ?
-    LIMIT 1
-  `, [id]).catch(error => {
-    logger.warn(`[Calendars Controller] No se pudo leer contacto para prefill publico ${id}: ${error.message}`);
-    return null;
-  });
-  if (!contact) return null;
-
-  const contactVisitorId = cleanString(contact.visitor_id);
-  const visitorMatchesContact = visitor && contactVisitorId && contactVisitorId === visitor;
-  const sessionMatch = await db.get(`
-    SELECT id
-    FROM sessions
-    WHERE contact_id = ?
-      AND (
-        (? != '' AND visitor_id = ?)
-        OR (? != '' AND session_id = ?)
-      )
-    ORDER BY started_at DESC, created_at DESC
-    LIMIT 1
-  `, [id, visitor, visitor, session, session]).catch(error => {
-    logger.warn(`[Calendars Controller] No se pudo verificar sesion para prefill publico ${id}: ${error.message}`);
-    return null;
-  });
-
-  if (!visitorMatchesContact && !sessionMatch?.id) return null;
-
-  const fullName = cleanString(contact.full_name) ||
-    [contact.first_name, contact.last_name].map(cleanString).filter(Boolean).join(' ');
-
-  return {
-    contactId: contact.id,
-    name: fullName,
-    email: cleanString(contact.email),
-    phone: cleanString(contact.phone)
-  };
 }
 
 async function getCalendarFreeSlotsForPublic(calendar, { startDate, endDate, timezone }) {
@@ -1338,7 +1292,7 @@ export async function getPublicContactPrefill(req, res) {
     const { slug } = req.params;
     await ensurePublicCalendarRequest(req, slug);
 
-    const contact = await getVerifiedPublicPrefillContact({
+    const contact = await resolvePublicPrefillContact({
       contactId: req.query?.contactId || req.query?.contact_id,
       visitorId: req.query?.visitorId || req.query?.visitor_id,
       sessionId: req.query?.sessionId || req.query?.session_id
