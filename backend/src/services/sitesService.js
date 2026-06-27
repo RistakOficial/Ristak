@@ -11448,6 +11448,7 @@ async function hydrateEmbeddedForms(blocks = []) {
         embeddedSiteId: embeddedSite?.id || formSiteId,
         embeddedSiteName: embeddedSite?.name || '',
         embeddedSiteType: embeddedSite?.siteType || embeddedSite?.site_type || 'standard_form',
+        ...buildEmbeddedFormSubmitMetaSettings(embeddedSite),
         embeddedTheme,
         embeddedPages,
         embeddedBlocks
@@ -14921,6 +14922,137 @@ function getFormSubmitMetaCondition(site) {
   return normalizeSiteMetaSubmitCondition(site?.theme?.metaSubmitCondition || site?.theme?.meta_submit_condition)
 }
 
+function isSiteMetaCapiEnabled(site = {}) {
+  return normalizeBoolean(site?.metaCapiEnabled ?? site?.meta_capi_enabled) === 1
+}
+
+function getSiteSubmitMetaConfig(site = {}, pageId = '') {
+  const eventName = getFormSubmitMetaEventName(site, pageId)
+
+  return {
+    enabled: isSiteMetaCapiEnabled(site) && eventName !== SITE_META_NO_EVENT,
+    eventName,
+    parameters: getFormSubmitMetaEventParameters(site, pageId, eventName),
+    submitCondition: getFormSubmitMetaCondition(site)
+  }
+}
+
+function normalizeEmbeddedFormSubmitMetaConfig(source = {}) {
+  if (!source || typeof source !== 'object') return null
+
+  const enabled = normalizeBoolean(
+    source.enabled ??
+    source.metaCapiEnabled ??
+    source.meta_capi_enabled ??
+    source.embeddedMetaCapiEnabled ??
+    source.embedded_meta_capi_enabled
+  ) === 1
+  const eventName = normalizeSiteMetaEventName(
+    source.eventName ||
+    source.event_name ||
+    source.metaEventName ||
+    source.meta_event_name ||
+    source.embeddedMetaEventName ||
+    source.embedded_meta_event_name,
+    { allowNone: true, fallback: SITE_META_NO_EVENT }
+  )
+
+  if (!enabled || eventName === SITE_META_NO_EVENT) return null
+
+  return {
+    enabled: true,
+    eventName,
+    parameters: pruneSiteMetaEventParametersForEvent(
+      source.parameters ||
+      source.eventParameters ||
+      source.event_parameters ||
+      source.metaEventParameters ||
+      source.meta_event_parameters ||
+      source.embeddedMetaEventParameters ||
+      source.embedded_meta_event_parameters ||
+      {},
+      eventName
+    ),
+    submitCondition: normalizeSiteMetaSubmitCondition(
+      source.submitCondition ||
+      source.submit_condition ||
+      source.metaSubmitCondition ||
+      source.meta_submit_condition ||
+      source.embeddedMetaSubmitCondition ||
+      source.embedded_meta_submit_condition
+    ),
+    sourceSiteId: cleanString(source.sourceSiteId || source.source_site_id || source.formSiteId || source.form_site_id),
+    sourceSiteName: cleanString(source.sourceSiteName || source.source_site_name || source.formSiteName || source.form_site_name)
+  }
+}
+
+function getEmbeddedSiteSubmitMetaConfig(embeddedSite = {}) {
+  if (!embeddedSite) return null
+  const firstPageId = normalizeSitePages(embeddedSite)[0]?.id || ''
+  const submitMeta = getSiteSubmitMetaConfig(embeddedSite, firstPageId)
+  if (!submitMeta.enabled) return null
+
+  return {
+    ...submitMeta,
+    sourceSiteId: cleanString(embeddedSite.id),
+    sourceSiteName: cleanString(embeddedSite.name)
+  }
+}
+
+function buildEmbeddedFormSubmitMetaSettings(embeddedSite = {}) {
+  const submitMeta = getEmbeddedSiteSubmitMetaConfig(embeddedSite)
+  if (!submitMeta) return {}
+
+  return {
+    embeddedMetaCapiEnabled: true,
+    embeddedMetaEventName: submitMeta.eventName,
+    embeddedMetaEventParameters: submitMeta.parameters,
+    embeddedMetaSubmitCondition: submitMeta.submitCondition
+  }
+}
+
+function getEmbeddedFormSubmitMetaConfigFromSettings(settings = {}) {
+  return normalizeEmbeddedFormSubmitMetaConfig({
+    enabled: settings.embeddedMetaCapiEnabled ?? settings.embedded_meta_capi_enabled,
+    eventName: settings.embeddedMetaEventName || settings.embedded_meta_event_name,
+    eventParameters: settings.embeddedMetaEventParameters || settings.embedded_meta_event_parameters,
+    submitCondition: settings.embeddedMetaSubmitCondition || settings.embedded_meta_submit_condition,
+    sourceSiteId: settings.embeddedSiteId || settings.embedded_site_id || settings.formSiteId || settings.form_site_id,
+    sourceSiteName: settings.embeddedSiteName || settings.embedded_site_name || settings.formSiteName || settings.form_site_name
+  })
+}
+
+function getRequestEmbeddedFormSubmitMetaConfig(requestMeta = {}) {
+  return normalizeEmbeddedFormSubmitMetaConfig(
+    requestMeta?.meta?.embeddedFormMeta ||
+    requestMeta?.meta?.embedded_form_meta ||
+    null
+  )
+}
+
+function getLandingEmbeddedFormSubmitMetaConfig(site, blocks = []) {
+  return getLandingEmbeddedFormSubmissionContext(site, blocks)?.meta || null
+}
+
+function buildSiteWithEmbeddedSubmitMetaFallback(site, blocks = [], pageId = '') {
+  const siteSubmitMeta = getSiteSubmitMetaConfig(site, pageId)
+  if (siteSubmitMeta.enabled) return site
+
+  const embeddedSubmitMeta = getLandingEmbeddedFormSubmitMetaConfig(site, blocks)
+  if (!embeddedSubmitMeta?.enabled) return site
+
+  return {
+    ...site,
+    metaCapiEnabled: true,
+    metaEventName: embeddedSubmitMeta.eventName,
+    theme: {
+      ...(site?.theme || {}),
+      metaEventParameters: embeddedSubmitMeta.parameters,
+      metaSubmitCondition: embeddedSubmitMeta.submitCondition
+    }
+  }
+}
+
 function isDisqualifiedSiteFormSubmission(requestMeta = {}) {
   const meta = requestMeta?.meta && typeof requestMeta.meta === 'object' ? requestMeta.meta : {}
   const rules = meta.rules && typeof meta.rules === 'object' ? meta.rules : {}
@@ -15051,6 +15183,7 @@ function getLandingEmbeddedFormSubmissionContext(site, blocks = []) {
     formSiteId: cleanString(settings.embeddedSiteId || settings.formSiteId || settings.form_site_id) || `${site.id}:form_embed:${formBlock.id}`,
     formSiteName: cleanString(settings.embeddedSiteName || settings.formSiteName || settings.form_site_name) || cleanString(formBlock.label) || `Formulario de ${site.name}`,
     formTheme,
+    meta: getEmbeddedFormSubmitMetaConfigFromSettings(settings),
     formBlockId: formBlock.id,
     blocks: Array.isArray(settings.embeddedBlocks) ? settings.embeddedBlocks : []
   }
@@ -21433,7 +21566,8 @@ export async function renderPublicSiteHtml(site, { pageId, pagePath, trackingEna
   // En páginas publicadas (no preview) los params de URL se preservan siempre,
   // aunque el tracking esté apagado: la atribución no debe perderse nunca.
   const paramPreservationScript = preview ? '' : buildParamPreservationScript()
-  const metaPixel = await buildMetaPixelSnippet(site, trackingEnabled, activePage, preview)
+  const metaPixelSite = buildSiteWithEmbeddedSubmitMetaFallback(site, blocks, activePage?.id)
+  const metaPixel = await buildMetaPixelSnippet(metaPixelSite, trackingEnabled, activePage, preview)
   const headerTrackingCode = trackingEnabled ? buildHeaderTrackingCode(site, activePage) : ''
   const popupHtml = renderSitePopup(site, {
     popupBlocks,
@@ -24201,24 +24335,37 @@ async function sendSiteLeadMetaEvent({ site, submissionId, submittedPageId, cont
     return { sent: false, reason: NO_TRACK_REASON, eventId: `site_${site.id}_${submissionId}` }
   }
 
-  if (!site.metaCapiEnabled) {
+  const siteMetaEnabled = isSiteMetaCapiEnabled(site)
+  const isVideoGateSubmission = normalizeBoolean(requestMeta?.meta?.videoFormGate || requestMeta?.meta?.video_form_gate) === 1
+  const videoGateMetaConfig = siteMetaEnabled && isVideoGateSubmission
+    ? getVideoFormGateMetaEventConfig(site, cleanString(requestMeta?.meta?.videoFormGateBlockId || requestMeta?.meta?.video_form_gate_block_id))
+    : null
+  const siteSubmitMeta = getSiteSubmitMetaConfig(site, submittedPageId)
+  const embeddedSubmitMeta = !videoGateMetaConfig ? getRequestEmbeddedFormSubmitMetaConfig(requestMeta) : null
+  const useEmbeddedSubmitMeta = Boolean(!videoGateMetaConfig && embeddedSubmitMeta?.enabled && !siteSubmitMeta.enabled)
+
+  if (!siteMetaEnabled && !useEmbeddedSubmitMeta) {
     return { sent: false, reason: 'disabled' }
   }
 
-  const isVideoGateSubmission = normalizeBoolean(requestMeta?.meta?.videoFormGate || requestMeta?.meta?.video_form_gate) === 1
-  const videoGateMetaConfig = isVideoGateSubmission
-    ? getVideoFormGateMetaEventConfig(site, cleanString(requestMeta?.meta?.videoFormGateBlockId || requestMeta?.meta?.video_form_gate_block_id))
-    : null
-  const eventName = videoGateMetaConfig?.eventName || getFormSubmitMetaEventName(site, submittedPageId)
-  const configuredParameters = videoGateMetaConfig?.parameters || getFormSubmitMetaEventParameters(site, submittedPageId, eventName)
-  const eventType = videoGateMetaConfig ? 'site_video_form_submission' : 'site_form_submission'
+  const eventName = videoGateMetaConfig?.eventName || (useEmbeddedSubmitMeta ? embeddedSubmitMeta.eventName : siteSubmitMeta.eventName)
+  const configuredParameters = videoGateMetaConfig?.parameters || (useEmbeddedSubmitMeta ? embeddedSubmitMeta.parameters : siteSubmitMeta.parameters)
+  const eventType = videoGateMetaConfig
+    ? 'site_video_form_submission'
+    : useEmbeddedSubmitMeta
+      ? 'site_embedded_form_submission'
+      : 'site_form_submission'
   const eventId = `site_${site.id}_${submissionId}`
   if (eventName === SITE_META_NO_EVENT) {
     return { sent: false, reason: 'no_event_configured', eventId, eventName }
   }
 
   const submissionRules = requestMeta?.meta?.rules && typeof requestMeta.meta.rules === 'object' ? requestMeta.meta.rules : {}
-  const submitCondition = videoGateMetaConfig ? 'always' : getFormSubmitMetaCondition(site)
+  const submitCondition = videoGateMetaConfig
+    ? 'always'
+    : useEmbeddedSubmitMeta
+      ? embeddedSubmitMeta.submitCondition
+      : siteSubmitMeta.submitCondition
   if (submitCondition === 'qualified_only' && isDisqualifiedSiteFormSubmission(requestMeta)) {
     await logMetaEvent({
       contactId,
@@ -24314,19 +24461,27 @@ async function sendSiteLeadMetaEvent({ site, submissionId, submittedPageId, cont
         user_data: userData,
         custom_data: mergeSiteMetaCustomData({
           source: 'ristak_site',
-          conversion_type: videoGateMetaConfig ? 'video_form_gate_submit' : 'form_submit',
+          conversion_type: videoGateMetaConfig
+            ? 'video_form_gate_submit'
+            : useEmbeddedSubmitMeta
+              ? 'embedded_form_submit'
+              : 'form_submit',
           site_id: site.id,
           site_name: site.name,
-	          ...(videoGateMetaConfig ? {
-	            video_block_id: videoGateMetaConfig.block?.id || '',
-	            video_block_label: videoGateMetaConfig.block?.label || ''
-	          } : {}),
-	          currency: accountLocale?.currency || 'MXN',
-	          status: formDisqualified ? 'disqualified' : 'qualified',
-	          form_status: templateContext.formStatus || (formDisqualified ? 'disqualified' : 'received'),
-	          form_disqualified: formDisqualified,
-	          content_name: site.title || site.name
-	        }, buildSiteMetaConfiguredCustomData(configuredParameters, eventName, templateContext))
+          ...(useEmbeddedSubmitMeta ? {
+            form_site_id: embeddedSubmitMeta.sourceSiteId || '',
+            form_site_name: embeddedSubmitMeta.sourceSiteName || ''
+          } : {}),
+          ...(videoGateMetaConfig ? {
+            video_block_id: videoGateMetaConfig.block?.id || '',
+            video_block_label: videoGateMetaConfig.block?.label || ''
+          } : {}),
+          currency: accountLocale?.currency || 'MXN',
+          status: formDisqualified ? 'disqualified' : 'qualified',
+          form_status: templateContext.formStatus || (formDisqualified ? 'disqualified' : 'received'),
+          form_disqualified: formDisqualified,
+          content_name: site.title || site.name
+        }, buildSiteMetaConfiguredCustomData(configuredParameters, eventName, templateContext))
 	      }
     ]
   }
@@ -25620,6 +25775,9 @@ export async function createSubmissionFromRequest(req, body = {}, options = {}) 
       videoFormGateBlockId: videoFormGateContext.videoBlockId,
       formSiteId: videoFormGateContext.formSiteId,
       formSiteName: videoFormGateContext.formSiteName
+    } : {}),
+    ...(!videoFormGateContext && landingEmbeddedFormContext?.meta?.enabled ? {
+      embeddedFormMeta: landingEmbeddedFormContext.meta
     } : {}),
     host,
     previewSession: Boolean(previewContext),
