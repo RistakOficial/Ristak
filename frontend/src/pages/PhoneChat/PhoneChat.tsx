@@ -15452,9 +15452,12 @@ export const PhoneChat: React.FC = () => {
       aria-label="Chat móvil de Ristak"
     >
       <div className={styles.portraitLock} role="status" aria-live="polite">
-        <Smartphone size={34} />
-        <strong>Usa el celular en vertical</strong>
-        <span>Ristak está bloqueado en modo vertical para que la pantalla no se desacomode.</span>
+        <Smartphone className={styles.phoneLockIcon} size={34} />
+        <Monitor className={styles.tabletLockIcon} size={38} />
+        <strong className={styles.phoneLockTitle}>Usa el celular en vertical</strong>
+        <strong className={styles.tabletLockTitle}>Gira la tableta</strong>
+        <span className={styles.phoneLockCopy}>Ristak está bloqueado en modo vertical para que la pantalla no se desacomode.</span>
+        <span className={styles.tabletLockCopy}>El chat para tablet funciona en horizontal para que la lista y la conversación se vean completas.</span>
       </div>
 
       <PhonePageTransition

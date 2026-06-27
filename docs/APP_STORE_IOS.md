@@ -22,6 +22,7 @@ Any other route opened inside the native iOS shell is redirected back to `/movil
 - Build: `2`
 - Minimum iOS: `15.0`
 - Device family: iPhone and iPad
+- Orientation: iPhone portrait; iPad landscape
 
 ## One-time Apple setup
 
@@ -64,7 +65,7 @@ If signing fails, open `frontend/ios/App/App.xcodeproj` in Xcode and check:
 ## App Store Connect submission checklist
 
 - App record exists for `com.ristak.app`.
-- Screenshots are uploaded for the required iPhone and iPad display sizes using the `/movil` flow.
+- Screenshots are uploaded for the required iPhone and iPad display sizes using the `/movil` flow. Use portrait screenshots for iPhone and landscape screenshots for iPad.
 - Description, keywords, support URL, privacy policy URL, age rating, and contact info are complete.
 - App Privacy answers match what Ristak collects and how it uses that data.
 - TestFlight build finishes processing without validation errors.
