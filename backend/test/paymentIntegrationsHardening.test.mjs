@@ -4,6 +4,7 @@ import { readFileSync } from 'node:fs'
 
 import { db } from '../src/config/database.js'
 import { clearHighLevelMirrorDataForLocationChange } from '../src/controllers/highlevelController.js'
+import { recordPayment as recordTransactionPayment } from '../src/controllers/transactionsController.js'
 import { handlePaymentWebhook } from '../src/controllers/webhooksController.js'
 import { __invoicesSyncTestHooks } from '../src/services/invoicesSyncService.js'
 
@@ -95,12 +96,13 @@ async function seedManualPayment(ids, overrides = {}) {
       id, contact_id, amount, currency, status, payment_method, payment_mode,
       payment_provider, reference, title, description, date, ghl_invoice_id, invoice_number,
       created_at, updated_at
-    ) VALUES (?, ?, ?, 'MXN', ?, 'cash', 'live', 'manual', ?, ?, ?, CURRENT_TIMESTAMP, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+    ) VALUES (?, ?, ?, 'MXN', ?, 'cash', ?, 'manual', ?, ?, ?, CURRENT_TIMESTAMP, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
     [
       ids.manualPaymentId,
       ids.contactId,
       overrides.amount ?? 500,
       overrides.status || 'paid',
+      overrides.paymentMode || 'live',
       overrides.reference || 'Anticipo ortodoncia',
       overrides.title || 'Anticipo ortodoncia',
       overrides.description || 'Anticipo ortodoncia',
@@ -109,6 +111,47 @@ async function seedManualPayment(ids, overrides = {}) {
     ]
   )
 }
+
+test('record-payment conserva modo test en pagos locales aunque HighLevel esté live', async () => {
+  const ids = idsFor('recordmode')
+  await cleanup(ids)
+  await seedContact(ids)
+  await seedManualPayment(ids, {
+    status: 'pending',
+    paymentMode: 'test',
+    title: 'Pago local test',
+    description: 'Pago local test'
+  })
+  await db.run(
+    `INSERT INTO highlevel_config (location_id, api_token, ghl_invoice_mode, created_at)
+     VALUES (?, '', 'live', CURRENT_TIMESTAMP)
+     ON CONFLICT(location_id) DO UPDATE SET ghl_invoice_mode = 'live'`,
+    [`pit_location_${ids.contactId}`]
+  )
+
+  try {
+    const res = createResponse()
+    await recordTransactionPayment({
+      params: { id: ids.manualPaymentId },
+      body: {
+        amount: 500,
+        paymentMethod: 'cash',
+        paymentDate: '2026-06-27T12:00:00.000Z'
+      },
+      headers: {},
+      protocol: 'https',
+      get: () => ''
+    }, res)
+
+    assert.equal(res.statusCode, 200)
+    const payment = await db.get('SELECT status, payment_mode FROM payments WHERE id = ?', [ids.manualPaymentId])
+    assert.equal(payment.status, 'paid')
+    assert.equal(payment.payment_mode, 'test')
+  } finally {
+    await db.run('DELETE FROM highlevel_config WHERE location_id = ?', [`pit_location_${ids.contactId}`]).catch(() => undefined)
+    await cleanup(ids)
+  }
+})
 
 async function seedHighLevelMirror(ids, overrides = {}) {
   await db.run(

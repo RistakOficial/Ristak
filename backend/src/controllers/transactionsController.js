@@ -1553,11 +1553,17 @@ export const recordPayment = async (req, res) => {
       ? resolvePaymentTimestamp(paymentDate)
       : (transaction.date || new Date().toISOString())
 
-    // Marcar como pagado en HighLevel si tiene invoice asociado
-    const liveMode = await getGhlInvoiceLiveMode()
-    const paymentMode = liveMode ? 'live' : 'test'
+    // Marcar como pagado en HighLevel si tiene invoice asociado. Para pagos locales
+    // sin invoice, conserva el modo del pago en vez de heredar el modo global de GHL.
+    const hasHighLevelInvoice = Boolean(cleanString(transaction.ghl_invoice_id))
+    const liveMode = hasHighLevelInvoice
+      ? await getGhlInvoiceLiveMode()
+      : normalizePaymentMode(transaction.payment_mode) === 'live'
+    const paymentMode = hasHighLevelInvoice
+      ? (liveMode ? 'live' : 'test')
+      : normalizePaymentMode(transaction.payment_mode)
 
-    if (transaction.ghl_invoice_id) {
+    if (hasHighLevelInvoice) {
       const ghlClient = await getGHLClient()
       await ghlClient.recordPayment(transaction.ghl_invoice_id, {
         amount: amount || transaction.amount,
