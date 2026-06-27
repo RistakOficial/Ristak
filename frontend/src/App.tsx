@@ -48,6 +48,8 @@ import {
   DESKTOP_LOGIN_PATH,
   PHONE_APP_HOME_PATH,
   PHONE_APP_LOGIN_PATH,
+  PHONE_APP_PREFIX,
+  PHONE_APP_TENANT_PATH,
   SETUP_PATH,
   TABLET_VIEW_PREFERENCE_EVENT,
   getLoginPathForRoute,
@@ -56,6 +58,7 @@ import {
   isPhoneAppPath,
   isTabletDevice,
   readTabletViewPreference,
+  toCanonicalPhoneAppPath,
   writeTabletViewPreference,
   type RedirectLocation,
   type TabletViewPreference
@@ -107,11 +110,13 @@ const ROUTE_BRANDING: Record<'ristak' | 'phone' | 'phoneChat', AppBranding> = {
 }
 
 function getRouteBranding(pathname: string) {
-  if (pathname === '/phone/chat' || pathname.startsWith('/phone/chat/')) {
+  const canonicalPathname = toCanonicalPhoneAppPath(pathname)
+
+  if (canonicalPathname === PHONE_APP_HOME_PATH) {
     return ROUTE_BRANDING.phoneChat
   }
 
-  if (pathname.startsWith('/phone')) {
+  if (isPhoneAppPath(pathname)) {
     return ROUTE_BRANDING.phone
   }
 
@@ -146,7 +151,7 @@ function setHeadMeta(selector: string, attributes: Record<string, string>) {
 
 function applyRouteBranding(pathname: string) {
   const branding = getRouteBranding(pathname)
-  const isPhoneRoute = pathname.startsWith('/phone')
+  const isPhoneRoute = isPhoneAppPath(pathname)
 
   document.title = branding.title
   document.documentElement.dataset.appBrand = isPhoneRoute ? 'ristak-chat' : 'ristak'
@@ -195,8 +200,8 @@ function isStandalonePhoneShell() {
 function getStandalonePhoneRedirect(pathname: string) {
   if (!isStandalonePhoneShell()) return ''
 
-  if (pathname === '/' || pathname === '/dashboard') return '/phone/chat'
-  if (pathname === '/login') return '/phone/login'
+  if (pathname === '/' || pathname === '/dashboard') return PHONE_APP_HOME_PATH
+  if (pathname === '/login') return PHONE_APP_LOGIN_PATH
   return ''
 }
 
@@ -598,6 +603,17 @@ const NativeIosPhoneChatRouteGate: React.FC = () => {
   return <Navigate to={redirectPath} replace state={state} />
 }
 
+const LegacyPhoneRouteRedirect: React.FC = () => {
+  const location = useLocation()
+  const canonicalPath = toCanonicalPhoneAppPath(location.pathname)
+  return <Navigate to={`${canonicalPath}${location.search}${location.hash}`} replace />
+}
+
+const PhoneHomeRouteRedirect: React.FC = () => {
+  const location = useLocation()
+  return <Navigate to={`${PHONE_APP_HOME_PATH}${location.search}${location.hash}`} replace />
+}
+
 const AppWithNotifications: React.FC = () => {
   const { toasts, removeToast, modal, closeModal } = useNotification()
 
@@ -615,56 +631,11 @@ const AppWithNotifications: React.FC = () => {
           <Route path="/login" element={<Login />} />
           <Route path="/reset-password" element={<ResetPassword />} />
           <Route path="/pay/:publicPaymentId" element={<PublicPayment />} />
-          <Route path="/phone/tenant" element={<MobileTenantSetup />} />
-          <Route path="/phone/login" element={<Login />} />
+          <Route path={PHONE_APP_TENANT_PATH} element={<MobileTenantSetup />} />
+          <Route path={PHONE_APP_LOGIN_PATH} element={<Login />} />
+          <Route path="/phone/*" element={<LegacyPhoneRouteRedirect />} />
           <Route
-            path="/phone"
-            element={
-              <ProtectedRoute>
-                <Navigate to="/phone/chat" replace />
-              </ProtectedRoute>
-            }
-          />
-          <Route
-            path="/phone/agent-chat/*"
-            element={
-              <ProtectedRoute>
-                <AccessRoute moduleKey="ai_agent">
-                  <PhoneAgentChat />
-                </AccessRoute>
-              </ProtectedRoute>
-            }
-          />
-          <Route
-            path="/phone/agent-ai/*"
-            element={
-              <ProtectedRoute>
-                <AccessRoute moduleKey="ai_agent">
-                  <PhoneAgentChat />
-                </AccessRoute>
-              </ProtectedRoute>
-            }
-          />
-          <Route
-            path="/phone/ai-agent/*"
-            element={
-              <ProtectedRoute>
-                <AccessRoute moduleKey="ai_agent">
-                  <PhoneAgentChat />
-                </AccessRoute>
-              </ProtectedRoute>
-            }
-          />
-          <Route
-            path="/phone/app"
-            element={
-              <ProtectedRoute>
-                <Navigate to="/phone/chat" replace />
-              </ProtectedRoute>
-            }
-          />
-          <Route
-            path="/phone/chat"
+            path={PHONE_APP_HOME_PATH}
             element={
               <ProtectedRoute>
                 <AccessRoute moduleKey="chat">
@@ -674,7 +645,53 @@ const AppWithNotifications: React.FC = () => {
             }
           />
           <Route
-            path="/phone/payments"
+            path={`${PHONE_APP_PREFIX}/chat`}
+            element={
+              <ProtectedRoute>
+                <PhoneHomeRouteRedirect />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path={`${PHONE_APP_PREFIX}/agent-chat/*`}
+            element={
+              <ProtectedRoute>
+                <AccessRoute moduleKey="ai_agent">
+                  <PhoneAgentChat />
+                </AccessRoute>
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path={`${PHONE_APP_PREFIX}/agent-ai/*`}
+            element={
+              <ProtectedRoute>
+                <AccessRoute moduleKey="ai_agent">
+                  <PhoneAgentChat />
+                </AccessRoute>
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path={`${PHONE_APP_PREFIX}/ai-agent/*`}
+            element={
+              <ProtectedRoute>
+                <AccessRoute moduleKey="ai_agent">
+                  <PhoneAgentChat />
+                </AccessRoute>
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path={`${PHONE_APP_PREFIX}/app`}
+            element={
+              <ProtectedRoute>
+                <Navigate to={PHONE_APP_HOME_PATH} replace />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path={`${PHONE_APP_PREFIX}/payments`}
             element={
               <ProtectedRoute>
                 <AccessRoute moduleKey="payments">
@@ -684,7 +701,7 @@ const AppWithNotifications: React.FC = () => {
             }
           />
           <Route
-            path="/phone/analytics"
+            path={`${PHONE_APP_PREFIX}/analytics`}
             element={
               <ProtectedRoute>
                 <AccessRoute moduleKey="analytics">
@@ -694,7 +711,7 @@ const AppWithNotifications: React.FC = () => {
             }
           />
           <Route
-            path="/phone/settings"
+            path={`${PHONE_APP_PREFIX}/settings`}
             element={
               <ProtectedRoute>
                 <AccessRoute moduleKey="settings_mobile">
@@ -704,7 +721,7 @@ const AppWithNotifications: React.FC = () => {
             }
           />
           <Route
-            path="/phone/calendar"
+            path={`${PHONE_APP_PREFIX}/calendar`}
             element={
               <ProtectedRoute>
                 <AccessRoute moduleKey="appointments">
@@ -714,7 +731,7 @@ const AppWithNotifications: React.FC = () => {
             }
           />
           <Route
-            path="/phone/appointments"
+            path={`${PHONE_APP_PREFIX}/appointments`}
             element={
               <ProtectedRoute>
                 <AccessRoute moduleKey="appointments">
@@ -724,7 +741,7 @@ const AppWithNotifications: React.FC = () => {
             }
           />
           <Route
-            path="/phone/:section"
+            path={`${PHONE_APP_PREFIX}/:section`}
             element={
               <ProtectedRoute>
                 <PhoneApp />

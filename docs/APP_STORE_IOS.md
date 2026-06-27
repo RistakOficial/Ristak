@@ -1,27 +1,27 @@
 # Ristak Chat iOS App Store Release
 
-This is the release path for the Capacitor iOS shell at `frontend/ios/App`. The App Store build is for the mobile `/phone/chat` experience, not the full desktop dashboard.
+This is the release path for the Capacitor iOS shell at `frontend/ios/App`. The App Store build is for the mobile `/movil` experience, not the full desktop dashboard.
 
 The native iOS shell keeps users inside the phone-chat flow:
 
-- `/phone/chat`
-- `/phone/login`
-- `/phone/tenant`
+- `/movil`
+- `/movil/login`
+- `/movil/tenant`
 - required setup, SSO, and license-blocked routes
 
-Any other route opened inside the native iOS shell is redirected back to `/phone/chat` or the required login/tenant step.
+Any other route opened inside the native iOS shell is redirected back to `/movil` or the required login/tenant step. Legacy `/phone/*` links are redirected to the matching `/movil/*` route.
 
 ## Current app identity
 
 - App name: `Ristak`
-- App Store scope: mobile chat shell for `/phone/chat`
+- App Store scope: mobile chat shell for `/movil`
 - Bundle ID: `com.ristak.app`
 - Apple team: `Y2L8669JNL`
 - Category: Business
 - Version: `1.0`
 - Build: `2`
 - Minimum iOS: `15.0`
-- Device family: iPhone
+- Device family: iPhone and iPad
 
 ## One-time Apple setup
 
@@ -64,7 +64,7 @@ If signing fails, open `frontend/ios/App/App.xcodeproj` in Xcode and check:
 ## App Store Connect submission checklist
 
 - App record exists for `com.ristak.app`.
-- Screenshots are uploaded for the required iPhone display sizes using the `/phone/chat` flow.
+- Screenshots are uploaded for the required iPhone and iPad display sizes using the `/movil` flow.
 - Description, keywords, support URL, privacy policy URL, age rating, and contact info are complete.
 - App Privacy answers match what Ristak collects and how it uses that data.
 - TestFlight build finishes processing without validation errors.

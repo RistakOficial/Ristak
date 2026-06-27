@@ -5,7 +5,7 @@ import { AIAgentPanel } from '@/components/ai'
 import { PhoneEcosystemNav } from '@/components/phone/PhoneEcosystemNav'
 import { PhoneStartupLoader } from '@/components/phone/PhoneStartupLoader'
 import { ConversationalAgentSettings } from '@/pages/Settings/ConversationalAgentSettings'
-import { isLocalPhonePreviewHost } from '@/utils/phoneAccess'
+import { PHONE_APP_PREFIX, isLocalPhonePreviewHost, toCanonicalPhoneAppPath } from '@/utils/phoneAccess'
 import styles from './PhoneAgentChat.module.css'
 
 const PORTABLE_WIDTH_QUERY = '(max-width: 1366px)'
@@ -14,9 +14,10 @@ const MOBILE_OR_TABLET_USER_AGENT_PATTERN = /Android|iPad|iPhone|iPod|IEMobile|O
 const SCROLLABLE_CHAT_SELECTOR = '[data-ai-agent-scrollable="true"], [data-phone-agent-scrollable="true"], textarea'
 
 function getPhoneAgentBasePath(pathname: string) {
-  if (pathname.startsWith('/phone/agent-ai')) return '/phone/agent-ai'
-  if (pathname.startsWith('/phone/ai-agent')) return '/phone/ai-agent'
-  return '/phone/agent-chat'
+  const canonicalPathname = toCanonicalPhoneAppPath(pathname)
+  if (canonicalPathname.startsWith(`${PHONE_APP_PREFIX}/agent-ai`)) return `${PHONE_APP_PREFIX}/agent-ai`
+  if (canonicalPathname.startsWith(`${PHONE_APP_PREFIX}/ai-agent`)) return `${PHONE_APP_PREFIX}/ai-agent`
+  return `${PHONE_APP_PREFIX}/agent-chat`
 }
 
 type AccessState = 'checking' | 'allowed' | 'blocked'

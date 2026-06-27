@@ -204,7 +204,7 @@ test('accion notify_push envia payload push cuando la IA detecta confirmacion', 
     assert.equal(payloads[0].payload.tag, `appointment-confirmed-${appointmentId}`)
     assert.equal(payloads[0].payload.category, 'appointment_confirmed')
     assert.equal(payloads[0].payload.eventKey, 'appointment_confirmed')
-    assert.equal(payloads[0].payload.url, `/phone/calendar?open=appointment&id=${encodeURIComponent(appointmentId)}`)
+    assert.equal(payloads[0].payload.url, `/movil/calendar?open=appointment&id=${encodeURIComponent(appointmentId)}`)
 
     const appointment = await db.get(
       'SELECT status, appointment_status, confirmation_badge_until FROM appointments WHERE id = ?',

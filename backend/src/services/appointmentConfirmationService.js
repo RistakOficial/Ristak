@@ -351,7 +351,7 @@ async function executeNoConfirmAction({ contactId, appointmentId, action, result
       title: `Confirmación de cita: ${contactName} ${label}`,
       body: `${contactName} respondió sobre "${appointmentTitle}". ${resultDetail || ''}`.trim().slice(0, 160),
       tag: `conf-${appointmentId}`,
-      url: `/phone/calendar?open=appointment&id=${encodeURIComponent(appointmentId)}`
+      url: `/movil/calendar?open=appointment&id=${encodeURIComponent(appointmentId)}`
     }
 
     await sendAppNotificationPayload(payload).catch(error => {

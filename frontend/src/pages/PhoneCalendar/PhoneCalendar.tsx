@@ -23,7 +23,7 @@ import { calendarsService, type Calendar, type CalendarEvent } from '@/services/
 import { contactsService } from '@/services/contactsService'
 import { getPhoneDailyCacheKey, readPhoneDailyCache, writePhoneDailyCache } from '@/services/phoneDailyCache'
 import type { Contact } from '@/types'
-import { isLocalPhonePreviewHost } from '@/utils/phoneAccess'
+import { PHONE_APP_HOME_PATH, isLocalPhonePreviewHost } from '@/utils/phoneAccess'
 import { convertLocalToUTC } from '@/utils/timezone'
 import styles from './PhoneCalendar.module.css'
 
@@ -445,7 +445,7 @@ export const PhoneCalendar: React.FC<PhoneCalendarProps> = ({ embedded = false, 
         contact: contact.id,
         action: 'appointment'
       })
-      navigate(`/phone/chat?${params.toString()}`)
+      navigate(`${PHONE_APP_HOME_PATH}?${params.toString()}`)
     }, 140)
   }, [calendarSheetDismiss, navigate])
 

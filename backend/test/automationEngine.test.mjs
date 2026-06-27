@@ -1516,7 +1516,7 @@ test('notificación interna desde automatización crea aviso y push para usuario
     assert.equal(notification.recipient_user_id, userId)
     assert.equal(notification.title, 'Nuevo lead: Lead')
     assert.equal(notification.message, 'Revisa a Lead Notificación en Ristak')
-    assert.equal(notification.action_url, `/phone/chat?contact=${encodeURIComponent(contactId)}`)
+    assert.equal(notification.action_url, `/movil?contact=${encodeURIComponent(contactId)}`)
 
     assert.equal(sentPushes.length, 1)
     assert.deepEqual(sentPushes[0].options.userIds, [userId])

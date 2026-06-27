@@ -306,7 +306,7 @@ async function getApnsJwt() {
 function getNotificationData(payload = {}) {
   return Object.fromEntries(
     Object.entries({
-      url: payload.url || '/phone/chat',
+      url: payload.url || '/movil',
       category: payload.category || 'ristak',
       tag: payload.tag || 'ristak',
       threadId: payload.threadId || payload.tag || payload.category || 'ristak',
@@ -1061,7 +1061,7 @@ export async function sendCalendarAppointmentNotification(appointment = {}, opti
     body: `${calendarName}: ${body}`,
     tag: `calendar-${calendarId}`,
     threadId: `calendar-${calendarId}`,
-    url: `/phone/calendar?open=appointment&id=${encodeURIComponent(appointment.id || '')}`,
+    url: `/movil/calendar?open=appointment&id=${encodeURIComponent(appointment.id || '')}`,
     category: 'appointment_booked',
     eventKey: 'appointment_booked',
     contactId: appointment.contactId || appointment.contact_id || ''
@@ -1126,7 +1126,7 @@ export async function sendAppointmentConfirmationNotification(appointment = {}, 
     body: bodyParts.join(' · ').slice(0, 220),
     tag: `appointment-confirmed-${appointmentId}`,
     threadId: calendarId ? `calendar-${calendarId}` : `appointment-${appointmentId}`,
-    url: `/phone/calendar?open=appointment&id=${encodeURIComponent(appointmentId)}`,
+    url: `/movil/calendar?open=appointment&id=${encodeURIComponent(appointmentId)}`,
     category: 'appointment_confirmed',
     eventKey: 'appointment_confirmed',
     contactId: appointment.contactId || appointment.contact_id || options.contactId || ''
@@ -1173,7 +1173,7 @@ export async function sendChatMessageNotification(message = {}) {
     threadId: message.contactId ? `chat-${message.contactId}` : `chat-${senderName}`,
     messageId: messageKey,
     contactId: message.contactId || '',
-    url: `/phone/chat?contact=${encodeURIComponent(message.contactId || '')}`,
+    url: `/movil?contact=${encodeURIComponent(message.contactId || '')}`,
     category: 'chat'
   }
 
@@ -1221,7 +1221,7 @@ export async function sendConversationalAgentPriorityNotification(signal = {}) {
     threadId: `chat-${contactId}`,
     messageId: `agent-priority-${contactId}-${Date.now()}`,
     contactId,
-    url: `/phone/chat?contact=${encodeURIComponent(contactId)}`,
+    url: `/movil?contact=${encodeURIComponent(contactId)}`,
     category: 'chat'
   }
 
@@ -1247,7 +1247,7 @@ export async function sendPaymentNotification(payment = {}) {
     body: `${contactLabel}: ${amountLabel}`,
     tag: `payment-${payment.id || payment.contactId || 'ristak'}`,
     threadId: payment.contactId || payment.contact_id ? `payment-${payment.contactId || payment.contact_id}` : 'payments',
-    url: '/phone/transactions',
+    url: '/movil/transactions',
     category: 'payment',
     eventKey: 'payments',
     contactId: payment.contactId || payment.contact_id || ''

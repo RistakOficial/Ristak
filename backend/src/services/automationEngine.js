@@ -2240,15 +2240,15 @@ function notificationClickUrl(config = {}, ctx = {}) {
   const contactQuery = contactId ? `?contact=${encodeURIComponent(contactId)}` : ''
   const contactOpenQuery = contactId ? `?open=contact&id=${encodeURIComponent(contactId)}` : ''
 
-  if (action === 'phone_contacts') return '/phone/contacts'
+  if (action === 'phone_contacts') return '/movil/contacts'
   if (action === 'desktop_contacts') return contactId ? `/contacts${contactOpenQuery}` : '/contacts'
   if (action === 'desktop_chat') return '/chat'
   if (action === 'custom_url') {
     const customUrl = cleanString(renderedConfigValue(config.customUrl, ctx))
-    if (!customUrl) return '/phone/chat'
+    if (!customUrl) return '/movil'
     return customUrl.startsWith('/') ? customUrl : `/${customUrl}`
   }
-  return `/phone/chat${contactQuery}`
+  return `/movil${contactQuery}`
 }
 
 function notificationActionLabel(config = {}) {

@@ -86,6 +86,17 @@ type SitesCreationMode = {
 }
 
 const routeLabels: Record<string, string> = {
+  '/movil/agent-chat': 'Mobile AI agent',
+  '/movil/agent-ai': 'Mobile AI agent',
+  '/movil/ai-agent': 'Mobile AI agent',
+  '/movil/dashboard': 'Mobile dashboard',
+  '/movil/appointments': 'Mobile appointments',
+  '/movil/transactions': 'Mobile payments',
+  '/movil/contacts': 'Mobile contacts',
+  '/movil/campaigns': 'Mobile ads',
+  '/movil/reports': 'Mobile reports',
+  '/movil/analytics': 'Mobile analytics',
+  '/movil/settings': 'Mobile settings',
   '/phone/agent-chat': 'Mobile AI agent',
   '/phone/agent-ai': 'Mobile AI agent',
   '/phone/ai-agent': 'Mobile AI agent',

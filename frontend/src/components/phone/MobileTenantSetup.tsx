@@ -2,6 +2,7 @@ import React from 'react'
 import { Loader2 } from 'lucide-react'
 import { Logo } from '@/components/common'
 import { loginWithPortal } from '@/services/mobileTenantService'
+import { PHONE_APP_HOME_PATH } from '@/utils/phoneAccess'
 import styles from './MobileTenantSetup.module.css'
 
 export const MobileTenantSetup: React.FC = () => {
@@ -19,7 +20,7 @@ export const MobileTenantSetup: React.FC = () => {
 
     try {
       await loginWithPortal(email, password)
-      window.location.replace('/phone/chat')
+      window.location.replace(PHONE_APP_HOME_PATH)
     } catch (err) {
       if ((err as { code?: string })?.code === 'license_blocked') {
         window.location.replace('/license-blocked')

@@ -134,7 +134,7 @@ import {
   getContactCustomFieldKeys
 } from '@/utils/contactCustomFields'
 import { formatCurrency, formatUrlParameter } from '@/utils/format'
-import { getLocalPhonePreviewDeviceMode, getPortableDeviceMode, writeTabletViewPreference, type PortableDeviceMode } from '@/utils/phoneAccess'
+import { PHONE_APP_HOME_PATH, getLocalPhonePreviewDeviceMode, getPortableDeviceMode, toCanonicalPhoneAppPath, writeTabletViewPreference, type PortableDeviceMode } from '@/utils/phoneAccess'
 import { normalizeTrafficSource } from '@/utils/trafficSourceNormalizer'
 import styles from './PhoneChat.module.css'
 
@@ -1060,8 +1060,8 @@ function isChatNotificationPayload(payload: Partial<MobileAppNotificationDetail>
   if (category === 'chat') return true
 
   try {
-    const parsed = new URL(url || '/phone/chat', typeof window === 'undefined' ? 'http://localhost' : window.location.origin)
-    return parsed.pathname === '/phone/chat'
+    const parsed = new URL(url || PHONE_APP_HOME_PATH, typeof window === 'undefined' ? 'http://localhost' : window.location.origin)
+    return toCanonicalPhoneAppPath(parsed.pathname) === PHONE_APP_HOME_PATH
   } catch {
     return false
   }
@@ -9575,7 +9575,7 @@ export const PhoneChat: React.FC = () => {
   }
 
   const getAIAgentViewContext = (visibleText?: string): AIAgentViewContext => ({
-    path: '/phone/chat',
+    path: PHONE_APP_HOME_PATH,
     title: document.title || 'Ristak',
     routeLabel: 'Chat móvil',
     visibleText: [

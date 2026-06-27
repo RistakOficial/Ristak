@@ -2052,7 +2052,7 @@ const OTHER_ACTIONS: NodeDefinition[] = [
         key: 'customUrl',
         label: 'Ruta interna',
         type: 'text',
-        placeholder: '/phone/chat',
+        placeholder: '/movil',
         showVariables: true,
         showIf: (config) => str(config.clickAction) === 'custom_url'
       }

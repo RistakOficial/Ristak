@@ -1,8 +1,8 @@
 # Ristak Mobile App
 
-Ristak ya puede compilarse como app nativa iOS/Android con Capacitor. La app usa las mismas pantallas `/phone/*`, pero dentro de un contenedor nativo con cámara, fotos y notificaciones push del celular.
+Ristak ya puede compilarse como app nativa iOS/Android con Capacitor. La app usa las mismas pantallas móviles bajo `/movil`, pero dentro de un contenedor nativo con cámara, fotos y notificaciones push del celular. Las rutas legacy `/phone/*` redirigen a `/movil/*`.
 
-En iOS el contenedor nativo está configurado como app de iPhone enfocada en `/phone/chat`. Al abrir desde Xcode o desde el icono del celular, primero resuelve la empresa contra el portal central, guarda la URL pública de la instalación del cliente y después arranca el login/chat móvil contra ese Render.
+En iOS el contenedor nativo está configurado como app de iPhone/iPad enfocada en `/movil`. Al abrir desde Xcode o desde el icono del celular, primero resuelve la empresa contra el portal central, guarda la URL pública de la instalación del cliente y después arranca el login/chat móvil contra ese Render.
 
 ## Requisitos
 
@@ -24,7 +24,7 @@ npm run mobile:open:android
 npm run mobile:open:ios
 ```
 
-Para preparar y subir a App Store Connect el shell iOS enfocado en `/phone/chat`, usa la guía específica en `docs/APP_STORE_IOS.md`.
+Para preparar y subir a App Store Connect el shell iOS enfocado en `/movil`, usa la guía específica en `docs/APP_STORE_IOS.md`.
 
 Si tu terminal sigue en Node 20, usa Node 22 temporal:
 

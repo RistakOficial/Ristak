@@ -37,6 +37,7 @@ import { pushNotificationsService } from '@/services/pushNotificationsService'
 import { whatsappApiService, type WhatsAppApiTemplate } from '@/services/whatsappApiService'
 import type { ContactCustomFieldDefinition } from '@/types'
 import { getContactCustomFieldIdentity } from '@/utils/contactCustomFields'
+import { PHONE_APP_LOGIN_PATH, PHONE_APP_TENANT_PATH } from '@/utils/phoneAccess'
 import styles from './PhoneSettings.module.css'
 
 type SettingsSection = 'numbers' | 'templates' | 'agent' | 'chats' | 'custom-fields' | 'appearance' | 'notifications' | null
@@ -581,10 +582,10 @@ export const PhoneSettings: React.FC = () => {
         if (isNativeAppRuntime()) {
           // App nativa: vuelve al login único (correo + contraseña).
           clearRuntimeApiBaseUrl()
-          window.location.replace('/phone/tenant')
+          window.location.replace(PHONE_APP_TENANT_PATH)
         } else {
           // Web: el login de este backend funciona en el mismo origen.
-          window.location.replace('/phone/login')
+          window.location.replace(PHONE_APP_LOGIN_PATH)
         }
       },
       'Cerrar sesión',

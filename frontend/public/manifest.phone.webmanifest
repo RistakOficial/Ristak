@@ -1,10 +1,10 @@
 {
-  "id": "/phone/chat",
+  "id": "/movil",
   "name": "Ristak",
   "short_name": "Ristak",
   "description": "Acceso movil de Ristak para responder mensajes, revisar citas, cobrar y usar el agente de IA.",
-  "start_url": "/phone/chat",
-  "scope": "/phone/",
+  "start_url": "/movil",
+  "scope": "/",
   "display": "standalone",
   "orientation": "portrait",
   "background_color": "#111111",
@@ -27,7 +27,7 @@
     {
       "name": "Chat",
       "short_name": "Chat",
-      "url": "/phone/chat",
+      "url": "/movil",
       "icons": [
         {
           "src": "/ristak-chat-icon-192.png",
@@ -39,7 +39,7 @@
     {
       "name": "Dashboard",
       "short_name": "Dashboard",
-      "url": "/phone/dashboard",
+      "url": "/movil/dashboard",
       "icons": [
         {
           "src": "/ristak-chat-icon-192.png",
@@ -51,7 +51,7 @@
     {
       "name": "Calendario",
       "short_name": "Calendario",
-      "url": "/phone/calendar",
+      "url": "/movil/calendar",
       "icons": [
         {
           "src": "/ristak-chat-icon-192.png",
@@ -63,7 +63,7 @@
     {
       "name": "Pagos",
       "short_name": "Pagos",
-      "url": "/phone/payments",
+      "url": "/movil/payments",
       "icons": [
         {
           "src": "/ristak-chat-icon-192.png",
@@ -75,7 +75,7 @@
     {
       "name": "Ristak AI",
       "short_name": "Ristak AI",
-      "url": "/phone/agent-ai",
+      "url": "/movil/agent-ai",
       "icons": [
         {
           "src": "/ristak-chat-icon-192.png",

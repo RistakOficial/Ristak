@@ -227,14 +227,17 @@ test('Google Login central conserva return_path móvil y limpia rutas inseguras'
       return { statusCode, responseBody }
     }
 
-    const mobile = await callStart({ return_path: '/phone/chat' })
+    const mobile = await callStart({ return_path: '/movil' })
     assert.equal(mobile.statusCode, 200)
     assert.equal(mobile.responseBody.url, 'https://accounts.google.test/oauth')
     assert.equal(requests[0].path, '/api/auth/google/start')
-    assert.equal(requests[0].body.return_path, '/phone/chat')
+    assert.equal(requests[0].body.return_path, '/movil')
+
+    await callStart({ return_path: '/phone/chat' })
+    assert.equal(requests[1].body.return_path, '/phone/chat')
 
     await callStart({ return_path: 'https://evil.test/steal' })
-    assert.equal(requests[1].body.return_path, '/dashboard')
+    assert.equal(requests[2].body.return_path, '/dashboard')
   } finally {
     server.closeAllConnections?.()
     server.close()

@@ -197,7 +197,7 @@ export async function createInternalNotification({
   const pushPayload = {
     title: pushTitle || cleanTitle,
     body: pushBody || cleanMessage || cleanTitle,
-    url: actionUrl || '/phone/chat',
+    url: actionUrl || '/movil',
     category,
     tag: ids[0] || `internal-${Date.now()}`,
     contactId: cleanString(contactId)

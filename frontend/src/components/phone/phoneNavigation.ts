@@ -1,4 +1,5 @@
 import { BarChart3, CalendarDays, CircleDollarSign, MessageCircle, Settings, type LucideIcon } from 'lucide-react'
+import { PHONE_APP_HOME_PATH, PHONE_APP_PREFIX } from '@/utils/phoneAccess'
 
 export type PhoneSection = 'chat' | 'calendar' | 'payments' | 'analytics' | 'settings'
 export type PhoneRouteDirection = 'forward' | 'back' | 'none'
@@ -11,11 +12,11 @@ export interface PhoneNavItem {
 }
 
 export const PHONE_NAV_ITEMS: PhoneNavItem[] = [
-  { key: 'settings', label: 'Ajustes', to: '/phone/settings', Icon: Settings },
-  { key: 'chat', label: 'Chats', to: '/phone/chat', Icon: MessageCircle },
-  { key: 'calendar', label: 'Citas', to: '/phone/calendar', Icon: CalendarDays },
-  { key: 'payments', label: 'Pagos', to: '/phone/payments', Icon: CircleDollarSign },
-  { key: 'analytics', label: 'Analíticas', to: '/phone/analytics', Icon: BarChart3 }
+  { key: 'settings', label: 'Ajustes', to: `${PHONE_APP_PREFIX}/settings`, Icon: Settings },
+  { key: 'chat', label: 'Chats', to: PHONE_APP_HOME_PATH, Icon: MessageCircle },
+  { key: 'calendar', label: 'Citas', to: `${PHONE_APP_PREFIX}/calendar`, Icon: CalendarDays },
+  { key: 'payments', label: 'Pagos', to: `${PHONE_APP_PREFIX}/payments`, Icon: CircleDollarSign },
+  { key: 'analytics', label: 'Analíticas', to: `${PHONE_APP_PREFIX}/analytics`, Icon: BarChart3 }
 ]
 
 export const PHONE_NAV_ACTIVE_INDEX_KEY = 'ristak_phone_nav_active_index'

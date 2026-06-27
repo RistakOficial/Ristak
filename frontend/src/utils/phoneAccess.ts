@@ -4,8 +4,14 @@ export type RedirectLocation = {
   hash?: string
 }
 
-export const PHONE_APP_HOME_PATH = '/phone/chat'
-export const PHONE_APP_LOGIN_PATH = '/phone/login'
+export const PHONE_APP_PREFIX = '/movil'
+export const LEGACY_PHONE_APP_PREFIX = '/phone'
+export const PHONE_APP_HOME_PATH = PHONE_APP_PREFIX
+export const PHONE_APP_LOGIN_PATH = `${PHONE_APP_PREFIX}/login`
+export const PHONE_APP_TENANT_PATH = `${PHONE_APP_PREFIX}/tenant`
+export const LEGACY_PHONE_APP_HOME_PATH = `${LEGACY_PHONE_APP_PREFIX}/chat`
+export const LEGACY_PHONE_APP_LOGIN_PATH = `${LEGACY_PHONE_APP_PREFIX}/login`
+export const LEGACY_PHONE_APP_TENANT_PATH = `${LEGACY_PHONE_APP_PREFIX}/tenant`
 export const DESKTOP_LOGIN_PATH = '/login'
 export const SETUP_PATH = '/setup'
 export const TABLET_VIEW_PREFERENCE_KEY = 'ristak.tabletViewPreference.v1'
@@ -22,8 +28,32 @@ const IPAD_DESKTOP_SHORT_SIDE_LIMIT = 700
 const TABLET_SHORT_SIDE_LIMIT = 1366
 const LOCAL_PHONE_PREVIEW_HOSTNAMES = new Set(['localhost', '0.0.0.0', '::1', '[::1]'])
 
+export function isCanonicalPhoneAppPath(pathname = '') {
+  return pathname === PHONE_APP_PREFIX || pathname.startsWith(`${PHONE_APP_PREFIX}/`)
+}
+
+export function isLegacyPhoneAppPath(pathname = '') {
+  return pathname === LEGACY_PHONE_APP_PREFIX || pathname.startsWith(`${LEGACY_PHONE_APP_PREFIX}/`)
+}
+
 export function isPhoneAppPath(pathname = '') {
-  return pathname === '/phone' || pathname.startsWith('/phone/')
+  return isCanonicalPhoneAppPath(pathname) || isLegacyPhoneAppPath(pathname)
+}
+
+export function toCanonicalPhoneAppPath(pathname = '') {
+  if (pathname === LEGACY_PHONE_APP_PREFIX || pathname === LEGACY_PHONE_APP_HOME_PATH || pathname === `${LEGACY_PHONE_APP_PREFIX}/app`) {
+    return PHONE_APP_HOME_PATH
+  }
+
+  if (pathname.startsWith(`${LEGACY_PHONE_APP_HOME_PATH}/`)) {
+    return `${PHONE_APP_HOME_PATH}${pathname.slice(LEGACY_PHONE_APP_HOME_PATH.length)}`
+  }
+
+  if (pathname.startsWith(`${LEGACY_PHONE_APP_PREFIX}/`)) {
+    return `${PHONE_APP_PREFIX}${pathname.slice(LEGACY_PHONE_APP_PREFIX.length)}`
+  }
+
+  return pathname
 }
 
 export function getLoginPathForRoute(pathname = '') {
@@ -49,11 +79,11 @@ export function getPostAuthRedirectPath(from?: RedirectLocation, fallbackPath = 
     return fallback
   }
 
-  if (pathname === PHONE_APP_LOGIN_PATH) {
+  if (pathname === PHONE_APP_LOGIN_PATH || pathname === LEGACY_PHONE_APP_LOGIN_PATH) {
     return PHONE_APP_HOME_PATH
   }
 
-  return sanitizeAuthRedirectPath(`${pathname}${from?.search || ''}${from?.hash || ''}`, fallback)
+  return sanitizeAuthRedirectPath(`${toCanonicalPhoneAppPath(pathname)}${from?.search || ''}${from?.hash || ''}`, fallback)
 }
 
 function getScreenShortSide() {

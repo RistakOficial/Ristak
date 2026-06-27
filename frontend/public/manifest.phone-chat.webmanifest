@@ -1,10 +1,10 @@
 {
-  "id": "/phone/chat",
+  "id": "/movil",
   "name": "Ristak",
   "short_name": "Ristak",
   "description": "Acceso movil de Ristak para responder mensajes, revisar citas, cobrar y usar el agente de IA.",
-  "start_url": "/phone/chat",
-  "scope": "/phone/",
+  "start_url": "/movil",
+  "scope": "/",
   "display": "standalone",
   "orientation": "portrait",
   "background_color": "#050505",
@@ -33,7 +33,7 @@
     {
       "name": "Chat",
       "short_name": "Chat",
-      "url": "/phone/chat",
+      "url": "/movil",
       "icons": [
         {
           "src": "/ristak-chat-home-icon-192.png",

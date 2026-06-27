@@ -6,7 +6,7 @@ import { useAuth } from '@/contexts/AuthContext'
 import { useNotification } from '@/contexts/NotificationContext'
 import { mobileAppService } from '@/services/mobileAppService'
 import { pushNotificationsService } from '@/services/pushNotificationsService'
-import { getPortableDeviceMode } from '@/utils/phoneAccess'
+import { getPortableDeviceMode, isPhoneAppPath } from '@/utils/phoneAccess'
 import styles from './MobileNotificationOnboarding.module.css'
 
 type PromptStep = 'intro' | 'first_decline' | 'final_decline' | 'system_denied'
@@ -140,7 +140,7 @@ export function MobileNotificationOnboarding() {
     if (typeof window === 'undefined') return undefined
 
     let cancelled = false
-    const isPhoneRoute = location.pathname.startsWith('/phone')
+    const isPhoneRoute = isPhoneAppPath(location.pathname)
     if (isLoading || !isAuthenticated || !isPhoneRoute) {
       setVisible(false)
       return undefined

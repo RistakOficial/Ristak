@@ -34,7 +34,7 @@ import { getPhoneDailyCacheKey, readPhoneDailyCache, writePhoneDailyCache } from
 import { reportsService, type ContactListItem, type ReportMetricRow, type ReportsSummary } from '@/services/reportsService'
 import { transactionsService, type Transaction, type TransactionSummary } from '@/services/transactionsService'
 import { formatCurrency, formatDate, formatDateToISO, formatNumber, formatRoas } from '@/utils/format'
-import { isLocalPhonePreviewHost } from '@/utils/phoneAccess'
+import { PHONE_APP_PREFIX, isLocalPhonePreviewHost } from '@/utils/phoneAccess'
 import styles from './PhoneApp.module.css'
 
 const PORTABLE_WIDTH_QUERY = '(max-width: 1366px)'
@@ -760,7 +760,7 @@ export const PhoneApp: React.FC = () => {
   }, [appointmentsTrend, leadsTrend, salesTrend, visitorsTrend])
 
   if (!activeSectionId) {
-    return <Navigate to="/phone/dashboard" replace />
+    return <Navigate to={`${PHONE_APP_PREFIX}/dashboard`} replace />
   }
 
   if (accessState === 'checking') {
@@ -810,7 +810,7 @@ export const PhoneApp: React.FC = () => {
             >
               <RefreshCw size={18} className={loading || cacheRefreshing ? styles.spinIcon : undefined} />
             </button>
-            <Link className={styles.iconButton} to="/phone/agent-ai" aria-label="Open AI agent" title="Open AI agent">
+            <Link className={styles.iconButton} to={`${PHONE_APP_PREFIX}/agent-ai`} aria-label="Open AI agent" title="Open AI agent">
               <Bot size={18} />
             </Link>
           </div>
@@ -841,10 +841,11 @@ export const PhoneApp: React.FC = () => {
           {PHONE_SECTIONS.map((section) => {
             const Icon = section.Icon
             const isActive = section.id === activeSectionId
+            const sectionPath = section.id === 'chat' ? PHONE_APP_PREFIX : `${PHONE_APP_PREFIX}/${section.id}`
             return (
               <Link
                 key={section.id}
-                to={`/phone/${section.id}`}
+                to={sectionPath}
                 className={`${styles.sectionTab} ${isActive ? styles.sectionTabActive : ''}`}
               >
                 <Icon size={16} />
@@ -1034,7 +1035,7 @@ function TransactionsSection({ summary, transactions }: TransactionsSectionProps
     <div className={styles.sectionStack}>
       <div className={styles.paymentActionGrid}>
         <Link
-          to="/phone/payments?mode=single"
+          to={`${PHONE_APP_PREFIX}/payments?mode=single`}
           className={`${styles.paymentActionButton} ${styles.paymentActionPrimary}`}
         >
           <CreditCard size={18} />
@@ -1044,7 +1045,7 @@ function TransactionsSection({ summary, transactions }: TransactionsSectionProps
           </span>
         </Link>
         <Link
-          to="/phone/payments?mode=products"
+          to={`${PHONE_APP_PREFIX}/payments?mode=products`}
           className={styles.paymentActionButton}
         >
           <Package size={18} />
@@ -1055,7 +1056,7 @@ function TransactionsSection({ summary, transactions }: TransactionsSectionProps
         </Link>
         {highLevelConnected && (
           <Link
-            to="/phone/payments?mode=partial"
+            to={`${PHONE_APP_PREFIX}/payments?mode=partial`}
             className={styles.paymentActionButton}
           >
             <CalendarDays size={18} />

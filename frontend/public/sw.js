@@ -1,14 +1,14 @@
-const CACHE_NAME = 'ristak-branding-v22'
+const CACHE_NAME = 'ristak-branding-v23'
 const DEFAULT_NOTIFICATION_TITLE = 'Notificación nueva'
 const DEFAULT_NOTIFICATION_BODY = 'Tienes una notificación nueva.'
 const SHELL_ASSETS = [
   '/',
-  '/phone/login',
-  '/phone/chat',
-  '/phone/dashboard',
-  '/phone/calendar',
-  '/phone/payments',
-  '/phone/agent-ai',
+  '/movil/login',
+  '/movil',
+  '/movil/dashboard',
+  '/movil/calendar',
+  '/movil/payments',
+  '/movil/agent-ai',
   '/manifest.webmanifest',
   '/manifest.phone.webmanifest',
   '/manifest.phone-chat.webmanifest',
@@ -116,7 +116,7 @@ function getNotificationBody(payload) {
 
 function getNotificationData(payload) {
   return {
-    url: payload?.url || '/phone/chat',
+    url: payload?.url || '/movil',
     category: payload?.category || 'ristak',
     tag: payload?.tag || 'ristak-chat',
     messageId: payload?.messageId || '',
@@ -140,7 +140,7 @@ self.addEventListener('push', (event) => {
   let payload = {
     title: DEFAULT_NOTIFICATION_TITLE,
     body: DEFAULT_NOTIFICATION_BODY,
-    url: '/phone/chat'
+    url: '/movil'
   }
 
   try {
@@ -172,7 +172,7 @@ self.addEventListener('push', (event) => {
 self.addEventListener('notificationclick', (event) => {
   event.notification.close()
   const notificationData = event.notification.data || {}
-  const targetUrl = notificationData.url || '/phone/chat'
+  const targetUrl = notificationData.url || '/movil'
   const normalizedTarget = new URL(targetUrl, self.location.origin)
 
   event.waitUntil(

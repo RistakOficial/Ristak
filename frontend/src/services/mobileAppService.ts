@@ -17,28 +17,31 @@ type DocumentSource = 'documents'
 type MobileShellTheme = 'light' | 'dark'
 
 export const MOBILE_APP_NOTIFICATION_EVENT = 'ristak:mobile-notification'
-const IOS_PHONE_CHAT_HOME_PATH = '/phone/chat'
-const IOS_PHONE_CHAT_LOGIN_PATH = '/phone/login'
-const IOS_PHONE_TENANT_PATH = '/phone/tenant'
+const IOS_PHONE_APP_PREFIX = '/movil'
+const IOS_PHONE_CHAT_HOME_PATH = IOS_PHONE_APP_PREFIX
+const IOS_PHONE_CHAT_LOGIN_PATH = `${IOS_PHONE_APP_PREFIX}/login`
+const IOS_PHONE_TENANT_PATH = `${IOS_PHONE_APP_PREFIX}/tenant`
+const LEGACY_IOS_PHONE_APP_PREFIX = '/phone'
+const LEGACY_IOS_PHONE_CHAT_HOME_PATH = `${LEGACY_IOS_PHONE_APP_PREFIX}/chat`
 const IOS_PHONE_APP_ALLOWED_PATHS = new Set([
-  '/phone',
-  '/phone/app',
+  IOS_PHONE_APP_PREFIX,
+  `${IOS_PHONE_APP_PREFIX}/app`,
   IOS_PHONE_CHAT_HOME_PATH,
   IOS_PHONE_CHAT_LOGIN_PATH,
   IOS_PHONE_TENANT_PATH,
-  '/phone/payments',
-  '/phone/analytics',
-  '/phone/settings',
-  '/phone/calendar',
-  '/phone/appointments',
+  `${IOS_PHONE_APP_PREFIX}/payments`,
+  `${IOS_PHONE_APP_PREFIX}/analytics`,
+  `${IOS_PHONE_APP_PREFIX}/settings`,
+  `${IOS_PHONE_APP_PREFIX}/calendar`,
+  `${IOS_PHONE_APP_PREFIX}/appointments`,
   '/setup',
   '/sso',
   '/license-blocked'
 ])
 const IOS_PHONE_APP_ALLOWED_PATH_PREFIXES = [
-  '/phone/agent-chat',
-  '/phone/agent-ai',
-  '/phone/ai-agent'
+  `${IOS_PHONE_APP_PREFIX}/agent-chat`,
+  `${IOS_PHONE_APP_PREFIX}/agent-ai`,
+  `${IOS_PHONE_APP_PREFIX}/ai-agent`
 ]
 
 export interface MobileAppNotificationDetail {
@@ -82,11 +85,45 @@ function isIosPhoneChatShell() {
   return Capacitor.isNativePlatform() && getPlatform() === 'ios'
 }
 
-function getPathname(value: string) {
+function isIosPhoneAppPath(pathname: string) {
+  return pathname === IOS_PHONE_APP_PREFIX ||
+    pathname.startsWith(`${IOS_PHONE_APP_PREFIX}/`) ||
+    pathname === LEGACY_IOS_PHONE_APP_PREFIX ||
+    pathname.startsWith(`${LEGACY_IOS_PHONE_APP_PREFIX}/`)
+}
+
+function toCanonicalIosPhonePathname(pathname: string) {
+  if (pathname === LEGACY_IOS_PHONE_APP_PREFIX || pathname === LEGACY_IOS_PHONE_CHAT_HOME_PATH || pathname === `${LEGACY_IOS_PHONE_APP_PREFIX}/app`) {
+    return IOS_PHONE_CHAT_HOME_PATH
+  }
+
+  if (pathname.startsWith(`${LEGACY_IOS_PHONE_CHAT_HOME_PATH}/`)) {
+    return `${IOS_PHONE_CHAT_HOME_PATH}${pathname.slice(LEGACY_IOS_PHONE_CHAT_HOME_PATH.length)}`
+  }
+
+  if (pathname.startsWith(`${LEGACY_IOS_PHONE_APP_PREFIX}/`)) {
+    return `${IOS_PHONE_APP_PREFIX}${pathname.slice(LEGACY_IOS_PHONE_APP_PREFIX.length)}`
+  }
+
+  return pathname
+}
+
+function parseInternalPath(value: string) {
   try {
-    return new URL(value, window.location.origin).pathname
+    const parsed = new URL(value, window.location.origin)
+    return {
+      pathname: parsed.pathname,
+      search: parsed.search,
+      hash: parsed.hash
+    }
   } catch {
-    return value.split(/[?#]/)[0] || '/'
+    const [pathWithSearch, hash = ''] = value.split('#')
+    const [pathname = '/', search = ''] = pathWithSearch.split('?')
+    return {
+      pathname: pathname || '/',
+      search: search ? `?${search}` : '',
+      hash: hash ? `#${hash}` : ''
+    }
   }
 }
 
@@ -95,9 +132,13 @@ function isIosPhoneAppAllowedPath(pathname: string) {
     IOS_PHONE_APP_ALLOWED_PATH_PREFIXES.some((prefix) => pathname === prefix || pathname.startsWith(`${prefix}/`))
 }
 
-function getIosPhoneChatRedirectPath(pathname = typeof window !== 'undefined' ? window.location.pathname : '') {
+function getIosPhoneChatRedirectPath(value = typeof window !== 'undefined' ? `${window.location.pathname}${window.location.search}${window.location.hash}` : '') {
   if (!isIosPhoneChatShell()) return ''
-  const normalizedPathname = getPathname(pathname)
+  const { pathname, search, hash } = parseInternalPath(value)
+  const normalizedPathname = toCanonicalIosPhonePathname(pathname)
+  if (normalizedPathname !== pathname) {
+    return `${normalizedPathname}${search}${hash}`
+  }
   if (!hasRuntimeApiBaseUrl()) {
     return normalizedPathname === IOS_PHONE_TENANT_PATH ? '' : IOS_PHONE_TENANT_PATH
   }
@@ -116,7 +157,7 @@ function replaceInternalPath(value: string) {
 function ensureIosPhoneChatRoute() {
   if (typeof window === 'undefined') return
 
-  const redirectPath = getIosPhoneChatRedirectPath(window.location.pathname)
+  const redirectPath = getIosPhoneChatRedirectPath(`${window.location.pathname}${window.location.search}${window.location.hash}`)
   if (redirectPath) replaceInternalPath(redirectPath)
 }
 
@@ -142,7 +183,7 @@ function openInternalPath(value?: string | null) {
     nextPath = value.startsWith('/') ? value : IOS_PHONE_CHAT_HOME_PATH
   }
 
-  nextPath = getIosPhoneChatRedirectPath(getPathname(nextPath)) || nextPath
+  nextPath = getIosPhoneChatRedirectPath(nextPath) || nextPath
   window.history.pushState({}, '', nextPath)
   window.dispatchEvent(new PopStateEvent('popstate'))
 }
@@ -397,7 +438,7 @@ export const mobileAppService = {
     }).catch(() => undefined)
 
     await App.addListener('backButton', ({ canGoBack }) => {
-      if (window.location.pathname.startsWith('/phone') && canGoBack) {
+      if (isIosPhoneAppPath(window.location.pathname) && canGoBack) {
         window.history.back()
       }
     }).catch(() => undefined)

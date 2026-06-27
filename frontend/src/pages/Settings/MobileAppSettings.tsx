@@ -2,9 +2,10 @@ import React from 'react'
 import { CheckCircle2, Copy, ExternalLink, Home, MessageCircle, Share2, Smartphone } from 'lucide-react'
 import { Button, Card } from '@/components/common'
 import { useNotification } from '@/contexts/NotificationContext'
+import { PHONE_APP_HOME_PATH } from '@/utils/phoneAccess'
 import styles from './Settings.module.css'
 
-const MOBILE_CHAT_PATH = '/phone/chat'
+const MOBILE_CHAT_PATH = PHONE_APP_HOME_PATH
 const MOBILE_APP_NAME = 'Ristak'
 
 const safariSteps = [

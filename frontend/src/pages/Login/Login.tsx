@@ -5,7 +5,7 @@ import { Button, Logo } from '@/components/common'
 import { useAuth } from '@/contexts/AuthContext'
 import { apiUrl, clearRuntimeApiBaseUrl, getRuntimeApiBaseUrl, getRuntimeTenant, isNativeAppRuntime } from '@/services/apiBaseUrl'
 import { resolveAndStoreMobileTenant } from '@/services/mobileTenantService'
-import { PHONE_APP_HOME_PATH, getPostAuthRedirectPath, type RedirectLocation } from '@/utils/phoneAccess'
+import { PHONE_APP_HOME_PATH, PHONE_APP_TENANT_PATH, getPostAuthRedirectPath, isPhoneAppPath, type RedirectLocation } from '@/utils/phoneAccess'
 import styles from './Login.module.css'
 
 type LoginLocationState = {
@@ -50,7 +50,7 @@ export const Login: React.FC = () => {
   const location = useLocation()
   const navigate = useNavigate()
   const fromLocation = (location.state as LoginLocationState)?.from
-  const isPhoneLogin = location.pathname.startsWith('/phone')
+  const isPhoneLogin = isPhoneAppPath(location.pathname)
   const redirectPath = getPostAuthRedirectPath(fromLocation, isPhoneLogin ? PHONE_APP_HOME_PATH : '/dashboard')
   const tenant = isPhoneLogin && isNativeAppRuntime() ? getRuntimeTenant() : null
 
@@ -177,7 +177,7 @@ export const Login: React.FC = () => {
 
   const handleChangeTenant = () => {
     clearRuntimeApiBaseUrl()
-    navigate('/phone/tenant', { replace: true })
+    navigate(PHONE_APP_TENANT_PATH, { replace: true })
   }
 
   // (AUTH-010) Solicitar enlace de recuperación por correo. Anti-enumeración: siempre
