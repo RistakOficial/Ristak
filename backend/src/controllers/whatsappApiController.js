@@ -65,6 +65,10 @@ function cleanString(value) {
   return String(value).trim()
 }
 
+function isManualChatMessageOrigin(value) {
+  return cleanString(value).toLowerCase() === 'manual_chat'
+}
+
 function normalizeBaseUrl(value = '') {
   return cleanString(value).replace(/\/+$/, '')
 }
@@ -516,7 +520,8 @@ export async function sendWhatsAppApiTextMessageView(req, res) {
       contactId: req.body?.contactId,
       userId: req.user?.userId,
       publicBaseUrl: getPublicBaseUrl(req),
-      phoneNumberId: req.body?.phoneNumberId
+      phoneNumberId: req.body?.phoneNumberId,
+      skipQrSendProtection: isManualChatMessageOrigin(req.body?.messageOrigin)
     })
     notifyHumanTakeover({ contactId: req.body?.contactId, toPhone: req.body?.to })
     res.json({ success: true, data })
@@ -624,7 +629,8 @@ export async function sendWhatsAppApiImageMessageView(req, res) {
       contactId: req.body?.contactId,
       userId: req.user?.userId,
       phoneNumberId: req.body?.phoneNumberId,
-      publicBaseUrl: getPublicBaseUrl(req)
+      publicBaseUrl: getPublicBaseUrl(req),
+      skipQrSendProtection: isManualChatMessageOrigin(req.body?.messageOrigin)
     })
     notifyHumanTakeover({ contactId: req.body?.contactId, toPhone: req.body?.to })
     res.json({ success: true, data })
@@ -652,7 +658,8 @@ export async function sendWhatsAppApiDocumentMessageView(req, res) {
       contactId: req.body?.contactId,
       userId: req.user?.userId,
       phoneNumberId: req.body?.phoneNumberId,
-      publicBaseUrl: getPublicBaseUrl(req)
+      publicBaseUrl: getPublicBaseUrl(req),
+      skipQrSendProtection: isManualChatMessageOrigin(req.body?.messageOrigin)
     })
     notifyHumanTakeover({ contactId: req.body?.contactId, toPhone: req.body?.to })
     res.json({ success: true, data })
@@ -678,7 +685,8 @@ export async function sendWhatsAppApiAudioMessageView(req, res) {
       transport: req.body?.transport,
       contactId: req.body?.contactId,
       phoneNumberId: req.body?.phoneNumberId,
-      publicBaseUrl: getPublicBaseUrl(req)
+      publicBaseUrl: getPublicBaseUrl(req),
+      skipQrSendProtection: isManualChatMessageOrigin(req.body?.messageOrigin)
     })
     notifyHumanTakeover({ contactId: req.body?.contactId, toPhone: req.body?.to })
     res.json({ success: true, data })

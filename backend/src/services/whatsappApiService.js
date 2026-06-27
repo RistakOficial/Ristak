@@ -7151,7 +7151,8 @@ export async function sendWhatsAppApiInteractiveMessage({
   userId,
   publicBaseUrl,
   extraVariables,
-  phoneNumberId
+  phoneNumberId,
+  skipQrSendProtection = false
 } = {}) {
   const config = await loadConfig({ includeSecrets: true })
   const fromPhone = normalizePhoneForStorage(from || config.senderPhone) || cleanString(from || config.senderPhone)
@@ -7193,7 +7194,8 @@ export async function sendWhatsAppApiInteractiveMessage({
       toPhone,
       body: interactivePayload.fallbackText,
       externalId,
-      contactId
+      contactId,
+      skipQrSendProtection
     })
   }
 
@@ -7210,7 +7212,8 @@ export async function sendWhatsAppApiInteractiveMessage({
       body: interactivePayload.fallbackText,
       externalId,
       contactId,
-      fallbackReason: fallbackDecision.reason
+      fallbackReason: fallbackDecision.reason,
+      skipQrSendProtection
     })
   }
 
@@ -7246,7 +7249,8 @@ export async function sendWhatsAppApiInteractiveMessage({
         externalId,
         contactId,
         fallbackReason: retryDecision.reason,
-        originalError: error
+        originalError: error,
+        skipQrSendProtection
       })
     }
     // (WA-009) Sin fallback QR: registrar el saliente fallido antes de propagar.
@@ -7308,14 +7312,15 @@ function decorateQrFallbackResponse(response = {}, fallbackReason = '') {
   }
 }
 
-async function sendTextViaQrFallback({ fromPhone, toPhone, body, externalId, phoneNumberId, contactId, fallbackReason, originalError, persist = true } = {}) {
+async function sendTextViaQrFallback({ fromPhone, toPhone, body, externalId, phoneNumberId, contactId, fallbackReason, originalError, persist = true, skipQrSendProtection = false } = {}) {
   try {
     const response = await sendWhatsAppQrTextMessage({
       phoneNumberId,
       from: fromPhone,
       to: toPhone,
       text: body,
-      externalId
+      externalId,
+      skipQrSendProtection
     })
 
     if (persist) {
@@ -7350,7 +7355,7 @@ async function sendTextViaQrFallback({ fromPhone, toPhone, body, externalId, pho
   }
 }
 
-async function sendImageViaQrFallback({ fromPhone, toPhone, requestImage, imageDataUrl, externalId, phoneNumberId, contactId, localMedia, publicBaseUrl, fallbackReason, originalError, persist = true } = {}) {
+async function sendImageViaQrFallback({ fromPhone, toPhone, requestImage, imageDataUrl, externalId, phoneNumberId, contactId, localMedia, publicBaseUrl, fallbackReason, originalError, persist = true, skipQrSendProtection = false } = {}) {
   try {
     const localMediaUrl = buildLocalMediaUrl(localMedia, publicBaseUrl)
     const response = await sendWhatsAppQrImageMessage({
@@ -7360,7 +7365,8 @@ async function sendImageViaQrFallback({ fromPhone, toPhone, requestImage, imageD
       imageDataUrl,
       imageUrl: requestImage?.link || localMediaUrl,
       caption: requestImage?.caption,
-      externalId
+      externalId,
+      skipQrSendProtection
     })
     const finalImage = {
       ...(requestImage || {}),
@@ -7408,7 +7414,7 @@ async function sendImageViaQrFallback({ fromPhone, toPhone, requestImage, imageD
   }
 }
 
-async function sendDocumentViaQrFallback({ fromPhone, toPhone, requestDocument, documentDataUrl, externalId, phoneNumberId, contactId, localMedia, publicBaseUrl, fallbackReason, originalError, persist = true } = {}) {
+async function sendDocumentViaQrFallback({ fromPhone, toPhone, requestDocument, documentDataUrl, externalId, phoneNumberId, contactId, localMedia, publicBaseUrl, fallbackReason, originalError, persist = true, skipQrSendProtection = false } = {}) {
   try {
     const localMediaUrl = buildLocalMediaUrl(localMedia, publicBaseUrl)
     const response = await sendWhatsAppQrDocumentMessage({
@@ -7420,7 +7426,8 @@ async function sendDocumentViaQrFallback({ fromPhone, toPhone, requestDocument, 
       caption: requestDocument?.caption,
       filename: requestDocument?.filename || requestDocument?.fileName || localMedia?.filename,
       mimeType: requestDocument?.mimeType || requestDocument?.mimetype || localMedia?.mimeType,
-      externalId
+      externalId,
+      skipQrSendProtection
     })
     const finalDocument = {
       ...(requestDocument || {}),
@@ -7470,7 +7477,7 @@ async function sendDocumentViaQrFallback({ fromPhone, toPhone, requestDocument, 
   }
 }
 
-async function sendAudioViaQrFallback({ fromPhone, toPhone, requestAudio, audioDataUrl, externalId, phoneNumberId, contactId, localMedia, publicBaseUrl, durationMs, fallbackReason, originalError, persist = true } = {}) {
+async function sendAudioViaQrFallback({ fromPhone, toPhone, requestAudio, audioDataUrl, externalId, phoneNumberId, contactId, localMedia, publicBaseUrl, durationMs, fallbackReason, originalError, persist = true, skipQrSendProtection = false } = {}) {
   try {
     const localMediaUrl = buildLocalMediaUrl(localMedia, publicBaseUrl)
     const publicAudioUrl = cleanString(requestAudio?.link || requestAudio?.url || localMediaUrl)
@@ -7483,7 +7490,8 @@ async function sendAudioViaQrFallback({ fromPhone, toPhone, requestAudio, audioD
       audioUrl: qrAudioUrl,
       audioPublicUrl: publicAudioUrl,
       externalId,
-      durationMs
+      durationMs,
+      skipQrSendProtection
     })
     const finalAudio = {
       ...(requestAudio || {}),
@@ -7544,7 +7552,8 @@ export async function sendWhatsAppApiTextMessage({
   userId,
   publicBaseUrl,
   extraVariables,
-  phoneNumberId
+  phoneNumberId,
+  skipQrSendProtection = false
 } = {}) {
   const config = await loadConfig({ includeSecrets: true })
   const fromPhone = normalizePhoneForStorage(from || config.senderPhone) || cleanString(from || config.senderPhone)
@@ -7579,7 +7588,8 @@ export async function sendWhatsAppApiTextMessage({
       toPhone,
       body,
       externalId,
-      contactId
+      contactId,
+      skipQrSendProtection
     })
   }
 
@@ -7596,7 +7606,8 @@ export async function sendWhatsAppApiTextMessage({
       body,
       externalId,
       contactId,
-      fallbackReason: fallbackDecision.reason
+      fallbackReason: fallbackDecision.reason,
+      skipQrSendProtection
     })
   }
 
@@ -7630,7 +7641,8 @@ export async function sendWhatsAppApiTextMessage({
         externalId,
         contactId,
         fallbackReason: retryDecision.reason,
-        originalError: error
+        originalError: error,
+        skipQrSendProtection
       })
     }
     // (WA-009) Sin fallback QR: registrar el saliente fallido antes de propagar.
@@ -7683,7 +7695,8 @@ export async function sendWhatsAppApiImageMessage({
   userId,
   extraVariables,
   publicBaseUrl,
-  phoneNumberId
+  phoneNumberId,
+  skipQrSendProtection = false
 } = {}) {
   const config = await loadConfig({ includeSecrets: true })
   const cleanTransport = cleanString(transport).toLowerCase() === 'qr' ? 'qr' : 'api'
@@ -7748,7 +7761,8 @@ export async function sendWhatsAppApiImageMessage({
       externalId,
       contactId,
       localMedia: savedImage,
-      publicBaseUrl
+      publicBaseUrl,
+      skipQrSendProtection
     })
   }
 
@@ -7768,7 +7782,8 @@ export async function sendWhatsAppApiImageMessage({
       contactId,
       localMedia: savedImage,
       publicBaseUrl,
-      fallbackReason: fallbackDecision.reason
+      fallbackReason: fallbackDecision.reason,
+      skipQrSendProtection
     })
   }
 
@@ -7799,7 +7814,8 @@ export async function sendWhatsAppApiImageMessage({
         localMedia: savedImage,
         publicBaseUrl,
         fallbackReason: retryDecision.reason,
-        originalError: error
+        originalError: error,
+        skipQrSendProtection
       })
     }
     // (WA-009) Sin fallback QR: registrar el saliente fallido antes de propagar.
@@ -7858,7 +7874,8 @@ export async function sendWhatsAppApiDocumentMessage({
   userId,
   extraVariables,
   publicBaseUrl,
-  phoneNumberId
+  phoneNumberId,
+  skipQrSendProtection = false
 } = {}) {
   const config = await loadConfig({ includeSecrets: true })
   const cleanTransport = cleanString(transport).toLowerCase() === 'qr' ? 'qr' : 'api'
@@ -7924,7 +7941,8 @@ export async function sendWhatsAppApiDocumentMessage({
       externalId,
       contactId,
       localMedia: savedDocument,
-      publicBaseUrl
+      publicBaseUrl,
+      skipQrSendProtection
     })
   }
 
@@ -7947,7 +7965,8 @@ export async function sendWhatsAppApiDocumentMessage({
       contactId,
       localMedia: savedDocument,
       publicBaseUrl,
-      fallbackReason: fallbackDecision.reason
+      fallbackReason: fallbackDecision.reason,
+      skipQrSendProtection
     })
   }
 
@@ -7981,7 +8000,8 @@ export async function sendWhatsAppApiDocumentMessage({
         localMedia: savedDocument,
         publicBaseUrl,
         fallbackReason: retryDecision.reason,
-        originalError: error
+        originalError: error,
+        skipQrSendProtection
       })
     }
     // (WA-009) Sin fallback QR: registrar el saliente fallido antes de propagar.
@@ -8040,7 +8060,8 @@ export async function sendWhatsAppApiAudioMessage({
   transport = 'api',
   allowQrFallback = true,
   contactId,
-  phoneNumberId
+  phoneNumberId,
+  skipQrSendProtection = false
 } = {}) {
   const config = await loadConfig({ includeSecrets: true })
   const cleanTransport = cleanString(transport).toLowerCase() === 'qr' ? 'qr' : 'api'
@@ -8100,7 +8121,8 @@ export async function sendWhatsAppApiAudioMessage({
       contactId,
       localMedia: savedAudio,
       publicBaseUrl,
-      durationMs
+      durationMs,
+      skipQrSendProtection
     })
   }
 
@@ -8124,7 +8146,8 @@ export async function sendWhatsAppApiAudioMessage({
       localMedia: savedAudio,
       publicBaseUrl,
       durationMs,
-      fallbackReason: fallbackDecision.reason
+      fallbackReason: fallbackDecision.reason,
+      skipQrSendProtection
     })
   }
 
@@ -8160,7 +8183,8 @@ export async function sendWhatsAppApiAudioMessage({
         publicBaseUrl,
         durationMs,
         fallbackReason: retryDecision.reason,
-        originalError: error
+        originalError: error,
+        skipQrSendProtection
       })
     }
     // (WA-009) Sin fallback QR: registrar el saliente fallido antes de propagar.

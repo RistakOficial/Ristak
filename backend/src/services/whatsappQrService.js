@@ -1912,7 +1912,7 @@ export async function disconnectWhatsAppQrConnection({ phoneNumberId } = {}) {
   return mapSessionForResponse(row)
 }
 
-async function sendProtectedQrMessage({ sock, phone, recipient, type, payload } = {}) {
+async function sendProtectedQrMessage({ sock, phone, recipient, type, payload, skipQrSendProtection = false } = {}) {
   if (!sock?.sendMessage) {
     throw new Error('La conexión QR no puede enviar mensajes en este momento')
   }
@@ -1920,16 +1920,18 @@ async function sendProtectedQrMessage({ sock, phone, recipient, type, payload } 
     throw new Error('Falta el número emisor de WhatsApp QR')
   }
 
-  await waitForWhatsAppQrDripSlot({
-    phoneNumberId: phone.id,
-    to: recipient?.verifiedPhone,
-    type
-  })
+  if (!skipQrSendProtection) {
+    await waitForWhatsAppQrDripSlot({
+      phoneNumberId: phone.id,
+      to: recipient?.verifiedPhone,
+      type
+    })
+  }
 
   return sock.sendMessage(recipient.jid, payload)
 }
 
-export async function sendWhatsAppQrTextMessage({ phoneNumberId, from, to, text, externalId } = {}) {
+export async function sendWhatsAppQrTextMessage({ phoneNumberId, from, to, text, externalId, skipQrSendProtection = false } = {}) {
   const phone = await resolveQrPhone({ phoneNumberId, from })
   const toPhone = normalizePhoneForStorage(to) || cleanString(to)
   const body = cleanString(text)
@@ -1956,7 +1958,8 @@ export async function sendWhatsAppQrTextMessage({ phoneNumberId, from, to, text,
     phone,
     recipient,
     type: 'text',
-    payload: { text: body }
+    payload: { text: body },
+    skipQrSendProtection
   })
   const sendResult = await finalizeQrSendResponse({ response, recipient, externalId })
 
@@ -1975,7 +1978,7 @@ export async function sendWhatsAppQrTextMessage({ phoneNumberId, from, to, text,
   }
 }
 
-export async function sendWhatsAppQrImageMessage({ phoneNumberId, from, to, imageDataUrl, imageUrl, caption, externalId } = {}) {
+export async function sendWhatsAppQrImageMessage({ phoneNumberId, from, to, imageDataUrl, imageUrl, caption, externalId, skipQrSendProtection = false } = {}) {
   const phone = await resolveQrPhone({ phoneNumberId, from })
   const toPhone = normalizePhoneForStorage(to) || cleanString(to)
   const cleanCaption = cleanString(caption).slice(0, 1024)
@@ -2010,7 +2013,8 @@ export async function sendWhatsAppQrImageMessage({ phoneNumberId, from, to, imag
       image: media.content,
       ...(media.mimeType ? { mimetype: media.mimeType } : {}),
       ...(cleanCaption ? { caption: cleanCaption } : {})
-    }
+    },
+    skipQrSendProtection
   })
   const sendResult = await finalizeQrSendResponse({ response, recipient, externalId })
 
@@ -2033,7 +2037,7 @@ export async function sendWhatsAppQrImageMessage({ phoneNumberId, from, to, imag
   }
 }
 
-export async function sendWhatsAppQrAudioMessage({ phoneNumberId, from, to, audioDataUrl, audioUrl, audioPublicUrl, externalId, durationMs } = {}) {
+export async function sendWhatsAppQrAudioMessage({ phoneNumberId, from, to, audioDataUrl, audioUrl, audioPublicUrl, externalId, durationMs, skipQrSendProtection = false } = {}) {
   const phone = await resolveQrPhone({ phoneNumberId, from })
   const toPhone = normalizePhoneForStorage(to) || cleanString(to)
 
@@ -2070,7 +2074,8 @@ export async function sendWhatsAppQrAudioMessage({ phoneNumberId, from, to, audi
       mimetype: mimeType,
       ptt: true,
       ...(seconds ? { seconds } : {})
-    }
+    },
+    skipQrSendProtection
   })
   const sendResult = await finalizeQrSendResponse({ response, recipient, externalId })
   const audioLink = cleanString(audioPublicUrl) || media.sourceUrl || cleanString(audioUrl)
@@ -2098,7 +2103,7 @@ export async function sendWhatsAppQrAudioMessage({ phoneNumberId, from, to, audi
   }
 }
 
-export async function sendWhatsAppQrDocumentMessage({ phoneNumberId, from, to, documentDataUrl, documentUrl, caption, filename, mimeType, externalId } = {}) {
+export async function sendWhatsAppQrDocumentMessage({ phoneNumberId, from, to, documentDataUrl, documentUrl, caption, filename, mimeType, externalId, skipQrSendProtection = false } = {}) {
   const phone = await resolveQrPhone({ phoneNumberId, from })
   const toPhone = normalizePhoneForStorage(to) || cleanString(to)
   const cleanCaption = cleanString(caption).slice(0, 1024)
@@ -2140,7 +2145,8 @@ export async function sendWhatsAppQrDocumentMessage({ phoneNumberId, from, to, d
       mimetype: documentMimeType,
       fileName: cleanFilename,
       ...(cleanCaption ? { caption: cleanCaption } : {})
-    }
+    },
+    skipQrSendProtection
   })
   const sendResult = await finalizeQrSendResponse({ response, recipient, externalId })
 

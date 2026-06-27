@@ -235,3 +235,33 @@ test('WhatsApp QR aplica pausas automáticas a todos los tipos de mensaje QR', a
     assert.ok(sleeps[2] >= 42_000 && sleeps[2] <= 46_000)
   })
 })
+
+test('WhatsApp QR omite pausas automáticas para mensajes de chat manual', async () => {
+  await snapshotAppConfig([WHATSAPP_QR_DRIP_CONFIG_KEY], async () => {
+    const sentMessages = []
+    const sleeps = []
+
+    await withQrFixture(async ({ phoneNumberId }) => {
+      setBaileysRuntimeForTest(createFakeBaileysRuntime(sentMessages))
+      setWhatsAppQrDripSleepForTest(async (delayMs) => {
+        sleeps.push(delayMs)
+      })
+      await saveWhatsAppQrDripSettings({ enabled: true, delaySeconds: 15, delayUnit: 'seconds' })
+
+      await sendWhatsAppQrTextMessage({
+        phoneNumberId,
+        to: CONTACT_PHONE,
+        text: 'Mensaje con pausa normal'
+      })
+      await sendWhatsAppQrTextMessage({
+        phoneNumberId,
+        to: CONTACT_PHONE,
+        text: 'Mensaje manual inmediato',
+        skipQrSendProtection: true
+      })
+    })
+
+    assert.equal(sentMessages.length, 2)
+    assert.deepEqual(sleeps, [])
+  })
+})

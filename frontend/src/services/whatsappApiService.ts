@@ -244,6 +244,7 @@ export interface WhatsAppApiTextSendPayload {
   externalId?: string
   transport?: 'api' | 'qr'
   phoneNumberId?: string
+  messageOrigin?: 'manual_chat' | string
 }
 
 export interface WhatsAppApiInteractiveSendPayload {
@@ -304,6 +305,7 @@ export interface WhatsAppApiImageSendPayload {
   externalId?: string
   transport?: 'api' | 'qr'
   phoneNumberId?: string
+  messageOrigin?: 'manual_chat' | string
 }
 
 export interface WhatsAppApiDocumentSendPayload {
@@ -318,6 +320,7 @@ export interface WhatsAppApiDocumentSendPayload {
   externalId?: string
   transport?: 'api' | 'qr'
   phoneNumberId?: string
+  messageOrigin?: 'manual_chat' | string
 }
 
 export interface WhatsAppApiAudioSendPayload {
@@ -330,6 +333,7 @@ export interface WhatsAppApiAudioSendPayload {
   externalId?: string
   transport?: 'api' | 'qr'
   phoneNumberId?: string
+  messageOrigin?: 'manual_chat' | string
 }
 
 export interface WhatsAppApiSendResponse {

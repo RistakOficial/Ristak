@@ -1705,7 +1705,8 @@ export function ContactDetailsModal({
           text,
           externalId: optimisticId,
           transport: 'api',
-          phoneNumberId: selectedBusinessPhone?.id || undefined
+          phoneNumberId: selectedBusinessPhone?.id || undefined,
+          messageOrigin: 'manual_chat'
         })
 
         setChatMessages((current) => current.map((message) => message.id === optimisticId

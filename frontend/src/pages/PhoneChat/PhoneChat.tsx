@@ -9185,7 +9185,8 @@ export const PhoneChat: React.FC = () => {
           voice: true,
           externalId: `${optimisticId}-audio`,
           transport: resolvedTransport,
-          phoneNumberId: selectedBusinessPhone?.id || undefined
+          phoneNumberId: selectedBusinessPhone?.id || undefined,
+          messageOrigin: 'manual_chat'
         })
         const responseAudioUrl = result.audio?.link || result.audio?.url || result.localMedia?.publicUrl || ''
         const responseAudioMimeType = result.audio?.mimeType || result.audio?.mimetype || result.localMedia?.mimeType || ''
@@ -9219,7 +9220,8 @@ export const PhoneChat: React.FC = () => {
                 caption: index === 0 ? text : '',
                 externalId: `${optimisticId}-attachment-${index}`,
                 transport: resolvedTransport,
-                phoneNumberId: selectedBusinessPhone?.id || undefined
+                phoneNumberId: selectedBusinessPhone?.id || undefined,
+                messageOrigin: 'manual_chat'
               })
             : whatsappApiService.sendDocument({
                 to: activeContact.phone || '',
@@ -9231,7 +9233,8 @@ export const PhoneChat: React.FC = () => {
                 caption: index === 0 ? text : '',
                 externalId: `${optimisticId}-attachment-${index}`,
                 transport: resolvedTransport,
-                phoneNumberId: selectedBusinessPhone?.id || undefined
+                phoneNumberId: selectedBusinessPhone?.id || undefined,
+                messageOrigin: 'manual_chat'
               })
         )))
         setMessages((current) => current.map((message) => (
@@ -9267,7 +9270,8 @@ export const PhoneChat: React.FC = () => {
           text,
           externalId: optimisticId,
           transport: resolvedTransport,
-          phoneNumberId: selectedBusinessPhone?.id || undefined
+          phoneNumberId: selectedBusinessPhone?.id || undefined,
+          messageOrigin: 'manual_chat'
         })
         setMessages((current) => current.map((message) => (
           message.id === optimisticId
