@@ -731,6 +731,7 @@ export const CalendarsConfiguration: React.FC = () => {
   const [googleMergePrompt, setGoogleMergePrompt] = useState<GoogleCalendarMergePreview | null>(null)
   const [savingGoogleMergePrompt, setSavingGoogleMergePrompt] = useState(false)
   const [googleCalendarId, setGoogleCalendarId] = useState('')
+  const googleConnected = Boolean(googleIntegration?.connected)
   const [savingGoogleSyncCalendarId, setSavingGoogleSyncCalendarId] = useState<string | null>(null)
   const [showCreateModal, setShowCreateModal] = useState(false)
   const [showNotificationsModal, setShowNotificationsModal] = useState(false)
@@ -895,16 +896,16 @@ export const CalendarsConfiguration: React.FC = () => {
   }, [calendars, expandedCalendarId, routeState.calendarId, routeState.create, routeState.view])
 
   // Sin integración conectada el selector de origen queda oculto. Si había quedado
-  // en "Solo HighLevel", se volvería a Ristak para no esconder sus calendarios
+  // en una fuente externa desconectada, se vuelve a una fuente visible.
   // (de lo contrario no habría forma de recuperarlos sin el selector).
   useEffect(() => {
     if (!highLevelLoading && !highLevelConnected && calendarSourcePreference === 'ghl') {
-      setCalendarSourcePreference('ristak').catch(() => {})
+      setCalendarSourcePreference(googleConnected ? 'combined' : 'ristak').catch(() => {})
     }
-    if (!loadingGoogleIntegration && calendarSourcePreference === 'google') {
+    if (!loadingGoogleIntegration && !googleConnected && calendarSourcePreference === 'google') {
       setCalendarSourcePreference(highLevelConnected ? 'combined' : 'ristak').catch(() => {})
     }
-  }, [highLevelLoading, highLevelConnected, loadingGoogleIntegration, googleIntegration?.connected, calendarSourcePreference, setCalendarSourcePreference])
+  }, [highLevelLoading, highLevelConnected, loadingGoogleIntegration, googleConnected, calendarSourcePreference, setCalendarSourcePreference])
 
   // Con un único calendario, ese es el predeterminado: no tiene sentido pedir
   // selección manual cuando solo existe la opción de Ristak.
@@ -1999,18 +2000,21 @@ export const CalendarsConfiguration: React.FC = () => {
         ? 'Todos los calendarios se mostrarán juntos'
         : nextValue === 'ristak'
           ? 'Solo se mostrarán calendarios de Ristak'
-          : 'Solo se mostrarán calendarios de HighLevel'
+          : nextValue === 'google'
+            ? 'Solo se mostrarán calendarios de Google'
+            : 'Solo se mostrarán calendarios de HighLevel'
     )
     await loadCalendars()
   }
 
   const renderCalendarSourceSelect = () => {
-    const showSourceSelector = highLevelConnected
+    const showSourceSelector = highLevelConnected || googleConnected
     if (!showSourceSelector) return null
 
     const options = [
       { value: 'combined', label: 'Todos' },
       { value: 'ristak', label: 'Solo Ristak' },
+      ...(googleConnected ? [{ value: 'google', label: 'Solo Google' }] : []),
       ...(highLevelConnected ? [{ value: 'ghl', label: 'Solo HighLevel' }] : [])
     ]
 

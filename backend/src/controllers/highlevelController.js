@@ -3226,6 +3226,16 @@ export const listInvoiceSchedules = async (req, res) => {
       source: 'conekta'
     });
 
+    const highLevelConfig = await getHighLevelConfig().catch(() => null);
+    if (!highLevelConfig?.location_id || !highLevelConfig?.api_token) {
+      const localPlans = await listLocalInvoiceSchedules({ activeOnly });
+      return res.json({
+        success: true,
+        data: localPlans,
+        source: 'local'
+      });
+    }
+
     const ghlClient = await getGHLClient();
 
     for (let page = 0; page < maxPages; page += 1) {

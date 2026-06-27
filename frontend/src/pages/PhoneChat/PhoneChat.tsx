@@ -4311,23 +4311,27 @@ export const PhoneChat: React.FC = () => {
   const outsideReplyWindow = Boolean(activeContact?.phone && !apiReplyWindowOpen)
   const inferredHighLevelChatChannel = useMemo(() => inferHighLevelChatChannel(activeContact, messages), [activeContact, messages])
   const activeContactHighLevelChannelOverride = activeContact?.id ? contactHighLevelChannelOverrides[activeContact.id] : undefined
-  const inferredSocialHighLevelChannel = highLevelConnected && (inferredHighLevelChatChannel === 'instagram' || inferredHighLevelChatChannel === 'messenger')
+  const inferredSocialHighLevelChannel = (highLevelConnected || metaMessengerConnected || metaInstagramConnected) && (inferredHighLevelChatChannel === 'instagram' || inferredHighLevelChatChannel === 'messenger')
     ? inferredHighLevelChatChannel
     : ''
   const activeHighLevelChatChannel = activeContactHighLevelChannelOverride || inferredSocialHighLevelChannel || selectedHighLevelChatChannel
   const activeMetaSocialChannel = activeHighLevelChatChannel === 'messenger' || activeHighLevelChatChannel === 'instagram'
     ? activeHighLevelChatChannel
     : ''
+  const activeMetaSocialNativeConnected = activeMetaSocialChannel === 'messenger'
+    ? metaMessengerConnected
+    : activeMetaSocialChannel === 'instagram'
+      ? metaInstagramConnected
+      : false
   const sendingThroughMetaSocial = Boolean(
     activeContact &&
     activeMetaSocialChannel &&
-    !highLevelConnected &&
-    (
-      (activeMetaSocialChannel === 'messenger' && metaMessengerConnected) ||
-      (activeMetaSocialChannel === 'instagram' && metaInstagramConnected)
-    )
+    activeMetaSocialNativeConnected
   )
-  const sendingThroughHighLevel = Boolean(highLevelConnected && activeContact)
+  const highLevelChannelRequired = activeHighLevelChatChannel === 'sms_qr'
+    || Boolean(activeMetaSocialChannel && !activeMetaSocialNativeConnected)
+    || (activeHighLevelChatChannel === 'whatsapp_api' && !whatsappConnected && !selectedQrReady)
+  const sendingThroughHighLevel = Boolean(highLevelConnected && activeContact && highLevelChannelRequired)
   const highLevelWhatsAppFallsBackToSms = Boolean(sendingThroughHighLevel && activeHighLevelChatChannel === 'whatsapp_api' && activeContact?.phone && !highLevelWhatsAppReplyWindowOpen)
   const effectiveHighLevelChatChannel: HighLevelChatChannel = highLevelWhatsAppFallsBackToSms ? 'sms_qr' : activeHighLevelChatChannel
   const activeHighLevelChannelNeedsPhone = effectiveHighLevelChatChannel === 'whatsapp_api' || effectiveHighLevelChatChannel === 'sms_qr'
@@ -11766,7 +11770,7 @@ export const PhoneChat: React.FC = () => {
   const renderComposerChannelPicker = () => {
     if (!activeContact || aiAgentConversationOpen) return null
 
-    const activeValue: ComposerMessageChannelValue = sendingThroughHighLevel ? activeHighLevelChatChannel : 'whatsapp_api'
+    const activeValue: ComposerMessageChannelValue = (sendingThroughHighLevel || sendingThroughMetaSocial) ? activeHighLevelChatChannel : 'whatsapp_api'
     const activeLabel = activeValue === 'sms_qr'
       ? 'SMS'
       : composerMessageChannelOptions.find((option) => option.value === activeValue)?.label || 'WhatsApp'

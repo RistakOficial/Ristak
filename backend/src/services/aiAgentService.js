@@ -154,6 +154,8 @@ payment_flows:
   first_payment_status, remaining_automatic, card_setup_required,
   card_setup_status, current_state, ghl_customer_id, ghl_payment_method_id,
   ghl_payment_method_type, ghl_card_brand, ghl_card_last4,
+  stripe_customer_id, stripe_payment_method_id, stripe_payment_method_label,
+  conekta_customer_id, conekta_payment_source_id, conekta_payment_source_label,
   ghl_payment_live_mode, card_authorized_at, created_at, updated_at
 
 installment_payments:
@@ -201,7 +203,7 @@ Definiciones del dashboard:
 - Clientes nuevos: contactos con purchases_count > 0 o total_paid > 0. Si se pregunta por "nuevos", normalmente filtra por contacts.created_at salvo que el usuario pida fecha de pago.
 - Ventas o ingresos reales: payments.amount con status pagado/completado y payment_mode distinto de "test". Estados pagados: paid, succeeded, success, completed, complete.
 - Pagos en modo prueba: payment_mode = "test". No los cuentes como ingreso real, venta real, ROAS real ni LTV real salvo que el usuario pida explícitamente pruebas/sandbox.
-- Tarjeta guardada/autorizada: NO se infiere desde payments. Se confirma con payment_flows donde contact_id coincide y existen ghl_customer_id + ghl_payment_method_id. Usa ghl_card_brand/ghl_card_last4 para describirla; respeta ghl_payment_live_mode contra modo prueba/en vivo cuando aplique.
+- Tarjeta guardada/autorizada: NO se infiere desde payments. Se confirma con tarjetas nativas en stripe_payment_methods/conekta_payment_sources o con payment_flows del mismo contact_id que tengan método guardado de Stripe, Conekta o HighLevel. Describe proveedor + marca/terminación cuando existan y respeta modo prueba/en vivo.
 - Inversión o gasto publicitario: SUM(meta_ads.spend), filtrado por meta_ads.date.
 - Facebook/Meta: normalmente meta_ads y contactos con attribution_ad_id; también puedes revisar source, attribution_session_source, utm_source, channel o source_platform cuando el usuario pregunte por origen.
 - Citas agendadas del funnel: contactos únicos con al menos una cita. Para contar citas operativas, cuenta appointments.id.
@@ -4376,6 +4378,8 @@ function hasScheduledPaymentCorrectionIntent(messages = []) {
 
 function normalizeScheduledPaymentCandidate(row = {}) {
   if (!row?.installment_id) return null
+  const storedCardLabel = row.stripe_payment_method_label || row.conekta_payment_source_label || row.ghl_card_brand || ''
+  const storedCardLast4 = row.ghl_card_last4 || extractStoredCardLast4(storedCardLabel)
 
   return {
     flowId: row.flow_id,
@@ -4395,12 +4399,18 @@ function normalizeScheduledPaymentCandidate(row = {}) {
       phone: row.contact_phone || null
     },
     storedCard: {
-      brand: row.ghl_card_brand || null,
-      last4: row.ghl_card_last4 || null
+      provider: row.stripe_payment_method_id ? 'stripe' : row.conekta_payment_source_id ? 'conekta' : row.ghl_payment_method_id ? 'highlevel' : null,
+      brand: row.ghl_card_brand || storedCardLabel || null,
+      last4: storedCardLast4 || null
     },
     createdAt: row.created_at || null,
     updatedAt: row.updated_at || null
   }
+}
+
+function extractStoredCardLast4(label = '') {
+  const match = String(label || '').match(/(\d{4})(?!.*\d)/)
+  return match?.[1] || null
 }
 
 function firstDefinedValue(...values) {
@@ -4615,8 +4625,14 @@ async function findScheduledPaymentCandidates({ contactId, amount = 0, timezone 
             f.contact_phone,
             f.currency,
             f.concept,
+            f.payment_provider,
+            f.ghl_payment_method_id,
             f.ghl_card_brand,
-            f.ghl_card_last4
+            f.ghl_card_last4,
+            f.stripe_payment_method_id,
+            f.stripe_payment_method_label,
+            f.conekta_payment_source_id,
+            f.conekta_payment_source_label
      FROM installment_payments i
      JOIN payment_flows f ON f.id = i.flow_id
      WHERE f.contact_id = ?
@@ -8089,23 +8105,93 @@ async function resolvePaymentProductArgs(args = {}, highLevelConnection = {}, me
   }
 }
 
-async function getStoredCardStatusForContact(contactId, paymentMode = PAYMENT_MODE_LIVE) {
+async function getStoredCardStatusForContact(contactId, paymentMode = PAYMENT_MODE_LIVE, provider = '') {
   if (!contactId) {
     return {
       hasAuthorizedCard: false,
-      paymentMode: normalizePaymentMode(paymentMode, PAYMENT_MODE_LIVE)
+      paymentMode: normalizePaymentMode(paymentMode, PAYMENT_MODE_LIVE),
+      provider: null
     }
   }
 
   const normalizedMode = normalizePaymentMode(paymentMode, PAYMENT_MODE_LIVE)
   const expectedLiveMode = normalizedMode === PAYMENT_MODE_LIVE ? 1 : 0
-  const row = await safeGet(
-    `SELECT ghl_customer_id, ghl_payment_method_id, ghl_payment_method_type,
-            ghl_card_brand, ghl_card_last4, ghl_payment_live_mode
+  const normalizedRequestedProvider = normalizeAgentPaymentGatewayId(provider)
+  const requestedProvider = normalizedRequestedProvider === 'auto' ? '' : normalizedRequestedProvider
+
+  if (!requestedProvider || requestedProvider === 'stripe') {
+    const stripeRow = await safeGet(
+      `SELECT stripe_customer_id, stripe_payment_method_id, brand, last4, mode
+       FROM stripe_payment_methods
+       WHERE contact_id = ?
+         AND stripe_customer_id IS NOT NULL
+         AND stripe_payment_method_id IS NOT NULL
+         AND (mode IS NULL OR mode = ?)
+       ORDER BY is_default DESC, updated_at DESC, created_at DESC
+       LIMIT 1`,
+      [contactId, normalizedMode],
+      null
+    )
+
+    if (stripeRow?.stripe_customer_id && stripeRow?.stripe_payment_method_id) {
+      return {
+        hasAuthorizedCard: true,
+        paymentMode: normalizedMode,
+        provider: 'stripe',
+        brand: stripeRow.brand || 'Stripe',
+        last4: stripeRow.last4 || null,
+        paymentMethodId: stripeRow.stripe_payment_method_id
+      }
+    }
+  }
+
+  if (!requestedProvider || requestedProvider === 'conekta') {
+    const conektaRow = await safeGet(
+      `SELECT conekta_customer_id, conekta_payment_source_id, brand, last4, mode
+       FROM conekta_payment_sources
+       WHERE contact_id = ?
+         AND conekta_customer_id IS NOT NULL
+         AND conekta_payment_source_id IS NOT NULL
+         AND (mode IS NULL OR mode = ?)
+       ORDER BY is_default DESC, updated_at DESC, created_at DESC
+       LIMIT 1`,
+      [contactId, normalizedMode],
+      null
+    )
+
+    if (conektaRow?.conekta_customer_id && conektaRow?.conekta_payment_source_id) {
+      return {
+        hasAuthorizedCard: true,
+        paymentMode: normalizedMode,
+        provider: 'conekta',
+        brand: conektaRow.brand || 'Conekta',
+        last4: conektaRow.last4 || null,
+        paymentMethodId: conektaRow.conekta_payment_source_id
+      }
+    }
+  }
+
+  const flowMethodWhere = requestedProvider === 'stripe'
+    ? 'stripe_payment_method_id IS NOT NULL'
+    : requestedProvider === 'conekta'
+      ? 'conekta_payment_source_id IS NOT NULL'
+      : requestedProvider === 'highlevel'
+        ? '(ghl_customer_id IS NOT NULL AND ghl_payment_method_id IS NOT NULL)'
+        : `(
+          stripe_payment_method_id IS NOT NULL OR
+          conekta_payment_source_id IS NOT NULL OR
+          (ghl_customer_id IS NOT NULL AND ghl_payment_method_id IS NOT NULL)
+        )`
+
+  const flowRow = await safeGet(
+    `SELECT payment_provider,
+            ghl_customer_id, ghl_payment_method_id, ghl_payment_method_type,
+            ghl_card_brand, ghl_card_last4, ghl_payment_live_mode,
+            stripe_customer_id, stripe_payment_method_id, stripe_payment_method_label,
+            conekta_customer_id, conekta_payment_source_id, conekta_payment_source_label
      FROM payment_flows
      WHERE contact_id = ?
-       AND ghl_customer_id IS NOT NULL
-       AND ghl_payment_method_id IS NOT NULL
+       AND ${flowMethodWhere}
        AND (ghl_payment_live_mode IS NULL OR ghl_payment_live_mode = ?)
      ORDER BY card_authorized_at DESC, updated_at DESC
      LIMIT 1`,
@@ -8113,11 +8199,46 @@ async function getStoredCardStatusForContact(contactId, paymentMode = PAYMENT_MO
     null
   )
 
+  if ((!requestedProvider || requestedProvider === 'stripe') && flowRow?.stripe_payment_method_id) {
+    return {
+      hasAuthorizedCard: true,
+      paymentMode: normalizedMode,
+      provider: 'stripe',
+      brand: flowRow.stripe_payment_method_label || 'Stripe',
+      last4: extractStoredCardLast4(flowRow.stripe_payment_method_label),
+      paymentMethodId: flowRow.stripe_payment_method_id
+    }
+  }
+
+  if ((!requestedProvider || requestedProvider === 'conekta') && flowRow?.conekta_payment_source_id) {
+    return {
+      hasAuthorizedCard: true,
+      paymentMode: normalizedMode,
+      provider: 'conekta',
+      brand: flowRow.conekta_payment_source_label || 'Conekta',
+      last4: extractStoredCardLast4(flowRow.conekta_payment_source_label),
+      paymentMethodId: flowRow.conekta_payment_source_id
+    }
+  }
+
+  if ((!requestedProvider || requestedProvider === 'highlevel') && flowRow?.ghl_customer_id && flowRow?.ghl_payment_method_id) {
+    return {
+      hasAuthorizedCard: true,
+      paymentMode: normalizedMode,
+      provider: 'highlevel',
+      brand: flowRow.ghl_card_brand || 'HighLevel',
+      last4: flowRow.ghl_card_last4 || null,
+      paymentMethodId: flowRow.ghl_payment_method_id
+    }
+  }
+
   return {
-    hasAuthorizedCard: Boolean(row?.ghl_customer_id && row?.ghl_payment_method_id),
+    hasAuthorizedCard: false,
     paymentMode: normalizedMode,
-    brand: row?.ghl_card_brand || null,
-    last4: row?.ghl_card_last4 || null
+    provider: null,
+    brand: null,
+    last4: null,
+    paymentMethodId: null
   }
 }
 
@@ -8157,8 +8278,10 @@ async function executeLookupContactPaymentProfile(args = {}, highLevelConnection
     storedCard: {
       available: storedCardStatus.hasAuthorizedCard,
       paymentMode: storedCardStatus.paymentMode,
+      provider: storedCardStatus.provider || null,
       brand: storedCardStatus.brand || null,
-      last4: storedCardStatus.last4 || null
+      last4: storedCardStatus.last4 || null,
+      paymentMethodId: storedCardStatus.paymentMethodId || null
     }
   }
 }
@@ -8358,8 +8481,10 @@ async function getStoredCardSummary(contactId, highLevelConnection = {}) {
   return {
     available: status.hasAuthorizedCard,
     paymentMode: status.paymentMode,
+    provider: status.provider || null,
     brand: status.brand || null,
-    last4: status.last4 || null
+    last4: status.last4 || null,
+    paymentMethodId: status.paymentMethodId || null
   }
 }
 
@@ -10116,8 +10241,8 @@ async function executeCreateInstallmentPaymentFlow(args = {}, highLevelConnectio
   }
   const usesHighLevelPaymentGateway = selectedGateway.gateway.id === 'highlevel'
   const remainingAutomatic = args.remainingAutomatic === false || args.automatic === false ? false : true
-  const storedCardStatus = usesHighLevelPaymentGateway && remainingAutomatic
-    ? await getStoredCardStatusForContact(contact.id, highLevelConnection.paymentMode)
+  const storedCardStatus = remainingAutomatic
+    ? await getStoredCardStatusForContact(contact.id, highLevelConnection.paymentMode, selectedGateway.gateway.id)
     : { hasAuthorizedCard: false, paymentMode: normalizePaymentMode(highLevelConnection.paymentMode, PAYMENT_MODE_LIVE) }
   const storedCardPreference = resolveStoredCardPreference(args, context.messages)
   const forceNewCardAuthorization = storedCardPreference === 'new_card'
@@ -10546,7 +10671,10 @@ async function executeCreateInstallmentPaymentFlow(args = {}, highLevelConnectio
       firstPayment: serviceFirstPayment,
       remainingPayments: serviceRemainingPayments,
       remainingAutomatic,
-      remainingFrequency: remaining.frequency
+      remainingFrequency: remaining.frequency,
+      paymentMethodId: (storedCardPreference === 'stored_card' || firstPaymentUsesStoredCard)
+        ? storedCardStatus.paymentMethodId || ''
+        : ''
     })
     const baseUrl = await getAgentPaymentBaseUrl()
     const result = selectedGateway.gateway.id === 'stripe'
