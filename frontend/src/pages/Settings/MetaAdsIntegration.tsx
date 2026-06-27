@@ -133,7 +133,8 @@ const metaTestEventOptions = [
   { value: 'LeadSubmitted', label: 'LeadSubmitted (WhatsApp)' }
 ]
 
-const defaultMetaTestEventName = 'LeadSubmitted'
+const defaultMetaTestEventName = 'Lead'
+const serverOnlyMetaTestEvents = new Set(['LeadSubmitted'])
 
 const metaTestParameterFieldLabels: Record<MetaTestParameterFieldKey, string> = {
   value: 'Valor',
@@ -1365,6 +1366,13 @@ export const MetaAdsIntegration: React.FC = () => {
   const normalizedMetaTestEventName = normalizeMetaTestEventName(metaTestEventName)
   const normalizedMetaTestEventParameters = normalizeMetaTestEventParameters(metaTestEventParameters)
   const metaTestEventFieldKeys = getMetaTestEventFieldsForEvent(normalizedMetaTestEventName)
+  const normalizedMetaTestDraftCode = normalizeMetaTestCode(metaTestDraftCode)
+  const normalizedSavedMetaTestCode = normalizeMetaTestCode(metaTestEventCode)
+  const isServerOnlyMetaTestEvent = serverOnlyMetaTestEvents.has(normalizedMetaTestEventName)
+  const shouldShowClearMetaTestCode = Boolean(normalizedSavedMetaTestCode)
+  const shouldShowSaveMetaTestCode = !isServerOnlyMetaTestEvent
+    && Boolean(normalizedMetaTestDraftCode)
+    && normalizedMetaTestDraftCode !== normalizedSavedMetaTestCode
   const visibleMetaTestCustomRows = [
     ...(normalizedMetaTestEventParameters.custom || []),
     ...(normalizedMetaTestEventParameters.custom?.length && normalizedMetaTestEventParameters.custom.length >= 12
@@ -2359,50 +2367,61 @@ export const MetaAdsIntegration: React.FC = () => {
           )}
 
           <div className={styles.metaTestActions}>
-            <Button
-              type="button"
-              variant="ghost"
-              onClick={() => void handleClearMetaTestEventCode()}
-              disabled={savingMetaTestEventCode || isSendingMetaTestEvent || !metaTestEventCode}
-            >
-              <Trash2 size={16} />
-              Limpiar
-            </Button>
-            <Button
-              type="button"
-              variant="secondary"
-              onClick={() => void handleSaveMetaTestEventCode()}
-              disabled={savingMetaTestEventCode || isSendingMetaTestEvent}
-            >
-              <Save size={16} />
-              {savingMetaTestEventCode ? 'Guardando' : 'Guardar código'}
-            </Button>
-            <Button
-              type="button"
-              variant="secondary"
-              onClick={() => void handleSendMetaTestEvent()}
-              disabled={savingMetaTestEventCode || isSendingMetaTestEvent || isOpeningMetaPixelTest}
-            >
-              {isSendingMetaTestEvent ? (
-                <RefreshCw size={16} className={styles.spinning} />
-              ) : (
-                <Send size={16} />
+            <div className={styles.metaTestSecondaryActions}>
+              {shouldShowClearMetaTestCode && (
+                <Button
+                  type="button"
+                  variant="ghost"
+                  onClick={() => void handleClearMetaTestEventCode()}
+                  disabled={savingMetaTestEventCode || isSendingMetaTestEvent || isOpeningMetaPixelTest}
+                >
+                  <Trash2 size={16} />
+                  Limpiar
+                </Button>
               )}
-              {isSendingMetaTestEvent ? 'Enviando' : 'Solo servidor'}
-            </Button>
-            <Button
-              type="button"
-              variant="primary"
-              onClick={() => void handleOpenMetaPixelTest()}
-              disabled={savingMetaTestEventCode || isOpeningMetaPixelTest || isSendingMetaTestEvent}
-            >
-              {isOpeningMetaPixelTest ? (
-                <RefreshCw size={16} className={styles.spinning} />
-              ) : (
-                <ExternalLink size={16} />
+            </div>
+            <div className={styles.metaTestPrimaryActions}>
+              {shouldShowSaveMetaTestCode && (
+                <Button
+                  type="button"
+                  variant="secondary"
+                  onClick={() => void handleSaveMetaTestEventCode()}
+                  disabled={savingMetaTestEventCode || isSendingMetaTestEvent || isOpeningMetaPixelTest}
+                >
+                  <Save size={16} />
+                  {savingMetaTestEventCode ? 'Guardando' : 'Guardar código'}
+                </Button>
               )}
-              {isOpeningMetaPixelTest ? 'Abriendo' : 'Abrir prueba completa'}
-            </Button>
+              {isServerOnlyMetaTestEvent ? (
+                <Button
+                  type="button"
+                  variant="primary"
+                  onClick={() => void handleSendMetaTestEvent()}
+                  disabled={savingMetaTestEventCode || isSendingMetaTestEvent || isOpeningMetaPixelTest}
+                >
+                  {isSendingMetaTestEvent ? (
+                    <RefreshCw size={16} className={styles.spinning} />
+                  ) : (
+                    <Send size={16} />
+                  )}
+                  {isSendingMetaTestEvent ? 'Enviando' : 'Solo servidor'}
+                </Button>
+              ) : (
+                <Button
+                  type="button"
+                  variant="primary"
+                  onClick={() => void handleOpenMetaPixelTest()}
+                  disabled={savingMetaTestEventCode || isOpeningMetaPixelTest || isSendingMetaTestEvent}
+                >
+                  {isOpeningMetaPixelTest ? (
+                    <RefreshCw size={16} className={styles.spinning} />
+                  ) : (
+                    <ExternalLink size={16} />
+                  )}
+                  {isOpeningMetaPixelTest ? 'Abriendo' : 'Abrir prueba completa'}
+                </Button>
+              )}
+            </div>
           </div>
         </div>
       </Modal>
