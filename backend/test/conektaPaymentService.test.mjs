@@ -170,7 +170,7 @@ test('Conekta payment flow: crea link, guarda payment_source y cobra tarjeta gua
     await db.run(
       `INSERT INTO contacts (id, email, full_name, phone, created_at, updated_at)
        VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
-      [contactId, `conekta-${Date.now()}@example.test`, 'Cliente Conekta', '5555555555']
+      [contactId, `conekta-${Date.now()}@example.test`, 'Cliente_QA *** Conekta', '5555555555']
     )
 
     const calls = []
@@ -182,6 +182,8 @@ test('Conekta payment flow: crea link, guarda payment_source y cobra tarjeta gua
       }
 
       if (url.endsWith('/customers') && options.method === 'POST') {
+        const body = JSON.parse(options.body)
+        assert.equal(body.name, 'Cliente QA Conekta')
         return jsonResponse({ id: 'cus_test_123' })
       }
 
@@ -203,6 +205,8 @@ test('Conekta payment flow: crea link, guarda payment_source y cobra tarjeta gua
         assert.equal(body.currency, 'MXN')
         assert.equal(body.customer_info.customer_id, 'cus_test_123')
         assert.equal(body.charges[0].payment_method.type, 'card')
+        assert.doesNotMatch(body.line_items[0].name, /[_*]/)
+        assert.doesNotMatch(body.line_items[0].description, /[_*]/)
         return jsonResponse({
           id: `ord_${calls.length}`,
           payment_status: 'paid',
@@ -284,7 +288,8 @@ test('Conekta payment flow: crea link, guarda payment_source y cobra tarjeta gua
       email: `conekta-${Date.now()}@example.test`,
       amount: 100,
       currency: 'MXN',
-      title: 'Pago Conekta'
+      title: 'Pago_QA *** Conekta',
+      description: 'Pago_QA *** Conekta'
     }, { baseUrl: 'https://app.example.test' })
     createdPaymentIds.push(linkResult.payment.id)
 

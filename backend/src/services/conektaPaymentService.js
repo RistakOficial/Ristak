@@ -56,6 +56,18 @@ function cleanString(value) {
   return String(value || '').trim()
 }
 
+function sanitizeConektaText(value, fallback = 'Ristak', maxLength = 250) {
+  const fallbackText = cleanString(fallback) || 'Ristak'
+  const raw = cleanString(value) || fallbackText
+  const ascii = raw.normalize('NFKD').replace(/[\u0300-\u036f]/g, '')
+  const sanitized = ascii
+    .replace(/[^a-zA-Z0-9 .-]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+
+  return (sanitized || fallbackText).slice(0, maxLength)
+}
+
 function normalizeMode(value) {
   return value === 'live' ? 'live' : 'test'
 }
@@ -522,13 +534,15 @@ async function attachMetaPublicPurchaseEvent(publicPayment, row) {
 }
 
 function buildContactName(contact = {}, fallback = {}) {
-  return cleanString(contact.full_name)
+  const name = cleanString(contact.full_name)
     || cleanString(`${contact.first_name || ''} ${contact.last_name || ''}`)
     || cleanString(fallback.contactName)
     || cleanString(fallback.name)
     || cleanString(contact.email)
     || cleanString(contact.phone)
     || 'Cliente Ristak'
+
+  return sanitizeConektaText(name, 'Cliente Ristak', 120)
 }
 
 async function getConektaContact(contactId) {
@@ -738,16 +752,16 @@ function buildOrderLineItems(row) {
 
   if (sourceItems.length === 1) {
     return [{
-      name: cleanString(sourceItems[0].name || sourceItems[0].title || label).slice(0, 250) || label,
-      description: cleanString(sourceItems[0].description || description).slice(0, 250) || description,
+      name: sanitizeConektaText(sourceItems[0].name || sourceItems[0].title || label, 'Pago Ristak'),
+      description: sanitizeConektaText(sourceItems[0].description || description, 'Pago Ristak'),
       quantity: Number(sourceItems[0].quantity || 1) || 1,
       unit_price: toConektaAmount(row.amount)
     }]
   }
 
   return [{
-    name: cleanString(label).slice(0, 250) || 'Pago Ristak',
-    description: cleanString(description).slice(0, 250) || 'Pago Ristak',
+    name: sanitizeConektaText(label, 'Pago Ristak'),
+    description: sanitizeConektaText(description, 'Pago Ristak'),
     quantity: 1,
     unit_price: toConektaAmount(row.amount)
   }]
@@ -756,7 +770,11 @@ function buildOrderLineItems(row) {
 function buildCustomerInfo(row, customerId = '') {
   if (customerId) return { customer_id: customerId }
   const customerInfo = {
-    name: cleanString(row.contact_name) || cleanString(parseJson(row.metadata_json, {}).contactName) || 'Cliente Ristak',
+    name: sanitizeConektaText(
+      cleanString(row.contact_name) || cleanString(parseJson(row.metadata_json, {}).contactName),
+      'Cliente Ristak',
+      120
+    ),
     email: cleanString(row.contact_email) || cleanString(parseJson(row.metadata_json, {}).contactEmail),
     phone: cleanString(row.contact_phone) || cleanString(parseJson(row.metadata_json, {}).contactPhone)
   }
@@ -2910,7 +2928,7 @@ function mapConektaRecurringSubscriptionResponse({
 }
 
 async function createConektaPlanForSubscription(input = {}, config) {
-  const name = cleanString(input.name) || 'Suscripción'
+  const name = sanitizeConektaText(input.name, 'Suscripcion', 120)
   const amount = Number(input.amount)
   if (!Number.isFinite(amount) || amount <= 0) {
     const error = new Error('El monto de la suscripción debe ser mayor a 0.')
