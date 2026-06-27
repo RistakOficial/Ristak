@@ -20,14 +20,26 @@ export const MOBILE_APP_NOTIFICATION_EVENT = 'ristak:mobile-notification'
 const IOS_PHONE_CHAT_HOME_PATH = '/phone/chat'
 const IOS_PHONE_CHAT_LOGIN_PATH = '/phone/login'
 const IOS_PHONE_TENANT_PATH = '/phone/tenant'
-const IOS_PHONE_CHAT_ALLOWED_PATHS = new Set([
+const IOS_PHONE_APP_ALLOWED_PATHS = new Set([
+  '/phone',
+  '/phone/app',
   IOS_PHONE_CHAT_HOME_PATH,
   IOS_PHONE_CHAT_LOGIN_PATH,
   IOS_PHONE_TENANT_PATH,
+  '/phone/payments',
+  '/phone/analytics',
+  '/phone/settings',
+  '/phone/calendar',
+  '/phone/appointments',
   '/setup',
   '/sso',
   '/license-blocked'
 ])
+const IOS_PHONE_APP_ALLOWED_PATH_PREFIXES = [
+  '/phone/agent-chat',
+  '/phone/agent-ai',
+  '/phone/ai-agent'
+]
 
 export interface MobileAppNotificationDetail {
   category: string
@@ -78,13 +90,19 @@ function getPathname(value: string) {
   }
 }
 
+function isIosPhoneAppAllowedPath(pathname: string) {
+  return IOS_PHONE_APP_ALLOWED_PATHS.has(pathname) ||
+    IOS_PHONE_APP_ALLOWED_PATH_PREFIXES.some((prefix) => pathname === prefix || pathname.startsWith(`${prefix}/`))
+}
+
 function getIosPhoneChatRedirectPath(pathname = typeof window !== 'undefined' ? window.location.pathname : '') {
   if (!isIosPhoneChatShell()) return ''
+  const normalizedPathname = getPathname(pathname)
   if (!hasRuntimeApiBaseUrl()) {
-    return pathname === IOS_PHONE_TENANT_PATH ? '' : IOS_PHONE_TENANT_PATH
+    return normalizedPathname === IOS_PHONE_TENANT_PATH ? '' : IOS_PHONE_TENANT_PATH
   }
-  if (IOS_PHONE_CHAT_ALLOWED_PATHS.has(pathname)) return ''
-  if (pathname === '/login') return IOS_PHONE_CHAT_LOGIN_PATH
+  if (isIosPhoneAppAllowedPath(normalizedPathname)) return ''
+  if (normalizedPathname === '/login') return IOS_PHONE_CHAT_LOGIN_PATH
   return IOS_PHONE_CHAT_HOME_PATH
 }
 
