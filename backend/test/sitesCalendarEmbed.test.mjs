@@ -2,11 +2,12 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 
 import {
+  getCalendarBookingFormDefinition,
   normalizeCalendarBookingCompletionConfig,
   normalizeCalendarCustomEventsConfig,
   renderPublicCalendarHtml
 } from '../src/services/localCalendarService.js'
-import { renderPublicSiteHtml } from '../src/services/sitesService.js'
+import { createBlock, createSite, deleteSite, renderPublicSiteHtml } from '../src/services/sitesService.js'
 
 function calendarSite(settings = {}) {
   return {
@@ -304,9 +305,88 @@ test('public calendar custom multipage booking form renders as real steps', () =
   assert.match(html, /<button class="submit" type="button" data-form-next>Siguiente<\/button>/)
   assert.match(html, /<button class="submit" type="submit" hidden disabled data-submit>Selecciona un horario<\/button>/)
   assert.match(html, /const validateAllPages = \(\) => validatePagesThrough\(formPages\.length - 1\);/)
-  assert.match(html, /if \(submit\) \{ submit\.disabled = immediateDisqualified; submit\.textContent = 'Continuar'; \}/)
-  assert.doesNotMatch(html, /submit\.hidden = false; submit\.disabled = immediateDisqualified; submit\.textContent = 'Continuar';/)
+  assert.match(html, /if \(submit\) \{ submit\.disabled = false; submit\.textContent = 'Continuar'; \}/)
+  assert.doesNotMatch(html, /submit\.disabled = immediateDisqualified/)
   assert.match(html, /if \(formFirst && gatePassed && submit\) submit\.hidden = false;/)
+})
+
+test('public calendar custom form keeps result pages out of the question flow', async () => {
+  const site = await createSite({
+    siteType: 'interactive_form',
+    name: 'Solicitud artista',
+    slug: 'calendar-result-pages-test',
+    blankCanvas: true,
+    theme: {
+      pages: [
+        { id: 'page-1', title: 'Bienvenida', sortOrder: 0 },
+        { id: 'page-2', title: 'Calificado', sortOrder: 1 },
+        { id: 'page-3', title: 'No candidato', sortOrder: 2 }
+      ],
+      formDisqualifiedMessage: 'Gracias por responder.'
+    }
+  })
+
+  try {
+    await createBlock(site.id, {
+      blockType: 'title',
+      content: 'Pregunta real del formulario',
+      settings: { pageId: 'page-1' }
+    })
+    await createBlock(site.id, {
+      blockType: 'radio',
+      label: 'Eres artista?',
+      required: true,
+      options: [
+        { label: 'Si', value: 'si' },
+        { label: 'No', value: 'no', action: 'disqualify' }
+      ],
+      settings: { pageId: 'page-1' }
+    })
+    await createBlock(site.id, {
+      blockType: 'title',
+      content: 'Tu solicitud fue aprobada',
+      settings: { pageId: 'page-2' }
+    })
+    await createBlock(site.id, {
+      blockType: 'text',
+      content: 'Por ahora no parece ser el siguiente paso ideal.',
+      settings: { pageId: 'page-3' }
+    })
+
+    const definition = await getCalendarBookingFormDefinition({
+      bookingForm: {
+        useCustomForm: true,
+        customFormId: site.id
+      }
+    })
+
+    assert.deepEqual(definition.pages.map(page => page.id), ['page-1'])
+    assert.ok(definition.fields.some(field => field.content === 'Pregunta real del formulario'))
+    assert.ok(definition.fields.some(field => field.label === 'Eres artista?'))
+    assert.equal(definition.fields.some(field => field.content === 'Tu solicitud fue aprobada'), false)
+    assert.equal(definition.fields.some(field => field.content === 'Por ahora no parece ser el siguiente paso ideal.'), false)
+    assert.match(definition.disqualification.html, /Por ahora no parece ser el siguiente paso ideal\./)
+    assert.doesNotMatch(definition.disqualification.html, /Tu solicitud fue aprobada/)
+
+    const html = renderPublicCalendarHtml({
+      id: 'calendar-result-pages',
+      slug: 'agenda-result-pages',
+      name: 'Agenda con resultado',
+      slotDuration: 30,
+      eventColor: '#146FC5',
+      bookingDisplay: { formPosition: 'before' }
+    }, { bookingForm: definition })
+
+    const pageOneMatch = html.match(/<div class="formPage" data-form-page="page-1">([\s\S]*?)<\/div>\s*<div class="formActions">/)
+    assert.ok(pageOneMatch, 'page-1 should render as the only question page')
+    assert.match(pageOneMatch[1], /Pregunta real del formulario/)
+    assert.doesNotMatch(pageOneMatch[1], /Tu solicitud fue aprobada/)
+    assert.doesNotMatch(pageOneMatch[1], /Por ahora no parece ser el siguiente paso ideal\./)
+    assert.match(html, /data-success-content hidden/)
+    assert.match(html, /payload\.html \|\| fallbackContent\.html/)
+  } finally {
+    await deleteSite(site.id)
+  }
 })
 
 test('public calendar normalizes custom Meta events for site appointments', () => {

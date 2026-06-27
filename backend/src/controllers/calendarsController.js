@@ -1174,7 +1174,8 @@ export async function createPublicAppointment(req, res) {
         success: false,
         disqualified: true,
         message: bookingSubmission.disqualifyMessage || 'Gracias por tus respuestas. Por ahora no podemos agendar tu cita.',
-        redirectUrl: bookingSubmission.disqualifyRedirectUrl || ''
+        redirectUrl: bookingSubmission.disqualifyRedirectUrl || '',
+        html: bookingSubmission.disqualifyHtml || ''
       });
     }
 

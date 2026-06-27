@@ -66,7 +66,9 @@ export const CALENDAR_FORMS_FOLDER_ID = 'system-calendar-forms'
 export const CALENDAR_DEFAULT_FORM_SITE_ID = 'system-calendar-booking-form'
 const CALENDAR_DEFAULT_FORM_SLUG = 'system-calendar-booking-form'
 const CALENDAR_DEFAULT_PAGE_ID = 'page-1'
-const CALENDAR_FORM_FINAL_PAGE_IDS = new Set(['page-2', 'page-3'])
+const CALENDAR_FORM_THANK_YOU_PAGE_ID = 'page-2'
+const CALENDAR_FORM_DISQUALIFIED_PAGE_ID = 'page-3'
+const CALENDAR_FORM_FINAL_PAGE_IDS = new Set([CALENDAR_FORM_THANK_YOU_PAGE_ID, CALENDAR_FORM_DISQUALIFIED_PAGE_ID])
 const CALENDAR_FORM_FIELD_TYPES = new Set([
   'short_text',
   'paragraph',
@@ -1408,6 +1410,7 @@ function normalizeCalendarFormBlock(row = {}, pages = []) {
   const settings = parseJson(row.settings_json || row.settings, {})
   const options = parseJson(row.options_json || row.options, [])
   const pageId = cleanString(settings.pageId || settings.page_id)
+  if (CALENDAR_FORM_FINAL_PAGE_IDS.has(pageId)) return null
   const resolvedPageId = pages.some(page => page.id === pageId) ? pageId : pages[0]?.id || CALENDAR_DEFAULT_PAGE_ID
 
   return {
@@ -1437,6 +1440,28 @@ function normalizeCalendarFormBlock(row = {}, pages = []) {
       : [],
     settings: settings && typeof settings === 'object' && !Array.isArray(settings) ? settings : {},
     pageId: resolvedPageId,
+    sortOrder: Number.isFinite(Number(row.sort_order ?? row.sortOrder)) ? Number(row.sort_order ?? row.sortOrder) : 0
+  }
+}
+
+function normalizeCalendarResultContentBlock(row = {}, targetPageId = '') {
+  const settings = parseJson(row.settings_json || row.settings, {})
+  if (cleanString(settings.pageId || settings.page_id) !== targetPageId) return null
+
+  const blockType = cleanString(row.block_type || row.blockType)
+  if (!CALENDAR_FORM_CONTENT_BLOCK_TYPES.has(blockType)) return null
+
+  return {
+    id: cleanString(row.id),
+    blockType,
+    isContent: true,
+    label: cleanString(row.label),
+    placeholder: cleanString(row.placeholder),
+    required: false,
+    content: cleanString(row.content),
+    options: [],
+    settings: settings && typeof settings === 'object' && !Array.isArray(settings) ? settings : {},
+    pageId: targetPageId,
     sortOrder: Number.isFinite(Number(row.sort_order ?? row.sortOrder)) ? Number(row.sort_order ?? row.sortOrder) : 0
   }
 }
@@ -1540,6 +1565,10 @@ export async function getCalendarBookingFormDefinition(calendar = {}) {
           AND block_type IN (${Array.from(CALENDAR_FORM_ALL_BLOCK_TYPES).map(() => '?').join(',')})
         ORDER BY sort_order ASC, created_at ASC
       `, [site.id, ...Array.from(CALENDAR_FORM_ALL_BLOCK_TYPES)]).catch(() => [])
+      const disqualificationBlocks = rows
+        .map(row => normalizeCalendarResultContentBlock(row, CALENDAR_FORM_DISQUALIFIED_PAGE_ID))
+        .filter(Boolean)
+        .sort((a, b) => a.sortOrder - b.sortOrder)
       const fields = rows
         .map(row => normalizeCalendarFormBlock(row, pages))
         .filter(Boolean)
@@ -1557,7 +1586,10 @@ export async function getCalendarBookingFormDefinition(calendar = {}) {
           siteType: site.site_type || 'standard_form',
           pages,
           fields,
-          disqualification: formDisqualification,
+          disqualification: {
+            ...formDisqualification,
+            html: renderCalendarResultContentBlocks(disqualificationBlocks)
+          },
           defaultFields: config.defaultFields
         }
       }
@@ -1720,6 +1752,16 @@ function renderCalendarContentBlock(block = {}) {
   return ''
 }
 
+function renderCalendarResultContentBlocks(blocks = []) {
+  return (Array.isArray(blocks) ? blocks : [])
+    .map(block => {
+      const html = renderCalendarContentBlock(block)
+      return html ? `<div class="calendarContentBlock" data-block-type="${escapeHtml(block.blockType)}">${html}</div>` : ''
+    })
+    .filter(Boolean)
+    .join('')
+}
+
 function renderCalendarBookingForm(bookingForm = {}) {
   const pages = Array.isArray(bookingForm.pages) && bookingForm.pages.length
     ? bookingForm.pages
@@ -1781,6 +1823,7 @@ export function normalizeCalendarBookingSubmission(bookingForm = {}, body = {}) 
   let disqualified = false
   let disqualifyMessage = ''
   let disqualifyRedirectUrl = ''
+  let disqualifyHtml = ''
 
   const getBodyValue = (field) => {
     if (Object.prototype.hasOwnProperty.call(responses, field.id)) return responses[field.id]
@@ -1869,6 +1912,7 @@ export function normalizeCalendarBookingSubmission(bookingForm = {}, body = {}) 
     const formDq = bookingForm.disqualification || {}
     if (!disqualifyRedirectUrl && formDq.action === 'redirect' && formDq.redirectUrl) disqualifyRedirectUrl = formDq.redirectUrl
     if (!disqualifyMessage && formDq.message) disqualifyMessage = formDq.message
+    disqualifyHtml = cleanString(formDq.html)
   }
 
   const responseLines = fields
@@ -1889,7 +1933,8 @@ export function normalizeCalendarBookingSubmission(bookingForm = {}, body = {}) 
     errors,
     disqualified,
     disqualifyMessage,
-    disqualifyRedirectUrl
+    disqualifyRedirectUrl,
+    disqualifyHtml
   }
 }
 
@@ -2160,6 +2205,9 @@ export function renderPublicCalendarHtml(calendar, { host = '', embedded = false
     .successCard{max-width:480px;display:flex;flex-direction:column;align-items:center;gap:18px}
     .successCard .successIcon{width:74px;height:74px;border-radius:999px;display:grid;place-items:center;background:var(--accent-soft);color:var(--accent)}
     .successCard .successMessage{margin:0;font-size:1.22rem;line-height:1.55;font-weight:600;color:var(--heading);white-space:pre-line}
+    .successContent{width:100%;display:grid;gap:14px;text-align:left}
+    .successContent[hidden]{display:none}
+    .successContent .calendarContentBlock{gap:10px}
     @media (max-width:1100px){.shell,.shell.dateSelected,.shell.bookingActive{grid-template-columns:300px minmax(0,1fr)}.shell.noIntro,.shell.noIntro.dateSelected,.shell.noIntro.bookingActive{grid-template-columns:minmax(0,1fr)}.shell.dateSelected .calendarPane{display:none}.timesPane{border-left:1px solid var(--line);border-top:0;max-width:none;width:auto}.shell.dateSelected .timesPane{padding:clamp(28px,3vw,38px) clamp(24px,2.5vw,30px)}.slotList{grid-template-columns:repeat(auto-fill,minmax(150px,1fr))}}
     @media (max-width:760px){.page{width:100%;padding:0;place-items:stretch}.shell,.shell.dateSelected,.shell.bookingActive,.shell.noIntro,.shell.noIntro.dateSelected,.shell.noIntro.bookingActive{grid-template-columns:1fr;min-height:100vh;border:0;border-radius:0;box-shadow:none}.shell.dateSelected .intro,.shell.dateSelected .calendarPane,.shell.bookingActive .intro,.shell.bookingActive .calendarPane{display:none}.shell.dateSelected .timesPane,.shell.bookingActive .timesPane{grid-column:auto;border-top:0}.intro,.calendarPane,.timesPane{padding:26px 22px;border-right:0;border-left:0}.intro{gap:14px}.calendarPane,.timesPane{border-top:1px solid var(--line)}.avatar{width:72px;height:72px;font-size:2rem;border-radius:16px}.days{gap:6px 2px}.day{width:40px;height:40px}.slotList{grid-template-columns:repeat(auto-fill,minmax(118px,1fr));max-height:none}input,textarea,select{font-size:16px;min-height:48px}.formActions button.submit{flex:1 1 100%}}
     @media (max-width:430px){.page{padding:0}.intro,.calendarPane,.timesPane{padding:22px 18px}.day{width:38px;height:38px}.weekdays{font-size:.66rem}.slotList{grid-template-columns:1fr}h1{font-size:1.5rem}h2{font-size:1.2rem}}
@@ -2222,6 +2270,7 @@ export function renderPublicCalendarHtml(calendar, { host = '', embedded = false
             <svg viewBox="0 0 24 24" width="36" height="36"><path d="M20 6 9 17l-5-5" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg>
           </div>
           <p class="successMessage" data-success-message></p>
+          <div class="successContent" data-success-content hidden></div>
         </div>
       </section>
     </div>
@@ -2345,6 +2394,7 @@ export function renderPublicCalendarHtml(calendar, { host = '', embedded = false
       const submit = document.querySelector('[data-submit]');
       const message = document.querySelector('[data-message]');
       const successMessageEl = document.querySelector('[data-success-message]');
+      const successContentEl = document.querySelector('[data-success-content]');
       const formPages = Array.from(form ? form.querySelectorAll('[data-form-page]') : []);
       const formBackButton = form ? form.querySelector('[data-form-back]') : null;
       const formNextButton = form ? form.querySelector('[data-form-next]') : null;
@@ -2389,6 +2439,13 @@ export function renderPublicCalendarHtml(calendar, { host = '', embedded = false
         message.className = 'message' + (type ? ' ' + type : '');
       };
 
+      const getDisqualificationContent = (rule) => {
+        const formDq = (calendar.bookingForm && calendar.bookingForm.disqualification) || {};
+        const messageText = (rule && rule.message) || formDq.message || 'Por ahora no podemos agendar tu cita.';
+        const html = rule && rule.message ? '' : (formDq.html || '');
+        return { message: messageText, html };
+      };
+
       const getSupportedTimezones = () => {
         let supported = [];
         try {
@@ -2431,7 +2488,15 @@ export function renderPublicCalendarHtml(calendar, { host = '', embedded = false
 
       const showSuccessScreen = (text, opts) => {
         const disqualified = !!(opts && opts.disqualified);
-        if (successMessageEl) successMessageEl.textContent = text || '';
+        const html = opts && opts.html ? String(opts.html) : '';
+        if (successContentEl) {
+          successContentEl.hidden = !html;
+          successContentEl.innerHTML = html;
+        }
+        if (successMessageEl) {
+          successMessageEl.hidden = !!html;
+          successMessageEl.textContent = text || '';
+        }
         const iconEl = document.querySelector('[data-success-icon]');
         if (iconEl) {
           iconEl.innerHTML = disqualified
@@ -2726,7 +2791,7 @@ export function renderPublicCalendarHtml(calendar, { host = '', embedded = false
         renderFormPage();
         evaluateDisqualification();
         if (formFirst && gatePassed && submit) submit.hidden = false;
-        submit.disabled = immediateDisqualified;
+        submit.disabled = false;
         submit.textContent = calendar.preview ? 'Vista previa sin agendar' : 'Agendar cita';
         selectedTitle.textContent = 'Confirma tu cita';
         selectedSubtitle.textContent = formatDay(selectedSlot) + ' a las ' + formatTime(selectedSlot);
@@ -2826,9 +2891,8 @@ export function renderPublicCalendarHtml(calendar, { host = '', embedded = false
         loadSlots();
       });
 
-      // (CAL-QUAL) Evaluación de calificación en el cliente (UX inmediata). El servidor SIEMPRE
-      // revalida; esto solo mejora la experiencia bloqueando en cuanto eligen una respuesta que
-      // descalifica ('disqualify'). Las de 'disqualify_after_submit' las resuelve el servidor.
+      // (CAL-QUAL) Evaluación de calificación en el cliente. El servidor SIEMPRE revalida;
+      // aquí solo marcamos la salida para mostrar la pantalla final al terminar el formulario.
       const parseDisqualifyRule = (raw) => {
         if (!raw) return null;
         try { const r = JSON.parse(raw); return r && r.action ? r : null; } catch (_) { return null; }
@@ -2850,8 +2914,8 @@ export function renderPublicCalendarHtml(calendar, { host = '', embedded = false
         const rule = readSelectedDisqualifyRule();
         if (rule) {
           immediateDisqualified = true;
-          if (submit) submit.disabled = true;
-          setMessage(rule.message || 'Por tus respuestas, por ahora no podemos agendar tu cita.', 'error');
+          if (submit) submit.disabled = false;
+          setMessage('');
         } else if (immediateDisqualified) {
           immediateDisqualified = false;
           // En el "gate" (formulario primero) el botón "Continuar" no depende del horario.
@@ -2874,7 +2938,7 @@ export function renderPublicCalendarHtml(calendar, { host = '', embedded = false
         if (selectedTitle) selectedTitle.textContent = 'Cuéntanos un poco de ti';
         if (selectedSubtitle) selectedSubtitle.textContent = 'Completa para ver los horarios disponibles.';
         evaluateDisqualification();
-        if (submit) { submit.disabled = immediateDisqualified; submit.textContent = 'Continuar'; }
+        if (submit) { submit.disabled = false; submit.textContent = 'Continuar'; }
       };
 
       form.addEventListener('submit', async (event) => {
@@ -2890,7 +2954,8 @@ export function renderPublicCalendarHtml(calendar, { host = '', embedded = false
               window.setTimeout(() => { try { window.location.assign(rule.redirectUrl); } catch (_) {} }, 1000);
               return;
             }
-            showSuccessScreen((rule && rule.message) || 'Por ahora no podemos agendar tu cita.', { disqualified: true });
+            const content = getDisqualificationContent(rule);
+            showSuccessScreen(content.message, { disqualified: true, html: content.html });
             return;
           }
           // Guardamos las respuestas del gate (el formulario se ocultará/reiniciará en los siguientes pasos).
@@ -2920,7 +2985,8 @@ export function renderPublicCalendarHtml(calendar, { host = '', embedded = false
             window.setTimeout(() => { try { window.location.assign(rule.redirectUrl); } catch (_) {} }, 1000);
             return;
           }
-          showSuccessScreen((rule && rule.message) || 'Por ahora no podemos agendar tu cita.', { disqualified: true });
+          const content = getDisqualificationContent(rule);
+          showSuccessScreen(content.message, { disqualified: true, html: content.html });
           return;
         }
 
@@ -2968,7 +3034,11 @@ export function renderPublicCalendarHtml(calendar, { host = '', embedded = false
               window.setTimeout(() => { try { window.location.assign(payload.redirectUrl); } catch (_) {} }, 1200);
               return;
             }
-            showSuccessScreen(payload.message || 'Gracias por tus respuestas. Por ahora no podemos agendar tu cita.', { disqualified: true });
+            const fallbackContent = getDisqualificationContent(null);
+            showSuccessScreen(payload.message || 'Gracias por tus respuestas. Por ahora no podemos agendar tu cita.', {
+              disqualified: true,
+              html: payload.html || fallbackContent.html
+            });
             return;
           }
           if (!response.ok || payload.success === false) throw new Error(payload.error || 'No se pudo agendar');
