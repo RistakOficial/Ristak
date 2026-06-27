@@ -162,6 +162,7 @@ test('payment Purchase CAPI event uses real payment amount and account currency'
           eventName: 'Purchase',
           parameters: {
             sendValue: true,
+            usePaymentPlanTotalValue: false,
             value: '9999',
             predictedLtv: '',
             custom: [{ key: 'checkout_source', value: 'public_payment' }]
@@ -247,6 +248,144 @@ test('payment Purchase CAPI event uses real payment amount and account currency'
     if (metaServer) await new Promise(resolve => metaServer.close(resolve))
     if (previousMetaGraphDescriptor) Object.defineProperty(API_URLS, 'META_GRAPH', previousMetaGraphDescriptor)
     await db.run('DELETE FROM meta_conversion_event_logs WHERE contact_id = ?', [contactId]).catch(() => undefined)
+    await db.run('DELETE FROM contacts WHERE id = ?', [contactId]).catch(() => undefined)
+  }
+})
+
+test('payment plan Purchase uses total plan value once by default', async () => {
+  const previousMetaGraphDescriptor = Object.getOwnPropertyDescriptor(API_URLS, 'META_GRAPH')
+  const contactId = 'contact_meta_purchase_plan_total'
+  const planId = 'flow_meta_purchase_total'
+  const metaCalls = []
+  let metaServer
+
+  try {
+    await initializeMasterKey()
+
+    await snapshotMetaConfig(async () => {
+      await snapshotAppConfig(APP_CONFIG_KEYS, async () => {
+        await db.run('DELETE FROM meta_conversion_event_logs WHERE contact_id = ?', [contactId])
+        await db.run('DELETE FROM payment_plans WHERE id = ?', [planId]).catch(() => undefined)
+        await db.run('DELETE FROM payment_flows WHERE id = ?', [planId]).catch(() => undefined)
+        await db.run('DELETE FROM contacts WHERE id = ?', [contactId])
+        await db.run(
+          `INSERT INTO contacts (id, email, full_name, phone, source, created_at, updated_at)
+           VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+          [contactId, 'plan-buyer@example.test', 'Plan Buyer', '+525512345681', 'test']
+        )
+        await db.run(
+          `INSERT INTO payment_flows (
+             id, contact_id, contact_name, contact_email, contact_phone,
+             total_amount, currency, concept, payment_type, current_state, metadata
+           ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          [
+            planId,
+            contactId,
+            'Plan Buyer',
+            'plan-buyer@example.test',
+            '+525512345681',
+            900,
+            'MXN',
+            'Plan premium',
+            'partial',
+            'installment_plan_active',
+            JSON.stringify({ source: 'test' })
+          ]
+        )
+        await db.run(
+          `INSERT INTO payment_plans (
+             id, contact_id, contact_name, email, phone, name, title, status,
+             total, currency, source, created_at, updated_at
+           ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+          [
+            planId,
+            contactId,
+            'Plan Buyer',
+            'plan-buyer@example.test',
+            '+525512345681',
+            'Plan premium',
+            'Plan premium',
+            'active',
+            900,
+            'MXN',
+            'stripe'
+          ]
+        )
+
+        await insertMetaPixelConfig()
+        await saveAccountLocaleSettings({ countryCode: 'MX', currency: 'MXN', dialCode: '52' })
+        await setAppConfig('meta_payment_purchase_event_config', JSON.stringify({
+          enabled: true,
+          channel: 'site',
+          eventName: 'Purchase',
+          parameters: {
+            sendValue: true,
+            value: '',
+            predictedLtv: '',
+            custom: [{ key: 'checkout_source', value: 'payment_plan' }]
+          }
+        }))
+
+        metaServer = await startMetaCaptureServer(metaCalls)
+
+        const firstResult = await triggerMetaPaymentPurchaseEvent(contactId, {
+          id: 'payment_meta_plan_1',
+          amount: 300,
+          status: 'paid',
+          payment_provider: 'stripe',
+          payment_method: 'stripe',
+          metadata_json: JSON.stringify({
+            paymentPlan: {
+              flowId: planId,
+              installmentId: 'installment_1',
+              sequence: 1
+            }
+          }),
+          eventSourceUrl: 'https://checkout.example.test/pay/payment_meta_plan_1'
+        })
+
+        assert.equal(firstResult.sent, true)
+        assert.equal(metaCalls.length, 1)
+
+        const payload = JSON.parse(metaCalls[0].body)
+        assert.equal(payload.data[0].event_id, `purchase_plan_${planId}`)
+        assert.equal(payload.data[0].custom_data.value, 900)
+        assert.equal(payload.data[0].custom_data.payment_id, 'payment_meta_plan_1')
+        assert.equal(payload.data[0].custom_data.payment_plan_id, planId)
+        assert.equal(payload.data[0].custom_data.installment_id, 'installment_1')
+        assert.equal(payload.data[0].custom_data.payment_plan_value_mode, 'payment_plan_total')
+        assert.equal(payload.data[0].custom_data.payment_plan_total_value, 900)
+        assert.equal(payload.data[0].custom_data.current_payment_value, 300)
+        assert.equal(payload.data[0].custom_data.checkout_source, 'payment_plan')
+
+        const secondResult = await triggerMetaPaymentPurchaseEvent(contactId, {
+          id: 'payment_meta_plan_2',
+          amount: 300,
+          status: 'paid',
+          payment_provider: 'stripe',
+          payment_method: 'stripe',
+          metadata_json: JSON.stringify({
+            paymentPlan: {
+              flowId: planId,
+              installmentId: 'installment_2',
+              sequence: 2
+            }
+          }),
+          eventSourceUrl: 'https://checkout.example.test/pay/payment_meta_plan_2'
+        })
+
+        assert.equal(secondResult.sent, false)
+        assert.equal(secondResult.reason, 'payment_plan_purchase_already_sent')
+        assert.equal(secondResult.eventId, `purchase_plan_${planId}`)
+        assert.equal(metaCalls.length, 1)
+      })
+    })
+  } finally {
+    if (metaServer) await new Promise(resolve => metaServer.close(resolve))
+    if (previousMetaGraphDescriptor) Object.defineProperty(API_URLS, 'META_GRAPH', previousMetaGraphDescriptor)
+    await db.run('DELETE FROM meta_conversion_event_logs WHERE contact_id = ?', [contactId]).catch(() => undefined)
+    await db.run('DELETE FROM payment_plans WHERE id = ?', [planId]).catch(() => undefined)
+    await db.run('DELETE FROM payment_flows WHERE id = ?', [planId]).catch(() => undefined)
     await db.run('DELETE FROM contacts WHERE id = ?', [contactId]).catch(() => undefined)
   }
 })

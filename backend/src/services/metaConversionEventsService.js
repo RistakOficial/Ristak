@@ -160,6 +160,9 @@ function normalizePaymentMetaPurchaseEventParameters(value = {}) {
     sendValue: Object.prototype.hasOwnProperty.call(source, 'sendValue')
       ? parseBoolean(source.sendValue, true)
       : true,
+    usePaymentPlanTotalValue: Object.prototype.hasOwnProperty.call(source, 'usePaymentPlanTotalValue')
+      ? parseBoolean(source.usePaymentPlanTotalValue, true)
+      : true,
     value: cleanString(source.value),
     predictedLtv: cleanString(source.predictedLtv || source.predicted_ltv),
     custom
@@ -416,6 +419,148 @@ function pickPaymentPlanMetadata(metadata = {}) {
       : {}
 }
 
+function getPaymentPlanId(payment = {}, metadata = null) {
+  const resolvedMetadata = metadata || getPaymentMetadata(payment)
+  const paymentPlan = pickPaymentPlanMetadata(resolvedMetadata)
+  return firstPaymentValue([
+    paymentPlan.flowId,
+    paymentPlan.flow_id,
+    paymentPlan.paymentPlanId,
+    paymentPlan.payment_plan_id,
+    paymentPlan.id,
+    payment.flow_id,
+    payment.flowId,
+    payment.payment_plan_id,
+    payment.paymentPlanId,
+    resolvedMetadata.flow_id,
+    resolvedMetadata.flowId,
+    resolvedMetadata.payment_plan_id,
+    resolvedMetadata.paymentPlanId
+  ])
+}
+
+function normalizeMetaEventIdSegment(value = '') {
+  return cleanString(value)
+    .replace(/[^a-zA-Z0-9_-]/g, '_')
+    .replace(/_+/g, '_')
+    .replace(/^_+|_+$/g, '')
+    .slice(0, 100)
+}
+
+function buildPurchaseEventId(contactId, paymentPlanId = '') {
+  const normalizedPlanId = normalizeMetaEventIdSegment(paymentPlanId)
+  if (normalizedPlanId) return `purchase_plan_${normalizedPlanId}`
+  return `purchase_contact_${contactId}`
+}
+
+async function getPaymentPlanTotalValue(paymentPlanId, metadata = {}) {
+  const cleanPlanId = cleanString(paymentPlanId)
+  if (!cleanPlanId) return null
+
+  const metadataPlan = pickPaymentPlanMetadata(metadata)
+  const metadataValue = parseMetaNumber(
+    metadataPlan.total ||
+    metadataPlan.totalAmount ||
+    metadataPlan.total_amount ||
+    metadata.total ||
+    metadata.totalAmount ||
+    metadata.total_amount
+  )
+  if (metadataValue !== null && metadataValue > 0) return metadataValue
+
+  const mirror = await db.get(
+    `SELECT total
+     FROM payment_plans
+     WHERE id = ? OR ghl_schedule_id = ?
+     ORDER BY updated_at DESC
+     LIMIT 1`,
+    [cleanPlanId, cleanPlanId]
+  ).catch(() => null)
+  const mirrorValue = parseMetaNumber(mirror?.total)
+  if (mirrorValue !== null && mirrorValue > 0) return mirrorValue
+
+  const flow = await db.get(
+    `SELECT total_amount
+     FROM payment_flows
+     WHERE id = ?
+     LIMIT 1`,
+    [cleanPlanId]
+  ).catch(() => null)
+  const flowValue = parseMetaNumber(flow?.total_amount)
+  if (flowValue !== null && flowValue > 0) return flowValue
+
+  return null
+}
+
+async function hasSuccessfulPaymentPlanPurchaseEvent(paymentPlanId, eventId) {
+  const cleanPlanId = cleanString(paymentPlanId)
+  if (!cleanPlanId && !eventId) return false
+
+  const jsonNeedle = cleanPlanId ? `"payment_plan_id":"${cleanPlanId}"` : ''
+  const row = await db.get(
+    `SELECT id
+     FROM meta_conversion_event_logs
+     WHERE event_type = ?
+       AND status = 'success'
+       AND (
+         event_id = ?
+         ${jsonNeedle ? 'OR request_payload LIKE ?' : ''}
+       )
+     ORDER BY created_at DESC
+     LIMIT 1`,
+    jsonNeedle
+      ? [EVENT_TYPES.purchase, eventId, `%${jsonNeedle}%`]
+      : [EVENT_TYPES.purchase, eventId]
+  )
+
+  return Boolean(row?.id)
+}
+
+async function buildPaymentPurchaseEventContext(contactId, payment = {}, paymentMetaConfig = {}) {
+  const parameters = normalizePaymentMetaPurchaseEventParameters(paymentMetaConfig.parameters || {})
+  const metadata = getPaymentMetadata(payment)
+  const paymentPlanId = getPaymentPlanId(payment, metadata)
+  const usePlanTotalValue = Boolean(paymentPlanId && parameters.usePaymentPlanTotalValue)
+  const eventId = buildPurchaseEventId(contactId, usePlanTotalValue ? paymentPlanId : '')
+
+  if (usePlanTotalValue && await hasSuccessfulPaymentPlanPurchaseEvent(paymentPlanId, eventId)) {
+    return {
+      skip: true,
+      reason: 'payment_plan_purchase_already_sent',
+      eventId,
+      paymentPlanId
+    }
+  }
+
+  if (!usePlanTotalValue) {
+    return {
+      eventId,
+      payment,
+      customDataOptions: {},
+      skipContactDedupe: false
+    }
+  }
+
+  const paymentPlanTotalValue = await getPaymentPlanTotalValue(paymentPlanId, metadata)
+  const currentPaymentValue = parseMetaNumber(payment.amount)
+  const shouldOverrideValue = parameters.sendValue !== false && paymentPlanTotalValue !== null
+  const enrichedPayment = shouldOverrideValue
+    ? { ...payment, amount: paymentPlanTotalValue }
+    : payment
+
+  return {
+    eventId,
+    payment: enrichedPayment,
+    customDataOptions: {
+      paymentPlanId,
+      paymentPlanValueMode: shouldOverrideValue ? 'payment_plan_total' : 'current_payment_amount',
+      paymentPlanTotalValue,
+      currentPaymentValue
+    },
+    skipContactDedupe: true
+  }
+}
+
 function buildPaymentMetaPurchaseEventCustomData(parameters = {}, payment = {}, options = {}) {
   const normalizedParameters = normalizePaymentMetaPurchaseEventParameters(parameters)
   const normalizedAmount = parseMetaNumber(normalizedParameters.value)
@@ -500,9 +645,34 @@ function buildPaymentMetaPurchaseEventCustomData(parameters = {}, payment = {}, 
     customData.subscription_id = subscriptionId
   }
 
-  const paymentPlanId = firstPaymentValue([paymentPlan.flowId, paymentPlan.flow_id, payment.flow_id, metadata.flow_id])
+  const paymentPlanId = firstPaymentValue([
+    options.paymentPlanId,
+    paymentPlan.flowId,
+    paymentPlan.flow_id,
+    paymentPlan.paymentPlanId,
+    paymentPlan.payment_plan_id,
+    paymentPlan.id,
+    payment.flow_id,
+    payment.flowId,
+    payment.payment_plan_id,
+    payment.paymentPlanId,
+    metadata.flow_id,
+    metadata.flowId,
+    metadata.payment_plan_id,
+    metadata.paymentPlanId
+  ])
   if (paymentPlanId) {
     customData.payment_plan_id = paymentPlanId
+  }
+
+  if (options.paymentPlanValueMode) {
+    customData.payment_plan_value_mode = options.paymentPlanValueMode
+  }
+  if (options.paymentPlanTotalValue !== null && options.paymentPlanTotalValue !== undefined) {
+    customData.payment_plan_total_value = options.paymentPlanTotalValue
+  }
+  if (options.currentPaymentValue !== null && options.currentPaymentValue !== undefined) {
+    customData.current_payment_value = options.currentPaymentValue
   }
 
   const installmentId = firstPaymentValue([paymentPlan.installmentId, paymentPlan.installment_id, payment.installment_id, metadata.installment_id])
@@ -580,14 +750,17 @@ export async function buildMetaPublicPurchasePixelEvent(payment = {}, options = 
   if (!metaConfig.datasetId) return null
 
   const accountCurrency = await getPaymentMetaCurrency()
-  const customData = buildPaymentMetaPurchaseEventCustomData(paymentMetaConfig.parameters, payment, {
-    currency: accountCurrency
+  const eventContext = await buildPaymentPurchaseEventContext(contactId, payment, paymentMetaConfig)
+  if (eventContext.skip) return { sent: false, reason: eventContext.reason, eventId: eventContext.eventId }
+  const customData = buildPaymentMetaPurchaseEventCustomData(paymentMetaConfig.parameters, eventContext.payment || payment, {
+    currency: accountCurrency,
+    ...(eventContext.customDataOptions || {})
   })
 
   return {
     pixelId: metaConfig.datasetId,
     eventName: paymentMetaConfig.eventName || DEFAULT_PAYMENT_EVENT_NAME,
-    eventId: `purchase_contact_${contactId}`,
+    eventId: eventContext.eventId,
     customData: prunePublicMetaPixelCustomData(customData)
   }
 }
@@ -618,6 +791,7 @@ async function getPaymentMetaPurchaseEventConfig() {
     channel: 'whatsapp',
     eventName: normalizeBusinessMessagingEventName(legacyEventName),
     parameters: {
+      usePaymentPlanTotalValue: true,
       value: '',
       predictedLtv: '',
       custom: []
@@ -959,7 +1133,8 @@ async function sendMetaWhatsappEvent({
   eventType,
   metaEventName,
   eventId,
-  customData
+  customData,
+  skipContactDedupe = false
 }) {
   const contact = await getContactForMetaEvent(contactId)
 
@@ -987,7 +1162,7 @@ async function sendMetaWhatsappEvent({
     return { sent: false, reason: 'missing_phone' }
   }
 
-  if (contactAlreadySent(contact, eventType)) {
+  if (!skipContactDedupe && contactAlreadySent(contact, eventType)) {
     return { sent: false, reason: 'already_sent' }
   }
 
@@ -1093,7 +1268,8 @@ async function sendMetaSiteEvent({
   eventId,
   customData,
   eventSourceUrl = '',
-  actionSource = 'website'
+  actionSource = 'website',
+  skipContactDedupe = false
 }) {
   const contact = await getContactForMetaEvent(contactId)
 
@@ -1109,7 +1285,7 @@ async function sendMetaSiteEvent({
     return { sent: false, reason: 'contact_not_found' }
   }
 
-  if (contactAlreadySent(contact, eventType)) {
+  if (!skipContactDedupe && contactAlreadySent(contact, eventType)) {
     return { sent: false, reason: 'already_sent' }
   }
 
@@ -1325,12 +1501,15 @@ export async function triggerMetaPaymentPurchaseEvent(contactId, payment = {}) {
       ? paymentMetaConfig.eventName || DEFAULT_PAYMENT_WHATSAPP_EVENT_NAME
       : DEFAULT_PAYMENT_WHATSAPP_EVENT_NAME
   )
-  const eventId = `purchase_contact_${contactId}`
   const eventSourceUrl = sanitizeMetaUrlForEvent(extractPaymentMetaEventSourceUrl(payment))
   const actionSource = resolvePaymentMetaActionSource(payment, eventSourceUrl)
+  const eventContext = await buildPaymentPurchaseEventContext(contactId, payment, paymentMetaConfig)
+  if (eventContext.skip) return { sent: false, reason: eventContext.reason, eventId: eventContext.eventId }
+  const eventId = eventContext.eventId
   const accountCurrency = await getPaymentMetaCurrency()
-  const customData = buildPaymentMetaPurchaseEventCustomData(paymentMetaConfig.parameters, payment, {
-    currency: accountCurrency
+  const customData = buildPaymentMetaPurchaseEventCustomData(paymentMetaConfig.parameters, eventContext.payment || payment, {
+    currency: accountCurrency,
+    ...(eventContext.customDataOptions || {})
   })
 
   if (paymentMetaConfig.channel === 'whatsapp') {
@@ -1339,7 +1518,8 @@ export async function triggerMetaPaymentPurchaseEvent(contactId, payment = {}) {
       eventType: EVENT_TYPES.purchase,
       metaEventName: whatsappMetaEventName,
       eventId,
-      customData
+      customData,
+      skipContactDedupe: eventContext.skipContactDedupe
     })
   }
 
@@ -1353,7 +1533,8 @@ export async function triggerMetaPaymentPurchaseEvent(contactId, payment = {}) {
       eventType: EVENT_TYPES.purchase,
       metaEventName: whatsappMetaEventName,
       eventId,
-      customData
+      customData,
+      skipContactDedupe: eventContext.skipContactDedupe
     })
 
     if (whatsappResult.sent || whatsappResult.reason === 'already_sent' || whatsappResult.reason === 'meta_error') {
@@ -1368,7 +1549,8 @@ export async function triggerMetaPaymentPurchaseEvent(contactId, payment = {}) {
     eventId,
     customData,
     eventSourceUrl,
-    actionSource
+    actionSource,
+    skipContactDedupe: eventContext.skipContactDedupe
   })
 }
 

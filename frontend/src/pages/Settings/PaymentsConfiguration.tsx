@@ -99,6 +99,7 @@ interface PaymentMetaPurchaseEventParameter {
 
 interface PaymentMetaPurchaseEventParameters {
   sendValue: boolean
+  usePaymentPlanTotalValue: boolean
   value: string
   predictedLtv: string
   custom: PaymentMetaPurchaseEventParameter[]
@@ -240,6 +241,7 @@ const createDefaultPaymentMetaPurchaseEventConfig = (): PaymentMetaPurchaseEvent
   eventName: PAYMENT_META_DEFAULT_PURCHASE_EVENT_NAME,
   parameters: {
     sendValue: true,
+    usePaymentPlanTotalValue: true,
     value: '',
     predictedLtv: '',
     custom: []
@@ -262,6 +264,7 @@ const normalizePaymentMetaPurchaseEventParameters = (
 
   return {
     sendValue: parseBooleanLike(source.sendValue, true),
+    usePaymentPlanTotalValue: parseBooleanLike(source.usePaymentPlanTotalValue, true),
     value: String(source.value || '').trim(),
     predictedLtv: String(source.predictedLtv || '').trim(),
     custom
@@ -1566,6 +1569,10 @@ export const PaymentsConfiguration: React.FC = () => {
     void updatePaymentMetaPurchaseEventParameters({ sendValue })
   }
 
+  const handlePaymentMetaPurchaseEventPlanTotalValueChange = (usePaymentPlanTotalValue: boolean) => {
+    void updatePaymentMetaPurchaseEventParameters({ usePaymentPlanTotalValue })
+  }
+
   const updatePaymentMetaPurchaseEventParameters = (patch: Partial<PaymentMetaPurchaseEventParameters>) => {
     updatePaymentMetaPurchaseEventConfig({
       parameters: {
@@ -1907,6 +1914,13 @@ export const PaymentsConfiguration: React.FC = () => {
               'Envía automáticamente lo que se pagó en la transacción. Puedes desactivarlo si no quieres exponer el valor.',
               paymentMetaPurchaseEventConfig.parameters.sendValue,
               handlePaymentMetaPurchaseEventSendValueChange
+            )}
+
+            {renderSwitchRow(
+              'Usar total del plan de pagos',
+              'Cuando el cobro pertenece a un plan, Meta recibe el total del plan una sola vez en lugar de cada parcialidad. Los pagos siguientes del mismo plan se saltan.',
+              paymentMetaPurchaseEventConfig.parameters.usePaymentPlanTotalValue,
+              handlePaymentMetaPurchaseEventPlanTotalValueChange
             )}
 
             <div className={styles.paymentMetaEventSmartHint}>
