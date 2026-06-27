@@ -21638,6 +21638,63 @@ export async function renderPublicSiteHtml(site, { pageId, pagePath, trackingEna
         }
         return '';
       };
+      const getImmediateDisqualifyUrl = (rule) => {
+        const ruleUrl = getRuleRedirectUrl(rule);
+        if (ruleUrl) return ruleUrl;
+        if (disqualifiedCompletionAction === 'redirect_url' && disqualifiedRedirectUrl) return preserveUrl(disqualifiedRedirectUrl);
+        if (disqualifiedPageUrl) return preserveUrl(disqualifiedPageUrl);
+        return '';
+      };
+      const buildSubmissionPayload = ({
+        responses,
+        ruleSubmit = false,
+        ruleAction = '',
+        ruleFieldId = '',
+        immediateDisqualify = false
+      } = {}) => {
+        const url = new URL(window.location.href);
+        const storedParams = window.ristakPreservedParams ? window.ristakPreservedParams() : {};
+        const params = Object.assign({}, storedParams, Object.fromEntries(url.searchParams.entries()));
+        const nativeIdentity = window.ristakNativeIdentity ? window.ristakNativeIdentity() : {};
+        const nativeTracking = window.ristakNativeBuildData ? window.ristakNativeBuildData({ conversion_type: 'form_submit' }) : null;
+        return {
+          siteId,
+          pageId,
+          responses,
+          meta: {
+            pageId,
+            pageUrl: window.location.href,
+            referrer: document.referrer,
+            params,
+            eventTime: Date.now(),
+            visitorId: nativeIdentity.visitorId || null,
+            sessionId: nativeIdentity.sessionId || null,
+            ruleSubmit,
+            ruleAction,
+            ruleFieldId,
+            immediateDisqualify,
+            formFinalSubmit: isStandardForm && !ruleSubmit && !isStandardFormIntermediatePage,
+            tracking: nativeTracking,
+            fbp: (document.cookie.match(/(?:^|; )_fbp=([^;]+)/) || [])[1] || null,
+            fbc: (document.cookie.match(/(?:^|; )_fbc=([^;]+)/) || [])[1] || null
+          }
+        };
+      };
+      const submitSubmissionInBackground = (payload) => {
+        try {
+          const body = JSON.stringify(payload || {});
+          if (navigator.sendBeacon && body.length < 60000) {
+            const blob = new Blob([body], { type: 'application/json' });
+            if (navigator.sendBeacon('/api/sites/public/submit', blob)) return;
+          }
+          fetch('/api/sites/public/submit', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body,
+            keepalive: true
+          }).catch(() => {});
+        } catch (_) {}
+      };
       const showOnlyRuleMessage = (targetMessage, text) => {
         const scope = targetMessage && targetMessage.closest ? targetMessage.closest('.rstk-embedded-form') || form : form;
         scope.querySelectorAll('.rstk-field, [data-interactive-page-content], [data-embedded-page-content]').forEach((element) => {
@@ -21653,10 +21710,32 @@ export async function renderPublicSiteHtml(site, { pageId, pagePath, trackingEna
           targetMessage.textContent = text;
         }
       };
+      let immediateDisqualifyHandled = false;
       const handleBlockingRule = (rule, rulePageId, targetMessage, options = {}) => {
         if (!rule) return false;
         const immediateDisqualify = options.immediate === true && rule.action === 'disqualify';
         const statusText = isExitRule(rule) && shouldSubmitRule(rule) ? 'Enviando...' : (rule.message || 'Gracias. Tu información fue recibida.');
+        if (immediateDisqualify) {
+          if (immediateDisqualifyHandled) return true;
+          immediateDisqualifyHandled = true;
+          submitSubmissionInBackground(buildSubmissionPayload({
+            responses: isStandardForm ? { ...readStoredResponses(), ...getCurrentResponses() } : getCurrentResponses(),
+            ruleSubmit: true,
+            ruleAction: rule.action || '',
+            ruleFieldId: options.fieldId || '',
+            immediateDisqualify: true
+          }));
+          clearStoredResponses();
+          const targetUrl = getImmediateDisqualifyUrl(rule);
+          if (targetUrl) {
+            pauseMediaIn(document);
+            window.location.href = targetUrl;
+            return true;
+          }
+          if (showEmbeddedResult('disqualified')) return true;
+          showOnlyRuleMessage(targetMessage, rule.message || 'Gracias. Por ahora no califica.');
+          return true;
+        }
         if (!shouldSubmitRule(rule)) {
           const targetUrl = getRuleRedirectUrl(rule);
           if (targetUrl) {
@@ -21667,9 +21746,7 @@ export async function renderPublicSiteHtml(site, { pageId, pagePath, trackingEna
           showOnlyRuleMessage(targetMessage, statusText);
           return true;
         }
-        if (immediateDisqualify) {
-          showOnlyRuleMessage(targetMessage, statusText);
-        } else if (targetMessage) {
+        if (targetMessage) {
           targetMessage.textContent = statusText;
         }
         form.dataset.ruleSubmit = 'true';
@@ -21798,8 +21875,8 @@ export async function renderPublicSiteHtml(site, { pageId, pagePath, trackingEna
         return true;
       };
 
-      // Al elegir una opción que descalifica solo mostramos un aviso debajo del
-      // campo; la descalificación real ocurre al avanzar/enviar, no al elegir.
+      // "Descalificar inmediatamente" navega al instante, salvo cuando se configuró
+      // aviso previo; en ese caso solo se muestra la nota debajo del campo.
       const DISQUALIFY_NOTICE_FALLBACK = ${JSON.stringify('Con esta respuesta es posible que no califiques para continuar.')};
       const updateDisqualifyNotice = (field) => {
         if (!field || !field.querySelector) return;
@@ -21821,7 +21898,15 @@ export async function renderPublicSiteHtml(site, { pageId, pagePath, trackingEna
         if (!target || !target.closest) return;
         if (!target.matches('input[type="radio"], input[type="checkbox"], select')) return;
         const field = target.closest('.rstk-field');
-        if (field) updateDisqualifyNotice(field);
+        if (!field) return;
+        const immediateRule = readSelectedRules(field).find(item => item.action === 'disqualify' && item.warnBeforeDisqualify !== true) || null;
+        if (immediateRule && validateField(field)) {
+          const fieldPageId = field.getAttribute('data-page-id') || getCurrentPageId();
+          const fieldId = field.getAttribute('data-block-id') || '';
+          const targetMessage = getFieldMessageTarget(field);
+          if (handleBlockingRule(immediateRule, fieldPageId, targetMessage, { immediate: true, fieldId })) return;
+        }
+        updateDisqualifyNotice(field);
       };
 
       form.addEventListener('change', handleDisqualifyNoticeChange);
@@ -21969,28 +22054,22 @@ export async function renderPublicSiteHtml(site, { pageId, pagePath, trackingEna
           ? { ...readStoredResponses(), ...getCurrentResponses() }
           : getCurrentResponses();
 
-        // Regla de descalificación efectivamente seleccionada: ahora que ya no se
-        // descalifica al elegir, el mensaje terminal se muestra aquí, al enviar.
+        // Regla de descalificación efectivamente seleccionada para envíos finales
+        // o para configuraciones que esperan hasta enviar.
         const selectedDisqualifyRule = fields
           .flatMap((field) => readSelectedRules(field))
           .find(item => item.action === 'disqualify' || item.action === 'disqualify_after_submit') || null;
         const terminalDisqualify = immediateDisqualify || Boolean(selectedDisqualifyRule && selectedDisqualifyRule.action === 'disqualify');
 
-        const url = new URL(window.location.href);
-        const storedParams = window.ristakPreservedParams ? window.ristakPreservedParams() : {};
-        const params = Object.assign({}, storedParams, Object.fromEntries(url.searchParams.entries()));
-        const nativeIdentity = window.ristakNativeIdentity ? window.ristakNativeIdentity() : {};
-        const nativeTracking = window.ristakNativeBuildData ? window.ristakNativeBuildData({ conversion_type: 'form_submit' }) : null;
         if (submitButton) submitButton.disabled = true;
         if (formNextButton) formNextButton.disabled = true;
-        if (message) message.textContent = 'Enviando...';
+        if (message && !immediateDisqualify) message.textContent = 'Enviando...';
 
         let isNavigatingAway = false;
         const navigateAway = (targetUrl) => {
           if (!targetUrl) return false;
           isNavigatingAway = true;
           pauseMediaIn(document);
-          if (message) message.textContent = 'Redirigiendo...';
           window.location.href = preserveUrl(targetUrl);
           return true;
         };
@@ -21999,28 +22078,13 @@ export async function renderPublicSiteHtml(site, { pageId, pagePath, trackingEna
           const response = await fetch('/api/sites/public/submit', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              siteId,
-              pageId,
+            body: JSON.stringify(buildSubmissionPayload({
               responses,
-              meta: {
-                pageId,
-                pageUrl: window.location.href,
-                referrer: document.referrer,
-                params,
-                eventTime: Date.now(),
-                visitorId: nativeIdentity.visitorId || null,
-                sessionId: nativeIdentity.sessionId || null,
-                ruleSubmit,
-                ruleAction,
-                ruleFieldId,
-                immediateDisqualify,
-                formFinalSubmit: isStandardForm && !ruleSubmit && !isStandardFormIntermediatePage,
-                tracking: nativeTracking,
-                fbp: (document.cookie.match(/(?:^|; )_fbp=([^;]+)/) || [])[1] || null,
-                fbc: (document.cookie.match(/(?:^|; )_fbc=([^;]+)/) || [])[1] || null
-              }
-            })
+              ruleSubmit,
+              ruleAction,
+              ruleFieldId,
+              immediateDisqualify
+            }))
           });
           const data = await response.json().catch(() => ({}));
           if (!response.ok || data.success === false) {

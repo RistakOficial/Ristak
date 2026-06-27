@@ -682,3 +682,51 @@ test('standalone standard form keeps honoring its own result redirect', async ()
   assert.ok(redirectBeforeResetIndex >= 0, 'expected completion navigation before form reset')
   assert.ok(resetIndex > redirectBeforeResetIndex, 'form reset must not run before redirect decisions')
 })
+
+test('immediate disqualify choices navigate without redirect copy', async () => {
+  const site = {
+    id: 'site_immediate_disqualify_choice',
+    name: 'Formulario descalificacion inmediata',
+    title: 'Formulario descalificacion inmediata',
+    description: '',
+    slug: 'formulario-descalificacion-inmediata',
+    siteType: 'standard_form',
+    status: 'published',
+    theme: {
+      template: 'compact',
+      pages: [
+        { id: 'page-1', title: 'Formulario', sortOrder: 0 },
+        { id: 'page-3', title: 'No califica', sortOrder: 1 }
+      ]
+    },
+    blocks: [
+      {
+        id: 'field-route',
+        siteId: 'site_immediate_disqualify_choice',
+        blockType: 'radio',
+        label: 'Ruta',
+        content: '',
+        placeholder: '',
+        required: true,
+        options: [
+          { id: 'yes', label: 'Si califica', value: 'Si califica', action: 'continue' },
+          { id: 'no', label: 'No califica', value: 'No califica', action: 'disqualify', message: 'No califica por ahora.' }
+        ],
+        sortOrder: 0,
+        settings: { pageId: 'page-1' }
+      }
+    ]
+  }
+
+  const html = await renderPublicSiteHtml(site, {
+    pageId: 'page-1',
+    trackingEnabled: false,
+    preview: true
+  })
+
+  assert.doesNotMatch(html, /Redirigiendo\.\.\./)
+  assert.match(html, /const getImmediateDisqualifyUrl = \(rule\) =>/)
+  assert.match(html, /const submitSubmissionInBackground = \(payload\) =>/)
+  assert.match(html, /const immediateRule = readSelectedRules\(field\)\.find\(item => item\.action === 'disqualify' && item\.warnBeforeDisqualify !== true\) \|\| null;/)
+  assert.match(html, /handleBlockingRule\(immediateRule, fieldPageId, targetMessage, \{ immediate: true, fieldId \}\)/)
+})
