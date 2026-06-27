@@ -138,10 +138,10 @@ const gatewayStatusCopy: Record<PaymentGatewayOption['status'], { label: string;
 const sectionItems: Array<{ id: PaymentsSectionId; label: string; icon: React.ReactNode }> = [
   { id: 'checkout', label: 'Página de cobro', icon: <CreditCard size={17} /> },
   { id: 'receipt', label: 'Comprobante', icon: <ReceiptText size={17} /> },
-  { id: 'meta', label: 'Meta', icon: <Sparkles size={17} /> },
   { id: 'automations', label: 'Automatizaciones', icon: <BellRing size={17} /> },
   { id: 'gateways', label: 'Pasarelas', icon: <WalletCards size={17} /> },
-  { id: 'taxes', label: 'Impuestos', icon: <Percent size={17} /> }
+  { id: 'taxes', label: 'Impuestos', icon: <Percent size={17} /> },
+  { id: 'meta', label: 'Meta', icon: <Sparkles size={17} /> }
 ]
 
 const sectionIds = sectionItems.map((item) => item.id)
