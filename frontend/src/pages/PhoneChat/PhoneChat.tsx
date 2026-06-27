@@ -3707,7 +3707,11 @@ export const PhoneChat: React.FC = () => {
   const chatSwipeGestureRef = useRef<ChatSwipeGesture | null>(null)
   const messageInfoSwipeGestureRef = useRef<MessageInfoSwipeGesture | null>(null)
   const handledRouteAppointmentRef = useRef<string | null>(null)
-  const closeSheetNow = useCallback(() => setSheet(null), [])
+  const closeSheetNow = useCallback(() => {
+    setSheet(null)
+    setWideAppointmentDefaults(null)
+    setWideAppointmentContact(null)
+  }, [])
   const handleSwitchToWebView = useCallback(() => {
     writeTabletViewPreference('web')
     setActiveSettingsSection(null)
@@ -4196,6 +4200,13 @@ export const PhoneChat: React.FC = () => {
       : 'single'
   const activeRecordPaymentMode: 'single' | 'partial' = activePhonePaymentMode === 'partial' ? 'partial' : 'single'
   const defaultAppointmentRange = useMemo(() => createDefaultAppointmentRange(timezone), [timezone])
+  const appointmentSheetRange = wideAppointmentDefaults || defaultAppointmentRange
+  const appointmentSheetCalendarId = selectedCalendarId || wideAppointmentDefaults?.calendarId || selectedCalendar?.id || ''
+  const appointmentSheetCalendar = appointmentSheetCalendarId
+    ? calendars.find((calendar) => calendar.id === appointmentSheetCalendarId) || selectedCalendar
+    : selectedCalendar
+  const appointmentSheetInitialContact = wideAppointmentDefaults ? null : initialContact
+  const appointmentSheetTitle = wideAppointmentDefaults?.title || appointmentSheetInitialContact?.name || ''
   const whatsappConnected = Boolean(whatsappStatus?.connected && whatsappStatus?.configured)
   const businessPhones = whatsappStatus?.phoneNumbers || []
   const chatPhoneFilterEnabled = whatsappNumberMode === 'separated' && businessPhones.length > 1
@@ -6888,12 +6899,12 @@ export const PhoneChat: React.FC = () => {
   const handleWideCalendarCreateRequest = (request: PhoneCalendarCreateRequest) => {
     setWideAppointmentDefaults(request)
     setWideAppointmentContact(null)
-    setWideSidebarMode('appointment')
+    setWideSidebarMode('chats')
     setContactQuery('')
     setArchivedViewOpen(false)
     setAgentPriorityViewOpen(false)
     setSelectedCalendarId(request.calendarId)
-    actionSheetDismiss.requestClose()
+    setSheet('appointment')
     closeSwipeActions()
     closeConversationSearch()
     setTagDropdownOpen(false)
@@ -9521,14 +9532,17 @@ export const PhoneChat: React.FC = () => {
     timeZone: string
     contactId?: string
   }) => {
-    if (!selectedCalendar) {
+    const isCalendarActionAppointment = Boolean(wideAppointmentDefaults)
+    const calendarForAppointment = appointmentSheetCalendar || selectedCalendar
+
+    if (!calendarForAppointment) {
       showToast('warning', 'Elige un calendario', 'Selecciona dónde quieres guardar la cita.')
       return
     }
 
     try {
       await calendarsService.createAppointment({
-        calendarId: selectedCalendar.id,
+        calendarId: calendarForAppointment.id,
         ...(locationId ? { locationId } : {}),
         ...payload
       }, accessToken || undefined)
@@ -9540,9 +9554,13 @@ export const PhoneChat: React.FC = () => {
         setContactQuery('')
       } else {
         actionSheetDismiss.requestClose()
+        if (isCalendarActionAppointment) {
+          setWideAppointmentDefaults(null)
+          setWideAppointmentContact(null)
+        }
       }
       showToast('success', 'Cita agendada', 'La cita quedó guardada.')
-      if (wideSidebarMode !== 'appointment') {
+      if (wideSidebarMode !== 'appointment' && !isCalendarActionAppointment && activeContact) {
         setMessages((current) => [
           ...current,
           {
@@ -15908,12 +15926,12 @@ export const PhoneChat: React.FC = () => {
 
       {sheet && (
           <div
-            className={`${styles.sheetBackdrop} ${actionSheetDragging ? styles.sheetBackdropInteractive : ''} ${sheet === 'settings' ? styles.settingsSheetBackdrop : ''} ${sheet === 'payment' || sheet === 'appointment' || sheet === 'settings' || sheet === 'chatMore' || sheet === 'clabe' || sheet === 'schedule' || sheet === 'tag' ? styles.darkSheetBackdrop : ''} ${sheet === 'payment' || sheet === 'appointment' ? styles.actionFormSheetBackdrop : ''} ${sheet === 'attachments' ? styles.attachmentsSheetBackdrop : ''} ${sheet === 'schedule' ? styles.scheduleSheetBackdrop : ''} ${sheet === 'chatMore' ? styles.chatMoreSheetBackdrop : ''} ${actionSheetDismiss.closing ? styles.sheetBackdropClosing : ''}`}
+            className={`${styles.sheetBackdrop} ${actionSheetDragging ? styles.sheetBackdropInteractive : ''} ${sheet === 'settings' ? styles.settingsSheetBackdrop : ''} ${sheet === 'payment' || sheet === 'appointment' || sheet === 'settings' || sheet === 'chatMore' || sheet === 'clabe' || sheet === 'schedule' || sheet === 'tag' ? styles.darkSheetBackdrop : ''} ${sheet === 'payment' || sheet === 'appointment' ? styles.actionFormSheetBackdrop : ''} ${sheet === 'appointment' ? styles.appointmentActionSheetBackdrop : ''} ${sheet === 'attachments' ? styles.attachmentsSheetBackdrop : ''} ${sheet === 'schedule' ? styles.scheduleSheetBackdrop : ''} ${sheet === 'chatMore' ? styles.chatMoreSheetBackdrop : ''} ${actionSheetDismiss.closing ? styles.sheetBackdropClosing : ''}`}
           style={sheetBackdropStyle}
           onClick={actionSheetDismiss.requestClose}
         >
           <section
-            className={`${styles.sheetPanel} ${actionSheetMoving ? styles.sheetPanelInteractive : ''} ${sheet === 'payment' || sheet === 'appointment' ? styles.actionFormSheet : ''} ${sheet === 'attachments' ? styles.attachmentsSheet : ''} ${sheet === 'templates' ? styles.templatesSheet : ''} ${sheet === 'clabe' ? styles.clabeSheet : ''} ${sheet === 'settings' ? styles.settingsSheet : ''} ${sheet === 'newChat' ? styles.newChatSheet : ''} ${sheet === 'chatMore' ? styles.chatMoreSheet : ''} ${sheet === 'schedule' ? styles.scheduleSheet : ''} ${sheet === 'tag' ? styles.tagSheet : ''} ${actionSheetDismiss.closing ? styles.sheetPanelClosing : ''}`}
+            className={`${styles.sheetPanel} ${actionSheetMoving ? styles.sheetPanelInteractive : ''} ${sheet === 'payment' || sheet === 'appointment' ? styles.actionFormSheet : ''} ${sheet === 'appointment' ? styles.appointmentActionSheet : ''} ${sheet === 'attachments' ? styles.attachmentsSheet : ''} ${sheet === 'templates' ? styles.templatesSheet : ''} ${sheet === 'clabe' ? styles.clabeSheet : ''} ${sheet === 'settings' ? styles.settingsSheet : ''} ${sheet === 'newChat' ? styles.newChatSheet : ''} ${sheet === 'chatMore' ? styles.chatMoreSheet : ''} ${sheet === 'schedule' ? styles.scheduleSheet : ''} ${sheet === 'tag' ? styles.tagSheet : ''} ${actionSheetDismiss.closing ? styles.sheetPanelClosing : ''}`}
             style={popoverSheetUsesCssClose ? undefined : actionSheetDismiss.sheetStyle}
             onClick={(event) => event.stopPropagation()}
             aria-label="Acciones del chat"
@@ -15973,16 +15991,17 @@ export const PhoneChat: React.FC = () => {
                   data-phone-chat-scrollable="true"
                 >
                   <AppointmentModal
+                    key={`action-appointment-${appointmentSheetCalendarId}-${appointmentSheetRange.start}-${appointmentSheetRange.end}-${appointmentSheetInitialContact?.id || 'unassigned'}`}
                     isOpen
                     onClose={actionSheetDismiss.requestClose}
                     mode="create"
-                    calendar={selectedCalendar}
-                    defaultStart={defaultAppointmentRange.start}
-                    defaultEnd={defaultAppointmentRange.end}
-                    defaultTimeZone={defaultAppointmentRange.timeZone}
-                    defaultTitle={initialContact?.name || ''}
-                    initialContact={initialContact}
-                    lockInitialContact={Boolean(initialContact?.id)}
+                    calendar={appointmentSheetCalendar}
+                    defaultStart={appointmentSheetRange.start}
+                    defaultEnd={appointmentSheetRange.end}
+                    defaultTimeZone={appointmentSheetRange.timeZone}
+                    defaultTitle={appointmentSheetTitle}
+                    initialContact={appointmentSheetInitialContact}
+                    lockInitialContact={Boolean(appointmentSheetInitialContact?.id)}
                     enableGuests
                     defaultScheduleMode="custom"
                     accessToken={accessToken || undefined}
@@ -15990,7 +16009,7 @@ export const PhoneChat: React.FC = () => {
                     presentation="embedded"
                     calendars={calendars}
                     calendarsLoading={calendarsLoading}
-                    selectedCalendarId={selectedCalendar?.id || ''}
+                    selectedCalendarId={appointmentSheetCalendarId}
                     onCalendarChange={setSelectedCalendarId}
                     onSave={handleCreateAppointment}
                   />
