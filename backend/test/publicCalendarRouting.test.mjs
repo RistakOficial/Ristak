@@ -26,8 +26,10 @@ test('public calendar endpoints stay out of the protected calendars router', asy
 
   assert.match(routesSource, /export const publicCalendarsRoutes = express\.Router\(\)/)
   assert.match(routesSource, /publicCalendarsRoutes\.get\('\/public\/:slug\/free-slots'/)
+  assert.match(routesSource, /publicCalendarsRoutes\.get\('\/public\/:slug\/contact-prefill'/)
   assert.match(routesSource, /publicCalendarsRoutes\.post\('\/public\/:slug\/appointments'/)
   assert.equal(routesSource.includes("router.get('/public/:slug/free-slots'"), false)
+  assert.equal(routesSource.includes("router.get('/public/:slug/contact-prefill'"), false)
   assert.equal(routesSource.includes("router.post('/public/:slug/appointments'"), false)
 })
 
@@ -78,4 +80,21 @@ test('public calendar free slots use Ristak local availability only', async () =
   assert.equal(helperSource.includes('calendarService.getFreeSlots'), false)
   assert.equal(helperSource.includes('ghlCalendarId'), false)
   assert.equal(helperSource.includes('accessToken'), false)
+})
+
+test('public calendar widget can prefill contact fields from a previous site submission', async () => {
+  const controllerSource = await readFile(join(backendRoot, 'src/controllers/calendarsController.js'), 'utf8')
+  const calendarSource = await readFile(join(backendRoot, 'src/services/localCalendarService.js'), 'utf8')
+  const sitesSource = await readFile(join(backendRoot, 'src/services/sitesService.js'), 'utf8')
+
+  assert.match(controllerSource, /export async function getPublicContactPrefill/)
+  assert.match(controllerSource, /WHERE contact_id = \?/)
+  assert.match(controllerSource, /visitor_id = \?/)
+  assert.match(controllerSource, /session_id = \?/)
+  assert.match(calendarSource, /data-system-field-key=/)
+  assert.match(calendarSource, /contact-prefill\?/)
+  assert.match(calendarSource, /applyContactPrefill\(payload\.data\)/)
+  assert.match(calendarSource, /rememberCalendarContact\(payload\.data\?\.contact\)/)
+  assert.match(sitesSource, /data\.contact_phone = contact\.phone/)
+  assert.match(sitesSource, /phone: submission\.contactPhone \|\| ''/)
 })

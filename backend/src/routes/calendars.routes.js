@@ -13,6 +13,7 @@ export const publicCalendarsRoutes = express.Router();
 
 // Slots y reservas publicas para URLs compartibles de calendario
 publicCalendarsRoutes.get('/public/:slug/free-slots', calendarsController.getPublicFreeSlots);
+publicCalendarsRoutes.get('/public/:slug/contact-prefill', calendarsController.getPublicContactPrefill);
 publicCalendarsRoutes.post('/public/:slug/appointments', calendarsController.createPublicAppointment);
 
 router.use(requireAuth);

@@ -13330,7 +13330,8 @@ function buildVideoFormGateRuntimeScript(blocks = []) {
               window.ristakNativeRememberContact({
                 contactId: submission.contactId,
                 fullName: submission.contactName || '',
-                email: submission.contactEmail || ''
+                email: submission.contactEmail || '',
+                phone: submission.contactPhone || ''
               });
             }
             window.dispatchEvent(new CustomEvent('ristak:submitted', { detail: submission }));
@@ -15216,9 +15217,11 @@ function buildNativeSiteTrackingScript(context) {
       const rememberContact = (contact) => {
         if (!contact || !contact.contactId) return;
         const data = readJson(localStorage, 'ristak');
+        const sameContact = data.contact_id === contact.contactId;
         data.contact_id = contact.contactId;
-        data.contact_email = contact.email || data.contact_email || null;
-        data.contact_name = contact.fullName || data.contact_name || null;
+        data.contact_email = contact.email || (sameContact ? data.contact_email : null) || null;
+        data.contact_name = contact.fullName || (sameContact ? data.contact_name : null) || null;
+        data.contact_phone = contact.phone || (sameContact ? data.contact_phone : null) || null;
         data.contact_synced_at = new Date().toISOString();
         writeJson(localStorage, 'ristak', data);
       };
@@ -19899,7 +19902,8 @@ function buildImportedFormCaptureScript(site, imported, { pageId = DEFAULT_FUNNE
               window.ristakNativeRememberContact({
                 contactId: submission.contactId,
                 fullName: submission.contactName || '',
-                email: submission.contactEmail || ''
+                email: submission.contactEmail || '',
+                phone: submission.contactPhone || ''
               });
             }
             if (immediateDisqualifyChoice) {
@@ -22376,7 +22380,8 @@ export async function renderPublicSiteHtml(site, { pageId, pagePath, trackingEna
             window.ristakNativeRememberContact({
               contactId: submission.contactId,
               fullName: submission.contactName || '',
-              email: submission.contactEmail || ''
+              email: submission.contactEmail || '',
+              phone: submission.contactPhone || ''
             });
           }
           // El redirect propio del formulario (calificación/descalificación del
@@ -24458,6 +24463,7 @@ async function createImportedSubmissionFromRequest({ req, body, site, host, prev
       contactId: null,
       contactName: contact.fullName,
       contactEmail: contact.email,
+      contactPhone: contact.phone,
       status: submissionStatus,
       message: responseMessage,
       rawFields: layers.rawFields,
@@ -24561,6 +24567,7 @@ async function createImportedSubmissionFromRequest({ req, body, site, host, prev
     contactId,
     contactName: contact.fullName,
     contactEmail: contact.email,
+    contactPhone: contact.phone,
     status: submissionStatus,
     message: responseMessage,
     rawFields: layers.rawFields,

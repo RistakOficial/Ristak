@@ -1867,7 +1867,7 @@ function renderCalendarBookingForm(bookingForm = {}) {
               return html ? `<div class="calendarContentBlock" data-block-type="${escapeHtml(field.blockType)}">${html}</div>` : ''
             }
             return `
-            <section class="calendarQuestion" data-field-id="${escapeHtml(field.id)}" data-field-type="${escapeHtml(field.blockType)}" data-required="${field.required ? 'true' : 'false'}" data-validation="${escapeHtml(getCalendarFieldValidation(field))}">
+            <section class="calendarQuestion" data-field-id="${escapeHtml(field.id)}" data-field-type="${escapeHtml(field.blockType)}" data-required="${field.required ? 'true' : 'false'}" data-validation="${escapeHtml(getCalendarFieldValidation(field))}" data-system-field-key="${escapeHtml(cleanString(field.settings?.systemFieldKey || field.settings?.system_field_key || ''))}">
               <label for="${escapeHtml(field.id)}">${escapeHtml(field.label || 'Pregunta')}${field.required ? '<span class="requiredMark">*</span>' : ''}</label>
               ${field.content ? `<p class="fieldHelp">${escapeHtml(field.content)}</p>` : ''}
               ${renderCalendarFieldInput(field)}
@@ -2781,6 +2781,128 @@ export function renderPublicCalendarHtml(calendar, { host = '', embedded = false
         return valid;
       };
 
+      const cleanPrefillText = (value) => {
+        const text = String(value || '').trim();
+        return text.length > 240 ? text.slice(0, 240) : text;
+      };
+      const readStoredJson = (storage, key) => {
+        try {
+          const raw = storage && typeof storage.getItem === 'function' ? storage.getItem(key) : '';
+          const parsed = raw ? JSON.parse(raw) : {};
+          return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : {};
+        } catch (_) {
+          return {};
+        }
+      };
+      const writeStoredJson = (storage, key, value) => {
+        try {
+          if (storage && typeof storage.setItem === 'function') storage.setItem(key, JSON.stringify(value || {}));
+        } catch (_) {}
+      };
+      const readStoredContact = () => {
+        const local = readStoredJson(window.localStorage, 'ristak');
+        const session = readStoredJson(window.sessionStorage, 'ristak');
+        return {
+          contactId: cleanPrefillText(local.contact_id || local.contactId),
+          name: cleanPrefillText(local.contact_name || local.contactName || local.fullName || local.name),
+          email: cleanPrefillText(local.contact_email || local.contactEmail || local.email),
+          phone: cleanPrefillText(local.contact_phone || local.contactPhone || local.phone),
+          visitorId: cleanPrefillText(local.visitor_id || local.visitorId || session.visitor_id || session.visitorId),
+          sessionId: cleanPrefillText(session.session_id || session.sessionId)
+        };
+      };
+      const rememberCalendarContact = (contact) => {
+        if (!contact || !contact.contactId) return;
+        const local = readStoredJson(window.localStorage, 'ristak');
+        const sameContact = local.contact_id === contact.contactId;
+        local.contact_id = contact.contactId;
+        local.contact_name = cleanPrefillText(contact.name || contact.fullName || contact.full_name) || (sameContact ? local.contact_name : null) || null;
+        local.contact_email = cleanPrefillText(contact.email) || (sameContact ? local.contact_email : null) || null;
+        local.contact_phone = cleanPrefillText(contact.phone) || (sameContact ? local.contact_phone : null) || null;
+        local.contact_synced_at = new Date().toISOString();
+        writeStoredJson(window.localStorage, 'ristak', local);
+      };
+      const getPrefillKeyForField = (field) => {
+        if (!field) return '';
+        const label = field.querySelector('label');
+        const haystack = [
+          field.getAttribute('data-system-field-key'),
+          field.getAttribute('data-field-id'),
+          field.getAttribute('data-field-type'),
+          field.getAttribute('data-validation'),
+          label ? label.textContent : ''
+        ].map(value => String(value || '').toLowerCase()).join(' ');
+
+        if (
+          haystack.includes('email') ||
+          haystack.includes('correo') ||
+          haystack.includes('calendar_email')
+        ) return 'email';
+        if (
+          haystack.includes('phone') ||
+          haystack.includes('teléfono') ||
+          haystack.includes('telefono') ||
+          haystack.includes('whatsapp') ||
+          haystack.includes('calendar_phone')
+        ) return 'phone';
+        if (
+          haystack.includes('full_name') ||
+          haystack.includes('full name') ||
+          haystack.includes('nombre completo') ||
+          haystack.includes('nombre') ||
+          haystack.includes('calendar_name')
+        ) return 'name';
+        return '';
+      };
+      const setPrefillValue = (field, value) => {
+        const input = field ? field.querySelector('input:not([type="radio"]):not([type="checkbox"]), textarea') : null;
+        const text = cleanPrefillText(value);
+        if (!input || !text || String(input.value || '').trim()) return false;
+        input.value = text;
+        input.dispatchEvent(new Event('input', { bubbles: true }));
+        input.dispatchEvent(new Event('change', { bubbles: true }));
+        validateField(field);
+        return true;
+      };
+      const applyContactPrefill = (contact) => {
+        if (!form || !contact) return false;
+        const normalized = {
+          name: cleanPrefillText(contact.name || contact.fullName || contact.full_name),
+          email: cleanPrefillText(contact.email),
+          phone: cleanPrefillText(contact.phone)
+        };
+        let changed = false;
+        Array.from(form.querySelectorAll('.calendarQuestion')).forEach((field) => {
+          const key = getPrefillKeyForField(field);
+          if (!key || !normalized[key]) return;
+          changed = setPrefillValue(field, normalized[key]) || changed;
+        });
+        if (changed) evaluateDisqualification();
+        return changed;
+      };
+      const initContactPrefill = async () => {
+        const stored = readStoredContact();
+        applyContactPrefill(stored);
+        if (!stored.contactId) return;
+
+        const params = new URLSearchParams({
+          contactId: stored.contactId,
+          visitorId: stored.visitorId || '',
+          sessionId: stored.sessionId || ''
+        });
+
+        try {
+          const response = await fetch('/api/calendars/public/' + encodeURIComponent(calendar.slug) + '/contact-prefill?' + params.toString(), {
+            headers: { 'Accept': 'application/json' },
+            cache: 'no-store'
+          });
+          const payload = await response.json().catch(() => ({}));
+          if (!response.ok || payload.success === false || !payload.data) return;
+          rememberCalendarContact(payload.data);
+          applyContactPrefill(payload.data);
+        } catch (_) {}
+      };
+
       const getPageFields = (pageIndex = formPageIndex) => {
         const page = formPages[pageIndex];
         return page ? Array.from(page.querySelectorAll('.calendarQuestion')) : Array.from(form.querySelectorAll('.calendarQuestion'));
@@ -3282,6 +3404,7 @@ export function renderPublicCalendarHtml(calendar, { host = '', embedded = false
             }));
             if (!response.ok || payload.success === false) throw new Error(payload.error || 'No se pudo agendar');
           }
+          rememberCalendarContact(payload.data?.contact);
           trackCalendarMetaEvent(payload.data?.metaEvent);
           const completionRedirectUrl = getCompletionRedirectUrl();
           selectedSlot = '';
@@ -3311,6 +3434,7 @@ export function renderPublicCalendarHtml(calendar, { host = '', embedded = false
       });
 
       renderTimezoneControl();
+      initContactPrefill();
       loadSlots();
       // (CAL-FLOW) Si el formulario va primero, mostramos el gate al cargar.
       if (formFirst) enterGate();
