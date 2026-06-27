@@ -138,6 +138,26 @@ function cleanString(value) {
   return String(value || '').trim();
 }
 
+function resolvePaymentTimestamp(rawDate) {
+  const now = new Date();
+  const value = cleanString(rawDate);
+  if (!value) return now.toISOString();
+
+  if (value.includes('T') || value.includes(' ')) {
+    const parsed = new Date(value);
+    return Number.isNaN(parsed.getTime()) ? now.toISOString() : parsed.toISOString();
+  }
+
+  if (/^\d{4}-\d{2}-\d{2}$/.test(value)) {
+    const todayUtc = now.toISOString().slice(0, 10);
+    if (value === todayUtc) return now.toISOString();
+    return `${value}T12:00:00.000Z`;
+  }
+
+  const parsed = new Date(value);
+  return Number.isNaN(parsed.getTime()) ? now.toISOString() : parsed.toISOString();
+}
+
 function normalizeBaseUrl(value = '') {
   return cleanString(value).replace(/\/+$/, '');
 }
@@ -1962,6 +1982,7 @@ export const recordPayment = async (req, res) => {
     const mode = methodMap[normalizedMethod] || 'cash';
     const liveMode = await getGhlInvoiceLiveMode();
     const paymentMode = liveMode ? 'live' : 'test';
+    const resolvedPaymentDate = resolvePaymentTimestamp(paymentDate);
 
     const noteParts = [
       `Pago registrado desde Ristak`,
@@ -1975,7 +1996,7 @@ export const recordPayment = async (req, res) => {
     await ghlClient.recordPayment(invoiceId, {
       amount,
       currency,
-      fulfilledAt: paymentDate || new Date().toISOString(),
+      fulfilledAt: resolvedPaymentDate,
       note: noteParts.join('\n'),
       mode,
       liveMode
@@ -1985,9 +2006,9 @@ export const recordPayment = async (req, res) => {
     try {
       await db.run(
         `UPDATE payments
-         SET status = 'paid', payment_method = ?, reference = ?, payment_mode = ?, updated_at = CURRENT_TIMESTAMP
+         SET status = 'paid', payment_method = ?, reference = ?, payment_mode = ?, date = ?, updated_at = CURRENT_TIMESTAMP
          WHERE ghl_invoice_id = ?`,
-        [normalizedMethod, reference || null, paymentMode, invoiceId]
+        [normalizedMethod, reference || null, paymentMode, resolvedPaymentDate, invoiceId]
       );
       logger.success(`Estado actualizado a 'paid' para invoice: ${invoiceId}`);
 

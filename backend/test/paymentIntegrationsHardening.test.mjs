@@ -1,5 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
+import { readFileSync } from 'node:fs'
 
 import { db } from '../src/config/database.js'
 import { clearHighLevelMirrorDataForLocationChange } from '../src/controllers/highlevelController.js'
@@ -33,6 +34,17 @@ function idsFor(name) {
     webhookPaymentId: `pit_ghl_payment_${name}_${suffix}`
   }
 }
+
+test('registro manual de invoice HighLevel persiste paymentDate como fecha local del pago', () => {
+  const source = readFileSync(new URL('../src/controllers/highlevelController.js', import.meta.url), 'utf8')
+  const start = source.indexOf('export const recordPayment = async')
+  const end = source.indexOf('export const createInstallmentFlow = async')
+  const recordPaymentSource = source.slice(start, end)
+
+  assert.match(recordPaymentSource, /const resolvedPaymentDate = resolvePaymentTimestamp\(paymentDate\)/)
+  assert.match(recordPaymentSource, /fulfilledAt: resolvedPaymentDate/)
+  assert.match(recordPaymentSource, /SET status = 'paid'.+date = \?/s)
+})
 
 async function cleanup(ids) {
   await db.run(
@@ -238,6 +250,47 @@ test('webhook de pago HighLevel persiste payment_provider highlevel', async () =
 
     assert.equal(payment.payment_provider, 'highlevel')
     assert.equal(payment.ghl_invoice_id, ids.highLevelInvoiceId)
+  } finally {
+    await cleanup(ids)
+  }
+})
+
+test('webhook de pago HighLevel prefiere fulfilledAt sobre created_at para payments.date', async () => {
+  const ids = idsFor('webhookdate')
+  const createdAt = '2026-05-01T08:00:00.000Z'
+  const fulfilledAt = '2026-05-09T18:30:00.000Z'
+  await cleanup(ids)
+  await seedContact(ids)
+
+  try {
+    const res = createResponse()
+    await handlePaymentWebhook({
+      body: {
+        payment: {
+          id: ids.webhookPaymentId,
+          contactId: ids.ghlContactId,
+          invoiceId: ids.highLevelInvoiceId,
+          invoiceNumber: 'INV-7788',
+          amount: 300,
+          currency: 'MXN',
+          status: 'succeeded',
+          gateway: 'cash',
+          created_at: createdAt,
+          fulfilledAt,
+          invoice: {
+            id: ids.highLevelInvoiceId,
+            invoiceNumber: 'INV-7788',
+            title: 'Pago con fecha real',
+            contactId: ids.ghlContactId
+          }
+        }
+      }
+    }, res)
+
+    assert.equal(res.statusCode, 200)
+    const payment = await db.get('SELECT date FROM payments WHERE ghl_invoice_id = ?', [ids.highLevelInvoiceId])
+
+    assert.equal(payment.date, fulfilledAt)
   } finally {
     await cleanup(ids)
   }

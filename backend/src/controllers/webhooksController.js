@@ -903,7 +903,7 @@ export const handlePaymentWebhook = async (req, res) => {
     const amount = normalizePaymentAmount(payment.total_amount || payment.totalAmount || payment.amount || 0); // HighLevel envía el monto directo, NO en centavos
     const currency = payment.currency_code || payment.currencyCode || payment.currency || 'MXN';
     const status = payment.payment_status || payment.paymentStatus || payment.status || 'succeeded';
-    const paymentDate = payment.created_at || payment.fulfilledAt || payment.date || payment.createdAt || new Date().toISOString();
+    const paymentDate = payment.fulfilledAt || payment.fulfilled_at || payment.paymentDate || payment.payment_date || payment.date || payment.transactionDate || payment.created_at || payment.createdAt || new Date().toISOString();
     const createdAt = payment.created_at || payment.createdAt || new Date().toISOString();
     const existingInvoicePayment = await findExistingInvoicePayment({
       invoiceId,
