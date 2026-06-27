@@ -53,6 +53,20 @@ export interface CalendarBookingCompletionConfig {
   redirectUrl: string;
 }
 
+export type CalendarPaymentGateway = 'stripe' | 'conekta' | 'mercadopago';
+
+export interface CalendarBookingPaymentConfig {
+  enabled: boolean;
+  gateway: CalendarPaymentGateway;
+  amount: number;
+  currency: string;
+  productName: string;
+  description: string;
+  buttonText: string;
+  pendingMessage: string;
+  paidMessage: string;
+}
+
 export type CalendarCustomEventChannel = 'site' | 'whatsapp' | 'smart';
 
 export interface CalendarCustomEventParameter {
@@ -161,6 +175,7 @@ export interface Calendar {
   formId?: string;
   bookingForm?: CalendarBookingFormConfig;
   bookingCompletion?: CalendarBookingCompletionConfig;
+  bookingPayment?: CalendarBookingPaymentConfig;
   bookingDisplay?: CalendarBookingDisplayConfig;
   customEvents?: CalendarCustomEventsConfig;
   stickyContact?: boolean;

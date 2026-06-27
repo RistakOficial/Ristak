@@ -59,6 +59,12 @@ export type { NumberInputProps } from './NumberInput'
 export { Switch } from './Switch'
 export { SegmentTabs } from './SegmentTabs'
 export type { SegmentTab } from './SegmentTabs'
+export {
+  PaymentGateControls,
+  normalizePaymentGateConfig,
+  type PaymentGateConfig,
+  type PaymentGateGateway
+} from './PaymentGateControls'
 export { PaymentPlatformLogo, getPaymentPlatformLabel } from './PaymentPlatformLogo'
 export type { PaymentPlatformLogoId } from './PaymentPlatformLogo'
 export { Loading } from './Loading'

@@ -1,0 +1,122 @@
+.root {
+  display: grid;
+  gap: 12px;
+  min-width: 0;
+}
+
+.header {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+}
+
+.copy {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.copy strong {
+  color: var(--text, var(--color-text-primary));
+  font-size: 14px;
+  font-weight: 650;
+  line-height: 1.25;
+}
+
+.copy span {
+  color: var(--color-text-tertiary, var(--muted));
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.body {
+  display: grid;
+  gap: 12px;
+  min-width: 0;
+}
+
+.grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+  min-width: 0;
+}
+
+.field {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+}
+
+.fieldWide {
+  grid-column: 1 / -1;
+}
+
+.field > span {
+  color: var(--text, var(--color-text-primary));
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 1.35;
+}
+
+.field input,
+.field textarea,
+.field :global([data-ristak-dropdown-trigger]) {
+  width: 100%;
+  min-height: var(--design-control-height, 40px);
+  border: 1px solid var(--design-control-border, var(--border));
+  border-radius: var(--design-control-radius, var(--radius-ctl));
+  background: var(--design-control-bg, var(--surface));
+  color: var(--design-control-text, var(--text));
+  box-shadow: var(--design-control-shadow, none);
+  font: inherit;
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 1.25rem;
+  outline: none;
+  padding: 0 var(--design-control-padding-x, 12px);
+}
+
+.field textarea {
+  min-height: 74px;
+  resize: vertical;
+  padding-top: 10px;
+  padding-bottom: 10px;
+}
+
+.field input:focus,
+.field textarea:focus,
+.field :global([data-ristak-dropdown-trigger]):focus,
+.field :global([data-ristak-dropdown-trigger]):focus-visible,
+.field :global([data-ristak-dropdown-trigger][aria-expanded='true']),
+.field :global([data-ristak-dropdown-trigger][data-state='open']) {
+  border-color: var(--design-control-border-focus, var(--accent));
+  background: var(--design-control-bg, var(--surface));
+  box-shadow: var(--design-control-focus-shadow, 0 0 0 3px color-mix(in srgb, var(--accent) 16%, transparent));
+}
+
+.gatewayStatus {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  color: var(--color-text-tertiary, var(--muted));
+  font-size: 12px;
+  line-height: 1.35;
+}
+
+.gatewayStatus[data-connected='true'] {
+  color: var(--pos, var(--accent));
+}
+
+.gatewayLogo {
+  flex: 0 0 auto;
+}
+
+@media (max-width: 720px) {
+  .grid {
+    grid-template-columns: 1fr;
+  }
+}

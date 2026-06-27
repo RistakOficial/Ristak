@@ -13,6 +13,18 @@ export type SiteType = 'standard_form' | 'interactive_form' | 'landing_page'
 export type SiteStatus = 'draft' | 'published' | 'archived'
 export type SiteMetaTrigger = 'page_view' | 'form_submit' | 'calendar_schedule'
 export type SiteMetaSubmitCondition = 'always' | 'qualified_only'
+export type PaymentGateGateway = 'stripe' | 'conekta' | 'mercadopago'
+export interface PaymentGateConfig {
+  enabled: boolean
+  gateway: PaymentGateGateway
+  amount: number
+  currency: string
+  productName: string
+  description: string
+  buttonText: string
+  pendingMessage: string
+  paidMessage: string
+}
 export type SiteFormCompletionAction = 'form_default' | 'next_page' | 'next_page_if_qualified' | 'specific_page' | 'specific_page_if_qualified' | 'redirect' | 'redirect_qualified'
 export type SiteFormDisqualifiedCompletionAction = 'disqualified_page' | 'redirect_url'
 export type SiteBlockType =
@@ -169,6 +181,7 @@ export interface SiteTheme {
   metaConversionTarget?: 'same_page' | 'next_page'
   metaEventParameters?: SiteMetaEventParameters
   metaSubmitCondition?: SiteMetaSubmitCondition
+  paymentGate?: PaymentGateConfig
   formCompletionAction?: SiteFormCompletionAction
   formQualifiedRedirectUrl?: string
   formDisqualifiedCompletionAction?: SiteFormDisqualifiedCompletionAction

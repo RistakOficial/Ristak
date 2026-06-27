@@ -114,6 +114,7 @@ import {
   Modal,
   NumberInput,
   PathInput,
+  PaymentGateControls,
   CustomSelect,
   SearchField,
   Switch,
@@ -33570,6 +33571,17 @@ const PageInspector: React.FC<{
           <p className={styles.customFieldHint}>
             Apagado: la persona puede ser enviada al destino, pero no se crea submission ni se guardan respuestas hasta que termine el formulario.
           </p>
+        </AccordionSection>
+      )}
+      {(isFormSite(site) || isLanding(site)) && (
+        <AccordionSection id="page-payment-gate" title="Cobro">
+          <PaymentGateControls
+            value={theme.paymentGate}
+            title="Solicitar pago"
+            description="Bloquea el avance hasta confirmar el pago."
+            onChange={(paymentGate) => onPatchTheme({ paymentGate })}
+            onCommit={onSaveSite}
+          />
         </AccordionSection>
       )}
     </AccordionGroup>

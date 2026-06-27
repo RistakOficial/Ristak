@@ -27,6 +27,7 @@ import {
   removeSitesAppDomainHandler,
   removeSitesDomainHandler,
   previewSiteSessionHandler,
+  publicSitePaymentStatusHandler,
   reorderBlocksHandler,
   restoreBlocksHandler,
   setSitesDefaultRouteHandler,
@@ -48,6 +49,7 @@ import {
 const router = express.Router()
 
 router.post('/public/submit', submitPublicSiteHandler)
+router.get('/public/payments/:publicPaymentId/status', publicSitePaymentStatusHandler)
 router.post('/public/meta-event', metaPageEventPublicHandler)
 router.get('/public/fonts.css', sitesFontCssHandler)
 router.get('/public/font-file', sitesFontFileHandler)

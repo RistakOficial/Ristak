@@ -18,6 +18,7 @@ import { normalizePhoneForAccount } from '../utils/accountLocale.js' // (GCAL-00
 import GHLClient from './ghlClient.js'
 import * as highlevelCalendarService from './highlevelCalendarService.js'
 import { getCalendarPublicBaseUrlStatus } from './sitesService.js'
+import { normalizePaymentGateConfig } from './publicPaymentGateService.js'
 
 const LOCAL_CALENDAR_PREFIX = 'rstk_cal'
 const LOCAL_APPOINTMENT_PREFIX = 'rstk_appt'
@@ -581,6 +582,13 @@ function getCalendarRawJsonWithBookingForm(calendar = {}, options = {}) {
       baseRaw.booking_completion ||
       calendar
     ),
+    bookingPayment: normalizePaymentGateConfig(
+      calendar.bookingPayment ||
+      calendar.booking_payment ||
+      baseRaw.bookingPayment ||
+      baseRaw.booking_payment ||
+      {}
+    ),
     bookingDisplay: normalizeCalendarBookingDisplayConfig(
       calendar.bookingDisplay ||
       calendar.booking_display ||
@@ -1099,6 +1107,7 @@ function calendarRowToApi(row = {}) {
     notes: row.notes || '',
     bookingForm: normalizeCalendarBookingFormConfig(rawJson.bookingForm || rawJson.booking_form || rawJson),
     bookingCompletion: normalizeCalendarBookingCompletionConfig(rawJson.bookingCompletion || rawJson.booking_completion || rawJson),
+    bookingPayment: normalizePaymentGateConfig(rawJson.bookingPayment || rawJson.booking_payment || {}),
     bookingDisplay: normalizeCalendarBookingDisplayConfig(rawJson.bookingDisplay || rawJson.booking_display || rawJson, { eventColor: row.event_color }),
     customEvents: normalizeCalendarCustomEventsConfig(rawJson.customEvents || rawJson.custom_events || rawJson.metaEvent || rawJson.meta_event || {}),
     availabilityType: toInt(row.availability_type, 0),
@@ -1597,6 +1606,7 @@ export async function getCalendarBookingFormDefinition(calendar = {}) {
             ...formDisqualification,
             html: renderCalendarResultContentBlocks(disqualificationBlocks)
           },
+          paymentGate: normalizePaymentGateConfig(theme.paymentGate || theme.payment_gate || {}),
           defaultFields: config.defaultFields
         }
       }
@@ -1610,6 +1620,7 @@ export async function getCalendarBookingFormDefinition(calendar = {}) {
     siteType: 'standard_form',
     pages: [{ id: CALENDAR_DEFAULT_PAGE_ID, title: 'Tus datos', sortOrder: 0 }],
     fields: getDefaultCalendarBookingFields(config.defaultFields),
+    paymentGate: normalizePaymentGateConfig({}),
     defaultFields: config.defaultFields
   }
 }
@@ -2004,6 +2015,7 @@ export function renderPublicCalendarHtml(calendar, { host = '', embedded = false
   const widgetTheme = normalizeCalendarBookingWidgetTheme(effectiveBookingDisplay.widgetTheme)
   const coverImage = safeCalendarImageUrl(style.coverImage, calendar.calendarCoverImage || calendar.calendar_cover_image || '')
   const bookingCompletion = normalizeCalendarBookingCompletionConfig(calendar.bookingCompletion || calendar.booking_completion || {})
+  const bookingPayment = normalizePaymentGateConfig(calendar.bookingPayment || calendar.booking_payment || {})
   const customEvents = normalizeCalendarCustomEventsConfig(calendar.customEvents || calendar.custom_events || calendar.metaEvent || calendar.meta_event || {})
   const showSidebar = effectiveBookingDisplay.showSidebar !== false
   const payload = {
@@ -2018,6 +2030,7 @@ export function renderPublicCalendarHtml(calendar, { host = '', embedded = false
     layout,
     coverImage,
     bookingCompletion,
+    bookingPayment,
     bookingDisplay: effectiveBookingDisplay,
     customEvents,
     styleDefaults: {
@@ -2224,6 +2237,7 @@ export function renderPublicCalendarHtml(calendar, { host = '', embedded = false
     .message.error{color:var(--danger)}
     .message.ok{color:var(--ok)}
     .message.preview{color:var(--muted)}
+    .message .paymentAction{display:inline-flex;align-items:center;justify-content:center;min-height:42px;margin:10px auto 0;border:1px solid var(--accent);border-radius:var(--slot-radius);background:var(--accent);color:var(--button-text);font-weight:650;text-decoration:none;padding:8px 16px}
     .loading{opacity:.62;pointer-events:none}
     .successPane{display:none;grid-column:1 / -1;min-height:420px;flex-direction:column;align-items:center;justify-content:center;text-align:center;padding:clamp(36px,6vw,80px) clamp(24px,4vw,48px)}
     .shell.bookingDone{grid-template-columns:1fr}
@@ -2498,6 +2512,75 @@ export function renderPublicCalendarHtml(calendar, { host = '', embedded = false
         message.textContent = text || '';
         message.className = 'message' + (type ? ' ' + type : '');
       };
+
+      const renderPaymentMessage = (payment, onStartPolling) => {
+        if (!message) return;
+        message.textContent = '';
+        message.className = 'message';
+        const text = document.createElement('span');
+        text.textContent = payment.pendingMessage || payment.message || 'Completa el pago para agendar.';
+        message.appendChild(text);
+        if (!payment.paymentUrl) return;
+        const link = document.createElement('a');
+        link.href = payment.paymentUrl;
+        link.target = '_blank';
+        link.rel = 'noopener';
+        link.className = 'paymentAction';
+        link.textContent = payment.buttonText || 'Completar pago';
+        link.addEventListener('click', () => { onStartPolling(); }, { once: true });
+        message.appendChild(link);
+      };
+
+      const getPaymentStatus = async (publicPaymentId) => {
+        const response = await fetch('/api/sites/public/payments/' + encodeURIComponent(publicPaymentId) + '/status', {
+          headers: { 'Accept': 'application/json' }
+        });
+        const payload = await response.json().catch(() => ({}));
+        if (!response.ok || payload.success === false) {
+          throw new Error(payload.error || 'No se pudo verificar el pago');
+        }
+        return payload && payload.data ? payload.data : {};
+      };
+
+      const waitForCalendarPayment = (payment) => new Promise((resolve, reject) => {
+        if (!payment || !payment.publicPaymentId || !payment.paymentUrl) {
+          reject(new Error('No se pudo preparar el pago. Intenta de nuevo.'));
+          return;
+        }
+        let started = false;
+        let finished = false;
+        let attempts = 0;
+        const checkStatus = async () => {
+          if (finished) return;
+          try {
+            const status = await getPaymentStatus(payment.publicPaymentId);
+            if (status.paid) {
+              finished = true;
+              setMessage(payment.paidMessage || 'Pago confirmado. Agendando...', 'ok');
+              resolve(status);
+              return;
+            }
+            attempts += 1;
+            setMessage('Esperando confirmación del pago...');
+            window.setTimeout(checkStatus, 2500);
+          } catch (error) {
+            attempts += 1;
+            if (attempts > 80) {
+              finished = true;
+              reject(error);
+              return;
+            }
+            window.setTimeout(checkStatus, 2500);
+          }
+        };
+        const startPolling = () => {
+          if (started || finished) return;
+          started = true;
+          setMessage('Esperando confirmación del pago...');
+          checkStatus();
+        };
+        renderPaymentMessage(payment, startPolling);
+      });
 
       const getDisqualificationContent = (rule) => {
         const formDq = (calendar.bookingForm && calendar.bookingForm.disqualification) || {};
@@ -3071,24 +3154,29 @@ export function renderPublicCalendarHtml(calendar, { host = '', embedded = false
         setMessage('');
 
         try {
-          const response = await fetch('/api/calendars/public/' + encodeURIComponent(calendar.slug) + '/appointments', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              startTime: selectedSlot,
-              timezone,
-              sourceUrl: window.location.href,
-              name: formData.get('name'),
-              phone: formData.get('phone'),
-              email: formData.get('email'),
-              notes: formData.get('notes'),
-              responses,
-              formId: calendar.bookingForm?.formId || '',
-              formName: calendar.bookingForm?.formName || '',
-              meta: getMetaEventPayload()
-            })
-          });
-          const payload = await response.json();
+          const appointmentPayload = {
+            startTime: selectedSlot,
+            timezone,
+            sourceUrl: window.location.href,
+            name: formData.get('name'),
+            phone: formData.get('phone'),
+            email: formData.get('email'),
+            notes: formData.get('notes'),
+            responses,
+            formId: calendar.bookingForm?.formId || '',
+            formName: calendar.bookingForm?.formName || '',
+            meta: getMetaEventPayload()
+          };
+          const postAppointment = async (payloadInput) => {
+            const response = await fetch('/api/calendars/public/' + encodeURIComponent(calendar.slug) + '/appointments', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify(payloadInput)
+            });
+            const payload = await response.json().catch(() => ({}));
+            return { response, payload };
+          };
+          let { response, payload } = await postAppointment(appointmentPayload);
           // (CAL-QUAL) El servidor descalificó: no se agendó. Mostramos el mensaje del
           // formulario (o redirigimos) en vez de un error rojo.
           if (payload && payload.disqualified) {
@@ -3106,6 +3194,19 @@ export function renderPublicCalendarHtml(calendar, { host = '', embedded = false
             return;
           }
           if (!response.ok || payload.success === false) throw new Error(payload.error || 'No se pudo agendar');
+          if (payload.data?.paymentRequired) {
+            const paymentStatus = await waitForCalendarPayment(payload.data);
+            ({ response, payload } = await postAppointment({
+              ...appointmentPayload,
+              paymentPublicId: payload.data.publicPaymentId,
+              meta: {
+                ...appointmentPayload.meta,
+                paymentPublicId: payload.data.publicPaymentId,
+                paymentStatus: paymentStatus.status || ''
+              }
+            }));
+            if (!response.ok || payload.success === false) throw new Error(payload.error || 'No se pudo agendar');
+          }
           trackCalendarMetaEvent(payload.data?.metaEvent);
           const completionRedirectUrl = getCompletionRedirectUrl();
           selectedSlot = '';

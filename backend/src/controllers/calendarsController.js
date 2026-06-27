@@ -26,6 +26,14 @@ import {
   prepareContactPhoneUpsert
 } from '../services/contactIdentityService.js';
 import { loadFirstWhatsAppAttributions } from '../services/contactSourceService.js';
+import {
+  assertPaidPaymentGate,
+  createPaymentGateLink,
+  getPaymentGateStatus,
+  isPaymentGateEnabled,
+  normalizePaymentGateConfig,
+  paymentGateMatches
+} from '../services/publicPaymentGateService.js';
 
 /**
  * Controlador para calendarios de Ristak con sincronizaciones externas opcionales.
@@ -114,6 +122,100 @@ function buildPublicCalendarMetaRequest(req, body = {}) {
       fbp: cleanString(source.fbp),
       fbc: cleanString(source.fbc)
     }
+  };
+}
+
+function getCalendarPaymentPublicId(body = {}) {
+  return cleanString(
+    body.paymentPublicId ||
+    body.payment_public_id ||
+    body.publicPaymentId ||
+    body.public_payment_id ||
+    body.meta?.paymentPublicId ||
+    body.meta?.payment_public_id ||
+    body.meta?.publicPaymentId ||
+    body.meta?.public_payment_id
+  );
+}
+
+function buildCalendarPaymentRequiredResponse(bookingPayment, paymentStatus = {}) {
+  return {
+    status: 'payment_pending',
+    paymentRequired: true,
+    publicPaymentId: cleanString(paymentStatus.publicPaymentId || paymentStatus.public_payment_id),
+    paymentUrl: cleanString(paymentStatus.paymentUrl || paymentStatus.payment_url),
+    paymentStatus: cleanString(paymentStatus.status || 'sent'),
+    paymentProvider: cleanString(paymentStatus.provider || bookingPayment.gateway),
+    paymentGateway: bookingPayment.gateway,
+    amount: Number(paymentStatus.amount || bookingPayment.amount) || bookingPayment.amount,
+    currency: cleanString(paymentStatus.currency || bookingPayment.currency) || bookingPayment.currency,
+    productName: bookingPayment.productName,
+    buttonText: bookingPayment.buttonText,
+    pendingMessage: bookingPayment.pendingMessage,
+    paidMessage: bookingPayment.paidMessage,
+    message: bookingPayment.pendingMessage || 'Completa el pago para agendar.'
+  };
+}
+
+function resolveCalendarBookingPayment(calendar = {}, bookingForm = {}) {
+  const calendarPayment = normalizePaymentGateConfig(calendar.bookingPayment || calendar.booking_payment || {});
+  if (isPaymentGateEnabled(calendarPayment)) return calendarPayment;
+
+  const formPayment = normalizePaymentGateConfig(bookingForm.paymentGate || bookingForm.payment_gate || {});
+  if (isPaymentGateEnabled(formPayment)) return formPayment;
+
+  return calendarPayment;
+}
+
+async function resolveCalendarPaymentGate({ req, body, calendar, bookingPayment, bookingSubmission, start, timezone }) {
+  const expected = {
+    source: 'calendar_booking',
+    calendarId: calendar.id,
+    startTime: start.toISOString()
+  };
+  const existingPublicPaymentId = getCalendarPaymentPublicId(body);
+
+  if (existingPublicPaymentId) {
+    const paidStatus = await assertPaidPaymentGate(existingPublicPaymentId, expected);
+    if (paidStatus) return { paid: true, status: paidStatus };
+
+    const pendingStatus = await getPaymentGateStatus(existingPublicPaymentId);
+    if (pendingStatus && paymentGateMatches(pendingStatus, expected)) {
+      return {
+        paid: false,
+        response: buildCalendarPaymentRequiredResponse(bookingPayment, pendingStatus)
+      };
+    }
+  }
+
+  const result = await createPaymentGateLink(bookingPayment, {
+    baseUrl: getRequestBaseUrl(req),
+    contact: {
+      name: bookingSubmission.contact.name,
+      email: bookingSubmission.contact.email,
+      phone: bookingSubmission.contact.phone
+    },
+    source: 'calendar_booking',
+    metadata: {
+      calendarId: calendar.id,
+      calendarSlug: calendar.slug || '',
+      calendarName: calendar.name || '',
+      startTime: start.toISOString(),
+      timezone,
+      paymentGate: expected
+    }
+  });
+
+  return {
+    paid: false,
+    response: buildCalendarPaymentRequiredResponse(bookingPayment, {
+      publicPaymentId: result.publicPaymentId,
+      paymentUrl: result.paymentUrl,
+      provider: bookingPayment.gateway,
+      status: 'sent',
+      amount: bookingPayment.amount,
+      currency: bookingPayment.currency
+    })
   };
 }
 
@@ -1121,6 +1223,7 @@ export async function createPublicAppointment(req, res) {
     const { slug } = req.params;
     const { calendar, host } = await ensurePublicCalendarRequest(req, slug);
     const body = req.body || {};
+    const context = await getHighLevelContext(req, {});
     const start = new Date(body.startTime || body.start_time || '');
 
     if (Number.isNaN(start.getTime())) {
@@ -1179,6 +1282,32 @@ export async function createPublicAppointment(req, res) {
       });
     }
 
+    const bookingPayment = resolveCalendarBookingPayment(calendar, bookingForm);
+    let paymentGateStatus = null;
+    if (isPaymentGateEnabled(bookingPayment)) {
+      const paymentResult = await resolveCalendarPaymentGate({
+        req,
+        body,
+        calendar,
+        bookingPayment,
+        bookingSubmission,
+        start,
+        timezone
+      });
+
+      if (!paymentResult.paid) {
+        return res.status(200).json({
+          success: true,
+          data: {
+            calendarId: calendar.id,
+            ...paymentResult.response
+          }
+        });
+      }
+
+      paymentGateStatus = paymentResult.status;
+    }
+
     const contactId = await upsertPublicCalendarContact({
       calendar,
       host,
@@ -1203,7 +1332,16 @@ export async function createPublicAppointment(req, res) {
       notes: submittedNotes,
       formId: bookingSubmission.formId,
       formName: bookingSubmission.formName,
-      formResponses: bookingSubmission.responses
+      formResponses: bookingSubmission.responses,
+      paymentGate: paymentGateStatus
+        ? {
+            publicPaymentId: paymentGateStatus.publicPaymentId,
+            provider: paymentGateStatus.provider,
+            amount: paymentGateStatus.amount,
+            currency: paymentGateStatus.currency,
+            paidAt: paymentGateStatus.paidAt
+          }
+        : null
     };
     // El render de variables de plantilla es cosmético y NUNCA debe impedir agendar
     // desde el calendario público: si falla, degradamos a valores planos.
@@ -1352,6 +1490,15 @@ export async function createPublicAppointment(req, res) {
         appointment,
         message: bookingCompletion.message,
         bookingCompletion,
+        paymentGate: paymentGateStatus
+          ? {
+              publicPaymentId: paymentGateStatus.publicPaymentId,
+              provider: paymentGateStatus.provider,
+              amount: paymentGateStatus.amount,
+              currency: paymentGateStatus.currency,
+              paidAt: paymentGateStatus.paidAt
+            }
+          : null,
         metaEvent: metaFiredViaSite && metaEvent?.eventId
           ? {
               eventId: metaEvent.eventId,
@@ -1889,6 +2036,7 @@ export async function updateCalendar(req, res) {
         const {
           bookingForm,
           bookingCompletion,
+          bookingPayment,
           customEvents,
           antiTrackingEnabled,
           anti_tracking_enabled,
@@ -1896,6 +2044,7 @@ export async function updateCalendar(req, res) {
         } = updateData;
         const preservedBookingForm = bookingForm || calendar?.bookingForm || existing?.bookingForm;
         const preservedBookingCompletion = bookingCompletion || calendar?.bookingCompletion || existing?.bookingCompletion;
+        const preservedBookingPayment = bookingPayment || calendar?.bookingPayment || existing?.bookingPayment;
         const preservedCustomEvents = customEvents || calendar?.customEvents || existing?.customEvents;
         const remote = await calendarService.updateCalendar(remoteCalendarId, remoteUpdateData, context.accessToken);
         calendar = await localCalendarService.upsertLocalCalendar(remote.calendar || remote, {
@@ -1908,6 +2057,7 @@ export async function updateCalendar(req, res) {
             ...(remote && typeof remote === 'object' ? remote : {}),
             bookingForm: preservedBookingForm,
             bookingCompletion: preservedBookingCompletion,
+            bookingPayment: preservedBookingPayment,
             customEvents: preservedCustomEvents
           }
         });

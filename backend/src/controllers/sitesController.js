@@ -13,6 +13,7 @@ import {
   getRequestHost,
   getImportedSiteBySiteId,
   getImportedSiteAssetResponse,
+  getPublicSitePaymentStatus,
   getSitesFontCss,
   getSitesFontFile,
   getSite,
@@ -771,6 +772,16 @@ export async function submitPublicSiteHandler(req, res) {
   }
 }
 
+export async function publicSitePaymentStatusHandler(req, res) {
+  try {
+    const result = await getPublicSitePaymentStatus(req.params.publicPaymentId)
+    res.status(200).json({ success: true, data: result })
+  } catch (error) {
+    logger.warn(`Estado público de pago rechazado: ${error.message}`)
+    sendError(res, error, 'No se pudo consultar el pago')
+  }
+}
+
 export async function metaPageEventPublicHandler(req, res) {
   try {
     const body = req.body || {}
@@ -829,15 +840,20 @@ export async function publicSiteHostMiddleware(req, res, next) {
       req.path === '/api/health' ||
       req.path === '/api/sites/public/submit' ||
       req.path === '/api/sites/public/meta-event' ||
+      req.path.startsWith('/api/sites/public/payments/') ||
       req.path === '/api/sites/public/fonts.css' ||
       req.path === '/api/sites/public/font-file' ||
       req.path.startsWith('/api/sites/public/calendar-preview/') ||
       req.path.startsWith('/api/sites/public/imported-assets/') ||
+      req.path.startsWith('/api/stripe/public/payments/') ||
+      req.path.startsWith('/api/conekta/public/payments/') ||
+      req.path.startsWith('/api/mercadopago/public/payments/') ||
       req.path === '/snip.js' ||
       req.path === '/collect' ||
       req.path === '/video-event' ||
       req.path === '/sync-visitor' ||
       req.path === '/link-visitor' ||
+      req.path.startsWith('/pay/') ||
       req.path.startsWith('/api/calendars/public/')
     ) {
       return next()

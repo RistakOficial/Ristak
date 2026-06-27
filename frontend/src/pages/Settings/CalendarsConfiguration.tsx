@@ -8,6 +8,9 @@ import {
   TabList,
   CustomSelect,
   NumberInput,
+  PaymentGateControls,
+  normalizePaymentGateConfig,
+  type PaymentGateConfig,
   PathInput,
   Switch,
   Loading,
@@ -56,6 +59,7 @@ import {
   type CalendarBookingFontFamily,
   type CalendarBookingDefaultFields,
   type CalendarBookingFormConfig,
+  type CalendarBookingPaymentConfig,
   type CalendarBookingLayout,
   type CalendarBookingWidgetTheme,
   type CalendarCustomEventChannel,
@@ -98,7 +102,7 @@ import pageStyles from './CalendarsConfiguration.module.css'
 
 type CalendarSettingsView = 'calendars' | 'google'
 type CalendarSourcePreference = 'combined' | 'ristak' | 'ghl' | 'google'
-type CalendarWizardStepId = 'basics' | 'publicUrl' | 'availability' | 'rules' | 'form' | 'reminders' | 'advanced' | 'events' | 'design'
+type CalendarWizardStepId = 'basics' | 'publicUrl' | 'availability' | 'rules' | 'form' | 'payment' | 'reminders' | 'advanced' | 'events' | 'design'
 type CalendarPreviewStep = 'date' | 'time' | 'details'
 
 const parseCalendarSettingsRoute = (pathname: string) => {
@@ -286,6 +290,7 @@ const CALENDAR_WIZARD_STEPS: Array<{
   { id: 'availability', label: 'Disponibilidad', description: 'Duración y espacios.' },
   { id: 'rules', label: 'Reglas', description: 'Límites de reserva.' },
   { id: 'form', label: 'Formulario', description: 'Preguntas y cierre.' },
+  { id: 'payment', label: 'Cobro', description: 'Pasarela y monto.' },
   { id: 'reminders', label: 'Recordatorios y confirmaciones', description: 'Mensajes automáticos.' },
   { id: 'advanced', label: 'Avanzado', description: 'Notas e integraciones.' },
   { id: 'events', label: 'Eventos', description: 'Meta Pixel y WhatsApp.' },
@@ -493,6 +498,24 @@ const normalizeCalendarBookingCompletion = (value?: Partial<CalendarBookingCompl
     redirectUrl
   }
 }
+
+const createDefaultCalendarBookingPayment = (): CalendarBookingPaymentConfig => normalizePaymentGateConfig({
+  enabled: false,
+  gateway: 'stripe',
+  amount: 0,
+  currency: 'MXN',
+  productName: 'Reserva de cita',
+  description: 'Reserva de cita',
+  buttonText: 'Completar pago',
+  pendingMessage: 'Completa el pago para agendar tu cita.',
+  paidMessage: 'Pago confirmado. Agendando tu cita.'
+}) as CalendarBookingPaymentConfig
+
+const normalizeCalendarBookingPayment = (
+  value?: Partial<CalendarBookingPaymentConfig> | null
+): CalendarBookingPaymentConfig => normalizePaymentGateConfig(
+  value || createDefaultCalendarBookingPayment()
+) as CalendarBookingPaymentConfig
 
 const createDefaultCalendarBookingDisplay = (): CalendarBookingDisplayConfig => ({
   showSidebar: true,
@@ -755,6 +778,7 @@ export const CalendarsConfiguration: React.FC = () => {
     allowBookingForUnit: 'days',
     bookingForm: createDefaultCalendarBookingForm(),
     bookingCompletion: createDefaultCalendarBookingCompletion(),
+    bookingPayment: createDefaultCalendarBookingPayment(),
     bookingDisplay: createDefaultCalendarBookingDisplay(),
     customEvents: createDefaultCalendarCustomEvents(),
     autoConfirm: true,
@@ -879,6 +903,7 @@ export const CalendarsConfiguration: React.FC = () => {
           ...calendar,
           bookingForm: normalizeCalendarBookingForm(calendar.bookingForm),
           bookingCompletion: normalizeCalendarBookingCompletion(calendar.bookingCompletion),
+          bookingPayment: normalizeCalendarBookingPayment(calendar.bookingPayment),
           bookingDisplay: normalizeCalendarBookingDisplay(calendar.bookingDisplay, calendar.eventColor),
           customEvents: normalizeCalendarCustomEvents(calendar.customEvents)
         })
@@ -923,6 +948,7 @@ export const CalendarsConfiguration: React.FC = () => {
         ...calendar,
         bookingForm: normalizeCalendarBookingForm(calendar.bookingForm),
         bookingCompletion: normalizeCalendarBookingCompletion(calendar.bookingCompletion),
+        bookingPayment: normalizeCalendarBookingPayment(calendar.bookingPayment),
         bookingDisplay: normalizeCalendarBookingDisplay(calendar.bookingDisplay, calendar.eventColor),
         customEvents: normalizeCalendarCustomEvents(calendar.customEvents)
       }))
@@ -1428,6 +1454,7 @@ export const CalendarsConfiguration: React.FC = () => {
       ...calendar,
       bookingForm: normalizeCalendarBookingForm(calendar.bookingForm),
       bookingCompletion: normalizeCalendarBookingCompletion(calendar.bookingCompletion),
+      bookingPayment: normalizeCalendarBookingPayment(calendar.bookingPayment),
       bookingDisplay,
       customEvents: normalizeCalendarCustomEvents(calendar.customEvents),
       antiTrackingEnabled: calendar.antiTrackingEnabled !== false
@@ -1467,6 +1494,7 @@ export const CalendarsConfiguration: React.FC = () => {
       // Construir payload con todos los campos editables
       const bookingForm = normalizeCalendarBookingForm(selectedCalendar.bookingForm)
       const bookingCompletion = normalizeCalendarBookingCompletion(selectedCalendar.bookingCompletion)
+      const bookingPayment = normalizeCalendarBookingPayment(selectedCalendar.bookingPayment)
       const bookingDisplay = normalizeCalendarBookingDisplay(selectedCalendar.bookingDisplay, selectedCalendar.eventColor)
       const customEvents = getSavableCalendarCustomEvents(selectedCalendar.customEvents, accountCurrency)
       const nextSlug = normalizeCalendarSlugInput(selectedCalendar.slug || selectedCalendar.widgetSlug || selectedCalendar.name || selectedCalendar.id)
@@ -1487,6 +1515,11 @@ export const CalendarsConfiguration: React.FC = () => {
 
       if (bookingCompletion.action === 'redirect' && !isValidCalendarRedirectUrl(bookingCompletion.redirectUrl)) {
         showToast('error', 'Redirección inválida', 'Usa una URL completa con http/https o una ruta interna que empiece con /.')
+        return
+      }
+
+      if (bookingPayment.enabled && bookingPayment.amount <= 0) {
+        showToast('error', 'Monto requerido', 'Configura un monto mayor a 0 para activar el cobro.')
         return
       }
 
@@ -1515,6 +1548,7 @@ export const CalendarsConfiguration: React.FC = () => {
         autoConfirm: selectedCalendar.autoConfirm !== false,
         bookingForm,
         bookingCompletion,
+        bookingPayment,
         bookingDisplay,
         customEvents,
         antiTrackingEnabled: selectedCalendar.antiTrackingEnabled !== false
@@ -1605,6 +1639,7 @@ export const CalendarsConfiguration: React.FC = () => {
         allowBookingForUnit: 'days',
         bookingForm: createDefaultCalendarBookingForm(),
         bookingCompletion: createDefaultCalendarBookingCompletion(),
+        bookingPayment: createDefaultCalendarBookingPayment(),
         bookingDisplay: createDefaultCalendarBookingDisplay(),
         customEvents: createDefaultCalendarCustomEvents(),
         autoConfirm: true,
@@ -2056,6 +2091,7 @@ export const CalendarsConfiguration: React.FC = () => {
     const customFormSites = formSites.filter(site => site.id !== CALENDAR_DEFAULT_FORM_SITE_ID)
     const bookingFormConfig = normalizeCalendarBookingForm(selectedCalendar.bookingForm)
     const bookingCompletionConfig = normalizeCalendarBookingCompletion(selectedCalendar.bookingCompletion)
+    const bookingPaymentConfig = normalizeCalendarBookingPayment(selectedCalendar.bookingPayment)
     const bookingDisplayConfig = normalizeCalendarBookingDisplay(selectedCalendar.bookingDisplay, selectedCalendar.eventColor)
     const customEventsConfig = normalizeCalendarCustomEvents(selectedCalendar.customEvents)
     const customEventsHasParameters = hasCalendarCustomEventParameters(customEventsConfig.parameters)
@@ -2089,6 +2125,12 @@ export const CalendarsConfiguration: React.FC = () => {
           ...bookingCompletionConfig,
           ...nextConfig
         })
+      })
+    }
+
+    const updateBookingPaymentConfig = (nextConfig: PaymentGateConfig) => {
+      updateSelectedCalendar({
+        bookingPayment: normalizeCalendarBookingPayment(nextConfig)
       })
     }
 
@@ -2994,8 +3036,29 @@ export const CalendarsConfiguration: React.FC = () => {
                 </label>
               )}
             </div>
-          </section>
+              </section>
                 </>
+              )}
+
+              {currentStep.id === 'payment' && (
+                <section className={pageStyles.editorSection}>
+                  <div className={pageStyles.editorSectionHeader}>
+                    <strong>Cobro antes de agendar</strong>
+                    <span>Configura la pasarela y el valor que se solicita al reservar.</span>
+                  </div>
+                  <div className={pageStyles.editorFields}>
+                    <div className={`${pageStyles.editorField} ${pageStyles.editorFieldWide}`}>
+                      <PaymentGateControls
+                        value={bookingPaymentConfig}
+                        title="Solicitar pago"
+                        description="La cita se crea hasta confirmar el pago."
+                        onChange={updateBookingPaymentConfig}
+                        onCommit={() => {}}
+                        currencyFallback={accountCurrency}
+                      />
+                    </div>
+                  </div>
+                </section>
               )}
 
               {currentStep.id === 'reminders' && (

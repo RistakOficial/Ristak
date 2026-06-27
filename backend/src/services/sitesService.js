@@ -41,6 +41,13 @@ import {
   buildMetaParameterUserData,
   collectMetaParameterSignals
 } from './metaParameterManagerService.js'
+import {
+  assertPaidPaymentGate,
+  createPaymentGateLink,
+  getPaymentGateStatus,
+  isPaymentGateEnabled,
+  normalizePaymentGateConfig
+} from './publicPaymentGateService.js'
 
 export const SITE_TYPES = new Set(['standard_form', 'interactive_form', 'landing_page'])
 const FORM_SITE_TYPES = new Set(['standard_form', 'interactive_form'])
@@ -235,6 +242,12 @@ const SITE_META_PARAMETER_ALIASES = {
   orderId: ['orderId', 'order_id'],
   status: ['status', 'estado'],
   searchString: ['searchString', 'search_string']
+}
+
+function getRequestBaseUrl(req) {
+  const protocol = req.get?.('x-forwarded-proto') || req.protocol || 'https'
+  const host = req.get?.('x-forwarded-host') || req.get?.('host') || req.headers?.host || ''
+  return host ? `${String(protocol).split(',')[0].trim()}://${String(host).split(',')[0].trim()}` : ''
 }
 const SITES_PUBLIC_DOMAIN_CONFIG_KEYS = {
   domain: 'sites_public_domain',
@@ -18759,10 +18772,11 @@ const RSTK_BASE_CSS = `
 	  .rstk-actions [data-submit],.rstk-actions [data-next]{flex:1 1 auto}
 	  .rstk-kind-form .rstk-actions,.rstk-embedded-form .rstk-actions{justify-content:var(--rstk-submit-justify,center)}
 	  .rstk-kind-form .rstk-actions [data-submit],.rstk-embedded-form .rstk-actions [data-submit]{min-height:var(--rstk-submit-height,var(--rstk-button-height,50px));border-width:var(--rstk-submit-border-width,var(--rstk-button-border-width,1px));border-color:var(--rstk-submit-border,var(--rstk-button-border,var(--rstk-accent)));border-radius:var(--rstk-submit-radius,var(--rstk-btn-radius));background:var(--rstk-submit-bg,var(--rstk-accent));color:var(--rstk-submit-text,var(--rstk-on-accent));flex-direction:column;gap:2px;font-size:var(--rstk-submit-size,var(--rstk-button-size,1.02rem));padding:var(--rstk-submit-pad-y,var(--rstk-button-pad-y,8px)) var(--rstk-submit-pad-x,var(--rstk-button-pad-x,22px));flex:0 1 var(--rstk-submit-width,fit-content);width:var(--rstk-submit-width,fit-content)}
-	  .rstk-actions [data-back]{flex:0 0 auto;min-width:120px}
+  .rstk-actions [data-back]{flex:0 0 auto;min-width:120px}
   .rstk-error{margin:2px 0 0;color:#dc2626;font-size:.85rem;font-weight:650}
   .rstk-disqualify-notice{margin:6px 0 0;padding:8px 11px;border-radius:8px;border:1px solid color-mix(in srgb,#d97706 38%,transparent);background:color-mix(in srgb,#d97706 12%,transparent);color:var(--rstk-ink,#1f2937);font-size:.82rem;font-weight:600;line-height:1.4}
   .rstk-submit-message{margin:0;color:var(--rstk-muted);font-weight:650;text-align:center}
+  .rstk-submit-message .rstk-payment-action{display:inline-flex;align-items:center;justify-content:center;min-height:42px;margin:10px auto 0;border:1px solid var(--rstk-submit-border,var(--rstk-accent));border-radius:var(--rstk-submit-radius,var(--rstk-btn-radius));background:var(--rstk-submit-bg,var(--rstk-accent));color:var(--rstk-submit-text,var(--rstk-on-accent));font-weight:800;text-decoration:none;padding:8px 16px}
 
   .rstk-progress{display:grid;gap:8px}
   .rstk-progress-track{height:6px;border-radius:999px;background:color-mix(in srgb,var(--rstk-ink) 12%,transparent);overflow:hidden}
@@ -22031,6 +22045,76 @@ export async function renderPublicSiteHtml(site, { pageId, pagePath, trackingEna
         renderStep();
       });
 
+      const renderPaymentGateMessage = (payment, onStartPolling) => {
+        if (!message) return;
+        message.textContent = '';
+        const text = document.createElement('span');
+        text.textContent = payment.pendingMessage || payment.message || 'Completa el pago para continuar.';
+        message.appendChild(text);
+        if (!payment.paymentUrl) return;
+        const link = document.createElement('a');
+        link.href = payment.paymentUrl;
+        link.target = '_blank';
+        link.rel = 'noopener';
+        link.className = 'rstk-payment-action';
+        link.textContent = payment.buttonText || 'Completar pago';
+        link.addEventListener('click', () => {
+          onStartPolling();
+        }, { once: true });
+        message.appendChild(link);
+      };
+
+      const getPaymentGateStatus = async (publicPaymentId) => {
+        const response = await fetch('/api/sites/public/payments/' + encodeURIComponent(publicPaymentId) + '/status', {
+          headers: { 'Accept': 'application/json' }
+        });
+        const data = await response.json().catch(() => ({}));
+        if (!response.ok || data.success === false) {
+          throw new Error(data.error || 'No se pudo verificar el pago');
+        }
+        return data && data.data ? data.data : {};
+      };
+
+      const waitForPaymentGate = (payment) => new Promise((resolve, reject) => {
+        if (!payment || !payment.publicPaymentId || !payment.paymentUrl) {
+          reject(new Error('No se pudo preparar el pago. Intenta de nuevo.'));
+          return;
+        }
+        let finished = false;
+        let started = false;
+        let attempts = 0;
+        const checkStatus = async () => {
+          if (finished) return;
+          try {
+            const status = await getPaymentGateStatus(payment.publicPaymentId);
+            if (status.paid) {
+              finished = true;
+              if (message) message.textContent = payment.paidMessage || 'Pago confirmado. Continuamos.';
+              resolve(status);
+              return;
+            }
+            attempts += 1;
+            if (message) message.textContent = 'Esperando confirmación del pago...';
+            window.setTimeout(checkStatus, 2500);
+          } catch (error) {
+            attempts += 1;
+            if (attempts > 80) {
+              finished = true;
+              reject(error);
+              return;
+            }
+            window.setTimeout(checkStatus, 2500);
+          }
+        };
+        const startPolling = () => {
+          if (started || finished) return;
+          started = true;
+          if (message) message.textContent = 'Esperando confirmación del pago...';
+          checkStatus();
+        };
+        renderPaymentGateMessage(payment, startPolling);
+      });
+
       form.addEventListener('submit', async (event) => {
         event.preventDefault();
         const ruleSubmit = form.dataset.ruleSubmit === 'true';
@@ -22075,22 +22159,38 @@ export async function renderPublicSiteHtml(site, { pageId, pagePath, trackingEna
         };
 
         try {
-          const response = await fetch('/api/sites/public/submit', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(buildSubmissionPayload({
-              responses,
-              ruleSubmit,
-              ruleAction,
-              ruleFieldId,
-              immediateDisqualify
-            }))
+          const requestBody = buildSubmissionPayload({
+            responses,
+            ruleSubmit,
+            ruleAction,
+            ruleFieldId,
+            immediateDisqualify
           });
-          const data = await response.json().catch(() => ({}));
-          if (!response.ok || data.success === false) {
-            throw new Error(data.error || 'No se pudo enviar el formulario');
+          const postSubmission = async (payload) => {
+            const response = await fetch('/api/sites/public/submit', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify(payload)
+            });
+            const data = await response.json().catch(() => ({}));
+            if (!response.ok || data.success === false) {
+              throw new Error(data.error || 'No se pudo enviar el formulario');
+            }
+            return data && data.data ? data.data : {};
+          };
+          let submission = await postSubmission(requestBody);
+          if (submission.paymentRequired) {
+            const paymentStatus = await waitForPaymentGate(submission);
+            submission = await postSubmission({
+              ...requestBody,
+              paymentPublicId: submission.publicPaymentId,
+              meta: {
+                ...requestBody.meta,
+                paymentPublicId: submission.publicPaymentId,
+                paymentStatus: paymentStatus.status || ''
+              }
+            });
           }
-          const submission = data && data.data ? data.data : {};
           const metaEventId = submission.capi && submission.capi.eventId
             ? submission.capi.eventId
             : (submission.submissionId ? 'site_' + siteId + '_' + submission.submissionId : '');
@@ -22148,7 +22248,7 @@ export async function renderPublicSiteHtml(site, { pageId, pagePath, trackingEna
             // si no hay (p.ej. formulario standalone que no navegó, o sin pantalla), usamos
             // el mensaje de la regla. "Descalificar inmediatamente" oculta el formulario.
             if (showEmbeddedResult('disqualified')) return;
-            const dqText = (selectedDisqualifyRule && selectedDisqualifyRule.message) || (data && data.data && data.data.message) || 'Gracias. Por ahora no califica.';
+            const dqText = (selectedDisqualifyRule && selectedDisqualifyRule.message) || submission.message || 'Gracias. Por ahora no califica.';
             if (selectedDisqualifyRule && selectedDisqualifyRule.action === 'disqualify') {
               showOnlyRuleMessage(message, dqText);
             } else if (message) {
@@ -22166,7 +22266,7 @@ export async function renderPublicSiteHtml(site, { pageId, pagePath, trackingEna
               renderEmbeddedForm(state);
             });
           }
-          if (message) message.textContent = (data && data.data && data.data.message) || ${JSON.stringify('Listo. Recibimos tu información.')};
+          if (message) message.textContent = submission.message || ${JSON.stringify('Listo. Recibimos tu información.')};
         } catch (error) {
           if (message) message.textContent = error.message || 'No se pudo enviar el formulario';
         } finally {
@@ -24303,6 +24403,136 @@ async function createImportedSubmissionFromRequest({ req, body, site, host, prev
   }
 }
 
+function resolveSitePaymentGateConfig(site = {}, contexts = {}) {
+  const candidates = [
+    contexts.videoFormGateContext?.formTheme,
+    contexts.landingEmbeddedFormContext?.formTheme,
+    site.theme
+  ]
+
+  for (const candidate of candidates) {
+    const normalized = normalizePaymentGateConfig(candidate || {})
+    if (isPaymentGateEnabled(normalized)) return normalized
+  }
+
+  return normalizePaymentGateConfig(site.theme || {})
+}
+
+function getBodyPaymentPublicId(body = {}) {
+  return cleanString(
+    body.paymentPublicId ||
+    body.payment_public_id ||
+    body.publicPaymentId ||
+    body.public_payment_id ||
+    body.meta?.paymentPublicId ||
+    body.meta?.payment_public_id ||
+    body.meta?.publicPaymentId ||
+    body.meta?.public_payment_id
+  )
+}
+
+function shouldRequireSitePaymentGate({ site, paymentGate, ruleEvaluation, isRuleSubmit, isFinalStandardFormSubmit }) {
+  if (!isPaymentGateEnabled(paymentGate)) return false
+  if (ruleEvaluation?.status === 'disqualified' || ruleEvaluation?.disqualified === true) return false
+  if (isRuleSubmit) return false
+  if (site.siteType === 'standard_form') return Boolean(isFinalStandardFormSubmit)
+  return site.siteType === 'interactive_form' || site.siteType === 'landing_page'
+}
+
+function paymentGateMatchesAnySiteContext(status, expected = {}) {
+  const gate = status?.metadata?.paymentGate && typeof status.metadata.paymentGate === 'object'
+    ? status.metadata.paymentGate
+    : {}
+  return cleanString(gate.source || status?.metadata?.source) === expected.source &&
+    cleanString(gate.siteId || status?.metadata?.siteId) === expected.siteId &&
+    cleanString(gate.formSiteId || status?.metadata?.formSiteId) === expected.formSiteId
+}
+
+function buildSitePaymentRequiredResponse(paymentGate, paymentStatus = {}) {
+  return {
+    paymentRequired: true,
+    publicPaymentId: cleanString(paymentStatus.publicPaymentId || paymentStatus.public_payment_id),
+    paymentUrl: cleanString(paymentStatus.paymentUrl || paymentStatus.payment_url),
+    paymentStatus: cleanString(paymentStatus.status || 'sent'),
+    paymentProvider: cleanString(paymentStatus.provider || paymentGate.gateway),
+    paymentGateway: paymentGate.gateway,
+    amount: Number(paymentStatus.amount || paymentGate.amount) || paymentGate.amount,
+    currency: cleanString(paymentStatus.currency || paymentGate.currency) || paymentGate.currency,
+    productName: paymentGate.productName,
+    buttonText: paymentGate.buttonText,
+    pendingMessage: paymentGate.pendingMessage,
+    paidMessage: paymentGate.paidMessage,
+    message: paymentGate.pendingMessage || 'Completa el pago para continuar.'
+  }
+}
+
+async function resolveSitePaymentGate({ req, body, site, paymentGate, contact, nativeFormContext, submittedPageId }) {
+  const expected = {
+    source: 'site_form',
+    siteId: site.id,
+    formSiteId: nativeFormContext.formSiteId || site.id
+  }
+  const existingPublicPaymentId = getBodyPaymentPublicId(body)
+
+  if (existingPublicPaymentId) {
+    const status = await assertPaidPaymentGate(existingPublicPaymentId, expected)
+    if (status) return { paid: true, status }
+
+    const pendingStatus = await getPaymentGateStatus(existingPublicPaymentId)
+    if (pendingStatus && paymentGateMatchesAnySiteContext(pendingStatus, expected)) {
+      return {
+        paid: false,
+        response: buildSitePaymentRequiredResponse(paymentGate, pendingStatus)
+      }
+    }
+  }
+
+  const result = await createPaymentGateLink(paymentGate, {
+    baseUrl: getRequestBaseUrl(req),
+    contact,
+    source: 'site_form',
+    metadata: {
+      siteId: site.id,
+      formSiteId: nativeFormContext.formSiteId || site.id,
+      formSiteName: nativeFormContext.formSiteName || site.name || '',
+      submittedPageId,
+      paymentGate: expected
+    }
+  })
+
+  return {
+    paid: false,
+    response: buildSitePaymentRequiredResponse(paymentGate, {
+      publicPaymentId: result.publicPaymentId,
+      paymentUrl: result.paymentUrl,
+      provider: paymentGate.gateway,
+      status: 'sent',
+      amount: paymentGate.amount,
+      currency: paymentGate.currency
+    })
+  }
+}
+
+export async function getPublicSitePaymentStatus(publicPaymentId) {
+  const status = await getPaymentGateStatus(publicPaymentId)
+  if (!status) {
+    const error = new Error('Pago no encontrado')
+    error.status = 404
+    throw error
+  }
+
+  return {
+    publicPaymentId: status.publicPaymentId,
+    paymentUrl: status.paymentUrl,
+    provider: status.provider,
+    status: status.status,
+    paid: status.paid,
+    amount: status.amount,
+    currency: status.currency,
+    updatedAt: status.updatedAt
+  }
+}
+
 export async function createSubmissionFromRequest(req, body = {}, options = {}) {
   const {
     host,
@@ -24494,6 +24724,8 @@ export async function createSubmissionFromRequest(req, body = {}, options = {}) 
   const finalMessageSite = finalMessageTheme
     ? { ...site, theme: { ...(site.theme || {}), ...finalMessageTheme } }
     : site
+  const nativeFormContextForPayment = videoFormGateContext || landingEmbeddedFormContext || getNativeFormContext(site, submissionBlocks)
+  const paymentGate = resolveSitePaymentGateConfig(site, { videoFormGateContext, landingEmbeddedFormContext })
   if (shouldSkipTracking({ req, body, meta, previewContext })) {
     return {
       submissionId: `preview_${crypto.randomUUID()}`,
@@ -24512,6 +24744,51 @@ export async function createSubmissionFromRequest(req, body = {}, options = {}) 
       preview: true,
       skipped: true,
       capi: { sent: false, reason: NO_TRACK_REASON }
+    }
+  }
+
+  if (shouldRequireSitePaymentGate({
+    site,
+    paymentGate,
+    ruleEvaluation,
+    isRuleSubmit,
+    isFinalStandardFormSubmit
+  })) {
+    const paymentResult = await resolveSitePaymentGate({
+      req,
+      body,
+      site,
+      paymentGate,
+      contact: inferredContact,
+      nativeFormContext: nativeFormContextForPayment,
+      submittedPageId: effectiveSubmittedPageId
+    })
+    if (!paymentResult.paid) {
+      return {
+        submissionId: '',
+        siteId: site.id,
+        contactId: null,
+        contactName: inferredContact.fullName || '',
+        contactEmail: inferredContact.email || '',
+        contactPhone: inferredContact.phone || '',
+        status: 'payment_pending',
+        redirectUrl: '',
+        rules: ruleEvaluation,
+        rawFields: nativeLayers.rawFields,
+        mappedFields: nativeLayers.mappedFields,
+        derivedFields: nativeLayers.derivedFields,
+        skipped: true,
+        capi: { sent: false, reason: 'payment_pending' },
+        ...paymentResult.response
+      }
+    }
+    meta.paymentGate = {
+      required: true,
+      publicPaymentId: paymentResult.status.publicPaymentId,
+      provider: paymentResult.status.provider,
+      amount: paymentResult.status.amount,
+      currency: paymentResult.status.currency,
+      paidAt: paymentResult.status.paidAt
     }
   }
 
