@@ -2201,11 +2201,20 @@ export function renderPublicCalendarHtml(calendar, { host = '', embedded = false
     input,textarea,select{width:100%;border:1px solid var(--field-border);border-radius:var(--field-radius);background:var(--field-bg);color:var(--field-text);font-size:.95rem;padding:12px 14px;min-height:46px;outline:none;transition:border-color .15s,box-shadow .15s}
     .timezoneStep .timezoneControl select{appearance:none;-webkit-appearance:none;padding-right:42px;line-height:1.2;background-image:linear-gradient(45deg,transparent 50%,var(--field-text) 50%),linear-gradient(135deg,var(--field-text) 50%,transparent 50%);background-position:calc(100% - 16px) calc(50% - 2px),calc(100% - 11px) calc(50% - 2px);background-size:5px 5px,5px 5px;background-repeat:no-repeat}
     textarea{resize:vertical}
-    input:focus,textarea:focus,select:focus{border-color:var(--accent);box-shadow:0 0 0 3px color-mix(in srgb,var(--accent) 16%,transparent)}
+    input:not([type='radio']):not([type='checkbox']):focus,textarea:focus,select:focus{border-color:var(--accent);box-shadow:0 0 0 3px color-mix(in srgb,var(--accent) 16%,transparent)}
     .options{display:grid;gap:8px}
     .option{display:flex;align-items:center;gap:10px;min-height:44px;border:1px solid var(--field-border);border-radius:var(--field-radius);background:var(--field-bg);padding:9px 12px;font-size:.92rem;font-weight:450;cursor:pointer;transition:border-color .15s}
     .option:hover{border-color:var(--accent)}
-    .option input{width:auto}
+    .option:has(input:checked){border-color:var(--accent);background:color-mix(in srgb,var(--accent) 8%,var(--field-bg))}
+    .option input[type='radio'],.option input[type='checkbox']{appearance:none;-webkit-appearance:none;box-sizing:border-box;width:19px;min-width:19px;height:19px;min-height:19px;margin:0;padding:0;border:1.5px solid var(--field-border);background:var(--field-bg);box-shadow:none;flex:0 0 auto;display:inline-grid;place-content:center;cursor:pointer}
+    .option input[type='radio']{border-radius:50%}
+    .option input[type='checkbox']{border-radius:min(6px,var(--field-radius))}
+    .option input[type='radio']::after{content:'';width:7px;height:7px;border-radius:50%;background:var(--accent);transform:scale(0);transition:transform .15s}
+    .option input[type='radio']:checked{border-color:var(--accent);background:var(--field-bg)}
+    .option input[type='radio']:checked::after{transform:scale(1)}
+    .option input[type='checkbox']:checked{border-color:var(--accent);background:var(--accent)}
+    .option input[type='checkbox']:checked::after{content:'';width:5px;height:9px;border:solid var(--button-text);border-width:0 2px 2px 0;transform:translateY(-1px) rotate(45deg)}
+    .option input[type='radio']:focus,.option input[type='checkbox']:focus{outline:none;box-shadow:none}
     .formActions{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-top:2px}
     button.submit,button.secondary{min-height:48px;border-radius:var(--slot-radius);font-size:.95rem;font-weight:600;cursor:pointer;transition:filter .15s,opacity .15s}
     button.submit{border:1px solid var(--accent);background:var(--accent);color:var(--button-text);flex:1 1 180px}

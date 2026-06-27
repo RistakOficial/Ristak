@@ -102,7 +102,7 @@ test('video form gate defaults to a dark readable theme and compact phone prefix
   assert.match(html, /--rstk-form-placeholder:rgba\(255, 255, 255, 0\.66\)/)
   assert.match(html, /--rstk-submit-bg:#0f2348/)
   assert.match(html, /\.rstk-video-form-content\{[^}]*--rstk-block-text:var\(--rstk-ink\)/)
-  assert.match(html, /\.rstk-video-form-gate \.rstk-phone-input\{[^}]*grid-template-columns:minmax\(96px,max-content\) minmax\(0,1fr\)[^}]*align-items:stretch/)
+  assert.match(html, /\.rstk-video-form-gate \.rstk-phone-input\{[^}]*grid-template-columns:minmax\(98px,clamp\(98px,18%,108px\)\) minmax\(0,1fr\)[^}]*align-items:stretch/)
   assert.match(html, /\.rstk-video-form-gate \.rstk-phone-input > select\{[^}]*var\(--rstk-form-field-bg,var\(--rstk-input-bg\)\)[^}]*color:var\(--rstk-form-field-text,var\(--rstk-input-ink\)\)/)
   assert.match(html, /\.rstk-video-form-gate-panel\{[^}]*height:auto;[^}]*--rstk-video-form-item-gap:clamp\(8px,2cqw,14px\)[^}]*grid-template-rows:auto auto minmax\(0,max-content\) auto auto/)
   assert.match(html, /\.rstk-video-form-gate-fit-expanded \.rstk-video-form-gate-panel,[^}]*\.rstk-video-gate-active\.rstk-video-form-gate-fit-expanded \.rstk-video-form-gate-panel\{height:100%;grid-template-rows:auto auto minmax\(0,1fr\) auto auto\}/)
