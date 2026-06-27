@@ -14,6 +14,8 @@ type NotificationPromptSurface = 'native_phone' | 'mobile_browser' | 'desktop_br
 
 const STORAGE_PREFIX = 'ristak_mobile_message_notifications_prompt_v1'
 const SHOW_DELAY_MS = 650
+const TABLET_PORTRAIT_QUERY = '(orientation: portrait)'
+const PHONE_LANDSCAPE_LOCK_QUERY = '(orientation: landscape) and (max-height: 520px)'
 
 function getStoredDecision(storageKey: string) {
   try {
@@ -43,6 +45,21 @@ function capitalizeFirst(value: string) {
 function getNotificationPromptSurface(): NotificationPromptSurface {
   if (mobileAppService.isNative()) return 'native_phone'
   return getPortableDeviceMode() === 'desktop' ? 'desktop_browser' : 'mobile_browser'
+}
+
+function isOrientationLockViewport() {
+  if (typeof window === 'undefined') return false
+
+  const deviceMode = getPortableDeviceMode()
+  if (deviceMode === 'tablet') {
+    return window.matchMedia?.(TABLET_PORTRAIT_QUERY).matches ?? false
+  }
+
+  if (deviceMode === 'phone') {
+    return window.matchMedia?.(PHONE_LANDSCAPE_LOCK_QUERY).matches ?? false
+  }
+
+  return false
 }
 
 function getPromptTargetCopy(surface: NotificationPromptSurface) {
@@ -131,6 +148,7 @@ export function MobileNotificationOnboarding() {
   const [step, setStep] = useState<PromptStep>('intro')
   const [busy, setBusy] = useState(false)
   const [denialReason, setDenialReason] = useState('')
+  const [viewportSignal, setViewportSignal] = useState(0)
 
   const storageKey = useMemo(() => (
     user?.id ? `${STORAGE_PREFIX}:${user.id}` : STORAGE_PREFIX
@@ -139,9 +157,25 @@ export function MobileNotificationOnboarding() {
   useEffect(() => {
     if (typeof window === 'undefined') return undefined
 
+    const updateViewportSignal = () => setViewportSignal((value) => value + 1)
+
+    window.addEventListener('resize', updateViewportSignal)
+    window.addEventListener('orientationchange', updateViewportSignal)
+    window.visualViewport?.addEventListener('resize', updateViewportSignal)
+
+    return () => {
+      window.removeEventListener('resize', updateViewportSignal)
+      window.removeEventListener('orientationchange', updateViewportSignal)
+      window.visualViewport?.removeEventListener('resize', updateViewportSignal)
+    }
+  }, [])
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return undefined
+
     let cancelled = false
     const isPhoneRoute = isPhoneAppPath(location.pathname)
-    if (isLoading || !isAuthenticated || !isPhoneRoute) {
+    if (isLoading || !isAuthenticated || !isPhoneRoute || isOrientationLockViewport()) {
       setVisible(false)
       return undefined
     }
@@ -183,7 +217,7 @@ export function MobileNotificationOnboarding() {
       cancelled = true
       cleanupTimer()
     }
-  }, [isAuthenticated, isLoading, location.pathname, storageKey])
+  }, [isAuthenticated, isLoading, location.pathname, storageKey, viewportSignal])
 
   const closeAsAccepted = () => {
     saveStoredDecision(storageKey, 'accepted')
