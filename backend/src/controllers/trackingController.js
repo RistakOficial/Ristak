@@ -17,7 +17,7 @@ import {
 import fetch from 'node-fetch'
 
 const isPostgres = Boolean(process.env.DATABASE_URL)
-const TRACKING_SNIPPET_VERSION = '12' // Incrementar cuando cambies el código del snippet
+const TRACKING_SNIPPET_VERSION = '13' // Incrementar cuando cambies el código del snippet
 const SUCCESS_PAYMENT_STATUS_SQL = SUCCESS_PAYMENT_STATUSES
   .map(status => `'${String(status).replace(/'/g, "''")}'`)
   .join(', ')
@@ -349,7 +349,9 @@ export async function servePixel(req, res) {
 
   function normalizeIdentityValue(value) {
     var cleaned = String(value || '').trim();
-    return /^[A-Za-z0-9_-]{8,120}$/.test(cleaned) ? cleaned : '';
+    if (!/^[A-Za-z0-9_-]{8,120}$/.test(cleaned)) return '';
+    if (/^\d{12,}$/.test(cleaned)) return '';
+    return cleaned;
   }
 
   function readCookie(name) {

@@ -36,6 +36,10 @@ import {
 import { buildPhoneMatchCandidates, normalizePhoneForStorage } from '../utils/phoneUtils.js'
 import { normalizePhoneForAccount } from '../utils/accountLocale.js'
 import {
+  isSuspiciousSharedVisitorId,
+  isTrustedTrackingVisitorId
+} from '../utils/trackingVisitorIdentity.js'
+import {
   cancelContactBulkAction,
   createAutomationBulkAction,
   createWhatsAppTemplateBulkAction,
@@ -793,8 +797,11 @@ const buildPageVisitJourneyEvent = (session, { contactCreatedAt } = {}) => ({
     last_page_url: session.last_page_url,
     event_names: Array.isArray(session.event_names) ? session.event_names : [],
     session_ids: Array.isArray(session.session_ids) ? session.session_ids : [],
+    visitor_ids: Array.isArray(session.visitor_ids) ? session.visitor_ids : [],
     visible_session_count: toFiniteNumber(session.visible_session_count),
     tracking_session_ids: Array.isArray(session.tracking_session_ids) ? session.tracking_session_ids : [],
+    tracking_identity_untrusted: Boolean(session.tracking_identity_untrusted),
+    identity_warning: session.identity_warning || null,
     ...buildPreRegistrationJourneyMeta(session.started_at, contactCreatedAt)
   }
 })
@@ -926,6 +933,13 @@ const mergeJourneySessionSummaries = (summaries = [], { useBestMatch = true } = 
       ? row.session_ids.map(cleanString)
       : [cleanString(row.session_id)]
   ).filter(Boolean))]
+  const visitorIds = [...new Set(chronological.flatMap(row =>
+    Array.isArray(row.visitor_ids) && row.visitor_ids.length
+      ? row.visitor_ids.map(cleanString)
+      : [cleanString(row.visitor_id)]
+  ).filter(Boolean))]
+  const hasUntrustedVisitorIdentity = chronological.some(row => row.tracking_identity_untrusted) ||
+    visitorIds.some(isSuspiciousSharedVisitorId)
   const firstPage = pageRows[0]
   const lastPage = pageRows[pageRows.length - 1]
   const startedAt = first?.session_started_at || first?.started_at || first?.created_at || base.started_at
@@ -940,29 +954,32 @@ const mergeJourneySessionSummaries = (summaries = [], { useBestMatch = true } = 
     ...base,
     started_at: startedAt,
     created_at: first?.created_at || base.created_at,
-    session_event_count: chronological.reduce(
+    session_event_count: hasUntrustedVisitorIdentity ? 0 : chronological.reduce(
       (total, row) => total + (hasSessionSummaryCount(row, 'session_event_count') ? Math.max(1, toFiniteNumber(row.session_event_count)) : 1),
       0
     ),
-    session_page_view_count: chronological.reduce(
+    session_page_view_count: hasUntrustedVisitorIdentity ? 0 : chronological.reduce(
       (total, row) => total + (hasSessionSummaryCount(row, 'session_page_view_count') ? toFiniteNumber(row.session_page_view_count) : (isJourneySessionViewEvent(row) ? 1 : 0)),
       0
     ),
-    session_conversion_count: chronological.reduce(
+    session_conversion_count: hasUntrustedVisitorIdentity ? 0 : chronological.reduce(
       (total, row) => total + (hasSessionSummaryCount(row, 'session_conversion_count') ? toFiniteNumber(row.session_conversion_count) : (isJourneySessionConversionEvent(row) ? 1 : 0)),
       0
     ),
     session_started_at: startedAt,
     session_ended_at: endedAt,
-    session_duration_seconds: durationSeconds,
-    pages_visited: uniquePageKeys.length,
+    session_duration_seconds: hasUntrustedVisitorIdentity ? 0 : durationSeconds,
+    pages_visited: hasUntrustedVisitorIdentity ? 0 : uniquePageKeys.length,
     page_keys: uniquePageKeys,
     first_page_url: firstPage?.first_page_url || firstPage?.page_url || firstPage?.landing_page || base.first_page_url || base.page_url || base.landing_page,
     last_page_url: lastPage?.last_page_url || lastPage?.page_url || lastPage?.landing_page || firstPage?.page_url || firstPage?.landing_page || base.last_page_url || base.page_url || base.landing_page,
     event_names: eventNames,
     tracking_session_ids: trackingSessionIds,
     session_ids: sessionIds,
-    visible_session_count: sessionIds.length || chronological.length
+    visitor_ids: visitorIds,
+    visible_session_count: hasUntrustedVisitorIdentity ? 0 : (sessionIds.length || chronological.length),
+    tracking_identity_untrusted: hasUntrustedVisitorIdentity,
+    identity_warning: hasUntrustedVisitorIdentity ? 'shared_ad_like_visitor_id' : base.identity_warning
   }
 }
 
@@ -4423,14 +4440,18 @@ export const getContactJourney = async (req, res) => {
     // 1. TODAS las visitas/sessions (por contact_id, visitor_id o email)
     let sessions = []
 
-    if (contact.visitor_id) {
+    const contactVisitorId = cleanString(contact.visitor_id)
+    if (isTrustedTrackingVisitorId(contactVisitorId)) {
       sessions = await db.all(
         `SELECT * FROM sessions
          WHERE contact_id = ? OR visitor_id = ?
          ORDER BY started_at ASC`,
-        [id, contact.visitor_id]
+        [id, contactVisitorId]
       )
     } else {
+      if (contactVisitorId) {
+        logger.warn(`Journey ignoró visitor_id no confiable para contacto ${id}: ${contactVisitorId}`)
+      }
       sessions = await db.all(
         `SELECT * FROM sessions
          WHERE contact_id = ?

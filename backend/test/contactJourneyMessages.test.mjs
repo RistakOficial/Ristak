@@ -991,6 +991,93 @@ test('contact journey rolls same-day visits into one visible web summary', async
   }
 })
 
+test('contact journey suppresses inflated metrics from ad-like visitor ids', async () => {
+  const id = randomUUID()
+  const contactId = `journey_ad_like_visitor_${id}`
+  const phone = `+52994${Date.now().toString().slice(-7)}`
+  const adLikeVisitorId = '120241691100910604'
+  const firstSessionId = `session_ad_like_first_${id}`
+  const secondSessionId = `session_ad_like_second_${id}`
+
+  await cleanup(contactId, phone)
+
+  try {
+    await insertRow('contacts', {
+      id: contactId,
+      phone,
+      email: `ad-like-${id}@ristak.test`,
+      full_name: 'Cliente Visitor Compartido',
+      first_name: 'Cliente',
+      source: 'native_site',
+      visitor_id: adLikeVisitorId,
+      attribution_ad_id: adLikeVisitorId,
+      created_at: '2026-06-22T18:00:00.000Z',
+      updated_at: '2026-06-22T18:00:00.000Z'
+    })
+
+    await insertRow('sessions', {
+      id: `session_ad_like_first_page_${id}`,
+      session_id: firstSessionId,
+      visitor_id: adLikeVisitorId,
+      contact_id: contactId,
+      full_name: 'Cliente Visitor Compartido',
+      email: `ad-like-${id}@ristak.test`,
+      event_name: 'page_view',
+      started_at: '2026-06-22T18:19:00.000Z',
+      created_at: '2026-06-22T18:19:00.000Z',
+      page_url: `https://raulgomez.com.mx/quiero-pacientes?rkvi_id=${adLikeVisitorId}&ad_id=${adLikeVisitorId}&utm_source=facebook`,
+      referrer_url: 'https://facebook.com/ads/click',
+      utm_source: 'facebook',
+      utm_medium: 'paid',
+      ad_id: adLikeVisitorId,
+      ad_name: 'Video Error',
+      tracking_source: 'native_site',
+      site_id: `site_ad_like_${id}`,
+      site_name: 'Raúl Gómez',
+      public_page_id: `page_ad_like_${id}`,
+      public_page_title: 'Quiero Pacientes'
+    })
+
+    await insertRow('sessions', {
+      id: `session_ad_like_second_page_${id}`,
+      session_id: secondSessionId,
+      visitor_id: adLikeVisitorId,
+      contact_id: contactId,
+      full_name: 'Cliente Visitor Compartido',
+      email: `ad-like-${id}@ristak.test`,
+      event_name: 'page_view',
+      started_at: '2026-06-22T23:40:00.000Z',
+      created_at: '2026-06-22T23:40:00.000Z',
+      page_url: `https://raulgomez.com.mx/quiero-pacientes?rkvi_id=${adLikeVisitorId}&ad_id=${adLikeVisitorId}&utm_source=facebook`,
+      referrer_url: 'https://facebook.com/ads/click',
+      utm_source: 'facebook',
+      utm_medium: 'paid',
+      ad_id: adLikeVisitorId,
+      tracking_source: 'native_site',
+      site_id: `site_ad_like_${id}`,
+      site_name: 'Raúl Gómez',
+      public_page_id: `page_ad_like_${id}`,
+      public_page_title: 'Quiero Pacientes'
+    })
+
+    const journey = await readJourney(contactId)
+    const pageVisits = journey.filter(event => event.type === 'page_visit')
+
+    assert.equal(pageVisits.length, 1)
+    assert.equal(pageVisits[0].data.tracking_identity_untrusted, true)
+    assert.equal(pageVisits[0].data.identity_warning, 'shared_ad_like_visitor_id')
+    assert.equal(pageVisits[0].data.session_event_count, 0)
+    assert.equal(pageVisits[0].data.session_page_view_count, 0)
+    assert.equal(pageVisits[0].data.pages_visited, 0)
+    assert.equal(pageVisits[0].data.session_duration_seconds, 0)
+    assert.equal(pageVisits[0].data.visible_session_count, 0)
+    assert.deepEqual(pageVisits[0].data.visitor_ids, [adLikeVisitorId])
+    assert.equal(pageVisits[0].data.first_page_url, `https://raulgomez.com.mx/quiero-pacientes?rkvi_id=${adLikeVisitorId}&ad_id=${adLikeVisitorId}&utm_source=facebook`)
+  } finally {
+    await cleanup(contactId, phone)
+  }
+})
+
 test('contact journey exposes pre-registration tracking attribution and match evidence', async () => {
   const id = randomUUID()
   const contactId = `journey_pre_registration_${id}`

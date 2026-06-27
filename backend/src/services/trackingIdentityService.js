@@ -1,6 +1,7 @@
 import crypto from 'crypto'
 import { db } from '../config/database.js'
 import { logger } from '../utils/logger.js'
+import { isTrustedTrackingVisitorId } from '../utils/trackingVisitorIdentity.js'
 
 const AUTO_LINK_CONFIDENCE = 90
 const CANDIDATE_CONFIDENCE = 70
@@ -269,7 +270,7 @@ async function getContactRow(contactId) {
 
 async function findContactByVisitorId(visitorId) {
   const cleanVisitorId = cleanString(visitorId, 180)
-  if (!cleanVisitorId) return null
+  if (!cleanVisitorId || !isTrustedTrackingVisitorId(cleanVisitorId)) return null
 
   const contact = await db.get(`
     SELECT id, full_name, email
@@ -574,8 +575,8 @@ export async function linkRelatedTrackingToContact({
   let videoSessionsUpdated = 0
   let videoEventsUpdated = 0
 
-  if (visitorId) {
-    const cleanVisitorId = cleanString(visitorId, 180)
+  const cleanVisitorId = cleanString(visitorId, 180)
+  if (isTrustedTrackingVisitorId(cleanVisitorId)) {
     const sessionsResult = await db.run(`
       UPDATE sessions
       SET

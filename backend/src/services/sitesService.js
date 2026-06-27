@@ -15032,7 +15032,9 @@ function buildNativeSiteTrackingScript(context) {
 
       const normalizeIdentityValue = (value) => {
         const cleaned = String(value || '').trim();
-        return /^[A-Za-z0-9_-]{8,120}$/.test(cleaned) ? cleaned : '';
+        if (!/^[A-Za-z0-9_-]{8,120}$/.test(cleaned)) return '';
+        if (/^\d{12,}$/.test(cleaned)) return '';
+        return cleaned;
       };
 
       const readCookie = (name) => {
@@ -15413,7 +15415,9 @@ function buildVideoPlaybackTrackingScript({ enabled = true } = {}) {
       };
       const normalizeIdentityValue = value => {
         const cleaned = String(value || '').trim();
-        return /^[A-Za-z0-9_-]{8,120}$/.test(cleaned) ? cleaned : '';
+        if (!/^[A-Za-z0-9_-]{8,120}$/.test(cleaned)) return '';
+        if (/^\d{12,}$/.test(cleaned)) return '';
+        return cleaned;
       };
       const readCookie = name => {
         try {

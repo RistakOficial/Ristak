@@ -7,6 +7,10 @@ import {
   recordTrackingIdentityMatch,
   resolveTrackingIdentity
 } from './trackingIdentityService.js'
+import {
+  buildFallbackVisitorIdFromSession,
+  isTrustedTrackingVisitorId
+} from '../utils/trackingVisitorIdentity.js'
 import fetch from 'node-fetch'
 
 const SUCCESS_PAYMENT_STATUS_SQL = SUCCESS_PAYMENT_STATUSES
@@ -326,6 +330,8 @@ export async function createSession(sessionData) {
     user_agent
   } = sessionData
 
+  const trustedVisitorId = isTrustedTrackingVisitorId(visitor_id) ? visitor_id : null
+  const storedVisitorId = trustedVisitorId || buildFallbackVisitorIdFromSession(session_id)
   const utms = extractUtmParams(data)
   const clickIds = extractClickIds(data)
   const deviceInfo = extractDeviceInfo(data)
@@ -333,7 +339,7 @@ export async function createSession(sessionData) {
   const sourceInfo = deriveSourceInfo(data, utms, clickIds)
   const nativeSiteInfo = extractNativeSiteInfo(data)
   const identity = await resolveTrackingIdentity({
-    visitorId: visitor_id,
+    visitorId: trustedVisitorId,
     contactId: contact_id,
     data: {
       ...data,
@@ -489,7 +495,7 @@ export async function createSession(sessionData) {
       )
     `, [
       session_id,
-      visitor_id,
+      storedVisitorId,
       validContactId,
       validFullName,
       validEmail,
@@ -561,7 +567,7 @@ export async function createSession(sessionData) {
     await recordTrackingIdentityMatch({
       subjectKind: 'session',
       subjectId: session_id,
-      visitorId: visitor_id,
+      visitorId: trustedVisitorId || storedVisitorId,
       sessionId: session_id,
       contactId: validContactId,
       matchMethod: identity.matchMethod,
@@ -574,7 +580,7 @@ export async function createSession(sessionData) {
     if (validContactId) {
       await linkRelatedTrackingToContact({
         contactId: validContactId,
-        visitorId: visitor_id,
+        visitorId: trustedVisitorId,
         fullName: validFullName,
         email: validEmail,
         signals: identity.signals,
@@ -590,8 +596,8 @@ export async function createSession(sessionData) {
 
     const pageUrl = data.url || 'unknown'
     const logMsg = validContactId
-      ? `Page view: ${pageUrl} - visitor: ${visitor_id} - contact: ${validContactId}`
-      : `Page view: ${pageUrl} - visitor: ${visitor_id} (anónimo)`
+      ? `Page view: ${pageUrl} - visitor: ${storedVisitorId} - contact: ${validContactId}`
+      : `Page view: ${pageUrl} - visitor: ${storedVisitorId} (anónimo)`
     logger.info(logMsg)
 
     // (TRK-003) Resolver geolocalización en segundo plano (fire-and-forget) para no
@@ -648,6 +654,17 @@ function resolveSessionGeoInBackground({ sessionId, startedAt, ip }) {
  */
 export async function linkVisitorToContact(visitor_id, contact_id, full_name) {
   try {
+    if (!isTrustedTrackingVisitorId(visitor_id)) {
+      logger.warn(`Visitor_id no confiable ignorado al vincular contacto ${contact_id}: ${visitor_id || '(vacío)'}`)
+      return {
+        success: false,
+        skipped: true,
+        reason: 'untrusted_visitor_id',
+        updated: 0,
+        videoUpdated: 0
+      }
+    }
+
     // Obtener email del contacto
     const contact = await db.get('SELECT email FROM contacts WHERE id = ?', [contact_id])
     const email = contact?.email || null
@@ -1027,28 +1044,40 @@ export async function getSessionsByDateRange(startDate, endDate, options = {}) {
 export async function unifyVisitorIds(contactId) {
   try {
     // PASO 1: Obtener el visitor_id MÁS VIEJO (primera visita)
-    const oldestSession = await db.get(`
-      SELECT visitor_id, created_at
+    const visitorRows = await db.all(`
+      SELECT visitor_id, MIN(created_at) as created_at
       FROM sessions
       WHERE contact_id = ?
-      ORDER BY created_at ASC
-      LIMIT 1
+        AND visitor_id IS NOT NULL
+        AND visitor_id != ''
+      GROUP BY visitor_id
+      ORDER BY MIN(created_at) ASC
     `, [contactId])
 
-    if (!oldestSession) {
+    if (!visitorRows.length) {
       logger.warn(`No se encontraron sesiones para contacto ${contactId}`)
       return { success: false, canonicalVisitorId: null, sessionsUpdated: 0 }
     }
 
+    const trustedVisitorRows = visitorRows.filter(row => isTrustedTrackingVisitorId(row.visitor_id))
+    if (!trustedVisitorRows.length) {
+      logger.warn(`No se encontró visitor_id confiable para unificar contacto ${contactId}`)
+      return {
+        success: false,
+        canonicalVisitorId: null,
+        sessionsUpdated: 0,
+        skipped: true,
+        reason: 'no_trusted_visitor_id'
+      }
+    }
+
+    const oldestSession = trustedVisitorRows[0]
     const canonicalVisitorId = oldestSession.visitor_id
 
     // PASO 2: Obtener todos los visitor_ids diferentes de este contacto
-    const allVisitorIds = await db.all(`
-      SELECT DISTINCT visitor_id
-      FROM sessions
-      WHERE contact_id = ?
-        AND visitor_id != ?
-    `, [contactId, canonicalVisitorId])
+    const allVisitorIds = trustedVisitorRows
+      .filter(row => row.visitor_id !== canonicalVisitorId)
+      .map(row => row.visitor_id)
 
     if (allVisitorIds.length === 0) {
       logger.info(`✅ Contacto ${contactId} ya tiene visitor_id unificado: ${canonicalVisitorId}`)
@@ -1067,15 +1096,16 @@ export async function unifyVisitorIds(contactId) {
 
     logger.info(`🔄 Unificando ${allVisitorIds.length} visitor_ids diferentes para contacto ${contactId}:`)
     logger.info(`   → Canonical (más viejo): ${canonicalVisitorId}`)
-    logger.info(`   → A reemplazar: ${allVisitorIds.map(v => v.visitor_id).join(', ')}`)
+    logger.info(`   → A reemplazar: ${allVisitorIds.join(', ')}`)
 
     // PASO 3: Actualizar TODAS las sesiones para usar el visitor_id canónico
+    const visitorPlaceholders = allVisitorIds.map(() => '?').join(', ')
     const result = await db.run(`
       UPDATE sessions
       SET visitor_id = ?
       WHERE contact_id = ?
-        AND visitor_id != ?
-    `, [canonicalVisitorId, contactId, canonicalVisitorId])
+        AND visitor_id IN (${visitorPlaceholders})
+    `, [canonicalVisitorId, contactId, ...allVisitorIds])
 
     logger.info(`✅ Actualizadas ${result.changes} sesiones con visitor_id unificado`)
 
