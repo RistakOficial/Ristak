@@ -31,14 +31,14 @@ export async function withCronLock(name, ttlMs, fn) {
     acquired = Number(res?.changes || 0) > 0
   } catch (error) {
     logger.warn(`[CronLock] No se pudo evaluar el lock "${name}" (se ejecuta igual): ${error.message}`)
-    return { ran: await runSafely(fn) }
+    return runSafely(fn)
   }
 
   if (!acquired) return { ran: false }
 
   try {
-    await fn()
-    return { ran: true }
+    const result = await fn()
+    return { ran: true, result }
   } finally {
     try {
       // Liberar: dejar locked_until en el pasado para que el siguiente tick pueda tomarlo.
@@ -50,6 +50,6 @@ export async function withCronLock(name, ttlMs, fn) {
 }
 
 async function runSafely(fn) {
-  await fn()
-  return true
+  const result = await fn()
+  return { ran: true, result }
 }

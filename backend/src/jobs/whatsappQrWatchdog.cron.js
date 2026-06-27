@@ -26,9 +26,13 @@ export function startWhatsAppQrWatchdogCron() {
 
   setTimeout(() => {
     if (isDeployShutdownStarted()) return
-    trackDeployDrainWork('cron:whatsapp-qr-watchdog', () => resumeWhatsAppQrSessions({ source: 'boot' }), 'boot')
-      .then(({ resumed }) => {
-        if (resumed) logger.info(`[WhatsApp QR] ${resumed} sesion(es) de WhatsApp Web reabiertas al arrancar`)
+    trackDeployDrainWork(
+      'cron:whatsapp-qr-watchdog',
+      () => withCronLock('whatsapp-qr-watchdog', WATCHDOG_INTERVAL_MS, () => resumeWhatsAppQrSessions({ source: 'boot' })),
+      'boot'
+    )
+      .then(({ result }) => {
+        if (result?.resumed) logger.info(`[WhatsApp QR] ${result.resumed} sesion(es) de WhatsApp Web reabiertas al arrancar`)
       })
       .catch(error => {
         logger.warn(`[WhatsApp QR] Fallo la reanudacion inicial de sesiones: ${error.message}`)

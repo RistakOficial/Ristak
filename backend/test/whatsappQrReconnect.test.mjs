@@ -13,6 +13,10 @@ import {
 const BUSINESS_PHONE = '+526561234567'
 const CONNECTED_JID = '526561234567@s.whatsapp.net'
 
+function sqlFuture(offsetMs = 60_000) {
+  return new Date(Date.now() + offsetMs).toISOString().slice(0, 19).replace('T', ' ')
+}
+
 function createFakeBaileysRuntime(sockets = []) {
   const DisconnectReason = {
     connectionClosed: 428,
@@ -81,6 +85,7 @@ function createFakeBaileysRuntime(sockets = []) {
 
 async function cleanupQrFixture(phoneNumberId) {
   resetWhatsAppQrServiceForTest()
+  await db.run('DELETE FROM distributed_locks WHERE name = ?', [`whatsapp-qr-session:${phoneNumberId}`])
   await db.run('DELETE FROM whatsapp_qr_auth_state WHERE phone_number_id = ?', [phoneNumberId])
   await db.run('DELETE FROM whatsapp_qr_sessions WHERE phone_number_id = ?', [phoneNumberId])
   await db.run('DELETE FROM whatsapp_api_phone_numbers WHERE id = ?', [phoneNumberId])
@@ -144,6 +149,29 @@ test('resumeWhatsAppQrSessions reabre sesiones connection_replaced sin cooldown 
 
     assert.equal(result.resumed, 1)
     assert.equal(sockets.length, 1)
+  })
+})
+
+test('resumeWhatsAppQrSessions no abre otra sesión si un lease vigente pertenece a otra instancia', async () => {
+  const sockets = []
+
+  await withQrFixture({ status: 'connected' }, async ({ phoneNumberId }) => {
+    await db.run(`
+      INSERT INTO distributed_locks (name, owner_id, locked_until, updated_at)
+      VALUES (?, ?, ?, CURRENT_TIMESTAMP)
+    `, [`whatsapp-qr-session:${phoneNumberId}`, 'other-render-instance', sqlFuture()])
+
+    setBaileysRuntimeForTest(createFakeBaileysRuntime(sockets))
+
+    const result = await resumeWhatsAppQrSessions({ source: 'test' })
+    const lock = await db.get(
+      'SELECT owner_id FROM distributed_locks WHERE name = ?',
+      [`whatsapp-qr-session:${phoneNumberId}`]
+    )
+
+    assert.equal(result.resumed, 0)
+    assert.equal(sockets.length, 0)
+    assert.equal(lock.owner_id, 'other-render-instance')
   })
 })
 

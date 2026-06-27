@@ -3,6 +3,7 @@ import crypto from 'crypto'
 import { db } from '../config/database.js'
 import { buildPhoneMatchCandidates, normalizePhoneDigits, normalizePhoneForStorage } from '../utils/phoneUtils.js'
 import { logger } from '../utils/logger.js'
+import { acquireDistributedLock, releaseDistributedLock, renewDistributedLock } from '../utils/distributedLock.js'
 import { waitForWhatsAppQrDripSlot } from './whatsappQrDripService.js'
 
 const QR_CONSENT_TEXT = 'Acepto que esta conexión usa WhatsApp Web por QR y no la API oficial de Meta. Entiendo que puede desconectarse, fallar o poner en riesgo el número. Ristak solo la usará para mensajes individuales cuando yo lo active.'
@@ -17,6 +18,8 @@ const RECONNECT_BASE_DELAY_MS = 2500
 const CONNECTION_REPLACED_RECONNECT_BASE_DELAY_MS = 5000
 const RECONNECT_MAX_DELAY_MS = 60000
 const MAX_RECONNECT_ATTEMPTS = 8
+const QR_SESSION_LEASE_TTL_MS = 90 * 1000
+const QR_SESSION_LEASE_HEARTBEAT_MS = 30 * 1000
 const QR_ACK_STATUS = {
   ERROR: 0,
   PENDING: 1,
@@ -891,6 +894,60 @@ function getSessionId(phoneNumberId) {
   return `qr_${phoneNumberId}`
 }
 
+function getSessionLeaseName(phoneNumberId) {
+  return `whatsapp-qr-session:${phoneNumberId}`
+}
+
+async function renewQrSessionLease(lease) {
+  return renewDistributedLock(lease)
+}
+
+async function releaseQrSessionLease(lease) {
+  return releaseDistributedLock(lease)
+}
+
+async function acquireQrSessionLease(phoneNumberId) {
+  const existingLease = liveSessions.get(phoneNumberId)?.lease
+  if (existingLease && await renewQrSessionLease(existingLease)) {
+    return existingLease
+  }
+
+  const { acquired, lock } = await acquireDistributedLock(
+    getSessionLeaseName(phoneNumberId),
+    QR_SESSION_LEASE_TTL_MS
+  )
+  if (!acquired) {
+    const error = new Error('Esta conexión QR ya está activa en otra instancia. El watchdog no abrirá otro socket para no desincronizar WhatsApp.')
+    error.code = 'whatsapp_qr_session_locked'
+    throw error
+  }
+
+  return lock
+}
+
+function startQrSessionLeaseHeartbeat(phoneNumberId, lease) {
+  if (!lease || lease.failOpen) return null
+
+  const timer = setInterval(() => {
+    const live = liveSessions.get(phoneNumberId)
+    if (!live || live.lease !== lease) return
+
+    renewQrSessionLease(lease)
+      .then((renewed) => {
+        if (renewed) return
+        logger.warn(`[WhatsApp QR] Se perdió el lease de sesión ${phoneNumberId}; cerrando socket local para no reemplazar otra instancia`)
+        closeLiveSession(phoneNumberId, { releaseLease: false })
+      })
+      .catch((error) => {
+        logger.warn(`[WhatsApp QR] No se pudo renovar lease ${phoneNumberId}: ${error.message}`)
+        closeLiveSession(phoneNumberId, { releaseLease: false })
+      })
+  }, QR_SESSION_LEASE_HEARTBEAT_MS)
+
+  timer.unref?.()
+  return timer
+}
+
 async function loadBaileys() {
   if (baileysRuntime) return baileysRuntime
 
@@ -1407,12 +1464,22 @@ function mapSessionForResponse(row = {}) {
   }
 }
 
-function closeLiveSession(phoneNumberId) {
+function closeLiveSession(phoneNumberId, { releaseLease = true } = {}) {
   const live = liveSessions.get(phoneNumberId)
   liveSessions.delete(phoneNumberId)
 
   if (live?.reconnectTimer) {
     clearTimeout(live.reconnectTimer)
+  }
+
+  if (live?.leaseHeartbeat) {
+    clearInterval(live.leaseHeartbeat)
+  }
+
+  if (releaseLease && live?.lease) {
+    releaseQrSessionLease(live.lease).catch(error => {
+      logger.warn(`[WhatsApp QR] No se pudo liberar lease ${phoneNumberId}: ${error.message}`)
+    })
   }
 
   if (!live?.sock) return
@@ -1434,8 +1501,6 @@ async function openSocket(phone, { requireConsent = true, reconnectAttempt = 0, 
     throw new Error('Primero acepta el riesgo de usar conexión por QR para este número')
   }
 
-  closeLiveSession(phone.id)
-
   const baileys = await loadBaileys()
   const {
     makeWASocket,
@@ -1444,6 +1509,9 @@ async function openSocket(phone, { requireConsent = true, reconnectAttempt = 0, 
     makeCacheableSignalKeyStore
   } = baileys
   const { state, saveCreds } = await useQrDbAuthState(phone.id, baileys)
+  const lease = await acquireQrSessionLease(phone.id)
+
+  closeLiveSession(phone.id, { releaseLease: false })
 
   const deferred = openDeferred || createDeferred()
   let openSettled = false
@@ -1462,32 +1530,40 @@ async function openSocket(phone, { requireConsent = true, reconnectAttempt = 0, 
   }
 
   const versionOverride = getWhatsAppWebVersionOverride()
-  const sock = makeWASocket({
-    auth: {
-      creds: state.creds,
-      keys: makeCacheableSignalKeyStore(state.keys, baileysLogger)
-    },
-    logger: baileysLogger,
-    printQRInTerminal: false,
-    syncFullHistory: false,
-    markOnlineOnConnect: false,
-    qrTimeout: 60000,
-    browser: Browsers?.macOS ? Browsers.macOS('Desktop') : undefined,
-    // Estabilidad 24/7: ping de keep-alive frecuente, timeouts explicitos y
-    // respuesta a reintentos de descifrado del receptor.
-    keepAliveIntervalMs: 10000,
-    connectTimeoutMs: 30000,
-    defaultQueryTimeoutMs: 60000,
-    retryRequestDelayMs: 250,
-    getMessage: async (key) => qrSentMessageCache.get(cleanString(key?.id)) || undefined,
-    ...(versionOverride ? { version: versionOverride } : {})
-  })
+  let sock
+  try {
+    sock = makeWASocket({
+      auth: {
+        creds: state.creds,
+        keys: makeCacheableSignalKeyStore(state.keys, baileysLogger)
+      },
+      logger: baileysLogger,
+      printQRInTerminal: false,
+      syncFullHistory: false,
+      markOnlineOnConnect: false,
+      qrTimeout: 60000,
+      browser: Browsers?.macOS ? Browsers.macOS('Desktop') : undefined,
+      // Estabilidad 24/7: ping de keep-alive frecuente, timeouts explicitos y
+      // respuesta a reintentos de descifrado del receptor.
+      keepAliveIntervalMs: 10000,
+      connectTimeoutMs: 30000,
+      defaultQueryTimeoutMs: 60000,
+      retryRequestDelayMs: 250,
+      getMessage: async (key) => qrSentMessageCache.get(cleanString(key?.id)) || undefined,
+      ...(versionOverride ? { version: versionOverride } : {})
+    })
+  } catch (error) {
+    await releaseQrSessionLease(lease)
+    throw error
+  }
 
   liveSessions.set(phone.id, {
     sock,
     openPromise: deferred.promise,
     connected: false,
-    reconnectTimer: null
+    reconnectTimer: null,
+    lease,
+    leaseHeartbeat: startQrSessionLeaseHeartbeat(phone.id, lease)
   })
 
   sock.ev.on('creds.update', saveCreds)
@@ -1592,7 +1668,7 @@ async function openSocket(phone, { requireConsent = true, reconnectAttempt = 0, 
           lastError: message,
           lastDisconnectedAt: nowIso()
         })
-        liveSessions.delete(phone.id)
+        closeLiveSession(phone.id)
         rejectCurrentOpen(new Error(message))
         return
       }
@@ -1607,7 +1683,7 @@ async function openSocket(phone, { requireConsent = true, reconnectAttempt = 0, 
           lastError: message,
           lastDisconnectedAt: nowIso()
         })
-        liveSessions.delete(phone.id)
+        closeLiveSession(phone.id)
         rejectCurrentOpen(new Error(message))
         return
       }
@@ -1628,6 +1704,9 @@ async function openSocket(phone, { requireConsent = true, reconnectAttempt = 0, 
         lastError: null,
         lastDisconnectedAt: nowIso()
       })
+      const reconnectLease = live?.lease || lease
+      const reconnectLeaseHeartbeat = live?.leaseHeartbeat ||
+        startQrSessionLeaseHeartbeat(phone.id, reconnectLease)
       liveSessions.delete(phone.id)
 
       const nextOpenDeferred = openSettled ? createDeferred() : deferred
@@ -1651,7 +1730,9 @@ async function openSocket(phone, { requireConsent = true, reconnectAttempt = 0, 
         sock: null,
         openPromise: nextOpenDeferred.promise,
         connected: false,
-        reconnectTimer
+        reconnectTimer,
+        lease: reconnectLease,
+        leaseHeartbeat: reconnectLeaseHeartbeat
       })
     }
   })
