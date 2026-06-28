@@ -31,6 +31,8 @@ export interface PaymentSubscription {
   stripeProductId?: string | null
   stripePriceId?: string | null
   stripePaymentMethodId?: string | null
+  stripeCheckoutSessionId?: string | null
+  stripeCheckoutUrl?: string | null
   mercadoPagoPreapprovalId?: string | null
   mercadoPagoPreapprovalPlanId?: string | null
   mercadoPagoInitPoint?: string | null
@@ -44,6 +46,7 @@ export interface PaymentSubscription {
   conektaSubscriptionId?: string | null
   conektaPaymentSourceId?: string | null
   conektaNextBillingAt?: string | null
+  subscriptionStartUrl?: string | null
   metadata?: Record<string, unknown> | null
   raw?: Record<string, unknown> | null
   createdAt?: string | null
@@ -78,6 +81,7 @@ export interface SubscriptionPayload {
   intervalCount: number
   startDate?: string | null
   nextRunAt?: string | null
+  cancelAt?: string | null
   paymentMethod?: string
   paymentProvider?: string
   paymentMode?: 'test' | 'live' | string

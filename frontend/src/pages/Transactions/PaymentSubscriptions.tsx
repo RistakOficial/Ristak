@@ -56,6 +56,8 @@ import styles from './PaymentSubscriptions.module.css'
 type SubscriptionFormMode = 'create' | 'edit' | null
 type SubscriptionFormStep = 'details' | 'gateway'
 type PaymentGatewayProvider = 'stripe' | 'conekta' | 'mercadopago'
+type SubscriptionPaymentMethod = 'stripe_saved_card' | 'stripe_link' | 'conekta_subscription' | 'mercadopago_subscription'
+type SubscriptionDurationType = 'continuous' | 'until_date'
 
 interface SubscriptionFormState {
   name: string
@@ -65,8 +67,10 @@ interface SubscriptionFormState {
   intervalCount: string
   startDate: string
   nextRunAt: string
+  cancelAt: string
+  durationType: SubscriptionDurationType
   status: SubscriptionStatus
-  paymentMethod: string
+  paymentMethod: SubscriptionPaymentMethod
   paymentProvider: PaymentGatewayProvider
 }
 
@@ -104,11 +108,56 @@ const STATUS_OPTIONS: Array<{ value: SubscriptionStatus; label: string }> = [
   { value: 'cancelled', label: 'Cancelada' }
 ]
 
-const PAYMENT_METHOD_OPTIONS: Array<{ value: string; label: string; provider: PaymentGatewayProvider }> = [
-  { value: 'stripe_saved_card', label: 'Stripe - tarjeta guardada', provider: 'stripe' },
-  { value: 'stripe_link', label: 'Stripe - enlace de pago', provider: 'stripe' },
-  { value: 'conekta_subscription', label: 'Conekta - tarjeta guardada', provider: 'conekta' },
-  { value: 'mercadopago_subscription', label: 'Mercado Pago - suscripción', provider: 'mercadopago' }
+const PAYMENT_METHOD_OPTIONS: Array<{
+  value: SubscriptionPaymentMethod
+  label: string
+  provider: PaymentGatewayProvider
+  modeLabel: string
+  description: string
+  requirement: string
+  result: string
+}> = [
+  {
+    value: 'stripe_saved_card',
+    label: 'Stripe - tarjeta guardada',
+    provider: 'stripe',
+    modeLabel: 'Tarjeta guardada',
+    description: 'Activa la suscripción usando la tarjeta guardada del contacto.',
+    requirement: 'Requiere un contacto con tarjeta guardada en Stripe.',
+    result: 'Se crea activa o en prueba según la fecha de inicio.'
+  },
+  {
+    value: 'stripe_link',
+    label: 'Stripe - link de autorización',
+    provider: 'stripe',
+    modeLabel: 'Enviar link',
+    description: 'Genera un Checkout de suscripción para que el cliente autorice el pago.',
+    requirement: 'Requiere un contacto con email.',
+    result: 'Queda incompleta hasta que el cliente complete el link.'
+  },
+  {
+    value: 'conekta_subscription',
+    label: 'Conekta - tarjeta guardada',
+    provider: 'conekta',
+    modeLabel: 'Tarjeta guardada',
+    description: 'Activa la domiciliación con la tarjeta guardada del contacto.',
+    requirement: 'Requiere un contacto con tarjeta guardada de Conekta.',
+    result: 'Se crea como suscripción domiciliada.'
+  },
+  {
+    value: 'mercadopago_subscription',
+    label: 'Mercado Pago - link de autorización',
+    provider: 'mercadopago',
+    modeLabel: 'Enviar link',
+    description: 'Genera el link de autorización de Mercado Pago para iniciar la suscripción.',
+    requirement: 'Requiere un contacto con email.',
+    result: 'Queda incompleta hasta que el cliente autorice el cobro.'
+  }
+]
+
+const DURATION_OPTIONS: Array<{ value: SubscriptionDurationType; label: string }> = [
+  { value: 'continuous', label: 'Continua, sin fecha final' },
+  { value: 'until_date', label: 'Hasta una fecha específica' }
 ]
 
 function formatLocalDateInput(date: Date) {
@@ -151,16 +200,12 @@ function createEmptyForm(): SubscriptionFormState {
     intervalCount: '1',
     startDate: today,
     nextRunAt: today,
+    cancelAt: '',
+    durationType: 'continuous',
     status: 'active',
     paymentMethod: 'stripe_saved_card',
     paymentProvider: 'stripe'
   }
-}
-
-function getPaymentMethodForProvider(provider: PaymentGatewayProvider) {
-  if (provider === 'mercadopago') return 'mercadopago_subscription'
-  if (provider === 'conekta') return 'conekta_subscription'
-  return 'stripe_saved_card'
 }
 
 function resolvePaymentProvider(provider?: string | null): PaymentGatewayProvider {
@@ -171,27 +216,28 @@ function resolvePaymentProvider(provider?: string | null): PaymentGatewayProvide
 function getPaymentProviderFromMethod(paymentMethod: string, paymentProvider: PaymentGatewayProvider): PaymentGatewayProvider {
   if (paymentMethod === 'mercadopago_subscription') return 'mercadopago'
   if (paymentMethod === 'conekta_subscription') return 'conekta'
+  if (paymentMethod === 'stripe_saved_card' || paymentMethod === 'stripe_link') return 'stripe'
   return paymentProvider
 }
 
-function createEmptyFormForProvider(provider: PaymentGatewayProvider | null): SubscriptionFormState {
+function createEmptyFormForPaymentMethod(option?: { value: SubscriptionPaymentMethod; provider: PaymentGatewayProvider } | null): SubscriptionFormState {
   const form = createEmptyForm()
-  if (provider === 'conekta') {
-    return {
-      ...form,
-      paymentMethod: getPaymentMethodForProvider(provider),
-      paymentProvider: 'conekta'
-    }
-  }
-  if (provider === 'mercadopago') {
+  if (!option) return form
+
+  if (option.provider === 'mercadopago' || option.value === 'stripe_link') {
     return {
       ...form,
       status: 'incomplete',
-      paymentMethod: getPaymentMethodForProvider(provider),
-      paymentProvider: 'mercadopago'
+      paymentMethod: option.value,
+      paymentProvider: option.provider
     }
   }
-  return form
+
+  return {
+    ...form,
+    paymentMethod: option.value,
+    paymentProvider: option.provider
+  }
 }
 
 function getSubscriptionStatusLabel(status?: string | null) {
@@ -242,6 +288,26 @@ function getIntervalLabel(intervalType?: string | null, intervalCount = 1) {
   return `Cada ${count} ${plural[normalized] || singular[normalized] || 'periodos'}`
 }
 
+function getBillingCadenceHelp(intervalType: SubscriptionInterval, intervalCountValue: string) {
+  const count = Number.parseInt(intervalCountValue, 10) || 1
+  const normalized = String(intervalType || 'monthly').toLowerCase()
+  const singular: Record<string, string> = {
+    daily: 'día',
+    weekly: 'semana',
+    monthly: 'mes',
+    yearly: 'año'
+  }
+  const plural: Record<string, string> = {
+    daily: 'días',
+    weekly: 'semanas',
+    monthly: 'meses',
+    yearly: 'años'
+  }
+  const unit = count === 1 ? singular[normalized] || 'periodo' : plural[normalized] || 'periodos'
+
+  return count === 1 ? `Se cobrará cada ${unit}.` : `Se cobrará cada ${count} ${unit}.`
+}
+
 function getPaymentMethodLabel(value?: string | null) {
   const normalized = String(value || '').toLowerCase()
   if (normalized === 'stripe_saved_card') return 'Tarjeta guardada'
@@ -272,6 +338,10 @@ function getMercadoPagoSubscriptionLink(subscription: PaymentSubscription) {
     return subscription.mercadoPagoSandboxInitPoint || subscription.mercadoPagoInitPoint || ''
   }
   return subscription.mercadoPagoInitPoint || subscription.mercadoPagoSandboxInitPoint || ''
+}
+
+function getSubscriptionStartLink(subscription: PaymentSubscription) {
+  return subscription.subscriptionStartUrl || subscription.stripeCheckoutUrl || getMercadoPagoSubscriptionLink(subscription)
 }
 
 function matchesStatusFilter(subscription: PaymentSubscription, filter: string) {
@@ -372,19 +442,13 @@ export const PaymentSubscriptions: React.FC = () => {
     ))
   ), [conektaConnected, mercadoPagoConnected, stripeConnected])
 
-  const gatewayOptions = useMemo(() => (
-    ([
-      { provider: 'stripe' as const, connected: stripeConnected },
-      { provider: 'conekta' as const, connected: conektaConnected },
-      { provider: 'mercadopago' as const, connected: mercadoPagoConnected }
-    ]).filter((option) => option.connected)
-  ), [conektaConnected, mercadoPagoConnected, stripeConnected])
-
-  const defaultProvider = stripeConnected ? 'stripe' : conektaConnected ? 'conekta' : mercadoPagoConnected ? 'mercadopago' : null
-  const hasSubscriptionGateway = Boolean(defaultProvider)
+  const defaultPaymentMethodOption = availablePaymentMethodOptions[0] || null
+  const selectedPaymentMethodOption = availablePaymentMethodOptions.find((option) => option.value === form.paymentMethod) || null
+  const hasSubscriptionGateway = availablePaymentMethodOptions.length > 0
   const showGatewayStep = formMode === 'create' && formStep === 'gateway'
-  const isMercadoPagoSelected = (formMode === 'edit' || showGatewayStep) && (form.paymentProvider === 'mercadopago' || form.paymentMethod === 'mercadopago_subscription')
-  const isConektaSelected = (formMode === 'edit' || showGatewayStep) && (form.paymentProvider === 'conekta' || form.paymentMethod === 'conekta_subscription')
+  const isMercadoPagoSelected = (formMode === 'edit' || showGatewayStep) && form.paymentMethod === 'mercadopago_subscription'
+  const isConektaSelected = (formMode === 'edit' || showGatewayStep) && form.paymentMethod === 'conekta_subscription'
+  const startsByLink = form.paymentMethod === 'stripe_link' || form.paymentMethod === 'mercadopago_subscription'
 
   useEffect(() => {
     if (integrationsLoading || hasSubscriptionGateway) return
@@ -424,7 +488,7 @@ export const PaymentSubscriptions: React.FC = () => {
 
     setEditingSubscription(null)
     setSelectedContact(null)
-    setForm(createEmptyForm())
+    setForm(createEmptyFormForPaymentMethod(defaultPaymentMethodOption))
     setFormStep('details')
     setFormMode('create')
   }
@@ -440,8 +504,10 @@ export const PaymentSubscriptions: React.FC = () => {
       intervalCount: String(subscription.intervalCount || 1),
       startDate: clampDateToToday(toDateInputValue(subscription.startDate)),
       nextRunAt: clampDateToToday(toDateInputValue(subscription.nextRunAt)),
+      cancelAt: toDateInputValue(subscription.cancelAt),
+      durationType: subscription.cancelAt ? 'until_date' : 'continuous',
       status: (subscription.status as SubscriptionStatus) || 'active',
-      paymentMethod: subscription.paymentMethod || 'stripe_saved_card',
+      paymentMethod: (subscription.paymentMethod as SubscriptionPaymentMethod) || 'stripe_saved_card',
       paymentProvider: resolvePaymentProvider(subscription.paymentProvider)
     })
     setFormStep('details')
@@ -450,7 +516,6 @@ export const PaymentSubscriptions: React.FC = () => {
 
   useEffect(() => {
     if (formMode !== 'create') return
-    if (formStep !== 'gateway') return
     if (!availablePaymentMethodOptions.length) return
     if (availablePaymentMethodOptions.some((option) => option.value === form.paymentMethod)) return
 
@@ -459,9 +524,9 @@ export const PaymentSubscriptions: React.FC = () => {
       ...current,
       paymentMethod: fallback.value,
       paymentProvider: fallback.provider,
-      status: fallback.provider === 'mercadopago' ? 'incomplete' : current.status
+      status: fallback.value === 'stripe_link' || fallback.value === 'mercadopago_subscription' ? 'incomplete' : 'active'
     }))
-  }, [availablePaymentMethodOptions, form.paymentMethod, formMode, formStep])
+  }, [availablePaymentMethodOptions, form.paymentMethod, formMode])
 
   const closeForm = () => {
     if (saving) return
@@ -474,9 +539,18 @@ export const PaymentSubscriptions: React.FC = () => {
   }
 
   const patchForm = (field: keyof SubscriptionFormState, value: string) => {
+    if (field === 'durationType' && value === 'continuous') {
+      setForm((current) => ({
+        ...current,
+        durationType: 'continuous',
+        cancelAt: ''
+      }))
+      return
+    }
+
     setForm((current) => ({
       ...current,
-      [field]: field === 'startDate' || field === 'nextRunAt'
+      [field]: field === 'startDate' || field === 'nextRunAt' || field === 'cancelAt'
         ? clampDateToToday(value)
         : value
     }))
@@ -502,10 +576,22 @@ export const PaymentSubscriptions: React.FC = () => {
       return false
     }
 
+    if (form.durationType === 'until_date') {
+      if (!form.cancelAt) {
+        showToast('warning', 'Falta la duración', 'Elige hasta qué fecha debe cobrarse esta suscripción.')
+        return false
+      }
+
+      if (isDateBeforeToday(form.cancelAt) || form.cancelAt <= form.startDate) {
+        showToast('warning', 'Duración inválida', 'La fecha final debe ser posterior al inicio de la suscripción.')
+        return false
+      }
+    }
+
     return true
   }
 
-  const buildPayload = (providerOverride?: PaymentGatewayProvider): SubscriptionPayload | null => {
+  const buildPayload = (): SubscriptionPayload | null => {
     const name = form.name.trim()
     const amount = Number(form.amount)
     const intervalCount = Number.parseInt(form.intervalCount, 10)
@@ -525,20 +611,31 @@ export const PaymentSubscriptions: React.FC = () => {
       return null
     }
 
-    const provider = providerOverride ?? getPaymentProviderFromMethod(form.paymentMethod, form.paymentProvider)
-    const paymentMethod = formMode === 'edit'
-      ? form.paymentMethod
-      : getPaymentMethodForProvider(provider)
+    if (form.durationType === 'until_date') {
+      if (!form.cancelAt) {
+        showToast('warning', 'Falta la duración', 'Elige hasta qué fecha debe cobrarse esta suscripción.')
+        return null
+      }
+
+      if (isDateBeforeToday(form.cancelAt) || form.cancelAt <= form.startDate) {
+        showToast('warning', 'Duración inválida', 'La fecha final debe ser posterior al inicio de la suscripción.')
+        return null
+      }
+    }
+
+    const paymentMethod = form.paymentMethod
+    const provider = getPaymentProviderFromMethod(paymentMethod, form.paymentProvider)
     const contactEmail = selectedContact?.email || editingSubscription?.contactEmail || null
     const contactId = selectedContact?.id || editingSubscription?.contactId || null
+    const startByLink = paymentMethod === 'stripe_link' || paymentMethod === 'mercadopago_subscription'
 
-    if (provider === 'mercadopago' && !contactEmail) {
-      showToast('warning', 'Falta el email', 'Mercado Pago necesita email para que el cliente autorice la suscripción.')
+    if (!contactId) {
+      showToast('warning', 'Falta el contacto', 'Selecciona el contacto que va a tener esta suscripción.')
       return null
     }
 
-    if ((provider === 'stripe' || provider === 'conekta') && !contactId) {
-      showToast('warning', 'Falta el contacto', `${provider === 'conekta' ? 'Conekta' : 'Stripe'} necesita un contacto con tarjeta guardada para activar la suscripción.`)
+    if (startByLink && !contactEmail) {
+      showToast('warning', 'Falta el email', `${provider === 'mercadopago' ? 'Mercado Pago' : 'Stripe'} necesita email para que el cliente autorice la suscripción.`)
       return null
     }
 
@@ -547,7 +644,7 @@ export const PaymentSubscriptions: React.FC = () => {
       return null
     }
 
-    if (isDateBeforeToday(form.startDate) || (provider !== 'mercadopago' && isDateBeforeToday(form.nextRunAt))) {
+    if (isDateBeforeToday(form.startDate) || (!startByLink && isDateBeforeToday(form.nextRunAt))) {
       showToast('warning', 'Fecha inválida', 'Las suscripciones automáticas no pueden iniciar ni cobrarse en fechas pasadas.')
       return null
     }
@@ -559,13 +656,14 @@ export const PaymentSubscriptions: React.FC = () => {
       contactPhone: selectedContact?.phone || editingSubscription?.contactPhone || null,
       name,
       description: form.description.trim(),
-      status: provider === 'mercadopago' && formMode !== 'edit' ? 'incomplete' : form.status,
+      status: formMode === 'edit' ? form.status : startByLink ? 'incomplete' : 'active',
       amount,
       currency: accountCurrency,
       intervalType: form.intervalType,
       intervalCount,
       startDate: form.startDate || null,
-      nextRunAt: provider === 'mercadopago' ? null : form.nextRunAt || null,
+      nextRunAt: startByLink ? null : form.nextRunAt || null,
+      cancelAt: form.durationType === 'until_date' ? form.cancelAt || null : null,
       paymentMethod,
       paymentProvider: provider,
       conektaPaymentSourceId: provider === 'conekta' ? editingSubscription?.conektaPaymentSourceId || null : undefined,
@@ -574,9 +672,9 @@ export const PaymentSubscriptions: React.FC = () => {
   }
 
   const saveSubscription = async () => {
-    if (formMode === 'create' && formStep === 'details' && gatewayOptions.length > 1) {
+    if (formMode === 'create' && formStep === 'details' && availablePaymentMethodOptions.length > 1) {
       if (!validateSubscriptionDetails()) return
-      const nextForm = createEmptyFormForProvider(defaultProvider)
+      const nextForm = createEmptyFormForPaymentMethod(selectedPaymentMethodOption || defaultPaymentMethodOption)
       setForm({
         ...nextForm,
         name: form.name,
@@ -586,16 +684,15 @@ export const PaymentSubscriptions: React.FC = () => {
         intervalCount: form.intervalCount,
         startDate: form.startDate,
         nextRunAt: form.nextRunAt,
+        cancelAt: form.cancelAt,
+        durationType: form.durationType,
         status: form.status
       })
       setFormStep('gateway')
       return
     }
 
-    const provider = formMode === 'create'
-      ? (formStep === 'gateway' ? form.paymentProvider : defaultProvider || undefined)
-      : undefined
-    const payload = buildPayload(provider)
+    const payload = buildPayload()
     if (!payload) return
 
     setSaving(true)
@@ -605,8 +702,9 @@ export const PaymentSubscriptions: React.FC = () => {
         showToast('success', 'Suscripción actualizada', `${payload.name} ya quedó lista.`)
       } else {
         const created = await subscriptionsService.createSubscription(payload)
-        if (created.paymentProvider === 'mercadopago' && getMercadoPagoSubscriptionLink(created)) {
-          showToast('success', 'Autorización Mercado Pago lista', `Copia el link de ${payload.name} para que el cliente active la suscripción.`)
+        const startLink = getSubscriptionStartLink(created)
+        if (startLink && (created.paymentMethod === 'stripe_link' || created.paymentProvider === 'mercadopago')) {
+          showToast('success', 'Link de autorización listo', `Copia el link de ${payload.name} para que el cliente active la suscripción.`)
         } else {
           showToast('success', 'Suscripción creada', `${payload.name} ya aparece en la lista.`)
         }
@@ -704,10 +802,10 @@ export const PaymentSubscriptions: React.FC = () => {
     openSubscriptionDeleteModal([subscription])
   }
 
-  const copyMercadoPagoAuthorizationLink = async (subscription: PaymentSubscription) => {
-    const link = getMercadoPagoSubscriptionLink(subscription)
+  const copySubscriptionStartLink = async (subscription: PaymentSubscription) => {
+    const link = getSubscriptionStartLink(subscription)
     if (!link) {
-      showToast('warning', 'Link no disponible', 'Mercado Pago todavía no devolvió un link de autorización para esta suscripción.')
+      showToast('warning', 'Link no disponible', 'La pasarela todavía no devolvió un link de autorización para esta suscripción.')
       return
     }
 
@@ -715,10 +813,10 @@ export const PaymentSubscriptions: React.FC = () => {
     showToast('success', 'Link copiado', 'Ya puedes enviarlo al cliente para autorizar la suscripción.')
   }
 
-  const openMercadoPagoAuthorizationLink = (subscription: PaymentSubscription) => {
-    const link = getMercadoPagoSubscriptionLink(subscription)
+  const openSubscriptionStartLink = (subscription: PaymentSubscription) => {
+    const link = getSubscriptionStartLink(subscription)
     if (!link) {
-      showToast('warning', 'Link no disponible', 'Mercado Pago todavía no devolvió un link de autorización para esta suscripción.')
+      showToast('warning', 'Link no disponible', 'La pasarela todavía no devolvió un link de autorización para esta suscripción.')
       return
     }
 
@@ -819,10 +917,11 @@ export const PaymentSubscriptions: React.FC = () => {
         const busy = actingId === item.id
         const status = String(item.status || '').toLowerCase()
         const isMercadoPago = item.paymentProvider === 'mercadopago' || Boolean(item.mercadoPagoPreapprovalId)
+        const startLink = getSubscriptionStartLink(item)
+        const isAuthorizationPending = Boolean(startLink) && status === 'incomplete'
         const canPause = status === 'active' || status === 'trialing'
-        const canActivate = (status === 'paused' || status === 'draft' || status === 'past_due' || status === 'incomplete') && !(isMercadoPago && status === 'incomplete')
+        const canActivate = (status === 'paused' || status === 'draft' || status === 'past_due' || status === 'incomplete') && !(isMercadoPago && status === 'incomplete') && !isAuthorizationPending
         const canCancel = status !== 'cancelled' && status !== 'deleted'
-        const mercadoPagoAuthorizationLink = getMercadoPagoSubscriptionLink(item)
 
         return (
           <div className={styles.rowActions} onClick={(event) => event.stopPropagation()}>
@@ -842,13 +941,13 @@ export const PaymentSubscriptions: React.FC = () => {
                   <Edit3 size={16} />
                   <span>Ver / editar</span>
                 </DropdownMenuItem>
-                {mercadoPagoAuthorizationLink && (
+                {startLink && (
                   <>
-                    <DropdownMenuItem disabled={busy} onClick={() => void copyMercadoPagoAuthorizationLink(item)}>
+                    <DropdownMenuItem disabled={busy} onClick={() => void copySubscriptionStartLink(item)}>
                       <Copy size={16} />
                       <span>Copiar autorización</span>
                     </DropdownMenuItem>
-                    <DropdownMenuItem disabled={busy} onClick={() => openMercadoPagoAuthorizationLink(item)}>
+                    <DropdownMenuItem disabled={busy} onClick={() => openSubscriptionStartLink(item)}>
                       <ExternalLink size={16} />
                       <span>Abrir autorización</span>
                     </DropdownMenuItem>
@@ -1005,7 +1104,7 @@ export const PaymentSubscriptions: React.FC = () => {
         <Modal
           isOpen={formMode !== null}
           onClose={closeForm}
-          title={formMode === 'edit' ? 'Editar suscripción' : showGatewayStep ? 'Elige pasarela' : 'Nueva suscripción'}
+          title={formMode === 'edit' ? 'Editar suscripción' : showGatewayStep ? 'Elige cómo iniciar' : 'Nueva suscripción'}
           size="md"
           type="custom"
           closeOnBackdropClick={false}
@@ -1017,19 +1116,20 @@ export const PaymentSubscriptions: React.FC = () => {
           }}>
             {showGatewayStep ? (
               <div className={styles.gatewayPicker}>
-                {gatewayOptions.map((option) => {
-                  const active = form.paymentProvider === option.provider
+                {availablePaymentMethodOptions.map((option) => {
+                  const active = form.paymentMethod === option.value
+                  const providerName = option.provider === 'mercadopago' ? 'Mercado Pago' : option.provider === 'conekta' ? 'Conekta' : 'Stripe'
                   return (
                     <button
-                      key={option.provider}
+                      key={option.value}
                       type="button"
                       className={`${styles.gatewayOption} ${active ? styles.gatewayOptionActive : ''}`}
                       onClick={() => {
                         setForm((current) => ({
                           ...current,
-                          paymentMethod: getPaymentMethodForProvider(option.provider),
+                          paymentMethod: option.value,
                           paymentProvider: option.provider,
-                          status: option.provider === 'mercadopago' ? 'incomplete' : current.status === 'incomplete' ? 'active' : current.status
+                          status: option.value === 'stripe_link' || option.value === 'mercadopago_subscription' ? 'incomplete' : current.status === 'incomplete' ? 'active' : current.status
                         }))
                       }}
                     >
@@ -1037,14 +1137,9 @@ export const PaymentSubscriptions: React.FC = () => {
                         <PaymentPlatformLogo platform={option.provider} size="md" decorative />
                       </span>
                       <span>
-                        <strong>{option.provider === 'mercadopago' ? 'Mercado Pago' : option.provider === 'conekta' ? 'Conekta' : 'Stripe'}</strong>
-                        <small>
-                          {option.provider === 'mercadopago'
-                            ? 'Crea un enlace de autorización para activar la suscripción.'
-                            : option.provider === 'conekta'
-                              ? 'Usa domiciliación con la tarjeta guardada del contacto.'
-                              : 'Usa la tarjeta guardada del contacto para activar cobros recurrentes.'}
-                        </small>
+                        <strong>{providerName} · {option.modeLabel}</strong>
+                        <small>{option.description}</small>
+                        <small>{option.requirement} {option.result}</small>
                       </span>
                       {active && <Check size={18} className={styles.gatewayOptionCheck} aria-hidden="true" />}
                     </button>
@@ -1061,7 +1156,7 @@ export const PaymentSubscriptions: React.FC = () => {
                 />
               </div>
 
-              <div className={styles.formGroup}>
+              <div className={`${styles.formGroup} ${styles.fullWidth}`}>
                 <label>Nombre</label>
                 <input
                   value={form.name}
@@ -1071,18 +1166,19 @@ export const PaymentSubscriptions: React.FC = () => {
                 />
               </div>
 
-              <div className={styles.formGroup}>
-                <label>Estado</label>
-                <CustomSelect
-                  value={form.status}
-                  onChange={(event) => patchForm('status', event.target.value)}
-                  disabled={isMercadoPagoSelected && formMode === 'create'}
-                >
-                  {STATUS_OPTIONS.map((option) => (
-                    <option key={option.value} value={option.value}>{option.label}</option>
-                  ))}
-                </CustomSelect>
-              </div>
+              {formMode === 'edit' && (
+                <div className={styles.formGroup}>
+                  <label>Estado</label>
+                  <CustomSelect
+                    value={form.status}
+                    onChange={(event) => patchForm('status', event.target.value)}
+                  >
+                    {STATUS_OPTIONS.map((option) => (
+                      <option key={option.value} value={option.value}>{option.label}</option>
+                    ))}
+                  </CustomSelect>
+                </div>
+              )}
 
               <div className={`${styles.formGroup} ${styles.fullWidth}`}>
                 <label>Descripción</label>
@@ -1104,10 +1200,6 @@ export const PaymentSubscriptions: React.FC = () => {
                   placeholder="0.00"
                   required
                 />
-                <div className={styles.currencyNote}>
-                  <span>Moneda de cuenta</span>
-                  <strong>{accountCurrency}</strong>
-                </div>
               </div>
 
               <div className={styles.formGroup}>
@@ -1123,7 +1215,7 @@ export const PaymentSubscriptions: React.FC = () => {
               </div>
 
               <div className={styles.formGroup}>
-                <label>Cada</label>
+                <label>Cobrar cada</label>
                 <NumberInput
                   value={form.intervalCount}
                   onChange={(event) => patchForm('intervalCount', event.target.value)}
@@ -1131,6 +1223,7 @@ export const PaymentSubscriptions: React.FC = () => {
                   step="1"
                   required
                 />
+                <p className={styles.formHint}>{getBillingCadenceHelp(form.intervalType, form.intervalCount)}</p>
               </div>
 
               <div className={styles.formGroup}>
@@ -1142,6 +1235,31 @@ export const PaymentSubscriptions: React.FC = () => {
                   min={getTodayInputValue()}
                 />
               </div>
+
+              <div className={styles.formGroup}>
+                <label>Duración del plan</label>
+                <CustomSelect
+                  value={form.durationType}
+                  onChange={(event) => patchForm('durationType', event.target.value)}
+                >
+                  {DURATION_OPTIONS.map((option) => (
+                    <option key={option.value} value={option.value}>{option.label}</option>
+                  ))}
+                </CustomSelect>
+              </div>
+
+              {form.durationType === 'until_date' && (
+                <div className={styles.formGroup}>
+                  <label>Termina el</label>
+                  <input
+                    value={form.cancelAt}
+                    onChange={(event) => patchForm('cancelAt', event.target.value)}
+                    type="date"
+                    min={form.startDate || getTodayInputValue()}
+                    required
+                  />
+                </div>
+              )}
 
               {formMode === 'edit' && !isMercadoPagoSelected && (
                 <div className={styles.formGroup}>
@@ -1164,9 +1282,9 @@ export const PaymentSubscriptions: React.FC = () => {
                     const option = availablePaymentMethodOptions.find((item) => item.value === event.target.value)
                     setForm((current) => ({
                       ...current,
-                      paymentMethod: event.target.value,
+                      paymentMethod: (option?.value || 'stripe_saved_card') as SubscriptionPaymentMethod,
                       paymentProvider: option?.provider || 'stripe',
-                      status: current.status
+                      status: option?.value === 'stripe_link' || option?.value === 'mercadopago_subscription' ? 'incomplete' : current.status
                     }))
                   }}
                 >
@@ -1185,7 +1303,9 @@ export const PaymentSubscriptions: React.FC = () => {
                     ? 'Mercado Pago creará una autorización de suscripción. Copia el link y envíalo al cliente; los cobros se activan cuando acepte el método de pago.'
                     : isConektaSelected
                       ? 'Para cobros automáticos con Conekta, el contacto debe tener una tarjeta guardada. Ristak usará la tarjeta predeterminada del contacto.'
-                  : 'Para cobros automáticos con Stripe, el contacto debe tener una tarjeta guardada. Ristak usará la tarjeta predeterminada del contacto y guardará los datos técnicos por debajo.'}
+                      : form.paymentMethod === 'stripe_link'
+                        ? 'Stripe generará un Checkout de suscripción. Copia el link y envíalo al cliente; Ristak la activará cuando Stripe confirme la autorización.'
+                        : 'Para cobros automáticos con Stripe, el contacto debe tener una tarjeta guardada. Ristak usará la tarjeta predeterminada del contacto.'}
                 </p>
               </div>
               )}
@@ -1208,7 +1328,13 @@ export const PaymentSubscriptions: React.FC = () => {
                 {showGatewayStep ? 'Atrás' : 'Cancelar'}
               </Button>
               <Button type="submit" loading={saving}>
-                {formMode === 'edit' ? 'Guardar suscripción' : 'Crear enlace de pago'}
+                {formMode === 'edit'
+                  ? 'Guardar suscripción'
+                  : showGatewayStep
+                    ? startsByLink ? 'Crear link de autorización' : 'Crear suscripción'
+                    : availablePaymentMethodOptions.length > 1
+                      ? 'Continuar'
+                      : startsByLink ? 'Crear link de autorización' : 'Crear suscripción'}
               </Button>
             </div>
           </form>

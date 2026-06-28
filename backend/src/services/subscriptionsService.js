@@ -3,6 +3,7 @@ import { db } from '../config/database.js'
 import { logger } from '../utils/logger.js'
 import {
   cancelStripeRecurringSubscription,
+  createStripeSubscriptionCheckoutLink,
   createStripeRecurringSubscription,
   pauseStripeRecurringSubscription,
   resumeStripeRecurringSubscription,
@@ -238,6 +239,14 @@ async function getContactSnapshot(contactId) {
 function rowToApi(row = {}) {
   const metadata = parseJson(row.metadata_json, null)
   const raw = parseJson(row.raw_json, null)
+  const stripeCheckout = metadata?.stripeCheckout && typeof metadata.stripeCheckout === 'object'
+    ? metadata.stripeCheckout
+    : {}
+  const stripeCheckoutUrl = cleanString(stripeCheckout.url || stripeCheckout.checkoutUrl)
+  const mercadoPagoUrl = row.payment_mode === 'test'
+    ? cleanString(row.mercadopago_sandbox_init_point || row.mercadopago_init_point)
+    : cleanString(row.mercadopago_init_point || row.mercadopago_sandbox_init_point)
+  const subscriptionStartUrl = stripeCheckoutUrl || mercadoPagoUrl || null
 
   return {
     id: row.id,
@@ -267,6 +276,8 @@ function rowToApi(row = {}) {
     stripeProductId: row.stripe_product_id || null,
     stripePriceId: row.stripe_price_id || null,
     stripePaymentMethodId: row.stripe_payment_method_id || null,
+    stripeCheckoutSessionId: cleanString(stripeCheckout.sessionId || stripeCheckout.id) || null,
+    stripeCheckoutUrl: stripeCheckoutUrl || null,
     mercadoPagoPreapprovalId: row.mercadopago_preapproval_id || null,
     mercadoPagoPreapprovalPlanId: row.mercadopago_preapproval_plan_id || null,
     mercadoPagoInitPoint: row.mercadopago_init_point || null,
@@ -280,6 +291,7 @@ function rowToApi(row = {}) {
     conektaSubscriptionId: row.conekta_subscription_id || null,
     conektaPaymentSourceId: row.conekta_payment_source_id || null,
     conektaNextBillingAt: row.conekta_next_billing_at || null,
+    subscriptionStartUrl,
     metadata,
     raw,
     createdAt: row.created_at || null,
@@ -315,6 +327,11 @@ async function buildSubscriptionRow(payload = {}, existing = {}) {
   const intervalCount = normalizeIntervalCount(payload.intervalCount ?? payload.interval_count ?? existing.interval_count)
   const startDate = nullableDate(payload.startDate ?? payload.start_date ?? existing.start_date) || new Date().toISOString()
   const nextRunAt = nullableDate(payload.nextRunAt ?? payload.next_run_at ?? existing.next_run_at)
+  const hasCancelAtInput = Object.prototype.hasOwnProperty.call(payload, 'cancelAt')
+    || Object.prototype.hasOwnProperty.call(payload, 'cancel_at')
+  const cancelAt = hasCancelAtInput
+    ? nullableDate(payload.cancelAt ?? payload.cancel_at)
+    : nullableDate(existing.cancel_at)
 
   return {
     id: nullableString(existing.id) || nullableString(payload.id) || makeId(),
@@ -338,7 +355,7 @@ async function buildSubscriptionRow(payload = {}, existing = {}) {
     }),
     current_period_start: nullableDate(payload.currentPeriodStart ?? payload.current_period_start ?? existing.current_period_start),
     current_period_end: nullableDate(payload.currentPeriodEnd ?? payload.current_period_end ?? existing.current_period_end),
-    cancel_at: nullableDate(payload.cancelAt ?? payload.cancel_at ?? existing.cancel_at),
+    cancel_at: cancelAt,
     cancelled_at: nullableDate(payload.cancelledAt ?? payload.cancelled_at ?? existing.cancelled_at),
     payment_method: cleanString(payload.paymentMethod ?? payload.payment_method ?? existing.payment_method) || 'stripe_saved_card',
     payment_provider: cleanString(payload.paymentProvider ?? payload.payment_provider ?? existing.payment_provider) || 'stripe',
@@ -369,7 +386,43 @@ async function buildSubscriptionRow(payload = {}, existing = {}) {
 
 async function attachStripeSubscriptionIfNeeded(row, payload = {}) {
   if (row.stripe_subscription_id) return row
-  if (row.payment_provider !== 'stripe' || row.payment_method !== 'stripe_saved_card') return row
+  if (row.payment_provider !== 'stripe') return row
+
+  if (row.payment_method === 'stripe_link') {
+    const checkout = await createStripeSubscriptionCheckoutLink({
+      ristakSubscriptionId: row.id,
+      contactId: row.contact_id,
+      name: row.name,
+      description: row.description,
+      amount: row.amount,
+      currency: row.currency,
+      intervalType: row.interval_type,
+      intervalCount: row.interval_count,
+      startDate: row.start_date,
+      cancelAt: row.cancel_at,
+      contactName: row.contact_name,
+      contactEmail: row.contact_email,
+      contactPhone: row.contact_phone
+    })
+
+    return {
+      ...row,
+      status: checkout.status || 'incomplete',
+      stripe_customer_id: checkout.stripeCustomerId || row.stripe_customer_id,
+      stripe_product_id: checkout.stripeProductId || row.stripe_product_id,
+      stripe_price_id: checkout.stripePriceId || row.stripe_price_id,
+      payment_mode: checkout.paymentMode || row.payment_mode,
+      metadata_json: mergeMetadataJson(row.metadata_json, 'stripeCheckout', {
+        sessionId: checkout.stripeCheckoutSessionId || '',
+        url: checkout.stripeCheckoutUrl || '',
+        mode: checkout.paymentMode || row.payment_mode,
+        createdAt: new Date().toISOString()
+      }),
+      raw_json: mergeRawJson(row.raw_json, 'stripeCheckout', checkout.raw?.checkoutSession || checkout.raw)
+    }
+  }
+
+  if (row.payment_method !== 'stripe_saved_card') return row
 
   const stripeSubscription = await createStripeRecurringSubscription({
     ristakSubscriptionId: row.id,
@@ -381,6 +434,7 @@ async function attachStripeSubscriptionIfNeeded(row, payload = {}) {
     intervalType: row.interval_type,
     intervalCount: row.interval_count,
     startDate: row.start_date,
+    cancelAt: row.cancel_at,
     paymentMethodId: row.stripe_payment_method_id || payload.paymentMethodId || payload.stripePaymentMethodId,
     contactName: row.contact_name,
     contactEmail: row.contact_email,
@@ -401,6 +455,14 @@ async function attachStripeSubscriptionIfNeeded(row, payload = {}) {
     next_run_at: stripeSubscription.nextRunAt || row.next_run_at,
     stripe_initial_invoice: stripeSubscription.initialInvoice || null
   }
+}
+
+function mergeMetadataJson(currentMetadata, key, value) {
+  const current = parseJson(currentMetadata, {})
+  return jsonOrNull({
+    ...current,
+    [key]: value
+  })
 }
 
 function mergeRawJson(currentRaw, providerKey, value) {
@@ -506,7 +568,7 @@ async function attachConektaSubscriptionIfNeeded(row, payload = {}) {
 async function syncStripeSubscriptionUpdateIfNeeded(row, existing) {
   if (!existing.stripe_subscription_id) return row
 
-  if (row.payment_provider !== 'stripe' || row.payment_method !== 'stripe_saved_card') {
+  if (row.payment_provider !== 'stripe' || !['stripe_saved_card', 'stripe_link'].includes(row.payment_method)) {
     const error = new Error('Esta suscripción ya está activa en Stripe. Cancélala antes de cambiarla a un método manual.')
     error.status = 422
     throw error
@@ -521,7 +583,9 @@ async function syncStripeSubscriptionUpdateIfNeeded(row, existing) {
     amount: row.amount,
     currency: row.currency,
     intervalType: row.interval_type,
-    intervalCount: row.interval_count
+    intervalCount: row.interval_count,
+    cancelAt: row.cancel_at,
+    clearCancelAt: Boolean(existing.cancel_at && !row.cancel_at)
   })
 
   return {

@@ -63,6 +63,7 @@ const STRIPE_WEBHOOK_EVENTS = [
   'payment_intent.canceled',
   'charge.refunded',
   'refund.created',
+  'checkout.session.completed',
   'invoice.payment_succeeded',
   'invoice.payment_failed',
   'customer.subscription.updated',
@@ -406,6 +407,27 @@ function toStripeAmount(amount, currency) {
     : Math.round(normalized * 100)
 }
 
+function toStripeFutureTimestamp(value, label = 'La fecha final de la suscripción') {
+  const cleaned = cleanString(value)
+  if (!cleaned) return null
+
+  const date = new Date(cleaned)
+  if (Number.isNaN(date.getTime())) {
+    const error = new Error(`${label} no es válida.`)
+    error.status = 400
+    throw error
+  }
+
+  const timestamp = Math.floor(date.getTime() / 1000)
+  if (timestamp <= Math.floor(Date.now() / 1000)) {
+    const error = new Error(`${label} debe estar en el futuro.`)
+    error.status = 400
+    throw error
+  }
+
+  return timestamp
+}
+
 function fromStripeAmount(amount, currency) {
   const value = Number(amount || 0)
   const code = normalizeCurrency(currency).toLowerCase()
@@ -472,6 +494,20 @@ function timestampToIso(timestamp) {
 function buildPaymentUrl(baseUrl, publicPaymentId) {
   const cleanBase = cleanString(baseUrl).replace(/\/+$/, '')
   return `${cleanBase}/pay/${encodeURIComponent(publicPaymentId)}`
+}
+
+function getConfiguredBaseUrl() {
+  return cleanString(
+    process.env.PUBLIC_APP_URL ||
+    process.env.RENDER_EXTERNAL_URL ||
+    process.env.PUBLIC_URL ||
+    process.env.APP_URL
+  )
+}
+
+function buildSubscriptionReturnUrl(baseUrl, result) {
+  const cleanBase = cleanString(baseUrl || getConfiguredBaseUrl()).replace(/\/+$/, '') || 'https://www.ristak.com'
+  return `${cleanBase}/transactions/subscriptions?stripe_subscription=${encodeURIComponent(result)}&session_id={CHECKOUT_SESSION_ID}`
 }
 
 async function readRawConfig() {
@@ -2461,6 +2497,62 @@ export async function syncStripeSubscriptionInvoicePayment(invoice, nextStatus =
   return { synced: true, invoiceId: cleanString(invoice.id), status: nextStatus }
 }
 
+async function updateSubscriptionFromStripeCheckoutSession(session, { stripe, requestOptions } = {}) {
+  const metadata = session?.metadata && typeof session.metadata === 'object' ? session.metadata : {}
+  const ristakSubscriptionId = cleanString(metadata.ristak_subscription_id)
+  const stripeSubscriptionId = extractStripeObjectId(session?.subscription)
+  if (!ristakSubscriptionId && !stripeSubscriptionId) return null
+
+  const filters = []
+  const params = []
+  if (ristakSubscriptionId) {
+    filters.push('id = ?')
+    params.push(ristakSubscriptionId)
+  }
+  if (stripeSubscriptionId) {
+    filters.push('stripe_subscription_id = ?')
+    params.push(stripeSubscriptionId)
+  }
+
+  const existing = await db.get(
+    `SELECT id, cancel_at
+     FROM subscriptions
+     WHERE ${filters.join(' OR ')}
+     LIMIT 1`,
+    params
+  )
+  if (!existing) return null
+
+  if (stripeSubscriptionId && stripe?.subscriptions?.update && existing.cancel_at) {
+    const cancelAtTimestamp = toStripeFutureTimestamp(existing.cancel_at)
+    if (cancelAtTimestamp) {
+      await stripe.subscriptions.update(
+        stripeSubscriptionId,
+        { cancel_at: cancelAtTimestamp },
+        requestOptions
+      )
+    }
+  }
+
+  const nextStatus = session?.payment_status === 'paid' ? 'active' : 'incomplete'
+  await db.run(
+    `UPDATE subscriptions
+     SET status = CASE WHEN status = 'incomplete' THEN ? ELSE status END,
+         stripe_subscription_id = COALESCE(?, stripe_subscription_id),
+         stripe_customer_id = COALESCE(?, stripe_customer_id),
+         updated_at = CURRENT_TIMESTAMP
+     WHERE id = ?`,
+    [
+      nextStatus,
+      stripeSubscriptionId || null,
+      extractStripeObjectId(session?.customer) || null,
+      existing.id
+    ]
+  )
+
+  return nextStatus
+}
+
 async function updateSubscriptionFromStripeSubscription(subscription) {
   const ristakSubscriptionId = getRistakSubscriptionIdFromStripeSubscription(subscription)
   const stripeSubscriptionId = extractStripeObjectId(subscription?.id)
@@ -2512,6 +2604,112 @@ async function updateSubscriptionFromStripeSubscription(subscription) {
   )
 
   return nextStatus
+}
+
+export async function createStripeSubscriptionCheckoutLink(input = {}, { baseUrl = '' } = {}) {
+  const { stripe, config, requestOptions } = await getStripeClient()
+  const contactId = cleanString(input.contactId)
+  const contactEmail = cleanString(input.contactEmail || input.email)
+  const name = cleanString(input.name) || 'Suscripción'
+  const amount = Number(input.amount)
+  const currency = await getConfiguredCurrency()
+  const interval = cleanString(input.intervalType || 'monthly').toLowerCase()
+  const intervalCount = Number.parseInt(input.intervalCount, 10) || 1
+  const ristakSubscriptionId = cleanString(input.ristakSubscriptionId)
+
+  if (!contactId) {
+    const error = new Error('Selecciona un contacto para crear el link de suscripción de Stripe.')
+    error.status = 400
+    throw error
+  }
+
+  if (!contactEmail) {
+    const error = new Error('Stripe necesita el email del contacto para enviarle un link de suscripción.')
+    error.status = 422
+    throw error
+  }
+
+  if (!['daily', 'weekly', 'monthly', 'yearly'].includes(interval)) {
+    const error = new Error('Frecuencia de suscripción no soportada por Stripe.')
+    error.status = 400
+    throw error
+  }
+
+  const stripeCustomerId = await ensureStripeCustomerForContact(
+    stripe,
+    contactId,
+    { ...input, stripeMode: config.mode, email: contactEmail },
+    requestOptions
+  )
+
+  const metadata = {
+    ristak_subscription_id: ristakSubscriptionId,
+    ristak_contact_id: contactId,
+    source: 'ristak_subscription_checkout'
+  }
+
+  const product = await stripe.products.create(
+    {
+      name,
+      description: cleanString(input.description) || undefined,
+      metadata
+    },
+    requestOptions
+  )
+
+  const price = await stripe.prices.create(
+    {
+      currency: currency.toLowerCase(),
+      unit_amount: toStripeAmount(amount, currency),
+      recurring: {
+        interval: {
+          daily: 'day',
+          weekly: 'week',
+          monthly: 'month',
+          yearly: 'year'
+        }[interval],
+        interval_count: Math.max(1, intervalCount)
+      },
+      product: product.id,
+      metadata
+    },
+    requestOptions
+  )
+
+  const startDate = cleanString(input.startDate)
+  const startTimestamp = startDate ? Math.floor(new Date(startDate).getTime() / 1000) : 0
+  const nowTimestamp = Math.floor(Date.now() / 1000)
+  const subscriptionData = { metadata }
+  if (Number.isFinite(startTimestamp) && startTimestamp > nowTimestamp + 300) {
+    subscriptionData.trial_end = startTimestamp
+  }
+
+  const session = await stripe.checkout.sessions.create(
+    {
+      mode: 'subscription',
+      customer: stripeCustomerId || undefined,
+      customer_email: stripeCustomerId ? undefined : contactEmail,
+      line_items: [{ price: price.id, quantity: 1 }],
+      success_url: buildSubscriptionReturnUrl(baseUrl, 'success'),
+      cancel_url: buildSubscriptionReturnUrl(baseUrl, 'cancelled'),
+      subscription_data: subscriptionData,
+      metadata
+    },
+    requestOptions
+  )
+
+  return {
+    stripeCustomerId,
+    stripeProductId: product.id,
+    stripePriceId: price.id,
+    stripeCheckoutSessionId: cleanString(session?.id),
+    stripeCheckoutUrl: cleanString(session?.url),
+    paymentMode: config.mode,
+    status: 'incomplete',
+    raw: {
+      checkoutSession: session
+    }
+  }
 }
 
 export async function createStripeRecurringSubscription(input = {}) {
@@ -2597,6 +2795,7 @@ export async function createStripeRecurringSubscription(input = {}) {
   const startDate = cleanString(input.startDate)
   const startTimestamp = startDate ? Math.floor(new Date(startDate).getTime() / 1000) : 0
   const nowTimestamp = Math.floor(Date.now() / 1000)
+  const cancelAtTimestamp = toStripeFutureTimestamp(input.cancelAt)
   const subscriptionParams = {
     customer: stripeCustomerId,
     items: [{ price: price.id }],
@@ -2611,6 +2810,9 @@ export async function createStripeRecurringSubscription(input = {}) {
 
   if (Number.isFinite(startTimestamp) && startTimestamp > nowTimestamp + 300) {
     subscriptionParams.trial_end = startTimestamp
+  }
+  if (cancelAtTimestamp) {
+    subscriptionParams.cancel_at = cancelAtTimestamp
   }
 
   const subscription = await stripe.subscriptions.create(subscriptionParams, requestOptions)
@@ -2716,18 +2918,28 @@ export async function updateStripeRecurringSubscription(input = {}) {
     requestOptions
   )
 
+  const cancelAtTimestamp = toStripeFutureTimestamp(input.cancelAt)
+  const subscriptionUpdateParams = {
+    items: [
+      {
+        id: item.id,
+        price: price.id
+      }
+    ],
+    proration_behavior: 'none',
+    metadata
+  }
+
+  if (cancelAtTimestamp) {
+    subscriptionUpdateParams.cancel_at = cancelAtTimestamp
+  } else if (input.clearCancelAt) {
+    subscriptionUpdateParams.cancel_at = ''
+    subscriptionUpdateParams.cancel_at_period_end = false
+  }
+
   const updated = await stripe.subscriptions.update(
     stripeSubscriptionId,
-    {
-      items: [
-        {
-          id: item.id,
-          price: price.id
-        }
-      ],
-      proration_behavior: 'none',
-      metadata
-    },
+    subscriptionUpdateParams,
     requestOptions
   )
   const period = getSubscriptionPeriod(updated)
@@ -5063,6 +5275,8 @@ export async function handleStripeWebhookEvent(rawBody, signature) {
 
   if (object?.object === 'payment_intent') {
     await updatePaymentFromIntent(object, { stripe, config, requestOptions })
+  } else if (event.type === 'checkout.session.completed' && object?.object === 'checkout.session') {
+    await updateSubscriptionFromStripeCheckoutSession(object, { stripe, requestOptions })
   } else if (event.type === 'invoice.payment_succeeded' && object?.object === 'invoice') {
     await updateSubscriptionFromInvoice(object, 'paid')
     await updatePaymentFromInvoice(object, 'paid')

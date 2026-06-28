@@ -145,6 +145,7 @@ function createStripeMock({ failAmounts = new Set(), webhookEvent = null } = {})
     productsCreate: [],
     productsUpdate: [],
     pricesCreate: [],
+    checkoutSessionsCreate: [],
     subscriptionsCreate: [],
     subscriptionsRetrieve: [],
     subscriptionsUpdate: [],
@@ -155,6 +156,7 @@ function createStripeMock({ failAmounts = new Set(), webhookEvent = null } = {})
   let paymentIntentCounter = 0
   let productCounter = 0
   let priceCounter = 0
+  let checkoutSessionCounter = 0
   let subscriptionCounter = 0
 
   const stripe = {
@@ -244,6 +246,24 @@ function createStripeMock({ failAmounts = new Set(), webhookEvent = null } = {})
         priceCounter += 1
         calls.pricesCreate.push({ params, options })
         return { id: `price_stress_${priceCounter}` }
+      }
+    },
+    checkout: {
+      sessions: {
+        create: async (params, options) => {
+          checkoutSessionCounter += 1
+          calls.checkoutSessionsCreate.push({ params, options })
+          return {
+            id: `cs_stress_${checkoutSessionCounter}`,
+            object: 'checkout.session',
+            url: `https://checkout.stripe.test/cs_stress_${checkoutSessionCounter}`,
+            mode: params.mode,
+            customer: params.customer,
+            payment_status: 'unpaid',
+            subscription: null,
+            metadata: params.metadata
+          }
+        }
       }
     },
     subscriptions: {
@@ -871,6 +891,67 @@ test('suscripciones Stripe test: crea, sube/baja precio, pausa, reanuda, cancela
     )
     assert.equal(removed, null)
     assert.equal(paymentAfterDelete, null)
+  } finally {
+    setStripeFactoryForTest(null)
+    await cleanupContact(contactId)
+  }
+})
+
+test('suscripciones Stripe: link de autorizacion crea Checkout sin iniciar con tarjeta guardada', async () => {
+  const { contactId, contact, stripeCustomerId } = await seedContactWithSavedCard('subscription_checkout_link')
+  const { stripe, calls } = createStripeMock()
+  setStripeFactoryForTest(() => stripe)
+
+  try {
+    await configureStripe()
+
+    const created = await createSubscription({
+      contactId,
+      contactName: contact.name,
+      contactEmail: contact.email,
+      contactPhone: contact.phone,
+      name: 'Membresia por link',
+      description: 'Suscripcion activada por Checkout',
+      amount: 750,
+      intervalType: 'monthly',
+      intervalCount: 1,
+      startDate: addDaysDateOnly(7),
+      cancelAt: addDaysDateOnly(120),
+      paymentMethod: 'stripe_link',
+      paymentProvider: 'stripe',
+      status: 'incomplete'
+    })
+
+    assert.equal(created.status, 'incomplete')
+    assert.equal(created.paymentMethod, 'stripe_link')
+    assert.equal(created.paymentProvider, 'stripe')
+    assert.equal(created.stripeCustomerId, stripeCustomerId)
+    assert.equal(created.stripeCheckoutSessionId, 'cs_stress_1')
+    assert.equal(created.stripeCheckoutUrl, 'https://checkout.stripe.test/cs_stress_1')
+    assert.equal(created.subscriptionStartUrl, created.stripeCheckoutUrl)
+    assert.equal(calls.checkoutSessionsCreate.length, 1)
+    assert.equal(calls.subscriptionsCreate.length, 0)
+
+    const checkoutParams = calls.checkoutSessionsCreate[0].params
+    assert.equal(checkoutParams.mode, 'subscription')
+    assert.equal(checkoutParams.customer, stripeCustomerId)
+    assert.deepEqual(checkoutParams.line_items, [{ price: 'price_stress_1', quantity: 1 }])
+    assert.equal(checkoutParams.subscription_data.metadata.ristak_subscription_id, created.id)
+    assert.equal(checkoutParams.metadata.ristak_subscription_id, created.id)
+
+    const saved = await db.get(
+      `SELECT status, payment_method, payment_provider, stripe_subscription_id, metadata_json
+       FROM subscriptions
+       WHERE id = ?`,
+      [created.id]
+    )
+    const metadata = JSON.parse(saved.metadata_json)
+    assert.equal(saved.status, 'incomplete')
+    assert.equal(saved.payment_method, 'stripe_link')
+    assert.equal(saved.payment_provider, 'stripe')
+    assert.equal(saved.stripe_subscription_id, null)
+    assert.equal(metadata.stripeCheckout.sessionId, 'cs_stress_1')
+    assert.equal(metadata.stripeCheckout.url, 'https://checkout.stripe.test/cs_stress_1')
   } finally {
     setStripeFactoryForTest(null)
     await cleanupContact(contactId)
