@@ -261,24 +261,17 @@ const paymentModeLabels: Record<PaymentModeId, { title: string; badge: string; d
   }
 }
 const mercadoPagoSinglePaymentTestSteps = [
-  'Deja el modo global en Prueba y conecta la cuenta dueña de la integración. Para pago único con tarjeta no necesitas vendedor y comprador test.',
-  'Crea un link de pago único desde Ristak y abre el checkout.',
-  'Usa una tarjeta de prueba de los recursos de Mercado Pago. El titular APRO aprueba; FUND simula fondos insuficientes.',
-  'Captura un correo válido cuando el formulario lo pida. En pruebas, usa uno distinto al de la cuenta de Mercado Pago conectada.'
+  'Conecta Mercado Pago en modo prueba.',
+  'Crea un link de pago único y abre el checkout.',
+  'Usa tarjeta de prueba: APRO aprueba, FUND rechaza por fondos.',
+  'Captura un correo válido distinto al de la cuenta conectada.'
 ]
 const mercadoPagoSubscriptionTestSteps = [
-  'Crea usuarios test en Mercado Pago: vendedor y comprador del mismo país.',
-  'Entra en modo incógnito con el usuario vendedor test y crea una aplicación en Tus integraciones.',
-  'En esa aplicación, copia las credenciales de producción APP_USR y guárdalas en Ristak para suscripciones test.',
-  'Configura webhooks en la misma aplicación del vendedor test: URL de Ristak, eventos de pagos, planes y suscripciones, reclamos y clave secreta.',
-  'Conecta Mercado Pago en Ristak iniciando sesión como vendedor test. Crea la suscripción y abre el link como comprador test.'
-]
-const mercadoPagoSubscriptionWebhookSteps = [
-  'En Mercado Pago entra como vendedor test y abre Tus integraciones > tu aplicación.',
-  'Ve a Notificaciones Webhooks y configura la URL pública de Ristak.',
-  'Activa Modo de prueba y Modo productivo si Mercado Pago los muestra separados para esa app.',
-  'Marca Pagos, Planes y suscripciones, y Reclamos.',
-  'Copia la clave secreta generada por Mercado Pago y guárdala aquí.'
+  'Crea vendedor test y comprador test del mismo país.',
+  'En incógnito, entra como vendedor test y crea una app en Tus integraciones.',
+  'Copia Public Key y Access Token APP_USR de esa app.',
+  'Configura Webhooks con URL de Ristak, eventos y clave secreta.',
+  'Abre el link como comprador test. No uses vendedor ni cuenta real.'
 ]
 const mercadoPagoSubscriptionWebhookEvents: WebhookEventGuideItem[] = [
   {
@@ -294,6 +287,7 @@ const mercadoPagoSubscriptionWebhookEvents: WebhookEventGuideItem[] = [
     description: 'Detecta reclamos o contracargos relacionados con pagos.'
   }
 ]
+const mercadoPagoSubscriptionWebhookEventNames = mercadoPagoSubscriptionWebhookEvents.map((item) => item.event).join('\n')
 const PAYMENT_META_DEFAULT_PURCHASE_EVENT_NAME = 'Purchase'
 const PAYMENT_META_DEFAULT_EVENT_CHANNEL: PaymentMetaPurchaseEventChannel = 'smart'
 const PAYMENT_META_PARAMETER_VARIABLE_CATEGORIES = new Set([
@@ -3618,19 +3612,19 @@ export const PaymentsConfiguration: React.FC = () => {
                   </div>
 
                   {paymentMode === 'test' && (
-                    <div className={styles.mercadoPagoTestGuide}>
-                      <div className={styles.mercadoPagoTestGuideHeader}>
-                        <div>
-                          <strong>Pagos únicos en modo prueba</strong>
-                          <span>Este flujo usa la conexión OAuth normal de Mercado Pago y tarjetas de prueba.</span>
-                        </div>
-                        <Badge variant="info">Modo prueba</Badge>
-                      </div>
-
-                      <section className={styles.mercadoPagoTestGuideSection}>
-                        <div className={styles.mercadoPagoTestGuideTitle}>
-                          <CreditCard size={16} />
-                          <h4>Checkout de pago único</h4>
+                    <div className={styles.mercadoPagoTestLayout}>
+                      <section className={styles.mercadoPagoTestColumn}>
+                        <div className={styles.mercadoPagoTestColumnHeader}>
+                          <div className={styles.mercadoPagoTestHeading}>
+                            <span className={styles.mercadoPagoTestIcon}>
+                              <CreditCard size={16} />
+                            </span>
+                            <div>
+                              <strong>Pagos únicos test</strong>
+                              <span>OAuth normal de Mercado Pago + tarjetas de prueba.</span>
+                            </div>
+                          </div>
+                          <Badge variant="info">Simple</Badge>
                         </div>
                         <ol className={styles.mercadoPagoTestGuideSteps}>
                           {mercadoPagoSinglePaymentTestSteps.map((step) => (
@@ -3638,179 +3632,164 @@ export const PaymentsConfiguration: React.FC = () => {
                           ))}
                         </ol>
                         <p className={styles.mercadoPagoTestGuideNote}>
-                          Si el comprador escribe otro correo en el checkout, Mercado Pago lo usará como correo del pagador.
+                          Si el comprador escribe otro correo, Mercado Pago lo usa como correo del pagador.
                           Ristak mantiene el pago ligado al contacto y al link original.
                         </p>
                       </section>
 
-                      <div className={styles.mercadoPagoTestGuideFooter}>
-                        <Info size={16} />
-                        <span>
-                          Este bloque no configura suscripciones. Para suscripciones test necesitas una aplicación del vendedor test y webhooks propios.
-                        </span>
-                      </div>
-                    </div>
-                  )}
-
-                  {paymentMode === 'test' && (
-                    <div className={styles.mercadoPagoCredentialPanel}>
-                      <div className={styles.mercadoPagoCredentialHeader}>
-                        <div>
-                          <strong>Suscripciones test: app, credenciales y webhook</strong>
-                          <span>Crea una aplicación dentro de la cuenta vendedora test y configura sus credenciales igual que una integración en vivo.</span>
+                      <section className={styles.mercadoPagoTestColumn}>
+                        <div className={styles.mercadoPagoTestColumnHeader}>
+                          <div className={styles.mercadoPagoTestHeading}>
+                            <span className={styles.mercadoPagoTestIcon}>
+                              <FileCheck2 size={16} />
+                            </span>
+                            <div>
+                              <strong>Suscripciones test</strong>
+                              <span>App del vendedor test + credenciales APP_USR + webhook.</span>
+                            </div>
+                          </div>
+                          <Badge variant={mercadoPagoSubscriptionTestConfigured ? 'success' : 'neutral'}>
+                            {mercadoPagoSubscriptionTestConfigured ? 'Configurado' : 'Pendiente'}
+                          </Badge>
                         </div>
-                        <Badge variant={mercadoPagoSubscriptionTestConfigured ? 'success' : 'neutral'}>
-                          {mercadoPagoSubscriptionTestConfigured ? 'Configurado' : 'Pendiente'}
-                        </Badge>
-                      </div>
 
-                      <section className={styles.mercadoPagoTestGuideSection}>
-                        <div className={styles.mercadoPagoTestGuideTitle}>
-                          <FileCheck2 size={16} />
-                          <h4>Pasos para probar suscripciones</h4>
-                        </div>
                         <ol className={styles.mercadoPagoTestGuideSteps}>
                           {mercadoPagoSubscriptionTestSteps.map((step) => (
                             <li key={step}>{step}</li>
                           ))}
                         </ol>
                         <p className={styles.mercadoPagoTestGuideNote}>
-                          En suscripciones, Ristak crea un plan abierto y Mercado Pago identifica al comprador cuando inicia sesión en el checkout.
-                          Si autorizas con el vendedor o con una cuenta real, Mercado Pago puede bloquear la prueba.
+                          Mercado Pago identifica al comprador en el checkout. No autorices con el vendedor ni con una cuenta real.
                         </p>
-                      </section>
 
-                      <section className={styles.mercadoPagoTestGuideSection}>
-                        <div className={styles.mercadoPagoTestGuideTitle}>
-                          <Webhook size={16} />
-                          <h4>Webhook de la aplicación test</h4>
-                        </div>
-                        <ol className={styles.mercadoPagoTestGuideSteps}>
-                          {mercadoPagoSubscriptionWebhookSteps.map((step) => (
-                            <li key={step}>{step}</li>
-                          ))}
-                        </ol>
-                        {mercadoPagoWebhookEndpoints.length > 0 && (
-                          <div className={styles.endpointList}>
-                            {mercadoPagoWebhookEndpoints.map((endpoint) => (
-                              <div key={`${endpoint.source}-${endpoint.url}`} className={styles.endpointItem}>
-                                <div>
-                                  <strong>{endpoint.label}</strong>
-                                  <span>{endpoint.description}</span>
-                                  <span>{endpoint.url}</span>
-                                </div>
-                                <Button
-                                  type="button"
-                                  variant="secondary"
-                                  size="sm"
-                                  leftIcon={<Copy size={15} />}
-                                  onClick={() => handleCopyGatewayText(endpoint.url, 'URL', 'Mercado Pago')}
-                                >
-                                  Copiar
-                                </Button>
-                              </div>
-                            ))}
+                        <div className={styles.mercadoPagoMiniSection}>
+                          <div className={styles.mercadoPagoMiniTitle}>
+                            <Webhook size={16} />
+                            <strong>Webhook</strong>
                           </div>
-                        )}
-                        {renderWebhookEventGuide(
-                          'Mercado Pago',
-                          'Eventos para suscripciones test',
-                          'Selecciona estos tópicos en la aplicación del vendedor test para que Ristak pueda activar suscripciones y registrar cobros recurrentes.',
-                          mercadoPagoSubscriptionWebhookEvents
-                        )}
-                      </section>
-
-                      <div className={styles.formGrid}>
-                        {renderField(
-                          'Public Key APP_USR',
-                          <input
-                            type="text"
-                            value={mercadoPagoSubscriptionTestCredentials.publicKey}
-                            onChange={(event) => updateMercadoPagoSubscriptionTestCredential('publicKey', event.target.value)}
-                            placeholder="APP_USR-..."
-                            autoComplete="off"
-                            spellCheck={false}
-                          />
-                        )}
-                        {renderField(
-                          'Access Token APP_USR',
-                          <input
-                            type="password"
-                            value={mercadoPagoSubscriptionTestCredentials.accessToken}
-                            onChange={(event) => updateMercadoPagoSubscriptionTestCredential('accessToken', event.target.value)}
-                            onFocus={(event) => {
-                              if (mercadoPagoConfig?.subscriptionTestCredentials?.accessTokenPreview && mercadoPagoSubscriptionTestCredentials.accessToken === mercadoPagoConfig.subscriptionTestCredentials.accessTokenPreview) {
-                                event.currentTarget.select()
-                              }
-                            }}
-                            placeholder={mercadoPagoConfig?.subscriptionTestCredentials?.hasAccessToken ? mercadoPagoConfig.subscriptionTestCredentials.accessTokenPreview : 'APP_USR-...'}
-                            autoComplete="new-password"
-                            spellCheck={false}
-                          />
-                        )}
-                        {renderField(
-                          'Clave secreta del webhook',
-                          <input
-                            type="password"
-                            value={mercadoPagoSubscriptionTestCredentials.webhookSecret}
-                            onChange={(event) => updateMercadoPagoSubscriptionTestCredential('webhookSecret', event.target.value)}
-                            onFocus={(event) => {
-                              if (mercadoPagoConfig?.subscriptionTestCredentials?.webhookSecretPreview && mercadoPagoSubscriptionTestCredentials.webhookSecret === mercadoPagoConfig.subscriptionTestCredentials.webhookSecretPreview) {
-                                event.currentTarget.select()
-                              }
-                            }}
-                            placeholder={mercadoPagoConfig?.subscriptionTestCredentials?.hasWebhookSecret ? mercadoPagoConfig.subscriptionTestCredentials.webhookSecretPreview : 'Clave secreta de Webhooks'}
-                            autoComplete="new-password"
-                            spellCheck={false}
-                          />
-                        )}
-                      </div>
-
-                      <div className={styles.inlineInfo}>
-                        <ShieldCheck size={16} />
-                        <span>
-                          Mercado Pago usa TEST-* para pagos únicos transparentes, pero suscripciones hospedadas en prueba necesitan APP_USR-* y la clave secreta del webhook de la aplicación del vendedor test.
-                        </span>
-                      </div>
-
-                      <div className={styles.stripeModeActions}>
-                        <Button
-                          type="button"
-                          size="sm"
-                          onClick={handleSaveMercadoPagoSubscriptionTestCredentials}
-                          disabled={savingMercadoPagoSubscriptionTestCredentials || clearingMercadoPagoSubscriptionTestCredentials || !mercadoPagoSubscriptionTestCanSave}
-                        >
-                          {savingMercadoPagoSubscriptionTestCredentials ? (
-                            <>
-                              <Loader2 size={15} className={styles.spinIcon} />
-                              Guardando...
-                            </>
-                          ) : (
-                            'Guardar credenciales'
+                          {mercadoPagoWebhookEndpoints.length > 0 && (
+                            <div className={styles.endpointList}>
+                              {mercadoPagoWebhookEndpoints.map((endpoint) => (
+                                <div key={`${endpoint.source}-${endpoint.url}`} className={styles.endpointItem}>
+                                  <div>
+                                    <strong>{endpoint.label}</strong>
+                                    <span>{endpoint.url}</span>
+                                  </div>
+                                  <Button
+                                    type="button"
+                                    variant="secondary"
+                                    size="sm"
+                                    leftIcon={<Copy size={15} />}
+                                    onClick={() => handleCopyGatewayText(endpoint.url, 'URL', 'Mercado Pago')}
+                                  >
+                                    Copiar
+                                  </Button>
+                                </div>
+                              ))}
+                            </div>
                           )}
-                        </Button>
-                        {mercadoPagoSubscriptionTestConfigured && (
+                          <div className={styles.mercadoPagoEventStrip}>
+                            <div>
+                              <strong>Eventos</strong>
+                              <span>Marca: Pagos, Planes y suscripciones, Reclamos.</span>
+                            </div>
+                            <Button
+                              type="button"
+                              variant="secondary"
+                              size="sm"
+                              leftIcon={<Copy size={15} />}
+                              onClick={() => handleCopyGatewayText(mercadoPagoSubscriptionWebhookEventNames, 'Eventos', 'Mercado Pago')}
+                            >
+                              Copiar eventos
+                            </Button>
+                          </div>
+                        </div>
+
+                        <div className={styles.mercadoPagoCredentialGrid}>
+                          {renderField(
+                            'Public Key APP_USR',
+                            <input
+                              type="text"
+                              value={mercadoPagoSubscriptionTestCredentials.publicKey}
+                              onChange={(event) => updateMercadoPagoSubscriptionTestCredential('publicKey', event.target.value)}
+                              placeholder="APP_USR-..."
+                              autoComplete="off"
+                              spellCheck={false}
+                            />
+                          )}
+                          {renderField(
+                            'Access Token APP_USR',
+                            <input
+                              type="password"
+                              value={mercadoPagoSubscriptionTestCredentials.accessToken}
+                              onChange={(event) => updateMercadoPagoSubscriptionTestCredential('accessToken', event.target.value)}
+                              onFocus={(event) => {
+                                if (mercadoPagoConfig?.subscriptionTestCredentials?.accessTokenPreview && mercadoPagoSubscriptionTestCredentials.accessToken === mercadoPagoConfig.subscriptionTestCredentials.accessTokenPreview) {
+                                  event.currentTarget.select()
+                                }
+                              }}
+                              placeholder={mercadoPagoConfig?.subscriptionTestCredentials?.hasAccessToken ? mercadoPagoConfig.subscriptionTestCredentials.accessTokenPreview : 'APP_USR-...'}
+                              autoComplete="new-password"
+                              spellCheck={false}
+                            />
+                          )}
+                          {renderField(
+                            'Clave secreta del webhook',
+                            <input
+                              type="password"
+                              value={mercadoPagoSubscriptionTestCredentials.webhookSecret}
+                              onChange={(event) => updateMercadoPagoSubscriptionTestCredential('webhookSecret', event.target.value)}
+                              onFocus={(event) => {
+                                if (mercadoPagoConfig?.subscriptionTestCredentials?.webhookSecretPreview && mercadoPagoSubscriptionTestCredentials.webhookSecret === mercadoPagoConfig.subscriptionTestCredentials.webhookSecretPreview) {
+                                  event.currentTarget.select()
+                                }
+                              }}
+                              placeholder={mercadoPagoConfig?.subscriptionTestCredentials?.hasWebhookSecret ? mercadoPagoConfig.subscriptionTestCredentials.webhookSecretPreview : 'Clave secreta de Webhooks'}
+                              autoComplete="new-password"
+                              spellCheck={false}
+                            />
+                          )}
+                        </div>
+
+                        <div className={styles.stripeModeActions}>
                           <Button
                             type="button"
-                            variant="secondary"
                             size="sm"
-                            onClick={handleClearMercadoPagoSubscriptionTestCredentials}
-                            disabled={savingMercadoPagoSubscriptionTestCredentials || clearingMercadoPagoSubscriptionTestCredentials}
+                            onClick={handleSaveMercadoPagoSubscriptionTestCredentials}
+                            disabled={savingMercadoPagoSubscriptionTestCredentials || clearingMercadoPagoSubscriptionTestCredentials || !mercadoPagoSubscriptionTestCanSave}
                           >
-                            {clearingMercadoPagoSubscriptionTestCredentials ? (
+                            {savingMercadoPagoSubscriptionTestCredentials ? (
                               <>
                                 <Loader2 size={15} className={styles.spinIcon} />
-                                Borrando...
+                                Guardando...
                               </>
                             ) : (
-                              <>
-                                <Unplug size={15} />
-                                Desconectar
-                              </>
+                              'Guardar credenciales'
                             )}
                           </Button>
-                        )}
-                      </div>
+                          {mercadoPagoSubscriptionTestConfigured && (
+                            <Button
+                              type="button"
+                              variant="secondary"
+                              size="sm"
+                              onClick={handleClearMercadoPagoSubscriptionTestCredentials}
+                              disabled={savingMercadoPagoSubscriptionTestCredentials || clearingMercadoPagoSubscriptionTestCredentials}
+                            >
+                              {clearingMercadoPagoSubscriptionTestCredentials ? (
+                                <>
+                                  <Loader2 size={15} className={styles.spinIcon} />
+                                  Borrando...
+                                </>
+                              ) : (
+                                <>
+                                  <Unplug size={15} />
+                                  Desconectar
+                                </>
+                              )}
+                            </Button>
+                          )}
+                        </div>
+                      </section>
                     </div>
                   )}
 
