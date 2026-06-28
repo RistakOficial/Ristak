@@ -282,23 +282,15 @@ const mercadoPagoSubscriptionWebhookSteps = [
 ]
 const mercadoPagoSubscriptionWebhookEvents: WebhookEventGuideItem[] = [
   {
-    event: 'subscription_preapproval_plan',
-    description: 'Detecta planes de suscripción creados o actualizados.'
-  },
-  {
-    event: 'subscription_preapproval',
-    description: 'Activa, pausa o cancela la suscripción cuando el comprador la autoriza.'
-  },
-  {
-    event: 'subscription_authorized_payment',
-    description: 'Registra los cobros recurrentes aprobados de la suscripción.'
-  },
-  {
-    event: 'payment',
+    event: 'Pagos',
     description: 'Sincroniza pagos aprobados, pendientes, fallidos o reembolsados.'
   },
   {
-    event: 'topic_claims_integration_wh',
+    event: 'Planes y suscripciones',
+    description: 'Activa suscripciones, cambios de estado y cobros recurrentes autorizados.'
+  },
+  {
+    event: 'Reclamos',
     description: 'Detecta reclamos o contracargos relacionados con pagos.'
   }
 ]
