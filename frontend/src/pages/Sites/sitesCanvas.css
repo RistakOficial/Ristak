@@ -2543,7 +2543,7 @@ html body :is(.rstkCanvas.rstk-kind-form.rstk-choice-grid, .rstkCanvas.rstk-kind
   max-width: 100%;
   min-width: 0;
   gap: var(--rstk-gap);
-  padding: var(--rstk-frame-pad, var(--rstk-pad));
+  padding: 0;
   background: var(--rstk-form-surface, var(--rstk-surface));
   border: var(--rstk-page-border-width, 0) solid var(--rstk-page-border, var(--rstk-border));
   border-radius: var(--rstk-page-radius, var(--rstk-radius-lg));
@@ -2578,6 +2578,10 @@ html body :is(.rstkCanvas.rstk-kind-form.rstk-choice-grid, .rstkCanvas.rstk-kind
 .rstkCanvas .rstkEmbeddedFormSourceFrame .rstk-block-style {
   max-width: 100%;
   min-width: 0;
+}
+
+.rstkCanvas .rstkEmbeddedFormSourceFrame .rstk-social-profile-block {
+  padding: 0;
 }
 
 /* Contenido del formulario embebido: igual al standalone. font-family var(--rstk-font)
