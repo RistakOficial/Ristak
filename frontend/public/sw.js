@@ -1,6 +1,7 @@
 const CACHE_NAME = 'ristak-branding-v23'
 const DEFAULT_NOTIFICATION_TITLE = 'Notificación nueva'
 const DEFAULT_NOTIFICATION_BODY = 'Tienes una notificación nueva.'
+const LATEST_NOTIFICATION_TAG = 'ristak-latest-notification'
 const SHELL_ASSETS = [
   '/',
   '/movil/login',
@@ -119,6 +120,7 @@ function getNotificationData(payload) {
     url: payload?.url || '/movil',
     category: payload?.category || 'ristak',
     tag: payload?.tag || 'ristak-chat',
+    sourceTag: payload?.tag || '',
     messageId: payload?.messageId || '',
     contactId: payload?.contactId || ''
   }
@@ -161,7 +163,7 @@ self.addEventListener('push', (event) => {
         body: getNotificationBody(payload),
         icon: '/ristak-chat-icon-192.png',
         badge: '/ristak-chat-icon-192.png',
-        tag: notificationData.tag,
+        tag: LATEST_NOTIFICATION_TAG,
         renotify: true,
         data: notificationData
       })
