@@ -2484,7 +2484,10 @@ html body :is(.rstkCanvas.rstk-kind-form.rstk-choice-grid, .rstkCanvas.rstk-kind
   width: 100%;
   min-width: 0;
   max-width: min(100%, var(--rstk-max));
-  margin: 0 auto;
+  margin-top: 0;
+  margin-bottom: 0;
+  margin-left: var(--rstk-form-page-margin-left, auto);
+  margin-right: var(--rstk-form-page-margin-right, auto);
   border: var(--rstk-page-border-width, 0) solid var(--rstk-page-border, transparent);
   border-radius: var(--rstk-page-radius, 0);
   overflow: visible;
@@ -2506,7 +2509,10 @@ html body :is(.rstkCanvas.rstk-kind-form.rstk-choice-grid, .rstkCanvas.rstk-kind
 .rstkCanvas .rstkEmbeddedFormSourceFrame.rstkEmbeddedFormStretch > .rstk-page {
   max-width: min(100%, var(--rstk-max));
   width: 100%;
-  margin: 0 auto;
+  margin-top: 0;
+  margin-bottom: 0;
+  margin-left: var(--rstk-form-page-margin-left, auto);
+  margin-right: var(--rstk-form-page-margin-right, auto);
 }
 /* El text-align del contenido embebido lo dan las reglas del standalone (.rstk-block-style
    para alineación por-bloque, y la herencia del shell para el default), igual que en el
@@ -2970,6 +2976,7 @@ html body :is(.rstkCanvas.rstk-kind-form.rstk-choice-grid, .rstkCanvas.rstk-kind
   .rstkCanvas .rstkEmbeddedFormFieldActive::after,
   .rstkCanvas .rstkEmbeddedFormItemActive::after,
   .rstkCanvas .rstkEmbeddedFormSubmitActive::after,
+  .rstkCanvas .rstkSelActive .rstkEmbeddedFormSourceFrame > .rstk-page::after,
   .rstkPopupEditorModalSelected::after {
     animation: none;
   }
@@ -2982,6 +2989,28 @@ html body :is(.rstkCanvas.rstk-kind-form.rstk-choice-grid, .rstkCanvas.rstk-kind
 }
 .rstkCanvas .rstk-section-lane.rstkSelActive:has(.rstkEmbeddedFormSourceRoot)::after {
   inset: -1px;
+}
+.rstkCanvas .rstkSelActive:has(.rstkEmbeddedFormSourceRoot)::after {
+  content: none;
+}
+.rstkCanvas .rstkSelActive .rstkEmbeddedFormSourceFrame > .rstk-page::after {
+  content: "";
+  position: absolute;
+  inset: calc(-6px - var(--rstk-page-border-width, 0px));
+  border-radius: calc(var(--rstk-page-radius, 0px) + 6px + var(--rstk-page-border-width, 0px));
+  pointer-events: none;
+  z-index: 6;
+  background-image: var(--rstk-march-bg);
+  background-size: 14px 3px, 14px 3px, 3px 14px, 3px 14px;
+  background-position: 0 0, 0 100%, 0 0, 100% 0;
+  background-repeat: repeat-x, repeat-x, repeat-y, repeat-y;
+  filter: drop-shadow(0 0 1px var(--rstk-selection-contrast, rgba(15, 23, 42, 0.28)));
+  animation: rstkSelMarch 1s linear infinite;
+}
+@media (prefers-reduced-motion: reduce) {
+  .rstkCanvas .rstkSelActive .rstkEmbeddedFormSourceFrame > .rstk-page::after {
+    animation: none;
+  }
 }
 .rstkCanvas .rstkEmbeddedFormFieldActive::after,
 .rstkCanvas .rstkEmbeddedFormItemActive::after {

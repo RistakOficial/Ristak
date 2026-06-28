@@ -443,6 +443,12 @@ const justifyForButtonAlign = (align: string) => {
   return 'start'
 }
 
+const marginsForAlign = (align: string) => {
+  if (align === 'center') return { left: 'auto', right: 'auto' }
+  if (align === 'right') return { left: 'auto', right: '0' }
+  return { left: '0', right: 'auto' }
+}
+
 const normalizeFormContentAlign = (value: unknown) => {
   const raw = String(value || '').trim()
   return ['left', 'center', 'right'].includes(raw) ? raw : 'left'
@@ -510,6 +516,8 @@ export const buildCanvasTheme = (site: PublicSite, device: 'desktop' | 'mobile' 
   const textPaint = rawTextPaint && (theme.textColorCustom || rawTextPaint.toLowerCase() !== DEFAULT_ACCENT.toLowerCase()) ? rawTextPaint : ''
   const ink = textPaint ? paintFallbackColor(textPaint, v.ink) : v.ink
   const formSurfacePaint = themePaint(theme, 'formSurfaceColor', '')
+  const formFieldAlign = normalizeFormFieldAlign(theme.formContentAlign)
+  const formPageMargins = marginsForAlign(formFieldAlign)
 
 	const vars = {
     '--rstk-color-scheme': template.mode,
@@ -577,7 +585,9 @@ export const buildCanvasTheme = (site: PublicSite, device: 'desktop' | 'mobile' 
 	    '--rstk-form-field-pad-y': `${themeNumber(theme, 'formFieldPaddingY', 13, 6, 36)}px`,
 	    '--rstk-form-field-width': `${themeNumber(theme, 'formFieldWidth', 560, 120, 2000)}px`,
 	    '--rstk-form-content-align': normalizeFormContentAlign(theme.formContentAlign),
-	    '--rstk-form-field-justify': justifyForButtonAlign(normalizeFormFieldAlign(theme.formContentAlign)),
+	    '--rstk-form-field-justify': justifyForButtonAlign(formFieldAlign),
+	    '--rstk-form-page-margin-left': formPageMargins.left,
+	    '--rstk-form-page-margin-right': formPageMargins.right,
 	    '--rstk-form-choice-selected-bg': themePaint(theme, 'formChoiceSelectedBg', `color-mix(in srgb, ${accent} 10%, transparent)`),
 	    '--rstk-form-choice-selected-border': paintFallbackColor(themePaint(theme, 'formChoiceSelectedBorder', accent), accent),
 	    '--rstk-submit-bg': themePaint(theme, 'submitBg', accent),

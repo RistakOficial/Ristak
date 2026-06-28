@@ -19719,12 +19719,12 @@ const RSTK_BASE_CSS = `
   .rstk-embedded-form-source-frame{--rstk-block-text:var(--rstk-ink);--rstk-block-font:var(--rstk-font);--rstk-block-font-style:normal;--rstk-block-text-decoration:none;--rstk-block-text-transform:none;--rstk-block-align:initial;--rstk-block-justify:initial;--rstk-content-margin-left:initial;--rstk-content-margin-right:initial;text-align:var(--rstk-block-align,left);position:relative;isolation:isolate;min-height:auto;box-sizing:border-box;width:100%;max-width:100%;min-width:0;margin:0;padding:0;background-color:var(--rstk-page-bg);background-image:var(--rstk-page-image);background-position:var(--rstk-page-image-position,center top);background-repeat:var(--rstk-page-image-repeat,no-repeat);background-size:var(--rstk-page-image-size,auto);background-attachment:var(--rstk-page-image-attachment,scroll);border-radius:var(--rstk-page-radius,0);overflow:visible}
   .rstk-embedded-form-source-frame::before{content:"";position:absolute;inset:0;z-index:1;background:var(--rstk-page-overlay,none);pointer-events:none}
   .rstk-embedded-form-source-frame>.rstk-bg-video{position:absolute;inset:0;z-index:0;width:100%;height:100%;object-fit:var(--rstk-page-video-fit,cover);pointer-events:none}
-  .rstk-embedded-form-source-frame>.rstk-page{position:relative;z-index:2;width:100%;max-width:min(100%,var(--rstk-max));min-width:0;margin:0 auto;border:var(--rstk-page-border-width,0) solid var(--rstk-page-border,transparent);border-radius:var(--rstk-page-radius,0);overflow:visible}
+  .rstk-embedded-form-source-frame>.rstk-page{position:relative;z-index:2;width:100%;max-width:min(100%,var(--rstk-max));min-width:0;margin-top:0;margin-bottom:0;margin-left:var(--rstk-form-page-margin-left,auto);margin-right:var(--rstk-form-page-margin-right,auto);border:var(--rstk-page-border-width,0) solid var(--rstk-page-border,transparent);border-radius:var(--rstk-page-radius,0);overflow:visible}
   body:has(.rstkBlockFullWidth){overflow-x:hidden}
   .rstk-frame:has(.rstkBlockFullWidth),.rstk-kind-form .rstk-shell:has(.rstkBlockFullWidth),.rstk-kind-landing .rstk-page:has(.rstkBlockFullWidth),.rstk-section-lane:has(.rstkBlockFullWidth),.rstk-section-inner:has(.rstkBlockFullWidth),.rstk-section-column:has(.rstkBlockFullWidth){overflow:visible}
   .rstk-kind-form .rstk-page:has(.rstkEmbeddedFormStretch){max-width:none;margin:0}
   .rstk-embedded-form-source-frame.rstkEmbeddedFormStretch{width:100%;max-width:none;margin:0}
-  .rstk-embedded-form-source-frame.rstkEmbeddedFormStretch>.rstk-page{max-width:min(100%,var(--rstk-max));width:100%;margin:0 auto}
+  .rstk-embedded-form-source-frame.rstkEmbeddedFormStretch>.rstk-page{max-width:min(100%,var(--rstk-max));width:100%;margin-top:0;margin-bottom:0;margin-left:var(--rstk-form-page-margin-left,auto);margin-right:var(--rstk-form-page-margin-right,auto)}
   .rstk-block-style.rstkBlockFullWidth{width:100vw;max-width:100vw;margin-left:calc(50% - 50vw);margin-right:calc(50% - 50vw);padding-inline:max(24px,calc(50vw - var(--rstk-max)/2))}
   .rstk-embedded-form-source-frame .rstk-block-style.rstkBlockFullWidth{width:100%;max-width:100%;margin-left:0;margin-right:0;padding-inline:max(24px,calc(50% - var(--rstk-max)/2))}
   .rstk-embedded-form-source-frame .rstk-shell{display:grid;grid-template-columns:minmax(0,1fr);width:100%;max-width:100%;min-width:0;gap:var(--rstk-gap);background:var(--rstk-form-surface,var(--rstk-surface));border:var(--rstk-page-border-width,0) solid var(--rstk-page-border,var(--rstk-border));border-radius:var(--rstk-page-radius,var(--rstk-radius-lg));box-shadow:none;padding:0;overflow:hidden}
@@ -19999,6 +19999,7 @@ function buildFormThemeStyleVars(theme, { baseFont, v, accent, ink, muted }) {
   // La columna del formulario se centra por default (igual que en el editor); solo se mueve
   // si el usuario eligió explícitamente una alineación. El texto/etiquetas sigue a formContentAlign.
   const formFieldAlign = ['left', 'center', 'right'].includes(cleanString(theme.formContentAlign)) ? cleanString(theme.formContentAlign) : 'center'
+  const formPageMargins = marginForAlign(formFieldAlign)
 
   return `
 	    ${formSurface ? `--rstk-form-surface:${formSurface};` : ''}
@@ -20023,6 +20024,8 @@ function buildFormThemeStyleVars(theme, { baseFont, v, accent, ink, muted }) {
 	    --rstk-form-field-width:${themeNumber(theme, 'formFieldWidth', 560, 120, 2000)}px;
 	    --rstk-form-content-align:${formContentAlign};
 	    --rstk-form-field-justify:${justifyForAlign(formFieldAlign)};
+	    --rstk-form-page-margin-left:${formPageMargins.left};
+	    --rstk-form-page-margin-right:${formPageMargins.right};
 	    --rstk-form-choice-selected-bg:${choiceSelectedBg};
 	    --rstk-form-choice-selected-border:${paintFallbackColor(choiceSelectedBorder, accent)};
 	    --rstk-submit-bg:${submitBg};
