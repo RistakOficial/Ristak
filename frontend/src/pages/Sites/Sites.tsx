@@ -32195,7 +32195,7 @@ const CanvasPreviewBlock: React.FC<CanvasPreviewBlockProps> = ({
 
     return sourceCanvasTheme ? (
       <div className={`rstkCanvas ${sourceCanvasTheme.bodyClass} rstkEmbeddedFormSourceRoot`} style={sourceThemeVars}>
-        <div className={`rstk-frame rstkEmbeddedFormSourceFrame${getSettingBoolean(settings, 'embeddedFullWidth') ? ' rstkEmbeddedFormStretch' : ''}`}>
+        <div className={`rstk-frame rstkEmbeddedFormSourceFrame rstk-embedded-form-theme rstk-embedded-form-source-frame${getSettingBoolean(settings, 'embeddedFullWidth') ? ' rstkEmbeddedFormStretch' : ''}`}>
           <CanvasBackgroundVideo theme={previewForm?.theme} />
           <main className="rstk-page">
             <div

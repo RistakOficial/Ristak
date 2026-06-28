@@ -2419,6 +2419,8 @@ html body :is(.rstkCanvas.rstk-kind-form.rstk-choice-grid, .rstkCanvas.rstk-kind
 
 .rstkCanvas .rstkEmbeddedFormSourceRoot {
   width: 100%;
+  max-width: 100%;
+  min-width: 0;
   overflow: visible;
   --rstk-block-text: var(--rstk-ink);
   --rstk-block-font: var(--rstk-font);
@@ -2449,8 +2451,10 @@ html body :is(.rstkCanvas.rstk-kind-form.rstk-choice-grid, .rstkCanvas.rstk-kind
   min-height: auto;
   box-sizing: border-box;
   width: 100%;
+  max-width: 100%;
+  min-width: 0;
   margin: 0;
-  padding: 0;
+  padding: var(--rstk-frame-pad, 0) 16px;
   background-color: var(--rstk-page-bg);
   background-image: var(--rstk-page-image);
   background-position: var(--rstk-page-image-position, center top);
@@ -2473,7 +2477,9 @@ html body :is(.rstkCanvas.rstk-kind-form.rstk-choice-grid, .rstkCanvas.rstk-kind
 .rstkCanvas .rstkEmbeddedFormSourceFrame > .rstk-page {
   position: relative;
   z-index: 2;
-  max-width: var(--rstk-max);
+  width: 100%;
+  min-width: 0;
+  max-width: min(100%, var(--rstk-max));
   margin: 0 auto;
   border: var(--rstk-page-border-width, 0) solid var(--rstk-page-border, transparent);
   border-radius: var(--rstk-page-radius, 0);
@@ -2494,7 +2500,7 @@ html body :is(.rstkCanvas.rstk-kind-form.rstk-choice-grid, .rstkCanvas.rstk-kind
   margin: 0;
 }
 .rstkCanvas .rstkEmbeddedFormSourceFrame.rstkEmbeddedFormStretch > .rstk-page {
-  max-width: var(--rstk-max);
+  max-width: min(100%, var(--rstk-max));
   width: 100%;
   margin: 0 auto;
 }
@@ -2518,18 +2524,35 @@ html body :is(.rstkCanvas.rstk-kind-form.rstk-choice-grid, .rstkCanvas.rstk-kind
   padding-inline: max(24px, calc(50vw - var(--rstk-max) / 2));
 }
 
+.rstkCanvas .rstkEmbeddedFormSourceFrame .rstk-block-style.rstkBlockFullWidth {
+  width: 100%;
+  max-width: 100%;
+  margin-left: 0;
+  margin-right: 0;
+  padding-inline: max(24px, calc(50% - var(--rstk-max) / 2));
+}
+
 .rstkCanvas .rstkEmbeddedFormSourceFrame .rstk-shell {
   gap: var(--rstk-gap);
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
   padding: var(--rstk-pad);
   background: var(--rstk-form-surface, var(--rstk-surface));
   border: var(--rstk-page-border-width, 0) solid var(--rstk-page-border, var(--rstk-border));
   border-radius: var(--rstk-radius-lg);
+  overflow: hidden;
+}
+
+.rstkCanvas .rstkEmbeddedFormSourceFrame .rstk-shell:has(.rstkBlockFullWidth) {
   overflow: visible;
 }
 
 .rstkCanvas.rstk-kind-landing .rstkEmbeddedFormSourceFrame .rstk-embedded-form,
 .rstkCanvas .rstkEmbeddedFormSourceFrame .rstk-embedded-form {
   width: 100%;
+  max-width: 100%;
+  min-width: 0;
   margin: 0;
   padding: 0;
   border: 0;

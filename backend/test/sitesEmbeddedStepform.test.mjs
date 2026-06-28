@@ -33,6 +33,11 @@ test('landing form embeds render multiple form pages as an inline stepform', asy
             { id: 'step-1', title: 'Paso 1', sortOrder: 0, buttonText: 'Siguiente pregunta' },
             { id: 'step-2', title: 'Paso 2', sortOrder: 1, buttonText: 'Enviar solicitud', buttonSubtitle: 'Finalizar' }
           ],
+          embeddedTheme: {
+            pagePadding: 64,
+            pageMaxWidth: 720,
+            formContentAlign: 'right'
+          },
           embeddedBlocks: [
             {
               id: 'content-title',
@@ -59,6 +64,18 @@ test('landing form embeds render multiple form pages as an inline stepform', asy
               settings: { pageId: 'step-1' }
             },
             {
+              id: 'full-width-copy',
+              siteId: 'site_embedded_stepform',
+              blockType: 'text',
+              label: 'Texto ancho',
+              content: 'Texto interno a ancho completo',
+              placeholder: '',
+              required: false,
+              options: [],
+              sortOrder: 2,
+              settings: { pageId: 'step-1', blockFullWidth: true }
+            },
+            {
               id: 'field-email',
               siteId: 'site_embedded_stepform',
               blockType: 'email',
@@ -67,7 +84,7 @@ test('landing form embeds render multiple form pages as an inline stepform', asy
               placeholder: 'tu@email.com',
               required: true,
               options: [],
-              sortOrder: 2,
+              sortOrder: 3,
               settings: { pageId: 'step-2' }
             },
             {
@@ -79,7 +96,7 @@ test('landing form embeds render multiple form pages as an inline stepform', asy
               placeholder: '',
               required: false,
               options: [],
-              sortOrder: 3,
+              sortOrder: 4,
               settings: { pageId: 'page-2' }
             }
           ]
@@ -98,7 +115,14 @@ test('landing form embeds render multiple form pages as an inline stepform', asy
 
   assert.match(html, /data-embedded-form-pages/)
   assert.match(html, /--rstk-page-border-width:20px/)
-  assert.match(html, /\.rstk-embedded-form-source-frame\{[^}]*margin:0;padding:0/)
+  assert.match(html, /--rstk-frame-pad:64px/)
+  assert.match(html, /--rstk-max:720px/)
+  assert.match(html, /--rstk-form-content-align:right/)
+  assert.match(html, /--rstk-form-field-justify:end/)
+  assert.match(html, /\.rstk-embedded-form-source-frame\{[^}]*margin:0;padding:var\(--rstk-frame-pad,0\) 16px/)
+  assert.match(html, /\.rstk-embedded-form-source-frame>\.rstk-page\{[^}]*max-width:min\(100%,var\(--rstk-max\)\)/)
+  assert.match(html, /\.rstk-embedded-form-source-frame \.rstk-shell\{[^}]*overflow:hidden/)
+  assert.match(html, /\.rstk-embedded-form-source-frame \.rstk-block-style\.rstkBlockFullWidth\{[^}]*width:100%/)
   assert.match(html, /data-embedded-page-content="step-1"/)
   assert.match(html, /data-embedded-page-content="step-2" hidden/)
   assert.match(html, /data-embedded-next/)
@@ -110,6 +134,7 @@ test('landing form embeds render multiple form pages as an inline stepform', asy
   assert.match(html, /Título interno del formulario/)
   assert.match(html, /data-block-id="field-name" data-page-id="step-1"/)
   assert.match(html, /data-block-id="field-email" data-page-id="step-2"/)
+  assert.match(html, /class="rstk-block-style rstkBlockFullWidth" data-rstk-block-id="full-width-copy"/)
   assert.match(html, /data-embedded-form-result="qualified" hidden>[\s\S]*Texto de página final que no debe aparecer/)
   assert.doesNotMatch(html, /<h2>Formulario<\/h2>/)
   assert.match(html, /getEmbeddedPageFields/)

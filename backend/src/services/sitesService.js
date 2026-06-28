@@ -17493,11 +17493,12 @@ function renderBlockBackgroundVideo(block) {
 function wrapRenderedBlock(block, html, context = {}) {
   const style = renderBlockStyleVars(block)
   const className = renderBlockStyleClassName(block)
+  const hasClassOnlyStyle = block?.settings?.blockFullWidth === true
   const backgroundVideo = renderBlockBackgroundVideo(block)
   const videoActionTargetAttr = renderVideoActionTargetAttribute(block, context)
   const countdownActionTargetAttr = renderCountdownActionTargetAttribute(block, context)
   const hiddenAttr = renderBlockHiddenAttributes(block)
-  return style || backgroundVideo || videoActionTargetAttr || countdownActionTargetAttr || hiddenAttr
+  return style || hasClassOnlyStyle || backgroundVideo || videoActionTargetAttr || countdownActionTargetAttr || hiddenAttr
     ? `<div class="${escapeHtml(className)}" data-rstk-block-id="${escapeHtml(block.id || '')}"${videoActionTargetAttr}${countdownActionTargetAttr}${hiddenAttr}${style}>${backgroundVideo}${html}</div>`
     : html
 }
@@ -19716,18 +19717,20 @@ const RSTK_BASE_CSS = `
   .rstk-kind-landing .rstk-calendar-embed{border-radius:var(--rstk-media-radius,0)}
   .rstk-kind-landing .rstk-embedded-form{padding:clamp(24px,3vw,40px);border:var(--rstk-block-border-width,0) solid var(--rstk-block-border,transparent);border-radius:var(--rstk-block-radius,0);background:var(--rstk-block-bg,transparent);width:100%;margin-inline:auto}
   .rstk-section-lane:has(.rstk-embedded-form-source-frame),.rstk-section-column:has(.rstk-embedded-form-source-frame),.rstk-block-style:has(.rstk-embedded-form-source-frame){overflow:visible}
-  .rstk-embedded-form-source-frame{--rstk-block-text:var(--rstk-ink);--rstk-block-font:var(--rstk-font);--rstk-block-font-style:normal;--rstk-block-text-decoration:none;--rstk-block-text-transform:none;--rstk-block-align:initial;--rstk-block-justify:initial;--rstk-content-margin-left:initial;--rstk-content-margin-right:initial;text-align:var(--rstk-block-align,left);position:relative;isolation:isolate;min-height:auto;box-sizing:border-box;width:100%;margin:0;padding:0;background-color:var(--rstk-page-bg);background-image:var(--rstk-page-image);background-position:var(--rstk-page-image-position,center top);background-repeat:var(--rstk-page-image-repeat,no-repeat);background-size:var(--rstk-page-image-size,auto);background-attachment:var(--rstk-page-image-attachment,scroll);border-radius:var(--rstk-page-radius,0);overflow:visible}
+  .rstk-embedded-form-source-frame{--rstk-block-text:var(--rstk-ink);--rstk-block-font:var(--rstk-font);--rstk-block-font-style:normal;--rstk-block-text-decoration:none;--rstk-block-text-transform:none;--rstk-block-align:initial;--rstk-block-justify:initial;--rstk-content-margin-left:initial;--rstk-content-margin-right:initial;text-align:var(--rstk-block-align,left);position:relative;isolation:isolate;min-height:auto;box-sizing:border-box;width:100%;max-width:100%;min-width:0;margin:0;padding:var(--rstk-frame-pad,0) 16px;background-color:var(--rstk-page-bg);background-image:var(--rstk-page-image);background-position:var(--rstk-page-image-position,center top);background-repeat:var(--rstk-page-image-repeat,no-repeat);background-size:var(--rstk-page-image-size,auto);background-attachment:var(--rstk-page-image-attachment,scroll);border-radius:var(--rstk-page-radius,0);overflow:visible}
   .rstk-embedded-form-source-frame::before{content:"";position:absolute;inset:0;z-index:1;background:var(--rstk-page-overlay,none);pointer-events:none}
   .rstk-embedded-form-source-frame>.rstk-bg-video{position:absolute;inset:0;z-index:0;width:100%;height:100%;object-fit:var(--rstk-page-video-fit,cover);pointer-events:none}
-  .rstk-embedded-form-source-frame>.rstk-page{position:relative;z-index:2;width:100%;max-width:var(--rstk-max);margin:0 auto;border:var(--rstk-page-border-width,0) solid var(--rstk-page-border,transparent);border-radius:var(--rstk-page-radius,0);overflow:visible}
+  .rstk-embedded-form-source-frame>.rstk-page{position:relative;z-index:2;width:100%;min-width:0;max-width:min(100%,var(--rstk-max));margin:0 auto;border:var(--rstk-page-border-width,0) solid var(--rstk-page-border,transparent);border-radius:var(--rstk-page-radius,0);overflow:visible}
   body:has(.rstkBlockFullWidth){overflow-x:hidden}
   .rstk-frame:has(.rstkBlockFullWidth),.rstk-kind-form .rstk-shell:has(.rstkBlockFullWidth),.rstk-kind-landing .rstk-page:has(.rstkBlockFullWidth),.rstk-section-lane:has(.rstkBlockFullWidth),.rstk-section-inner:has(.rstkBlockFullWidth),.rstk-section-column:has(.rstkBlockFullWidth){overflow:visible}
   .rstk-kind-form .rstk-page:has(.rstkEmbeddedFormStretch){max-width:none;margin:0}
   .rstk-embedded-form-source-frame.rstkEmbeddedFormStretch{width:100%;max-width:none;margin:0}
-  .rstk-embedded-form-source-frame.rstkEmbeddedFormStretch>.rstk-page{max-width:var(--rstk-max);width:100%;margin:0 auto}
+  .rstk-embedded-form-source-frame.rstkEmbeddedFormStretch>.rstk-page{max-width:min(100%,var(--rstk-max));width:100%;margin:0 auto}
   .rstk-block-style.rstkBlockFullWidth{width:100vw;max-width:100vw;margin-left:calc(50% - 50vw);margin-right:calc(50% - 50vw);padding-inline:max(24px,calc(50vw - var(--rstk-max)/2))}
-  .rstk-embedded-form-source-frame .rstk-shell{display:grid;gap:var(--rstk-gap);background:var(--rstk-form-surface,var(--rstk-surface));border:var(--rstk-page-border-width,0) solid var(--rstk-page-border,var(--rstk-border));border-radius:var(--rstk-radius-lg);box-shadow:none;padding:var(--rstk-pad);overflow:visible}
-  .rstk-kind-landing .rstk-embedded-form-source-frame .rstk-embedded-form,.rstk-embedded-form-source-frame .rstk-embedded-form{width:100%;margin:0;padding:0;border:0;border-radius:0;background:transparent}
+  .rstk-embedded-form-source-frame .rstk-block-style.rstkBlockFullWidth{width:100%;max-width:100%;margin-left:0;margin-right:0;padding-inline:max(24px,calc(50% - var(--rstk-max)/2))}
+  .rstk-embedded-form-source-frame .rstk-shell{display:grid;gap:var(--rstk-gap);width:100%;max-width:100%;min-width:0;background:var(--rstk-form-surface,var(--rstk-surface));border:var(--rstk-page-border-width,0) solid var(--rstk-page-border,var(--rstk-border));border-radius:var(--rstk-radius-lg);box-shadow:none;padding:var(--rstk-pad);overflow:hidden}
+  .rstk-embedded-form-source-frame .rstk-shell:has(.rstkBlockFullWidth){overflow:visible}
+  .rstk-kind-landing .rstk-embedded-form-source-frame .rstk-embedded-form,.rstk-embedded-form-source-frame .rstk-embedded-form{width:100%;max-width:100%;min-width:0;margin:0;padding:0;border:0;border-radius:0;background:transparent}
   .rstk-embedded-form-source-frame .rstk-headline{margin:0;color:var(--rstk-ink);font-family:var(--rstk-font);font-size:clamp(1.7rem,4.6vw,3rem);font-weight:var(--rstk-heading-weight);line-height:1.05;letter-spacing:0;background-image:none;-webkit-text-fill-color:currentColor}
   .rstk-embedded-form-source-frame .rstk-subheading{margin:0;color:var(--rstk-muted);font-size:clamp(1rem,2vw,1.18rem);line-height:1.5;max-width:var(--rstk-content-max,60ch);background-image:none;-webkit-text-fill-color:currentColor}
   .rstk-embedded-form-source-frame .rstk-text{margin:0;color:color-mix(in srgb,var(--rstk-ink) 80%,transparent);font-size:1rem;line-height:1.55;max-width:var(--rstk-content-max,66ch);background-image:none;-webkit-text-fill-color:currentColor}
