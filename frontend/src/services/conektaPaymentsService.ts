@@ -15,6 +15,13 @@ export interface ConektaModeStatus {
   updatedAt?: string
 }
 
+export interface ConektaWebhookEndpoint {
+  source: 'render' | 'configured' | 'app_domain' | 'current_request' | string
+  label: string
+  description: string
+  url: string
+}
+
 export interface ConektaPaymentConfig {
   enabled: boolean
   configured: boolean
@@ -25,6 +32,8 @@ export interface ConektaPaymentConfig {
   hasPrivateKey: boolean
   privateKeyPreview?: string
   manualModes?: Record<'test' | 'live', ConektaModeStatus>
+  webhookEndpointPath?: string
+  webhookEndpoints?: ConektaWebhookEndpoint[]
 }
 
 export interface SaveConektaPaymentConfigPayload {

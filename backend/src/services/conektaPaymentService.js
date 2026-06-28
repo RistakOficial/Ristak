@@ -697,22 +697,39 @@ export async function reconcileConektaOrderFromWebhook(event = {}) {
   const chargeId = cleanString(charge?.id)
   if (!orderId && !chargeId) return { matched: false, reason: 'sin_id' }
 
-  let payment = null
+  let matchedPayment = null
   if (orderId) {
-    payment = await db.get('SELECT id, status FROM payments WHERE conekta_order_id = ? ORDER BY created_at DESC LIMIT 1', [orderId])
+    matchedPayment = await db.get('SELECT id FROM payments WHERE conekta_order_id = ? ORDER BY created_at DESC LIMIT 1', [orderId])
   }
-  if (!payment?.id && chargeId) {
-    payment = await db.get('SELECT id, status FROM payments WHERE conekta_charge_id = ? ORDER BY created_at DESC LIMIT 1', [chargeId])
+  if (!matchedPayment?.id && chargeId) {
+    matchedPayment = await db.get('SELECT id FROM payments WHERE conekta_charge_id = ? ORDER BY created_at DESC LIMIT 1', [chargeId])
   }
+  if (!matchedPayment?.id) return { matched: false, reason: 'pago_no_encontrado' }
+
+  const payment = await findPaymentById(matchedPayment.id)
   if (!payment?.id) return { matched: false, reason: 'pago_no_encontrado' }
 
   const newStatus = mapOrderStatus(order)
-  if (cleanString(payment.status).toLowerCase() === newStatus) {
-    return { matched: true, changed: false, paymentId: payment.id, status: newStatus }
+  const currentStatus = cleanString(payment.status).toLowerCase()
+  const changed = currentStatus !== newStatus
+  const config = await getConektaPaymentConfig({ mode: payment.payment_mode || '' })
+  const nextPayment = changed
+    ? await updatePaymentFromOrder(order, payment)
+    : payment
+
+  const planSyncResult = await syncConektaPlanFromPayment(nextPayment, null, config)
+
+  if (changed) {
+    logger.info(`[Conekta webhook] Pago ${payment.id} reconciliado: ${payment.status} -> ${newStatus} (order ${orderId || chargeId})`)
   }
-  await db.run('UPDATE payments SET status = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?', [newStatus, payment.id])
-  logger.info(`[Conekta webhook] Pago ${payment.id} reconciliado: ${payment.status} -> ${newStatus} (order ${orderId || chargeId})`)
-  return { matched: true, changed: true, paymentId: payment.id, status: newStatus }
+
+  return {
+    matched: true,
+    changed,
+    paymentId: payment.id,
+    status: nextPayment.status || newStatus,
+    planSynced: Boolean(planSyncResult?.id)
+  }
 }
 
 function getPaymentSourceCard(source = {}) {
@@ -801,6 +818,27 @@ async function upsertConektaPaymentSource({
   )
 
   return db.get('SELECT * FROM conekta_payment_sources WHERE conekta_payment_source_id = ?', [sourceId])
+}
+
+async function findConektaSavedSourceForPayment(paymentRow, config = null) {
+  const sourceId = cleanString(paymentRow?.conekta_payment_source_id)
+  if (!sourceId) return null
+
+  const mode = normalizeMode(config?.mode || paymentRow?.payment_mode || 'test')
+  if (paymentRow?.contact_id) {
+    const scoped = await db.get(
+      `SELECT *
+       FROM conekta_payment_sources
+       WHERE contact_id = ?
+         AND conekta_payment_source_id = ?
+         AND mode = ?
+       LIMIT 1`,
+      [paymentRow.contact_id, sourceId, mode]
+    )
+    if (scoped) return scoped
+  }
+
+  return db.get('SELECT * FROM conekta_payment_sources WHERE conekta_payment_source_id = ? LIMIT 1', [sourceId])
 }
 
 async function createPaymentSource(customerId, tokenId) {
@@ -1045,10 +1083,13 @@ export async function createPublicConektaCardPayment(publicPaymentId, input = {}
     throw error
   }
 
-  // (PAY2-008) Opt-in: la tarjeta del cliente NO se guarda por defecto en el pago público.
-  // Solo se guarda si el cliente lo autoriza explícitamente (casilla en el frontend que
-  // envía savePaymentSource=true). Antes el default era true (se guardaba sin consentimiento).
-  const savePaymentSource = row.contact_id && normalizeBoolean(input.savePaymentSource, false)
+  const metadata = parseJson(row.metadata_json, {})
+  const planMetadata = metadata.paymentPlan && typeof metadata.paymentPlan === 'object' ? metadata.paymentPlan : {}
+  const planTrigger = cleanString(planMetadata.trigger)
+  const planRequiresSavedSource = FIRST_PAYMENT_PLAN_TRIGGERS.has(planTrigger) || CARD_SETUP_PLAN_TRIGGERS.has(planTrigger)
+  // En pagos normales sigue siendo opt-in. En pagos de plan, guardar la tarjeta es parte
+  // de la autorización: sin payment_source guardada el plan no puede cobrarse después.
+  const savePaymentSource = row.contact_id && (planRequiresSavedSource || normalizeBoolean(input.savePaymentSource, false))
   let customerId = cleanString(row.contact_conekta_customer_id || parseJson(row.metadata_json, {}).conektaCustomerId)
   let paymentSource = null
   let paymentSourceId = ''
@@ -1636,12 +1677,16 @@ async function syncConektaPlanFromPayment(paymentRow, savedSource, config) {
     )
   }
 
-  if (paymentRow.status === 'paid' && savedSource && (isFirstPlanPayment || isCardSetupPayment)) {
-    await activateConektaPaymentPlan(flowId, savedSource, config)
-    return
+  let planSavedSource = savedSource
+  if (!planSavedSource && paymentRow.status === 'paid' && (isFirstPlanPayment || isCardSetupPayment)) {
+    planSavedSource = await findConektaSavedSourceForPayment(paymentRow, config)
   }
 
-  await persistConektaPaymentPlanMirror(flowId)
+  if (paymentRow.status === 'paid' && planSavedSource && (isFirstPlanPayment || isCardSetupPayment)) {
+    return activateConektaPaymentPlan(flowId, planSavedSource, config)
+  }
+
+  return persistConektaPaymentPlanMirror(flowId)
 }
 
 async function chargeConektaPaymentRowWithSavedSource({

@@ -247,6 +247,19 @@ const conektaModeLabels: Record<StripeModeId, { title: string; description: stri
     privatePlaceholder: 'key_...'
   }
 }
+const conektaWebhookEvents = [
+  'order.paid',
+  'order.expired',
+  'order.canceled',
+  'charge.paid',
+  'charge.failed'
+]
+const conektaWebhookSteps = [
+  'En Conekta abre Desarrolladores > Webhooks y presiona Crear webhook.',
+  'Pega la Endpoint URL que muestra Ristak.',
+  'Ponle un nombre sencillo, por ejemplo Ristak - Pagos.',
+  'Selecciona los eventos de la lista y guarda el webhook.'
+]
 
 const parseBooleanLike = (value: unknown, fallback = false) => {
   if (typeof value === 'boolean') return value
@@ -729,6 +742,7 @@ export const PaymentsConfiguration: React.FC = () => {
 
   const selectedGatewayOption = gatewayOptions.find((gateway) => gateway.id === (activeGatewayRoute || selectedGateway))
   const stripeWebhookEndpoints = stripeConfig?.webhookEndpoints || []
+  const conektaWebhookEndpoints = conektaConfig?.webhookEndpoints || []
   const stripeConnected = Boolean(stripeConfig?.configured)
   const conektaConnected = Boolean(conektaConfig?.configured)
   const mercadoPagoConnected = Boolean(mercadoPagoConfig?.configured)
@@ -889,6 +903,15 @@ export const PaymentsConfiguration: React.FC = () => {
       return true
     } catch {
       return false
+    }
+  }
+
+  const handleCopyConektaText = async (value: string, label: string) => {
+    const copied = await copyTextToClipboard(value)
+    if (copied) {
+      showToast('success', `${label} copiado`, 'Ya lo puedes pegar en Conekta.')
+    } else {
+      showToast('error', 'No se pudo copiar', 'Selecciona el campo y copia el texto manualmente.')
     }
   }
 
@@ -3209,6 +3232,55 @@ export const PaymentsConfiguration: React.FC = () => {
                   </div>
                 )
               })}
+            </div>
+
+            <div className={styles.webhookList}>
+              <h3>Webhook de Conekta</h3>
+              <div className={styles.formField}>
+                <span>Cómo configurarlo en Conekta</span>
+                <small>
+                  Conekta no se conecta por OAuth en Ristak: usa tus llaves API y este webhook para avisar pagos aprobados,
+                  rechazados o expirados. Sin este webhook, los planes con domiciliación pueden quedarse esperando confirmación.
+                </small>
+              </div>
+
+              {conektaWebhookEndpoints.length > 0 && conektaWebhookEndpoints.map((endpoint) => (
+                <div key={endpoint.url} className={styles.webhookRow}>
+                  <div>
+                    <strong>{endpoint.label}</strong>
+                    <span>{endpoint.description}</span>
+                    <span>{endpoint.url}</span>
+                  </div>
+                  <Button
+                    type="button"
+                    variant="secondary"
+                    size="sm"
+                    leftIcon={<Copy size={15} />}
+                    onClick={() => handleCopyConektaText(endpoint.url, 'URL')}
+                  >
+                    Copiar
+                  </Button>
+                </div>
+              ))}
+
+              <div className={styles.formField}>
+                <span>Eventos a seleccionar</span>
+                <textarea
+                  readOnly
+                  value={conektaWebhookEvents.join('\n')}
+                  onFocus={(event) => event.currentTarget.select()}
+                />
+                <small>Selecciona estos eventos al crear el webhook para que Ristak pueda reconciliar pagos y activar planes.</small>
+              </div>
+
+              <div className={styles.webhookInstructions}>
+                {conektaWebhookSteps.map((step, index) => (
+                  <div key={step} className={styles.webhookInstructionRow}>
+                    <strong>{index + 1}</strong>
+                    <span>{step}</span>
+                  </div>
+                ))}
+              </div>
             </div>
           </div>
         </Card>

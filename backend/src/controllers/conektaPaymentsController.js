@@ -11,10 +11,26 @@ import {
   saveConektaPaymentConfig,
   testConektaPaymentConfig
 } from '../services/conektaPaymentService.js'
+import { getAppConfig } from '../config/database.js'
 import { logger } from '../utils/logger.js'
+
+const CONEKTA_WEBHOOK_PATH = '/api/conekta/webhook'
 
 function cleanString(value) {
   return String(value || '').trim()
+}
+
+function normalizeBaseUrl(value) {
+  const clean = cleanString(value).replace(/\/+$/, '')
+  if (!clean) return ''
+
+  const withProtocol = /^https?:\/\//i.test(clean) ? clean : `https://${clean}`
+  try {
+    const parsed = new URL(withProtocol)
+    return `${parsed.protocol}//${parsed.host}`.replace(/\/+$/, '')
+  } catch {
+    return ''
+  }
 }
 
 function getRequestBaseUrl(req) {
@@ -26,6 +42,73 @@ function getRequestBaseUrl(req) {
 
   const configured = process.env.PUBLIC_APP_URL || process.env.APP_PUBLIC_URL || process.env.FRONTEND_URL || process.env.RENDER_EXTERNAL_URL
   return configured ? String(configured).replace(/\/+$/, '') : ''
+}
+
+function addWebhookEndpoint(items, seen, source, label, description, baseUrl) {
+  const normalized = normalizeBaseUrl(baseUrl)
+  if (!normalized) return
+
+  const url = `${normalized}${CONEKTA_WEBHOOK_PATH}`
+  const key = url.toLowerCase()
+  if (seen.has(key)) return
+  seen.add(key)
+
+  items.push({ source, label, description, url })
+}
+
+async function buildConektaWebhookEndpoints(req) {
+  const endpoints = []
+  const seen = new Set()
+
+  addWebhookEndpoint(
+    endpoints,
+    seen,
+    'render',
+    'Render',
+    'Endpoint del servicio publicado en Render.',
+    process.env.RENDER_EXTERNAL_URL
+  )
+
+  addWebhookEndpoint(
+    endpoints,
+    seen,
+    'configured',
+    'URL pública configurada',
+    'Endpoint tomado de la URL pública configurada para esta instalación.',
+    process.env.PUBLIC_APP_URL || process.env.APP_PUBLIC_URL || process.env.FRONTEND_URL || process.env.APP_URL
+  )
+
+  const appDomain = cleanString(await getAppConfig('sites_app_domain'))
+  const appDomainVerified = ['1', 'true', 'yes'].includes(cleanString(await getAppConfig('sites_app_domain_verified')).toLowerCase())
+  if (appDomain && appDomainVerified) {
+    addWebhookEndpoint(
+      endpoints,
+      seen,
+      'app_domain',
+      'Dominio de la app',
+      'Endpoint del dominio conectado para abrir Ristak.',
+      appDomain
+    )
+  }
+
+  addWebhookEndpoint(
+    endpoints,
+    seen,
+    'current_request',
+    'URL detectada',
+    'Endpoint detectado desde esta sesión actual.',
+    getRequestBaseUrl(req)
+  )
+
+  return endpoints
+}
+
+async function withConektaWebhookEndpoints(req, config) {
+  return {
+    ...config,
+    webhookEndpointPath: CONEKTA_WEBHOOK_PATH,
+    webhookEndpoints: await buildConektaWebhookEndpoints(req)
+  }
 }
 
 function sendConektaError(res, error, fallback = 'No se pudo procesar Conekta') {
@@ -65,7 +148,7 @@ export async function handleConektaWebhookView(req, res) {
 export async function getConektaConfigView(req, res) {
   try {
     const config = await getConektaPaymentConfig()
-    res.json({ success: true, data: config })
+    res.json({ success: true, data: await withConektaWebhookEndpoints(req, config) })
   } catch (error) {
     logger.error(`Error obteniendo configuración Conekta: ${error.message}`)
     sendConektaError(res, error, 'No se pudo obtener la configuración de Conekta')
@@ -75,7 +158,7 @@ export async function getConektaConfigView(req, res) {
 export async function saveConektaConfigView(req, res) {
   try {
     const config = await saveConektaPaymentConfig(req.body || {})
-    res.json({ success: true, data: config })
+    res.json({ success: true, data: await withConektaWebhookEndpoints(req, config) })
   } catch (error) {
     logger.error(`Error guardando configuración Conekta: ${error.message}`)
     sendConektaError(res, error, 'No se pudo guardar la configuración de Conekta')
@@ -85,7 +168,7 @@ export async function saveConektaConfigView(req, res) {
 export async function deleteConektaConfigView(req, res) {
   try {
     const config = await deleteConektaPaymentConfig()
-    res.json({ success: true, data: config })
+    res.json({ success: true, data: await withConektaWebhookEndpoints(req, config) })
   } catch (error) {
     logger.error(`Error desconectando Conekta: ${error.message}`)
     sendConektaError(res, error, 'No se pudo desconectar Conekta')

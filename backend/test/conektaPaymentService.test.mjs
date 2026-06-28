@@ -17,6 +17,7 @@ import {
   getConektaPaymentConfig,
   pauseConektaRecurringSubscription,
   processDueConektaPaymentPlanCharges,
+  reconcileConektaOrderFromWebhook,
   resumeConektaRecurringSubscription,
   saveConektaPaymentConfig,
   setConektaFetchForTest,
@@ -426,6 +427,188 @@ test('Conekta payment flow: crea link, guarda payment_source y cobra tarjeta gua
 
   try {
     await db.run('DELETE FROM subscriptions WHERE contact_id = ?', [contactId])
+    await db.run('DELETE FROM payment_plans WHERE contact_id = ?', [contactId])
+    await db.run('DELETE FROM payment_flows WHERE contact_id = ?', [contactId])
+    await db.run('DELETE FROM payments WHERE contact_id = ?', [contactId])
+    await db.run('DELETE FROM conekta_payment_sources WHERE contact_id = ?', [contactId])
+    await db.run('DELETE FROM contacts WHERE id = ?', [contactId])
+  } catch {
+    // Limpieza best-effort para no ocultar la aserción principal.
+  }
+})
+
+test('Conekta planes: el webhook de domiciliación activa el plan con primer pago offline', async () => {
+  await initializeMasterKey()
+
+  const suffix = `${Date.now()}_${Math.random().toString(36).slice(2, 8)}`
+  const contactId = `contact_conekta_webhook_${suffix}`
+  const conektaCustomerId = `cus_webhook_${suffix}`
+  const conektaSourceId = `src_webhook_${suffix}`
+  const orderId = `ord_webhook_${suffix}`
+  const chargeId = `charge_webhook_${suffix}`
+
+  await snapshotConektaConfig(async () => {
+    const apiCalls = []
+    setConektaFetchForTest(async (url, options = {}) => {
+      apiCalls.push({ url, method: options.method || 'GET', body: options.body ? JSON.parse(options.body) : null })
+
+      if (url.endsWith('/customers') && options.method === 'POST') {
+        return jsonResponse({ id: conektaCustomerId })
+      }
+
+      if (url.endsWith(`/customers/${conektaCustomerId}/payment_sources`) && options.method === 'POST') {
+        assert.equal(JSON.parse(options.body).token_id, 'tok_setup_webhook')
+        return jsonResponse({
+          id: conektaSourceId,
+          object: 'payment_source',
+          type: 'card',
+          brand: 'visa',
+          last4: '4242',
+          exp_month: 11,
+          exp_year: 2030
+        })
+      }
+
+      if (url.endsWith('/orders') && options.method === 'POST') {
+        const body = JSON.parse(options.body)
+        assert.equal(body.customer_info.customer_id, conektaCustomerId)
+        assert.equal(body.charges[0].payment_method.payment_source_id, conektaSourceId)
+        return jsonResponse({
+          id: orderId,
+          payment_status: 'pending',
+          charges: {
+            data: [{
+              id: chargeId,
+              status: 'pending',
+              payment_method: {
+                type: 'card',
+                payment_source_id: conektaSourceId
+              }
+            }]
+          }
+        })
+      }
+
+      return jsonResponse({ message: 'unexpected request' }, 500)
+    })
+
+    await savePaymentSettings({ paymentMode: 'test' })
+    await saveConektaPaymentConfig({
+      enabled: true,
+      mode: 'test',
+      manualModes: {
+        test: {
+          publicKey: 'key_test_public_webhook',
+          privateKey: 'key_test_private_webhook'
+        }
+      }
+    })
+
+    await db.run(
+      `INSERT INTO contacts (id, email, full_name, phone, created_at, updated_at)
+       VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+      [contactId, `conekta-webhook-${suffix}@example.test`, 'Cliente Webhook Conekta', '5555555555']
+    )
+
+    const today = todayConektaDateOnly()
+    const planResult = await createConektaPaymentPlan({
+      contact: {
+        id: contactId,
+        name: 'Cliente Webhook Conekta',
+        email: `conekta-webhook-${suffix}@example.test`,
+        phone: '5555555555'
+      },
+      totalAmount: 500,
+      currency: 'MXN',
+      title: 'Plan webhook Conekta',
+      description: 'Plan webhook Conekta',
+      firstPayment: {
+        enabled: true,
+        amount: 100,
+        date: today,
+        method: 'cash'
+      },
+      remainingPayments: [{
+        sequence: 1,
+        amount: 400,
+        dueDate: today,
+        frequency: 'monthly'
+      }],
+      remainingFrequency: 'monthly',
+      cardSetupAmount: 25
+    }, { baseUrl: 'https://app.example.test' })
+
+    assert.equal(planResult.currentState, 'waiting_card_authorization')
+    assert.ok(planResult.cardSetupPaymentId)
+
+    const setupPayment = await db.get(
+      'SELECT public_payment_id FROM payments WHERE id = ?',
+      [planResult.cardSetupPaymentId]
+    )
+    assert.ok(setupPayment?.public_payment_id)
+
+    const setupAttempt = await createPublicConektaCardPayment(setupPayment.public_payment_id, {
+      tokenId: 'tok_setup_webhook',
+      savePaymentSource: false
+    }, { baseUrl: 'https://app.example.test' })
+    assert.equal(setupAttempt.status, 'pending')
+    assert.equal(setupAttempt.conektaPaymentSourceId, conektaSourceId)
+
+    const waitingFlow = await db.get(
+      'SELECT current_state, card_setup_status, conekta_payment_source_id FROM payment_flows WHERE id = ?',
+      [planResult.flowId]
+    )
+    assert.equal(waitingFlow.current_state, 'waiting_card_authorization')
+    assert.equal(waitingFlow.card_setup_status, 'pending')
+    assert.equal(waitingFlow.conekta_payment_source_id, null)
+
+    const webhookResult = await reconcileConektaOrderFromWebhook({
+      type: 'order.paid',
+      data: {
+        object: {
+          id: orderId,
+          payment_status: 'paid',
+          charges: {
+            data: [{
+              id: chargeId,
+              status: 'paid',
+              payment_method: {
+                type: 'card',
+                payment_source_id: conektaSourceId
+              }
+            }]
+          }
+        }
+      }
+    })
+
+    assert.equal(webhookResult.matched, true)
+    assert.equal(webhookResult.changed, true)
+    assert.equal(webhookResult.status, 'paid')
+    assert.equal(webhookResult.planSynced, true)
+
+    const activeFlow = await db.get(
+      `SELECT current_state, card_setup_status, conekta_payment_source_id, installment_plan_active_at
+       FROM payment_flows
+       WHERE id = ?`,
+      [planResult.flowId]
+    )
+    assert.equal(activeFlow.current_state, 'installment_plan_active')
+    assert.equal(activeFlow.card_setup_status, 'paid')
+    assert.equal(activeFlow.conekta_payment_source_id, conektaSourceId)
+    assert.ok(activeFlow.installment_plan_active_at)
+
+    const scheduledInstallment = await db.get(
+      'SELECT status, payment_method FROM installment_payments WHERE flow_id = ? AND sequence = 1',
+      [planResult.flowId]
+    )
+    assert.equal(scheduledInstallment.status, 'scheduled')
+    assert.equal(scheduledInstallment.payment_method, 'conekta_saved_card')
+
+    assert.ok(apiCalls.some((call) => call.url.endsWith(`/customers/${conektaCustomerId}/payment_sources`)))
+  })
+
+  try {
     await db.run('DELETE FROM payment_plans WHERE contact_id = ?', [contactId])
     await db.run('DELETE FROM payment_flows WHERE contact_id = ?', [contactId])
     await db.run('DELETE FROM payments WHERE contact_id = ?', [contactId])

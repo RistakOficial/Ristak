@@ -57,6 +57,7 @@ export function classifyDeployDrainRequest(req = {}) {
 
   if (matchesAny(path, [
     /^\/api\/stripe\/webhook$/,
+    /^\/api\/conekta\/webhook$/,
     /^\/api\/mercadopago\/webhook$/
   ])) {
     return 'http:payment-webhook'
