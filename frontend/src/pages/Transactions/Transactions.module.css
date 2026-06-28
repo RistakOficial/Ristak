@@ -46,6 +46,14 @@
   display: flex;
   align-items: center;
   gap: var(--spacing-xs);
+  min-width: 0;
+}
+
+.methodCell span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .nameButton {

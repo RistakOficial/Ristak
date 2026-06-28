@@ -1,8 +1,8 @@
 import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react'
 import { createPortal } from 'react-dom'
 import { useLocation, useNavigate, useSearchParams } from 'react-router-dom'
-import { KpiCard, Card, Button, Table, DateRangePicker, ContactSearchInput, PageContainer, PageHeader, TabList, TreeFilter, RecordPaymentModal, Badge, DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, Loading, NumberInput, CustomSelect, Modal } from '@/components/common'
-import type { Column } from '@/components/common'
+import { KpiCard, Card, Button, Table, DateRangePicker, ContactSearchInput, PageContainer, PageHeader, TabList, TreeFilter, RecordPaymentModal, Badge, DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, Loading, NumberInput, CustomSelect, Modal, PaymentPlatformLogo } from '@/components/common'
+import type { Column, PaymentPlatformLogoId } from '@/components/common'
 import { useNotification } from '@/contexts/NotificationContext'
 import { Contact } from '@/types'
 import {
@@ -2010,8 +2010,21 @@ export const Transactions: React.FC = () => {
     }
   }
 
+  const getPaymentProviderLogo = (transaction: Transaction): PaymentPlatformLogoId | null => {
+    const provider = String(transaction.paymentProvider || '').toLowerCase()
+    const method = String(transaction.method || '').toLowerCase()
+
+    if (provider === 'mercadopago' || method.startsWith('mercadopago')) return 'mercadopago'
+    if (provider === 'conekta' || method.startsWith('conekta')) return 'conekta'
+    if (provider === 'stripe' || method.startsWith('stripe') || Boolean(transaction.stripePaymentIntentId)) return 'stripe'
+    if (provider === 'gigstack' || method.startsWith('gigstack')) return 'gigstack'
+    return null
+  }
+
   const getMethodIcon = (method: string) => {
-    switch(method) {
+    const normalized = String(method || '').toLowerCase()
+
+    switch(normalized) {
       case 'card': return <CreditCard size={16} />
       case 'mercadopago':
       case 'mercadopago_checkout': return <CreditCard size={16} />
@@ -2025,17 +2038,32 @@ export const Transactions: React.FC = () => {
   }
 
   const getMethodLabel = (method: string) => {
-    switch(method) {
+    const normalized = String(method || '').toLowerCase()
+
+    switch(normalized) {
       case 'card': return 'Tarjeta'
+      case 'direct_card': return 'Tarjeta'
+      case 'saved_card': return 'Tarjeta guardada'
+      case 'payment_link': return 'Link de pago'
+      case 'stripe': return 'Stripe'
+      case 'stripe_saved_card': return 'Tarjeta guardada'
+      case 'stripe_link':
+      case 'stripe_payment_link': return 'Link de Stripe'
+      case 'conekta': return 'Conekta'
+      case 'conekta_saved_card': return 'Tarjeta Conekta'
+      case 'conekta_subscription': return 'Conekta domiciliado'
       case 'mercadopago':
       case 'mercadopago_checkout': return 'Mercado Pago'
+      case 'mercadopago_subscription': return 'Suscripción Mercado Pago'
       case 'bank_transfer':
       case 'transfer': return 'Transferencia'
       case 'cash': return 'Efectivo'
       case 'check': return 'Cheque'
       case 'paypal': return 'PayPal'
       case 'other': return 'Otro'
-      default: return method.charAt(0).toUpperCase() + method.slice(1)
+      default: return normalized
+        ? normalized.replace(/[_-]+/g, ' ').replace(/\b\w/g, (match) => match.toUpperCase())
+        : 'Sin método'
     }
   }
 
@@ -2083,12 +2111,16 @@ export const Transactions: React.FC = () => {
     {
       key: 'method',
       header: 'Método de pago',
-      render: (value) => (
-        <div className={styles.methodCell}>
-          {getMethodIcon(value)}
-          <span>{getMethodLabel(value)}</span>
-        </div>
-      ),
+      render: (value, item) => {
+        const providerLogo = getPaymentProviderLogo(item)
+
+        return (
+          <div className={styles.methodCell}>
+            {providerLogo ? <PaymentPlatformLogo platform={providerLogo} size="sm" decorative /> : getMethodIcon(value)}
+            <span>{getMethodLabel(value)}</span>
+          </div>
+        )
+      },
       sortable: true
     },
     {
