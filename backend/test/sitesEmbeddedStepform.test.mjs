@@ -136,7 +136,7 @@ test('landing form embeds render multiple form pages as an inline stepform', asy
   assert.match(html, /\.rstk-embedded-form-source-frame\{[^}]*width:100%;max-width:100%;min-width:0/)
   assert.match(html, /\.rstk-embedded-form-source-frame>.rstk-page\{[^}]*max-width:min\(100%,var\(--rstk-max\)\);min-width:0/)
   assert.match(html, /\.rstkSocialProfileBlock\.rstk-block-style\{width:fit-content;min-width:0;max-width:100%\}/)
-  assert.match(html, /\.rstk-kind-form \.rstkSocialProfileBlock\.rstk-block-style,\.rstk-embedded-form-source-frame \.rstkSocialProfileBlock\.rstk-block-style\{justify-self:start\}/)
+  assert.match(html, /\.rstk-kind-form \.rstkSocialProfileBlock\.rstk-block-style,\.rstk-embedded-form-source-frame \.rstkSocialProfileBlock\.rstk-block-style\{justify-self:start;transform:translateX\(var\(--rstk-social-profile-nudge,clamp\(-22px,-5vw,-14px\)\)\)\}/)
   assert.match(html, /\.rstk-social-profile-block\{width:fit-content;min-width:0;max-width:100%;/)
   assert.match(html, /\.rstk-social-profile-block \.rstk-social-details\{flex:1 1 auto;min-width:0;max-width:100%\}/)
   assert.match(html, /\.rstk-social-profile-block \.rstk-social-name,\.rstk-social-profile-block \.rstk-social-followers\{overflow:hidden;text-overflow:ellipsis;white-space:nowrap\}/)

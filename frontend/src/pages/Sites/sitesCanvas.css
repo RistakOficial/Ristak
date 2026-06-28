@@ -177,6 +177,7 @@
 .rstkCanvas.rstk-kind-form .rstkSocialProfileBlock.rstk-block-style,
 .rstkCanvas .rstkEmbeddedFormSourceFrame .rstkSocialProfileBlock.rstk-block-style {
   justify-self: start;
+  transform: translateX(var(--rstk-social-profile-nudge, clamp(-22px, -5vw, -14px)));
 }
 .rstkCanvas .rstkHasBgVideo {
   isolation: isolate;

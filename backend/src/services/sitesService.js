@@ -19247,7 +19247,7 @@ const RSTK_BASE_CSS = `
   }
   .rstkCalendarBlock.rstk-block-style{background:transparent;border:0;padding:0}
   .rstkSocialProfileBlock.rstk-block-style{width:fit-content;min-width:0;max-width:100%}
-  .rstk-kind-form .rstkSocialProfileBlock.rstk-block-style,.rstk-embedded-form-source-frame .rstkSocialProfileBlock.rstk-block-style{justify-self:start}
+  .rstk-kind-form .rstkSocialProfileBlock.rstk-block-style,.rstk-embedded-form-source-frame .rstkSocialProfileBlock.rstk-block-style{justify-self:start;transform:translateX(var(--rstk-social-profile-nudge,clamp(-22px,-5vw,-14px)))}
   .rstkHasBgVideo{isolation:isolate;overflow:hidden}
   .rstk-block-bg-video{position:absolute;inset:0;z-index:0;width:100%;height:100%;object-fit:var(--rstk-block-bg-size,cover);pointer-events:none}
   .rstkHasBgVideo > :not(.rstk-block-bg-video){position:relative;z-index:1}
