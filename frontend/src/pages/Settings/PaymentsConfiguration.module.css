@@ -1747,6 +1747,80 @@
   margin-top: 4px;
   color: var(--text-dim);
   font-size: 12px;
+  overflow-wrap: anywhere;
+}
+
+.webhookEventGuide {
+  display: grid;
+  gap: 12px;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-ctl);
+  background: var(--surface);
+}
+
+.webhookEventGuideHeader {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.webhookEventGuideHeader > div {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.webhookEventGuideHeader strong {
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 700;
+  line-height: 1.25;
+}
+
+.webhookEventGuideHeader span {
+  color: var(--text-dim);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.webhookEventList {
+  display: grid;
+  gap: 0;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-ctl);
+  overflow: hidden;
+}
+
+.webhookEventItem {
+  display: grid;
+  grid-template-columns: minmax(220px, 0.8fr) minmax(0, 1.2fr);
+  gap: 12px;
+  align-items: start;
+  padding: 10px 12px;
+  border-top: 1px solid var(--border);
+  background: var(--surface-solid);
+}
+
+.webhookEventItem:first-child {
+  border-top: 0;
+}
+
+.webhookEventItem code {
+  min-width: 0;
+  color: var(--text);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+
+.webhookEventItem span {
+  min-width: 0;
+  color: var(--text-dim);
+  font-size: 12px;
+  line-height: 1.45;
 }
 
 .webhookInstructions {
@@ -1874,6 +1948,7 @@
   .actionsRow,
   .stripeModeActions,
   .copyField,
+  .webhookEventGuideHeader,
   .sectionSaveBar,
   .gatewayDetailBar,
   .paymentModeControl {
@@ -1885,10 +1960,15 @@
   }
 
   .copyField,
+  .webhookEventGuideHeader,
   .sectionSaveBar,
   .gatewayDetailBar {
     flex-direction: column;
     align-items: stretch;
+  }
+
+  .webhookEventItem {
+    grid-template-columns: 1fr;
   }
 
   .logoUploadControl {

@@ -138,6 +138,11 @@ interface PaymentGatewayOption {
   logo?: PaymentPlatformLogoId
 }
 
+interface WebhookEventGuideItem {
+  event: string
+  description: string
+}
+
 const gatewayStatusCopy: Record<PaymentGatewayOption['status'], { label: string; variant: 'success' | 'neutral' }> = {
   connected: { label: 'Conectada', variant: 'success' },
   available: { label: 'Sin conexión', variant: 'neutral' }
@@ -178,10 +183,55 @@ const stripeModeLabels: Record<StripeModeId, { title: string; description: strin
     secretPlaceholder: 'sk_live_...'
   }
 }
-const stripeWebhookEvents = [
-  'invoice.payment_failed',
-  'invoice.payment_succeeded',
-  'refund.created'
+const stripeWebhookEvents: WebhookEventGuideItem[] = [
+  {
+    event: 'payment_intent.succeeded',
+    description: 'Confirma pagos con tarjeta, links públicos y cobros directos.'
+  },
+  {
+    event: 'payment_intent.payment_failed',
+    description: 'Marca intentos rechazados o fallidos.'
+  },
+  {
+    event: 'payment_intent.canceled',
+    description: 'Cierra cobros cancelados desde Stripe.'
+  },
+  {
+    event: 'payment_intent.processing',
+    description: 'Mantiene pagos asíncronos como pendientes mientras Stripe confirma.'
+  },
+  {
+    event: 'payment_intent.requires_action',
+    description: 'Sincroniza cobros que quedan esperando 3DS u otra acción del cliente.'
+  },
+  {
+    event: 'checkout.session.completed',
+    description: 'Activa suscripciones iniciadas desde Checkout.'
+  },
+  {
+    event: 'invoice.payment_succeeded',
+    description: 'Confirma cobros recurrentes de suscripciones.'
+  },
+  {
+    event: 'invoice.payment_failed',
+    description: 'Marca cobros recurrentes fallidos.'
+  },
+  {
+    event: 'customer.subscription.updated',
+    description: 'Sincroniza cambios de estado, periodo y renovación de suscripciones.'
+  },
+  {
+    event: 'customer.subscription.deleted',
+    description: 'Sincroniza cancelaciones de suscripciones.'
+  },
+  {
+    event: 'charge.refunded',
+    description: 'Detecta reembolsos aplicados al cargo.'
+  },
+  {
+    event: 'refund.created',
+    description: 'Registra reembolsos iniciados desde Stripe.'
+  }
 ]
 const paymentModeLabels: Record<PaymentModeId, { title: string; badge: string; description: string; mercadoPagoHelp: string }> = {
   test: {
@@ -252,12 +302,35 @@ const conektaModeLabels: Record<StripeModeId, { title: string; description: stri
     privatePlaceholder: 'key_...'
   }
 }
-const conektaWebhookEvents = [
-  'order.paid',
-  'order.expired',
-  'order.canceled',
-  'charge.paid',
-  'charge.failed'
+const conektaWebhookEvents: WebhookEventGuideItem[] = [
+  {
+    event: 'order.paid',
+    description: 'Confirma pagos completados y activa planes o suscripciones pendientes.'
+  },
+  {
+    event: 'order.pending_payment',
+    description: 'Mantiene la orden en espera mientras el cliente termina el pago.'
+  },
+  {
+    event: 'order.declined',
+    description: 'Marca pagos rechazados por la pasarela o el banco.'
+  },
+  {
+    event: 'order.canceled',
+    description: 'Sincroniza órdenes canceladas.'
+  },
+  {
+    event: 'order.expired',
+    description: 'Cierra links u órdenes que vencieron sin pago.'
+  },
+  {
+    event: 'order.charged_back',
+    description: 'Marca órdenes reportadas como contracargo.'
+  },
+  {
+    event: 'order.refunded',
+    description: 'Sincroniza órdenes reembolsadas completamente.'
+  }
 ]
 const conektaWebhookSteps = [
   'En Conekta abre Desarrolladores > Webhooks y presiona Crear webhook.',
@@ -911,13 +984,50 @@ export const PaymentsConfiguration: React.FC = () => {
     }
   }
 
-  const handleCopyConektaText = async (value: string, label: string) => {
+  const handleCopyGatewayText = async (value: string, label: string, gatewayName: string) => {
     const copied = await copyTextToClipboard(value)
     if (copied) {
-      showToast('success', `${label} copiado`, 'Ya lo puedes pegar en Conekta.')
+      showToast('success', `${label} copiado`, `Ya lo puedes pegar en ${gatewayName}.`)
     } else {
       showToast('error', 'No se pudo copiar', 'Selecciona el campo y copia el texto manualmente.')
     }
+  }
+
+  const renderWebhookEventGuide = (
+    gatewayName: string,
+    title: string,
+    description: string,
+    events: WebhookEventGuideItem[]
+  ) => {
+    const eventList = events.map((item) => item.event).join('\n')
+
+    return (
+      <div className={styles.webhookEventGuide}>
+        <div className={styles.webhookEventGuideHeader}>
+          <div>
+            <strong>{title}</strong>
+            <span>{description}</span>
+          </div>
+          <Button
+            type="button"
+            variant="secondary"
+            size="sm"
+            leftIcon={<Copy size={15} />}
+            onClick={() => handleCopyGatewayText(eventList, 'Eventos', gatewayName)}
+          >
+            Copiar eventos
+          </Button>
+        </div>
+        <div className={styles.webhookEventList}>
+          {events.map((item) => (
+            <div key={item.event} className={styles.webhookEventItem}>
+              <code>{item.event}</code>
+              <span>{item.description}</span>
+            </div>
+          ))}
+        </div>
+      </div>
+    )
   }
 
   const handleCopyGigstackPortalUrl = async () => {
@@ -3102,28 +3212,32 @@ export const PaymentsConfiguration: React.FC = () => {
                 <>
                   <h3>Endpoint URL</h3>
                   {stripeWebhookEndpoints.map((endpoint) => (
-                    <div key={endpoint.url} className={styles.formField}>
-                      <span>{endpoint.label}</span>
-                      <input
-                        type="text"
-                        readOnly
-                        value={endpoint.url}
-                        onFocus={(event) => event.currentTarget.select()}
-                      />
+                    <div key={endpoint.url} className={styles.webhookRow}>
+                      <div>
+                        <strong>{endpoint.label}</strong>
+                        <span>{endpoint.description}</span>
+                        <span>{endpoint.url}</span>
+                      </div>
+                      <Button
+                        type="button"
+                        variant="secondary"
+                        size="sm"
+                        leftIcon={<Copy size={15} />}
+                        onClick={() => handleCopyGatewayText(endpoint.url, 'URL', 'Stripe')}
+                      >
+                        Copiar
+                      </Button>
                     </div>
                   ))}
                 </>
               )}
 
-              <div className={styles.formField}>
-                <span>Eventos a escuchar</span>
-                <textarea
-                  readOnly
-                  value={stripeWebhookEvents.join('\n')}
-                  onFocus={(event) => event.currentTarget.select()}
-                />
-                <small>Selecciona estos eventos en Stripe para que Ristak reciba confirmaciones de invoice y reembolsos sin ruido extra.</small>
-              </div>
+              {renderWebhookEventGuide(
+                'Stripe',
+                'Eventos a escuchar en Stripe',
+                'Selecciona estos eventos al crear el endpoint. Son los que Ristak usa para pagos, Checkout de suscripciones, invoices, cancelaciones y reembolsos.',
+                stripeWebhookEvents
+              )}
             </div>
           </div>
         </Card>
@@ -3260,22 +3374,19 @@ export const PaymentsConfiguration: React.FC = () => {
                     variant="secondary"
                     size="sm"
                     leftIcon={<Copy size={15} />}
-                    onClick={() => handleCopyConektaText(endpoint.url, 'URL')}
+                    onClick={() => handleCopyGatewayText(endpoint.url, 'URL', 'Conekta')}
                   >
                     Copiar
                   </Button>
                 </div>
               ))}
 
-              <div className={styles.formField}>
-                <span>Eventos a seleccionar</span>
-                <textarea
-                  readOnly
-                  value={conektaWebhookEvents.join('\n')}
-                  onFocus={(event) => event.currentTarget.select()}
-                />
-                <small>Selecciona estos eventos al crear el webhook para que Ristak pueda reconciliar pagos y activar planes.</small>
-              </div>
+              {renderWebhookEventGuide(
+                'Conekta',
+                'Eventos a seleccionar en Conekta',
+                'Usa eventos de orden. Ristak reconcilia pagos por la orden de Conekta para activar planes, suscripciones y cerrar pagos rechazados o vencidos.',
+                conektaWebhookEvents
+              )}
 
               <div className={styles.webhookInstructions}>
                 {conektaWebhookSteps.map((step, index) => (
