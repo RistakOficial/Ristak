@@ -359,7 +359,7 @@
 .payPanel {
   position: sticky;
   top: 24px;
-  padding: 26px;
+  padding: clamp(22px, 3vw, 30px);
   background: var(--surface-solid, var(--surface));
 }
 
@@ -409,7 +409,8 @@
 .stripeBox {
   display: flex;
   flex-direction: column;
-  gap: 14px;
+  gap: 18px;
+  min-width: 0;
 }
 
 .cardAuthorizationNotice {
@@ -430,6 +431,7 @@
 }
 
 .stripeElementShell {
+  min-width: 0;
   padding: 0;
 }
 
@@ -437,7 +439,7 @@
   position: relative;
   min-height: 410px;
   padding: 0;
-  overflow: hidden;
+  overflow: visible;
 }
 
 .mercadoPagoBrick {
@@ -448,18 +450,33 @@
 .mercadoPagoBrick :global(form) {
   display: flex;
   flex-direction: column;
-  gap: 18px;
+  gap: 20px;
+  min-width: 0;
+  padding: 0;
 }
 
 .mercadoPagoBrick :global(form > div),
 .mercadoPagoBrick :global(fieldset) {
   min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  box-shadow: none;
+}
+
+.mercadoPagoBrick :global([class*="form-control"]),
+.mercadoPagoBrick :global([class*="FormControl"]),
+.mercadoPagoBrick :global([class*="field"]),
+.mercadoPagoBrick :global([class*="Field"]) {
+  min-width: 0;
 }
 
 .mercadoPagoBrick :global(label) {
   display: inline-flex;
-  margin-bottom: 7px;
+  margin: 0 0 8px;
   color: var(--text);
+  font-size: 13px;
+  font-weight: 600;
   line-height: 1.35;
 }
 
@@ -470,6 +487,12 @@
   margin: 4px 0 10px;
   color: var(--text);
   line-height: 1.25;
+}
+
+.mercadoPagoBrick :global(legend) {
+  padding: 0;
+  font-size: 13px;
+  font-weight: 600;
 }
 
 .mercadoPagoBrick :global(input),
@@ -483,9 +506,46 @@
   font-size: 13px;
 }
 
+.mercadoPagoBrick :global(select) {
+  width: 100%;
+  min-width: 0;
+  box-shadow: none;
+}
+
+.mercadoPagoBrick :global([role="combobox"]),
+.mercadoPagoBrick :global([class*="dropdown"]),
+.mercadoPagoBrick :global([class*="Dropdown"]) {
+  min-width: 0;
+  box-shadow: none;
+}
+
+.mercadoPagoBrick :global([role="combobox"]),
+.mercadoPagoBrick :global([class*="dropdown"] > button),
+.mercadoPagoBrick :global([class*="Dropdown"] > button) {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  min-height: 44px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-ctl);
+  background: var(--surface);
+  color: var(--text);
+  box-shadow: none;
+}
+
+.mercadoPagoBrick :global([class*="dropdown"] select),
+.mercadoPagoBrick :global([class*="Dropdown"] select) {
+  min-height: auto;
+  border: 0;
+  background: none;
+  box-shadow: none;
+}
+
 .mercadoPagoBrick :global(button[type="submit"]) {
+  width: 100%;
   min-height: 48px;
-  margin-top: 2px;
+  margin-top: 4px;
 }
 
 .mercadoPagoBrick :global(input:focus),
@@ -493,6 +553,49 @@
 .mercadoPagoBrick :global(textarea:focus) {
   border-color: var(--accent);
   box-shadow: var(--ristak-focus-ring);
+}
+
+.mercadoPagoBrick :global([role="alert"]),
+.mercadoPagoBrick :global([aria-live="assertive"]),
+.mercadoPagoBrick :global([class*="message"]),
+.mercadoPagoBrick :global([class*="Message"]) {
+  display: flex;
+  align-items: flex-start;
+  gap: 7px;
+  width: 100%;
+  min-width: 0;
+  margin: 2px 0 0;
+  padding: 0;
+  border: 0;
+  background: none;
+  box-shadow: none;
+  color: var(--neg);
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 1.45;
+}
+
+.mercadoPagoBrick :global([role="alert"] button),
+.mercadoPagoBrick :global([aria-live="assertive"] button),
+.mercadoPagoBrick :global([class*="message"] button),
+.mercadoPagoBrick :global([class*="Message"] button) {
+  display: none;
+}
+
+.saveCardOption {
+  display: flex;
+  align-items: flex-start;
+  gap: 9px;
+  margin: 0;
+  color: var(--text-dim);
+  font-size: 13px;
+  line-height: 1.45;
+  cursor: pointer;
+}
+
+.saveCardOption input {
+  flex: 0 0 auto;
+  margin-top: 2px;
 }
 
 .conektaTokenizerShell {
@@ -610,6 +713,24 @@
   color: var(--text-dim);
   font-size: 13px;
   line-height: 1.45;
+}
+
+.providerMessage {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin: -2px 0 0;
+  padding: 0;
+  border: 0;
+  color: var(--text-dim);
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 1.45;
+}
+
+.providerMessage svg {
+  flex: 0 0 auto;
+  margin-top: 1px;
 }
 
 .messageError {
@@ -750,7 +871,7 @@
 
   .payPanel {
     position: static;
-    padding: 18px;
+    padding: 22px;
   }
 
   .title {
@@ -777,7 +898,44 @@
   }
 
   .mercadoPagoBrickShell {
-    min-height: 340px;
+    min-height: 360px;
+  }
+
+  .mercadoPagoBrick :global(form) {
+    gap: 18px;
+  }
+}
+
+@media (max-width: 520px) {
+  .shell {
+    width: min(100vw - 18px, 680px);
+    padding: 16px 0 30px;
+  }
+
+  .payPanel {
+    padding: 22px 18px;
+  }
+
+  .payHeader {
+    margin-bottom: 20px;
+  }
+
+  .payHeader h2 {
+    font-size: 22px;
+  }
+
+  .mercadoPagoBrickShell {
+    min-height: 380px;
+  }
+
+  .mercadoPagoBrick :global(form) {
+    gap: 17px;
+  }
+
+  .cardAuthorizationNotice,
+  .providerMessage,
+  .fallbackAction {
+    font-size: 12px;
   }
 }
 

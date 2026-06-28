@@ -565,7 +565,7 @@ const PublicPaymentForm: React.FC<{
       </div>
 
       {message && (
-        <p className={`${styles.message} ${success ? styles.messageSuccess : styles.messageError}`}>
+        <p className={`${styles.providerMessage} ${success ? styles.messageSuccess : styles.messageError}`}>
           {success ? <CheckCircle2 size={16} /> : <AlertCircle size={16} />}
           <span>{message}</span>
         </p>
@@ -708,7 +708,7 @@ const MercadoPagoCardPaymentForm: React.FC<{
   }, [containerId, payment.amount, payment.mercadoPagoInstallments?.maxInstallments, payment.publicKey, payment.publicPaymentId])
 
   const messageClassName = [
-    styles.message,
+    styles.providerMessage,
     messageKind === 'success' ? styles.messageSuccess : '',
     messageKind === 'error' ? styles.messageError : ''
   ].filter(Boolean).join(' ')
@@ -900,7 +900,7 @@ const ConektaCardTokenizerForm: React.FC<{
   }
 
   const messageClassName = [
-    styles.message,
+    styles.providerMessage,
     messageKind === 'success' ? styles.messageSuccess : '',
     messageKind === 'error' ? styles.messageError : ''
   ].filter(Boolean).join(' ')
@@ -921,7 +921,7 @@ const ConektaCardTokenizerForm: React.FC<{
 
       {/* (PAY2-008) Opt-in: el cliente decide si guardar su tarjeta (desmarcado por defecto). */}
       {payment.contact?.id && (
-        <label style={{ display: 'flex', alignItems: 'center', gap: 8, margin: '4px 0 12px', color: 'var(--text-dim)', fontSize: 13, cursor: 'pointer' }}>
+        <label className={styles.saveCardOption}>
           <input
             type="checkbox"
             checked={saveCard}
