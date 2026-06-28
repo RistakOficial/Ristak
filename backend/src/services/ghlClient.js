@@ -256,6 +256,72 @@ class GHLClient {
     })
   }
 
+  async searchConversations(options = {}) {
+    const {
+      contactId,
+      assignedTo,
+      followers,
+      mentions,
+      query,
+      sort = 'desc',
+      sortBy = 'last_message_date',
+      status = 'all',
+      startAfterDate,
+      startDate,
+      endDate,
+      lastMessageType,
+      lastMessageAction,
+      lastMessageDirection,
+      limit = 100
+    } = options
+
+    return this.request('/conversations/search', {
+      method: 'GET',
+      version: GHL_CONVERSATIONS_API_VERSION,
+      params: {
+        locationId: this.locationId,
+        limit,
+        sort,
+        sortBy,
+        status,
+        ...(contactId && { contactId }),
+        ...(assignedTo && { assignedTo }),
+        ...(followers && { followers }),
+        ...(mentions && { mentions }),
+        ...(query && { query }),
+        ...(startAfterDate && { startAfterDate }),
+        ...(startDate && { startDate }),
+        ...(endDate && { endDate }),
+        ...(lastMessageType && { lastMessageType }),
+        ...(lastMessageAction && { lastMessageAction }),
+        ...(lastMessageDirection && { lastMessageDirection })
+      }
+    })
+  }
+
+  async getConversationMessages(conversationId, options = {}) {
+    const cleanConversationId = cleanString(conversationId)
+    if (!cleanConversationId) {
+      throw new Error('Se requiere el ID de conversación de HighLevel')
+    }
+
+    const {
+      lastMessageId,
+      limit = 100,
+      type
+    } = options
+
+    return this.request(`/conversations/${encodeURIComponent(cleanConversationId)}/messages`, {
+      method: 'GET',
+      version: GHL_CONVERSATIONS_API_VERSION,
+      params: {
+        limit,
+        ...(lastMessageId && { lastMessageId }),
+        ...(type && { type })
+      }
+    })
+  }
+
   async getConversationMessage(messageId) {
     const cleanMessageId = cleanString(messageId)
     if (!cleanMessageId) {

@@ -74,7 +74,7 @@ router.get('/contacts/:id', getContactById)
 
 // Conversations
 router.post('/conversations/messages', sendConversationMessage)
-router.post('/conversations/sync', syncConversations)
+router.post('/conversations/sync', requireAdmin, syncConversations)
 
 // Users
 router.get('/users', getLocationUsers)
