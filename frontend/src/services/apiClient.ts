@@ -1,4 +1,3 @@
-import { dedupeContactsPayload } from '@/utils/contactDedup'
 import { getApiBaseUrl } from './apiBaseUrl'
 
 // IMPORTANTE: VITE_API_URL NO debe terminar con /api
@@ -69,7 +68,7 @@ class ApiClient {
       return {} as T
     }
 
-    const json = dedupeContactsPayload(rawJson)
+    const json = rawJson
 
     if (!response.ok) {
       let message = `API Error: ${response.status} ${response.statusText}`

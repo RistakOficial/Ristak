@@ -1,4 +1,3 @@
-import { dedupeContacts } from '@/utils/contactDedup'
 import apiClient from './apiClient'
 import type { ContactCustomField } from '@/types'
 
@@ -310,7 +309,7 @@ class CampaignsService {
     try {
       const data = await apiClient.get<CampaignContact[]>('/meta/contacts', { params })
       const contacts = Array.isArray(data) ? data : []
-      return dedupeContacts<CampaignContact>(contacts)
+      return contacts
     } catch (error) {
       return []
     }

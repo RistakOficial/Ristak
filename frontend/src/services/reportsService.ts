@@ -1,5 +1,4 @@
 import type { ContactMetaAttribution } from '@/types'
-import { dedupeContacts } from '@/utils/contactDedup'
 import apiClient from './apiClient'
 
 export type GroupBy = 'day' | 'month' | 'year'
@@ -214,7 +213,7 @@ class ReportsService {
     const rawContacts = Array.isArray(response.contacts) ? response.contacts : []
     return {
       ...response,
-      contacts: dedupeContacts<ContactListItem>(rawContacts)
+      contacts: rawContacts
     }
   }
 

@@ -33,7 +33,6 @@ import type { ContactAppointment, ContactCustomField, ContactCustomFieldDefiniti
 import { useNotification } from '@/contexts/NotificationContext'
 import { useAuth } from '@/contexts/AuthContext'
 import styles from './Contacts.module.css'
-import { dedupeContacts } from '@/utils/contactDedup'
 import { getContactAvatarUrl, getContactDisplayName, getContactInitials } from '@/utils/contactAvatar'
 import { getContactStageBadge, isAttendedAppointmentStatus } from '@/utils/contactStageBadge'
 import { normalizeTrafficSource } from '@/utils/trafficSourceNormalizer'
@@ -1266,10 +1265,10 @@ const ContactsTable: React.FC = () => {
               return
             }
 
-            loadedContacts = dedupeContacts<Contact>([
+            loadedContacts = [
               ...loadedContacts,
               ...nextPage.contacts
-            ])
+            ]
             setContacts(loadedContacts)
 
             hasMore = nextPage.pagination.hasNext && nextPage.contacts.length > 0
@@ -2053,7 +2052,7 @@ const ContactsTable: React.FC = () => {
   const handleCreateContact = async (contact: Omit<Contact, 'id' | 'createdAt' | 'ltv' | 'purchases'>) => {
     try {
       const newContact = await contactsService.createContact(contact)
-      setContacts(prev => dedupeContacts<Contact>([...prev, newContact]))
+      setContacts(prev => [...prev, newContact])
       setShowNewContactModal(false)
       openContactModal(newContact)
       showToast('success', '¡Contacto creado exitosamente!', `${contact.name} se agregó a tu lista de contactos`)

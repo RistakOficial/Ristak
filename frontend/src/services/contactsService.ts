@@ -1,5 +1,4 @@
 import type { Contact as ContactType, ContactCustomField, ContactCustomFieldDefinition } from '@/types'
-import { dedupeContacts } from '@/utils/contactDedup'
 import { formatName } from '@/utils/format'
 import { apiUrl } from './apiBaseUrl'
 import apiClient from './apiClient'
@@ -205,7 +204,7 @@ const requestContactsPage = async ({
   const pagination = json?.pagination || {}
 
   return {
-    contacts: dedupeContacts<Contact>(contacts).map(normalizeContact),
+    contacts: contacts.map(normalizeContact),
     pagination: {
       page: Number(pagination.page || page),
       limit: Number(pagination.limit || limit),
@@ -242,7 +241,7 @@ export const contactsService = {
         page++
       }
 
-      return dedupeContacts<Contact>(allContacts).map(normalizeContact)
+      return allContacts.map(normalizeContact)
     } catch (error) {
       // TODO: Implement proper logging service
       return []
@@ -256,7 +255,7 @@ export const contactsService = {
         signal
       })
       const results = Array.isArray(data) ? data : []
-      return dedupeContacts<Contact>(results).map(normalizeContact)
+      return results.map(normalizeContact)
     } catch (error) {
       // TODO: Implement proper logging service
       return []
