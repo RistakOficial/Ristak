@@ -156,11 +156,21 @@ export const AutomationNodeCard: React.FC<AutomationNodeCardProps> = ({
   // ------------------------------------------------------------------
   const isTemplateMode = node.type === 'channel-whatsapp' && config.messageType === 'template'
   const showBlocks = Boolean(definition?.supportsMessageBlocks) && !isTemplateMode
-  const blocks = showBlocks ? asMessageBlocks(config.messageBlocks) : []
+  const rawMessageBlocks = asMessageBlocks(config.messageBlocks)
+  const visibleMessageBlocks = node.type === 'channel-whatsapp'
+    ? rawMessageBlocks.filter((block) => block.type !== 'template')
+    : rawMessageBlocks
+  const blocks = showBlocks ? visibleMessageBlocks : []
 
   const addMessageBlock = () => {
     const block: MessageBlock = { id: genId('blk'), type: 'text', compiledText: '', buttons: [], quickReplies: [] }
-    onPatchConfig(node, { messageBlocks: [...asMessageBlocks(config.messageBlocks), block] }, true)
+    const nextBlocks = node.type === 'channel-whatsapp' ? visibleMessageBlocks : rawMessageBlocks
+    const patch: Record<string, unknown> = { messageBlocks: [...nextBlocks, block] }
+    if (node.type === 'channel-whatsapp') {
+      patch.templateId = ''
+      patch.templateName = ''
+    }
+    onPatchConfig(node, patch, true)
   }
 
 

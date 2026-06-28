@@ -8,7 +8,7 @@ import {
   Toggle,
   useCatalogOptions
 } from './configPrimitives'
-import { MessageBlocksEditor } from './MessageBlocksEditor'
+import { MessageBlocksEditor, messageBlockHelpers } from './MessageBlocksEditor'
 import { useNotification } from '@/contexts/NotificationContext'
 import { whatsappApiService } from '@/services/whatsappApiService'
 import {
@@ -54,6 +54,8 @@ const sanitizeTemplateBlock = (block: MessageBlock): MessageBlock => {
   return cleanBlock
 }
 
+const isNormalWhatsAppBlock = (block: MessageBlock): boolean => block.type !== 'template'
+
 export const WhatsAppConfigEditor: React.FC<{ config: Config; onChange: (config: Config) => void }> = ({
   config,
   onChange
@@ -64,6 +66,7 @@ export const WhatsAppConfigEditor: React.FC<{ config: Config; onChange: (config:
   const messageType = str(config.messageType) || 'text'
   const allowQrFallback = config.sendViaQr === true || str(config.transport) === 'qr'
   const [whatsappAvailability, setWhatsappAvailability] = useState<WhatsAppConnectionAvailability>(defaultWhatsAppAvailability)
+  const [initialTextBlock] = useState<MessageBlock>(() => messageBlockHelpers.newBlock('text'))
 
   useEffect(() => {
     let mounted = true
@@ -82,6 +85,11 @@ export const WhatsAppConfigEditor: React.FC<{ config: Config; onChange: (config:
 
   // Compatibilidad: si la config vieja solo tenía templateId, se ve como bloque
   const rawBlocks = Array.isArray(config.messageBlocks) ? (config.messageBlocks as MessageBlock[]) : []
+  const normalBlocks = rawBlocks.filter(isNormalWhatsAppBlock)
+  const hasNormalTextBlock = normalBlocks.some((block) => block.type === 'text')
+  const visibleNormalBlocks = hasNormalTextBlock ? normalBlocks : [initialTextBlock, ...normalBlocks]
+  const normalBlocksKey = rawBlocks.map((block) => `${block.id || ''}:${block.type}`).join('|')
+  const templateMetaKey = `${str(config.templateId)}:${str(config.templateName)}`
   const templateBlocks =
     rawBlocks.some((block) => block.type === 'template') || !str(config.templateId)
       ? rawBlocks.filter((block) => block.type === 'template' || block.type === 'delay').map(sanitizeTemplateBlock)
@@ -95,6 +103,29 @@ export const WhatsAppConfigEditor: React.FC<{ config: Config; onChange: (config:
         ]
 
   const firstTemplateBlock = (blocks: MessageBlock[]) => blocks.find((block) => block.type === 'template')
+
+  useEffect(() => {
+    if (messageType !== 'text') return
+    const hasTemplateBlock = rawBlocks.some((block) => block.type === 'template')
+    const hasTemplateMeta = Boolean(str(config.templateId) || str(config.templateName))
+    if (!hasTemplateBlock && hasNormalTextBlock && !hasTemplateMeta) return
+
+    onChange({
+      ...config,
+      messageBlocks: hasNormalTextBlock ? normalBlocks : [messageBlockHelpers.newBlock('text'), ...normalBlocks],
+      templateId: '',
+      templateName: ''
+    })
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [messageType, normalBlocksKey, templateMetaKey, hasNormalTextBlock])
+
+  const setNormalBlocks = (messageBlocks: MessageBlock[]) => {
+    set({
+      messageBlocks: messageBlocks.filter(isNormalWhatsAppBlock),
+      templateId: '',
+      templateName: ''
+    })
+  }
 
   const setTemplateBlocks = (messageBlocks: MessageBlock[]) => {
     const nextBlocks = messageBlocks.map(sanitizeTemplateBlock)
@@ -122,7 +153,12 @@ export const WhatsAppConfigEditor: React.FC<{ config: Config; onChange: (config:
       })
       return
     }
-    set({ messageType: next })
+    set({
+      messageType: next,
+      messageBlocks: hasNormalTextBlock ? normalBlocks : [messageBlockHelpers.newBlock('text'), ...normalBlocks],
+      templateId: '',
+      templateName: ''
+    })
   }
 
   const applyQrFallback = (checked: boolean) => {
@@ -203,6 +239,13 @@ export const WhatsAppConfigEditor: React.FC<{ config: Config; onChange: (config:
 
         {messageType === 'text' && (
           <>
+            <MessageBlocksEditor
+              value={visibleNormalBlocks}
+              onChange={setNormalBlocks}
+              supportsQuickReplies={false}
+              buttonLabelMaxLength={20}
+            />
+
             {whatsappAvailability.canShowQrFallbackSwitch && (
               <div className={styles.qrModeBox}>
                 <Toggle
@@ -240,13 +283,6 @@ export const WhatsAppConfigEditor: React.FC<{ config: Config; onChange: (config:
                 Esta automatización permite respaldo por QR, pero ahora no hay ningún número conectado por QR.
               </div>
             )}
-
-            <MessageBlocksEditor
-              value={config.messageBlocks}
-              onChange={(messageBlocks: MessageBlock[]) => set({ messageBlocks })}
-              supportsQuickReplies={false}
-              buttonLabelMaxLength={20}
-            />
           </>
         )}
 
