@@ -12,7 +12,9 @@ import {
 } from './stripePaymentService.js'
 import {
   cancelMercadoPagoRecurringSubscription,
+  cancelMercadoPagoSubscriptionPlan,
   createMercadoPagoRecurringSubscription,
+  createMercadoPagoSubscriptionPlanLink,
   pauseMercadoPagoRecurringSubscription,
   resumeMercadoPagoRecurringSubscription,
   updateMercadoPagoRecurringSubscription
@@ -648,18 +650,13 @@ function applyMercadoPagoSubscriptionToRow(row, mercadoPagoSubscription) {
   }
 }
 
-async function attachMercadoPagoSubscriptionIfNeeded(row) {
+async function attachMercadoPagoSubscriptionIfNeeded(row, payload = {}) {
   if (row.mercadopago_preapproval_id) return row
+  if (row.mercadopago_preapproval_plan_id) return row
   if (row.payment_provider !== 'mercadopago') return row
   if (row.payment_method !== 'mercadopago_subscription') return row
 
-  if (!row.contact_email) {
-    const error = new Error('Mercado Pago necesita el email del contacto para crear la suscripción en su sistema.')
-    error.status = 422
-    throw error
-  }
-
-  const mercadoPagoSubscription = await createMercadoPagoRecurringSubscription({
+  const mercadoPagoSubscription = await createMercadoPagoSubscriptionPlanLink({
     ristakSubscriptionId: row.id,
     name: row.name,
     amount: row.amount,
@@ -667,8 +664,9 @@ async function attachMercadoPagoSubscriptionIfNeeded(row) {
     intervalType: row.interval_type,
     intervalCount: row.interval_count,
     startDate: row.start_date,
-    cancelAt: row.cancel_at,
-    contactEmail: row.contact_email
+    cancelAt: row.cancel_at
+  }, {
+    baseUrl: cleanString(payload.baseUrl || payload.base_url)
   })
 
   return applyMercadoPagoSubscriptionToRow(row, mercadoPagoSubscription)
@@ -755,9 +753,9 @@ async function syncStripeSubscriptionUpdateIfNeeded(row, existing) {
   }
 }
 
-async function syncMercadoPagoSubscriptionUpdateIfNeeded(row, existing = {}) {
+async function syncMercadoPagoSubscriptionUpdateIfNeeded(row, existing = {}, payload = {}) {
   if (row.payment_method !== 'mercadopago_subscription') return row
-  if (!existing.mercadopago_preapproval_id) return attachMercadoPagoSubscriptionIfNeeded(row)
+  if (!existing.mercadopago_preapproval_id) return attachMercadoPagoSubscriptionIfNeeded(row, payload)
 
   if (row.payment_provider !== 'mercadopago') {
     const error = new Error('Esta suscripción ya está activa en Mercado Pago. Cancélala antes de cambiarla a otro método.')
@@ -930,6 +928,14 @@ export async function createSubscription(payload = {}) {
         logger.error(`[Suscripciones] (PAY-003) INSERT local falló y NO se pudo cancelar la suscripción Stripe ${row.stripe_subscription_id} (queda huérfana, revisar manualmente): ${cancelError.message}`)
       }
     }
+    if (row.mercadopago_preapproval_plan_id) {
+      try {
+        await cancelMercadoPagoSubscriptionPlan(row.mercadopago_preapproval_plan_id)
+        logger.error(`[Suscripciones] INSERT local falló; se canceló el plan Mercado Pago huérfano ${row.mercadopago_preapproval_plan_id}: ${insertError.message}`)
+      } catch (cancelError) {
+        logger.error(`[Suscripciones] INSERT local falló y NO se pudo cancelar el plan Mercado Pago ${row.mercadopago_preapproval_plan_id} (queda huérfano, revisar manualmente): ${cancelError.message}`)
+      }
+    }
     throw insertError
   }
 
@@ -958,7 +964,7 @@ export async function updateSubscription(subscriptionId, payload = {}) {
   assertSubscriptionDatesNotInPast(row)
   row = await createSubscriptionStartPaymentLinkIfNeeded(row, payload)
   row = await syncStripeSubscriptionUpdateIfNeeded(row, existing)
-  row = await syncMercadoPagoSubscriptionUpdateIfNeeded(row, existing)
+  row = await syncMercadoPagoSubscriptionUpdateIfNeeded(row, existing, payload)
   row = await syncConektaSubscriptionUpdateIfNeeded(row, existing, payload)
 
   await db.run(
@@ -1113,6 +1119,9 @@ export async function actionSubscription(subscriptionId, action, payload = {}) {
     if (existing.mercadopago_preapproval_id) {
       await cancelMercadoPagoRecurringSubscription(existing.mercadopago_preapproval_id)
     }
+    if (existing.mercadopago_preapproval_plan_id && !existing.mercadopago_preapproval_id) {
+      await cancelMercadoPagoSubscriptionPlan(existing.mercadopago_preapproval_plan_id)
+    }
     if (existing.conekta_subscription_id) {
       await cancelConektaRecurringSubscription(existing.conekta_customer_id, existing.conekta_subscription_id)
     }
@@ -1142,7 +1151,7 @@ export async function actionSubscription(subscriptionId, action, payload = {}) {
 export async function deleteSubscription(subscriptionId) {
   const audit = await getSubscriptionAuditSummary(subscriptionId)
   const existing = await db.get(
-    `SELECT id, status, stripe_subscription_id, mercadopago_preapproval_id, conekta_customer_id, conekta_subscription_id
+    `SELECT id, status, stripe_subscription_id, mercadopago_preapproval_id, mercadopago_preapproval_plan_id, conekta_customer_id, conekta_subscription_id
      FROM subscriptions
      WHERE id = ? AND COALESCE(status, '') <> 'deleted'
      LIMIT 1`,
@@ -1162,6 +1171,13 @@ export async function deleteSubscription(subscriptionId) {
         await cancelMercadoPagoRecurringSubscription(existing.mercadopago_preapproval_id)
       } catch (error) {
         logger.warn(`[Suscripciones] No se pudo cancelar la suscripción test en Mercado Pago ${subscriptionId}; se eliminará localmente: ${error.message}`)
+      }
+    }
+    if (existing?.mercadopago_preapproval_plan_id && !existing?.mercadopago_preapproval_id && existing.status !== 'cancelled') {
+      try {
+        await cancelMercadoPagoSubscriptionPlan(existing.mercadopago_preapproval_plan_id)
+      } catch (error) {
+        logger.warn(`[Suscripciones] No se pudo cancelar el plan test en Mercado Pago ${subscriptionId}; se eliminará localmente: ${error.message}`)
       }
     }
     if (existing?.conekta_subscription_id && existing.status !== 'cancelled') {
@@ -1194,6 +1210,9 @@ export async function deleteSubscription(subscriptionId) {
   }
   if (existing?.mercadopago_preapproval_id && existing.status !== 'cancelled') {
     await cancelMercadoPagoRecurringSubscription(existing.mercadopago_preapproval_id)
+  }
+  if (existing?.mercadopago_preapproval_plan_id && !existing?.mercadopago_preapproval_id && existing.status !== 'cancelled') {
+    await cancelMercadoPagoSubscriptionPlan(existing.mercadopago_preapproval_plan_id)
   }
   if (existing?.conekta_subscription_id && existing.status !== 'cancelled') {
     await cancelConektaRecurringSubscription(existing.conekta_customer_id, existing.conekta_subscription_id)

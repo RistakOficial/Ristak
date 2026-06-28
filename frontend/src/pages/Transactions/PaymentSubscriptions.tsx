@@ -168,8 +168,8 @@ const PAYMENT_METHOD_OPTIONS: Array<{
     label: 'Mercado Pago - suscripción Mercado Pago',
     provider: 'mercadopago',
     modeLabel: 'Link de suscripción',
-    description: 'Crea la suscripción en Mercado Pago y entrega su link de autorización.',
-    requirement: 'Requiere un contacto con email.',
+    description: 'Crea un plan de suscripción en Mercado Pago y entrega su link de autorización.',
+    requirement: 'El cliente captura o confirma sus datos al autorizar el link en Mercado Pago.',
     result: 'Mercado Pago activa la suscripción cuando el cliente autoriza el link.'
   }
 ]
@@ -1029,8 +1029,8 @@ export const PaymentSubscriptions: React.FC = () => {
       return null
     }
 
-    if (startByLink && !contactEmail) {
-      showToast('warning', 'Falta el email', `${provider === 'mercadopago' ? 'Mercado Pago' : provider === 'conekta' ? 'Conekta' : 'Stripe'} necesita email para crear el link de suscripción.`)
+    if (startByLink && provider !== 'mercadopago' && !contactEmail) {
+      showToast('warning', 'Falta el email', `${provider === 'conekta' ? 'Conekta' : 'Stripe'} necesita email para crear el link de suscripción.`)
       return null
     }
 

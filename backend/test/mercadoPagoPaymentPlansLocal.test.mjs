@@ -5,6 +5,7 @@ import { db, setAppConfig } from '../src/config/database.js'
 import {
   createMercadoPagoPaymentLink,
   createMercadoPagoPaymentPlan,
+  createMercadoPagoRecurringSubscription,
   ensurePublicMercadoPagoPreference,
   createPublicMercadoPagoCardPayment,
   handleMercadoPagoWebhookEvent,
@@ -137,11 +138,11 @@ test('Mercado Pago cobra tarjeta en la pagina publica sin confiar en el monto de
       assert.equal(options.method, 'POST')
       assert.equal(options.headers?.Authorization, 'Bearer TEST-access-token')
 
-      if (url === 'https://api.mercadopago.com/preapproval') {
+      if (url === 'https://api.mercadopago.com/preapproval_plan') {
         const body = JSON.parse(String(options.body || '{}'))
         assert.equal(body.reason, 'Membresía Mercado Pago por link')
-        assert.equal(body.payer_email, 'cliente-card@example.test')
-        assert.equal(body.status, 'pending')
+        assert.equal(Object.hasOwn(body, 'payer_email'), false)
+        assert.equal(Object.hasOwn(body, 'status'), false)
         assert.equal(body.auto_recurring.transaction_amount, 189)
         assert.ok(String(body.back_url).includes('/transactions/subscriptions'))
 
@@ -149,13 +150,12 @@ test('Mercado Pago cobra tarjeta en la pagina publica sin confiar en el monto de
           ok: true,
           status: 201,
           json: async () => ({
-            id: 'mp_preapproval_card_link',
+            id: 'mp_preapproval_plan_card_link',
             external_reference: body.external_reference,
-            init_point: 'https://www.mercadopago.com.mx/subscriptions/checkout?preapproval_id=mp_preapproval_card_link',
-            sandbox_init_point: 'https://sandbox.mercadopago.com.mx/subscriptions/checkout?preapproval_id=mp_preapproval_card_link',
+            init_point: 'https://www.mercadopago.com.mx/subscriptions/checkout?preapproval_plan_id=mp_preapproval_plan_card_link',
+            sandbox_init_point: 'https://sandbox.mercadopago.com.mx/subscriptions/checkout?preapproval_plan_id=mp_preapproval_plan_card_link',
             auto_recurring: body.auto_recurring,
-            status: 'pending',
-            next_payment_date: body.auto_recurring.start_date
+            status: 'active'
           })
         }
       }
@@ -251,8 +251,9 @@ test('Mercado Pago cobra tarjeta en la pagina publica sin confiar en el monto de
       assert.equal(linkedSubscription.paymentProvider, 'mercadopago')
       assert.equal(linkedSubscription.paymentMethod, 'mercadopago_subscription')
       assert.equal(linkedSubscription.status, 'incomplete')
-      assert.equal(linkedSubscription.mercadoPagoPreapprovalId, 'mp_preapproval_card_link')
-      assert.equal(linkedSubscription.subscriptionStartUrl, 'https://sandbox.mercadopago.com.mx/subscriptions/checkout?preapproval_id=mp_preapproval_card_link')
+      assert.equal(linkedSubscription.mercadoPagoPreapprovalId, null)
+      assert.equal(linkedSubscription.mercadoPagoPreapprovalPlanId, 'mp_preapproval_plan_card_link')
+      assert.equal(linkedSubscription.subscriptionStartUrl, 'https://sandbox.mercadopago.com.mx/subscriptions/checkout?preapproval_plan_id=mp_preapproval_plan_card_link')
 
       const checkoutFallback = await ensurePublicMercadoPagoPreference(created.publicPaymentId, {
         baseUrl: 'https://app.example.test'
@@ -691,7 +692,7 @@ test('Mercado Pago no genera parcialidades publicas porque los planes estan desh
   )
 })
 
-test('Mercado Pago crea suscripcion recurrente real con preapproval pendiente', async () => {
+test('Mercado Pago crea link abierto de suscripcion con preapproval plan', async () => {
   await initializeMasterKey()
 
   await snapshotMercadoPagoConfig(async () => {
@@ -707,15 +708,15 @@ test('Mercado Pago crea suscripcion recurrente real con preapproval pendiente', 
     setMercadoPagoFetchForTest(async (url, options = {}) => {
       assert.equal(options.headers?.Authorization, 'Bearer TEST-access-token')
       assert.equal(Object.hasOwn(options.headers || {}, 'X-scope'), false)
-      assert.equal(url, 'https://api.mercadopago.com/preapproval')
+      assert.equal(url, 'https://api.mercadopago.com/preapproval_plan')
       assert.equal(options.method, 'POST')
 
       const body = JSON.parse(String(options.body || '{}'))
       calls.push(body)
 
       assert.equal(body.reason, 'Membresia Mercado Pago')
-      assert.equal(body.payer_email, 'cliente-mp-sub@example.test')
-      assert.equal(body.status, 'pending')
+      assert.equal(Object.hasOwn(body, 'payer_email'), false)
+      assert.equal(Object.hasOwn(body, 'status'), false)
       assert.equal(body.auto_recurring.frequency, 1)
       assert.equal(body.auto_recurring.frequency_type, 'months')
       assert.equal(body.auto_recurring.transaction_amount, 149)
@@ -728,13 +729,12 @@ test('Mercado Pago crea suscripcion recurrente real con preapproval pendiente', 
         ok: true,
         status: 201,
         json: async () => ({
-          id: 'mp_preapproval_test_1',
+          id: 'mp_preapproval_plan_test_1',
           external_reference: body.external_reference,
-          init_point: 'https://www.mercadopago.com.mx/subscriptions/checkout?preapproval_id=mp_preapproval_test_1',
-          sandbox_init_point: 'https://sandbox.mercadopago.com.mx/subscriptions/checkout?preapproval_id=mp_preapproval_test_1',
+          init_point: 'https://www.mercadopago.com.mx/subscriptions/checkout?preapproval_plan_id=mp_preapproval_plan_test_1',
+          sandbox_init_point: 'https://sandbox.mercadopago.com.mx/subscriptions/checkout?preapproval_plan_id=mp_preapproval_plan_test_1',
           auto_recurring: body.auto_recurring,
-          payer_id: 'payer_123',
-          status: 'pending',
+          status: 'active',
           next_payment_date: nextPaymentDate
         })
       }
@@ -764,12 +764,13 @@ test('Mercado Pago crea suscripcion recurrente real con preapproval pendiente', 
       assert.equal(subscription.paymentProvider, 'mercadopago')
       assert.equal(subscription.paymentMethod, 'mercadopago_subscription')
       assert.equal(subscription.status, 'incomplete')
-      assert.equal(subscription.mercadoPagoPreapprovalId, 'mp_preapproval_test_1')
-      assert.equal(subscription.mercadoPagoSandboxInitPoint, 'https://sandbox.mercadopago.com.mx/subscriptions/checkout?preapproval_id=mp_preapproval_test_1')
-      assert.equal(subscription.subscriptionStartUrl, 'https://sandbox.mercadopago.com.mx/subscriptions/checkout?preapproval_id=mp_preapproval_test_1')
+      assert.equal(subscription.mercadoPagoPreapprovalId, null)
+      assert.equal(subscription.mercadoPagoPreapprovalPlanId, 'mp_preapproval_plan_test_1')
+      assert.equal(subscription.mercadoPagoSandboxInitPoint, 'https://sandbox.mercadopago.com.mx/subscriptions/checkout?preapproval_plan_id=mp_preapproval_plan_test_1')
+      assert.equal(subscription.subscriptionStartUrl, 'https://sandbox.mercadopago.com.mx/subscriptions/checkout?preapproval_plan_id=mp_preapproval_plan_test_1')
 
       const saved = await db.get(
-        `SELECT status, payment_provider, payment_method, mercadopago_preapproval_id, mercadopago_sandbox_init_point
+        `SELECT status, payment_provider, payment_method, mercadopago_preapproval_id, mercadopago_preapproval_plan_id, mercadopago_sandbox_init_point
          FROM subscriptions
          WHERE id = ?`,
         [subscription.id]
@@ -778,8 +779,49 @@ test('Mercado Pago crea suscripcion recurrente real con preapproval pendiente', 
       assert.equal(saved.status, 'incomplete')
       assert.equal(saved.payment_provider, 'mercadopago')
       assert.equal(saved.payment_method, 'mercadopago_subscription')
-      assert.equal(saved.mercadopago_preapproval_id, 'mp_preapproval_test_1')
+      assert.equal(saved.mercadopago_preapproval_id, null)
+      assert.equal(saved.mercadopago_preapproval_plan_id, 'mp_preapproval_plan_test_1')
       assert.equal(saved.mercadopago_sandbox_init_point, subscription.mercadoPagoSandboxInitPoint)
+
+      setMercadoPagoFetchForTest(async (url, options = {}) => {
+        assert.equal(options.method || 'GET', 'GET')
+        assert.equal(url, 'https://api.mercadopago.com/preapproval/mp_preapproval_authorized_1')
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({
+            id: 'mp_preapproval_authorized_1',
+            preapproval_plan_id: 'mp_preapproval_plan_test_1',
+            external_reference: subscription.id,
+            status: 'authorized',
+            payer_id: 'payer_123',
+            card_id: 'card_123',
+            payment_method_id: 'master',
+            next_payment_date: nextPaymentDate,
+            auto_recurring: calls[0].auto_recurring
+          })
+        }
+      })
+
+      const webhookResult = await handleMercadoPagoWebhookEvent({
+        type: 'subscription_preapproval',
+        action: 'subscription_preapproval.updated',
+        data: { id: 'mp_preapproval_authorized_1' }
+      }, {}, {})
+
+      assert.equal(webhookResult.subscriptionId, subscription.id)
+      assert.equal(webhookResult.status, 'active')
+
+      const activated = await db.get(
+        `SELECT status, mercadopago_preapproval_id, mercadopago_preapproval_plan_id, mercadopago_next_payment_date
+         FROM subscriptions
+         WHERE id = ?`,
+        [subscription.id]
+      )
+      assert.equal(activated.status, 'active')
+      assert.equal(activated.mercadopago_preapproval_id, 'mp_preapproval_authorized_1')
+      assert.equal(activated.mercadopago_preapproval_plan_id, 'mp_preapproval_plan_test_1')
+      assert.equal(activated.mercadopago_next_payment_date, new Date(nextPaymentDate).toISOString())
     } finally {
       await cleanup(ids)
     }
@@ -827,17 +869,16 @@ test('Mercado Pago explica usuario test requerido al crear suscripcion preapprov
 
     try {
       await assert.rejects(
-        () => createSubscription({
-          contactId: ids.contactId,
+        () => createMercadoPagoRecurringSubscription({
+          ristakSubscriptionId: `rstk_sub_invalid_users_${suffix}`,
           name: 'Membresia Mercado Pago Error',
           amount: 149,
+          currency: 'MXN',
           intervalType: 'monthly',
           intervalCount: 1,
           startDate: dateOnlyInDays(1),
-          paymentMethod: 'mercadopago_subscription',
-          paymentProvider: 'mercadopago',
-          status: 'incomplete'
-        }),
+          contactEmail: 'cliente-real@example.test'
+        }, { baseUrl: 'https://app.example.test' }),
         (error) => {
           assert.equal(error.status, 400)
           assert.match(error.message, /comprador test de Mercado Pago/i)
@@ -889,17 +930,16 @@ test('Mercado Pago explica error interno al crear suscripcion preapproval', asyn
 
     try {
       await assert.rejects(
-        () => createSubscription({
-          contactId: ids.contactId,
+        () => createMercadoPagoRecurringSubscription({
+          ristakSubscriptionId: `rstk_sub_internal_error_${suffix}`,
           name: 'Membresia Mercado Pago 500',
           amount: 149,
+          currency: 'MXN',
           intervalType: 'monthly',
           intervalCount: 1,
           startDate: dateOnlyInDays(1),
-          paymentMethod: 'mercadopago_subscription',
-          paymentProvider: 'mercadopago',
-          status: 'incomplete'
-        }),
+          contactEmail: 'comprador-test@example.test'
+        }, { baseUrl: 'https://app.example.test' }),
         (error) => {
           assert.equal(error.status, 500)
           assert.match(error.message, /error interno al crear la suscripción/i)
@@ -950,17 +990,16 @@ test('Mercado Pago explica policy unauthorized al crear suscripcion preapproval'
 
     try {
       await assert.rejects(
-        () => createSubscription({
-          contactId: ids.contactId,
+        () => createMercadoPagoRecurringSubscription({
+          ristakSubscriptionId: `rstk_sub_policy_error_${suffix}`,
           name: 'Membresia Mercado Pago Policy',
           amount: 149,
+          currency: 'MXN',
           intervalType: 'monthly',
           intervalCount: 1,
           startDate: dateOnlyInDays(1),
-          paymentMethod: 'mercadopago_subscription',
-          paymentProvider: 'mercadopago',
-          status: 'incomplete'
-        }),
+          contactEmail: 'comprador-test-policy@example.test'
+        }, { baseUrl: 'https://app.example.test' }),
         (error) => {
           assert.equal(error.status, 401)
           assert.match(error.message, /no autorizó crear la suscripción/i)
@@ -986,7 +1025,7 @@ test('Mercado Pago no fuerza start_date al crear link pendiente de suscripcion',
     }
     const requestedStartDate = dateOnlyInDays(0)
     setMercadoPagoFetchForTest(async (url, options = {}) => {
-      assert.equal(url, 'https://api.mercadopago.com/preapproval')
+      assert.equal(url, 'https://api.mercadopago.com/preapproval_plan')
       assert.equal(options.method, 'POST')
       assert.equal(Object.hasOwn(options.headers || {}, 'X-scope'), false)
 
@@ -999,12 +1038,12 @@ test('Mercado Pago no fuerza start_date al crear link pendiente de suscripcion',
         ok: true,
         status: 201,
         json: async () => ({
-          id: 'mp_preapproval_today_test_1',
+          id: 'mp_preapproval_plan_today_test_1',
           external_reference: body.external_reference,
-          init_point: 'https://www.mercadopago.com.mx/subscriptions/checkout?preapproval_id=mp_preapproval_today_test_1',
-          sandbox_init_point: 'https://sandbox.mercadopago.com.mx/subscriptions/checkout?preapproval_id=mp_preapproval_today_test_1',
+          init_point: 'https://www.mercadopago.com.mx/subscriptions/checkout?preapproval_plan_id=mp_preapproval_plan_today_test_1',
+          sandbox_init_point: 'https://sandbox.mercadopago.com.mx/subscriptions/checkout?preapproval_plan_id=mp_preapproval_plan_today_test_1',
           auto_recurring: body.auto_recurring,
-          status: 'pending'
+          status: 'active'
         })
       }
     })
@@ -1031,7 +1070,8 @@ test('Mercado Pago no fuerza start_date al crear link pendiente de suscripcion',
 
       assert.equal(subscription.paymentProvider, 'mercadopago')
       assert.equal(subscription.status, 'incomplete')
-      assert.equal(subscription.mercadoPagoPreapprovalId, 'mp_preapproval_today_test_1')
+      assert.equal(subscription.mercadoPagoPreapprovalId, null)
+      assert.equal(subscription.mercadoPagoPreapprovalPlanId, 'mp_preapproval_plan_today_test_1')
       assert.ok(new Date(subscription.nextRunAt).getTime() > Date.now())
     } finally {
       await cleanup(ids)

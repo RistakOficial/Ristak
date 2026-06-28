@@ -2426,6 +2426,63 @@ function mapMercadoPagoSubscriptionResponse(payload = {}, fallback = {}) {
   }
 }
 
+function mapMercadoPagoSubscriptionPlanResponse(payload = {}, fallback = {}) {
+  const mode = payload.livemode === true ? 'live' : fallback.paymentMode || fallback.mode || 'test'
+  const initPoint = cleanString(payload.init_point)
+  const sandboxInitPoint = cleanString(payload.sandbox_init_point)
+
+  return {
+    status: 'incomplete',
+    mercadoPagoPreapprovalId: '',
+    mercadoPagoPreapprovalPlanId: cleanString(payload.id || payload.preapproval_plan_id),
+    mercadoPagoInitPoint: initPoint,
+    mercadoPagoSandboxInitPoint: sandboxInitPoint,
+    mercadoPagoPayerId: '',
+    mercadoPagoCardId: '',
+    mercadoPagoPaymentMethodId: '',
+    mercadoPagoNextPaymentDate: null,
+    paymentMode: normalizeMode(mode),
+    raw: {
+      provider: 'mercadopago',
+      preapprovalPlan: payload
+    }
+  }
+}
+
+export async function createMercadoPagoSubscriptionPlanLink(input = {}, { baseUrl = '' } = {}) {
+  const subscriptionId = cleanString(input.ristakSubscriptionId || input.subscriptionId)
+  if (!subscriptionId) {
+    const error = new Error('Falta el ID local de la suscripción para Mercado Pago.')
+    error.status = 422
+    throw error
+  }
+
+  const body = {
+    reason: cleanString(input.name || input.reason || 'Suscripción Ristak'),
+    external_reference: subscriptionId,
+    auto_recurring: buildMercadoPagoAutoRecurring({
+      amount: input.amount,
+      currency: input.currency,
+      intervalType: input.intervalType,
+      intervalCount: input.intervalCount,
+      startDate: input.startDate,
+      endDate: input.cancelAt || input.endDate,
+      includeStartDate: false
+    }),
+    back_url: getMercadoPagoSubscriptionBackUrl(baseUrl)
+  }
+
+  const { payload, config } = await mercadoPagoApiRequest('/preapproval_plan', {
+    method: 'POST',
+    body,
+    idempotencyKey: `rstk-subscription-plan-${subscriptionId}`
+  })
+
+  return mapMercadoPagoSubscriptionPlanResponse(payload, {
+    paymentMode: config.mode
+  })
+}
+
 export async function createMercadoPagoRecurringSubscription(input = {}, { baseUrl = '' } = {}) {
   const payerEmail = cleanString(input.contactEmail || input.email || input.payerEmail)
   if (!payerEmail) {
@@ -2527,6 +2584,23 @@ export async function resumeMercadoPagoRecurringSubscription(preapprovalId) {
 
 export async function cancelMercadoPagoRecurringSubscription(preapprovalId) {
   return setMercadoPagoRecurringSubscriptionStatus(preapprovalId, 'canceled')
+}
+
+export async function cancelMercadoPagoSubscriptionPlan(preapprovalPlanId) {
+  const cleanPreapprovalPlanId = cleanString(preapprovalPlanId)
+  if (!cleanPreapprovalPlanId) {
+    const error = new Error('Falta el ID de plan de suscripción de Mercado Pago.')
+    error.status = 422
+    throw error
+  }
+
+  const { payload, config } = await mercadoPagoApiRequest(`/preapproval_plan/${encodeURIComponent(cleanPreapprovalPlanId)}`, {
+    method: 'PUT',
+    body: { status: 'cancelled' },
+    idempotencyKey: `rstk-subscription-plan-cancel-${cleanPreapprovalPlanId}`
+  })
+
+  return mapMercadoPagoSubscriptionPlanResponse(payload, { paymentMode: config.mode })
 }
 
 function timestampToIso(value) {
@@ -2667,6 +2741,7 @@ async function updatePaymentFromMercadoPagoPayment(mpPayment) {
 async function findSubscriptionForMercadoPagoPreapproval(preapproval = {}) {
   const subscriptionId = cleanString(preapproval.external_reference)
   const preapprovalId = cleanString(preapproval.id || preapproval.preapproval_id)
+  const preapprovalPlanId = cleanString(preapproval.preapproval_plan_id)
   const filters = []
   const params = []
 
@@ -2678,6 +2753,11 @@ async function findSubscriptionForMercadoPagoPreapproval(preapproval = {}) {
   if (preapprovalId) {
     filters.push('mercadopago_preapproval_id = ?')
     params.push(preapprovalId)
+  }
+
+  if (preapprovalPlanId) {
+    filters.push('mercadopago_preapproval_plan_id = ?')
+    params.push(preapprovalPlanId)
   }
 
   if (!filters.length) return null
