@@ -63,6 +63,7 @@ import styles from './PaymentSubscriptions.module.css'
 type SubscriptionFormMode = 'create' | 'edit' | null
 type SubscriptionFormStep = 'details' | 'start_method' | 'gateway' | 'saved_card'
 type SubscriptionStartMode = 'link' | 'saved_card' | ''
+type SubscriptionBulkAction = 'activate' | 'pause' | 'cancel'
 type PaymentGatewayProvider = 'stripe' | 'conekta' | 'mercadopago'
 type SubscriptionPaymentMethod = 'stripe_saved_card' | 'stripe_link' | 'conekta_subscription' | 'conekta_link' | 'mercadopago_checkout' | 'mercadopago_subscription'
 type SubscriptionDurationType = 'continuous' | 'until_date'
@@ -413,6 +414,22 @@ function getSubscriptionStartLink(subscription: PaymentSubscription) {
     buildPublicPaymentUrl(subscription.subscriptionStartPublicPaymentId)
 }
 
+function getSubscriptionActionAvailability(subscription: PaymentSubscription) {
+  const status = String(subscription.status || '').toLowerCase()
+  const isMercadoPago = subscription.paymentProvider === 'mercadopago' || Boolean(subscription.mercadoPagoPreapprovalId)
+  const startLink = getSubscriptionStartLink(subscription)
+  const isPaymentLinkPending = Boolean(startLink) && status === 'incomplete'
+
+  return {
+    startLink,
+    canPause: status === 'active' || status === 'trialing',
+    canActivate: (status === 'paused' || status === 'draft' || status === 'past_due' || status === 'incomplete') &&
+      !(isMercadoPago && status === 'incomplete') &&
+      !isPaymentLinkPending,
+    canCancel: status !== 'cancelled' && status !== 'deleted'
+  }
+}
+
 function getSubscriptionContactDisplayName(contact?: PaymentLinkReadyData['contact'] | null) {
   return contact?.name ||
     `${contact?.firstName || ''} ${contact?.lastName || ''}`.trim() ||
@@ -509,7 +526,7 @@ function buildContactFromSubscription(subscription: PaymentSubscription): Contac
 
 export const PaymentSubscriptions: React.FC = () => {
   const navigate = useNavigate()
-  const { showToast } = useNotification()
+  const { showConfirm, showToast } = useNotification()
   const [accountCurrency] = useAccountCurrency()
   const [subscriptions, setSubscriptions] = useState<PaymentSubscription[]>([])
   const [summary, setSummary] = useState<SubscriptionSummary>(EMPTY_SUMMARY)
@@ -518,6 +535,7 @@ export const PaymentSubscriptions: React.FC = () => {
   const [refreshing, setRefreshing] = useState(false)
   const [saving, setSaving] = useState(false)
   const [actingId, setActingId] = useState<string | null>(null)
+  const [bulkSubscriptionAction, setBulkSubscriptionAction] = useState<SubscriptionBulkAction | null>(null)
   const [selectedSubscriptionIds, setSelectedSubscriptionIds] = useState<string[]>([])
   const [subscriptionsPendingDeletion, setSubscriptionsPendingDeletion] = useState<PaymentSubscription[]>([])
   const [deletingSubscriptions, setDeletingSubscriptions] = useState(false)
@@ -708,6 +726,18 @@ export const PaymentSubscriptions: React.FC = () => {
     const selectedIds = new Set(selectedSubscriptionIds)
     return subscriptions.filter((subscription) => selectedIds.has(subscription.id) && canDeleteSubscription(subscription))
   }, [selectedSubscriptionIds, subscriptions])
+  const selectedSubscriptionsToActivate = useMemo(
+    () => selectedSubscriptions.filter((subscription) => getSubscriptionActionAvailability(subscription).canActivate),
+    [selectedSubscriptions]
+  )
+  const selectedSubscriptionsToPause = useMemo(
+    () => selectedSubscriptions.filter((subscription) => getSubscriptionActionAvailability(subscription).canPause),
+    [selectedSubscriptions]
+  )
+  const selectedSubscriptionsToCancel = useMemo(
+    () => selectedSubscriptions.filter((subscription) => getSubscriptionActionAvailability(subscription).canCancel),
+    [selectedSubscriptions]
+  )
 
   useEffect(() => {
     if (selectedSubscriptionIds.length === 0) return
@@ -1132,6 +1162,87 @@ export const PaymentSubscriptions: React.FC = () => {
     }
   }
 
+  const handleSubscriptionAction = (subscription: PaymentSubscription, action: SubscriptionBulkAction) => {
+    if (action === 'cancel') {
+      showConfirm(
+        'Cancelar suscripción',
+        `Vas a cancelar ${subscription.name || 'esta suscripción'}. La pasarela dejará de cobrarla y esta acción no se puede deshacer.`,
+        () => runAction(subscription, action),
+        'Cancelar suscripción',
+        'Cancelar',
+        undefined,
+        { typeToConfirm: 'CANCELAR' }
+      )
+      return
+    }
+
+    void runAction(subscription, action)
+  }
+
+  const runBulkSubscriptionAction = async (action: SubscriptionBulkAction, targetSubscriptions: PaymentSubscription[]) => {
+    if (targetSubscriptions.length === 0) return
+
+    setBulkSubscriptionAction(action)
+    const failedSubscriptions: PaymentSubscription[] = []
+
+    for (const subscription of targetSubscriptions) {
+      setActingId(subscription.id)
+      try {
+        await subscriptionsService.actionSubscription(subscription.id, action)
+      } catch {
+        failedSubscriptions.push(subscription)
+      }
+    }
+
+    const failedIds = new Set(failedSubscriptions.map(subscription => subscription.id))
+    const updatedCount = targetSubscriptions.length - failedSubscriptions.length
+
+    setSelectedSubscriptionIds(current => current.filter(id => failedIds.has(id)))
+    setActingId(null)
+    setBulkSubscriptionAction(null)
+
+    if (failedSubscriptions.length > 0) {
+      showToast(
+        'error',
+        'No se actualizaron todas',
+        `Se actualizaron ${updatedCount} y fallaron ${failedSubscriptions.length}. Revisa las pendientes e intenta otra vez.`
+      )
+    } else {
+      const title = action === 'pause'
+        ? 'Suscripciones pausadas'
+        : action === 'cancel'
+          ? 'Suscripciones canceladas'
+          : 'Suscripciones activadas'
+      const message = action === 'pause'
+        ? `${updatedCount} suscripci${updatedCount === 1 ? 'ón quedó pausada' : 'ones quedaron pausadas'}.`
+        : action === 'cancel'
+          ? `${updatedCount} suscripci${updatedCount === 1 ? 'ón quedó cancelada' : 'ones quedaron canceladas'}.`
+          : `${updatedCount} suscripci${updatedCount === 1 ? 'ón quedó activa' : 'ones quedaron activas'}.`
+      showToast('success', title, message)
+    }
+
+    await loadSubscriptions({ refresh: true })
+  }
+
+  const handleBulkSubscriptionAction = (action: SubscriptionBulkAction, targetSubscriptions: PaymentSubscription[]) => {
+    if (targetSubscriptions.length === 0) return
+
+    if (action === 'cancel') {
+      showConfirm(
+        'Cancelar suscripciones',
+        `Vas a cancelar ${targetSubscriptions.length} suscripci${targetSubscriptions.length === 1 ? 'ón' : 'ones'}. La pasarela dejará de cobrarlas y esta acción no se puede deshacer.`,
+        () => runBulkSubscriptionAction(action, targetSubscriptions),
+        'Cancelar suscripciones',
+        'Cancelar',
+        undefined,
+        { typeToConfirm: 'CANCELAR' }
+      )
+      return
+    }
+
+    void runBulkSubscriptionAction(action, targetSubscriptions)
+  }
+
   const openSubscriptionDeleteModal = (targetSubscriptions: PaymentSubscription[]) => {
     if (targetSubscriptions.length === 0) return
 
@@ -1327,13 +1438,7 @@ export const PaymentSubscriptions: React.FC = () => {
       header: 'Acciones',
       render: (_value, item) => {
         const busy = actingId === item.id
-        const status = String(item.status || '').toLowerCase()
-        const isMercadoPago = item.paymentProvider === 'mercadopago' || Boolean(item.mercadoPagoPreapprovalId)
-        const startLink = getSubscriptionStartLink(item)
-        const isPaymentLinkPending = Boolean(startLink) && status === 'incomplete'
-        const canPause = status === 'active' || status === 'trialing'
-        const canActivate = (status === 'paused' || status === 'draft' || status === 'past_due' || status === 'incomplete') && !(isMercadoPago && status === 'incomplete') && !isPaymentLinkPending
-        const canCancel = status !== 'cancelled' && status !== 'deleted'
+        const { startLink, canPause, canActivate, canCancel } = getSubscriptionActionAvailability(item)
 
         return (
           <div className={styles.rowActions} onClick={(event) => event.stopPropagation()}>
@@ -1370,19 +1475,19 @@ export const PaymentSubscriptions: React.FC = () => {
                   </>
                 )}
                 {canActivate && (
-                  <DropdownMenuItem disabled={busy} onClick={() => void runAction(item, 'activate')}>
+                  <DropdownMenuItem disabled={busy} onClick={() => handleSubscriptionAction(item, 'activate')}>
                     <Play size={16} />
                     <span>Activar</span>
                   </DropdownMenuItem>
                 )}
                 {canPause && (
-                  <DropdownMenuItem disabled={busy} onClick={() => void runAction(item, 'pause')}>
+                  <DropdownMenuItem disabled={busy} onClick={() => handleSubscriptionAction(item, 'pause')}>
                     <Pause size={16} />
                     <span>Pausar</span>
                   </DropdownMenuItem>
                 )}
                 {canCancel && (
-                  <DropdownMenuItem disabled={busy} onClick={() => void runAction(item, 'cancel')}>
+                  <DropdownMenuItem disabled={busy} onClick={() => handleSubscriptionAction(item, 'cancel')}>
                     <XCircle size={16} />
                     <span>Cancelar</span>
                   </DropdownMenuItem>
@@ -1414,11 +1519,51 @@ export const PaymentSubscriptions: React.FC = () => {
       pluralLabel="seleccionadas"
       onClearSelection={() => setSelectedSubscriptionIds([])}
     >
+      {selectedSubscriptionsToActivate.length > 0 && (
+        <Button
+          type="button"
+          variant="secondary"
+          size="sm"
+          loading={bulkSubscriptionAction === 'activate'}
+          disabled={Boolean(bulkSubscriptionAction) || deletingSubscriptions}
+          onClick={() => handleBulkSubscriptionAction('activate', selectedSubscriptionsToActivate)}
+        >
+          <Play size={16} />
+          Continuar
+        </Button>
+      )}
+      {selectedSubscriptionsToPause.length > 0 && (
+        <Button
+          type="button"
+          variant="secondary"
+          size="sm"
+          loading={bulkSubscriptionAction === 'pause'}
+          disabled={Boolean(bulkSubscriptionAction) || deletingSubscriptions}
+          onClick={() => handleBulkSubscriptionAction('pause', selectedSubscriptionsToPause)}
+        >
+          <Pause size={16} />
+          Pausar
+        </Button>
+      )}
+      {selectedSubscriptionsToCancel.length > 0 && (
+        <Button
+          type="button"
+          variant="danger"
+          size="sm"
+          loading={bulkSubscriptionAction === 'cancel'}
+          disabled={Boolean(bulkSubscriptionAction) || deletingSubscriptions}
+          onClick={() => handleBulkSubscriptionAction('cancel', selectedSubscriptionsToCancel)}
+        >
+          <XCircle size={16} />
+          Cancelar
+        </Button>
+      )}
       <Button
         type="button"
         variant="danger"
         size="sm"
         loading={deletingSubscriptions}
+        disabled={Boolean(bulkSubscriptionAction)}
         onClick={() => openSubscriptionDeleteModal(selectedSubscriptions)}
       >
         <Trash2 size={16} />

@@ -60,6 +60,7 @@ type PaymentsTableTab = 'transactions' | 'payment-plans'
 type TransactionsViewMode = 'all' | 'by-date'
 type StatusFilters = Record<string, string[]>
 type PaymentPlanAction = 'activate' | 'pause' | 'cancel' | 'delete' | 'change_card'
+type PaymentPlanBulkAction = 'activate' | 'pause' | 'cancel'
 
 interface PaymentPlanModalData {
   plan: PaymentPlan | null
@@ -643,6 +644,7 @@ export const Transactions: React.FC = () => {
   const [loading, setLoading] = useState(false)
   const [paymentPlansLoading, setPaymentPlansLoading] = useState(false)
   const [paymentPlanActionId, setPaymentPlanActionId] = useState<string | null>(null)
+  const [bulkPaymentPlanAction, setBulkPaymentPlanAction] = useState<PaymentPlanBulkAction | null>(null)
   const [syncing, setSyncing] = useState(false)
   const [modal, setModal] = useState<ModalData>({ type: null, selectedContact: null })
   const [paymentPlanModal, setPaymentPlanModal] = useState<PaymentPlanModalData>({
@@ -1378,6 +1380,71 @@ export const Transactions: React.FC = () => {
     }
 
     runPaymentPlanAction(plan, action, 'Plan activado', 'El plan quedó activo/programado.')
+  }
+
+  const runBulkPaymentPlanAction = async (action: PaymentPlanBulkAction, targetPlans: PaymentPlan[]) => {
+    if (targetPlans.length === 0) return
+
+    setBulkPaymentPlanAction(action)
+    const failedPlans: PaymentPlan[] = []
+
+    for (const plan of targetPlans) {
+      setPaymentPlanActionId(`${plan.id}:${action}`)
+      try {
+        const updatedPlan = await transactionsService.actionPaymentPlan(plan.id, action)
+        updatePaymentPlanInState(updatedPlan)
+      } catch {
+        failedPlans.push(plan)
+      }
+    }
+
+    const failedIds = new Set(failedPlans.map(plan => plan.id))
+    const updatedCount = targetPlans.length - failedPlans.length
+
+    setSelectedPaymentPlanIds(current => current.filter(id => failedIds.has(id)))
+    setPaymentPlanActionId(null)
+    setBulkPaymentPlanAction(null)
+
+    if (failedPlans.length > 0) {
+      showToast(
+        'error',
+        'No se actualizaron todos',
+        `Se actualizaron ${updatedCount} y fallaron ${failedPlans.length}. Revisa los pendientes e intenta otra vez.`
+      )
+    } else {
+      const title = action === 'pause'
+        ? 'Planes pausados'
+        : action === 'cancel'
+          ? 'Planes cancelados'
+          : 'Planes activados'
+      const message = action === 'pause'
+        ? `${updatedCount} plan${updatedCount === 1 ? ' quedó pausado' : 'es quedaron pausados'}.`
+        : action === 'cancel'
+          ? `${updatedCount} plan${updatedCount === 1 ? ' quedó cancelado' : 'es quedaron cancelados'}.`
+          : `${updatedCount} plan${updatedCount === 1 ? ' quedó activo' : 'es quedaron activos'}.`
+      showToast('success', title, message)
+    }
+
+    fetchPaymentPlans()
+  }
+
+  const handleBulkPaymentPlanAction = (action: PaymentPlanBulkAction, targetPlans: PaymentPlan[]) => {
+    if (targetPlans.length === 0) return
+
+    if (action === 'cancel') {
+      showConfirm(
+        'Cancelar planes de pago',
+        `Vas a cancelar ${targetPlans.length} plan${targetPlans.length === 1 ? '' : 'es'} de pago. La pasarela dejará de cobrarlos y esta acción no se puede deshacer.`,
+        () => runBulkPaymentPlanAction(action, targetPlans),
+        'Cancelar planes',
+        'Cancelar',
+        undefined,
+        { typeToConfirm: 'CANCELAR' }
+      )
+      return
+    }
+
+    void runBulkPaymentPlanAction(action, targetPlans)
   }
 
   const handleChangeStripePlanCard = (plan: PaymentPlan) => {
@@ -2418,6 +2485,18 @@ export const Transactions: React.FC = () => {
     const selectedIds = new Set(selectedPaymentPlanIds)
     return paymentPlans.filter(plan => selectedIds.has(plan.id) && canDeletePaymentPlan(plan))
   }, [paymentPlans, selectedPaymentPlanIds])
+  const selectedPaymentPlansToActivate = useMemo(
+    () => selectedPaymentPlans.filter(canActivatePaymentPlan),
+    [selectedPaymentPlans]
+  )
+  const selectedPaymentPlansToPause = useMemo(
+    () => selectedPaymentPlans.filter(canPausePaymentPlan),
+    [selectedPaymentPlans]
+  )
+  const selectedPaymentPlansToCancel = useMemo(
+    () => selectedPaymentPlans.filter(canCancelPaymentPlan),
+    [selectedPaymentPlans]
+  )
 
   const activeStatusFilters = paymentTableTab === 'payment-plans'
     ? paymentPlanStatusFilters
@@ -2465,11 +2544,51 @@ export const Transactions: React.FC = () => {
       count={selectedPaymentPlans.length}
       onClearSelection={() => setSelectedPaymentPlanIds([])}
     >
+      {selectedPaymentPlansToActivate.length > 0 && (
+        <Button
+          type="button"
+          variant="secondary"
+          size="sm"
+          loading={bulkPaymentPlanAction === 'activate'}
+          disabled={Boolean(bulkPaymentPlanAction) || deletingPaymentPlans}
+          onClick={() => handleBulkPaymentPlanAction('activate', selectedPaymentPlansToActivate)}
+        >
+          <PlayCircle size={16} />
+          Activar
+        </Button>
+      )}
+      {selectedPaymentPlansToPause.length > 0 && (
+        <Button
+          type="button"
+          variant="secondary"
+          size="sm"
+          loading={bulkPaymentPlanAction === 'pause'}
+          disabled={Boolean(bulkPaymentPlanAction) || deletingPaymentPlans}
+          onClick={() => handleBulkPaymentPlanAction('pause', selectedPaymentPlansToPause)}
+        >
+          <PauseCircle size={16} />
+          Pausar
+        </Button>
+      )}
+      {selectedPaymentPlansToCancel.length > 0 && (
+        <Button
+          type="button"
+          variant="danger"
+          size="sm"
+          loading={bulkPaymentPlanAction === 'cancel'}
+          disabled={Boolean(bulkPaymentPlanAction) || deletingPaymentPlans}
+          onClick={() => handleBulkPaymentPlanAction('cancel', selectedPaymentPlansToCancel)}
+        >
+          <Ban size={16} />
+          Cancelar
+        </Button>
+      )}
       <Button
         type="button"
         variant="danger"
         size="sm"
         loading={deletingPaymentPlans}
+        disabled={Boolean(bulkPaymentPlanAction)}
         onClick={() => openPaymentPlanDeleteModal(selectedPaymentPlans)}
       >
         <Trash2 size={16} />
