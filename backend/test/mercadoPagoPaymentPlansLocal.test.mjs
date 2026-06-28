@@ -127,7 +127,8 @@ test('Mercado Pago cobra tarjeta en la pagina publica sin confiar en el monto de
     const suffix = `${Date.now()}_${Math.random().toString(36).slice(2, 8)}`
     const ids = {
       contactId: `contact_mp_card_${suffix}`,
-      paymentId: ''
+      paymentId: '',
+      subscriptionId: ''
     }
     const preferenceCalls = []
     const cardPaymentCalls = []
@@ -206,12 +207,36 @@ test('Mercado Pago cobra tarjeta en la pagina publica sin confiar en el monto de
       assert.equal(created.paymentUrl, `https://app.example.test/pay/${created.publicPaymentId}`)
       assert.equal(created.payment.paymentUrl, `https://app.example.test/pay/${created.publicPaymentId}`)
 
+      const linkedSubscription = await createSubscription({
+        contactId: ids.contactId,
+        contactName: 'Cliente Card Mercado Pago',
+        contactEmail: 'cliente-card@example.test',
+        contactPhone: '+5215555555557',
+        name: 'Membresía Mercado Pago por link',
+        description: 'Suscripción iniciada por link público',
+        amount: 189,
+        currency: 'MXN',
+        intervalType: 'monthly',
+        intervalCount: 1,
+        startDate: dateOnlyInDays(7),
+        paymentMethod: 'mercadopago_checkout',
+        paymentProvider: 'mercadopago',
+        status: 'incomplete',
+        baseUrl: 'https://app.example.test'
+      })
+      ids.subscriptionId = linkedSubscription.id
+      assert.equal(linkedSubscription.paymentProvider, 'mercadopago')
+      assert.equal(linkedSubscription.paymentMethod, 'mercadopago_checkout')
+      assert.equal(linkedSubscription.status, 'incomplete')
+      assert.equal(linkedSubscription.mercadoPagoPreapprovalId, null)
+      assert.match(linkedSubscription.subscriptionStartUrl, /^https:\/\/app\.example\.test\/pay\/pay_/)
+
       const checkoutFallback = await ensurePublicMercadoPagoPreference(created.publicPaymentId, {
         baseUrl: 'https://app.example.test'
       })
       assert.equal(checkoutFallback.paymentUrl, 'https://sandbox.mercadopago.com.mx/checkout/v1/redirect?pref_id=card_1')
       assert.equal(checkoutFallback.checkoutUrl, 'https://sandbox.mercadopago.com.mx/checkout/v1/redirect?pref_id=card_1')
-      assert.equal(preferenceCalls.length, 1)
+      assert.equal(preferenceCalls.length, 2)
 
       const charged = await createPublicMercadoPagoCardPayment(created.publicPaymentId, {
         token: 'tok_card_test',
@@ -229,7 +254,7 @@ test('Mercado Pago cobra tarjeta en la pagina publica sin confiar en el monto de
         }
       }, { baseUrl: 'https://app.example.test' })
 
-      assert.equal(preferenceCalls.length, 1)
+      assert.equal(preferenceCalls.length, 2)
       assert.equal(cardPaymentCalls.length, 1)
       assert.equal(charged.payment.status, 'paid')
       assert.equal(charged.payment.mercadoPagoPaymentId, 'mp_card_payment_1')
@@ -716,6 +741,7 @@ test('Mercado Pago crea suscripcion recurrente real con preapproval pendiente', 
       assert.equal(subscription.status, 'incomplete')
       assert.equal(subscription.mercadoPagoPreapprovalId, 'mp_preapproval_test_1')
       assert.equal(subscription.mercadoPagoSandboxInitPoint, 'https://sandbox.mercadopago.com.mx/subscriptions/checkout?preapproval_id=mp_preapproval_test_1')
+      assert.equal(subscription.subscriptionStartUrl, null)
 
       const saved = await db.get(
         `SELECT status, payment_provider, payment_method, mercadopago_preapproval_id, mercadopago_sandbox_init_point

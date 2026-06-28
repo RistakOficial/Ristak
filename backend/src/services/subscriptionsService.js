@@ -267,10 +267,7 @@ function rowToApi(row = {}) {
     : {}
   const startPayment = getSubscriptionStartPayment(metadata || {})
   const stripeCheckoutUrl = cleanString(stripeCheckout.url || stripeCheckout.checkoutUrl)
-  const mercadoPagoUrl = row.payment_mode === 'test'
-    ? cleanString(row.mercadopago_sandbox_init_point || row.mercadopago_init_point)
-    : cleanString(row.mercadopago_init_point || row.mercadopago_sandbox_init_point)
-  const subscriptionStartUrl = startPayment.paymentUrl || stripeCheckoutUrl || mercadoPagoUrl || null
+  const subscriptionStartUrl = startPayment.paymentUrl || null
 
   return {
     id: row.id,

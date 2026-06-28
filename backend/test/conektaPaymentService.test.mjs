@@ -329,6 +329,30 @@ test('Conekta payment flow: crea link, guarda payment_source y cobra tarjeta gua
     assert.equal(contact.conekta_customer_id, 'cus_test_123')
 
     const today = todayConektaDateOnly()
+    const linkedSubscription = await createSubscription({
+      contactId,
+      contactName: 'Cliente Conekta',
+      contactEmail: `conekta-${Date.now()}@example.test`,
+      contactPhone: '5555555555',
+      name: 'Membresía Conekta por link',
+      description: 'Suscripción iniciada por link público',
+      amount: 210,
+      currency: 'MXN',
+      intervalType: 'monthly',
+      intervalCount: 1,
+      startDate: today,
+      paymentProvider: 'conekta',
+      paymentMethod: 'conekta_link',
+      status: 'incomplete',
+      baseUrl: 'https://app.example.test'
+    })
+
+    assert.equal(linkedSubscription.paymentProvider, 'conekta')
+    assert.equal(linkedSubscription.paymentMethod, 'conekta_link')
+    assert.equal(linkedSubscription.status, 'incomplete')
+    assert.equal(linkedSubscription.conektaSubscriptionId, null)
+    assert.match(linkedSubscription.subscriptionStartUrl, /^https:\/\/app\.example\.test\/pay\/pay_/)
+
     const planResult = await createConektaPaymentPlan({
       contact: {
         id: contactId,

@@ -184,15 +184,22 @@ const DURATION_OPTIONS: Array<{ value: SubscriptionDurationType; label: string }
   { value: 'until_date', label: 'Hasta una fecha específica' }
 ]
 
-const LINK_PAYMENT_METHODS = new Set<SubscriptionPaymentMethod>(['stripe_link', 'conekta_link', 'mercadopago_checkout'])
+const LINK_PAYMENT_METHODS = new Set<string>([
+  'stripe_link',
+  'stripe_payment_link',
+  'conekta_link',
+  'conekta_payment_link',
+  'mercadopago_checkout',
+  'mercadopago_payment_link'
+])
 const SAVED_CARD_PAYMENT_METHODS = new Set<SubscriptionPaymentMethod>(['stripe_saved_card', 'conekta_subscription'])
 
-function isLinkPaymentMethod(value: SubscriptionPaymentMethod) {
-  return LINK_PAYMENT_METHODS.has(value)
+function isLinkPaymentMethod(value?: string | null) {
+  return LINK_PAYMENT_METHODS.has(String(value || '').toLowerCase())
 }
 
 function getStartModeForPaymentMethod(value?: string | null): SubscriptionStartMode {
-  if (value && LINK_PAYMENT_METHODS.has(value as SubscriptionPaymentMethod)) return 'link'
+  if (isLinkPaymentMethod(value)) return 'link'
   if (value && SAVED_CARD_PAYMENT_METHODS.has(value as SubscriptionPaymentMethod)) return 'saved_card'
   return ''
 }
@@ -367,8 +374,18 @@ function getSubscriptionProviderLogo(subscription: PaymentSubscription): Payment
   return null
 }
 
+function buildPublicPaymentUrl(publicPaymentId?: string | null) {
+  const cleanId = String(publicPaymentId || '').trim()
+  if (!cleanId) return ''
+
+  const path = `/pay/${encodeURIComponent(cleanId)}`
+  if (typeof window === 'undefined') return path
+
+  return `${window.location.origin.replace(/\/+$/, '')}${path}`
+}
+
 function getSubscriptionStartLink(subscription: PaymentSubscription) {
-  return subscription.subscriptionStartUrl || ''
+  return subscription.subscriptionStartUrl || buildPublicPaymentUrl(subscription.subscriptionStartPublicPaymentId)
 }
 
 function getSubscriptionContactDisplayName(contact?: PaymentLinkReadyData['contact'] | null) {
@@ -379,14 +396,31 @@ function getSubscriptionContactDisplayName(contact?: PaymentLinkReadyData['conta
     'cliente'
 }
 
-function buildSubscriptionPaymentLinkPanel(subscription: PaymentSubscription): PaymentLinkReadyData | null {
-  const paymentMethod = (subscription.paymentMethod || '') as SubscriptionPaymentMethod
+interface SubscriptionPaymentLinkPanelFallback {
+  payload?: SubscriptionPayload | null
+  contact?: Contact | null
+}
+
+function buildSubscriptionPaymentLinkPanel(
+  subscription: PaymentSubscription,
+  fallback: SubscriptionPaymentLinkPanelFallback = {}
+): PaymentLinkReadyData | null {
+  const paymentMethod = subscription.paymentMethod || fallback.payload?.paymentMethod || ''
   if (!isLinkPaymentMethod(paymentMethod)) return null
 
-  const paymentUrl = subscription.subscriptionStartUrl || ''
-  if (!paymentUrl || !subscription.contactId) return null
+  const paymentUrl = getSubscriptionStartLink(subscription)
+  if (!paymentUrl) return null
 
-  const provider = (subscription.subscriptionStartPaymentProvider || getSubscriptionProviderLogo(subscription) || resolvePaymentProvider(subscription.paymentProvider)) as PaymentPlatformLogoId
+  const contactId = subscription.contactId || fallback.contact?.id || fallback.payload?.contactId || ''
+  const contactName = subscription.contactName || fallback.contact?.name || fallback.payload?.contactName || 'Contacto'
+  const contactEmail = subscription.contactEmail || fallback.contact?.email || fallback.payload?.contactEmail || ''
+  const contactPhone = subscription.contactPhone || fallback.contact?.phone || fallback.payload?.contactPhone || ''
+
+  const provider = (
+    subscription.subscriptionStartPaymentProvider ||
+    getSubscriptionProviderLogo(subscription) ||
+    resolvePaymentProvider(subscription.paymentProvider || fallback.payload?.paymentProvider)
+  ) as PaymentPlatformLogoId
 
   return {
     kind: 'subscription_start',
@@ -394,13 +428,13 @@ function buildSubscriptionPaymentLinkPanel(subscription: PaymentSubscription): P
     description: 'Comparte este enlace público de Ristak para que el cliente realice el primer pago de la suscripción.',
     provider,
     paymentUrl,
-    amount: Number(subscription.amount || 0),
-    currency: subscription.currency || 'MXN',
+    amount: Number(subscription.amount || fallback.payload?.amount || 0),
+    currency: subscription.currency || fallback.payload?.currency || 'MXN',
     contact: {
-      id: subscription.contactId,
-      name: subscription.contactName || 'Contacto',
-      email: subscription.contactEmail || '',
-      phone: subscription.contactPhone || ''
+      id: contactId,
+      name: contactName,
+      email: contactEmail,
+      phone: contactPhone
     },
     paymentId: subscription.subscriptionStartPaymentId || null,
     publicPaymentId: subscription.subscriptionStartPublicPaymentId || null
@@ -961,7 +995,10 @@ export const PaymentSubscriptions: React.FC = () => {
         showToast('success', 'Suscripción actualizada', `${payload.name} ya quedó lista.`)
       } else {
         const created = await subscriptionsService.createSubscription(payload)
-        const readyLink = buildSubscriptionPaymentLinkPanel(created)
+        const readyLink = buildSubscriptionPaymentLinkPanel(created, {
+          payload,
+          contact: selectedContact
+        })
         if (readyLink) {
           setCreatedSubscriptionLink(readyLink)
           showToast('success', 'Link de pago listo', `El link de ${payload.name} ya está listo para copiar o enviar.`)
