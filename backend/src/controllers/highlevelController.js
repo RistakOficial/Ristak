@@ -2649,6 +2649,48 @@ function extractScheduleFromResponse(response) {
   return candidate && typeof candidate === 'object' ? candidate : null;
 }
 
+function normalizeIdValue(value) {
+  return value === undefined || value === null ? '' : String(value).trim();
+}
+
+export function resolveInvoiceScheduleId(schedule = {}, { preferred = [] } = {}) {
+  const contact = resolveContactDetails(schedule);
+  const contactIds = new Set([
+    contact.id,
+    contact._id,
+    schedule.contactId,
+    schedule.contact_id
+  ].map(normalizeIdValue).filter(Boolean));
+
+  const explicitCandidates = [
+    ...toArray(preferred),
+    schedule.scheduleId,
+    schedule.schedule_id,
+    schedule.invoiceScheduleId,
+    schedule.invoice_schedule_id,
+    schedule.ghl_schedule_id,
+    schedule.invoiceSchedule?.id,
+    schedule.invoiceSchedule?._id,
+    schedule.invoiceSchedule?.scheduleId,
+    schedule.invoiceSchedule?.schedule_id,
+    schedule.invoice_schedule?.id,
+    schedule.invoice_schedule?._id,
+    schedule.invoice_schedule?.scheduleId,
+    schedule.invoice_schedule?.schedule_id
+  ];
+
+  const genericCandidates = [
+    schedule._id,
+    schedule.id
+  ];
+
+  const candidates = [...explicitCandidates, ...genericCandidates]
+    .map(normalizeIdValue)
+    .filter(Boolean);
+
+  return candidates.find(candidate => !contactIds.has(candidate)) || '';
+}
+
 function combineRruleStart(rrule = {}) {
   if (!rrule || typeof rrule !== 'object') return null;
   if (!rrule.startDate) return null;
@@ -2795,8 +2837,10 @@ function isActiveInvoiceSchedule(schedule = {}) {
   return !INACTIVE_INVOICE_SCHEDULE_STATUSES.has(status);
 }
 
-function normalizeInvoiceSchedule(schedule = {}) {
-  const id = firstDefined(schedule.id, schedule._id, schedule.scheduleId, schedule.schedule_id);
+export function normalizeInvoiceSchedule(schedule = {}, options = {}) {
+  const id = resolveInvoiceScheduleId(schedule, {
+    preferred: options.preferredIds || []
+  });
   const contact = resolveContactDetails(schedule);
   const scheduleConfig = resolveScheduleObject(schedule);
   const recurrence = resolveScheduleRecurrence(schedule);
@@ -2882,6 +2926,16 @@ async function persistLocalInvoiceSchedule(schedule) {
     : null;
 
   try {
+    if (localContactId && normalizeIdValue(schedule.id) !== normalizeIdValue(localContactId)) {
+      await db.run(
+        `DELETE FROM payment_plans
+         WHERE id = ?
+           AND contact_id = ?
+           AND COALESCE(source, 'ghl') = 'ghl'`,
+        [localContactId, localContactId]
+      );
+    }
+
     await db.run(
       `INSERT INTO payment_plans (
         id, ghl_schedule_id, contact_id, contact_name, email, phone,
@@ -3054,7 +3108,7 @@ async function markLocalInvoiceScheduleStatus(scheduleId, status, rawPatch = {})
       sortDate: existing.sortDate || now,
       raw
     }
-    : normalizeInvoiceSchedule(raw);
+    : normalizeInvoiceSchedule(raw, { preferredIds: [scheduleId] });
 
   await persistLocalInvoiceSchedule(updatedSchedule);
   return updatedSchedule;
@@ -3086,7 +3140,7 @@ async function normalizePersistedInvoiceScheduleAction(ghlClient, scheduleId, re
   }
 
   if (schedule) {
-    const normalizedSchedule = normalizeInvoiceSchedule(schedule);
+    const normalizedSchedule = normalizeInvoiceSchedule(schedule, { preferredIds: [scheduleId] });
     await persistLocalInvoiceSchedule(normalizedSchedule);
     return normalizedSchedule;
   }
@@ -3098,7 +3152,7 @@ async function normalizePersistedInvoiceScheduleAction(ghlClient, scheduleId, re
   const localSchedule = await getLocalInvoiceSchedule(scheduleId);
   if (localSchedule) return localSchedule;
 
-  const normalizedSchedule = normalizeInvoiceSchedule({ id: scheduleId, ...rawPatch });
+  const normalizedSchedule = normalizeInvoiceSchedule({ ...rawPatch, id: scheduleId }, { preferredIds: [scheduleId] });
   await persistLocalInvoiceSchedule(normalizedSchedule);
   return normalizedSchedule;
 }
@@ -3181,20 +3235,36 @@ export const createInvoiceSchedule = async (req, res) => {
 
     const createResponse = await ghlClient.createInvoiceSchedule(payload);
     let schedule = extractScheduleFromResponse(createResponse);
-    let scheduleId = firstDefined(
-      schedule?.id,
-      schedule?._id,
-      schedule?.scheduleId,
-      schedule?.schedule_id,
-      createResponse?.id,
-      createResponse?._id,
-      createResponse?.scheduleId,
-      createResponse?.schedule_id,
-      createResponse?.data?.id,
-      createResponse?.data?._id,
-      createResponse?.schedule?.id,
-      createResponse?.invoiceSchedule?.id
-    );
+    let scheduleId = resolveInvoiceScheduleId(schedule || {}, {
+      preferred: [
+        createResponse?.scheduleId,
+        createResponse?.schedule_id,
+        createResponse?.invoiceScheduleId,
+        createResponse?.invoice_schedule_id,
+        createResponse?.id,
+        createResponse?._id,
+        createResponse?.data?.scheduleId,
+        createResponse?.data?.schedule_id,
+        createResponse?.data?.invoiceScheduleId,
+        createResponse?.data?.invoice_schedule_id,
+        createResponse?.data?.id,
+        createResponse?.data?._id,
+        createResponse?.schedule?.scheduleId,
+        createResponse?.schedule?.schedule_id,
+        createResponse?.schedule?.invoiceScheduleId,
+        createResponse?.schedule?.invoice_schedule_id,
+        createResponse?.schedule?.id,
+        createResponse?.schedule?._id,
+        createResponse?.invoiceSchedule?.scheduleId,
+        createResponse?.invoiceSchedule?.schedule_id,
+        createResponse?.invoiceSchedule?.id,
+        createResponse?.invoiceSchedule?._id,
+        createResponse?.invoice_schedule?.scheduleId,
+        createResponse?.invoice_schedule?.schedule_id,
+        createResponse?.invoice_schedule?.id,
+        createResponse?.invoice_schedule?._id
+      ]
+    });
 
     if (!scheduleId) {
       throw new Error('HighLevel no devolvió ID del plan de pago creado');
@@ -3213,10 +3283,7 @@ export const createInvoiceSchedule = async (req, res) => {
       }
     }
 
-    const normalizedSchedule = normalizeInvoiceSchedule(schedule || {
-      ...payload,
-      id: scheduleId
-    });
+    const normalizedSchedule = normalizeInvoiceSchedule(schedule || payload, { preferredIds: [scheduleId] });
     await persistLocalInvoiceSchedule(normalizedSchedule);
 
     res.json({
@@ -3377,7 +3444,7 @@ export const getInvoiceSchedule = async (req, res) => {
       });
     }
 
-    const normalizedSchedule = normalizeInvoiceSchedule(schedule);
+    const normalizedSchedule = normalizeInvoiceSchedule(schedule, { preferredIds: [scheduleId] });
     await persistLocalInvoiceSchedule(normalizedSchedule);
 
     res.json({
@@ -3489,7 +3556,7 @@ export const updateInvoiceSchedule = async (req, res) => {
       schedule = extractScheduleFromResponse(detailResponse);
     }
 
-    const normalizedSchedule = normalizeInvoiceSchedule(schedule || payload);
+    const normalizedSchedule = normalizeInvoiceSchedule(schedule || payload, { preferredIds: [scheduleId] });
     await persistLocalInvoiceSchedule(normalizedSchedule);
 
     res.json({
