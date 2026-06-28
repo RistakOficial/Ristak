@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useLocation, useNavigate } from 'react-router-dom'
 import {
   CalendarClock,
   Check,
@@ -526,6 +526,7 @@ function buildContactFromSubscription(subscription: PaymentSubscription): Contac
 
 export const PaymentSubscriptions: React.FC = () => {
   const navigate = useNavigate()
+  const location = useLocation()
   const { showConfirm, showToast } = useNotification()
   const [accountCurrency] = useAccountCurrency()
   const [subscriptions, setSubscriptions] = useState<PaymentSubscription[]>([])
@@ -560,7 +561,7 @@ export const PaymentSubscriptions: React.FC = () => {
     else setLoading(true)
 
     try {
-      const data = await subscriptionsService.listSubscriptions()
+      const data = await subscriptionsService.listSubscriptions({ refresh })
       setSubscriptions(data.subscriptions)
       setSummary(data.summary)
     } catch (error) {
@@ -574,6 +575,22 @@ export const PaymentSubscriptions: React.FC = () => {
   useEffect(() => {
     void loadSubscriptions()
   }, [])
+
+  useEffect(() => {
+    const params = new URLSearchParams(location.search)
+    if (params.get('mercadopago') !== 'return') return
+
+    void (async () => {
+      try {
+        await loadSubscriptions({ refresh: true })
+        showToast('success', 'Mercado Pago sincronizado', 'Ristak revisó las suscripciones pendientes y registró los cobros aprobados.')
+      } catch {
+        // loadSubscriptions already shows the detailed error toast.
+      } finally {
+        navigate('/transactions/subscriptions', { replace: true })
+      }
+    })()
+  }, [location.search, navigate, showToast])
 
   useEffect(() => {
     let cancelled = false

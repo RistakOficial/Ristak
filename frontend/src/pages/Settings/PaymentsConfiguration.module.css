@@ -1641,6 +1641,24 @@
   color: var(--warn);
 }
 
+.inlineInfo {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 12px 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-ctl);
+  background: var(--info-soft);
+  color: var(--text-dim);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.inlineInfo svg {
+  flex: 0 0 auto;
+  color: var(--info);
+}
+
 .mercadoPagoTestGuide {
   display: grid;
   gap: 14px;
@@ -1753,6 +1771,41 @@
 .mercadoPagoTestGuideFooter svg {
   flex: 0 0 auto;
   color: var(--info);
+}
+
+.mercadoPagoCredentialPanel {
+  display: grid;
+  gap: 14px;
+  padding: 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-card);
+  background: var(--surface);
+}
+
+.mercadoPagoCredentialHeader {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.mercadoPagoCredentialHeader > div {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.mercadoPagoCredentialHeader strong {
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 700;
+  line-height: 1.25;
+}
+
+.mercadoPagoCredentialHeader span {
+  color: var(--text-dim);
+  font-size: 12px;
+  line-height: 1.45;
 }
 
 .connectionSummary {
@@ -2071,6 +2124,7 @@
   .stripeModeActions,
   .copyField,
   .mercadoPagoTestGuideHeader,
+  .mercadoPagoCredentialHeader,
   .mercadoPagoTestGuideFooter,
   .webhookEventGuideHeader,
   .sectionSaveBar,

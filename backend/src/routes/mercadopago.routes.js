@@ -5,10 +5,13 @@ import {
   createMercadoPagoPaymentPlanView,
   createPublicMercadoPagoCardPaymentView,
   deleteMercadoPagoConfigView,
+  deleteMercadoPagoSubscriptionTestCredentialsView,
   ensurePublicMercadoPagoPreferenceView,
   getMercadoPagoConfigView,
   getPublicMercadoPagoPaymentView,
+  mercadoPagoSubscriptionReturnView,
   mercadoPagoWebhookView,
+  saveMercadoPagoSubscriptionTestCredentialsView,
   setMercadoPagoModeView,
   syncMercadoPagoConnectView,
   testMercadoPagoConfigView
@@ -19,6 +22,7 @@ import { requireModuleAccess } from '../middleware/userAccessMiddleware.js'
 const router = express.Router()
 
 router.post('/webhook', mercadoPagoWebhookView)
+router.get('/subscriptions/return', mercadoPagoSubscriptionReturnView)
 router.get('/public/payments/:publicPaymentId', getPublicMercadoPagoPaymentView)
 router.post('/public/payments/:publicPaymentId/preference', ensurePublicMercadoPagoPreferenceView)
 router.post('/public/payments/:publicPaymentId/card', createPublicMercadoPagoCardPaymentView)
@@ -28,6 +32,8 @@ router.use(requireAuth)
 router.get('/config', requireModuleAccess('settings_payments'), getMercadoPagoConfigView)
 router.delete('/config', requireModuleAccess('settings_payments'), deleteMercadoPagoConfigView)
 router.post('/config/test', requireModuleAccess('settings_payments'), testMercadoPagoConfigView)
+router.post('/config/subscription-test-credentials', requireModuleAccess('settings_payments'), saveMercadoPagoSubscriptionTestCredentialsView)
+router.delete('/config/subscription-test-credentials', requireModuleAccess('settings_payments'), deleteMercadoPagoSubscriptionTestCredentialsView)
 router.post('/connect/url', requireModuleAccess('settings_payments'), createMercadoPagoConnectUrlView)
 router.post('/connect/sync', requireModuleAccess('settings_payments'), syncMercadoPagoConnectView)
 router.post('/connect/mode', requireModuleAccess('settings_payments'), setMercadoPagoModeView)

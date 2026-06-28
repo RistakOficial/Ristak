@@ -131,6 +131,11 @@ interface ConektaModeCredentials {
   privateKey: string
 }
 
+interface MercadoPagoSubscriptionTestCredentials {
+  publicKey: string
+  accessToken: string
+}
+
 interface PaymentGatewayOption {
   id: PaymentGatewayId
   name: string
@@ -169,6 +174,10 @@ const emptyStripeModeCredentials: Record<StripeModeId, StripeModeCredentials> = 
 const emptyConektaModeCredentials: Record<StripeModeId, ConektaModeCredentials> = {
   test: { publicKey: '', privateKey: '' },
   live: { publicKey: '', privateKey: '' }
+}
+const emptyMercadoPagoSubscriptionTestCredentials: MercadoPagoSubscriptionTestCredentials = {
+  publicKey: '',
+  accessToken: ''
 }
 const stripeModeLabels: Record<StripeModeId, { title: string; description: string; publishablePlaceholder: string; secretPlaceholder: string }> = {
   test: {
@@ -256,9 +265,9 @@ const mercadoPagoSinglePaymentTestSteps = [
 ]
 const mercadoPagoSubscriptionTestSteps = [
   'Crea usuarios test en Mercado Pago: vendedor y comprador del mismo país.',
+  'En el panel de Mercado Pago del vendedor test, copia las credenciales de producción APP_USR y guárdalas aquí como credenciales de suscripción test.',
   'En Ristak, con el modo global en Prueba, conecta Mercado Pago iniciando sesión como vendedor test.',
-  'Crea la suscripción usando como contacto el correo del comprador test. Ese correo se manda a Mercado Pago como pagador esperado.',
-  'Abre el link de suscripción como comprador test. No uses la misma cuenta vendedora ni una cuenta real para autorizarla.'
+  'Crea la suscripción y abre el link como comprador test. No uses la misma cuenta vendedora ni una cuenta real para autorizarla.'
 ]
 const PAYMENT_META_DEFAULT_PURCHASE_EVENT_NAME = 'Purchase'
 const PAYMENT_META_DEFAULT_EVENT_CHANNEL: PaymentMetaPurchaseEventChannel = 'smart'
@@ -657,6 +666,11 @@ const getConektaModeCredentialsFromConfig = (config?: ConektaPaymentConfig | nul
   return nextCredentials
 }
 
+const getMercadoPagoSubscriptionTestCredentialsFromConfig = (config?: MercadoPagoPaymentConfig | null): MercadoPagoSubscriptionTestCredentials => ({
+  publicKey: config?.subscriptionTestCredentials?.publicKey || '',
+  accessToken: config?.subscriptionTestCredentials?.accessTokenPreview || ''
+})
+
 export const PaymentsConfiguration: React.FC = () => {
   const navigate = useNavigate()
   const location = useLocation()
@@ -690,9 +704,12 @@ export const PaymentsConfiguration: React.FC = () => {
   const [conektaConnectionFailed, setConektaConnectionFailed] = useState(false)
   const [disconnectingConektaMode, setDisconnectingConektaMode] = useState<StripeModeId | null>(null)
   const [mercadoPagoConfig, setMercadoPagoConfig] = useState<MercadoPagoPaymentConfig | null>(null)
+  const [mercadoPagoSubscriptionTestCredentials, setMercadoPagoSubscriptionTestCredentials] = useState<MercadoPagoSubscriptionTestCredentials>(emptyMercadoPagoSubscriptionTestCredentials)
   const [loadingMercadoPagoConfig, setLoadingMercadoPagoConfig] = useState(false)
   const [connectingMercadoPago, setConnectingMercadoPago] = useState(false)
+  const [savingMercadoPagoSubscriptionTestCredentials, setSavingMercadoPagoSubscriptionTestCredentials] = useState(false)
   const [disconnectingMercadoPago, setDisconnectingMercadoPago] = useState(false)
+  const [clearingMercadoPagoSubscriptionTestCredentials, setClearingMercadoPagoSubscriptionTestCredentials] = useState(false)
   const [uploadingCheckoutLogo, setUploadingCheckoutLogo] = useState(false)
   const [checkoutLogoUploadProgress, setCheckoutLogoUploadProgress] = useState(0)
   const [uploadingReceiptLogo, setUploadingReceiptLogo] = useState(false)
@@ -899,6 +916,11 @@ export const PaymentsConfiguration: React.FC = () => {
   const mercadoPagoModeIsConnected = (mode: PaymentModeId) => Boolean(
     mercadoPagoConfig?.modeConnections?.[mode]?.connected ||
     (mercadoPagoConnected && mercadoPagoConfig?.mode === mode)
+  )
+  const mercadoPagoSubscriptionTestConfigured = Boolean(mercadoPagoConfig?.subscriptionTestCredentials?.configured)
+  const mercadoPagoSubscriptionTestCanSave = Boolean(
+    mercadoPagoSubscriptionTestCredentials.publicKey.trim() &&
+    mercadoPagoSubscriptionTestCredentials.accessToken.trim()
   )
   const paymentWhatsappTemplateOptions = useMemo(() => {
     const options = Object.values(paymentAutomationTemplateDefaults).map((template) => ({
@@ -1341,6 +1363,7 @@ export const PaymentsConfiguration: React.FC = () => {
 
   const applyMercadoPagoConfig = (config: MercadoPagoPaymentConfig) => {
     setMercadoPagoConfig(config)
+    setMercadoPagoSubscriptionTestCredentials(getMercadoPagoSubscriptionTestCredentialsFromConfig(config))
   }
 
   const loadMercadoPagoConfig = async () => {
@@ -1350,6 +1373,7 @@ export const PaymentsConfiguration: React.FC = () => {
       applyMercadoPagoConfig(config)
     } catch {
       setMercadoPagoConfig(null)
+      setMercadoPagoSubscriptionTestCredentials(emptyMercadoPagoSubscriptionTestCredentials)
     } finally {
       setLoadingMercadoPagoConfig(false)
     }
@@ -1616,6 +1640,54 @@ export const PaymentsConfiguration: React.FC = () => {
       showToast('error', 'No se pudo desconectar Mercado Pago', error.message || 'Intenta de nuevo.')
     } finally {
       setDisconnectingMercadoPago(false)
+    }
+  }
+
+  const updateMercadoPagoSubscriptionTestCredential = (field: keyof MercadoPagoSubscriptionTestCredentials, value: string) => {
+    setMercadoPagoSubscriptionTestCredentials((current) => ({
+      ...current,
+      [field]: value
+    }))
+  }
+
+  const handleSaveMercadoPagoSubscriptionTestCredentials = async () => {
+    setSavingMercadoPagoSubscriptionTestCredentials(true)
+    try {
+      const config = await mercadoPagoPaymentsService.saveSubscriptionTestCredentials({
+        publicKey: mercadoPagoSubscriptionTestCredentials.publicKey.trim(),
+        accessToken: mercadoPagoSubscriptionTestCredentials.accessToken.trim()
+      })
+      applyMercadoPagoConfig(config)
+      showToast('success', 'Credenciales guardadas', 'Las suscripciones test de Mercado Pago usarán el vendedor test APP_USR.')
+    } catch (error: any) {
+      showToast('error', 'No se guardaron las credenciales', error.message || 'Revisa las credenciales APP_USR del vendedor test.')
+    } finally {
+      setSavingMercadoPagoSubscriptionTestCredentials(false)
+    }
+  }
+
+  const handleClearMercadoPagoSubscriptionTestCredentials = () => {
+    showConfirm(
+      'Desconectar credenciales test',
+      'Se borrarán las credenciales APP_USR usadas para probar suscripciones de Mercado Pago. Los pagos únicos de prueba seguirán usando la conexión normal. Esta acción no se puede deshacer.',
+      () => clearMercadoPagoSubscriptionTestCredentials(),
+      'Desconectar',
+      'Cancelar',
+      undefined,
+      { typeToConfirm: 'DESCONECTAR' }
+    )
+  }
+
+  const clearMercadoPagoSubscriptionTestCredentials = async () => {
+    setClearingMercadoPagoSubscriptionTestCredentials(true)
+    try {
+      const config = await mercadoPagoPaymentsService.deleteSubscriptionTestCredentials()
+      applyMercadoPagoConfig(config)
+      showToast('success', 'Credenciales borradas', 'Ristak dejó de usar credenciales APP_USR para suscripciones test.')
+    } catch (error: any) {
+      showToast('error', 'No se borraron las credenciales', error.message || 'Intenta de nuevo.')
+    } finally {
+      setClearingMercadoPagoSubscriptionTestCredentials(false)
     }
   }
 
@@ -3554,8 +3626,8 @@ export const PaymentsConfiguration: React.FC = () => {
                             ))}
                           </ol>
                           <p className={styles.mercadoPagoTestGuideNote}>
-                            En suscripciones, el correo del contacto se manda a Mercado Pago como pagador esperado. Si autorizas con otro usuario,
-                            con el vendedor o con una cuenta real, Mercado Pago puede bloquear la autorización.
+                            En suscripciones, Ristak crea un plan abierto y Mercado Pago identifica al comprador cuando inicia sesión en el checkout.
+                            Si autorizas con el vendedor o con una cuenta real, Mercado Pago puede bloquear la prueba.
                           </p>
                         </section>
                       </div>
@@ -3566,6 +3638,96 @@ export const PaymentsConfiguration: React.FC = () => {
                           Si el checkout de suscripción no muestra una leyenda de sandbox, valida el modo por la cuenta conectada:
                           vendedor test para pruebas y cuenta real solo para producción.
                         </span>
+                      </div>
+                    </div>
+                  )}
+
+                  {paymentMode === 'test' && (
+                    <div className={styles.mercadoPagoCredentialPanel}>
+                      <div className={styles.mercadoPagoCredentialHeader}>
+                        <div>
+                          <strong>Credenciales de suscripción test</strong>
+                          <span>Usa la Public Key y el Access Token APP_USR del vendedor test. Los pagos únicos de prueba conservan la conexión normal.</span>
+                        </div>
+                        <Badge variant={mercadoPagoSubscriptionTestConfigured ? 'success' : 'neutral'}>
+                          {mercadoPagoSubscriptionTestConfigured ? 'Listas' : 'Pendientes'}
+                        </Badge>
+                      </div>
+
+                      <div className={styles.formGrid}>
+                        {renderField(
+                          'Public Key APP_USR',
+                          <input
+                            type="text"
+                            value={mercadoPagoSubscriptionTestCredentials.publicKey}
+                            onChange={(event) => updateMercadoPagoSubscriptionTestCredential('publicKey', event.target.value)}
+                            placeholder="APP_USR-..."
+                            autoComplete="off"
+                            spellCheck={false}
+                          />
+                        )}
+                        {renderField(
+                          'Access Token APP_USR',
+                          <input
+                            type="password"
+                            value={mercadoPagoSubscriptionTestCredentials.accessToken}
+                            onChange={(event) => updateMercadoPagoSubscriptionTestCredential('accessToken', event.target.value)}
+                            onFocus={(event) => {
+                              if (mercadoPagoConfig?.subscriptionTestCredentials?.accessTokenPreview && mercadoPagoSubscriptionTestCredentials.accessToken === mercadoPagoConfig.subscriptionTestCredentials.accessTokenPreview) {
+                                event.currentTarget.select()
+                              }
+                            }}
+                            placeholder={mercadoPagoConfig?.subscriptionTestCredentials?.hasAccessToken ? mercadoPagoConfig.subscriptionTestCredentials.accessTokenPreview : 'APP_USR-...'}
+                            autoComplete="new-password"
+                            spellCheck={false}
+                          />
+                        )}
+                      </div>
+
+                      <div className={styles.inlineInfo}>
+                        <ShieldCheck size={16} />
+                        <span>
+                          Mercado Pago usa `TEST-*` para pagos únicos transparentes, pero suscripciones hospedadas en prueba necesitan `APP_USR-*` del vendedor test.
+                        </span>
+                      </div>
+
+                      <div className={styles.stripeModeActions}>
+                        <Button
+                          type="button"
+                          size="sm"
+                          onClick={handleSaveMercadoPagoSubscriptionTestCredentials}
+                          disabled={savingMercadoPagoSubscriptionTestCredentials || clearingMercadoPagoSubscriptionTestCredentials || !mercadoPagoSubscriptionTestCanSave}
+                        >
+                          {savingMercadoPagoSubscriptionTestCredentials ? (
+                            <>
+                              <Loader2 size={15} className={styles.spinIcon} />
+                              Guardando...
+                            </>
+                          ) : (
+                            'Guardar credenciales'
+                          )}
+                        </Button>
+                        {mercadoPagoSubscriptionTestConfigured && (
+                          <Button
+                            type="button"
+                            variant="secondary"
+                            size="sm"
+                            onClick={handleClearMercadoPagoSubscriptionTestCredentials}
+                            disabled={savingMercadoPagoSubscriptionTestCredentials || clearingMercadoPagoSubscriptionTestCredentials}
+                          >
+                            {clearingMercadoPagoSubscriptionTestCredentials ? (
+                              <>
+                                <Loader2 size={15} className={styles.spinIcon} />
+                                Borrando...
+                              </>
+                            ) : (
+                              <>
+                                <Unplug size={15} />
+                                Desconectar
+                              </>
+                            )}
+                          </Button>
+                        )}
                       </div>
                     </div>
                   )}

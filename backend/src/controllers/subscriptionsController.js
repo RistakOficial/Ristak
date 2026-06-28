@@ -46,7 +46,10 @@ function sendError(res, error, fallback = 'No se pudo procesar la suscripción.'
 
 export async function listSubscriptionsView(req, res) {
   try {
-    const data = await listSubscriptions({ status: req.query.status })
+    const data = await listSubscriptions({
+      status: req.query.status,
+      refresh: ['1', 'true', 'yes'].includes(cleanString(req.query.refresh).toLowerCase())
+    })
     res.json({ success: true, data })
   } catch (error) {
     sendError(res, error, 'No se pudieron cargar las suscripciones.')

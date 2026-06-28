@@ -42,6 +42,14 @@ export interface MercadoPagoPaymentConfig {
   hasAccessToken?: boolean
   hasRefreshToken?: boolean
   modeConnections?: Record<'test' | 'live', MercadoPagoModeConnectionStatus>
+  subscriptionTestCredentials?: {
+    configured: boolean
+    publicKey?: string
+    hasAccessToken?: boolean
+    accessTokenPreview?: string
+    userId?: string
+    accountLabel?: string
+  }
   webhookEndpointPath?: string
   webhookEndpoints?: MercadoPagoWebhookEndpoint[]
 }
@@ -218,6 +226,24 @@ export const mercadoPagoPaymentsService = {
 
   async deleteConfig(): Promise<MercadoPagoPaymentConfig> {
     const response = await fetch(apiUrl('/api/mercadopago/config'), {
+      method: 'DELETE',
+      credentials: 'include'
+    })
+    return parseResponse<MercadoPagoPaymentConfig>(response)
+  },
+
+  async saveSubscriptionTestCredentials(payload: { publicKey: string; accessToken: string }): Promise<MercadoPagoPaymentConfig> {
+    const response = await fetch(apiUrl('/api/mercadopago/config/subscription-test-credentials'), {
+      method: 'POST',
+      credentials: 'include',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
+    })
+    return parseResponse<MercadoPagoPaymentConfig>(response)
+  },
+
+  async deleteSubscriptionTestCredentials(): Promise<MercadoPagoPaymentConfig> {
+    const response = await fetch(apiUrl('/api/mercadopago/config/subscription-test-credentials'), {
       method: 'DELETE',
       credentials: 'include'
     })

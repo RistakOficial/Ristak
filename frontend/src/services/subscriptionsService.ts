@@ -123,9 +123,13 @@ const EMPTY_SUMMARY: SubscriptionSummary = {
 }
 
 export const subscriptionsService = {
-  async listSubscriptions(params: { status?: string } = {}): Promise<SubscriptionListResponse> {
+  async listSubscriptions(params: { status?: string; refresh?: boolean } = {}): Promise<SubscriptionListResponse> {
+    const queryParams: Record<string, string> = {}
+    if (params.status && params.status !== 'all') queryParams.status = params.status
+    if (params.refresh) queryParams.refresh = 'true'
+
     const data = await apiClient.get<SubscriptionListResponse>('/subscriptions', {
-      params: params.status && params.status !== 'all' ? { status: params.status } : undefined
+      params: Object.keys(queryParams).length ? queryParams : undefined
     })
 
     return {

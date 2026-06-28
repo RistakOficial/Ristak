@@ -137,6 +137,17 @@ function encryptOptionalSecret(value) {
   return clean ? encrypt(clean) : ''
 }
 
+function maskSecret(value = '') {
+  const clean = cleanString(value)
+  if (!clean) return ''
+  if (clean.length <= 10) return '****'
+  return `${clean.slice(0, 8)}****${clean.slice(-6)}`
+}
+
+function isMaskedSecret(value = '') {
+  return /[•*]/.test(String(value || ''))
+}
+
 function normalizePositiveAmount(value, fallback = 25) {
   const amount = Number(value)
   if (Number.isFinite(amount) && amount > 0) return Math.round(amount * 100) / 100
@@ -405,6 +416,8 @@ function mapConfig(raw = {}, { includeSecrets = false, mode: modeOverride = '' }
   const webhookSecret = cleanString(selectedConnection?.webhookSecret) || (legacyMatchesMode && raw[CONFIG_KEYS.webhookSecret] ? decryptSecret(raw[CONFIG_KEYS.webhookSecret]) : '')
   const enabled = normalizeBoolean(raw[CONFIG_KEYS.enabled], true)
   const configured = Boolean(enabled && accessToken && cleanString(selectedConnection?.userId || (legacyMatchesMode ? raw[CONFIG_KEYS.userId] : '')))
+  const subscriptionTestAccessToken = raw[CONFIG_KEYS.subscriptionTestAccessToken] ? decryptSecret(raw[CONFIG_KEYS.subscriptionTestAccessToken]) : ''
+  const subscriptionTestPublicKey = cleanString(raw[CONFIG_KEYS.subscriptionTestPublicKey])
 
   return {
     enabled,
@@ -428,6 +441,12 @@ function mapConfig(raw = {}, { includeSecrets = false, mode: modeOverride = '' }
     modeConnections: {
       test: summarizeMercadoPagoModeConnection(raw, 'test'),
       live: summarizeMercadoPagoModeConnection(raw, 'live')
+    },
+    subscriptionTestCredentials: {
+      configured: Boolean(subscriptionTestPublicKey && subscriptionTestAccessToken),
+      publicKey: subscriptionTestPublicKey,
+      hasAccessToken: Boolean(subscriptionTestAccessToken),
+      accessTokenPreview: maskSecret(subscriptionTestAccessToken)
     },
     ...(includeSecrets ? { accessToken, refreshToken, webhookSecret } : {})
   }
@@ -506,6 +525,63 @@ export async function getMercadoPagoPaymentConfig({ includeSecrets = false, mode
   }
   const mode = modeOverride || await getPaymentGatewayMode()
   return mapConfig(raw, { includeSecrets, mode })
+}
+
+export async function saveMercadoPagoSubscriptionTestCredentials(input = {}) {
+  const raw = await readRawConfig()
+  const previousAccessToken = raw[CONFIG_KEYS.subscriptionTestAccessToken] ? decryptSecret(raw[CONFIG_KEYS.subscriptionTestAccessToken]) : ''
+  const publicKey = cleanString(input.publicKey || input.public_key)
+  const submittedAccessToken = cleanString(input.accessToken || input.access_token)
+  const accessToken = submittedAccessToken && !isMaskedSecret(submittedAccessToken)
+    ? submittedAccessToken
+    : previousAccessToken
+
+  if (!publicKey || !publicKey.startsWith('APP_USR-')) {
+    const error = new Error('La Public Key de suscripciones test debe ser una credencial APP_USR del vendedor test de Mercado Pago.')
+    error.status = 400
+    throw error
+  }
+
+  if (!accessToken || !accessToken.startsWith('APP_USR-')) {
+    const error = new Error('El Access Token de suscripciones test debe ser una credencial APP_USR del vendedor test de Mercado Pago.')
+    error.status = 400
+    throw error
+  }
+
+  const { payload } = await mercadoPagoApiRequest('/users/me', {
+    config: {
+      ...(await getMercadoPagoPaymentConfig({ includeSecrets: true, mode: 'test' })),
+      mode: 'test',
+      publicKey,
+      accessToken
+    }
+  })
+
+  await setAppConfig(CONFIG_KEYS.subscriptionTestPublicKey, publicKey)
+  await setAppConfig(CONFIG_KEYS.subscriptionTestAccessToken, encryptOptionalSecret(accessToken))
+
+  const config = await getMercadoPagoPaymentConfig({ mode: 'test' })
+  return {
+    ...config,
+    subscriptionTestCredentials: {
+      ...(config.subscriptionTestCredentials || {}),
+      configured: true,
+      publicKey,
+      hasAccessToken: true,
+      accessTokenPreview: maskSecret(accessToken),
+      userId: cleanString(payload?.id),
+      accountLabel: cleanString(payload?.nickname || payload?.email || payload?.id)
+    }
+  }
+}
+
+export async function deleteMercadoPagoSubscriptionTestCredentials() {
+  await db.run(
+    `DELETE FROM app_config
+     WHERE config_key IN (?, ?)`,
+    [CONFIG_KEYS.subscriptionTestPublicKey, CONFIG_KEYS.subscriptionTestAccessToken]
+  )
+  return getMercadoPagoPaymentConfig({ mode: 'test' })
 }
 
 export async function createMercadoPagoOAuthUrl({ mode = '', appUrl = '', returnPath = '/settings/payments/mercadopago' } = {}) {
@@ -2424,9 +2500,17 @@ function buildMercadoPagoAutoRecurring({
   return autoRecurring
 }
 
-function getMercadoPagoSubscriptionBackUrl(baseUrl = '') {
+function getMercadoPagoSubscriptionBackUrl(baseUrl = '', subscriptionId = '') {
   const cleanBase = cleanString(baseUrl || getConfiguredBaseUrl()).replace(/\/+$/, '')
-  return `${cleanBase || 'https://www.ristak.com'}/transactions/subscriptions?mercadopago=return`
+  const url = new URL(`${cleanBase || 'https://www.ristak.com'}/api/mercadopago/subscriptions/return`)
+  const cleanSubscriptionId = cleanString(subscriptionId)
+  if (cleanSubscriptionId) url.searchParams.set('subscription_id', cleanSubscriptionId)
+  return url.toString()
+}
+
+function getMercadoPagoWebhookUrl(baseUrl = '') {
+  const cleanBase = cleanString(baseUrl || getConfiguredBaseUrl()).replace(/\/+$/, '')
+  return cleanBase ? `${cleanBase}${MERCADOPAGO_WEBHOOK_PATH}` : ''
 }
 
 function mapMercadoPagoSubscriptionResponse(payload = {}, fallback = {}) {
@@ -2490,6 +2574,7 @@ export async function createMercadoPagoSubscriptionPlanLink(input = {}, { baseUr
     throw error
   }
 
+  const notificationUrl = getMercadoPagoWebhookUrl(baseUrl)
   const body = {
     reason: cleanString(input.name || input.reason || 'Suscripción Ristak'),
     external_reference: subscriptionId,
@@ -2502,8 +2587,9 @@ export async function createMercadoPagoSubscriptionPlanLink(input = {}, { baseUr
       endDate: input.cancelAt || input.endDate,
       includeStartDate: false
     }),
-    back_url: getMercadoPagoSubscriptionBackUrl(baseUrl)
+    back_url: getMercadoPagoSubscriptionBackUrl(baseUrl, subscriptionId)
   }
+  if (notificationUrl) body.notification_url = notificationUrl
 
   const { payload, config } = await mercadoPagoSubscriptionApiRequest('/preapproval_plan', {
     method: 'POST',
@@ -2544,7 +2630,7 @@ export async function createMercadoPagoRecurringSubscription(input = {}, { baseU
       endDate: input.cancelAt || input.endDate,
       includeStartDate: false
     }),
-    back_url: getMercadoPagoSubscriptionBackUrl(baseUrl),
+    back_url: getMercadoPagoSubscriptionBackUrl(baseUrl, subscriptionId),
     status: 'pending'
   }
 
@@ -2970,11 +3056,156 @@ async function insertSubscriptionPaymentFromMercadoPagoAuthorizedPayment(authori
   return localPaymentId
 }
 
+function getMercadoPagoPreapprovalSearchResults(payload = {}) {
+  if (Array.isArray(payload.results)) return payload.results
+  if (Array.isArray(payload.elements)) return payload.elements
+  if (Array.isArray(payload.data)) return payload.data
+  return []
+}
+
+function pickMercadoPagoPreapproval(results = []) {
+  const valid = results.filter((item) => cleanString(item?.id))
+  if (!valid.length) return null
+
+  const statusPriority = {
+    authorized: 0,
+    pending: 1,
+    paused: 2,
+    cancelled: 3,
+    canceled: 3
+  }
+
+  return [...valid].sort((a, b) => {
+    const statusA = statusPriority[cleanString(a.status).toLowerCase()] ?? 9
+    const statusB = statusPriority[cleanString(b.status).toLowerCase()] ?? 9
+    if (statusA !== statusB) return statusA - statusB
+    return new Date(b.last_modified || b.date_created || 0).getTime() - new Date(a.last_modified || a.date_created || 0).getTime()
+  })[0]
+}
+
+async function listMercadoPagoAuthorizedPayments(preapprovalId) {
+  const cleanPreapprovalId = cleanString(preapprovalId)
+  if (!cleanPreapprovalId) return []
+  const query = new URLSearchParams({
+    preapproval_id: cleanPreapprovalId,
+    limit: '20'
+  })
+  const { payload } = await mercadoPagoSubscriptionApiRequest(`/authorized_payments/search?${query.toString()}`)
+  return getMercadoPagoPreapprovalSearchResults(payload)
+}
+
+async function syncMercadoPagoAuthorizedPaymentsForSubscription(preapprovalId, subscriptionRow = null) {
+  const cleanPreapprovalId = cleanString(preapprovalId)
+  if (!cleanPreapprovalId || !subscriptionRow?.id) return []
+  const authorizedPayments = await listMercadoPagoAuthorizedPayments(cleanPreapprovalId)
+  const paymentIds = []
+
+  for (const authorizedPayment of authorizedPayments) {
+    const paymentId = await insertSubscriptionPaymentFromMercadoPagoAuthorizedPayment(authorizedPayment, subscriptionRow)
+    if (paymentId) paymentIds.push(paymentId)
+  }
+
+  return paymentIds
+}
+
 export async function refreshMercadoPagoSubscription(preapprovalId) {
   const cleanPreapprovalId = cleanString(preapprovalId)
   if (!cleanPreapprovalId) return null
   const { payload } = await mercadoPagoSubscriptionApiRequest(`/preapproval/${encodeURIComponent(cleanPreapprovalId)}`)
-  return updateSubscriptionFromMercadoPagoPreapproval(payload)
+  const updated = await updateSubscriptionFromMercadoPagoPreapproval(payload)
+  if (updated?.id) {
+    await syncMercadoPagoAuthorizedPaymentsForSubscription(cleanPreapprovalId, updated)
+  }
+  return updated
+}
+
+export async function syncMercadoPagoSubscriptionPlan(preapprovalPlanId) {
+  const cleanPreapprovalPlanId = cleanString(preapprovalPlanId)
+  if (!cleanPreapprovalPlanId) return null
+
+  const query = new URLSearchParams({
+    preapproval_plan_id: cleanPreapprovalPlanId,
+    limit: '20'
+  })
+  const { payload } = await mercadoPagoSubscriptionApiRequest(`/preapproval/search?${query.toString()}`)
+  const preapproval = pickMercadoPagoPreapproval(getMercadoPagoPreapprovalSearchResults(payload))
+  if (!preapproval?.id) return null
+
+  const updated = await updateSubscriptionFromMercadoPagoPreapproval(preapproval)
+  if (updated?.id) {
+    await syncMercadoPagoAuthorizedPaymentsForSubscription(preapproval.id, updated)
+  }
+  return updated
+}
+
+export async function syncMercadoPagoSubscriptionReturn(input = {}) {
+  const subscriptionId = cleanString(input.subscriptionId || input.subscription_id || input.external_reference)
+  const preapprovalId = cleanString(input.preapprovalId || input.preapproval_id)
+  let preapprovalPlanId = cleanString(input.preapprovalPlanId || input.preapproval_plan_id)
+
+  if (preapprovalId) {
+    return refreshMercadoPagoSubscription(preapprovalId)
+  }
+
+  if (!preapprovalPlanId && subscriptionId) {
+    const row = await db.get(
+      `SELECT mercadopago_preapproval_plan_id
+       FROM subscriptions
+       WHERE id = ?
+       LIMIT 1`,
+      [subscriptionId]
+    )
+    preapprovalPlanId = cleanString(row?.mercadopago_preapproval_plan_id)
+  }
+
+  if (preapprovalPlanId) {
+    return syncMercadoPagoSubscriptionPlan(preapprovalPlanId)
+  }
+
+  return null
+}
+
+export async function syncPendingMercadoPagoSubscriptions({ limit = 20 } = {}) {
+  const rows = await db.all(
+    `SELECT *
+     FROM subscriptions
+     WHERE payment_provider = 'mercadopago'
+       AND payment_method = 'mercadopago_subscription'
+       AND mercadopago_preapproval_plan_id IS NOT NULL
+       AND COALESCE(status, '') NOT IN ('active', 'cancelled', 'deleted')
+     ORDER BY updated_at DESC
+     LIMIT ?`,
+    [Math.max(1, Math.min(Number(limit) || 20, 50))]
+  )
+
+  const result = {
+    checked: rows.length,
+    updated: 0,
+    payments: 0
+  }
+
+  for (const row of rows) {
+    const beforePaymentCount = await db.get(
+      `SELECT COUNT(*) AS count
+       FROM payments
+       WHERE metadata_json LIKE ?`,
+      [`%${row.id}%`]
+    )
+    const updated = await syncMercadoPagoSubscriptionPlan(row.mercadopago_preapproval_plan_id).catch((error) => {
+      logger.warn(`No se pudo sincronizar suscripción Mercado Pago ${row.id}: ${error.message}`)
+      return null
+    })
+    if (updated?.id) result.updated += 1
+    const afterPaymentCount = await db.get(
+      `SELECT COUNT(*) AS count
+       FROM payments
+       WHERE metadata_json LIKE ?`,
+      [`%${row.id}%`]
+    )
+    result.payments += Math.max(0, Number(afterPaymentCount?.count || 0) - Number(beforePaymentCount?.count || 0))
+  }
+
+  return result
 }
 
 export async function refreshMercadoPagoAuthorizedPayment(authorizedPaymentId) {
@@ -3034,6 +3265,18 @@ export async function handleMercadoPagoWebhookEvent(body = {}, headers = {}, que
 
   const type = cleanString(body.type || body.topic || query.topic || query.type)
   const action = cleanString(body.action)
+
+  if (dataId && (type.includes('subscription_preapproval_plan') || action.includes('preapproval_plan'))) {
+    const updated = await syncMercadoPagoSubscriptionPlan(dataId)
+    return {
+      received: true,
+      type,
+      action,
+      subscriptionId: updated?.id || null,
+      status: updated?.status || null
+    }
+  }
+
   if (dataId && (type.includes('subscription_preapproval') || action.includes('preapproval'))) {
     const updated = await refreshMercadoPagoSubscription(dataId)
     return {

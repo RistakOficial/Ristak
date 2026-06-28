@@ -17,6 +17,7 @@ import {
   createMercadoPagoSubscriptionPlanLink,
   pauseMercadoPagoRecurringSubscription,
   resumeMercadoPagoRecurringSubscription,
+  syncPendingMercadoPagoSubscriptions,
   updateMercadoPagoRecurringSubscription
 } from './mercadoPagoPaymentService.js'
 import {
@@ -803,7 +804,13 @@ async function syncConektaSubscriptionUpdateIfNeeded(row, existing = {}, payload
   return applyConektaSubscriptionToRow(row, conektaSubscription)
 }
 
-export async function listSubscriptions({ status } = {}) {
+export async function listSubscriptions({ status, refresh = false } = {}) {
+  if (refresh) {
+    await syncPendingMercadoPagoSubscriptions().catch((error) => {
+      logger.warn(`No se pudieron sincronizar suscripciones pendientes de Mercado Pago: ${error.message}`)
+    })
+  }
+
   const cleanStatus = cleanString(status).toLowerCase()
   const params = []
   const where = ["COALESCE(status, '') <> 'deleted'"]
