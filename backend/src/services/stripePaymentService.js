@@ -234,6 +234,25 @@ function parseJson(value, fallback = {}) {
   }
 }
 
+function getPublicSubscriptionStart(metadata = {}) {
+  const start = metadata?.subscriptionStart && typeof metadata.subscriptionStart === 'object'
+    ? metadata.subscriptionStart
+    : null
+  const subscriptionId = cleanString(start?.subscriptionId || metadata?.ristakSubscriptionId || metadata?.ristak_subscription_id)
+  if (!subscriptionId) return null
+
+  return {
+    subscriptionId,
+    paymentProvider: cleanString(start?.paymentProvider),
+    paymentMethod: cleanString(start?.paymentMethod),
+    intervalType: cleanString(start?.intervalType),
+    intervalCount: Number.parseInt(start?.intervalCount, 10) || 1,
+    startDate: cleanString(start?.startDate) || null,
+    nextRunAt: cleanString(start?.nextRunAt) || null,
+    cancelAt: cleanString(start?.cancelAt) || null
+  }
+}
+
 function decryptSecret(value) {
   const clean = cleanString(value)
   if (!clean) return ''
@@ -730,6 +749,7 @@ function mapPublicPayment(row, config, baseUrl = '', settings = null, paymentPla
   if (!row) return null
   const metadata = parseJson(row.metadata_json, {})
   const tax = metadata.tax && typeof metadata.tax === 'object' ? metadata.tax : null
+  const subscriptionStart = getPublicSubscriptionStart(metadata)
   const publicPaymentId = row.public_payment_id
   return {
     id: row.id,
@@ -754,6 +774,7 @@ function mapPublicPayment(row, config, baseUrl = '', settings = null, paymentPla
     stripePaymentIntentId: row.stripe_payment_intent_id || null,
     publishableKey: config?.publishableKey || '',
     stripeAccountId: '',
+    subscriptionStart,
     tax,
     paymentPlan,
     settings: settings || null
@@ -1779,7 +1800,7 @@ async function updateSubscriptionFromStripeCheckoutSession(session, { stripe, re
   }
 
   const existing = await db.get(
-    `SELECT id, cancel_at
+    `SELECT id, cancel_at, metadata_json
      FROM subscriptions
      WHERE ${filters.join(' OR ')}
      LIMIT 1`,
@@ -1799,20 +1820,62 @@ async function updateSubscriptionFromStripeCheckoutSession(session, { stripe, re
   }
 
   const nextStatus = session?.payment_status === 'paid' ? 'active' : 'incomplete'
+  const existingMetadata = parseJson(existing.metadata_json, {})
+  const subscriptionStartPayment = existingMetadata.subscriptionStartPayment && typeof existingMetadata.subscriptionStartPayment === 'object'
+    ? existingMetadata.subscriptionStartPayment
+    : {}
+  const completedAt = new Date().toISOString()
   await db.run(
     `UPDATE subscriptions
      SET status = CASE WHEN status = 'incomplete' THEN ? ELSE status END,
          stripe_subscription_id = COALESCE(?, stripe_subscription_id),
          stripe_customer_id = COALESCE(?, stripe_customer_id),
+         metadata_json = ?,
          updated_at = CURRENT_TIMESTAMP
      WHERE id = ?`,
     [
       nextStatus,
       stripeSubscriptionId || null,
       extractStripeObjectId(session?.customer) || null,
+      JSON.stringify({
+        ...existingMetadata,
+        stripeCheckout: {
+          ...(existingMetadata.stripeCheckout && typeof existingMetadata.stripeCheckout === 'object' ? existingMetadata.stripeCheckout : {}),
+          id: cleanString(session?.id),
+          sessionId: cleanString(session?.id),
+          paymentStatus: cleanString(session?.payment_status),
+          completedAt
+        },
+        subscriptionStartPayment: {
+          ...subscriptionStartPayment,
+          status: nextStatus === 'active' ? 'paid' : 'pending',
+          stripeCheckoutSessionId: cleanString(session?.id),
+          completedAt
+        }
+      }),
       existing.id
     ]
   )
+
+  if (subscriptionStartPayment.paymentId) {
+    await db.run(
+      `UPDATE payments
+       SET status = ?,
+           payment_method = 'stripe_subscription',
+           payment_provider = 'stripe',
+           reference = COALESCE(?, reference),
+           paid_at = CASE WHEN ? = 'active' THEN COALESCE(paid_at, ?) ELSE paid_at END,
+           updated_at = CURRENT_TIMESTAMP
+       WHERE id = ?`,
+      [
+        nextStatus === 'active' ? 'paid' : 'pending',
+        cleanString(session?.id) || null,
+        nextStatus,
+        completedAt,
+        subscriptionStartPayment.paymentId
+      ]
+    )
+  }
 
   return nextStatus
 }
@@ -1973,6 +2036,145 @@ export async function createStripeSubscriptionCheckoutLink(input = {}, { baseUrl
     raw: {
       checkoutSession: session
     }
+  }
+}
+
+export async function createPublicStripeSubscriptionCheckout(publicPaymentId, { baseUrl = '' } = {}) {
+  const row = await findPaymentByPublicId(publicPaymentId)
+  if (!row || row.payment_provider !== 'stripe') {
+    const error = new Error('Link de suscripción no encontrado.')
+    error.status = 404
+    throw error
+  }
+
+  if (['paid', 'refunded', 'void', 'deleted'].includes(cleanString(row.status).toLowerCase())) {
+    const error = new Error('Este link de suscripción ya no acepta nuevas autorizaciones.')
+    error.status = 409
+    throw error
+  }
+
+  const paymentMetadata = parseJson(row.metadata_json, {})
+  const subscriptionStart = getPublicSubscriptionStart(paymentMetadata)
+  if (!subscriptionStart?.subscriptionId || subscriptionStart.paymentProvider !== 'stripe') {
+    const error = new Error('Este link no corresponde a una suscripción de Stripe.')
+    error.status = 400
+    throw error
+  }
+
+  const subscription = await db.get(
+    `SELECT *
+     FROM subscriptions
+     WHERE id = ?
+     LIMIT 1`,
+    [subscriptionStart.subscriptionId]
+  )
+
+  if (!subscription) {
+    const error = new Error('No encontramos la suscripción asociada a este link.')
+    error.status = 404
+    throw error
+  }
+
+  const subscriptionMetadata = parseJson(subscription.metadata_json, {})
+  const existingCheckout = subscriptionMetadata.stripeCheckout && typeof subscriptionMetadata.stripeCheckout === 'object'
+    ? subscriptionMetadata.stripeCheckout
+    : {}
+  const existingCheckoutUrl = cleanString(existingCheckout.url || existingCheckout.checkoutUrl)
+  if (existingCheckoutUrl && !subscription.stripe_subscription_id) {
+    return {
+      checkoutUrl: existingCheckoutUrl,
+      stripeCheckoutSessionId: cleanString(existingCheckout.sessionId || existingCheckout.id),
+      status: subscription.status || 'incomplete',
+      subscriptionId: subscription.id
+    }
+  }
+
+  if (subscription.stripe_subscription_id) {
+    return {
+      checkoutUrl: '',
+      stripeCheckoutSessionId: '',
+      status: subscription.status || 'active',
+      subscriptionId: subscription.id,
+      alreadyActive: true
+    }
+  }
+
+  const checkout = await createStripeSubscriptionCheckoutLink({
+    ristakSubscriptionId: subscription.id,
+    contactId: subscription.contact_id,
+    contactEmail: subscription.contact_email,
+    email: subscription.contact_email,
+    contactName: subscription.contact_name,
+    contactPhone: subscription.contact_phone,
+    name: subscription.name,
+    description: subscription.description,
+    amount: subscription.amount,
+    currency: subscription.currency,
+    intervalType: subscription.interval_type,
+    intervalCount: subscription.interval_count,
+    startDate: subscription.start_date,
+    cancelAt: subscription.cancel_at
+  }, { baseUrl })
+
+  const checkoutMetadata = {
+    id: checkout.stripeCheckoutSessionId,
+    sessionId: checkout.stripeCheckoutSessionId,
+    url: checkout.stripeCheckoutUrl,
+    checkoutUrl: checkout.stripeCheckoutUrl,
+    createdAt: new Date().toISOString()
+  }
+  const raw = parseJson(subscription.raw_json, {})
+
+  await db.run(
+    `UPDATE subscriptions
+     SET status = 'incomplete',
+         payment_method = 'stripe_link',
+         payment_provider = 'stripe',
+         payment_mode = ?,
+         stripe_customer_id = COALESCE(?, stripe_customer_id),
+         stripe_product_id = COALESCE(?, stripe_product_id),
+         stripe_price_id = COALESCE(?, stripe_price_id),
+         metadata_json = ?,
+         raw_json = ?,
+         updated_at = CURRENT_TIMESTAMP
+     WHERE id = ?`,
+    [
+      checkout.paymentMode || subscription.payment_mode,
+      checkout.stripeCustomerId || null,
+      checkout.stripeProductId || null,
+      checkout.stripePriceId || null,
+      JSON.stringify({
+        ...subscriptionMetadata,
+        stripeCheckout: checkoutMetadata,
+        subscriptionStartPayment: {
+          ...(subscriptionMetadata.subscriptionStartPayment && typeof subscriptionMetadata.subscriptionStartPayment === 'object' ? subscriptionMetadata.subscriptionStartPayment : {}),
+          status: 'pending_checkout',
+          stripeCheckoutSessionId: checkout.stripeCheckoutSessionId,
+          updatedAt: new Date().toISOString()
+        }
+      }),
+      JSON.stringify({
+        ...raw,
+        stripeCheckout: checkout.raw || checkout
+      }),
+      subscription.id
+    ]
+  )
+
+  await db.run(
+    `UPDATE payments
+     SET status = CASE WHEN status = 'sent' THEN 'pending' ELSE status END,
+         reference = COALESCE(?, reference),
+         updated_at = CURRENT_TIMESTAMP
+     WHERE id = ?`,
+    [checkout.stripeCheckoutSessionId || null, row.id]
+  )
+
+  return {
+    checkoutUrl: checkout.stripeCheckoutUrl,
+    stripeCheckoutSessionId: checkout.stripeCheckoutSessionId,
+    status: 'incomplete',
+    subscriptionId: subscription.id
   }
 }
 

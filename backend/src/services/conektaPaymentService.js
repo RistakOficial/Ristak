@@ -223,6 +223,25 @@ function parseJson(value, fallback = {}) {
   }
 }
 
+function getPublicSubscriptionStart(metadata = {}) {
+  const start = metadata?.subscriptionStart && typeof metadata.subscriptionStart === 'object'
+    ? metadata.subscriptionStart
+    : null
+  const subscriptionId = cleanString(start?.subscriptionId || metadata?.ristakSubscriptionId || metadata?.ristak_subscription_id)
+  if (!subscriptionId) return null
+
+  return {
+    subscriptionId,
+    paymentProvider: cleanString(start?.paymentProvider),
+    paymentMethod: cleanString(start?.paymentMethod),
+    intervalType: cleanString(start?.intervalType),
+    intervalCount: Number.parseInt(start?.intervalCount, 10) || 1,
+    startDate: cleanString(start?.startDate) || null,
+    nextRunAt: cleanString(start?.nextRunAt) || null,
+    cancelAt: cleanString(start?.cancelAt) || null
+  }
+}
+
 function decryptSecret(value) {
   const clean = cleanString(value)
   if (!clean) return ''
@@ -562,6 +581,7 @@ function mapPublicPayment(row, config, baseUrl = '', settings = null) {
   if (!row) return null
   const metadata = parseJson(row.metadata_json, {})
   const tax = metadata.tax && typeof metadata.tax === 'object' ? metadata.tax : null
+  const subscriptionStart = getPublicSubscriptionStart(metadata)
   const publicPaymentId = row.public_payment_id
   return {
     id: row.id,
@@ -586,6 +606,7 @@ function mapPublicPayment(row, config, baseUrl = '', settings = null) {
     conektaOrderId: row.conekta_order_id || null,
     conektaChargeId: row.conekta_charge_id || null,
     publicKey: config?.publicKey || '',
+    subscriptionStart,
     tax,
     settings: settings || null
   }
@@ -1275,6 +1296,174 @@ export async function createPublicConektaCardPayment(publicPaymentId, input = {}
     savedPaymentSource: paymentSource ? mapPaymentSource(savedSourceRow || {
       ...(await db.get('SELECT * FROM conekta_payment_sources WHERE conekta_payment_source_id = ?', [paymentSourceId]) || {})
     }) : null
+  }
+}
+
+export async function createPublicConektaSubscription(publicPaymentId, input = {}, { baseUrl } = {}) {
+  const row = await findPaymentByPublicId(publicPaymentId)
+  if (!row || row.payment_provider !== 'conekta') {
+    const error = new Error('Link de suscripción no encontrado.')
+    error.status = 404
+    throw error
+  }
+
+  if (['paid', 'succeeded', 'completed', 'refunded', 'void', 'deleted'].includes(cleanString(row.status).toLowerCase())) {
+    const error = new Error('Este link de suscripción ya no acepta nuevas autorizaciones.')
+    error.status = 409
+    throw error
+  }
+
+  const metadata = parseJson(row.metadata_json, {})
+  const subscriptionStart = getPublicSubscriptionStart(metadata)
+  if (!subscriptionStart?.subscriptionId || subscriptionStart.paymentProvider !== 'conekta') {
+    const error = new Error('Este link no corresponde a una suscripción de Conekta.')
+    error.status = 400
+    throw error
+  }
+
+  const tokenId = cleanString(input.tokenId || input.token_id || input.token)
+  if (!tokenId) {
+    const error = new Error('Conekta no devolvió un token de tarjeta.')
+    error.status = 400
+    throw error
+  }
+
+  const subscription = await db.get(
+    `SELECT *
+     FROM subscriptions
+     WHERE id = ?
+     LIMIT 1`,
+    [subscriptionStart.subscriptionId]
+  )
+
+  if (!subscription) {
+    const error = new Error('No encontramos la suscripción asociada a este link.')
+    error.status = 404
+    throw error
+  }
+
+  if (subscription.conekta_subscription_id) {
+    const config = await getConektaPaymentConfig({ mode: row.payment_mode || '' })
+    const paymentSettings = await getPublicPaymentSettings()
+    return {
+      payment: mapPublicPayment(row, config, baseUrl, paymentSettings),
+      status: subscription.status || 'active',
+      subscriptionId: subscription.id,
+      alreadyActive: true
+    }
+  }
+
+  const config = await getConektaPaymentConfig({ includeSecrets: true, mode: row.payment_mode || '' })
+  if (!config.configured) {
+    const error = new Error('Conekta no está configurado todavía. Guarda las llaves primero.')
+    error.status = 400
+    throw error
+  }
+
+  let customerId = cleanString(row.contact_conekta_customer_id || metadata.conektaCustomerId || subscription.conekta_customer_id)
+  if (!customerId) customerId = await ensureConektaCustomerForContact(row.contact_id, row)
+
+  const sourceResult = await createPaymentSource(customerId, tokenId)
+  const paymentSource = sourceResult.paymentSource
+  const paymentSourceId = cleanString(paymentSource?.id)
+  const savedSourceRow = await upsertConektaPaymentSource({
+    contactId: row.contact_id,
+    customerId,
+    paymentSource,
+    mode: sourceResult.config?.mode || config.mode,
+    makeDefault: true
+  })
+
+  const conektaSubscription = await createConektaRecurringSubscription({
+    ristakSubscriptionId: subscription.id,
+    contactId: subscription.contact_id,
+    name: subscription.name,
+    description: subscription.description,
+    amount: subscription.amount,
+    currency: subscription.currency,
+    intervalType: subscription.interval_type,
+    intervalCount: subscription.interval_count,
+    startDate: subscription.start_date,
+    paymentMethodId: paymentSourceId,
+    contactName: subscription.contact_name,
+    contactEmail: subscription.contact_email,
+    contactPhone: subscription.contact_phone
+  })
+
+  const subscriptionMetadata = parseJson(subscription.metadata_json, {})
+  const raw = parseJson(subscription.raw_json, {})
+  const authorizedAt = new Date().toISOString()
+  await db.run(
+    `UPDATE subscriptions
+     SET status = ?,
+         payment_method = 'conekta_subscription',
+         payment_provider = 'conekta',
+         payment_mode = ?,
+         conekta_customer_id = ?,
+         conekta_plan_id = ?,
+         conekta_subscription_id = ?,
+         conekta_payment_source_id = ?,
+         conekta_next_billing_at = ?,
+         current_period_start = ?,
+         current_period_end = ?,
+         next_run_at = ?,
+         metadata_json = ?,
+         raw_json = ?,
+         updated_at = CURRENT_TIMESTAMP
+     WHERE id = ?`,
+    [
+      conektaSubscription.status || 'active',
+      conektaSubscription.paymentMode || config.mode,
+      conektaSubscription.conektaCustomerId || customerId,
+      conektaSubscription.conektaPlanId || subscription.conekta_plan_id,
+      conektaSubscription.conektaSubscriptionId || subscription.conekta_subscription_id,
+      conektaSubscription.conektaPaymentSourceId || paymentSourceId,
+      conektaSubscription.nextRunAt || subscription.next_run_at,
+      conektaSubscription.currentPeriodStart || subscription.current_period_start,
+      conektaSubscription.currentPeriodEnd || subscription.current_period_end,
+      conektaSubscription.nextRunAt || subscription.next_run_at,
+      JSON.stringify({
+        ...subscriptionMetadata,
+        subscriptionStartPayment: {
+          ...(subscriptionMetadata.subscriptionStartPayment && typeof subscriptionMetadata.subscriptionStartPayment === 'object' ? subscriptionMetadata.subscriptionStartPayment : {}),
+          paymentId: row.id,
+          publicPaymentId: row.public_payment_id,
+          status: 'paid',
+          provider: 'conekta',
+          conektaPaymentSourceId: paymentSourceId,
+          activatedAt: authorizedAt
+        }
+      }),
+      JSON.stringify({
+        ...raw,
+        conektaSubscriptionStart: conektaSubscription.raw || conektaSubscription
+      }),
+      subscription.id
+    ]
+  )
+
+  await db.run(
+    `UPDATE payments
+     SET status = 'paid',
+         payment_method = 'conekta_subscription',
+         payment_provider = 'conekta',
+         conekta_payment_source_id = COALESCE(?, conekta_payment_source_id),
+         paid_at = COALESCE(paid_at, ?),
+         updated_at = CURRENT_TIMESTAMP
+     WHERE id = ?`,
+    [paymentSourceId || null, authorizedAt, row.id]
+  )
+
+  const refreshed = await findPaymentById(row.id)
+  const paymentSettings = await getPublicPaymentSettings()
+  return {
+    payment: mapPublicPayment(refreshed, sourceResult.config || config, baseUrl, paymentSettings),
+    conektaPaymentSourceId: paymentSourceId,
+    conektaSubscriptionId: conektaSubscription.conektaSubscriptionId,
+    status: conektaSubscription.status || 'active',
+    savedPaymentSource: mapPaymentSource(savedSourceRow || {
+      ...(await db.get('SELECT * FROM conekta_payment_sources WHERE conekta_payment_source_id = ?', [paymentSourceId]) || {})
+    })
   }
 }
 

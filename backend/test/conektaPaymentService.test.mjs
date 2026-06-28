@@ -14,6 +14,7 @@ import {
   createConektaRecurringSubscription,
   createConektaSavedCardPayment,
   createPublicConektaCardPayment,
+  createPublicConektaSubscription,
   getConektaPaymentConfig,
   pauseConektaRecurringSubscription,
   processDueConektaPaymentPlanCharges,
@@ -467,6 +468,148 @@ test('Conekta payment flow: crea link, guarda payment_source y cobra tarjeta gua
   } catch {
     // Limpieza best-effort para no ocultar la aserción principal.
   }
+})
+
+test('Conekta suscripciones: link publico autoriza tarjeta y crea suscripcion sin order de pago unico', async () => {
+  await initializeMasterKey()
+
+  const idSuffix = Date.now()
+  const contactId = `contact_conekta_subscription_link_${idSuffix}`
+
+  await snapshotConektaConfig(async () => {
+    await db.run(
+      `INSERT INTO contacts (id, email, full_name, phone, created_at, updated_at)
+       VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+      [contactId, `conekta-sub-link-${idSuffix}@example.test`, 'Cliente Suscripcion Conekta', '5555555555']
+    )
+
+    const calls = []
+    setConektaFetchForTest(async (url, options = {}) => {
+      const body = options.body ? JSON.parse(options.body) : null
+      calls.push({ url, method: options.method || 'GET', body })
+
+      if (url.endsWith('/customers?limit=1')) {
+        return jsonResponse({ data: [] })
+      }
+
+      if (url.endsWith('/customers') && options.method === 'POST') {
+        return jsonResponse({ id: 'cus_subscription_link' })
+      }
+
+      if (url.endsWith('/customers/cus_subscription_link/payment_sources') && options.method === 'POST') {
+        assert.equal(body.token_id, 'tok_subscription_link')
+        return jsonResponse({
+          id: 'src_subscription_link',
+          object: 'payment_source',
+          type: 'card',
+          brand: 'visa',
+          last4: '4242',
+          exp_month: 12,
+          exp_year: 2030
+        })
+      }
+
+      if (url.endsWith('/orders')) {
+        assert.fail('El link de suscripción Conekta no debe crear una orden de pago único.')
+      }
+
+      if (url.endsWith('/plans') && options.method === 'POST') {
+        assert.equal(body.currency, 'MXN')
+        assert.equal(body.interval, 'month')
+        return jsonResponse({
+          id: 'plan_subscription_link',
+          name: body.name,
+          amount: body.amount,
+          currency: body.currency,
+          interval: body.interval,
+          frequency: body.frequency,
+          status: 'active'
+        })
+      }
+
+      if (url.endsWith('/customers/cus_subscription_link/subscriptions') && options.method === 'POST') {
+        assert.equal(body.plan_id, 'plan_subscription_link')
+        assert.equal(body.card_id, 'src_subscription_link')
+        assert.equal(body.trial_end, undefined)
+        return jsonResponse({
+          id: 'sub_subscription_link',
+          status: 'active',
+          billing_cycle_start: 1782000000,
+          billing_cycle_end: 1784678400,
+          next_billing_at: 1784678400
+        })
+      }
+
+      return jsonResponse({ message: 'unexpected request' }, 500)
+    })
+
+    await savePaymentSettings({ paymentMode: 'test' })
+    await saveConektaPaymentConfig({
+      enabled: true,
+      mode: 'test',
+      manualModes: {
+        test: {
+          publicKey: 'key_test_public_subscription_link',
+          privateKey: 'key_test_private_subscription_link'
+        }
+      }
+    })
+
+    const today = todayConektaDateOnly()
+    const created = await createSubscription({
+      contactId,
+      contactName: 'Cliente Suscripcion Conekta',
+      contactEmail: `conekta-sub-link-${idSuffix}@example.test`,
+      contactPhone: '5555555555',
+      name: 'Membresía link Conekta',
+      amount: 210,
+      currency: 'MXN',
+      intervalType: 'monthly',
+      intervalCount: 1,
+      startDate: today,
+      paymentProvider: 'conekta',
+      paymentMethod: 'conekta_link',
+      status: 'incomplete',
+      baseUrl: 'https://app.example.test'
+    })
+
+    assert.equal(created.status, 'incomplete')
+    assert.equal(created.conektaSubscriptionId, null)
+    assert.match(created.subscriptionStartUrl, /^https:\/\/app\.example\.test\/pay\/pay_/)
+
+    const result = await createPublicConektaSubscription(created.subscriptionStartPublicPaymentId, {
+      tokenId: 'tok_subscription_link'
+    }, { baseUrl: 'https://app.example.test' })
+
+    assert.equal(result.status, 'active')
+    assert.equal(result.conektaSubscriptionId, 'sub_subscription_link')
+    assert.equal(calls.some((call) => call.url.endsWith('/orders')), false)
+
+    const subscriptionRow = await db.get(
+      `SELECT status, payment_method, conekta_subscription_id, conekta_payment_source_id
+       FROM subscriptions
+       WHERE id = ?`,
+      [created.id]
+    )
+    assert.equal(subscriptionRow.status, 'active')
+    assert.equal(subscriptionRow.payment_method, 'conekta_subscription')
+    assert.equal(subscriptionRow.conekta_subscription_id, 'sub_subscription_link')
+    assert.equal(subscriptionRow.conekta_payment_source_id, 'src_subscription_link')
+
+    const paymentRow = await db.get(
+      `SELECT status, payment_method
+       FROM payments
+       WHERE public_payment_id = ?`,
+      [created.subscriptionStartPublicPaymentId]
+    )
+    assert.equal(paymentRow.status, 'paid')
+    assert.equal(paymentRow.payment_method, 'conekta_subscription')
+
+    await db.run('DELETE FROM subscriptions WHERE id = ?', [created.id])
+    await db.run('DELETE FROM payments WHERE public_payment_id = ?', [created.subscriptionStartPublicPaymentId])
+    await db.run('DELETE FROM conekta_payment_sources WHERE contact_id = ?', [contactId])
+    await db.run('DELETE FROM contacts WHERE id = ?', [contactId])
+  })
 })
 
 test('Conekta planes: el webhook de domiciliación activa el plan con primer pago offline', async () => {

@@ -24,6 +24,7 @@ export interface PaymentLinkReadyData {
   kind: PaymentLinkReadyKind
   title: string
   description: string
+  linkLabel?: string
   provider?: PaymentPlatformLogoId
   paymentUrl: string
   amount: number
@@ -227,7 +228,7 @@ export function PaymentLinkReadyPanel({
       </div>
 
       <div className={styles.linkBox}>
-        <label>Enlace público de pago</label>
+        <label>{link.linkLabel || 'Enlace público de pago'}</label>
         <div className={styles.linkActions}>
           <div className={styles.url}>{link.paymentUrl}</div>
           <Button

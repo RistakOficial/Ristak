@@ -3,6 +3,7 @@ import {
   createConektaPaymentPlan,
   createConektaSavedCardPayment,
   createPublicConektaCardPayment,
+  createPublicConektaSubscription,
   deleteConektaPaymentConfig,
   getConektaPaymentConfig,
   getConektaSavedPaymentSources,
@@ -235,6 +236,18 @@ export async function createPublicConektaCardPaymentView(req, res) {
   } catch (error) {
     logger.error(`Error creando pago público Conekta: ${error.message}`)
     sendConektaError(res, error, 'No se pudo iniciar el pago con Conekta')
+  }
+}
+
+export async function createPublicConektaSubscriptionView(req, res) {
+  try {
+    const result = await createPublicConektaSubscription(req.params.publicPaymentId, req.body || {}, {
+      baseUrl: getRequestBaseUrl(req)
+    })
+    res.json({ success: true, data: result })
+  } catch (error) {
+    logger.error(`Error creando suscripción pública Conekta: ${error.message}`)
+    sendConektaError(res, error, 'No se pudo iniciar la suscripción con Conekta')
   }
 }
 

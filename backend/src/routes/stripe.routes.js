@@ -1,6 +1,7 @@
 import express from 'express'
 import {
   createPublicStripePaymentIntentView,
+  createPublicStripeSubscriptionCheckoutView,
   createStripePaymentPlanView,
   createStripeSavedCardPaymentView,
   createStripePaymentLinkView,
@@ -20,6 +21,7 @@ const router = express.Router()
 router.post('/webhook', stripeWebhookView)
 router.get('/public/payments/:publicPaymentId', getPublicStripePaymentView)
 router.post('/public/payments/:publicPaymentId/intent', createPublicStripePaymentIntentView)
+router.post('/public/payments/:publicPaymentId/subscription-checkout', createPublicStripeSubscriptionCheckoutView)
 
 router.use(requireAuth)
 

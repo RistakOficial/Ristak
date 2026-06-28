@@ -69,6 +69,17 @@ export interface PublicMetaPurchaseEvent {
   customData?: Record<string, unknown>
 }
 
+export interface PublicConektaSubscriptionStart {
+  subscriptionId: string
+  paymentProvider?: string
+  paymentMethod?: string
+  intervalType?: string
+  intervalCount?: number
+  startDate?: string | null
+  nextRunAt?: string | null
+  cancelAt?: string | null
+}
+
 export interface PublicConektaPayment {
   id: string
   publicPaymentId: string
@@ -92,6 +103,7 @@ export interface PublicConektaPayment {
   conektaOrderId?: string | null
   conektaChargeId?: string | null
   publicKey: string
+  subscriptionStart?: PublicConektaSubscriptionStart | null
   tax?: {
     enabled: boolean
     taxName: string
@@ -116,6 +128,10 @@ export interface PublicConektaPayment {
 export interface ConektaPublicCardPaymentPayload {
   tokenId: string
   savePaymentSource?: boolean
+}
+
+export interface ConektaPublicSubscriptionPayload {
+  tokenId: string
 }
 
 export interface ConektaSavedPaymentSource {
@@ -293,6 +309,15 @@ export const conektaPaymentsService = {
 
   async createPublicCardPayment(publicPaymentId: string, payload: ConektaPublicCardPaymentPayload): Promise<{ payment: PublicConektaPayment; conektaOrderId?: string; conektaChargeId?: string; status?: string }> {
     const response = await fetch(apiUrl(`/api/conekta/public/payments/${encodeURIComponent(publicPaymentId)}/card`), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
+    })
+    return parseApiResponse(response)
+  },
+
+  async createPublicSubscription(publicPaymentId: string, payload: ConektaPublicSubscriptionPayload): Promise<{ payment: PublicConektaPayment; conektaSubscriptionId?: string; conektaPaymentSourceId?: string; status?: string }> {
+    const response = await fetch(apiUrl(`/api/conekta/public/payments/${encodeURIComponent(publicPaymentId)}/subscription`), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload)

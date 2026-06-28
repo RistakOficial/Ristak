@@ -1028,6 +1028,7 @@ const ConektaCardTokenizerForm: React.FC<{
   const [messageKind, setMessageKind] = useState<'info' | 'success' | 'error'>('info')
   const showSecureNotice = payment.settings?.checkout?.showSecureBadge !== false
   const isTestMode = payment.paymentMode === 'test'
+  const isSubscriptionStart = Boolean(payment.subscriptionStart?.subscriptionId)
 
   useEffect(() => {
     onPaidRef.current = onPaid
@@ -1079,13 +1080,17 @@ const ConektaCardTokenizerForm: React.FC<{
               setSubmitting(true)
               setMessage('')
               try {
-                const result = await conektaPaymentsService.createPublicCardPayment(payment.publicPaymentId, {
-                  tokenId,
-                  savePaymentSource: Boolean(payment.contact?.id)
-                })
+                const result = isSubscriptionStart
+                  ? await conektaPaymentsService.createPublicSubscription(payment.publicPaymentId, { tokenId })
+                  : await conektaPaymentsService.createPublicCardPayment(payment.publicPaymentId, {
+                      tokenId,
+                      savePaymentSource: Boolean(payment.contact?.id)
+                    })
                 const statusMessage = normalizeConektaStatusMessage(result.payment?.status || result.status)
                 setMessageKind(statusMessage.kind)
-                setMessage(statusMessage.text)
+                setMessage(isSubscriptionStart && statusMessage.kind === 'success'
+                  ? 'Suscripción autorizada. Gracias.'
+                  : statusMessage.text)
                 await onPaidRef.current()
               } catch (submitError: any) {
                 setMessageKind('error')
@@ -1176,14 +1181,20 @@ const ConektaCardTokenizerForm: React.FC<{
         disabled={loadingTokenizer || !tokenizerReady}
         leftIcon={!submitting ? <ShieldCheck size={16} /> : undefined}
       >
-        {submitting ? 'Procesando pago' : `Pagar ${formatCurrency(payment.amount, payment.currency)}`}
+        {submitting
+          ? (isSubscriptionStart ? 'Autorizando' : 'Procesando pago')
+          : isSubscriptionStart
+            ? `Autorizar suscripción ${formatCurrency(payment.amount, payment.currency)}`
+            : `Pagar ${formatCurrency(payment.amount, payment.currency)}`}
       </Button>
 
       {showSecureNotice && (
         <p className={styles.cardAuthorizationNotice}>
           <ShieldCheck size={16} />
           <span>
-            Tus datos de tarjeta viajan en campos seguros de Conekta. Ristak solo recibe el resultado del cobro.
+            {isSubscriptionStart
+              ? 'Tus datos de tarjeta viajan en campos seguros de Conekta. Ristak solo recibe la autorización para crear la suscripción.'
+              : 'Tus datos de tarjeta viajan en campos seguros de Conekta. Ristak solo recibe el resultado del cobro.'}
           </span>
         </p>
       )}
@@ -1261,6 +1272,8 @@ export const PublicPayment: React.FC = () => {
   const isConektaPayment = payment?.provider === 'conekta'
   const stripePayment = payment?.provider === 'stripe' ? payment : null
   const paymentPlan = stripePayment?.paymentPlan || null
+  const subscriptionStart = payment && 'subscriptionStart' in payment ? payment.subscriptionStart : null
+  const isSubscriptionStart = Boolean(subscriptionStart?.subscriptionId)
   const shouldSavePaymentMethod = Boolean(stripePayment?.contact?.id || paymentPlan?.cardSetupRequired)
   const providerLabel = isMercadoPagoPayment ? 'Mercado Pago' : isConektaPayment ? 'Conekta' : 'Stripe'
   const providerLogo: PaymentPlatformLogoId = isMercadoPagoPayment ? 'mercadopago' : isConektaPayment ? 'conekta' : 'stripe'
@@ -1348,6 +1361,19 @@ export const PublicPayment: React.FC = () => {
         return
       }
 
+      if (payment.provider === 'stripe' && isSubscriptionStart) {
+        const checkout = await stripePaymentsService.createPublicSubscriptionCheckout(payment.publicPaymentId)
+        if (checkout.alreadyActive) {
+          await loadPayment(true)
+          return
+        }
+        if (!checkout.checkoutUrl) {
+          throw new Error('Stripe no devolvió el checkout de suscripción.')
+        }
+        window.location.assign(checkout.checkoutUrl)
+        return
+      }
+
       const nextIntent = await stripePaymentsService.createPublicPaymentIntent(payment.publicPaymentId, {
         savePaymentMethod: shouldSavePaymentMethod
       })
@@ -1361,6 +1387,7 @@ export const PublicPayment: React.FC = () => {
 
   useEffect(() => {
     if (!stripePayment || !stripePayment.publishableKey || intent?.clientSecret || startingPayment || isPaid || isClosed) return
+    if (isSubscriptionStart) return
 
     const autoStartKey = `${stripePayment.publicPaymentId}:${shouldSavePaymentMethod ? 'save' : 'charge'}`
     if (autoStartedStripePaymentRef.current === autoStartKey) return
@@ -1374,6 +1401,7 @@ export const PublicPayment: React.FC = () => {
     stripePayment?.publicPaymentId,
     stripePayment?.publishableKey,
     shouldSavePaymentMethod,
+    isSubscriptionStart,
     startingPayment
   ])
 
@@ -1478,10 +1506,16 @@ export const PublicPayment: React.FC = () => {
   ].filter(Boolean).join(' ')
   const paymentModeLabel = payment.paymentMode === 'live' ? 'Producción' : 'Prueba'
   const headline = isPaid
-    ? 'Pago confirmado'
+    ? (isSubscriptionStart ? 'Suscripción autorizada' : 'Pago confirmado')
+    : isSubscriptionStart
+      ? 'Autoriza tu suscripción'
     : checkoutSettings?.headline || payment.title || 'Pago pendiente'
   const description = isPaid
-    ? 'Tu pago fue recibido correctamente. Puedes descargar tu comprobante en PDF cuando lo necesites.'
+    ? (isSubscriptionStart
+        ? 'La suscripción fue autorizada correctamente.'
+        : 'Tu pago fue recibido correctamente. Puedes descargar tu comprobante en PDF cuando lo necesites.')
+    : isSubscriptionStart
+      ? `Revisa los datos de la suscripción y autoriza el cobro recurrente con ${providerLabel}.`
     : checkoutSettings?.description || `Revisa los datos del cobro y paga de forma segura con ${providerLabel}. Ristak no ve ni guarda el número de tu tarjeta.`
   const planInstallments = paymentPlan?.installments || []
   const firstPlanPayment = paymentPlan?.firstPayment || null
@@ -1519,8 +1553,8 @@ export const PublicPayment: React.FC = () => {
               <p className={styles.subtitle}>{description}</p>
             </div>
 
-            <div className={styles.summaryAmountBlock} aria-label={isPaid ? 'Total pagado' : 'Total a pagar'}>
-              <span>{isPaid ? 'Total pagado' : isCardSetupPlan ? 'Monto de este link' : 'Total a pagar'}</span>
+            <div className={styles.summaryAmountBlock} aria-label={isPaid ? 'Total pagado' : isSubscriptionStart ? 'Monto recurrente' : 'Total a pagar'}>
+              <span>{isPaid ? 'Total pagado' : isSubscriptionStart ? 'Monto recurrente' : isCardSetupPlan ? 'Monto de este link' : 'Total a pagar'}</span>
               <strong>
                 {isCardSetupPlan && Number(totalAmount || 0) <= 0
                   ? 'Sin cargo inmediato'
@@ -1563,7 +1597,7 @@ export const PublicPayment: React.FC = () => {
                   </div>
                 )}
                 <div>
-                  <span>Total</span>
+                  <span>{isSubscriptionStart ? 'Monto recurrente' : 'Total'}</span>
                   <strong>{formatCurrency(totalAmount, payment.currency)}</strong>
                 </div>
                 <div>
@@ -1679,19 +1713,23 @@ export const PublicPayment: React.FC = () => {
                 <PaymentPlatformLogo platform={providerLogo} size="lg" decorative />
                 <div>
                   <span className={styles.payKicker}>{isPaid ? 'Estado final' : 'Método de pago'}</span>
-                  <h2>{isPaid ? 'Pago confirmado' : isCardSetupPlan ? 'Autorizar tarjeta' : 'Pagar con tarjeta'}</h2>
+                  <h2>{isPaid ? (isSubscriptionStart ? 'Suscripción autorizada' : 'Pago confirmado') : isSubscriptionStart ? 'Autorizar suscripción' : isCardSetupPlan ? 'Autorizar tarjeta' : 'Pagar con tarjeta'}</h2>
                 </div>
               </div>
               <p>
                 {isPaid
-                  ? 'Este pago ya aparece como pagado en Ristak.'
+                  ? (isSubscriptionStart ? 'Esta suscripción ya quedó autorizada.' : 'Este pago ya aparece como pagado en Ristak.')
                   : isMercadoPagoPayment
                     ? 'Captura la tarjeta en el formulario seguro de Mercado Pago sin salir de esta página.'
                     : isConektaPayment
-                      ? 'Captura la tarjeta en el tokenizador seguro de Conekta sin salir de esta página.'
+                      ? (isSubscriptionStart
+                          ? 'Captura la tarjeta en el tokenizador seguro de Conekta para autorizar la suscripción.'
+                          : 'Captura la tarjeta en el tokenizador seguro de Conekta sin salir de esta página.')
                       : isCardSetupPlan
                         ? 'Stripe abrirá el formulario seguro para autorizar el calendario mostrado.'
-                        : 'Los datos se capturan en el formulario seguro de Stripe.'}
+                        : isSubscriptionStart
+                          ? 'Stripe abrirá su Checkout seguro para autorizar la suscripción.'
+                          : 'Los datos se capturan en el formulario seguro de Stripe.'}
               </p>
             </div>
 
@@ -1706,7 +1744,7 @@ export const PublicPayment: React.FC = () => {
               <div className={styles.receiptBox}>
                 <p className={`${styles.message} ${styles.messageSuccess}`}>
                   <CheckCircle2 size={16} />
-                  <span>Listo. El pago fue recibido y el invoice quedó marcado como pagado.</span>
+                  <span>{isSubscriptionStart ? 'Listo. La suscripción quedó autorizada.' : 'Listo. El pago fue recibido y el invoice quedó marcado como pagado.'}</span>
                 </p>
                 <div className={styles.receiptRows}>
                   {showBusinessInfo && (
@@ -1775,6 +1813,26 @@ export const PublicPayment: React.FC = () => {
                 <AlertCircle size={16} />
                 <span>Este link ya no está disponible para cobrar.</span>
               </p>
+            ) : isStripePayment && isSubscriptionStart ? (
+              <div className={styles.stripeBox}>
+                <p className={styles.message}>
+                  {startingPayment ? <Loader2 size={16} className={styles.spin} /> : <ShieldCheck size={16} />}
+                  <span>{startingPayment ? 'Abriendo Checkout de Stripe.' : 'Continúa a Stripe para autorizar la suscripción.'}</span>
+                </p>
+                <div className={styles.actions}>
+                  <Button
+                    type="button"
+                    variant="primary"
+                    fullWidth
+                    className={styles.payButton}
+                    onClick={startPayment}
+                    disabled={startingPayment}
+                    leftIcon={startingPayment ? <Loader2 size={16} className={styles.spin} /> : <ExternalLink size={16} />}
+                  >
+                    {startingPayment ? 'Abriendo' : 'Continuar a Stripe'}
+                  </Button>
+                </div>
+              </div>
             ) : isMercadoPagoPayment ? (
               <MercadoPagoCardPaymentForm
                 payment={payment}

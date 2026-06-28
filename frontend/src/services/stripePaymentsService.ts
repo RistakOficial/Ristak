@@ -117,6 +117,17 @@ export interface PublicStripePaymentPlan {
   } | null
 }
 
+export interface PublicStripeSubscriptionStart {
+  subscriptionId: string
+  paymentProvider?: string
+  paymentMethod?: string
+  intervalType?: string
+  intervalCount?: number
+  startDate?: string | null
+  nextRunAt?: string | null
+  cancelAt?: string | null
+}
+
 export interface PublicStripePayment {
   id: string
   publicPaymentId: string
@@ -140,6 +151,7 @@ export interface PublicStripePayment {
   stripePaymentIntentId?: string | null
   publishableKey: string
   stripeAccountId?: string
+  subscriptionStart?: PublicStripeSubscriptionStart | null
   paymentPlan?: PublicStripePaymentPlan | null
   tax?: {
     enabled: boolean
@@ -167,6 +179,14 @@ export interface StripePaymentIntentResponse {
   publishableKey: string
   stripeAccountId?: string
   status: string
+}
+
+export interface StripeSubscriptionCheckoutResponse {
+  checkoutUrl: string
+  stripeCheckoutSessionId?: string
+  status: string
+  subscriptionId: string
+  alreadyActive?: boolean
 }
 
 export interface StripeSavedPaymentMethod {
@@ -357,6 +377,16 @@ export const stripePaymentsService = {
       body: JSON.stringify(payload)
     })
     return parseApiResponse<StripePaymentIntentResponse>(response)
+  },
+
+  async createPublicSubscriptionCheckout(publicPaymentId: string): Promise<StripeSubscriptionCheckoutResponse> {
+    const response = await fetch(apiUrl(`/api/stripe/public/payments/${encodeURIComponent(publicPaymentId)}/subscription-checkout`), {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json'
+      }
+    })
+    return parseApiResponse<StripeSubscriptionCheckoutResponse>(response)
   },
 
   async getSavedPaymentMethods(contactId: string): Promise<StripeSavedPaymentMethod[]> {

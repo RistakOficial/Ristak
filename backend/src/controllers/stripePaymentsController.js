@@ -1,6 +1,7 @@
 import {
   createStripePaymentPlan,
   createStripeSavedCardPayment,
+  createPublicStripeSubscriptionCheckout,
   createStripePaymentIntent,
   createStripePaymentLink,
   deleteStripePaymentConfig,
@@ -208,6 +209,18 @@ export async function createPublicStripePaymentIntentView(req, res) {
   } catch (error) {
     logger.error(`Error creando PaymentIntent público Stripe: ${error.message}`)
     sendStripeError(res, error, 'No se pudo iniciar el pago con Stripe')
+  }
+}
+
+export async function createPublicStripeSubscriptionCheckoutView(req, res) {
+  try {
+    const result = await createPublicStripeSubscriptionCheckout(req.params.publicPaymentId, {
+      baseUrl: getRequestBaseUrl(req)
+    })
+    res.json({ success: true, data: result })
+  } catch (error) {
+    logger.error(`Error creando Checkout público de suscripción Stripe: ${error.message}`)
+    sendStripeError(res, error, 'No se pudo iniciar la suscripción con Stripe')
   }
 }
 
