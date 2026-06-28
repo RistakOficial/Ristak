@@ -158,14 +158,16 @@ const buildTransactionDetailPath = (viewMode: TransactionsViewMode, transactionI
 const buildPaymentPlansPath = () => '/transactions/payment-plans'
 const buildPaymentPlanDetailPath = (planId: string) => `${buildPaymentPlansPath()}/${encodeURIComponent(planId)}`
 const isStripePaymentPlan = (plan: PaymentPlan) => plan.source === 'stripe' || plan.raw?.provider === 'stripe'
+const isConektaPaymentPlan = (plan: PaymentPlan) => plan.source === 'conekta' || plan.raw?.provider === 'conekta' || plan.raw?.schedule?.provider === 'conekta'
 const isMercadoPagoPaymentPlan = (plan: PaymentPlan) => plan.source === 'mercadopago' || plan.raw?.provider === 'mercadopago' || plan.raw?.schedule?.provider === 'mercadopago'
-const isLocalCheckoutPaymentPlan = (plan: PaymentPlan) => isStripePaymentPlan(plan) || isMercadoPagoPaymentPlan(plan)
-type LocalCheckoutPlanProvider = 'stripe' | 'mercadopago'
+const isLocalCheckoutPaymentPlan = (plan: PaymentPlan) => isStripePaymentPlan(plan) || isConektaPaymentPlan(plan) || isMercadoPagoPaymentPlan(plan)
+type LocalCheckoutPlanProvider = 'stripe' | 'conekta' | 'mercadopago'
 const getLocalCheckoutPlanProvider = (plan: PaymentPlan | null): LocalCheckoutPlanProvider => (
-  plan && isMercadoPagoPaymentPlan(plan) ? 'mercadopago' : 'stripe'
+  plan && isMercadoPagoPaymentPlan(plan) ? 'mercadopago' : plan && isConektaPaymentPlan(plan) ? 'conekta' : 'stripe'
 )
 const getPaymentPlanProviderLabel = (plan: PaymentPlan) => {
   if (isMercadoPagoPaymentPlan(plan)) return 'Mercado Pago'
+  if (isConektaPaymentPlan(plan)) return 'Conekta'
   if (isStripePaymentPlan(plan)) return 'Stripe'
   return 'HighLevel'
 }
@@ -180,6 +182,14 @@ const STRIPE_PLAN_PAYMENT_METHOD_OPTIONS = [
 ]
 const MERCADOPAGO_PLAN_PAYMENT_METHOD_OPTIONS = [
   { value: 'mercadopago', label: 'Checkout Pro' },
+  { value: 'bank_transfer', label: 'Transferencia' },
+  { value: 'cash', label: 'Efectivo' },
+  { value: 'deposit', label: 'Depósito' },
+  { value: 'check', label: 'Cheque' },
+  { value: 'other', label: 'Otro' }
+]
+const CONEKTA_PLAN_PAYMENT_METHOD_OPTIONS = [
+  { value: 'conekta_auto', label: 'Tarjeta automática' },
   { value: 'bank_transfer', label: 'Transferencia' },
   { value: 'cash', label: 'Efectivo' },
   { value: 'deposit', label: 'Depósito' },
@@ -262,17 +272,32 @@ const getEditableMercadoPagoMethod = (method?: string | null) => {
   return normalized
 }
 
-const getEditablePlanMethod = (method: string | null | undefined, provider: LocalCheckoutPlanProvider) => (
-  provider === 'mercadopago' ? getEditableMercadoPagoMethod(method) : getEditableStripeMethod(method)
-)
+const getEditableConektaMethod = (method?: string | null) => {
+  const normalized = String(method || '').toLowerCase()
+  if (!normalized || normalized.startsWith('conekta') || ['card', 'payment_link', 'direct_card', 'saved_card'].includes(normalized)) {
+    return 'conekta_auto'
+  }
+  if (normalized === 'transfer') return 'bank_transfer'
+  return normalized
+}
 
-const getPlanMethodOptions = (provider: LocalCheckoutPlanProvider) => (
-  provider === 'mercadopago' ? MERCADOPAGO_PLAN_PAYMENT_METHOD_OPTIONS : STRIPE_PLAN_PAYMENT_METHOD_OPTIONS
-)
+const getEditablePlanMethod = (method: string | null | undefined, provider: LocalCheckoutPlanProvider) => {
+  if (provider === 'mercadopago') return getEditableMercadoPagoMethod(method)
+  if (provider === 'conekta') return getEditableConektaMethod(method)
+  return getEditableStripeMethod(method)
+}
 
-const getDefaultPlanMethod = (provider: LocalCheckoutPlanProvider) => (
-  provider === 'mercadopago' ? 'mercadopago' : 'stripe_auto'
-)
+const getPlanMethodOptions = (provider: LocalCheckoutPlanProvider) => {
+  if (provider === 'mercadopago') return MERCADOPAGO_PLAN_PAYMENT_METHOD_OPTIONS
+  if (provider === 'conekta') return CONEKTA_PLAN_PAYMENT_METHOD_OPTIONS
+  return STRIPE_PLAN_PAYMENT_METHOD_OPTIONS
+}
+
+const getDefaultPlanMethod = (provider: LocalCheckoutPlanProvider) => {
+  if (provider === 'mercadopago') return 'mercadopago'
+  if (provider === 'conekta') return 'conekta_auto'
+  return 'stripe_auto'
+}
 
 const getStripePlanMethodLabel = (method?: string | null, provider: LocalCheckoutPlanProvider = 'stripe') => {
   const normalized = getEditablePlanMethod(method, provider)
@@ -1090,7 +1115,7 @@ export const Transactions: React.FC = () => {
     if (isLocalCheckoutPaymentPlan(paymentPlanModal.plan)) {
       const plan = paymentPlanModal.plan
       const provider = getLocalCheckoutPlanProvider(plan)
-      const providerLabel = provider === 'mercadopago' ? 'Mercado Pago' : 'Stripe'
+      const providerLabel = getPaymentPlanProviderLabel(plan)
       const defaultMethod = getDefaultPlanMethod(provider)
       const schedule = getStripePlanSchedulePayload(plan)
       const name = String(formData.get('name') || plan.name || plan.title || 'Plan de pago').trim()
@@ -2370,7 +2395,7 @@ export const Transactions: React.FC = () => {
 
   const renderStripePlanScheduleEditor = (plan: PaymentPlan) => {
     const provider = getLocalCheckoutPlanProvider(plan)
-    const isStripePlan = provider === 'stripe'
+    const isCardSetupProvider = provider === 'stripe' || provider === 'conekta'
     const schedule = getStripePlanSchedulePayload(plan)
     const cardSetupRequired = Boolean(schedule.cardSetupRequired)
     const cardSetupAmount = Number(schedule.cardSetupAmount || 0)
@@ -2390,7 +2415,7 @@ export const Transactions: React.FC = () => {
         </div>
 
         <div className={styles.stripePlanPaymentRows}>
-          {isStripePlan && cardSetupRequired && (
+          {isCardSetupProvider && cardSetupRequired && (
             <div className={styles.stripePlanPaymentRow}>
               <div className={styles.stripePlanPaymentMeta}>
                 <strong>Domiciliación</strong>
@@ -2547,6 +2572,7 @@ export const Transactions: React.FC = () => {
         const status = getNormalizedPlanStatus(item)
         const actionInProgress = paymentPlanActionId?.startsWith(`${item.id}:`) || false
         const stripePlan = isStripePaymentPlan(item)
+        const conektaPlan = isConektaPaymentPlan(item)
         const mercadoPagoPlan = isMercadoPagoPaymentPlan(item)
         const activationLabel = status === 'paused' ? 'Continuar plan' : 'Activar plan'
 
@@ -2569,7 +2595,7 @@ export const Transactions: React.FC = () => {
               <DropdownMenuContent align="end">
                 <DropdownMenuItem disabled={actionInProgress} onClick={() => handleOpenPaymentPlan(item)}>
                   <Edit size={16} />
-                  <span style={{ marginLeft: '8px' }}>{stripePlan ? 'Ver plan Stripe' : mercadoPagoPlan ? 'Ver plan Mercado Pago' : 'Editar factura'}</span>
+                  <span style={{ marginLeft: '8px' }}>{stripePlan ? 'Ver plan Stripe' : conektaPlan ? 'Ver plan Conekta' : mercadoPagoPlan ? 'Ver plan Mercado Pago' : 'Editar factura'}</span>
                 </DropdownMenuItem>
 
                 {canActivatePaymentPlan(item) && (

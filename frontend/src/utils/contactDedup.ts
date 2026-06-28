@@ -454,12 +454,37 @@ function isContactCandidate(value: unknown): value is ContactLike {
     return false
   }
 
-  // IMPORTANTE: Excluir transactions/payments de la deduplicación
-  // Los payments tienen campos: id, date, contactId, contactName, amount, method, status
-  // Si tiene 'amount' y 'status', probablemente es un payment, NO un contacto
   const obj = value as Record<string, any>
+
+  // IMPORTANTE: excluir entidades operativas que también traen teléfono/email del contacto.
+  // El dedupe global solo debe colapsar contactos, no pagos ni planes de pago.
   if ('amount' in obj && 'status' in obj && 'date' in obj) {
-    return false // Es un payment/transaction, no deduplicar
+    return false
+  }
+
+  const knownPlanSource = ['stripe', 'conekta', 'ghl', 'highlevel', 'mercadopago', 'mercado_pago']
+    .includes(String(obj.source || obj.provider || '').toLowerCase())
+  const hasPaymentPlanScheduleShape = [
+    'recurrenceLabel',
+    'recurrence_label',
+    'nextRunAt',
+    'next_run_at',
+    'startDate',
+    'start_date',
+    'endDate',
+    'end_date',
+    'itemCount',
+    'item_count',
+    'sortDate',
+    'sort_date',
+    'schedule',
+    'schedule_json',
+    'raw'
+  ].some(key => key in obj)
+  const idLooksLikePaymentPlan = typeof obj.id === 'string' && /(stripe|conekta|mercadopago|flow|schedule|plan)/i.test(obj.id)
+
+  if ('total' in obj && 'status' in obj && (hasPaymentPlanScheduleShape || knownPlanSource || idLooksLikePaymentPlan)) {
+    return false
   }
 
   return Boolean(extractPhone(value as ContactLike))
