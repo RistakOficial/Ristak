@@ -2835,35 +2835,28 @@ export const PaymentsConfiguration: React.FC = () => {
         </div>
       )}
 
-      <Card className={styles.paymentModeCard}>
-        <div className={styles.paymentModeCopy}>
-          <Badge variant={paymentMode === 'live' ? 'success' : 'warning'}>
-            <Clock size={14} />
-            {paymentModeCopy.badge}
-          </Badge>
-          <div>
-            <h2>Modo global de pasarelas</h2>
-            <p>{paymentModeCopy.description} Este switch aplica a Stripe, Conekta, GoHighLevel y Mercado Pago para nuevos cobros.</p>
-          </div>
-        </div>
-        <div className={styles.paymentModeControl}>
-          <span className={paymentMode === 'test' ? styles.modeActive : ''}>Prueba</span>
-          <Switch
-            checked={paymentMode === 'live'}
-            onChange={(next) => void handlePaymentModeChange(next ? 'live' : 'test')}
-            disabled={savingPaymentMode || savingSettings}
-            aria-label="Cambiar modo global de pasarelas"
-          />
-          <span className={paymentMode === 'live' ? styles.modeActive : ''}>En vivo</span>
-        </div>
-      </Card>
-
       {!activeGatewayRoute && (
         <Card className={styles.sectionCard}>
           <div className={styles.sectionHeader}>
             <div>
-              <h2>Pasarela de pagos</h2>
-              <p>Elige con qué proveedor se cobran links, tarjetas, parcialidades y suscripciones.</p>
+              <div className={styles.gatewayTitleRow}>
+                <h2>Pasarela de pagos</h2>
+                <Badge variant={paymentMode === 'live' ? 'success' : 'warning'}>
+                  <Clock size={14} />
+                  {paymentModeCopy.badge}
+                </Badge>
+              </div>
+              <p>Elige con qué proveedor se cobran links, tarjetas, parcialidades y suscripciones. Nuevos cobros en {paymentModeCopy.title.toLowerCase()}.</p>
+            </div>
+            <div className={styles.paymentModeControl}>
+              <span className={paymentMode === 'test' ? styles.modeActive : ''}>Prueba</span>
+              <Switch
+                checked={paymentMode === 'live'}
+                onChange={(next) => void handlePaymentModeChange(next ? 'live' : 'test')}
+                disabled={savingPaymentMode || savingSettings}
+                aria-label="Cambiar modo global de pasarelas"
+              />
+              <span className={paymentMode === 'live' ? styles.modeActive : ''}>En vivo</span>
             </div>
           </div>
 

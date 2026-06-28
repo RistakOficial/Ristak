@@ -1517,32 +1517,16 @@
   gap: 12px;
 }
 
-.paymentModeCard :global([data-ristak-card-content]) {
+.gatewayTitleRow {
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  gap: 18px;
-}
-
-.paymentModeCopy {
-  display: flex;
-  align-items: flex-start;
-  gap: 12px;
+  flex-wrap: wrap;
+  gap: 10px;
   min-width: 0;
 }
 
-.paymentModeCopy h2 {
-  margin: 0;
-  color: var(--text);
-  font-size: 16px;
-  font-weight: 700;
-}
-
-.paymentModeCopy p {
-  margin: 5px 0 0;
-  color: var(--text-dim);
-  font-size: 12px;
-  line-height: 1.5;
+.gatewayTitleRow h2 {
+  min-width: 0;
 }
 
 .paymentModeControl {
@@ -1864,8 +1848,7 @@
   .gigstackHeader,
   .gigstackPortalHeader,
   .gatewaySectionTitle,
-  .gatewayItem :global([data-ristak-card-content]),
-  .paymentModeCard :global([data-ristak-card-content]) {
+  .gatewayItem :global([data-ristak-card-content]) {
     flex-direction: column;
   }
 
@@ -1895,6 +1878,10 @@
   .gatewayDetailBar,
   .paymentModeControl {
     width: 100%;
+  }
+
+  .paymentModeControl {
+    justify-content: flex-start;
   }
 
   .copyField,
