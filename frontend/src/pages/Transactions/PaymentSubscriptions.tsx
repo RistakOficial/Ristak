@@ -137,7 +137,7 @@ const PAYMENT_METHOD_OPTIONS: Array<{
     label: 'Stripe - link de suscripción',
     provider: 'stripe',
     modeLabel: 'Link de suscripción',
-    description: 'Genera un link público de Ristak para iniciar una suscripción en Stripe.',
+    description: 'Genera un Checkout de Stripe para que el cliente autorice la suscripción.',
     requirement: 'Requiere un contacto con email.',
     result: 'Al autorizarse, Stripe activa la suscripción.'
   },
@@ -155,7 +155,7 @@ const PAYMENT_METHOD_OPTIONS: Array<{
     label: 'Conekta - link de suscripción',
     provider: 'conekta',
     modeLabel: 'Link de suscripción',
-    description: 'Genera un link público de Ristak para iniciar una suscripción en Conekta.',
+    description: 'Genera un link hospedado de Conekta para que el cliente autorice la suscripción.',
     requirement: 'Requiere un contacto con email.',
     result: 'Al autorizarse, Conekta activa la suscripción.'
   },
@@ -386,7 +386,10 @@ function getSubscriptionStartLink(subscription: PaymentSubscription) {
   const mercadoPagoUrl = getMercadoPagoSubscriptionUrl(subscription)
   if (mercadoPagoUrl) return mercadoPagoUrl
 
-  return subscription.subscriptionStartUrl || buildPublicPaymentUrl(subscription.subscriptionStartPublicPaymentId)
+  return subscription.subscriptionStartUrl ||
+    subscription.stripeCheckoutUrl ||
+    subscription.conektaCheckoutUrl ||
+    buildPublicPaymentUrl(subscription.subscriptionStartPublicPaymentId)
 }
 
 function getSubscriptionContactDisplayName(contact?: PaymentLinkReadyData['contact'] | null) {
@@ -426,11 +429,11 @@ function buildSubscriptionPaymentLinkPanel(
 
   return {
     kind: 'subscription_start',
-    title: isMercadoPagoSubscription ? 'Link de suscripción listo' : 'Link de suscripción listo',
+    title: 'Link de suscripción listo',
     description: isMercadoPagoSubscription
       ? 'Comparte este enlace de Mercado Pago para que el cliente autorice la suscripción.'
-      : 'Comparte este enlace público de Ristak para que el cliente autorice la suscripción.',
-    linkLabel: isMercadoPagoSubscription ? 'Enlace de suscripción Mercado Pago' : 'Enlace público de suscripción',
+      : 'Comparte este enlace de la pasarela para que el cliente autorice la suscripción.',
+    linkLabel: isMercadoPagoSubscription ? 'Enlace de suscripción Mercado Pago' : 'Enlace de suscripción',
     provider,
     paymentUrl,
     amount: Number(subscription.amount || fallback.payload?.amount || 0),
@@ -1759,14 +1762,14 @@ export const PaymentSubscriptions: React.FC = () => {
                 <p className={styles.formHint}>
                   {isMercadoPagoSelected
                     ? form.paymentMethod === 'mercadopago_checkout'
-                      ? 'Mercado Pago usará el link público de Ristak para cobrar el primer pago de la suscripción.'
+                      ? 'Mercado Pago creará la suscripción en su sistema y entregará su link de autorización.'
                       : 'Mercado Pago manejará esta suscripción desde su propio sistema y entregará su link de autorización.'
                     : isConektaSelected
                       ? form.paymentMethod === 'conekta_link'
-                        ? 'Conekta usará el link público de Ristak para autorizar la tarjeta y crear la suscripción.'
+                        ? 'Conekta generará su link hospedado para autorizar la tarjeta y crear la suscripción.'
                         : 'Para cobros automáticos con Conekta, el contacto debe tener una tarjeta guardada. Ristak usará la tarjeta predeterminada del contacto.'
                       : form.paymentMethod === 'stripe_link'
-                        ? 'Stripe usará el link público de Ristak para abrir Checkout y crear la suscripción.'
+                        ? 'Stripe abrirá Checkout para que el cliente autorice y active la suscripción.'
                         : 'Para cobros automáticos con Stripe, el contacto debe tener una tarjeta guardada. Ristak usará la tarjeta predeterminada del contacto.'}
                 </p>
               </div>

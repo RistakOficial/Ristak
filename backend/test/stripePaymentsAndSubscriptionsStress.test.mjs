@@ -3,7 +3,6 @@ import assert from 'node:assert/strict'
 
 import { db } from '../src/config/database.js'
 import {
-  createPublicStripeSubscriptionCheckout,
   createStripePaymentPlan,
   handleStripeWebhookEvent,
   processDueStripePaymentPlanCharges,
@@ -898,7 +897,7 @@ test('suscripciones Stripe test: crea, sube/baja precio, pausa, reanuda, cancela
   }
 })
 
-test('suscripciones Stripe: link publico abre Checkout de suscripcion bajo demanda', async () => {
+test('suscripciones Stripe: link crea Checkout de suscripcion en Stripe', async () => {
   const { contactId, contact, stripeCustomerId } = await seedContactWithSavedCard('subscription_checkout_link')
   const { stripe, calls } = createStripeMock()
   setStripeFactoryForTest(() => stripe)
@@ -927,11 +926,14 @@ test('suscripciones Stripe: link publico abre Checkout de suscripcion bajo deman
     assert.equal(created.status, 'incomplete')
     assert.equal(created.paymentMethod, 'stripe_link')
     assert.equal(created.paymentProvider, 'stripe')
-    assert.equal(created.stripeCustomerId, null)
-    assert.equal(created.stripeCheckoutSessionId, null)
-    assert.equal(created.stripeCheckoutUrl, null)
-    assert.match(created.subscriptionStartUrl, /^https:\/\/app\.example\.test\/pay\/pay_/)
-    assert.equal(calls.checkoutSessionsCreate.length, 0)
+    assert.equal(created.stripeCustomerId, stripeCustomerId)
+    assert.equal(created.stripeCheckoutSessionId, 'cs_stress_1')
+    assert.equal(created.stripeCheckoutUrl, 'https://checkout.stripe.test/cs_stress_1')
+    assert.equal(created.subscriptionStartUrl, 'https://checkout.stripe.test/cs_stress_1')
+    assert.equal(calls.checkoutSessionsCreate.length, 1)
+    assert.equal(calls.checkoutSessionsCreate[0].params.mode, 'subscription')
+    assert.equal(calls.checkoutSessionsCreate[0].params.metadata.ristak_subscription_id, created.id)
+    assert.equal(calls.checkoutSessionsCreate[0].params.subscription_data.metadata.ristak_subscription_id, created.id)
     assert.equal(calls.subscriptionsCreate.length, 0)
 
     const saved = await db.get(
@@ -946,34 +948,10 @@ test('suscripciones Stripe: link publico abre Checkout de suscripcion bajo deman
     assert.equal(saved.payment_provider, 'stripe')
     assert.equal(saved.stripe_subscription_id, null)
     assert.equal(metadata.subscriptionStartPayment.provider, 'stripe')
-    assert.match(metadata.subscriptionStartPayment.paymentUrl, /^https:\/\/app\.example\.test\/pay\/pay_/)
-
-    const payment = await db.get(
-      `SELECT amount, status, payment_provider, public_payment_id, payment_url, metadata_json
-       FROM payments
-       WHERE id = ?`,
-      [metadata.subscriptionStartPayment.paymentId]
-    )
-    const paymentMetadata = JSON.parse(payment.metadata_json)
-    assert.equal(payment.amount, 750)
-    assert.equal(payment.status, 'sent')
-    assert.equal(payment.payment_provider, 'stripe')
-    assert.match(payment.public_payment_id, /^pay_/)
-    assert.equal(payment.payment_url, metadata.subscriptionStartPayment.paymentUrl)
-    assert.equal(paymentMetadata.subscriptionStart.subscriptionId, created.id)
-    assert.equal(paymentMetadata.subscriptionStart.paymentMethod, 'stripe_link')
-
-    const checkout = await createPublicStripeSubscriptionCheckout(created.subscriptionStartPublicPaymentId, {
-      baseUrl: 'https://app.example.test'
-    })
-
-    assert.equal(checkout.checkoutUrl, 'https://checkout.stripe.test/cs_stress_1')
-    assert.equal(checkout.stripeCheckoutSessionId, 'cs_stress_1')
-    assert.equal(calls.checkoutSessionsCreate.length, 1)
-    assert.equal(calls.checkoutSessionsCreate[0].params.mode, 'subscription')
-    assert.equal(calls.checkoutSessionsCreate[0].params.metadata.ristak_subscription_id, created.id)
-    assert.equal(calls.checkoutSessionsCreate[0].params.subscription_data.metadata.ristak_subscription_id, created.id)
-    assert.equal(calls.subscriptionsCreate.length, 0)
+    assert.equal(metadata.subscriptionStartPayment.paymentUrl, 'https://checkout.stripe.test/cs_stress_1')
+    assert.equal(metadata.subscriptionStartPayment.status, 'pending_checkout')
+    assert.equal(metadata.subscriptionStartPayment.publicPaymentId, '')
+    assert.equal(metadata.stripeCheckout.sessionId, 'cs_stress_1')
 
     const withCheckout = await getSubscription(created.id)
     assert.equal(withCheckout.stripeCheckoutSessionId, 'cs_stress_1')
@@ -984,7 +962,7 @@ test('suscripciones Stripe: link publico abre Checkout de suscripcion bajo deman
   }
 })
 
-test('suscripciones Stripe: Checkout de link publico activa suscripcion en webhook', async () => {
+test('suscripciones Stripe: Checkout hospedado activa suscripcion en webhook', async () => {
   const { contactId, contact } = await seedContactWithSavedCard('subscription_public_link_activation')
   const webhookSecret = 'whsec_subscription_public_link'
   let webhookEvent = null
@@ -1016,19 +994,16 @@ test('suscripciones Stripe: Checkout de link publico activa suscripcion en webho
       baseUrl: 'https://app.example.test'
     })
 
-    assert.match(created.subscriptionStartUrl, /^https:\/\/app\.example\.test\/pay\/pay_/)
-    assert.ok(created.subscriptionStartPublicPaymentId)
-
-    const checkout = await createPublicStripeSubscriptionCheckout(created.subscriptionStartPublicPaymentId, {
-      baseUrl: 'https://app.example.test'
-    })
+    assert.equal(created.subscriptionStartUrl, 'https://checkout.stripe.test/cs_stress_1')
+    assert.equal(created.subscriptionStartPublicPaymentId, null)
+    assert.equal(calls.checkoutSessionsCreate.length, 1)
 
     webhookEvent = {
       type: 'checkout.session.completed',
       data: {
         object: {
           object: 'checkout.session',
-          id: checkout.stripeCheckoutSessionId,
+          id: created.stripeCheckoutSessionId,
           payment_status: 'paid',
           customer: 'cus_subscription_checkout',
           subscription: 'sub_subscription_checkout',

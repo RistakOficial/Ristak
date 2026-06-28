@@ -137,6 +137,29 @@ test('Mercado Pago cobra tarjeta en la pagina publica sin confiar en el monto de
       assert.equal(options.method, 'POST')
       assert.equal(options.headers?.Authorization, 'Bearer TEST-access-token')
 
+      if (url === 'https://api.mercadopago.com/preapproval') {
+        const body = JSON.parse(String(options.body || '{}'))
+        assert.equal(body.reason, 'Membresía Mercado Pago por link')
+        assert.equal(body.payer_email, 'cliente-card@example.test')
+        assert.equal(body.status, 'pending')
+        assert.equal(body.auto_recurring.transaction_amount, 189)
+        assert.ok(String(body.back_url).includes('/transactions/subscriptions'))
+
+        return {
+          ok: true,
+          status: 201,
+          json: async () => ({
+            id: 'mp_preapproval_card_link',
+            external_reference: body.external_reference,
+            init_point: 'https://www.mercadopago.com.mx/subscriptions/checkout?preapproval_id=mp_preapproval_card_link',
+            sandbox_init_point: 'https://sandbox.mercadopago.com.mx/subscriptions/checkout?preapproval_id=mp_preapproval_card_link',
+            auto_recurring: body.auto_recurring,
+            status: 'pending',
+            next_payment_date: body.auto_recurring.start_date
+          })
+        }
+      }
+
       if (url === 'https://api.mercadopago.com/checkout/preferences') {
         const body = JSON.parse(String(options.body || '{}'))
         preferenceCalls.push(body)
@@ -226,17 +249,17 @@ test('Mercado Pago cobra tarjeta en la pagina publica sin confiar en el monto de
       })
       ids.subscriptionId = linkedSubscription.id
       assert.equal(linkedSubscription.paymentProvider, 'mercadopago')
-      assert.equal(linkedSubscription.paymentMethod, 'mercadopago_checkout')
+      assert.equal(linkedSubscription.paymentMethod, 'mercadopago_subscription')
       assert.equal(linkedSubscription.status, 'incomplete')
-      assert.equal(linkedSubscription.mercadoPagoPreapprovalId, null)
-      assert.match(linkedSubscription.subscriptionStartUrl, /^https:\/\/app\.example\.test\/pay\/pay_/)
+      assert.equal(linkedSubscription.mercadoPagoPreapprovalId, 'mp_preapproval_card_link')
+      assert.equal(linkedSubscription.subscriptionStartUrl, 'https://sandbox.mercadopago.com.mx/subscriptions/checkout?preapproval_id=mp_preapproval_card_link')
 
       const checkoutFallback = await ensurePublicMercadoPagoPreference(created.publicPaymentId, {
         baseUrl: 'https://app.example.test'
       })
       assert.equal(checkoutFallback.paymentUrl, 'https://sandbox.mercadopago.com.mx/checkout/v1/redirect?pref_id=card_1')
       assert.equal(checkoutFallback.checkoutUrl, 'https://sandbox.mercadopago.com.mx/checkout/v1/redirect?pref_id=card_1')
-      assert.equal(preferenceCalls.length, 2)
+      assert.equal(preferenceCalls.length, 1)
 
       const charged = await createPublicMercadoPagoCardPayment(created.publicPaymentId, {
         token: 'tok_card_test',
@@ -254,7 +277,7 @@ test('Mercado Pago cobra tarjeta en la pagina publica sin confiar en el monto de
         }
       }, { baseUrl: 'https://app.example.test' })
 
-      assert.equal(preferenceCalls.length, 2)
+      assert.equal(preferenceCalls.length, 1)
       assert.equal(cardPaymentCalls.length, 1)
       assert.equal(charged.payment.status, 'paid')
       assert.equal(charged.payment.mercadoPagoPaymentId, 'mp_card_payment_1')
@@ -741,7 +764,7 @@ test('Mercado Pago crea suscripcion recurrente real con preapproval pendiente', 
       assert.equal(subscription.status, 'incomplete')
       assert.equal(subscription.mercadoPagoPreapprovalId, 'mp_preapproval_test_1')
       assert.equal(subscription.mercadoPagoSandboxInitPoint, 'https://sandbox.mercadopago.com.mx/subscriptions/checkout?preapproval_id=mp_preapproval_test_1')
-      assert.equal(subscription.subscriptionStartUrl, null)
+      assert.equal(subscription.subscriptionStartUrl, 'https://sandbox.mercadopago.com.mx/subscriptions/checkout?preapproval_id=mp_preapproval_test_1')
 
       const saved = await db.get(
         `SELECT status, payment_provider, payment_method, mercadopago_preapproval_id, mercadopago_sandbox_init_point

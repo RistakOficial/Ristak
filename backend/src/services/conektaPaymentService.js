@@ -213,6 +213,20 @@ function buildPaymentUrl(baseUrl, publicPaymentId) {
   return cleanBase ? `${cleanBase}/pay/${encodeURIComponent(publicPaymentId)}` : ''
 }
 
+function getConfiguredBaseUrl() {
+  return cleanString(
+    process.env.PUBLIC_APP_URL ||
+    process.env.RENDER_EXTERNAL_URL ||
+    process.env.PUBLIC_URL ||
+    process.env.APP_URL
+  )
+}
+
+function buildConektaSubscriptionReturnUrl(baseUrl, result) {
+  const cleanBase = cleanString(baseUrl || getConfiguredBaseUrl()).replace(/\/+$/, '') || 'https://www.ristak.com'
+  return `${cleanBase}/transactions/subscriptions?conekta_subscription=${encodeURIComponent(result)}`
+}
+
 function parseJson(value, fallback = {}) {
   if (!value) return fallback
   if (typeof value === 'object') return value
@@ -3787,6 +3801,114 @@ async function createConektaPlanForSubscription(input = {}, config) {
   })
 
   return payload
+}
+
+export async function createConektaSubscriptionCheckoutLink(input = {}, { baseUrl = '' } = {}) {
+  const config = await getConektaPaymentConfig({ includeSecrets: true })
+  if (!config.configured) {
+    const error = new Error('Conekta no está configurado todavía. Guarda las llaves primero.')
+    error.status = 400
+    throw error
+  }
+
+  const contactId = cleanString(input.contactId)
+  const contactEmail = cleanString(input.contactEmail || input.email)
+  const contactPhone = cleanString(input.contactPhone || input.phone)
+  const contactName = sanitizeConektaName(input.contactName, 'Cliente Ristak')
+  const name = sanitizeConektaText(input.name, 'Suscripcion', 120)
+  const amount = Number(input.amount)
+  const currency = normalizeCurrency(input.currency || await getConfiguredCurrency())
+  const ristakSubscriptionId = cleanString(input.ristakSubscriptionId || input.subscriptionId)
+
+  if (!contactId) {
+    const error = new Error('Selecciona un contacto para crear el link de suscripción de Conekta.')
+    error.status = 400
+    throw error
+  }
+
+  if (!contactEmail) {
+    const error = new Error('Conekta necesita el email del contacto para crear el link de suscripción.')
+    error.status = 422
+    throw error
+  }
+
+  if (!Number.isFinite(amount) || amount <= 0) {
+    const error = new Error('El monto de la suscripción debe ser mayor a 0.')
+    error.status = 400
+    throw error
+  }
+
+  const plan = await createConektaPlanForSubscription(input, config)
+  const conektaPlanId = cleanString(plan?.id)
+  if (!conektaPlanId) {
+    const error = new Error('Conekta no devolvió el plan de la suscripción.')
+    error.status = 502
+    throw error
+  }
+
+  const metadata = {
+    ristakSubscriptionId,
+    ristak_subscription_id: ristakSubscriptionId,
+    contactId,
+    source: 'ristak_conekta_subscription_checkout'
+  }
+
+  const orderTemplate = {
+    line_items: [
+      {
+        name,
+        description: sanitizeConektaText(input.description || name, name, 250),
+        unit_price: toConektaAmount(amount),
+        quantity: 1
+      }
+    ],
+    currency,
+    customer_info: {
+      name: contactName,
+      email: contactEmail,
+      ...(contactPhone ? { phone: contactPhone } : {})
+    },
+    metadata
+  }
+
+  const body = {
+    name,
+    type: 'PaymentLink',
+    recurrent: false,
+    expires_at: Math.floor(Date.now() / 1000) + 30 * 24 * 60 * 60,
+    allowed_payment_methods: ['card'],
+    plan_ids: [conektaPlanId],
+    needs_shipping_contact: false,
+    success_url: buildConektaSubscriptionReturnUrl(baseUrl, 'success'),
+    failure_url: buildConektaSubscriptionReturnUrl(baseUrl, 'cancelled'),
+    order_template: orderTemplate,
+    metadata
+  }
+
+  const { payload: checkout } = await conektaApiRequest('/checkouts', {
+    method: 'POST',
+    body,
+    config
+  })
+  const checkoutUrl = cleanString(checkout?.url)
+  if (!checkoutUrl) {
+    const error = new Error('Conekta no devolvió el enlace hospedado de la suscripción.')
+    error.status = 502
+    error.payload = checkout
+    throw error
+  }
+
+  return {
+    conektaPlanId,
+    conektaCheckoutId: cleanString(checkout?.id),
+    conektaCheckoutUrl: checkoutUrl,
+    paymentMode: config.mode,
+    status: 'incomplete',
+    raw: {
+      plan,
+      checkout
+    }
+  }
 }
 
 export async function createConektaRecurringSubscription(input = {}) {

@@ -46,6 +46,8 @@ export interface PaymentSubscription {
   conektaSubscriptionId?: string | null
   conektaPaymentSourceId?: string | null
   conektaNextBillingAt?: string | null
+  conektaCheckoutId?: string | null
+  conektaCheckoutUrl?: string | null
   subscriptionStartPaymentId?: string | null
   subscriptionStartPublicPaymentId?: string | null
   subscriptionStartPaymentProvider?: string | null

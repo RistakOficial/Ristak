@@ -3,8 +3,8 @@ import { db } from '../config/database.js'
 import { logger } from '../utils/logger.js'
 import {
   cancelStripeRecurringSubscription,
-  createStripePaymentLink,
   createStripeRecurringSubscription,
+  createStripeSubscriptionCheckoutLink,
   pauseStripeRecurringSubscription,
   resumeStripeRecurringSubscription,
   syncStripeSubscriptionInvoicePayment,
@@ -12,7 +12,6 @@ import {
 } from './stripePaymentService.js'
 import {
   cancelMercadoPagoRecurringSubscription,
-  createMercadoPagoPaymentLink,
   createMercadoPagoRecurringSubscription,
   pauseMercadoPagoRecurringSubscription,
   resumeMercadoPagoRecurringSubscription,
@@ -20,8 +19,8 @@ import {
 } from './mercadoPagoPaymentService.js'
 import {
   cancelConektaRecurringSubscription,
-  createConektaPaymentLink,
   createConektaRecurringSubscription,
+  createConektaSubscriptionCheckoutLink,
   pauseConektaRecurringSubscription,
   resumeConektaRecurringSubscription,
   updateConektaRecurringSubscription
@@ -38,7 +37,8 @@ const DEFAULT_PAYMENT_TIMEZONE = 'America/Mexico_City'
 const ACTIVE_STATUSES = new Set(['active', 'trialing'])
 const PAUSED_STATUSES = new Set(['paused'])
 const PAST_DUE_STATUSES = new Set(['past_due', 'incomplete'])
-const PUBLIC_PAYMENT_LINK_METHODS = new Set(['stripe_link', 'stripe_payment_link', 'conekta_link', 'conekta_payment_link', 'mercadopago_checkout', 'mercadopago_payment_link'])
+const PUBLIC_PAYMENT_LINK_METHODS = new Set(['stripe_link', 'stripe_payment_link', 'conekta_link', 'conekta_payment_link'])
+const MERCADOPAGO_LEGACY_LINK_METHODS = new Set(['mercadopago_checkout', 'mercadopago_payment_link'])
 
 function makeId() {
   return `${SUBSCRIPTION_PREFIX}_${crypto.randomUUID()}`
@@ -83,6 +83,15 @@ function normalizeStatus(value) {
     return normalized
   }
   return DEFAULT_STATUS
+}
+
+function normalizeSubscriptionPaymentMethod(value, provider) {
+  const normalized = cleanString(value).toLowerCase()
+  const normalizedProvider = cleanString(provider).toLowerCase()
+  if (normalizedProvider === 'mercadopago' && MERCADOPAGO_LEGACY_LINK_METHODS.has(normalized)) {
+    return 'mercadopago_subscription'
+  }
+  return normalized
 }
 
 function nullableString(value) {
@@ -265,9 +274,16 @@ function rowToApi(row = {}) {
   const stripeCheckout = metadata?.stripeCheckout && typeof metadata.stripeCheckout === 'object'
     ? metadata.stripeCheckout
     : {}
+  const conektaCheckout = metadata?.conektaCheckout && typeof metadata.conektaCheckout === 'object'
+    ? metadata.conektaCheckout
+    : {}
   const startPayment = getSubscriptionStartPayment(metadata || {})
   const stripeCheckoutUrl = cleanString(stripeCheckout.url || stripeCheckout.checkoutUrl)
-  const subscriptionStartUrl = startPayment.paymentUrl || null
+  const conektaCheckoutUrl = cleanString(conektaCheckout.url || conektaCheckout.checkoutUrl)
+  const mercadoPagoSubscriptionUrl = (row.payment_mode === 'test'
+    ? cleanString(row.mercadopago_sandbox_init_point || row.mercadopago_init_point)
+    : cleanString(row.mercadopago_init_point || row.mercadopago_sandbox_init_point))
+  const subscriptionStartUrl = startPayment.paymentUrl || stripeCheckoutUrl || conektaCheckoutUrl || mercadoPagoSubscriptionUrl || null
 
   return {
     id: row.id,
@@ -312,6 +328,8 @@ function rowToApi(row = {}) {
     conektaSubscriptionId: row.conekta_subscription_id || null,
     conektaPaymentSourceId: row.conekta_payment_source_id || null,
     conektaNextBillingAt: row.conekta_next_billing_at || null,
+    conektaCheckoutId: cleanString(conektaCheckout.checkoutId || conektaCheckout.id) || null,
+    conektaCheckoutUrl: conektaCheckoutUrl || null,
     subscriptionStartPaymentId: startPayment.paymentId || null,
     subscriptionStartPublicPaymentId: startPayment.publicPaymentId || null,
     subscriptionStartPaymentProvider: startPayment.provider || null,
@@ -357,6 +375,11 @@ async function buildSubscriptionRow(payload = {}, existing = {}) {
   const cancelAt = hasCancelAtInput
     ? nullableDate(payload.cancelAt ?? payload.cancel_at)
     : nullableDate(existing.cancel_at)
+  const paymentProvider = cleanString(payload.paymentProvider ?? payload.payment_provider ?? existing.payment_provider).toLowerCase() || 'stripe'
+  const paymentMethod = normalizeSubscriptionPaymentMethod(
+    payload.paymentMethod ?? payload.payment_method ?? existing.payment_method,
+    paymentProvider
+  ) || 'stripe_saved_card'
 
   return {
     id: nullableString(existing.id) || nullableString(payload.id) || makeId(),
@@ -382,8 +405,8 @@ async function buildSubscriptionRow(payload = {}, existing = {}) {
     current_period_end: nullableDate(payload.currentPeriodEnd ?? payload.current_period_end ?? existing.current_period_end),
     cancel_at: cancelAt,
     cancelled_at: nullableDate(payload.cancelledAt ?? payload.cancelled_at ?? existing.cancelled_at),
-    payment_method: cleanString(payload.paymentMethod ?? payload.payment_method ?? existing.payment_method) || 'stripe_saved_card',
-    payment_provider: cleanString(payload.paymentProvider ?? payload.payment_provider ?? existing.payment_provider) || 'stripe',
+    payment_method: paymentMethod,
+    payment_provider: paymentProvider,
     payment_mode: cleanString(payload.paymentMode ?? payload.payment_mode ?? existing.payment_mode) || 'test',
     source: cleanString(payload.source ?? existing.source) || 'ristak',
     stripe_customer_id: nullableString(payload.stripeCustomerId ?? payload.stripe_customer_id ?? existing.stripe_customer_id),
@@ -467,12 +490,20 @@ function mergeRawJson(currentRaw, providerKey, value) {
 
 function buildSubscriptionStartPaymentInput(row) {
   return {
+    ristakSubscriptionId: row.id,
     contactId: row.contact_id,
     contactName: row.contact_name,
+    contactEmail: row.contact_email,
+    contactPhone: row.contact_phone,
     email: row.contact_email,
     phone: row.contact_phone,
+    name: row.name,
     amount: row.amount,
     currency: row.currency,
+    intervalType: row.interval_type,
+    intervalCount: row.interval_count,
+    startDate: row.start_date,
+    cancelAt: row.cancel_at,
     applyTax: false,
     title: `Inicio de ${row.name || 'suscripción'}`,
     description: row.description || row.name || 'Pago inicial de suscripción',
@@ -524,36 +555,74 @@ async function createSubscriptionStartPaymentLinkIfNeeded(row, payload = {}) {
 
   const baseUrl = cleanString(payload.baseUrl || payload.base_url)
   const input = buildSubscriptionStartPaymentInput(row)
-  let result = null
 
   if (row.payment_provider === 'stripe') {
-    result = await createStripePaymentLink(input, { baseUrl })
-  } else if (row.payment_provider === 'conekta') {
-    result = await createConektaPaymentLink(input, { baseUrl })
-  } else if (row.payment_provider === 'mercadopago') {
-    result = await createMercadoPagoPaymentLink(input, { baseUrl })
+    const checkout = await createStripeSubscriptionCheckoutLink(input, { baseUrl })
+    const checkoutUrl = cleanString(checkout.stripeCheckoutUrl)
+    if (!checkoutUrl) return row
+
+    return {
+      ...row,
+      status: 'incomplete',
+      payment_mode: checkout.paymentMode || row.payment_mode,
+      stripe_customer_id: checkout.stripeCustomerId || row.stripe_customer_id,
+      stripe_product_id: checkout.stripeProductId || row.stripe_product_id,
+      stripe_price_id: checkout.stripePriceId || row.stripe_price_id,
+      metadata_json: jsonOrNull({
+        ...currentMetadata,
+        stripeCheckout: {
+          sessionId: cleanString(checkout.stripeCheckoutSessionId),
+          url: checkoutUrl,
+          status: 'pending_checkout',
+          createdAt: new Date().toISOString()
+        },
+        subscriptionStartPayment: {
+          paymentId: '',
+          publicPaymentId: '',
+          paymentUrl: checkoutUrl,
+          provider: 'stripe',
+          status: 'pending_checkout',
+          stripeCheckoutSessionId: cleanString(checkout.stripeCheckoutSessionId),
+          createdAt: new Date().toISOString()
+        }
+      }),
+      raw_json: mergeRawJson(row.raw_json, 'stripeCheckout', checkout.raw || checkout)
+    }
   }
 
-  if (!result?.paymentUrl) return row
+  if (row.payment_provider === 'conekta') {
+    const checkout = await createConektaSubscriptionCheckoutLink(input, { baseUrl })
+    const checkoutUrl = cleanString(checkout.conektaCheckoutUrl)
+    if (!checkoutUrl) return row
 
-  const provider = cleanString(result.payment?.provider || row.payment_provider)
-  const paymentMode = cleanString(result.payment?.paymentMode || row.payment_mode)
-  return {
-    ...row,
-    status: 'incomplete',
-    payment_mode: paymentMode || row.payment_mode,
-    metadata_json: jsonOrNull({
-      ...currentMetadata,
-      subscriptionStartPayment: {
-        paymentId: cleanString(result.payment?.id),
-        publicPaymentId: cleanString(result.publicPaymentId),
-        paymentUrl: cleanString(result.paymentUrl),
-        provider,
-        status: cleanString(result.payment?.status || 'sent'),
-        createdAt: new Date().toISOString()
-      }
-    })
+    return {
+      ...row,
+      status: 'incomplete',
+      payment_mode: checkout.paymentMode || row.payment_mode,
+      conekta_plan_id: checkout.conektaPlanId || row.conekta_plan_id,
+      metadata_json: jsonOrNull({
+        ...currentMetadata,
+        conektaCheckout: {
+          checkoutId: cleanString(checkout.conektaCheckoutId),
+          url: checkoutUrl,
+          status: 'pending_checkout',
+          createdAt: new Date().toISOString()
+        },
+        subscriptionStartPayment: {
+          paymentId: '',
+          publicPaymentId: '',
+          paymentUrl: checkoutUrl,
+          provider: 'conekta',
+          status: 'pending_checkout',
+          conektaCheckoutId: cleanString(checkout.conektaCheckoutId),
+          createdAt: new Date().toISOString()
+        }
+      }),
+      raw_json: mergeRawJson(row.raw_json, 'conektaCheckout', checkout.raw || checkout)
+    }
   }
+
+  return row
 }
 
 function applyMercadoPagoSubscriptionToRow(row, mercadoPagoSubscription) {
