@@ -2049,9 +2049,10 @@ export const Transactions: React.FC = () => {
       case 'stripe_saved_card': return 'Tarjeta guardada'
       case 'stripe_link':
       case 'stripe_payment_link': return 'Link de Stripe'
+      case 'stripe_subscription': return 'Stripe Subscription'
       case 'conekta': return 'Conekta'
-      case 'conekta_saved_card': return 'Tarjeta Conekta'
-      case 'conekta_subscription': return 'Conekta domiciliado'
+      case 'conekta_saved_card': return 'Conekta domiciliado'
+      case 'conekta_subscription': return 'Conekta Subscription'
       case 'mercadopago':
       case 'mercadopago_checkout': return 'Mercado Pago'
       case 'mercadopago_subscription': return 'Suscripción Mercado Pago'
