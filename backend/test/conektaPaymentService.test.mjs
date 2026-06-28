@@ -595,6 +595,37 @@ test('Conekta planes: el webhook de domiciliación activa el plan con primer pag
     assert.equal(webhookResult.status, 'paid')
     assert.equal(webhookResult.planSynced, true)
 
+    const stalePendingWebhookResult = await reconcileConektaOrderFromWebhook({
+      type: 'order.pending_payment',
+      data: {
+        object: {
+          id: orderId,
+          payment_status: 'pending_payment',
+          charges: {
+            data: [{
+              id: chargeId,
+              status: 'pending_payment',
+              payment_method: {
+                type: 'card',
+                payment_source_id: conektaSourceId
+              }
+            }]
+          }
+        }
+      }
+    })
+
+    assert.equal(stalePendingWebhookResult.matched, true)
+    assert.equal(stalePendingWebhookResult.changed, false)
+    assert.equal(stalePendingWebhookResult.status, 'paid')
+
+    const protectedPayment = await db.get(
+      'SELECT status, paid_at FROM payments WHERE id = ?',
+      [planResult.cardSetupPaymentId]
+    )
+    assert.equal(protectedPayment.status, 'paid')
+    assert.ok(protectedPayment.paid_at)
+
     const activeFlow = await db.get(
       `SELECT current_state, card_setup_status, conekta_payment_source_id, installment_plan_active_at
        FROM payment_flows

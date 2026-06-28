@@ -40,6 +40,7 @@ const CARD_PLAN_PAYMENT_METHODS = new Set(['card', 'payment_link', 'direct_card'
 const AUTOMATIC_PLAN_PAYMENT_METHODS = new Set(['', 'conekta_auto', 'conekta_saved_card', 'conekta_pending_card', 'conekta_scheduled_card', ...CARD_PLAN_PAYMENT_METHODS])
 const FIRST_PAYMENT_PLAN_TRIGGERS = new Set(['first_payment', 'first_payment_saved_card'])
 const CARD_SETUP_PLAN_TRIGGERS = new Set(['card_setup', 'card_setup_authorization'])
+const SUCCESSFUL_PAYMENT_STATUSES = new Set(['paid', 'succeeded', 'completed', 'complete', 'fulfilled', 'success', 'captured'])
 const LOCKED_PLAN_PAYMENT_STATUSES = new Set(['paid', 'succeeded', 'completed', 'complete', 'fulfilled', 'success', 'refunded', 'void', 'deleted', 'cancelled', 'canceled'])
 const TIMED_PLAN_FREQUENCY = 'scheduled_time'
 const TIMED_PLAN_FREQUENCY_ALIASES = new Set([TIMED_PLAN_FREQUENCY, 'scheduled-time', 'scheduledat', 'scheduled_at', 'timed', 'datetime'])
@@ -685,6 +686,12 @@ function mapOrderStatus(order = {}) {
   return 'pending'
 }
 
+function shouldIgnorePendingWebhookRegression(payment = {}, nextStatus = '') {
+  if (nextStatus !== 'pending') return false
+  const currentStatus = cleanString(payment.status).toLowerCase()
+  return SUCCESSFUL_PAYMENT_STATUSES.has(currentStatus) || Boolean(payment.paid_at)
+}
+
 // (PAY2-002) Reconcilia un pago de Conekta a partir del payload de un webhook. Conekta
 // envía { type, data: { object: <order> } } para eventos como order.paid / order.expired /
 // charge.paid. Buscamos el pago local por conekta_order_id (o conekta_charge_id) y
@@ -711,7 +718,8 @@ export async function reconcileConektaOrderFromWebhook(event = {}) {
 
   const newStatus = mapOrderStatus(order)
   const currentStatus = cleanString(payment.status).toLowerCase()
-  const changed = currentStatus !== newStatus
+  const ignorePendingRegression = shouldIgnorePendingWebhookRegression(payment, newStatus)
+  const changed = !ignorePendingRegression && currentStatus !== newStatus
   const config = await getConektaPaymentConfig({ mode: payment.payment_mode || '' })
   const nextPayment = changed
     ? await updatePaymentFromOrder(order, payment)
@@ -721,6 +729,8 @@ export async function reconcileConektaOrderFromWebhook(event = {}) {
 
   if (changed) {
     logger.info(`[Conekta webhook] Pago ${payment.id} reconciliado: ${payment.status} -> ${newStatus} (order ${orderId || chargeId})`)
+  } else if (ignorePendingRegression) {
+    logger.info(`[Conekta webhook] Ignorado estado pending tardío para pago ya pagado ${payment.id} (order ${orderId || chargeId})`)
   }
 
   return {
