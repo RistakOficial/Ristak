@@ -706,6 +706,7 @@ test('Mercado Pago crea suscripcion recurrente real con preapproval pendiente', 
 
     setMercadoPagoFetchForTest(async (url, options = {}) => {
       assert.equal(options.headers?.Authorization, 'Bearer TEST-access-token')
+      assert.equal(options.headers?.['X-scope'], 'stage')
       assert.equal(url, 'https://api.mercadopago.com/preapproval')
       assert.equal(options.method, 'POST')
 
@@ -719,6 +720,7 @@ test('Mercado Pago crea suscripcion recurrente real con preapproval pendiente', 
       assert.equal(body.auto_recurring.frequency_type, 'months')
       assert.equal(body.auto_recurring.transaction_amount, 149)
       assert.equal(body.auto_recurring.currency_id, 'MXN')
+      assert.equal(Object.hasOwn(body.auto_recurring, 'start_date'), false)
       assert.ok(String(body.back_url).includes('/transactions/subscriptions'))
       assert.ok(String(body.external_reference).startsWith('rstk_sub_'))
 
@@ -797,6 +799,7 @@ test('Mercado Pago explica usuario test requerido al crear suscripcion preapprov
     setMercadoPagoFetchForTest(async (url, options = {}) => {
       assert.equal(url, 'https://api.mercadopago.com/preapproval')
       assert.equal(options.method, 'POST')
+      assert.equal(options.headers?.['X-scope'], 'stage')
       const body = JSON.parse(String(options.body || '{}'))
       assert.equal(body.payer_email, 'cliente-real@example.test')
 
@@ -850,7 +853,68 @@ test('Mercado Pago explica usuario test requerido al crear suscripcion preapprov
   })
 })
 
-test('Mercado Pago ajusta suscripciones que inician hoy a una fecha futura', async () => {
+test('Mercado Pago explica error interno al crear suscripcion preapproval', async () => {
+  await initializeMasterKey()
+
+  await snapshotMercadoPagoConfig(async () => {
+    const suffix = `${Date.now()}_${Math.random().toString(36).slice(2, 8)}`
+    const ids = {
+      contactId: `contact_mp_sub_internal_error_${suffix}`,
+      subscriptionId: ''
+    }
+
+    setMercadoPagoFetchForTest(async (url, options = {}) => {
+      assert.equal(url, 'https://api.mercadopago.com/preapproval')
+      assert.equal(options.method, 'POST')
+      assert.equal(options.headers?.['X-scope'], 'stage')
+      const body = JSON.parse(String(options.body || '{}'))
+      assert.equal(body.status, 'pending')
+      assert.equal(Object.hasOwn(body.auto_recurring, 'start_date'), false)
+
+      return {
+        ok: false,
+        status: 500,
+        json: async () => ({
+          message: 'Internal server error',
+          error: 'internal_server_error'
+        })
+      }
+    })
+
+    await db.run(
+      `INSERT INTO contacts (id, full_name, email, phone, source, created_at, updated_at)
+       VALUES (?, ?, ?, ?, 'test', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+      [ids.contactId, 'Cliente MP Sub 500', 'comprador-test@example.test', `+52156${String(Date.now()).slice(-8)}`]
+    )
+
+    try {
+      await assert.rejects(
+        () => createSubscription({
+          contactId: ids.contactId,
+          name: 'Membresia Mercado Pago 500',
+          amount: 149,
+          intervalType: 'monthly',
+          intervalCount: 1,
+          startDate: dateOnlyInDays(1),
+          paymentMethod: 'mercadopago_subscription',
+          paymentProvider: 'mercadopago',
+          status: 'incomplete'
+        }),
+        (error) => {
+          assert.equal(error.status, 500)
+          assert.match(error.message, /error interno al crear la suscripción/i)
+          assert.match(error.message, /APRO aplica al nombre de tarjeta/i)
+          assert.match(error.message, /comprador test/i)
+          return true
+        }
+      )
+    } finally {
+      await cleanup(ids)
+    }
+  })
+})
+
+test('Mercado Pago no fuerza start_date al crear link pendiente de suscripcion', async () => {
   await initializeMasterKey()
 
   await snapshotMercadoPagoConfig(async () => {
@@ -860,21 +924,15 @@ test('Mercado Pago ajusta suscripciones que inician hoy a una fecha futura', asy
       subscriptionId: ''
     }
     const requestedStartDate = dateOnlyInDays(0)
-    const beforeCreate = Date.now()
-
     setMercadoPagoFetchForTest(async (url, options = {}) => {
       assert.equal(url, 'https://api.mercadopago.com/preapproval')
       assert.equal(options.method, 'POST')
+      assert.equal(options.headers?.['X-scope'], 'stage')
 
       const body = JSON.parse(String(options.body || '{}'))
-      const sentStartDate = new Date(body.auto_recurring.start_date)
       assert.equal(body.auto_recurring.frequency, 1)
       assert.equal(body.auto_recurring.frequency_type, 'months')
-      assert.ok(!Number.isNaN(sentStartDate.getTime()))
-      assert.ok(
-        sentStartDate.getTime() >= beforeCreate + (9 * 60 * 1000),
-        `expected Mercado Pago start_date to be safely in the future, got ${body.auto_recurring.start_date}`
-      )
+      assert.equal(Object.hasOwn(body.auto_recurring, 'start_date'), false)
 
       return {
         ok: true,
@@ -885,8 +943,7 @@ test('Mercado Pago ajusta suscripciones que inician hoy a una fecha futura', asy
           init_point: 'https://www.mercadopago.com.mx/subscriptions/checkout?preapproval_id=mp_preapproval_today_test_1',
           sandbox_init_point: 'https://sandbox.mercadopago.com.mx/subscriptions/checkout?preapproval_id=mp_preapproval_today_test_1',
           auto_recurring: body.auto_recurring,
-          status: 'pending',
-          next_payment_date: body.auto_recurring.start_date
+          status: 'pending'
         })
       }
     })
@@ -914,7 +971,7 @@ test('Mercado Pago ajusta suscripciones que inician hoy a una fecha futura', asy
       assert.equal(subscription.paymentProvider, 'mercadopago')
       assert.equal(subscription.status, 'incomplete')
       assert.equal(subscription.mercadoPagoPreapprovalId, 'mp_preapproval_today_test_1')
-      assert.ok(new Date(subscription.nextRunAt).getTime() >= beforeCreate + (9 * 60 * 1000))
+      assert.ok(new Date(subscription.nextRunAt).getTime() > Date.now())
     } finally {
       await cleanup(ids)
     }
