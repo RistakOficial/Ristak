@@ -3815,6 +3815,8 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
     const showSavedCardPicker = singlePaymentOptionsStage === 'saved_cards' && singlePaymentAction === 'saved_card'
     const showGatewayPicker = singlePaymentOptionsStage === 'gateway' && singlePaymentAction === 'payment_link'
     const showGatewayConfiguration = singlePaymentOptionsStage === 'gateway_config' && singlePaymentAction === 'payment_link'
+    const showManualPaymentFields = singlePaymentOptionsStage === 'method' && singlePaymentAction === 'manual' && paymentOption === 'manual'
+    const showPrimaryPaymentOptions = !showManualPaymentFields
     const showMercadoPagoInstallmentControls = showGatewayConfiguration &&
       paymentOption === 'mercadopago'
     const savedCardActionDescription = savedCardGatewayLabels.length > 1
@@ -3833,6 +3835,35 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
             : defaultPaymentLinkOption === 'send'
               ? 'Usa la integración conectada para enviar el enlace al cliente.'
               : 'Conecta una pasarela para enviar enlaces de pago.'
+    const renderManualTransferInfo = () => (
+      <div className={styles.manualTransferInfo}>
+        <div className={styles.manualTransferHeader}>
+          <div className={styles.manualTransferIcon}>
+            <LinkIcon size={18} />
+          </div>
+          <div className={styles.manualTransferText}>
+            <p>Enlace para transferencias</p>
+            <span>Comparte este enlace con el cliente para completar el depósito.</span>
+          </div>
+        </div>
+        {transferInfoUrl ? (
+          <div className={styles.manualTransferActions}>
+            <div className={styles.manualTransferUrl}>{transferInfoUrl}</div>
+            <Button
+              variant="secondary"
+              size="sm"
+              onClick={handleCopyTransferUrl}
+            >
+              Copiar enlace
+            </Button>
+          </div>
+        ) : (
+          <p className={styles.manualTransferHint}>
+            Configura la URL en Ajustes &gt; Pagos para mostrarla aquí.
+          </p>
+        )}
+      </div>
+    )
 
     return (
       <div className={styles.optionsContent}>
@@ -3872,7 +3903,7 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
           )}
         </div>
 
-        {!showGatewayConfiguration && (
+        {!showGatewayConfiguration && showPrimaryPaymentOptions && (
           <div className={styles.paymentOptions}>
             {showGatewayPicker ? (
               <>
@@ -4145,7 +4176,7 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
           </div>
         )}
 
-        {singlePaymentOptionsStage === 'method' && singlePaymentAction === 'manual' && paymentOption === 'manual' && (
+        {showManualPaymentFields && (
           <div className={styles.manualFields}>
             <div className={styles.manualGrid}>
               <div className={styles.manualField}>
@@ -4168,35 +4199,7 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
                 })}
               </div>
             </div>
-            {manualPaymentData.paymentMethod === 'bank_transfer' && (
-              <div className={styles.manualTransferInfo}>
-                <div className={styles.manualTransferHeader}>
-                  <div className={styles.manualTransferIcon}>
-                    <LinkIcon size={18} />
-                  </div>
-                  <div className={styles.manualTransferText}>
-                    <p>Enlace para transferencias</p>
-                    <span>Comparte este enlace con el cliente para completar el depósito.</span>
-                  </div>
-                </div>
-                {transferInfoUrl ? (
-                  <div className={styles.manualTransferActions}>
-                    <div className={styles.manualTransferUrl}>{transferInfoUrl}</div>
-                    <Button
-                      variant="secondary"
-                      size="sm"
-                      onClick={handleCopyTransferUrl}
-                    >
-                      Copiar enlace
-                    </Button>
-                  </div>
-                ) : (
-                  <p className={styles.manualTransferHint}>
-                    Configura la URL en Ajustes &gt; Pagos para mostrarla aquí.
-                  </p>
-                )}
-              </div>
-            )}
+            {manualPaymentData.paymentMethod === 'bank_transfer' && transferInfoUrl && renderManualTransferInfo()}
             <div className={styles.manualGrid}>
               <div className={styles.manualField}>
                 <label>Referencia (opcional)</label>
@@ -4218,6 +4221,7 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
                 />
               </div>
             </div>
+            {manualPaymentData.paymentMethod === 'bank_transfer' && !transferInfoUrl && renderManualTransferInfo()}
           </div>
         )}
       </div>
