@@ -322,8 +322,26 @@ test('public calendar opens date-first and steps into slots then form', () => {
   assert.match(html, /resetForm\(key \? 'slots' : 'calendar'\)/)
   assert.match(html, /setStep\('form'\)/)
   assert.match(html, /\.shell\.dateSelected \.intro,\.shell\.dateSelected \.calendarPane/)
+  assert.match(html, /\.shell\.bookingActive,\.shell\.formGate\{width:min\(100%,640px\);min-height:0;grid-template-columns:minmax\(0,1fr\)/)
+  assert.match(html, /\.shell\.bookingActive \.intro,\.shell\.formGate \.intro,\.shell\.bookingActive \.calendarPane,\.shell\.formGate \.calendarPane\{display:none\}/)
+  assert.match(html, /\.shell\.bookingActive form,\.shell\.formGate form\{border-top:0;padding-top:0;gap:13px\}/)
   assert.match(html, /data-change-label>Cambiar fecha<\/span>/)
   assert.match(html, /Cambiar fecha y hora/)
+})
+
+test('public embedded calendar reports its content height to avoid inner scrollbars', () => {
+  const html = renderPublicCalendarHtml({
+    id: 'calendar-height-bridge',
+    slug: 'agenda-height-bridge',
+    name: 'Agenda height bridge',
+    slotDuration: 30,
+    eventColor: '#146FC5'
+  }, { embedded: true })
+
+  assert.match(html, /const isEmbeddedCalendar = document\.body\.classList\.contains\('rstk-calendar-embedded'\)/)
+  assert.match(html, /window\.parent\.postMessage\(\{ type: 'ristak:calendar-embed-height', height: height \+ 2 \}, '\*'\)/)
+  assert.match(html, /body\.rstk-calendar-embedded \.page\{min-height:0;width:100%;padding:0;place-items:stretch\}/)
+  assert.match(html, /body\.rstk-calendar-embedded \.shell\.bookingActive,body\.rstk-calendar-embedded \.shell\.formGate\{min-height:0\}/)
 })
 
 test('public calendar custom multipage booking form renders as real steps', () => {
@@ -565,8 +583,22 @@ test('calendar embed bridges to a redirect URL on booking', async () => {
   })
 
   assert.match(html, /data-rstk-calendar-redirect="https:\/\/example\.test\/gracias-cita"/)
+  assert.match(html, /<iframe class="rstk-embed rstk-calendar-embed"[^>]+scrolling="no"/)
   const url = getCalendarFrameUrl(html)
   assert.equal(url.searchParams.get('bookingBridge'), '1')
+})
+
+test('site calendar embed resizes when the calendar posts its content height', async () => {
+  const html = await renderPublicSiteHtml(calendarSite(), {
+    pageId: 'page-1',
+    trackingEnabled: false,
+    preview: true
+  })
+
+  assert.match(html, /data\.type === 'ristak:calendar-embed-height'/)
+  assert.match(html, /document\.querySelectorAll\('iframe\.rstk-calendar-embed'\)/)
+  assert.match(html, /calendarFrame\.style\.minHeight = Math\.round\(height\) \+ 'px'/)
+  assert.match(html, /calendarFrame\.style\.height = Math\.round\(height\) \+ 'px'/)
 })
 
 test('calendar embed bridges to the next funnel page on booking', async () => {

@@ -2156,7 +2156,7 @@ export function renderPublicCalendarHtml(calendar, { host = '', embedded = false
     body.rstk-calendar-embedded{min-height:0;background:transparent}
     button,input,textarea{font:inherit}
     .page{min-height:100vh;width:min(1180px,calc(100% - 32px));margin:0 auto;padding:clamp(24px,4vw,54px) 0;display:grid;place-items:center}
-    body.rstk-calendar-embedded .page{width:100%;padding:0;place-items:stretch}
+    body.rstk-calendar-embedded .page{min-height:0;width:100%;padding:0;place-items:stretch}
     .shell{width:100%;min-height:min(760px,calc(100vh - 80px));display:grid;grid-template-columns:340px minmax(390px,1fr);background:var(--surface);border:1px solid var(--line);border-radius:16px;box-shadow:0 32px 90px -60px rgba(15,23,42,.45);overflow:hidden}
     body.rstk-calendar-embedded .shell{min-height:100vh;min-width:0;border:0;border-radius:0;box-shadow:none}
     body.rstk-calendar-embedded.rstk-calendar-layout-stacked .page{place-items:start center}
@@ -2350,6 +2350,18 @@ export function renderPublicCalendarHtml(calendar, { host = '', embedded = false
     @media (max-width:1100px){.shell,.shell.dateSelected,.shell.bookingActive{grid-template-columns:300px minmax(0,1fr)}.shell.noIntro,.shell.noIntro.dateSelected,.shell.noIntro.bookingActive{grid-template-columns:minmax(0,1fr)}.shell.dateSelected .calendarPane{display:none}.timesPane{border-left:1px solid var(--line);border-top:0;max-width:none;width:auto}.shell.dateSelected .timesPane{padding:clamp(28px,3vw,38px) clamp(24px,2.5vw,30px)}.slotList{grid-template-columns:repeat(auto-fill,minmax(150px,1fr))}}
     @media (max-width:760px){.page{width:100%;padding:0;place-items:stretch}.shell,.shell.dateSelected,.shell.bookingActive,.shell.noIntro,.shell.noIntro.dateSelected,.shell.noIntro.bookingActive{grid-template-columns:1fr;min-height:100vh;border:0;border-radius:0;box-shadow:none}.shell.dateSelected .intro,.shell.dateSelected .calendarPane,.shell.bookingActive .intro,.shell.bookingActive .calendarPane{display:none}.shell.dateSelected .timesPane,.shell.bookingActive .timesPane{grid-column:auto;border-top:0}.intro,.calendarPane,.timesPane{padding:26px 22px;border-right:0;border-left:0}.intro{gap:14px}.calendarPane,.timesPane{border-top:1px solid var(--line)}.avatar{width:72px;height:72px;font-size:2rem;border-radius:16px}.days{gap:6px 2px}.day{width:40px;height:40px}.slotList{grid-template-columns:repeat(auto-fill,minmax(118px,1fr));max-height:none}input,textarea,select{font-size:16px;min-height:48px}.calPaymentBlock{grid-template-columns:1fr}.formActions button.submit{flex:1 1 100%}}
     @media (max-width:430px){.page{padding:0}.intro,.calendarPane,.timesPane{padding:22px 18px}.day{width:38px;height:38px}.weekdays{font-size:.66rem}.slotList{grid-template-columns:1fr}h1{font-size:1.5rem}h2{font-size:1.2rem}}
+    .shell.bookingActive,.shell.formGate{width:min(100%,640px);min-height:0;grid-template-columns:minmax(0,1fr);align-content:start;justify-content:center;overflow:visible}
+    body.rstk-calendar-embedded .shell.bookingActive,body.rstk-calendar-embedded .shell.formGate{min-height:0}
+    .shell.bookingActive .intro,.shell.formGate .intro,.shell.bookingActive .calendarPane,.shell.formGate .calendarPane{display:none}
+    .shell.bookingActive .timesPane,.shell.formGate .timesPane{grid-column:1;border-left:0;border-top:0;max-width:none;width:100%;padding:clamp(22px,3vw,32px) clamp(22px,3vw,34px);gap:12px}
+    .shell.bookingActive .selectedDate{min-height:0;gap:5px}
+    .shell.bookingActive .selectedDate p{line-height:1.45}
+    .shell.bookingActive form,.shell.formGate form{border-top:0;padding-top:0;gap:13px}
+    .shell.bookingActive .formHeader,.shell.formGate .formHeader{margin-bottom:2px;gap:6px}
+    .shell.bookingActive .formPage,.shell.formGate .formPage{gap:12px}
+    .shell.bookingActive .calendarQuestion,.shell.formGate .calendarQuestion{gap:6px}
+    .shell.bookingActive textarea,.shell.formGate textarea{min-height:88px}
+    @media (max-width:760px){.shell.bookingActive,.shell.formGate,.shell.noIntro.bookingActive,.shell.noIntro.formGate{width:100%;min-height:0;grid-template-columns:1fr}.shell.bookingActive .timesPane,.shell.formGate .timesPane{padding:22px 18px;border-top:0}.shell.bookingActive form,.shell.formGate form{gap:12px}}
   </style>
 </head>
 <body class="${[embedded ? 'rstk-calendar-embedded' : '', preview ? 'rstk-calendar-preview' : '', `rstk-calendar-layout-${layout}`, `rstk-calendar-theme-${widgetTheme}`].filter(Boolean).join(' ')}">
@@ -2438,6 +2450,25 @@ export function renderPublicCalendarHtml(calendar, { host = '', embedded = false
         buttonText: '--button-text'
       };
       const styleLayouts = ['classic', 'compact', 'stacked'];
+      const isEmbeddedCalendar = document.body.classList.contains('rstk-calendar-embedded');
+      let embedHeightFrame = 0;
+      const notifyEmbedHeight = () => {
+        if (!isEmbeddedCalendar || window.parent === window) return;
+        if (embedHeightFrame) window.cancelAnimationFrame(embedHeightFrame);
+        embedHeightFrame = window.requestAnimationFrame(() => {
+          embedHeightFrame = 0;
+          const shellRect = shell ? shell.getBoundingClientRect() : null;
+          const height = Math.ceil(Math.max(
+            document.documentElement ? document.documentElement.scrollHeight : 0,
+            document.body ? document.body.scrollHeight : 0,
+            shell ? shell.scrollHeight : 0,
+            shellRect ? shellRect.height : 0
+          ));
+          if (height > 0) {
+            window.parent.postMessage({ type: 'ristak:calendar-embed-height', height: height + 2 }, '*');
+          }
+        });
+      };
       const cleanStyleValue = (value) => {
         const text = String(value || '').trim();
         return text && text.length < 180 && !/[;{}<>]/.test(text) ? text : '';
@@ -2516,6 +2547,7 @@ export function renderPublicCalendarHtml(calendar, { host = '', embedded = false
           styleLayouts.forEach(name => shell.classList.toggle('layout-' + name, name === layout));
         }
         setAvatarImage(style.coverImage || styleDefaults.coverImage || calendar.coverImage);
+        notifyEmbedHeight();
       };
       const calendarPane = document.querySelector('[data-calendar-pane]');
       const daysEl = document.querySelector('[data-days]');
@@ -2696,6 +2728,7 @@ export function renderPublicCalendarHtml(calendar, { host = '', embedded = false
           if (labelEl) labelEl.textContent = backText;
           changeSlotButton.setAttribute('aria-label', backText);
         }
+        notifyEmbedHeight();
       };
 
       const showSuccessScreen = (text, opts) => {
@@ -2723,6 +2756,7 @@ export function renderPublicCalendarHtml(calendar, { host = '', embedded = false
           shell.classList.remove('dateSelected', 'bookingActive', 'bookingDone', 'bookingDisqualified');
           shell.classList.add(disqualified ? 'bookingDisqualified' : 'bookingDone');
         }
+        notifyEmbedHeight();
         try { window.scrollTo({ top: 0, behavior: 'smooth' }); } catch (err) {}
       };
 
@@ -2942,6 +2976,7 @@ export function renderPublicCalendarHtml(calendar, { host = '', embedded = false
         if (formNextButton) formNextButton.hidden = formPageIndex >= formPages.length - 1;
         if (submit) submit.hidden = formPages.length > 1 && formPageIndex < formPages.length - 1;
         if (formProgress) formProgress.textContent = 'Pantalla ' + (formPageIndex + 1) + ' de ' + formPages.length;
+        notifyEmbedHeight();
       };
 
       const collectResponses = () => {
@@ -3068,6 +3103,7 @@ export function renderPublicCalendarHtml(calendar, { host = '', embedded = false
         }
 
         slotsEl.innerHTML = slots.map(slot => '<button type="button" class="slot" data-slot="' + slot + '">' + formatTime(slot) + '</button>').join('');
+        notifyEmbedHeight();
       };
 
       const ingestSlots = (days) => {
@@ -3209,6 +3245,7 @@ export function renderPublicCalendarHtml(calendar, { host = '', embedded = false
           slotsEl.innerHTML = '<div class="slotEmpty">No se pudieron cargar horarios. Intenta más tarde.</div>';
         } finally {
           setLoading(false);
+          notifyEmbedHeight();
         }
       };
 

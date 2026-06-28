@@ -18177,7 +18177,7 @@ function renderContentBlock(block, context = {}) {
     })
     const calendarSrc = context.noTrack ? appendNoTrackParam(baseCalendarSrc) : baseCalendarSrc
     const calendarRedirectAttr = calendarCompletionRedirect ? ` data-rstk-calendar-redirect="${escapeHtml(calendarCompletionRedirect)}"` : ''
-    return `<iframe class="rstk-embed rstk-calendar-embed" src="${escapeHtml(calendarSrc)}" title="${escapeHtml(calendarName)}"${calendarRedirectAttr} loading="lazy" sandbox="allow-scripts allow-same-origin allow-forms allow-popups"></iframe>`
+    return `<iframe class="rstk-embed rstk-calendar-embed" src="${escapeHtml(calendarSrc)}" title="${escapeHtml(calendarName)}"${calendarRedirectAttr} loading="lazy" scrolling="no" sandbox="allow-scripts allow-same-origin allow-forms allow-popups"></iframe>`
   }
 
   if (block.blockType === 'embed') {
@@ -21622,6 +21622,15 @@ export async function renderPublicSiteHtml(site, { pageId, pagePath, trackingEna
           const calendarFrame = Array.from(document.querySelectorAll('iframe.rstk-calendar-embed')).find(item => item.contentWindow === event.source);
           const target = calendarFrame ? calendarFrame.getAttribute('data-rstk-calendar-redirect') : '';
           if (target) window.location.assign(window.ristakPreserveParams ? window.ristakPreserveParams(target) : target);
+          return;
+        }
+        if (data.type === 'ristak:calendar-embed-height') {
+          const calendarFrame = Array.from(document.querySelectorAll('iframe.rstk-calendar-embed')).find(item => item.contentWindow === event.source);
+          if (!calendarFrame) return;
+          const height = Math.max(${EMBED_MIN_HEIGHT}, Math.min(${EMBED_MAX_HEIGHT}, Number(data.height || 0)));
+          if (!Number.isFinite(height)) return;
+          calendarFrame.style.minHeight = Math.round(height) + 'px';
+          calendarFrame.style.height = Math.round(height) + 'px';
           return;
         }
         if (data.type !== 'ristak:embed-height') return;
