@@ -2479,8 +2479,11 @@ html body :is(.rstkCanvas.rstk-kind-form.rstk-choice-grid, .rstkCanvas.rstk-kind
 }
 
 .rstkCanvas .rstkEmbeddedFormSourceFrame > .rstk-page {
+  --rstk-embedded-form-selection-outset: 6px;
+  --rstk-embedded-form-selection-gap: calc(var(--rstk-embedded-form-selection-outset) + var(--rstk-page-border-width, 0px));
   position: relative;
   z-index: 2;
+  isolation: isolate;
   width: 100%;
   min-width: 0;
   max-width: min(100%, var(--rstk-max));
@@ -2996,14 +2999,17 @@ html body :is(.rstkCanvas.rstk-kind-form.rstk-choice-grid, .rstkCanvas.rstk-kind
 .rstkCanvas .rstkSelActive .rstkEmbeddedFormSourceFrame > .rstk-page::after {
   content: "";
   position: absolute;
-  inset: calc(-6px - var(--rstk-page-border-width, 0px));
-  border-radius: calc(var(--rstk-page-radius, 0px) + 6px + var(--rstk-page-border-width, 0px));
+  inset: calc(-1 * var(--rstk-embedded-form-selection-gap, 6px));
+  border-radius: calc(var(--rstk-page-radius, 0px) + var(--rstk-embedded-form-selection-gap, 6px));
   pointer-events: none;
-  z-index: 6;
+  z-index: 40;
   background-image: var(--rstk-march-bg);
   background-size: 14px 3px, 14px 3px, 3px 14px, 3px 14px;
   background-position: 0 0, 0 100%, 0 0, 100% 0;
   background-repeat: repeat-x, repeat-x, repeat-y, repeat-y;
+  box-shadow:
+    0 0 0 1px color-mix(in srgb, var(--rstk-selection-border, #2563eb) 24%, transparent),
+    0 0 0 4px color-mix(in srgb, var(--rstk-selection-border, #2563eb) 8%, transparent);
   filter: drop-shadow(0 0 1px var(--rstk-selection-contrast, rgba(15, 23, 42, 0.28)));
   animation: rstkSelMarch 1s linear infinite;
 }

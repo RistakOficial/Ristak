@@ -3220,6 +3220,8 @@ const readCssPixelValue = (value: string | null | undefined) => {
   return Number.isFinite(parsed) ? parsed : 0
 }
 
+const EMBEDDED_FORM_SELECTION_SURFACE_SELECTOR = '[data-rstk-embedded-form-selection-surface]'
+
 const isVisibleLayoutElement = (element: HTMLElement | null) => {
   if (!element || element.hidden) return false
   const style = window.getComputedStyle(element)
@@ -28594,6 +28596,48 @@ const SortableCanvasBlock: React.FC<SortableCanvasBlockProps> = ({
     animateLayoutChanges: sortableAnimateLayoutChanges,
     transition: sortableTransition
   })
+  const handleClick = (event: React.MouseEvent<HTMLDivElement>) => {
+    if (block.blockType === 'form_embed') {
+      const targetElement = event.target instanceof Element ? event.target : null
+      const clickedBlockTools = Boolean(targetElement?.closest('.rstkBlockTools'))
+
+      if (!clickedBlockTools) {
+        const selectionSurface = event.currentTarget.querySelector<HTMLElement>(EMBEDDED_FORM_SELECTION_SURFACE_SELECTOR)
+
+        if (selectionSurface) {
+          const style = window.getComputedStyle(selectionSurface)
+          const selectionOutset = Math.max(
+            0,
+            readCssPixelValue(style.getPropertyValue('--rstk-embedded-form-selection-outset')) ||
+              readCssPixelValue(style.getPropertyValue('--rstk-selection-outset')) ||
+              6
+          )
+          const borderOutset = Math.max(
+            readCssPixelValue(style.getPropertyValue('--rstk-page-border-width')),
+            readCssPixelValue(style.borderTopWidth),
+            readCssPixelValue(style.borderRightWidth),
+            readCssPixelValue(style.borderBottomWidth),
+            readCssPixelValue(style.borderLeftWidth),
+            0
+          )
+          const clickOutset = selectionOutset + borderOutset
+          const rect = selectionSurface.getBoundingClientRect()
+          const clickedInsideVisibleSelection =
+            event.clientX >= rect.left - clickOutset &&
+            event.clientX <= rect.right + clickOutset &&
+            event.clientY >= rect.top - clickOutset &&
+            event.clientY <= rect.bottom + clickOutset
+
+          if (!clickedInsideVisibleSelection) {
+            return
+          }
+        }
+      }
+    }
+
+    event.stopPropagation()
+    onSelect()
+  }
 
   return (
 	    <div
@@ -28609,10 +28653,7 @@ const SortableCanvasBlock: React.FC<SortableCanvasBlockProps> = ({
         ...getBlockCanvasStyle(block)
       }}
       className={getBlockStyleClassName(block, `rstkSel ${selected ? 'rstkSelActive' : ''} ${toolbarPositionClass} ${isDragging ? 'rstkSelDragging' : ''} ${videoActionHoverTargetId === block.id ? 'rstkVideoActionHover' : ''} ${videoActionHiddenNote ? 'rstkVideoActionGhost' : ''}`)}
-      onClick={(event) => {
-        event.stopPropagation()
-        onSelect()
-      }}
+      onClick={handleClick}
     >
       {videoActionHiddenNote && <span className="rstkVideoActionNote">{videoActionHiddenNote}</span>}
       <BlockBackgroundVideo block={block} />
@@ -32187,7 +32228,7 @@ const CanvasPreviewBlock: React.FC<CanvasPreviewBlockProps> = ({
       <div className={`rstkCanvas ${sourceCanvasTheme.bodyClass} rstkEmbeddedFormSourceRoot`} style={sourceThemeVars}>
         <div className={`rstk-frame rstkEmbeddedFormSourceFrame rstk-embedded-form-theme rstk-embedded-form-source-frame${getSettingBoolean(settings, 'embeddedFullWidth') ? ' rstkEmbeddedFormStretch' : ''}`}>
           <CanvasBackgroundVideo theme={previewForm?.theme} />
-          <main className="rstk-page">
+          <main className="rstk-page" data-rstk-embedded-form-selection-surface>
             <div
               className="rstk-shell rstkEmbeddedFormSourceShell"
               onClick={embeddedFormEditor ? (event) => {
