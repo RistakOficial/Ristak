@@ -36,7 +36,9 @@ const CONFIG_KEYS = {
   connectedAt: 'mercadopago_connected_at',
   disconnectedAt: 'mercadopago_disconnected_at',
   managedByPortal: 'mercadopago_managed_by_portal',
-  modeConnections: 'mercadopago_mode_connections'
+  modeConnections: 'mercadopago_mode_connections',
+  subscriptionTestPublicKey: 'mercadopago_subscription_test_public_key',
+  subscriptionTestAccessToken: 'mercadopago_subscription_test_access_token_encrypted'
 }
 
 const DEFAULT_CURRENCY = 'MXN'
@@ -48,6 +50,7 @@ const MERCADOPAGO_TEST_CARD_HELP = 'Mercado Pago rechazó el pago de prueba. En 
 const MERCADOPAGO_SUBSCRIPTION_TEST_USER_HELP = 'Mercado Pago rechazó la suscripción de prueba porque el vendedor y el pagador deben ser usuarios del mismo tipo. Si conectaste una cuenta test, el email del contacto debe ser un comprador test de Mercado Pago del mismo país que el vendedor test, no un cliente real ni el mismo vendedor. Cambia el email del contacto por el usuario comprador test o cambia Mercado Pago a modo en vivo para clientes reales.'
 const MERCADOPAGO_SUBSCRIPTION_INTERNAL_ERROR_HELP = 'Mercado Pago devolvió un error interno al crear la suscripción. En modo prueba usa el email del comprador test de Mercado Pago del mismo país que el vendedor; APRO aplica al nombre de tarjeta en el checkout, no al contacto de la suscripción. Si el comprador test ya es correcto, intenta crear el link nuevamente.'
 const MERCADOPAGO_SUBSCRIPTION_UNAUTHORIZED_HELP = 'Mercado Pago no autorizó crear la suscripción con la cuenta conectada. Reconecta Mercado Pago y asegúrate de usar una cuenta vendedora con suscripciones activas; en modo prueba usa un vendedor test y un comprador test del mismo país.'
+const MERCADOPAGO_SUBSCRIPTION_TEST_CREDENTIALS_HELP = 'Mercado Pago no puede autorizar suscripciones de prueba con credenciales TEST. Para links de suscripción en modo prueba conecta o configura las credenciales de producción del usuario vendedor test (APP_USR). Las credenciales TEST siguen sirviendo para pagos únicos con tarjeta, pero el checkout hospedado de suscripciones necesita APP_USR.'
 const DEFAULT_PAYMENT_TIMEZONE = 'America/Mexico_City'
 const MP_PLAN_STATES = {
   ACTIVE: 'mercadopago_plan_active',
@@ -580,6 +583,31 @@ async function getMercadoPagoClientConfig() {
   return config
 }
 
+async function getMercadoPagoSubscriptionClientConfig() {
+  const config = await getMercadoPagoClientConfig()
+  if (config.mode !== 'test') return config
+
+  const usesTestCredentials = cleanString(config.accessToken).startsWith('TEST-')
+    || cleanString(config.publicKey).startsWith('TEST-')
+  if (!usesTestCredentials) return config
+
+  const raw = await readRawConfig()
+  const subscriptionAccessToken = decryptSecret(raw[CONFIG_KEYS.subscriptionTestAccessToken])
+  const subscriptionPublicKey = cleanString(raw[CONFIG_KEYS.subscriptionTestPublicKey])
+
+  if (subscriptionAccessToken && subscriptionPublicKey) {
+    return {
+      ...config,
+      accessToken: subscriptionAccessToken,
+      publicKey: subscriptionPublicKey
+    }
+  }
+
+  const error = new Error(MERCADOPAGO_SUBSCRIPTION_TEST_CREDENTIALS_HELP)
+  error.status = 400
+  throw error
+}
+
 function normalizeMercadoPagoErrorMessage(payload = {}, options = {}) {
   const message = cleanString(payload?.message || payload?.error)
   const causes = Array.isArray(payload?.cause) ? payload.cause : []
@@ -615,8 +643,8 @@ function normalizeMercadoPagoErrorMessage(payload = {}, options = {}) {
   return message || 'Mercado Pago no pudo completar la solicitud.'
 }
 
-async function mercadoPagoApiRequest(path, { method = 'GET', body = null, idempotencyKey = '' } = {}) {
-  const config = await getMercadoPagoClientConfig()
+async function mercadoPagoApiRequest(path, { method = 'GET', body = null, idempotencyKey = '', config: configOverride = null } = {}) {
+  const config = configOverride || await getMercadoPagoClientConfig()
   const url = path.startsWith('http') ? path : `${MERCADOPAGO_API_BASE}${path}`
   const headers = {
     Accept: 'application/json',
@@ -640,6 +668,11 @@ async function mercadoPagoApiRequest(path, { method = 'GET', body = null, idempo
   }
 
   return { payload, config }
+}
+
+async function mercadoPagoSubscriptionApiRequest(path, options = {}) {
+  const config = await getMercadoPagoSubscriptionClientConfig()
+  return mercadoPagoApiRequest(path, { ...options, config })
 }
 
 export async function testMercadoPagoPaymentConfig() {
@@ -2472,7 +2505,7 @@ export async function createMercadoPagoSubscriptionPlanLink(input = {}, { baseUr
     back_url: getMercadoPagoSubscriptionBackUrl(baseUrl)
   }
 
-  const { payload, config } = await mercadoPagoApiRequest('/preapproval_plan', {
+  const { payload, config } = await mercadoPagoSubscriptionApiRequest('/preapproval_plan', {
     method: 'POST',
     body,
     idempotencyKey: `rstk-subscription-plan-${subscriptionId}`
@@ -2515,7 +2548,7 @@ export async function createMercadoPagoRecurringSubscription(input = {}, { baseU
     status: 'pending'
   }
 
-  const { payload, config } = await mercadoPagoApiRequest('/preapproval', {
+  const { payload, config } = await mercadoPagoSubscriptionApiRequest('/preapproval', {
     method: 'POST',
     body,
     idempotencyKey: `rstk-subscription-${subscriptionId}`
@@ -2547,7 +2580,7 @@ export async function updateMercadoPagoRecurringSubscription(input = {}) {
   const cleanEndDate = timestampToIso(input.cancelAt || input.endDate)
   if (cleanEndDate) body.auto_recurring.end_date = cleanEndDate
 
-  const { payload, config } = await mercadoPagoApiRequest(`/preapproval/${encodeURIComponent(preapprovalId)}`, {
+  const { payload, config } = await mercadoPagoSubscriptionApiRequest(`/preapproval/${encodeURIComponent(preapprovalId)}`, {
     method: 'PUT',
     body
   })
@@ -2566,7 +2599,7 @@ async function setMercadoPagoRecurringSubscriptionStatus(preapprovalId, status) 
     throw error
   }
 
-  const { payload, config } = await mercadoPagoApiRequest(`/preapproval/${encodeURIComponent(cleanPreapprovalId)}`, {
+  const { payload, config } = await mercadoPagoSubscriptionApiRequest(`/preapproval/${encodeURIComponent(cleanPreapprovalId)}`, {
     method: 'PUT',
     body: { status }
   })
@@ -2594,7 +2627,7 @@ export async function cancelMercadoPagoSubscriptionPlan(preapprovalPlanId) {
     throw error
   }
 
-  const { payload, config } = await mercadoPagoApiRequest(`/preapproval_plan/${encodeURIComponent(cleanPreapprovalPlanId)}`, {
+  const { payload, config } = await mercadoPagoSubscriptionApiRequest(`/preapproval_plan/${encodeURIComponent(cleanPreapprovalPlanId)}`, {
     method: 'PUT',
     body: { status: 'cancelled' },
     idempotencyKey: `rstk-subscription-plan-cancel-${cleanPreapprovalPlanId}`
@@ -2940,14 +2973,14 @@ async function insertSubscriptionPaymentFromMercadoPagoAuthorizedPayment(authori
 export async function refreshMercadoPagoSubscription(preapprovalId) {
   const cleanPreapprovalId = cleanString(preapprovalId)
   if (!cleanPreapprovalId) return null
-  const { payload } = await mercadoPagoApiRequest(`/preapproval/${encodeURIComponent(cleanPreapprovalId)}`)
+  const { payload } = await mercadoPagoSubscriptionApiRequest(`/preapproval/${encodeURIComponent(cleanPreapprovalId)}`)
   return updateSubscriptionFromMercadoPagoPreapproval(payload)
 }
 
 export async function refreshMercadoPagoAuthorizedPayment(authorizedPaymentId) {
   const cleanAuthorizedPaymentId = cleanString(authorizedPaymentId)
   if (!cleanAuthorizedPaymentId) return null
-  const { payload } = await mercadoPagoApiRequest(`/authorized_payments/${encodeURIComponent(cleanAuthorizedPaymentId)}`)
+  const { payload } = await mercadoPagoSubscriptionApiRequest(`/authorized_payments/${encodeURIComponent(cleanAuthorizedPaymentId)}`)
 
   let subscription = await findSubscriptionForMercadoPagoPreapproval({
     id: payload?.preapproval_id,

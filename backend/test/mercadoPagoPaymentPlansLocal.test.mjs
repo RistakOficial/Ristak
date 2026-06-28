@@ -48,6 +48,8 @@ async function snapshotMercadoPagoConfig(callback) {
     await setAppConfig('mercadopago_token_type', 'bearer')
     await setAppConfig('mercadopago_livemode', '0')
     await setAppConfig('mercadopago_access_token_encrypted', encrypt('TEST-access-token'))
+    await setAppConfig('mercadopago_subscription_test_public_key', 'APP_USR-subscription-public-key')
+    await setAppConfig('mercadopago_subscription_test_access_token_encrypted', encrypt('APP_USR-subscription-access-token'))
     await setAppConfig('mercadopago_connected_at', new Date().toISOString())
 
     return await callback()
@@ -136,9 +138,9 @@ test('Mercado Pago cobra tarjeta en la pagina publica sin confiar en el monto de
 
     setMercadoPagoFetchForTest(async (url, options = {}) => {
       assert.equal(options.method, 'POST')
-      assert.equal(options.headers?.Authorization, 'Bearer TEST-access-token')
 
       if (url === 'https://api.mercadopago.com/preapproval_plan') {
+        assert.equal(options.headers?.Authorization, 'Bearer APP_USR-subscription-access-token')
         const body = JSON.parse(String(options.body || '{}'))
         assert.equal(body.reason, 'Membresía Mercado Pago por link')
         assert.equal(Object.hasOwn(body, 'payer_email'), false)
@@ -161,6 +163,7 @@ test('Mercado Pago cobra tarjeta en la pagina publica sin confiar en el monto de
       }
 
       if (url === 'https://api.mercadopago.com/checkout/preferences') {
+        assert.equal(options.headers?.Authorization, 'Bearer TEST-access-token')
         const body = JSON.parse(String(options.body || '{}'))
         preferenceCalls.push(body)
 
@@ -176,6 +179,7 @@ test('Mercado Pago cobra tarjeta en la pagina publica sin confiar en el monto de
       }
 
       assert.equal(url, 'https://api.mercadopago.com/v1/payments')
+      assert.equal(options.headers?.Authorization, 'Bearer TEST-access-token')
       assert.equal(options.headers?.['X-Idempotency-Key'], 'card-test-key-123')
       const body = JSON.parse(String(options.body || '{}'))
       cardPaymentCalls.push(body)
@@ -692,6 +696,53 @@ test('Mercado Pago no genera parcialidades publicas porque los planes estan desh
   )
 })
 
+test('Mercado Pago bloquea links de suscripcion test sin credenciales APP_USR', async () => {
+  await initializeMasterKey()
+
+  await snapshotMercadoPagoConfig(async () => {
+    await db.run("DELETE FROM app_config WHERE config_key IN ('mercadopago_subscription_test_public_key', 'mercadopago_subscription_test_access_token_encrypted')")
+    const suffix = `${Date.now()}_${Math.random().toString(36).slice(2, 8)}`
+    const ids = {
+      contactId: `contact_mp_sub_missing_appusr_${suffix}`,
+      subscriptionId: ''
+    }
+
+    setMercadoPagoFetchForTest(async () => {
+      throw new Error('No debe llamar a Mercado Pago sin credenciales APP_USR de suscripción.')
+    })
+
+    await db.run(
+      `INSERT INTO contacts (id, full_name, email, phone, source, created_at, updated_at)
+       VALUES (?, ?, ?, ?, 'test', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+      [ids.contactId, 'Cliente MP Sin APP_USR', 'cliente-mp-sin-appusr@example.test', '+5215555555599']
+    )
+
+    try {
+      await assert.rejects(
+        () => createSubscription({
+          contactId: ids.contactId,
+          name: 'Membresia Mercado Pago Sin APP_USR',
+          amount: 149,
+          intervalType: 'monthly',
+          intervalCount: 1,
+          startDate: dateOnlyInDays(1),
+          paymentMethod: 'mercadopago_subscription',
+          paymentProvider: 'mercadopago',
+          status: 'incomplete'
+        }),
+        (error) => {
+          assert.equal(error.status, 400)
+          assert.match(error.message, /credenciales TEST/i)
+          assert.match(error.message, /APP_USR/i)
+          return true
+        }
+      )
+    } finally {
+      await cleanup(ids)
+    }
+  })
+})
+
 test('Mercado Pago crea link abierto de suscripcion con preapproval plan', async () => {
   await initializeMasterKey()
 
@@ -706,7 +757,7 @@ test('Mercado Pago crea link abierto de suscripcion con preapproval plan', async
     const calls = []
 
     setMercadoPagoFetchForTest(async (url, options = {}) => {
-      assert.equal(options.headers?.Authorization, 'Bearer TEST-access-token')
+      assert.equal(options.headers?.Authorization, 'Bearer APP_USR-subscription-access-token')
       assert.equal(Object.hasOwn(options.headers || {}, 'X-scope'), false)
       assert.equal(url, 'https://api.mercadopago.com/preapproval_plan')
       assert.equal(options.method, 'POST')
@@ -1025,6 +1076,7 @@ test('Mercado Pago no fuerza start_date al crear link pendiente de suscripcion',
     }
     const requestedStartDate = dateOnlyInDays(0)
     setMercadoPagoFetchForTest(async (url, options = {}) => {
+      assert.equal(options.headers?.Authorization, 'Bearer APP_USR-subscription-access-token')
       assert.equal(url, 'https://api.mercadopago.com/preapproval_plan')
       assert.equal(options.method, 'POST')
       assert.equal(Object.hasOwn(options.headers || {}, 'X-scope'), false)
@@ -1092,7 +1144,7 @@ test('Mercado Pago registra cobro recurrente por webhook subscription_authorized
     const nextPaymentDate = localIsoInDays(31)
 
     setMercadoPagoFetchForTest(async (url, options = {}) => {
-      assert.equal(options.headers?.Authorization, 'Bearer TEST-access-token')
+      assert.equal(options.headers?.Authorization, 'Bearer APP_USR-subscription-access-token')
       assert.equal(url, 'https://api.mercadopago.com/authorized_payments/auth_pay_1')
       assert.equal(options.method, 'GET')
 
