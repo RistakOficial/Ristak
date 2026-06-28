@@ -406,6 +406,27 @@ function toStripeAmount(amount, currency) {
     : Math.round(normalized * 100)
 }
 
+function toStripeFutureTimestamp(value, label = 'La fecha final de la suscripción') {
+  const cleaned = cleanString(value)
+  if (!cleaned) return null
+
+  const date = new Date(cleaned)
+  if (Number.isNaN(date.getTime())) {
+    const error = new Error(`${label} no es válida.`)
+    error.status = 400
+    throw error
+  }
+
+  const timestamp = Math.floor(date.getTime() / 1000)
+  if (timestamp <= Math.floor(Date.now() / 1000)) {
+    const error = new Error(`${label} debe estar en el futuro.`)
+    error.status = 400
+    throw error
+  }
+
+  return timestamp
+}
+
 function fromStripeAmount(amount, currency) {
   const value = Number(amount || 0)
   const code = normalizeCurrency(currency).toLowerCase()
@@ -2597,6 +2618,7 @@ export async function createStripeRecurringSubscription(input = {}) {
   const startDate = cleanString(input.startDate)
   const startTimestamp = startDate ? Math.floor(new Date(startDate).getTime() / 1000) : 0
   const nowTimestamp = Math.floor(Date.now() / 1000)
+  const cancelAtTimestamp = toStripeFutureTimestamp(input.cancelAt)
   const subscriptionParams = {
     customer: stripeCustomerId,
     items: [{ price: price.id }],
@@ -2611,6 +2633,9 @@ export async function createStripeRecurringSubscription(input = {}) {
 
   if (Number.isFinite(startTimestamp) && startTimestamp > nowTimestamp + 300) {
     subscriptionParams.trial_end = startTimestamp
+  }
+  if (cancelAtTimestamp) {
+    subscriptionParams.cancel_at = cancelAtTimestamp
   }
 
   const subscription = await stripe.subscriptions.create(subscriptionParams, requestOptions)
@@ -2716,18 +2741,28 @@ export async function updateStripeRecurringSubscription(input = {}) {
     requestOptions
   )
 
+  const cancelAtTimestamp = toStripeFutureTimestamp(input.cancelAt)
+  const subscriptionUpdateParams = {
+    items: [
+      {
+        id: item.id,
+        price: price.id
+      }
+    ],
+    proration_behavior: 'none',
+    metadata
+  }
+
+  if (cancelAtTimestamp) {
+    subscriptionUpdateParams.cancel_at = cancelAtTimestamp
+  } else if (input.clearCancelAt) {
+    subscriptionUpdateParams.cancel_at = ''
+    subscriptionUpdateParams.cancel_at_period_end = false
+  }
+
   const updated = await stripe.subscriptions.update(
     stripeSubscriptionId,
-    {
-      items: [
-        {
-          id: item.id,
-          price: price.id
-        }
-      ],
-      proration_behavior: 'none',
-      metadata
-    },
+    subscriptionUpdateParams,
     requestOptions
   )
   const period = getSubscriptionPeriod(updated)

@@ -174,6 +174,7 @@ test('Conekta payment flow: crea link, guarda payment_source y cobra tarjeta gua
     )
 
     const calls = []
+    const planCalls = []
     setConektaFetchForTest(async (url, options = {}) => {
       calls.push({ url, method: options.method || 'GET', body: options.body ? JSON.parse(options.body) : null })
 
@@ -226,6 +227,7 @@ test('Conekta payment flow: crea link, guarda payment_source y cobra tarjeta gua
 
       if (url.endsWith('/plans') && options.method === 'POST') {
         const body = JSON.parse(options.body)
+        planCalls.push(body)
         assert.equal(body.currency, 'MXN')
         assert.equal(body.amount > 0, true)
         assert.equal(['week', 'month', 'year'].includes(body.interval), true)
@@ -385,11 +387,13 @@ test('Conekta payment flow: crea link, guarda payment_source y cobra tarjeta gua
       currency: 'MXN',
       intervalType: 'monthly',
       intervalCount: 1,
-      startDate: today
+      startDate: '2099-01-01',
+      cancelAt: '2099-04-01'
     })
     assert.equal(subscription.conektaSubscriptionId, 'sub_test_123')
     assert.equal(subscription.conektaPaymentSourceId, 'src_test_123')
     assert.equal(subscription.status, 'active')
+    assert.equal(planCalls.at(-1).expiry_count, 3)
 
     const paused = await pauseConektaRecurringSubscription('cus_test_123', 'sub_test_123')
     assert.equal(paused.payload.status, 'paused')
