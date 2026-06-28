@@ -299,7 +299,7 @@ test('public calendar carries booking completion behavior into the booking widge
   })
   assert.match(html, /"bookingCompletion":\{"action":"redirect"/)
   assert.match(html, /"redirectUrl":"\/gracias"/)
-  assert.match(html, /window\.location\.assign\(completionRedirectUrl\)/)
+  assert.match(html, /window\.location\.assign\(appendContactPrefillParams\(completionRedirectUrl\)\)/)
 })
 
 test('public calendar opens date-first and steps into slots then form', () => {

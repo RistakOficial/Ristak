@@ -2833,27 +2833,65 @@ export function renderPublicCalendarHtml(calendar, { host = '', embedded = false
           if (storage && typeof storage.setItem === 'function') storage.setItem(key, JSON.stringify(value || {}));
         } catch (_) {}
       };
+      const readUrlContact = () => {
+        let params = null;
+        try {
+          params = new URLSearchParams(window.location.search || '');
+        } catch (_) {
+          params = null;
+        }
+        const pick = (keys) => {
+          if (!params) return '';
+          for (const key of keys) {
+            const value = cleanPrefillText(params.get(key));
+            if (value) return value;
+          }
+          return '';
+        };
+        return {
+          contactId: pick(['rstk_contact_id', 'contact_id', 'contactId']),
+          name: pick(['rstk_name', 'rstk_full_name', 'contact_name', 'contactName', 'full_name', 'fullName', 'full-name', 'fullname', 'name', 'nombre', 'nombre_completo']),
+          email: pick(['rstk_email', 'contact_email', 'contactEmail', 'email', 'mail', 'correo', 'correo_electronico']),
+          phone: pick(['rstk_phone', 'contact_phone', 'contactPhone', 'phone', 'phone_number', 'phoneNumber', 'phone-number', 'telefono', 'celular', 'whatsapp'])
+        };
+      };
+      const hasContactDraft = (contact) => Boolean(contact && (
+        contact.contactId ||
+        contact.name ||
+        contact.fullName ||
+        contact.email ||
+        contact.phone
+      ));
       const readStoredContact = () => {
         const local = readStoredJson(window.localStorage, 'ristak');
         const session = readStoredJson(window.sessionStorage, 'ristak');
+        const urlContact = readUrlContact();
         return {
-          contactId: cleanPrefillText(local.contact_id || local.contactId),
-          name: cleanPrefillText(local.contact_name || local.contactName || local.fullName || local.name),
-          email: cleanPrefillText(local.contact_email || local.contactEmail || local.email),
-          phone: cleanPrefillText(local.contact_phone || local.contactPhone || local.phone),
+          contactId: cleanPrefillText(urlContact.contactId || local.contact_id || local.contactId),
+          name: cleanPrefillText(urlContact.name || local.contact_name || local.contactName || local.fullName || local.name),
+          email: cleanPrefillText(urlContact.email || local.contact_email || local.contactEmail || local.email),
+          phone: cleanPrefillText(urlContact.phone || local.contact_phone || local.contactPhone || local.phone),
           visitorId: cleanPrefillText(local.visitor_id || local.visitorId || session.visitor_id || session.visitorId),
           sessionId: cleanPrefillText(session.session_id || session.sessionId)
         };
       };
       const rememberCalendarContact = (contact) => {
-        if (!contact || !contact.contactId) return;
+        if (!hasContactDraft(contact)) return;
         const local = readStoredJson(window.localStorage, 'ristak');
-        const sameContact = local.contact_id === contact.contactId;
-        local.contact_id = contact.contactId;
-        local.contact_name = cleanPrefillText(contact.name || contact.fullName || contact.full_name) || (sameContact ? local.contact_name : null) || null;
-        local.contact_email = cleanPrefillText(contact.email) || (sameContact ? local.contact_email : null) || null;
-        local.contact_phone = cleanPrefillText(contact.phone) || (sameContact ? local.contact_phone : null) || null;
-        local.contact_synced_at = new Date().toISOString();
+        const contactId = cleanPrefillText(contact.contactId || contact.contact_id);
+        const sameContact = contactId && local.contact_id === contactId;
+        const name = cleanPrefillText(contact.name || contact.fullName || contact.full_name);
+        const email = cleanPrefillText(contact.email);
+        const phone = cleanPrefillText(contact.phone);
+        if (contactId) local.contact_id = contactId;
+        if (name) local.contact_name = name;
+        else if (contactId && !sameContact) local.contact_name = null;
+        if (email) local.contact_email = email;
+        else if (contactId && !sameContact) local.contact_email = null;
+        if (phone) local.contact_phone = phone;
+        else if (contactId && !sameContact) local.contact_phone = null;
+        if (contactId) local.contact_synced_at = new Date().toISOString();
+        local.contact_draft_at = new Date().toISOString();
         writeStoredJson(window.localStorage, 'ristak', local);
       };
       const getPrefillKeyForField = (field) => {
@@ -2873,15 +2911,22 @@ export function renderPublicCalendarHtml(calendar, { host = '', embedded = false
           haystack.includes('calendar_email')
         ) return 'email';
         if (
+          haystack.includes('phone_number') ||
+          haystack.includes('phone-number') ||
+          haystack.includes('phone number') ||
           haystack.includes('phone') ||
           haystack.includes('teléfono') ||
           haystack.includes('telefono') ||
+          haystack.includes('celular') ||
+          haystack.includes('mobile') ||
           haystack.includes('whatsapp') ||
           haystack.includes('calendar_phone')
         ) return 'phone';
         if (
           haystack.includes('full_name') ||
+          haystack.includes('full-name') ||
           haystack.includes('full name') ||
+          haystack.includes('fullname') ||
           haystack.includes('nombre completo') ||
           haystack.includes('nombre') ||
           haystack.includes('calendar_name')
@@ -2914,7 +2959,63 @@ export function renderPublicCalendarHtml(calendar, { host = '', embedded = false
         if (changed) evaluateDisqualification();
         return changed;
       };
+      const rememberCalendarContactDraft = () => {
+        const draft = {};
+        Array.from(form.querySelectorAll('.calendarQuestion')).forEach((field) => {
+          const key = getPrefillKeyForField(field);
+          if (!key) return;
+          const value = getFieldValue(field);
+          const text = cleanPrefillText(Array.isArray(value) ? value.join(', ') : value);
+          if (!text) return;
+          if (key === 'name') {
+            draft.name = text;
+            draft.fullName = text;
+          } else {
+            draft[key] = text;
+          }
+        });
+        rememberCalendarContact(draft);
+        return draft;
+      };
+      const appendContactPrefillParams = (rawUrl) => {
+        const raw = String(rawUrl || '');
+        if (!raw || raw.charAt(0) === '#') return raw;
+        const formDraft = rememberCalendarContactDraft() || {};
+        const stored = readStoredContact();
+        const contact = Object.assign({}, stored, formDraft);
+        if (!hasContactDraft(contact)) return raw;
+        let target;
+        try {
+          target = new URL(raw, window.location.href);
+        } catch (_) {
+          return raw;
+        }
+        if (target.protocol !== 'http:' && target.protocol !== 'https:') return raw;
+        let changed = false;
+        const addParam = (key, value) => {
+          const text = cleanPrefillText(value);
+          if (!text || target.searchParams.has(key)) return;
+          target.searchParams.set(key, text);
+          changed = true;
+        };
+        addParam('rstk_contact_id', contact.contactId);
+        addParam('full_name', contact.fullName || contact.name);
+        addParam('email', contact.email);
+        addParam('phone', contact.phone);
+        addParam('phone_number', contact.phone);
+        addParam('rstk_name', contact.fullName || contact.name);
+        addParam('rstk_email', contact.email);
+        addParam('rstk_phone', contact.phone);
+        if (!changed) return raw;
+        if (target.origin === window.location.origin && !/^https?:/i.test(raw) && raw.slice(0, 2) !== '//') {
+          return target.pathname + target.search + target.hash;
+        }
+        return target.toString();
+      };
       const initContactPrefill = async () => {
+        const urlContact = readUrlContact();
+        if (hasContactDraft(urlContact)) rememberCalendarContact(urlContact);
+        rememberCalendarContactDraft();
         const stored = readStoredContact();
         applyContactPrefill(stored);
         if (!stored.contactId && !stored.visitorId && !stored.sessionId) return;
@@ -3202,6 +3303,14 @@ export function renderPublicCalendarHtml(calendar, { host = '', embedded = false
         renderFormPage();
       });
 
+      const handleCalendarContactDraftEdit = (event) => {
+        const target = event.target;
+        if (!target || !target.closest || !target.closest('.calendarQuestion')) return;
+        rememberCalendarContactDraft();
+      };
+      form.addEventListener('input', handleCalendarContactDraftEdit);
+      form.addEventListener('change', handleCalendarContactDraftEdit);
+
       daysEl.addEventListener('click', (event) => {
         const button = event.target.closest('[data-date]');
         if (!button || button.disabled) return;
@@ -3331,7 +3440,7 @@ export function renderPublicCalendarHtml(calendar, { host = '', embedded = false
             const rule = readSelectedDisqualifyRule();
             if (rule && rule.redirectUrl) {
               showSuccessScreen('Gracias por tus respuestas.', { disqualified: true });
-              window.setTimeout(() => { try { window.location.assign(rule.redirectUrl); } catch (_) {} }, 1000);
+              window.setTimeout(() => { try { window.location.assign(appendContactPrefillParams(rule.redirectUrl)); } catch (_) {} }, 1000);
               return;
             }
             const content = getDisqualificationContent(rule);
@@ -3341,6 +3450,7 @@ export function renderPublicCalendarHtml(calendar, { host = '', embedded = false
           // Guardamos las respuestas del gate (el formulario se ocultará/reiniciará en los siguientes pasos).
           gateResponses = collectResponses();
           gateFormData = new FormData(form);
+          rememberCalendarContactDraft();
           gatePassed = true;
           shell.classList.remove('formGate');
           shell.classList.add('formCompleted');
@@ -3362,7 +3472,7 @@ export function renderPublicCalendarHtml(calendar, { host = '', embedded = false
           const rule = readSelectedDisqualifyRule();
           if (rule && rule.redirectUrl) {
             showSuccessScreen('Gracias por tus respuestas.', { disqualified: true });
-            window.setTimeout(() => { try { window.location.assign(rule.redirectUrl); } catch (_) {} }, 1000);
+            window.setTimeout(() => { try { window.location.assign(appendContactPrefillParams(rule.redirectUrl)); } catch (_) {} }, 1000);
             return;
           }
           const content = getDisqualificationContent(rule);
@@ -3416,7 +3526,7 @@ export function renderPublicCalendarHtml(calendar, { host = '', embedded = false
             selectedSlot = '';
             if (payload.redirectUrl) {
               showSuccessScreen('Gracias por tus respuestas.', { disqualified: true });
-              window.setTimeout(() => { try { window.location.assign(payload.redirectUrl); } catch (_) {} }, 1200);
+              window.setTimeout(() => { try { window.location.assign(appendContactPrefillParams(payload.redirectUrl)); } catch (_) {} }, 1200);
               return;
             }
             const fallbackContent = getDisqualificationContent(null);
@@ -3441,6 +3551,7 @@ export function renderPublicCalendarHtml(calendar, { host = '', embedded = false
             if (!response.ok || payload.success === false) throw new Error(payload.error || 'No se pudo agendar');
           }
           rememberCalendarContact(payload.data?.contact);
+          rememberCalendarContactDraft();
           trackCalendarMetaEvent(payload.data?.metaEvent);
           const completionRedirectUrl = getCompletionRedirectUrl();
           selectedSlot = '';
@@ -3455,7 +3566,7 @@ export function renderPublicCalendarHtml(calendar, { host = '', embedded = false
           if (completionRedirectUrl) {
             showSuccessScreen('Te estamos redirigiendo...');
             window.setTimeout(() => {
-              window.location.assign(completionRedirectUrl);
+              window.location.assign(appendContactPrefillParams(completionRedirectUrl));
             }, 600);
             return;
           }
