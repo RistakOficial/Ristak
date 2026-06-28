@@ -1306,8 +1306,8 @@ export const PaymentSubscriptions: React.FC = () => {
           title={formModalTitle}
           size="md"
           type="custom"
-          closeOnBackdropClick={false}
-          closeOnEscape={false}
+          closeOnBackdropClick={formMode === 'edit'}
+          closeOnEscape={formMode === 'edit'}
         >
           <form className={styles.form} onSubmit={(event) => {
             event.preventDefault()

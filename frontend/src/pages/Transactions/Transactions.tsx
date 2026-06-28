@@ -3154,7 +3154,11 @@ export const Transactions: React.FC = () => {
       />
 
       {isClient && modal.type && createPortal(
-        <div className={styles.modalOverlay} data-overlay="">
+        <div
+          className={styles.modalOverlay}
+          data-overlay=""
+          onClick={modal.type === 'edit' ? closeTransactionModal : undefined}
+        >
           <div
             className={styles.modal}
             data-modal=""
@@ -3585,7 +3589,7 @@ export const Transactions: React.FC = () => {
       )}
 
       {isClient && paymentPlanModal.plan && createPortal(
-        <div className={styles.modalOverlay} data-overlay="">
+        <div className={styles.modalOverlay} data-overlay="" onClick={closePaymentPlanModal}>
           <div
             className={`${styles.modal} ${styles.paymentPlanModal}`}
             data-modal=""

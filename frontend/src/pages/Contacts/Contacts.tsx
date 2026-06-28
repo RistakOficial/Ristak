@@ -2384,10 +2384,7 @@ const ContactsTable: React.FC = () => {
       )}
 
       {isClient && showNewContactModal && createPortal(
-        <div className={styles.modalOverlay} data-overlay="" onClick={() => {
-          setShowNewContactModal(false)
-          navigateContactsPath(buildContactsPath(viewMode, filter), { replace: true })
-        }}>
+        <div className={styles.modalOverlay} data-overlay="">
           <div
             className={styles.modal}
             data-modal=""

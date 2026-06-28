@@ -584,8 +584,6 @@ export const PaymentProducts: React.FC = () => {
           title={formMode === 'edit' ? 'Editar producto' : 'Nuevo producto'}
           size="md"
           type="custom"
-          closeOnBackdropClick={false}
-          closeOnEscape={false}
         >
           <form className={styles.form} onSubmit={(event) => {
             event.preventDefault()

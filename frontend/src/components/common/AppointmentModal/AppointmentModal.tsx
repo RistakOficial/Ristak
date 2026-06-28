@@ -2213,6 +2213,8 @@ export const AppointmentModal: React.FC<AppointmentModalProps> = ({
           size="lg"
           className={styles.appointmentDialogModal}
           flushContent
+          closeOnBackdropClick={!isCreateMode}
+          closeOnEscape={!isCreateMode}
         >
           {appointmentContent}
         </Modal>
