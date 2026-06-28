@@ -45,6 +45,7 @@ const MERCADOPAGO_WEBHOOK_PATH = '/api/mercadopago/webhook'
 const TOKEN_SYNC_WINDOW_MS = 15 * 60 * 1000
 const MERCADOPAGO_SUBSCRIPTION_START_BUFFER_MS = 10 * 60 * 1000
 const MERCADOPAGO_TEST_CARD_HELP = 'Mercado Pago rechazó el pago de prueba. En el link de pago abre la ayuda de pruebas, usa una tarjeta de esa tabla, cualquier correo válido y el nombre del titular que simula el resultado: APRO para aprobar, FUND para fondos insuficientes u otro escenario disponible.'
+const MERCADOPAGO_SUBSCRIPTION_TEST_USER_HELP = 'Mercado Pago rechazó la suscripción de prueba porque el vendedor y el pagador deben ser usuarios del mismo tipo. Si conectaste una cuenta test, el email del contacto debe ser un comprador test de Mercado Pago del mismo país que el vendedor test, no un cliente real ni el mismo vendedor. Cambia el email del contacto por el usuario comprador test o cambia Mercado Pago a modo en vivo para clientes reales.'
 const DEFAULT_PAYMENT_TIMEZONE = 'America/Mexico_City'
 const MP_PLAN_STATES = {
   ACTIVE: 'mercadopago_plan_active',
@@ -577,24 +578,27 @@ async function getMercadoPagoClientConfig() {
   return config
 }
 
-function normalizeMercadoPagoErrorMessage(payload = {}) {
+function normalizeMercadoPagoErrorMessage(payload = {}, options = {}) {
   const message = cleanString(payload?.message || payload?.error)
   const causes = Array.isArray(payload?.cause) ? payload.cause : []
+  const path = cleanString(options.path)
   const hasInvalidTestUserEmailCause = causes.some((cause) => (
     Number(cause?.code) === 2198 ||
     /invalid test user email/i.test(cleanString(cause?.description || cause?.message))
   ))
   const hasInvalidUsersCause = causes.some((cause) => (
     Number(cause?.code) === 2034 ||
-    /invalid users involved/i.test(cleanString(cause?.description || cause?.message))
+    /invalid users involved|both payer and collector must be real or test users/i.test(cleanString(cause?.description || cause?.message))
   ))
 
   if (
     /invalid test user email/i.test(message) ||
     /invalid users involved/i.test(message) ||
+    /both payer and collector must be real or test users/i.test(message) ||
     hasInvalidTestUserEmailCause ||
     hasInvalidUsersCause
   ) {
+    if (path.includes('/preapproval')) return MERCADOPAGO_SUBSCRIPTION_TEST_USER_HELP
     return MERCADOPAGO_TEST_CARD_HELP
   }
 
@@ -619,7 +623,7 @@ async function mercadoPagoApiRequest(path, { method = 'GET', body = null, idempo
   const payload = await response.json().catch(() => ({}))
 
   if (!response.ok) {
-    const error = new Error(normalizeMercadoPagoErrorMessage(payload))
+    const error = new Error(normalizeMercadoPagoErrorMessage(payload, { path }))
     error.status = response.status || 502
     error.payload = payload
     throw error

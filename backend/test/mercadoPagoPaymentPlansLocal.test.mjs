@@ -784,6 +784,72 @@ test('Mercado Pago crea suscripcion recurrente real con preapproval pendiente', 
   })
 })
 
+test('Mercado Pago explica usuario test requerido al crear suscripcion preapproval', async () => {
+  await initializeMasterKey()
+
+  await snapshotMercadoPagoConfig(async () => {
+    const suffix = `${Date.now()}_${Math.random().toString(36).slice(2, 8)}`
+    const ids = {
+      contactId: `contact_mp_sub_invalid_users_${suffix}`,
+      subscriptionId: ''
+    }
+
+    setMercadoPagoFetchForTest(async (url, options = {}) => {
+      assert.equal(url, 'https://api.mercadopago.com/preapproval')
+      assert.equal(options.method, 'POST')
+      const body = JSON.parse(String(options.body || '{}'))
+      assert.equal(body.payer_email, 'cliente-real@example.test')
+
+      return {
+        ok: false,
+        status: 400,
+        json: async () => ({
+          message: 'Both payer and collector must be real or test users',
+          error: 'bad_request',
+          cause: [
+            {
+              code: 2034,
+              description: 'Both payer and collector must be real or test users'
+            }
+          ]
+        })
+      }
+    })
+
+    await db.run(
+      `INSERT INTO contacts (id, full_name, email, phone, source, created_at, updated_at)
+       VALUES (?, ?, ?, ?, 'test', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+      [ids.contactId, 'Cliente MP Sub Error', 'cliente-real@example.test', `+52155${String(Date.now()).slice(-8)}`]
+    )
+
+    try {
+      await assert.rejects(
+        () => createSubscription({
+          contactId: ids.contactId,
+          name: 'Membresia Mercado Pago Error',
+          amount: 149,
+          intervalType: 'monthly',
+          intervalCount: 1,
+          startDate: dateOnlyInDays(1),
+          paymentMethod: 'mercadopago_subscription',
+          paymentProvider: 'mercadopago',
+          status: 'incomplete'
+        }),
+        (error) => {
+          assert.equal(error.status, 400)
+          assert.match(error.message, /comprador test de Mercado Pago/i)
+          assert.match(error.message, /mismo país/i)
+          assert.match(error.message, /modo en vivo/i)
+          assert.equal(error.payload?.cause?.[0]?.code, 2034)
+          return true
+        }
+      )
+    } finally {
+      await cleanup(ids)
+    }
+  })
+})
+
 test('Mercado Pago ajusta suscripciones que inician hoy a una fecha futura', async () => {
   await initializeMasterKey()
 
