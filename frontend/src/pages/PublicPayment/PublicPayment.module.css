@@ -509,19 +509,28 @@
 .mercadoPagoBrick :global(select) {
   width: 100%;
   min-width: 0;
+  margin: 0;
   box-shadow: none;
+  outline: 0;
+  appearance: none;
+  -webkit-appearance: none;
+  background-image: none;
 }
 
 .mercadoPagoBrick :global([role="combobox"]),
 .mercadoPagoBrick :global([class*="dropdown"]),
-.mercadoPagoBrick :global([class*="Dropdown"]) {
+.mercadoPagoBrick :global([class*="Dropdown"]),
+.mercadoPagoBrick :global([class*="select-wrapper"]),
+.mercadoPagoBrick :global([class*="SelectWrapper"]) {
   min-width: 0;
   box-shadow: none;
 }
 
 .mercadoPagoBrick :global([role="combobox"]),
 .mercadoPagoBrick :global([class*="dropdown"] > button),
-.mercadoPagoBrick :global([class*="Dropdown"] > button) {
+.mercadoPagoBrick :global([class*="Dropdown"] > button),
+.mercadoPagoBrick :global([class*="select-wrapper"]),
+.mercadoPagoBrick :global([class*="SelectWrapper"]) {
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -535,11 +544,19 @@
 }
 
 .mercadoPagoBrick :global([class*="dropdown"] select),
-.mercadoPagoBrick :global([class*="Dropdown"] select) {
+.mercadoPagoBrick :global([class*="Dropdown"] select),
+.mercadoPagoBrick :global([class*="select-wrapper"] select),
+.mercadoPagoBrick :global([class*="SelectWrapper"] select) {
   min-height: auto;
-  border: 0;
-  background: none;
-  box-shadow: none;
+  margin: 0 !important;
+  border: 0 !important;
+  outline: 0 !important;
+  appearance: none !important;
+  -webkit-appearance: none !important;
+  background: transparent !important;
+  background-image: none !important;
+  box-shadow: none !important;
+  -webkit-box-shadow: none !important;
 }
 
 .mercadoPagoBrick :global(button[type="submit"]) {
@@ -551,8 +568,25 @@
 .mercadoPagoBrick :global(input:focus),
 .mercadoPagoBrick :global(select:focus),
 .mercadoPagoBrick :global(textarea:focus) {
+  outline: 0;
   border-color: var(--accent);
   box-shadow: var(--ristak-focus-ring);
+}
+
+.mercadoPagoBrick :global([class*="select-wrapper"]:focus-within),
+.mercadoPagoBrick :global([class*="SelectWrapper"]:focus-within) {
+  border-color: var(--accent);
+  box-shadow: var(--ristak-focus-ring);
+}
+
+.mercadoPagoBrick :global([class*="select-wrapper"] select:focus),
+.mercadoPagoBrick :global([class*="select-wrapper"] select:focus-visible),
+.mercadoPagoBrick :global([class*="SelectWrapper"] select:focus),
+.mercadoPagoBrick :global([class*="SelectWrapper"] select:focus-visible) {
+  border: 0 !important;
+  outline: 0 !important;
+  box-shadow: none !important;
+  -webkit-box-shadow: none !important;
 }
 
 .mercadoPagoBrick :global([role="alert"]),

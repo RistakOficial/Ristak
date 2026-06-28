@@ -722,7 +722,7 @@ const MercadoPagoCardPaymentForm: React.FC<{
             <span>Cargando formulario seguro</span>
           </div>
         )}
-        <div id={containerId} className={styles.mercadoPagoBrick} />
+        <div id={containerId} className={styles.mercadoPagoBrick} data-ristak-unstyled />
       </div>
 
       {showSecureNotice && (
