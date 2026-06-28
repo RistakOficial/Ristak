@@ -769,6 +769,7 @@ test('suscripciones Stripe test: crea, sube/baja precio, pausa, reanuda, cancela
       amount: 1000,
       intervalType: 'monthly',
       intervalCount: 1,
+      cancelAt: '2099-04-01',
       paymentMethod: 'stripe_saved_card',
       paymentProvider: 'stripe',
       stripePaymentMethodId: savedMethodId
@@ -784,6 +785,7 @@ test('suscripciones Stripe test: crea, sube/baja precio, pausa, reanuda, cancela
     assert.equal(calls.pricesCreate[0].params.unit_amount, 100000)
     assert.deepEqual(calls.pricesCreate[0].params.recurring, { interval: 'month', interval_count: 1 })
     assert.equal(calls.subscriptionsCreate.length, 1)
+    assert.equal(calls.subscriptionsCreate[0].params.cancel_at, Math.floor(new Date('2099-04-01').getTime() / 1000))
 
     const initialPayment = await db.get(
       `SELECT amount, status, payment_method, reference
@@ -803,6 +805,7 @@ test('suscripciones Stripe test: crea, sube/baja precio, pausa, reanuda, cancela
       amount: 1500,
       intervalType: 'weekly',
       intervalCount: 2,
+      cancelAt: '2099-06-01',
       paymentMethod: 'stripe_saved_card',
       paymentProvider: 'stripe'
     })
@@ -814,16 +817,21 @@ test('suscripciones Stripe test: crea, sube/baja precio, pausa, reanuda, cancela
     assert.equal(calls.pricesCreate[1].params.unit_amount, 150000)
     assert.deepEqual(calls.pricesCreate[1].params.recurring, { interval: 'week', interval_count: 2 })
     assert.equal(calls.subscriptionsUpdate.at(-1).params.proration_behavior, 'none')
+    assert.equal(calls.subscriptionsUpdate.at(-1).params.cancel_at, Math.floor(new Date('2099-06-01').getTime() / 1000))
 
     const decreased = await updateSubscription(created.id, {
       amount: 499.99,
       intervalType: 'monthly',
       intervalCount: 1,
+      cancelAt: null,
       paymentMethod: 'stripe_saved_card',
       paymentProvider: 'stripe'
     })
     assert.equal(decreased.amount, 499.99)
+    assert.equal(decreased.cancelAt, null)
     assert.equal(calls.pricesCreate.at(-1).params.unit_amount, 49999)
+    assert.equal(calls.subscriptionsUpdate.at(-1).params.cancel_at, '')
+    assert.equal(calls.subscriptionsUpdate.at(-1).params.cancel_at_period_end, false)
 
     await assert.rejects(
       () => updateSubscription(created.id, {

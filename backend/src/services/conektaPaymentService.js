@@ -2988,6 +2988,45 @@ function mapConektaInterval(intervalType) {
   throw error
 }
 
+function addConektaInterval(date, intervalType, intervalCount) {
+  const next = new Date(date)
+  const count = Math.max(1, Number.parseInt(intervalCount, 10) || 1)
+  const normalized = cleanString(intervalType || 'monthly').toLowerCase()
+
+  if (normalized === 'weekly') {
+    next.setUTCDate(next.getUTCDate() + (7 * count))
+    return next
+  }
+
+  const months = normalized === 'yearly' ? 12 * count : count
+  const originalDay = next.getUTCDate()
+  next.setUTCMonth(next.getUTCMonth() + months)
+  if (next.getUTCDate() !== originalDay) next.setUTCDate(0)
+  return next
+}
+
+function calculateConektaExpiryCount(input = {}) {
+  const cancelAt = cleanString(input.cancelAt || input.endDate)
+  if (!cancelAt) return null
+
+  const start = new Date(cleanString(input.startDate) || Date.now())
+  const end = new Date(cancelAt)
+  if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime()) || end <= start) {
+    const error = new Error('La fecha final de la suscripción debe ser posterior al inicio.')
+    error.status = 400
+    throw error
+  }
+
+  let cycles = 0
+  let cursor = start
+  while (cursor < end && cycles < 1000) {
+    cycles += 1
+    cursor = addConektaInterval(cursor, input.intervalType, input.intervalCount)
+  }
+
+  return Math.max(1, cycles)
+}
+
 function buildConektaPlanId(ristakSubscriptionId) {
   const base = cleanString(ristakSubscriptionId).replace(/[^a-zA-Z0-9_-]/g, '_').slice(0, 42) || 'ristak_subscription'
   return `${base}_${Date.now()}`
@@ -3036,6 +3075,7 @@ function mapConektaRecurringSubscriptionResponse({
 async function createConektaPlanForSubscription(input = {}, config) {
   const name = sanitizeConektaText(input.name, 'Suscripcion', 120)
   const amount = Number(input.amount)
+  const expiryCount = calculateConektaExpiryCount(input)
   if (!Number.isFinite(amount) || amount <= 0) {
     const error = new Error('El monto de la suscripción debe ser mayor a 0.')
     error.status = 400
@@ -3051,6 +3091,9 @@ async function createConektaPlanForSubscription(input = {}, config) {
     interval: mapConektaInterval(input.intervalType),
     max_retries: 3,
     retry_delay_hours: 48
+  }
+  if (expiryCount) {
+    body.expiry_count = expiryCount
   }
 
   const { payload } = await conektaApiRequest('/plans', {

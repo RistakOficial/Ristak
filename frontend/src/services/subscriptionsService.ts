@@ -78,6 +78,7 @@ export interface SubscriptionPayload {
   intervalCount: number
   startDate?: string | null
   nextRunAt?: string | null
+  cancelAt?: string | null
   paymentMethod?: string
   paymentProvider?: string
   paymentMode?: 'test' | 'live' | string

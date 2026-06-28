@@ -48,7 +48,6 @@ import {
   type PaymentSubscription,
   type SubscriptionInterval,
   type SubscriptionPayload,
-  type SubscriptionStatus,
   type SubscriptionSummary
 } from '@/services/subscriptionsService'
 import styles from './PaymentSubscriptions.module.css'
@@ -56,6 +55,7 @@ import styles from './PaymentSubscriptions.module.css'
 type SubscriptionFormMode = 'create' | 'edit' | null
 type SubscriptionFormStep = 'details' | 'gateway'
 type PaymentGatewayProvider = 'stripe' | 'conekta' | 'mercadopago'
+type SubscriptionDurationType = 'continuous' | 'until_date'
 
 interface SubscriptionFormState {
   name: string
@@ -65,7 +65,8 @@ interface SubscriptionFormState {
   intervalCount: string
   startDate: string
   nextRunAt: string
-  status: SubscriptionStatus
+  cancelAt: string
+  durationType: SubscriptionDurationType
   paymentMethod: string
   paymentProvider: PaymentGatewayProvider
 }
@@ -94,21 +95,16 @@ const INTERVAL_OPTIONS: Array<{ value: SubscriptionInterval; label: string }> = 
   { value: 'yearly', label: 'Anual' }
 ]
 
-const STATUS_OPTIONS: Array<{ value: SubscriptionStatus; label: string }> = [
-  { value: 'active', label: 'Activa' },
-  { value: 'draft', label: 'Borrador' },
-  { value: 'trialing', label: 'Prueba' },
-  { value: 'paused', label: 'Pausada' },
-  { value: 'past_due', label: 'Vencida' },
-  { value: 'incomplete', label: 'Incompleta' },
-  { value: 'cancelled', label: 'Cancelada' }
-]
-
 const PAYMENT_METHOD_OPTIONS: Array<{ value: string; label: string; provider: PaymentGatewayProvider }> = [
   { value: 'stripe_saved_card', label: 'Stripe - tarjeta guardada', provider: 'stripe' },
   { value: 'stripe_link', label: 'Stripe - enlace de pago', provider: 'stripe' },
   { value: 'conekta_subscription', label: 'Conekta - tarjeta guardada', provider: 'conekta' },
   { value: 'mercadopago_subscription', label: 'Mercado Pago - suscripción', provider: 'mercadopago' }
+]
+
+const DURATION_OPTIONS: Array<{ value: SubscriptionDurationType; label: string }> = [
+  { value: 'continuous', label: 'Continua, sin fecha final' },
+  { value: 'until_date', label: 'Hasta una fecha específica' }
 ]
 
 function formatLocalDateInput(date: Date) {
@@ -151,7 +147,8 @@ function createEmptyForm(): SubscriptionFormState {
     intervalCount: '1',
     startDate: today,
     nextRunAt: today,
-    status: 'active',
+    cancelAt: '',
+    durationType: 'continuous',
     paymentMethod: 'stripe_saved_card',
     paymentProvider: 'stripe'
   }
@@ -186,7 +183,6 @@ function createEmptyFormForProvider(provider: PaymentGatewayProvider | null): Su
   if (provider === 'mercadopago') {
     return {
       ...form,
-      status: 'incomplete',
       paymentMethod: getPaymentMethodForProvider(provider),
       paymentProvider: 'mercadopago'
     }
@@ -240,6 +236,26 @@ function getIntervalLabel(intervalType?: string | null, intervalCount = 1) {
   }
 
   return `Cada ${count} ${plural[normalized] || singular[normalized] || 'periodos'}`
+}
+
+function getBillingCadenceHelp(intervalType: SubscriptionInterval, intervalCountValue: string) {
+  const count = Number.parseInt(intervalCountValue, 10) || 1
+  const normalized = String(intervalType || 'monthly').toLowerCase()
+  const singular: Record<string, string> = {
+    daily: 'día',
+    weekly: 'semana',
+    monthly: 'mes',
+    yearly: 'año'
+  }
+  const plural: Record<string, string> = {
+    daily: 'días',
+    weekly: 'semanas',
+    monthly: 'meses',
+    yearly: 'años'
+  }
+  const unit = count === 1 ? singular[normalized] || 'periodo' : plural[normalized] || 'periodos'
+
+  return count === 1 ? `Se cobrará cada ${unit}.` : `Se cobrará cada ${count} ${unit}.`
 }
 
 function getPaymentMethodLabel(value?: string | null) {
@@ -440,7 +456,8 @@ export const PaymentSubscriptions: React.FC = () => {
       intervalCount: String(subscription.intervalCount || 1),
       startDate: clampDateToToday(toDateInputValue(subscription.startDate)),
       nextRunAt: clampDateToToday(toDateInputValue(subscription.nextRunAt)),
-      status: (subscription.status as SubscriptionStatus) || 'active',
+      cancelAt: toDateInputValue(subscription.cancelAt),
+      durationType: subscription.cancelAt ? 'until_date' : 'continuous',
       paymentMethod: subscription.paymentMethod || 'stripe_saved_card',
       paymentProvider: resolvePaymentProvider(subscription.paymentProvider)
     })
@@ -458,8 +475,7 @@ export const PaymentSubscriptions: React.FC = () => {
     setForm((current) => ({
       ...current,
       paymentMethod: fallback.value,
-      paymentProvider: fallback.provider,
-      status: fallback.provider === 'mercadopago' ? 'incomplete' : current.status
+      paymentProvider: fallback.provider
     }))
   }, [availablePaymentMethodOptions, form.paymentMethod, formMode, formStep])
 
@@ -474,9 +490,18 @@ export const PaymentSubscriptions: React.FC = () => {
   }
 
   const patchForm = (field: keyof SubscriptionFormState, value: string) => {
+    if (field === 'durationType' && value === 'continuous') {
+      setForm((current) => ({
+        ...current,
+        durationType: 'continuous',
+        cancelAt: ''
+      }))
+      return
+    }
+
     setForm((current) => ({
       ...current,
-      [field]: field === 'startDate' || field === 'nextRunAt'
+      [field]: field === 'startDate' || field === 'nextRunAt' || field === 'cancelAt'
         ? clampDateToToday(value)
         : value
     }))
@@ -502,6 +527,18 @@ export const PaymentSubscriptions: React.FC = () => {
       return false
     }
 
+    if (form.durationType === 'until_date') {
+      if (!form.cancelAt) {
+        showToast('warning', 'Falta la duración', 'Elige hasta qué fecha debe cobrarse esta suscripción.')
+        return false
+      }
+
+      if (isDateBeforeToday(form.cancelAt) || form.cancelAt <= form.startDate) {
+        showToast('warning', 'Duración inválida', 'La fecha final debe ser posterior al inicio de la suscripción.')
+        return false
+      }
+    }
+
     return true
   }
 
@@ -523,6 +560,18 @@ export const PaymentSubscriptions: React.FC = () => {
     if (!Number.isFinite(intervalCount) || intervalCount <= 0) {
       showToast('warning', 'Frecuencia inválida', 'La frecuencia debe ser de al menos 1 periodo.')
       return null
+    }
+
+    if (form.durationType === 'until_date') {
+      if (!form.cancelAt) {
+        showToast('warning', 'Falta la duración', 'Elige hasta qué fecha debe cobrarse esta suscripción.')
+        return null
+      }
+
+      if (isDateBeforeToday(form.cancelAt) || form.cancelAt <= form.startDate) {
+        showToast('warning', 'Duración inválida', 'La fecha final debe ser posterior al inicio de la suscripción.')
+        return null
+      }
     }
 
     const provider = providerOverride ?? getPaymentProviderFromMethod(form.paymentMethod, form.paymentProvider)
@@ -559,13 +608,13 @@ export const PaymentSubscriptions: React.FC = () => {
       contactPhone: selectedContact?.phone || editingSubscription?.contactPhone || null,
       name,
       description: form.description.trim(),
-      status: provider === 'mercadopago' && formMode !== 'edit' ? 'incomplete' : form.status,
       amount,
       currency: accountCurrency,
       intervalType: form.intervalType,
       intervalCount,
       startDate: form.startDate || null,
       nextRunAt: provider === 'mercadopago' ? null : form.nextRunAt || null,
+      cancelAt: form.durationType === 'until_date' ? form.cancelAt || null : null,
       paymentMethod,
       paymentProvider: provider,
       conektaPaymentSourceId: provider === 'conekta' ? editingSubscription?.conektaPaymentSourceId || null : undefined,
@@ -586,7 +635,8 @@ export const PaymentSubscriptions: React.FC = () => {
         intervalCount: form.intervalCount,
         startDate: form.startDate,
         nextRunAt: form.nextRunAt,
-        status: form.status
+        cancelAt: form.cancelAt,
+        durationType: form.durationType
       })
       setFormStep('gateway')
       return
@@ -1028,8 +1078,7 @@ export const PaymentSubscriptions: React.FC = () => {
                         setForm((current) => ({
                           ...current,
                           paymentMethod: getPaymentMethodForProvider(option.provider),
-                          paymentProvider: option.provider,
-                          status: option.provider === 'mercadopago' ? 'incomplete' : current.status === 'incomplete' ? 'active' : current.status
+                          paymentProvider: option.provider
                         }))
                       }}
                     >
@@ -1061,7 +1110,7 @@ export const PaymentSubscriptions: React.FC = () => {
                 />
               </div>
 
-              <div className={styles.formGroup}>
+              <div className={`${styles.formGroup} ${styles.fullWidth}`}>
                 <label>Nombre</label>
                 <input
                   value={form.name}
@@ -1069,19 +1118,6 @@ export const PaymentSubscriptions: React.FC = () => {
                   placeholder="Mensualidad, membresía, soporte..."
                   required
                 />
-              </div>
-
-              <div className={styles.formGroup}>
-                <label>Estado</label>
-                <CustomSelect
-                  value={form.status}
-                  onChange={(event) => patchForm('status', event.target.value)}
-                  disabled={isMercadoPagoSelected && formMode === 'create'}
-                >
-                  {STATUS_OPTIONS.map((option) => (
-                    <option key={option.value} value={option.value}>{option.label}</option>
-                  ))}
-                </CustomSelect>
               </div>
 
               <div className={`${styles.formGroup} ${styles.fullWidth}`}>
@@ -1104,10 +1140,6 @@ export const PaymentSubscriptions: React.FC = () => {
                   placeholder="0.00"
                   required
                 />
-                <div className={styles.currencyNote}>
-                  <span>Moneda de cuenta</span>
-                  <strong>{accountCurrency}</strong>
-                </div>
               </div>
 
               <div className={styles.formGroup}>
@@ -1123,7 +1155,7 @@ export const PaymentSubscriptions: React.FC = () => {
               </div>
 
               <div className={styles.formGroup}>
-                <label>Cada</label>
+                <label>Cobrar cada</label>
                 <NumberInput
                   value={form.intervalCount}
                   onChange={(event) => patchForm('intervalCount', event.target.value)}
@@ -1131,6 +1163,7 @@ export const PaymentSubscriptions: React.FC = () => {
                   step="1"
                   required
                 />
+                <p className={styles.formHint}>{getBillingCadenceHelp(form.intervalType, form.intervalCount)}</p>
               </div>
 
               <div className={styles.formGroup}>
@@ -1142,6 +1175,31 @@ export const PaymentSubscriptions: React.FC = () => {
                   min={getTodayInputValue()}
                 />
               </div>
+
+              <div className={styles.formGroup}>
+                <label>Duración del plan</label>
+                <CustomSelect
+                  value={form.durationType}
+                  onChange={(event) => patchForm('durationType', event.target.value)}
+                >
+                  {DURATION_OPTIONS.map((option) => (
+                    <option key={option.value} value={option.value}>{option.label}</option>
+                  ))}
+                </CustomSelect>
+              </div>
+
+              {form.durationType === 'until_date' && (
+                <div className={styles.formGroup}>
+                  <label>Termina el</label>
+                  <input
+                    value={form.cancelAt}
+                    onChange={(event) => patchForm('cancelAt', event.target.value)}
+                    type="date"
+                    min={form.startDate || getTodayInputValue()}
+                    required
+                  />
+                </div>
+              )}
 
               {formMode === 'edit' && !isMercadoPagoSelected && (
                 <div className={styles.formGroup}>
@@ -1165,8 +1223,7 @@ export const PaymentSubscriptions: React.FC = () => {
                     setForm((current) => ({
                       ...current,
                       paymentMethod: event.target.value,
-                      paymentProvider: option?.provider || 'stripe',
-                      status: current.status
+                      paymentProvider: option?.provider || 'stripe'
                     }))
                   }}
                 >

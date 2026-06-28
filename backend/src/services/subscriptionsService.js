@@ -315,6 +315,11 @@ async function buildSubscriptionRow(payload = {}, existing = {}) {
   const intervalCount = normalizeIntervalCount(payload.intervalCount ?? payload.interval_count ?? existing.interval_count)
   const startDate = nullableDate(payload.startDate ?? payload.start_date ?? existing.start_date) || new Date().toISOString()
   const nextRunAt = nullableDate(payload.nextRunAt ?? payload.next_run_at ?? existing.next_run_at)
+  const hasCancelAtInput = Object.prototype.hasOwnProperty.call(payload, 'cancelAt')
+    || Object.prototype.hasOwnProperty.call(payload, 'cancel_at')
+  const cancelAt = hasCancelAtInput
+    ? nullableDate(payload.cancelAt ?? payload.cancel_at)
+    : nullableDate(existing.cancel_at)
 
   return {
     id: nullableString(existing.id) || nullableString(payload.id) || makeId(),
@@ -338,7 +343,7 @@ async function buildSubscriptionRow(payload = {}, existing = {}) {
     }),
     current_period_start: nullableDate(payload.currentPeriodStart ?? payload.current_period_start ?? existing.current_period_start),
     current_period_end: nullableDate(payload.currentPeriodEnd ?? payload.current_period_end ?? existing.current_period_end),
-    cancel_at: nullableDate(payload.cancelAt ?? payload.cancel_at ?? existing.cancel_at),
+    cancel_at: cancelAt,
     cancelled_at: nullableDate(payload.cancelledAt ?? payload.cancelled_at ?? existing.cancelled_at),
     payment_method: cleanString(payload.paymentMethod ?? payload.payment_method ?? existing.payment_method) || 'stripe_saved_card',
     payment_provider: cleanString(payload.paymentProvider ?? payload.payment_provider ?? existing.payment_provider) || 'stripe',
@@ -381,6 +386,7 @@ async function attachStripeSubscriptionIfNeeded(row, payload = {}) {
     intervalType: row.interval_type,
     intervalCount: row.interval_count,
     startDate: row.start_date,
+    cancelAt: row.cancel_at,
     paymentMethodId: row.stripe_payment_method_id || payload.paymentMethodId || payload.stripePaymentMethodId,
     contactName: row.contact_name,
     contactEmail: row.contact_email,
@@ -494,6 +500,7 @@ async function attachConektaSubscriptionIfNeeded(row, payload = {}) {
     intervalType: row.interval_type,
     intervalCount: row.interval_count,
     startDate: row.start_date,
+    cancelAt: row.cancel_at,
     paymentMethodId: row.conekta_payment_source_id || payload.paymentMethodId || payload.conektaPaymentSourceId,
     contactName: row.contact_name,
     contactEmail: row.contact_email,
@@ -521,7 +528,9 @@ async function syncStripeSubscriptionUpdateIfNeeded(row, existing) {
     amount: row.amount,
     currency: row.currency,
     intervalType: row.interval_type,
-    intervalCount: row.interval_count
+    intervalCount: row.interval_count,
+    cancelAt: row.cancel_at,
+    clearCancelAt: Boolean(existing.cancel_at && !row.cancel_at)
   })
 
   return {
@@ -579,7 +588,8 @@ async function syncConektaSubscriptionUpdateIfNeeded(row, existing = {}, payload
     amount: row.amount,
     currency: row.currency,
     intervalType: row.interval_type,
-    intervalCount: row.interval_count
+    intervalCount: row.interval_count,
+    cancelAt: row.cancel_at
   })
 
   return applyConektaSubscriptionToRow(row, conektaSubscription)
