@@ -927,6 +927,7 @@ test('video player uses the same visual signature for direct and Bunny Stream re
     'rstk-video-sound-hint',
     'rstk-video-is-muted',
     'rstk-video-landscape',
+    'rstk-video-wauto',
     'rstk-video-play-shape-rectangle',
     'rstk-video-play-spark'
   ].join(' ')
@@ -996,6 +997,7 @@ test('video player uses the same visual signature for direct and Bunny Stream re
       'rstk-video-controls-start-hidden',
       'rstk-video-is-muted',
       'rstk-video-landscape',
+      'rstk-video-wauto',
       'rstk-video-play-shape-rectangle',
       'rstk-video-play-spark'
     ].join(' '))

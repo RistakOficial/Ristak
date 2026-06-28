@@ -818,18 +818,33 @@
   min-height: var(--rstk-video-sound-size);
   overflow: hidden;
   border-radius: 999px;
-  background: color-mix(in srgb, #020617 72%, transparent);
+  background: transparent;
   color: var(--rstk-video-sound-color, var(--rstk-video-play-color, #fff));
   box-shadow: none;
   padding: 0 12px;
   pointer-events: none;
-  backdrop-filter: blur(14px);
+  isolation: isolate;
+  contain: paint;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: geometricPrecision;
   transform-origin: right center;
+}
+.rstkCanvas .rstk-video-sound::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  border-radius: inherit;
+  background: color-mix(in srgb, #020617 72%, transparent);
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
 }
 .rstkCanvas .rstk-video-has-control-bar .rstk-video-sound { top: 22px; }
 .rstkCanvas .rstk-video-sound-auto { animation: rstkVideoSoundNotice var(--rstk-video-sound-cycle, 6.6s) cubic-bezier(.2, .8, .2, 1) .45s both; }
 .rstkCanvas .rstk-video-sound-persistent { animation: rstkVideoSoundNoticeOpen .8s cubic-bezier(.2, .8, .2, 1) .45s both; }
 .rstkCanvas .rstk-video-sound-icon {
+  position: relative;
+  z-index: 1;
   display: grid;
   place-items: center;
   flex: 0 0 var(--rstk-video-sound-icon-size);
@@ -840,8 +855,14 @@
 }
 .rstkCanvas .rstk-video-sound-icon svg {
   display: block;
+  width: 22px;
+  height: 22px;
+  flex: 0 0 auto;
+  shape-rendering: geometricPrecision;
 }
 .rstkCanvas .rstk-video-sound-text {
+  position: relative;
+  z-index: 1;
   display: inline-block;
   max-width: min(260px, calc(100vw - 150px));
   min-width: 0;
@@ -851,6 +872,7 @@
   color: currentColor;
   font-size: 1rem;
   font-weight: 500;
+  line-height: 1.25;
   letter-spacing: 0;
   opacity: 0;
   transform: translateX(10px);
@@ -1114,16 +1136,16 @@
   }
 }
 @keyframes rstkVideoSoundNotice {
-  0% { max-width: var(--rstk-video-sound-size, 58px); opacity: 0; transform: translateY(-4px) scale(.94); }
-  10%, 18% { max-width: var(--rstk-video-sound-size, 58px); opacity: 1; transform: translateY(0) scale(1); }
-  28%, 70% { max-width: min(calc(100% - 44px), 360px); opacity: 1; transform: translateY(0) scale(1); }
-  86% { max-width: var(--rstk-video-sound-size, 58px); opacity: 1; transform: translateY(0) scale(1); }
-  100% { max-width: var(--rstk-video-sound-size, 58px); opacity: 0; transform: translateY(-4px) scale(.94); }
+  0% { max-width: var(--rstk-video-sound-size, 58px); opacity: 0; transform: translateY(-4px); }
+  10%, 18% { max-width: var(--rstk-video-sound-size, 58px); opacity: 1; transform: translateY(0); }
+  28%, 70% { max-width: min(calc(100% - 44px), 360px); opacity: 1; transform: translateY(0); }
+  86% { max-width: var(--rstk-video-sound-size, 58px); opacity: 1; transform: translateY(0); }
+  100% { max-width: var(--rstk-video-sound-size, 58px); opacity: 0; transform: translateY(-4px); }
 }
 @keyframes rstkVideoSoundNoticeOpen {
-  0% { max-width: var(--rstk-video-sound-size, 58px); opacity: 0; transform: translateY(-4px) scale(.94); }
-  45% { opacity: 1; transform: translateY(0) scale(1); }
-  100% { max-width: min(calc(100% - 44px), 360px); opacity: 1; transform: translateY(0) scale(1); }
+  0% { max-width: var(--rstk-video-sound-size, 58px); opacity: 0; transform: translateY(-4px); }
+  45% { opacity: 1; transform: translateY(0); }
+  100% { max-width: min(calc(100% - 44px), 360px); opacity: 1; transform: translateY(0); }
 }
 @keyframes rstkVideoSoundText {
   0%, 17%, 76%, 100% { opacity: 0; transform: translateX(10px); }
