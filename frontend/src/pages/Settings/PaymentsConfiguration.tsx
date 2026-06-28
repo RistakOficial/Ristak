@@ -269,7 +269,7 @@ const mercadoPagoSinglePaymentTestSteps = [
 const mercadoPagoSubscriptionTestSteps = [
   'Crea vendedor test y comprador test del mismo país.',
   'En incógnito, entra como vendedor test y crea una app en Tus integraciones.',
-  'Copia Public Key y Access Token APP_USR de esa app.',
+  'Copia la Public Key y el Access Token de esa app.',
   'Configura Webhooks con URL de Ristak, eventos y clave secreta.',
   'Abre el link como comprador test. No uses vendedor ni cuenta real.'
 ]
@@ -1681,9 +1681,9 @@ export const PaymentsConfiguration: React.FC = () => {
         webhookSecret: mercadoPagoSubscriptionTestCredentials.webhookSecret.trim()
       })
       applyMercadoPagoConfig(config)
-      showToast('success', 'Credenciales guardadas', 'Las suscripciones test de Mercado Pago usarán el vendedor test APP_USR.')
+      showToast('success', 'Credenciales guardadas', 'Las suscripciones test de Mercado Pago usarán la app del vendedor test.')
     } catch (error: any) {
-      showToast('error', 'No se guardaron las credenciales', error.message || 'Revisa las credenciales APP_USR del vendedor test.')
+      showToast('error', 'No se guardaron las credenciales', error.message || 'Revisa las credenciales de la app del vendedor test.')
     } finally {
       setSavingMercadoPagoSubscriptionTestCredentials(false)
     }
@@ -1692,7 +1692,7 @@ export const PaymentsConfiguration: React.FC = () => {
   const handleClearMercadoPagoSubscriptionTestCredentials = () => {
     showConfirm(
       'Desconectar credenciales test',
-      'Se borrarán las credenciales APP_USR usadas para probar suscripciones de Mercado Pago. Los pagos únicos de prueba seguirán usando la conexión normal. Esta acción no se puede deshacer.',
+      'Se borrarán las credenciales de la app usadas para probar suscripciones de Mercado Pago. Los pagos únicos de prueba seguirán usando la conexión normal. Esta acción no se puede deshacer.',
       () => clearMercadoPagoSubscriptionTestCredentials(),
       'Desconectar',
       'Cancelar',
@@ -1706,7 +1706,7 @@ export const PaymentsConfiguration: React.FC = () => {
     try {
       const config = await mercadoPagoPaymentsService.deleteSubscriptionTestCredentials()
       applyMercadoPagoConfig(config)
-      showToast('success', 'Credenciales borradas', 'Ristak dejó de usar credenciales APP_USR para suscripciones test.')
+      showToast('success', 'Credenciales borradas', 'Ristak dejó de usar esa app para suscripciones test.')
     } catch (error: any) {
       showToast('error', 'No se borraron las credenciales', error.message || 'Intenta de nuevo.')
     } finally {
@@ -3645,7 +3645,7 @@ export const PaymentsConfiguration: React.FC = () => {
                             </span>
                             <div>
                               <strong>Suscripciones test</strong>
-                              <span>App del vendedor test + credenciales APP_USR + webhook.</span>
+                              <span>App del vendedor test + credenciales + webhook.</span>
                             </div>
                           </div>
                           <Badge variant={mercadoPagoSubscriptionTestConfigured ? 'success' : 'neutral'}>
@@ -3707,7 +3707,7 @@ export const PaymentsConfiguration: React.FC = () => {
 
                         <div className={styles.mercadoPagoCredentialGrid}>
                           {renderField(
-                            'Public Key APP_USR',
+                            'Public Key de la app',
                             <input
                               type="text"
                               value={mercadoPagoSubscriptionTestCredentials.publicKey}
@@ -3718,7 +3718,7 @@ export const PaymentsConfiguration: React.FC = () => {
                             />
                           )}
                           {renderField(
-                            'Access Token APP_USR',
+                            'Access Token de la app',
                             <input
                               type="password"
                               value={mercadoPagoSubscriptionTestCredentials.accessToken}
