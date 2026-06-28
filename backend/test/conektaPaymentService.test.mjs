@@ -435,3 +435,185 @@ test('Conekta payment flow: crea link, guarda payment_source y cobra tarjeta gua
     // Limpieza best-effort para no ocultar la aserción principal.
   }
 })
+
+test('Conekta planes: conserva varios planes del mismo contacto y procesa solo vencidos', async () => {
+  await initializeMasterKey()
+
+  const suffix = `${Date.now()}_${Math.random().toString(36).slice(2, 8)}`
+  const contactId = `contact_conekta_multi_${suffix}`
+  const conektaCustomerId = `cus_multi_${suffix}`
+  const conektaSourceId = `src_multi_${suffix}`
+
+  await snapshotConektaConfig(async () => {
+    const orderCalls = []
+    setConektaFetchForTest(async (url, options = {}) => {
+      if (url.endsWith('/orders') && options.method === 'POST') {
+        const body = JSON.parse(options.body)
+        orderCalls.push({
+          url,
+          body,
+          idempotencyKey: options.headers?.['Idempotency-Key']
+        })
+
+        assert.equal(body.currency, 'MXN')
+        assert.equal(body.customer_info.customer_id, conektaCustomerId)
+        assert.equal(body.charges[0].payment_method.type, 'card')
+        assert.equal(body.charges[0].payment_method.payment_source_id, conektaSourceId)
+        assert.ok(options.headers?.['Idempotency-Key'])
+
+        return jsonResponse({
+          id: `ord_multi_${orderCalls.length}`,
+          payment_status: 'paid',
+          charges: {
+            data: [{
+              id: `charge_multi_${orderCalls.length}`,
+              status: 'paid',
+              payment_method: {
+                type: 'card',
+                payment_source_id: conektaSourceId
+              }
+            }]
+          }
+        })
+      }
+
+      return jsonResponse({ message: 'unexpected request' }, 500)
+    })
+
+    await savePaymentSettings({ paymentMode: 'test' })
+    await saveConektaPaymentConfig({
+      enabled: true,
+      mode: 'test',
+      manualModes: {
+        test: {
+          publicKey: 'key_test_public_multi',
+          privateKey: 'key_test_private_multi'
+        }
+      }
+    })
+
+    await db.run(
+      `INSERT INTO contacts (
+        id, email, full_name, phone, conekta_customer_id, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+      [
+        contactId,
+        `conekta-multi-${suffix}@example.test`,
+        'Cliente Multi Conekta',
+        '5555555555',
+        conektaCustomerId
+      ]
+    )
+
+    await db.run(
+      `INSERT INTO conekta_payment_sources (
+        id, contact_id, conekta_customer_id, conekta_payment_source_id,
+        brand, last4, exp_month, exp_year, mode, is_default, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, 'visa', '4242', 12, 2035, 'test', 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+      [`conekta_source_${suffix}`, contactId, conektaCustomerId, conektaSourceId]
+    )
+
+    const today = todayConektaDateOnly()
+    const contact = {
+      id: contactId,
+      name: 'Cliente Multi Conekta',
+      email: `conekta-multi-${suffix}@example.test`,
+      phone: '5555555555'
+    }
+
+    const firstPlan = await createConektaPaymentPlan({
+      contact,
+      totalAmount: 350,
+      currency: 'MXN',
+      title: 'Plan Conekta vencido',
+      description: 'Plan Conekta vencido',
+      paymentMethodId: conektaSourceId,
+      firstPayment: { enabled: false },
+      remainingFrequency: 'custom',
+      remainingPayments: [{
+        sequence: 1,
+        amount: 350,
+        dueDate: today,
+        frequency: 'custom'
+      }]
+    }, { baseUrl: 'https://app.example.test' })
+
+    const secondPlan = await createConektaPaymentPlan({
+      contact,
+      totalAmount: 475,
+      currency: 'MXN',
+      title: 'Plan Conekta futuro',
+      description: 'Plan Conekta futuro',
+      paymentMethodId: conektaSourceId,
+      firstPayment: { enabled: false },
+      remainingFrequency: 'custom',
+      remainingPayments: [{
+        sequence: 1,
+        amount: 475,
+        dueDate: '2099-01-01',
+        frequency: 'custom'
+      }]
+    }, { baseUrl: 'https://app.example.test' })
+
+    assert.notEqual(firstPlan.flowId, secondPlan.flowId)
+
+    const flows = await db.all(
+      `SELECT id, total_amount, current_state
+       FROM payment_flows
+       WHERE contact_id = ? AND payment_provider = 'conekta'
+       ORDER BY total_amount ASC`,
+      [contactId]
+    )
+    assert.equal(flows.length, 2)
+    assert.deepEqual(flows.map((row) => row.id).sort(), [firstPlan.flowId, secondPlan.flowId].sort())
+    assert.deepEqual(flows.map((row) => Number(row.total_amount)), [350, 475])
+    assert.ok(flows.every((row) => row.current_state === 'installment_plan_active'))
+
+    const mirrors = await db.all(
+      `SELECT id, total, source
+       FROM payment_plans
+       WHERE contact_id = ? AND source = 'conekta'
+       ORDER BY total ASC`,
+      [contactId]
+    )
+    assert.equal(mirrors.length, 2)
+    assert.deepEqual(mirrors.map((row) => row.id).sort(), [firstPlan.flowId, secondPlan.flowId].sort())
+    assert.deepEqual(mirrors.map((row) => Number(row.total)), [350, 475])
+
+    const firstRun = await processDueConektaPaymentPlanCharges({ limit: 10 })
+    assert.equal(firstRun.processed, 1)
+    assert.equal(firstRun.succeeded, 1)
+    assert.equal(firstRun.failed, 0)
+    assert.equal(orderCalls.length, 1)
+    assert.equal(orderCalls[0].body.line_items[0].unit_price, 35000)
+    assert.match(orderCalls[0].idempotencyKey, /^ristak_conekta_charge_conekta_installment_/)
+
+    const firstInstallment = await db.get(
+      'SELECT status, conekta_order_id FROM installment_payments WHERE id = ?',
+      [firstPlan.scheduledPayments[0].installmentId]
+    )
+    const secondInstallment = await db.get(
+      'SELECT status, conekta_order_id FROM installment_payments WHERE id = ?',
+      [secondPlan.scheduledPayments[0].installmentId]
+    )
+    assert.equal(firstInstallment.status, 'paid')
+    assert.equal(firstInstallment.conekta_order_id, 'ord_multi_1')
+    assert.equal(secondInstallment.status, 'scheduled')
+    assert.equal(secondInstallment.conekta_order_id, null)
+
+    const secondRun = await processDueConektaPaymentPlanCharges({ limit: 10 })
+    assert.equal(secondRun.processed, 0)
+    assert.equal(orderCalls.length, 1)
+  })
+
+  try {
+    await db.run('DELETE FROM payment_plans WHERE contact_id = ?', [contactId])
+    await db.run('DELETE FROM installment_payments WHERE flow_id IN (SELECT id FROM payment_flows WHERE contact_id = ?)', [contactId])
+    await db.run('DELETE FROM payment_flows WHERE contact_id = ?', [contactId])
+    await db.run('DELETE FROM payments WHERE contact_id = ?', [contactId])
+    await db.run('DELETE FROM conekta_payment_sources WHERE contact_id = ?', [contactId])
+    await db.run('DELETE FROM contacts WHERE id = ?', [contactId])
+  } catch {
+    // Limpieza best-effort para no ocultar la aserción principal.
+  }
+})

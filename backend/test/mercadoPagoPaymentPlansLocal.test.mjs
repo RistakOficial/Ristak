@@ -82,23 +82,42 @@ async function cleanup(ids) {
   await db.run('DELETE FROM contacts WHERE id = ?', [ids.contactId]).catch(() => undefined)
 }
 
-test('Mercado Pago rechaza nuevos planes de pago por parcialidades', async () => {
-  await assert.rejects(
-    () => createMercadoPagoPaymentPlan({
-      contact: { id: 'contact_mp_plan_disabled', name: 'Cliente Mercado Pago' },
-      totalAmount: 300,
-      currency: 'MXN',
-      title: 'Plan no permitido',
-      description: 'Plan no permitido',
-      firstPayment: { enabled: false, amount: 0, method: 'mercadopago' },
-      remainingPayments: [{ sequence: 1, amount: 300, dueDate: '2099-01-01', frequency: 'monthly' }]
-    }, { baseUrl: 'https://app.example.test' }),
-    (error) => {
-      assert.equal(error.status, 422)
-      assert.match(error.message, /Mercado Pago no está disponible para planes de pago/i)
-      return true
-    }
-  )
+test('Mercado Pago rechaza nuevos planes de pago por parcialidades sin dejar registros a medias', async () => {
+  const contactId = `contact_mp_plan_disabled_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`
+
+  await db.run('DELETE FROM payment_plans WHERE contact_id = ?', [contactId]).catch(() => undefined)
+  await db.run('DELETE FROM payment_flows WHERE contact_id = ?', [contactId]).catch(() => undefined)
+  await db.run('DELETE FROM payments WHERE contact_id = ?', [contactId]).catch(() => undefined)
+
+  try {
+    await assert.rejects(
+      () => createMercadoPagoPaymentPlan({
+        contact: { id: contactId, name: 'Cliente Mercado Pago' },
+        totalAmount: 300,
+        currency: 'MXN',
+        title: 'Plan no permitido',
+        description: 'Plan no permitido',
+        firstPayment: { enabled: false, amount: 0, method: 'mercadopago' },
+        remainingPayments: [{ sequence: 1, amount: 300, dueDate: '2099-01-01', frequency: 'monthly' }]
+      }, { baseUrl: 'https://app.example.test' }),
+      (error) => {
+        assert.equal(error.status, 422)
+        assert.match(error.message, /Mercado Pago no está disponible para planes de pago/i)
+        return true
+      }
+    )
+
+    const leftovers = await Promise.all([
+      db.get('SELECT COUNT(*) AS count FROM payment_flows WHERE contact_id = ?', [contactId]),
+      db.get('SELECT COUNT(*) AS count FROM payment_plans WHERE contact_id = ?', [contactId]),
+      db.get('SELECT COUNT(*) AS count FROM payments WHERE contact_id = ?', [contactId])
+    ])
+    assert.deepEqual(leftovers.map((row) => Number(row.count)), [0, 0, 0])
+  } finally {
+    await db.run('DELETE FROM payment_plans WHERE contact_id = ?', [contactId]).catch(() => undefined)
+    await db.run('DELETE FROM payment_flows WHERE contact_id = ?', [contactId]).catch(() => undefined)
+    await db.run('DELETE FROM payments WHERE contact_id = ?', [contactId]).catch(() => undefined)
+  }
 })
 
 test('Mercado Pago cobra tarjeta en la pagina publica sin confiar en el monto del navegador', async () => {
