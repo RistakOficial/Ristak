@@ -679,7 +679,8 @@ const GHL_CHAT_CHANNEL_LABELS: Record<HighLevelChatChannel, string> = {
   whatsapp_api: 'WhatsApp API',
   sms_qr: 'SMS',
   messenger: 'Messenger',
-  instagram: 'Instagram'
+  instagram: 'Instagram',
+  email: 'Correo'
 }
 type ComposerMessageChannelValue = HighLevelChatChannel | 'email'
 const COMPOSER_MESSAGE_CHANNEL_OPTIONS: Array<{

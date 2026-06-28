@@ -1952,6 +1952,7 @@ function getDefaultComposerChannel(contact?: DesktopChatContact | null): Compose
 }
 
 function getHighLevelChannelForComposer(channel: ComposerChannel): HighLevelChatChannel {
+  if (channel === 'email') return 'email'
   if (channel === 'messenger' || channel === 'instagram') return channel
   return 'whatsapp_api'
 }
@@ -2611,6 +2612,7 @@ export const DesktopChat: React.FC = () => {
   const whatsappApiSourcesAvailable = Boolean(whatsappStatus?.connected && whatsappComposerPhones.some((phone) => getBusinessPhoneValue(phone)))
   const canSendMessenger = metaMessengerConnected || highLevelConnected
   const canSendInstagram = metaInstagramConnected || highLevelConnected
+  const emailChannelConnected = highLevelConnected || emailConnected
   const composerChannelOptions = COMPOSER_CHANNEL_OPTIONS.flatMap((option) => {
     if (option.value === 'whatsapp') {
       const whatsappDisabled = !activeContact?.phone || (!whatsappApiSourcesAvailable && !highLevelConnected)
@@ -2627,7 +2629,7 @@ export const DesktopChat: React.FC = () => {
       return [{
         ...option,
         icon: renderComposerChannelIcon(option.value),
-        disabled: !activeContact?.email || !emailConnected
+        disabled: !activeContact?.email || !emailChannelConnected
       }]
     }
     return [{
@@ -2642,7 +2644,7 @@ export const DesktopChat: React.FC = () => {
     ? `whatsapp:${selectedBusinessPhone.id}`
     : composerChannel
   const composerChannelReady = isEmailComposer
-    ? Boolean(hasEmailAccess && activeContact?.email && emailConnected)
+    ? Boolean(hasEmailAccess && activeContact?.email && emailChannelConnected)
     : composerChannel === 'whatsapp'
     ? Boolean(activeContact?.phone && (whatsappConnected || highLevelConnected))
     : composerChannel === 'messenger'
@@ -2654,8 +2656,8 @@ export const DesktopChat: React.FC = () => {
     ? 'El correo no está incluido en los accesos de esta cuenta.'
     : isEmailComposer && !activeContact.email
     ? 'Este contacto no tiene correo guardado.'
-    : isEmailComposer && !emailConnected
-    ? 'Conecta tu correo de envío en Configuración > Correos.'
+    : isEmailComposer && !emailChannelConnected
+    ? 'Conecta HighLevel o tu correo de envío en Configuración > Correos.'
     : composerChannel === 'whatsapp' && !activeContact.phone
     ? 'Este contacto no tiene teléfono guardado.'
     : composerChannel === 'whatsapp' && whatsappApiSourcesAvailable && !selectedBusinessPhoneValue && !highLevelConnected
@@ -4513,12 +4515,13 @@ export const DesktopChat: React.FC = () => {
 		    if (isEmailMessage) {
 		      const subject = emailSubject.trim()
 		      const recipient = activeContact.email?.trim() || ''
+		      const sendEmailThroughHighLevel = highLevelConnected
 		      if (!recipient) {
 		        showToast('error', 'Falta el correo', 'Guarda el correo del contacto antes de enviarle un email.')
 	        return
 	      }
-	      if (!emailConnected) {
-	        showToast('warning', 'Correo no conectado', 'Conecta tu correo de envío en Configuración > Correos.')
+	      if (!sendEmailThroughHighLevel && !emailConnected) {
+	        showToast('warning', 'Correo no conectado', 'Conecta HighLevel o tu correo de envío en Configuración > Correos.')
 	        return
 	      }
 	      if (!subject) {
@@ -4540,7 +4543,7 @@ export const DesktopChat: React.FC = () => {
 	        date: sentAt,
 	        direction: 'outbound',
 	        status: 'enviando',
-	        transport: 'email'
+	        transport: sendEmailThroughHighLevel ? 'ghl_email' : 'email'
 	      }
 
 		      setComposerStatus('sending')
@@ -4560,7 +4563,7 @@ export const DesktopChat: React.FC = () => {
 	                lastMessageDate: sentAt,
 	                lastMessageDirection: 'outbound',
 	                lastMessageChannel: 'email',
-	                lastMessageTransport: 'email',
+	                lastMessageTransport: sendEmailThroughHighLevel ? 'ghl_email' : 'email',
 	                messageCount: Number(contact.messageCount || 0) + 1
 	              }
 	            : contact
@@ -4570,24 +4573,45 @@ export const DesktopChat: React.FC = () => {
 	      })
 
 	      try {
-	        const result = await emailService.send({
-	          contactId: activeContact.id,
-		          to: recipient,
-		          subject,
-		          text,
-		          html: cleanEmailHtml,
-		          includeSignature: emailIncludeSignature,
-		          externalId: optimisticId
-		        })
-	        setMessages((current) => current.map((message) => message.id === optimisticId
-	          ? {
-	              ...message,
-	              id: result.localMessageId || message.id,
-	              status: result.status || 'sent',
-	              transport: 'email'
-	            }
-	          : message
-	        ))
+	        if (sendEmailThroughHighLevel) {
+	          const result = await highLevelService.sendConversationMessage({
+	            contactId: activeContact.id,
+	            channel: 'email',
+	            message: text,
+	            subject,
+	            html: cleanEmailHtml,
+	            externalId: optimisticId
+	          })
+	          const data = result.data || result
+	          setMessages((current) => current.map((message) => message.id === optimisticId
+	            ? {
+	                ...message,
+	                id: data.localMessageId || message.id,
+	                status: data.status || 'sent',
+	                transport: data.transport || 'ghl_email'
+	              }
+	            : message
+	          ))
+	        } else {
+	          const result = await emailService.send({
+	            contactId: activeContact.id,
+		            to: recipient,
+		            subject,
+		            text,
+		            html: cleanEmailHtml,
+		            includeSignature: emailIncludeSignature,
+		            externalId: optimisticId
+		          })
+	          setMessages((current) => current.map((message) => message.id === optimisticId
+	            ? {
+	                ...message,
+	                id: result.localMessageId || message.id,
+	                status: result.status || 'sent',
+	                transport: 'email'
+	              }
+	            : message
+	          ))
+	        }
 	        await Promise.all([
 	          loadConversation(activeContact.id),
 	          loadChats({ silent: true })

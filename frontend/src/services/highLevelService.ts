@@ -14,7 +14,7 @@ interface HighLevelConfig {
   ghlInvoiceLiveMode?: boolean
 }
 
-export type HighLevelChatChannel = 'whatsapp_api' | 'sms_qr' | 'messenger' | 'instagram'
+export type HighLevelChatChannel = 'whatsapp_api' | 'sms_qr' | 'messenger' | 'instagram' | 'email'
 
 export interface HighLevelConversationMessagePayload {
   contactId: string
@@ -28,6 +28,8 @@ export interface HighLevelConversationMessagePayload {
   toNumber?: string
   conversationProviderId?: string
   externalId?: string
+  subject?: string
+  html?: string
 }
 
 export interface HighLevelConversationMessageResponse {

@@ -84,6 +84,13 @@ const GHL_CHAT_CHANNELS = {
     localTable: 'meta',
     platform: 'instagram'
   },
+  email: {
+    key: 'email',
+    type: 'Email',
+    label: 'Correo',
+    transport: 'ghl_email',
+    localTable: 'email'
+  },
   webchat: {
     key: 'webchat',
     type: 'WebChat',
@@ -141,6 +148,10 @@ const GHL_CHAT_CHANNEL_ALIASES = {
   ig: 'instagram',
   instagram: 'instagram',
   ghl_instagram: 'instagram',
+  email: 'email',
+  correo: 'email',
+  mail: 'email',
+  ghl_email: 'email',
   webchat: 'webchat',
   web_chat: 'webchat',
   chat_web: 'webchat',
@@ -163,9 +174,29 @@ const GHL_LOCAL_WHATSAPP_TRANSPORTS = new Set([
   'whatsapp_qr'
 ]);
 const GHL_INBOUND_DIRECTIONS = new Set(['inbound', 'incoming', 'received', 'customer']);
+const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 function cleanString(value) {
   return String(value || '').trim();
+}
+
+function escapeEmailHtml(value = '') {
+  return String(value || '').replace(/[&<>"']/g, (char) => ({
+    '&': '&amp;',
+    '<': '&lt;',
+    '>': '&gt;',
+    '"': '&quot;',
+    "'": '&#39;'
+  }[char] || char));
+}
+
+function textToHighLevelEmailHtml(text = '') {
+  return String(text || '')
+    .split(/\n{2,}/)
+    .map(block => block.trim())
+    .filter(Boolean)
+    .map(block => `<p>${block.split(/\n/).map(line => escapeEmailHtml(line)).join('<br>')}</p>`)
+    .join('');
 }
 
 function resolvePaymentTimestamp(rawDate) {
@@ -2452,6 +2483,68 @@ async function saveHighLevelMetaMirror({ contact, channel, text, attachments = [
   };
 }
 
+async function saveHighLevelEmailMirror({ contact, channel, subject, text, html, externalId, requestBody, response }) {
+  const now = new Date().toISOString();
+  const remoteMessageId = getHighLevelMessageId(response, externalId);
+  const deliveryStatus = getHighLevelResponseStatus(response);
+  const toEmail = cleanString(contact.email).toLowerCase();
+  const rawPayload = safeJsonStringify({
+    provider: 'highlevel',
+    channel: channel.key,
+    request: requestBody,
+    response
+  });
+  const localMessageId = hashId(
+    'ghl_email_msg',
+    remoteMessageId
+      ? `${remoteMessageId}:0`
+      : `${contact.id}:${channel.key}:${subject}:${text}:${now}`
+  );
+
+  await db.run(`
+    INSERT INTO email_messages (
+      id, contact_id, direction, status, to_email, from_email, reply_to,
+      subject, message_text, html_body, smtp_message_id, error_message,
+      message_timestamp, raw_payload_json, updated_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+    ON CONFLICT(id) DO UPDATE SET
+      contact_id = COALESCE(excluded.contact_id, email_messages.contact_id),
+      direction = COALESCE(NULLIF(excluded.direction, ''), email_messages.direction),
+      status = COALESCE(NULLIF(excluded.status, ''), email_messages.status),
+      to_email = COALESCE(NULLIF(excluded.to_email, ''), email_messages.to_email),
+      from_email = COALESCE(NULLIF(excluded.from_email, ''), email_messages.from_email),
+      reply_to = COALESCE(NULLIF(excluded.reply_to, ''), email_messages.reply_to),
+      subject = COALESCE(NULLIF(excluded.subject, ''), email_messages.subject),
+      message_text = COALESCE(NULLIF(excluded.message_text, ''), email_messages.message_text),
+      html_body = COALESCE(NULLIF(excluded.html_body, ''), email_messages.html_body),
+      smtp_message_id = COALESCE(NULLIF(excluded.smtp_message_id, ''), email_messages.smtp_message_id),
+      error_message = COALESCE(NULLIF(excluded.error_message, ''), email_messages.error_message),
+      message_timestamp = COALESCE(excluded.message_timestamp, email_messages.message_timestamp),
+      raw_payload_json = excluded.raw_payload_json,
+      updated_at = CURRENT_TIMESTAMP
+  `, [
+    localMessageId,
+    contact.id,
+    'outbound',
+    deliveryStatus,
+    toEmail || null,
+    null,
+    null,
+    subject,
+    text,
+    html,
+    null,
+    null,
+    now,
+    rawPayload
+  ]);
+
+  return {
+    localMessageId,
+    status: deliveryStatus
+  };
+}
+
 function createHighLevelChatError(message, statusCode = 400) {
   const error = new Error(message);
   error.statusCode = statusCode;
@@ -2470,10 +2563,14 @@ export async function sendHighLevelConversationMessageCore(payload = {}, { req, 
     fromNumber,
     toNumber,
     conversationProviderId,
-    externalId
+    externalId,
+    subject,
+    html
   } = payload || {};
   const channelConfig = normalizeGhlChatChannel(channel);
   const text = cleanString(message);
+  const emailSubject = cleanString(subject);
+  const emailHtml = cleanString(html);
   const attachmentUrls = Array.isArray(attachments)
     ? attachments.map(item => cleanString(item)).filter(Boolean)
     : [];
@@ -2510,6 +2607,16 @@ export async function sendHighLevelConversationMessageCore(payload = {}, { req, 
     throw createHighLevelChatError('Este contacto necesita teléfono para enviar por WhatsApp API o SMS/QR.');
   }
 
+  if (channelConfig.key === 'email') {
+    const recipient = cleanString(contact.email).toLowerCase();
+    if (!EMAIL_PATTERN.test(recipient)) {
+      throw createHighLevelChatError('Este contacto necesita un correo válido para enviar por HighLevel.');
+    }
+    if (!emailSubject) {
+      throw createHighLevelChatError('El correo necesita un asunto.');
+    }
+  }
+
   const ghlClient = await getGHLClient();
   const highLevelContactId = await resolveHighLevelContactIdForChat({ contact, ghlClient });
   const cleanFromNumber = normalizePhoneForStorage(fromNumber) || cleanString(fromNumber);
@@ -2520,6 +2627,25 @@ export async function sendHighLevelConversationMessageCore(payload = {}, { req, 
     userId: req?.user?.userId,
     publicBaseUrl: req ? getPublicBaseUrl(req) : undefined
   });
+  const renderedSubject = channelConfig.key === 'email'
+    ? await renderTemplateVariables(emailSubject, {
+        contactId: contact.id,
+        phone: cleanToNumber,
+        userId: req?.user?.userId,
+        publicBaseUrl: req ? getPublicBaseUrl(req) : undefined
+      })
+    : '';
+  const renderedEmailHtml = channelConfig.key === 'email'
+    ? await renderTemplateVariables(emailHtml || textToHighLevelEmailHtml(renderedText), {
+        contactId: contact.id,
+        phone: cleanToNumber,
+        userId: req?.user?.userId,
+        publicBaseUrl: req ? getPublicBaseUrl(req) : undefined
+      })
+    : '';
+  if (channelConfig.key === 'email' && !cleanString(renderedSubject)) {
+    throw createHighLevelChatError('El correo necesita un asunto.');
+  }
   if (!cleanString(renderedText) && resolvedAttachmentUrls.length === 0) {
     throw createHighLevelChatError('El mensaje quedó vacío después de resolver parámetros.');
   }
@@ -2530,38 +2656,55 @@ export async function sendHighLevelConversationMessageCore(payload = {}, { req, 
     highLevelContactId
   });
   const effectiveChannel = channelResolution.channel;
+  const shouldIncludePhoneFields = effectiveChannel.key !== 'email';
   const requestBody = {
     type: effectiveChannel.type,
     contactId: highLevelContactId,
     status: 'pending',
     ...(renderedText && { message: renderedText }),
+    ...(effectiveChannel.key === 'email' && renderedSubject && { subject: renderedSubject }),
+    ...(effectiveChannel.key === 'email' && renderedEmailHtml && { html: renderedEmailHtml }),
     ...(resolvedAttachmentUrls.length > 0 && { attachments: resolvedAttachmentUrls }),
-    ...(cleanFromNumber && { fromNumber: cleanFromNumber }),
-    ...(cleanToNumber && { toNumber: cleanToNumber }),
+    ...(shouldIncludePhoneFields && cleanFromNumber && { fromNumber: cleanFromNumber }),
+    ...(shouldIncludePhoneFields && cleanToNumber && { toNumber: cleanToNumber }),
     ...(cleanString(conversationProviderId) && { conversationProviderId: cleanString(conversationProviderId) })
   };
   const response = await ghlClient.sendConversationMessage(requestBody);
-  const localMirror = effectiveChannel.localTable === 'meta'
-    ? await saveHighLevelMetaMirror({
-        contact,
-        channel: effectiveChannel,
-        text: renderedText,
-        attachments: resolvedAttachmentUrls,
-        externalId,
-        requestBody,
-        response
-      })
-    : await saveHighLevelWhatsAppMirror({
-        contact,
-        channel: effectiveChannel,
-        text: renderedText,
-        attachments: resolvedAttachmentUrls,
-        fromNumber: cleanFromNumber,
-        toNumber: cleanToNumber,
-        externalId,
-        requestBody,
-        response
-      });
+  let localMirror;
+  if (effectiveChannel.localTable === 'meta') {
+    localMirror = await saveHighLevelMetaMirror({
+      contact,
+      channel: effectiveChannel,
+      text: renderedText,
+      attachments: resolvedAttachmentUrls,
+      externalId,
+      requestBody,
+      response
+    });
+  } else if (effectiveChannel.localTable === 'email') {
+    localMirror = await saveHighLevelEmailMirror({
+      contact,
+      channel: effectiveChannel,
+      subject: renderedSubject,
+      text: renderedText,
+      html: renderedEmailHtml,
+      externalId,
+      requestBody,
+      response
+    });
+  } else {
+    localMirror = await saveHighLevelWhatsAppMirror({
+      contact,
+      channel: effectiveChannel,
+      text: renderedText,
+      attachments: resolvedAttachmentUrls,
+      fromNumber: cleanFromNumber,
+      toNumber: cleanToNumber,
+      externalId,
+      requestBody,
+      response
+    });
+  }
 
   if (markHumanTakeover) {
     markHumanTakeoverIfActive(contact.id, { updatedBy: 'human' }).catch(error => {

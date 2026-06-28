@@ -389,6 +389,7 @@ const getContactChatChannelFromValue = (value: string): ContactChatComposerChann
 }
 
 const getHighLevelChannelForContactChat = (channel: ContactChatComposerChannel): HighLevelChatChannel => {
+  if (channel === 'email') return 'email'
   if (channel === 'messenger' || channel === 'instagram') return channel
   return 'whatsapp_api'
 }
@@ -1449,6 +1450,7 @@ export function ContactDetailsModal({
   const whatsappApiSourcesAvailable = Boolean(whatsappStatus?.connected && availableWhatsAppPhones.some((phone) => getWhatsAppPhoneValue(phone)))
   const canSendMessenger = metaMessengerConnected || highLevelConnected
   const canSendInstagram = metaInstagramConnected || highLevelConnected
+  const emailChannelConnected = highLevelConnected || emailConnected
   const chatChannelOptions = useMemo<Array<{ value: string; label: string; disabled?: boolean; icon: ReactNode }>>(() => {
     if (!selectedContact) {
       return [{ value: 'none', label: CONTACT_CHAT_CHANNEL_LABELS.none, disabled: true, icon: renderContactChatChannelIcon('none') }]
@@ -1483,7 +1485,7 @@ export function ContactDetailsModal({
         value: 'email',
         label: `${CONTACT_CHAT_CHANNEL_LABELS.email} · ${selectedContact.email}`,
         icon: renderContactChatChannelIcon('email'),
-        disabled: !emailConnected
+        disabled: !emailChannelConnected
       })
     }
 
@@ -1510,7 +1512,7 @@ export function ContactDetailsModal({
       : [{ value: 'none', label: CONTACT_CHAT_CHANNEL_LABELS.none, disabled: true, icon: renderContactChatChannelIcon('none') }]
   }, [
     availableWhatsAppPhones,
-    emailConnected,
+    emailChannelConnected,
     hasEmailAccess,
     hasDetectedInstagram,
     hasDetectedMessenger,
@@ -1559,7 +1561,7 @@ export function ContactDetailsModal({
     return groups
   }, [agentCompletionEvents, chatMessages, timezone])
   const chatChannelReady = selectedChatChannel === 'email'
-    ? Boolean(hasEmailAccess && selectedContact?.email && emailConnected)
+    ? Boolean(hasEmailAccess && selectedContact?.email && emailChannelConnected)
     : selectedChatChannel === 'whatsapp'
     ? Boolean(selectedContact?.phone && (whatsappConnected || highLevelConnected))
     : selectedChatChannel === 'messenger'
@@ -1580,8 +1582,8 @@ export function ContactDetailsModal({
     ? 'El correo no está incluido en los accesos de esta cuenta.'
     : selectedChatChannel === 'email' && !selectedContact.email
     ? 'Este contacto no tiene correo guardado.'
-    : selectedChatChannel === 'email' && !emailConnected
-    ? 'Conecta tu correo de envio en Configuracion > Correos.'
+    : selectedChatChannel === 'email' && !emailChannelConnected
+    ? 'Conecta HighLevel o tu correo de envio en Configuracion > Correos.'
     : selectedChatChannel === 'whatsapp' && !selectedContact.phone
     ? 'Este contacto no tiene telefono guardado.'
     : selectedChatChannel === 'whatsapp' && whatsappApiSourcesAvailable && !selectedBusinessPhoneValue && !highLevelConnected
@@ -1651,6 +1653,7 @@ export function ContactDetailsModal({
     const cleanEmailHtml = isEmailChannel ? sanitizeEmailRichHtmlForEditor(chatEmailHtml) : ''
     const text = isEmailChannel ? emailHtmlToPlainText(cleanEmailHtml) : chatDraft.trim()
     const subject = chatSubject.trim()
+    const sendEmailThroughHighLevel = isEmailChannel && highLevelConnected
     const optimisticId = `contact-modal-chat-${Date.now()}`
     const sentAt = new Date().toISOString()
     const optimisticMessage: ContactChatMessage = {
@@ -1661,7 +1664,9 @@ export function ContactDetailsModal({
       date: sentAt,
       direction: 'outbound',
       status: 'enviando',
-      transport: selectedChatChannel === 'whatsapp'
+      transport: sendEmailThroughHighLevel
+        ? 'ghl_email'
+        : selectedChatChannel === 'whatsapp'
         ? (whatsappConnected ? 'api' : 'whatsapp_api')
         : selectedChatChannel,
       channel: selectedChatChannel
@@ -1677,26 +1682,49 @@ export function ContactDetailsModal({
 
     try {
       if (isEmailChannel) {
-        const result = await emailService.send({
-          contactId: selectedContact.id,
-          to: selectedContact.email || '',
-          subject,
-          text,
-          html: cleanEmailHtml,
-          includeSignature: chatEmailIncludeSignature,
-          externalId: optimisticId
-        })
+        if (sendEmailThroughHighLevel) {
+          const result = await highLevelService.sendConversationMessage({
+            contactId: selectedContact.id,
+            channel: 'email',
+            message: text,
+            subject,
+            html: cleanEmailHtml,
+            externalId: optimisticId
+          })
+          const data = result.data || result
 
-        setChatMessages((current) => current.map((message) => message.id === optimisticId
-          ? {
-              ...message,
-              id: result.localMessageId || message.id,
-              status: result.status || 'sent',
-              transport: 'email',
-              channel: 'email'
-            }
-          : message
-        ))
+          setChatMessages((current) => current.map((message) => message.id === optimisticId
+            ? {
+                ...message,
+                id: data.localMessageId || message.id,
+                status: data.status || 'sent',
+                transport: data.transport || 'ghl_email',
+                channel: 'email'
+              }
+            : message
+          ))
+        } else {
+          const result = await emailService.send({
+            contactId: selectedContact.id,
+            to: selectedContact.email || '',
+            subject,
+            text,
+            html: cleanEmailHtml,
+            includeSignature: chatEmailIncludeSignature,
+            externalId: optimisticId
+          })
+
+          setChatMessages((current) => current.map((message) => message.id === optimisticId
+            ? {
+                ...message,
+                id: result.localMessageId || message.id,
+                status: result.status || 'sent',
+                transport: 'email',
+                channel: 'email'
+              }
+            : message
+          ))
+        }
       } else if (selectedChatChannel === 'whatsapp' && whatsappConnected && selectedContact.phone) {
         const result = await whatsappApiService.sendText({
           to: selectedContact.phone,

@@ -35,10 +35,11 @@ async function cleanupContact(contactId, marker) {
   await db.run('DELETE FROM whatsapp_api_messages WHERE contact_id = ? OR ycloud_message_id LIKE ?', [contactId, `remote_send_${marker}%`]).catch(() => undefined)
   await db.run('DELETE FROM meta_social_messages WHERE contact_id = ? OR meta_message_id LIKE ?', [contactId, `remote_send_${marker}%`]).catch(() => undefined)
   await db.run('DELETE FROM meta_social_contacts WHERE contact_id = ?', [contactId]).catch(() => undefined)
+  await db.run('DELETE FROM email_messages WHERE contact_id = ?', [contactId]).catch(() => undefined)
   await db.run('DELETE FROM contacts WHERE id = ?', [contactId]).catch(() => undefined)
 }
 
-test('HighLevel conversation sender supports WhatsApp, Messenger and Instagram mirrors', async () => {
+test('HighLevel conversation sender supports WhatsApp, Messenger, Instagram and Email mirrors', async () => {
   const marker = randomUUID().replace(/-/g, '')
   const contactId = `contact_send_channels_${marker}`
   const phone = `+52656${marker.slice(0, 10).replace(/[a-f]/g, '7')}`
@@ -87,12 +88,27 @@ test('HighLevel conversation sender supports WhatsApp, Messenger and Instagram m
         channel: 'instagram',
         message: 'Hola por Instagram'
       }, { markHumanTakeover: false })
+      const email = await sendHighLevelConversationMessageCore({
+        contactId,
+        channel: 'email',
+        subject: 'Asunto por correo',
+        message: 'Hola por correo',
+        html: '<p>Hola por correo</p>'
+      }, { markHumanTakeover: false })
 
-      assert.deepEqual(sentPayloads.map(payload => payload.type), ['WhatsApp', 'FB', 'IG'])
-      assert.deepEqual([whatsapp.status, messenger.status, instagram.status], ['sent', 'sent', 'sent'])
+      assert.deepEqual(sentPayloads.map(payload => payload.type), ['WhatsApp', 'FB', 'IG', 'Email'])
+      assert.deepEqual([whatsapp.status, messenger.status, instagram.status, email.status], ['sent', 'sent', 'sent', 'sent'])
       assert.equal(whatsapp.channel, 'whatsapp_api')
       assert.equal(messenger.channel, 'messenger')
       assert.equal(instagram.channel, 'instagram')
+      assert.equal(email.channel, 'email')
+
+      const emailPayload = sentPayloads[3]
+      assert.equal(emailPayload.subject, 'Asunto por correo')
+      assert.equal(emailPayload.message, 'Hola por correo')
+      assert.equal(emailPayload.html, '<p>Hola por correo</p>')
+      assert.equal(emailPayload.fromNumber, undefined)
+      assert.equal(emailPayload.toNumber, undefined)
 
       const whatsappRow = await db.get(
         `SELECT transport, direction, message_type, message_text, status
@@ -118,6 +134,20 @@ test('HighLevel conversation sender supports WhatsApp, Messenger and Instagram m
       assert.equal(metaRows.find(row => row.platform === 'instagram')?.message_text, 'Hola por Instagram')
       assert.ok(metaRows.every(row => row.direction === 'outbound'))
       assert.ok(metaRows.every(row => row.status === 'sent'))
+
+      const emailRow = await db.get(
+        `SELECT direction, status, to_email, subject, message_text, html_body, raw_payload_json
+         FROM email_messages
+         WHERE contact_id = ? AND subject = ?`,
+        [contactId, 'Asunto por correo']
+      )
+      assert.equal(emailRow.direction, 'outbound')
+      assert.equal(emailRow.status, 'sent')
+      assert.equal(emailRow.to_email, `cliente-${marker}@example.com`)
+      assert.equal(emailRow.subject, 'Asunto por correo')
+      assert.equal(emailRow.message_text, 'Hola por correo')
+      assert.equal(emailRow.html_body, '<p>Hola por correo</p>')
+      assert.equal(JSON.parse(emailRow.raw_payload_json).provider, 'highlevel')
     } finally {
       mock.restoreAll()
       await cleanupContact(contactId, marker)

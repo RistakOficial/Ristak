@@ -2006,7 +2006,10 @@ export const getChatContacts = async (req, res) => {
           direction,
           NULL AS business_phone,
           NULL AS business_phone_number_id,
-          'smtp' AS transport,
+          CASE
+            WHEN raw_payload_json LIKE '%"provider":"highlevel"%' THEN 'ghl_email'
+            ELSE 'smtp'
+          END AS transport,
           COALESCE(message_timestamp, created_at) AS message_date,
           created_at,
           'email' AS message_channel
@@ -4855,6 +4858,7 @@ export const getContactJourney = async (req, res) => {
 	          html_body,
 	          smtp_message_id,
 	          error_message,
+	          raw_payload_json,
 	          message_timestamp,
 	          created_at,
 	          COALESCE(message_timestamp, created_at) as journey_message_date
@@ -4875,6 +4879,8 @@ export const getContactJourney = async (req, res) => {
 	    )
 
 	    emailMessages.forEach(msg => {
+	      const rawPayload = parseJsonObject(msg.raw_payload_json)
+	      const provider = cleanString(rawPayload?.provider).toLowerCase()
 	      journey.push({
 	        type: 'email_message',
 	        date: msg.message_timestamp || msg.created_at,
@@ -4892,7 +4898,7 @@ export const getContactJourney = async (req, res) => {
 	          direction: msg.direction || 'outbound',
 	          status: msg.status || null,
 	          error_message: msg.error_message || null,
-	          transport: 'email'
+	          transport: provider === 'highlevel' ? 'ghl_email' : 'email'
 	        }
 	      })
 	    })
