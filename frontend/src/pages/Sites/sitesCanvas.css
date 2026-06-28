@@ -2555,7 +2555,7 @@ html body :is(.rstkCanvas.rstk-kind-form.rstk-choice-grid, .rstkCanvas.rstk-kind
 
 .rstkCanvas.rstk-kind-landing .rstkEmbeddedFormSourceFrame .rstk-embedded-form,
 .rstkCanvas .rstkEmbeddedFormSourceFrame .rstk-embedded-form {
-  width: auto;
+  width: 100%;
   max-width: 100%;
   min-width: 0;
   justify-self: stretch;
@@ -2564,6 +2564,19 @@ html body :is(.rstkCanvas.rstk-kind-form.rstk-choice-grid, .rstkCanvas.rstk-kind
   border: 0;
   border-radius: 0;
   background: transparent;
+}
+
+.rstkCanvas .rstkEmbeddedFormSourceFrame .rstk-embedded-pages,
+.rstkCanvas .rstkEmbeddedFormSourceFrame .rstk-embedded-pages [data-embedded-page-content] {
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+  justify-self: stretch;
+}
+
+.rstkCanvas .rstkEmbeddedFormSourceFrame .rstk-block-style {
+  max-width: 100%;
+  min-width: 0;
 }
 
 /* Contenido del formulario embebido: igual al standalone. font-family var(--rstk-font)
@@ -2579,6 +2592,9 @@ html body :is(.rstkCanvas.rstk-kind-form.rstk-choice-grid, .rstkCanvas.rstk-kind
   font-weight: var(--rstk-heading-weight);
   line-height: 1.05;
   letter-spacing: 0;
+  max-width: 100%;
+  min-width: 0;
+  overflow-wrap: break-word;
   background-image: none;
   -webkit-text-fill-color: currentColor;
 }
@@ -2588,7 +2604,9 @@ html body :is(.rstkCanvas.rstk-kind-form.rstk-choice-grid, .rstkCanvas.rstk-kind
   color: var(--rstk-muted);
   font-size: clamp(1rem, 2vw, 1.18rem);
   line-height: 1.5;
-  max-width: var(--rstk-content-max, 60ch);
+  max-width: min(100%, var(--rstk-content-max, 60ch));
+  min-width: 0;
+  overflow-wrap: break-word;
   background-image: none;
   -webkit-text-fill-color: currentColor;
 }
@@ -2598,9 +2616,29 @@ html body :is(.rstkCanvas.rstk-kind-form.rstk-choice-grid, .rstkCanvas.rstk-kind
   color: color-mix(in srgb, var(--rstk-ink) 80%, transparent);
   font-size: 1rem;
   line-height: 1.55;
-  max-width: var(--rstk-content-max, 66ch);
+  max-width: min(100%, var(--rstk-content-max, 66ch));
+  min-width: 0;
+  overflow-wrap: break-word;
   background-image: none;
   -webkit-text-fill-color: currentColor;
+}
+
+.rstkCanvas .rstkEmbeddedFormSourceFrame .rstk-media,
+.rstkCanvas .rstkEmbeddedFormSourceFrame .rstk-video {
+  max-width: 100%;
+  min-width: 0;
+}
+
+.rstkCanvas .rstkEmbeddedFormSourceFrame .rstk-media img,
+.rstkCanvas .rstkEmbeddedFormSourceFrame .rstk-video iframe,
+.rstkCanvas .rstkEmbeddedFormSourceFrame .rstk-video video {
+  max-width: 100%;
+  min-width: 0;
+}
+
+.rstkCanvas .rstkEmbeddedFormSourceFrame .rstk-video-control-bar {
+  max-width: calc(100% - 24px);
+  min-width: 0;
 }
 
 .rstkCanvas .rstkEmbeddedFormSourceFrame .rstk-field > label {
