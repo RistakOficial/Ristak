@@ -255,6 +255,10 @@ const getSavedCardDescription = (method?: StripeSavedPaymentMethod | null) => {
   return method?.expiresLabel ? `${label} · vence ${method.expiresLabel}` : label
 }
 
+const getSavedStripePaymentMethodId = (method?: StripeSavedPaymentMethod | null) => (
+  method?.stripePaymentMethodId || method?.id || ''
+)
+
 const getSavedConektaCardLabel = (source?: ConektaSavedPaymentSource | null) => {
   if (!source) return 'Tarjeta guardada'
   const brand = source.brand ? source.brand.toUpperCase() : 'Tarjeta'
@@ -265,6 +269,10 @@ const getSavedConektaCardDescription = (source?: ConektaSavedPaymentSource | nul
   const label = getSavedConektaCardLabel(source)
   return source?.expiresLabel ? `${label} · vence ${source.expiresLabel}` : label
 }
+
+const getSavedConektaPaymentSourceId = (source?: ConektaSavedPaymentSource | null) => (
+  source?.conektaPaymentSourceId || source?.id || ''
+)
 
 const EMAIL_SEND_METHODS = new Set<SendMethod>(['email', 'email_whatsapp', 'email_sms', 'all'])
 const PHONE_SEND_METHODS = new Set<SendMethod>(['whatsapp', 'sms', 'email_whatsapp', 'email_sms', 'all'])
@@ -724,22 +732,22 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
   const sendMethodOptions = useMemo(() => getSendMethodOptions(selectedContact), [selectedContact?.email, selectedContact?.phone])
   const selectedSendMethodOption = sendMethodOptions.find(option => option.value === sendMethod)
   const savedPaymentMethodOptions = useMemo(() => (
-    savedPaymentMethods.map((method) => ({
-      value: method.stripePaymentMethodId,
-      label: getSavedCardDescription(method)
-    }))
+    savedPaymentMethods.flatMap((method) => {
+      const value = getSavedStripePaymentMethodId(method)
+      return value ? [{ value, label: getSavedCardDescription(method) }] : []
+    })
   ), [savedPaymentMethods])
   const selectedSavedPaymentMethod = savedPaymentMethods.find((method) => (
-    method.stripePaymentMethodId === selectedSavedPaymentMethodId || method.id === selectedSavedPaymentMethodId
+    getSavedStripePaymentMethodId(method) === selectedSavedPaymentMethodId
   )) || null
   const savedConektaPaymentSourceOptions = useMemo(() => (
-    savedConektaPaymentSources.map((source) => ({
-      value: source.conektaPaymentSourceId,
-      label: getSavedConektaCardDescription(source)
-    }))
+    savedConektaPaymentSources.flatMap((source) => {
+      const value = getSavedConektaPaymentSourceId(source)
+      return value ? [{ value, label: getSavedConektaCardDescription(source) }] : []
+    })
   ), [savedConektaPaymentSources])
   const selectedConektaPaymentSource = savedConektaPaymentSources.find((source) => (
-    source.conektaPaymentSourceId === selectedConektaPaymentSourceId || source.id === selectedConektaPaymentSourceId
+    getSavedConektaPaymentSourceId(source) === selectedConektaPaymentSourceId
   )) || null
   const stripePlanSavedPaymentMethod = stripePlanCardSource === 'saved_card'
     ? selectedSavedPaymentMethod || savedPaymentMethods[0] || null
@@ -913,6 +921,65 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
     setStripePlanCardSource('saved_card')
     setPaymentOption(nextPaymentOption)
     setSinglePaymentOptionsStage('saved_cards')
+  }
+
+  const renderSavedCardGatewayRow = ({
+    platform,
+    label,
+    description,
+    value,
+    options,
+    active,
+    onSelect
+  }: {
+    platform: 'stripe' | 'conekta'
+    label: string
+    description: string
+    value: string
+    options: Array<{ value: string; label: string }>
+    active: boolean
+    onSelect: (value: string) => void
+  }) => {
+    const selectedValue = value || options[0]?.value || ''
+    const selectCurrentCard = () => {
+      if (selectedValue) {
+        onSelect(selectedValue)
+      }
+    }
+
+    return (
+      <div
+        className={styles.savedCardGatewayRow}
+        data-active={active ? 'true' : undefined}
+      >
+        <button
+          type="button"
+          className={styles.savedCardGatewayMain}
+          onClick={selectCurrentCard}
+        >
+          <div className={styles.optionInfo}>
+            <div className={styles.optionIcon}>
+              <PaymentPlatformLogo platform={platform} size="md" decorative />
+            </div>
+            <div>
+              <p>{label}</p>
+              <span>{description}</span>
+            </div>
+          </div>
+        </button>
+        <div className={styles.savedCardSelector} onClick={(event) => event.stopPropagation()}>
+          <CustomSelect
+            value={selectedValue}
+            onValueChange={onSelect}
+            options={options}
+            placeholder={`Tarjeta de ${label}`}
+            aria-label={`Tarjeta guardada de ${label}`}
+            portal
+          />
+        </div>
+        {active && <Check size={18} className={styles.optionCheck} />}
+      </div>
+    )
   }
 
   useEffect(() => {
@@ -1096,11 +1163,11 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
         setSavedPaymentMethods(methods)
         setSelectedSavedPaymentMethodId((current) => {
           const stillExists = methods.some((method) => (
-            method.stripePaymentMethodId === current || method.id === current
+            getSavedStripePaymentMethodId(method) === current
           ))
           if (stillExists) return current
           const preferred = methods.find((method) => method.isDefault) || methods[0]
-          return preferred?.stripePaymentMethodId || ''
+          return getSavedStripePaymentMethodId(preferred)
         })
         if (!methods.length && paymentOption === 'stripe_saved_card') {
           setSinglePaymentAction(getDefaultSinglePaymentAction())
@@ -1143,11 +1210,11 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
         setSavedConektaPaymentSources(sources)
         setSelectedConektaPaymentSourceId((current) => {
           const stillExists = sources.some((source) => (
-            source.conektaPaymentSourceId === current || source.id === current
+            getSavedConektaPaymentSourceId(source) === current
           ))
           if (stillExists) return current
           const preferred = sources.find((source) => source.isDefault) || sources[0]
-          return preferred?.conektaPaymentSourceId || ''
+          return getSavedConektaPaymentSourceId(preferred)
         })
         if (!sources.length && paymentOption === 'conekta_saved_card') {
           setSinglePaymentAction(getDefaultSinglePaymentAction())
@@ -3666,87 +3733,37 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
             ) : showPlanSavedCardPicker ? (
               <>
                 {hasStripeSavedCards && (
-                  <div className={styles.optionGroup}>
-                    <div className={styles.optionGroupHeader}>
-                      <PaymentPlatformLogo platform="stripe" size="sm" decorative />
-                      <span>Stripe</span>
-                    </div>
-                    {savedPaymentMethods.map((method) => {
-                      const isSelected = paymentOption === 'stripe' &&
-                        stripePlanCardSource === 'saved_card' &&
-                        (
-                          currentStripePlanPaymentMethodId === method.stripePaymentMethodId ||
-                          currentStripePlanPaymentMethodId === method.id
-                        )
-
-                      return (
-                        <button
-                          key={method.stripePaymentMethodId || method.id}
-                          type="button"
-                          className={`${styles.optionButton} ${isSelected ? styles.optionButtonActive : ''}`}
-                          onClick={() => {
-                            setSinglePaymentAction('saved_card')
-                            setPaymentOption('stripe')
-                            setStripePlanCardSource('saved_card')
-                            setSelectedSavedPaymentMethodId(method.stripePaymentMethodId || method.id || '')
-                          }}
-                        >
-                          <div className={styles.optionInfo}>
-                            <div className={styles.optionIcon}>
-                              <PaymentPlatformLogo platform="stripe" size="md" decorative />
-                            </div>
-                            <div>
-                              <p>{getSavedCardDescription(method)}</p>
-                              <span>Programará los cobros futuros con Stripe.</span>
-                            </div>
-                          </div>
-                          {isSelected && <Check size={18} className={styles.optionCheck} />}
-                        </button>
-                      )
-                    })}
-                  </div>
+                  renderSavedCardGatewayRow({
+                    platform: 'stripe',
+                    label: 'Stripe',
+                    description: 'Programará los cobros futuros con Stripe.',
+                    value: currentStripePlanPaymentMethodId,
+                    options: savedPaymentMethodOptions,
+                    active: paymentOption === 'stripe' && stripePlanCardSource === 'saved_card',
+                    onSelect: (value) => {
+                      setSinglePaymentAction('saved_card')
+                      setPaymentOption('stripe')
+                      setStripePlanCardSource('saved_card')
+                      setSelectedSavedPaymentMethodId(value)
+                    }
+                  })
                 )}
 
                 {hasConektaSavedCards && (
-                  <div className={styles.optionGroup}>
-                    <div className={styles.optionGroupHeader}>
-                      <PaymentPlatformLogo platform="conekta" size="sm" decorative />
-                      <span>Conekta</span>
-                    </div>
-                    {savedConektaPaymentSources.map((source) => {
-                      const isSelected = paymentOption === 'conekta' &&
-                        stripePlanCardSource === 'saved_card' &&
-                        (
-                          currentConektaPlanPaymentSourceId === source.conektaPaymentSourceId ||
-                          currentConektaPlanPaymentSourceId === source.id
-                        )
-
-                      return (
-                        <button
-                          key={source.conektaPaymentSourceId || source.id}
-                          type="button"
-                          className={`${styles.optionButton} ${isSelected ? styles.optionButtonActive : ''}`}
-                          onClick={() => {
-                            setSinglePaymentAction('saved_card')
-                            setPaymentOption('conekta')
-                            setStripePlanCardSource('saved_card')
-                            setSelectedConektaPaymentSourceId(source.conektaPaymentSourceId || source.id || '')
-                          }}
-                        >
-                          <div className={styles.optionInfo}>
-                            <div className={styles.optionIcon}>
-                              <PaymentPlatformLogo platform="conekta" size="md" decorative />
-                            </div>
-                            <div>
-                              <p>{getSavedConektaCardDescription(source)}</p>
-                              <span>Programará los cobros futuros con Conekta.</span>
-                            </div>
-                          </div>
-                          {isSelected && <Check size={18} className={styles.optionCheck} />}
-                        </button>
-                      )
-                    })}
-                  </div>
+                  renderSavedCardGatewayRow({
+                    platform: 'conekta',
+                    label: 'Conekta',
+                    description: 'Programará los cobros futuros con Conekta.',
+                    value: currentConektaPlanPaymentSourceId,
+                    options: savedConektaPaymentSourceOptions,
+                    active: paymentOption === 'conekta' && stripePlanCardSource === 'saved_card',
+                    onSelect: (value) => {
+                      setSinglePaymentAction('saved_card')
+                      setPaymentOption('conekta')
+                      setStripePlanCardSource('saved_card')
+                      setSelectedConektaPaymentSourceId(value)
+                    }
+                  })
                 )}
               </>
             ) : (
@@ -3962,81 +3979,35 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
             ) : showSavedCardPicker ? (
               <>
                 {hasStripeSavedCards && (
-                  <div className={styles.optionGroup}>
-                    <div className={styles.optionGroupHeader}>
-                      <PaymentPlatformLogo platform="stripe" size="sm" decorative />
-                      <span>Stripe</span>
-                    </div>
-                    {savedPaymentMethods.map((method) => {
-                      const isSelected = paymentOption === 'stripe_saved_card' && (
-                        selectedSavedPaymentMethodId === method.stripePaymentMethodId ||
-                        selectedSavedPaymentMethodId === method.id
-                      )
-
-                      return (
-                        <button
-                          key={method.stripePaymentMethodId || method.id}
-                          type="button"
-                          className={`${styles.optionButton} ${isSelected ? styles.optionButtonActive : ''}`}
-                          onClick={() => {
-                            setSinglePaymentAction('saved_card')
-                            setPaymentOption('stripe_saved_card')
-                            setSelectedSavedPaymentMethodId(method.stripePaymentMethodId)
-                          }}
-                        >
-                          <div className={styles.optionInfo}>
-                            <div className={styles.optionIcon}>
-                              <PaymentPlatformLogo platform="stripe" size="md" decorative />
-                            </div>
-                            <div>
-                              <p>{getSavedCardDescription(method)}</p>
-                              <span>Se cobrará inmediatamente con Stripe.</span>
-                            </div>
-                          </div>
-                          {isSelected && <Check size={18} className={styles.optionCheck} />}
-                        </button>
-                      )
-                    })}
-                  </div>
+                  renderSavedCardGatewayRow({
+                    platform: 'stripe',
+                    label: 'Stripe',
+                    description: 'Se cobrará inmediatamente con Stripe.',
+                    value: selectedSavedPaymentMethodId,
+                    options: savedPaymentMethodOptions,
+                    active: paymentOption === 'stripe_saved_card',
+                    onSelect: (value) => {
+                      setSinglePaymentAction('saved_card')
+                      setPaymentOption('stripe_saved_card')
+                      setSelectedSavedPaymentMethodId(value)
+                    }
+                  })
                 )}
 
                 {hasConektaSavedCards && (
-                  <div className={styles.optionGroup}>
-                    <div className={styles.optionGroupHeader}>
-                      <PaymentPlatformLogo platform="conekta" size="sm" decorative />
-                      <span>Conekta</span>
-                    </div>
-                    {savedConektaPaymentSources.map((source) => {
-                      const isSelected = paymentOption === 'conekta_saved_card' && (
-                        selectedConektaPaymentSourceId === source.conektaPaymentSourceId ||
-                        selectedConektaPaymentSourceId === source.id
-                      )
-
-                      return (
-                        <button
-                          key={source.conektaPaymentSourceId || source.id}
-                          type="button"
-                          className={`${styles.optionButton} ${isSelected ? styles.optionButtonActive : ''}`}
-                          onClick={() => {
-                            setSinglePaymentAction('saved_card')
-                            setPaymentOption('conekta_saved_card')
-                            setSelectedConektaPaymentSourceId(source.conektaPaymentSourceId)
-                          }}
-                        >
-                          <div className={styles.optionInfo}>
-                            <div className={styles.optionIcon}>
-                              <PaymentPlatformLogo platform="conekta" size="md" decorative />
-                            </div>
-                            <div>
-                              <p>{getSavedConektaCardDescription(source)}</p>
-                              <span>Se cobrará inmediatamente con Conekta.</span>
-                            </div>
-                          </div>
-                          {isSelected && <Check size={18} className={styles.optionCheck} />}
-                        </button>
-                      )
-                    })}
-                  </div>
+                  renderSavedCardGatewayRow({
+                    platform: 'conekta',
+                    label: 'Conekta',
+                    description: 'Se cobrará inmediatamente con Conekta.',
+                    value: selectedConektaPaymentSourceId,
+                    options: savedConektaPaymentSourceOptions,
+                    active: paymentOption === 'conekta_saved_card',
+                    onSelect: (value) => {
+                      setSinglePaymentAction('saved_card')
+                      setPaymentOption('conekta_saved_card')
+                      setSelectedConektaPaymentSourceId(value)
+                    }
+                  })
                 )}
               </>
             ) : (

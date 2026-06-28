@@ -1297,6 +1297,58 @@ body.dark .summaryBadge,
   z-index: 4;
 }
 
+.savedCardGatewayRow {
+  width: 100%;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(220px, 300px) auto;
+  align-items: center;
+  gap: 16px;
+  min-width: 0;
+  padding: 14px 16px;
+  border: 1px solid var(--border, var(--color-border));
+  border-radius: var(--radius-ctl, 12px);
+  background: var(--surface, var(--color-surface));
+  color: inherit;
+  transition: border-color 0.18s ease, background-color 0.18s ease, box-shadow 0.18s ease;
+  position: relative;
+}
+
+.savedCardGatewayRow:hover {
+  border-color: var(--accent, var(--color-primary));
+}
+
+.savedCardGatewayRow[data-active='true'] {
+  border-color: var(--accent, var(--color-primary));
+  background: var(--accent-soft, var(--color-primary-light));
+  z-index: 4;
+}
+
+.savedCardGatewayMain {
+  appearance: none;
+  width: 100%;
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.savedCardGatewayMain:focus-visible {
+  outline: none;
+  border-radius: var(--radius-ctl, 10px);
+  box-shadow: var(--ristak-focus-ring, 0 0 0 3px var(--accent-soft));
+}
+
+.savedCardGatewayRow .savedCardSelector {
+  width: min(100%, 300px);
+  max-width: 300px;
+  min-width: 220px;
+  justify-self: end;
+}
+
 .optionGroup {
   display: grid;
   gap: 10px;
@@ -1907,6 +1959,25 @@ body.dark .tooltipInfo {
   .optionAction {
     width: 100%;
     margin-left: 0;
+  }
+
+  .savedCardGatewayRow {
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: start;
+  }
+
+  .savedCardGatewayRow .savedCardSelector {
+    grid-column: 1 / -1;
+    width: 100%;
+    max-width: none;
+    min-width: 0;
+    justify-self: stretch;
+  }
+
+  .savedCardGatewayRow .optionCheck {
+    grid-column: 2;
+    grid-row: 1;
+    margin-top: 8px;
   }
 
   .sendMethodSelector {
@@ -2663,6 +2734,36 @@ body.dark .tooltipInfo {
 .embeddedRoot .optionButtonActive {
   background: transparent;
   border-color: var(--record-payment-embedded-border);
+}
+
+.embeddedRoot .savedCardGatewayRow {
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 12px;
+  padding: 14px 0;
+  border: 0;
+  border-bottom: 1px solid var(--record-payment-embedded-border);
+  border-radius: 0;
+  background: transparent;
+}
+
+.embeddedRoot .savedCardGatewayRow:hover,
+.embeddedRoot .savedCardGatewayRow[data-active='true'] {
+  border-color: var(--record-payment-embedded-border);
+  background: transparent;
+}
+
+.embeddedRoot .savedCardGatewayRow .savedCardSelector {
+  grid-column: 1 / -1;
+  width: 100%;
+  max-width: none;
+  min-width: 0;
+  justify-self: stretch;
+}
+
+.embeddedRoot .savedCardGatewayRow .optionCheck {
+  grid-column: 2;
+  grid-row: 1;
+  margin-top: 8px;
 }
 
 .embeddedRoot .optionIcon {
