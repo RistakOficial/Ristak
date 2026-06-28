@@ -3018,7 +3018,7 @@ async function createStripePlanPaymentRow({
       currency,
       status,
       paymentMethod,
-      provider === 'stripe' ? metadata?.stripeMode || 'test' : 'live',
+      metadata?.paymentMode || metadata?.stripeMode || (provider === 'stripe' ? 'test' : 'live'),
       provider,
       null,
       title,
@@ -4545,6 +4545,7 @@ export async function createStripePaymentPlan(input = {}, { baseUrl } = {}) {
       description: `${plan.description} - primer pago`,
       dueDate: plan.firstPayment.date,
       metadata: {
+        paymentMode: config.mode,
         source: 'stripe_payment_plan_first_offline',
         contactName: plan.contact.name,
         contactEmail: plan.contact.email,

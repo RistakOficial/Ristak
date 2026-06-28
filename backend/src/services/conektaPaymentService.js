@@ -1246,7 +1246,7 @@ async function createConektaPlanPaymentRow({
       normalizeCurrency(currency),
       status,
       paymentMethod,
-      provider === 'conekta' ? metadata?.conektaMode || 'test' : 'live',
+      metadata?.paymentMode || metadata?.conektaMode || (provider === 'conekta' ? 'test' : 'live'),
       provider,
       null,
       title,
@@ -1862,6 +1862,7 @@ export async function createConektaPaymentPlan(input = {}, { baseUrl } = {}) {
       description: `${plan.description} - primer pago`,
       dueDate: plan.firstPayment.date,
       metadata: {
+        paymentMode: config.mode,
         source: 'conekta_payment_plan_first_offline',
         contactName: plan.contact.name,
         contactEmail: plan.contact.email,

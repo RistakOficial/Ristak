@@ -1098,12 +1098,14 @@ export async function createOfflineContactPayment(payload) {
     `UPDATE payments
      SET status = 'paid',
          payment_method = ?,
+         payment_mode = ?,
          reference = ?,
          date = ?,
          updated_at = CURRENT_TIMESTAMP
      WHERE ghl_invoice_id = ?`,
     [
       paymentMethod,
+      liveMode ? 'live' : 'test',
       payload.reference || null,
       paymentDate,
       invoiceId
@@ -1994,9 +1996,9 @@ export async function createInstallmentPaymentFlow(payload) {
 
     await db.run(
       `UPDATE payments
-       SET status = 'paid', payment_method = ?, reference = ?, updated_at = CURRENT_TIMESTAMP
+       SET status = 'paid', payment_method = ?, payment_mode = ?, reference = ?, updated_at = CURRENT_TIMESTAMP
        WHERE ghl_invoice_id = ?`,
-      [firstPaymentMethod, firstPayment.reference || null, invoiceId]
+      [firstPaymentMethod, liveMode ? 'live' : 'test', firstPayment.reference || null, invoiceId]
     )
 
     stateHistory = addState(stateHistory, PAYMENT_FLOW_STATES.OFFLINE_PAYMENT_REGISTERED)
@@ -2042,9 +2044,9 @@ export async function createInstallmentPaymentFlow(payload) {
 
     await db.run(
       `UPDATE payments
-       SET status = 'paid', payment_method = 'card', reference = ?, updated_at = CURRENT_TIMESTAMP
+       SET status = 'paid', payment_method = 'card', payment_mode = ?, reference = ?, updated_at = CURRENT_TIMESTAMP
        WHERE ghl_invoice_id = ?`,
-      [firstPayment.reference || null, invoiceId]
+      [liveMode ? 'live' : 'test', firstPayment.reference || null, invoiceId]
     )
 
     await persistGhlPaymentMethodForFlow(flowId, authorizedCard)

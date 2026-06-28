@@ -438,6 +438,14 @@ test('planes Stripe: conserva varios planes del mismo contacto y cobra solo los 
       ]
     }, { baseUrl: 'https://example.test' })
 
+    const firstPlanPayment = await db.get(
+      'SELECT status, payment_provider, payment_mode FROM payments WHERE id = ?',
+      [firstPlan.firstPaymentPaymentId]
+    )
+    assert.equal(firstPlanPayment.status, 'paid')
+    assert.equal(firstPlanPayment.payment_provider, 'manual')
+    assert.equal(firstPlanPayment.payment_mode, 'test')
+
     const secondPlan = await createStripePaymentPlan({
       contact: contactA.contact,
       title: 'Plan B futuro mismo contacto',

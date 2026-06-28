@@ -360,6 +360,14 @@ test('Conekta payment flow: crea link, guarda payment_source y cobra tarjeta gua
     assert.match(planResult.cardSetupLink, /^https:\/\/app\.example\.test\/pay\/pay_/)
     assert.equal(planResult.scheduledPayments.length, 1)
 
+    const firstPlanPayment = await db.get(
+      'SELECT status, payment_provider, payment_mode FROM payments WHERE id = ?',
+      [planResult.firstPaymentPaymentId]
+    )
+    assert.equal(firstPlanPayment.status, 'paid')
+    assert.equal(firstPlanPayment.payment_provider, 'manual')
+    assert.equal(firstPlanPayment.payment_mode, 'test')
+
     const setupPayment = await db.get('SELECT public_payment_id FROM payments WHERE id = ?', [planResult.cardSetupPaymentId])
     assert.ok(setupPayment?.public_payment_id)
     await createPublicConektaCardPayment(setupPayment.public_payment_id, {

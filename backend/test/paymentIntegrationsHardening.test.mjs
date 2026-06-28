@@ -1,12 +1,14 @@
-import test from 'node:test'
+import test, { mock } from 'node:test'
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 
 import { db } from '../src/config/database.js'
 import { clearHighLevelMirrorDataForLocationChange } from '../src/controllers/highlevelController.js'
 import { recordPayment as recordTransactionPayment } from '../src/controllers/transactionsController.js'
+import GHLClient from '../src/services/ghlClient.js'
 import { handlePaymentWebhook } from '../src/controllers/webhooksController.js'
 import { __invoicesSyncTestHooks } from '../src/services/invoicesSyncService.js'
+import { createInstallmentPaymentFlow } from '../src/services/paymentFlowService.js'
 
 function createResponse() {
   return {
@@ -49,6 +51,13 @@ test('registro manual de invoice HighLevel persiste paymentDate como fecha local
 
 async function cleanup(ids) {
   await db.run(
+    `DELETE FROM installment_payments
+     WHERE flow_id IN (SELECT id FROM payment_flows WHERE contact_id = ?)`,
+    [ids.contactId]
+  ).catch(() => undefined)
+  await db.run('DELETE FROM payment_plans WHERE contact_id = ?', [ids.contactId]).catch(() => undefined)
+  await db.run('DELETE FROM payment_flows WHERE contact_id = ?', [ids.contactId]).catch(() => undefined)
+  await db.run(
     `DELETE FROM payments
      WHERE id IN (?, ?, ?, ?, ?)
         OR contact_id = ?
@@ -68,6 +77,49 @@ async function cleanup(ids) {
     'DELETE FROM contacts WHERE id = ? OR ghl_contact_id = ?',
     [ids.contactId, ids.ghlContactId]
   ).catch(() => undefined)
+}
+
+async function replaceHighLevelConfigForTest(config, callback) {
+  const columns = await db.all('PRAGMA table_info(highlevel_config)').then(rows => rows.map(row => row.name))
+  const existingRows = await db.all('SELECT * FROM highlevel_config').catch(() => [])
+  await db.run('DELETE FROM highlevel_config')
+
+  try {
+    await db.run(
+      `INSERT INTO highlevel_config (
+        location_id, api_token, location_data, ghl_invoice_mode, card_setup_amount, invoice_title, created_at
+      ) VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)`,
+      [
+        config.locationId,
+        config.apiToken || 'test-ghl-token',
+        JSON.stringify(config.locationData || {
+          name: 'Ristak Test',
+          domain: 'pay.example.test',
+          timezone: 'America/Mexico_City',
+          business: {
+            name: 'Ristak Test',
+            email: 'billing@example.test'
+          }
+        }),
+        config.invoiceMode || 'test',
+        config.cardSetupAmount || 25,
+        config.invoiceTitle || 'PAGO'
+      ]
+    )
+
+    return await callback()
+  } finally {
+    await db.run('DELETE FROM highlevel_config').catch(() => undefined)
+    for (const row of existingRows) {
+      const availableColumns = columns.filter(column => Object.prototype.hasOwnProperty.call(row, column))
+      if (!availableColumns.length) continue
+      const placeholders = availableColumns.map(() => '?').join(', ')
+      await db.run(
+        `INSERT INTO highlevel_config (${availableColumns.join(', ')}) VALUES (${placeholders})`,
+        availableColumns.map(column => row[column])
+      ).catch(() => undefined)
+    }
+  }
 }
 
 async function seedContact(ids) {
@@ -149,6 +201,94 @@ test('record-payment conserva modo test en pagos locales aunque HighLevel esté 
     assert.equal(payment.payment_mode, 'test')
   } finally {
     await db.run('DELETE FROM highlevel_config WHERE location_id = ?', [`pit_location_${ids.contactId}`]).catch(() => undefined)
+    await cleanup(ids)
+  }
+})
+
+test('enganche manual de plan HighLevel conserva modo test aunque el invoice remoto regrese live', async () => {
+  const ids = idsFor('plan_enganche_test')
+  await cleanup(ids)
+  await seedContact(ids)
+
+  const createdInvoices = []
+  const recordedPayments = []
+
+  mock.method(GHLClient.prototype, 'createInvoice', async function createInvoice(payload) {
+    const invoiceId = `pit_plan_invoice_${ids.contactId}`
+    createdInvoices.push(payload)
+    return {
+      invoice: {
+        id: invoiceId,
+        contactId: payload.contactDetails?.id,
+        invoiceNumber: `PIT-${ids.contactId}`,
+        title: payload.title || payload.name || 'PAGO',
+        name: payload.name || payload.title || 'PAGO',
+        currency: payload.currency || 'MXN',
+        items: payload.items || [],
+        issueDate: payload.issueDate,
+        dueDate: payload.dueDate,
+        liveMode: true
+      }
+    }
+  })
+  mock.method(GHLClient.prototype, 'recordPayment', async function recordPayment(invoiceId, payload) {
+    recordedPayments.push({ invoiceId, payload })
+    return { success: true }
+  })
+
+  try {
+    await replaceHighLevelConfigForTest({
+      locationId: `pit_location_${ids.contactId}`,
+      invoiceMode: 'test'
+    }, async () => {
+      const result = await createInstallmentPaymentFlow({
+        contact: {
+          id: ids.contactId,
+          name: 'Cliente Enganche Test',
+          email: `${ids.contactId}@example.test`,
+          phone: '+5215550001111'
+        },
+        totalAmount: 1000,
+        description: 'Plan test con enganche',
+        firstPayment: {
+          enabled: true,
+          amount: 200,
+          method: 'cash',
+          date: '2099-01-10',
+          reference: 'ENG-TEST'
+        },
+        remainingPayments: [
+          {
+            sequence: 1,
+            amount: 800,
+            dueDate: '2099-02-10',
+            frequency: 'monthly'
+          }
+        ],
+        remainingAutomatic: false,
+        invoicePayload: {
+          title: 'PAGO',
+          liveMode: true
+        },
+        source: 'test_payment_integrations_hardening'
+      })
+
+      assert.equal(result.paymentMode, 'test')
+      assert.equal(result.currentState, 'installment_plan_active')
+      assert.equal(createdInvoices[0]?.liveMode, false)
+      assert.equal(recordedPayments[0]?.payload?.liveMode, false)
+
+      const payment = await db.get(
+        'SELECT status, payment_method, payment_mode, reference FROM payments WHERE ghl_invoice_id = ?',
+        [result.firstPaymentInvoiceId]
+      )
+      assert.equal(payment.status, 'paid')
+      assert.equal(payment.payment_method, 'cash')
+      assert.equal(payment.payment_mode, 'test')
+      assert.equal(payment.reference, 'ENG-TEST')
+    })
+  } finally {
+    mock.restoreAll()
     await cleanup(ids)
   }
 })
