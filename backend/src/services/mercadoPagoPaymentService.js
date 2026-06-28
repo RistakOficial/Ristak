@@ -568,6 +568,21 @@ async function getMercadoPagoClientConfig() {
   return config
 }
 
+function normalizeMercadoPagoErrorMessage(payload = {}) {
+  const message = cleanString(payload?.message || payload?.error)
+  const causes = Array.isArray(payload?.cause) ? payload.cause : []
+  const hasInvalidUsersCause = causes.some((cause) => (
+    Number(cause?.code) === 2034 ||
+    /invalid users involved/i.test(cleanString(cause?.description || cause?.message))
+  ))
+
+  if (/invalid users involved/i.test(message) || hasInvalidUsersCause) {
+    return 'Mercado Pago rechazó el pago de prueba porque el comprador y el vendedor no son válidos entre sí. Usa un comprador de prueba distinto al vendedor conectado, escribe el email real del test user (no el nickname TESTUSER...) y usa APRO como titular para simular un pago aprobado.'
+  }
+
+  return message || 'Mercado Pago no pudo completar la solicitud.'
+}
+
 async function mercadoPagoApiRequest(path, { method = 'GET', body = null, idempotencyKey = '' } = {}) {
   const config = await getMercadoPagoClientConfig()
   const url = path.startsWith('http') ? path : `${MERCADOPAGO_API_BASE}${path}`
@@ -586,7 +601,7 @@ async function mercadoPagoApiRequest(path, { method = 'GET', body = null, idempo
   const payload = await response.json().catch(() => ({}))
 
   if (!response.ok) {
-    const error = new Error(payload?.message || payload?.error || 'Mercado Pago no pudo completar la solicitud.')
+    const error = new Error(normalizeMercadoPagoErrorMessage(payload))
     error.status = response.status || 502
     error.payload = payload
     throw error

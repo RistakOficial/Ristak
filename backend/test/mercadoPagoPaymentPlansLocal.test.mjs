@@ -253,6 +253,103 @@ test('Mercado Pago cobra tarjeta en la pagina publica sin confiar en el monto de
   })
 })
 
+test('Mercado Pago explica Invalid users involved en cobros publicos de prueba', async () => {
+  await initializeMasterKey()
+
+  await snapshotMercadoPagoConfig(async () => {
+    const suffix = `${Date.now()}_${Math.random().toString(36).slice(2, 8)}`
+    const ids = {
+      contactId: `contact_mp_invalid_users_${suffix}`,
+      paymentId: ''
+    }
+    const cardPaymentCalls = []
+
+    setMercadoPagoFetchForTest(async (url, options = {}) => {
+      assert.equal(options.method, 'POST')
+      assert.equal(options.headers?.Authorization, 'Bearer TEST-access-token')
+
+      if (url === 'https://api.mercadopago.com/checkout/preferences') {
+        return {
+          ok: true,
+          status: 201,
+          json: async () => ({
+            id: 'pref_invalid_users',
+            init_point: 'https://www.mercadopago.com.mx/checkout/v1/redirect?pref_id=invalid_users',
+            sandbox_init_point: 'https://sandbox.mercadopago.com.mx/checkout/v1/redirect?pref_id=invalid_users'
+          })
+        }
+      }
+
+      assert.equal(url, 'https://api.mercadopago.com/v1/payments')
+      const body = JSON.parse(String(options.body || '{}'))
+      cardPaymentCalls.push(body)
+      assert.equal(body.payer.email, 'comprador-test@example.com')
+
+      return {
+        ok: false,
+        status: 400,
+        json: async () => ({
+          message: 'Invalid users involved',
+          error: 'bad_request',
+          cause: [
+            {
+              code: 2034,
+              description: 'Invalid users involved'
+            }
+          ]
+        })
+      }
+    })
+
+    await db.run(
+      `INSERT INTO contacts (id, full_name, email, phone, source, created_at, updated_at)
+       VALUES (?, ?, ?, ?, 'test', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+      [ids.contactId, 'Cliente MP Invalid Users', 'cliente-invalid-users@example.test', '+5215555555558']
+    )
+
+    try {
+      const created = await createMercadoPagoPaymentLink({
+        contactId: ids.contactId,
+        contactName: 'Cliente MP Invalid Users',
+        email: 'cliente-invalid-users@example.test',
+        phone: '+5215555555558',
+        amount: 200,
+        currency: 'MXN',
+        title: 'Pago Mercado Pago Invalid Users',
+        description: 'Pago Mercado Pago Invalid Users',
+        applyTax: false
+      }, { baseUrl: 'https://app.example.test' })
+      ids.paymentId = created.payment.id
+
+      await assert.rejects(
+        () => createPublicMercadoPagoCardPayment(created.publicPaymentId, {
+          token: 'tok_card_test',
+          paymentMethodId: 'master',
+          installments: 1,
+          idempotencyKey: 'card-invalid-users-key',
+          payer: {
+            email: 'comprador-test@example.com'
+          }
+        }, { baseUrl: 'https://app.example.test' }),
+        (error) => {
+          assert.equal(error.status, 400)
+          assert.match(error.message, /comprador de prueba distinto/i)
+          assert.match(error.message, /email real del test user/i)
+          assert.match(error.message, /APRO/i)
+          assert.equal(error.payload?.cause?.[0]?.code, 2034)
+          return true
+        }
+      )
+
+      assert.equal(cardPaymentCalls.length, 1)
+      const saved = await db.get('SELECT status FROM payments WHERE id = ?', [ids.paymentId])
+      assert.equal(saved.status, 'sent')
+    } finally {
+      await cleanup(ids)
+    }
+  })
+})
+
 test('Mercado Pago no genera parcialidades publicas porque los planes estan deshabilitados', async () => {
   await assert.rejects(
     () => createMercadoPagoPaymentPlan({
