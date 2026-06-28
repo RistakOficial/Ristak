@@ -159,7 +159,7 @@ const sendStripePlanAuthorizationManualPaymentError = (res) => res.status(422).j
 })
 
 const sendPaymentDeletionGuardError = (res, guard) => {
-  if (guard.isTestMode) return null
+  if (guard.canHardDelete) return null
 
   if (guard.hasPlanLink) {
     return res.status(422).json({
@@ -1313,7 +1313,7 @@ export const deleteTransaction = async (req, res) => {
     const guardResponse = sendPaymentDeletionGuardError(res, deletionGuard)
     if (guardResponse) return guardResponse
 
-    if (deletionGuard.isTestMode) {
+    if (deletionGuard.isTestMode || deletionGuard.isDeletedRecord) {
       await hardDeleteTestPaymentRecord(id)
     } else if (deletionGuard.shouldArchive) {
       let archiveStatus = 'deleted'

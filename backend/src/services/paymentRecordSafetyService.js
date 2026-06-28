@@ -3,6 +3,7 @@ import { db } from '../config/database.js'
 const SUCCESS_PAYMENT_STATUSES = new Set(['paid', 'succeeded', 'completed', 'complete', 'fulfilled', 'success'])
 const TEST_PAYMENT_MODES = new Set(['test', 'sandbox'])
 const LIVE_PAYMENT_MODES = new Set(['live', 'production', 'prod'])
+const DELETED_RECORD_STATUSES = new Set(['deleted'])
 const LEDGER_PAYMENT_STATUSES = new Set([
   ...SUCCESS_PAYMENT_STATUSES,
   'partial',
@@ -103,6 +104,10 @@ export function isTestPaymentRecord(payment = {}) {
     isExplicitTestMode(payment.payment_mode) ||
     hasTestModeSignal(payment.metadata_json)
   )
+}
+
+export function isDeletedPaymentRecord(payment = {}) {
+  return DELETED_RECORD_STATUSES.has(normalizePaymentStatus(payment.status))
 }
 
 export function isTestSubscriptionRecord(subscription = {}) {
@@ -209,6 +214,7 @@ export async function getPaymentDeletionGuard(payment = {}) {
   const hasLedgerActivity = paymentHasLedgerActivity(payment)
   const hasExternalArtifact = paymentHasExternalArtifact(payment)
   const isTestMode = isTestPaymentRecord(payment)
+  const isDeletedRecord = isDeletedPaymentRecord(payment)
 
   return {
     planLinks,
@@ -218,16 +224,21 @@ export async function getPaymentDeletionGuard(payment = {}) {
     hasLedgerActivity,
     hasExternalArtifact,
     isTestMode,
-    canHardDelete: isTestMode || (!planLinks.length && !subscriptionLinks.length && !hasLedgerActivity && !hasExternalArtifact),
-    shouldArchive: !isTestMode && !planLinks.length && !subscriptionLinks.length && !hasLedgerActivity && hasExternalArtifact
+    isDeletedRecord,
+    canHardDelete: isTestMode || isDeletedRecord || (!planLinks.length && !subscriptionLinks.length && !hasLedgerActivity && !hasExternalArtifact),
+    shouldArchive: !isTestMode && !isDeletedRecord && !planLinks.length && !subscriptionLinks.length && !hasLedgerActivity && hasExternalArtifact
   }
 }
 
 export async function getPaymentPlanAuditSummary(flowId) {
   const cleanFlowId = cleanString(flowId)
-  if (!cleanFlowId) return { payments: [], hasLedgerActivity: false, isTestMode: false }
+  if (!cleanFlowId) return { payments: [], hasLedgerActivity: false, isTestMode: false, isDeletedRecord: false }
 
   const flow = await db.get('SELECT * FROM payment_flows WHERE id = ?', [cleanFlowId])
+  const mirror = await db.get(
+    'SELECT * FROM payment_plans WHERE id = ? OR ghl_schedule_id = ? LIMIT 1',
+    [cleanFlowId, cleanFlowId]
+  )
 
   const payments = await db.all(
     `SELECT DISTINCT p.*
@@ -252,18 +263,28 @@ export async function getPaymentPlanAuditSummary(flowId) {
   )
   const protectedPayments = (payments || []).filter(paymentHasLedgerActivity)
   const metadata = parseJson(flow?.metadata, {})
+  const mirrorSchedule = parseJson(mirror?.schedule_json, {})
+  const mirrorRaw = parseJson(mirror?.raw_json, {})
   const hasLinkedPayments = (payments || []).length > 0
+  const isDeletedRecord = Boolean(
+    cleanString(flow?.current_state).toLowerCase() === 'deleted' ||
+    cleanString(mirror?.status).toLowerCase() === 'deleted'
+  )
   const isTestMode = Boolean(
     hasTestModeSignal(metadata) ||
+    hasTestModeSignal(mirrorSchedule) ||
+    hasTestModeSignal(mirrorRaw) ||
     (hasLinkedPayments && (payments || []).every(isTestPaymentRecord))
   )
 
   return {
     flow,
+    mirror,
     payments: payments || [],
     protectedPayments,
     hasLedgerActivity: protectedPayments.length > 0,
-    isTestMode
+    isTestMode,
+    isDeletedRecord
   }
 }
 
@@ -272,7 +293,9 @@ export async function hardDeleteTestPaymentRecord(paymentId) {
   if (!cleanPaymentId) return { deleted: false, paymentIds: [] }
 
   const payment = await db.get('SELECT * FROM payments WHERE id = ?', [cleanPaymentId])
-  if (!payment || !isTestPaymentRecord(payment)) return { deleted: false, paymentIds: [] }
+  if (!payment || (!isTestPaymentRecord(payment) && !isDeletedPaymentRecord(payment))) {
+    return { deleted: false, paymentIds: [] }
+  }
 
   return db.transaction(async (tx) => {
     await tx.run('DELETE FROM payment_automation_dispatches WHERE payment_id = ?', [cleanPaymentId]).catch(() => undefined)
@@ -315,7 +338,9 @@ export async function hardDeleteTestPaymentPlan(flowId) {
   if (!cleanFlowId) return { deleted: false, paymentIds: [] }
 
   const audit = await getPaymentPlanAuditSummary(cleanFlowId)
-  if (!audit.isTestMode) return { deleted: false, paymentIds: [] }
+  if (!audit.isTestMode && !(audit.isDeletedRecord && !audit.hasLedgerActivity)) {
+    return { deleted: false, paymentIds: [] }
+  }
 
   return db.transaction(async (tx) => {
     const linkedPayments = await tx.all(
@@ -358,17 +383,23 @@ export async function hardDeleteTestPaymentPlan(flowId) {
 
 export async function getSubscriptionAuditSummary(subscriptionId) {
   const cleanSubscriptionId = cleanString(subscriptionId)
-  if (!cleanSubscriptionId) return { subscription: null, payments: [], hasPayments: false, isTestMode: false }
+  if (!cleanSubscriptionId) {
+    return { subscription: null, payments: [], protectedPayments: [], hasPayments: false, hasLedgerActivity: false, isTestMode: false, isDeletedRecord: false }
+  }
 
   const subscription = await db.get(
-    `SELECT id, contact_id, stripe_subscription_id, mercadopago_preapproval_id,
+    `SELECT id, contact_id, status, stripe_subscription_id, mercadopago_preapproval_id,
             conekta_subscription_id, payment_mode, metadata_json, raw_json
      FROM subscriptions
      WHERE id = ?
      LIMIT 1`,
     [cleanSubscriptionId]
   )
-  if (!subscription) return { subscription: null, payments: [], hasPayments: false, isTestMode: false }
+  if (!subscription) {
+    return { subscription: null, payments: [], protectedPayments: [], hasPayments: false, hasLedgerActivity: false, isTestMode: false, isDeletedRecord: false }
+  }
+
+  const isDeletedRecord = cleanString(subscription.status).toLowerCase() === 'deleted'
 
   const patterns = [
     `%${subscription.id}%`,
@@ -381,8 +412,11 @@ export async function getSubscriptionAuditSummary(subscriptionId) {
     return {
       subscription,
       payments: [],
+      protectedPayments: [],
       hasPayments: false,
-      isTestMode: isTestSubscriptionRecord(subscription)
+      hasLedgerActivity: false,
+      isTestMode: isTestSubscriptionRecord(subscription),
+      isDeletedRecord
     }
   }
 
@@ -394,6 +428,7 @@ export async function getSubscriptionAuditSummary(subscriptionId) {
     patterns
   )
   const linkedPayments = payments || []
+  const protectedPayments = linkedPayments.filter(paymentHasLedgerActivity)
   const hasPayments = Boolean(linkedPayments.length)
   const hasExplicitLiveSignal = Boolean(
     isExplicitLiveMode(subscription.payment_mode) ||
@@ -410,8 +445,11 @@ export async function getSubscriptionAuditSummary(subscriptionId) {
   return {
     subscription,
     payments: linkedPayments,
+    protectedPayments,
     hasPayments,
-    isTestMode
+    hasLedgerActivity: protectedPayments.length > 0,
+    isTestMode,
+    isDeletedRecord
   }
 }
 
@@ -420,7 +458,9 @@ export async function hardDeleteTestSubscription(subscriptionId) {
   if (!cleanSubscriptionId) return { deleted: false, paymentIds: [] }
 
   const audit = await getSubscriptionAuditSummary(cleanSubscriptionId)
-  if (!audit.subscription || !audit.isTestMode) return { deleted: false, paymentIds: [] }
+  if (!audit.subscription || (!audit.isTestMode && !(audit.isDeletedRecord && !audit.hasLedgerActivity))) {
+    return { deleted: false, paymentIds: [] }
+  }
 
   return db.transaction(async (tx) => {
     const paymentIds = (audit.payments || []).map((payment) => cleanString(payment.id)).filter(Boolean)

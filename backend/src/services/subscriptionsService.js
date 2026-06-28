@@ -927,7 +927,7 @@ export async function deleteSubscription(subscriptionId) {
     [subscriptionId]
   )
 
-  if (audit.hasPayments && audit.isTestMode) {
+  if (audit.isTestMode || (audit.isDeletedRecord && !audit.hasLedgerActivity)) {
     if (existing?.stripe_subscription_id && existing.status !== 'cancelled') {
       try {
         await cancelStripeRecurringSubscription(existing.stripe_subscription_id)

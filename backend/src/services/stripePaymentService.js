@@ -4235,7 +4235,7 @@ export async function applyStripePaymentPlanAction(flowId, action, options = {})
 
   if (normalizedAction === 'delete') {
     const audit = await getPaymentPlanAuditSummary(cleanFlowId)
-    if (audit.isTestMode) {
+    if (audit.isTestMode || (audit.isDeletedRecord && !audit.hasLedgerActivity)) {
       await hardDeleteTestPaymentPlan(cleanFlowId)
       return {
         id: cleanFlowId,

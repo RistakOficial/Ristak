@@ -396,7 +396,7 @@ export const PaymentSubscriptions: React.FC = () => {
     () => subscriptions.filter((subscription) => matchesStatusFilter(subscription, statusFilter)),
     [statusFilter, subscriptions]
   )
-  const canDeleteSubscription = (subscription: PaymentSubscription) => String(subscription.status || '').toLowerCase() !== 'deleted'
+  const canDeleteSubscription = (_subscription: PaymentSubscription) => true
   const selectedSubscriptions = useMemo(() => {
     if (selectedSubscriptionIds.length === 0) return []
 
@@ -407,7 +407,7 @@ export const PaymentSubscriptions: React.FC = () => {
   useEffect(() => {
     if (selectedSubscriptionIds.length === 0) return
 
-    const availableIds = new Set(subscriptions.filter(canDeleteSubscription).map(subscription => subscription.id))
+    const availableIds = new Set(subscriptions.map(subscription => subscription.id))
     const nextSelectedIds = selectedSubscriptionIds.filter(id => availableIds.has(id))
 
     if (nextSelectedIds.length !== selectedSubscriptionIds.length) {
@@ -820,7 +820,7 @@ export const PaymentSubscriptions: React.FC = () => {
         const isMercadoPago = item.paymentProvider === 'mercadopago' || Boolean(item.mercadoPagoPreapprovalId)
         const canPause = status === 'active' || status === 'trialing'
         const canActivate = (status === 'paused' || status === 'draft' || status === 'past_due' || status === 'incomplete') && !(isMercadoPago && status === 'incomplete')
-        const canCancel = status !== 'cancelled'
+        const canCancel = status !== 'cancelled' && status !== 'deleted'
         const mercadoPagoAuthorizationLink = getMercadoPagoSubscriptionLink(item)
 
         return (
@@ -976,7 +976,6 @@ export const PaymentSubscriptions: React.FC = () => {
             rowSelection={{
               selectedKeys: selectedSubscriptionIds,
               onChange: setSelectedSubscriptionIds,
-              isRowDisabled: (item) => !canDeleteSubscription(item),
               getRowLabel: (item) => item.name || 'suscripción',
               selectVisibleLabel: 'Seleccionar suscripciones visibles'
             }}

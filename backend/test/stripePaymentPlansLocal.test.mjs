@@ -262,6 +262,116 @@ test('elimina físicamente un plan Stripe local de prueba y sus pagos ligados', 
   }
 })
 
+test('elimina físicamente un plan Stripe local ya archivado como eliminado sin historial contable', async () => {
+  const ids = await seedStripePlan()
+
+  try {
+    await db.run(
+      `UPDATE payment_flows
+       SET current_state = 'deleted'
+       WHERE id = ?`,
+      [ids.flowId]
+    )
+    await db.run(
+      `UPDATE payment_plans
+       SET status = 'deleted'
+       WHERE id = ?`,
+      [ids.flowId]
+    )
+    await db.run(
+      `UPDATE installment_payments
+       SET status = 'deleted'
+       WHERE flow_id = ?`,
+      [ids.flowId]
+    )
+    await db.run(
+      `UPDATE payments
+       SET status = 'deleted',
+           payment_mode = 'live',
+           metadata_json = ?
+       WHERE id IN (?, ?)`,
+      ['{}', ids.cardSetupPaymentId, ids.installmentPaymentId]
+    )
+
+    const res = createResponse()
+    await actionInvoiceSchedule({
+      params: { scheduleId: ids.flowId },
+      body: { action: 'delete' }
+    }, res)
+
+    assert.equal(res.statusCode, 200)
+    assert.equal(res.payload.success, true)
+    assert.equal(res.payload.data.deleted, true)
+
+    const flow = await db.get('SELECT id FROM payment_flows WHERE id = ?', [ids.flowId])
+    const mirror = await db.get('SELECT id FROM payment_plans WHERE id = ?', [ids.flowId])
+    const installment = await db.get('SELECT id FROM installment_payments WHERE id = ?', [ids.installmentId])
+    const setupPayment = await db.get('SELECT id FROM payments WHERE id = ?', [ids.cardSetupPaymentId])
+    const installmentPayment = await db.get('SELECT id FROM payments WHERE id = ?', [ids.installmentPaymentId])
+
+    assert.equal(flow, null)
+    assert.equal(mirror, null)
+    assert.equal(installment, null)
+    assert.equal(setupPayment, null)
+    assert.equal(installmentPayment, null)
+  } finally {
+    await cleanup(ids)
+  }
+})
+
+test('bloquea borrar físicamente un plan Stripe ya eliminado si conserva un pago live registrado', async () => {
+  const ids = await seedStripePlan()
+
+  try {
+    await db.run(
+      `UPDATE payment_flows
+       SET current_state = 'deleted'
+       WHERE id = ?`,
+      [ids.flowId]
+    )
+    await db.run(
+      `UPDATE payment_plans
+       SET status = 'deleted'
+       WHERE id = ?`,
+      [ids.flowId]
+    )
+    await db.run(
+      `UPDATE payments
+       SET status = 'paid',
+           payment_mode = 'live',
+           stripe_payment_intent_id = 'pi_deleted_live_guard',
+           paid_at = CURRENT_TIMESTAMP,
+           metadata_json = ?
+       WHERE id = ?`,
+      ['{}', ids.cardSetupPaymentId]
+    )
+    await db.run(
+      `UPDATE payments
+       SET payment_mode = 'live',
+           metadata_json = ?
+       WHERE id = ?`,
+      ['{}', ids.installmentPaymentId]
+    )
+
+    const res = createResponse()
+    await actionInvoiceSchedule({
+      params: { scheduleId: ids.flowId },
+      body: { action: 'delete' }
+    }, res)
+
+    assert.equal(res.statusCode, 422)
+    assert.match(res.payload.error, /no se puede eliminar|conservar el historial/i)
+
+    const flow = await db.get('SELECT current_state FROM payment_flows WHERE id = ?', [ids.flowId])
+    const setupPayment = await db.get('SELECT status FROM payments WHERE id = ?', [ids.cardSetupPaymentId])
+
+    assert.equal(flow.current_state, 'deleted')
+    assert.equal(setupPayment.status, 'paid')
+  } finally {
+    await cleanup(ids)
+  }
+})
+
 test('bloquea eliminar un plan Stripe live cuando ya tiene un pago registrado', async () => {
   const ids = await seedStripePlan()
 

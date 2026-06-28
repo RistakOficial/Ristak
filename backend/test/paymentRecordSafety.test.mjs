@@ -211,6 +211,31 @@ test('seguridad pagos: archiva un link live pendiente sin borrar la fila', async
   }
 })
 
+test('seguridad pagos: borra físicamente una transacción ya archivada como eliminada', async () => {
+  const ids = await seedSafetyRows('deleted_archive')
+
+  try {
+    await db.run(
+      `UPDATE payments
+       SET status = 'deleted',
+           payment_mode = 'live'
+       WHERE id = ?`,
+      [ids.pendingLinkPaymentId]
+    )
+
+    const res = createResponse()
+    await deleteTransaction({ params: { id: ids.pendingLinkPaymentId } }, res)
+
+    assert.equal(res.statusCode, 200)
+    assert.equal(res.payload.success, true)
+
+    const row = await db.get('SELECT id FROM payments WHERE id = ?', [ids.pendingLinkPaymentId])
+    assert.equal(row, null)
+  } finally {
+    await cleanup(ids)
+  }
+})
+
 test('seguridad pagos: borra un link test pendiente aunque tenga URL externa', async () => {
   const ids = await seedSafetyRows('pending_link_test')
 
@@ -310,6 +335,30 @@ test('seguridad pagos: borra una suscripción test con cobros ligados', async ()
 
     assert.equal(subscription, null)
     assert.equal(payment, null)
+  } finally {
+    await cleanup(ids)
+  }
+})
+
+test('seguridad pagos: borra una suscripción test aunque todavía no tenga cobros', async () => {
+  const ids = await seedSafetyRows('subscription_test_empty_delete')
+
+  try {
+    await db.run(
+      `INSERT INTO subscriptions (
+        id, contact_id, contact_name, name, status, amount, currency,
+        interval_type, interval_count, payment_method, payment_provider,
+        payment_mode, source, metadata_json, created_at, updated_at
+      ) VALUES (?, ?, 'Cliente seguridad pagos', 'Suscripción test sin cobros', 'active', 500, 'MXN',
+        'monthly', 1, 'stripe_saved_card', 'stripe', 'test', 'ristak', ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+      [ids.subscriptionId, ids.contactId, JSON.stringify({ paymentMode: 'test' })]
+    )
+
+    const deleted = await deleteSubscription(ids.subscriptionId)
+    assert.equal(deleted, true)
+
+    const subscription = await db.get('SELECT id FROM subscriptions WHERE id = ?', [ids.subscriptionId])
+    assert.equal(subscription, null)
   } finally {
     await cleanup(ids)
   }

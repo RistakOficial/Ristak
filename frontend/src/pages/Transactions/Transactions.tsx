@@ -857,11 +857,7 @@ export const Transactions: React.FC = () => {
   useEffect(() => {
     if (selectedPaymentPlanIds.length === 0) return
 
-    const availableIds = new Set(
-      paymentPlans
-        .filter(plan => String(plan.status || '').toLowerCase() !== 'deleted')
-        .map(plan => plan.id)
-    )
+    const availableIds = new Set(paymentPlans.map(plan => plan.id))
     const nextSelectedIds = selectedPaymentPlanIds.filter(id => availableIds.has(id))
 
     if (nextSelectedIds.length !== selectedPaymentPlanIds.length) {
@@ -2288,7 +2284,7 @@ export const Transactions: React.FC = () => {
   const canActivatePaymentPlan = (plan: PaymentPlan) => ['draft', 'paused', 'inactive', 'pending'].includes(getNormalizedPlanStatus(plan))
   const canPausePaymentPlan = (plan: PaymentPlan) => ['active', 'scheduled', 'pending', 'sent'].includes(getNormalizedPlanStatus(plan))
   const canCancelPaymentPlan = (plan: PaymentPlan) => !['cancelled', 'canceled', 'completed', 'complete', 'deleted'].includes(getNormalizedPlanStatus(plan))
-  const canDeletePaymentPlan = (plan: PaymentPlan) => !isPlanDeleted(plan)
+  const canDeletePaymentPlan = (_plan: PaymentPlan) => true
 
   const transactionStatusFilterData = useMemo(() => {
     const counts = transactions.reduce<Record<string, number>>((acc, transaction) => {
@@ -2701,10 +2697,6 @@ export const Transactions: React.FC = () => {
         const mercadoPagoPlan = isMercadoPagoPaymentPlan(item)
         const activationLabel = status === 'paused' ? 'Continuar plan' : 'Activar plan'
 
-        if (isPlanDeleted(item)) {
-          return <span className={styles.mutedAction}>-</span>
-        }
-
         return (
           <div className={styles.actions} onClick={(event) => event.stopPropagation()}>
             <DropdownMenu>
@@ -3050,7 +3042,6 @@ export const Transactions: React.FC = () => {
             rowSelection={{
               selectedKeys: selectedPaymentPlanIds,
               onChange: setSelectedPaymentPlanIds,
-              isRowDisabled: (item) => !canDeletePaymentPlan(item),
               getRowLabel: (item) => item.name || item.title || 'plan de pago',
               selectVisibleLabel: 'Seleccionar planes visibles'
             }}
