@@ -44,6 +44,7 @@ const MERCADOPAGO_API_BASE = 'https://api.mercadopago.com'
 const MERCADOPAGO_WEBHOOK_PATH = '/api/mercadopago/webhook'
 const TOKEN_SYNC_WINDOW_MS = 15 * 60 * 1000
 const MERCADOPAGO_SUBSCRIPTION_START_BUFFER_MS = 10 * 60 * 1000
+const MERCADOPAGO_TEST_CARD_HELP = 'Mercado Pago rechazó el pago de prueba. Usa el email del comprador de prueba con rol buyer, no el usuario TESTUSER ni un correo normal. El comprador debe ser distinto al vendedor conectado. Para aprobar tarjeta usa APRO como titular, vencimiento 11/30 y CVV 123.'
 const DEFAULT_PAYMENT_TIMEZONE = 'America/Mexico_City'
 const MP_PLAN_STATES = {
   ACTIVE: 'mercadopago_plan_active',
@@ -572,13 +573,22 @@ async function getMercadoPagoClientConfig() {
 function normalizeMercadoPagoErrorMessage(payload = {}) {
   const message = cleanString(payload?.message || payload?.error)
   const causes = Array.isArray(payload?.cause) ? payload.cause : []
+  const hasInvalidTestUserEmailCause = causes.some((cause) => (
+    Number(cause?.code) === 2198 ||
+    /invalid test user email/i.test(cleanString(cause?.description || cause?.message))
+  ))
   const hasInvalidUsersCause = causes.some((cause) => (
     Number(cause?.code) === 2034 ||
     /invalid users involved/i.test(cleanString(cause?.description || cause?.message))
   ))
 
-  if (/invalid users involved/i.test(message) || hasInvalidUsersCause) {
-    return 'Mercado Pago rechazó el pago de prueba porque el comprador y el vendedor no son válidos entre sí. Usa un comprador de prueba distinto al vendedor conectado, escribe el email real del test user (no el nickname TESTUSER...) y usa APRO como titular para simular un pago aprobado.'
+  if (
+    /invalid test user email/i.test(message) ||
+    /invalid users involved/i.test(message) ||
+    hasInvalidTestUserEmailCause ||
+    hasInvalidUsersCause
+  ) {
+    return MERCADOPAGO_TEST_CARD_HELP
   }
 
   return message || 'Mercado Pago no pudo completar la solicitud.'

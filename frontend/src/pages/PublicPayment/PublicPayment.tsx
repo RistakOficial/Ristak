@@ -93,6 +93,7 @@ declare global {
 const MERCADOPAGO_SDK_SRC = 'https://sdk.mercadopago.com/js/v2'
 const CONEKTA_CHECKOUT_SDK_SRC = 'https://pay.conekta.com/v1.0/js/conekta-checkout.min.js'
 const META_PIXEL_SDK_SRC = 'https://connect.facebook.net/en_US/fbevents.js'
+const MERCADOPAGO_TEST_CARD_HELP = 'Modo prueba de Mercado Pago: usa el email del comprador de prueba con rol buyer, no el usuario TESTUSER. Para aprobar tarjeta usa titular APRO, vencimiento 11/30 y CVV 123.'
 let mercadoPagoSdkPromise: Promise<void> | null = null
 let conektaCheckoutSdkPromise: Promise<void> | null = null
 let metaPixelSdkPromise: Promise<void> | null = null
@@ -460,6 +461,21 @@ function normalizeMercadoPagoStatusMessage(status?: string, statusDetail?: strin
   }
 }
 
+function normalizeMercadoPagoCardErrorMessage(error: unknown) {
+  const message = String((error as any)?.message || error || '').trim()
+  const lowerMessage = message.toLowerCase()
+
+  if (
+    lowerMessage.includes('invalid test user email') ||
+    lowerMessage.includes('invalid users involved') ||
+    lowerMessage.includes('testuser')
+  ) {
+    return MERCADOPAGO_TEST_CARD_HELP
+  }
+
+  return message || 'No se pudo completar el pago. Revisa los datos e intenta otra vez.'
+}
+
 function buildMercadoPagoCardPayload(payment: PublicMercadoPagoPayment, formData: MercadoPagoCardSubmitData): MercadoPagoCardPaymentPayload {
   const token = String(formData.token || '').trim()
   const paymentMethodId = String(formData.payment_method_id || formData.paymentMethodId || '').trim()
@@ -595,6 +611,7 @@ const MercadoPagoCardPaymentForm: React.FC<{
   const [message, setMessage] = useState('')
   const [messageKind, setMessageKind] = useState<'info' | 'success' | 'error'>('info')
   const showSecureNotice = payment.settings?.checkout?.showSecureBadge !== false
+  const isTestMode = payment.paymentMode === 'test' || String(payment.publicKey || '').startsWith('TEST-')
 
   useEffect(() => {
     onPaidRef.current = onPaid
@@ -649,7 +666,7 @@ const MercadoPagoCardPaymentForm: React.FC<{
 
                 return result
               } catch (submitError: any) {
-                const text = submitError?.message || 'No se pudo completar el pago. Revisa los datos e intenta otra vez.'
+                const text = normalizeMercadoPagoCardErrorMessage(submitError)
                 setMessageKind('error')
                 setMessage(text)
                 throw submitError
@@ -675,7 +692,7 @@ const MercadoPagoCardPaymentForm: React.FC<{
         if (cancelled) return
         setLoadingBrick(false)
         setMessageKind('error')
-        setMessage(brickError?.message || 'No se pudo cargar el formulario de Mercado Pago.')
+        setMessage(normalizeMercadoPagoCardErrorMessage(brickError))
       }
     }
 
@@ -712,6 +729,13 @@ const MercadoPagoCardPaymentForm: React.FC<{
         <p className={styles.cardAuthorizationNotice}>
           <ShieldCheck size={16} />
           <span>La tarjeta se captura en campos seguros de Mercado Pago. Ristak solo recibe el resultado del cobro.</span>
+        </p>
+      )}
+
+      {isTestMode && (
+        <p className={styles.message}>
+          <AlertCircle size={16} />
+          <span>{MERCADOPAGO_TEST_CARD_HELP}</span>
         </p>
       )}
 

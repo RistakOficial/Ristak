@@ -333,8 +333,8 @@ test('Mercado Pago explica Invalid users involved en cobros publicos de prueba',
         }, { baseUrl: 'https://app.example.test' }),
         (error) => {
           assert.equal(error.status, 400)
-          assert.match(error.message, /comprador de prueba distinto/i)
-          assert.match(error.message, /email real del test user/i)
+          assert.match(error.message, /email del comprador de prueba/i)
+          assert.match(error.message, /TESTUSER/i)
           assert.match(error.message, /APRO/i)
           assert.equal(error.payload?.cause?.[0]?.code, 2034)
           return true
@@ -462,6 +462,100 @@ test('Mercado Pago limita cuotas configuradas en links de pago unico', async () 
       assert.equal(cardPaymentCalls.length, 1)
       assert.equal(charged.payment.status, 'paid')
       assert.equal(charged.payment.mercadoPagoInstallments.maxInstallments, 6)
+    } finally {
+      await cleanup(ids)
+    }
+  })
+})
+
+test('Mercado Pago explica Invalid test user email en cobros publicos de prueba', async () => {
+  await initializeMasterKey()
+
+  await snapshotMercadoPagoConfig(async () => {
+    const suffix = `${Date.now()}_${Math.random().toString(36).slice(2, 8)}`
+    const ids = {
+      contactId: `contact_mp_invalid_email_${suffix}`,
+      paymentId: ''
+    }
+
+    setMercadoPagoFetchForTest(async (url, options = {}) => {
+      assert.equal(options.method, 'POST')
+      assert.equal(options.headers?.Authorization, 'Bearer TEST-access-token')
+
+      if (url === 'https://api.mercadopago.com/checkout/preferences') {
+        return {
+          ok: true,
+          status: 201,
+          json: async () => ({
+            id: 'pref_invalid_email',
+            init_point: 'https://www.mercadopago.com.mx/checkout/v1/redirect?pref_id=invalid_email',
+            sandbox_init_point: 'https://sandbox.mercadopago.com.mx/checkout/v1/redirect?pref_id=invalid_email'
+          })
+        }
+      }
+
+      assert.equal(url, 'https://api.mercadopago.com/v1/payments')
+      const body = JSON.parse(String(options.body || '{}'))
+      assert.equal(body.payer.email, 'comprador-normal@example.com')
+
+      return {
+        ok: false,
+        status: 400,
+        json: async () => ({
+          message: 'Invalid test user email',
+          error: 'bad_request',
+          cause: [
+            {
+              code: 2198,
+              description: 'Invalid test user email'
+            }
+          ]
+        })
+      }
+    })
+
+    await db.run(
+      `INSERT INTO contacts (id, full_name, email, phone, source, created_at, updated_at)
+       VALUES (?, ?, ?, ?, 'test', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+      [ids.contactId, 'Cliente MP Invalid Email', 'cliente-invalid-email@example.test', '+5215555555559']
+    )
+
+    try {
+      const created = await createMercadoPagoPaymentLink({
+        contactId: ids.contactId,
+        contactName: 'Cliente MP Invalid Email',
+        email: 'cliente-invalid-email@example.test',
+        phone: '+5215555555559',
+        amount: 200,
+        currency: 'MXN',
+        title: 'Pago Mercado Pago Invalid Email',
+        description: 'Pago Mercado Pago Invalid Email',
+        applyTax: false
+      }, { baseUrl: 'https://app.example.test' })
+      ids.paymentId = created.payment.id
+
+      await assert.rejects(
+        () => createPublicMercadoPagoCardPayment(created.publicPaymentId, {
+          token: 'tok_card_test',
+          paymentMethodId: 'master',
+          installments: 1,
+          idempotencyKey: 'card-invalid-email-key',
+          payer: {
+            email: 'comprador-normal@example.com'
+          }
+        }, { baseUrl: 'https://app.example.test' }),
+        (error) => {
+          assert.equal(error.status, 400)
+          assert.match(error.message, /email del comprador de prueba/i)
+          assert.match(error.message, /correo normal/i)
+          assert.match(error.message, /TESTUSER/i)
+          assert.equal(error.payload?.cause?.[0]?.code, 2198)
+          return true
+        }
+      )
+
+      const saved = await db.get('SELECT status FROM payments WHERE id = ?', [ids.paymentId])
+      assert.equal(saved.status, 'sent')
     } finally {
       await cleanup(ids)
     }
