@@ -32423,20 +32423,44 @@ const FieldStaticPreview: React.FC<{ block: SiteBlock }> = ({ block }) => (
   </section>
 )
 
+const blockHasBackgroundVideo = (block: SiteBlock) => {
+  const settings = block.settings || {}
+  return getSettingString(settings, 'blockBackgroundMediaType') === 'video' &&
+    Boolean(safePublicMediaUrl(getSettingString(settings, 'blockBackgroundImage'), 'video'))
+}
+
+const blockNeedsStaticPreviewWrapper = (block: SiteBlock, style: React.CSSProperties) => {
+  const settings = block.settings || {}
+  return Object.keys(style).length > 0 ||
+    getSettingBoolean(settings, 'blockFullWidth') ||
+    blockHasBackgroundVideo(block) ||
+    isBlockHidden(block)
+}
+
 const EmbeddedFormStaticBlockPreview: React.FC<{
   block: SiteBlock
   site?: PublicSite
   forms: PublicSite[]
   calendars: CalendarType[]
-}> = ({ block, site, forms, calendars }) => (
-  fieldBlockTypes.has(block.blockType) ? (
-    <FieldStaticPreview block={block} />
-  ) : (
-    <div className={getBlockStyleClassName(block)} style={getBlockCanvasStyle(block)}>
-      <CanvasPreviewBlock block={block} site={site} forms={forms} calendars={calendars} />
+}> = ({ block, site, forms, calendars }) => {
+  if (fieldBlockTypes.has(block.blockType)) {
+    return <FieldStaticPreview block={block} />
+  }
+
+  const style = getBlockCanvasStyle(block)
+  const content = <CanvasPreviewBlock block={block} site={site} forms={forms} calendars={calendars} />
+
+  if (!blockNeedsStaticPreviewWrapper(block, style)) {
+    return content
+  }
+
+  return (
+    <div className={getBlockStyleClassName(block)} style={style}>
+      <BlockBackgroundVideo block={block} />
+      {content}
     </div>
   )
-)
+}
 
 const EmbeddedFormCanvasDropZone: React.FC<{
   active: boolean
@@ -32479,20 +32503,23 @@ const EmbeddedFormCanvasFields: React.FC<{
         {fields.map((field, index) => {
           const selected = !editor.submitSelected && editor.activeFieldId === field.id
           const isFieldBlock = fieldBlockTypes.has(field.blockType)
+          const blockStyle = getBlockCanvasStyle(field)
+          const needsBlockStyleWrapper = blockNeedsStaticPreviewWrapper(field, blockStyle)
           return (
             <React.Fragment key={field.id}>
               <section
                 className={[
                   isFieldBlock ? 'rstkEmbeddedFormField' : 'rstkEmbeddedFormItem',
                   selected ? (isFieldBlock ? 'rstkEmbeddedFormFieldActive' : 'rstkEmbeddedFormItemActive') : '',
-                  getBlockStyleClassName(field)
+                  needsBlockStyleWrapper ? getBlockStyleClassName(field) : ''
                 ].filter(Boolean).join(' ')}
-                style={getBlockCanvasStyle(field)}
+                style={needsBlockStyleWrapper ? blockStyle : undefined}
                 onClick={(event) => {
                   event.stopPropagation()
                   editor.onSelectField(field.id)
                 }}
               >
+                {needsBlockStyleWrapper ? <BlockBackgroundVideo block={field} /> : null}
                 <div className="rstkEmbeddedFormFieldTools">
                   <button
                     type="button"
