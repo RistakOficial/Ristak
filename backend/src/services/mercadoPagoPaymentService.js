@@ -3086,10 +3086,8 @@ function pickMercadoPagoPreapproval(results = []) {
 async function listMercadoPagoAuthorizedPayments(preapprovalId) {
   const cleanPreapprovalId = cleanString(preapprovalId)
   if (!cleanPreapprovalId) return []
-  const query = new URLSearchParams({
-    preapproval_id: cleanPreapprovalId,
-    limit: '20'
-  })
+
+  const query = new URLSearchParams({ preapproval_id: cleanPreapprovalId })
   const { payload } = await mercadoPagoSubscriptionApiRequest(`/authorized_payments/search?${query.toString()}`)
   return getMercadoPagoPreapprovalSearchResults(payload)
 }
@@ -3114,7 +3112,9 @@ export async function refreshMercadoPagoSubscription(preapprovalId) {
   const { payload } = await mercadoPagoSubscriptionApiRequest(`/preapproval/${encodeURIComponent(cleanPreapprovalId)}`)
   const updated = await updateSubscriptionFromMercadoPagoPreapproval(payload)
   if (updated?.id) {
-    await syncMercadoPagoAuthorizedPaymentsForSubscription(cleanPreapprovalId, updated)
+    await syncMercadoPagoAuthorizedPaymentsForSubscription(cleanPreapprovalId, updated).catch((error) => {
+      logger.warn(`No se pudieron sincronizar cobros autorizados de Mercado Pago para ${updated.id}: ${error.message}`)
+    })
   }
   return updated
 }
@@ -3133,7 +3133,9 @@ export async function syncMercadoPagoSubscriptionPlan(preapprovalPlanId) {
 
   const updated = await updateSubscriptionFromMercadoPagoPreapproval(preapproval)
   if (updated?.id) {
-    await syncMercadoPagoAuthorizedPaymentsForSubscription(preapproval.id, updated)
+    await syncMercadoPagoAuthorizedPaymentsForSubscription(preapproval.id, updated).catch((error) => {
+      logger.warn(`No se pudieron sincronizar cobros autorizados de Mercado Pago para ${updated.id}: ${error.message}`)
+    })
   }
   return updated
 }

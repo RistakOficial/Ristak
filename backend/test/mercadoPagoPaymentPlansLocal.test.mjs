@@ -840,7 +840,7 @@ test('Mercado Pago crea link abierto de suscripcion con preapproval plan', async
 
       setMercadoPagoFetchForTest(async (url, options = {}) => {
         assert.equal(options.method || 'GET', 'GET')
-        if (url === 'https://api.mercadopago.com/authorized_payments/search?preapproval_id=mp_preapproval_authorized_1&limit=20') {
+        if (url === 'https://api.mercadopago.com/authorized_payments/search?preapproval_id=mp_preapproval_authorized_1') {
           return {
             ok: true,
             status: 200,
@@ -953,7 +953,7 @@ test('Mercado Pago sincroniza suscripcion y cobro desde evento de preapproval pl
         }
       }
 
-      if (url === 'https://api.mercadopago.com/authorized_payments/search?preapproval_id=mp_preapproval_sync_1&limit=20') {
+      if (url === 'https://api.mercadopago.com/authorized_payments/search?preapproval_id=mp_preapproval_sync_1') {
         assert.equal(options.method || 'GET', 'GET')
         return {
           ok: true,
