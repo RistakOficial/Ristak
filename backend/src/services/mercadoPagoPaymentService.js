@@ -44,7 +44,7 @@ const MERCADOPAGO_API_BASE = 'https://api.mercadopago.com'
 const MERCADOPAGO_WEBHOOK_PATH = '/api/mercadopago/webhook'
 const TOKEN_SYNC_WINDOW_MS = 15 * 60 * 1000
 const MERCADOPAGO_SUBSCRIPTION_START_BUFFER_MS = 10 * 60 * 1000
-const MERCADOPAGO_TEST_CARD_HELP = 'Mercado Pago rechazó el pago de prueba. Usa el email del comprador de prueba con rol buyer, no el usuario TESTUSER ni un correo normal. El comprador debe ser distinto al vendedor conectado. Para aprobar tarjeta usa APRO como titular, vencimiento 11/30 y CVV 123.'
+const MERCADOPAGO_TEST_CARD_HELP = 'Mercado Pago rechazó el pago de prueba. El formulario embebido de tarjeta no funciona con cuentas TESTUSER. Para tarjeta directa, reconecta Mercado Pago con credenciales de prueba de la cuenta real y usa un email valido de comprador. Si quieres probar comprador/vendedor TESTUSER, usa Checkout Pro.'
 const DEFAULT_PAYMENT_TIMEZONE = 'America/Mexico_City'
 const MP_PLAN_STATES = {
   ACTIVE: 'mercadopago_plan_active',

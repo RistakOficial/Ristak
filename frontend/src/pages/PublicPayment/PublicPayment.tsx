@@ -93,7 +93,7 @@ declare global {
 const MERCADOPAGO_SDK_SRC = 'https://sdk.mercadopago.com/js/v2'
 const CONEKTA_CHECKOUT_SDK_SRC = 'https://pay.conekta.com/v1.0/js/conekta-checkout.min.js'
 const META_PIXEL_SDK_SRC = 'https://connect.facebook.net/en_US/fbevents.js'
-const MERCADOPAGO_TEST_CARD_HELP = 'Modo prueba de Mercado Pago: usa el email del comprador de prueba con rol buyer, no el usuario TESTUSER. Para aprobar tarjeta usa titular APRO, vencimiento 11/30 y CVV 123.'
+const MERCADOPAGO_TEST_CARD_HELP = 'Modo prueba de Mercado Pago: el formulario embebido de tarjeta no se prueba con cuentas TESTUSER. Para probar tarjeta aqui, reconecta Mercado Pago con las credenciales de prueba de tu cuenta real y usa APRO como titular. Si quieres comprador/vendedor TESTUSER, usa Checkout Pro.'
 let mercadoPagoSdkPromise: Promise<void> | null = null
 let conektaCheckoutSdkPromise: Promise<void> | null = null
 let metaPixelSdkPromise: Promise<void> | null = null
