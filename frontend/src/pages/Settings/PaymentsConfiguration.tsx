@@ -179,16 +179,8 @@ const stripeModeLabels: Record<StripeModeId, { title: string; description: strin
   }
 }
 const stripeWebhookEvents = [
-  'payment_intent.succeeded',
-  'payment_intent.payment_failed',
-  'payment_intent.canceled',
-  'payment_intent.processing',
-  'payment_intent.requires_action',
-  'invoice.payment_succeeded',
   'invoice.payment_failed',
-  'customer.subscription.updated',
-  'customer.subscription.deleted',
-  'charge.refunded',
+  'invoice.payment_succeeded',
   'refund.created'
 ]
 const paymentModeLabels: Record<PaymentModeId, { title: string; badge: string; description: string; mercadoPagoHelp: string }> = {
@@ -3143,7 +3135,7 @@ export const PaymentsConfiguration: React.FC = () => {
                   value={stripeWebhookEvents.join('\n')}
                   onFocus={(event) => event.currentTarget.select()}
                 />
-                <small>Selecciona estos eventos en Stripe para que Ristak actualice pagos, suscripciones y reembolsos.</small>
+                <small>Selecciona estos eventos en Stripe para que Ristak reciba confirmaciones de invoice y reembolsos sin ruido extra.</small>
               </div>
             </div>
           </div>
