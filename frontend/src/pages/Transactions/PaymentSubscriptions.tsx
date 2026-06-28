@@ -3,10 +3,12 @@ import { useNavigate } from 'react-router-dom'
 import {
   CalendarClock,
   Check,
+  ChevronRight,
   Copy,
   CreditCard,
   Edit3,
   ExternalLink,
+  Link as LinkIcon,
   MoreVertical,
   Pause,
   Play,
@@ -15,6 +17,7 @@ import {
   Repeat2,
   Send,
   Settings,
+  ShieldCheck,
   Trash2,
   XCircle
 } from 'lucide-react'
@@ -255,6 +258,16 @@ function getPaymentProviderFromMethod(paymentMethod: string, paymentProvider: Pa
   return paymentProvider
 }
 
+function getPaymentProviderName(provider: PaymentGatewayProvider) {
+  if (provider === 'mercadopago') return 'Mercado Pago'
+  if (provider === 'conekta') return 'Conekta'
+  return 'Stripe'
+}
+
+function getPaymentProviderList(options: Array<{ provider: PaymentGatewayProvider }>) {
+  return Array.from(new Set(options.map((option) => getPaymentProviderName(option.provider)))).join(', ')
+}
+
 function getSavedStripeCardDescription(method?: StripeSavedPaymentMethod | null) {
   if (!method) return 'Tarjeta guardada'
   const brand = method.brand ? method.brand.toUpperCase() : 'Tarjeta'
@@ -262,11 +275,19 @@ function getSavedStripeCardDescription(method?: StripeSavedPaymentMethod | null)
   return method.expiresLabel ? `${label} · vence ${method.expiresLabel}` : label
 }
 
+function getSavedStripePaymentMethodId(method?: StripeSavedPaymentMethod | null) {
+  return method?.stripePaymentMethodId || method?.id || ''
+}
+
 function getSavedConektaCardDescription(source?: ConektaSavedPaymentSource | null) {
   if (!source) return 'Tarjeta guardada'
   const brand = source.brand ? source.brand.toUpperCase() : 'Tarjeta'
   const label = `${brand} •••• ${source.last4 || '----'}`
   return source.expiresLabel ? `${label} · vence ${source.expiresLabel}` : label
+}
+
+function getSavedConektaPaymentSourceId(source?: ConektaSavedPaymentSource | null) {
+  return source?.conektaPaymentSourceId || source?.id || ''
 }
 
 function getSubscriptionStatusLabel(status?: string | null) {
@@ -590,16 +611,16 @@ export const PaymentSubscriptions: React.FC = () => {
         setSavedPaymentMethods(stripeMethods)
         setSavedConektaPaymentSources(conektaSources)
         setSelectedStripePaymentMethodId((current) => {
-          const stillExists = stripeMethods.some((method) => method.stripePaymentMethodId === current || method.id === current)
+          const stillExists = stripeMethods.some((method) => getSavedStripePaymentMethodId(method) === current)
           if (stillExists) return current
           const preferred = stripeMethods.find((method) => method.isDefault) || stripeMethods[0]
-          return preferred?.stripePaymentMethodId || ''
+          return getSavedStripePaymentMethodId(preferred)
         })
         setSelectedConektaPaymentSourceId((current) => {
-          const stillExists = conektaSources.some((source) => source.conektaPaymentSourceId === current || source.id === current)
+          const stillExists = conektaSources.some((source) => getSavedConektaPaymentSourceId(source) === current)
           if (stillExists) return current
           const preferred = conektaSources.find((source) => source.isDefault) || conektaSources[0]
-          return preferred?.conektaPaymentSourceId || ''
+          return getSavedConektaPaymentSourceId(preferred)
         })
       })
       .finally(() => {
@@ -619,7 +640,6 @@ export const PaymentSubscriptions: React.FC = () => {
   const availableLinkPaymentMethodOptions = useMemo(() => (
     availablePaymentMethodOptions.filter((option) => isLinkPaymentMethod(option.value))
   ), [availablePaymentMethodOptions])
-  const hasSavedCardGateway = stripeConnected || conektaConnected
 
   const hasSubscriptionGateway = availablePaymentMethodOptions.length > 0
   const showGatewayStep = formMode === 'create' && formStep === 'gateway'
@@ -632,11 +652,37 @@ export const PaymentSubscriptions: React.FC = () => {
   const hasConektaSavedCards = conektaConnected && savedConektaPaymentSources.length > 0
   const hasSavedCardOptions = hasStripeSavedCards || hasConektaSavedCards
   const selectedStripePaymentMethod = savedPaymentMethods.find((method) => (
-    method.stripePaymentMethodId === selectedStripePaymentMethodId || method.id === selectedStripePaymentMethodId
+    getSavedStripePaymentMethodId(method) === selectedStripePaymentMethodId
   )) || null
   const selectedConektaPaymentSource = savedConektaPaymentSources.find((source) => (
-    source.conektaPaymentSourceId === selectedConektaPaymentSourceId || source.id === selectedConektaPaymentSourceId
+    getSavedConektaPaymentSourceId(source) === selectedConektaPaymentSourceId
   )) || null
+  const savedPaymentMethodOptions = useMemo(() => (
+    savedPaymentMethods.flatMap((method) => {
+      const value = getSavedStripePaymentMethodId(method)
+      return value ? [{ value, label: getSavedStripeCardDescription(method) }] : []
+    })
+  ), [savedPaymentMethods])
+  const savedConektaPaymentSourceOptions = useMemo(() => (
+    savedConektaPaymentSources.flatMap((source) => {
+      const value = getSavedConektaPaymentSourceId(source)
+      return value ? [{ value, label: getSavedConektaCardDescription(source) }] : []
+    })
+  ), [savedConektaPaymentSources])
+  const savedCardGatewayLabels = [
+    hasStripeSavedCards ? 'Stripe' : null,
+    hasConektaSavedCards ? 'Conekta' : null
+  ].filter(Boolean) as string[]
+  const savedCardActionDescription = savedCardGatewayLabels.length > 1
+    ? `Elige la tarjeta guardada en ${savedCardGatewayLabels.join(' o ')}.`
+    : savedCardGatewayLabels.length === 1
+      ? `Elige la tarjeta guardada de ${savedCardGatewayLabels[0]}.`
+      : 'Este contacto todavía no tiene tarjetas guardadas.'
+  const paymentLinkActionDescription = availableLinkPaymentMethodOptions.length > 1
+    ? `Después eliges pasarela: ${getPaymentProviderList(availableLinkPaymentMethodOptions)}.`
+    : availableLinkPaymentMethodOptions.length === 1
+      ? `Usa ${getPaymentProviderName(availableLinkPaymentMethodOptions[0].provider)} para generar el enlace de pago.`
+      : 'Conecta una pasarela para enviar el enlace de pago.'
   const selectedSavedCardReady = form.paymentMethod === 'stripe_saved_card'
     ? Boolean(selectedStripePaymentMethod)
     : form.paymentMethod === 'conekta_subscription'
@@ -778,8 +824,13 @@ export const PaymentSubscriptions: React.FC = () => {
       return
     }
 
-    if (!hasSavedCardGateway) {
-      showToast('warning', 'No hay pasarela con tarjeta guardada', 'Conecta Stripe o Conekta para cobrar una tarjeta guardada.')
+    if (loadingSavedCards) {
+      showToast('warning', 'Buscando tarjetas', 'Espera un momento mientras cargamos las tarjetas guardadas del contacto.')
+      return
+    }
+
+    if (!hasSavedCardOptions) {
+      showToast('warning', 'No hay tarjetas guardadas', 'Este contacto todavía no tiene tarjetas guardadas en Stripe o Conekta.')
       return
     }
 
@@ -787,26 +838,8 @@ export const PaymentSubscriptions: React.FC = () => {
       applyPaymentMethod({ value: 'stripe_saved_card', provider: 'stripe' })
     } else if (hasConektaSavedCards) {
       applyPaymentMethod({ value: 'conekta_subscription', provider: 'conekta' })
-    } else {
-      setForm((current) => ({
-        ...current,
-        startMode: 'saved_card',
-        paymentMethod: stripeConnected ? 'stripe_saved_card' : 'conekta_subscription',
-        paymentProvider: stripeConnected ? 'stripe' : 'conekta',
-        status: current.status === 'incomplete' ? 'active' : current.status
-      }))
     }
     setFormStep('saved_card')
-  }
-
-  const chooseStripeSavedCard = (method: StripeSavedPaymentMethod) => {
-    setSelectedStripePaymentMethodId(method.stripePaymentMethodId || method.id || '')
-    applyPaymentMethod({ value: 'stripe_saved_card', provider: 'stripe' })
-  }
-
-  const chooseConektaSavedCard = (source: ConektaSavedPaymentSource) => {
-    setSelectedConektaPaymentSourceId(source.conektaPaymentSourceId || source.id || '')
-    applyPaymentMethod({ value: 'conekta_subscription', provider: 'conekta' })
   }
 
   const goBackFormStep = () => {
@@ -821,6 +854,65 @@ export const PaymentSubscriptions: React.FC = () => {
     }
 
     closeForm()
+  }
+
+  const renderSavedCardGatewayRow = ({
+    platform,
+    label,
+    description,
+    value,
+    options,
+    active,
+    onSelect
+  }: {
+    platform: 'stripe' | 'conekta'
+    label: string
+    description: string
+    value: string
+    options: Array<{ value: string; label: string }>
+    active: boolean
+    onSelect: (value: string) => void
+  }) => {
+    const selectedValue = value || options[0]?.value || ''
+    const selectCurrentCard = () => {
+      if (selectedValue) {
+        onSelect(selectedValue)
+      }
+    }
+
+    return (
+      <div
+        className={styles.savedCardGatewayRow}
+        data-active={active ? 'true' : undefined}
+      >
+        <button
+          type="button"
+          className={styles.savedCardGatewayMain}
+          onClick={selectCurrentCard}
+        >
+          <div className={styles.optionInfo}>
+            <div className={styles.optionIcon}>
+              <PaymentPlatformLogo platform={platform} size="md" decorative />
+            </div>
+            <div>
+              <p>{label}</p>
+              <span>{description}</span>
+            </div>
+          </div>
+        </button>
+        <div className={styles.savedCardSelector} onClick={(event) => event.stopPropagation()}>
+          <CustomSelect
+            value={selectedValue}
+            onValueChange={onSelect}
+            options={options}
+            placeholder={`Tarjeta de ${label}`}
+            aria-label={`Tarjeta guardada de ${label}`}
+            portal
+          />
+        </div>
+        {active && <Check size={18} className={styles.optionCheck} aria-hidden="true" />}
+      </div>
+    )
   }
 
   const validateSubscriptionDetails = () => {
@@ -1464,70 +1556,73 @@ export const PaymentSubscriptions: React.FC = () => {
               void saveSubscription()
             }}>
             {showStartMethodStep ? (
-              <div className={styles.gatewayPicker}>
-                {availableLinkPaymentMethodOptions.length > 0 && (
+              <div className={styles.paymentOptions}>
+                {hasSavedCardOptions && (
                   <button
                     type="button"
-                    className={`${styles.gatewayOption} ${form.startMode === 'link' ? styles.gatewayOptionActive : ''}`}
-                    onClick={() => chooseStartMode('link')}
+                    className={`${styles.optionButton} ${form.startMode === 'saved_card' ? styles.optionButtonActive : ''}`}
+                    onClick={() => chooseStartMode('saved_card')}
                   >
-                    <span className={styles.gatewayOptionLogo}>
-                      <ExternalLink size={18} aria-hidden="true" />
-                    </span>
-                    <span>
-                      <strong>Enviar link de suscripción</strong>
-                      <small>El cliente autoriza la suscripción desde el flujo correcto de la pasarela.</small>
-                      <small>Stripe y Conekta usan página pública de Ristak; Mercado Pago entrega su propio link.</small>
-                    </span>
-                    <ExternalLink size={18} className={styles.gatewayOptionCheck} aria-hidden="true" />
+                    <div className={styles.optionInfo}>
+                      <div className={styles.optionIcon}>
+                        <ShieldCheck size={18} aria-hidden="true" />
+                      </div>
+                      <div>
+                        <p>Cobrar tarjeta guardada</p>
+                        <span>{savedCardActionDescription}</span>
+                      </div>
+                    </div>
+                    <ChevronRight size={18} className={styles.optionCheck} aria-hidden="true" />
                   </button>
                 )}
 
-                {hasSavedCardGateway && (
+                {availableLinkPaymentMethodOptions.length > 0 && (
                   <button
                     type="button"
-                    className={`${styles.gatewayOption} ${form.startMode === 'saved_card' ? styles.gatewayOptionActive : ''}`}
-                    onClick={() => chooseStartMode('saved_card')}
+                    className={`${styles.optionButton} ${form.startMode === 'link' ? styles.optionButtonActive : ''}`}
+                    onClick={() => chooseStartMode('link')}
                   >
-                    <span className={styles.gatewayOptionLogo}>
-                      <CreditCard size={18} aria-hidden="true" />
-                    </span>
-                    <span>
-                      <strong>Usar tarjeta guardada</strong>
-                      <small>Ristak inicia la suscripción con una tarjeta guardada del contacto.</small>
-                      <small>Después eliges la tarjeta disponible en Stripe o Conekta.</small>
-                    </span>
-                    <CreditCard size={18} className={styles.gatewayOptionCheck} aria-hidden="true" />
+                    <div className={styles.optionInfo}>
+                      <div className={styles.optionIcon}>
+                        <LinkIcon size={18} aria-hidden="true" />
+                      </div>
+                      <div>
+                        <p>Enviar enlace de pago</p>
+                        <span>{paymentLinkActionDescription}</span>
+                      </div>
+                    </div>
+                    <ChevronRight size={18} className={styles.optionCheck} aria-hidden="true" />
                   </button>
                 )}
               </div>
             ) : showGatewayStep ? (
-              <div className={styles.gatewayPicker}>
+              <div className={styles.paymentOptions}>
                 {availableLinkPaymentMethodOptions.map((option) => {
                   const active = form.paymentMethod === option.value
-                  const providerName = option.provider === 'mercadopago' ? 'Mercado Pago' : option.provider === 'conekta' ? 'Conekta' : 'Stripe'
+                  const providerName = getPaymentProviderName(option.provider)
                   return (
                     <button
                       key={option.value}
                       type="button"
-                      className={`${styles.gatewayOption} ${active ? styles.gatewayOptionActive : ''}`}
+                      className={`${styles.optionButton} ${active ? styles.optionButtonActive : ''}`}
                       onClick={() => applyPaymentMethod(option)}
                     >
-                      <span className={styles.gatewayOptionLogo}>
-                        <PaymentPlatformLogo platform={option.provider} size="md" decorative />
-                      </span>
-                      <span>
-                        <strong>{providerName} · {option.modeLabel}</strong>
-                        <small>{option.description}</small>
-                        <small>{option.requirement} {option.result}</small>
-                      </span>
-                      {active && <Check size={18} className={styles.gatewayOptionCheck} aria-hidden="true" />}
+                      <div className={styles.optionInfo}>
+                        <div className={styles.optionIcon}>
+                          <PaymentPlatformLogo platform={option.provider} size="md" decorative />
+                        </div>
+                        <div>
+                          <p>{providerName}</p>
+                          <span>{option.description}</span>
+                        </div>
+                      </div>
+                      {active && <Check size={18} className={styles.optionCheck} aria-hidden="true" />}
                     </button>
                   )
                 })}
               </div>
             ) : showSavedCardStep ? (
-              <div className={styles.gatewayPicker}>
+              <div className={styles.paymentOptions}>
                 {loadingSavedCards && (
                   <div className={styles.emptyState}>
                     <span>Buscando tarjetas guardadas del contacto...</span>
@@ -1542,69 +1637,33 @@ export const PaymentSubscriptions: React.FC = () => {
                 )}
 
                 {!loadingSavedCards && hasStripeSavedCards && (
-                  <div className={styles.optionGroup}>
-                    <div className={styles.optionGroupHeader}>
-                      <PaymentPlatformLogo platform="stripe" size="sm" decorative />
-                      <span>Stripe</span>
-                    </div>
-                    {savedPaymentMethods.map((method) => {
-                      const active = form.paymentMethod === 'stripe_saved_card' && (
-                        selectedStripePaymentMethodId === method.stripePaymentMethodId ||
-                        selectedStripePaymentMethodId === method.id
-                      )
-
-                      return (
-                        <button
-                          key={method.stripePaymentMethodId || method.id}
-                          type="button"
-                          className={`${styles.gatewayOption} ${active ? styles.gatewayOptionActive : ''}`}
-                          onClick={() => chooseStripeSavedCard(method)}
-                        >
-                          <span className={styles.gatewayOptionLogo}>
-                            <PaymentPlatformLogo platform="stripe" size="md" decorative />
-                          </span>
-                          <span>
-                            <strong>{getSavedStripeCardDescription(method)}</strong>
-                            <small>Iniciará la suscripción con esta tarjeta guardada en Stripe.</small>
-                          </span>
-                          {active && <Check size={18} className={styles.gatewayOptionCheck} aria-hidden="true" />}
-                        </button>
-                      )
-                    })}
-                  </div>
+                  renderSavedCardGatewayRow({
+                    platform: 'stripe',
+                    label: 'Stripe',
+                    description: 'Iniciará la suscripción con Stripe.',
+                    value: selectedStripePaymentMethodId,
+                    options: savedPaymentMethodOptions,
+                    active: form.paymentMethod === 'stripe_saved_card',
+                    onSelect: (value) => {
+                      setSelectedStripePaymentMethodId(value)
+                      applyPaymentMethod({ value: 'stripe_saved_card', provider: 'stripe' })
+                    }
+                  })
                 )}
 
                 {!loadingSavedCards && hasConektaSavedCards && (
-                  <div className={styles.optionGroup}>
-                    <div className={styles.optionGroupHeader}>
-                      <PaymentPlatformLogo platform="conekta" size="sm" decorative />
-                      <span>Conekta</span>
-                    </div>
-                    {savedConektaPaymentSources.map((source) => {
-                      const active = form.paymentMethod === 'conekta_subscription' && (
-                        selectedConektaPaymentSourceId === source.conektaPaymentSourceId ||
-                        selectedConektaPaymentSourceId === source.id
-                      )
-
-                      return (
-                        <button
-                          key={source.conektaPaymentSourceId || source.id}
-                          type="button"
-                          className={`${styles.gatewayOption} ${active ? styles.gatewayOptionActive : ''}`}
-                          onClick={() => chooseConektaSavedCard(source)}
-                        >
-                          <span className={styles.gatewayOptionLogo}>
-                            <PaymentPlatformLogo platform="conekta" size="md" decorative />
-                          </span>
-                          <span>
-                            <strong>{getSavedConektaCardDescription(source)}</strong>
-                            <small>Iniciará la suscripción con esta tarjeta guardada en Conekta.</small>
-                          </span>
-                          {active && <Check size={18} className={styles.gatewayOptionCheck} aria-hidden="true" />}
-                        </button>
-                      )
-                    })}
-                  </div>
+                  renderSavedCardGatewayRow({
+                    platform: 'conekta',
+                    label: 'Conekta',
+                    description: 'Iniciará la suscripción con Conekta.',
+                    value: selectedConektaPaymentSourceId,
+                    options: savedConektaPaymentSourceOptions,
+                    active: form.paymentMethod === 'conekta_subscription',
+                    onSelect: (value) => {
+                      setSelectedConektaPaymentSourceId(value)
+                      applyPaymentMethod({ value: 'conekta_subscription', provider: 'conekta' })
+                    }
+                  })
                 )}
               </div>
             ) : (

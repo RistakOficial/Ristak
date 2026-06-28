@@ -3768,25 +3768,6 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
               </>
             ) : (
               <>
-                {hasPaymentPlanGateways && (
-                  <button
-                    type="button"
-                    className={`${styles.optionButton} ${stripePlanCardSource === 'new_card' ? styles.optionButtonActive : ''}`}
-                    onClick={selectPaymentPlanNewCardAction}
-                  >
-                    <div className={styles.optionInfo}>
-                      <div className={styles.optionIcon}>
-                        <LinkIcon size={18} />
-                      </div>
-                      <div>
-                        <p>Enviar link para nueva tarjeta</p>
-                        <span>{paymentPlanNewCardActionDescription}</span>
-                      </div>
-                    </div>
-                    <ChevronRight size={18} className={styles.optionCheck} />
-                  </button>
-                )}
-
                 {hasPaymentPlanSavedCards && (
                   <button
                     type="button"
@@ -3798,8 +3779,27 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
                         <ShieldCheck size={18} />
                       </div>
                       <div>
-                        <p>Usar tarjeta guardada</p>
+                        <p>Cobrar tarjeta guardada</p>
                         <span>{paymentPlanSavedCardActionDescription}</span>
+                      </div>
+                    </div>
+                    <ChevronRight size={18} className={styles.optionCheck} />
+                  </button>
+                )}
+
+                {hasPaymentPlanGateways && (
+                  <button
+                    type="button"
+                    className={`${styles.optionButton} ${stripePlanCardSource === 'new_card' ? styles.optionButtonActive : ''}`}
+                    onClick={selectPaymentPlanNewCardAction}
+                  >
+                    <div className={styles.optionInfo}>
+                      <div className={styles.optionIcon}>
+                        <LinkIcon size={18} />
+                      </div>
+                      <div>
+                        <p>Enviar enlace de pago</p>
+                        <span>{paymentPlanNewCardActionDescription}</span>
                       </div>
                     </div>
                     <ChevronRight size={18} className={styles.optionCheck} />
