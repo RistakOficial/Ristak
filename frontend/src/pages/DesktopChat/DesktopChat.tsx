@@ -279,21 +279,23 @@ const CHAT_CACHE_KEY = 'ristak_desktop_chat_list_cache_v1'
 const CHAT_CONVERSATION_CACHE_KEY_PREFIX = 'ristak_desktop_chat_conversation_cache_v1'
 const CHAT_CACHE_MAX_AGE_MS = 30 * 60 * 1000
 const CHAT_CACHE_STALE_MAX_AGE_MS = 24 * 60 * 60 * 1000
+const CHAT_CACHE_ENTRY_LIMIT = 400
 const CHAT_CONVERSATION_CACHE_MAX_AGE_MS = 24 * 60 * 60 * 1000
 const CHAT_CONVERSATION_CACHE_MAX_ENTRY_CHARS = 360_000
 const CHAT_REFRESH_INTERVAL_MS = 20000
-// Lotes pequeños para que la lista se revele progresivamente al hacer scroll (como
-// cualquier app de chat) en vez de aparecer toda de golpe.
-const CHAT_LIST_PAGE_SIZE = 30
+// Lotes amplios: el endpoint ya pagina, pero una app de chat no debe hacer esperar cada
+// 30 filas. Con 100 se reducen viajes y la lista queda lista antes de que el usuario toque fondo.
+const CHAT_LIST_PAGE_SIZE = 100
 // Distancia mínima al fondo para empezar a prefetch del siguiente lote. El disparo real
-// usa ~1.5 pantallas (ver loadMoreChatsIfNeeded) para que el lote llegue ANTES de tocar
+// usa varias pantallas (ver loadMoreChatsIfNeeded) para que el lote llegue ANTES de tocar
 // el fondo y nunca se sienta "trabado".
-const CHAT_LIST_AUTO_LOAD_GAP_PX = 320
+const CHAT_LIST_AUTO_LOAD_GAP_PX = 900
+const CHAT_LIST_PREFETCH_VIEWPORTS = 3
 // Cargamos el historial COMPLETO en segundo plano (no bloqueante): la primera página pinta
 // al instante y el resto se trae solo, lote por lote, hasta este tope. Así aparecen TODAS las
 // conversaciones (no solo las recientes) sin depender del scroll. Pasado el tope, el resto se
 // sigue cargando con el prefetch por scroll (protege cuentas enormes / rendimiento de render).
-const CHAT_LIST_BACKGROUND_LOAD_CAP = 500
+const CHAT_LIST_BACKGROUND_LOAD_CAP = 1000
 const BULK_CHAT_ARCHIVE_CONFIRM_WORD = 'ARCHIVAR'
 const BULK_CHAT_RESTORE_CONFIRM_WORD = 'RESTAURAR'
 const BULK_CHAT_REMOVE_CONFIRM_WORD = 'ELIMINAR'
@@ -912,7 +914,7 @@ function readCachedChatList(): ChatListCacheSnapshot {
         typeof (contact as DesktopChatContact).id === 'string' &&
         (contact as DesktopChatContact).id.trim()
       ))
-      .slice(0, 120)
+      .slice(0, CHAT_CACHE_ENTRY_LIMIT)
 
     return {
       chats,
@@ -929,7 +931,7 @@ function writeCachedChatList(chats: DesktopChatContact[]) {
   try {
     window.localStorage.setItem(CHAT_CACHE_KEY, JSON.stringify({
       storedAt: Date.now(),
-      chats: chats.slice(0, 120)
+      chats: chats.slice(0, CHAT_CACHE_ENTRY_LIMIT)
     }))
   } catch {
     // Cache best-effort: si el navegador no deja guardar, la red sigue siendo la fuente.
@@ -2079,8 +2081,8 @@ export const DesktopChat: React.FC = () => {
   const selectAllChatCheckboxRef = useRef<HTMLInputElement | null>(null)
   const chatsRef = useRef<DesktopChatContact[]>([])
   const [initialChatCache] = useState<ChatListCacheSnapshot>(() => readCachedChatList())
-  const chatListOffsetRef = useRef(initialChatCache.chats.length)
-  const chatListHasMoreRef = useRef(initialChatCache.chats.length >= CHAT_LIST_PAGE_SIZE)
+  const chatListOffsetRef = useRef(0)
+  const chatListHasMoreRef = useRef(initialChatCache.chats.length > 0)
   const chatListLoadingMoreRef = useRef(false)
   // Controller propio para "cargar más" (append), independiente de chatsRequestRef, para que
   // el load-more nunca quede bloqueado por una carga inicial o un refresco en segundo plano.
@@ -2814,11 +2816,15 @@ export const DesktopChat: React.FC = () => {
         // Refresco en segundo plano: NO recortar ni reconstruir la lista entera (eso causa
         // tirones de scroll). Traemos solo la primera página (lo más reciente) y la fusionamos
         // sobre los chats ya cargados, conservando la cola que el usuario reveló con scroll.
-        // No reiniciamos offset/hasMore ni el chat activo.
+        // El offset solo avanza por páginas reales traídas del servidor; el caché no cuenta.
         const freshPage = await fetchChatPage(0)
         if (chatsRequestRef.current !== controller) return
 
         const freshIds = new Set(freshPage.map((contact) => contact.id))
+        const loadedBeyondFreshPage = chatListOffsetRef.current > freshPage.length
+        chatListOffsetRef.current = Math.max(chatListOffsetRef.current, freshPage.length)
+        chatListHasMoreRef.current = freshPage.length >= CHAT_LIST_PAGE_SIZE ||
+          (loadedBeyondFreshPage && chatListHasMoreRef.current)
         // setChats funcional: fusionamos sobre el estado MÁS reciente para no pisar un
         // "cargar más" que pudiera estar corriendo en paralelo.
         setChats((current) => dedupeChatsById([
@@ -2847,9 +2853,12 @@ export const DesktopChat: React.FC = () => {
           ...(fromSearch ? [] : chatsRef.current.filter((contact) => !freshIds.has(contact.id)))
         ])
 
-        // Conservamos la profundidad mostrada (offset = tamaño fusionado); hasMore se basa en
-        // si la primera página vino llena. NUNCA reiniciamos al primer lote (evita encoger).
-        chatListOffsetRef.current = merged.length
+        // El offset representa páginas reales traídas del servidor, no filas pintadas desde
+        // caché. Si usáramos merged.length, un caché viejo podría saltarse conversaciones
+        // intermedias cuando el orden cambió por mensajes nuevos.
+        chatListOffsetRef.current = fromSearch
+          ? freshPage.length
+          : Math.max(chatListOffsetRef.current, freshPage.length)
         chatListHasMoreRef.current = freshPage.length >= CHAT_LIST_PAGE_SIZE
         writeCachedChatList(merged)
         setRemovedChatStates((current) => pruneRevealedRemovedChatStates(current, merged))
@@ -2900,9 +2909,9 @@ export const DesktopChat: React.FC = () => {
     const pane = event?.currentTarget || chatListRef.current
     if (!pane) return
 
-    // Prefetch anticipado: disparamos cuando faltan ~1.5 pantallas para el fondo, así el
+    // Prefetch anticipado: disparamos varias pantallas antes del fondo, así el
     // siguiente lote llega antes de que el usuario lo alcance y el scroll nunca se "traba".
-    const prefetchDistance = Math.max(CHAT_LIST_AUTO_LOAD_GAP_PX, pane.clientHeight * 1.5)
+    const prefetchDistance = Math.max(CHAT_LIST_AUTO_LOAD_GAP_PX, pane.clientHeight * CHAT_LIST_PREFETCH_VIEWPORTS)
     const bottomGap = pane.scrollHeight - pane.scrollTop - pane.clientHeight
     if (bottomGap > prefetchDistance) return
 
@@ -2922,7 +2931,7 @@ export const DesktopChat: React.FC = () => {
     }
     // Pasado el tope, volvemos al prefetch por scroll: si la lista no llena la pantalla O el
     // usuario está cerca del fondo, traemos el siguiente lote.
-    const prefetchDistance = Math.max(CHAT_LIST_AUTO_LOAD_GAP_PX, list.clientHeight * 1.5)
+    const prefetchDistance = Math.max(CHAT_LIST_AUTO_LOAD_GAP_PX, list.clientHeight * CHAT_LIST_PREFETCH_VIEWPORTS)
     const bottomGap = list.scrollHeight - list.scrollTop - list.clientHeight
     if (list.scrollHeight <= list.clientHeight + CHAT_LIST_AUTO_LOAD_GAP_PX || bottomGap <= prefetchDistance) {
       void loadChats({ silent: true, append: true })

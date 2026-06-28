@@ -146,16 +146,17 @@ const CHAT_MUTED_STATE_KEY = 'ristak_phone_chat_muted_state_v1'
 const CHAT_STARRED_MESSAGES_KEY = 'ristak_phone_chat_starred_messages_v1'
 const CHAT_FAST_START_INBOX_KEY = 'ristak_phone_chat_fast_start_inbox_v1'
 const CHAT_FAST_START_MAX_AGE_MS = 3 * 24 * 60 * 60 * 1000
-// Lotes pequeños para revelado progresivo al hacer scroll (como cualquier app de chat),
-// en vez de aparecer toda la lista de golpe.
-const CHAT_LIST_PAGE_SIZE = 30
-// Mínimo para prefetch del siguiente lote. El disparo real usa ~1.5 pantallas (ver
+const CHAT_FAST_START_INBOX_LIMIT = 300
+// Lotes amplios: menos viajes al backend y más conversaciones listas antes de tocar fondo.
+const CHAT_LIST_PAGE_SIZE = 100
+// Mínimo para prefetch del siguiente lote. El disparo real usa varias pantallas (ver
 // loadMoreChatsIfNeeded) para que el lote llegue antes de tocar el fondo.
-const CHAT_LIST_AUTO_LOAD_GAP_PX = 320
+const CHAT_LIST_AUTO_LOAD_GAP_PX = 900
+const CHAT_LIST_PREFETCH_VIEWPORTS = 3
 // Cargamos el historial COMPLETO en segundo plano (no bloqueante) hasta este tope: la primera
 // página pinta al instante y el resto se trae solo, lote por lote, para que aparezcan TODAS las
 // conversaciones sin depender del scroll. Pasado el tope, el resto se carga con prefetch.
-const CHAT_LIST_BACKGROUND_LOAD_CAP = 500
+const CHAT_LIST_BACKGROUND_LOAD_CAP = 1000
 const PAYMENT_BANK_CLABES_CONFIG_KEY = 'payment_bank_clabes'
 const CONTACT_INFO_CUSTOM_FIELDS_CONFIG_KEY = 'mobile_chat_contact_info_custom_field_ids'
 const AI_AGENT_CHAT_ID = 'ristak-ai-agent-mobile-chat'
@@ -901,7 +902,7 @@ function readChatFastStartInbox(selectedChatPhoneId: string): ChatFastStartInbox
     return {
       selectedChatPhoneId,
       savedAt: parsed.savedAt,
-      chats: parsed.chats.filter((chat): chat is ChatContact => Boolean(chat?.id)).slice(0, 80)
+      chats: parsed.chats.filter((chat): chat is ChatContact => Boolean(chat?.id)).slice(0, CHAT_FAST_START_INBOX_LIMIT)
     }
   } catch {
     window.localStorage.removeItem(CHAT_FAST_START_INBOX_KEY)
@@ -916,7 +917,7 @@ function writeChatFastStartInbox(selectedChatPhoneId: string, chats: ChatContact
     window.localStorage.setItem(CHAT_FAST_START_INBOX_KEY, JSON.stringify({
       selectedChatPhoneId,
       savedAt: Date.now(),
-      chats: chats.slice(0, 80)
+      chats: chats.slice(0, CHAT_FAST_START_INBOX_LIMIT)
     }))
   } catch {
     // El cache diario y la API siguen siendo fuente de verdad.
@@ -3545,7 +3546,7 @@ export const PhoneChat: React.FC = () => {
   const chatsRef = useRef<ChatContact[]>([])
   const chatsRequestRef = useRef<AbortController | null>(null)
   const chatListRef = useRef<HTMLDivElement | null>(null)
-  const chatListOffsetRef = useRef(initialFastStartInbox?.chats.length || 0)
+  const chatListOffsetRef = useRef(0)
   const chatListHasMoreRef = useRef(true)
   const chatListLoadingMoreRef = useRef(false)
   // Controller propio para "cargar más" (append), independiente de chatsRequestRef, para que
@@ -4812,7 +4813,7 @@ export const PhoneChat: React.FC = () => {
       const cachedList = cachedChats
         ? Array.isArray(cachedChats.data) ? cachedChats.data : []
         : fastStartInbox?.chats || []
-      chatListOffsetRef.current = cachedList.length
+      chatListOffsetRef.current = 0
       chatListHasMoreRef.current = true
       chatListLoadedSearchRef.current = ''
       const cachedRequestedContact = requestedContactParam
@@ -4876,18 +4877,23 @@ export const PhoneChat: React.FC = () => {
       } else if (silentRefresh) {
         // Refresco en segundo plano: NO reconstruir la lista entera (causa tirones). Traemos
         // solo la primera página y la fusionamos sobre lo ya cargado, conservando la cola que
-        // el usuario reveló con scroll. No reiniciamos offset/hasMore ni el chat activo.
+        // el usuario reveló con scroll. El offset avanza por páginas reales del servidor; el
+        // caché no cuenta porque podría estar viejo o reordenado por mensajes nuevos.
         const freshPage = dedupeChatsById(await fetchChatPage(0))
         if (chatsRequestRef.current !== controller) return
 
         const freshIds = new Set(freshPage.map((contact) => contact.id))
+        const loadedBeyondFreshPage = chatListOffsetRef.current > freshPage.length
+        chatListOffsetRef.current = Math.max(chatListOffsetRef.current, freshPage.length)
+        chatListHasMoreRef.current = freshPage.length >= CHAT_LIST_PAGE_SIZE ||
+          (loadedBeyondFreshPage && chatListHasMoreRef.current)
         const merged = dedupeChatsById([
           ...freshPage,
           ...chatsRef.current.filter((contact) => !freshIds.has(contact.id))
         ])
         const displayedChats = applyLoadedChats(merged)
         if (cacheEnabled) {
-          writePhoneDailyCache(cacheKey, displayedChats.slice(0, 80), { maxEntryChars: 360_000 }, timezone) // (MOB-007)
+          writePhoneDailyCache(cacheKey, displayedChats.slice(0, CHAT_FAST_START_INBOX_LIMIT), { maxEntryChars: 900_000 }, timezone) // (MOB-007)
           writeChatFastStartInbox(selectedChatPhoneId, displayedChats)
         }
       } else {
@@ -4908,8 +4914,12 @@ export const PhoneChat: React.FC = () => {
           ...(shouldReplace ? [] : chatsRef.current.filter((contact) => !freshIds.has(contact.id)))
         ])
 
-        // Conservamos la profundidad mostrada; hasMore según si la primera página vino llena.
-        chatListOffsetRef.current = merged.length
+        // El offset representa páginas reales traídas del servidor, no filas pintadas desde
+        // caché. Si usáramos merged.length, un caché viejo podría saltarse conversaciones
+        // intermedias cuando el orden cambió por mensajes nuevos.
+        chatListOffsetRef.current = shouldReplace
+          ? freshPage.length
+          : Math.max(chatListOffsetRef.current, freshPage.length)
         chatListHasMoreRef.current = freshPage.length >= CHAT_LIST_PAGE_SIZE
 
         let requestedContact = requestedContactParam
@@ -4927,7 +4937,7 @@ export const PhoneChat: React.FC = () => {
 
         const displayedChats = applyLoadedChats(nextChats, requestedContact)
         if (cacheEnabled) {
-          writePhoneDailyCache(cacheKey, displayedChats.slice(0, 80), { maxEntryChars: 360_000 }, timezone) // (MOB-007)
+          writePhoneDailyCache(cacheKey, displayedChats.slice(0, CHAT_FAST_START_INBOX_LIMIT), { maxEntryChars: 900_000 }, timezone) // (MOB-007)
           writeChatFastStartInbox(selectedChatPhoneId, displayedChats)
         }
       }
@@ -4968,9 +4978,9 @@ export const PhoneChat: React.FC = () => {
     const pane = event?.currentTarget || chatListRef.current
     if (!pane) return
 
-    // Prefetch anticipado: disparamos cuando faltan ~1.5 pantallas para el fondo, así el
+    // Prefetch anticipado: disparamos varias pantallas antes del fondo, así el
     // siguiente lote llega antes de que el usuario lo alcance y el scroll nunca se "traba".
-    const prefetchDistance = Math.max(CHAT_LIST_AUTO_LOAD_GAP_PX, pane.clientHeight * 1.5)
+    const prefetchDistance = Math.max(CHAT_LIST_AUTO_LOAD_GAP_PX, pane.clientHeight * CHAT_LIST_PREFETCH_VIEWPORTS)
     const bottomGap = pane.scrollHeight - pane.scrollTop - pane.clientHeight
     if (bottomGap > prefetchDistance) return
 
@@ -5838,7 +5848,7 @@ export const PhoneChat: React.FC = () => {
       return
     }
     // Pasado el tope, volvemos al prefetch por scroll.
-    const prefetchDistance = Math.max(CHAT_LIST_AUTO_LOAD_GAP_PX, list.clientHeight * 1.5)
+    const prefetchDistance = Math.max(CHAT_LIST_AUTO_LOAD_GAP_PX, list.clientHeight * CHAT_LIST_PREFETCH_VIEWPORTS)
     const bottomGap = list.scrollHeight - list.scrollTop - list.clientHeight
     if (list.scrollHeight <= list.clientHeight + CHAT_LIST_AUTO_LOAD_GAP_PX || bottomGap <= prefetchDistance) {
       void loadChats({ silent: true, append: true, useCache: false })

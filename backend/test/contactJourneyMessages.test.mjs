@@ -64,6 +64,58 @@ async function insertRow(table, values) {
   )
 }
 
+test('chat contacts supports larger pages for deep inbox prefetch', async () => {
+  const id = randomUUID().replace(/-/g, '')
+  const prefix = `chat_page_${id}`
+  const phoneSeed = Date.now().toString().slice(-6)
+
+  try {
+    for (let index = 0; index < 120; index += 1) {
+      const contactId = `${prefix}_${index}`
+      const phone = `+52998${phoneSeed}${String(index).padStart(3, '0')}`
+      const minute = String(Math.floor(index / 60)).padStart(2, '0')
+      const second = String(index % 60).padStart(2, '0')
+      const timestamp = `2099-07-01T12:${minute}:${second}.000Z`
+
+      await insertRow('contacts', {
+        id: contactId,
+        phone,
+        full_name: `Cliente Paginado ${index}`,
+        first_name: 'Cliente',
+        source: 'manual',
+        created_at: timestamp,
+        updated_at: timestamp
+      })
+
+      await insertRow('whatsapp_api_messages', {
+        id: `api_${contactId}`,
+        contact_id: contactId,
+        phone,
+        from_phone: phone,
+        to_phone: '+526561000000',
+        business_phone: '+526561000000',
+        transport: 'api',
+        direction: 'inbound',
+        message_type: 'text',
+        message_text: `Mensaje paginado ${index}`,
+        message_timestamp: timestamp,
+        created_at: timestamp
+      })
+    }
+
+    const firstPage = await readChatContacts({ limit: '110' })
+    const firstPageSyntheticChats = firstPage.filter(chat => String(chat.id).startsWith(prefix))
+    assert.equal(firstPageSyntheticChats.length, 110)
+
+    const secondPage = await readChatContacts({ limit: '110', offset: '110' })
+    const secondPageSyntheticChats = secondPage.filter(chat => String(chat.id).startsWith(prefix))
+    assert.equal(secondPageSyntheticChats.length, 10)
+  } finally {
+    await db.run('DELETE FROM whatsapp_api_messages WHERE contact_id LIKE ?', [`${prefix}%`]).catch(() => undefined)
+    await db.run('DELETE FROM contacts WHERE id LIKE ?', [`${prefix}%`]).catch(() => undefined)
+  }
+})
+
 test('contact journey defaults to contact-authored messages only', async () => {
   const id = randomUUID()
   const contactId = `journey_msg_${id}`

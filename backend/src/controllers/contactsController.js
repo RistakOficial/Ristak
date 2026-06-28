@@ -1568,6 +1568,9 @@ const mapChatContactRowForResponse = (contact = {}) => ({
   unreadCount: Number(contact.unread_count || 0)
 })
 
+const CHAT_CONTACTS_DEFAULT_LIMIT = 100
+const CHAT_CONTACTS_MAX_LIMIT = 250
+
 const applyWarmedProfilePictures = (rows = [], warmedPictures = new Map()) => {
   if (!warmedPictures?.size) return rows
 
@@ -1864,12 +1867,12 @@ export const getChatContacts = async (req, res) => {
   try {
     const {
       q = '',
-      limit = 60,
+      limit = CHAT_CONTACTS_DEFAULT_LIMIT,
       offset = 0,
       businessPhoneNumberId = '',
       businessPhone = ''
     } = req.query
-    const limitNumber = Math.min(Math.max(Number(limit) || 60, 1), 100)
+    const limitNumber = Math.min(Math.max(Number(limit) || CHAT_CONTACTS_DEFAULT_LIMIT, 1), CHAT_CONTACTS_MAX_LIMIT)
     const offsetNumber = Math.max(Math.floor(Number(offset) || 0), 0)
     const shouldWarmProfilePictures = isTruthyQueryValue(req.query.warmProfilePictures || req.query.warmProfiles)
     const searchTerm = cleanString(q)
