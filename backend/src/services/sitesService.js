@@ -15594,11 +15594,11 @@ function buildNativeSiteTrackingScript(context) {
         };
         return {
           contactId: pick(['rstk_contact_id', 'contact_id', 'contactId']),
-          name: pick(['rstk_name', 'rstk_full_name', 'contact_name', 'contactName', 'full_name', 'fullName', 'full-name', 'fullname', 'name', 'nombre', 'nombre_completo']),
+          name: pick(['full_name', 'fullName', 'full-name', 'fullname', 'name', 'nombre', 'nombre_completo', 'contact_name', 'contactName', 'rstk_name', 'rstk_full_name']),
           firstName: pick(['rstk_first_name', 'contact_first_name', 'first_name', 'firstName', 'first-name', 'given-name', 'given_name']),
           lastName: pick(['rstk_last_name', 'contact_last_name', 'last_name', 'lastName', 'last-name', 'family-name', 'family_name', 'apellido']),
-          email: pick(['rstk_email', 'contact_email', 'contactEmail', 'email', 'mail', 'correo', 'correo_electronico']),
-          phone: pick(['rstk_phone', 'contact_phone', 'contactPhone', 'phone', 'phone_number', 'phoneNumber', 'phone-number', 'telefono', 'celular', 'whatsapp'])
+          email: pick(['email', 'mail', 'correo', 'correo_electronico', 'contact_email', 'contactEmail', 'rstk_email']),
+          phone: pick(['phone_number', 'phoneNumber', 'phone-number', 'phone', 'telefono', 'celular', 'whatsapp', 'contact_phone', 'contactPhone', 'rstk_phone'])
         };
       };
 
