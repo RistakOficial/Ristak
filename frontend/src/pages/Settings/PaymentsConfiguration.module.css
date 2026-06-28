@@ -1641,6 +1641,120 @@
   color: var(--warn);
 }
 
+.mercadoPagoTestGuide {
+  display: grid;
+  gap: 14px;
+  padding: 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-card);
+  background: var(--surface);
+}
+
+.mercadoPagoTestGuideHeader {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.mercadoPagoTestGuideHeader > div {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.mercadoPagoTestGuideHeader strong {
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 700;
+  line-height: 1.25;
+}
+
+.mercadoPagoTestGuideHeader span {
+  color: var(--text-dim);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.mercadoPagoTestGuideGrid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+}
+
+.mercadoPagoTestGuideSection {
+  display: grid;
+  gap: 10px;
+  min-width: 0;
+}
+
+.mercadoPagoTestGuideSection + .mercadoPagoTestGuideSection {
+  padding-left: 14px;
+  border-left: 1px solid var(--border);
+}
+
+.mercadoPagoTestGuideTitle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--text);
+}
+
+.mercadoPagoTestGuideTitle svg {
+  flex: 0 0 auto;
+  color: var(--accent);
+}
+
+.mercadoPagoTestGuideTitle h4 {
+  margin: 0;
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 700;
+  line-height: 1.25;
+}
+
+.mercadoPagoTestGuideSteps {
+  display: grid;
+  gap: 7px;
+  margin: 0;
+  padding-left: 18px;
+}
+
+.mercadoPagoTestGuideSteps li {
+  min-width: 0;
+  color: var(--text-dim);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.mercadoPagoTestGuideSteps li::marker {
+  color: var(--accent);
+  font-weight: 700;
+}
+
+.mercadoPagoTestGuideNote,
+.mercadoPagoTestGuideFooter {
+  margin: 0;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-ctl);
+  background: var(--info-soft);
+  color: var(--text-dim);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.mercadoPagoTestGuideFooter {
+  display: flex;
+  align-items: flex-start;
+  gap: 9px;
+}
+
+.mercadoPagoTestGuideFooter svg {
+  flex: 0 0 auto;
+  color: var(--info);
+}
+
 .connectionSummary {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
@@ -1908,9 +2022,17 @@
 
   .summaryStrip,
   .connectionSummary,
+  .mercadoPagoTestGuideGrid,
   .taxSettingsLayout .gigstackDefaultsGrid,
   .automationColumns {
     grid-template-columns: 1fr;
+  }
+
+  .mercadoPagoTestGuideSection + .mercadoPagoTestGuideSection {
+    padding-top: 14px;
+    padding-left: 0;
+    border-top: 1px solid var(--border);
+    border-left: 0;
   }
 }
 
@@ -1948,6 +2070,8 @@
   .actionsRow,
   .stripeModeActions,
   .copyField,
+  .mercadoPagoTestGuideHeader,
+  .mercadoPagoTestGuideFooter,
   .webhookEventGuideHeader,
   .sectionSaveBar,
   .gatewayDetailBar,

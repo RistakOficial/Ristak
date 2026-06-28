@@ -239,7 +239,7 @@ const paymentModeLabels: Record<PaymentModeId, { title: string; badge: string; d
     title: 'Modo prueba',
     badge: 'Prueba',
     description: 'Todos los nuevos cobros usarán modo prueba para validar tarjetas, rechazos y flujos sin mover dinero real.',
-    mercadoPagoHelp: 'Deja el switch en Prueba, presiona Conectar cuenta y entra con el login de Mercado Pago. Después crea un link de pago y usa las tarjetas de prueba que aparecen en el checkout.'
+    mercadoPagoHelp: 'Mercado Pago prueba pagos únicos y suscripciones con reglas distintas. Revisa la guía antes de probar para no mezclar cuentas reales con usuarios test.'
   },
   live: {
     title: 'Modo en vivo',
@@ -248,6 +248,18 @@ const paymentModeLabels: Record<PaymentModeId, { title: string; badge: string; d
     mercadoPagoHelp: 'Para cobrar real con Mercado Pago, inicia sesión con tu cuenta normal de Mercado Pago y autoriza la conexión.'
   }
 }
+const mercadoPagoSinglePaymentTestSteps = [
+  'Deja el modo global en Prueba y conecta la cuenta dueña de la integración. Para pago único con tarjeta no necesitas vendedor y comprador test.',
+  'Crea un link de pago único desde Ristak y abre el checkout.',
+  'Usa una tarjeta de prueba de los recursos de Mercado Pago. El titular APRO aprueba; FUND simula fondos insuficientes.',
+  'Captura un correo válido cuando el formulario lo pida. En pruebas, usa uno distinto al de la cuenta de Mercado Pago conectada.'
+]
+const mercadoPagoSubscriptionTestSteps = [
+  'Crea usuarios test en Mercado Pago: vendedor y comprador del mismo país.',
+  'En Ristak, con el modo global en Prueba, conecta Mercado Pago iniciando sesión como vendedor test.',
+  'Crea la suscripción usando como contacto el correo del comprador test. Ese correo se manda a Mercado Pago como pagador esperado.',
+  'Abre el link de suscripción como comprador test. No uses la misma cuenta vendedora ni una cuenta real para autorizarla.'
+]
 const PAYMENT_META_DEFAULT_PURCHASE_EVENT_NAME = 'Purchase'
 const PAYMENT_META_DEFAULT_EVENT_CHANNEL: PaymentMetaPurchaseEventChannel = 'smart'
 const PAYMENT_META_PARAMETER_VARIABLE_CATEGORIES = new Set([
@@ -3437,7 +3449,7 @@ export const PaymentsConfiguration: React.FC = () => {
               <PaymentPlatformLogo platform="mercadopago" size="lg" decorative />
               <div>
                 <h2>Mercado Pago</h2>
-                <p>Conecta Mercado Pago para crear links de Checkout Pro y suscripciones desde Ristak.</p>
+                <p>Conecta Mercado Pago para crear links de pago y suscripciones desde Ristak.</p>
               </div>
             </div>
             {loadingMercadoPagoConfig ? (
@@ -3499,10 +3511,64 @@ export const PaymentsConfiguration: React.FC = () => {
                     <AlertTriangle size={16} />
                     <span>
                       {paymentMode === 'test'
-                        ? 'Para probar Mercado Pago, deja este modo en Prueba, conecta la cuenta con el botón y crea un link de pago. En el link aparecerán las tarjetas y nombres de prueba para copiar.'
+                        ? 'En prueba, los pagos únicos se validan con tarjeta de prueba. Las suscripciones requieren comprador y vendedor test separados en Mercado Pago.'
                         : 'Este modo usa tu cuenta real de Mercado Pago. Los links y suscripciones nuevos pueden generar cobros reales.'}
                     </span>
                   </div>
+
+                  {paymentMode === 'test' && (
+                    <div className={styles.mercadoPagoTestGuide}>
+                      <div className={styles.mercadoPagoTestGuideHeader}>
+                        <div>
+                          <strong>Guía de pruebas de Mercado Pago</strong>
+                          <span>Usa esta referencia cuando quieras validar links y suscripciones sin mover dinero real.</span>
+                        </div>
+                        <Badge variant="info">Modo prueba</Badge>
+                      </div>
+
+                      <div className={styles.mercadoPagoTestGuideGrid}>
+                        <section className={styles.mercadoPagoTestGuideSection}>
+                          <div className={styles.mercadoPagoTestGuideTitle}>
+                            <CreditCard size={16} />
+                            <h4>Pagos únicos</h4>
+                          </div>
+                          <ol className={styles.mercadoPagoTestGuideSteps}>
+                            {mercadoPagoSinglePaymentTestSteps.map((step) => (
+                              <li key={step}>{step}</li>
+                            ))}
+                          </ol>
+                          <p className={styles.mercadoPagoTestGuideNote}>
+                            Si el comprador escribe otro correo en el checkout, Mercado Pago lo usará como correo del pagador.
+                            Ristak mantiene el pago ligado al contacto y al link original.
+                          </p>
+                        </section>
+
+                        <section className={styles.mercadoPagoTestGuideSection}>
+                          <div className={styles.mercadoPagoTestGuideTitle}>
+                            <FileCheck2 size={16} />
+                            <h4>Suscripciones</h4>
+                          </div>
+                          <ol className={styles.mercadoPagoTestGuideSteps}>
+                            {mercadoPagoSubscriptionTestSteps.map((step) => (
+                              <li key={step}>{step}</li>
+                            ))}
+                          </ol>
+                          <p className={styles.mercadoPagoTestGuideNote}>
+                            En suscripciones, el correo del contacto se manda a Mercado Pago como pagador esperado. Si autorizas con otro usuario,
+                            con el vendedor o con una cuenta real, Mercado Pago puede bloquear la autorización.
+                          </p>
+                        </section>
+                      </div>
+
+                      <div className={styles.mercadoPagoTestGuideFooter}>
+                        <Info size={16} />
+                        <span>
+                          Si el checkout de suscripción no muestra una leyenda de sandbox, valida el modo por la cuenta conectada:
+                          vendedor test para pruebas y cuenta real solo para producción.
+                        </span>
+                      </div>
+                    </div>
+                  )}
 
                   <div className={styles.stripeModeActions}>
                     <Button
