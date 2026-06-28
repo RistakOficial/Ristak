@@ -39,6 +39,7 @@ import {
   type PaymentPlatformLogoId,
   SegmentTabs,
   Switch,
+  MetaBrandMark,
   MetaParameterValueInput,
   type MetaParameterVariable
 } from '@/components/common'
@@ -154,7 +155,7 @@ const sectionItems: Array<{ id: PaymentsSectionId; label: string; icon: React.Re
   { id: 'automations', label: 'Automatizaciones', icon: <BellRing size={17} /> },
   { id: 'gateways', label: 'Pasarelas', icon: <WalletCards size={17} /> },
   { id: 'taxes', label: 'Impuestos', icon: <Percent size={17} /> },
-  { id: 'meta', label: 'Meta', icon: <Sparkles size={17} /> }
+  { id: 'meta', label: 'Meta', icon: <MetaBrandMark size={17} /> }
 ]
 
 const sectionIds = sectionItems.map((item) => item.id)

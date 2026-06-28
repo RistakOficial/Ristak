@@ -56,6 +56,8 @@ export type { BadgeVariant } from './Badge'
 export { ChatMessageSurface } from './ChatMessageSurface'
 export type { ChatMessageSurfaceProps } from './ChatMessageSurface'
 export { CustomSelect } from './CustomSelect'
+export { MetaBrandMark } from './MetaBrandMark'
+export type { MetaBrandMarkProps } from './MetaBrandMark'
 export { MetaParameterValueInput }
   from './MetaParameterValueInput/MetaParameterValueInput'
 export type { MetaParameterVariable }
