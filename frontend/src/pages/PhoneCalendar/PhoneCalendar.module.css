@@ -436,6 +436,7 @@
   font-size: clamp(17px, 4.4vw, 22px);
   font-weight: 780;
   line-height: 1;
+  overflow: hidden;
 }
 
 .monthDaySelectButton {
@@ -1905,6 +1906,7 @@
     color: var(--phone-calendar-text);
     font-size: 20px;
     text-align: left;
+    overflow: hidden;
   }
 
   .monthDay:nth-child(7n) {
@@ -1921,6 +1923,8 @@
 
   .monthDaySelectButton > span:first-child {
     justify-self: end;
+    position: relative;
+    z-index: 2;
   }
 
   .monthDaySelected .monthDaySelectButton > span:first-child {
@@ -1934,13 +1938,15 @@
 
   .monthEventList {
     position: relative;
-    z-index: 1;
+    z-index: 3;
     display: grid;
     align-content: start;
     gap: 5px;
     width: 100%;
     min-width: 0;
-    margin-top: 36px;
+    max-height: calc(100% - 42px);
+    margin-top: 38px;
+    overflow: hidden;
   }
 
   .monthEventPill {
@@ -1950,6 +1956,10 @@
     grid-template-columns: 4px minmax(0, 1fr) auto;
     align-items: center;
     gap: 6px;
+    width: 100%;
+    max-width: 100%;
+    min-width: 0;
+    height: 22px;
     min-height: 22px;
     padding: 0 6px 0 0;
     border-radius: 5px;

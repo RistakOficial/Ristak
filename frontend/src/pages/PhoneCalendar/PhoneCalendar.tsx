@@ -1560,17 +1560,15 @@ export const PhoneCalendar: React.FC<PhoneCalendarProps> = ({ embedded = false, 
 		                          aria-label={`Ver citas del ${cell.date.getDate()} de ${MONTH_NAMES[cell.date.getMonth()]}`}
 		                        >
 		                          <span>{cell.date.getDate()}</span>
-		                          {cell.events.length > 0 && (
+		                          {cell.events[0] && (
 		                            <i className={styles.monthMarkers}>
-		                              {cell.events.slice(0, 3).map((event) => (
-		                                <b key={event.id} style={{ backgroundColor: getEventColor(event) }} />
-		                              ))}
+		                              <b style={{ backgroundColor: getEventColor(cell.events[0]) }} />
 		                            </i>
 		                          )}
 		                        </button>
 		                        {cell.events.length > 0 && (
 		                          <span className={styles.monthEventList}>
-		                            {cell.events.slice(0, 3).map((event) => (
+		                            {cell.events.slice(0, 2).map((event) => (
 		                              <button
 		                                type="button"
 		                                key={event.id}

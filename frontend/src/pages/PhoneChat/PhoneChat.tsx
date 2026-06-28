@@ -3726,6 +3726,7 @@ export const PhoneChat: React.FC = () => {
     isOpen: Boolean(sheet),
     onClose: closeSheetNow
   })
+  const actionFormSheetOpen = sheet === 'payment' || sheet === 'appointment'
   const actionSheetMoving = actionSheetDismiss.dragging || actionSheetDismiss.closing || actionSheetDismiss.dragOffset > 0
   const actionSheetDragging = actionSheetDismiss.dragging || actionSheetDismiss.dragOffset > 0
   const requestSheetToggleClose = useCallback((targetSheet: Exclude<ActionSheet, null>, contactId?: string | null) => {
@@ -15456,7 +15457,8 @@ export const PhoneChat: React.FC = () => {
         }
       : {})
   } as React.CSSProperties
-  const popoverSheetUsesCssClose = isWideChatDevice && (sheet === 'attachments' || sheet === 'schedule')
+  const centeredActionFormSheet = isWideChatDevice && actionFormSheetOpen
+  const popoverSheetUsesCssClose = isWideChatDevice && (sheet === 'attachments' || sheet === 'schedule' || actionFormSheetOpen)
 
   const pageTransitionClass = locationTransition === 'to-desktop'
     ? styles.phoneChatTransitionFromSimple
@@ -15781,7 +15783,7 @@ export const PhoneChat: React.FC = () => {
             </div>
           </div>
 
-          {(aiAgentConversationOpen || activeContact) && (
+          {(aiAgentConversationOpen || activeContact) && !actionFormSheetOpen && (
             <div className={styles.composerShell} data-phone-chat-composer="true">
               {aiAgentConversationOpen ? (
                 renderAIAgentComposer()
@@ -15926,16 +15928,16 @@ export const PhoneChat: React.FC = () => {
 
       {sheet && (
           <div
-            className={`${styles.sheetBackdrop} ${actionSheetDragging ? styles.sheetBackdropInteractive : ''} ${sheet === 'settings' ? styles.settingsSheetBackdrop : ''} ${sheet === 'payment' || sheet === 'appointment' || sheet === 'settings' || sheet === 'chatMore' || sheet === 'clabe' || sheet === 'schedule' || sheet === 'tag' ? styles.darkSheetBackdrop : ''} ${sheet === 'payment' || sheet === 'appointment' ? styles.actionFormSheetBackdrop : ''} ${sheet === 'appointment' ? styles.appointmentActionSheetBackdrop : ''} ${sheet === 'attachments' ? styles.attachmentsSheetBackdrop : ''} ${sheet === 'schedule' ? styles.scheduleSheetBackdrop : ''} ${sheet === 'chatMore' ? styles.chatMoreSheetBackdrop : ''} ${actionSheetDismiss.closing ? styles.sheetBackdropClosing : ''}`}
+            className={`${styles.sheetBackdrop} ${actionSheetDragging && !centeredActionFormSheet ? styles.sheetBackdropInteractive : ''} ${sheet === 'settings' ? styles.settingsSheetBackdrop : ''} ${sheet === 'payment' || sheet === 'appointment' || sheet === 'settings' || sheet === 'chatMore' || sheet === 'clabe' || sheet === 'schedule' || sheet === 'tag' ? styles.darkSheetBackdrop : ''} ${actionFormSheetOpen ? styles.actionFormSheetBackdrop : ''} ${sheet === 'appointment' ? styles.appointmentActionSheetBackdrop : ''} ${sheet === 'attachments' ? styles.attachmentsSheetBackdrop : ''} ${sheet === 'schedule' ? styles.scheduleSheetBackdrop : ''} ${sheet === 'chatMore' ? styles.chatMoreSheetBackdrop : ''} ${actionSheetDismiss.closing ? styles.sheetBackdropClosing : ''}`}
           style={sheetBackdropStyle}
           onClick={actionSheetDismiss.requestClose}
         >
           <section
-            className={`${styles.sheetPanel} ${actionSheetMoving ? styles.sheetPanelInteractive : ''} ${sheet === 'payment' || sheet === 'appointment' ? styles.actionFormSheet : ''} ${sheet === 'appointment' ? styles.appointmentActionSheet : ''} ${sheet === 'attachments' ? styles.attachmentsSheet : ''} ${sheet === 'templates' ? styles.templatesSheet : ''} ${sheet === 'clabe' ? styles.clabeSheet : ''} ${sheet === 'settings' ? styles.settingsSheet : ''} ${sheet === 'newChat' ? styles.newChatSheet : ''} ${sheet === 'chatMore' ? styles.chatMoreSheet : ''} ${sheet === 'schedule' ? styles.scheduleSheet : ''} ${sheet === 'tag' ? styles.tagSheet : ''} ${actionSheetDismiss.closing ? styles.sheetPanelClosing : ''}`}
+            className={`${styles.sheetPanel} ${actionSheetMoving && !centeredActionFormSheet ? styles.sheetPanelInteractive : ''} ${actionFormSheetOpen ? styles.actionFormSheet : ''} ${sheet === 'appointment' ? styles.appointmentActionSheet : ''} ${sheet === 'attachments' ? styles.attachmentsSheet : ''} ${sheet === 'templates' ? styles.templatesSheet : ''} ${sheet === 'clabe' ? styles.clabeSheet : ''} ${sheet === 'settings' ? styles.settingsSheet : ''} ${sheet === 'newChat' ? styles.newChatSheet : ''} ${sheet === 'chatMore' ? styles.chatMoreSheet : ''} ${sheet === 'schedule' ? styles.scheduleSheet : ''} ${sheet === 'tag' ? styles.tagSheet : ''} ${actionSheetDismiss.closing ? styles.sheetPanelClosing : ''}`}
             style={popoverSheetUsesCssClose ? undefined : actionSheetDismiss.sheetStyle}
             onClick={(event) => event.stopPropagation()}
             aria-label="Acciones del chat"
-            {...actionSheetDismiss.sheetDragProps}
+            {...(centeredActionFormSheet ? {} : actionSheetDismiss.sheetDragProps)}
           >
             <div className={styles.sheetHandle} aria-hidden="true" />
             {sheet !== 'attachments' && (
