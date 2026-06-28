@@ -405,6 +405,8 @@ const PAYMENT_PLAN_STATUS_ORDER = [
 
 const PAYMENT_PLAN_PAID_STATUSES = new Set(['paid', 'succeeded', 'completed', 'complete', 'fulfilled', 'success', 'registered'])
 const PAYMENT_PLAN_IGNORED_PAYMENT_STATUSES = new Set(['cancelled', 'canceled', 'deleted', 'void'])
+const PAYMENT_PLAN_FINAL_STATUSES = new Set(['paid', 'completed', 'complete', 'finished', 'finalized', 'finalizado'])
+const PAYMENT_PLAN_EMPTY_NEXT_DATE_STATUSES = new Set(['completed', 'cancelled', 'deleted', 'inactive'])
 
 const isHighLevelTransaction = (transaction: Transaction) => {
   const provider = String(transaction.paymentProvider || '').toLowerCase()
@@ -519,6 +521,14 @@ const getPaymentPlanProgress = (plan: PaymentPlan): PaymentPlanProgress => {
 
   return { known: false, completed: 0, total: 0, remaining: 0 }
 }
+
+const renderDateHeader = (subtitle: string) => (
+  <>
+    <span>Fecha</span>
+    <br />
+    <small>{subtitle}</small>
+  </>
+)
 
 interface PaymentPlanScheduleOptions {
   scheduleMode: 'recurring' | 'one_time'
@@ -2274,11 +2284,27 @@ export const Transactions: React.FC = () => {
   }
 
   const getNormalizedPlanStatus = (plan: PaymentPlan) => String(plan.status || 'active').toLowerCase()
-  const getPlanFilterStatus = (plan: PaymentPlan) => {
-    const status = getNormalizedPlanStatus(plan)
+  const normalizePaymentPlanStatusForDisplay = (status: string) => {
     if (status === 'canceled') return 'cancelled'
-    if (status === 'complete') return 'completed'
+    if (PAYMENT_PLAN_FINAL_STATUSES.has(status)) return 'completed'
     return status
+  }
+  const isPaymentPlanFullyPaid = (plan: PaymentPlan) => {
+    const progress = getPaymentPlanProgress(plan)
+    return progress.known && progress.total > 0 && progress.remaining === 0
+  }
+  const getPlanFilterStatus = (plan: PaymentPlan) => {
+    const status = normalizePaymentPlanStatusForDisplay(getNormalizedPlanStatus(plan))
+    if (status !== 'completed' && isPaymentPlanFullyPaid(plan)) return 'completed'
+    return status
+  }
+  const getPaymentPlanStartDate = (plan: PaymentPlan) => (
+    plan.startDate || plan.sortDate || plan.nextRunAt || plan.updatedAt || plan.createdAt || ''
+  )
+  const getPaymentPlanNextDate = (plan: PaymentPlan) => {
+    const status = getPlanFilterStatus(plan)
+    if (PAYMENT_PLAN_EMPTY_NEXT_DATE_STATUSES.has(status)) return ''
+    return plan.nextRunAt || ''
   }
   const isPlanDeleted = (plan: PaymentPlan) => getNormalizedPlanStatus(plan) === 'deleted'
   const canActivatePaymentPlan = (plan: PaymentPlan) => ['draft', 'paused', 'inactive', 'pending'].includes(getNormalizedPlanStatus(plan))
@@ -2594,15 +2620,27 @@ export const Transactions: React.FC = () => {
 
   const paymentPlanColumns: Column<PaymentPlan>[] = [
     {
-      key: 'sortDate',
-      header: 'Fecha',
-      render: (_value, item) => formatLocalDateShort(item.sortDate || item.nextRunAt || item.updatedAt || item.createdAt || ''),
+      key: 'startDate',
+      header: renderDateHeader('(de inicio)'),
+      render: (_value, item) => formatLocalDateShort(getPaymentPlanStartDate(item)),
+      searchValue: (_value, item) => getPaymentPlanStartDate(item),
+      sortable: true
+    },
+    {
+      key: 'nextRunAt',
+      header: renderDateHeader('(próximo pago)'),
+      render: (_value, item) => {
+        const nextDate = getPaymentPlanNextDate(item)
+        return nextDate ? formatLocalDateShort(nextDate) : '-'
+      },
+      searchValue: (_value, item) => getPaymentPlanNextDate(item) || '-',
       sortable: true
     },
     {
       key: 'status',
       header: 'Estado',
-      render: (value) => getPlanStatusBadge(value),
+      render: (_value, item) => getPlanStatusBadge(getPlanFilterStatus(item)),
+      searchValue: (_value, item) => getPaymentPlanStatusBadge(getPlanFilterStatus(item)).label,
       sortable: true
     },
     {
@@ -3036,7 +3074,7 @@ export const Transactions: React.FC = () => {
             pageSize={20}
             searchPosition="left"
             tableId="payment_plans"
-            initialSortBy="sortDate"
+            initialSortBy="startDate"
             initialSortOrder="desc"
             selectionActions={paymentPlanSelectionToolbar}
             rowSelection={{

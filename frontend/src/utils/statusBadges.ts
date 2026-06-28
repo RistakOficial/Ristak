@@ -48,7 +48,12 @@ export const PAYMENT_PLAN_STATUS_BADGES: Record<string, StatusBadgeDescriptor> =
   paused: { label: 'Pausado', variant: 'warning' },
   cancelled: { label: 'Cancelado', variant: 'error' },
   canceled: { label: 'Cancelado', variant: 'error' },
-  completed: { label: 'Completado', variant: 'success' },
+  completed: { label: 'Finalizado', variant: 'success' },
+  complete: { label: 'Finalizado', variant: 'success' },
+  paid: { label: 'Finalizado', variant: 'success' },
+  finished: { label: 'Finalizado', variant: 'success' },
+  finalized: { label: 'Finalizado', variant: 'success' },
+  finalizado: { label: 'Finalizado', variant: 'success' },
   inactive: { label: 'Inactivo', variant: 'neutral' }
 }
 
