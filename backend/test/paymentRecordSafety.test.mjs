@@ -364,6 +364,86 @@ test('seguridad pagos: borra una suscripción test aunque todavía no tenga cobr
   }
 })
 
+test('seguridad pagos: borra una suscripción cuando sus cobros ligados son test aunque el modo local esté live', async () => {
+  const ids = await seedSafetyRows('subscription_linked_test_delete')
+
+  try {
+    await db.run(
+      `INSERT INTO subscriptions (
+        id, contact_id, contact_name, name, status, amount, currency,
+        interval_type, interval_count, payment_method, payment_provider,
+        payment_mode, source, metadata_json, created_at, updated_at
+      ) VALUES (?, ?, 'Cliente seguridad pagos', 'Suscripción con modo local stale', 'active', 500, 'MXN',
+        'monthly', 1, 'stripe_saved_card', 'stripe', 'live', 'ristak', ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+      [ids.subscriptionId, ids.contactId, JSON.stringify({ paymentMode: 'live' })]
+    )
+    await db.run(
+      `INSERT INTO payments (
+        id, contact_id, amount, currency, status, payment_method, payment_mode,
+        payment_provider, title, description, metadata_json, date, created_at, updated_at
+      ) VALUES (?, ?, 500, 'MXN', 'paid', 'stripe_subscription', 'test', 'stripe',
+        'Cobro suscripción test stale', 'Cobro suscripción test stale', ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+      [
+        ids.subscriptionPaymentId,
+        ids.contactId,
+        JSON.stringify({
+          ristakSubscriptionId: ids.subscriptionId,
+          source: 'stripe_subscription_invoice',
+          paymentMode: 'test'
+        })
+      ]
+    )
+
+    const deleted = await deleteSubscription(ids.subscriptionId)
+    assert.equal(deleted, true)
+
+    const subscription = await db.get('SELECT id FROM subscriptions WHERE id = ?', [ids.subscriptionId])
+    const payment = await db.get('SELECT id FROM payments WHERE id = ?', [ids.subscriptionPaymentId])
+
+    assert.equal(subscription, null)
+    assert.equal(payment, null)
+  } finally {
+    await cleanup(ids)
+  }
+})
+
+test('seguridad pagos: borra una suscripción Mercado Pago sandbox aunque el modo local esté live', async () => {
+  const ids = await seedSafetyRows('subscription_mp_sandbox_delete')
+
+  try {
+    await db.run(
+      `INSERT INTO subscriptions (
+        id, contact_id, contact_name, name, status, amount, currency,
+        interval_type, interval_count, payment_method, payment_provider,
+        payment_mode, source, mercadopago_preapproval_id, mercadopago_sandbox_init_point,
+        metadata_json, raw_json, created_at, updated_at
+      ) VALUES (?, ?, 'Cliente seguridad pagos', 'Suscripción MP sandbox stale', 'active', 500, 'MXN',
+        'monthly', 1, 'mercadopago_subscription', 'mercadopago',
+        'live', 'ristak', ?, 'https://sandbox.mercadopago.test/preapproval', ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+      [
+        ids.subscriptionId,
+        ids.contactId,
+        `preapproval_${ids.subscriptionId}`,
+        JSON.stringify({ paymentMode: 'live' }),
+        JSON.stringify({
+          mercadoPago: {
+            provider: 'mercadopago',
+            preapproval: { id: `preapproval_${ids.subscriptionId}`, livemode: false }
+          }
+        })
+      ]
+    )
+
+    const deleted = await deleteSubscription(ids.subscriptionId)
+    assert.equal(deleted, true)
+
+    const subscription = await db.get('SELECT id FROM subscriptions WHERE id = ?', [ids.subscriptionId])
+    assert.equal(subscription, null)
+  } finally {
+    await cleanup(ids)
+  }
+})
+
 test('seguridad pagos: no borra una suscripción live con cobros ligados', async () => {
   const ids = await seedSafetyRows('subscription_live_delete')
 

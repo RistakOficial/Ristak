@@ -2,7 +2,6 @@ import { db } from '../config/database.js'
 
 const SUCCESS_PAYMENT_STATUSES = new Set(['paid', 'succeeded', 'completed', 'complete', 'fulfilled', 'success'])
 const TEST_PAYMENT_MODES = new Set(['test', 'sandbox'])
-const LIVE_PAYMENT_MODES = new Set(['live', 'production', 'prod'])
 const DELETED_RECORD_STATUSES = new Set(['deleted'])
 const LEDGER_PAYMENT_STATUSES = new Set([
   ...SUCCESS_PAYMENT_STATUSES,
@@ -40,54 +39,42 @@ function isExplicitTestMode(value) {
   return TEST_PAYMENT_MODES.has(normalizeMode(value))
 }
 
-function isExplicitLiveMode(value) {
-  return LIVE_PAYMENT_MODES.has(normalizeMode(value))
-}
-
 function hasTestModeSignal(value) {
   const metadata = parseJson(value, {})
   if (!metadata || typeof metadata !== 'object' || Array.isArray(metadata)) return false
 
-  const modeFields = [
-    metadata.paymentMode,
-    metadata.payment_mode,
-    metadata.mode,
-    metadata.stripeMode,
-    metadata.stripe_mode,
-    metadata.conektaMode,
-    metadata.conekta_mode,
-    metadata.mercadoPagoMode,
-    metadata.mercadopagoMode,
-    metadata.mercadopago_mode
-  ]
-
-  if (modeFields.some(isExplicitTestMode)) return true
-  if (metadata.livemode === false || metadata.liveMode === false || metadata.live_mode === false) return true
-
-  return false
+  return hasModeSignal(metadata, isExplicitTestMode, false)
 }
 
-function hasLiveModeSignal(value) {
-  const metadata = parseJson(value, {})
-  if (!metadata || typeof metadata !== 'object' || Array.isArray(metadata)) return false
+function hasModeSignal(value, modePredicate, livemodeValue, depth = 0, seen = new Set()) {
+  if (!value || typeof value !== 'object' || depth > 5) return false
+  if (seen.has(value)) return false
+  seen.add(value)
 
   const modeFields = [
-    metadata.paymentMode,
-    metadata.payment_mode,
-    metadata.mode,
-    metadata.stripeMode,
-    metadata.stripe_mode,
-    metadata.conektaMode,
-    metadata.conekta_mode,
-    metadata.mercadoPagoMode,
-    metadata.mercadopagoMode,
-    metadata.mercadopago_mode
+    value.paymentMode,
+    value.payment_mode,
+    value.mode,
+    value.environment,
+    value.env,
+    value.stripeMode,
+    value.stripe_mode,
+    value.conektaMode,
+    value.conekta_mode,
+    value.mercadoPagoMode,
+    value.mercadopagoMode,
+    value.mercadopago_mode
   ]
 
-  if (modeFields.some(isExplicitLiveMode)) return true
-  if (metadata.livemode === true || metadata.liveMode === true || metadata.live_mode === true) return true
+  if (modeFields.some(modePredicate)) return true
+  if (value.livemode === livemodeValue || value.liveMode === livemodeValue || value.live_mode === livemodeValue) return true
 
-  return false
+  if (livemodeValue === false) {
+    if (value.sandbox === true || value.sandboxMode === true || value.sandbox_mode === true) return true
+    if (cleanString(value.sandboxInitPoint || value.sandbox_init_point || value.sandboxUrl || value.sandbox_url)) return true
+  }
+
+  return Object.values(value).some((child) => hasModeSignal(child, modePredicate, livemodeValue, depth + 1, seen))
 }
 
 export function normalizePaymentStatus(status) {
@@ -388,7 +375,8 @@ export async function getSubscriptionAuditSummary(subscriptionId) {
   }
 
   const subscription = await db.get(
-    `SELECT id, contact_id, status, stripe_subscription_id, mercadopago_preapproval_id,
+    `SELECT id, contact_id, status, payment_method, payment_provider,
+            stripe_subscription_id, mercadopago_preapproval_id, mercadopago_sandbox_init_point,
             conekta_subscription_id, payment_mode, metadata_json, raw_json
      FROM subscriptions
      WHERE id = ?
@@ -430,16 +418,19 @@ export async function getSubscriptionAuditSummary(subscriptionId) {
   const linkedPayments = payments || []
   const protectedPayments = linkedPayments.filter(paymentHasLedgerActivity)
   const hasPayments = Boolean(linkedPayments.length)
-  const hasExplicitLiveSignal = Boolean(
-    isExplicitLiveMode(subscription.payment_mode) ||
-    hasLiveModeSignal(subscription.metadata_json) ||
-    hasLiveModeSignal(subscription.raw_json)
+  const hasLinkedTestPayments = Boolean(hasPayments && linkedPayments.every(isTestPaymentRecord))
+  const hasProviderTestSignal = Boolean(
+    cleanString(subscription.mercadopago_sandbox_init_point) ||
+    hasTestModeSignal({
+      paymentProvider: subscription.payment_provider,
+      paymentMethod: subscription.payment_method,
+      mercadoPagoSandboxInitPoint: subscription.mercadopago_sandbox_init_point
+    })
   )
   const isTestMode = Boolean(
-    !hasExplicitLiveSignal && (
-      isTestSubscriptionRecord(subscription) ||
-      (hasPayments && linkedPayments.every(isTestPaymentRecord))
-    )
+    isTestSubscriptionRecord(subscription) ||
+    hasProviderTestSignal ||
+    hasLinkedTestPayments
   )
 
   return {
