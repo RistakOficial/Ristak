@@ -235,6 +235,14 @@ test('public calendar renders configured widget themes and per-embed theme overr
     bookingDisplay: { widgetTheme: 'space-laser' }
   }, { embedded: true })
   assert.match(invalidTheme, /rstk-calendar-theme-ristak/)
+
+  const agendaTheme = renderPublicCalendarHtml({
+    ...calendar,
+    bookingDisplay: { widgetTheme: 'agenda' }
+  }, { embedded: true })
+  assert.match(agendaTheme, /body\.rstk-calendar-theme-agenda \.day\{width:50px;height:50px/)
+  assert.ok(agendaTheme.includes('.day,body.rstk-calendar-theme-agenda .day{width:40px;height:40px;max-width:100%}'))
+  assert.ok(agendaTheme.includes('.day,body.rstk-calendar-theme-agenda .day{width:38px;height:38px;max-width:100%}'))
 })
 
 test('public calendar asks for timezone after date selection when visitor timezone is enabled', () => {

@@ -17358,7 +17358,7 @@ function renderBlockStyleVars(block) {
     vars.push(`--rstk-social-name-size:${socialPx(socialFontSize * profileScale)}`)
     vars.push(`--rstk-social-followers-size:${socialPx(Math.max(11, socialFontSize * profileScale * 0.82))}`)
     vars.push(`--rstk-social-verified-size:${socialPx(16.5 * profileScale)}`)
-    // El ancho max-content del chip lo dan las reglas CSS (.rstkSocialProfileBlock /
+    // El ancho del chip lo dan las reglas CSS (.rstkSocialProfileBlock /
     // .rstk-embedded-form > .rstkSocialProfileBlock), NO inline: así dentro de un
     // formulario puede seguir --rstk-form-field-justify (alinearse en su franja).
   }
@@ -18205,15 +18205,13 @@ function renderContentBlock(block, context = {}) {
     const nextButtonContent = normalizeButtonIconName(settings.buttonIcon)
       ? renderSubmitButtonContent(firstButtonCopy.label, '', settings)
       : escapeHtml(firstButtonCopy.label)
+    const embeddedRenderContext = { ...context, site: embeddedSiteForCopy }
     const renderEmbeddedItem = (item, pageId) => {
       if (FIELD_BLOCK_TYPES.has(item.blockType)) {
-        return wrapRenderedBlock(item, renderFieldBlock(item, false, pageId || getBlockPageId(item, embeddedPages), context), context)
+        return wrapRenderedBlock(item, renderFieldBlock(item, false, pageId || getBlockPageId(item, embeddedPages), embeddedRenderContext), embeddedRenderContext)
       }
 
-      // El perfil de red social resuelve marca/plataforma desde el formulario
-      // embebido (no desde el sitio anfitrión).
-      const itemContext = item.blockType === 'social_profile' ? { ...context, site: embeddedSiteForCopy } : context
-      return wrapRenderedBlock(item, renderContentBlock(item, itemContext), context)
+      return wrapRenderedBlock(item, renderContentBlock(item, embeddedRenderContext), embeddedRenderContext)
     }
     const renderEmbeddedItems = () => {
       if (!embeddedItems.length) return '<p class="rstk-help">Agrega campos o contenido al formulario.</p>'
@@ -19248,7 +19246,8 @@ const RSTK_BASE_CSS = `
     padding:var(--rstk-block-pad,0);
   }
   .rstkCalendarBlock.rstk-block-style{background:transparent;border:0;padding:0}
-  .rstkSocialProfileBlock.rstk-block-style{width:max-content;min-width:max-content;max-width:100%}
+  .rstkSocialProfileBlock.rstk-block-style{width:fit-content;min-width:0;max-width:100%}
+  .rstk-kind-form .rstkSocialProfileBlock.rstk-block-style,.rstk-embedded-form-source-frame .rstkSocialProfileBlock.rstk-block-style{justify-self:start}
   .rstkHasBgVideo{isolation:isolate;overflow:hidden}
   .rstk-block-bg-video{position:absolute;inset:0;z-index:0;width:100%;height:100%;object-fit:var(--rstk-block-bg-size,cover);pointer-events:none}
   .rstkHasBgVideo > :not(.rstk-block-bg-video){position:relative;z-index:1}
@@ -19640,7 +19639,7 @@ const RSTK_BASE_CSS = `
   .rstk-chrome .rstk-avatar{width:46px;height:46px;border-radius:50%;display:grid;place-items:center;overflow:hidden;background:var(--rstk-accent);color:#fff;font-weight:800;font-size:1.15rem;flex:0 0 auto}
   .rstk-chrome .rstk-avatar img{width:100%;height:100%;object-fit:cover}
 	  .rstk-social-profile{margin:calc(-1 * var(--rstk-pad)) calc(-1 * var(--rstk-pad)) 0;padding:20px var(--rstk-pad) 14px;display:flex;align-items:center;gap:8px;background:transparent;border:0}
-	  .rstk-social-profile-block{width:max-content;min-width:max-content;max-width:100%;margin:0;padding:0;border:0;border-radius:0;background:transparent;gap:var(--rstk-social-gap,12px)}
+	  .rstk-social-profile-block{width:fit-content;min-width:0;max-width:100%;margin:0;padding:0;border:0;border-radius:0;background:transparent;gap:var(--rstk-social-gap,12px)}
 	  .rstk-social-image{position:relative;display:inline-block;flex:0 0 auto}
 	  .rstk-social-profile .rstk-avatar{width:64px;height:64px;font-size:1.35rem}
 	  .rstk-social-profile-block .rstk-avatar{width:var(--rstk-social-avatar-size,70px);height:var(--rstk-social-avatar-size,70px);font-size:var(--rstk-social-avatar-font-size,22px)}
@@ -19651,9 +19650,9 @@ const RSTK_BASE_CSS = `
   .rstk-social-platform-threads{background:#050505;font-size:var(--rstk-social-badge-icon-size,14px);font-weight:900;line-height:1}
   .rstk-social-platform svg{width:var(--rstk-social-badge-icon-size,14px);height:var(--rstk-social-badge-icon-size,14px)}
   .rstk-social-details{display:flex;flex-direction:column;min-width:0}
-  .rstk-social-profile-block .rstk-social-details{flex:0 0 auto;min-width:max-content}
+  .rstk-social-profile-block .rstk-social-details{flex:1 1 auto;min-width:0;max-width:100%}
   .rstk-social-name{display:flex;align-items:center;gap:2px;min-width:0;font-size:var(--rstk-social-name-size,20px);line-height:1.08;font-weight:700;color:color-mix(in srgb,var(--rstk-block-text,var(--rstk-ink)) 92%,var(--rstk-muted) 8%)}
-  .rstk-social-profile-block .rstk-social-name,.rstk-social-profile-block .rstk-social-followers{white-space:nowrap}
+  .rstk-social-profile-block .rstk-social-name,.rstk-social-profile-block .rstk-social-followers{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
   .rstk-social-name .rstk-verified{width:var(--rstk-social-verified-size,18px);height:var(--rstk-social-verified-size,18px);margin-left:0;color:#1877f2;flex:0 0 auto;align-self:center;position:relative;top:0;transform:translateY(0.04em)}
   .rstk-social-followers{margin-top:1px;color:color-mix(in srgb,var(--rstk-block-text,var(--rstk-ink)) 50%,var(--rstk-muted) 50%);font-size:var(--rstk-social-followers-size,16px);line-height:1.18;font-weight:500}
   @media (max-width:480px){
@@ -19717,10 +19716,10 @@ const RSTK_BASE_CSS = `
   .rstk-kind-landing .rstk-calendar-embed{border-radius:var(--rstk-media-radius,0)}
   .rstk-kind-landing .rstk-embedded-form{padding:clamp(24px,3vw,40px);border:var(--rstk-block-border-width,0) solid var(--rstk-block-border,transparent);border-radius:var(--rstk-block-radius,0);background:var(--rstk-block-bg,transparent);width:100%;margin-inline:auto}
   .rstk-section-lane:has(.rstk-embedded-form-source-frame),.rstk-section-column:has(.rstk-embedded-form-source-frame),.rstk-block-style:has(.rstk-embedded-form-source-frame){overflow:visible}
-  .rstk-embedded-form-source-frame{--rstk-block-text:var(--rstk-ink);--rstk-block-font:var(--rstk-font);--rstk-block-font-style:normal;--rstk-block-text-decoration:none;--rstk-block-text-transform:none;--rstk-block-align:initial;--rstk-block-justify:initial;--rstk-content-margin-left:initial;--rstk-content-margin-right:initial;text-align:var(--rstk-block-align,left);position:relative;isolation:isolate;min-height:auto;box-sizing:border-box;width:100%;max-width:100%;min-width:0;margin:0;padding:var(--rstk-frame-pad,0) 16px;background-color:var(--rstk-page-bg);background-image:var(--rstk-page-image);background-position:var(--rstk-page-image-position,center top);background-repeat:var(--rstk-page-image-repeat,no-repeat);background-size:var(--rstk-page-image-size,auto);background-attachment:var(--rstk-page-image-attachment,scroll);border-radius:var(--rstk-page-radius,0);overflow:visible}
+  .rstk-embedded-form-source-frame{--rstk-block-text:var(--rstk-ink);--rstk-block-font:var(--rstk-font);--rstk-block-font-style:normal;--rstk-block-text-decoration:none;--rstk-block-text-transform:none;--rstk-block-align:initial;--rstk-block-justify:initial;--rstk-content-margin-left:initial;--rstk-content-margin-right:initial;text-align:var(--rstk-block-align,left);position:relative;isolation:isolate;min-height:auto;box-sizing:border-box;width:100%;max-width:100%;min-width:0;margin:0;padding:0;background-color:var(--rstk-page-bg);background-image:var(--rstk-page-image);background-position:var(--rstk-page-image-position,center top);background-repeat:var(--rstk-page-image-repeat,no-repeat);background-size:var(--rstk-page-image-size,auto);background-attachment:var(--rstk-page-image-attachment,scroll);border-radius:var(--rstk-page-radius,0);overflow:visible}
   .rstk-embedded-form-source-frame::before{content:"";position:absolute;inset:0;z-index:1;background:var(--rstk-page-overlay,none);pointer-events:none}
   .rstk-embedded-form-source-frame>.rstk-bg-video{position:absolute;inset:0;z-index:0;width:100%;height:100%;object-fit:var(--rstk-page-video-fit,cover);pointer-events:none}
-  .rstk-embedded-form-source-frame>.rstk-page{position:relative;z-index:2;width:100%;min-width:0;max-width:min(100%,var(--rstk-max));margin:0 auto;border:var(--rstk-page-border-width,0) solid var(--rstk-page-border,transparent);border-radius:var(--rstk-page-radius,0);overflow:visible}
+  .rstk-embedded-form-source-frame>.rstk-page{position:relative;z-index:2;width:100%;max-width:min(100%,var(--rstk-max));min-width:0;margin:0 auto;border:var(--rstk-page-border-width,0) solid var(--rstk-page-border,transparent);border-radius:var(--rstk-page-radius,0);overflow:visible}
   body:has(.rstkBlockFullWidth){overflow-x:hidden}
   .rstk-frame:has(.rstkBlockFullWidth),.rstk-kind-form .rstk-shell:has(.rstkBlockFullWidth),.rstk-kind-landing .rstk-page:has(.rstkBlockFullWidth),.rstk-section-lane:has(.rstkBlockFullWidth),.rstk-section-inner:has(.rstkBlockFullWidth),.rstk-section-column:has(.rstkBlockFullWidth){overflow:visible}
   .rstk-kind-form .rstk-page:has(.rstkEmbeddedFormStretch){max-width:none;margin:0}
@@ -19728,9 +19727,9 @@ const RSTK_BASE_CSS = `
   .rstk-embedded-form-source-frame.rstkEmbeddedFormStretch>.rstk-page{max-width:min(100%,var(--rstk-max));width:100%;margin:0 auto}
   .rstk-block-style.rstkBlockFullWidth{width:100vw;max-width:100vw;margin-left:calc(50% - 50vw);margin-right:calc(50% - 50vw);padding-inline:max(24px,calc(50vw - var(--rstk-max)/2))}
   .rstk-embedded-form-source-frame .rstk-block-style.rstkBlockFullWidth{width:100%;max-width:100%;margin-left:0;margin-right:0;padding-inline:max(24px,calc(50% - var(--rstk-max)/2))}
-  .rstk-embedded-form-source-frame .rstk-shell{display:grid;gap:var(--rstk-gap);width:100%;max-width:100%;min-width:0;background:var(--rstk-form-surface,var(--rstk-surface));border:var(--rstk-page-border-width,0) solid var(--rstk-page-border,var(--rstk-border));border-radius:var(--rstk-radius-lg);box-shadow:none;padding:var(--rstk-pad);overflow:hidden}
+  .rstk-embedded-form-source-frame .rstk-shell{display:grid;grid-template-columns:minmax(0,1fr);width:100%;max-width:100%;min-width:0;gap:var(--rstk-gap);background:var(--rstk-form-surface,var(--rstk-surface));border:var(--rstk-page-border-width,0) solid var(--rstk-page-border,var(--rstk-border));border-radius:var(--rstk-radius-lg);box-shadow:none;padding:var(--rstk-pad);overflow:hidden}
   .rstk-embedded-form-source-frame .rstk-shell:has(.rstkBlockFullWidth){overflow:visible}
-  .rstk-kind-landing .rstk-embedded-form-source-frame .rstk-embedded-form,.rstk-embedded-form-source-frame .rstk-embedded-form{width:100%;max-width:100%;min-width:0;margin:0;padding:0;border:0;border-radius:0;background:transparent}
+  .rstk-kind-landing .rstk-embedded-form-source-frame .rstk-embedded-form,.rstk-embedded-form-source-frame .rstk-embedded-form{width:auto;max-width:100%;min-width:0;justify-self:stretch;margin:0;padding:0;border:0;border-radius:0;background:transparent}
   .rstk-embedded-form-source-frame .rstk-headline{margin:0;color:var(--rstk-ink);font-family:var(--rstk-font);font-size:clamp(1.7rem,4.6vw,3rem);font-weight:var(--rstk-heading-weight);line-height:1.05;letter-spacing:0;background-image:none;-webkit-text-fill-color:currentColor}
   .rstk-embedded-form-source-frame .rstk-subheading{margin:0;color:var(--rstk-muted);font-size:clamp(1rem,2vw,1.18rem);line-height:1.5;max-width:var(--rstk-content-max,60ch);background-image:none;-webkit-text-fill-color:currentColor}
   .rstk-embedded-form-source-frame .rstk-text{margin:0;color:color-mix(in srgb,var(--rstk-ink) 80%,transparent);font-size:1rem;line-height:1.55;max-width:var(--rstk-content-max,66ch);background-image:none;-webkit-text-fill-color:currentColor}

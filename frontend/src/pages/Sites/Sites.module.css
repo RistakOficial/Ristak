@@ -9044,15 +9044,16 @@
 }
 
 .canvasChromeProfileBlock {
-  width: max-content;
-  min-width: max-content;
+  width: fit-content;
+  min-width: 0;
   max-width: 100%;
   gap: var(--rstk-social-gap, 12px);
 }
 
 .canvasChromeProfileBlock .chromeMeta {
-  flex: 0 0 auto;
-  min-width: max-content;
+  flex: 1 1 auto;
+  min-width: 0;
+  max-width: 100%;
 }
 
 .canvasChromeProfileBlock .chromeAvatar {
@@ -9084,6 +9085,8 @@
   font-size: var(--rstk-social-name-size, 20px);
   font-weight: 700;
   line-height: 1.08;
+  overflow: hidden;
+  text-overflow: ellipsis;
   white-space: nowrap;
 }
 
@@ -9093,6 +9096,8 @@
   font-size: var(--rstk-social-followers-size, 16px);
   font-weight: 500;
   line-height: 1.18;
+  overflow: hidden;
+  text-overflow: ellipsis;
   white-space: nowrap;
 }
 

@@ -170,9 +170,13 @@
   padding: 0;
 }
 .rstkCanvas .rstkSocialProfileBlock.rstk-block-style {
-  width: max-content;
-  min-width: max-content;
+  width: fit-content;
+  min-width: 0;
   max-width: 100%;
+}
+.rstkCanvas.rstk-kind-form .rstkSocialProfileBlock.rstk-block-style,
+.rstkCanvas .rstkEmbeddedFormSourceFrame .rstkSocialProfileBlock.rstk-block-style {
+  justify-self: start;
 }
 .rstkCanvas .rstkHasBgVideo {
   isolation: isolate;
@@ -2454,7 +2458,7 @@ html body :is(.rstkCanvas.rstk-kind-form.rstk-choice-grid, .rstkCanvas.rstk-kind
   max-width: 100%;
   min-width: 0;
   margin: 0;
-  padding: var(--rstk-frame-pad, 0) 16px;
+  padding: 0;
   background-color: var(--rstk-page-bg);
   background-image: var(--rstk-page-image);
   background-position: var(--rstk-page-image-position, center top);
@@ -2533,10 +2537,11 @@ html body :is(.rstkCanvas.rstk-kind-form.rstk-choice-grid, .rstkCanvas.rstk-kind
 }
 
 .rstkCanvas .rstkEmbeddedFormSourceFrame .rstk-shell {
-  gap: var(--rstk-gap);
+  grid-template-columns: minmax(0, 1fr);
   width: 100%;
   max-width: 100%;
   min-width: 0;
+  gap: var(--rstk-gap);
   padding: var(--rstk-pad);
   background: var(--rstk-form-surface, var(--rstk-surface));
   border: var(--rstk-page-border-width, 0) solid var(--rstk-page-border, var(--rstk-border));
@@ -2550,9 +2555,10 @@ html body :is(.rstkCanvas.rstk-kind-form.rstk-choice-grid, .rstkCanvas.rstk-kind
 
 .rstkCanvas.rstk-kind-landing .rstkEmbeddedFormSourceFrame .rstk-embedded-form,
 .rstkCanvas .rstkEmbeddedFormSourceFrame .rstk-embedded-form {
-  width: 100%;
+  width: auto;
   max-width: 100%;
   min-width: 0;
+  justify-self: stretch;
   margin: 0;
   padding: 0;
   border: 0;

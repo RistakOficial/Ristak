@@ -4341,7 +4341,7 @@ const getBlockCanvasStyle = (block: SiteBlock): React.CSSProperties => {
     style['--rstk-social-name-size'] = socialPx(socialFontSize * profileScale)
     style['--rstk-social-followers-size'] = socialPx(Math.max(11, socialFontSize * profileScale * 0.82))
     style['--rstk-social-verified-size'] = socialPx(16.5 * profileScale)
-    // El ancho max-content del chip lo dan las reglas CSS (.rstkSocialProfileBlock /
+    // El ancho del chip lo dan las reglas CSS (.rstkSocialProfileBlock /
     // .rstk-embedded-form > .rstkSocialProfileBlock), NO inline: así dentro de un
     // formulario puede seguir --rstk-form-field-justify (alinearse en su franja).
   }

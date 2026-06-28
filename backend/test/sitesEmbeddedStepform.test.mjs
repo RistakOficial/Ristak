@@ -36,9 +36,24 @@ test('landing form embeds render multiple form pages as an inline stepform', asy
           embeddedTheme: {
             pagePadding: 64,
             pageMaxWidth: 720,
-            formContentAlign: 'right'
+            formContentAlign: 'right',
+            brandName: 'adryckk',
+            brandSubtitle: 'Productor musical',
+            followers: '46,3 mil'
           },
           embeddedBlocks: [
+            {
+              id: 'social-profile',
+              siteId: 'site_embedded_stepform',
+              blockType: 'social_profile',
+              label: 'Perfil de red social',
+              content: '',
+              placeholder: '',
+              required: false,
+              options: [],
+              sortOrder: 0,
+              settings: { pageId: 'step-1', platform: 'instagram' }
+            },
             {
               id: 'content-title',
               siteId: 'site_embedded_stepform',
@@ -48,7 +63,7 @@ test('landing form embeds render multiple form pages as an inline stepform', asy
               placeholder: '',
               required: false,
               options: [],
-              sortOrder: 0,
+              sortOrder: 1,
               settings: { pageId: 'step-1' }
             },
             {
@@ -60,19 +75,19 @@ test('landing form embeds render multiple form pages as an inline stepform', asy
               placeholder: 'Tu nombre',
               required: true,
               options: [],
-              sortOrder: 1,
+              sortOrder: 2,
               settings: { pageId: 'step-1' }
             },
             {
               id: 'full-width-copy',
               siteId: 'site_embedded_stepform',
               blockType: 'text',
-              label: 'Texto ancho',
-              content: 'Texto interno a ancho completo',
+              label: 'Texto amplio',
+              content: 'Bloque amplio dentro del formulario',
               placeholder: '',
               required: false,
               options: [],
-              sortOrder: 2,
+              sortOrder: 3,
               settings: { pageId: 'step-1', blockFullWidth: true }
             },
             {
@@ -84,7 +99,7 @@ test('landing form embeds render multiple form pages as an inline stepform', asy
               placeholder: 'tu@email.com',
               required: true,
               options: [],
-              sortOrder: 3,
+              sortOrder: 4,
               settings: { pageId: 'step-2' }
             },
             {
@@ -96,7 +111,7 @@ test('landing form embeds render multiple form pages as an inline stepform', asy
               placeholder: '',
               required: false,
               options: [],
-              sortOrder: 4,
+              sortOrder: 5,
               settings: { pageId: 'page-2' }
             }
           ]
@@ -115,14 +130,17 @@ test('landing form embeds render multiple form pages as an inline stepform', asy
 
   assert.match(html, /data-embedded-form-pages/)
   assert.match(html, /--rstk-page-border-width:20px/)
-  assert.match(html, /--rstk-frame-pad:64px/)
-  assert.match(html, /--rstk-max:720px/)
-  assert.match(html, /--rstk-form-content-align:right/)
-  assert.match(html, /--rstk-form-field-justify:end/)
-  assert.match(html, /\.rstk-embedded-form-source-frame\{[^}]*margin:0;padding:var\(--rstk-frame-pad,0\) 16px/)
-  assert.match(html, /\.rstk-embedded-form-source-frame>\.rstk-page\{[^}]*max-width:min\(100%,var\(--rstk-max\)\)/)
-  assert.match(html, /\.rstk-embedded-form-source-frame \.rstk-shell\{[^}]*overflow:hidden/)
-  assert.match(html, /\.rstk-embedded-form-source-frame \.rstk-block-style\.rstkBlockFullWidth\{[^}]*width:100%/)
+  assert.match(html, /\.rstk-embedded-form-source-frame\{[^}]*margin:0;padding:0/)
+  assert.match(html, /\.rstk-embedded-form-source-frame\{[^}]*width:100%;max-width:100%;min-width:0/)
+  assert.match(html, /\.rstk-embedded-form-source-frame>.rstk-page\{[^}]*max-width:min\(100%,var\(--rstk-max\)\);min-width:0/)
+  assert.match(html, /\.rstkSocialProfileBlock\.rstk-block-style\{width:fit-content;min-width:0;max-width:100%\}/)
+  assert.match(html, /\.rstk-kind-form \.rstkSocialProfileBlock\.rstk-block-style,\.rstk-embedded-form-source-frame \.rstkSocialProfileBlock\.rstk-block-style\{justify-self:start\}/)
+  assert.match(html, /\.rstk-social-profile-block\{width:fit-content;min-width:0;max-width:100%;/)
+  assert.match(html, /\.rstk-social-profile-block \.rstk-social-details\{flex:1 1 auto;min-width:0;max-width:100%\}/)
+  assert.match(html, /\.rstk-social-profile-block \.rstk-social-name,\.rstk-social-profile-block \.rstk-social-followers\{overflow:hidden;text-overflow:ellipsis;white-space:nowrap\}/)
+  assert.match(html, /\.rstk-embedded-form-source-frame \.rstk-block-style\.rstkBlockFullWidth\{width:100%;max-width:100%;margin-left:0;margin-right:0/)
+  assert.match(html, /\.rstk-embedded-form-source-frame \.rstk-shell\{display:grid;grid-template-columns:minmax\(0,1fr\);width:100%;max-width:100%;min-width:0;[^}]*overflow:hidden/)
+  assert.match(html, /\.rstk-embedded-form-source-frame \.rstk-shell:has\(\.rstkBlockFullWidth\)\{overflow:visible\}/)
   assert.match(html, /data-embedded-page-content="step-1"/)
   assert.match(html, /data-embedded-page-content="step-2" hidden/)
   assert.match(html, /data-embedded-next/)
@@ -131,7 +149,12 @@ test('landing form embeds render multiple form pages as an inline stepform', asy
   assert.match(html, /<button type="submit" data-submit hidden><span class="rstk-button-label">Enviar solicitud<\/span><span class="rstk-button-subtitle">Finalizar<\/span><\/button>/)
   assert.match(html, /data-embedded-back hidden/)
   assert.match(html, /data-submit hidden/)
+  assert.match(html, /rstk-social-profile-instagram/)
+  assert.match(html, /adryckk/)
+  assert.match(html, /46,3 mil seguidores/)
   assert.match(html, /Título interno del formulario/)
+  assert.match(html, /Bloque amplio dentro del formulario/)
+  assert.match(html, /rstkBlockFullWidth/)
   assert.match(html, /data-block-id="field-name" data-page-id="step-1"/)
   assert.match(html, /data-block-id="field-email" data-page-id="step-2"/)
   assert.match(html, /class="rstk-block-style rstkBlockFullWidth" data-rstk-block-id="full-width-copy"/)
