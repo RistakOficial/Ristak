@@ -2440,6 +2440,7 @@ html body :is(.rstkCanvas.rstk-kind-form.rstk-choice-grid, .rstkCanvas.rstk-kind
 }
 
 .rstkCanvas .rstkEmbeddedFormSourceFrame {
+  --rstk-selection-surface-radius: var(--rstk-page-radius, 0px);
   /* Aísla el formulario embebido de la alineación del sitio anfitrión: corta la herencia
      de la PROPIEDAD text-align del landing (que centraba títulos/subtítulos). Baseline
      'left' = el del body.rstk-kind-form standalone; si el form fuente es centrado,
@@ -2479,8 +2480,6 @@ html body :is(.rstkCanvas.rstk-kind-form.rstk-choice-grid, .rstkCanvas.rstk-kind
 }
 
 .rstkCanvas .rstkEmbeddedFormSourceFrame > .rstk-page {
-  --rstk-embedded-form-selection-outset: 6px;
-  --rstk-embedded-form-selection-gap: calc(var(--rstk-embedded-form-selection-outset) + var(--rstk-page-border-width, 0px));
   position: relative;
   z-index: 2;
   isolation: isolate;
@@ -2556,6 +2555,32 @@ html body :is(.rstkCanvas.rstk-kind-form.rstk-choice-grid, .rstkCanvas.rstk-kind
   border: var(--rstk-page-border-width, 0) solid var(--rstk-page-border, var(--rstk-border));
   border-radius: var(--rstk-page-radius, var(--rstk-radius-lg));
   overflow: hidden;
+}
+
+.rstkCanvas .rstkEmbeddedFormFallbackSurface,
+.rstkCanvas .rstkEmbedSelectionSurface {
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+}
+
+.rstkCanvas [data-rstk-selection-surface="true"] {
+  position: relative;
+  --rstk-selection-surface-outset: 6px;
+  --rstk-selection-surface-radius: var(--rstk-block-radius, 12px);
+}
+
+.rstkCanvas .rstk-media[data-rstk-selection-surface="true"],
+.rstkCanvas .rstkEmbedSelectionSurface[data-rstk-selection-surface="true"] {
+  --rstk-selection-surface-radius: var(--rstk-media-radius, var(--rstk-block-radius, 12px));
+}
+
+.rstkCanvas .rstk-video[data-rstk-selection-surface="true"] {
+  --rstk-selection-surface-radius: var(--rstk-video-radius, var(--rstk-media-radius, var(--rstk-block-radius, 12px)));
+}
+
+.rstkCanvas .rstk-calendar-preview[data-rstk-selection-surface="true"] {
+  --rstk-selection-surface-radius: var(--rstk-media-radius, 0px);
 }
 
 .rstkCanvas .rstkEmbeddedFormSourceFrame .rstk-shell:has(.rstkBlockFullWidth) {
@@ -2979,7 +3004,7 @@ html body :is(.rstkCanvas.rstk-kind-form.rstk-choice-grid, .rstkCanvas.rstk-kind
   .rstkCanvas .rstkEmbeddedFormFieldActive::after,
   .rstkCanvas .rstkEmbeddedFormItemActive::after,
   .rstkCanvas .rstkEmbeddedFormSubmitActive::after,
-  .rstkCanvas .rstkSelActive .rstkEmbeddedFormSourceFrame > .rstk-page::after,
+  .rstkCanvas .rstkSurfaceSelectionHost.rstkSelActive [data-rstk-selection-surface="true"]::after,
   .rstkPopupEditorModalSelected::after {
     animation: none;
   }
@@ -2993,14 +3018,14 @@ html body :is(.rstkCanvas.rstk-kind-form.rstk-choice-grid, .rstkCanvas.rstk-kind
 .rstkCanvas .rstk-section-lane.rstkSelActive:has(.rstkEmbeddedFormSourceRoot)::after {
   inset: -1px;
 }
-.rstkCanvas .rstkSelActive:has(.rstkEmbeddedFormSourceRoot)::after {
+.rstkCanvas .rstkSurfaceSelectionHost.rstkSelActive::after {
   content: none;
 }
-.rstkCanvas .rstkSelActive .rstkEmbeddedFormSourceFrame > .rstk-page::after {
+.rstkCanvas .rstkSurfaceSelectionHost.rstkSelActive [data-rstk-selection-surface="true"]::after {
   content: "";
   position: absolute;
-  inset: calc(-1 * var(--rstk-embedded-form-selection-gap, 6px));
-  border-radius: calc(var(--rstk-page-radius, 0px) + var(--rstk-embedded-form-selection-gap, 6px));
+  inset: calc(-1 * var(--rstk-selection-surface-outset, 6px));
+  border-radius: calc(var(--rstk-selection-surface-radius, 12px) + var(--rstk-selection-surface-outset, 6px));
   pointer-events: none;
   z-index: 40;
   background-image: var(--rstk-march-bg);
@@ -3014,7 +3039,7 @@ html body :is(.rstkCanvas.rstk-kind-form.rstk-choice-grid, .rstkCanvas.rstk-kind
   animation: rstkSelMarch 1s linear infinite;
 }
 @media (prefers-reduced-motion: reduce) {
-  .rstkCanvas .rstkSelActive .rstkEmbeddedFormSourceFrame > .rstk-page::after {
+  .rstkCanvas .rstkSurfaceSelectionHost.rstkSelActive [data-rstk-selection-surface="true"]::after {
     animation: none;
   }
 }

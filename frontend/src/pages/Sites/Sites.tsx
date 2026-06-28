@@ -1978,6 +1978,7 @@ const isChoiceBlock = (blockType: SiteBlockType) =>
   blockType === 'dropdown' || blockType === 'radio' || blockType === 'checkboxes'
 
 const nativeBorderBlockTypes = new Set<SiteBlockType>(['hero', 'section', 'cta', 'benefits', 'testimonials', 'services', 'faq', 'form_embed', 'image', 'video', 'countdown', 'embed', 'calendar_embed', 'payment'])
+const surfaceSelectionBlockTypes = new Set<SiteBlockType>(['form_embed', 'calendar_embed', 'embed', 'image', 'video'])
 
 const isBlockHidden = (block?: SiteBlock | null) => block?.settings?.hidden === true
 
@@ -3220,7 +3221,34 @@ const readCssPixelValue = (value: string | null | undefined) => {
   return Number.isFinite(parsed) ? parsed : 0
 }
 
-const EMBEDDED_FORM_SELECTION_SURFACE_SELECTOR = '[data-rstk-embedded-form-selection-surface]'
+const BLOCK_SELECTION_SURFACE_SELECTOR = '[data-rstk-selection-surface="true"]'
+
+const clickHitsSelectionSurface = (surface: HTMLElement, event: React.MouseEvent<HTMLElement>) => {
+  const style = window.getComputedStyle(surface)
+  const selectionOutset = Math.max(
+    0,
+    readCssPixelValue(style.getPropertyValue('--rstk-selection-surface-outset')) ||
+      readCssPixelValue(style.getPropertyValue('--rstk-selection-outset')) ||
+      6
+  )
+  const borderOutset = Math.max(
+    readCssPixelValue(style.getPropertyValue('--rstk-selection-surface-border-width')),
+    readCssPixelValue(style.borderTopWidth),
+    readCssPixelValue(style.borderRightWidth),
+    readCssPixelValue(style.borderBottomWidth),
+    readCssPixelValue(style.borderLeftWidth),
+    0
+  )
+  const clickOutset = selectionOutset + borderOutset
+  const rect = surface.getBoundingClientRect()
+
+  return (
+    event.clientX >= rect.left - clickOutset &&
+    event.clientX <= rect.right + clickOutset &&
+    event.clientY >= rect.top - clickOutset &&
+    event.clientY <= rect.bottom + clickOutset
+  )
+}
 
 const isVisibleLayoutElement = (element: HTMLElement | null) => {
   if (!element || element.hidden) return false
@@ -13364,6 +13392,7 @@ export const Sites: React.FC = () => {
                                           onDuplicate={() => handleDuplicateBlock(block.id)}
                                           onMoveUp={() => handleMoveBlock(block.id, 'up')}
                                           onMoveDown={() => handleMoveBlock(block.id, 'down')}
+                                          onClearSelection={() => selectEditorBlock('')}
                                           onPatchBlock={(patch) => patchBlockLocal(block.id, patch)}
                                           onPatchSettings={(patch) => patchBlockSettingsLocal(block, patch)}
                                           onSave={() => handleSaveBlock(block.id)}
@@ -28546,6 +28575,7 @@ interface SortableCanvasBlockProps {
   onDuplicate: () => void
   onMoveUp: () => void
   onMoveDown: () => void
+  onClearSelection: () => void
   onPatchBlock: (patch: Partial<SiteBlock>) => void
   onPatchSettings: (patch: Record<string, unknown>) => void
   onSave: () => void
@@ -28585,6 +28615,7 @@ const SortableCanvasBlock: React.FC<SortableCanvasBlockProps> = ({
   onDuplicate,
   onMoveUp,
   onMoveDown,
+  onClearSelection,
   onPatchBlock,
   onPatchSettings,
   onSave
@@ -28597,41 +28628,16 @@ const SortableCanvasBlock: React.FC<SortableCanvasBlockProps> = ({
     transition: sortableTransition
   })
   const handleClick = (event: React.MouseEvent<HTMLDivElement>) => {
-    if (block.blockType === 'form_embed') {
-      const targetElement = event.target instanceof Element ? event.target : null
-      const clickedBlockTools = Boolean(targetElement?.closest('.rstkBlockTools'))
+    const targetElement = event.target instanceof Element ? event.target : null
+    const clickedBlockTools = Boolean(targetElement?.closest('.rstkBlockTools'))
 
-      if (!clickedBlockTools) {
-        const selectionSurface = event.currentTarget.querySelector<HTMLElement>(EMBEDDED_FORM_SELECTION_SURFACE_SELECTOR)
+    if (!clickedBlockTools) {
+      const selectionSurface = event.currentTarget.querySelector<HTMLElement>(BLOCK_SELECTION_SURFACE_SELECTOR)
 
-        if (selectionSurface) {
-          const style = window.getComputedStyle(selectionSurface)
-          const selectionOutset = Math.max(
-            0,
-            readCssPixelValue(style.getPropertyValue('--rstk-embedded-form-selection-outset')) ||
-              readCssPixelValue(style.getPropertyValue('--rstk-selection-outset')) ||
-              6
-          )
-          const borderOutset = Math.max(
-            readCssPixelValue(style.getPropertyValue('--rstk-page-border-width')),
-            readCssPixelValue(style.borderTopWidth),
-            readCssPixelValue(style.borderRightWidth),
-            readCssPixelValue(style.borderBottomWidth),
-            readCssPixelValue(style.borderLeftWidth),
-            0
-          )
-          const clickOutset = selectionOutset + borderOutset
-          const rect = selectionSurface.getBoundingClientRect()
-          const clickedInsideVisibleSelection =
-            event.clientX >= rect.left - clickOutset &&
-            event.clientX <= rect.right + clickOutset &&
-            event.clientY >= rect.top - clickOutset &&
-            event.clientY <= rect.bottom + clickOutset
-
-          if (!clickedInsideVisibleSelection) {
-            return
-          }
-        }
+      if (selectionSurface && !clickHitsSelectionSurface(selectionSurface, event)) {
+        event.stopPropagation()
+        onClearSelection()
+        return
       }
     }
 
@@ -28652,7 +28658,7 @@ const SortableCanvasBlock: React.FC<SortableCanvasBlockProps> = ({
         zIndex: isDragging ? 8 : undefined,
         ...getBlockCanvasStyle(block)
       }}
-      className={getBlockStyleClassName(block, `rstkSel ${selected ? 'rstkSelActive' : ''} ${toolbarPositionClass} ${isDragging ? 'rstkSelDragging' : ''} ${videoActionHoverTargetId === block.id ? 'rstkVideoActionHover' : ''} ${videoActionHiddenNote ? 'rstkVideoActionGhost' : ''}`)}
+      className={getBlockStyleClassName(block, `rstkSel ${surfaceSelectionBlockTypes.has(block.blockType) ? 'rstkSurfaceSelectionHost' : ''} ${selected ? 'rstkSelActive' : ''} ${toolbarPositionClass} ${isDragging ? 'rstkSelDragging' : ''} ${videoActionHoverTargetId === block.id ? 'rstkVideoActionHover' : ''} ${videoActionHiddenNote ? 'rstkVideoActionGhost' : ''}`)}
       onClick={handleClick}
     >
       {videoActionHiddenNote && <span className="rstkVideoActionNote">{videoActionHiddenNote}</span>}
@@ -28975,6 +28981,7 @@ const LandingCanvasSections: React.FC<LandingCanvasSectionsProps> = ({
                 onDuplicate={() => onDuplicateBlock(block.id)}
                 onMoveUp={() => onMoveBlock(block.id, 'up')}
                 onMoveDown={() => onMoveBlock(block.id, 'down')}
+                onClearSelection={() => onSelectBlock('')}
                 onPatchBlock={(patch) => onPatchBlock(block.id, patch)}
                 onPatchSettings={(patch) => onPatchBlockSettings(block, patch)}
                 onSave={() => onSaveBlock(block.id)}
@@ -29200,6 +29207,7 @@ const LandingSectionColumns: React.FC<LandingSectionRenderProps> = ({
                     onDuplicate={() => onDuplicateBlock(block.id)}
                     onMoveUp={() => onMoveBlock(block.id, 'up')}
                     onMoveDown={() => onMoveBlock(block.id, 'down')}
+                    onClearSelection={() => onSelectBlock('')}
                     onPatchBlock={(patch) => onPatchBlock(block.id, patch)}
                     onPatchSettings={(patch) => onPatchBlockSettings(block, patch)}
                     onSave={() => onSaveBlock(block.id)}
@@ -31465,6 +31473,7 @@ const VideoPlayerPreview: React.FC<{
     <div
       ref={playerRef}
       className={className}
+      data-rstk-selection-surface="true"
       style={{
         ['--rstk-video-bg' as string]: playerBackground,
         ['--rstk-video-radius' as string]: playerRadius,
@@ -31719,6 +31728,7 @@ const CalendarEmbedStaticPreview: React.FC<{
   return (
     <section
       className={`rstk-calendar-preview rstk-calendar-preview-${layout} rstk-calendar-preview-theme-${widgetTheme} ${showSidebar ? '' : 'rstk-calendar-preview-no-sidebar'}`}
+      data-rstk-selection-surface="true"
       data-widget-theme={widgetTheme}
       style={style}
       aria-label={`Vista previa de ${title}`}
@@ -31954,8 +31964,8 @@ const CanvasPreviewBlock: React.FC<CanvasPreviewBlockProps> = ({
     // Only real URLs: free text (e.g. the default "Imagen") would resolve as a relative path.
     const mediaUrl = safePublicMediaUrl(rawImageUrl, 'image')
     return mediaUrl
-      ? <figure className="rstk-media"><img src={mediaUrl} alt={block.label || 'Imagen'} loading="lazy" /></figure>
-      : <div className="rstk-media rstk-media-empty">Imagen sin URL</div>
+      ? <figure className="rstk-media" data-rstk-selection-surface="true"><img src={mediaUrl} alt={block.label || 'Imagen'} loading="lazy" /></figure>
+      : <div className="rstk-media rstk-media-empty" data-rstk-selection-surface="true">Imagen sin URL</div>
   }
 
   if (block.blockType === 'video') {
@@ -31998,8 +32008,8 @@ const CanvasPreviewBlock: React.FC<CanvasPreviewBlockProps> = ({
               selected={selected}
             />
           )
-          : <div className="rstk-video"><iframe src={appendEditorNoTrackParam(videoUrl)} title={block.label || 'Video'} loading="lazy" allow={DEFAULT_EMBED_ALLOW} allowFullScreen sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-presentation" /></div>
-      : <div className="rstk-media rstk-media-empty"><span className="rstk-play"><Play size={22} /></span>Agrega la URL del video</div>
+          : <div className="rstk-video" data-rstk-selection-surface="true"><iframe src={appendEditorNoTrackParam(videoUrl)} title={block.label || 'Video'} loading="lazy" allow={DEFAULT_EMBED_ALLOW} allowFullScreen sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-presentation" /></div>
+      : <div className="rstk-media rstk-media-empty" data-rstk-selection-surface="true"><span className="rstk-play"><Play size={22} /></span>Agrega la URL del video</div>
   }
 
   if (block.blockType === 'button') {
@@ -32072,7 +32082,7 @@ const CanvasPreviewBlock: React.FC<CanvasPreviewBlockProps> = ({
 
     if (!hasConfiguredForm) {
       return (
-        <div className="rstk-embed rstk-embed-empty rstk-inline-setup-surface">
+        <div className="rstk-embed rstk-embed-empty rstk-inline-setup-surface" data-rstk-selection-surface="true">
           <section className="rstk-inline-setup" aria-label="Configurar formulario embebido">
             <span className="rstk-inline-setup-icon" aria-hidden="true"><FormInput size={20} /></span>
             <div className="rstk-inline-setup-copy">
@@ -32226,9 +32236,9 @@ const CanvasPreviewBlock: React.FC<CanvasPreviewBlockProps> = ({
 
     return sourceCanvasTheme ? (
       <div className={`rstkCanvas ${sourceCanvasTheme.bodyClass} rstkEmbeddedFormSourceRoot`} style={sourceThemeVars}>
-        <div className={`rstk-frame rstkEmbeddedFormSourceFrame rstk-embedded-form-theme rstk-embedded-form-source-frame${getSettingBoolean(settings, 'embeddedFullWidth') ? ' rstkEmbeddedFormStretch' : ''}`}>
+        <div className={`rstk-frame rstkEmbeddedFormSourceFrame rstk-embedded-form-theme rstk-embedded-form-source-frame${getSettingBoolean(settings, 'embeddedFullWidth') ? ' rstkEmbeddedFormStretch' : ''}`} data-rstk-selection-surface="true">
           <CanvasBackgroundVideo theme={previewForm?.theme} />
-          <main className="rstk-page" data-rstk-embedded-form-selection-surface>
+          <main className="rstk-page">
             <div
               className="rstk-shell rstkEmbeddedFormSourceShell"
               onClick={embeddedFormEditor ? (event) => {
@@ -32251,7 +32261,11 @@ const CanvasPreviewBlock: React.FC<CanvasPreviewBlockProps> = ({
           </main>
         </div>
       </div>
-    ) : embeddedFormPreview
+    ) : (
+      <div className="rstkEmbeddedFormFallbackSurface" data-rstk-selection-surface="true">
+        {embeddedFormPreview}
+      </div>
+    )
   }
 
   if (block.blockType === 'cta') {
@@ -32291,7 +32305,7 @@ const CanvasPreviewBlock: React.FC<CanvasPreviewBlockProps> = ({
     }
 
     return (
-      <div className="rstk-embed rstk-embed-empty rstk-inline-setup-surface">
+      <div className="rstk-embed rstk-embed-empty rstk-inline-setup-surface" data-rstk-selection-surface="true">
         <section className="rstk-inline-setup" aria-label="Seleccionar calendario embebido">
           <span className="rstk-inline-setup-icon" aria-hidden="true"><CalendarDays size={20} /></span>
           <div className="rstk-inline-setup-copy">
@@ -32352,7 +32366,7 @@ const EmbedPreview: React.FC<{ rawCode: string }> = ({ rawCode }) => {
   }, [embed.kind, embed.kind === 'html' ? embed.srcDoc : ''])
 
   if (embed.kind === 'empty') {
-    return <div className="rstk-embed rstk-embed-empty">Pega una URL, iframe o código embed</div>
+    return <div className="rstk-embed rstk-embed-empty" data-rstk-selection-surface="true">Pega una URL, iframe o código embed</div>
   }
 
   const resolvedHeight = embed.kind === 'html'
@@ -32360,19 +32374,21 @@ const EmbedPreview: React.FC<{ rawCode: string }> = ({ rawCode }) => {
     : embed.height || EMBED_DEFAULT_HEIGHT
 
   return (
-    <iframe
-      ref={iframeRef}
-      className={`rstk-embed ${embed.kind === 'html' ? 'rstk-embed-code' : ''}`}
-      title={embed.title}
-      src={embed.kind === 'url' ? appendEditorNoTrackParam(embed.src) : undefined}
-      srcDoc={embed.kind === 'html' ? embed.srcDoc : undefined}
-      loading="lazy"
-      referrerPolicy="no-referrer-when-downgrade"
-      sandbox={embed.kind === 'url' ? EMBED_SANDBOX_URL : EMBED_SANDBOX_HTML}
-      allow={embed.kind === 'url' ? embed.allow || DEFAULT_EMBED_ALLOW : DEFAULT_EMBED_ALLOW}
-      allowFullScreen
-      style={{ minHeight: `${resolvedHeight}px`, height: `${resolvedHeight}px` }}
-    />
+    <div className="rstkEmbedSelectionSurface" data-rstk-selection-surface="true">
+      <iframe
+        ref={iframeRef}
+        className={`rstk-embed ${embed.kind === 'html' ? 'rstk-embed-code' : ''}`}
+        title={embed.title}
+        src={embed.kind === 'url' ? appendEditorNoTrackParam(embed.src) : undefined}
+        srcDoc={embed.kind === 'html' ? embed.srcDoc : undefined}
+        loading="lazy"
+        referrerPolicy="no-referrer-when-downgrade"
+        sandbox={embed.kind === 'url' ? EMBED_SANDBOX_URL : EMBED_SANDBOX_HTML}
+        allow={embed.kind === 'url' ? embed.allow || DEFAULT_EMBED_ALLOW : DEFAULT_EMBED_ALLOW}
+        allowFullScreen
+        style={{ minHeight: `${resolvedHeight}px`, height: `${resolvedHeight}px` }}
+      />
+    </div>
   )
 }
 
