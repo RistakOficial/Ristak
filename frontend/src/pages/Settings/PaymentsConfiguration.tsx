@@ -2,7 +2,9 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useLocation, useNavigate } from 'react-router-dom'
 import {
   AlertTriangle,
+  ArrowLeft,
   BellRing,
+  Cable,
   CheckCircle,
   Clock,
   Copy,
@@ -25,7 +27,6 @@ import {
   Sparkles,
   Trash2,
   Unplug,
-  WalletCards,
   Webhook
 } from 'lucide-react'
 import {
@@ -169,7 +170,7 @@ const sectionItems: Array<{ id: PaymentsSectionId; label: string; icon: React.Re
   { id: 'checkout', label: 'Página de cobro', icon: <CreditCard size={17} /> },
   { id: 'receipt', label: 'Comprobante', icon: <ReceiptText size={17} /> },
   { id: 'automations', label: 'Automatizaciones', icon: <BellRing size={17} /> },
-  { id: 'gateways', label: 'Pasarelas', icon: <WalletCards size={17} /> },
+  { id: 'gateways', label: 'Pasarelas', icon: <Cable size={17} /> },
   { id: 'taxes', label: 'Impuestos', icon: <Percent size={17} /> },
   { id: 'meta', label: 'Meta', icon: <MetaBrandMark size={17} /> }
 ]
@@ -1783,6 +1784,12 @@ export const PaymentsConfiguration: React.FC = () => {
     navigate(`/settings/payments/${gateway.id}`)
   }
 
+  const handleGatewayCardKeyDown = (event: React.KeyboardEvent<HTMLDivElement>, gateway: PaymentGatewayOption) => {
+    if (event.key !== 'Enter' && event.key !== ' ') return
+    event.preventDefault()
+    handleSelectGateway(gateway)
+  }
+
   const handleCheckoutLogoUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.currentTarget.files?.[0]
     event.currentTarget.value = ''
@@ -3130,8 +3137,8 @@ export const PaymentsConfiguration: React.FC = () => {
       {activeGatewayRoute && (
         <div className={styles.gatewayDetailBar}>
           <Button type="button" variant="secondary" size="sm" onClick={() => navigate('/settings/payments/gateways')}>
-            <WalletCards size={16} />
-            Pasarelas
+            <ArrowLeft size={16} />
+            Volver
           </Button>
           <Badge variant={selectedGatewayOption ? gatewayStatusCopy[selectedGatewayOption.status].variant : 'neutral'}>
             {selectedGatewayOption ? gatewayStatusCopy[selectedGatewayOption.status].label : 'Sin conexión'}
@@ -3166,11 +3173,19 @@ export const PaymentsConfiguration: React.FC = () => {
 
           <div className={styles.gatewayList}>
             {gatewayOptions.map((gateway) => {
-              const isConnected = gateway.status === 'connected'
               const statusCopy = gatewayStatusCopy[gateway.status]
 
               return (
-                <Card key={gateway.id} className={styles.gatewayItem} padding="md">
+                <Card
+                  key={gateway.id}
+                  className={`${styles.gatewayItem} ${styles.gatewayItemInteractive}`}
+                  padding="md"
+                  role="button"
+                  tabIndex={0}
+                  aria-label={`Abrir configuración de ${gateway.name}`}
+                  onClick={() => handleSelectGateway(gateway)}
+                  onKeyDown={(event) => handleGatewayCardKeyDown(event, gateway)}
+                >
                   <div className={styles.gatewayItemIdentity}>
                     {gateway.logo && (
                       <PaymentPlatformLogo platform={gateway.logo} size="lg" decorative />
@@ -3178,15 +3193,12 @@ export const PaymentsConfiguration: React.FC = () => {
                     <div className={styles.gatewayItemCopy}>
                       <div className={styles.gatewayItemTitleRow}>
                         <strong>{gateway.name}</strong>
-                        <Badge variant={statusCopy.variant}>{statusCopy.label}</Badge>
                       </div>
                       <p>{gateway.description}</p>
                     </div>
                   </div>
                   <div className={styles.gatewayItemActions}>
-                    <Button type="button" variant="primary" size="sm" onClick={() => handleSelectGateway(gateway)}>
-                      {isConnected ? 'Abrir' : 'Configurar'}
-                    </Button>
+                    <Badge variant={statusCopy.variant}>{statusCopy.label}</Badge>
                   </div>
                 </Card>
               )

@@ -1462,6 +1462,25 @@
   border-color: var(--border);
 }
 
+.gatewayItemInteractive {
+  outline: none;
+  transition: border-color .15s ease, background .15s ease, box-shadow .15s ease, transform .15s ease;
+}
+
+.gatewayItemInteractive:hover {
+  border-color: var(--accent);
+  background: var(--surface-hover);
+}
+
+.gatewayItemInteractive:focus-visible {
+  border-color: var(--accent);
+  box-shadow: var(--ristak-focus-ring);
+}
+
+.gatewayItemInteractive:active {
+  transform: translateY(1px);
+}
+
 .gatewayItem :global([data-ristak-card-content]) {
   display: flex;
   align-items: flex-start;
@@ -2166,6 +2185,10 @@
   }
 
   .paymentModeControl {
+    justify-content: flex-start;
+  }
+
+  .gatewayItemActions {
     justify-content: flex-start;
   }
 
