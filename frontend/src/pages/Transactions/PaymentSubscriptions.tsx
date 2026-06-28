@@ -34,7 +34,8 @@ import {
   PageContainer,
   PageHeader,
   PaymentPlatformLogo,
-  Table
+  Table,
+  TableSelectionToolbar
 } from '@/components/common'
 import type { BadgeVariant, Column, PaymentPlatformLogoId } from '@/components/common'
 import { useNotification } from '@/contexts/NotificationContext'
@@ -892,8 +893,12 @@ export const PaymentSubscriptions: React.FC = () => {
   ]
 
   const subscriptionSelectionToolbar = selectedSubscriptions.length > 0 ? (
-    <div className={styles.selectionToolbar}>
-      <span>{selectedSubscriptions.length} seleccionada{selectedSubscriptions.length === 1 ? '' : 's'}</span>
+    <TableSelectionToolbar
+      count={selectedSubscriptions.length}
+      singularLabel="seleccionada"
+      pluralLabel="seleccionadas"
+      onClearSelection={() => setSelectedSubscriptionIds([])}
+    >
       <Button
         type="button"
         variant="danger"
@@ -904,7 +909,7 @@ export const PaymentSubscriptions: React.FC = () => {
         <Trash2 size={16} />
         Eliminar
       </Button>
-    </div>
+    </TableSelectionToolbar>
   ) : null
 
   return (

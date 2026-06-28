@@ -31,22 +31,6 @@
   margin-left: auto;
 }
 
-.selectionToolbar {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--spacing-sm);
-  width: 100%;
-  color: var(--color-text-secondary);
-  font-size: var(--font-size-sm);
-  font-weight: var(--font-weight-medium);
-  flex-wrap: wrap;
-}
-
-.selectionToolbar > span {
-  margin-right: auto;
-  color: var(--color-text-primary);
-}
-
 .kpiRow {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));

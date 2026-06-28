@@ -64,6 +64,30 @@
   width: 100%;
 }
 
+.tableSelectionToolbar {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--spacing-sm);
+  width: 100%;
+  color: var(--text-dim, var(--color-text-secondary));
+  font-size: var(--font-size-sm);
+  font-weight: 500;
+  flex-wrap: wrap;
+}
+
+.tableSelectionCount {
+  margin-right: auto;
+  color: var(--text, var(--color-text-primary));
+}
+
+.tableSelectionToolbarActions {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--spacing-sm);
+  flex-wrap: wrap;
+}
+
 .actionGroup {
   display: flex;
   gap: var(--spacing-xs);
@@ -432,6 +456,11 @@ body.light input.selectionCheckbox:checked:hover::after {
 
   .selectionActions {
     margin-left: 0;
+  }
+
+  .tableSelectionToolbarActions {
+    width: 100%;
+    justify-content: flex-start;
   }
 }
 

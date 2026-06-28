@@ -16,7 +16,8 @@ import {
   PageContainer,
   PageHeader,
   PaymentPlatformLogo,
-  Table
+  Table,
+  TableSelectionToolbar
 } from '@/components/common'
 import type { BadgeVariant, Column } from '@/components/common'
 import { useNotification } from '@/contexts/NotificationContext'
@@ -99,6 +100,7 @@ export const PaymentProducts: React.FC = () => {
   const [refreshing, setRefreshing] = useState(false)
   const [saving, setSaving] = useState(false)
   const [deletingProductId, setDeletingProductId] = useState<string | null>(null)
+  const [selectedProductIds, setSelectedProductIds] = useState<string[]>([])
   const [formMode, setFormMode] = useState<ProductFormMode>(null)
   const [editingProduct, setEditingProduct] = useState<ProductItem | null>(null)
   const [productForm, setProductForm] = useState<ProductFormState>(() => createEmptyProductForm())
@@ -128,6 +130,17 @@ export const PaymentProducts: React.FC = () => {
   }, [])
 
   useEffect(() => {
+    if (selectedProductIds.length === 0) return
+
+    const availableProductIds = new Set(products.map(getProductId).filter(Boolean))
+    const nextSelectedProductIds = selectedProductIds.filter((id) => availableProductIds.has(id))
+
+    if (nextSelectedProductIds.length !== selectedProductIds.length) {
+      setSelectedProductIds(nextSelectedProductIds)
+    }
+  }, [products, selectedProductIds])
+
+  useEffect(() => {
     let cancelled = false
 
     paymentSettingsService.getSettings()
@@ -144,6 +157,16 @@ export const PaymentProducts: React.FC = () => {
       cancelled = true
     }
   }, [])
+
+  const selectedProducts = useMemo(() => {
+    if (selectedProductIds.length === 0) return []
+
+    const selectedIds = new Set(selectedProductIds)
+    return products.filter((product) => {
+      const productId = getProductId(product)
+      return Boolean(productId && selectedIds.has(productId))
+    })
+  }, [products, selectedProductIds])
 
   const productMetrics = useMemo(() => {
     return products.reduce((acc, product) => {
@@ -268,31 +291,71 @@ export const PaymentProducts: React.FC = () => {
     }
   }
 
-  const deleteProduct = async (product: ProductItem) => {
-    const productId = getProductId(product)
-    if (!productId) return
+  const deleteProducts = async (targetProducts: ProductItem[]) => {
+    const productsToDelete = targetProducts
+      .map((product) => ({ product, productId: getProductId(product) }))
+      .filter((entry): entry is { product: ProductItem; productId: string } => Boolean(entry.productId))
 
-    setDeletingProductId(productId)
+    if (productsToDelete.length === 0) return
+
+    const failedProducts: ProductItem[] = []
+    const deletedIds: string[] = []
     try {
-      await productsService.deleteProduct(productId)
-      setProducts((current) => current.filter((item) => getProductId(item) !== productId))
-      if (editingProduct && getProductId(editingProduct) === productId) {
+      for (const { product, productId } of productsToDelete) {
+        setDeletingProductId(productId)
+        try {
+          await productsService.deleteProduct(productId)
+          deletedIds.push(productId)
+        } catch {
+          failedProducts.push(product)
+        }
+      }
+
+      if (deletedIds.length > 0) {
+        const deletedIdSet = new Set(deletedIds)
+        setProducts((current) => current.filter((item) => !deletedIdSet.has(getProductId(item))))
+        setSelectedProductIds((current) => current.filter((id) => !deletedIdSet.has(id)))
+      }
+
+      if (editingProduct && deletedIds.includes(getProductId(editingProduct))) {
         closeProductForm()
       }
-      showToast('success', 'Producto eliminado', `${product.name} ya no aparece para cobrar.`)
-    } catch (error) {
-      showToast('error', 'No se eliminó el producto', error instanceof Error ? error.message : 'Intenta otra vez.')
+
+      if (failedProducts.length > 0) {
+        showToast(
+          'error',
+          'No se pudieron eliminar todos',
+          `Se eliminaron ${deletedIds.length} y fallaron ${failedProducts.length}. Revisa los pendientes e intenta otra vez.`
+        )
+        return
+      }
+
+      showToast(
+        'success',
+        productsToDelete.length === 1 ? 'Producto eliminado' : 'Productos eliminados',
+        productsToDelete.length === 1
+          ? `${productsToDelete[0].product.name} ya no aparece para cobrar.`
+          : `Se eliminaron ${productsToDelete.length} productos correctamente.`
+      )
     } finally {
       setDeletingProductId(null)
     }
   }
 
-  const handleDeleteProduct = (product: ProductItem) => {
+  const handleDeleteProducts = (targetProducts: ProductItem[]) => {
+    if (targetProducts.length === 0) return
+
+    const isSingleProduct = targetProducts.length === 1
+    const firstProduct = targetProducts[0]
+    if (!firstProduct) return
+
     showConfirm(
-      'Eliminar producto',
-      `Se quitará "${product.name}" de la lista para cobrar. Los pagos anteriores no se borran. Esta acción no se puede deshacer.`,
-      () => {
-        void deleteProduct(product)
+      isSingleProduct ? 'Eliminar producto' : 'Eliminar productos',
+      isSingleProduct
+        ? `Se quitará "${firstProduct.name}" de la lista para cobrar. Los pagos anteriores no se borran. Esta acción no se puede deshacer.`
+        : `Vas a eliminar ${targetProducts.length} productos del catálogo para cobrar. Los pagos anteriores no se borran. Esta acción no se puede deshacer.`,
+      async () => {
+        await deleteProducts(targetProducts)
       },
       'Eliminar',
       'Cancelar',
@@ -420,7 +483,7 @@ export const PaymentProducts: React.FC = () => {
                 <DropdownMenuSeparator />
                 <DropdownMenuItem
                   disabled={deleting}
-                  onClick={() => handleDeleteProduct(item)}
+                  onClick={() => handleDeleteProducts([item])}
                   className={styles.destructive}
                 >
                   <Trash2 size={16} />
@@ -436,6 +499,24 @@ export const PaymentProducts: React.FC = () => {
       width: '88px'
     }
   ]
+
+  const productSelectionToolbar = selectedProducts.length > 0 ? (
+    <TableSelectionToolbar
+      count={selectedProducts.length}
+      onClearSelection={() => setSelectedProductIds([])}
+    >
+      <Button
+        type="button"
+        variant="danger"
+        size="sm"
+        loading={Boolean(deletingProductId)}
+        onClick={() => handleDeleteProducts(selectedProducts)}
+      >
+        <Trash2 size={16} />
+        Eliminar
+      </Button>
+    </TableSelectionToolbar>
+  ) : null
 
   return (
     <PageContainer>
@@ -486,6 +567,14 @@ export const PaymentProducts: React.FC = () => {
             tableId="payment_products"
             initialSortBy="name"
             initialSortOrder="asc"
+            selectionActions={productSelectionToolbar}
+            rowSelection={{
+              selectedKeys: selectedProductIds,
+              onChange: setSelectedProductIds,
+              isRowDisabled: (item) => !getProductId(item),
+              getRowLabel: (item) => item.name || 'producto',
+              selectVisibleLabel: 'Seleccionar productos visibles'
+            }}
           />
         </Card>
 

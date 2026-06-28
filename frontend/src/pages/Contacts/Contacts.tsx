@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react'
 import { createPortal } from 'react-dom'
 import { useLocation, useNavigate, useSearchParams } from 'react-router-dom'
-import { KpiCard, Card, Button, Table, DateRangePicker, PageContainer, PageHeader, TabList, Badge, DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, ContactDetailsModal, Loading, TreeFilter, CustomSelect, Modal } from '@/components/common'
+import { KpiCard, Card, Button, Table, TableSelectionToolbar, DateRangePicker, PageContainer, PageHeader, TabList, Badge, DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, ContactDetailsModal, Loading, TreeFilter, CustomSelect, Modal } from '@/components/common'
 import type { Column } from '@/components/common'
 import {
   Users,
@@ -2077,8 +2077,10 @@ const ContactsTable: React.FC = () => {
   }
 
   const contactSelectionToolbar = selectedContacts.length > 0 ? (
-    <div className={styles.selectionToolbar}>
-      <span>{selectedContacts.length} seleccionado{selectedContacts.length === 1 ? '' : 's'}</span>
+    <TableSelectionToolbar
+      count={selectedContacts.length}
+      onClearSelection={() => setSelectedContactIds([])}
+    >
       <Button
         type="button"
         variant="secondary"
@@ -2124,16 +2126,7 @@ const ContactsTable: React.FC = () => {
         <Trash2 size={16} />
         Eliminar
       </Button>
-      <Button
-        type="button"
-        variant="ghost"
-        size="sm"
-        onClick={() => setSelectedContactIds([])}
-        aria-label="Limpiar selección"
-      >
-        <X size={16} />
-      </Button>
-    </div>
+    </TableSelectionToolbar>
   ) : null
 
   const contactsRefreshing = loading && hasLoadedContacts

@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react'
 import { createPortal } from 'react-dom'
 import { useLocation, useNavigate, useSearchParams } from 'react-router-dom'
-import { KpiCard, Card, Button, Table, DateRangePicker, ContactSearchInput, PageContainer, PageHeader, TabList, TreeFilter, RecordPaymentModal, Badge, DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, Loading, NumberInput, CustomSelect, Modal, PaymentPlatformLogo } from '@/components/common'
+import { KpiCard, Card, Button, Table, TableSelectionToolbar, DateRangePicker, ContactSearchInput, PageContainer, PageHeader, TabList, TreeFilter, RecordPaymentModal, Badge, DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, Loading, NumberInput, CustomSelect, Modal, PaymentPlatformLogo } from '@/components/common'
 import type { Column, PaymentPlatformLogoId } from '@/components/common'
 import { useNotification } from '@/contexts/NotificationContext'
 import { Contact } from '@/types'
@@ -2443,8 +2443,10 @@ export const Transactions: React.FC = () => {
   )
 
   const transactionSelectionToolbar = selectedTransactions.length > 0 ? (
-    <div className={styles.selectionToolbar}>
-      <span>{selectedTransactions.length} seleccionado{selectedTransactions.length === 1 ? '' : 's'}</span>
+    <TableSelectionToolbar
+      count={selectedTransactions.length}
+      onClearSelection={() => setSelectedTransactionIds([])}
+    >
       <Button
         type="button"
         variant="danger"
@@ -2454,12 +2456,14 @@ export const Transactions: React.FC = () => {
         <Trash2 size={16} />
         Eliminar
       </Button>
-    </div>
+    </TableSelectionToolbar>
   ) : null
 
   const paymentPlanSelectionToolbar = selectedPaymentPlans.length > 0 ? (
-    <div className={styles.selectionToolbar}>
-      <span>{selectedPaymentPlans.length} seleccionado{selectedPaymentPlans.length === 1 ? '' : 's'}</span>
+    <TableSelectionToolbar
+      count={selectedPaymentPlans.length}
+      onClearSelection={() => setSelectedPaymentPlanIds([])}
+    >
       <Button
         type="button"
         variant="danger"
@@ -2470,7 +2474,7 @@ export const Transactions: React.FC = () => {
         <Trash2 size={16} />
         Eliminar
       </Button>
-    </div>
+    </TableSelectionToolbar>
   ) : null
 
   const renderStripePlanPaymentStatusBadge = (status?: string | null) => {
