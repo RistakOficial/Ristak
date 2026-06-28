@@ -1527,7 +1527,8 @@ const videoFormGateStorageUnitOptions: Array<{ value: VideoFormGateStorageUnit; 
 ]
 
 const LANDING_DEFAULT_PAGE_PADDING = 36
-const EMBEDDED_FORM_DEFAULT_PAGE_BORDER_WIDTH = 20
+const EMBEDDED_FORM_DEFAULT_PAGE_BORDER_WIDTH = 0
+const EMBEDDED_FORM_VISIBLE_BORDER_COLOR = '#dbe3ef'
 const FORM_PAGE_BORDER_WIDTH_MAX = 80
 const createDefaultEmbeddedFormThemeOverride = (): Partial<SiteTheme> => ({
   pageBorderWidth: EMBEDDED_FORM_DEFAULT_PAGE_BORDER_WIDTH,
@@ -33579,6 +33580,20 @@ const FormLayoutStyleControls: React.FC<{
     ? 1440
     : getThemeNumber(theme, 'pageMaxWidth', defaultMaxWidth, FORM_PAGE_MAX_WIDTH_MIN, FORM_PAGE_MAX_WIDTH_MAX)
   const showStretchToggle = embedded && typeof onToggleFullWidth === 'function'
+  const pageBorderWidth = getThemeNumber(theme, 'pageBorderWidth', embedded ? EMBEDDED_FORM_DEFAULT_PAGE_BORDER_WIDTH : 0, 0, FORM_PAGE_BORDER_WIDTH_MAX)
+  const pageBorderColor = getThemePaint(theme, 'pageBorderColor', embedded ? 'transparent' : EMBEDDED_FORM_VISIBLE_BORDER_COLOR)
+  const patchPageMaxWidth = (value: number) => {
+    onPatchTheme(embedded
+      ? { pageMaxWidth: value, formFieldWidth: value }
+      : { pageMaxWidth: value })
+  }
+  const patchPageBorderWidth = (value: number) => {
+    const patch: Partial<SiteTheme> = { pageBorderWidth: value }
+    if (value > 0 && isTransparentCssColorValue(pageBorderColor)) {
+      patch.pageBorderColor = EMBEDDED_FORM_VISIBLE_BORDER_COLOR
+    }
+    onPatchTheme(patch)
+  }
 
   return (
     <AccordionSection id="form-layout" title={embedded ? 'Espacio del formulario' : 'Dimensiones del formulario'}>
@@ -33614,7 +33629,7 @@ const FormLayoutStyleControls: React.FC<{
           label="Ancho del formulario"
           value={maxWidth}
           options={[{ value: 480, label: 'Angosto' }, { value: 680, label: 'Medio' }, { value: 1024, label: 'Ancho' }, { value: 1440, label: 'Extra' }]}
-          onChange={(value) => onPatchTheme({ pageMaxWidth: value })}
+          onChange={patchPageMaxWidth}
           onCommit={onSaveSite}
         />
       )}
@@ -33627,15 +33642,15 @@ const FormLayoutStyleControls: React.FC<{
       />
       <PresetField
         label="Borde"
-        value={getThemeNumber(theme, 'pageBorderWidth', embedded ? EMBEDDED_FORM_DEFAULT_PAGE_BORDER_WIDTH : 0, 0, FORM_PAGE_BORDER_WIDTH_MAX)}
+        value={pageBorderWidth}
         options={[{ value: 0, label: 'Sin' }, { value: 1, label: 'Fino' }, { value: 2, label: 'Medio' }, { value: 4, label: 'Grueso' }]}
-        onChange={(value) => onPatchTheme({ pageBorderWidth: value })}
+        onChange={patchPageBorderWidth}
         onCommit={onSaveSite}
       />
-      {getThemeNumber(theme, 'pageBorderWidth', embedded ? EMBEDDED_FORM_DEFAULT_PAGE_BORDER_WIDTH : 0, 0, FORM_PAGE_BORDER_WIDTH_MAX) > 0 && (
+      {pageBorderWidth > 0 && (
         <ColorField
           label="Color del borde"
-          value={getThemePaint(theme, 'pageBorderColor', embedded ? 'transparent' : '#dbe3ef')}
+          value={isTransparentCssColorValue(pageBorderColor) ? EMBEDDED_FORM_VISIBLE_BORDER_COLOR : pageBorderColor}
           allowGradient
           onChange={(value) => onPatchTheme({ pageBorderColor: value })}
           onCommit={onSaveSite}
@@ -33658,7 +33673,7 @@ const FormLayoutStyleControls: React.FC<{
               min={FORM_PAGE_MAX_WIDTH_MIN}
               max={FORM_PAGE_MAX_WIDTH_MAX}
               step={10}
-              onChange={(value) => onPatchTheme({ pageMaxWidth: value })}
+              onChange={patchPageMaxWidth}
               onCommit={onSaveSite}
             />
           )}
@@ -33674,10 +33689,10 @@ const FormLayoutStyleControls: React.FC<{
           />
           <DimensionField
             label="Grosor borde"
-            value={getThemeNumber(theme, 'pageBorderWidth', embedded ? EMBEDDED_FORM_DEFAULT_PAGE_BORDER_WIDTH : 0, 0, FORM_PAGE_BORDER_WIDTH_MAX)}
+            value={pageBorderWidth}
             min={0}
             max={FORM_PAGE_BORDER_WIDTH_MAX}
-            onChange={(value) => onPatchTheme({ pageBorderWidth: value })}
+            onChange={patchPageBorderWidth}
             onCommit={onSaveSite}
           />
         </div>

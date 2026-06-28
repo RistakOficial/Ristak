@@ -2542,10 +2542,10 @@ html body :is(.rstkCanvas.rstk-kind-form.rstk-choice-grid, .rstkCanvas.rstk-kind
   max-width: 100%;
   min-width: 0;
   gap: var(--rstk-gap);
-  padding: var(--rstk-pad);
+  padding: var(--rstk-frame-pad, var(--rstk-pad));
   background: var(--rstk-form-surface, var(--rstk-surface));
   border: var(--rstk-page-border-width, 0) solid var(--rstk-page-border, var(--rstk-border));
-  border-radius: var(--rstk-radius-lg);
+  border-radius: var(--rstk-page-radius, var(--rstk-radius-lg));
   overflow: hidden;
 }
 

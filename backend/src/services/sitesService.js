@@ -122,7 +122,7 @@ const DEFAULT_THEME = {
   textColor: '#111827'
 }
 const EMBEDDED_FORM_DEFAULT_THEME = {
-  pageBorderWidth: 20,
+  pageBorderWidth: 0,
   pageBorderColor: 'transparent'
 }
 const SOCIAL_PROFILE_SCALE_MIN = 80
@@ -19727,7 +19727,7 @@ const RSTK_BASE_CSS = `
   .rstk-embedded-form-source-frame.rstkEmbeddedFormStretch>.rstk-page{max-width:min(100%,var(--rstk-max));width:100%;margin:0 auto}
   .rstk-block-style.rstkBlockFullWidth{width:100vw;max-width:100vw;margin-left:calc(50% - 50vw);margin-right:calc(50% - 50vw);padding-inline:max(24px,calc(50vw - var(--rstk-max)/2))}
   .rstk-embedded-form-source-frame .rstk-block-style.rstkBlockFullWidth{width:100%;max-width:100%;margin-left:0;margin-right:0;padding-inline:max(24px,calc(50% - var(--rstk-max)/2))}
-  .rstk-embedded-form-source-frame .rstk-shell{display:grid;grid-template-columns:minmax(0,1fr);width:100%;max-width:100%;min-width:0;gap:var(--rstk-gap);background:var(--rstk-form-surface,var(--rstk-surface));border:var(--rstk-page-border-width,0) solid var(--rstk-page-border,var(--rstk-border));border-radius:var(--rstk-radius-lg);box-shadow:none;padding:var(--rstk-pad);overflow:hidden}
+  .rstk-embedded-form-source-frame .rstk-shell{display:grid;grid-template-columns:minmax(0,1fr);width:100%;max-width:100%;min-width:0;gap:var(--rstk-gap);background:var(--rstk-form-surface,var(--rstk-surface));border:var(--rstk-page-border-width,0) solid var(--rstk-page-border,var(--rstk-border));border-radius:var(--rstk-page-radius,var(--rstk-radius-lg));box-shadow:none;padding:var(--rstk-frame-pad,var(--rstk-pad));overflow:hidden}
   .rstk-embedded-form-source-frame .rstk-shell:has(.rstkBlockFullWidth){overflow:visible}
   .rstk-kind-landing .rstk-embedded-form-source-frame .rstk-embedded-form,.rstk-embedded-form-source-frame .rstk-embedded-form{width:100%;max-width:100%;min-width:0;justify-self:stretch;margin:0;padding:0;border:0;border-radius:0;background:transparent}
   .rstk-embedded-form-source-frame .rstk-embedded-pages,.rstk-embedded-form-source-frame .rstk-embedded-pages [data-embedded-page-content]{width:100%;max-width:100%;min-width:0;justify-self:stretch}
