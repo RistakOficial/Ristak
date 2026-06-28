@@ -1,6 +1,6 @@
 import React, { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { Elements, PaymentElement, useElements, useStripe } from '@stripe/react-stripe-js'
-import { loadStripe, type StripeElementsOptions } from '@stripe/stripe-js'
+import { loadStripe, type StripeElementsOptions, type StripePaymentElementOptions } from '@stripe/stripe-js'
 import { AlertCircle, CheckCircle2, ChevronDown, Copy, CreditCard, Download, ExternalLink, Info, Loader2, ShieldCheck } from 'lucide-react'
 import { useParams, useSearchParams } from 'react-router-dom'
 import { Badge, Button, type BadgeVariant } from '@/components/common'
@@ -94,6 +94,14 @@ const MERCADOPAGO_SDK_SRC = 'https://sdk.mercadopago.com/js/v2'
 const CONEKTA_CHECKOUT_SDK_SRC = 'https://pay.conekta.com/v1.0/js/conekta-checkout.min.js'
 const META_PIXEL_SDK_SRC = 'https://connect.facebook.net/en_US/fbevents.js'
 const MERCADOPAGO_TEST_CARD_HELP = 'Modo prueba de Mercado Pago: usa cualquier correo con formato valido y elige el resultado con el nombre del titular, por ejemplo APRO para aprobar o FUND para fondos insuficientes.'
+const STRIPE_PAYMENT_ELEMENT_OPTIONS: StripePaymentElementOptions = {
+  terms: {
+    card: 'never'
+  },
+  wallets: {
+    link: 'never'
+  }
+}
 let mercadoPagoSdkPromise: Promise<void> | null = null
 let conektaCheckoutSdkPromise: Promise<void> | null = null
 let metaPixelSdkPromise: Promise<void> | null = null
@@ -766,11 +774,6 @@ const PublicPaymentForm: React.FC<{
   const submitAmount = Number(payment.amount || 0) > 0 ? ` ${formatCurrency(payment.amount, payment.currency)}` : ''
   const showSecureNotice = payment.settings?.checkout?.showSecureBadge !== false
   const isTestMode = payment.paymentMode === 'test' || String(payment.publishableKey || '').startsWith('pk_test_')
-  const authorizationNotice = isCardSetupPlan
-    ? 'Al confirmar, Stripe guardará esta tarjeta para cobrar automáticamente los pagos programados de este plan.'
-    : payment.contact?.id
-      ? 'Al pagar autorizas que esta tarjeta quede resguardada en Stripe para futuros cargos acordados con este negocio.'
-      : 'La tarjeta se captura en campos seguros de Stripe. Ristak solo recibe el resultado del cobro.'
 
   const handleSubmit = async (event: React.FormEvent) => {
     event.preventDefault()
@@ -810,7 +813,7 @@ const PublicPaymentForm: React.FC<{
   return (
     <form className={styles.stripeBox} onSubmit={handleSubmit}>
       <div className={styles.stripeElementShell}>
-        <PaymentElement />
+        <PaymentElement options={STRIPE_PAYMENT_ELEMENT_OPTIONS} />
       </div>
 
       {message && (
@@ -833,10 +836,10 @@ const PublicPaymentForm: React.FC<{
         </Button>
       </div>
 
-      {(showSecureNotice || payment.contact?.id || isCardSetupPlan) && (
+      {showSecureNotice && (
         <p className={styles.cardAuthorizationNotice}>
           <ShieldCheck size={16} />
-          <span>{authorizationNotice}</span>
+          <span>La tarjeta se captura en campos seguros de Stripe. Ristak solo recibe el resultado del cobro.</span>
         </p>
       )}
 
@@ -1021,7 +1024,6 @@ const ConektaCardTokenizerForm: React.FC<{
   const [loadingTokenizer, setLoadingTokenizer] = useState(Boolean(payment.publicKey))
   const [tokenizerReady, setTokenizerReady] = useState(false)
   const [submitting, setSubmitting] = useState(false)
-  const [saveCard, setSaveCard] = useState(false) // (PAY2-008) opt-in para guardar la tarjeta
   const [message, setMessage] = useState('')
   const [messageKind, setMessageKind] = useState<'info' | 'success' | 'error'>('info')
   const showSecureNotice = payment.settings?.checkout?.showSecureBadge !== false
@@ -1079,8 +1081,7 @@ const ConektaCardTokenizerForm: React.FC<{
               try {
                 const result = await conektaPaymentsService.createPublicCardPayment(payment.publicPaymentId, {
                   tokenId,
-                  // (PAY2-008) Opt-in: solo guardar la tarjeta si el cliente marcó la casilla.
-                  savePaymentSource: saveCard && Boolean(payment.contact?.id)
+                  savePaymentSource: Boolean(payment.contact?.id)
                 })
                 const statusMessage = normalizeConektaStatusMessage(result.payment?.status || result.status)
                 setMessageKind(statusMessage.kind)
@@ -1166,19 +1167,6 @@ const ConektaCardTokenizerForm: React.FC<{
         </div>
       </div>
 
-      {/* (PAY2-008) Opt-in: el cliente decide si guardar su tarjeta (desmarcado por defecto). */}
-      {payment.contact?.id && (
-        <label className={styles.saveCardOption}>
-          <input
-            type="checkbox"
-            checked={saveCard}
-            onChange={(e) => setSaveCard(e.target.checked)}
-            disabled={submitting}
-          />
-          Guardar mi tarjeta para futuros pagos
-        </label>
-      )}
-
       <Button
         type="button"
         variant="primary"
@@ -1219,6 +1207,7 @@ export const PublicPayment: React.FC = () => {
   const restoreThemeRef = useRef<DocumentThemeMode>(theme)
   const autoReceiptPrintRef = useRef('')
   const metaPurchasePixelRef = useRef('')
+  const autoStartedStripePaymentRef = useRef('')
   const [payment, setPayment] = useState<PublicPaymentData | null>(null)
   const [intent, setIntent] = useState<StripePaymentIntentResponse | null>(null)
   const [loading, setLoading] = useState(true)
@@ -1226,6 +1215,11 @@ export const PublicPayment: React.FC = () => {
   const [error, setError] = useState('')
 
   restoreThemeRef.current = theme
+
+  useEffect(() => {
+    autoStartedStripePaymentRef.current = ''
+    setIntent(null)
+  }, [publicPaymentId])
 
   useLayoutEffect(() => {
     if (typeof document === 'undefined') return undefined
@@ -1364,6 +1358,24 @@ export const PublicPayment: React.FC = () => {
       setStartingPayment(false)
     }
   }
+
+  useEffect(() => {
+    if (!stripePayment || !stripePayment.publishableKey || intent?.clientSecret || startingPayment || isPaid || isClosed) return
+
+    const autoStartKey = `${stripePayment.publicPaymentId}:${shouldSavePaymentMethod ? 'save' : 'charge'}`
+    if (autoStartedStripePaymentRef.current === autoStartKey) return
+
+    autoStartedStripePaymentRef.current = autoStartKey
+    void startPayment()
+  }, [
+    intent?.clientSecret,
+    isClosed,
+    isPaid,
+    stripePayment?.publicPaymentId,
+    stripePayment?.publishableKey,
+    shouldSavePaymentMethod,
+    startingPayment
+  ])
 
   const handleDownloadPdf = () => {
     if (!payment || typeof window === 'undefined') return
@@ -1599,7 +1611,7 @@ export const PublicPayment: React.FC = () => {
 
                 {isCardSetupPlan && (
                   <p className={styles.planNotice}>
-                    Este link domicilia tu tarjeta para cobrar automáticamente los pagos programados del plan.
+                    Este link autoriza el método de pago para el calendario programado del plan.
                   </p>
                 )}
 
@@ -1678,7 +1690,7 @@ export const PublicPayment: React.FC = () => {
                     : isConektaPayment
                       ? 'Captura la tarjeta en el tokenizador seguro de Conekta sin salir de esta página.'
                       : isCardSetupPlan
-                        ? 'Stripe guardará la tarjeta para cobrar el plan según el calendario mostrado.'
+                        ? 'Stripe abrirá el formulario seguro para autorizar el calendario mostrado.'
                         : 'Los datos se capturan en el formulario seguro de Stripe.'}
               </p>
             </div>
@@ -1782,32 +1794,24 @@ export const PublicPayment: React.FC = () => {
             ) : (
               <div className={styles.stripeBox}>
                 <p className={styles.message}>
-                  <ShieldCheck size={16} />
-                  <span>Stripe abrirá el campo seguro de tarjeta cuando inicies el pago.</span>
+                  {startingPayment ? <Loader2 size={16} className={styles.spin} /> : <ShieldCheck size={16} />}
+                  <span>{startingPayment ? 'Preparando el formulario seguro de Stripe.' : 'No se pudo montar el formulario seguro de Stripe automáticamente.'}</span>
                 </p>
-                {shouldSavePaymentMethod && (
-                  <p className={styles.cardAuthorizationNotice}>
-                    <ShieldCheck size={16} />
-                    <span>
-                      {isCardSetupPlan
-                        ? 'Al iniciar, Stripe preparará la autorización para guardar la tarjeta y domiciliar este plan.'
-                        : 'Al iniciar y completar este pago, Stripe guardará la tarjeta para que el negocio pueda cobrar futuros pagos que acuerdes.'}
-                    </span>
-                  </p>
+                {error && (
+                  <div className={styles.actions}>
+                    <Button
+                      type="button"
+                      variant="primary"
+                      fullWidth
+                      className={styles.payButton}
+                      onClick={startPayment}
+                      disabled={startingPayment || !isStripePayment || !payment.publishableKey}
+                      leftIcon={startingPayment ? <Loader2 size={16} className={styles.spin} /> : <CreditCard size={16} />}
+                    >
+                      {startingPayment ? 'Preparando' : 'Reintentar'}
+                    </Button>
+                  </div>
                 )}
-                <div className={styles.actions}>
-                  <Button
-                    type="button"
-                    variant="primary"
-                    fullWidth
-                    className={styles.payButton}
-                    onClick={startPayment}
-                    disabled={startingPayment || !isStripePayment || !payment.publishableKey}
-                    leftIcon={startingPayment ? <Loader2 size={16} className={styles.spin} /> : <CreditCard size={16} />}
-                  >
-                    {startingPayment ? 'Preparando' : isCardSetupPlan ? 'Autorizar tarjeta' : checkoutSettings?.buttonLabel || 'Iniciar pago'}
-                  </Button>
-                </div>
               </div>
             )}
           </section>

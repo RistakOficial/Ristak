@@ -616,22 +616,6 @@
   display: none;
 }
 
-.saveCardOption {
-  display: flex;
-  align-items: flex-start;
-  gap: 9px;
-  margin: 0;
-  color: var(--text-dim);
-  font-size: 13px;
-  line-height: 1.45;
-  cursor: pointer;
-}
-
-.saveCardOption input {
-  flex: 0 0 auto;
-  margin-top: 2px;
-}
-
 .conektaTokenizerShell {
   --conekta-frame-visible-height: 340px;
   --conekta-frame-source-height: 430px;
