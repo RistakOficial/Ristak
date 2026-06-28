@@ -3217,10 +3217,6 @@ export const Transactions: React.FC = () => {
                     className={styles.amountInput}
                   />
                 </div>
-                <div className={styles.currencyNote}>
-                  <span>Moneda de cuenta</span>
-                  <strong>{accountCurrency}</strong>
-                </div>
               </div>
               <div className={styles.formGroup}>
                 <label>Método de pago</label>

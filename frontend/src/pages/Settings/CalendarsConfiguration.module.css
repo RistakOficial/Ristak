@@ -1885,32 +1885,6 @@
   background: var(--surface);
 }
 
-.eventCurrencyNote {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  min-width: 0;
-  color: var(--text-dim);
-  font-size: 12px;
-  line-height: 1.35;
-}
-
-.eventCurrencyNote span {
-  color: var(--text-dim);
-}
-
-.eventCurrencyNote strong {
-  color: var(--text);
-  font-size: 13px;
-  font-weight: 650;
-}
-
-.eventCurrencyNote small {
-  color: var(--text-mute);
-  font-size: 12px;
-  line-height: 1.35;
-}
-
 .eventParameterGrid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -3372,7 +3346,6 @@
   }
 
   .eventSwitchRow,
-  .eventCurrencyNote,
   .customParameterHeader,
   .remindersToolbar {
     align-items: stretch;

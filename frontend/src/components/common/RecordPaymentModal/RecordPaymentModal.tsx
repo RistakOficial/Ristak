@@ -3110,23 +3110,14 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
                   </div>
                 </div>
 
-                <div className={styles.fieldGrid}>
-                  <div className={styles.field}>
-                    <label className={styles.label}>Nombre del precio</label>
-                    <input
-                      className={styles.input}
-                      value={newProductPriceName}
-                      onChange={(event) => setNewProductPriceName(event.target.value)}
-                      placeholder="Precio base"
-                    />
-                  </div>
-                  <div className={styles.field}>
-                    <label className={styles.label}>Moneda de cuenta</label>
-                    <div className={styles.currencyNote}>
-                      <span>Moneda de cuenta</span>
-                      <strong>{accountCurrency}</strong>
-                    </div>
-                  </div>
+                <div className={styles.field}>
+                  <label className={styles.label}>Nombre del precio</label>
+                  <input
+                    className={styles.input}
+                    value={newProductPriceName}
+                    onChange={(event) => setNewProductPriceName(event.target.value)}
+                    placeholder="Precio base"
+                  />
                 </div>
 
                 <div className={styles.field}>

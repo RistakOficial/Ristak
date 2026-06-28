@@ -2006,12 +2006,6 @@ export const PaymentsConfiguration: React.FC = () => {
 
             {paymentMetaParamsOpen && (
               <div className={styles.paymentMetaEventParameterPanel}>
-                <div className={styles.paymentMetaEventCurrencyNote}>
-                  <span>Moneda de la cuenta</span>
-                  <strong>{accountCurrency}</strong>
-                  <small>Se manda automáticamente con el evento.</small>
-                </div>
-
                 <div className={styles.paymentMetaEventParameterGrid}>
                   <label>
                     <span className={styles.paymentMetaEventParameterLabel}>Valor de conversión alterno</span>

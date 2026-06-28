@@ -632,10 +632,6 @@ export const PaymentProducts: React.FC = () => {
                   placeholder="0.00"
                   required
                 />
-                <div className={styles.currencyNote}>
-                  <span>Moneda de cuenta</span>
-                  <strong>{accountCurrency}</strong>
-                </div>
               </div>
 
               {gigstackProductMappingEnabled && (

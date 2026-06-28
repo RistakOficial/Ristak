@@ -634,10 +634,6 @@ export const PhonePayments: React.FC = () => {
                 type="text"
                 placeholder="0.00"
               />
-              <div className={styles.currencyNote}>
-                <span>Moneda de cuenta</span>
-                <strong>{accountCurrency}</strong>
-              </div>
             </label>
           </div>
 

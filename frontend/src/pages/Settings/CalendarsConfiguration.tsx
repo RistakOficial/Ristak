@@ -3590,12 +3590,6 @@ export const CalendarsConfiguration: React.FC = () => {
 
                                 {calendarMetaParamsOpen && (
                                   <div className={pageStyles.eventParameterPanel}>
-                                    <div className={pageStyles.eventCurrencyNote}>
-                                      <span>Moneda de la cuenta</span>
-                                      <strong>{accountCurrency}</strong>
-                                      <small>Se manda automáticamente con el evento; no se edita por calendario.</small>
-                                    </div>
-
                                     <div className={pageStyles.eventParameterGrid}>
                                       {CALENDAR_META_PARAMETER_FIELDS.map(field => (
                                         <label key={field.key}>
