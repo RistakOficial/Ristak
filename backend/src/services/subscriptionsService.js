@@ -23,7 +23,7 @@ import {
   resumeConektaRecurringSubscription,
   updateConektaRecurringSubscription
 } from './conektaPaymentService.js'
-import { getSubscriptionAuditSummary } from './paymentRecordSafetyService.js'
+import { getSubscriptionAuditSummary, hardDeleteTestSubscription } from './paymentRecordSafetyService.js'
 import { getAccountCurrency } from '../utils/accountLocale.js'
 
 const SUBSCRIPTION_PREFIX = 'rstk_sub'
@@ -919,12 +919,6 @@ export async function actionSubscription(subscriptionId, action, payload = {}) {
 
 export async function deleteSubscription(subscriptionId) {
   const audit = await getSubscriptionAuditSummary(subscriptionId)
-  if (audit.hasPayments) {
-    const error = new Error('Esta suscripción ya tiene cobros registrados. No se puede eliminar; cancélala para conservar el historial.')
-    error.status = 422
-    throw error
-  }
-
   const existing = await db.get(
     `SELECT id, status, stripe_subscription_id, mercadopago_preapproval_id, conekta_customer_id, conekta_subscription_id
      FROM subscriptions
@@ -932,6 +926,39 @@ export async function deleteSubscription(subscriptionId) {
      LIMIT 1`,
     [subscriptionId]
   )
+
+  if (audit.hasPayments && audit.isTestMode) {
+    if (existing?.stripe_subscription_id && existing.status !== 'cancelled') {
+      try {
+        await cancelStripeRecurringSubscription(existing.stripe_subscription_id)
+      } catch (error) {
+        logger.warn(`[Suscripciones] No se pudo cancelar la suscripción test en Stripe ${subscriptionId}; se eliminará localmente: ${error.message}`)
+      }
+    }
+    if (existing?.mercadopago_preapproval_id && existing.status !== 'cancelled') {
+      try {
+        await cancelMercadoPagoRecurringSubscription(existing.mercadopago_preapproval_id)
+      } catch (error) {
+        logger.warn(`[Suscripciones] No se pudo cancelar la suscripción test en Mercado Pago ${subscriptionId}; se eliminará localmente: ${error.message}`)
+      }
+    }
+    if (existing?.conekta_subscription_id && existing.status !== 'cancelled') {
+      try {
+        await cancelConektaRecurringSubscription(existing.conekta_customer_id, existing.conekta_subscription_id)
+      } catch (error) {
+        logger.warn(`[Suscripciones] No se pudo cancelar la suscripción test en Conekta ${subscriptionId}; se eliminará localmente: ${error.message}`)
+      }
+    }
+
+    const result = await hardDeleteTestSubscription(subscriptionId)
+    return result.deleted
+  }
+
+  if (audit.hasPayments) {
+    const error = new Error('Esta suscripción ya tiene cobros registrados. No se puede eliminar; cancélala para conservar el historial.')
+    error.status = 422
+    throw error
+  }
 
   // (PAY-001) Eliminar una suscripción también la cancela en Stripe: de lo contrario
   // Stripe seguiría cobrando al cliente mes a mes aunque desaparezca de Ristak.

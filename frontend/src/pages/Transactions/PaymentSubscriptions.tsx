@@ -289,7 +289,7 @@ function buildContactFromSubscription(subscription: PaymentSubscription): Contac
 
 export const PaymentSubscriptions: React.FC = () => {
   const navigate = useNavigate()
-  const { showToast, showConfirm } = useNotification()
+  const { showToast } = useNotification()
   const [accountCurrency] = useAccountCurrency()
   const [subscriptions, setSubscriptions] = useState<PaymentSubscription[]>([])
   const [summary, setSummary] = useState<SubscriptionSummary>(EMPTY_SUMMARY)
@@ -298,6 +298,9 @@ export const PaymentSubscriptions: React.FC = () => {
   const [refreshing, setRefreshing] = useState(false)
   const [saving, setSaving] = useState(false)
   const [actingId, setActingId] = useState<string | null>(null)
+  const [selectedSubscriptionIds, setSelectedSubscriptionIds] = useState<string[]>([])
+  const [subscriptionsPendingDeletion, setSubscriptionsPendingDeletion] = useState<PaymentSubscription[]>([])
+  const [deletingSubscriptions, setDeletingSubscriptions] = useState(false)
   const [formMode, setFormMode] = useState<SubscriptionFormMode>(null)
   const [formStep, setFormStep] = useState<SubscriptionFormStep>('details')
   const [editingSubscription, setEditingSubscription] = useState<PaymentSubscription | null>(null)
@@ -384,6 +387,24 @@ export const PaymentSubscriptions: React.FC = () => {
     () => subscriptions.filter((subscription) => matchesStatusFilter(subscription, statusFilter)),
     [statusFilter, subscriptions]
   )
+  const canDeleteSubscription = (subscription: PaymentSubscription) => String(subscription.status || '').toLowerCase() !== 'deleted'
+  const selectedSubscriptions = useMemo(() => {
+    if (selectedSubscriptionIds.length === 0) return []
+
+    const selectedIds = new Set(selectedSubscriptionIds)
+    return subscriptions.filter((subscription) => selectedIds.has(subscription.id) && canDeleteSubscription(subscription))
+  }, [selectedSubscriptionIds, subscriptions])
+
+  useEffect(() => {
+    if (selectedSubscriptionIds.length === 0) return
+
+    const availableIds = new Set(subscriptions.filter(canDeleteSubscription).map(subscription => subscription.id))
+    const nextSelectedIds = selectedSubscriptionIds.filter(id => availableIds.has(id))
+
+    if (nextSelectedIds.length !== selectedSubscriptionIds.length) {
+      setSelectedSubscriptionIds(nextSelectedIds)
+    }
+  }, [selectedSubscriptionIds, subscriptions])
 
   const openCreateSubscription = () => {
     if (!hasSubscriptionGateway) {
@@ -604,30 +625,73 @@ export const PaymentSubscriptions: React.FC = () => {
     }
   }
 
-  const handleDelete = (subscription: PaymentSubscription) => {
-    showConfirm(
-      'Eliminar suscripción',
-      // (PAY-001) Eliminar ahora CANCELA el cobro recurrente en la pasarela (Stripe/
-      // MercadoPago/Conekta): el mensaje debe dejarlo claro para no sorprender al usuario.
-      `Se cancelará el cobro recurrente de "${subscription.name}" en la pasarela de pago y el cliente dejará de ser cobrado. Los pagos ya registrados se conservan. Esta acción no se puede deshacer.`,
-      async () => {
-        setActingId(subscription.id)
-        try {
-          await subscriptionsService.deleteSubscription(subscription.id)
-          setSubscriptions((current) => current.filter((item) => item.id !== subscription.id))
-          showToast('success', 'Suscripción eliminada', `${subscription.name} ya no aparece en la lista.`)
-        } catch (error) {
-          showToast('error', 'No se eliminó la suscripción', error instanceof Error ? error.message : 'Intenta otra vez.')
-          return false
-        } finally {
-          setActingId(null)
-        }
-      },
-      'Eliminar',
-      'Cancelar',
-      undefined,
-      { typeToConfirm: 'ELIMINAR' }
+  const openSubscriptionDeleteModal = (targetSubscriptions: PaymentSubscription[]) => {
+    if (targetSubscriptions.length === 0) return
+
+    setSubscriptionsPendingDeletion(targetSubscriptions)
+  }
+
+  const closeSubscriptionDeleteModal = () => {
+    if (deletingSubscriptions) return
+
+    setSubscriptionsPendingDeletion([])
+  }
+
+  const removeSubscriptionsFromState = (subscriptionIds: string[]) => {
+    const deletedIds = new Set(subscriptionIds)
+    setSubscriptions((current) => current.filter((item) => !deletedIds.has(item.id)))
+    setSelectedSubscriptionIds((current) => current.filter((id) => !deletedIds.has(id)))
+  }
+
+  const handleConfirmDeleteSubscriptions = async () => {
+    if (subscriptionsPendingDeletion.length === 0) return
+
+    setDeletingSubscriptions(true)
+    const deletingIds = subscriptionsPendingDeletion.map((subscription) => subscription.id)
+    const failedSubscriptions: PaymentSubscription[] = []
+
+    for (const subscription of subscriptionsPendingDeletion) {
+      setActingId(subscription.id)
+      try {
+        await subscriptionsService.deleteSubscription(subscription.id)
+      } catch {
+        failedSubscriptions.push(subscription)
+      }
+    }
+
+    const deletedIds = new Set(
+      deletingIds.filter(id => !failedSubscriptions.some(subscription => subscription.id === id))
     )
+
+    if (deletedIds.size > 0) {
+      removeSubscriptionsFromState(Array.from(deletedIds))
+    }
+
+    setActingId(null)
+    setDeletingSubscriptions(false)
+    setSubscriptionsPendingDeletion([])
+
+    if (failedSubscriptions.length > 0) {
+      showToast(
+        'error',
+        'No se pudieron eliminar todas',
+        `Se eliminaron ${deletedIds.size} y fallaron ${failedSubscriptions.length}. Revisa las pendientes e intenta otra vez.`
+      )
+    } else {
+      showToast(
+        'success',
+        subscriptionsPendingDeletion.length === 1 ? 'Suscripción eliminada' : 'Suscripciones eliminadas',
+        subscriptionsPendingDeletion.length === 1
+          ? 'La suscripción ya no aparece en la lista.'
+          : `Se eliminaron ${subscriptionsPendingDeletion.length} suscripciones correctamente.`
+      )
+    }
+
+    await loadSubscriptions({ refresh: true })
+  }
+
+  const handleDelete = (subscription: PaymentSubscription) => {
+    openSubscriptionDeleteModal([subscription])
   }
 
   const copyMercadoPagoAuthorizationLink = async (subscription: PaymentSubscription) => {
@@ -818,6 +882,22 @@ export const PaymentSubscriptions: React.FC = () => {
     }
   ]
 
+  const subscriptionSelectionToolbar = selectedSubscriptions.length > 0 ? (
+    <div className={styles.selectionToolbar}>
+      <span>{selectedSubscriptions.length} seleccionada{selectedSubscriptions.length === 1 ? '' : 's'}</span>
+      <Button
+        type="button"
+        variant="danger"
+        size="sm"
+        loading={deletingSubscriptions}
+        onClick={() => openSubscriptionDeleteModal(selectedSubscriptions)}
+      >
+        <Trash2 size={16} />
+        Eliminar
+      </Button>
+    </div>
+  ) : null
+
   return (
     <PageContainer>
       <div className={styles.page}>
@@ -883,8 +963,29 @@ export const PaymentSubscriptions: React.FC = () => {
             tableId="payment_subscriptions"
             initialSortBy="nextRunAt"
             initialSortOrder="asc"
+            selectionActions={subscriptionSelectionToolbar}
+            rowSelection={{
+              selectedKeys: selectedSubscriptionIds,
+              onChange: setSelectedSubscriptionIds,
+              isRowDisabled: (item) => !canDeleteSubscription(item),
+              getRowLabel: (item) => item.name || 'suscripción',
+              selectVisibleLabel: 'Seleccionar suscripciones visibles'
+            }}
           />
         </Card>
+
+        <Modal
+          isOpen={subscriptionsPendingDeletion.length > 0}
+          onClose={closeSubscriptionDeleteModal}
+          type="confirm"
+          size="sm"
+          title={`Eliminar suscripci${subscriptionsPendingDeletion.length === 1 ? 'ón' : 'ones'}`}
+          message={`Vas a eliminar ${subscriptionsPendingDeletion.length} suscripci${subscriptionsPendingDeletion.length === 1 ? 'ón' : 'ones'}. Las suscripciones de prueba se borran junto con sus cobros relacionados; las suscripciones en vivo siguen protegidas si tienen historial real.`}
+          confirmText="Eliminar"
+          cancelText="Cancelar"
+          typeToConfirm="ELIMINAR"
+          onConfirm={handleConfirmDeleteSubscriptions}
+        />
 
         <Modal
           isOpen={formMode !== null}

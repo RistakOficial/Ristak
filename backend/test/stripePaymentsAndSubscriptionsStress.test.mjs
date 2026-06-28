@@ -694,7 +694,7 @@ test('planes Stripe: tarjeta con requires_action marca error y evita reintentos 
   }
 })
 
-test('suscripciones Stripe: crea, sube/baja precio, pausa, reanuda, cancela y conserva historial', async () => {
+test('suscripciones Stripe test: crea, sube/baja precio, pausa, reanuda, cancela y permite limpieza total', async () => {
   const { contactId, contact, savedMethodId, stripeCustomerId, stripePaymentMethodId } = await seedContactWithSavedCard('subscription_lifecycle')
   const { stripe, calls } = createStripeMock()
   setStripeFactoryForTest(() => stripe)
@@ -793,13 +793,19 @@ test('suscripciones Stripe: crea, sube/baja precio, pausa, reanuda, cancela y co
     assert.equal(cancelled.status, 'cancelled')
     assert.equal(calls.subscriptionsCancel.length, 1)
 
-    await assert.rejects(
-      () => deleteSubscription(created.id),
-      /ya tiene cobros registrados|conservar el historial/i
-    )
+    const deleted = await deleteSubscription(created.id)
+    assert.equal(deleted, true)
 
-    const preserved = await getSubscription(created.id)
-    assert.equal(preserved.status, 'cancelled')
+    const removed = await getSubscription(created.id)
+    const paymentAfterDelete = await db.get(
+      `SELECT id
+       FROM payments
+       WHERE contact_id = ? AND payment_method = 'stripe_subscription'
+       LIMIT 1`,
+      [contactId]
+    )
+    assert.equal(removed, null)
+    assert.equal(paymentAfterDelete, null)
   } finally {
     setStripeFactoryForTest(null)
     await cleanupContact(contactId)

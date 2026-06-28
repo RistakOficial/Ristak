@@ -2,6 +2,7 @@ import { db } from '../config/database.js'
 
 const SUCCESS_PAYMENT_STATUSES = new Set(['paid', 'succeeded', 'completed', 'complete', 'fulfilled', 'success'])
 const TEST_PAYMENT_MODES = new Set(['test', 'sandbox'])
+const LIVE_PAYMENT_MODES = new Set(['live', 'production', 'prod'])
 const LEDGER_PAYMENT_STATUSES = new Set([
   ...SUCCESS_PAYMENT_STATUSES,
   'partial',
@@ -38,6 +39,10 @@ function isExplicitTestMode(value) {
   return TEST_PAYMENT_MODES.has(normalizeMode(value))
 }
 
+function isExplicitLiveMode(value) {
+  return LIVE_PAYMENT_MODES.has(normalizeMode(value))
+}
+
 function hasTestModeSignal(value) {
   const metadata = parseJson(value, {})
   if (!metadata || typeof metadata !== 'object' || Array.isArray(metadata)) return false
@@ -61,6 +66,29 @@ function hasTestModeSignal(value) {
   return false
 }
 
+function hasLiveModeSignal(value) {
+  const metadata = parseJson(value, {})
+  if (!metadata || typeof metadata !== 'object' || Array.isArray(metadata)) return false
+
+  const modeFields = [
+    metadata.paymentMode,
+    metadata.payment_mode,
+    metadata.mode,
+    metadata.stripeMode,
+    metadata.stripe_mode,
+    metadata.conektaMode,
+    metadata.conekta_mode,
+    metadata.mercadoPagoMode,
+    metadata.mercadopagoMode,
+    metadata.mercadopago_mode
+  ]
+
+  if (modeFields.some(isExplicitLiveMode)) return true
+  if (metadata.livemode === true || metadata.liveMode === true || metadata.live_mode === true) return true
+
+  return false
+}
+
 export function normalizePaymentStatus(status) {
   const normalized = cleanString(status).toLowerCase()
   return normalized === 'succeeded' ? 'paid' : normalized
@@ -74,6 +102,14 @@ export function isTestPaymentRecord(payment = {}) {
   return Boolean(
     isExplicitTestMode(payment.payment_mode) ||
     hasTestModeSignal(payment.metadata_json)
+  )
+}
+
+export function isTestSubscriptionRecord(subscription = {}) {
+  return Boolean(
+    isExplicitTestMode(subscription.payment_mode) ||
+    hasTestModeSignal(subscription.metadata_json) ||
+    hasTestModeSignal(subscription.raw_json)
   )
 }
 
@@ -322,20 +358,33 @@ export async function hardDeleteTestPaymentPlan(flowId) {
 
 export async function getSubscriptionAuditSummary(subscriptionId) {
   const cleanSubscriptionId = cleanString(subscriptionId)
-  if (!cleanSubscriptionId) return { payments: [], hasPayments: false }
+  if (!cleanSubscriptionId) return { subscription: null, payments: [], hasPayments: false, isTestMode: false }
 
   const subscription = await db.get(
-    'SELECT id, contact_id, stripe_subscription_id FROM subscriptions WHERE id = ? LIMIT 1',
+    `SELECT id, contact_id, stripe_subscription_id, mercadopago_preapproval_id,
+            conekta_subscription_id, payment_mode, metadata_json, raw_json
+     FROM subscriptions
+     WHERE id = ?
+     LIMIT 1`,
     [cleanSubscriptionId]
   )
-  if (!subscription) return { payments: [], hasPayments: false }
+  if (!subscription) return { subscription: null, payments: [], hasPayments: false, isTestMode: false }
 
   const patterns = [
     `%${subscription.id}%`,
-    subscription.stripe_subscription_id ? `%${subscription.stripe_subscription_id}%` : ''
+    subscription.stripe_subscription_id ? `%${subscription.stripe_subscription_id}%` : '',
+    subscription.mercadopago_preapproval_id ? `%${subscription.mercadopago_preapproval_id}%` : '',
+    subscription.conekta_subscription_id ? `%${subscription.conekta_subscription_id}%` : ''
   ].filter(Boolean)
 
-  if (!patterns.length) return { payments: [], hasPayments: false }
+  if (!patterns.length) {
+    return {
+      subscription,
+      payments: [],
+      hasPayments: false,
+      isTestMode: isTestSubscriptionRecord(subscription)
+    }
+  }
 
   const where = patterns.map(() => 'metadata_json LIKE ?').join(' OR ')
   const payments = await db.all(
@@ -344,9 +393,52 @@ export async function getSubscriptionAuditSummary(subscriptionId) {
      WHERE ${where}`,
     patterns
   )
+  const linkedPayments = payments || []
+  const hasPayments = Boolean(linkedPayments.length)
+  const hasExplicitLiveSignal = Boolean(
+    isExplicitLiveMode(subscription.payment_mode) ||
+    hasLiveModeSignal(subscription.metadata_json) ||
+    hasLiveModeSignal(subscription.raw_json)
+  )
+  const isTestMode = Boolean(
+    !hasExplicitLiveSignal && (
+      isTestSubscriptionRecord(subscription) ||
+      (hasPayments && linkedPayments.every(isTestPaymentRecord))
+    )
+  )
 
   return {
-    payments: payments || [],
-    hasPayments: Boolean((payments || []).length)
+    subscription,
+    payments: linkedPayments,
+    hasPayments,
+    isTestMode
   }
+}
+
+export async function hardDeleteTestSubscription(subscriptionId) {
+  const cleanSubscriptionId = cleanString(subscriptionId)
+  if (!cleanSubscriptionId) return { deleted: false, paymentIds: [] }
+
+  const audit = await getSubscriptionAuditSummary(cleanSubscriptionId)
+  if (!audit.subscription || !audit.isTestMode) return { deleted: false, paymentIds: [] }
+
+  return db.transaction(async (tx) => {
+    const paymentIds = (audit.payments || []).map((payment) => cleanString(payment.id)).filter(Boolean)
+
+    for (const paymentId of paymentIds) {
+      await tx.run('DELETE FROM payment_automation_dispatches WHERE payment_id = ?', [paymentId]).catch(() => undefined)
+    }
+
+    if (paymentIds.length > 0) {
+      const placeholders = paymentIds.map(() => '?').join(', ')
+      await tx.run(`DELETE FROM payments WHERE id IN (${placeholders})`, paymentIds)
+    }
+
+    const result = await tx.run('DELETE FROM subscriptions WHERE id = ?', [cleanSubscriptionId])
+
+    return {
+      deleted: Number(result?.changes || 0) > 0,
+      paymentIds
+    }
+  })
 }

@@ -11,6 +11,19 @@
   gap: 14px;
 }
 
+.selectionToolbar {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--spacing-sm);
+  padding: var(--spacing-xs) var(--spacing-sm);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-ctl);
+  background: var(--surface);
+  color: var(--text-mute);
+  font-size: var(--font-size-sm);
+  font-weight: 500;
+}
+
 .nameButton {
   appearance: none;
   display: flex;

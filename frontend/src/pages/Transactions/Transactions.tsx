@@ -660,8 +660,11 @@ export const Transactions: React.FC = () => {
   })
   const [paymentTableTab, setPaymentTableTab] = useState<PaymentsTableTab>(routeState.tab)
   const [selectedTransactionIds, setSelectedTransactionIds] = useState<string[]>([])
+  const [selectedPaymentPlanIds, setSelectedPaymentPlanIds] = useState<string[]>([])
   const [transactionsPendingDeletion, setTransactionsPendingDeletion] = useState<Transaction[]>([])
+  const [paymentPlansPendingDeletion, setPaymentPlansPendingDeletion] = useState<PaymentPlan[]>([])
   const [deletingTransactions, setDeletingTransactions] = useState(false)
+  const [deletingPaymentPlans, setDeletingPaymentPlans] = useState(false)
 
   // Los planes de pago pertenecen a Ristak y pueden programarse con Stripe, Conekta o HighLevel opcional.
   // Mercado Pago queda disponible para links y suscripciones, no parcialidades.
@@ -852,10 +855,31 @@ export const Transactions: React.FC = () => {
   }, [selectedTransactionIds, transactions])
 
   useEffect(() => {
+    if (selectedPaymentPlanIds.length === 0) return
+
+    const availableIds = new Set(
+      paymentPlans
+        .filter(plan => String(plan.status || '').toLowerCase() !== 'deleted')
+        .map(plan => plan.id)
+    )
+    const nextSelectedIds = selectedPaymentPlanIds.filter(id => availableIds.has(id))
+
+    if (nextSelectedIds.length !== selectedPaymentPlanIds.length) {
+      setSelectedPaymentPlanIds(nextSelectedIds)
+    }
+  }, [paymentPlans, selectedPaymentPlanIds])
+
+  useEffect(() => {
     if (paymentTableTab !== 'transactions' && selectedTransactionIds.length > 0) {
       setSelectedTransactionIds([])
     }
   }, [paymentTableTab, selectedTransactionIds.length])
+
+  useEffect(() => {
+    if (paymentTableTab !== 'payment-plans' && selectedPaymentPlanIds.length > 0) {
+      setSelectedPaymentPlanIds([])
+    }
+  }, [paymentTableTab, selectedPaymentPlanIds.length])
 
   const fetchData = async (forceSync = false) => {
     setLoading(true)
@@ -1251,6 +1275,21 @@ export const Transactions: React.FC = () => {
     })
   }
 
+  const removePaymentPlansFromState = (planIds: string[]) => {
+    const deletedIds = new Set(planIds)
+    setPaymentPlans(prev => prev.filter(plan => !deletedIds.has(plan.id)))
+    setSelectedPaymentPlanIds(prev => prev.filter(id => !deletedIds.has(id)))
+    setPaymentPlanModal(prev => {
+      if (!prev.plan || !deletedIds.has(prev.plan.id)) return prev
+
+      return {
+        plan: null,
+        loading: false,
+        saving: false
+      }
+    })
+  }
+
   const runPaymentPlanAction = async (
     plan: PaymentPlan,
     action: PaymentPlanAction,
@@ -1262,7 +1301,11 @@ export const Transactions: React.FC = () => {
 
     try {
       const updatedPlan = await transactionsService.actionPaymentPlan(plan.id, action)
-      updatePaymentPlanInState(updatedPlan)
+      if (action === 'delete' || updatedPlan.deleted || isPlanDeleted(updatedPlan)) {
+        removePaymentPlansFromState([plan.id])
+      } else {
+        updatePaymentPlanInState(updatedPlan)
+      }
       if (action === 'change_card') {
         const cardSetupLink = getStripePlanCardSetupPaymentLink(updatedPlan)
         if (cardSetupLink) {
@@ -1665,6 +1708,18 @@ export const Transactions: React.FC = () => {
     setTransactionsPendingDeletion([])
   }
 
+  const openPaymentPlanDeleteModal = (targetPlans: PaymentPlan[]) => {
+    if (targetPlans.length === 0) return
+
+    setPaymentPlansPendingDeletion(targetPlans)
+  }
+
+  const closePaymentPlanDeleteModal = () => {
+    if (deletingPaymentPlans) return
+
+    setPaymentPlansPendingDeletion([])
+  }
+
   const handleConfirmDeleteTransactions = async () => {
     if (transactionsPendingDeletion.length === 0) return
 
@@ -1709,6 +1764,53 @@ export const Transactions: React.FC = () => {
     }
 
     fetchData()
+  }
+
+  const handleConfirmDeletePaymentPlans = async () => {
+    if (paymentPlansPendingDeletion.length === 0) return
+
+    setDeletingPaymentPlans(true)
+    const deletingIds = paymentPlansPendingDeletion.map(plan => plan.id)
+    const failedPlans: PaymentPlan[] = []
+
+    for (const plan of paymentPlansPendingDeletion) {
+      setPaymentPlanActionId(`${plan.id}:delete`)
+      try {
+        await transactionsService.actionPaymentPlan(plan.id, 'delete')
+      } catch {
+        failedPlans.push(plan)
+      }
+    }
+
+    const deletedIds = new Set(
+      deletingIds.filter(id => !failedPlans.some(plan => plan.id === id))
+    )
+
+    if (deletedIds.size > 0) {
+      removePaymentPlansFromState(Array.from(deletedIds))
+    }
+
+    setPaymentPlanActionId(null)
+    setDeletingPaymentPlans(false)
+    setPaymentPlansPendingDeletion([])
+
+    if (failedPlans.length > 0) {
+      showToast(
+        'error',
+        'No se pudieron eliminar todos',
+        `Se eliminaron ${deletedIds.size} y fallaron ${failedPlans.length}. Revisa los pendientes e intenta otra vez.`
+      )
+    } else {
+      showToast(
+        'success',
+        paymentPlansPendingDeletion.length === 1 ? 'Plan eliminado' : 'Planes eliminados',
+        paymentPlansPendingDeletion.length === 1
+          ? 'El plan de pago se eliminó correctamente.'
+          : `Se eliminaron ${paymentPlansPendingDeletion.length} planes de pago correctamente.`
+      )
+    }
+
+    fetchPaymentPlans()
   }
 
   const handleDelete = (id: string) => {
@@ -2255,6 +2357,13 @@ export const Transactions: React.FC = () => {
     return paymentPlans.filter(plan => selectedStatuses.includes(getPlanFilterStatus(plan)))
   }, [paymentPlanStatusFilters, paymentPlans])
 
+  const selectedPaymentPlans = useMemo(() => {
+    if (selectedPaymentPlanIds.length === 0) return []
+
+    const selectedIds = new Set(selectedPaymentPlanIds)
+    return paymentPlans.filter(plan => selectedIds.has(plan.id) && canDeletePaymentPlan(plan))
+  }, [paymentPlans, selectedPaymentPlanIds])
+
   const activeStatusFilters = paymentTableTab === 'payment-plans'
     ? paymentPlanStatusFilters
     : transactionStatusFilters
@@ -2287,6 +2396,22 @@ export const Transactions: React.FC = () => {
         variant="danger"
         size="sm"
         onClick={() => openTransactionDeleteModal(selectedTransactions)}
+      >
+        <Trash2 size={16} />
+        Eliminar
+      </Button>
+    </div>
+  ) : null
+
+  const paymentPlanSelectionToolbar = selectedPaymentPlans.length > 0 ? (
+    <div className={styles.selectionToolbar}>
+      <span>{selectedPaymentPlans.length} seleccionado{selectedPaymentPlans.length === 1 ? '' : 's'}</span>
+      <Button
+        type="button"
+        variant="danger"
+        size="sm"
+        loading={deletingPaymentPlans}
+        onClick={() => openPaymentPlanDeleteModal(selectedPaymentPlans)}
       >
         <Trash2 size={16} />
         Eliminar
@@ -2921,6 +3046,14 @@ export const Transactions: React.FC = () => {
             tableId="payment_plans"
             initialSortBy="sortDate"
             initialSortOrder="desc"
+            selectionActions={paymentPlanSelectionToolbar}
+            rowSelection={{
+              selectedKeys: selectedPaymentPlanIds,
+              onChange: setSelectedPaymentPlanIds,
+              isRowDisabled: (item) => !canDeletePaymentPlan(item),
+              getRowLabel: (item) => item.name || item.title || 'plan de pago',
+              selectVisibleLabel: 'Seleccionar planes visibles'
+            }}
           />
         )}
       </Card>
@@ -2936,6 +3069,19 @@ export const Transactions: React.FC = () => {
         cancelText="Cancelar"
         typeToConfirm="ELIMINAR"
         onConfirm={handleConfirmDeleteTransactions}
+      />
+
+      <Modal
+        isOpen={paymentPlansPendingDeletion.length > 0}
+        onClose={closePaymentPlanDeleteModal}
+        type="confirm"
+        size="sm"
+        title={`Eliminar plan${paymentPlansPendingDeletion.length === 1 ? '' : 'es'} de pago`}
+        message={`Vas a eliminar ${paymentPlansPendingDeletion.length} plan${paymentPlansPendingDeletion.length === 1 ? '' : 'es'} de pago. Los planes de prueba se borran junto con sus pagos relacionados; los planes en vivo siguen protegidos si tienen historial real.`}
+        confirmText="Eliminar"
+        cancelText="Cancelar"
+        typeToConfirm="ELIMINAR"
+        onConfirm={handleConfirmDeletePaymentPlans}
       />
 
       {isClient && modal.type && createPortal(
