@@ -15,8 +15,6 @@ import { createSubscription } from '../src/services/subscriptionsService.js'
 import { saveAccountLocaleSettings } from '../src/utils/accountLocale.js'
 import { initializeMasterKey } from '../src/utils/encryption.js'
 
-const STRIPE_ENV_KEYS = ['STRIPE_CONNECT_OAUTH_ENABLED']
-
 function suffix(label = 'live_parity') {
   return `${label}_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`
 }
@@ -34,7 +32,6 @@ async function snapshotStripeConfig(callback) {
   const previousRows = await db.all(
     "SELECT config_key, config_value FROM app_config WHERE config_key LIKE 'stripe_%' OR config_key = 'payments_settings'"
   )
-  const previousEnv = Object.fromEntries(STRIPE_ENV_KEYS.map((key) => [key, process.env[key]]))
 
   try {
     await db.run("DELETE FROM app_config WHERE config_key LIKE 'stripe_%' OR config_key = 'payments_settings'")
@@ -49,14 +46,6 @@ async function snapshotStripeConfig(callback) {
           config_value = excluded.config_value,
           updated_at = CURRENT_TIMESTAMP
       `, [row.config_key, row.config_value])
-    }
-
-    for (const [key, value] of Object.entries(previousEnv)) {
-      if (value === undefined) {
-        delete process.env[key]
-      } else {
-        process.env[key] = value
-      }
     }
 
     setStripeFactoryForTest(null)
@@ -161,36 +150,9 @@ function createStripeModeMock() {
 
   function stripeFor(secretKey) {
     const mode = modeFromSecret(secretKey)
-    const connectedAccountId = mode === 'live' ? 'acct_live_connected' : 'acct_test_connected'
     const webhookSecret = mode === 'live' ? 'whsec_manual_live' : 'whsec_manual_test'
 
     return {
-      accounts: {
-        retrieve: async (accountId) => ({
-          id: accountId,
-          email: `${accountId}@stripe.test`,
-          charges_enabled: true,
-          payouts_enabled: true,
-          details_submitted: true,
-          business_profile: {
-            name: accountId.includes('live') ? 'Stripe Live' : 'Stripe Test'
-          }
-        })
-      },
-      webhookEndpoints: {
-        create: async (payload, options = {}) => {
-          assert.equal(payload.connect, undefined)
-          assert.deepEqual(options, {})
-          return {
-            id: `we_${payload.metadata.stripe_account_id}`,
-            url: payload.url,
-            secret: payload.metadata.stripe_account_id.includes('live')
-              ? 'whsec_acct_live_connected'
-              : 'whsec_acct_test_connected'
-          }
-        },
-        del: async () => ({ deleted: true })
-      },
       balance: {
         retrieve: async () => ({
           livemode: mode === 'live',
@@ -314,17 +276,15 @@ function createStripeModeMock() {
       webhooks: {
         constructEvent: (rawBody, signature, secret) => {
           calls.webhooksConstructEvent.push({ mode, rawBody, signature, secret })
-          if (state.webhookMode === 'test' && secret !== 'whsec_acct_test_connected') {
+          if (state.webhookMode === 'test') {
             throw new Error('Firma test no corresponde a secret live.')
           }
-          if (state.webhookMode !== 'test' && secret !== webhookSecret) {
+          if (secret !== webhookSecret) {
             throw new Error('Firma live no corresponde a este secret.')
           }
 
-          const eventMode = state.webhookMode
           return {
             type: 'account.updated',
-            account: eventMode === 'live_other' ? 'acct_other_connected' : (eventMode === 'live' ? connectedAccountId : 'acct_test_connected'),
             data: {
               object: { object: 'account' }
             }
@@ -354,7 +314,6 @@ async function configureManualStripeLive() {
   assert.equal(liveConfig.mode, 'live')
   assert.equal(liveConfig.connectionType, 'manual')
   assert.equal(liveConfig.configurationStatus, 'configured_manually')
-  assert.equal(liveConfig.connectedAccountId, '')
   assert.equal(liveConfig.hasSecretKey, true)
   assert.equal(liveConfig.hasWebhookSecret, true)
 }

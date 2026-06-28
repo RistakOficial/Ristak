@@ -163,8 +163,7 @@ export const getStatus = async (req, res) => {
         connectionType: stripeConfig?.connectionType || 'manual',
         mode: stripeConfig?.mode || 'test',
         publishableKey: stripeConfig?.publishableKey || null,
-        accountLabel: stripeConfig?.accountLabel || null,
-        connectedAccountId: stripeConfig?.connectedAccountId || null
+        accountLabel: stripeConfig?.accountLabel || null
       };
     } catch (error) {
       logger.warn(`Error obteniendo estado de Stripe: ${error.message}`);

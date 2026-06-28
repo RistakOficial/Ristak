@@ -614,32 +614,6 @@ export async function refreshCentralGoogleCalendarToken({ refreshToken } = {}) {
   return data.token || {}
 }
 
-export async function createCentralStripeConnectUrl({ mode = 'test', returnPath = '/settings/payments/stripe', appUrl = '' } = {}) {
-  const payload = {
-    mode: mode === 'live' ? 'live' : 'test',
-    return_path: returnPath
-  }
-
-  if (appUrl) {
-    payload.app_url = appUrl
-  }
-
-  const data = await callLicenseServer('/api/license/stripe-connect/connect-url', payload)
-  return {
-    url: data.url || '',
-    mode: data.mode === 'live' ? 'live' : 'test',
-    redirectUri: data.redirect_uri || data.redirectUri || '',
-    webhookUrl: data.webhook_url || data.webhookUrl || '',
-    scope: data.scope || 'read_write',
-    managedByPortal: true
-  }
-}
-
-export async function disconnectCentralStripeConnect() {
-  const data = await callLicenseServer('/api/license/stripe-connect/disconnect')
-  return data.connection || {}
-}
-
 export async function createCentralMercadoPagoConnectUrl({ mode = 'test', returnPath = '/settings/payments/mercadopago', appUrl = '' } = {}) {
   const payload = {
     mode: mode === 'live' ? 'live' : 'test',

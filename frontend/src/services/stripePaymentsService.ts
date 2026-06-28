@@ -4,9 +4,8 @@ import type { PublicPaymentSettings } from './paymentSettingsService'
 export interface StripePaymentConfig {
   enabled: boolean
   configured: boolean
-  connectionType?: 'manual' | 'connect'
+  connectionType?: 'manual'
   configurationStatus?: 'not_configured' | 'configured_manually' | 'connection_failed' | 'disconnected'
-  stripeConnectOAuthEnabled?: boolean
   mode: 'test' | 'live'
   defaultCurrency: string
   accountLabel?: string
@@ -18,29 +17,6 @@ export interface StripePaymentConfig {
   manualModes?: Record<'test' | 'live', StripeManualModeStatus>
   webhookEndpointPath?: string
   webhookEndpoints?: StripeWebhookEndpoint[]
-  connectedAccountId?: string
-  connectedAccountPreview?: string
-  connectScope?: string
-  connectLivemode?: boolean
-  connectReady?: boolean
-  connectModes?: Record<'test' | 'live', StripeConnectModeStatus>
-  connectOauthReady?: boolean
-  connectOauthReadyByMode?: Record<'test' | 'live', boolean>
-  connectMissingEnv?: string[]
-  connectAccountEmail?: string
-  connectManagedByPortal?: boolean
-  connectUsesAccessToken?: boolean
-  connectUsesPlatformAccountHeader?: boolean
-  connectChargesEnabled?: boolean
-  connectPayoutsEnabled?: boolean
-  connectDetailsSubmitted?: boolean
-  connectWebhookEndpointId?: string
-  connectWebhookUrl?: string
-  connectWebhookStatus?: string
-  connectWebhookLastError?: string
-  connectConnectedAt?: string
-  hasConnectAccessToken?: boolean
-  hasConnectRefreshToken?: boolean
 }
 
 export interface StripeManualModeStatus {
@@ -52,19 +28,6 @@ export interface StripeManualModeStatus {
   hasWebhookSecret: boolean
   webhookSecretPreview?: string
   updatedAt?: string
-}
-
-export interface StripeConnectModeStatus {
-  connected: boolean
-  mode: 'test' | 'live'
-  accountId?: string
-  accountPreview?: string
-  accountEmail?: string
-  accountLabel?: string
-  webhookStatus?: string
-  webhookUrl?: string
-  connectedAt?: string
-  livemode?: boolean
 }
 
 export interface StripeWebhookEndpoint {
@@ -335,7 +298,7 @@ export const stripePaymentsService = {
     return parseApiResponse<StripePaymentConfig>(response)
   },
 
-  async testConfig(payload?: Partial<SaveStripePaymentConfigPayload>): Promise<{ ok: boolean; livemode: boolean; available: number; connectionType?: string; connectedAccountId?: string }> {
+  async testConfig(payload?: Partial<SaveStripePaymentConfigPayload>): Promise<{ ok: boolean; livemode: boolean; available: number; connectionType?: 'manual' | string }> {
     const response = await fetch(apiUrl('/api/stripe/config/test'), {
       method: 'POST',
       headers: {

@@ -44,7 +44,7 @@ test('deploy drain policy protects appointments, integration reads, callbacks, a
   assert.equal(classifyDeployDrainRequest(req('POST', '/api/calendars/public/demo/appointments')), 'http:appointments')
   assert.equal(classifyDeployDrainRequest(req('GET', '/api/meta/ad-accounts')), 'http:integration-read')
   assert.equal(classifyDeployDrainRequest(req('GET', '/api/highlevel/products')), 'http:integration-read')
-  assert.equal(classifyDeployDrainRequest(req('GET', '/api/stripe/connect/callback')), 'http:integration-callback')
+  assert.equal(classifyDeployDrainRequest(req('GET', '/api/mercadopago/connect/callback')), 'http:integration-callback')
   assert.equal(classifyDeployDrainRequest(req('POST', '/api/meta/sync')), 'http:api-mutation')
   assert.equal(classifyDeployDrainRequest(req('PUT', '/api/sites/site_123')), 'http:api-mutation')
 })

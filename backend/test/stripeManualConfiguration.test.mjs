@@ -7,25 +7,14 @@ import { getStripeConfigView } from '../src/controllers/stripePaymentsController
 import { initializeMasterKey } from '../src/utils/encryption.js'
 import { savePaymentSettings } from '../src/services/paymentSettingsService.js'
 import {
-  completeStripeConnectOAuth,
-  createStripeConnectOAuthUrl,
   deleteStripePaymentConfig,
   getStripePaymentConfig,
   saveStripePaymentConfig,
-  setStripeConnectActiveMode,
   setStripeFactoryForTest,
-  syncStripeConnectFromCentral,
   testStripePaymentConfig
 } from '../src/services/stripePaymentService.js'
 
 const STRIPE_ENV_KEYS = [
-  'STRIPE_CONNECT_OAUTH_ENABLED',
-  'STRIPE_CONNECT_TEST_CLIENT_ID',
-  'STRIPE_CONNECT_TEST_SECRET_KEY',
-  'STRIPE_CONNECT_TEST_PUBLISHABLE_KEY',
-  'STRIPE_CONNECT_LIVE_CLIENT_ID',
-  'STRIPE_CONNECT_LIVE_SECRET_KEY',
-  'STRIPE_CONNECT_LIVE_PUBLISHABLE_KEY',
   'RENDER_EXTERNAL_URL',
   'PUBLIC_APP_URL',
   'APP_PUBLIC_URL',
@@ -351,29 +340,7 @@ test('Stripe manual: desconecta y elimina credenciales guardadas', async () => {
   })
 })
 
-test('Stripe OAuth queda desactivado por defecto aunque existan variables Connect', async () => {
-  await initializeMasterKey()
-
-  await snapshotStripeConfig(async () => {
-    process.env.STRIPE_CONNECT_TEST_CLIENT_ID = 'ca_test_client'
-    process.env.STRIPE_CONNECT_TEST_SECRET_KEY = 'sk_test_platform'
-    process.env.STRIPE_CONNECT_TEST_PUBLISHABLE_KEY = 'pk_test_platform'
-
-    await assert.rejects(
-      () => createStripeConnectOAuthUrl({
-        mode: 'test',
-        baseUrl: 'https://app.example.com',
-        returnPath: '/settings/payments/stripe'
-      }),
-      (error) => error?.status === 404 && /Configura Stripe manualmente/i.test(error.message)
-    )
-    await assert.rejects(() => syncStripeConnectFromCentral({ handoffToken: 'test' }), { status: 404 })
-    await assert.rejects(() => setStripeConnectActiveMode('test'), { status: 404 })
-    await assert.rejects(() => completeStripeConnectOAuth({ code: 'code', state: 'state' }), { status: 404 })
-  })
-})
-
-test('Stripe OAuth legacy guardado no cuenta como configuración oficial cuando el flag está apagado', async () => {
+test('Stripe manual: ignora configuración legacy de Connect guardada en app_config', async () => {
   await snapshotStripeConfig(async () => {
     await db.run(
       `INSERT INTO app_config (config_key, config_value, updated_at)
@@ -389,9 +356,8 @@ test('Stripe OAuth legacy guardado no cuenta como configuración oficial cuando 
 
     assert.equal(config.configured, false)
     assert.equal(config.connectionType, 'manual')
-    assert.equal(config.configurationStatus, 'disconnected')
-    assert.equal(config.connectedAccountId, '')
-    assert.equal(config.stripeConnectOAuthEnabled, false)
+    assert.equal(config.configurationStatus, 'not_configured')
+    assert.equal(config.hasSecretKey, false)
   })
 })
 

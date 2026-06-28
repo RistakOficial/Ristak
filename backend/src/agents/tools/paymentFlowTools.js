@@ -180,7 +180,7 @@ async function getPaymentGatewaySnapshot() {
       id: 'stripe',
       connected: Boolean(stripeConfig?.configured),
       mode: stripeConfig?.mode || null,
-      accountLabel: stripeConfig?.accountLabel || stripeConfig?.connectAccountEmail || stripeConfig?.connectedAccountPreview || '',
+      accountLabel: stripeConfig?.accountLabel || '',
       issue: stripeResult.status === 'rejected' ? stripeResult.reason?.message : ''
     }),
     mapGatewayStatus({

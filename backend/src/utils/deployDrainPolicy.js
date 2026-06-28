@@ -75,7 +75,6 @@ export function classifyDeployDrainRequest(req = {}) {
   }
 
   if (READ_METHODS.has(method) && matchesAny(path, [
-    /^\/api\/stripe\/connect\/callback$/,
     /^\/api\/mercadopago\/connect\/callback$/,
     /^\/api\/oauth\/authorize$/
   ])) {
