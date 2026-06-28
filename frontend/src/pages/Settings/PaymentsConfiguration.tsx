@@ -424,7 +424,10 @@ const normalizePaymentMetaPurchaseEventParameters = (
 const normalizePaymentMetaPurchaseEventConfig = (
   value?: Partial<PaymentMetaPurchaseEventConfig> | null
 ): PaymentMetaPurchaseEventConfig => {
-  const channel = PAYMENT_META_DEFAULT_EVENT_CHANNEL
+  const rawChannel = String(value?.channel || '').trim().toLowerCase()
+  const channel: PaymentMetaPurchaseEventChannel = rawChannel === 'site' || rawChannel === 'whatsapp' || rawChannel === 'smart'
+    ? rawChannel
+    : PAYMENT_META_DEFAULT_EVENT_CHANNEL
 
   return {
     enabled: Boolean(value?.enabled),

@@ -9,7 +9,10 @@ import { getPaymentPlanAuditSummary, hardDeleteTestPaymentPlan } from './payment
 import { calculatePaymentTax, getPaymentGatewayMode, getPaymentSettings, getPublicPaymentSettings } from './paymentSettingsService.js'
 import { queuePaymentAutomationMessage } from './paymentAutomationsService.js'
 import { registerGigstackPaymentForTransactionInBackground } from './gigstackInvoiceService.js'
-import { buildMetaPublicPurchasePixelEvent } from './metaConversionEventsService.js'
+import {
+  buildMetaPublicPurchasePixelEvent,
+  triggerMetaPaymentPurchaseEvent
+} from './metaConversionEventsService.js'
 
 const CONFIG_KEYS = {
   enabled: 'stripe_enabled',
@@ -1411,6 +1414,14 @@ async function updatePaymentFromIntent(intent, stripeContext = null) {
   if (row?.contact_id && nextStatus === 'paid') {
     registerGigstackPaymentForTransactionInBackground(row.id)
     queuePaymentAutomationMessage('receipt', { ...row, status: nextStatus, stripe_payment_intent_id: intent.id })
+    triggerMetaPaymentPurchaseEvent(row.contact_id, {
+      ...row,
+      status: nextStatus,
+      stripe_payment_intent_id: intent.id,
+      stripe_charge_id: latestChargeId || row.stripe_charge_id
+    }).catch((error) => {
+      logger.warn(`No se pudo enviar Purchase a Meta para pago Stripe ${row.id}: ${error.message}`)
+    })
   }
 
   if (ignorePendingRegression) {
@@ -1474,6 +1485,13 @@ async function updatePaymentFromInvoice(invoice, nextStatus) {
 
   if (row?.contact_id && nextStatus === 'paid') {
     queuePaymentAutomationMessage('receipt', { ...row, status: nextStatus, stripe_payment_intent_id: paymentIntentId || row.stripe_payment_intent_id })
+    triggerMetaPaymentPurchaseEvent(row.contact_id, {
+      ...row,
+      status: nextStatus,
+      stripe_payment_intent_id: paymentIntentId || row.stripe_payment_intent_id
+    }).catch((error) => {
+      logger.warn(`No se pudo enviar Purchase a Meta para invoice Stripe ${row.id}: ${error.message}`)
+    })
   }
 
   return nextStatus

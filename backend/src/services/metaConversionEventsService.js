@@ -231,10 +231,15 @@ function renderPaymentMetaParameterValue(value, templateContext = {}) {
 function normalizePaymentMetaPurchaseEventConfig(value = null) {
   const source = parseJson(value, {})
   const eventSource = source && typeof source === 'object' && !Array.isArray(source) ? source : {}
+  const channel = cleanString(
+    eventSource.channel ||
+    eventSource.conversionChannel ||
+    eventSource.conversion_channel
+  ).toLowerCase()
 
   return {
     enabled: parseBoolean(eventSource.enabled, false),
-    channel: DEFAULT_PAYMENT_EVENT_CHANNEL,
+    channel: ['site', 'whatsapp', 'smart'].includes(channel) ? channel : DEFAULT_PAYMENT_EVENT_CHANNEL,
     eventName: DEFAULT_PAYMENT_EVENT_NAME,
     parameters: normalizePaymentMetaPurchaseEventParameters(eventSource.parameters || {})
   }
@@ -288,6 +293,8 @@ function extractPaymentMetaEventSourceUrl(payment = {}) {
     || payment.source_url
     || payment.checkoutUrl
     || payment.checkout_url
+    || payment.paymentUrl
+    || payment.payment_url
   )
 
   return sourceUrl || ''
@@ -796,7 +803,7 @@ export async function buildMetaPublicPurchasePixelEvent(payment = {}, options = 
   if (!contactId) return null
 
   const paymentMetaConfig = await getPaymentMetaPurchaseEventConfig()
-  if (!paymentMetaConfig.enabled || paymentMetaConfig.channel !== 'site') return null
+  if (!paymentMetaConfig.enabled || paymentMetaConfig.channel === 'whatsapp') return null
 
   const metaConfig = await getMetaCapiConfig()
   if (!metaConfig.datasetId) return null
@@ -805,6 +812,13 @@ export async function buildMetaPublicPurchasePixelEvent(payment = {}, options = 
   const eventContext = await buildPaymentPurchaseEventContext(contactId, payment, paymentMetaConfig)
   if (eventContext.skip) return { sent: false, reason: eventContext.reason, eventId: eventContext.eventId }
   const contact = await getContactForMetaEvent(contactId)
+  if (
+    paymentMetaConfig.channel === 'smart' &&
+    hasWhatsappAttributionSignal(await getLatestWhatsappAttribution(contact))
+  ) {
+    return null
+  }
+
   const variableFields = await getVariableFieldValueMap().catch(() => ({}))
   const templateContext = buildPaymentMetaTemplateContext({
     contact,

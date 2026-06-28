@@ -15,7 +15,10 @@ import { calculatePaymentTax, getPaymentGatewayMode, getPublicPaymentSettings } 
 import { registerGigstackPaymentForTransactionInBackground } from './gigstackInvoiceService.js'
 // (PAY2-003) Encolar el comprobante automático tras un pago de Mercado Pago (igual que Conekta).
 import { queuePaymentAutomationMessage } from './paymentAutomationsService.js'
-import { buildMetaPublicPurchasePixelEvent } from './metaConversionEventsService.js'
+import {
+  buildMetaPublicPurchasePixelEvent,
+  triggerMetaPaymentPurchaseEvent
+} from './metaConversionEventsService.js'
 import { getPaymentPlanAuditSummary, hardDeleteTestPaymentPlan } from './paymentRecordSafetyService.js'
 
 const CONFIG_KEYS = {
@@ -2653,6 +2656,10 @@ async function updatePaymentFromMercadoPagoPayment(mpPayment) {
     Promise.resolve(queuePaymentAutomationMessage('receipt', { ...updated, status: nextStatus }))
       .catch((error) => {
         logger.warn(`No se pudo encolar comprobante por pago Mercado Pago ${updated.id}: ${error.message}`)
+      })
+    triggerMetaPaymentPurchaseEvent(updated.contact_id, { ...updated, status: nextStatus })
+      .catch((error) => {
+        logger.warn(`No se pudo enviar Purchase a Meta para pago Mercado Pago ${updated.id}: ${error.message}`)
       })
   }
   await syncMercadoPagoPaymentPlanFromLocalPayment(updated)
