@@ -8195,13 +8195,25 @@ export const Sites: React.FC = () => {
       return true
     })
   ), [analyticsSiteIds, siteVideoAssets, sitesAnalyticsSiteId])
+  const scopedAnalyticsSites = useMemo(
+    () => sitesAnalyticsSiteId
+      ? analyticsSites.filter(site => site.id === sitesAnalyticsSiteId)
+      : analyticsSites,
+    [analyticsSites, sitesAnalyticsSiteId]
+  )
+  const scopedAnalyticsVideos = useMemo(
+    () => sitesAnalyticsVideoId
+      ? filteredAnalyticsVideos.filter(asset => asset.id === sitesAnalyticsVideoId)
+      : filteredAnalyticsVideos,
+    [filteredAnalyticsVideos, sitesAnalyticsVideoId]
+  )
   const analyticsSummarySiteIds = useMemo(
-    () => analyticsSites.map(site => site.id),
-    [analyticsSites]
+    () => scopedAnalyticsSites.map(site => site.id),
+    [scopedAnalyticsSites]
   )
   const analyticsSummaryVideoAssetIds = useMemo(
-    () => filteredAnalyticsVideos.map(asset => asset.id),
-    [filteredAnalyticsVideos]
+    () => scopedAnalyticsVideos.map(asset => asset.id),
+    [scopedAnalyticsVideos]
   )
   const analyticsSummarySiteKey = useMemo(
     () => analyticsSummarySiteIds.join('|'),
@@ -12977,10 +12989,12 @@ export const Sites: React.FC = () => {
               />
             ) : section === 'analytics' ? (
               <SitesAnalyticsPanel
-                sites={analyticsSites}
+                sites={scopedAnalyticsSites}
+                siteOptions={analyticsSites}
                 allSites={liveAnalyticsSites}
                 sitesById={sitesById}
-                videos={filteredAnalyticsVideos}
+                videos={scopedAnalyticsVideos}
+                videoOptions={filteredAnalyticsVideos}
                 selectedSiteType={sitesAnalyticsSiteType}
                 selectedSiteId={sitesAnalyticsSiteId}
                 selectedVideoId={sitesAnalyticsVideoId}
@@ -37950,9 +37964,11 @@ const FormResponsesQuickPanel: React.FC<{
 
 interface SitesAnalyticsPanelProps {
   sites: PublicSite[]
+  siteOptions: PublicSite[]
   allSites: PublicSite[]
   sitesById: Map<string, PublicSite>
   videos: MediaAsset[]
+  videoOptions: MediaAsset[]
   selectedSiteType: SitesAnalyticsSiteType
   selectedSiteId: string
   selectedVideoId: string
@@ -37973,9 +37989,11 @@ interface SitesAnalyticsPanelProps {
 
 const SitesAnalyticsPanel: React.FC<SitesAnalyticsPanelProps> = ({
   sites,
+  siteOptions,
   allSites,
   sitesById,
   videos,
+  videoOptions,
   selectedSiteType,
   selectedSiteId,
   selectedVideoId,
@@ -38826,9 +38844,9 @@ const SitesAnalyticsPanel: React.FC<SitesAnalyticsPanelProps> = ({
         <div className={`${styles.sitesAnalyticsFilterControls} ${isVideosView ? styles.sitesAnalyticsFilterControlsVideo : ''}`}>
           <label className={styles.field}>
             <span>{siteFilterLabel}</span>
-            <CustomSelect value={selectedSiteId} onChange={(event) => onSiteChange(event.target.value)} disabled={sites.length === 0} portal>
+            <CustomSelect value={selectedSiteId} onChange={(event) => onSiteChange(event.target.value)} disabled={siteOptions.length === 0} portal>
               <option value="">{siteFilterEmptyLabel}</option>
-              {sites.map(site => (
+              {siteOptions.map(site => (
                 <option key={site.id} value={site.id}>{site.name}</option>
               ))}
             </CustomSelect>
@@ -38839,16 +38857,16 @@ const SitesAnalyticsPanel: React.FC<SitesAnalyticsPanelProps> = ({
               <CustomSelect
                 value={selectedVideoId}
                 onChange={(event) => onVideoChange(event.target.value)}
-                disabled={videos.length === 0}
+                disabled={videoOptions.length === 0}
                 className={styles.sitesAnalyticsVideoSelect}
                 portal
               >
-                {videos.length === 0 ? (
+                {videoOptions.length === 0 ? (
                   <option value="">Sin videos</option>
                 ) : (
                   <>
                     <option value="">Todos los videos</option>
-                    {videos.map(asset => (
+                    {videoOptions.map(asset => (
                       <option key={asset.id} value={asset.id}>{getSiteAnalyticsVideoLabel(asset, sitesById)}</option>
                     ))}
                   </>
