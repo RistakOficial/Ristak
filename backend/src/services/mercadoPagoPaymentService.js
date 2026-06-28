@@ -43,6 +43,7 @@ const DEFAULT_CURRENCY = 'MXN'
 const MERCADOPAGO_API_BASE = 'https://api.mercadopago.com'
 const MERCADOPAGO_WEBHOOK_PATH = '/api/mercadopago/webhook'
 const TOKEN_SYNC_WINDOW_MS = 15 * 60 * 1000
+const MERCADOPAGO_SUBSCRIPTION_START_BUFFER_MS = 10 * 60 * 1000
 const DEFAULT_PAYMENT_TIMEZONE = 'America/Mexico_City'
 const MP_PLAN_STATES = {
   ACTIVE: 'mercadopago_plan_active',
@@ -2281,7 +2282,7 @@ function buildMercadoPagoAutoRecurring({
     autoRecurring.frequency_type = 'months'
   }
 
-  const cleanStartDate = timestampToIso(startDate)
+  const cleanStartDate = normalizeMercadoPagoSubscriptionStartDate(startDate)
   const cleanEndDate = timestampToIso(endDate)
   if (cleanStartDate) autoRecurring.start_date = cleanStartDate
   if (cleanEndDate) autoRecurring.end_date = cleanEndDate
@@ -2430,6 +2431,17 @@ function timestampToIso(value) {
   if (!value) return null
   const date = new Date(value)
   return Number.isNaN(date.getTime()) ? null : date.toISOString()
+}
+
+function normalizeMercadoPagoSubscriptionStartDate(value) {
+  const cleanStartDate = timestampToIso(value)
+  if (!cleanStartDate) return null
+
+  const parsed = new Date(cleanStartDate)
+  const minimumStartAt = Date.now() + MERCADOPAGO_SUBSCRIPTION_START_BUFFER_MS
+  if (parsed.getTime() >= minimumStartAt) return cleanStartDate
+
+  return new Date(minimumStartAt).toISOString()
 }
 
 async function syncMercadoPagoPaymentPlanFromLocalPayment(payment) {

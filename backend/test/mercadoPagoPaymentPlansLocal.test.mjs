@@ -360,6 +360,77 @@ test('Mercado Pago crea suscripcion recurrente real con preapproval pendiente', 
   })
 })
 
+test('Mercado Pago ajusta suscripciones que inician hoy a una fecha futura', async () => {
+  await initializeMasterKey()
+
+  await snapshotMercadoPagoConfig(async () => {
+    const suffix = `${Date.now()}_${Math.random().toString(36).slice(2, 8)}`
+    const ids = {
+      contactId: `contact_mp_sub_today_${suffix}`,
+      subscriptionId: ''
+    }
+    const requestedStartDate = dateOnlyInDays(0)
+    const beforeCreate = Date.now()
+
+    setMercadoPagoFetchForTest(async (url, options = {}) => {
+      assert.equal(url, 'https://api.mercadopago.com/preapproval')
+      assert.equal(options.method, 'POST')
+
+      const body = JSON.parse(String(options.body || '{}'))
+      const sentStartDate = new Date(body.auto_recurring.start_date)
+      assert.equal(body.auto_recurring.frequency, 1)
+      assert.equal(body.auto_recurring.frequency_type, 'months')
+      assert.ok(!Number.isNaN(sentStartDate.getTime()))
+      assert.ok(
+        sentStartDate.getTime() >= beforeCreate + (9 * 60 * 1000),
+        `expected Mercado Pago start_date to be safely in the future, got ${body.auto_recurring.start_date}`
+      )
+
+      return {
+        ok: true,
+        status: 201,
+        json: async () => ({
+          id: 'mp_preapproval_today_test_1',
+          external_reference: body.external_reference,
+          init_point: 'https://www.mercadopago.com.mx/subscriptions/checkout?preapproval_id=mp_preapproval_today_test_1',
+          sandbox_init_point: 'https://sandbox.mercadopago.com.mx/subscriptions/checkout?preapproval_id=mp_preapproval_today_test_1',
+          auto_recurring: body.auto_recurring,
+          status: 'pending',
+          next_payment_date: body.auto_recurring.start_date
+        })
+      }
+    })
+
+    await db.run(
+      `INSERT INTO contacts (id, full_name, email, phone, source, created_at, updated_at)
+       VALUES (?, ?, ?, ?, 'test', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+      [ids.contactId, 'Cliente MP Hoy', 'cliente-mp-hoy@example.test', '+5215555555502']
+    )
+
+    try {
+      const subscription = await createSubscription({
+        contactId: ids.contactId,
+        name: 'Membresia Mercado Pago Hoy',
+        amount: 149,
+        intervalType: 'monthly',
+        intervalCount: 1,
+        startDate: requestedStartDate,
+        paymentMethod: 'mercadopago_subscription',
+        paymentProvider: 'mercadopago',
+        status: 'incomplete'
+      })
+      ids.subscriptionId = subscription.id
+
+      assert.equal(subscription.paymentProvider, 'mercadopago')
+      assert.equal(subscription.status, 'incomplete')
+      assert.equal(subscription.mercadoPagoPreapprovalId, 'mp_preapproval_today_test_1')
+      assert.ok(new Date(subscription.nextRunAt).getTime() >= beforeCreate + (9 * 60 * 1000))
+    } finally {
+      await cleanup(ids)
+    }
+  })
+})
+
 test('Mercado Pago registra cobro recurrente por webhook subscription_authorized_payment', async () => {
   await initializeMasterKey()
 
