@@ -922,6 +922,136 @@ function buildOrderPayload(row, { tokenId = '', paymentSourceId = '', customerId
   }
 }
 
+function addSubscriptionMonths(date, months) {
+  const next = new Date(date)
+  const originalDay = next.getDate()
+  next.setMonth(next.getMonth() + months)
+  if (next.getDate() !== originalDay) next.setDate(0)
+  return next
+}
+
+function addSubscriptionInterval(date, intervalType, intervalCount) {
+  const next = new Date(date)
+  const count = Math.max(1, Number.parseInt(intervalCount, 10) || 1)
+  const interval = cleanString(intervalType || 'monthly').toLowerCase()
+
+  if (interval === 'daily') {
+    next.setDate(next.getDate() + count)
+    return next
+  }
+
+  if (interval === 'weekly') {
+    next.setDate(next.getDate() + (7 * count))
+    return next
+  }
+
+  if (interval === 'yearly') return addSubscriptionMonths(next, 12 * count)
+  return addSubscriptionMonths(next, count)
+}
+
+function getSubscriptionStartMetadata(paymentRow = {}) {
+  const metadata = parseJson(paymentRow.metadata_json, {})
+  const start = metadata.subscriptionStart && typeof metadata.subscriptionStart === 'object'
+    ? metadata.subscriptionStart
+    : {}
+  return {
+    metadata,
+    subscriptionId: cleanString(start.subscriptionId || metadata.ristakSubscriptionId || metadata.ristak_subscription_id),
+    provider: cleanString(start.paymentProvider || paymentRow.payment_provider),
+    method: cleanString(start.paymentMethod || paymentRow.payment_method)
+  }
+}
+
+async function activateConektaSubscriptionFromStartPayment(paymentRow = {}, savedSource = null) {
+  const { subscriptionId, provider } = getSubscriptionStartMetadata(paymentRow)
+  if (!subscriptionId || provider !== 'conekta' || !savedSource) return null
+
+  const subscription = await db.get(
+    `SELECT *
+     FROM subscriptions
+     WHERE id = ?
+     LIMIT 1`,
+    [subscriptionId]
+  )
+
+  if (!subscription || subscription.conekta_subscription_id) return null
+
+  const paidAt = paymentRow.paid_at || new Date().toISOString()
+  const baseDate = new Date(paidAt)
+  const nextStart = addSubscriptionInterval(
+    Number.isNaN(baseDate.getTime()) ? new Date() : baseDate,
+    subscription.interval_type,
+    subscription.interval_count
+  ).toISOString()
+
+  const conektaSubscription = await createConektaRecurringSubscription({
+    ristakSubscriptionId: subscription.id,
+    contactId: subscription.contact_id,
+    name: subscription.name,
+    description: subscription.description,
+    amount: subscription.amount,
+    currency: subscription.currency,
+    intervalType: subscription.interval_type,
+    intervalCount: subscription.interval_count,
+    startDate: nextStart,
+    paymentMethodId: savedSource.conekta_payment_source_id,
+    contactName: subscription.contact_name,
+    contactEmail: subscription.contact_email,
+    contactPhone: subscription.contact_phone
+  })
+
+  const metadata = parseJson(subscription.metadata_json, {})
+  const raw = parseJson(subscription.raw_json, {})
+  await db.run(
+    `UPDATE subscriptions
+     SET status = ?,
+         payment_method = 'conekta_subscription',
+         payment_provider = 'conekta',
+         payment_mode = ?,
+         conekta_customer_id = ?,
+         conekta_plan_id = ?,
+         conekta_subscription_id = ?,
+         conekta_payment_source_id = ?,
+         conekta_next_billing_at = ?,
+         current_period_start = ?,
+         current_period_end = ?,
+         next_run_at = ?,
+         metadata_json = ?,
+         raw_json = ?,
+         updated_at = CURRENT_TIMESTAMP
+     WHERE id = ?`,
+    [
+      conektaSubscription.status || 'active',
+      conektaSubscription.paymentMode || subscription.payment_mode,
+      conektaSubscription.conektaCustomerId || subscription.conekta_customer_id,
+      conektaSubscription.conektaPlanId || subscription.conekta_plan_id,
+      conektaSubscription.conektaSubscriptionId || subscription.conekta_subscription_id,
+      conektaSubscription.conektaPaymentSourceId || savedSource.conekta_payment_source_id,
+      conektaSubscription.nextRunAt || nextStart,
+      conektaSubscription.currentPeriodStart || subscription.current_period_start,
+      conektaSubscription.currentPeriodEnd || subscription.current_period_end,
+      conektaSubscription.nextRunAt || nextStart,
+      JSON.stringify({
+        ...metadata,
+        subscriptionStartPayment: {
+          ...(metadata.subscriptionStartPayment && typeof metadata.subscriptionStartPayment === 'object' ? metadata.subscriptionStartPayment : {}),
+          paymentId: paymentRow.id,
+          publicPaymentId: paymentRow.public_payment_id,
+          status: 'paid',
+          activatedAt: new Date().toISOString()
+        }
+      }),
+      JSON.stringify({
+        ...raw,
+        conektaSubscriptionStart: conektaSubscription.raw || conektaSubscription
+      }),
+      subscription.id
+    ]
+  )
+
+  return db.get('SELECT * FROM subscriptions WHERE id = ?', [subscription.id])
+}
+
 async function updatePaymentFromOrder(order, row, { paymentSourceId = '' } = {}) {
   const nextStatus = mapOrderStatus(order)
   const charge = extractCharge(order)
@@ -964,6 +1094,12 @@ async function updatePaymentFromOrder(order, row, { paymentSourceId = '' } = {})
       .catch((error) => {
         logger.warn(`No se pudo encolar comprobante por pago Conekta ${updated.id}: ${error.message}`)
       })
+    try {
+      const savedSource = await findConektaSavedSourceForPayment(updated)
+      await activateConektaSubscriptionFromStartPayment(updated, savedSource)
+    } catch (error) {
+      logger.warn(`No se pudo activar la suscripción Conekta desde el pago ${updated.id}: ${error.message}`)
+    }
   }
 
   return updated

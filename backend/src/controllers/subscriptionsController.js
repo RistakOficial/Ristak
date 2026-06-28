@@ -8,6 +8,34 @@ import {
 } from '../services/subscriptionsService.js'
 import { logger } from '../utils/logger.js'
 
+function cleanString(value) {
+  return String(value || '').trim()
+}
+
+function normalizeBaseUrl(value) {
+  const clean = cleanString(value).replace(/\/+$/, '')
+  if (!clean) return ''
+
+  const withProtocol = /^https?:\/\//i.test(clean) ? clean : `https://${clean}`
+  try {
+    const parsed = new URL(withProtocol)
+    return `${parsed.protocol}//${parsed.host}`.replace(/\/+$/, '')
+  } catch {
+    return ''
+  }
+}
+
+function getRequestBaseUrl(req) {
+  const configured = process.env.PUBLIC_APP_URL || process.env.APP_PUBLIC_URL || process.env.FRONTEND_URL || process.env.RENDER_EXTERNAL_URL
+  if (configured) return normalizeBaseUrl(configured)
+
+  const forwardedHost = String(req.headers['x-forwarded-host'] || '').split(',')[0].trim()
+  const host = forwardedHost || req.headers.host
+  const forwardedProto = String(req.headers['x-forwarded-proto'] || '').split(',')[0].trim()
+  const protocol = forwardedProto || req.protocol || 'https'
+  return normalizeBaseUrl(host ? `${protocol}://${host}` : '')
+}
+
 function sendError(res, error, fallback = 'No se pudo procesar la suscripción.') {
   logger.error(fallback, error)
   res.status(error?.status || 400).json({
@@ -41,7 +69,10 @@ export async function getSubscriptionView(req, res) {
 
 export async function createSubscriptionView(req, res) {
   try {
-    const subscription = await createSubscription(req.body || {})
+    const subscription = await createSubscription({
+      ...(req.body || {}),
+      baseUrl: getRequestBaseUrl(req)
+    })
     res.status(201).json({ success: true, data: subscription })
   } catch (error) {
     sendError(res, error, 'No se pudo crear la suscripción.')
@@ -50,7 +81,10 @@ export async function createSubscriptionView(req, res) {
 
 export async function updateSubscriptionView(req, res) {
   try {
-    const subscription = await updateSubscription(req.params.subscriptionId, req.body || {})
+    const subscription = await updateSubscription(req.params.subscriptionId, {
+      ...(req.body || {}),
+      baseUrl: getRequestBaseUrl(req)
+    })
     if (!subscription) {
       res.status(404).json({ success: false, error: 'Suscripción no encontrada.' })
       return

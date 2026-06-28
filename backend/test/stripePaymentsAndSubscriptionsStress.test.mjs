@@ -3,6 +3,7 @@ import assert from 'node:assert/strict'
 
 import { db } from '../src/config/database.js'
 import {
+  createStripePaymentIntent,
   createStripePaymentPlan,
   handleStripeWebhookEvent,
   processDueStripePaymentPlanCharges,
@@ -897,7 +898,7 @@ test('suscripciones Stripe test: crea, sube/baja precio, pausa, reanuda, cancela
   }
 })
 
-test('suscripciones Stripe: link de autorizacion crea Checkout sin iniciar con tarjeta guardada', async () => {
+test('suscripciones Stripe: link de pago crea pago publico sin abrir Checkout de suscripcion', async () => {
   const { contactId, contact, stripeCustomerId } = await seedContactWithSavedCard('subscription_checkout_link')
   const { stripe, calls } = createStripeMock()
   setStripeFactoryForTest(() => stripe)
@@ -919,25 +920,19 @@ test('suscripciones Stripe: link de autorizacion crea Checkout sin iniciar con t
       cancelAt: addDaysDateOnly(120),
       paymentMethod: 'stripe_link',
       paymentProvider: 'stripe',
-      status: 'incomplete'
+      status: 'incomplete',
+      baseUrl: 'https://app.example.test'
     })
 
     assert.equal(created.status, 'incomplete')
     assert.equal(created.paymentMethod, 'stripe_link')
     assert.equal(created.paymentProvider, 'stripe')
-    assert.equal(created.stripeCustomerId, stripeCustomerId)
-    assert.equal(created.stripeCheckoutSessionId, 'cs_stress_1')
-    assert.equal(created.stripeCheckoutUrl, 'https://checkout.stripe.test/cs_stress_1')
-    assert.equal(created.subscriptionStartUrl, created.stripeCheckoutUrl)
-    assert.equal(calls.checkoutSessionsCreate.length, 1)
+    assert.equal(created.stripeCustomerId, null)
+    assert.equal(created.stripeCheckoutSessionId, null)
+    assert.equal(created.stripeCheckoutUrl, null)
+    assert.match(created.subscriptionStartUrl, /^https:\/\/app\.example\.test\/pay\/pay_/)
+    assert.equal(calls.checkoutSessionsCreate.length, 0)
     assert.equal(calls.subscriptionsCreate.length, 0)
-
-    const checkoutParams = calls.checkoutSessionsCreate[0].params
-    assert.equal(checkoutParams.mode, 'subscription')
-    assert.equal(checkoutParams.customer, stripeCustomerId)
-    assert.deepEqual(checkoutParams.line_items, [{ price: 'price_stress_1', quantity: 1 }])
-    assert.equal(checkoutParams.subscription_data.metadata.ristak_subscription_id, created.id)
-    assert.equal(checkoutParams.metadata.ristak_subscription_id, created.id)
 
     const saved = await db.get(
       `SELECT status, payment_method, payment_provider, stripe_subscription_id, metadata_json
@@ -950,8 +945,98 @@ test('suscripciones Stripe: link de autorizacion crea Checkout sin iniciar con t
     assert.equal(saved.payment_method, 'stripe_link')
     assert.equal(saved.payment_provider, 'stripe')
     assert.equal(saved.stripe_subscription_id, null)
-    assert.equal(metadata.stripeCheckout.sessionId, 'cs_stress_1')
-    assert.equal(metadata.stripeCheckout.url, 'https://checkout.stripe.test/cs_stress_1')
+    assert.equal(metadata.subscriptionStartPayment.provider, 'stripe')
+    assert.match(metadata.subscriptionStartPayment.paymentUrl, /^https:\/\/app\.example\.test\/pay\/pay_/)
+
+    const payment = await db.get(
+      `SELECT amount, status, payment_provider, public_payment_id, payment_url, metadata_json
+       FROM payments
+       WHERE id = ?`,
+      [metadata.subscriptionStartPayment.paymentId]
+    )
+    const paymentMetadata = JSON.parse(payment.metadata_json)
+    assert.equal(payment.amount, 750)
+    assert.equal(payment.status, 'sent')
+    assert.equal(payment.payment_provider, 'stripe')
+    assert.match(payment.public_payment_id, /^pay_/)
+    assert.equal(payment.payment_url, metadata.subscriptionStartPayment.paymentUrl)
+    assert.equal(paymentMetadata.subscriptionStart.subscriptionId, created.id)
+    assert.equal(paymentMetadata.subscriptionStart.paymentMethod, 'stripe_link')
+  } finally {
+    setStripeFactoryForTest(null)
+    await cleanupContact(contactId)
+  }
+})
+
+test('suscripciones Stripe: pagar link publico activa suscripcion con tarjeta guardada', async () => {
+  const { contactId, contact } = await seedContactWithSavedCard('subscription_public_link_activation')
+  const webhookSecret = 'whsec_subscription_public_link'
+  let webhookEvent = null
+  const { stripe, calls } = createStripeMock()
+
+  stripe.webhooks.constructEvent = (rawBody, signature, secret) => {
+    calls.webhooksConstructEvent.push({ rawBody, signature, secret })
+    return webhookEvent
+  }
+
+  setStripeFactoryForTest(() => stripe)
+
+  try {
+    await configureStripe({ webhookSecret })
+
+    const created = await createSubscription({
+      contactId,
+      contactName: contact.name,
+      contactEmail: contact.email,
+      contactPhone: contact.phone,
+      name: 'Membresia link publico',
+      description: 'Activa con primer pago publico',
+      amount: 640,
+      intervalType: 'monthly',
+      intervalCount: 1,
+      paymentMethod: 'stripe_link',
+      paymentProvider: 'stripe',
+      status: 'incomplete',
+      baseUrl: 'https://app.example.test'
+    })
+
+    assert.match(created.subscriptionStartUrl, /^https:\/\/app\.example\.test\/pay\/pay_/)
+    assert.ok(created.subscriptionStartPublicPaymentId)
+
+    await createStripePaymentIntent(created.subscriptionStartPublicPaymentId, {
+      savePaymentMethod: true
+    })
+
+    const intentMetadata = calls.paymentIntentsCreate[0].params.metadata
+    webhookEvent = {
+      type: 'payment_intent.succeeded',
+      data: {
+        object: {
+          object: 'payment_intent',
+          id: 'pi_subscription_public_start',
+          status: 'succeeded',
+          amount: 64000,
+          amount_received: 64000,
+          currency: 'mxn',
+          customer: calls.paymentIntentsCreate[0].params.customer,
+          payment_method: 'pm_subscription_public_start',
+          latest_charge: 'ch_subscription_public_start',
+          metadata: intentMetadata
+        }
+      }
+    }
+
+    const webhookResult = await handleStripeWebhookEvent(Buffer.from('{}'), 'sig_test')
+    assert.equal(webhookResult.received, true)
+    assert.equal(calls.subscriptionsCreate.length, 1)
+    assert.ok(calls.subscriptionsCreate[0].params.trial_end)
+
+    const activated = await getSubscription(created.id)
+    assert.equal(activated.status, 'active')
+    assert.equal(activated.paymentMethod, 'stripe_saved_card')
+    assert.equal(activated.stripeSubscriptionId, 'sub_stress_1')
+    assert.equal(activated.stripePaymentMethodId, 'pm_subscription_public_start')
+    assert.equal(activated.subscriptionStartPaymentStatus, 'paid')
   } finally {
     setStripeFactoryForTest(null)
     await cleanupContact(contactId)

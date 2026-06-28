@@ -59,7 +59,7 @@ type SubscriptionFormMode = 'create' | 'edit' | null
 type SubscriptionFormStep = 'details' | 'start_method' | 'gateway' | 'saved_card'
 type SubscriptionStartMode = 'link' | 'saved_card' | ''
 type PaymentGatewayProvider = 'stripe' | 'conekta' | 'mercadopago'
-type SubscriptionPaymentMethod = 'stripe_saved_card' | 'stripe_link' | 'conekta_subscription' | 'mercadopago_subscription'
+type SubscriptionPaymentMethod = 'stripe_saved_card' | 'stripe_link' | 'conekta_subscription' | 'conekta_link' | 'mercadopago_checkout' | 'mercadopago_subscription'
 type SubscriptionDurationType = 'continuous' | 'until_date'
 
 interface SubscriptionFormState {
@@ -132,12 +132,12 @@ const PAYMENT_METHOD_OPTIONS: Array<{
   },
   {
     value: 'stripe_link',
-    label: 'Stripe - link de autorización',
+    label: 'Stripe - link de pago',
     provider: 'stripe',
-    modeLabel: 'Enviar link',
-    description: 'Genera un Checkout de suscripción para que el cliente autorice el pago.',
+    modeLabel: 'Link de pago',
+    description: 'Genera un link público de Ristak para cobrar el primer pago.',
     requirement: 'Requiere un contacto con email.',
-    result: 'Queda incompleta hasta que el cliente complete el link.'
+    result: 'Al pagarse, Ristak guarda la tarjeta e inicia la suscripción.'
   },
   {
     value: 'conekta_subscription',
@@ -149,13 +149,31 @@ const PAYMENT_METHOD_OPTIONS: Array<{
     result: 'Se crea como suscripción domiciliada.'
   },
   {
-    value: 'mercadopago_subscription',
-    label: 'Mercado Pago - link de autorización',
-    provider: 'mercadopago',
-    modeLabel: 'Enviar link',
-    description: 'Genera el link de autorización de Mercado Pago para iniciar la suscripción.',
+    value: 'conekta_link',
+    label: 'Conekta - link de pago',
+    provider: 'conekta',
+    modeLabel: 'Link de pago',
+    description: 'Genera un link público de Ristak para cobrar el primer pago con Conekta.',
     requirement: 'Requiere un contacto con email.',
-    result: 'Queda incompleta hasta que el cliente autorice el cobro.'
+    result: 'Al pagarse, Ristak guarda la tarjeta e inicia la suscripción.'
+  },
+  {
+    value: 'mercadopago_checkout',
+    label: 'Mercado Pago - link de pago',
+    provider: 'mercadopago',
+    modeLabel: 'Link de pago',
+    description: 'Genera un link público de Ristak para cobrar el primer pago con Mercado Pago.',
+    requirement: 'Requiere un contacto con email.',
+    result: 'El cliente paga desde la página pública y Ristak registra ese arranque.'
+  },
+  {
+    value: 'mercadopago_subscription',
+    label: 'Mercado Pago - suscripción Mercado Pago',
+    provider: 'mercadopago',
+    modeLabel: 'Sistema Mercado Pago',
+    description: 'Usa el sistema de suscripción de Mercado Pago para cobros recurrentes.',
+    requirement: 'Requiere un contacto con email.',
+    result: 'Queda pendiente hasta que Mercado Pago active la suscripción.'
   }
 ]
 
@@ -164,7 +182,7 @@ const DURATION_OPTIONS: Array<{ value: SubscriptionDurationType; label: string }
   { value: 'until_date', label: 'Hasta una fecha específica' }
 ]
 
-const LINK_PAYMENT_METHODS = new Set<SubscriptionPaymentMethod>(['stripe_link', 'mercadopago_subscription'])
+const LINK_PAYMENT_METHODS = new Set<SubscriptionPaymentMethod>(['stripe_link', 'conekta_link', 'mercadopago_checkout'])
 const SAVED_CARD_PAYMENT_METHODS = new Set<SubscriptionPaymentMethod>(['stripe_saved_card', 'conekta_subscription'])
 
 function isLinkPaymentMethod(value: SubscriptionPaymentMethod) {
@@ -232,8 +250,8 @@ function resolvePaymentProvider(provider?: string | null): PaymentGatewayProvide
 }
 
 function getPaymentProviderFromMethod(paymentMethod: string, paymentProvider: PaymentGatewayProvider): PaymentGatewayProvider {
-  if (paymentMethod === 'mercadopago_subscription') return 'mercadopago'
-  if (paymentMethod === 'conekta_subscription') return 'conekta'
+  if (paymentMethod === 'mercadopago_subscription' || paymentMethod === 'mercadopago_checkout') return 'mercadopago'
+  if (paymentMethod === 'conekta_subscription' || paymentMethod === 'conekta_link') return 'conekta'
   if (paymentMethod === 'stripe_saved_card' || paymentMethod === 'stripe_link') return 'stripe'
   return paymentProvider
 }
@@ -323,8 +341,10 @@ function getBillingCadenceHelp(intervalType: SubscriptionInterval, intervalCount
 function getPaymentMethodLabel(value?: string | null) {
   const normalized = String(value || '').toLowerCase()
   if (normalized === 'stripe_saved_card') return 'Tarjeta guardada'
-  if (normalized === 'stripe_link') return 'Link de Stripe'
+  if (normalized === 'stripe_link') return 'Link de pago Stripe'
   if (normalized === 'conekta_subscription') return 'Conekta domiciliado'
+  if (normalized === 'conekta_link') return 'Link de pago Conekta'
+  if (normalized === 'mercadopago_checkout') return 'Link de pago Mercado Pago'
   if (normalized === 'mercadopago_subscription') return 'Suscripción Mercado Pago'
   if (normalized === 'manual') return 'Manual'
   return value || 'Sin método'
@@ -517,8 +537,8 @@ export const PaymentSubscriptions: React.FC = () => {
   const showGatewayStep = formMode === 'create' && formStep === 'gateway'
   const showStartMethodStep = formMode === 'create' && formStep === 'start_method'
   const showSavedCardStep = formMode === 'create' && formStep === 'saved_card'
-  const isMercadoPagoSelected = (formMode === 'edit' || showGatewayStep) && form.paymentMethod === 'mercadopago_subscription'
-  const isConektaSelected = (formMode === 'edit' || showGatewayStep || showSavedCardStep) && form.paymentMethod === 'conekta_subscription'
+  const isMercadoPagoSelected = (formMode === 'edit' || showGatewayStep) && ['mercadopago_subscription', 'mercadopago_checkout'].includes(form.paymentMethod)
+  const isConektaSelected = (formMode === 'edit' || showGatewayStep || showSavedCardStep) && ['conekta_subscription', 'conekta_link'].includes(form.paymentMethod)
   const startsByLink = isLinkPaymentMethod(form.paymentMethod)
   const hasStripeSavedCards = stripeConnected && savedPaymentMethods.length > 0
   const hasConektaSavedCards = conektaConnected && savedConektaPaymentSources.length > 0
@@ -612,7 +632,7 @@ export const PaymentSubscriptions: React.FC = () => {
       paymentMethod: fallback.value,
       paymentProvider: fallback.provider,
       startMode: getStartModeForPaymentMethod(fallback.value),
-      status: fallback.value === 'stripe_link' || fallback.value === 'mercadopago_subscription' ? 'incomplete' : 'active'
+      status: isLinkPaymentMethod(fallback.value) ? 'incomplete' : 'active'
     }))
   }, [availablePaymentMethodOptions, form.paymentMethod, formMode])
 
@@ -658,7 +678,7 @@ export const PaymentSubscriptions: React.FC = () => {
     if (mode === 'link') {
       const fallback = availableLinkPaymentMethodOptions[0]
       if (!fallback) {
-        showToast('warning', 'No hay pasarela de link', 'Conecta Stripe o Mercado Pago para generar un link de autorización.')
+        showToast('warning', 'No hay pasarela de link', 'Conecta Stripe, Conekta o Mercado Pago para generar un link de pago.')
         return
       }
 
@@ -788,7 +808,7 @@ export const PaymentSubscriptions: React.FC = () => {
     const provider = getPaymentProviderFromMethod(paymentMethod, form.paymentProvider)
     const contactEmail = selectedContact?.email || editingSubscription?.contactEmail || null
     const contactId = selectedContact?.id || editingSubscription?.contactId || null
-    const startByLink = paymentMethod === 'stripe_link' || paymentMethod === 'mercadopago_subscription'
+    const startByLink = isLinkPaymentMethod(paymentMethod)
 
     if (!contactId) {
       showToast('warning', 'Falta el contacto', 'Selecciona el contacto que va a tener esta suscripción.')
@@ -796,7 +816,7 @@ export const PaymentSubscriptions: React.FC = () => {
     }
 
     if (startByLink && !contactEmail) {
-      showToast('warning', 'Falta el email', `${provider === 'mercadopago' ? 'Mercado Pago' : 'Stripe'} necesita email para que el cliente autorice la suscripción.`)
+      showToast('warning', 'Falta el email', `${provider === 'mercadopago' ? 'Mercado Pago' : provider === 'conekta' ? 'Conekta' : 'Stripe'} necesita email para crear el link de pago.`)
       return null
     }
 
@@ -863,14 +883,14 @@ export const PaymentSubscriptions: React.FC = () => {
         return
       }
 
-      showToast('warning', 'Elige cómo iniciar', 'Selecciona si vas a enviar link de autorización o usar una tarjeta guardada.')
+      showToast('warning', 'Elige cómo iniciar', 'Selecciona si vas a enviar link de pago o usar una tarjeta guardada.')
       return
     }
 
     if (formMode === 'create' && formStep === 'gateway' && !availableLinkPaymentMethodOptions.some((option) => option.value === form.paymentMethod)) {
       const fallback = availableLinkPaymentMethodOptions[0]
       if (!fallback) {
-        showToast('warning', 'No hay pasarela de link', 'Conecta Stripe o Mercado Pago para crear un link de autorización.')
+        showToast('warning', 'No hay pasarela de link', 'Conecta Stripe, Conekta o Mercado Pago para crear un link de pago.')
         return
       }
       applyPaymentMethod(fallback)
@@ -893,8 +913,8 @@ export const PaymentSubscriptions: React.FC = () => {
       } else {
         const created = await subscriptionsService.createSubscription(payload)
         const startLink = getSubscriptionStartLink(created)
-        if (startLink && (created.paymentMethod === 'stripe_link' || created.paymentProvider === 'mercadopago')) {
-          showToast('success', 'Link de autorización listo', `Copia el link de ${payload.name} para que el cliente active la suscripción.`)
+        if (startLink && isLinkPaymentMethod(created.paymentMethod as SubscriptionPaymentMethod)) {
+          showToast('success', 'Link de pago listo', `Copia el link de ${payload.name} para que el cliente realice el primer pago.`)
         } else {
           showToast('success', 'Suscripción creada', `${payload.name} ya aparece en la lista.`)
         }
@@ -995,18 +1015,18 @@ export const PaymentSubscriptions: React.FC = () => {
   const copySubscriptionStartLink = async (subscription: PaymentSubscription) => {
     const link = getSubscriptionStartLink(subscription)
     if (!link) {
-      showToast('warning', 'Link no disponible', 'La pasarela todavía no devolvió un link de autorización para esta suscripción.')
+      showToast('warning', 'Link no disponible', 'Todavía no hay un link de pago público para esta suscripción.')
       return
     }
 
     await navigator.clipboard.writeText(link)
-    showToast('success', 'Link copiado', 'Ya puedes enviarlo al cliente para autorizar la suscripción.')
+    showToast('success', 'Link copiado', 'Ya puedes enviarlo al cliente para realizar el primer pago.')
   }
 
   const openSubscriptionStartLink = (subscription: PaymentSubscription) => {
     const link = getSubscriptionStartLink(subscription)
     if (!link) {
-      showToast('warning', 'Link no disponible', 'La pasarela todavía no devolvió un link de autorización para esta suscripción.')
+      showToast('warning', 'Link no disponible', 'Todavía no hay un link de pago público para esta suscripción.')
       return
     }
 
@@ -1108,9 +1128,9 @@ export const PaymentSubscriptions: React.FC = () => {
         const status = String(item.status || '').toLowerCase()
         const isMercadoPago = item.paymentProvider === 'mercadopago' || Boolean(item.mercadoPagoPreapprovalId)
         const startLink = getSubscriptionStartLink(item)
-        const isAuthorizationPending = Boolean(startLink) && status === 'incomplete'
+        const isPaymentLinkPending = Boolean(startLink) && status === 'incomplete'
         const canPause = status === 'active' || status === 'trialing'
-        const canActivate = (status === 'paused' || status === 'draft' || status === 'past_due' || status === 'incomplete') && !(isMercadoPago && status === 'incomplete') && !isAuthorizationPending
+        const canActivate = (status === 'paused' || status === 'draft' || status === 'past_due' || status === 'incomplete') && !(isMercadoPago && status === 'incomplete') && !isPaymentLinkPending
         const canCancel = status !== 'cancelled' && status !== 'deleted'
 
         return (
@@ -1135,11 +1155,11 @@ export const PaymentSubscriptions: React.FC = () => {
                   <>
                     <DropdownMenuItem disabled={busy} onClick={() => void copySubscriptionStartLink(item)}>
                       <Copy size={16} />
-                      <span>Copiar autorización</span>
+                      <span>Copiar link de pago</span>
                     </DropdownMenuItem>
                     <DropdownMenuItem disabled={busy} onClick={() => openSubscriptionStartLink(item)}>
                       <ExternalLink size={16} />
-                      <span>Abrir autorización</span>
+                      <span>Abrir link de pago</span>
                     </DropdownMenuItem>
                   </>
                 )}
@@ -1325,9 +1345,9 @@ export const PaymentSubscriptions: React.FC = () => {
                       <ExternalLink size={18} aria-hidden="true" />
                     </span>
                     <span>
-                      <strong>Enviar link de autorización</strong>
-                      <small>El cliente autoriza la suscripción desde una página segura de la pasarela.</small>
-                      <small>Después eliges si el link sale por Stripe o Mercado Pago.</small>
+                      <strong>Enviar link de pago</strong>
+                      <small>El cliente realiza el primer pago desde la página pública de Ristak.</small>
+                      <small>Después eliges si el link sale por Stripe, Conekta o Mercado Pago.</small>
                     </span>
                     <ExternalLink size={18} className={styles.gatewayOptionCheck} aria-hidden="true" />
                   </button>
@@ -1344,7 +1364,7 @@ export const PaymentSubscriptions: React.FC = () => {
                     </span>
                     <span>
                       <strong>Usar tarjeta guardada</strong>
-                      <small>Ristak inicia la suscripción con una tarjeta ya autorizada del contacto.</small>
+                      <small>Ristak inicia la suscripción con una tarjeta guardada del contacto.</small>
                       <small>Después eliges la tarjeta disponible en Stripe o Conekta.</small>
                     </span>
                     <CreditCard size={18} className={styles.gatewayOptionCheck} aria-hidden="true" />
@@ -1355,7 +1375,7 @@ export const PaymentSubscriptions: React.FC = () => {
               <div className={styles.gatewayPicker}>
                 {availableLinkPaymentMethodOptions.map((option) => {
                   const active = form.paymentMethod === option.value
-                  const providerName = option.provider === 'mercadopago' ? 'Mercado Pago' : 'Stripe'
+                  const providerName = option.provider === 'mercadopago' ? 'Mercado Pago' : option.provider === 'conekta' ? 'Conekta' : 'Stripe'
                   return (
                     <button
                       key={option.value}
@@ -1595,7 +1615,7 @@ export const PaymentSubscriptions: React.FC = () => {
                       ...current,
                       paymentMethod: (option?.value || 'stripe_saved_card') as SubscriptionPaymentMethod,
                       paymentProvider: option?.provider || 'stripe',
-                      status: option?.value === 'stripe_link' || option?.value === 'mercadopago_subscription' ? 'incomplete' : current.status
+                      status: option?.value && isLinkPaymentMethod(option.value) ? 'incomplete' : current.status
                     }))
                   }}
                 >
@@ -1611,11 +1631,15 @@ export const PaymentSubscriptions: React.FC = () => {
                 <PaymentPlatformLogo platform={isMercadoPagoSelected ? 'mercadopago' : isConektaSelected ? 'conekta' : 'stripe'} size="sm" decorative />
                 <p className={styles.formHint}>
                   {isMercadoPagoSelected
-                    ? 'Mercado Pago creará una autorización de suscripción. Copia el link y envíalo al cliente; los cobros se activan cuando acepte el método de pago.'
+                    ? form.paymentMethod === 'mercadopago_checkout'
+                      ? 'Mercado Pago usará el link público de Ristak para cobrar el primer pago de la suscripción.'
+                      : 'Mercado Pago manejará esta suscripción desde su propio sistema.'
                     : isConektaSelected
-                      ? 'Para cobros automáticos con Conekta, el contacto debe tener una tarjeta guardada. Ristak usará la tarjeta predeterminada del contacto.'
+                      ? form.paymentMethod === 'conekta_link'
+                        ? 'Conekta usará el link público de Ristak para cobrar el primer pago y guardar la tarjeta.'
+                        : 'Para cobros automáticos con Conekta, el contacto debe tener una tarjeta guardada. Ristak usará la tarjeta predeterminada del contacto.'
                       : form.paymentMethod === 'stripe_link'
-                        ? 'Stripe generará un Checkout de suscripción. Copia el link y envíalo al cliente; Ristak la activará cuando Stripe confirme la autorización.'
+                        ? 'Stripe usará el link público de Ristak para cobrar el primer pago y guardar la tarjeta.'
                         : 'Para cobros automáticos con Stripe, el contacto debe tener una tarjeta guardada. Ristak usará la tarjeta predeterminada del contacto.'}
                 </p>
               </div>
@@ -1636,7 +1660,7 @@ export const PaymentSubscriptions: React.FC = () => {
                 {formMode === 'edit'
                   ? 'Guardar suscripción'
                   : showGatewayStep
-                    ? startsByLink ? 'Crear link de autorización' : 'Crear suscripción'
+                    ? startsByLink ? 'Crear link de pago' : 'Crear suscripción'
                     : showSavedCardStep
                       ? 'Crear suscripción'
                     : showStartMethodStep

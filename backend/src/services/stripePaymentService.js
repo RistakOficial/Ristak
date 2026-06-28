@@ -1197,13 +1197,13 @@ export async function createStripePaymentIntent(publicPaymentId, options = {}) {
           {
             customer: stripeCustomerId,
             setup_future_usage: 'off_session',
-            metadata: {
-              ...existing.metadata,
-              save_payment_method: '1',
-              stripe_customer_id: stripeCustomerId,
-              payment_method_authorization: 'public_invoice_payment'
-            }
-          },
+              metadata: {
+                ...existing.metadata,
+                save_payment_method: '1',
+                stripe_customer_id: stripeCustomerId,
+                payment_method_setup_source: 'public_payment_link'
+              }
+            },
           requestOptions
         )
         return {
@@ -1236,7 +1236,7 @@ export async function createStripePaymentIntent(publicPaymentId, options = {}) {
     contact_id: row.contact_id || '',
     stripe_customer_id: stripeCustomerId || '',
     save_payment_method: savePaymentMethod && stripeCustomerId ? '1' : '0',
-    payment_method_authorization: savePaymentMethod && stripeCustomerId ? 'public_invoice_payment' : '',
+    payment_method_setup_source: savePaymentMethod && stripeCustomerId ? 'public_payment_link' : '',
     ...(paymentPlanMetadata?.flowId ? { ristak_flow_id: cleanString(paymentPlanMetadata.flowId) } : {}),
     ...(paymentPlanMetadata?.installmentId ? { ristak_installment_id: cleanString(paymentPlanMetadata.installmentId) } : {}),
     ...(paymentPlanMetadata?.trigger ? { ristak_plan_trigger: cleanString(paymentPlanMetadata.trigger) } : {})
@@ -1365,6 +1365,12 @@ async function updatePaymentFromIntent(intent, stripeContext = null) {
         savedMethod,
         context.config
       )
+      if (savedMethod) {
+        await activateStripeSubscriptionFromStartPayment(
+          { ...row, status: nextStatus, stripe_payment_intent_id: intent.id, paid_at: paidAt || row.paid_at },
+          savedMethod
+        )
+      }
     } catch (error) {
       logger.warn(`No se pudo guardar la tarjeta Stripe del pago ${whereValue}: ${error.message}`)
     }
@@ -1476,6 +1482,137 @@ function mapStripeSubscriptionStatus(status, fallback = 'active') {
   if (normalized === 'canceled' || normalized === 'cancelled') return 'cancelled'
   if (normalized === 'incomplete' || normalized === 'incomplete_expired') return 'incomplete'
   return fallback
+}
+
+function addSubscriptionMonths(date, months) {
+  const next = new Date(date)
+  const originalDay = next.getDate()
+  next.setMonth(next.getMonth() + months)
+  if (next.getDate() !== originalDay) next.setDate(0)
+  return next
+}
+
+function addSubscriptionInterval(date, intervalType, intervalCount) {
+  const next = new Date(date)
+  const count = Math.max(1, Number.parseInt(intervalCount, 10) || 1)
+  const interval = cleanString(intervalType || 'monthly').toLowerCase()
+
+  if (interval === 'daily') {
+    next.setDate(next.getDate() + count)
+    return next
+  }
+
+  if (interval === 'weekly') {
+    next.setDate(next.getDate() + (7 * count))
+    return next
+  }
+
+  if (interval === 'yearly') return addSubscriptionMonths(next, 12 * count)
+  return addSubscriptionMonths(next, count)
+}
+
+function getSubscriptionStartMetadata(paymentRow = {}) {
+  const metadata = parseJson(paymentRow.metadata_json, {})
+  const start = metadata.subscriptionStart && typeof metadata.subscriptionStart === 'object'
+    ? metadata.subscriptionStart
+    : {}
+  return {
+    metadata,
+    subscriptionId: cleanString(start.subscriptionId || metadata.ristakSubscriptionId || metadata.ristak_subscription_id),
+    provider: cleanString(start.paymentProvider || paymentRow.payment_provider),
+    method: cleanString(start.paymentMethod || paymentRow.payment_method)
+  }
+}
+
+async function activateStripeSubscriptionFromStartPayment(paymentRow = {}, savedMethod = null) {
+  const { subscriptionId, provider } = getSubscriptionStartMetadata(paymentRow)
+  if (!subscriptionId || provider !== 'stripe' || !savedMethod) return null
+
+  const subscription = await db.get(
+    `SELECT *
+     FROM subscriptions
+     WHERE id = ?
+     LIMIT 1`,
+    [subscriptionId]
+  )
+
+  if (!subscription || subscription.stripe_subscription_id) return null
+
+  const paidAt = paymentRow.paid_at || new Date().toISOString()
+  const baseDate = new Date(paidAt)
+  const nextStart = addSubscriptionInterval(
+    Number.isNaN(baseDate.getTime()) ? new Date() : baseDate,
+    subscription.interval_type,
+    subscription.interval_count
+  ).toISOString()
+
+  const stripeSubscription = await createStripeRecurringSubscription({
+    ristakSubscriptionId: subscription.id,
+    contactId: subscription.contact_id,
+    name: subscription.name,
+    description: subscription.description,
+    amount: subscription.amount,
+    currency: subscription.currency,
+    intervalType: subscription.interval_type,
+    intervalCount: subscription.interval_count,
+    startDate: nextStart,
+    cancelAt: subscription.cancel_at,
+    paymentMethodId: savedMethod.stripe_payment_method_id,
+    contactName: subscription.contact_name,
+    contactEmail: subscription.contact_email,
+    contactPhone: subscription.contact_phone
+  })
+
+  const metadata = parseJson(subscription.metadata_json, {})
+  const raw = parseJson(subscription.raw_json, {})
+  await db.run(
+    `UPDATE subscriptions
+     SET status = ?,
+         payment_method = 'stripe_saved_card',
+         payment_provider = 'stripe',
+         payment_mode = ?,
+         stripe_customer_id = ?,
+         stripe_subscription_id = ?,
+         stripe_product_id = ?,
+         stripe_price_id = ?,
+         stripe_payment_method_id = ?,
+         current_period_start = ?,
+         current_period_end = ?,
+         next_run_at = ?,
+         metadata_json = ?,
+         raw_json = ?,
+         updated_at = CURRENT_TIMESTAMP
+     WHERE id = ?`,
+    [
+      stripeSubscription.status || 'active',
+      stripeSubscription.paymentMode || subscription.payment_mode,
+      stripeSubscription.stripeCustomerId || subscription.stripe_customer_id,
+      stripeSubscription.stripeSubscriptionId || subscription.stripe_subscription_id,
+      stripeSubscription.stripeProductId || subscription.stripe_product_id,
+      stripeSubscription.stripePriceId || subscription.stripe_price_id,
+      stripeSubscription.stripePaymentMethodId || savedMethod.stripe_payment_method_id,
+      stripeSubscription.currentPeriodStart || subscription.current_period_start,
+      stripeSubscription.currentPeriodEnd || subscription.current_period_end,
+      stripeSubscription.nextRunAt || nextStart,
+      JSON.stringify({
+        ...metadata,
+        subscriptionStartPayment: {
+          ...(metadata.subscriptionStartPayment && typeof metadata.subscriptionStartPayment === 'object' ? metadata.subscriptionStartPayment : {}),
+          paymentId: paymentRow.id,
+          publicPaymentId: paymentRow.public_payment_id,
+          status: 'paid',
+          activatedAt: new Date().toISOString()
+        }
+      }),
+      JSON.stringify({
+        ...raw,
+        stripeSubscriptionStart: stripeSubscription.raw || stripeSubscription
+      }),
+      subscription.id
+    ]
+  )
+
+  return db.get('SELECT * FROM subscriptions WHERE id = ?', [subscription.id])
 }
 
 function getInvoiceLinePeriod(invoice = {}) {

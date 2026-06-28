@@ -46,6 +46,10 @@ export interface PaymentSubscription {
   conektaSubscriptionId?: string | null
   conektaPaymentSourceId?: string | null
   conektaNextBillingAt?: string | null
+  subscriptionStartPaymentId?: string | null
+  subscriptionStartPublicPaymentId?: string | null
+  subscriptionStartPaymentProvider?: string | null
+  subscriptionStartPaymentStatus?: string | null
   subscriptionStartUrl?: string | null
   metadata?: Record<string, unknown> | null
   raw?: Record<string, unknown> | null
