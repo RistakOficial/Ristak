@@ -52,6 +52,7 @@ async function cleanup(contactId, phone, extraPhones = []) {
     await db.run('DELETE FROM contact_phone_numbers WHERE contact_id = ? OR phone = ?', [contactId, phoneValue]).catch(() => undefined)
   }
   await db.run('DELETE FROM meta_social_messages WHERE contact_id = ?', [contactId]).catch(() => undefined)
+  await db.run('DELETE FROM email_messages WHERE contact_id = ?', [contactId]).catch(() => undefined)
   await db.run('DELETE FROM contacts WHERE id = ? OR phone = ?', [contactId, phone]).catch(() => undefined)
 }
 
@@ -262,6 +263,61 @@ test('contact journey defaults to contact-authored messages only', async () => {
         'meta_message:inbound:DM del contacto',
         'meta_message:outbound:DM del negocio'
       ]
+    )
+  } finally {
+    await cleanup(contactId, phone)
+  }
+})
+
+test('contact journey messageLimit returns the most recent chat messages in chronological order', async () => {
+  const id = randomUUID()
+  const contactId = `journey_recent_${id}`
+  const phone = `+52992${Date.now().toString().slice(-7)}`
+
+  await cleanup(contactId, phone)
+
+  try {
+    await insertRow('contacts', {
+      id: contactId,
+      phone,
+      full_name: 'Cliente con mucho historial',
+      first_name: 'Cliente',
+      source: 'manual',
+      created_at: '2026-06-17T09:00:00.000Z',
+      updated_at: '2026-06-17T09:00:00.000Z'
+    })
+
+    for (let index = 0; index < 10; index += 1) {
+      const timestamp = `2026-06-17T10:${String(index).padStart(2, '0')}:00.000Z`
+      await insertRow('whatsapp_api_messages', {
+        id: `api_recent_${id}_${index}`,
+        contact_id: contactId,
+        phone,
+        from_phone: index % 2 === 0 ? phone : '+526561000000',
+        to_phone: index % 2 === 0 ? '+526561000000' : phone,
+        business_phone: '+526561000000',
+        transport: 'api',
+        direction: index % 2 === 0 ? 'inbound' : 'outbound',
+        message_type: 'text',
+        message_text: `Mensaje ${index}`,
+        message_timestamp: timestamp,
+        created_at: timestamp
+      })
+    }
+
+    const fullJourney = await readJourney(contactId, { includeBusinessMessages: 'true' })
+    const fullMessages = fullJourney.filter(event => event.type === 'whatsapp_message')
+    assert.equal(fullMessages.length, 10)
+
+    const limitedJourney = await readJourney(contactId, {
+      includeBusinessMessages: 'true',
+      messageLimit: '3'
+    })
+    const limitedMessages = limitedJourney.filter(event => event.type === 'whatsapp_message')
+
+    assert.deepEqual(
+      limitedMessages.map(event => event.data.message_text),
+      ['Mensaje 7', 'Mensaje 8', 'Mensaje 9']
     )
   } finally {
     await cleanup(contactId, phone)

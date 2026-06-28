@@ -27,6 +27,7 @@ export interface JourneyEvent {
 interface ContactJourneyOptions {
   includeBusinessMessages?: boolean
   refreshExternalStatuses?: boolean
+  messageLimit?: number
 }
 
 interface ContactChartData {
@@ -352,6 +353,9 @@ export const contactsService = {
       const params: Record<string, string> = {}
       if (options.includeBusinessMessages) params.includeBusinessMessages = 'true'
       if (options.refreshExternalStatuses === false) params.refreshExternalStatuses = 'false'
+      if (options.messageLimit && Number.isFinite(options.messageLimit) && options.messageLimit > 0) {
+        params.messageLimit = String(Math.round(options.messageLimit))
+      }
 
       const data = await apiClient.get<JourneyEvent[]>(`/contacts/${id}/journey`, {
         params: Object.keys(params).length > 0 ? params : undefined

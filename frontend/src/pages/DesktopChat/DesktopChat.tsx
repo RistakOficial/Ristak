@@ -282,6 +282,7 @@ const CHAT_CACHE_STALE_MAX_AGE_MS = 24 * 60 * 60 * 1000
 const CHAT_CACHE_ENTRY_LIMIT = 400
 const CHAT_CONVERSATION_CACHE_MAX_AGE_MS = 24 * 60 * 60 * 1000
 const CHAT_CONVERSATION_CACHE_MAX_ENTRY_CHARS = 360_000
+const CHAT_CONVERSATION_MESSAGE_LIMIT = 250
 const CHAT_REFRESH_INTERVAL_MS = 20000
 // Lotes amplios: el endpoint ya pagina, pero una app de chat no debe hacer esperar cada
 // 30 filas. Con 100 se reducen viajes y la lista queda lista antes de que el usuario toque fondo.
@@ -2987,7 +2988,11 @@ export const DesktopChat: React.FC = () => {
     setMessagesError('')
     try {
       const [journey, scheduledMessages, details, contactAgentStates, agentCompletions] = await Promise.all([
-        contactsService.getContactJourney(contactId, { includeBusinessMessages: true, refreshExternalStatuses: false }),
+        contactsService.getContactJourney(contactId, {
+          includeBusinessMessages: true,
+          refreshExternalStatuses: false,
+          messageLimit: CHAT_CONVERSATION_MESSAGE_LIMIT
+        }),
         whatsappApiService.getScheduledMessages(contactId).catch(() => []),
         contactsService.getContactDetails(contactId).catch(() => null),
         conversationalAgentService.getStates(contactId).catch(() => [] as ConversationAgentState[]),

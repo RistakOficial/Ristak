@@ -157,6 +157,7 @@ const CHAT_LIST_PREFETCH_VIEWPORTS = 3
 // página pinta al instante y el resto se trae solo, lote por lote, para que aparezcan TODAS las
 // conversaciones sin depender del scroll. Pasado el tope, el resto se carga con prefetch.
 const CHAT_LIST_BACKGROUND_LOAD_CAP = 1000
+const CHAT_CONVERSATION_MESSAGE_LIMIT = 250
 const PAYMENT_BANK_CLABES_CONFIG_KEY = 'payment_bank_clabes'
 const CONTACT_INFO_CUSTOM_FIELDS_CONFIG_KEY = 'mobile_chat_contact_info_custom_field_ids'
 const AI_AGENT_CHAT_ID = 'ristak-ai-agent-mobile-chat'
@@ -5292,7 +5293,11 @@ export const PhoneChat: React.FC = () => {
 
     try {
       const [journey, scheduledMessages, agentCompletions] = await Promise.all([
-        contactsService.getContactJourney(contactId, { includeBusinessMessages: true, refreshExternalStatuses: false }),
+        contactsService.getContactJourney(contactId, {
+          includeBusinessMessages: true,
+          refreshExternalStatuses: false,
+          messageLimit: CHAT_CONVERSATION_MESSAGE_LIMIT
+        }),
         whatsappApiService.getScheduledMessages(contactId).catch(() => []),
         conversationalAgentService.listCompletionEvents({ contactId, limit: 20 }).catch(() => [])
       ])
