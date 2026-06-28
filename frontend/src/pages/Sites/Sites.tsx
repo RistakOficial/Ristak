@@ -401,6 +401,23 @@ const normalizeMetaBoolean = (value: unknown) => (
   value === true || value === 1 || value === '1' || value === 'true' || value === 'yes' || value === 'on'
 )
 
+const readConfigObject = (value: unknown): Record<string, unknown> => {
+  if (value && typeof value === 'object' && !Array.isArray(value)) return value as Record<string, unknown>
+  if (typeof value !== 'string') return {}
+  try {
+    const parsed = JSON.parse(value)
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed)
+      ? parsed as Record<string, unknown>
+      : {}
+  } catch {
+    return {}
+  }
+}
+
+const isPaymentPurchaseMetaEnabled = (value: unknown) => (
+  normalizeMetaBoolean(readConfigObject(value).enabled)
+)
+
 type SiteMetaParameterFieldKey = Exclude<keyof SiteMetaEventParameters, 'custom' | 'currency' | 'status'>
 
 const metaParameterFieldLabels: Record<SiteMetaParameterFieldKey, string> = {
@@ -6834,6 +6851,42 @@ const getMetaDetectedCalendarSurfaces = (
     })
 }
 
+const getMetaDetectedPaymentSurfaces = (
+  blocks: SiteBlock[] = [],
+  pages: SitePage[] = [],
+  activePage?: SitePage | null,
+  currencyFallback = 'MXN'
+): MetaDetectedSurface[] => {
+  const activePageId = activePage?.id || pages[0]?.id || DEFAULT_FUNNEL_PAGE_ID
+  const surfaces: MetaDetectedSurface[] = []
+
+  const visitBlocks = (items: SiteBlock[] = [], parentPageId = '') => {
+    items.forEach((block) => {
+      const blockPageId = parentPageId || getBlockPageId(block, pages)
+      const settings = block.settings || {}
+
+      if (block.blockType === 'payment' && blockPageId === activePageId) {
+        const paymentGate = getPaymentGateFromSettings(settings, currencyFallback)
+        if (paymentGate.enabled && paymentGate.amount > 0) {
+          surfaces.push({
+            id: `payment-block:${block.id || surfaces.length + 1}`,
+            label: paymentGate.productName || block.label || `Pago ${surfaces.length + 1}`,
+            detail: `${formatPaymentAmount(paymentGate.amount, paymentGate.currency)} · ${getPaymentGatewayLabel(paymentGate.gateway)}`
+          })
+        }
+      }
+
+      const embeddedBlocks = Array.isArray(settings.embeddedBlocks)
+        ? settings.embeddedBlocks as SiteBlock[]
+        : []
+      if (embeddedBlocks.length) visitBlocks(embeddedBlocks, blockPageId)
+    })
+  }
+
+  visitBlocks(blocks)
+  return surfaces
+}
+
 const getVideoFormGateSourceId = (block?: SiteBlock | null) => (
   getSettingString(block?.settings || {}, 'videoFormGateFormSiteId') ||
   getSettingString(block?.settings || {}, 'video_form_gate_form_site_id')
@@ -8315,6 +8368,11 @@ export const Sites: React.FC = () => {
     librarySettingsImportData
   )
   const librarySettingsMetaDetectedCalendars = getMetaDetectedCalendarSurfaces(
+    librarySettingsSite?.blocks || [],
+    librarySettingsPages,
+    librarySettingsActivePage
+  )
+  const librarySettingsMetaDetectedPayments = getMetaDetectedPaymentSurfaces(
     librarySettingsSite?.blocks || [],
     librarySettingsPages,
     librarySettingsActivePage
@@ -12655,6 +12713,11 @@ export const Sites: React.FC = () => {
     editorToolbarSettingsPages,
     editorToolbarSettingsActivePage
   )
+  const editorToolbarMetaDetectedPayments = getMetaDetectedPaymentSurfaces(
+    blocks,
+    editorToolbarSettingsPages,
+    editorToolbarSettingsActivePage
+  )
   const patchEditorToolbarSettingsSite = updateSelectedSite
   const patchEditorToolbarSettingsTheme = patchSiteTheme
   const saveEditorToolbarSettingsSite = () => handleSaveSite(undefined, { silent: true })
@@ -12802,6 +12865,7 @@ export const Sites: React.FC = () => {
                         hasFormSubmitMetaSettings={editorToolbarHasFormSubmitMetaSettings}
                         metaDetectedForms={editorToolbarMetaDetectedForms}
                         metaDetectedCalendars={editorToolbarMetaDetectedCalendars}
+                        metaDetectedPayments={editorToolbarMetaDetectedPayments}
                         disabled={editorAIGenerating}
                         canEditHeader={hasEditablePages(editorToolbarSettingsSite)}
                         routeValue={getRouteEditorValue(editorToolbarSettingsSite)}
@@ -12938,6 +13002,7 @@ export const Sites: React.FC = () => {
                   hasFormSubmitMetaSettings={librarySettingsHasFormSubmitMetaSettings}
                   metaDetectedForms={librarySettingsMetaDetectedForms}
                   metaDetectedCalendars={librarySettingsMetaDetectedCalendars}
+                  metaDetectedPayments={librarySettingsMetaDetectedPayments}
                   disabled={librarySettingsLoading}
                   canEditHeader={hasEditablePages(librarySettingsSite)}
                   routeValue={getRouteEditorValue(librarySettingsSite)}
@@ -26467,6 +26532,7 @@ const MetaPageConversionSettingsPanel: React.FC<{
   disabled?: boolean
   formSurfaces: MetaDetectedSurface[]
   calendarSurfaces: MetaDetectedSurface[]
+  paymentSurfaces: MetaDetectedSurface[]
   onPatchSite: (patch: Partial<PublicSite>) => void
   onPatchTheme: (patch: Partial<SiteTheme>) => void
   onSaveSite: () => void | Promise<void>
@@ -26477,14 +26543,17 @@ const MetaPageConversionSettingsPanel: React.FC<{
   disabled,
   formSurfaces,
   calendarSurfaces,
+  paymentSurfaces,
   onPatchSite,
   onPatchTheme,
   onSaveSite
 }) => {
   const [detailsOpen, setDetailsOpen] = useState(false)
   const [calendarParamsOpen, setCalendarParamsOpen] = useState<Record<string, boolean>>({})
+  const [paymentMetaPurchaseEventConfigRaw] = useAppConfig('meta_payment_purchase_event_config', { enabled: false })
   const metaParameterVariables = useMetaParameterVariables(site)
   const metaEnabled = Boolean(site.metaCapiEnabled)
+  const paymentPurchaseEnabled = isPaymentPurchaseMetaEnabled(paymentMetaPurchaseEventConfigRaw)
   const activePageEventName = activePage.metaCapiEnabled
     ? normalizeMetaEventName(activePage.metaEventName, 'none')
     : 'none'
@@ -26501,15 +26570,18 @@ const MetaPageConversionSettingsPanel: React.FC<{
   const configuredCount = [
     activePageHasConversion,
     formSurfaces.length > 0 && submitActive,
-    activeCalendarCount > 0
+    activeCalendarCount > 0,
+    paymentSurfaces.length > 0 && paymentPurchaseEnabled
   ].filter(Boolean).length
-  const detectedCount = formSurfaces.length + calendarSurfaces.length
+  const detectedCount = formSurfaces.length + calendarSurfaces.length + paymentSurfaces.length
   const summaryText = !metaEnabled
     ? 'Apagado para este sitio'
     : detailsOpen
-      ? `${detectedCount ? `${detectedCount} elemento${detectedCount === 1 ? '' : 's'} detectado${detectedCount === 1 ? '' : 's'}` : 'Sin formularios ni calendarios detectados'}`
+      ? `${detectedCount ? `${detectedCount} elemento${detectedCount === 1 ? '' : 's'} detectado${detectedCount === 1 ? '' : 's'}` : 'Sin formularios, calendarios ni pagos detectados'}`
       : configuredCount
         ? `${configuredCount} disparador${configuredCount === 1 ? '' : 'es'} configurado${configuredCount === 1 ? '' : 's'}`
+        : paymentSurfaces.length
+          ? 'Pago detectado · activa Purchase en Pagos'
         : 'Activo sin eventos configurados'
 
   const saveSoon = useCallback(() => {
@@ -26732,6 +26804,32 @@ const MetaPageConversionSettingsPanel: React.FC<{
                   </div>
                 )
               })}
+            </div>
+          )}
+
+          {paymentSurfaces.length > 0 && (
+            <div className={styles.editorSettingsMetaDetectedList}>
+              {paymentSurfaces.map((surface, index) => (
+                <div key={surface.id} className={styles.editorSettingsMetaDetectedItem}>
+                  <div className={styles.editorSettingsMetaDetectedHeader}>
+                    <span className={styles.editorSettingsSectionIcon} aria-hidden="true"><DollarSign size={15} /></span>
+                    <div>
+                      <strong>{surface.label || `Pago ${index + 1}`}</strong>
+                      <span>{surface.detail}</span>
+                    </div>
+                  </div>
+                  <div className={styles.editorSettingsMetaStaticTrigger}>
+                    <div>
+                      <strong>Evento al completar pago: Purchase</strong>
+                      <span>
+                        {paymentPurchaseEnabled
+                          ? 'Se enviará automáticamente desde la configuración global de pagos.'
+                          : 'Activa Purchase en Configuración > Pagos > Meta.'}
+                      </span>
+                    </div>
+                  </div>
+                </div>
+              ))}
             </div>
           )}
         </div>
@@ -26974,6 +27072,7 @@ const SiteSettingsPanelContent: React.FC<{
   hasFormSubmitMetaSettings?: boolean
   metaDetectedForms?: MetaDetectedSurface[]
   metaDetectedCalendars?: MetaDetectedSurface[]
+  metaDetectedPayments?: MetaDetectedSurface[]
   disabled?: boolean
   canEditHeader: boolean
   routeValue: string
@@ -26995,6 +27094,7 @@ const SiteSettingsPanelContent: React.FC<{
   hasFormSubmitMetaSettings,
   metaDetectedForms = [],
   metaDetectedCalendars = [],
+  metaDetectedPayments = [],
   disabled,
   canEditHeader,
   routeValue,
@@ -27014,6 +27114,9 @@ const SiteSettingsPanelContent: React.FC<{
   const formSurfaces = showFormSubmitMetaSettings
     ? (metaDetectedForms.length ? metaDetectedForms : getMetaDetectedFormSurfaces(site, site.blocks || [], pages, activePage))
     : []
+  const paymentSurfaces = metaDetectedPayments.length
+    ? metaDetectedPayments
+    : getMetaDetectedPaymentSurfaces(site.blocks || [], pages, activePage)
 
   const openNestedPanel = (callback: () => void) => {
     onBeforeOpenNested?.()
@@ -27096,6 +27199,7 @@ const SiteSettingsPanelContent: React.FC<{
               disabled={disabled}
               formSurfaces={formSurfaces}
               calendarSurfaces={metaDetectedCalendars}
+              paymentSurfaces={paymentSurfaces}
               onPatchSite={onPatchSite}
               onPatchTheme={onPatchTheme}
               onSaveSite={onSaveSite}
@@ -27140,6 +27244,7 @@ const EditorSettingsDropdown: React.FC<{
   hasFormSubmitMetaSettings?: boolean
   metaDetectedForms?: MetaDetectedSurface[]
   metaDetectedCalendars?: MetaDetectedSurface[]
+  metaDetectedPayments?: MetaDetectedSurface[]
   disabled?: boolean
   canEditHeader: boolean
   routeValue: string

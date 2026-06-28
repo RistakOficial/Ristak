@@ -4,7 +4,10 @@ import http from 'node:http'
 
 import { db, setAppConfig } from '../src/config/database.js'
 import { API_URLS } from '../src/config/constants.js'
-import { triggerMetaPaymentPurchaseEvent } from '../src/services/metaConversionEventsService.js'
+import {
+  buildMetaPublicPurchasePixelEvent,
+  triggerMetaPaymentPurchaseEvent
+} from '../src/services/metaConversionEventsService.js'
 import { saveAccountLocaleSettings } from '../src/utils/accountLocale.js'
 import { encrypt, initializeMasterKey } from '../src/utils/encryption.js'
 
@@ -536,6 +539,134 @@ test('payment smart default falls back to website Purchase data without WhatsApp
   } finally {
     if (metaServer) await new Promise(resolve => metaServer.close(resolve))
     if (previousMetaGraphDescriptor) Object.defineProperty(API_URLS, 'META_GRAPH', previousMetaGraphDescriptor)
+    await deletePaymentMetaTestContact(contactId)
+  }
+})
+
+test('public payment pixel event is built for smart website Purchase without WhatsApp attribution', async () => {
+  const contactId = 'contact_meta_public_pixel_site'
+
+  try {
+    await initializeMasterKey()
+
+    await snapshotMetaConfig(async () => {
+      await snapshotAppConfig(APP_CONFIG_KEYS, async () => {
+        await deletePaymentMetaTestContact(contactId)
+        await db.run(
+          `INSERT INTO contacts (id, email, full_name, phone, source, created_at, updated_at)
+           VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+          [contactId, 'pixel-buyer@example.test', 'Pixel Buyer', '+525512345682', 'site']
+        )
+
+        await insertMetaPixelConfig({ pixelId: 'pixel-public-payment-123' })
+        await saveAccountLocaleSettings({ countryCode: 'MX', currency: 'MXN', dialCode: '52' })
+        await setAppConfig('meta_payment_purchase_event_config', JSON.stringify({
+          enabled: true,
+          channel: 'smart',
+          eventName: 'Purchase',
+          parameters: {
+            sendValue: true,
+            usePaymentPlanTotalValue: false,
+            value: '',
+            predictedLtv: '',
+            custom: [{ key: 'checkout_source', value: 'payment_block' }]
+          }
+        }))
+
+        const event = await buildMetaPublicPurchasePixelEvent({
+          id: 'payment_meta_public_pixel_1',
+          contact_id: contactId,
+          amount: 456.78,
+          status: 'paid',
+          payment_provider: 'stripe',
+          payment_method: 'stripe',
+          payment_mode: 'live',
+          public_payment_id: 'public_pixel_1',
+          payment_url: 'https://checkout.example.test/pay/public_pixel_1?email=pixel-buyer@example.test&fbclid=fb.pixel',
+          title: 'Bloque de pago'
+        })
+
+        assert.equal(event.pixelId, 'pixel-public-payment-123')
+        assert.equal(event.eventName, 'Purchase')
+        assert.equal(event.eventId, `purchase_contact_${contactId}`)
+        assert.equal(event.customData.value, 456.78)
+        assert.equal(event.customData.currency, 'MXN')
+        assert.equal(event.customData.payment_id, 'payment_meta_public_pixel_1')
+        assert.equal(event.customData.payment_status, 'paid')
+        assert.equal(event.customData.payment_provider, 'stripe')
+        assert.equal(event.customData.public_payment_id, 'public_pixel_1')
+        assert.equal(event.customData.order_id, 'public_pixel_1')
+        assert.equal(event.customData.content_name, 'Bloque de pago')
+        assert.equal(event.customData.checkout_source, 'payment_block')
+      })
+    })
+  } finally {
+    await deletePaymentMetaTestContact(contactId)
+  }
+})
+
+test('public payment pixel event is skipped for smart WhatsApp-attributed payments', async () => {
+  const contactId = 'contact_meta_public_pixel_whatsapp'
+
+  try {
+    await initializeMasterKey()
+
+    await snapshotMetaConfig(async () => {
+      await snapshotAppConfig(APP_CONFIG_KEYS, async () => {
+        await deletePaymentMetaTestContact(contactId)
+        await db.run(
+          `INSERT INTO contacts (id, email, full_name, phone, source, created_at, updated_at)
+           VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+          [contactId, 'pixel-wa-buyer@example.test', 'Pixel WA Buyer', '+525512345683', 'whatsapp']
+        )
+        await db.run(
+          `INSERT INTO whatsapp_attribution (
+             contact_id, phone, referral_ctwa_clid, referral_source_id, referral_source_type,
+             referral_source_url, referral_headline, ad_id_thru_message, created_at
+           ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)`,
+          [
+            contactId,
+            '+525512345683',
+            'ctwa-public-payment-123',
+            'ad-public-payment-1',
+            'ad',
+            'https://fb.example.test/ad/public-payment',
+            'Public payment ad',
+            'ad-public-payment-1'
+          ]
+        )
+
+        await insertMetaPixelConfig({ pixelId: 'pixel-public-payment-wa-123', pageId: 'page-public-payment-wa' })
+        await saveAccountLocaleSettings({ countryCode: 'MX', currency: 'MXN', dialCode: '52' })
+        await setAppConfig('meta_payment_purchase_event_config', JSON.stringify({
+          enabled: true,
+          channel: 'smart',
+          eventName: 'Purchase',
+          parameters: {
+            sendValue: true,
+            usePaymentPlanTotalValue: false,
+            value: '',
+            predictedLtv: '',
+            custom: []
+          }
+        }))
+
+        const event = await buildMetaPublicPurchasePixelEvent({
+          id: 'payment_meta_public_pixel_wa',
+          contact_id: contactId,
+          amount: 650,
+          status: 'paid',
+          payment_provider: 'conekta',
+          payment_method: 'conekta',
+          payment_mode: 'live',
+          public_payment_id: 'public_pixel_wa',
+          payment_url: 'https://checkout.example.test/pay/public_pixel_wa'
+        })
+
+        assert.equal(event, null)
+      })
+    })
+  } finally {
     await deletePaymentMetaTestContact(contactId)
   }
 })

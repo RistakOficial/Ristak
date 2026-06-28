@@ -11,7 +11,10 @@ import { registerGigstackPaymentForTransactionInBackground } from './gigstackInv
 import { dispatchProductPostWebhooksForPaymentInBackground } from './productPostWebhookService.js'
 import { sendPaymentNotification } from './pushNotificationsService.js'
 import { getPaymentPlanAuditSummary, hardDeleteTestPaymentPlan } from './paymentRecordSafetyService.js'
-import { buildMetaPublicPurchasePixelEvent } from './metaConversionEventsService.js'
+import {
+  buildMetaPublicPurchasePixelEvent,
+  triggerMetaPaymentPurchaseEvent
+} from './metaConversionEventsService.js'
 import { createPublicPaymentId, createRistakPaymentEntityId } from '../utils/idGenerator.js'
 import {
   DEFAULT_TIMEZONE as ACCOUNT_DEFAULT_TIMEZONE,
@@ -1871,6 +1874,10 @@ async function updatePaymentFromOrder(order, row, { paymentSourceId = '' } = {})
       .catch((error) => {
         logger.warn(`No se pudo encolar comprobante por pago Conekta ${updated.id}: ${error.message}`)
       })
+    triggerMetaPaymentPurchaseEvent(updated.contact_id, { ...updated, status: nextStatus })
+      .catch((error) => {
+        logger.warn(`No se pudo enviar Purchase a Meta para pago Conekta ${updated.id}: ${error.message}`)
+      })
     try {
       const savedSource = await findConektaSavedSourceForPayment(updated)
       await activateConektaSubscriptionFromStartPayment(updated, savedSource)
@@ -2222,6 +2229,12 @@ export async function createPublicConektaSubscription(publicPaymentId, input = {
   )
 
   const refreshed = await findPaymentById(row.id)
+  if (refreshed?.contact_id) {
+    triggerMetaPaymentPurchaseEvent(refreshed.contact_id, { ...refreshed, status: 'paid' })
+      .catch((error) => {
+        logger.warn(`No se pudo enviar Purchase a Meta para inicio de suscripción Conekta ${refreshed.id}: ${error.message}`)
+      })
+  }
   const paymentSettings = await getPublicPaymentSettings()
   return {
     payment: mapPublicPayment(refreshed, sourceResult.config || config, baseUrl, paymentSettings),
