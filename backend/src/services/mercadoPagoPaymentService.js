@@ -54,6 +54,7 @@ const MP_PLAN_STATES = {
 }
 const LOCKED_PLAN_PAYMENT_STATUSES = new Set(['paid', 'succeeded', 'completed', 'complete', 'fulfilled', 'success', 'refunded', 'void', 'deleted', 'cancelled', 'canceled'])
 const MERCADOPAGO_CHECKOUT_METHODS = new Set(['', 'mercadopago', 'mercadopago_checkout', 'payment_link', 'checkout', 'card', 'auto'])
+const MERCADOPAGO_PAYMENT_LINK_INSTALLMENT_CHOICES = new Set([1, 2, 3, 6, 9, 12, 18, 24])
 const MANUAL_PLAN_PAYMENT_METHODS = new Set(['cash', 'bank_transfer', 'transfer', 'deposit', 'check', 'other', 'manual', 'offline'])
 
 let mercadoPagoFetchForTest = null
@@ -652,6 +653,7 @@ function mapPublicPayment(row, config, baseUrl = '', settings = null) {
   if (!row) return null
   const metadata = parseJson(row.metadata_json, {})
   const tax = metadata.tax && typeof metadata.tax === 'object' ? metadata.tax : null
+  const mercadoPagoInstallments = normalizeMercadoPagoInstallmentOptions(metadata.mercadoPagoInstallments, { emptyAsNull: true })
   const publicPaymentId = row.public_payment_id
   return {
     id: row.id,
@@ -676,6 +678,7 @@ function mapPublicPayment(row, config, baseUrl = '', settings = null) {
     mercadoPagoPaymentId: row.mercadopago_payment_id || null,
     mercadoPagoPreferenceId: row.mercadopago_preference_id || null,
     publicKey: config?.publicKey || '',
+    mercadoPagoInstallments,
     tax,
     settings: settings || null
   }
@@ -696,6 +699,7 @@ async function attachMetaPublicPurchaseEvent(publicPayment, row) {
 
 function buildPreferencePayload(row, { baseUrl = '' } = {}) {
   const metadata = parseJson(row.metadata_json, {})
+  const mercadoPagoInstallments = normalizeMercadoPagoInstallmentOptions(metadata.mercadoPagoInstallments, { emptyAsNull: true })
   const publicPaymentId = row.public_payment_id
   const paymentPageUrl = buildPaymentUrl(baseUrl, publicPaymentId)
   const returnUrl = paymentPageUrl ? `${paymentPageUrl}?mercadopago=return` : ''
@@ -728,12 +732,52 @@ function buildPreferencePayload(row, { baseUrl = '' } = {}) {
     } : undefined,
     auto_return: 'approved',
     binary_mode: false,
+    ...(mercadoPagoInstallments
+      ? {
+          payment_methods: {
+            installments: mercadoPagoInstallments.maxInstallments
+          }
+        }
+      : {}),
     metadata: {
       ristak_payment_id: row.id,
       public_payment_id: publicPaymentId,
       source: metadata.source || 'ristak',
+      ...(mercadoPagoInstallments ? { mercado_pago_installments: mercadoPagoInstallments } : {}),
       ...(metadata.paymentPlan ? { payment_plan: metadata.paymentPlan } : {})
     }
+  }
+}
+
+function normalizeMercadoPagoInstallmentOptions(value, { emptyAsNull = false } = {}) {
+  if (!value || typeof value !== 'object') {
+    return emptyAsNull ? null : {
+      enabled: false,
+      maxInstallments: 1,
+      label: 'Pago de contado'
+    }
+  }
+
+  const enabled = value.enabled === true || value.enabled === 'true' || value.enabled === 1
+  const requestedMax = Number(value.maxInstallments || value.max_installments || value.installments)
+  const maxInstallments = Number.isFinite(requestedMax)
+    ? Math.max(1, Math.min(Math.trunc(requestedMax), 60))
+    : 1
+
+  if (!enabled || maxInstallments <= 1) {
+    return {
+      enabled: false,
+      maxInstallments: 1,
+      label: 'Pago de contado'
+    }
+  }
+
+  return {
+    enabled: true,
+    maxInstallments,
+    label: MERCADOPAGO_PAYMENT_LINK_INSTALLMENT_CHOICES.has(maxInstallments)
+      ? `Hasta ${maxInstallments} meses`
+      : `Hasta ${maxInstallments} cuotas`
   }
 }
 
@@ -829,12 +873,20 @@ function buildCardPaymentPayload(row, input = {}, { baseUrl = '' } = {}) {
   const cleanBaseUrl = cleanString(baseUrl).replace(/\/+$/, '')
   const notificationUrl = cleanBaseUrl ? `${cleanBaseUrl}${MERCADOPAGO_WEBHOOK_PATH}` : ''
   const description = cleanString(row.description || row.title || 'Pago Ristak').slice(0, 255)
+  const installmentOptions = normalizeMercadoPagoInstallmentOptions(metadata.mercadoPagoInstallments, { emptyAsNull: true })
+  const requestedInstallments = normalizeInstallments(input.installments)
+
+  if (installmentOptions && requestedInstallments > installmentOptions.maxInstallments) {
+    const error = new Error(`Este link permite máximo ${installmentOptions.maxInstallments} ${installmentOptions.maxInstallments === 1 ? 'cuota' : 'cuotas'} en Mercado Pago.`)
+    error.status = 400
+    throw error
+  }
 
   return {
     transaction_amount: Math.round(amount * 100) / 100,
     token,
     description,
-    installments: normalizeInstallments(input.installments),
+    installments: requestedInstallments,
     payment_method_id: paymentMethodId,
     ...(issuerId ? { issuer_id: issuerId } : {}),
     payer: buildCardPaymentPayer(row, metadata, input.payer),
@@ -1008,6 +1060,7 @@ export async function createMercadoPagoPaymentLink(input = {}, { baseUrl } = {})
     email: cleanString(input.email),
     phone: cleanString(input.phone)
   }
+  const mercadoPagoInstallments = normalizeMercadoPagoInstallmentOptions(input.installments || input.mercadoPagoInstallments, { emptyAsNull: true })
   const metadata = {
     contactName: contact.name,
     contactEmail: contact.email,
@@ -1015,6 +1068,7 @@ export async function createMercadoPagoPaymentLink(input = {}, { baseUrl } = {})
     source: cleanString(input.source || 'ristak'),
     lineItems: Array.isArray(input.lineItems) ? input.lineItems : [],
     ...(input.metadata && typeof input.metadata === 'object' ? input.metadata : {}),
+    ...(mercadoPagoInstallments ? { mercadoPagoInstallments } : {}),
     ...(tax ? { tax } : {})
   }
 

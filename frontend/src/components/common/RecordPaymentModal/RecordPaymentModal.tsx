@@ -121,6 +121,7 @@ type RemainingFrequency = 'custom' | 'daily' | 'weekly' | 'biweekly' | 'monthly'
 type StripePlanCardSource = 'new_card' | 'saved_card'
 type SendMethod = 'whatsapp' | 'sms' | 'email' | 'email_whatsapp' | 'email_sms' | 'all'
 type InvoiceSendMethod = 'email' | 'sms' | 'both'
+type MercadoPagoInstallmentChoice = 'none' | '2' | '3' | '6' | '9' | '12' | '18' | '24'
 type PaymentSegmentedOption = { value: string; label: string }
 type RecordPaymentStep = 'form' | 'options' | 'processing' | 'link_ready'
 type CreatedPaymentLinkKind = 'single' | 'first_payment' | 'card_setup'
@@ -159,6 +160,23 @@ const MANUAL_PAYMENT_METHOD_OPTIONS = [
   { value: 'check', label: 'Cheque' },
   { value: 'other', label: 'Otro' }
 ]
+
+const MERCADOPAGO_INSTALLMENT_OPTIONS: Array<{ value: MercadoPagoInstallmentChoice; label: string }> = [
+  { value: 'none', label: 'Sin meses: pago de contado' },
+  { value: '2', label: 'Hasta 2 meses' },
+  { value: '3', label: 'Hasta 3 meses' },
+  { value: '6', label: 'Hasta 6 meses' },
+  { value: '9', label: 'Hasta 9 meses' },
+  { value: '12', label: 'Hasta 12 meses' },
+  { value: '18', label: 'Hasta 18 meses' },
+  { value: '24', label: 'Hasta 24 meses' }
+]
+
+const getMercadoPagoInstallmentLimit = (choice: MercadoPagoInstallmentChoice) => {
+  if (choice === 'none') return 1
+  const parsed = Number(choice)
+  return Number.isFinite(parsed) ? Math.max(1, Math.trunc(parsed)) : 1
+}
 
 interface InstallmentDraft {
   id: string
@@ -615,6 +633,7 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
   const [singlePaymentOptionsStage, setSinglePaymentOptionsStage] = useState<SinglePaymentOptionsStage>('method')
   const [paymentOption, setPaymentOption] = useState<PaymentOption>('send')
   const [sendMethod, setSendMethod] = useState<SendMethod>(DEFAULT_SEND_METHOD)
+  const [mercadoPagoInstallmentChoice, setMercadoPagoInstallmentChoice] = useState<MercadoPagoInstallmentChoice>('none')
   const [manualPaymentData, setManualPaymentData] = useState<ManualPaymentData>(defaultManualPaymentData)
   const [transferInfoUrl, setTransferInfoUrl] = useState<string | null>(null)
   const [savedPaymentMethods, setSavedPaymentMethods] = useState<StripeSavedPaymentMethod[]>([])
@@ -828,6 +847,15 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
     return 'manual'
   }
 
+  const mercadoPagoInstallmentLimit = getMercadoPagoInstallmentLimit(mercadoPagoInstallmentChoice)
+  const mercadoPagoInstallmentEnabled = mercadoPagoInstallmentLimit > 1
+  const mercadoPagoInstallmentPaymentLabel = mercadoPagoInstallmentEnabled
+    ? `Hasta ${mercadoPagoInstallmentLimit} meses`
+    : 'Pago de contado'
+  const mercadoPagoInstallmentEstimate = invoiceSummary && mercadoPagoInstallmentEnabled
+    ? normalizeAmount(invoiceSummary.amount / mercadoPagoInstallmentLimit)
+    : 0
+
   const selectSinglePaymentLinkAction = () => {
     setSinglePaymentAction('payment_link')
     setPaymentOption(defaultPaymentLinkOption || 'manual')
@@ -900,6 +928,7 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
     setSinglePaymentOptionsStage('method')
     setPaymentOption(getDefaultPaymentOption())
     setSendMethod(resolvedInitialContact ? getDefaultSendMethod(getSendMethodOptions(resolvedInitialContact)) : DEFAULT_SEND_METHOD)
+    setMercadoPagoInstallmentChoice('none')
     setManualPaymentData(defaultManualPaymentData())
     setSavedPaymentMethods([])
     setSelectedSavedPaymentMethodId('')
@@ -2387,13 +2416,19 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
           description: invoiceSummary.description,
           dueDate: invoicePayload.dueDate,
           source: 'record_payment_modal_mercadopago',
-          lineItems: Array.isArray(invoicePayload.items) ? invoicePayload.items : []
+          lineItems: Array.isArray(invoicePayload.items) ? invoicePayload.items : [],
+          installments: {
+            enabled: mercadoPagoInstallmentEnabled,
+            maxInstallments: mercadoPagoInstallmentLimit
+          }
         })
 
         showPaymentLinkReady({
           kind: 'single',
           title: 'Enlace Mercado Pago listo',
-          description: 'Comparte este enlace para que el cliente pague con Mercado Pago. Ristak actualizará el estado por webhook.',
+          description: mercadoPagoInstallmentEnabled
+            ? `Comparte este enlace para que el cliente pague con Mercado Pago. Se mostrarán hasta ${mercadoPagoInstallmentLimit} meses si su tarjeta lo permite.`
+            : 'Comparte este enlace para que el cliente pague de contado con Mercado Pago. Ristak actualizará el estado por webhook.',
           provider: 'mercadopago',
           paymentUrl: result.paymentUrl,
           amount: invoiceSummary.amount,
@@ -3718,6 +3753,8 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
     }
 
     const showGatewayPicker = singlePaymentOptionsStage === 'gateway' && singlePaymentAction === 'payment_link' && hasMultiplePaymentLinkGateways
+    const showMercadoPagoInstallmentControls = singlePaymentAction === 'payment_link' &&
+      paymentOption === 'mercadopago'
     const paymentLinkActionDescription = hasMultiplePaymentLinkGateways
       ? `Después eliges ${paymentLinkGatewayLabels.join(', ')}.`
       : defaultPaymentLinkOption === 'stripe'
@@ -3990,6 +4027,52 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
             </>
           )}
         </div>
+
+        {showMercadoPagoInstallmentControls && invoiceSummary && (
+          <div className={styles.mercadoPagoInstallmentsPanel}>
+            <div className={styles.mercadoPagoInstallmentsHeader}>
+              <div>
+                <span>Mercado Pago</span>
+                <p>Mensualidades Mercado Pago</p>
+              </div>
+              <strong>{mercadoPagoInstallmentPaymentLabel}</strong>
+            </div>
+
+            <div className={styles.mercadoPagoInstallmentsGrid}>
+              <div className={styles.manualField}>
+                <label>Límite de mensualidades</label>
+                {renderPaymentSelect({
+                  value: mercadoPagoInstallmentChoice,
+                  onChange: (value) => setMercadoPagoInstallmentChoice(value as MercadoPagoInstallmentChoice),
+                  options: MERCADOPAGO_INSTALLMENT_OPTIONS,
+                  title: 'Límite de mensualidades'
+                })}
+              </div>
+              <div className={styles.mercadoPagoInstallmentTotals}>
+                <div>
+                  <span>Cliente paga</span>
+                  <strong>{formatCurrency(invoiceSummary.amount, invoiceSummary.currency)}</strong>
+                </div>
+                <div>
+                  <span>{mercadoPagoInstallmentEnabled ? 'Referencia mensual' : 'Forma de pago'}</span>
+                  <strong>
+                    {mercadoPagoInstallmentEnabled
+                      ? `${formatCurrency(mercadoPagoInstallmentEstimate, invoiceSummary.currency)} x ${mercadoPagoInstallmentLimit}`
+                      : 'Una sola exhibición'}
+                  </strong>
+                </div>
+                <div>
+                  <span>Ristak registra</span>
+                  <strong>{formatCurrency(invoiceSummary.amount, invoiceSummary.currency)}</strong>
+                </div>
+              </div>
+            </div>
+
+            <p className={styles.mercadoPagoInstallmentsNote}>
+              Mercado Pago mostrará solo las opciones que existan para la tarjeta del cliente, hasta este límite. Si tu cuenta tiene meses sin intereses activos, Mercado Pago los aplicará; el neto final y comisiones se confirman al pagar.
+            </p>
+          </div>
+        )}
 
         {!showGatewayPicker && singlePaymentAction === 'manual' && paymentOption === 'manual' && (
           <div className={styles.manualFields}>

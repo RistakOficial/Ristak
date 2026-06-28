@@ -67,6 +67,10 @@ export interface MercadoPagoPaymentLinkPayload {
   dueDate?: string
   source?: string
   lineItems?: Array<Record<string, unknown>>
+  installments?: {
+    enabled?: boolean
+    maxInstallments?: number
+  }
 }
 
 export interface PublicMetaPurchaseEvent {
@@ -99,6 +103,11 @@ export interface PublicMercadoPagoPayment {
   mercadoPagoPaymentId?: string | null
   mercadoPagoPreferenceId?: string | null
   publicKey?: string
+  mercadoPagoInstallments?: {
+    enabled: boolean
+    maxInstallments: number
+    label: string
+  } | null
   tax?: {
     enabled: boolean
     taxName: string

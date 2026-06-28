@@ -350,6 +350,124 @@ test('Mercado Pago explica Invalid users involved en cobros publicos de prueba',
   })
 })
 
+test('Mercado Pago limita cuotas configuradas en links de pago unico', async () => {
+  await initializeMasterKey()
+
+  await snapshotMercadoPagoConfig(async () => {
+    const suffix = `${Date.now()}_${Math.random().toString(36).slice(2, 8)}`
+    const ids = {
+      contactId: `contact_mp_installments_${suffix}`,
+      paymentId: ''
+    }
+    const preferenceCalls = []
+    const cardPaymentCalls = []
+
+    setMercadoPagoFetchForTest(async (url, options = {}) => {
+      assert.equal(options.headers?.Authorization, 'Bearer TEST-access-token')
+
+      if (url === 'https://api.mercadopago.com/checkout/preferences') {
+        assert.equal(options.method, 'POST')
+        const body = JSON.parse(String(options.body || '{}'))
+        preferenceCalls.push(body)
+
+        assert.equal(body.payment_methods.installments, 6)
+        assert.equal(body.metadata.mercado_pago_installments.maxInstallments, 6)
+
+        return {
+          ok: true,
+          status: 201,
+          json: async () => ({
+            id: 'pref_installments_6',
+            init_point: 'https://www.mercadopago.com.mx/checkout/v1/redirect?pref_id=installments_6',
+            sandbox_init_point: 'https://sandbox.mercadopago.com.mx/checkout/v1/redirect?pref_id=installments_6'
+          })
+        }
+      }
+
+      assert.equal(url, 'https://api.mercadopago.com/v1/payments')
+      const body = JSON.parse(String(options.body || '{}'))
+      cardPaymentCalls.push(body)
+      assert.equal(body.installments, 6)
+
+      return {
+        ok: true,
+        status: 201,
+        json: async () => ({
+          id: 'mp_card_installments_6',
+          status: 'approved',
+          status_detail: 'accredited',
+          transaction_amount: 600,
+          currency_id: 'MXN',
+          payment_method_id: 'visa',
+          payment_type_id: 'credit_card',
+          external_reference: ids.paymentId,
+          metadata: {
+            ristak_payment_id: ids.paymentId
+          },
+          date_approved: '2026-06-20T20:00:00.000Z'
+        })
+      }
+    })
+
+    await db.run(
+      `INSERT INTO contacts (id, full_name, email, phone, source, created_at, updated_at)
+       VALUES (?, ?, ?, ?, 'test', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+      [ids.contactId, 'Cliente MSI Mercado Pago', 'cliente-msi@example.test', '+5215555555511']
+    )
+
+    try {
+      const created = await createMercadoPagoPaymentLink({
+        contactId: ids.contactId,
+        contactName: 'Cliente MSI Mercado Pago',
+        email: 'cliente-msi@example.test',
+        phone: '+5215555555511',
+        amount: 600,
+        currency: 'MXN',
+        title: 'Pago con MSI Mercado Pago',
+        description: 'Pago con MSI Mercado Pago',
+        applyTax: false,
+        installments: {
+          enabled: true,
+          maxInstallments: 6
+        }
+      }, { baseUrl: 'https://app.example.test' })
+
+      ids.paymentId = created.payment.id
+      assert.equal(preferenceCalls.length, 1)
+      assert.equal(created.payment.mercadoPagoInstallments.enabled, true)
+      assert.equal(created.payment.mercadoPagoInstallments.maxInstallments, 6)
+
+      await assert.rejects(
+        () => createPublicMercadoPagoCardPayment(created.publicPaymentId, {
+          token: 'tok_card_test',
+          paymentMethodId: 'visa',
+          issuerId: '123',
+          installments: 12,
+          idempotencyKey: 'card-installments-too-high',
+          payer: { email: 'cliente-msi@example.test' }
+        }, { baseUrl: 'https://app.example.test' }),
+        /máximo 6 cuotas/i
+      )
+      assert.equal(cardPaymentCalls.length, 0)
+
+      const charged = await createPublicMercadoPagoCardPayment(created.publicPaymentId, {
+        token: 'tok_card_test',
+        paymentMethodId: 'visa',
+        issuerId: '123',
+        installments: 6,
+        idempotencyKey: 'card-installments-ok',
+        payer: { email: 'cliente-msi@example.test' }
+      }, { baseUrl: 'https://app.example.test' })
+
+      assert.equal(cardPaymentCalls.length, 1)
+      assert.equal(charged.payment.status, 'paid')
+      assert.equal(charged.payment.mercadoPagoInstallments.maxInstallments, 6)
+    } finally {
+      await cleanup(ids)
+    }
+  })
+})
+
 test('Mercado Pago no genera parcialidades publicas porque los planes estan deshabilitados', async () => {
   await assert.rejects(
     () => createMercadoPagoPaymentPlan({

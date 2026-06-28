@@ -185,7 +185,13 @@ function buildStripeAppearance() {
   }
 }
 
-function buildMercadoPagoCustomization() {
+function getMercadoPagoMaxInstallments(payment?: PublicMercadoPagoPayment | null) {
+  const maxInstallments = Number(payment?.mercadoPagoInstallments?.maxInstallments || 0)
+  if (!Number.isFinite(maxInstallments) || maxInstallments <= 0) return null
+  return Math.max(1, Math.min(Math.trunc(maxInstallments), 60))
+}
+
+function buildMercadoPagoCustomization(payment?: PublicMercadoPagoPayment | null) {
   const customVariables: Record<string, string> = {
     fontSizeSmall: '13px',
     fontSizeMedium: '13px',
@@ -224,13 +230,23 @@ function buildMercadoPagoCustomization() {
     if (value) customVariables[variable] = value
   })
 
+  const maxInstallments = getMercadoPagoMaxInstallments(payment)
+
   return {
     visual: {
       style: {
         theme: document.body?.dataset?.mode === 'dark' ? 'dark' : 'default',
         customVariables
       }
-    }
+    },
+    ...(maxInstallments
+      ? {
+          paymentMethods: {
+            minInstallments: 1,
+            maxInstallments
+          }
+        }
+      : {})
   }
 }
 
@@ -610,7 +626,7 @@ const MercadoPagoCardPaymentForm: React.FC<{
           initialization: {
             amount: Number(payment.amount || 0)
           },
-          customization: buildMercadoPagoCustomization(),
+          customization: buildMercadoPagoCustomization(payment),
           callbacks: {
             onReady: () => {
               if (!cancelled) setLoadingBrick(false)
@@ -672,7 +688,7 @@ const MercadoPagoCardPaymentForm: React.FC<{
       const container = document.getElementById(containerId)
       if (container) container.innerHTML = ''
     }
-  }, [containerId, payment.amount, payment.publicKey, payment.publicPaymentId])
+  }, [containerId, payment.amount, payment.mercadoPagoInstallments?.maxInstallments, payment.publicKey, payment.publicPaymentId])
 
   const messageClassName = [
     styles.message,

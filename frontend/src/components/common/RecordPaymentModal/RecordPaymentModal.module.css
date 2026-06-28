@@ -1211,6 +1211,85 @@ body.dark .summaryBadge,
   z-index: 2;
 }
 
+.mercadoPagoInstallmentsPanel {
+  display: grid;
+  gap: 16px;
+  padding: 16px 0;
+  border-top: 1px solid var(--border, var(--color-border));
+  border-bottom: 1px solid var(--border, var(--color-border));
+}
+
+.mercadoPagoInstallmentsHeader {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  min-width: 0;
+}
+
+.mercadoPagoInstallmentsHeader span,
+.mercadoPagoInstallmentTotals span {
+  display: block;
+  font: var(--label-font);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: var(--label-spacing);
+  text-transform: var(--label-transform);
+  color: var(--text-mute, var(--color-text-tertiary));
+}
+
+.mercadoPagoInstallmentsHeader p {
+  margin: 4px 0 0;
+  color: var(--text, var(--color-text-primary));
+  font-size: 15px;
+  font-weight: 600;
+  line-height: 1.3;
+}
+
+.mercadoPagoInstallmentsHeader strong {
+  flex: 0 0 auto;
+  color: var(--accent, var(--color-primary));
+  font-size: 13px;
+  font-weight: 700;
+  text-align: right;
+}
+
+.mercadoPagoInstallmentsGrid {
+  display: grid;
+  grid-template-columns: minmax(220px, 0.8fr) minmax(0, 1.2fr);
+  gap: 18px;
+  align-items: end;
+}
+
+.mercadoPagoInstallmentTotals {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+  min-width: 0;
+}
+
+.mercadoPagoInstallmentTotals div {
+  min-width: 0;
+}
+
+.mercadoPagoInstallmentTotals strong {
+  display: block;
+  margin-top: 5px;
+  color: var(--text, var(--color-text-primary));
+  font-family: var(--num-font);
+  font-size: 13px;
+  font-weight: 700;
+  line-height: 1.25;
+  overflow-wrap: anywhere;
+}
+
+.mercadoPagoInstallmentsNote {
+  margin: 0;
+  color: var(--text-dim, var(--color-text-secondary));
+  font-size: 12px;
+  line-height: 1.5;
+}
+
 .optionButton {
   width: 100%;
   padding: 14px 16px;
@@ -1754,6 +1833,20 @@ body.dark .tooltipInfo {
 
   .manualGrid {
     grid-template-columns: 1fr;
+  }
+
+  .mercadoPagoInstallmentsGrid,
+  .mercadoPagoInstallmentTotals {
+    grid-template-columns: 1fr;
+  }
+
+  .mercadoPagoInstallmentsHeader {
+    flex-direction: column;
+    gap: 8px;
+  }
+
+  .mercadoPagoInstallmentsHeader strong {
+    text-align: left;
   }
 
   .fieldGrid {
