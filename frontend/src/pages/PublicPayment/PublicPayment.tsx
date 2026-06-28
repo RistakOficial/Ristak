@@ -192,14 +192,14 @@ function buildMercadoPagoCustomization() {
     fontSizeLarge: '14px',
     fontWeightNormal: '500',
     fontWeightSemiBold: '600',
-    inputVerticalPadding: '12px',
+    inputVerticalPadding: '13px',
     inputHorizontalPadding: '14px',
     inputBorderWidth: '1px',
     inputFocusedBorderWidth: '1px',
     borderRadiusSmall: '10px',
     borderRadiusMedium: '10px',
     borderRadiusLarge: '10px',
-    formPadding: '0px'
+    formPadding: '2px 0 0'
   }
   const tokenMap: Record<string, string> = {
     textPrimaryColor: '--text',
