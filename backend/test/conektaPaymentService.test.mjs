@@ -1,5 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
+import { createSign, generateKeyPairSync } from 'node:crypto'
 import { db } from '../src/config/database.js'
 import { initializeMasterKey } from '../src/utils/encryption.js'
 import { savePaymentSettings } from '../src/services/paymentSettingsService.js'
@@ -23,7 +24,8 @@ import {
   saveConektaPaymentConfig,
   setConektaFetchForTest,
   cancelConektaRecurringSubscription,
-  testConektaPaymentConfig
+  testConektaPaymentConfig,
+  verifyConektaWebhookSignature
 } from '../src/services/conektaPaymentService.js'
 
 async function snapshotConektaConfig(callback) {
@@ -159,6 +161,89 @@ test('Conekta manual: guarda llaves por modo cifradas y conserva privadas enmasc
 
     assert.equal(preserved.configured, true)
     assert.equal(preserved.hasPrivateKey, true)
+  })
+})
+
+test('Conekta manual: al guardar llaves crea webhook, llave de firma y verifica DIGEST', async () => {
+  await initializeMasterKey()
+
+  await snapshotConektaConfig(async () => {
+    const { publicKey, privateKey } = generateKeyPairSync('rsa', {
+      modulusLength: 2048,
+      publicKeyEncoding: { type: 'spki', format: 'pem' },
+      privateKeyEncoding: { type: 'pkcs8', format: 'pem' }
+    })
+    const calls = []
+
+    setConektaFetchForTest(async (url, options = {}) => {
+      const parsed = new URL(url)
+      const body = options.body ? JSON.parse(options.body) : null
+      calls.push({
+        method: options.method || 'GET',
+        path: parsed.pathname,
+        body,
+        authorization: options.headers?.Authorization
+      })
+
+      if (parsed.pathname === '/webhook_keys' && (options.method || 'GET') === 'POST') {
+        return jsonResponse({ id: 'whkey_test_ristak', public_key: publicKey })
+      }
+      if (parsed.pathname === '/webhooks' && (options.method || 'GET') === 'GET') {
+        return jsonResponse({ data: [] })
+      }
+      if (parsed.pathname === '/webhooks' && (options.method || 'GET') === 'POST') {
+        return jsonResponse({
+          id: 'webhook_test_ristak',
+          url: body.url,
+          subscribed_events: body.subscribed_events,
+          active: body.active
+        })
+      }
+
+      return jsonResponse({ message: 'unexpected request' }, 404)
+    })
+
+    const config = await saveConektaPaymentConfig({
+      enabled: true,
+      mode: 'test',
+      manualModes: {
+        test: {
+          publicKey: 'key_test_public_auto',
+          privateKey: 'key_test_private_auto'
+        }
+      }
+    }, {
+      webhookUrl: 'https://app.example.com/api/conekta/webhook'
+    })
+
+    assert.equal(config.manualModes.test.webhookConfigured, true)
+    assert.equal(config.manualModes.test.webhookKeyConfigured, true)
+    assert.equal(config.manualModes.test.webhookUrl, 'https://app.example.com/api/conekta/webhook')
+    assert.equal(config.manualModes.test.webhookId, 'webhook_test_ristak')
+    assert.equal(config.manualModes.test.webhookKeyId, 'whkey_test_ristak')
+    assert.ok(calls.some((call) => call.path === '/webhook_keys' && call.method === 'POST'))
+    assert.ok(calls.some((call) => (
+      call.path === '/webhooks' &&
+      call.method === 'POST' &&
+      call.authorization === 'Bearer key_test_private_auto' &&
+      call.body.subscribed_events.includes('order.paid') &&
+      call.body.subscribed_events.includes('subscription.payment_failed')
+    )))
+
+    const rawBody = JSON.stringify({ type: 'order.paid', data: { object: { id: 'ord_auto_webhook' } } })
+    const signer = createSign('RSA-SHA256')
+    signer.update(rawBody, 'utf8')
+    signer.end()
+    const digest = signer.sign(privateKey, 'base64')
+
+    const verified = await verifyConektaWebhookSignature(rawBody, digest)
+    assert.equal(verified.configured, true)
+    assert.equal(verified.verified, true)
+    assert.equal(verified.mode, 'test')
+
+    const rejected = await verifyConektaWebhookSignature(`${rawBody} `, digest)
+    assert.equal(rejected.configured, true)
+    assert.equal(rejected.verified, false)
   })
 })
 

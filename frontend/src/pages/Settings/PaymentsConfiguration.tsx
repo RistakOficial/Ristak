@@ -151,6 +151,15 @@ interface WebhookEventGuideItem {
   description: string
 }
 
+interface AutomaticWebhookStatus {
+  configured?: boolean
+  webhookConfigured?: boolean
+  webhookStatus?: string
+  webhookUrl?: string
+  webhookLastError?: string
+  webhookKeyConfigured?: boolean
+}
+
 const gatewayStatusCopy: Record<PaymentGatewayOption['status'], { label: string; variant: 'success' | 'neutral' }> = {
   connected: { label: 'Conectada', variant: 'success' },
   available: { label: 'Sin conexión', variant: 'neutral' }
@@ -401,13 +410,6 @@ const conektaWebhookEvents: WebhookEventGuideItem[] = [
     description: 'Sincroniza cambios de estado, tarjeta o periodo.'
   }
 ]
-const conektaWebhookSteps = [
-  'En Conekta abre Desarrolladores > Webhooks y presiona Crear webhook.',
-  'Pega la Endpoint URL que muestra Ristak.',
-  'Ponle un nombre sencillo, por ejemplo Ristak - Pagos.',
-  'Selecciona los eventos de la lista y guarda el webhook.'
-]
-
 const parseBooleanLike = (value: unknown, fallback = false) => {
   if (typeof value === 'boolean') return value
   if (typeof value === 'number') return value === 1
@@ -908,7 +910,7 @@ export const PaymentsConfiguration: React.FC = () => {
     : stripeConfig?.configurationStatus || (stripeConnected ? 'configured_manually' : 'not_configured')
   const stripeStatusBadge = (() => {
     if (loadingStripeConfig) return { label: 'Cargando', variant: 'warning' as const, icon: <Loader2 size={14} className={styles.spinIcon} /> }
-    if (stripeConfigurationStatus === 'configured_manually') return { label: 'Configurado manualmente', variant: 'success' as const, icon: <ShieldCheck size={14} /> }
+    if (stripeConfigurationStatus === 'configured_manually') return { label: 'Configurado', variant: 'success' as const, icon: <ShieldCheck size={14} /> }
     if (stripeConfigurationStatus === 'connection_failed') return { label: 'Conexión fallida', variant: 'warning' as const, icon: <AlertTriangle size={14} /> }
     if (stripeConfigurationStatus === 'disconnected') return { label: 'Desconectado', variant: 'neutral' as const, icon: <Unplug size={14} /> }
     return { label: 'Sin configurar', variant: 'neutral' as const, icon: <KeyRound size={14} /> }
@@ -924,7 +926,7 @@ export const PaymentsConfiguration: React.FC = () => {
     : conektaConnected ? 'configured_manually' : 'not_configured'
   const conektaStatusBadge = (() => {
     if (loadingConektaConfig) return { label: 'Cargando', variant: 'warning' as const, icon: <Loader2 size={14} className={styles.spinIcon} /> }
-    if (conektaConfigurationStatus === 'configured_manually') return { label: 'Configurado manualmente', variant: 'success' as const, icon: <ShieldCheck size={14} /> }
+    if (conektaConfigurationStatus === 'configured_manually') return { label: 'Configurado', variant: 'success' as const, icon: <ShieldCheck size={14} /> }
     if (conektaConfigurationStatus === 'connection_failed') return { label: 'Conexión fallida', variant: 'warning' as const, icon: <AlertTriangle size={14} /> }
     return { label: 'Sin configurar', variant: 'neutral' as const, icon: <KeyRound size={14} /> }
   })()
@@ -1111,6 +1113,48 @@ export const PaymentsConfiguration: React.FC = () => {
             </div>
           ))}
         </div>
+      </div>
+    )
+  }
+
+  const renderAutomaticWebhookStatus = (
+    gatewayName: 'Stripe' | 'Conekta',
+    connection?: AutomaticWebhookStatus | null
+  ) => {
+    const status = String(connection?.webhookStatus || '').toLowerCase()
+    const hasError = Boolean(connection?.webhookLastError)
+    const configured = Boolean(connection?.webhookConfigured || ['active', 'enabled', 'configured'].includes(status))
+    const pendingPublicUrl = status === 'pending_public_url'
+    const badge = hasError
+      ? { label: 'Revisar', variant: 'warning' as const, icon: <AlertTriangle size={14} /> }
+      : configured
+        ? { label: 'Activo', variant: 'success' as const, icon: <ShieldCheck size={14} /> }
+        : pendingPublicUrl
+          ? { label: 'Pendiente', variant: 'warning' as const, icon: <Clock size={14} /> }
+          : { label: 'Por guardar', variant: 'neutral' as const, icon: <KeyRound size={14} /> }
+    const description = hasError
+      ? `Ristak no pudo sincronizar el webhook de ${gatewayName}. Revisa las llaves y vuelve a guardar.`
+      : configured
+        ? `Ristak ya creó y sincronizó el webhook de ${gatewayName} automáticamente.`
+        : pendingPublicUrl
+          ? 'Ristak necesita una URL pública HTTPS para crear el webhook automáticamente.'
+          : `Al guardar las llaves, Ristak creará el webhook de ${gatewayName} sin pasos manuales.`
+
+    return (
+      <div className={styles.webhookRow}>
+        <div>
+          <strong>Webhook automático</strong>
+          <span>{description}</span>
+          {connection?.webhookUrl && <span>{connection.webhookUrl}</span>}
+          {connection?.webhookLastError && <span>{connection.webhookLastError}</span>}
+          {gatewayName === 'Conekta' && connection?.webhookKeyConfigured && (
+            <span>Llave de firma lista para verificar eventos entrantes.</span>
+          )}
+        </div>
+        <Badge variant={badge.variant}>
+          {badge.icon}
+          {badge.label}
+        </Badge>
       </div>
     )
   }
@@ -1453,8 +1497,7 @@ export const PaymentsConfiguration: React.FC = () => {
       manualModes: {
         [mode]: {
           publishableKey: modeValues.publishableKey.trim(),
-          secretKey: modeValues.secretKey.trim(),
-          webhookSecret: modeValues.webhookSecret.trim()
+          secretKey: modeValues.secretKey.trim()
         }
       }
     }
@@ -1494,13 +1537,28 @@ export const PaymentsConfiguration: React.FC = () => {
     }))
   }
 
+  const getGatewayWebhookSaveMessage = (
+    gatewayName: 'Stripe' | 'Conekta',
+    modeTitle: string,
+    connection?: AutomaticWebhookStatus | null
+  ) => {
+    const status = String(connection?.webhookStatus || '').toLowerCase()
+    if (connection?.webhookConfigured || ['active', 'enabled', 'configured'].includes(status)) {
+      return `${modeTitle} quedó listo para cobrar y el webhook automático de ${gatewayName} está activo.`
+    }
+    if (status === 'pending_public_url') {
+      return `${modeTitle} quedó guardado. El webhook automático se completará cuando Ristak tenga una URL pública HTTPS.`
+    }
+    return `${modeTitle} quedó listo para cobrar.`
+  }
+
   const handleSaveStripeModeConfig = async (mode: StripeModeId) => {
     setSavingStripeMode(mode)
     try {
       const config = await stripePaymentsService.saveConfig(buildStripeModeConfigPayload(mode))
       applyStripeConfig(config)
       invalidateIntegrationsStatus()
-      showToast('success', 'Stripe guardado', `${stripeModeLabels[mode].title} quedó listo para cobrar.`)
+      showToast('success', 'Stripe guardado', getGatewayWebhookSaveMessage('Stripe', stripeModeLabels[mode].title, config.manualModes?.[mode]))
     } catch (error: any) {
       setStripeConnectionFailed(true)
       showToast('error', 'No se pudo guardar Stripe', error.message || 'Revisa las credenciales de Stripe.')
@@ -1566,7 +1624,7 @@ export const PaymentsConfiguration: React.FC = () => {
       const config = await conektaPaymentsService.saveConfig(buildConektaModeConfigPayload(mode))
       applyConektaConfig(config)
       invalidateIntegrationsStatus()
-      showToast('success', 'Conekta guardado', `${conektaModeLabels[mode].title} quedó listo para cobrar.`)
+      showToast('success', 'Conekta guardado', getGatewayWebhookSaveMessage('Conekta', conektaModeLabels[mode].title, config.manualModes?.[mode]))
     } catch (error: any) {
       setConektaConnectionFailed(true)
       showToast('error', 'No se pudo guardar Conekta', error.message || 'Revisa las credenciales de Conekta.')
@@ -3226,8 +3284,8 @@ export const PaymentsConfiguration: React.FC = () => {
             <div className={styles.gatewaySectionTitle}>
               <PaymentPlatformLogo platform="stripe" size="lg" decorative />
               <div>
-                <h2>Configuración manual de Stripe</h2>
-                <p>Pega las llaves de prueba y en vivo de tu propia cuenta de Stripe. Ristak las guarda en backend y las usa para crear cobros, links, planes y suscripciones.</p>
+                <h2>Stripe</h2>
+                <p>Pega las llaves de tu cuenta. Al guardar, Ristak crea y sincroniza el webhook automáticamente para cobros, links, planes y suscripciones.</p>
               </div>
             </div>
             <Badge variant={stripeStatusBadge.variant}>
@@ -3284,21 +3342,9 @@ export const PaymentsConfiguration: React.FC = () => {
                           spellCheck={false}
                         />
                       )}
-                      {renderField(
-                        'Webhook signing secret',
-                        <input
-                          type="password"
-                          value={values.webhookSecret}
-                          onChange={(event) => updateStripeModeCredential(mode, 'webhookSecret', event.target.value)}
-                          onFocus={(event) => {
-                            if (savedMode?.webhookSecretPreview && values.webhookSecret === savedMode.webhookSecretPreview) event.currentTarget.select()
-                          }}
-                          placeholder={savedMode?.hasWebhookSecret ? savedMode.webhookSecretPreview : 'whsec_...'}
-                          autoComplete="new-password"
-                          spellCheck={false}
-                        />
-                      )}
                     </div>
+
+                    {renderAutomaticWebhookStatus('Stripe', savedMode)}
 
                     <div className={styles.stripeModeActions}>
                       <Button
@@ -3346,7 +3392,7 @@ export const PaymentsConfiguration: React.FC = () => {
             <div className={styles.webhookList}>
               {stripeWebhookEndpoints.length > 0 && (
                 <>
-                  <h3>Endpoint URL</h3>
+                  <h3>URL detectada para webhook</h3>
                   {stripeWebhookEndpoints.map((endpoint) => (
                     <div key={endpoint.url} className={styles.webhookRow}>
                       <div>
@@ -3370,8 +3416,8 @@ export const PaymentsConfiguration: React.FC = () => {
 
               {renderWebhookEventGuide(
                 'Stripe',
-                'Eventos a escuchar en Stripe',
-                'Selecciona estos eventos al crear el endpoint. Son los que Ristak usa para pagos, Checkout de suscripciones, invoices, cancelaciones y reembolsos.',
+                'Eventos sincronizados por Stripe',
+                'Ristak registra estos eventos automáticamente al guardar las llaves. La lista queda visible sólo para diagnóstico.',
                 stripeWebhookEvents
               )}
             </div>
@@ -3385,8 +3431,8 @@ export const PaymentsConfiguration: React.FC = () => {
             <div className={styles.gatewaySectionTitle}>
               <PaymentPlatformLogo platform="conekta" size="lg" decorative />
               <div>
-                <h2>Configuración manual de Conekta</h2>
-                <p>Pega las llaves pública y privada de Conekta. Ristak usa la pública para tokenizar tarjetas y la privada para crear órdenes y cargos con tarjetas guardadas.</p>
+                <h2>Conekta</h2>
+                <p>Pega las llaves pública y privada. Al guardar, Ristak crea el webhook, prepara la firma y lo usa para sincronizar pagos y suscripciones.</p>
               </div>
             </div>
             <Badge variant={conektaStatusBadge.variant}>
@@ -3445,6 +3491,8 @@ export const PaymentsConfiguration: React.FC = () => {
                       )}
                     </div>
 
+                    {renderAutomaticWebhookStatus('Conekta', savedMode)}
+
                     <div className={styles.stripeModeActions}>
                       <Button
                         type="button"
@@ -3489,12 +3537,11 @@ export const PaymentsConfiguration: React.FC = () => {
             </div>
 
             <div className={styles.webhookList}>
-              <h3>Webhook de Conekta</h3>
+              <h3>Webhook automático de Conekta</h3>
               <div className={styles.formField}>
-                <span>Cómo configurarlo en Conekta</span>
+                <span>Estado de integración</span>
                 <small>
-                  Conekta no se conecta por OAuth en Ristak: usa tus llaves API y este webhook para avisar pagos aprobados,
-                  rechazados, expirados o cambios de suscripción. Sin este webhook, las suscripciones pueden quedarse sin sincronizar.
+                  Ristak usa tus llaves API para crear el webhook y verificar las firmas de Conekta. Las URLs quedan aquí como referencia técnica.
                 </small>
               </div>
 
@@ -3519,19 +3566,10 @@ export const PaymentsConfiguration: React.FC = () => {
 
               {renderWebhookEventGuide(
                 'Conekta',
-                'Eventos a seleccionar en Conekta',
-                'Usa eventos de orden y suscripción. Ristak reconcilia pagos por orden y mantiene las suscripciones de Conekta sincronizadas cuando se crean, cobran, fallan, pausan o cancelan.',
+                'Eventos sincronizados por Conekta',
+                'Ristak registra estos eventos automáticamente. Son los eventos de orden y suscripción que el backend sabe reconciliar sin ruido extra.',
                 conektaWebhookEvents
               )}
-
-              <div className={styles.webhookInstructions}>
-                {conektaWebhookSteps.map((step, index) => (
-                  <div key={step} className={styles.webhookInstructionRow}>
-                    <strong>{index + 1}</strong>
-                    <span>{step}</span>
-                  </div>
-                ))}
-              </div>
             </div>
           </div>
         </Card>

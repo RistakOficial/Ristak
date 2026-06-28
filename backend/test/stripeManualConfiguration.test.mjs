@@ -3,7 +3,7 @@ import assert from 'node:assert/strict'
 import { readFile } from 'node:fs/promises'
 import { fileURLToPath } from 'node:url'
 import { db } from '../src/config/database.js'
-import { getStripeConfigView } from '../src/controllers/stripePaymentsController.js'
+import { getStripeConfigView, saveStripeConfigView } from '../src/controllers/stripePaymentsController.js'
 import { initializeMasterKey } from '../src/utils/encryption.js'
 import { savePaymentSettings } from '../src/services/paymentSettingsService.js'
 import {
@@ -208,6 +208,69 @@ test('Stripe manual: conserva Secret keys existentes cuando la UI reenvía valor
     const liveWithSecrets = await getStripePaymentConfig({ includeSecrets: true, mode: 'live' })
     assert.equal(liveWithSecrets.secretKey, 'sk_live_manual_secret')
     assert.equal(liveWithSecrets.webhookSecret, 'whsec_manual_live')
+  })
+})
+
+test('Stripe manual: al guardar llaves crea webhook automático con la URL pública detectada', async () => {
+  await initializeMasterKey()
+
+  await snapshotStripeConfig(async () => {
+    const created = []
+    const updated = []
+
+    setStripeFactoryForTest(() => ({
+      webhookEndpoints: {
+        list: async () => ({ data: [] }),
+        create: async (payload) => {
+          created.push(payload)
+          return {
+            id: 'we_test_ristak_auto',
+            secret: 'whsec_ristak_auto',
+            status: 'enabled'
+          }
+        },
+        update: async (id, payload) => {
+          updated.push({ id, payload })
+          return { id, ...payload }
+        }
+      }
+    }))
+
+    const req = {
+      protocol: 'https',
+      headers: {
+        host: 'payments.example.com'
+      },
+      body: {
+        enabled: true,
+        mode: 'test',
+        manualModes: {
+          test: {
+            publishableKey: 'pk_test_auto_public',
+            secretKey: 'sk_test_auto_secret'
+          }
+        }
+      }
+    }
+    const res = createJsonResponse()
+
+    await saveStripeConfigView(req, res)
+
+    assert.equal(res.statusCode, 200)
+    assert.equal(created.length, 1)
+    assert.equal(updated.length, 0)
+    assert.equal(created[0].url, 'https://payments.example.com/api/stripe/webhook')
+    assert.equal(created[0].description, 'Ristak - Pagos')
+    assert.equal(created[0].metadata.ristak, 'payment_webhook')
+    assert.equal(created[0].metadata.mode, 'test')
+    assert.ok(created[0].enabled_events.includes('payment_intent.succeeded'))
+    assert.ok(created[0].enabled_events.includes('customer.subscription.deleted'))
+    assert.equal(res.payload.data.manualModes.test.webhookConfigured, true)
+    assert.equal(res.payload.data.manualModes.test.webhookEndpointId, 'we_test_ristak_auto')
+    assert.equal(res.payload.data.manualModes.test.hasWebhookSecret, true)
+
+    const withSecrets = await getStripePaymentConfig({ includeSecrets: true, mode: 'test' })
+    assert.equal(withSecrets.manualModes.test.webhookSecret, 'whsec_ristak_auto')
   })
 })
 

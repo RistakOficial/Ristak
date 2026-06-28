@@ -10,7 +10,8 @@ import {
   getPublicConektaPayment,
   reconcileConektaWebhookEvent,
   saveConektaPaymentConfig,
-  testConektaPaymentConfig
+  testConektaPaymentConfig,
+  verifyConektaWebhookSignature
 } from '../services/conektaPaymentService.js'
 import { getAppConfig } from '../config/database.js'
 import { logger } from '../utils/logger.js'
@@ -104,6 +105,23 @@ async function buildConektaWebhookEndpoints(req) {
   return endpoints
 }
 
+function isPublicWebhookEndpointUrl(url) {
+  try {
+    const parsed = new URL(cleanString(url))
+    const host = parsed.hostname.toLowerCase()
+    return parsed.protocol === 'https:' &&
+      !['localhost', '127.0.0.1', '::1'].includes(host) &&
+      !host.endsWith('.local')
+  } catch {
+    return false
+  }
+}
+
+async function getPreferredConektaWebhookUrl(req) {
+  const endpoints = await buildConektaWebhookEndpoints(req)
+  return endpoints.find((endpoint) => isPublicWebhookEndpointUrl(endpoint.url))?.url || ''
+}
+
 async function withConektaWebhookEndpoints(req, config) {
   return {
     ...config,
@@ -127,14 +145,23 @@ function sendConektaError(res, error, fallback = 'No se pudo procesar Conekta') 
 // de la orden viaja en data.object.id (la estructura documentada es { type, data:{ object } }).
 export async function handleConektaWebhookView(req, res) {
   try {
-    const secret = cleanString(process.env.CONEKTA_WEBHOOK_SECRET)
-    if (secret) {
-      const provided = cleanString(req.get('x-conekta-webhook-secret') || req.query?.secret || '')
-      if (provided !== secret) {
+    const rawBody = typeof req.rawBody === 'string' ? req.rawBody : JSON.stringify(req.body || {})
+    const signature = await verifyConektaWebhookSignature(rawBody, req.get('DIGEST') || req.get('digest') || '')
+
+    if (signature.configured) {
+      if (!signature.verified) {
         return res.status(401).json({ success: false, error: 'Firma de webhook inválida' })
       }
     } else {
-      logger.warn('[Conekta webhook] Aceptado SIN verificación: configura CONEKTA_WEBHOOK_SECRET para protegerlo.')
+      const secret = cleanString(process.env.CONEKTA_WEBHOOK_SECRET)
+      if (secret) {
+        const provided = cleanString(req.get('x-conekta-webhook-secret') || req.query?.secret || '')
+        if (provided !== secret) {
+          return res.status(401).json({ success: false, error: 'Firma de webhook inválida' })
+        }
+      } else {
+        logger.warn('[Conekta webhook] Aceptado SIN verificación: configura las llaves de Conekta para que Ristak cree y verifique el webhook automático.')
+      }
     }
 
     const result = await reconcileConektaWebhookEvent(req.body || {})
@@ -158,7 +185,9 @@ export async function getConektaConfigView(req, res) {
 
 export async function saveConektaConfigView(req, res) {
   try {
-    const config = await saveConektaPaymentConfig(req.body || {})
+    const config = await saveConektaPaymentConfig(req.body || {}, {
+      webhookUrl: await getPreferredConektaWebhookUrl(req)
+    })
     res.json({ success: true, data: await withConektaWebhookEndpoints(req, config) })
   } catch (error) {
     logger.error(`Error guardando configuración Conekta: ${error.message}`)

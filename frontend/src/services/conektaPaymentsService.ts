@@ -12,6 +12,13 @@ export interface ConektaModeStatus {
   publicKey: string
   hasPrivateKey: boolean
   privateKeyPreview?: string
+  webhookId?: string
+  webhookUrl?: string
+  webhookStatus?: string
+  webhookSyncedAt?: string
+  webhookLastError?: string
+  webhookKeyConfigured?: boolean
+  webhookConfigured?: boolean
   updatedAt?: string
 }
 
@@ -31,6 +38,13 @@ export interface ConektaPaymentConfig {
   publicKey: string
   hasPrivateKey: boolean
   privateKeyPreview?: string
+  webhookId?: string
+  webhookUrl?: string
+  webhookStatus?: string
+  webhookSyncedAt?: string
+  webhookLastError?: string
+  webhookKeyConfigured?: boolean
+  webhookConfigured?: boolean
   manualModes?: Record<'test' | 'live', ConektaModeStatus>
   webhookEndpointPath?: string
   webhookEndpoints?: ConektaWebhookEndpoint[]

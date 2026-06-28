@@ -14,6 +14,12 @@ export interface StripePaymentConfig {
   secretKeyPreview?: string
   hasWebhookSecret: boolean
   webhookSecretPreview?: string
+  webhookEndpointId?: string
+  webhookUrl?: string
+  webhookStatus?: string
+  webhookSyncedAt?: string
+  webhookLastError?: string
+  webhookConfigured?: boolean
   manualModes?: Record<'test' | 'live', StripeManualModeStatus>
   webhookEndpointPath?: string
   webhookEndpoints?: StripeWebhookEndpoint[]
@@ -27,6 +33,12 @@ export interface StripeManualModeStatus {
   secretKeyPreview?: string
   hasWebhookSecret: boolean
   webhookSecretPreview?: string
+  webhookEndpointId?: string
+  webhookUrl?: string
+  webhookStatus?: string
+  webhookSyncedAt?: string
+  webhookLastError?: string
+  webhookConfigured?: boolean
   updatedAt?: string
 }
 

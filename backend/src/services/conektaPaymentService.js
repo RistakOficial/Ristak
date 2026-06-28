@@ -1,4 +1,4 @@
-import { randomBytes } from 'crypto'
+import { createVerify, randomBytes } from 'crypto'
 import fetch from 'node-fetch'
 import { db, getAppConfig, setAppConfig } from '../config/database.js'
 import { decrypt, encrypt, isEncrypted } from '../utils/encryption.js'
@@ -26,6 +26,22 @@ const CONEKTA_MODES = ['test', 'live']
 const DEFAULT_CURRENCY = 'MXN'
 const CONEKTA_API_BASE = 'https://api.conekta.io'
 const CONEKTA_API_ACCEPT = 'application/vnd.conekta-v2.2.0+json'
+const CONEKTA_WEBHOOK_EVENTS = [
+  'order.paid',
+  'order.pending_payment',
+  'order.declined',
+  'order.canceled',
+  'order.expired',
+  'order.charged_back',
+  'order.refunded',
+  'subscription.created',
+  'subscription.paused',
+  'subscription.resumed',
+  'subscription.canceled',
+  'subscription.paid',
+  'subscription.payment_failed',
+  'subscription.updated'
+]
 const DEFAULT_PAYMENT_TIMEZONE = 'America/Mexico_City'
 const isPostgresRuntime = Boolean(process.env.DATABASE_URL)
 const CONEKTA_PLAN_STATES = {
@@ -58,6 +74,30 @@ function conektaFetch() {
 
 function cleanString(value) {
   return String(value || '').trim()
+}
+
+function normalizeWebhookUrl(value) {
+  const clean = cleanString(value).replace(/\/+$/, '')
+  if (!clean) return ''
+  try {
+    const parsed = new URL(clean)
+    const host = parsed.hostname.toLowerCase()
+    if (parsed.protocol !== 'https:') return ''
+    if (['localhost', '127.0.0.1', '::1'].includes(host) || host.endsWith('.local')) return ''
+    return `${parsed.protocol}//${parsed.host}${parsed.pathname}${parsed.search}`.replace(/\/+$/, '')
+  } catch {
+    return ''
+  }
+}
+
+function sameEventSet(left = [], right = []) {
+  const leftSet = new Set((left || []).map(cleanString).filter(Boolean))
+  const rightSet = new Set((right || []).map(cleanString).filter(Boolean))
+  if (leftSet.size !== rightSet.size) return false
+  for (const item of leftSet) {
+    if (!rightSet.has(item)) return false
+  }
+  return true
 }
 
 function sanitizeConektaText(value, fallback = 'Ristak', maxLength = 250) {
@@ -307,6 +347,15 @@ function normalizeStoredModeConnection(value = {}, mode = 'test', { includeSecre
       privateKey: includeSecrets ? '' : undefined,
       hasPrivateKey: false,
       privateKeyPreview: '',
+      webhookId: '',
+      webhookUrl: '',
+      webhookStatus: '',
+      webhookSyncedAt: '',
+      webhookLastError: '',
+      webhookKeyId: '',
+      webhookPublicKey: '',
+      webhookConfigured: false,
+      webhookKeyConfigured: false,
       updatedAt: ''
     }
   }
@@ -322,6 +371,15 @@ function normalizeStoredModeConnection(value = {}, mode = 'test', { includeSecre
     ...(includeSecrets ? { privateKey } : {}),
     hasPrivateKey: Boolean(privateKey),
     privateKeyPreview: privateKey ? previewSecret(privateKey) : '',
+    webhookId: cleanString(value.webhookId || value.webhook_id),
+    webhookUrl: cleanString(value.webhookUrl || value.webhook_url),
+    webhookStatus: cleanString(value.webhookStatus || value.webhook_status),
+    webhookSyncedAt: cleanString(value.webhookSyncedAt || value.webhook_synced_at),
+    webhookLastError: cleanString(value.webhookLastError || value.webhook_last_error),
+    webhookKeyId: cleanString(value.webhookKeyId || value.webhook_key_id),
+    webhookPublicKey: cleanString(value.webhookPublicKey || value.webhook_public_key),
+    webhookConfigured: Boolean(cleanString(value.webhookId || value.webhook_id) && cleanString(value.webhookUrl || value.webhook_url)),
+    webhookKeyConfigured: Boolean(cleanString(value.webhookPublicKey || value.webhook_public_key)),
     updatedAt: cleanString(value.updatedAt || value.updated_at)
   }
 }
@@ -332,6 +390,13 @@ function serializeModeConnection(connection = {}) {
     mode: normalizeMode(connection.mode),
     publicKey: cleanString(connection.publicKey),
     privateKey: privateKey ? encrypt(privateKey) : '',
+    webhookId: cleanString(connection.webhookId),
+    webhookUrl: cleanString(connection.webhookUrl),
+    webhookStatus: cleanString(connection.webhookStatus),
+    webhookSyncedAt: cleanString(connection.webhookSyncedAt),
+    webhookLastError: cleanString(connection.webhookLastError),
+    webhookKeyId: cleanString(connection.webhookKeyId),
+    webhookPublicKey: cleanString(connection.webhookPublicKey),
     updatedAt: cleanString(connection.updatedAt || new Date().toISOString())
   }
 }
@@ -352,13 +417,23 @@ function buildModeConnectionFromInput(mode, input = {}, current = {}) {
   const nextPrivateKey = privateKeyProvided
     ? (isMaskedSecret(rawPrivateKey) ? normalizedCurrent.privateKey : rawPrivateKey)
     : normalizedCurrent.privateKey
+  const configured = Boolean(nextPublicKey && nextPrivateKey)
 
   return {
     mode,
     publicKey: nextPublicKey,
     privateKey: nextPrivateKey,
-    configured: Boolean(nextPublicKey && nextPrivateKey),
-    updatedAt: new Date().toISOString()
+    configured,
+    webhookId: configured ? cleanString(normalizedCurrent.webhookId) : '',
+    webhookUrl: configured ? cleanString(normalizedCurrent.webhookUrl) : '',
+    webhookStatus: configured ? cleanString(normalizedCurrent.webhookStatus) : '',
+    webhookSyncedAt: configured ? cleanString(normalizedCurrent.webhookSyncedAt) : '',
+    webhookLastError: configured ? cleanString(normalizedCurrent.webhookLastError) : '',
+    webhookKeyId: configured ? cleanString(normalizedCurrent.webhookKeyId) : '',
+    webhookPublicKey: configured ? cleanString(normalizedCurrent.webhookPublicKey) : '',
+    webhookConfigured: configured ? Boolean(normalizedCurrent.webhookConfigured) : false,
+    webhookKeyConfigured: configured ? Boolean(normalizedCurrent.webhookKeyConfigured) : false,
+    updatedAt: configured ? new Date().toISOString() : ''
   }
 }
 
@@ -368,6 +443,186 @@ function chooseMode(connections = {}, preferred = 'live') {
   if (connections.live?.configured || (connections.live?.publicKey && connections.live?.privateKey)) return 'live'
   if (connections.test?.configured || (connections.test?.publicKey && connections.test?.privateKey)) return 'test'
   return preferredMode
+}
+
+function getConnectionApiConfig(connection = {}) {
+  return {
+    configured: Boolean(connection.publicKey && connection.privateKey),
+    mode: normalizeMode(connection.mode),
+    publicKey: cleanString(connection.publicKey),
+    privateKey: cleanString(connection.privateKey),
+    accountLabel: 'Conekta'
+  }
+}
+
+function extractConektaCollection(payload = {}) {
+  if (Array.isArray(payload)) return payload
+  if (Array.isArray(payload?.data)) return payload.data
+  return []
+}
+
+function normalizeConektaWebhookStatus(webhook = {}) {
+  if (cleanString(webhook.status)) return cleanString(webhook.status)
+  if (webhook.active === false) return 'disabled'
+  return 'active'
+}
+
+function getDigestCandidates(header = '') {
+  return cleanString(header)
+    .split(',')
+    .map((part) => {
+      const clean = part.trim()
+      if (!clean) return ''
+      const equalIndex = clean.indexOf('=')
+      const digestPrefix = equalIndex > 0 ? clean.slice(0, equalIndex).trim() : ''
+      if (equalIndex === -1 || equalIndex > 24 || !/^[a-z0-9_-]+$/i.test(digestPrefix)) return clean
+      return clean.slice(equalIndex + 1).trim()
+    })
+    .map((value) => value.replace(/^"|"$/g, ''))
+    .filter(Boolean)
+}
+
+function verifyConektaRawBody(rawBody = '', digestHeader = '', publicKey = '') {
+  const body = Buffer.isBuffer(rawBody) ? rawBody.toString('utf8') : String(rawBody || '')
+  const key = cleanString(publicKey)
+  if (!body || !key) return false
+
+  for (const digest of getDigestCandidates(digestHeader)) {
+    try {
+      const verifier = createVerify('RSA-SHA256')
+      verifier.update(body, 'utf8')
+      verifier.end()
+      if (verifier.verify(key, Buffer.from(digest, 'base64'))) return true
+    } catch {
+      // Intencional: probamos el siguiente formato/candidato de DIGEST.
+    }
+  }
+
+  return false
+}
+
+async function ensureConektaWebhookKey(connection = {}) {
+  if (cleanString(connection.webhookPublicKey)) return connection
+
+  const { payload } = await conektaApiRequest('/webhook_keys', {
+    method: 'POST',
+    body: { active: true },
+    config: getConnectionApiConfig(connection)
+  })
+
+  const publicKey = cleanString(payload?.public_key || payload?.publicKey)
+  if (!publicKey) {
+    const error = new Error('Conekta no devolvió la llave pública del webhook.')
+    error.status = 502
+    throw error
+  }
+
+  return {
+    ...connection,
+    webhookKeyId: cleanString(payload?.id || connection.webhookKeyId),
+    webhookPublicKey: publicKey,
+    webhookKeyConfigured: true
+  }
+}
+
+async function syncConektaWebhookForConnection(connection = {}, webhookUrl = '') {
+  const normalizedUrl = normalizeWebhookUrl(webhookUrl)
+  if (!connection.publicKey || !connection.privateKey) return connection
+
+  if (!normalizedUrl) {
+    return {
+      ...connection,
+      webhookStatus: connection.webhookId ? 'configured' : 'pending_public_url',
+      webhookLastError: ''
+    }
+  }
+
+  const keyedConnection = await ensureConektaWebhookKey(connection)
+  const { payload: listPayload } = await conektaApiRequest('/webhooks?limit=250', {
+    config: getConnectionApiConfig(keyedConnection)
+  })
+  const webhooks = extractConektaCollection(listPayload)
+  const sameUrl = (webhook) => cleanString(webhook?.url).replace(/\/+$/, '').toLowerCase() === normalizedUrl.toLowerCase()
+  const existing = webhooks.find((webhook) => cleanString(webhook?.id) === cleanString(keyedConnection.webhookId)) ||
+    webhooks.find(sameUrl)
+
+  const body = {
+    url: normalizedUrl,
+    subscribed_events: CONEKTA_WEBHOOK_EVENTS,
+    active: true
+  }
+
+  if (existing?.id) {
+    if (!sameUrl(existing) || !sameEventSet(existing.subscribed_events, CONEKTA_WEBHOOK_EVENTS) || existing.active === false) {
+      await conektaApiRequest(`/webhooks/${encodeURIComponent(existing.id)}`, {
+        method: 'PUT',
+        body,
+        config: getConnectionApiConfig(keyedConnection)
+      })
+    }
+
+    return {
+      ...keyedConnection,
+      webhookId: cleanString(existing.id),
+      webhookUrl: normalizedUrl,
+      webhookStatus: normalizeConektaWebhookStatus(existing),
+      webhookSyncedAt: new Date().toISOString(),
+      webhookLastError: '',
+      webhookConfigured: true
+    }
+  }
+
+  const { payload: created } = await conektaApiRequest('/webhooks', {
+    method: 'POST',
+    body,
+    config: getConnectionApiConfig(keyedConnection)
+  })
+
+  return {
+    ...keyedConnection,
+    webhookId: cleanString(created?.id),
+    webhookUrl: normalizedUrl,
+    webhookStatus: normalizeConektaWebhookStatus(created),
+    webhookSyncedAt: new Date().toISOString(),
+    webhookLastError: '',
+    webhookConfigured: Boolean(created?.id)
+  }
+}
+
+async function syncConektaWebhooksForConnections(connections = {}, webhookUrl = '') {
+  const next = { ...connections }
+
+  for (const mode of CONEKTA_MODES) {
+    const connection = next[mode]
+    if (!connection?.publicKey || !connection?.privateKey) continue
+    next[mode] = await syncConektaWebhookForConnection(connection, webhookUrl)
+  }
+
+  return next
+}
+
+async function getConektaWebhookVerificationKeys() {
+  const config = await getConektaPaymentConfig({ includeSecrets: true })
+  return CONEKTA_MODES
+    .map((mode) => ({
+      mode,
+      publicKey: cleanString(config.manualModes?.[mode]?.webhookPublicKey)
+    }))
+    .filter((item) => item.publicKey)
+}
+
+export async function verifyConektaWebhookSignature(rawBody = '', digestHeader = '') {
+  const keys = await getConektaWebhookVerificationKeys()
+  if (keys.length === 0) return { configured: false, verified: false, mode: '' }
+  if (!cleanString(digestHeader)) return { configured: true, verified: false, mode: '' }
+
+  for (const key of keys) {
+    if (verifyConektaRawBody(rawBody, digestHeader, key.publicKey)) {
+      return { configured: true, verified: true, mode: key.mode }
+    }
+  }
+
+  return { configured: true, verified: false, mode: '' }
 }
 
 async function getStoredModeConnections(raw = null, options = {}) {
@@ -388,6 +643,15 @@ async function getStoredModeConnections(raw = null, options = {}) {
       ...(options.includeSecrets ? { privateKey: legacyPrivateKey } : {}),
       hasPrivateKey: Boolean(legacyPrivateKey),
       privateKeyPreview: legacyPrivateKey ? previewSecret(legacyPrivateKey) : '',
+      webhookId: '',
+      webhookUrl: '',
+      webhookStatus: '',
+      webhookSyncedAt: '',
+      webhookLastError: '',
+      webhookKeyId: '',
+      webhookPublicKey: '',
+      webhookConfigured: false,
+      webhookKeyConfigured: false,
       updatedAt: ''
     }
   }
@@ -413,6 +677,13 @@ export async function getConektaPaymentConfig(options = {}) {
     ...(options.includeSecrets ? { privateKey: active?.privateKey || '' } : {}),
     hasPrivateKey: Boolean(active?.hasPrivateKey),
     privateKeyPreview: active?.privateKeyPreview || '',
+    webhookId: active?.webhookId || '',
+    webhookUrl: active?.webhookUrl || '',
+    webhookStatus: active?.webhookStatus || '',
+    webhookSyncedAt: active?.webhookSyncedAt || '',
+    webhookLastError: active?.webhookLastError || '',
+    webhookKeyConfigured: Boolean(active?.webhookKeyConfigured || active?.webhookPublicKey),
+    webhookConfigured: Boolean(active?.webhookConfigured || (active?.webhookId && active?.webhookUrl)),
     manualModes: {
       test: modeConnections.test,
       live: modeConnections.live
@@ -420,7 +691,7 @@ export async function getConektaPaymentConfig(options = {}) {
   }
 }
 
-export async function saveConektaPaymentConfig(input = {}) {
+export async function saveConektaPaymentConfig(input = {}, options = {}) {
   const current = await getConektaPaymentConfig({ includeSecrets: true })
   const currentModes = current.manualModes || {
     test: normalizeStoredModeConnection({}, 'test', { includeSecrets: true }),
@@ -434,10 +705,15 @@ export async function saveConektaPaymentConfig(input = {}) {
           privateKey: input.privateKey
         }
       }
-  const nextModes = {
+  let nextModes = {
     test: buildModeConnectionFromInput('test', manualInput.test, currentModes.test),
     live: buildModeConnectionFromInput('live', manualInput.live, currentModes.live)
   }
+
+  if (Object.prototype.hasOwnProperty.call(options, 'webhookUrl')) {
+    nextModes = await syncConektaWebhooksForConnections(nextModes, options.webhookUrl)
+  }
+
   const activeMode = chooseMode(nextModes, input.mode || 'live')
   const active = nextModes[activeMode]
 

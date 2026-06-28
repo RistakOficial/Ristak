@@ -104,6 +104,23 @@ async function buildStripeWebhookEndpoints(req) {
   return endpoints
 }
 
+function isPublicWebhookEndpointUrl(url) {
+  try {
+    const parsed = new URL(cleanString(url))
+    const host = parsed.hostname.toLowerCase()
+    return parsed.protocol === 'https:' &&
+      !['localhost', '127.0.0.1', '::1'].includes(host) &&
+      !host.endsWith('.local')
+  } catch {
+    return false
+  }
+}
+
+async function getPreferredStripeWebhookUrl(req) {
+  const endpoints = await buildStripeWebhookEndpoints(req)
+  return endpoints.find((endpoint) => isPublicWebhookEndpointUrl(endpoint.url))?.url || ''
+}
+
 async function withStripeWebhookEndpoints(req, config) {
   return {
     ...config,
@@ -132,7 +149,9 @@ export async function getStripeConfigView(req, res) {
 
 export async function saveStripeConfigView(req, res) {
   try {
-    const config = await saveStripePaymentConfig(req.body || {})
+    const config = await saveStripePaymentConfig(req.body || {}, {
+      webhookUrl: await getPreferredStripeWebhookUrl(req)
+    })
     res.json({ success: true, data: await withStripeWebhookEndpoints(req, config) })
   } catch (error) {
     logger.error(`Error guardando configuración Stripe: ${error.message}`)
