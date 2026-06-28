@@ -185,6 +185,48 @@ export const WhatsAppConfigEditor: React.FC<{ config: Config; onChange: (config:
     )
   }
 
+  const qrFallbackNotice = (
+    <>
+      {whatsappAvailability.canShowQrFallbackSwitch && (
+        <div className={styles.qrModeBox}>
+          <Toggle
+            checked={allowQrFallback}
+            onChange={setAllowQrFallback}
+            label="Permitir QR"
+          />
+          <div className={styles.qrModeCopy}>
+            <div className={styles.qrModeTitle}>
+              <span
+                className={styles.qrRiskIcon}
+                title="Precaución: el envío por QR usa una aplicación de terceros no validada por Meta y puede aumentar el riesgo de bloqueo del número."
+              >
+                <ShieldAlert size={16} aria-hidden="true" />
+              </span>
+              Usar QR si WhatsApp API no está disponible
+            </div>
+            <span className={styles.configHelp}>
+              Primero se intenta WhatsApp API. Si la API no está disponible o Meta restringe el envío, se usa un número conectado por QR como respaldo. {WHATSAPP_QR_PRECAUTION_MESSAGE}
+            </span>
+          </div>
+        </div>
+      )}
+
+      {whatsappAvailability.hasQrConnected && !whatsappAvailability.canShowQrFallbackSwitch && (
+        <div className={styles.configWarning}>
+          <AlertTriangle size={12} />
+          {WHATSAPP_QR_PRECAUTION_TITLE}: sólo hay QR conectado para WhatsApp. {WHATSAPP_QR_PRECAUTION_MESSAGE} Conecta WhatsApp API para activar QR como respaldo.
+        </div>
+      )}
+
+      {allowQrFallback && !whatsappAvailability.hasQrConnected && (
+        <div className={styles.configWarning}>
+          <AlertTriangle size={12} />
+          Esta automatización permite respaldo por QR, pero ahora no hay ningún número conectado por QR.
+        </div>
+      )}
+    </>
+  )
+
   return (
     <div className={styles.whatsappConfig}>
       {/* ------------------------------ Remitente ----------------------------- */}
@@ -244,45 +286,8 @@ export const WhatsAppConfigEditor: React.FC<{ config: Config; onChange: (config:
               onChange={setNormalBlocks}
               supportsQuickReplies={false}
               buttonLabelMaxLength={20}
+              afterBlocks={qrFallbackNotice}
             />
-
-            {whatsappAvailability.canShowQrFallbackSwitch && (
-              <div className={styles.qrModeBox}>
-                <Toggle
-                  checked={allowQrFallback}
-                  onChange={setAllowQrFallback}
-                  label="Permitir QR"
-                />
-                <div className={styles.qrModeCopy}>
-                  <div className={styles.qrModeTitle}>
-                    <span
-                      className={styles.qrRiskIcon}
-                      title="Precaución: el envío por QR usa una aplicación de terceros no validada por Meta y puede aumentar el riesgo de bloqueo del número."
-                    >
-                      <ShieldAlert size={16} aria-hidden="true" />
-                    </span>
-                    Usar QR si WhatsApp API no está disponible
-                  </div>
-                  <span className={styles.configHelp}>
-                    Primero se intenta WhatsApp API. Si la API no está disponible o Meta restringe el envío, se usa un número conectado por QR como respaldo. {WHATSAPP_QR_PRECAUTION_MESSAGE}
-                  </span>
-                </div>
-              </div>
-            )}
-
-            {whatsappAvailability.hasQrConnected && !whatsappAvailability.canShowQrFallbackSwitch && (
-              <div className={styles.configWarning}>
-                <AlertTriangle size={12} />
-                {WHATSAPP_QR_PRECAUTION_TITLE}: sólo hay QR conectado para WhatsApp. {WHATSAPP_QR_PRECAUTION_MESSAGE} Conecta WhatsApp API para activar QR como respaldo.
-              </div>
-            )}
-
-            {allowQrFallback && !whatsappAvailability.hasQrConnected && (
-              <div className={styles.configWarning}>
-                <AlertTriangle size={12} />
-                Esta automatización permite respaldo por QR, pero ahora no hay ningún número conectado por QR.
-              </div>
-            )}
           </>
         )}
 

@@ -51,6 +51,7 @@ interface MessageBlocksEditorProps {
   onChange: (blocks: MessageBlock[]) => void
   supportsQuickReplies?: boolean
   buttonLabelMaxLength?: number
+  afterBlocks?: React.ReactNode
   /** 'chat' = globos normales; 'template' = secuencia de plantillas + retrasos */
   variant?: 'chat' | 'template'
 }
@@ -222,6 +223,7 @@ export const MessageBlocksEditor: React.FC<MessageBlocksEditorProps> = ({
   onChange,
   supportsQuickReplies = false,
   buttonLabelMaxLength = 40,
+  afterBlocks,
   variant = 'chat'
 }) => {
   const blocks = asMessageBlocks(value)
@@ -530,6 +532,8 @@ export const MessageBlocksEditor: React.FC<MessageBlocksEditorProps> = ({
       })}
         </SortableContext>
       </DndContext>
+
+      {afterBlocks}
 
       {/* --------------------- Respuestas rápidas (pill) -------------------- */}
       {supportsQuickReplies && (
