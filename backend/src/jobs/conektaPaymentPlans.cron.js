@@ -3,8 +3,8 @@ import { logger } from '../utils/logger.js'
 import { isDeployShutdownStarted, trackDeployDrainWork } from '../utils/deployDrainTracker.js'
 import { withCronLock } from '../utils/cronLock.js'
 
-// Los planes se cobran por fecha, no por segundo exacto; 30 minutos evita ruido innecesario.
-const CONEKTA_PAYMENT_PLANS_INTERVAL_MS = 30 * 60 * 1000
+// Revisa cada minuto para pruebas y planes con hora exacta. La idempotencia/lock evita doble cargo.
+const CONEKTA_PAYMENT_PLANS_INTERVAL_MS = 60 * 1000
 
 let started = false
 let running = false

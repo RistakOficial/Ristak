@@ -372,14 +372,19 @@ interface CreatedPaymentLink {
   publicPaymentId?: string | null
 }
 
+const toDateInputValue = (date: Date) => {
+  const year = date.getFullYear()
+  const month = String(date.getMonth() + 1).padStart(2, '0')
+  const day = String(date.getDate()).padStart(2, '0')
+  return `${year}-${month}-${day}`
+}
+
 const defaultManualPaymentData = (): ManualPaymentData => ({
-  paymentDate: new Date().toISOString().split('T')[0],
+  paymentDate: toDateInputValue(new Date()),
   paymentMethod: 'bank_transfer',
   reference: '',
   notes: ''
 })
-
-const toDateInputValue = (date: Date) => date.toISOString().split('T')[0]
 
 const addDays = (date: Date, days: number) => {
   const next = new Date(date)
@@ -1806,7 +1811,7 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
         phoneNo: contactPhone || ''
       },
       items,
-      issueDate: new Date().toISOString().split('T')[0],
+      issueDate: toDateInputValue(new Date()),
       dueDate,
       liveMode: ghlInvoiceMode === 'live',
       ...(taxBreakdown.includesTax && {

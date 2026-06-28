@@ -514,6 +514,7 @@ test('Conekta planes: conserva varios planes del mismo contacto y procesa solo v
     )
 
     const today = todayConektaDateOnly()
+    const futureTimedDue = new Date(Date.now() + 60 * 60 * 1000).toISOString()
     const contact = {
       id: contactId,
       name: 'Cliente Multi Conekta',
@@ -546,12 +547,12 @@ test('Conekta planes: conserva varios planes del mismo contacto y procesa solo v
       description: 'Plan Conekta futuro',
       paymentMethodId: conektaSourceId,
       firstPayment: { enabled: false },
-      remainingFrequency: 'custom',
+      remainingFrequency: 'scheduled_time',
       remainingPayments: [{
         sequence: 1,
         amount: 475,
-        dueDate: '2099-01-01',
-        frequency: 'custom'
+        dueDate: futureTimedDue,
+        frequency: 'scheduled_time'
       }]
     }, { baseUrl: 'https://app.example.test' })
 
@@ -604,6 +605,32 @@ test('Conekta planes: conserva varios planes del mismo contacto y procesa solo v
     const secondRun = await processDueConektaPaymentPlanCharges({ limit: 10 })
     assert.equal(secondRun.processed, 0)
     assert.equal(orderCalls.length, 1)
+
+    await db.run(
+      `UPDATE installment_payments
+       SET due_date = ?, updated_at = CURRENT_TIMESTAMP
+       WHERE id = ?`,
+      [new Date(Date.now() - 2 * 60 * 1000).toISOString(), secondPlan.scheduledPayments[0].installmentId]
+    )
+
+    const timedRun = await processDueConektaPaymentPlanCharges({ limit: 10 })
+    assert.equal(timedRun.processed, 1)
+    assert.equal(timedRun.succeeded, 1)
+    assert.equal(timedRun.failed, 0)
+    assert.equal(orderCalls.length, 2)
+    assert.equal(orderCalls[1].body.line_items[0].unit_price, 47500)
+
+    const paidTimedInstallment = await db.get(
+      'SELECT status, frequency, conekta_order_id FROM installment_payments WHERE id = ?',
+      [secondPlan.scheduledPayments[0].installmentId]
+    )
+    assert.equal(paidTimedInstallment.status, 'paid')
+    assert.equal(paidTimedInstallment.frequency, 'scheduled_time')
+    assert.equal(paidTimedInstallment.conekta_order_id, 'ord_multi_2')
+
+    const duplicateTimedRun = await processDueConektaPaymentPlanCharges({ limit: 10 })
+    assert.equal(duplicateTimedRun.processed, 0)
+    assert.equal(orderCalls.length, 2)
   })
 
   try {

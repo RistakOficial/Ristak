@@ -86,6 +86,9 @@ const CARD_SETUP_PLAN_TRIGGERS = new Set(['card_setup', 'card_setup_authorizatio
 const LOCKED_PLAN_PAYMENT_STATUSES = new Set(['paid', 'succeeded', 'completed', 'complete', 'fulfilled', 'success', 'refunded', 'void', 'deleted', 'cancelled', 'canceled'])
 const AUTOMATIC_PLAN_PAYMENT_METHODS = new Set(['', 'stripe_auto', 'stripe_saved_card', 'stripe_pending_card', 'stripe_scheduled_card', 'card', 'payment_link', 'direct_card', 'saved_card'])
 const MANUAL_PLAN_PAYMENT_METHODS = new Set(['cash', 'bank_transfer', 'transfer', 'deposit', 'check', 'other', 'manual', 'offline'])
+const TIMED_PLAN_FREQUENCY = 'scheduled_time'
+const TIMED_PLAN_FREQUENCY_ALIASES = new Set([TIMED_PLAN_FREQUENCY, 'scheduled-time', 'scheduledat', 'scheduled_at', 'timed', 'datetime'])
+const PLAN_FREQUENCIES = new Set(['custom', 'daily', 'weekly', 'biweekly', 'monthly', 'yearly', TIMED_PLAN_FREQUENCY])
 const ZERO_DECIMAL_CURRENCIES = new Set([
   'bif', 'clp', 'djf', 'gnf', 'jpy', 'kmf', 'krw', 'mga', 'pyg', 'rwf',
   'ugx', 'vnd', 'vuv', 'xaf', 'xof', 'xpf'
@@ -197,6 +200,14 @@ function dateOnlyPlaceholder() {
   return isPostgresRuntime ? '?::date' : 'DATE(?)'
 }
 
+function timestampSql(expression) {
+  return isPostgresRuntime ? expression : `datetime(${expression})`
+}
+
+function timestampComparisonPlaceholder() {
+  return isPostgresRuntime ? '?::timestamp' : 'datetime(?)'
+}
+
 function staleProcessingSql(column) {
   return isPostgresRuntime
     ? `${column} < CURRENT_TIMESTAMP - INTERVAL '10 minutes'`
@@ -276,6 +287,43 @@ function assertDateNotInPast(value, message) {
     throw error
   }
   return date
+}
+
+function normalizePlanFrequency(value, fallback = 'custom') {
+  const normalized = cleanString(value || fallback).toLowerCase().replace(/[\s-]+/g, '_')
+  if (TIMED_PLAN_FREQUENCY_ALIASES.has(normalized)) return TIMED_PLAN_FREQUENCY
+  return PLAN_FREQUENCIES.has(normalized) ? normalized : fallback
+}
+
+function isTimedPlanFrequency(value) {
+  return normalizePlanFrequency(value) === TIMED_PLAN_FREQUENCY
+}
+
+function assertPlanDueDateNotInPast(value, frequency, message) {
+  if (!isTimedPlanFrequency(frequency)) return assertDateNotInPast(value, message)
+
+  const date = new Date(cleanString(value))
+  if (Number.isNaN(date.getTime())) {
+    const error = new Error('La fecha y hora de cobro no es válida.')
+    error.status = 400
+    throw error
+  }
+
+  if (date.getTime() < Date.now() - 60_000) {
+    const error = new Error(message)
+    error.status = 400
+    throw error
+  }
+
+  return date.toISOString()
+}
+
+function duePlanInstallmentCondition(alias = 'i') {
+  const frequencySql = `LOWER(COALESCE(${alias}.frequency, 'custom'))`
+  const timedFrequencySql = `${frequencySql} = '${TIMED_PLAN_FREQUENCY}'`
+  const timedDueSql = `${timestampSql(`${alias}.due_date`)} <= ${timestampComparisonPlaceholder()}`
+  const dateDueSql = `${dateOnlySql(`${alias}.due_date`)} <= ${dateOnlyPlaceholder()}`
+  return `((${timedFrequencySql} AND ${timedDueSql}) OR (${frequencySql} <> '${TIMED_PLAN_FREQUENCY}' AND ${dateDueSql}))`
 }
 
 function isMaskedSecret(value) {
@@ -3137,14 +3185,15 @@ function validateStripePaymentPlanPayload(input = {}) {
       throw error
     }
 
-    const dueDate = assertDateNotInPast(payment.dueDate, 'Los pagos futuros automáticos no pueden programarse en fechas pasadas.')
+    const frequency = normalizePlanFrequency(payment.frequency || input.remainingFrequency || 'custom')
+    const dueDate = assertPlanDueDateNotInPast(payment.dueDate, frequency, 'Los pagos futuros automáticos no pueden programarse en fechas pasadas.')
 
     return {
       sequence: Number(payment.sequence || index + 1),
       amount: Math.round(amount * 100) / 100,
       percentage: payment.percentage ?? null,
       dueDate,
-      frequency: cleanString(payment.frequency || input.remainingFrequency || 'custom') || 'custom'
+      frequency
     }
   })
 
@@ -3178,7 +3227,7 @@ function validateStripePaymentPlanPayload(input = {}) {
       method: firstPaymentMethod
     },
     remainingPayments: normalizedRemaining,
-    remainingFrequency: cleanString(input.remainingFrequency || 'custom') || 'custom',
+    remainingFrequency: normalizePlanFrequency(input.remainingFrequency || 'custom'),
     cardSetupAmount,
     lineItems: Array.isArray(input.invoicePayload?.items) ? input.invoicePayload.items : [],
     invoicePayload: input.invoicePayload || {},
@@ -3189,6 +3238,7 @@ function validateStripePaymentPlanPayload(input = {}) {
 
 function getStripePlanRecurrenceLabel(frequency) {
   const labels = {
+    scheduled_time: 'Hora programada',
     daily: 'Diario',
     weekly: 'Semanal',
     biweekly: 'Quincenal',
@@ -3473,7 +3523,7 @@ export async function updateStripePaymentPlanSchedule(flowId, input = {}) {
   const metadata = parseJson(flow.metadata, {})
   const hasSavedCard = Boolean(cleanString(flow.stripe_payment_method_id))
   const nextConcept = cleanString(input.name || input.title || input.description || input.concept || flow.concept || 'Plan de pagos')
-  const nextFrequency = cleanString(input.remainingFrequency || input.frequency || metadata.remainingFrequency || 'custom') || 'custom'
+  const nextFrequency = normalizePlanFrequency(input.remainingFrequency || input.frequency || metadata.remainingFrequency || 'custom')
   const submittedInstallments = Array.isArray(input.installments)
     ? input.installments
     : Array.isArray(input.remainingPayments)
@@ -3515,7 +3565,11 @@ export async function updateStripePaymentPlanSchedule(flowId, input = {}) {
       throw error
     }
 
-    const dueDate = normalizeDateOnly(submitted.dueDate || submitted.date || submitted.scheduledAt)
+    const dueDate = assertPlanDueDateNotInPast(
+      submitted.dueDate || submitted.date || submitted.scheduledAt,
+      nextFrequency,
+      'Las parcialidades automáticas no pueden programarse en fechas pasadas.'
+    )
     if (!dueDate) {
       const error = new Error('Cada parcialidad futura necesita fecha de cobro.')
       error.status = 400
@@ -3523,7 +3577,7 @@ export async function updateStripePaymentPlanSchedule(flowId, input = {}) {
     }
 
     const method = normalizePlanEditablePaymentMethod(submitted.paymentMethod || submitted.method, hasSavedCard)
-    if (method.automatic) {
+    if (method.automatic && !isTimedPlanFrequency(nextFrequency)) {
       assertDateNotInPast(dueDate, 'Las parcialidades automáticas no pueden programarse en fechas pasadas.')
     }
 
@@ -4717,9 +4771,10 @@ export async function createStripePaymentPlan(input = {}, { baseUrl } = {}) {
 export async function processDueStripePaymentPlanCharges({ limit = 25 } = {}) {
   const { stripe, config, requestOptions } = await getStripeClient()
   const dueDate = todayDateOnly()
+  const dueTimestamp = new Date().toISOString()
   const normalizedLimit = Math.max(1, Math.min(Number(limit) || 25, 100))
   const firstPaymentDueDateSql = dateOnlySql('COALESCE(f.first_payment_date, p.due_date, p.date)')
-  const installmentDueDateSql = dateOnlySql('i.due_date')
+  const installmentDueSql = duePlanInstallmentCondition('i')
   const dueDatePlaceholder = dateOnlyPlaceholder()
   const staleFirstPaymentSql = staleProcessingSql('f.updated_at')
   const staleInstallmentSql = staleProcessingSql('i.updated_at')
@@ -4770,10 +4825,10 @@ export async function processDueStripePaymentPlanCharges({ limit = 25 } = {}) {
          OR (i.status = 'processing' AND ${staleInstallmentSql})
        )
        AND i.payment_id IS NOT NULL
-       AND ${installmentDueDateSql} <= ${dueDatePlaceholder}
+       AND ${installmentDueSql}
      ORDER BY i.due_date ASC, i.sequence ASC
      LIMIT ?`,
-    [STRIPE_PLAN_STATES.INSTALLMENT_PLAN_ACTIVE, dueDate, normalizedLimit]
+    [STRIPE_PLAN_STATES.INSTALLMENT_PLAN_ACTIVE, dueTimestamp, dueDate, normalizedLimit]
   )
 
   const results = []

@@ -694,6 +694,63 @@ test('planes Stripe: tarjeta con requires_action marca error y evita reintentos 
   }
 })
 
+test('planes Stripe: respeta hora programada interna y no cobra antes ni duplica', async () => {
+  const { contactId, contact, savedMethodId } = await seedContactWithSavedCard('timed_plan')
+  const { stripe, calls } = createStripeMock()
+  setStripeFactoryForTest(() => stripe)
+
+  try {
+    await configureStripe()
+    const futureDue = new Date(Date.now() + 60 * 60 * 1000).toISOString()
+
+    const plan = await createStripePaymentPlan({
+      contact,
+      title: 'Plan con hora exacta',
+      description: 'Parcialidad programada por timestamp interno',
+      totalAmount: 275,
+      paymentMethodId: savedMethodId,
+      firstPayment: { enabled: false },
+      remainingFrequency: 'scheduled_time',
+      remainingPayments: [
+        { sequence: 1, amount: 275, dueDate: futureDue, frequency: 'scheduled_time' }
+      ]
+    }, { baseUrl: 'https://example.test' })
+
+    const earlyRun = await processDueStripePaymentPlanCharges({ limit: 10 })
+    assert.equal(earlyRun.length, 0)
+    assert.equal(calls.paymentIntentsCreate.length, 0)
+
+    const pastDue = new Date(Date.now() - 2 * 60 * 1000).toISOString()
+    await db.run(
+      `UPDATE installment_payments
+       SET due_date = ?, updated_at = CURRENT_TIMESTAMP
+       WHERE id = ?`,
+      [pastDue, plan.scheduledPayments[0].installmentId]
+    )
+
+    const dueRun = await processDueStripePaymentPlanCharges({ limit: 10 })
+    assert.equal(dueRun.length, 1)
+    assert.equal(dueRun[0].charged, true)
+    assert.equal(calls.paymentIntentsCreate.length, 1)
+    assert.equal(calls.paymentIntentsCreate[0].params.amount, 27500)
+
+    const duplicateRun = await processDueStripePaymentPlanCharges({ limit: 10 })
+    assert.equal(duplicateRun.length, 0)
+    assert.equal(calls.paymentIntentsCreate.length, 1)
+
+    const installment = await db.get(
+      'SELECT status, frequency, stripe_payment_intent_id FROM installment_payments WHERE id = ?',
+      [plan.scheduledPayments[0].installmentId]
+    )
+    assert.equal(installment.status, 'paid')
+    assert.equal(installment.frequency, 'scheduled_time')
+    assert.equal(installment.stripe_payment_intent_id, 'pi_stress_1')
+  } finally {
+    setStripeFactoryForTest(null)
+    await cleanupContact(contactId)
+  }
+})
+
 test('suscripciones Stripe test: crea, sube/baja precio, pausa, reanuda, cancela y permite limpieza total', async () => {
   const { contactId, contact, savedMethodId, stripeCustomerId, stripePaymentMethodId } = await seedContactWithSavedCard('subscription_lifecycle')
   const { stripe, calls } = createStripeMock()
