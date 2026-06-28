@@ -158,6 +158,8 @@ const CHAT_LIST_PREFETCH_VIEWPORTS = 3
 // conversaciones sin depender del scroll. Pasado el tope, el resto se carga con prefetch.
 const CHAT_LIST_BACKGROUND_LOAD_CAP = 1000
 const CHAT_CONVERSATION_MESSAGE_LIMIT = 250
+const OPTIMISTIC_MESSAGE_ID_PREFIXES = ['local-', 'template-', 'local-meta-', 'local-ghl-']
+const OPTIMISTIC_MESSAGE_MAX_AGE_MS = 10 * 60 * 1000
 const PAYMENT_BANK_CLABES_CONFIG_KEY = 'payment_bank_clabes'
 const CONTACT_INFO_CUSTOM_FIELDS_CONFIG_KEY = 'mobile_chat_contact_info_custom_field_ids'
 const AI_AGENT_CHAT_ID = 'ristak-ai-agent-mobile-chat'
@@ -1189,6 +1191,10 @@ function normalizeWhatsAppBusinessDirection(value?: unknown): 'inbound' | 'outbo
 }
 
 function applyLocalUnreadState(contact: ChatContact, readState: ChatReadState): ChatContact {
+  if (contact.unreadCount !== undefined && contact.unreadCount !== null) {
+    return { ...contact, unreadCount: Math.max(0, Number(contact.unreadCount || 0)) }
+  }
+
   const serverUnread = Math.max(0, Number(contact.unreadCount || 0))
   const lastDirection = String(contact.lastMessageDirection || '').toLowerCase()
 
@@ -1815,6 +1821,83 @@ function areMessagesEquivalent(left: ChatMessage[], right: ChatMessage[]) {
   if (left === right) return true
   if (left.length !== right.length) return false
   return left.every((message, index) => getMessageSignature(message) === getMessageSignature(right[index]))
+}
+
+function normalizeMessageMatchText(value?: string) {
+  return String(value || '').replace(/\s+/g, ' ').trim().toLowerCase()
+}
+
+function getMessageTimeValue(value?: string) {
+  const timestamp = Date.parse(String(value || ''))
+  return Number.isFinite(timestamp) ? timestamp : 0
+}
+
+function isOptimisticMessage(message: ChatMessage) {
+  return OPTIMISTIC_MESSAGE_ID_PREFIXES.some((prefix) => message.id.startsWith(prefix))
+}
+
+function isRecentOptimisticMessage(message: ChatMessage) {
+  if (!isOptimisticMessage(message)) return false
+  const timestamp = getMessageTimeValue(message.date)
+  if (!timestamp) return true
+  return Date.now() - timestamp < OPTIMISTIC_MESSAGE_MAX_AGE_MS
+}
+
+function getMessageAttachmentMatchKey(message: ChatMessage) {
+  const attachment = message.attachment
+  if (!attachment) return ''
+  return [
+    attachment.type,
+    normalizeMessageMatchText(attachment.name),
+    normalizeMessageMatchText(attachment.mimeType)
+  ].join(':')
+}
+
+function messagesLookLikeSameOptimisticSend(loaded: ChatMessage, optimistic: ChatMessage) {
+  if (loaded.id === optimistic.id) return true
+  if (loaded.direction !== optimistic.direction || optimistic.direction !== 'outbound') return false
+
+  const loadedTime = getMessageTimeValue(loaded.date)
+  const optimisticTime = getMessageTimeValue(optimistic.date)
+  if (loadedTime && optimisticTime && Math.abs(loadedTime - optimisticTime) > OPTIMISTIC_MESSAGE_MAX_AGE_MS) return false
+
+  const loadedText = normalizeMessageMatchText(loaded.text)
+  const optimisticText = normalizeMessageMatchText(optimistic.text)
+  const sameText = Boolean(loadedText && optimisticText && loadedText === optimisticText)
+  const loadedAttachment = getMessageAttachmentMatchKey(loaded)
+  const optimisticAttachment = getMessageAttachmentMatchKey(optimistic)
+  const sameAttachment = Boolean(loadedAttachment && optimisticAttachment && loadedAttachment === optimisticAttachment)
+
+  if (sameText || sameAttachment) {
+    return !loadedTime || !optimisticTime || loadedTime >= optimisticTime - 5000
+  }
+
+  return optimistic.id.startsWith('template-') &&
+    Boolean(loadedText || loaded.attachment) &&
+    (!loadedTime || !optimisticTime || loadedTime >= optimisticTime - 5000)
+}
+
+function mergeMessagesWithOptimistic(loadedMessages: ChatMessage[], currentMessages: ChatMessage[]) {
+  const merged = [...loadedMessages]
+  const matchedLoadedIndexes = new Set<number>()
+
+  currentMessages.forEach((message) => {
+    if (!isRecentOptimisticMessage(message)) return
+
+    const matchIndex = loadedMessages.findIndex((loaded, index) => (
+      !matchedLoadedIndexes.has(index) && messagesLookLikeSameOptimisticSend(loaded, message)
+    ))
+    if (matchIndex >= 0) {
+      matchedLoadedIndexes.add(matchIndex)
+      return
+    }
+
+    if (!merged.some((loaded) => loaded.id === message.id)) {
+      merged.push(message)
+    }
+  })
+
+  return merged.sort((left, right) => getMessageTimeValue(left.date) - getMessageTimeValue(right.date))
 }
 
 function getJourneyEventSignature(event: JourneyEvent) {
@@ -4738,6 +4821,20 @@ export const PhoneChat: React.FC = () => {
     })
     return nextContact
   }, [])
+  const persistChatsRead = useCallback((contactIds: string[], options: { silent?: boolean } = {}) => {
+    const ids = [...new Set(contactIds.filter(Boolean))]
+    if (!ids.length) return
+
+    const request = ids.length === 1
+      ? contactsService.markChatRead(ids[0])
+      : contactsService.markChatsRead(ids)
+
+    request.catch((error: any) => {
+      if (!options.silent) {
+        showToast('warning', 'No se pudo guardar leído', error?.message || 'El chat se marcó localmente; se corregirá al refrescar.')
+      }
+    })
+  }, [showToast])
 
   const applyLoadedChats = useCallback((loadedChats: ChatContact[], requestedContact?: ChatContact | null) => {
     const readState = ensureReadBaselines(loadedChats, readChatReadState())
@@ -4749,6 +4846,7 @@ export const PhoneChat: React.FC = () => {
       const activeLoadedContact = nextChats.find((contact) => contact.id === currentActiveContactId)
       if (activeLoadedContact) {
         markContactReadState(activeLoadedContact)
+        persistChatsRead([currentActiveContactId], { silent: true })
         nextChats = nextChats.map((contact) => (
           contact.id === currentActiveContactId ? { ...contact, unreadCount: 0 } : contact
         ))
@@ -4773,7 +4871,7 @@ export const PhoneChat: React.FC = () => {
     }
 
     return nextChats
-  }, [aiAgentChatEnabled, openAIConfigured, runConversationOpenBottomScrollSequence, startConversationBottomLock])
+  }, [aiAgentChatEnabled, openAIConfigured, persistChatsRead, runConversationOpenBottomScrollSequence, startConversationBottomLock])
 
   const loadChats = useCallback(async (options: { append?: boolean; showCacheRefresh?: boolean; useCache?: boolean; silent?: boolean } = {}) => {
     const silentRefresh = options.silent === true
@@ -5278,7 +5376,10 @@ export const PhoneChat: React.FC = () => {
         areJourneyEventsEquivalent(currentJourney, cachedJourney) ? currentJourney : cachedJourney
       ))
       setMessages((currentMessages) => (
-        areMessagesEquivalent(currentMessages, cachedMessages) ? currentMessages : cachedMessages
+        (() => {
+          const nextMessages = mergeMessagesWithOptimistic(cachedMessages, currentMessages)
+          return areMessagesEquivalent(currentMessages, nextMessages) ? currentMessages : nextMessages
+        })()
       ))
       setAgentCompletionEvents(cachedAgentCompletions)
       setMessagesLoading(false)
@@ -5316,9 +5417,16 @@ export const PhoneChat: React.FC = () => {
         .sort((left, right) => new Date(left.date).getTime() - new Date(right.date).getTime())
 
       setMessages((currentMessages) => (
-        areMessagesEquivalent(currentMessages, nextMessages) ? currentMessages : nextMessages
+        (() => {
+          const mergedMessages = mergeMessagesWithOptimistic(nextMessages, currentMessages)
+          return areMessagesEquivalent(currentMessages, mergedMessages) ? currentMessages : mergedMessages
+        })()
       ))
       writePhoneDailyCache(cacheKey, { journey, messages: nextMessages, agentCompletions }, { maxEntryChars: 360_000 }, timezone) // (MOB-007)
+      persistChatsRead([contactId], { silent: true })
+      setChats((currentChats) => currentChats.map((contact) => (
+        contact.id === contactId ? { ...contact, unreadCount: 0 } : contact
+      )))
     } catch {
       if (isCurrentConversationLoad() && !showedCachedConversation && !silentRefresh) {
         setMessages([])
@@ -5331,7 +5439,7 @@ export const PhoneChat: React.FC = () => {
         setMessagesRefreshing(false)
       }
     }
-  }, [locationId, timezone]) // (MOB-007)
+  }, [locationId, persistChatsRead, timezone]) // (MOB-007)
 
   const refreshChatInboxNow = useCallback(async (options: { contactId?: string; showIndicator?: boolean } = {}) => {
     if (accessState !== 'allowed') return
@@ -6549,6 +6657,7 @@ export const PhoneChat: React.FC = () => {
     handleCancelVoiceDraft()
     clearMessageActionPress()
     markContactReadState(chatContact)
+    persistChatsRead([nextContact.id], { silent: true })
     startConversationBottomLock(nextContact.id)
     runConversationOpenBottomScrollSequence()
     setActiveContactId(nextContact.id)
@@ -7144,6 +7253,7 @@ export const PhoneChat: React.FC = () => {
       }
     })
     writeChatReadState(nextReadState)
+    persistChatsRead([...selectedIds])
     setChats((current) => current.map((contact) => (
       selectedIds.has(contact.id) ? { ...contact, unreadCount: 0 } : contact
     )))

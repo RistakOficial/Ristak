@@ -22,6 +22,11 @@ import { findWhatsAppProfilePictureUrl, getWhatsAppApiStatus, warmWhatsAppApiPro
 import { warmWhatsAppQrProfilePictures } from '../services/whatsappQrService.js'
 import { isMetaSocialMessagingEnabled } from '../services/metaSocialMessagingService.js'
 import {
+  getChatUnreadCountsForUser,
+  markChatContactReadForUser,
+  markChatContactsReadForUser
+} from '../services/chatReadStateService.js'
+import {
   listContactCustomFieldDefinitions,
   prepareContactCustomFieldsForStorage,
   updateContactCustomFieldDefinition,
@@ -1585,6 +1590,8 @@ const mapChatContactRowForResponse = (contact = {}) => ({
 const CHAT_CONTACTS_DEFAULT_LIMIT = 100
 const CHAT_CONTACTS_MAX_LIMIT = 250
 
+const getRequestUserId = (req) => req.user?.userId || req.user?.id || null
+
 const applyWarmedProfilePictures = (rows = [], warmedPictures = new Map()) => {
   if (!warmedPictures?.size) return rows
 
@@ -2162,16 +2169,88 @@ ${CONTACT_META_PROFILE_SELECT},
         })
       : rows
     const responseRowsWithPhones = await attachContactPhoneNumbers(responseRows)
+    const unreadCounts = await getChatUnreadCountsForUser({
+      userId: getRequestUserId(req),
+      contactIds: responseRowsWithPhones.map(row => row.id)
+    })
 
     res.json({
       success: true,
-      data: responseRowsWithPhones.map(mapChatContactRowForResponse)
+      data: responseRowsWithPhones.map(row => mapChatContactRowForResponse({
+        ...row,
+        unread_count: unreadCounts.get(String(row.id)) || 0
+      }))
     })
   } catch (error) {
     logger.error(`Error obteniendo chats: ${error.message}`)
     res.status(500).json({
       success: false,
       error: 'Error obteniendo chats'
+    })
+  }
+}
+
+export const markChatContactRead = async (req, res) => {
+  try {
+    const userId = getRequestUserId(req)
+    const contactId = cleanString(req.params?.id || req.body?.contactId)
+
+    if (!userId) {
+      return res.status(401).json({
+        success: false,
+        error: 'Usuario no autenticado'
+      })
+    }
+
+    if (!contactId) {
+      return res.status(400).json({
+        success: false,
+        error: 'Contacto inválido'
+      })
+    }
+
+    const state = await markChatContactReadForUser({ userId, contactId })
+    res.json({ success: true, data: state })
+  } catch (error) {
+    logger.error(`Error marcando chat como leído: ${error.message}`)
+    res.status(500).json({
+      success: false,
+      error: 'Error marcando chat como leído'
+    })
+  }
+}
+
+export const markChatContactsRead = async (req, res) => {
+  try {
+    const userId = getRequestUserId(req)
+    const rawContactIds = Array.isArray(req.body?.contactIds)
+      ? req.body.contactIds
+      : Array.isArray(req.body?.ids)
+        ? req.body.ids
+        : []
+    const contactIds = rawContactIds.map(cleanString).filter(Boolean)
+
+    if (!userId) {
+      return res.status(401).json({
+        success: false,
+        error: 'Usuario no autenticado'
+      })
+    }
+
+    if (!contactIds.length) {
+      return res.status(400).json({
+        success: false,
+        error: 'Selecciona al menos un chat'
+      })
+    }
+
+    const state = await markChatContactsReadForUser({ userId, contactIds })
+    res.json({ success: true, data: state })
+  } catch (error) {
+    logger.error(`Error marcando chats como leídos: ${error.message}`)
+    res.status(500).json({
+      success: false,
+      error: 'Error marcando chats como leídos'
     })
   }
 }

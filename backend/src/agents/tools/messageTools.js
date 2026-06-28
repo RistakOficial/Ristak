@@ -60,13 +60,14 @@ function mapInboxMessage(row) {
   }
 }
 
-export async function listInboxMessages({ channel = 'all', direction = 'inbound', contactId = null, since = null, query = null, limit = 20, unreadOnly = false } = {}) {
+export async function listInboxMessages({ channel = 'all', direction = 'inbound', contactId = null, since = null, query = null, limit = 20, unreadOnly = false, userId = null } = {}) {
   const safeChannel = normalizeInboxChannel(channel)
   const safeDirection = normalizeMessageDirection(unreadOnly ? 'inbound' : direction)
   const safeLimit = clampLimit(limit)
   const cleanContactId = cleanText(contactId)
   const cleanSince = cleanText(since)
   const cleanQuery = cleanText(query).toLowerCase()
+  const cleanUserId = cleanText(userId)
 
   const unions = []
   const params = []
@@ -174,10 +175,22 @@ export async function listInboxMessages({ channel = 'all', direction = 'inbound'
   }
 
   if (!unions.length) {
-    return { ok: true, total: 0, messages: [], unreadSupported: false }
+    return { ok: true, total: 0, messages: [], unreadSupported: true }
   }
 
   const outerConditions = []
+  if (unreadOnly) {
+    outerConditions.push(`
+      contact_id IN (
+        SELECT contact_id
+        FROM chat_read_states
+        WHERE unread_count > 0
+          ${cleanUserId ? 'AND user_id = ?' : ''}
+      )
+    `)
+    if (cleanUserId) params.push(cleanUserId)
+  }
+
   if (cleanQuery) {
     outerConditions.push(`(
       LOWER(COALESCE(contact_name, '')) LIKE ?
@@ -205,22 +218,21 @@ export async function listInboxMessages({ channel = 'all', direction = 'inbound'
     channel: safeChannel,
     direction: safeDirection,
     total: rows.length,
-    unreadSupported: false,
-    note: unreadOnly ? 'Ristak no guarda una marca universal de leído/no leído en backend; se listan mensajes entrantes recientes como aproximación operativa.' : undefined,
+    unreadSupported: true,
     messages: rows.map(mapInboxMessage)
   }
 }
 
 export const listInboxMessagesTool = tool({
   name: 'list_inbox_messages',
-  description: 'Lista la bandeja de mensajes multicanal (WhatsApp, Instagram/Facebook y email). Úsala para saber quién escribió, cuál fue el último mensaje o revisar mensajes entrantes recientes. No inventes "no leídos": el backend no tiene una marca universal de leído/no leído, así que unreadOnly devuelve entrantes recientes.',
+  description: 'Lista la bandeja de mensajes multicanal (WhatsApp, Instagram/Facebook y email). Úsala para saber quién escribió, cuál fue el último mensaje, revisar mensajes entrantes recientes o filtrar contactos con no leídos reales del backend.',
   parameters: z.object({
     channel: z.enum(['all', 'whatsapp', 'facebook', 'instagram', 'email']).nullable().describe('Canal a consultar; default all'),
     direction: z.enum(['all', 'inbound', 'outbound']).nullable().describe('Dirección; default inbound para mensajes recibidos'),
     contactId: z.string().nullable().describe('Filtrar por contacto si ya tienes el contactId'),
     since: z.string().nullable().describe('Filtrar desde esta fecha/hora ISO o YYYY-MM-DD'),
     query: z.string().nullable().describe('Buscar por contacto, teléfono/correo, usuario, asunto o texto del mensaje'),
-    unreadOnly: z.boolean().nullable().describe('true si el usuario pide no leídos; devuelve entrantes recientes y avisa que no hay marca universal de leído en backend'),
+    unreadOnly: z.boolean().nullable().describe('true si el usuario pide no leídos; filtra por el estado persistente de chat_read_states'),
     limit: z.number().int().min(1).max(100).nullable().describe('Máximo de mensajes (default 20)')
   }),
   execute: async ({ channel, direction, contactId, since, query, unreadOnly, limit }) => listInboxMessages({

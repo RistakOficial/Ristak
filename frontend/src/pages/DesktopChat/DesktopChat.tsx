@@ -297,6 +297,7 @@ const CHAT_LIST_PREFETCH_VIEWPORTS = 3
 // conversaciones (no solo las recientes) sin depender del scroll. Pasado el tope, el resto se
 // sigue cargando con el prefetch por scroll (protege cuentas enormes / rendimiento de render).
 const CHAT_LIST_BACKGROUND_LOAD_CAP = 1000
+const MESSAGE_PANE_BOTTOM_LOCK_GAP_PX = 120
 const BULK_CHAT_ARCHIVE_CONFIRM_WORD = 'ARCHIVAR'
 const BULK_CHAT_RESTORE_CONFIRM_WORD = 'RESTAURAR'
 const BULK_CHAT_REMOVE_CONFIRM_WORD = 'ELIMINAR'
@@ -2068,6 +2069,7 @@ export const DesktopChat: React.FC = () => {
   const { showToast } = useNotification()
   const { timezone, formatLocalDateTime } = useTimezone()
   const messagesEndRef = useRef<HTMLDivElement | null>(null)
+  const messagePaneRef = useRef<HTMLDivElement | null>(null)
   const chatsRequestRef = useRef<AbortController | null>(null)
   const chatListRef = useRef<HTMLDivElement | null>(null)
   const photoInputRef = useRef<HTMLInputElement | null>(null)
@@ -2093,6 +2095,8 @@ export const DesktopChat: React.FC = () => {
   // resultados de búsqueda anteriores.
   const chatListLoadedSearchRef = useRef('')
   const activeContactIdRef = useRef('')
+  const messagePanePinnedToBottomRef = useRef(true)
+  const scrollContactIdRef = useRef('')
   const conversationLoadGenerationRef = useRef(0)
   const chatLiveRefreshTimeoutRef = useRef<number | null>(null)
   const chatLiveRefreshInFlightRef = useRef(false)
@@ -2420,6 +2424,29 @@ export const DesktopChat: React.FC = () => {
   useEffect(() => {
     activeContactIdRef.current = activeContactId
   }, [activeContactId])
+  const markChatsReadLocally = useCallback((contactIds: string[]) => {
+    const idSet = new Set(contactIds.filter(Boolean))
+    if (!idSet.size) return
+    setChats((current) => {
+      const next = current.map((contact) => (
+        idSet.has(contact.id) ? { ...contact, unreadCount: 0 } : contact
+      ))
+      writeCachedChatList(next)
+      return next
+    })
+  }, [])
+  const persistChatsRead = useCallback((contactIds: string[]) => {
+    const ids = [...new Set(contactIds.filter(Boolean))]
+    if (!ids.length) return
+
+    const request = ids.length === 1
+      ? contactsService.markChatRead(ids[0])
+      : contactsService.markChatsRead(ids)
+
+    request.catch((error: any) => {
+      showToast('warning', 'No se pudo guardar leído', error?.message || 'El chat se marcó localmente; se corregirá al refrescar.')
+    })
+  }, [showToast])
   useEffect(() => {
     archivedChatIdSetRef.current = archivedChatIdSet
   }, [archivedChatIdSet])
@@ -3028,6 +3055,7 @@ export const DesktopChat: React.FC = () => {
         writeCachedChatList(next)
         return next
       })
+      void contactsService.markChatRead(contactId).catch(() => undefined)
     } catch {
       if (!isCurrentConversationLoad()) return
       if (!silent && !showedCachedConversation) {
@@ -3195,9 +3223,41 @@ export const DesktopChat: React.FC = () => {
     loadConversation(activeContactId)
   }, [activeContactId, loadConversation])
 
+  const updateMessagePaneBottomLock = useCallback(() => {
+    const pane = messagePaneRef.current
+    if (!pane) {
+      messagePanePinnedToBottomRef.current = true
+      return
+    }
+    const bottomGap = pane.scrollHeight - pane.scrollTop - pane.clientHeight
+    messagePanePinnedToBottomRef.current = bottomGap <= MESSAGE_PANE_BOTTOM_LOCK_GAP_PX
+  }, [])
+
+  const scrollConversationToBottom = useCallback((behavior: ScrollBehavior = 'auto') => {
+    window.requestAnimationFrame(() => {
+      messagesEndRef.current?.scrollIntoView({ block: 'end', behavior })
+      messagePanePinnedToBottomRef.current = true
+    })
+  }, [])
+
   useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ block: 'end' })
-  }, [agentCompletionEvents, messages, messagesLoading])
+    if (!activeContactId) return
+    const contactChanged = scrollContactIdRef.current !== activeContactId
+    if (contactChanged) {
+      scrollContactIdRef.current = activeContactId
+      messagePanePinnedToBottomRef.current = true
+    }
+
+    const lastMessage = messages[messages.length - 1]
+    const shouldScroll =
+      contactChanged ||
+      messagePanePinnedToBottomRef.current ||
+      lastMessage?.direction === 'outbound'
+
+    if (shouldScroll) {
+      scrollConversationToBottom(contactChanged ? 'auto' : 'smooth')
+    }
+  }, [activeContactId, agentCompletionEvents.length, messages, scrollConversationToBottom])
 
   const clearVoiceTimer = useCallback(() => {
     if (voiceTimerRef.current) {
@@ -4102,7 +4162,11 @@ export const DesktopChat: React.FC = () => {
   const handleSelectChat = useCallback((contact: DesktopChatContact) => {
     setActiveContactId(contact.id)
     acknowledgeAgentPriorityOnOpen(contact.id)
-  }, [acknowledgeAgentPriorityOnOpen])
+    if (Number(contact.unreadCount || 0) > 0) {
+      markChatsReadLocally([contact.id])
+      persistChatsRead([contact.id])
+    }
+  }, [acknowledgeAgentPriorityOnOpen, markChatsReadLocally, persistChatsRead])
 
   const handleToggleAgentAssignedView = useCallback(() => {
     setArchivedViewOpen(false)
@@ -4154,29 +4218,23 @@ export const DesktopChat: React.FC = () => {
 
   const handleMarkChatAsRead = useCallback((contact: DesktopChatContact) => {
     const unread = Number(contact.unreadCount || 0)
-    setChats((current) => {
-      const next = current.map((item) => item.id === contact.id ? { ...item, unreadCount: 0 } : item)
-      writeCachedChatList(next)
-      return next
-    })
+    markChatsReadLocally([contact.id])
+    persistChatsRead([contact.id])
 
     showToast(
       unread > 0 ? 'success' : 'info',
       unread > 0 ? 'Chat marcado como leído' : 'Chat sin pendientes',
       unread > 0 ? `${getContactName(contact)} ya no aparece como pendiente.` : `${getContactName(contact)} ya estaba leído.`
     )
-  }, [showToast])
+  }, [markChatsReadLocally, persistChatsRead, showToast])
 
   const handleMarkSelectedChatsAsRead = useCallback(() => {
     if (selectedChatContacts.length === 0) return
     const selectedIds = new Set(selectedChatContacts.map((contact) => contact.id))
     const unreadCount = selectedChatContacts.filter((contact) => Number(contact.unreadCount || 0) > 0).length
 
-    setChats((current) => {
-      const next = current.map((contact) => selectedIds.has(contact.id) ? { ...contact, unreadCount: 0 } : contact)
-      writeCachedChatList(next)
-      return next
-    })
+    markChatsReadLocally([...selectedIds])
+    persistChatsRead([...selectedIds])
 
     showToast(
       unreadCount > 0 ? 'success' : 'info',
@@ -4185,7 +4243,7 @@ export const DesktopChat: React.FC = () => {
         ? `${unreadCount} chat${unreadCount === 1 ? '' : 's'} ya no aparece${unreadCount === 1 ? '' : 'n'} como pendiente${unreadCount === 1 ? '' : 's'}.`
         : 'Los chats seleccionados ya estaban leídos.'
     )
-  }, [selectedChatContacts, showToast])
+  }, [markChatsReadLocally, persistChatsRead, selectedChatContacts, showToast])
 
   const handleRemoveChatFromList = useCallback((contact: DesktopChatContact) => {
     const snapshot = getChatRemovalSnapshot(contact)
@@ -6063,7 +6121,11 @@ export const DesktopChat: React.FC = () => {
                 </div>
               </header>
 
-              <ChatMessageSurface className={styles.messagePane}>
+              <ChatMessageSurface
+                ref={messagePaneRef}
+                className={styles.messagePane}
+                onScroll={updateMessagePaneBottomLock}
+              >
                 {messagesRefreshing && !messagesLoading ? (
                   <div className={styles.cacheRefreshPill} role="status" aria-live="polite">
                     <Loader2 size={13} className={styles.spin} aria-hidden="true" />

@@ -241,6 +241,11 @@ test('agente de mensajes lista bandeja multicanal y filtra por contacto o texto'
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [`${marker}_email_msg`, contactId, 'inbound', 'received', `${marker}@client.test`, 'ventas@example.test', `Asunto ${marker}`, `Correo entrante ${marker}`, '2099-04-03T10:00:00Z']
     )
+    await db.run(
+      `INSERT INTO chat_read_states (user_id, contact_id, unread_count, last_unread_at)
+       VALUES (?, ?, ?, ?)`,
+      [`agent_test_${marker}`, contactId, 3, '2099-04-03T10:00:00Z']
+    )
 
     const all = await listInboxMessages({ query: marker, direction: 'inbound', limit: 10 })
     assert.equal(all.ok, true)
@@ -252,10 +257,11 @@ test('agente de mensajes lista bandeja multicanal y filtra por contacto o texto'
     assert.equal(whatsappOnly.total, 1)
     assert.equal(whatsappOnly.messages[0].text, `Hola desde WhatsApp ${marker}`)
 
-    const unreadApproximation = await listInboxMessages({ query: marker, unreadOnly: true })
-    assert.equal(unreadApproximation.unreadSupported, false)
-    assert.match(unreadApproximation.note, /no guarda una marca universal/i)
+    const unreadMessages = await listInboxMessages({ query: marker, unreadOnly: true, userId: `agent_test_${marker}` })
+    assert.equal(unreadMessages.unreadSupported, true)
+    assert.equal(unreadMessages.total, 3)
   } finally {
+    await db.run('DELETE FROM chat_read_states WHERE contact_id = ?', [contactId]).catch(() => undefined)
     await db.run('DELETE FROM email_messages WHERE contact_id = ?', [contactId]).catch(() => undefined)
     await db.run('DELETE FROM meta_social_messages WHERE contact_id = ?', [contactId]).catch(() => undefined)
     await db.run('DELETE FROM meta_social_contacts WHERE id = ?', [metaContactId]).catch(() => undefined)

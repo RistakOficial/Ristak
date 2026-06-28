@@ -30,6 +30,14 @@ interface ContactJourneyOptions {
   messageLimit?: number
 }
 
+interface ChatReadStateResult {
+  contactId?: string
+  contactIds?: string[]
+  unreadCount?: number
+  lastReadAt?: string | null
+  updated?: number
+}
+
 interface ContactChartData {
   date: string
   count: number
@@ -346,6 +354,14 @@ export const contactsService = {
 
   getPaymentLinkDeliveryOptions(contactId: string): Promise<PaymentLinkDeliveryOptions> {
     return apiClient.get<PaymentLinkDeliveryOptions>(`/contacts/${encodeURIComponent(contactId)}/payment-link-delivery-options`)
+  },
+
+  markChatRead(contactId: string): Promise<ChatReadStateResult> {
+    return apiClient.post<ChatReadStateResult>(`/contacts/chats/${encodeURIComponent(contactId)}/read`, {})
+  },
+
+  markChatsRead(contactIds: string[]): Promise<ChatReadStateResult> {
+    return apiClient.post<ChatReadStateResult>('/contacts/chats/read', { contactIds })
   },
 
   async getContactJourney(id: string, options: ContactJourneyOptions = {}): Promise<JourneyEvent[]> {

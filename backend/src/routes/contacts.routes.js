@@ -6,6 +6,8 @@ import {
   createContactCustomFieldDefinition,
   getContactCustomFieldDefinitions,
   getChatContacts,
+  markChatContactRead,
+  markChatContactsRead,
   searchContacts,
   getContactStats,
   getContactsChart,
@@ -45,6 +47,8 @@ router.get('/', getContacts)
 // 'contacts' a nivel de router, exigimos el módulo 'chat' para que un empleado con
 // chat:'none' (aunque tenga contacts:'read') quede bloqueado también por API directa.
 router.get('/chats', requireModuleAccess('chat'), getChatContacts)
+router.post('/chats/read', requireModuleAccess('chat'), markChatContactsRead)
+router.post('/chats/:id/read', requireModuleAccess('chat'), markChatContactRead)
 router.get('/search', searchContacts)
 router.get('/stats', getContactStats)
 // (CNT-007) Papelera de contactos (debe ir ANTES de '/:id' para no capturarse como un id).

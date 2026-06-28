@@ -5,6 +5,7 @@ import { db, getAppConfig, setAppConfig } from '../config/database.js'
 import { decrypt, encrypt } from '../utils/encryption.js'
 import { logger } from '../utils/logger.js'
 import { clearEmailIntegrationCredentials } from './integrationCredentialsCleanupService.js'
+import { publishChatMessageEvent } from './chatLiveEventsService.js'
 
 // Configuración del remitente de correo de la cuenta.
 // El password SMTP se guarda cifrado en una llave separada de app_config.
@@ -1080,6 +1081,17 @@ export async function sendEmailToContact({
       smtpMessageId: result.messageId || '',
       messageTimestamp: timestamp,
       rawPayloadJson: JSON.stringify({ ...rawBase, result })
+    })
+    publishChatMessageEvent({
+      contactId,
+      messageId: localMessageId,
+      channel: 'email',
+      provider: 'smtp',
+      transport: 'smtp',
+      direction: 'outbound',
+      messageType: 'email',
+      messageTimestamp: timestamp,
+      isNew: true
     })
     return {
       ...result,

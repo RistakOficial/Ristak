@@ -30,9 +30,9 @@ async function readJourney(contactId, query = {}) {
   return res.body.data
 }
 
-async function readChatContacts(query = {}) {
+async function readChatContacts(query = {}, user = {}) {
   const res = createMockResponse()
-  await getChatContacts({ query }, res)
+  await getChatContacts({ query, user }, res)
 
   assert.equal(res.statusCode, 200)
   assert.equal(res.body?.success, true)
@@ -53,6 +53,7 @@ async function cleanup(contactId, phone, extraPhones = []) {
   }
   await db.run('DELETE FROM meta_social_messages WHERE contact_id = ?', [contactId]).catch(() => undefined)
   await db.run('DELETE FROM email_messages WHERE contact_id = ?', [contactId]).catch(() => undefined)
+  await db.run('DELETE FROM chat_read_states WHERE contact_id = ?', [contactId]).catch(() => undefined)
   await db.run('DELETE FROM contacts WHERE id = ? OR phone = ?', [contactId, phone]).catch(() => undefined)
 }
 
@@ -114,6 +115,62 @@ test('chat contacts supports larger pages for deep inbox prefetch', async () => 
   } finally {
     await db.run('DELETE FROM whatsapp_api_messages WHERE contact_id LIKE ?', [`${prefix}%`]).catch(() => undefined)
     await db.run('DELETE FROM contacts WHERE id LIKE ?', [`${prefix}%`]).catch(() => undefined)
+  }
+})
+
+test('chat contacts returns persisted unread counts for requester', async () => {
+  const id = randomUUID()
+  const contactId = `chat_unread_${id}`
+  const phone = `+52992${Date.now().toString().slice(-7)}`
+  const username = `chat_unread_user_${id}`
+
+  await cleanup(contactId, phone)
+
+  try {
+    await insertRow('contacts', {
+      id: contactId,
+      phone,
+      full_name: 'Cliente Unread',
+      first_name: 'Cliente',
+      source: 'manual',
+      created_at: '2099-07-02T12:00:00.000Z',
+      updated_at: '2099-07-02T12:00:00.000Z'
+    })
+    await insertRow('whatsapp_api_messages', {
+      id: `api_unread_${id}`,
+      contact_id: contactId,
+      phone,
+      from_phone: phone,
+      to_phone: '+526561000000',
+      business_phone: '+526561000000',
+      transport: 'api',
+      direction: 'inbound',
+      message_type: 'text',
+      message_text: 'Mensaje pendiente real',
+      message_timestamp: '2099-07-02T12:01:00.000Z',
+      created_at: '2099-07-02T12:01:00.000Z'
+    })
+    await db.run(
+      `INSERT INTO users (username, email, password_hash, full_name, role, is_active)
+       VALUES (?, ?, ?, ?, ?, ?)`,
+      [username, `${username}@example.test`, 'test_hash', 'Usuario Chat', 'admin', 1]
+    )
+    const user = await db.get('SELECT id FROM users WHERE username = ?', [username])
+    await insertRow('chat_read_states', {
+      user_id: String(user.id),
+      contact_id: contactId,
+      unread_count: 4,
+      last_unread_at: '2099-07-02T12:01:00.000Z'
+    })
+
+    const chats = await readChatContacts({ limit: '10' }, { userId: user.id })
+    const chat = chats.find((item) => item.id === contactId)
+    assert.ok(chat)
+    assert.equal(chat.unreadCount, 4)
+  } finally {
+    await db.run('DELETE FROM chat_read_states WHERE contact_id = ?', [contactId]).catch(() => undefined)
+    await db.run('DELETE FROM users WHERE username = ?', [username]).catch(() => undefined)
+    await cleanup(contactId, phone)
   }
 })
 

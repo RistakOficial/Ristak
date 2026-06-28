@@ -19,6 +19,7 @@ import { logger } from '../utils/logger.js'
 import GHLClient from './ghlClient.js'
 import { sendChatMessageNotification } from './pushNotificationsService.js'
 import { publishChatMessageEvent } from './chatLiveEventsService.js'
+import { recordInboundChatUnread } from './chatReadStateService.js'
 // (NOTI-003) La confirmación de citas por respuesta también debe abrirse cuando el
 // contacto responde por canales sincronizados vía HighLevel (SMS/Messenger/Instagram/
 // WhatsApp de GHL), no solo por WhatsApp API.
@@ -547,6 +548,12 @@ async function upsertWhatsAppRow({ message, contact, transport, direction, notif
   }
 
   if (isNew && notifyNewInbound && direction === 'inbound') {
+    recordInboundChatUnread({
+      contactId: contact.id,
+      messageTimestamp
+    }).catch(error => {
+      logger.warn(`[Chat Read State] No se pudo incrementar unread GHL ${remoteMessageId}: ${error.message}`)
+    })
     const channel = getLocalChannelFromWhatsAppTransport(transport)
     sendChatMessageNotification({
       contactId: contact.id,
@@ -649,6 +656,12 @@ async function upsertEmailRow({ message, contact, direction, notifyNewInbound })
   ])
 
   if (isNew && notifyNewInbound && direction === 'inbound') {
+    recordInboundChatUnread({
+      contactId: contact.id,
+      messageTimestamp
+    }).catch(error => {
+      logger.warn(`[Chat Read State] No se pudo incrementar unread GHL email ${remoteMessageId}: ${error.message}`)
+    })
     sendChatMessageNotification({
       contactId: contact.id,
       contactName: contact.full_name || contact.first_name || fromEmail || 'Email',
@@ -768,6 +781,12 @@ async function upsertMetaRow({ message, contact, platform, direction, notifyNewI
   }
 
   if (isNew && notifyNewInbound && direction === 'inbound') {
+    recordInboundChatUnread({
+      contactId: contact.id,
+      messageTimestamp
+    }).catch(error => {
+      logger.warn(`[Chat Read State] No se pudo incrementar unread GHL ${platform} ${remoteMessageId}: ${error.message}`)
+    })
     sendChatMessageNotification({
       contactId: contact.id,
       contactName: contact.full_name || contact.first_name || platform,

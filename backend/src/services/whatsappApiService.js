@@ -37,6 +37,7 @@ import { getMetaConfig } from './metaAdsService.js'
 import { getVerifiedAppBaseUrl } from './sitesService.js'
 import { renderTemplateVariables } from './templateVariablesService.js'
 import { publishChatMessageEvent } from './chatLiveEventsService.js'
+import { recordInboundChatUnread } from './chatReadStateService.js'
 import {
   clearWhatsAppApiIntegrationCredentials,
   clearWhatsAppMetaDirectIntegrationCredentials
@@ -4758,6 +4759,14 @@ async function upsertMessage({ payload, message, direction, businessPhoneHints =
     messageTimestamp,
     isNew: !existingMessage
   })
+  if (!existingMessage && identity.direction === 'inbound') {
+    recordInboundChatUnread({
+      contactId: localContact.id,
+      messageTimestamp
+    }).catch(error => {
+      logger.warn(`[Chat Read State] No se pudo incrementar unread WhatsApp ${messageId}: ${error.message}`)
+    })
+  }
 
   return {
     messageId,

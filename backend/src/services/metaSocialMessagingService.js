@@ -6,6 +6,7 @@ import { logger } from '../utils/logger.js'
 import { getMetaConfig } from './metaAdsService.js'
 import { sendChatMessageNotification } from './pushNotificationsService.js'
 import { publishChatMessageEvent } from './chatLiveEventsService.js'
+import { recordInboundChatUnread } from './chatReadStateService.js'
 // (NOTI-003) Confirmación de citas por respuesta también para DMs de Messenger/Instagram.
 import { maybeConfirmAppointmentFromReply, handleInboundForConfirmation } from './appointmentConfirmationService.js'
 
@@ -773,6 +774,12 @@ export async function processMetaSocialWebhook({ payload = {}, rawBody = '', sig
         })
 
         if (result.direction === 'inbound' && result.isNew !== false) {
+          recordInboundChatUnread({
+            contactId: result.contactId,
+            messageTimestamp: result.timestamp
+          }).catch(error => {
+            logger.warn(`[Chat Read State] No se pudo incrementar unread ${result.platform} ${result.messageId}: ${error.message}`)
+          })
           // (NOTI-003) Abrir/evaluar la ventana de confirmación de citas antes de
           // disparar automatizaciones/agente: el contacto pudo responder por DM al
           // recordatorio. Si hay ventana activa con bypass, no se disparan.
