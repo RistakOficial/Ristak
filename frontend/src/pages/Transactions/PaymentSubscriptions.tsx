@@ -658,6 +658,7 @@ export const PaymentSubscriptions: React.FC = () => {
   const availableLinkPaymentMethodOptions = useMemo(() => (
     availablePaymentMethodOptions.filter((option) => isLinkPaymentMethod(option.value))
   ), [availablePaymentMethodOptions])
+  const hasMultipleLinkPaymentGateways = availableLinkPaymentMethodOptions.length > 1
 
   const hasSubscriptionGateway = availablePaymentMethodOptions.length > 0
   const showGatewayStep = formMode === 'create' && formStep === 'gateway'
@@ -850,7 +851,7 @@ export const PaymentSubscriptions: React.FC = () => {
       }
 
       applyPaymentMethod(fallback)
-      setFormStep('gateway')
+      setFormStep(hasMultipleLinkPaymentGateways ? 'gateway' : 'start_method')
       return
     }
 
@@ -985,10 +986,10 @@ export const PaymentSubscriptions: React.FC = () => {
     return true
   }
 
-  const buildPayload = (): SubscriptionPayload | null => {
-    const name = form.name.trim()
-    const amount = Number(form.amount)
-    const intervalCount = Number.parseInt(form.intervalCount, 10)
+  const buildPayload = (currentForm: SubscriptionFormState = form): SubscriptionPayload | null => {
+    const name = currentForm.name.trim()
+    const amount = Number(currentForm.amount)
+    const intervalCount = Number.parseInt(currentForm.intervalCount, 10)
 
     if (!name) {
       showToast('warning', 'Falta el nombre', 'Escribe cómo se llama la suscripción.')
@@ -1005,20 +1006,20 @@ export const PaymentSubscriptions: React.FC = () => {
       return null
     }
 
-    if (form.durationType === 'until_date') {
-      if (!form.cancelAt) {
+    if (currentForm.durationType === 'until_date') {
+      if (!currentForm.cancelAt) {
         showToast('warning', 'Falta la duración', 'Elige hasta qué fecha debe cobrarse esta suscripción.')
         return null
       }
 
-      if (isDateBeforeToday(form.cancelAt) || form.cancelAt <= form.startDate) {
+      if (isDateBeforeToday(currentForm.cancelAt) || currentForm.cancelAt <= currentForm.startDate) {
         showToast('warning', 'Duración inválida', 'La fecha final debe ser posterior al inicio de la suscripción.')
         return null
       }
     }
 
-    const paymentMethod = form.paymentMethod
-    const provider = getPaymentProviderFromMethod(paymentMethod, form.paymentProvider)
+    const paymentMethod = currentForm.paymentMethod
+    const provider = getPaymentProviderFromMethod(paymentMethod, currentForm.paymentProvider)
     const contactEmail = selectedContact?.email || editingSubscription?.contactEmail || null
     const contactId = selectedContact?.id || editingSubscription?.contactId || null
     const startByLink = isLinkPaymentMethod(paymentMethod)
@@ -1046,12 +1047,12 @@ export const PaymentSubscriptions: React.FC = () => {
       return null
     }
 
-    if (provider === 'conekta' && form.intervalType === 'daily') {
+    if (provider === 'conekta' && currentForm.intervalType === 'daily') {
       showToast('warning', 'Frecuencia no soportada', 'Conekta no acepta suscripciones diarias. Usa semanal, mensual o anual.')
       return null
     }
 
-    if (isDateBeforeToday(form.startDate) || (!startByLink && isDateBeforeToday(form.nextRunAt))) {
+    if (isDateBeforeToday(currentForm.startDate) || (!startByLink && isDateBeforeToday(currentForm.nextRunAt))) {
       showToast('warning', 'Fecha inválida', 'Las suscripciones automáticas no pueden iniciar ni cobrarse en fechas pasadas.')
       return null
     }
@@ -1062,15 +1063,15 @@ export const PaymentSubscriptions: React.FC = () => {
       contactEmail,
       contactPhone: selectedContact?.phone || editingSubscription?.contactPhone || null,
       name,
-      description: form.description.trim(),
-      status: formMode === 'edit' ? form.status : startByLink ? 'incomplete' : 'active',
+      description: currentForm.description.trim(),
+      status: formMode === 'edit' ? currentForm.status : startByLink ? 'incomplete' : 'active',
       amount,
       currency: accountCurrency,
-      intervalType: form.intervalType,
+      intervalType: currentForm.intervalType,
       intervalCount,
-      startDate: form.startDate || null,
-      nextRunAt: startByLink ? null : form.nextRunAt || null,
-      cancelAt: form.durationType === 'until_date' ? form.cancelAt || null : null,
+      startDate: currentForm.startDate || null,
+      nextRunAt: startByLink ? null : currentForm.nextRunAt || null,
+      cancelAt: currentForm.durationType === 'until_date' ? currentForm.cancelAt || null : null,
       paymentMethod,
       paymentProvider: provider,
       stripePaymentMethodId: paymentMethod === 'stripe_saved_card'
@@ -1084,6 +1085,8 @@ export const PaymentSubscriptions: React.FC = () => {
   }
 
   const saveSubscription = async () => {
+    let payloadForm = form
+
     if (formMode === 'create' && formStep === 'details') {
       if (!validateSubscriptionDetails()) return
       setFormStep('start_method')
@@ -1091,13 +1094,33 @@ export const PaymentSubscriptions: React.FC = () => {
     }
 
     if (formMode === 'create' && formStep === 'start_method') {
-      if (form.startMode === 'link' || form.startMode === 'saved_card') {
+      if (form.startMode === 'link') {
+        const fallback = availableLinkPaymentMethodOptions[0]
+        if (!fallback) {
+          showToast('warning', 'No hay pasarela de link', 'Conecta Stripe, Conekta o Mercado Pago para generar un link de suscripción.')
+          return
+        }
+
+        if (hasMultipleLinkPaymentGateways) {
+          chooseStartMode('link')
+          return
+        }
+
+        payloadForm = {
+          ...form,
+          startMode: 'link',
+          paymentMethod: fallback.value,
+          paymentProvider: fallback.provider,
+          status: 'incomplete'
+        }
+        setForm(payloadForm)
+      } else if (form.startMode === 'saved_card') {
         chooseStartMode(form.startMode)
         return
+      } else {
+        showToast('warning', 'Elige cómo iniciar', 'Selecciona si vas a enviar link de suscripción o usar una tarjeta guardada.')
+        return
       }
-
-      showToast('warning', 'Elige cómo iniciar', 'Selecciona si vas a enviar link de suscripción o usar una tarjeta guardada.')
-      return
     }
 
     if (formMode === 'create' && formStep === 'gateway' && !availableLinkPaymentMethodOptions.some((option) => option.value === form.paymentMethod)) {
@@ -1115,7 +1138,7 @@ export const PaymentSubscriptions: React.FC = () => {
       return
     }
 
-    const payload = buildPayload()
+    const payload = buildPayload(payloadForm)
     if (!payload) return
 
     setSaving(true)
@@ -1736,7 +1759,11 @@ export const PaymentSubscriptions: React.FC = () => {
                         <span>{paymentLinkActionDescription}</span>
                       </div>
                     </div>
-                    <ChevronRight size={18} className={styles.optionCheck} aria-hidden="true" />
+                    {hasMultipleLinkPaymentGateways ? (
+                      <ChevronRight size={18} className={styles.optionCheck} aria-hidden="true" />
+                    ) : (
+                      form.startMode === 'link' && <Check size={18} className={styles.optionCheck} aria-hidden="true" />
+                    )}
                   </button>
                 )}
               </div>
@@ -1997,6 +2024,8 @@ export const PaymentSubscriptions: React.FC = () => {
                     ? startsByLink ? 'Crear link de suscripción' : 'Crear suscripción'
                     : showSavedCardStep
                       ? 'Crear suscripción'
+                    : showStartMethodStep && form.startMode === 'link' && !hasMultipleLinkPaymentGateways && availableLinkPaymentMethodOptions.length === 1
+                      ? 'Crear link de suscripción'
                     : showStartMethodStep
                       ? 'Continuar'
                     : 'Continuar'}

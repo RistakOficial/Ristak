@@ -109,7 +109,7 @@ const calculateConfiguredTax = (
 type PaymentOption = 'send' | 'manual' | 'stripe' | 'stripe_saved_card' | 'mercadopago' | 'conekta' | 'conekta_saved_card'
 type PaymentMode = 'single' | 'partial'
 type SinglePaymentAction = 'payment_link' | 'saved_card' | 'manual'
-type SinglePaymentOptionsStage = 'method' | 'saved_cards' | 'gateway' | 'gateway_config'
+type SinglePaymentOptionsStage = 'method' | 'saved_cards' | 'gateway' | 'gateway_config' | 'confirm'
 type InstallmentValueType = 'percentage' | 'amount'
 type FirstPaymentMethod = '' | 'cash' | 'bank_transfer' | 'deposit' | 'card'
 type RemainingFrequency = 'custom' | 'daily' | 'weekly' | 'biweekly' | 'monthly' | 'yearly'
@@ -824,6 +824,7 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
     highLevelConnected ? 'HighLevel' : null
   ].filter(Boolean) as string[]
   const hasPaymentPlanGateways = paymentPlanGatewayLabels.length > 0
+  const hasMultiplePaymentPlanGateways = paymentPlanGatewayLabels.length > 1
   const hasPaymentPlanSavedCards = hasStripeSavedCards || hasConektaSavedCards
   const defaultPaymentLinkOption: PaymentOption | null = stripeConnected
     ? 'stripe'
@@ -910,7 +911,7 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
     setSinglePaymentAction('payment_link')
     setStripePlanCardSource('new_card')
     setPaymentOption(nextPaymentOption)
-    setSinglePaymentOptionsStage('gateway')
+    setSinglePaymentOptionsStage(hasMultiplePaymentPlanGateways ? 'gateway' : 'confirm')
   }
 
   const goToPaymentPlanSavedCardOptions = () => {
@@ -3547,8 +3548,9 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
     if (!invoiceSummary) return null
 
     if (activePaymentMode === 'partial') {
-      const showPlanGatewayPicker = singlePaymentOptionsStage === 'gateway' && stripePlanCardSource === 'new_card'
+      const showPlanGatewayPicker = singlePaymentOptionsStage === 'gateway' && stripePlanCardSource === 'new_card' && hasMultiplePaymentPlanGateways
       const showPlanSavedCardPicker = singlePaymentOptionsStage === 'saved_cards' && stripePlanCardSource === 'saved_card'
+      const showPlanMethodPicker = singlePaymentOptionsStage === 'method'
       const currentStripePlanPaymentMethodId = selectedSavedPaymentMethodId ||
         stripePlanSavedPaymentMethod?.stripePaymentMethodId ||
         stripePlanSavedPaymentMethod?.id ||
@@ -3766,7 +3768,7 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
                   })
                 )}
               </>
-            ) : (
+            ) : showPlanMethodPicker ? (
               <>
                 {hasPaymentPlanSavedCards && (
                   <button
@@ -3806,7 +3808,7 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
                   </button>
                 )}
               </>
-            )}
+            ) : null}
           </div>
         </div>
       )
@@ -4363,7 +4365,7 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
                   if (defaultPaymentPlanGatewayOption) {
                     setPaymentOption(defaultPaymentPlanGatewayOption)
                   }
-                  setSinglePaymentOptionsStage('gateway')
+                  setSinglePaymentOptionsStage(hasMultiplePaymentPlanGateways ? 'gateway' : 'confirm')
                   return
                 }
                 if (needsGatewayChoice) {
@@ -4555,6 +4557,8 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
             ? 'Selecciona tarjeta guardada'
             : singlePaymentOptionsStage === 'gateway'
               ? 'Elige pasarela'
+              : activePaymentMode === 'partial' && singlePaymentOptionsStage === 'confirm'
+                ? 'Confirmar autorización'
               : activePaymentMode !== 'partial' && singlePaymentOptionsStage === 'gateway_config' && paymentOption === 'mercadopago'
                 ? 'Configura Mercado Pago'
                 : 'Elige cómo cobrar'
