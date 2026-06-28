@@ -333,10 +333,10 @@ test('Mercado Pago explica Invalid users involved en cobros publicos de prueba',
         }, { baseUrl: 'https://app.example.test' }),
         (error) => {
           assert.equal(error.status, 400)
-          assert.match(error.message, /formulario embebido de tarjeta/i)
-          assert.match(error.message, /cuentas TESTUSER/i)
-          assert.match(error.message, /credenciales de prueba de la cuenta real/i)
-          assert.match(error.message, /Checkout Pro/i)
+          assert.match(error.message, /ayuda de pruebas/i)
+          assert.match(error.message, /cualquier correo válido/i)
+          assert.match(error.message, /APRO/i)
+          assert.match(error.message, /FUND/i)
           assert.equal(error.payload?.cause?.[0]?.code, 2034)
           return true
         }
@@ -547,10 +547,10 @@ test('Mercado Pago explica Invalid test user email en cobros publicos de prueba'
         }, { baseUrl: 'https://app.example.test' }),
         (error) => {
           assert.equal(error.status, 400)
-          assert.match(error.message, /formulario embebido de tarjeta/i)
-          assert.match(error.message, /cuentas TESTUSER/i)
-          assert.match(error.message, /credenciales de prueba de la cuenta real/i)
-          assert.match(error.message, /Checkout Pro/i)
+          assert.match(error.message, /ayuda de pruebas/i)
+          assert.match(error.message, /cualquier correo válido/i)
+          assert.match(error.message, /APRO/i)
+          assert.match(error.message, /FUND/i)
           assert.equal(error.payload?.cause?.[0]?.code, 2198)
           return true
         }

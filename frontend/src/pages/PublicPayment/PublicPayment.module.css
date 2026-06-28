@@ -777,6 +777,151 @@
   color: var(--pos);
 }
 
+.testGuide {
+  min-width: 0;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-ctl);
+  background: var(--surface-solid, var(--surface));
+}
+
+.testGuide summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-width: 0;
+  padding: 12px;
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  list-style: none;
+}
+
+.testGuide summary::-webkit-details-marker {
+  display: none;
+}
+
+.testGuide summary > span {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.testGuide summary svg {
+  flex: 0 0 auto;
+  color: var(--accent);
+}
+
+.testGuide[open] summary {
+  border-bottom: 1px solid var(--border);
+}
+
+.testGuide[open] summary > svg {
+  transform: rotate(180deg);
+}
+
+.testGuideBody {
+  display: grid;
+  gap: 14px;
+  min-width: 0;
+  padding: 12px;
+}
+
+.testGuideBody p,
+.testGuideHint {
+  margin: 0;
+  color: var(--text-dim);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.testGuideHint {
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-ctl);
+  background: var(--surface);
+}
+
+.testGuideSection {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+}
+
+.testGuideSection > strong {
+  color: var(--text);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.testGuideScroller {
+  min-width: 0;
+  overflow-x: auto;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-ctl);
+}
+
+.testCardsMatrix {
+  width: 100%;
+  min-width: 640px;
+  border-collapse: collapse;
+  background: var(--surface);
+}
+
+.testCardsMatrix th,
+.testCardsMatrix td {
+  padding: 9px 10px;
+  border-top: 1px solid var(--border);
+  color: var(--text-dim);
+  font-size: 12px;
+  line-height: 1.35;
+  text-align: left;
+  white-space: nowrap;
+}
+
+.testCardsMatrix th {
+  border-top: 0;
+  background: var(--surface-2);
+  color: var(--text-mute);
+  font: var(--label-font);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: var(--label-spacing);
+  text-transform: var(--label-transform);
+}
+
+.testCardsMatrix td:last-child {
+  white-space: normal;
+}
+
+.testCopyCell {
+  min-width: 0;
+}
+
+.testCopyValue {
+  display: inline-flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  width: 100%;
+  min-width: 0;
+}
+
+.testCopyValue > span {
+  min-width: 0;
+  color: var(--text);
+  font-family: var(--num-font);
+  overflow-wrap: anywhere;
+}
+
+.testCopyButton[data-btn] {
+  --app-button-height: 26px;
+  --app-button-padding-x: 7px;
+  flex: 0 0 auto;
+}
+
 .receiptBox {
   display: flex;
   flex-direction: column;

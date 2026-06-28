@@ -1,7 +1,7 @@
 import React, { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { Elements, PaymentElement, useElements, useStripe } from '@stripe/react-stripe-js'
 import { loadStripe, type StripeElementsOptions } from '@stripe/stripe-js'
-import { AlertCircle, CheckCircle2, CreditCard, Download, ExternalLink, Loader2, ShieldCheck } from 'lucide-react'
+import { AlertCircle, CheckCircle2, ChevronDown, Copy, CreditCard, Download, ExternalLink, Info, Loader2, ShieldCheck } from 'lucide-react'
 import { useParams, useSearchParams } from 'react-router-dom'
 import { Badge, Button, type BadgeVariant } from '@/components/common'
 import { PaymentPlatformLogo, type PaymentPlatformLogoId } from '@/components/common/PaymentPlatformLogo'
@@ -93,7 +93,7 @@ declare global {
 const MERCADOPAGO_SDK_SRC = 'https://sdk.mercadopago.com/js/v2'
 const CONEKTA_CHECKOUT_SDK_SRC = 'https://pay.conekta.com/v1.0/js/conekta-checkout.min.js'
 const META_PIXEL_SDK_SRC = 'https://connect.facebook.net/en_US/fbevents.js'
-const MERCADOPAGO_TEST_CARD_HELP = 'Modo prueba de Mercado Pago: el formulario embebido de tarjeta no se prueba con cuentas TESTUSER. Para probar tarjeta aqui, reconecta Mercado Pago con las credenciales de prueba de tu cuenta real y usa APRO como titular. Si quieres comprador/vendedor TESTUSER, usa Checkout Pro.'
+const MERCADOPAGO_TEST_CARD_HELP = 'Modo prueba de Mercado Pago: usa cualquier correo con formato valido y elige el resultado con el nombre del titular, por ejemplo APRO para aprobar o FUND para fondos insuficientes.'
 let mercadoPagoSdkPromise: Promise<void> | null = null
 let conektaCheckoutSdkPromise: Promise<void> | null = null
 let metaPixelSdkPromise: Promise<void> | null = null
@@ -107,6 +107,87 @@ const printTemplateClassById: Record<PaymentInvoiceTemplateId, string> = {
   executive: 'printThemeExecutive',
   accent: 'printThemeAccent',
   ledger: 'printThemeLedger'
+}
+
+type PaymentTestProvider = 'stripe' | 'conekta' | 'mercadopago'
+type PaymentTestCardRow = {
+  kind: string
+  brand: string
+  number: string
+  cvc: string
+  expiry: string
+  result?: string
+}
+type PaymentTestScenarioRow = {
+  holder: string
+  result: string
+}
+type PaymentTestGuide = {
+  title: string
+  description: string
+  emailHint: string
+  cards: PaymentTestCardRow[]
+  scenarios?: PaymentTestScenarioRow[]
+}
+
+const PAYMENT_TEST_GUIDES: Record<PaymentTestProvider, PaymentTestGuide> = {
+  mercadopago: {
+    title: 'Ayuda para pruebas de Mercado Pago',
+    description: 'En modo prueba copia una tarjeta, escribe cualquier correo valido y usa el nombre del titular para elegir si el pago se aprueba, queda pendiente o se rechaza.',
+    emailHint: 'Correo: escribe cualquier correo con formato valido, por ejemplo cliente.prueba@correo.com.',
+    cards: [
+      { kind: 'Credito', brand: 'Mastercard', number: '5474 9254 3267 0366', cvc: '123', expiry: '11/30' },
+      { kind: 'Credito', brand: 'Visa', number: '4075 5957 1648 3764', cvc: '123', expiry: '11/30' },
+      { kind: 'Credito', brand: 'American Express', number: '3711 803032 57522', cvc: '1234', expiry: '11/30' },
+      { kind: 'Debito', brand: 'Mastercard', number: '5579 0534 6148 2647', cvc: '123', expiry: '11/30' },
+      { kind: 'Debito', brand: 'Visa', number: '4189 1412 2126 7633', cvc: '123', expiry: '11/30' }
+    ],
+    scenarios: [
+      { holder: 'APRO', result: 'Pago aprobado' },
+      { holder: 'OTHE', result: 'Rechazado por error general' },
+      { holder: 'CONT', result: 'Pendiente de pago' },
+      { holder: 'CALL', result: 'Rechazado con validacion para autorizar' },
+      { holder: 'FUND', result: 'Rechazado por importe insuficiente' },
+      { holder: 'SECU', result: 'Rechazado por codigo de seguridad invalido' },
+      { holder: 'EXPI', result: 'Rechazado por fecha de vencimiento' },
+      { holder: 'FORM', result: 'Rechazado por error de formulario' },
+      { holder: 'CARD', result: 'Rechazado por falta de numero de tarjeta' },
+      { holder: 'INST', result: 'Rechazado por cuotas invalidas' },
+      { holder: 'DUPL', result: 'Rechazado por pago duplicado' },
+      { holder: 'LOCK', result: 'Rechazado por tarjeta deshabilitada' },
+      { holder: 'CTNA', result: 'Rechazado por tipo de tarjeta no permitida' },
+      { holder: 'ATTE', result: 'Rechazado por intentos de PIN excedidos' },
+      { holder: 'BLAC', result: 'Rechazado por lista negra' },
+      { holder: 'UNSU', result: 'No soportado' },
+      { holder: 'TEST', result: 'Aplica regla de montos' }
+    ]
+  },
+  stripe: {
+    title: 'Ayuda para pruebas de Stripe',
+    description: 'En modo prueba usa fecha futura, cualquier CVC y cualquier dato de cliente. Algunas tarjetas fuerzan rechazo o autenticacion bancaria.',
+    emailHint: 'Correo: cualquier correo con formato valido.',
+    cards: [
+      { kind: 'Credito', brand: 'Visa', number: '4242 4242 4242 4242', cvc: '123', expiry: '12/34', result: 'Pago aprobado' },
+      { kind: 'Debito', brand: 'Visa', number: '4000 0566 5566 5556', cvc: '123', expiry: '12/34', result: 'Pago aprobado' },
+      { kind: 'Credito', brand: 'Mastercard', number: '5555 5555 5555 4444', cvc: '123', expiry: '12/34', result: 'Pago aprobado' },
+      { kind: 'Credito', brand: 'Visa', number: '4000 0025 0000 3155', cvc: '123', expiry: '12/34', result: 'Pide autenticacion 3D Secure' },
+      { kind: 'Credito', brand: 'Visa', number: '4000 0000 0000 0002', cvc: '123', expiry: '12/34', result: 'Rechazo generico' },
+      { kind: 'Credito', brand: 'Visa', number: '4000 0000 0000 9995', cvc: '123', expiry: '12/34', result: 'Fondos insuficientes' }
+    ]
+  },
+  conekta: {
+    title: 'Ayuda para pruebas de Conekta',
+    description: 'En modo prueba usa una fecha futura, cualquier CVC valido y cualquier correo. Estas tarjetas no mueven dinero real.',
+    emailHint: 'Correo: cualquier correo con formato valido.',
+    cards: [
+      { kind: 'Credito', brand: 'Visa', number: '4242 4242 4242 4242', cvc: '123', expiry: '12/34', result: 'Pago aprobado' },
+      { kind: 'Credito', brand: 'Visa', number: '4012 8888 8888 1881', cvc: '123', expiry: '12/34', result: 'Pago aprobado' },
+      { kind: 'Credito', brand: 'Mastercard', number: '5555 5555 5555 4444', cvc: '123', expiry: '12/34', result: 'Pago aprobado' },
+      { kind: 'Credito', brand: 'Mastercard', number: '5105 1051 0510 5100', cvc: '123', expiry: '12/34', result: 'Pago aprobado' },
+      { kind: 'Credito', brand: 'American Express', number: '3782 822463 10005', cvc: '1234', expiry: '12/34', result: 'Pago aprobado' },
+      { kind: 'Credito', brand: 'Visa', number: '4000 0000 0000 0002', cvc: '123', expiry: '12/34', result: 'Pago rechazado' }
+    ]
+  }
 }
 
 function formatDate(value?: string | null) {
@@ -476,6 +557,173 @@ function normalizeMercadoPagoCardErrorMessage(error: unknown) {
   return message || 'No se pudo completar el pago. Revisa los datos e intenta otra vez.'
 }
 
+async function copyPublicPaymentText(text: string) {
+  const value = text.trim()
+  if (!value) return false
+
+  try {
+    if (navigator?.clipboard?.writeText) {
+      await navigator.clipboard.writeText(value)
+    } else {
+      const input = document.createElement('input')
+      input.value = value
+      document.body.appendChild(input)
+      input.select()
+      document.execCommand('copy')
+      document.body.removeChild(input)
+    }
+    return true
+  } catch {
+    return false
+  }
+}
+
+const TestCopyButton: React.FC<{
+  value: string
+  label: string
+  copied: boolean
+  onCopy: (value: string, label: string) => void
+}> = ({ value, label, copied, onCopy }) => (
+  <Button
+    type="button"
+    variant="ghost"
+    size="sm"
+    className={styles.testCopyButton}
+    onClick={() => onCopy(value, label)}
+    title={label}
+    aria-label={label}
+  >
+    {copied ? <CheckCircle2 size={14} /> : <Copy size={14} />}
+  </Button>
+)
+
+const PaymentTestHelper: React.FC<{ provider: PaymentTestProvider }> = ({ provider }) => {
+  const guide = PAYMENT_TEST_GUIDES[provider]
+  const [copiedKey, setCopiedKey] = useState('')
+
+  const handleCopy = async (value: string, label: string) => {
+    const copied = await copyPublicPaymentText(value)
+    if (!copied) return
+
+    setCopiedKey(`${label}:${value}`)
+    window.setTimeout(() => {
+      setCopiedKey((current) => current === `${label}:${value}` ? '' : current)
+    }, 1600)
+  }
+
+  const isCopied = (label: string, value: string) => copiedKey === `${label}:${value}`
+
+  return (
+    <details className={styles.testGuide}>
+      <summary>
+        <span>
+          <Info size={16} />
+          {guide.title}
+        </span>
+        <ChevronDown size={16} />
+      </summary>
+      <div className={styles.testGuideBody}>
+        <p>{guide.description}</p>
+        <div className={styles.testGuideHint}>{guide.emailHint}</div>
+
+        <div className={styles.testGuideSection}>
+          <strong>Tarjetas</strong>
+          <div className={styles.testGuideScroller}>
+            <table className={styles.testCardsMatrix}>
+              <thead>
+                <tr>
+                  <th>Tipo</th>
+                  <th>Bandera</th>
+                  <th>Numero</th>
+                  <th>CVV</th>
+                  <th>Vence</th>
+                  <th>Resultado</th>
+                </tr>
+              </thead>
+              <tbody>
+                {guide.cards.map((card) => (
+                  <tr key={`${provider}-${card.number}-${card.result || card.brand}`}>
+                    <td>{card.kind}</td>
+                    <td>{card.brand}</td>
+                    <td className={styles.testCopyCell}>
+                      <span className={styles.testCopyValue}>
+                        <span>{card.number}</span>
+                        <TestCopyButton
+                          value={card.number}
+                          label="Copiar numero"
+                          copied={isCopied('Copiar numero', card.number)}
+                          onCopy={handleCopy}
+                        />
+                      </span>
+                    </td>
+                    <td className={styles.testCopyCell}>
+                      <span className={styles.testCopyValue}>
+                        <span>{card.cvc}</span>
+                        <TestCopyButton
+                          value={card.cvc}
+                          label="Copiar CVV"
+                          copied={isCopied('Copiar CVV', card.cvc)}
+                          onCopy={handleCopy}
+                        />
+                      </span>
+                    </td>
+                    <td className={styles.testCopyCell}>
+                      <span className={styles.testCopyValue}>
+                        <span>{card.expiry}</span>
+                        <TestCopyButton
+                          value={card.expiry}
+                          label="Copiar vencimiento"
+                          copied={isCopied('Copiar vencimiento', card.expiry)}
+                          onCopy={handleCopy}
+                        />
+                      </span>
+                    </td>
+                    <td>{card.result || 'Segun titular'}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        {guide.scenarios?.length ? (
+          <div className={styles.testGuideSection}>
+            <strong>Escenarios por titular</strong>
+            <div className={styles.testGuideScroller}>
+              <table className={styles.testCardsMatrix}>
+                <thead>
+                  <tr>
+                    <th>Nombre del titular</th>
+                    <th>Estado que simula</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {guide.scenarios.map((scenario) => (
+                    <tr key={`${provider}-${scenario.holder}`}>
+                      <td className={styles.testCopyCell}>
+                        <span className={styles.testCopyValue}>
+                          <span>{scenario.holder}</span>
+                          <TestCopyButton
+                            value={scenario.holder}
+                            label="Copiar titular"
+                            copied={isCopied('Copiar titular', scenario.holder)}
+                            onCopy={handleCopy}
+                          />
+                        </span>
+                      </td>
+                      <td>{scenario.result}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        ) : null}
+      </div>
+    </details>
+  )
+}
+
 function buildMercadoPagoCardPayload(payment: PublicMercadoPagoPayment, formData: MercadoPagoCardSubmitData): MercadoPagoCardPaymentPayload {
   const token = String(formData.token || '').trim()
   const paymentMethodId = String(formData.payment_method_id || formData.paymentMethodId || '').trim()
@@ -517,6 +765,7 @@ const PublicPaymentForm: React.FC<{
     : payment.settings?.checkout?.buttonLabel || 'Pagar'
   const submitAmount = Number(payment.amount || 0) > 0 ? ` ${formatCurrency(payment.amount, payment.currency)}` : ''
   const showSecureNotice = payment.settings?.checkout?.showSecureBadge !== false
+  const isTestMode = payment.paymentMode === 'test' || String(payment.publishableKey || '').startsWith('pk_test_')
   const authorizationNotice = isCardSetupPlan
     ? 'Al confirmar, Stripe guardará esta tarjeta para cobrar automáticamente los pagos programados de este plan.'
     : payment.contact?.id
@@ -590,6 +839,8 @@ const PublicPaymentForm: React.FC<{
           <span>{authorizationNotice}</span>
         </p>
       )}
+
+      {isTestMode && <PaymentTestHelper provider="stripe" />}
     </form>
   )
 }
@@ -732,12 +983,7 @@ const MercadoPagoCardPaymentForm: React.FC<{
         </p>
       )}
 
-      {isTestMode && (
-        <p className={styles.message}>
-          <AlertCircle size={16} />
-          <span>{MERCADOPAGO_TEST_CARD_HELP}</span>
-        </p>
-      )}
+      {isTestMode && <PaymentTestHelper provider="mercadopago" />}
 
       {message && (
         <p className={messageClassName}>
@@ -779,6 +1025,7 @@ const ConektaCardTokenizerForm: React.FC<{
   const [message, setMessage] = useState('')
   const [messageKind, setMessageKind] = useState<'info' | 'success' | 'error'>('info')
   const showSecureNotice = payment.settings?.checkout?.showSecureBadge !== false
+  const isTestMode = payment.paymentMode === 'test'
 
   useEffect(() => {
     onPaidRef.current = onPaid
@@ -952,6 +1199,8 @@ const ConektaCardTokenizerForm: React.FC<{
           </span>
         </p>
       )}
+
+      {isTestMode && <PaymentTestHelper provider="conekta" />}
 
       {message && (
         <p className={messageClassName}>

@@ -182,8 +182,8 @@ const paymentModeLabels: Record<PaymentModeId, { title: string; badge: string; d
   test: {
     title: 'Modo prueba',
     badge: 'Prueba',
-    description: 'Todos los nuevos cobros usarán credenciales sandbox o usuarios de prueba.',
-    mercadoPagoHelp: 'Para probar Mercado Pago, entra con un TEST USER creado desde Mercado Pago Developers. No uses tu cuenta real para este modo.'
+    description: 'Todos los nuevos cobros usarán modo prueba para validar tarjetas, rechazos y flujos sin mover dinero real.',
+    mercadoPagoHelp: 'Deja el switch en Prueba, presiona Conectar cuenta y entra con el login de Mercado Pago. Después crea un link de pago y usa las tarjetas de prueba que aparecen en el checkout.'
   },
   live: {
     title: 'Modo en vivo',
@@ -722,7 +722,7 @@ export const PaymentsConfiguration: React.FC = () => {
       logo: 'mercadopago',
       description: mercadoPagoConfig?.configured
         ? `Listo para links y suscripciones en ${mercadoPagoConfig.mode === 'live' ? 'modo en vivo' : 'modo prueba'}.`
-        : `Conecta una cuenta de Mercado Pago para usar ${paymentMode === 'live' ? 'cobros reales' : 'pruebas con TEST USER'}.`,
+        : `Conecta Mercado Pago para usar ${paymentMode === 'live' ? 'cobros reales' : 'tarjetas de prueba en links de pago'}.`,
       status: mercadoPagoConfig?.configured ? 'connected' : 'available'
     }
   ]
@@ -3283,7 +3283,7 @@ export const PaymentsConfiguration: React.FC = () => {
                     <AlertTriangle size={16} />
                     <span>
                       {paymentMode === 'test'
-                        ? 'Mercado Pago no tiene un switch sandbox separado dentro de Ristak: para probar debes autorizar con un TEST USER creado desde tu panel de Developers.'
+                        ? 'Para probar Mercado Pago, deja este modo en Prueba, conecta la cuenta con el botón y crea un link de pago. En el link aparecerán las tarjetas y nombres de prueba para copiar.'
                         : 'Este modo usa tu cuenta real de Mercado Pago. Los links y suscripciones nuevos pueden generar cobros reales.'}
                     </span>
                   </div>
@@ -3303,7 +3303,7 @@ export const PaymentsConfiguration: React.FC = () => {
                       ) : (
                         <>
                           <ExternalLink size={15} />
-                          {modeConnected ? 'Reconectar cuenta' : paymentMode === 'test' ? 'Conectar TEST USER' : 'Conectar cuenta real'}
+                          {modeConnected ? 'Reconectar cuenta' : 'Conectar cuenta'}
                         </>
                       )}
                     </Button>
