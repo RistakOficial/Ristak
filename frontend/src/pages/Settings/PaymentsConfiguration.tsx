@@ -178,6 +178,19 @@ const stripeModeLabels: Record<StripeModeId, { title: string; description: strin
     secretPlaceholder: 'sk_live_...'
   }
 }
+const stripeWebhookEvents = [
+  'payment_intent.succeeded',
+  'payment_intent.payment_failed',
+  'payment_intent.canceled',
+  'payment_intent.processing',
+  'payment_intent.requires_action',
+  'invoice.payment_succeeded',
+  'invoice.payment_failed',
+  'customer.subscription.updated',
+  'customer.subscription.deleted',
+  'charge.refunded',
+  'refund.created'
+]
 const paymentModeLabels: Record<PaymentModeId, { title: string; badge: string; description: string; mercadoPagoHelp: string }> = {
   test: {
     title: 'Modo prueba',
@@ -3105,22 +3118,34 @@ export const PaymentsConfiguration: React.FC = () => {
               })}
             </div>
 
-            {stripeWebhookEndpoints.length > 0 && (
-              <div className={styles.webhookList}>
-                <h3>Endpoint URL</h3>
-                {stripeWebhookEndpoints.map((endpoint) => (
-                  <div key={endpoint.url} className={styles.formField}>
-                    <span>{endpoint.label}</span>
-                    <input
-                      type="text"
-                      readOnly
-                      value={endpoint.url}
-                      onFocus={(event) => event.currentTarget.select()}
-                    />
-                  </div>
-                ))}
+            <div className={styles.webhookList}>
+              {stripeWebhookEndpoints.length > 0 && (
+                <>
+                  <h3>Endpoint URL</h3>
+                  {stripeWebhookEndpoints.map((endpoint) => (
+                    <div key={endpoint.url} className={styles.formField}>
+                      <span>{endpoint.label}</span>
+                      <input
+                        type="text"
+                        readOnly
+                        value={endpoint.url}
+                        onFocus={(event) => event.currentTarget.select()}
+                      />
+                    </div>
+                  ))}
+                </>
+              )}
+
+              <div className={styles.formField}>
+                <span>Eventos a escuchar</span>
+                <textarea
+                  readOnly
+                  value={stripeWebhookEvents.join('\n')}
+                  onFocus={(event) => event.currentTarget.select()}
+                />
+                <small>Selecciona estos eventos en Stripe para que Ristak actualice pagos, suscripciones y reembolsos.</small>
               </div>
-            )}
+            </div>
           </div>
         </Card>
       )}
