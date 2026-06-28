@@ -56,6 +56,7 @@ import {
   getPostAuthRedirectPath,
   isCellphoneDevice,
   isPhoneAppPath,
+  isPublicPaymentPath,
   isTabletDevice,
   readTabletViewPreference,
   toCanonicalPhoneAppPath,
@@ -420,7 +421,7 @@ const CellphoneRouteGate: React.FC = () => {
   const location = useLocation()
   const isCellphone = useCellphoneAccessState()
 
-  if (!isCellphone || isPhoneAppPath(location.pathname) || location.pathname === SETUP_PATH) {
+  if (!isCellphone || isPhoneAppPath(location.pathname) || isPublicPaymentPath(location.pathname) || location.pathname === SETUP_PATH) {
     return null
   }
 

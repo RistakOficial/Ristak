@@ -13,6 +13,7 @@ export const LEGACY_PHONE_APP_HOME_PATH = `${LEGACY_PHONE_APP_PREFIX}/chat`
 export const LEGACY_PHONE_APP_LOGIN_PATH = `${LEGACY_PHONE_APP_PREFIX}/login`
 export const LEGACY_PHONE_APP_TENANT_PATH = `${LEGACY_PHONE_APP_PREFIX}/tenant`
 export const DESKTOP_LOGIN_PATH = '/login'
+export const PUBLIC_PAYMENT_PATH_PREFIX = '/pay/'
 export const SETUP_PATH = '/setup'
 export const TABLET_VIEW_PREFERENCE_KEY = 'ristak.tabletViewPreference.v1'
 export const TABLET_VIEW_PREFERENCE_EVENT = 'ristak:tablet-view-preference'
@@ -38,6 +39,10 @@ export function isLegacyPhoneAppPath(pathname = '') {
 
 export function isPhoneAppPath(pathname = '') {
   return isCanonicalPhoneAppPath(pathname) || isLegacyPhoneAppPath(pathname)
+}
+
+export function isPublicPaymentPath(pathname = '') {
+  return pathname.startsWith(PUBLIC_PAYMENT_PATH_PREFIX) && pathname.length > PUBLIC_PAYMENT_PATH_PREFIX.length
 }
 
 export function toCanonicalPhoneAppPath(pathname = '') {

@@ -10,6 +10,7 @@ import { StatusBar, Style } from '@capacitor/status-bar'
 import { hasRuntimeApiBaseUrl } from './apiBaseUrl'
 import apiClient from './apiClient'
 import type { PushSubscriptionResult } from './pushNotificationsService'
+import { isPublicPaymentPath } from '@/utils/phoneAccess'
 
 type NativePlatform = 'ios' | 'android' | 'web'
 type PhotoSource = 'camera' | 'photos'
@@ -142,6 +143,7 @@ function getIosPhoneChatRedirectPath(value = typeof window !== 'undefined' ? `${
   if (!hasRuntimeApiBaseUrl()) {
     return normalizedPathname === IOS_PHONE_TENANT_PATH ? '' : IOS_PHONE_TENANT_PATH
   }
+  if (isPublicPaymentPath(normalizedPathname)) return ''
   if (isIosPhoneAppAllowedPath(normalizedPathname)) return ''
   if (normalizedPathname === '/login') return IOS_PHONE_CHAT_LOGIN_PATH
   return IOS_PHONE_CHAT_HOME_PATH
