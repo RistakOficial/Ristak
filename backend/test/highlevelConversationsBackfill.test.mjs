@@ -3,7 +3,11 @@ import assert from 'node:assert/strict'
 import { randomUUID } from 'node:crypto'
 import { db } from '../src/config/database.js'
 import GHLClient from '../src/services/ghlClient.js'
-import { syncHighLevelConversationHistory } from '../src/services/highlevelConversationsSyncService.js'
+import {
+  estimateHighLevelConversationSyncVolume,
+  resolveHighLevelMessageChannel,
+  syncHighLevelConversationHistory
+} from '../src/services/highlevelConversationsSyncService.js'
 
 const LAST_SYNC_CONFIG_KEY = 'highlevel_conversations_last_synced_at'
 
@@ -240,4 +244,84 @@ test('HighLevel incremental export keeps previous checkpoint when export cursor 
     mock.restoreAll()
     await cleanup([id])
   }
+})
+
+test('HighLevel conversation estimate uses backfill totals when no checkpoint exists', async () => {
+  await cleanup([])
+
+  const searchCalls = []
+  mock.method(GHLClient.prototype, 'exportConversationMessages', async () => {
+    throw new Error('backfill estimate must not use messages/export')
+  })
+  mock.method(GHLClient.prototype, 'searchConversations', async function searchConversations(options) {
+    searchCalls.push(options)
+    return {
+      total: 245,
+      conversations: [{ id: 'conv_estimate_backfill_1' }]
+    }
+  })
+
+  try {
+    const estimate = await estimateHighLevelConversationSyncVolume({
+      locationId: 'loc_test',
+      apiToken: 'token_test'
+    })
+
+    assert.equal(estimate.strategy, 'conversation_backfill')
+    assert.equal(estimate.useConversationBackfill, true)
+    assert.equal(estimate.unit, 'conversations')
+    assert.equal(estimate.total, 245)
+    assert.equal(searchCalls.length, 1)
+    assert.equal(searchCalls[0].limit, 1)
+  } finally {
+    mock.restoreAll()
+    await cleanup([])
+  }
+})
+
+test('HighLevel conversation estimate uses export message totals when checkpoint exists', async () => {
+  const checkpoint = '2026-06-20T12:00:00.000Z'
+  await cleanup([])
+  await upsertCheckpoint(checkpoint)
+
+  const exportCalls = []
+  mock.method(GHLClient.prototype, 'searchConversations', async () => {
+    throw new Error('incremental estimate must not use conversations/search')
+  })
+  mock.method(GHLClient.prototype, 'exportConversationMessages', async function exportConversationMessages(options) {
+    exportCalls.push(options)
+    return {
+      total: 168,
+      messages: [{ id: 'msg_estimate_incremental_1' }]
+    }
+  })
+
+  try {
+    const estimate = await estimateHighLevelConversationSyncVolume({
+      locationId: 'loc_test',
+      apiToken: 'token_test'
+    })
+
+    assert.equal(estimate.strategy, 'export')
+    assert.equal(estimate.useConversationBackfill, false)
+    assert.equal(estimate.unit, 'messages')
+    assert.equal(estimate.total, 168)
+    assert.equal(exportCalls.length, 1)
+    assert.equal(exportCalls[0].limit, 1)
+    assert.ok(exportCalls[0].startDate)
+  } finally {
+    mock.restoreAll()
+    await cleanup([])
+  }
+})
+
+test('HighLevel conversation channel resolver includes email history', () => {
+  assert.deepEqual(
+    resolveHighLevelMessageChannel({ type: 3 }),
+    { table: 'email', transport: 'ghl_email' }
+  )
+  assert.deepEqual(
+    resolveHighLevelMessageChannel({ messageType: 'TYPE_EMAIL' }),
+    { table: 'email', transport: 'ghl_email' }
+  )
 })

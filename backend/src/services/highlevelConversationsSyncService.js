@@ -2,10 +2,11 @@
  * SINCRONIZACIÓN DE CONVERSACIONES (CHATS) DESDE HIGHLEVEL
  *
  * Importa el historial de mensajes de HighLevel (WhatsApp, SMS, Messenger,
- * Instagram) hacia las tablas locales que alimentan el chat de la app móvil
- * y del escritorio:
+ * Instagram y correo) hacia las tablas locales que alimentan el chat de la app
+ * móvil y del escritorio:
  * - whatsapp_api_messages  (WhatsApp y SMS enviados/recibidos vía GHL)
  * - meta_social_messages   (Messenger e Instagram vía GHL)
+ * - email_messages         (correo vía GHL)
  *
  * Usa GET /conversations/messages/export para sincronizaciones incrementales
  * recientes y GET /conversations/search + /conversations/{id}/messages para
@@ -73,6 +74,12 @@ function parseTimestampToIso(value) {
   return Number.isNaN(date.getTime()) ? null : date.toISOString()
 }
 
+function buildIncrementalStartDate(lastSyncedAt) {
+  const parsed = parseTimestampToIso(lastSyncedAt)
+  if (!parsed) return null
+  return new Date(new Date(parsed).getTime() - INCREMENTAL_OVERLAP_MS).toISOString()
+}
+
 function parseTimestampMs(value) {
   const iso = parseTimestampToIso(value)
   if (!iso) return null
@@ -117,7 +124,7 @@ function inferHighLevelMessageType(message = {}) {
 /**
  * Determina el canal local de un mensaje de HighLevel.
  * Devuelve null para canales que no se muestran en el chat
- * (email, llamadas, reviews, actividades, etc).
+ * (llamadas, reviews, actividades, etc).
  */
 export function resolveHighLevelMessageChannel(message = {}) {
   const channelText = [
@@ -171,6 +178,18 @@ function extractExportMessages(response = {}) {
     response.result?.messages
   ]
   return candidates.find(Array.isArray) || []
+}
+
+function extractExportTotal(response = {}) {
+  const total = Number(
+    response.total ||
+    response.totalCount ||
+    response.data?.total ||
+    response.data?.totalCount ||
+    response.meta?.total ||
+    0
+  )
+  return Number.isFinite(total) && total > 0 ? total : 0
 }
 
 function extractExportCursor(response = {}) {
@@ -1573,6 +1592,65 @@ async function syncConversationMessagesByConversation({
 }
 
 /**
+ * Mide barato el tamaño probable de la sincronización antes de importar.
+ * - Backfill: HighLevel solo nos da total de conversaciones.
+ * - Incremental: messages/export sí reporta total de mensajes.
+ */
+export async function estimateHighLevelConversationSyncVolume({
+  locationId,
+  apiToken,
+  fullSync = false
+} = {}) {
+  if (!locationId || !apiToken) {
+    throw new Error('Se requieren locationId y apiToken para estimar conversaciones')
+  }
+
+  const client = new GHLClient(apiToken, locationId)
+  let lastSyncedAt = null
+  let startDate = null
+
+  if (!fullSync) {
+    lastSyncedAt = parseTimestampToIso(await getAppConfig(LAST_SYNC_CONFIG_KEY).catch(() => null))
+    startDate = buildIncrementalStartDate(lastSyncedAt)
+  }
+
+  const useConversationBackfill = fullSync || !lastSyncedAt
+  if (useConversationBackfill) {
+    const response = await client.searchConversations({
+      limit: 1,
+      sort: 'desc',
+      sortBy: 'last_message_date',
+      status: 'all'
+    })
+    const rows = extractConversationRows(response)
+    return {
+      total: extractConversationSearchTotal(response) || rows.length,
+      unit: 'conversations',
+      strategy: 'conversation_backfill',
+      useConversationBackfill: true,
+      startDate: null,
+      estimated: true
+    }
+  }
+
+  const response = await client.exportConversationMessages({
+    limit: 1,
+    sortBy: 'createdAt',
+    sortOrder: 'desc',
+    startDate
+  })
+  const messages = extractExportMessages(response)
+  return {
+    total: extractExportTotal(response) || messages.length,
+    unit: 'messages',
+    strategy: 'export',
+    useConversationBackfill: false,
+    startDate,
+    estimated: true
+  }
+}
+
+/**
  * Sincroniza el historial de conversaciones desde HighLevel.
  *
  * @param {Object} options
@@ -1609,7 +1687,7 @@ export async function syncHighLevelConversationHistory({
     if (!fullSync) {
       lastSyncedAt = parseTimestampToIso(await getAppConfig(LAST_SYNC_CONFIG_KEY).catch(() => null))
       if (lastSyncedAt) {
-        startDate = new Date(new Date(lastSyncedAt).getTime() - INCREMENTAL_OVERLAP_MS).toISOString()
+        startDate = buildIncrementalStartDate(lastSyncedAt)
       }
     }
 

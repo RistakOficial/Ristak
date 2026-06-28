@@ -44,6 +44,9 @@ const META_CUSTOM_VALUE_FIELDS = [
   { key: 'pixelApiToken', names: ['Facebook - Pixel API Token'], secret: true },
   { key: 'whatsappBusinessAccountId', names: ['Facebook - WhatsApp Business Account ID', 'WhatsApp Business Account ID', 'WABA ID'] }
 ]
+const HIGHLEVEL_CONVERSATION_BACKGROUND_THRESHOLD = 100
+
+let backgroundConversationSyncRunning = false
 
 // Variable global para trackear el estado de sincronización
 let syncProgress = {
@@ -131,6 +134,92 @@ function updateConversations(saved, total, status, message) {
 function updateMetaAds(synced, count, status, message, saved = 0, total = 0) {
   syncProgress.metaAds = { synced, count, saved, total, status, message }
   updateGlobalProgress()
+}
+
+function normalizeEstimateTotal(estimate = {}) {
+  const total = Number(estimate?.total || 0)
+  return Number.isFinite(total) && total > 0 ? total : 0
+}
+
+function describeConversationEstimate(estimate = {}) {
+  const total = normalizeEstimateTotal(estimate)
+  const unit = cleanString(estimate?.unit) || 'items'
+  if (!total) return 'volumen no disponible'
+  return `${total} ${unit === 'messages' ? 'mensajes' : unit === 'conversations' ? 'conversaciones' : unit}`
+}
+
+export function shouldRunHighLevelConversationsInBackground({ triggerSource = 'manual', estimate = {} } = {}) {
+  if (cleanString(triggerSource).toLowerCase() !== 'manual') return false
+  if (estimate?.unknown) return true
+  if (estimate?.useConversationBackfill) return true
+  return normalizeEstimateTotal(estimate) > HIGHLEVEL_CONVERSATION_BACKGROUND_THRESHOLD
+}
+
+function startHighLevelConversationSyncInBackground({ locationId, apiToken, estimate = {} }) {
+  const estimatedTotal = normalizeEstimateTotal(estimate)
+
+  if (backgroundConversationSyncRunning) {
+    updateConversations(
+      0,
+      estimatedTotal,
+      'running',
+      'Ya hay una importación de chats en segundo plano'
+    )
+    return { started: false, alreadyRunning: true }
+  }
+
+  backgroundConversationSyncRunning = true
+  updateConversations(
+    0,
+    estimatedTotal,
+    'running',
+    `Importando chats de HighLevel en segundo plano (${describeConversationEstimate(estimate)})`
+  )
+
+  setTimeout(() => {
+    runHighLevelConversationSyncInBackground({ locationId, apiToken, estimate }).catch(error => {
+      logger.error(`[GHL Conversations] Error inesperado en background sync: ${error.message}`)
+    })
+  }, 0)
+
+  return { started: true, alreadyRunning: false }
+}
+
+async function runHighLevelConversationSyncInBackground({ locationId, apiToken, estimate = {} }) {
+  try {
+    const { syncHighLevelConversationHistory } = await import('./highlevelConversationsSyncService.js')
+    const result = await syncHighLevelConversationHistory({
+      locationId,
+      apiToken,
+      notifyNewInbound: false,
+      onProgress: (saved, total, message) => {
+        updateConversations(saved, total, 'running', `${message} (segundo plano)`)
+      }
+    })
+
+    if (result.alreadyRunning) {
+      updateConversations(
+        0,
+        normalizeEstimateTotal(estimate),
+        'running',
+        'La importación de chats ya estaba corriendo en segundo plano'
+      )
+      return
+    }
+
+    updateConversations(
+      result.saved,
+      Math.max(result.total, result.saved),
+      'completed',
+      `${result.saved} mensajes de chat sincronizados en segundo plano`
+    )
+    logger.info(`[GHL Conversations] Background sync completada: ${result.saved}/${result.total} mensajes`)
+  } catch (error) {
+    logger.error(`No se pudieron sincronizar conversaciones en segundo plano: ${error.message}`)
+    updateConversations(0, normalizeEstimateTotal(estimate), 'error', `Error sincronizando chats en segundo plano: ${error.message}`)
+  } finally {
+    backgroundConversationSyncRunning = false
+  }
 }
 
 function buildHighLevelUrl(pathOrUrl, params = {}) {
@@ -2077,23 +2166,74 @@ export async function syncHighLevelData(locationId, apiToken, triggerSource = 'm
     }
 
     // 4.25. Sincronizar historial de conversaciones (chats) para la app
-    syncProgress.step = 'Sincronizando conversaciones...'
+    syncProgress.step = 'Preparando sincronización de conversaciones...'
     let conversationsResult = { total: 0, saved: 0, skipped: 0, contactsCreated: 0 }
     try {
-      updateConversations(0, 0, 'running', 'Importando historial de chats de HighLevel...')
-      const { syncHighLevelConversationHistory } = await import('./highlevelConversationsSyncService.js')
-      conversationsResult = await syncHighLevelConversationHistory({
-        locationId,
-        apiToken,
-        notifyNewInbound: false,
-        onProgress: (saved, total, message) => updateConversations(saved, total, 'running', message)
-      })
-      updateConversations(
-        conversationsResult.saved,
-        Math.max(conversationsResult.total, conversationsResult.saved),
-        'completed',
-        `${conversationsResult.saved} mensajes de chat sincronizados`
-      )
+      updateConversations(0, 0, 'running', 'Revisando volumen de chats en HighLevel...')
+      const {
+        estimateHighLevelConversationSyncVolume,
+        syncHighLevelConversationHistory
+      } = await import('./highlevelConversationsSyncService.js')
+      let conversationEstimate = null
+      try {
+        conversationEstimate = await estimateHighLevelConversationSyncVolume({
+          locationId,
+          apiToken,
+          fullSync: false
+        })
+        logger.info(
+          `[GHL Conversations] Estimación de sync: ${describeConversationEstimate(conversationEstimate)} ` +
+          `(estrategia=${conversationEstimate.strategy})`
+        )
+      } catch (estimateError) {
+        conversationEstimate = {
+          total: 0,
+          unit: 'messages',
+          strategy: 'unknown',
+          useConversationBackfill: true,
+          unknown: true,
+          error: estimateError.message
+        }
+        logger.warn(`[GHL Conversations] No se pudo estimar volumen; se moverá al background: ${estimateError.message}`)
+      }
+
+      if (shouldRunHighLevelConversationsInBackground({ triggerSource, estimate: conversationEstimate })) {
+        const background = startHighLevelConversationSyncInBackground({ locationId, apiToken, estimate: conversationEstimate })
+        conversationsResult = {
+          total: normalizeEstimateTotal(conversationEstimate),
+          saved: 0,
+          skipped: 0,
+          contactsCreated: 0,
+          background: true,
+          backgroundStarted: background.started,
+          alreadyRunning: background.alreadyRunning,
+          strategy: conversationEstimate.strategy,
+          estimatedUnit: conversationEstimate.unit
+        }
+        updateConversations(
+          0,
+          0,
+          'completed',
+          background.alreadyRunning
+            ? 'Los chats ya se estaban importando en segundo plano'
+            : 'Los chats se seguirán importando en segundo plano'
+        )
+      } else {
+        syncProgress.step = 'Sincronizando conversaciones...'
+        updateConversations(0, 0, 'running', 'Importando historial de chats de HighLevel...')
+        conversationsResult = await syncHighLevelConversationHistory({
+          locationId,
+          apiToken,
+          notifyNewInbound: false,
+          onProgress: (saved, total, message) => updateConversations(saved, total, 'running', message)
+        })
+        updateConversations(
+          conversationsResult.saved,
+          Math.max(conversationsResult.total, conversationsResult.saved),
+          'completed',
+          `${conversationsResult.saved} mensajes de chat sincronizados`
+        )
+      }
     } catch (error) {
       logger.error(`No se pudieron sincronizar conversaciones: ${error.message}`)
       updateConversations(0, 0, 'error', `Error sincronizando chats: ${error.message}`)
@@ -2107,7 +2247,10 @@ export async function syncHighLevelData(locationId, apiToken, triggerSource = 'm
     // 5. Completado
     syncProgress.status = 'completed'
     syncProgress.step = 'Sincronización completada'
-    syncProgress.message = `✅ Sincronización completada: ${contactsResult.saved} contactos GHL, ${whatsappContactsResult.synced} contactos WhatsApp, ${localCalendarsResult.created + localCalendarsResult.updated} calendarios Ristak→GHL, ${syncProgress.products.saved} productos/precios, ${localAppointmentsResult.created + localAppointmentsResult.updated} citas Ristak→GHL, ${appointmentsResult.saved} citas GHL→Ristak, ${paymentsResult.saved} pagos, ${conversationsResult.saved} mensajes de chat`
+    const conversationsSummary = conversationsResult.background
+      ? `chats importándose en segundo plano (${describeConversationEstimate({ total: conversationsResult.total, unit: conversationsResult.estimatedUnit })})`
+      : `${conversationsResult.saved} mensajes de chat`
+    syncProgress.message = `✅ Sincronización completada: ${contactsResult.saved} contactos GHL, ${whatsappContactsResult.synced} contactos WhatsApp, ${localCalendarsResult.created + localCalendarsResult.updated} calendarios Ristak→GHL, ${syncProgress.products.saved} productos/precios, ${localAppointmentsResult.created + localAppointmentsResult.updated} citas Ristak→GHL, ${appointmentsResult.saved} citas GHL→Ristak, ${paymentsResult.saved} pagos, ${conversationsSummary}`
 
     logger.info('===========================================')
     logger.info('SINCRONIZACIÓN COMPLETADA EXITOSAMENTE')
@@ -2118,7 +2261,9 @@ export async function syncHighLevelData(locationId, apiToken, triggerSource = 'm
     logger.info(`Citas Ristak → GHL: ${localAppointmentsResult.created + localAppointmentsResult.updated + localAppointmentsResult.deleted}/${localAppointmentsResult.total} (${localAppointmentsResult.failed} fallidas)`)
     logger.info(`Citas: ${appointmentsResult.saved}/${appointmentsResult.total} (${appointmentsResult.contactsCreated} contactos creados)`)
     logger.info(`Pagos: ${paymentsResult.saved}/${paymentsResult.total} (${paymentsResult.contactsCreated} contactos creados)`)
-    logger.info(`Chats: ${conversationsResult.saved}/${conversationsResult.total} mensajes (${conversationsResult.contactsCreated} contactos creados)`)
+    logger.info(conversationsResult.background
+      ? `Chats: importación en segundo plano (${describeConversationEstimate({ total: conversationsResult.total, unit: conversationsResult.estimatedUnit })})`
+      : `Chats: ${conversationsResult.saved}/${conversationsResult.total} mensajes (${conversationsResult.contactsCreated} contactos creados)`)
     logger.info('===========================================')
 
     // PASO 5: Sincronizar anuncios de Meta (últimos 35 meses)
