@@ -13,6 +13,7 @@ import {
   Plus,
   RefreshCw,
   Repeat2,
+  Send,
   Settings,
   Trash2,
   XCircle
@@ -33,11 +34,12 @@ import {
   NumberInput,
   PageContainer,
   PageHeader,
+  PaymentLinkReadyPanel,
   PaymentPlatformLogo,
   Table,
   TableSelectionToolbar
 } from '@/components/common'
-import type { BadgeVariant, Column, PaymentPlatformLogoId } from '@/components/common'
+import type { BadgeVariant, Column, PaymentLinkReadyData, PaymentPlatformLogoId } from '@/components/common'
 import { useNotification } from '@/contexts/NotificationContext'
 import { useAccountCurrency } from '@/hooks'
 import type { Contact } from '@/types'
@@ -365,15 +367,58 @@ function getSubscriptionProviderLogo(subscription: PaymentSubscription): Payment
   return null
 }
 
-function getMercadoPagoSubscriptionLink(subscription: PaymentSubscription) {
-  if (subscription.paymentMode === 'test') {
-    return subscription.mercadoPagoSandboxInitPoint || subscription.mercadoPagoInitPoint || ''
-  }
-  return subscription.mercadoPagoInitPoint || subscription.mercadoPagoSandboxInitPoint || ''
+function getSubscriptionStartLink(subscription: PaymentSubscription) {
+  return subscription.subscriptionStartUrl || ''
 }
 
-function getSubscriptionStartLink(subscription: PaymentSubscription) {
-  return subscription.subscriptionStartUrl || subscription.stripeCheckoutUrl || getMercadoPagoSubscriptionLink(subscription)
+function getSubscriptionContactDisplayName(contact?: PaymentLinkReadyData['contact'] | null) {
+  return contact?.name ||
+    `${contact?.firstName || ''} ${contact?.lastName || ''}`.trim() ||
+    contact?.email ||
+    contact?.phone ||
+    'cliente'
+}
+
+function buildSubscriptionPaymentLinkPanel(subscription: PaymentSubscription): PaymentLinkReadyData | null {
+  const paymentMethod = (subscription.paymentMethod || '') as SubscriptionPaymentMethod
+  if (!isLinkPaymentMethod(paymentMethod)) return null
+
+  const paymentUrl = subscription.subscriptionStartUrl || ''
+  if (!paymentUrl || !subscription.contactId) return null
+
+  const provider = (subscription.subscriptionStartPaymentProvider || getSubscriptionProviderLogo(subscription) || resolvePaymentProvider(subscription.paymentProvider)) as PaymentPlatformLogoId
+
+  return {
+    kind: 'subscription_start',
+    title: 'Link de pago listo',
+    description: 'Comparte este enlace público de Ristak para que el cliente realice el primer pago de la suscripción.',
+    provider,
+    paymentUrl,
+    amount: Number(subscription.amount || 0),
+    currency: subscription.currency || 'MXN',
+    contact: {
+      id: subscription.contactId,
+      name: subscription.contactName || 'Contacto',
+      email: subscription.contactEmail || '',
+      phone: subscription.contactPhone || ''
+    },
+    paymentId: subscription.subscriptionStartPaymentId || null,
+    publicPaymentId: subscription.subscriptionStartPublicPaymentId || null
+  }
+}
+
+function getSubscriptionPaymentLinkShareText(link: PaymentLinkReadyData) {
+  const contactName = getSubscriptionContactDisplayName(link.contact)
+  const amountText = link.amount > 0 ? ` por ${formatCurrency(link.amount, link.currency)}` : ''
+  const activationText = link.provider === 'stripe' || link.provider === 'conekta'
+    ? 'Al pagarlo se guarda tu tarjeta para activar los siguientes cobros de la suscripción.'
+    : 'Al pagarlo registramos el inicio de tu suscripción.'
+
+  return `Hola ${contactName}, te comparto el enlace del primer pago de tu suscripción${amountText}. ${activationText}\n${link.paymentUrl}`
+}
+
+function getSubscriptionPaymentLinkEmailSubject() {
+  return 'Primer pago de suscripción'
 }
 
 function matchesStatusFilter(subscription: PaymentSubscription, filter: string) {
@@ -413,6 +458,7 @@ export const PaymentSubscriptions: React.FC = () => {
   const [selectedSubscriptionIds, setSelectedSubscriptionIds] = useState<string[]>([])
   const [subscriptionsPendingDeletion, setSubscriptionsPendingDeletion] = useState<PaymentSubscription[]>([])
   const [deletingSubscriptions, setDeletingSubscriptions] = useState(false)
+  const [createdSubscriptionLink, setCreatedSubscriptionLink] = useState<PaymentLinkReadyData | null>(null)
   const [formMode, setFormMode] = useState<SubscriptionFormMode>(null)
   const [formStep, setFormStep] = useState<SubscriptionFormStep>('details')
   const [editingSubscription, setEditingSubscription] = useState<PaymentSubscription | null>(null)
@@ -592,6 +638,7 @@ export const PaymentSubscriptions: React.FC = () => {
       return
     }
 
+    setCreatedSubscriptionLink(null)
     setEditingSubscription(null)
     setSelectedContact(null)
     setForm(createEmptyForm())
@@ -600,6 +647,7 @@ export const PaymentSubscriptions: React.FC = () => {
   }
 
   const openEditSubscription = (subscription: PaymentSubscription) => {
+    setCreatedSubscriptionLink(null)
     setEditingSubscription(subscription)
     setSelectedContact(buildContactFromSubscription(subscription))
     setForm({
@@ -639,6 +687,7 @@ export const PaymentSubscriptions: React.FC = () => {
   const closeForm = () => {
     if (saving) return
 
+    setCreatedSubscriptionLink(null)
     setFormMode(null)
     setFormStep('details')
     setEditingSubscription(null)
@@ -912,12 +961,15 @@ export const PaymentSubscriptions: React.FC = () => {
         showToast('success', 'Suscripción actualizada', `${payload.name} ya quedó lista.`)
       } else {
         const created = await subscriptionsService.createSubscription(payload)
-        const startLink = getSubscriptionStartLink(created)
-        if (startLink && isLinkPaymentMethod(created.paymentMethod as SubscriptionPaymentMethod)) {
-          showToast('success', 'Link de pago listo', `Copia el link de ${payload.name} para que el cliente realice el primer pago.`)
-        } else {
-          showToast('success', 'Suscripción creada', `${payload.name} ya aparece en la lista.`)
+        const readyLink = buildSubscriptionPaymentLinkPanel(created)
+        if (readyLink) {
+          setCreatedSubscriptionLink(readyLink)
+          showToast('success', 'Link de pago listo', `El link de ${payload.name} ya está listo para copiar o enviar.`)
+          await loadSubscriptions({ refresh: true })
+          return
         }
+
+        showToast('success', 'Suscripción creada', `${payload.name} ya aparece en la lista.`)
       }
 
       closeForm()
@@ -1010,6 +1062,19 @@ export const PaymentSubscriptions: React.FC = () => {
 
   const handleDelete = (subscription: PaymentSubscription) => {
     openSubscriptionDeleteModal([subscription])
+  }
+
+  const openSubscriptionStartLinkPanel = (subscription: PaymentSubscription) => {
+    const readyLink = buildSubscriptionPaymentLinkPanel(subscription)
+    if (!readyLink) {
+      showToast('warning', 'Link no disponible', 'Todavía no hay un link de pago público para esta suscripción.')
+      return
+    }
+
+    setCreatedSubscriptionLink(readyLink)
+    setEditingSubscription(null)
+    setSelectedContact(buildContactFromSubscription(subscription))
+    setFormMode('create')
   }
 
   const copySubscriptionStartLink = async (subscription: PaymentSubscription) => {
@@ -1146,13 +1211,17 @@ export const PaymentSubscriptions: React.FC = () => {
                   <MoreVertical size={16} />
                 </button>
               </DropdownMenuTrigger>
-                <DropdownMenuContent align="end">
+              <DropdownMenuContent align="end">
                 <DropdownMenuItem disabled={busy} onClick={() => openEditSubscription(item)}>
                   <Edit3 size={16} />
                   <span>Ver / editar</span>
                 </DropdownMenuItem>
                 {startLink && (
                   <>
+                    <DropdownMenuItem disabled={busy} onClick={() => openSubscriptionStartLinkPanel(item)}>
+                      <Send size={16} />
+                      <span>Enviar link de pago</span>
+                    </DropdownMenuItem>
                     <DropdownMenuItem disabled={busy} onClick={() => void copySubscriptionStartLink(item)}>
                       <Copy size={16} />
                       <span>Copiar link de pago</span>
@@ -1222,6 +1291,8 @@ export const PaymentSubscriptions: React.FC = () => {
   ) : null
   const formModalTitle = formMode === 'edit'
     ? 'Editar suscripción'
+    : createdSubscriptionLink
+      ? 'Link de pago listo'
     : showStartMethodStep
       ? 'Elige cómo iniciar'
       : showGatewayStep
@@ -1326,13 +1397,27 @@ export const PaymentSubscriptions: React.FC = () => {
           title={formModalTitle}
           size="md"
           type="custom"
-          closeOnBackdropClick={formMode === 'edit'}
-          closeOnEscape={formMode === 'edit'}
+          closeOnBackdropClick={formMode === 'edit' && !createdSubscriptionLink}
+          closeOnEscape={formMode === 'edit' && !createdSubscriptionLink}
         >
-          <form className={styles.form} onSubmit={(event) => {
-            event.preventDefault()
-            void saveSubscription()
-          }}>
+          {createdSubscriptionLink ? (
+            <div className={styles.form}>
+              <PaymentLinkReadyPanel
+                link={createdSubscriptionLink}
+                getShareText={getSubscriptionPaymentLinkShareText}
+                getEmailSubject={getSubscriptionPaymentLinkEmailSubject}
+              />
+              <div className={styles.footerActions}>
+                <Button type="button" onClick={closeForm}>
+                  Listo
+                </Button>
+              </div>
+            </div>
+          ) : (
+            <form className={styles.form} onSubmit={(event) => {
+              event.preventDefault()
+              void saveSubscription()
+            }}>
             {showStartMethodStep ? (
               <div className={styles.gatewayPicker}>
                 {availableLinkPaymentMethodOptions.length > 0 && (
@@ -1668,7 +1753,8 @@ export const PaymentSubscriptions: React.FC = () => {
                     : 'Continuar'}
               </Button>
             </div>
-          </form>
+            </form>
+          )}
         </Modal>
       </div>
     </PageContainer>

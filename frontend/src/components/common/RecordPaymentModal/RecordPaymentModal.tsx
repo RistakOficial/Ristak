@@ -7,7 +7,7 @@ import { NumberInput } from '../NumberInput'
 import { PhoneDateField } from '@/components/phone/PhoneDateField'
 import { PhoneSelect } from '@/components/phone/PhoneSelect'
 import { PhoneSegmentedTabs } from '@/components/phone/ui'
-import { PaymentPlatformLogo, type PaymentPlatformLogoId } from '@/components/common/PaymentPlatformLogo'
+import { PaymentPlatformLogo } from '@/components/common/PaymentPlatformLogo'
 import {
   Search,
   Loader2,
@@ -24,10 +24,7 @@ import {
   Trash2,
   ShieldCheck,
   User,
-  Copy,
-  ExternalLink,
-  Mail,
-  MessageCircle
+  Copy
 } from 'lucide-react'
 import styles from './RecordPaymentModal.module.css'
 import { useNotification } from '@/contexts/NotificationContext'
@@ -46,9 +43,7 @@ import {
   paymentSettingsService,
   type PaymentTaxSettings
 } from '@/services/paymentSettingsService'
-import { contactsService, type PaymentLinkDeliveryChannelKey, type PaymentLinkDeliveryOptions } from '@/services/contactsService'
-import { emailService } from '@/services/emailService'
-import { whatsappApiService } from '@/services/whatsappApiService'
+import { PaymentLinkReadyPanel, type PaymentLinkReadyData } from '../PaymentLinkReadyPanel'
 
 const DEFAULT_INVOICE_TITLE = 'Pago'
 const CONTACT_SEARCH_DELAY_MS = 90
@@ -124,7 +119,6 @@ type InvoiceSendMethod = 'email' | 'sms' | 'both'
 type MercadoPagoInstallmentChoice = 'none' | '2' | '3' | '6' | '9' | '12' | '18' | '24'
 type PaymentSegmentedOption = { value: string; label: string }
 type RecordPaymentStep = 'form' | 'options' | 'processing' | 'link_ready'
-type CreatedPaymentLinkKind = 'single' | 'first_payment' | 'card_setup'
 
 const INSTALLMENT_VALUE_TYPE_OPTIONS = [
   { value: 'amount', label: 'Monto fijo' },
@@ -277,7 +271,6 @@ const PHONE_SEND_METHODS = new Set<SendMethod>(['whatsapp', 'sms', 'email_whatsa
 const SMS_SEND_METHODS = new Set<SendMethod>(['sms', 'email_sms', 'all'])
 const WHATSAPP_SEND_METHODS = new Set<SendMethod>(['whatsapp', 'email_whatsapp', 'all'])
 const DEFAULT_SEND_METHOD: SendMethod = 'all'
-const PAYMENT_LINK_DELIVERY_CHANNELS: PaymentLinkDeliveryChannelKey[] = ['whatsapp', 'messenger', 'instagram', 'email']
 
 const getSendMethodOptions = (contact: Contact | null) => {
   const hasEmail = Boolean(contact?.email)
@@ -377,18 +370,7 @@ interface ManualPaymentData {
   notes: string
 }
 
-interface CreatedPaymentLink {
-  kind: CreatedPaymentLinkKind
-  title: string
-  description: string
-  provider?: PaymentPlatformLogoId
-  paymentUrl: string
-  amount: number
-  currency: string
-  contact: Contact
-  paymentId?: string | null
-  publicPaymentId?: string | null
-}
+type CreatedPaymentLink = PaymentLinkReadyData
 
 const toDateInputValue = (date: Date) => {
   const year = date.getFullYear()
@@ -642,9 +624,6 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
   const [selectedConektaPaymentSourceId, setSelectedConektaPaymentSourceId] = useState('')
   const [stripePlanCardSource, setStripePlanCardSource] = useState<StripePlanCardSource>('new_card')
   const [createdPaymentLink, setCreatedPaymentLink] = useState<CreatedPaymentLink | null>(null)
-  const [paymentLinkDeliveryOptions, setPaymentLinkDeliveryOptions] = useState<PaymentLinkDeliveryOptions | null>(null)
-  const [loadingPaymentLinkDeliveryOptions, setLoadingPaymentLinkDeliveryOptions] = useState(false)
-  const [sendingPaymentLinkChannel, setSendingPaymentLinkChannel] = useState<PaymentLinkDeliveryChannelKey | null>(null)
 
   // Estado de conexión con pasarelas. Ristak opera sin HighLevel; cada gateway
   // habilita sólo las acciones que realmente soporta.
@@ -1011,9 +990,6 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
     setSelectedConektaPaymentSourceId('')
     setStripePlanCardSource('new_card')
     setCreatedPaymentLink(null)
-    setPaymentLinkDeliveryOptions(null)
-    setLoadingPaymentLinkDeliveryOptions(false)
-    setSendingPaymentLinkChannel(null)
   }
 
   const loadConfig = async () => {
@@ -1540,110 +1516,9 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
     }
   }
 
-  const loadPaymentLinkDeliveryOptions = async (contactId: string) => {
-    setLoadingPaymentLinkDeliveryOptions(true)
-    try {
-      const options = await contactsService.getPaymentLinkDeliveryOptions(contactId)
-      setPaymentLinkDeliveryOptions(options)
-    } catch {
-      setPaymentLinkDeliveryOptions(null)
-    } finally {
-      setLoadingPaymentLinkDeliveryOptions(false)
-    }
-  }
-
   const showPaymentLinkReady = (link: CreatedPaymentLink) => {
     setCreatedPaymentLink(link)
-    setPaymentLinkDeliveryOptions(null)
-    setSendingPaymentLinkChannel(null)
     setStep('link_ready')
-    void loadPaymentLinkDeliveryOptions(link.contact.id)
-  }
-
-  const getCreatedPaymentLinkShareText = (link: CreatedPaymentLink) => {
-    const contactName = getContactDisplayName(link.contact)
-    const amountText = link.amount > 0 ? ` por ${formatCurrency(link.amount, link.currency)}` : ''
-    const intro = link.kind === 'card_setup'
-      ? `Hola ${contactName}, te comparto el enlace para domiciliar tu tarjeta${amountText} y activar tu plan de pagos:`
-      : link.kind === 'first_payment'
-        ? `Hola ${contactName}, te comparto el enlace del primer pago${amountText}. Al pagarlo se guarda tu tarjeta para los siguientes cobros programados:`
-        : `Hola ${contactName}, te comparto tu enlace de pago${amountText}:`
-
-    return `${intro}\n${link.paymentUrl}`
-  }
-
-  const getCreatedPaymentLinkEmailSubject = (link: CreatedPaymentLink) => {
-    if (link.kind === 'card_setup') return `Domiciliación de tarjeta - ${businessName}`
-    if (link.kind === 'first_payment') return `Primer pago - ${businessName}`
-    return `Enlace de pago - ${businessName}`
-  }
-
-  const handleCopyCreatedPaymentLink = async () => {
-    if (!createdPaymentLink?.paymentUrl) return
-
-    const copied = await copyTextToClipboard(createdPaymentLink.paymentUrl)
-    showToast(
-      copied ? 'success' : 'error',
-      copied ? 'Enlace copiado' : 'No se pudo copiar el enlace'
-    )
-  }
-
-  const handleOpenCreatedPaymentLink = () => {
-    if (!createdPaymentLink?.paymentUrl || typeof window === 'undefined') return
-    window.open(createdPaymentLink.paymentUrl, '_blank', 'noopener,noreferrer')
-  }
-
-  const getPaymentLinkChannelIcon = (channel: PaymentLinkDeliveryChannelKey) => {
-    if (channel === 'email') return <Mail size={16} />
-    if (channel === 'messenger') return <Send size={16} />
-    return <MessageCircle size={16} />
-  }
-
-  const handleSendCreatedPaymentLink = async (channel: PaymentLinkDeliveryChannelKey) => {
-    if (!createdPaymentLink) return
-
-    const deliveryChannel = paymentLinkDeliveryOptions?.channels[channel]
-    if (!deliveryChannel?.available) {
-      showToast('error', 'Canal no disponible', deliveryChannel?.reason || 'Este contacto no tiene ese canal conectado.')
-      return
-    }
-
-    setSendingPaymentLinkChannel(channel)
-    try {
-      const message = getCreatedPaymentLinkShareText(createdPaymentLink)
-      const externalId = `payment_link_${createdPaymentLink.kind}_${channel}_${Date.now()}`
-
-      if (channel === 'email') {
-        await emailService.send({
-          contactId: createdPaymentLink.contact.id,
-          to: deliveryChannel.value || createdPaymentLink.contact.email,
-          subject: getCreatedPaymentLinkEmailSubject(createdPaymentLink),
-          text: message,
-          externalId,
-          includeSignature: true
-        })
-      } else if (channel === 'whatsapp') {
-        await whatsappApiService.sendText({
-          contactId: createdPaymentLink.contact.id,
-          to: deliveryChannel.value || createdPaymentLink.contact.phone,
-          text: message,
-          externalId
-        })
-      } else {
-        await whatsappApiService.sendMetaSocialText({
-          contactId: createdPaymentLink.contact.id,
-          platform: channel,
-          message,
-          externalId
-        })
-      }
-
-      showToast('success', 'Enlace enviado', `Se mandó por ${deliveryChannel.label}.`)
-    } catch (error: any) {
-      showToast('error', `No se pudo enviar por ${deliveryChannel.label}`, error.message || 'Intenta copiar el enlace y mandarlo manualmente.')
-    } finally {
-      setSendingPaymentLinkChannel(null)
-    }
   }
 
   const handleSelectContact = (contact: Contact) => {
@@ -1698,8 +1573,6 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
     setSinglePaymentOptionsStage('method')
     setPaymentOption(getDefaultPaymentOption())
     setCreatedPaymentLink(null)
-    setPaymentLinkDeliveryOptions(null)
-    setSendingPaymentLinkChannel(null)
   }
 
   const returnToPreviousPaymentOptionsStage = () => {
@@ -4393,97 +4266,8 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
       return renderProcessing()
     }
 
-    const availableChannels = PAYMENT_LINK_DELIVERY_CHANNELS
-      .map(channel => paymentLinkDeliveryOptions?.channels[channel])
-      .filter((channel): channel is NonNullable<typeof channel> => Boolean(channel?.available))
-
     return (
-      <div className={styles.paymentLinkReady}>
-        <div className={styles.paymentLinkReadyHeader}>
-          <div className={styles.paymentLinkReadyIcon}>
-            {createdPaymentLink.provider ? (
-              <PaymentPlatformLogo platform={createdPaymentLink.provider} size="md" decorative />
-            ) : (
-              <LinkIcon size={20} aria-hidden="true" />
-            )}
-          </div>
-          <div className={styles.paymentLinkReadyTitle}>
-            <p>{createdPaymentLink.title}</p>
-            <span>{createdPaymentLink.description}</span>
-          </div>
-        </div>
-
-        <div className={styles.paymentLinkMeta}>
-          <div>
-            <span>Cliente</span>
-            <strong>{getContactDisplayName(createdPaymentLink.contact)}</strong>
-          </div>
-          <div>
-            <span>Monto</span>
-            <strong>{formatCurrency(createdPaymentLink.amount, createdPaymentLink.currency)}</strong>
-          </div>
-        </div>
-
-        <div className={styles.paymentLinkBox}>
-          <label>Enlace público de pago</label>
-          <div className={styles.paymentLinkActions}>
-            <div className={styles.paymentLinkUrl}>{createdPaymentLink.paymentUrl}</div>
-            <Button
-              type="button"
-              variant="secondary"
-              size="sm"
-              leftIcon={<Copy size={15} />}
-              onClick={handleCopyCreatedPaymentLink}
-            >
-              Copiar
-            </Button>
-            <Button
-              type="button"
-              variant="secondary"
-              size="sm"
-              leftIcon={<ExternalLink size={15} />}
-              onClick={handleOpenCreatedPaymentLink}
-            >
-              Abrir
-            </Button>
-          </div>
-        </div>
-
-        <div className={styles.paymentLinkDelivery}>
-          <div className={styles.paymentLinkDeliveryHeader}>
-            <p>Enviar por</p>
-            <span>Solo aparecen los canales conectados para este contacto.</span>
-          </div>
-
-          {loadingPaymentLinkDeliveryOptions ? (
-            <div className={styles.paymentLinkDeliveryLoading}>
-              <Loader2 size={16} aria-hidden="true" />
-              Revisando canales...
-            </div>
-          ) : availableChannels.length > 0 ? (
-            <div className={styles.paymentLinkChannelActions}>
-              {availableChannels.map(channel => (
-                <Button
-                  key={channel.key}
-                  type="button"
-                  variant="secondary"
-                  size="sm"
-                  leftIcon={getPaymentLinkChannelIcon(channel.key)}
-                  loading={sendingPaymentLinkChannel === channel.key}
-                  disabled={Boolean(sendingPaymentLinkChannel)}
-                  onClick={() => handleSendCreatedPaymentLink(channel.key)}
-                >
-                  {channel.label}
-                </Button>
-              ))}
-            </div>
-          ) : (
-            <p className={styles.paymentLinkDeliveryEmpty}>
-              Este contacto no tiene canales conectados para envío directo. Copia el enlace y mándalo manualmente.
-            </p>
-          )}
-        </div>
-      </div>
+      <PaymentLinkReadyPanel link={createdPaymentLink} businessName={businessName} />
     )
   }
 
@@ -4498,7 +4282,6 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
           <Button
             variant="primary"
             onClick={onClose}
-            disabled={Boolean(sendingPaymentLinkChannel)}
           >
             Listo
           </Button>

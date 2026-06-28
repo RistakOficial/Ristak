@@ -34,6 +34,8 @@ export { VisitorDetailsModal } from './VisitorDetailsModal'
 // Componentes de pagos
 export { RecordPaymentModal } from './RecordPaymentModal'
 export { TransactionsModal } from './TransactionsModal'
+export { PaymentLinkReadyPanel } from './PaymentLinkReadyPanel'
+export type { PaymentLinkReadyData, PaymentLinkReadyKind, PaymentLinkReadyContact } from './PaymentLinkReadyPanel'
 
 // Componentes de citas
 export { AppointmentModal } from './AppointmentModal'

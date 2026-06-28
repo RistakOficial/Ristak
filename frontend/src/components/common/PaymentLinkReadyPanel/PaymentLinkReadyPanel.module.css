@@ -1,0 +1,152 @@
+.root {
+  display: grid;
+  gap: 18px;
+}
+
+.header {
+  display: flex;
+  align-items: flex-start;
+  gap: 14px;
+}
+
+.icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 40px;
+  height: 40px;
+  border-radius: var(--radius-ctl);
+  color: var(--accent);
+  background: var(--accent-soft);
+  flex: 0 0 auto;
+}
+
+.title {
+  display: grid;
+  gap: 5px;
+  min-width: 0;
+}
+
+.title p {
+  margin: 0;
+  color: var(--text);
+  font-size: 17px;
+  font-weight: 700;
+}
+
+.title span {
+  color: var(--text-dim);
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.meta {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+  padding: 14px 0;
+  border-top: 1px solid var(--border);
+  border-bottom: 1px solid var(--border);
+}
+
+.meta div {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.meta span,
+.linkBox label {
+  color: var(--text-mute);
+  font: var(--label-font);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: var(--label-spacing, 0);
+  text-transform: var(--label-transform, uppercase);
+}
+
+.meta strong {
+  color: var(--text);
+  font-size: 15px;
+  font-weight: 700;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.linkBox {
+  display: grid;
+  gap: 10px;
+}
+
+.linkActions {
+  display: flex;
+  align-items: stretch;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.url {
+  flex: 1 1 260px;
+  min-width: 0;
+  padding: 11px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-ctl);
+  color: var(--text);
+  background: var(--surface);
+  font-size: 13px;
+  line-height: 1.35;
+  word-break: break-word;
+}
+
+.delivery {
+  display: grid;
+  gap: 12px;
+}
+
+.deliveryHeader {
+  display: grid;
+  gap: 3px;
+}
+
+.deliveryHeader p {
+  margin: 0;
+  color: var(--text);
+  font-size: 14px;
+  font-weight: 700;
+}
+
+.deliveryHeader span,
+.deliveryEmpty,
+.deliveryLoading {
+  color: var(--text-mute);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.channelActions {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.deliveryLoading {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.deliveryLoading svg {
+  color: var(--accent);
+  animation: spin 1s linear infinite;
+}
+
+.deliveryEmpty {
+  margin: 0;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
