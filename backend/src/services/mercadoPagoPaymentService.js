@@ -47,6 +47,7 @@ const MERCADOPAGO_SUBSCRIPTION_START_BUFFER_MS = 10 * 60 * 1000
 const MERCADOPAGO_TEST_CARD_HELP = 'Mercado Pago rechazó el pago de prueba. En el link de pago abre la ayuda de pruebas, usa una tarjeta de esa tabla, cualquier correo válido y el nombre del titular que simula el resultado: APRO para aprobar, FUND para fondos insuficientes u otro escenario disponible.'
 const MERCADOPAGO_SUBSCRIPTION_TEST_USER_HELP = 'Mercado Pago rechazó la suscripción de prueba porque el vendedor y el pagador deben ser usuarios del mismo tipo. Si conectaste una cuenta test, el email del contacto debe ser un comprador test de Mercado Pago del mismo país que el vendedor test, no un cliente real ni el mismo vendedor. Cambia el email del contacto por el usuario comprador test o cambia Mercado Pago a modo en vivo para clientes reales.'
 const MERCADOPAGO_SUBSCRIPTION_INTERNAL_ERROR_HELP = 'Mercado Pago devolvió un error interno al crear la suscripción. En modo prueba usa el email del comprador test de Mercado Pago del mismo país que el vendedor; APRO aplica al nombre de tarjeta en el checkout, no al contacto de la suscripción. Si el comprador test ya es correcto, intenta crear el link nuevamente.'
+const MERCADOPAGO_SUBSCRIPTION_UNAUTHORIZED_HELP = 'Mercado Pago no autorizó crear la suscripción con la cuenta conectada. Reconecta Mercado Pago y asegúrate de usar una cuenta vendedora con suscripciones activas; en modo prueba usa un vendedor test y un comprador test del mismo país.'
 const DEFAULT_PAYMENT_TIMEZONE = 'America/Mexico_City'
 const MP_PLAN_STATES = {
   ACTIVE: 'mercadopago_plan_active',
@@ -607,12 +608,11 @@ function normalizeMercadoPagoErrorMessage(payload = {}, options = {}) {
     return MERCADOPAGO_SUBSCRIPTION_INTERNAL_ERROR_HELP
   }
 
-  return message || 'Mercado Pago no pudo completar la solicitud.'
-}
+  if (path.includes('/preapproval') && /policy returned unauthorized|unauthorized/i.test(message)) {
+    return MERCADOPAGO_SUBSCRIPTION_UNAUTHORIZED_HELP
+  }
 
-function shouldUseMercadoPagoStageScope(config = {}, path = '') {
-  const cleanPath = cleanString(path)
-  return normalizeMode(config.mode) === 'test' && cleanPath.includes('/preapproval')
+  return message || 'Mercado Pago no pudo completar la solicitud.'
 }
 
 async function mercadoPagoApiRequest(path, { method = 'GET', body = null, idempotencyKey = '' } = {}) {
@@ -624,7 +624,6 @@ async function mercadoPagoApiRequest(path, { method = 'GET', body = null, idempo
   }
   if (body) headers['Content-Type'] = 'application/json'
   if (idempotencyKey) headers['X-Idempotency-Key'] = idempotencyKey
-  if (shouldUseMercadoPagoStageScope(config, path)) headers['X-scope'] = 'stage'
 
   const response = await mercadoPagoFetch()(url, {
     method,

@@ -706,7 +706,7 @@ test('Mercado Pago crea suscripcion recurrente real con preapproval pendiente', 
 
     setMercadoPagoFetchForTest(async (url, options = {}) => {
       assert.equal(options.headers?.Authorization, 'Bearer TEST-access-token')
-      assert.equal(options.headers?.['X-scope'], 'stage')
+      assert.equal(Object.hasOwn(options.headers || {}, 'X-scope'), false)
       assert.equal(url, 'https://api.mercadopago.com/preapproval')
       assert.equal(options.method, 'POST')
 
@@ -799,7 +799,7 @@ test('Mercado Pago explica usuario test requerido al crear suscripcion preapprov
     setMercadoPagoFetchForTest(async (url, options = {}) => {
       assert.equal(url, 'https://api.mercadopago.com/preapproval')
       assert.equal(options.method, 'POST')
-      assert.equal(options.headers?.['X-scope'], 'stage')
+      assert.equal(Object.hasOwn(options.headers || {}, 'X-scope'), false)
       const body = JSON.parse(String(options.body || '{}'))
       assert.equal(body.payer_email, 'cliente-real@example.test')
 
@@ -866,7 +866,7 @@ test('Mercado Pago explica error interno al crear suscripcion preapproval', asyn
     setMercadoPagoFetchForTest(async (url, options = {}) => {
       assert.equal(url, 'https://api.mercadopago.com/preapproval')
       assert.equal(options.method, 'POST')
-      assert.equal(options.headers?.['X-scope'], 'stage')
+      assert.equal(Object.hasOwn(options.headers || {}, 'X-scope'), false)
       const body = JSON.parse(String(options.body || '{}'))
       assert.equal(body.status, 'pending')
       assert.equal(Object.hasOwn(body.auto_recurring, 'start_date'), false)
@@ -914,6 +914,67 @@ test('Mercado Pago explica error interno al crear suscripcion preapproval', asyn
   })
 })
 
+test('Mercado Pago explica policy unauthorized al crear suscripcion preapproval', async () => {
+  await initializeMasterKey()
+
+  await snapshotMercadoPagoConfig(async () => {
+    const suffix = `${Date.now()}_${Math.random().toString(36).slice(2, 8)}`
+    const ids = {
+      contactId: `contact_mp_sub_policy_error_${suffix}`,
+      subscriptionId: ''
+    }
+
+    setMercadoPagoFetchForTest(async (url, options = {}) => {
+      assert.equal(url, 'https://api.mercadopago.com/preapproval')
+      assert.equal(options.method, 'POST')
+      assert.equal(Object.hasOwn(options.headers || {}, 'X-scope'), false)
+      const body = JSON.parse(String(options.body || '{}'))
+      assert.equal(body.status, 'pending')
+      assert.equal(Object.hasOwn(body.auto_recurring, 'start_date'), false)
+
+      return {
+        ok: false,
+        status: 401,
+        json: async () => ({
+          message: 'At least one policy returned UNAUTHORIZED.',
+          error: 'unauthorized'
+        })
+      }
+    })
+
+    await db.run(
+      `INSERT INTO contacts (id, full_name, email, phone, source, created_at, updated_at)
+       VALUES (?, ?, ?, ?, 'test', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+      [ids.contactId, 'Cliente MP Sub Policy', 'comprador-test-policy@example.test', `+52157${String(Date.now()).slice(-8)}`]
+    )
+
+    try {
+      await assert.rejects(
+        () => createSubscription({
+          contactId: ids.contactId,
+          name: 'Membresia Mercado Pago Policy',
+          amount: 149,
+          intervalType: 'monthly',
+          intervalCount: 1,
+          startDate: dateOnlyInDays(1),
+          paymentMethod: 'mercadopago_subscription',
+          paymentProvider: 'mercadopago',
+          status: 'incomplete'
+        }),
+        (error) => {
+          assert.equal(error.status, 401)
+          assert.match(error.message, /no autorizó crear la suscripción/i)
+          assert.match(error.message, /Reconecta Mercado Pago/i)
+          assert.match(error.message, /vendedor test y un comprador test/i)
+          return true
+        }
+      )
+    } finally {
+      await cleanup(ids)
+    }
+  })
+})
+
 test('Mercado Pago no fuerza start_date al crear link pendiente de suscripcion', async () => {
   await initializeMasterKey()
 
@@ -927,7 +988,7 @@ test('Mercado Pago no fuerza start_date al crear link pendiente de suscripcion',
     setMercadoPagoFetchForTest(async (url, options = {}) => {
       assert.equal(url, 'https://api.mercadopago.com/preapproval')
       assert.equal(options.method, 'POST')
-      assert.equal(options.headers?.['X-scope'], 'stage')
+      assert.equal(Object.hasOwn(options.headers || {}, 'X-scope'), false)
 
       const body = JSON.parse(String(options.body || '{}'))
       assert.equal(body.auto_recurring.frequency, 1)
