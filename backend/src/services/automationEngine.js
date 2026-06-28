@@ -46,6 +46,7 @@ const WEEKDAY_KEYS = ['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun']
 const CONDITION_VARIABLE_FIELD_PREFIX = 'var:'
 const MESSAGE_TRIGGER_CHANNELS = {
   'trigger-whatsapp-message': 'whatsapp',
+  'trigger-click-to-whatsapp': 'whatsapp',
   'trigger-instagram-message': 'instagram',
   'trigger-messenger-message': 'messenger',
   'trigger-email-message': 'email'
@@ -2689,6 +2690,45 @@ async function sendWhatsAppBlocks(node, ctx) {
   }
 }
 
+async function sendMetaSocialBlocks(node, ctx, platform) {
+  const { sendMetaSocialTextMessage } = await import('./metaSocialMessagingService.js')
+  const config = node.config || {}
+  const blocks = Array.isArray(config.messageBlocks) ? config.messageBlocks : []
+  const sentMessages = []
+  const notes = []
+
+  for (const block of blocks) {
+    if (block.type === 'text') {
+      const text = renderTemplate(str(block.compiledText || block.text || block.message), ctx, { preserveUnknown: true }).trim()
+      if (!text) continue
+      await sendMetaSocialTextMessage({
+        contactId: ctx.contact?.id,
+        platform,
+        message: text,
+        externalId: `${ctx.automationId || 'automation'}:${ctx.enrollmentId || ''}:${node.id}:${sentMessages.length + 1}`
+      })
+      sentMessages.push(text)
+    } else if (block.type === 'delay') {
+      const seconds = Math.min(
+        MAX_INLINE_DELAY_SECONDS,
+        Math.max(0, (Number(block.amount) || 0) * (block.unit === 'minutes' ? 60 : 1))
+      )
+      if (seconds > 0) await sleep(seconds * 1000)
+    } else if (block.type) {
+      notes.push(`bloque "${block.type}" sin soporte en ${platform}: omitido`)
+    }
+  }
+
+  if (sentMessages.length === 0) {
+    throw new Error(`El mensaje de ${platform === 'instagram' ? 'Instagram' : 'Messenger'} está vacío: configura al menos un globo de texto`)
+  }
+
+  const label = platform === 'instagram' ? 'Instagram' : 'Messenger'
+  return {
+    detail: `${sentMessages.length} mensaje${sentMessages.length > 1 ? 's' : ''} de ${label} enviado${sentMessages.length > 1 ? 's' : ''}${notes.length ? ` (${notes.join(', ')})` : ''}`
+  }
+}
+
 async function sendEmailAutomationMessage(node, ctx) {
   const { sendEmailToContact } = await import('./emailService.js')
   const config = node.config || {}
@@ -2721,6 +2761,34 @@ async function sendEmailAutomationMessage(node, ctx) {
       fecha_envio: result.sentAt || nowIso()
     }
   }
+}
+
+function executeRandomizerNode(node) {
+  const branches = Array.isArray(node.config?.branches) ? node.config.branches : []
+  const normalized = branches
+    .map((branch, index) => ({
+      id: str(branch?.id) || `branch-${index + 1}`,
+      label: str(branch?.label) || str(branch?.name) || `Rama ${index + 1}`,
+      percent: Math.max(0, Number(branch?.percent) || 0)
+    }))
+    .filter((branch) => branch.id && branch.percent > 0)
+
+  const total = normalized.reduce((sum, branch) => sum + branch.percent, 0)
+  if (total <= 0) {
+    return { handle: 'none', detail: 'Aleatorizador sin ramas válidas' }
+  }
+
+  const roll = Math.random() * total
+  let cursor = 0
+  for (const branch of normalized) {
+    cursor += branch.percent
+    if (roll < cursor) {
+      return { handle: branch.id, detail: `Aleatorizador eligió ${branch.label}` }
+    }
+  }
+
+  const fallback = normalized[normalized.length - 1]
+  return { handle: fallback.id, detail: `Aleatorizador eligió ${fallback.label}` }
 }
 
 // (AUTO-006) Evalúa, con el estado ACTUAL del contacto, si el objetivo del nodo
@@ -2805,6 +2873,34 @@ async function executeNode(node, ctx, enrollment) {
         detail,
         output,
         outputBaseId: 'enviar_whatsapp'
+      }
+    }
+
+    case 'channel-messenger': {
+      const sendResult = await sendMetaSocialBlocks(node, ctx, 'messenger')
+      return {
+        handle: 'out',
+        detail: sendResult.detail,
+        output: {
+          estado: 'enviado',
+          canal: 'messenger',
+          fecha_envio: nowIso()
+        },
+        outputBaseId: 'enviar_messenger'
+      }
+    }
+
+    case 'channel-instagram': {
+      const sendResult = await sendMetaSocialBlocks(node, ctx, 'instagram')
+      return {
+        handle: 'out',
+        detail: sendResult.detail,
+        output: {
+          estado: 'enviado',
+          canal: 'instagram',
+          fecha_envio: nowIso()
+        },
+        outputBaseId: 'enviar_instagram'
       }
     }
 
@@ -2913,6 +3009,9 @@ async function executeNode(node, ctx, enrollment) {
       const result = evaluateConditionNode(node.config, ctx)
       return { handle: result.handle, detail: `Condición evaluada → ${result.label}` }
     }
+
+    case 'randomizer':
+      return executeRandomizerNode(node)
 
     case 'logic-goal': {
       // (AUTO-006) Antes este nodo SIEMPRE tomaba la salida "cumplido" sin evaluar

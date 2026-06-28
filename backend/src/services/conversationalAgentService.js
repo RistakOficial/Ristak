@@ -2189,13 +2189,20 @@ async function enableConversationalAgentRuntime({ reason = 'agent_published', ag
 }
 
 export async function ensureConversationalAgentRuntimeEnabledForPublishedAgents({ reason = 'published_agent_present' } = {}) {
-  // (AI-007) Kill switch real: el apagador global del agente IA es AUTORITATIVO.
-  // El runtime NO debe re-encender silenciosamente la ejecución por el solo hecho
-  // de existir agentes publicados. Si el toggle global está apagado, regresamos la
-  // config tal cual (apagada) y el runtime no actúa. El encendido sólo ocurre por
-  // acción explícita del dueño (publicar/activar un agente vía enableConversationalAgentRuntime).
+  // (AI-007) Kill switch real: el apagador global es autoritativo cuando existe
+  // marcador de apagado manual. Sin ese marcador, una instalación legacy con agentes
+  // publicados puede repararse para que el runtime vuelva a encender.
   await ensureAgentsMigration()
-  return getConversationalAgentConfig()
+  const config = await getConversationalAgentConfig()
+  if (config.enabled) return config
+
+  const manualDisabledAt = await getAppConfig(CONVERSATIONAL_AGENT_MANUAL_DISABLED_CONFIG_KEY).catch(() => null)
+  if (manualDisabledAt) return config
+
+  const publishedAgent = await db.get('SELECT id FROM conversational_agents WHERE enabled = 1 LIMIT 1')
+  if (!publishedAgent?.id) return config
+
+  return enableConversationalAgentRuntime({ reason, agentId: publishedAgent.id })
 }
 
 function toMetricNumber(value) {

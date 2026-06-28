@@ -51,7 +51,7 @@ function makeFlow(label = 'Mensaje publicado', viewport = { x: 0, y: 0, zoom: 1 
       },
       {
         id: 'node_message',
-        type: 'action-send-message',
+        type: 'channel-whatsapp',
         label: 'Mensaje',
         position: { x: 520, y: 220 },
         config: { customTitle: label }

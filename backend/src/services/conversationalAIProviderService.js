@@ -2,10 +2,6 @@ import { OpenAIProvider } from '@openai/agents'
 import { db, getAppConfig, setAppConfig } from '../config/database.js'
 import { decrypt, encrypt } from '../utils/encryption.js'
 import { logger } from '../utils/logger.js'
-import {
-  getAIAgentStatus,
-  getOpenAIApiKey
-} from './aiAgentService.js'
 
 export const DEFAULT_CONVERSATIONAL_AI_PROVIDER = 'openai'
 
@@ -98,6 +94,7 @@ async function getEncryptedProviderKey(provider) {
 
 async function getStoredProviderApiKey(provider) {
   if (provider.id === 'openai') {
+    const { getOpenAIApiKey } = await import('./aiAgentService.js')
     return getOpenAIApiKey()
   }
 
@@ -117,6 +114,7 @@ async function getStoredProviderApiKey(provider) {
 
 async function getProviderStatus(provider) {
   if (provider.id === 'openai') {
+    const { getAIAgentStatus } = await import('./aiAgentService.js')
     const status = await getAIAgentStatus({})
     return buildProviderStatus(provider, {
       connected: Boolean(status.configured && !status.needsReconnect),

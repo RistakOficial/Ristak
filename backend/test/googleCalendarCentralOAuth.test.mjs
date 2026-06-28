@@ -508,7 +508,7 @@ test('OAuth Google reclama handoff y sincroniza eventos con credenciales locales
   }
 })
 
-test('OAuth Google local elimina en Ristak los eventos cancelados desde Google Calendar', async () => {
+test('OAuth Google local cancela en Ristak los eventos cancelados desde Google Calendar', async () => {
   await initializeMasterKey()
   const previousEnv = snapshotEnv()
   const requests = []
@@ -567,8 +567,10 @@ test('OAuth Google local elimina en Ristak los eventos cancelados desde Google C
     assert.equal(result.deleted, 1)
     assert.equal(result.linkedCalendars, 1)
 
-    const deletedAppointment = await localCalendarService.getLocalAppointment(appointmentId)
-    assert.equal(deletedAppointment, null)
+    const cancelledAppointment = await localCalendarService.getLocalAppointment(appointmentId)
+    assert.equal(cancelledAppointment.status, 'cancelled')
+    assert.equal(cancelledAppointment.appointmentStatus, 'cancelled')
+    assert.equal(cancelledAppointment.googleEventId, 'evt_google_cancelled')
 
     assert.equal(requests.length, 2)
     assert.equal(requests[0].path, '/api/license/oauth-handoff/claim')

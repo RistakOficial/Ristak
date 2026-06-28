@@ -32,6 +32,11 @@ async function createTestUser(role = 'employee', isActive = true) {
   return String(row.id)
 }
 
+async function getActiveAdminUserIds() {
+  const rows = await db.all("SELECT id FROM users WHERE role = 'admin' AND is_active = 1")
+  return rows.map((row) => String(row.id))
+}
+
 describe('notification preferences service', () => {
   afterEach(async () => {
     await deleteTestData()
@@ -53,9 +58,10 @@ describe('notification preferences service', () => {
     })
 
     const target = await resolvePushNotificationTargetForEvent('payments')
+    const activeAdminUserIds = await getActiveAdminUserIds()
 
     assert.equal(target.configured, true)
-    assert.deepEqual(new Set(target.userIds), new Set([adminId, employeeId]))
+    assert.deepEqual(new Set(target.userIds), new Set([...activeAdminUserIds, adminId, employeeId]))
   })
 
   it('keeps the global target when everyone is selected', async () => {

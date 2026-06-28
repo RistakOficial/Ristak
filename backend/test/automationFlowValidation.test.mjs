@@ -15,7 +15,7 @@ function startNode(triggers = [{ id: 't1', type: 'trigger-contact-tag', config: 
   }
 }
 
-function actionNode(id, type = 'action-send-message') {
+function actionNode(id, type = 'channel-whatsapp') {
   return { id, type, position: { x: 100, y: 0 }, config: {} }
 }
 

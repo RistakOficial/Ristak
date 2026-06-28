@@ -29,7 +29,7 @@ beforeEach(() => {
 test('login accepts Android-style pasted identifiers with spaces and different casing', async () => {
   const username = `android_login_${Date.now()}`
   const email = `${username}@example.com`
-  const password = 'android-pass-123'
+  const password = 'AndroidPass123'
 
   await db.run('DELETE FROM users WHERE username = ? OR email = ?', [username, email])
   await db.run(
@@ -59,7 +59,7 @@ test('login accepts Android-style pasted identifiers with spaces and different c
 test('login keeps password matching exact while cleaning only the identifier', async () => {
   const username = `android_password_${Date.now()}`
   const email = `${username}@example.com`
-  const password = 'exact-pass-123'
+  const password = 'ExactPass123'
 
   await db.run('DELETE FROM users WHERE username = ? OR email = ?', [username, email])
   await db.run(

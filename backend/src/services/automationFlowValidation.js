@@ -25,11 +25,14 @@ export const ALLOWED_CHANNELS = ['whatsapp', 'messenger', 'instagram']
 const EXECUTABLE_NODE_TYPES = new Set([
   START_NODE_TYPE,
   'channel-whatsapp',
+  'channel-messenger',
+  'channel-instagram',
   'channel-email',
   'logic-wait',
   'logic-drip',
   'logic-condition',
   'logic-goal',
+  'randomizer',
   'action-create-contact',
   'action-find-contact',
   'action-change-whatsapp-number',
@@ -50,6 +53,7 @@ const EXECUTABLE_NODE_TYPES = new Set([
 // IMPORTANTE: mantener en sync con triggerMatches.
 const SUPPORTED_TRIGGER_TYPES = new Set([
   'trigger-whatsapp-message',
+  'trigger-click-to-whatsapp',
   'trigger-instagram-message',
   'trigger-messenger-message',
   'trigger-email-message',
