@@ -16,6 +16,7 @@ import { registerGigstackPaymentForTransactionInBackground } from './gigstackInv
 // (PAY2-003) Encolar el comprobante automático tras un pago de Mercado Pago (igual que Conekta).
 import { queuePaymentAutomationMessage } from './paymentAutomationsService.js'
 import { buildMetaPublicPurchasePixelEvent } from './metaConversionEventsService.js'
+import { getPaymentPlanAuditSummary, hardDeleteTestPaymentPlan } from './paymentRecordSafetyService.js'
 
 const CONFIG_KEYS = {
   enabled: 'mercadopago_enabled',
@@ -1856,6 +1857,25 @@ export async function applyMercadoPagoPaymentPlanAction(flowId, action) {
     const error = new Error('Acción inválida para plan Mercado Pago.')
     error.status = 400
     throw error
+  }
+
+  if (normalizedAction === 'delete') {
+    const audit = await getPaymentPlanAuditSummary(cleanFlowId)
+    if (audit.isTestMode) {
+      await hardDeleteTestPaymentPlan(cleanFlowId)
+      return {
+        id: cleanFlowId,
+        status: MP_PLAN_STATES.DELETED,
+        source: 'mercadopago',
+        deleted: true
+      }
+    }
+
+    if (audit.hasLedgerActivity) {
+      const error = new Error('Este plan ya tiene pagos, intentos, anulaciones o reembolsos registrados. No se puede eliminar; cancélalo para conservar el historial.')
+      error.status = 422
+      throw error
+    }
   }
 
   const finalState = normalizedAction === 'delete'

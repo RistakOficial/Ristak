@@ -8,7 +8,7 @@ import { getAccountCurrency } from '../utils/accountLocale.js'
 import { calculatePaymentTax, getPaymentGatewayMode, getPublicPaymentSettings } from './paymentSettingsService.js'
 import { queuePaymentAutomationMessage } from './paymentAutomationsService.js'
 import { registerGigstackPaymentForTransactionInBackground } from './gigstackInvoiceService.js'
-import { getPaymentPlanAuditSummary } from './paymentRecordSafetyService.js'
+import { getPaymentPlanAuditSummary, hardDeleteTestPaymentPlan } from './paymentRecordSafetyService.js'
 import { buildMetaPublicPurchasePixelEvent } from './metaConversionEventsService.js'
 
 const CONFIG_KEYS = {
@@ -2812,6 +2812,16 @@ export async function applyConektaPaymentPlanAction(flowId, action, options = {}
 
   if (normalizedAction === 'delete') {
     const audit = await getPaymentPlanAuditSummary(cleanFlowId)
+    if (audit.isTestMode) {
+      await hardDeleteTestPaymentPlan(cleanFlowId)
+      return {
+        id: cleanFlowId,
+        status: CONEKTA_PLAN_STATES.DELETED,
+        source: 'conekta',
+        deleted: true
+      }
+    }
+
     if (audit.hasLedgerActivity) {
       const error = new Error('Este plan ya tiene pagos, intentos, anulaciones o reembolsos registrados. No se puede eliminar; cancélalo para conservar el historial.')
       error.status = 422

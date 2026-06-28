@@ -3637,12 +3637,12 @@ export const actionInvoiceSchedule = async (req, res) => {
         });
       }
 
-      await applyStripePaymentPlanAction(scheduleId, stripeAction, { baseUrl: getPublicBaseUrl(req) });
+      const actionResult = await applyStripePaymentPlanAction(scheduleId, stripeAction, { baseUrl: getPublicBaseUrl(req) });
       const updatedLocalSchedule = await getLocalInvoiceSchedule(scheduleId);
 
       return res.json({
         success: true,
-        data: updatedLocalSchedule,
+        data: updatedLocalSchedule || actionResult,
         source: 'local_stripe'
       });
     }
@@ -3663,12 +3663,12 @@ export const actionInvoiceSchedule = async (req, res) => {
         });
       }
 
-      await applyMercadoPagoPaymentPlanAction(scheduleId, mercadoPagoAction);
+      const actionResult = await applyMercadoPagoPaymentPlanAction(scheduleId, mercadoPagoAction);
       const updatedLocalSchedule = await getLocalInvoiceSchedule(scheduleId);
 
       return res.json({
         success: true,
-        data: updatedLocalSchedule,
+        data: updatedLocalSchedule || actionResult,
         source: 'local_mercadopago'
       });
     }
@@ -3690,12 +3690,12 @@ export const actionInvoiceSchedule = async (req, res) => {
         });
       }
 
-      await applyConektaPaymentPlanAction(scheduleId, conektaAction, { baseUrl: getPublicBaseUrl(req) });
+      const actionResult = await applyConektaPaymentPlanAction(scheduleId, conektaAction, { baseUrl: getPublicBaseUrl(req) });
       const updatedLocalSchedule = await getLocalInvoiceSchedule(scheduleId);
 
       return res.json({
         success: true,
-        data: updatedLocalSchedule,
+        data: updatedLocalSchedule || actionResult,
         source: 'local_conekta'
       });
     }

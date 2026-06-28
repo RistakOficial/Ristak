@@ -231,7 +231,7 @@ test('cancela un plan Stripe local y anula pagos pendientes ligados', async () =
   }
 })
 
-test('elimina un plan Stripe local sin cobros reales e invalida pagos pendientes', async () => {
+test('elimina físicamente un plan Stripe local de prueba y sus pagos ligados', async () => {
   const ids = await seedStripePlan()
 
   try {
@@ -244,32 +244,42 @@ test('elimina un plan Stripe local sin cobros reales e invalida pagos pendientes
     assert.equal(res.statusCode, 200)
     assert.equal(res.payload.success, true)
     assert.equal(res.payload.data.status, 'deleted')
+    assert.equal(res.payload.data.deleted, true)
 
-    const flow = await db.get('SELECT current_state FROM payment_flows WHERE id = ?', [ids.flowId])
-    const installment = await db.get('SELECT status FROM installment_payments WHERE id = ?', [ids.installmentId])
-    const setupPayment = await db.get('SELECT status FROM payments WHERE id = ?', [ids.cardSetupPaymentId])
-    const installmentPayment = await db.get('SELECT status FROM payments WHERE id = ?', [ids.installmentPaymentId])
+    const flow = await db.get('SELECT id FROM payment_flows WHERE id = ?', [ids.flowId])
+    const mirror = await db.get('SELECT id FROM payment_plans WHERE id = ?', [ids.flowId])
+    const installment = await db.get('SELECT id FROM installment_payments WHERE id = ?', [ids.installmentId])
+    const setupPayment = await db.get('SELECT id FROM payments WHERE id = ?', [ids.cardSetupPaymentId])
+    const installmentPayment = await db.get('SELECT id FROM payments WHERE id = ?', [ids.installmentPaymentId])
 
-    assert.equal(flow.current_state, 'deleted')
-    assert.equal(installment.status, 'deleted')
-    assert.equal(setupPayment.status, 'deleted')
-    assert.equal(installmentPayment.status, 'deleted')
+    assert.equal(flow, null)
+    assert.equal(mirror, null)
+    assert.equal(installment, null)
+    assert.equal(setupPayment, null)
+    assert.equal(installmentPayment, null)
   } finally {
     await cleanup(ids)
   }
 })
 
-test('bloquea eliminar un plan Stripe local cuando ya tiene un pago registrado', async () => {
+test('bloquea eliminar un plan Stripe live cuando ya tiene un pago registrado', async () => {
   const ids = await seedStripePlan()
 
   try {
     await db.run(
       `UPDATE payments
        SET status = 'paid',
+           payment_mode = 'live',
            stripe_payment_intent_id = 'pi_plan_delete_guard',
            paid_at = CURRENT_TIMESTAMP
        WHERE id = ?`,
       [ids.cardSetupPaymentId]
+    )
+    await db.run(
+      `UPDATE payments
+       SET payment_mode = 'live'
+       WHERE id = ?`,
+      [ids.installmentPaymentId]
     )
 
     const res = createResponse()

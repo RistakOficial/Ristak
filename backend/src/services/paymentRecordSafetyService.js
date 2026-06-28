@@ -1,6 +1,7 @@
 import { db } from '../config/database.js'
 
 const SUCCESS_PAYMENT_STATUSES = new Set(['paid', 'succeeded', 'completed', 'complete', 'fulfilled', 'success'])
+const TEST_PAYMENT_MODES = new Set(['test', 'sandbox'])
 const LEDGER_PAYMENT_STATUSES = new Set([
   ...SUCCESS_PAYMENT_STATUSES,
   'partial',
@@ -29,6 +30,37 @@ function parseJson(value, fallback = {}) {
   }
 }
 
+function normalizeMode(value) {
+  return cleanString(value).toLowerCase()
+}
+
+function isExplicitTestMode(value) {
+  return TEST_PAYMENT_MODES.has(normalizeMode(value))
+}
+
+function hasTestModeSignal(value) {
+  const metadata = parseJson(value, {})
+  if (!metadata || typeof metadata !== 'object' || Array.isArray(metadata)) return false
+
+  const modeFields = [
+    metadata.paymentMode,
+    metadata.payment_mode,
+    metadata.mode,
+    metadata.stripeMode,
+    metadata.stripe_mode,
+    metadata.conektaMode,
+    metadata.conekta_mode,
+    metadata.mercadoPagoMode,
+    metadata.mercadopagoMode,
+    metadata.mercadopago_mode
+  ]
+
+  if (modeFields.some(isExplicitTestMode)) return true
+  if (metadata.livemode === false || metadata.liveMode === false || metadata.live_mode === false) return true
+
+  return false
+}
+
 export function normalizePaymentStatus(status) {
   const normalized = cleanString(status).toLowerCase()
   return normalized === 'succeeded' ? 'paid' : normalized
@@ -36,6 +68,13 @@ export function normalizePaymentStatus(status) {
 
 export function isSuccessfulPaymentStatus(status) {
   return SUCCESS_PAYMENT_STATUSES.has(normalizePaymentStatus(status))
+}
+
+export function isTestPaymentRecord(payment = {}) {
+  return Boolean(
+    isExplicitTestMode(payment.payment_mode) ||
+    hasTestModeSignal(payment.metadata_json)
+  )
 }
 
 export function paymentHasLedgerActivity(payment = {}) {
@@ -133,6 +172,7 @@ export async function getPaymentDeletionGuard(payment = {}) {
   const subscriptionLinks = await getPaymentSubscriptionLinksForPayment(payment)
   const hasLedgerActivity = paymentHasLedgerActivity(payment)
   const hasExternalArtifact = paymentHasExternalArtifact(payment)
+  const isTestMode = isTestPaymentRecord(payment)
 
   return {
     planLinks,
@@ -141,14 +181,17 @@ export async function getPaymentDeletionGuard(payment = {}) {
     hasSubscriptionLink: subscriptionLinks.length > 0,
     hasLedgerActivity,
     hasExternalArtifact,
-    canHardDelete: !planLinks.length && !subscriptionLinks.length && !hasLedgerActivity && !hasExternalArtifact,
-    shouldArchive: !planLinks.length && !subscriptionLinks.length && !hasLedgerActivity && hasExternalArtifact
+    isTestMode,
+    canHardDelete: isTestMode || (!planLinks.length && !subscriptionLinks.length && !hasLedgerActivity && !hasExternalArtifact),
+    shouldArchive: !isTestMode && !planLinks.length && !subscriptionLinks.length && !hasLedgerActivity && hasExternalArtifact
   }
 }
 
 export async function getPaymentPlanAuditSummary(flowId) {
   const cleanFlowId = cleanString(flowId)
-  if (!cleanFlowId) return { payments: [], hasLedgerActivity: false }
+  if (!cleanFlowId) return { payments: [], hasLedgerActivity: false, isTestMode: false }
+
+  const flow = await db.get('SELECT * FROM payment_flows WHERE id = ?', [cleanFlowId])
 
   const payments = await db.all(
     `SELECT DISTINCT p.*
@@ -172,12 +215,109 @@ export async function getPaymentPlanAuditSummary(flowId) {
     [cleanFlowId, cleanFlowId, cleanFlowId]
   )
   const protectedPayments = (payments || []).filter(paymentHasLedgerActivity)
+  const metadata = parseJson(flow?.metadata, {})
+  const hasLinkedPayments = (payments || []).length > 0
+  const isTestMode = Boolean(
+    hasTestModeSignal(metadata) ||
+    (hasLinkedPayments && (payments || []).every(isTestPaymentRecord))
+  )
 
   return {
+    flow,
     payments: payments || [],
     protectedPayments,
-    hasLedgerActivity: protectedPayments.length > 0
+    hasLedgerActivity: protectedPayments.length > 0,
+    isTestMode
   }
+}
+
+export async function hardDeleteTestPaymentRecord(paymentId) {
+  const cleanPaymentId = cleanString(paymentId)
+  if (!cleanPaymentId) return { deleted: false, paymentIds: [] }
+
+  const payment = await db.get('SELECT * FROM payments WHERE id = ?', [cleanPaymentId])
+  if (!payment || !isTestPaymentRecord(payment)) return { deleted: false, paymentIds: [] }
+
+  return db.transaction(async (tx) => {
+    await tx.run('DELETE FROM payment_automation_dispatches WHERE payment_id = ?', [cleanPaymentId]).catch(() => undefined)
+    await tx.run(
+      `UPDATE installment_payments
+       SET payment_id = NULL,
+           status = 'deleted',
+           updated_at = CURRENT_TIMESTAMP
+       WHERE payment_id = ?`,
+      [cleanPaymentId]
+    )
+    await tx.run(
+      `UPDATE payment_flows
+       SET first_payment_invoice_id = NULL,
+           first_payment_status = NULL,
+           updated_at = CURRENT_TIMESTAMP
+       WHERE first_payment_invoice_id = ?`,
+      [cleanPaymentId]
+    )
+    await tx.run(
+      `UPDATE payment_flows
+       SET card_setup_invoice_id = NULL,
+           card_setup_status = NULL,
+           card_setup_payment_link = NULL,
+           updated_at = CURRENT_TIMESTAMP
+       WHERE card_setup_invoice_id = ?`,
+      [cleanPaymentId]
+    )
+    const deleted = await tx.run('DELETE FROM payments WHERE id = ?', [cleanPaymentId])
+
+    return {
+      deleted: Number(deleted?.changes || 0) > 0,
+      paymentIds: [cleanPaymentId]
+    }
+  })
+}
+
+export async function hardDeleteTestPaymentPlan(flowId) {
+  const cleanFlowId = cleanString(flowId)
+  if (!cleanFlowId) return { deleted: false, paymentIds: [] }
+
+  const audit = await getPaymentPlanAuditSummary(cleanFlowId)
+  if (!audit.isTestMode) return { deleted: false, paymentIds: [] }
+
+  return db.transaction(async (tx) => {
+    const linkedPayments = await tx.all(
+      `SELECT DISTINCT payment_id AS id
+       FROM installment_payments
+       WHERE flow_id = ?
+         AND payment_id IS NOT NULL
+       UNION
+       SELECT first_payment_invoice_id AS id
+       FROM payment_flows
+       WHERE id = ?
+         AND first_payment_invoice_id IS NOT NULL
+       UNION
+       SELECT card_setup_invoice_id AS id
+       FROM payment_flows
+       WHERE id = ?
+         AND card_setup_invoice_id IS NOT NULL`,
+      [cleanFlowId, cleanFlowId, cleanFlowId]
+    )
+    const paymentIds = (linkedPayments || []).map((row) => cleanString(row.id)).filter(Boolean)
+
+    for (const paymentId of paymentIds) {
+      await tx.run('DELETE FROM payment_automation_dispatches WHERE payment_id = ?', [paymentId]).catch(() => undefined)
+    }
+
+    await tx.run('DELETE FROM payment_plans WHERE id = ? OR ghl_schedule_id = ?', [cleanFlowId, cleanFlowId])
+    await tx.run('DELETE FROM installment_payments WHERE flow_id = ?', [cleanFlowId])
+    await tx.run('DELETE FROM payment_flows WHERE id = ?', [cleanFlowId])
+
+    for (const paymentId of paymentIds) {
+      await tx.run('DELETE FROM payments WHERE id = ?', [paymentId])
+    }
+
+    return {
+      deleted: true,
+      paymentIds
+    }
+  })
 }
 
 export async function getSubscriptionAuditSummary(subscriptionId) {

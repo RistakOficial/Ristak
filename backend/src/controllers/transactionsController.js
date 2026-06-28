@@ -14,6 +14,7 @@ import { queuePaymentAutomationMessage } from '../services/paymentAutomationsSer
 import { registerGigstackPaymentForTransactionInBackground } from '../services/gigstackInvoiceService.js'
 import {
   getPaymentDeletionGuard,
+  hardDeleteTestPaymentRecord,
   isSuccessfulPaymentStatus
 } from '../services/paymentRecordSafetyService.js'
 import { formatInvoiceMultilineText, formatInvoiceSingleLineText } from '../utils/invoiceTextFormatter.js'
@@ -158,6 +159,8 @@ const sendStripePlanAuthorizationManualPaymentError = (res) => res.status(422).j
 })
 
 const sendPaymentDeletionGuardError = (res, guard) => {
+  if (guard.isTestMode) return null
+
   if (guard.hasPlanLink) {
     return res.status(422).json({
       success: false,
@@ -1310,7 +1313,9 @@ export const deleteTransaction = async (req, res) => {
     const guardResponse = sendPaymentDeletionGuardError(res, deletionGuard)
     if (guardResponse) return guardResponse
 
-    if (deletionGuard.shouldArchive) {
+    if (deletionGuard.isTestMode) {
+      await hardDeleteTestPaymentRecord(id)
+    } else if (deletionGuard.shouldArchive) {
       let archiveStatus = 'deleted'
       if (transaction.ghl_invoice_id) {
         const ghlClient = await getGHLClient()

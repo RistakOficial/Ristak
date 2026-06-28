@@ -151,10 +151,42 @@ test('seguridad pagos: no borra una transacción pagada', async () => {
   }
 })
 
-test('seguridad pagos: archiva un link pendiente sin borrar la fila', async () => {
+test('seguridad pagos: borra una transacción pagada cuando es de prueba', async () => {
+  const ids = await seedSafetyRows('paid_test_delete')
+
+  try {
+    await db.run(
+      `UPDATE payments
+       SET payment_mode = 'test',
+           metadata_json = ?
+       WHERE id = ?`,
+      [JSON.stringify({ paymentMode: 'test' }), ids.paidPaymentId]
+    )
+
+    const res = createResponse()
+    await deleteTransaction({ params: { id: ids.paidPaymentId } }, res)
+
+    assert.equal(res.statusCode, 200)
+    assert.equal(res.payload.success, true)
+
+    const row = await db.get('SELECT id FROM payments WHERE id = ?', [ids.paidPaymentId])
+    assert.equal(row, null)
+  } finally {
+    await cleanup(ids)
+  }
+})
+
+test('seguridad pagos: archiva un link live pendiente sin borrar la fila', async () => {
   const ids = await seedSafetyRows('pending_link')
 
   try {
+    await db.run(
+      `UPDATE payments
+       SET payment_mode = 'live'
+       WHERE id = ?`,
+      [ids.pendingLinkPaymentId]
+    )
+
     const res = createResponse()
     await deleteTransaction({ params: { id: ids.pendingLinkPaymentId } }, res)
 
@@ -170,10 +202,34 @@ test('seguridad pagos: archiva un link pendiente sin borrar la fila', async () =
   }
 })
 
-test('seguridad pagos: no borra una transacción individual ligada a un plan', async () => {
+test('seguridad pagos: borra un link test pendiente aunque tenga URL externa', async () => {
+  const ids = await seedSafetyRows('pending_link_test')
+
+  try {
+    const res = createResponse()
+    await deleteTransaction({ params: { id: ids.pendingLinkPaymentId } }, res)
+
+    assert.equal(res.statusCode, 200)
+    assert.equal(res.payload.success, true)
+
+    const row = await db.get('SELECT id FROM payments WHERE id = ?', [ids.pendingLinkPaymentId])
+    assert.equal(row, null)
+  } finally {
+    await cleanup(ids)
+  }
+})
+
+test('seguridad pagos: no borra una transacción live individual ligada a un plan', async () => {
   const ids = await seedSafetyRows('plan_link')
 
   try {
+    await db.run(
+      `UPDATE payments
+       SET payment_mode = 'live'
+       WHERE id = ?`,
+      [ids.planPaymentId]
+    )
+
     const res = createResponse()
     await deleteTransaction({ params: { id: ids.planPaymentId } }, res)
 
@@ -182,6 +238,27 @@ test('seguridad pagos: no borra una transacción individual ligada a un plan', a
 
     const row = await db.get('SELECT status FROM payments WHERE id = ?', [ids.planPaymentId])
     assert.equal(row.status, 'scheduled')
+  } finally {
+    await cleanup(ids)
+  }
+})
+
+test('seguridad pagos: borra una transacción test ligada a un plan y limpia la parcialidad', async () => {
+  const ids = await seedSafetyRows('plan_link_test')
+
+  try {
+    const res = createResponse()
+    await deleteTransaction({ params: { id: ids.planPaymentId } }, res)
+
+    assert.equal(res.statusCode, 200)
+    assert.equal(res.payload.success, true)
+
+    const row = await db.get('SELECT id FROM payments WHERE id = ?', [ids.planPaymentId])
+    const installment = await db.get('SELECT status, payment_id FROM installment_payments WHERE id = ?', [ids.installmentId])
+
+    assert.equal(row, null)
+    assert.equal(installment.status, 'deleted')
+    assert.equal(installment.payment_id, null)
   } finally {
     await cleanup(ids)
   }

@@ -5,7 +5,7 @@ import { decrypt, encrypt, isEncrypted } from '../utils/encryption.js'
 import { logger } from '../utils/logger.js'
 import { updateSingleContactStats } from '../utils/updateContactsStats.js'
 import { getAccountCurrency } from '../utils/accountLocale.js'
-import { getPaymentPlanAuditSummary } from './paymentRecordSafetyService.js'
+import { getPaymentPlanAuditSummary, hardDeleteTestPaymentPlan } from './paymentRecordSafetyService.js'
 import {
   claimCentralOAuthHandoff,
   createCentralStripeConnectUrl,
@@ -4181,6 +4181,16 @@ export async function applyStripePaymentPlanAction(flowId, action, options = {})
 
   if (normalizedAction === 'delete') {
     const audit = await getPaymentPlanAuditSummary(cleanFlowId)
+    if (audit.isTestMode) {
+      await hardDeleteTestPaymentPlan(cleanFlowId)
+      return {
+        id: cleanFlowId,
+        status: STRIPE_PLAN_STATES.DELETED,
+        source: 'stripe',
+        deleted: true
+      }
+    }
+
     if (audit.hasLedgerActivity) {
       const error = new Error('Este plan ya tiene pagos, intentos, anulaciones o reembolsos registrados. No se puede eliminar; cancélalo para conservar el historial.')
       error.status = 422
