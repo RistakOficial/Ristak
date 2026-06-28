@@ -3133,6 +3133,8 @@ export function renderPublicCalendarHtml(calendar, { host = '', embedded = false
         setStep(step);
         form.classList.remove('visible');
         form.reset();
+        // Availability reloads reset the form; restore known contact data immediately after.
+        applyContactPrefill(readStoredContact());
         formPageIndex = 0;
         renderFormPage();
         submit.disabled = true;

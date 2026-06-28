@@ -114,6 +114,7 @@ test('public calendar widget can prefill contact fields from a previous site sub
   assert.match(calendarSource, /const readUrlContact = \(\) =>/)
   assert.match(calendarSource, /const rememberCalendarContactDraft = \(\) =>/)
   assert.match(calendarSource, /appendContactPrefillParams\(completionRedirectUrl\)/)
+  assert.match(calendarSource, /form\.reset\(\);\n\s+\/\/ Availability reloads reset the form; restore known contact data immediately after\.\n\s+applyContactPrefill\(readStoredContact\(\)\);/)
   assert.match(calendarSource, /phone_number/)
   assert.match(sitesSource, /phone: submission\.contactPhone \|\| ''/)
 })
