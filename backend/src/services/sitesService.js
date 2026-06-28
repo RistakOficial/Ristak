@@ -51,6 +51,12 @@ import {
 import { renderTemplate } from './automationEngine.js'
 import { getVariableFieldValueMap } from './variableFieldsService.js'
 
+let domainHealthFetch = fetch
+
+export function setSitesDomainHealthFetchForTests(fetchImpl) {
+  domainHealthFetch = typeof fetchImpl === 'function' ? fetchImpl : fetch
+}
+
 export const SITE_TYPES = new Set(['standard_form', 'interactive_form', 'landing_page'])
 const FORM_SITE_TYPES = new Set(['standard_form', 'interactive_form'])
 export const SITE_STATUSES = new Set(['draft', 'published', 'archived'])
@@ -11156,13 +11162,81 @@ function describeDnsSignal(dnsInfo) {
   return 'DNS resuelve, pero el dominio todavía no responde a esta app'
 }
 
+function firstRuntimeEnv(...keys) {
+  for (const key of keys) {
+    const value = cleanString(process.env[key])
+    if (value) return value
+  }
+  return ''
+}
+
+function getDomainVerificationIdentity() {
+  const installationId = firstRuntimeEnv('INSTALLATION_ID', 'RISTAK_INSTALLATION_ID')
+  if (installationId) {
+    return {
+      field: 'installation_id',
+      value: installationId,
+      label: 'instalacion'
+    }
+  }
+
+  const clientId = firstRuntimeEnv('CLIENT_ID', 'RISTAK_CLIENT_ID')
+  if (clientId) {
+    return {
+      field: 'client_id',
+      value: clientId,
+      label: 'cliente'
+    }
+  }
+
+  return null
+}
+
+function verifyDomainHealthPayload(payload) {
+  if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
+    return { ok: false, code: 'invalid_health', error: 'respondio health invalido' }
+  }
+
+  if (cleanString(payload.app).toLowerCase() !== 'ristak') {
+    return { ok: false, code: 'not_ristak', error: 'respondio health, pero no es Ristak' }
+  }
+
+  const identity = getDomainVerificationIdentity()
+  if (!identity) {
+    return {
+      ok: false,
+      code: 'missing_current_identity',
+      error: 'Esta instalacion no tiene INSTALLATION_ID ni CLIENT_ID para validar dominios sin falsos positivos'
+    }
+  }
+
+  const targetValue = cleanString(payload[identity.field])
+  if (!targetValue) {
+    return {
+      ok: false,
+      code: 'missing_target_identity',
+      error: `El dominio responde como Ristak, pero no publica ${identity.field} para confirmar que es esta ${identity.label}`
+    }
+  }
+
+  if (targetValue !== identity.value) {
+    return {
+      ok: false,
+      code: 'identity_mismatch',
+      error: `El dominio responde a otra ${identity.label} de Ristak; conectalo al servicio web de esta app`
+    }
+  }
+
+  return { ok: true, identityField: identity.field }
+}
+
 async function checkDomainHealth(domain, protocol) {
   const controller = new AbortController()
   const timeout = setTimeout(() => controller.abort(), PUBLIC_DOMAIN_VERIFY_TIMEOUT_MS)
-  const url = `${protocol}://${domain}/api/health`
+  const url = `${protocol}://${domain}/health`
 
   try {
-    const response = await fetch(url, {
+    const response = await domainHealthFetch(url, {
       headers: {
         accept: 'application/json',
         'user-agent': 'RistakDomainVerifier/1.0'
@@ -11171,18 +11245,25 @@ async function checkDomainHealth(domain, protocol) {
       signal: controller.signal
     })
     const payload = await response.json().catch(() => null)
+    const payloadVerification = verifyDomainHealthPayload(payload)
 
-    if (response.ok && cleanString(payload?.status).toLowerCase() === 'ok') {
-      return { ok: true, url }
+    if (response.ok && payloadVerification.ok) {
+      return {
+        ok: true,
+        url,
+        identityField: payloadVerification.identityField
+      }
     }
 
     return {
       ok: false,
-      error: `${url} respondió ${response.status}, pero no parece ser el health de Ristak`
+      code: payloadVerification.code || 'health_rejected',
+      error: `${url} respondio ${response.status}, pero ${payloadVerification.error || 'no parece ser el health de esta instalacion de Ristak'}`
     }
   } catch (error) {
     return {
       ok: false,
+      code: error.name === 'AbortError' ? 'timeout' : 'network_error',
       error: error.name === 'AbortError'
         ? `${url} no respondió a tiempo`
         : `${url} fallo: ${error.message}`
@@ -11198,6 +11279,14 @@ export async function verifyPublicDomainConnection(domainValue) {
     return { verified: false, error: 'Dominio inválido' }
   }
 
+  if (!getDomainVerificationIdentity()) {
+    return {
+      verified: false,
+      error: 'Esta instalacion no tiene INSTALLATION_ID ni CLIENT_ID para validar dominios sin falsos positivos',
+      details: { code: 'missing_current_identity' }
+    }
+  }
+
   // Probamos el dominio tal cual y su variante con/sin www: en Render es comun
   // que solo una de las dos este enrutada y la otra responda con redireccion.
   const twin = domain.startsWith('www.') ? domain.slice(4) : `www.${domain}`
@@ -11208,9 +11297,30 @@ export async function verifyPublicDomainConnection(domainValue) {
     for (const candidate of candidates) {
       const check = await checkDomainHealth(candidate, protocol)
       if (check.ok) {
-        return { verified: true, error: null, method: `${protocol}_health`, url: check.url }
+        return {
+          verified: true,
+          error: null,
+          method: `${protocol}_installation_health`,
+          url: check.url,
+          identityField: check.identityField || null
+        }
       }
-      failures.push(check.error)
+      failures.push(check)
+    }
+  }
+
+  const identityFailure = failures.find(failure => (
+    failure?.code === 'identity_mismatch' ||
+    failure?.code === 'missing_target_identity'
+  ))
+  if (identityFailure) {
+    return {
+      verified: false,
+      error: identityFailure.error,
+      details: {
+        code: identityFailure.code,
+        checks: failures.map(failure => failure?.error).filter(Boolean)
+      }
     }
   }
 
@@ -11220,7 +11330,7 @@ export async function verifyPublicDomainConnection(domainValue) {
     error: describeDnsSignal(dnsInfo),
     details: {
       dns: dnsInfo,
-      checks: failures.filter(Boolean)
+      checks: failures.map(failure => failure?.error).filter(Boolean)
     }
   }
 }

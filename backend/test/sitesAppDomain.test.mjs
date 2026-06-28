@@ -7,7 +7,9 @@ import {
   getSitesDomainSettings,
   isAppSubdomainHost,
   refreshSitesAppDomain,
-  resolveConnectedAppDomainForHost
+  resolveConnectedAppDomainForHost,
+  setSitesDomainHealthFetchForTests,
+  verifyAppDomainConnection
 } from '../src/services/sitesService.js'
 
 const APP_DOMAIN_KEYS = {
@@ -15,6 +17,42 @@ const APP_DOMAIN_KEYS = {
   verified: 'sites_app_domain_verified',
   checkedAt: 'sites_app_domain_checked_at',
   error: 'sites_app_domain_error'
+}
+
+const MANAGED_ENV_KEYS = [
+  'CLIENT_ID',
+  'RISTAK_CLIENT_ID',
+  'INSTALLATION_ID',
+  'RISTAK_INSTALLATION_ID'
+]
+
+function snapshotManagedEnv() {
+  return Object.fromEntries(MANAGED_ENV_KEYS.map(key => [key, process.env[key]]))
+}
+
+function restoreManagedEnv(snapshot) {
+  for (const key of MANAGED_ENV_KEYS) {
+    if (snapshot[key] === undefined) {
+      delete process.env[key]
+    } else {
+      process.env[key] = snapshot[key]
+    }
+  }
+}
+
+function configureManagedIdentity({ clientId = 'cli_current', installationId = 'inst_current' } = {}) {
+  delete process.env.RISTAK_CLIENT_ID
+  delete process.env.RISTAK_INSTALLATION_ID
+  process.env.CLIENT_ID = clientId
+  process.env.INSTALLATION_ID = installationId
+}
+
+function jsonResponse(payload, { status = 200, ok = status >= 200 && status < 300 } = {}) {
+  return {
+    ok,
+    status,
+    json: async () => payload
+  }
 }
 
 async function snapshotAppDomainConfig() {
@@ -81,5 +119,57 @@ test('app domain verification rejects non app subdomains before persistence', as
     assert.equal(await getAppConfig(APP_DOMAIN_KEYS.verified), previousConfig.verified)
   } finally {
     await restoreAppDomainConfig(previousConfig)
+  }
+})
+
+test('app domain verification accepts the current installed service only', async () => {
+  const previousEnv = snapshotManagedEnv()
+  const seenUrls = []
+
+  try {
+    configureManagedIdentity()
+    setSitesDomainHealthFetchForTests(async (url) => {
+      seenUrls.push(url)
+      assert.equal(new URL(url).pathname, '/health')
+      return jsonResponse({
+        ok: true,
+        app: 'ristak',
+        client_id: 'cli_current',
+        installation_id: 'inst_current'
+      })
+    })
+
+    const result = await verifyAppDomainConnection('app.ristak.test')
+
+    assert.equal(result.verified, true)
+    assert.equal(result.method, 'https_installation_health')
+    assert.equal(result.identityField, 'installation_id')
+    assert.equal(seenUrls[0], 'https://app.ristak.test/health')
+  } finally {
+    setSitesDomainHealthFetchForTests(null)
+    restoreManagedEnv(previousEnv)
+  }
+})
+
+test('app domain verification rejects a domain connected to another installed service', async () => {
+  const previousEnv = snapshotManagedEnv()
+
+  try {
+    configureManagedIdentity()
+    setSitesDomainHealthFetchForTests(async () => jsonResponse({
+      ok: true,
+      app: 'ristak',
+      client_id: 'cli_current',
+      installation_id: 'inst_other'
+    }))
+
+    const result = await verifyAppDomainConnection('app.ristak.test')
+
+    assert.equal(result.verified, false)
+    assert.match(result.error, /otra instalacion de Ristak/)
+    assert.equal(result.details.code, 'identity_mismatch')
+  } finally {
+    setSitesDomainHealthFetchForTests(null)
+    restoreManagedEnv(previousEnv)
   }
 })
