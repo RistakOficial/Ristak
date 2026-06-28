@@ -174,8 +174,7 @@
   min-width: 0;
   max-width: 100%;
 }
-.rstkCanvas.rstk-kind-form .rstkSocialProfileBlock.rstk-block-style,
-.rstkCanvas .rstkEmbeddedFormSourceFrame .rstkSocialProfileBlock.rstk-block-style {
+.rstkCanvas.rstk-kind-form .rstkSocialProfileBlock.rstk-block-style {
   justify-self: start;
   transform: translateX(var(--rstk-social-profile-nudge, clamp(-22px, -5vw, -14px)));
 }
@@ -2578,6 +2577,11 @@ html body :is(.rstkCanvas.rstk-kind-form.rstk-choice-grid, .rstkCanvas.rstk-kind
 .rstkCanvas .rstkEmbeddedFormSourceFrame .rstk-block-style {
   max-width: 100%;
   min-width: 0;
+}
+
+.rstkCanvas .rstkEmbeddedFormSourceFrame .rstkSocialProfileBlock.rstk-block-style {
+  justify-self: start;
+  transform: none;
 }
 
 .rstkCanvas .rstkEmbeddedFormSourceFrame .rstk-social-profile-block {
