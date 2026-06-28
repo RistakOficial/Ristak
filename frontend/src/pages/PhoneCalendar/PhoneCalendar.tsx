@@ -50,6 +50,8 @@ const TIMELINE_START_HOUR = 0
 const TIMELINE_END_HOUR = 23
 const TIMELINE_TOTAL_MINUTES = (TIMELINE_END_HOUR - TIMELINE_START_HOUR + 1) * 60
 const YEAR_GRID_SIZE = 12
+const TIMELINE_LONG_PRESS_DELAY_MS = 650
+const TIMELINE_PENDING_MOVE_CANCEL_PX = 12
 
 const STATUS_LABELS: Record<CalendarEvent['appointmentStatus'], string> = {
   confirmed: 'Confirmada',
@@ -65,6 +67,19 @@ type SheetView = 'calendar' | 'contactPicker' | null
 type CalendarView = 'month' | 'week' | 'day' | 'year' | 'years'
 type SwitchableCalendarView = Exclude<CalendarView, 'years'>
 type TimelineSelectionPoint = { date: Date; minutes: number }
+type TimelineSelection = {
+  start: TimelineSelectionPoint
+  end: TimelineSelectionPoint
+  pointerId: number
+}
+type TimelinePendingSelection = {
+  start: TimelineSelectionPoint
+  pointerId: number
+  element: HTMLElement
+  timerId: number
+  x: number
+  y: number
+}
 
 const TABLET_VIEW_OPTIONS: Array<{ view: SwitchableCalendarView; label: string }> = [
   { view: 'day', label: 'Día' },
@@ -305,17 +320,27 @@ export const PhoneCalendar: React.FC<PhoneCalendarProps> = ({ embedded = false, 
     timeZone: timezone,
     title: ''
   }))
-  const [timelineSelection, setTimelineSelection] = useState<{
-    start: TimelineSelectionPoint
-    end: TimelineSelectionPoint
-    pointerId: number
-  } | null>(null)
+  const [timelineSelection, setTimelineSelection] = useState<TimelineSelection | null>(null)
   const timelineScrollRef = useRef<HTMLElement | null>(null)
   const handledOpenAppointmentRef = useRef<string | null>(null)
   const calendarTouchStartRef = useRef<{ x: number; y: number } | null>(null)
   // Para distinguir un swipe horizontal (cambiar de día) del arrastre vertical que selecciona hora
   const timelinePointerStartRef = useRef<{ x: number; y: number } | null>(null)
   const timelineSwipeAbortRef = useRef(false)
+  const timelineSelectionRef = useRef<TimelineSelection | null>(null)
+  const timelinePendingSelectionRef = useRef<TimelinePendingSelection | null>(null)
+  const setTimelineSelectionValue = useCallback((nextSelection: TimelineSelection | null) => {
+    timelineSelectionRef.current = nextSelection
+    setTimelineSelection(nextSelection)
+  }, [])
+  const clearTimelinePendingSelection = useCallback((pointerId?: number) => {
+    const pending = timelinePendingSelectionRef.current
+    if (!pending || (pointerId !== undefined && pending.pointerId !== pointerId)) return false
+
+    window.clearTimeout(pending.timerId)
+    timelinePendingSelectionRef.current = null
+    return true
+  }, [])
   const closeSheetViewNow = useCallback(() => setSheetView(null), [])
   const calendarSheetDismiss = useBottomSheetDismiss({
     isOpen: Boolean(sheetView),
@@ -323,6 +348,13 @@ export const PhoneCalendar: React.FC<PhoneCalendarProps> = ({ embedded = false, 
   })
   const isCalendarSheetMoving = calendarSheetDismiss.dragging || calendarSheetDismiss.closing || calendarSheetDismiss.dragOffset > 0
   const isCalendarSheetDragging = calendarSheetDismiss.dragging || calendarSheetDismiss.dragOffset > 0
+
+  useEffect(() => {
+    return () => {
+      clearTimelinePendingSelection()
+      timelineSelectionRef.current = null
+    }
+  }, [clearTimelinePendingSelection])
   const calendarNavStyle = useMemo<React.CSSProperties | undefined>(() => {
     if (!sheetView) return undefined
 
@@ -946,20 +978,63 @@ export const PhoneCalendar: React.FC<PhoneCalendarProps> = ({ embedded = false, 
     }
 
     const minutes = getTimelineMinutesFromPointer(event)
+    clearTimelinePendingSelection()
+    setTimelineSelectionValue(null)
     timelinePointerStartRef.current = { x: event.clientX, y: event.clientY }
     timelineSwipeAbortRef.current = false
-    event.currentTarget.setPointerCapture(event.pointerId)
-    event.preventDefault()
-    setTimelineSelection({
-      start: { date, minutes },
-      end: { date, minutes },
-      pointerId: event.pointerId
-    })
+    const element = event.currentTarget
+    const pointerId = event.pointerId
+    const start = { date, minutes }
+
+    const timerId = window.setTimeout(() => {
+      const pending = timelinePendingSelectionRef.current
+      if (!pending || pending.pointerId !== pointerId) return
+
+      timelinePendingSelectionRef.current = null
+      if (pending.element.isConnected) {
+        try {
+          pending.element.setPointerCapture(pointerId)
+        } catch {
+          // El navegador puede soltar el pointer antes de que expire el long-press.
+        }
+      }
+
+      setTimelineSelectionValue({
+        start: pending.start,
+        end: pending.start,
+        pointerId
+      })
+    }, TIMELINE_LONG_PRESS_DELAY_MS)
+
+    timelinePendingSelectionRef.current = {
+      start,
+      pointerId,
+      element,
+      timerId,
+      x: event.clientX,
+      y: event.clientY
+    }
   }
 
   const handleTimelinePointerMove = (date: Date) => (event: React.PointerEvent<HTMLElement>) => {
-    if (!timelineSelection || timelineSelection.pointerId !== event.pointerId) return
+    const pending = timelinePendingSelectionRef.current
+    if (pending && pending.pointerId === event.pointerId) {
+      const dx = event.clientX - pending.x
+      const dy = event.clientY - pending.y
+      const movedBeforeLongPress = Math.abs(dx) > TIMELINE_PENDING_MOVE_CANCEL_PX || Math.abs(dy) > TIMELINE_PENDING_MOVE_CANCEL_PX
+
+      if (movedBeforeLongPress) {
+        timelineSwipeAbortRef.current = Math.abs(dx) > Math.abs(dy)
+        clearTimelinePendingSelection(event.pointerId)
+        timelinePointerStartRef.current = null
+      }
+      return
+    }
+
+    const activeSelection = timelineSelectionRef.current
+    if (!activeSelection || activeSelection.pointerId !== event.pointerId) return
     if (timelineSwipeAbortRef.current) return
+    event.preventDefault()
 
     // Si el dedo se mueve más en horizontal que en vertical, es un swipe para cambiar de día:
     // abortamos la selección de hora para no crear una cita fantasma. El cambio de día lo hace
@@ -973,49 +1048,59 @@ export const PhoneCalendar: React.FC<PhoneCalendarProps> = ({ embedded = false, 
         if (event.currentTarget.hasPointerCapture(event.pointerId)) {
           event.currentTarget.releasePointerCapture(event.pointerId)
         }
-        setTimelineSelection(null)
+        setTimelineSelectionValue(null)
         return
       }
     }
 
     const minutes = getTimelineMinutesFromPointer(event)
-    setTimelineSelection((current) => current ? {
-      ...current,
+    setTimelineSelectionValue({
+      ...activeSelection,
       end: { date, minutes }
-    } : current)
+    })
   }
 
   const finishTimelineSelection = useCallback(() => {
-    if (!timelineSelection) return
+    const currentSelection = timelineSelectionRef.current
+    if (!currentSelection) return
 
-    const { start, end } = timelineSelection
-    setTimelineSelection(null)
+    const { start, end } = currentSelection
+    setTimelineSelectionValue(null)
     if (!isSameDay(start.date, end.date)) return
 
     const sameSlot = start.minutes === end.minutes
     const endMinutes = sameSlot ? start.minutes + 60 : end.minutes + 15
     openCreateAppointmentRange(start.date, start.minutes, endMinutes)
-  }, [openCreateAppointmentRange, timelineSelection])
+  }, [openCreateAppointmentRange, setTimelineSelectionValue])
 
   const handleTimelinePointerUp = (event: React.PointerEvent<HTMLElement>) => {
     timelinePointerStartRef.current = null
+    if (clearTimelinePendingSelection(event.pointerId)) {
+      timelineSwipeAbortRef.current = false
+      return
+    }
     if (event.currentTarget.hasPointerCapture(event.pointerId)) {
       event.currentTarget.releasePointerCapture(event.pointerId)
     }
     // Swipe horizontal: no abrimos el modal de crear; el día ya cambió con el gesto táctil.
     if (timelineSwipeAbortRef.current) {
       timelineSwipeAbortRef.current = false
-      setTimelineSelection(null)
+      setTimelineSelectionValue(null)
       return
     }
-    if (!timelineSelection || timelineSelection.pointerId !== event.pointerId) return
+    const activeSelection = timelineSelectionRef.current
+    if (!activeSelection || activeSelection.pointerId !== event.pointerId) return
     finishTimelineSelection()
   }
 
-  const handleTimelinePointerCancel = () => {
+  const handleTimelinePointerCancel = (event?: React.PointerEvent<HTMLElement>) => {
+    if (event?.currentTarget.hasPointerCapture(event.pointerId)) {
+      event.currentTarget.releasePointerCapture(event.pointerId)
+    }
+    clearTimelinePendingSelection(event?.pointerId)
     timelinePointerStartRef.current = null
     timelineSwipeAbortRef.current = false
-    setTimelineSelection(null)
+    setTimelineSelectionValue(null)
   }
 
   const renderTimelineSelectionOverlay = (date: Date) => {
