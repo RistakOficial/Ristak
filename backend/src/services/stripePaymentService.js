@@ -41,6 +41,7 @@ const STRIPE_PLAN_STATES = {
 }
 const FIRST_PAYMENT_PLAN_TRIGGERS = new Set(['first_payment', 'first_payment_saved_card'])
 const CARD_SETUP_PLAN_TRIGGERS = new Set(['card_setup', 'card_setup_authorization'])
+const SUCCESSFUL_PAYMENT_STATUSES = new Set(['paid', 'succeeded', 'completed', 'complete', 'fulfilled', 'success', 'captured'])
 const LOCKED_PLAN_PAYMENT_STATUSES = new Set(['paid', 'succeeded', 'completed', 'complete', 'fulfilled', 'success', 'refunded', 'void', 'deleted', 'cancelled', 'canceled'])
 const AUTOMATIC_PLAN_PAYMENT_METHODS = new Set(['', 'stripe_auto', 'stripe_saved_card', 'stripe_pending_card', 'stripe_scheduled_card', 'card', 'payment_link', 'direct_card', 'saved_card'])
 const MANUAL_PLAN_PAYMENT_METHODS = new Set(['cash', 'bank_transfer', 'transfer', 'deposit', 'check', 'other', 'manual', 'offline'])
@@ -60,6 +61,12 @@ export function setStripeFactoryForTest(factory) {
 
 function cleanString(value) {
   return String(value || '').trim()
+}
+
+function shouldIgnorePendingWebhookRegression(payment = {}, nextStatus = '') {
+  if (nextStatus !== 'pending') return false
+  const currentStatus = cleanString(payment.status).toLowerCase()
+  return SUCCESSFUL_PAYMENT_STATUSES.has(currentStatus) || Boolean(payment.paid_at)
 }
 
 function shouldSendStripeReceiptEmail(paymentSettings = {}) {
@@ -1292,6 +1299,9 @@ async function updatePaymentFromIntent(intent, stripeContext = null) {
     canceled: 'void'
   }
   const nextStatus = statusMap[intent.status] || 'pending'
+  const existingRow = await db.get(`SELECT * FROM payments WHERE ${whereColumn} = ?`, [whereValue])
+  const ignorePendingRegression = shouldIgnorePendingWebhookRegression(existingRow, nextStatus)
+  const persistedStatus = ignorePendingRegression ? cleanString(existingRow?.status) || 'paid' : nextStatus
   const paidAt = intent.status === 'succeeded' ? new Date().toISOString() : null
   const latestChargeId = typeof intent.latest_charge === 'string'
     ? intent.latest_charge
@@ -1318,7 +1328,7 @@ async function updatePaymentFromIntent(intent, stripeContext = null) {
     [
       amount,
       currency,
-      nextStatus,
+      persistedStatus,
       intent.id,
       intent.id,
       latestChargeId,
@@ -1362,7 +1372,7 @@ async function updatePaymentFromIntent(intent, stripeContext = null) {
     try {
       const context = stripeContext || await getStripeClient()
       await syncStripePlanFromPayment(
-        { ...row, status: nextStatus, stripe_payment_intent_id: intent.id },
+        { ...row, status: persistedStatus, stripe_payment_intent_id: intent.id },
         null,
         context.config
       )
@@ -1376,7 +1386,11 @@ async function updatePaymentFromIntent(intent, stripeContext = null) {
     queuePaymentAutomationMessage('receipt', { ...row, status: nextStatus, stripe_payment_intent_id: intent.id })
   }
 
-  return nextStatus
+  if (ignorePendingRegression) {
+    logger.info(`[Stripe webhook] Ignorado estado pending tardío para pago ya pagado ${row?.id || whereValue} (intent ${intent.id})`)
+  }
+
+  return persistedStatus
 }
 
 async function updatePaymentFromInvoice(invoice, nextStatus) {

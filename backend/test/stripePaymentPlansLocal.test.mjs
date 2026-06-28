@@ -179,6 +179,61 @@ test('abre un plan local de Stripe sin depender de HighLevel', async () => {
   }
 })
 
+test('Stripe conserva paid si llega un PaymentIntent processing tardío', async () => {
+  await initializeMasterKey()
+  await savePaymentSettings({ paymentMode: 'test' })
+  await saveStripePaymentConfig({
+    enabled: true,
+    mode: 'test',
+    publishableKey: 'pk_test_no_downgrade',
+    secretKey: 'sk_test_no_downgrade',
+    defaultCurrency: 'MXN'
+  })
+
+  const paymentId = `stripe_no_downgrade_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`
+  setStripeFactoryForTest(() => ({
+    paymentIntents: {
+      retrieve: async (paymentIntentId) => ({
+        id: paymentIntentId,
+        status: 'processing',
+        amount: 2500,
+        amount_received: 0,
+        currency: 'mxn',
+        latest_charge: 'ch_processing_late',
+        metadata: {
+          ristak_payment_id: paymentId
+        }
+      })
+    }
+  }))
+
+  try {
+    await db.run(
+      `INSERT INTO payments (
+        id, amount, currency, status, payment_method, payment_mode,
+        payment_provider, title, stripe_payment_intent_id, stripe_charge_id,
+        paid_at, date, created_at, updated_at
+      ) VALUES (?, 25, 'MXN', 'paid', 'stripe', 'test', 'stripe', ?, 'pi_original_paid', 'ch_original_paid', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+      [paymentId, 'Stripe pagado protegido']
+    )
+
+    const status = await refreshStripePaymentFromIntent('pi_processing_late', 'test')
+    assert.equal(status, 'paid')
+
+    const payment = await db.get(
+      'SELECT status, paid_at, stripe_payment_intent_id, stripe_charge_id FROM payments WHERE id = ?',
+      [paymentId]
+    )
+    assert.equal(payment.status, 'paid')
+    assert.ok(payment.paid_at)
+    assert.equal(payment.stripe_payment_intent_id, 'pi_processing_late')
+    assert.equal(payment.stripe_charge_id, 'ch_processing_late')
+  } finally {
+    setStripeFactoryForTest(null)
+    await db.run('DELETE FROM payments WHERE id = ?', [paymentId]).catch(() => undefined)
+  }
+})
+
 test('expone resumen de plan en el link público de domiciliación Stripe', async () => {
   const ids = await seedStripePlan()
 

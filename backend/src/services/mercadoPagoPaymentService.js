@@ -53,6 +53,7 @@ const MP_PLAN_STATES = {
   CANCELLED: 'cancelled',
   DELETED: 'deleted'
 }
+const SUCCESSFUL_PAYMENT_STATUSES = new Set(['paid', 'succeeded', 'completed', 'complete', 'fulfilled', 'success', 'approved', 'accredited'])
 const LOCKED_PLAN_PAYMENT_STATUSES = new Set(['paid', 'succeeded', 'completed', 'complete', 'fulfilled', 'success', 'refunded', 'void', 'deleted', 'cancelled', 'canceled'])
 const MERCADOPAGO_CHECKOUT_METHODS = new Set(['', 'mercadopago', 'mercadopago_checkout', 'payment_link', 'checkout', 'card', 'auto'])
 const MERCADOPAGO_PAYMENT_LINK_INSTALLMENT_CHOICES = new Set([1, 2, 3, 6, 9, 12, 18, 24])
@@ -66,6 +67,12 @@ export function setMercadoPagoFetchForTest(fetchImpl) {
 
 function cleanString(value) {
   return String(value || '').trim()
+}
+
+function shouldIgnorePendingWebhookRegression(payment = {}, nextStatus = '') {
+  if (nextStatus !== 'pending') return false
+  const currentStatus = cleanString(payment.status).toLowerCase()
+  return SUCCESSFUL_PAYMENT_STATUSES.has(currentStatus) || Boolean(payment.paid_at)
 }
 
 function mercadoPagoFetch() {
@@ -2572,6 +2579,8 @@ async function updatePaymentFromMercadoPagoPayment(mpPayment) {
   const amount = Number(mpPayment.transaction_amount || mpPayment.transaction_details?.total_paid_amount || row.amount)
   const currency = normalizeCurrency(mpPayment.currency_id || row.currency)
   const nextStatus = mapMercadoPagoStatus(mpPayment.status)
+  const ignorePendingRegression = shouldIgnorePendingWebhookRegression(row, nextStatus)
+  const persistedStatus = ignorePendingRegression ? cleanString(row.status) || 'paid' : nextStatus
   const paidAt = nextStatus === 'paid'
     ? timestampToIso(mpPayment.date_approved || mpPayment.money_release_date || mpPayment.date_last_updated) || new Date().toISOString()
     : null
@@ -2606,7 +2615,7 @@ async function updatePaymentFromMercadoPagoPayment(mpPayment) {
     [
       Number.isFinite(amount) ? amount : null,
       currency,
-      nextStatus,
+      persistedStatus,
       paymentMethod,
       mercadoPagoPaymentId || null,
       mercadoPagoPaymentId || null,
@@ -2631,6 +2640,10 @@ async function updatePaymentFromMercadoPagoPayment(mpPayment) {
       })
   }
   await syncMercadoPagoPaymentPlanFromLocalPayment(updated)
+
+  if (ignorePendingRegression) {
+    logger.info(`[Mercado Pago webhook] Ignorado estado pending tardío para pago ya pagado ${updated?.id || row.id} (payment ${mercadoPagoPaymentId})`)
+  }
 
   return updated
 }

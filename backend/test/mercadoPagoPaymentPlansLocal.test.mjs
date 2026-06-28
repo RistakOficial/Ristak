@@ -253,6 +253,70 @@ test('Mercado Pago cobra tarjeta en la pagina publica sin confiar en el monto de
   })
 })
 
+test('Mercado Pago conserva paid si llega un payment in_process tardío', async () => {
+  await initializeMasterKey()
+
+  await snapshotMercadoPagoConfig(async () => {
+    const paymentId = `mp_no_downgrade_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`
+
+    setMercadoPagoFetchForTest(async (url, options = {}) => {
+      assert.equal(options.method, 'GET')
+      assert.equal(options.headers?.Authorization, 'Bearer TEST-access-token')
+      assert.equal(url, 'https://api.mercadopago.com/v1/payments/mp_pending_late')
+
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({
+          id: 'mp_pending_late',
+          status: 'in_process',
+          status_detail: 'pending_contingency',
+          transaction_amount: 123.45,
+          currency_id: 'MXN',
+          payment_method_id: 'visa',
+          payment_type_id: 'credit_card',
+          external_reference: paymentId,
+          preference_id: 'pref_late_pending',
+          date_last_updated: '2026-06-20T20:05:00.000Z'
+        })
+      }
+    })
+
+    try {
+      await db.run(
+        `INSERT INTO payments (
+          id, amount, currency, status, payment_method, payment_mode,
+          payment_provider, title, mercadopago_payment_id, paid_at,
+          date, created_at, updated_at
+        ) VALUES (?, 123.45, 'MXN', 'paid', 'credit_card', 'test', 'mercadopago', ?, 'mp_approved_original', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+        [paymentId, 'Mercado Pago pagado protegido']
+      )
+
+      const result = await handleMercadoPagoWebhookEvent({
+        type: 'payment',
+        action: 'payment.updated',
+        data: { id: 'mp_pending_late' }
+      }, {}, {})
+
+      assert.equal(result.received, true)
+      assert.equal(result.paymentId, paymentId)
+      assert.equal(result.status, 'paid')
+
+      const payment = await db.get(
+        'SELECT status, paid_at, mercadopago_payment_id, mercadopago_preference_id, metadata_json FROM payments WHERE id = ?',
+        [paymentId]
+      )
+      assert.equal(payment.status, 'paid')
+      assert.ok(payment.paid_at)
+      assert.equal(payment.mercadopago_payment_id, 'mp_pending_late')
+      assert.equal(payment.mercadopago_preference_id, 'pref_late_pending')
+      assert.equal(JSON.parse(payment.metadata_json).mercadoPago.status, 'in_process')
+    } finally {
+      await db.run('DELETE FROM payments WHERE id = ?', [paymentId]).catch(() => undefined)
+    }
+  })
+})
+
 test('Mercado Pago explica Invalid users involved en cobros publicos de prueba', async () => {
   await initializeMasterKey()
 
