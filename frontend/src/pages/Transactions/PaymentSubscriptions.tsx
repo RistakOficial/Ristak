@@ -992,6 +992,8 @@ export const PaymentSubscriptions: React.FC = () => {
           confirmText="Eliminar"
           cancelText="Cancelar"
           typeToConfirm="ELIMINAR"
+          closeOnBackdropClick={false}
+          closeOnEscape={false}
           onConfirm={handleConfirmDeleteSubscriptions}
         />
 
@@ -1001,6 +1003,8 @@ export const PaymentSubscriptions: React.FC = () => {
           title={formMode === 'edit' ? 'Editar suscripción' : showGatewayStep ? 'Elige pasarela' : 'Nueva suscripción'}
           size="md"
           type="custom"
+          closeOnBackdropClick={false}
+          closeOnEscape={false}
         >
           <form className={styles.form} onSubmit={(event) => {
             event.preventDefault()

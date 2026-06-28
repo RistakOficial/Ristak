@@ -4517,6 +4517,8 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
       size={activePaymentMode === 'partial' ? 'lg' : 'md'}
       type="custom"
       flushContent
+      closeOnBackdropClick={false}
+      closeOnEscape={false}
       showCloseButton={step !== 'processing'}
     >
       {step === 'processing' && renderProcessing()}

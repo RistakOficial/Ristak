@@ -31,6 +31,8 @@ interface ModalProps {
   contentClassName?: string
   closeIcon?: React.ReactNode
   closeAriaLabel?: string
+  closeOnBackdropClick?: boolean
+  closeOnEscape?: boolean
   draggableSheet?: boolean
   typeToConfirm?: string
   /** Quita el padding global del contenido. Solo para modales que dibujan su
@@ -99,6 +101,8 @@ export const Modal: React.FC<ModalProps> = ({
   contentClassName = '',
   closeIcon,
   closeAriaLabel = 'Cerrar modal',
+  closeOnBackdropClick = true,
+  closeOnEscape = true,
   draggableSheet = false,
   typeToConfirm,
   flushContent = false,
@@ -193,7 +197,7 @@ export const Modal: React.FC<ModalProps> = ({
     const previousBodyOverflow = document.body.style.overflow
 
     const handleEscape = (e: KeyboardEvent) => {
-      if (e.key === 'Escape' && isOpen) {
+      if (e.key === 'Escape' && isOpen && closeOnEscape) {
         if (draggableSheet) closeWithSheetAnimation()
         else handleCancel()
       }
@@ -206,12 +210,12 @@ export const Modal: React.FC<ModalProps> = ({
       document.removeEventListener('keydown', handleEscape)
       document.body.style.overflow = previousBodyOverflow
     }
-  }, [closeWithSheetAnimation, draggableSheet, handleCancel, isOpen])
+  }, [closeOnEscape, closeWithSheetAnimation, draggableSheet, handleCancel, isOpen])
 
   if (!isOpen && !sheetExiting) return null
 
   const handleBackdropClick = (e: React.MouseEvent) => {
-    if (e.target === e.currentTarget) {
+    if (closeOnBackdropClick && e.target === e.currentTarget) {
       if (draggableSheet) closeWithSheetAnimation()
       else handleCancel()
     }

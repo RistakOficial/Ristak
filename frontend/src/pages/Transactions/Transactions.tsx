@@ -3129,6 +3129,8 @@ export const Transactions: React.FC = () => {
         confirmText="Eliminar"
         cancelText="Cancelar"
         typeToConfirm="ELIMINAR"
+        closeOnBackdropClick={false}
+        closeOnEscape={false}
         onConfirm={handleConfirmDeleteTransactions}
       />
 
@@ -3142,11 +3144,13 @@ export const Transactions: React.FC = () => {
         confirmText="Eliminar"
         cancelText="Cancelar"
         typeToConfirm="ELIMINAR"
+        closeOnBackdropClick={false}
+        closeOnEscape={false}
         onConfirm={handleConfirmDeletePaymentPlans}
       />
 
       {isClient && modal.type && createPortal(
-        <div className={styles.modalOverlay} data-overlay="" onClick={closeTransactionModal}>
+        <div className={styles.modalOverlay} data-overlay="">
           <div
             className={styles.modal}
             data-modal=""
@@ -3155,7 +3159,20 @@ export const Transactions: React.FC = () => {
             data-modal-type="custom"
             onClick={(e) => e.stopPropagation()}
           >
-            <h2>{modal.type === 'create' ? 'Nuevo Pago' : 'Editar Pago'}</h2>
+            <div className={styles.modalHeader} data-modal-header="">
+              <div>
+                <h2>{modal.type === 'create' ? 'Nuevo Pago' : 'Editar Pago'}</h2>
+              </div>
+              <button
+                className={styles.closeButton}
+                type="button"
+                onClick={closeTransactionModal}
+                title="Cerrar"
+                aria-label="Cerrar modal de pago"
+              >
+                <X size={20} />
+              </button>
+            </div>
             <form className={styles.form} data-modal-form="" onSubmit={(e) => {
               e.preventDefault()
               const formData = new FormData(e.currentTarget)
@@ -3282,7 +3299,7 @@ export const Transactions: React.FC = () => {
       )}
 
       {isClient && paymentPlanCreateModal.open && createPortal(
-        <div className={styles.modalOverlay} data-overlay="" onClick={closePaymentPlanCreateModal}>
+        <div className={styles.modalOverlay} data-overlay="">
           <div
             className={`${styles.modal} ${styles.paymentPlanModal}`}
             data-modal=""
@@ -3568,7 +3585,7 @@ export const Transactions: React.FC = () => {
       )}
 
       {isClient && paymentPlanModal.plan && createPortal(
-        <div className={styles.modalOverlay} data-overlay="" onClick={closePaymentPlanModal}>
+        <div className={styles.modalOverlay} data-overlay="">
           <div
             className={`${styles.modal} ${styles.paymentPlanModal}`}
             data-modal=""
@@ -3708,7 +3725,7 @@ export const Transactions: React.FC = () => {
       )}
 
       {isClient && stripeCardSetupLinkModal.open && createPortal(
-        <div className={styles.modalOverlay} data-overlay="" onClick={closeStripeCardSetupLinkModal}>
+        <div className={styles.modalOverlay} data-overlay="">
           <div
             className={`${styles.modal} ${styles.cardSetupLinkModal}`}
             data-modal=""
