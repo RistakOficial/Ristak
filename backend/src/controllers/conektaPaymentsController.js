@@ -8,7 +8,7 @@ import {
   getConektaPaymentConfig,
   getConektaSavedPaymentSources,
   getPublicConektaPayment,
-  reconcileConektaOrderFromWebhook,
+  reconcileConektaWebhookEvent,
   saveConektaPaymentConfig,
   testConektaPaymentConfig
 } from '../services/conektaPaymentService.js'
@@ -137,7 +137,7 @@ export async function handleConektaWebhookView(req, res) {
       logger.warn('[Conekta webhook] Aceptado SIN verificación: configura CONEKTA_WEBHOOK_SECRET para protegerlo.')
     }
 
-    const result = await reconcileConektaOrderFromWebhook(req.body || {})
+    const result = await reconcileConektaWebhookEvent(req.body || {})
     // Siempre 200 para que Conekta no reintente en bucle; el resultado va en el body.
     return res.json({ success: true, ...result })
   } catch (error) {

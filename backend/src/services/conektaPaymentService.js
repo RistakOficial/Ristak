@@ -707,6 +707,352 @@ function mapOrderStatus(order = {}) {
   return 'pending'
 }
 
+function extractConektaSubscriptionFromEvent(event = {}) {
+  const dataObject = event?.data?.object
+  if (dataObject && typeof dataObject === 'object' && cleanString(dataObject.object).toLowerCase() === 'subscription') {
+    return dataObject
+  }
+
+  const directObject = event?.object
+  if (directObject && typeof directObject === 'object' && cleanString(directObject.object).toLowerCase() === 'subscription') {
+    return directObject
+  }
+
+  if (cleanString(event?.object).toLowerCase() === 'subscription') {
+    return event
+  }
+
+  return null
+}
+
+function isConektaSubscriptionWebhook(event = {}) {
+  return cleanString(event?.type).toLowerCase().startsWith('subscription.')
+    || Boolean(extractConektaSubscriptionFromEvent(event))
+}
+
+function getConektaSubscriptionEventStatus(eventType, subscription = {}) {
+  const normalizedType = cleanString(eventType).toLowerCase()
+  if (normalizedType === 'subscription.payment_failed') return 'past_due'
+  if (normalizedType === 'subscription.canceled') return 'cancelled'
+  if (normalizedType === 'subscription.paused') return 'paused'
+  if (normalizedType === 'subscription.resumed' || normalizedType === 'subscription.paid') return 'active'
+  return mapConektaSubscriptionStatus(subscription?.status)
+}
+
+function getConektaSubscriptionPeriod(subscription = {}) {
+  const nextRunAt = toIsoFromConektaTimestamp(
+    subscription.next_billing_at
+    || subscription.billing_cycle_end
+    || subscription.current_period_end
+    || subscription.trial_end
+  )
+  const currentPeriodStart = toIsoFromConektaTimestamp(
+    subscription.billing_cycle_start
+    || subscription.current_period_start
+    || subscription.subscription_start
+    || subscription.created_at
+  )
+  const currentPeriodEnd = toIsoFromConektaTimestamp(
+    subscription.billing_cycle_end
+    || subscription.current_period_end
+    || subscription.charged_through
+  )
+
+  return {
+    nextRunAt,
+    currentPeriodStart,
+    currentPeriodEnd
+  }
+}
+
+function getSubscriptionStartPaymentFromMetadata(metadata = {}) {
+  const payment = metadata?.subscriptionStartPayment && typeof metadata.subscriptionStartPayment === 'object'
+    ? metadata.subscriptionStartPayment
+    : {}
+  const legacy = metadata?.publicPaymentLink && typeof metadata.publicPaymentLink === 'object'
+    ? metadata.publicPaymentLink
+    : {}
+
+  return {
+    paymentId: cleanString(payment.paymentId || legacy.paymentId),
+    publicPaymentId: cleanString(payment.publicPaymentId || legacy.publicPaymentId)
+  }
+}
+
+async function findConektaSubscriptionForWebhook(subscription = {}) {
+  const conektaSubscriptionId = cleanString(subscription.id)
+  const conektaPlanId = cleanString(subscription.plan_id)
+  const conektaCustomerId = cleanString(subscription.customer_id)
+  const conektaCardId = cleanString(subscription.card_id)
+
+  if (conektaSubscriptionId) {
+    const match = await db.get(
+      `SELECT *
+       FROM subscriptions
+       WHERE conekta_subscription_id = ?
+       LIMIT 1`,
+      [conektaSubscriptionId]
+    )
+    if (match?.id) return match
+  }
+
+  if (conektaPlanId) {
+    const match = await db.get(
+      `SELECT *
+       FROM subscriptions
+       WHERE conekta_plan_id = ?
+       ORDER BY updated_at DESC
+       LIMIT 1`,
+      [conektaPlanId]
+    )
+    if (match?.id) return match
+  }
+
+  if (conektaCustomerId && conektaCardId) {
+    const match = await db.get(
+      `SELECT *
+       FROM subscriptions
+       WHERE conekta_customer_id = ?
+         AND conekta_payment_source_id = ?
+       ORDER BY updated_at DESC
+       LIMIT 1`,
+      [conektaCustomerId, conektaCardId]
+    )
+    if (match?.id) return match
+  }
+
+  return null
+}
+
+async function syncConektaSubscriptionPaymentFromWebhook(subscription = {}, subscriptionRow = {}, event = {}) {
+  if (cleanString(event?.type).toLowerCase() !== 'subscription.paid') return null
+
+  const chargeId = cleanString(subscription.charge_id)
+  const orderId = cleanString(subscription.last_billing_cycle_order_id || subscription.order_id)
+  if (!chargeId && !orderId) return null
+
+  const existing = await db.get(
+    `SELECT id
+     FROM payments
+     WHERE (conekta_charge_id IS NOT NULL AND conekta_charge_id = ?)
+        OR (conekta_order_id IS NOT NULL AND conekta_order_id = ?)
+     ORDER BY created_at DESC
+     LIMIT 1`,
+    [chargeId || '', orderId || '']
+  )
+  if (existing?.id) return { paymentId: existing.id, created: false, existing: true }
+
+  const metadata = parseJson(subscriptionRow.metadata_json, {})
+  const startPayment = getSubscriptionStartPaymentFromMetadata(metadata)
+  const paidAt = toIsoFromConektaTimestamp(event.created_at) || new Date().toISOString()
+  const cardId = cleanString(subscription.card_id)
+
+  if (startPayment.paymentId) {
+    const startPaymentRow = await db.get(
+      `SELECT id, conekta_order_id, conekta_charge_id
+       FROM payments
+       WHERE id = ?
+       LIMIT 1`,
+      [startPayment.paymentId]
+    )
+
+    if (startPaymentRow?.id && !startPaymentRow.conekta_order_id && !startPaymentRow.conekta_charge_id) {
+      await db.run(
+        `UPDATE payments
+         SET status = 'paid',
+             payment_method = 'conekta_subscription',
+             payment_provider = 'conekta',
+             reference = COALESCE(?, reference),
+             conekta_order_id = COALESCE(?, conekta_order_id),
+             conekta_charge_id = COALESCE(?, conekta_charge_id),
+             conekta_payment_source_id = COALESCE(?, conekta_payment_source_id),
+             paid_at = COALESCE(paid_at, ?),
+             date = COALESCE(date, ?),
+             updated_at = CURRENT_TIMESTAMP
+         WHERE id = ?`,
+        [
+          orderId || chargeId || null,
+          orderId || null,
+          chargeId || null,
+          cardId || subscriptionRow.conekta_payment_source_id || null,
+          paidAt,
+          paidAt,
+          startPaymentRow.id
+        ]
+      )
+
+      if (subscriptionRow.contact_id) {
+        updateSingleContactStats(subscriptionRow.contact_id).catch((error) => {
+          logger.warn(`No se pudieron actualizar stats del contacto por suscripción Conekta ${subscriptionRow.id}: ${error.message}`)
+        })
+      }
+
+      return { paymentId: startPaymentRow.id, created: false, updatedStartPayment: true }
+    }
+  }
+
+  const paymentId = createId('conekta_subscription_payment')
+  const currency = normalizeCurrency(subscriptionRow.currency || DEFAULT_CURRENCY)
+  const amount = Number(subscriptionRow.amount || 0)
+  const paymentMetadata = {
+    source: 'conekta_subscription_webhook',
+    ristakSubscriptionId: subscriptionRow.id,
+    conektaSubscriptionId: cleanString(subscription.id),
+    conektaPlanId: cleanString(subscription.plan_id),
+    conektaCustomerId: cleanString(subscription.customer_id),
+    conektaChargeId: chargeId,
+    conektaOrderId: orderId
+  }
+
+  await db.run(
+    `INSERT INTO payments (
+      id, contact_id, amount, currency, status, payment_method, payment_mode,
+      payment_provider, reference, title, description, conekta_order_id,
+      conekta_charge_id, conekta_payment_source_id, paid_at, metadata_json, date,
+      created_at, updated_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+    [
+      paymentId,
+      subscriptionRow.contact_id || null,
+      Number.isFinite(amount) ? amount : 0,
+      currency,
+      'paid',
+      'conekta_subscription',
+      subscriptionRow.payment_mode || 'test',
+      'conekta',
+      orderId || chargeId,
+      subscriptionRow.name || 'Suscripción',
+      `Cobro recurrente de ${subscriptionRow.name || 'suscripción'}`,
+      orderId || null,
+      chargeId || null,
+      cardId || subscriptionRow.conekta_payment_source_id || null,
+      paidAt,
+      JSON.stringify(paymentMetadata),
+      paidAt
+    ]
+  )
+
+  if (subscriptionRow.contact_id) {
+    updateSingleContactStats(subscriptionRow.contact_id).catch((error) => {
+      logger.warn(`No se pudieron actualizar stats del contacto por suscripción Conekta ${subscriptionRow.id}: ${error.message}`)
+    })
+  }
+
+  return { paymentId, created: true }
+}
+
+export async function reconcileConektaSubscriptionFromWebhook(event = {}) {
+  const subscription = extractConektaSubscriptionFromEvent(event)
+  const conektaSubscriptionId = cleanString(subscription?.id)
+  if (!subscription || !conektaSubscriptionId) return { matched: false, reason: 'sin_subscription_id' }
+
+  const existing = await findConektaSubscriptionForWebhook(subscription)
+  if (!existing?.id) return { matched: false, reason: 'suscripcion_no_encontrada' }
+
+  const eventType = cleanString(event?.type).toLowerCase()
+  const nextStatus = getConektaSubscriptionEventStatus(eventType, subscription)
+  const period = getConektaSubscriptionPeriod(subscription)
+  const cancelledAt = toIsoFromConektaTimestamp(subscription.canceled_at)
+  const metadata = parseJson(existing.metadata_json, {})
+  const raw = parseJson(existing.raw_json, {})
+  const receivedAt = new Date().toISOString()
+  const cardId = cleanString(subscription.card_id)
+  const planId = cleanString(subscription.plan_id)
+  const customerId = cleanString(subscription.customer_id)
+
+  const changed = cleanString(existing.status).toLowerCase() !== nextStatus
+    || (period.nextRunAt && period.nextRunAt !== existing.next_run_at)
+    || (period.currentPeriodStart && period.currentPeriodStart !== existing.current_period_start)
+    || (period.currentPeriodEnd && period.currentPeriodEnd !== existing.current_period_end)
+    || (planId && planId !== existing.conekta_plan_id)
+    || (customerId && customerId !== existing.conekta_customer_id)
+    || (cardId && cardId !== existing.conekta_payment_source_id)
+
+  await db.run(
+    `UPDATE subscriptions
+     SET status = ?,
+         payment_method = 'conekta_subscription',
+         payment_provider = 'conekta',
+         conekta_subscription_id = COALESCE(?, conekta_subscription_id),
+         conekta_customer_id = COALESCE(?, conekta_customer_id),
+         conekta_plan_id = COALESCE(?, conekta_plan_id),
+         conekta_payment_source_id = COALESCE(?, conekta_payment_source_id),
+         conekta_next_billing_at = COALESCE(?, conekta_next_billing_at),
+         current_period_start = COALESCE(?, current_period_start),
+         current_period_end = COALESCE(?, current_period_end),
+         next_run_at = COALESCE(?, next_run_at),
+         cancelled_at = CASE
+           WHEN ? = 'cancelled' THEN COALESCE(?, cancelled_at, CURRENT_TIMESTAMP)
+           ELSE cancelled_at
+         END,
+         metadata_json = ?,
+         raw_json = ?,
+         updated_at = CURRENT_TIMESTAMP
+     WHERE id = ?`,
+    [
+      nextStatus,
+      conektaSubscriptionId || null,
+      customerId || null,
+      planId || null,
+      cardId || null,
+      period.nextRunAt,
+      period.currentPeriodStart,
+      period.currentPeriodEnd,
+      period.nextRunAt,
+      nextStatus,
+      cancelledAt,
+      JSON.stringify({
+        ...metadata,
+        conektaSubscriptionWebhook: {
+          type: eventType || null,
+          eventId: cleanString(event?.id),
+          receivedAt,
+          status: nextStatus,
+          conektaSubscriptionId,
+          conektaChargeId: cleanString(subscription.charge_id),
+          conektaOrderId: cleanString(subscription.last_billing_cycle_order_id || subscription.order_id)
+        }
+      }),
+      JSON.stringify({
+        ...raw,
+        conektaSubscriptionWebhook: {
+          type: eventType || null,
+          eventId: cleanString(event?.id),
+          receivedAt,
+          subscription
+        }
+      }),
+      existing.id
+    ]
+  )
+
+  const refreshed = await db.get('SELECT * FROM subscriptions WHERE id = ?', [existing.id])
+  const paymentSync = await syncConektaSubscriptionPaymentFromWebhook(subscription, refreshed || existing, event)
+
+  if (changed) {
+    logger.info(`[Conekta webhook] Suscripción ${existing.id} reconciliada: ${existing.status} -> ${nextStatus} (${conektaSubscriptionId})`)
+  }
+
+  return {
+    matched: true,
+    changed,
+    subscriptionId: existing.id,
+    conektaSubscriptionId,
+    status: nextStatus,
+    paymentSynced: Boolean(paymentSync?.paymentId),
+    paymentCreated: Boolean(paymentSync?.created),
+    paymentId: paymentSync?.paymentId || null
+  }
+}
+
+export async function reconcileConektaWebhookEvent(event = {}) {
+  if (isConektaSubscriptionWebhook(event)) {
+    return reconcileConektaSubscriptionFromWebhook(event)
+  }
+
+  return reconcileConektaOrderFromWebhook(event)
+}
+
 function shouldIgnorePendingWebhookRegression(payment = {}, nextStatus = '') {
   if (nextStatus !== 'pending') return false
   const currentStatus = cleanString(payment.status).toLowerCase()

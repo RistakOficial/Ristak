@@ -19,6 +19,7 @@ import {
   pauseConektaRecurringSubscription,
   processDueConektaPaymentPlanCharges,
   reconcileConektaOrderFromWebhook,
+  reconcileConektaSubscriptionFromWebhook,
   resumeConektaRecurringSubscription,
   saveConektaPaymentConfig,
   setConektaFetchForTest,
@@ -597,16 +598,131 @@ test('Conekta suscripciones: link publico autoriza tarjeta y crea suscripcion si
     assert.equal(subscriptionRow.conekta_payment_source_id, 'src_subscription_link')
 
     const paymentRow = await db.get(
-      `SELECT status, payment_method
+      `SELECT id, status, payment_method, conekta_order_id, conekta_charge_id
        FROM payments
        WHERE public_payment_id = ?`,
       [created.subscriptionStartPublicPaymentId]
     )
     assert.equal(paymentRow.status, 'paid')
     assert.equal(paymentRow.payment_method, 'conekta_subscription')
+    assert.equal(paymentRow.conekta_order_id, null)
+    assert.equal(paymentRow.conekta_charge_id, null)
+
+    const webhookResult = await reconcileConektaSubscriptionFromWebhook({
+      id: 'evt_subscription_paid_link',
+      type: 'subscription.paid',
+      created_at: 1782000100,
+      data: {
+        object: {
+          id: 'sub_subscription_link',
+          status: 'active',
+          object: 'subscription',
+          charge_id: 'charge_subscription_link',
+          created_at: 1782000000,
+          subscription_start: 1782000000,
+          canceled_at: null,
+          paused_at: null,
+          billing_cycle_start: 1782000000,
+          billing_cycle_end: 1784678400,
+          trial_start: null,
+          trial_end: null,
+          plan_id: 'plan_subscription_link',
+          last_billing_cycle_order_id: 'ord_subscription_link',
+          customer_id: 'cus_subscription_link',
+          card_id: 'src_subscription_link'
+        }
+      }
+    })
+
+    assert.equal(webhookResult.matched, true)
+    assert.equal(webhookResult.status, 'active')
+    assert.equal(webhookResult.paymentSynced, true)
+    assert.equal(webhookResult.paymentCreated, false)
+    assert.equal(webhookResult.paymentId, paymentRow.id)
+
+    const syncedStartPayment = await db.get(
+      `SELECT status, payment_method, conekta_order_id, conekta_charge_id, conekta_payment_source_id
+       FROM payments
+       WHERE id = ?`,
+      [paymentRow.id]
+    )
+    assert.equal(syncedStartPayment.status, 'paid')
+    assert.equal(syncedStartPayment.payment_method, 'conekta_subscription')
+    assert.equal(syncedStartPayment.conekta_order_id, 'ord_subscription_link')
+    assert.equal(syncedStartPayment.conekta_charge_id, 'charge_subscription_link')
+    assert.equal(syncedStartPayment.conekta_payment_source_id, 'src_subscription_link')
+
+    const failedWebhookResult = await reconcileConektaSubscriptionFromWebhook({
+      id: 'evt_subscription_failed_link',
+      type: 'subscription.payment_failed',
+      created_at: 1784678500,
+      data: {
+        object: {
+          id: 'sub_subscription_link',
+          status: 'past_due',
+          object: 'subscription',
+          charge_id: null,
+          billing_cycle_start: 1784678400,
+          billing_cycle_end: 1787356800,
+          plan_id: 'plan_subscription_link',
+          last_billing_cycle_order_id: 'ord_subscription_link_failed',
+          customer_id: 'cus_subscription_link',
+          card_id: 'src_subscription_link'
+        }
+      }
+    })
+    assert.equal(failedWebhookResult.matched, true)
+    assert.equal(failedWebhookResult.status, 'past_due')
+
+    const subscriptionAfterFailedWebhook = await db.get(
+      `SELECT status, conekta_next_billing_at, current_period_start, current_period_end
+       FROM subscriptions
+       WHERE id = ?`,
+      [created.id]
+    )
+    assert.equal(subscriptionAfterFailedWebhook.status, 'past_due')
+    assert.ok(subscriptionAfterFailedWebhook.current_period_start)
+    assert.ok(subscriptionAfterFailedWebhook.current_period_end)
+
+    const secondPaidWebhookResult = await reconcileConektaSubscriptionFromWebhook({
+      id: 'evt_subscription_paid_link_second',
+      type: 'subscription.paid',
+      created_at: 1787356900,
+      data: {
+        object: {
+          id: 'sub_subscription_link',
+          status: 'active',
+          object: 'subscription',
+          charge_id: 'charge_subscription_link_second',
+          billing_cycle_start: 1787356800,
+          billing_cycle_end: 1790035200,
+          plan_id: 'plan_subscription_link',
+          last_billing_cycle_order_id: 'ord_subscription_link_second',
+          customer_id: 'cus_subscription_link',
+          card_id: 'src_subscription_link'
+        }
+      }
+    })
+    assert.equal(secondPaidWebhookResult.matched, true)
+    assert.equal(secondPaidWebhookResult.status, 'active')
+    assert.equal(secondPaidWebhookResult.paymentSynced, true)
+    assert.equal(secondPaidWebhookResult.paymentCreated, true)
+
+    const insertedRecurringPayment = await db.get(
+      `SELECT amount, status, payment_method, conekta_order_id, conekta_charge_id
+       FROM payments
+       WHERE id = ?`,
+      [secondPaidWebhookResult.paymentId]
+    )
+    assert.equal(insertedRecurringPayment.amount, 210)
+    assert.equal(insertedRecurringPayment.status, 'paid')
+    assert.equal(insertedRecurringPayment.payment_method, 'conekta_subscription')
+    assert.equal(insertedRecurringPayment.conekta_order_id, 'ord_subscription_link_second')
+    assert.equal(insertedRecurringPayment.conekta_charge_id, 'charge_subscription_link_second')
 
     await db.run('DELETE FROM subscriptions WHERE id = ?', [created.id])
     await db.run('DELETE FROM payments WHERE public_payment_id = ?', [created.subscriptionStartPublicPaymentId])
+    await db.run('DELETE FROM payments WHERE id = ?', [secondPaidWebhookResult.paymentId])
     await db.run('DELETE FROM conekta_payment_sources WHERE contact_id = ?', [contactId])
     await db.run('DELETE FROM contacts WHERE id = ?', [contactId])
   })

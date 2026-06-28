@@ -330,6 +330,34 @@ const conektaWebhookEvents: WebhookEventGuideItem[] = [
   {
     event: 'order.refunded',
     description: 'Sincroniza órdenes reembolsadas completamente.'
+  },
+  {
+    event: 'subscription.created',
+    description: 'Registra suscripciones creadas por Conekta.'
+  },
+  {
+    event: 'subscription.paused',
+    description: 'Sincroniza pausas aplicadas a una suscripción.'
+  },
+  {
+    event: 'subscription.resumed',
+    description: 'Reactiva suscripciones cuando Conekta las reanuda.'
+  },
+  {
+    event: 'subscription.canceled',
+    description: 'Sincroniza cancelaciones de suscripciones.'
+  },
+  {
+    event: 'subscription.paid',
+    description: 'Confirma ciclos cobrados de suscripciones Conekta.'
+  },
+  {
+    event: 'subscription.payment_failed',
+    description: 'Marca suscripciones con cobro recurrente fallido.'
+  },
+  {
+    event: 'subscription.updated',
+    description: 'Sincroniza cambios de estado, tarjeta o periodo.'
   }
 ]
 const conektaWebhookSteps = [
@@ -3358,7 +3386,7 @@ export const PaymentsConfiguration: React.FC = () => {
                 <span>Cómo configurarlo en Conekta</span>
                 <small>
                   Conekta no se conecta por OAuth en Ristak: usa tus llaves API y este webhook para avisar pagos aprobados,
-                  rechazados o expirados. Sin este webhook, los planes con domiciliación pueden quedarse esperando confirmación.
+                  rechazados, expirados o cambios de suscripción. Sin este webhook, las suscripciones pueden quedarse sin sincronizar.
                 </small>
               </div>
 
@@ -3384,7 +3412,7 @@ export const PaymentsConfiguration: React.FC = () => {
               {renderWebhookEventGuide(
                 'Conekta',
                 'Eventos a seleccionar en Conekta',
-                'Usa eventos de orden. Ristak reconcilia pagos por la orden de Conekta para activar planes, suscripciones y cerrar pagos rechazados o vencidos.',
+                'Usa eventos de orden y suscripción. Ristak reconcilia pagos por orden y mantiene las suscripciones de Conekta sincronizadas cuando se crean, cobran, fallan, pausan o cancelan.',
                 conektaWebhookEvents
               )}
 
