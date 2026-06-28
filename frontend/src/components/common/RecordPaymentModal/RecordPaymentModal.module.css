@@ -1256,7 +1256,7 @@ body.dark .summaryBadge,
 
 .mercadoPagoInstallmentsGrid {
   display: grid;
-  grid-template-columns: minmax(220px, 0.8fr) minmax(0, 1.2fr);
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
   gap: 18px;
   align-items: end;
 }
@@ -1317,6 +1317,24 @@ body.dark .summaryBadge,
   border-color: var(--color-primary);
   background: rgba(var(--color-primary-rgb), 0.12);
   z-index: 4;
+}
+
+.optionGroup {
+  display: grid;
+  gap: 10px;
+  min-width: 0;
+}
+
+.optionGroupHeader {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--text-mute, var(--color-text-tertiary));
+  font: var(--label-font);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: var(--label-spacing);
+  text-transform: var(--label-transform);
 }
 
 .optionAction {
