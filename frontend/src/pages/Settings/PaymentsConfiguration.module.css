@@ -1917,6 +1917,41 @@
   overflow-wrap: anywhere;
 }
 
+.endpointList {
+  display: grid;
+  gap: 8px;
+}
+
+.endpointItem {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-ctl);
+  background: var(--surface-solid);
+}
+
+.endpointItem div {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.endpointItem strong {
+  color: var(--text);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.endpointItem span {
+  color: var(--text-dim);
+  font-size: 12px;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+}
+
 .webhookEventGuide {
   display: grid;
   gap: 12px;
@@ -2126,6 +2161,7 @@
   .mercadoPagoTestGuideHeader,
   .mercadoPagoCredentialHeader,
   .mercadoPagoTestGuideFooter,
+  .endpointItem,
   .webhookEventGuideHeader,
   .sectionSaveBar,
   .gatewayDetailBar,
@@ -2138,6 +2174,7 @@
   }
 
   .copyField,
+  .endpointItem,
   .webhookEventGuideHeader,
   .sectionSaveBar,
   .gatewayDetailBar {

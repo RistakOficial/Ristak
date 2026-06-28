@@ -25,7 +25,8 @@ import {
   Sparkles,
   Trash2,
   Unplug,
-  WalletCards
+  WalletCards,
+  Webhook
 } from 'lucide-react'
 import {
   Badge,
@@ -134,6 +135,7 @@ interface ConektaModeCredentials {
 interface MercadoPagoSubscriptionTestCredentials {
   publicKey: string
   accessToken: string
+  webhookSecret: string
 }
 
 interface PaymentGatewayOption {
@@ -177,7 +179,8 @@ const emptyConektaModeCredentials: Record<StripeModeId, ConektaModeCredentials> 
 }
 const emptyMercadoPagoSubscriptionTestCredentials: MercadoPagoSubscriptionTestCredentials = {
   publicKey: '',
-  accessToken: ''
+  accessToken: '',
+  webhookSecret: ''
 }
 const stripeModeLabels: Record<StripeModeId, { title: string; description: string; publishablePlaceholder: string; secretPlaceholder: string }> = {
   test: {
@@ -265,9 +268,39 @@ const mercadoPagoSinglePaymentTestSteps = [
 ]
 const mercadoPagoSubscriptionTestSteps = [
   'Crea usuarios test en Mercado Pago: vendedor y comprador del mismo país.',
-  'En el panel de Mercado Pago del vendedor test, copia las credenciales de producción APP_USR y guárdalas aquí como credenciales de suscripción test.',
-  'En Ristak, con el modo global en Prueba, conecta Mercado Pago iniciando sesión como vendedor test.',
-  'Crea la suscripción y abre el link como comprador test. No uses la misma cuenta vendedora ni una cuenta real para autorizarla.'
+  'Entra en modo incógnito con el usuario vendedor test y crea una aplicación en Tus integraciones.',
+  'En esa aplicación, copia las credenciales de producción APP_USR y guárdalas en Ristak para suscripciones test.',
+  'Configura webhooks en la misma aplicación del vendedor test: URL de Ristak, eventos de pagos, planes y suscripciones, reclamos y clave secreta.',
+  'Conecta Mercado Pago en Ristak iniciando sesión como vendedor test. Crea la suscripción y abre el link como comprador test.'
+]
+const mercadoPagoSubscriptionWebhookSteps = [
+  'En Mercado Pago entra como vendedor test y abre Tus integraciones > tu aplicación.',
+  'Ve a Notificaciones Webhooks y configura la URL pública de Ristak.',
+  'Activa Modo de prueba y Modo productivo si Mercado Pago los muestra separados para esa app.',
+  'Marca Pagos, Planes y suscripciones, y Reclamos.',
+  'Copia la clave secreta generada por Mercado Pago y guárdala aquí.'
+]
+const mercadoPagoSubscriptionWebhookEvents: WebhookEventGuideItem[] = [
+  {
+    event: 'subscription_preapproval_plan',
+    description: 'Detecta planes de suscripción creados o actualizados.'
+  },
+  {
+    event: 'subscription_preapproval',
+    description: 'Activa, pausa o cancela la suscripción cuando el comprador la autoriza.'
+  },
+  {
+    event: 'subscription_authorized_payment',
+    description: 'Registra los cobros recurrentes aprobados de la suscripción.'
+  },
+  {
+    event: 'payment',
+    description: 'Sincroniza pagos aprobados, pendientes, fallidos o reembolsados.'
+  },
+  {
+    event: 'topic_claims_integration_wh',
+    description: 'Detecta reclamos o contracargos relacionados con pagos.'
+  }
 ]
 const PAYMENT_META_DEFAULT_PURCHASE_EVENT_NAME = 'Purchase'
 const PAYMENT_META_DEFAULT_EVENT_CHANNEL: PaymentMetaPurchaseEventChannel = 'smart'
@@ -668,7 +701,8 @@ const getConektaModeCredentialsFromConfig = (config?: ConektaPaymentConfig | nul
 
 const getMercadoPagoSubscriptionTestCredentialsFromConfig = (config?: MercadoPagoPaymentConfig | null): MercadoPagoSubscriptionTestCredentials => ({
   publicKey: config?.subscriptionTestCredentials?.publicKey || '',
-  accessToken: config?.subscriptionTestCredentials?.accessTokenPreview || ''
+  accessToken: config?.subscriptionTestCredentials?.accessTokenPreview || '',
+  webhookSecret: config?.subscriptionTestCredentials?.webhookSecretPreview || ''
 })
 
 export const PaymentsConfiguration: React.FC = () => {
@@ -879,6 +913,7 @@ export const PaymentsConfiguration: React.FC = () => {
   const selectedGatewayOption = gatewayOptions.find((gateway) => gateway.id === (activeGatewayRoute || selectedGateway))
   const stripeWebhookEndpoints = stripeConfig?.webhookEndpoints || []
   const conektaWebhookEndpoints = conektaConfig?.webhookEndpoints || []
+  const mercadoPagoWebhookEndpoints = mercadoPagoConfig?.webhookEndpoints || []
   const stripeConnected = Boolean(stripeConfig?.configured)
   const conektaConnected = Boolean(conektaConfig?.configured)
   const mercadoPagoConnected = Boolean(mercadoPagoConfig?.configured)
@@ -920,7 +955,8 @@ export const PaymentsConfiguration: React.FC = () => {
   const mercadoPagoSubscriptionTestConfigured = Boolean(mercadoPagoConfig?.subscriptionTestCredentials?.configured)
   const mercadoPagoSubscriptionTestCanSave = Boolean(
     mercadoPagoSubscriptionTestCredentials.publicKey.trim() &&
-    mercadoPagoSubscriptionTestCredentials.accessToken.trim()
+    mercadoPagoSubscriptionTestCredentials.accessToken.trim() &&
+    mercadoPagoSubscriptionTestCredentials.webhookSecret.trim()
   )
   const paymentWhatsappTemplateOptions = useMemo(() => {
     const options = Object.values(paymentAutomationTemplateDefaults).map((template) => ({
@@ -1655,7 +1691,8 @@ export const PaymentsConfiguration: React.FC = () => {
     try {
       const config = await mercadoPagoPaymentsService.saveSubscriptionTestCredentials({
         publicKey: mercadoPagoSubscriptionTestCredentials.publicKey.trim(),
-        accessToken: mercadoPagoSubscriptionTestCredentials.accessToken.trim()
+        accessToken: mercadoPagoSubscriptionTestCredentials.accessToken.trim(),
+        webhookSecret: mercadoPagoSubscriptionTestCredentials.webhookSecret.trim()
       })
       applyMercadoPagoConfig(config)
       showToast('success', 'Credenciales guardadas', 'Las suscripciones test de Mercado Pago usarán el vendedor test APP_USR.')
@@ -3592,51 +3629,32 @@ export const PaymentsConfiguration: React.FC = () => {
                     <div className={styles.mercadoPagoTestGuide}>
                       <div className={styles.mercadoPagoTestGuideHeader}>
                         <div>
-                          <strong>Guía de pruebas de Mercado Pago</strong>
-                          <span>Usa esta referencia cuando quieras validar links y suscripciones sin mover dinero real.</span>
+                          <strong>Pagos únicos en modo prueba</strong>
+                          <span>Este flujo usa la conexión OAuth normal de Mercado Pago y tarjetas de prueba.</span>
                         </div>
                         <Badge variant="info">Modo prueba</Badge>
                       </div>
 
-                      <div className={styles.mercadoPagoTestGuideGrid}>
-                        <section className={styles.mercadoPagoTestGuideSection}>
-                          <div className={styles.mercadoPagoTestGuideTitle}>
-                            <CreditCard size={16} />
-                            <h4>Pagos únicos</h4>
-                          </div>
-                          <ol className={styles.mercadoPagoTestGuideSteps}>
-                            {mercadoPagoSinglePaymentTestSteps.map((step) => (
-                              <li key={step}>{step}</li>
-                            ))}
-                          </ol>
-                          <p className={styles.mercadoPagoTestGuideNote}>
-                            Si el comprador escribe otro correo en el checkout, Mercado Pago lo usará como correo del pagador.
-                            Ristak mantiene el pago ligado al contacto y al link original.
-                          </p>
-                        </section>
-
-                        <section className={styles.mercadoPagoTestGuideSection}>
-                          <div className={styles.mercadoPagoTestGuideTitle}>
-                            <FileCheck2 size={16} />
-                            <h4>Suscripciones</h4>
-                          </div>
-                          <ol className={styles.mercadoPagoTestGuideSteps}>
-                            {mercadoPagoSubscriptionTestSteps.map((step) => (
-                              <li key={step}>{step}</li>
-                            ))}
-                          </ol>
-                          <p className={styles.mercadoPagoTestGuideNote}>
-                            En suscripciones, Ristak crea un plan abierto y Mercado Pago identifica al comprador cuando inicia sesión en el checkout.
-                            Si autorizas con el vendedor o con una cuenta real, Mercado Pago puede bloquear la prueba.
-                          </p>
-                        </section>
-                      </div>
+                      <section className={styles.mercadoPagoTestGuideSection}>
+                        <div className={styles.mercadoPagoTestGuideTitle}>
+                          <CreditCard size={16} />
+                          <h4>Checkout de pago único</h4>
+                        </div>
+                        <ol className={styles.mercadoPagoTestGuideSteps}>
+                          {mercadoPagoSinglePaymentTestSteps.map((step) => (
+                            <li key={step}>{step}</li>
+                          ))}
+                        </ol>
+                        <p className={styles.mercadoPagoTestGuideNote}>
+                          Si el comprador escribe otro correo en el checkout, Mercado Pago lo usará como correo del pagador.
+                          Ristak mantiene el pago ligado al contacto y al link original.
+                        </p>
+                      </section>
 
                       <div className={styles.mercadoPagoTestGuideFooter}>
                         <Info size={16} />
                         <span>
-                          Si el checkout de suscripción no muestra una leyenda de sandbox, valida el modo por la cuenta conectada:
-                          vendedor test para pruebas y cuenta real solo para producción.
+                          Este bloque no configura suscripciones. Para suscripciones test necesitas una aplicación del vendedor test y webhooks propios.
                         </span>
                       </div>
                     </div>
@@ -3646,13 +3664,69 @@ export const PaymentsConfiguration: React.FC = () => {
                     <div className={styles.mercadoPagoCredentialPanel}>
                       <div className={styles.mercadoPagoCredentialHeader}>
                         <div>
-                          <strong>Credenciales de suscripción test</strong>
-                          <span>Usa la Public Key y el Access Token APP_USR del vendedor test. Los pagos únicos de prueba conservan la conexión normal.</span>
+                          <strong>Suscripciones test: app, credenciales y webhook</strong>
+                          <span>Crea una aplicación dentro de la cuenta vendedora test y configura sus credenciales igual que una integración en vivo.</span>
                         </div>
                         <Badge variant={mercadoPagoSubscriptionTestConfigured ? 'success' : 'neutral'}>
-                          {mercadoPagoSubscriptionTestConfigured ? 'Listas' : 'Pendientes'}
+                          {mercadoPagoSubscriptionTestConfigured ? 'Configurado' : 'Pendiente'}
                         </Badge>
                       </div>
+
+                      <section className={styles.mercadoPagoTestGuideSection}>
+                        <div className={styles.mercadoPagoTestGuideTitle}>
+                          <FileCheck2 size={16} />
+                          <h4>Pasos para probar suscripciones</h4>
+                        </div>
+                        <ol className={styles.mercadoPagoTestGuideSteps}>
+                          {mercadoPagoSubscriptionTestSteps.map((step) => (
+                            <li key={step}>{step}</li>
+                          ))}
+                        </ol>
+                        <p className={styles.mercadoPagoTestGuideNote}>
+                          En suscripciones, Ristak crea un plan abierto y Mercado Pago identifica al comprador cuando inicia sesión en el checkout.
+                          Si autorizas con el vendedor o con una cuenta real, Mercado Pago puede bloquear la prueba.
+                        </p>
+                      </section>
+
+                      <section className={styles.mercadoPagoTestGuideSection}>
+                        <div className={styles.mercadoPagoTestGuideTitle}>
+                          <Webhook size={16} />
+                          <h4>Webhook de la aplicación test</h4>
+                        </div>
+                        <ol className={styles.mercadoPagoTestGuideSteps}>
+                          {mercadoPagoSubscriptionWebhookSteps.map((step) => (
+                            <li key={step}>{step}</li>
+                          ))}
+                        </ol>
+                        {mercadoPagoWebhookEndpoints.length > 0 && (
+                          <div className={styles.endpointList}>
+                            {mercadoPagoWebhookEndpoints.map((endpoint) => (
+                              <div key={`${endpoint.source}-${endpoint.url}`} className={styles.endpointItem}>
+                                <div>
+                                  <strong>{endpoint.label}</strong>
+                                  <span>{endpoint.description}</span>
+                                  <span>{endpoint.url}</span>
+                                </div>
+                                <Button
+                                  type="button"
+                                  variant="secondary"
+                                  size="sm"
+                                  leftIcon={<Copy size={15} />}
+                                  onClick={() => handleCopyGatewayText(endpoint.url, 'URL', 'Mercado Pago')}
+                                >
+                                  Copiar
+                                </Button>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                        {renderWebhookEventGuide(
+                          'Mercado Pago',
+                          'Eventos para suscripciones test',
+                          'Selecciona estos tópicos en la aplicación del vendedor test para que Ristak pueda activar suscripciones y registrar cobros recurrentes.',
+                          mercadoPagoSubscriptionWebhookEvents
+                        )}
+                      </section>
 
                       <div className={styles.formGrid}>
                         {renderField(
@@ -3682,12 +3756,28 @@ export const PaymentsConfiguration: React.FC = () => {
                             spellCheck={false}
                           />
                         )}
+                        {renderField(
+                          'Clave secreta del webhook',
+                          <input
+                            type="password"
+                            value={mercadoPagoSubscriptionTestCredentials.webhookSecret}
+                            onChange={(event) => updateMercadoPagoSubscriptionTestCredential('webhookSecret', event.target.value)}
+                            onFocus={(event) => {
+                              if (mercadoPagoConfig?.subscriptionTestCredentials?.webhookSecretPreview && mercadoPagoSubscriptionTestCredentials.webhookSecret === mercadoPagoConfig.subscriptionTestCredentials.webhookSecretPreview) {
+                                event.currentTarget.select()
+                              }
+                            }}
+                            placeholder={mercadoPagoConfig?.subscriptionTestCredentials?.hasWebhookSecret ? mercadoPagoConfig.subscriptionTestCredentials.webhookSecretPreview : 'Clave secreta de Webhooks'}
+                            autoComplete="new-password"
+                            spellCheck={false}
+                          />
+                        )}
                       </div>
 
                       <div className={styles.inlineInfo}>
                         <ShieldCheck size={16} />
                         <span>
-                          Mercado Pago usa `TEST-*` para pagos únicos transparentes, pero suscripciones hospedadas en prueba necesitan `APP_USR-*` del vendedor test.
+                          Mercado Pago usa TEST-* para pagos únicos transparentes, pero suscripciones hospedadas en prueba necesitan APP_USR-* y la clave secreta del webhook de la aplicación del vendedor test.
                         </span>
                       </div>
 

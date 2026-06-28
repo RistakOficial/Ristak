@@ -1,5 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
+import { createHmac } from 'node:crypto'
 
 import { db, setAppConfig } from '../src/config/database.js'
 import {
@@ -8,7 +9,9 @@ import {
   createMercadoPagoRecurringSubscription,
   ensurePublicMercadoPagoPreference,
   createPublicMercadoPagoCardPayment,
+  getMercadoPagoPaymentConfig,
   handleMercadoPagoWebhookEvent,
+  saveMercadoPagoSubscriptionTestCredentials,
   setMercadoPagoFetchForTest
 } from '../src/services/mercadoPagoPaymentService.js'
 import { createSubscription } from '../src/services/subscriptionsService.js'
@@ -29,6 +32,15 @@ function dateOnlyInDays(days) {
 
 function localIsoInDays(days) {
   return `${dateOnlyInDays(days)}T10:00:00.000-06:00`
+}
+
+function signMercadoPagoWebhook(dataId, secret, requestId = 'mp_req_test_signature', ts = '1700000000') {
+  const manifest = `id:${dataId};request-id:${requestId};ts:${ts};`
+  const signature = createHmac('sha256', secret).update(manifest).digest('hex')
+  return {
+    'x-request-id': requestId,
+    'x-signature': `ts=${ts},v1=${signature}`
+  }
 }
 
 async function snapshotMercadoPagoConfig(callback) {
@@ -745,6 +757,43 @@ test('Mercado Pago bloquea links de suscripcion test sin credenciales APP_USR', 
   })
 })
 
+test('Mercado Pago guarda credenciales y secret de webhooks para suscripciones test', async () => {
+  await initializeMasterKey()
+
+  await snapshotMercadoPagoConfig(async () => {
+    setMercadoPagoFetchForTest(async (url, options = {}) => {
+      assert.equal(url, 'https://api.mercadopago.com/users/me')
+      assert.equal(options.headers?.Authorization, 'Bearer APP_USR-subscription-access-token-updated')
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({
+          id: 'seller_test_user_1',
+          nickname: 'SELLERTEST'
+        })
+      }
+    })
+
+    const saved = await saveMercadoPagoSubscriptionTestCredentials({
+      publicKey: 'APP_USR-subscription-public-key-updated',
+      accessToken: 'APP_USR-subscription-access-token-updated',
+      webhookSecret: 'mp_subscription_webhook_secret_updated'
+    })
+
+    assert.equal(saved.subscriptionTestCredentials.configured, true)
+    assert.equal(saved.subscriptionTestCredentials.publicKey, 'APP_USR-subscription-public-key-updated')
+    assert.equal(saved.subscriptionTestCredentials.hasAccessToken, true)
+    assert.equal(saved.subscriptionTestCredentials.hasWebhookSecret, true)
+    assert.equal(saved.subscriptionTestCredentials.userId, 'seller_test_user_1')
+    assert.match(saved.subscriptionTestCredentials.accessTokenPreview, /^APP_USR-/)
+    assert.match(saved.subscriptionTestCredentials.webhookSecretPreview, /^mp_subsc/)
+
+    const publicConfig = await getMercadoPagoPaymentConfig({ mode: 'test' })
+    assert.equal(publicConfig.subscriptionTestCredentials.configured, true)
+    assert.equal(publicConfig.subscriptionTestCredentials.hasWebhookSecret, true)
+  })
+})
+
 test('Mercado Pago crea link abierto de suscripcion con preapproval plan', async () => {
   await initializeMasterKey()
 
@@ -1001,12 +1050,14 @@ test('Mercado Pago sincroniza suscripcion y cobro desde evento de preapproval pl
         status: 'incomplete'
       })
       ids.subscriptionId = subscription.id
+      await setAppConfig('mercadopago_webhook_secret_encrypted', encrypt('mp_normal_webhook_secret'))
+      await setAppConfig('mercadopago_subscription_test_webhook_secret_encrypted', encrypt('mp_subscription_webhook_secret'))
 
       const webhookResult = await handleMercadoPagoWebhookEvent({
         type: 'subscription_preapproval_plan',
         action: 'subscription_preapproval_plan.updated',
         data: { id: 'mp_preapproval_plan_sync_1' }
-      }, {}, {})
+      }, signMercadoPagoWebhook('mp_preapproval_plan_sync_1', 'mp_subscription_webhook_secret'), {})
 
       assert.equal(webhookResult.subscriptionId, subscription.id)
       assert.equal(webhookResult.status, 'active')

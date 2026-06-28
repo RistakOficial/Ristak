@@ -47,6 +47,8 @@ export interface MercadoPagoPaymentConfig {
     publicKey?: string
     hasAccessToken?: boolean
     accessTokenPreview?: string
+    hasWebhookSecret?: boolean
+    webhookSecretPreview?: string
     userId?: string
     accountLabel?: string
   }
@@ -232,7 +234,7 @@ export const mercadoPagoPaymentsService = {
     return parseResponse<MercadoPagoPaymentConfig>(response)
   },
 
-  async saveSubscriptionTestCredentials(payload: { publicKey: string; accessToken: string }): Promise<MercadoPagoPaymentConfig> {
+  async saveSubscriptionTestCredentials(payload: { publicKey: string; accessToken: string; webhookSecret: string }): Promise<MercadoPagoPaymentConfig> {
     const response = await fetch(apiUrl('/api/mercadopago/config/subscription-test-credentials'), {
       method: 'POST',
       credentials: 'include',

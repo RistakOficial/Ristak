@@ -38,7 +38,8 @@ const CONFIG_KEYS = {
   managedByPortal: 'mercadopago_managed_by_portal',
   modeConnections: 'mercadopago_mode_connections',
   subscriptionTestPublicKey: 'mercadopago_subscription_test_public_key',
-  subscriptionTestAccessToken: 'mercadopago_subscription_test_access_token_encrypted'
+  subscriptionTestAccessToken: 'mercadopago_subscription_test_access_token_encrypted',
+  subscriptionTestWebhookSecret: 'mercadopago_subscription_test_webhook_secret_encrypted'
 }
 
 const DEFAULT_CURRENCY = 'MXN'
@@ -418,6 +419,7 @@ function mapConfig(raw = {}, { includeSecrets = false, mode: modeOverride = '' }
   const configured = Boolean(enabled && accessToken && cleanString(selectedConnection?.userId || (legacyMatchesMode ? raw[CONFIG_KEYS.userId] : '')))
   const subscriptionTestAccessToken = raw[CONFIG_KEYS.subscriptionTestAccessToken] ? decryptSecret(raw[CONFIG_KEYS.subscriptionTestAccessToken]) : ''
   const subscriptionTestPublicKey = cleanString(raw[CONFIG_KEYS.subscriptionTestPublicKey])
+  const subscriptionTestWebhookSecret = raw[CONFIG_KEYS.subscriptionTestWebhookSecret] ? decryptSecret(raw[CONFIG_KEYS.subscriptionTestWebhookSecret]) : ''
 
   return {
     enabled,
@@ -443,12 +445,14 @@ function mapConfig(raw = {}, { includeSecrets = false, mode: modeOverride = '' }
       live: summarizeMercadoPagoModeConnection(raw, 'live')
     },
     subscriptionTestCredentials: {
-      configured: Boolean(subscriptionTestPublicKey && subscriptionTestAccessToken),
+      configured: Boolean(subscriptionTestPublicKey && subscriptionTestAccessToken && subscriptionTestWebhookSecret),
       publicKey: subscriptionTestPublicKey,
       hasAccessToken: Boolean(subscriptionTestAccessToken),
-      accessTokenPreview: maskSecret(subscriptionTestAccessToken)
+      accessTokenPreview: maskSecret(subscriptionTestAccessToken),
+      hasWebhookSecret: Boolean(subscriptionTestWebhookSecret),
+      webhookSecretPreview: maskSecret(subscriptionTestWebhookSecret)
     },
-    ...(includeSecrets ? { accessToken, refreshToken, webhookSecret } : {})
+    ...(includeSecrets ? { accessToken, refreshToken, webhookSecret, subscriptionTestWebhookSecret } : {})
   }
 }
 
@@ -530,11 +534,16 @@ export async function getMercadoPagoPaymentConfig({ includeSecrets = false, mode
 export async function saveMercadoPagoSubscriptionTestCredentials(input = {}) {
   const raw = await readRawConfig()
   const previousAccessToken = raw[CONFIG_KEYS.subscriptionTestAccessToken] ? decryptSecret(raw[CONFIG_KEYS.subscriptionTestAccessToken]) : ''
+  const previousWebhookSecret = raw[CONFIG_KEYS.subscriptionTestWebhookSecret] ? decryptSecret(raw[CONFIG_KEYS.subscriptionTestWebhookSecret]) : ''
   const publicKey = cleanString(input.publicKey || input.public_key)
   const submittedAccessToken = cleanString(input.accessToken || input.access_token)
+  const submittedWebhookSecret = cleanString(input.webhookSecret || input.webhook_secret)
   const accessToken = submittedAccessToken && !isMaskedSecret(submittedAccessToken)
     ? submittedAccessToken
     : previousAccessToken
+  const webhookSecret = submittedWebhookSecret && !isMaskedSecret(submittedWebhookSecret)
+    ? submittedWebhookSecret
+    : previousWebhookSecret
 
   if (!publicKey || !publicKey.startsWith('APP_USR-')) {
     const error = new Error('La Public Key de suscripciones test debe ser una credencial APP_USR del vendedor test de Mercado Pago.')
@@ -544,6 +553,12 @@ export async function saveMercadoPagoSubscriptionTestCredentials(input = {}) {
 
   if (!accessToken || !accessToken.startsWith('APP_USR-')) {
     const error = new Error('El Access Token de suscripciones test debe ser una credencial APP_USR del vendedor test de Mercado Pago.')
+    error.status = 400
+    throw error
+  }
+
+  if (!webhookSecret) {
+    const error = new Error('Falta la clave secreta del webhook de la aplicación test de Mercado Pago.')
     error.status = 400
     throw error
   }
@@ -559,6 +574,7 @@ export async function saveMercadoPagoSubscriptionTestCredentials(input = {}) {
 
   await setAppConfig(CONFIG_KEYS.subscriptionTestPublicKey, publicKey)
   await setAppConfig(CONFIG_KEYS.subscriptionTestAccessToken, encryptOptionalSecret(accessToken))
+  await setAppConfig(CONFIG_KEYS.subscriptionTestWebhookSecret, encryptOptionalSecret(webhookSecret))
 
   const config = await getMercadoPagoPaymentConfig({ mode: 'test' })
   return {
@@ -569,6 +585,8 @@ export async function saveMercadoPagoSubscriptionTestCredentials(input = {}) {
       publicKey,
       hasAccessToken: true,
       accessTokenPreview: maskSecret(accessToken),
+      hasWebhookSecret: true,
+      webhookSecretPreview: maskSecret(webhookSecret),
       userId: cleanString(payload?.id),
       accountLabel: cleanString(payload?.nickname || payload?.email || payload?.id)
     }
@@ -578,8 +596,8 @@ export async function saveMercadoPagoSubscriptionTestCredentials(input = {}) {
 export async function deleteMercadoPagoSubscriptionTestCredentials() {
   await db.run(
     `DELETE FROM app_config
-     WHERE config_key IN (?, ?)`,
-    [CONFIG_KEYS.subscriptionTestPublicKey, CONFIG_KEYS.subscriptionTestAccessToken]
+     WHERE config_key IN (?, ?, ?)`,
+    [CONFIG_KEYS.subscriptionTestPublicKey, CONFIG_KEYS.subscriptionTestAccessToken, CONFIG_KEYS.subscriptionTestWebhookSecret]
   )
   return getMercadoPagoPaymentConfig({ mode: 'test' })
 }
@@ -3247,16 +3265,25 @@ export async function handleMercadoPagoWebhookEvent(body = {}, headers = {}, que
   const dataId = getWebhookDataId(body, query)
   const requestId = cleanString(headers['x-request-id'])
   const signatureHeader = cleanString(headers['x-signature'])
+  const type = cleanString(body.type || body.topic || query.topic || query.type)
+  const action = cleanString(body.action)
+  const isSubscriptionWebhook = type.includes('subscription') || action.includes('preapproval') || action.includes('authorized_payment')
+  const acceptedSecrets = [
+    cleanString(config.webhookSecret),
+    ...(isSubscriptionWebhook ? [cleanString(config.subscriptionTestWebhookSecret)] : [])
+  ].filter(Boolean)
 
   // (PAY2-005) Rollout seguro: si YA hay secret configurado, exigir firma válida (401 si falla);
   // si todavía no hay secret provisionado, aceptar pero dejar constancia para no romper la integración viva.
-  if (config.webhookSecret) {
-    if (!validateWebhookSignature({
+  if (acceptedSecrets.length) {
+    const signatureIsValid = acceptedSecrets.some((secret) => validateWebhookSignature({
       signatureHeader,
       requestId,
       dataId,
-      secret: config.webhookSecret
-    })) {
+      secret
+    }))
+
+    if (!signatureIsValid) {
       const error = new Error('No se pudo verificar la firma del webhook de Mercado Pago.')
       error.status = 401
       throw error
@@ -3264,9 +3291,6 @@ export async function handleMercadoPagoWebhookEvent(body = {}, headers = {}, que
   } else {
     logger.warn('Webhook de Mercado Pago aceptado sin verificar firma porque no hay secret configurado. Configura el secret para exigir firma.')
   }
-
-  const type = cleanString(body.type || body.topic || query.topic || query.type)
-  const action = cleanString(body.action)
 
   if (dataId && (type.includes('subscription_preapproval_plan') || action.includes('preapproval_plan'))) {
     const updated = await syncMercadoPagoSubscriptionPlan(dataId)
