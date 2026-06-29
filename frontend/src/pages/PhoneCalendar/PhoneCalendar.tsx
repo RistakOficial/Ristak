@@ -52,6 +52,9 @@ const TIMELINE_TOTAL_MINUTES = (TIMELINE_END_HOUR - TIMELINE_START_HOUR + 1) * 6
 const YEAR_GRID_SIZE = 12
 const TIMELINE_LONG_PRESS_DELAY_MS = 650
 const TIMELINE_PENDING_MOVE_CANCEL_PX = 12
+const MONTH_SWIPE_MIN_PX = 56
+const MONTH_SWIPE_COMMIT_RATIO = 0.18
+const MONTH_SWIPE_MAX_OFFSET_RATIO = 0.92
 
 const STATUS_LABELS: Record<CalendarEvent['appointmentStatus'], string> = {
   confirmed: 'Confirmada',
@@ -67,6 +70,19 @@ type SheetView = 'calendar' | 'contactPicker' | null
 type CalendarView = 'month' | 'week' | 'day' | 'year' | 'years'
 type SwitchableCalendarView = Exclude<CalendarView, 'years'>
 type TimelineSelectionPoint = { date: Date; minutes: number }
+type MonthSwipePhase = 'idle' | 'dragging' | 'settling' | 'rebounding'
+type MonthSwipeDirection = -1 | 0 | 1
+type MonthSwipeGesture = {
+  x: number
+  y: number
+  width: number
+  lock: 'horizontal' | 'vertical' | null
+}
+type MonthSwipeState = {
+  phase: MonthSwipePhase
+  offset: number
+  direction: MonthSwipeDirection
+}
 type TimelineSelection = {
   start: TimelineSelectionPoint
   end: TimelineSelectionPoint
@@ -204,6 +220,20 @@ function buildMonthRange(date: Date) {
   return { start, end }
 }
 
+function buildMonthCellsForDate(date: Date, eventsByDate: Record<string, CalendarEvent[]>): DayCell[] {
+  const { start, end } = buildMonthRange(date)
+  const dayCount = Math.floor((end.getTime() - start.getTime()) / (24 * 60 * 60 * 1000)) + 1
+  return Array.from({ length: dayCount }).map((_, index) => {
+    const cellDate = new Date(start)
+    cellDate.setDate(start.getDate() + index)
+    return {
+      date: cellDate,
+      isCurrentMonth: cellDate.getMonth() === date.getMonth(),
+      events: eventsByDate[formatDateKey(cellDate)] || []
+    }
+  })
+}
+
 function getDaysInMonth(year: number, month: number) {
   return new Date(year, month + 1, 0).getDate()
 }
@@ -321,7 +351,15 @@ export const PhoneCalendar: React.FC<PhoneCalendarProps> = ({ embedded = false, 
     title: ''
   }))
   const [timelineSelection, setTimelineSelection] = useState<TimelineSelection | null>(null)
+  const [monthSwipe, setMonthSwipe] = useState<MonthSwipeState>({
+    phase: 'idle',
+    offset: 0,
+    direction: 0
+  })
   const timelineScrollRef = useRef<HTMLElement | null>(null)
+  const monthSwipeViewportRef = useRef<HTMLDivElement | null>(null)
+  const monthSwipeGestureRef = useRef<MonthSwipeGesture | null>(null)
+  const monthSwipeSettleDirectionRef = useRef<MonthSwipeDirection>(0)
   const handledOpenAppointmentRef = useRef<string | null>(null)
   const calendarTouchStartRef = useRef<{ x: number; y: number } | null>(null)
   // Para distinguir un swipe horizontal (cambiar de día) del arrastre vertical que selecciona hora
@@ -819,16 +857,14 @@ export const PhoneCalendar: React.FC<PhoneCalendarProps> = ({ embedded = false, 
     })
   }, [eventsByDate, selectedDate])
 
-  const monthCells = useMemo((): DayCell[] => {
-    const { start, end } = buildMonthRange(currentDate)
-    const dayCount = Math.floor((end.getTime() - start.getTime()) / (24 * 60 * 60 * 1000)) + 1
-    return Array.from({ length: dayCount }).map((_, index) => {
-      const date = new Date(start)
-      date.setDate(start.getDate() + index)
+  const monthPages = useMemo(() => {
+    return ([-1, 0, 1] as const).map((offset) => {
+      const pageDate = new Date(currentDate.getFullYear(), currentDate.getMonth() + offset, 1)
       return {
-        date,
-        isCurrentMonth: date.getMonth() === currentDate.getMonth(),
-        events: eventsByDate[formatDateKey(date)] || []
+        key: `${pageDate.getFullYear()}-${pageDate.getMonth()}`,
+        offset,
+        date: pageDate,
+        cells: buildMonthCellsForDate(pageDate, eventsByDate)
       }
     })
   }, [currentDate, eventsByDate])
@@ -1145,7 +1181,7 @@ export const PhoneCalendar: React.FC<PhoneCalendarProps> = ({ embedded = false, 
     calendarSheetDismiss.requestClose()
   }
 
-  const movePeriod = (direction: -1 | 1) => {
+  const movePeriod = useCallback((direction: -1 | 1) => {
     const next = new Date(calendarView === 'month' ? currentDate : selectedDate)
 
     if (calendarView === 'month') {
@@ -1185,7 +1221,7 @@ export const PhoneCalendar: React.FC<PhoneCalendarProps> = ({ embedded = false, 
     next.setDate(next.getDate() + (calendarView === 'week' ? direction * 7 : direction))
     setSelectedDate(next)
     setCurrentDate(next)
-  }
+  }, [calendarView, currentDate, selectedDate])
 
   const handleToday = () => {
     const today = toDateInTimeZone(new Date().toISOString(), timezone) ?? new Date()
@@ -1259,23 +1295,139 @@ export const PhoneCalendar: React.FC<PhoneCalendarProps> = ({ embedded = false, 
     setCalendarView('year')
   }
 
+  const monthSwipeTrackStyle = useMemo<React.CSSProperties>(() => {
+    if (monthSwipe.phase === 'settling') {
+      return {
+        transform: `translate3d(${monthSwipe.direction === 1 ? '-200%' : '0%'}, 0, 0)`
+      }
+    }
+
+    return {
+      transform: `translate3d(calc(-100% + ${monthSwipe.offset}px), 0, 0)`
+    }
+  }, [monthSwipe.direction, monthSwipe.offset, monthSwipe.phase])
+
+  const monthSwipeTrackClassName = [
+    styles.monthSwipeTrack,
+    monthSwipe.phase === 'dragging' ? styles.monthSwipeTrackDragging : '',
+    monthSwipe.phase === 'settling' || monthSwipe.phase === 'rebounding' ? styles.monthSwipeTrackAnimating : ''
+  ].filter(Boolean).join(' ')
+
+  const finishMonthSwipeTransition = useCallback((event: React.TransitionEvent<HTMLDivElement>) => {
+    if (event.target !== event.currentTarget || event.propertyName !== 'transform') return
+
+    const settleDirection = monthSwipeSettleDirectionRef.current
+    monthSwipeSettleDirectionRef.current = 0
+    if (monthSwipe.phase === 'settling' && settleDirection !== 0) {
+      movePeriod(settleDirection)
+    }
+
+    setMonthSwipe({
+      phase: 'idle',
+      offset: 0,
+      direction: 0
+    })
+  }, [monthSwipe.phase, movePeriod])
+
   const handleCalendarTouchStart = (event: React.TouchEvent<HTMLElement>) => {
     const touch = event.touches[0]
     if (!touch) return
     calendarTouchStartRef.current = { x: touch.clientX, y: touch.clientY }
+
+    if (calendarView !== 'month' || event.touches.length !== 1 || monthSwipe.phase === 'settling') {
+      monthSwipeGestureRef.current = null
+      return
+    }
+
+    const width = monthSwipeViewportRef.current?.clientWidth || window.innerWidth || 1
+    monthSwipeGestureRef.current = {
+      x: touch.clientX,
+      y: touch.clientY,
+      width,
+      lock: null
+    }
+  }
+
+  const handleCalendarTouchMove = (event: React.TouchEvent<HTMLElement>) => {
+    const gesture = monthSwipeGestureRef.current
+    const touch = event.touches[0]
+    if (!gesture || !touch || calendarView !== 'month') return
+
+    const deltaX = touch.clientX - gesture.x
+    const deltaY = touch.clientY - gesture.y
+    const absX = Math.abs(deltaX)
+    const absY = Math.abs(deltaY)
+
+    if (!gesture.lock) {
+      if (absX < 8 && absY < 8) return
+      gesture.lock = absX > absY * 1.18 ? 'horizontal' : 'vertical'
+    }
+
+    if (gesture.lock !== 'horizontal') return
+
+    event.preventDefault()
+    const maxOffset = Math.max(1, gesture.width) * MONTH_SWIPE_MAX_OFFSET_RATIO
+    const offset = Math.sign(deltaX) * Math.min(absX, maxOffset)
+    setMonthSwipe({
+      phase: 'dragging',
+      offset,
+      direction: 0
+    })
   }
 
   const handleCalendarTouchEnd = (event: React.TouchEvent<HTMLElement>) => {
     const start = calendarTouchStartRef.current
     const touch = event.changedTouches[0]
+    const monthGesture = monthSwipeGestureRef.current
     calendarTouchStartRef.current = null
+    monthSwipeGestureRef.current = null
     if (!start || !touch) return
 
     const deltaX = touch.clientX - start.x
     const deltaY = touch.clientY - start.y
+    const horizontalMonthIntent =
+      calendarView === 'month' &&
+      monthGesture &&
+      (monthGesture.lock === 'horizontal' || (Math.abs(deltaX) >= 8 && Math.abs(deltaX) > Math.abs(deltaY) * 1.18))
+
+    if (horizontalMonthIntent) {
+      event.preventDefault()
+      const width = Math.max(1, monthGesture.width)
+      const shouldCommit = Math.abs(deltaX) >= Math.max(MONTH_SWIPE_MIN_PX, width * MONTH_SWIPE_COMMIT_RATIO)
+      const direction = deltaX < 0 ? 1 : -1
+
+      if (shouldCommit) {
+        monthSwipeSettleDirectionRef.current = direction
+        setMonthSwipe({
+          phase: 'settling',
+          offset: 0,
+          direction
+        })
+        return
+      }
+
+      setMonthSwipe({
+        phase: 'rebounding',
+        offset: 0,
+        direction: 0
+      })
+      return
+    }
+
     if (Math.abs(deltaX) < 56 || Math.abs(deltaX) < Math.abs(deltaY) * 1.35) return
 
     movePeriod(deltaX < 0 ? 1 : -1)
+  }
+
+  const handleCalendarTouchCancel = () => {
+    calendarTouchStartRef.current = null
+    monthSwipeGestureRef.current = null
+    monthSwipeSettleDirectionRef.current = 0
+    setMonthSwipe({
+      phase: 'rebounding',
+      offset: 0,
+      direction: 0
+    })
   }
 
   const handleCreateAppointment = async (payload: {
@@ -1474,7 +1626,14 @@ export const PhoneCalendar: React.FC<PhoneCalendarProps> = ({ embedded = false, 
       data-calendar-embedded={embedded ? 'true' : undefined}
       aria-label="Calendario móvil de Ristak"
     >
-      <PhonePageTransition active="calendar" className={styles.phoneFrame}>
+      <PhonePageTransition
+        active="calendar"
+        className={styles.phoneFrame}
+        onTouchStart={handleCalendarTouchStart}
+        onTouchMove={handleCalendarTouchMove}
+        onTouchEnd={handleCalendarTouchEnd}
+        onTouchCancel={handleCalendarTouchCancel}
+      >
         <header className={styles.header}>
           <div className={styles.headerToolbar}>
             {calendarView === 'years' ? (
@@ -1535,58 +1694,70 @@ export const PhoneCalendar: React.FC<PhoneCalendarProps> = ({ embedded = false, 
 	          <section
 	            className={styles.calendarSurface}
 	            aria-label={selectedViewLabel}
-	            onTouchStart={handleCalendarTouchStart}
-	            onTouchEnd={handleCalendarTouchEnd}
 	          >
 	            {calendarView === 'month' && (
 	              <div className={styles.monthGridPanel}>
 	                <div className={styles.weekdayRow}>
 	                  {DAYS_COMPACT.map((day, index) => <span key={`${day}-${index}`}>{day}</span>)}
 	                </div>
-	                <div className={styles.monthGrid}>
-	                  {monthCells.map((cell) => {
-	                    const isSelected = isSameDay(cell.date, selectedDate)
-	                    const isToday = isSameDay(cell.date, nowInCalendar)
-	                    return (
-		                      <div
-		                        key={formatDateKey(cell.date)}
-		                        className={`${styles.monthDay} ${!cell.isCurrentMonth ? styles.monthDayMuted : ''} ${isSelected ? styles.monthDaySelected : ''} ${isToday ? styles.monthDayToday : ''}`}
-		                      >
-		                        <button
-		                          type="button"
-		                          className={styles.monthDaySelectButton}
-		                          onClick={() => handleSelectDate(cell.date)}
-		                          onDoubleClick={() => openCreateAppointmentForDate(cell.date)}
-		                          aria-label={`Ver citas del ${cell.date.getDate()} de ${MONTH_NAMES[cell.date.getMonth()]}`}
-		                        >
-		                          <span>{cell.date.getDate()}</span>
-		                          {cell.events[0] && (
-		                            <i className={styles.monthMarkers}>
-		                              <b style={{ backgroundColor: getEventColor(cell.events[0]) }} />
-		                            </i>
-		                          )}
-		                        </button>
-		                        {cell.events.length > 0 && (
-		                          <span className={styles.monthEventList}>
-		                            {cell.events.slice(0, 2).map((event) => (
-		                              <button
-		                                type="button"
-		                                key={event.id}
-		                                className={styles.monthEventPill}
-		                                style={{ '--event-color': getEventColor(event) } as React.CSSProperties}
-		                                onClick={(clickEvent) => handleOpenMonthEvent(clickEvent, event, cell.date)}
-		                                aria-label={`Ver cita ${event.title || 'Sin título'} a las ${formatEventTime(event.startTime)}`}
+	                <div className={styles.monthSwipeViewport} ref={monthSwipeViewportRef}>
+	                  <div
+	                    className={monthSwipeTrackClassName}
+	                    style={monthSwipeTrackStyle}
+	                    onTransitionEnd={finishMonthSwipeTransition}
+	                  >
+	                    {monthPages.map((page) => (
+	                      <div className={styles.monthPage} key={page.key} aria-hidden={page.offset !== 0}>
+	                        <div className={styles.monthGrid}>
+	                          {page.cells.map((cell) => {
+	                            const isSelected = isSameDay(cell.date, selectedDate)
+	                            const isToday = isSameDay(cell.date, nowInCalendar)
+	                            return (
+		                              <div
+		                                key={formatDateKey(cell.date)}
+		                                className={`${styles.monthDay} ${!cell.isCurrentMonth ? styles.monthDayMuted : ''} ${isSelected ? styles.monthDaySelected : ''} ${isToday ? styles.monthDayToday : ''}`}
 		                              >
-		                                <b aria-hidden="true" />
-		                                <strong>{event.title || 'Sin título'}</strong>
-		                                <em>{formatEventTime(event.startTime)}</em>
-		                              </button>
-		                            ))}
-		                          </span>
-		                        )}
-		                      </div>
-	                    )
-	                  })}
+		                                <button
+		                                  type="button"
+		                                  className={styles.monthDaySelectButton}
+		                                  tabIndex={page.offset === 0 ? undefined : -1}
+		                                  onClick={() => handleSelectDate(cell.date)}
+		                                  onDoubleClick={() => openCreateAppointmentForDate(cell.date)}
+		                                  aria-label={`Ver citas del ${cell.date.getDate()} de ${MONTH_NAMES[cell.date.getMonth()]}`}
+		                                >
+		                                  <span>{cell.date.getDate()}</span>
+		                                  {cell.events[0] && (
+		                                    <i className={styles.monthMarkers}>
+		                                      <b style={{ backgroundColor: getEventColor(cell.events[0]) }} />
+		                                    </i>
+		                                  )}
+		                                </button>
+		                                {cell.events.length > 0 && (
+		                                  <span className={styles.monthEventList}>
+		                                    {cell.events.slice(0, 2).map((event) => (
+		                                      <button
+		                                        type="button"
+		                                        key={event.id}
+		                                        className={styles.monthEventPill}
+		                                        tabIndex={page.offset === 0 ? undefined : -1}
+		                                        style={{ '--event-color': getEventColor(event) } as React.CSSProperties}
+		                                        onClick={(clickEvent) => handleOpenMonthEvent(clickEvent, event, cell.date)}
+		                                        aria-label={`Ver cita ${event.title || 'Sin título'} a las ${formatEventTime(event.startTime)}`}
+		                                      >
+		                                        <b aria-hidden="true" />
+		                                        <strong>{event.title || 'Sin título'}</strong>
+		                                        <em>{formatEventTime(event.startTime)}</em>
+		                                      </button>
+		                                    ))}
+		                                  </span>
+		                                )}
+		                              </div>
+	                            )
+	                          })}
+	                        </div>
+	                      </div>
+	                    ))}
+	                  </div>
 	                </div>
 	              </div>
 	            )}
@@ -1665,8 +1836,6 @@ export const PhoneCalendar: React.FC<PhoneCalendarProps> = ({ embedded = false, 
 	            data-calendar-timeline-view={calendarView}
 	            data-phone-scrollable="true"
 	            aria-label={calendarView === 'week' ? 'Horario semanal' : 'Horario del día'}
-	            onTouchStart={handleCalendarTouchStart}
-	            onTouchEnd={handleCalendarTouchEnd}
 	          >
 	            <div className={styles.timelineWrap}>
 	              {calendarView === 'week' ? (

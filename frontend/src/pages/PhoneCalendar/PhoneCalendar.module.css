@@ -394,6 +394,31 @@
   padding: 0 16px 5px;
 }
 
+.monthSwipeViewport {
+  min-width: 0;
+  overflow: hidden;
+  touch-action: pan-y;
+}
+
+.monthSwipeTrack {
+  display: grid;
+  grid-template-columns: repeat(3, 100%);
+  width: 100%;
+  will-change: transform;
+}
+
+.monthSwipeTrackDragging {
+  transition: none;
+}
+
+.monthSwipeTrackAnimating {
+  transition: transform 280ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.monthPage {
+  min-width: 0;
+}
+
 .weekdayRow,
 .monthGrid {
   display: grid;
@@ -1872,6 +1897,18 @@
     padding: 0 24px 10px;
   }
 
+  .monthSwipeViewport,
+  .monthSwipeTrack,
+  .monthPage {
+    min-height: 0;
+    height: 100%;
+  }
+
+  .monthPage {
+    display: grid;
+    grid-template-rows: minmax(0, 1fr);
+  }
+
   .weekdayRow,
   .monthGrid {
     column-gap: 0;
@@ -2194,7 +2231,8 @@
 
 @media (prefers-reduced-motion: reduce) {
   .sheetBackdrop,
-  .sheet {
+  .sheet,
+  .monthSwipeTrackAnimating {
     animation-duration: 1ms;
     transition-duration: 1ms !important;
   }
