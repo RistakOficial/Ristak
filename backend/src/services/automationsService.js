@@ -1,8 +1,11 @@
 import { db } from '../config/database.js'
 import { normalizeFlow, validateFlowForPublish, START_NODE_TYPE } from './automationFlowValidation.js'
 import { enrollContactManually, testWebhookAction } from './automationEngine.js'
+import { findContactByPhoneCandidates, recordContactPhoneNumber } from './contactIdentityService.js'
 import { getWhatsAppApiTemplates } from './whatsappApiService.js'
 import { syncLocalMessageTemplateSnapshots } from './messageTemplatesService.js'
+import { normalizePhoneForAccount } from '../utils/accountLocale.js'
+import { serializeContactCustomFieldsForDb } from '../utils/contactCustomFields.js'
 import {
   AUTOMATION_REVIEW_OK,
   getAutomationReviewStatus,
@@ -26,10 +29,20 @@ function badRequest(message) {
   return error
 }
 
+function conflict(message) {
+  const error = new Error(message)
+  error.status = 409
+  return error
+}
+
 function notFound(message) {
   const error = new Error(message)
   error.status = 404
   return error
+}
+
+function cleanString(value) {
+  return String(value || '').trim()
 }
 
 function parseFlow(rawFlow) {
@@ -559,6 +572,16 @@ function contactDisplayName(row) {
   return String(row?.full_name || row?.first_name || row?.phone || row?.email || row?.id || 'Contacto')
 }
 
+function splitContactName(fullName) {
+  const parts = cleanString(fullName).split(/\s+/).filter(Boolean)
+  if (parts.length === 0) return { firstName: '', lastName: '' }
+  if (parts.length === 1) return { firstName: parts[0], lastName: '' }
+  return {
+    firstName: parts[0],
+    lastName: parts.slice(1).join(' ')
+  }
+}
+
 async function getContactForAutomation(contactId) {
   const id = typeof contactId === 'string' ? contactId.trim() : ''
   if (!id) throw badRequest('Selecciona un contacto')
@@ -568,6 +591,73 @@ async function getContactForAutomation(contactId) {
   )
   if (!contact) throw notFound('Contacto no encontrado')
   return contact
+}
+
+async function createAutomationTestContact(input = {}) {
+  const fullNameInput = cleanString(input.fullName || input.full_name || input.name)
+  const firstNameInput = cleanString(input.firstName || input.first_name)
+  const lastNameInput = cleanString(input.lastName || input.last_name)
+  const fullName = fullNameInput || [firstNameInput, lastNameInput].filter(Boolean).join(' ') || 'Contacto de prueba'
+  const normalizedEmail = cleanString(input.email).toLowerCase() || null
+  const normalizedPhone = input.phone ? await normalizePhoneForAccount(input.phone) : null
+
+  if (!normalizedEmail && !normalizedPhone) {
+    throw badRequest('Agrega al menos correo o teléfono para el contacto de prueba')
+  }
+
+  if (normalizedEmail) {
+    const existingByEmail = await db.get(
+      'SELECT id FROM contacts WHERE LOWER(email) = ? LIMIT 1',
+      [normalizedEmail]
+    )
+    if (existingByEmail) {
+      throw conflict('Ya existe un contacto con ese correo. Búscalo y úsalo como contacto existente.')
+    }
+  }
+
+  if (normalizedPhone) {
+    const existingByPhone = await findContactByPhoneCandidates(normalizedPhone)
+    if (existingByPhone) {
+      throw conflict('Ya existe un contacto con ese teléfono. Búscalo y úsalo como contacto existente.')
+    }
+  }
+
+  const id = makeId('contact_test')
+  const nameParts = splitContactName(fullName)
+
+  await db.run(
+    `INSERT INTO contacts (
+      id, phone, email, full_name, first_name, last_name, source, custom_fields, created_at, updated_at
+    ) VALUES (?, ?, ?, ?, ?, ?, 'automation_test', ${flowPlaceholder}, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+    [
+      id,
+      normalizedPhone,
+      normalizedEmail,
+      fullName,
+      nameParts.firstName || null,
+      nameParts.lastName || null,
+      serializeContactCustomFieldsForDb([])
+    ]
+  )
+
+  if (normalizedPhone) {
+    await recordContactPhoneNumber({
+      contactId: id,
+      phone: normalizedPhone,
+      label: 'Principal',
+      isPrimary: true,
+      source: 'automation_test',
+      mergeConflicts: false
+    }).catch(() => undefined)
+  }
+
+  return getContactForAutomation(id)
+}
+
+async function resolveTestAutomationContact(input = {}) {
+  if (input.contactId) return getContactForAutomation(input.contactId)
+  if (isPlainObject(input.contact)) return createAutomationTestContact(input.contact)
+  throw badRequest('Selecciona un contacto o agrega un contacto de prueba')
 }
 
 async function getPublishedAutomationForEnrollment(automationId) {
@@ -1175,7 +1265,7 @@ export async function enrollContactInAutomation(automationId, input = {}) {
 }
 
 export async function testAutomationRun(automationId, input = {}) {
-  const contact = await getContactForAutomation(input.contactId)
+  const contact = await resolveTestAutomationContact(input)
   const automation = await getPublishedAutomationForEnrollment(automationId)
   const enrollment = await enrollContactManually({
     automationId: automation.id,

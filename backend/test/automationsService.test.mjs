@@ -208,6 +208,54 @@ test('testAutomationRun inscribe un contacto real como prueba y devuelve bitáco
   }
 })
 
+test('testAutomationRun crea contacto de prueba sin disparar trigger global de contacto creado', async () => {
+  const suffix = Date.now()
+  const tagId = `tag_test_run_draft_${suffix}`
+  let automation
+  let contactId
+
+  await db.run('INSERT INTO contact_tags (id, name) VALUES (?, ?)', [tagId, 'Prueba directa'])
+
+  try {
+    automation = await createAutomation({
+      name: `Prueba contacto inline ${suffix}`,
+      flow: makeTagActionFlow(tagId)
+    })
+    await updateAutomation(automation.id, { status: 'published' })
+
+    const result = await testAutomationRun(automation.id, {
+      contact: {
+        name: 'Contacto Inline',
+        email: `inline-${suffix}@example.com`,
+        phone: `+521556${suffix}`
+      }
+    })
+    contactId = result.contactId
+
+    const contact = await db.get('SELECT source, tags FROM contacts WHERE id = ?', [contactId])
+    const tags = JSON.parse(contact.tags || '[]')
+    const logDetails = (result.enrollment.log || []).map((entry) => entry.detail).filter(Boolean)
+
+    assert.equal(result.mode, 'test')
+    assert.equal(result.automationId, automation.id)
+    assert.equal(result.contactName, 'Contacto Inline')
+    assert.equal(contact.source, 'automation_test')
+    assert.ok(tags.includes(tagId))
+    assert.ok(logDetails.includes('Prueba iniciada desde Automatizaciones'))
+    assert.ok(!logDetails.some((detail) => /Disparador: se creó el contacto/.test(detail)))
+  } finally {
+    if (automation?.id) {
+      await db.run('DELETE FROM automation_enrollments WHERE automation_id = ?', [automation.id]).catch(() => undefined)
+      await db.run('DELETE FROM automations WHERE id = ?', [automation.id]).catch(() => undefined)
+    }
+    if (contactId) {
+      await db.run('DELETE FROM contact_phone_numbers WHERE contact_id = ?', [contactId]).catch(() => undefined)
+      await db.run('DELETE FROM contacts WHERE id = ?', [contactId]).catch(() => undefined)
+    }
+    await db.run('DELETE FROM contact_tags WHERE id = ?', [tagId]).catch(() => undefined)
+  }
+})
+
 test('updateAutomation bloquea publicación cuando una referencia ya no existe', async () => {
   const suffix = Date.now()
   const missingTagId = `tag_missing_review_${suffix}`

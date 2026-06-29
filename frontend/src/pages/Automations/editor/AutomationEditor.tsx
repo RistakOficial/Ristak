@@ -76,6 +76,7 @@ import {
 import { AutomationLibrary } from '../AutomationLibrary'
 import { FlowSettingsPanel } from './FlowSettingsPanel'
 import { EnrollmentRecordsModal, type RecordsTab } from './EnrollmentRecordsModal'
+import { AutomationTestRunModal } from './AutomationTestRunModal'
 import { createEditorState, editorReducer } from './editorState'
 import { validateAutomationFlow } from './automationValidation'
 import { RichEmailEditorModal } from './config/RichEmailEditorModal'
@@ -258,6 +259,7 @@ export const AutomationEditor: React.FC = () => {
   const [flowSettings, setFlowSettings] = useState<FlowSettings>(defaultFlowSettings())
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [recordsTab, setRecordsTab] = useState<RecordsTab | null>(null)
+  const [testRunOpen, setTestRunOpen] = useState(false)
   const [nodeStats, setNodeStats] = useState<Record<string, number>>({})
   const [fitSignal, setFitSignal] = useState(0)
   const flowSettingsRef = useRef(flowSettings)
@@ -1648,6 +1650,26 @@ export const AutomationEditor: React.FC = () => {
       ? 'Reanudar'
       : 'Publicar'
 
+  const openTestRun = () => {
+    if (status !== 'published') {
+      showToast('warning', 'Publica la automatización antes de probarla')
+      return
+    }
+    if (hasDraftChanges) {
+      showToast(
+        'warning',
+        'Publica los cambios antes de probar',
+        'La prueba usa la versión publicada para no ejecutar una versión distinta a la que ves.'
+      )
+      return
+    }
+    if (requiresReview) {
+      showToast('warning', 'Corrige la automatización antes de probarla', reviewSummary)
+      return
+    }
+    setTestRunOpen(true)
+  }
+
   // Flecha fantasma mientras el selector está abierto tras soltar el conector
   const pendingEdge: PendingEdge | null =
     picker && picker.source && picker.placeAtWorldPoint
@@ -1729,6 +1751,15 @@ export const AutomationEditor: React.FC = () => {
               Registros de ejecución
             </button>
           </div>
+          <Button
+            variant="secondary"
+            size="sm"
+            leftIcon={<Play size={13} />}
+            disabled={statusBusy || saveState === 'saving'}
+            onClick={openTestRun}
+          >
+            Probar
+          </Button>
         </div>
 
         <div className={styles.toolbarSpacer} />
@@ -1917,6 +1948,23 @@ export const AutomationEditor: React.FC = () => {
         open={recordsTab !== null}
         initialTab={recordsTab || 'enrollments'}
         onClose={() => setRecordsTab(null)}
+      />
+
+      <AutomationTestRunModal
+        automationId={automation.id}
+        automationName={automation.name}
+        open={testRunOpen}
+        onClose={() => setTestRunOpen(false)}
+        onTested={() => {
+          void automationsService
+            .getEnrollmentStats(automation.id)
+            .then((stats) => setNodeStats(stats.byNode || {}))
+            .catch(() => undefined)
+        }}
+        onOpenRecords={() => {
+          setTestRunOpen(false)
+          setRecordsTab('executions')
+        }}
       />
 
       {/* ----------------------- Configuración del flujo --------------------- */}

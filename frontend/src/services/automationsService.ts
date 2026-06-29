@@ -200,6 +200,12 @@ export interface AutomationTestRunResult {
   enrollment: ContactAutomationActivityItem
 }
 
+export interface AutomationTestContactInput {
+  name?: string
+  email?: string
+  phone?: string
+}
+
 export interface EnrollmentStats {
   active: number
   total: number
@@ -386,7 +392,10 @@ export const automationsService = {
     return apiClient.post<ContactAutomationEnrollmentResult>(`/automations/${automationId}/enroll-contact`, input)
   },
 
-  async testAutomation(automationId: string, input: { contactId: string }): Promise<AutomationTestRunResult> {
+  async testAutomation(
+    automationId: string,
+    input: { contactId?: string; contact?: AutomationTestContactInput }
+  ): Promise<AutomationTestRunResult> {
     return apiClient.post<AutomationTestRunResult>(`/automations/${automationId}/test-run`, input)
   },
 
