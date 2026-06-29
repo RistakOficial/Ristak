@@ -1291,6 +1291,15 @@ body.dark .summaryBadge,
   border-color: var(--color-primary);
 }
 
+.optionButton:disabled {
+  cursor: not-allowed;
+  opacity: 0.58;
+}
+
+.optionButton:disabled:hover {
+  border-color: var(--color-border);
+}
+
 .optionButtonActive {
   border-color: var(--color-primary);
   background: rgba(var(--color-primary-rgb), 0.12);

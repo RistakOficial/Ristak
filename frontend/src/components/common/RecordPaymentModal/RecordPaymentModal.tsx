@@ -118,6 +118,7 @@ type SendMethod = 'whatsapp' | 'sms' | 'email' | 'email_whatsapp' | 'email_sms' 
 type InvoiceSendMethod = 'email' | 'sms' | 'both'
 type MercadoPagoInstallmentChoice = 'none' | '2' | '3' | '6' | '9' | '12' | '18' | '24'
 type ConektaInstallmentChoice = 'none' | '3' | '6' | '9' | '12' | '18' | '24'
+type InstallmentChargeMode = 'single' | 'installments'
 type PaymentSegmentedOption = { value: string; label: string }
 type RecordPaymentStep = 'form' | 'options' | 'processing' | 'link_ready'
 
@@ -648,6 +649,7 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
   const [singlePaymentOptionsStage, setSinglePaymentOptionsStage] = useState<SinglePaymentOptionsStage>('method')
   const [paymentOption, setPaymentOption] = useState<PaymentOption>('send')
   const [sendMethod, setSendMethod] = useState<SendMethod>(DEFAULT_SEND_METHOD)
+  const [installmentChargeMode, setInstallmentChargeMode] = useState<InstallmentChargeMode>('single')
   const [mercadoPagoInstallmentChoice, setMercadoPagoInstallmentChoice] = useState<MercadoPagoInstallmentChoice>('none')
   const [conektaInstallmentChoice, setConektaInstallmentChoice] = useState<ConektaInstallmentChoice>('none')
   const [manualPaymentData, setManualPaymentData] = useState<ManualPaymentData>(defaultManualPaymentData)
@@ -897,6 +899,7 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
 
   const mercadoPagoInstallmentLimit = getMercadoPagoInstallmentLimit(mercadoPagoInstallmentChoice)
   const mercadoPagoInstallmentEnabled = mercadoPagoInstallmentLimit > 1
+  const mercadoPagoMsiEnabled = installmentChargeMode === 'installments' && mercadoPagoInstallmentEnabled
   const mercadoPagoInstallmentPaymentLabel = mercadoPagoInstallmentEnabled
     ? `Hasta ${mercadoPagoInstallmentLimit} meses`
     : 'Pago de contado'
@@ -907,6 +910,7 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
   const conektaInstallmentsAvailable = conektaInstallmentOptions.length > 0
   const conektaInstallmentLimit = getConektaInstallmentLimit(conektaInstallmentChoice)
   const conektaInstallmentEnabled = conektaInstallmentLimit > 1
+  const conektaMsiEnabled = installmentChargeMode === 'installments' && conektaInstallmentEnabled
   const conektaInstallmentPaymentLabel = conektaInstallmentEnabled
     ? `Hasta ${conektaInstallmentLimit} meses`
     : 'Pago de contado'
@@ -918,14 +922,52 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
     if (conektaInstallmentChoice === 'none') return
     const nextOptions = getConektaInstallmentOptions(invoiceSummary?.amount || 0)
     if (!nextOptions.some((option) => option.value === conektaInstallmentChoice)) {
+      setInstallmentChargeMode('single')
       setConektaInstallmentChoice('none')
     }
   }, [conektaInstallmentChoice, invoiceSummary?.amount])
+
+  const resetInstallmentChargeMode = () => {
+    setInstallmentChargeMode('single')
+    setMercadoPagoInstallmentChoice('none')
+    setConektaInstallmentChoice('none')
+  }
+
+  const openMercadoPagoInstallmentConfiguration = () => {
+    setInstallmentChargeMode('installments')
+    setMercadoPagoInstallmentChoice((current) => current === 'none' ? '3' : current)
+  }
+
+  const openConektaInstallmentConfiguration = () => {
+    const fallback = conektaInstallmentOptions[0]?.value as ConektaInstallmentChoice | undefined
+    if (!fallback) return
+
+    setInstallmentChargeMode('installments')
+    setConektaInstallmentChoice((current) => (
+      current !== 'none' && conektaInstallmentOptions.some((option) => option.value === current)
+        ? current
+        : fallback
+    ))
+  }
+
+  const isSinglePaymentInstallmentContext = activePaymentMode !== 'partial' && (
+    (
+      singlePaymentAction === 'payment_link' &&
+      singlePaymentOptionsStage === 'gateway_config' &&
+      (paymentOption === 'conekta' || paymentOption === 'mercadopago')
+    ) ||
+    (
+      singlePaymentAction === 'saved_card' &&
+      singlePaymentOptionsStage === 'saved_cards' &&
+      paymentOption === 'conekta_saved_card'
+    )
+  )
 
   const goToSavedCardOptions = () => {
     const nextPaymentOption = getDefaultSavedCardOption()
     if (!nextPaymentOption) return
 
+    resetInstallmentChargeMode()
     setSinglePaymentAction('saved_card')
     setPaymentOption(nextPaymentOption)
     setSinglePaymentOptionsStage('saved_cards')
@@ -935,6 +977,7 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
     setSinglePaymentAction('payment_link')
     const nextPaymentOption = defaultPaymentLinkOption || 'manual'
     setPaymentOption(nextPaymentOption)
+    resetInstallmentChargeMode()
 
     if (hasMultiplePaymentLinkGateways) {
       setSinglePaymentOptionsStage('gateway')
@@ -1094,6 +1137,7 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
     setSinglePaymentOptionsStage('method')
     setPaymentOption(getDefaultPaymentOption())
     setSendMethod(resolvedInitialContact ? getDefaultSendMethod(getSendMethodOptions(resolvedInitialContact)) : DEFAULT_SEND_METHOD)
+    setInstallmentChargeMode('single')
     setMercadoPagoInstallmentChoice('none')
     setConektaInstallmentChoice('none')
     setManualPaymentData(defaultManualPaymentData())
@@ -1685,6 +1729,7 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
     setSinglePaymentAction(getDefaultSinglePaymentAction())
     setSinglePaymentOptionsStage('method')
     setPaymentOption(getDefaultPaymentOption())
+    resetInstallmentChargeMode()
     setCreatedPaymentLink(null)
   }
 
@@ -1699,13 +1744,20 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
       return
     }
 
+    if (isSinglePaymentInstallmentContext && installmentChargeMode === 'installments') {
+      resetInstallmentChargeMode()
+      return
+    }
+
     if (singlePaymentOptionsStage === 'gateway_config') {
       setSinglePaymentOptionsStage(hasMultiplePaymentLinkGateways ? 'gateway' : 'method')
+      resetInstallmentChargeMode()
       return
     }
 
     if (singlePaymentOptionsStage !== 'method') {
       setSinglePaymentOptionsStage('method')
+      resetInstallmentChargeMode()
       return
     }
 
@@ -2211,7 +2263,7 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
           source: 'record_payment_modal_conekta_saved_card',
           lineItems: Array.isArray(invoicePayload.items) ? invoicePayload.items : [],
           installments: {
-            enabled: conektaInstallmentEnabled,
+            enabled: conektaMsiEnabled,
             maxInstallments: conektaInstallmentLimit
           }
         })
@@ -2221,7 +2273,7 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
           'success',
           paid ? 'Cobro realizado' : 'Cobro enviado a Conekta',
           paid
-            ? `${getSavedConektaCardLabel(selectedConektaPaymentSource)} quedó cobrada correctamente${conektaInstallmentEnabled ? ` a ${conektaInstallmentLimit} meses sin intereses` : ''}.`
+            ? `${getSavedConektaCardLabel(selectedConektaPaymentSource)} quedó cobrada correctamente${conektaMsiEnabled ? ` a ${conektaInstallmentLimit} meses sin intereses` : ''}.`
             : 'Conekta está terminando de procesar este cobro.'
         )
         onSuccess?.()
@@ -2453,7 +2505,7 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
           source: 'record_payment_modal_conekta',
           lineItems: Array.isArray(invoicePayload.items) ? invoicePayload.items : [],
           installments: {
-            enabled: conektaInstallmentEnabled,
+            enabled: conektaMsiEnabled,
             maxInstallments: conektaInstallmentLimit
           }
         })
@@ -2461,7 +2513,7 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
         showPaymentLinkReady({
           kind: 'single',
           title: 'Enlace Conekta listo',
-          description: conektaInstallmentEnabled
+          description: conektaMsiEnabled
             ? `Comparte este enlace para que el cliente pague con Conekta. Podrá elegir hasta ${conektaInstallmentLimit} meses sin intereses si su tarjeta aplica.`
             : 'Comparte este enlace para que el cliente pague con tarjeta en el tokenizador seguro de Conekta.',
           provider: 'conekta',
@@ -2511,7 +2563,7 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
           source: 'record_payment_modal_mercadopago',
           lineItems: Array.isArray(invoicePayload.items) ? invoicePayload.items : [],
           installments: {
-            enabled: mercadoPagoInstallmentEnabled,
+            enabled: mercadoPagoMsiEnabled,
             maxInstallments: mercadoPagoInstallmentLimit
           }
         })
@@ -2519,7 +2571,7 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
         showPaymentLinkReady({
           kind: 'single',
           title: 'Enlace Mercado Pago listo',
-          description: mercadoPagoInstallmentEnabled
+          description: mercadoPagoMsiEnabled
             ? `Comparte este enlace para que el cliente pague con Mercado Pago. Se mostrarán hasta ${mercadoPagoInstallmentLimit} meses si su tarjeta lo permite.`
             : 'Comparte este enlace para que el cliente pague de contado con Mercado Pago. Ristak actualizará el estado por webhook.',
           provider: 'mercadopago',
@@ -3874,13 +3926,32 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
     const showGatewayConfiguration = singlePaymentOptionsStage === 'gateway_config' && singlePaymentAction === 'payment_link'
     const showManualPaymentFields = singlePaymentOptionsStage === 'method' && singlePaymentAction === 'manual' && paymentOption === 'manual'
     const showPrimaryPaymentOptions = !showManualPaymentFields
+    const showInstallmentModeChoice = isSinglePaymentInstallmentContext && installmentChargeMode === 'single'
     const showMercadoPagoInstallmentControls = showGatewayConfiguration &&
-      paymentOption === 'mercadopago'
+      paymentOption === 'mercadopago' &&
+      installmentChargeMode === 'installments'
     const showConektaInstallmentControls = (
       showGatewayConfiguration && paymentOption === 'conekta'
     ) || (
       showSavedCardPicker && paymentOption === 'conekta_saved_card'
     )
+    const showConektaInstallmentPanel = showConektaInstallmentControls && installmentChargeMode === 'installments'
+    const installmentProviderLabel = paymentOption === 'mercadopago' ? 'Mercado Pago' : 'Conekta'
+    const installmentModeIsSavedCard = paymentOption === 'conekta_saved_card'
+    const installmentModeMsiAvailable = paymentOption === 'mercadopago' || conektaInstallmentsAvailable
+    const installmentModeMsiDescription = paymentOption === 'mercadopago'
+      ? 'Configura cuántos meses podrá elegir el cliente en el link.'
+      : conektaInstallmentsAvailable
+        ? 'Configura los meses disponibles para este cobro.'
+        : `Disponible en Conekta desde ${invoiceSummary ? formatCurrency(300, invoiceSummary.currency) : '$300.00'}.`
+    const handleOpenInstallmentConfiguration = () => {
+      if (paymentOption === 'mercadopago') {
+        openMercadoPagoInstallmentConfiguration()
+        return
+      }
+
+      openConektaInstallmentConfiguration()
+    }
     const savedCardActionDescription = savedCardGatewayLabels.length > 1
       ? `Elige la tarjeta guardada en ${savedCardGatewayLabels.join(' o ')}.`
       : savedCardGatewayLabels.length === 1
@@ -3924,6 +3995,48 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
             Configura la URL en Ajustes &gt; Pagos para mostrarla aquí.
           </p>
         )}
+      </div>
+    )
+    const renderInstallmentModeChoice = () => (
+      <div className={styles.paymentOptions}>
+        <button
+          type="button"
+          className={`${styles.optionButton} ${installmentChargeMode === 'single' ? styles.optionButtonActive : ''}`}
+          onClick={resetInstallmentChargeMode}
+        >
+          <div className={styles.optionInfo}>
+            <div className={styles.optionIcon}>
+              <DollarSign size={18} />
+            </div>
+            <div>
+              <p>Cobro único</p>
+              <span>
+                {installmentModeIsSavedCard
+                  ? 'Cobra la tarjeta seleccionada en una sola exhibición.'
+                  : `Crea el link de ${installmentProviderLabel} para pago de contado.`}
+              </span>
+            </div>
+          </div>
+          {installmentChargeMode === 'single' && <Check size={18} className={styles.optionCheck} />}
+        </button>
+
+        <button
+          type="button"
+          className={styles.optionButton}
+          onClick={handleOpenInstallmentConfiguration}
+          disabled={!installmentModeMsiAvailable}
+        >
+          <div className={styles.optionInfo}>
+            <div className={styles.optionIcon}>
+              <Percent size={18} />
+            </div>
+            <div>
+              <p>Meses sin intereses</p>
+              <span>{installmentModeMsiDescription}</span>
+            </div>
+          </div>
+          <ChevronRight size={18} className={styles.optionCheck} />
+        </button>
       </div>
     )
 
@@ -3973,7 +4086,10 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
                   <button
                     type="button"
                     className={`${styles.optionButton} ${paymentOption === 'stripe' ? styles.optionButtonActive : ''}`}
-                    onClick={() => setPaymentOption('stripe')}
+                    onClick={() => {
+                      resetInstallmentChargeMode()
+                      setPaymentOption('stripe')
+                    }}
                   >
                     <div className={styles.optionInfo}>
                       <div className={styles.optionIcon}>
@@ -3992,7 +4108,10 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
                   <button
                     type="button"
                     className={`${styles.optionButton} ${paymentOption === 'conekta' ? styles.optionButtonActive : ''}`}
-                    onClick={() => setPaymentOption('conekta')}
+                    onClick={() => {
+                      resetInstallmentChargeMode()
+                      setPaymentOption('conekta')
+                    }}
                   >
                     <div className={styles.optionInfo}>
                       <div className={styles.optionIcon}>
@@ -4011,7 +4130,10 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
                   <button
                     type="button"
                     className={`${styles.optionButton} ${paymentOption === 'mercadopago' ? styles.optionButtonActive : ''}`}
-                    onClick={() => setPaymentOption('mercadopago')}
+                    onClick={() => {
+                      resetInstallmentChargeMode()
+                      setPaymentOption('mercadopago')
+                    }}
                   >
                     <div className={styles.optionInfo}>
                       <div className={styles.optionIcon}>
@@ -4029,7 +4151,10 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
                 {highLevelConnected && (
                   <div
                     className={`${styles.optionButton} ${paymentOption === 'send' ? styles.optionButtonActive : ''}`}
-                    onClick={() => setPaymentOption('send')}
+                    onClick={() => {
+                      resetInstallmentChargeMode()
+                      setPaymentOption('send')
+                    }}
                   >
                     <div className={styles.optionInfo}>
                       <div className={styles.optionIcon}>
@@ -4080,6 +4205,7 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
                     options: savedPaymentMethodOptions,
                     active: paymentOption === 'stripe_saved_card',
                     onSelect: (value) => {
+                      resetInstallmentChargeMode()
                       setSinglePaymentAction('saved_card')
                       setPaymentOption('stripe_saved_card')
                       setSelectedSavedPaymentMethodId(value)
@@ -4096,6 +4222,7 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
                     options: savedConektaPaymentSourceOptions,
                     active: paymentOption === 'conekta_saved_card',
                     onSelect: (value) => {
+                      resetInstallmentChargeMode()
                       setSinglePaymentAction('saved_card')
                       setPaymentOption('conekta_saved_card')
                       setSelectedConektaPaymentSourceId(value)
@@ -4151,6 +4278,7 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
                   type="button"
                   className={`${styles.optionButton} ${singlePaymentAction === 'manual' && paymentOption === 'manual' ? styles.optionButtonActive : ''}`}
                   onClick={() => {
+                    resetInstallmentChargeMode()
                     setSinglePaymentAction('manual')
                     setSinglePaymentOptionsStage('method')
                     setPaymentOption('manual')
@@ -4176,7 +4304,9 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
           </div>
         )}
 
-        {showConektaInstallmentControls && invoiceSummary && (
+        {showInstallmentModeChoice && renderInstallmentModeChoice()}
+
+        {showConektaInstallmentPanel && invoiceSummary && (
           <div className={styles.mercadoPagoInstallmentsPanel}>
             <div className={styles.mercadoPagoInstallmentsHeader}>
               <div>
@@ -4188,37 +4318,14 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
 
             <div className={styles.mercadoPagoInstallmentsGrid}>
               <div className={styles.manualField}>
-                <label>¿Ofrecer meses sin intereses?</label>
-                {conektaInstallmentsAvailable ? (
-                  renderPaymentSegmentedTabs({
-                    options: [
-                      { value: 'none', label: 'No' },
-                      { value: 'enabled', label: 'Sí' }
-                    ],
-                    value: conektaInstallmentEnabled ? 'enabled' : 'none',
-                    onChange: (value) => setConektaInstallmentChoice(value === 'enabled'
-                      ? (conektaInstallmentOptions[0]?.value as ConektaInstallmentChoice) || '3'
-                      : 'none'),
-                    ariaLabel: 'Meses sin intereses Conekta'
-                  })
-                ) : (
-                  <p className={styles.mercadoPagoInstallmentsNote}>
-                    Disponible en Conekta desde {formatCurrency(300, invoiceSummary.currency)}.
-                  </p>
-                )}
+                <label>Máximo de meses</label>
+                {renderPaymentSelect({
+                  value: conektaInstallmentChoice,
+                  onChange: (value) => setConektaInstallmentChoice(value as ConektaInstallmentChoice),
+                  options: conektaInstallmentOptions,
+                  title: 'Máximo de meses'
+                })}
               </div>
-
-              {conektaInstallmentEnabled && (
-                <div className={styles.manualField}>
-                  <label>Máximo de meses</label>
-                  {renderPaymentSelect({
-                    value: conektaInstallmentChoice,
-                    onChange: (value) => setConektaInstallmentChoice(value as ConektaInstallmentChoice),
-                    options: conektaInstallmentOptions,
-                    title: 'Máximo de meses'
-                  })}
-                </div>
-              )}
             </div>
 
             <div className={styles.mercadoPagoInstallmentTotals}>
@@ -4258,29 +4365,14 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
 
             <div className={styles.mercadoPagoInstallmentsGrid}>
               <div className={styles.manualField}>
-                <label>¿Ofrecer meses sin intereses?</label>
-                {renderPaymentSegmentedTabs({
-                  options: [
-                    { value: 'none', label: 'No' },
-                    { value: 'enabled', label: 'Sí' }
-                  ],
-                  value: mercadoPagoInstallmentEnabled ? 'enabled' : 'none',
-                  onChange: (value) => setMercadoPagoInstallmentChoice(value === 'enabled' ? '3' : 'none'),
-                  ariaLabel: 'Meses sin intereses Mercado Pago'
+                <label>Máximo de meses</label>
+                {renderPaymentSelect({
+                  value: mercadoPagoInstallmentChoice,
+                  onChange: (value) => setMercadoPagoInstallmentChoice(value as MercadoPagoInstallmentChoice),
+                  options: MERCADOPAGO_INSTALLMENT_OPTIONS.filter(option => option.value !== 'none'),
+                  title: 'Máximo de meses'
                 })}
               </div>
-
-              {mercadoPagoInstallmentEnabled && (
-                <div className={styles.manualField}>
-                  <label>Máximo de meses</label>
-                  {renderPaymentSelect({
-                    value: mercadoPagoInstallmentChoice,
-                    onChange: (value) => setMercadoPagoInstallmentChoice(value as MercadoPagoInstallmentChoice),
-                    options: MERCADOPAGO_INSTALLMENT_OPTIONS.filter(option => option.value !== 'none'),
-                    title: 'Máximo de meses'
-                  })}
-                </div>
-              )}
             </div>
 
             <div className={styles.mercadoPagoInstallmentTotals}>
