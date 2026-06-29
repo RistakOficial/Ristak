@@ -52,6 +52,8 @@ const TIMELINE_TOTAL_MINUTES = (TIMELINE_END_HOUR - TIMELINE_START_HOUR + 1) * 6
 const YEAR_GRID_SIZE = 12
 const TIMELINE_LONG_PRESS_DELAY_MS = 650
 const TIMELINE_PENDING_MOVE_CANCEL_PX = 12
+const TIMELINE_TAP_MOVE_TOLERANCE_PX = 10
+const TIMELINE_TOUCH_ANCHOR_OFFSET_PX = 18
 const MONTH_SWIPE_MIN_PX = 56
 const MONTH_SWIPE_COMMIT_RATIO = 0.18
 const MONTH_SWIPE_MAX_OFFSET_RATIO = 0.92
@@ -238,6 +240,15 @@ function getDaysInMonth(year: number, month: number) {
   return new Date(year, month + 1, 0).getDate()
 }
 
+function normalizeCalendarMinutes(value?: number | null, unit?: string | null) {
+  const amount = Number(value)
+  if (!Number.isFinite(amount) || amount <= 0) return null
+
+  const normalizedUnit = String(unit || 'mins').toLowerCase()
+  if (normalizedUnit.startsWith('hour')) return amount * 60
+  return amount
+}
+
 function getStatusLabel(status: CalendarEvent['appointmentStatus']) {
   return STATUS_LABELS[status] || status
 }
@@ -378,6 +389,14 @@ export const PhoneCalendar: React.FC<PhoneCalendarProps> = ({ embedded = false, 
     window.clearTimeout(pending.timerId)
     timelinePendingSelectionRef.current = null
     return true
+  }, [])
+  const takeTimelinePendingSelection = useCallback((pointerId?: number) => {
+    const pending = timelinePendingSelectionRef.current
+    if (!pending || (pointerId !== undefined && pending.pointerId !== pointerId)) return null
+
+    window.clearTimeout(pending.timerId)
+    timelinePendingSelectionRef.current = null
+    return pending
   }, [])
   const closeSheetViewNow = useCallback(() => setSheetView(null), [])
   const calendarSheetDismiss = useBottomSheetDismiss({
@@ -997,13 +1016,39 @@ export const PhoneCalendar: React.FC<PhoneCalendarProps> = ({ embedded = false, 
     openCreateAppointmentRange(date, startHour * 60, (startHour + 1) * 60)
   }, [openCreateAppointmentRange, timezone])
 
-  const getTimelineMinutesFromPointer = (event: React.PointerEvent<HTMLElement>) => {
+  const getTimelineSlotDurationMinutes = useCallback(() => {
+    return Math.max(
+      15,
+      Math.min(
+        24 * 60,
+        normalizeCalendarMinutes(selectedCalendar?.slotDuration, selectedCalendar?.slotDurationUnit) ?? 60
+      )
+    )
+  }, [selectedCalendar])
+
+  const getTimelineSnapMinutes = useCallback(() => {
+    return Math.max(
+      5,
+      Math.min(
+        60,
+        normalizeCalendarMinutes(selectedCalendar?.slotInterval, selectedCalendar?.slotIntervalUnit) ??
+          normalizeCalendarMinutes(selectedCalendar?.slotDuration, selectedCalendar?.slotDurationUnit) ??
+          15
+      )
+    )
+  }, [selectedCalendar])
+
+  const getTimelineMinutesFromPointer = useCallback((event: React.PointerEvent<HTMLElement>) => {
     const rect = event.currentTarget.getBoundingClientRect()
-    const y = Math.max(0, Math.min(rect.height, event.clientY - rect.top))
+    const touchAnchorOffset = event.pointerType === 'touch'
+      ? Math.min(30, Math.max(TIMELINE_TOUCH_ANCHOR_OFFSET_PX, event.height * 0.42 || 0))
+      : 0
+    const y = Math.max(0, Math.min(rect.height, event.clientY - rect.top - touchAnchorOffset))
     const rawMinutes = (y / rect.height) * TIMELINE_TOTAL_MINUTES
-    const roundedMinutes = Math.round(rawMinutes / 15) * 15
+    const snapMinutes = getTimelineSnapMinutes()
+    const roundedMinutes = Math.round(rawMinutes / snapMinutes) * snapMinutes
     return Math.max(0, Math.min(24 * 60 - 15, roundedMinutes))
-  }
+  }, [getTimelineSnapMinutes])
 
   const handleTimelinePointerDown = (date: Date) => (event: React.PointerEvent<HTMLElement>) => {
     if (event.button !== 0) return
@@ -1105,14 +1150,26 @@ export const PhoneCalendar: React.FC<PhoneCalendarProps> = ({ embedded = false, 
     if (!isSameDay(start.date, end.date)) return
 
     const sameSlot = start.minutes === end.minutes
-    const endMinutes = sameSlot ? start.minutes + 60 : end.minutes + 15
+    const endMinutes = sameSlot ? start.minutes + getTimelineSlotDurationMinutes() : end.minutes + 15
     openCreateAppointmentRange(start.date, start.minutes, endMinutes)
-  }, [openCreateAppointmentRange, setTimelineSelectionValue])
+  }, [getTimelineSlotDurationMinutes, openCreateAppointmentRange, setTimelineSelectionValue])
 
   const handleTimelinePointerUp = (event: React.PointerEvent<HTMLElement>) => {
     timelinePointerStartRef.current = null
-    if (clearTimelinePendingSelection(event.pointerId)) {
+    const pendingSelection = takeTimelinePendingSelection(event.pointerId)
+    if (pendingSelection) {
+      const dx = event.clientX - pendingSelection.x
+      const dy = event.clientY - pendingSelection.y
+      const isTap = Math.abs(dx) <= TIMELINE_TAP_MOVE_TOLERANCE_PX && Math.abs(dy) <= TIMELINE_TAP_MOVE_TOLERANCE_PX
+      const startMinutes = pendingSelection.start.minutes
       timelineSwipeAbortRef.current = false
+      if (isTap) {
+        openCreateAppointmentRange(
+          pendingSelection.start.date,
+          startMinutes,
+          startMinutes + getTimelineSlotDurationMinutes()
+        )
+      }
       return
     }
     if (event.currentTarget.hasPointerCapture(event.pointerId)) {
@@ -1144,7 +1201,7 @@ export const PhoneCalendar: React.FC<PhoneCalendarProps> = ({ embedded = false, 
 
     const startMinutes = timelineSelection.start.minutes
     const endMinutes = timelineSelection.start.minutes === timelineSelection.end.minutes
-      ? timelineSelection.end.minutes + 60
+      ? timelineSelection.end.minutes + getTimelineSlotDurationMinutes()
       : timelineSelection.end.minutes + 15
     const minMinutes = Math.max(0, Math.min(startMinutes, endMinutes))
     const maxMinutes = Math.min(24 * 60, Math.max(startMinutes, endMinutes))

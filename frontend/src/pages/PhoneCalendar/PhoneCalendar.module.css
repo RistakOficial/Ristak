@@ -23,6 +23,39 @@
   overflow: hidden;
   overscroll-behavior: none;
   font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", "SF Pro Text", Inter, sans-serif;
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-touch-callout: none;
+  -webkit-text-size-adjust: 100%;
+}
+
+.phonePage[data-calendar-view="day"]::after,
+.phonePage[data-calendar-view="week"]::after {
+  content: "";
+  position: fixed;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  z-index: 60;
+  height: calc(168px + env(safe-area-inset-bottom));
+  pointer-events: none;
+  background: linear-gradient(
+    180deg,
+    color-mix(in srgb, var(--phone-frame-bg) 0%, transparent) 0%,
+    color-mix(in srgb, var(--phone-frame-bg) 72%, transparent) 35%,
+    var(--phone-frame-bg) 78%,
+    var(--phone-frame-bg) 100%
+  );
+}
+
+.phonePage[data-calendar-embedded="true"]::after {
+  display: none;
+}
+
+.phonePage :is(input, textarea, [contenteditable="true"]) {
+  user-select: text;
+  -webkit-user-select: text;
+  -webkit-touch-callout: default;
 }
 
 .phoneFrame {
@@ -36,6 +69,16 @@
   overflow-x: hidden;
   overflow-y: hidden;
   overscroll-behavior: none;
+}
+
+.phonePage[data-calendar-view="day"] .phoneFrame,
+.phonePage[data-calendar-view="week"] .phoneFrame {
+  padding-bottom: 0;
+}
+
+.phonePage[data-calendar-view="day"] .timelineWrap,
+.phonePage[data-calendar-view="week"] .timelineWrap {
+  padding-bottom: calc(128px + env(safe-area-inset-bottom));
 }
 
 :global(body[data-phone-chat-tone="dark"]) .phonePage {
@@ -655,6 +698,7 @@
   display: block;
   min-height: 1392px;
   overflow: visible;
+  box-sizing: border-box;
 }
 
 .timelineScroller {
@@ -665,6 +709,7 @@
   overscroll-behavior-y: contain;
   -webkit-overflow-scrolling: touch;
   background: var(--phone-calendar-surface);
+  scroll-padding-bottom: calc(128px + env(safe-area-inset-bottom));
 }
 
 .timelineScroller[data-calendar-timeline-view="week"] {
@@ -799,11 +844,17 @@
   grid-template-rows: repeat(24, 58px);
   min-width: 0;
   background: var(--phone-calendar-surface);
-  touch-action: none;
+  touch-action: pan-y;
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-touch-callout: none;
 }
 
 .timelineGrid > span {
   border-bottom: 1px solid var(--soft-line);
+  pointer-events: none;
+  user-select: none;
+  -webkit-user-select: none;
 }
 
 .timelineEvent {
