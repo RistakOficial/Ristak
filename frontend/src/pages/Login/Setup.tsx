@@ -1,6 +1,6 @@
 import React, { useMemo, useState, useEffect, FormEvent } from 'react'
 import { Navigate, useLocation, useNavigate, useSearchParams } from 'react-router-dom'
-import { Lock, Mail, User, UserPlus } from 'lucide-react'
+import { Lock, Mail, UserPlus } from 'lucide-react'
 import { Button } from '@/components/common'
 import { useAuth } from '@/contexts/AuthContext'
 import { apiUrl } from '@/services/apiBaseUrl'
@@ -20,8 +20,12 @@ type TokenState = {
   message: string
 }
 
+function isValidSetupEmail(value: string) {
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value.trim())
+}
+
 export const Setup: React.FC = () => {
-  const [username, setUsername] = useState('')
+  const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [confirmPassword, setConfirmPassword] = useState('')
   const [error, setError] = useState('')
@@ -147,16 +151,16 @@ export const Setup: React.FC = () => {
     e.preventDefault()
     setError('')
 
-    const effectiveUsername = tokenMode ? tokenState.email : username
+    const effectiveEmail = (tokenMode ? tokenState.email : email).trim()
 
     // Validaciones
-    if (!effectiveUsername || !password || !confirmPassword) {
+    if (!effectiveEmail || !password || !confirmPassword) {
       setError('Por favor llena todos los campos')
       return
     }
 
-    if (!tokenMode && username.length < 3) {
-      setError('El usuario debe tener al menos 3 caracteres')
+    if (!isValidSetupEmail(effectiveEmail)) {
+      setError('Ingresa un correo válido')
       return
     }
 
@@ -173,7 +177,7 @@ export const Setup: React.FC = () => {
     setIsLoading(true)
 
     try {
-      await setupAccount(effectiveUsername, password, tokenMode ? setupToken : undefined, detectedAccountLocale)
+      await setupAccount(effectiveEmail, password, tokenMode ? setupToken : undefined, detectedAccountLocale)
       navigate(redirectPath, { replace: true })
     } catch (err: any) {
       if (err.code === 'license_blocked') {
@@ -253,21 +257,20 @@ export const Setup: React.FC = () => {
             </div>
           ) : (
             <div className={styles.inputGroup}>
-              <label htmlFor="username" className={styles.label}>
-                Usuario
+              <label htmlFor="setupEmail" className={styles.label}>
+                Correo de login
               </label>
               <div className={styles.inputWrapper}>
-                <User size={18} className={styles.inputIcon} />
+                <Mail size={18} className={styles.inputIcon} />
                 <input
-                  id="username"
-                  type="text"
-                  value={username}
-                  onChange={(e) => setUsername(e.target.value)}
+                  id="setupEmail"
+                  type="email"
+                  value={email}
+                  onChange={(e) => setEmail(e.target.value)}
                   className={styles.input}
-                  placeholder="ej. raul"
-                  autoComplete="username"
+                  placeholder="tu@correo.com"
+                  autoComplete="email"
                   disabled={isLoading}
-                  minLength={3}
                 />
               </div>
             </div>

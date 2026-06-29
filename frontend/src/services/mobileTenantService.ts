@@ -77,7 +77,7 @@ export async function loginWithPortal(email: string, password: string): Promise<
   const response = await fetch(apiUrl('/api/auth/login'), {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ username: cleanEmail, password })
+    body: JSON.stringify({ email: cleanEmail, password })
   })
   const data = await response.json().catch(() => ({})) as BackendLoginResponse
 

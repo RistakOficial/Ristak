@@ -56,7 +56,7 @@ const loginRateLimiter = rateLimit({
   skipSuccessfulRequests: true,
   keyGenerator: (req) => {
     const ipKey = ipKeyGenerator(req.ip)
-    const identifier = String(req.body?.username || '').trim().toLowerCase()
+    const identifier = String(req.body?.email || req.body?.username || '').trim().toLowerCase()
     return identifier ? `${ipKey}:${identifier}` : ipKey
   },
   handler: rateLimited429('Demasiados intentos de inicio de sesión. Espera unos minutos e intenta de nuevo.')

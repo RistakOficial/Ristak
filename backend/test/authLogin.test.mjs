@@ -42,7 +42,7 @@ test('login accepts Android-style pasted identifiers with spaces and different c
 
     await login({
       body: {
-        username: `  ${email.toUpperCase()}\u200B  `,
+        email: `  ${email.toUpperCase()}\u200B  `,
         password
       }
     }, res)
@@ -72,13 +72,42 @@ test('login keeps password matching exact while cleaning only the identifier', a
 
     await login({
       body: {
-        username: ` ${email} `,
+        email: ` ${email} `,
         password: `${password} `
       }
     }, res)
 
     assert.equal(res.statusCode, 401)
     assert.equal(res.payload.success, false)
+  } finally {
+    await db.run('DELETE FROM users WHERE username = ? OR email = ?', [username, email])
+  }
+})
+
+test('login rejects internal username even when password is correct', async () => {
+  const username = `internal_login_${Date.now()}`
+  const email = `${username}@example.com`
+  const password = 'InternalPass123'
+
+  await db.run('DELETE FROM users WHERE username = ? OR email = ?', [username, email])
+  await db.run(
+    'INSERT INTO users (username, email, password_hash, full_name, role, is_active) VALUES (?, ?, ?, ?, ?, ?)',
+    [username, email, hashPassword(password), 'Internal Login Test', 'admin', 1]
+  )
+
+  try {
+    const res = createMockResponse()
+
+    await login({
+      body: {
+        username,
+        password
+      }
+    }, res)
+
+    assert.equal(res.statusCode, 400)
+    assert.equal(res.payload.success, false)
+    assert.equal(res.payload.message, 'Ingresa un correo válido')
   } finally {
     await db.run('DELETE FROM users WHERE username = ? OR email = ?', [username, email])
   }

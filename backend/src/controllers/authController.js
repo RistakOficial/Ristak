@@ -19,7 +19,6 @@ import {
   createCentralGoogleLoginUrl
 } from '../services/licenseService.js'
 import { saveAccountLocaleSettings } from '../utils/accountLocale.js'
-import { normalizePhoneForStorage } from '../utils/phoneUtils.js'
 import { getEffectiveAccessConfig } from '../utils/userAccess.js'
 
 function sanitizeAuthReturnPath(value, fallbackPath = '/dashboard') {
@@ -73,6 +72,25 @@ function cleanLoginIdentifier(value) {
   return String(value || '')
     .replace(/[\u200B-\u200D\uFEFF]/g, '')
     .trim()
+}
+
+function cleanLoginEmail(value) {
+  return cleanLoginIdentifier(value).toLowerCase()
+}
+
+function isValidEmailAddress(value) {
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(value || '').trim())
+}
+
+function buildDefaultInternalUsername(email) {
+  const localPart = String(email || '').split('@')[0] || ''
+  const normalized = localPart
+    .normalize('NFKD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^a-zA-Z0-9._-]/g, '')
+    .slice(0, 60)
+
+  return normalized.length >= 3 ? normalized : 'admin'
 }
 
 function sendLicenseBlocked(res, licenseState, fallbackMessage = 'Tu licencia de Ristak no está activa. Contacta al administrador o actualiza tu suscripción para continuar.') {
@@ -130,35 +148,41 @@ function isLocalDevAuthRequest(req) {
  */
 export async function login(req, res) {
   try {
-    const { username, password } = req.body
-    const loginIdentifier = cleanLoginIdentifier(username)
+    const { password } = req.body
+    const loginEmail = cleanLoginEmail(req.body?.email || req.body?.username)
 
-    if (!loginIdentifier || !password) {
+    if (!loginEmail || !password) {
       return res.status(400).json({
         success: false,
-        message: 'Usuario y contraseña son requeridos'
+        message: 'Correo y contraseña son requeridos'
       })
     }
 
-    const normalizedLoginPhone = normalizePhoneForStorage(loginIdentifier)
+    if (!isValidEmailAddress(loginEmail)) {
+      return res.status(400).json({
+        success: false,
+        message: 'Ingresa un correo válido'
+      })
+    }
 
-    // Buscar usuario por username, email o teléfono.
+    // El correo es la única credencial de login. El username queda como
+    // identificador interno para referencias y compatibilidad de datos.
     const user = await db.get(
-      'SELECT * FROM users WHERE LOWER(username) = LOWER(?) OR LOWER(email) = LOWER(?) OR phone = ?',
-      [loginIdentifier, loginIdentifier, normalizedLoginPhone]
+      'SELECT * FROM users WHERE LOWER(email) = LOWER(?)',
+      [loginEmail]
     )
 
     if (!user) {
-      logger.warn(`⚠️  Intento de login fallido: usuario "${loginIdentifier}" no encontrado`)
+      logger.warn(`⚠️  Intento de login fallido: correo "${loginEmail}" no encontrado`)
       return res.status(401).json({
         success: false,
-        message: 'Usuario o contraseña incorrectos'
+        message: 'Correo o contraseña incorrectos'
       })
     }
 
     // Verificar que el usuario esté activo
     if (!user.is_active) {
-      logger.warn(`⚠️  Intento de login de usuario inactivo: ${loginIdentifier}`)
+      logger.warn(`⚠️  Intento de login de usuario inactivo: ${loginEmail}`)
       return res.status(401).json({
         success: false,
         message: 'Usuario inactivo. Contacta al administrador'
@@ -172,7 +196,7 @@ export async function login(req, res) {
     // la contraseña del dueño: si el admin le asignó una nueva allá, se acepta
     // aquí y se actualiza la copia local (nunca viaja nada en claro al guardar).
     if (!isValidPassword && isLicenseEnforced()) {
-      const sync = await verifyOwnerCredentialsWithServer(user.email || user.username, password)
+      const sync = await verifyOwnerCredentialsWithServer(user.email, password)
 
       if (sync.valid && sync.password_hash) {
         await db.run(
@@ -180,15 +204,15 @@ export async function login(req, res) {
           [sync.password_hash, user.id]
         )
         isValidPassword = true
-        logger.info(`🔄 Contraseña del dueño sincronizada desde el portal central para "${loginIdentifier}"`)
+        logger.info(`🔄 Contraseña del dueño sincronizada desde el portal central para "${loginEmail}"`)
       }
     }
 
     if (!isValidPassword) {
-      logger.warn(`⚠️  Intento de login fallido: contraseña incorrecta para usuario "${loginIdentifier}"`)
+      logger.warn(`⚠️  Intento de login fallido: contraseña incorrecta para correo "${loginEmail}"`)
       return res.status(401).json({
         success: false,
-        message: 'Usuario o contraseña incorrectos'
+        message: 'Correo o contraseña incorrectos'
       })
     }
 
@@ -196,10 +220,10 @@ export async function login(req, res) {
     // comercial contra el servidor central de licencias (si está configurado).
     let licenseState = null
     if (isLicenseEnforced()) {
-      licenseState = await verifyLicenseWithServer(user.email || user.username)
+      licenseState = await verifyLicenseWithServer(user.email)
 
       if (!licenseState.allowed) {
-        logger.warn(`⚠️  Login bloqueado por licencia (${licenseState.reason}) para "${loginIdentifier}"`)
+        logger.warn(`⚠️  Login bloqueado por licencia (${licenseState.reason}) para "${loginEmail}"`)
         return sendLicenseBlocked(res, licenseState)
       }
     }
@@ -219,7 +243,7 @@ export async function login(req, res) {
       tokenVersion: user.token_version ?? 0 // (AUTH-003) para revocar al cambiar contraseña
     })
 
-    logger.success(`✅ Login exitoso: ${loginIdentifier}`)
+    logger.success(`✅ Login exitoso: ${loginEmail}`)
 
     const [apiTokenMetadata, appId] = await Promise.all([
       getApiTokenMetadataForUser(user.id),
@@ -1042,7 +1066,8 @@ export async function setupInfo(req, res) {
 export async function setup(req, res) {
   try {
     const { password, token } = req.body
-    let { username } = req.body
+    let loginEmail = cleanLoginEmail(req.body?.email || req.body?.username)
+    let username = cleanLoginIdentifier(req.body?.internalUsername)
     let ownerEmail = ''
     let ownerPasswordHash = null
 
@@ -1067,10 +1092,8 @@ export async function setup(req, res) {
         })
       }
 
-      ownerEmail = tokenResult.email || process.env.OWNER_EMAIL || ''
-      if (!username) {
-        username = ownerEmail
-      }
+      ownerEmail = cleanLoginEmail(tokenResult.email || process.env.OWNER_EMAIL || '')
+      loginEmail = ownerEmail || loginEmail
 
       // Modo automático: el portal central comparte el hash de la contraseña del
       // cliente (mismo formato PBKDF2), así el dueño entra con las MISMAS
@@ -1089,19 +1112,22 @@ export async function setup(req, res) {
     }
 
     // Validación de entrada
-    if (!username || (!password && !ownerPasswordHash)) {
+    if (!loginEmail || (!password && !ownerPasswordHash)) {
       return res.status(400).json({
         success: false,
-        message: 'Usuario y contraseña son requeridos'
+        message: 'Correo y contraseña son requeridos'
       })
     }
 
-    if (username.length < 3) {
+    if (!isValidEmailAddress(loginEmail)) {
       return res.status(400).json({
         success: false,
-        message: 'El usuario debe tener al menos 3 caracteres'
+        message: 'Ingresa un correo válido'
       })
     }
+
+    ownerEmail = ownerEmail || loginEmail
+    username = username || buildDefaultInternalUsername(ownerEmail)
 
     // (AUTH-005) Política de contraseñas fuerte. En modo gestionado con hash del
     // portal central (ownerPasswordHash) no hay password en claro que validar.
@@ -1138,13 +1164,13 @@ export async function setup(req, res) {
       }
     }
 
-    // Verificar que el username no esté en uso
+    // Verificar que el identificador interno no esté en uso
     const usernameTaken = await db.get('SELECT id FROM users WHERE username = ?', [username])
 
     if (usernameTaken) {
       return res.status(400).json({
         success: false,
-        message: 'Este nombre de usuario ya está en uso'
+        message: 'Este identificador interno ya está en uso'
       })
     }
 
@@ -1161,7 +1187,7 @@ export async function setup(req, res) {
       `INSERT INTO users (username, email, password_hash, full_name, role, is_active)
        SELECT ?, ?, ?, ?, ?, ?
        WHERE NOT EXISTS (SELECT 1 FROM users)`,
-      [username, ownerEmail || null, passwordHash, username, 'admin', 1]
+      [username, ownerEmail, passwordHash, username, 'admin', 1]
     )
 
     // (AUTH-006) Si no insertó ninguna fila, otra request creó el primer usuario
@@ -1200,7 +1226,7 @@ export async function setup(req, res) {
     // Validar la licencia contra el servidor central antes de abrir la sesión
     let licenseState = null
     if (isLicenseEnforced()) {
-      licenseState = await verifyLicenseWithServer(ownerEmail || username)
+      licenseState = await verifyLicenseWithServer(ownerEmail)
 
       if (!licenseState.allowed) {
         return sendLicenseBlocked(res, licenseState)
@@ -1211,7 +1237,7 @@ export async function setup(req, res) {
     const sessionToken = generateToken({
       userId,
       username,
-      email: ownerEmail || '',
+      email: ownerEmail,
       role: 'admin',
       tokenVersion: 0 // (AUTH-003) usuario recién creado
     })
@@ -1228,7 +1254,7 @@ export async function setup(req, res) {
       user: serializeAuthUser({
         id: userId,
         username,
-        email: ownerEmail || '',
+        email: ownerEmail,
         full_name: username,
         role: 'admin'
       }, licenseState)

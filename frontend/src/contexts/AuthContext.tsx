@@ -25,8 +25,8 @@ export interface User {
 interface AuthContextType {
   user: User | null
   isAuthenticated: boolean
-  login: (username: string, password: string) => Promise<void>
-  setupAccount: (username: string, password: string, setupToken?: string, accountLocale?: AccountLocaleDefaults) => Promise<void>
+  login: (email: string, password: string) => Promise<void>
+  setupAccount: (email: string, password: string, setupToken?: string, accountLocale?: AccountLocaleDefaults) => Promise<void>
   updateProfile: (profile: Partial<{
     firstName: string
     lastName: string
@@ -174,14 +174,14 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     fetchLocationData()
   }, [user])
 
-  const login = async (username: string, password: string) => {
+  const login = async (email: string, password: string) => {
     try {
       const response = await fetch(apiUrl('/api/auth/login'), {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json'
         },
-        body: JSON.stringify({ username, password })
+        body: JSON.stringify({ email, password })
       })
 
       const data = await response.json()
@@ -206,14 +206,14 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     }
   }
 
-  const setupAccount = async (username: string, password: string, setupToken?: string, accountLocale?: AccountLocaleDefaults) => {
+  const setupAccount = async (email: string, password: string, setupToken?: string, accountLocale?: AccountLocaleDefaults) => {
     try {
       const response = await fetch(apiUrl('/api/auth/setup'), {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json'
         },
-        body: JSON.stringify({ username, password, token: setupToken, accountLocale })
+        body: JSON.stringify({ email, password, token: setupToken, accountLocale })
       })
 
       const data = await response.json()

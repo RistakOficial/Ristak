@@ -12,9 +12,15 @@ type LoginLocationState = {
   from?: RedirectLocation
 } | null
 
-function cleanLoginIdentifier(value: string) {
+function cleanLoginEmail(value: string) {
   return value.replace(/[\u200B-\u200D\uFEFF]/g, '').trim()
 }
+
+function isValidLoginEmail(value: string) {
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value)
+}
+
+const RENDER_PASSWORD_RESET_COMMAND = `node -e "const crypto = require('crypto'); const { Pool } = require('pg'); const pool = new Pool({ connectionString: process.env.DATABASE_URL, ssl: { rejectUnauthorized: false } }); async function reset() { const result = await pool.query('SELECT id, email FROM users ORDER BY id LIMIT 1'); const user = result.rows[0]; if (!user) throw new Error('No hay usuarios en la base de datos.'); const email = String(user.email || '').trim().toLowerCase(); if (!email) throw new Error('El usuario no tiene correo de login guardado. Actualiza users.email antes de resetear contraseña.'); const newPassword = crypto.randomBytes(12).toString('base64').replace(/[+/=]/g, '').slice(0, 16); const salt = crypto.randomBytes(16).toString('hex'); const hash = crypto.pbkdf2Sync(newPassword, salt, 100000, 64, 'sha512').toString('hex'); const passwordHash = salt + ':' + hash; await pool.query('UPDATE users SET password_hash = $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2', [passwordHash, user.id]); process.stdout.write('✅ Contraseña reseteada. Correo: ' + email + ' · Contraseña temporal: ' + newPassword + '\\n'); } reset().catch((error) => { console.error('❌ ' + error.message); process.exitCode = 1; }).finally(() => pool.end());"`
 
 const LoginBrandLogo: React.FC<{ isPhoneLogin: boolean }> = ({ isPhoneLogin }) => (
   <Logo
@@ -34,7 +40,7 @@ const GoogleGIcon: React.FC = () => (
 )
 
 export const Login: React.FC = () => {
-  const [username, setUsername] = useState('')
+  const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [error, setError] = useState('')
   const [isLoading, setIsLoading] = useState(false)
@@ -82,20 +88,24 @@ export const Login: React.FC = () => {
     e.preventDefault()
     setError('')
 
-    const loginIdentifier = cleanLoginIdentifier(username)
+    const loginEmail = cleanLoginEmail(email)
 
-    if (!loginIdentifier || !password) {
+    if (!loginEmail || !password) {
       setError('Por favor ingresa correo y contraseña')
+      return
+    }
+
+    if (!isValidLoginEmail(loginEmail)) {
+      setError('Ingresa un correo válido')
       return
     }
 
     setIsLoading(true)
 
     const isMobileRuntime = isPhoneLogin && isNativeAppRuntime()
-    const looksLikeEmail = loginIdentifier.includes('@')
 
     try {
-      await login(loginIdentifier, password)
+      await login(loginEmail, password)
       navigate(redirectPath, { replace: true })
     } catch (err: any) {
       if (err.code === 'license_blocked') {
@@ -107,10 +117,10 @@ export const Login: React.FC = () => {
       // correo pertenece a OTRA empresa y la app sigue apuntando al backend
       // anterior. Re-resolvemos el tenant a partir del correo y, si cambió de
       // backend, reintentamos el login una sola vez contra el correcto.
-      if (isMobileRuntime && looksLikeEmail) {
+      if (isMobileRuntime) {
         const previousBaseUrl = getRuntimeApiBaseUrl()
         try {
-          await resolveAndStoreMobileTenant(loginIdentifier)
+          await resolveAndStoreMobileTenant(loginEmail)
         } catch (resolveErr: any) {
           // No encontramos una app activa para ese correo: mensaje claro para
           // cambiar de empresa, sin dejar al usuario adivinando.
@@ -122,7 +132,7 @@ export const Login: React.FC = () => {
         if (resolvedBaseUrl && resolvedBaseUrl !== previousBaseUrl) {
           // El correo apunta a otro backend: reintenta el login ahí.
           try {
-            await login(loginIdentifier, password)
+            await login(loginEmail, password)
             navigate(redirectPath, { replace: true })
             return
           } catch (retryErr: any) {
@@ -168,9 +178,7 @@ export const Login: React.FC = () => {
   const handleCopyCode = () => {
     // (AUTH-002) El comando genera una contraseña ALEATORIA temporal y la imprime,
     // en vez de fijar 'admin123' (credencial conocida que cualquiera veía en esta página).
-    const code = `node -e "const crypto = require('crypto'); const { Pool } = require('pg'); const pool = new Pool({ connectionString: process.env.DATABASE_URL, ssl: { rejectUnauthorized: false } }); async function reset() { const newPassword = crypto.randomBytes(12).toString('base64').replace(/[+/=]/g, '').slice(0, 16); const salt = crypto.randomBytes(16).toString('hex'); const hash = crypto.pbkdf2Sync(newPassword, salt, 100000, 64, 'sha512').toString('hex'); const passwordHash = salt + ':' + hash; await pool.query('UPDATE users SET username = \$1, password_hash = \$2, updated_at = CURRENT_TIMESTAMP WHERE id = (SELECT id FROM users ORDER BY id LIMIT 1)', ['admin', passwordHash]); process.stdout.write('✅ Credenciales reseteadas. Usuario: admin · Contraseña temporal: ' + newPassword + '\\n'); await pool.end(); } reset();"`
-
-    navigator.clipboard.writeText(code)
+    navigator.clipboard.writeText(RENDER_PASSWORD_RESET_COMMAND)
     setCopied(true)
     setTimeout(() => setCopied(false), 2000)
   }
@@ -233,16 +241,16 @@ export const Login: React.FC = () => {
           </div>
 
           <div className={styles.inputGroup}>
-            <label htmlFor="username" className={styles.label}>
+            <label htmlFor="email" className={styles.label}>
               Correo electrónico
             </label>
             <input
-              id="username"
-              name="username"
+              id="email"
+              name="email"
               data-ristak-unstyled
-              type="text"
-              value={username}
-              onChange={(e) => setUsername(e.target.value)}
+              type="email"
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
               className={styles.input}
               placeholder="tu@correo.com"
               autoComplete="email"
@@ -372,9 +380,7 @@ export const Login: React.FC = () => {
                 <li>
                   Copia y pega este comando en el Shell:
                   <div className={styles.codeBlock}>
-                    <code>
-                      node -e "const crypto = require('crypto'); const &#123; Pool &#125; = require('pg'); const pool = new Pool(&#123; connectionString: process.env.DATABASE_URL, ssl: &#123; rejectUnauthorized: false &#125; &#125;); async function reset() &#123; const newPassword = crypto.randomBytes(12).toString('base64').replace(/[+/=]/g, '').slice(0, 16); const salt = crypto.randomBytes(16).toString('hex'); const hash = crypto.pbkdf2Sync(newPassword, salt, 100000, 64, 'sha512').toString('hex'); const passwordHash = salt + ':' + hash; await pool.query('UPDATE users SET username = $1, password_hash = $2, updated_at = CURRENT_TIMESTAMP WHERE id = (SELECT id FROM users ORDER BY id LIMIT 1)', ['admin', passwordHash]); process.stdout.write('✅ Credenciales reseteadas. Usuario: admin · Contraseña temporal: ' + newPassword + '\n'); await pool.end(); &#125; reset();"
-                    </code>
+                    <code>{RENDER_PASSWORD_RESET_COMMAND}</code>
                     <button
                       onClick={handleCopyCode}
                       className={styles.copyButton}
@@ -387,13 +393,13 @@ export const Login: React.FC = () => {
                 <li>
                   Presiona <strong>Enter</strong> y espera a que veas el mensaje (la contraseña es aleatoria y única en cada reseteo):
                   <div className={styles.successMessage}>
-                    ✅ Credenciales reseteadas. Usuario: admin · Contraseña temporal: ••••••••
+                    ✅ Contraseña reseteada. Correo: tu@correo.com · Contraseña temporal: ••••••••
                   </div>
                 </li>
                 <li>
                   Ahora puedes loguearte con:
                   <div className={styles.credentialsBox}>
-                    <p><strong>Usuario:</strong> admin</p>
+                    <p><strong>Correo:</strong> el correo que imprimió el comando</p>
                     <p><strong>Contraseña:</strong> la contraseña temporal que imprimió el comando (cópiala del Shell)</p>
                   </div>
                 </li>
