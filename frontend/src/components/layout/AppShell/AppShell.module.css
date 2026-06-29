@@ -50,6 +50,7 @@
 
 .contentScroller {
   position: relative;
+  min-height: 0;
 }
 
 .routeContentReady,
@@ -66,10 +67,10 @@
   position: absolute;
   inset: 0;
   z-index: 12;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  min-height: 100%;
+  display: grid;
+  height: 100%;
+  min-height: 0;
+  place-items: center;
   background: color-mix(in srgb, var(--bg) 94%, transparent);
   backdrop-filter: blur(6px);
   -webkit-backdrop-filter: blur(6px);

@@ -277,10 +277,10 @@ export const AppShell: React.FC = () => {
               />
             }
           >
-            <div className="flex flex-col min-h-full">
+            <div className="flex h-full min-h-0 flex-col">
               {!sitesEditorActive && <Header />}
               <div
-                className={`${styles.contentScroller} flex-1 overflow-auto`}
+                className={`${styles.contentScroller} min-h-0 flex-1 overflow-auto`}
                 aria-busy={routeDataLoadGate.loading}
               >
                 <div className={routeDataLoadGate.loading ? styles.routeContentLoading : styles.routeContentReady}>
