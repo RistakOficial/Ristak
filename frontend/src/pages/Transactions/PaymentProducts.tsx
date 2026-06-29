@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react'
-import { AlertTriangle, DollarSign, Edit3, MoreVertical, Package, Plus, RefreshCw, Tag, Trash2 } from 'lucide-react'
+import { AlertTriangle, Copy, DollarSign, Edit3, MoreVertical, Package, Plus, RefreshCw, Tag, Trash2 } from 'lucide-react'
 import {
   Badge,
   Button,
@@ -98,6 +98,48 @@ const createEmptyProductForm = (): ProductFormState => ({
   gigstackUnitKey: '',
   prices: [createProductPriceForm(null, 0)]
 })
+
+const createProductFormFromProduct = (product: ProductItem): ProductFormState => {
+  const prices = getProductPrices(product)
+
+  return {
+    name: product.name || '',
+    description: product.description || '',
+    productType: String(product.productType || 'digital').toLowerCase(),
+    gigstackProductKey: product.gigstackProductKey || '',
+    gigstackUnitKey: product.gigstackUnitKey || '',
+    prices: prices.length
+      ? prices.map((price, index) => createProductPriceForm(price, index))
+      : [createProductPriceForm(getPrimaryPrice(product), 0)]
+  }
+}
+
+const copyTextToClipboard = async (text: string) => {
+  const value = text.trim()
+  if (!value) return false
+
+  try {
+    if (typeof navigator !== 'undefined' && navigator.clipboard?.writeText) {
+      await navigator.clipboard.writeText(value)
+      return true
+    }
+
+    if (typeof document === 'undefined') return false
+
+    const input = document.createElement('input')
+    input.value = value
+    input.setAttribute('readonly', 'true')
+    input.style.position = 'fixed'
+    input.style.opacity = '0'
+    document.body.appendChild(input)
+    input.select()
+    const copied = document.execCommand('copy')
+    document.body.removeChild(input)
+    return copied
+  } catch {
+    return false
+  }
+}
 
 const getProductTypeLabel = (value?: string | null) => {
   const normalized = String(value || '').toLowerCase()
@@ -250,19 +292,8 @@ export const PaymentProducts: React.FC = () => {
   }
 
   const openEditProduct = (product: ProductItem) => {
-    const prices = getProductPrices(product)
-
     setEditingProduct(product)
-    setProductForm({
-      name: product.name || '',
-      description: product.description || '',
-      productType: String(product.productType || 'digital').toLowerCase(),
-      gigstackProductKey: product.gigstackProductKey || '',
-      gigstackUnitKey: product.gigstackUnitKey || '',
-      prices: prices.length
-        ? prices.map((price, index) => createProductPriceForm(price, index))
-        : [createProductPriceForm(getPrimaryPrice(product), 0)]
-    })
+    setProductForm(createProductFormFromProduct(product))
     setFormMode('edit')
   }
 
@@ -354,6 +385,17 @@ export const PaymentProducts: React.FC = () => {
     }
   }
 
+  const handleCopyProductId = async (productId: string) => {
+    const copied = await copyTextToClipboard(productId)
+
+    if (copied) {
+      showToast('success', 'ID copiado', 'Ya puedes pegar el ID del producto donde lo necesites.')
+      return
+    }
+
+    showToast('error', 'No se pudo copiar', 'Selecciona el ID y cópialo manualmente.')
+  }
+
   const handleSaveProduct = async () => {
     const payload = buildProductPayload()
     if (!payload) return
@@ -366,12 +408,23 @@ export const PaymentProducts: React.FC = () => {
 
         await productsService.updateProduct(productId, payload)
         showToast('success', 'Producto actualizado', `${payload.name} ya quedó listo para cobrar.`)
+        closeProductForm()
       } else {
-        await productsService.createProduct(payload)
-        showToast('success', 'Producto creado', `${payload.name} ya aparece en tu catálogo.`)
+        const createdProduct = await productsService.createProduct(payload)
+        const createdProductId = getProductId(createdProduct)
+
+        setEditingProduct(createdProduct)
+        setProductForm(createProductFormFromProduct(createdProduct))
+        setFormMode('edit')
+        showToast(
+          'success',
+          'Producto creado',
+          createdProductId
+            ? `Ya aparece en tu catálogo y su ID quedó listo para copiar.`
+            : `${payload.name} ya aparece en tu catálogo.`
+        )
       }
 
-      closeProductForm()
       await loadProducts({ refresh: true })
     } catch (error) {
       showToast('error', 'No se guardó el producto', error instanceof Error ? error.message : 'Intenta otra vez.')
@@ -585,6 +638,13 @@ export const PaymentProducts: React.FC = () => {
                   <Edit3 size={16} />
                   <span>Editar producto</span>
                 </DropdownMenuItem>
+                <DropdownMenuItem
+                  disabled={deleting || !productId}
+                  onClick={() => void handleCopyProductId(productId)}
+                >
+                  <Copy size={16} />
+                  <span>Copiar ID</span>
+                </DropdownMenuItem>
                 <DropdownMenuSeparator />
                 <DropdownMenuItem
                   disabled={deleting}
@@ -695,6 +755,24 @@ export const PaymentProducts: React.FC = () => {
             void handleSaveProduct()
           }}>
             <div className={styles.formGrid}>
+              {editingProduct && getProductId(editingProduct) && (
+                <div className={`${styles.productIdPanel} ${styles.fullWidth}`}>
+                  <div className={styles.productIdValue}>
+                    <span>ID del producto</span>
+                    <code>{getProductId(editingProduct)}</code>
+                  </div>
+                  <Button
+                    type="button"
+                    variant="secondary"
+                    size="sm"
+                    leftIcon={<Copy size={14} />}
+                    onClick={() => void handleCopyProductId(getProductId(editingProduct))}
+                  >
+                    Copiar
+                  </Button>
+                </div>
+              )}
+
               <div className={`${styles.formGroup} ${styles.fullWidth}`}>
                 <label>Nombre del producto</label>
                 <input
