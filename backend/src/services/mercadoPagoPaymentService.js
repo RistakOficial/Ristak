@@ -3253,10 +3253,11 @@ export async function refreshMercadoPagoAuthorizedPayment(authorizedPaymentId) {
   }
 }
 
-export async function refreshMercadoPagoPayment(mercadoPagoPaymentId) {
+export async function refreshMercadoPagoPayment(mercadoPagoPaymentId, { useSubscriptionClient = false } = {}) {
   const paymentId = cleanString(mercadoPagoPaymentId)
   if (!paymentId) return null
-  const { payload } = await mercadoPagoApiRequest(`/v1/payments/${encodeURIComponent(paymentId)}`)
+  const apiRequest = useSubscriptionClient ? mercadoPagoSubscriptionApiRequest : mercadoPagoApiRequest
+  const { payload } = await apiRequest(`/v1/payments/${encodeURIComponent(paymentId)}`)
   return updatePaymentFromMercadoPagoPayment(payload)
 }
 
@@ -3268,26 +3269,32 @@ export async function handleMercadoPagoWebhookEvent(body = {}, headers = {}, que
   const type = cleanString(body.type || body.topic || query.topic || query.type)
   const action = cleanString(body.action)
   const isSubscriptionWebhook = type.includes('subscription') || action.includes('preapproval') || action.includes('authorized_payment')
+  const isTestWebhook = body.live_mode === false || cleanString(body.live_mode || query.live_mode).toLowerCase() === 'false'
   const acceptedSecrets = [
-    cleanString(config.webhookSecret),
-    ...(isSubscriptionWebhook ? [cleanString(config.subscriptionTestWebhookSecret)] : [])
-  ].filter(Boolean)
+    { secret: cleanString(config.webhookSecret), useSubscriptionClient: false },
+    ...((isSubscriptionWebhook || isTestWebhook)
+      ? [{ secret: cleanString(config.subscriptionTestWebhookSecret), useSubscriptionClient: true }]
+      : [])
+  ].filter((item) => item.secret)
+  let useSubscriptionClientForPaymentWebhook = false
 
   // (PAY2-005) Rollout seguro: si YA hay secret configurado, exigir firma válida (401 si falla);
   // si todavía no hay secret provisionado, aceptar pero dejar constancia para no romper la integración viva.
   if (acceptedSecrets.length) {
-    const signatureIsValid = acceptedSecrets.some((secret) => validateWebhookSignature({
+    const matchedSecret = acceptedSecrets.find((item) => validateWebhookSignature({
       signatureHeader,
       requestId,
       dataId,
-      secret
+      secret: item.secret
     }))
 
-    if (!signatureIsValid) {
+    if (!matchedSecret) {
       const error = new Error('No se pudo verificar la firma del webhook de Mercado Pago.')
       error.status = 401
       throw error
     }
+
+    useSubscriptionClientForPaymentWebhook = matchedSecret.useSubscriptionClient
   } else {
     logger.warn('Webhook de Mercado Pago aceptado sin verificar firma porque no hay secret configurado. Configura el secret para exigir firma.')
   }
@@ -3329,7 +3336,9 @@ export async function handleMercadoPagoWebhookEvent(body = {}, headers = {}, que
     return { received: true, ignored: true, type, action }
   }
 
-  const updated = await refreshMercadoPagoPayment(dataId)
+  const updated = await refreshMercadoPagoPayment(dataId, {
+    useSubscriptionClient: useSubscriptionClientForPaymentWebhook
+  })
   return {
     received: true,
     type,

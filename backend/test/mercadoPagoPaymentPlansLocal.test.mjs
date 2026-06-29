@@ -1092,6 +1092,69 @@ test('Mercado Pago sincroniza suscripcion y cobro desde evento de preapproval pl
   })
 })
 
+test('Mercado Pago acepta payment.updated test firmado con secret de app de suscripciones', async () => {
+  await initializeMasterKey()
+
+  await snapshotMercadoPagoConfig(async () => {
+    const paymentId = `payment_mp_subscription_secret_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`
+    await setAppConfig('mercadopago_webhook_secret_encrypted', encrypt('mp_normal_webhook_secret'))
+    await setAppConfig('mercadopago_subscription_test_webhook_secret_encrypted', encrypt('mp_subscription_webhook_secret'))
+
+    setMercadoPagoFetchForTest(async (url, options = {}) => {
+      assert.equal(options.method, 'GET')
+      assert.equal(options.headers?.Authorization, 'Bearer APP_USR-subscription-access-token')
+      assert.equal(url, 'https://api.mercadopago.com/v1/payments/mp_subscription_payment_updated_1')
+
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({
+          id: 'mp_subscription_payment_updated_1',
+          status: 'approved',
+          status_detail: 'accredited',
+          transaction_amount: 122,
+          currency_id: 'MXN',
+          payment_method_id: 'master',
+          payment_type_id: 'credit_card',
+          external_reference: paymentId,
+          date_approved: '2026-06-28T22:15:00.000Z'
+        })
+      }
+    })
+
+    try {
+      await db.run(
+        `INSERT INTO payments (
+          id, amount, currency, status, payment_method, payment_mode,
+          payment_provider, title, date, created_at, updated_at
+        ) VALUES (?, 122, 'MXN', 'pending', 'mercadopago_subscription', 'test', 'mercadopago', ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+        [paymentId, 'Mercado Pago suscripcion test']
+      )
+
+      const result = await handleMercadoPagoWebhookEvent({
+        type: 'payment',
+        action: 'payment.updated',
+        live_mode: false,
+        data: { id: 'mp_subscription_payment_updated_1' }
+      }, signMercadoPagoWebhook('mp_subscription_payment_updated_1', 'mp_subscription_webhook_secret'), {})
+
+      assert.equal(result.received, true)
+      assert.equal(result.paymentId, paymentId)
+      assert.equal(result.status, 'paid')
+
+      const payment = await db.get(
+        'SELECT status, mercadopago_payment_id, payment_method FROM payments WHERE id = ?',
+        [paymentId]
+      )
+      assert.equal(payment.status, 'paid')
+      assert.equal(payment.payment_method, 'credit_card')
+      assert.equal(payment.mercadopago_payment_id, 'mp_subscription_payment_updated_1')
+    } finally {
+      await db.run('DELETE FROM payments WHERE id = ?', [paymentId]).catch(() => undefined)
+    }
+  })
+})
+
 test('Mercado Pago explica usuario test requerido al crear suscripcion preapproval', async () => {
   await initializeMasterKey()
 
