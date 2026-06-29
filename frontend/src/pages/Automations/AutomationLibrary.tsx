@@ -35,6 +35,7 @@ import { useNotification } from '@/contexts/NotificationContext'
 import automationsService, {
   AUTOMATION_REVIEW_LABEL,
   AUTOMATION_STATUS_LABELS,
+  automationToSummary,
   automationsCache,
   type AutomationFolder,
   type AutomationSummary
@@ -54,6 +55,7 @@ interface AutomationLibraryProps {
   /** Resumen fresco de la automatización abierta; mantiene la lista al día sin recargar. */
   currentAutomation?: AutomationSummary
   onOpenAutomation?: (automationId: string) => void
+  onAutomationUpdated?: (automation: AutomationSummary) => void
 }
 
 interface NameModal {
@@ -65,7 +67,8 @@ interface NameModal {
 export const AutomationLibrary: React.FC<AutomationLibraryProps> = ({
   currentAutomationId,
   currentAutomation,
-  onOpenAutomation
+  onOpenAutomation,
+  onAutomationUpdated
 }) => {
   const navigate = useNavigate()
   const { showToast, showConfirm } = useNotification()
@@ -277,7 +280,12 @@ export const AutomationLibrary: React.FC<AutomationLibraryProps> = ({
       } else if (nameModal.kind === 'rename-folder' && nameModal.targetId) {
         await automationsService.updateFolder(nameModal.targetId, { name: value })
       } else if (nameModal.kind === 'rename-automation' && nameModal.targetId) {
-        await automationsService.updateAutomation(nameModal.targetId, { name: value })
+        const updated = await automationsService.updateAutomation(nameModal.targetId, { name: value })
+        const summary = automationToSummary(updated)
+        setAutomations((current) =>
+          current.map((automation) => (automation.id === summary.id ? { ...automation, ...summary } : automation))
+        )
+        onAutomationUpdated?.(summary)
       }
       await reload()
       setNameModal(null)

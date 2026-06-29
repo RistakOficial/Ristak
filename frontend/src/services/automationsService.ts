@@ -232,7 +232,7 @@ export const automationsCache = {
 
 const automationRequests = new Map<string, Promise<Automation>>()
 
-function automationToSummary(automation: Automation): AutomationSummary {
+export function automationToSummary(automation: Automation): AutomationSummary {
   return {
     id: automation.id,
     folderId: automation.folderId,

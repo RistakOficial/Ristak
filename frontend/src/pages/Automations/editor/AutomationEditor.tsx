@@ -440,6 +440,36 @@ export const AutomationEditor: React.FC = () => {
     [confirmLeavingIfNeeded, navigate]
   )
 
+  const handleLibraryAutomationUpdated = useCallback((updated: AutomationSummary) => {
+    const current = automationRef.current
+    if (!current || current.id !== updated.id) return
+
+    const wasDirty = getHasUnsavedChanges()
+    setAutomation((value) =>
+      value
+        ? {
+            ...value,
+            ...updated,
+            flow: value.flow
+          }
+        : value
+    )
+    if (nameRef.current !== updated.name) {
+      nameRef.current = updated.name
+      setName(updated.name)
+    }
+
+    if (!wasDirty) {
+      savedContentSignatureRef.current = automationContentSignature(
+        updated.name,
+        stateRef.current.present.nodes,
+        stateRef.current.present.edges,
+        flowSettingsRef.current
+      )
+      setSaveState('saved')
+    }
+  }, [getHasUnsavedChanges])
+
   useEffect(() => {
     if (!shouldWarnBeforeLeaving) return
     const handleDocumentClick = (event: MouseEvent) => {
@@ -1761,6 +1791,7 @@ export const AutomationEditor: React.FC = () => {
           currentAutomationId={automation.id}
           currentAutomation={currentAutomationSummary}
           onOpenAutomation={(targetId) => navigateFromEditor(`/automations/${targetId}`)}
+          onAutomationUpdated={handleLibraryAutomationUpdated}
         />
         <AutomationCanvas
         nodes={nodes}
