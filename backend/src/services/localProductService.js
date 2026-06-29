@@ -13,6 +13,7 @@ const PRODUCT_PAGE_LIMIT = 100
 const PRICE_MATCH_TOLERANCE = 0.01
 const MAX_PRODUCT_POST_WEBHOOKS = 10
 const MAX_PRODUCT_WEBHOOK_HEADERS = 20
+const MAX_PRODUCT_WEBHOOK_BODY_FIELDS = 40
 
 function makeId(prefix) {
   return `${prefix}_${randomUUID()}`
@@ -51,6 +52,10 @@ function parseJson(value, fallback) {
   } catch {
     return fallback
   }
+}
+
+function isPlainObject(value) {
+  return Boolean(value && typeof value === 'object' && !Array.isArray(value))
 }
 
 function jsonOrNull(value) {
@@ -93,6 +98,88 @@ function normalizeWebhookHeaders(value) {
   return headers
 }
 
+function normalizeWebhookBodyValue(value, depth = 0) {
+  if (value === undefined || typeof value === 'function' || typeof value === 'symbol') return undefined
+  if (value === null || typeof value === 'boolean') return value
+  if (typeof value === 'number') return Number.isFinite(value) ? value : undefined
+  if (typeof value === 'string') return value.trim().slice(0, 5000)
+  if (Array.isArray(value)) {
+    if (depth >= 4) return undefined
+    return value
+      .slice(0, 50)
+      .map((item) => normalizeWebhookBodyValue(item, depth + 1))
+      .filter((item) => item !== undefined)
+  }
+  if (isPlainObject(value)) {
+    if (depth >= 4) return undefined
+    return Object.entries(value).slice(0, MAX_PRODUCT_WEBHOOK_BODY_FIELDS).reduce((acc, [rawKey, rawValue]) => {
+      const key = cleanString(rawKey).replace(/[\r\n]/g, '').slice(0, 120)
+      const normalized = normalizeWebhookBodyValue(rawValue, depth + 1)
+      if (key && normalized !== undefined) acc[key] = normalized
+      return acc
+    }, {})
+  }
+  return cleanString(value).slice(0, 5000)
+}
+
+function normalizeWebhookBodyObject(value) {
+  const parsed = parseJson(value, value)
+  const source = isPlainObject(parsed) ? parsed : {}
+
+  return Object.entries(source).slice(0, MAX_PRODUCT_WEBHOOK_BODY_FIELDS).reduce((acc, [rawKey, rawValue]) => {
+    const key = cleanString(rawKey).replace(/[\r\n]/g, '').slice(0, 120)
+    const normalized = normalizeWebhookBodyValue(rawValue)
+    if (key && normalized !== undefined) acc[key] = normalized
+    return acc
+  }, {})
+}
+
+function normalizeWebhookBodyFields(value) {
+  const parsed = parseJson(value, value)
+  if (!Array.isArray(parsed)) return []
+
+  return parsed.slice(0, MAX_PRODUCT_WEBHOOK_BODY_FIELDS).map((row) => {
+    const key = cleanString(row?.key || row?.name).replace(/[\r\n]/g, '').slice(0, 120)
+    const fieldValue = cleanString(row?.value).slice(0, 5000)
+    return key && fieldValue ? { key, value: fieldValue } : null
+  }).filter(Boolean)
+}
+
+function bodyObjectFromFields(fields = []) {
+  return fields.reduce((acc, field) => {
+    if (field?.key && field?.value) acc[field.key] = field.value
+    return acc
+  }, {})
+}
+
+function normalizeWebhookBodyConfig(webhook = {}) {
+  const rawMode = cleanString(webhook.bodyMode || webhook.body_mode).toLowerCase()
+  const bodyMode = rawMode === 'json' ? 'json' : 'fields'
+  const bodyFields = normalizeWebhookBodyFields(
+    webhook.bodyFields ||
+    webhook.body_fields ||
+    webhook.customBodyFields ||
+    webhook.custom_body_fields
+  )
+  const body = normalizeWebhookBodyObject(
+    webhook.bodyJson ||
+    webhook.body_json ||
+    webhook.body ||
+    webhook.payload ||
+    webhook.extraBody ||
+    webhook.extra_body
+  )
+
+  if (bodyMode === 'json') {
+    return Object.keys(body).length ? { bodyMode: 'json', body } : {}
+  }
+
+  const fieldsBody = bodyObjectFromFields(bodyFields)
+  if (bodyFields.length) return { bodyMode: 'fields', bodyFields, body: fieldsBody }
+  if (Object.keys(body).length) return { bodyMode: 'json', body }
+  return {}
+}
+
 function normalizePostWebhookConfig(value) {
   const parsed = parseJson(value, value)
   const list = Array.isArray(parsed)
@@ -109,6 +196,7 @@ function normalizePostWebhookConfig(value) {
       if (!url) return null
 
       const headers = normalizeWebhookHeaders(webhook.headers || webhook.customHeaders || webhook.custom_headers)
+      const bodyConfig = normalizeWebhookBodyConfig(webhook)
       const authorization = cleanString(
         webhook.authorization ||
         webhook.auth ||
@@ -122,7 +210,8 @@ function normalizePostWebhookConfig(value) {
         url,
         enabled: webhook.enabled === false ? false : true,
         ...(authorization ? { authorization } : {}),
-        ...(Object.keys(headers).length ? { headers } : {})
+        ...(Object.keys(headers).length ? { headers } : {}),
+        ...bodyConfig
       }
     })
     .filter(Boolean)

@@ -68,9 +68,18 @@ interface ProductWebhookFormState {
   headersMode: 'fields' | 'json'
   headerRows: ProductWebhookHeaderFormState[]
   headersJson: string
+  bodyMode: 'fields' | 'json'
+  bodyRows: ProductWebhookBodyFormState[]
+  bodyJson: string
 }
 
 interface ProductWebhookHeaderFormState {
+  formId: string
+  key: string
+  value: string
+}
+
+interface ProductWebhookBodyFormState {
   formId: string
   key: string
   value: string
@@ -94,10 +103,16 @@ const productTypeOptions = [
 const makePriceFormId = () => `price_${Math.random().toString(36).slice(2, 10)}`
 const makeWebhookFormId = () => `webhook_${Math.random().toString(36).slice(2, 10)}`
 const makeWebhookHeaderFormId = () => `header_${Math.random().toString(36).slice(2, 10)}`
+const makeWebhookBodyFormId = () => `body_${Math.random().toString(36).slice(2, 10)}`
 
 const stringifyHeaders = (headers?: Record<string, string>) => {
   if (!headers || Object.keys(headers).length === 0) return ''
   return JSON.stringify(headers, null, 2)
+}
+
+const stringifyBody = (body?: Record<string, unknown>) => {
+  if (!body || Object.keys(body).length === 0) return ''
+  return JSON.stringify(body, null, 2)
 }
 
 const createWebhookHeaderRows = (headers?: Record<string, string>): ProductWebhookHeaderFormState[] => (
@@ -128,6 +143,62 @@ const parseSimpleHeadersJson = (value: string): Record<string, string> => {
   }, {})
 }
 
+const createEmptyWebhookBodyRow = (): ProductWebhookBodyFormState => ({
+  formId: makeWebhookBodyFormId(),
+  key: '',
+  value: ''
+})
+
+const isWebhookBodyFieldValue = (value: unknown) => (
+  value === null || ['string', 'number', 'boolean'].includes(typeof value)
+)
+
+const createWebhookBodyRows = (
+  bodyFields?: ProductPostWebhook['bodyFields'],
+  body?: Record<string, unknown>
+): ProductWebhookBodyFormState[] => {
+  const fromFields = Array.isArray(bodyFields)
+    ? bodyFields.map((row) => ({
+        formId: makeWebhookBodyFormId(),
+        key: String(row?.key || row?.name || ''),
+        value: String(row?.value ?? '')
+      })).filter((row) => row.key.trim() || row.value.trim())
+    : []
+
+  if (fromFields.length) return fromFields
+
+  const fromBody = Object.entries(body || {})
+    .filter(([, value]) => isWebhookBodyFieldValue(value))
+    .map(([key, value]) => ({
+      formId: makeWebhookBodyFormId(),
+      key,
+      value: String(value ?? '')
+    }))
+
+  return fromBody.length ? fromBody : [createEmptyWebhookBodyRow()]
+}
+
+const bodyFromRows = (rows: ProductWebhookBodyFormState[]) => rows.reduce<Record<string, string>>((acc, row) => {
+  const fieldKey = row.key.trim()
+  const fieldValue = row.value.trim()
+  if (fieldKey && fieldValue) acc[fieldKey] = fieldValue
+  return acc
+}, {})
+
+const parseSimpleBodyJson = (value: string): Record<string, unknown> => {
+  const parsed = JSON.parse(value)
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+    throw new Error('invalid_body')
+  }
+  return parsed as Record<string, unknown>
+}
+
+const getWebhookBodyMode = (webhook?: ProductPostWebhook): 'fields' | 'json' => {
+  if (webhook?.bodyMode === 'fields' || webhook?.bodyMode === 'json') return webhook.bodyMode
+  const body = webhook?.body || {}
+  return Object.values(body).some((value) => value !== null && typeof value === 'object') ? 'json' : 'fields'
+}
+
 const createProductPriceForm = (price?: ProductPrice | null, index = 0): ProductPriceFormState => {
   const amount = getPriceAmount(price)
   const priceId = getPriceId(price)
@@ -150,7 +221,10 @@ const createProductWebhookForm = (webhook?: ProductPostWebhook): ProductWebhookF
   authorization: webhook?.authorization || '',
   headersMode: 'fields',
   headerRows: createWebhookHeaderRows(webhook?.headers),
-  headersJson: stringifyHeaders(webhook?.headers)
+  headersJson: stringifyHeaders(webhook?.headers),
+  bodyMode: getWebhookBodyMode(webhook),
+  bodyRows: createWebhookBodyRows(webhook?.bodyFields, webhook?.body),
+  bodyJson: stringifyBody(webhook?.body)
 })
 
 const createEmptyProductForm = (): ProductFormState => ({
@@ -395,7 +469,7 @@ export const PaymentProducts: React.FC = () => {
 
   const patchProductWebhook = (
     formId: string,
-    field: keyof Pick<ProductWebhookFormState, 'url' | 'authorization' | 'headersJson' | 'headersMode'>,
+    field: keyof Pick<ProductWebhookFormState, 'url' | 'authorization' | 'headersJson' | 'headersMode' | 'bodyJson' | 'bodyMode'>,
     value: string
   ) => {
     setProductForm((current) => ({
@@ -438,6 +512,38 @@ export const PaymentProducts: React.FC = () => {
     }))
   }
 
+  const setProductWebhookBodyMode = (formId: string, mode: 'fields' | 'json') => {
+    setProductForm((current) => ({
+      ...current,
+      postWebhooks: current.postWebhooks.map((webhook) => {
+        if (webhook.formId !== formId) return webhook
+
+        if (mode === 'json') {
+          const body = bodyFromRows(webhook.bodyRows)
+          return {
+            ...webhook,
+            bodyMode: mode,
+            bodyJson: webhook.bodyJson || stringifyBody(body)
+          }
+        }
+
+        if (webhook.bodyRows.some((row) => row.key.trim() || row.value.trim()) || !webhook.bodyJson.trim()) {
+          return { ...webhook, bodyMode: mode }
+        }
+
+        try {
+          return {
+            ...webhook,
+            bodyMode: mode,
+            bodyRows: createWebhookBodyRows(undefined, parseSimpleBodyJson(webhook.bodyJson))
+          }
+        } catch {
+          return { ...webhook, bodyMode: mode }
+        }
+      })
+    }))
+  }
+
   const patchProductWebhookHeader = (
     webhookFormId: string,
     headerFormId: string,
@@ -452,6 +558,27 @@ export const PaymentProducts: React.FC = () => {
               ...webhook,
               headerRows: webhook.headerRows.map((row) => (
                 row.formId === headerFormId ? { ...row, [field]: value } : row
+              ))
+            }
+          : webhook
+      ))
+    }))
+  }
+
+  const patchProductWebhookBody = (
+    webhookFormId: string,
+    bodyFormId: string,
+    field: keyof Pick<ProductWebhookBodyFormState, 'key' | 'value'>,
+    value: string
+  ) => {
+    setProductForm((current) => ({
+      ...current,
+      postWebhooks: current.postWebhooks.map((webhook) => (
+        webhook.formId === webhookFormId
+          ? {
+              ...webhook,
+              bodyRows: webhook.bodyRows.map((row) => (
+                row.formId === bodyFormId ? { ...row, [field]: value } : row
               ))
             }
           : webhook
@@ -477,6 +604,24 @@ export const PaymentProducts: React.FC = () => {
     }))
   }
 
+  const addProductWebhookBodyField = (webhookFormId: string) => {
+    setProductForm((current) => ({
+      ...current,
+      postWebhooks: current.postWebhooks.map((webhook) => (
+        webhook.formId === webhookFormId
+          ? {
+              ...webhook,
+              bodyMode: 'fields',
+              bodyRows: [
+                ...webhook.bodyRows,
+                createEmptyWebhookBodyRow()
+              ]
+            }
+          : webhook
+      ))
+    }))
+  }
+
   const removeProductWebhookHeader = (webhookFormId: string, headerFormId: string) => {
     setProductForm((current) => ({
       ...current,
@@ -485,6 +630,20 @@ export const PaymentProducts: React.FC = () => {
           ? {
               ...webhook,
               headerRows: webhook.headerRows.filter((row) => row.formId !== headerFormId)
+            }
+          : webhook
+      ))
+    }))
+  }
+
+  const removeProductWebhookBodyField = (webhookFormId: string, bodyFormId: string) => {
+    setProductForm((current) => ({
+      ...current,
+      postWebhooks: current.postWebhooks.map((webhook) => (
+        webhook.formId === webhookFormId
+          ? {
+              ...webhook,
+              bodyRows: webhook.bodyRows.filter((row) => row.formId !== bodyFormId)
             }
           : webhook
       ))
@@ -531,8 +690,15 @@ export const PaymentProducts: React.FC = () => {
       const url = webhook.url.trim()
       const authorization = webhook.authorization.trim()
       const headersJson = webhook.headersJson.trim()
+      const bodyJson = webhook.bodyJson.trim()
       const headersFromFields = headersFromRows(webhook.headerRows)
+      const bodyFromFields = bodyFromRows(webhook.bodyRows)
       const hasIncompleteHeaderRow = webhook.headersMode === 'fields' && webhook.headerRows.some((row) => {
+        const hasKey = Boolean(row.key.trim())
+        const hasValue = Boolean(row.value.trim())
+        return hasKey !== hasValue
+      })
+      const hasIncompleteBodyRow = webhook.bodyMode === 'fields' && webhook.bodyRows.some((row) => {
         const hasKey = Boolean(row.key.trim())
         const hasValue = Boolean(row.value.trim())
         return hasKey !== hasValue
@@ -540,13 +706,21 @@ export const PaymentProducts: React.FC = () => {
       const hasHeaders = webhook.headersMode === 'json'
         ? Boolean(headersJson)
         : Object.keys(headersFromFields).length > 0
+      const hasBody = webhook.bodyMode === 'json'
+        ? Boolean(bodyJson)
+        : Object.keys(bodyFromFields).length > 0
 
       if (hasIncompleteHeaderRow) {
         showToast('warning', 'Header incompleto', `Completa nombre y valor en los headers del webhook ${index + 1}.`)
         return null
       }
 
-      if (!url && !authorization && !hasHeaders) continue
+      if (hasIncompleteBodyRow) {
+        showToast('warning', 'Body incompleto', `Completa nombre y valor en el body del webhook ${index + 1}.`)
+        return null
+      }
+
+      if (!url && !authorization && !hasHeaders && !hasBody) continue
       if (!url) {
         showToast('warning', 'Falta la URL del webhook', `Agrega una ruta POST para el webhook ${index + 1}.`)
         return null
@@ -574,11 +748,34 @@ export const PaymentProducts: React.FC = () => {
         headers = headersFromFields
       }
 
+      let body: Record<string, unknown> | undefined
+      let bodyFields: Array<{ key: string; value: string }> | undefined
+      if (webhook.bodyMode === 'json' && bodyJson) {
+        try {
+          body = parseSimpleBodyJson(bodyJson)
+        } catch {
+          showToast('warning', 'Body inválido', `El body del webhook ${index + 1} debe ser un JSON simple.`)
+          return null
+        }
+      } else if (webhook.bodyMode === 'fields') {
+        body = bodyFromFields
+        bodyFields = webhook.bodyRows
+          .map((row) => ({ key: row.key.trim(), value: row.value.trim() }))
+          .filter((row) => row.key && row.value)
+      }
+
       webhooks.push({
         id: webhook.id || webhook.formId,
         url,
         ...(authorization ? { authorization } : {}),
-        ...(headers && Object.keys(headers).length ? { headers } : {})
+        ...(headers && Object.keys(headers).length ? { headers } : {}),
+        ...(body && Object.keys(body).length
+          ? {
+              bodyMode: webhook.bodyMode,
+              ...(bodyFields?.length ? { bodyFields } : {}),
+              body
+            }
+          : {})
       })
     }
 
@@ -1253,6 +1450,77 @@ export const PaymentProducts: React.FC = () => {
                                       onClick={() => addProductWebhookHeader(webhook.formId)}
                                     >
                                       Agregar header
+                                    </Button>
+                                  </div>
+                                )}
+                              </div>
+                              <div className={`${styles.formGroup} ${styles.webhookHeadersField}`}>
+                                <div className={styles.webhookHeadersHeader}>
+                                  <label>Body</label>
+                                  <CustomSelect
+                                    value={webhook.bodyMode}
+                                    onValueChange={(value) => setProductWebhookBodyMode(
+                                      webhook.formId,
+                                      value === 'json' ? 'json' : 'fields'
+                                    )}
+                                    options={[
+                                      { value: 'fields', label: 'Campos' },
+                                      { value: 'json', label: 'JSON' }
+                                    ]}
+                                  />
+                                </div>
+
+                                {webhook.bodyMode === 'json' ? (
+                                  <textarea
+                                    rows={3}
+                                    value={webhook.bodyJson}
+                                    onChange={(event) => patchProductWebhook(webhook.formId, 'bodyJson', event.target.value)}
+                                    placeholder='{"campaign": "lanzamiento"}'
+                                  />
+                                ) : (
+                                  <div className={styles.webhookHeadersList}>
+                                    {webhook.bodyRows.map((bodyField) => (
+                                      <div className={styles.webhookHeaderRow} key={bodyField.formId}>
+                                        <input
+                                          value={bodyField.key}
+                                          onChange={(event) => patchProductWebhookBody(
+                                            webhook.formId,
+                                            bodyField.formId,
+                                            'key',
+                                            event.target.value
+                                          )}
+                                          placeholder="Nombre"
+                                        />
+                                        <input
+                                          value={bodyField.value}
+                                          onChange={(event) => patchProductWebhookBody(
+                                            webhook.formId,
+                                            bodyField.formId,
+                                            'value',
+                                            event.target.value
+                                          )}
+                                          placeholder="Valor"
+                                        />
+                                        <Button
+                                          type="button"
+                                          variant="ghost"
+                                          size="sm"
+                                          iconOnly
+                                          aria-label="Quitar campo del body"
+                                          title="Quitar campo del body"
+                                          leftIcon={<Trash2 size={14} />}
+                                          onClick={() => removeProductWebhookBodyField(webhook.formId, bodyField.formId)}
+                                        />
+                                      </div>
+                                    ))}
+                                    <Button
+                                      type="button"
+                                      variant="ghost"
+                                      size="sm"
+                                      leftIcon={<Plus size={14} />}
+                                      onClick={() => addProductWebhookBodyField(webhook.formId)}
+                                    >
+                                      Agregar campo
                                     </Button>
                                   </div>
                                 )}

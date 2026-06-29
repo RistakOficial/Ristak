@@ -20,6 +20,46 @@ function parseJson(value, fallback = {}) {
   }
 }
 
+function isPlainObject(value) {
+  return Boolean(value && typeof value === 'object' && !Array.isArray(value))
+}
+
+function normalizeWebhookBodyValue(value, depth = 0) {
+  if (value === undefined || typeof value === 'function' || typeof value === 'symbol') return undefined
+  if (value === null || typeof value === 'boolean') return value
+  if (typeof value === 'number') return Number.isFinite(value) ? value : undefined
+  if (typeof value === 'string') return value.trim().slice(0, 5000)
+  if (Array.isArray(value)) {
+    if (depth >= 4) return undefined
+    return value
+      .slice(0, 50)
+      .map((item) => normalizeWebhookBodyValue(item, depth + 1))
+      .filter((item) => item !== undefined)
+  }
+  if (isPlainObject(value)) {
+    if (depth >= 4) return undefined
+    return Object.entries(value).slice(0, 40).reduce((acc, [rawKey, rawValue]) => {
+      const key = cleanString(rawKey).replace(/[\r\n]/g, '').slice(0, 120)
+      const normalized = normalizeWebhookBodyValue(rawValue, depth + 1)
+      if (key && normalized !== undefined) acc[key] = normalized
+      return acc
+    }, {})
+  }
+  return cleanString(value).slice(0, 5000)
+}
+
+function normalizeWebhookBodyObject(value) {
+  const parsed = parseJson(value, value)
+  const source = isPlainObject(parsed) ? parsed : {}
+
+  return Object.entries(source).slice(0, 40).reduce((acc, [rawKey, rawValue]) => {
+    const key = cleanString(rawKey).replace(/[\r\n]/g, '').slice(0, 120)
+    const normalized = normalizeWebhookBodyValue(rawValue)
+    if (key && normalized !== undefined) acc[key] = normalized
+    return acc
+  }, {})
+}
+
 function normalizeStatus(status = '') {
   const normalized = cleanString(status).toLowerCase()
   if (['succeeded', 'complete', 'completed', 'fulfilled', 'success'].includes(normalized)) return 'paid'
@@ -40,7 +80,8 @@ function hashWebhookConfig(webhook = {}) {
     .update(JSON.stringify({
       url: webhook.url || '',
       authorization: webhook.authorization || '',
-      headers: webhook.headers || {}
+      headers: webhook.headers || {},
+      body: webhook.body || {}
     }))
     .digest('hex')
     .slice(0, 16)
@@ -61,7 +102,8 @@ function normalizeProductWebhooks(value) {
         authorization: cleanString(webhook.authorization || webhook.auth || ''),
         headers: webhook.headers && typeof webhook.headers === 'object' && !Array.isArray(webhook.headers)
           ? webhook.headers
-          : {}
+          : {},
+        body: normalizeWebhookBodyObject(webhook.body)
       }
     })
     .filter(Boolean)
@@ -191,7 +233,7 @@ function serializeContact(row = {}) {
 }
 
 function buildPayload({ event, status, previousStatus, payment, contact, metadata, lineItems, lineItem, product, price, webhook }) {
-  return {
+  const payload = {
     event,
     eventType: 'payment',
     status,
@@ -212,6 +254,10 @@ function buildPayload({ event, status, previousStatus, payment, contact, metadat
       feature: 'product_post_webhooks'
     }
   }
+
+  return Object.keys(webhook.body || {}).length
+    ? { ...webhook.body, ...payload }
+    : payload
 }
 
 function buildHeaders(webhook = {}, event = '', paymentId = '') {

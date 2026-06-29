@@ -40,7 +40,12 @@ describe('local product catalog', () => {
           id: 'primary_webhook',
           url: 'https://example.test/ristak/product-paid',
           authorization: 'Bearer product-secret',
-          headers: { 'X-Product-Hook': 'catalog' }
+          headers: { 'X-Product-Hook': 'catalog' },
+          bodyMode: 'fields',
+          bodyFields: [
+            { key: 'campaign', value: 'catalog-launch' },
+            { key: 'source', value: 'product-modal' }
+          ]
         }
       ],
       prices: [
@@ -59,6 +64,15 @@ describe('local product catalog', () => {
     assert.equal(product.postWebhooks[0].url, 'https://example.test/ristak/product-paid')
     assert.equal(product.postWebhooks[0].authorization, 'Bearer product-secret')
     assert.deepEqual(product.postWebhooks[0].headers, { 'X-Product-Hook': 'catalog' })
+    assert.equal(product.postWebhooks[0].bodyMode, 'fields')
+    assert.deepEqual(product.postWebhooks[0].bodyFields, [
+      { key: 'campaign', value: 'catalog-launch' },
+      { key: 'source', value: 'product-modal' }
+    ])
+    assert.deepEqual(product.postWebhooks[0].body, {
+      campaign: 'catalog-launch',
+      source: 'product-modal'
+    })
     assert.equal(product.prices.length, 2)
     assert.deepEqual(
       product.prices.map((price) => price.sku).sort(),
@@ -80,7 +94,12 @@ describe('local product catalog', () => {
         {
           id: 'updated_webhook',
           url: 'https://example.test/ristak/product-updated',
-          headers: { 'X-Product-Hook': 'updated' }
+          headers: { 'X-Product-Hook': 'updated' },
+          bodyMode: 'json',
+          body: {
+            channel: 'crm',
+            nested: { tier: 'vip' }
+          }
         }
       ],
       prices: [
@@ -96,6 +115,11 @@ describe('local product catalog', () => {
     assert.equal(updated.postWebhooks.length, 1)
     assert.equal(updated.postWebhooks[0].url, 'https://example.test/ristak/product-updated')
     assert.deepEqual(updated.postWebhooks[0].headers, { 'X-Product-Hook': 'updated' })
+    assert.equal(updated.postWebhooks[0].bodyMode, 'json')
+    assert.deepEqual(updated.postWebhooks[0].body, {
+      channel: 'crm',
+      nested: { tier: 'vip' }
+    })
     assert.equal(updated.prices.length, 2)
     assert.deepEqual(
       updated.prices.map((price) => price.name).sort(),
@@ -128,7 +152,13 @@ describe('local product catalog', () => {
           id: 'payment_status_hook',
           url: 'https://example.test/ristak/payment-status',
           authorization: 'Bearer webhook-token',
-          headers: { 'X-Webhook-Test': 'ok' }
+          headers: { 'X-Webhook-Test': 'ok' },
+          bodyMode: 'json',
+          body: {
+            campaign: 'paid-product',
+            nested: { source: 'product-modal' },
+            product: { shouldNotOverrideCoreProduct: true }
+          }
         }
       ],
       prices: [
@@ -201,12 +231,15 @@ describe('local product catalog', () => {
       assert.equal(calls[0].options.headers.Authorization, 'Bearer webhook-token')
       assert.equal(calls[0].options.headers['X-Webhook-Test'], 'ok')
       assert.equal(calls[0].body.event, 'payment.paid')
+      assert.equal(calls[0].body.campaign, 'paid-product')
+      assert.deepEqual(calls[0].body.nested, { source: 'product-modal' })
       assert.equal(calls[0].body.previousStatus, 'pending')
       assert.equal(calls[0].body.payment.id, paymentId)
       assert.equal(calls[0].body.payment.amount, 1500)
       assert.equal(calls[0].body.payment.metadata.source, 'test')
       assert.equal(calls[0].body.product.localId, product.localId)
       assert.equal(calls[0].body.product.name, product.name)
+      assert.equal(calls[0].body.product.shouldNotOverrideCoreProduct, undefined)
       assert.equal(calls[0].body.product.postWebhooks, undefined)
       assert.equal(calls[0].body.lineItem.localProductId, product.localId)
 

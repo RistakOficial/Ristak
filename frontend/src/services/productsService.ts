@@ -37,6 +37,9 @@ export interface ProductPostWebhook {
   url: string
   authorization?: string
   headers?: Record<string, string>
+  bodyMode?: 'fields' | 'json'
+  bodyFields?: Array<{ key?: string; name?: string; value?: string }>
+  body?: Record<string, unknown>
   enabled?: boolean
 }
 
