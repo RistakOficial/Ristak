@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
-import { Building2, Check, CheckCircle, ChevronDown, Clock, Database, Globe2, Image, ImageUp, Loader2, Lock, Save, Trash2, Upload, User, X } from 'lucide-react'
-import { Button, Card, CustomSelect } from '@/components/common'
+import { AlertTriangle, Building2, Check, CheckCircle, ChevronDown, Clock, Database, Download, Gift, Globe2, Image, ImageUp, Loader2, Lock, Save, Trash2, Upload, User, X } from 'lucide-react'
+import { Button, Card, CustomSelect, Modal } from '@/components/common'
 import { Badge } from '@/components/common/Badge'
 import { useAuth } from '@/contexts/AuthContext'
 import { useLabels } from '@/contexts/LabelsContext'
@@ -18,6 +18,11 @@ import {
   normalizeAccountBusinessProfile,
   type AccountBusinessProfile
 } from '@/services/accountBusinessProfile'
+import {
+  accountCancellationService,
+  type AccountCancellationResult,
+  type AccountCancellationStatus
+} from '@/services/accountCancellationService'
 import mediaService from '@/services/mediaService'
 import {
   ACCOUNT_COUNTRY_CONFIG_KEY,
@@ -207,6 +212,15 @@ export const AccountSettings: React.FC = () => {
   const [savingAccountLocale, setSavingAccountLocale] = useState(false)
   const [storageStatus, setStorageStatus] = useState<StorageStatus | null>(null)
   const [storageStatusError, setStorageStatusError] = useState(false)
+  const [cancellationStatus, setCancellationStatus] = useState<AccountCancellationStatus | null>(null)
+  const [cancellationStatusError, setCancellationStatusError] = useState(false)
+  const [isCancellationModalOpen, setIsCancellationModalOpen] = useState(false)
+  const [cancellationStep, setCancellationStep] = useState<'offer' | 'reasons' | 'done'>('offer')
+  const [selectedCancellationReason, setSelectedCancellationReason] = useState('')
+  const [cancellationReasonDetails, setCancellationReasonDetails] = useState('')
+  const [cancellationResult, setCancellationResult] = useState<AccountCancellationResult | null>(null)
+  const [savingRetentionOffer, setSavingRetentionOffer] = useState(false)
+  const [cancellingAccount, setCancellingAccount] = useState(false)
   const [dropdownPos, setDropdownPos] = useState<{ top: number; left: number; width: number } | null>(null)
   const customerTriggerRef = useRef<HTMLButtonElement>(null)
   const leadTriggerRef = useRef<HTMLButtonElement>(null)
@@ -257,6 +271,9 @@ export const AccountSettings: React.FC = () => {
     accountLocaleDraft.currency !== accountCurrency ||
     accountLocaleDraft.dialCode !== accountDialCode
   const accountLocaleSaving = savingAccountLocale || savingAccountCountry || savingAccountCurrency || savingAccountDialCode
+  const canManageAccountCancellation = user?.role === 'admin' && user?.licenseEnforced
+  const cancellationReasons = cancellationStatus?.reasons || []
+  const selectedReasonRequiresDetails = selectedCancellationReason === 'other'
 
   useEffect(() => {
     setCustomLabels({
@@ -377,6 +394,36 @@ export const AccountSettings: React.FC = () => {
       cancelled = true
     }
   }, [])
+
+  useEffect(() => {
+    if (!canManageAccountCancellation) {
+      setCancellationStatus(null)
+      setCancellationStatusError(false)
+      return
+    }
+
+    let cancelled = false
+
+    const loadCancellationStatus = async () => {
+      try {
+        const status = await accountCancellationService.getStatus()
+        if (!cancelled) {
+          setCancellationStatus(status)
+          setCancellationStatusError(false)
+        }
+      } catch {
+        if (!cancelled) {
+          setCancellationStatusError(true)
+        }
+      }
+    }
+
+    loadCancellationStatus()
+
+    return () => {
+      cancelled = true
+    }
+  }, [canManageAccountCancellation])
 
   const handleSaveTimezone = async () => {
     if (!timezoneDraft || timezoneDraft === timezone) return
@@ -764,6 +811,59 @@ export const AccountSettings: React.FC = () => {
       showToast('error', 'Error', 'No se pudieron guardar los nombres')
     } finally {
       setSavingLabels(false)
+    }
+  }
+
+  const openCancellationModal = () => {
+    setCancellationStep(cancellationStatus?.has_stripe_subscription === false ? 'reasons' : 'offer')
+    setCancellationResult(null)
+    setSelectedCancellationReason(cancellationReasons[0]?.key || '')
+    setCancellationReasonDetails('')
+    setIsCancellationModalOpen(true)
+  }
+
+  const handleAcceptRetentionOffer = async () => {
+    setSavingRetentionOffer(true)
+    try {
+      const result = await accountCancellationService.acceptRetentionOffer()
+      showToast('success', 'Descuento aplicado', `Tu siguiente mes queda con ${result.percent_off}% de descuento.`)
+      setIsCancellationModalOpen(false)
+      const status = await accountCancellationService.getStatus().catch(() => null)
+      if (status) setCancellationStatus(status)
+    } catch (error: any) {
+      showToast('error', 'No se aplicó el descuento', error?.message || 'Intenta otra vez.')
+      return false
+    } finally {
+      setSavingRetentionOffer(false)
+    }
+  }
+
+  const handleCancelAccount = async () => {
+    if (!selectedCancellationReason) {
+      showToast('warning', 'Selecciona un motivo', 'Necesitamos guardar por qué cancelas para mejorar Ristak.')
+      return false
+    }
+
+    if (selectedReasonRequiresDetails && !cancellationReasonDetails.trim()) {
+      showToast('warning', 'Cuéntanos un poco más', 'Escribe el motivo para poder continuar.')
+      return false
+    }
+
+    setCancellingAccount(true)
+    try {
+      const result = await accountCancellationService.cancelAccount({
+        reasonKey: selectedCancellationReason,
+        reasonDetails: cancellationReasonDetails
+      })
+      setCancellationResult(result)
+      setCancellationStep('done')
+      showToast('success', 'Cuenta cancelada', 'Tu suscripción quedó cancelada y el respaldo está listo para descargar.')
+      return false
+    } catch (error: any) {
+      showToast('error', 'No se canceló la cuenta', error?.message || 'Intenta otra vez.')
+      return false
+    } finally {
+      setCancellingAccount(false)
     }
   }
 
@@ -1507,9 +1607,168 @@ export const AccountSettings: React.FC = () => {
                 <span>{storageStatus ? `${storageStatus.availablePretty || '0 MB'} libres de ${storageStatus.limitGB.toFixed(storageStatus.limitGB >= 10 ? 0 : 1)} GB` : 'Esperando lectura'}</span>
               </div>
             </section>
+
+            {user?.role === 'admin' && (
+              <section className={`${styles.accountSection} ${styles.accountSectionWide} ${styles.cancelAccountSection}`}>
+                <div className={styles.accountSectionHeader}>
+                  <div>
+                    <h3 className={styles.accountSectionTitle}>
+                      <AlertTriangle size={16} /> Cancelar cuenta
+                    </h3>
+                    <p className={styles.accountSectionDescription}>
+                      Cancela la suscripción, prepara un respaldo descargable por 30 días y elimina los recursos de Render para detener futuros cobros de infraestructura.
+                    </p>
+                  </div>
+                </div>
+
+                <div className={styles.cancelAccountPanel}>
+                  <div className={styles.cancelAccountCopy}>
+                    <strong>Esta acción apaga tu Ristak.</strong>
+                    <span>
+                      Primero generamos un respaldo completo de la base de datos. Después se cancela Stripe y se eliminan el servicio web, la base de datos y archivos externos de esta instalación.
+                    </span>
+                    {cancellationStatusError && (
+                      <span className={styles.cancelAccountWarning}>
+                        No pudimos leer el estado de cancelación del portal central. Intenta de nuevo en unos minutos.
+                      </span>
+                    )}
+                  </div>
+                  <Button
+                    variant="danger"
+                    onClick={openCancellationModal}
+                    disabled={!canManageAccountCancellation || cancellationStatusError || !cancellationStatus}
+                  >
+                    <AlertTriangle size={16} />
+                    Cancelar cuenta
+                  </Button>
+                </div>
+              </section>
+            )}
           </div>
         </div>
       </Card>
+
+      <Modal
+        isOpen={isCancellationModalOpen}
+        onClose={() => setIsCancellationModalOpen(false)}
+        title={cancellationStep === 'done' ? 'Cuenta cancelada' : cancellationStep === 'offer' ? 'Antes de cancelar' : 'Cancelar cuenta'}
+        message={cancellationStep === 'reasons'
+          ? 'Vas a cancelar tu suscripción, generar un respaldo y eliminar los recursos de Render. Esta acción no se puede deshacer.'
+          : undefined}
+        type={cancellationStep === 'reasons' ? 'confirm' : 'custom'}
+        size="lg"
+        confirmText={cancellationStep === 'reasons' ? 'Cancelar cuenta' : undefined}
+        cancelText="Volver"
+        onConfirm={cancellationStep === 'reasons' ? handleCancelAccount : undefined}
+        closeOnBackdropClick={!cancellingAccount && !savingRetentionOffer}
+        closeOnEscape={!cancellingAccount && !savingRetentionOffer}
+      >
+        {cancellationStep === 'offer' && (
+          <div className={styles.cancelModalStack}>
+            <div className={styles.retentionOfferPanel}>
+              <span className={styles.retentionOfferIcon}>
+                <Gift size={22} />
+              </span>
+              <div>
+                <h3>Quédate un mes más con 80% de descuento</h3>
+                <p>
+                  Aplicamos el descuento al siguiente mes de tu suscripción. Tu cuenta sigue activa y no se borra nada.
+                </p>
+              </div>
+            </div>
+            <div className={styles.cancelModalActions}>
+              <Button
+                variant="primary"
+                onClick={handleAcceptRetentionOffer}
+                loading={savingRetentionOffer}
+                disabled={savingRetentionOffer}
+              >
+                <Gift size={16} />
+                Aceptar 80%
+              </Button>
+              <Button
+                variant="secondary"
+                onClick={() => setCancellationStep('reasons')}
+                disabled={savingRetentionOffer}
+              >
+                No, cancelar
+              </Button>
+            </div>
+          </div>
+        )}
+
+        {cancellationStep === 'reasons' && (
+          <div className={styles.cancelModalStack}>
+            <div className={styles.cancelReasonList} role="radiogroup" aria-label="Motivo de cancelación">
+              {cancellationReasons.map((reason) => (
+                <label key={reason.key} className={styles.cancelReasonOption}>
+                  <input
+                    type="radio"
+                    name="account-cancellation-reason"
+                    value={reason.key}
+                    checked={selectedCancellationReason === reason.key}
+                    onChange={(event) => setSelectedCancellationReason(event.target.value)}
+                    disabled={cancellingAccount}
+                  />
+                  <span>{reason.label}</span>
+                </label>
+              ))}
+            </div>
+            {selectedReasonRequiresDetails && (
+              <div className={styles.field}>
+                <label className={styles.label} htmlFor="account-cancellation-details">Motivo</label>
+                <textarea
+                  id="account-cancellation-details"
+                  className={styles.textarea}
+                  value={cancellationReasonDetails}
+                  onChange={(event) => setCancellationReasonDetails(event.target.value)}
+                  disabled={cancellingAccount}
+                  placeholder="Cuéntanos qué faltó o qué te hizo cancelar."
+                />
+              </div>
+            )}
+            <div className={styles.cancelDangerNote}>
+              <AlertTriangle size={16} />
+              <span>El respaldo se genera antes de apagar tu app. El enlace dura 30 días.</span>
+            </div>
+          </div>
+        )}
+
+        {cancellationStep === 'done' && cancellationResult && (
+          <div className={styles.cancelModalStack}>
+            <div className={styles.cancelCompletePanel}>
+              <CheckCircle size={24} />
+              <div>
+                <h3>Tu respaldo está listo</h3>
+                <p>
+                  Tienes 30 días para descargar todos los datos exportados. La limpieza de Render ya quedó en cola para detener cobros futuros de infraestructura.
+                </p>
+              </div>
+            </div>
+            <div className={styles.exportSummaryGrid}>
+              <span>{cancellationResult.export.table_count} tablas</span>
+              <span>{cancellationResult.export.row_count} filas</span>
+              <span>Vence {new Date(cancellationResult.export.expires_at).toLocaleDateString('es-MX')}</span>
+            </div>
+            <div className={styles.cancelModalActions}>
+              <a
+                data-btn=""
+                data-v="primary"
+                className={styles.exportDownloadButton}
+                href={cancellationResult.export.download_url}
+                target="_blank"
+                rel="noreferrer"
+              >
+                <Download size={16} />
+                Descargar respaldo
+              </a>
+              <Button variant="secondary" onClick={() => setIsCancellationModalOpen(false)}>
+                Cerrar
+              </Button>
+            </div>
+          </div>
+        )}
+      </Modal>
     </div>
   )
 }

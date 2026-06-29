@@ -647,6 +647,21 @@ export async function refreshCentralMercadoPagoToken({ mode = 'test', refreshTok
   return data.token || {}
 }
 
+export async function getCentralAccountCancellationStatus() {
+  return callLicenseServer('/api/license/account-cancellation/status')
+}
+
+export async function acceptCentralAccountRetentionOffer() {
+  return callLicenseServer('/api/license/account-cancellation/retention')
+}
+
+export async function requestCentralAccountCancellation({ reasonKey, reasonDetails = '' } = {}) {
+  return callLicenseServer('/api/license/account-cancellation/cancel', {
+    reason_key: reasonKey,
+    reason_details: reasonDetails
+  })
+}
+
 /**
  * Verifica las credenciales del dueño contra el portal central. El portal es la
  * fuente de verdad: si el admin asignó una nueva contraseña allá, la app la

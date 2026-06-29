@@ -815,6 +815,7 @@ function shouldClearNameOnlyWhatsAppApiAdAttribution(row = {}, profileName = '')
 }
 
 export async function repairWhatsAppApiContactIdentityFromMessages({ limit = 5000 } = {}) {
+  const rowLimit = Math.max(Number(limit) || 5000, 5000)
   const rows = await db.all(`
     SELECT
       c.id,
@@ -843,8 +844,22 @@ export async function repairWhatsAppApiContactIdentityFromMessages({ limit = 500
       )
     WHERE LOWER(COALESCE(c.source, '')) = 'whatsapp_api'
       OR wac.id IS NOT NULL
+    ORDER BY
+      CASE
+        WHEN wac.first_seen_at IS NOT NULL
+          AND c.created_at IS NOT NULL
+          AND wac.first_seen_at < c.created_at THEN 0
+        WHEN LOWER(COALESCE(c.full_name, '')) IN ('contacto whatsapp api', 'contacto whatsapp_api') THEN 0
+        WHEN LOWER(COALESCE(c.first_name, '')) IN ('contacto whatsapp api', 'contacto whatsapp_api') THEN 0
+        WHEN LOWER(COALESCE(wac.profile_name, '')) IN ('contacto whatsapp api', 'contacto whatsapp_api') THEN 0
+        WHEN c.attribution_ad_id IS NULL
+          AND c.attribution_ad_name IS NOT NULL
+          AND c.attribution_ad_name != '' THEN 0
+        ELSE 1
+      END,
+      COALESCE(c.updated_at, c.created_at, wac.updated_at, wac.first_seen_at) DESC
     LIMIT ?
-  `, [Math.max(Number(limit) || 5000, 1)]).catch(() => [])
+  `, [rowLimit]).catch(() => [])
 
   let repairedContacts = 0
   let repairedApiContacts = 0
