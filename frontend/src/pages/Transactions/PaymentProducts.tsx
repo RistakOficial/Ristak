@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react'
-import { AlertTriangle, CheckCircle, DollarSign, Edit3, MoreVertical, Package, Plus, RefreshCw, Trash2 } from 'lucide-react'
+import { AlertTriangle, DollarSign, Edit3, MoreVertical, Package, Plus, RefreshCw, Tag, Trash2 } from 'lucide-react'
 import {
   Badge,
   Button,
@@ -42,32 +42,83 @@ type ProductFormMode = 'create' | 'edit' | null
 interface ProductFormState {
   name: string
   description: string
-  priceName: string
-  amount: string
+  productType: string
   gigstackProductKey: string
   gigstackUnitKey: string
+  prices: ProductPriceFormState[]
 }
 
-const createEmptyProductForm = (): ProductFormState => ({
-  name: '',
-  description: '',
-  priceName: 'Precio base',
-  amount: '',
-  gigstackProductKey: '',
-  gigstackUnitKey: ''
-})
+interface ProductPriceFormState {
+  formId: string
+  id?: string
+  localId?: string
+  name: string
+  amount: string
+  sku: string
+  type: string
+}
+
+type ProductTextFormField = Exclude<keyof ProductFormState, 'prices'>
 
 const getProductId = (product: ProductItem) => product.localId || product.id || product._id || ''
 const getPrimaryPrice = (product?: ProductItem | null) => product?.prices?.[0] || null
 const getPriceId = (price?: ProductPrice | null) => price?.localId || price?.id || price?._id || ''
 const getPriceAmount = (price?: ProductPrice | null) => Number(price?.amount ?? price?.price ?? 0) || 0
 
+const productTypeOptions = [
+  { value: 'digital', label: 'Producto digital' },
+  { value: 'service', label: 'Servicio' },
+  { value: 'physical', label: 'Producto físico' },
+  { value: 'subscription', label: 'Membresía / suscripción' },
+  { value: 'package', label: 'Paquete' }
+]
+
+const makePriceFormId = () => `price_${Math.random().toString(36).slice(2, 10)}`
+
+const createProductPriceForm = (price?: ProductPrice | null, index = 0): ProductPriceFormState => {
+  const amount = getPriceAmount(price)
+  const priceId = getPriceId(price)
+
+  return {
+    formId: priceId || makePriceFormId(),
+    id: price?.id || price?._id,
+    localId: price?.localId,
+    name: price?.name || (index === 0 ? 'Precio base' : `Precio ${index + 1}`),
+    amount: amount > 0 ? String(amount) : '',
+    sku: price?.sku || '',
+    type: price?.type || 'one_time'
+  }
+}
+
+const createEmptyProductForm = (): ProductFormState => ({
+  name: '',
+  description: '',
+  productType: 'digital',
+  gigstackProductKey: '',
+  gigstackUnitKey: '',
+  prices: [createProductPriceForm(null, 0)]
+})
+
 const getProductTypeLabel = (value?: string | null) => {
   const normalized = String(value || '').toLowerCase()
   if (normalized === 'digital') return 'Digital'
   if (normalized === 'physical') return 'Físico'
   if (normalized === 'service') return 'Servicio'
+  if (normalized === 'subscription') return 'Suscripción'
+  if (normalized === 'package') return 'Paquete'
   return value || 'Producto'
+}
+
+const getProductPrices = (product: ProductItem) => Array.isArray(product.prices) ? product.prices : []
+
+const getProductSkuSummary = (product: ProductItem) => {
+  const skus = getProductPrices(product)
+    .map((price) => String(price.sku || '').trim())
+    .filter(Boolean)
+
+  if (skus.length === 0) return 'Sin SKU'
+  if (skus.length === 1) return skus[0]
+  return `${skus[0]} +${skus.length - 1}`
 }
 
 const getProductSourceLabel = (product: ProductItem) => (
@@ -170,28 +221,25 @@ export const PaymentProducts: React.FC = () => {
 
   const productMetrics = useMemo(() => {
     return products.reduce((acc, product) => {
-      const price = getPrimaryPrice(product)
-      const amount = getPriceAmount(price)
-      const syncStatus = String(product.syncStatus || '').toLowerCase()
+      const prices = getProductPrices(product)
 
       acc.total += 1
+      acc.totalPrices += prices.length
 
-      if (amount > 0) {
-        acc.withPrice += 1
-      } else {
+      if (!prices.some((price) => getPriceAmount(price) > 0)) {
         acc.withoutPrice += 1
       }
 
-      if (syncStatus === 'synced' || getProductSourceLabel(product) === 'HighLevel') {
-        acc.synced += 1
+      if (prices.some((price) => String(price.sku || '').trim())) {
+        acc.withSku += 1
       }
 
       return acc
     }, {
       total: 0,
-      withPrice: 0,
       withoutPrice: 0,
-      synced: 0
+      totalPrices: 0,
+      withSku: 0
     })
   }, [products])
 
@@ -202,16 +250,18 @@ export const PaymentProducts: React.FC = () => {
   }
 
   const openEditProduct = (product: ProductItem) => {
-    const price = getPrimaryPrice(product)
+    const prices = getProductPrices(product)
 
     setEditingProduct(product)
     setProductForm({
       name: product.name || '',
       description: product.description || '',
-      priceName: price?.name || 'Precio base',
-      amount: getPriceAmount(price) ? String(getPriceAmount(price)) : '',
+      productType: String(product.productType || 'digital').toLowerCase(),
       gigstackProductKey: product.gigstackProductKey || '',
-      gigstackUnitKey: product.gigstackUnitKey || ''
+      gigstackUnitKey: product.gigstackUnitKey || '',
+      prices: prices.length
+        ? prices.map((price, index) => createProductPriceForm(price, index))
+        : [createProductPriceForm(getPrimaryPrice(product), 0)]
     })
     setFormMode('edit')
   }
@@ -224,44 +274,83 @@ export const PaymentProducts: React.FC = () => {
     setProductForm(createEmptyProductForm())
   }
 
-  const patchProductForm = (field: keyof ProductFormState, value: string) => {
+  const patchProductForm = (field: ProductTextFormField, value: string) => {
     setProductForm((current) => ({ ...current, [field]: value }))
+  }
+
+  const patchProductPrice = (formId: string, field: keyof Pick<ProductPriceFormState, 'name' | 'amount' | 'sku'>, value: string) => {
+    setProductForm((current) => ({
+      ...current,
+      prices: current.prices.map((price) => (
+        price.formId === formId ? { ...price, [field]: value } : price
+      ))
+    }))
+  }
+
+  const addProductPrice = () => {
+    setProductForm((current) => ({
+      ...current,
+      prices: [
+        ...current.prices,
+        createProductPriceForm(null, current.prices.length)
+      ]
+    }))
+  }
+
+  const removeProductPrice = (formId: string) => {
+    setProductForm((current) => {
+      if (current.prices.length <= 1) return current
+
+      return {
+        ...current,
+        prices: current.prices.filter((price) => price.formId !== formId)
+      }
+    })
   }
 
   const buildProductPayload = (): ProductPayload | null => {
     const name = productForm.name.trim()
-    const amount = Number(productForm.amount)
     const currency = accountCurrency
+    const prices = productForm.prices.map((price, index) => ({
+      ...price,
+      name: price.name.trim() || (index === 0 ? 'Precio base' : `Precio ${index + 1}`),
+      amount: Number(price.amount),
+      sku: price.sku.trim()
+    }))
 
     if (!name) {
       showToast('warning', 'Falta el nombre', 'Escribe cómo se llama el producto.')
       return null
     }
 
-    if (!Number.isFinite(amount) || amount <= 0) {
-      showToast('warning', 'Falta el precio', 'Escribe un precio válido para poder cobrarlo.')
+    if (prices.length === 0) {
+      showToast('warning', 'Falta el precio', 'Agrega al menos un precio para poder cobrar este producto.')
       return null
     }
 
-    const currentPrice = editingProduct ? getPrimaryPrice(editingProduct) : null
+    const invalidPrice = prices.find((price) => !Number.isFinite(price.amount) || price.amount <= 0)
+    if (invalidPrice) {
+      showToast('warning', 'Falta el precio', 'Escribe un precio válido para poder cobrarlo.')
+      return null
+    }
 
     return {
       name,
       description: productForm.description.trim(),
       currency,
+      productType: productForm.productType,
       gigstackProductKey: productForm.gigstackProductKey,
       gigstackUnitKey: productForm.gigstackUnitKey,
       gigstackUnitName: getGigstackUnitName(productForm.gigstackUnitKey),
-      prices: [
-        {
-          id: getPriceId(currentPrice) || undefined,
-          localId: currentPrice?.localId,
-          name: productForm.priceName.trim() || 'Precio base',
-          amount,
-          currency,
-          type: currentPrice?.type || 'one_time'
-        }
-      ]
+      prices: prices.map((price) => ({
+        id: price.id || undefined,
+        localId: price.localId,
+        name: price.name,
+        amount: price.amount,
+        currency,
+        type: price.type || 'one_time',
+        ...(price.sku ? { sku: price.sku } : {})
+      }))
     }
   }
 
@@ -385,27 +474,48 @@ export const PaymentProducts: React.FC = () => {
     },
     {
       key: 'price',
-      header: 'Precio base',
+      header: 'Precios',
       render: (_value, item) => {
-        const price = getPrimaryPrice(item)
-        const amount = getPriceAmount(price)
-        const currency = price?.currency || item.currency || accountCurrency
+        const prices = getProductPrices(item)
+        const pricedItems = prices.filter((price) => getPriceAmount(price) > 0)
+        const primaryPrice = pricedItems[0] || getPrimaryPrice(item)
+        const amount = getPriceAmount(primaryPrice)
+        const currency = primaryPrice?.currency || item.currency || accountCurrency
 
         return amount > 0 ? (
-          <span className={styles.priceCell}>{formatCurrency(amount, currency)}</span>
+          <span className={styles.priceStack}>
+            <span className={styles.priceCell}>{formatCurrency(amount, currency)}</span>
+            {prices.length > 1 && <small>{prices.length} precios</small>}
+          </span>
         ) : (
           <span className={styles.mutedCell}>Sin precio</span>
         )
       },
       searchValue: (_value, item) => {
-        const price = getPrimaryPrice(item)
-        return [getPriceAmount(price), price?.currency]
+        return getProductPrices(item).flatMap((price) => [
+          price.name,
+          price.sku,
+          getPriceAmount(price),
+          price.currency
+        ])
       },
       sortable: false
     },
     {
+      key: 'sku',
+      header: 'SKU',
+      render: (_value, item) => {
+        const summary = getProductSkuSummary(item)
+        return summary === 'Sin SKU'
+          ? <span className={styles.mutedCell}>Sin SKU</span>
+          : <span className={styles.skuCell}>{summary}</span>
+      },
+      searchValue: (_value, item) => getProductPrices(item).map((price) => price.sku),
+      sortable: false
+    },
+    {
       key: 'productType',
-      header: 'Tipo',
+      header: 'Categoría',
       render: (value) => <Badge variant="neutral">{getProductTypeLabel(value)}</Badge>,
       sortable: true
     },
@@ -435,7 +545,8 @@ export const PaymentProducts: React.FC = () => {
           {getProductSourceLabel(item)}
         </Badge>
       ),
-      sortable: true
+      sortable: true,
+      visible: false
     },
     {
       key: 'syncStatus',
@@ -446,13 +557,7 @@ export const PaymentProducts: React.FC = () => {
           {item.syncError && <span className={styles.syncError}>{item.syncError}</span>}
         </div>
       ),
-      sortable: true
-    },
-    {
-      key: 'prices',
-      header: 'Precios',
-      render: (value) => Array.isArray(value) ? value.length : 0,
-      sortable: false,
+      sortable: true,
       visible: false
     },
     {
@@ -545,9 +650,9 @@ export const PaymentProducts: React.FC = () => {
 
         <div className={styles.metricsGrid}>
           <KpiCard title="Productos" value={productMetrics.total} icon={Package} loading={loading} />
-          <KpiCard title="Con precio" value={productMetrics.withPrice} icon={DollarSign} loading={loading} />
+          <KpiCard title="Precios" value={productMetrics.totalPrices} icon={DollarSign} loading={loading} />
+          <KpiCard title="Con SKU" value={productMetrics.withSku} icon={Tag} loading={loading} />
           <KpiCard title="Sin precio" value={productMetrics.withoutPrice} icon={AlertTriangle} loading={loading} />
-          <KpiCard title="Sincronizados" value={productMetrics.synced} icon={CheckCircle} loading={loading} />
         </div>
 
         <Card padding="none">
@@ -564,7 +669,7 @@ export const PaymentProducts: React.FC = () => {
             paginated={true}
             pageSize={20}
             searchPosition="left"
-            tableId="payment_products"
+            tableId="payment_products_catalog"
             initialSortBy="name"
             initialSortOrder="asc"
             selectionActions={productSelectionToolbar}
@@ -582,7 +687,7 @@ export const PaymentProducts: React.FC = () => {
           isOpen={formMode !== null}
           onClose={closeProductForm}
           title={formMode === 'edit' ? 'Editar producto' : 'Nuevo producto'}
-          size="md"
+          size="lg"
           type="custom"
         >
           <form className={styles.form} onSubmit={(event) => {
@@ -610,26 +715,83 @@ export const PaymentProducts: React.FC = () => {
                 />
               </div>
 
-              <div className={styles.formGroup}>
-                <label>Nombre del precio</label>
-                <input
-                  value={productForm.priceName}
-                  onChange={(event) => patchProductForm('priceName', event.target.value)}
-                  placeholder="Precio base"
-                  required
+              <div className={`${styles.formGroup} ${styles.fullWidth}`}>
+                <label>Categoría</label>
+                <CustomSelect
+                  value={productForm.productType}
+                  onValueChange={(value) => patchProductForm('productType', value)}
+                  options={productTypeOptions}
                 />
               </div>
 
-              <div className={styles.formGroup}>
-                <label>Monto ({accountCurrency})</label>
-                <NumberInput
-                  value={productForm.amount}
-                  onChange={(event) => patchProductForm('amount', event.target.value)}
-                  min="0"
-                  step="0.01"
-                  placeholder="0.00"
-                  required
-                />
+              <div className={`${styles.pricesPanel} ${styles.fullWidth}`}>
+                <div className={styles.sectionHeader}>
+                  <span>Precios</span>
+                  <Button
+                    type="button"
+                    variant="secondary"
+                    size="sm"
+                    leftIcon={<Plus size={14} />}
+                    onClick={addProductPrice}
+                  >
+                    Agregar precio
+                  </Button>
+                </div>
+
+                <div className={styles.priceList}>
+                  {productForm.prices.map((price, index) => (
+                    <div className={styles.priceRow} key={price.formId}>
+                      <div className={styles.priceIndex}>
+                        {index + 1}
+                      </div>
+
+                      <div className={styles.priceFields}>
+                        <div className={styles.formGroup}>
+                          <label>Nombre del precio</label>
+                          <input
+                            value={price.name}
+                            onChange={(event) => patchProductPrice(price.formId, 'name', event.target.value)}
+                            placeholder={index === 0 ? 'Precio base' : `Precio ${index + 1}`}
+                            required
+                          />
+                        </div>
+
+                        <div className={styles.formGroup}>
+                          <label>Monto ({accountCurrency})</label>
+                          <NumberInput
+                            value={price.amount}
+                            onChange={(event) => patchProductPrice(price.formId, 'amount', event.target.value)}
+                            min="0"
+                            step="0.01"
+                            placeholder="0.00"
+                            required
+                          />
+                        </div>
+
+                        <div className={styles.formGroup}>
+                          <label>SKU</label>
+                          <input
+                            value={price.sku}
+                            onChange={(event) => patchProductPrice(price.formId, 'sku', event.target.value)}
+                            placeholder="SKU-001"
+                          />
+                        </div>
+                      </div>
+
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="sm"
+                        iconOnly
+                        aria-label="Quitar precio"
+                        title="Quitar precio"
+                        disabled={productForm.prices.length <= 1}
+                        leftIcon={<Trash2 size={16} />}
+                        onClick={() => removeProductPrice(price.formId)}
+                      />
+                    </div>
+                  ))}
+                </div>
               </div>
 
               {gigstackProductMappingEnabled && (
@@ -667,13 +829,6 @@ export const PaymentProducts: React.FC = () => {
                       />
                     </div>
                   </div>
-                </div>
-              )}
-
-              {editingProduct && (
-                <div className={styles.formMeta}>
-                  <Package size={16} />
-                  <span>{getProductSourceLabel(editingProduct)} · {getSyncStatusLabel(editingProduct.syncStatus)}</span>
                 </div>
               )}
             </div>
