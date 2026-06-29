@@ -2,7 +2,7 @@ export const DEFAULT_AI_MODEL = 'gpt-5.4-nano'
 
 export const aiModelOptionGroups = [
   {
-    label: 'GPT-5.5 y GPT-5.4',
+    label: 'Modelos actuales',
     options: [
       { value: 'gpt-5.5', label: 'GPT-5.5', description: 'El más nuevo para análisis complejo, criterio y trabajo profesional.' },
       { value: 'gpt-5.5-pro', label: 'GPT-5.5 pro', description: 'Más cómputo para respuestas más precisas; puede tardar más.' },
@@ -13,7 +13,7 @@ export const aiModelOptionGroups = [
     ]
   },
   {
-    label: 'GPT-5 anteriores',
+    label: 'Modelos GPT-5 anteriores',
     options: [
       { value: 'gpt-5.2', label: 'GPT-5.2', description: 'Modelo frontier anterior para trabajo profesional.' },
       { value: 'gpt-5.2-pro', label: 'GPT-5.2 pro', description: 'Versión pro anterior con más precisión.' },
@@ -25,7 +25,7 @@ export const aiModelOptionGroups = [
     ]
   },
   {
-    label: 'Modelos usados en ChatGPT',
+    label: 'Modelos ChatGPT',
     options: [
       { value: 'chat-latest', label: 'chat-latest', description: 'Modelo instantáneo actual usado en ChatGPT; OpenAI lo puede actualizar.' },
       { value: 'gpt-5.3-chat-latest', label: 'GPT-5.3 Chat', description: 'Snapshot instantáneo GPT-5.3 usado en ChatGPT.' },
@@ -36,7 +36,7 @@ export const aiModelOptionGroups = [
     ]
   },
   {
-    label: 'GPT-4 y legacy',
+    label: 'Modelos GPT-4 y legacy',
     options: [
       { value: 'gpt-4.1', label: 'GPT-4.1', description: 'Modelo no razonador fuerte.' },
       { value: 'gpt-4.1-mini', label: 'GPT-4.1 mini', description: 'Versión más rápida de GPT-4.1.' },

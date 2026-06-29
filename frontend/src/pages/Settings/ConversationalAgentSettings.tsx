@@ -1212,12 +1212,23 @@ interface QuestionSelectOption<T extends string> {
   disabled?: boolean
 }
 
+interface QuestionSelectOptionGroup<T extends string> {
+  label: string
+  options: Array<QuestionSelectOption<T>>
+}
+
+type QuestionSelectEntry<T extends string> = QuestionSelectOption<T> | QuestionSelectOptionGroup<T>
+
+const isQuestionSelectOptionGroup = <T extends string>(entry: QuestionSelectEntry<T>): entry is QuestionSelectOptionGroup<T> => (
+  'options' in entry
+)
+
 interface QuestionSelectRowProps<T extends string> {
   question: string
   helper?: string
   error?: string
   value: T
-  options: Array<QuestionSelectOption<T>>
+  options: Array<QuestionSelectEntry<T>>
   selectLabel?: string
   children?: React.ReactNode
   onChange: (value: T) => void
@@ -1236,6 +1247,9 @@ function QuestionSelectRow<T extends string>({
   const visibleChildren = React.Children
     .toArray(children)
     .filter((child) => child !== null && child !== undefined)
+  const renderOption = (option: QuestionSelectOption<T>) => (
+    <option key={option.value} value={option.value} disabled={option.disabled}>{option.label}</option>
+  )
 
   return (
     <div className={`${styles.configQuestion} ${visibleChildren.length ? styles.configQuestionOpen : ''}`}>
@@ -1253,8 +1267,14 @@ function QuestionSelectRow<T extends string>({
           portal
           aria-label={selectLabel || question}
         >
-          {options.map((option) => (
-            <option key={option.value} value={option.value} disabled={option.disabled}>{option.label}</option>
+          {options.map((entry) => (
+            isQuestionSelectOptionGroup(entry)
+              ? (
+                <optgroup key={`group-${entry.label}`} label={entry.label}>
+                  {entry.options.map(renderOption)}
+                </optgroup>
+              )
+              : renderOption(entry)
           ))}
         </CustomSelect>
       </div>
@@ -1380,12 +1400,13 @@ const AgentCard: React.FC<AgentCardProps> = ({ agent, aiProviders, calendars, pr
   const selectedAgentModel = selectedProvider.modelGroups
     .flatMap((group) => group.options)
     .find((option) => option.value === selectedAgentModelValue)
-  const selectedAgentModelOptions = selectedProvider.modelGroups.flatMap((group) => (
-    group.options.map((option) => ({
+  const selectedAgentModelOptions = selectedProvider.modelGroups.map((group) => ({
+    label: group.label,
+    options: group.options.map((option) => ({
       value: option.value,
-      label: `${group.label} · ${option.label}`
+      label: option.label
     }))
-  ))
+  }))
   const selectedAttendedChatActionValue = getAttendedChatActionValue(agent)
   const selectedAttendedChatAction = attendedChatActionOptions.find((option) => option.value === selectedAttendedChatActionValue) || attendedChatActionOptions[0]
   const strategyIsCustom = agent.closingStrategyMode === 'custom'
@@ -2606,8 +2627,8 @@ const AgentCard: React.FC<AgentCardProps> = ({ agent, aiProviders, calendars, pr
               </QuestionSelectRow>
 
               <QuestionSelectRow
-                question={`¿Qué versión de ${selectedProvider.label} va a usar?`}
-                helper={`Es la versión que va a escribir. Ejemplo: ${selectedAgentModel?.label || selectedAgentModelValue} se usa sólo en este agente.`}
+                question={`¿Qué modelo de ${selectedProvider.label} va a usar?`}
+                helper={`Elige el modelo exacto que va a escribir. Ejemplo: ${selectedAgentModel?.label || selectedAgentModelValue} se usa sólo en este agente.`}
                 value={selectedAgentModelValue}
                 options={selectedAgentModelOptions}
                 selectLabel={`Modelo de ${selectedProvider.label}`}
