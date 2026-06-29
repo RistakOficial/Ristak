@@ -23,6 +23,7 @@ import { Appointments } from '@/pages/Appointments'
 import { Analytics } from '@/pages/Analytics'
 import { Sites } from '@/pages/Sites'
 import { Automations } from '@/pages/Automations'
+import { MDPProgram } from '@/pages/MDPProgram'
 import { PhoneAgentChat } from '@/pages/PhoneAgentChat'
 import { PhoneApp } from '@/pages/PhoneApp'
 import { PhoneAnalytics } from '@/pages/PhoneAnalytics'
@@ -255,6 +256,16 @@ const AccessRoute: React.FC<{ moduleKey: PermissionKey; children: React.ReactNod
   const { user } = useAuth()
 
   if (!hasModuleAccess(user, moduleKey, 'read')) {
+    return <Navigate to={getFirstAllowedAppPath(user)} replace />
+  }
+
+  return <>{children}</>
+}
+
+const MdpProgramRoute: React.FC<{ children: React.ReactNode }> = ({ children }) => {
+  const { user } = useAuth()
+
+  if (user?.licenseFeatures?.mdp_program !== true) {
     return <Navigate to={getFirstAllowedAppPath(user)} replace />
   }
 
@@ -782,6 +793,7 @@ const AppWithNotifications: React.FC = () => {
             <Route path="automations/*" element={<AccessRoute moduleKey="automations"><Automations /></AccessRoute>} />
             <Route path="analytics/*" element={<AccessRoute moduleKey="analytics"><Analytics /></AccessRoute>} />
             <Route path="ai-agent/*" element={<AccessRoute moduleKey="ai_agent"><AIAgent /></AccessRoute>} />
+            <Route path="mdp-program/*" element={<MdpProgramRoute><MDPProgram /></MdpProgramRoute>} />
             <Route path="settings/*" element={<Settings />} />
             <Route path="*" element={<Navigate to="/dashboard" replace />} />
           </Route>

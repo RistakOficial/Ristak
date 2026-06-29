@@ -20,6 +20,7 @@ import {
   MessageCircle,
   Moon,
   Palette,
+  BrainCircuit,
   Rocket,
   Sun,
   BotMessageSquare
@@ -37,6 +38,7 @@ import {
   type AIAgentNavItem,
   type PermissionKey
 } from '@/utils/accessControl'
+import { getMdpProgramNavigation, type MdpProgramNavItem } from '@/services/mdpProgramService'
 import {
   DndContext,
   closestCenter,
@@ -82,6 +84,8 @@ interface SidebarNavChild {
   label: string
   exact?: boolean
 }
+
+const MDP_PROGRAM_ROOT_PATH = '/mdp-program'
 
 const PAYMENTS_NAV_ITEMS: SidebarNavChild[] = [
   { to: '/transactions', label: 'Transacciones', exact: true },
@@ -432,6 +436,93 @@ const PaymentsNavGroup: React.FC<PaymentsNavGroupProps> = ({
   )
 }
 
+interface MdpProgramNavGroupProps {
+  pathname: string
+  open: boolean
+  items: MdpProgramNavItem[]
+  collapsed?: boolean
+  onToggle: () => void
+  onRequestExpand?: () => void
+  onNavigate?: () => void
+}
+
+const MdpProgramNavGroup: React.FC<MdpProgramNavGroupProps> = ({
+  pathname,
+  open,
+  items,
+  collapsed = false,
+  onToggle,
+  onRequestExpand,
+  onNavigate
+}) => {
+  const isMdpRoute = pathname.startsWith(MDP_PROGRAM_ROOT_PATH)
+  const visibleItems = items.length ? items : [{ id: 'inicio', label: 'Magnetismo', launchUrl: '', order: 0 }]
+
+  if (collapsed) {
+    return (
+      <button
+        type="button"
+        onClick={() => {
+          if (!open) onToggle()
+          onRequestExpand?.()
+        }}
+        aria-label="Magnetismo de Pacientes"
+        title="Magnetismo de Pacientes"
+        data-ristak-sidebar-nav-item
+        data-active={isMdpRoute ? 'true' : undefined}
+        className={cn(getNavLinkClasses(isMdpRoute, 'w-full', true))}
+      >
+        <BrainCircuit className="h-5 w-5 flex-shrink-0" />
+        <span className="sr-only">Magnetismo de Pacientes</span>
+      </button>
+    )
+  }
+
+  return (
+    <div>
+      <button
+        type="button"
+        onClick={onToggle}
+        aria-expanded={open}
+        data-ristak-sidebar-nav-item
+        data-active={isMdpRoute && !open ? 'true' : undefined}
+        className={cn(getNavLinkClasses(isMdpRoute && !open, 'w-full'))}
+      >
+        <BrainCircuit className="h-5 w-5 flex-shrink-0" />
+        <span className="flex-1 text-left">Magnetismo</span>
+        <ChevronDown
+          className={cn(
+            'h-4 w-4 flex-shrink-0 text-[var(--text-mute)] transition-transform',
+            open && 'rotate-180'
+          )}
+        />
+      </button>
+
+      {open && (
+        <div className="ml-[1.55rem] mt-1 space-y-0.5 border-l border-[var(--border)] pl-2.5">
+          {visibleItems.map((child) => {
+            const to = child.id === 'inicio' ? MDP_PROGRAM_ROOT_PATH : `${MDP_PROGRAM_ROOT_PATH}/${encodeURIComponent(child.id)}`
+            const childActive = pathname === to || pathname.startsWith(`${to}/`)
+            return (
+              <Link
+                key={child.id}
+                to={to}
+                onClick={onNavigate}
+                data-ristak-sidebar-nav-item
+                data-ristak-sidebar-subnav-item
+                data-active={childActive ? 'true' : undefined}
+                className={getNavChildLinkClasses(childActive)}
+              >
+                {child.label}
+              </Link>
+            )
+          })}
+        </div>
+      )}
+    </div>
+  )
+}
+
 const NavigationItem: React.FC<NavigationItemProps> = ({ item, isActive, collapsed = false, onNavigate }) => {
   const Icon = item.icon
 
@@ -603,8 +694,11 @@ export const Sidebar: React.FC<SidebarProps> = ({
   const [showUserMenu, setShowUserMenu] = useState(false)
   const isAIAgentRoute = location.pathname.startsWith('/ai-agent')
   const isPaymentsRoute = location.pathname.startsWith('/transactions')
+  const isMdpProgramRoute = location.pathname.startsWith(MDP_PROGRAM_ROOT_PATH)
   const [aiAgentOpen, setAiAgentOpen] = useState(isAIAgentRoute)
   const [paymentsOpen, setPaymentsOpen] = useState(isPaymentsRoute)
+  const [mdpProgramOpen, setMdpProgramOpen] = useState(isMdpProgramRoute)
+  const [mdpProgramItems, setMdpProgramItems] = useState<MdpProgramNavItem[]>([])
 
   // Sincronizar el estado de los grupos con la ruta actual
   useEffect(() => {
@@ -615,7 +709,32 @@ export const Sidebar: React.FC<SidebarProps> = ({
     setPaymentsOpen(isPaymentsRoute)
   }, [isPaymentsRoute])
 
+  useEffect(() => {
+    setMdpProgramOpen(isMdpProgramRoute)
+  }, [isMdpProgramRoute])
+
   const visiblePaymentsNavigation = PAYMENTS_NAV_ITEMS
+  const canUseMdpProgram = user?.licenseFeatures?.mdp_program === true
+
+  useEffect(() => {
+    if (!canUseMdpProgram) {
+      setMdpProgramItems([])
+      return
+    }
+
+    let cancelled = false
+    getMdpProgramNavigation()
+      .then((navigation) => {
+        if (!cancelled) setMdpProgramItems(navigation.items)
+      })
+      .catch(() => {
+        if (!cancelled) setMdpProgramItems([])
+      })
+
+    return () => {
+      cancelled = true
+    }
+  }, [canUseMdpProgram])
 
   useEffect(() => {
     if (!collapsed) return
@@ -990,6 +1109,17 @@ export const Sidebar: React.FC<SidebarProps> = ({
                 onNavigate={handleNavigate}
               />
             )}
+            {canUseMdpProgram && (
+              <MdpProgramNavGroup
+                pathname={location.pathname}
+                open={mdpProgramOpen}
+                items={mdpProgramItems}
+                collapsed={collapsed}
+                onToggle={() => setMdpProgramOpen((current) => !current)}
+                onRequestExpand={handleRequestExpand}
+                onNavigate={handleNavigate}
+              />
+            )}
           </DndContext>
         ) : (
           <div
@@ -1041,6 +1171,17 @@ export const Sidebar: React.FC<SidebarProps> = ({
                 items={visibleAIAgentNavigation}
                 collapsed={collapsed}
                 onToggle={() => setAiAgentOpen((current) => !current)}
+                onRequestExpand={handleRequestExpand}
+                onNavigate={handleNavigate}
+              />
+            )}
+            {canUseMdpProgram && (
+              <MdpProgramNavGroup
+                pathname={location.pathname}
+                open={mdpProgramOpen}
+                items={mdpProgramItems}
+                collapsed={collapsed}
+                onToggle={() => setMdpProgramOpen((current) => !current)}
                 onRequestExpand={handleRequestExpand}
                 onNavigate={handleNavigate}
               />
