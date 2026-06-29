@@ -70,17 +70,29 @@ export const MDPProgram: React.FC = () => {
 
   const items = navigation?.items || []
   const activeItem = selectItem(items, activeId)
+  const title = activeItem?.label || navigation?.program?.title || 'Magnetismo de Pacientes'
 
   return (
     <PageContainer size="wide" className="pb-8">
       <PageHeader
-        eyebrow="Programa privado"
-        title={navigation?.program?.title || 'Magnetismo de Pacientes'}
-        subtitle="Capacitaciones y recursos del programa dentro de Ristak."
+        eyebrow={navigation?.program?.title || 'Magnetismo de Pacientes'}
+        title={title}
         actions={
-          <Button variant="secondary" size="sm" onClick={() => void load(activeId)} loading={loading} leftIcon={<RefreshCw size={16} />}>
-            Actualizar
-          </Button>
+          <div className="flex flex-wrap items-center gap-2">
+            {launchItem && (
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => window.open(launchItem.launchUrl, '_blank', 'noopener,noreferrer')}
+                leftIcon={<ExternalLink size={16} />}
+              >
+                Abrir aparte
+              </Button>
+            )}
+            <Button variant="secondary" size="sm" onClick={() => void load(activeId)} loading={loading} leftIcon={<RefreshCw size={16} />}>
+              Actualizar
+            </Button>
+          </div>
         }
       />
 
@@ -109,38 +121,15 @@ export const MDPProgram: React.FC = () => {
             Abriendo {activeItem.label}
           </div>
         ) : (
-          <>
-            <div className="flex flex-wrap items-center gap-2">
-              {items.map(item => (
-                <Button
-                  key={item.id}
-                  variant={item.id === activeItem.id ? 'primary' : 'secondary'}
-                  size="sm"
-                  onClick={() => navigate(`/mdp-program/${encodeURIComponent(item.id)}`)}
-                >
-                  {item.label}
-                </Button>
-              ))}
-              <Button
-                variant="ghost"
-                size="sm"
-                onClick={() => window.open(launchItem.launchUrl, '_blank', 'noopener,noreferrer')}
-                leftIcon={<ExternalLink size={16} />}
-              >
-                Abrir aparte
-              </Button>
-            </div>
-
-            <div className="min-h-0 flex-1 overflow-hidden rounded-lg border border-[var(--border)] bg-[var(--surface)]">
-              <iframe
-                key={launchItem.launchUrl}
-                title={`Magnetismo de Pacientes - ${launchItem.label}`}
-                src={launchItem.launchUrl}
-                className={cn('h-full min-h-[42rem] w-full border-0 bg-[var(--surface)]')}
-                allow="fullscreen; clipboard-read; clipboard-write"
-              />
-            </div>
-          </>
+          <div className="min-h-0 flex-1 overflow-hidden rounded-lg border border-[var(--border)] bg-[var(--surface)]">
+            <iframe
+              key={launchItem.launchUrl}
+              title={`Magnetismo de Pacientes - ${launchItem.label}`}
+              src={launchItem.launchUrl}
+              className={cn('h-full min-h-[42rem] w-full border-0 bg-[var(--surface)]')}
+              allow="fullscreen; clipboard-read; clipboard-write"
+            />
+          </div>
         )}
       </div>
     </PageContainer>

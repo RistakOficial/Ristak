@@ -24,7 +24,7 @@ MDP_PROGRAM_BRIDGE_SECRET=...
 
 - El Installer sincroniza la licencia con `mdp_program=true`.
 - El Installer envia `external_modules.mdp_program.sidebar_position` en la licencia.
-- El sidebar muestra `Magnetismo` en esa posicion, salvo que el cliente ya lo haya reordenado manualmente.
+- El sidebar usa esa posicion como ancla y muestra las pestañas que MDP devuelve como un bloque propio con separador.
 - Ristak llama `GET /api/mdp-program/navigation`.
 - El backend de Ristak firma un POST hacia MDP: `/api/ristak/navigation`.
 - MDP devuelve las pestañas disponibles para ese usuario.
@@ -51,6 +51,6 @@ MDP_PROGRAM_BRIDGE_SECRET=...
 4. Quitar `MDPProgram` y la ruta `mdp-program/*` en `frontend/src/App.tsx`.
 5. Quitar `frontend/src/services/mdpProgramService.ts`.
 6. Borrar `frontend/src/pages/MDPProgram/`.
-7. Quitar `MdpProgramNavGroup`, el item `mdp_program` y sus imports/estado en `Sidebar.tsx`.
+7. Quitar `MdpProgramSidebarBlock`, el item `mdp_program` y sus imports/estado en `Sidebar.tsx`.
 8. Quitar `licenseExternalModules` si solo se usaba para MDP.
 9. Quitar las variables `MDP_PROGRAM_*` del entorno.
