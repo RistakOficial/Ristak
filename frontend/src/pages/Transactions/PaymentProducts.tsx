@@ -65,7 +65,15 @@ interface ProductWebhookFormState {
   id?: string
   url: string
   authorization: string
+  headersMode: 'fields' | 'json'
+  headerRows: ProductWebhookHeaderFormState[]
   headersJson: string
+}
+
+interface ProductWebhookHeaderFormState {
+  formId: string
+  key: string
+  value: string
 }
 
 type ProductTextFormField = Exclude<keyof ProductFormState, 'prices' | 'postWebhooks'>
@@ -85,10 +93,39 @@ const productTypeOptions = [
 
 const makePriceFormId = () => `price_${Math.random().toString(36).slice(2, 10)}`
 const makeWebhookFormId = () => `webhook_${Math.random().toString(36).slice(2, 10)}`
+const makeWebhookHeaderFormId = () => `header_${Math.random().toString(36).slice(2, 10)}`
 
 const stringifyHeaders = (headers?: Record<string, string>) => {
   if (!headers || Object.keys(headers).length === 0) return ''
   return JSON.stringify(headers, null, 2)
+}
+
+const createWebhookHeaderRows = (headers?: Record<string, string>): ProductWebhookHeaderFormState[] => (
+  Object.entries(headers || {}).map(([key, value]) => ({
+    formId: makeWebhookHeaderFormId(),
+    key,
+    value: String(value ?? '')
+  }))
+)
+
+const headersFromRows = (rows: ProductWebhookHeaderFormState[]) => rows.reduce<Record<string, string>>((acc, row) => {
+  const headerKey = row.key.trim()
+  const headerValue = row.value.trim()
+  if (headerKey && headerValue) acc[headerKey] = headerValue
+  return acc
+}, {})
+
+const parseSimpleHeadersJson = (value: string): Record<string, string> => {
+  const parsed = JSON.parse(value)
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+    throw new Error('invalid_headers')
+  }
+  return Object.entries(parsed).reduce<Record<string, string>>((acc, [key, headerValue]) => {
+    const headerKey = key.trim()
+    const cleanValue = String(headerValue ?? '').trim()
+    if (headerKey && cleanValue) acc[headerKey] = cleanValue
+    return acc
+  }, {})
 }
 
 const createProductPriceForm = (price?: ProductPrice | null, index = 0): ProductPriceFormState => {
@@ -111,6 +148,8 @@ const createProductWebhookForm = (webhook?: ProductPostWebhook): ProductWebhookF
   id: webhook?.id,
   url: webhook?.url || '',
   authorization: webhook?.authorization || '',
+  headersMode: 'fields',
+  headerRows: createWebhookHeaderRows(webhook?.headers),
   headersJson: stringifyHeaders(webhook?.headers)
 })
 
@@ -354,11 +393,100 @@ export const PaymentProducts: React.FC = () => {
     })
   }
 
-  const patchProductWebhook = (formId: string, field: keyof Pick<ProductWebhookFormState, 'url' | 'authorization' | 'headersJson'>, value: string) => {
+  const patchProductWebhook = (
+    formId: string,
+    field: keyof Pick<ProductWebhookFormState, 'url' | 'authorization' | 'headersJson' | 'headersMode'>,
+    value: string
+  ) => {
     setProductForm((current) => ({
       ...current,
       postWebhooks: current.postWebhooks.map((webhook) => (
         webhook.formId === formId ? { ...webhook, [field]: value } : webhook
+      ))
+    }))
+  }
+
+  const setProductWebhookHeadersMode = (formId: string, mode: 'fields' | 'json') => {
+    setProductForm((current) => ({
+      ...current,
+      postWebhooks: current.postWebhooks.map((webhook) => {
+        if (webhook.formId !== formId) return webhook
+
+        if (mode === 'json') {
+          const headers = headersFromRows(webhook.headerRows)
+          return {
+            ...webhook,
+            headersMode: mode,
+            headersJson: webhook.headersJson || stringifyHeaders(headers)
+          }
+        }
+
+        if (webhook.headerRows.length > 0 || !webhook.headersJson.trim()) {
+          return { ...webhook, headersMode: mode }
+        }
+
+        try {
+          return {
+            ...webhook,
+            headersMode: mode,
+            headerRows: createWebhookHeaderRows(parseSimpleHeadersJson(webhook.headersJson))
+          }
+        } catch {
+          return { ...webhook, headersMode: mode }
+        }
+      })
+    }))
+  }
+
+  const patchProductWebhookHeader = (
+    webhookFormId: string,
+    headerFormId: string,
+    field: keyof Pick<ProductWebhookHeaderFormState, 'key' | 'value'>,
+    value: string
+  ) => {
+    setProductForm((current) => ({
+      ...current,
+      postWebhooks: current.postWebhooks.map((webhook) => (
+        webhook.formId === webhookFormId
+          ? {
+              ...webhook,
+              headerRows: webhook.headerRows.map((row) => (
+                row.formId === headerFormId ? { ...row, [field]: value } : row
+              ))
+            }
+          : webhook
+      ))
+    }))
+  }
+
+  const addProductWebhookHeader = (webhookFormId: string) => {
+    setProductForm((current) => ({
+      ...current,
+      postWebhooks: current.postWebhooks.map((webhook) => (
+        webhook.formId === webhookFormId
+          ? {
+              ...webhook,
+              headersMode: 'fields',
+              headerRows: [
+                ...webhook.headerRows,
+                { formId: makeWebhookHeaderFormId(), key: '', value: '' }
+              ]
+            }
+          : webhook
+      ))
+    }))
+  }
+
+  const removeProductWebhookHeader = (webhookFormId: string, headerFormId: string) => {
+    setProductForm((current) => ({
+      ...current,
+      postWebhooks: current.postWebhooks.map((webhook) => (
+        webhook.formId === webhookFormId
+          ? {
+              ...webhook,
+              headerRows: webhook.headerRows.filter((row) => row.formId !== headerFormId)
+            }
+          : webhook
       ))
     }))
   }
@@ -388,8 +516,22 @@ export const PaymentProducts: React.FC = () => {
       const url = webhook.url.trim()
       const authorization = webhook.authorization.trim()
       const headersJson = webhook.headersJson.trim()
+      const headersFromFields = headersFromRows(webhook.headerRows)
+      const hasIncompleteHeaderRow = webhook.headersMode === 'fields' && webhook.headerRows.some((row) => {
+        const hasKey = Boolean(row.key.trim())
+        const hasValue = Boolean(row.value.trim())
+        return hasKey !== hasValue
+      })
+      const hasHeaders = webhook.headersMode === 'json'
+        ? Boolean(headersJson)
+        : Object.keys(headersFromFields).length > 0
 
-      if (!url && !authorization && !headersJson) continue
+      if (hasIncompleteHeaderRow) {
+        showToast('warning', 'Header incompleto', `Completa nombre y valor en los headers del webhook ${index + 1}.`)
+        return null
+      }
+
+      if (!url && !authorization && !hasHeaders) continue
       if (!url) {
         showToast('warning', 'Falta la URL del webhook', `Agrega una ruta POST para el webhook ${index + 1}.`)
         return null
@@ -406,22 +548,15 @@ export const PaymentProducts: React.FC = () => {
       }
 
       let headers: Record<string, string> | undefined
-      if (headersJson) {
+      if (webhook.headersMode === 'json' && headersJson) {
         try {
-          const parsed = JSON.parse(headersJson)
-          if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
-            throw new Error('invalid_headers')
-          }
-          headers = Object.entries(parsed).reduce<Record<string, string>>((acc, [key, value]) => {
-            const headerKey = key.trim()
-            const headerValue = String(value ?? '').trim()
-            if (headerKey && headerValue) acc[headerKey] = headerValue
-            return acc
-          }, {})
+          headers = parseSimpleHeadersJson(headersJson)
         } catch {
           showToast('warning', 'Headers inválidos', `Los headers del webhook ${index + 1} deben ser un JSON simple.`)
           return null
         }
+      } else if (webhook.headersMode === 'fields') {
+        headers = headersFromFields
       }
 
       webhooks.push({
@@ -1037,13 +1172,75 @@ export const PaymentProducts: React.FC = () => {
                                 />
                               </div>
                               <div className={`${styles.formGroup} ${styles.webhookHeadersField}`}>
-                                <label>Headers JSON</label>
-                                <textarea
-                                  rows={2}
-                                  value={webhook.headersJson}
-                                  onChange={(event) => patchProductWebhook(webhook.formId, 'headersJson', event.target.value)}
-                                  placeholder='{"X-Secret": "valor"}'
-                                />
+                                <div className={styles.webhookHeadersHeader}>
+                                  <label>Headers</label>
+                                  <CustomSelect
+                                    value={webhook.headersMode}
+                                    onValueChange={(value) => setProductWebhookHeadersMode(
+                                      webhook.formId,
+                                      value === 'json' ? 'json' : 'fields'
+                                    )}
+                                    options={[
+                                      { value: 'fields', label: 'Campos' },
+                                      { value: 'json', label: 'JSON' }
+                                    ]}
+                                  />
+                                </div>
+
+                                {webhook.headersMode === 'json' ? (
+                                  <textarea
+                                    rows={2}
+                                    value={webhook.headersJson}
+                                    onChange={(event) => patchProductWebhook(webhook.formId, 'headersJson', event.target.value)}
+                                    placeholder='{"X-Secret": "valor"}'
+                                  />
+                                ) : (
+                                  <div className={styles.webhookHeadersList}>
+                                    {webhook.headerRows.map((header) => (
+                                      <div className={styles.webhookHeaderRow} key={header.formId}>
+                                        <input
+                                          value={header.key}
+                                          onChange={(event) => patchProductWebhookHeader(
+                                            webhook.formId,
+                                            header.formId,
+                                            'key',
+                                            event.target.value
+                                          )}
+                                          placeholder="Nombre"
+                                        />
+                                        <input
+                                          value={header.value}
+                                          onChange={(event) => patchProductWebhookHeader(
+                                            webhook.formId,
+                                            header.formId,
+                                            'value',
+                                            event.target.value
+                                          )}
+                                          placeholder="Valor"
+                                        />
+                                        <Button
+                                          type="button"
+                                          variant="ghost"
+                                          size="sm"
+                                          iconOnly
+                                          aria-label="Quitar header"
+                                          title="Quitar header"
+                                          leftIcon={<Trash2 size={14} />}
+                                          onClick={() => removeProductWebhookHeader(webhook.formId, header.formId)}
+                                        />
+                                      </div>
+                                    ))}
+                                    <Button
+                                      type="button"
+                                      variant="ghost"
+                                      size="sm"
+                                      leftIcon={<Plus size={14} />}
+                                      onClick={() => addProductWebhookHeader(webhook.formId)}
+                                    >
+                                      Agregar header
+                                    </Button>
+                                  </div>
+                                )}
                               </div>
                             </div>
                             <Button

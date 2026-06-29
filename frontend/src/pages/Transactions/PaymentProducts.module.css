@@ -382,6 +382,25 @@
   grid-column: 1 / -1;
 }
 
+.webhookHeadersHeader {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(140px, 180px);
+  gap: 10px;
+  align-items: end;
+}
+
+.webhookHeadersList {
+  display: grid;
+  gap: 8px;
+}
+
+.webhookHeaderRow {
+  display: grid;
+  grid-template-columns: minmax(120px, 0.8fr) minmax(140px, 1fr) auto;
+  gap: 8px;
+  align-items: center;
+}
+
 .webhookHeadersField textarea {
   min-height: 62px;
   font-family: var(--font-mono);
@@ -438,6 +457,15 @@
   .priceRow > button,
   .webhookRow > button {
     grid-column: 2;
+    justify-self: start;
+  }
+
+  .webhookHeadersHeader,
+  .webhookHeaderRow {
+    grid-template-columns: 1fr;
+  }
+
+  .webhookHeaderRow > button {
     justify-self: start;
   }
 

@@ -66,15 +66,23 @@ const webhookBodyMode = (config: ConfigValue): 'fields' | 'json' => {
   return str(config.body).trim() ? 'json' : 'fields'
 }
 
+const webhookHeadersMode = (config: ConfigValue): 'fields' | 'json' => {
+  const mode = str(config.headersMode)
+  if (mode === 'fields' || mode === 'json') return mode
+  return str(config.headersJson).trim() ? 'json' : 'fields'
+}
+
 const requestSignature = (definitionType: string, config: ConfigValue): string =>
   JSON.stringify({
     type: definitionType,
     url: str(config.url),
     method: str(config.method),
+    headersMode: webhookHeadersMode(config),
+    headersJson: str(config.headersJson),
+    headers: config.headers || null,
     bodyMode: webhookBodyMode(config),
     bodyFields: config.bodyFields || null,
-    body: str(config.body),
-    headers: config.headers || null
+    body: str(config.body)
   })
 
 export const NodeConfigBubble: React.FC<NodeConfigBubbleProps> = ({
@@ -256,7 +264,13 @@ export const NodeConfigBubble: React.FC<NodeConfigBubbleProps> = ({
           <Field key={field.key} label={field.label} help={field.help}>
             <CustomSelect
               options={field.options || []}
-              value={field.key === 'bodyMode' ? webhookBodyMode(config) : str(config[field.key])}
+              value={
+                field.key === 'bodyMode'
+                  ? webhookBodyMode(config)
+                  : field.key === 'headersMode'
+                    ? webhookHeadersMode(config)
+                    : str(config[field.key])
+              }
               onValueChange={(value) => setValue(field.key, value)}
               placeholder="Selecciona una opción"
               aria-label={field.label}

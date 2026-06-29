@@ -190,6 +190,54 @@ test('testWebhookAction arma el body con campos sin escribir JSON', async () => 
   }
 })
 
+test('testWebhookAction acepta headers en JSON cuando el usuario cambia de modo', async () => {
+  let received = { headers: {}, body: {} }
+  const server = http.createServer((req, res) => {
+    let rawBody = ''
+    req.on('data', (chunk) => {
+      rawBody += chunk
+    })
+    req.on('end', () => {
+      received = {
+        headers: req.headers,
+        body: rawBody ? JSON.parse(rawBody) : {}
+      }
+      res.setHeader('Content-Type', 'application/json')
+      res.end(JSON.stringify({ ok: true }))
+    })
+  })
+
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve))
+  try {
+    const address = server.address()
+    const port = typeof address === 'object' && address ? address.port : 0
+    const result = await testWebhookAction(
+      {
+        url: `http://127.0.0.1:${port}/crm`,
+        method: 'POST',
+        headersMode: 'json',
+        headersJson: '{\n  "X-Test-Token": "{{webhook.token}}",\n  "X-Source": "Ristak"\n}',
+        bodyMode: 'fields',
+        bodyFields: [{ key: 'email', value: '{{webhook.email}}' }],
+        timeout: 5
+      },
+      {
+        payload: {
+          email: 'lead@test.com',
+          token: 'tok_test_json'
+        }
+      }
+    )
+
+    assert.equal(result.ok, true)
+    assert.equal(received.headers['x-test-token'], 'tok_test_json')
+    assert.equal(received.headers['x-source'], 'Ristak')
+    assert.deepEqual(received.body, { email: 'lead@test.com' })
+  } finally {
+    await new Promise((resolve) => server.close(resolve))
+  }
+})
+
 test('webhook saliente expone respuestas como Webhook.response_01 y conserva alias legacy', async () => {
   const suffix = randomUUID()
   const automationId = `automation_webhook_response_root_${suffix}`

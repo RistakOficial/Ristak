@@ -2294,19 +2294,45 @@ function responseBodyFromText(text) {
   }
 }
 
-function webhookHeadersFromConfig(rawHeaders, ctx) {
+function webhookHeadersModeFromConfig(config = {}) {
+  const mode = cleanString(config.headersMode).toLowerCase()
+  if (mode === 'fields' || mode === 'json') return mode
+  return str(config.headersJson).trim() ? 'json' : 'fields'
+}
+
+function addRenderedWebhookHeader(headers, key, value, ctx) {
+  const cleanKey = str(key).trim()
+  if (!cleanKey) return
+  headers[cleanKey] = renderTemplate(String(value ?? ''), ctx, { preserveUnknown: true })
+}
+
+function webhookHeadersFromConfig(config = {}, ctx) {
   const headers = {}
+  if (webhookHeadersModeFromConfig(config) === 'json') {
+    const rawJson = str(config.headersJson).trim()
+    if (!rawJson) return headers
+
+    try {
+      const parsed = JSON.parse(rawJson)
+      if (isPlainObject(parsed)) {
+        Object.entries(parsed).forEach(([key, value]) => addRenderedWebhookHeader(headers, key, value, ctx))
+      }
+    } catch (error) {
+      logger.warn(`[Automations] Headers JSON inválidos para webhook: ${error.message}`)
+    }
+    return headers
+  }
+
+  const rawHeaders = config.headers
   if (Array.isArray(rawHeaders)) {
     rawHeaders.forEach((row) => {
-      const key = str(row?.key || row?.name).trim()
-      if (!key) return
-      headers[key] = renderTemplate(String(row?.value ?? ''), ctx, { preserveUnknown: true })
+      addRenderedWebhookHeader(headers, row?.key || row?.name, row?.value, ctx)
     })
     return headers
   }
   if (isPlainObject(rawHeaders)) {
     Object.entries(rawHeaders).forEach(([key, value]) => {
-      if (str(key).trim()) headers[key] = renderTemplate(String(value ?? ''), ctx, { preserveUnknown: true })
+      addRenderedWebhookHeader(headers, key, value, ctx)
     })
   }
   return headers
@@ -2384,7 +2410,7 @@ async function runWebhookRequestFromConfig(config = {}, ctx = {}) {
     })
   }
 
-  const headers = webhookHeadersFromConfig(config.headers, ctx)
+  const headers = webhookHeadersFromConfig(config, ctx)
   const body = webhookBodyFromConfig(config, ctx)
   const init = { method, headers }
   if (!['GET', 'HEAD'].includes(method) && body.text) {

@@ -405,6 +405,21 @@ const webhookBodyMode = (config: Record<string, unknown>): 'fields' | 'json' => 
   return str(config.body).trim() ? 'json' : 'fields'
 }
 
+const webhookHeadersMode = (config: Record<string, unknown>): 'fields' | 'json' => {
+  const mode = str(config.headersMode)
+  if (mode === 'fields' || mode === 'json') return mode
+  return str(config.headersJson).trim() ? 'json' : 'fields'
+}
+
+const isSimpleJsonObject = (value: string): boolean => {
+  try {
+    const parsed = JSON.parse(value)
+    return Boolean(parsed && typeof parsed === 'object' && !Array.isArray(parsed))
+  } catch {
+    return false
+  }
+}
+
 export const channelLabel = (value: string): string =>
   CHANNEL_OPTIONS_WITH_ANY.find((option) => option.value === value)?.label || value
 
@@ -2108,7 +2123,9 @@ const OTHER_ACTIONS: NodeDefinition[] = [
     defaultConfig: () => ({
       url: '',
       method: 'POST',
+      headersMode: 'fields',
       headers: [],
+      headersJson: '',
       bodyMode: 'fields',
       bodyFields: [],
       body: '',
@@ -2131,10 +2148,29 @@ const OTHER_ACTIONS: NodeDefinition[] = [
         ]
       },
       {
+        key: 'headersMode',
+        label: 'Headers',
+        type: 'select',
+        options: [
+          { value: 'fields', label: 'Campos' },
+          { value: 'json', label: 'JSON' }
+        ],
+        help: 'Usa campos si no quieres escribir JSON. Cambia a JSON solo si el API lo pide.'
+      },
+      {
         key: 'headers',
         label: 'Headers',
         type: 'keyValue',
-        help: 'Van antes del body. Ejemplo: Authorization, Content-Type o X-API-Key.'
+        help: 'Van antes del body. Ejemplo: Authorization, Content-Type o X-API-Key.',
+        showIf: (config) => webhookHeadersMode(config) === 'fields'
+      },
+      {
+        key: 'headersJson',
+        label: 'Headers (JSON)',
+        type: 'textarea',
+        placeholder: '{\n  "Authorization": "Bearer {{token}}"\n}',
+        showVariables: true,
+        showIf: (config) => webhookHeadersMode(config) === 'json'
       },
       {
         key: 'bodyMode',
@@ -2181,6 +2217,13 @@ const OTHER_ACTIONS: NodeDefinition[] = [
         ]
       }
     ],
+    validate: (config) => {
+      const rawHeadersJson = str(config.headersJson).trim()
+      if (webhookHeadersMode(config) === 'json' && rawHeadersJson && !isSimpleJsonObject(rawHeadersJson)) {
+        return ['Los headers JSON deben ser un objeto simple.']
+      }
+      return []
+    },
     outputs: (config) => {
       const outputs: NodeOutputHandle[] = [{ id: 'out', label: 'Siguiente paso' }]
       if (str(config.onError) === 'branch') outputs.push({ id: 'error', label: 'Error' })
