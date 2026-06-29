@@ -502,6 +502,21 @@ export const PaymentProducts: React.FC = () => {
     setWebhooksExpanded(true)
   }
 
+  const toggleProductWebhooks = () => {
+    if (!webhooksExpanded) {
+      setProductForm((current) => (
+        current.postWebhooks.length > 0
+          ? current
+          : {
+              ...current,
+              postWebhooks: [createProductWebhookForm()]
+            }
+      ))
+    }
+
+    setWebhooksExpanded((current) => !current)
+  }
+
   const removeProductWebhook = (formId: string) => {
     setProductForm((current) => ({
       ...current,
@@ -1137,7 +1152,7 @@ export const PaymentProducts: React.FC = () => {
                 <button
                   type="button"
                   className={styles.webhookToggle}
-                  onClick={() => setWebhooksExpanded((current) => !current)}
+                  onClick={toggleProductWebhooks}
                   aria-expanded={webhooksExpanded}
                 >
                   <span>Webhooks</span>
