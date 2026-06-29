@@ -43,6 +43,7 @@ import {
   Switch,
   MetaBrandMark,
   MetaParameterValueInput,
+  Modal,
   type MetaParameterVariable
 } from '@/components/common'
 import { useNotification } from '@/contexts/NotificationContext'
@@ -620,6 +621,7 @@ export const PaymentsConfiguration: React.FC = () => {
   const [mercadoPagoSubscriptionTestCredentials, setMercadoPagoSubscriptionTestCredentials] = useState<MercadoPagoSubscriptionTestCredentials>(emptyMercadoPagoSubscriptionTestCredentials)
   const [loadingMercadoPagoConfig, setLoadingMercadoPagoConfig] = useState(false)
   const [connectingMercadoPago, setConnectingMercadoPago] = useState(false)
+  const [mercadoPagoSubscriptionTestModalOpen, setMercadoPagoSubscriptionTestModalOpen] = useState(false)
   const [savingMercadoPagoSubscriptionTestCredentials, setSavingMercadoPagoSubscriptionTestCredentials] = useState(false)
   const [disconnectingMercadoPago, setDisconnectingMercadoPago] = useState(false)
   const [clearingMercadoPagoSubscriptionTestCredentials, setClearingMercadoPagoSubscriptionTestCredentials] = useState(false)
@@ -3460,159 +3462,21 @@ export const PaymentsConfiguration: React.FC = () => {
                           Si el comprador escribe otro correo, Mercado Pago lo usa como correo del pagador.
                           Ristak mantiene el pago ligado al contacto y al link original.
                         </p>
-                      </section>
 
-                      <section className={styles.mercadoPagoTestColumn}>
-                        <div className={styles.mercadoPagoTestColumnHeader}>
-                          <div className={styles.mercadoPagoTestHeading}>
-                            <span className={styles.mercadoPagoTestIcon}>
-                              <FileCheck2 size={16} />
-                            </span>
-                            <div>
-                              <strong>Suscripciones test</strong>
-                              <span>App del vendedor test + credenciales + webhook.</span>
-                            </div>
+                        <div className={styles.mercadoPagoTestLinkRow}>
+                          <div>
+                            <strong>Suscripciones test</strong>
+                            <span>Abre la guía, webhook y credenciales del vendedor test.</span>
                           </div>
-                          <Badge variant={mercadoPagoSubscriptionTestConfigured ? 'success' : 'neutral'}>
-                            {mercadoPagoSubscriptionTestConfigured ? 'Configurado' : 'Pendiente'}
-                          </Badge>
-                        </div>
-
-                        <ol className={styles.mercadoPagoTestGuideSteps}>
-                          {mercadoPagoSubscriptionTestSteps.map((step) => (
-                            <li key={step}>{step}</li>
-                          ))}
-                        </ol>
-                        <p className={styles.mercadoPagoTestGuideNote}>
-                          Mercado Pago identifica al comprador en el checkout. No autorices con el vendedor ni con una cuenta real.
-                        </p>
-
-                        <div className={styles.mercadoPagoMiniSection}>
-                          <div className={styles.mercadoPagoMiniTitle}>
-                            <Webhook size={16} />
-                            <strong>Webhook</strong>
-                          </div>
-                          {mercadoPagoWebhookEndpoints.length > 0 && (
-                            <div className={styles.endpointList}>
-                              {mercadoPagoWebhookEndpoints.map((endpoint) => (
-                                <div key={`${endpoint.source}-${endpoint.url}`} className={styles.endpointItem}>
-                                  <div>
-                                    <strong>{endpoint.label}</strong>
-                                    <span>{endpoint.url}</span>
-                                  </div>
-                                  <Button
-                                    type="button"
-                                    variant="secondary"
-                                    size="sm"
-                                    leftIcon={<Copy size={15} />}
-                                    onClick={() => handleCopyGatewayText(endpoint.url, 'URL', 'Mercado Pago')}
-                                  >
-                                    Copiar
-                                  </Button>
-                                </div>
-                              ))}
-                            </div>
-                          )}
-                          <div className={styles.mercadoPagoEventStrip}>
-                            <div>
-                              <strong>Eventos</strong>
-                              <span>Marca: Pagos, Planes y suscripciones, Reclamos.</span>
-                            </div>
-                            <Button
-                              type="button"
-                              variant="secondary"
-                              size="sm"
-                              leftIcon={<Copy size={15} />}
-                              onClick={() => handleCopyGatewayText(mercadoPagoSubscriptionWebhookEventNames, 'Eventos', 'Mercado Pago')}
-                            >
-                              Copiar eventos
-                            </Button>
-                          </div>
-                        </div>
-
-                        <div className={styles.mercadoPagoCredentialGrid}>
-                          {renderField(
-                            'Public Key de la app',
-                            <input
-                              type="text"
-                              value={mercadoPagoSubscriptionTestCredentials.publicKey}
-                              onChange={(event) => updateMercadoPagoSubscriptionTestCredential('publicKey', event.target.value)}
-                              placeholder="APP_USR-..."
-                              autoComplete="off"
-                              spellCheck={false}
-                            />
-                          )}
-                          {renderField(
-                            'Access Token de la app',
-                            <input
-                              type="password"
-                              value={mercadoPagoSubscriptionTestCredentials.accessToken}
-                              onChange={(event) => updateMercadoPagoSubscriptionTestCredential('accessToken', event.target.value)}
-                              onFocus={(event) => {
-                                if (mercadoPagoConfig?.subscriptionTestCredentials?.accessTokenPreview && mercadoPagoSubscriptionTestCredentials.accessToken === mercadoPagoConfig.subscriptionTestCredentials.accessTokenPreview) {
-                                  event.currentTarget.select()
-                                }
-                              }}
-                              placeholder={mercadoPagoConfig?.subscriptionTestCredentials?.hasAccessToken ? mercadoPagoConfig.subscriptionTestCredentials.accessTokenPreview : 'APP_USR-...'}
-                              autoComplete="new-password"
-                              spellCheck={false}
-                            />
-                          )}
-                          {renderField(
-                            'Clave secreta del webhook',
-                            <input
-                              type="password"
-                              value={mercadoPagoSubscriptionTestCredentials.webhookSecret}
-                              onChange={(event) => updateMercadoPagoSubscriptionTestCredential('webhookSecret', event.target.value)}
-                              onFocus={(event) => {
-                                if (mercadoPagoConfig?.subscriptionTestCredentials?.webhookSecretPreview && mercadoPagoSubscriptionTestCredentials.webhookSecret === mercadoPagoConfig.subscriptionTestCredentials.webhookSecretPreview) {
-                                  event.currentTarget.select()
-                                }
-                              }}
-                              placeholder={mercadoPagoConfig?.subscriptionTestCredentials?.hasWebhookSecret ? mercadoPagoConfig.subscriptionTestCredentials.webhookSecretPreview : 'Clave secreta de Webhooks'}
-                              autoComplete="new-password"
-                              spellCheck={false}
-                            />
-                          )}
-                        </div>
-
-                        <div className={styles.stripeModeActions}>
                           <Button
                             type="button"
+                            variant="ghost"
                             size="sm"
-                            onClick={handleSaveMercadoPagoSubscriptionTestCredentials}
-                            disabled={savingMercadoPagoSubscriptionTestCredentials || clearingMercadoPagoSubscriptionTestCredentials || !mercadoPagoSubscriptionTestCanSave}
+                            leftIcon={<FileCheck2 size={15} />}
+                            onClick={() => setMercadoPagoSubscriptionTestModalOpen(true)}
                           >
-                            {savingMercadoPagoSubscriptionTestCredentials ? (
-                              <>
-                                <Loader2 size={15} className={styles.spinIcon} />
-                                Guardando...
-                              </>
-                            ) : (
-                              'Guardar credenciales'
-                            )}
+                            Probar suscripciones test
                           </Button>
-                          {mercadoPagoSubscriptionTestConfigured && (
-                            <Button
-                              type="button"
-                              variant="secondary"
-                              size="sm"
-                              onClick={handleClearMercadoPagoSubscriptionTestCredentials}
-                              disabled={savingMercadoPagoSubscriptionTestCredentials || clearingMercadoPagoSubscriptionTestCredentials}
-                            >
-                              {clearingMercadoPagoSubscriptionTestCredentials ? (
-                                <>
-                                  <Loader2 size={15} className={styles.spinIcon} />
-                                  Borrando...
-                                </>
-                              ) : (
-                                <>
-                                  <Unplug size={15} />
-                                  Desconectar
-                                </>
-                              )}
-                            </Button>
-                          )}
                         </div>
                       </section>
                     </div>
@@ -3664,6 +3528,173 @@ export const PaymentsConfiguration: React.FC = () => {
             })()}
           </div>
         </Card>
+      )}
+
+      {activeGatewayRoute === 'mercadopago' && (
+        <Modal
+          isOpen={mercadoPagoSubscriptionTestModalOpen}
+          onClose={() => setMercadoPagoSubscriptionTestModalOpen(false)}
+          title="Suscripciones test de Mercado Pago"
+          size="xl"
+        >
+          <div className={styles.mercadoPagoSubscriptionModal}>
+            <div className={styles.mercadoPagoSubscriptionModalIntro}>
+              <div className={styles.mercadoPagoTestHeading}>
+                <span className={styles.mercadoPagoTestIcon}>
+                  <FileCheck2 size={16} />
+                </span>
+                <div>
+                  <strong>App del vendedor test</strong>
+                  <span>Credenciales separadas para probar suscripciones sin mezclar la conexión OAuth.</span>
+                </div>
+              </div>
+              <Badge variant={mercadoPagoSubscriptionTestConfigured ? 'success' : 'neutral'}>
+                {mercadoPagoSubscriptionTestConfigured ? 'Configurado' : 'Pendiente'}
+              </Badge>
+            </div>
+
+            <div className={styles.inlineWarning}>
+              <AlertTriangle size={16} />
+              <span>
+                Mercado Pago identifica al comprador en el checkout. No autorices con el vendedor ni con una cuenta real.
+              </span>
+            </div>
+
+            <ol className={styles.mercadoPagoTestGuideSteps}>
+              {mercadoPagoSubscriptionTestSteps.map((step) => (
+                <li key={step}>{step}</li>
+              ))}
+            </ol>
+
+            <div className={styles.mercadoPagoMiniSection}>
+              <div className={styles.mercadoPagoMiniTitle}>
+                <Webhook size={16} />
+                <strong>Webhook</strong>
+              </div>
+              {mercadoPagoWebhookEndpoints.length > 0 && (
+                <div className={styles.endpointList}>
+                  {mercadoPagoWebhookEndpoints.map((endpoint) => (
+                    <div key={`${endpoint.source}-${endpoint.url}`} className={styles.endpointItem}>
+                      <div>
+                        <strong>{endpoint.label}</strong>
+                        <span>{endpoint.url}</span>
+                      </div>
+                      <Button
+                        type="button"
+                        variant="secondary"
+                        size="sm"
+                        leftIcon={<Copy size={15} />}
+                        onClick={() => handleCopyGatewayText(endpoint.url, 'URL', 'Mercado Pago')}
+                      >
+                        Copiar
+                      </Button>
+                    </div>
+                  ))}
+                </div>
+              )}
+              <div className={styles.mercadoPagoEventStrip}>
+                <div>
+                  <strong>Eventos</strong>
+                  <span>Marca: Pagos, Planes y suscripciones, Reclamos.</span>
+                </div>
+                <Button
+                  type="button"
+                  variant="secondary"
+                  size="sm"
+                  leftIcon={<Copy size={15} />}
+                  onClick={() => handleCopyGatewayText(mercadoPagoSubscriptionWebhookEventNames, 'Eventos', 'Mercado Pago')}
+                >
+                  Copiar eventos
+                </Button>
+              </div>
+            </div>
+
+            <div className={styles.mercadoPagoCredentialGrid}>
+              {renderField(
+                'Public Key de la app',
+                <input
+                  type="text"
+                  value={mercadoPagoSubscriptionTestCredentials.publicKey}
+                  onChange={(event) => updateMercadoPagoSubscriptionTestCredential('publicKey', event.target.value)}
+                  placeholder="APP_USR-..."
+                  autoComplete="off"
+                  spellCheck={false}
+                />
+              )}
+              {renderField(
+                'Access Token de la app',
+                <input
+                  type="password"
+                  value={mercadoPagoSubscriptionTestCredentials.accessToken}
+                  onChange={(event) => updateMercadoPagoSubscriptionTestCredential('accessToken', event.target.value)}
+                  onFocus={(event) => {
+                    if (mercadoPagoConfig?.subscriptionTestCredentials?.accessTokenPreview && mercadoPagoSubscriptionTestCredentials.accessToken === mercadoPagoConfig.subscriptionTestCredentials.accessTokenPreview) {
+                      event.currentTarget.select()
+                    }
+                  }}
+                  placeholder={mercadoPagoConfig?.subscriptionTestCredentials?.hasAccessToken ? mercadoPagoConfig.subscriptionTestCredentials.accessTokenPreview : 'APP_USR-...'}
+                  autoComplete="new-password"
+                  spellCheck={false}
+                />
+              )}
+              {renderField(
+                'Clave secreta del webhook',
+                <input
+                  type="password"
+                  value={mercadoPagoSubscriptionTestCredentials.webhookSecret}
+                  onChange={(event) => updateMercadoPagoSubscriptionTestCredential('webhookSecret', event.target.value)}
+                  onFocus={(event) => {
+                    if (mercadoPagoConfig?.subscriptionTestCredentials?.webhookSecretPreview && mercadoPagoSubscriptionTestCredentials.webhookSecret === mercadoPagoConfig.subscriptionTestCredentials.webhookSecretPreview) {
+                      event.currentTarget.select()
+                    }
+                  }}
+                  placeholder={mercadoPagoConfig?.subscriptionTestCredentials?.hasWebhookSecret ? mercadoPagoConfig.subscriptionTestCredentials.webhookSecretPreview : 'Clave secreta de Webhooks'}
+                  autoComplete="new-password"
+                  spellCheck={false}
+                />
+              )}
+            </div>
+
+            <div className={styles.stripeModeActions}>
+              <Button
+                type="button"
+                size="sm"
+                onClick={handleSaveMercadoPagoSubscriptionTestCredentials}
+                disabled={savingMercadoPagoSubscriptionTestCredentials || clearingMercadoPagoSubscriptionTestCredentials || !mercadoPagoSubscriptionTestCanSave}
+              >
+                {savingMercadoPagoSubscriptionTestCredentials ? (
+                  <>
+                    <Loader2 size={15} className={styles.spinIcon} />
+                    Guardando...
+                  </>
+                ) : (
+                  'Guardar credenciales'
+                )}
+              </Button>
+              {mercadoPagoSubscriptionTestConfigured && (
+                <Button
+                  type="button"
+                  variant="secondary"
+                  size="sm"
+                  onClick={handleClearMercadoPagoSubscriptionTestCredentials}
+                  disabled={savingMercadoPagoSubscriptionTestCredentials || clearingMercadoPagoSubscriptionTestCredentials}
+                >
+                  {clearingMercadoPagoSubscriptionTestCredentials ? (
+                    <>
+                      <Loader2 size={15} className={styles.spinIcon} />
+                      Borrando...
+                    </>
+                  ) : (
+                    <>
+                      <Unplug size={15} />
+                      Desconectar
+                    </>
+                  )}
+                </Button>
+              )}
+            </div>
+          </div>
+        </Modal>
       )}
     </div>
   )
