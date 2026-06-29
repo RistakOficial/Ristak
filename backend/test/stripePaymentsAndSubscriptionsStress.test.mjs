@@ -933,8 +933,11 @@ test('suscripciones Stripe: link crea Checkout de suscripcion en Stripe', async 
     assert.equal(calls.checkoutSessionsCreate.length, 1)
     assert.equal(calls.checkoutSessionsCreate[0].params.mode, 'subscription')
     assert.equal(calls.checkoutSessionsCreate[0].params.metadata.ristak_subscription_id, created.id)
+    assert.equal(calls.checkoutSessionsCreate[0].params.metadata.public_payment_id, created.subscriptionStartPublicPaymentId)
+    assert.ok(calls.checkoutSessionsCreate[0].params.success_url.includes(`/pay/${created.subscriptionStartPublicPaymentId}`))
     assert.equal(calls.checkoutSessionsCreate[0].params.subscription_data.metadata.ristak_subscription_id, created.id)
     assert.equal(calls.subscriptionsCreate.length, 0)
+    assert.match(created.subscriptionStartPublicPaymentId || '', /^pay_/)
 
     const saved = await db.get(
       `SELECT status, payment_method, payment_provider, stripe_subscription_id, metadata_json
@@ -950,7 +953,7 @@ test('suscripciones Stripe: link crea Checkout de suscripcion en Stripe', async 
     assert.equal(metadata.subscriptionStartPayment.provider, 'stripe')
     assert.equal(metadata.subscriptionStartPayment.paymentUrl, 'https://checkout.stripe.test/cs_stress_1')
     assert.equal(metadata.subscriptionStartPayment.status, 'pending_checkout')
-    assert.equal(metadata.subscriptionStartPayment.publicPaymentId, '')
+    assert.equal(metadata.subscriptionStartPayment.publicPaymentId, created.subscriptionStartPublicPaymentId)
     assert.equal(metadata.stripeCheckout.sessionId, 'cs_stress_1')
 
     const withCheckout = await getSubscription(created.id)
@@ -995,7 +998,7 @@ test('suscripciones Stripe: Checkout hospedado activa suscripcion en webhook', a
     })
 
     assert.equal(created.subscriptionStartUrl, 'https://checkout.stripe.test/cs_stress_1')
-    assert.equal(created.subscriptionStartPublicPaymentId, null)
+    assert.match(created.subscriptionStartPublicPaymentId || '', /^pay_/)
     assert.equal(calls.checkoutSessionsCreate.length, 1)
 
     webhookEvent = {

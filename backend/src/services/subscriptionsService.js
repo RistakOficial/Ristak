@@ -47,6 +47,15 @@ function makeId() {
   return `${SUBSCRIPTION_PREFIX}_${crypto.randomUUID()}`
 }
 
+function makePaymentId(provider = 'subscription') {
+  const cleanProvider = cleanString(provider).replace(/[^a-z0-9_]+/gi, '_').toLowerCase() || 'subscription'
+  return `${cleanProvider}_subscription_start_${Date.now()}_${crypto.randomBytes(6).toString('hex')}`
+}
+
+function makePublicPaymentId() {
+  return `pay_${crypto.randomBytes(18).toString('base64url')}`
+}
+
 function cleanString(value) {
   return String(value ?? '').trim()
 }
@@ -196,6 +205,12 @@ function jsonOrNull(value) {
   } catch {
     return null
   }
+}
+
+function buildPublicPaymentUrl(baseUrl = '', publicPaymentId = '') {
+  const cleanBase = cleanString(baseUrl).replace(/\/+$/, '')
+  const cleanPublicPaymentId = cleanString(publicPaymentId)
+  return cleanBase && cleanPublicPaymentId ? `${cleanBase}/pay/${encodeURIComponent(cleanPublicPaymentId)}` : ''
 }
 
 function addMonths(date, months) {
@@ -538,6 +553,76 @@ function buildSubscriptionStartPaymentInput(row) {
   }
 }
 
+function getSubscriptionStartPaymentMethod(row = {}) {
+  const provider = cleanString(row.payment_provider).toLowerCase()
+  if (provider === 'mercadopago') return 'mercadopago_subscription'
+  if (provider === 'conekta') return 'conekta'
+  return 'stripe'
+}
+
+async function createSubscriptionStartPaymentRecord(row, baseUrl = '') {
+  const metadata = parseJson(row.metadata_json, {})
+  const existing = getSubscriptionStartPayment(metadata)
+  if (existing.paymentId && existing.publicPaymentId) {
+    return {
+      ...existing,
+      paymentUrl: buildPublicPaymentUrl(baseUrl, existing.publicPaymentId) || existing.paymentUrl,
+      provider: existing.provider || row.payment_provider,
+      status: existing.status || 'sent'
+    }
+  }
+
+  const publicPaymentId = makePublicPaymentId()
+  const paymentId = makePaymentId(row.payment_provider)
+  const now = new Date().toISOString()
+  const paymentUrl = buildPublicPaymentUrl(baseUrl, publicPaymentId)
+  const input = buildSubscriptionStartPaymentInput(row)
+  const paymentMetadata = {
+    contactName: cleanString(row.contact_name),
+    contactEmail: cleanString(row.contact_email),
+    contactPhone: cleanString(row.contact_phone),
+    source: 'subscription_start_link',
+    lineItems: input.lineItems,
+    ...(input.metadata && typeof input.metadata === 'object' ? input.metadata : {})
+  }
+
+  await db.run(
+    `INSERT INTO payments (
+      id, contact_id, amount, currency, status, payment_method, payment_mode,
+      payment_provider, reference, title, description, date, due_date, sent_at,
+      public_payment_id, payment_url, metadata_json, created_at, updated_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+    [
+      paymentId,
+      row.contact_id || null,
+      row.amount,
+      row.currency || DEFAULT_CURRENCY,
+      'sent',
+      getSubscriptionStartPaymentMethod(row),
+      row.payment_mode || 'test',
+      row.payment_provider || 'stripe',
+      publicPaymentId,
+      input.title || row.name || 'Inicio de suscripción',
+      input.description || row.description || row.name || 'Pago inicial de suscripción',
+      now,
+      input.dueDate || null,
+      now,
+      publicPaymentId,
+      paymentUrl,
+      JSON.stringify(paymentMetadata)
+    ]
+  )
+
+  return {
+    paymentId,
+    publicPaymentId,
+    paymentUrl,
+    provider: row.payment_provider || 'stripe',
+    status: 'sent',
+    createdAt: now
+  }
+}
+
 async function createSubscriptionStartPaymentLinkIfNeeded(row, payload = {}) {
   if (!isPublicPaymentLinkMethod(row.payment_method)) return row
 
@@ -558,11 +643,26 @@ async function createSubscriptionStartPaymentLinkIfNeeded(row, payload = {}) {
 
   const baseUrl = cleanString(payload.baseUrl || payload.base_url)
   const input = buildSubscriptionStartPaymentInput(row)
+  const startPayment = await createSubscriptionStartPaymentRecord(row, baseUrl)
+  const checkoutInput = {
+    ...input,
+    subscriptionStartPaymentId: startPayment.paymentId,
+    subscriptionStartPublicPaymentId: startPayment.publicPaymentId,
+    publicPaymentId: startPayment.publicPaymentId
+  }
 
   if (row.payment_provider === 'stripe') {
-    const checkout = await createStripeSubscriptionCheckoutLink(input, { baseUrl })
+    const checkout = await createStripeSubscriptionCheckoutLink(checkoutInput, { baseUrl })
     const checkoutUrl = cleanString(checkout.stripeCheckoutUrl)
     if (!checkoutUrl) return row
+    await db.run(
+      `UPDATE payments
+       SET status = CASE WHEN status = 'sent' THEN 'pending' ELSE status END,
+           reference = COALESCE(?, reference),
+           updated_at = CURRENT_TIMESTAMP
+       WHERE id = ?`,
+      [cleanString(checkout.stripeCheckoutSessionId) || null, startPayment.paymentId]
+    )
 
     return {
       ...row,
@@ -580,9 +680,9 @@ async function createSubscriptionStartPaymentLinkIfNeeded(row, payload = {}) {
           createdAt: new Date().toISOString()
         },
         subscriptionStartPayment: {
-          paymentId: '',
-          publicPaymentId: '',
+          ...startPayment,
           paymentUrl: checkoutUrl,
+          publicPaymentUrl: startPayment.paymentUrl,
           provider: 'stripe',
           status: 'pending_checkout',
           stripeCheckoutSessionId: cleanString(checkout.stripeCheckoutSessionId),
@@ -594,9 +694,17 @@ async function createSubscriptionStartPaymentLinkIfNeeded(row, payload = {}) {
   }
 
   if (row.payment_provider === 'conekta') {
-    const checkout = await createConektaSubscriptionCheckoutLink(input, { baseUrl })
+    const checkout = await createConektaSubscriptionCheckoutLink(checkoutInput, { baseUrl })
     const checkoutUrl = cleanString(checkout.conektaCheckoutUrl)
     if (!checkoutUrl) return row
+    await db.run(
+      `UPDATE payments
+       SET status = CASE WHEN status = 'sent' THEN 'pending' ELSE status END,
+           reference = COALESCE(?, reference),
+           updated_at = CURRENT_TIMESTAMP
+       WHERE id = ?`,
+      [cleanString(checkout.conektaCheckoutId) || null, startPayment.paymentId]
+    )
 
     return {
       ...row,
@@ -612,9 +720,9 @@ async function createSubscriptionStartPaymentLinkIfNeeded(row, payload = {}) {
           createdAt: new Date().toISOString()
         },
         subscriptionStartPayment: {
-          paymentId: '',
-          publicPaymentId: '',
+          ...startPayment,
           paymentUrl: checkoutUrl,
+          publicPaymentUrl: startPayment.paymentUrl,
           provider: 'conekta',
           status: 'pending_checkout',
           conektaCheckoutId: cleanString(checkout.conektaCheckoutId),
@@ -657,6 +765,9 @@ async function attachMercadoPagoSubscriptionIfNeeded(row, payload = {}) {
   if (row.payment_provider !== 'mercadopago') return row
   if (row.payment_method !== 'mercadopago_subscription') return row
 
+  const baseUrl = cleanString(payload.baseUrl || payload.base_url)
+  const currentMetadata = parseJson(row.metadata_json, {})
+  const startPayment = await createSubscriptionStartPaymentRecord(row, baseUrl)
   const mercadoPagoSubscription = await createMercadoPagoSubscriptionPlanLink({
     ristakSubscriptionId: row.id,
     name: row.name,
@@ -665,12 +776,51 @@ async function attachMercadoPagoSubscriptionIfNeeded(row, payload = {}) {
     intervalType: row.interval_type,
     intervalCount: row.interval_count,
     startDate: row.start_date,
-    cancelAt: row.cancel_at
+    cancelAt: row.cancel_at,
+    subscriptionStartPaymentId: startPayment.paymentId,
+    subscriptionStartPublicPaymentId: startPayment.publicPaymentId,
+    publicPaymentId: startPayment.publicPaymentId
   }, {
-    baseUrl: cleanString(payload.baseUrl || payload.base_url)
+    baseUrl
   })
 
-  return applyMercadoPagoSubscriptionToRow(row, mercadoPagoSubscription)
+  const nextRow = applyMercadoPagoSubscriptionToRow(row, mercadoPagoSubscription)
+  const checkoutUrl = nextRow.payment_mode === 'test'
+    ? cleanString(nextRow.mercadopago_sandbox_init_point || nextRow.mercadopago_init_point)
+    : cleanString(nextRow.mercadopago_init_point || nextRow.mercadopago_sandbox_init_point)
+
+  await db.run(
+    `UPDATE payments
+     SET status = CASE WHEN status = 'sent' THEN 'pending' ELSE status END,
+         reference = COALESCE(?, reference),
+         updated_at = CURRENT_TIMESTAMP
+     WHERE id = ?`,
+    [nextRow.mercadopago_preapproval_plan_id || nextRow.mercadopago_preapproval_id || null, startPayment.paymentId]
+  ).catch(() => undefined)
+
+  return {
+    ...nextRow,
+    metadata_json: jsonOrNull({
+      ...currentMetadata,
+      mercadoPagoCheckout: {
+        preapprovalPlanId: nextRow.mercadopago_preapproval_plan_id || '',
+        preapprovalId: nextRow.mercadopago_preapproval_id || '',
+        url: checkoutUrl,
+        status: 'pending_checkout',
+        createdAt: new Date().toISOString()
+      },
+      subscriptionStartPayment: {
+        ...startPayment,
+        paymentUrl: checkoutUrl || startPayment.paymentUrl,
+        publicPaymentUrl: startPayment.paymentUrl,
+        provider: 'mercadopago',
+        status: 'pending_checkout',
+        mercadoPagoPreapprovalPlanId: nextRow.mercadopago_preapproval_plan_id || '',
+        mercadoPagoPreapprovalId: nextRow.mercadopago_preapproval_id || '',
+        createdAt: startPayment.createdAt || new Date().toISOString()
+      }
+    })
+  }
 }
 
 function applyConektaSubscriptionToRow(row, conektaSubscription) {

@@ -374,8 +374,11 @@ export const stripePaymentsService = {
     return parseApiResponse<StripePaymentPlanResponse>(response)
   },
 
-  async getPublicPayment(publicPaymentId: string, sync = false): Promise<PublicStripePayment> {
-    const query = sync ? '?sync=true' : ''
+  async getPublicPayment(publicPaymentId: string, sync = false, checkoutSessionId = ''): Promise<PublicStripePayment> {
+    const params = new URLSearchParams()
+    if (sync) params.set('sync', 'true')
+    if (checkoutSessionId) params.set('session_id', checkoutSessionId)
+    const query = params.toString() ? `?${params.toString()}` : ''
     const response = await fetch(apiUrl(`/api/stripe/public/payments/${encodeURIComponent(publicPaymentId)}${query}`))
     return parseApiResponse<PublicStripePayment>(response)
   },

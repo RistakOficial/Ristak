@@ -438,8 +438,12 @@ function getConfiguredBaseUrl() {
   )
 }
 
-function buildSubscriptionReturnUrl(baseUrl, result) {
+function buildSubscriptionReturnUrl(baseUrl, result, publicPaymentId = '') {
   const cleanBase = cleanString(baseUrl || getConfiguredBaseUrl()).replace(/\/+$/, '') || 'https://www.ristak.com'
+  const cleanPublicPaymentId = cleanString(publicPaymentId)
+  if (cleanPublicPaymentId) {
+    return `${cleanBase}/pay/${encodeURIComponent(cleanPublicPaymentId)}?payment=return&stripe_subscription=${encodeURIComponent(result)}&session_id={CHECKOUT_SESSION_ID}`
+  }
   return `${cleanBase}/transactions/subscriptions?stripe_subscription=${encodeURIComponent(result)}&session_id={CHECKOUT_SESSION_ID}`
 }
 
@@ -1327,7 +1331,7 @@ export async function createStripePaymentLink(input = {}, { baseUrl } = {}) {
   }
 }
 
-export async function getPublicStripePayment(publicPaymentId, { baseUrl, sync = false } = {}) {
+export async function getPublicStripePayment(publicPaymentId, { baseUrl, sync = false, checkoutSessionId = '' } = {}) {
   let row = await findPaymentByPublicId(publicPaymentId)
   if (!row || row.payment_provider !== 'stripe') return null
   const config = await getStripePaymentConfig({ mode: row.payment_mode || '' })
@@ -1335,6 +1339,16 @@ export async function getPublicStripePayment(publicPaymentId, { baseUrl, sync = 
   if (sync && row.stripe_payment_intent_id && !['paid', 'refunded', 'void', 'deleted'].includes(row.status)) {
     await refreshStripePaymentFromIntent(row.stripe_payment_intent_id, row.payment_mode || '')
     row = await findPaymentByPublicId(publicPaymentId)
+  }
+
+  const cleanCheckoutSessionId = cleanString(checkoutSessionId)
+  if (sync && cleanCheckoutSessionId && !['paid', 'refunded', 'void', 'deleted'].includes(cleanString(row.status).toLowerCase())) {
+    const context = await getStripeClient(row.payment_mode || '')
+    if (context.stripe?.checkout?.sessions?.retrieve) {
+      const session = await context.stripe.checkout.sessions.retrieve(cleanCheckoutSessionId, {}, context.requestOptions)
+      await updateSubscriptionFromStripeCheckoutSession(session, context)
+      row = await findPaymentByPublicId(publicPaymentId)
+    }
   }
 
   const paymentSettings = await getPublicPaymentSettings()
@@ -2104,6 +2118,8 @@ export async function createStripeSubscriptionCheckoutLink(input = {}, { baseUrl
   const interval = cleanString(input.intervalType || 'monthly').toLowerCase()
   const intervalCount = Number.parseInt(input.intervalCount, 10) || 1
   const ristakSubscriptionId = cleanString(input.ristakSubscriptionId)
+  const subscriptionStartPaymentId = cleanString(input.subscriptionStartPaymentId || input.ristakPaymentId || input.paymentId)
+  const subscriptionStartPublicPaymentId = cleanString(input.subscriptionStartPublicPaymentId || input.publicPaymentId)
 
   if (!contactId) {
     const error = new Error('Selecciona un contacto para crear el link de suscripción de Stripe.')
@@ -2132,6 +2148,8 @@ export async function createStripeSubscriptionCheckoutLink(input = {}, { baseUrl
 
   const metadata = {
     ristak_subscription_id: ristakSubscriptionId,
+    ristak_payment_id: subscriptionStartPaymentId,
+    public_payment_id: subscriptionStartPublicPaymentId,
     ristak_contact_id: contactId,
     source: 'ristak_subscription_checkout'
   }
@@ -2178,8 +2196,8 @@ export async function createStripeSubscriptionCheckoutLink(input = {}, { baseUrl
       customer: stripeCustomerId || undefined,
       customer_email: stripeCustomerId ? undefined : contactEmail,
       line_items: [{ price: price.id, quantity: 1 }],
-      success_url: buildSubscriptionReturnUrl(baseUrl, 'success'),
-      cancel_url: buildSubscriptionReturnUrl(baseUrl, 'cancelled'),
+      success_url: buildSubscriptionReturnUrl(baseUrl, 'success', subscriptionStartPublicPaymentId),
+      cancel_url: buildSubscriptionReturnUrl(baseUrl, 'cancelled', subscriptionStartPublicPaymentId),
       subscription_data: subscriptionData,
       metadata
     },
@@ -2274,7 +2292,10 @@ export async function createPublicStripeSubscriptionCheckout(publicPaymentId, { 
     intervalType: subscription.interval_type,
     intervalCount: subscription.interval_count,
     startDate: subscription.start_date,
-    cancelAt: subscription.cancel_at
+    cancelAt: subscription.cancel_at,
+    subscriptionStartPaymentId: row.id,
+    subscriptionStartPublicPaymentId: row.public_payment_id,
+    publicPaymentId: row.public_payment_id
   }, { baseUrl })
 
   const checkoutMetadata = {

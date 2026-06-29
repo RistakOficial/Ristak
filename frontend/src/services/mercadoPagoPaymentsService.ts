@@ -90,6 +90,17 @@ export interface PublicMetaPurchaseEvent {
   customData?: Record<string, unknown>
 }
 
+export interface PublicMercadoPagoSubscriptionStart {
+  subscriptionId: string
+  paymentProvider?: string
+  paymentMethod?: string
+  intervalType?: string
+  intervalCount?: number
+  startDate?: string | null
+  nextRunAt?: string | null
+  cancelAt?: string | null
+}
+
 export interface PublicMercadoPagoPayment {
   id: string
   publicPaymentId: string
@@ -113,6 +124,7 @@ export interface PublicMercadoPagoPayment {
   mercadoPagoPaymentId?: string | null
   mercadoPagoPreferenceId?: string | null
   publicKey?: string
+  subscriptionStart?: PublicMercadoPagoSubscriptionStart | null
   mercadoPagoInstallments?: {
     enabled: boolean
     maxInstallments: number

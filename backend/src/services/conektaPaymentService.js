@@ -262,8 +262,12 @@ function getConfiguredBaseUrl() {
   )
 }
 
-function buildConektaSubscriptionReturnUrl(baseUrl, result) {
+function buildConektaSubscriptionReturnUrl(baseUrl, result, publicPaymentId = '') {
   const cleanBase = cleanString(baseUrl || getConfiguredBaseUrl()).replace(/\/+$/, '') || 'https://www.ristak.com'
+  const cleanPublicPaymentId = cleanString(publicPaymentId)
+  if (cleanPublicPaymentId) {
+    return `${cleanBase}/pay/${encodeURIComponent(cleanPublicPaymentId)}?payment=return&conekta_subscription=${encodeURIComponent(result)}`
+  }
   return `${cleanBase}/transactions/subscriptions?conekta_subscription=${encodeURIComponent(result)}`
 }
 
@@ -4095,6 +4099,8 @@ export async function createConektaSubscriptionCheckoutLink(input = {}, { baseUr
   const amount = Number(input.amount)
   const currency = normalizeCurrency(input.currency || await getConfiguredCurrency())
   const ristakSubscriptionId = cleanString(input.ristakSubscriptionId || input.subscriptionId)
+  const subscriptionStartPaymentId = cleanString(input.subscriptionStartPaymentId || input.ristakPaymentId || input.paymentId)
+  const subscriptionStartPublicPaymentId = cleanString(input.subscriptionStartPublicPaymentId || input.publicPaymentId)
 
   if (!contactId) {
     const error = new Error('Selecciona un contacto para crear el link de suscripción de Conekta.')
@@ -4125,6 +4131,10 @@ export async function createConektaSubscriptionCheckoutLink(input = {}, { baseUr
   const metadata = {
     ristakSubscriptionId,
     ristak_subscription_id: ristakSubscriptionId,
+    ristakPaymentId: subscriptionStartPaymentId,
+    ristak_payment_id: subscriptionStartPaymentId,
+    publicPaymentId: subscriptionStartPublicPaymentId,
+    public_payment_id: subscriptionStartPublicPaymentId,
     contactId,
     source: 'ristak_conekta_subscription_checkout'
   }
@@ -4155,8 +4165,8 @@ export async function createConektaSubscriptionCheckoutLink(input = {}, { baseUr
     allowed_payment_methods: ['card'],
     plan_ids: [conektaPlanId],
     needs_shipping_contact: false,
-    success_url: buildConektaSubscriptionReturnUrl(baseUrl, 'success'),
-    failure_url: buildConektaSubscriptionReturnUrl(baseUrl, 'cancelled'),
+    success_url: buildConektaSubscriptionReturnUrl(baseUrl, 'success', subscriptionStartPublicPaymentId),
+    failure_url: buildConektaSubscriptionReturnUrl(baseUrl, 'cancelled', subscriptionStartPublicPaymentId),
     order_template: orderTemplate,
     metadata
   }

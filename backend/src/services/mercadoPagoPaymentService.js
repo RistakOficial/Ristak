@@ -127,6 +127,41 @@ function parseJson(value, fallback = {}) {
   }
 }
 
+function getPublicSubscriptionStart(metadata = {}) {
+  const start = metadata?.subscriptionStart && typeof metadata.subscriptionStart === 'object'
+    ? metadata.subscriptionStart
+    : null
+  const subscriptionId = cleanString(start?.subscriptionId || metadata?.ristakSubscriptionId || metadata?.ristak_subscription_id)
+  if (!subscriptionId) return null
+
+  return {
+    subscriptionId,
+    paymentProvider: cleanString(start?.paymentProvider),
+    paymentMethod: cleanString(start?.paymentMethod),
+    intervalType: cleanString(start?.intervalType),
+    intervalCount: Number.parseInt(start?.intervalCount, 10) || 1,
+    startDate: cleanString(start?.startDate) || null,
+    nextRunAt: cleanString(start?.nextRunAt) || null,
+    cancelAt: cleanString(start?.cancelAt) || null
+  }
+}
+
+function getSubscriptionStartPaymentFromMetadata(metadata = {}) {
+  const payment = metadata?.subscriptionStartPayment && typeof metadata.subscriptionStartPayment === 'object'
+    ? metadata.subscriptionStartPayment
+    : {}
+  const legacy = metadata?.publicPaymentLink && typeof metadata.publicPaymentLink === 'object'
+    ? metadata.publicPaymentLink
+    : {}
+  return {
+    paymentId: cleanString(payment.paymentId || legacy.paymentId),
+    publicPaymentId: cleanString(payment.publicPaymentId || legacy.publicPaymentId),
+    paymentUrl: cleanString(payment.paymentUrl || legacy.paymentUrl),
+    provider: cleanString(payment.provider || legacy.provider),
+    status: cleanString(payment.status || legacy.status)
+  }
+}
+
 function decryptSecret(value) {
   const clean = cleanString(value)
   if (!clean) return ''
@@ -812,6 +847,7 @@ function mapPublicPayment(row, config, baseUrl = '', settings = null) {
   const metadata = parseJson(row.metadata_json, {})
   const tax = metadata.tax && typeof metadata.tax === 'object' ? metadata.tax : null
   const mercadoPagoInstallments = normalizeMercadoPagoInstallmentOptions(metadata.mercadoPagoInstallments, { emptyAsNull: true })
+  const subscriptionStart = getPublicSubscriptionStart(metadata)
   const publicPaymentId = row.public_payment_id
   return {
     id: row.id,
@@ -837,6 +873,7 @@ function mapPublicPayment(row, config, baseUrl = '', settings = null) {
     mercadoPagoPreferenceId: row.mercadopago_preference_id || null,
     publicKey: config?.publicKey || '',
     mercadoPagoInstallments,
+    subscriptionStart,
     tax,
     settings: settings || null
   }
@@ -2518,11 +2555,13 @@ function buildMercadoPagoAutoRecurring({
   return autoRecurring
 }
 
-function getMercadoPagoSubscriptionBackUrl(baseUrl = '', subscriptionId = '') {
+function getMercadoPagoSubscriptionBackUrl(baseUrl = '', subscriptionId = '', publicPaymentId = '') {
   const cleanBase = cleanString(baseUrl || getConfiguredBaseUrl()).replace(/\/+$/, '')
   const url = new URL(`${cleanBase || 'https://www.ristak.com'}/api/mercadopago/subscriptions/return`)
   const cleanSubscriptionId = cleanString(subscriptionId)
   if (cleanSubscriptionId) url.searchParams.set('subscription_id', cleanSubscriptionId)
+  const cleanPublicPaymentId = cleanString(publicPaymentId)
+  if (cleanPublicPaymentId) url.searchParams.set('public_payment_id', cleanPublicPaymentId)
   return url.toString()
 }
 
@@ -2592,6 +2631,7 @@ export async function createMercadoPagoSubscriptionPlanLink(input = {}, { baseUr
     throw error
   }
 
+  const publicPaymentId = cleanString(input.subscriptionStartPublicPaymentId || input.publicPaymentId)
   const notificationUrl = getMercadoPagoWebhookUrl(baseUrl)
   const body = {
     reason: cleanString(input.name || input.reason || 'Suscripción Ristak'),
@@ -2605,7 +2645,7 @@ export async function createMercadoPagoSubscriptionPlanLink(input = {}, { baseUr
       endDate: input.cancelAt || input.endDate,
       includeStartDate: false
     }),
-    back_url: getMercadoPagoSubscriptionBackUrl(baseUrl, subscriptionId)
+    back_url: getMercadoPagoSubscriptionBackUrl(baseUrl, subscriptionId, publicPaymentId)
   }
   if (notificationUrl) body.notification_url = notificationUrl
 
@@ -2635,6 +2675,7 @@ export async function createMercadoPagoRecurringSubscription(input = {}, { baseU
     throw error
   }
 
+  const publicPaymentId = cleanString(input.subscriptionStartPublicPaymentId || input.publicPaymentId)
   const body = {
     reason: cleanString(input.name || input.reason || 'Suscripción Ristak'),
     external_reference: subscriptionId,
@@ -2648,7 +2689,7 @@ export async function createMercadoPagoRecurringSubscription(input = {}, { baseU
       endDate: input.cancelAt || input.endDate,
       includeStartDate: false
     }),
-    back_url: getMercadoPagoSubscriptionBackUrl(baseUrl, subscriptionId),
+    back_url: getMercadoPagoSubscriptionBackUrl(baseUrl, subscriptionId, publicPaymentId),
     status: 'pending'
   }
 
@@ -2921,6 +2962,14 @@ async function updateSubscriptionFromMercadoPagoPreapproval(preapproval = {}) {
     ...parseJson(existing.raw_json, {}),
     mercadoPago: mapped.raw
   }
+  const metadata = parseJson(existing.metadata_json, {})
+  const startPayment = getSubscriptionStartPaymentFromMetadata(metadata)
+  const syncedAt = new Date().toISOString()
+  const startPaymentStatus = mapped.status === 'active'
+    ? 'paid'
+    : mapped.status === 'cancelled'
+      ? 'cancelled'
+      : 'pending_checkout'
 
   await db.run(
     `UPDATE subscriptions
@@ -2939,6 +2988,7 @@ async function updateSubscriptionFromMercadoPagoPreapproval(preapproval = {}) {
          next_run_at = COALESCE(?, next_run_at),
          current_period_end = COALESCE(?, current_period_end),
          cancelled_at = CASE WHEN ? = 'cancelled' THEN COALESCE(cancelled_at, CURRENT_TIMESTAMP) ELSE cancelled_at END,
+         metadata_json = ?,
          raw_json = ?,
          updated_at = CURRENT_TIMESTAMP
      WHERE id = ?`,
@@ -2956,12 +3006,49 @@ async function updateSubscriptionFromMercadoPagoPreapproval(preapproval = {}) {
       mapped.nextRunAt || null,
       mapped.currentPeriodEnd || null,
       mapped.status,
+      JSON.stringify({
+        ...metadata,
+        subscriptionStartPayment: {
+          ...(metadata.subscriptionStartPayment && typeof metadata.subscriptionStartPayment === 'object' ? metadata.subscriptionStartPayment : {}),
+          status: startPaymentStatus,
+          provider: 'mercadopago',
+          mercadoPagoPreapprovalId: mapped.mercadoPagoPreapprovalId || existing.mercadopago_preapproval_id || '',
+          mercadoPagoPreapprovalPlanId: mapped.mercadoPagoPreapprovalPlanId || existing.mercadopago_preapproval_plan_id || '',
+          syncedAt
+        }
+      }),
       JSON.stringify(raw),
       existing.id
     ]
   )
 
-  return db.get('SELECT * FROM subscriptions WHERE id = ?', [existing.id])
+  const updated = await db.get('SELECT * FROM subscriptions WHERE id = ?', [existing.id])
+  if (startPayment.paymentId) {
+    await db.run(
+      `UPDATE payments
+       SET status = ?,
+           payment_method = 'mercadopago_subscription',
+           payment_provider = 'mercadopago',
+           reference = COALESCE(?, reference),
+           mercadopago_payment_id = COALESCE(?, mercadopago_payment_id),
+           paid_at = CASE WHEN ? = 'paid' THEN COALESCE(paid_at, ?) ELSE paid_at END,
+           date = CASE WHEN ? = 'paid' THEN COALESCE(date, ?) ELSE date END,
+           updated_at = CURRENT_TIMESTAMP
+       WHERE id = ?`,
+      [
+        startPaymentStatus === 'paid' ? 'paid' : 'pending',
+        mapped.mercadoPagoPreapprovalId || mapped.mercadoPagoPreapprovalPlanId || null,
+        null,
+        startPaymentStatus,
+        syncedAt,
+        startPaymentStatus,
+        syncedAt,
+        startPayment.paymentId
+      ]
+    )
+  }
+
+  return updated
 }
 
 async function insertSubscriptionPaymentFromMercadoPagoAuthorizedPayment(authorizedPayment = {}, subscriptionRow = null) {
@@ -2996,6 +3083,61 @@ async function insertSubscriptionPaymentFromMercadoPagoAuthorizedPayment(authori
     mercadoPagoPaymentId: paymentIdFromMercadoPago,
     mercadoPagoStatus: cleanString(authorizedPayment.status),
     mercadoPagoSummarized: cleanString(authorizedPayment.summarized)
+  }
+
+  const subscriptionMetadata = parseJson(subscriptionRow.metadata_json, {})
+  const startPayment = getSubscriptionStartPaymentFromMetadata(subscriptionMetadata)
+  if (!existing?.id && startPayment.paymentId) {
+    const startPaymentRow = await db.get(
+      `SELECT id, metadata_json
+       FROM payments
+       WHERE id = ?
+       LIMIT 1`,
+      [startPayment.paymentId]
+    )
+
+    if (startPaymentRow?.id) {
+      await db.run(
+        `UPDATE payments
+         SET amount = ?,
+             currency = ?,
+             status = ?,
+             payment_method = 'mercadopago_subscription',
+             payment_mode = ?,
+             payment_provider = 'mercadopago',
+             reference = COALESCE(?, reference),
+             mercadopago_payment_id = COALESCE(?, mercadopago_payment_id),
+             paid_at = COALESCE(?, paid_at),
+             date = COALESCE(?, date),
+             metadata_json = ?,
+             updated_at = CURRENT_TIMESTAMP
+         WHERE id = ?`,
+        [
+          amount,
+          currency,
+          nextStatus,
+          subscriptionRow.payment_mode || 'test',
+          reference || paymentIdFromMercadoPago || null,
+          paymentIdFromMercadoPago || null,
+          paidAt,
+          paidAt || timestampToIso(authorizedPayment.debit_date),
+          JSON.stringify({
+            ...parseJson(startPaymentRow.metadata_json, {}),
+            mercadoPago: metadata
+          }),
+          startPaymentRow.id
+        ]
+      )
+
+      if (subscriptionRow.contact_id && nextStatus === 'paid') {
+        registerGigstackPaymentForTransactionInBackground(startPaymentRow.id)
+        updateSingleContactStats(subscriptionRow.contact_id).catch((error) => {
+          logger.warn(`No se pudieron actualizar stats del contacto por suscripción Mercado Pago ${subscriptionRow.id}: ${error.message}`)
+        })
+      }
+
+      return startPaymentRow.id
+    }
   }
 
   if (existing?.id) {

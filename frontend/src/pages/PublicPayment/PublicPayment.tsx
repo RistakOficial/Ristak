@@ -1302,7 +1302,7 @@ export const PublicPayment: React.FC = () => {
 
   const loadPublicPayment = async (id: string, sync = false): Promise<PublicPaymentData> => {
     try {
-      return await stripePaymentsService.getPublicPayment(id, sync)
+      return await stripePaymentsService.getPublicPayment(id, sync, searchParams.get('session_id') || '')
     } catch (stripeError: any) {
       try {
         return await mercadoPagoPaymentsService.getPublicPayment(id)

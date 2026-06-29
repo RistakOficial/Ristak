@@ -207,7 +207,8 @@ export async function getPublicStripePaymentView(req, res) {
   try {
     const payment = await getPublicStripePayment(req.params.publicPaymentId, {
       baseUrl: getRequestBaseUrl(req),
-      sync: String(req.query?.sync || '').toLowerCase() === 'true'
+      sync: String(req.query?.sync || '').toLowerCase() === 'true',
+      checkoutSessionId: req.query?.session_id || req.query?.checkout_session_id || ''
     })
 
     if (!payment) {

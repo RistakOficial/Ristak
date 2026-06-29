@@ -453,7 +453,7 @@ test('Conekta payment flow: crea link, guarda payment_source y cobra tarjeta gua
     assert.equal(linkedSubscription.conektaSubscriptionId, null)
     assert.equal(linkedSubscription.conektaCheckoutUrl, 'https://pay.conekta.com/link/subscription_test_123')
     assert.equal(linkedSubscription.subscriptionStartUrl, 'https://pay.conekta.com/link/subscription_test_123')
-    assert.equal(linkedSubscription.subscriptionStartPublicPaymentId, null)
+    assert.match(linkedSubscription.subscriptionStartPublicPaymentId || '', /^pay_/)
 
     const planResult = await createConektaPaymentPlan({
       contact: {
@@ -625,7 +625,9 @@ test('Conekta suscripciones: link crea checkout hospedado y webhook activa suscr
         assert.equal(body.needs_shipping_contact, false)
         assert.equal(body.order_template.customer_info.email, `conekta-sub-link-${idSuffix}@example.test`)
         assert.equal(body.order_template.metadata.ristak_subscription_id.startsWith('rstk_sub_'), true)
-        assert.ok(String(body.success_url).includes('/transactions/subscriptions'))
+        assert.match(String(body.order_template.metadata.public_payment_id || ''), /^pay_/)
+        assert.ok(String(body.success_url).includes('/pay/pay_'))
+        assert.ok(String(body.success_url).includes('conekta_subscription=success'))
         return jsonResponse({
           id: checkoutId,
           object: 'checkout',
@@ -672,7 +674,7 @@ test('Conekta suscripciones: link crea checkout hospedado y webhook activa suscr
     assert.equal(created.conektaCheckoutId, checkoutId)
     assert.equal(created.conektaCheckoutUrl, `https://pay.conekta.com/link/subscription_link_${idSuffix}`)
     assert.equal(created.subscriptionStartUrl, `https://pay.conekta.com/link/subscription_link_${idSuffix}`)
-    assert.equal(created.subscriptionStartPublicPaymentId, null)
+    assert.match(created.subscriptionStartPublicPaymentId || '', /^pay_/)
     assert.equal(calls.some((call) => call.url.endsWith('/orders')), false)
 
     const webhookResult = await reconcileConektaSubscriptionFromWebhook({
@@ -704,7 +706,7 @@ test('Conekta suscripciones: link crea checkout hospedado y webhook activa suscr
     assert.equal(webhookResult.matched, true)
     assert.equal(webhookResult.status, 'active')
     assert.equal(webhookResult.paymentSynced, true)
-    assert.equal(webhookResult.paymentCreated, true)
+    assert.equal(webhookResult.paymentCreated, false)
 
     const subscriptionRow = await db.get(
       `SELECT status, payment_method, conekta_subscription_id, conekta_payment_source_id

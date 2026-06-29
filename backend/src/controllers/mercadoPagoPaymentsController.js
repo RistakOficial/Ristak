@@ -100,13 +100,49 @@ function sendMercadoPagoError(res, error, fallback = 'No se pudo procesar Mercad
   })
 }
 
-function escapeHtml(value) {
-  return cleanString(value)
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&#39;')
+function parseJson(value, fallback = {}) {
+  if (!value) return fallback
+  if (typeof value === 'object') return value
+  try {
+    return JSON.parse(value)
+  } catch {
+    return fallback
+  }
+}
+
+function getSubscriptionStartPublicPaymentId(subscription = {}) {
+  const metadata = parseJson(subscription?.metadata_json, {})
+  const startPayment = metadata?.subscriptionStartPayment && typeof metadata.subscriptionStartPayment === 'object'
+    ? metadata.subscriptionStartPayment
+    : {}
+  return cleanString(
+    subscription?.subscriptionStartPublicPaymentId ||
+    subscription?.publicPaymentId ||
+    startPayment.publicPaymentId
+  )
+}
+
+function buildSubscriptionReturnRedirectUrl(req, subscription = null, fallbackStatus = 'received') {
+  const baseUrl = getRequestBaseUrl(req).replace(/\/+$/, '')
+  const queryPublicPaymentId = cleanString(req.query?.public_payment_id || req.query?.publicPaymentId)
+  const publicPaymentId = queryPublicPaymentId || getSubscriptionStartPublicPaymentId(subscription)
+  const subscriptionId = cleanString(req.query?.subscription_id || req.query?.subscriptionId || subscription?.id)
+  const status = cleanString(subscription?.status || fallbackStatus)
+
+  if (publicPaymentId) {
+    const url = new URL(`${baseUrl}/pay/${encodeURIComponent(publicPaymentId)}`)
+    url.searchParams.set('payment', 'return')
+    url.searchParams.set('mercadopago', 'subscription_return')
+    if (subscriptionId) url.searchParams.set('subscription_id', subscriptionId)
+    if (status) url.searchParams.set('subscription_status', status)
+    return url.toString()
+  }
+
+  const url = new URL(`${baseUrl}/transactions/subscriptions`)
+  url.searchParams.set('mercadopago', 'return')
+  if (subscriptionId) url.searchParams.set('subscription_id', subscriptionId)
+  if (status) url.searchParams.set('subscription_status', status)
+  return url.toString()
 }
 
 export async function getMercadoPagoConfigView(req, res) {
@@ -264,45 +300,14 @@ export async function createPublicMercadoPagoCardPaymentView(req, res) {
 export async function mercadoPagoSubscriptionReturnView(req, res) {
   try {
     const subscription = await syncMercadoPagoSubscriptionReturn(req.query || {})
-    const status = subscription?.status || 'received'
-    const title = status === 'active' ? 'Suscripción autorizada' : 'Suscripción recibida'
-    const message = status === 'active'
-      ? 'Ristak ya sincronizó la suscripción y sus cobros aprobados.'
-      : 'Ristak recibió el regreso de Mercado Pago. Si la autorización tarda, se terminará de sincronizar desde webhooks o actualización manual.'
-
     res.set('Cache-Control', 'no-store')
-    res.status(200).type('html').send(`<!doctype html>
-<html lang="es">
-  <head>
-    <meta charset="utf-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>${escapeHtml(title)}</title>
-    <style>
-      :root { color-scheme: light dark; font-family: Inter, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
-      body { margin: 0; min-height: 100vh; display: grid; place-items: center; background: #f6f7f9; color: #111827; }
-      main { width: min(520px, calc(100vw - 32px)); padding: 28px; border: 1px solid #d9dee7; border-radius: 16px; background: #fff; box-shadow: 0 18px 48px rgba(15, 23, 42, .12); }
-      h1 { margin: 0; font-size: 22px; line-height: 1.2; }
-      p { margin: 12px 0 0; color: #4b5563; line-height: 1.55; }
-      a { display: inline-flex; margin-top: 20px; color: #0969da; font-weight: 700; text-decoration: none; }
-      @media (prefers-color-scheme: dark) {
-        body { background: #111827; color: #f9fafb; }
-        main { background: #182033; border-color: #293449; box-shadow: none; }
-        p { color: #cbd5e1; }
-        a { color: #8ab4ff; }
-      }
-    </style>
-  </head>
-  <body>
-    <main>
-      <h1>${escapeHtml(title)}</h1>
-      <p>${escapeHtml(message)}</p>
-      <a href="/transactions/subscriptions?mercadopago=return">Abrir suscripciones en Ristak</a>
-    </main>
-  </body>
-</html>`)
+    res.redirect(303, buildSubscriptionReturnRedirectUrl(req, subscription, 'received'))
   } catch (error) {
     logger.error(`Retorno de suscripción Mercado Pago falló: ${error.message}`)
-    res.status(200).type('html').send('<!doctype html><meta charset="utf-8"><p>Ristak recibió el regreso de Mercado Pago, pero no pudo sincronizar todavía. Abre Ristak y actualiza suscripciones.</p>')
+    res.set('Cache-Control', 'no-store')
+    const url = new URL(buildSubscriptionReturnRedirectUrl(req, null, 'sync_error'))
+    url.searchParams.set('sync', 'error')
+    res.redirect(303, url.toString())
   }
 }
 
