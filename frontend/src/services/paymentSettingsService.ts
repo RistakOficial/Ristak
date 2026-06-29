@@ -1,6 +1,7 @@
 import { apiUrl } from './apiBaseUrl'
 
 export interface PaymentCheckoutSettings {
+  useBusinessProfile: boolean
   logoUrl: string
   headline: string
   description: string
@@ -11,6 +12,7 @@ export interface PaymentCheckoutSettings {
 }
 
 export interface PaymentReceiptSettings {
+  useBusinessProfile: boolean
   logoUrl: string
   invoiceTemplate: 'classic' | 'executive' | 'accent' | 'ledger'
   invoicePalette: 'graphite' | 'sage' | 'indigo' | 'terracotta' | 'champagne' | 'custom'
@@ -100,6 +102,7 @@ export interface PaymentReceiptPreviewSession {
 export const defaultPaymentSettings: PaymentSettings = {
   paymentMode: 'live',
   checkout: {
+    useBusinessProfile: true,
     logoUrl: '',
     headline: 'Pago seguro',
     description: 'Revisa el resumen y completa tu pago con tarjeta.',
@@ -109,6 +112,7 @@ export const defaultPaymentSettings: PaymentSettings = {
     showSecureBadge: true
   },
   receipt: {
+    useBusinessProfile: true,
     logoUrl: '',
     invoiceTemplate: 'classic',
     invoicePalette: 'graphite',

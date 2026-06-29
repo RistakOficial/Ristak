@@ -27,12 +27,12 @@ interface AuthContextType {
   isAuthenticated: boolean
   login: (username: string, password: string) => Promise<void>
   setupAccount: (username: string, password: string, setupToken?: string, accountLocale?: AccountLocaleDefaults) => Promise<void>
-  updateProfile: (profile: {
+  updateProfile: (profile: Partial<{
     firstName: string
     lastName: string
     phone: string
     businessName: string
-  }) => Promise<User>
+  }>) => Promise<User>
   logout: () => void
   locationId: string | null
   accessToken: string | null

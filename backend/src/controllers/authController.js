@@ -764,11 +764,27 @@ export async function updateProfile(req, res) {
       })
     }
 
-    const firstName = cleanProfileText(req.body.firstName, 80)
-    const lastName = cleanProfileText(req.body.lastName, 80)
-    const phone = cleanProfileText(req.body.phone, 40)
-    const businessName = cleanProfileText(req.body.businessName, 160)
-    const fullName = buildFullName(firstName, lastName, req.body.fullName)
+    const currentUser = await db.get(
+      `SELECT id, username, email, first_name, last_name, full_name, phone, business_name, role, access_config
+       FROM users
+       WHERE id = ? AND is_active = 1`,
+      [payload.userId]
+    )
+
+    if (!currentUser) {
+      return res.status(404).json({
+        success: false,
+        error: 'Usuario no encontrado'
+      })
+    }
+
+    const body = req.body || {}
+    const hasField = (key) => Object.prototype.hasOwnProperty.call(body, key)
+    const firstName = hasField('firstName') ? cleanProfileText(body.firstName, 80) : cleanProfileText(currentUser.first_name, 80)
+    const lastName = hasField('lastName') ? cleanProfileText(body.lastName, 80) : cleanProfileText(currentUser.last_name, 80)
+    const phone = hasField('phone') ? cleanProfileText(body.phone, 40) : cleanProfileText(currentUser.phone, 40)
+    const businessName = hasField('businessName') ? cleanProfileText(body.businessName, 160) : cleanProfileText(currentUser.business_name, 160)
+    const fullName = buildFullName(firstName, lastName, body.fullName)
 
     await db.run(
       `UPDATE users
