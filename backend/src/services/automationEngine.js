@@ -601,6 +601,16 @@ function paymentLineItemsFromContext(ctx = {}) {
     []
 }
 
+function uniquePaymentCandidates(candidates = []) {
+  const seen = new Set()
+  return candidates.filter((candidate) => {
+    const key = normalizeText(candidate)
+    if (!key || seen.has(key)) return false
+    seen.add(key)
+    return true
+  })
+}
+
 function paymentProductCandidatesFromContext(ctx = {}) {
   const payment = paymentObjectFromContext(ctx)
   const candidates = []
@@ -650,13 +660,105 @@ function paymentProductCandidatesFromContext(ctx = {}) {
     )
   }
 
-  const seen = new Set()
-  return candidates.filter((candidate) => {
-    const key = normalizeText(candidate)
-    if (!key || seen.has(key)) return false
-    seen.add(key)
-    return true
-  })
+  return uniquePaymentCandidates(candidates)
+}
+
+function paymentProductFieldCandidatesFromContext(ctx = {}, field = '') {
+  const payment = paymentObjectFromContext(ctx)
+  const metadata = paymentMetadataFromContext(ctx)
+  const candidates = []
+
+  switch (field) {
+    case 'product_name':
+      pushCleanPaymentCandidate(
+        candidates,
+        ctx.productName,
+        ctx.product_name,
+        ctx.product,
+        payment.productName,
+        payment.product_name,
+        payment.product,
+        metadata.productName,
+        metadata.product_name,
+        metadata.product,
+        ctx.title,
+        payment.title,
+        ctx.description,
+        payment.description
+      )
+      break
+    case 'product_id':
+      pushCleanPaymentCandidate(
+        candidates,
+        ctx.productId,
+        ctx.product_id,
+        payment.productId,
+        payment.product_id,
+        metadata.productId,
+        metadata.product_id
+      )
+      break
+    case 'local_product_id':
+      pushCleanPaymentCandidate(candidates, ctx.localProductId, ctx.local_product_id, payment.localProductId, payment.local_product_id, metadata.localProductId, metadata.local_product_id)
+      break
+    case 'ghl_product_id':
+      pushCleanPaymentCandidate(candidates, ctx.ghlProductId, ctx.ghl_product_id, payment.ghlProductId, payment.ghl_product_id, metadata.ghlProductId, metadata.ghl_product_id)
+      break
+    case 'product_sku':
+      pushCleanPaymentCandidate(candidates, ctx.sku, payment.sku, metadata.sku)
+      break
+    case 'price_name':
+      pushCleanPaymentCandidate(candidates, ctx.priceName, ctx.price_name, payment.priceName, payment.price_name, metadata.priceName, metadata.price_name)
+      break
+    case 'price_id':
+      pushCleanPaymentCandidate(candidates, ctx.priceId, ctx.price_id, payment.priceId, payment.price_id, metadata.priceId, metadata.price_id)
+      break
+    case 'local_price_id':
+      pushCleanPaymentCandidate(candidates, ctx.localPriceId, ctx.local_price_id, payment.localPriceId, payment.local_price_id, metadata.localPriceId, metadata.local_price_id)
+      break
+    case 'ghl_price_id':
+      pushCleanPaymentCandidate(candidates, ctx.ghlPriceId, ctx.ghl_price_id, payment.ghlPriceId, payment.ghl_price_id, metadata.ghlPriceId, metadata.ghl_price_id)
+      break
+    default:
+      return paymentProductCandidatesFromContext(ctx)
+  }
+
+  for (const item of paymentLineItemsFromContext(ctx)) {
+    if (!item || typeof item !== 'object') continue
+    switch (field) {
+      case 'product_name':
+        pushCleanPaymentCandidate(candidates, item.name, item.title, item.description, item.productName, item.product_name, item.product)
+        break
+      case 'product_id':
+        pushCleanPaymentCandidate(candidates, item.productId, item.product_id, item.product)
+        break
+      case 'local_product_id':
+        pushCleanPaymentCandidate(candidates, item.localProductId, item.local_product_id)
+        break
+      case 'ghl_product_id':
+        pushCleanPaymentCandidate(candidates, item.ghlProductId, item.ghl_product_id)
+        break
+      case 'product_sku':
+        pushCleanPaymentCandidate(candidates, item.sku)
+        break
+      case 'price_name':
+        pushCleanPaymentCandidate(candidates, item.priceName, item.price_name, item.variantName, item.variant_name)
+        break
+      case 'price_id':
+        pushCleanPaymentCandidate(candidates, item.priceId, item.price_id, item.price)
+        break
+      case 'local_price_id':
+        pushCleanPaymentCandidate(candidates, item.localPriceId, item.local_price_id)
+        break
+      case 'ghl_price_id':
+        pushCleanPaymentCandidate(candidates, item.ghlPriceId, item.ghl_price_id)
+        break
+      default:
+        break
+    }
+  }
+
+  return uniquePaymentCandidates(candidates)
 }
 
 function publicPaymentIdFromContext(ctx = {}) {
@@ -1267,6 +1369,16 @@ function paymentTriggerFieldValue(field, ctx = {}) {
       return firstPaymentContextValue(ctx, 'invoiceId', 'invoice_id', 'ghl_invoice_id')
     case 'invoice_number':
       return firstPaymentContextValue(ctx, 'invoiceNumber', 'invoice_number')
+    case 'product_name':
+    case 'product_id':
+    case 'local_product_id':
+    case 'ghl_product_id':
+    case 'product_sku':
+    case 'price_name':
+    case 'price_id':
+    case 'local_price_id':
+    case 'ghl_price_id':
+      return paymentProductFieldCandidatesFromContext(ctx, field)[0] || ''
     case 'stripe_payment_intent_id':
       return firstPaymentContextValue(
         ctx,
@@ -1465,8 +1577,23 @@ function evaluateChangedDetailFilter(filter, ctx) {
   }
 }
 
-function evaluateProductFilter(filter, ctx) {
-  const candidates = paymentProductCandidatesFromContext(ctx)
+const PAYMENT_CANDIDATE_FILTER_FIELDS = new Set([
+  'product',
+  'product_name',
+  'product_id',
+  'local_product_id',
+  'ghl_product_id',
+  'product_sku',
+  'price_name',
+  'price_id',
+  'local_price_id',
+  'ghl_price_id'
+])
+
+function evaluatePaymentCandidateFilter(filter, ctx) {
+  const candidates = filter.field === 'product'
+    ? paymentProductCandidatesFromContext(ctx)
+    : paymentProductFieldCandidatesFromContext(ctx, filter.field)
   if (candidates.length === 0) return true
   const normalizedCandidates = candidates.map(normalizeText).filter(Boolean)
   const expected = normalizeText(filter.value)
@@ -1486,7 +1613,7 @@ function evaluateProductFilter(filter, ctx) {
 
 function evaluateFilter(filter, ctx) {
   if (filter.field === 'changed_detail') return evaluateChangedDetailFilter(filter, ctx)
-  if (filter.field === 'product') return evaluateProductFilter(filter, ctx)
+  if (PAYMENT_CANDIDATE_FILTER_FIELDS.has(filter.field)) return evaluatePaymentCandidateFilter(filter, ctx)
   const actualRaw = filterFieldValue(filter, ctx)
   if (actualRaw === null) return true
   const actual = normalizeText(actualRaw)

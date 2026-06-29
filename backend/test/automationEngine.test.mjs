@@ -445,9 +445,14 @@ test('filtersMatch: filtra datos completos del evento de pago', () => {
       lineItems: [
         {
           name: 'Curso',
+          priceName: 'Mensualidad',
           productId: 'prod_curso',
           localProductId: 'local_curso',
-          ghlProductId: 'ghl_curso'
+          ghlProductId: 'ghl_curso',
+          priceId: 'price_curso',
+          localPriceId: 'local_price_curso',
+          ghlPriceId: 'ghl_price_curso',
+          sku: 'CURSO-001'
         }
       ]
     },
@@ -481,6 +486,15 @@ test('filtersMatch: filtra datos completos del evento de pago', () => {
   assert.equal(filtersMatch([{ field: 'product', match: 'is', value: 'prod_curso' }], paymentCtx), true)
   assert.equal(filtersMatch([{ field: 'product', match: 'is', value: 'local_curso' }], paymentCtx), true)
   assert.equal(filtersMatch([{ field: 'product', match: 'contains', value: 'curso' }], paymentCtx), true)
+  assert.equal(filtersMatch([{ field: 'product_name', match: 'is', value: 'Curso' }], paymentCtx), true)
+  assert.equal(filtersMatch([{ field: 'product_id', match: 'is', value: 'prod_curso' }], paymentCtx), true)
+  assert.equal(filtersMatch([{ field: 'local_product_id', match: 'is', value: 'local_curso' }], paymentCtx), true)
+  assert.equal(filtersMatch([{ field: 'ghl_product_id', match: 'is', value: 'ghl_curso' }], paymentCtx), true)
+  assert.equal(filtersMatch([{ field: 'product_sku', match: 'is', value: 'CURSO-001' }], paymentCtx), true)
+  assert.equal(filtersMatch([{ field: 'price_name', match: 'contains', value: 'mensual' }], paymentCtx), true)
+  assert.equal(filtersMatch([{ field: 'price_id', match: 'is', value: 'price_curso' }], paymentCtx), true)
+  assert.equal(filtersMatch([{ field: 'local_price_id', match: 'is', value: 'local_price_curso' }], paymentCtx), true)
+  assert.equal(filtersMatch([{ field: 'ghl_price_id', match: 'is', value: 'ghl_price_curso' }], paymentCtx), true)
   assert.equal(filtersMatch([{ field: 'payment_method', match: 'contains', value: 'card' }], paymentCtx), true)
   assert.equal(filtersMatch([{ field: 'receipt', match: 'contains', value: 'INV-55' }], paymentCtx), true)
   assert.equal(filtersMatch([{ field: 'product', match: 'not', value: 'prod_otro' }], paymentCtx), true)
