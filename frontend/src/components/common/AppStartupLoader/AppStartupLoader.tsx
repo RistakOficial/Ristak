@@ -25,7 +25,7 @@ export const AppStartupLoader: React.FC<AppStartupLoaderProps> = ({
     >
       <div className={styles.loadingWrapper}>
         <Loader2 className={styles.spinner} aria-hidden="true" />
-        <p className={styles.message}>Cargando</p>
+        <p className={styles.message}>{ariaMessage}</p>
       </div>
     </main>
   )

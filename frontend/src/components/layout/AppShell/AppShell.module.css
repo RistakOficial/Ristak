@@ -48,6 +48,33 @@
   overflow: hidden;
 }
 
+.contentScroller {
+  position: relative;
+}
+
+.routeContentReady,
+.routeContentLoading {
+  min-height: 100%;
+}
+
+.routeContentLoading {
+  pointer-events: none;
+  user-select: none;
+}
+
+.routeDataLoader {
+  position: absolute;
+  inset: 0;
+  z-index: 12;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 100%;
+  background: color-mix(in srgb, var(--bg) 94%, transparent);
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+}
+
 .aiAgentSlot {
   position: relative;
   z-index: 20;

@@ -51,7 +51,7 @@ export const Loading: React.FC<LoadingProps> = ({
     <div className={containerClass} role="status" aria-live="polite" aria-label={ariaMessage}>
       <div className={cx(styles.loadingWrapper, sizeClasses[size])}>
         <Loader2 className={styles.spinner} aria-hidden="true" />
-        <p className={styles.message}>Cargando</p>
+        <p className={styles.message}>{ariaMessage}</p>
       </div>
     </div>
   )

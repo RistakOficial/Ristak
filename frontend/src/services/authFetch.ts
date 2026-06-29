@@ -1,4 +1,8 @@
 import { getApiBaseUrl } from './apiBaseUrl'
+import {
+  finishRistakApiRequest,
+  startRistakApiRequest
+} from './requestActivity'
 
 const API_AUTH_HEADER = 'Authorization'
 const LOCAL_DEV_LOGIN_TIMEOUT_MS = 2500
@@ -55,10 +59,24 @@ export function installAuthFetch() {
 
   window.fetch = (input: RequestInfo | URL, init?: RequestInit) => {
     const requestUrl = resolveRequestUrl(input)
+    const activityId = requestUrl && isRistakApiRequest(requestUrl)
+      ? startRistakApiRequest(requestUrl, input, init)
+      : null
     const token = getStoredAuthToken()
 
+    const runFetch = (nextInit?: RequestInit) => {
+      try {
+        return originalFetch(input, nextInit).finally(() => {
+          finishRistakApiRequest(activityId)
+        })
+      } catch (error) {
+        finishRistakApiRequest(activityId)
+        throw error
+      }
+    }
+
     if (!requestUrl || !token || !isRistakApiRequest(requestUrl)) {
-      return originalFetch(input, init)
+      return runFetch(init)
     }
 
     const headers = new Headers(input instanceof Request ? input.headers : undefined)
@@ -73,7 +91,7 @@ export function installAuthFetch() {
       headers.set(API_AUTH_HEADER, `Bearer ${token}`)
     }
 
-    return originalFetch(input, {
+    return runFetch({
       ...init,
       headers
     }).then(response => {
