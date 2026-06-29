@@ -145,45 +145,6 @@
   -webkit-text-size-adjust: 100%;
 }
 
-.portraitLock {
-  position: absolute;
-  inset: 0;
-  z-index: 120;
-  display: none;
-  place-items: center;
-  align-content: center;
-  gap: 10px;
-  padding: 24px;
-  color: var(--phone-chat-text);
-  background: var(--phone-chat-bg);
-  text-align: center;
-}
-
-.portraitLock svg {
-  color: var(--phone-chat-accent);
-}
-
-.portraitLock strong {
-  max-width: 320px;
-  font-size: 22px;
-  font-weight: 860;
-  line-height: 1.1;
-}
-
-.portraitLock span {
-  max-width: 340px;
-  color: var(--phone-chat-muted);
-  font-size: 15px;
-  font-weight: 620;
-  line-height: 1.35;
-}
-
-.tabletLockIcon,
-.tabletLockTitle,
-.tabletLockCopy {
-  display: none;
-}
-
 .phoneFrame {
   position: relative;
   width: 100%;
@@ -9043,45 +9004,6 @@
 
 .phoneChatPage:is([data-phone-chat-device="tablet"], [data-phone-chat-device="desktop"]) .mobileDock {
   display: none;
-}
-
-@media (orientation: portrait) {
-  .phoneChatPage[data-phone-chat-device="tablet"] .portraitLock {
-    display: grid;
-    gap: 12px;
-    padding: max(24px, env(safe-area-inset-top)) max(28px, env(safe-area-inset-right)) max(24px, env(safe-area-inset-bottom)) max(28px, env(safe-area-inset-left));
-  }
-
-  .phoneChatPage[data-phone-chat-device="tablet"] .phoneFrame,
-  .phoneChatPage[data-phone-chat-device="tablet"] .mobileDock {
-    visibility: hidden;
-    pointer-events: none;
-  }
-
-  .phoneChatPage[data-phone-chat-device="tablet"] .phoneLockIcon,
-  .phoneChatPage[data-phone-chat-device="tablet"] .phoneLockTitle,
-  .phoneChatPage[data-phone-chat-device="tablet"] .phoneLockCopy {
-    display: none;
-  }
-
-  .phoneChatPage[data-phone-chat-device="tablet"] .tabletLockIcon {
-    display: block;
-  }
-
-  .phoneChatPage[data-phone-chat-device="tablet"] .tabletLockTitle,
-  .phoneChatPage[data-phone-chat-device="tablet"] .tabletLockCopy {
-    display: inline;
-  }
-
-  .phoneChatPage[data-phone-chat-device="tablet"] .portraitLock strong {
-    max-width: 480px;
-    font-size: clamp(28px, 4vw, 44px);
-  }
-
-  .phoneChatPage[data-phone-chat-device="tablet"] .portraitLock span {
-    max-width: 520px;
-    font-size: clamp(16px, 2vw, 20px);
-  }
 }
 
 @media (max-width: 430px) {

@@ -15590,15 +15590,6 @@ export const PhoneChat: React.FC = () => {
       data-phone-chat-scroll-settling={conversationScrollSettling ? 'true' : undefined}
       aria-label="Chat móvil de Ristak"
     >
-      <div className={styles.portraitLock} role="status" aria-live="polite">
-        <Smartphone className={styles.phoneLockIcon} size={34} />
-        <Monitor className={styles.tabletLockIcon} size={38} />
-        <strong className={styles.phoneLockTitle}>Usa el celular en vertical</strong>
-        <strong className={styles.tabletLockTitle}>Gira la tableta</strong>
-        <span className={styles.phoneLockCopy}>Ristak está bloqueado en modo vertical para que la pantalla no se desacomode.</span>
-        <span className={styles.tabletLockCopy}>El chat para tablet funciona en horizontal para que la lista y la conversación se vean completas.</span>
-      </div>
-
       <PhonePageTransition
         active="chat"
         className={styles.phoneFrame}

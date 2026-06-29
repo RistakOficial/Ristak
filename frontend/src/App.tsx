@@ -306,14 +306,22 @@ const PhoneRouteEffects: React.FC = () => {
   }, [location.pathname])
 
   React.useEffect(() => {
-    if (!isPhoneRoute || !isCellphoneDevice()) return
+    if (!isPhoneRoute) return
+
+    const lockTarget = isCellphoneDevice()
+      ? 'portrait'
+      : isTabletDevice()
+        ? 'landscape'
+        : ''
+
+    if (!lockTarget) return
 
     const orientation = window.screen?.orientation as (ScreenOrientation & {
       lock?: (orientation: string) => Promise<void>
       unlock?: () => void
     }) | undefined
 
-    void orientation?.lock?.('portrait').catch(() => undefined)
+    void orientation?.lock?.(lockTarget).catch(() => undefined)
 
     return () => {
       orientation?.unlock?.()
