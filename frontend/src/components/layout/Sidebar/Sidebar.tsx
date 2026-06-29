@@ -118,6 +118,13 @@ const mdpProgramNavigationItem: NavItem = {
   isMdpProgram: true
 }
 
+const mdpProgramFallbackNavItem: MdpProgramNavItem = {
+  id: '__mdp_home',
+  label: 'Magnetismo',
+  launchUrl: '',
+  order: 0
+}
+
 const defaultNavigationPositionById: Record<string, number> = {
   dashboard: 10,
   chat: 20,
@@ -264,9 +271,11 @@ const withInitializationNavigation = (
   items: NavItem[],
   user: AccessControlledUser | null | undefined,
   isInitialized: boolean
-): NavItem[] => (
-  isInitialized || user?.role !== 'admin' ? items : [initializationNavigation, ...items]
-)
+): NavItem[] => {
+  if (isInitialized || user?.role !== 'admin') return items
+  if (items[0]?.isMdpProgram) return [items[0], initializationNavigation, ...items.slice(1)]
+  return [initializationNavigation, ...items]
+}
 
 interface NavigationItemProps {
   item: NavItem
@@ -297,6 +306,12 @@ const getNavChildLinkClasses = (isActive: boolean) => cn(
   isActive
     ? 'bg-[var(--accent-soft)] text-[var(--text)]'
     : 'text-[var(--text-mute)] hover:bg-[var(--surface-hover)] hover:text-[var(--text)]'
+)
+
+const mdpProgramPathForItem = (item: MdpProgramNavItem) => (
+  item.id === mdpProgramFallbackNavItem.id
+    ? MDP_PROGRAM_ROOT_PATH
+    : `${MDP_PROGRAM_ROOT_PATH}/${encodeURIComponent(item.id)}`
 )
 
 interface SettingsNavLinkProps {
@@ -494,87 +509,60 @@ const PaymentsNavGroup: React.FC<PaymentsNavGroupProps> = ({
   )
 }
 
-interface MdpProgramNavGroupProps {
+interface MdpProgramSidebarBlockProps {
   pathname: string
-  open: boolean
   items: MdpProgramNavItem[]
+  title: string
   collapsed?: boolean
-  onToggle: () => void
-  onRequestExpand?: () => void
+  showSeparator?: boolean
   onNavigate?: () => void
 }
 
-const MdpProgramNavGroup: React.FC<MdpProgramNavGroupProps> = ({
+const MdpProgramSidebarBlock: React.FC<MdpProgramSidebarBlockProps> = ({
   pathname,
-  open,
   items,
+  title,
   collapsed = false,
-  onToggle,
-  onRequestExpand,
+  showSeparator = true,
   onNavigate
 }) => {
-  const isMdpRoute = pathname.startsWith(MDP_PROGRAM_ROOT_PATH)
-  const visibleItems = items.length ? items : [{ id: 'inicio', label: 'Magnetismo', launchUrl: '', order: 0 }]
-
-  if (collapsed) {
-    return (
-      <button
-        type="button"
-        onClick={() => {
-          if (!open) onToggle()
-          onRequestExpand?.()
-        }}
-        aria-label="Magnetismo de Pacientes"
-        title="Magnetismo de Pacientes"
-        data-ristak-sidebar-nav-item
-        data-active={isMdpRoute ? 'true' : undefined}
-        className={cn(getNavLinkClasses(isMdpRoute, 'w-full', true))}
-      >
-        <BrainCircuit className="h-5 w-5 flex-shrink-0" />
-        <span className="sr-only">Magnetismo de Pacientes</span>
-      </button>
-    )
-  }
+  const visibleItems = items.length ? items : [mdpProgramFallbackNavItem]
 
   return (
-    <div>
-      <button
-        type="button"
-        onClick={onToggle}
-        aria-expanded={open}
-        data-ristak-sidebar-nav-item
-        data-active={isMdpRoute && !open ? 'true' : undefined}
-        className={cn(getNavLinkClasses(isMdpRoute && !open, 'w-full'))}
-      >
-        <BrainCircuit className="h-5 w-5 flex-shrink-0" />
-        <span className="flex-1 text-left">Magnetismo</span>
-        <ChevronDown
-          className={cn(
-            'h-4 w-4 flex-shrink-0 text-[var(--text-mute)] transition-transform',
-            open && 'rotate-180'
-          )}
-        />
-      </button>
+    <div data-ristak-mdp-sidebar-block className="space-y-1">
+      {!collapsed && (
+        <div className="px-3 pb-1 pt-1 text-[11px] font-semibold uppercase text-[var(--text-mute)]">
+          <span className="block truncate">{title}</span>
+        </div>
+      )}
 
-      {open && (
-        <div className="ml-[1.55rem] mt-1 space-y-0.5 border-l border-[var(--border)] pl-2.5">
-          {visibleItems.map((child) => {
-            const to = child.id === 'inicio' ? MDP_PROGRAM_ROOT_PATH : `${MDP_PROGRAM_ROOT_PATH}/${encodeURIComponent(child.id)}`
-            const childActive = pathname === to || pathname.startsWith(`${to}/`)
-            return (
-              <Link
-                key={child.id}
-                to={to}
-                onClick={onNavigate}
-                data-ristak-sidebar-nav-item
-                data-ristak-sidebar-subnav-item
-                data-active={childActive ? 'true' : undefined}
-                className={getNavChildLinkClasses(childActive)}
-              >
-                {child.label}
-              </Link>
-            )
-          })}
+      {visibleItems.map((child, index) => {
+        const to = mdpProgramPathForItem(child)
+        const childActive =
+          pathname === to ||
+          pathname.startsWith(`${to}/`) ||
+          (index === 0 && pathname === MDP_PROGRAM_ROOT_PATH)
+        return (
+          <Link
+            key={child.id}
+            to={to}
+            onClick={onNavigate}
+            aria-label={child.label}
+            title={collapsed ? child.label : undefined}
+            data-ristak-sidebar-nav-item
+            data-ristak-mdp-sidebar-item
+            data-active={childActive ? 'true' : undefined}
+            className={getNavLinkClasses(childActive, undefined, collapsed)}
+          >
+            <BrainCircuit className="h-5 w-5 flex-shrink-0" />
+            <span className={collapsed ? 'sr-only' : 'min-w-0 flex-1 truncate'}>{child.label}</span>
+          </Link>
+        )
+      })}
+
+      {showSeparator && (
+        <div className="py-2" aria-hidden="true">
+          <div className="border-t border-[var(--border)]" />
         </div>
       )}
     </div>
@@ -752,11 +740,10 @@ export const Sidebar: React.FC<SidebarProps> = ({
   const [showUserMenu, setShowUserMenu] = useState(false)
   const isAIAgentRoute = location.pathname.startsWith('/ai-agent')
   const isPaymentsRoute = location.pathname.startsWith('/transactions')
-  const isMdpProgramRoute = location.pathname.startsWith(MDP_PROGRAM_ROOT_PATH)
   const [aiAgentOpen, setAiAgentOpen] = useState(isAIAgentRoute)
   const [paymentsOpen, setPaymentsOpen] = useState(isPaymentsRoute)
-  const [mdpProgramOpen, setMdpProgramOpen] = useState(isMdpProgramRoute)
   const [mdpProgramItems, setMdpProgramItems] = useState<MdpProgramNavItem[]>([])
+  const mdpProgramMenuLabel = user?.licenseExternalModules?.mdp_program?.menuLabel || 'Magnetismo'
 
   // Sincronizar el estado de los grupos con la ruta actual
   useEffect(() => {
@@ -766,10 +753,6 @@ export const Sidebar: React.FC<SidebarProps> = ({
   useEffect(() => {
     setPaymentsOpen(isPaymentsRoute)
   }, [isPaymentsRoute])
-
-  useEffect(() => {
-    setMdpProgramOpen(isMdpProgramRoute)
-  }, [isMdpProgramRoute])
 
   const visiblePaymentsNavigation = PAYMENTS_NAV_ITEMS
   const canUseMdpProgram = user?.licenseFeatures?.mdp_program === true
@@ -1185,8 +1168,9 @@ export const Sidebar: React.FC<SidebarProps> = ({
             onPointerCancel={(e) => cancelLongPress(e)}
             onPointerLeave={(e) => cancelLongPress(e)}
           >
-            {navigation.map((item) => {
+            {navigation.map((item, index) => {
               const isActive = location.pathname.startsWith(item.href)
+              const nextItem = navigation[index + 1]
               return (
                 item.id === 'transactions' ? (
                   <PaymentsNavGroup
@@ -1200,14 +1184,13 @@ export const Sidebar: React.FC<SidebarProps> = ({
                     onNavigate={handleNavigate}
                   />
                 ) : item.isMdpProgram ? (
-                  <MdpProgramNavGroup
+                  <MdpProgramSidebarBlock
                     key={item.id}
                     pathname={location.pathname}
-                    open={mdpProgramOpen}
                     items={mdpProgramItems}
+                    title={mdpProgramMenuLabel}
                     collapsed={collapsed}
-                    onToggle={() => setMdpProgramOpen((current) => !current)}
-                    onRequestExpand={handleRequestExpand}
+                    showSeparator={Boolean(nextItem && !nextItem.isDivider)}
                     onNavigate={handleNavigate}
                   />
                 ) : (
