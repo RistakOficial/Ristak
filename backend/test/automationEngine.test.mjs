@@ -1543,6 +1543,92 @@ test('trigger Pagos distingue acción del pago y filtros del recibo', async () =
   }
 })
 
+test('trigger Pagos con Todos acepta cualquier tipo de evento de pago por default', async () => {
+  const suffix = randomUUID()
+  const cases = [
+    { paymentAction: 'any', label: 'any' },
+    { paymentAction: '', label: 'legacy-empty' }
+  ]
+  const created = []
+
+  try {
+    for (const item of cases) {
+      const contactId = `rstk_contact_payment_any_${item.label}_${suffix}`
+      const automationId = `automation_payment_any_${item.label}_${suffix}`
+      created.push({ contactId, automationId })
+
+      const flow = {
+        nodes: [
+          {
+            id: 'start',
+            type: 'start',
+            label: 'Cuando...',
+            config: {
+              triggers: [
+                {
+                  id: 'trigger-payment',
+                  type: 'trigger-payment-received',
+                  config: { paymentAction: item.paymentAction }
+                }
+              ]
+            }
+          },
+          {
+            id: 'done',
+            type: 'extra-comment',
+            label: 'Listo',
+            config: {}
+          }
+        ],
+        edges: [
+          { id: 'edge-start-done', sourceNodeId: 'start', targetNodeId: 'done' }
+        ],
+        settings: {}
+      }
+
+      await db.run(
+        `INSERT INTO contacts (id, phone, email, full_name, first_name, custom_fields)
+         VALUES (?, ?, ?, ?, ?, ?)`,
+        [
+          contactId,
+          `+1555${Date.now().toString().slice(-8)}`,
+          `payment-any-${item.label}-${suffix}@example.com`,
+          'Contacto Pago Todos',
+          'Contacto',
+          '{}'
+        ]
+      )
+      await db.run(
+        `INSERT INTO automations (id, name, status, flow, published_flow, published_at)
+         VALUES (?, ?, 'published', ?, ?, CURRENT_TIMESTAMP)`,
+        [automationId, `Test pagos todos ${item.label}`, JSON.stringify(flow), JSON.stringify(flow)]
+      )
+
+      await handleAutomationEvent('refund', {
+        contactId,
+        paymentId: `pay_any_${item.label}_${suffix}`,
+        paymentStatus: 'refunded',
+        provider: 'stripe',
+        amount: 1200,
+        currency: 'MXN'
+      })
+
+      const enrollment = await db.get(
+        'SELECT * FROM automation_enrollments WHERE automation_id = ? AND contact_id = ?',
+        [automationId, contactId]
+      )
+      assert.equal(enrollment.status, 'completed')
+      assert.equal(enrollment.current_node_id, 'done')
+    }
+  } finally {
+    for (const item of created) {
+      await db.run('DELETE FROM automation_enrollments WHERE automation_id = ?', [item.automationId])
+      await db.run('DELETE FROM automations WHERE id = ?', [item.automationId])
+      await db.run('DELETE FROM contacts WHERE id = ?', [item.contactId])
+    }
+  }
+})
+
 test('webhook encuentra contacto por valor mapeado y asigna usuario', async () => {
   const suffix = randomUUID()
   const contactId = `rstk_contact_webhook_find_${suffix}`

@@ -528,7 +528,7 @@ function withContactChangeContext(eventType, ctx = {}) {
 }
 
 function paymentActionMatches(configAction, ctx = {}, eventType = '') {
-  const wanted = normalizeText(configAction) || 'successful'
+  const wanted = normalizeText(configAction) || 'any'
   if (wanted === 'any') return true
   const actual = paymentActionFromContext(ctx, eventType) || 'successful'
   return actual === wanted
@@ -1625,7 +1625,6 @@ function triggerMatches(trigger, eventType, ctx) {
       if (trigger.type === 'trigger-contact-updated') return true
       if (trigger.type === 'trigger-refund') return true
       if (trigger.type !== 'trigger-payment-received') return false
-      if (!str(config.paymentAction)) return false
       return paymentActionMatches(config.paymentAction, ctx, eventType)
 
     case 'webhook-received': {

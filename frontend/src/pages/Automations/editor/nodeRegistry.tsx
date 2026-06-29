@@ -558,6 +558,7 @@ const PAYMENT_FIELDS: VariableSchemaField[] = [
 ]
 
 const PAYMENT_ACTION_OPTIONS: ConfigFieldOption[] = [
+  { value: 'any', label: 'Todos' },
   { value: 'successful', label: 'Pago exitoso' },
   { value: 'failed', label: 'Error de pago' },
   { value: 'refunded', label: 'Reembolso' },
@@ -565,6 +566,7 @@ const PAYMENT_ACTION_OPTIONS: ConfigFieldOption[] = [
 ]
 
 const PAYMENT_ACTION_SUMMARIES: Record<string, string> = {
+  any: 'cualquier tipo de pago',
   successful: 'un pago exitoso',
   failed: 'un error de pago',
   refunded: 'un reembolso',
@@ -1064,7 +1066,7 @@ const TRIGGERS: NodeDefinition[] = [
     icon: Receipt,
     accent: 'green',
     addButtonLabel: 'Configurar pago',
-    defaultConfig: () => ({ paymentAction: '' }),
+    defaultConfig: () => ({ paymentAction: 'any' }),
     fields: [
       {
         key: 'paymentAction',
@@ -1081,11 +1083,9 @@ const TRIGGERS: NodeDefinition[] = [
       fields: PAYMENT_FIELDS
     }),
     summary: (config) => {
-      const action = str(config.paymentAction)
+      const action = str(config.paymentAction) || 'any'
       return {
-        text: action
-          ? `Cuando ocurra ${PAYMENT_ACTION_SUMMARIES[action] || 'un evento de pago'}${triggerFiltersSentence(config.filters)}`
-          : undefined,
+        text: `Cuando ocurra ${PAYMENT_ACTION_SUMMARIES[action] || 'un evento de pago'}${triggerFiltersSentence(config.filters)}`,
         empty: 'Elige qué acción del pago inicia la automatización'
       }
     }
