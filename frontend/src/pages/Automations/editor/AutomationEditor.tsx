@@ -622,6 +622,27 @@ export const AutomationEditor: React.FC = () => {
   }, [getHasUnsavedChanges, showToast])
   persistAutomationRef.current = persistAutomation
 
+  const commitNameChange = useCallback(() => {
+    const current = automationRef.current
+    if (!current || saveState === 'saving' || statusBusy) return
+
+    const rawName = nameRef.current
+    const trimmedName = rawName.trim()
+    if (rawName !== trimmedName) {
+      nameRef.current = trimmedName
+      setName(trimmedName)
+    }
+
+    if (!trimmedName) {
+      setSaveState('error')
+      showToast('error', 'No se pudo guardar', 'Ponle un nombre a la automatización')
+      return
+    }
+    if (trimmedName === current.name) return
+
+    void persistAutomation({ notify: false })
+  }, [persistAutomation, saveState, showToast, statusBusy])
+
   useEffect(() => {
     if (!automation) return
     const dirty = getHasUnsavedChanges()
@@ -1652,6 +1673,7 @@ export const AutomationEditor: React.FC = () => {
           className={styles.toolbarName}
           value={name}
           onChange={(event) => setName(event.target.value)}
+          onBlur={commitNameChange}
           onKeyDown={(event) => {
             if (event.key === 'Enter') (event.target as HTMLInputElement).blur()
           }}
@@ -1905,6 +1927,7 @@ export const AutomationEditor: React.FC = () => {
         }}
         name={name}
         onRename={setName}
+        onCommitName={commitNameChange}
         settings={flowSettings}
         onChange={(next) => {
           setFlowSettings(next)

@@ -27,6 +27,7 @@ interface FlowSettingsPanelProps {
   onClose: () => void
   name: string
   onRename: (name: string) => void
+  onCommitName: () => void
   settings: FlowSettings
   onChange: (settings: FlowSettings) => void
 }
@@ -51,6 +52,7 @@ export const FlowSettingsPanel: React.FC<FlowSettingsPanelProps> = ({
   onClose,
   name,
   onRename,
+  onCommitName,
   settings,
   onChange
 }) => {
@@ -61,7 +63,15 @@ export const FlowSettingsPanel: React.FC<FlowSettingsPanelProps> = ({
     <Modal isOpen={open} onClose={onClose} title="Configuración del flujo" size="md">
       <div className={styles.flowSettingsBody} data-automation-interactive="true">
         <Field label="Nombre del flujo">
-          <TextInput value={name} maxLength={120} onChange={(event) => onRename(event.target.value)} />
+          <TextInput
+            value={name}
+            maxLength={120}
+            onChange={(event) => onRename(event.target.value)}
+            onBlur={onCommitName}
+            onKeyDown={(event) => {
+              if (event.key === 'Enter') (event.target as HTMLInputElement).blur()
+            }}
+          />
         </Field>
 
         <Field label="Descripción interna (opcional)">
