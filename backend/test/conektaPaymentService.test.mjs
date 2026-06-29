@@ -272,6 +272,7 @@ test('Conekta payment flow: crea link, guarda payment_source y cobra tarjeta gua
         const body = JSON.parse(options.body)
         assert.equal(body.name, 'Cliente QA Conekta')
         assert.doesNotMatch(body.name, /[0-9_*]/)
+        assert.equal(Object.prototype.hasOwnProperty.call(body, 'custom_reference'), false)
         return jsonResponse({ id: 'cus_test_123' })
       }
 
@@ -384,6 +385,9 @@ test('Conekta payment flow: crea link, guarda payment_source y cobra tarjeta gua
     const testResult = await testConektaPaymentConfig()
     assert.equal(testResult.ok, true)
 
+    const customerCreatesBeforeLink = calls.filter((call) => (
+      call.url.endsWith('/customers') && call.method === 'POST'
+    )).length
     const linkResult = await createConektaPaymentLink({
       contactId,
       contactName: 'Cliente Conekta',
@@ -403,6 +407,10 @@ test('Conekta payment flow: crea link, guarda payment_source y cobra tarjeta gua
     assert.equal(linkResult.payment.conektaInstallments.enabled, true)
     assert.equal(linkResult.payment.conektaInstallments.maxInstallments, 6)
     assert.match(linkResult.paymentUrl, /^https:\/\/app\.example\.test\/pay\/pay_/)
+    const customerCreatesAfterLink = calls.filter((call) => (
+      call.url.endsWith('/customers') && call.method === 'POST'
+    )).length
+    assert.equal(customerCreatesAfterLink, customerCreatesBeforeLink)
 
     const publicResult = await createPublicConektaCardPayment(linkResult.publicPaymentId, {
       tokenId: 'tok_test_123',

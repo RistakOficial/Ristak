@@ -1068,8 +1068,7 @@ async function ensureConektaCustomerForContact(contactId, fallback = {}) {
   const body = {
     name: buildContactName(contact, fallback),
     email: cleanString(contact.email || fallback.email || fallback.contactEmail),
-    phone: cleanString(contact.phone || fallback.phone || fallback.contactPhone),
-    custom_reference: contact.id
+    phone: cleanString(contact.phone || fallback.phone || fallback.contactPhone)
   }
   Object.keys(body).forEach((key) => {
     if (!body[key]) delete body[key]
@@ -1939,9 +1938,13 @@ export async function createConektaPaymentLink(input = {}, { baseUrl } = {}) {
   const now = new Date().toISOString()
   const paymentUrl = buildPaymentUrl(baseUrl, publicPaymentId)
   const contactId = cleanString(input.contactId) || null
-  const conektaCustomerId = contactId
-    ? await ensureConektaCustomerForContact(contactId, input)
-    : null
+  const contact = contactId ? await getConektaContact(contactId) : null
+  if (contactId && !contact) {
+    const error = new Error('Contacto no encontrado.')
+    error.status = 404
+    throw error
+  }
+  const conektaCustomerId = cleanString(contact?.conekta_customer_id)
   const metadata = {
     contactName: cleanString(input.contactName),
     contactEmail: cleanString(input.email),
