@@ -315,8 +315,13 @@ function buildAutomationPaymentPayload(input = {}) {
           ? metadata.line_items
           : Array.isArray(metadata.items)
             ? metadata.items
-            : [];
+            : Array.isArray(metadata.invoicePayload?.items)
+              ? metadata.invoicePayload.items
+              : [];
   const firstLineItem = lineItems[0] || {};
+  const stripeMeta = metadata.stripe || metadata.stripePayment || {};
+  const mercadoPagoMeta = metadata.mercadoPago || metadata.mercado_pago || metadata.mercadopago || {};
+  const conektaMeta = metadata.conekta || {};
   const status = firstValue(input.paymentStatus, input.status) || '';
   const paymentId = firstValue(input.paymentId, input.payment_id, input.id) || '';
   const invoiceId = firstValue(input.invoiceId, input.invoice_id, input.ghl_invoice_id) || '';
@@ -326,10 +331,112 @@ function buildAutomationPaymentPayload(input = {}) {
   const receiptUrl = firstValue(input.receiptUrl, input.receipt_url, input.receiptDownloadUrl, input.receipt_download_url, input.paymentReceiptUrl, input.payment_receipt_url) || '';
   const title = firstValue(input.title, input.name, input.product, firstLineItem.name, input.description) || '';
   const description = firstValue(input.description, input.product, firstLineItem.description, firstLineItem.name, title) || '';
-  const product = firstValue(input.product, input.productName, input.product_name, firstLineItem.name, description, title) || '';
-  const provider = firstValue(input.provider, input.paymentProvider, input.gateway, input.processor, input.paymentMethod, input.payment_method) || '';
+  const product = firstValue(input.product, input.productName, input.product_name, firstLineItem.productName, firstLineItem.product_name, firstLineItem.name, description, title) || '';
+  const provider = firstValue(input.provider, input.paymentProvider, input.payment_provider, input.gateway, input.processor, metadata.provider, metadata.paymentProvider, metadata.payment_provider) || '';
   const paymentMethod = firstValue(input.paymentMethod, input.payment_method, input.method, provider) || '';
+  const paymentMode = firstValue(input.paymentMode, input.payment_mode, input.mode, metadata.paymentMode, metadata.payment_mode, metadata.mode) || '';
   const reference = firstValue(input.reference, input.receipt, invoiceNumber, invoiceId, paymentId) || '';
+  const eventId = firstValue(
+    input.eventId,
+    input.event_id,
+    input.webhookEventId,
+    input.webhook_event_id,
+    input.sourceEventId,
+    input.source_event_id,
+    input.stripeEventId,
+    input.stripe_event_id,
+    input.mercadoPagoEventId,
+    input.mercadopagoEventId,
+    input.mercadopago_event_id,
+    input.conektaEventId,
+    input.conekta_event_id,
+    metadata.eventId,
+    metadata.event_id,
+    metadata.webhookEventId,
+    metadata.webhook_event_id,
+    metadata.sourceEventId,
+    metadata.source_event_id,
+    metadata.stripeEventId,
+    metadata.stripe_event_id,
+    metadata.mercadoPagoEventId,
+    metadata.mercadopagoEventId,
+    metadata.mercadopago_event_id,
+    metadata.conektaEventId,
+    metadata.conekta_event_id,
+    stripeMeta.eventId,
+    stripeMeta.event_id,
+    mercadoPagoMeta.eventId,
+    mercadoPagoMeta.event_id,
+    conektaMeta.eventId,
+    conektaMeta.event_id
+  ) || '';
+  const stripePaymentIntentId = firstValue(
+    input.stripePaymentIntentId,
+    input.stripe_payment_intent_id,
+    input.paymentIntentId,
+    input.payment_intent_id,
+    metadata.stripePaymentIntentId,
+    metadata.stripe_payment_intent_id,
+    stripeMeta.paymentIntentId,
+    stripeMeta.payment_intent_id,
+    stripeMeta.paymentIntent?.id,
+    stripeMeta.payment_intent?.id
+  ) || '';
+  const stripeChargeId = firstValue(
+    input.stripeChargeId,
+    input.stripe_charge_id,
+    input.chargeId,
+    input.charge_id,
+    metadata.stripeChargeId,
+    metadata.stripe_charge_id,
+    stripeMeta.chargeId,
+    stripeMeta.charge_id,
+    stripeMeta.charge?.id
+  ) || '';
+  const mercadoPagoPaymentId = firstValue(
+    input.mercadoPagoPaymentId,
+    input.mercadopagoPaymentId,
+    input.mercadopago_payment_id,
+    metadata.mercadoPagoPaymentId,
+    metadata.mercadopagoPaymentId,
+    metadata.mercadopago_payment_id,
+    mercadoPagoMeta.paymentId,
+    mercadoPagoMeta.payment_id
+  ) || '';
+  const mercadoPagoPreferenceId = firstValue(
+    input.mercadoPagoPreferenceId,
+    input.mercadopagoPreferenceId,
+    input.mercadopago_preference_id,
+    input.preferenceId,
+    input.preference_id,
+    metadata.mercadoPagoPreferenceId,
+    metadata.mercadopagoPreferenceId,
+    metadata.mercadopago_preference_id,
+    metadata.preferenceId,
+    metadata.preference_id,
+    mercadoPagoMeta.preferenceId,
+    mercadoPagoMeta.preference_id
+  ) || '';
+  const conektaOrderId = firstValue(input.conektaOrderId, input.conekta_order_id, input.orderId, input.order_id, metadata.conektaOrderId, metadata.conekta_order_id, conektaMeta.orderId, conektaMeta.order_id) || '';
+  const conektaChargeId = firstValue(input.conektaChargeId, input.conekta_charge_id, input.chargeId, input.charge_id, metadata.conektaChargeId, metadata.conekta_charge_id, conektaMeta.chargeId, conektaMeta.charge_id) || '';
+  const conektaPaymentSourceId = firstValue(
+    input.conektaPaymentSourceId,
+    input.conekta_payment_source_id,
+    input.paymentSourceId,
+    input.payment_source_id,
+    input.sourceId,
+    input.source_id,
+    metadata.conektaPaymentSourceId,
+    metadata.conekta_payment_source_id,
+    conektaMeta.paymentSourceId,
+    conektaMeta.payment_source_id
+  ) || '';
+  const paidAt = firstValue(input.paidAt, input.paid_at, input.fulfilledAt, input.fulfilled_at, metadata.paidAt, metadata.paid_at) || '';
+  const dueDate = firstValue(input.dueDate, input.due_date, metadata.dueDate, metadata.due_date) || '';
+  const sentAt = firstValue(input.sentAt, input.sent_at, metadata.sentAt, metadata.sent_at) || '';
+  const createdAt = firstValue(input.createdAt, input.created_at, metadata.createdAt, metadata.created_at) || '';
+  const updatedAt = firstValue(input.updatedAt, input.updated_at, metadata.updatedAt, metadata.updated_at) || '';
+  const paymentDate = firstValue(input.paymentDate, input.payment_date, input.date, paidAt, createdAt) || '';
   return {
     contactId: input.contactId || input.contact_id || '',
     paymentId,
@@ -341,7 +448,8 @@ function buildAutomationPaymentPayload(input = {}) {
     provider,
     paymentProvider: provider,
     paymentMethod,
-    paymentMode: input.paymentMode || input.payment_mode || '',
+    paymentMode,
+    eventId,
     reference,
     title,
     description,
@@ -350,12 +458,24 @@ function buildAutomationPaymentPayload(input = {}) {
     publicPaymentId,
     paymentUrl,
     receiptUrl,
+    stripePaymentIntentId,
+    stripeChargeId,
+    mercadoPagoPaymentId,
+    mercadoPagoPreferenceId,
+    conektaOrderId,
+    conektaChargeId,
+    conektaPaymentSourceId,
+    paidAt,
+    dueDate,
+    sentAt,
+    createdAt,
+    updatedAt,
     metadata,
     metadataJson: input.metadata_json || input.metadataJson || '',
     lineItems,
     receipt: firstValue(input.receipt, reference, invoiceNumber, invoiceId, title) || '',
-    paymentDate: input.paymentDate || input.date || input.createdAt || input.created_at || '',
-    date: input.paymentDate || input.date || input.createdAt || input.created_at || ''
+    paymentDate,
+    date: paymentDate
   };
 }
 
@@ -377,8 +497,19 @@ function buildAutomationPaymentPayloadFromRow(row = {}, overrides = {}) {
     invoiceNumber: row.invoice_number,
     publicPaymentId: row.public_payment_id,
     paymentUrl: row.payment_url,
+    stripePaymentIntentId: row.stripe_payment_intent_id,
+    stripeChargeId: row.stripe_charge_id,
+    mercadoPagoPaymentId: row.mercadopago_payment_id,
+    mercadoPagoPreferenceId: row.mercadopago_preference_id,
+    conektaOrderId: row.conekta_order_id,
+    conektaChargeId: row.conekta_charge_id,
+    conektaPaymentSourceId: row.conekta_payment_source_id,
+    paidAt: row.paid_at,
+    dueDate: row.due_date,
+    sentAt: row.sent_at,
     paymentDate: row.date,
     createdAt: row.created_at,
+    updatedAt: row.updated_at,
     metadata,
     metadataJson: row.metadata_json,
     ...overrides
@@ -1128,11 +1259,13 @@ export const handlePaymentWebhook = async (req, res) => {
       provider: 'highlevel',
       gateway: paymentProvider,
       paymentMode,
+      eventId: firstValue(payment.eventId, payment.event_id, data.eventId, data.event_id, data.id),
       reference,
       title,
       description,
       invoiceId: effectiveInvoiceId || invoiceId || '',
       invoiceNumber,
+      paidAt: paymentDate,
       paymentDate,
       createdAt
     }));
@@ -1816,7 +1949,11 @@ export const handleInvoiceWebhook = async (req, res) => {
 
       const payment = await db.get(
         `SELECT id, contact_id, amount, currency, status, payment_method, payment_mode,
-                reference, title, description, date, created_at, ghl_invoice_id, invoice_number
+                payment_provider, reference, title, description, public_payment_id, payment_url,
+                stripe_payment_intent_id, stripe_charge_id, mercadopago_payment_id,
+                mercadopago_preference_id, conekta_order_id, conekta_charge_id,
+                conekta_payment_source_id, paid_at, due_date, sent_at, metadata_json,
+                date, created_at, updated_at, ghl_invoice_id, invoice_number
          FROM payments
          WHERE ghl_invoice_id = ?`,
         [invoiceId]

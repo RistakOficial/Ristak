@@ -198,14 +198,39 @@ test('renderTemplate expone datos del pago para acciones posteriores', () => {
     paymentStatus: 'paid',
     product: 'Curso',
     provider: 'stripe',
+    paymentMode: 'live',
+    eventId: 'evt_123',
     paymentMethod: 'card',
     reference: 'Invoice #INV-55',
+    title: 'Venta curso',
+    description: 'Acceso anual',
+    publicPaymentId: 'pay_public_123',
+    paymentUrl: 'https://app.test/pay/pay_public_123',
+    invoiceId: 'inv_123',
     invoiceNumber: 'INV-55',
+    stripePaymentIntentId: 'pi_123',
+    stripeChargeId: 'ch_123',
+    mercadoPagoPaymentId: 'mp_123',
+    mercadoPagoPreferenceId: 'pref_123',
+    conektaOrderId: 'ord_123',
+    conektaChargeId: 'charge_123',
+    conektaPaymentSourceId: 'src_123',
+    paidAt: '2026-06-14T10:00:00.000Z',
+    dueDate: '2026-06-20T10:00:00.000Z',
+    sentAt: '2026-06-13T10:00:00.000Z',
+    createdAt: '2026-06-12T10:00:00.000Z',
+    updatedAt: '2026-06-14T10:05:00.000Z',
     paymentDate: '2026-06-14T10:00:00.000Z'
   }
   assert.equal(renderTemplate('{{pago_1.monto}} {{pago_1.moneda}}', paymentCtx), '1499 MXN')
   assert.equal(renderTemplate('{{payment.product}}', paymentCtx), 'Curso')
   assert.equal(renderTemplate('{{payment.invoice_number}}', paymentCtx), 'INV-55')
+  assert.equal(renderTemplate('{{payment.mode}} {{payment.event_id}}', paymentCtx), 'live evt_123')
+  assert.equal(renderTemplate('{{payment.reference}} {{payment.invoice_id}}', paymentCtx), 'Invoice #INV-55 inv_123')
+  assert.equal(renderTemplate('{{payment.stripe_payment_intent_id}} {{payment.stripe_charge_id}}', paymentCtx), 'pi_123 ch_123')
+  assert.equal(renderTemplate('{{payment.mercadopago_payment_id}} {{payment.mercadopago_preference_id}}', paymentCtx), 'mp_123 pref_123')
+  assert.equal(renderTemplate('{{payment.conekta_order_id}} {{payment.conekta_payment_source_id}}', paymentCtx), 'ord_123 src_123')
+  assert.equal(renderTemplate('{{payment.paid_at}} {{payment.due_date}}', paymentCtx), '2026-06-14T10:00:00.000Z 2026-06-20T10:00:00.000Z')
 })
 
 test('renderTemplate toma el producto del item de pago cuando viene en metadata', () => {
@@ -261,9 +286,29 @@ test('filtersMatch: filtra datos completos del evento de pago', () => {
       ]
     },
     provider: 'stripe',
+    paymentMode: 'live',
+    eventId: 'evt_123',
     paymentMethod: 'card',
     reference: 'Invoice #INV-55',
-    invoiceNumber: 'INV-55'
+    title: 'Venta curso',
+    description: 'Acceso anual',
+    publicPaymentId: 'pay_public_123',
+    paymentUrl: 'https://app.test/pay/pay_public_123',
+    invoiceId: 'inv_123',
+    invoiceNumber: 'INV-55',
+    stripePaymentIntentId: 'pi_123',
+    stripeChargeId: 'ch_123',
+    mercadoPagoPaymentId: 'mp_123',
+    mercadoPagoPreferenceId: 'pref_123',
+    conektaOrderId: 'ord_123',
+    conektaChargeId: 'charge_123',
+    conektaPaymentSourceId: 'src_123',
+    paidAt: '2026-06-14T10:00:00.000Z',
+    dueDate: '2026-06-20T10:00:00.000Z',
+    sentAt: '2026-06-13T10:00:00.000Z',
+    createdAt: '2026-06-12T10:00:00.000Z',
+    updatedAt: '2026-06-14T10:05:00.000Z',
+    paymentDate: '2026-06-14T10:00:00.000Z'
   }
   assert.equal(filtersMatch([{ field: 'payment_status', match: 'is', value: 'refunded' }], paymentCtx), true)
   assert.equal(filtersMatch([{ field: 'amount', match: 'is', value: '1499' }], paymentCtx), true)
@@ -273,7 +318,31 @@ test('filtersMatch: filtra datos completos del evento de pago', () => {
   assert.equal(filtersMatch([{ field: 'payment_method', match: 'contains', value: 'card' }], paymentCtx), true)
   assert.equal(filtersMatch([{ field: 'receipt', match: 'contains', value: 'INV-55' }], paymentCtx), true)
   assert.equal(filtersMatch([{ field: 'product', match: 'not', value: 'prod_otro' }], paymentCtx), true)
+  assert.equal(filtersMatch([{ field: 'provider', match: 'is', value: 'stripe' }], paymentCtx), true)
   assert.equal(filtersMatch([{ field: 'provider', match: 'is', value: 'paypal' }], paymentCtx), false)
+  assert.equal(filtersMatch([{ field: 'payment_mode', match: 'is', value: 'live' }], paymentCtx), true)
+  assert.equal(filtersMatch([{ field: 'event_id', match: 'is', value: 'evt_123' }], paymentCtx), true)
+  assert.equal(filtersMatch([{ field: 'reference', match: 'contains', value: 'INV-55' }], paymentCtx), true)
+  assert.equal(filtersMatch([{ field: 'title', match: 'contains', value: 'Venta' }], paymentCtx), true)
+  assert.equal(filtersMatch([{ field: 'description', match: 'contains', value: 'anual' }], paymentCtx), true)
+  assert.equal(filtersMatch([{ field: 'public_payment_id', match: 'is', value: 'pay_public_123' }], paymentCtx), true)
+  assert.equal(filtersMatch([{ field: 'payment_url', match: 'contains', value: '/pay/pay_public_123' }], paymentCtx), true)
+  assert.equal(filtersMatch([{ field: 'receipt_url', match: 'contains', value: 'receipt=1' }], paymentCtx), true)
+  assert.equal(filtersMatch([{ field: 'invoice_id', match: 'is', value: 'inv_123' }], paymentCtx), true)
+  assert.equal(filtersMatch([{ field: 'invoice_number', match: 'is', value: 'INV-55' }], paymentCtx), true)
+  assert.equal(filtersMatch([{ field: 'stripe_payment_intent_id', match: 'is', value: 'pi_123' }], paymentCtx), true)
+  assert.equal(filtersMatch([{ field: 'stripe_charge_id', match: 'is', value: 'ch_123' }], paymentCtx), true)
+  assert.equal(filtersMatch([{ field: 'mercadopago_payment_id', match: 'is', value: 'mp_123' }], paymentCtx), true)
+  assert.equal(filtersMatch([{ field: 'mercadopago_preference_id', match: 'is', value: 'pref_123' }], paymentCtx), true)
+  assert.equal(filtersMatch([{ field: 'conekta_order_id', match: 'is', value: 'ord_123' }], paymentCtx), true)
+  assert.equal(filtersMatch([{ field: 'conekta_charge_id', match: 'is', value: 'charge_123' }], paymentCtx), true)
+  assert.equal(filtersMatch([{ field: 'conekta_payment_source_id', match: 'is', value: 'src_123' }], paymentCtx), true)
+  assert.equal(filtersMatch([{ field: 'paid_at', match: 'contains', value: '2026-06-14' }], paymentCtx), true)
+  assert.equal(filtersMatch([{ field: 'payment_date', match: 'contains', value: '2026-06-14' }], paymentCtx), true)
+  assert.equal(filtersMatch([{ field: 'due_date', match: 'contains', value: '2026-06-20' }], paymentCtx), true)
+  assert.equal(filtersMatch([{ field: 'sent_at', match: 'contains', value: '2026-06-13' }], paymentCtx), true)
+  assert.equal(filtersMatch([{ field: 'payment_created_at', match: 'contains', value: '2026-06-12' }], paymentCtx), true)
+  assert.equal(filtersMatch([{ field: 'payment_updated_at', match: 'contains', value: '2026-06-14T10:05' }], paymentCtx), true)
 })
 
 test('filtersMatch: formulario enviado puede ser descalificado o no descalificado', () => {

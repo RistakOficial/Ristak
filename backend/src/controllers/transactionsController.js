@@ -123,6 +123,12 @@ const buildPaymentUrlFromBase = (baseUrl, publicPaymentId) => {
   return cleanPublicId && cleanBase ? `${cleanBase}/pay/${encodeURIComponent(cleanPublicId)}` : ''
 }
 
+const appendReceiptQuery = (url = '') => {
+  const cleanUrl = cleanString(url)
+  if (!cleanUrl) return ''
+  return cleanUrl.includes('?') ? `${cleanUrl}&receipt=1` : `${cleanUrl}?receipt=1`
+}
+
 const resolveTransactionPaymentUrl = (transaction = {}, baseUrl = '') => {
   const localUrl = buildPaymentUrlFromBase(baseUrl, transaction.public_payment_id)
   const provider = cleanString(transaction.payment_provider).toLowerCase()
@@ -132,6 +138,8 @@ const resolveTransactionPaymentUrl = (transaction = {}, baseUrl = '') => {
 
 const buildTransactionAutomationPayload = (transaction = {}, req, overrides = {}) => {
   const metadata = parseJson(transaction.metadata_json, {})
+  const paymentUrl = resolveTransactionPaymentUrl(transaction, getRequestBaseUrl(req))
+  const provider = transaction.payment_provider || (transaction.ghl_invoice_id ? 'highlevel' : 'manual')
   return {
     contactId: transaction.contact_id,
     paymentId: transaction.id || '',
@@ -140,7 +148,8 @@ const buildTransactionAutomationPayload = (transaction = {}, req, overrides = {}
     status: transaction.status || '',
     paymentStatus: transaction.status || '',
     product: transaction.description || transaction.title || '',
-    provider: transaction.payment_method || '',
+    provider,
+    paymentProvider: provider,
     paymentMethod: transaction.payment_method || '',
     paymentMode: transaction.payment_mode || '',
     reference: transaction.reference || '',
@@ -149,7 +158,20 @@ const buildTransactionAutomationPayload = (transaction = {}, req, overrides = {}
     invoiceId: transaction.ghl_invoice_id || '',
     invoiceNumber: transaction.invoice_number || '',
     publicPaymentId: transaction.public_payment_id || '',
-    paymentUrl: resolveTransactionPaymentUrl(transaction, getRequestBaseUrl(req)),
+    paymentUrl,
+    receiptUrl: appendReceiptQuery(paymentUrl),
+    stripePaymentIntentId: transaction.stripe_payment_intent_id || '',
+    stripeChargeId: transaction.stripe_charge_id || '',
+    mercadoPagoPaymentId: transaction.mercadopago_payment_id || '',
+    mercadoPagoPreferenceId: transaction.mercadopago_preference_id || '',
+    conektaOrderId: transaction.conekta_order_id || '',
+    conektaChargeId: transaction.conekta_charge_id || '',
+    conektaPaymentSourceId: transaction.conekta_payment_source_id || '',
+    paidAt: transaction.paid_at || '',
+    dueDate: transaction.due_date || '',
+    sentAt: transaction.sent_at || '',
+    createdAt: transaction.created_at || '',
+    updatedAt: transaction.updated_at || '',
     receipt: transaction.reference || transaction.invoice_number || transaction.ghl_invoice_id || '',
     paymentDate: transaction.date || transaction.created_at || '',
     metadata,
@@ -432,6 +454,12 @@ const mapTransactionRow = (t, baseUrl = '') => ({
   publicPaymentId: t.public_payment_id,
   paymentUrl: resolveTransactionPaymentUrl(t, baseUrl),
   stripePaymentIntentId: t.stripe_payment_intent_id,
+  stripeChargeId: t.stripe_charge_id,
+  mercadoPagoPaymentId: t.mercadopago_payment_id,
+  mercadoPagoPreferenceId: t.mercadopago_preference_id,
+  conektaOrderId: t.conekta_order_id,
+  conektaChargeId: t.conekta_charge_id,
+  conektaPaymentSourceId: t.conekta_payment_source_id,
   paidAt: t.paid_at
 })
 
@@ -555,6 +583,12 @@ const getTransactionByIdForResponse = async (id, baseUrl = '') => {
       p.public_payment_id,
       p.payment_url,
       p.stripe_payment_intent_id,
+      p.stripe_charge_id,
+      p.mercadopago_payment_id,
+      p.mercadopago_preference_id,
+      p.conekta_order_id,
+      p.conekta_charge_id,
+      p.conekta_payment_source_id,
       p.paid_at,
       c.full_name as contact_name,
       c.email as contact_email,
@@ -895,6 +929,12 @@ export const getTransactions = async (req, res) => {
         p.public_payment_id,
         p.payment_url,
         p.stripe_payment_intent_id,
+        p.stripe_charge_id,
+        p.mercadopago_payment_id,
+        p.mercadopago_preference_id,
+        p.conekta_order_id,
+        p.conekta_charge_id,
+        p.conekta_payment_source_id,
         p.paid_at,
         c.full_name as contact_name,
         c.email as contact_email,
@@ -1027,6 +1067,12 @@ export const getTransactionById = async (req, res) => {
       publicPaymentId: transaction.public_payment_id,
       paymentUrl: resolveTransactionPaymentUrl(transaction, getRequestBaseUrl(req)),
       stripePaymentIntentId: transaction.stripe_payment_intent_id,
+      stripeChargeId: transaction.stripe_charge_id,
+      mercadoPagoPaymentId: transaction.mercadopago_payment_id,
+      mercadoPagoPreferenceId: transaction.mercadopago_preference_id,
+      conektaOrderId: transaction.conekta_order_id,
+      conektaChargeId: transaction.conekta_charge_id,
+      conektaPaymentSourceId: transaction.conekta_payment_source_id,
       paidAt: transaction.paid_at,
       contactSource: transaction.contact_source,
       attributionAdName: transaction.attribution_ad_name,

@@ -68,6 +68,20 @@ const PAYMENT_STATUS_OPTIONS = [
   { value: 'sent', label: 'Enviado' }
 ]
 
+const PAYMENT_PROVIDER_OPTIONS = [
+  { value: 'stripe', label: 'Stripe' },
+  { value: 'conekta', label: 'Conekta' },
+  { value: 'mercadopago', label: 'Mercado Pago' },
+  { value: 'highlevel', label: 'HighLevel' },
+  { value: 'manual', label: 'Manual' },
+  { value: 'other', label: 'Otro' }
+]
+
+const PAYMENT_MODE_OPTIONS = [
+  { value: 'live', label: 'En vivo' },
+  { value: 'test', label: 'Prueba' }
+]
+
 const tagValueLabel = (value: unknown, savedLabel?: string): string =>
   savedLabel || contactTagsService.getDisplayName(typeof value === 'string' ? value : '')
 
@@ -633,15 +647,37 @@ export const TRIGGER_FILTER_FIELDS: TriggerFilterField[] = [
   { id: 'channel', label: 'Canal del mensaje', phrase: 'el canal', options: CHANNEL_FIELD_OPTIONS, category: 'Mensaje', appliesTo: ['message'] },
   { id: 'calendar', label: 'Calendario', phrase: 'el calendario', catalog: 'calendars', category: 'Cita', appliesTo: ['appointment'] },
   { id: 'appointment_type', label: 'Tipo de cita', phrase: 'el tipo de cita', category: 'Cita', appliesTo: ['appointment'] },
-  { id: 'payment_status', label: 'Estado del pago', phrase: 'el estado del pago', options: PAYMENT_STATUS_OPTIONS, category: 'Pago', appliesTo: ['payment'] },
+  { id: 'payment_status', label: 'Status del pago', phrase: 'el status del pago', options: PAYMENT_STATUS_OPTIONS, category: 'Pago', appliesTo: ['payment'] },
   { id: 'amount', label: 'Monto', phrase: 'el monto', category: 'Pago', appliesTo: ['payment'] },
   { id: 'product', label: 'Productos', phrase: 'el producto', catalog: 'products', category: 'Pago', appliesTo: ['payment'] },
   { id: 'currency', label: 'Moneda', phrase: 'la moneda', category: 'Pago', appliesTo: ['payment'] },
-  { id: 'provider', label: 'Proveedor de pago', phrase: 'el proveedor', category: 'Pago', appliesTo: ['payment'] },
+  { id: 'provider', label: 'Pasarela de pago', phrase: 'la pasarela de pago', options: PAYMENT_PROVIDER_OPTIONS, category: 'Pago', appliesTo: ['payment'] },
+  { id: 'payment_mode', label: 'Modo de pago', phrase: 'el modo de pago', options: PAYMENT_MODE_OPTIONS, category: 'Pago', appliesTo: ['payment'] },
   { id: 'payment_method', label: 'Método de pago', phrase: 'el método de pago', category: 'Pago', appliesTo: ['payment'] },
   { id: 'payment_id', label: 'ID del pago', phrase: 'el ID del pago', category: 'Pago', appliesTo: ['payment'] },
+  { id: 'event_id', label: 'ID del evento / webhook', phrase: 'el ID del evento', category: 'Pasarela de pago', appliesTo: ['payment'] },
+  { id: 'reference', label: 'Referencia', phrase: 'la referencia', category: 'Pago', appliesTo: ['payment'] },
+  { id: 'title', label: 'Concepto / título', phrase: 'el concepto', category: 'Pago', appliesTo: ['payment'] },
+  { id: 'description', label: 'Descripción', phrase: 'la descripción', category: 'Pago', appliesTo: ['payment'] },
   { id: 'receipt', label: 'Recibo / factura', phrase: 'el recibo', category: 'Pago', appliesTo: ['payment'] },
+  { id: 'receipt_url', label: 'URL del comprobante', phrase: 'la URL del comprobante', category: 'Pago', appliesTo: ['payment'] },
+  { id: 'public_payment_id', label: 'ID público del pago', phrase: 'el ID público del pago', category: 'Pago', appliesTo: ['payment'] },
+  { id: 'payment_url', label: 'URL del pago', phrase: 'la URL del pago', category: 'Pago', appliesTo: ['payment'] },
+  { id: 'invoice_id', label: 'ID de factura', phrase: 'el ID de factura', category: 'Pago', appliesTo: ['payment'] },
   { id: 'invoice_number', label: 'Número de factura', phrase: 'el número de factura', category: 'Pago', appliesTo: ['payment'] },
+  { id: 'stripe_payment_intent_id', label: 'Stripe PaymentIntent ID', phrase: 'el PaymentIntent de Stripe', category: 'Pasarela de pago', appliesTo: ['payment'] },
+  { id: 'stripe_charge_id', label: 'Stripe Charge ID', phrase: 'el charge de Stripe', category: 'Pasarela de pago', appliesTo: ['payment'] },
+  { id: 'mercadopago_payment_id', label: 'Mercado Pago payment ID', phrase: 'el payment ID de Mercado Pago', category: 'Pasarela de pago', appliesTo: ['payment'] },
+  { id: 'mercadopago_preference_id', label: 'Mercado Pago preference ID', phrase: 'el preference ID de Mercado Pago', category: 'Pasarela de pago', appliesTo: ['payment'] },
+  { id: 'conekta_order_id', label: 'Conekta order ID', phrase: 'el order ID de Conekta', category: 'Pasarela de pago', appliesTo: ['payment'] },
+  { id: 'conekta_charge_id', label: 'Conekta charge ID', phrase: 'el charge ID de Conekta', category: 'Pasarela de pago', appliesTo: ['payment'] },
+  { id: 'conekta_payment_source_id', label: 'Conekta payment source ID', phrase: 'el payment source de Conekta', category: 'Pasarela de pago', appliesTo: ['payment'] },
+  { id: 'paid_at', label: 'Fecha de pago', phrase: 'la fecha de pago', category: 'Fechas del pago', appliesTo: ['payment'] },
+  { id: 'payment_date', label: 'Fecha del evento', phrase: 'la fecha del evento', category: 'Fechas del pago', appliesTo: ['payment'] },
+  { id: 'due_date', label: 'Fecha de vencimiento', phrase: 'la fecha de vencimiento', category: 'Fechas del pago', appliesTo: ['payment'] },
+  { id: 'sent_at', label: 'Fecha de envío', phrase: 'la fecha de envío', category: 'Fechas del pago', appliesTo: ['payment'] },
+  { id: 'payment_created_at', label: 'Fecha de creación del pago', phrase: 'la fecha de creación del pago', category: 'Fechas del pago', appliesTo: ['payment'] },
+  { id: 'payment_updated_at', label: 'Fecha de actualización del pago', phrase: 'la fecha de actualización del pago', category: 'Fechas del pago', appliesTo: ['payment'] },
   { id: 'campaign', label: 'Campaña', phrase: 'la campaña', catalog: 'campaigns', category: 'Anuncio', appliesTo: ['ads'] },
   {
     id: 'form_disqualified',

@@ -560,6 +560,21 @@ function paymentMetadataFromContext(ctx = {}) {
   }
 }
 
+function firstPaymentContextValue(ctx = {}, ...paths) {
+  const payment = paymentObjectFromContext(ctx)
+  const metadata = paymentMetadataFromContext(ctx)
+  const sources = [ctx, payment, metadata]
+
+  for (const path of paths) {
+    for (const source of sources) {
+      const cleaned = cleanString(readPath(source, path))
+      if (cleaned) return cleaned
+    }
+  }
+
+  return ''
+}
+
 function pushCleanPaymentCandidate(candidates, ...values) {
   for (const value of values) {
     const cleaned = cleanString(value)
@@ -699,6 +714,101 @@ function paymentDataFromContext(ctx = {}) {
   const publicPaymentId = publicPaymentIdFromContext(ctx)
   const paymentUrl = buildPaymentPageUrlFromContext(ctx)
   const productCandidates = paymentProductCandidatesFromContext(ctx)
+  const paymentId = firstPaymentContextValue(ctx, 'paymentId', 'payment_id', 'id')
+  const amount = firstPaymentContextValue(ctx, 'amount')
+  const currency = firstPaymentContextValue(ctx, 'currency')
+  const status = firstPaymentContextValue(ctx, 'paymentStatus', 'payment_status', 'status')
+  const paymentMode = firstPaymentContextValue(ctx, 'paymentMode', 'payment_mode', 'mode')
+  const eventId = firstPaymentContextValue(
+    ctx,
+    'eventId',
+    'event_id',
+    'webhookEventId',
+    'webhook_event_id',
+    'sourceEventId',
+    'source_event_id',
+    'stripeEventId',
+    'stripe_event_id',
+    'mercadoPagoEventId',
+    'mercadopagoEventId',
+    'mercadopago_event_id',
+    'conektaEventId',
+    'conekta_event_id',
+    'payload.id',
+    'payload.eventId',
+    'payload.event_id',
+    'event.id',
+    'webhook.id'
+  )
+  const provider = firstPaymentContextValue(ctx, 'provider', 'paymentProvider', 'payment_provider', 'gateway', 'processor')
+  const paymentMethod = firstPaymentContextValue(ctx, 'paymentMethod', 'payment_method', 'method')
+  const invoiceId = firstPaymentContextValue(ctx, 'invoiceId', 'invoice_id', 'ghl_invoice_id')
+  const invoiceNumber = firstPaymentContextValue(ctx, 'invoiceNumber', 'invoice_number')
+  const reference = firstPaymentContextValue(ctx, 'reference')
+  const title = firstPaymentContextValue(ctx, 'title', 'name')
+  const description = firstPaymentContextValue(ctx, 'description')
+  const stripePaymentIntentId = firstPaymentContextValue(
+    ctx,
+    'stripePaymentIntentId',
+    'stripe_payment_intent_id',
+    'paymentIntentId',
+    'payment_intent_id',
+    'stripe.paymentIntentId',
+    'stripe.payment_intent_id',
+    'stripe.paymentIntent.id',
+    'stripe.payment_intent.id'
+  )
+  const stripeChargeId = firstPaymentContextValue(
+    ctx,
+    'stripeChargeId',
+    'stripe_charge_id',
+    'chargeId',
+    'charge_id',
+    'stripe.chargeId',
+    'stripe.charge_id',
+    'stripe.charge.id'
+  )
+  const mercadoPagoPaymentId = firstPaymentContextValue(
+    ctx,
+    'mercadoPagoPaymentId',
+    'mercadopagoPaymentId',
+    'mercadopago_payment_id',
+    'mercadoPago.paymentId',
+    'mercadoPago.payment_id',
+    'mercado_pago.paymentId',
+    'mercado_pago.payment_id'
+  )
+  const mercadoPagoPreferenceId = firstPaymentContextValue(
+    ctx,
+    'mercadoPagoPreferenceId',
+    'mercadopagoPreferenceId',
+    'mercadopago_preference_id',
+    'preferenceId',
+    'preference_id',
+    'mercadoPago.preferenceId',
+    'mercadoPago.preference_id',
+    'mercado_pago.preferenceId',
+    'mercado_pago.preference_id'
+  )
+  const conektaOrderId = firstPaymentContextValue(ctx, 'conektaOrderId', 'conekta_order_id', 'orderId', 'order_id', 'conekta.orderId', 'conekta.order_id')
+  const conektaChargeId = firstPaymentContextValue(ctx, 'conektaChargeId', 'conekta_charge_id', 'chargeId', 'charge_id', 'conekta.chargeId', 'conekta.charge_id')
+  const conektaPaymentSourceId = firstPaymentContextValue(
+    ctx,
+    'conektaPaymentSourceId',
+    'conekta_payment_source_id',
+    'paymentSourceId',
+    'payment_source_id',
+    'sourceId',
+    'source_id',
+    'conekta.paymentSourceId',
+    'conekta.payment_source_id'
+  )
+  const paidAt = firstPaymentContextValue(ctx, 'paidAt', 'paid_at', 'fulfilledAt', 'fulfilled_at')
+  const paymentDate = firstPaymentContextValue(ctx, 'paymentDate', 'payment_date', 'date', 'createdAt', 'created_at')
+  const dueDate = firstPaymentContextValue(ctx, 'dueDate', 'due_date')
+  const sentAt = firstPaymentContextValue(ctx, 'sentAt', 'sent_at')
+  const createdAt = firstPaymentContextValue(ctx, 'createdAt', 'created_at')
+  const updatedAt = firstPaymentContextValue(ctx, 'updatedAt', 'updated_at')
   const receiptUrl = firstCleanPaymentValue(
     ctx.receiptUrl,
     ctx.receipt_url,
@@ -713,17 +823,35 @@ function paymentDataFromContext(ctx = {}) {
     appendPaymentReceiptQuery(paymentUrl)
   )
   return {
-    id_pago: ctx.paymentId || ctx.payment_id || payment.id || ctx.id || '',
+    id_pago: paymentId,
     id_publico: publicPaymentId,
-    monto: ctx.amount ?? payment.amount ?? '',
-    moneda: ctx.currency || payment.currency || '',
-    estado: ctx.paymentStatus || ctx.payment_status || payment.paymentStatus || payment.payment_status || ctx.status || payment.status || '',
-    producto: firstCleanPaymentValue(ctx.product, payment.product, productCandidates[0], ctx.title, payment.title, ctx.description, payment.description),
-    proveedor: ctx.provider || ctx.paymentProvider || ctx.gateway || payment.provider || payment.paymentProvider || payment.gateway || '',
-    metodo_pago: ctx.paymentMethod || ctx.payment_method || ctx.method || payment.paymentMethod || payment.payment_method || payment.method || '',
-    recibo: ctx.receipt || payment.receipt || ctx.reference || payment.reference || ctx.invoiceNumber || payment.invoiceNumber || ctx.invoiceId || payment.invoiceId || '',
-    numero_factura: ctx.invoiceNumber || ctx.invoice_number || payment.invoiceNumber || payment.invoice_number || '',
-    fecha: ctx.paymentDate || payment.paymentDate || ctx.date || payment.date || ctx.createdAt || payment.createdAt || '',
+    monto: amount,
+    moneda: currency,
+    estado: status,
+    modo_pago: paymentMode,
+    id_evento: eventId,
+    producto: firstCleanPaymentValue(ctx.product, paymentProductCandidatesFromContext(ctx)[0], productCandidates[0], title, description),
+    proveedor: provider,
+    metodo_pago: paymentMethod,
+    referencia: reference,
+    titulo: title,
+    descripcion: description,
+    recibo: firstPaymentContextValue(ctx, 'receipt') || reference || invoiceNumber || invoiceId || title || '',
+    id_factura: invoiceId,
+    numero_factura: invoiceNumber,
+    id_stripe_payment_intent: stripePaymentIntentId,
+    id_stripe_charge: stripeChargeId,
+    id_mercadopago_pago: mercadoPagoPaymentId,
+    id_mercadopago_preferencia: mercadoPagoPreferenceId,
+    id_conekta_order: conektaOrderId,
+    id_conekta_charge: conektaChargeId,
+    id_conekta_fuente_pago: conektaPaymentSourceId,
+    fecha: paymentDate,
+    fecha_pago: paidAt,
+    fecha_vencimiento: dueDate,
+    fecha_envio: sentAt,
+    fecha_creacion: createdAt,
+    fecha_actualizacion: updatedAt,
     url_pago: paymentUrl,
     url_comprobante: receiptUrl,
     ruta_comprobante: publicPaymentId ? `${publicPaymentId}?receipt=1` : ''
@@ -938,12 +1066,31 @@ function buildVariableMap(ctx) {
     map['payment.amount'] = String(payment.monto ?? '')
     map['payment.currency'] = String(payment.moneda ?? '')
     map['payment.status'] = String(payment.estado ?? '')
+    map['payment.mode'] = String(payment.modo_pago ?? '')
+    map['payment.payment_mode'] = String(payment.modo_pago ?? '')
+    map['payment.event_id'] = String(payment.id_evento ?? '')
     map['payment.product'] = String(payment.producto ?? '')
     map['payment.provider'] = String(payment.proveedor ?? '')
     map['payment.method'] = String(payment.metodo_pago ?? '')
+    map['payment.reference'] = String(payment.referencia ?? '')
+    map['payment.title'] = String(payment.titulo ?? '')
+    map['payment.description'] = String(payment.descripcion ?? '')
     map['payment.receipt'] = String(payment.recibo ?? '')
+    map['payment.invoice_id'] = String(payment.id_factura ?? '')
     map['payment.invoice_number'] = String(payment.numero_factura ?? '')
+    map['payment.stripe_payment_intent_id'] = String(payment.id_stripe_payment_intent ?? '')
+    map['payment.stripe_charge_id'] = String(payment.id_stripe_charge ?? '')
+    map['payment.mercadopago_payment_id'] = String(payment.id_mercadopago_pago ?? '')
+    map['payment.mercadopago_preference_id'] = String(payment.id_mercadopago_preferencia ?? '')
+    map['payment.conekta_order_id'] = String(payment.id_conekta_order ?? '')
+    map['payment.conekta_charge_id'] = String(payment.id_conekta_charge ?? '')
+    map['payment.conekta_payment_source_id'] = String(payment.id_conekta_fuente_pago ?? '')
     map['payment.date'] = String(payment.fecha ?? '')
+    map['payment.paid_at'] = String(payment.fecha_pago ?? '')
+    map['payment.due_date'] = String(payment.fecha_vencimiento ?? '')
+    map['payment.sent_at'] = String(payment.fecha_envio ?? '')
+    map['payment.created_at'] = String(payment.fecha_creacion ?? '')
+    map['payment.updated_at'] = String(payment.fecha_actualizacion ?? '')
     map['payment.url'] = String(payment.url_pago ?? '')
     map['payment.receipt_url'] = String(payment.url_comprobante ?? '')
     map['payment.receipt_path'] = String(payment.ruta_comprobante ?? '')
@@ -1063,6 +1210,134 @@ function keywordsMatch(config, messageText) {
   })
 }
 
+function paymentTriggerFieldValue(field, ctx = {}) {
+  switch (field) {
+    case 'payment_status':
+      return firstPaymentContextValue(ctx, 'paymentStatus', 'payment_status', 'status')
+    case 'amount':
+      return firstPaymentContextValue(ctx, 'amount')
+    case 'currency':
+      return firstPaymentContextValue(ctx, 'currency')
+    case 'provider':
+      return firstPaymentContextValue(ctx, 'provider', 'paymentProvider', 'payment_provider', 'gateway', 'processor')
+    case 'payment_mode':
+      return firstPaymentContextValue(ctx, 'paymentMode', 'payment_mode', 'mode')
+    case 'payment_method':
+      return firstPaymentContextValue(ctx, 'paymentMethod', 'payment_method', 'method')
+    case 'payment_id':
+      return firstPaymentContextValue(ctx, 'paymentId', 'payment_id', 'id')
+    case 'event_id':
+      return firstPaymentContextValue(
+        ctx,
+        'eventId',
+        'event_id',
+        'webhookEventId',
+        'webhook_event_id',
+        'sourceEventId',
+        'source_event_id',
+        'stripeEventId',
+        'stripe_event_id',
+        'mercadoPagoEventId',
+        'mercadopagoEventId',
+        'mercadopago_event_id',
+        'conektaEventId',
+        'conekta_event_id',
+        'payload.id',
+        'payload.eventId',
+        'payload.event_id',
+        'event.id',
+        'webhook.id'
+      )
+    case 'reference':
+      return firstPaymentContextValue(ctx, 'reference')
+    case 'title':
+      return firstPaymentContextValue(ctx, 'title', 'name')
+    case 'description':
+      return firstPaymentContextValue(ctx, 'description')
+    case 'receipt':
+      return firstPaymentContextValue(ctx, 'receipt', 'reference', 'invoiceNumber', 'invoice_number', 'invoiceId', 'invoice_id', 'ghl_invoice_id', 'title', 'description')
+    case 'receipt_url':
+      return firstPaymentContextValue(ctx, 'receiptUrl', 'receipt_url', 'receiptDownloadUrl', 'receipt_download_url', 'paymentReceiptUrl', 'payment_receipt_url') ||
+        appendPaymentReceiptQuery(buildPaymentPageUrlFromContext(ctx))
+    case 'public_payment_id':
+      return publicPaymentIdFromContext(ctx)
+    case 'payment_url':
+      return buildPaymentPageUrlFromContext(ctx)
+    case 'invoice_id':
+      return firstPaymentContextValue(ctx, 'invoiceId', 'invoice_id', 'ghl_invoice_id')
+    case 'invoice_number':
+      return firstPaymentContextValue(ctx, 'invoiceNumber', 'invoice_number')
+    case 'stripe_payment_intent_id':
+      return firstPaymentContextValue(
+        ctx,
+        'stripePaymentIntentId',
+        'stripe_payment_intent_id',
+        'paymentIntentId',
+        'payment_intent_id',
+        'stripe.paymentIntentId',
+        'stripe.payment_intent_id',
+        'stripe.paymentIntent.id',
+        'stripe.payment_intent.id'
+      )
+    case 'stripe_charge_id':
+      return firstPaymentContextValue(ctx, 'stripeChargeId', 'stripe_charge_id', 'chargeId', 'charge_id', 'stripe.chargeId', 'stripe.charge_id', 'stripe.charge.id')
+    case 'mercadopago_payment_id':
+      return firstPaymentContextValue(
+        ctx,
+        'mercadoPagoPaymentId',
+        'mercadopagoPaymentId',
+        'mercadopago_payment_id',
+        'mercadoPago.paymentId',
+        'mercadoPago.payment_id',
+        'mercado_pago.paymentId',
+        'mercado_pago.payment_id'
+      )
+    case 'mercadopago_preference_id':
+      return firstPaymentContextValue(
+        ctx,
+        'mercadoPagoPreferenceId',
+        'mercadopagoPreferenceId',
+        'mercadopago_preference_id',
+        'preferenceId',
+        'preference_id',
+        'mercadoPago.preferenceId',
+        'mercadoPago.preference_id',
+        'mercado_pago.preferenceId',
+        'mercado_pago.preference_id'
+      )
+    case 'conekta_order_id':
+      return firstPaymentContextValue(ctx, 'conektaOrderId', 'conekta_order_id', 'orderId', 'order_id', 'conekta.orderId', 'conekta.order_id')
+    case 'conekta_charge_id':
+      return firstPaymentContextValue(ctx, 'conektaChargeId', 'conekta_charge_id', 'chargeId', 'charge_id', 'conekta.chargeId', 'conekta.charge_id')
+    case 'conekta_payment_source_id':
+      return firstPaymentContextValue(
+        ctx,
+        'conektaPaymentSourceId',
+        'conekta_payment_source_id',
+        'paymentSourceId',
+        'payment_source_id',
+        'sourceId',
+        'source_id',
+        'conekta.paymentSourceId',
+        'conekta.payment_source_id'
+      )
+    case 'paid_at':
+      return firstPaymentContextValue(ctx, 'paidAt', 'paid_at', 'fulfilledAt', 'fulfilled_at')
+    case 'payment_date':
+      return firstPaymentContextValue(ctx, 'paymentDate', 'payment_date', 'date', 'createdAt', 'created_at')
+    case 'due_date':
+      return firstPaymentContextValue(ctx, 'dueDate', 'due_date')
+    case 'sent_at':
+      return firstPaymentContextValue(ctx, 'sentAt', 'sent_at')
+    case 'payment_created_at':
+      return firstPaymentContextValue(ctx, 'createdAt', 'created_at')
+    case 'payment_updated_at':
+      return firstPaymentContextValue(ctx, 'updatedAt', 'updated_at')
+    default:
+      return ''
+  }
+}
+
 function filterFieldValue(filter, ctx) {
   const contact = ctx.contact || {}
   const custom = contact.customFields || {}
@@ -1104,15 +1379,38 @@ function filterFieldValue(filter, ctx) {
     // Campos del evento (cita, pago, anuncio…)
     case 'calendar': return ctx.calendarId || null
     case 'appointment_type': return ctx.appointmentType || null
-    case 'payment_status': return ctx.paymentStatus || ctx.payment_status || ctx.status || null
-    case 'amount': return ctx.amount ?? null
+    case 'payment_status': return paymentTriggerFieldValue(filter.field, ctx) || null
+    case 'amount': return paymentTriggerFieldValue(filter.field, ctx) || null
     case 'product': return paymentProductCandidatesFromContext(ctx)[0] || null
-    case 'currency': return ctx.currency || null
-    case 'provider': return ctx.provider || ctx.paymentProvider || ctx.gateway || null
-    case 'payment_method': return ctx.paymentMethod || ctx.payment_method || ctx.method || null
-    case 'payment_id': return ctx.paymentId || ctx.payment_id || ctx.id || null
-    case 'receipt': return ctx.receipt || ctx.reference || ctx.invoiceNumber || ctx.invoiceId || ctx.title || ctx.description || null
-    case 'invoice_number': return ctx.invoiceNumber || ctx.invoice_number || null
+    case 'currency':
+    case 'provider':
+    case 'payment_mode':
+    case 'payment_method':
+    case 'payment_id':
+    case 'event_id':
+    case 'reference':
+    case 'title':
+    case 'description':
+    case 'receipt':
+    case 'receipt_url':
+    case 'public_payment_id':
+    case 'payment_url':
+    case 'invoice_id':
+    case 'invoice_number':
+    case 'stripe_payment_intent_id':
+    case 'stripe_charge_id':
+    case 'mercadopago_payment_id':
+    case 'mercadopago_preference_id':
+    case 'conekta_order_id':
+    case 'conekta_charge_id':
+    case 'conekta_payment_source_id':
+    case 'paid_at':
+    case 'payment_date':
+    case 'due_date':
+    case 'sent_at':
+    case 'payment_created_at':
+    case 'payment_updated_at':
+      return paymentTriggerFieldValue(filter.field, ctx) || null
     case 'campaign': return ctx.campaign || null
     case 'form_disqualified': return boolText(formDisqualifiedFromContext(ctx))
     case 'form_status': return ctx.formStatus || ctx.form_status || ctx.submissionStatus || ctx.submission_status || ctx.status || ''
