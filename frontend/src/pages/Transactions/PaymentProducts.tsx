@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react'
-import { AlertTriangle, ChevronDown, Copy, DollarSign, Edit3, MoreVertical, Package, Plus, RefreshCw, Tag, Trash2, Webhook } from 'lucide-react'
+import { AlertTriangle, ChevronDown, Copy, DollarSign, Edit3, MoreVertical, Package, Plus, RefreshCw, Tag, Trash2 } from 'lucide-react'
 import {
   Badge,
   Button,
@@ -999,25 +999,18 @@ export const PaymentProducts: React.FC = () => {
               )}
 
               <div className={`${styles.webhookSection} ${styles.fullWidth}`}>
-                <Button
+                <button
                   type="button"
-                  variant="ghost"
                   className={styles.webhookToggle}
                   onClick={() => setWebhooksExpanded((current) => !current)}
                   aria-expanded={webhooksExpanded}
                 >
-                  <span className={styles.webhookToggleLabel}>
-                    <Webhook size={16} />
-                    <span>Webhooks</span>
-                    {productForm.postWebhooks.length > 0 && (
-                      <Badge variant="neutral">{productForm.postWebhooks.length}</Badge>
-                    )}
-                  </span>
+                  <span>Webhooks</span>
                   <ChevronDown
-                    size={16}
+                    size={14}
                     className={webhooksExpanded ? styles.webhookToggleIconOpen : styles.webhookToggleIcon}
                   />
-                </Button>
+                </button>
 
                 {webhooksExpanded && (
                   <div className={styles.webhookBody}>

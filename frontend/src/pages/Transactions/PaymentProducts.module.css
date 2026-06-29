@@ -293,24 +293,34 @@
 
 .webhookSection {
   display: grid;
-  gap: 10px;
+  gap: 8px;
+  justify-items: start;
 }
 
 .webhookToggle {
-  width: 100%;
-  justify-content: space-between;
-  min-height: 42px;
-}
-
-.webhookToggleLabel {
   display: inline-flex;
   align-items: center;
-  gap: 8px;
-  min-width: 0;
+  justify-content: flex-start;
+  gap: 6px;
+  appearance: none;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--text-dim);
+  font-family: var(--font-body);
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 1.4;
+  cursor: pointer;
 }
 
-.webhookToggleLabel > span:not([data-badge]) {
-  min-width: 0;
+.webhookToggle:hover {
+  color: var(--text);
+}
+
+.webhookToggle:focus-visible {
+  outline: var(--ristak-focus-ring);
+  outline-offset: 3px;
 }
 
 .webhookToggleIcon,
@@ -327,10 +337,8 @@
   display: flex;
   flex-direction: column;
   gap: 12px;
-  padding: 12px;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-card);
-  background: var(--surface);
+  width: 100%;
+  padding-top: 4px;
 }
 
 .webhookList {
