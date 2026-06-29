@@ -382,11 +382,6 @@ const getInitialSection = (pathname: string): PaymentsSectionId => {
   return 'checkout'
 }
 
-const getInitialGateway = (pathname: string): PaymentGatewayId => {
-  const segment = getPaymentRouteSegment(pathname)
-  return isPaymentGatewayId(segment) ? segment : 'stripe'
-}
-
 const RECEIPT_PREVIEW_LOADING_HTML = `<!doctype html>
 <html lang="es">
   <head>
@@ -593,7 +588,6 @@ export const PaymentsConfiguration: React.FC = () => {
   const [accountCurrency] = useAccountCurrency()
 
   const [activeSection, setActiveSection] = useState<PaymentsSectionId>(() => getInitialSection(location.pathname))
-  const [selectedGateway, setSelectedGateway] = useState<PaymentGatewayId>(() => getInitialGateway(location.pathname))
   const [settings, setSettings] = useState<PaymentSettings>(defaultPaymentSettings)
   const [loadingSettings, setLoadingSettings] = useState(false)
   const [savingSettings, setSavingSettings] = useState(false)
@@ -692,8 +686,6 @@ export const PaymentsConfiguration: React.FC = () => {
   useEffect(() => {
     const nextSection = getInitialSection(location.pathname)
     setActiveSection(nextSection)
-    const routeGateway = getInitialGateway(location.pathname)
-    if (routeGateway) setSelectedGateway(routeGateway)
   }, [location.pathname])
 
   useEffect(() => {
@@ -719,7 +711,6 @@ export const PaymentsConfiguration: React.FC = () => {
     const handoffToken = params.get('mercadopago_handoff_token') || ''
     const finishMercadoPagoReturn = async () => {
       setActiveSection('gateways')
-      setSelectedGateway('mercadopago')
 
       if (status === 'success' || status === 'warning') {
         setLoadingMercadoPagoConfig(true)
@@ -791,46 +782,58 @@ export const PaymentsConfiguration: React.FC = () => {
     }
   ]
 
-  const selectedGatewayOption = gatewayOptions.find((gateway) => gateway.id === (activeGatewayRoute || selectedGateway))
   const mercadoPagoWebhookEndpoints = mercadoPagoConfig?.webhookEndpoints || []
   const stripeConnected = Boolean(stripeConfig?.configured)
   const conektaConnected = Boolean(conektaConfig?.configured)
   const mercadoPagoConnected = Boolean(mercadoPagoConfig?.configured)
+  const stripeModeIsComplete = (mode: StripeModeId) => {
+    const values = stripeManualCredentials[mode]
+    return Boolean(values.publishableKey.trim() && values.secretKey.trim())
+  }
+  const stripeModeIsSaved = (mode: StripeModeId) => Boolean(
+    stripeConfig?.manualModes?.[mode]?.configured ||
+    (stripeConfig?.configured && stripeConfig.mode === mode)
+  )
+  const stripeModeCanSave = (mode: StripeModeId) => stripeModeIsComplete(mode)
+  const stripeActiveModeConfigured = stripeModeIsSaved(paymentMode)
   const stripeConfigurationStatus = stripeConnectionFailed
     ? 'connection_failed'
     : stripeConfig?.configurationStatus || (stripeConnected ? 'configured_manually' : 'not_configured')
   const stripeStatusBadge = (() => {
     if (loadingStripeConfig) return { label: 'Cargando', variant: 'warning' as const, icon: <Loader2 size={14} className={styles.spinIcon} /> }
-    if (stripeConfigurationStatus === 'configured_manually') return { label: 'Configurado', variant: 'success' as const, icon: <ShieldCheck size={14} /> }
     if (stripeConfigurationStatus === 'connection_failed') return { label: 'Conexión fallida', variant: 'warning' as const, icon: <AlertTriangle size={14} /> }
+    if (stripeActiveModeConfigured) return { label: 'Configurado', variant: 'success' as const, icon: <ShieldCheck size={14} /> }
     if (stripeConfigurationStatus === 'disconnected') return { label: 'Desconectado', variant: 'neutral' as const, icon: <Unplug size={14} /> }
-    return { label: 'Sin configurar', variant: 'neutral' as const, icon: <KeyRound size={14} /> }
-  })()
-  const stripeModeIsComplete = (mode: StripeModeId) => {
-    const values = stripeManualCredentials[mode]
-    return Boolean(values.publishableKey.trim() && values.secretKey.trim())
-  }
-  const stripeModeIsSaved = (mode: StripeModeId) => Boolean(stripeConfig?.manualModes?.[mode]?.configured)
-  const stripeModeCanSave = (mode: StripeModeId) => stripeModeIsComplete(mode)
-  const conektaConfigurationStatus = conektaConnectionFailed
-    ? 'connection_failed'
-    : conektaConnected ? 'configured_manually' : 'not_configured'
-  const conektaStatusBadge = (() => {
-    if (loadingConektaConfig) return { label: 'Cargando', variant: 'warning' as const, icon: <Loader2 size={14} className={styles.spinIcon} /> }
-    if (conektaConfigurationStatus === 'configured_manually') return { label: 'Configurado', variant: 'success' as const, icon: <ShieldCheck size={14} /> }
-    if (conektaConfigurationStatus === 'connection_failed') return { label: 'Conexión fallida', variant: 'warning' as const, icon: <AlertTriangle size={14} /> }
     return { label: 'Sin configurar', variant: 'neutral' as const, icon: <KeyRound size={14} /> }
   })()
   const conektaModeIsComplete = (mode: StripeModeId) => {
     const values = conektaManualCredentials[mode]
     return Boolean(values.publicKey.trim() && values.privateKey.trim())
   }
-  const conektaModeIsSaved = (mode: StripeModeId) => Boolean(conektaConfig?.manualModes?.[mode]?.configured)
+  const conektaModeIsSaved = (mode: StripeModeId) => Boolean(
+    conektaConfig?.manualModes?.[mode]?.configured ||
+    (conektaConfig?.configured && conektaConfig.mode === mode)
+  )
   const conektaModeCanSave = (mode: StripeModeId) => conektaModeIsComplete(mode)
+  const conektaActiveModeConfigured = conektaModeIsSaved(paymentMode)
+  const conektaConfigurationStatus = conektaConnectionFailed
+    ? 'connection_failed'
+    : conektaConnected ? 'configured_manually' : 'not_configured'
+  const conektaStatusBadge = (() => {
+    if (loadingConektaConfig) return { label: 'Cargando', variant: 'warning' as const, icon: <Loader2 size={14} className={styles.spinIcon} /> }
+    if (conektaConfigurationStatus === 'connection_failed') return { label: 'Conexión fallida', variant: 'warning' as const, icon: <AlertTriangle size={14} /> }
+    if (conektaActiveModeConfigured) return { label: 'Configurado', variant: 'success' as const, icon: <ShieldCheck size={14} /> }
+    return { label: 'Sin configurar', variant: 'neutral' as const, icon: <KeyRound size={14} /> }
+  })()
   const mercadoPagoModeIsConnected = (mode: PaymentModeId) => Boolean(
     mercadoPagoConfig?.modeConnections?.[mode]?.connected ||
     (mercadoPagoConnected && mercadoPagoConfig?.mode === mode)
   )
+  const mercadoPagoStatusBadge = (() => {
+    if (loadingMercadoPagoConfig) return { label: 'Cargando', variant: 'warning' as const, icon: <Loader2 size={14} className={styles.spinIcon} /> }
+    if (mercadoPagoModeIsConnected(paymentMode)) return { label: 'Conectado', variant: 'success' as const, icon: <ShieldCheck size={14} /> }
+    return { label: 'Listo para conectar', variant: 'info' as const, icon: <KeyRound size={14} /> }
+  })()
   const mercadoPagoSubscriptionTestConfigured = Boolean(mercadoPagoConfig?.subscriptionTestCredentials?.configured)
   const mercadoPagoSubscriptionTestCanSave = Boolean(
     mercadoPagoSubscriptionTestCredentials.publicKey.trim() &&
@@ -1628,7 +1631,6 @@ export const PaymentsConfiguration: React.FC = () => {
   }
 
   const handleSelectGateway = (gateway: PaymentGatewayOption) => {
-    setSelectedGateway(gateway.id)
     navigate(`/settings/payments/${gateway.id}`)
   }
 
@@ -2988,9 +2990,6 @@ export const PaymentsConfiguration: React.FC = () => {
             <ArrowLeft size={16} />
             Volver
           </Button>
-          <Badge variant={selectedGatewayOption ? gatewayStatusCopy[selectedGatewayOption.status].variant : 'neutral'}>
-            {selectedGatewayOption ? gatewayStatusCopy[selectedGatewayOption.status].label : 'Sin conexión'}
-          </Badge>
         </div>
       )}
 
@@ -3171,9 +3170,6 @@ export const PaymentsConfiguration: React.FC = () => {
                         <h3>{modeCopy.title}</h3>
                         <p>{modeCopy.description}</p>
                       </div>
-                      <Badge variant={stripeModeIsComplete(mode) || savedMode?.configured ? 'success' : 'neutral'}>
-                        {stripeModeIsComplete(mode) || savedMode?.configured ? 'Listo' : 'Pendiente'}
-                      </Badge>
                     </div>
 
                     <div className={styles.formGrid}>
@@ -3284,9 +3280,6 @@ export const PaymentsConfiguration: React.FC = () => {
                         <h3>{modeCopy.title}</h3>
                         <p>{modeCopy.description}</p>
                       </div>
-                      <Badge variant={conektaModeIsComplete(mode) || savedMode?.configured ? 'success' : 'neutral'}>
-                        {conektaModeIsComplete(mode) || savedMode?.configured ? 'Listo' : 'Pendiente'}
-                      </Badge>
                     </div>
 
                     <div className={styles.formGrid}>
@@ -3374,22 +3367,10 @@ export const PaymentsConfiguration: React.FC = () => {
                 <p>Conecta Mercado Pago para crear links de pago y suscripciones desde Ristak.</p>
               </div>
             </div>
-            {loadingMercadoPagoConfig ? (
-              <Badge variant="warning">
-                <Loader2 size={14} className={styles.spinIcon} />
-                Cargando
-              </Badge>
-            ) : mercadoPagoConnected ? (
-              <Badge variant="success">
-                <ShieldCheck size={14} />
-                Conectado
-              </Badge>
-            ) : (
-              <Badge variant="info">
-                <KeyRound size={14} />
-                Listo para conectar
-              </Badge>
-            )}
+            <Badge variant={mercadoPagoStatusBadge.variant}>
+              {mercadoPagoStatusBadge.icon}
+              {mercadoPagoStatusBadge.label}
+            </Badge>
           </div>
 
           <div className={styles.stripePanel}>
@@ -3398,7 +3379,7 @@ export const PaymentsConfiguration: React.FC = () => {
               const modeConnected = mercadoPagoModeIsConnected(paymentMode)
               const accountLabel = modeConnection?.accountLabel || mercadoPagoConfig?.accountLabel || 'Mercado Pago'
               const userId = modeConnection?.userId || mercadoPagoConfig?.userId || 'Cuenta conectada'
-              const tokenLabel = (modeConnection?.hasRefreshToken ?? mercadoPagoConfig?.hasRefreshToken) ? 'Renovable' : 'Conectado'
+              const tokenLabel = (modeConnection?.hasRefreshToken ?? mercadoPagoConfig?.hasRefreshToken) ? 'Renovable' : 'Activo'
 
               return (
                 <div className={styles.mercadoPagoConnectionPanel}>
@@ -3407,9 +3388,6 @@ export const PaymentsConfiguration: React.FC = () => {
                       <h3>{paymentMode === 'test' ? 'Conexión de prueba' : 'Conexión en vivo'}</h3>
                       <p>{paymentModeCopy.mercadoPagoHelp}</p>
                     </div>
-                    <Badge variant={modeConnected ? 'success' : 'neutral'}>
-                      {modeConnected ? 'Conectado' : 'Pendiente'}
-                    </Badge>
                   </div>
 
                   {modeConnected && (
