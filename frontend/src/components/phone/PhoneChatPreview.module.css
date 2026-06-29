@@ -159,7 +159,7 @@
   color: var(--pc-text);
   font-size: 16px;
   font-weight: 500;
-  line-height: 1.08;
+  line-height: 1.16;
 }
 
 .headerIdentity span {
@@ -217,7 +217,7 @@
   background: color-mix(in srgb, var(--pc-system) 78%, var(--pc-surface) 22%);
   font-size: 12px;
   font-weight: 850;
-  line-height: 1;
+  line-height: 1.15;
   backdrop-filter: blur(10px);
   -webkit-backdrop-filter: blur(10px);
 }
@@ -488,7 +488,7 @@
   font-size: 12px;
   font-weight: 650;
   font-variant-numeric: tabular-nums;
-  line-height: 1;
+  line-height: 1.15;
   white-space: nowrap;
 }
 
@@ -504,7 +504,7 @@
   min-width: 0;
   color: var(--pc-muted);
   font-size: 11px;
-  line-height: 1;
+  line-height: 1.15;
 }
 
 .messageRowOutbound .messageMeta {
@@ -912,7 +912,7 @@
   font-weight: 420;
   font-variant-numeric: tabular-nums;
   letter-spacing: 0;
-  line-height: 1;
+  line-height: 1.15;
   white-space: nowrap;
 }
 

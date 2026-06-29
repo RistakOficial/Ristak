@@ -131,7 +131,7 @@
   color: var(--phone-app-text);
   font-size: clamp(34px, 10vw, 48px);
   font-weight: 850;
-  line-height: 1.08;
+  line-height: 1.12;
   letter-spacing: 0;
   white-space: nowrap;
   overflow: hidden;
@@ -145,7 +145,7 @@
   font-size: 11px;
   font-weight: 800;
   letter-spacing: 0.08em;
-  line-height: 1;
+  line-height: 1.12;
   text-transform: uppercase;
 }
 
@@ -232,7 +232,7 @@
   background: color-mix(in srgb, var(--color-background-secondary) 86%, transparent);
   font-size: 12px;
   font-weight: 800;
-  line-height: 1;
+  line-height: 1.15;
 }
 
 .periodButtonActive {
@@ -379,7 +379,7 @@
   color: var(--color-text-primary);
   font-size: clamp(20px, 6vw, 30px);
   font-weight: 880;
-  line-height: 1.02;
+  line-height: 1.14;
   overflow-wrap: anywhere;
 }
 

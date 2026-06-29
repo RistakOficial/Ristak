@@ -3,7 +3,7 @@
   gap: 8px;
   width: calc(100% + 28px);
   min-width: 0;
-  max-height: 36px;
+  max-height: 38px;
   margin-inline: -14px;
   padding: 0 18px 2px 14px;
   overflow-x: auto;
@@ -33,7 +33,7 @@
   align-items: center;
   flex: 0 0 auto;
   gap: 7px;
-  min-height: 30px;
+  min-height: 32px;
   max-width: min(210px, 72vw);
   padding: 0 12px;
   border: 1px solid var(--phone-chat-border);
@@ -44,7 +44,7 @@
   font-size: 14px;
   font-weight: 760;
   letter-spacing: 0;
-  line-height: 1;
+  line-height: 1.18;
   scroll-snap-align: start;
   white-space: nowrap;
   cursor: pointer;
@@ -83,7 +83,7 @@
   background: rgba(var(--phone-chat-primary-rgb), 0.08);
   font-size: 11px;
   font-weight: 850;
-  line-height: 1;
+  line-height: 1.1;
 }
 
 .chipActive {
