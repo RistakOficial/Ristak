@@ -20,6 +20,13 @@ export interface User {
   licenseEnforced?: boolean
   licensePlan?: string | null
   licenseFeatures?: LicenseFeatures
+  licenseExternalModules?: Record<string, {
+    key?: string
+    label?: string
+    menuLabel?: string
+    enabled?: boolean
+    sidebarPosition?: number | null
+  }>
 }
 
 interface AuthContextType {
@@ -59,6 +66,9 @@ function mapUserFromApi(apiUser: any): User {
     licensePlan: apiUser.licensePlan || null,
     licenseFeatures: apiUser.licenseFeatures && typeof apiUser.licenseFeatures === 'object'
       ? apiUser.licenseFeatures
+      : {},
+    licenseExternalModules: apiUser.licenseExternalModules && typeof apiUser.licenseExternalModules === 'object'
+      ? apiUser.licenseExternalModules
       : {}
   }
 }

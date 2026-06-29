@@ -193,6 +193,7 @@ export interface AccessControlledUser {
   accessConfig?: Partial<Record<PermissionKey, AccessLevel>>
   licenseEnforced?: boolean
   licenseFeatures?: LicenseFeatures | null
+  licenseExternalModules?: Record<string, { sidebarPosition?: number | null }>
 }
 
 const MODULE_KEYS = new Set<PermissionKey>(ACCESS_MODULES.map((module) => module.key))

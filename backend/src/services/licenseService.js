@@ -46,6 +46,8 @@ const DEFAULT_FEATURES = {
   advanced_reports: true
 }
 
+const DEFAULT_EXTERNAL_MODULES = {}
+
 // (LIC-003) Features de pago que el backend candaduea con requireFeature(...). Si el
 // portal responde enforced 'allowed' pero SIN un objeto features válido, NO se abren
 // éstas (fail-closed): la base del CRM sigue, el premium queda apagado hasta que el
@@ -333,8 +335,28 @@ function allowedWithoutEnforcement() {
     enforced: false,
     plan: null,
     features: { ...DEFAULT_FEATURES },
+    externalModules: { ...DEFAULT_EXTERNAL_MODULES },
     expiresAt: null
   }
+}
+
+function normalizeExternalModules(externalModules = {}) {
+  const source = externalModules && typeof externalModules === 'object' ? externalModules : {}
+  const normalized = {}
+
+  for (const [key, value] of Object.entries(source)) {
+    if (!value || typeof value !== 'object') continue
+    const sidebarPosition = Number(value.sidebar_position ?? value.sidebarPosition)
+    normalized[key] = {
+      key: value.key || key,
+      label: value.label || key,
+      menuLabel: value.menu_label || value.menuLabel || value.label || key,
+      enabled: value.enabled === true,
+      sidebarPosition: Number.isFinite(sidebarPosition) ? sidebarPosition : null
+    }
+  }
+
+  return normalized
 }
 
 function normalizeLicenseFeatures(features = {}) {
@@ -448,6 +470,7 @@ export async function verifyLicenseWithServer(email) {
       enforced: true,
       plan: data.plan || null,
       features: hasValidFeatures ? normalizeLicenseFeatures(data.features) : closedRemoteFeatures(),
+      externalModules: normalizeExternalModules(data.external_modules),
       licenseToken: data.license_token || null,
       expiresAt: data.expires_at || null,
       verifiedAt: new Date().toISOString(),
