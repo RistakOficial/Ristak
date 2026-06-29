@@ -190,6 +190,124 @@ test('testWebhookAction arma el body con campos sin escribir JSON', async () => 
   }
 })
 
+test('webhook saliente expone respuestas como Webhook.response_01 y conserva alias legacy', async () => {
+  const suffix = randomUUID()
+  const automationId = `automation_webhook_response_root_${suffix}`
+  const contactId = `contact_webhook_response_root_${suffix}`
+  const username = `webhook-root-${suffix}@example.com`
+  let userId = ''
+  const sentPushes = []
+
+  const server = http.createServer((req, res) => {
+    req.resume()
+    req.on('end', () => {
+      res.setHeader('Content-Type', 'application/json')
+      res.end(JSON.stringify({ lead_id: `lead_${suffix}` }))
+    })
+  })
+
+  setAppNotificationPayloadSenderForTest(async (payload, options) => {
+    sentPushes.push({ payload, options })
+    return { sent: 1, webSent: 1, nativeSent: 0, skipped: false }
+  })
+
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve))
+  try {
+    const address = server.address()
+    const port = typeof address === 'object' && address ? address.port : 0
+    const result = await db.run(
+      `INSERT INTO users (username, email, password_hash, full_name, role, is_active)
+       VALUES (?, ?, ?, ?, 'admin', 1)`,
+      [username, username, 'test-hash', 'Dueño Webhook']
+    )
+    userId = String(result.lastID || '')
+    if (!userId) {
+      const user = await db.get('SELECT id FROM users WHERE username = ?', [username])
+      userId = String(user.id)
+    }
+
+    await db.run(
+      `INSERT INTO contacts (id, phone, email, full_name, first_name, custom_fields)
+       VALUES (?, ?, ?, ?, ?, ?)`,
+      [
+        contactId,
+        `+1555${Date.now().toString().slice(-8)}`,
+        `webhook-root-${suffix}@example.com`,
+        'Lead Webhook',
+        'Lead',
+        JSON.stringify({ assignedUser: userId, assignedUserName: 'Dueño Webhook' })
+      ]
+    )
+
+    const flow = {
+      nodes: [
+        {
+          id: 'start',
+          type: 'start',
+          label: 'Cuando...',
+          config: {
+            triggers: [{ id: 'trigger-contact-created', type: 'trigger-contact-created', config: {} }]
+          }
+        },
+        {
+          id: 'send-webhook',
+          type: 'action-webhook',
+          label: 'Webhook',
+          config: {
+            url: `http://127.0.0.1:${port}/lead`,
+            method: 'POST',
+            bodyMode: 'fields',
+            bodyFields: [{ key: 'email', value: '{{contact.email}}' }],
+            timeout: 5
+          }
+        },
+        {
+          id: 'notify-owner',
+          type: 'action-system-notification',
+          label: 'Notificación',
+          config: {
+            recipientMode: 'assigned_user',
+            pushTitle: 'Lead creado',
+            pushBody: 'Nuevo {{Webhook.response_01.lead_id}} / viejo {{http_request_1.lead_id}}',
+            clickAction: 'phone_chat'
+          }
+        }
+      ],
+      edges: [
+        { id: 'edge-start-webhook', sourceNodeId: 'start', targetNodeId: 'send-webhook' },
+        { id: 'edge-webhook-notify', sourceNodeId: 'send-webhook', sourceHandle: 'out', targetNodeId: 'notify-owner' }
+      ],
+      settings: {}
+    }
+
+    await db.run(
+      `INSERT INTO automations (id, name, status, flow, published_flow, published_at)
+       VALUES (?, ?, 'published', ?, ?, CURRENT_TIMESTAMP)`,
+      [automationId, 'Test respuesta webhook root', JSON.stringify(flow), JSON.stringify(flow)]
+    )
+
+    await handleAutomationEvent('contact-created', { contactId })
+
+    const notification = await db.get(
+      'SELECT * FROM internal_notifications WHERE automation_id = ? AND automation_node_id = ?',
+      [automationId, 'notify-owner']
+    )
+    assert.equal(notification.message, `Nuevo lead_${suffix} / viejo lead_${suffix}`)
+    assert.equal(sentPushes[0].payload.body, `Nuevo lead_${suffix} / viejo lead_${suffix}`)
+
+    const enrollment = await db.get('SELECT * FROM automation_enrollments WHERE automation_id = ?', [automationId])
+    assert.equal(enrollment.status, 'completed')
+  } finally {
+    setAppNotificationPayloadSenderForTest(null)
+    await new Promise((resolve) => server.close(resolve))
+    await db.run('DELETE FROM internal_notifications WHERE automation_id = ?', [automationId]).catch(() => {})
+    await db.run('DELETE FROM automation_enrollments WHERE automation_id = ?', [automationId]).catch(() => {})
+    await db.run('DELETE FROM automations WHERE id = ?', [automationId]).catch(() => {})
+    await db.run('DELETE FROM contacts WHERE id = ?', [contactId]).catch(() => {})
+    if (userId) await db.run('DELETE FROM users WHERE id = ?', [userId]).catch(() => {})
+  }
+})
+
 test('renderTemplate expone datos del pago para acciones posteriores', () => {
   const paymentCtx = {
     paymentId: 'pay_123',

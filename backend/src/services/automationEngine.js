@@ -2246,6 +2246,21 @@ function contactAutomationOutput(contact = {}) {
   }
 }
 
+function webhookResponseRoot(occurrence) {
+  return `Webhook.response_${String(occurrence).padStart(2, '0')}`
+}
+
+function setOutputAtTokenRoot(ctx, root, output) {
+  const segments = cleanString(root).split('.').filter(Boolean)
+  if (segments.length === 0) return
+  let target = ctx
+  for (const segment of segments.slice(0, -1)) {
+    if (!isPlainObject(target[segment])) target[segment] = {}
+    target = target[segment]
+  }
+  target[segments[segments.length - 1]] = output
+}
+
 function exposeNodeOutput(ctx, node, result) {
   if (!result?.output || !result.outputBaseId || !node?.id) return
   if (!ctx.__nodeOutputs || typeof ctx.__nodeOutputs !== 'object') ctx.__nodeOutputs = {}
@@ -2261,6 +2276,9 @@ function exposeNodeOutput(ctx, node, result) {
   const root = fixedRoot
     ? nextOccurrence === 1 ? fixedRoot : `${fixedRoot}_${nextOccurrence}`
     : `${baseId}_${nextOccurrence}`
+  if (baseId === 'http_request') {
+    setOutputAtTokenRoot(ctx, webhookResponseRoot(nextOccurrence), result.output)
+  }
   ctx[root] = result.output
   if (nextOccurrence === 1 && !fixedRoot && ctx[baseId] === undefined) {
     ctx[baseId] = result.output

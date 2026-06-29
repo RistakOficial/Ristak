@@ -156,6 +156,25 @@ function parseJsonSample(value) {
   }
 }
 
+function isPlainObject(value) {
+  return Boolean(value) && typeof value === 'object' && !Array.isArray(value)
+}
+
+function webhookResponseRoot(occurrence) {
+  return `Webhook.response_${String(occurrence).padStart(2, '0')}`
+}
+
+function setOutputAtTokenRoot(ctx, root, output) {
+  const segments = String(root || '').trim().split('.').filter(Boolean)
+  if (segments.length === 0) return
+  let target = ctx
+  for (const segment of segments.slice(0, -1)) {
+    if (!isPlainObject(target[segment])) target[segment] = {}
+    target = target[segment]
+  }
+  target[segments[segments.length - 1]] = output
+}
+
 function hasPath(edges, from, to) {
   if (!from || !to) return false
   if (from === to) return true
@@ -189,6 +208,9 @@ function exposeTestOutput(ctx, sourceId, baseId, output) {
   ctx.__nodeOutputs[sourceId] = output
   const nextOccurrence = (Number(ctx.__outputOccurrences[baseId]) || 0) + 1
   ctx.__outputOccurrences[baseId] = nextOccurrence
+  if (baseId === 'http_request') {
+    setOutputAtTokenRoot(ctx, webhookResponseRoot(nextOccurrence), output)
+  }
   const root = `${baseId}_${nextOccurrence}`
   ctx[root] = output
   if (nextOccurrence === 1 && ctx[baseId] === undefined) ctx[baseId] = output

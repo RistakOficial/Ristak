@@ -310,6 +310,7 @@ export const MessageComposer: React.FC<MessageComposerProps> = ({
         category,
         items: allVariables.filter(
           (variable) =>
+            !variable.hiddenFromPicker &&
             variable.category === category.id &&
             (!normalized ||
               variable.label.toLowerCase().includes(normalized) ||

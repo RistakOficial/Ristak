@@ -35,6 +35,8 @@ export interface FlowVariable {
   path?: string
   type?: VariableValueType
   sourceId?: string
+  /** Disponible para validar/renderizar tokens antiguos, pero no se muestra como opción nueva. */
+  hiddenFromPicker?: boolean
 }
 
 export interface FlowVariableCategory {
@@ -152,6 +154,7 @@ export async function loadAllVariables(): Promise<FlowVariable[]> {
 
 const BLOCK_OUTPUT_ROOTS = [
   'webhook',
+  'Webhook',
   'respuesta_whatsapp',
   'formulario',
   'chatgpt',
@@ -298,21 +301,37 @@ function nodeDisplayName(baseLabel: string, config: Record<string, unknown>, occ
   return `${baseLabel} #${occurrence}`
 }
 
+function webhookResponseRoot(occurrence: number): string {
+  return `Webhook.response_${String(occurrence).padStart(2, '0')}`
+}
+
+function outputRoot(output: NodeVariableOutput, occurrence: number): string {
+  if (output.baseId === 'http_request') return webhookResponseRoot(occurrence)
+  return output.fixedTokenRoot && occurrence === 1
+    ? output.fixedTokenRoot
+    : output.fixedTokenRoot && occurrence > 1
+      ? `${output.fixedTokenRoot}_${occurrence}`
+      : `${output.baseId}_${occurrence}`
+}
+
+function outputCategoryLabel(output: NodeVariableOutput, config: Record<string, unknown>, occurrence: number): string {
+  if (output.baseId !== 'http_request') return nodeDisplayName(output.baseLabel, config, occurrence)
+  const customTitle = typeof config.customTitle === 'string' ? config.customTitle.trim() : ''
+  const root = webhookResponseRoot(occurrence)
+  return customTitle ? `${root} - ${customTitle}` : root
+}
+
 function outputToVariables(
   output: NodeVariableOutput,
   config: Record<string, unknown>,
   sourceId: string,
   occurrence: number
 ): FlowVariableCatalog {
-  const root = output.fixedTokenRoot && occurrence === 1
-    ? output.fixedTokenRoot
-    : output.fixedTokenRoot && occurrence > 1
-      ? `${output.fixedTokenRoot}_${occurrence}`
-      : `${output.baseId}_${occurrence}`
+  const root = outputRoot(output, occurrence)
 
   const category: FlowVariableCategory = {
     id: root,
-    label: nodeDisplayName(output.baseLabel, config, occurrence),
+    label: outputCategoryLabel(output, config, occurrence),
     unavailableReason: output.unavailableReason
   }
 
@@ -324,9 +343,18 @@ function outputToVariables(
     ? output.fields
     : fieldsFromSample(output.sampleResponse)
 
+  const variables = flattenFields(fields, root, category, sourceId)
+  if (output.baseId === 'http_request') {
+    const legacyRoot = `${output.baseId}_${occurrence}`
+    variables.push(
+      ...flattenFields(fields, legacyRoot, { ...category, id: legacyRoot }, sourceId)
+        .map((variable) => ({ ...variable, hiddenFromPicker: true }))
+    )
+  }
+
   return {
     categories: [category],
-    variables: flattenFields(fields, root, category, sourceId)
+    variables
   }
 }
 

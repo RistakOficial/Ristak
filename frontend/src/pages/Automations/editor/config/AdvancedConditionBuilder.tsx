@@ -88,12 +88,14 @@ export const AdvancedConditionBuilder: React.FC<AdvancedConditionBuilderProps> =
         return {
           id: `flow-${category.id}`,
           label: categoryLabels.get(category.id) || category.label,
-          items: variables.map((variable) => ({
-            value: conditionVariableFieldId(variable.fieldId),
-            label: Array.isArray(variable.pathLabels) && variable.pathLabels.length > 0
-              ? variable.pathLabels.join(' > ')
-              : variable.label
-          }))
+          items: variables
+            .filter((variable) => !variable.hiddenFromPicker)
+            .map((variable) => ({
+              value: conditionVariableFieldId(variable.fieldId),
+              label: Array.isArray(variable.pathLabels) && variable.pathLabels.length > 0
+                ? variable.pathLabels.join(' > ')
+                : variable.label
+            }))
         }
       })
       .filter((group) => group.items.length > 0)
