@@ -1344,12 +1344,16 @@
 }
 
 .emptyAgentDirectory {
-  display: grid;
-  justify-items: start;
-  gap: 10px;
   width: 100%;
   min-width: 0;
   overflow: hidden;
+}
+
+.emptyAgentDirectory :global([data-ristak-card-content]) {
+  display: grid;
+  justify-items: start;
+  row-gap: 14px;
+  min-width: 0;
 }
 
 .emptyAgentDirectory h3,
@@ -1369,6 +1373,10 @@
   font-size: 13px;
   line-height: 1.45;
   overflow-wrap: anywhere;
+}
+
+.emptyAgentDirectory :global([data-btn]) {
+  margin-top: 2px;
 }
 
 .agentDetailTopbar {
