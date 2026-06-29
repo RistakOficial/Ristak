@@ -2009,6 +2009,160 @@ body.dark .select:focus {
   line-height: 1.4;
 }
 
+.cancelAccountSection {
+  border-color: var(--color-status-error-border);
+}
+
+.cancelAccountPanel {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 18px;
+  padding-top: 4px;
+}
+
+.cancelAccountCopy {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+  color: var(--color-text-secondary);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.cancelAccountCopy strong {
+  color: var(--color-text-primary);
+  font-size: 14px;
+  line-height: 1.35;
+}
+
+.cancelAccountWarning {
+  color: var(--color-status-error);
+  font-weight: 600;
+}
+
+.cancelModalStack {
+  display: grid;
+  gap: 18px;
+}
+
+.retentionOfferPanel,
+.cancelCompletePanel,
+.cancelDangerNote {
+  display: flex;
+  align-items: flex-start;
+  gap: 14px;
+  padding: 16px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--surface-secondary);
+}
+
+.retentionOfferIcon,
+.cancelCompletePanel > svg,
+.cancelDangerNote > svg {
+  flex: 0 0 auto;
+}
+
+.retentionOfferIcon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 38px;
+  height: 38px;
+  border-radius: 999px;
+  color: var(--color-primary);
+  background: rgba(var(--color-primary-rgb), 0.12);
+}
+
+.retentionOfferPanel h3,
+.cancelCompletePanel h3 {
+  margin: 0;
+  color: var(--color-text-primary);
+  font-size: 15px;
+  font-weight: 700;
+  line-height: 1.3;
+}
+
+.retentionOfferPanel p,
+.cancelCompletePanel p {
+  margin: 6px 0 0;
+  color: var(--color-text-secondary);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.cancelCompletePanel > svg {
+  color: var(--color-status-success);
+}
+
+.cancelDangerNote {
+  border-color: var(--color-status-error-border);
+  color: var(--color-status-error);
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1.45;
+}
+
+.cancelModalActions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 10px;
+}
+
+.cancelReasonList {
+  display: grid;
+  gap: 10px;
+}
+
+.cancelReasonOption {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 44px;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  color: var(--color-text-primary);
+  background: var(--surface);
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.cancelReasonOption:has(input:checked) {
+  border-color: var(--color-primary);
+  background: var(--surface-secondary);
+}
+
+.cancelReasonOption input {
+  flex: 0 0 auto;
+  margin: 0;
+  accent-color: var(--color-primary);
+}
+
+.exportSummaryGrid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.exportSummaryGrid span {
+  min-width: 0;
+  padding: 10px 12px;
+  border-radius: 10px;
+  color: var(--color-text-secondary);
+  background: var(--surface-secondary);
+  font-size: 13px;
+  font-weight: 600;
+  text-align: center;
+}
+
+.exportDownloadButton {
+  text-decoration: none;
+}
+
 .spinIcon {
   animation: settingsSpin 0.8s linear infinite;
 }
@@ -2110,6 +2264,7 @@ body.dark .select:focus {
   .profileSummary,
   .lockedFieldRow,
   .notificationDevicePanel,
+  .cancelAccountPanel,
   .storageUsageHeader,
   .storageUsageMeta {
     align-items: stretch;
@@ -2117,6 +2272,7 @@ body.dark .select:focus {
 
   .profileSummary,
   .lockedFieldRow,
+  .cancelAccountPanel,
   .storageUsageHeader,
   .storageUsageMeta {
     flex-direction: column;
@@ -2141,5 +2297,13 @@ body.dark .select:focus {
 
   .sectionActions {
     justify-content: flex-start;
+  }
+
+  .cancelModalActions {
+    justify-content: flex-start;
+  }
+
+  .exportSummaryGrid {
+    grid-template-columns: 1fr;
   }
 }
