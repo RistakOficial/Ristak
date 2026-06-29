@@ -1,6 +1,7 @@
 import React, { forwardRef, useId } from 'react'
 import { Loader2, Search, X } from 'lucide-react'
 import { cn } from '@/utils/cn'
+import { suppressBrowserAutofill } from '@/utils/browserAutofill'
 import styles from './SearchField.module.css'
 
 export interface SearchFieldProps extends Omit<React.InputHTMLAttributes<HTMLInputElement>, 'onChange' | 'size' | 'type'> {
@@ -44,6 +45,7 @@ export const SearchField = forwardRef<HTMLInputElement, SearchFieldProps>(({
     >
       <Search aria-hidden="true" size={16} className={styles.icon} />
       <input
+        {...suppressBrowserAutofill}
         {...inputProps}
         ref={ref}
         id={inputId}

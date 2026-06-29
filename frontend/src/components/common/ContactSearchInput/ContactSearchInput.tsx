@@ -5,6 +5,7 @@ import { SearchField } from '../SearchField';
 import { Button } from '../Button';
 import { Contact } from '@/types';
 import { contactsService } from '@/services/contactsService';
+import { suppressContactAutofill } from '@/utils/browserAutofill';
 
 interface ContactSearchInputProps {
   value: Contact | null;
@@ -255,6 +256,7 @@ export const ContactSearchInput: React.FC<ContactSearchInputProps> = ({
             disabled={disabled}
             loading={isLoading}
             aria-expanded={isOpen}
+            autoComplete={suppressContactAutofill.autoComplete}
           />
 
           {isOpen && (
@@ -283,6 +285,7 @@ export const ContactSearchInput: React.FC<ContactSearchInputProps> = ({
                     <div className={styles.formRow}>
                       <div className={styles.formField}>
                         <input
+                          {...suppressContactAutofill}
                           type="text"
                           placeholder="Nombre *"
                           value={newContact.name}
@@ -293,6 +296,7 @@ export const ContactSearchInput: React.FC<ContactSearchInputProps> = ({
                       </div>
                       <div className={styles.formField}>
                         <input
+                          {...suppressContactAutofill}
                           type="text"
                           placeholder="Apellido"
                           value={newContact.lastName}
@@ -303,6 +307,7 @@ export const ContactSearchInput: React.FC<ContactSearchInputProps> = ({
 
                     <div className={styles.formField}>
                       <input
+                        {...suppressContactAutofill}
                         type="email"
                         placeholder="Correo electrónico"
                         value={newContact.email}
@@ -314,6 +319,7 @@ export const ContactSearchInput: React.FC<ContactSearchInputProps> = ({
 
                     <div className={styles.formField}>
                       <input
+                        {...suppressContactAutofill}
                         type="tel"
                         placeholder="Teléfono"
                         value={newContact.phone}

@@ -14,6 +14,7 @@ import { CalendarEvent, Calendar, calendarsService, FreeSlot, BlockedSlot, RawBl
 import { apiUrl } from '@/services/apiBaseUrl';
 import { useNotification } from '@/contexts/NotificationContext';
 import { useTimezone } from '@/contexts/TimezoneContext';
+import { suppressContactAutofill } from '@/utils/browserAutofill';
 import styles from './AppointmentModal.module.css';
 import { Trash2, Search, Loader2, X, UserPlus } from 'lucide-react';
 
@@ -1472,6 +1473,7 @@ export const AppointmentModal: React.FC<AppointmentModalProps> = ({
             <div className={styles.searchInput}>
               <Search size={16} className={styles.searchIcon} />
               <input
+                {...suppressContactAutofill}
                 type="text"
                 placeholder="Buscar por nombre, correo o teléfono..."
                 value={searchQuery}
@@ -1557,6 +1559,7 @@ export const AppointmentModal: React.FC<AppointmentModalProps> = ({
               <div className={styles.searchInput}>
                 <Search size={16} className={styles.searchIcon} />
                 <input
+                  {...suppressContactAutofill}
                   type="text"
                   placeholder="Buscar en contactos..."
                   value={guestSearchQuery}
@@ -1602,6 +1605,7 @@ export const AppointmentModal: React.FC<AppointmentModalProps> = ({
                   Nombre completo <span className={styles.required}>*</span>
                 </label>
                 <input
+                  {...suppressContactAutofill}
                   id="guestName"
                   type="text"
                   className={styles.input}
@@ -1616,6 +1620,7 @@ export const AppointmentModal: React.FC<AppointmentModalProps> = ({
                   Num Whats o correo <span className={styles.required}>*</span>
                 </label>
                 <input
+                  {...suppressContactAutofill}
                   id="guestContact"
                   type="text"
                   className={styles.input}

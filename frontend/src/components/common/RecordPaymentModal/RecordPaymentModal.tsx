@@ -38,6 +38,7 @@ import { transactionsService } from '@/services/transactionsService'
 import { conektaPaymentsService, type ConektaSavedPaymentSource } from '@/services/conektaPaymentsService'
 import { mercadoPagoPaymentsService } from '@/services/mercadoPagoPaymentsService'
 import { stripePaymentsService, type StripeSavedPaymentMethod } from '@/services/stripePaymentsService'
+import { suppressContactAutofill } from '@/utils/browserAutofill'
 import {
   defaultPaymentSettings,
   paymentSettingsService,
@@ -2949,6 +2950,7 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
             <div className={styles.contactSearchBox} data-ristak-unstyled>
               <Search size={16} className={styles.searchIcon} />
               <input
+                {...suppressContactAutofill}
                 type="text"
                 placeholder="Buscar contacto"
                 value={searchQuery}
@@ -3053,6 +3055,7 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
                 <div className={styles.searchInput}>
                   <Search size={16} className={styles.searchIcon} />
                   <input
+                    {...suppressContactAutofill}
                     type="text"
                     placeholder="Buscar por nombre, email o teléfono..."
                     value={searchQuery}
