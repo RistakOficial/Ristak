@@ -5,6 +5,9 @@ import { getPortableDeviceMode } from '@/utils/phoneAccess'
 export interface WebPushPublicConfig {
   configured: boolean
   publicKey: string
+  nativeConfigured?: boolean
+  androidConfigured?: boolean
+  iosConfigured?: boolean
 }
 
 export type PushSubscriptionResult =
@@ -42,6 +45,20 @@ function getBrowserNotificationTarget() {
   return getPortableDeviceMode() === 'desktop' ? 'esta computadora' : 'este celular'
 }
 
+function getNativePushConfigurationError(config: WebPushPublicConfig | null) {
+  const platform = mobileAppService.getPlatform()
+  if (platform === 'ios' && !config?.iosConfigured) {
+    return 'El servidor todavía no tiene APNs configurado para iPhone. Revisa APNS_KEY_ID, APNS_TEAM_ID, APNS_PRIVATE_KEY y APNS_ENV en Render.'
+  }
+  if (platform === 'android' && !config?.androidConfigured) {
+    return 'El servidor todavía no tiene Firebase Cloud Messaging configurado para Android. Revisa FCM_PROJECT_ID y FCM_SERVICE_ACCOUNT_JSON en Render.'
+  }
+  if (!config?.nativeConfigured) {
+    return 'El servidor todavía no tiene notificaciones nativas configuradas.'
+  }
+  return ''
+}
+
 export const pushNotificationsService = {
   async getPublicConfig(): Promise<WebPushPublicConfig> {
     return apiClient.get<WebPushPublicConfig>('/push/public-key')
@@ -49,6 +66,24 @@ export const pushNotificationsService = {
 
   async subscribeToAppNotifications({ calendarIds = [] }: { calendarIds?: string[] } = {}): Promise<PushSubscriptionResult> {
     if (mobileAppService.isNative()) {
+      let config: WebPushPublicConfig
+      try {
+        config = await this.getPublicConfig()
+      } catch {
+        return {
+          status: 'not_configured',
+          reason: 'No pude validar la configuración de notificaciones del servidor. Revisa conexión y vuelve a intentar.'
+        }
+      }
+
+      const nativeConfigurationError = getNativePushConfigurationError(config)
+      if (nativeConfigurationError) {
+        return {
+          status: 'not_configured',
+          reason: nativeConfigurationError
+        }
+      }
+
       return mobileAppService.subscribeToPushNotifications({ calendarIds })
     }
 

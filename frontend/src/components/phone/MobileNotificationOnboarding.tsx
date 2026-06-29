@@ -14,6 +14,7 @@ type NotificationPromptSurface = 'native_phone' | 'mobile_browser' | 'desktop_br
 
 const STORAGE_PREFIX = 'ristak_mobile_message_notifications_prompt_v1'
 const SHOW_DELAY_MS = 650
+const REGISTRATION_SYNC_INTERVAL_MS = 12 * 60 * 60 * 1000
 function getStoredDecision(storageKey: string) {
   try {
     return window.localStorage.getItem(storageKey)
@@ -27,6 +28,28 @@ function saveStoredDecision(storageKey: string, value: 'accepted' | 'declined') 
     window.localStorage.setItem(storageKey, value)
   } catch {
     // If storage is blocked, the permission state still controls the real behavior.
+  }
+}
+
+function getRegistrationSyncKey(storageKey: string) {
+  return `${storageKey}:registration_synced_at`
+}
+
+function hasFreshRegistrationSync(storageKey: string) {
+  try {
+    const raw = window.localStorage.getItem(getRegistrationSyncKey(storageKey))
+    const timestamp = Number(raw || 0)
+    return Number.isFinite(timestamp) && timestamp > 0 && Date.now() - timestamp < REGISTRATION_SYNC_INTERVAL_MS
+  } catch {
+    return false
+  }
+}
+
+function saveRegistrationSync(storageKey: string) {
+  try {
+    window.localStorage.setItem(getRegistrationSyncKey(storageKey), String(Date.now()))
+  } catch {
+    // If storage is blocked, the backend token registration still happened.
   }
 }
 
@@ -146,22 +169,57 @@ export function MobileNotificationOnboarding() {
     }
 
     const preparePrompt = async () => {
-      if (mobileAppService.isNative()) {
-        const nativePermission = await mobileAppService.getPushPermissionStatus()
-        if (cancelled) return
-        if (nativePermission === 'granted') {
-          saveStoredDecision(storageKey, 'accepted')
-          setVisible(false)
-          return
-        }
-      } else if (getBrowserNotificationPermission() === 'granted') {
-        saveStoredDecision(storageKey, 'accepted')
+      const storedDecision = getStoredDecision(storageKey)
+      if (storedDecision === 'declined') {
         setVisible(false)
         return
       }
 
-      const storedDecision = getStoredDecision(storageKey)
-      if (storedDecision === 'accepted' || storedDecision === 'declined') {
+      let permissionAlreadyGranted = false
+      if (mobileAppService.isNative()) {
+        const nativePermission = await mobileAppService.getPushPermissionStatus()
+        if (cancelled) return
+        permissionAlreadyGranted = nativePermission === 'granted'
+      } else if (getBrowserNotificationPermission() === 'granted') {
+        permissionAlreadyGranted = true
+      }
+
+      if (permissionAlreadyGranted) {
+        if (hasFreshRegistrationSync(storageKey)) {
+          saveStoredDecision(storageKey, 'accepted')
+          setVisible(false)
+          return
+        }
+
+        try {
+          const result = await pushNotificationsService.subscribeToAppNotifications()
+          if (cancelled) return
+          if (result.status === 'subscribed') {
+            saveStoredDecision(storageKey, 'accepted')
+            saveRegistrationSync(storageKey)
+            setVisible(false)
+            return
+          }
+
+          setDenialReason(result.reason)
+          setStep('system_denied')
+          setVisible(true)
+          return
+        } catch (error: any) {
+          if (cancelled) return
+          if (storedDecision === 'accepted') {
+            setVisible(false)
+            return
+          }
+
+          setDenialReason(error?.message || 'No se pudo registrar este celular para notificaciones.')
+          setStep('system_denied')
+          setVisible(true)
+          return
+        }
+      }
+
+      if (storedDecision === 'accepted') {
         return
       }
 
@@ -211,6 +269,7 @@ export function MobileNotificationOnboarding() {
 
       if (result.status === 'subscribed') {
         const target = getPromptTargetCopy(getNotificationPromptSurface())
+        saveRegistrationSync(storageKey)
         closeAsAccepted()
         showToast('success', 'Notificaciones activadas', `${capitalizeFirst(target.deviceShort)} ya puede avisarte cuando llegue un mensaje.`)
         return
