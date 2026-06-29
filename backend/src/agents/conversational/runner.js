@@ -43,6 +43,7 @@ import {
   normalizeConversationalAIProvider,
   resolveConversationalAIRuntime
 } from '../../services/conversationalAIProviderService.js'
+import { DEFAULT_OPENAI_MODEL } from '../../config/openAIModels.js'
 import { tagNamesForIds } from '../../services/contactTagsService.js'
 // (AI-002) Gate de licencia: el runtime del agente conversacional debe respetar
 // la feature premium incluso cuando se dispara desde los servicios de mensajería.
@@ -67,7 +68,7 @@ import {
 
 const HISTORY_LIMIT = 20
 const MAX_TURNS = 10
-const DEFAULT_MODEL = process.env.OPENAI_CONVERSATIONAL_AGENT_MODEL || 'gpt-5.4-nano'
+const DEFAULT_MODEL = process.env.OPENAI_CONVERSATIONAL_AGENT_MODEL || DEFAULT_OPENAI_MODEL
 const MAX_REPLY_CHARS = 1000
 const DEBOUNCE_MS = 4000
 const PENDING_INBOUND_LIMIT = 8

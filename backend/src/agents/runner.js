@@ -11,10 +11,11 @@ import {
 } from '../services/agentExecutionLedgerService.js'
 import { AGENT_CATEGORIES, getAgentCategory, resolveCategoryContextFields } from './registry.js'
 import { loadAgentMemories } from './tools/memoryTools.js'
+import { DEFAULT_OPENAI_MODEL } from '../config/openAIModels.js'
 
 const MESSAGE_HISTORY_LIMIT = 12
 const MAX_TURNS = 16
-const DEFAULT_MODEL = 'gpt-5.4-nano'
+const DEFAULT_MODEL = DEFAULT_OPENAI_MODEL
 const CONTEXT_FIELD_LIMIT = 4000
 
 const MAX_CHAT_ATTACHMENTS = 8

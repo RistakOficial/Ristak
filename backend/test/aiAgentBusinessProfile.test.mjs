@@ -55,7 +55,7 @@ test('prepara perfil usable cuando la extraccion IA aborta con descripcion larga
   try {
     const result = await syncBusinessProfileFromContext({
       businessContext: longContext,
-      model: 'gpt-5.4-nano',
+      model: 'gpt-5.4-mini',
       apiKey: 'sk-test-long-description',
       extractor: async ({ businessContext }) => {
         assert.ok(businessContext.length <= 16_000)

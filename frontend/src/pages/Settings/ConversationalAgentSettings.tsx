@@ -3648,10 +3648,6 @@ export const ConversationalAgentSettings: React.FC<ConversationalAgentSettingsPr
   }
 
   const openProviderModal = (providerId: ConversationalAIProviderId) => {
-    if (providerId === 'openai') {
-      navigate(generalConfigPath)
-      return
-    }
     setProviderModalId(providerId)
     setProviderApiKey('')
   }
@@ -3674,9 +3670,21 @@ export const ConversationalAgentSettings: React.FC<ConversationalAgentSettingsPr
       const providers = await conversationalAgentService.connectAIProvider(providerModalId, cleanKey)
       setAIProviders(providers)
       const provider = getConversationalAIProviderOption(providerModalId)
+      if (providerModalId === 'openai') {
+        const nextConfig = await conversationalAgentService.getConfig()
+        setConfig(nextConfig)
+        setAIProviders(nextConfig.aiProviders || providers)
+        await refreshAgentData()
+      }
       setProviderModalId(null)
       setProviderApiKey('')
-      showToast('success', `${provider.label} conectado`, 'Ya puedes elegirlo en tus agentes conversacionales.')
+      showToast(
+        'success',
+        `${provider.label} conectado`,
+        providerModalId === 'openai'
+          ? 'También quedó guardado en la configuración general de Ristak AI.'
+          : 'Ya puedes elegirlo en tus agentes conversacionales.'
+      )
     } catch (error: any) {
       showToast('error', 'No se pudo conectar', error?.message || 'Revisa la API key.')
     } finally {
@@ -3872,7 +3880,9 @@ export const ConversationalAgentSettings: React.FC<ConversationalAgentSettingsPr
       {providerModalOption && (
         <div className={styles.aiProviderModalBody}>
           <p className={styles.helper}>
-            Pega la API key de {providerModalOption.label}. Se guarda cifrada y sólo se usa para el agente conversacional.
+            {providerModalOption.id === 'openai'
+              ? 'Pega la API key de OpenAI. Se guarda cifrada en la configuración general de Ristak AI y queda disponible para el agente conversacional.'
+              : `Pega la API key de ${providerModalOption.label}. Se guarda cifrada y sólo se usa para el agente conversacional.`}
           </p>
           <div className={styles.field}>
             <label className={styles.label}>API key</label>

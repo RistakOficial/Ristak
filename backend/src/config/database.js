@@ -8,6 +8,7 @@ import {
   extractWhatsAppProfileName,
   shouldReplaceWhatsAppApiContactName
 } from '../utils/whatsappContactProfile.js'
+import { DEFAULT_OPENAI_MODEL } from './openAIModels.js'
 
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = dirname(__filename)
@@ -50,6 +51,7 @@ const DEFAULT_REPORT_TABLE_COLUMN_CONFIG = [
 const DEFAULT_REPORT_TABLE_CONFIG_VALUE = JSON.stringify(DEFAULT_REPORT_TABLE_COLUMN_CONFIG)
 const DEFAULT_REPORT_TABLE_CONFIG_KEYS = ['cashflow', 'attribution', 'campaigns']
   .flatMap(reportType => ['day', 'month', 'year'].map(viewType => `table_reports_metrics_${reportType}_${viewType}`))
+const DEFAULT_OPENAI_MODEL_COLUMN = `TEXT DEFAULT '${DEFAULT_OPENAI_MODEL}'`
 
 const POSTGRES_CONNECT_RETRY_CODES = new Set([
   'ECONNREFUSED',
@@ -1462,7 +1464,7 @@ async function initTables() {
       CREATE TABLE IF NOT EXISTS ai_agent_config (
         id ${usePostgres ? 'SERIAL PRIMARY KEY' : 'INTEGER PRIMARY KEY AUTOINCREMENT'},
         openai_api_key_encrypted TEXT,
-        model TEXT DEFAULT 'gpt-5.4-nano',
+        model ${DEFAULT_OPENAI_MODEL_COLUMN},
         business_context TEXT,
         market_context TEXT,
         ideal_customer TEXT,
@@ -4487,7 +4489,7 @@ async function initTables() {
         id INTEGER PRIMARY KEY,
         enabled INTEGER DEFAULT 0,
         ai_provider TEXT DEFAULT 'openai',
-        model TEXT DEFAULT 'gpt-5.4-nano',
+        model ${DEFAULT_OPENAI_MODEL_COLUMN},
         objective TEXT DEFAULT 'citas',
         custom_objective TEXT,
         success_action TEXT DEFAULT 'ready_for_human',
@@ -4510,7 +4512,7 @@ async function initTables() {
     // Columnas agregadas después del despliegue inicial del agente conversacional
     for (const [columnName, columnType] of [
       ['ai_provider', "TEXT DEFAULT 'openai'"],
-      ['model', "TEXT DEFAULT 'gpt-5.4-nano'"],
+      ['model', DEFAULT_OPENAI_MODEL_COLUMN],
       ['hide_attended_notifications', 'INTEGER'],
       ['closing_strategy_mode', "TEXT DEFAULT 'system'"],
       ['closing_strategy_custom', 'TEXT'],
@@ -4536,7 +4538,7 @@ async function initTables() {
         name TEXT NOT NULL,
         enabled INTEGER DEFAULT 1,
         ai_provider TEXT DEFAULT 'openai',
-        model TEXT DEFAULT 'gpt-5.4-nano',
+        model ${DEFAULT_OPENAI_MODEL_COLUMN},
         identity_mode TEXT DEFAULT 'business',
         identity_user_id TEXT,
         identity_user_name TEXT,
@@ -4570,7 +4572,7 @@ async function initTables() {
     `)
     for (const [columnName, columnType] of [
       ['ai_provider', "TEXT DEFAULT 'openai'"],
-      ['model', "TEXT DEFAULT 'gpt-5.4-nano'"],
+      ['model', DEFAULT_OPENAI_MODEL_COLUMN],
       ['identity_mode', "TEXT DEFAULT 'business'"],
       ['identity_user_id', 'TEXT'],
       ['identity_user_name', 'TEXT'],

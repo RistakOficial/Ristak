@@ -80,7 +80,7 @@ test('deleteAIAgentToken borra solo el token y conserva el contexto del agente',
     await saveAIAgentConfig({
       userId,
       apiKey: 'sk-test-token-abcdefghijklmnopqrstuvwxyz',
-      model: 'gpt-5.4-nano',
+      model: 'gpt-5.4-mini',
       businessContext: 'Clinica dental',
       marketContext: '',
       idealCustomer: '',

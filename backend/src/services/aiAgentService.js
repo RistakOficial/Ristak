@@ -14,6 +14,7 @@ import { recordAttendanceAttributionSignal } from './appointmentsMerge.js'
 import { triggerWhatsappAppointmentBookedEvent } from './metaWhatsappEventsService.js'
 import { PAYMENT_MODE_LIVE, PAYMENT_MODE_TEST, normalizePaymentMode, nonTestPaymentCondition } from '../utils/paymentMode.js'
 import { logger } from '../utils/logger.js'
+import { DEFAULT_OPENAI_MODEL, LEGACY_DEFAULT_OPENAI_MODEL } from '../config/openAIModels.js'
 import {
   buildContactSearchClause,
   normalizePhoneDigits,
@@ -52,7 +53,7 @@ const OPENAI_API_URL = 'https://api.openai.com/v1'
 const HIGHLEVEL_API_BASE_URL = process.env.GHL_API_BASE_URL || 'https://services.leadconnectorhq.com'
 const HIGHLEVEL_MCP_SERVER_URL = process.env.GHL_MCP_SERVER_URL || 'https://services.leadconnectorhq.com/mcp/'
 const HIGHLEVEL_API_VERSION = process.env.GHL_API_VERSION || '2021-07-28'
-const DEFAULT_MODEL = process.env.OPENAI_AGENT_MODEL || 'gpt-5.4-nano'
+const DEFAULT_MODEL = process.env.OPENAI_AGENT_MODEL || DEFAULT_OPENAI_MODEL
 const DEFAULT_TRANSCRIPTION_MODEL = process.env.OPENAI_TRANSCRIPTION_MODEL || 'gpt-4o-mini-transcribe'
 const OPENAI_CREDENTIAL_RECONNECT_CODE = 'OPENAI_CREDENTIAL_RECONNECT_REQUIRED'
 const OPENAI_CREDENTIAL_RECONNECT_MESSAGE = 'OpenAI necesita reconectarse. Ve a Configuración > Agente AI y pega nuevamente tu API token.'
@@ -17435,6 +17436,65 @@ export async function saveAIAgentConfig({
     businessContext: unifiedBusinessContext,
     model: normalizeAIAgentModel(model)
   })
+
+  return getAIAgentStatus({ userId })
+}
+
+export async function saveAIAgentOpenAICredentials({
+  userId,
+  apiKey,
+  model = DEFAULT_MODEL
+} = {}) {
+  const cleanApiKey = String(apiKey || '').trim()
+  if (!cleanApiKey) {
+    throw new Error('Pega una API key válida de OpenAI.')
+  }
+
+  const encryptedKey = encrypt(cleanApiKey)
+  const existingConfig = await db.get('SELECT id FROM ai_agent_config WHERE id = 1 LIMIT 1')
+  const currentConfig = existingConfig ? await getAIAgentConfig({ userId }) : null
+  const currentModel = String(currentConfig?.model || '').trim()
+  const nextModel = normalizeAIAgentModel(
+    !currentModel || currentModel === LEGACY_DEFAULT_OPENAI_MODEL
+      ? model
+      : currentModel
+  )
+
+  if (existingConfig) {
+    await db.run(`
+      UPDATE ai_agent_config
+      SET
+        openai_api_key_encrypted = ?,
+        model = ?,
+        updated_at = CURRENT_TIMESTAMP
+      WHERE id = 1
+    `, [encryptedKey, nextModel])
+  } else {
+    await db.run(`
+      INSERT INTO ai_agent_config (
+        id,
+        openai_api_key_encrypted,
+        model,
+        business_context,
+        market_context,
+        ideal_customer,
+        location_context,
+        competitors_context,
+        brand_voice,
+        research_domains,
+        response_style,
+        recommendation_mode,
+        web_search_enabled,
+        updated_at
+      )
+      VALUES (1, ?, ?, '', '', '', '', '', '', '', ?, ?, 0, CURRENT_TIMESTAMP)
+    `, [
+      encryptedKey,
+      nextModel,
+      DEFAULT_AI_RESPONSE_STYLE,
+      DEFAULT_AI_RECOMMENDATION_MODE
+    ])
+  }
 
   return getAIAgentStatus({ userId })
 }

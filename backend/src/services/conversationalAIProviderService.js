@@ -1,5 +1,6 @@
 import { OpenAIProvider } from '@openai/agents'
 import { db, getAppConfig, setAppConfig } from '../config/database.js'
+import { DEFAULT_OPENAI_MODEL, LEGACY_DEFAULT_OPENAI_MODEL } from '../config/openAIModels.js'
 import { decrypt, encrypt } from '../utils/encryption.js'
 import { logger } from '../utils/logger.js'
 
@@ -12,7 +13,7 @@ export const CONVERSATIONAL_AI_PROVIDER_DEFINITIONS = [
   {
     id: 'openai',
     label: 'OpenAI',
-    defaultModel: process.env.OPENAI_CONVERSATIONAL_AGENT_MODEL || 'gpt-5.4-nano',
+    defaultModel: process.env.OPENAI_CONVERSATIONAL_AGENT_MODEL || DEFAULT_OPENAI_MODEL,
     supportsMultimodalInputs: true,
     canDelete: false,
     managedBy: 'ai_agent_config'
@@ -193,17 +194,50 @@ async function verifyProviderApiKey(provider, apiKey) {
 
 export async function connectConversationalAIProvider(providerId, apiKey) {
   const provider = getConversationalAIProviderDefinition(providerId)
-  if (provider.id === 'openai') {
-    const error = new Error('OpenAI se conecta desde la sección General del Agente AI.')
-    error.statusCode = 400
-    throw error
-  }
-
   const cleanKey = String(apiKey || '').trim()
   if (cleanKey.length < 12) {
     const error = new Error(`Pega una API key válida de ${provider.label}.`)
     error.statusCode = 400
     throw error
+  }
+
+  if (provider.id === 'openai') {
+    if (!cleanKey.startsWith('sk-')) {
+      const error = new Error('El API Token de OpenAI no tiene un formato válido')
+      error.statusCode = 400
+      throw error
+    }
+
+    const {
+      saveAIAgentOpenAICredentials,
+      verifyOpenAIApiKey
+    } = await import('./aiAgentService.js')
+    const validation = await verifyOpenAIApiKey(cleanKey)
+    if (!validation.valid) {
+      const error = new Error(validation.error || 'API Token de OpenAI inválido')
+      error.statusCode = 400
+      throw error
+    }
+
+    await saveAIAgentOpenAICredentials({
+      apiKey: cleanKey,
+      model: provider.defaultModel
+    })
+
+    await db.run(`
+      UPDATE conversational_agent_config
+      SET ai_provider = ?, model = ?, updated_at = CURRENT_TIMESTAMP
+      WHERE ai_provider = ?
+        AND (model IS NULL OR model = '' OR model = ?)
+    `, [provider.id, provider.defaultModel, provider.id, LEGACY_DEFAULT_OPENAI_MODEL]).catch(() => {})
+    await db.run(`
+      UPDATE conversational_agents
+      SET ai_provider = ?, model = ?, updated_at = CURRENT_TIMESTAMP
+      WHERE ai_provider = ?
+        AND (model IS NULL OR model = '' OR model = ?)
+    `, [provider.id, provider.defaultModel, provider.id, LEGACY_DEFAULT_OPENAI_MODEL]).catch(() => {})
+
+    return listConversationalAIProviders()
   }
 
   await verifyProviderApiKey(provider, cleanKey)
