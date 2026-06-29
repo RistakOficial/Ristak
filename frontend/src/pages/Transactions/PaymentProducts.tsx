@@ -1268,71 +1268,73 @@ export const PaymentProducts: React.FC = () => {
 
                     return (
                       <div className={styles.priceRow} key={price.formId}>
-                        <div className={styles.priceIndex}>
-                          {index + 1}
-                        </div>
-
-                        <div className={styles.priceFields}>
-                          <div className={styles.formGroup}>
-                            <label>Nombre del precio</label>
-                            <input
-                              value={price.name}
-                              onChange={(event) => patchProductPrice(price.formId, 'name', event.target.value)}
-                              placeholder={index === 0 ? 'Precio base' : `Precio ${index + 1}`}
-                              required
-                            />
+                        <div className={styles.priceMainRow}>
+                          <div className={styles.priceIndex}>
+                            {index + 1}
                           </div>
 
-                          <div className={styles.formGroup}>
-                            <label>Monto ({accountCurrency})</label>
-                            <NumberInput
-                              value={price.amount}
-                              onChange={(event) => patchProductPrice(price.formId, 'amount', event.target.value)}
-                              min="0"
-                              step="0.01"
-                              placeholder="0.00"
-                              required
-                            />
-                          </div>
-
-                          <div className={styles.formGroup}>
-                            <label>SKU</label>
-                            <input
-                              value={price.sku}
-                              onChange={(event) => patchProductPrice(price.formId, 'sku', event.target.value)}
-                              placeholder="SKU-001"
-                            />
-                          </div>
-
-                          {priceId && (
-                            <div className={styles.priceIdLine}>
-                              <span>ID del precio</span>
-                              <code>{priceId}</code>
-                              <Button
-                                type="button"
-                                variant="ghost"
-                                size="sm"
-                                iconOnly
-                                aria-label="Copiar ID del precio"
-                                title="Copiar ID del precio"
-                                leftIcon={<Copy size={13} />}
-                                onClick={() => void handleCopyPriceId(priceId)}
+                          <div className={styles.priceFields}>
+                            <div className={styles.formGroup}>
+                              <label>Nombre del precio</label>
+                              <input
+                                value={price.name}
+                                onChange={(event) => patchProductPrice(price.formId, 'name', event.target.value)}
+                                placeholder={index === 0 ? 'Precio base' : `Precio ${index + 1}`}
+                                required
                               />
                             </div>
-                          )}
+
+                            <div className={styles.formGroup}>
+                              <label>Monto ({accountCurrency})</label>
+                              <NumberInput
+                                value={price.amount}
+                                onChange={(event) => patchProductPrice(price.formId, 'amount', event.target.value)}
+                                min="0"
+                                step="0.01"
+                                placeholder="0.00"
+                                required
+                              />
+                            </div>
+
+                            <div className={styles.formGroup}>
+                              <label>SKU (opcional)</label>
+                              <input
+                                value={price.sku}
+                                onChange={(event) => patchProductPrice(price.formId, 'sku', event.target.value)}
+                                placeholder="SKU-001"
+                              />
+                            </div>
+                          </div>
+
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="sm"
+                            iconOnly
+                            aria-label="Quitar precio"
+                            title="Quitar precio"
+                            disabled={productForm.prices.length <= 1}
+                            leftIcon={<Trash2 size={16} />}
+                            onClick={() => removeProductPrice(price.formId)}
+                          />
                         </div>
 
-                        <Button
-                          type="button"
-                          variant="ghost"
-                          size="sm"
-                          iconOnly
-                          aria-label="Quitar precio"
-                          title="Quitar precio"
-                          disabled={productForm.prices.length <= 1}
-                          leftIcon={<Trash2 size={16} />}
-                          onClick={() => removeProductPrice(price.formId)}
-                        />
+                        {priceId && (
+                          <div className={styles.priceIdLine}>
+                            <span>ID del precio</span>
+                            <code>{priceId}</code>
+                            <Button
+                              type="button"
+                              variant="ghost"
+                              size="sm"
+                              iconOnly
+                              aria-label="Copiar ID del precio"
+                              title="Copiar ID del precio"
+                              leftIcon={<Copy size={13} />}
+                              onClick={() => void handleCopyPriceId(priceId)}
+                            />
+                          </div>
+                        )}
                       </div>
                     )
                   })}

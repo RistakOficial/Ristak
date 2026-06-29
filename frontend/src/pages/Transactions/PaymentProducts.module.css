@@ -237,13 +237,20 @@
 
 .priceRow {
   display: grid;
-  grid-template-columns: auto minmax(0, 1fr) auto;
-  gap: 12px;
-  align-items: end;
+  gap: 8px;
+  min-width: 0;
   padding: 12px;
   border: 1px solid var(--border);
   border-radius: var(--radius-card);
   background: var(--surface);
+}
+
+.priceMainRow {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  gap: 12px;
+  align-items: center;
+  min-width: 0;
 }
 
 .priceIndex {
@@ -268,7 +275,8 @@
 }
 
 .priceIdLine {
-  grid-column: 1 / -1;
+  margin-left: 42px;
+  margin-right: 44px;
 }
 
 .fiscalPanel {
@@ -457,16 +465,20 @@
     grid-template-columns: 1fr;
   }
 
-  .priceRow,
+  .priceMainRow,
   .webhookRow {
     grid-template-columns: auto minmax(0, 1fr);
     align-items: start;
   }
 
-  .priceRow > button,
+  .priceMainRow > button,
   .webhookRow > button {
     grid-column: 2;
     justify-self: start;
+  }
+
+  .priceIdLine {
+    margin-right: 0;
   }
 
   .webhookHeadersHeader,
