@@ -7,7 +7,7 @@ import GHLClient, { getGHLClient } from '../services/ghlClient.js';
 import { db } from '../config/database.js';
 import { getAccountTimezone } from '../utils/dateUtils.js';
 import { triggerWhatsappAppointmentBookedEvent } from '../services/metaWhatsappEventsService.js';
-import { sendAppointmentConfirmationNotification, sendCalendarAppointmentNotification } from '../services/pushNotificationsService.js';
+import { sendAppointmentConfirmationNotification, sendAppointmentStatusNotification, sendCalendarAppointmentNotification } from '../services/pushNotificationsService.js';
 import {
   getRequestHost,
   resolvePublicCalendarHostForHost,
@@ -2075,10 +2075,11 @@ export async function updateAppointment(req, res) {
     // (APT-003) Si la cita se reprogramó (cambió start_time), olvidar recordatorios ya
     // registrados para que el cron recalcule/reenvíe en la nueva fecha. La ruta GHL hace
     // upsert directo (sin pasar por updateLocalAppointment), por eso lo cubrimos aquí también.
+    const prevStartMs = new Date(existing?.startTime || existing?.start_time).getTime();
+    const nextStartMs = new Date(appointment?.startTime || appointment?.start_time).getTime();
+    const appointmentStartChanged = Number.isFinite(prevStartMs) && Number.isFinite(nextStartMs) && prevStartMs !== nextStartMs;
     try {
-      const prevStartMs = new Date(existing?.startTime || existing?.start_time).getTime();
-      const nextStartMs = new Date(appointment?.startTime || appointment?.start_time).getTime();
-      if (Number.isFinite(prevStartMs) && Number.isFinite(nextStartMs) && prevStartMs !== nextStartMs && (appointment?.id || id)) {
+      if (appointmentStartChanged && (appointment?.id || id)) {
         const { clearAppointmentReminderSends } = await import('../services/appointmentRemindersService.js');
         await clearAppointmentReminderSends(appointment?.id || id);
       }
@@ -2088,11 +2089,31 @@ export async function updateAppointment(req, res) {
 
     const previousStatus = String(existing?.appointmentStatus || existing?.appointment_status || existing?.status || '').trim().toLowerCase();
     const nextStatus = String(appointment?.appointmentStatus || appointment?.appointment_status || appointment?.status || updateData.appointmentStatus || updateData.appointment_status || updateData.status || '').trim().toLowerCase();
-    if (nextStatus === 'confirmed' && previousStatus !== 'confirmed') {
+    const previousCancelled = ['cancelled', 'canceled'].includes(previousStatus);
+    const nextCancelled = ['cancelled', 'canceled'].includes(nextStatus);
+    const notificationContext = {
+      appointmentId: appointment?.id || id,
+      calendarId: appointment?.calendarId || appointment?.calendar_id || existing?.calendarId || existing?.calendar_id,
+      calendarName: appointment?.calendarName || appointment?.calendar_name || existing?.calendarName || existing?.calendar_name || '',
+      source: 'admin_calendar_status'
+    };
+    if (nextCancelled && !previousCancelled) {
+      await sendAppointmentStatusNotification(appointment, {
+        ...notificationContext,
+        eventType: 'cancelled'
+      }).catch(error => {
+        logger.warn(`[Calendars Controller] No se pudo enviar push de cita cancelada: ${error.message}`);
+      });
+    } else if (appointmentStartChanged) {
+      await sendAppointmentStatusNotification(appointment, {
+        ...notificationContext,
+        eventType: 'rescheduled'
+      }).catch(error => {
+        logger.warn(`[Calendars Controller] No se pudo enviar push de cita reprogramada: ${error.message}`);
+      });
+    } else if (nextStatus === 'confirmed' && previousStatus !== 'confirmed') {
       await sendAppointmentConfirmationNotification(appointment, {
-        appointmentId: appointment?.id || id,
-        calendarId: appointment?.calendarId || appointment?.calendar_id || existing?.calendarId || existing?.calendar_id,
-        source: 'admin_calendar_status'
+        ...notificationContext
       }).catch(error => {
         logger.warn(`[Calendars Controller] No se pudo enviar push de cita confirmada: ${error.message}`);
       });

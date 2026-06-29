@@ -9,6 +9,7 @@ import { calculatePaymentTax, getPaymentGatewayMode, getPaymentSettings, getPubl
 import { queuePaymentAutomationMessage } from './paymentAutomationsService.js'
 import { registerGigstackPaymentForTransactionInBackground } from './gigstackInvoiceService.js'
 import { dispatchProductPostWebhooksForPaymentInBackground } from './productPostWebhookService.js'
+import { sendPaymentNotification } from './pushNotificationsService.js'
 import { buildMetaPublicPurchasePixelEvent } from './metaConversionEventsService.js'
 import { createPublicPaymentId, createRistakPaymentEntityId } from '../utils/idGenerator.js'
 
@@ -1536,7 +1537,7 @@ async function updatePaymentFromIntent(intent, stripeContext = null) {
   )
 
   const row = await db.get(
-    `SELECT p.*, c.stripe_customer_id
+    `SELECT p.*, c.full_name AS contact_name, c.email AS contact_email, c.phone AS contact_phone, c.stripe_customer_id
      FROM payments p
      LEFT JOIN contacts c ON c.id = p.contact_id
      WHERE p.${whereColumn} = ?`,
@@ -1547,6 +1548,11 @@ async function updatePaymentFromIntent(intent, stripeContext = null) {
       status: persistedStatus,
       previousStatus: existingRow?.status || ''
     })
+    if (cleanString(existingRow?.status).toLowerCase() !== cleanString(persistedStatus).toLowerCase()) {
+      sendPaymentNotification({ ...row, status: persistedStatus, previousStatus: existingRow?.status || '' }).catch((error) => {
+        logger.warn(`No se pudo enviar push de pago Stripe ${row.id}: ${error.message}`)
+      })
+    }
   }
   if (row?.contact_id && nextStatus === 'paid') {
     updateSingleContactStats(row.contact_id).catch((error) => {
@@ -1621,6 +1627,10 @@ async function updatePaymentFromInvoice(invoice, nextStatus) {
   const amount = fromStripeAmount(invoiceAmount, currency)
   const paidAt = nextStatus === 'paid' ? timestampToIso(invoice.status_transitions?.paid_at) || new Date().toISOString() : null
   const reference = extractStripeObjectId(invoice?.payment_intent) || cleanString(invoice.id)
+  const existingRow = await db.get(
+    `SELECT status FROM payments WHERE ${whereColumn} = ?`,
+    [whereValue]
+  ).catch(() => null)
 
   await db.run(
     `UPDATE payments
@@ -1647,12 +1657,23 @@ async function updatePaymentFromInvoice(invoice, nextStatus) {
     ]
   )
 
-  const row = await db.get(`SELECT * FROM payments WHERE ${whereColumn} = ?`, [whereValue])
+  const row = await db.get(
+    `SELECT p.*, c.full_name AS contact_name, c.email AS contact_email, c.phone AS contact_phone
+     FROM payments p
+     LEFT JOIN contacts c ON c.id = p.contact_id
+     WHERE p.${whereColumn} = ?`,
+    [whereValue]
+  )
   if (row?.id) {
     dispatchProductPostWebhooksForPaymentInBackground(row.id, {
       status: nextStatus,
-      previousStatus: ''
+      previousStatus: existingRow?.status || ''
     })
+    if (cleanString(existingRow?.status).toLowerCase() !== cleanString(nextStatus).toLowerCase()) {
+      sendPaymentNotification({ ...row, status: nextStatus, previousStatus: existingRow?.status || '' }).catch((error) => {
+        logger.warn(`No se pudo enviar push de invoice Stripe ${row.id}: ${error.message}`)
+      })
+    }
   }
   if (row?.contact_id && nextStatus === 'paid') {
     updateSingleContactStats(row.contact_id).catch((error) => {

@@ -1,7 +1,32 @@
-const CACHE_NAME = 'ristak-branding-v23'
+const CACHE_NAME = 'ristak-branding-v24'
 const DEFAULT_NOTIFICATION_TITLE = 'Notificación nueva'
 const DEFAULT_NOTIFICATION_BODY = 'Tienes una notificación nueva.'
 const LATEST_NOTIFICATION_TAG = 'ristak-latest-notification'
+const APP_NAME_TEXT_PATTERN = '(?:Ristak|Ristack|Reistak|Reistack)'
+const APP_NAME_NOTIFICATION_TEXTS = new Set([
+  'ristak',
+  'ristak app',
+  'ristak chat',
+  'app ristak',
+  'de ristak',
+  'from ristak',
+  'from ristak chat',
+  'ristack',
+  'ristack app',
+  'ristack chat',
+  'de ristack',
+  'from ristack',
+  'reistak',
+  'reistak app',
+  'reistak chat',
+  'de reistak',
+  'from reistak',
+  'reistack',
+  'reistack app',
+  'reistack chat',
+  'de reistack',
+  'from reistack'
+])
 const SHELL_ASSETS = [
   '/',
   '/movil/login',
@@ -88,8 +113,8 @@ function cleanNotificationText(value, fallback = '') {
 
 function stripAppNameFromNotificationText(value, fallback = '') {
   return cleanNotificationText(value, fallback)
-    .replace(/\s+(?:from|de)\s+Ristak(?:\s+Chat)?$/i, '')
-    .replace(/^Ristak(?:\s+Chat)?\s*[:\-–]\s*/i, '')
+    .replace(new RegExp(`\\s+(?:from|de)\\s+${APP_NAME_TEXT_PATTERN}(?:\\s+(?:Chat|App))?$`, 'i'), '')
+    .replace(new RegExp(`^${APP_NAME_TEXT_PATTERN}(?:\\s+(?:Chat|App))?\\s*[:\\-–]\\s*`, 'i'), '')
     .trim()
 }
 
@@ -101,11 +126,11 @@ function isAppNameNotificationText(value) {
     .trim()
     .toLowerCase()
 
-  return text === 'ristak' || text === 'ristak chat' || text === 'from ristak' || text === 'from ristak chat'
+  return APP_NAME_NOTIFICATION_TEXTS.has(text)
 }
 
 function getNotificationTitle(payload) {
-  const fallback = payload?.category === 'chat' ? 'WhatsApp' : DEFAULT_NOTIFICATION_TITLE
+  const fallback = payload?.category === 'chat' ? 'Mensaje nuevo' : DEFAULT_NOTIFICATION_TITLE
   const title = stripAppNameFromNotificationText(payload?.title, fallback)
   return title && !isAppNameNotificationText(title) ? title : fallback
 }

@@ -2130,6 +2130,7 @@ export const recordPayment = async (req, res) => {
         id: savedPayment?.id || invoiceId,
         amount: amount || savedPayment?.amount,
         currency: currency || savedPayment?.currency || 'MXN',
+        status: 'paid',
         contactId: savedPayment?.contact_id,
         contactName: savedPayment?.contact_name || 'Cliente'
       }).catch((pushError) => {

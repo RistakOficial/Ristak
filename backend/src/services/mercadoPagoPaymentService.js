@@ -14,6 +14,7 @@ import {
 import { calculatePaymentTax, getPaymentGatewayMode, getPublicPaymentSettings } from './paymentSettingsService.js'
 import { registerGigstackPaymentForTransactionInBackground } from './gigstackInvoiceService.js'
 import { dispatchProductPostWebhooksForPaymentInBackground } from './productPostWebhookService.js'
+import { sendPaymentNotification } from './pushNotificationsService.js'
 // (PAY2-003) Encolar el comprobante automático tras un pago de Mercado Pago (igual que Conekta).
 import { queuePaymentAutomationMessage } from './paymentAutomationsService.js'
 import { buildMetaPublicPurchasePixelEvent } from './metaConversionEventsService.js'
@@ -2903,6 +2904,11 @@ async function updatePaymentFromMercadoPagoPayment(mpPayment) {
       status: persistedStatus,
       previousStatus: row.status || ''
     })
+    if (cleanString(row.status).toLowerCase() !== cleanString(persistedStatus).toLowerCase()) {
+      sendPaymentNotification({ ...updated, status: persistedStatus, previousStatus: row.status || '' }).catch((error) => {
+        logger.warn(`No se pudo enviar push de pago Mercado Pago ${updated.id}: ${error.message}`)
+      })
+    }
   }
   if (updated?.contact_id && nextStatus === 'paid') {
     registerGigstackPaymentForTransactionInBackground(updated.id)

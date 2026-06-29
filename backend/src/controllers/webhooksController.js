@@ -37,6 +37,7 @@ import {
   completeConversationalAgentSalePaymentFromInvoice
 } from '../services/conversationalAgentService.js';
 import { dispatchProductPostWebhooksForPaymentInBackground } from '../services/productPostWebhookService.js';
+import { sendAppointmentStatusNotification, sendPaymentNotification } from '../services/pushNotificationsService.js';
 
 function firstValue(...values) {
   return values.find(value => value !== undefined && value !== null && value !== '');
@@ -1222,6 +1223,29 @@ export const handlePaymentWebhook = async (req, res) => {
         status,
         previousStatus: previousPaymentStatus
       });
+      if (String(previousPaymentStatus || '').toLowerCase() !== String(status || '').toLowerCase()) {
+        const notificationPayment = await db.get(
+          `SELECT p.*, c.full_name AS contact_name, c.email AS contact_email, c.phone AS contact_phone
+           FROM payments p
+           LEFT JOIN contacts c ON c.id = p.contact_id
+           WHERE p.id = ?`,
+          [processedPaymentId]
+        ).catch(() => null);
+        sendPaymentNotification({
+          ...(notificationPayment || {}),
+          id: processedPaymentId,
+          contactId,
+          contactName: notificationPayment?.contact_name || '',
+          amount,
+          currency,
+          status,
+          title,
+          description,
+          previousStatus: previousPaymentStatus
+        }).catch((pushError) => {
+          logger.warn(`No se pudo enviar aviso de pago ${processedPaymentId}: ${pushError.message}`);
+        });
+      }
     }
 
     // Actualizar estadísticas del contacto
@@ -1509,6 +1533,10 @@ export const handleAppointmentWebhook = async (req, res) => {
     const endTime = normalizeToUtcIso(calendar.endTime || data.endTime || data.end_time, accountZone);
     const dateAdded = normalizeToUtcIso(calendar.date_created || data.dateAdded || data.date_added || new Date().toISOString(), accountZone);
     const dateUpdated = normalizeToUtcIso(calendar.last_updated || data.dateUpdated || data.date_updated || new Date().toISOString(), accountZone);
+    const existingAppointment = await db.get(
+      'SELECT id, calendar_id, contact_id, title, status, appointment_status, start_time FROM appointments WHERE id = ?',
+      [appointmentId]
+    ).catch(() => null);
 
     await db.run(query, [
       appointmentId,
@@ -1539,10 +1567,21 @@ export const handleAppointmentWebhook = async (req, res) => {
 
     const appointmentStatus = calendar.appoinmentStatus || calendar.appointmentStatus || data.appointment_status || calendar.status || data.status;
     const appointmentStatusNormalized = String(appointmentStatus || '').toLowerCase();
+    const previousStatusNormalized = String(existingAppointment?.appointment_status || existingAppointment?.status || '').toLowerCase();
+    const previousStartMs = new Date(existingAppointment?.start_time).getTime();
+    const nextStartMs = new Date(startTime).getTime();
+    const appointmentStartChanged = Boolean(existingAppointment?.id) &&
+      Number.isFinite(previousStartMs) &&
+      Number.isFinite(nextStartMs) &&
+      previousStartMs !== nextStartMs;
     const isCancelledAppointment = appointmentStatusNormalized.includes('cancel') ||
       appointmentStatusNormalized.includes('no-show') ||
       appointmentStatusNormalized.includes('noshow') ||
       appointmentStatusNormalized.includes('deleted');
+    const wasCancelledAppointment = previousStatusNormalized.includes('cancel') ||
+      previousStatusNormalized.includes('no-show') ||
+      previousStatusNormalized.includes('noshow') ||
+      previousStatusNormalized.includes('deleted');
 
     if (contactId && !isCancelledAppointment) {
       await triggerWhatsappAppointmentBookedEvent(contactId, { calendarId: appointmentCalendarId });
@@ -1561,6 +1600,35 @@ export const handleAppointmentWebhook = async (req, res) => {
           engine.handleAutomationEvent('appointment-status', { contactId, calendarId: appointmentCalendarId, status: statusEvent }).catch(() => {});
         })
         .catch(() => {});
+    }
+
+    if (existingAppointment?.id && contactId && appointmentCalendarId) {
+      const notificationAppointment = {
+        id: appointmentId,
+        calendarId: appointmentCalendarId,
+        contactId,
+        title: calendar.title || data.title || existingAppointment.title || calendar.calendarName,
+        appointmentStatus,
+        startTime,
+        contactName: data.contactName || data.fullName || data.full_name || ''
+      };
+      if (isCancelledAppointment && !wasCancelledAppointment) {
+        sendAppointmentStatusNotification(notificationAppointment, {
+          calendarId: appointmentCalendarId,
+          eventType: 'cancelled',
+          source: 'appointment_webhook'
+        }).catch(error => {
+          logger.warn(`[Webhook] No se pudo enviar push de cita cancelada: ${error.message}`);
+        });
+      } else if (!isCancelledAppointment && appointmentStartChanged) {
+        sendAppointmentStatusNotification(notificationAppointment, {
+          calendarId: appointmentCalendarId,
+          eventType: 'rescheduled',
+          source: 'appointment_webhook'
+        }).catch(error => {
+          logger.warn(`[Webhook] No se pudo enviar push de cita reprogramada: ${error.message}`);
+        });
+      }
     }
 
     logger.info(`✅ Cita ${appointmentId} procesada exitosamente para contacto ${contactId}`);
@@ -1770,7 +1838,13 @@ export const handleRefundWebhook = async (req, res) => {
     }
 
     // Obtener el pago completo antes de actualizarlo para mandar contexto real a automatizaciones.
-    const payment = await db.get('SELECT * FROM payments WHERE id = ?', [refundId]);
+    const payment = await db.get(
+      `SELECT p.*, c.full_name AS contact_name, c.email AS contact_email, c.phone AS contact_phone
+       FROM payments p
+       LEFT JOIN contacts c ON c.id = p.contact_id
+       WHERE p.id = ?`,
+      [refundId]
+    );
 
     if (!payment) {
       logger.warn(`Pago ${refundId} no encontrado para reembolso`);
@@ -1786,6 +1860,11 @@ export const handleRefundWebhook = async (req, res) => {
       status: 'refunded',
       previousStatus: payment.status || ''
     });
+    if (String(payment.status || '').toLowerCase() !== 'refunded') {
+      sendPaymentNotification({ ...payment, status: 'refunded', previousStatus: payment.status || '' }).catch((pushError) => {
+        logger.warn(`No se pudo enviar aviso de reembolso ${refundId}: ${pushError.message}`);
+      });
+    }
 
     // Recalcular estadísticas del contacto
     if (payment.contact_id) {
@@ -1955,6 +2034,10 @@ export const handleInvoiceWebhook = async (req, res) => {
       }
 
       values.push(invoiceId);
+      const previousPayment = await db.get(
+        'SELECT status FROM payments WHERE ghl_invoice_id = ? LIMIT 1',
+        [invoiceId]
+      ).catch(() => null);
 
       await db.run(
         `UPDATE payments SET ${setFields.join(', ')} WHERE ghl_invoice_id = ?`,
@@ -1964,20 +2047,28 @@ export const handleInvoiceWebhook = async (req, res) => {
       logger.success(`Estado actualizado a '${newStatus}' para invoice: ${invoiceId}`);
 
       const payment = await db.get(
-        `SELECT id, contact_id, amount, currency, status, payment_method, payment_mode,
-                payment_provider, reference, title, description, public_payment_id, payment_url,
-                stripe_payment_intent_id, stripe_charge_id, mercadopago_payment_id,
-                mercadopago_preference_id, conekta_order_id, conekta_charge_id,
-                conekta_payment_source_id, paid_at, due_date, sent_at, metadata_json,
-                date, created_at, updated_at, ghl_invoice_id, invoice_number
-         FROM payments
-         WHERE ghl_invoice_id = ?`,
+        `SELECT p.id, p.contact_id, p.amount, p.currency, p.status, p.payment_method, p.payment_mode,
+                p.payment_provider, p.reference, p.title, p.description, p.public_payment_id, p.payment_url,
+                p.stripe_payment_intent_id, p.stripe_charge_id, p.mercadopago_payment_id,
+                p.mercadopago_preference_id, p.conekta_order_id, p.conekta_charge_id,
+                p.conekta_payment_source_id, p.paid_at, p.due_date, p.sent_at, p.metadata_json,
+                p.date, p.created_at, p.updated_at, p.ghl_invoice_id, p.invoice_number,
+                c.full_name AS contact_name, c.email AS contact_email, c.phone AS contact_phone
+         FROM payments p
+         LEFT JOIN contacts c ON c.id = p.contact_id
+         WHERE p.ghl_invoice_id = ?`,
         [invoiceId]
       );
       if (payment?.id) {
         dispatchProductPostWebhooksForPaymentInBackground(payment.id, {
-          status: newStatus
+          status: newStatus,
+          previousStatus: previousPayment?.status || ''
         });
+        if (String(previousPayment?.status || '').toLowerCase() !== String(newStatus || '').toLowerCase()) {
+          sendPaymentNotification({ ...payment, status: newStatus, previousStatus: previousPayment?.status || '' }).catch((pushError) => {
+            logger.warn(`No se pudo enviar aviso de invoice ${invoiceId}: ${pushError.message}`);
+          });
+        }
       }
 
       // Si fue pagado, actualizar estadísticas del contacto

@@ -1358,6 +1358,9 @@ export const updateTransaction = async (req, res) => {
         status: finalStatus,
         previousStatus: transaction.status || ''
       })
+      sendPaymentNotification({ ...updatedTransaction, status: finalStatus, previousStatus: transaction.status || '' }).catch((pushError) => {
+        logger.warn(`No se pudo enviar aviso de pago ${id}: ${pushError.message}`)
+      })
     }
 
     logger.success(`Transacción actualizada: ${id}`)
@@ -1417,6 +1420,10 @@ export const deleteTransaction = async (req, res) => {
       dispatchProductPostWebhooksForPaymentInBackground(id, {
         status: archiveStatus,
         previousStatus: transaction.status || ''
+      })
+      const notificationPayment = await getTransactionByIdForResponse(id, getRequestBaseUrl(req)) || transaction
+      sendPaymentNotification({ ...notificationPayment, status: archiveStatus, previousStatus: transaction.status || '' }).catch((pushError) => {
+        logger.warn(`No se pudo enviar aviso de pago ${id}: ${pushError.message}`)
       })
       if (isStripeBackedTransaction(transaction)) {
         await syncStripePaymentPlanFromLocalPayment(id)
@@ -1495,6 +1502,10 @@ export const refundTransaction = async (req, res) => {
       status: 'refunded',
       previousStatus: transaction.status || ''
     })
+    const notificationPayment = await getTransactionByIdForResponse(id, getRequestBaseUrl(req)) || transaction
+    sendPaymentNotification({ ...notificationPayment, status: 'refunded', previousStatus: transaction.status || '' }).catch((pushError) => {
+      logger.warn(`No se pudo enviar aviso de pago ${id}: ${pushError.message}`)
+    })
 
     if (transaction.contact_id) {
       await updateSingleContactStats(transaction.contact_id)
@@ -1564,6 +1575,10 @@ export const voidTransaction = async (req, res) => {
     dispatchProductPostWebhooksForPaymentInBackground(id, {
       status: 'void',
       previousStatus: transaction.status || ''
+    })
+    const notificationPayment = await getTransactionByIdForResponse(id, getRequestBaseUrl(req)) || transaction
+    sendPaymentNotification({ ...notificationPayment, status: 'void', previousStatus: transaction.status || '' }).catch((pushError) => {
+      logger.warn(`No se pudo enviar aviso de pago ${id}: ${pushError.message}`)
     })
     if (isStripeBackedTransaction(transaction)) {
       await syncStripePaymentPlanFromLocalPayment(id)

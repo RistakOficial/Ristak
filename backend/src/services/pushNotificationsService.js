@@ -110,6 +110,75 @@ const CENTRAL_MOBILE_PUSH_STATUS_TTL_MS = 60_000
 let fcmAccessTokenCache = { token: '', expiresAt: 0 }
 let apnsJwtCache = { token: '', expiresAt: 0 }
 let centralMobilePushStatusCache = { status: null, expiresAt: 0 }
+const APP_NAME_TEXT_PATTERN = '(?:Ristak|Ristack|Reistak|Reistack)'
+const APP_NAME_NOTIFICATION_TEXTS = new Set([
+  'ristak',
+  'ristak app',
+  'ristak chat',
+  'app ristak',
+  'de ristak',
+  'from ristak',
+  'from ristak chat',
+  'ristack',
+  'ristack app',
+  'ristack chat',
+  'de ristack',
+  'from ristack',
+  'reistak',
+  'reistak app',
+  'reistak chat',
+  'de reistak',
+  'from reistak',
+  'reistack',
+  'reistack app',
+  'reistack chat',
+  'de reistack',
+  'from reistack'
+])
+const PAYMENT_STATUS_TITLES = {
+  paid: 'Pago recibido',
+  succeeded: 'Pago recibido',
+  completed: 'Pago recibido',
+  complete: 'Pago recibido',
+  fulfilled: 'Pago recibido',
+  success: 'Pago recibido',
+  captured: 'Pago recibido',
+  approved: 'Pago recibido',
+  accredited: 'Pago recibido',
+  failed: 'Pago rechazado',
+  failure: 'Pago rechazado',
+  error: 'Pago rechazado',
+  declined: 'Pago rechazado',
+  rejected: 'Pago rechazado',
+  requires_action: 'Pago requiere atención',
+  pending: 'Pago pendiente',
+  processing: 'Pago pendiente',
+  in_process: 'Pago pendiente',
+  partial: 'Pago parcial',
+  overdue: 'Pago vencido',
+  refunded: 'Pago reembolsado',
+  refund: 'Pago reembolsado',
+  partially_refunded: 'Pago reembolsado',
+  void: 'Pago cancelado',
+  voided: 'Pago cancelado',
+  cancelled: 'Pago cancelado',
+  canceled: 'Pago cancelado',
+  deleted: 'Pago cancelado',
+  scheduled: 'Pago programado',
+  sent: 'Pago enviado',
+  draft: 'Pago creado'
+}
+const APPOINTMENT_STATUS_TITLES = {
+  booked: 'Cita agendada',
+  scheduled: 'Cita agendada',
+  created: 'Cita agendada',
+  confirmed: 'Cita confirmada',
+  rescheduled: 'Cita reprogramada',
+  cancelled: 'Cita cancelada',
+  canceled: 'Cita cancelada',
+  no_show: 'Cita sin asistencia',
+  noshow: 'Cita sin asistencia'
+}
 
 if (pushConfigured) {
   webPush.setVapidDetails(VAPID_SUBJECT, VAPID_PUBLIC_KEY, VAPID_PRIVATE_KEY)
@@ -389,8 +458,8 @@ function cleanNotificationText(value = '') {
 
 function stripAppNameFromNotificationText(value = '') {
   return cleanNotificationText(value)
-    .replace(/\s+(?:from|de)\s+Ristak(?:\s+Chat)?$/i, '')
-    .replace(/^Ristak(?:\s+Chat)?\s*[:\-–]\s*/i, '')
+    .replace(new RegExp(`\\s+(?:from|de)\\s+${APP_NAME_TEXT_PATTERN}(?:\\s+(?:Chat|App))?$`, 'i'), '')
+    .replace(new RegExp(`^${APP_NAME_TEXT_PATTERN}(?:\\s+(?:Chat|App))?\\s*[:\\-–]\\s*`, 'i'), '')
     .trim()
 }
 
@@ -402,12 +471,13 @@ function isAppNameNotificationText(value = '') {
     .trim()
     .toLowerCase()
 
-  return text === 'ristak' || text === 'ristak chat' || text === 'from ristak' || text === 'from ristak chat'
+  return APP_NAME_NOTIFICATION_TEXTS.has(text)
 }
 
 function getNotificationTitle(payload = {}) {
+  const fallback = payload.category === 'chat' ? 'Mensaje nuevo' : DEFAULT_NOTIFICATION_TITLE
   const title = stripAppNameFromNotificationText(payload.title)
-  return title && !isAppNameNotificationText(title) ? title : DEFAULT_NOTIFICATION_TITLE
+  return title && !isAppNameNotificationText(title) ? title : fallback
 }
 
 function getNotificationBody(payload = {}) {
@@ -415,7 +485,7 @@ function getNotificationBody(payload = {}) {
   return body && !isAppNameNotificationText(body) ? body : DEFAULT_NOTIFICATION_BODY
 }
 
-function normalizeNotificationPayload(payload = {}) {
+export function normalizeNotificationPayload(payload = {}) {
   return {
     ...payload,
     title: getNotificationTitle(payload),
@@ -439,7 +509,7 @@ function getChatSenderName(message = {}) {
     }
   }
 
-  return 'WhatsApp'
+  return 'Mensaje nuevo'
 }
 
 function getChatMessageBody(message = {}) {
@@ -569,18 +639,130 @@ function formatAppointmentTime(value) {
 }
 
 function formatPaymentAmount(amount, currency = 'MXN') {
+  if (amount === undefined || amount === null || amount === '') return ''
   const value = Number(amount)
-  const safeAmount = Number.isFinite(value) ? value : 0
+  if (!Number.isFinite(value)) return ''
 
   try {
     return new Intl.NumberFormat('es-MX', {
       style: 'currency',
       currency: String(currency || 'MXN').toUpperCase(),
       maximumFractionDigits: 2
-    }).format(safeAmount)
+    }).format(value)
   } catch {
-    return `$${safeAmount.toFixed(2)}`
+    return `$${value.toFixed(2)}`
   }
+}
+
+function normalizePaymentStatus(value = '') {
+  const status = cleanNotificationText(value).toLowerCase().replace(/[\s-]+/g, '_')
+  if (status === 'succeeded') return 'paid'
+  if (status === 'canceled') return 'cancelled'
+  return status
+}
+
+function getPaymentNotificationTitle(payment = {}) {
+  const status = normalizePaymentStatus(payment.paymentStatus || payment.payment_status || payment.status || 'paid')
+  return PAYMENT_STATUS_TITLES[status] || 'Pago actualizado'
+}
+
+function getPaymentContactLabel(payment = {}) {
+  const contact = cleanNotificationText(
+    payment.contactName ||
+    payment.contact_name ||
+    payment.customerName ||
+    payment.customer_name ||
+    payment.clientName ||
+    payment.client_name ||
+    ''
+  )
+  return contact && !isAppNameNotificationText(contact) ? contact.slice(0, 90) : 'Cliente'
+}
+
+function getPaymentConceptLabel(payment = {}) {
+  const concept = cleanNotificationText(
+    payment.title ||
+    payment.description ||
+    payment.concept ||
+    payment.productName ||
+    payment.product_name ||
+    payment.name ||
+    ''
+  )
+  if (!concept || /^pago(?:\s+(?:registrado|recibido|manual|programado))?$/i.test(concept)) return ''
+  return concept.slice(0, 90)
+}
+
+function getPaymentDetailLabel(payment = {}) {
+  const detail = cleanNotificationText(
+    payment.failureReason ||
+    payment.failure_reason ||
+    payment.errorMessage ||
+    payment.error_message ||
+    payment.reason ||
+    ''
+  )
+  return detail.slice(0, 110)
+}
+
+function getPaymentNotificationBody(payment = {}) {
+  const parts = [
+    getPaymentContactLabel(payment),
+    formatPaymentAmount(payment.amount, payment.currency),
+    getPaymentConceptLabel(payment),
+    getPaymentDetailLabel(payment)
+  ].filter(Boolean)
+  return (parts.join(' · ') || 'Revisa el detalle del pago.').slice(0, 220)
+}
+
+function normalizeAppointmentEventType(value = '') {
+  const eventType = cleanNotificationText(value).toLowerCase().replace(/[\s-]+/g, '_')
+  if (eventType === 'appointment_booked' || eventType === 'booked') return 'booked'
+  if (eventType === 'appointment_scheduled' || eventType === 'scheduled') return 'scheduled'
+  if (eventType === 'appointment_created' || eventType === 'created') return 'created'
+  if (eventType === 'appointment_confirmed' || eventType === 'confirmed') return 'confirmed'
+  if (eventType === 'appointment_rescheduled' || eventType === 'rescheduled') return 'rescheduled'
+  if (eventType === 'appointment_cancelled' || eventType === 'cancelled' || eventType === 'appointment_canceled' || eventType === 'canceled') return 'cancelled'
+  return eventType || 'booked'
+}
+
+function getAppointmentNotificationTitle(eventType = 'booked') {
+  return APPOINTMENT_STATUS_TITLES[normalizeAppointmentEventType(eventType)] || 'Cita actualizada'
+}
+
+function getAppointmentEventKey(eventType = 'booked') {
+  const normalized = normalizeAppointmentEventType(eventType)
+  if (normalized === 'booked' || normalized === 'scheduled' || normalized === 'created') return 'appointment_booked'
+  if (normalized === 'confirmed') return 'appointment_confirmed'
+  return `appointment_${normalized}`
+}
+
+function getAppointmentNotificationBody(appointment = {}, options = {}, { contactName = '', detail = '' } = {}) {
+  const appointmentTitle = cleanNotificationText(
+    options.appointmentTitle ||
+    appointment.title ||
+    appointment.name ||
+    ''
+  )
+  const calendarName = cleanNotificationText(
+    options.calendarName ||
+    appointment.calendarName ||
+    appointment.calendar_name ||
+    ''
+  )
+  const timeLabel = formatAppointmentTime(
+    options.startTime ||
+    appointment.startTime ||
+    appointment.start_time
+  )
+  const parts = [
+    contactName,
+    appointmentTitle && !/^nueva cita$/i.test(appointmentTitle) ? appointmentTitle : '',
+    timeLabel,
+    calendarName,
+    cleanNotificationText(detail)
+  ].filter(Boolean)
+  return (parts.join(' · ') || 'Revisa los detalles de la cita.').slice(0, 220)
 }
 
 function getAndroidChannelId({ soundEnabled = true, vibrationEnabled = true } = {}) {
@@ -1095,8 +1277,9 @@ async function filterRowsByUserPreference(rows, { enabledKey = '', calendarId = 
 // (MOB-006) enabledKey: clave on/off del evento para resolver la preferencia POR
 // usuario destinatario (con fallback al global). Si se omite, no se filtra por usuario.
 export async function sendAppNotificationPayload(payload = {}, { calendarId = '', userIds = null, enabledKey = '' } = {}) {
+  const normalizedPayload = normalizeNotificationPayload(payload)
   if (appNotificationPayloadSenderForTest) {
-    return appNotificationPayloadSenderForTest(payload, { calendarId, userIds, enabledKey })
+    return appNotificationPayloadSenderForTest(normalizedPayload, { calendarId, userIds, enabledKey })
   }
 
   const transport = await getEffectivePushTransportStatus()
@@ -1110,7 +1293,6 @@ export async function sendAppNotificationPayload(payload = {}, { calendarId = ''
     return { sent: 0, webSent: 0, nativeSent: 0, skipped: true, reason: 'missing_recipients' }
   }
 
-  const normalizedPayload = normalizeNotificationPayload(payload)
   const [webRows, nativeRows] = await Promise.all([
     pushConfigured
       ? (calendarId ? getSubscriptionsForCalendar(calendarId) : getEnabledSubscriptions())
@@ -1176,20 +1358,16 @@ export async function sendCalendarAppointmentNotification(appointment = {}, opti
   }
 
   const contactName = await getAppointmentContactName(appointment, options)
-  const appointmentTitle = String(appointment.title || appointment.name || 'Nueva cita').trim()
-  const calendarName = String(options.calendarName || appointment.calendarName || 'Calendario').trim()
-  const timeLabel = formatAppointmentTime(appointment.startTime || appointment.start_time)
-  const body = timeLabel
-    ? `${appointmentTitle} · ${timeLabel}`
-    : appointmentTitle
+  const eventType = normalizeAppointmentEventType(options.eventType || 'booked')
+  const eventKey = getAppointmentEventKey(eventType)
   const payload = {
-    title: contactName || 'Nueva cita',
-    body: `${calendarName}: ${body}`,
+    title: getAppointmentNotificationTitle(eventType),
+    body: getAppointmentNotificationBody(appointment, options, { contactName }),
     tag: `calendar-${calendarId}`,
     threadId: `calendar-${calendarId}`,
     url: `/movil/calendar?open=appointment&id=${encodeURIComponent(appointment.id || '')}`,
-    category: 'appointment_booked',
-    eventKey: 'appointment_booked',
+    category: eventKey,
+    eventKey,
     contactId: appointment.contactId || appointment.contact_id || ''
   }
 
@@ -1197,6 +1375,50 @@ export async function sendCalendarAppointmentNotification(appointment = {}, opti
   return sendAppNotificationPayload(payload, getPushPreferenceOptions(preferenceTarget, {
     calendarId,
     enabledKey: 'calendar_push_notifications_enabled'
+  }))
+}
+
+export async function sendAppointmentStatusNotification(appointment = {}, options = {}) {
+  if (!(await hasAnyPushTransport())) return { sent: 0, skipped: true, reason: 'not_configured' }
+
+  const eventType = normalizeAppointmentEventType(options.eventType || options.status || appointment.appointmentStatus || appointment.appointment_status || appointment.status || 'booked')
+  const calendarId = String(options.calendarId || appointment.calendarId || appointment.calendar_id || '').trim()
+  if (!calendarId) return { sent: 0, skipped: true, reason: 'missing_calendar' }
+
+  const config = await getGlobalCalendarPushConfig()
+  if (config.calendarIds.length > 0 && !config.calendarIds.includes(calendarId)) {
+    return { sent: 0, skipped: true, reason: 'calendar_filtered' }
+  }
+
+  const preferenceEvent = eventType === 'confirmed' ? 'appointment_confirmed' : 'appointment_booked'
+  const enabledKey = eventType === 'confirmed'
+    ? 'appointment_confirmation_push_notifications_enabled'
+    : 'calendar_push_notifications_enabled'
+  const preferenceTarget = await getPushPreferenceTarget(preferenceEvent)
+  if (isPushPreferenceDisabled(preferenceTarget)) {
+    return { sent: 0, skipped: true, reason: 'disabled_by_preferences' }
+  }
+
+  const contactName = await getAppointmentContactName(appointment, options)
+  const eventKey = getAppointmentEventKey(eventType)
+  const appointmentId = String(options.appointmentId || appointment.id || '').trim()
+  const payload = {
+    title: getAppointmentNotificationTitle(eventType),
+    body: getAppointmentNotificationBody(appointment, options, {
+      contactName,
+      detail: options.resultDetail || options.detail || ''
+    }),
+    tag: `appointment-${eventType}-${appointmentId || calendarId}`,
+    threadId: `calendar-${calendarId}`,
+    url: `/movil/calendar?open=appointment&id=${encodeURIComponent(appointmentId)}`,
+    category: eventKey,
+    eventKey,
+    contactId: appointment.contactId || appointment.contact_id || options.contactId || ''
+  }
+
+  return sendAppNotificationPayload(payload, getPushPreferenceOptions(preferenceTarget, {
+    calendarId,
+    enabledKey
   }))
 }
 
@@ -1239,17 +1461,12 @@ export async function sendAppointmentConfirmationNotification(appointment = {}, 
   }
 
   const contactName = await getAppointmentContactName(appointment, options)
-  const appointmentTitle = cleanNotificationText(options.appointmentTitle || appointment.title || appointment.name || 'cita')
-  const timeLabel = formatAppointmentTime(options.startTime || appointment.startTime || appointment.start_time)
-  const detail = cleanNotificationText(options.resultDetail || '')
-  const bodyParts = [
-    `Confirmó ${appointmentTitle}`,
-    timeLabel,
-    detail
-  ].filter(Boolean)
   const payload = {
-    title: contactName || 'Cita confirmada',
-    body: bodyParts.join(' · ').slice(0, 220),
+    title: getAppointmentNotificationTitle('confirmed'),
+    body: getAppointmentNotificationBody(appointment, options, {
+      contactName,
+      detail: options.resultDetail || ''
+    }),
     tag: `appointment-confirmed-${appointmentId}`,
     threadId: calendarId ? `calendar-${calendarId}` : `appointment-${appointmentId}`,
     url: `/movil/calendar?open=appointment&id=${encodeURIComponent(appointmentId)}`,
@@ -1357,6 +1574,20 @@ export async function sendConversationalAgentPriorityNotification(signal = {}) {
   }))
 }
 
+export function buildPaymentNotificationPayload(payment = {}) {
+  const amountLabel = formatPaymentAmount(payment.amount, payment.currency)
+  return {
+    title: getPaymentNotificationTitle(payment),
+    body: getPaymentNotificationBody(payment) || amountLabel || 'Revisa el detalle del pago.',
+    tag: `payment-${payment.id || payment.contactId || 'ristak'}`,
+    threadId: payment.contactId || payment.contact_id ? `payment-${payment.contactId || payment.contact_id}` : 'payments',
+    url: '/movil/transactions',
+    category: 'payment',
+    eventKey: 'payments',
+    contactId: payment.contactId || payment.contact_id || ''
+  }
+}
+
 export async function sendPaymentNotification(payment = {}) {
   if (!(await hasAnyPushTransport())) return { sent: 0, skipped: true, reason: 'not_configured' }
 
@@ -1366,18 +1597,7 @@ export async function sendPaymentNotification(payment = {}) {
     return { sent: 0, skipped: true, reason: 'disabled_by_preferences' }
   }
 
-  const amountLabel = formatPaymentAmount(payment.amount, payment.currency)
-  const contactLabel = String(payment.contactName || payment.contact_name || 'Cliente').trim()
-  const payload = {
-    title: 'Pago registrado',
-    body: `${contactLabel}: ${amountLabel}`,
-    tag: `payment-${payment.id || payment.contactId || 'ristak'}`,
-    threadId: payment.contactId || payment.contact_id ? `payment-${payment.contactId || payment.contact_id}` : 'payments',
-    url: '/movil/transactions',
-    category: 'payment',
-    eventKey: 'payments',
-    contactId: payment.contactId || payment.contact_id || ''
-  }
+  const payload = buildPaymentNotificationPayload(payment)
 
   // (MOB-006) enabledKey => on/off de pagos por usuario destinatario (fallback global).
   return sendAppNotificationPayload(payload, getPushPreferenceOptions(preferenceTarget, {

@@ -9,6 +9,7 @@ import { calculatePaymentTax, getPaymentGatewayMode, getPublicPaymentSettings } 
 import { queuePaymentAutomationMessage } from './paymentAutomationsService.js'
 import { registerGigstackPaymentForTransactionInBackground } from './gigstackInvoiceService.js'
 import { dispatchProductPostWebhooksForPaymentInBackground } from './productPostWebhookService.js'
+import { sendPaymentNotification } from './pushNotificationsService.js'
 import { getPaymentPlanAuditSummary, hardDeleteTestPaymentPlan } from './paymentRecordSafetyService.js'
 import { buildMetaPublicPurchasePixelEvent } from './metaConversionEventsService.js'
 import { createPublicPaymentId, createRistakPaymentEntityId } from '../utils/idGenerator.js'
@@ -1877,6 +1878,11 @@ async function updatePaymentFromOrder(order, row, { paymentSourceId = '' } = {})
       status: nextStatus,
       previousStatus: row.status || ''
     })
+    if (cleanString(row.status).toLowerCase() !== cleanString(nextStatus).toLowerCase()) {
+      sendPaymentNotification({ ...updated, status: nextStatus, previousStatus: row.status || '' }).catch((error) => {
+        logger.warn(`No se pudo enviar push de pago Conekta ${updated.id}: ${error.message}`)
+      })
+    }
   }
   if (updated?.contact_id && nextStatus === 'paid') {
     updateSingleContactStats(updated.contact_id).catch((error) => {
