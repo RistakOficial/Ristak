@@ -11,6 +11,8 @@ const DEFAULT_PRODUCT_TYPE = 'DIGITAL'
 const DEFAULT_PRICE_TYPE = 'one_time'
 const PRODUCT_PAGE_LIMIT = 100
 const PRICE_MATCH_TOLERANCE = 0.01
+const MAX_PRODUCT_POST_WEBHOOKS = 10
+const MAX_PRODUCT_WEBHOOK_HEADERS = 20
 
 function makeId(prefix) {
   return `${prefix}_${randomUUID()}`
@@ -59,6 +61,71 @@ function jsonOrNull(value) {
   } catch {
     return null
   }
+}
+
+function normalizeWebhookUrl(value) {
+  const url = cleanString(value).slice(0, 2048)
+  if (!url) return ''
+
+  try {
+    const parsed = new URL(url)
+    if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') return ''
+    return parsed.toString()
+  } catch {
+    return ''
+  }
+}
+
+function normalizeWebhookHeaders(value) {
+  const parsed = parseJson(value, value)
+  const source = parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : {}
+  const headers = {}
+
+  for (const [rawKey, rawValue] of Object.entries(source)) {
+    if (Object.keys(headers).length >= MAX_PRODUCT_WEBHOOK_HEADERS) break
+
+    const key = cleanString(rawKey).replace(/[\r\n:]/g, '').slice(0, 120)
+    const headerValue = cleanString(rawValue).replace(/[\r\n]/g, ' ').slice(0, 2000)
+    if (!key || !headerValue) continue
+    headers[key] = headerValue
+  }
+
+  return headers
+}
+
+function normalizePostWebhookConfig(value) {
+  const parsed = parseJson(value, value)
+  const list = Array.isArray(parsed)
+    ? parsed
+    : Array.isArray(parsed?.postWebhooks)
+      ? parsed.postWebhooks
+      : []
+
+  return list
+    .slice(0, MAX_PRODUCT_POST_WEBHOOKS)
+    .map((entry, index) => {
+      const webhook = entry && typeof entry === 'object' ? entry : { url: entry }
+      const url = normalizeWebhookUrl(webhook.url || webhook.endpoint || webhook.postUrl || webhook.post_url)
+      if (!url) return null
+
+      const headers = normalizeWebhookHeaders(webhook.headers || webhook.customHeaders || webhook.custom_headers)
+      const authorization = cleanString(
+        webhook.authorization ||
+        webhook.auth ||
+        webhook.password ||
+        webhook.secret ||
+        ''
+      ).replace(/[\r\n]/g, ' ').slice(0, 2000)
+
+      return {
+        id: cleanString(webhook.id).replace(/[^a-zA-Z0-9_-]/g, '').slice(0, 80) || `webhook_${index + 1}`,
+        url,
+        enabled: webhook.enabled === false ? false : true,
+        ...(authorization ? { authorization } : {}),
+        ...(Object.keys(headers).length ? { headers } : {})
+      }
+    })
+    .filter(Boolean)
 }
 
 function extractArrayPayload(response, keys = []) {
@@ -223,6 +290,7 @@ function normalizeProductRecord(raw = {}, options = {}) {
     gigstackProductKey: normalizeGigstackProductKey(readEditableField(product, 'gigstackProductKey', 'gigstack_product_key')),
     gigstackUnitKey: normalizeGigstackUnitKey(readEditableField(product, 'gigstackUnitKey', 'gigstack_unit_key')),
     gigstackUnitName: cleanString(readEditableField(product, 'gigstackUnitName', 'gigstack_unit_name') || '').slice(0, 120),
+    postWebhooks: normalizePostWebhookConfig(readEditableField(product, 'postWebhooks', 'post_webhooks')),
     isActive: toBoolInt(product.isActive ?? product.is_active ?? product.active, true),
     source,
     syncStatus: options.syncStatus || product.syncStatus || product.sync_status || (sourceIsGhl ? 'synced' : 'pending'),
@@ -311,6 +379,7 @@ export function productRowToApi(row = {}, prices = undefined) {
     gigstackProductKey: row.gigstack_product_key || '',
     gigstackUnitKey: row.gigstack_unit_key || '',
     gigstackUnitName: row.gigstack_unit_name || '',
+    postWebhooks: normalizePostWebhookConfig(row.post_webhooks),
     isActive: row.is_active !== 0,
     source: row.source || 'ristak',
     syncStatus: row.sync_status || 'pending',
@@ -439,15 +508,18 @@ export async function upsertLocalProduct(raw = {}, options = {}) {
     if (!hasEditableField(productInput, 'gigstackUnitName', 'gigstack_unit_name')) {
       normalized.gigstackUnitName = existing.gigstack_unit_name || ''
     }
+    if (!hasEditableField(productInput, 'postWebhooks', 'post_webhooks')) {
+      normalized.postWebhooks = normalizePostWebhookConfig(existing.post_webhooks)
+    }
   }
 
   await db.run(`
     INSERT INTO products (
       id, ghl_product_id, location_id, name, description, product_type,
       image, available_in_store, currency, gigstack_product_key, gigstack_unit_key,
-      gigstack_unit_name, is_active, source, sync_status,
+      gigstack_unit_name, post_webhooks, is_active, source, sync_status,
       sync_origin, sync_error, raw_json, last_synced_at, updated_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CASE WHEN ? = 'synced' THEN CURRENT_TIMESTAMP ELSE NULL END, CURRENT_TIMESTAMP)
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CASE WHEN ? = 'synced' THEN CURRENT_TIMESTAMP ELSE NULL END, CURRENT_TIMESTAMP)
     ON CONFLICT (id) DO UPDATE SET
       ghl_product_id = COALESCE(excluded.ghl_product_id, products.ghl_product_id),
       location_id = COALESCE(excluded.location_id, products.location_id),
@@ -460,6 +532,7 @@ export async function upsertLocalProduct(raw = {}, options = {}) {
       gigstack_product_key = excluded.gigstack_product_key,
       gigstack_unit_key = excluded.gigstack_unit_key,
       gigstack_unit_name = excluded.gigstack_unit_name,
+      post_webhooks = excluded.post_webhooks,
       is_active = excluded.is_active,
       source = COALESCE(products.source, excluded.source),
       sync_status = excluded.sync_status,
@@ -481,6 +554,7 @@ export async function upsertLocalProduct(raw = {}, options = {}) {
     normalized.gigstackProductKey,
     normalized.gigstackUnitKey,
     normalized.gigstackUnitName,
+    JSON.stringify(normalized.postWebhooks || []),
     normalized.isActive,
     normalized.source,
     normalized.syncStatus,

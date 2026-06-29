@@ -28,7 +28,16 @@ export interface ProductItem {
   gigstackProductKey?: string
   gigstackUnitKey?: string
   gigstackUnitName?: string
+  postWebhooks?: ProductPostWebhook[]
   prices?: ProductPrice[]
+}
+
+export interface ProductPostWebhook {
+  id?: string
+  url: string
+  authorization?: string
+  headers?: Record<string, string>
+  enabled?: boolean
 }
 
 export interface ProductPayload {
@@ -39,6 +48,7 @@ export interface ProductPayload {
   gigstackProductKey?: string
   gigstackUnitKey?: string
   gigstackUnitName?: string
+  postWebhooks?: ProductPostWebhook[]
   prices?: Array<{
     id?: string
     localId?: string

@@ -9,6 +9,7 @@ import { getPaymentPlanAuditSummary, hardDeleteTestPaymentPlan } from './payment
 import { calculatePaymentTax, getPaymentGatewayMode, getPaymentSettings, getPublicPaymentSettings } from './paymentSettingsService.js'
 import { queuePaymentAutomationMessage } from './paymentAutomationsService.js'
 import { registerGigstackPaymentForTransactionInBackground } from './gigstackInvoiceService.js'
+import { dispatchProductPostWebhooksForPaymentInBackground } from './productPostWebhookService.js'
 import { buildMetaPublicPurchasePixelEvent } from './metaConversionEventsService.js'
 
 const CONFIG_KEYS = {
@@ -1541,6 +1542,12 @@ async function updatePaymentFromIntent(intent, stripeContext = null) {
      WHERE p.${whereColumn} = ?`,
     [whereValue]
   )
+  if (row?.id && !ignorePendingRegression) {
+    dispatchProductPostWebhooksForPaymentInBackground(row.id, {
+      status: persistedStatus,
+      previousStatus: existingRow?.status || ''
+    })
+  }
   if (row?.contact_id && nextStatus === 'paid') {
     updateSingleContactStats(row.contact_id).catch((error) => {
       logger.warn(`No se pudieron actualizar stats del contacto por pago Stripe ${whereValue}: ${error.message}`)
@@ -1641,6 +1648,12 @@ async function updatePaymentFromInvoice(invoice, nextStatus) {
   )
 
   const row = await db.get(`SELECT * FROM payments WHERE ${whereColumn} = ?`, [whereValue])
+  if (row?.id) {
+    dispatchProductPostWebhooksForPaymentInBackground(row.id, {
+      status: nextStatus,
+      previousStatus: ''
+    })
+  }
   if (row?.contact_id && nextStatus === 'paid') {
     updateSingleContactStats(row.contact_id).catch((error) => {
       logger.warn(`No se pudieron actualizar stats del contacto por invoice Stripe ${whereValue}: ${error.message}`)

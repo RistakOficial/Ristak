@@ -2203,6 +2203,7 @@ async function initTables() {
         gigstack_product_key TEXT,
         gigstack_unit_key TEXT,
         gigstack_unit_name TEXT,
+        post_webhooks TEXT,
         is_active INTEGER DEFAULT 1,
         source TEXT DEFAULT 'ristak',
         sync_status TEXT DEFAULT 'pending',
@@ -2259,7 +2260,8 @@ async function initTables() {
     for (const [columnName, columnType] of [
       ['gigstack_product_key', 'TEXT'],
       ['gigstack_unit_key', 'TEXT'],
-      ['gigstack_unit_name', 'TEXT']
+      ['gigstack_unit_name', 'TEXT'],
+      ['post_webhooks', 'TEXT']
     ]) {
       try {
         await db.run(`ALTER TABLE products ADD COLUMN ${columnName} ${columnType}`)

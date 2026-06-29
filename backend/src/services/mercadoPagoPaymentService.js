@@ -13,6 +13,7 @@ import {
 } from './licenseService.js'
 import { calculatePaymentTax, getPaymentGatewayMode, getPublicPaymentSettings } from './paymentSettingsService.js'
 import { registerGigstackPaymentForTransactionInBackground } from './gigstackInvoiceService.js'
+import { dispatchProductPostWebhooksForPaymentInBackground } from './productPostWebhookService.js'
 // (PAY2-003) Encolar el comprobante automático tras un pago de Mercado Pago (igual que Conekta).
 import { queuePaymentAutomationMessage } from './paymentAutomationsService.js'
 import { buildMetaPublicPurchasePixelEvent } from './metaConversionEventsService.js'
@@ -2896,6 +2897,12 @@ async function updatePaymentFromMercadoPagoPayment(mpPayment) {
   )
 
   const updated = await findPaymentById(row.id)
+  if (updated?.id && !ignorePendingRegression) {
+    dispatchProductPostWebhooksForPaymentInBackground(updated.id, {
+      status: persistedStatus,
+      previousStatus: row.status || ''
+    })
+  }
   if (updated?.contact_id && nextStatus === 'paid') {
     registerGigstackPaymentForTransactionInBackground(updated.id)
     updateSingleContactStats(updated.contact_id).catch((error) => {
@@ -3024,6 +3031,7 @@ async function updateSubscriptionFromMercadoPagoPreapproval(preapproval = {}) {
 
   const updated = await db.get('SELECT * FROM subscriptions WHERE id = ?', [existing.id])
   if (startPayment.paymentId) {
+    const previousStartPayment = await db.get('SELECT status FROM payments WHERE id = ?', [startPayment.paymentId])
     await db.run(
       `UPDATE payments
        SET status = ?,
@@ -3046,6 +3054,10 @@ async function updateSubscriptionFromMercadoPagoPreapproval(preapproval = {}) {
         startPayment.paymentId
       ]
     )
+    dispatchProductPostWebhooksForPaymentInBackground(startPayment.paymentId, {
+      status: startPaymentStatus === 'paid' ? 'paid' : 'pending',
+      previousStatus: previousStartPayment?.status || ''
+    })
   }
 
   return updated
@@ -3131,6 +3143,10 @@ async function insertSubscriptionPaymentFromMercadoPagoAuthorizedPayment(authori
 
       if (subscriptionRow.contact_id && nextStatus === 'paid') {
         registerGigstackPaymentForTransactionInBackground(startPaymentRow.id)
+        dispatchProductPostWebhooksForPaymentInBackground(startPaymentRow.id, {
+          status: nextStatus,
+          previousStatus: ''
+        })
         updateSingleContactStats(subscriptionRow.contact_id).catch((error) => {
           logger.warn(`No se pudieron actualizar stats del contacto por suscripción Mercado Pago ${subscriptionRow.id}: ${error.message}`)
         })

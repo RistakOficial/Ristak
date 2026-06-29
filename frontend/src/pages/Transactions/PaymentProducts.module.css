@@ -291,6 +291,95 @@
   gap: 12px;
 }
 
+.webhookSection {
+  display: grid;
+  gap: 10px;
+}
+
+.webhookToggle {
+  width: 100%;
+  justify-content: space-between;
+  min-height: 42px;
+}
+
+.webhookToggleLabel {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.webhookToggleLabel > span:not([data-badge]) {
+  min-width: 0;
+}
+
+.webhookToggleIcon,
+.webhookToggleIconOpen {
+  flex: 0 0 auto;
+  transition: transform 0.16s ease;
+}
+
+.webhookToggleIconOpen {
+  transform: rotate(180deg);
+}
+
+.webhookBody {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-card);
+  background: var(--surface);
+}
+
+.webhookList {
+  display: grid;
+  gap: 10px;
+}
+
+.webhookRow {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  gap: 12px;
+  align-items: start;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-card);
+  background: var(--surface-2);
+}
+
+.webhookIndex {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border-radius: var(--radius-pill);
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-family: var(--num-font);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.webhookFields {
+  display: grid;
+  grid-template-columns: minmax(220px, 1.2fr) minmax(170px, 0.8fr);
+  gap: 12px;
+  min-width: 0;
+}
+
+.webhookHeadersField {
+  grid-column: 1 / -1;
+}
+
+.webhookHeadersField textarea {
+  min-height: 62px;
+  font-family: var(--font-mono);
+  font-size: 12px;
+}
+
 .formMeta {
   display: inline-flex;
   align-items: center;
@@ -327,16 +416,19 @@
   .metricsGrid,
   .formGrid,
   .fiscalGrid,
-  .priceFields {
+  .priceFields,
+  .webhookFields {
     grid-template-columns: 1fr;
   }
 
-  .priceRow {
+  .priceRow,
+  .webhookRow {
     grid-template-columns: auto minmax(0, 1fr);
     align-items: start;
   }
 
-  .priceRow > button {
+  .priceRow > button,
+  .webhookRow > button {
     grid-column: 2;
     justify-self: start;
   }

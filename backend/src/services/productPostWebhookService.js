@@ -1,0 +1,374 @@
+import crypto from 'crypto'
+import { db } from '../config/database.js'
+import { logger } from '../utils/logger.js'
+import { priceRowToApi, productRowToApi } from './localProductService.js'
+
+const PRODUCT_POST_WEBHOOK_TIMEOUT_MS = 8000
+const MAX_DELIVERY_LOG_ENTRIES = 80
+
+function cleanString(value) {
+  return String(value ?? '').trim()
+}
+
+function parseJson(value, fallback = {}) {
+  if (value === undefined || value === null || value === '') return fallback
+  if (typeof value === 'object') return value
+  try {
+    return JSON.parse(value)
+  } catch {
+    return fallback
+  }
+}
+
+function normalizeStatus(status = '') {
+  const normalized = cleanString(status).toLowerCase()
+  if (['succeeded', 'complete', 'completed', 'fulfilled', 'success'].includes(normalized)) return 'paid'
+  if (['rejected', 'declined', 'error', 'failure'].includes(normalized)) return 'failed'
+  if (['refund', 'charged_back', 'chargeback', 'partially_refunded'].includes(normalized)) return 'refunded'
+  if (['cancelled', 'canceled', 'voided'].includes(normalized)) return 'void'
+  return normalized || 'updated'
+}
+
+function eventNameForStatus(status = '') {
+  const normalized = normalizeStatus(status)
+  return `payment.${normalized}`
+}
+
+function hashWebhookConfig(webhook = {}) {
+  return crypto
+    .createHash('sha256')
+    .update(JSON.stringify({
+      url: webhook.url || '',
+      authorization: webhook.authorization || '',
+      headers: webhook.headers || {}
+    }))
+    .digest('hex')
+    .slice(0, 16)
+}
+
+function normalizeProductWebhooks(value) {
+  const list = parseJson(value, [])
+  if (!Array.isArray(list)) return []
+
+  return list
+    .map((webhook, index) => {
+      if (!webhook || typeof webhook !== 'object') return null
+      const url = cleanString(webhook.url)
+      if (!url || webhook.enabled === false) return null
+      return {
+        id: cleanString(webhook.id).replace(/[^a-zA-Z0-9_-]/g, '').slice(0, 80) || `webhook_${index + 1}`,
+        url,
+        authorization: cleanString(webhook.authorization || webhook.auth || ''),
+        headers: webhook.headers && typeof webhook.headers === 'object' && !Array.isArray(webhook.headers)
+          ? webhook.headers
+          : {}
+      }
+    })
+    .filter(Boolean)
+}
+
+function getLineItems(payment = {}, metadata = {}) {
+  const sources = [
+    payment.lineItems,
+    payment.line_items,
+    metadata.lineItems,
+    metadata.line_items,
+    metadata.items,
+    metadata.invoicePayload?.items
+  ]
+  return sources.find(source => Array.isArray(source) && source.length > 0) ||
+    sources.find(Array.isArray) ||
+    []
+}
+
+function productCandidatesFromLineItem(item = {}) {
+  return [
+    item.localProductId,
+    item.local_product_id,
+    item.productId,
+    item.product_id,
+    item.product,
+    item.ghlProductId,
+    item.ghl_product_id
+  ].map(cleanString).filter(Boolean)
+}
+
+function priceCandidatesFromLineItem(item = {}) {
+  return [
+    item.localPriceId,
+    item.local_price_id,
+    item.priceId,
+    item.price_id,
+    item.price,
+    item.ghlPriceId,
+    item.ghl_price_id
+  ].map(cleanString).filter(Boolean)
+}
+
+async function findProductForLineItem(item = {}) {
+  const productCandidates = productCandidatesFromLineItem(item)
+  for (const productId of productCandidates) {
+    const product = await db.get(
+      'SELECT * FROM products WHERE id = ? OR ghl_product_id = ? LIMIT 1',
+      [productId, productId]
+    )
+    if (product?.id) return { product, price: null }
+  }
+
+  const priceCandidates = priceCandidatesFromLineItem(item)
+  for (const priceId of priceCandidates) {
+    const price = await db.get(
+      'SELECT * FROM product_prices WHERE id = ? OR ghl_price_id = ? LIMIT 1',
+      [priceId, priceId]
+    )
+    if (!price?.product_id) continue
+
+    const product = await db.get('SELECT * FROM products WHERE id = ? LIMIT 1', [price.product_id])
+    if (product?.id) return { product, price }
+  }
+
+  return { product: null, price: null }
+}
+
+async function getProductPrices(productId) {
+  const rows = await db.all(
+    'SELECT * FROM product_prices WHERE product_id = ? ORDER BY name ASC, amount ASC',
+    [productId]
+  )
+  return rows.map(priceRowToApi)
+}
+
+function sanitizeProduct(product, prices = []) {
+  const apiProduct = productRowToApi(product, prices)
+  const { postWebhooks, ...safeProduct } = apiProduct
+  return safeProduct
+}
+
+function serializePayment(row = {}, metadata = {}) {
+  return {
+    id: row.id || '',
+    contactId: row.contact_id || '',
+    amount: row.amount,
+    currency: row.currency || '',
+    status: row.status || '',
+    paymentMethod: row.payment_method || '',
+    paymentMode: row.payment_mode || '',
+    paymentProvider: row.payment_provider || '',
+    reference: row.reference || '',
+    title: row.title || '',
+    description: row.description || '',
+    date: row.date || '',
+    dueDate: row.due_date || '',
+    sentAt: row.sent_at || '',
+    paidAt: row.paid_at || '',
+    publicPaymentId: row.public_payment_id || '',
+    paymentUrl: row.payment_url || '',
+    invoiceId: row.ghl_invoice_id || '',
+    invoiceNumber: row.invoice_number || '',
+    stripePaymentIntentId: row.stripe_payment_intent_id || '',
+    stripeChargeId: row.stripe_charge_id || '',
+    mercadoPagoPaymentId: row.mercadopago_payment_id || '',
+    mercadoPagoPreferenceId: row.mercadopago_preference_id || '',
+    conektaOrderId: row.conekta_order_id || '',
+    conektaChargeId: row.conekta_charge_id || '',
+    metadata,
+    createdAt: row.created_at || '',
+    updatedAt: row.updated_at || ''
+  }
+}
+
+function serializeContact(row = {}) {
+  if (!row?.id) return null
+  return {
+    id: row.id,
+    ghlContactId: row.ghl_contact_id || '',
+    name: row.name || row.full_name || '',
+    firstName: row.first_name || '',
+    lastName: row.last_name || '',
+    email: row.email || '',
+    phone: row.phone || ''
+  }
+}
+
+function buildPayload({ event, status, previousStatus, payment, contact, metadata, lineItems, lineItem, product, price, webhook }) {
+  return {
+    event,
+    eventType: 'payment',
+    status,
+    previousStatus: previousStatus || '',
+    occurredAt: new Date().toISOString(),
+    payment: serializePayment(payment, metadata),
+    contact: serializeContact(contact),
+    product,
+    price,
+    lineItem,
+    lineItems,
+    webhook: {
+      id: webhook.id,
+      productId: product.localId || product.id || ''
+    },
+    source: {
+      app: 'ristak',
+      feature: 'product_post_webhooks'
+    }
+  }
+}
+
+function buildHeaders(webhook = {}, event = '', paymentId = '') {
+  const headers = {
+    'Content-Type': 'application/json',
+    'User-Agent': 'Ristak-Product-Webhook/1.0',
+    'X-Ristak-Event': event,
+    'X-Ristak-Payment-Id': paymentId,
+    ...webhook.headers
+  }
+
+  if (webhook.authorization && !headers.Authorization && !headers.authorization) {
+    headers.Authorization = webhook.authorization
+  }
+
+  return headers
+}
+
+async function postWebhook(webhook, payload, event, paymentId) {
+  const controller = new AbortController()
+  const timeout = setTimeout(() => controller.abort(), PRODUCT_POST_WEBHOOK_TIMEOUT_MS)
+
+  try {
+    const response = await fetch(webhook.url, {
+      method: 'POST',
+      headers: buildHeaders(webhook, event, paymentId),
+      body: JSON.stringify(payload),
+      signal: controller.signal
+    })
+
+    const text = await response.text().catch(() => '')
+    return {
+      ok: response.ok,
+      statusCode: response.status,
+      response: text.slice(0, 500)
+    }
+  } finally {
+    clearTimeout(timeout)
+  }
+}
+
+async function mergeDeliveryLog(paymentId, updates = {}) {
+  const row = await db.get('SELECT metadata_json FROM payments WHERE id = ?', [paymentId])
+  const metadata = parseJson(row?.metadata_json, {})
+  const current = metadata.productPostWebhookDeliveries && typeof metadata.productPostWebhookDeliveries === 'object'
+    ? metadata.productPostWebhookDeliveries
+    : {}
+
+  const mergedEntries = Object.entries({ ...current, ...updates }).slice(-MAX_DELIVERY_LOG_ENTRIES)
+  metadata.productPostWebhookDeliveries = Object.fromEntries(mergedEntries)
+
+  await db.run(
+    'UPDATE payments SET metadata_json = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?',
+    [JSON.stringify(metadata), paymentId]
+  )
+}
+
+export async function dispatchProductPostWebhooksForPayment(paymentId, options = {}) {
+  const cleanPaymentId = cleanString(paymentId)
+  if (!cleanPaymentId) return { sent: 0, skipped: true, reason: 'missing_payment_id' }
+
+  const payment = await db.get('SELECT * FROM payments WHERE id = ?', [cleanPaymentId])
+  if (!payment?.id) return { sent: 0, skipped: true, reason: 'payment_not_found' }
+
+  const metadata = parseJson(payment.metadata_json, {})
+  const lineItems = getLineItems(payment, metadata)
+  if (!lineItems.length) return { sent: 0, skipped: true, reason: 'no_line_items' }
+
+  const status = normalizeStatus(options.status || payment.status)
+  const previousStatus = options.previousStatus ? normalizeStatus(options.previousStatus) : ''
+  const event = options.event || eventNameForStatus(status)
+  const deliveryLog = metadata.productPostWebhookDeliveries && typeof metadata.productPostWebhookDeliveries === 'object'
+    ? metadata.productPostWebhookDeliveries
+    : {}
+  const contact = payment.contact_id
+    ? await db.get('SELECT * FROM contacts WHERE id = ? LIMIT 1', [payment.contact_id])
+    : null
+  const deliveryUpdates = {}
+  let sent = 0
+  let failed = 0
+
+  for (const [index, lineItem] of lineItems.entries()) {
+    if (!lineItem || typeof lineItem !== 'object') continue
+
+    const { product, price } = await findProductForLineItem(lineItem)
+    const webhooks = normalizeProductWebhooks(product?.post_webhooks)
+    if (!product?.id || !webhooks.length) continue
+
+    const prices = await getProductPrices(product.id)
+    const safeProduct = sanitizeProduct(product, prices)
+    const safePrice = price ? priceRowToApi(price) : null
+
+    for (const webhook of webhooks) {
+      const configHash = hashWebhookConfig(webhook)
+      const deliveryKey = `${status}:${product.id}:${webhook.id}:${configHash}`
+      if (deliveryLog[deliveryKey]?.attemptedAt || deliveryUpdates[deliveryKey]?.attemptedAt) continue
+
+      const payload = buildPayload({
+        event,
+        status,
+        previousStatus,
+        payment: { ...payment, status },
+        contact,
+        metadata,
+        lineItems,
+        lineItem: { ...lineItem, index },
+        product: safeProduct,
+        price: safePrice,
+        webhook
+      })
+      const attemptedAt = new Date().toISOString()
+
+      try {
+        const result = await postWebhook(webhook, payload, event, payment.id)
+        deliveryUpdates[deliveryKey] = {
+          webhookId: webhook.id,
+          productId: product.id,
+          status,
+          event,
+          attemptedAt,
+          ok: result.ok,
+          statusCode: result.statusCode
+        }
+
+        if (result.ok) {
+          sent += 1
+        } else {
+          failed += 1
+          deliveryUpdates[deliveryKey].error = `HTTP ${result.statusCode}`
+          if (result.response) deliveryUpdates[deliveryKey].response = result.response
+        }
+      } catch (error) {
+        failed += 1
+        deliveryUpdates[deliveryKey] = {
+          webhookId: webhook.id,
+          productId: product.id,
+          status,
+          event,
+          attemptedAt,
+          ok: false,
+          error: error?.name === 'AbortError' ? 'timeout' : cleanString(error?.message || error).slice(0, 500)
+        }
+      }
+    }
+  }
+
+  if (Object.keys(deliveryUpdates).length) {
+    await mergeDeliveryLog(payment.id, deliveryUpdates)
+  }
+
+  return { sent, failed, attempted: Object.keys(deliveryUpdates).length }
+}
+
+export function dispatchProductPostWebhooksForPaymentInBackground(paymentId, options = {}) {
+  Promise.resolve()
+    .then(() => dispatchProductPostWebhooksForPayment(paymentId, options))
+    .catch((error) => {
+      logger.warn(`No se pudieron enviar webhooks POST de producto para pago ${paymentId}: ${error.message}`)
+    })
+}

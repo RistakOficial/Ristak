@@ -8,6 +8,7 @@ import { getAccountCurrency } from '../utils/accountLocale.js'
 import { calculatePaymentTax, getPaymentGatewayMode, getPublicPaymentSettings } from './paymentSettingsService.js'
 import { queuePaymentAutomationMessage } from './paymentAutomationsService.js'
 import { registerGigstackPaymentForTransactionInBackground } from './gigstackInvoiceService.js'
+import { dispatchProductPostWebhooksForPaymentInBackground } from './productPostWebhookService.js'
 import { getPaymentPlanAuditSummary, hardDeleteTestPaymentPlan } from './paymentRecordSafetyService.js'
 import { buildMetaPublicPurchasePixelEvent } from './metaConversionEventsService.js'
 
@@ -1870,6 +1871,12 @@ async function updatePaymentFromOrder(order, row, { paymentSourceId = '' } = {})
   )
 
   const updated = await findPaymentById(row.id)
+  if (updated?.id) {
+    dispatchProductPostWebhooksForPaymentInBackground(updated.id, {
+      status: nextStatus,
+      previousStatus: row.status || ''
+    })
+  }
   if (updated?.contact_id && nextStatus === 'paid') {
     updateSingleContactStats(updated.contact_id).catch((error) => {
       logger.warn(`No se pudieron actualizar stats del contacto por pago Conekta ${updated.id}: ${error.message}`)

@@ -36,6 +36,7 @@ import {
 import {
   completeConversationalAgentSalePaymentFromInvoice
 } from '../services/conversationalAgentService.js';
+import { dispatchProductPostWebhooksForPaymentInBackground } from '../services/productPostWebhookService.js';
 
 function firstValue(...values) {
   return values.find(value => value !== undefined && value !== null && value !== '');
@@ -674,7 +675,7 @@ async function findUniqueRecentInvoicePayment({ paymentId, contactId, amount, pa
 async function findExistingInvoicePayment({ invoiceId, paymentId, contactId, amount, description, invoiceNumber, reference, paymentDate }) {
   if (invoiceId) {
     const existing = await db.get(
-      'SELECT id, contact_id, ghl_invoice_id, payment_mode FROM payments WHERE ghl_invoice_id = ? OR id = ? LIMIT 1',
+      'SELECT id, contact_id, ghl_invoice_id, payment_mode, status FROM payments WHERE ghl_invoice_id = ? OR id = ? LIMIT 1',
       [invoiceId, invoiceId]
     );
 
@@ -687,7 +688,7 @@ async function findExistingInvoicePayment({ invoiceId, paymentId, contactId, amo
     const referencePlaceholders = referenceCandidates.map(() => '?').join(', ');
     const normalizedCandidates = referenceCandidates.map(value => value.toLowerCase());
     const existingByNumber = await db.get(
-      `SELECT id, contact_id, ghl_invoice_id, payment_mode
+      `SELECT id, contact_id, ghl_invoice_id, payment_mode, status
        FROM payments
        WHERE contact_id = ?
          AND (
@@ -709,7 +710,7 @@ async function findExistingInvoicePayment({ invoiceId, paymentId, contactId, amo
 
   if (cleanDescription) {
     const invoiceBackedMatch = await db.get(
-      `SELECT id, contact_id, ghl_invoice_id, payment_mode
+      `SELECT id, contact_id, ghl_invoice_id, payment_mode, status
        FROM payments
        WHERE contact_id = ?
          AND id != ?
@@ -732,7 +733,7 @@ async function findExistingInvoicePayment({ invoiceId, paymentId, contactId, amo
   if (!cleanDescription.toLowerCase().includes('primer pago')) return null;
 
   return await db.get(
-    `SELECT id, contact_id, ghl_invoice_id, payment_mode
+    `SELECT id, contact_id, ghl_invoice_id, payment_mode, status
      FROM payments
      WHERE contact_id = ?
        AND id != ?
@@ -1087,7 +1088,7 @@ export const handlePaymentWebhook = async (req, res) => {
     if (!dedupedInvoicePayment && effectiveInvoiceId) {
       try {
         const existingByGhlInvoiceId = await db.get(
-          'SELECT id, contact_id, ghl_invoice_id, payment_mode FROM payments WHERE ghl_invoice_id = ? LIMIT 1',
+          'SELECT id, contact_id, ghl_invoice_id, payment_mode, status FROM payments WHERE ghl_invoice_id = ? LIMIT 1',
           [effectiveInvoiceId]
         );
         if (existingByGhlInvoiceId) {
@@ -1100,6 +1101,8 @@ export const handlePaymentWebhook = async (req, res) => {
 
     const configuredPaymentMode = await getConfiguredPaymentModeFallback();
     const paymentMode = getWebhookPaymentMode(data, payment, dedupedInvoicePayment?.payment_mode || configuredPaymentMode);
+    let processedPaymentId = '';
+    const previousPaymentStatus = dedupedInvoicePayment?.status || '';
 
     if (dedupedInvoicePayment) {
       await db.run(
@@ -1147,6 +1150,7 @@ export const handlePaymentWebhook = async (req, res) => {
         amount,
         description
       });
+      processedPaymentId = dedupedInvoicePayment.id;
     } else {
       const rowId = effectiveInvoiceId || paymentId;
       const query = usePostgres
@@ -1210,6 +1214,14 @@ export const handlePaymentWebhook = async (req, res) => {
         effectiveInvoiceId || null,
         invoiceNumber || null
       ]);
+      processedPaymentId = rowId;
+    }
+
+    if (processedPaymentId) {
+      dispatchProductPostWebhooksForPaymentInBackground(processedPaymentId, {
+        status,
+        previousStatus: previousPaymentStatus
+      });
     }
 
     // Actualizar estadísticas del contacto
@@ -1770,6 +1782,10 @@ export const handleRefundWebhook = async (req, res) => {
       `UPDATE payments SET status = 'refunded', updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
       [refundId]
     );
+    dispatchProductPostWebhooksForPaymentInBackground(refundId, {
+      status: 'refunded',
+      previousStatus: payment.status || ''
+    });
 
     // Recalcular estadísticas del contacto
     if (payment.contact_id) {
@@ -1958,6 +1974,11 @@ export const handleInvoiceWebhook = async (req, res) => {
          WHERE ghl_invoice_id = ?`,
         [invoiceId]
       );
+      if (payment?.id) {
+        dispatchProductPostWebhooksForPaymentInBackground(payment.id, {
+          status: newStatus
+        });
+      }
 
       // Si fue pagado, actualizar estadísticas del contacto
       if (newStatus === 'paid') {

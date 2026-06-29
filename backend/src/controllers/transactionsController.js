@@ -12,6 +12,7 @@ import { triggerMetaPaymentPurchaseEvent } from '../services/metaConversionEvent
 import { sendPaymentNotification } from '../services/pushNotificationsService.js'
 import { queuePaymentAutomationMessage } from '../services/paymentAutomationsService.js'
 import { registerGigstackPaymentForTransactionInBackground } from '../services/gigstackInvoiceService.js'
+import { dispatchProductPostWebhooksForPaymentInBackground } from '../services/productPostWebhookService.js'
 import {
   getPaymentDeletionGuard,
   hardDeleteTestPaymentRecord,
@@ -740,6 +741,10 @@ export const createTransaction = async (req, res) => {
 
     const createdTransaction = await getTransactionByIdForResponse(transactionId, getRequestBaseUrl(req))
 
+    if (createdTransaction) {
+      dispatchProductPostWebhooksForPaymentInBackground(transactionId, { status: finalStatus })
+    }
+
     if (createdTransaction && SUCCESS_PAYMENT_STATUSES.has(finalStatus)) {
       registerGigstackPaymentForTransactionInBackground(transactionId)
       queuePaymentAutomationMessage('receipt', transactionId)
@@ -1347,6 +1352,12 @@ export const updateTransaction = async (req, res) => {
     }
 
     const updatedTransaction = await getTransactionByIdForResponse(id, getRequestBaseUrl(req))
+    if (updatedTransaction && statusChanged) {
+      dispatchProductPostWebhooksForPaymentInBackground(id, {
+        status: finalStatus,
+        previousStatus: transaction.status || ''
+      })
+    }
 
     logger.success(`Transacción actualizada: ${id}`)
 
@@ -1402,6 +1413,10 @@ export const deleteTransaction = async (req, res) => {
         'UPDATE payments SET status = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?',
         [archiveStatus, id]
       )
+      dispatchProductPostWebhooksForPaymentInBackground(id, {
+        status: archiveStatus,
+        previousStatus: transaction.status || ''
+      })
       if (isStripeBackedTransaction(transaction)) {
         await syncStripePaymentPlanFromLocalPayment(id)
       }
@@ -1475,6 +1490,10 @@ export const refundTransaction = async (req, res) => {
       'UPDATE payments SET status = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?',
       ['refunded', id]
     )
+    dispatchProductPostWebhooksForPaymentInBackground(id, {
+      status: 'refunded',
+      previousStatus: transaction.status || ''
+    })
 
     if (transaction.contact_id) {
       await updateSingleContactStats(transaction.contact_id)
@@ -1541,6 +1560,10 @@ export const voidTransaction = async (req, res) => {
 
     // Actualizar estado en BD
     await db.run('UPDATE payments SET status = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?', ['void', id])
+    dispatchProductPostWebhooksForPaymentInBackground(id, {
+      status: 'void',
+      previousStatus: transaction.status || ''
+    })
     if (isStripeBackedTransaction(transaction)) {
       await syncStripePaymentPlanFromLocalPayment(id)
     }
@@ -1653,6 +1676,10 @@ export const recordPayment = async (req, res) => {
 
     const paidTransaction = await getTransactionByIdForResponse(id, getRequestBaseUrl(req))
     if (paidTransaction) {
+      dispatchProductPostWebhooksForPaymentInBackground(id, {
+        status: 'paid',
+        previousStatus: transaction.status || ''
+      })
       registerGigstackPaymentForTransactionInBackground(id)
       queuePaymentAutomationMessage('receipt', id)
       sendPaymentNotification(paidTransaction).catch((pushError) => {

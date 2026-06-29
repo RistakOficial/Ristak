@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react'
-import { AlertTriangle, Copy, DollarSign, Edit3, MoreVertical, Package, Plus, RefreshCw, Tag, Trash2 } from 'lucide-react'
+import { AlertTriangle, ChevronDown, Copy, DollarSign, Edit3, MoreVertical, Package, Plus, RefreshCw, Tag, Trash2, Webhook } from 'lucide-react'
 import {
   Badge,
   Button,
@@ -27,6 +27,7 @@ import {
   productsService,
   type ProductItem,
   type ProductPayload,
+  type ProductPostWebhook,
   type ProductPrice
 } from '@/services/productsService'
 import { paymentSettingsService } from '@/services/paymentSettingsService'
@@ -45,6 +46,7 @@ interface ProductFormState {
   productType: string
   gigstackProductKey: string
   gigstackUnitKey: string
+  postWebhooks: ProductWebhookFormState[]
   prices: ProductPriceFormState[]
 }
 
@@ -58,7 +60,15 @@ interface ProductPriceFormState {
   type: string
 }
 
-type ProductTextFormField = Exclude<keyof ProductFormState, 'prices'>
+interface ProductWebhookFormState {
+  formId: string
+  id?: string
+  url: string
+  authorization: string
+  headersJson: string
+}
+
+type ProductTextFormField = Exclude<keyof ProductFormState, 'prices' | 'postWebhooks'>
 
 const getProductId = (product: ProductItem) => product.localId || product.id || product._id || ''
 const getPrimaryPrice = (product?: ProductItem | null) => product?.prices?.[0] || null
@@ -74,6 +84,12 @@ const productTypeOptions = [
 ]
 
 const makePriceFormId = () => `price_${Math.random().toString(36).slice(2, 10)}`
+const makeWebhookFormId = () => `webhook_${Math.random().toString(36).slice(2, 10)}`
+
+const stringifyHeaders = (headers?: Record<string, string>) => {
+  if (!headers || Object.keys(headers).length === 0) return ''
+  return JSON.stringify(headers, null, 2)
+}
 
 const createProductPriceForm = (price?: ProductPrice | null, index = 0): ProductPriceFormState => {
   const amount = getPriceAmount(price)
@@ -90,12 +106,21 @@ const createProductPriceForm = (price?: ProductPrice | null, index = 0): Product
   }
 }
 
+const createProductWebhookForm = (webhook?: ProductPostWebhook): ProductWebhookFormState => ({
+  formId: webhook?.id || makeWebhookFormId(),
+  id: webhook?.id,
+  url: webhook?.url || '',
+  authorization: webhook?.authorization || '',
+  headersJson: stringifyHeaders(webhook?.headers)
+})
+
 const createEmptyProductForm = (): ProductFormState => ({
   name: '',
   description: '',
   productType: 'digital',
   gigstackProductKey: '',
   gigstackUnitKey: '',
+  postWebhooks: [],
   prices: [createProductPriceForm(null, 0)]
 })
 
@@ -108,6 +133,9 @@ const createProductFormFromProduct = (product: ProductItem): ProductFormState =>
     productType: String(product.productType || 'digital').toLowerCase(),
     gigstackProductKey: product.gigstackProductKey || '',
     gigstackUnitKey: product.gigstackUnitKey || '',
+    postWebhooks: Array.isArray(product.postWebhooks)
+      ? product.postWebhooks.map(createProductWebhookForm)
+      : [],
     prices: prices.length
       ? prices.map((price, index) => createProductPriceForm(price, index))
       : [createProductPriceForm(getPrimaryPrice(product), 0)]
@@ -180,6 +208,7 @@ export const PaymentProducts: React.FC = () => {
   const [formMode, setFormMode] = useState<ProductFormMode>(null)
   const [editingProduct, setEditingProduct] = useState<ProductItem | null>(null)
   const [productForm, setProductForm] = useState<ProductFormState>(() => createEmptyProductForm())
+  const [webhooksExpanded, setWebhooksExpanded] = useState(false)
   const [gigstackProductMappingEnabled, setGigstackProductMappingEnabled] = useState(false)
 
   const loadProducts = async ({ refresh = false, sync = false }: { refresh?: boolean; sync?: boolean } = {}) => {
@@ -271,12 +300,14 @@ export const PaymentProducts: React.FC = () => {
   const openCreateProduct = () => {
     setEditingProduct(null)
     setProductForm(createEmptyProductForm())
+    setWebhooksExpanded(false)
     setFormMode('create')
   }
 
   const openEditProduct = (product: ProductItem) => {
     setEditingProduct(product)
     setProductForm(createProductFormFromProduct(product))
+    setWebhooksExpanded(false)
     setFormMode('edit')
   }
 
@@ -286,6 +317,7 @@ export const PaymentProducts: React.FC = () => {
     setFormMode(null)
     setEditingProduct(null)
     setProductForm(createEmptyProductForm())
+    setWebhooksExpanded(false)
   }
 
   const patchProductForm = (field: ProductTextFormField, value: string) => {
@@ -322,6 +354,87 @@ export const PaymentProducts: React.FC = () => {
     })
   }
 
+  const patchProductWebhook = (formId: string, field: keyof Pick<ProductWebhookFormState, 'url' | 'authorization' | 'headersJson'>, value: string) => {
+    setProductForm((current) => ({
+      ...current,
+      postWebhooks: current.postWebhooks.map((webhook) => (
+        webhook.formId === formId ? { ...webhook, [field]: value } : webhook
+      ))
+    }))
+  }
+
+  const addProductWebhook = () => {
+    setProductForm((current) => ({
+      ...current,
+      postWebhooks: [
+        ...current.postWebhooks,
+        createProductWebhookForm()
+      ]
+    }))
+    setWebhooksExpanded(true)
+  }
+
+  const removeProductWebhook = (formId: string) => {
+    setProductForm((current) => ({
+      ...current,
+      postWebhooks: current.postWebhooks.filter((webhook) => webhook.formId !== formId)
+    }))
+  }
+
+  const buildPostWebhooksPayload = (): ProductPostWebhook[] | null => {
+    const webhooks: ProductPostWebhook[] = []
+
+    for (const [index, webhook] of productForm.postWebhooks.entries()) {
+      const url = webhook.url.trim()
+      const authorization = webhook.authorization.trim()
+      const headersJson = webhook.headersJson.trim()
+
+      if (!url && !authorization && !headersJson) continue
+      if (!url) {
+        showToast('warning', 'Falta la URL del webhook', `Agrega una ruta POST para el webhook ${index + 1}.`)
+        return null
+      }
+
+      try {
+        const parsedUrl = new URL(url)
+        if (parsedUrl.protocol !== 'http:' && parsedUrl.protocol !== 'https:') {
+          throw new Error('invalid_protocol')
+        }
+      } catch {
+        showToast('warning', 'URL inválida', `Revisa la ruta POST del webhook ${index + 1}.`)
+        return null
+      }
+
+      let headers: Record<string, string> | undefined
+      if (headersJson) {
+        try {
+          const parsed = JSON.parse(headersJson)
+          if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+            throw new Error('invalid_headers')
+          }
+          headers = Object.entries(parsed).reduce<Record<string, string>>((acc, [key, value]) => {
+            const headerKey = key.trim()
+            const headerValue = String(value ?? '').trim()
+            if (headerKey && headerValue) acc[headerKey] = headerValue
+            return acc
+          }, {})
+        } catch {
+          showToast('warning', 'Headers inválidos', `Los headers del webhook ${index + 1} deben ser un JSON simple.`)
+          return null
+        }
+      }
+
+      webhooks.push({
+        id: webhook.id || webhook.formId,
+        url,
+        ...(authorization ? { authorization } : {}),
+        ...(headers && Object.keys(headers).length ? { headers } : {})
+      })
+    }
+
+    return webhooks
+  }
+
   const buildProductPayload = (): ProductPayload | null => {
     const name = productForm.name.trim()
     const currency = accountCurrency
@@ -348,6 +461,9 @@ export const PaymentProducts: React.FC = () => {
       return null
     }
 
+    const postWebhooks = buildPostWebhooksPayload()
+    if (!postWebhooks) return null
+
     return {
       name,
       description: productForm.description.trim(),
@@ -356,6 +472,7 @@ export const PaymentProducts: React.FC = () => {
       gigstackProductKey: productForm.gigstackProductKey,
       gigstackUnitKey: productForm.gigstackUnitKey,
       gigstackUnitName: getGigstackUnitName(productForm.gigstackUnitKey),
+      postWebhooks,
       prices: prices.map((price) => ({
         id: price.id || undefined,
         localId: price.localId,
@@ -880,6 +997,89 @@ export const PaymentProducts: React.FC = () => {
                   </div>
                 </div>
               )}
+
+              <div className={`${styles.webhookSection} ${styles.fullWidth}`}>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  className={styles.webhookToggle}
+                  onClick={() => setWebhooksExpanded((current) => !current)}
+                  aria-expanded={webhooksExpanded}
+                >
+                  <span className={styles.webhookToggleLabel}>
+                    <Webhook size={16} />
+                    <span>Webhooks</span>
+                    {productForm.postWebhooks.length > 0 && (
+                      <Badge variant="neutral">{productForm.postWebhooks.length}</Badge>
+                    )}
+                  </span>
+                  <ChevronDown
+                    size={16}
+                    className={webhooksExpanded ? styles.webhookToggleIconOpen : styles.webhookToggleIcon}
+                  />
+                </Button>
+
+                {webhooksExpanded && (
+                  <div className={styles.webhookBody}>
+                    {productForm.postWebhooks.length > 0 && (
+                      <div className={styles.webhookList}>
+                        {productForm.postWebhooks.map((webhook, index) => (
+                          <div className={styles.webhookRow} key={webhook.formId}>
+                            <div className={styles.webhookIndex}>{index + 1}</div>
+                            <div className={styles.webhookFields}>
+                              <div className={`${styles.formGroup} ${styles.webhookUrlField}`}>
+                                <label>Ruta POST</label>
+                                <input
+                                  value={webhook.url}
+                                  onChange={(event) => patchProductWebhook(webhook.formId, 'url', event.target.value)}
+                                  placeholder="https://api.tuapp.com/webhooks/ristak"
+                                />
+                              </div>
+                              <div className={styles.formGroup}>
+                                <label>Authorization / contraseña</label>
+                                <input
+                                  value={webhook.authorization}
+                                  onChange={(event) => patchProductWebhook(webhook.formId, 'authorization', event.target.value)}
+                                  placeholder="Bearer token..."
+                                />
+                              </div>
+                              <div className={`${styles.formGroup} ${styles.webhookHeadersField}`}>
+                                <label>Headers JSON</label>
+                                <textarea
+                                  rows={2}
+                                  value={webhook.headersJson}
+                                  onChange={(event) => patchProductWebhook(webhook.formId, 'headersJson', event.target.value)}
+                                  placeholder='{"X-Secret": "valor"}'
+                                />
+                              </div>
+                            </div>
+                            <Button
+                              type="button"
+                              variant="ghost"
+                              size="sm"
+                              iconOnly
+                              aria-label="Quitar webhook"
+                              title="Quitar webhook"
+                              leftIcon={<Trash2 size={16} />}
+                              onClick={() => removeProductWebhook(webhook.formId)}
+                            />
+                          </div>
+                        ))}
+                      </div>
+                    )}
+
+                    <Button
+                      type="button"
+                      variant="secondary"
+                      size="sm"
+                      leftIcon={<Plus size={14} />}
+                      onClick={addProductWebhook}
+                    >
+                      Agregar webhook
+                    </Button>
+                  </div>
+                )}
+              </div>
             </div>
 
             <div className={styles.modalFooter}>
