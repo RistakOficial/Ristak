@@ -635,12 +635,12 @@ export const AccountSettings: React.FC = () => {
 
   const handleChangeUsername = async () => {
     if (!newUsername.trim()) {
-      showToast('error', 'Error', 'El nuevo nombre de usuario no puede estar vacío')
+      showToast('error', 'Error', 'El identificador interno no puede estar vacío')
       return
     }
 
     if (newUsername.trim() === currentUsername) {
-      showToast('warning', 'Atención', 'El nuevo nombre de usuario es igual al actual')
+      showToast('warning', 'Atención', 'El identificador interno es igual al actual')
       return
     }
 
@@ -659,17 +659,17 @@ export const AccountSettings: React.FC = () => {
       const data = await response.json()
 
       if (!response.ok || !data.success) {
-        throw new Error(data.message || 'Error al cambiar el nombre de usuario')
+        throw new Error(data.message || 'Error al cambiar el identificador interno')
       }
 
-      showToast('success', 'Usuario actualizado', 'Debes volver a iniciar sesión con tu nuevo nombre de usuario')
+      showToast('success', 'Identificador actualizado', 'Vuelve a iniciar sesión con tu correo de login para refrescar la cuenta.')
 
       setTimeout(() => {
         logout()
         window.location.href = '/login'
       }, 2000)
     } catch (error: any) {
-      showToast('error', 'Error', error.message || 'No se pudo cambiar el nombre de usuario')
+      showToast('error', 'Error', error.message || 'No se pudo cambiar el identificador interno')
     } finally {
       setIsChangingUsername(false)
     }
@@ -778,7 +778,7 @@ export const AccountSettings: React.FC = () => {
             <div>
               <h2 className={styles.panelTitle}>Cuenta</h2>
               <p className={styles.panelDescription}>
-                Administra perfil, usuario y contraseña con cambios explícitos.
+                Administra correo de login, contraseña, perfil y datos del negocio.
               </p>
             </div>
           </div>
@@ -792,6 +792,171 @@ export const AccountSettings: React.FC = () => {
 
         <div className={styles.panelSection}>
           <div className={styles.accountGrid}>
+            <section className={`${styles.accountSection} ${styles.accountSectionWide}`}>
+              <div className={styles.accountSectionHeader}>
+                <div>
+                  <h3 className={styles.accountSectionTitle}>Acceso de login</h3>
+                  <p className={styles.accountSectionDescription}>
+                    Lo primero: la entrada a Ristak usa el correo de login y la contraseña. El identificador interno no es la llave principal de acceso.
+                  </p>
+                </div>
+              </div>
+
+              <div className={styles.loginAccessStack}>
+                <div className={styles.loginAccessItem}>
+                  <div className={styles.loginAccessText}>
+                    <strong>Correo de login</strong>
+                    <span>Este es el correo que se usa para iniciar sesión y recuperar el acceso de la cuenta.</span>
+                  </div>
+                  <div className={styles.loginAccessControl}>
+                    <div className={styles.field}>
+                      <label className={styles.label} htmlFor="account-login-email">Correo electrónico</label>
+                      <input
+                        id="account-login-email"
+                        className={`${styles.input} ${styles.inputReadOnly}`}
+                        type="email"
+                        value={accountEmail || 'Sin correo de login guardado'}
+                        readOnly
+                        autoComplete="email"
+                      />
+                    </div>
+                  </div>
+                </div>
+
+                <div className={styles.loginAccessItem}>
+                  <div className={styles.loginAccessText}>
+                    <strong>Identificador interno</strong>
+                    <span>Sirve para referencias internas. No tiene que ser el correo y no es la credencial principal de login.</span>
+                  </div>
+                  <div className={styles.loginAccessControl}>
+                    <div className={styles.lockedFieldRow}>
+                      <div className={styles.field}>
+                        <label className={styles.label}>Nombre de usuario interno</label>
+                        <input
+                          className={`${styles.input} ${!isEditingUsername ? styles.inputReadOnly : ''}`}
+                          type="text"
+                          value={isEditingUsername ? newUsername : currentUsername}
+                          onChange={(event) => {
+                            if (isEditingUsername) {
+                              setNewUsername(event.target.value)
+                            }
+                          }}
+                          readOnly={!isEditingUsername}
+                          disabled={isChangingUsername}
+                          autoComplete="username"
+                        />
+                      </div>
+                      {!isEditingUsername ? (
+                        <Button variant="secondary" onClick={handleStartUsernameEdit}>
+                          Cambiar
+                        </Button>
+                      ) : (
+                        <Button
+                          variant="primary"
+                          onClick={handleChangeUsername}
+                          loading={isChangingUsername}
+                          disabled={!usernameChanged || isChangingUsername}
+                        >
+                          <Save size={16} />
+                          Guardar
+                        </Button>
+                      )}
+                    </div>
+
+                    {isEditingUsername && (
+                      <div className={styles.sectionActions}>
+                        <Button variant="ghost" onClick={handleCancelUsernameEdit} disabled={isChangingUsername}>
+                          Cancelar
+                        </Button>
+                      </div>
+                    )}
+                  </div>
+                </div>
+
+                <div className={styles.loginAccessItem}>
+                  <div className={styles.loginAccessText}>
+                    <strong>Contraseña</strong>
+                    <span>Actualízala aquí. La nueva contraseña debe tener al menos 6 caracteres.</span>
+                  </div>
+                  <div className={styles.loginAccessControl}>
+                    {!isEditingPassword ? (
+                      <div className={styles.lockedFieldRow}>
+                        <div className={styles.field}>
+                          <label className={styles.label}>Contraseña actual</label>
+                          <input
+                            className={`${styles.input} ${styles.inputReadOnly}`}
+                            type="password"
+                            value="password-guardado"
+                            readOnly
+                            autoComplete="current-password"
+                          />
+                        </div>
+                        <Button variant="secondary" onClick={handleStartPasswordEdit}>
+                          <Lock size={16} />
+                          Cambiar
+                        </Button>
+                      </div>
+                    ) : (
+                      <>
+                        <div className={styles.passwordGrid}>
+                          <div className={styles.field}>
+                            <label className={styles.label}>Contraseña actual</label>
+                            <input
+                              className={styles.input}
+                              type="password"
+                              value={currentPassword}
+                              onChange={(event) => setCurrentPassword(event.target.value)}
+                              disabled={isChangingPassword}
+                              autoComplete="current-password"
+                            />
+                          </div>
+
+                          <div className={styles.field}>
+                            <label className={styles.label}>Nueva contraseña</label>
+                            <input
+                              className={styles.input}
+                              type="password"
+                              value={newPassword}
+                              onChange={(event) => setNewPassword(event.target.value)}
+                              disabled={isChangingPassword}
+                              autoComplete="new-password"
+                            />
+                          </div>
+
+                          <div className={styles.field}>
+                            <label className={styles.label}>Confirmar nueva contraseña</label>
+                            <input
+                              className={styles.input}
+                              type="password"
+                              value={confirmPassword}
+                              onChange={(event) => setConfirmPassword(event.target.value)}
+                              disabled={isChangingPassword}
+                              autoComplete="new-password"
+                            />
+                          </div>
+                        </div>
+
+                        <div className={styles.sectionActions}>
+                          <Button
+                            variant="primary"
+                            onClick={handleChangePassword}
+                            loading={isChangingPassword}
+                            disabled={!currentPassword || !newPassword || !confirmPassword || isChangingPassword}
+                          >
+                            <Save size={16} />
+                            Guardar
+                          </Button>
+                          <Button variant="ghost" onClick={handleCancelPasswordEdit} disabled={isChangingPassword}>
+                            Cancelar
+                          </Button>
+                        </div>
+                      </>
+                    )}
+                  </div>
+                </div>
+              </div>
+            </section>
+
             <section className={styles.accountSection}>
               <div className={styles.accountSectionHeader}>
                 <div>
@@ -878,7 +1043,7 @@ export const AccountSettings: React.FC = () => {
                 <div>
                   <h3 className={styles.accountSectionTitle}>Datos de cuenta</h3>
                   <p className={styles.accountSectionDescription}>
-                    El nombre del negocio aparece en el menú lateral. Si lo dejas vacío, se mostrará el correo.
+                    Datos visibles del administrador dentro de Ristak.
                   </p>
                 </div>
               </div>
@@ -907,18 +1072,6 @@ export const AccountSettings: React.FC = () => {
                     onChange={(event) => setProfileDraft((current) => ({ ...current, lastName: event.target.value }))}
                     disabled={savingProfileDetails}
                     autoComplete="family-name"
-                  />
-                </div>
-
-                <div className={styles.field}>
-                  <label className={styles.label} htmlFor="account-email">Correo</label>
-                  <input
-                    id="account-email"
-                    className={`${styles.input} ${styles.inputReadOnly}`}
-                    type="text"
-                    value={accountEmail || 'Sin correo guardado'}
-                    readOnly
-                    autoComplete="email"
                   />
                 </div>
 
@@ -1103,144 +1256,6 @@ export const AccountSettings: React.FC = () => {
                   Guardar datos del negocio
                 </Button>
               </div>
-            </section>
-
-            <section className={styles.accountSection}>
-              <div className={styles.accountSectionHeader}>
-                <div>
-                  <h3 className={styles.accountSectionTitle}>Nombre de usuario</h3>
-                  <p className={styles.accountSectionDescription}>
-                    Al cambiarlo tendrás que iniciar sesión otra vez.
-                  </p>
-                </div>
-              </div>
-
-              <div className={styles.lockedFieldRow}>
-                <div className={styles.field}>
-                  <label className={styles.label}>Usuario</label>
-                  <input
-                    className={`${styles.input} ${!isEditingUsername ? styles.inputReadOnly : ''}`}
-                    type="text"
-                    value={isEditingUsername ? newUsername : currentUsername}
-                    onChange={(event) => {
-                      if (isEditingUsername) {
-                        setNewUsername(event.target.value)
-                      }
-                    }}
-                    readOnly={!isEditingUsername}
-                    disabled={isChangingUsername}
-                    autoComplete="username"
-                  />
-                </div>
-                {!isEditingUsername ? (
-                  <Button variant="secondary" onClick={handleStartUsernameEdit}>
-                    Cambiar
-                  </Button>
-                ) : (
-                  <Button
-                    variant="primary"
-                    onClick={handleChangeUsername}
-                    loading={isChangingUsername}
-                    disabled={!usernameChanged || isChangingUsername}
-                  >
-                    <Save size={16} />
-                    Guardar
-                  </Button>
-                )}
-              </div>
-
-              {isEditingUsername && (
-                <div className={styles.sectionActions}>
-                  <Button variant="ghost" onClick={handleCancelUsernameEdit} disabled={isChangingUsername}>
-                    Cancelar
-                  </Button>
-                </div>
-              )}
-            </section>
-
-            <section className={`${styles.accountSection} ${styles.accountSectionWide}`}>
-              <div className={styles.accountSectionHeader}>
-                <div>
-                  <h3 className={styles.accountSectionTitle}>Contraseña</h3>
-                  <p className={styles.accountSectionDescription}>
-                    La nueva contraseña debe tener al menos 6 caracteres.
-                  </p>
-                </div>
-              </div>
-
-              {!isEditingPassword ? (
-                <div className={styles.lockedFieldRow}>
-                  <div className={styles.field}>
-                    <label className={styles.label}>Contraseña actual</label>
-                    <input
-                      className={`${styles.input} ${styles.inputReadOnly}`}
-                      type="password"
-                      value="password-guardado"
-                      readOnly
-                      autoComplete="current-password"
-                    />
-                  </div>
-                  <Button variant="secondary" onClick={handleStartPasswordEdit}>
-                    <Lock size={16} />
-                    Cambiar
-                  </Button>
-                </div>
-              ) : (
-                <>
-                  <div className={styles.passwordGrid}>
-                    <div className={styles.field}>
-                      <label className={styles.label}>Contraseña actual</label>
-                      <input
-                        className={styles.input}
-                        type="password"
-                        value={currentPassword}
-                        onChange={(event) => setCurrentPassword(event.target.value)}
-                        disabled={isChangingPassword}
-                        autoComplete="current-password"
-                      />
-                    </div>
-
-                    <div className={styles.field}>
-                      <label className={styles.label}>Nueva contraseña</label>
-                      <input
-                        className={styles.input}
-                        type="password"
-                        value={newPassword}
-                        onChange={(event) => setNewPassword(event.target.value)}
-                        disabled={isChangingPassword}
-                        autoComplete="new-password"
-                      />
-                    </div>
-
-                    <div className={styles.field}>
-                      <label className={styles.label}>Confirmar nueva contraseña</label>
-                      <input
-                        className={styles.input}
-                        type="password"
-                        value={confirmPassword}
-                        onChange={(event) => setConfirmPassword(event.target.value)}
-                        disabled={isChangingPassword}
-                        autoComplete="new-password"
-                      />
-                    </div>
-                  </div>
-
-                  <div className={styles.sectionActions}>
-                    <Button
-                      variant="primary"
-                      onClick={handleChangePassword}
-                      loading={isChangingPassword}
-                      disabled={!currentPassword || !newPassword || !confirmPassword || isChangingPassword}
-                    >
-                      <Save size={16} />
-                      Guardar
-                    </Button>
-                    <Button variant="ghost" onClick={handleCancelPasswordEdit} disabled={isChangingPassword}>
-                      Cancelar
-                    </Button>
-                  </div>
-                </>
-              )}
             </section>
 
             <section className={`${styles.accountSection} ${styles.accountSectionWide}`}>

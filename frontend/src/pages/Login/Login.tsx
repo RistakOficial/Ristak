@@ -85,7 +85,7 @@ export const Login: React.FC = () => {
     const loginIdentifier = cleanLoginIdentifier(username)
 
     if (!loginIdentifier || !password) {
-      setError('Por favor ingresa usuario y contraseña')
+      setError('Por favor ingresa correo y contraseña')
       return
     }
 
@@ -136,7 +136,7 @@ export const Login: React.FC = () => {
         }
       }
 
-      setError(err.message || 'Usuario o contraseña incorrectos')
+      setError(err.message || 'Correo o contraseña incorrectos')
     } finally {
       setIsLoading(false)
     }
@@ -234,7 +234,7 @@ export const Login: React.FC = () => {
 
           <div className={styles.inputGroup}>
             <label htmlFor="username" className={styles.label}>
-              Email o usuario
+              Correo electrónico
             </label>
             <input
               id="username"
@@ -245,7 +245,7 @@ export const Login: React.FC = () => {
               onChange={(e) => setUsername(e.target.value)}
               className={styles.input}
               placeholder="tu@correo.com"
-              autoComplete="username"
+              autoComplete="email"
               autoCapitalize="none"
               autoCorrect="off"
               inputMode="email"
@@ -299,7 +299,7 @@ export const Login: React.FC = () => {
             onClick={() => setShowRecovery(!showRecovery)}
             className={styles.forgotLink}
           >
-            ¿Olvidé mi usuario o contraseña?
+            ¿Olvidaste tu contraseña?
           </button>
 
           {isPhoneLogin && isNativeAppRuntime() && (

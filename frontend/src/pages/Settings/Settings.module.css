@@ -1225,6 +1225,56 @@ body.dark .select:focus {
   min-width: 0;
 }
 
+.loginAccessStack {
+  display: flex;
+  flex-direction: column;
+}
+
+.loginAccessItem {
+  display: grid;
+  grid-template-columns: minmax(180px, 0.36fr) minmax(0, 0.64fr);
+  gap: 16px;
+  align-items: flex-start;
+  padding: 16px 0;
+  border-top: 1px solid var(--border);
+}
+
+.loginAccessItem:first-child {
+  padding-top: 0;
+  border-top: 0;
+}
+
+.loginAccessItem:last-child {
+  padding-bottom: 0;
+}
+
+.loginAccessText {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.loginAccessText strong {
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.loginAccessText span {
+  color: var(--text-mute);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.loginAccessControl {
+  min-width: 0;
+}
+
+.loginAccessControl .sectionActions {
+  margin-top: 10px;
+}
+
 .passwordGrid {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
@@ -1999,6 +2049,7 @@ body.dark .select:focus {
   }
 
   .accountGrid,
+  .loginAccessItem,
   .passwordGrid,
   .profileDetailsGrid,
   .businessProfileLayout,
