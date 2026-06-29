@@ -1174,6 +1174,30 @@ export async function enrollContactInAutomation(automationId, input = {}) {
   }
 }
 
+export async function testAutomationRun(automationId, input = {}) {
+  const contact = await getContactForAutomation(input.contactId)
+  const automation = await getPublishedAutomationForEnrollment(automationId)
+  const enrollment = await enrollContactManually({
+    automationId: automation.id,
+    contactId: contact.id,
+    source: 'test-run'
+  })
+
+  return {
+    mode: 'test',
+    testedAt: new Date().toISOString(),
+    automationId: automation.id,
+    automationName: automation.name,
+    contactId: contact.id,
+    contactName: contactDisplayName(contact),
+    enrollment: {
+      ...enrollment,
+      kind: 'enrollment',
+      automationName: automation.name
+    }
+  }
+}
+
 /** Conteo de contactos activos por nodo (para los badges del canvas) */
 export async function getEnrollmentStats(automationId) {
   const rows = await db.all(

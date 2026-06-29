@@ -11,6 +11,7 @@ import {
   listAutomationFormsCatalog,
   listAutomationWhatsAppTemplatesCatalog,
   listAutomations,
+  testAutomationRun,
   updateAutomation
 } from '../src/services/automationsService.js'
 import { getWhatsAppApiConfigKeys } from '../src/services/whatsappApiService.js'
@@ -93,6 +94,43 @@ function makeTagTriggerFlow(tagId, tagName = tagId) {
   }
 }
 
+function makeTagActionFlow(tagId) {
+  const actionNodeId = 'node_add_tag'
+  return {
+    nodes: [
+      {
+        id: 'start',
+        type: 'start',
+        category: 'trigger',
+        label: 'Cuando...',
+        position: { x: 120, y: 220 },
+        config: {
+          triggers: [{ id: 'trig_test_run', type: 'trigger-contact-created', config: {} }]
+        }
+      },
+      {
+        id: actionNodeId,
+        type: 'action-add-contact-tag',
+        label: 'Añadir etiqueta',
+        position: { x: 520, y: 220 },
+        config: { tag: tagId }
+      }
+    ],
+    edges: [
+      {
+        id: 'edge_test_run',
+        sourceNodeId: 'start',
+        sourceHandle: 'out',
+        targetNodeId: actionNodeId,
+        targetHandle: 'in',
+        animated: true
+      }
+    ],
+    viewport: { x: 0, y: 0, zoom: 1 },
+    settings: { allowReentry: true, preventDuplicateActiveEnrollment: true }
+  }
+}
+
 test('updateAutomation separa borrador guardado de flujo publicado', async () => {
   const automation = await createAutomation({
     name: `Publicación con borrador ${Date.now()}`,
@@ -127,6 +165,46 @@ test('updateAutomation separa borrador guardado de flujo publicado', async () =>
     assert.equal(fresh.flow.nodes[1].config.customTitle, 'Cambio pendiente')
   } finally {
     await db.run('DELETE FROM automations WHERE id = ?', [automation.id])
+  }
+})
+
+test('testAutomationRun inscribe un contacto real como prueba y devuelve bitácora', async () => {
+  const suffix = Date.now()
+  const tagId = `tag_test_run_${suffix}`
+  const contactId = `contact_test_run_${suffix}`
+  let automation
+
+  await db.run('INSERT INTO contact_tags (id, name) VALUES (?, ?)', [tagId, 'Prueba automatización'])
+  await db.run(
+    `INSERT INTO contacts (id, full_name, first_name, phone, email, source, created_at, updated_at)
+     VALUES (?, ?, ?, ?, ?, 'test', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+    [contactId, 'Contacto Prueba', 'Contacto', `+521555${suffix}`, `test-run-${suffix}@example.com`]
+  )
+
+  try {
+    automation = await createAutomation({
+      name: `Prueba runner ${suffix}`,
+      flow: makeTagActionFlow(tagId)
+    })
+    await updateAutomation(automation.id, { status: 'published' })
+
+    const result = await testAutomationRun(automation.id, { contactId })
+    const contact = await db.get('SELECT tags FROM contacts WHERE id = ?', [contactId])
+    const tags = JSON.parse(contact.tags || '[]')
+
+    assert.equal(result.mode, 'test')
+    assert.equal(result.automationId, automation.id)
+    assert.equal(result.contactId, contactId)
+    assert.equal(result.enrollment.automationName, `Prueba runner ${suffix}`)
+    assert.ok(result.enrollment.log.some((entry) => entry.detail === 'Prueba iniciada desde Automatizaciones'))
+    assert.ok(tags.includes(tagId))
+  } finally {
+    if (automation?.id) {
+      await db.run('DELETE FROM automation_enrollments WHERE automation_id = ?', [automation.id]).catch(() => undefined)
+      await db.run('DELETE FROM automations WHERE id = ?', [automation.id]).catch(() => undefined)
+    }
+    await db.run('DELETE FROM contacts WHERE id = ?', [contactId]).catch(() => undefined)
+    await db.run('DELETE FROM contact_tags WHERE id = ?', [tagId]).catch(() => undefined)
   }
 })
 

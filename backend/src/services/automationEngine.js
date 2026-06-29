@@ -4051,7 +4051,11 @@ export async function enrollContactManually({ automationId, contactId, source = 
     nodeId: 'start',
     label: 'Cuando...',
     status: 'ok',
-    detail: scheduledFor ? `Agregado manualmente para ${scheduledFor}` : 'Agregado manualmente desde el contacto'
+    detail: scheduledFor
+      ? `Agregado manualmente para ${scheduledFor}`
+      : source === 'test-run'
+        ? 'Prueba iniciada desde Automatizaciones'
+        : 'Agregado manualmente desde el contacto'
   })
 
   const edge = edgesFrom(flow, startNode.id)[0]

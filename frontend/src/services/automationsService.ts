@@ -145,6 +145,7 @@ export interface EnrollmentLogEntry {
   nodeId: string
   label?: string
   status?: string
+  detail?: string
   at?: string
 }
 
@@ -187,6 +188,16 @@ export interface ContactAutomationEnrollmentResult {
   mode: 'now' | 'scheduled'
   enrollment?: ContactAutomationActivityItem
   job?: ContactAutomationActivityItem
+}
+
+export interface AutomationTestRunResult {
+  mode: 'test'
+  testedAt: string
+  automationId: string
+  automationName: string
+  contactId: string
+  contactName: string
+  enrollment: ContactAutomationActivityItem
 }
 
 export interface EnrollmentStats {
@@ -373,6 +384,10 @@ export const automationsService = {
     input: { contactId: string; mode: 'now' | 'scheduled'; scheduledAt?: string }
   ): Promise<ContactAutomationEnrollmentResult> {
     return apiClient.post<ContactAutomationEnrollmentResult>(`/automations/${automationId}/enroll-contact`, input)
+  },
+
+  async testAutomation(automationId: string, input: { contactId: string }): Promise<AutomationTestRunResult> {
+    return apiClient.post<AutomationTestRunResult>(`/automations/${automationId}/test-run`, input)
   },
 
   async testWebhookAction(input: AutomationWebhookActionTestInput): Promise<AutomationWebhookActionTestResult> {

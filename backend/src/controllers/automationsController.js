@@ -23,7 +23,8 @@ import {
   listAutomationFormFieldsCatalog,
   listAutomationWhatsAppTemplatesCatalog,
   saveAutomationAsset,
-  getAutomationAsset
+  getAutomationAsset,
+  testAutomationRun
 } from '../services/automationsService.js'
 
 function sendError(res, error, fallback = 'Error procesando la solicitud') {
@@ -218,6 +219,16 @@ export async function enrollContactInAutomationHandler(req, res) {
   } catch (error) {
     logger.error(`Error agregando contacto a automatización: ${error.message}`)
     sendError(res, error, 'Error agregando contacto a automatización')
+  }
+}
+
+export async function testAutomationRunHandler(req, res) {
+  try {
+    const result = await testAutomationRun(req.params.automationId, req.body || {})
+    res.status(201).json({ success: true, data: result })
+  } catch (error) {
+    logger.error(`Error probando automatización: ${error.message}`)
+    sendError(res, error, 'Error probando la automatización')
   }
 }
 

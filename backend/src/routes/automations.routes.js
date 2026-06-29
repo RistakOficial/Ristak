@@ -24,7 +24,8 @@ import {
   getWhatsAppTemplatesCatalogHandler,
   uploadAssetHandler,
   serveAssetHandler,
-  testWebhookActionHandler
+  testWebhookActionHandler,
+  testAutomationRunHandler
 } from '../controllers/automationsController.js'
 
 const router = express.Router()
@@ -62,6 +63,7 @@ router.get('/:automationId/stats', getEnrollmentStatsHandler)
 router.get('/:automationId', getAutomationHandler)
 router.put('/:automationId', updateAutomationHandler)
 router.post('/:automationId/enroll-contact', enrollContactInAutomationHandler)
+router.post('/:automationId/test-run', testAutomationRunHandler)
 router.post('/:automationId/duplicate', duplicateAutomationHandler)
 router.delete('/:automationId', deleteAutomationHandler)
 
