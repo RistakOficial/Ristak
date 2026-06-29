@@ -1,6 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { randomUUID } from 'node:crypto'
+import http from 'node:http'
 import { DateTime } from 'luxon'
 import { db, getAppConfig, setAppConfig } from '../src/config/database.js'
 import { initializeMasterKey } from '../src/utils/encryption.js'
@@ -13,7 +14,8 @@ import {
   processDueResumes,
   processScheduledTriggers,
   processScheduledContactEnrollments,
-  enrollContactManually
+  enrollContactManually,
+  testWebhookAction
 } from '../src/services/automationEngine.js'
 import {
   connectEmail,
@@ -77,6 +79,58 @@ test('renderTemplate resuelve payloads de webhook con objetos y arrays anidados'
   assert.equal(renderTemplate('{{webhook.categories[0].name}}', { payload }), 'Trabajo')
   assert.equal(renderTemplate('{{webhook.categories[1].items[1]}}', { payload }), 'Ejercicio')
   assert.equal(renderTemplate('{{webhook.mixed[1].deep.value}}', { payload }), '7')
+})
+
+test('testWebhookAction ejecuta el POST y devuelve salida mapeable', async () => {
+  let received = { headers: {}, body: {} }
+  const server = http.createServer((req, res) => {
+    let rawBody = ''
+    req.on('data', (chunk) => {
+      rawBody += chunk
+    })
+    req.on('end', () => {
+      received = {
+        headers: req.headers,
+        body: rawBody ? JSON.parse(rawBody) : {}
+      }
+      res.setHeader('Content-Type', 'application/json')
+      res.end(JSON.stringify({
+        lead_id: 'lead_123',
+        echo: received.body
+      }))
+    })
+  })
+
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve))
+  try {
+    const address = server.address()
+    const port = typeof address === 'object' && address ? address.port : 0
+    const result = await testWebhookAction(
+      {
+        url: `http://127.0.0.1:${port}/crm`,
+        method: 'POST',
+        headers: [{ key: 'X-Test-Token', value: '{{webhook.token}}' }],
+        body: '{"email":"{{webhook.email}}","plan":"{{webhook.plan}}"}',
+        timeout: 5
+      },
+      {
+        payload: {
+          email: 'lead@test.com',
+          plan: 'Pro',
+          token: 'tok_test'
+        }
+      }
+    )
+
+    assert.equal(result.ok, true)
+    assert.equal(result.output.status, 'ok')
+    assert.equal(result.output.status_code, 200)
+    assert.equal(result.output.lead_id, 'lead_123')
+    assert.deepEqual(result.output.respuesta.echo, { email: 'lead@test.com', plan: 'Pro' })
+    assert.equal(received.headers['x-test-token'], 'tok_test')
+  } finally {
+    await new Promise((resolve) => server.close(resolve))
+  }
 })
 
 test('renderTemplate expone datos del pago para acciones posteriores', () => {

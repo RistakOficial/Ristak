@@ -681,6 +681,24 @@ export const AutomationEditor: React.FC = () => {
     return latestTrigger.config
   }, [updateNodeConfig])
 
+  const testWebhookAction = useCallback(async (nodeConfig: Record<string, unknown>) => {
+    const currentConfig = configRef.current
+    if (!currentConfig?.nodeId) {
+      throw new Error('Selecciona el webhook antes de probarlo')
+    }
+    const current = stateRef.current.present
+    return automationsService.testWebhookAction({
+      nodeId: currentConfig.nodeId,
+      config: nodeConfig,
+      flow: {
+        nodes: current.nodes,
+        edges: current.edges,
+        viewport: viewportRef.current,
+        settings: flowSettingsRef.current
+      }
+    })
+  }, [])
+
   // ------------------------------------------------------------------
   // Selección / creación de pasos desde los globos
   // ------------------------------------------------------------------
@@ -1851,6 +1869,7 @@ export const AutomationEditor: React.FC = () => {
             onChange={handleConfigChange}
             waitMessageSources={waitMessageSources}
             onRefreshWebhookSample={refreshWebhookSample}
+            onTestWebhookAction={testWebhookAction}
             onOpenRichEmailEditor={handleOpenRichEmailEditor}
             onClose={closeConfig}
           />

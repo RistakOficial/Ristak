@@ -1,7 +1,7 @@
 import crypto from 'crypto'
 import { db } from '../config/database.js'
 import { normalizeFlow, validateFlowForPublish, START_NODE_TYPE } from './automationFlowValidation.js'
-import { enrollContactManually } from './automationEngine.js'
+import { enrollContactManually, testWebhookAction } from './automationEngine.js'
 import { getWhatsAppApiTemplates } from './whatsappApiService.js'
 import { syncLocalMessageTemplateSnapshots } from './messageTemplatesService.js'
 import {
@@ -144,6 +144,94 @@ function normalizeWebhookSample({ body, query }) {
 function hasWebhookSampleData(value) {
   if (Array.isArray(value)) return value.length > 0
   return Boolean(value && typeof value === 'object' && Object.keys(value).length > 0)
+}
+
+function parseJsonSample(value) {
+  if (!value) return null
+  if (typeof value === 'object') return value
+  try {
+    return JSON.parse(String(value))
+  } catch {
+    return null
+  }
+}
+
+function hasPath(edges, from, to) {
+  if (!from || !to) return false
+  if (from === to) return true
+  const adjacency = new Map()
+  ;(Array.isArray(edges) ? edges : []).forEach((edge) => {
+    const list = adjacency.get(edge.sourceNodeId) || []
+    list.push(edge.targetNodeId)
+    adjacency.set(edge.sourceNodeId, list)
+  })
+
+  const queue = [from]
+  const visited = new Set([from])
+  while (queue.length > 0) {
+    const current = queue.shift()
+    for (const next of adjacency.get(current) || []) {
+      if (next === to) return true
+      if (!visited.has(next)) {
+        visited.add(next)
+        queue.push(next)
+      }
+    }
+  }
+  return false
+}
+
+function exposeTestOutput(ctx, sourceId, baseId, output) {
+  if (!output || typeof output !== 'object' || Array.isArray(output)) return
+  if (!ctx.__nodeOutputs || typeof ctx.__nodeOutputs !== 'object') ctx.__nodeOutputs = {}
+  if (!ctx.__outputOccurrences || typeof ctx.__outputOccurrences !== 'object') ctx.__outputOccurrences = {}
+
+  ctx.__nodeOutputs[sourceId] = output
+  const nextOccurrence = (Number(ctx.__outputOccurrences[baseId]) || 0) + 1
+  ctx.__outputOccurrences[baseId] = nextOccurrence
+  const root = `${baseId}_${nextOccurrence}`
+  ctx[root] = output
+  if (nextOccurrence === 1 && ctx[baseId] === undefined) ctx[baseId] = output
+}
+
+function buildWebhookActionTestContext(flow, nodeId) {
+  const ctx = { contact: {}, __nodeOutputs: {}, __outputOccurrences: {} }
+  const nodes = Array.isArray(flow?.nodes) ? flow.nodes : []
+  const edges = Array.isArray(flow?.edges) ? flow.edges : []
+  const startNode = nodes.find((node) => node.type === START_NODE_TYPE)
+  if (startNode && nodeId && hasPath(edges, startNode.id, nodeId)) {
+    const triggers = Array.isArray(startNode.config?.triggers) ? startNode.config.triggers : []
+    const incomingSample = triggers
+      .filter((trigger) => trigger?.type === 'trigger-incoming-webhook')
+      .map((trigger) => trigger?.config?.sampleResponse)
+      .find(hasWebhookSampleData)
+    if (incomingSample) {
+      ctx.payload = incomingSample
+      ctx.webhook = incomingSample
+      ctx.webhook_1 = incomingSample
+      ctx.phone = incomingSample.phone || incomingSample.telefono || incomingSample.teléfono || ''
+      ctx.email = incomingSample.email || incomingSample.correo || ''
+      ctx.contactName = incomingSample.name || incomingSample.nombre || ''
+      ctx.contact = {
+        fullName: ctx.contactName,
+        firstName: String(ctx.contactName || '').split(' ')[0] || '',
+        phone: ctx.phone,
+        email: ctx.email,
+        customFields: {}
+      }
+    }
+  }
+
+  nodes
+    .filter((node) => node.id !== nodeId && node.type === 'action-webhook' && hasPath(edges, node.id, nodeId))
+    .forEach((node) => {
+      const sample = parseJsonSample(node.config?.sampleResponseJson)
+      if (sample && typeof sample === 'object') {
+        exposeTestOutput(ctx, node.id, 'http_request', sample)
+      }
+    })
+
+  return ctx
 }
 
 // ---------------------------------------------------------------------------
@@ -416,6 +504,17 @@ export async function recordAutomationWebhookSample({ endpointId, method, body, 
   }
 
   throw notFound('Webhook de automatización no encontrado')
+}
+
+export async function testAutomationWebhookAction(input = {}) {
+  const config = isPlainObject(input.config) ? input.config : {}
+  if (!String(config.url || '').trim()) {
+    throw badRequest('Configura la URL antes de probar el webhook')
+  }
+
+  const flow = input.flow ? normalizeFlow(input.flow) : null
+  const ctx = flow ? buildWebhookActionTestContext(flow, String(input.nodeId || '')) : { contact: {} }
+  return testWebhookAction(config, ctx)
 }
 
 export async function getAutomationsOverview() {

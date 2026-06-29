@@ -7,6 +7,7 @@ import {
   duplicateAutomation,
   deleteAutomation,
   recordAutomationWebhookSample,
+  testAutomationWebhookAction,
   createFolder,
   updateFolder,
   reorderFolders,
@@ -285,5 +286,15 @@ export async function automationWebhookSampleHandler(req, res) {
   } catch (error) {
     logger.error(`Error capturando muestra de webhook de automatización: ${error.message}`)
     sendError(res, error, 'Error capturando la muestra del webhook')
+  }
+}
+
+export async function testWebhookActionHandler(req, res) {
+  try {
+    const data = await testAutomationWebhookAction(req.body || {})
+    res.json({ success: true, data })
+  } catch (error) {
+    logger.error(`Error probando webhook de automatización: ${error.message}`)
+    sendError(res, error, 'Error probando el webhook')
   }
 }

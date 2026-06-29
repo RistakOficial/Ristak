@@ -208,6 +208,21 @@ export interface AutomationUpdateInput {
   flow?: AutomationFlow
 }
 
+export interface AutomationWebhookActionTestInput {
+  nodeId: string
+  config: Record<string, unknown>
+  flow: AutomationFlow
+}
+
+export interface AutomationWebhookActionTestResult {
+  ok: boolean
+  detail: string
+  handle: string
+  stop: boolean
+  output: Record<string, unknown>
+  testedAt: string
+}
+
 export const AUTOMATION_STATUS_LABELS: Record<AutomationStatus, string> = {
   draft: 'Borrador',
   published: 'Publicada',
@@ -358,6 +373,10 @@ export const automationsService = {
     input: { contactId: string; mode: 'now' | 'scheduled'; scheduledAt?: string }
   ): Promise<ContactAutomationEnrollmentResult> {
     return apiClient.post<ContactAutomationEnrollmentResult>(`/automations/${automationId}/enroll-contact`, input)
+  },
+
+  async testWebhookAction(input: AutomationWebhookActionTestInput): Promise<AutomationWebhookActionTestResult> {
+    return apiClient.post<AutomationWebhookActionTestResult>('/automations/test-webhook-action', input)
   },
 
   async deleteFolder(folderId: string): Promise<void> {

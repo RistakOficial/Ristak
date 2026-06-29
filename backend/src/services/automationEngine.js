@@ -1997,8 +1997,7 @@ function webhookHeadersFromConfig(rawHeaders, ctx) {
   return headers
 }
 
-async function executeWebhookAction(node, ctx) {
-  const config = node.config || {}
+async function runWebhookRequestFromConfig(config = {}, ctx = {}) {
   const method = (str(config.method) || 'POST').toUpperCase()
   const url = renderTemplate(str(config.url), ctx, { preserveUnknown: true }).trim()
   const onError = str(config.onError) || 'continue'
@@ -2061,6 +2060,22 @@ async function executeWebhookAction(node, ctx) {
     })
   } finally {
     clearTimeout(timer)
+  }
+}
+
+async function executeWebhookAction(node, ctx) {
+  return runWebhookRequestFromConfig(node.config || {}, ctx)
+}
+
+export async function testWebhookAction(config = {}, ctx = {}) {
+  const result = await runWebhookRequestFromConfig(config, ctx)
+  return {
+    ok: result.output?.status === 'ok',
+    detail: result.detail || '',
+    handle: result.handle || 'out',
+    stop: Boolean(result.stop),
+    output: result.output || {},
+    testedAt: nowIso()
   }
 }
 

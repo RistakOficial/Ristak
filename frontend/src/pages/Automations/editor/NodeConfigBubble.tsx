@@ -1,6 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react'
-import { Check, ChevronRight, Copy, Loader2, Pencil, Plus, RefreshCw, Trash2, X } from 'lucide-react'
+import { Check, ChevronRight, Copy, Loader2, Pencil, Plus, RefreshCw, Save, Trash2, X } from 'lucide-react'
 import { cn } from '@/utils/cn'
+import type { AutomationWebhookActionTestResult } from '@/services/automationsService'
 import { CustomSelect } from './config/configPrimitives'
 import { validateNodeConfig, type ConfigField, type NodeDefinition } from './nodeRegistry'
 import { genId, type WaitMessageSourceOption } from './flowUtils'
@@ -40,6 +41,7 @@ interface NodeConfigBubbleProps {
   onChange: (config: ConfigValue) => void
   waitMessageSources?: WaitMessageSourceOption[]
   onRefreshWebhookSample?: (endpointId: string) => Promise<Record<string, unknown> | null>
+  onTestWebhookAction?: (config: ConfigValue) => Promise<AutomationWebhookActionTestResult>
   onOpenRichEmailEditor: (request: EmailRichEditorRequest) => void
   onClose: () => void
 }
@@ -54,6 +56,15 @@ const hasSampleResponse = (value: unknown): boolean => {
   return Boolean(value && typeof value === 'object' && Object.keys(value as Record<string, unknown>).length > 0)
 }
 
+const requestSignature = (definitionType: string, config: ConfigValue): string =>
+  JSON.stringify({
+    type: definitionType,
+    url: str(config.url),
+    method: str(config.method),
+    body: str(config.body),
+    headers: config.headers || null
+  })
+
 export const NodeConfigBubble: React.FC<NodeConfigBubbleProps> = ({
   definition,
   config,
@@ -62,6 +73,7 @@ export const NodeConfigBubble: React.FC<NodeConfigBubbleProps> = ({
   onChange,
   waitMessageSources = [],
   onRefreshWebhookSample,
+  onTestWebhookAction,
   onOpenRichEmailEditor,
   onClose
 }) => {
@@ -72,6 +84,13 @@ export const NodeConfigBubble: React.FC<NodeConfigBubbleProps> = ({
   const [draftTitle, setDraftTitle] = useState('')
   const titleInputRef = useRef<HTMLInputElement>(null)
   const [checkingSample, setCheckingSample] = useState(false)
+  const [webhookActionTest, setWebhookActionTest] = useState<{
+    status: 'idle' | 'testing' | 'received' | 'error'
+    result?: AutomationWebhookActionTestResult
+    error?: string
+    saved?: boolean
+  }>({ status: 'idle' })
+  const webhookActionRequestSignature = requestSignature(definition.type, config)
 
   const customTitle = str(config.customTitle).trim()
 
@@ -92,6 +111,35 @@ export const NodeConfigBubble: React.FC<NodeConfigBubbleProps> = ({
 
   const setValue = (key: string, value: unknown) => {
     onChange({ ...config, [key]: value })
+  }
+
+  useEffect(() => {
+    setWebhookActionTest({ status: 'idle' })
+  }, [webhookActionRequestSignature])
+
+  const runWebhookActionTest = async () => {
+    if (!onTestWebhookAction || !str(config.url).trim()) return
+    setWebhookActionTest({ status: 'testing' })
+    try {
+      const result = await onTestWebhookAction(config)
+      setWebhookActionTest({ status: 'received', result, saved: false })
+    } catch (error) {
+      setWebhookActionTest({
+        status: 'error',
+        error: error instanceof Error ? error.message : 'No se pudo probar el webhook'
+      })
+    }
+  }
+
+  const saveWebhookActionResponse = () => {
+    const output = webhookActionTest.result?.output
+    if (!output || typeof output !== 'object') return
+    onChange({
+      ...config,
+      sampleResponseJson: JSON.stringify(output, null, 2),
+      sampleResponseSavedAt: new Date().toISOString()
+    })
+    setWebhookActionTest((current) => ({ ...current, saved: true }))
   }
 
   // Genera la URL del webhook entrante la primera vez que se abre
@@ -596,6 +644,78 @@ export const NodeConfigBubble: React.FC<NodeConfigBubbleProps> = ({
     }
   }
 
+  const renderWebhookActionTestPanel = () => {
+    if (definition.type !== 'action-webhook') return null
+
+    const testing = webhookActionTest.status === 'testing'
+    const hasSavedSample = Boolean(str(config.sampleResponseJson).trim())
+    const result = webhookActionTest.result
+    const canSave = Boolean(result?.output && typeof result.output === 'object' && Object.keys(result.output).length > 0)
+    const panelSuccess = Boolean(result?.ok || webhookActionTest.saved || (!result && hasSavedSample))
+    const statusText = result
+      ? result.ok
+        ? 'Respuesta recibida'
+        : 'Respuesta recibida con error'
+      : hasSavedSample
+        ? 'Respuesta guardada'
+        : 'Sin respuesta guardada'
+    const hintText = result
+      ? result.detail || 'Guarda esta respuesta para mapear sus campos en pasos posteriores'
+      : hasSavedSample
+        ? 'Los campos guardados ya aparecen como variables en los pasos siguientes'
+        : 'Prueba el webhook para capturar una respuesta real y usar sus campos después'
+
+    return (
+      <Field
+        label="Prueba de respuesta"
+        help="Ejecuta el webhook desde el backend con la misma configuración que usará la automatización."
+      >
+        <div
+          className={cn(
+            styles.webhookTestPanel,
+            panelSuccess && styles.webhookTestPanelSuccess,
+            webhookActionTest.status === 'error' && styles.webhookTestPanelError
+          )}
+        >
+          <div className={styles.webhookTestHeader}>
+            <span className={styles.webhookTestStatus}>{testing ? 'Probando webhook' : statusText}</span>
+            <span className={styles.webhookTestHint}>{hintText}</span>
+          </div>
+          <div className={styles.configRow}>
+            <button
+              type="button"
+              className={styles.configSmallButton}
+              disabled={testing || !onTestWebhookAction || !str(config.url).trim()}
+              onClick={() => void runWebhookActionTest()}
+            >
+              {testing ? <Loader2 size={11} className="animate-spin" /> : <RefreshCw size={11} />}
+              Probar
+            </button>
+            {canSave && (
+              <button
+                type="button"
+                className={styles.configSmallButton}
+                disabled={testing}
+                onClick={saveWebhookActionResponse}
+              >
+                {webhookActionTest.saved ? <Check size={11} /> : <Save size={11} />}
+                {webhookActionTest.saved ? 'Respuesta guardada' : 'Guardar respuesta'}
+              </button>
+            )}
+          </div>
+          {webhookActionTest.error && (
+            <span className={styles.webhookActionError}>{webhookActionTest.error}</span>
+          )}
+          {result && (
+            <pre className={styles.webhookSamplePreview}>
+              {JSON.stringify(result.output, null, 2)}
+            </pre>
+          )}
+        </div>
+      </Field>
+    )
+  }
+
   // El panel aparece a la derecha del evento y A SU ALTURA: si el contenido
   // es alto y no cabe, se desplaza hacia arriba solo lo necesario.
   const left = Math.max(12, Math.min(anchor.x, bounds.width - PANEL_WIDTH - 12))
@@ -711,6 +831,8 @@ export const NodeConfigBubble: React.FC<NodeConfigBubbleProps> = ({
         )}
         {/* Solo los campos indispensables a la vista */}
         {!definition.configComponent && definition.fields.filter((field) => !field.advanced).map(renderField)}
+
+        {renderWebhookActionTestPanel()}
 
         {/* Filtros avanzados del disparador (coincide / NO coincide) */}
         {definition.kind === 'trigger' && (

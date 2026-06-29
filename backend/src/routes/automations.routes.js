@@ -23,7 +23,8 @@ import {
   getFormFieldsCatalogHandler,
   getWhatsAppTemplatesCatalogHandler,
   uploadAssetHandler,
-  serveAssetHandler
+  serveAssetHandler,
+  testWebhookActionHandler
 } from '../controllers/automationsController.js'
 
 const router = express.Router()
@@ -55,6 +56,7 @@ router.get('/catalogs/whatsapp-templates', getWhatsAppTemplatesCatalogHandler)
 router.get('/', getAutomationsHandler)
 router.post('/', createAutomationHandler)
 router.get('/contacts/:contactId/activity', getContactAutomationActivityHandler)
+router.post('/test-webhook-action', testWebhookActionHandler)
 router.get('/:automationId/enrollments', getEnrollmentsHandler)
 router.get('/:automationId/stats', getEnrollmentStatsHandler)
 router.get('/:automationId', getAutomationHandler)
