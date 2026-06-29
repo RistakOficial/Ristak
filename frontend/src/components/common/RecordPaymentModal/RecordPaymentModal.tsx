@@ -120,6 +120,7 @@ type MercadoPagoInstallmentChoice = 'none' | '2' | '3' | '6' | '9' | '12' | '18'
 type ConektaInstallmentChoice = 'none' | '3' | '6' | '9' | '12' | '18' | '24'
 type InstallmentChargeMode = 'single' | 'installments'
 type PaymentSegmentedOption = { value: string; label: string }
+type PaymentSelectOption = { value: string; label: string; description?: string; disabled?: boolean }
 type RecordPaymentStep = 'form' | 'options' | 'processing' | 'link_ready'
 
 const INSTALLMENT_VALUE_TYPE_OPTIONS = [
@@ -168,13 +169,13 @@ const MERCADOPAGO_INSTALLMENT_OPTIONS: Array<{ value: MercadoPagoInstallmentChoi
   { value: '24', label: 'Hasta 24 meses' }
 ]
 
-const CONEKTA_INSTALLMENT_TERMS: Array<{ value: ConektaInstallmentChoice; months: number; minAmount: number }> = [
+const CONEKTA_INSTALLMENT_TERMS: Array<{ value: ConektaInstallmentChoice; months: number; minAmount: number; issuer?: string }> = [
   { value: '3', months: 3, minAmount: 300 },
   { value: '6', months: 6, minAmount: 600 },
   { value: '9', months: 9, minAmount: 900 },
   { value: '12', months: 12, minAmount: 1200 },
-  { value: '18', months: 18, minAmount: 1800 },
-  { value: '24', months: 24, minAmount: 2400 }
+  { value: '18', months: 18, minAmount: 1800, issuer: 'Citibanamex' },
+  { value: '24', months: 24, minAmount: 2400, issuer: 'BBVA, Banorte y Afirme' }
 ]
 
 const getMercadoPagoInstallmentLimit = (choice: MercadoPagoInstallmentChoice) => {
@@ -189,14 +190,30 @@ const getConektaInstallmentLimit = (choice: ConektaInstallmentChoice) => {
   return Number.isFinite(parsed) ? Math.max(1, Math.trunc(parsed)) : 1
 }
 
-const getConektaInstallmentOptions = (amount: number) => (
-  CONEKTA_INSTALLMENT_TERMS
-    .filter((term) => Number(amount || 0) >= term.minAmount)
-    .map((term) => ({
-      value: term.value,
-      label: `Hasta ${term.months} meses`
-    }))
+const getConektaInstallmentTermLabel = (term: typeof CONEKTA_INSTALLMENT_TERMS[number]) => (
+  `${term.months} meses${term.issuer ? ` (${term.issuer})` : ''}`
 )
+
+const formatConektaInstallmentMinimum = (amount: number, currency = 'MXN') => (
+  `${formatCurrency(amount, currency)} ${currency}`
+)
+
+const getConektaInstallmentOptions = (amount: number, currency = 'MXN'): PaymentSelectOption[] => {
+  const normalizedAmount = Number(amount || 0)
+
+  return CONEKTA_INSTALLMENT_TERMS.map((term) => {
+    const minimumLabel = formatConektaInstallmentMinimum(term.minAmount, currency)
+    const available = normalizedAmount >= term.minAmount
+    const termLabel = getConektaInstallmentTermLabel(term)
+
+    return {
+      value: term.value,
+      label: available ? termLabel : `${termLabel} - mínimo ${minimumLabel}`,
+      description: available ? `Disponible desde ${minimumLabel}` : `Necesita mínimo ${minimumLabel}`,
+      disabled: !available
+    }
+  })
+}
 
 interface InstallmentDraft {
   id: string
@@ -677,14 +694,18 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
     options,
     title,
     placeholder,
-    invalid = false
+    invalid = false,
+    includeDisabledOptions = false,
+    dropdownMinWidth
   }: {
     value: string;
     onChange: (value: string) => void;
-    options: Array<{ value: string; label: string; disabled?: boolean }>;
+    options: PaymentSelectOption[];
     title: string;
     placeholder?: string;
     invalid?: boolean;
+    includeDisabledOptions?: boolean;
+    dropdownMinWidth?: number;
   }) => (
     variant === 'embedded' ? (
       <PhoneSelect
@@ -701,9 +722,10 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
       <CustomSelect
         value={value}
         onValueChange={onChange}
-        options={options.filter((option) => !option.disabled)}
+        options={includeDisabledOptions ? options : options.filter((option) => !option.disabled)}
         placeholder={placeholder || title}
         className={styles.customSelectControl}
+        dropdownMinWidth={dropdownMinWidth}
         portal
       />
     )
@@ -906,26 +928,29 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
   const mercadoPagoInstallmentEstimate = invoiceSummary && mercadoPagoInstallmentEnabled
     ? normalizeAmount(invoiceSummary.amount / mercadoPagoInstallmentLimit)
     : 0
-  const conektaInstallmentOptions = invoiceSummary ? getConektaInstallmentOptions(invoiceSummary.amount) : []
-  const conektaInstallmentsAvailable = conektaInstallmentOptions.length > 0
+  const conektaInstallmentOptions = invoiceSummary ? getConektaInstallmentOptions(invoiceSummary.amount, invoiceSummary.currency) : []
+  const conektaInstallmentsAvailable = conektaInstallmentOptions.some((option) => !option.disabled)
+  const conektaSelectedInstallmentOption = conektaInstallmentOptions.find((option) => option.value === conektaInstallmentChoice)
   const conektaInstallmentLimit = getConektaInstallmentLimit(conektaInstallmentChoice)
-  const conektaInstallmentEnabled = conektaInstallmentLimit > 1
+  const conektaInstallmentEnabled = conektaInstallmentLimit > 1 && !conektaSelectedInstallmentOption?.disabled
   const conektaMsiEnabled = installmentChargeMode === 'installments' && conektaInstallmentEnabled
   const conektaInstallmentPaymentLabel = conektaInstallmentEnabled
     ? `Hasta ${conektaInstallmentLimit} meses`
-    : 'Pago de contado'
+    : conektaInstallmentsAvailable
+      ? 'Selecciona plazo'
+      : `Desde ${formatConektaInstallmentMinimum(300, invoiceSummary?.currency || accountCurrency || 'MXN')}`
   const conektaInstallmentEstimate = invoiceSummary && conektaInstallmentEnabled
     ? normalizeAmount(invoiceSummary.amount / conektaInstallmentLimit)
     : 0
 
   useEffect(() => {
     if (conektaInstallmentChoice === 'none') return
-    const nextOptions = getConektaInstallmentOptions(invoiceSummary?.amount || 0)
-    if (!nextOptions.some((option) => option.value === conektaInstallmentChoice)) {
-      setInstallmentChargeMode('single')
+    const nextOptions = getConektaInstallmentOptions(invoiceSummary?.amount || 0, invoiceSummary?.currency || accountCurrency || 'MXN')
+    const nextOption = nextOptions.find((option) => option.value === conektaInstallmentChoice)
+    if (!nextOption || nextOption.disabled) {
       setConektaInstallmentChoice('none')
     }
-  }, [conektaInstallmentChoice, invoiceSummary?.amount])
+  }, [accountCurrency, conektaInstallmentChoice, invoiceSummary?.amount, invoiceSummary?.currency])
 
   const resetInstallmentChargeMode = () => {
     setInstallmentChargeMode('single')
@@ -939,14 +964,13 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
   }
 
   const openConektaInstallmentConfiguration = () => {
-    const fallback = conektaInstallmentOptions[0]?.value as ConektaInstallmentChoice | undefined
-    if (!fallback) return
+    const fallback = conektaInstallmentOptions.find((option) => !option.disabled)?.value as ConektaInstallmentChoice | undefined
 
     setInstallmentChargeMode('installments')
     setConektaInstallmentChoice((current) => (
-      current !== 'none' && conektaInstallmentOptions.some((option) => option.value === current)
+      current !== 'none' && conektaInstallmentOptions.some((option) => option.value === current && !option.disabled)
         ? current
-        : fallback
+        : fallback || 'none'
     ))
   }
 
@@ -962,6 +986,10 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
       paymentOption === 'conekta_saved_card'
     )
   )
+  const needsConektaInstallmentSelection = isSinglePaymentInstallmentContext &&
+    (paymentOption === 'conekta' || paymentOption === 'conekta_saved_card') &&
+    installmentChargeMode === 'installments' &&
+    !conektaMsiEnabled
 
   const goToSavedCardOptions = () => {
     const nextPaymentOption = getDefaultSavedCardOption()
@@ -2170,6 +2198,15 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
   const handleConfirm = async () => {
     if (!invoiceSummary || !invoicePayload) {
       showToast('error', 'No se pudo procesar el pago. Intenta nuevamente.')
+      return
+    }
+
+    if (needsConektaInstallmentSelection) {
+      showToast(
+        'error',
+        'Selecciona un plazo disponible',
+        'El monto no alcanza para ese plazo de meses sin intereses en Conekta.'
+      )
       return
     }
 
@@ -3938,12 +3975,12 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
     const showConektaInstallmentPanel = showConektaInstallmentControls && installmentChargeMode === 'installments'
     const installmentProviderLabel = paymentOption === 'mercadopago' ? 'Mercado Pago' : 'Conekta'
     const installmentModeIsSavedCard = paymentOption === 'conekta_saved_card'
-    const installmentModeMsiAvailable = paymentOption === 'mercadopago' || conektaInstallmentsAvailable
+    const installmentModeMsiAvailable = paymentOption === 'mercadopago' ||
+      paymentOption === 'conekta' ||
+      paymentOption === 'conekta_saved_card'
     const installmentModeMsiDescription = paymentOption === 'mercadopago'
       ? 'Configura cuántos meses podrá elegir el cliente en el link.'
-      : conektaInstallmentsAvailable
-        ? 'Configura los meses disponibles para este cobro.'
-        : `Disponible en Conekta desde ${invoiceSummary ? formatCurrency(300, invoiceSummary.currency) : '$300.00'}.`
+      : 'Consulta mínimos y selecciona un plazo disponible.'
     const handleOpenInstallmentConfiguration = () => {
       if (paymentOption === 'mercadopago') {
         openMercadoPagoInstallmentConfiguration()
@@ -4323,8 +4360,36 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
                   value: conektaInstallmentChoice,
                   onChange: (value) => setConektaInstallmentChoice(value as ConektaInstallmentChoice),
                   options: conektaInstallmentOptions,
-                  title: 'Máximo de meses'
+                  title: 'Máximo de meses',
+                  placeholder: 'Selecciona un plazo',
+                  includeDisabledOptions: true,
+                  dropdownMinWidth: 420
                 })}
+              </div>
+
+              <div className={styles.conektaInstallmentMinimums} aria-label="Montos mínimos de Conekta">
+                <span>Montos mínimos</span>
+                <div className={styles.conektaMinimumList}>
+                  {CONEKTA_INSTALLMENT_TERMS.map((term) => {
+                    const available = invoiceSummary.amount >= term.minAmount
+
+                    return (
+                      <div
+                        key={term.value}
+                        className={styles.conektaMinimumRow}
+                        data-available={available ? 'true' : 'false'}
+                      >
+                        <span>{getConektaInstallmentTermLabel(term)}</span>
+                        <strong>{formatConektaInstallmentMinimum(term.minAmount, invoiceSummary.currency)}</strong>
+                      </div>
+                    )
+                  })}
+                </div>
+                {!conektaInstallmentsAvailable && (
+                  <p className={styles.conektaInstallmentHelp}>
+                    Sube el monto del cobro para habilitar meses sin intereses.
+                  </p>
+                )}
               </div>
             </div>
 
@@ -4609,7 +4674,8 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
                 lacksStripePlanSavedCard ||
                 lacksStripePlanAuthorization ||
                 lacksConektaPlanSavedCard ||
-                lacksConektaPlanAuthorization
+                lacksConektaPlanAuthorization ||
+                needsConektaInstallmentSelection
               }
               title={
                 lacksDeliveryChannel
@@ -4628,6 +4694,8 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
                     ? 'Selecciona una tarjeta guardada para el plan'
                   : lacksConektaPlanAuthorization
                     ? 'Usa una tarjeta guardada o marca el primer pago como tarjeta/link'
+                  : needsConektaInstallmentSelection
+                    ? 'Selecciona un plazo disponible para Conekta'
                   : undefined
               }
             >
@@ -4687,6 +4755,12 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
               <div className={styles.tooltipInfo}>
                 <AlertCircle size={14} />
                 <span>Usa tarjeta guardada o primer pago con tarjeta/link</span>
+              </div>
+            )}
+            {needsConektaInstallmentSelection && (
+              <div className={styles.tooltipInfo}>
+                <AlertCircle size={14} />
+                <span>Selecciona un plazo disponible para Conekta</span>
               </div>
             )}
           </div>

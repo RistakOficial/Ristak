@@ -1239,6 +1239,64 @@ body.dark .summaryBadge,
   align-items: end;
 }
 
+.conektaInstallmentMinimums {
+  display: grid;
+  gap: 8px;
+  align-self: start;
+  min-width: 0;
+}
+
+.conektaInstallmentMinimums > span {
+  display: block;
+  font: var(--label-font);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: var(--label-spacing);
+  text-transform: var(--label-transform);
+  color: var(--text-mute, var(--color-text-tertiary));
+}
+
+.conektaMinimumList {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+}
+
+.conektaMinimumRow {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: baseline;
+  gap: 12px;
+  min-width: 0;
+  color: var(--text-mute, var(--color-text-tertiary));
+  font-size: 12px;
+  line-height: 1.35;
+}
+
+.conektaMinimumRow[data-available='true'] {
+  color: var(--text, var(--color-text-primary));
+}
+
+.conektaMinimumRow span {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.conektaMinimumRow strong {
+  color: inherit;
+  font-family: var(--num-font);
+  font-size: 12px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.conektaInstallmentHelp {
+  margin: 2px 0 0;
+  color: var(--text-dim, var(--color-text-secondary));
+  font-size: 12px;
+  line-height: 1.45;
+}
+
 .mercadoPagoInstallmentTotals {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
