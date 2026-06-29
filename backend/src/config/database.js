@@ -2564,6 +2564,23 @@ async function initTables() {
       logger.warn('Advertencia al crear índice único de calendars.ghl_calendar_id:', err.message)
     }
 
+    await db.run(`
+      CREATE TABLE IF NOT EXISTS blocked_slots (
+        id TEXT PRIMARY KEY,
+        calendar_id TEXT,
+        start_time DATETIME NOT NULL,
+        end_time DATETIME NOT NULL,
+        title TEXT,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (calendar_id) REFERENCES calendars(id) ON DELETE CASCADE
+      )
+    `)
+
+    await db.run('CREATE INDEX IF NOT EXISTS idx_blocked_slots_calendar ON blocked_slots(calendar_id)')
+    await db.run('CREATE INDEX IF NOT EXISTS idx_blocked_slots_start_time ON blocked_slots(start_time)')
+    await db.run('CREATE INDEX IF NOT EXISTS idx_blocked_slots_end_time ON blocked_slots(end_time)')
+
     for (const [columnName, columnType] of [
       ['ghl_appointment_id', 'TEXT'],
       ['source', "TEXT DEFAULT 'ghl'"],

@@ -4,11 +4,15 @@ import { randomUUID } from 'node:crypto'
 import { DateTime } from 'luxon'
 import { db } from '../src/config/database.js'
 import {
+  createLocalBlockedSlot,
   createLocalCalendar,
   createLocalAppointment,
+  deleteLocalBlockedSlot,
   ensureHighLevelContactForAppointment,
   getLocalFreeSlots,
   getPublicCalendarBySlug,
+  listLocalBlockedSlots,
+  updateLocalBlockedSlot,
   upsertLocalCalendar
 } from '../src/services/localCalendarService.js'
 
@@ -195,6 +199,73 @@ test('createLocalCalendar genera IDs y URLs publicas unicas para calendarios Ris
     if (createdIds.length) {
       await db.run(`DELETE FROM calendars WHERE id IN (${createdIds.map(() => '?').join(', ')})`, createdIds).catch(() => undefined)
     }
+  }
+})
+
+test('bloqueos locales de calendario se crean con ID rstk y afectan disponibilidad', async () => {
+  const suffix = randomUUID()
+  const calendarId = `rstk_cal_blocked_${suffix}`
+  const baseDay = DateTime.utc().plus({ days: 30 }).startOf('day')
+  const nextMonday = baseDay.plus({ days: (1 - baseDay.weekday + 7) % 7 })
+  const dateKey = nextMonday.toISODate()
+  const blockStart = nextMonday.set({ hour: 10, minute: 0 })
+  const blockEnd = blockStart.plus({ minutes: 60 })
+  const expectedSlot = blockStart.toISO()
+  let blockedSlotId = ''
+
+  try {
+    await upsertLocalCalendar({
+      id: calendarId,
+      locationId: 'loc_blocked_slot_test',
+      name: 'Calendario con bloqueo',
+      source: 'ristak',
+      slotDuration: 60,
+      slotInterval: 60,
+      openHours: [
+        {
+          daysOfTheWeek: [1],
+          hours: [{ openHour: 9, openMinute: 0, closeHour: 12, closeMinute: 0 }]
+        }
+      ]
+    }, {
+      source: 'ristak',
+      syncStatus: 'pending'
+    })
+
+    const blockedSlot = await createLocalBlockedSlot({
+      calendarId,
+      startTime: blockStart.toISO(),
+      endTime: blockEnd.toISO(),
+      title: 'Bloqueo smoke'
+    })
+    blockedSlotId = blockedSlot.id
+
+    assert.match(blockedSlot.id, /^rstk_block_[A-Za-z0-9]{20}$/)
+
+    let slots = await getLocalFreeSlots(calendarId, dateKey, dateKey, 'UTC')
+    assert.equal(slots[0]?.slots.includes(expectedSlot), false)
+
+    const listed = await listLocalBlockedSlots({
+      calendarId,
+      startTime: blockStart.minus({ minutes: 1 }).toISO(),
+      endTime: blockEnd.plus({ minutes: 1 }).toISO()
+    })
+    assert.equal(listed.some((item) => item.id === blockedSlot.id), true)
+
+    const updated = await updateLocalBlockedSlot({ id: blockedSlot.id, title: 'Bloqueo actualizado' })
+    assert.equal(updated, true)
+
+    const deleted = await deleteLocalBlockedSlot(blockedSlot.id)
+    assert.equal(deleted, true)
+    blockedSlotId = ''
+
+    slots = await getLocalFreeSlots(calendarId, dateKey, dateKey, 'UTC')
+    assert.equal(slots[0]?.slots.includes(expectedSlot), true)
+  } finally {
+    if (blockedSlotId) await deleteLocalBlockedSlot(blockedSlotId).catch(() => undefined)
+    await db.run('DELETE FROM appointments WHERE calendar_id = ?', [calendarId]).catch(() => undefined)
+    await db.run('DELETE FROM blocked_slots WHERE calendar_id = ?', [calendarId]).catch(() => undefined)
+    await db.run('DELETE FROM calendars WHERE id = ?', [calendarId]).catch(() => undefined)
   }
 })
 
