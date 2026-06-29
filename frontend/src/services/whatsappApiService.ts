@@ -265,7 +265,13 @@ export interface ScheduledChatMessage {
   provider: 'highlevel' | 'whatsapp_api' | string
   channel?: string
   transport?: string
+  messageType?: 'text' | 'template' | string
   text: string
+  templateId?: string
+  templateName?: string
+  templateLanguage?: string
+  templateComponents?: Array<Record<string, any>> | null
+  templateVariables?: unknown
   toPhone?: string
   fromPhone?: string
   businessPhoneNumberId?: string
@@ -287,7 +293,13 @@ export interface ScheduleChatMessagePayload {
   provider: 'highlevel' | 'whatsapp_api'
   channel?: string
   transport?: 'api' | 'qr'
+  messageType?: 'text' | 'template'
   text: string
+  templateId?: string
+  templateName?: string
+  templateLanguage?: string
+  templateComponents?: Array<Record<string, any>>
+  templateVariables?: unknown
   toPhone?: string
   fromPhone?: string
   businessPhoneNumberId?: string

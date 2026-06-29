@@ -1739,10 +1739,12 @@ function getJourneyMessage(event: JourneyEvent, index: number): DesktopChatMessa
 }
 
 function getScheduledChatMessageBubble(message: ScheduledChatMessage): DesktopChatMessage | null {
-  if (!message?.id || !message.text) return null
+  if (!message?.id) return null
+  const text = message.text || (message.messageType === 'template' ? `Plantilla: ${message.templateName || message.templateId || 'WhatsApp'}` : '')
+  if (!text) return null
   return {
     id: `scheduled-${message.id}`,
-    text: message.text,
+    text,
     date: message.createdAt || message.updatedAt || new Date().toISOString(),
     direction: 'outbound',
     status: message.status || 'scheduled',

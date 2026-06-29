@@ -1,6 +1,10 @@
 import { db } from '../config/database.js'
 import { sendHighLevelConversationMessageCore } from '../controllers/highlevelController.js'
-import { sendWhatsAppApiTextMessage } from './whatsappApiService.js'
+import {
+  sendWhatsAppApiTemplateMessage,
+  sendWhatsAppApiTextMessage
+} from './whatsappApiService.js'
+import { buildDefaultMessageTemplateSendComponents } from './messageTemplatesService.js'
 import { renderTemplateVariables } from './templateVariablesService.js'
 import { logger } from '../utils/logger.js'
 import { normalizePhoneForStorage } from '../utils/phoneUtils.js'
@@ -27,6 +31,15 @@ function safeJson(value) {
     return JSON.stringify(value ?? null)
   } catch {
     return JSON.stringify({ unserializable: true })
+  }
+}
+
+function parseJsonValue(value, fallback = null) {
+  if (!value) return fallback
+  try {
+    return JSON.parse(value)
+  } catch {
+    return fallback
   }
 }
 
@@ -74,6 +87,18 @@ function normalizeWhatsappTransport(value = '') {
   return cleanString(value).toLowerCase() === 'qr' ? 'qr' : 'api'
 }
 
+function normalizeMessageType(value = '') {
+  return cleanString(value).toLowerCase() === 'template' ? 'template' : 'text'
+}
+
+function hasPayloadTemplate(payload = {}) {
+  return Boolean(
+    cleanString(payload.templateId) ||
+    cleanString(payload.templateName) ||
+    cleanString(payload.language || payload.templateLanguage)
+  )
+}
+
 function getScheduledTransport(row = {}) {
   if (row.provider === 'highlevel') {
     return cleanString(row.transport) || HIGHLEVEL_TRANSPORT_BY_CHANNEL[row.channel] || 'ghl_whatsapp'
@@ -90,7 +115,13 @@ function normalizeScheduledMessageRow(row = {}) {
     provider: normalizeProvider(row.provider),
     channel: cleanString(row.channel),
     transport: getScheduledTransport(row),
+    messageType: normalizeMessageType(row.message_type),
     text: cleanString(row.message_text),
+    templateId: cleanString(row.template_id),
+    templateName: cleanString(row.template_name),
+    templateLanguage: cleanString(row.template_language),
+    templateComponents: parseJsonValue(row.template_components_json, null),
+    templateVariables: parseJsonValue(row.template_variables_json, null),
     toPhone: cleanString(row.to_phone),
     fromPhone: cleanString(row.from_phone),
     businessPhoneNumberId: cleanString(row.business_phone_number_id),
@@ -125,13 +156,40 @@ async function getContact(contactId) {
 export async function createScheduledChatMessage(payload = {}) {
   const contact = await getContact(payload.contactId)
   const provider = normalizeProvider(payload.provider)
-  const text = cleanString(payload.text || payload.message)
+  const messageType = provider === 'whatsapp_api' && (normalizeMessageType(payload.messageType) === 'template' || hasPayloadTemplate(payload))
+    ? 'template'
+    : 'text'
+  const templateId = cleanString(payload.templateId)
+  const templateName = cleanString(payload.templateName)
+  const templateLanguage = cleanString(payload.templateLanguage || payload.language)
+  const templateComponents = Array.isArray(payload.templateComponents || payload.components)
+    ? payload.templateComponents || payload.components
+    : null
+  const templateVariables = payload.templateVariables !== undefined
+    ? payload.templateVariables
+    : payload.variables !== undefined
+      ? payload.variables
+      : null
+  const text = cleanString(payload.text || payload.message) ||
+    (messageType === 'template' ? `Plantilla: ${templateName || templateId}` : '')
   const scheduledAt = parseScheduledDate(payload.scheduledAt)
   const id = cleanString(payload.id) || createScheduledMessageId()
   const externalId = cleanString(payload.externalId) || id
 
-  if (!text) {
+  if (messageType === 'text' && !text) {
     throw createServiceError('Escribe el mensaje que quieres programar.')
+  }
+
+  if (messageType === 'template' && provider !== 'whatsapp_api') {
+    throw createServiceError('Las plantillas programadas sólo se pueden enviar por WhatsApp API.')
+  }
+
+  if (messageType === 'template' && !templateId && !templateName) {
+    throw createServiceError('Elige la plantilla que quieres programar.')
+  }
+
+  if (messageType === 'template' && !templateLanguage) {
+    throw createServiceError('Falta el idioma de la plantilla.')
   }
 
   const channel = provider === 'highlevel' ? normalizeHighLevelChannel(payload.channel) : ''
@@ -157,16 +215,23 @@ export async function createScheduledChatMessage(payload = {}) {
 
   await db.run(`
     INSERT INTO scheduled_chat_messages (
-      id, contact_id, provider, channel, transport, message_text,
+      id, contact_id, provider, channel, transport, message_type, message_text,
+      template_id, template_name, template_language, template_components_json, template_variables_json,
       to_phone, from_phone, business_phone_number_id, scheduled_at,
       status, external_id, updated_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'scheduled', ?, ?)
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'scheduled', ?, ?)
     ON CONFLICT(id) DO UPDATE SET
       contact_id = excluded.contact_id,
       provider = excluded.provider,
       channel = excluded.channel,
       transport = excluded.transport,
+      message_type = excluded.message_type,
       message_text = excluded.message_text,
+      template_id = excluded.template_id,
+      template_name = excluded.template_name,
+      template_language = excluded.template_language,
+      template_components_json = excluded.template_components_json,
+      template_variables_json = excluded.template_variables_json,
       to_phone = excluded.to_phone,
       from_phone = excluded.from_phone,
       business_phone_number_id = excluded.business_phone_number_id,
@@ -181,7 +246,13 @@ export async function createScheduledChatMessage(payload = {}) {
     provider,
     channel || null,
     transport,
+    messageType,
     text,
+    templateId || null,
+    templateName || null,
+    templateLanguage || null,
+    templateComponents ? safeJson(templateComponents) : null,
+    templateVariables !== null && templateVariables !== undefined ? safeJson(templateVariables) : null,
     toPhone || null,
     fromPhone || null,
     businessPhoneNumberId || null,
@@ -284,6 +355,38 @@ async function claimScheduledMessage(id) {
 }
 
 async function sendScheduledChatMessage(row) {
+  if (row.provider === 'whatsapp_api' && normalizeMessageType(row.message_type) === 'template') {
+    const explicitComponents = parseJsonValue(row.template_components_json, [])
+    const explicitVariables = parseJsonValue(row.template_variables_json, null)
+    const hasExplicitVariables = explicitVariables !== null && explicitVariables !== undefined
+    const components = Array.isArray(explicitComponents) && explicitComponents.length
+      ? explicitComponents
+      : hasExplicitVariables
+        ? []
+        : await buildDefaultMessageTemplateSendComponents({
+            templateId: row.template_id,
+            templateName: row.template_name,
+            language: row.template_language,
+            variableOptions: {
+              contactId: row.contact_id,
+              phone: row.to_phone
+            }
+          })
+
+    return sendWhatsAppApiTemplateMessage({
+      to: row.to_phone,
+      from: row.from_phone,
+      templateId: row.template_id || undefined,
+      templateName: row.template_name || undefined,
+      language: row.template_language || undefined,
+      ...(components.length ? { components } : {}),
+      ...(hasExplicitVariables ? { variables: explicitVariables } : {}),
+      externalId: row.external_id || row.id,
+      contactId: row.contact_id,
+      phoneNumberId: row.business_phone_number_id
+    })
+  }
+
   const renderedText = await renderTemplateVariables(row.message_text, {
     contactId: row.contact_id,
     phone: row.to_phone

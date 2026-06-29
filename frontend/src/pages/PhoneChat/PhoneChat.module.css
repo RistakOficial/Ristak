@@ -5287,27 +5287,27 @@
 }
 
 .composer {
-  --phone-chat-composer-gap: 6px;
-  --phone-chat-composer-inline: 7px;
-  --phone-chat-composer-action: 38px;
-  --phone-chat-composer-side-action: 36px;
-  --phone-chat-composer-channel: 34px;
-  --phone-chat-composer-plus: 34px;
-  --phone-chat-composer-row: 38px;
-  --phone-chat-composer-input: 32px;
+  --phone-chat-composer-gap: 5px;
+  --phone-chat-composer-inline: 6px;
+  --phone-chat-composer-action: 35px;
+  --phone-chat-composer-side-action: 33px;
+  --phone-chat-composer-channel: 31px;
+  --phone-chat-composer-plus: 32px;
+  --phone-chat-composer-row: 35px;
+  --phone-chat-composer-input: 31px;
   display: grid;
   grid-template-columns: var(--phone-chat-composer-channel) var(--phone-chat-composer-plus) minmax(0, 1fr) auto;
   align-items: center;
   gap: var(--phone-chat-composer-gap);
   box-sizing: border-box;
-  min-height: calc(42px + env(safe-area-inset-bottom));
-  padding: 3px var(--phone-chat-composer-inline) max(4px, env(safe-area-inset-bottom));
+  min-height: calc(39px + env(safe-area-inset-bottom));
+  padding: 2px var(--phone-chat-composer-inline) max(3px, env(safe-area-inset-bottom));
   background: transparent;
   transition: gap 220ms cubic-bezier(0.2, 0.8, 0.2, 1);
 }
 
-.composerWithSchedule {
-  grid-template-columns: var(--phone-chat-composer-channel) var(--phone-chat-composer-plus) minmax(0, 1fr) var(--phone-chat-composer-side-action) auto;
+.composerTemplateOnly {
+  grid-template-columns: var(--phone-chat-composer-channel) minmax(0, 1fr);
 }
 
 .aiAgentUnifiedComposer {
@@ -5323,8 +5323,8 @@
 }
 
 :global(html[data-phone-chat-keyboard="true"]) .composer {
-  min-height: 40px;
-  padding-bottom: 4px;
+  min-height: 38px;
+  padding-bottom: 3px;
 }
 
 .composerChannelButton,
@@ -5362,9 +5362,10 @@
 
 .composerChannelButton svg,
 .composerChannelButton :global(svg) {
-  width: 21px;
-  height: 21px;
+  width: 19px;
+  height: 19px;
   flex: 0 0 auto;
+  stroke-width: 1.8;
 }
 
 .composerChannelButton[data-channel="whatsapp_api"] {
@@ -5390,8 +5391,8 @@
 }
 
 .composerChannelWhatsappGlyph {
-  width: 21px;
-  height: 21px;
+  width: 19px;
+  height: 19px;
 }
 
 .composerChannelDropdown {
@@ -5501,9 +5502,9 @@
 }
 
 .composerPlus svg {
-  width: 31px;
-  height: 31px;
-  stroke-width: 2;
+  width: 28px;
+  height: 28px;
+  stroke-width: 1.8;
 }
 
 .messageInputWrap {
@@ -5523,7 +5524,7 @@
 }
 
 .messageInputWrapWithSchedule {
-  grid-template-columns: minmax(0, 1fr) 34px;
+  grid-template-columns: minmax(0, 1fr) 31px;
 }
 
 .composerHasContent .messageInputWrap {
@@ -5536,7 +5537,7 @@
   width: 100%;
   min-height: var(--phone-chat-composer-row);
   max-height: 118px;
-  padding: 8px 8px 7px 13px;
+  padding: 7px 7px 6px 13px;
   border: 0;
   outline: none;
   color: var(--phone-chat-text);
@@ -5570,9 +5571,38 @@
   -webkit-user-select: none;
 }
 
+.templateOnlyInputWrap {
+  border-color: color-mix(in srgb, var(--phone-chat-accent) 22%, var(--phone-chat-border));
+  background: var(--phone-chat-surface);
+}
+
+.templateOnlyButton {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 7px;
+  min-width: 0;
+  width: 100% !important;
+  height: var(--phone-chat-composer-row) !important;
+  padding: 0 6px 0 13px;
+  color: var(--phone-chat-text);
+  font-size: 15px;
+  font-weight: 720;
+  letter-spacing: 0;
+  text-align: left;
+}
+
+.templateOnlyButton svg {
+  flex: 0 0 auto;
+  width: 16px;
+  height: 16px;
+  color: var(--phone-chat-muted);
+  stroke-width: 1.8;
+}
+
 .messageInputWrap button {
-  width: 34px;
-  height: 30px;
+  width: 31px;
+  height: 29px;
   margin-bottom: 0;
 }
 
@@ -5590,9 +5620,9 @@
 }
 
 .composerScheduleButton svg {
-  width: 22px;
-  height: 22px;
-  stroke-width: 2;
+  width: 18px;
+  height: 18px;
+  stroke-width: 1.8;
 }
 
 .composerScheduleButton:active {
@@ -5616,9 +5646,9 @@
 }
 
 .composerIconButton svg {
-  width: 29px;
-  height: 29px;
-  stroke-width: 2;
+  width: 25px;
+  height: 25px;
+  stroke-width: 1.85;
 }
 
 .composerIconButton:disabled {
@@ -5676,9 +5706,9 @@
 }
 
 .composerSendButton svg {
-  width: 20px;
-  height: 20px;
-  stroke-width: 3;
+  width: 18px;
+  height: 18px;
+  stroke-width: 2.4;
 }
 
 .composerSendButton:disabled {
@@ -6671,6 +6701,55 @@
   min-height: 0;
   overflow: hidden;
   padding: 0 0 4px;
+}
+
+.scheduleTemplatePreview {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+  padding: 10px 12px;
+  border: 1px solid color-mix(in srgb, var(--phone-chat-accent) 22%, var(--phone-chat-border));
+  border-radius: 14px;
+  background: color-mix(in srgb, var(--phone-chat-accent) 8%, var(--phone-chat-surface));
+}
+
+.scheduleTemplatePreview span {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--phone-chat-muted);
+  font-size: 11px;
+  font-weight: 820;
+  letter-spacing: 0;
+}
+
+.scheduleTemplatePreview span svg {
+  width: 15px;
+  height: 15px;
+  stroke-width: 1.8;
+}
+
+.scheduleTemplatePreview strong,
+.scheduleTemplatePreview small {
+  min-width: 0;
+  overflow: hidden;
+  letter-spacing: 0;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.scheduleTemplatePreview strong {
+  color: var(--phone-chat-text);
+  font-size: 14px;
+  font-weight: 820;
+  line-height: 1.15;
+}
+
+.scheduleTemplatePreview small {
+  color: var(--phone-chat-muted);
+  font-size: 12px;
+  font-weight: 650;
+  line-height: 1.2;
 }
 
 .scheduleFields {
@@ -8922,6 +9001,10 @@
     0 1px 0 color-mix(in srgb, var(--phone-chat-surface) 82%, transparent);
   backdrop-filter: blur(22px);
   -webkit-backdrop-filter: blur(22px);
+}
+
+.phoneChatPage:is([data-phone-chat-device="tablet"], [data-phone-chat-device="desktop"]) .composerTemplateOnly {
+  grid-template-columns: var(--phone-chat-composer-channel) minmax(0, 1fr);
 }
 
 .phoneChatPage:is([data-phone-chat-device="tablet"], [data-phone-chat-device="desktop"]) .messageInputWrap {

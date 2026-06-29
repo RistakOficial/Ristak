@@ -312,6 +312,7 @@ type AgentMenuSection = 'menu' | 'agents' | 'agent_detail' | 'ready_human'
 type ChatFilter = 'all' | 'agent' | 'unread' | 'appointments' | 'customers' | 'leads'
 type AIAgentHubStatusFilter = 'active' | 'completed' | 'paused' | 'skipped' | 'unassigned'
 type TemplateMode = 'choice' | 'send' | 'create'
+type TemplatePickIntent = 'send' | 'schedule'
 type ChatSettingsSection = 'appearance' | 'templates' | 'numbers' | 'notifications' | 'agent' | 'chats' | 'display' | null
 type WhatsAppNumberMode = 'merged' | 'separated'
 type ConversationSortMode = 'recent' | 'unread'
@@ -708,6 +709,10 @@ interface ChatMessage {
   errorReason?: string
   scheduledAt?: string
   scheduledMessageId?: string
+  messageType?: 'text' | 'template' | string
+  templateId?: string
+  templateName?: string
+  templateLanguage?: string
   sentAt?: string
   deliveredAt?: string
   readAt?: string
@@ -2256,17 +2261,23 @@ function getJourneyMessage(event: JourneyEvent, index: number): ChatMessage | nu
 }
 
 function getScheduledChatMessageBubble(message: ScheduledChatMessage): ChatMessage | null {
-  if (!message?.id || !message.text) return null
+  if (!message?.id) return null
+  const text = message.text || (message.messageType === 'template' ? `Plantilla: ${message.templateName || message.templateId || 'WhatsApp'}` : '')
+  if (!text) return null
 
   return {
     id: `scheduled-${message.id}`,
     scheduledMessageId: message.id,
-    text: message.text,
+    text,
     date: message.createdAt || message.updatedAt || new Date().toISOString(),
     direction: 'outbound',
     status: message.status || 'scheduled',
     errorReason: message.errorMessage || '',
     scheduledAt: message.scheduledAt,
+    messageType: message.messageType || 'text',
+    templateId: message.templateId || '',
+    templateName: message.templateName || '',
+    templateLanguage: message.templateLanguage || '',
     businessPhone: message.fromPhone || '',
     businessPhoneNumberId: message.businessPhoneNumberId || '',
     transport: message.transport || (message.provider === 'highlevel' ? message.channel || 'ghl_whatsapp' : 'api')
@@ -3688,6 +3699,8 @@ export const PhoneChat: React.FC = () => {
   const [widePaymentStep, setWidePaymentStep] = useState<PaymentSheetStep>('choice')
   const [requestingPush, setRequestingPush] = useState(false)
   const [templateMode, setTemplateMode] = useState<TemplateMode>('choice')
+  const [templatePickIntent, setTemplatePickIntent] = useState<TemplatePickIntent>('send')
+  const [scheduleTemplate, setScheduleTemplate] = useState<WhatsAppApiTemplate | null>(null)
   const [templates, setTemplates] = useState<WhatsAppApiTemplate[]>([])
   const [templatesLoading, setTemplatesLoading] = useState(false)
   const [templatesRefreshing, setTemplatesRefreshing] = useState(false)
@@ -4446,22 +4459,21 @@ export const PhoneChat: React.FC = () => {
     ? Boolean(activeContact?.id)
     : Boolean(activeContact?.phone)
   const composerBlockedByReplyWindow = Boolean(outsideReplyWindow && !selectedQrReady && !sendingThroughHighLevel && !sendingThroughMetaSocial)
+  const composerTemplateOnlyMode = composerBlockedByReplyWindow
   const hasComposerText = Boolean(messageText.trim())
   const hasComposerContent = Boolean(hasComposerText || draftAttachments.length > 0 || voiceDraft)
   const voicePanelActive = Boolean(voiceRecording || voiceProcessing || voiceDraft)
-  const canSendMessage = Boolean(selectedChannelCanSend && hasComposerContent && !voiceRecording && !voiceProcessing && !composerBlockedByReplyWindow)
-  const canOpenScheduleSheet = Boolean(selectedChannelCanSend && hasComposerText && !draftAttachments.length && !voicePanelActive && !composerBlockedByReplyWindow && composerStatus !== 'sending')
-  const composerInputDisabled = Boolean(!selectedChannelCanSend || voiceRecording || voiceProcessing || voiceDraft || composerBlockedByReplyWindow)
+  const canSendMessage = Boolean(selectedChannelCanSend && hasComposerContent && !voiceRecording && !voiceProcessing && !composerTemplateOnlyMode)
+  const canOpenScheduleSheet = Boolean(selectedChannelCanSend && hasComposerText && !draftAttachments.length && !voicePanelActive && !composerTemplateOnlyMode && composerStatus !== 'sending')
+  const composerInputDisabled = Boolean(!selectedChannelCanSend || voiceRecording || voiceProcessing || voiceDraft || composerTemplateOnlyMode)
   const composerPlaceholder = voiceRecording
     ? 'Grabando...'
     : voiceProcessing
       ? 'Preparando audio...'
     : voiceDraft
       ? 'Audio listo'
-      : composerBlockedByReplyWindow
-        ? 'Han pasado más de 24 horas; manda una plantilla'
-      : outsideReplyWindow && selectedQrReady
-        ? 'Han pasado más de 24 horas; se enviará por QR'
+      : composerTemplateOnlyMode || (outsideReplyWindow && selectedQrReady)
+        ? ''
       : selectedChannelCanSend
         ? ''
         : activeContact && sendingThroughHighLevel && activeHighLevelChannelNeedsPhone
@@ -5817,6 +5829,8 @@ export const PhoneChat: React.FC = () => {
     const previousBodyTextSizeAdjust = body.style.getPropertyValue('-webkit-text-size-adjust')
     let startX = 0
     let startY = 0
+    let keyboardFrame = 0
+    let keyboardScrollTimeout = 0
 
     if (viewportMeta) {
       viewportMeta.setAttribute(
@@ -5838,17 +5852,26 @@ export const PhoneChat: React.FC = () => {
       const force = input === true
       if (!force && html.getAttribute('data-phone-chat-keyboard') !== 'true') return
 
-      window.setTimeout(() => {
+      if (keyboardFrame) window.cancelAnimationFrame(keyboardFrame)
+      keyboardFrame = window.requestAnimationFrame(() => {
+        keyboardFrame = 0
         window.scrollTo({ top: 0, left: 0, behavior: 'auto' })
         html.scrollTop = 0
         body.scrollTop = 0
-        if (html.getAttribute('data-phone-chat-keyboard') === 'true') {
-          scrollMessagesPaneToBottom()
-        }
-      }, 60)
+      })
+
+      if (force) {
+        window.clearTimeout(keyboardScrollTimeout)
+        keyboardScrollTimeout = window.setTimeout(() => {
+          if (html.getAttribute('data-phone-chat-keyboard') === 'true') {
+            scrollMessagesPaneToBottom()
+          }
+        }, 180)
+      }
     }
 
     const resetViewportAfterKeyboard = () => {
+      window.clearTimeout(keyboardScrollTimeout)
       window.setTimeout(() => {
         html.removeAttribute('data-phone-chat-keyboard')
         window.scrollTo({ top: 0, left: 0, behavior: 'auto' })
@@ -5929,6 +5952,8 @@ export const PhoneChat: React.FC = () => {
       window.removeEventListener('focusout', handleFocusOut)
       window.visualViewport?.removeEventListener('resize', keepViewportStable)
       window.visualViewport?.removeEventListener('scroll', keepViewportStable)
+      if (keyboardFrame) window.cancelAnimationFrame(keyboardFrame)
+      window.clearTimeout(keyboardScrollTimeout)
       html.removeAttribute('data-phone-chat-keyboard')
       if (viewportMeta) {
         viewportMeta.setAttribute('content', previousViewportContent)
@@ -7984,9 +8009,19 @@ export const PhoneChat: React.FC = () => {
     }
 
     setScheduleEditingMessageId(scheduledMessageId)
-    setComposerMessageText(message.text)
+    const scheduledTemplate = message.messageType === 'template' && (message.templateId || message.templateName)
+      ? {
+          id: message.templateId || message.templateName || scheduledMessageId,
+          name: message.templateName || message.templateId || 'Plantilla',
+          language: message.templateLanguage || 'es_MX',
+          status: 'APPROVED',
+          components: []
+        } as WhatsAppApiTemplate
+      : null
+    setScheduleTemplate(scheduledTemplate)
+    setComposerMessageText(scheduledTemplate ? '' : message.text)
     if (composerInputRef.current) {
-      composerInputRef.current.textContent = message.text
+      composerInputRef.current.textContent = scheduledTemplate ? '' : message.text
     }
     setDraftAttachments([])
     stopVoicePreview(true)
@@ -8399,7 +8434,31 @@ export const PhoneChat: React.FC = () => {
   const handleOpenTemplatesSheet = () => {
     if (requestSheetToggleClose('templates')) return
 
-    setTemplateMode('choice')
+    setTemplatePickIntent('send')
+    setTemplateMode(templates.length > 0 ? 'send' : 'choice')
+    setTemplateSearch('')
+    setSheet('templates')
+  }
+
+  const handleOpenTemplateSchedulePicker = () => {
+    if (!activeContact?.phone) {
+      showToast('error', 'Falta el teléfono', 'Guarda el número del contacto antes de programar una plantilla.')
+      return
+    }
+
+    if (!whatsappConnected) {
+      showToast('error', 'WhatsApp no está conectado', 'Conecta WhatsApp API para programar plantillas.')
+      return
+    }
+
+    if (!selectedBusinessPhoneValue) {
+      showToast('error', 'Falta el WhatsApp del negocio', 'Configura el número conectado para programar plantillas.')
+      return
+    }
+
+    setTemplatePickIntent('schedule')
+    setScheduleTemplate(null)
+    setTemplateMode(templates.length > 0 ? 'send' : 'choice')
     setTemplateSearch('')
     setSheet('templates')
   }
@@ -8463,6 +8522,47 @@ export const PhoneChat: React.FC = () => {
   const handleShowMessageError = (message: ChatMessage) => {
     const reason = message.errorReason || 'WhatsApp no entregó la razón exacta. Intenta reenviar o revisa el estado de la conexión.'
     showToast('error', 'No se pudo enviar', reason)
+  }
+
+  const handleScheduleTemplatePick = (template: WhatsAppApiTemplate) => {
+    if (!activeContact?.phone) {
+      showToast('error', 'Falta el teléfono', 'Guarda el número del contacto antes de programar una plantilla.')
+      return
+    }
+
+    if (!whatsappConnected) {
+      showToast('error', 'WhatsApp no está conectado', 'Conecta WhatsApp API en configuración para programar plantillas.')
+      return
+    }
+
+    if (!selectedBusinessPhoneValue) {
+      showToast('error', 'Falta el WhatsApp del negocio', 'Configura el número conectado para programar plantillas.')
+      return
+    }
+
+    const status = getTemplateStatus(template)
+    const blockedReason = getTemplateBlockedReason(template, getTemplateAlertMessage(template))
+    if (status !== 'APPROVED') {
+      showToast('warning', getTemplateStatusLabel(status), blockedReason)
+      return
+    }
+
+    closeComposerChannelPicker()
+    setScheduleTemplate(template)
+    setScheduleDraft(createDefaultScheduleDraft())
+    setScheduleError('')
+    setScheduleEditingMessageId(null)
+    setTemplateSearch('')
+    setSheet('schedule')
+  }
+
+  const handleChooseTemplate = (template: WhatsAppApiTemplate) => {
+    if (templatePickIntent === 'schedule') {
+      handleScheduleTemplatePick(template)
+      return
+    }
+
+    handleSendTemplate(template)
   }
 
   const handleSendTemplate = async (template: WhatsAppApiTemplate) => {
@@ -8650,6 +8750,7 @@ export const PhoneChat: React.FC = () => {
     }
 
     closeComposerChannelPicker()
+    setScheduleTemplate(null)
     setScheduleDraft(createDefaultScheduleDraft())
     setScheduleError('')
     setScheduleEditingMessageId(null)
@@ -8673,13 +8774,18 @@ export const PhoneChat: React.FC = () => {
   const handleScheduleMessage = async () => {
     if (!activeContact || schedulingMessage) return
 
-    const text = messageTextRef.current.trim()
+    const templateToSchedule = scheduleTemplate
+    const schedulingTemplate = Boolean(templateToSchedule)
+    const text = schedulingTemplate
+      ? getTemplateBodyPreview(templateToSchedule as WhatsAppApiTemplate) || `Plantilla: ${(templateToSchedule as WhatsAppApiTemplate).name}`
+      : messageTextRef.current.trim()
+
     if (!text) {
       setScheduleError('Escribe el mensaje que quieres programar.')
       return
     }
 
-    if (draftAttachments.length > 0 || voiceDraft) {
+    if (!schedulingTemplate && (draftAttachments.length > 0 || voiceDraft)) {
       setScheduleError('Por ahora sólo se pueden programar mensajes escritos.')
       return
     }
@@ -8699,12 +8805,36 @@ export const PhoneChat: React.FC = () => {
     let channel: HighLevelChatChannel | undefined
     let transport: 'api' | 'qr' = 'api'
 
+    if (schedulingTemplate) {
+      const status = getTemplateStatus(templateToSchedule as WhatsAppApiTemplate)
+      const blockedReason = getTemplateBlockedReason(templateToSchedule as WhatsAppApiTemplate, getTemplateAlertMessage(templateToSchedule as WhatsAppApiTemplate))
+      if (status !== 'APPROVED') {
+        setScheduleError(blockedReason)
+        return
+      }
+    }
+
     if (sendingThroughMetaSocial) {
       setScheduleError('La programación para Messenger e Instagram todavía no está disponible en Meta nativo. Puedes enviarlo al momento desde Ristak.')
       return
     }
 
-    if (sendingThroughHighLevel) {
+    if (schedulingTemplate) {
+      if (!activeContact.phone) {
+        setScheduleError('Guarda el teléfono del contacto antes de programar una plantilla.')
+        return
+      }
+
+      if (!whatsappConnected) {
+        setScheduleError('Conecta WhatsApp API antes de programar una plantilla.')
+        return
+      }
+
+      if (!selectedBusinessPhoneValue) {
+        setScheduleError('Elige el WhatsApp del negocio que mandará la plantilla.')
+        return
+      }
+    } else if (sendingThroughHighLevel) {
       provider = 'highlevel'
       channel = activeHighLevelChatChannel
       if (activeHighLevelChannelNeedsPhone && !activeContact.phone) {
@@ -8757,7 +8887,11 @@ export const PhoneChat: React.FC = () => {
         provider,
         channel,
         transport: provider === 'whatsapp_api' ? transport : undefined,
+        messageType: schedulingTemplate ? 'template' : 'text',
         text,
+        templateId: templateToSchedule?.id || undefined,
+        templateName: templateToSchedule?.name || undefined,
+        templateLanguage: templateToSchedule?.language || undefined,
         toPhone: activeContact.phone || undefined,
         fromPhone: selectedBusinessPhoneValue || undefined,
         businessPhoneNumberId: selectedBusinessPhone?.id || undefined,
@@ -8768,6 +8902,7 @@ export const PhoneChat: React.FC = () => {
 
       setComposerMessageText('')
       setReplyingToMessageId(null)
+      setScheduleTemplate(null)
       if (composerInputRef.current) {
         composerInputRef.current.textContent = ''
       }
@@ -8782,7 +8917,7 @@ export const PhoneChat: React.FC = () => {
           contact.id === activeContact.id
             ? {
                 ...contact,
-                lastMessageText: `Programado: ${text}`,
+                lastMessageText: schedulingTemplate ? `Plantilla programada: ${templateToSchedule?.name || text}` : `Programado: ${text}`,
                 lastMessageDate: scheduledBubble.date,
                 lastMessageDirection: 'outbound',
                 lastMessageChannel: provider === 'highlevel' ? channel : contact.lastMessageChannel,
@@ -9235,7 +9370,7 @@ export const PhoneChat: React.FC = () => {
     }
 
     if (!apiReplyWindowOpen && !selectedQrReady) {
-      showToast('warning', 'Fuera de 24 horas', 'Manda una plantilla aprobada para volver a escribirle.')
+      handleOpenTemplatesSheet()
       return
     }
 
@@ -13635,10 +13770,10 @@ export const PhoneChat: React.FC = () => {
                 setTemplateMode('send')
               }}>
                 <span>
-                  <Send size={20} />
+                  {templatePickIntent === 'schedule' ? <Clock size={20} /> : <Send size={20} />}
                 </span>
-                <strong>Enviar creada</strong>
-                <small>Usa una plantilla aprobada por Meta.</small>
+                <strong>{templatePickIntent === 'schedule' ? 'Programar creada' : 'Enviar creada'}</strong>
+                <small>{templatePickIntent === 'schedule' ? 'Elige una plantilla aprobada y agenda la hora.' : 'Usa una plantilla aprobada por Meta.'}</small>
               </button>
             ) : null}
             <button type="button" onClick={() => setTemplateMode('create')}>
@@ -13728,7 +13863,7 @@ export const PhoneChat: React.FC = () => {
             <ChevronLeft size={19} />
             Atrás
           </button>
-          <strong>Plantillas creadas</strong>
+          <strong>{templatePickIntent === 'schedule' ? 'Programar plantilla' : 'Plantillas creadas'}</strong>
           <button type="button" onClick={loadTemplates} disabled={templatesLoading || templatesRefreshing}>
             {templatesLoading || templatesRefreshing ? <Loader2 size={16} className={styles.spinIcon} /> : 'Actualizar'}
           </button>
@@ -13797,7 +13932,7 @@ export const PhoneChat: React.FC = () => {
                     key={`${template.id}-${template.language}`}
                     type="button"
                     className={styles.templateRow}
-                    onClick={() => handleSendTemplate(template)}
+                    onClick={() => handleChooseTemplate(template)}
                     disabled={!approved || Boolean(templateSendingId)}
                   >
                     <span className={styles.templateRowIcon}>
@@ -13809,7 +13944,7 @@ export const PhoneChat: React.FC = () => {
                       {!approved && <em>{reason}</em>}
                     </span>
                     <span className={`${styles.templateStatus} ${statusClass}`}>
-                      {templateSendingId === template.id ? <Loader2 size={13} className={styles.spinIcon} /> : getTemplateStatusLabel(status)}
+                      {templateSendingId === template.id ? <Loader2 size={13} className={styles.spinIcon} /> : templatePickIntent === 'schedule' && approved ? 'Programar' : getTemplateStatusLabel(status)}
                     </span>
                   </button>
                 )
@@ -13921,10 +14056,22 @@ export const PhoneChat: React.FC = () => {
 
   const renderScheduleSheet = () => {
     const previewDate = getScheduleDateFromDraft(scheduleDraft)
-    const canSubmitSchedule = Boolean(previewDate && messageText.trim() && !schedulingMessage)
+    const scheduleTemplatePreview = scheduleTemplate ? getTemplateBodyPreview(scheduleTemplate) : ''
+    const canSubmitSchedule = Boolean(previewDate && (scheduleTemplate || messageText.trim()) && !schedulingMessage)
 
     return (
       <div className={styles.scheduleSheetContent}>
+        {scheduleTemplate && (
+          <div className={styles.scheduleTemplatePreview}>
+            <span>
+              <FileText size={16} />
+              Plantilla
+            </span>
+            <strong>{scheduleTemplate.name}</strong>
+            <small>{scheduleTemplatePreview}</small>
+          </div>
+        )}
+
         <div className={styles.scheduleFields}>
           <label className={styles.scheduleField}>
             <span>Fecha</span>
@@ -14001,7 +14148,7 @@ export const PhoneChat: React.FC = () => {
           disabled={!canSubmitSchedule}
         >
           {schedulingMessage ? <Loader2 size={17} className={styles.spinIcon} /> : <Clock size={17} />}
-          {scheduleEditingMessageId ? 'Guardar cambios' : 'Enviar programación'}
+          {scheduleTemplate ? (scheduleEditingMessageId ? 'Guardar plantilla' : 'Programar plantilla') : scheduleEditingMessageId ? 'Guardar cambios' : 'Enviar programación'}
         </button>
       </div>
     )
@@ -15895,12 +16042,37 @@ export const PhoneChat: React.FC = () => {
                 renderAIAgentComposer()
               ) : (
                 <>
-                  {!composerBlockedByReplyWindow && renderAISuggestionBar()}
-                  {!composerBlockedByReplyWindow && renderReplyPreviewBar()}
-                  {!composerBlockedByReplyWindow && renderDraftAttachments()}
-                  <div className={`${styles.composer} ${hasComposerContent ? styles.composerHasContent : ''} ${canOpenScheduleSheet ? styles.composerWithSchedule : ''} ${voicePanelActive ? styles.composerVoiceMode : ''}`}>
+                  {!composerTemplateOnlyMode && renderAISuggestionBar()}
+                  {!composerTemplateOnlyMode && renderReplyPreviewBar()}
+                  {!composerTemplateOnlyMode && renderDraftAttachments()}
+                  <div className={`${styles.composer} ${hasComposerContent ? styles.composerHasContent : ''} ${composerTemplateOnlyMode ? styles.composerTemplateOnly : ''} ${voicePanelActive ? styles.composerVoiceMode : ''}`}>
                     {voicePanelActive ? (
                       renderVoiceComposerPanel()
+                    ) : composerTemplateOnlyMode ? (
+                      <>
+                        {renderComposerChannelPicker()}
+                        <div className={`${styles.messageInputWrap} ${styles.messageInputWrapWithSchedule} ${styles.templateOnlyInputWrap}`}>
+                          <button
+                            type="button"
+                            className={styles.templateOnlyButton}
+                            onClick={handleOpenTemplatesSheet}
+                            aria-label="Mandar plantilla"
+                          >
+                            <FileText size={16} />
+                            Mandar plantilla
+                          </button>
+                          <button
+                            type="button"
+                            ref={composerScheduleRef}
+                            className={styles.composerScheduleButton}
+                            onClick={handleOpenTemplateSchedulePicker}
+                            aria-label="Programar plantilla"
+                            title="Programar plantilla"
+                          >
+                            <Clock size={18} />
+                          </button>
+                        </div>
+                      </>
                     ) : (
                       <>
                         {renderComposerChannelPicker()}
@@ -15908,12 +16080,12 @@ export const PhoneChat: React.FC = () => {
                           type="button"
                           ref={composerPlusRef}
                           className={styles.composerPlus}
-                          onClick={composerBlockedByReplyWindow ? handleOpenTemplatesSheet : openAttachmentsSheet}
-                          aria-label={composerBlockedByReplyWindow ? 'Enviar plantilla' : 'Abrir adjuntos'}
+                          onClick={openAttachmentsSheet}
+                          aria-label="Abrir adjuntos"
                         >
-                          {composerBlockedByReplyWindow ? <FileText size={22} /> : <Plus size={24} />}
+                          <Plus size={24} />
                         </button>
-                        <div className={styles.messageInputWrap}>
+                        <div className={`${styles.messageInputWrap} ${canOpenScheduleSheet ? styles.messageInputWrapWithSchedule : ''}`}>
                           <div
                             ref={composerInputRef}
                             className={styles.composerInput}
@@ -15939,21 +16111,21 @@ export const PhoneChat: React.FC = () => {
                               }
                             }}
                           />
+                          {canOpenScheduleSheet && (
+                            <button
+                              type="button"
+                              ref={composerScheduleRef}
+                              className={styles.composerScheduleButton}
+                              onClick={handleOpenScheduleSheet}
+                              aria-label="Programar mensaje"
+                              title="Programar mensaje"
+                            >
+                              <Clock size={18} />
+                            </button>
+                          )}
                         </div>
-                        {canOpenScheduleSheet && (
-                          <button
-                            type="button"
-                            ref={composerScheduleRef}
-                            className={styles.composerScheduleButton}
-                            onClick={handleOpenScheduleSheet}
-                            aria-label="Programar mensaje"
-                            title="Programar mensaje"
-                          >
-                            <Clock size={22} />
-                          </button>
-                        )}
-                        <div className={`${styles.composerTrailingActions} ${isWideChatDevice || composerBlockedByReplyWindow ? styles.composerTrailingActionsNoCamera : ''}`}>
-                          {!isWideChatDevice && !composerBlockedByReplyWindow && (
+                        <div className={`${styles.composerTrailingActions} ${isWideChatDevice ? styles.composerTrailingActionsNoCamera : ''}`}>
+                          {!isWideChatDevice && (
                             <button
                               type="button"
                               className={`${styles.composerIconButton} ${styles.composerCameraButton}`}
@@ -15966,28 +16138,17 @@ export const PhoneChat: React.FC = () => {
                               <Camera size={20} />
                             </button>
                           )}
-                          {composerBlockedByReplyWindow ? (
-                            <button
-                              type="button"
-                              className={`${styles.composerIconButton} ${styles.composerSendButton}`}
-                              onClick={handleOpenTemplatesSheet}
-                              aria-label="Enviar plantilla"
-                            >
-                              <FileText size={18} />
-                            </button>
-                          ) : (
-                            <button
-                              type="button"
-                              className={`${styles.composerIconButton} ${canSendMessage ? styles.composerSendButton : ''} ${voiceRecording ? styles.composerMicRecording : ''}`}
-                              onPointerDown={handleVoiceButtonPointerDown}
-                              onPointerUp={finishVoiceButtonPress}
-                              onPointerCancel={handleVoiceButtonPointerCancel}
-                              onClick={handleVoiceOrSendButtonClick}
-                              aria-label={voiceRecording ? 'Detener grabación' : canSendMessage ? 'Enviar mensaje' : 'Grabar mensaje de voz'}
-                            >
-                              {canSendMessage ? <ArrowRight size={18} /> : <Mic size={20} />}
-                            </button>
-                          )}
+                          <button
+                            type="button"
+                            className={`${styles.composerIconButton} ${canSendMessage ? styles.composerSendButton : ''} ${voiceRecording ? styles.composerMicRecording : ''}`}
+                            onPointerDown={handleVoiceButtonPointerDown}
+                            onPointerUp={finishVoiceButtonPress}
+                            onPointerCancel={handleVoiceButtonPointerCancel}
+                            onClick={handleVoiceOrSendButtonClick}
+                            aria-label={voiceRecording ? 'Detener grabación' : canSendMessage ? 'Enviar mensaje' : 'Grabar mensaje de voz'}
+                          >
+                            {canSendMessage ? <ArrowRight size={18} /> : <Mic size={20} />}
+                          </button>
                         </div>
                       </>
                     )}
@@ -16075,7 +16236,11 @@ export const PhoneChat: React.FC = () => {
                             ? 'Configurar agente'
                             : 'Agente conversacional'
                     )}
-                    {sheet === 'schedule' && (scheduleEditingMessageId ? 'Editar programación' : 'Programar mensaje')}
+                    {sheet === 'schedule' && (
+                      scheduleTemplate
+                        ? scheduleEditingMessageId ? 'Editar plantilla' : 'Programar plantilla'
+                        : scheduleEditingMessageId ? 'Editar programación' : 'Programar mensaje'
+                    )}
                   </h2>
                 </div>
               </div>

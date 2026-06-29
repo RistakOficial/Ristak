@@ -432,7 +432,7 @@ export const mobileAppService = {
 
     if (getPlatform() === 'ios') {
       await Keyboard.setAccessoryBarVisible({ isVisible: false }).catch(() => undefined)
-      await Keyboard.setResizeMode({ mode: KeyboardResize.Native }).catch(() => undefined)
+      await Keyboard.setResizeMode({ mode: KeyboardResize.Body }).catch(() => undefined)
     }
 
     await App.addListener('appUrlOpen', (event) => {
