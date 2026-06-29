@@ -22,8 +22,7 @@ import {
   Palette,
   BrainCircuit,
   Rocket,
-  Sun,
-  BotMessageSquare
+  Sun
 } from 'lucide-react'
 import { cn } from '@/utils/cn'
 import { useAppConfig, useAppVersion } from '@/hooks'
@@ -35,7 +34,6 @@ import {
   hasModuleAccess,
   hasLicenseFeature,
   type AccessControlledUser,
-  type AIAgentNavItem,
   type PermissionKey
 } from '@/utils/accessControl'
 import { getMdpProgramNavigation, type MdpProgramNavItem } from '@/services/mdpProgramService'
@@ -339,66 +337,71 @@ const SettingsNavLink: React.FC<SettingsNavLinkProps> = ({ pathname, collapsed =
   )
 }
 
-interface AIAgentNavGroupProps {
+interface ChatNavGroupProps {
   pathname: string
   open: boolean
-  items: ReadonlyArray<AIAgentNavItem>
+  items: ReadonlyArray<SidebarNavChild>
   collapsed?: boolean
-  onToggle: () => void
+  onOpen: () => void
   onRequestExpand?: () => void
   onNavigate?: () => void
 }
 
-const AIAgentNavGroup: React.FC<AIAgentNavGroupProps> = ({
+const ChatNavGroup: React.FC<ChatNavGroupProps> = ({
   pathname,
   open,
   items,
   collapsed = false,
-  onToggle,
+  onOpen,
   onRequestExpand,
   onNavigate
 }) => {
+  const isChatRoute = pathname === '/chat' || pathname.startsWith('/chat/')
   const isAIAgentRoute = pathname.startsWith('/ai-agent')
+  const isChatGroupRoute = isChatRoute || isAIAgentRoute
 
   if (collapsed) {
     return (
       <button
         type="button"
         onClick={() => {
-          if (!open) onToggle()
+          onOpen()
           onRequestExpand?.()
         }}
-        aria-label="Ristak AI"
-        title="Ristak AI"
+        aria-label="Chat"
+        title="Chat"
         data-ristak-sidebar-nav-item
-        data-active={isAIAgentRoute ? 'true' : undefined}
-        className={cn(getNavLinkClasses(isAIAgentRoute, 'w-full', true))}
+        data-active={isChatGroupRoute ? 'true' : undefined}
+        className={cn(getNavLinkClasses(isChatGroupRoute, 'w-full', true))}
       >
-        <BotMessageSquare className="h-5 w-5 flex-shrink-0" />
-        <span className="sr-only">Ristak AI</span>
+        <MessageCircle className="h-5 w-5 flex-shrink-0" />
+        <span className="sr-only">Chat</span>
       </button>
     )
   }
 
   return (
     <div>
-      <button
-        type="button"
-        onClick={onToggle}
+      <Link
+        to="/chat"
+        onClick={() => {
+          onOpen()
+          onNavigate?.()
+        }}
         aria-expanded={open}
         data-ristak-sidebar-nav-item
-        data-active={isAIAgentRoute && !open ? 'true' : undefined}
-        className={cn(getNavLinkClasses(isAIAgentRoute && !open, 'w-full'))}
+        data-active={(isChatRoute || (isAIAgentRoute && !open)) ? 'true' : undefined}
+        className={cn(getNavLinkClasses(isChatRoute || (isAIAgentRoute && !open), 'w-full'))}
       >
-        <BotMessageSquare className="h-5 w-5 flex-shrink-0" />
-        <span className="flex-1 text-left">Ristak AI</span>
+        <MessageCircle className="h-5 w-5 flex-shrink-0" />
+        <span className="flex-1 text-left">Chat</span>
         <ChevronDown
           className={cn(
             'h-4 w-4 flex-shrink-0 text-[var(--text-mute)] transition-transform',
             open && 'rotate-180'
           )}
         />
-      </button>
+      </Link>
 
       {open && (
         <div className="ml-[1.55rem] mt-1 space-y-0.5 border-l border-[var(--border)] pl-2.5">
@@ -738,17 +741,19 @@ export const Sidebar: React.FC<SidebarProps> = ({
   const [activeId, setActiveId] = useState<string | null>(null)
   const [isEditMode, setIsEditMode] = useState(false)
   const [showUserMenu, setShowUserMenu] = useState(false)
+  const isChatRoute = location.pathname === '/chat' || location.pathname.startsWith('/chat/')
   const isAIAgentRoute = location.pathname.startsWith('/ai-agent')
+  const isChatGroupRoute = isChatRoute || isAIAgentRoute
   const isPaymentsRoute = location.pathname.startsWith('/transactions')
-  const [aiAgentOpen, setAiAgentOpen] = useState(isAIAgentRoute)
+  const [chatOpen, setChatOpen] = useState(isChatGroupRoute)
   const [paymentsOpen, setPaymentsOpen] = useState(isPaymentsRoute)
   const [mdpProgramItems, setMdpProgramItems] = useState<MdpProgramNavItem[]>([])
   const mdpProgramMenuLabel = user?.licenseExternalModules?.mdp_program?.menuLabel || 'Magnetismo'
 
   // Sincronizar el estado de los grupos con la ruta actual
   useEffect(() => {
-    setAiAgentOpen(isAIAgentRoute)
-  }, [isAIAgentRoute])
+    setChatOpen(isChatGroupRoute)
+  }, [isChatGroupRoute])
 
   useEffect(() => {
     setPaymentsOpen(isPaymentsRoute)
@@ -791,6 +796,14 @@ export const Sidebar: React.FC<SidebarProps> = ({
   const visibleAIAgentNavigation = useMemo(
     () => AI_AGENT_NAV_ITEMS.filter((item) => hasLicenseFeature(user, item.featureKeys)),
     [user]
+  )
+  const visibleChatAIAgentNavigation = useMemo<SidebarNavChild[]>(
+    () => visibleAIAgentNavigation.map((item) => ({
+      to: item.to,
+      label: item.to === '/ai-agent/general' ? 'Ristak AI' : item.label,
+      exact: item.exact
+    })),
+    [visibleAIAgentNavigation]
   )
 
   const sensors = useSensors(
@@ -1139,17 +1152,6 @@ export const Sidebar: React.FC<SidebarProps> = ({
                 </div>
               ) : null}
             </DragOverlay>
-
-            {canUseAIAgent && visibleAIAgentNavigation.length > 0 && (
-              <AIAgentNavGroup
-                pathname={location.pathname}
-                open={aiAgentOpen}
-                items={visibleAIAgentNavigation}
-                onToggle={() => setAiAgentOpen((current) => !current)}
-                onRequestExpand={handleRequestExpand}
-                onNavigate={handleNavigate}
-              />
-            )}
           </DndContext>
         ) : (
           <div
@@ -1172,7 +1174,18 @@ export const Sidebar: React.FC<SidebarProps> = ({
               const isActive = location.pathname.startsWith(item.href)
               const nextItem = navigation[index + 1]
               return (
-                item.id === 'transactions' ? (
+                item.id === 'chat' && canUseAIAgent && visibleChatAIAgentNavigation.length > 0 ? (
+                  <ChatNavGroup
+                    key={item.id}
+                    pathname={location.pathname}
+                    open={chatOpen}
+                    items={visibleChatAIAgentNavigation}
+                    collapsed={collapsed}
+                    onOpen={() => setChatOpen(true)}
+                    onRequestExpand={handleRequestExpand}
+                    onNavigate={handleNavigate}
+                  />
+                ) : item.id === 'transactions' ? (
                   <PaymentsNavGroup
                     key={item.id}
                     pathname={location.pathname}
@@ -1204,18 +1217,6 @@ export const Sidebar: React.FC<SidebarProps> = ({
                 )
               )
             })}
-
-            {canUseAIAgent && visibleAIAgentNavigation.length > 0 && (
-              <AIAgentNavGroup
-                pathname={location.pathname}
-                open={aiAgentOpen}
-                items={visibleAIAgentNavigation}
-                collapsed={collapsed}
-                onToggle={() => setAiAgentOpen((current) => !current)}
-                onRequestExpand={handleRequestExpand}
-                onNavigate={handleNavigate}
-              />
-            )}
           </div>
         )}
       </nav>
