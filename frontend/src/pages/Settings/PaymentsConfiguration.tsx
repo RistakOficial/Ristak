@@ -152,13 +152,11 @@ interface WebhookEventGuideItem {
   description: string
 }
 
-interface AutomaticWebhookStatus {
+interface GatewayAutomaticConnectionStatus {
   configured?: boolean
   webhookConfigured?: boolean
   webhookStatus?: string
-  webhookUrl?: string
   webhookLastError?: string
-  webhookKeyConfigured?: boolean
 }
 
 const gatewayStatusCopy: Record<PaymentGatewayOption['status'], { label: string; variant: 'success' | 'neutral' }> = {
@@ -195,7 +193,7 @@ const emptyMercadoPagoSubscriptionTestCredentials: MercadoPagoSubscriptionTestCr
 const stripeModeLabels: Record<StripeModeId, { title: string; description: string; publishablePlaceholder: string; secretPlaceholder: string }> = {
   test: {
     title: 'Modo prueba',
-    description: 'Para probar links, webhooks y tarjetas de prueba.',
+    description: 'Para probar links y tarjetas sin mover dinero real.',
     publishablePlaceholder: 'pk_test_...',
     secretPlaceholder: 'sk_test_...'
   },
@@ -206,56 +204,6 @@ const stripeModeLabels: Record<StripeModeId, { title: string; description: strin
     secretPlaceholder: 'sk_live_...'
   }
 }
-const stripeWebhookEvents: WebhookEventGuideItem[] = [
-  {
-    event: 'payment_intent.succeeded',
-    description: 'Confirma pagos con tarjeta, links públicos y cobros directos.'
-  },
-  {
-    event: 'payment_intent.payment_failed',
-    description: 'Marca intentos rechazados o fallidos.'
-  },
-  {
-    event: 'payment_intent.canceled',
-    description: 'Cierra cobros cancelados desde Stripe.'
-  },
-  {
-    event: 'payment_intent.processing',
-    description: 'Mantiene pagos asíncronos como pendientes mientras Stripe confirma.'
-  },
-  {
-    event: 'payment_intent.requires_action',
-    description: 'Sincroniza cobros que quedan esperando 3DS u otra acción del cliente.'
-  },
-  {
-    event: 'checkout.session.completed',
-    description: 'Activa suscripciones iniciadas desde Checkout.'
-  },
-  {
-    event: 'invoice.payment_succeeded',
-    description: 'Confirma cobros recurrentes de suscripciones.'
-  },
-  {
-    event: 'invoice.payment_failed',
-    description: 'Marca cobros recurrentes fallidos.'
-  },
-  {
-    event: 'customer.subscription.updated',
-    description: 'Sincroniza cambios de estado, periodo y renovación de suscripciones.'
-  },
-  {
-    event: 'customer.subscription.deleted',
-    description: 'Sincroniza cancelaciones de suscripciones.'
-  },
-  {
-    event: 'charge.refunded',
-    description: 'Detecta reembolsos aplicados al cargo.'
-  },
-  {
-    event: 'refund.created',
-    description: 'Registra reembolsos iniciados desde Stripe.'
-  }
-]
 const paymentModeLabels: Record<PaymentModeId, { title: string; badge: string; description: string; mercadoPagoHelp: string }> = {
   test: {
     title: 'Modo prueba',
@@ -353,64 +301,6 @@ const conektaModeLabels: Record<StripeModeId, { title: string; description: stri
     privatePlaceholder: 'key_...'
   }
 }
-const conektaWebhookEvents: WebhookEventGuideItem[] = [
-  {
-    event: 'order.paid',
-    description: 'Confirma pagos completados y activa planes o suscripciones pendientes.'
-  },
-  {
-    event: 'order.pending_payment',
-    description: 'Mantiene la orden en espera mientras el cliente termina el pago.'
-  },
-  {
-    event: 'order.declined',
-    description: 'Marca pagos rechazados por la pasarela o el banco.'
-  },
-  {
-    event: 'order.canceled',
-    description: 'Sincroniza órdenes canceladas.'
-  },
-  {
-    event: 'order.expired',
-    description: 'Cierra links u órdenes que vencieron sin pago.'
-  },
-  {
-    event: 'order.charged_back',
-    description: 'Marca órdenes reportadas como contracargo.'
-  },
-  {
-    event: 'order.refunded',
-    description: 'Sincroniza órdenes reembolsadas completamente.'
-  },
-  {
-    event: 'subscription.created',
-    description: 'Registra suscripciones creadas por Conekta.'
-  },
-  {
-    event: 'subscription.paused',
-    description: 'Sincroniza pausas aplicadas a una suscripción.'
-  },
-  {
-    event: 'subscription.resumed',
-    description: 'Reactiva suscripciones cuando Conekta las reanuda.'
-  },
-  {
-    event: 'subscription.canceled',
-    description: 'Sincroniza cancelaciones de suscripciones.'
-  },
-  {
-    event: 'subscription.paid',
-    description: 'Confirma ciclos cobrados de suscripciones Conekta.'
-  },
-  {
-    event: 'subscription.payment_failed',
-    description: 'Marca suscripciones con cobro recurrente fallido.'
-  },
-  {
-    event: 'subscription.updated',
-    description: 'Sincroniza cambios de estado, tarjeta o periodo.'
-  }
-]
 const parseBooleanLike = (value: unknown, fallback = false) => {
   if (typeof value === 'boolean') return value
   if (typeof value === 'number') return value === 1
@@ -900,8 +790,6 @@ export const PaymentsConfiguration: React.FC = () => {
   ]
 
   const selectedGatewayOption = gatewayOptions.find((gateway) => gateway.id === (activeGatewayRoute || selectedGateway))
-  const stripeWebhookEndpoints = stripeConfig?.webhookEndpoints || []
-  const conektaWebhookEndpoints = conektaConfig?.webhookEndpoints || []
   const mercadoPagoWebhookEndpoints = mercadoPagoConfig?.webhookEndpoints || []
   const stripeConnected = Boolean(stripeConfig?.configured)
   const conektaConnected = Boolean(conektaConfig?.configured)
@@ -1114,48 +1002,6 @@ export const PaymentsConfiguration: React.FC = () => {
             </div>
           ))}
         </div>
-      </div>
-    )
-  }
-
-  const renderAutomaticWebhookStatus = (
-    gatewayName: 'Stripe' | 'Conekta',
-    connection?: AutomaticWebhookStatus | null
-  ) => {
-    const status = String(connection?.webhookStatus || '').toLowerCase()
-    const hasError = Boolean(connection?.webhookLastError)
-    const configured = Boolean(connection?.webhookConfigured || ['active', 'enabled', 'configured'].includes(status))
-    const pendingPublicUrl = status === 'pending_public_url'
-    const badge = hasError
-      ? { label: 'Revisar', variant: 'warning' as const, icon: <AlertTriangle size={14} /> }
-      : configured
-        ? { label: 'Activo', variant: 'success' as const, icon: <ShieldCheck size={14} /> }
-        : pendingPublicUrl
-          ? { label: 'Pendiente', variant: 'warning' as const, icon: <Clock size={14} /> }
-          : { label: 'Por guardar', variant: 'neutral' as const, icon: <KeyRound size={14} /> }
-    const description = hasError
-      ? `Ristak no pudo sincronizar el webhook de ${gatewayName}. Revisa las llaves y vuelve a guardar.`
-      : configured
-        ? `Ristak ya creó y sincronizó el webhook de ${gatewayName} automáticamente.`
-        : pendingPublicUrl
-          ? 'Ristak necesita una URL pública HTTPS para crear el webhook automáticamente.'
-          : `Al guardar las llaves, Ristak creará el webhook de ${gatewayName} sin pasos manuales.`
-
-    return (
-      <div className={styles.webhookRow}>
-        <div>
-          <strong>Webhook automático</strong>
-          <span>{description}</span>
-          {connection?.webhookUrl && <span>{connection.webhookUrl}</span>}
-          {connection?.webhookLastError && <span>{connection.webhookLastError}</span>}
-          {gatewayName === 'Conekta' && connection?.webhookKeyConfigured && (
-            <span>Llave de firma lista para verificar eventos entrantes.</span>
-          )}
-        </div>
-        <Badge variant={badge.variant}>
-          {badge.icon}
-          {badge.label}
-        </Badge>
       </div>
     )
   }
@@ -1538,17 +1384,17 @@ export const PaymentsConfiguration: React.FC = () => {
     }))
   }
 
-  const getGatewayWebhookSaveMessage = (
+  const getGatewaySaveMessage = (
     gatewayName: 'Stripe' | 'Conekta',
     modeTitle: string,
-    connection?: AutomaticWebhookStatus | null
+    connection?: GatewayAutomaticConnectionStatus | null
   ) => {
     const status = String(connection?.webhookStatus || '').toLowerCase()
     if (connection?.webhookConfigured || ['active', 'enabled', 'configured'].includes(status)) {
-      return `${modeTitle} quedó listo para cobrar y el webhook automático de ${gatewayName} está activo.`
+      return `${modeTitle} quedó listo para cobrar con ${gatewayName}.`
     }
     if (status === 'pending_public_url') {
-      return `${modeTitle} quedó guardado. El webhook automático se completará cuando Ristak tenga una URL pública HTTPS.`
+      return `${modeTitle} quedó guardado. Para terminar la conexión automática, Ristak necesita estar publicado con una URL segura HTTPS.`
     }
     return `${modeTitle} quedó listo para cobrar.`
   }
@@ -1559,7 +1405,7 @@ export const PaymentsConfiguration: React.FC = () => {
       const config = await stripePaymentsService.saveConfig(buildStripeModeConfigPayload(mode))
       applyStripeConfig(config)
       invalidateIntegrationsStatus()
-      showToast('success', 'Stripe guardado', getGatewayWebhookSaveMessage('Stripe', stripeModeLabels[mode].title, config.manualModes?.[mode]))
+      showToast('success', 'Stripe guardado', getGatewaySaveMessage('Stripe', stripeModeLabels[mode].title, config.manualModes?.[mode]))
     } catch (error: any) {
       setStripeConnectionFailed(true)
       showToast('error', 'No se pudo guardar Stripe', error.message || 'Revisa las credenciales de Stripe.')
@@ -1625,7 +1471,7 @@ export const PaymentsConfiguration: React.FC = () => {
       const config = await conektaPaymentsService.saveConfig(buildConektaModeConfigPayload(mode))
       applyConektaConfig(config)
       invalidateIntegrationsStatus()
-      showToast('success', 'Conekta guardado', getGatewayWebhookSaveMessage('Conekta', conektaModeLabels[mode].title, config.manualModes?.[mode]))
+      showToast('success', 'Conekta guardado', getGatewaySaveMessage('Conekta', conektaModeLabels[mode].title, config.manualModes?.[mode]))
     } catch (error: any) {
       setConektaConnectionFailed(true)
       showToast('error', 'No se pudo guardar Conekta', error.message || 'Revisa las credenciales de Conekta.')
@@ -3297,7 +3143,7 @@ export const PaymentsConfiguration: React.FC = () => {
               <PaymentPlatformLogo platform="stripe" size="lg" decorative />
               <div>
                 <h2>Stripe</h2>
-                <p>Pega las llaves de tu cuenta. Al guardar, Ristak crea y sincroniza el webhook automáticamente para cobros, links, planes y suscripciones.</p>
+                <p>Pega tus llaves de Stripe. Ristak deja la conexión lista automáticamente para cobrar con links, planes y suscripciones.</p>
               </div>
             </div>
             <Badge variant={stripeStatusBadge.variant}>
@@ -3356,8 +3202,6 @@ export const PaymentsConfiguration: React.FC = () => {
                       )}
                     </div>
 
-                    {renderAutomaticWebhookStatus('Stripe', savedMode)}
-
                     <div className={styles.stripeModeActions}>
                       <Button
                         type="button"
@@ -3401,38 +3245,6 @@ export const PaymentsConfiguration: React.FC = () => {
               })}
             </div>
 
-            <div className={styles.webhookList}>
-              {stripeWebhookEndpoints.length > 0 && (
-                <>
-                  <h3>URL detectada para webhook</h3>
-                  {stripeWebhookEndpoints.map((endpoint) => (
-                    <div key={endpoint.url} className={styles.webhookRow}>
-                      <div>
-                        <strong>{endpoint.label}</strong>
-                        <span>{endpoint.description}</span>
-                        <span>{endpoint.url}</span>
-                      </div>
-                      <Button
-                        type="button"
-                        variant="secondary"
-                        size="sm"
-                        leftIcon={<Copy size={15} />}
-                        onClick={() => handleCopyGatewayText(endpoint.url, 'URL', 'Stripe')}
-                      >
-                        Copiar
-                      </Button>
-                    </div>
-                  ))}
-                </>
-              )}
-
-              {renderWebhookEventGuide(
-                'Stripe',
-                'Eventos sincronizados por Stripe',
-                'Ristak registra estos eventos automáticamente al guardar las llaves. La lista queda visible sólo para diagnóstico.',
-                stripeWebhookEvents
-              )}
-            </div>
           </div>
         </Card>
       )}
@@ -3444,7 +3256,7 @@ export const PaymentsConfiguration: React.FC = () => {
               <PaymentPlatformLogo platform="conekta" size="lg" decorative />
               <div>
                 <h2>Conekta</h2>
-                <p>Pega las llaves pública y privada. Al guardar, Ristak crea el webhook, prepara la firma y lo usa para sincronizar pagos y suscripciones.</p>
+                <p>Pega tus llaves de Conekta. Ristak deja la conexión lista automáticamente para cobrar con tarjetas, links y suscripciones.</p>
               </div>
             </div>
             <Badge variant={conektaStatusBadge.variant}>
@@ -3503,8 +3315,6 @@ export const PaymentsConfiguration: React.FC = () => {
                       )}
                     </div>
 
-                    {renderAutomaticWebhookStatus('Conekta', savedMode)}
-
                     <div className={styles.stripeModeActions}>
                       <Button
                         type="button"
@@ -3548,41 +3358,6 @@ export const PaymentsConfiguration: React.FC = () => {
               })}
             </div>
 
-            <div className={styles.webhookList}>
-              <h3>Webhook automático de Conekta</h3>
-              <div className={styles.formField}>
-                <span>Estado de integración</span>
-                <small>
-                  Ristak usa tus llaves API para crear el webhook y verificar las firmas de Conekta. Las URLs quedan aquí como referencia técnica.
-                </small>
-              </div>
-
-              {conektaWebhookEndpoints.length > 0 && conektaWebhookEndpoints.map((endpoint) => (
-                <div key={endpoint.url} className={styles.webhookRow}>
-                  <div>
-                    <strong>{endpoint.label}</strong>
-                    <span>{endpoint.description}</span>
-                    <span>{endpoint.url}</span>
-                  </div>
-                  <Button
-                    type="button"
-                    variant="secondary"
-                    size="sm"
-                    leftIcon={<Copy size={15} />}
-                    onClick={() => handleCopyGatewayText(endpoint.url, 'URL', 'Conekta')}
-                  >
-                    Copiar
-                  </Button>
-                </div>
-              ))}
-
-              {renderWebhookEventGuide(
-                'Conekta',
-                'Eventos sincronizados por Conekta',
-                'Ristak registra estos eventos automáticamente. Son los eventos de orden y suscripción que el backend sabe reconciliar sin ruido extra.',
-                conektaWebhookEvents
-              )}
-            </div>
           </div>
         </Card>
       )}
