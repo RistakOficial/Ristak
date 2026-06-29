@@ -3319,7 +3319,7 @@ export const Transactions: React.FC = () => {
             }}>
               {modal.type === 'edit' ? (
                 <div className={styles.formGroup}>
-                  <label>Contacto</label>
+                  <label>Cliente</label>
                   <div className={styles.lockedContact}>
                     <span className={styles.lockedContactName}>{formatName(lockedContactName)}</span>
                     {lockedContactDetail && (
@@ -3330,9 +3330,10 @@ export const Transactions: React.FC = () => {
               ) : (
                 <div className={styles.formGroup}>
                   <ContactSearchInput
+                    label="Cliente"
                     value={modal.selectedContact || null}
-                    onChange={(contact) => setModal({ ...modal, selectedContact: contact })}
-                    placeholder="Buscar contacto por nombre, email o teléfono"
+                    onChange={(contact) => setModal({ ...modal, selectedContact: contact as Contact | null })}
+                    placeholder="Buscar cliente por nombre, email o teléfono"
                     required
                   />
                 </div>
@@ -3465,9 +3466,10 @@ export const Transactions: React.FC = () => {
               <div className={styles.paymentPlanFormGrid}>
                 <div className={`${styles.formGroup} ${styles.fullWidth}`}>
                   <ContactSearchInput
+                    label="Cliente"
                     value={paymentPlanCreateModal.selectedContact}
-                    onChange={(contact) => setPaymentPlanCreateModal(prev => ({ ...prev, selectedContact: contact }))}
-                    placeholder="Buscar contacto por nombre, email o teléfono"
+                    onChange={(contact) => setPaymentPlanCreateModal(prev => ({ ...prev, selectedContact: contact as Contact | null }))}
+                    placeholder="Buscar cliente por nombre, email o teléfono"
                     required
                   />
                 </div>

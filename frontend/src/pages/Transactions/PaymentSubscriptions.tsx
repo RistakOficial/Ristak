@@ -1866,9 +1866,11 @@ export const PaymentSubscriptions: React.FC = () => {
             <div className={styles.formGrid}>
               <div className={`${styles.formGroup} ${styles.fullWidth}`}>
                 <ContactSearchInput
+                  label="Cliente"
                   value={selectedContact}
-                  onChange={setSelectedContact}
-                  placeholder="Buscar contacto para la suscripción..."
+                  onChange={(contact) => setSelectedContact(contact as Contact | null)}
+                  placeholder="Buscar cliente por nombre, email o teléfono"
+                  required
                 />
               </div>
 

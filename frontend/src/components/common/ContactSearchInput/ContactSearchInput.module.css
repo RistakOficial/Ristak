@@ -16,62 +16,79 @@
   color: var(--neg);
 }
 
-.chip {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--spacing-xs);
-  background: var(--accent-soft);
-  border: 1px solid var(--accent);
-  border-radius: var(--radius-pill);
-  padding: var(--spacing-xs) var(--spacing-sm);
-  max-width: 100%;
-}
-
-.chipContent {
+.selectedContact {
   display: flex;
   align-items: center;
-  gap: var(--spacing-xs);
-  flex: 1;
+  justify-content: space-between;
+  gap: var(--spacing-sm);
+  width: 100%;
+  min-height: 48px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-ctl);
+  padding: var(--spacing-sm) var(--spacing-md);
+  max-width: 100%;
   min-width: 0;
-  color: var(--accent);
+  transition:
+    border-color var(--transition-fast),
+    background-color var(--transition-fast);
 }
 
-.chipName {
-  font-weight: 500;
-  white-space: nowrap;
+.selectedContact:hover {
+  border-color: var(--border-strong);
+  background: var(--surface-hover);
+}
+
+.selectedContactInfo {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+  flex: 1;
+}
+
+.selectedContactName,
+.selectedContactDetail {
+  margin: 0;
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
-.chipEmail {
+.selectedContactName {
+  color: var(--text);
+  font-size: var(--font-size-base);
+  font-weight: 500;
+}
+
+.selectedContactDetail {
   font-size: var(--font-size-xs);
   color: var(--text-mute);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
 }
 
-.chipRemove {
+.clearButton {
   display: flex;
   align-items: center;
   justify-content: center;
+  flex: 0 0 auto;
+  width: 28px;
+  height: 28px;
   background: transparent;
   border: none;
   color: var(--text-mute);
   cursor: pointer;
-  padding: var(--spacing-xxs);
   border-radius: var(--radius-ctl);
   transition:
     background-color var(--transition-fast),
     color var(--transition-fast);
 }
 
-.chipRemove:hover:not(:disabled) {
+.clearButton:hover:not(:disabled) {
   background: var(--surface-hover);
   color: var(--text);
 }
 
-.chipRemove:disabled {
+.clearButton:disabled {
   opacity: 0.5;
   cursor: not-allowed;
 }
@@ -168,7 +185,7 @@
   appearance: none;
   -webkit-appearance: none;
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   gap: var(--spacing-sm);
   width: 100%;
   padding: var(--spacing-sm) var(--spacing-md);
@@ -191,7 +208,36 @@
 }
 
 .addNewButton svg {
+  margin-top: 1px;
   flex-shrink: 0;
+}
+
+.addNewButtonText {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+  text-align: left;
+}
+
+.addNewButtonText span,
+.addNewButtonText small {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.addNewButtonText span {
+  color: var(--accent);
+  font-size: var(--app-control-font-size, var(--font-size-sm));
+  font-weight: 500;
+  white-space: nowrap;
+}
+
+.addNewButtonText small {
+  color: var(--text-mute);
+  font-size: var(--font-size-xs);
+  font-weight: 400;
+  white-space: normal;
 }
 
 /* New contact form */

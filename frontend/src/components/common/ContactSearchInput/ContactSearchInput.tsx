@@ -3,13 +3,22 @@ import styles from './ContactSearchInput.module.css';
 import { Icon } from '../Icon/Icon';
 import { SearchField } from '../SearchField';
 import { Button } from '../Button';
-import { Contact } from '@/types';
 import { contactsService } from '@/services/contactsService';
 import { suppressContactAutofill } from '@/utils/browserAutofill';
 
+export interface ContactSearchInputContact {
+  id: string;
+  name?: string;
+  email?: string;
+  phone?: string;
+  firstName?: string;
+  lastName?: string;
+}
+
 interface ContactSearchInputProps {
-  value: Contact | null;
-  onChange: (contact: Contact | null) => void;
+  value: ContactSearchInputContact | null;
+  onChange: (contact: ContactSearchInputContact | null) => void;
+  label?: string;
   placeholder?: string;
   required?: boolean;
   error?: string;
@@ -18,9 +27,42 @@ interface ContactSearchInputProps {
 
 const CONTACT_SEARCH_DELAY_MS = 90;
 
+const emptyNewContact = () => ({
+  name: '',
+  lastName: '',
+  email: '',
+  phone: ''
+});
+
+const escapeRegExp = (value: string) => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+const buildContactDraftFromSearch = (rawSearchTerm: string) => {
+  const term = rawSearchTerm.trim();
+  const draft = emptyNewContact();
+  if (!term) return draft;
+
+  if (/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(term)) {
+    return { ...draft, email: term };
+  }
+
+  const phoneCharactersOnly = /^[+\d\s().-]+$/.test(term);
+  const phoneDigits = term.replace(/\D/g, '');
+  if (phoneCharactersOnly && phoneDigits.length >= 7) {
+    return { ...draft, phone: term };
+  }
+
+  const [firstName, ...lastNameParts] = term.split(/\s+/);
+  return {
+    ...draft,
+    name: firstName || term,
+    lastName: lastNameParts.join(' ')
+  };
+};
+
 export const ContactSearchInput: React.FC<ContactSearchInputProps> = ({
   value,
   onChange,
+  label = 'Contacto',
   placeholder = 'Buscar o agregar contacto...',
   required = false,
   error,
@@ -28,18 +70,13 @@ export const ContactSearchInput: React.FC<ContactSearchInputProps> = ({
 }) => {
   const [searchTerm, setSearchTerm] = useState('');
   const [isOpen, setIsOpen] = useState(false);
-  const [suggestions, setSuggestions] = useState<Contact[]>([]);
+  const [suggestions, setSuggestions] = useState<ContactSearchInputContact[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [showNewContactForm, setShowNewContactForm] = useState(false);
   const [selectedIndex, setSelectedIndex] = useState(-1);
 
   // New contact form state
-  const [newContact, setNewContact] = useState({
-    name: '',
-    lastName: '',
-    email: '',
-    phone: ''
-  });
+  const [newContact, setNewContact] = useState(emptyNewContact);
   const [formErrors, setFormErrors] = useState<Record<string, string>>({});
 
   const inputRef = useRef<HTMLInputElement>(null);
@@ -66,9 +103,17 @@ export const ContactSearchInput: React.FC<ContactSearchInputProps> = ({
   useEffect(() => {
     const term = searchTerm.trim();
 
-    if (term.length < 2 || value) {
+    if (!term || value) {
       setSuggestions([]);
       setIsOpen(false);
+      setIsLoading(false);
+      setSelectedIndex(-1);
+      return;
+    }
+
+    if (term.length < 2) {
+      setSuggestions([]);
+      setIsOpen(true);
       setIsLoading(false);
       setSelectedIndex(-1);
       return;
@@ -126,7 +171,7 @@ export const ContactSearchInput: React.FC<ContactSearchInputProps> = ({
           if (selectedIndex >= 0 && selectedIndex < suggestions.length) {
             handleSelectContact(suggestions[selectedIndex]);
           } else if (selectedIndex === suggestions.length) {
-            setShowNewContactForm(true);
+            openNewContactForm();
           }
           break;
         case 'Escape':
@@ -142,7 +187,7 @@ export const ContactSearchInput: React.FC<ContactSearchInputProps> = ({
     }
   }, [isOpen, suggestions, selectedIndex, showNewContactForm]);
 
-  const handleSelectContact = (contact: Contact) => {
+  const handleSelectContact = (contact: ContactSearchInputContact) => {
     onChange(contact);
     setSearchTerm('');
     setIsOpen(false);
@@ -153,6 +198,19 @@ export const ContactSearchInput: React.FC<ContactSearchInputProps> = ({
     onChange(null);
     setSearchTerm('');
     inputRef.current?.focus();
+  };
+
+  const openNewContactForm = () => {
+    setNewContact(buildContactDraftFromSearch(searchTerm));
+    setFormErrors({});
+    setShowNewContactForm(true);
+    setSelectedIndex(-1);
+  };
+
+  const resetNewContactForm = () => {
+    setShowNewContactForm(false);
+    setNewContact(emptyNewContact());
+    setFormErrors({});
   };
 
   const validateNewContact = () => {
@@ -190,7 +248,7 @@ export const ContactSearchInput: React.FC<ContactSearchInputProps> = ({
       handleSelectContact(createdContact);
 
       // Reset form
-      setNewContact({ name: '', lastName: '', email: '', phone: '' });
+      setNewContact(emptyNewContact());
       setFormErrors({});
       setShowNewContactForm(false);
     } catch (error) {
@@ -201,11 +259,24 @@ export const ContactSearchInput: React.FC<ContactSearchInputProps> = ({
     }
   };
 
-  const highlightMatch = (text: string, search: string) => {
+  const getContactDisplayName = (contact?: ContactSearchInputContact | null) => (
+    contact?.name || `${contact?.firstName || ''} ${contact?.lastName || ''}`.trim() || contact?.email || contact?.phone || 'Sin nombre'
+  );
+
+  const getContactDisplayDetail = (contact?: ContactSearchInputContact | null) => (
+    contact?.email && contact?.phone
+      ? `${contact.email} • ${contact.phone}`
+      : contact?.email || contact?.phone || 'Sin información de contacto'
+  );
+
+  const highlightMatch = (text: string | undefined, search: string) => {
+    if (!text) return '';
     if (!search) return text;
-    const parts = text.split(new RegExp(`(${search})`, 'gi'));
+    const normalizedSearch = search.trim();
+    if (!normalizedSearch) return text;
+    const parts = text.split(new RegExp(`(${escapeRegExp(normalizedSearch)})`, 'gi'));
     return parts.map((part, index) =>
-      part.toLowerCase() === search.toLowerCase() ? (
+      part.toLowerCase() === normalizedSearch.toLowerCase() ? (
         <mark key={index} className={styles.highlight}>{part}</mark>
       ) : (
         part
@@ -213,23 +284,26 @@ export const ContactSearchInput: React.FC<ContactSearchInputProps> = ({
     );
   };
 
+  const trimmedSearchTerm = searchTerm.trim();
+  const addNewContactLabel = trimmedSearchTerm
+    ? `Crear nuevo contacto: ${trimmedSearchTerm}`
+    : 'Agregar nuevo contacto';
+
   return (
     <div className={styles.wrapper}>
       <label className={styles.label}>
-        Contacto {required && <span className={styles.required}>*</span>}
+        {label} {required && <span className={styles.required}>*</span>}
       </label>
 
       {value ? (
-        // Selected contact chip
-        <div className={styles.chip}>
-          <div className={styles.chipContent}>
-            <Icon name="user" size={14} />
-            <span className={styles.chipName}>{value.name}</span>
-            {value.email && <span className={styles.chipEmail}>({value.email})</span>}
+        <div className={styles.selectedContact}>
+          <div className={styles.selectedContactInfo}>
+            <p className={styles.selectedContactName}>{getContactDisplayName(value)}</p>
+            <p className={styles.selectedContactDetail}>{getContactDisplayDetail(value)}</p>
           </div>
           <button
             type="button"
-            className={styles.chipRemove}
+            className={styles.clearButton}
             onClick={handleRemoveContact}
             disabled={disabled}
             data-icon-btn
@@ -265,17 +339,13 @@ export const ContactSearchInput: React.FC<ContactSearchInputProps> = ({
                 // New contact form
                 <div className={styles.newContactForm}>
                   <div className={styles.formHeader}>
-                    <h4>Nuevo Contacto</h4>
+                    <h4>Nuevo contacto</h4>
                     <button
                       type="button"
                       className={styles.closeButton}
                       data-icon-btn
                       aria-label="Cerrar formulario de contacto"
-                      onClick={() => {
-                        setShowNewContactForm(false);
-                        setNewContact({ name: '', lastName: '', email: '', phone: '' });
-                        setFormErrors({});
-                      }}
+                      onClick={resetNewContactForm}
                     >
                       <Icon name="x" size={16} />
                     </button>
@@ -339,11 +409,7 @@ export const ContactSearchInput: React.FC<ContactSearchInputProps> = ({
                         type="button"
                         variant="secondary"
                         size="sm"
-                        onClick={() => {
-                          setShowNewContactForm(false);
-                          setNewContact({ name: '', lastName: '', email: '', phone: '' });
-                          setFormErrors({});
-                        }}
+                        onClick={resetNewContactForm}
                       >
                         Cancelar
                       </Button>
@@ -353,7 +419,7 @@ export const ContactSearchInput: React.FC<ContactSearchInputProps> = ({
                         onClick={handleCreateContact}
                         disabled={isLoading}
                       >
-                        {isLoading ? 'Guardando...' : 'Guardar'}
+                        {isLoading ? 'Creando...' : 'Crear contacto'}
                       </Button>
                     </div>
                   </div>
@@ -377,15 +443,11 @@ export const ContactSearchInput: React.FC<ContactSearchInputProps> = ({
                           <Icon name="user" size={16} />
                           <div className={styles.contactInfo}>
                             <div className={styles.contactName}>
-                              {highlightMatch(contact.name, searchTerm)}
+                              {highlightMatch(getContactDisplayName(contact), searchTerm)}
                             </div>
-                            {(contact.email || contact.phone) && (
-                              <div className={styles.contactDetails}>
-                                {contact.email && highlightMatch(contact.email, searchTerm)}
-                                {contact.email && contact.phone && ' • '}
-                                {contact.phone && highlightMatch(contact.phone, searchTerm)}
-                              </div>
-                            )}
+                            <div className={styles.contactDetails}>
+                              {highlightMatch(getContactDisplayDetail(contact), searchTerm)}
+                            </div>
                           </div>
                         </li>
                       ))}
@@ -403,11 +465,16 @@ export const ContactSearchInput: React.FC<ContactSearchInputProps> = ({
                     }`}
                     data-ristak-dropdown-item
                     data-active={selectedIndex === suggestions.length ? 'true' : undefined}
-                    onClick={() => setShowNewContactForm(true)}
+                    onClick={openNewContactForm}
                     onMouseEnter={() => setSelectedIndex(suggestions.length)}
                   >
                     <Icon name="plus" size={16} />
-                    <span>Agregar nuevo contacto</span>
+                    <span className={styles.addNewButtonText}>
+                      <span>{addNewContactLabel}</span>
+                      {trimmedSearchTerm && (
+                        <small>Se abrirá el formulario con este dato precargado.</small>
+                      )}
+                    </span>
                   </button>
                 </>
               )}

@@ -8,6 +8,7 @@ import { PhoneDateField } from '@/components/phone/PhoneDateField'
 import { PhoneSelect } from '@/components/phone/PhoneSelect'
 import { PhoneSegmentedTabs } from '@/components/phone/ui'
 import { PaymentPlatformLogo } from '@/components/common/PaymentPlatformLogo'
+import { ContactSearchInput, type ContactSearchInputContact } from '../ContactSearchInput/ContactSearchInput'
 import {
   Search,
   Loader2,
@@ -636,7 +637,6 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
   const [searchingContact, setSearchingContact] = useState(false)
   const [contacts, setContacts] = useState<Contact[]>([])
   const [selectedContact, setSelectedContact] = useState<Contact | null>(null)
-  const [showContactDropdown, setShowContactDropdown] = useState(false)
   const [contactPickerOpen, setContactPickerOpen] = useState(false)
 
   // Charge type
@@ -1181,7 +1181,6 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
     setSearchingContact(false)
     setContacts([])
     setSelectedContact(resolvedInitialContact)
-    setShowContactDropdown(false)
     setContactPickerOpen(false)
     setChargeType('direct')
     setAmount('')
@@ -1429,7 +1428,6 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
   useEffect(() => {
     if (contactLocked) {
       setContacts([])
-      setShowContactDropdown(false)
       setContactPickerOpen(false)
       setSearchingContact(false)
       return
@@ -1437,7 +1435,6 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
 
     if (isEmbedded && !contactPickerOpen) {
       setContacts([])
-      setShowContactDropdown(false)
       setSearchingContact(false)
       return
     }
@@ -1447,14 +1444,12 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
 
     if (query.length < 2 && !shouldLoadRecentContacts) {
       setContacts([])
-      setShowContactDropdown(false)
       setSearchingContact(false)
       return
     }
 
     const controller = new AbortController()
     setSearchingContact(true)
-    setShowContactDropdown(!isEmbedded)
 
     const timer = window.setTimeout(async () => {
       setSearchingContact(true)
@@ -1539,7 +1534,6 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
 
         if (!controller.signal.aborted) {
           setContacts(formattedContacts)
-          setShowContactDropdown(!isEmbedded)
         }
       } catch (error) {
         if (!controller.signal.aborted) {
@@ -1775,7 +1769,7 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
     setStep('link_ready')
   }
 
-  const handleSelectContact = (contact: Contact) => {
+  const handleSelectContact = (contact: ContactSearchInputContact) => {
     // Solo guardar los datos primitivos del contacto para evitar referencias circulares
     const nextContact = {
       id: contact.id,
@@ -1789,7 +1783,6 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
     setSelectedContact(nextContact)
     setSendMethod(getDefaultSendMethod(getSendMethodOptions(nextContact)))
     setSearchQuery('')
-    setShowContactDropdown(false)
     setContactPickerOpen(false)
     setContacts([])
   }
@@ -1799,7 +1792,6 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
     setSelectedContact(null)
     setSearchQuery('')
     setContacts([])
-    setShowContactDropdown(false)
     setContactPickerOpen(false)
   }
 
@@ -1807,7 +1799,6 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
     if (contactLocked) return
     setSearchQuery('')
     setContacts([])
-    setShowContactDropdown(false)
     setContactPickerOpen(true)
   }
 
@@ -1815,7 +1806,6 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
     setContactPickerOpen(false)
     setSearchQuery('')
     setContacts([])
-    setShowContactDropdown(false)
     setSearchingContact(false)
   }
 
@@ -3085,10 +3075,9 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
     return (
       <div className={styles.content} data-modal-panel="">
         {!contactLocked && (
-          <div className={`${styles.field} ${isEmbedded ? styles.contactPickerField : ''}`}>
-            <label className={styles.label}>Cliente</label>
-
-            {isEmbedded ? (
+          isEmbedded ? (
+            <div className={`${styles.field} ${styles.contactPickerField}`}>
+              <label className={styles.label}>Cliente</label>
               <>
                 <div className={styles.contactPickerControl}>
                   <button
@@ -3118,70 +3107,24 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
                 </div>
                 {renderEmbeddedContactPicker()}
               </>
-            ) : selectedContact ? (
-              <div className={styles.selectedContact}>
-                <div className={styles.contactInfo}>
-                  <p className={styles.contactName}>{getContactDisplayName(selectedContact)}</p>
-                  <p className={styles.contactDetail}>{getContactDisplayDetail(selectedContact)}</p>
-                </div>
-                <button
-                  type="button"
-                  onClick={handleClearContact}
-                  className={styles.clearButton}
-                  title="Cambiar contacto"
-                >
-                  <X size={16} />
-                </button>
-              </div>
-            ) : (
-              <div className={styles.searchWrapper}>
-                <div className={styles.searchInput}>
-                  <Search size={16} className={styles.searchIcon} />
-                  <input
-                    {...suppressContactAutofill}
-                    type="text"
-                    placeholder="Buscar por nombre, email o teléfono..."
-                    value={searchQuery}
-                    onChange={(e) => setSearchQuery(e.target.value)}
-                    className={styles.input}
-                    aria-label="Buscar contacto para cobrar"
-                  />
-                  {searchingContact && <Loader2 size={16} className={styles.loadingIcon} />}
-                </div>
-
-                {showContactDropdown && (
-                  <div
-                    className={styles.dropdown}
-                    data-phone-scrollable="true"
-                    data-ristak-dropdown-panel="true"
-                  >
-                    {searchingContact && contacts.length === 0 ? (
-                      <div className={styles.dropdownEmpty}>
-                        Buscando contactos...
-                      </div>
-                    ) : contacts.length > 0 ? (
-                      contacts.map((contact) => (
-                        <button
-                          key={contact.id}
-	                          type="button"
-	                          className={styles.dropdownItem}
-                            data-ristak-dropdown-item="true"
-	                          onClick={() => handleSelectContact(contact)}
-                        >
-                          <p className={styles.dropdownName}>{getContactDisplayName(contact)}</p>
-                          <p className={styles.dropdownDetail}>{getContactDisplayDetail(contact)}</p>
-                        </button>
-                      ))
-                    ) : (
-                      <div className={styles.dropdownEmpty}>
-                        No se encontraron contactos
-                      </div>
-                    )}
-                  </div>
-                )}
-              </div>
-            )}
-          </div>
+            </div>
+          ) : (
+            <div className={styles.field}>
+              <ContactSearchInput
+                label="Cliente"
+                value={selectedContact}
+                onChange={(contact) => {
+                  if (contact) {
+                    handleSelectContact(contact)
+                    return
+                  }
+                  handleClearContact()
+                }}
+                placeholder="Buscar cliente por nombre, email o teléfono"
+                required
+              />
+            </div>
+          )
         )}
 
         <div className={styles.field}>
