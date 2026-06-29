@@ -76,6 +76,7 @@ interface NavItem {
   icon: IconType
   isDivider?: boolean
   isAction?: boolean
+  isMdpProgram?: boolean
   action?: () => void
 }
 
@@ -108,6 +109,31 @@ const baseNavigation: NavItem[] = [
   { id: 'automations', name: 'Automatizaciones', href: '/automations', icon: Workflow },
   { id: 'sites', name: 'Sitios', href: '/sites', icon: PanelTop },
 ]
+
+const mdpProgramNavigationItem: NavItem = {
+  id: 'mdp_program',
+  name: 'Magnetismo',
+  href: MDP_PROGRAM_ROOT_PATH,
+  icon: BrainCircuit,
+  isMdpProgram: true
+}
+
+const defaultNavigationPositionById: Record<string, number> = {
+  dashboard: 10,
+  chat: 20,
+  appointments: 30,
+  transactions: 40,
+  contacts: 50,
+  'divider-contacts': 56,
+  reports: 60,
+  analytics: 70,
+  'divider-1': 76,
+  campaigns: 80,
+  automations: 90,
+  sites: 100
+}
+
+const DEFAULT_MDP_NAVIGATION_POSITION = 25
 
 const navPermissionById: Partial<Record<string, PermissionKey>> = {
   dashboard: 'dashboard',
@@ -147,12 +173,37 @@ const cleanNavigationDividers = (items: NavItem[]) => {
   return cleaned
 }
 
+const externalModuleSidebarPosition = (user: AccessControlledUser | null | undefined, key: string) => {
+  const position = Number(user?.licenseExternalModules?.[key]?.sidebarPosition)
+  return Number.isFinite(position) ? position : DEFAULT_MDP_NAVIGATION_POSITION
+}
+
+const sortNavigationByDefaultPosition = (items: NavItem[], user?: AccessControlledUser | null): NavItem[] => {
+  return [...items].sort((a, b) => {
+    const aPosition = a.id === mdpProgramNavigationItem.id
+      ? externalModuleSidebarPosition(user, mdpProgramNavigationItem.id)
+      : defaultNavigationPositionById[a.id] ?? 1000
+    const bPosition = b.id === mdpProgramNavigationItem.id
+      ? externalModuleSidebarPosition(user, mdpProgramNavigationItem.id)
+      : defaultNavigationPositionById[b.id] ?? 1000
+
+    if (aPosition !== bPosition) return aPosition - bPosition
+    return items.indexOf(a) - items.indexOf(b)
+  })
+}
+
 const getNavigationItems = (user?: AccessControlledUser | null): NavItem[] => {
-  return cleanNavigationDividers(baseNavigation.filter((item) => {
+  const items = baseNavigation.filter((item) => {
     if (item.isDivider) return true
     const permissionKey = navPermissionById[item.id]
     return !permissionKey || hasModuleAccess(user, permissionKey, 'read')
-  }))
+  })
+
+  if (user?.licenseFeatures?.mdp_program === true) {
+    items.push(mdpProgramNavigationItem)
+  }
+
+  return cleanNavigationDividers(sortNavigationByDefaultPosition(items, user))
 }
 
 const getInitials = (name?: string, email?: string) => {
@@ -184,9 +235,16 @@ const applyNavigationOrder = (items: NavItem[], order: string[]): NavItem[] => {
     }
   })
 
-  // Items nuevos no presentes en el orden guardado van al final.
+  // Items nuevos no presentes en el orden guardado se insertan segun el orden
+  // actual del producto. Asi un modulo externo nuevo no aparece hasta abajo
+  // solo porque el cliente ya tenia un sidebar personalizado.
   itemsById.forEach(item => {
-    orderedItems.push(item)
+    const defaultIndex = items.findIndex(candidate => candidate.id === item.id)
+    const insertAt = orderedItems.findIndex(candidate => {
+      const candidateDefaultIndex = items.findIndex(defaultItem => defaultItem.id === candidate.id)
+      return candidateDefaultIndex >= 0 && candidateDefaultIndex > defaultIndex
+    })
+    orderedItems.splice(insertAt >= 0 ? insertAt : orderedItems.length, 0, item)
   })
 
   if (!orderIncludesChat) {
@@ -1109,17 +1167,6 @@ export const Sidebar: React.FC<SidebarProps> = ({
                 onNavigate={handleNavigate}
               />
             )}
-            {canUseMdpProgram && (
-              <MdpProgramNavGroup
-                pathname={location.pathname}
-                open={mdpProgramOpen}
-                items={mdpProgramItems}
-                collapsed={collapsed}
-                onToggle={() => setMdpProgramOpen((current) => !current)}
-                onRequestExpand={handleRequestExpand}
-                onNavigate={handleNavigate}
-              />
-            )}
           </DndContext>
         ) : (
           <div
@@ -1152,6 +1199,17 @@ export const Sidebar: React.FC<SidebarProps> = ({
                     onRequestExpand={handleRequestExpand}
                     onNavigate={handleNavigate}
                   />
+                ) : item.isMdpProgram ? (
+                  <MdpProgramNavGroup
+                    key={item.id}
+                    pathname={location.pathname}
+                    open={mdpProgramOpen}
+                    items={mdpProgramItems}
+                    collapsed={collapsed}
+                    onToggle={() => setMdpProgramOpen((current) => !current)}
+                    onRequestExpand={handleRequestExpand}
+                    onNavigate={handleNavigate}
+                  />
                 ) : (
                   <NavigationItem
                     key={item.id}
@@ -1171,17 +1229,6 @@ export const Sidebar: React.FC<SidebarProps> = ({
                 items={visibleAIAgentNavigation}
                 collapsed={collapsed}
                 onToggle={() => setAiAgentOpen((current) => !current)}
-                onRequestExpand={handleRequestExpand}
-                onNavigate={handleNavigate}
-              />
-            )}
-            {canUseMdpProgram && (
-              <MdpProgramNavGroup
-                pathname={location.pathname}
-                open={mdpProgramOpen}
-                items={mdpProgramItems}
-                collapsed={collapsed}
-                onToggle={() => setMdpProgramOpen((current) => !current)}
                 onRequestExpand={handleRequestExpand}
                 onNavigate={handleNavigate}
               />

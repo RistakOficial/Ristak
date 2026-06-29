@@ -64,6 +64,9 @@ function serializeAuthUser(user, licenseState = null) {
     licensePlan: licenseState?.plan || null,
     licenseFeatures: licenseState?.features && typeof licenseState.features === 'object'
       ? licenseState.features
+      : {},
+    licenseExternalModules: licenseState?.externalModules && typeof licenseState.externalModules === 'object'
+      ? licenseState.externalModules
       : {}
   }
 }

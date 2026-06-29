@@ -51,6 +51,19 @@ function startMockServer() {
                 : serverMode === 'allow_without_whatsapp'
                   ? { meta_ads: true, ai: false }
                   : { whatsapp: true, meta_ads: true, ai: false },
+              ...(serverMode === 'allow'
+                ? {
+                    external_modules: {
+                      mdp_program: {
+                        key: 'mdp_program',
+                        label: 'Magnetismo de Pacientes',
+                        menu_label: 'Magnetismo',
+                        enabled: true,
+                        sidebar_position: 35
+                      }
+                    }
+                  }
+                : {}),
               license_token: 'tok_123',
               expires_at: new Date(Date.now() + 60 * 60 * 1000).toISOString()
             }))
@@ -181,6 +194,9 @@ test('licencia activa permite el acceso y entrega features', async () => {
   assert.equal(state.features.ai, false)
   assert.equal(state.features.app_assistant_ai, false)
   assert.equal(state.features.conversational_ai, false)
+  assert.equal(state.externalModules.mdp_program.enabled, true)
+  assert.equal(state.externalModules.mdp_program.sidebarPosition, 35)
+  assert.equal(state.externalModules.mdp_program.menuLabel, 'Magnetismo')
 
   // El payload enviado al servidor central incluye todos los datos de la instalación
   assert.equal(lastRequestBody.client_id, 'cli_1')
