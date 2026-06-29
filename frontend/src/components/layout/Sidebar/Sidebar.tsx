@@ -57,7 +57,6 @@ import {
 } from '@dnd-kit/sortable'
 import { CSS } from '@dnd-kit/utilities'
 import automationsService from '@/services/automationsService'
-import { getIntegrationsStatus } from '@/services/integrationsService'
 
 interface SidebarProps {
   collapsed?: boolean
@@ -165,6 +164,47 @@ const getInitials = (name?: string, email?: string) => {
   }
   return 'U'
 }
+
+const applyNavigationOrder = (items: NavItem[], order: string[]): NavItem[] => {
+  if (!order.length) return items
+
+  const itemsById = new Map(items.map(item => [item.id, item]))
+  const orderedItems: NavItem[] = []
+  const orderIncludesChat = order.includes('chat')
+
+  order.forEach(id => {
+    const item = itemsById.get(id)
+    if (item) {
+      orderedItems.push(item)
+      itemsById.delete(id)
+    }
+  })
+
+  // Items nuevos no presentes en el orden guardado van al final.
+  itemsById.forEach(item => {
+    orderedItems.push(item)
+  })
+
+  if (!orderIncludesChat) {
+    const chatIndex = orderedItems.findIndex(item => item.id === 'chat')
+    const dashboardIndex = orderedItems.findIndex(item => item.id === 'dashboard')
+    if (chatIndex >= 0 && dashboardIndex >= 0 && chatIndex !== dashboardIndex + 1) {
+      const [chatItem] = orderedItems.splice(chatIndex, 1)
+      const nextDashboardIndex = orderedItems.findIndex(item => item.id === 'dashboard')
+      orderedItems.splice(nextDashboardIndex + 1, 0, chatItem)
+    }
+  }
+
+  return orderedItems
+}
+
+const withInitializationNavigation = (
+  items: NavItem[],
+  user: AccessControlledUser | null | undefined,
+  isInitialized: boolean
+): NavItem[] => (
+  isInitialized || user?.role !== 'admin' ? items : [initializationNavigation, ...items]
+)
 
 interface NavigationItemProps {
   item: NavItem
@@ -558,7 +598,6 @@ export const Sidebar: React.FC<SidebarProps> = ({
   const { isInitialized } = useInitialization()
   const [sidebarOrder, setSidebarOrder] = useAppConfig<string[]>('sidebar_navigation_order', [])
   const appVersion = useAppVersion()
-  const [navigation, setNavigation] = useState<NavItem[]>(() => [])
   const [activeId, setActiveId] = useState<string | null>(null)
   const [isEditMode, setIsEditMode] = useState(false)
   const [showUserMenu, setShowUserMenu] = useState(false)
@@ -566,10 +605,6 @@ export const Sidebar: React.FC<SidebarProps> = ({
   const isPaymentsRoute = location.pathname.startsWith('/transactions')
   const [aiAgentOpen, setAiAgentOpen] = useState(isAIAgentRoute)
   const [paymentsOpen, setPaymentsOpen] = useState(isPaymentsRoute)
-  const [paymentCapabilities, setPaymentCapabilities] = useState({
-    paymentPlans: false,
-    subscriptions: false
-  })
 
   // Sincronizar el estado de los grupos con la ruta actual
   useEffect(() => {
@@ -580,42 +615,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
     setPaymentsOpen(isPaymentsRoute)
   }, [isPaymentsRoute])
 
-  useEffect(() => {
-    let cancelled = false
-
-    getIntegrationsStatus()
-      .then((status) => {
-        if (cancelled) return
-        const stripe = Boolean(status?.stripe?.connected)
-        const conekta = Boolean(status?.conekta?.connected)
-        const mercadoPago = Boolean(status?.mercadopago?.connected)
-        const highlevel = Boolean(status?.highlevel?.connected)
-        setPaymentCapabilities({
-          paymentPlans: stripe || conekta || highlevel,
-          subscriptions: stripe || conekta || mercadoPago
-        })
-      })
-      .catch(() => {
-        if (!cancelled) {
-          setPaymentCapabilities({
-            paymentPlans: false,
-            subscriptions: false
-          })
-        }
-      })
-
-    return () => {
-      cancelled = true
-    }
-  }, [location.pathname])
-
-  const visiblePaymentsNavigation = useMemo(() => (
-    PAYMENTS_NAV_ITEMS.filter((item) => {
-      if (item.to === '/transactions/payment-plans') return paymentCapabilities.paymentPlans
-      if (item.to === '/transactions/subscriptions') return paymentCapabilities.subscriptions
-      return true
-    })
-  ), [paymentCapabilities.paymentPlans, paymentCapabilities.subscriptions])
+  const visiblePaymentsNavigation = PAYMENTS_NAV_ITEMS
 
   useEffect(() => {
     if (!collapsed) return
@@ -689,40 +689,6 @@ export const Sidebar: React.FC<SidebarProps> = ({
     }
   }, [])
 
-  // Aplicar orden guardado a los items
-  const applyOrder = (items: NavItem[], order: string[]): NavItem[] => {
-    if (!order.length) return items
-
-    const itemsById = new Map(items.map(item => [item.id, item]))
-    const orderedItems: NavItem[] = []
-    const orderIncludesChat = order.includes('chat')
-
-    order.forEach(id => {
-      const item = itemsById.get(id)
-      if (item) {
-        orderedItems.push(item)
-        itemsById.delete(id)
-      }
-    })
-
-    // Items nuevos no presentes en el orden guardado van al final
-    itemsById.forEach(item => {
-      orderedItems.push(item)
-    })
-
-    if (!orderIncludesChat) {
-      const chatIndex = orderedItems.findIndex(item => item.id === 'chat')
-      const dashboardIndex = orderedItems.findIndex(item => item.id === 'dashboard')
-      if (chatIndex >= 0 && dashboardIndex >= 0 && chatIndex !== dashboardIndex + 1) {
-        const [chatItem] = orderedItems.splice(chatIndex, 1)
-        const nextDashboardIndex = orderedItems.findIndex(item => item.id === 'dashboard')
-        orderedItems.splice(nextDashboardIndex + 1, 0, chatItem)
-      }
-    }
-
-    return orderedItems
-  }
-
   useEffect(() => {
     if (!showUserMenu) return
 
@@ -739,13 +705,13 @@ export const Sidebar: React.FC<SidebarProps> = ({
     }
   }, [showUserMenu])
 
-  // Prepone Inicialización (siempre primero) cuando el onboarding no está completo.
-  const withInitialization = (items: NavItem[]): NavItem[] =>
-    isInitialized || user?.role !== 'admin' ? items : [initializationNavigation, ...items]
-
-  useEffect(() => {
+  const navigation = useMemo(() => {
     const items = getNavigationItems(user)
-    setNavigation(withInitialization(applyOrder(items, sidebarOrder)))
+    return withInitializationNavigation(
+      applyNavigationOrder(items, sidebarOrder),
+      user,
+      isInitialized
+    )
   }, [sidebarOrder, isInitialized, user])
 
   const handleDragStart = (event: DragStartEvent) => {
@@ -763,17 +729,13 @@ export const Sidebar: React.FC<SidebarProps> = ({
     const { active, over } = event
 
     if (over && active.id !== over.id) {
-      setNavigation((items) => {
-        const oldIndex = items.findIndex(item => item.id === active.id)
-        const newIndex = items.findIndex(item => item.id === over.id)
+      const oldIndex = navigation.findIndex(item => item.id === active.id)
+      const newIndex = navigation.findIndex(item => item.id === over.id)
 
-        const newOrder = arrayMove(items, oldIndex, newIndex)
-
-        // Guardar orden en la base de datos
-        setSidebarOrder(newOrder.map(item => item.id))
-
-        return newOrder
-      })
+      if (oldIndex >= 0 && newIndex >= 0) {
+        const newOrder = arrayMove(navigation, oldIndex, newIndex)
+        void setSidebarOrder(newOrder.map(item => item.id))
+      }
     }
 
     setActiveId(null)
