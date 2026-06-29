@@ -1,7 +1,7 @@
-import crypto from 'crypto'
 import { db } from '../config/database.js'
 import { logger } from '../utils/logger.js'
 import { normalizePhoneForStorage } from '../utils/phoneUtils.js'
+import { createRistakId } from '../utils/idGenerator.js'
 import { sendWhatsAppApiTemplateMessage } from './whatsappApiService.js'
 
 const MAX_BULK_CONTACTS = 1000
@@ -40,7 +40,7 @@ function serviceError(message, status = 400) {
 }
 
 function makeId(prefix) {
-  return `${prefix}_${crypto.randomUUID()}`
+  return createRistakId(prefix)
 }
 
 function nowIso() {

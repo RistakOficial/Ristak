@@ -937,7 +937,7 @@ test('suscripciones Stripe: link crea Checkout de suscripcion en Stripe', async 
     assert.ok(calls.checkoutSessionsCreate[0].params.success_url.includes(`/pay/${created.subscriptionStartPublicPaymentId}`))
     assert.equal(calls.checkoutSessionsCreate[0].params.subscription_data.metadata.ristak_subscription_id, created.id)
     assert.equal(calls.subscriptionsCreate.length, 0)
-    assert.match(created.subscriptionStartPublicPaymentId || '', /^pay_/)
+    assert.match(created.subscriptionStartPublicPaymentId || '', /^rstk_pay_[A-Za-z0-9]{20}$/)
 
     const saved = await db.get(
       `SELECT status, payment_method, payment_provider, stripe_subscription_id, metadata_json
@@ -998,7 +998,7 @@ test('suscripciones Stripe: Checkout hospedado activa suscripcion en webhook', a
     })
 
     assert.equal(created.subscriptionStartUrl, 'https://checkout.stripe.test/cs_stress_1')
-    assert.match(created.subscriptionStartPublicPaymentId || '', /^pay_/)
+    assert.match(created.subscriptionStartPublicPaymentId || '', /^rstk_pay_[A-Za-z0-9]{20}$/)
     assert.equal(calls.checkoutSessionsCreate.length, 1)
 
     webhookEvent = {

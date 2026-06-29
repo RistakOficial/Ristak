@@ -3,6 +3,7 @@ import type {
   AutomationNode,
   AutomationTriggerEntry
 } from '@/services/automationsService'
+import { createRistakId } from '@/utils/idGenerator'
 import { getNodeDefinition, START_NODE_TYPE, type NodeOutputHandle } from './nodeRegistry'
 import { migrateSimpleCondition } from './crmFields'
 
@@ -12,11 +13,7 @@ export const MIN_ZOOM = 0.25
 export const MAX_ZOOM = 2
 
 export function genId(prefix: string): string {
-  const random =
-    typeof crypto !== 'undefined' && 'randomUUID' in crypto
-      ? crypto.randomUUID().slice(0, 8)
-      : Math.random().toString(36).slice(2, 10)
-  return `${prefix}_${Date.now().toString(36)}${random}`
+  return createRistakId(prefix)
 }
 
 export function isStartNode(node: AutomationNode): boolean {

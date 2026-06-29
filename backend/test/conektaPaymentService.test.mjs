@@ -406,7 +406,7 @@ test('Conekta payment flow: crea link, guarda payment_source y cobra tarjeta gua
     assert.equal(linkResult.payment.provider, 'conekta')
     assert.equal(linkResult.payment.conektaInstallments.enabled, true)
     assert.equal(linkResult.payment.conektaInstallments.maxInstallments, 6)
-    assert.match(linkResult.paymentUrl, /^https:\/\/app\.example\.test\/pay\/pay_/)
+    assert.match(linkResult.paymentUrl, /^https:\/\/app\.example\.test\/pay\/rstk_pay_[A-Za-z0-9]{20}$/)
     const customerCreatesAfterLink = calls.filter((call) => (
       call.url.endsWith('/customers') && call.method === 'POST'
     )).length
@@ -482,7 +482,7 @@ test('Conekta payment flow: crea link, guarda payment_source y cobra tarjeta gua
     assert.equal(linkedSubscription.conektaSubscriptionId, null)
     assert.equal(linkedSubscription.conektaCheckoutUrl, 'https://pay.conekta.com/link/subscription_test_123')
     assert.equal(linkedSubscription.subscriptionStartUrl, 'https://pay.conekta.com/link/subscription_test_123')
-    assert.match(linkedSubscription.subscriptionStartPublicPaymentId || '', /^pay_/)
+    assert.match(linkedSubscription.subscriptionStartPublicPaymentId || '', /^rstk_pay_[A-Za-z0-9]{20}$/)
 
     const planResult = await createConektaPaymentPlan({
       contact: {
@@ -512,7 +512,7 @@ test('Conekta payment flow: crea link, guarda payment_source y cobra tarjeta gua
     }, { baseUrl: 'https://app.example.test' })
 
     assert.equal(planResult.currentState, 'waiting_card_authorization')
-    assert.match(planResult.cardSetupLink, /^https:\/\/app\.example\.test\/pay\/pay_/)
+    assert.match(planResult.cardSetupLink, /^https:\/\/app\.example\.test\/pay\/rstk_pay_[A-Za-z0-9]{20}$/)
     assert.equal(planResult.scheduledPayments.length, 1)
 
     const firstPlanPayment = await db.get(
@@ -654,8 +654,8 @@ test('Conekta suscripciones: link crea checkout hospedado y webhook activa suscr
         assert.equal(body.needs_shipping_contact, false)
         assert.equal(body.order_template.customer_info.email, `conekta-sub-link-${idSuffix}@example.test`)
         assert.equal(body.order_template.metadata.ristak_subscription_id.startsWith('rstk_sub_'), true)
-        assert.match(String(body.order_template.metadata.public_payment_id || ''), /^pay_/)
-        assert.ok(String(body.success_url).includes('/pay/pay_'))
+        assert.match(String(body.order_template.metadata.public_payment_id || ''), /^rstk_pay_[A-Za-z0-9]{20}$/)
+        assert.ok(String(body.success_url).includes('/pay/rstk_pay_'))
         assert.ok(String(body.success_url).includes('conekta_subscription=success'))
         return jsonResponse({
           id: checkoutId,
@@ -703,7 +703,7 @@ test('Conekta suscripciones: link crea checkout hospedado y webhook activa suscr
     assert.equal(created.conektaCheckoutId, checkoutId)
     assert.equal(created.conektaCheckoutUrl, `https://pay.conekta.com/link/subscription_link_${idSuffix}`)
     assert.equal(created.subscriptionStartUrl, `https://pay.conekta.com/link/subscription_link_${idSuffix}`)
-    assert.match(created.subscriptionStartPublicPaymentId || '', /^pay_/)
+    assert.match(created.subscriptionStartPublicPaymentId || '', /^rstk_pay_[A-Za-z0-9]{20}$/)
     assert.equal(calls.some((call) => call.url.endsWith('/orders')), false)
 
     const webhookResult = await reconcileConektaSubscriptionFromWebhook({
@@ -1200,7 +1200,7 @@ test('Conekta planes: conserva varios planes del mismo contacto y procesa solo v
     assert.equal(firstRun.failed, 0)
     assert.equal(orderCalls.length, 1)
     assert.equal(orderCalls[0].body.line_items[0].unit_price, 35000)
-    assert.match(orderCalls[0].idempotencyKey, /^ristak_conekta_charge_conekta_installment_/)
+    assert.match(orderCalls[0].idempotencyKey, /^ristak_conekta_charge_rstk_installment_[A-Za-z0-9]{20}$/)
 
     const firstInstallment = await db.get(
       'SELECT status, conekta_order_id FROM installment_payments WHERE id = ?',

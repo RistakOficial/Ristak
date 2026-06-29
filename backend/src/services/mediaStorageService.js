@@ -9,6 +9,7 @@ import { fileURLToPath } from 'url'
 import { db } from '../config/database.js'
 import { logger } from '../utils/logger.js'
 import { compressMediaBuffer } from './mediaCompressionService.js'
+import { createRistakId } from '../utils/idGenerator.js'
 
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = dirname(__filename)
@@ -1783,7 +1784,7 @@ export async function uploadMediaAsset(input = {}) {
 
     await assertQuotaAvailable({ businessId, quotaSize, config })
 
-    const id = `media_${crypto.randomUUID()}`
+    const id = createRistakId('media')
     const storedFilename = `${id}-${filenameBase(originalFilename)}.${extension}`
     const objectPath = buildObjectPath({
       businessId,
@@ -1948,7 +1949,7 @@ async function finalizeStreamingMediaUpload({
   const finalMimeType = detected.mimeType
   const finalMediaType = mediaType
   const extension = extensionForMime(finalMimeType, originalFilename)
-  const id = `media_${crypto.randomUUID()}`
+  const id = createRistakId('media')
   const storedFilename = `${id}-${filenameBase(originalFilename)}.${extension}`
   const objectPath = buildObjectPath({
     businessId,
@@ -2730,7 +2731,7 @@ export async function syncMediaAssetBunnyStream(assetId, context = {}) {
 }
 
 export function extractMediaAssetIdFromUrl(value = '') {
-  const match = cleanString(value).match(/(?:\/api)?\/media\/assets\/(media_[\w-]+)(?:\/file|\/thumbnail)?/i)
+  const match = cleanString(value).match(/(?:\/api)?\/media\/assets\/((?:media|rstk_media)_[\w-]+)(?:\/file|\/thumbnail)?/i)
   return match?.[1] || ''
 }
 

@@ -30,8 +30,8 @@ test('createTriggerLink crea ID público, URL pública y permite actualizar dest
   )
 
   try {
-    assert.match(created.id, /^trigger_link_/)
-    assert.match(created.publicId, /^[a-zA-Z0-9_-]{8,}$/)
+    assert.match(created.id, /^rstk_trigger_link_[A-Za-z0-9]{20}$/)
+    assert.match(created.publicId, /^rstk_link_[A-Za-z0-9]{12}$/)
     assert.equal(created.destinationUrl, 'https://example.com/pdf')
     assert.equal(created.publicUrl, `https://app.ristak.test/trigger-links/${created.publicId}`)
     assert.equal(buildTriggerLinkPublicUrl(created, 'https://app.ristak.test/'), created.publicUrl)

@@ -91,8 +91,8 @@ test('ZIP imports store binary site assets through media storage, not DB base64'
 
     assert.ok(imageRow)
     assert.equal(imageRow.content_base64, '')
-    assert.match(imageRow.media_asset_id, /^media_/)
-    assert.match(imageRow.public_url, /\/media\/assets\/media_|^https?:\/\//)
+    assert.match(imageRow.media_asset_id, /^rstk_media_[A-Za-z0-9]{20}$/)
+    assert.match(imageRow.public_url, /\/media\/assets\/rstk_media_|^https?:\/\//)
     assert.equal(imageRow.storage_provider, 'local')
     mediaAssetId = imageRow.media_asset_id
 

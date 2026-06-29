@@ -36,6 +36,7 @@ import {
   gigstackProductKeyOptions,
   gigstackUnitOptions
 } from '@/utils/gigstackFiscalCatalog'
+import { createRistakId } from '@/utils/idGenerator'
 import styles from './PaymentProducts.module.css'
 
 type ProductFormMode = 'create' | 'edit' | null
@@ -102,7 +103,7 @@ const productTypeOptions = [
 ]
 
 const makePriceFormId = () => `price_${Math.random().toString(36).slice(2, 10)}`
-const makeWebhookFormId = () => `webhook_${Math.random().toString(36).slice(2, 10)}`
+const makeWebhookFormId = () => createRistakId('product_webhook')
 const makeWebhookHeaderFormId = () => `header_${Math.random().toString(36).slice(2, 10)}`
 const makeWebhookBodyFormId = () => `body_${Math.random().toString(36).slice(2, 10)}`
 

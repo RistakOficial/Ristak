@@ -11,6 +11,7 @@ import {
 } from './whatsappApiService.js'
 import { renderTemplateVariables } from './templateVariablesService.js'
 import { logger } from '../utils/logger.js'
+import { createRistakId } from '../utils/idGenerator.js'
 
 const TEMPLATE_CATEGORIES = new Set(['utility', 'marketing', 'authentication', 'service'])
 const TEMPLATE_STATUSES = new Set(['draft', 'active', 'archived'])
@@ -63,8 +64,8 @@ const BASE_APPOINTMENT_VARIABLES = [
 }))
 
 const BASE_PAYMENT_VARIABLES = [
-  ['ID del pago', 'payment.id', 'pay_3NfL8dZ9'],
-  ['ID publico del pago', 'payment.public_id', 'pay_3NfL8dZ9xQ2aB6mP'],
+  ['ID del pago', 'payment.id', 'rstk_payment_3NfL8dZ9xQ2aB6mP7KcR'],
+  ['ID publico del pago', 'payment.public_id', 'rstk_pay_3NfL8dZ9xQ2aB6mP7KcR'],
   ['Concepto del pago', 'payment.product', 'Plan mensual'],
   ['Monto del pago', 'payment.amount', '$1,499 MXN'],
   ['Moneda del pago', 'payment.currency', 'MXN'],
@@ -74,9 +75,9 @@ const BASE_PAYMENT_VARIABLES = [
   ['Referencia del pago', 'payment.receipt', 'REC-1048'],
   ['Numero de comprobante', 'payment.invoice_number', 'COMP-1048'],
   ['Fecha del pago', 'payment.date', '20 de junio de 2026'],
-  ['URL de pago', 'payment.url', 'https://app.ristak.com/pay/pay_3NfL8dZ9xQ2aB6mP'],
-  ['URL de comprobante', 'payment.receipt_url', 'https://app.ristak.com/pay/pay_3NfL8dZ9xQ2aB6mP?receipt=1'],
-  ['Ruta dinamica de comprobante', 'payment.receipt_path', 'pay_3NfL8dZ9xQ2aB6mP?receipt=1']
+  ['URL de pago', 'payment.url', 'https://app.ristak.com/pay/rstk_pay_3NfL8dZ9xQ2aB6mP7KcR'],
+  ['URL de comprobante', 'payment.receipt_url', 'https://app.ristak.com/pay/rstk_pay_3NfL8dZ9xQ2aB6mP7KcR?receipt=1'],
+  ['Ruta dinamica de comprobante', 'payment.receipt_path', 'rstk_pay_3NfL8dZ9xQ2aB6mP7KcR?receipt=1']
 ].map(([label, key, example]) => ({
   key,
   label,
@@ -220,7 +221,7 @@ const DEFAULT_APPOINTMENT_REVIEW_MAX_RETRIES = 2
 const DEFAULT_APPOINTMENT_REVIEW_RETRY_ALERT_TYPE = 'template_review_retry_exhausted'
 
 function makeId(prefix) {
-  return `${prefix}_${crypto.randomUUID()}`
+  return createRistakId(prefix)
 }
 
 function hashId(prefix, value) {
@@ -249,8 +250,8 @@ function paymentButtonBinding({ hasPublicBaseUrl, receipt = false } = {}) {
       mergeField: receipt ? '{{payment.receipt_url}}' : '{{payment.url}}',
       label: receipt ? 'URL de comprobante' : 'URL de pago',
       example: receipt
-        ? 'https://app.ristak.com/pay/pay_3NfL8dZ9xQ2aB6mP?receipt=1'
-        : 'https://app.ristak.com/pay/pay_3NfL8dZ9xQ2aB6mP'
+        ? 'https://app.ristak.com/pay/rstk_pay_3NfL8dZ9xQ2aB6mP7KcR?receipt=1'
+        : 'https://app.ristak.com/pay/rstk_pay_3NfL8dZ9xQ2aB6mP7KcR'
     }
   }
 
@@ -258,7 +259,7 @@ function paymentButtonBinding({ hasPublicBaseUrl, receipt = false } = {}) {
     variableKey: receipt ? 'payment.receipt_path' : 'payment.public_id',
     mergeField: receipt ? '{{payment.receipt_path}}' : '{{payment.public_id}}',
     label: receipt ? 'Ruta dinamica de comprobante' : 'ID publico del pago',
-    example: receipt ? 'pay_3NfL8dZ9xQ2aB6mP?receipt=1' : 'pay_3NfL8dZ9xQ2aB6mP'
+    example: receipt ? 'rstk_pay_3NfL8dZ9xQ2aB6mP7KcR?receipt=1' : 'rstk_pay_3NfL8dZ9xQ2aB6mP7KcR'
   }
 }
 
@@ -291,8 +292,8 @@ function getDefaultPaymentMessageTemplates({ publicBaseUrl = '' } = {}) {
         '{{contact.first_name}}': 'Maria',
         '{{payment.product}}': 'Plan mensual',
         '{{payment.amount}}': '$1,499 MXN',
-        '{{payment.public_id}}': 'pay_3NfL8dZ9xQ2aB6mP',
-        '{{payment.url}}': 'https://app.ristak.com/pay/pay_3NfL8dZ9xQ2aB6mP'
+        '{{payment.public_id}}': 'rstk_pay_3NfL8dZ9xQ2aB6mP7KcR',
+        '{{payment.url}}': 'https://app.ristak.com/pay/rstk_pay_3NfL8dZ9xQ2aB6mP7KcR'
       },
       variableBindings: {
         headerText: {},
@@ -343,9 +344,9 @@ function getDefaultPaymentMessageTemplates({ publicBaseUrl = '' } = {}) {
         '{{contact.first_name}}': 'Maria',
         '{{payment.product}}': 'Plan mensual',
         '{{payment.amount}}': '$1,499 MXN',
-        '{{payment.public_id}}': 'pay_3NfL8dZ9xQ2aB6mP',
-        '{{payment.receipt_path}}': 'pay_3NfL8dZ9xQ2aB6mP?receipt=1',
-        '{{payment.receipt_url}}': 'https://app.ristak.com/pay/pay_3NfL8dZ9xQ2aB6mP?receipt=1'
+        '{{payment.public_id}}': 'rstk_pay_3NfL8dZ9xQ2aB6mP7KcR',
+        '{{payment.receipt_path}}': 'rstk_pay_3NfL8dZ9xQ2aB6mP7KcR?receipt=1',
+        '{{payment.receipt_url}}': 'https://app.ristak.com/pay/rstk_pay_3NfL8dZ9xQ2aB6mP7KcR?receipt=1'
       },
       variableBindings: {
         headerText: {},
@@ -396,8 +397,8 @@ function getDefaultPaymentMessageTemplates({ publicBaseUrl = '' } = {}) {
         '{{contact.first_name}}': 'Maria',
         '{{payment.product}}': 'Plan mensual',
         '{{payment.amount}}': '$1,499 MXN',
-        '{{payment.public_id}}': 'pay_3NfL8dZ9xQ2aB6mP',
-        '{{payment.url}}': 'https://app.ristak.com/pay/pay_3NfL8dZ9xQ2aB6mP'
+        '{{payment.public_id}}': 'rstk_pay_3NfL8dZ9xQ2aB6mP7KcR',
+        '{{payment.url}}': 'https://app.ristak.com/pay/rstk_pay_3NfL8dZ9xQ2aB6mP7KcR'
       },
       variableBindings: {
         headerText: {},

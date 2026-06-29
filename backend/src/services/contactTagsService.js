@@ -1,6 +1,6 @@
-import crypto from 'crypto'
 import { db } from '../config/database.js'
 import { logger } from '../utils/logger.js'
+import { createRistakId } from '../utils/idGenerator.js'
 
 /**
  * Catálogo de etiquetas de contactos.
@@ -219,14 +219,7 @@ export async function createContactTag(name, { folderId = null } = {}) {
   const existing = await findCustomTagByName(clean)
   if (existing) return mapRow(existing)
 
-  // ID legible derivado del nombre; con sufijo numérico si ya está ocupado
-  const rows = await db.all('SELECT id FROM contact_tags')
-  const taken = new Set(rows.map((row) => row.id))
-  const base = slugifyTagId(clean)
-  let id = base
-  for (let n = 2; taken.has(id) || isSystemTagId(id); n += 1) {
-    id = `${base}_${n}`
-  }
+  const id = createRistakId('tag')
   const cleanFolderId = await resolveFolderId(folderId)
   await db.run('INSERT INTO contact_tags (id, name, folder_id) VALUES (?, ?, ?)', [id, clean, cleanFolderId])
   logger.info(`Etiqueta de contacto creada: ${clean} (${id})`)
@@ -300,7 +293,7 @@ export async function createContactTagFolder({ name, description = '' } = {}) {
   if (rows.some((row) => normalizeTagName(row.name) === normalizeTagName(clean))) {
     throw Object.assign(new Error('Ya existe una carpeta con ese nombre'), { statusCode: 409 })
   }
-  const id = `tagfolder_${crypto.randomUUID()}`
+  const id = createRistakId('tag_folder')
   await db.run('INSERT INTO contact_tag_folders (id, name, description) VALUES (?, ?, ?)', [
     id,
     clean,

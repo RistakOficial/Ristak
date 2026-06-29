@@ -1,5 +1,4 @@
 import fetch from 'node-fetch'
-import crypto from 'crypto'
 import { db, getAppConfig } from '../config/database.js'
 import { API_URLS } from '../config/constants.js'
 import { getMetaConfig, getMetaSyncProgress } from './metaAdsService.js'
@@ -7,6 +6,7 @@ import { getSitesPublicDomain } from './sitesService.js'
 import { listAutomationReviewProblems } from './automationReferenceResolver.js'
 import { sendAppNotificationPayload } from './pushNotificationsService.js'
 import { logger } from '../utils/logger.js'
+import { createRistakId } from '../utils/idGenerator.js'
 
 const STORAGE_LIMIT_GB = Number(process.env.DATABASE_STORAGE_LIMIT_GB || 1)
 const STORAGE_WARNING_PERCENT = Number(process.env.DATABASE_STORAGE_WARNING_PERCENT || 80)
@@ -69,7 +69,7 @@ function cleanString(value) {
 }
 
 function makeInternalNotificationId() {
-  return `internal_notification_${crypto.randomUUID()}`
+  return createRistakId('internal_notification')
 }
 
 function normalizeUserIds(value = []) {

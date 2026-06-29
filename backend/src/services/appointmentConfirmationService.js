@@ -1,9 +1,9 @@
-import crypto from 'crypto'
 import { db } from '../config/database.js'
 import { logger } from '../utils/logger.js'
 import { isAffirmativeReply } from './appointmentReminderLogic.js'
 import { classifyConfirmationResponse } from '../agents/appointmentConfirmationAgent.js'
 import { sendAppNotificationPayload, sendAppointmentConfirmationNotification } from './pushNotificationsService.js'
+import { createRistakId } from '../utils/idGenerator.js'
 
 export { isAffirmativeReply }
 
@@ -12,7 +12,7 @@ const DEBOUNCE_MS = 2 * 60 * 1000
 const CONFIRMATION_SUCCESS_ACTIONS = new Set(['mark_confirmed', 'chat_card', 'notify_push', 'chat_badge'])
 
 function makeWindowId() {
-  return `conf_win_${crypto.randomUUID()}`
+  return createRistakId('confirmation_window')
 }
 
 function nowIso() {

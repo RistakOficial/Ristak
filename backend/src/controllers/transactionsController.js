@@ -19,9 +19,10 @@ import {
   isSuccessfulPaymentStatus
 } from '../services/paymentRecordSafetyService.js'
 import { formatInvoiceMultilineText, formatInvoiceSingleLineText } from '../utils/invoiceTextFormatter.js'
-import { findContactByPhoneCandidates } from '../services/contactIdentityService.js'
+import { findContactByPhoneCandidates, generateContactId } from '../services/contactIdentityService.js'
 import { getAccountCurrency, normalizePhoneForAccount } from '../utils/accountLocale.js'
 import { buildContactSearchClause, containsPattern, normalizePhoneDigits } from '../utils/searchText.js'
+import { createRistakPaymentEntityId } from '../utils/idGenerator.js'
 
 const SUCCESS_PAYMENT_STATUSES = new Set(['succeeded', 'paid', 'completed', 'complete', 'fulfilled', 'success'])
 const CLOSED_PAYMENT_STATUSES = new Set(['paid', 'succeeded', 'completed', 'complete', 'fulfilled', 'success', 'refunded', 'void', 'deleted', 'failed'])
@@ -79,7 +80,7 @@ const normalizeAmount = (amount) => {
 
 const cleanString = (value) => String(value || '').trim()
 
-const createLocalId = (prefix) => `${prefix}_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`
+const createLocalId = (prefix) => createRistakPaymentEntityId(prefix)
 
 // (PAY-007) Idempotencia del registro manual de pago: un reintento de red NO debe
 // crear un pago duplicado. Si el cliente manda Idempotency-Key (o un id estable en el
@@ -349,7 +350,7 @@ async function ensureLocalContactForPayment({ contactId, contactName, email, pho
     return null
   }
 
-  const id = cleanString(contactId) || createLocalId('manual_contact')
+  const id = cleanString(contactId) || generateContactId()
   const nameParts = splitName(fullName)
 
   await db.run(

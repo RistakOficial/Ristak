@@ -10,11 +10,12 @@ import automationsService, {
   type AutomationTestRunResult
 } from '@/services/automationsService'
 import type { Contact } from '@/types'
+import { createRistakId } from '@/utils/idGenerator'
 import { AutomationLibrary } from './AutomationLibrary'
 import styles from './editor/AutomationEditor.module.css'
 
 // Generador local de ids (mismo formato que el editor, sin importar su grafo)
-const genId = (prefix: string) => `${prefix}_${Math.random().toString(36).slice(2, 10)}${Date.now().toString(36).slice(-4)}`
+const genId = (prefix: string) => createRistakId(prefix)
 
 /**
  * Página principal de Automatizaciones: librería de archivos a la izquierda

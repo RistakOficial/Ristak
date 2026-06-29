@@ -1,4 +1,3 @@
-import crypto from 'node:crypto'
 import { promises as dns } from 'node:dns'
 import nodemailer from 'nodemailer'
 import { db, getAppConfig, setAppConfig } from '../config/database.js'
@@ -6,6 +5,7 @@ import { decrypt, encrypt } from '../utils/encryption.js'
 import { logger } from '../utils/logger.js'
 import { clearEmailIntegrationCredentials } from './integrationCredentialsCleanupService.js'
 import { publishChatMessageEvent } from './chatLiveEventsService.js'
+import { createRistakId } from '../utils/idGenerator.js'
 
 // Configuración del remitente de correo de la cuenta.
 // El password SMTP se guarda cifrado en una llave separada de app_config.
@@ -251,7 +251,7 @@ function getEmailDomain(email) {
 function buildEmailMessageId(externalId) {
   const normalized = cleanString(externalId)
   if (/^[A-Za-z0-9:_-]{1,140}$/.test(normalized)) return normalized
-  return `email_${crypto.randomUUID()}`
+  return createRistakId('email')
 }
 
 function sanitizeMxRecords(records = []) {

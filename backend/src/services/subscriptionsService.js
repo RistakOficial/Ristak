@@ -1,4 +1,3 @@
-import crypto from 'crypto'
 import { db } from '../config/database.js'
 import { logger } from '../utils/logger.js'
 import {
@@ -30,6 +29,7 @@ import {
 } from './conektaPaymentService.js'
 import { getSubscriptionAuditSummary, hardDeleteTestSubscription } from './paymentRecordSafetyService.js'
 import { getAccountCurrency } from '../utils/accountLocale.js'
+import { createEntityId, createPublicPaymentId, createRistakId } from '../utils/idGenerator.js'
 
 const SUBSCRIPTION_PREFIX = 'rstk_sub'
 const DEFAULT_CURRENCY = 'MXN'
@@ -44,16 +44,15 @@ const PUBLIC_PAYMENT_LINK_METHODS = new Set(['stripe_link', 'stripe_payment_link
 const MERCADOPAGO_LEGACY_LINK_METHODS = new Set(['mercadopago_checkout', 'mercadopago_payment_link'])
 
 function makeId() {
-  return `${SUBSCRIPTION_PREFIX}_${crypto.randomUUID()}`
+  return createEntityId(SUBSCRIPTION_PREFIX)
 }
 
 function makePaymentId(provider = 'subscription') {
-  const cleanProvider = cleanString(provider).replace(/[^a-z0-9_]+/gi, '_').toLowerCase() || 'subscription'
-  return `${cleanProvider}_subscription_start_${Date.now()}_${crypto.randomBytes(6).toString('hex')}`
+  return createRistakId('subscription_payment')
 }
 
 function makePublicPaymentId() {
-  return `pay_${crypto.randomBytes(18).toString('base64url')}`
+  return createPublicPaymentId()
 }
 
 function cleanString(value) {

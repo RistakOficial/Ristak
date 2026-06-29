@@ -160,7 +160,7 @@ test('Mercado Pago cobra tarjeta en la pagina publica sin confiar en el monto de
         assert.equal(body.auto_recurring.transaction_amount, 189)
         assert.ok(String(body.back_url).includes('/api/mercadopago/subscriptions/return'))
         assert.ok(String(body.back_url).includes('subscription_id='))
-        assert.match(new URL(body.back_url).searchParams.get('public_payment_id') || '', /^pay_/)
+        assert.match(new URL(body.back_url).searchParams.get('public_payment_id') || '', /^rstk_pay_[A-Za-z0-9]{20}$/)
         assert.ok(String(body.notification_url).includes('/api/mercadopago/webhook'))
 
         return {
@@ -273,7 +273,7 @@ test('Mercado Pago cobra tarjeta en la pagina publica sin confiar en el monto de
       assert.equal(linkedSubscription.mercadoPagoPreapprovalId, null)
       assert.equal(linkedSubscription.mercadoPagoPreapprovalPlanId, 'mp_preapproval_plan_card_link')
       assert.equal(linkedSubscription.subscriptionStartUrl, 'https://sandbox.mercadopago.com.mx/subscriptions/checkout?preapproval_plan_id=mp_preapproval_plan_card_link')
-      assert.match(linkedSubscription.subscriptionStartPublicPaymentId || '', /^pay_/)
+      assert.match(linkedSubscription.subscriptionStartPublicPaymentId || '', /^rstk_pay_[A-Za-z0-9]{20}$/)
 
       const checkoutFallback = await ensurePublicMercadoPagoPreference(created.publicPaymentId, {
         baseUrl: 'https://app.example.test'
@@ -828,7 +828,7 @@ test('Mercado Pago crea link abierto de suscripcion con preapproval plan', async
       assert.equal(Object.hasOwn(body.auto_recurring, 'start_date'), false)
       assert.ok(String(body.back_url).includes('/api/mercadopago/subscriptions/return'))
       assert.ok(String(body.back_url).includes('subscription_id='))
-      assert.match(new URL(body.back_url).searchParams.get('public_payment_id') || '', /^pay_/)
+      assert.match(new URL(body.back_url).searchParams.get('public_payment_id') || '', /^rstk_pay_[A-Za-z0-9]{20}$/)
       if (body.notification_url) assert.ok(String(body.notification_url).includes('/api/mercadopago/webhook'))
       assert.ok(String(body.external_reference).startsWith('rstk_sub_'))
 
@@ -875,7 +875,7 @@ test('Mercado Pago crea link abierto de suscripcion con preapproval plan', async
       assert.equal(subscription.mercadoPagoPreapprovalPlanId, 'mp_preapproval_plan_test_1')
       assert.equal(subscription.mercadoPagoSandboxInitPoint, 'https://sandbox.mercadopago.com.mx/subscriptions/checkout?preapproval_plan_id=mp_preapproval_plan_test_1')
       assert.equal(subscription.subscriptionStartUrl, 'https://sandbox.mercadopago.com.mx/subscriptions/checkout?preapproval_plan_id=mp_preapproval_plan_test_1')
-      assert.match(subscription.subscriptionStartPublicPaymentId || '', /^pay_/)
+      assert.match(subscription.subscriptionStartPublicPaymentId || '', /^rstk_pay_[A-Za-z0-9]{20}$/)
 
       const saved = await db.get(
         `SELECT status, payment_provider, payment_method, mercadopago_preapproval_id, mercadopago_preapproval_plan_id, mercadopago_sandbox_init_point

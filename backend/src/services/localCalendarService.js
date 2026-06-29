@@ -1,4 +1,3 @@
-import crypto from 'crypto'
 import { DateTime } from 'luxon'
 import { db } from '../config/database.js'
 import { logger } from '../utils/logger.js'
@@ -8,6 +7,7 @@ import { normalizeToUtcIso, getAccountTimezone, isValidTimezone } from '../utils
 import {
   isRistakContactId,
   linkContactToGhl,
+  generateContactId,
   // (GCAL-006) Reutilizamos los helpers de identidad de contacto para enlazar/crear
   // contacto a partir de un evento entrante de Google, sin duplicar lógica.
   findContactByPhoneCandidates,
@@ -19,6 +19,7 @@ import GHLClient from './ghlClient.js'
 import * as highlevelCalendarService from './highlevelCalendarService.js'
 import { getCalendarPublicBaseUrlStatus } from './sitesService.js'
 import { isPaymentGateEnabled, normalizePaymentGateConfig } from './publicPaymentGateService.js'
+import { createEntityId, generateShortId } from '../utils/idGenerator.js'
 
 const LOCAL_CALENDAR_PREFIX = 'rstk_cal'
 const LOCAL_APPOINTMENT_PREFIX = 'rstk_appt'
@@ -90,7 +91,7 @@ const CALENDAR_FORM_ALL_BLOCK_TYPES = new Set([...CALENDAR_FORM_FIELD_TYPES, ...
 const CALENDAR_SLUG_MAX_LENGTH = 80
 
 function makeId(prefix) {
-  return `${prefix}_${crypto.randomUUID()}`
+  return createEntityId(prefix)
 }
 
 function cleanString(value) {
@@ -973,7 +974,7 @@ async function ensureUniqueRistakPublicSlug(value, calendarId) {
     candidate = appendCalendarSlugSuffix(baseSlug, suffix)
 
     if (attempt > 25) {
-      candidate = appendCalendarSlugSuffix(baseSlug, crypto.randomUUID().replace(/-/g, '').slice(0, 8))
+      candidate = appendCalendarSlugSuffix(baseSlug, generateShortId(8))
       break
     }
   }
@@ -4087,7 +4088,7 @@ export async function resolveOrCreateContactForGoogleAppointment({ email, name, 
       ).catch(() => null)
     : null
 
-  const contactId = byPhone?.id || byEmail?.id || `rstk_contact_${crypto.randomUUID()}`
+  const contactId = byPhone?.id || byEmail?.id || generateContactId()
   const names = splitGoogleContactName(fullName)
   // (GCAL-006) Si el invitado no trajo nombre, usar el email como etiqueta legible.
   const displayName = fullName || normalizedEmail || normalizedPhone || 'Invitado de Google'

@@ -3,6 +3,7 @@ import { fileURLToPath } from 'url'
 import { dirname, join } from 'path'
 import { logger } from '../utils/logger.js'
 import { normalizePhoneForStorage } from '../utils/phoneUtils.js'
+import { createRistakId } from '../utils/idGenerator.js'
 import { detectWhatsAppAttributionFields } from '../utils/whatsappAttribution.js'
 import {
   extractWhatsAppProfileName,
@@ -631,7 +632,7 @@ async function backfillGhlContactIds() {
 }
 
 // Re-identifica los contactos creados por WhatsApp (waapi_contact_<hash>) con el
-// ID propio de Ristak (rstk_contact_<uuid>), re-apuntando todas las tablas que
+// ID propio de Ristak (rstk_contact_<alfanumérico>), re-apuntando todas las tablas que
 // los referencian. El orden insertar-copia → mover referencias → borrar original
 // es seguro tanto en SQLite como en PostgreSQL con FKs activas.
 async function migrateWhatsAppContactIdsToRistak() {
@@ -645,7 +646,7 @@ async function migrateWhatsAppContactIdsToRistak() {
     const contact = await db.get('SELECT * FROM contacts WHERE id = ?', [legacy.id])
     if (!contact) continue
 
-    const newId = `rstk_contact_${crypto.randomUUID()}`
+    const newId = createRistakId('contact')
     const columns = Object.keys(contact)
     const values = columns.map(column => {
       if (column === 'id') return newId
@@ -2136,7 +2137,7 @@ async function initTables() {
           END,
           updated_at = CURRENT_TIMESTAMP
       `, [
-        `contact_phone_${crypto.randomUUID()}`,
+        createRistakId('contact_phone'),
         row.id,
         phone,
         'Principal',

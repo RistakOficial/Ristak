@@ -1,10 +1,10 @@
-import crypto from 'crypto'
 import { db } from '../config/database.js'
 import { sendHighLevelConversationMessageCore } from '../controllers/highlevelController.js'
 import { sendWhatsAppApiTextMessage } from './whatsappApiService.js'
 import { renderTemplateVariables } from './templateVariablesService.js'
 import { logger } from '../utils/logger.js'
 import { normalizePhoneForStorage } from '../utils/phoneUtils.js'
+import { createRistakId } from '../utils/idGenerator.js'
 
 const DISPATCH_BATCH_SIZE = 20
 const STALE_SENDING_MS = 10 * 60 * 1000
@@ -41,7 +41,7 @@ function nowIso() {
 }
 
 function createScheduledMessageId() {
-  return `scheduled_chat_${crypto.randomUUID()}`
+  return createRistakId('scheduled_chat')
 }
 
 function parseScheduledDate(value) {

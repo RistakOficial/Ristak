@@ -1,8 +1,8 @@
-import crypto from 'crypto'
 import { db } from '../config/database.js'
 import { logger } from '../utils/logger.js'
 import { handleAutomationEvent } from './automationEngine.js'
 import { handleConversationalAgentTriggerLinkClick } from './conversationalAgentService.js'
+import { createRistakId } from '../utils/idGenerator.js'
 
 const PUBLIC_ID_LENGTH = 12
 const ALLOWED_DESTINATION_PROTOCOLS = new Set(['http:', 'https:', 'mailto:', 'tel:'])
@@ -70,11 +70,7 @@ export function normalizeTriggerLinkDestination(value) {
 }
 
 function makePublicId() {
-  return crypto
-    .randomBytes(12)
-    .toString('base64url')
-    .replace(/[^a-zA-Z0-9_-]/g, '')
-    .slice(0, PUBLIC_ID_LENGTH)
+  return createRistakId('link', { length: PUBLIC_ID_LENGTH })
 }
 
 async function createUniquePublicId() {
@@ -180,7 +176,7 @@ export async function createTriggerLink(input = {}, { userId = null, baseUrl = '
 
   if (!name) throw badRequest('Ponle nombre al enlace de disparo.')
 
-  const id = `trigger_link_${crypto.randomUUID()}`
+  const id = createRistakId('trigger_link')
   const publicId = await createUniquePublicId()
 
   await db.run(`
@@ -294,7 +290,7 @@ export async function recordTriggerLinkClick(publicId, req = {}) {
       logger.warn(`Trigger link ${normalizedPublicId}: contact_id "${rawContactId}" del query no existe; se ignora (click anónimo).`)
     }
   }
-  const eventId = `trigger_link_event_${crypto.randomUUID()}`
+  const eventId = createRistakId('trigger_link_event')
   const referrer = cleanString(req.headers?.referer || req.headers?.referrer || '', 2048)
   const userAgent = cleanString(req.headers?.['user-agent'] || '', 1000)
   const ipAddress = getRequestIp(req)

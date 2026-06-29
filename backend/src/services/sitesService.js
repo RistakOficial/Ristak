@@ -28,6 +28,7 @@ import { prepareContactCustomFieldsForStorage } from './contactCustomFieldDefini
 import {
   finalizePreparedPhoneUpsert,
   findContactByPhoneCandidates,
+  generateContactId,
   prepareContactPhoneUpsert
 } from './contactIdentityService.js'
 import {
@@ -50,6 +51,7 @@ import {
 } from './publicPaymentGateService.js'
 import { renderTemplate } from './automationEngine.js'
 import { getVariableFieldValueMap } from './variableFieldsService.js'
+import { createRistakId } from '../utils/idGenerator.js'
 
 let domainHealthFetch = fetch
 
@@ -636,6 +638,14 @@ const IMPORTED_CONTACT_CUSTOM_FIELD_KEYS = new Set([
 
 function cleanString(value) {
   return String(value || '').trim()
+}
+
+const LEGACY_UUID_ID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
+const RISTAK_SITE_BLOCK_ID_PATTERN = /^rstk_site_block_[A-Za-z0-9]{6,64}$/
+
+function canUseRequestedSiteBlockId(value) {
+  const id = cleanString(value)
+  return LEGACY_UUID_ID_PATTERN.test(id) || RISTAK_SITE_BLOCK_ID_PATTERN.test(id)
 }
 
 function normalizeSiteMetaEventName(value, { allowNone = false, fallback = 'Lead' } = {}) {
@@ -4245,7 +4255,7 @@ function getDefaultFormPages() {
 
 function buildDefaultFormResultBlockRows(siteId, pageId, presetBlocks = []) {
   return presetBlocks.map(block => ({
-    id: crypto.randomUUID(),
+    id: createRistakId('site_block'),
     site_id: siteId,
     block_type: block.blockType,
     label: block.label,
@@ -4337,7 +4347,7 @@ function buildDefaultBlocks(siteId, siteType, template, siteContext = {}) {
     ...settings
   })
   const makeBlock = (blockType, label, content = '', extra = {}) => ({
-    id: crypto.randomUUID(),
+    id: createRistakId('site_block'),
     site_id: siteId,
     block_type: blockType,
     label,
@@ -4494,7 +4504,7 @@ function buildDefaultBlocks(siteId, siteType, template, siteContext = {}) {
     })
   ]
   const makeEmbeddedField = (blockType, label, placeholder, settings = {}, sortOrder = 0) => ({
-    id: crypto.randomUUID(),
+    id: createRistakId('site_block'),
     siteId,
     blockType,
     label,
@@ -7731,7 +7741,7 @@ export async function createSiteFolder(input = {}) {
     'SELECT COALESCE(MAX(sort_order), -1) AS max_order FROM public_site_folders WHERE section = ? AND archived = 0',
     [section]
   )
-  const id = crypto.randomUUID()
+  const id = createRistakId('site_folder')
   const sortOrder = Number(row?.max_order || 0) + 1
 
   await db.run(`
@@ -8018,7 +8028,7 @@ function normalizePreviewDraftBlock(input, siteId, index = 0) {
   const now = new Date().toISOString()
 
   return {
-    id: cleanString(input.id) || crypto.randomUUID(),
+    id: cleanString(input.id) || createRistakId('site_block'),
     siteId,
     blockType,
     label: cleanString(input.label),
@@ -8167,7 +8177,7 @@ async function ensureSocialProfileBlock(site, currentBlocks = null) {
     .filter(block => getBlockPageId(block, pages) === entryPageId)
     .sort((a, b) => a.sortOrder - b.sortOrder)
 
-  const id = crypto.randomUUID()
+  const id = createRistakId('site_block')
   const firstSection = site.siteType === 'landing_page' ? pageBlocks.find(isSectionBlock) : null
   const baseSettings = getSocialProfileDefaults(site, template)
   const settings = {
@@ -8243,7 +8253,7 @@ export async function listSiteSubmissions(siteId) {
 }
 
 export async function createSite(input = {}) {
-  const id = crypto.randomUUID()
+  const id = createRistakId('site')
   const siteType = validateSiteType(input.siteType || input.site_type)
   const slug = await ensureUniqueSlug(slugify(input.slug || await getNextDefaultSlug(siteType)))
   const name = cleanString(input.name) || getDefaultSiteName(siteType, slug)
@@ -8614,7 +8624,7 @@ function buildImportedAssetRow({
 }) {
   const contentBuffer = Buffer.isBuffer(content) ? content : Buffer.from(String(content || ''), 'utf8')
   return {
-    id: `site_import_asset_${crypto.randomUUID()}`,
+    id: createRistakId('site_import_asset'),
     importId,
     siteId,
     assetPath,
@@ -9150,8 +9160,8 @@ export async function createImportedSiteFromHtml(input = {}) {
   }
 
   const siteType = validateSiteType(input.siteType || input.site_type || 'landing_page')
-  const siteId = crypto.randomUUID()
-  const importId = `site_import_${crypto.randomUUID()}`
+  const siteId = createRistakId('site')
+  const importId = createRistakId('site_import')
 
   let prepared
   if (extension === 'zip') {
@@ -10598,9 +10608,9 @@ export async function createBlock(siteId, input = {}) {
     [siteId]
   )
   const requestedId = cleanString(input.id)
-  const id = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(requestedId)
+  const id = canUseRequestedSiteBlockId(requestedId)
     ? requestedId
-    : crypto.randomUUID()
+    : createRistakId('site_block')
   if (requestedId && requestedId === id) {
     const existingBlock = await db.get(
       'SELECT id FROM public_site_blocks WHERE id = ?',
@@ -10734,7 +10744,7 @@ export async function restoreBlocks(siteId, inputBlocks = []) {
   await assertUniqueSystemFieldsForRestore(siteId, site, blocks)
 
   for (const input of blocks) {
-    const id = cleanString(input.id) || crypto.randomUUID()
+    const id = cleanString(input.id) || createRistakId('site_block')
     const blockType = validateBlockType(input.blockType || input.block_type)
     const isField = FIELD_BLOCK_TYPES.has(blockType)
     const sortOrder = Number(input.sortOrder ?? input.sort_order)
@@ -24156,7 +24166,7 @@ async function upsertContactFromSubmissionWithResult({ site, contact, meta }) {
   if (!email && !phone && !fullName) return null
 
   const existing = await findExistingContact({ email, phone })
-  const contactId = existing?.id || `site_contact_${crypto.randomUUID()}`
+  const contactId = existing?.id || generateContactId()
   const phoneUpsert = await prepareContactPhoneUpsert({ contactId, phone })
   const names = splitName(fullName)
   const firstName = explicitFirstName || names.firstName
@@ -25589,7 +25599,7 @@ async function createImportedSubmissionFromRequest({ req, body, site, host, prev
     : 'Listo. Recibimos tu información.'
   if (shouldSkipTracking({ req, body, meta, previewContext })) {
     return {
-      submissionId: `preview_${crypto.randomUUID()}`,
+      submissionId: createRistakId('site_preview_submission'),
       siteId: site.id,
       contactId: null,
       contactName: contact.fullName,
@@ -25615,7 +25625,7 @@ async function createImportedSubmissionFromRequest({ req, body, site, host, prev
     formMapping: layers.formMapping
   })
   const contactId = contactResult.contactId
-  const submissionId = crypto.randomUUID()
+  const submissionId = createRistakId('site_submission')
   const importedAutomationFormId = layers.formMapping?.formId || importedFormId
   const importedAutomationFormName = layers.formMapping?.formTitle || site.name || ''
   const importedSourceFormSiteId = getImportedFormMappingSourceSiteId(layers.formMapping)
@@ -26110,7 +26120,7 @@ export async function createSubmissionFromRequest(req, body = {}, options = {}) 
   })
   if (shouldSkipTracking({ req, body, meta, previewContext })) {
     return {
-      submissionId: `preview_${crypto.randomUUID()}`,
+      submissionId: createRistakId('site_preview_submission'),
       siteId: site.id,
       contactId: null,
       contactName: inferredContact.fullName || '',
@@ -26194,7 +26204,7 @@ export async function createSubmissionFromRequest(req, body = {}, options = {}) 
       ? { custom: { ...(nativeLayers.mappedFields.custom || {}), ...buildNativeMappedCustomFields(preparedUserCustomFields) } }
       : {})
   }
-  const submissionId = crypto.randomUUID()
+  const submissionId = createRistakId('site_submission')
   const nativeFormContext = videoFormGateContext || getNativeFormContext(site, submissionBlocks)
   const automationFormResponses = buildNativeAutomationFormResponses({
     blocks: submissionBlocks,

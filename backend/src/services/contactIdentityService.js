@@ -1,7 +1,7 @@
-import crypto from 'crypto'
 import { db, getContactReferenceTables, isWhatsAppAutoCreatedContact } from '../config/database.js'
 import { logger } from '../utils/logger.js'
 import { buildPhoneMatchCandidates, normalizePhoneForStorage } from '../utils/phoneUtils.js'
+import { createRistakId } from '../utils/idGenerator.js'
 // (CNT-002) Para no perder custom_fields al fusionar.
 import { mergeContactCustomFields, serializeContactCustomFieldsForDb } from '../utils/contactCustomFields.js'
 
@@ -43,10 +43,10 @@ export function isRistakContactId(contactId) {
   return RISTAK_CONTACT_ID_PREFIXES.some(prefix => id.startsWith(prefix))
 }
 
-// ID canónico de contacto de Ristak. Todos los contactos nuevos deben crearse
-// con este formato; los IDs externos (HighLevel, WhatsApp) son solo referencias.
+// ID canónico de contacto de Ristak. Los IDs legacy con UUID siguen siendo válidos;
+// los nuevos usan cola corta alfanumérica para verse como IDs de plataforma.
 export function generateContactId() {
-  return `rstk_contact_${crypto.randomUUID()}`
+  return createRistakId('contact')
 }
 
 function contactPriorityScore(contact = {}) {
@@ -325,7 +325,7 @@ export async function recordContactPhoneNumber({
       source = COALESCE(NULLIF(excluded.source, ''), contact_phone_numbers.source),
       updated_at = CURRENT_TIMESTAMP
   `, [
-    `contact_phone_${crypto.randomUUID()}`,
+    createRistakId('contact_phone'),
     id,
     canonicalPhone,
     cleanString(label) || (isPrimary ? 'Principal' : 'Adicional'),

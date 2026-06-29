@@ -18,6 +18,7 @@ import { dispatchProductPostWebhooksForPaymentInBackground } from './productPost
 import { queuePaymentAutomationMessage } from './paymentAutomationsService.js'
 import { buildMetaPublicPurchasePixelEvent } from './metaConversionEventsService.js'
 import { getPaymentPlanAuditSummary, hardDeleteTestPaymentPlan } from './paymentRecordSafetyService.js'
+import { createPublicPaymentId, createRistakPaymentEntityId } from '../utils/idGenerator.js'
 
 const CONFIG_KEYS = {
   enabled: 'mercadopago_enabled',
@@ -111,11 +112,11 @@ async function getConfiguredCurrency() {
 }
 
 function createId(prefix) {
-  return `${prefix}_${Date.now()}_${randomBytes(6).toString('hex')}`
+  return createRistakPaymentEntityId(prefix)
 }
 
 function createPublicId() {
-  return `pay_${randomBytes(18).toString('base64url')}`
+  return createPublicPaymentId()
 }
 
 function parseJson(value, fallback = {}) {

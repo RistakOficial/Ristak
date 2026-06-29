@@ -3,6 +3,7 @@ import { db, getHighLevelConfig } from '../config/database.js'
 import GHLClient from './ghlClient.js'
 import { logger } from '../utils/logger.js'
 import { getAccountCurrency } from '../utils/accountLocale.js'
+import { createEntityId, createRistakId } from '../utils/idGenerator.js'
 
 const LOCAL_PRODUCT_PREFIX = 'rstk_prod'
 const LOCAL_PRICE_PREFIX = 'rstk_price'
@@ -16,7 +17,7 @@ const MAX_PRODUCT_WEBHOOK_HEADERS = 20
 const MAX_PRODUCT_WEBHOOK_BODY_FIELDS = 40
 
 function makeId(prefix) {
-  return `${prefix}_${randomUUID()}`
+  return createEntityId(prefix)
 }
 
 function cleanString(value) {
@@ -206,7 +207,7 @@ function normalizePostWebhookConfig(value) {
       ).replace(/[\r\n]/g, ' ').slice(0, 2000)
 
       return {
-        id: cleanString(webhook.id).replace(/[^a-zA-Z0-9_-]/g, '').slice(0, 80) || `webhook_${index + 1}`,
+        id: cleanString(webhook.id).replace(/[^a-zA-Z0-9_-]/g, '').slice(0, 80) || createRistakId('product_webhook'),
         url,
         enabled: webhook.enabled === false ? false : true,
         ...(authorization ? { authorization } : {}),

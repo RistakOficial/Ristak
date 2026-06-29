@@ -1,4 +1,3 @@
-import crypto from 'crypto'
 import { DateTime } from 'luxon'
 import fetch from 'node-fetch'
 import { db } from '../config/database.js'
@@ -13,6 +12,7 @@ import {
   generateContactId,
   prepareContactPhoneUpsert
 } from './contactIdentityService.js'
+import { createRistakId } from '../utils/idGenerator.js'
 
 /**
  * Motor de ejecución de automatizaciones.
@@ -53,7 +53,7 @@ const MESSAGE_TRIGGER_CHANNELS = {
 }
 
 function makeId(prefix) {
-  return `${prefix}_${crypto.randomUUID()}`
+  return createRistakId(prefix)
 }
 
 function nowIso() {
@@ -2819,7 +2819,7 @@ async function applyContactWhatsAppNumberAction(node, ctx) {
     INSERT INTO whatsapp_routing_events (id, contact_id, previous_phone_number_id, new_phone_number_id, reason, source)
     VALUES (?, ?, ?, ?, ?, 'automation')
   `, [
-    crypto.randomUUID(),
+    createRistakId('whatsapp_routing_event'),
     contactId,
     previousPhoneNumberId || null,
     targetPhoneNumberId,

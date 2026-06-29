@@ -1,9 +1,9 @@
-import crypto from 'crypto'
 import { db } from '../config/database.js'
 import {
   normalizeContactCustomFields,
   parseJsonSafe
 } from '../utils/contactCustomFields.js'
+import { createRistakId } from '../utils/idGenerator.js'
 
 const STANDARD_CONTACT_FIELD_KEYS = new Set([
   'full_name',
@@ -426,7 +426,7 @@ async function recordDefinitionSource(definitionId, input = {}) {
       source_label, source_context_json, occurrence_count, first_seen_at, last_seen_at
     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
   `, [
-    `contact_field_source_${crypto.randomUUID()}`,
+    createRistakId('contact_field_source'),
     definitionId,
     input.sourceType || 'manual',
     input.sourceId || null,
@@ -522,7 +522,7 @@ export async function createContactCustomFieldFolder(input = {}) {
     FROM contact_custom_field_folders
     WHERE archived = 0
   `)
-  const id = `contact_field_folder_${crypto.randomUUID()}`
+  const id = createRistakId('contact_field_folder')
 
   await db.run(`
     INSERT INTO contact_custom_field_folders (
@@ -654,7 +654,7 @@ export async function upsertContactCustomFieldDefinition(rawField = {}, context 
     return getDefinitionById(existing.definitionId)
   }
 
-  const id = `contact_field_${crypto.randomUUID()}`
+  const id = createRistakId('contact_field')
   await db.run(`
     INSERT INTO contact_custom_field_definitions (
       id, owner_user_id, field_key, label, description, data_type, folder_id, field_group,

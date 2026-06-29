@@ -24,6 +24,7 @@ import {
 import {
   finalizePreparedPhoneUpsert,
   findContactByPhoneCandidates,
+  generateContactId,
   prepareContactPhoneUpsert
 } from '../services/contactIdentityService.js';
 import { loadFirstWhatsAppAttributions } from '../services/contactSourceService.js';
@@ -899,7 +900,7 @@ async function upsertPublicCalendarContact({ calendar, contact, host, sourceUrl 
   const byEmail = !byPhone && email
     ? await db.get('SELECT id FROM contacts WHERE LOWER(email) = LOWER(?) ORDER BY updated_at DESC LIMIT 1', [email]).catch(() => null)
     : null;
-  const contactId = byPhone?.id || byEmail?.id || `rstk_contact_${crypto.randomUUID()}`;
+  const contactId = byPhone?.id || byEmail?.id || generateContactId();
   const names = splitName(fullName);
   const phoneUpsert = phone ? await prepareContactPhoneUpsert({ contactId, phone }) : { phone: null };
 

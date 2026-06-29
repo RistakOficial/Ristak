@@ -100,7 +100,7 @@ test('draft preview actions work on the service domain without a public domain',
     assert.equal(result.preview, true)
     assert.equal(result.skipped, true)
     assert.equal(result.capi.reason, 'preview_no_track')
-    assert.match(result.submissionId, /^preview_/)
+    assert.match(result.submissionId, /^rstk_site_preview_submission_[A-Za-z0-9]{20}$/)
 
     const submission = await db.get(
       'SELECT domain, meta_json FROM public_site_submissions WHERE id = ?',

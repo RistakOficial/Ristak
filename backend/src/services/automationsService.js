@@ -1,4 +1,3 @@
-import crypto from 'crypto'
 import { db } from '../config/database.js'
 import { normalizeFlow, validateFlowForPublish, START_NODE_TYPE } from './automationFlowValidation.js'
 import { enrollContactManually, testWebhookAction } from './automationEngine.js'
@@ -10,6 +9,7 @@ import {
   loadAutomationReferenceCatalogs
 } from './automationReferenceResolver.js'
 import { CALENDAR_DEFAULT_FORM_SITE_ID } from './localCalendarService.js'
+import { createRistakId } from '../utils/idGenerator.js'
 
 const usePostgres = !!process.env.DATABASE_URL
 const flowPlaceholder = usePostgres ? '?::jsonb' : '?'
@@ -17,7 +17,7 @@ const flowPlaceholder = usePostgres ? '?::jsonb' : '?'
 export const AUTOMATION_STATUSES = ['draft', 'published', 'paused', 'archived']
 
 function makeId(prefix) {
-  return `${prefix}_${crypto.randomUUID()}`
+  return createRistakId(prefix)
 }
 
 function badRequest(message) {

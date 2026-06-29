@@ -139,6 +139,7 @@ import { useMediaUploadQueue } from '@/hooks/useMediaUploadQueue'
 import { setSearchParam } from '@/utils/urlState'
 import { hasLicenseFeature } from '@/utils/accessControl'
 import { getFloatingLayerZIndex } from '@/utils/layering'
+import { createRistakId } from '@/utils/idGenerator'
 import {
   blockLabels,
   fieldBlockTypes,
@@ -4749,7 +4750,7 @@ const getFormAddPageIndex = (site: PublicSite, pages: SitePage[]) => (
 )
 
 const makeFunnelPage = (index: number, extra?: Partial<SitePage>): SitePage => ({
-  id: `page-${Date.now()}-${Math.random().toString(16).slice(2, 8)}`,
+  id: createRistakId('site_page'),
   title: `Página ${index + 1}`,
   sortOrder: index,
   metaCapiEnabled: false,
@@ -4922,7 +4923,7 @@ const isVideoActionKind = (value: unknown): value is VideoActionKind =>
 const isVideoActionBeforeState = (value: unknown): value is VideoActionBeforeState =>
   videoActionBeforeStates.includes(value as VideoActionBeforeState)
 
-const makeVideoActionId = () => `video-action-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
+const makeVideoActionId = () => createRistakId('site_video_action')
 
 const clampVideoActionTime = (value: unknown) => {
   const number = Number(value)
@@ -5056,7 +5057,7 @@ const getVideoActionTargetIdsFromSource = (source: Record<string, unknown>) => {
   return [...new Set(ids)]
 }
 
-const normalizeVideoActionRule = (value: unknown, index = 0): VideoActionRule | null => {
+const normalizeVideoActionRule = (value: unknown, _index = 0): VideoActionRule | null => {
   if (!value || typeof value !== 'object') return null
   const source = value as Record<string, unknown>
   const action = isVideoActionKind(source.action) ? source.action : 'show'
@@ -5068,7 +5069,7 @@ const normalizeVideoActionRule = (value: unknown, index = 0): VideoActionRule | 
       : sourceTargetBlockIds
   const targetBlockId = targetBlockIds[0] || ''
   const before = isVideoActionBeforeState(source.before) ? source.before : getRecommendedVideoActionBefore(action)
-  const id = getSettingString(source, 'id') || `video-action-${index + 1}`
+  const id = getSettingString(source, 'id') || makeVideoActionId()
   const targetPageId = getSettingString(source, 'targetPageId') || getSettingString(source, 'target_page_id')
   const redirectUrl = getSettingString(source, 'redirectUrl') || getSettingString(source, 'redirect_url')
   const rawMetaEventName = getSettingString(source, 'metaEventName') || getSettingString(source, 'meta_event_name')
@@ -6240,7 +6241,7 @@ const createEmbeddedBlocks = (siteId: string): SiteBlock[] =>
     const preset = getSystemFormFieldPreset(systemFieldKey)
     const now = new Date().toISOString()
     return {
-      id: `embedded_${crypto.randomUUID()}`,
+      id: createRistakId('site_block'),
       siteId,
       blockType: preset?.blockType || 'short_text',
       label: preset?.label || 'Campo',
@@ -6644,7 +6645,7 @@ const createEmbeddedFieldBlock = (
   const uniquePayload = withUniqueBlockIdentity(payload, payload.blockType || blockType, existingBlocks)
   const now = new Date().toISOString()
   return {
-    id: `embedded_${crypto.randomUUID()}`,
+    id: createRistakId('site_block'),
     siteId: site.id,
     blockType: uniquePayload.blockType || blockType,
     label: uniquePayload.label || blockLabels[uniquePayload.blockType || blockType] || 'Elemento',
@@ -6870,7 +6871,7 @@ const createVideoFormGateBlocks = (siteId: string): SiteBlock[] =>
     const preset = getSystemFormFieldPreset(config.systemFieldKey)
     const now = new Date().toISOString()
     const field: SiteBlock = {
-      id: `video_gate_${crypto.randomUUID()}`,
+      id: createRistakId('site_block'),
       siteId,
       blockType: preset?.blockType || 'short_text',
       label: config.label,
@@ -8680,14 +8681,7 @@ export const Sites: React.FC = () => {
   }
 
   function createEditorLocalId() {
-    if (typeof crypto !== 'undefined' && 'randomUUID' in crypto) {
-      return crypto.randomUUID()
-    }
-
-    return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, char => {
-      const value = Math.floor(Math.random() * 16)
-      return (char === 'x' ? value : (value & 0x3) | 0x8).toString(16)
-    })
+    return createRistakId('site_block')
   }
 
   function createLocalBlockFromPayload(
@@ -10393,7 +10387,7 @@ export const Sites: React.FC = () => {
 
     const idMap = new Map<string, string>()
     subtreePages.forEach((page, i) => {
-      idMap.set(page.id, `page-${Date.now()}-${Math.random().toString(16).slice(2, 8)}-${i}`)
+      idMap.set(page.id, createRistakId('site_page'))
     })
 
     const clonedPages: SitePage[] = subtreePages.map(page => {
@@ -11610,7 +11604,7 @@ export const Sites: React.FC = () => {
     const baseInternal = getSettingString(source.settings || {}, 'internalName') || source.label || 'campo'
     const clone: SiteBlock = {
       ...source,
-      id: `embedded_${crypto.randomUUID()}`,
+      id: createRistakId('site_block'),
       settings: {
         ...(source.settings || {}),
         internalName: makeUniqueInternalName(baseInternal, context.fields)
@@ -13920,8 +13914,7 @@ const formatAICreationFileSize = (bytes: number) => {
 }
 
 const makeAICreationId = () => {
-  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') return crypto.randomUUID()
-  return `${Date.now()}-${Math.random().toString(16).slice(2)}`
+  return createRistakId('site_ai_attachment')
 }
 
 const getAICreationAttachmentKind = (file: File): SitesAICreationAttachment['kind'] => {
@@ -16105,7 +16098,7 @@ const normalizeImportedButtonAction = (value: string): ImportedButtonAction => {
 }
 
 const makeImportedActionStep = (action: ImportedButtonAction, patch: Partial<ImportedButtonActionStep> = {}): ImportedButtonActionStep => ({
-  id: patch.id || `action-${Date.now().toString(36)}-${Math.random().toString(16).slice(2, 8)}`,
+  id: patch.id || createRistakId('site_action'),
   action,
   buttonUrl: patch.buttonUrl || '',
   buttonPageId: patch.buttonPageId || '',
@@ -26342,7 +26335,7 @@ const MetaEventParametersEditor: React.FC<{
   const patchCustomRow = (index: number, patch: Partial<SiteMetaCustomParameter>) => {
     const rows = customRows.map(row => ({ ...row }))
     while (rows.length <= index) {
-      rows.push({ id: `meta-param-${Date.now()}-${rows.length}`, key: '', value: '' })
+      rows.push({ id: createRistakId('site_meta_param'), key: '', value: '' })
     }
     rows[index] = normalizeMetaCustomParameter({ ...rows[index], ...patch })
     const next: SiteMetaEventParameters = {
@@ -34531,7 +34524,7 @@ const buildBlockOptionsFromCustomField = (block: SiteBlock, field: CustomFieldDe
       const prior = existing.find(item => String(item.label || '').trim().toLowerCase() === label.toLowerCase())
       return {
         ...(prior || {}),
-        id: prior?.id || `option-${index}-${normalizeCustomFieldKey(label)}`,
+        id: prior?.id || createRistakId('site_option'),
         label,
         value,
         action: prior?.action || 'continue'
@@ -36239,7 +36232,7 @@ const OptionsRulesEditor: React.FC<OptionsRulesEditorProps> = ({ block, blocks, 
       options: [
         ...options,
         {
-          id: `option-${Date.now()}`,
+          id: createRistakId('site_option'),
           label: `Opción ${options.length + 1}`,
           value: `Opción ${options.length + 1}`,
           action: 'continue'

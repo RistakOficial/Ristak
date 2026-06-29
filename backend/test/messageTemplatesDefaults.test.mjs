@@ -241,13 +241,13 @@ test('crea plantillas default de pagos con botones dinamicos de pago y comproban
       assert.equal(beforeButtons[0].type, 'URL')
       assert.equal(beforeButtons[0].text, 'Pagar aquí')
       assert.equal(beforeButtons[0].url, 'https://pagos.ristak.test/pay/{{1}}')
-      assert.deepEqual(beforeButtons[0].example, ['pay_3NfL8dZ9xQ2aB6mP'])
+      assert.deepEqual(beforeButtons[0].example, ['rstk_pay_3NfL8dZ9xQ2aB6mP7KcR'])
 
       const receiptTemplate = paymentCaptures.find((capture) => capture.name === 'comprobante_pago_recibido')
       const receiptButtons = receiptTemplate.components.find((component) => component.type === 'BUTTONS').buttons
       assert.equal(receiptButtons[0].text, 'Descargar comprobante')
       assert.equal(receiptButtons[0].url, 'https://pagos.ristak.test/pay/{{1}}')
-      assert.deepEqual(receiptButtons[0].example, ['pay_3NfL8dZ9xQ2aB6mP?receipt=1'])
+      assert.deepEqual(receiptButtons[0].example, ['rstk_pay_3NfL8dZ9xQ2aB6mP7KcR?receipt=1'])
 
       const failedTemplate = paymentCaptures.find((capture) => capture.name === 'pago_fallido_reintento')
       const failedButtons = failedTemplate.components.find((component) => component.type === 'BUTTONS').buttons
@@ -275,7 +275,7 @@ test('crea plantillas default de pagos con botones dinamicos de pago y comproban
             'contact.first_name': 'Ana',
             'payment.product': 'Plan anual',
             'payment.amount': '$2,000 MXN',
-            'payment.receipt_path': 'pay_test_123?receipt=1'
+            'payment.receipt_path': 'rstk_pay_test_123?receipt=1'
           }
         }
       })
@@ -293,7 +293,7 @@ test('crea plantillas default de pagos con botones dinamicos de pago y comproban
           sub_type: 'url',
           index: '0',
           parameters: [
-            { type: 'text', text: 'pay_test_123?receipt=1' }
+            { type: 'text', text: 'rstk_pay_test_123?receipt=1' }
           ]
         }
       ])
@@ -317,8 +317,8 @@ test('arma parámetros de pago fallido aunque falte el snapshot local de la plan
           'contact.first_name': 'Luis',
           'payment.product': 'Plan mensual',
           'payment.amount': '$1,499 MXN',
-          'payment.public_id': 'pay_reintento_123',
-          'payment.url': 'https://pagos.ristak.test/pay/pay_reintento_123'
+          'payment.public_id': 'rstk_pay_reintento_123',
+          'payment.url': 'https://pagos.ristak.test/pay/rstk_pay_reintento_123'
         }
       }
     })
@@ -337,7 +337,7 @@ test('arma parámetros de pago fallido aunque falte el snapshot local de la plan
         sub_type: 'url',
         index: '0',
         parameters: [
-          { type: 'text', text: 'pay_reintento_123' }
+          { type: 'text', text: 'rstk_pay_reintento_123' }
         ]
       }
     ])

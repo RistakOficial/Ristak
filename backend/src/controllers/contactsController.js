@@ -8,6 +8,7 @@ import {
   findContactByPhoneCandidates,
   getContactPhoneValues,
   getGhlContactIdForLocalContact,
+  generateContactId,
   listContactPhoneNumbers,
   prepareContactPhoneUpsert,
   recordContactPhoneNumber
@@ -1390,7 +1391,7 @@ const splitName = (name = '') => {
   }
 }
 
-const createManualContactId = () => `manual_contact_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`
+const createManualContactId = () => generateContactId()
 
 const getProfilePhotoFromRawProfile = (rawProfile) => findWhatsAppProfilePictureUrl(rawProfile)
 

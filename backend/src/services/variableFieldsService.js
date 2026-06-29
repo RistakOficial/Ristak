@@ -1,5 +1,5 @@
-import crypto from 'crypto'
 import { db } from '../config/database.js'
+import { createRistakId } from '../utils/idGenerator.js'
 
 function cleanString(value, max = 1000) {
   const cleaned = String(value ?? '').trim()
@@ -95,7 +95,7 @@ export async function createVariableField(input = {}, { userId = null } = {}) {
 
   await assertUniqueKey(fieldKey)
 
-  const id = `variable_field_${crypto.randomUUID()}`
+  const id = createRistakId('variable_field')
   await db.run(`
     INSERT INTO variable_fields (
       id, field_key, label, value_text, description, archived,

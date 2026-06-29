@@ -1,7 +1,7 @@
-import crypto from 'crypto'
 import { DateTime } from 'luxon'
 import { db, getAppConfig, setAppConfig } from '../config/database.js'
 import { getAccountTimezone } from '../utils/dateUtils.js'
+import { createRistakId } from '../utils/idGenerator.js'
 import {
   sendWhatsAppApiTemplateMessage,
   sendWhatsAppApiTextMessage
@@ -87,11 +87,11 @@ function createServiceError(message, status = 400) {
 }
 
 function createReminderId() {
-  return `apt_reminder_${crypto.randomUUID()}`
+  return createRistakId('apt_reminder')
 }
 
 function createSendId() {
-  return `apt_reminder_send_${crypto.randomUUID()}`
+  return createRistakId('apt_reminder_send')
 }
 
 function nowIso() {

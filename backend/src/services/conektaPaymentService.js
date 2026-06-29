@@ -1,4 +1,4 @@
-import { createVerify, randomBytes } from 'crypto'
+import { createVerify } from 'crypto'
 import fetch from 'node-fetch'
 import { db, getAppConfig, setAppConfig } from '../config/database.js'
 import { decrypt, encrypt, isEncrypted } from '../utils/encryption.js'
@@ -11,6 +11,7 @@ import { registerGigstackPaymentForTransactionInBackground } from './gigstackInv
 import { dispatchProductPostWebhooksForPaymentInBackground } from './productPostWebhookService.js'
 import { getPaymentPlanAuditSummary, hardDeleteTestPaymentPlan } from './paymentRecordSafetyService.js'
 import { buildMetaPublicPurchasePixelEvent } from './metaConversionEventsService.js'
+import { createPublicPaymentId, createRistakPaymentEntityId } from '../utils/idGenerator.js'
 
 const CONFIG_KEYS = {
   enabled: 'conekta_enabled',
@@ -251,11 +252,11 @@ async function getConfiguredCurrency() {
 }
 
 function createId(prefix) {
-  return `${prefix}_${Date.now()}_${randomBytes(6).toString('hex')}`
+  return createRistakPaymentEntityId(prefix)
 }
 
 function createPublicId() {
-  return `pay_${randomBytes(18).toString('base64url')}`
+  return createPublicPaymentId()
 }
 
 function buildPaymentUrl(baseUrl, publicPaymentId) {

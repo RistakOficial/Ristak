@@ -1,4 +1,3 @@
-import { randomBytes } from 'crypto'
 import { DateTime } from 'luxon'
 import { db } from '../config/database.js'
 import { getGHLClient } from './ghlClient.js'
@@ -11,6 +10,7 @@ import { normalizePhoneForStorage } from '../utils/phoneUtils.js'
 import { getAccountCurrency } from '../utils/accountLocale.js'
 import { prepareInvoiceCatalogItemsForHighLevel } from './localProductService.js'
 import { getGhlContactIdForLocalContact } from './contactIdentityService.js'
+import { createRistakPaymentEntityId } from '../utils/idGenerator.js'
 
 export const PAYMENT_FLOW_STATES = {
   DRAFT: 'draft',
@@ -37,7 +37,7 @@ function normalizeGhlInvoiceMode(mode) {
 }
 
 function createId(prefix) {
-  return `${prefix}_${Date.now()}_${randomBytes(6).toString('hex')}`
+  return createRistakPaymentEntityId(prefix)
 }
 
 function normalizeAmount(value) {

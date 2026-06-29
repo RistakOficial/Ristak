@@ -1,5 +1,4 @@
 import Stripe from 'stripe'
-import { randomBytes } from 'crypto'
 import { db, setAppConfig } from '../config/database.js'
 import { decrypt, encrypt, isEncrypted } from '../utils/encryption.js'
 import { logger } from '../utils/logger.js'
@@ -11,6 +10,7 @@ import { queuePaymentAutomationMessage } from './paymentAutomationsService.js'
 import { registerGigstackPaymentForTransactionInBackground } from './gigstackInvoiceService.js'
 import { dispatchProductPostWebhooksForPaymentInBackground } from './productPostWebhookService.js'
 import { buildMetaPublicPurchasePixelEvent } from './metaConversionEventsService.js'
+import { createPublicPaymentId, createRistakPaymentEntityId } from '../utils/idGenerator.js'
 
 const CONFIG_KEYS = {
   enabled: 'stripe_enabled',
@@ -258,11 +258,11 @@ function maskSecret(value) {
 }
 
 function createId(prefix) {
-  return `${prefix}_${Date.now()}_${randomBytes(6).toString('hex')}`
+  return createRistakPaymentEntityId(prefix)
 }
 
 function createPublicId() {
-  return `pay_${randomBytes(18).toString('base64url')}`
+  return createPublicPaymentId()
 }
 
 function parseJson(value, fallback = {}) {
