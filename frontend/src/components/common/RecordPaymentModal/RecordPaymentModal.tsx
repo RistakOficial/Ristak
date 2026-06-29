@@ -117,6 +117,7 @@ type StripePlanCardSource = 'new_card' | 'saved_card'
 type SendMethod = 'whatsapp' | 'sms' | 'email' | 'email_whatsapp' | 'email_sms' | 'all'
 type InvoiceSendMethod = 'email' | 'sms' | 'both'
 type MercadoPagoInstallmentChoice = 'none' | '2' | '3' | '6' | '9' | '12' | '18' | '24'
+type ConektaInstallmentChoice = 'none' | '3' | '6' | '9' | '12' | '18' | '24'
 type PaymentSegmentedOption = { value: string; label: string }
 type RecordPaymentStep = 'form' | 'options' | 'processing' | 'link_ready'
 
@@ -166,11 +167,35 @@ const MERCADOPAGO_INSTALLMENT_OPTIONS: Array<{ value: MercadoPagoInstallmentChoi
   { value: '24', label: 'Hasta 24 meses' }
 ]
 
+const CONEKTA_INSTALLMENT_TERMS: Array<{ value: ConektaInstallmentChoice; months: number; minAmount: number }> = [
+  { value: '3', months: 3, minAmount: 300 },
+  { value: '6', months: 6, minAmount: 600 },
+  { value: '9', months: 9, minAmount: 900 },
+  { value: '12', months: 12, minAmount: 1200 },
+  { value: '18', months: 18, minAmount: 1800 },
+  { value: '24', months: 24, minAmount: 2400 }
+]
+
 const getMercadoPagoInstallmentLimit = (choice: MercadoPagoInstallmentChoice) => {
   if (choice === 'none') return 1
   const parsed = Number(choice)
   return Number.isFinite(parsed) ? Math.max(1, Math.trunc(parsed)) : 1
 }
+
+const getConektaInstallmentLimit = (choice: ConektaInstallmentChoice) => {
+  if (choice === 'none') return 1
+  const parsed = Number(choice)
+  return Number.isFinite(parsed) ? Math.max(1, Math.trunc(parsed)) : 1
+}
+
+const getConektaInstallmentOptions = (amount: number) => (
+  CONEKTA_INSTALLMENT_TERMS
+    .filter((term) => Number(amount || 0) >= term.minAmount)
+    .map((term) => ({
+      value: term.value,
+      label: `Hasta ${term.months} meses`
+    }))
+)
 
 interface InstallmentDraft {
   id: string
@@ -624,6 +649,7 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
   const [paymentOption, setPaymentOption] = useState<PaymentOption>('send')
   const [sendMethod, setSendMethod] = useState<SendMethod>(DEFAULT_SEND_METHOD)
   const [mercadoPagoInstallmentChoice, setMercadoPagoInstallmentChoice] = useState<MercadoPagoInstallmentChoice>('none')
+  const [conektaInstallmentChoice, setConektaInstallmentChoice] = useState<ConektaInstallmentChoice>('none')
   const [manualPaymentData, setManualPaymentData] = useState<ManualPaymentData>(defaultManualPaymentData)
   const [transferInfoUrl, setTransferInfoUrl] = useState<string | null>(null)
   const [savedPaymentMethods, setSavedPaymentMethods] = useState<StripeSavedPaymentMethod[]>([])
@@ -867,7 +893,7 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
     return 'manual'
   }
 
-  const paymentLinkOptionNeedsConfiguration = (option: PaymentOption | null) => option === 'mercadopago'
+  const paymentLinkOptionNeedsConfiguration = (option: PaymentOption | null) => option === 'mercadopago' || option === 'conekta'
 
   const mercadoPagoInstallmentLimit = getMercadoPagoInstallmentLimit(mercadoPagoInstallmentChoice)
   const mercadoPagoInstallmentEnabled = mercadoPagoInstallmentLimit > 1
@@ -877,6 +903,24 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
   const mercadoPagoInstallmentEstimate = invoiceSummary && mercadoPagoInstallmentEnabled
     ? normalizeAmount(invoiceSummary.amount / mercadoPagoInstallmentLimit)
     : 0
+  const conektaInstallmentOptions = invoiceSummary ? getConektaInstallmentOptions(invoiceSummary.amount) : []
+  const conektaInstallmentsAvailable = conektaInstallmentOptions.length > 0
+  const conektaInstallmentLimit = getConektaInstallmentLimit(conektaInstallmentChoice)
+  const conektaInstallmentEnabled = conektaInstallmentLimit > 1
+  const conektaInstallmentPaymentLabel = conektaInstallmentEnabled
+    ? `Hasta ${conektaInstallmentLimit} meses`
+    : 'Pago de contado'
+  const conektaInstallmentEstimate = invoiceSummary && conektaInstallmentEnabled
+    ? normalizeAmount(invoiceSummary.amount / conektaInstallmentLimit)
+    : 0
+
+  useEffect(() => {
+    if (conektaInstallmentChoice === 'none') return
+    const nextOptions = getConektaInstallmentOptions(invoiceSummary?.amount || 0)
+    if (!nextOptions.some((option) => option.value === conektaInstallmentChoice)) {
+      setConektaInstallmentChoice('none')
+    }
+  }, [conektaInstallmentChoice, invoiceSummary?.amount])
 
   const goToSavedCardOptions = () => {
     const nextPaymentOption = getDefaultSavedCardOption()
@@ -1051,6 +1095,7 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
     setPaymentOption(getDefaultPaymentOption())
     setSendMethod(resolvedInitialContact ? getDefaultSendMethod(getSendMethodOptions(resolvedInitialContact)) : DEFAULT_SEND_METHOD)
     setMercadoPagoInstallmentChoice('none')
+    setConektaInstallmentChoice('none')
     setManualPaymentData(defaultManualPaymentData())
     setSavedPaymentMethods([])
     setSelectedSavedPaymentMethodId('')
@@ -2164,7 +2209,11 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
           description: invoiceSummary.description,
           dueDate: invoicePayload.dueDate,
           source: 'record_payment_modal_conekta_saved_card',
-          lineItems: Array.isArray(invoicePayload.items) ? invoicePayload.items : []
+          lineItems: Array.isArray(invoicePayload.items) ? invoicePayload.items : [],
+          installments: {
+            enabled: conektaInstallmentEnabled,
+            maxInstallments: conektaInstallmentLimit
+          }
         })
 
         const paid = result.payment?.status === 'paid'
@@ -2172,7 +2221,7 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
           'success',
           paid ? 'Cobro realizado' : 'Cobro enviado a Conekta',
           paid
-            ? `${getSavedConektaCardLabel(selectedConektaPaymentSource)} quedó cobrada correctamente.`
+            ? `${getSavedConektaCardLabel(selectedConektaPaymentSource)} quedó cobrada correctamente${conektaInstallmentEnabled ? ` a ${conektaInstallmentLimit} meses sin intereses` : ''}.`
             : 'Conekta está terminando de procesar este cobro.'
         )
         onSuccess?.()
@@ -2402,13 +2451,19 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
           description: invoiceSummary.description,
           dueDate: invoicePayload.dueDate,
           source: 'record_payment_modal_conekta',
-          lineItems: Array.isArray(invoicePayload.items) ? invoicePayload.items : []
+          lineItems: Array.isArray(invoicePayload.items) ? invoicePayload.items : [],
+          installments: {
+            enabled: conektaInstallmentEnabled,
+            maxInstallments: conektaInstallmentLimit
+          }
         })
 
         showPaymentLinkReady({
           kind: 'single',
           title: 'Enlace Conekta listo',
-          description: 'Comparte este enlace para que el cliente pague con tarjeta en el tokenizador seguro de Conekta.',
+          description: conektaInstallmentEnabled
+            ? `Comparte este enlace para que el cliente pague con Conekta. Podrá elegir hasta ${conektaInstallmentLimit} meses sin intereses si su tarjeta aplica.`
+            : 'Comparte este enlace para que el cliente pague con tarjeta en el tokenizador seguro de Conekta.',
           provider: 'conekta',
           paymentUrl: result.paymentUrl,
           amount: invoiceSummary.amount,
@@ -3821,6 +3876,11 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
     const showPrimaryPaymentOptions = !showManualPaymentFields
     const showMercadoPagoInstallmentControls = showGatewayConfiguration &&
       paymentOption === 'mercadopago'
+    const showConektaInstallmentControls = (
+      showGatewayConfiguration && paymentOption === 'conekta'
+    ) || (
+      showSavedCardPicker && paymentOption === 'conekta_saved_card'
+    )
     const savedCardActionDescription = savedCardGatewayLabels.length > 1
       ? `Elige la tarjeta guardada en ${savedCardGatewayLabels.join(' o ')}.`
       : savedCardGatewayLabels.length === 1
@@ -3831,7 +3891,7 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
       : defaultPaymentLinkOption === 'stripe'
         ? 'Usa Stripe para generar el enlace de pago.'
         : defaultPaymentLinkOption === 'conekta'
-          ? 'Usa Conekta para generar el enlace de pago.'
+          ? 'Configura meses sin intereses antes de crear el enlace.'
           : defaultPaymentLinkOption === 'mercadopago'
             ? 'Configura meses sin intereses antes de crear el enlace.'
             : defaultPaymentLinkOption === 'send'
@@ -3940,7 +4000,7 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
                       </div>
                       <div>
                         <p>Conekta</p>
-                        <span>Genera tu página pública con tokenizador seguro y tarjeta reutilizable.</span>
+                        <span>Genera tu página pública con tokenizador seguro y opción de meses sin intereses.</span>
                       </div>
                     </div>
                     {paymentOption === 'conekta' && <Check size={18} className={styles.optionCheck} />}
@@ -4113,6 +4173,76 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
                 </button>
               </>
             )}
+          </div>
+        )}
+
+        {showConektaInstallmentControls && invoiceSummary && (
+          <div className={styles.mercadoPagoInstallmentsPanel}>
+            <div className={styles.mercadoPagoInstallmentsHeader}>
+              <div>
+                <span>Conekta</span>
+                <p>Meses sin intereses</p>
+              </div>
+              <strong>{conektaInstallmentPaymentLabel}</strong>
+            </div>
+
+            <div className={styles.mercadoPagoInstallmentsGrid}>
+              <div className={styles.manualField}>
+                <label>¿Ofrecer meses sin intereses?</label>
+                {conektaInstallmentsAvailable ? (
+                  renderPaymentSegmentedTabs({
+                    options: [
+                      { value: 'none', label: 'No' },
+                      { value: 'enabled', label: 'Sí' }
+                    ],
+                    value: conektaInstallmentEnabled ? 'enabled' : 'none',
+                    onChange: (value) => setConektaInstallmentChoice(value === 'enabled'
+                      ? (conektaInstallmentOptions[0]?.value as ConektaInstallmentChoice) || '3'
+                      : 'none'),
+                    ariaLabel: 'Meses sin intereses Conekta'
+                  })
+                ) : (
+                  <p className={styles.mercadoPagoInstallmentsNote}>
+                    Disponible en Conekta desde {formatCurrency(300, invoiceSummary.currency)}.
+                  </p>
+                )}
+              </div>
+
+              {conektaInstallmentEnabled && (
+                <div className={styles.manualField}>
+                  <label>Máximo de meses</label>
+                  {renderPaymentSelect({
+                    value: conektaInstallmentChoice,
+                    onChange: (value) => setConektaInstallmentChoice(value as ConektaInstallmentChoice),
+                    options: conektaInstallmentOptions,
+                    title: 'Máximo de meses'
+                  })}
+                </div>
+              )}
+            </div>
+
+            <div className={styles.mercadoPagoInstallmentTotals}>
+              <div>
+                <span>Cliente paga</span>
+                <strong>{formatCurrency(invoiceSummary.amount, invoiceSummary.currency)}</strong>
+              </div>
+              <div>
+                <span>{conektaInstallmentEnabled ? 'Referencia mensual' : 'Forma de pago'}</span>
+                <strong>
+                  {conektaInstallmentEnabled
+                    ? `${formatCurrency(conektaInstallmentEstimate, invoiceSummary.currency)} x ${conektaInstallmentLimit}`
+                    : 'Una sola exhibición'}
+                </strong>
+              </div>
+              <div>
+                <span>Ristak registra</span>
+                <strong>{formatCurrency(invoiceSummary.amount, invoiceSummary.currency)}</strong>
+              </div>
+            </div>
+
+            <p className={styles.mercadoPagoInstallmentsNote}>
+              Conekta valida la disponibilidad con el banco emisor. Ristak registra el total completo cuando Conekta confirma el pago.
+            </p>
           </div>
         )}
 

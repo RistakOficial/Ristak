@@ -388,23 +388,35 @@ test('Conekta payment flow: crea link, guarda payment_source y cobra tarjeta gua
       contactId,
       contactName: 'Cliente Conekta',
       email: `conekta-${Date.now()}@example.test`,
-      amount: 100,
+      amount: 600,
       currency: 'MXN',
       title: 'Pago_QA *** Conekta',
-      description: 'Pago_QA *** Conekta'
+      description: 'Pago_QA *** Conekta',
+      installments: {
+        enabled: true,
+        maxInstallments: 6
+      }
     }, { baseUrl: 'https://app.example.test' })
     createdPaymentIds.push(linkResult.payment.id)
 
     assert.equal(linkResult.payment.provider, 'conekta')
+    assert.equal(linkResult.payment.conektaInstallments.enabled, true)
+    assert.equal(linkResult.payment.conektaInstallments.maxInstallments, 6)
     assert.match(linkResult.paymentUrl, /^https:\/\/app\.example\.test\/pay\/pay_/)
 
     const publicResult = await createPublicConektaCardPayment(linkResult.publicPaymentId, {
       tokenId: 'tok_test_123',
-      savePaymentSource: true
+      savePaymentSource: true,
+      installments: 6
     }, { baseUrl: 'https://app.example.test' })
 
     assert.equal(publicResult.payment.status, 'paid')
     assert.equal(publicResult.conektaPaymentSourceId, 'src_test_123')
+    const publicOrderRequest = calls.find((call) => (
+      call.url.endsWith('/orders') &&
+      call.body?.metadata?.public_payment_id === linkResult.publicPaymentId
+    ))
+    assert.equal(publicOrderRequest.body.charges[0].payment_method.monthly_installments, 6)
 
     const savedSources = await db.all(
       'SELECT * FROM conekta_payment_sources WHERE contact_id = ?',
@@ -416,14 +428,23 @@ test('Conekta payment flow: crea link, guarda payment_source y cobra tarjeta gua
     const savedCardResult = await createConektaSavedCardPayment({
       contactId,
       paymentSourceId: 'src_test_123',
-      amount: 50,
+      amount: 300,
       currency: 'MXN',
-      title: 'Segundo cobro'
+      title: 'Segundo cobro',
+      installments: {
+        enabled: true,
+        maxInstallments: 3
+      }
     })
     createdPaymentIds.push(savedCardResult.payment.id)
 
     assert.equal(savedCardResult.payment.status, 'paid')
     assert.equal(savedCardResult.payment.conektaOrderId.startsWith('ord_'), true)
+    const savedCardOrderRequest = calls.find((call) => (
+      call.url.endsWith('/orders') &&
+      call.body?.metadata?.ristak_payment_id === savedCardResult.payment.id
+    ))
+    assert.equal(savedCardOrderRequest.body.charges[0].payment_method.monthly_installments, 3)
 
     const contact = await db.get('SELECT conekta_customer_id FROM contacts WHERE id = ?', [contactId])
     assert.equal(contact.conekta_customer_id, 'cus_test_123')

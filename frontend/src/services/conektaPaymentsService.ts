@@ -60,6 +60,17 @@ export interface SaveConektaPaymentConfigPayload {
   manualModes?: Partial<Record<'test' | 'live', Partial<ConektaModeCredentials>>>
 }
 
+export interface ConektaInstallmentsConfig {
+  enabled: boolean
+  maxInstallments: number
+  minAmount?: number
+  label?: string
+  options?: Array<{
+    months: number
+    minAmount: number
+  }>
+}
+
 export interface ConektaPaymentLinkPayload {
   contactId?: string
   contactName?: string
@@ -74,6 +85,10 @@ export interface ConektaPaymentLinkPayload {
   dueDate?: string
   source?: string
   lineItems?: Array<Record<string, unknown>>
+  installments?: {
+    enabled?: boolean
+    maxInstallments?: number
+  }
 }
 
 export interface PublicMetaPurchaseEvent {
@@ -118,6 +133,7 @@ export interface PublicConektaPayment {
   conektaChargeId?: string | null
   publicKey: string
   subscriptionStart?: PublicConektaSubscriptionStart | null
+  conektaInstallments?: ConektaInstallmentsConfig | null
   tax?: {
     enabled: boolean
     taxName: string
@@ -142,6 +158,7 @@ export interface PublicConektaPayment {
 export interface ConektaPublicCardPaymentPayload {
   tokenId: string
   savePaymentSource?: boolean
+  installments?: number
 }
 
 export interface ConektaPublicSubscriptionPayload {
@@ -179,6 +196,10 @@ export interface ConektaSavedCardPaymentPayload {
   dueDate?: string
   source?: string
   lineItems?: Array<Record<string, unknown>>
+  installments?: {
+    enabled?: boolean
+    maxInstallments?: number
+  }
 }
 
 export interface ConektaPaymentPlanPayload {

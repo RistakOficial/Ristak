@@ -677,6 +677,42 @@
   width: 100%;
 }
 
+.conektaInstallmentSelector {
+  display: grid;
+  gap: 8px;
+}
+
+.conektaInstallmentSelector span {
+  color: var(--text, var(--color-text-primary));
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.conektaInstallmentSelector select {
+  width: 100%;
+  min-height: 44px;
+  border: 1px solid var(--border, var(--color-border));
+  border-radius: var(--radius-ctl, 10px);
+  background: var(--surface, var(--color-surface));
+  color: var(--text, var(--color-text-primary));
+  font: inherit;
+  font-size: 14px;
+  font-weight: 500;
+  padding: 0 12px;
+}
+
+.conektaInstallmentSelector select:focus {
+  outline: none;
+  border-color: var(--accent, var(--color-primary));
+  box-shadow: var(--ristak-focus-ring);
+}
+
+.conektaInstallmentSelector small {
+  color: var(--text-dim, var(--color-text-secondary));
+  font-size: 12px;
+  line-height: 1.45;
+}
+
 .brickLoading {
   position: absolute;
   inset: 0;

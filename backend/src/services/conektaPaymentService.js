@@ -42,6 +42,15 @@ const CONEKTA_WEBHOOK_EVENTS = [
   'subscription.payment_failed',
   'subscription.updated'
 ]
+const CONEKTA_INSTALLMENT_TERMS = [
+  { months: 3, minAmount: 300 },
+  { months: 6, minAmount: 600 },
+  { months: 9, minAmount: 900 },
+  { months: 12, minAmount: 1200 },
+  { months: 18, minAmount: 1800 },
+  { months: 24, minAmount: 2400 }
+]
+const CONEKTA_INSTALLMENT_MONTHS = new Set(CONEKTA_INSTALLMENT_TERMS.map((term) => term.months))
 const DEFAULT_PAYMENT_TIMEZONE = 'America/Mexico_City'
 const isPostgresRuntime = Boolean(process.env.DATABASE_URL)
 const CONEKTA_PLAN_STATES = {
@@ -327,6 +336,104 @@ function normalizePositiveAmount(value, fallback = 25) {
 
 function toConektaAmount(value) {
   return Math.round(normalizePositiveAmount(value) * 100)
+}
+
+function getConektaInstallmentTerm(months) {
+  const parsed = Math.trunc(Number(months))
+  if (!Number.isFinite(parsed)) return null
+  return CONEKTA_INSTALLMENT_TERMS.find((term) => term.months === parsed) || null
+}
+
+function getAvailableConektaInstallmentTerms(amount, maxInstallments = 24) {
+  const hasAmount = amount !== null && amount !== undefined && amount !== ''
+  const parsedAmount = hasAmount ? Number(amount) : NaN
+  const parsedMax = Math.trunc(Number(maxInstallments))
+  const limit = Number.isFinite(parsedMax) && parsedMax > 0 ? parsedMax : 24
+  return CONEKTA_INSTALLMENT_TERMS.filter((term) => {
+    if (term.months > limit) return false
+    return !Number.isFinite(parsedAmount) || parsedAmount >= term.minAmount
+  })
+}
+
+function normalizeConektaInstallmentOptions(input, { amount = null, emptyAsNull = false } = {}) {
+  if (input === undefined || input === null || input === '' || input === false) return emptyAsNull ? null : {
+    enabled: false,
+    maxInstallments: 1,
+    options: []
+  }
+
+  const source = typeof input === 'object' && !Array.isArray(input)
+    ? input
+    : { enabled: true, maxInstallments: input }
+  const enabled = normalizeBoolean(source.enabled, Boolean(source.maxInstallments || source.months || source.monthlyInstallments))
+
+  if (!enabled) return emptyAsNull ? null : {
+    enabled: false,
+    maxInstallments: 1,
+    options: []
+  }
+
+  const rawMonths = source.maxInstallments || source.months || source.monthlyInstallments || source.monthly_installments
+  const term = getConektaInstallmentTerm(rawMonths)
+
+  if (!term) {
+    const error = new Error('Conekta sólo permite meses sin intereses a 3, 6, 9, 12, 18 o 24 meses.')
+    error.status = 400
+    throw error
+  }
+
+  const availableTerms = getAvailableConektaInstallmentTerms(amount, term.months)
+  if (!availableTerms.some((available) => available.months === term.months)) {
+    const error = new Error(`Para ofrecer ${term.months} meses sin intereses en Conekta, el monto mínimo es ${term.minAmount} MXN.`)
+    error.status = 400
+    throw error
+  }
+
+  return {
+    enabled: true,
+    maxInstallments: term.months,
+    minAmount: term.minAmount,
+    label: `Hasta ${term.months} meses sin intereses`,
+    options: availableTerms.map((available) => ({
+      months: available.months,
+      minAmount: available.minAmount
+    }))
+  }
+}
+
+function normalizeConektaChargeInstallments(input, configuredOptions = null, amount = null) {
+  if (input === undefined || input === null || input === '' || input === false) return 1
+
+  const parsed = Math.trunc(Number(input))
+  if (!Number.isFinite(parsed) || parsed <= 1) return 1
+
+  if (!configuredOptions?.enabled) {
+    const error = new Error('Este cobro de Conekta no tiene meses sin intereses habilitados.')
+    error.status = 400
+    throw error
+  }
+
+  if (parsed > configuredOptions.maxInstallments) {
+    const error = new Error(`Este cobro de Conekta permite hasta ${configuredOptions.maxInstallments} meses sin intereses.`)
+    error.status = 400
+    throw error
+  }
+
+  const term = getConektaInstallmentTerm(parsed)
+  if (!term || !CONEKTA_INSTALLMENT_MONTHS.has(parsed)) {
+    const error = new Error('Conekta sólo permite meses sin intereses a 3, 6, 9, 12, 18 o 24 meses.')
+    error.status = 400
+    throw error
+  }
+
+  const parsedAmount = Number(amount)
+  if (Number.isFinite(parsedAmount) && parsedAmount < term.minAmount) {
+    const error = new Error(`Para cobrar a ${term.months} meses sin intereses en Conekta, el monto mínimo es ${term.minAmount} MXN.`)
+    error.status = 400
+    throw error
+  }
+
+  return term.months
 }
 
 async function readRawConfig() {
@@ -877,6 +984,10 @@ function mapPublicPayment(row, config, baseUrl = '', settings = null) {
   const tax = metadata.tax && typeof metadata.tax === 'object' ? metadata.tax : null
   const subscriptionStart = getPublicSubscriptionStart(metadata)
   const publicPaymentId = row.public_payment_id
+  const conektaInstallments = normalizeConektaInstallmentOptions(metadata.conektaInstallments, {
+    amount: row.amount,
+    emptyAsNull: true
+  })
   return {
     id: row.id,
     publicPaymentId,
@@ -901,6 +1012,7 @@ function mapPublicPayment(row, config, baseUrl = '', settings = null) {
     conektaChargeId: row.conekta_charge_id || null,
     publicKey: config?.publicKey || '',
     subscriptionStart,
+    conektaInstallments,
     tax,
     settings: settings || null
   }
@@ -1563,10 +1675,21 @@ function buildCustomerInfo(row, customerId = '') {
   return customerInfo
 }
 
-function buildOrderPayload(row, { tokenId = '', paymentSourceId = '', customerId = '' } = {}) {
+function buildOrderPayload(row, { tokenId = '', paymentSourceId = '', customerId = '', installments = null, monthlyInstallments = null, monthly_installments = null } = {}) {
+  const metadata = parseJson(row.metadata_json, {})
+  const conektaInstallments = normalizeConektaInstallmentOptions(metadata.conektaInstallments, {
+    amount: row.amount,
+    emptyAsNull: true
+  })
+  const monthlyInstallmentCount = normalizeConektaChargeInstallments(
+    installments ?? monthlyInstallments ?? monthly_installments,
+    conektaInstallments,
+    row.amount
+  )
   const paymentMethod = {
     type: 'card',
-    ...(paymentSourceId ? { payment_source_id: paymentSourceId } : { token_id: tokenId })
+    ...(paymentSourceId ? { payment_source_id: paymentSourceId } : { token_id: tokenId }),
+    ...(monthlyInstallmentCount > 1 ? { monthly_installments: monthlyInstallmentCount } : {})
   }
 
   return {
@@ -1578,7 +1701,9 @@ function buildOrderPayload(row, { tokenId = '', paymentSourceId = '', customerId
       ristak_payment_id: row.id,
       public_payment_id: row.public_payment_id || '',
       contact_id: row.contact_id || '',
-      source: cleanString(parseJson(row.metadata_json, {}).source || 'ristak_conekta')
+      source: cleanString(metadata.source || 'ristak_conekta'),
+      ...(conektaInstallments ? { conekta_installments: conektaInstallments } : {}),
+      ...(monthlyInstallmentCount > 1 ? { monthly_installments: monthlyInstallmentCount } : {})
     }
   }
 }
@@ -1804,6 +1929,10 @@ export async function createConektaPaymentLink(input = {}, { baseUrl } = {}) {
   }
   const tax = calculatePaymentTax(amount, taxSettings)
   const chargeAmount = tax?.totalAmount || Math.round(amount * 100) / 100
+  const conektaInstallments = normalizeConektaInstallmentOptions(input.installments || input.conektaInstallments, {
+    amount: chargeAmount,
+    emptyAsNull: true
+  })
   const publicPaymentId = createPublicId()
   const id = createId('conekta_payment')
   const currency = normalizeCurrency(input.currency || await getConfiguredCurrency())
@@ -1821,6 +1950,7 @@ export async function createConektaPaymentLink(input = {}, { baseUrl } = {}) {
     source: cleanString(input.source || 'ristak'),
     lineItems: Array.isArray(input.lineItems) ? input.lineItems : [],
     ...(input.metadata && typeof input.metadata === 'object' ? input.metadata : {}),
+    ...(conektaInstallments ? { conektaInstallments } : {}),
     ...(tax ? { tax } : {})
   }
 
@@ -1921,7 +2051,8 @@ export async function createPublicConektaCardPayment(publicPaymentId, input = {}
   const result = await createOrderForPayment(row, {
     tokenId: savePaymentSource ? '' : tokenId,
     paymentSourceId,
-    customerId: savePaymentSource ? customerId : ''
+    customerId: savePaymentSource ? customerId : '',
+    installments: input.installments || input.monthlyInstallments || input.monthly_installments || 1
   })
   const refreshed = result.payment || await findPaymentById(row.id)
   await syncConektaPlanFromPayment(refreshed, savedSourceRow, config)
@@ -4379,6 +4510,10 @@ export async function createConektaSavedCardPayment(input = {}) {
   }
   const tax = calculatePaymentTax(amount, taxSettings)
   const chargeAmount = tax?.totalAmount || Math.round(amount * 100) / 100
+  const conektaInstallments = normalizeConektaInstallmentOptions(input.installments || input.conektaInstallments, {
+    amount: chargeAmount,
+    emptyAsNull: true
+  })
   const metadata = {
     source: cleanString(input.source || 'ristak_conekta_saved_card'),
     contactName: cleanString(input.contactName || savedSource.contact_name),
@@ -4393,6 +4528,7 @@ export async function createConektaSavedCardPayment(input = {}) {
       expYear: savedSource.exp_year || null
     },
     lineItems: Array.isArray(input.lineItems) ? input.lineItems : [],
+    ...(conektaInstallments ? { conektaInstallments } : {}),
     ...(tax ? { tax } : {})
   }
 
@@ -4425,7 +4561,8 @@ export async function createConektaSavedCardPayment(input = {}) {
   const row = await findPaymentById(id)
   await createOrderForPayment(row, {
     paymentSourceId: savedSource.conekta_payment_source_id,
-    customerId: savedSource.conekta_customer_id
+    customerId: savedSource.conekta_customer_id,
+    installments: conektaInstallments?.maxInstallments || 1
   })
 
   const updated = await findPaymentById(id)

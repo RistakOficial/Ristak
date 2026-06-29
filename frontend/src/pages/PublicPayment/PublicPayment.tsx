@@ -281,6 +281,41 @@ function getMercadoPagoMaxInstallments(payment?: PublicMercadoPagoPayment | null
   return Math.max(1, Math.min(Math.trunc(maxInstallments), 60))
 }
 
+const CONEKTA_INSTALLMENT_TERMS = [
+  { months: 3, minAmount: 300 },
+  { months: 6, minAmount: 600 },
+  { months: 9, minAmount: 900 },
+  { months: 12, minAmount: 1200 },
+  { months: 18, minAmount: 1800 },
+  { months: 24, minAmount: 2400 }
+]
+
+function getAvailableConektaInstallmentOptions(payment: PublicConektaPayment) {
+  const configured = payment.conektaInstallments
+  if (!configured?.enabled) return []
+
+  const amount = Number(payment.amount || 0)
+  const maxInstallments = Math.trunc(Number(configured.maxInstallments || 0))
+  if (!Number.isFinite(maxInstallments) || maxInstallments <= 1) return []
+
+  const configuredOptions = Array.isArray(configured.options) && configured.options.length
+    ? configured.options
+    : CONEKTA_INSTALLMENT_TERMS
+
+  return configuredOptions
+    .map((option) => ({
+      months: Math.trunc(Number(option.months)),
+      minAmount: Number(option.minAmount || 0)
+    }))
+    .filter((option) => (
+      Number.isFinite(option.months) &&
+      option.months > 1 &&
+      option.months <= maxInstallments &&
+      amount >= option.minAmount
+    ))
+    .sort((left, right) => left.months - right.months)
+}
+
 function buildMercadoPagoCustomization(payment?: PublicMercadoPagoPayment | null) {
   const customVariables: Record<string, string> = {
     fontSizeSmall: '13px',
@@ -1029,10 +1064,32 @@ const ConektaCardTokenizerForm: React.FC<{
   const showSecureNotice = payment.settings?.checkout?.showSecureBadge !== false
   const isTestMode = payment.paymentMode === 'test'
   const isSubscriptionStart = Boolean(payment.subscriptionStart?.subscriptionId)
+  const conektaInstallmentOptions = useMemo(
+    () => isSubscriptionStart ? [] : getAvailableConektaInstallmentOptions(payment),
+    [
+      isSubscriptionStart,
+      payment.amount,
+      payment.conektaInstallments?.enabled,
+      payment.conektaInstallments?.maxInstallments,
+      payment.conektaInstallments?.options
+    ]
+  )
+  const [selectedConektaInstallments, setSelectedConektaInstallments] = useState(1)
+  const selectedConektaInstallmentsRef = useRef(1)
 
   useEffect(() => {
     onPaidRef.current = onPaid
   }, [onPaid])
+
+  useEffect(() => {
+    selectedConektaInstallmentsRef.current = selectedConektaInstallments
+  }, [selectedConektaInstallments])
+
+  useEffect(() => {
+    if (!conektaInstallmentOptions.some((option) => option.months === selectedConektaInstallments)) {
+      setSelectedConektaInstallments(1)
+    }
+  }, [conektaInstallmentOptions, selectedConektaInstallments])
 
   useEffect(() => {
     if (!payment.publicKey) {
@@ -1084,7 +1141,8 @@ const ConektaCardTokenizerForm: React.FC<{
                   ? await conektaPaymentsService.createPublicSubscription(payment.publicPaymentId, { tokenId })
                   : await conektaPaymentsService.createPublicCardPayment(payment.publicPaymentId, {
                       tokenId,
-                      savePaymentSource: Boolean(payment.contact?.id)
+                      savePaymentSource: Boolean(payment.contact?.id),
+                      installments: selectedConektaInstallmentsRef.current
                     })
                 const statusMessage = normalizeConektaStatusMessage(result.payment?.status || result.status)
                 setMessageKind(statusMessage.kind)
@@ -1138,7 +1196,7 @@ const ConektaCardTokenizerForm: React.FC<{
       const container = document.getElementById(containerId)
       if (container) container.innerHTML = ''
     }
-  }, [containerId, payment.contact?.id, payment.publicKey, payment.publicPaymentId])
+  }, [containerId, payment.contact?.id, payment.publicKey, payment.publicPaymentId, isSubscriptionStart])
 
   const handleSubmit = () => {
     const submitTokenizer = submitTokenizerRef.current
@@ -1171,6 +1229,25 @@ const ConektaCardTokenizerForm: React.FC<{
           <div id={containerId} className={styles.conektaTokenizerFrame} />
         </div>
       </div>
+
+      {conektaInstallmentOptions.length > 0 && (
+        <label className={styles.conektaInstallmentSelector}>
+          <span>Meses sin intereses</span>
+          <select
+            value={selectedConektaInstallments}
+            onChange={(event) => setSelectedConektaInstallments(Number(event.target.value) || 1)}
+            disabled={submitting}
+          >
+            <option value={1}>Pago de contado</option>
+            {conektaInstallmentOptions.map((option) => (
+              <option key={option.months} value={option.months}>
+                {option.months} meses sin intereses
+              </option>
+            ))}
+          </select>
+          <small>Conekta valida la disponibilidad con el banco emisor. Ristak registra el total del pago.</small>
+        </label>
+      )}
 
       <Button
         type="button"
