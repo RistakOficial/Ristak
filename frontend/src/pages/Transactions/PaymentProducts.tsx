@@ -577,7 +577,7 @@ export const PaymentProducts: React.FC = () => {
       header: (
         <span className={styles.fiscalHeader}>
           <PaymentPlatformLogo platform="gigstack" size="sm" decorative />
-          <span>Gigstack</span>
+          <span>Facturación</span>
         </span>
       ),
       render: (_value, item) => item.gigstackProductKey ? (
@@ -688,7 +688,7 @@ export const PaymentProducts: React.FC = () => {
       <div className={styles.page}>
         <PageHeader
           title="Productos"
-          subtitle="Administra los productos y precios guardados en la base de datos."
+          subtitle="Administra los productos, precios e impuestos guardados en la base de datos."
           actions={
             <>
               <Button onClick={openCreateProduct} leftIcon={<Plus size={16} />}>
@@ -877,7 +877,7 @@ export const PaymentProducts: React.FC = () => {
                   <div className={styles.fiscalPanelHeader}>
                     <span className={styles.fiscalTitle}>
                       <PaymentPlatformLogo platform="gigstack" size="sm" decorative />
-                      <span>Gigstack</span>
+                      <span>Facturación e impuestos</span>
                     </span>
                     <Badge variant={productForm.gigstackProductKey ? 'success' : 'neutral'}>
                       {productForm.gigstackProductKey ? 'Mapeado' : 'Default'}
@@ -885,7 +885,7 @@ export const PaymentProducts: React.FC = () => {
                   </div>
                   <div className={styles.fiscalGrid}>
                     <div className={styles.formGroup}>
-                      <label>Clave SAT</label>
+                      <label>Categoría SAT para facturas</label>
                       <CustomSelect
                         value={productForm.gigstackProductKey}
                         onValueChange={(value) => patchProductForm('gigstackProductKey', value)}
@@ -896,7 +896,7 @@ export const PaymentProducts: React.FC = () => {
                       />
                     </div>
                     <div className={styles.formGroup}>
-                      <label>Unidad SAT</label>
+                      <label>Unidad fiscal</label>
                       <CustomSelect
                         value={productForm.gigstackUnitKey}
                         onValueChange={(value) => patchProductForm('gigstackUnitKey', value)}

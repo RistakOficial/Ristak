@@ -24,6 +24,9 @@ describe('local product catalog', () => {
       description: 'Producto con varias opciones de precio',
       productType: 'service',
       currency: 'MXN',
+      gigstackProductKey: '82101800',
+      gigstackUnitKey: 'E48',
+      gigstackUnitName: 'Unidad de Servicio',
       prices: [
         { name: 'Base', amount: 1000, currency: 'MXN', sku: 'BASE-001' },
         { name: 'Premium', amount: 1600, currency: 'MXN', sku: 'PREM-001' }
@@ -33,6 +36,9 @@ describe('local product catalog', () => {
     cleanupProductIds.add(product.localId)
 
     assert.equal(product.productType, 'SERVICE')
+    assert.equal(product.gigstackProductKey, '82101800')
+    assert.equal(product.gigstackUnitKey, 'E48')
+    assert.equal(product.gigstackUnitName, 'Unidad de Servicio')
     assert.equal(product.prices.length, 2)
     assert.deepEqual(
       product.prices.map((price) => price.sku).sort(),
@@ -47,6 +53,9 @@ describe('local product catalog', () => {
       description: product.description,
       productType: 'package',
       currency: 'MXN',
+      gigstackProductKey: '80101500',
+      gigstackUnitKey: 'H87',
+      gigstackUnitName: 'Pieza',
       prices: [
         { localId: basePrice.localId, name: 'Base ajustado', amount: 1100, currency: 'MXN', sku: 'BASE-NEW' },
         { name: 'VIP', amount: 2500, currency: 'MXN', sku: 'VIP-001' }
@@ -54,6 +63,9 @@ describe('local product catalog', () => {
     }, { sync: false })
 
     assert.equal(updated.productType, 'PACKAGE')
+    assert.equal(updated.gigstackProductKey, '80101500')
+    assert.equal(updated.gigstackUnitKey, 'H87')
+    assert.equal(updated.gigstackUnitName, 'Pieza')
     assert.equal(updated.prices.length, 2)
     assert.deepEqual(
       updated.prices.map((price) => price.name).sort(),

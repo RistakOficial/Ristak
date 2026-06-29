@@ -44,6 +44,11 @@ import {
   paymentSettingsService,
   type PaymentTaxSettings
 } from '@/services/paymentSettingsService'
+import {
+  getGigstackUnitName,
+  gigstackProductKeyOptions,
+  gigstackUnitOptions
+} from '@/utils/gigstackFiscalCatalog'
 import { PaymentLinkReadyPanel, type PaymentLinkReadyData } from '../PaymentLinkReadyPanel'
 
 const DEFAULT_INVOICE_TITLE = 'Pago'
@@ -659,6 +664,8 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
   const [newProductDescription, setNewProductDescription] = useState('')
   const [newProductPriceName, setNewProductPriceName] = useState('')
   const [newProductAmount, setNewProductAmount] = useState('')
+  const [newProductGigstackProductKey, setNewProductGigstackProductKey] = useState('')
+  const [newProductGigstackUnitKey, setNewProductGigstackUnitKey] = useState('')
 
   // Payment options
   const [invoicePayload, setInvoicePayload] = useState<Record<string, any> | null>(null)
@@ -748,6 +755,7 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
   const currentTaxBreakdown = useMemo(() => (
     calculateConfiguredTax(subtotalAmount, paymentTaxes, includeIVA, taxCalculationMode)
   ), [includeIVA, paymentTaxes, subtotalAmount, taxCalculationMode])
+  const gigstackProductMappingEnabled = Boolean(paymentTaxes.enabled && paymentTaxes.gigstackEnabled)
   const taxAmount = currentTaxBreakdown.taxAmount
   const totalAmount = currentTaxBreakdown.totalAmount
   const firstPaymentAmount = firstPaymentEnabled
@@ -1160,6 +1168,8 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
     setNewProductDescription('')
     setNewProductPriceName('')
     setNewProductAmount('')
+    setNewProductGigstackProductKey('')
+    setNewProductGigstackUnitKey('')
     setInvoicePayload(null)
     setInvoiceSummary(null)
     setSinglePaymentAction(getDefaultSinglePaymentAction())
@@ -1595,6 +1605,8 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
     setNewProductDescription('')
     setNewProductPriceName('')
     setNewProductAmount('')
+    setNewProductGigstackProductKey('')
+    setNewProductGigstackUnitKey('')
   }
 
   const handleCreateProduct = async () => {
@@ -1622,6 +1634,9 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
           productType: 'DIGITAL',
           availableInStore: false,
           currency: accountCurrency,
+          gigstackProductKey: newProductGigstackProductKey,
+          gigstackUnitKey: newProductGigstackUnitKey,
+          gigstackUnitName: getGigstackUnitName(newProductGigstackUnitKey),
           prices: [
             {
               name: newProductPriceName.trim() || productName,
@@ -3108,7 +3123,7 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
               ariaLabel: 'Tipo de cobro',
               options: [
                 { value: 'direct', label: 'Personalizado' },
-                { value: 'product', label: 'Precios guardados' }
+                { value: 'product', label: 'Productos' }
               ],
               value: chargeType,
               onChange: (value) => {
@@ -3217,6 +3232,60 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
                     placeholder="Detalle"
                   />
                 </div>
+
+                {gigstackProductMappingEnabled && (
+                  <div className={styles.quickProductFiscalPanel}>
+                    <div className={styles.quickProductFiscalHeader}>
+                      <span className={styles.quickProductFiscalTitle}>
+                        <PaymentPlatformLogo platform="gigstack" size="sm" decorative />
+                        <span>Facturación e impuestos</span>
+                      </span>
+                      <span className={styles.quickProductFiscalChip}>
+                        {newProductGigstackProductKey ? 'Mapeado' : 'Default'}
+                      </span>
+                    </div>
+                    <div className={styles.fieldGrid}>
+                      <div className={styles.field}>
+                        <label className={styles.label}>Categoría SAT para facturas</label>
+                        <CustomSelect
+                          value={newProductGigstackProductKey}
+                          onValueChange={setNewProductGigstackProductKey}
+                          options={[
+                            {
+                              value: '',
+                              label: paymentTaxes.gigstackDefaultProductKey
+                                ? `Usar default · ${paymentTaxes.gigstackDefaultProductKey}`
+                                : 'Usar default de Gigstack'
+                            },
+                            ...gigstackProductKeyOptions
+                          ]}
+                          placeholder="Usar default de Gigstack"
+                          className={styles.customSelectControl}
+                          portal
+                        />
+                      </div>
+                      <div className={styles.field}>
+                        <label className={styles.label}>Unidad fiscal</label>
+                        <CustomSelect
+                          value={newProductGigstackUnitKey}
+                          onValueChange={setNewProductGigstackUnitKey}
+                          options={[
+                            {
+                              value: '',
+                              label: paymentTaxes.gigstackDefaultUnitKey
+                                ? `Usar default · ${paymentTaxes.gigstackDefaultUnitKey}`
+                                : 'Usar default de Gigstack'
+                            },
+                            ...gigstackUnitOptions
+                          ]}
+                          placeholder="Usar default de Gigstack"
+                          className={styles.customSelectControl}
+                          portal
+                        />
+                      </div>
+                    </div>
+                  </div>
+                )}
 
                 <div className={styles.quickProductActions}>
                   <Button
@@ -3666,7 +3735,7 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
             <div className={styles.summaryHeader}>
               <span>Resumen del cobro</span>
               <span className={styles.summaryBadge}>
-                {chargeType === 'product' ? 'Precios guardados' : 'Personalizado'}
+                {chargeType === 'product' ? 'Productos' : 'Personalizado'}
               </span>
             </div>
             <div className={styles.summaryBody}>
