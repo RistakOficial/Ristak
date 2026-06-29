@@ -1,13 +1,14 @@
 import React, { useEffect, useLayoutEffect, useRef, useState } from 'react'
-import { Outlet, useNavigate } from 'react-router-dom'
+import { Outlet, useLocation, useNavigate } from 'react-router-dom'
 import { Layout } from '@/components/layout/Layout'
 import { Sidebar } from '@/components/layout/Sidebar'
 import { Header } from '@/components/layout/Header'
 import { SyncProgressBar } from '@/components/common/SyncProgressBar'
+import { Loading } from '@/components/common/Loading'
 import { AIAgentPanel } from '@/components/ai'
 import { useAuth } from '@/contexts/AuthContext'
 import { InitializationProvider } from '@/contexts/InitializationContext'
-import { useAIAgentAvailability, useAppConfig, useDomainFeatureSync } from '@/hooks'
+import { useAIAgentAvailability, useAppConfig, useDomainFeatureSync, useRouteDataLoadGate } from '@/hooks'
 import { requestAIAgentClose } from '@/utils/aiAgentEvents'
 import { hasModuleAccess } from '@/utils/accessControl'
 import { apiUrl } from '@/services/apiBaseUrl'
@@ -57,6 +58,7 @@ function getInitialAIAgentWidth() {
 
 export const AppShell: React.FC = () => {
   const navigate = useNavigate()
+  const location = useLocation()
   const { logout, user } = useAuth()
   const [persistedAIAgentWidth, savePersistedAIAgentWidth] = useAppConfig<number>(
     AI_AGENT_WIDTH_CONFIG_KEY,
@@ -73,6 +75,7 @@ export const AppShell: React.FC = () => {
   const [aiAgentResizing, setAIAgentResizing] = useState(false)
   const [sitesEditorActive, setSitesEditorActive] = useState(false)
   const aiAgentAvailability = useAIAgentAvailability()
+  const routeDataLoadGate = useRouteDataLoadGate(`${location.pathname}${location.search}`)
   const canUseAIAgent = hasModuleAccess(user, 'ai_agent', 'read') && aiAgentAvailability.configured
   const resizePointerIdRef = useRef<number | null>(null)
   const aiAgentWidthRef = useRef(aiAgentWidth)
@@ -276,8 +279,18 @@ export const AppShell: React.FC = () => {
           >
             <div className="flex flex-col min-h-full">
               {!sitesEditorActive && <Header />}
-              <div className="flex-1 overflow-auto">
-                <Outlet />
+              <div
+                className={`${styles.contentScroller} flex-1 overflow-auto`}
+                aria-busy={routeDataLoadGate.loading}
+              >
+                <div className={routeDataLoadGate.loading ? styles.routeContentLoading : styles.routeContentReady}>
+                  <Outlet />
+                </div>
+                {routeDataLoadGate.loading && (
+                  <div className={styles.routeDataLoader} role="presentation">
+                    <Loading message="Cargando datos..." size="md" />
+                  </div>
+                )}
               </div>
             </div>
           </Layout>
