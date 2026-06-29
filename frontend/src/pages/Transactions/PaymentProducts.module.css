@@ -75,13 +75,6 @@
   font-size: 13px;
 }
 
-.statusCell {
-  display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-  gap: 5px;
-}
-
 .fiscalCell {
   display: inline-flex;
   align-items: center;
@@ -105,15 +98,6 @@
 .fiscalCell span {
   color: var(--text-mute);
   font-size: 12px;
-}
-
-.syncError {
-  max-width: 18rem;
-  overflow: hidden;
-  color: var(--neg);
-  font-size: 12px;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 
 .rowActions {

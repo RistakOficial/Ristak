@@ -19,7 +19,7 @@ import {
   Table,
   TableSelectionToolbar
 } from '@/components/common'
-import type { BadgeVariant, Column } from '@/components/common'
+import type { Column } from '@/components/common'
 import { useNotification } from '@/contexts/NotificationContext'
 import { useAccountCurrency, useHighLevelConnected } from '@/hooks'
 import { formatCurrency } from '@/utils/format'
@@ -166,23 +166,6 @@ const getProductSkuSummary = (product: ProductItem) => {
 const getProductSourceLabel = (product: ProductItem) => (
   product.source === 'ghl' || product.ghlProductId ? 'HighLevel' : 'Ristak'
 )
-
-const getSyncStatusLabel = (status?: string | null) => {
-  const normalized = String(status || '').toLowerCase()
-  if (normalized === 'synced') return 'Sincronizado'
-  if (normalized === 'pending') return 'Pendiente'
-  if (normalized === 'error' || normalized === 'failed') return 'Error'
-  if (normalized === 'deleted') return 'Eliminado'
-  return status || 'Local'
-}
-
-const getSyncStatusVariant = (status?: string | null): BadgeVariant => {
-  const normalized = String(status || '').toLowerCase()
-  if (normalized === 'synced') return 'success'
-  if (normalized === 'pending') return 'warning'
-  if (normalized === 'error' || normalized === 'failed') return 'error'
-  return 'neutral'
-}
 
 export const PaymentProducts: React.FC = () => {
   const { showToast, showConfirm } = useNotification()
@@ -597,18 +580,6 @@ export const PaymentProducts: React.FC = () => {
         <Badge variant={getProductSourceLabel(item) === 'HighLevel' ? 'info' : 'neutral'}>
           {getProductSourceLabel(item)}
         </Badge>
-      ),
-      sortable: true,
-      visible: false
-    },
-    {
-      key: 'syncStatus',
-      header: 'Estado',
-      render: (value, item) => (
-        <div className={styles.statusCell}>
-          <Badge variant={getSyncStatusVariant(value)}>{getSyncStatusLabel(value)}</Badge>
-          {item.syncError && <span className={styles.syncError}>{item.syncError}</span>}
-        </div>
       ),
       sortable: true,
       visible: false
