@@ -483,7 +483,7 @@ const TabletViewPreferenceGate: React.FC = () => {
   // "Versión para computadora" no aplica y provoca un loop con el gate nativo,
   // además de tapar el login con un overlay. No mostramos el modal ahí.
   const canApplyTabletPreference =
-    isTablet && location.pathname !== SETUP_PATH && !mobileAppService.isIosPhoneChatShell()
+    isTablet && location.pathname !== SETUP_PATH && !mobileAppService.isIosMobileShell()
 
   React.useEffect(() => {
     if (!canApplyTabletPreference || !preference) return
@@ -600,12 +600,12 @@ const TabletViewPreferenceGate: React.FC = () => {
   )
 }
 
-const NativeIosPhoneChatRouteGate: React.FC = () => {
+const NativeIosMobileRouteGate: React.FC = () => {
   const location = useLocation()
 
-  if (!mobileAppService.isIosPhoneChatShell()) return null
+  if (!mobileAppService.isIosMobileShell()) return null
 
-  const redirectPath = mobileAppService.getIosPhoneChatRedirectPath(location.pathname)
+  const redirectPath = mobileAppService.getIosMobileRedirectPath(location.pathname)
   if (!redirectPath) return null
 
   const state = redirectPath === PHONE_APP_LOGIN_PATH
@@ -633,7 +633,7 @@ const AppWithNotifications: React.FC = () => {
     <>
       <BrowserRouter>
         <PhoneRouteEffects />
-        <NativeIosPhoneChatRouteGate />
+        <NativeIosMobileRouteGate />
         <CellphoneRouteGate />
         <TabletViewPreferenceGate />
         <Routes>

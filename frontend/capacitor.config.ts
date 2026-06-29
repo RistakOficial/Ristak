@@ -15,7 +15,7 @@ const config: CapacitorConfig = {
       presentationOptions: ['badge', 'sound', 'banner', 'list', 'alert']
     },
     SplashScreen: {
-      launchAutoHide: false,
+      launchAutoHide: true,
       backgroundColor: '#ffffff',
       androidScaleType: 'CENTER_CROP',
       showSpinner: false
@@ -23,7 +23,7 @@ const config: CapacitorConfig = {
     StatusBar: {
       style: 'LIGHT',
       backgroundColor: '#ffffff',
-      overlaysWebView: false
+      overlaysWebView: true
     },
     Keyboard: {
       resize: 'native',

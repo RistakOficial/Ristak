@@ -4451,13 +4451,17 @@ export const PhoneChat: React.FC = () => {
   const voicePanelActive = Boolean(voiceRecording || voiceProcessing || voiceDraft)
   const canSendMessage = Boolean(selectedChannelCanSend && hasComposerContent && !voiceRecording && !voiceProcessing && !composerBlockedByReplyWindow)
   const canOpenScheduleSheet = Boolean(selectedChannelCanSend && hasComposerText && !draftAttachments.length && !voicePanelActive && !composerBlockedByReplyWindow && composerStatus !== 'sending')
-  const composerInputDisabled = Boolean(!selectedChannelCanSend || voiceRecording || voiceProcessing || voiceDraft)
+  const composerInputDisabled = Boolean(!selectedChannelCanSend || voiceRecording || voiceProcessing || voiceDraft || composerBlockedByReplyWindow)
   const composerPlaceholder = voiceRecording
     ? 'Grabando...'
     : voiceProcessing
       ? 'Preparando audio...'
     : voiceDraft
       ? 'Audio listo'
+      : composerBlockedByReplyWindow
+        ? 'Han pasado más de 24 horas; manda una plantilla'
+      : outsideReplyWindow && selectedQrReady
+        ? 'Han pasado más de 24 horas; se enviará por QR'
       : selectedChannelCanSend
         ? ''
         : activeContact && sendingThroughHighLevel && activeHighLevelChannelNeedsPhone
@@ -12001,21 +12005,6 @@ export const PhoneChat: React.FC = () => {
     )
   }
 
-  const renderSenderBar = () => {
-    if (!activeContact) return null
-
-    if (!outsideReplyWindow || !selectedQrReady) return null
-
-    return (
-      <div className={`${styles.senderBar} ${styles.replyWindowSenderBar}`}>
-        <span className={styles.replyWindowNotice}>
-          <Clock size={12} />
-          Fuera de 24 h · se enviará por QR
-        </span>
-      </div>
-    )
-  }
-
   const renderAIAgentComposer = () => (
     <>
       {renderDraftAttachments()}
@@ -15915,86 +15904,87 @@ export const PhoneChat: React.FC = () => {
                 renderAIAgentComposer()
               ) : (
                 <>
-                  {renderSenderBar()}
                   {!composerBlockedByReplyWindow && renderAISuggestionBar()}
                   {!composerBlockedByReplyWindow && renderReplyPreviewBar()}
                   {!composerBlockedByReplyWindow && renderDraftAttachments()}
-                  {composerBlockedByReplyWindow ? (
-                    <div className={styles.replyWindowBlockedComposer}>
-                      <span className={styles.replyWindowBlockedIcon}>
-                        <Clock size={12} />
-                      </span>
-                      <span className={styles.replyWindowBlockedText}>
-                        <strong>Fuera de 24 horas</strong>
-                        <small>Manda una plantilla para volver a escribirle.</small>
-                      </span>
-                      <button type="button" onClick={handleOpenTemplatesSheet} aria-label="Enviar plantilla">
-                        <FileText size={14} />
-                      </button>
-                    </div>
-                  ) : (
-                    <div className={`${styles.composer} ${hasComposerContent ? styles.composerHasContent : ''} ${canOpenScheduleSheet ? styles.composerWithSchedule : ''} ${voicePanelActive ? styles.composerVoiceMode : ''}`}>
-                      {voicePanelActive ? (
-                        renderVoiceComposerPanel()
-                      ) : (
-                        <>
-                          {renderComposerChannelPicker()}
-                          <button type="button" ref={composerPlusRef} className={styles.composerPlus} onClick={openAttachmentsSheet} aria-label="Abrir adjuntos">
-                            <Plus size={24} />
+                  <div className={`${styles.composer} ${hasComposerContent ? styles.composerHasContent : ''} ${canOpenScheduleSheet ? styles.composerWithSchedule : ''} ${voicePanelActive ? styles.composerVoiceMode : ''}`}>
+                    {voicePanelActive ? (
+                      renderVoiceComposerPanel()
+                    ) : (
+                      <>
+                        {renderComposerChannelPicker()}
+                        <button
+                          type="button"
+                          ref={composerPlusRef}
+                          className={styles.composerPlus}
+                          onClick={composerBlockedByReplyWindow ? handleOpenTemplatesSheet : openAttachmentsSheet}
+                          aria-label={composerBlockedByReplyWindow ? 'Enviar plantilla' : 'Abrir adjuntos'}
+                        >
+                          {composerBlockedByReplyWindow ? <FileText size={22} /> : <Plus size={24} />}
+                        </button>
+                        <div className={styles.messageInputWrap}>
+                          <div
+                            ref={composerInputRef}
+                            className={styles.composerInput}
+                            role="textbox"
+                            aria-multiline="true"
+                            aria-label="Mensaje"
+                            aria-disabled={composerInputDisabled}
+                            data-placeholder={composerPlaceholder}
+                            contentEditable={!composerInputDisabled}
+                            suppressContentEditableWarning
+                            spellCheck
+                            autoCorrect="on"
+                            autoCapitalize="sentences"
+                            onInput={(event) => {
+                              syncComposerText(event.currentTarget)
+                            }}
+                            onPaste={handleComposerPaste}
+                            onKeyDown={(event) => {
+                              if (event.key === 'Enter' && !event.shiftKey) {
+                                event.preventDefault()
+                                event.stopPropagation()
+                                handleSendMessage()
+                              }
+                            }}
+                          />
+                        </div>
+                        {canOpenScheduleSheet && (
+                          <button
+                            type="button"
+                            ref={composerScheduleRef}
+                            className={styles.composerScheduleButton}
+                            onClick={handleOpenScheduleSheet}
+                            aria-label="Programar mensaje"
+                            title="Programar mensaje"
+                          >
+                            <Clock size={22} />
                           </button>
-                          <div className={styles.messageInputWrap}>
-                            <div
-                              ref={composerInputRef}
-                              className={styles.composerInput}
-                              role="textbox"
-                              aria-multiline="true"
-                              aria-label="Mensaje"
-                              aria-disabled={composerInputDisabled}
-                              data-placeholder={composerPlaceholder}
-                              contentEditable={!composerInputDisabled}
-                              suppressContentEditableWarning
-                              spellCheck
-                              autoCorrect="on"
-                              autoCapitalize="sentences"
-                              onInput={(event) => {
-                                syncComposerText(event.currentTarget)
-                              }}
-                              onPaste={handleComposerPaste}
-                              onKeyDown={(event) => {
-                                if (event.key === 'Enter' && !event.shiftKey) {
-                                  event.preventDefault()
-                                  event.stopPropagation()
-                                  handleSendMessage()
-                                }
-                              }}
-                            />
-                          </div>
-                          {canOpenScheduleSheet && (
+                        )}
+                        <div className={`${styles.composerTrailingActions} ${isWideChatDevice || composerBlockedByReplyWindow ? styles.composerTrailingActionsNoCamera : ''}`}>
+                          {!isWideChatDevice && !composerBlockedByReplyWindow && (
                             <button
                               type="button"
-                              ref={composerScheduleRef}
-                              className={styles.composerScheduleButton}
-                              onClick={handleOpenScheduleSheet}
-                              aria-label="Programar mensaje"
-                              title="Programar mensaje"
+                              className={`${styles.composerIconButton} ${styles.composerCameraButton}`}
+                              onClick={() => handlePickPhoto('camera')}
+                              disabled={hasComposerContent}
+                              tabIndex={hasComposerContent ? -1 : undefined}
+                              aria-hidden={hasComposerContent}
+                              aria-label="Cámara"
                             >
-                              <Clock size={22} />
+                              <Camera size={20} />
                             </button>
                           )}
-                          <div className={`${styles.composerTrailingActions} ${isWideChatDevice ? styles.composerTrailingActionsNoCamera : ''}`}>
-                            {!isWideChatDevice && (
-                              <button
-                                type="button"
-                                className={`${styles.composerIconButton} ${styles.composerCameraButton}`}
-                                onClick={() => handlePickPhoto('camera')}
-                                disabled={hasComposerContent}
-                                tabIndex={hasComposerContent ? -1 : undefined}
-                                aria-hidden={hasComposerContent}
-                                aria-label="Cámara"
-                              >
-                                <Camera size={20} />
-                              </button>
-                            )}
+                          {composerBlockedByReplyWindow ? (
+                            <button
+                              type="button"
+                              className={`${styles.composerIconButton} ${styles.composerSendButton}`}
+                              onClick={handleOpenTemplatesSheet}
+                              aria-label="Enviar plantilla"
+                            >
+                              <FileText size={18} />
+                            </button>
+                          ) : (
                             <button
                               type="button"
                               className={`${styles.composerIconButton} ${canSendMessage ? styles.composerSendButton : ''} ${voiceRecording ? styles.composerMicRecording : ''}`}
@@ -16006,11 +15996,11 @@ export const PhoneChat: React.FC = () => {
                             >
                               {canSendMessage ? <ArrowRight size={18} /> : <Mic size={20} />}
                             </button>
-                          </div>
-                        </>
-                      )}
-                    </div>
-                  )}
+                          )}
+                        </div>
+                      </>
+                    )}
+                  </div>
                 </>
               )}
             </div>

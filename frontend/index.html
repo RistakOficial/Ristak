@@ -16,16 +16,18 @@
     <script>
       (function () {
         var pathname = window.location.pathname || '/'
-        var isPhoneRoute = pathname === '/phone' || pathname.indexOf('/phone/') === 0
-        var isPhoneChatRoute = pathname === '/phone/chat' || pathname.indexOf('/phone/chat/') === 0
+        var isLegacyPhoneRoute = pathname === '/phone' || pathname.indexOf('/phone/') === 0
+        var isMobileRoute = pathname === '/movil' || pathname.indexOf('/movil/') === 0
+        var isPhoneRoute = isMobileRoute || isLegacyPhoneRoute
+        var isMobileHomeRoute = pathname === '/movil' || pathname === '/movil/' || pathname === '/phone' || pathname === '/phone/app'
         var title = 'Ristak'
         var themeColor = isPhoneRoute ? '#050505' : '#ffffff'
-        var manifest = isPhoneChatRoute
+        var manifest = isMobileHomeRoute
           ? '/manifest.phone-chat.webmanifest'
           : isPhoneRoute
             ? '/manifest.phone.webmanifest'
             : '/manifest.webmanifest'
-        var icon = isPhoneChatRoute
+        var icon = isMobileHomeRoute
           ? '/ristak-chat-home-apple-touch-icon.png'
           : isPhoneRoute
             ? '/ristak-chat-apple-touch-icon.png'

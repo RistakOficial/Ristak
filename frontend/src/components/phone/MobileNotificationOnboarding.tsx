@@ -15,7 +15,6 @@ type NotificationPromptSurface = 'native_phone' | 'mobile_browser' | 'desktop_br
 const STORAGE_PREFIX = 'ristak_mobile_message_notifications_prompt_v1'
 const SHOW_DELAY_MS = 650
 const TABLET_PORTRAIT_QUERY = '(orientation: portrait)'
-const PHONE_LANDSCAPE_LOCK_QUERY = '(orientation: landscape) and (max-height: 520px)'
 
 function getStoredDecision(storageKey: string) {
   try {
@@ -53,10 +52,6 @@ function isOrientationLockViewport() {
   const deviceMode = getPortableDeviceMode()
   if (deviceMode === 'tablet') {
     return window.matchMedia?.(TABLET_PORTRAIT_QUERY).matches ?? false
-  }
-
-  if (deviceMode === 'phone') {
-    return window.matchMedia?.(PHONE_LANDSCAPE_LOCK_QUERY).matches ?? false
   }
 
   return false

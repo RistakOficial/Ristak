@@ -1,8 +1,8 @@
-# Ristak Chat iOS App Store Release
+# Ristak Mobile iOS App Store Release
 
 This is the release path for the Capacitor iOS shell at `frontend/ios/App`. The App Store build is for the mobile `/movil` experience, not the full desktop dashboard.
 
-The native iOS shell keeps users inside the phone-chat flow:
+The native iOS shell keeps users inside the mobile `/movil` flow:
 
 - `/movil`
 - `/movil/login`

@@ -14,9 +14,10 @@ async function bootstrapRistak() {
   installBrowserAutofillGuard()
   installEnterSubmitShortcuts()
   installNumberInputWheelGuard()
+  const nativeShellReady = mobileAppService.configureShell()
   await ensureLocalDevAuth()
   registerPwa()
-  mobileAppService.configureShell()
+  void nativeShellReady
 
   ReactDOM.createRoot(document.getElementById('root')!).render(
     <React.StrictMode>

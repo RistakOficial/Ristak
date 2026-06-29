@@ -5220,57 +5220,6 @@
   -webkit-text-size-adjust: 100%;
 }
 
-.senderBar {
-  display: flex;
-  align-items: center;
-  justify-content: flex-start;
-  gap: 6px;
-  min-width: 0;
-  padding: 3px 6px 0 35px;
-  border-top: 1px solid var(--phone-chat-border);
-  overflow: hidden;
-}
-
-.replyWindowSenderBar {
-  justify-content: center;
-  padding-right: 12px;
-  padding-left: 12px;
-}
-
-.conversationReplyWindowNotice {
-  display: none;
-  align-items: center;
-  flex: 0 0 auto;
-  gap: 5px;
-  min-height: 30px;
-  padding: 0 10px;
-  border: 1px solid var(--phone-chat-border);
-  border-radius: 999px;
-  color: var(--phone-chat-muted);
-  background: color-mix(in srgb, var(--phone-chat-surface) 92%, transparent);
-  font-size: 11px;
-  font-weight: 820;
-  white-space: nowrap;
-}
-
-.replyWindowNotice {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 6px;
-  min-height: 26px;
-  max-width: 100%;
-  padding: 0 10px;
-  border: 1px solid color-mix(in srgb, var(--warn) 28%, transparent);
-  border-radius: 999px;
-  font-size: 11px;
-  font-weight: 820;
-  text-align: center;
-  white-space: nowrap;
-  color: var(--warn);
-  background: color-mix(in srgb, var(--warn-soft) 72%, var(--phone-chat-surface));
-}
-
 .aiSuggestionBar {
   display: flex;
   align-items: center;
@@ -5989,81 +5938,6 @@
     width: 40px;
     height: 40px;
   }
-}
-
-.replyWindowBlockedComposer {
-  display: grid;
-  grid-template-columns: 26px minmax(0, 1fr) 28px;
-  align-items: center;
-  gap: 8px;
-  box-sizing: border-box;
-  min-height: calc(38px + env(safe-area-inset-bottom));
-  margin: 2px 5px max(3px, env(safe-area-inset-bottom));
-  padding: 3px 6px 3px 7px;
-  border: 1px solid color-mix(in srgb, var(--warn) 24%, var(--phone-chat-border));
-  border-radius: 20px;
-  color: var(--warn);
-  background:
-    linear-gradient(
-      135deg,
-      color-mix(in srgb, var(--warn-soft) 76%, var(--phone-chat-surface)),
-      color-mix(in srgb, var(--phone-chat-surface) 90%, var(--warn-soft))
-    );
-}
-
-:global(html[data-phone-chat-keyboard="true"]) .replyWindowBlockedComposer {
-  min-height: 44px;
-  margin-bottom: 5px;
-}
-
-.replyWindowBlockedIcon,
-.replyWindowBlockedComposer button {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  border: 0;
-}
-
-.replyWindowBlockedIcon {
-  width: 24px;
-  height: 24px;
-  border-radius: 999px;
-  color: var(--warn);
-  background: color-mix(in srgb, var(--warn-soft) 82%, var(--phone-chat-surface));
-}
-
-.replyWindowBlockedText {
-  display: grid;
-  min-width: 0;
-  gap: 1px;
-}
-
-.replyWindowBlockedText strong {
-  overflow: hidden;
-  color: var(--warn);
-  font-size: 10px;
-  font-weight: 860;
-  line-height: 1.15;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.replyWindowBlockedText small {
-  overflow: hidden;
-  color: color-mix(in srgb, var(--warn) 72%, var(--phone-chat-muted));
-  font-size: 9px;
-  font-weight: 690;
-  line-height: 1.2;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.replyWindowBlockedComposer button {
-  width: 28px;
-  height: 28px;
-  border-radius: 999px;
-  color: #ffffff;
-  background: var(--phone-chat-primary);
 }
 
 .aiComposer {
@@ -8750,10 +8624,6 @@
   max-width: min(420px, 100%);
 }
 
-.phoneChatPage:is([data-phone-chat-device="tablet"], [data-phone-chat-device="desktop"]) .conversationReplyWindowNotice {
-  display: none;
-}
-
 .phoneChatPage:is([data-phone-chat-device="tablet"], [data-phone-chat-device="desktop"]) .phoneFrame > .contactInfoScreen {
   top: 0;
   right: 0;
@@ -9154,29 +9024,12 @@
   gap: 5px;
 }
 
-.phoneChatPage:is([data-phone-chat-device="tablet"], [data-phone-chat-device="desktop"]) .senderBar,
 .phoneChatPage:is([data-phone-chat-device="tablet"], [data-phone-chat-device="desktop"]) .aiSuggestionBar,
 .phoneChatPage:is([data-phone-chat-device="tablet"], [data-phone-chat-device="desktop"]) .replyPreviewBar,
 .phoneChatPage:is([data-phone-chat-device="tablet"], [data-phone-chat-device="desktop"]) .draftAttachments {
   width: min(100%, 1280px);
   margin-right: auto;
   margin-left: auto;
-}
-
-.phoneChatPage:is([data-phone-chat-device="tablet"], [data-phone-chat-device="desktop"]) .senderBar {
-  justify-content: center;
-  padding: 0 16px;
-  border-top: 0;
-}
-
-.phoneChatPage:is([data-phone-chat-device="tablet"], [data-phone-chat-device="desktop"]) .replyWindowSenderBar {
-  padding-top: 3px;
-}
-
-.phoneChatPage:is([data-phone-chat-device="tablet"], [data-phone-chat-device="desktop"]) .replyWindowNotice {
-  min-height: 32px;
-  padding: 0 14px;
-  box-shadow: 0 10px 28px rgba(var(--phone-chat-primary-rgb), 0.1);
 }
 
 .phoneChatPage:is([data-phone-chat-device="tablet"], [data-phone-chat-device="desktop"]) .aiSuggestionBar {
@@ -9188,31 +9041,8 @@
   margin-bottom: 0;
 }
 
-.phoneChatPage:is([data-phone-chat-device="tablet"], [data-phone-chat-device="desktop"]) .replyWindowBlockedComposer {
-  width: min(100%, 760px);
-  margin: 0 auto;
-  border: 1px solid var(--phone-chat-border);
-  border-radius: 999px;
-  background: color-mix(in srgb, var(--phone-chat-surface) 94%, transparent);
-  box-shadow: 0 18px 46px rgba(var(--phone-chat-primary-rgb), 0.12);
-  backdrop-filter: blur(22px);
-  -webkit-backdrop-filter: blur(22px);
-}
-
 .phoneChatPage:is([data-phone-chat-device="tablet"], [data-phone-chat-device="desktop"]) .mobileDock {
   display: none;
-}
-
-@media (orientation: landscape) and (max-height: 520px) {
-  .phoneChatPage[data-phone-chat-device="phone"] .portraitLock {
-    display: grid;
-  }
-
-  .phoneChatPage[data-phone-chat-device="phone"] .phoneFrame,
-  .phoneChatPage[data-phone-chat-device="phone"] .mobileDock {
-    visibility: hidden;
-    pointer-events: none;
-  }
 }
 
 @media (orientation: portrait) {
