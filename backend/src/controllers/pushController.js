@@ -13,7 +13,7 @@ export async function getPushPublicKey(req, res) {
   try {
     res.json({
       success: true,
-      data: getPublicPushConfig()
+      data: await getPublicPushConfig()
     })
   } catch (error) {
     logger.error(`[Push Controller] Error obteniendo llave pública: ${error.message}`)

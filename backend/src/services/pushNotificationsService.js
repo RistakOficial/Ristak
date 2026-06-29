@@ -4,6 +4,11 @@ import http2 from 'http2'
 import webPush from 'web-push'
 import { db, getAppConfig, setAppConfig, getUserAppConfig } from '../config/database.js'
 import { logger } from '../utils/logger.js'
+import {
+  getCentralMobilePushStatus,
+  isLicenseEnforced,
+  sendCentralMobilePushNotifications
+} from './licenseService.js'
 import { shouldSuppressChatNotificationForConversationalAgent } from './conversationalAgentService.js'
 // (MOB-002 / NOTI-004) Importamos el chequeo de contactos ocultos para no exponerlos en el push
 import { resolvePushNotificationTargetForEvent, isContactHiddenFromNotifications } from './notificationPreferencesService.js'
@@ -101,8 +106,10 @@ const pushConfigured = Boolean(VAPID_PUBLIC_KEY && VAPID_PRIVATE_KEY)
 const fcmConfigured = Boolean(FCM_PROJECT_ID && (FCM_SERVICE_ACCOUNT_JSON || FCM_SERVICE_ACCOUNT_FILE))
 const apnsConfigured = Boolean(APNS_KEY_ID && APNS_TEAM_ID && APNS_BUNDLE_ID && (APNS_PRIVATE_KEY || APNS_PRIVATE_KEY_FILE))
 const nativePushConfigured = fcmConfigured || apnsConfigured
+const CENTRAL_MOBILE_PUSH_STATUS_TTL_MS = 60_000
 let fcmAccessTokenCache = { token: '', expiresAt: 0 }
 let apnsJwtCache = { token: '', expiresAt: 0 }
+let centralMobilePushStatusCache = { status: null, expiresAt: 0 }
 
 if (pushConfigured) {
   webPush.setVapidDetails(VAPID_SUBJECT, VAPID_PUBLIC_KEY, VAPID_PRIVATE_KEY)
@@ -119,7 +126,7 @@ if (pushConfigured) {
 }
 
 if (!nativePushConfigured) {
-  logger.warn('[Push] Push nativo sin FCM/APNs; los celulares nativos se guardan, pero no recibirán notificaciones hasta configurar credenciales.')
+  logger.warn('[Push] Push nativo local sin FCM/APNs; iPhone puede enviarse por Installer central si APNs esta configurado alla.')
 }
 
 function safeJsonParse(value, fallback) {
@@ -128,6 +135,65 @@ function safeJsonParse(value, fallback) {
   } catch {
     return fallback
   }
+}
+
+function emptyCentralMobilePushStatus(reason = '') {
+  return {
+    configured: false,
+    nativeConfigured: false,
+    iosConfigured: false,
+    androidConfigured: false,
+    reason
+  }
+}
+
+async function getCentralMobilePushStatusCached({ force = false } = {}) {
+  if (!isLicenseEnforced()) return emptyCentralMobilePushStatus('standalone')
+
+  if (!force && centralMobilePushStatusCache.status && centralMobilePushStatusCache.expiresAt > Date.now()) {
+    return centralMobilePushStatusCache.status
+  }
+
+  try {
+    const status = await getCentralMobilePushStatus()
+    const normalized = {
+      configured: status?.configured === true || status?.nativeConfigured === true,
+      nativeConfigured: status?.nativeConfigured === true || status?.configured === true,
+      iosConfigured: status?.iosConfigured === true || status?.ios?.configured === true,
+      androidConfigured: status?.androidConfigured === true || status?.android?.configured === true,
+      ios: status?.ios || null,
+      android: status?.android || null
+    }
+    centralMobilePushStatusCache = {
+      status: normalized,
+      expiresAt: Date.now() + CENTRAL_MOBILE_PUSH_STATUS_TTL_MS
+    }
+    return normalized
+  } catch (error) {
+    const status = emptyCentralMobilePushStatus('central_unavailable')
+    centralMobilePushStatusCache = {
+      status,
+      expiresAt: Date.now() + Math.min(10_000, CENTRAL_MOBILE_PUSH_STATUS_TTL_MS)
+    }
+    logger.warn(`[Push] No se pudo leer push movil central: ${error.message}`)
+    return status
+  }
+}
+
+async function getEffectivePushTransportStatus() {
+  const central = await getCentralMobilePushStatusCached()
+  return {
+    webConfigured: pushConfigured,
+    nativeConfigured: nativePushConfigured || central.iosConfigured || central.androidConfigured,
+    androidConfigured: fcmConfigured || central.androidConfigured,
+    iosConfigured: apnsConfigured || central.iosConfigured,
+    central
+  }
+}
+
+async function hasAnyPushTransport() {
+  const status = await getEffectivePushTransportStatus()
+  return status.webConfigured || status.nativeConfigured
 }
 
 function normalizeCalendarIds(value = []) {
@@ -555,13 +621,14 @@ async function getGlobalCalendarPushConfig() {
   return { enabled, calendarIds }
 }
 
-export function getPublicPushConfig() {
+export async function getPublicPushConfig() {
+  const transport = await getEffectivePushTransportStatus()
   return {
     configured: pushConfigured,
     publicKey: pushConfigured ? VAPID_PUBLIC_KEY : '',
-    nativeConfigured: nativePushConfigured,
-    androidConfigured: fcmConfigured,
-    iosConfigured: apnsConfigured
+    nativeConfigured: transport.nativeConfigured,
+    androidConfigured: transport.androidConfigured,
+    iosConfigured: transport.iosConfigured
   }
 }
 
@@ -922,11 +989,58 @@ async function resolveExperienceForRow(experience, row) {
   return experience
 }
 
-async function sendMobileNotificationRows(rows = [], payload = {}, experience = {}) {
+function shouldDisableMobileDeviceFromCentralResult(result = {}) {
+  const statusCode = Number(result.statusCode || result.status || 0)
+  const reason = String(result.reason || result.error || '').toUpperCase()
+  return statusCode === 400 ||
+    statusCode === 404 ||
+    statusCode === 410 ||
+    reason.includes('BADDEVICETOKEN') ||
+    reason.includes('UNREGISTERED')
+}
+
+async function markCentralMobileDeviceResults(rowsById, results = []) {
+  await Promise.all(results.map(async (result) => {
+    if (result?.success || result?.skipped) return
+    const row = rowsById.get(String(result?.id || '').trim())
+    if (!row) return
+    await db.run(
+      `UPDATE mobile_push_devices
+       SET enabled = ?, last_error = ?, updated_at = CURRENT_TIMESTAMP
+       WHERE id = ?`,
+      [
+        shouldDisableMobileDeviceFromCentralResult(result) ? 0 : 1,
+        result?.error || result?.reason || 'Error enviando notificacion al celular',
+        row.id
+      ]
+    ).catch(() => {})
+  }))
+}
+
+async function sendMobileNotificationRows(rows = [], payload = {}, experience = {}, transport = {}) {
   let sent = 0
+  const centralDevices = []
+  const centralRowsById = new Map()
+  const centralIosConfigured = transport?.central?.iosConfigured === true
+
   await Promise.all(rows.map(async (row) => {
     const platform = normalizePlatform(row.platform)
     const rowExperience = await resolveExperienceForRow(experience, row) // (MOB-006) por usuario
+
+    if (platform === 'ios' && !apnsConfigured && centralIosConfigured) {
+      centralDevices.push({
+        id: row.id,
+        platform: 'ios',
+        token: row.token,
+        experience: rowExperience
+      })
+      centralRowsById.set(String(row.id || '').trim(), row)
+      return
+    }
+
+    if (platform === 'android' && !fcmConfigured) return
+    if (platform === 'ios' && !apnsConfigured) return
+
     try {
       if (platform === 'android') {
         await sendFcmNotification(row, payload, rowExperience)
@@ -941,6 +1055,17 @@ async function sendMobileNotificationRows(rows = [], payload = {}, experience = 
       await markMobileDeviceError(row, error)
     }
   }))
+
+  if (centralDevices.length > 0) {
+    try {
+      const result = await sendCentralMobilePushNotifications({ devices: centralDevices, payload })
+      sent += Number(result?.sent || 0)
+      await markCentralMobileDeviceResults(centralRowsById, Array.isArray(result?.results) ? result.results : [])
+    } catch (error) {
+      logger.warn(`[Push] No se pudo enviar iOS por Installer central: ${error.message}`)
+      await Promise.all(Array.from(centralRowsById.values()).map((row) => markMobileDeviceError(row, error)))
+    }
+  }
 
   return sent
 }
@@ -974,7 +1099,8 @@ export async function sendAppNotificationPayload(payload = {}, { calendarId = ''
     return appNotificationPayloadSenderForTest(payload, { calendarId, userIds, enabledKey })
   }
 
-  if (!pushConfigured && !nativePushConfigured) {
+  const transport = await getEffectivePushTransportStatus()
+  if (!pushConfigured && !transport.nativeConfigured) {
     return { sent: 0, webSent: 0, nativeSent: 0, skipped: true, reason: 'not_configured' }
   }
 
@@ -989,7 +1115,7 @@ export async function sendAppNotificationPayload(payload = {}, { calendarId = ''
     pushConfigured
       ? (calendarId ? getSubscriptionsForCalendar(calendarId) : getEnabledSubscriptions())
       : Promise.resolve([]),
-    nativePushConfigured
+    transport.nativeConfigured
       ? (calendarId ? getMobileDevicesForCalendar(calendarId) : getEnabledMobileDevices(normalizedUserIds))
       : Promise.resolve([])
   ])
@@ -1019,7 +1145,7 @@ export async function sendAppNotificationPayload(payload = {}, { calendarId = ''
 
   const [webSent, nativeSent] = await Promise.all([
     pushConfigured ? sendNotificationRows(filteredWebRows, normalizedPayload) : Promise.resolve(0),
-    nativePushConfigured ? sendMobileNotificationRows(filteredNativeRows, normalizedPayload, experienceResolver) : Promise.resolve(0)
+    transport.nativeConfigured ? sendMobileNotificationRows(filteredNativeRows, normalizedPayload, experienceResolver, transport) : Promise.resolve(0)
   ])
 
   return {
@@ -1031,7 +1157,7 @@ export async function sendAppNotificationPayload(payload = {}, { calendarId = ''
 }
 
 export async function sendCalendarAppointmentNotification(appointment = {}, options = {}) {
-  if (!pushConfigured && !nativePushConfigured) return { sent: 0, skipped: true, reason: 'not_configured' }
+  if (!(await hasAnyPushTransport())) return { sent: 0, skipped: true, reason: 'not_configured' }
 
   const calendarId = String(options.calendarId || appointment.calendarId || appointment.calendar_id || '').trim()
   if (!calendarId) return { sent: 0, skipped: true, reason: 'missing_calendar' }
@@ -1099,7 +1225,7 @@ async function getAppointmentContactName(appointment = {}, options = {}) {
 }
 
 export async function sendAppointmentConfirmationNotification(appointment = {}, options = {}) {
-  if (!pushConfigured && !nativePushConfigured) return { sent: 0, skipped: true, reason: 'not_configured' }
+  if (!(await hasAnyPushTransport())) return { sent: 0, skipped: true, reason: 'not_configured' }
 
   // (MOB-006) El on/off ahora se resuelve POR usuario destinatario en el dispatcher
   // (enabledKey, fallback al global), no como kill-switch global aquí.
@@ -1140,7 +1266,7 @@ export async function sendAppointmentConfirmationNotification(appointment = {}, 
 }
 
 export async function sendChatMessageNotification(message = {}) {
-  if (!pushConfigured && !nativePushConfigured) return { sent: 0, skipped: true, reason: 'not_configured' }
+  if (!(await hasAnyPushTransport())) return { sent: 0, skipped: true, reason: 'not_configured' }
 
   // (MOB-006) El on/off de chat se resuelve POR usuario destinatario en el dispatcher.
   const suppressByAgent = await shouldSuppressChatNotificationForConversationalAgent(message.contactId).catch((error) => {
@@ -1184,7 +1310,7 @@ export async function sendChatMessageNotification(message = {}) {
 }
 
 export async function sendConversationalAgentPriorityNotification(signal = {}) {
-  if (!pushConfigured && !nativePushConfigured) return { sent: 0, skipped: true, reason: 'not_configured' }
+  if (!(await hasAnyPushTransport())) return { sent: 0, skipped: true, reason: 'not_configured' }
 
   // (MOB-006) El on/off de chat se resuelve POR usuario destinatario en el dispatcher.
   const contactId = String(signal.contactId || '').trim()
@@ -1232,7 +1358,7 @@ export async function sendConversationalAgentPriorityNotification(signal = {}) {
 }
 
 export async function sendPaymentNotification(payment = {}) {
-  if (!pushConfigured && !nativePushConfigured) return { sent: 0, skipped: true, reason: 'not_configured' }
+  if (!(await hasAnyPushTransport())) return { sent: 0, skipped: true, reason: 'not_configured' }
 
   // (MOB-006) El on/off de pagos se resuelve POR usuario destinatario en el dispatcher.
   const preferenceTarget = await getPushPreferenceTarget('payments')

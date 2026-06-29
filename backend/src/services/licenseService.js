@@ -670,6 +670,23 @@ export async function refreshCentralMercadoPagoToken({ mode = 'test', refreshTok
   return data.token || {}
 }
 
+export async function getCentralMobilePushStatus() {
+  const data = await callLicenseServer('/api/license/mobile-push/status')
+  return data.push || {
+    configured: false,
+    nativeConfigured: false,
+    iosConfigured: false,
+    androidConfigured: false
+  }
+}
+
+export async function sendCentralMobilePushNotifications({ devices = [], payload = {} } = {}) {
+  return callLicenseServer('/api/license/mobile-push/send', {
+    devices,
+    payload
+  })
+}
+
 export async function getCentralAccountCancellationStatus() {
   return callLicenseServer('/api/license/account-cancellation/status')
 }

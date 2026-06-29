@@ -54,16 +54,6 @@ services:
         value: Ristak Sites & Forms
       - key: INTERNAL_INSTALLER_TOKEN
         sync: false
-      - key: APNS_KEY_ID
-        sync: false
-      - key: APNS_TEAM_ID
-        value: Y2L8669JNL
-      - key: APNS_BUNDLE_ID
-        value: com.ristak.app
-      - key: APNS_PRIVATE_KEY
-        sync: false
-      - key: APNS_ENV
-        value: production
 
 databases:
   - name: ristak-db

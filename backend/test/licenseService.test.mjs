@@ -107,6 +107,25 @@ function startMockServer() {
           return
         }
 
+        if (req.url === '/api/license/mobile-push/status') {
+          res.end(JSON.stringify({
+            success: true,
+            push: {
+              configured: true,
+              nativeConfigured: true,
+              iosConfigured: true,
+              androidConfigured: false
+            }
+          }))
+          return
+        }
+
+        if (req.url === '/api/license/mobile-push/send') {
+          const devices = Array.isArray(lastRequestBody?.devices) ? lastRequestBody.devices : []
+          res.end(JSON.stringify({ success: true, sent: devices.length, results: devices.map((device) => ({ id: device.id, platform: device.platform, success: true })) }))
+          return
+        }
+
         if (req.url === '/api/setup-token/verify' || req.url === '/api/setup-token/consume') {
           const { token } = lastRequestBody || {}
           if (token === 'good-token') {
@@ -259,6 +278,28 @@ test('dominio de app verificado se usa al crear links centrales de Google', asyn
 
   assert.equal(lastRequestBody.return_path, '/settings/calendars/google')
   assert.equal(lastRequestBody.app_url, 'https://tenant.onrender.com')
+})
+
+test('push movil central usa el broker del Installer con datos de licencia', async () => {
+  licenseService.setVerifiedAppBaseUrlResolverForTests(async () => 'https://app.ristak.test')
+
+  const status = await licenseService.getCentralMobilePushStatus()
+  assert.equal(status.iosConfigured, true)
+  assert.equal(lastRequestBody.client_id, 'cli_1')
+  assert.equal(lastRequestBody.license_key, 'RSTK-TEST-0000')
+  assert.equal(lastRequestBody.installation_id, 'inst_1')
+  assert.equal(lastRequestBody.app_url, 'https://app.ristak.test')
+
+  const result = await licenseService.sendCentralMobilePushNotifications({
+    devices: [{ id: 'native_push_1', platform: 'ios', token: 'token-ios-1' }],
+    payload: { title: 'Nuevo mensaje', body: 'WhatsApp' }
+  })
+
+  assert.equal(result.sent, 1)
+  assert.equal(lastRequestBody.client_id, 'cli_1')
+  assert.equal(lastRequestBody.devices[0].id, 'native_push_1')
+  assert.equal(lastRequestBody.devices[0].token, 'token-ios-1')
+  assert.equal(lastRequestBody.payload.title, 'Nuevo mensaje')
 })
 
 test('licencia suspendida bloquea aunque el password local sea correcto', async () => {
