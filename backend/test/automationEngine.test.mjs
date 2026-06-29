@@ -97,6 +97,26 @@ test('renderTemplate expone datos del pago para acciones posteriores', () => {
   assert.equal(renderTemplate('{{payment.invoice_number}}', paymentCtx), 'INV-55')
 })
 
+test('renderTemplate toma el producto del item de pago cuando viene en metadata', () => {
+  const paymentCtx = {
+    paymentId: 'pay_456',
+    amount: 2500,
+    currency: 'MXN',
+    paymentStatus: 'paid',
+    metadata: {
+      lineItems: [
+        {
+          name: 'Programa: Magnetismo de Pacientes',
+          productId: 'prod_magnetismo',
+          localProductId: 'local_magnetismo'
+        }
+      ]
+    }
+  }
+
+  assert.equal(renderTemplate('{{payment.product}}', paymentCtx), 'Programa: Magnetismo de Pacientes')
+})
+
 test('filtersMatch: coincide / NO coincide / contiene / NO contiene', () => {
   assert.equal(filtersMatch([{ field: 'source', match: 'is', value: 'facebook' }], ctx), true)
   assert.equal(filtersMatch([{ field: 'source', match: 'not', value: 'Facebook' }], ctx), false)
@@ -119,6 +139,16 @@ test('filtersMatch: filtra datos completos del evento de pago', () => {
     currency: 'MXN',
     paymentStatus: 'refunded',
     product: 'Curso',
+    metadata: {
+      lineItems: [
+        {
+          name: 'Curso',
+          productId: 'prod_curso',
+          localProductId: 'local_curso',
+          ghlProductId: 'ghl_curso'
+        }
+      ]
+    },
     provider: 'stripe',
     paymentMethod: 'card',
     reference: 'Invoice #INV-55',
@@ -126,8 +156,12 @@ test('filtersMatch: filtra datos completos del evento de pago', () => {
   }
   assert.equal(filtersMatch([{ field: 'payment_status', match: 'is', value: 'refunded' }], paymentCtx), true)
   assert.equal(filtersMatch([{ field: 'amount', match: 'is', value: '1499' }], paymentCtx), true)
+  assert.equal(filtersMatch([{ field: 'product', match: 'is', value: 'prod_curso' }], paymentCtx), true)
+  assert.equal(filtersMatch([{ field: 'product', match: 'is', value: 'local_curso' }], paymentCtx), true)
+  assert.equal(filtersMatch([{ field: 'product', match: 'contains', value: 'curso' }], paymentCtx), true)
   assert.equal(filtersMatch([{ field: 'payment_method', match: 'contains', value: 'card' }], paymentCtx), true)
   assert.equal(filtersMatch([{ field: 'receipt', match: 'contains', value: 'INV-55' }], paymentCtx), true)
+  assert.equal(filtersMatch([{ field: 'product', match: 'not', value: 'prod_otro' }], paymentCtx), true)
   assert.equal(filtersMatch([{ field: 'provider', match: 'is', value: 'paypal' }], paymentCtx), false)
 })
 

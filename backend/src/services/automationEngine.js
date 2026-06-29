@@ -548,6 +548,102 @@ function paymentObjectFromContext(ctx = {}) {
     : {}
 }
 
+function paymentMetadataFromContext(ctx = {}) {
+  const payment = paymentObjectFromContext(ctx)
+  return {
+    ...parseJson(payment.metadata_json, {}),
+    ...parseJson(payment.metadataJson, {}),
+    ...parseJson(payment.metadata, {}),
+    ...parseJson(ctx.metadata_json, {}),
+    ...parseJson(ctx.metadataJson, {}),
+    ...parseJson(ctx.metadata, {})
+  }
+}
+
+function pushCleanPaymentCandidate(candidates, ...values) {
+  for (const value of values) {
+    const cleaned = cleanString(value)
+    if (cleaned) candidates.push(cleaned)
+  }
+}
+
+function paymentLineItemsFromContext(ctx = {}) {
+  const payment = paymentObjectFromContext(ctx)
+  const metadata = paymentMetadataFromContext(ctx)
+  const sources = [
+    ctx.lineItems,
+    ctx.line_items,
+    payment.lineItems,
+    payment.line_items,
+    payment.items,
+    metadata.lineItems,
+    metadata.line_items,
+    metadata.items,
+    metadata.invoicePayload?.items
+  ]
+  return sources.find((source) => Array.isArray(source) && source.length > 0) ||
+    sources.find((source) => Array.isArray(source)) ||
+    []
+}
+
+function paymentProductCandidatesFromContext(ctx = {}) {
+  const payment = paymentObjectFromContext(ctx)
+  const candidates = []
+  pushCleanPaymentCandidate(
+    candidates,
+    ctx.product,
+    ctx.productName,
+    ctx.product_name,
+    payment.product,
+    payment.productName,
+    payment.product_name,
+    ctx.title,
+    payment.title,
+    ctx.description,
+    payment.description,
+    ctx.productId,
+    ctx.product_id,
+    payment.productId,
+    payment.product_id,
+    ctx.localProductId,
+    ctx.local_product_id,
+    payment.localProductId,
+    payment.local_product_id,
+    ctx.ghlProductId,
+    ctx.ghl_product_id,
+    payment.ghlProductId,
+    payment.ghl_product_id
+  )
+
+  for (const item of paymentLineItemsFromContext(ctx)) {
+    if (!item || typeof item !== 'object') continue
+    pushCleanPaymentCandidate(
+      candidates,
+      item.name,
+      item.title,
+      item.description,
+      item.productName,
+      item.product_name,
+      item.productId,
+      item.product_id,
+      item.product,
+      item.localProductId,
+      item.local_product_id,
+      item.ghlProductId,
+      item.ghl_product_id,
+      item.sku
+    )
+  }
+
+  const seen = new Set()
+  return candidates.filter((candidate) => {
+    const key = normalizeText(candidate)
+    if (!key || seen.has(key)) return false
+    seen.add(key)
+    return true
+  })
+}
+
 function publicPaymentIdFromContext(ctx = {}) {
   const payment = paymentObjectFromContext(ctx)
   return firstCleanPaymentValue(
@@ -602,6 +698,7 @@ function paymentDataFromContext(ctx = {}) {
   const payment = paymentObjectFromContext(ctx)
   const publicPaymentId = publicPaymentIdFromContext(ctx)
   const paymentUrl = buildPaymentPageUrlFromContext(ctx)
+  const productCandidates = paymentProductCandidatesFromContext(ctx)
   const receiptUrl = firstCleanPaymentValue(
     ctx.receiptUrl,
     ctx.receipt_url,
@@ -621,7 +718,7 @@ function paymentDataFromContext(ctx = {}) {
     monto: ctx.amount ?? payment.amount ?? '',
     moneda: ctx.currency || payment.currency || '',
     estado: ctx.paymentStatus || ctx.payment_status || payment.paymentStatus || payment.payment_status || ctx.status || payment.status || '',
-    producto: ctx.product || payment.product || ctx.title || payment.title || ctx.description || payment.description || '',
+    producto: firstCleanPaymentValue(ctx.product, payment.product, productCandidates[0], ctx.title, payment.title, ctx.description, payment.description),
     proveedor: ctx.provider || ctx.paymentProvider || ctx.gateway || payment.provider || payment.paymentProvider || payment.gateway || '',
     metodo_pago: ctx.paymentMethod || ctx.payment_method || ctx.method || payment.paymentMethod || payment.payment_method || payment.method || '',
     recibo: ctx.receipt || payment.receipt || ctx.reference || payment.reference || ctx.invoiceNumber || payment.invoiceNumber || ctx.invoiceId || payment.invoiceId || '',
@@ -1009,7 +1106,7 @@ function filterFieldValue(filter, ctx) {
     case 'appointment_type': return ctx.appointmentType || null
     case 'payment_status': return ctx.paymentStatus || ctx.payment_status || ctx.status || null
     case 'amount': return ctx.amount ?? null
-    case 'product': return ctx.product || null
+    case 'product': return paymentProductCandidatesFromContext(ctx)[0] || null
     case 'currency': return ctx.currency || null
     case 'provider': return ctx.provider || ctx.paymentProvider || ctx.gateway || null
     case 'payment_method': return ctx.paymentMethod || ctx.payment_method || ctx.method || null
@@ -1070,8 +1167,28 @@ function evaluateChangedDetailFilter(filter, ctx) {
   }
 }
 
+function evaluateProductFilter(filter, ctx) {
+  const candidates = paymentProductCandidatesFromContext(ctx)
+  if (candidates.length === 0) return true
+  const normalizedCandidates = candidates.map(normalizeText).filter(Boolean)
+  const expected = normalizeText(filter.value)
+  const exactMatch = normalizedCandidates.some((candidate) => candidate === expected)
+  const partialMatch = normalizedCandidates.some((candidate) => candidate.includes(expected))
+  switch (filter.match) {
+    case 'not': return !exactMatch
+    case 'contains': return partialMatch
+    case 'not_contains': return !partialMatch
+    case 'starts_with': return normalizedCandidates.some((candidate) => candidate.startsWith(expected))
+    case 'ends_with': return normalizedCandidates.some((candidate) => candidate.endsWith(expected))
+    case 'empty': return normalizedCandidates.length === 0
+    case 'not_empty': return normalizedCandidates.length > 0
+    default: return exactMatch
+  }
+}
+
 function evaluateFilter(filter, ctx) {
   if (filter.field === 'changed_detail') return evaluateChangedDetailFilter(filter, ctx)
+  if (filter.field === 'product') return evaluateProductFilter(filter, ctx)
   const actualRaw = filterFieldValue(filter, ctx)
   if (actualRaw === null) return true
   const actual = normalizeText(actualRaw)
@@ -1202,7 +1319,8 @@ function triggerMatches(trigger, eventType, ctx) {
         if (operator === 'eq' && amount !== expected) return false
       }
       const product = str(config.product)
-      return !product || normalizeText(product) === normalizeText(ctx.product)
+      if (!product) return true
+      return paymentProductCandidatesFromContext(ctx).some((candidate) => normalizeText(candidate) === normalizeText(product))
     }
 
     case 'refund':
@@ -1276,7 +1394,7 @@ function ruleFieldValue(rule, ctx) {
     case 'pay-has': return (ctx.paymentId || ctx.payment_id || ctx.amount || ctx.status || ctx.paymentStatus) ? 'true' : 'false'
     case 'pay-status': return ctx.paymentStatus || ctx.payment_status || ctx.status || ''
     case 'pay-amount': return ctx.amount ?? ''
-    case 'pay-product': return ctx.product || ctx.title || ctx.description || ''
+    case 'pay-product': return paymentProductCandidatesFromContext(ctx)[0] || ctx.product || ctx.title || ctx.description || ''
     case 'pay-currency': return ctx.currency || ''
     case 'pay-date': return ctx.paymentDate || ctx.date || ctx.createdAt || ''
     case 'form-submitted': return (ctx.submissionId || ctx.submission_id || primaryFormIdFromContext(ctx)) ? 'true' : 'false'

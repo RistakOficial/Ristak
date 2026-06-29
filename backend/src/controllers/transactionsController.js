@@ -130,6 +130,35 @@ const resolveTransactionPaymentUrl = (transaction = {}, baseUrl = '') => {
   return cleanString(transaction.payment_url) || localUrl
 }
 
+const buildTransactionAutomationPayload = (transaction = {}, req, overrides = {}) => {
+  const metadata = parseJson(transaction.metadata_json, {})
+  return {
+    contactId: transaction.contact_id,
+    paymentId: transaction.id || '',
+    amount: transaction.amount,
+    currency: transaction.currency,
+    status: transaction.status || '',
+    paymentStatus: transaction.status || '',
+    product: transaction.description || transaction.title || '',
+    provider: transaction.payment_method || '',
+    paymentMethod: transaction.payment_method || '',
+    paymentMode: transaction.payment_mode || '',
+    reference: transaction.reference || '',
+    title: transaction.title || '',
+    description: transaction.description || '',
+    invoiceId: transaction.ghl_invoice_id || '',
+    invoiceNumber: transaction.invoice_number || '',
+    publicPaymentId: transaction.public_payment_id || '',
+    paymentUrl: resolveTransactionPaymentUrl(transaction, getRequestBaseUrl(req)),
+    receipt: transaction.reference || transaction.invoice_number || transaction.ghl_invoice_id || '',
+    paymentDate: transaction.date || transaction.created_at || '',
+    metadata,
+    metadataJson: transaction.metadata_json || '',
+    lineItems: Array.isArray(metadata.lineItems) ? metadata.lineItems : [],
+    ...overrides
+  }
+}
+
 const isStripeBackedTransaction = (transaction = {}) => {
   if (cleanString(transaction.payment_provider).toLowerCase() === 'stripe') return true
   if (cleanString(transaction.payment_method).toLowerCase().startsWith('stripe')) return true
@@ -1404,27 +1433,11 @@ export const refundTransaction = async (req, res) => {
     if (transaction.contact_id) {
       await updateSingleContactStats(transaction.contact_id)
       import('../services/automationEngine.js')
-        .then(engine => engine.handleAutomationEvent('refund', {
-          contactId: transaction.contact_id,
+        .then(engine => engine.handleAutomationEvent('refund', buildTransactionAutomationPayload(transaction, req, {
           paymentId: transaction.id || id,
-          amount: transaction.amount,
-          currency: transaction.currency,
           status: 'refunded',
-          paymentStatus: 'refunded',
-          product: transaction.description || transaction.title || '',
-          provider: transaction.payment_method || '',
-          paymentMethod: transaction.payment_method || '',
-          paymentMode: transaction.payment_mode || '',
-          reference: transaction.reference || '',
-          title: transaction.title || '',
-          description: transaction.description || '',
-          invoiceId: transaction.ghl_invoice_id || '',
-          invoiceNumber: transaction.invoice_number || '',
-          publicPaymentId: transaction.public_payment_id || '',
-          paymentUrl: resolveTransactionPaymentUrl(transaction, getRequestBaseUrl(req)),
-          receipt: transaction.reference || transaction.invoice_number || transaction.ghl_invoice_id || '',
-          paymentDate: transaction.date || transaction.created_at || ''
-        }))
+          paymentStatus: 'refunded'
+        })))
         .catch(() => {})
     }
 
@@ -1488,27 +1501,11 @@ export const voidTransaction = async (req, res) => {
     if (transaction.contact_id) {
       await updateSingleContactStats(transaction.contact_id)
       import('../services/automationEngine.js')
-        .then(engine => engine.handleAutomationEvent('payment-received', {
-          contactId: transaction.contact_id,
+        .then(engine => engine.handleAutomationEvent('payment-received', buildTransactionAutomationPayload(transaction, req, {
           paymentId: transaction.id || id,
-          amount: transaction.amount,
-          currency: transaction.currency,
           status: 'void',
-          paymentStatus: 'void',
-          product: transaction.description || transaction.title || '',
-          provider: transaction.payment_method || '',
-          paymentMethod: transaction.payment_method || '',
-          paymentMode: transaction.payment_mode || '',
-          reference: transaction.reference || '',
-          title: transaction.title || '',
-          description: transaction.description || '',
-          invoiceId: transaction.ghl_invoice_id || '',
-          invoiceNumber: transaction.invoice_number || '',
-          publicPaymentId: transaction.public_payment_id || '',
-          paymentUrl: resolveTransactionPaymentUrl(transaction, getRequestBaseUrl(req)),
-          receipt: transaction.reference || transaction.invoice_number || transaction.ghl_invoice_id || '',
-          paymentDate: transaction.date || transaction.created_at || ''
-        }))
+          paymentStatus: 'void'
+        })))
         .catch(() => {})
     }
 

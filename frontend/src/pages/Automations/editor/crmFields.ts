@@ -635,7 +635,7 @@ export const TRIGGER_FILTER_FIELDS: TriggerFilterField[] = [
   { id: 'appointment_type', label: 'Tipo de cita', phrase: 'el tipo de cita', category: 'Cita', appliesTo: ['appointment'] },
   { id: 'payment_status', label: 'Estado del pago', phrase: 'el estado del pago', options: PAYMENT_STATUS_OPTIONS, category: 'Pago', appliesTo: ['payment'] },
   { id: 'amount', label: 'Monto', phrase: 'el monto', category: 'Pago', appliesTo: ['payment'] },
-  { id: 'product', label: 'Producto / servicio', phrase: 'el producto', catalog: 'products', category: 'Pago', appliesTo: ['payment'] },
+  { id: 'product', label: 'Productos', phrase: 'el producto', catalog: 'products', category: 'Pago', appliesTo: ['payment'] },
   { id: 'currency', label: 'Moneda', phrase: 'la moneda', category: 'Pago', appliesTo: ['payment'] },
   { id: 'provider', label: 'Proveedor de pago', phrase: 'el proveedor', category: 'Pago', appliesTo: ['payment'] },
   { id: 'payment_method', label: 'Método de pago', phrase: 'el método de pago', category: 'Pago', appliesTo: ['payment'] },

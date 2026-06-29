@@ -41,6 +41,16 @@ function firstValue(...values) {
   return values.find(value => value !== undefined && value !== null && value !== '');
 }
 
+function parseJson(value, fallback = {}) {
+  if (!value) return fallback;
+  if (typeof value === 'object') return value;
+  try {
+    return JSON.parse(value);
+  } catch {
+    return fallback;
+  }
+}
+
 // (SEC-002 / WA-004) Clave compartida para verificar los webhooks de ingreso
 // (pago/contacto/refund/cita/atribución/conversación) que hoy llegan sin firma desde
 // HighLevel. Rollout SEGURO: si AÚN no hay secreto configurado, aceptamos el webhook
@@ -294,6 +304,19 @@ function normalizePaymentAmount(value) {
 }
 
 function buildAutomationPaymentPayload(input = {}) {
+  const metadata = parseJson(firstValue(input.metadata, input.metadata_json, input.metadataJson), {});
+  const lineItems = Array.isArray(input.lineItems)
+    ? input.lineItems
+    : Array.isArray(input.line_items)
+      ? input.line_items
+      : Array.isArray(metadata.lineItems)
+        ? metadata.lineItems
+        : Array.isArray(metadata.line_items)
+          ? metadata.line_items
+          : Array.isArray(metadata.items)
+            ? metadata.items
+            : [];
+  const firstLineItem = lineItems[0] || {};
   const status = firstValue(input.paymentStatus, input.status) || '';
   const paymentId = firstValue(input.paymentId, input.payment_id, input.id) || '';
   const invoiceId = firstValue(input.invoiceId, input.invoice_id, input.ghl_invoice_id) || '';
@@ -301,9 +324,9 @@ function buildAutomationPaymentPayload(input = {}) {
   const publicPaymentId = firstValue(input.publicPaymentId, input.public_payment_id, input.paymentPublicId, input.payment_public_id) || '';
   const paymentUrl = firstValue(input.paymentUrl, input.payment_url, input.checkoutUrl, input.checkout_url, input.paymentLink, input.payment_link) || '';
   const receiptUrl = firstValue(input.receiptUrl, input.receipt_url, input.receiptDownloadUrl, input.receipt_download_url, input.paymentReceiptUrl, input.payment_receipt_url) || '';
-  const title = firstValue(input.title, input.name, input.product, input.description) || '';
-  const description = firstValue(input.description, input.product, title) || '';
-  const product = firstValue(input.product, description, title) || '';
+  const title = firstValue(input.title, input.name, input.product, firstLineItem.name, input.description) || '';
+  const description = firstValue(input.description, input.product, firstLineItem.description, firstLineItem.name, title) || '';
+  const product = firstValue(input.product, input.productName, input.product_name, firstLineItem.name, description, title) || '';
   const provider = firstValue(input.provider, input.paymentProvider, input.gateway, input.processor, input.paymentMethod, input.payment_method) || '';
   const paymentMethod = firstValue(input.paymentMethod, input.payment_method, input.method, provider) || '';
   const reference = firstValue(input.reference, input.receipt, invoiceNumber, invoiceId, paymentId) || '';
@@ -327,6 +350,9 @@ function buildAutomationPaymentPayload(input = {}) {
     publicPaymentId,
     paymentUrl,
     receiptUrl,
+    metadata,
+    metadataJson: input.metadata_json || input.metadataJson || '',
+    lineItems,
     receipt: firstValue(input.receipt, reference, invoiceNumber, invoiceId, title) || '',
     paymentDate: input.paymentDate || input.date || input.createdAt || input.created_at || '',
     date: input.paymentDate || input.date || input.createdAt || input.created_at || ''
@@ -334,6 +360,7 @@ function buildAutomationPaymentPayload(input = {}) {
 }
 
 function buildAutomationPaymentPayloadFromRow(row = {}, overrides = {}) {
+  const metadata = parseJson(row.metadata_json, {});
   return buildAutomationPaymentPayload({
     contactId: row.contact_id,
     paymentId: row.id,
@@ -352,6 +379,8 @@ function buildAutomationPaymentPayloadFromRow(row = {}, overrides = {}) {
     paymentUrl: row.payment_url,
     paymentDate: row.date,
     createdAt: row.created_at,
+    metadata,
+    metadataJson: row.metadata_json,
     ...overrides
   });
 }

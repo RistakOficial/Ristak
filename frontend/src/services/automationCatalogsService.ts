@@ -10,6 +10,7 @@ import { contactTagsService } from './contactTagsService'
 import { campaignsService, type ConnectedSocialProfile } from './campaignsService'
 import { triggerLinksService } from './triggerLinksService'
 import { userAccessService } from './userAccessService'
+import { productsService, type ProductItem } from './productsService'
 
 /**
  * Catálogos de datos reales del CRM para los selectores del editor de
@@ -45,15 +46,6 @@ export type CatalogKind =
   | 'adIds'
   | 'messengerPages'
   | 'instagramAccounts'
-
-// ---------------------------------------------------------------------------
-// Mocks marcados (catálogos sin backend todavía)
-// ---------------------------------------------------------------------------
-
-// MOCK: el catálogo de productos aún no está expuesto en el frontend.
-const MOCK_PRODUCTS: CatalogOption[] = [
-  { value: 'any', label: 'Cualquier producto' }
-]
 
 // ---------------------------------------------------------------------------
 // Cargadores reales
@@ -218,6 +210,23 @@ async function loadTriggerLinks(): Promise<CatalogOption[]> {
     }))
 }
 
+const productCatalogValue = (product: ProductItem) =>
+  String(product.id || product._id || product.localId || product.ghlProductId || '').trim()
+
+async function loadProducts(): Promise<CatalogOption[]> {
+  const { products } = await productsService.listProducts({ limit: 200, includePrices: false })
+  return products
+    .map((product) => {
+      const value = productCatalogValue(product)
+      return {
+        value,
+        label: product.name || value,
+        meta: product.source === 'ghl' ? 'HighLevel' : undefined
+      }
+    })
+    .filter((option) => option.value && option.label)
+}
+
 interface MetaAdsCatalogItem {
   id: string
   name: string
@@ -379,7 +388,7 @@ const loaders: Record<CatalogKind, () => Promise<CatalogOption[]>> = {
   campaigns: loadCampaigns,
   adsets: loadAdsets,
   links: loadTriggerLinks,
-  products: async () => MOCK_PRODUCTS,
+  products: loadProducts,
   ads: loadAds,
   adIds: loadAdIds,
   messengerPages: loadMessengerPages,
@@ -399,6 +408,7 @@ const fallbacks: Partial<Record<CatalogKind, CatalogOption[]>> = {
   whatsappTemplates: [],
   campaigns: [],
   adsets: [],
+  products: [],
   ads: [],
   adIds: [],
   messengerPages: [],
