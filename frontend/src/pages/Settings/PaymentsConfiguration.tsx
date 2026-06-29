@@ -49,6 +49,13 @@ import {
 import { useNotification } from '@/contexts/NotificationContext'
 import { useAccountCurrency, useAppConfig } from '@/hooks'
 import { useHighLevelConnected } from '@/hooks/useHighLevelConnected'
+import {
+  ACCOUNT_BUSINESS_PROFILE_CONFIG_KEY,
+  defaultAccountBusinessProfile,
+  hasAccountBusinessProfileDetails,
+  normalizeAccountBusinessProfile,
+  type AccountBusinessProfile
+} from '@/services/accountBusinessProfile'
 import { invalidateIntegrationsStatus } from '@/services/integrationsService'
 import mediaService from '@/services/mediaService'
 import {
@@ -580,12 +587,48 @@ const getMercadoPagoSubscriptionTestCredentialsFromConfig = (config?: MercadoPag
   webhookSecret: config?.subscriptionTestCredentials?.webhookSecretPreview || ''
 })
 
+const applyBusinessProfileToCheckout = (
+  checkout: PaymentCheckoutSettings,
+  profile: AccountBusinessProfile
+): PaymentCheckoutSettings => {
+  if (checkout.useBusinessProfile === false) return checkout
+
+  return {
+    ...checkout,
+    logoUrl: profile.logoUrl || checkout.logoUrl,
+    supportEmail: profile.email || checkout.supportEmail,
+    supportPhone: profile.phone || checkout.supportPhone
+  }
+}
+
+const applyBusinessProfileToReceipt = (
+  receipt: PaymentReceiptSettings,
+  profile: AccountBusinessProfile
+): PaymentReceiptSettings => {
+  if (receipt.useBusinessProfile === false) return receipt
+
+  return {
+    ...receipt,
+    logoUrl: profile.logoUrl || receipt.logoUrl,
+    businessName: profile.name || receipt.businessName,
+    businessEmail: profile.email || receipt.businessEmail,
+    businessPhone: profile.phone || receipt.businessPhone,
+    businessAddress: profile.address || receipt.businessAddress,
+    businessWebsite: profile.website || receipt.businessWebsite,
+    terms: profile.terms || receipt.terms
+  }
+}
+
 export const PaymentsConfiguration: React.FC = () => {
   const navigate = useNavigate()
   const location = useLocation()
   const { showToast, showConfirm } = useNotification()
   const { connected: highLevelConnected, loading: loadingHighLevelConnection } = useHighLevelConnected()
   const [accountCurrency] = useAccountCurrency()
+  const [accountBusinessProfileRaw] = useAppConfig<AccountBusinessProfile>(
+    ACCOUNT_BUSINESS_PROFILE_CONFIG_KEY,
+    defaultAccountBusinessProfile
+  )
 
   const [activeSection, setActiveSection] = useState<PaymentsSectionId>(() => getInitialSection(location.pathname))
   const [settings, setSettings] = useState<PaymentSettings>(defaultPaymentSettings)
@@ -643,6 +686,22 @@ export const PaymentsConfiguration: React.FC = () => {
   const receipt = settings.receipt
   const automations = settings.automations
   const taxes = settings.taxes
+  const accountBusinessProfile = useMemo(
+    () => normalizeAccountBusinessProfile(accountBusinessProfileRaw),
+    [accountBusinessProfileRaw]
+  )
+  const hasBusinessProfile = useMemo(
+    () => hasAccountBusinessProfileDetails(accountBusinessProfile),
+    [accountBusinessProfile]
+  )
+  const effectiveCheckout = useMemo(
+    () => applyBusinessProfileToCheckout(checkout, accountBusinessProfile),
+    [accountBusinessProfile, checkout]
+  )
+  const effectiveReceipt = useMemo(
+    () => applyBusinessProfileToReceipt(receipt, accountBusinessProfile),
+    [accountBusinessProfile, receipt]
+  )
   const paymentMode: PaymentModeId = settings.paymentMode === 'test' ? 'test' : 'live'
   const paymentModeCopy = paymentModeLabels[paymentMode]
   const routeSegment = getPaymentRouteSegment(location.pathname)
@@ -674,6 +733,26 @@ export const PaymentsConfiguration: React.FC = () => {
   useEffect(() => {
     latestSettingsRef.current = settings
   }, [settings])
+
+  useEffect(() => {
+    if (!loadedSettingsRef.current) return
+
+    setSettings((current) => {
+      const nextCheckout = applyBusinessProfileToCheckout(current.checkout, accountBusinessProfile)
+      const nextReceipt = applyBusinessProfileToReceipt(current.receipt, accountBusinessProfile)
+      if (
+        JSON.stringify(nextCheckout) === JSON.stringify(current.checkout) &&
+        JSON.stringify(nextReceipt) === JSON.stringify(current.receipt)
+      ) {
+        return current
+      }
+      return {
+        ...current,
+        checkout: nextCheckout,
+        receipt: nextReceipt
+      }
+    })
+  }, [accountBusinessProfile])
 
   useEffect(() => {
     let cancelled = false
@@ -1125,22 +1204,26 @@ export const PaymentsConfiguration: React.FC = () => {
       if (config.cardSetupAmount) setCardSetupAmount(Number(config.cardSetupAmount))
       setSettings((current) => ({
         ...current,
-        receipt: {
-          ...current.receipt,
-          logoUrl: current.receipt.logoUrl || config.companyLogoUrl || '',
-          businessName: current.receipt.businessName || config.businessName || '',
-          businessEmail: current.receipt.businessEmail || config.businessEmail || '',
-          businessPhone: current.receipt.businessPhone || config.businessPhone || '',
-          businessAddress: current.receipt.businessAddress || [config.businessAddress, config.businessCity, config.businessState, config.businessCountry]
-            .filter(Boolean)
-            .join(', '),
-          businessWebsite: current.receipt.businessWebsite || config.companyWebsite || '',
-          terms: current.receipt.terms || config.invoiceTermsNotes || ''
-        },
-        checkout: {
-          ...current.checkout,
-          logoUrl: current.checkout.logoUrl || config.companyLogoUrl || ''
-        }
+        receipt: current.receipt.useBusinessProfile === false
+          ? {
+              ...current.receipt,
+              logoUrl: current.receipt.logoUrl || config.companyLogoUrl || '',
+              businessName: current.receipt.businessName || config.businessName || '',
+              businessEmail: current.receipt.businessEmail || config.businessEmail || '',
+              businessPhone: current.receipt.businessPhone || config.businessPhone || '',
+              businessAddress: current.receipt.businessAddress || [config.businessAddress, config.businessCity, config.businessState, config.businessCountry]
+                .filter(Boolean)
+                .join(', '),
+              businessWebsite: current.receipt.businessWebsite || config.companyWebsite || '',
+              terms: current.receipt.terms || config.invoiceTermsNotes || ''
+            }
+          : current.receipt,
+        checkout: current.checkout.useBusinessProfile === false
+          ? {
+              ...current.checkout,
+              logoUrl: current.checkout.logoUrl || config.companyLogoUrl || ''
+            }
+          : current.checkout
       }))
     } catch {
       // Usar valores por defecto si no hay configuración todavía.
@@ -1149,6 +1232,7 @@ export const PaymentsConfiguration: React.FC = () => {
 
   const saveHighLevelInvoiceConfig = useCallback(async (nextSettings: PaymentSettings, modeOverride: PaymentModeId = paymentMode) => {
     if (!highLevelConnected) return
+    const highLevelReceipt = applyBusinessProfileToReceipt(nextSettings.receipt, accountBusinessProfile)
 
     const response = await fetch('/api/highlevel/invoice-config', {
       method: 'POST',
@@ -1158,7 +1242,7 @@ export const PaymentsConfiguration: React.FC = () => {
       body: JSON.stringify({
         invoiceTitle: paymentTitle.trim(),
         invoiceNumberPrefix: paymentNumberPrefix.trim(),
-        invoiceTermsNotes: nextSettings.receipt.terms.trim() || null,
+        invoiceTermsNotes: highLevelReceipt.terms.trim() || null,
         invoiceDueDays: paymentDueDays,
         transferInfoUrl: transferInfoUrl.trim() || null,
         cardSetupAmount,
@@ -1174,7 +1258,7 @@ export const PaymentsConfiguration: React.FC = () => {
     window.dispatchEvent(new CustomEvent('ristak-payment-config-changed', {
       detail: { ghlInvoiceMode: modeOverride }
     }))
-  }, [cardSetupAmount, highLevelConnected, paymentDueDays, paymentMode, paymentNumberPrefix, paymentTitle, transferInfoUrl])
+  }, [accountBusinessProfile, cardSetupAmount, highLevelConnected, paymentDueDays, paymentMode, paymentNumberPrefix, paymentTitle, transferInfoUrl])
 
   const persistPaymentSettings = useCallback(async ({ showSuccess = false } = {}) => {
     const nextSettings = latestSettingsRef.current
@@ -1712,7 +1796,12 @@ export const PaymentsConfiguration: React.FC = () => {
     writeReceiptPreviewLoadingPage(previewWindow)
     setPreviewingReceipt(true)
     try {
-      const session = await paymentSettingsService.createReceiptPreviewSession(latestSettingsRef.current, accountCurrency)
+      const previewSettings = {
+        ...latestSettingsRef.current,
+        checkout: applyBusinessProfileToCheckout(latestSettingsRef.current.checkout, accountBusinessProfile),
+        receipt: applyBusinessProfileToReceipt(latestSettingsRef.current.receipt, accountBusinessProfile)
+      }
+      const session = await paymentSettingsService.createReceiptPreviewSession(previewSettings, accountCurrency)
       previewWindow.location.replace(session.url)
     } catch (error: any) {
       previewWindow.close()
@@ -1860,6 +1949,49 @@ export const PaymentsConfiguration: React.FC = () => {
     </div>
   )
 
+  const renderBusinessProfileSource = (
+    title: string,
+    description: string,
+    checked: boolean,
+    onChange: (next: boolean) => void
+  ) => {
+    const previewItems = [
+      accountBusinessProfile.logoUrl ? 'Logo configurado' : '',
+      accountBusinessProfile.name,
+      accountBusinessProfile.email,
+      accountBusinessProfile.phone,
+      accountBusinessProfile.website,
+      accountBusinessProfile.address,
+      accountBusinessProfile.terms ? 'Términos configurados' : ''
+    ].filter(Boolean)
+
+    return (
+      <div className={styles.businessProfileSource}>
+        <div className={styles.businessProfileSummary}>
+          <div>
+            <strong>{title}</strong>
+            <span>{description}</span>
+          </div>
+          <Switch checked={checked} onChange={onChange} aria-label={title} />
+        </div>
+        {checked && (
+          <div className={styles.businessProfilePreview}>
+            {hasBusinessProfile
+              ? previewItems.map((item, index) => <span key={`${item}-${index}`}>{item}</span>)
+              : <span>No hay datos de negocio guardados todavía.</span>}
+          </div>
+        )}
+        {checked && (
+          <div className={styles.logoUploadActions}>
+            <Button type="button" variant="ghost" size="sm" onClick={() => navigate('/settings/account')}>
+              Editar en cuenta
+            </Button>
+          </div>
+        )}
+      </div>
+    )
+  }
+
   const renderCheckoutSection = () => (
     <div className={styles.twoColumnLayout}>
       <Card className={styles.sectionCard}>
@@ -1874,12 +2006,19 @@ export const PaymentsConfiguration: React.FC = () => {
           </Badge>
         </div>
 
+        {renderBusinessProfileSource(
+          'Usar logo y soporte de Cuenta',
+          'El logo, email y teléfono de soporte salen de Configuración > Cuenta > Datos del negocio.',
+          checkout.useBusinessProfile !== false,
+          (next) => setCheckoutValue('useBusinessProfile', next)
+        )}
+
         <div className={styles.formGrid}>
           <div className={`${styles.formField} ${styles.fullWidthField}`}>
             <span>Logo del negocio</span>
             <div className={styles.logoUploadControl}>
               <div className={styles.logoUploadPreview}>
-                {checkout.logoUrl ? <img src={checkout.logoUrl} alt="" /> : <Image size={22} />}
+                {effectiveCheckout.logoUrl ? <img src={effectiveCheckout.logoUrl} alt="" /> : <Image size={22} />}
               </div>
               <div className={styles.logoUploadContent}>
                 <div className={styles.logoUploadActions}>
@@ -1888,7 +2027,7 @@ export const PaymentsConfiguration: React.FC = () => {
                     variant="secondary"
                     size="sm"
                     onClick={() => checkoutLogoInputRef.current?.click()}
-                    disabled={uploadingCheckoutLogo}
+                    disabled={uploadingCheckoutLogo || checkout.useBusinessProfile !== false}
                   >
                     {uploadingCheckoutLogo ? (
                       <>
@@ -1902,7 +2041,7 @@ export const PaymentsConfiguration: React.FC = () => {
                       </>
                     )}
                   </Button>
-                  {checkout.logoUrl && (
+                  {checkout.useBusinessProfile === false && checkout.logoUrl && (
                     <Button type="button" variant="ghost" size="sm" onClick={() => setCheckoutValue('logoUrl', '')}>
                       <Trash2 size={15} />
                       Quitar
@@ -1916,12 +2055,13 @@ export const PaymentsConfiguration: React.FC = () => {
                   accept="image/*"
                   onChange={handleCheckoutLogoUpload}
                 />
-                <small>Se guarda en Media y aparece en la parte superior del link de cobro.</small>
-                {checkout.logoUrl && (
+                <small>{checkout.useBusinessProfile === false ? 'Se guarda en Media y aparece en la parte superior del link de cobro.' : 'Heredado desde los datos del negocio en Cuenta.'}</small>
+                {effectiveCheckout.logoUrl && (
                   <input
                     type="url"
-                    value={checkout.logoUrl}
+                    value={effectiveCheckout.logoUrl}
                     onChange={(event) => setCheckoutValue('logoUrl', event.target.value)}
+                    disabled={checkout.useBusinessProfile !== false}
                     placeholder="https://tu-dominio.com/logo.png"
                   />
                 )}
@@ -1956,22 +2096,24 @@ export const PaymentsConfiguration: React.FC = () => {
           )}
           {renderField(
             'Email de soporte',
-            <input
-              type="email"
-              value={checkout.supportEmail}
-              onChange={(event) => setCheckoutValue('supportEmail', event.target.value)}
-              placeholder="pagos@tu-negocio.com"
-            />
-          )}
+              <input
+                type="email"
+                value={effectiveCheckout.supportEmail}
+                onChange={(event) => setCheckoutValue('supportEmail', event.target.value)}
+                disabled={checkout.useBusinessProfile !== false}
+                placeholder="pagos@tu-negocio.com"
+              />
+            )}
           {renderField(
             'Teléfono de soporte',
-            <input
-              type="tel"
-              value={checkout.supportPhone}
-              onChange={(event) => setCheckoutValue('supportPhone', event.target.value)}
-              placeholder="+52 656 000 0000"
-            />
-          )}
+              <input
+                type="tel"
+                value={effectiveCheckout.supportPhone}
+                onChange={(event) => setCheckoutValue('supportPhone', event.target.value)}
+                disabled={checkout.useBusinessProfile !== false}
+                placeholder="+52 656 000 0000"
+              />
+            )}
         </div>
 
         <div className={styles.subsectionBlock}>
@@ -1980,13 +2122,21 @@ export const PaymentsConfiguration: React.FC = () => {
             <p>Estos datos son los mismos del comprobante descargable y también aparecen en el resumen del link de cobro.</p>
           </div>
 
+          {renderBusinessProfileSource(
+            'Usar datos del negocio de Cuenta',
+            'Nombre, contacto, web, dirección y términos se toman del perfil de negocio.',
+            receipt.useBusinessProfile !== false,
+            (next) => setReceiptValue('useBusinessProfile', next)
+          )}
+
           <div className={styles.formGrid}>
             {renderField(
               'Nombre del negocio',
               <input
                 type="text"
-                value={receipt.businessName}
+                value={effectiveReceipt.businessName}
                 onChange={(event) => setReceiptValue('businessName', event.target.value)}
+                disabled={receipt.useBusinessProfile !== false}
                 placeholder="Nombre comercial"
               />
             )}
@@ -1994,8 +2144,9 @@ export const PaymentsConfiguration: React.FC = () => {
               'Email del negocio',
               <input
                 type="email"
-                value={receipt.businessEmail}
+                value={effectiveReceipt.businessEmail}
                 onChange={(event) => setReceiptValue('businessEmail', event.target.value)}
+                disabled={receipt.useBusinessProfile !== false}
                 placeholder="pagos@tu-negocio.com"
               />
             )}
@@ -2003,8 +2154,9 @@ export const PaymentsConfiguration: React.FC = () => {
               'Teléfono del negocio',
               <input
                 type="tel"
-                value={receipt.businessPhone}
+                value={effectiveReceipt.businessPhone}
                 onChange={(event) => setReceiptValue('businessPhone', event.target.value)}
+                disabled={receipt.useBusinessProfile !== false}
                 placeholder="+52 656 000 0000"
               />
             )}
@@ -2012,16 +2164,18 @@ export const PaymentsConfiguration: React.FC = () => {
               'Sitio web',
               <input
                 type="url"
-                value={receipt.businessWebsite}
+                value={effectiveReceipt.businessWebsite}
                 onChange={(event) => setReceiptValue('businessWebsite', event.target.value)}
+                disabled={receipt.useBusinessProfile !== false}
                 placeholder="https://tu-negocio.com"
               />
             )}
             {renderField(
               'Dirección fiscal o comercial',
               <textarea
-                value={receipt.businessAddress}
+                value={effectiveReceipt.businessAddress}
                 onChange={(event) => setReceiptValue('businessAddress', event.target.value)}
+                disabled={receipt.useBusinessProfile !== false}
                 placeholder="Calle, ciudad, estado, país"
               />
             )}
@@ -2029,8 +2183,9 @@ export const PaymentsConfiguration: React.FC = () => {
               <span>Términos y condiciones</span>
               <textarea
                 className={styles.largeTextarea}
-                value={receipt.terms}
+                value={effectiveReceipt.terms}
                 onChange={(event) => setReceiptValue('terms', event.target.value)}
+                disabled={receipt.useBusinessProfile !== false}
                 placeholder="Políticas de pago, reembolso, emisión de comprobantes o condiciones del servicio."
               />
               <small>Se muestran en el resumen antes de pagar y al final del comprobante descargable.</small>
@@ -2057,10 +2212,10 @@ export const PaymentsConfiguration: React.FC = () => {
 
       <Card className={styles.previewCard}>
         <div className={styles.previewPaymentHeader}>
-          {checkout.logoUrl ? <img src={checkout.logoUrl} alt="" /> : <span>{(receipt.businessName || 'R').slice(0, 1)}</span>}
+          {effectiveCheckout.logoUrl ? <img src={effectiveCheckout.logoUrl} alt="" /> : <span>{(effectiveReceipt.businessName || 'R').slice(0, 1)}</span>}
           <div>
-            <strong>{checkout.headline || 'Pago seguro'}</strong>
-            <p>{checkout.description || 'Revisa el resumen y completa tu pago con tarjeta.'}</p>
+            <strong>{effectiveCheckout.headline || 'Pago seguro'}</strong>
+            <p>{effectiveCheckout.description || 'Revisa el resumen y completa tu pago con tarjeta.'}</p>
           </div>
         </div>
         <div className={styles.previewInvoice}>
@@ -2077,26 +2232,26 @@ export const PaymentsConfiguration: React.FC = () => {
             <strong>8 jul 2026</strong>
           </div>
         </div>
-        {receipt.showBusinessInfo && (receipt.businessName || receipt.businessEmail || receipt.businessPhone || receipt.businessAddress || receipt.businessWebsite) && (
+        {effectiveReceipt.showBusinessInfo && (effectiveReceipt.businessName || effectiveReceipt.businessEmail || effectiveReceipt.businessPhone || effectiveReceipt.businessAddress || effectiveReceipt.businessWebsite) && (
           <div className={styles.previewInfoBlock}>
-            <strong>{receipt.businessName || 'Tu negocio'}</strong>
-            {receipt.businessEmail && <span>{receipt.businessEmail}</span>}
-            {receipt.businessPhone && <span>{receipt.businessPhone}</span>}
-            {receipt.businessAddress && <span>{receipt.businessAddress}</span>}
-            {receipt.businessWebsite && <span>{receipt.businessWebsite}</span>}
+            <strong>{effectiveReceipt.businessName || 'Tu negocio'}</strong>
+            {effectiveReceipt.businessEmail && <span>{effectiveReceipt.businessEmail}</span>}
+            {effectiveReceipt.businessPhone && <span>{effectiveReceipt.businessPhone}</span>}
+            {effectiveReceipt.businessAddress && <span>{effectiveReceipt.businessAddress}</span>}
+            {effectiveReceipt.businessWebsite && <span>{effectiveReceipt.businessWebsite}</span>}
           </div>
         )}
-        {receipt.showTerms && receipt.terms && (
+        {effectiveReceipt.showTerms && effectiveReceipt.terms && (
           <p className={styles.previewTerms}>
             <strong>Términos y condiciones</strong>
-            <span>{receipt.terms}</span>
+            <span>{effectiveReceipt.terms}</span>
           </p>
         )}
         <div className={styles.previewButton}>
           <CreditCard size={16} />
-          {checkout.buttonLabel || 'Pagar ahora'}
+          {effectiveCheckout.buttonLabel || 'Pagar ahora'}
         </div>
-        {checkout.showSecureBadge && (
+        {effectiveCheckout.showSecureBadge && (
           <p className={styles.previewTrust}>
             <ShieldCheck size={15} />
             Pago procesado de forma segura.
@@ -2309,12 +2464,19 @@ export const PaymentsConfiguration: React.FC = () => {
             </Badge>
           </div>
 
+          {renderBusinessProfileSource(
+            'Usar datos del negocio de Cuenta',
+            'Logo, nombre, contacto, web, dirección y términos se toman del perfil de negocio.',
+            receipt.useBusinessProfile !== false,
+            (next) => setReceiptValue('useBusinessProfile', next)
+          )}
+
           <div className={styles.formGrid}>
             <div className={`${styles.formField} ${styles.fullWidthField}`}>
               <span>Logo del comprobante</span>
               <div className={styles.logoUploadControl}>
                 <div className={styles.logoUploadPreview}>
-                  {receipt.logoUrl ? <img src={receipt.logoUrl} alt="" /> : <Image size={22} />}
+                  {effectiveReceipt.logoUrl ? <img src={effectiveReceipt.logoUrl} alt="" /> : <Image size={22} />}
                 </div>
                 <div className={styles.logoUploadContent}>
                   <div className={styles.logoUploadActions}>
@@ -2323,7 +2485,7 @@ export const PaymentsConfiguration: React.FC = () => {
                       variant="secondary"
                       size="sm"
                       onClick={() => receiptLogoInputRef.current?.click()}
-                      disabled={uploadingReceiptLogo}
+                      disabled={uploadingReceiptLogo || receipt.useBusinessProfile !== false}
                     >
                       {uploadingReceiptLogo ? (
                         <>
@@ -2337,7 +2499,7 @@ export const PaymentsConfiguration: React.FC = () => {
                         </>
                       )}
                     </Button>
-                    {receipt.logoUrl && (
+                    {receipt.useBusinessProfile === false && receipt.logoUrl && (
                       <Button type="button" variant="ghost" size="sm" onClick={() => setReceiptValue('logoUrl', '')}>
                         <Trash2 size={15} />
                         Quitar
@@ -2351,12 +2513,13 @@ export const PaymentsConfiguration: React.FC = () => {
                     accept="image/*"
                     onChange={handleReceiptLogoUpload}
                   />
-                  <small>Se guarda en Media y se usa en la hoja PDF del comprobante.</small>
-                  {receipt.logoUrl && (
+                  <small>{receipt.useBusinessProfile === false ? 'Se guarda en Media y se usa en la hoja PDF del comprobante.' : 'Heredado desde los datos del negocio en Cuenta.'}</small>
+                  {effectiveReceipt.logoUrl && (
                     <input
                       type="url"
-                      value={receipt.logoUrl}
+                      value={effectiveReceipt.logoUrl}
                       onChange={(event) => setReceiptValue('logoUrl', event.target.value)}
+                      disabled={receipt.useBusinessProfile !== false}
                       placeholder="https://tu-dominio.com/logo.png"
                     />
                   )}
@@ -2385,8 +2548,9 @@ export const PaymentsConfiguration: React.FC = () => {
               'Nombre del negocio',
               <input
                 type="text"
-                value={receipt.businessName}
+                value={effectiveReceipt.businessName}
                 onChange={(event) => setReceiptValue('businessName', event.target.value)}
+                disabled={receipt.useBusinessProfile !== false}
                 placeholder="Nombre comercial"
               />
             )}
@@ -2394,8 +2558,9 @@ export const PaymentsConfiguration: React.FC = () => {
               'Email del negocio',
               <input
                 type="email"
-                value={receipt.businessEmail}
+                value={effectiveReceipt.businessEmail}
                 onChange={(event) => setReceiptValue('businessEmail', event.target.value)}
+                disabled={receipt.useBusinessProfile !== false}
                 placeholder="pagos@tu-negocio.com"
               />
             )}
@@ -2403,8 +2568,9 @@ export const PaymentsConfiguration: React.FC = () => {
               'Teléfono del negocio',
               <input
                 type="tel"
-                value={receipt.businessPhone}
+                value={effectiveReceipt.businessPhone}
                 onChange={(event) => setReceiptValue('businessPhone', event.target.value)}
+                disabled={receipt.useBusinessProfile !== false}
                 placeholder="+52 656 000 0000"
               />
             )}
@@ -2412,16 +2578,18 @@ export const PaymentsConfiguration: React.FC = () => {
               'Sitio web',
               <input
                 type="url"
-                value={receipt.businessWebsite}
+                value={effectiveReceipt.businessWebsite}
                 onChange={(event) => setReceiptValue('businessWebsite', event.target.value)}
+                disabled={receipt.useBusinessProfile !== false}
                 placeholder="https://tu-negocio.com"
               />
             )}
             {renderField(
               'Dirección fiscal o comercial',
               <textarea
-                value={receipt.businessAddress}
+                value={effectiveReceipt.businessAddress}
                 onChange={(event) => setReceiptValue('businessAddress', event.target.value)}
+                disabled={receipt.useBusinessProfile !== false}
                 placeholder="Calle, ciudad, estado, país"
               />
             )}
@@ -2437,8 +2605,9 @@ export const PaymentsConfiguration: React.FC = () => {
               <span>Términos y condiciones</span>
               <textarea
                 className={styles.largeTextarea}
-                value={receipt.terms}
+                value={effectiveReceipt.terms}
                 onChange={(event) => setReceiptValue('terms', event.target.value)}
+                disabled={receipt.useBusinessProfile !== false}
                 placeholder="Políticas de pago, reembolso, emisión de comprobantes o condiciones del servicio."
               />
               <small>Este texto puede ser largo y también se sincroniza como nota de términos para comprobantes de GoHighLevel cuando esté conectado.</small>
@@ -2569,14 +2738,14 @@ export const PaymentsConfiguration: React.FC = () => {
             <article className={invoiceSheetClassName} style={invoiceStyleVars} aria-label="Vista previa del comprobante de pago descargable">
               <header className={styles.documentSheetHeader}>
                 <div className={styles.documentIdentity}>
-                  {receipt.logoUrl ? (
-                    <img src={receipt.logoUrl} alt="" />
+                  {effectiveReceipt.logoUrl ? (
+                    <img src={effectiveReceipt.logoUrl} alt="" />
                   ) : (
                     <span><ReceiptText size={22} /></span>
                   )}
                   <div>
-                    <strong>{receipt.businessName || 'Tu negocio'}</strong>
-                    <p>{receipt.businessWebsite || receipt.businessEmail || 'tu-negocio.com'}</p>
+                    <strong>{effectiveReceipt.businessName || 'Tu negocio'}</strong>
+                    <p>{effectiveReceipt.businessWebsite || effectiveReceipt.businessEmail || 'tu-negocio.com'}</p>
                   </div>
                 </div>
                 <div className={styles.documentMeta}>
@@ -2614,10 +2783,10 @@ export const PaymentsConfiguration: React.FC = () => {
                 {receipt.showBusinessInfo && (
                   <div>
                     <span>Emitido por</span>
-                    <strong>{receipt.businessName || 'Tu negocio'}</strong>
-                    {receipt.businessEmail && <p>{receipt.businessEmail}</p>}
-                    {receipt.businessPhone && <p>{receipt.businessPhone}</p>}
-                    {receipt.businessAddress && <p>{receipt.businessAddress}</p>}
+                    <strong>{effectiveReceipt.businessName || 'Tu negocio'}</strong>
+                    {effectiveReceipt.businessEmail && <p>{effectiveReceipt.businessEmail}</p>}
+                    {effectiveReceipt.businessPhone && <p>{effectiveReceipt.businessPhone}</p>}
+                    {effectiveReceipt.businessAddress && <p>{effectiveReceipt.businessAddress}</p>}
                   </div>
                 )}
                 {receipt.showCustomerInfo && (
@@ -2663,7 +2832,7 @@ export const PaymentsConfiguration: React.FC = () => {
               {receipt.showTerms && (
                 <section className={styles.documentTerms}>
                   <strong>Términos y condiciones</strong>
-                  <p>{receipt.terms || 'Agrega aquí políticas de pago, reembolso, emisión de comprobantes o condiciones del servicio.'}</p>
+                  <p>{effectiveReceipt.terms || 'Agrega aquí políticas de pago, reembolso, emisión de comprobantes o condiciones del servicio.'}</p>
                 </section>
               )}
 

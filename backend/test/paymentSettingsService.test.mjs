@@ -4,7 +4,8 @@ import { describe, it } from 'node:test'
 import {
   calculatePaymentTax,
   normalizePaymentSettings,
-  normalizePaymentSettingsMode
+  normalizePaymentSettingsMode,
+  resolvePaymentSettingsBusinessProfile
 } from '../src/services/paymentSettingsService.js'
 
 describe('payment settings automations', () => {
@@ -200,5 +201,83 @@ describe('payment settings tax calculation', () => {
 
     assert.equal(settings.taxes.hasGigstackApiToken, false)
     assert.equal(settings.taxes.gigstackApiTokenPreview, '')
+  })
+})
+
+describe('payment settings business profile defaults', () => {
+  it('uses account business profile data when payment surfaces inherit from account', () => {
+    const settings = normalizePaymentSettings({
+      checkout: {
+        useBusinessProfile: true,
+        headline: 'Paga sin broncas'
+      },
+      receipt: {
+        useBusinessProfile: true,
+        title: 'Recibo'
+      }
+    })
+
+    const resolved = resolvePaymentSettingsBusinessProfile(settings, {
+      logoUrl: 'https://cdn.example.com/logo.png',
+      name: 'Ristak Studio',
+      email: 'pagos@ristak.test',
+      phone: '+52 656 123 4567',
+      address: 'Av. Siempre Viva 742',
+      website: 'https://ristak.test',
+      terms: 'Pagos no reembolsables.'
+    })
+
+    assert.equal(resolved.checkout.logoUrl, 'https://cdn.example.com/logo.png')
+    assert.equal(resolved.checkout.supportEmail, 'pagos@ristak.test')
+    assert.equal(resolved.checkout.supportPhone, '+52 656 123 4567')
+    assert.equal(resolved.receipt.logoUrl, 'https://cdn.example.com/logo.png')
+    assert.equal(resolved.receipt.businessName, 'Ristak Studio')
+    assert.equal(resolved.receipt.businessEmail, 'pagos@ristak.test')
+    assert.equal(resolved.receipt.businessPhone, '+52 656 123 4567')
+    assert.equal(resolved.receipt.businessAddress, 'Av. Siempre Viva 742')
+    assert.equal(resolved.receipt.businessWebsite, 'https://ristak.test')
+    assert.equal(resolved.receipt.terms, 'Pagos no reembolsables.')
+  })
+
+  it('keeps payment-specific business data when overrides are enabled', () => {
+    const settings = normalizePaymentSettings({
+      checkout: {
+        useBusinessProfile: false,
+        logoUrl: 'https://cdn.example.com/checkout.png',
+        supportEmail: 'checkout@override.test',
+        supportPhone: '+52 111'
+      },
+      receipt: {
+        useBusinessProfile: false,
+        logoUrl: 'https://cdn.example.com/receipt.png',
+        businessName: 'Override Corp',
+        businessEmail: 'recibos@override.test',
+        businessPhone: '+52 222',
+        businessAddress: 'Dirección override',
+        businessWebsite: 'https://override.test',
+        terms: 'Términos override.'
+      }
+    })
+
+    const resolved = resolvePaymentSettingsBusinessProfile(settings, {
+      logoUrl: 'https://cdn.example.com/account.png',
+      name: 'Cuenta Corp',
+      email: 'cuenta@test.test',
+      phone: '+52 333',
+      address: 'Dirección cuenta',
+      website: 'https://cuenta.test',
+      terms: 'Términos cuenta.'
+    })
+
+    assert.equal(resolved.checkout.logoUrl, 'https://cdn.example.com/checkout.png')
+    assert.equal(resolved.checkout.supportEmail, 'checkout@override.test')
+    assert.equal(resolved.checkout.supportPhone, '+52 111')
+    assert.equal(resolved.receipt.logoUrl, 'https://cdn.example.com/receipt.png')
+    assert.equal(resolved.receipt.businessName, 'Override Corp')
+    assert.equal(resolved.receipt.businessEmail, 'recibos@override.test')
+    assert.equal(resolved.receipt.businessPhone, '+52 222')
+    assert.equal(resolved.receipt.businessAddress, 'Dirección override')
+    assert.equal(resolved.receipt.businessWebsite, 'https://override.test')
+    assert.equal(resolved.receipt.terms, 'Términos override.')
   })
 })

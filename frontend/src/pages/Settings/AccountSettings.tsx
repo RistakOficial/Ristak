@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
-import { Check, CheckCircle, ChevronDown, Clock, Database, Globe2, Loader2, Lock, Save, Upload, User, X } from 'lucide-react'
+import { Building2, Check, CheckCircle, ChevronDown, Clock, Database, Globe2, Image, ImageUp, Loader2, Lock, Save, Trash2, Upload, User, X } from 'lucide-react'
 import { Button, Card, CustomSelect } from '@/components/common'
 import { Badge } from '@/components/common/Badge'
 import { useAuth } from '@/contexts/AuthContext'
@@ -11,6 +11,13 @@ import { useAppConfig } from '@/hooks'
 import { contactTagsService } from '@/services/contactTagsService'
 import { apiUrl } from '@/services/apiBaseUrl'
 import apiClient from '@/services/apiClient'
+import {
+  ACCOUNT_BUSINESS_PROFILE_CONFIG_KEY,
+  defaultAccountBusinessProfile,
+  hasAccountBusinessProfileDetails,
+  normalizeAccountBusinessProfile,
+  type AccountBusinessProfile
+} from '@/services/accountBusinessProfile'
 import mediaService from '@/services/mediaService'
 import {
   ACCOUNT_COUNTRY_CONFIG_KEY,
@@ -25,6 +32,7 @@ import styles from './Settings.module.css'
 
 const PROFILE_PHOTO_KEY = 'admin_profile_photo'
 const MAX_PROFILE_PHOTO_SIZE = 1.5 * 1024 * 1024
+const MAX_BUSINESS_LOGO_SIZE = 2 * 1024 * 1024
 const CUSTOMER_LABEL_OPTIONS = ['Cliente', 'Paciente', 'Proyecto', 'Miembro', 'Alumno']
 const LEAD_LABEL_OPTIONS = ['Interesado', 'Prospecto', 'Mensaje', 'Lead', 'Consulta']
 const STORAGE_GB = 1024 * 1024 * 1024
@@ -154,6 +162,10 @@ export const AccountSettings: React.FC = () => {
   const detectedLocaleDefaults = useMemo(getDetectedAccountLocaleDefaults, [])
 
   const [profilePhoto, setProfilePhoto, savingProfilePhoto] = useAppConfig<string>(PROFILE_PHOTO_KEY, '')
+  const [businessProfile, setBusinessProfile, savingBusinessProfileConfig] = useAppConfig<AccountBusinessProfile>(
+    ACCOUNT_BUSINESS_PROFILE_CONFIG_KEY,
+    defaultAccountBusinessProfile
+  )
   const [accountCountry, setAccountCountry, savingAccountCountry] = useAppConfig<string>(ACCOUNT_COUNTRY_CONFIG_KEY, detectedLocaleDefaults.countryCode)
   const [accountCurrency, setAccountCurrency, savingAccountCurrency] = useAppConfig<string>(ACCOUNT_CURRENCY_CONFIG_KEY, detectedLocaleDefaults.currency)
   const [accountDialCode, setAccountDialCode, savingAccountDialCode] = useAppConfig<string>(ACCOUNT_DIAL_CODE_CONFIG_KEY, detectedLocaleDefaults.dialCode)
@@ -162,10 +174,11 @@ export const AccountSettings: React.FC = () => {
   const [profileDraft, setProfileDraft] = useState({
     firstName: '',
     lastName: '',
-    phone: '',
-    businessName: ''
+    phone: ''
   })
   const [savingProfileDetails, setSavingProfileDetails] = useState(false)
+  const [businessProfileDraft, setBusinessProfileDraft] = useState<AccountBusinessProfile>(defaultAccountBusinessProfile)
+  const [savingBusinessProfile, setSavingBusinessProfile] = useState(false)
 
   const [newUsername, setNewUsername] = useState('')
   const [isEditingUsername, setIsEditingUsername] = useState(false)
@@ -197,6 +210,7 @@ export const AccountSettings: React.FC = () => {
   const [dropdownPos, setDropdownPos] = useState<{ top: number; left: number; width: number } | null>(null)
   const customerTriggerRef = useRef<HTMLButtonElement>(null)
   const leadTriggerRef = useRef<HTMLButtonElement>(null)
+  const businessLogoInputRef = useRef<HTMLInputElement | null>(null)
   const localeBootstrappedRef = useRef(false)
 
   const currentUsername = user?.username || 'admin'
@@ -205,17 +219,29 @@ export const AccountSettings: React.FC = () => {
   const visibleProfilePhoto = isEditingPhoto ? profilePhotoDraft : profilePhoto
   const profileNameFallback = user?.name && user.name !== user.username ? user.name : ''
   const fallbackNameParts = useMemo(() => splitFallbackName(profileNameFallback), [profileNameFallback])
+  const normalizedBusinessProfile = useMemo(() => {
+    const normalized = normalizeAccountBusinessProfile(businessProfile)
+    return normalized.name || !user?.businessName
+      ? normalized
+      : { ...normalized, name: user.businessName }
+  }, [businessProfile, user?.businessName])
+  const hasStoredBusinessProfile = useMemo(
+    () => hasAccountBusinessProfileDetails(businessProfile),
+    [businessProfile]
+  )
   const normalizedUserProfile = useMemo(() => ({
     firstName: user?.firstName || fallbackNameParts.firstName,
     lastName: user?.lastName || fallbackNameParts.lastName,
-    phone: user?.phone || '',
-    businessName: user?.businessName || ''
-  }), [fallbackNameParts, user?.businessName, user?.firstName, user?.lastName, user?.phone])
+    phone: user?.phone || ''
+  }), [fallbackNameParts, user?.firstName, user?.lastName, user?.phone])
   const profileDetailsChanged =
     profileDraft.firstName !== normalizedUserProfile.firstName ||
     profileDraft.lastName !== normalizedUserProfile.lastName ||
-    profileDraft.phone !== normalizedUserProfile.phone ||
-    profileDraft.businessName !== normalizedUserProfile.businessName
+    profileDraft.phone !== normalizedUserProfile.phone
+  const businessProfileChanged =
+    JSON.stringify(businessProfileDraft) !== JSON.stringify(normalizedBusinessProfile) ||
+    (!hasStoredBusinessProfile && Boolean(user?.businessName))
+  const businessProfileSaving = savingBusinessProfile || savingBusinessProfileConfig
   const usernameChanged = newUsername.trim() && newUsername.trim() !== currentUsername
   const storagePercent = Math.max(0, Math.min(100, storageStatus?.percentUsed ?? 0))
   const timezoneOptions = useMemo(
@@ -242,6 +268,10 @@ export const AccountSettings: React.FC = () => {
   useEffect(() => {
     setProfileDraft(normalizedUserProfile)
   }, [normalizedUserProfile])
+
+  useEffect(() => {
+    setBusinessProfileDraft(normalizedBusinessProfile)
+  }, [normalizedBusinessProfile])
 
   useEffect(() => {
     setTimezoneDraft(timezone)
@@ -500,15 +530,96 @@ export const AccountSettings: React.FC = () => {
       await updateProfile({
         firstName: profileDraft.firstName.trim(),
         lastName: profileDraft.lastName.trim(),
-        phone: profileDraft.phone.trim(),
-        businessName: profileDraft.businessName.trim()
+        phone: profileDraft.phone.trim()
       })
-      showToast('success', 'Datos guardados', 'Tu nombre, teléfono y negocio quedaron actualizados.')
+      showToast('success', 'Datos guardados', 'Tu nombre y teléfono quedaron actualizados.')
     } catch (error: any) {
       setProfileDraft(normalizedUserProfile)
       showToast('error', 'No se guardó', error?.message || 'Intenta guardar tus datos otra vez.')
     } finally {
       setSavingProfileDetails(false)
+    }
+  }
+
+  const handleBusinessProfileDraftChange = <K extends keyof AccountBusinessProfile>(
+    key: K,
+    value: AccountBusinessProfile[K]
+  ) => {
+    setBusinessProfileDraft((current) => ({ ...current, [key]: value }))
+  }
+
+  const handleBusinessLogoChange = (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0]
+    event.target.value = ''
+
+    if (!file) return
+
+    if (!file.type.startsWith('image/')) {
+      showToast('error', 'Archivo inválido', 'Sube una imagen en formato JPG, PNG o WebP.')
+      return
+    }
+
+    if (file.size > MAX_BUSINESS_LOGO_SIZE) {
+      showToast('error', 'Logo muy pesado', 'El logo debe pesar máximo 2 MB.')
+      return
+    }
+
+    const reader = new FileReader()
+    reader.onload = () => {
+      if (typeof reader.result === 'string') {
+        handleBusinessProfileDraftChange('logoUrl', reader.result)
+      }
+    }
+    reader.onerror = () => {
+      showToast('error', 'No se pudo leer', 'Intenta subir el logo otra vez.')
+    }
+    reader.readAsDataURL(file)
+  }
+
+  const handleSaveBusinessProfile = async () => {
+    if (!businessProfileChanged) return
+
+    setSavingBusinessProfile(true)
+    try {
+      let nextBusinessProfile = normalizeAccountBusinessProfile(businessProfileDraft)
+      if (/^data:image\//i.test(nextBusinessProfile.logoUrl)) {
+        const uploaded = await mediaService.uploadDataUrl({
+          fileBase64: nextBusinessProfile.logoUrl,
+          filename: 'business-logo',
+          module: 'business_settings',
+          moduleEntityId: 'account-business-profile',
+          isPublic: true
+        })
+        nextBusinessProfile = {
+          ...nextBusinessProfile,
+          logoUrl: uploaded.publicUrl || `/api/media/assets/${encodeURIComponent(uploaded.id)}/file`
+        }
+      }
+
+      await setBusinessProfile(nextBusinessProfile)
+      let profileSyncFailed = false
+      if (nextBusinessProfile.name !== (user?.businessName || '')) {
+        try {
+          await updateProfile({ businessName: nextBusinessProfile.name })
+        } catch {
+          profileSyncFailed = true
+        }
+      }
+      setBusinessProfileDraft(nextBusinessProfile)
+      if (profileSyncFailed) {
+        showToast(
+          'warning',
+          'Negocio guardado',
+          'Los comprobantes ya usan estos datos, pero no se pudo sincronizar el nombre del perfil.'
+        )
+      } else {
+        showToast('success', 'Negocio guardado', 'Página de cobro y comprobantes usarán estos datos por default.')
+      }
+    } catch (error: any) {
+      setBusinessProfileDraft(normalizedBusinessProfile)
+      showToast('error', 'No se guardó', error?.message || 'Intenta guardar los datos del negocio otra vez.')
+    } finally {
+      setSavingBusinessProfile(false)
     }
   }
 
@@ -825,19 +936,6 @@ export const AccountSettings: React.FC = () => {
                   />
                 </div>
 
-                <div className={`${styles.field} ${styles.profileDetailsWide}`}>
-                  <label className={styles.label} htmlFor="account-business-name">Nombre del negocio</label>
-                  <input
-                    id="account-business-name"
-                    className={styles.input}
-                    type="text"
-                    value={profileDraft.businessName}
-                    onChange={(event) => setProfileDraft((current) => ({ ...current, businessName: event.target.value }))}
-                    disabled={savingProfileDetails}
-                    autoComplete="organization"
-                    placeholder="Tu negocio"
-                  />
-                </div>
               </div>
 
               <div className={styles.sectionActions}>
@@ -849,6 +947,160 @@ export const AccountSettings: React.FC = () => {
                 >
                   <Save size={16} />
                   Guardar
+                </Button>
+              </div>
+            </section>
+
+            <section className={`${styles.accountSection} ${styles.accountSectionWide}`}>
+              <div className={styles.accountSectionHeader}>
+                <div>
+                  <h3 className={styles.accountSectionTitle}>
+                    <Building2 size={16} /> Datos del negocio
+                  </h3>
+                  <p className={styles.accountSectionDescription}>
+                    Estos datos alimentan automáticamente la página de cobro y el comprobante. Pagos sólo los cambia si activas una personalización.
+                  </p>
+                </div>
+              </div>
+
+              <div className={styles.businessProfileLayout}>
+                <div className={styles.businessLogoControl}>
+                  <div className={styles.businessLogoPreview}>
+                    {businessProfileDraft.logoUrl ? (
+                      <img src={businessProfileDraft.logoUrl} alt="Logo del negocio" />
+                    ) : (
+                      <Image size={24} />
+                    )}
+                  </div>
+                  <div className={styles.businessLogoContent}>
+                    <strong>Logo del negocio</strong>
+                    <span>Se usará como identidad visual en links de cobro y comprobantes.</span>
+                    <div className={styles.businessLogoActions}>
+                      <Button
+                        type="button"
+                        variant="secondary"
+                        size="sm"
+                        onClick={() => businessLogoInputRef.current?.click()}
+                        disabled={businessProfileSaving}
+                      >
+                        <ImageUp size={15} />
+                        Subir logo
+                      </Button>
+                      {businessProfileDraft.logoUrl && (
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => handleBusinessProfileDraftChange('logoUrl', '')}
+                          disabled={businessProfileSaving}
+                        >
+                          <Trash2 size={15} />
+                          Quitar
+                        </Button>
+                      )}
+                    </div>
+                    <input
+                      ref={businessLogoInputRef}
+                      className={styles.hiddenFileInput}
+                      type="file"
+                      accept="image/*"
+                      onChange={handleBusinessLogoChange}
+                    />
+                  </div>
+                </div>
+
+                <div className={styles.businessProfileGrid}>
+                  <div className={styles.field}>
+                    <label className={styles.label} htmlFor="business-profile-name">Nombre del negocio</label>
+                    <input
+                      id="business-profile-name"
+                      className={styles.input}
+                      type="text"
+                      value={businessProfileDraft.name}
+                      onChange={(event) => handleBusinessProfileDraftChange('name', event.target.value)}
+                      disabled={businessProfileSaving}
+                      autoComplete="organization"
+                      placeholder="Tu negocio"
+                    />
+                  </div>
+
+                  <div className={styles.field}>
+                    <label className={styles.label} htmlFor="business-profile-email">Email del negocio</label>
+                    <input
+                      id="business-profile-email"
+                      className={styles.input}
+                      type="email"
+                      value={businessProfileDraft.email}
+                      onChange={(event) => handleBusinessProfileDraftChange('email', event.target.value)}
+                      disabled={businessProfileSaving}
+                      autoComplete="email"
+                      placeholder="pagos@tu-negocio.com"
+                    />
+                  </div>
+
+                  <div className={styles.field}>
+                    <label className={styles.label} htmlFor="business-profile-phone">Teléfono del negocio</label>
+                    <input
+                      id="business-profile-phone"
+                      className={styles.input}
+                      type="tel"
+                      value={businessProfileDraft.phone}
+                      onChange={(event) => handleBusinessProfileDraftChange('phone', event.target.value)}
+                      disabled={businessProfileSaving}
+                      autoComplete="tel"
+                      placeholder="+52 656 000 0000"
+                    />
+                  </div>
+
+                  <div className={styles.field}>
+                    <label className={styles.label} htmlFor="business-profile-website">Sitio web</label>
+                    <input
+                      id="business-profile-website"
+                      className={styles.input}
+                      type="url"
+                      value={businessProfileDraft.website}
+                      onChange={(event) => handleBusinessProfileDraftChange('website', event.target.value)}
+                      disabled={businessProfileSaving}
+                      autoComplete="url"
+                      placeholder="https://tu-negocio.com"
+                    />
+                  </div>
+
+                  <div className={`${styles.field} ${styles.profileDetailsWide}`}>
+                    <label className={styles.label} htmlFor="business-profile-address">Dirección fiscal o comercial</label>
+                    <textarea
+                      id="business-profile-address"
+                      className={styles.textarea}
+                      value={businessProfileDraft.address}
+                      onChange={(event) => handleBusinessProfileDraftChange('address', event.target.value)}
+                      disabled={businessProfileSaving}
+                      placeholder="Calle, ciudad, estado, país"
+                    />
+                  </div>
+
+                  <div className={`${styles.field} ${styles.profileDetailsWide}`}>
+                    <label className={styles.label} htmlFor="business-profile-terms">Términos predeterminados para pagos</label>
+                    <textarea
+                      id="business-profile-terms"
+                      className={styles.textarea}
+                      value={businessProfileDraft.terms}
+                      onChange={(event) => handleBusinessProfileDraftChange('terms', event.target.value)}
+                      disabled={businessProfileSaving}
+                      placeholder="Políticas de pago, reembolso, emisión de comprobantes o condiciones del servicio."
+                    />
+                  </div>
+                </div>
+              </div>
+
+              <div className={styles.sectionActions}>
+                <Button
+                  variant="primary"
+                  onClick={handleSaveBusinessProfile}
+                  loading={businessProfileSaving}
+                  disabled={businessProfileSaving || !businessProfileChanged}
+                >
+                  <Save size={16} />
+                  Guardar datos del negocio
                 </Button>
               </div>
             </section>

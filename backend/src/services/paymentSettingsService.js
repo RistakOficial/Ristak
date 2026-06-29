@@ -1,4 +1,8 @@
 import { getAppConfig, setAppConfig } from '../config/database.js'
+import {
+  getAccountBusinessProfile,
+  normalizeAccountBusinessProfile
+} from './accountBusinessProfileService.js'
 import { decrypt, encrypt } from '../utils/encryption.js'
 import { logger } from '../utils/logger.js'
 
@@ -10,6 +14,7 @@ const PAYMENT_MODES = [PAYMENT_MODE_TEST, PAYMENT_MODE_LIVE]
 const DEFAULT_PAYMENT_SETTINGS = {
   paymentMode: PAYMENT_MODE_LIVE,
   checkout: {
+    useBusinessProfile: true,
     logoUrl: '',
     headline: 'Pago seguro',
     description: 'Revisa el resumen y completa tu pago con tarjeta.',
@@ -19,6 +24,7 @@ const DEFAULT_PAYMENT_SETTINGS = {
     showSecureBadge: true
   },
   receipt: {
+    useBusinessProfile: true,
     logoUrl: '',
     invoiceTemplate: 'classic',
     invoicePalette: 'graphite',
@@ -234,6 +240,87 @@ function parseStoredSettings(rawValue) {
   }
 }
 
+function hasOwn(object = {}, key) {
+  return Object.prototype.hasOwnProperty.call(object, key)
+}
+
+function readBusinessProfileFlag(value, fallback) {
+  if (value === undefined || value === null || value === '') return fallback
+  return cleanBoolean(value, fallback)
+}
+
+function hasCheckoutBusinessOverride(checkout = {}) {
+  return Boolean(
+    cleanString(checkout.logoUrl, 1000) ||
+    cleanString(checkout.supportEmail, 160) ||
+    cleanString(checkout.supportPhone, 80)
+  )
+}
+
+function hasReceiptBusinessOverride(receipt = {}) {
+  return Boolean(
+    cleanString(receipt.logoUrl, 1000) ||
+    cleanString(receipt.businessName, 160) ||
+    cleanString(receipt.businessEmail, 160) ||
+    cleanString(receipt.businessPhone, 80) ||
+    cleanLongString(receipt.businessAddress, 500) ||
+    cleanString(receipt.businessWebsite, 250) ||
+    cleanLongString(receipt.terms, 12000)
+  )
+}
+
+function resolveStoredBusinessProfileFlags(stored = {}) {
+  const checkout = stored.checkout || {}
+  const receipt = stored.receipt || {}
+  const checkoutHasFlag = hasOwn(checkout, 'useBusinessProfile') || hasOwn(checkout, 'useAccountBusinessProfile')
+  const receiptHasFlag = hasOwn(receipt, 'useBusinessProfile') || hasOwn(receipt, 'useAccountBusinessProfile')
+
+  return {
+    checkoutUseBusinessProfile: checkoutHasFlag
+      ? readBusinessProfileFlag(checkout.useBusinessProfile ?? checkout.useAccountBusinessProfile, DEFAULT_PAYMENT_SETTINGS.checkout.useBusinessProfile)
+      : !hasCheckoutBusinessOverride(checkout),
+    receiptUseBusinessProfile: receiptHasFlag
+      ? readBusinessProfileFlag(receipt.useBusinessProfile ?? receipt.useAccountBusinessProfile, DEFAULT_PAYMENT_SETTINGS.receipt.useBusinessProfile)
+      : !hasReceiptBusinessOverride(receipt)
+  }
+}
+
+export function resolvePaymentSettingsBusinessProfile(settings = {}, profile = {}) {
+  const normalizedProfile = normalizeAccountBusinessProfile(profile)
+  const checkout = settings.checkout || {}
+  const receipt = settings.receipt || {}
+  const checkoutUsesProfile = checkout.useBusinessProfile !== false
+  const receiptUsesProfile = receipt.useBusinessProfile !== false
+
+  return {
+    ...settings,
+    checkout: {
+      ...checkout,
+      ...(checkoutUsesProfile
+        ? {
+            logoUrl: normalizedProfile.logoUrl || checkout.logoUrl || '',
+            supportEmail: normalizedProfile.email || checkout.supportEmail || '',
+            supportPhone: normalizedProfile.phone || checkout.supportPhone || ''
+          }
+        : {})
+    },
+    receipt: {
+      ...receipt,
+      ...(receiptUsesProfile
+        ? {
+            logoUrl: normalizedProfile.logoUrl || receipt.logoUrl || '',
+            businessName: normalizedProfile.name || receipt.businessName || '',
+            businessEmail: normalizedProfile.email || receipt.businessEmail || '',
+            businessPhone: normalizedProfile.phone || receipt.businessPhone || '',
+            businessAddress: normalizedProfile.address || receipt.businessAddress || '',
+            businessWebsite: normalizedProfile.website || receipt.businessWebsite || '',
+            terms: normalizedProfile.terms || receipt.terms || ''
+          }
+        : {})
+    }
+  }
+}
+
 export function normalizePaymentSettings(input = {}, options = {}) {
   const checkout = input.checkout || {}
   const receipt = input.receipt || {}
@@ -248,6 +335,10 @@ export function normalizePaymentSettings(input = {}, options = {}) {
   const normalized = {
     paymentMode: normalizePaymentSettingsMode(input.paymentMode || input.mode, DEFAULT_PAYMENT_SETTINGS.paymentMode),
     checkout: {
+      useBusinessProfile: readBusinessProfileFlag(
+        checkout.useBusinessProfile ?? checkout.useAccountBusinessProfile,
+        DEFAULT_PAYMENT_SETTINGS.checkout.useBusinessProfile
+      ),
       logoUrl: cleanString(checkout.logoUrl, 1000),
       headline: cleanString(checkout.headline, 120) || DEFAULT_PAYMENT_SETTINGS.checkout.headline,
       description: cleanLongString(checkout.description, 420) || DEFAULT_PAYMENT_SETTINGS.checkout.description,
@@ -257,6 +348,10 @@ export function normalizePaymentSettings(input = {}, options = {}) {
       showSecureBadge: cleanBoolean(checkout.showSecureBadge, DEFAULT_PAYMENT_SETTINGS.checkout.showSecureBadge)
     },
     receipt: {
+      useBusinessProfile: readBusinessProfileFlag(
+        receipt.useBusinessProfile ?? receipt.useAccountBusinessProfile,
+        DEFAULT_PAYMENT_SETTINGS.receipt.useBusinessProfile
+      ),
       logoUrl: cleanString(receipt.logoUrl, 1000),
       invoiceTemplate: cleanEnum(receipt.invoiceTemplate, ['classic', 'executive', 'accent', 'ledger'], DEFAULT_PAYMENT_SETTINGS.receipt.invoiceTemplate),
       invoicePalette: cleanEnum(receipt.invoicePalette, ['graphite', 'sage', 'indigo', 'terracotta', 'champagne', 'custom'], DEFAULT_PAYMENT_SETTINGS.receipt.invoicePalette),
@@ -381,8 +476,29 @@ export function calculatePaymentTax(amount, rawTaxes = {}) {
 }
 
 function settingsForStorage(settings = {}) {
+  const checkout = { ...(settings.checkout || {}) }
+  const receipt = { ...(settings.receipt || {}) }
+
+  if (checkout.useBusinessProfile !== false) {
+    checkout.logoUrl = ''
+    checkout.supportEmail = ''
+    checkout.supportPhone = ''
+  }
+
+  if (receipt.useBusinessProfile !== false) {
+    receipt.logoUrl = ''
+    receipt.businessName = ''
+    receipt.businessEmail = ''
+    receipt.businessPhone = ''
+    receipt.businessAddress = ''
+    receipt.businessWebsite = ''
+    receipt.terms = ''
+  }
+
   return {
     ...settings,
+    checkout,
+    receipt,
     taxes: {
       ...(settings.taxes || {}),
       gigstackApiToken: undefined,
@@ -394,17 +510,34 @@ function settingsForStorage(settings = {}) {
 
 export async function getPaymentSettings(options = {}) {
   const stored = parseStoredSettings(await getAppConfig(PAYMENT_SETTINGS_CONFIG_KEY))
-  return normalizePaymentSettings({
+  const businessProfileFlags = resolveStoredBusinessProfileFlags(stored)
+  const normalized = normalizePaymentSettings({
     paymentMode: stored.paymentMode || DEFAULT_PAYMENT_SETTINGS.paymentMode,
-    checkout: { ...DEFAULT_PAYMENT_SETTINGS.checkout, ...(stored.checkout || {}) },
-    receipt: { ...DEFAULT_PAYMENT_SETTINGS.receipt, ...(stored.receipt || {}) },
+    checkout: {
+      ...DEFAULT_PAYMENT_SETTINGS.checkout,
+      ...(stored.checkout || {}),
+      useBusinessProfile: businessProfileFlags.checkoutUseBusinessProfile
+    },
+    receipt: {
+      ...DEFAULT_PAYMENT_SETTINGS.receipt,
+      ...(stored.receipt || {}),
+      useBusinessProfile: businessProfileFlags.receiptUseBusinessProfile
+    },
     automations: { ...DEFAULT_PAYMENT_SETTINGS.automations, ...(stored.automations || {}) },
     taxes: { ...DEFAULT_PAYMENT_SETTINGS.taxes, ...(stored.taxes || {}) }
   }, options)
+
+  if (options.resolveBusinessProfile === false) return normalized
+
+  return resolvePaymentSettingsBusinessProfile(normalized, await getAccountBusinessProfile())
 }
 
 export async function savePaymentSettings(input = {}) {
-  const current = await getPaymentSettings({ includeSecrets: true, includePrivateStorage: true })
+  const current = await getPaymentSettings({
+    includeSecrets: true,
+    includePrivateStorage: true,
+    resolveBusinessProfile: false
+  })
   const next = normalizePaymentSettings({
     paymentMode: input.paymentMode ?? current.paymentMode,
     checkout: { ...current.checkout, ...(input.checkout || {}) },
@@ -416,7 +549,7 @@ export async function savePaymentSettings(input = {}) {
     includePrivateStorage: true
   })
   await setAppConfig(PAYMENT_SETTINGS_CONFIG_KEY, settingsForStorage(next))
-  return normalizePaymentSettings(next)
+  return getPaymentSettings()
 }
 
 export async function getPaymentGatewayMode() {

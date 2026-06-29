@@ -2,8 +2,10 @@ import crypto from 'crypto'
 import {
   getPaymentSettings,
   normalizePaymentSettings,
+  resolvePaymentSettingsBusinessProfile,
   savePaymentSettings
 } from '../services/paymentSettingsService.js'
+import { getAccountBusinessProfile } from '../services/accountBusinessProfileService.js'
 import { renderPaymentReceiptPreviewHtml } from '../services/paymentReceiptPreviewService.js'
 import { logger } from '../utils/logger.js'
 
@@ -74,13 +76,15 @@ async function buildPaymentSettingsPreviewSnapshot(input = {}) {
   const current = await getPaymentSettings()
   const draft = input?.settings && typeof input.settings === 'object' ? input.settings : input
 
-  return normalizePaymentSettings({
+  const normalized = normalizePaymentSettings({
     paymentMode: draft.paymentMode ?? current.paymentMode,
     checkout: { ...current.checkout, ...(draft.checkout || {}) },
     receipt: { ...current.receipt, ...(draft.receipt || {}) },
     automations: { ...current.automations, ...(draft.automations || {}) },
     taxes: { ...current.taxes, ...(draft.taxes || {}) }
   })
+
+  return resolvePaymentSettingsBusinessProfile(normalized, await getAccountBusinessProfile())
 }
 
 export async function getPaymentSettingsView(_req, res) {
