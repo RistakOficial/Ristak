@@ -15,6 +15,7 @@ interface ModalProps {
   isOpen: boolean
   onClose: () => void
   title: string
+  subtitle?: React.ReactNode
   message?: string
   type?: ModalType
   size?: ModalSize
@@ -86,6 +87,7 @@ export const Modal: React.FC<ModalProps> = ({
   isOpen,
   onClose,
   title,
+  subtitle,
   message,
   type = 'custom',
   size = 'md',
@@ -250,7 +252,10 @@ export const Modal: React.FC<ModalProps> = ({
                   {icons[type]}
                 </div>
               )}
-              {title && <h2 className={styles.title}>{title}</h2>}
+              <div className={styles.titleText}>
+                {title && <h2 className={styles.title}>{title}</h2>}
+                {subtitle && <div className={styles.subtitle}>{subtitle}</div>}
+              </div>
             </div>
             {showCloseButton && (
               <button

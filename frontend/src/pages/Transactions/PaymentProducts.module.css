@@ -145,41 +145,46 @@
   gap: 14px;
 }
 
-.productIdPanel {
-  display: flex;
+.modalIdLine,
+.priceIdLine {
+  display: inline-flex;
   align-items: center;
-  justify-content: space-between;
-  gap: 12px;
+  gap: 6px;
   min-width: 0;
-  padding: 12px;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-card);
-  background: var(--surface);
-}
-
-.productIdValue {
-  display: flex;
-  flex-direction: column;
-  gap: 5px;
-  min-width: 0;
-}
-
-.productIdValue span {
-  color: var(--text-dim);
+  color: var(--text-mute);
   font-size: 12px;
-  font-weight: 500;
+  font-weight: 400;
 }
 
-.productIdValue code {
+.modalIdLine {
+  max-width: min(54vw, 520px);
+}
+
+.modalIdLine span,
+.priceIdLine span {
+  flex: 0 0 auto;
+}
+
+.modalIdLine code,
+.priceIdLine code {
   display: block;
+  min-width: 0;
   max-width: 100%;
   overflow: hidden;
-  color: var(--text);
+  color: var(--text-mute);
   font-family: var(--font-mono);
   font-size: 12px;
-  font-weight: 500;
+  font-weight: 400;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.modalIdLine button,
+.priceIdLine button {
+  width: 24px;
+  height: 24px;
+  min-height: 24px;
+  color: var(--text-mute);
 }
 
 .formGroup {
@@ -260,6 +265,10 @@
   grid-template-columns: minmax(180px, 1.3fr) minmax(130px, 0.8fr) minmax(140px, 0.9fr);
   gap: 12px;
   min-width: 0;
+}
+
+.priceIdLine {
+  grid-column: 1 / -1;
 }
 
 .fiscalPanel {
