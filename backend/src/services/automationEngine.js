@@ -1997,6 +1997,55 @@ function webhookHeadersFromConfig(rawHeaders, ctx) {
   return headers
 }
 
+function hasWebhookHeader(headers, name) {
+  const expected = cleanString(name).toLowerCase()
+  return Object.keys(headers || {}).some((key) => key.toLowerCase() === expected)
+}
+
+function webhookBodyModeFromConfig(config = {}) {
+  const mode = cleanString(config.bodyMode).toLowerCase()
+  if (mode === 'fields' || mode === 'json') return mode
+  const rawFields = config.bodyFields
+  if (Array.isArray(rawFields) && rawFields.some((row) => cleanString(row?.key || row?.name))) return 'fields'
+  if (isPlainObject(rawFields) && Object.keys(rawFields).some((key) => cleanString(key))) return 'fields'
+  return str(config.body).trim() ? 'json' : 'fields'
+}
+
+function renderWebhookBodyValue(value, ctx) {
+  return typeof value === 'string'
+    ? renderTemplate(value, ctx, { preserveUnknown: true })
+    : value ?? ''
+}
+
+function webhookBodyFieldsFromConfig(rawFields, ctx) {
+  const body = {}
+  if (Array.isArray(rawFields)) {
+    rawFields.forEach((row) => {
+      const key = cleanString(row?.key || row?.name)
+      if (!key) return
+      body[key] = renderWebhookBodyValue(row?.value, ctx)
+    })
+    return body
+  }
+  if (isPlainObject(rawFields)) {
+    Object.entries(rawFields).forEach(([key, value]) => {
+      if (!cleanString(key)) return
+      body[key] = renderWebhookBodyValue(value, ctx)
+    })
+  }
+  return body
+}
+
+function webhookBodyFromConfig(config = {}, ctx = {}) {
+  if (webhookBodyModeFromConfig(config) === 'fields') {
+    const body = webhookBodyFieldsFromConfig(config.bodyFields, ctx)
+    if (!Object.keys(body).length) return { text: '', json: false }
+    return { text: JSON.stringify(body), json: true }
+  }
+  const bodyText = renderTemplate(str(config.body), ctx, { preserveUnknown: true }).trim()
+  return { text: bodyText, json: /^[\[{]/.test(bodyText) }
+}
+
 async function runWebhookRequestFromConfig(config = {}, ctx = {}) {
   const method = (str(config.method) || 'POST').toUpperCase()
   const url = renderTemplate(str(config.url), ctx, { preserveUnknown: true }).trim()
@@ -2021,11 +2070,11 @@ async function runWebhookRequestFromConfig(config = {}, ctx = {}) {
   }
 
   const headers = webhookHeadersFromConfig(config.headers, ctx)
-  const bodyText = renderTemplate(str(config.body), ctx, { preserveUnknown: true }).trim()
+  const body = webhookBodyFromConfig(config, ctx)
   const init = { method, headers }
-  if (!['GET', 'HEAD'].includes(method) && bodyText) {
-    init.body = bodyText
-    if (!Object.keys(headers).some((key) => key.toLowerCase() === 'content-type') && /^[\[{]/.test(bodyText)) {
+  if (!['GET', 'HEAD'].includes(method) && body.text) {
+    init.body = body.text
+    if (!hasWebhookHeader(headers, 'content-type') && body.json) {
       headers['Content-Type'] = 'application/json'
     }
   }

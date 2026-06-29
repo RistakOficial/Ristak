@@ -133,6 +133,63 @@ test('testWebhookAction ejecuta el POST y devuelve salida mapeable', async () =>
   }
 })
 
+test('testWebhookAction arma el body con campos sin escribir JSON', async () => {
+  let received = { headers: {}, body: {} }
+  const server = http.createServer((req, res) => {
+    let rawBody = ''
+    req.on('data', (chunk) => {
+      rawBody += chunk
+    })
+    req.on('end', () => {
+      received = {
+        headers: req.headers,
+        body: rawBody ? JSON.parse(rawBody) : {}
+      }
+      res.setHeader('Content-Type', 'application/json')
+      res.end(JSON.stringify({
+        accepted: true,
+        received: received.body
+      }))
+    })
+  })
+
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve))
+  try {
+    const address = server.address()
+    const port = typeof address === 'object' && address ? address.port : 0
+    const result = await testWebhookAction(
+      {
+        url: `http://127.0.0.1:${port}/crm`,
+        method: 'POST',
+        headers: [{ key: 'X-Test-Token', value: '{{webhook.token}}' }],
+        bodyMode: 'fields',
+        bodyFields: [
+          { key: 'email', value: '{{webhook.email}}' },
+          { key: 'plan', value: '{{webhook.plan}}' },
+          { key: 'origen', value: 'Ristak' }
+        ],
+        body: '{"ignored":true}',
+        timeout: 5
+      },
+      {
+        payload: {
+          email: 'lead@test.com',
+          plan: 'Pro',
+          token: 'tok_test'
+        }
+      }
+    )
+
+    assert.equal(result.ok, true)
+    assert.equal(received.headers['x-test-token'], 'tok_test')
+    assert.equal(received.headers['content-type'], 'application/json')
+    assert.deepEqual(received.body, { email: 'lead@test.com', plan: 'Pro', origen: 'Ristak' })
+    assert.deepEqual(result.output.respuesta.received, received.body)
+  } finally {
+    await new Promise((resolve) => server.close(resolve))
+  }
+})
+
 test('renderTemplate expone datos del pago para acciones posteriores', () => {
   const paymentCtx = {
     paymentId: 'pay_123',

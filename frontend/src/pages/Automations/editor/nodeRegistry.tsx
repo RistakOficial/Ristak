@@ -397,6 +397,14 @@ const arr = <T,>(value: unknown): T[] => (Array.isArray(value) ? (value as T[]) 
 const obj = (value: unknown): Record<string, unknown> =>
   value && typeof value === 'object' && !Array.isArray(value) ? (value as Record<string, unknown>) : {}
 
+const webhookBodyMode = (config: Record<string, unknown>): 'fields' | 'json' => {
+  const mode = str(config.bodyMode)
+  if (mode === 'fields' || mode === 'json') return mode
+  const bodyFields = arr<{ key?: unknown; name?: unknown }>(config.bodyFields)
+  if (bodyFields.some((row) => str(row.key || row.name).trim())) return 'fields'
+  return str(config.body).trim() ? 'json' : 'fields'
+}
+
 export const channelLabel = (value: string): string =>
   CHANNEL_OPTIONS_WITH_ANY.find((option) => option.value === value)?.label || value
 
@@ -2101,6 +2109,8 @@ const OTHER_ACTIONS: NodeDefinition[] = [
       url: '',
       method: 'POST',
       headers: [],
+      bodyMode: 'fields',
+      bodyFields: [],
       body: '',
       timeout: 15,
       onError: 'continue',
@@ -2120,8 +2130,37 @@ const OTHER_ACTIONS: NodeDefinition[] = [
           { value: 'DELETE', label: 'DELETE' }
         ]
       },
-      { key: 'headers', label: 'Headers', type: 'keyValue', advanced: true },
-      { key: 'body', label: 'Body (JSON)', type: 'textarea', placeholder: '{\n  "telefono": "{{telefono}}"\n}', showVariables: true },
+      {
+        key: 'headers',
+        label: 'Headers',
+        type: 'keyValue',
+        help: 'Van antes del body. Ejemplo: Authorization, Content-Type o X-API-Key.'
+      },
+      {
+        key: 'bodyMode',
+        label: 'Body',
+        type: 'select',
+        options: [
+          { value: 'fields', label: 'Campos' },
+          { value: 'json', label: 'JSON' }
+        ],
+        help: 'Usa campos si no quieres escribir JSON. Usa JSON cuando el API necesite una estructura avanzada.'
+      },
+      {
+        key: 'bodyFields',
+        label: 'Campos del body',
+        type: 'keyValue',
+        help: 'Cada fila se enviará como una propiedad del JSON.',
+        showIf: (config) => webhookBodyMode(config) === 'fields'
+      },
+      {
+        key: 'body',
+        label: 'Body (JSON)',
+        type: 'textarea',
+        placeholder: '{\n  "telefono": "{{telefono}}"\n}',
+        showVariables: true,
+        showIf: (config) => webhookBodyMode(config) === 'json'
+      },
       {
         key: 'sampleResponseJson',
         label: 'Muestra de respuesta (opcional)',

@@ -56,11 +56,23 @@ const hasSampleResponse = (value: unknown): boolean => {
   return Boolean(value && typeof value === 'object' && Object.keys(value as Record<string, unknown>).length > 0)
 }
 
+const webhookBodyMode = (config: ConfigValue): 'fields' | 'json' => {
+  const mode = str(config.bodyMode)
+  if (mode === 'fields' || mode === 'json') return mode
+  const bodyFields = Array.isArray(config.bodyFields)
+    ? (config.bodyFields as Array<{ key?: unknown; name?: unknown }>)
+    : []
+  if (bodyFields.some((row) => str(row.key || row.name).trim())) return 'fields'
+  return str(config.body).trim() ? 'json' : 'fields'
+}
+
 const requestSignature = (definitionType: string, config: ConfigValue): string =>
   JSON.stringify({
     type: definitionType,
     url: str(config.url),
     method: str(config.method),
+    bodyMode: webhookBodyMode(config),
+    bodyFields: config.bodyFields || null,
     body: str(config.body),
     headers: config.headers || null
   })
@@ -244,7 +256,7 @@ export const NodeConfigBubble: React.FC<NodeConfigBubbleProps> = ({
           <Field key={field.key} label={field.label} help={field.help}>
             <CustomSelect
               options={field.options || []}
-              value={str(config[field.key])}
+              value={field.key === 'bodyMode' ? webhookBodyMode(config) : str(config[field.key])}
               onValueChange={(value) => setValue(field.key, value)}
               placeholder="Selecciona una opción"
               aria-label={field.label}
