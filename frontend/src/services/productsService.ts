@@ -9,6 +9,7 @@ export interface ProductPrice {
   price?: number
   currency?: string
   type?: string
+  sku?: string | null
   syncStatus?: string
 }
 
@@ -34,6 +35,7 @@ export interface ProductPayload {
   name: string
   description?: string
   currency?: string
+  productType?: string
   gigstackProductKey?: string
   gigstackUnitKey?: string
   gigstackUnitName?: string
@@ -44,6 +46,7 @@ export interface ProductPayload {
     amount: number
     currency: string
     type: string
+    sku?: string
   }>
 }
 

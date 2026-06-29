@@ -84,7 +84,24 @@ function getRecordId(record = {}, aliases = []) {
 
 function normalizeProductType(value) {
   const normalized = cleanString(value || DEFAULT_PRODUCT_TYPE).toUpperCase()
-  return ['PHYSICAL', 'DIGITAL'].includes(normalized) ? normalized : DEFAULT_PRODUCT_TYPE
+  const aliases = {
+    PRODUCT: 'PHYSICAL',
+    PRODUCTO: 'PHYSICAL',
+    SERVICIO: 'SERVICE',
+    PLAN: 'SUBSCRIPTION',
+    MEMBERSHIP: 'SUBSCRIPTION',
+    MEMBRESIA: 'SUBSCRIPTION',
+    MEMBRESÍA: 'SUBSCRIPTION',
+    PAQUETE: 'PACKAGE'
+  }
+  const resolved = aliases[normalized] || normalized
+  return ['PHYSICAL', 'DIGITAL', 'SERVICE', 'SUBSCRIPTION', 'PACKAGE'].includes(resolved)
+    ? resolved
+    : DEFAULT_PRODUCT_TYPE
+}
+
+function normalizeHighLevelProductType(value) {
+  return normalizeProductType(value) === 'PHYSICAL' ? 'PHYSICAL' : DEFAULT_PRODUCT_TYPE
 }
 
 function normalizePriceType(value) {
@@ -113,6 +130,53 @@ function normalizeGigstackProductKey(value) {
 
 function normalizeGigstackUnitKey(value) {
   return cleanString(value).toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 10)
+}
+
+function hasLegacyPriceInput(input = {}) {
+  return input.price !== undefined ||
+    input.amount !== undefined ||
+    input.productPrice !== undefined
+}
+
+function buildProductPriceInputs(input = {}) {
+  if (Array.isArray(input.prices)) return input.prices
+
+  if (!hasLegacyPriceInput(input)) return []
+
+  return [{
+    name: input.priceName || input.name || 'Precio',
+    amount: input.price ?? input.amount ?? input.productPrice,
+    currency: input.currency,
+    type: input.priceType || DEFAULT_PRICE_TYPE,
+    description: input.priceDescription || input.description || '',
+    sku: input.sku || ''
+  }]
+}
+
+function getPriceInputIdentifiers(price = {}) {
+  return [
+    price.localId,
+    price.local_id,
+    price.id,
+    price._id,
+    price.ristakPriceId,
+    price.ghlPriceId,
+    price.ghl_price_id,
+    price.priceId,
+    price.price_id
+  ].map(cleanString).filter(Boolean)
+}
+
+function findExistingPriceForInput(existingPrices = [], priceInput = {}) {
+  const identifiers = new Set(getPriceInputIdentifiers(priceInput))
+  if (identifiers.size === 0) return null
+
+  return existingPrices.find((price) => (
+    identifiers.has(cleanString(price.localId)) ||
+    identifiers.has(cleanString(price.id)) ||
+    identifiers.has(cleanString(price._id)) ||
+    identifiers.has(cleanString(price.ghlPriceId))
+  )) || null
 }
 
 async function getDefaultProductCurrency() {
@@ -621,17 +685,7 @@ export async function createLocalProduct(input = {}, options = {}) {
     syncOrigin: 'ristak'
   })
 
-  const priceInputs = Array.isArray(input.prices) && input.prices.length
-    ? input.prices
-    : (input.price || input.amount || input.productPrice)
-      ? [{
-          name: input.priceName || input.name || 'Precio',
-          amount: input.price || input.amount || input.productPrice,
-          currency: input.currency,
-          type: input.priceType || DEFAULT_PRICE_TYPE,
-          description: input.priceDescription || input.description || ''
-        }]
-      : []
+  const priceInputs = buildProductPriceInputs(input)
 
   for (const priceInput of priceInputs) {
     await upsertLocalPrice(priceInput, {
@@ -713,19 +767,45 @@ export async function updateLocalProduct(productId, input = {}, options = {}) {
     syncOrigin: existing.sync_origin || existing.source || 'ristak'
   })
 
-  const priceInput = Array.isArray(input.prices) && input.prices.length
-    ? input.prices[0]
-    : (input.price !== undefined || input.amount !== undefined || input.productPrice !== undefined)
-      ? {
-          name: input.priceName || input.name || 'Precio',
-          amount: input.price ?? input.amount ?? input.productPrice,
-          currency: input.currency,
-          type: input.priceType || DEFAULT_PRICE_TYPE,
-          description: input.priceDescription || input.description || ''
-        }
-      : null
+  const priceInputs = buildProductPriceInputs(input)
+  if (Array.isArray(input.prices)) {
+    const existingPrices = await listLocalPrices(existing.id)
+    const savedPriceIds = []
 
-  if (priceInput) {
+    for (const priceInput of priceInputs) {
+      const existingPrice = findExistingPriceForInput(existingPrices, priceInput)
+      const savedPrice = await upsertLocalPrice({
+        ...existingPrice,
+        ...priceInput,
+        id: existingPrice?.localId || existingPrice?.id,
+        ghlPriceId: existingPrice?.ghlPriceId,
+        productId: existing.id,
+        localProductId: existing.id,
+        ghlProductId: existing.ghl_product_id
+      }, {
+        id: existingPrice?.localId,
+        productId: existing.id,
+        ghlProductId: existing.ghl_product_id,
+        locationId: existing.location_id,
+        source: existingPrice?.source || existing.source || 'ristak',
+        syncStatus: 'pending',
+        syncOrigin: existingPrice?.syncOrigin || existing.sync_origin || existing.source || 'ristak'
+      })
+      if (savedPrice?.id) savedPriceIds.push(savedPrice.id)
+    }
+
+    if (savedPriceIds.length > 0) {
+      await db.run(
+        `DELETE FROM product_prices
+         WHERE product_id = ?
+           AND id NOT IN (${savedPriceIds.map(() => '?').join(', ')})`,
+        [existing.id, ...savedPriceIds]
+      )
+    } else {
+      await db.run('DELETE FROM product_prices WHERE product_id = ?', [existing.id])
+    }
+  } else if (priceInputs.length > 0) {
+    const priceInput = priceInputs[0]
     const existingPrices = await listLocalPrices(existing.id)
     const existingPrice = existingPrices[0] || null
     await upsertLocalPrice({
@@ -790,7 +870,7 @@ function buildGhlProductPayload(row = {}, locationId) {
     name: row.name,
     locationId,
     description: row.description || '',
-    productType: normalizeProductType(row.product_type),
+    productType: normalizeHighLevelProductType(row.product_type),
     availableInStore: row.available_in_store === 1 || row.available_in_store === true
   }
 
@@ -820,7 +900,7 @@ function buildGhlPricePayload(row = {}, productRow = {}, locationId) {
     description: row.description || '',
     sku: row.sku || undefined,
     trackInventory: row.track_inventory === 1 || row.track_inventory === true,
-    isDigitalProduct: normalizeProductType(productRow.product_type) === 'DIGITAL'
+    isDigitalProduct: normalizeHighLevelProductType(productRow.product_type) === 'DIGITAL'
   }
 
   if (type === 'recurring') {
