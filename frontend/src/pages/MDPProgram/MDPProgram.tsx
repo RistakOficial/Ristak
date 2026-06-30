@@ -29,6 +29,21 @@ const RISTAK_TO_MDP_THEME_PRESET: Record<ThemeDir, string> = {
   em: 'aurora-graphite'
 }
 
+const MDP_PROGRAM_IFRAME_ALLOW = [
+  'accelerometer',
+  'autoplay',
+  'camera',
+  'clipboard-read',
+  'clipboard-write',
+  'display-capture',
+  'encrypted-media',
+  'fullscreen',
+  'gyroscope',
+  'microphone',
+  'picture-in-picture',
+  'web-share'
+].join('; ')
+
 interface MdpBridgeThemePayload {
   type: 'ristak:theme'
   source: 'ristak'
@@ -326,7 +341,7 @@ export const MDPProgram: React.FC = () => {
           title={`${programTitle} - ${launchItem.label}`}
           src={iframeSrc}
           className={cn('h-full min-h-0 w-full border-0 bg-[var(--surface)]')}
-          allow="fullscreen; clipboard-read; clipboard-write"
+          allow={MDP_PROGRAM_IFRAME_ALLOW}
           allowFullScreen
           onLoad={postThemeToIframe}
         />
