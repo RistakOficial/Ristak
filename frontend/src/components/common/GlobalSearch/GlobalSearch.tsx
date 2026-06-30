@@ -269,6 +269,7 @@ export const GlobalSearch: React.FC<GlobalSearchProps> = ({ className }) => {
         }}
         onKeyDown={handleKeyDown}
         onClear={clearSearch}
+        loading={loading}
         aria-expanded={showDropdown}
         aria-controls="global-search-results"
       />

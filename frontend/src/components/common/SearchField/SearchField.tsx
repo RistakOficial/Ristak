@@ -32,7 +32,7 @@ export const SearchField = forwardRef<HTMLInputElement, SearchFieldProps>(({
 }, ref) => {
   const generatedId = useId()
   const inputId = id ?? generatedId
-  const canClear = showClear && Boolean(value) && Boolean(onClear) && !disabled && !loading
+  const canClear = showClear && Boolean(value) && Boolean(onClear) && !disabled
 
   return (
     <div
@@ -42,6 +42,7 @@ export const SearchField = forwardRef<HTMLInputElement, SearchFieldProps>(({
       data-size={size}
       data-disabled={disabled ? 'true' : undefined}
       data-loading={loading ? 'true' : undefined}
+      data-has-clear={canClear ? 'true' : undefined}
     >
       <Search aria-hidden="true" size={16} className={styles.icon} />
       <input
@@ -57,8 +58,13 @@ export const SearchField = forwardRef<HTMLInputElement, SearchFieldProps>(({
         onChange={(event) => onChange(event.target.value, event)}
       />
       {loading ? (
-        <Loader2 aria-hidden="true" size={16} className={styles.loader} />
-      ) : canClear ? (
+        <Loader2
+          aria-hidden="true"
+          size={16}
+          className={cn(styles.loader, canClear && styles.loaderWithClear)}
+        />
+      ) : null}
+      {canClear ? (
         <button
           type="button"
           className={styles.clearButton}

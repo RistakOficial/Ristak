@@ -7,7 +7,8 @@ import {
   GripVertical,
   X as XIcon,
   ChevronLeft,
-  ChevronRight
+  ChevronRight,
+  Loader2
 } from 'lucide-react'
 import { useTableConfig } from '@/hooks'
 import { getDateSortValueForKey } from '@/utils/dateSort'
@@ -212,6 +213,7 @@ export function Table<T extends Record<string, any>>({
   tableId,
   initialSortBy,
   initialSortOrder = 'asc',
+  loadingVariant,
   focusedRowKey,
   rowClassName,
   toolbarStart,
@@ -390,20 +392,37 @@ export function Table<T extends Record<string, any>>({
   const hiddenColumns = columns.filter(col => !col.fixed && col.visible === false)
   const hasControlledSearchTerm = typeof searchTerm === 'string'
   const resolvedSearchTerm = hasControlledSearchTerm ? searchTerm : localSearchTerm
+  const rawData = Array.isArray(data) ? data : []
+  const hasCompletedInitialLoadRef = useRef(false)
+  const lastSettledDataRef = useRef<T[]>([])
+  const showInitialSkeleton =
+    loading &&
+    loadingVariant !== 'spinner' &&
+    !hasCompletedInitialLoadRef.current &&
+    rawData.length === 0 &&
+    lastSettledDataRef.current.length === 0
+  const isRefreshing = loading && !showInitialSkeleton
+  const tableData =
+    isRefreshing && rawData.length === 0 && lastSettledDataRef.current.length > 0
+      ? lastSettledDataRef.current
+      : rawData
   const resolvedSearchTermPrepared = useMemo(() => prepareSearchQuery(resolvedSearchTerm), [resolvedSearchTerm])
-  const rowSearchIndexes = useMemo(() => {
-    if (serverSideSearch || !Array.isArray(data)) return []
 
-    return data.map(item => buildSearchIndex(getSearchValues(item, columns)))
-  }, [columns, data, serverSideSearch])
+  useEffect(() => {
+    if (loading) return
+
+    hasCompletedInitialLoadRef.current = true
+    lastSettledDataRef.current = rawData
+  }, [loading, rawData])
+
+  const rowSearchIndexes = useMemo(() => {
+    if (serverSideSearch) return []
+
+    return tableData.map(item => buildSearchIndex(getSearchValues(item, columns)))
+  }, [columns, tableData, serverSideSearch])
 
   const filteredData = useMemo(() => {
-    if (!Array.isArray(data)) {
-      // TODO: Implement proper logging service
-      return []
-    }
-
-    let filtered = [...data]
+    let filtered = [...tableData]
 
     if (!serverSideSearch && resolvedSearchTerm) {
       filtered = filtered.filter((item, index) =>
@@ -433,7 +452,7 @@ export function Table<T extends Record<string, any>>({
     }
 
     return filtered
-  }, [columns, data, resolvedSearchTermPrepared, rowSearchIndexes, resolvedSearchTerm, serverSideSearch, sortBy, sortOrder])
+  }, [columns, tableData, resolvedSearchTermPrepared, rowSearchIndexes, resolvedSearchTerm, serverSideSearch, sortBy, sortOrder])
 
   const handleSearchTermChange = (nextSearchTerm: string) => {
     if (!hasControlledSearchTerm) {
@@ -539,11 +558,24 @@ export function Table<T extends Record<string, any>>({
         value={resolvedSearchTerm}
         onChange={handleSearchTermChange}
         onClear={() => handleSearchTermChange('')}
+        loading={isRefreshing && Boolean(resolvedSearchTerm)}
       />
     </div>
   ) : null
 
-  if (loading) {
+  const refreshIndicator = isRefreshing ? (
+    <span
+      className={styles.refreshIndicator}
+      role="status"
+      aria-live="polite"
+      aria-label="Actualizando tabla"
+      title="Actualizando tabla"
+    >
+      <Loader2 aria-hidden="true" size={16} className={styles.refreshIcon} />
+    </span>
+  ) : null
+
+  if (showInitialSkeleton) {
     const skeletonColumnCount = Math.max(3, Math.min(totalVisibleColumns || visibleColumns.length || 4, 8))
     const skeletonRows = Array.from({ length: 7 })
     const skeletonCells = Array.from({ length: skeletonColumnCount })
@@ -596,7 +628,7 @@ export function Table<T extends Record<string, any>>({
   }
 
   return (
-    <div className={styles.container} data-ristak-table>
+    <div className={styles.container} data-ristak-table aria-busy={isRefreshing ? 'true' : undefined}>
       <div className={`${styles.tableHeader} ${hasSelectionActions ? styles.tableHeaderSelection : ''}`}>
         {hasSelectionActions ? (
           <div className={styles.selectionActions}>
@@ -620,6 +652,7 @@ export function Table<T extends Record<string, any>>({
 
             <div className={styles.tableActions}>
               {searchPosition === 'right' && searchControl}
+              {refreshIndicator}
 
               <button
                 className={`${styles.actionButton} ${columnEditMode ? styles.active : ''}`}
@@ -746,7 +779,7 @@ export function Table<T extends Record<string, any>>({
             {paginatedData.length === 0 ? (
               <tr>
                 <td colSpan={totalVisibleColumns || 1} className={styles.empty}>
-                  {searchTerm ? 'No se encontraron resultados' : emptyMessage}
+                  {resolvedSearchTerm ? 'No se encontraron resultados' : emptyMessage}
                 </td>
               </tr>
             ) : (

@@ -711,6 +711,7 @@ export const Transactions: React.FC = () => {
   const handledOpenPaymentRef = useRef<string | null>(null)
   const handledOpenPaymentPlanRef = useRef<string | null>(null)
   const paymentPlansUnavailableRedirectedRef = useRef(false)
+  const transactionsRequestRef = useRef(0)
   const paymentPlansRequestRef = useRef(0)
 
   const navigateTransactionsPath = useCallback((pathname: string, options?: { replace?: boolean }) => {
@@ -904,6 +905,8 @@ export const Transactions: React.FC = () => {
   }, [paymentTableTab, selectedPaymentPlanIds.length])
 
   const fetchData = async (forceSync = false) => {
+    const requestId = transactionsRequestRef.current + 1
+    transactionsRequestRef.current = requestId
     setLoading(true)
     try {
       let startDate: string | undefined
@@ -922,14 +925,22 @@ export const Transactions: React.FC = () => {
         transactionsService.getSummary(startDate, endDate)
       ])
 
+      if (transactionsRequestRef.current !== requestId) {
+        return
+      }
+
       setTransactions(transactionsData)
       setSummary(summaryData)
     } catch (error) {
       // Error already shown to user via toast
-      showToast('error', 'No se pudieron cargar los pagos', 'Hubo un problema al obtener la información de pagos. Intenta refrescar la página.')
+      if (transactionsRequestRef.current === requestId) {
+        showToast('error', 'No se pudieron cargar los pagos', 'Hubo un problema al obtener la información de pagos. Intenta refrescar la página.')
+      }
     } finally {
-      setLoading(false)
-      setHasLoadedTransactions(true)
+      if (transactionsRequestRef.current === requestId) {
+        setLoading(false)
+        setHasLoadedTransactions(true)
+      }
     }
   }
 

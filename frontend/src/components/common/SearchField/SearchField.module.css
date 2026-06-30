@@ -34,6 +34,10 @@
   --search-field-action-size: 26px;
 }
 
+.root[data-loading='true'][data-has-clear='true'] {
+  --search-field-right-pad: calc((var(--search-field-action-size) * 2) + (var(--search-field-action-gap) * 2) + 8px);
+}
+
 .root:hover:not([data-disabled='true']) {
   border-color: var(--border-strong);
   background: var(--design-control-bg-hover, var(--surface-hover));
@@ -68,6 +72,10 @@
 .loader {
   right: calc(var(--search-field-action-gap) + 5px);
   animation: searchFieldSpin 0.9s linear infinite;
+}
+
+.loaderWithClear {
+  right: calc(var(--search-field-action-size) + (var(--search-field-action-gap) * 2) + 4px);
 }
 
 .input {

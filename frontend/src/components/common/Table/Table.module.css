@@ -51,6 +51,21 @@
   margin-left: auto;
 }
 
+.refreshIndicator {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  flex: 0 0 auto;
+  border-radius: var(--radius-ctl);
+  color: var(--text-mute);
+}
+
+.refreshIcon {
+  animation: spin 0.9s linear infinite;
+}
+
 .tableActions .searchContainer {
   flex: 0 1 420px;
   width: clamp(260px, 32vw, 420px);
