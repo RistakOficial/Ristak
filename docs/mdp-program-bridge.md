@@ -6,10 +6,10 @@ Ristak solo hace tres cosas:
 
 1. Respeta el feature general `mdp_program`.
 2. Respeta `licenseExternalModules.mdp_program.sidebarPosition` para ubicar el modulo en el sidebar.
-3. Pide a MDP el menu dinamico del alumno.
-4. Embebe la seccion elegida con un launch token emitido por MDP.
+3. Pide a MDP un launch token autorizado para el alumno.
+4. Embebe MDP en pantalla completa dentro del area principal de Ristak.
 
-MDP sigue siendo la fuente de verdad de cursos, mentorias, recursos y permisos internos.
+MDP sigue siendo la fuente de verdad de cursos, mentorias, recursos, pestañas internas y permisos internos.
 
 ## Variables
 
@@ -24,11 +24,11 @@ MDP_PROGRAM_BRIDGE_SECRET=...
 
 - El Installer sincroniza la licencia con `mdp_program=true`.
 - El Installer envia `external_modules.mdp_program.sidebar_position` en la licencia.
-- El sidebar usa esa posicion como ancla y muestra las pestañas que MDP devuelve como un bloque propio con separador.
+- El sidebar usa esa posicion como ancla y muestra un solo bloque `Magnetismo` con separador.
 - Ristak llama `GET /api/mdp-program/navigation`.
 - El backend de Ristak firma un POST hacia MDP: `/api/ristak/navigation`.
-- MDP devuelve las pestañas disponibles para ese usuario.
-- Al abrir una seccion, Ristak refresca el manifest para usar un launch token nuevo y carga MDP en un iframe.
+- MDP devuelve las secciones disponibles para ese usuario y sus launch URLs.
+- Ristak abre la primera seccion autorizada en un iframe de ancho y alto completo. Desde ahi, la navegacion de curso, mentoria, MediTalk y futuras paginas ocurre dentro de MDP sin tocar Ristak.
 
 ## Archivos de esta integracion
 
@@ -51,6 +51,6 @@ MDP_PROGRAM_BRIDGE_SECRET=...
 4. Quitar `MDPProgram` y la ruta `mdp-program/*` en `frontend/src/App.tsx`.
 5. Quitar `frontend/src/services/mdpProgramService.ts`.
 6. Borrar `frontend/src/pages/MDPProgram/`.
-7. Quitar `MdpProgramSidebarBlock`, el item `mdp_program` y sus imports/estado en `Sidebar.tsx`.
+7. Quitar `MdpProgramSidebarBlock`, el item `mdp_program` y sus imports en `Sidebar.tsx`.
 8. Quitar `licenseExternalModules` si solo se usaba para MDP.
 9. Quitar las variables `MDP_PROGRAM_*` del entorno.

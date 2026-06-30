@@ -1,7 +1,7 @@
 import React from 'react'
-import { ExternalLink, RefreshCw } from 'lucide-react'
-import { useLocation, useNavigate } from 'react-router-dom'
-import { Button, PageContainer, PageHeader } from '@/components/common'
+import { RefreshCw } from 'lucide-react'
+import { useLocation } from 'react-router-dom'
+import { Button } from '@/components/common'
 import {
   getMdpProgramNavigation,
   type MdpProgramNavigation,
@@ -15,16 +15,15 @@ function selectItem(items: MdpProgramNavItem[], itemId?: string) {
   return items.find(item => item.id === itemId) || items[0]
 }
 
-function readItemIdFromPath() {
+function readLegacyItemIdFromPath() {
   const parts = window.location.pathname.split('/').filter(Boolean)
   return parts[0] === 'mdp-program' ? parts[1] : undefined
 }
 
 export const MDPProgram: React.FC = () => {
   const location = useLocation()
-  const navigate = useNavigate()
   const [navigation, setNavigation] = React.useState<MdpProgramNavigation | null>(null)
-  const [activeId, setActiveId] = React.useState(readItemIdFromPath)
+  const [requestedItemId, setRequestedItemId] = React.useState(readLegacyItemIdFromPath)
   const [launchItem, setLaunchItem] = React.useState<MdpProgramNavItem | null>(null)
   const [loading, setLoading] = React.useState(true)
   const [error, setError] = React.useState('')
@@ -42,13 +41,6 @@ export const MDPProgram: React.FC = () => {
       if (loadSeq !== loadSeqRef.current) return
       setNavigation(nextNavigation)
       setLaunchItem(nextItem)
-
-      if (nextItem) {
-        const nextPath = `/mdp-program/${encodeURIComponent(nextItem.id)}`
-        if (window.location.pathname !== nextPath) {
-          navigate(nextPath, { replace: true })
-        }
-      }
     } catch (err) {
       if (loadSeq !== loadSeqRef.current) return
       setError(err instanceof Error ? err.message : 'No se pudo cargar Magnetismo de Pacientes.')
@@ -57,81 +49,76 @@ export const MDPProgram: React.FC = () => {
     } finally {
       if (loadSeq === loadSeqRef.current) setLoading(false)
     }
-  }, [navigate])
+  }, [])
 
   React.useEffect(() => {
-    void load(activeId)
-  }, [activeId, load])
+    void load(requestedItemId)
+  }, [requestedItemId, load])
 
   React.useEffect(() => {
     const parts = location.pathname.split('/').filter(Boolean)
-    setActiveId(parts[0] === 'mdp-program' ? parts[1] : undefined)
+    setRequestedItemId(parts[0] === 'mdp-program' ? parts[1] : undefined)
   }, [location.pathname])
 
   const items = navigation?.items || []
-  const activeItem = selectItem(items, activeId)
-  const title = activeItem?.label || navigation?.program?.title || 'Magnetismo de Pacientes'
+  const activeItem = selectItem(items, requestedItemId)
+  const programTitle = navigation?.program?.title || 'Magnetismo de Pacientes'
 
   return (
-    <PageContainer size="wide" className="pb-8">
-      <PageHeader
-        eyebrow={navigation?.program?.title || 'Magnetismo de Pacientes'}
-        title={title}
-        actions={
-          <div className="flex flex-wrap items-center gap-2">
-            {launchItem && (
-              <Button
-                variant="ghost"
-                size="sm"
-                onClick={() => window.open(launchItem.launchUrl, '_blank', 'noopener,noreferrer')}
-                leftIcon={<ExternalLink size={16} />}
-              >
-                Abrir aparte
-              </Button>
-            )}
-            <Button variant="secondary" size="sm" onClick={() => void load(activeId)} loading={loading} leftIcon={<RefreshCw size={16} />}>
-              Actualizar
-            </Button>
-          </div>
-        }
-      />
-
-      <div className="mt-5 flex min-h-[calc(100vh-12rem)] flex-col gap-3">
-        {loading && !navigation ? (
-          <div className="grid min-h-[22rem] place-items-center rounded-lg border border-[var(--border)] bg-[var(--surface)] text-sm text-[var(--text-mute)]">
-            Cargando Magnetismo de Pacientes
-          </div>
-        ) : error ? (
-          <div className="rounded-lg border border-[var(--border)] bg-[var(--surface)] p-5">
-            <p className="m-0 text-sm font-semibold text-[var(--text)]">No se pudo abrir el programa</p>
-            <p className="mt-2 text-sm text-[var(--text-mute)]">{error}</p>
-          </div>
-        ) : !navigation?.configured ? (
-          <div className="rounded-lg border border-[var(--border)] bg-[var(--surface)] p-5">
-            <p className="m-0 text-sm font-semibold text-[var(--text)]">Magnetismo de Pacientes no está conectado</p>
-            <p className="mt-2 text-sm text-[var(--text-mute)]">Falta configurar la URL y secreto del bridge MDP en esta instalación.</p>
-          </div>
-        ) : !activeItem ? (
-          <div className="rounded-lg border border-[var(--border)] bg-[var(--surface)] p-5">
-            <p className="m-0 text-sm font-semibold text-[var(--text)]">Sin secciones disponibles</p>
-            <p className="mt-2 text-sm text-[var(--text-mute)]">MDP no devolvió pestañas activas para este usuario.</p>
-          </div>
-        ) : !launchItem ? (
-          <div className="grid min-h-[22rem] place-items-center rounded-lg border border-[var(--border)] bg-[var(--surface)] text-sm text-[var(--text-mute)]">
-            Abriendo {activeItem.label}
-          </div>
-        ) : (
-          <div className="min-h-0 flex-1 overflow-hidden rounded-lg border border-[var(--border)] bg-[var(--surface)]">
-            <iframe
-              key={launchItem.launchUrl}
-              title={`Magnetismo de Pacientes - ${launchItem.label}`}
-              src={launchItem.launchUrl}
-              className={cn('h-full min-h-[42rem] w-full border-0 bg-[var(--surface)]')}
-              allow="fullscreen; clipboard-read; clipboard-write"
-            />
-          </div>
-        )}
-      </div>
-    </PageContainer>
+    <section
+      data-ristak-mdp-program-view
+      className="h-[calc(100vh-var(--header-height))] min-h-[calc(100vh-var(--header-height))] overflow-hidden bg-[var(--surface)] text-[var(--color-text-primary)]"
+    >
+      {loading && !navigation ? (
+        <div className="grid h-full place-items-center text-sm text-[var(--text-mute)]">
+          Cargando Magnetismo de Pacientes
+        </div>
+      ) : error ? (
+        <MdpProgramState
+          title="No se pudo abrir el programa"
+          message={error}
+          action={<Button variant="secondary" size="sm" onClick={() => void load(requestedItemId)} leftIcon={<RefreshCw size={16} />}>Actualizar</Button>}
+        />
+      ) : !navigation?.configured ? (
+        <MdpProgramState
+          title="Magnetismo de Pacientes no está conectado"
+          message="Falta configurar la URL y secreto del bridge MDP en esta instalación."
+        />
+      ) : !activeItem ? (
+        <MdpProgramState
+          title="Sin secciones disponibles"
+          message="MDP no devolvió secciones activas para este usuario."
+        />
+      ) : !launchItem ? (
+        <div className="grid h-full place-items-center text-sm text-[var(--text-mute)]">
+          Abriendo {activeItem.label}
+        </div>
+      ) : (
+        <iframe
+          key={launchItem.launchUrl}
+          title={`${programTitle} - ${launchItem.label}`}
+          src={launchItem.launchUrl}
+          className={cn('h-full min-h-0 w-full border-0 bg-[var(--surface)]')}
+          allow="fullscreen; clipboard-read; clipboard-write"
+          allowFullScreen
+        />
+      )}
+    </section>
   )
 }
+
+interface MdpProgramStateProps {
+  title: string
+  message: string
+  action?: React.ReactNode
+}
+
+const MdpProgramState: React.FC<MdpProgramStateProps> = ({ title, message, action }) => (
+  <div className="grid h-full place-items-center p-6">
+    <div className="w-full max-w-xl rounded-lg border border-[var(--border)] bg-[var(--surface)] p-5 shadow-sm">
+      <p className="m-0 text-sm font-semibold text-[var(--text)]">{title}</p>
+      <p className="mt-2 text-sm text-[var(--text-mute)]">{message}</p>
+      {action && <div className="mt-4">{action}</div>}
+    </div>
+  </div>
+)

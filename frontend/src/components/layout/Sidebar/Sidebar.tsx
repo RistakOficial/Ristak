@@ -17,10 +17,10 @@ import {
   ChevronLeft,
   ChevronRight,
   LogOut,
+  Magnet,
   MessageCircle,
   Moon,
   Palette,
-  BrainCircuit,
   Rocket,
   Sun
 } from 'lucide-react'
@@ -36,7 +36,6 @@ import {
   type AccessControlledUser,
   type PermissionKey
 } from '@/utils/accessControl'
-import { getMdpProgramNavigation, type MdpProgramNavItem } from '@/services/mdpProgramService'
 import {
   DndContext,
   closestCenter,
@@ -112,15 +111,8 @@ const mdpProgramNavigationItem: NavItem = {
   id: 'mdp_program',
   name: 'Magnetismo',
   href: MDP_PROGRAM_ROOT_PATH,
-  icon: BrainCircuit,
+  icon: Magnet,
   isMdpProgram: true
-}
-
-const mdpProgramFallbackNavItem: MdpProgramNavItem = {
-  id: '__mdp_home',
-  label: 'Magnetismo',
-  launchUrl: '',
-  order: 0
 }
 
 const defaultNavigationPositionById: Record<string, number> = {
@@ -304,12 +296,6 @@ const getNavChildLinkClasses = (isActive: boolean) => cn(
   isActive
     ? 'bg-[var(--accent-soft)] text-[var(--text)]'
     : 'text-[var(--text-mute)] hover:bg-[var(--surface-hover)] hover:text-[var(--text)]'
-)
-
-const mdpProgramPathForItem = (item: MdpProgramNavItem) => (
-  item.id === mdpProgramFallbackNavItem.id
-    ? MDP_PROGRAM_ROOT_PATH
-    : `${MDP_PROGRAM_ROOT_PATH}/${encodeURIComponent(item.id)}`
 )
 
 interface SettingsNavLinkProps {
@@ -514,7 +500,7 @@ const PaymentsNavGroup: React.FC<PaymentsNavGroupProps> = ({
 
 interface MdpProgramSidebarBlockProps {
   pathname: string
-  items: MdpProgramNavItem[]
+  item: NavItem
   title: string
   collapsed?: boolean
   showSeparator?: boolean
@@ -523,13 +509,14 @@ interface MdpProgramSidebarBlockProps {
 
 const MdpProgramSidebarBlock: React.FC<MdpProgramSidebarBlockProps> = ({
   pathname,
-  items,
+  item,
   title,
   collapsed = false,
   showSeparator = true,
   onNavigate
 }) => {
-  const visibleItems = items.length ? items : [mdpProgramFallbackNavItem]
+  const Icon = item.icon
+  const isActive = pathname === item.href || pathname.startsWith(`${item.href}/`)
 
   return (
     <div data-ristak-mdp-sidebar-block className="space-y-1">
@@ -539,29 +526,19 @@ const MdpProgramSidebarBlock: React.FC<MdpProgramSidebarBlockProps> = ({
         </div>
       )}
 
-      {visibleItems.map((child, index) => {
-        const to = mdpProgramPathForItem(child)
-        const childActive =
-          pathname === to ||
-          pathname.startsWith(`${to}/`) ||
-          (index === 0 && pathname === MDP_PROGRAM_ROOT_PATH)
-        return (
-          <Link
-            key={child.id}
-            to={to}
-            onClick={onNavigate}
-            aria-label={child.label}
-            title={collapsed ? child.label : undefined}
-            data-ristak-sidebar-nav-item
-            data-ristak-mdp-sidebar-item
-            data-active={childActive ? 'true' : undefined}
-            className={getNavLinkClasses(childActive, undefined, collapsed)}
-          >
-            <BrainCircuit className="h-5 w-5 flex-shrink-0" />
-            <span className={collapsed ? 'sr-only' : 'min-w-0 flex-1 truncate'}>{child.label}</span>
-          </Link>
-        )
-      })}
+      <Link
+        to={item.href}
+        onClick={onNavigate}
+        aria-label={item.name}
+        title={collapsed ? item.name : undefined}
+        data-ristak-sidebar-nav-item
+        data-ristak-mdp-sidebar-item
+        data-active={isActive ? 'true' : undefined}
+        className={getNavLinkClasses(isActive, undefined, collapsed)}
+      >
+        <Icon className="h-5 w-5 flex-shrink-0" />
+        <span className={collapsed ? 'sr-only' : 'min-w-0 flex-1 truncate'}>{item.name}</span>
+      </Link>
 
       {showSeparator && (
         <div className="py-2" aria-hidden="true">
@@ -752,7 +729,6 @@ export const Sidebar: React.FC<SidebarProps> = ({
   const isPaymentsRoute = location.pathname.startsWith('/transactions')
   const [chatOpen, setChatOpen] = useState(isChatGroupRoute)
   const [paymentsOpen, setPaymentsOpen] = useState(isPaymentsRoute)
-  const [mdpProgramItems, setMdpProgramItems] = useState<MdpProgramNavItem[]>([])
   const mdpProgramMenuLabel = user?.licenseExternalModules?.mdp_program?.menuLabel || 'Magnetismo'
 
   // Sincronizar el estado de los grupos con la ruta actual
@@ -765,28 +741,6 @@ export const Sidebar: React.FC<SidebarProps> = ({
   }, [isPaymentsRoute])
 
   const visiblePaymentsNavigation = PAYMENTS_NAV_ITEMS
-  const canUseMdpProgram = user?.licenseFeatures?.mdp_program === true
-
-  useEffect(() => {
-    if (!canUseMdpProgram) {
-      setMdpProgramItems([])
-      return
-    }
-
-    let cancelled = false
-    getMdpProgramNavigation()
-      .then((navigation) => {
-        if (!cancelled) setMdpProgramItems(navigation.items)
-      })
-      .catch(() => {
-        if (!cancelled) setMdpProgramItems([])
-      })
-
-    return () => {
-      cancelled = true
-    }
-  }, [canUseMdpProgram])
-
   useEffect(() => {
     if (!collapsed) return
     setIsEditMode(false)
@@ -1204,7 +1158,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
                   <MdpProgramSidebarBlock
                     key={item.id}
                     pathname={location.pathname}
-                    items={mdpProgramItems}
+                    item={item}
                     title={mdpProgramMenuLabel}
                     collapsed={collapsed}
                     showSeparator={Boolean(nextItem && !nextItem.isDivider)}
