@@ -6985,6 +6985,17 @@ export const PhoneChat: React.FC = () => {
   const handleWideRailSelect = (section: PhoneSection) => {
     if (!isWideChatDevice) return
 
+    const shouldCloseSheetImmediately = sheet === 'appointment' && Boolean(wideAppointmentDefaults)
+    const closeSheetForRailChange = () => {
+      if (!sheet) return
+      if (shouldCloseSheetImmediately) {
+        closeSheetNow()
+        return
+      }
+
+      actionSheetDismiss.requestClose()
+    }
+
     setWideRailSection(section)
     setWideSidebarMode('chats')
     setWideAppointmentDefaults(null)
@@ -7000,9 +7011,12 @@ export const PhoneChat: React.FC = () => {
       setWidePaymentStep(hasAdvancedMobilePayments ? 'choice' : 'form')
     }
 
-    if (section === 'chat') return
+    if (section === 'chat') {
+      closeSheetForRailChange()
+      return
+    }
 
-    actionSheetDismiss.requestClose()
+    closeSheetForRailChange()
     setContactInfoOpen(false)
     setMessageInfoOpen(false)
     setMessageInfoMessageId(null)
