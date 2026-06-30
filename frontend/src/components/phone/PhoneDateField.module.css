@@ -22,12 +22,12 @@
   min-height: 42px;
   box-sizing: border-box;
   padding: 0 11px;
-  border: 1px solid var(--phone-chat-border, rgba(17, 24, 39, 0.1));
-  border-radius: 8px;
+  border: 1px solid var(--phone-field-border, var(--phone-chat-border, rgba(17, 24, 39, 0.1)));
+  border-radius: 12px;
   color: var(--phone-chat-text, #111111);
   background: var(--phone-chat-surface, #ffffff);
   font: inherit;
-  font-size: 15px;
+  font-size: 16px;
   font-weight: 650;
   text-align: left;
   -webkit-tap-highlight-color: transparent;

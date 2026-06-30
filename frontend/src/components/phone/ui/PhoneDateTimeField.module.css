@@ -15,7 +15,7 @@
 .label {
   color: var(--phone-chat-muted, #737373);
   font-size: 12px;
-  font-weight: 760;
+  font-weight: 600;
 }
 
 /* Misma piel que los campos del Registrar pago móvil: rectángulo redondeado
@@ -30,7 +30,7 @@
   min-height: 44px;
   box-sizing: border-box;
   padding: 0 12px;
-  border: 1px solid var(--phone-chat-border, rgba(17, 24, 39, 0.1));
+  border: 1px solid var(--phone-field-border, var(--phone-chat-border, rgba(17, 24, 39, 0.1)));
   border-radius: 12px;
   color: var(--phone-chat-text, #111111);
   background: var(--phone-chat-panel, #ffffff);

@@ -8,7 +8,7 @@
 .label {
   color: var(--phone-chat-muted, #737373);
   font-size: 13px;
-  font-weight: 800;
+  font-weight: 600;
 }
 
 .trigger {
@@ -21,13 +21,13 @@
   min-height: 44px;
   box-sizing: border-box;
   padding: 0 14px;
-  border: 1px solid var(--phone-chat-border, rgba(17, 24, 39, 0.1));
-  border-radius: 999px;
+  border: 1px solid var(--phone-field-border, var(--phone-chat-border, rgba(17, 24, 39, 0.1)));
+  border-radius: 12px;
   color: var(--phone-chat-text, #111111);
   background: var(--phone-chat-surface, #ffffff);
   font: inherit;
-  font-size: 15px;
-  font-weight: 760;
+  font-size: 16px;
+  font-weight: 600;
   text-align: left;
   -webkit-tap-highlight-color: transparent;
 }
