@@ -9,6 +9,7 @@ import {
   isMetaApiVersionAvailable,
   saveVersion
 } from '../services/metaVersionService.js'
+import { DEFAULT_TIMEZONE } from '../utils/dateUtils.js'
 
 let metaVersionTask = null
 
@@ -112,7 +113,7 @@ export function startMetaVersionCron() {
       logger.success(`✅ Cron: Versión actualizada de ${result.oldVersion} a ${result.newVersion}`)
     }
   }, {
-    timezone: 'America/Mexico_City'
+    timezone: DEFAULT_TIMEZONE
   })
 
   logger.info('✅ Cron de actualización de versión Meta API iniciado (día 1 de cada mes a las 3 AM)')

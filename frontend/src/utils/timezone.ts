@@ -11,6 +11,8 @@
 /**
  * Extrae los componentes (año, mes, ...) de una fecha en una zona horaria dada.
  */
+export const DEFAULT_TIMEZONE = 'America/Mexico_City'
+
 function getZonedParts(date: Date, timeZone: string): Record<string, number> {
   const formatter = new Intl.DateTimeFormat('en-US', {
     timeZone,
@@ -50,6 +52,8 @@ function getZoneOffsetMs(timeZone: string, atDate: Date): number {
   )
   return zoneWallAsUtc - atDate.getTime()
 }
+
+const padDateTimePart = (value: number): string => String(value).padStart(2, '0')
 
 /**
  * Asegura que una fecha quede como ISO string en UTC ("...Z").
@@ -118,6 +122,35 @@ export function convertLocalToUTC(localDate: string | Date, timezone: string): D
   // El offset se evalúa en el instante aproximado para respetar DST.
   const offsetMs = getZoneOffsetMs(timezone, new Date(asUtc))
   return new Date(asUtc - offsetMs)
+}
+
+export function toDateTimeLocalInputValue(utcDate: string | Date, timezone: string): string {
+  const local = convertUTCToLocal(utcDate, timezone)
+  if (Number.isNaN(local.getTime())) return ''
+
+  return [
+    local.getFullYear(),
+    padDateTimePart(local.getMonth() + 1),
+    padDateTimePart(local.getDate())
+  ].join('-') + `T${padDateTimePart(local.getHours())}:${padDateTimePart(local.getMinutes())}`
+}
+
+export function localDateTimeInputToUTCISOString(value: string, timezone: string): string | undefined {
+  const clean = String(value || '').trim()
+  if (!clean) return undefined
+
+  const utc = convertLocalToUTC(clean, timezone)
+  return Number.isNaN(utc.getTime()) ? undefined : utc.toISOString()
+}
+
+export function todayDateOnlyInTimezone(timezone: string, referenceDate: string | Date = new Date()): string {
+  const local = convertUTCToLocal(referenceDate, timezone)
+  if (Number.isNaN(local.getTime())) return ''
+  return [
+    local.getFullYear(),
+    padDateTimePart(local.getMonth() + 1),
+    padDateTimePart(local.getDate())
+  ].join('-')
 }
 
 /**

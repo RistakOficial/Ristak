@@ -4,7 +4,7 @@ import { db, getAppConfig, setAppConfig } from '../config/database.js'
 import { PUBLIC_URL } from '../config/constants.js'
 import { CHEAPEST_OPENAI_MODEL } from '../config/openAIModels.js'
 import { logger } from '../utils/logger.js'
-import { getAccountTimezone } from '../utils/dateUtils.js'
+import { DEFAULT_TIMEZONE, getAccountTimezone } from '../utils/dateUtils.js'
 import { buildTagMatchKeys, resolveTagIds, tagNamesForIds } from './contactTagsService.js'
 import { getOpenAIApiKey } from './aiAgentService.js'
 import {
@@ -600,7 +600,7 @@ function conciseCompletionPhrase(value, maxLength = 130) {
   return (output || clean.slice(0, maxLength)).trim().replace(/[.,;:!?-]+$/g, '')
 }
 
-function formatHumanDateTimeFromSummary(summary, timezone = 'America/Mexico_City') {
+function formatHumanDateTimeFromSummary(summary, timezone = DEFAULT_TIMEZONE) {
   const match = String(summary || '').match(/\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z/)
   if (!match) return ''
   const date = new Date(match[0])
@@ -648,7 +648,7 @@ function parsePaymentSummary(summary = '') {
   return { amount, currency }
 }
 
-function buildCompletionActionSummary({ signal, summary = '', reason = '', closingContext = {}, timezone = 'America/Mexico_City' } = {}) {
+function buildCompletionActionSummary({ signal, summary = '', reason = '', closingContext = {}, timezone = DEFAULT_TIMEZONE } = {}) {
   const cleanSignal = String(signal || '').trim()
   const baseSummary = cleanAdvancedClosingContextValue(summary, 500)
   const baseReason = cleanAdvancedClosingContextValue(reason, 280)
@@ -679,7 +679,7 @@ async function buildCompletionSummaryFromClosingContext({
   reason = '',
   actionSummarySource = '',
   closingContext = {},
-  timezone = 'America/Mexico_City',
+  timezone = DEFAULT_TIMEZONE,
   channel = 'whatsapp',
   allowInternalSummary = false
 } = {}) {
@@ -2997,7 +2997,7 @@ export async function buildRuleContext({ contactId = null, messageText = '', cha
       ORDER BY COALESCE(message_timestamp, created_at) DESC
       LIMIT 1
     `, [contactId]).catch(() => null) : null,
-    getAccountTimezone().catch(() => 'America/Mexico_City')
+    getAccountTimezone().catch(() => DEFAULT_TIMEZONE)
   ])
 
   // Hora local del negocio (para condiciones de horario y día de la semana)
@@ -4097,7 +4097,7 @@ export async function setConversationSignal(contactId, signal, {
   const cleanStatus = String(status || 'completed').trim() || 'completed'
   const effectiveAgentId = String(agentId || currentState?.agent_id || '').trim() || null
   const objectiveCompleted = cleanStatus === 'completed' && Boolean(effectiveAgentId)
-  const timezone = await getAccountTimezone().catch(() => 'America/Mexico_City')
+  const timezone = await getAccountTimezone().catch(() => DEFAULT_TIMEZONE)
   const completionSummary = await buildCompletionSummaryFromClosingContext({
     contactId,
     signal,

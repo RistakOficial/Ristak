@@ -2,6 +2,7 @@ import fetch from 'node-fetch'
 import { db } from '../config/database.js'
 import { API_URLS } from '../config/constants.js'
 import { logger } from '../utils/logger.js'
+import { DEFAULT_TIMEZONE, businessTodayDateOnly, getAccountTimezone } from '../utils/dateUtils.js'
 import { getMetaConfig } from './metaAdsService.js'
 
 const THREADS_GRAPH_URL = 'https://graph.threads.net/v1.0'
@@ -416,7 +417,8 @@ async function getPublishedSocialProfileSyncTargets({ force, today }) {
 }
 
 export async function refreshConnectedSocialProfileBlocks({ force = false } = {}) {
-  const today = new Date().toISOString().slice(0, 10)
+  const timezone = await getAccountTimezone().catch(() => DEFAULT_TIMEZONE)
+  const today = businessTodayDateOnly(timezone)
   const { siteRows, blockRows } = await getPublishedSocialProfileSyncTargets({ force, today })
 
   if (siteRows.length === 0 && blockRows.length === 0) {

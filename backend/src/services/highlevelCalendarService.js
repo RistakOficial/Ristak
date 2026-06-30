@@ -1,5 +1,6 @@
 import { DateTime } from 'luxon';
 import { logger } from '../utils/logger.js';
+import { getAccountTimezone, resolveTimezone } from '../utils/dateUtils.js';
 
 /**
  * Servicio para interactuar con la API de Calendarios de HighLevel
@@ -269,19 +270,22 @@ export async function getAppointment(eventId, accessToken) {
  * @param {string} timezone - Zona horaria (ej: "America/Mexico_City")
  * @returns {Promise<Array>} Lista de slots disponibles
  */
-export async function getFreeSlots(calendarId, startDate, endDate, accessToken, timezone = 'America/Mexico_City') {
+export async function getFreeSlots(calendarId, startDate, endDate, accessToken, timezone) {
   try {
     logger.info(`[HighLevel Calendar] Obteniendo slots disponibles para calendario: ${calendarId}`);
 
+    const effectiveTimezone = resolveTimezone(timezone || await getAccountTimezone());
+
     // Convertir fechas string a timestamps en milisegundos
-    // startDate y endDate vienen como "YYYY-MM-DD" del frontend
-    const startTimestamp = new Date(startDate).getTime();
-    const endTimestamp = new Date(endDate).getTime();
+    // startDate y endDate vienen como "YYYY-MM-DD" del frontend y se interpretan
+    // como días completos en la zona horaria del negocio.
+    const startTimestamp = DateTime.fromISO(startDate, { zone: effectiveTimezone }).startOf('day').toMillis();
+    const endTimestamp = DateTime.fromISO(endDate, { zone: effectiveTimezone }).endOf('day').toMillis();
 
     logger.info(`[HighLevel Calendar] Fechas convertidas: ${startDate} (${startTimestamp}) - ${endDate} (${endTimestamp})`);
 
     const response = await fetchWithTimeout(
-      `${GHL_API_BASE}/calendars/${calendarId}/free-slots?startDate=${startTimestamp}&endDate=${endTimestamp}&timezone=${timezone}`,
+      `${GHL_API_BASE}/calendars/${calendarId}/free-slots?startDate=${startTimestamp}&endDate=${endTimestamp}&timezone=${effectiveTimezone}`,
       {
         method: 'GET',
         headers: {

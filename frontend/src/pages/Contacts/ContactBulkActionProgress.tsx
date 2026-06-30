@@ -5,7 +5,9 @@ import { Badge, Button, Card, Loading, PageContainer, PageHeader, Table, Modal, 
 import type { Column } from '@/components/common'
 import { contactBulkActionsService, type ContactBulkAction, type ContactBulkActionItem } from '@/services/contactBulkActionsService'
 import { useNotification } from '@/contexts/NotificationContext'
+import { useTimezone } from '@/contexts/TimezoneContext'
 import { formatDate } from '@/utils/format'
+import { localDateTimeInputToUTCISOString, toDateTimeLocalInputValue } from '@/utils/timezone'
 import styles from './Contacts.module.css'
 
 interface ContactBulkActionProgressProps {
@@ -31,12 +33,9 @@ const statusMeta = (status = ''): { label: string; variant: 'success' | 'warning
   }
 }
 
-const pad = (value: number) => String(value).padStart(2, '0')
-
-const toDateTimeLocalValue = (date: Date) =>
-  `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`
-
-const defaultRescheduleValue = () => toDateTimeLocalValue(new Date(Date.now() + 30 * 60 * 1000))
+const defaultRescheduleValue = (timezone: string) => (
+  toDateTimeLocalInputValue(new Date(Date.now() + 30 * 60 * 1000), timezone)
+)
 
 const actionKindLabel = (action?: ContactBulkAction | null) => {
   if (!action) return ''
@@ -46,11 +45,12 @@ const actionKindLabel = (action?: ContactBulkAction | null) => {
 export const ContactBulkActionProgress: React.FC<ContactBulkActionProgressProps> = ({ actionId }) => {
   const navigate = useNavigate()
   const { showToast } = useNotification()
+  const { timezone } = useTimezone()
   const [action, setAction] = useState<ContactBulkAction | null>(null)
   const [loading, setLoading] = useState(true)
   const [working, setWorking] = useState(false)
   const [showReschedule, setShowReschedule] = useState(false)
-  const [rescheduleAt, setRescheduleAt] = useState(defaultRescheduleValue)
+  const [rescheduleAt, setRescheduleAt] = useState(() => defaultRescheduleValue(timezone))
   const [rescheduleDrip, setRescheduleDrip] = useState(false)
   const [rescheduleDripMinutes, setRescheduleDripMinutes] = useState(2)
 
@@ -101,7 +101,7 @@ export const ContactBulkActionProgress: React.FC<ContactBulkActionProgressProps>
     await runAction(
       () => contactBulkActionsService.reschedule(actionId, {
         mode: 'scheduled',
-        scheduledAt: new Date(rescheduleAt).toISOString(),
+        scheduledAt: localDateTimeInputToUTCISOString(rescheduleAt, timezone),
         drip: {
           enabled: rescheduleDrip,
           intervalMinutes: rescheduleDrip ? rescheduleDripMinutes : undefined

@@ -12,6 +12,14 @@ import { dispatchProductPostWebhooksForPaymentInBackground } from './productPost
 import { sendPaymentNotification } from './pushNotificationsService.js'
 import { buildMetaPublicPurchasePixelEvent } from './metaConversionEventsService.js'
 import { createPublicPaymentId, createRistakPaymentEntityId } from '../utils/idGenerator.js'
+import {
+  DEFAULT_TIMEZONE as ACCOUNT_DEFAULT_TIMEZONE,
+  assertDateOnlyNotInPast,
+  assertLocalDateTimeNotInPast,
+  businessTodayDateOnly,
+  getAccountTimezone,
+  normalizeDateOnlyInTimezone
+} from '../utils/dateUtils.js'
 
 const CONFIG_KEYS = {
   enabled: 'stripe_enabled',
@@ -45,7 +53,7 @@ const STRIPE_WEBHOOK_EVENTS = [
 const STRIPE_WEBHOOK_DESCRIPTION = 'Ristak - Pagos'
 const STRIPE_WEBHOOK_METADATA = { ristak: 'payment_webhook' }
 const isPostgresRuntime = Boolean(process.env.DATABASE_URL)
-const DEFAULT_PAYMENT_TIMEZONE = 'America/Mexico_City'
+const DEFAULT_PAYMENT_TIMEZONE = ACCOUNT_DEFAULT_TIMEZONE
 const STRIPE_PLAN_STATES = {
   DRAFT: 'draft',
   FIRST_PAYMENT_PENDING: 'first_payment_pending',
@@ -177,38 +185,20 @@ function normalizeBoolean(value, fallback = true) {
   return !['0', 'false', 'off', 'no'].includes(String(value).trim().toLowerCase())
 }
 
-function normalizeDateOnly(value) {
-  if (!value) return new Date().toISOString().slice(0, 10)
-  const text = String(value).trim()
-  const match = text.match(/^(\d{4}-\d{2}-\d{2})/)
-  if (match) return match[1]
-
-  const date = new Date(text)
-  if (!Number.isNaN(date.getTime())) return date.toISOString().slice(0, 10)
-  return new Date().toISOString().slice(0, 10)
+function normalizeDateOnly(value, timezone = DEFAULT_PAYMENT_TIMEZONE) {
+  return normalizeDateOnlyInTimezone(value, timezone)
 }
 
-function todayDateOnly() {
-  return new Intl.DateTimeFormat('en-CA', {
-    timeZone: DEFAULT_PAYMENT_TIMEZONE,
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit'
-  }).format(new Date())
+function todayDateOnly(timezone = DEFAULT_PAYMENT_TIMEZONE) {
+  return businessTodayDateOnly(timezone)
 }
 
-function isDueTodayOrPast(value) {
-  return normalizeDateOnly(value) <= todayDateOnly()
+function isDueTodayOrPast(value, timezone = DEFAULT_PAYMENT_TIMEZONE) {
+  return normalizeDateOnly(value, timezone) <= todayDateOnly(timezone)
 }
 
-function assertDateNotInPast(value, message) {
-  const date = normalizeDateOnly(value)
-  if (date < todayDateOnly()) {
-    const error = new Error(message)
-    error.status = 400
-    throw error
-  }
-  return date
+function assertDateNotInPast(value, message, timezone = DEFAULT_PAYMENT_TIMEZONE) {
+  return assertDateOnlyNotInPast(value, timezone, message)
 }
 
 function normalizePlanFrequency(value, fallback = 'custom') {
@@ -221,23 +211,9 @@ function isTimedPlanFrequency(value) {
   return normalizePlanFrequency(value) === TIMED_PLAN_FREQUENCY
 }
 
-function assertPlanDueDateNotInPast(value, frequency, message) {
-  if (!isTimedPlanFrequency(frequency)) return assertDateNotInPast(value, message)
-
-  const date = new Date(cleanString(value))
-  if (Number.isNaN(date.getTime())) {
-    const error = new Error('La fecha y hora de cobro no es válida.')
-    error.status = 400
-    throw error
-  }
-
-  if (date.getTime() < Date.now() - 60_000) {
-    const error = new Error(message)
-    error.status = 400
-    throw error
-  }
-
-  return date.toISOString()
+function assertPlanDueDateNotInPast(value, frequency, message, timezone = DEFAULT_PAYMENT_TIMEZONE) {
+  if (!isTimedPlanFrequency(frequency)) return assertDateNotInPast(value, message, timezone)
+  return assertLocalDateTimeNotInPast(value, timezone, message)
 }
 
 function duePlanInstallmentCondition(alias = 'i') {
@@ -912,7 +888,7 @@ async function findPaymentByPublicId(publicPaymentId) {
   )
 }
 
-function mapPublicPayment(row, config, baseUrl = '', settings = null, paymentPlan = null) {
+function mapPublicPayment(row, config, baseUrl = '', settings = null, paymentPlan = null, timezone = ACCOUNT_DEFAULT_TIMEZONE) {
   if (!row) return null
   const metadata = parseJson(row.metadata_json, {})
   const tax = metadata.tax && typeof metadata.tax === 'object' ? metadata.tax : null
@@ -930,6 +906,8 @@ function mapPublicPayment(row, config, baseUrl = '', settings = null, paymentPla
     dueDate: row.due_date || null,
     sentAt: row.sent_at || null,
     paidAt: row.paid_at || null,
+    timezone,
+    timeZone: timezone,
     paymentMode: row.payment_mode || config?.mode || 'test',
     provider: row.payment_provider || 'stripe',
     contact: {
@@ -1355,8 +1333,9 @@ export async function getPublicStripePayment(publicPaymentId, { baseUrl, sync = 
 
   const paymentSettings = await getPublicPaymentSettings()
   const paymentPlan = await buildPublicPaymentPlanSummary(row)
+  const timezone = await getAccountTimezone().catch(() => ACCOUNT_DEFAULT_TIMEZONE)
   return attachMetaPublicPurchaseEvent(
-    mapPublicPayment(row, config, baseUrl, paymentSettings, paymentPlan),
+    mapPublicPayment(row, config, baseUrl, paymentSettings, paymentPlan, timezone),
     row
   )
 }
@@ -1445,7 +1424,8 @@ export async function createStripePaymentIntent(publicPaymentId, options = {}) {
   // huérfanos antes de que se persista el id. La llave incluye monto+moneda+bucket-diario:
   // un reintento del mismo día reutiliza el mismo intent; si cambia el monto (admin edita
   // la factura) o pasa el día (expira el cache 24h de Stripe), se crea uno nuevo limpio.
-  const createIntentDayBucket = new Date().toISOString().slice(0, 10)
+  const createIntentTimezone = await getAccountTimezone().catch(() => DEFAULT_PAYMENT_TIMEZONE)
+  const createIntentDayBucket = businessTodayDateOnly(createIntentTimezone)
   const createIntentIdempotencyKey =
     `ristak:${row.id}:create-intent:${toStripeAmount(row.amount, currency)}:${currency}:${createIntentDayBucket}`
 
@@ -2954,7 +2934,8 @@ async function chargeStripePaymentRowWithSavedMethod({
   // El bucket diario mantiene la idempotencia dentro de la ventana de cobro (reintentos
   // del mismo día NO re-cobran) y a la vez permite reintentar un cargo fallido al día
   // siguiente, cuando ya expiró el cache de 24h de Stripe.
-  const chargeAttemptToken = new Date().toISOString().slice(0, 10)
+  const chargeAttemptTimezone = await getAccountTimezone().catch(() => DEFAULT_PAYMENT_TIMEZONE)
+  const chargeAttemptToken = businessTodayDateOnly(chargeAttemptTimezone)
 
   const currency = normalizeCurrency(row.currency || config.defaultCurrency)
   const metadata = parseJson(row.metadata_json, {})
@@ -3035,7 +3016,7 @@ async function chargeStripePaymentRowWithSavedMethod({
   }
 }
 
-function validateStripePaymentPlanPayload(input = {}) {
+function validateStripePaymentPlanPayload(input = {}, timezone = DEFAULT_PAYMENT_TIMEZONE) {
   const contact = input.contact || {}
   const totalAmount = Number(input.totalAmount || input.amount)
   const currency = normalizeCurrency(input.currency || DEFAULT_CURRENCY)
@@ -3043,7 +3024,7 @@ function validateStripePaymentPlanPayload(input = {}) {
   const firstPaymentEnabled = normalizeBoolean(firstPayment.enabled, true)
   const firstPaymentAmount = firstPaymentEnabled ? Number(firstPayment.amount || 0) : 0
   const firstPaymentMethod = firstPaymentEnabled ? cleanString(firstPayment.method || 'card') : 'none'
-  const firstPaymentDate = firstPaymentEnabled ? normalizeDateOnly(firstPayment.date) : null
+  const firstPaymentDate = firstPaymentEnabled ? normalizeDateOnly(firstPayment.date, timezone) : null
   const remainingPayments = Array.isArray(input.remainingPayments) ? input.remainingPayments : []
   const cardSetupAmount = normalizePositiveAmount(input.cardSetupAmount, 25)
 
@@ -3080,7 +3061,7 @@ function validateStripePaymentPlanPayload(input = {}) {
     }
 
     const frequency = normalizePlanFrequency(payment.frequency || input.remainingFrequency || 'custom')
-    const dueDate = assertPlanDueDateNotInPast(payment.dueDate, frequency, 'Los pagos futuros automáticos no pueden programarse en fechas pasadas.')
+    const dueDate = assertPlanDueDateNotInPast(payment.dueDate, frequency, 'Los pagos futuros automáticos no pueden programarse en fechas pasadas.', timezone)
 
     return {
       sequence: Number(payment.sequence || index + 1),
@@ -3092,7 +3073,7 @@ function validateStripePaymentPlanPayload(input = {}) {
   })
 
   if (firstPaymentEnabled && !MANUAL_PLAN_PAYMENT_METHODS.has(firstPaymentMethod)) {
-    assertDateNotInPast(firstPaymentDate, 'El primer pago automático no puede programarse en una fecha pasada.')
+    assertDateNotInPast(firstPaymentDate, 'El primer pago automático no puede programarse en una fecha pasada.', timezone)
   }
 
   const remainingTotal = normalizedRemaining.reduce((sum, payment) => sum + payment.amount, 0)
@@ -3123,6 +3104,7 @@ function validateStripePaymentPlanPayload(input = {}) {
     remainingPayments: normalizedRemaining,
     remainingFrequency: normalizePlanFrequency(input.remainingFrequency || 'custom'),
     cardSetupAmount,
+    timezone,
     lineItems: Array.isArray(input.invoicePayload?.items) ? input.invoicePayload.items : [],
     invoicePayload: input.invoicePayload || {},
     paymentMethodId: cleanString(input.paymentMethodId),
@@ -3415,6 +3397,7 @@ export async function updateStripePaymentPlanSchedule(flowId, input = {}) {
   }
 
   const metadata = parseJson(flow.metadata, {})
+  const accountTimezone = await getAccountTimezone()
   const hasSavedCard = Boolean(cleanString(flow.stripe_payment_method_id))
   const nextConcept = cleanString(input.name || input.title || input.description || input.concept || flow.concept || 'Plan de pagos')
   const nextFrequency = normalizePlanFrequency(input.remainingFrequency || input.frequency || metadata.remainingFrequency || 'custom')
@@ -3462,7 +3445,8 @@ export async function updateStripePaymentPlanSchedule(flowId, input = {}) {
     const dueDate = assertPlanDueDateNotInPast(
       submitted.dueDate || submitted.date || submitted.scheduledAt,
       nextFrequency,
-      'Las parcialidades automáticas no pueden programarse en fechas pasadas.'
+      'Las parcialidades automáticas no pueden programarse en fechas pasadas.',
+      accountTimezone
     )
     if (!dueDate) {
       const error = new Error('Cada parcialidad futura necesita fecha de cobro.')
@@ -3472,7 +3456,7 @@ export async function updateStripePaymentPlanSchedule(flowId, input = {}) {
 
     const method = normalizePlanEditablePaymentMethod(submitted.paymentMethod || submitted.method, hasSavedCard)
     if (method.automatic && !isTimedPlanFrequency(nextFrequency)) {
-      assertDateNotInPast(dueDate, 'Las parcialidades automáticas no pueden programarse en fechas pasadas.')
+      assertDateNotInPast(dueDate, 'Las parcialidades automáticas no pueden programarse en fechas pasadas.', accountTimezone)
     }
 
     const status = resolveEditableInstallmentStatus({
@@ -3667,14 +3651,14 @@ export async function updateStripePaymentPlanSchedule(flowId, input = {}) {
       }
     } else {
       firstPaymentAmount = firstPaymentInputAmount
-      firstPaymentDate = normalizeDateOnly(firstPayment.dueDate || firstPayment.date || firstPaymentDate)
+      firstPaymentDate = normalizeDateOnly(firstPayment.dueDate || firstPayment.date || firstPaymentDate, accountTimezone)
       const firstPaymentMethodInput = cleanString(firstPayment.method || firstPayment.paymentMethod || firstPaymentMethod || 'stripe_auto').toLowerCase()
       const normalizedFirstPaymentMethod = normalizePlanEditableFirstPaymentMethod(
         firstPaymentMethodInput,
         hasSavedCard
       )
       if (AUTOMATIC_PLAN_PAYMENT_METHODS.has(firstPaymentMethodInput)) {
-        assertDateNotInPast(firstPaymentDate, 'El primer pago automático no puede programarse en una fecha pasada.')
+        assertDateNotInPast(firstPaymentDate, 'El primer pago automático no puede programarse en una fecha pasada.', accountTimezone)
       }
 
       firstPaymentMethod = normalizedFirstPaymentMethod.flowMethod
@@ -3955,6 +3939,7 @@ async function createStripePaymentPlanCardSetupLink(flow, { baseUrl } = {}) {
   const metadata = parseJson(flow.metadata, {})
   const concept = cleanString(flow.concept) || 'Plan de pagos'
   const currency = normalizeCurrency(flow.currency || DEFAULT_CURRENCY)
+  const accountTimezone = await getAccountTimezone()
   const cardSetupAmount = await resolveStripeCardSetupAmount(flow.card_setup_amount || metadata.cardSetupAmount)
   const setupLink = await createStripePaymentLink({
     contactId: flow.contact_id,
@@ -3965,7 +3950,7 @@ async function createStripePaymentPlanCardSetupLink(flow, { baseUrl } = {}) {
     currency,
     title: `${concept} - cambiar tarjeta domiciliada`,
     description: `Domiciliación de nueva tarjeta para ${concept}`,
-    dueDate: todayDateOnly(),
+    dueDate: todayDateOnly(accountTimezone),
     source: 'stripe_payment_plan_card_update',
     lineItems: [
       {
@@ -4349,7 +4334,8 @@ export async function createStripeSavedCardPayment(input = {}) {
 export async function createStripePaymentPlan(input = {}, { baseUrl } = {}) {
   const { stripe, config, requestOptions } = await getStripeClient()
   const accountCurrency = await getConfiguredCurrency()
-  const plan = validateStripePaymentPlanPayload({ ...input, currency: accountCurrency })
+  const accountTimezone = await getAccountTimezone()
+  const plan = validateStripePaymentPlanPayload({ ...input, currency: accountCurrency }, accountTimezone)
   plan.cardSetupAmount = await resolveStripeCardSetupAmount(input.cardSetupAmount)
   const savedMethod = plan.paymentMethodId
     ? await resolveStripeSavedMethod(plan.contact.id, plan.paymentMethodId, config)
@@ -4393,7 +4379,7 @@ export async function createStripePaymentPlan(input = {}, { baseUrl } = {}) {
       plan.firstPayment.amount,
       plan.firstPayment.date,
       plan.firstPayment.method,
-      plan.firstPayment.enabled ? (hasSavedCard && firstPaymentIsCard && isDueTodayOrPast(plan.firstPayment.date) ? 'processing' : 'pending') : 'not_required',
+      plan.firstPayment.enabled ? (hasSavedCard && firstPaymentIsCard && isDueTodayOrPast(plan.firstPayment.date, accountTimezone) ? 'processing' : 'pending') : 'not_required',
       hasSavedCard ? 0 : 1,
       cardSetupAmount,
       savedMethod?.stripe_customer_id || null,
@@ -4406,6 +4392,7 @@ export async function createStripePaymentPlan(input = {}, { baseUrl } = {}) {
       hasSavedCard ? now : null,
       JSON.stringify({
         source: plan.source,
+        timezone: accountTimezone,
         remainingFrequency: plan.remainingFrequency,
         lineItems: plan.lineItems,
         firstPaymentLinkRequired: !hasSavedCard && firstPaymentIsCard,
@@ -4470,7 +4457,7 @@ export async function createStripePaymentPlan(input = {}, { baseUrl } = {}) {
       contact: plan.contact,
       amount: plan.firstPayment.amount,
       currency: plan.currency,
-      status: isDueTodayOrPast(plan.firstPayment.date) ? 'pending' : 'scheduled',
+      status: isDueTodayOrPast(plan.firstPayment.date, accountTimezone) ? 'pending' : 'scheduled',
       paymentMethod: 'stripe_saved_card',
       title: `${plan.title} - primer pago`,
       description: `${plan.description} - primer pago`,
@@ -4497,7 +4484,7 @@ export async function createStripePaymentPlan(input = {}, { baseUrl } = {}) {
     )
     response.firstPaymentPaymentId = paymentId
 
-    if (isDueTodayOrPast(plan.firstPayment.date)) {
+    if (isDueTodayOrPast(plan.firstPayment.date, accountTimezone)) {
       try {
         await chargeStripePaymentRowWithSavedMethod({
           stripe,
@@ -4565,7 +4552,7 @@ export async function createStripePaymentPlan(input = {}, { baseUrl } = {}) {
       currency: plan.currency,
       title: `${plan.title} - domiciliación de tarjeta`,
       description: `Domiciliación de tarjeta para ${plan.description}`,
-      dueDate: new Date().toISOString().slice(0, 10),
+      dueDate: businessTodayDateOnly(accountTimezone),
       source: 'stripe_payment_plan_card_setup',
       lineItems: [
         {
@@ -4665,7 +4652,8 @@ export async function createStripePaymentPlan(input = {}, { baseUrl } = {}) {
 
 export async function processDueStripePaymentPlanCharges({ limit = 25 } = {}) {
   const { stripe, config, requestOptions } = await getStripeClient()
-  const dueDate = todayDateOnly()
+  const accountTimezone = await getAccountTimezone()
+  const dueDate = todayDateOnly(accountTimezone)
   const dueTimestamp = new Date().toISOString()
   const normalizedLimit = Math.max(1, Math.min(Number(limit) || 25, 100))
   const firstPaymentDueDateSql = dateOnlySql('COALESCE(f.first_payment_date, p.due_date, p.date)')

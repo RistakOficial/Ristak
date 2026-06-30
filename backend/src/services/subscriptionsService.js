@@ -30,12 +30,19 @@ import {
 import { getSubscriptionAuditSummary, hardDeleteTestSubscription } from './paymentRecordSafetyService.js'
 import { getAccountCurrency } from '../utils/accountLocale.js'
 import { createEntityId, createPublicPaymentId, createRistakId } from '../utils/idGenerator.js'
+import {
+  DEFAULT_TIMEZONE as ACCOUNT_DEFAULT_TIMEZONE,
+  businessTodayDateOnly,
+  getAccountTimezone,
+  normalizeDateOnlyInTimezone,
+  normalizeToUtcIso
+} from '../utils/dateUtils.js'
 
 const SUBSCRIPTION_PREFIX = 'rstk_sub'
 const DEFAULT_CURRENCY = 'MXN'
 const DEFAULT_INTERVAL = 'monthly'
 const DEFAULT_STATUS = 'active'
-const DEFAULT_PAYMENT_TIMEZONE = 'America/Mexico_City'
+const DEFAULT_PAYMENT_TIMEZONE = ACCOUNT_DEFAULT_TIMEZONE
 
 const ACTIVE_STATUSES = new Set(['active', 'trialing'])
 const PAUSED_STATUSES = new Set(['paused'])
@@ -77,6 +84,14 @@ async function getDefaultSubscriptionCurrency() {
   }
 }
 
+async function getDefaultSubscriptionTimezone() {
+  try {
+    return await getAccountTimezone()
+  } catch {
+    return DEFAULT_PAYMENT_TIMEZONE
+  }
+}
+
 function normalizeInterval(value) {
   const normalized = cleanString(value || DEFAULT_INTERVAL).toLowerCase()
   if (['daily', 'weekly', 'monthly', 'yearly'].includes(normalized)) return normalized
@@ -110,7 +125,7 @@ function nullableString(value) {
   return cleaned || null
 }
 
-function nullableDate(value) {
+function nullableDate(value, timezone = DEFAULT_PAYMENT_TIMEZONE) {
   if (value === undefined || value === null || value === '') return null
 
   if (value instanceof Date) {
@@ -127,35 +142,26 @@ function nullableDate(value) {
   const cleaned = cleanString(value)
   if (!cleaned) return null
 
-  const date = new Date(cleaned)
+  const normalized = normalizeToUtcIso(cleaned, timezone)
+  const date = new Date(normalized)
   if (!Number.isNaN(date.getTime())) return date.toISOString()
 
   return cleaned
 }
 
-function todayDateOnly() {
-  return new Intl.DateTimeFormat('en-CA', {
-    timeZone: DEFAULT_PAYMENT_TIMEZONE,
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit'
-  }).format(new Date())
+function todayDateOnly(timezone = DEFAULT_PAYMENT_TIMEZONE) {
+  return businessTodayDateOnly(timezone)
 }
 
-function toDateOnly(value) {
+function toDateOnly(value, timezone = DEFAULT_PAYMENT_TIMEZONE) {
   if (!value) return null
-  const text = cleanString(value)
-  const match = text.match(/^(\d{4}-\d{2}-\d{2})/)
-  if (match) return match[1]
-
-  const date = new Date(text)
-  return Number.isNaN(date.getTime()) ? null : date.toISOString().slice(0, 10)
+  return normalizeDateOnlyInTimezone(value, timezone)
 }
 
-function assertSubscriptionDatesNotInPast(row = {}) {
-  const today = todayDateOnly()
-  const startDate = toDateOnly(row.start_date)
-  const nextRunAt = toDateOnly(row.next_run_at)
+function assertSubscriptionDatesNotInPast(row = {}, timezone = DEFAULT_PAYMENT_TIMEZONE) {
+  const today = todayDateOnly(timezone)
+  const startDate = toDateOnly(row.start_date, timezone)
+  const nextRunAt = toDateOnly(row.next_run_at, timezone)
 
   if (startDate && startDate < today) {
     const error = new Error('Las suscripciones automáticas no pueden iniciar en fechas pasadas.')
@@ -383,15 +389,16 @@ async function buildSubscriptionRow(payload = {}, existing = {}) {
   const contactId = nullableString(payload.contactId ?? payload.contact_id ?? existing.contact_id)
   const contact = await getContactSnapshot(contactId)
   const accountCurrency = await getDefaultSubscriptionCurrency()
+  const accountTimezone = await getDefaultSubscriptionTimezone()
   const intervalType = normalizeInterval(payload.intervalType ?? payload.interval_type ?? existing.interval_type)
   const intervalCount = normalizeIntervalCount(payload.intervalCount ?? payload.interval_count ?? existing.interval_count)
-  const startDate = nullableDate(payload.startDate ?? payload.start_date ?? existing.start_date) || new Date().toISOString()
-  const nextRunAt = nullableDate(payload.nextRunAt ?? payload.next_run_at ?? existing.next_run_at)
+  const startDate = nullableDate(payload.startDate ?? payload.start_date ?? existing.start_date, accountTimezone) || new Date().toISOString()
+  const nextRunAt = nullableDate(payload.nextRunAt ?? payload.next_run_at ?? existing.next_run_at, accountTimezone)
   const hasCancelAtInput = Object.prototype.hasOwnProperty.call(payload, 'cancelAt')
     || Object.prototype.hasOwnProperty.call(payload, 'cancel_at')
   const cancelAt = hasCancelAtInput
-    ? nullableDate(payload.cancelAt ?? payload.cancel_at)
-    : nullableDate(existing.cancel_at)
+    ? nullableDate(payload.cancelAt ?? payload.cancel_at, accountTimezone)
+    : nullableDate(existing.cancel_at, accountTimezone)
   const paymentProvider = cleanString(payload.paymentProvider ?? payload.payment_provider ?? existing.payment_provider).toLowerCase() || 'stripe'
   const paymentMethod = normalizeSubscriptionPaymentMethod(
     payload.paymentMethod ?? payload.payment_method ?? existing.payment_method,
@@ -418,10 +425,10 @@ async function buildSubscriptionRow(payload = {}, existing = {}) {
       intervalType,
       intervalCount
     }),
-    current_period_start: nullableDate(payload.currentPeriodStart ?? payload.current_period_start ?? existing.current_period_start),
-    current_period_end: nullableDate(payload.currentPeriodEnd ?? payload.current_period_end ?? existing.current_period_end),
+    current_period_start: nullableDate(payload.currentPeriodStart ?? payload.current_period_start ?? existing.current_period_start, accountTimezone),
+    current_period_end: nullableDate(payload.currentPeriodEnd ?? payload.current_period_end ?? existing.current_period_end, accountTimezone),
     cancel_at: cancelAt,
-    cancelled_at: nullableDate(payload.cancelledAt ?? payload.cancelled_at ?? existing.cancelled_at),
+    cancelled_at: nullableDate(payload.cancelledAt ?? payload.cancelled_at ?? existing.cancelled_at, accountTimezone),
     payment_method: paymentMethod,
     payment_provider: paymentProvider,
     payment_mode: cleanString(payload.paymentMode ?? payload.payment_mode ?? existing.payment_mode) || 'test',
@@ -438,12 +445,12 @@ async function buildSubscriptionRow(payload = {}, existing = {}) {
     mercadopago_payer_id: nullableString(payload.mercadoPagoPayerId ?? payload.mercadopago_payer_id ?? existing.mercadopago_payer_id),
     mercadopago_card_id: nullableString(payload.mercadoPagoCardId ?? payload.mercadopago_card_id ?? existing.mercadopago_card_id),
     mercadopago_payment_method_id: nullableString(payload.mercadoPagoPaymentMethodId ?? payload.mercadopago_payment_method_id ?? existing.mercadopago_payment_method_id),
-    mercadopago_next_payment_date: nullableDate(payload.mercadoPagoNextPaymentDate ?? payload.mercadopago_next_payment_date ?? existing.mercadopago_next_payment_date),
+    mercadopago_next_payment_date: nullableDate(payload.mercadoPagoNextPaymentDate ?? payload.mercadopago_next_payment_date ?? existing.mercadopago_next_payment_date, accountTimezone),
     conekta_customer_id: nullableString(payload.conektaCustomerId ?? payload.conekta_customer_id ?? existing.conekta_customer_id),
     conekta_plan_id: nullableString(payload.conektaPlanId ?? payload.conekta_plan_id ?? existing.conekta_plan_id),
     conekta_subscription_id: nullableString(payload.conektaSubscriptionId ?? payload.conekta_subscription_id ?? existing.conekta_subscription_id),
     conekta_payment_source_id: nullableString(payload.conektaPaymentSourceId ?? payload.conekta_payment_source_id ?? payload.paymentMethodId ?? existing.conekta_payment_source_id),
-    conekta_next_billing_at: nullableDate(payload.conektaNextBillingAt ?? payload.conekta_next_billing_at ?? existing.conekta_next_billing_at),
+    conekta_next_billing_at: nullableDate(payload.conektaNextBillingAt ?? payload.conekta_next_billing_at ?? existing.conekta_next_billing_at, accountTimezone),
     metadata_json: jsonOrNull(payload.metadata ?? payload.metadata_json ?? existing.metadata_json),
     raw_json: jsonOrNull(payload.raw ?? payload.raw_json ?? existing.raw_json)
   }
@@ -1000,10 +1007,11 @@ export async function getSubscription(subscriptionId) {
 
 export async function createSubscription(payload = {}) {
   let row = await buildSubscriptionRow(payload)
+  const accountTimezone = await getDefaultSubscriptionTimezone()
 
   if (!row.name) throw new Error('El nombre de la suscripción es obligatorio.')
   if (!row.amount || row.amount <= 0) throw new Error('El monto de la suscripción debe ser mayor a cero.')
-  assertSubscriptionDatesNotInPast(row)
+  assertSubscriptionDatesNotInPast(row, accountTimezone)
   row = await createSubscriptionStartPaymentLinkIfNeeded(row, payload)
   row = await attachStripeSubscriptionIfNeeded(row, payload)
   row = await attachMercadoPagoSubscriptionIfNeeded(row, payload)
@@ -1114,10 +1122,11 @@ export async function updateSubscription(subscriptionId, payload = {}) {
   if (!existing) return null
 
   let row = await buildSubscriptionRow(payload, existing)
+  const accountTimezone = await getDefaultSubscriptionTimezone()
 
   if (!row.name) throw new Error('El nombre de la suscripción es obligatorio.')
   if (!row.amount || row.amount <= 0) throw new Error('El monto de la suscripción debe ser mayor a cero.')
-  assertSubscriptionDatesNotInPast(row)
+  assertSubscriptionDatesNotInPast(row, accountTimezone)
   row = await createSubscriptionStartPaymentLinkIfNeeded(row, payload)
   row = await syncStripeSubscriptionUpdateIfNeeded(row, existing)
   row = await syncMercadoPagoSubscriptionUpdateIfNeeded(row, existing, payload)
@@ -1257,8 +1266,9 @@ export async function actionSubscription(subscriptionId, action, payload = {}) {
       await resumeConektaRecurringSubscription(existing.conekta_customer_id, existing.conekta_subscription_id)
     }
 
-    const nextRunAt = nullableDate(payload.nextRunAt ?? payload.next_run_at ?? existing.next_run_at) || new Date().toISOString()
-    assertSubscriptionDatesNotInPast({ start_date: existing.start_date, next_run_at: nextRunAt })
+    const accountTimezone = await getDefaultSubscriptionTimezone()
+    const nextRunAt = nullableDate(payload.nextRunAt ?? payload.next_run_at ?? existing.next_run_at, accountTimezone) || new Date().toISOString()
+    assertSubscriptionDatesNotInPast({ start_date: existing.start_date, next_run_at: nextRunAt }, accountTimezone)
     await db.run(
       `UPDATE subscriptions
        SET status = 'active',

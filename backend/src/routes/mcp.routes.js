@@ -249,7 +249,7 @@ const toolDefinitions = [
         calendarId: { type: 'string' },
         startDate: { type: 'string' },
         endDate: { type: 'string' },
-        timezone: { type: 'string', default: 'America/Mexico_City' }
+        timezone: { type: 'string' }
       },
       required: ['calendarId', 'startDate', 'endDate']
     },
@@ -885,7 +885,7 @@ async function ghlGetFreeSlots(args = {}) {
     args.startDate,
     args.endDate,
     config.api_token,
-    args.timezone || 'America/Mexico_City'
+    args.timezone
   )
   return { slots }
 }

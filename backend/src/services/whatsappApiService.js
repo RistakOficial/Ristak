@@ -42,6 +42,11 @@ import {
   clearWhatsAppApiIntegrationCredentials,
   clearWhatsAppMetaDirectIntegrationCredentials
 } from './integrationCredentialsCleanupService.js'
+import {
+  DEFAULT_TIMEZONE,
+  businessTodayDateOnly,
+  getAccountTimezone
+} from '../utils/dateUtils.js'
 
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = dirname(__filename)
@@ -80,6 +85,11 @@ const WHATSAPP_API_PROFILE_PICTURE_BATCH_LIMIT = 40
 const WHATSAPP_INTERACTIVE_REPLY_BUTTON_LIMIT = 3
 const WHATSAPP_INTERACTIVE_REPLY_BUTTON_TITLE_MAX = 20
 const WHATSAPP_INTERACTIVE_REPLY_BUTTON_ID_MAX = 256
+
+async function getBusinessDayKey() {
+  const timezone = await getAccountTimezone().catch(() => DEFAULT_TIMEZONE)
+  return businessTodayDateOnly(timezone)
+}
 const IMAGE_EXTENSION_BY_MIME = {
   'image/jpeg': 'jpg',
   'image/jpg': 'jpg',
@@ -856,7 +866,7 @@ export async function saveWhatsAppImageDataUrl(dataUrl = '') {
     handleWhatsAppMediaStorageError('imagen de chat', error)
   }
 
-  const dayKey = new Date().toISOString().slice(0, 10)
+  const dayKey = await getBusinessDayKey()
   const folder = join(WHATSAPP_IMAGE_UPLOAD_ROOT, dayKey)
   const filename = `${crypto.randomUUID()}.${prepared.extension}`
   const filePath = join(folder, filename)
@@ -912,7 +922,7 @@ export async function saveWhatsAppAudioDataUrl(dataUrl = '') {
     handleWhatsAppMediaStorageError('audio de chat', error)
   }
 
-  const dayKey = new Date().toISOString().slice(0, 10)
+  const dayKey = await getBusinessDayKey()
   const folder = join(WHATSAPP_AUDIO_UPLOAD_ROOT, dayKey)
   const filename = `${crypto.randomUUID()}.${media.extension}`
   const filePath = join(folder, filename)
@@ -956,7 +966,7 @@ async function saveWhatsAppDocumentDataUrl(dataUrl = '', filename = '', mimeType
     handleWhatsAppMediaStorageError('documento de chat', error)
   }
 
-  const dayKey = new Date().toISOString().slice(0, 10)
+  const dayKey = await getBusinessDayKey()
   const folder = join(WHATSAPP_DOCUMENT_UPLOAD_ROOT, dayKey)
   const storedFilename = `${crypto.randomUUID()}.${parsed.extension}`
   const filePath = join(folder, storedFilename)

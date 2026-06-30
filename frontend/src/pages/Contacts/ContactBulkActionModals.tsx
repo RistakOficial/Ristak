@@ -7,6 +7,8 @@ import { contactBulkActionsService, type ContactBulkAction, type ContactBulkActi
 import { whatsappApiService, type WhatsAppApiPhoneNumber, type WhatsAppApiTemplate } from '@/services/whatsappApiService'
 import type { Contact } from '@/services/contactsService'
 import { useNotification } from '@/contexts/NotificationContext'
+import { useTimezone } from '@/contexts/TimezoneContext'
+import { localDateTimeInputToUTCISOString, toDateTimeLocalInputValue } from '@/utils/timezone'
 import styles from './Contacts.module.css'
 
 interface ContactBulkActionModalsProps {
@@ -19,20 +21,7 @@ interface ContactBulkActionModalsProps {
   onCreated: (action: ContactBulkAction) => void
 }
 
-const pad = (value: number) => String(value).padStart(2, '0')
-
-const toDateTimeLocalValue = (date: Date) => {
-  const year = date.getFullYear()
-  const month = pad(date.getMonth() + 1)
-  const day = pad(date.getDate())
-  const hours = pad(date.getHours())
-  const minutes = pad(date.getMinutes())
-  return `${year}-${month}-${day}T${hours}:${minutes}`
-}
-
-const defaultScheduledAt = () => toDateTimeLocalValue(new Date(Date.now() + 30 * 60 * 1000))
-
-const toIsoFromLocal = (value: string) => value ? new Date(value).toISOString() : undefined
+const defaultScheduledAt = (timezone: string) => toDateTimeLocalInputValue(new Date(Date.now() + 30 * 60 * 1000), timezone)
 
 const phoneLabel = (phone: WhatsAppApiPhoneNumber) =>
   phone.label ||
@@ -58,9 +47,9 @@ const getTemplateVariables = (template?: WhatsAppApiTemplate | null) => {
     .sort((left, right) => Number(left) - Number(right))
 }
 
-const buildSchedule = (scheduled: boolean, scheduledAt: string, dripEnabled: boolean, dripIntervalMinutes: number): ContactBulkActionScheduleInput => ({
+const buildSchedule = (scheduled: boolean, scheduledAt: string, dripEnabled: boolean, dripIntervalMinutes: number, timezone: string): ContactBulkActionScheduleInput => ({
   mode: scheduled ? 'scheduled' : 'now',
-  scheduledAt: scheduled ? toIsoFromLocal(scheduledAt) : undefined,
+  scheduledAt: scheduled ? localDateTimeInputToUTCISOString(scheduledAt, timezone) : undefined,
   drip: {
     enabled: dripEnabled,
     intervalMinutes: dripEnabled ? dripIntervalMinutes : undefined
@@ -78,6 +67,7 @@ export const ContactBulkActionModals: React.FC<ContactBulkActionModalsProps> = (
 }) => {
   const navigate = useNavigate()
   const { showToast } = useNotification()
+  const { timezone } = useTimezone()
   const selectedIds = useMemo(() => selectedContacts.map((contact) => contact.id), [selectedContacts])
   const selectedCount = selectedContacts.length
 
@@ -87,7 +77,7 @@ export const ContactBulkActionModals: React.FC<ContactBulkActionModalsProps> = (
   const [phoneNumberId, setPhoneNumberId] = useState('')
   const [templateVariables, setTemplateVariables] = useState<Record<string, string>>({})
   const [whatsappScheduled, setWhatsappScheduled] = useState(false)
-  const [whatsappScheduledAt, setWhatsappScheduledAt] = useState(defaultScheduledAt)
+  const [whatsappScheduledAt, setWhatsappScheduledAt] = useState(() => defaultScheduledAt(timezone))
   const [whatsappDrip, setWhatsappDrip] = useState(false)
   const [whatsappDripMinutes, setWhatsappDripMinutes] = useState(2)
   const [sendingWhatsApp, setSendingWhatsApp] = useState(false)
@@ -96,7 +86,7 @@ export const ContactBulkActionModals: React.FC<ContactBulkActionModalsProps> = (
   const [automationsLoading, setAutomationsLoading] = useState(false)
   const [automationId, setAutomationId] = useState('')
   const [automationScheduled, setAutomationScheduled] = useState(false)
-  const [automationScheduledAt, setAutomationScheduledAt] = useState(defaultScheduledAt)
+  const [automationScheduledAt, setAutomationScheduledAt] = useState(() => defaultScheduledAt(timezone))
   const [automationDrip, setAutomationDrip] = useState(false)
   const [automationDripMinutes, setAutomationDripMinutes] = useState(2)
   const [sendingAutomation, setSendingAutomation] = useState(false)
@@ -189,7 +179,7 @@ export const ContactBulkActionModals: React.FC<ContactBulkActionModalsProps> = (
         templateName: selectedTemplate.name,
         language: selectedTemplate.language,
         variables: templateVariables,
-        schedule: buildSchedule(whatsappScheduled, whatsappScheduledAt, whatsappDrip, whatsappDripMinutes)
+        schedule: buildSchedule(whatsappScheduled, whatsappScheduledAt, whatsappDrip, whatsappDripMinutes, timezone)
       })
       onCloseWhatsApp()
       handleCreated(action)
@@ -207,7 +197,7 @@ export const ContactBulkActionModals: React.FC<ContactBulkActionModalsProps> = (
       const action = await contactBulkActionsService.createAutomation({
         contactIds: selectedIds,
         automationId,
-        schedule: buildSchedule(automationScheduled, automationScheduledAt, automationDrip, automationDripMinutes)
+        schedule: buildSchedule(automationScheduled, automationScheduledAt, automationDrip, automationDripMinutes, timezone)
       })
       onCloseAutomation()
       handleCreated(action)

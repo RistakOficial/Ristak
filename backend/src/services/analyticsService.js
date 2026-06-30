@@ -1,6 +1,6 @@
 import { db } from '../config/database.js'
 import { DateTime } from 'luxon'
-import { resolveDateRange, resolveDateRangeWithGHLTimezone } from '../utils/dateUtils.js'
+import { DEFAULT_TIMEZONE, resolveDateRange, resolveDateRangeWithGHLTimezone } from '../utils/dateUtils.js'
 import { logger } from '../utils/logger.js'
 import {
   getContactsWithAppointmentsHybrid,
@@ -753,14 +753,14 @@ export async function buildCampaignSummary ({ startDate, endDate } = {}) {
   }
 }
 
-export function getGroupExpression(column, groupBy, timezone = 'America/Mexico_City') {
+export function getGroupExpression(column, groupBy, timezone = DEFAULT_TIMEZONE) {
   // (RPT-004) Para SQLite, convertir el timezone IANA real a un offset en minutos
   // en vez de hardcodear -6h. SQLite no soporta nombres de zona, solo offsets;
   // calculamos el offset actual de la zona configurada con luxon. (Sigue siendo un
   // offset fijo, así que no captura cambios de DST a mitad de rango, pero respeta
   // la zona configurada en lugar de asumir siempre México City.)
-  const safeIanaTimezone = String(timezone || 'America/Mexico_City')
-  let offsetMinutes = -360 // fallback: México City (UTC-6) si la zona es inválida
+  const safeIanaTimezone = String(timezone || DEFAULT_TIMEZONE)
+  let offsetMinutes = DateTime.now().setZone(DEFAULT_TIMEZONE).offset || -360
   try {
     const probe = DateTime.now().setZone(safeIanaTimezone)
     if (probe.isValid && Number.isFinite(probe.offset)) {

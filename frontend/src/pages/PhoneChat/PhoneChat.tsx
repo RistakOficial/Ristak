@@ -75,6 +75,7 @@ import { hasLicenseFeature } from '@/utils/accessControl'
 import { useLabels } from '@/contexts/LabelsContext'
 import { useNotification } from '@/contexts/NotificationContext'
 import { useTimezone } from '@/contexts/TimezoneContext'
+import { localDateTimeInputToUTCISOString, toDateTimeLocalInputValue, todayDateOnlyInTimezone } from '@/utils/timezone'
 import { PhoneAnalytics } from '@/pages/PhoneAnalytics'
 import { PhoneCalendar, type PhoneCalendarCreateRequest } from '@/pages/PhoneCalendar'
 import { PhoneSettings } from '@/pages/PhoneSettings'
@@ -1681,8 +1682,10 @@ function formatScheduleDateDisplay(value: string) {
   }).format(date).replace('.', '')
 }
 
-function createDefaultScheduleDraft(): ScheduleDraft {
-  const date = new Date(Date.now() + 15 * 60 * 1000)
+function createDefaultScheduleDraft(timezone?: string): ScheduleDraft {
+  const date = timezone
+    ? new Date(toDateTimeLocalInputValue(new Date(Date.now() + 15 * 60 * 1000), timezone))
+    : new Date(Date.now() + 15 * 60 * 1000)
   const minutes = date.getMinutes()
   date.setMinutes(minutes + ((5 - (minutes % 5)) % 5), 0, 0)
 
@@ -1696,9 +1699,11 @@ function createDefaultScheduleDraft(): ScheduleDraft {
   }
 }
 
-function createScheduleDraftFromDate(value?: string | null): ScheduleDraft {
-  const date = value ? new Date(value) : null
-  if (!date || Number.isNaN(date.getTime())) return createDefaultScheduleDraft()
+function createScheduleDraftFromDate(value?: string | null, timezone?: string): ScheduleDraft {
+  const date = value
+    ? new Date(timezone ? toDateTimeLocalInputValue(value, timezone) : value)
+    : null
+  if (!date || Number.isNaN(date.getTime())) return createDefaultScheduleDraft(timezone)
 
   const hour24 = date.getHours()
   const hour12 = hour24 % 12 || 12
@@ -1710,7 +1715,7 @@ function createScheduleDraftFromDate(value?: string | null): ScheduleDraft {
   }
 }
 
-function getScheduleDateFromDraft(draft: ScheduleDraft) {
+function getScheduleDateFromDraft(draft: ScheduleDraft, timezone?: string) {
   const [year, month, day] = draft.date.split('-').map(Number)
   const hour = Number(draft.hour)
   const minute = Number(draft.minute)
@@ -1721,7 +1726,10 @@ function getScheduleDateFromDraft(draft: ScheduleDraft) {
   const hour24 = draft.period === 'PM'
     ? (hour === 12 ? 12 : hour + 12)
     : (hour === 12 ? 0 : hour)
-  const date = new Date(year, month - 1, day, hour24, minute, 0, 0)
+  const localInput = `${draft.date}T${padTwoDigits(hour24)}:${padTwoDigits(minute)}`
+  const date = timezone
+    ? new Date(localDateTimeInputToUTCISOString(localInput, timezone) || '')
+    : new Date(year, month - 1, day, hour24, minute, 0, 0)
   return Number.isNaN(date.getTime()) ? null : date
 }
 
@@ -3931,7 +3939,7 @@ export const PhoneChat: React.FC = () => {
   const [messageAudioRates, setMessageAudioRates] = useState<Record<string, MessageAudioRate>>({})
   const [messageAudioPlayback, setMessageAudioPlayback] = useState<Record<string, MessageAudioPlaybackState>>({})
   const [composerStatus, setComposerStatus] = useState<ComposerStatus>('idle')
-  const [scheduleDraft, setScheduleDraft] = useState<ScheduleDraft>(() => createDefaultScheduleDraft())
+  const [scheduleDraft, setScheduleDraft] = useState<ScheduleDraft>(() => createDefaultScheduleDraft(timezone))
   const [scheduleEditingMessageId, setScheduleEditingMessageId] = useState<string | null>(null)
   const [scheduleError, setScheduleError] = useState('')
   const [schedulingMessage, setSchedulingMessage] = useState(false)
@@ -8505,7 +8513,7 @@ export const PhoneChat: React.FC = () => {
     stopVoicePreview(true)
     voiceSendAfterStopRef.current = false
     setVoiceDraft(null)
-    setScheduleDraft(createScheduleDraftFromDate(message.scheduledAt || message.date))
+    setScheduleDraft(createScheduleDraftFromDate(message.scheduledAt || message.date, timezone))
     setScheduleError('')
     closeMessageActionMenu()
     setSheet('schedule')
@@ -9027,7 +9035,7 @@ export const PhoneChat: React.FC = () => {
 
     closeComposerChannelPicker()
     setScheduleTemplate(template)
-    setScheduleDraft(createDefaultScheduleDraft())
+    setScheduleDraft(createDefaultScheduleDraft(timezone))
     setScheduleError('')
     setScheduleEditingMessageId(null)
     setTemplateSearch('')
@@ -9229,7 +9237,7 @@ export const PhoneChat: React.FC = () => {
 
     closeComposerChannelPicker()
     setScheduleTemplate(null)
-    setScheduleDraft(createDefaultScheduleDraft())
+    setScheduleDraft(createDefaultScheduleDraft(timezone))
     setScheduleError('')
     setScheduleEditingMessageId(null)
     if (isWideChatDevice) {
@@ -9268,7 +9276,7 @@ export const PhoneChat: React.FC = () => {
       return
     }
 
-    const scheduledDate = getScheduleDateFromDraft(scheduleDraft)
+    const scheduledDate = getScheduleDateFromDraft(scheduleDraft, timezone)
     if (!scheduledDate) {
       setScheduleError('Revisa la fecha y la hora.')
       return
@@ -14533,7 +14541,7 @@ export const PhoneChat: React.FC = () => {
   )
 
   const renderScheduleSheet = () => {
-    const previewDate = getScheduleDateFromDraft(scheduleDraft)
+    const previewDate = getScheduleDateFromDraft(scheduleDraft, timezone)
     const scheduleTemplatePreview = scheduleTemplate ? getTemplateBodyPreview(scheduleTemplate) : ''
     const canSubmitSchedule = Boolean(previewDate && (scheduleTemplate || messageText.trim()) && !schedulingMessage)
 
@@ -14561,7 +14569,7 @@ export const PhoneChat: React.FC = () => {
                 className={styles.scheduleDateNativeInput}
                 type="date"
                 value={scheduleDraft.date}
-                min={formatDateInputValue(new Date())}
+                min={todayDateOnlyInTimezone(timezone)}
                 aria-label="Fecha"
                 onChange={(event) => handleScheduleDraftChange({ date: event.target.value })}
               />

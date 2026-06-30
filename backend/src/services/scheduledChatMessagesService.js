@@ -9,6 +9,7 @@ import { renderTemplateVariables } from './templateVariablesService.js'
 import { logger } from '../utils/logger.js'
 import { normalizePhoneForStorage } from '../utils/phoneUtils.js'
 import { createRistakId } from '../utils/idGenerator.js'
+import { getAccountTimezone, normalizeToUtcIso } from '../utils/dateUtils.js'
 
 const DISPATCH_BATCH_SIZE = 20
 const STALE_SENDING_MS = 10 * 60 * 1000
@@ -57,8 +58,9 @@ function createScheduledMessageId() {
   return createRistakId('scheduled_chat')
 }
 
-function parseScheduledDate(value) {
-  const date = new Date(cleanString(value))
+function parseScheduledDate(value, timezone) {
+  const normalized = normalizeToUtcIso(cleanString(value), timezone)
+  const date = new Date(normalized)
   if (Number.isNaN(date.getTime())) {
     throw createServiceError('Elige una fecha y hora válidas para programar el mensaje.')
   }
@@ -155,6 +157,7 @@ async function getContact(contactId) {
 
 export async function createScheduledChatMessage(payload = {}) {
   const contact = await getContact(payload.contactId)
+  const timezone = await getAccountTimezone()
   const provider = normalizeProvider(payload.provider)
   const messageType = provider === 'whatsapp_api' && (normalizeMessageType(payload.messageType) === 'template' || hasPayloadTemplate(payload))
     ? 'template'
@@ -172,7 +175,7 @@ export async function createScheduledChatMessage(payload = {}) {
       : null
   const text = cleanString(payload.text || payload.message) ||
     (messageType === 'template' ? `Plantilla: ${templateName || templateId}` : '')
-  const scheduledAt = parseScheduledDate(payload.scheduledAt)
+  const scheduledAt = parseScheduledDate(payload.scheduledAt, timezone)
   const id = cleanString(payload.id) || createScheduledMessageId()
   const externalId = cleanString(payload.externalId) || id
 

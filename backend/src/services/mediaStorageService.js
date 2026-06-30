@@ -10,6 +10,7 @@ import { db } from '../config/database.js'
 import { logger } from '../utils/logger.js'
 import { compressMediaBuffer } from './mediaCompressionService.js'
 import { createRistakId } from '../utils/idGenerator.js'
+import { DEFAULT_TIMEZONE, businessTodayDateOnly, getAccountTimezone } from '../utils/dateUtils.js'
 
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = dirname(__filename)
@@ -1473,8 +1474,13 @@ async function processMedia({ buffer, mimeType, mediaType, config, skipCompressi
   }
 }
 
-function buildObjectPath({ businessId, clientAccount, mediaType, module, id, filename, extension, variant = '' }) {
-  const day = new Date().toISOString().slice(0, 10).replace(/-/g, '/')
+async function getMediaStorageDateKey() {
+  const timezone = await getAccountTimezone().catch(() => DEFAULT_TIMEZONE)
+  return businessTodayDateOnly(timezone).replace(/-/g, '/')
+}
+
+function buildObjectPath({ businessId, clientAccount, mediaType, module, id, filename, extension, variant = '', dateKey = '' }) {
+  const day = dateKey || businessTodayDateOnly(DEFAULT_TIMEZONE).replace(/-/g, '/')
   const folder = module && module !== 'other' ? module : `${mediaType}s`
   const suffix = variant ? `-${variant}` : ''
   const rootPath = clientAccount?.rootPath || buildClientAccountRootPath(businessId)
@@ -1786,6 +1792,7 @@ export async function uploadMediaAsset(input = {}) {
 
     const id = createRistakId('media')
     const storedFilename = `${id}-${filenameBase(originalFilename)}.${extension}`
+    const dateKey = await getMediaStorageDateKey()
     const objectPath = buildObjectPath({
       businessId,
       clientAccount,
@@ -1793,7 +1800,8 @@ export async function uploadMediaAsset(input = {}) {
       module,
       id,
       filename: originalFilename,
-      extension
+      extension,
+      dateKey
     })
     const thumbnailPath = thumbnail ? buildObjectPath({
       businessId,
@@ -1803,7 +1811,8 @@ export async function uploadMediaAsset(input = {}) {
       id,
       filename: originalFilename,
       extension: thumbnail.extension,
-      variant: 'thumb'
+      variant: 'thumb',
+      dateKey
     }) : ''
 
     let storageProvider = 'local'
@@ -1951,6 +1960,7 @@ async function finalizeStreamingMediaUpload({
   const extension = extensionForMime(finalMimeType, originalFilename)
   const id = createRistakId('media')
   const storedFilename = `${id}-${filenameBase(originalFilename)}.${extension}`
+  const dateKey = await getMediaStorageDateKey()
   const objectPath = buildObjectPath({
     businessId,
     clientAccount,
@@ -1958,7 +1968,8 @@ async function finalizeStreamingMediaUpload({
     module,
     id,
     filename: originalFilename,
-    extension
+    extension,
+    dateKey
   })
 
   let storageProvider = 'local'

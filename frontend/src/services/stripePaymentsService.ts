@@ -152,6 +152,8 @@ export interface PublicStripePayment {
   dueDate?: string | null
   sentAt?: string | null
   paidAt?: string | null
+  timezone?: string
+  timeZone?: string
   paymentMode: 'test' | 'live'
   provider: 'stripe'
   contact: {

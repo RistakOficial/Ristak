@@ -3,7 +3,7 @@ import fetch from 'node-fetch'
 import { db } from '../config/database.js'
 import { logger } from '../utils/logger.js'
 import { isDeployShutdownStarted, trackDeployDrainWork } from '../utils/deployDrainTracker.js'
-import { getAccountTimezone, isValidTimezone } from '../utils/dateUtils.js'
+import { DEFAULT_TIMEZONE, getAccountTimezone, isValidTimezone } from '../utils/dateUtils.js'
 import { buildTagMatchKeys, resolveTagIds, tagNamesForIds } from './contactTagsService.js'
 import { createInternalNotification } from './notificationsService.js'
 import {
@@ -4369,13 +4369,13 @@ function normalizeScheduleRecurrence(config = {}) {
   return 'none'
 }
 
-function resolveScheduleZone(config = {}, flow = {}, accountTimezone = 'America/Mexico_City') {
+function resolveScheduleZone(config = {}, flow = {}, accountTimezone = DEFAULT_TIMEZONE) {
   const requested = cleanString(config.timezone || flow?.settings?.timezone)
   if (requested && isValidTimezone(requested)) return requested
-  return isValidTimezone(accountTimezone) ? accountTimezone : 'America/Mexico_City'
+  return isValidTimezone(accountTimezone) ? accountTimezone : DEFAULT_TIMEZONE
 }
 
-function computeDueSchedule(config = {}, flow = {}, nowUtc = DateTime.utc(), accountTimezone = 'America/Mexico_City') {
+function computeDueSchedule(config = {}, flow = {}, nowUtc = DateTime.utc(), accountTimezone = DEFAULT_TIMEZONE) {
   const zone = resolveScheduleZone(config, flow, accountTimezone)
   const datetime = cleanString(config.datetime)
   if (!datetime) return null
@@ -4464,7 +4464,7 @@ export async function processScheduledTriggers(referenceDate = new Date()) {
 
     const [automations, accountTimezone] = await Promise.all([
       listPublishedAutomations(),
-      getAccountTimezone().catch(() => 'America/Mexico_City')
+      getAccountTimezone().catch(() => DEFAULT_TIMEZONE)
     ])
 
     for (const automation of automations) {

@@ -13,7 +13,7 @@ import apiClient from '@/services/apiClient'
 import { getPhoneDailyCacheKey, readPhoneDailyCache, writePhoneDailyCache } from '@/services/phoneDailyCache'
 import { transactionsService, type Transaction } from '@/services/transactionsService'
 import { isLocalPhonePreviewHost } from '@/utils/phoneAccess'
-import { ensureUTC } from '@/utils/timezone'
+import { ensureUTC, todayDateOnlyInTimezone } from '@/utils/timezone'
 import styles from './PhonePayments.module.css'
 
 const PORTABLE_WIDTH_QUERY = '(max-width: 1366px)'
@@ -93,25 +93,20 @@ function getInitialView(mode: string | null): PaymentView {
   return 'select'
 }
 
-function formatISODate(date: Date) {
-  return date.toISOString().slice(0, 10)
+const addDateOnlyDays = (dateOnly: string, days: number): string => {
+  const [year, month, day] = dateOnly.split('-').map(Number)
+  if (!year || !month || !day) return dateOnly
+  return new Date(Date.UTC(year, month - 1, day + days)).toISOString().slice(0, 10)
 }
 
-function getRecentPaymentRange(period: RecentPaymentsPeriod) {
-  const end = new Date()
-  const start = new Date()
+function getRecentPaymentRange(period: RecentPaymentsPeriod, timezone: string) {
   const selectedPeriod = RECENT_PAYMENT_PERIODS.find((option) => option.id === period) || RECENT_PAYMENT_PERIODS[2]
-
-  start.setHours(0, 0, 0, 0)
-  end.setHours(23, 59, 59, 999)
-
-  if (selectedPeriod.days > 0) {
-    start.setDate(start.getDate() - (selectedPeriod.days - 1))
-  }
+  const endDate = todayDateOnlyInTimezone(timezone)
+  const startDate = selectedPeriod.days > 0 ? addDateOnlyDays(endDate, -(selectedPeriod.days - 1)) : endDate
 
   return {
-    startDate: formatISODate(start),
-    endDate: formatISODate(end)
+    startDate,
+    endDate
   }
 }
 
@@ -123,7 +118,7 @@ function formatCurrency(value: number, currency = 'MXN') {
   }).format(value || 0)
 }
 
-function formatPaymentDate(value?: string | null, timezone = 'America/Mexico_City') {
+function formatPaymentDate(value?: string | null, timezone = 'UTC') {
   if (!value) return 'Sin fecha'
   const date = new Date(ensureUTC(value))
   if (Number.isNaN(date.getTime())) return 'Sin fecha'
@@ -493,7 +488,7 @@ export const PhonePayments: React.FC = () => {
 
     let cancelled = false
     const loadRecentPayments = async () => {
-      const { startDate, endDate } = getRecentPaymentRange(recentPaymentsPeriod)
+      const { startDate, endDate } = getRecentPaymentRange(recentPaymentsPeriod, timezone)
       const cacheKey = getPhoneDailyCacheKey('phone-payments', 'recent-payments', recentPaymentsPeriod, startDate, endDate)
       const cachedPayments = readPhoneDailyCache<Transaction[]>(cacheKey, timezone) // (MOB-007) bucket por día del negocio
       const showedCachedPayments = Boolean(cachedPayments)

@@ -6,6 +6,8 @@ import { CustomSelect } from '../CustomSelect';
 import { apiUrl } from '@/services/apiBaseUrl';
 import { Calendar, BlockedSlot } from '@/services/calendarsService';
 import { useNotification } from '@/contexts/NotificationContext';
+import { useTimezone } from '@/contexts/TimezoneContext';
+import { localDateTimeInputToUTCISOString, toDateTimeLocalInputValue } from '@/utils/timezone';
 import styles from './BlockedSlotModal.module.css';
 import { Trash2, Loader2 } from 'lucide-react';
 
@@ -40,6 +42,30 @@ const INITIAL_FORM_STATE = {
   endTime: '',
   timeZone: DEFAULT_TIMEZONE,
   assignedUserId: ''
+};
+
+const pad = (value: number) => String(value).padStart(2, '0');
+
+const browserLocalInputFromPickerValue = (value: string) => {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return '';
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`;
+};
+
+const pickerValueFromBusinessInstant = (value: string, timezone: string) => {
+  const localValue = toDateTimeLocalInputValue(value, timezone);
+  const pickerDate = new Date(localValue);
+  return Number.isNaN(pickerDate.getTime()) ? '' : pickerDate.toISOString();
+};
+
+const pickerValueFromBusinessLocal = (value: string) => {
+  const pickerDate = new Date(value);
+  return Number.isNaN(pickerDate.getTime()) ? '' : pickerDate.toISOString();
+};
+
+const businessInstantFromPickerValue = (value: string, timezone: string) => {
+  const localValue = browserLocalInputFromPickerValue(value);
+  return localDateTimeInputToUTCISOString(localValue, timezone) || null;
 };
 
 // Presets de bloqueo rápido
@@ -142,13 +168,15 @@ export const BlockedSlotModal: React.FC<BlockedSlotModalProps> = ({
   mode = 'create',
   defaultStart = '',
   defaultEnd = '',
-  defaultTimeZone = DEFAULT_TIMEZONE,
+  defaultTimeZone = '',
   accessToken,
   locationId,
   onSave,
   onDelete
 }) => {
   const { showToast } = useNotification();
+  const { timezone: accountTimezone } = useTimezone();
+  const effectiveTimeZone = defaultTimeZone || accountTimezone;
   const [isSaving, setIsSaving] = useState(false);
   const [formData, setFormData] = useState(INITIAL_FORM_STATE);
   const isCreateMode = mode === 'create';
@@ -258,7 +286,7 @@ export const BlockedSlotModal: React.FC<BlockedSlotModalProps> = ({
   const applyPreset = (preset: PresetType) => {
     if (preset === 'custom') return;
 
-    const now = new Date();
+    const now = new Date(toDateTimeLocalInputValue(new Date(), effectiveTimeZone));
     let startDate: Date;
     let endDate: Date;
 
@@ -316,8 +344,6 @@ export const BlockedSlotModal: React.FC<BlockedSlotModalProps> = ({
         return;
     }
 
-    // DateTimePicker consume/emite ISO (hora local del navegador). Le pasamos ISO directo
-    // para NO doble-convertir la zona horaria (ese era el bug que desfasaba la hora del bloqueo).
     setFormData({
       ...formData,
       startTime: startDate.toISOString(),
@@ -368,38 +394,38 @@ export const BlockedSlotModal: React.FC<BlockedSlotModalProps> = ({
         // Modo crear: usar defaults
         setFormData({
           title: 'Ausencia',
-          startTime: defaultStart || '',
-          endTime: defaultEnd || '',
-          timeZone: defaultTimeZone,
+          startTime: defaultStart ? pickerValueFromBusinessInstant(defaultStart, effectiveTimeZone) : '',
+          endTime: defaultEnd ? pickerValueFromBusinessInstant(defaultEnd, effectiveTimeZone) : '',
+          timeZone: effectiveTimeZone,
           assignedUserId: users[0]?.id || ''
         });
       } else if (blockedSlot) {
-        // Modo editar: DateTimePicker consume ISO directo (hora local del navegador).
-        // Preferimos el instante REAL del bloqueo (startIso/endIso); si no, lo reconstruimos.
         const startTimeValue = blockedSlot.startIso
-          || (blockedSlot.date && blockedSlot.startTime
-            ? new Date(`${blockedSlot.date}T${blockedSlot.startTime}:00`).toISOString()
+          ? pickerValueFromBusinessInstant(blockedSlot.startIso, effectiveTimeZone)
+          : (blockedSlot.date && blockedSlot.startTime
+            ? pickerValueFromBusinessLocal(`${blockedSlot.date}T${blockedSlot.startTime}:00`)
             : '');
         const endTimeValue = blockedSlot.endIso
-          || (blockedSlot.date && blockedSlot.endTime
-            ? new Date(`${blockedSlot.date}T${blockedSlot.endTime}:00`).toISOString()
+          ? pickerValueFromBusinessInstant(blockedSlot.endIso, effectiveTimeZone)
+          : (blockedSlot.date && blockedSlot.endTime
+            ? pickerValueFromBusinessLocal(`${blockedSlot.date}T${blockedSlot.endTime}:00`)
             : '');
 
         setFormData({
           title: blockedSlot.reason || 'Ausencia',
           startTime: startTimeValue,
           endTime: endTimeValue,
-          timeZone: defaultTimeZone,
+          timeZone: effectiveTimeZone,
           assignedUserId: blockedSlot.blockedBy || users[0]?.id || ''
         });
       }
     } else {
       // Reset al cerrar
-      setFormData(INITIAL_FORM_STATE);
+      setFormData({ ...INITIAL_FORM_STATE, timeZone: effectiveTimeZone });
       setShowDeleteConfirm(false);
       setSelectedPreset('custom');
     }
-  }, [isOpen, isCreateMode, blockedSlot, defaultStart, defaultEnd, defaultTimeZone, users]);
+  }, [isOpen, isCreateMode, blockedSlot, defaultStart, defaultEnd, effectiveTimeZone, users]);
 
   const handleSave = async () => {
     try {
@@ -441,10 +467,8 @@ export const BlockedSlotModal: React.FC<BlockedSlotModalProps> = ({
         payload.calendarId = calendar?.id;
       }
 
-      // formData.startTime / endTime ya son ISO (DateTimePicker emite ISO). No reconvertir
-      // por zona horaria: hacerlo desfasaba la hora del bloqueo.
-      const startIso = formData.startTime ? new Date(formData.startTime).toISOString() : null;
-      const endIso = formData.endTime ? new Date(formData.endTime).toISOString() : null;
+      const startIso = formData.startTime ? businessInstantFromPickerValue(formData.startTime, formData.timeZone || effectiveTimeZone) : null;
+      const endIso = formData.endTime ? businessInstantFromPickerValue(formData.endTime, formData.timeZone || effectiveTimeZone) : null;
 
       if (startIso && endIso && new Date(endIso).getTime() <= new Date(startIso).getTime()) {
         showToast('error', 'Rango inválido', 'La hora de fin debe ser posterior a la de inicio');
@@ -454,6 +478,7 @@ export const BlockedSlotModal: React.FC<BlockedSlotModalProps> = ({
 
       if (startIso) payload.startTime = startIso;
       if (endIso) payload.endTime = endIso;
+      payload.timeZone = formData.timeZone || effectiveTimeZone;
 
       if (isCreateMode) {
         // Agregar calendarId y locationId solo en modo crear

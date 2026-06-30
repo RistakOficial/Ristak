@@ -1,7 +1,11 @@
 import crypto from 'crypto'
 import { db, getAppConfig, getHighLevelConfig } from '../config/database.js'
 import { decrypt, encrypt } from '../utils/encryption.js'
-import { resolveDateRangeWithGHLTimezone } from '../utils/dateUtils.js'
+import {
+  DEFAULT_TIMEZONE as ACCOUNT_DEFAULT_TIMEZONE,
+  getAccountTimezone,
+  resolveDateRangeWithGHLTimezone
+} from '../utils/dateUtils.js'
 import { buildHiddenContactsCondition, getHiddenContactFilters } from '../utils/hiddenContactsFilter.js'
 import { getGHLClient } from './ghlClient.js'
 import * as highLevelCalendarService from './highlevelCalendarService.js'
@@ -81,8 +85,8 @@ const MAX_CHAT_ATTACHMENTS = 8
 const MAX_ATTACHMENT_DATA_CHARS = 12_000_000
 const MAX_ATTACHMENT_TEXT_CHARS = 18_000
 const DEFAULT_PAYMENT_CURRENCY = 'MXN'
-const DEFAULT_PAYMENT_TIMEZONE = 'America/Mexico_City'
-const DEFAULT_APPOINTMENT_TIMEZONE = 'America/Mexico_City'
+const DEFAULT_PAYMENT_TIMEZONE = ACCOUNT_DEFAULT_TIMEZONE
+const DEFAULT_APPOINTMENT_TIMEZONE = ACCOUNT_DEFAULT_TIMEZONE
 const DEFAULT_APPOINTMENT_DURATION_MINUTES = 60
 const DEFAULT_AI_RESPONSE_STYLE = 'advisor'
 const DEFAULT_AI_RECOMMENDATION_MODE = 'when_useful'
@@ -103,6 +107,14 @@ const LEGACY_BUSINESS_CONTEXT_FIELDS = [
 const AI_MODEL_ID_PATTERN = /^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,99}$/
 const ACTION_CUSTOMIZATION_LIMIT = 6000
 const isPostgres = Boolean(process.env.DATABASE_URL)
+
+async function resolveAgentAccountTimezone(highLevelConnection = null, fallback = DEFAULT_PAYMENT_TIMEZONE) {
+  try {
+    return await getAccountTimezone()
+  } catch {
+    return highLevelConnection?.locationData?.timezone || fallback
+  }
+}
 
 export class AIAgentCredentialError extends Error {
   constructor(message = OPENAI_CREDENTIAL_RECONNECT_MESSAGE) {
@@ -229,13 +241,13 @@ Atribución de campañas, anuncios y publicidad (modelo oficial de la página de
   Gasto/inversión: SUM(meta_ads.spend) por meta_ads.date en el rango.
   ROAS o retorno por peso: ingresos atribuidos ÷ gasto del rango.
 - VENTANA DE ATRIBUCIÓN: la venta y el ingreso se atribuyen al día en que se creó el contacto, aunque el pago entre días o meses después. No uses ventanas de 7, 14 o 30 días sobre la fecha de pago; usa SIEMPRE contacts.created_at.
-- Ejemplo de resultados por campaña en un rango (placeholders ? con fechas ISO; cada contacto cuenta una vez porque meta_ads es único por ad_id y día):
+- Ejemplo de resultados por campaña en un rango (placeholders ? con fechas ISO y zona horaria del negocio; cada contacto cuenta una vez porque meta_ads es único por ad_id y día):
   SELECT ma.campaign_name,
          COUNT(DISTINCT c.id) AS leads,
          COUNT(DISTINCT CASE WHEN c.purchases_count > 0 THEN c.id END) AS ventas,
          COALESCE(SUM(c.total_paid), 0) AS ingresos
   FROM contacts c
-  JOIN meta_ads ma ON ma.ad_id = c.attribution_ad_id AND (ma.date)::date = ((c.created_at)::timestamptz AT TIME ZONE 'America/Mexico_City')::date
+  JOIN meta_ads ma ON ma.ad_id = c.attribution_ad_id AND (ma.date)::date = ((c.created_at)::timestamptz AT TIME ZONE ?)::date
   WHERE c.attribution_ad_id IS NOT NULL AND c.created_at >= ? AND c.created_at <= ?
   GROUP BY ma.campaign_name
   ORDER BY ingresos DESC
@@ -10100,7 +10112,7 @@ function resolveRemainingPayments(args, totalAmount, firstPayment, timezone = DE
 async function executeCreateInstallmentPaymentFlow(args = {}, highLevelConnection, context = {}) {
   highLevelConnection = normalizePaymentAgentConnection(highLevelConnection)
 
-  const paymentTimezone = highLevelConnection.locationData?.timezone || DEFAULT_PAYMENT_TIMEZONE
+  const paymentTimezone = await resolveAgentAccountTimezone(highLevelConnection)
   args = enrichInstallmentPaymentArgs(args, context.messages, paymentTimezone)
   const productResolution = await resolvePaymentProductArgs(args, highLevelConnection, context.messages)
   if (!productResolution.ok) {
@@ -10809,7 +10821,7 @@ async function executeCreateSinglePaymentLink(args = {}, highLevelConnection, co
   const productSummary = getPaymentProductSummary(args)
   const amount = normalizePaymentAmount(args.amount || args.totalAmount || args.total || getProductPaymentAmount(args))
   const currency = getProductPaymentCurrency(args)
-  const paymentTimezone = highLevelConnection.locationData?.timezone || DEFAULT_PAYMENT_TIMEZONE
+  const paymentTimezone = await resolveAgentAccountTimezone(highLevelConnection)
 
   if (amount <= 0) {
     return {
@@ -11280,7 +11292,7 @@ async function executeCreateSinglePaymentLink(args = {}, highLevelConnection, co
 async function executeModifyScheduledPaymentFlow(args = {}, highLevelConnection, context = {}) {
   highLevelConnection = normalizePaymentAgentConnection(highLevelConnection)
 
-  const paymentTimezone = highLevelConnection.locationData?.timezone || DEFAULT_PAYMENT_TIMEZONE
+  const paymentTimezone = await resolveAgentAccountTimezone(highLevelConnection)
   const resolvedContact = await resolvePaymentContact(args, context)
   const amount = normalizePaymentAmount(args.amount || args.totalAmount || args.total)
   const currency = getProductPaymentCurrency(args)
@@ -11620,7 +11632,7 @@ async function executeRecordContactPayment(args = {}, highLevelConnection, conte
     concept,
     title: concept,
     paymentDate,
-    timezone: highLevelConnection.locationData?.timezone || DEFAULT_PAYMENT_TIMEZONE,
+    timezone: await resolveAgentAccountTimezone(highLevelConnection),
     paymentMethod: normalizedMethod,
     reference: cleanText(args.reference || '', 160) || null,
     notes: cleanText(args.notes || '', 500) || null,

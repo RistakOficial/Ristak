@@ -23,6 +23,13 @@ import {
   resolveContactIdByGhlId
 } from '../services/contactIdentityService.js';
 import { buildLocalMediaUrl, saveWhatsAppAudioDataUrl } from '../services/whatsappApiService.js';
+import {
+  DEFAULT_TIMEZONE as ACCOUNT_DEFAULT_TIMEZONE,
+  businessTodayDateOnly,
+  getAccountTimezone,
+  normalizeDateOnlyInTimezone,
+  normalizeToUtcIso
+} from '../utils/dateUtils.js';
 import * as localCalendarService from '../services/localCalendarService.js';
 import {
   createLocalPrice,
@@ -53,7 +60,7 @@ const INACTIVE_INVOICE_SCHEDULE_STATUSES = new Set([
   'paused',
   'void'
 ]);
-const DEFAULT_PAYMENT_TIMEZONE = 'America/Mexico_City';
+const DEFAULT_PAYMENT_TIMEZONE = ACCOUNT_DEFAULT_TIMEZONE;
 const GHL_CHAT_CHANNELS = {
   whatsapp_api: {
     key: 'whatsapp_api',
@@ -101,33 +108,45 @@ const GHL_CHAT_CHANNELS = {
   }
 };
 
-const todayDateOnly = () => new Intl.DateTimeFormat('en-CA', {
-  timeZone: DEFAULT_PAYMENT_TIMEZONE,
-  year: 'numeric',
-  month: '2-digit',
-  day: '2-digit'
-}).format(new Date());
+const todayDateOnly = (timezone = DEFAULT_PAYMENT_TIMEZONE) => businessTodayDateOnly(timezone);
 
-const toDateOnly = (value) => {
+const toDateOnly = (value, timezone = DEFAULT_PAYMENT_TIMEZONE) => {
   if (!value) return '';
-  const text = String(value).trim();
-  const match = text.match(/^(\d{4}-\d{2}-\d{2})/);
-  if (match) return match[1];
-
-  const date = new Date(text);
-  return Number.isNaN(date.getTime()) ? '' : date.toISOString().slice(0, 10);
+  return normalizeDateOnlyInTimezone(value, timezone);
 };
 
-const assertInvoiceScheduleDateNotPast = (payload = {}) => {
+const assertInvoiceScheduleDateNotPast = (payload = {}, timezone = DEFAULT_PAYMENT_TIMEZONE) => {
   const schedule = payload.schedule && typeof payload.schedule === 'object' ? payload.schedule : {};
   const rrule = schedule.rrule && typeof schedule.rrule === 'object' ? schedule.rrule : {};
-  const scheduledDate = toDateOnly(rrule.startDate || schedule.executeAt || payload.dueDate || payload.issueDate);
+  const scheduledDate = toDateOnly(rrule.startDate || schedule.executeAt || payload.dueDate || payload.issueDate, timezone);
 
-  if (scheduledDate && scheduledDate < todayDateOnly()) {
+  if (scheduledDate && scheduledDate < todayDateOnly(timezone)) {
     const error = new Error('Los planes de pago no pueden programarse en fechas pasadas.');
     error.status = 400;
     throw error;
   }
+};
+
+const normalizeInvoiceSchedulePayloadDates = (payload = {}, timezone = DEFAULT_PAYMENT_TIMEZONE) => {
+  if (!payload || typeof payload !== 'object' || Array.isArray(payload)) return payload;
+
+  const normalized = { ...payload };
+  if (normalized.issueDate) normalized.issueDate = normalizeDateOnlyInTimezone(normalized.issueDate, timezone);
+  if (normalized.dueDate) normalized.dueDate = normalizeDateOnlyInTimezone(normalized.dueDate, timezone);
+
+  if (normalized.schedule && typeof normalized.schedule === 'object' && !Array.isArray(normalized.schedule)) {
+    const schedule = { ...normalized.schedule };
+    if (schedule.executeAt) schedule.executeAt = normalizeToUtcIso(schedule.executeAt, timezone);
+    if (schedule.rrule && typeof schedule.rrule === 'object' && !Array.isArray(schedule.rrule)) {
+      schedule.rrule = {
+        ...schedule.rrule,
+        ...(schedule.rrule.startDate ? { startDate: normalizeDateOnlyInTimezone(schedule.rrule.startDate, timezone) } : {})
+      };
+    }
+    normalized.schedule = schedule;
+  }
+
+  return normalized;
 };
 const GHL_CHAT_CHANNEL_ALIASES = {
   whatsapp: 'whatsapp_api',
@@ -200,7 +219,7 @@ function textToHighLevelEmailHtml(text = '') {
     .join('');
 }
 
-function resolvePaymentTimestamp(rawDate) {
+function resolvePaymentTimestamp(rawDate, timezone = DEFAULT_PAYMENT_TIMEZONE) {
   const now = new Date();
   const value = cleanString(rawDate);
   if (!value) return now.toISOString();
@@ -211,9 +230,9 @@ function resolvePaymentTimestamp(rawDate) {
   }
 
   if (/^\d{4}-\d{2}-\d{2}$/.test(value)) {
-    const todayUtc = now.toISOString().slice(0, 10);
-    if (value === todayUtc) return now.toISOString();
-    return `${value}T12:00:00.000Z`;
+    const today = businessTodayDateOnly(timezone, now);
+    if (value === today) return now.toISOString();
+    return normalizeToUtcIso(`${value}T12:00:00`, timezone);
   }
 
   const parsed = new Date(value);
@@ -664,9 +683,11 @@ async function getGhlInvoiceScheduleContext() {
     ? safeJsonParse(config.location_data, {})
     : {};
   const business = locationData?.business || {};
+  const timezone = await getAccountTimezone().catch(() => locationData?.timezone || DEFAULT_PAYMENT_TIMEZONE);
 
   return {
     liveMode: normalizeGhlInvoiceMode(config?.ghl_invoice_mode) === 'live',
+    timezone,
     currency: firstDefined(
       locationData?.currency,
       locationData?.currencyCode,
@@ -2046,7 +2067,8 @@ export const recordPayment = async (req, res) => {
     const mode = methodMap[normalizedMethod] || 'cash';
     const liveMode = await getGhlInvoiceLiveMode();
     const paymentMode = liveMode ? 'live' : 'test';
-    const resolvedPaymentDate = resolvePaymentTimestamp(paymentDate);
+    const accountTimezone = await getAccountTimezone().catch(() => DEFAULT_PAYMENT_TIMEZONE);
+    const resolvedPaymentDate = resolvePaymentTimestamp(paymentDate, accountTimezone);
 
     const noteParts = [
       `Pago registrado desde Ristak`,
@@ -3320,25 +3342,27 @@ export const createInvoiceSchedule = async (req, res) => {
       ? req.body.payload
       : req.body;
     const context = await getGhlInvoiceScheduleContext();
-    const currency = String(firstDefined(rawPayload?.currency, context.currency, 'MXN')).toUpperCase();
-    const items = toArray(firstDefined(rawPayload?.items, rawPayload?.invoiceItems)).map(item => ({
+    const normalizedRawPayload = normalizeInvoiceSchedulePayloadDates(rawPayload, context.timezone);
+    const currency = String(firstDefined(normalizedRawPayload?.currency, context.currency, 'MXN')).toUpperCase();
+    const items = toArray(firstDefined(normalizedRawPayload?.items, normalizedRawPayload?.invoiceItems)).map(item => ({
       ...item,
       currency: item.currency || currency
     }));
     const payload = formatInvoicePayloadText(sanitizeInvoiceSchedulePayload({
-      ...rawPayload,
-      status: rawPayload?.status || 'draft',
-      liveMode: rawPayload?.liveMode !== undefined ? rawPayload.liveMode : context.liveMode,
+      ...normalizedRawPayload,
+      status: normalizedRawPayload?.status || 'draft',
+      liveMode: normalizedRawPayload?.liveMode !== undefined ? normalizedRawPayload.liveMode : context.liveMode,
+      timezone: normalizedRawPayload?.timezone || context.timezone,
       currency,
-      title: rawPayload?.title || context.invoiceTitle,
-      termsNotes: firstDefined(rawPayload?.termsNotes, context.termsNotes),
-      ...(context.invoiceNumberPrefix && !rawPayload?.invoiceNumberPrefix ? { invoiceNumberPrefix: context.invoiceNumberPrefix } : {}),
-      businessDetails: rawPayload?.businessDetails || context.businessDetails,
-      amountPaid: numberOrNull(rawPayload?.amountPaid) || 0,
-      amountDue: numberOrNull(rawPayload?.amountDue) || Number(rawPayload?.total || 0),
-      issueDate: rawPayload?.issueDate || rawPayload?.schedule?.rrule?.startDate || String(rawPayload?.schedule?.executeAt || '').slice(0, 10),
-      dueDate: rawPayload?.dueDate || rawPayload?.schedule?.rrule?.startDate || String(rawPayload?.schedule?.executeAt || '').slice(0, 10),
-      ...(items.length ? { items, invoiceItems: rawPayload?.invoiceItems || items } : {})
+      title: normalizedRawPayload?.title || context.invoiceTitle,
+      termsNotes: firstDefined(normalizedRawPayload?.termsNotes, context.termsNotes),
+      ...(context.invoiceNumberPrefix && !normalizedRawPayload?.invoiceNumberPrefix ? { invoiceNumberPrefix: context.invoiceNumberPrefix } : {}),
+      businessDetails: normalizedRawPayload?.businessDetails || context.businessDetails,
+      amountPaid: numberOrNull(normalizedRawPayload?.amountPaid) || 0,
+      amountDue: numberOrNull(normalizedRawPayload?.amountDue) || Number(normalizedRawPayload?.total || 0),
+      issueDate: normalizedRawPayload?.issueDate || normalizedRawPayload?.schedule?.rrule?.startDate || toDateOnly(normalizedRawPayload?.schedule?.executeAt, context.timezone),
+      dueDate: normalizedRawPayload?.dueDate || normalizedRawPayload?.schedule?.rrule?.startDate || toDateOnly(normalizedRawPayload?.schedule?.executeAt, context.timezone),
+      ...(items.length ? { items, invoiceItems: normalizedRawPayload?.invoiceItems || items } : {})
     }));
     const shouldSchedule = req.body?.scheduleNow !== false;
 
@@ -3370,7 +3394,7 @@ export const createInvoiceSchedule = async (req, res) => {
       });
     }
 
-    assertInvoiceScheduleDateNotPast(payload);
+    assertInvoiceScheduleDateNotPast(payload, context.timezone);
 
     const ghlClient = await getGHLClient();
 
@@ -3627,7 +3651,8 @@ export const updateInvoiceSchedule = async (req, res) => {
     const rawPayload = req.body?.payload && typeof req.body.payload === 'object'
       ? req.body.payload
       : req.body;
-    const payload = sanitizeInvoiceSchedulePayload(rawPayload);
+    const context = await getGhlInvoiceScheduleContext();
+    const payload = sanitizeInvoiceSchedulePayload(normalizeInvoiceSchedulePayloadDates(rawPayload, context.timezone));
     const shouldUpdateScheduled = req.body?.updateAndSchedule !== false;
 
     if (!scheduleId) {
@@ -3644,7 +3669,7 @@ export const updateInvoiceSchedule = async (req, res) => {
       });
     }
 
-    assertInvoiceScheduleDateNotPast(payload);
+    assertInvoiceScheduleDateNotPast(payload, context.timezone);
 
     const localSchedule = await getLocalInvoiceSchedule(scheduleId);
     if (isStripeLocalInvoiceSchedule(localSchedule)) {

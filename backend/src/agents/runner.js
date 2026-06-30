@@ -1,6 +1,6 @@
 import { Agent, Runner, OpenAIProvider, assistant, webSearchTool } from '@openai/agents'
 import { logger } from '../utils/logger.js'
-import { getAccountTimezone } from '../utils/dateUtils.js'
+import { DEFAULT_TIMEZONE, getAccountTimezone } from '../utils/dateUtils.js'
 import { getAIAgentConfig } from '../services/aiAgentService.js'
 import {
   startAgentRun,
@@ -422,7 +422,7 @@ export async function runSpecializedAgentReply({ apiKey, category: categoryId, m
   try {
     const [agentConfig, timezone, ...memoryLists] = await Promise.all([
       getAIAgentConfig({ userId }),
-      getAccountTimezone().catch(() => 'America/Mexico_City'),
+      getAccountTimezone().catch(() => DEFAULT_TIMEZONE),
       ...AGENT_CATEGORIES.map((category) => loadAgentMemories(category.id))
     ])
     const memoriesByCategory = Object.fromEntries(

@@ -3,7 +3,7 @@ import { db } from '../config/database.js'
 
 // Utilidades para manejo de fechas
 
-const DEFAULT_TIMEZONE = 'America/Mexico_City'
+export const DEFAULT_TIMEZONE = 'America/Mexico_City'
 
 // Cache de timezone de HighLevel (se refresca cada hora)
 let cachedTimezone = null
@@ -25,6 +25,10 @@ export function isValidTimezone(tz) {
   } catch (error) {
     return false
   }
+}
+
+export function resolveTimezone(tz, fallback = DEFAULT_TIMEZONE) {
+  return isValidTimezone(tz) ? tz : (isValidTimezone(fallback) ? fallback : DEFAULT_TIMEZONE)
 }
 
 /**
@@ -116,7 +120,7 @@ export function normalizeToUtcIso(value, fallbackZone = DEFAULT_TIMEZONE) {
   const str = String(value).trim()
   if (!str) return value
 
-  const zone = isValidTimezone(fallbackZone) ? fallbackZone : DEFAULT_TIMEZONE
+  const zone = resolveTimezone(fallbackZone)
   const hasExplicitZone = /(?:Z|[+-]\d{2}:?\d{2})$/i.test(str)
 
   let dt
@@ -138,6 +142,72 @@ export function normalizeToUtcIso(value, fallbackZone = DEFAULT_TIMEZONE) {
   return dt.toUTC().toISO({ suppressMilliseconds: false })
 }
 
+export function businessTodayDateOnly(timezone = DEFAULT_TIMEZONE, referenceDate = new Date()) {
+  return DateTime.fromJSDate(referenceDate instanceof Date ? referenceDate : new Date(referenceDate))
+    .setZone(resolveTimezone(timezone))
+    .toISODate()
+}
+
+export function normalizeDateOnlyInTimezone(value, timezone = DEFAULT_TIMEZONE, fallbackDate = null) {
+  const zone = resolveTimezone(timezone)
+  const fallback = fallbackDate
+    ? DateTime.fromISO(String(fallbackDate), { zone })
+    : DateTime.now().setZone(zone)
+
+  if (value === null || value === undefined || value === '') {
+    return (fallback.isValid ? fallback : DateTime.now().setZone(zone)).toISODate()
+  }
+
+  const text = String(value).trim()
+  const dateOnly = text.match(/^(\d{4}-\d{2}-\d{2})$/)
+  if (dateOnly) return dateOnly[1]
+
+  const hasExplicitZone = /(?:Z|[+-]\d{2}:?\d{2})$/i.test(text)
+  let parsed = hasExplicitZone
+    ? DateTime.fromISO(text, { setZone: true }).setZone(zone)
+    : DateTime.fromISO(text, { zone })
+
+  if (!parsed.isValid) parsed = DateTime.fromSQL(text, { zone })
+  if (!parsed.isValid) {
+    const fallbackJs = new Date(text)
+    if (!Number.isNaN(fallbackJs.getTime())) parsed = DateTime.fromJSDate(fallbackJs).setZone(zone)
+  }
+
+  if (!parsed.isValid) {
+    return (fallback.isValid ? fallback : DateTime.now().setZone(zone)).toISODate()
+  }
+
+  return parsed.toISODate()
+}
+
+export function assertDateOnlyNotInPast(value, timezone = DEFAULT_TIMEZONE, message = 'La fecha no puede estar en el pasado.') {
+  const normalizedDate = normalizeDateOnlyInTimezone(value, timezone)
+  if (normalizedDate < businessTodayDateOnly(timezone)) {
+    const error = new Error(message)
+    error.status = 400
+    throw error
+  }
+  return normalizedDate
+}
+
+export function assertLocalDateTimeNotInPast(value, timezone = DEFAULT_TIMEZONE, message = 'La fecha y hora no puede estar en el pasado.') {
+  const utcIso = normalizeToUtcIso(value, timezone)
+  const timestamp = Date.parse(utcIso)
+  if (!Number.isFinite(timestamp)) {
+    const error = new Error('La fecha y hora no es válida.')
+    error.status = 400
+    throw error
+  }
+
+  if (timestamp < Date.now() - 60_000) {
+    const error = new Error(message)
+    error.status = 400
+    throw error
+  }
+
+  return utcIso
+}
+
 /**
  * Normaliza un rango de fechas recibido desde la API para usar en consultas SQL.
  * Garantiza:
@@ -151,7 +221,7 @@ export function normalizeToUtcIso(value, fallbackZone = DEFAULT_TIMEZONE) {
  * @returns {{ startUtc: string|null, endUtc: string|null, appliedTimezone: string, isFiltered: boolean }}
  */
 export function resolveDateRange ({ startDate, endDate, timezone = DEFAULT_TIMEZONE } = {}) {
-  const zone = timezone || DEFAULT_TIMEZONE
+  const zone = resolveTimezone(timezone)
 
   let start = startDate ? DateTime.fromISO(startDate, { zone }).startOf('day') : null
   let end = endDate ? DateTime.fromISO(endDate, { zone }).endOf('day') : null

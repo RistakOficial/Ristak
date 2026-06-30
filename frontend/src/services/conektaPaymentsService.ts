@@ -121,6 +121,8 @@ export interface PublicConektaPayment {
   dueDate?: string | null
   sentAt?: string | null
   paidAt?: string | null
+  timezone?: string
+  timeZone?: string
   paymentMode: 'test' | 'live'
   provider: 'conekta'
   contact: {

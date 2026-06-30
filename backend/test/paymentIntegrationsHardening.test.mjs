@@ -44,7 +44,8 @@ test('registro manual de invoice HighLevel persiste paymentDate como fecha local
   const end = source.indexOf('export const createInstallmentFlow = async')
   const recordPaymentSource = source.slice(start, end)
 
-  assert.match(recordPaymentSource, /const resolvedPaymentDate = resolvePaymentTimestamp\(paymentDate\)/)
+  assert.match(recordPaymentSource, /const accountTimezone = await getAccountTimezone\(\)\.catch\(\(\) => DEFAULT_PAYMENT_TIMEZONE\)/)
+  assert.match(recordPaymentSource, /const resolvedPaymentDate = resolvePaymentTimestamp\(paymentDate, accountTimezone\)/)
   assert.match(recordPaymentSource, /fulfilledAt: resolvedPaymentDate/)
   assert.match(recordPaymentSource, /SET status = 'paid'.+date = \?/s)
 })

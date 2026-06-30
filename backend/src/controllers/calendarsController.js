@@ -508,14 +508,22 @@ function splitName(fullName = '') {
   };
 }
 
-function dateKeyFromDate(date) {
-  return date.toISOString().slice(0, 10);
+function dateKeyFromDate(date, timezone = 'UTC') {
+  const parts = new Intl.DateTimeFormat('en-CA', {
+    timeZone: timezone,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit'
+  }).formatToParts(date);
+  const get = (type) => parts.find(part => part.type === type)?.value || '';
+  return `${get('year')}-${get('month')}-${get('day')}`;
 }
 
-function addDays(date, days) {
-  const next = new Date(date);
-  next.setUTCDate(next.getUTCDate() + days);
-  return next;
+function addDateOnlyDays(dateOnly, days) {
+  const [year, month, day] = String(dateOnly || '').split('-').map(Number);
+  if (!year || !month || !day) return dateOnly;
+  const next = new Date(Date.UTC(year, month - 1, day + days));
+  return next.toISOString().slice(0, 10);
 }
 
 function getCalendarSlotLimit(calendar = {}) {
@@ -1343,8 +1351,8 @@ export async function createPublicAppointment(req, res) {
     }
 
     const timezone = cleanString(body.timezone) || await getAccountTimezone();
-    const startDate = dateKeyFromDate(start);
-    const endDate = dateKeyFromDate(addDays(start, 1));
+    const startDate = dateKeyFromDate(start, timezone);
+    const endDate = addDateOnlyDays(startDate, 1);
     const availableSlots = await getCalendarFreeSlotsForPublic(calendar, {
       startDate,
       endDate,

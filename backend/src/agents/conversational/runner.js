@@ -1,7 +1,7 @@
 import { Agent, Runner } from '@openai/agents'
 import { db } from '../../config/database.js'
 import { logger } from '../../utils/logger.js'
-import { getAccountTimezone } from '../../utils/dateUtils.js'
+import { DEFAULT_TIMEZONE, getAccountTimezone } from '../../utils/dateUtils.js'
 import { getAccountLocaleSettings } from '../../utils/accountLocale.js'
 import {
   buildBusinessProfilePromptParameters,
@@ -826,7 +826,7 @@ async function loadRecentInboundMessagesForRecovery(channel = 'whatsapp', limit 
 async function buildAgentForRun({ config, conversationModel, contactId, contactName, dryRun, channel = 'whatsapp', ruleContext = null, followUpContext = null }) {
   const [aiConfig, timezone, businessProfile, accountLocale] = await Promise.all([
     getAIAgentConfig({}),
-    getAccountTimezone().catch(() => 'America/Mexico_City'),
+    getAccountTimezone().catch(() => DEFAULT_TIMEZONE),
     getBusinessProfileSnapshot().catch(() => null),
     getAccountLocaleSettings().catch(() => ({ countryCode: 'MX', currency: 'MXN', dialCode: '52' }))
   ])

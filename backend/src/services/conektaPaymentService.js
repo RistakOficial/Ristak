@@ -13,6 +13,14 @@ import { sendPaymentNotification } from './pushNotificationsService.js'
 import { getPaymentPlanAuditSummary, hardDeleteTestPaymentPlan } from './paymentRecordSafetyService.js'
 import { buildMetaPublicPurchasePixelEvent } from './metaConversionEventsService.js'
 import { createPublicPaymentId, createRistakPaymentEntityId } from '../utils/idGenerator.js'
+import {
+  DEFAULT_TIMEZONE as ACCOUNT_DEFAULT_TIMEZONE,
+  assertDateOnlyNotInPast,
+  assertLocalDateTimeNotInPast,
+  businessTodayDateOnly,
+  getAccountTimezone,
+  normalizeDateOnlyInTimezone
+} from '../utils/dateUtils.js'
 
 const CONFIG_KEYS = {
   enabled: 'conekta_enabled',
@@ -54,7 +62,7 @@ const CONEKTA_INSTALLMENT_TERMS = [
   { months: 24, minAmount: 2400 }
 ]
 const CONEKTA_INSTALLMENT_MONTHS = new Set(CONEKTA_INSTALLMENT_TERMS.map((term) => term.months))
-const DEFAULT_PAYMENT_TIMEZONE = 'America/Mexico_City'
+const DEFAULT_PAYMENT_TIMEZONE = ACCOUNT_DEFAULT_TIMEZONE
 const isPostgresRuntime = Boolean(process.env.DATABASE_URL)
 const CONEKTA_PLAN_STATES = {
   WAITING_CARD_AUTHORIZATION: 'waiting_card_authorization',
@@ -151,38 +159,20 @@ function normalizeCurrency(value) {
   return /^[A-Z]{3}$/.test(currency) ? currency : DEFAULT_CURRENCY
 }
 
-function normalizeDateOnly(value) {
-  if (!value) return new Date().toISOString().slice(0, 10)
-  const text = String(value).trim()
-  const match = text.match(/^(\d{4}-\d{2}-\d{2})/)
-  if (match) return match[1]
-
-  const date = new Date(text)
-  if (!Number.isNaN(date.getTime())) return date.toISOString().slice(0, 10)
-  return new Date().toISOString().slice(0, 10)
+function normalizeDateOnly(value, timezone = DEFAULT_PAYMENT_TIMEZONE) {
+  return normalizeDateOnlyInTimezone(value, timezone)
 }
 
-function todayDateOnly() {
-  return new Intl.DateTimeFormat('en-CA', {
-    timeZone: DEFAULT_PAYMENT_TIMEZONE,
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit'
-  }).format(new Date())
+function todayDateOnly(timezone = DEFAULT_PAYMENT_TIMEZONE) {
+  return businessTodayDateOnly(timezone)
 }
 
-function isDueTodayOrPast(value) {
-  return normalizeDateOnly(value) <= todayDateOnly()
+function isDueTodayOrPast(value, timezone = DEFAULT_PAYMENT_TIMEZONE) {
+  return normalizeDateOnly(value, timezone) <= todayDateOnly(timezone)
 }
 
-function assertDateNotInPast(value, message) {
-  const date = normalizeDateOnly(value)
-  if (date < todayDateOnly()) {
-    const error = new Error(message)
-    error.status = 400
-    throw error
-  }
-  return date
+function assertDateNotInPast(value, message, timezone = DEFAULT_PAYMENT_TIMEZONE) {
+  return assertDateOnlyNotInPast(value, timezone, message)
 }
 
 function dateOnlySql(expression) {
@@ -217,23 +207,9 @@ function isTimedPlanFrequency(value) {
   return normalizePlanFrequency(value) === TIMED_PLAN_FREQUENCY
 }
 
-function assertPlanDueDateNotInPast(value, frequency, message) {
-  if (!isTimedPlanFrequency(frequency)) return assertDateNotInPast(value, message)
-
-  const date = new Date(cleanString(value))
-  if (Number.isNaN(date.getTime())) {
-    const error = new Error('La fecha y hora de cobro no es válida.')
-    error.status = 400
-    throw error
-  }
-
-  if (date.getTime() < Date.now() - 60_000) {
-    const error = new Error(message)
-    error.status = 400
-    throw error
-  }
-
-  return date.toISOString()
+function assertPlanDueDateNotInPast(value, frequency, message, timezone = DEFAULT_PAYMENT_TIMEZONE) {
+  if (!isTimedPlanFrequency(frequency)) return assertDateNotInPast(value, message, timezone)
+  return assertLocalDateTimeNotInPast(value, timezone, message)
 }
 
 function duePlanInstallmentCondition(alias = 'i') {
@@ -981,7 +957,7 @@ async function findPaymentById(paymentId) {
   )
 }
 
-function mapPublicPayment(row, config, baseUrl = '', settings = null) {
+function mapPublicPayment(row, config, baseUrl = '', settings = null, timezone = ACCOUNT_DEFAULT_TIMEZONE) {
   if (!row) return null
   const metadata = parseJson(row.metadata_json, {})
   const tax = metadata.tax && typeof metadata.tax === 'object' ? metadata.tax : null
@@ -1003,6 +979,8 @@ function mapPublicPayment(row, config, baseUrl = '', settings = null) {
     dueDate: row.due_date || null,
     sentAt: row.sent_at || null,
     paidAt: row.paid_at || null,
+    timezone,
+    timeZone: timezone,
     paymentMode: row.payment_mode || config?.mode || 'test',
     provider: 'conekta',
     contact: {
@@ -2010,8 +1988,9 @@ export async function getPublicConektaPayment(publicPaymentId, { baseUrl } = {})
   if (!row || row.payment_provider !== 'conekta') return null
   const config = await getConektaPaymentConfig({ mode: row.payment_mode || '' })
   const paymentSettings = await getPublicPaymentSettings()
+  const timezone = await getAccountTimezone().catch(() => ACCOUNT_DEFAULT_TIMEZONE)
   return attachMetaPublicPurchaseEvent(
-    mapPublicPayment(row, config, baseUrl, paymentSettings),
+    mapPublicPayment(row, config, baseUrl, paymentSettings, timezone),
     row
   )
 }
@@ -2384,7 +2363,7 @@ async function createConektaPlanPaymentRow({
   return id
 }
 
-function normalizeConektaPaymentPlanPayload(input = {}) {
+function normalizeConektaPaymentPlanPayload(input = {}, timezone = DEFAULT_PAYMENT_TIMEZONE) {
   const contact = input.contact || {}
   const totalAmount = Number(input.totalAmount || input.amount)
   const currency = normalizeCurrency(input.currency || DEFAULT_CURRENCY)
@@ -2392,7 +2371,7 @@ function normalizeConektaPaymentPlanPayload(input = {}) {
   const firstPaymentEnabled = normalizeBoolean(firstPayment.enabled, true)
   const firstPaymentAmount = firstPaymentEnabled ? Number(firstPayment.amount || 0) : 0
   const firstPaymentMethod = firstPaymentEnabled ? cleanString(firstPayment.method || 'card') : 'none'
-  const firstPaymentDate = firstPaymentEnabled ? normalizeDateOnly(firstPayment.date) : null
+  const firstPaymentDate = firstPaymentEnabled ? normalizeDateOnly(firstPayment.date, timezone) : null
   const remainingPayments = Array.isArray(input.remainingPayments) ? input.remainingPayments : []
   const cardSetupAmount = normalizePositiveAmount(input.cardSetupAmount, 25)
 
@@ -2429,7 +2408,7 @@ function normalizeConektaPaymentPlanPayload(input = {}) {
     }
 
     const frequency = normalizePlanFrequency(payment.frequency || input.remainingFrequency || 'custom')
-    const dueDate = assertPlanDueDateNotInPast(payment.dueDate, frequency, 'Los pagos futuros automáticos no pueden programarse en fechas pasadas.')
+    const dueDate = assertPlanDueDateNotInPast(payment.dueDate, frequency, 'Los pagos futuros automáticos no pueden programarse en fechas pasadas.', timezone)
 
     return {
       sequence: Number(payment.sequence || index + 1),
@@ -2441,7 +2420,7 @@ function normalizeConektaPaymentPlanPayload(input = {}) {
   })
 
   if (firstPaymentEnabled && !MANUAL_PLAN_PAYMENT_METHODS.has(firstPaymentMethod)) {
-    assertDateNotInPast(firstPaymentDate, 'El primer pago automático no puede programarse en una fecha pasada.')
+    assertDateNotInPast(firstPaymentDate, 'El primer pago automático no puede programarse en una fecha pasada.', timezone)
   }
 
   const remainingTotal = normalizedRemaining.reduce((sum, payment) => sum + payment.amount, 0)
@@ -2472,6 +2451,7 @@ function normalizeConektaPaymentPlanPayload(input = {}) {
     remainingPayments: normalizedRemaining,
     remainingFrequency: normalizePlanFrequency(input.remainingFrequency || 'custom'),
     cardSetupAmount,
+    timezone,
     lineItems: Array.isArray(input.invoicePayload?.items) ? input.invoicePayload.items : [],
     invoicePayload: input.invoicePayload || {},
     paymentMethodId: cleanString(input.paymentMethodId),
@@ -2892,7 +2872,8 @@ export async function createConektaPaymentPlan(input = {}, { baseUrl } = {}) {
   }
 
   const accountCurrency = await getConfiguredCurrency()
-  const plan = normalizeConektaPaymentPlanPayload({ ...input, currency: accountCurrency })
+  const accountTimezone = await getAccountTimezone()
+  const plan = normalizeConektaPaymentPlanPayload({ ...input, currency: accountCurrency }, accountTimezone)
   const savedSource = plan.paymentMethodId
     ? await resolveConektaSavedSource(plan.contact.id, plan.paymentMethodId, config)
     : null
@@ -2935,7 +2916,7 @@ export async function createConektaPaymentPlan(input = {}, { baseUrl } = {}) {
       plan.firstPayment.amount,
       plan.firstPayment.date,
       plan.firstPayment.method,
-      plan.firstPayment.enabled ? (hasSavedCard && firstPaymentIsCard && isDueTodayOrPast(plan.firstPayment.date) ? 'processing' : 'pending') : 'not_required',
+      plan.firstPayment.enabled ? (hasSavedCard && firstPaymentIsCard && isDueTodayOrPast(plan.firstPayment.date, accountTimezone) ? 'processing' : 'pending') : 'not_required',
       hasSavedCard ? 0 : 1,
       cardSetupAmount,
       savedSource?.conekta_customer_id || null,
@@ -2949,6 +2930,7 @@ export async function createConektaPaymentPlan(input = {}, { baseUrl } = {}) {
       JSON.stringify({
         source: plan.source,
         conektaMode: config.mode,
+        timezone: accountTimezone,
         remainingFrequency: plan.remainingFrequency,
         lineItems: plan.lineItems,
         firstPaymentLinkRequired: !hasSavedCard && firstPaymentIsCard,
@@ -3016,7 +2998,7 @@ export async function createConektaPaymentPlan(input = {}, { baseUrl } = {}) {
       contact: plan.contact,
       amount: plan.firstPayment.amount,
       currency: plan.currency,
-      status: isDueTodayOrPast(plan.firstPayment.date) ? 'pending' : 'scheduled',
+      status: isDueTodayOrPast(plan.firstPayment.date, accountTimezone) ? 'pending' : 'scheduled',
       paymentMethod: 'conekta_saved_card',
       title: `${plan.title} - primer pago`,
       description: `${plan.description} - primer pago`,
@@ -3043,7 +3025,7 @@ export async function createConektaPaymentPlan(input = {}, { baseUrl } = {}) {
     )
     response.firstPaymentPaymentId = paymentId
 
-    if (isDueTodayOrPast(plan.firstPayment.date)) {
+    if (isDueTodayOrPast(plan.firstPayment.date, accountTimezone)) {
       await chargeConektaPaymentRowWithSavedSource({
         paymentId,
         savedSource,
@@ -3097,7 +3079,7 @@ export async function createConektaPaymentPlan(input = {}, { baseUrl } = {}) {
       currency: plan.currency,
       title: `${plan.title} - domiciliación de tarjeta`,
       description: `Domiciliación de tarjeta para ${plan.description}`,
-      dueDate: todayDateOnly(),
+      dueDate: todayDateOnly(accountTimezone),
       source: 'conekta_payment_plan_card_setup',
       lineItems: [
         {
@@ -3201,7 +3183,8 @@ export async function processDueConektaPaymentPlanCharges({ limit = 25 } = {}) {
     throw error
   }
 
-  const dueDate = todayDateOnly()
+  const accountTimezone = await getAccountTimezone()
+  const dueDate = todayDateOnly(accountTimezone)
   const dueTimestamp = new Date().toISOString()
   const normalizedLimit = Math.max(1, Math.min(Number(limit) || 25, 100))
   const firstPaymentDueDateSql = dateOnlySql('COALESCE(f.first_payment_date, p.due_date, p.date)')
@@ -3483,6 +3466,7 @@ async function createConektaPaymentPlanCardSetupLink(flow, { baseUrl } = {}) {
   const metadata = parseJson(flow.metadata, {})
   const concept = cleanString(flow.concept) || 'Plan de pagos'
   const currency = normalizeCurrency(flow.currency || DEFAULT_CURRENCY)
+  const accountTimezone = await getAccountTimezone()
   const cardSetupAmount = normalizePositiveAmount(flow.card_setup_amount || metadata.cardSetupAmount, 25)
   const setupLink = await createConektaPaymentLink({
     contactId: flow.contact_id,
@@ -3493,7 +3477,7 @@ async function createConektaPaymentPlanCardSetupLink(flow, { baseUrl } = {}) {
     currency,
     title: `${concept} - cambiar tarjeta domiciliada`,
     description: `Domiciliación de nueva tarjeta para ${concept}`,
-    dueDate: todayDateOnly(),
+    dueDate: todayDateOnly(accountTimezone),
     source: 'conekta_payment_plan_card_update',
     lineItems: [
       {
@@ -3573,6 +3557,7 @@ export async function updateConektaPaymentPlanSchedule(flowId, input = {}) {
   }
 
   const metadata = parseJson(flow.metadata, {})
+  const accountTimezone = await getAccountTimezone()
   const hasSavedCard = Boolean(cleanString(flow.conekta_payment_source_id))
   const nextConcept = cleanString(input.name || input.title || input.description || input.concept || flow.concept || 'Plan de pagos')
   const nextFrequency = normalizePlanFrequency(input.remainingFrequency || input.frequency || metadata.remainingFrequency || 'custom')
@@ -3619,7 +3604,8 @@ export async function updateConektaPaymentPlanSchedule(flowId, input = {}) {
     const dueDate = assertPlanDueDateNotInPast(
       submitted.dueDate || submitted.date || submitted.scheduledAt,
       nextFrequency,
-      'Las parcialidades automáticas no pueden programarse en fechas pasadas.'
+      'Las parcialidades automáticas no pueden programarse en fechas pasadas.',
+      accountTimezone
     )
     if (!dueDate) {
       const error = new Error('Cada parcialidad futura necesita fecha de cobro.')
@@ -3629,7 +3615,7 @@ export async function updateConektaPaymentPlanSchedule(flowId, input = {}) {
 
     const method = normalizePlanEditablePaymentMethod(submitted.paymentMethod || submitted.method, hasSavedCard)
     if (method.automatic && !isTimedPlanFrequency(nextFrequency)) {
-      assertDateNotInPast(dueDate, 'Las parcialidades automáticas no pueden programarse en fechas pasadas.')
+      assertDateNotInPast(dueDate, 'Las parcialidades automáticas no pueden programarse en fechas pasadas.', accountTimezone)
     }
 
     const status = resolveEditableInstallmentStatus({
@@ -3818,14 +3804,14 @@ export async function updateConektaPaymentPlanSchedule(flowId, input = {}) {
       }
     } else {
       firstPaymentAmount = firstPaymentInputAmount
-      firstPaymentDate = normalizeDateOnly(firstPayment.dueDate || firstPayment.date || firstPaymentDate)
+      firstPaymentDate = normalizeDateOnly(firstPayment.dueDate || firstPayment.date || firstPaymentDate, accountTimezone)
       const firstPaymentMethodInput = cleanString(firstPayment.method || firstPayment.paymentMethod || firstPaymentMethod || 'conekta_auto').toLowerCase()
       const normalizedFirstPaymentMethod = normalizePlanEditableFirstPaymentMethod(
         firstPaymentMethodInput,
         hasSavedCard
       )
       if (AUTOMATIC_PLAN_PAYMENT_METHODS.has(firstPaymentMethodInput)) {
-        assertDateNotInPast(firstPaymentDate, 'El primer pago automático no puede programarse en una fecha pasada.')
+        assertDateNotInPast(firstPaymentDate, 'El primer pago automático no puede programarse en una fecha pasada.', accountTimezone)
       }
 
       firstPaymentMethod = normalizedFirstPaymentMethod.flowMethod

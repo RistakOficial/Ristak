@@ -1,6 +1,13 @@
 import { db } from '../config/database.js'
 import { logger } from '../utils/logger.js'
-import { resolveDateRange, resolveDateRangeWithGHLTimezone } from '../utils/dateUtils.js'
+import {
+  DEFAULT_TIMEZONE,
+  businessTodayDateOnly,
+  getAccountTimezone,
+  normalizeToUtcIso,
+  resolveDateRange,
+  resolveDateRangeWithGHLTimezone
+} from '../utils/dateUtils.js'
 import { buildTransactionStats, buildTransactionSummary } from '../services/analyticsService.js'
 import { getGHLClient } from '../services/ghlClient.js'
 import { getHighLevelConfig } from '../config/database.js'
@@ -395,7 +402,7 @@ const toDateOnly = (dateValue) => {
  *                            horaria mueva el pago al día anterior/siguiente; el
  *                            desempate por created_at conserva el orden de registro.
  */
-const resolvePaymentTimestamp = (rawDate) => {
+const resolvePaymentTimestamp = (rawDate, timezone = DEFAULT_TIMEZONE) => {
   const now = new Date()
   const value = cleanString(rawDate)
   if (!value) return now.toISOString()
@@ -408,9 +415,9 @@ const resolvePaymentTimestamp = (rawDate) => {
 
   // Solo fecha (YYYY-MM-DD).
   if (/^\d{4}-\d{2}-\d{2}$/.test(value)) {
-    const todayUtc = now.toISOString().slice(0, 10)
-    if (value === todayUtc) return now.toISOString()
-    return `${value}T12:00:00.000Z`
+    const today = businessTodayDateOnly(timezone, now)
+    if (value === today) return now.toISOString()
+    return normalizeToUtcIso(`${value}T12:00:00`, timezone)
   }
 
   const parsed = new Date(value)
@@ -422,13 +429,13 @@ const resolvePaymentTimestamp = (rawDate) => {
  * timestamp original para no perder la hora exacta del registro. Si cambia el día,
  * se recalcula como pago fechado en ese nuevo día.
  */
-const resolvePaymentUpdateDate = (rawDate, currentDate) => {
+const resolvePaymentUpdateDate = (rawDate, currentDate, timezone = DEFAULT_TIMEZONE) => {
   const value = cleanString(rawDate)
   if (!value) return undefined
   if (/^\d{4}-\d{2}-\d{2}$/.test(value) && currentDate) {
     if (value === String(currentDate).slice(0, 10)) return currentDate
   }
-  return resolvePaymentTimestamp(value)
+  return resolvePaymentTimestamp(value, timezone)
 }
 
 const mapTransactionRow = (t, baseUrl = '') => ({
@@ -679,7 +686,8 @@ export const createTransaction = async (req, res) => {
     const finalMethod = cleanString(paymentMethod || method || 'cash') || 'cash'
     const finalTitle = cleanString(title || description || 'Pago')
     const finalDescription = cleanString(description || title || 'Pago')
-    const finalDate = resolvePaymentTimestamp(date)
+    const accountTimezone = await getAccountTimezone().catch(() => DEFAULT_TIMEZONE)
+    const finalDate = resolvePaymentTimestamp(date, accountTimezone)
     const finalPaymentMode = normalizePaymentMode(paymentMode)
     const metadataJson = metadata && typeof metadata === 'object' ? JSON.stringify(metadata) : null
 
@@ -1194,6 +1202,7 @@ export const updateTransaction = async (req, res) => {
     }
 
     const accountCurrency = cleanString(await getAccountCurrency()).toUpperCase() || 'MXN'
+    const accountTimezone = await getAccountTimezone().catch(() => DEFAULT_TIMEZONE)
     const shouldNormalizeCurrency = currency !== undefined || cleanString(transaction.currency).toUpperCase() !== accountCurrency
     const updates = {
       amount: normalizeAmount(amount),
@@ -1203,7 +1212,7 @@ export const updateTransaction = async (req, res) => {
       reference: reference !== undefined ? String(reference || '') : undefined,
       title: title !== undefined ? String(title || '') : undefined,
       description: description !== undefined ? String(description || '') : undefined,
-      date: resolvePaymentUpdateDate(date, transaction.date),
+      date: resolvePaymentUpdateDate(date, transaction.date, accountTimezone),
       dueDate: dueDate || undefined,
       contactId: contactId || undefined,
       contactName: contactName || undefined,
@@ -1637,7 +1646,7 @@ export const recordPayment = async (req, res) => {
     // Timestamp completo del pago: si el usuario eligió fecha la respetamos
     // (hoy -> hora exacta; otra fecha -> ese día); si no, el momento actual.
     const resolvedPaymentDate = paymentDate
-      ? resolvePaymentTimestamp(paymentDate)
+      ? resolvePaymentTimestamp(paymentDate, await getAccountTimezone().catch(() => DEFAULT_TIMEZONE))
       : (transaction.date || new Date().toISOString())
 
     // Marcar como pagado en HighLevel si tiene invoice asociado. Para pagos locales

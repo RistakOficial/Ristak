@@ -6,6 +6,7 @@ import {
   containsPattern,
   textFoldExpression
 } from '../utils/searchText.js'
+import { DEFAULT_TIMEZONE, getAccountTimezone, normalizeDateOnlyInTimezone } from '../utils/dateUtils.js'
 // (ACL-002) Excluir contactos ocultos también en la búsqueda global.
 import { getHiddenContactFilters, buildHiddenContactsCondition } from '../utils/hiddenContactsFilter.js'
 
@@ -26,13 +27,13 @@ const ACTIVE_APPOINTMENT_CONDITION = `LOWER(COALESCE(appointment_status, status,
 
 const safeText = (value) => (value === null || value === undefined ? '' : String(value))
 
-const formatDate = (value) => {
+const formatDate = (value, timezone = DEFAULT_TIMEZONE) => {
   if (!value) return ''
   const date = new Date(value)
   if (Number.isNaN(date.getTime())) {
     return safeText(value).slice(0, 10)
   }
-  return date.toISOString().slice(0, 10)
+  return normalizeDateOnlyInTimezone(date.toISOString(), timezone)
 }
 
 const formatMoney = (amount, currency = 'MXN') => {
@@ -72,6 +73,7 @@ const runCategoryQuery = async (label, queryFn) => {
 export const globalSearch = async (req, res) => {
   try {
     const rawQuery = safeText(req.query.q).trim()
+    const timezone = await getAccountTimezone().catch(() => DEFAULT_TIMEZONE)
 
     if (!rawQuery) {
       return res.json({
@@ -264,7 +266,7 @@ export const globalSearch = async (req, res) => {
             id: contact.id,
             title: name || contact.email || contact.phone || 'Contacto sin nombre',
             subtitle: joinParts(contact.email, contact.phone),
-            meta: joinParts(status, formatMoney(contact.total_paid || 0), formatDate(contact.created_at))
+            meta: joinParts(status, formatMoney(contact.total_paid || 0), formatDate(contact.created_at, timezone))
           }
         })
       },
@@ -279,7 +281,7 @@ export const globalSearch = async (req, res) => {
             id: appointment.id,
             title: appointment.title || contactName || 'Cita sin título',
             subtitle: joinParts(contactName, appointment.contact_email, appointment.contact_phone),
-            meta: joinParts(formatDate(appointment.start_time), appointment.appointment_status || appointment.status),
+            meta: joinParts(formatDate(appointment.start_time, timezone), appointment.appointment_status || appointment.status),
             metadata: {
               calendarId: appointment.calendar_id,
               contactId: appointment.contact_id,
@@ -299,7 +301,7 @@ export const globalSearch = async (req, res) => {
             id: payment.id,
             title: joinParts(formatMoney(payment.amount, payment.currency), contactName || 'Pago sin contacto'),
             subtitle: joinParts(payment.description, payment.reference),
-            meta: joinParts(formatDate(payment.date), payment.status, payment.payment_method),
+            meta: joinParts(formatDate(payment.date, timezone), payment.status, payment.payment_method),
             metadata: {
               contactId: payment.contact_id
             }
@@ -314,7 +316,7 @@ export const globalSearch = async (req, res) => {
           id: campaign.id,
           title: campaign.name || campaign.id,
           subtitle: 'Campaña de Meta',
-          meta: joinParts(formatMoney(campaign.spend), `${Number(campaign.clicks || 0).toLocaleString('es-MX')} clicks`, formatDate(campaign.last_date)),
+          meta: joinParts(formatMoney(campaign.spend), `${Number(campaign.clicks || 0).toLocaleString('es-MX')} clicks`, formatDate(campaign.last_date, timezone)),
           metadata: {
             campaignId: campaign.id,
             lastDate: campaign.last_date
@@ -329,7 +331,7 @@ export const globalSearch = async (req, res) => {
           id: adset.id,
           title: adset.name || adset.id,
           subtitle: joinParts('Conjunto de anuncios', adset.campaign_name),
-          meta: joinParts(formatMoney(adset.spend), `${Number(adset.clicks || 0).toLocaleString('es-MX')} clicks`, formatDate(adset.last_date)),
+          meta: joinParts(formatMoney(adset.spend), `${Number(adset.clicks || 0).toLocaleString('es-MX')} clicks`, formatDate(adset.last_date, timezone)),
           metadata: {
             campaignId: adset.campaign_id,
             adsetId: adset.id,
@@ -345,7 +347,7 @@ export const globalSearch = async (req, res) => {
           id: ad.id,
           title: ad.name || ad.id,
           subtitle: joinParts('Anuncio', ad.campaign_name, ad.adset_name),
-          meta: joinParts(formatMoney(ad.spend), `${Number(ad.clicks || 0).toLocaleString('es-MX')} clicks`, formatDate(ad.last_date)),
+          meta: joinParts(formatMoney(ad.spend), `${Number(ad.clicks || 0).toLocaleString('es-MX')} clicks`, formatDate(ad.last_date, timezone)),
           metadata: {
             campaignId: ad.campaign_id,
             adsetId: ad.adset_id,

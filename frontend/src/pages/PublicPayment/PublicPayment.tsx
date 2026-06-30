@@ -26,6 +26,7 @@ import {
   resolveInvoiceDesign,
   type PaymentInvoiceTemplateId
 } from '@/utils/paymentInvoiceDesign'
+import { DEFAULT_TIMEZONE } from '@/utils/timezone'
 import styles from './PublicPayment.module.css'
 
 type StripePromise = ReturnType<typeof loadStripe>
@@ -198,14 +199,15 @@ const PAYMENT_TEST_GUIDES: Record<PaymentTestProvider, PaymentTestGuide> = {
   }
 }
 
-function formatDate(value?: string | null) {
+function formatDate(value?: string | null, timezone = DEFAULT_TIMEZONE) {
   if (!value) return 'Sin vencimiento'
   const dateOnlyMatch = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value)
   const date = dateOnlyMatch
-    ? new Date(Number(dateOnlyMatch[1]), Number(dateOnlyMatch[2]) - 1, Number(dateOnlyMatch[3]))
+    ? new Date(Date.UTC(Number(dateOnlyMatch[1]), Number(dateOnlyMatch[2]) - 1, Number(dateOnlyMatch[3]), 12))
     : new Date(value)
   if (Number.isNaN(date.getTime())) return String(value).split('T')[0]
   return new Intl.DateTimeFormat('es-MX', {
+    timeZone: timezone,
     day: '2-digit',
     month: 'short',
     year: 'numeric'
@@ -1568,6 +1570,7 @@ export const PublicPayment: React.FC = () => {
   const showCheckoutBusinessInfo = !isPaid && showBusinessInfo && Boolean(receiptSettings?.businessName || businessDetails.length)
   const showCheckoutTerms = !isPaid && showTerms && Boolean(receiptSettings?.terms)
   const showCheckoutInfo = showCheckoutBusinessInfo || (!isPaid && supportItems.length > 0) || showCheckoutTerms
+  const publicTimezone = payment.timezone || payment.timeZone || DEFAULT_TIMEZONE
   const taxLabel = taxDetails?.enabled
     ? `${taxDetails.taxName || 'Impuesto'} ${taxDetails.rateValue || 0}%`
     : ''
@@ -1659,7 +1662,7 @@ export const PublicPayment: React.FC = () => {
                 )}
                 <div>
                   <span>Vencimiento</span>
-                  <strong>{formatDate(payment.dueDate)}</strong>
+                  <strong>{formatDate(payment.dueDate, publicTimezone)}</strong>
                 </div>
                 {hasTaxBreakdown && (
                   <div>
@@ -1751,7 +1754,7 @@ export const PublicPayment: React.FC = () => {
                   <div className={styles.planLine}>
                     <span>Primer pago</span>
                     <strong>
-                      {formatCurrency(firstPlanPayment.amount, paymentPlan.currency || payment.currency)} · {formatDate(firstPlanPayment.date)}
+                      {formatCurrency(firstPlanPayment.amount, paymentPlan.currency || payment.currency)} · {formatDate(firstPlanPayment.date, publicTimezone)}
                     </strong>
                     <small>
                       {getPlanInstallmentStatusCopy(firstPlanPayment.status)} · {getPlanPaymentMethodCopy(firstPlanPayment.method)}
@@ -1773,7 +1776,7 @@ export const PublicPayment: React.FC = () => {
                             {formatCurrency(installment.amount, paymentPlan.currency || payment.currency)}
                             {installment.changeType === 'added' && <span className={styles.addedTag}>Agregado</span>}
                           </strong>
-                          <span>{formatDate(installment.dueDate)} · {getPlanInstallmentStatusCopy(installment.status)}</span>
+                          <span>{formatDate(installment.dueDate, publicTimezone)} · {getPlanInstallmentStatusCopy(installment.status)}</span>
                           <small>{getPlanPaymentMethodCopy(installment.paymentMethod)}</small>
                         </div>
                       </div>
@@ -1842,11 +1845,11 @@ export const PublicPayment: React.FC = () => {
                   </div>
                   <div>
                     <span>Fecha de pago</span>
-                    <strong>{formatDate(payment.paidAt || new Date().toISOString())}</strong>
+                    <strong>{formatDate(payment.paidAt || new Date().toISOString(), publicTimezone)}</strong>
                   </div>
                   <div>
                     <span>Vencimiento</span>
-                    <strong>{formatDate(payment.dueDate)}</strong>
+                    <strong>{formatDate(payment.dueDate, publicTimezone)}</strong>
                   </div>
                   {hasTaxBreakdown && (
                     <div>
@@ -1969,7 +1972,7 @@ export const PublicPayment: React.FC = () => {
               <div className={styles.printMeta}>
                 <h1>{receiptSettings?.title || 'Comprobante de pago'}</h1>
                 <span>Referencia {payment.publicPaymentId}</span>
-                <span>Fecha de pago {formatDate(payment.paidAt || new Date().toISOString())}</span>
+                <span>Fecha de pago {formatDate(payment.paidAt || new Date().toISOString(), publicTimezone)}</span>
               </div>
             </header>
 
@@ -1982,11 +1985,11 @@ export const PublicPayment: React.FC = () => {
               </div>
               <div>
                 <span>Fecha de pago</span>
-                <strong>{formatDate(payment.paidAt || new Date().toISOString())}</strong>
+                <strong>{formatDate(payment.paidAt || new Date().toISOString(), publicTimezone)}</strong>
               </div>
               <div>
                 <span>Vencimiento</span>
-                <strong>{formatDate(payment.dueDate)}</strong>
+                <strong>{formatDate(payment.dueDate, publicTimezone)}</strong>
               </div>
               <div>
                 <span>Pasarela</span>

@@ -41,6 +41,7 @@ import { getContactAvatarUrl, getContactDetailLabel, getContactDisplayName, getC
 import { normalizeTrafficSource } from '@/utils/trafficSourceNormalizer'
 import { CONTACT_STAGE_BADGE_VARIANTS, getContactStageBadge } from '@/utils/contactStageBadge'
 import { buildSearchIndex, prepareSearchQuery, searchIndexIncludes } from '@/utils/searchText'
+import { localDateTimeInputToUTCISOString, toDateTimeLocalInputValue as toZonedDateTimeLocalInputValue } from '@/utils/timezone'
 import { AgentRobot } from '@/components/ai'
 import { useLabels } from '@/contexts/LabelsContext'
 import { useTimezone } from '@/contexts/TimezoneContext'
@@ -646,8 +647,10 @@ const toDateTimeLocalInputValue = (date: Date) => {
   return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`
 }
 
-const defaultAutomationScheduleValue = () => {
-  const date = new Date(Date.now() + 60 * 60 * 1000)
+const defaultAutomationScheduleValue = (timezone?: string) => {
+  const date = timezone
+    ? new Date(toZonedDateTimeLocalInputValue(new Date(Date.now() + 60 * 60 * 1000), timezone))
+    : new Date(Date.now() + 60 * 60 * 1000)
   date.setSeconds(0, 0)
   return toDateTimeLocalInputValue(date)
 }
@@ -894,7 +897,7 @@ export function ContactDetailsModal({
       setAutomationQuery('')
       setEnrollModalOpen(false)
       setEnrollMode('now')
-      setEnrollScheduledAt(defaultAutomationScheduleValue())
+      setEnrollScheduledAt(defaultAutomationScheduleValue(timezone))
       setEnrollSubmitting(false)
       setEnrollError(null)
       setSelectedAutomationForEnrollment(null)
@@ -904,7 +907,7 @@ export function ContactDetailsModal({
       setTagsError(null)
       setSavingPrimaryPhone(null)
     }
-  }, [isOpen, data])
+  }, [isOpen, data, timezone])
 
   useEffect(() => {
     setPaymentsExpanded(false)
@@ -934,7 +937,7 @@ export function ContactDetailsModal({
     setAutomationQuery('')
     setEnrollModalOpen(false)
     setEnrollMode('now')
-    setEnrollScheduledAt(defaultAutomationScheduleValue())
+    setEnrollScheduledAt(defaultAutomationScheduleValue(timezone))
     setEnrollSubmitting(false)
     setEnrollError(null)
     setSelectedAutomationForEnrollment(null)
@@ -1051,7 +1054,7 @@ export function ContactDetailsModal({
   const preparedContactSearch = useMemo(() => prepareSearchQuery(searchQuery), [searchQuery])
   const contactSearchIndexes = useMemo(() => {
     return data.map(contact => buildSearchIndex([contact.name, contact.email, contact.phone, contact.id]))
-  }, [data])
+  }, [data, timezone])
 
   // Filtrar contactos según búsqueda
   const filteredData = useMemo(() => {
@@ -1118,7 +1121,7 @@ export function ContactDetailsModal({
   const openEnrollmentModal = (automation: AutomationSummary) => {
     setSelectedAutomationForEnrollment(automation)
     setEnrollMode('now')
-    setEnrollScheduledAt(defaultAutomationScheduleValue())
+    setEnrollScheduledAt(defaultAutomationScheduleValue(timezone))
     setEnrollError(null)
     setEnrollModalOpen(true)
   }
@@ -1134,7 +1137,8 @@ export function ContactDetailsModal({
     if (!selectedContact || !selectedAutomationForEnrollment) return
     let scheduledAt: string | undefined
     if (enrollMode === 'scheduled') {
-      const scheduledDate = new Date(enrollScheduledAt)
+      const scheduledIso = localDateTimeInputToUTCISOString(enrollScheduledAt, timezone)
+      const scheduledDate = scheduledIso ? new Date(scheduledIso) : new Date(NaN)
       if (!enrollScheduledAt || Number.isNaN(scheduledDate.getTime())) {
         setEnrollError('Elige una fecha y hora válidas.')
         return

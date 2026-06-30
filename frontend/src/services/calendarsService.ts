@@ -512,14 +512,14 @@ export const calendarsService = {
     startDate: string,
     endDate: string,
     accessToken?: string,
-    timezone: string = 'America/Mexico_City'
+    timezone?: string
   ): Promise<FreeSlot[]> {
     try {
       const data = await apiClient.get<FreeSlot[]>(`/calendars/${calendarId}/free-slots`, {
         params: {
           startDate,
           endDate,
-          timezone,
+          ...(timezone ? { timezone } : {}),
           ...(accessToken ? { accessToken } : {})
         }
       });

@@ -15,6 +15,7 @@ import { apiUrl } from '@/services/apiBaseUrl';
 import { useNotification } from '@/contexts/NotificationContext';
 import { useTimezone } from '@/contexts/TimezoneContext';
 import { suppressContactAutofill } from '@/utils/browserAutofill';
+import { todayDateOnlyInTimezone } from '@/utils/timezone';
 import styles from './AppointmentModal.module.css';
 import { Trash2, Search, Loader2, X, UserPlus } from 'lucide-react';
 
@@ -113,7 +114,7 @@ const ALL_TIMEZONES: string[] =
         'Europe/Madrid'
       ];
 
-const DEFAULT_TIMEZONE = Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
+const DEFAULT_TIMEZONE = 'UTC';
 const CONTACT_SEARCH_DELAY_MS = 90;
 
 const createGuestId = () => `guest-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
@@ -162,9 +163,16 @@ const INITIAL_FORM_STATE = {
   endTime: '',
   notes: '',
   address: '',
-  timeZone: DEFAULT_TIMEZONE,
+  timeZone: '',
   contactId: '',
   assignedUserId: ''
+};
+
+const addDateOnlyDays = (dateOnly: string, days: number): string => {
+  const [year, month, day] = dateOnly.split('-').map(Number);
+  if (!year || !month || !day) return dateOnly;
+  const date = new Date(Date.UTC(year, month - 1, day + days));
+  return date.toISOString().slice(0, 10);
 };
 
 const getTimeZoneParts = (date: Date, timeZone: string) => {
@@ -376,15 +384,16 @@ export const AppointmentModal: React.FC<AppointmentModalProps> = ({
     setLoadingSlots(true);
     try {
       // Cargar slots para los próximos 30 días
-      const today = new Date();
-      const endDate = new Date(today.getTime() + 30 * 24 * 60 * 60 * 1000);
+      const slotsTimezone = formData.timeZone || accountTimezone || DEFAULT_TIMEZONE;
+      const today = todayDateOnlyInTimezone(slotsTimezone);
+      const endDate = addDateOnlyDays(today, 30);
 
       const slots = await calendarsService.getFreeSlots(
         calendar.id,
-        today.toISOString().split('T')[0],
-        endDate.toISOString().split('T')[0],
+        today,
+        endDate,
         accessToken || undefined,
-        formData.timeZone || DEFAULT_TIMEZONE
+        slotsTimezone
       );
 
       setFreeSlots(slots);
@@ -874,7 +883,7 @@ export const AppointmentModal: React.FC<AppointmentModalProps> = ({
               event.timeZone ||
               (event as any)?.timeZone ||
               (event as any)?.timezone ||
-              DEFAULT_TIMEZONE,
+              accountTimezone,
             contactId: (event as any)?.contactId || '',
             assignedUserId: (event as any)?.assignedUserId || ''
           });
@@ -930,7 +939,7 @@ export const AppointmentModal: React.FC<AppointmentModalProps> = ({
       setGuestName('');
       setGuestContact('');
     }
-  }, [event, isOpen, isCreateMode, defaultStart, defaultEnd, defaultTimeZone, defaultTitle, initialContact?.id, initialContact?.email, initialContact?.phone, initialContact?.name]);
+  }, [event, isOpen, isCreateMode, defaultStart, defaultEnd, defaultTimeZone, defaultTitle, initialContact?.id, initialContact?.email, initialContact?.phone, initialContact?.name, accountTimezone]);
 
   /**
    * Verificar si el horario seleccionado está bloqueado
@@ -989,6 +998,7 @@ export const AppointmentModal: React.FC<AppointmentModalProps> = ({
   const handleSave = async () => {
     try {
       setIsSaving(true);
+      const saveTimezone = formData.timeZone || accountTimezone || DEFAULT_TIMEZONE;
 
       if (isCreateMode) {
         if (!calendar?.id) {
@@ -1015,8 +1025,8 @@ export const AppointmentModal: React.FC<AppointmentModalProps> = ({
 
         // Validación: verificar si el horario está bloqueado
         if (formData.startTime && formData.endTime) {
-          const startIso = toIsoForSave(formData.startTime, formData.timeZone);
-          const endIso = toIsoForSave(formData.endTime, formData.timeZone);
+          const startIso = toIsoForSave(formData.startTime, saveTimezone);
+          const endIso = toIsoForSave(formData.endTime, saveTimezone);
 
           if (startIso && endIso) {
             const blockedSlot = await checkIfTimeIsBlocked(startIso, endIso);
@@ -1043,7 +1053,7 @@ export const AppointmentModal: React.FC<AppointmentModalProps> = ({
           appointmentStatus: formData.appointmentStatus,
           notes: notesWithGuests,
           address: formData.address,
-          timeZone: formData.timeZone,
+          timeZone: saveTimezone,
           contactId: formData.contactId // SIEMPRE incluir contactId
         };
 
@@ -1054,8 +1064,8 @@ export const AppointmentModal: React.FC<AppointmentModalProps> = ({
 
         // Convertir fecha/hora a ISO. Si la conversión falla, NO mandamos cadenas vacías
         // al backend (provocaban un error confuso "Fecha de inicio inválida"): avisamos claro.
-        const startIso = formData.startTime ? toIsoForSave(formData.startTime, formData.timeZone) : null;
-        const endIso = formData.endTime ? toIsoForSave(formData.endTime, formData.timeZone) : null;
+        const startIso = formData.startTime ? toIsoForSave(formData.startTime, saveTimezone) : null;
+        const endIso = formData.endTime ? toIsoForSave(formData.endTime, saveTimezone) : null;
         if (!startIso || !endIso) {
           showToast('error', 'Horario inválido', 'Selecciona una fecha y hora válidas para la cita.');
           setIsSaving(false);
@@ -1071,8 +1081,8 @@ export const AppointmentModal: React.FC<AppointmentModalProps> = ({
 
         // Validación: verificar si el horario está bloqueado (solo si se cambió el horario)
         if (formData.startTime && formData.endTime) {
-          const startIso = toIsoForSave(formData.startTime, formData.timeZone);
-          const endIso = toIsoForSave(formData.endTime, formData.timeZone);
+          const startIso = toIsoForSave(formData.startTime, saveTimezone);
+          const endIso = toIsoForSave(formData.endTime, saveTimezone);
 
           if (startIso && endIso) {
             // Solo validar si el horario cambió respecto al original
@@ -1099,16 +1109,16 @@ export const AppointmentModal: React.FC<AppointmentModalProps> = ({
           appointmentStatus: formData.appointmentStatus,
           notes: formData.notes,
           address: formData.address,
-          timeZone: formData.timeZone
+          timeZone: saveTimezone
         };
 
         if (formData.startTime) {
-          const startIso = toIsoForSave(formData.startTime, formData.timeZone);
+          const startIso = toIsoForSave(formData.startTime, saveTimezone);
           if (startIso) updates.startTime = startIso;
         }
 
         if (formData.endTime) {
-          const endIso = toIsoForSave(formData.endTime, formData.timeZone);
+          const endIso = toIsoForSave(formData.endTime, saveTimezone);
           if (endIso) updates.endTime = endIso;
         }
 

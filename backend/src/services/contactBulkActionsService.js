@@ -4,6 +4,7 @@ import { normalizePhoneForStorage } from '../utils/phoneUtils.js'
 import { createRistakId } from '../utils/idGenerator.js'
 import { sendWhatsAppApiTemplateMessage } from './whatsappApiService.js'
 import { trackDeployDrainWork } from '../utils/deployDrainTracker.js'
+import { getAccountTimezone, normalizeToUtcIso } from '../utils/dateUtils.js'
 
 const MAX_BULK_CONTACTS = 1000
 const DUE_BATCH_LIMIT = 50
@@ -73,12 +74,14 @@ function normalizeContactIds(contactIds = []) {
   return ids
 }
 
-function normalizeSchedule(input = {}) {
+async function normalizeSchedule(input = {}) {
   const mode = input.mode === 'scheduled' ? 'scheduled' : 'now'
   const rawScheduledAt = cleanString(input.scheduledAt)
-  let scheduledAt = mode === 'scheduled' && rawScheduledAt
-    ? new Date(rawScheduledAt)
-    : new Date()
+  const timezone = await getAccountTimezone()
+  const scheduledAtIso = mode === 'scheduled' && rawScheduledAt
+    ? normalizeToUtcIso(rawScheduledAt, timezone)
+    : new Date().toISOString()
+  const scheduledAt = new Date(scheduledAtIso)
 
   if (Number.isNaN(scheduledAt.getTime())) {
     throw serviceError('Elige una fecha y hora válidas.')
@@ -276,7 +279,7 @@ function startImmediateBulkProcessing(actionId, logLabel) {
 }
 
 export async function createWhatsAppTemplateBulkAction(input = {}) {
-  const schedule = normalizeSchedule(input.schedule || {})
+  const schedule = await normalizeSchedule(input.schedule || {})
   const templateId = cleanString(input.templateId)
   const templateName = cleanString(input.templateName)
   if (!templateId && !templateName) throw serviceError('Selecciona una plantilla de WhatsApp.')
@@ -321,7 +324,7 @@ export async function createWhatsAppTemplateBulkAction(input = {}) {
 }
 
 export async function createAutomationBulkAction(input = {}) {
-  const schedule = normalizeSchedule(input.schedule || {})
+  const schedule = await normalizeSchedule(input.schedule || {})
   const automationId = cleanString(input.automationId)
   if (!automationId) throw serviceError('Selecciona una automatización.')
 
@@ -645,7 +648,7 @@ export async function resumeContactBulkAction(bulkActionId) {
 
 export async function rescheduleContactBulkAction(bulkActionId, input = {}) {
   const id = cleanString(bulkActionId)
-  const schedule = normalizeSchedule({ mode: 'scheduled', ...input.schedule })
+  const schedule = await normalizeSchedule({ mode: 'scheduled', ...input.schedule })
   const action = await getContactBulkAction(id)
   const pending = action.items.filter((item) => ['scheduled', 'error', 'cancelled'].includes(item.status))
 

@@ -868,7 +868,7 @@ test('suscripciones Stripe test: crea, sube/baja precio, pausa, reanuda, cancela
 
     const resumed = await actionSubscription(created.id, 'resume', { nextRunAt: '2099-05-01' })
     assert.equal(resumed.status, 'active')
-    assert.equal(resumed.nextRunAt, '2099-05-01T00:00:00.000Z')
+    assert.equal(resumed.nextRunAt, '2099-05-01T06:00:00.000Z')
     assert.equal(calls.subscriptionsUpdate.at(-1).params.pause_collection, null)
 
     const pastDue = await actionSubscription(created.id, 'mark_past_due')

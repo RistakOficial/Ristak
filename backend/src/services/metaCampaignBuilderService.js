@@ -1,11 +1,12 @@
 import { randomUUID } from 'crypto'
 import { db } from '../config/database.js'
 import { logger } from '../utils/logger.js'
+import { DEFAULT_TIMEZONE as ACCOUNT_DEFAULT_TIMEZONE, businessTodayDateOnly } from '../utils/dateUtils.js'
 import { getMetaConfig } from './metaAdsService.js'
 
 export const META_ADS_MCP_SERVER_URL = process.env.META_ADS_MCP_SERVER_URL || 'https://mcp.facebook.com/ads'
 const DEFAULT_CURRENCY = process.env.META_ADS_DEFAULT_CURRENCY || 'MXN'
-const DEFAULT_TIMEZONE = process.env.META_ADS_DEFAULT_TIMEZONE || 'America/Mexico_City'
+const DEFAULT_TIMEZONE = process.env.META_ADS_DEFAULT_TIMEZONE || ACCOUNT_DEFAULT_TIMEZONE
 const MCP_EXECUTION_ENABLED = process.env.META_ADS_MCP_EXECUTION_ENABLED === '1'
 const MCP_AUTHORIZATION_TOKEN = process.env.META_ADS_MCP_AUTHORIZATION_TOKEN || ''
 
@@ -30,6 +31,10 @@ function parseJson(value, fallback = null) {
 function cleanString(value, maxLength = 500) {
   if (value === null || value === undefined) return ''
   return String(value).trim().slice(0, maxLength)
+}
+
+function currentDateOnly(timezone = DEFAULT_TIMEZONE) {
+  return businessTodayDateOnly(timezone || DEFAULT_TIMEZONE)
 }
 
 function normalizeAdAccountId(value = '') {
@@ -426,7 +431,7 @@ function buildCampaignPayload({ normalized, template, configSnapshot }) {
     campaign.campaignName ||
     sourceContent.offer ||
     sourceContent.headline ||
-    `Campaña Meta ${new Date().toISOString().slice(0, 10)}`,
+    `Campaña Meta ${currentDateOnly(configSnapshot.timezoneName)}`,
     220
   )
   const adSetName = cleanString(adSet.name || adSet.adSetName || `${campaignName} | Conjunto 1`, 220)

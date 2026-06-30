@@ -13,6 +13,7 @@ import {
 } from './automationReferenceResolver.js'
 import { CALENDAR_DEFAULT_FORM_SITE_ID } from './localCalendarService.js'
 import { createRistakId } from '../utils/idGenerator.js'
+import { getAccountTimezone, normalizeToUtcIso } from '../utils/dateUtils.js'
 
 const usePostgres = !!process.env.DATABASE_URL
 const flowPlaceholder = usePostgres ? '?::jsonb' : '?'
@@ -676,10 +677,11 @@ async function getPublishedAutomationForEnrollment(automationId) {
   return automation
 }
 
-function normalizeScheduledAt(value) {
+async function normalizeScheduledAt(value) {
   const raw = typeof value === 'string' ? value.trim() : ''
   if (!raw) throw badRequest('Elige cuándo quieres agregar el contacto')
-  const date = new Date(raw)
+  const timezone = await getAccountTimezone()
+  const date = new Date(normalizeToUtcIso(raw, timezone))
   if (Number.isNaN(date.getTime())) throw badRequest('La fecha programada no es válida')
   if (date.getTime() < Date.now() - 60_000) throw badRequest('Elige una fecha futura')
   return date.toISOString()
@@ -1224,7 +1226,7 @@ export async function enrollContactInAutomation(automationId, input = {}) {
   const mode = input.mode === 'scheduled' ? 'scheduled' : 'now'
 
   if (mode === 'scheduled') {
-    const scheduledAt = normalizeScheduledAt(input.scheduledAt)
+    const scheduledAt = await normalizeScheduledAt(input.scheduledAt)
     const id = makeId('autojob')
     await db.run(
       `INSERT INTO automation_contact_enrollment_jobs

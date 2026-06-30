@@ -2,7 +2,7 @@ import { tool } from '@openai/agents'
 import { z } from 'zod'
 import { db } from '../../config/database.js'
 import { getMetaConfig } from '../../services/metaAdsService.js'
-import { getAccountTimezone } from '../../utils/dateUtils.js'
+import { DEFAULT_TIMEZONE, getAccountTimezone } from '../../utils/dateUtils.js'
 import { buildHiddenContactsCondition, getHiddenContactFilters } from '../../utils/hiddenContactsFilter.js'
 import { nonTestPaymentCondition, SUCCESS_PAYMENT_STATUSES } from '../../utils/paymentMode.js'
 
@@ -95,7 +95,7 @@ export async function getCampaignReturn({ startDate, endDate, groupBy = 'campaig
   const safeGroupBy = CAMPAIGN_RETURN_GROUPS[groupBy] ? groupBy : 'campaign'
   const safeLimit = Math.max(1, Math.min(100, Number(limit) || 25))
   const group = CAMPAIGN_RETURN_GROUPS[safeGroupBy]
-  const timezone = await getAccountTimezone().catch(() => 'America/Mexico_City')
+  const timezone = await getAccountTimezone().catch(() => DEFAULT_TIMEZONE)
   const hiddenFilters = await getHiddenContactFilters()
   const hiddenCondition = buildHiddenContactsCondition(hiddenFilters, 'c', false)
   const contactWhere = [

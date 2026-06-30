@@ -1,6 +1,6 @@
 import React, { createContext, useContext, useState, useEffect, ReactNode } from 'react'
 import { apiUrl } from '@/services/apiBaseUrl'
-import { convertUTCToLocal, convertLocalToUTC, formatInTimezone, ensureUTC } from '@/utils/timezone'
+import { DEFAULT_TIMEZONE, convertUTCToLocal, convertLocalToUTC, formatInTimezone, ensureUTC } from '@/utils/timezone'
 
 // Nombres de meses en español (formato corto)
 const MONTHS_SHORT = ['ene', 'feb', 'mar', 'abr', 'may', 'jun', 'jul', 'ago', 'sept', 'oct', 'nov', 'dic']
@@ -30,7 +30,7 @@ export const TimezoneProvider: React.FC<{ children: ReactNode }> = ({ children }
   // Default to México City timezone
   const [timezone, setTimezone] = useState<string>(() => {
     const saved = localStorage.getItem('userTimezone')
-    return saved || 'America/Mexico_City'
+    return saved || DEFAULT_TIMEZONE
   })
 
   // Fetch timezone from GHL config on mount
@@ -70,7 +70,7 @@ export const TimezoneProvider: React.FC<{ children: ReactNode }> = ({ children }
       throw new Error(data.error || 'No se pudo guardar la zona horaria')
     }
 
-    const resolved = data.timezone || 'America/Mexico_City'
+    const resolved = data.timezone || DEFAULT_TIMEZONE
     setTimezone(resolved)
     localStorage.setItem('userTimezone', resolved)
     return resolved

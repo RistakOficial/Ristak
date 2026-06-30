@@ -20,6 +20,13 @@ import { queuePaymentAutomationMessage } from './paymentAutomationsService.js'
 import { buildMetaPublicPurchasePixelEvent } from './metaConversionEventsService.js'
 import { getPaymentPlanAuditSummary, hardDeleteTestPaymentPlan } from './paymentRecordSafetyService.js'
 import { createPublicPaymentId, createRistakPaymentEntityId } from '../utils/idGenerator.js'
+import {
+  DEFAULT_TIMEZONE as ACCOUNT_DEFAULT_TIMEZONE,
+  assertDateOnlyNotInPast,
+  businessTodayDateOnly,
+  getAccountTimezone,
+  normalizeDateOnlyInTimezone
+} from '../utils/dateUtils.js'
 
 const CONFIG_KEYS = {
   enabled: 'mercadopago_enabled',
@@ -55,7 +62,7 @@ const MERCADOPAGO_SUBSCRIPTION_TEST_USER_HELP = 'Mercado Pago rechazó la suscri
 const MERCADOPAGO_SUBSCRIPTION_INTERNAL_ERROR_HELP = 'Mercado Pago devolvió un error interno al crear la suscripción. En modo prueba usa el email del comprador test de Mercado Pago del mismo país que el vendedor; APRO aplica al nombre de tarjeta en el checkout, no al contacto de la suscripción. Si el comprador test ya es correcto, intenta crear el link nuevamente.'
 const MERCADOPAGO_SUBSCRIPTION_UNAUTHORIZED_HELP = 'Mercado Pago no autorizó crear la suscripción con la cuenta conectada. Reconecta Mercado Pago y asegúrate de usar una cuenta vendedora con suscripciones activas; en modo prueba usa un vendedor test y un comprador test del mismo país.'
 const MERCADOPAGO_SUBSCRIPTION_TEST_CREDENTIALS_HELP = 'Mercado Pago no puede autorizar suscripciones de prueba con credenciales TEST. Para links de suscripción en modo prueba conecta o configura las credenciales de producción del usuario vendedor test (APP_USR). Las credenciales TEST siguen sirviendo para pagos únicos con tarjeta, pero el checkout hospedado de suscripciones necesita APP_USR.'
-const DEFAULT_PAYMENT_TIMEZONE = 'America/Mexico_City'
+const DEFAULT_PAYMENT_TIMEZONE = ACCOUNT_DEFAULT_TIMEZONE
 const MP_PLAN_STATES = {
   ACTIVE: 'mercadopago_plan_active',
   PAUSED: 'paused',
@@ -193,34 +200,16 @@ function normalizePositiveAmount(value, fallback = 25) {
   return Math.round(Number(fallback || 25) * 100) / 100
 }
 
-function normalizeDateOnly(value) {
-  if (!value) return new Date().toISOString().slice(0, 10)
-  const text = String(value).trim()
-  const match = text.match(/^(\d{4}-\d{2}-\d{2})/)
-  if (match) return match[1]
-
-  const date = new Date(text)
-  if (!Number.isNaN(date.getTime())) return date.toISOString().slice(0, 10)
-  return new Date().toISOString().slice(0, 10)
+function normalizeDateOnly(value, timezone = DEFAULT_PAYMENT_TIMEZONE) {
+  return normalizeDateOnlyInTimezone(value, timezone)
 }
 
-function todayDateOnly() {
-  return new Intl.DateTimeFormat('en-CA', {
-    timeZone: DEFAULT_PAYMENT_TIMEZONE,
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit'
-  }).format(new Date())
+function todayDateOnly(timezone = DEFAULT_PAYMENT_TIMEZONE) {
+  return businessTodayDateOnly(timezone)
 }
 
-function assertDateNotInPast(value, message) {
-  const date = normalizeDateOnly(value)
-  if (date < todayDateOnly()) {
-    const error = new Error(message)
-    error.status = 400
-    throw error
-  }
-  return date
+function assertDateNotInPast(value, message, timezone = DEFAULT_PAYMENT_TIMEZONE) {
+  return assertDateOnlyNotInPast(value, timezone, message)
 }
 
 function dateOnlySql(expression) {
@@ -845,7 +834,7 @@ async function findPaymentById(paymentId) {
   )
 }
 
-function mapPublicPayment(row, config, baseUrl = '', settings = null) {
+function mapPublicPayment(row, config, baseUrl = '', settings = null, timezone = ACCOUNT_DEFAULT_TIMEZONE) {
   if (!row) return null
   const metadata = parseJson(row.metadata_json, {})
   const tax = metadata.tax && typeof metadata.tax === 'object' ? metadata.tax : null
@@ -864,6 +853,8 @@ function mapPublicPayment(row, config, baseUrl = '', settings = null) {
     dueDate: row.due_date || null,
     sentAt: row.sent_at || null,
     paidAt: row.paid_at || null,
+    timezone,
+    timeZone: timezone,
     paymentMode: row.payment_mode || config?.mode || 'test',
     provider: 'mercadopago',
     contact: {
@@ -1298,8 +1289,9 @@ export async function getPublicMercadoPagoPayment(publicPaymentId, { baseUrl } =
   if (!row || row.payment_provider !== 'mercadopago') return null
 
   const paymentSettings = await getPublicPaymentSettings()
+  const timezone = await getAccountTimezone().catch(() => ACCOUNT_DEFAULT_TIMEZONE)
   return attachMetaPublicPurchaseEvent(
-    mapPublicPayment(row, config, baseUrl, paymentSettings),
+    mapPublicPayment(row, config, baseUrl, paymentSettings, timezone),
     row
   )
 }
@@ -1394,7 +1386,7 @@ export async function createPublicMercadoPagoCardPayment(publicPaymentId, input 
   }
 }
 
-function validatePlanPayload(input = {}) {
+function validatePlanPayload(input = {}, timezone = DEFAULT_PAYMENT_TIMEZONE) {
   const totalAmount = normalizePositiveAmount(input.totalAmount)
   const contact = input.contact || {}
   if (!cleanString(contact.id)) {
@@ -1412,10 +1404,10 @@ function validatePlanPayload(input = {}) {
 
   const firstPaymentEnabled = input.firstPayment?.enabled !== false && Number(input.firstPayment?.amount || 0) > 0
   const firstPaymentMethod = firstPaymentEnabled ? cleanString(input.firstPayment?.method || 'mercadopago') : 'none'
-  const firstPaymentDate = firstPaymentEnabled ? normalizeDateOnly(input.firstPayment?.date) : null
+  const firstPaymentDate = firstPaymentEnabled ? normalizeDateOnly(input.firstPayment?.date, timezone) : null
 
   if (firstPaymentDate && !MANUAL_PLAN_PAYMENT_METHODS.has(firstPaymentMethod)) {
-    assertDateNotInPast(firstPaymentDate, 'El primer pago automático no puede programarse en una fecha pasada.')
+    assertDateNotInPast(firstPaymentDate, 'El primer pago automático no puede programarse en una fecha pasada.', timezone)
   }
 
   return {
@@ -1442,7 +1434,7 @@ function validatePlanPayload(input = {}) {
       sequence: Number(payment.sequence || index + 1),
       amount: normalizePositiveAmount(payment.amount),
       percentage: payment.percentage === null || payment.percentage === undefined ? null : Number(payment.percentage),
-      dueDate: assertDateNotInPast(payment.dueDate, 'Los pagos futuros automáticos no pueden programarse en fechas pasadas.'),
+      dueDate: assertDateNotInPast(payment.dueDate, 'Los pagos futuros automáticos no pueden programarse en fechas pasadas.', timezone),
       frequency: cleanString(payment.frequency || input.remainingFrequency || 'custom')
     }))
   }
@@ -1709,6 +1701,7 @@ export async function updateMercadoPagoPaymentPlanSchedule(flowId, input = {}, {
   }
 
   const metadata = parseJson(flow.metadata, {})
+  const accountTimezone = await getAccountTimezone()
   const nextConcept = cleanString(input.name || input.title || input.description || input.concept || flow.concept || 'Plan de pagos')
   const nextFrequency = cleanString(input.remainingFrequency || input.frequency || metadata.remainingFrequency || 'custom') || 'custom'
   const submittedInstallments = Array.isArray(input.installments)
@@ -1750,7 +1743,7 @@ export async function updateMercadoPagoPaymentPlanSchedule(flowId, input = {}, {
       throw error
     }
 
-    const dueDate = normalizeDateOnly(submitted.dueDate || submitted.date || submitted.scheduledAt)
+    const dueDate = normalizeDateOnly(submitted.dueDate || submitted.date || submitted.scheduledAt, accountTimezone)
     if (!dueDate) {
       const error = new Error('Cada parcialidad futura necesita fecha de cobro.')
       error.status = 400
@@ -1759,7 +1752,7 @@ export async function updateMercadoPagoPaymentPlanSchedule(flowId, input = {}, {
 
     const method = normalizeMercadoPagoPlanPaymentMethod(submitted.paymentMethod || submitted.method)
     if (method.automatic) {
-      assertDateNotInPast(dueDate, 'Las parcialidades automáticas no pueden programarse en fechas pasadas.')
+      assertDateNotInPast(dueDate, 'Las parcialidades automáticas no pueden programarse en fechas pasadas.', accountTimezone)
     }
 
     const installmentId = existing?.id || createId('mp_installment')
@@ -1940,13 +1933,13 @@ export async function updateMercadoPagoPaymentPlanSchedule(flowId, input = {}, {
       }
     } else {
       firstPaymentAmount = firstPaymentInputAmount
-      firstPaymentDate = normalizeDateOnly(firstPayment.dueDate || firstPayment.date || firstPaymentDate)
+      firstPaymentDate = normalizeDateOnly(firstPayment.dueDate || firstPayment.date || firstPaymentDate, accountTimezone)
       const firstPaymentMethodInput = cleanString(firstPayment.method || firstPayment.paymentMethod || firstPaymentMethod || 'mercadopago').toLowerCase()
       const normalizedFirstPaymentMethod = normalizeMercadoPagoFirstPaymentMethod(
         firstPaymentMethodInput
       )
       if (MERCADOPAGO_CHECKOUT_METHODS.has(firstPaymentMethodInput)) {
-        assertDateNotInPast(firstPaymentDate, 'El primer pago automático no puede programarse en una fecha pasada.')
+        assertDateNotInPast(firstPaymentDate, 'El primer pago automático no puede programarse en una fecha pasada.', accountTimezone)
       }
 
       firstPaymentMethod = normalizedFirstPaymentMethod.flowMethod
@@ -2217,7 +2210,8 @@ export async function createMercadoPagoPaymentPlan(input = {}, { baseUrl } = {})
   throw error
 
   const config = await getMercadoPagoClientConfig()
-  const plan = validatePlanPayload({ ...input, currency: input.currency || await getConfiguredCurrency() })
+  const accountTimezone = await getAccountTimezone()
+  const plan = validatePlanPayload({ ...input, currency: input.currency || await getConfiguredCurrency() }, accountTimezone)
   const flowId = createId('mp_flow')
   const now = new Date().toISOString()
   const firstPaymentIsOffline = plan.firstPayment.enabled && isOfflinePaymentMethod(plan.firstPayment.method)
@@ -2397,7 +2391,8 @@ export async function createMercadoPagoPaymentPlan(input = {}, { baseUrl } = {})
 
 export async function processDueMercadoPagoPaymentPlanCharges({ limit = 25, baseUrl = '' } = {}) {
   await getMercadoPagoClientConfig()
-  const dueDate = todayDateOnly()
+  const accountTimezone = await getAccountTimezone()
+  const dueDate = todayDateOnly(accountTimezone)
   const normalizedLimit = Math.max(1, Math.min(Number(limit) || 25, 100))
   const resolvedBaseUrl = cleanString(baseUrl) || getConfiguredBaseUrl()
   const dueDateSql = dateOnlySql('i.due_date')
