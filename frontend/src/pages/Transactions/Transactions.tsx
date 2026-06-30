@@ -705,6 +705,7 @@ export const Transactions: React.FC = () => {
   const handledOpenPaymentRef = useRef<string | null>(null)
   const handledOpenPaymentPlanRef = useRef<string | null>(null)
   const paymentPlansUnavailableRedirectedRef = useRef(false)
+  const paymentPlansRequestRef = useRef(0)
 
   const navigateTransactionsPath = useCallback((pathname: string, options?: { replace?: boolean }) => {
     navigate({ pathname, search: location.search }, options)
@@ -927,14 +928,22 @@ export const Transactions: React.FC = () => {
   }
 
   const fetchPaymentPlans = async () => {
+    const requestId = paymentPlansRequestRef.current + 1
+    paymentPlansRequestRef.current = requestId
     setPaymentPlansLoading(true)
     try {
       const plans = await transactionsService.getPaymentPlans()
-      setPaymentPlans(plans)
+      if (paymentPlansRequestRef.current === requestId) {
+        setPaymentPlans(plans)
+      }
     } catch (error) {
-      showToast('error', 'No se pudieron cargar los planes de pago', 'Ristak no pudo leer los planes guardados. Intenta actualizar de nuevo.')
+      if (paymentPlansRequestRef.current === requestId) {
+        showToast('error', 'No se pudieron cargar los planes de pago', 'Ristak no pudo leer los planes guardados. Intenta actualizar de nuevo.')
+      }
     } finally {
-      setPaymentPlansLoading(false)
+      if (paymentPlansRequestRef.current === requestId) {
+        setPaymentPlansLoading(false)
+      }
     }
   }
 
@@ -1227,7 +1236,7 @@ export const Transactions: React.FC = () => {
           saving: false
         })
         showToast('success', 'Calendario actualizado', `El plan de ${providerLabel} quedó actualizado con los pagos configurados.`)
-        fetchPaymentPlans()
+        await fetchPaymentPlans()
       } catch (error: any) {
         setPaymentPlanModal(prev => ({ ...prev, saving: false }))
         showToast('error', 'No se pudo guardar el plan', error?.message || `${providerLabel} no pudo actualizar el calendario de pagos.`)
@@ -1266,7 +1275,7 @@ export const Transactions: React.FC = () => {
       setPaymentPlans(prev => prev.map(plan => plan.id === updatedPlan.id ? updatedPlan : plan))
       closePaymentPlanModal()
       showToast('success', 'Plan de pago actualizado', 'El plan de pago se actualizó correctamente.')
-      fetchPaymentPlans()
+      await fetchPaymentPlans()
     } catch (error: any) {
       setPaymentPlanModal(prev => ({ ...prev, saving: false }))
       showToast('error', 'No se pudo guardar el plan', error?.message || 'La pasarela rechazó la actualización del plan de pago.')
@@ -1334,7 +1343,7 @@ export const Transactions: React.FC = () => {
       } else {
         showToast('success', successTitle, successMessage)
       }
-      fetchPaymentPlans()
+      await fetchPaymentPlans()
     } catch (error: any) {
       showToast('error', 'No se pudo actualizar el plan', error?.message || 'No se pudo aplicar la acción para este plan de pago.')
     } finally {
@@ -1427,7 +1436,7 @@ export const Transactions: React.FC = () => {
       showToast('success', title, message)
     }
 
-    fetchPaymentPlans()
+    await fetchPaymentPlans()
   }
 
   const handleBulkPaymentPlanAction = (action: PaymentPlanBulkAction, targetPlans: PaymentPlan[]) => {
@@ -1600,11 +1609,10 @@ export const Transactions: React.FC = () => {
     setPaymentPlanCreateModal(prev => ({ ...prev, saving: true }))
 
     try {
-      const createdPlan = await transactionsService.createPaymentPlan(payload)
-      setPaymentPlans(prev => [createdPlan, ...prev])
+      await transactionsService.createPaymentPlan(payload)
+      await fetchPaymentPlans()
       closePaymentPlanCreateModal()
       showToast('success', 'Plan programado', 'El plan de pago quedó programado correctamente.')
-      fetchPaymentPlans()
     } catch (error: any) {
       setPaymentPlanCreateModal(prev => ({ ...prev, saving: false }))
       showToast('error', 'No se pudo programar el plan', error?.message || 'La pasarela rechazó la creación del plan de pago.')
@@ -1886,7 +1894,7 @@ export const Transactions: React.FC = () => {
       )
     }
 
-    fetchPaymentPlans()
+    await fetchPaymentPlans()
   }
 
   const handleDelete = (id: string) => {
@@ -2402,7 +2410,7 @@ export const Transactions: React.FC = () => {
     return status
   }
   const getPaymentPlanStartDate = (plan: PaymentPlan) => (
-    plan.startDate || plan.sortDate || plan.nextRunAt || plan.updatedAt || plan.createdAt || ''
+    plan.startDate || plan.nextRunAt || plan.sortDate || plan.updatedAt || plan.createdAt || ''
   )
   const getPaymentPlanNextDate = (plan: PaymentPlan) => {
     const status = getPlanFilterStatus(plan)
@@ -3921,11 +3929,13 @@ export const Transactions: React.FC = () => {
           setShowRecordPaymentModal(false)
           navigateTransactionsPath(targetPath, { replace: true })
         }}
-        onSuccess={(context) => {
+        onSuccess={async (context) => {
+          const paymentPlanChanged = recordPaymentInitialMode === 'partial' || context?.paymentPlanChanged
+
           if (context?.keepOpen) {
             fetchData()
-            if (recordPaymentInitialMode === 'partial') {
-              fetchPaymentPlans()
+            if (paymentPlanChanged) {
+              await fetchPaymentPlans()
             }
             return
           }
@@ -3933,14 +3943,22 @@ export const Transactions: React.FC = () => {
           const targetPath = recordPaymentInitialMode === 'partial'
             ? buildPaymentPlansPath()
             : buildTransactionsPath(viewMode)
+
+          if (paymentPlanChanged) {
+            await Promise.all([
+              fetchData(),
+              fetchPaymentPlans()
+            ])
+            setShowRecordPaymentModal(false)
+            navigateTransactionsPath(targetPath, { replace: true })
+            return
+          }
+
           setShowRecordPaymentModal(false)
           navigateTransactionsPath(targetPath, { replace: true })
           // El modal ya guardó el cobro o plan específico.
           // Solo recargar desde BD local (sin sync completo).
           fetchData()
-          if (recordPaymentInitialMode === 'partial') {
-            fetchPaymentPlans()
-          }
         }}
       />
       </div>

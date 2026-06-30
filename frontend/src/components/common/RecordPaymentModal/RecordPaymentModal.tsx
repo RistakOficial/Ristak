@@ -157,6 +157,14 @@ const LINK_READY_SUCCESS_CONTEXT: RecordPaymentSuccessContext = {
   keepOpen: true,
   paymentLinkReady: true
 }
+const PAYMENT_PLAN_LINK_READY_SUCCESS_CONTEXT: RecordPaymentSuccessContext = {
+  keepOpen: true,
+  paymentLinkReady: true,
+  paymentPlanChanged: true
+}
+const PAYMENT_PLAN_CHANGED_SUCCESS_CONTEXT: RecordPaymentSuccessContext = {
+  paymentPlanChanged: true
+}
 
 const MANUAL_PAYMENT_METHOD_OPTIONS = [
   { value: 'cash', label: 'Efectivo' },
@@ -233,12 +241,13 @@ interface InstallmentDraft {
 export interface RecordPaymentSuccessContext {
   keepOpen?: boolean
   paymentLinkReady?: boolean
+  paymentPlanChanged?: boolean
 }
 
 interface RecordPaymentModalProps {
   isOpen: boolean
   onClose: () => void
-  onSuccess?: (context?: RecordPaymentSuccessContext) => void
+  onSuccess?: (context?: RecordPaymentSuccessContext) => void | Promise<void>
   initialPaymentMode?: PaymentMode
   lockPaymentMode?: boolean
   initialContact?: Partial<Contact> | null
@@ -1983,7 +1992,7 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
         paymentId: data.cardSetupInvoiceId
       })
       showToast('success', 'Parcialidades creadas', 'El enlace de domiciliación está listo para copiar o enviar.')
-      onSuccess?.(LINK_READY_SUCCESS_CONTEXT)
+      await onSuccess?.(PAYMENT_PLAN_LINK_READY_SUCCESS_CONTEXT)
       return
     }
 
@@ -2000,7 +2009,7 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
         paymentId: data.firstPaymentInvoiceId
       })
       showToast('success', 'Parcialidades creadas', 'El enlace del primer pago está listo para copiar o enviar.')
-      onSuccess?.(LINK_READY_SUCCESS_CONTEXT)
+      await onSuccess?.(PAYMENT_PLAN_LINK_READY_SUCCESS_CONTEXT)
       return
     }
 
@@ -2010,7 +2019,7 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
 
     showToast('success', 'Éxito', statusMessage)
 
-    onSuccess?.()
+    await onSuccess?.(PAYMENT_PLAN_CHANGED_SUCCESS_CONTEXT)
     onClose()
   }
 
@@ -2404,7 +2413,7 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
             'Plan de Stripe creado',
             `${manualFirstPaymentRegistered ? 'El primer pago quedó registrado. ' : ''}El enlace de domiciliación por ${formatCurrency(setupAmount, invoiceSummary.currency)} está listo para compartir.`
           )
-          onSuccess?.(LINK_READY_SUCCESS_CONTEXT)
+          await onSuccess?.(PAYMENT_PLAN_LINK_READY_SUCCESS_CONTEXT)
           return
         } else if (result.firstPaymentLink) {
           showPaymentLinkReady({
@@ -2423,7 +2432,7 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
             'Plan de Stripe creado',
             'El enlace del primer pago está listo para compartir.'
           )
-          onSuccess?.(LINK_READY_SUCCESS_CONTEXT)
+          await onSuccess?.(PAYMENT_PLAN_LINK_READY_SUCCESS_CONTEXT)
           return
         } else {
           showToast(
@@ -2433,7 +2442,7 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
           )
         }
 
-        onSuccess?.()
+        await onSuccess?.(PAYMENT_PLAN_CHANGED_SUCCESS_CONTEXT)
         onClose()
       } catch (stripePlanError: any) {
         showToast('error', 'No se pudo crear el plan con Stripe', stripePlanError.message || 'Revisa la tarjeta guardada o manda primer pago por link.')
@@ -2475,7 +2484,7 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
             'Plan de Conekta creado',
             `${manualFirstPaymentRegistered ? 'El primer pago quedó registrado. ' : ''}El enlace de domiciliación por ${formatCurrency(setupAmount, invoiceSummary.currency)} está listo para compartir.`
           )
-          onSuccess?.(LINK_READY_SUCCESS_CONTEXT)
+          await onSuccess?.(PAYMENT_PLAN_LINK_READY_SUCCESS_CONTEXT)
           return
         } else if (result.firstPaymentLink) {
           showPaymentLinkReady({
@@ -2493,7 +2502,7 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
             'Plan de Conekta creado',
             'El enlace del primer pago está listo para compartir.'
           )
-          onSuccess?.(LINK_READY_SUCCESS_CONTEXT)
+          await onSuccess?.(PAYMENT_PLAN_LINK_READY_SUCCESS_CONTEXT)
           return
         } else {
           showToast(
@@ -2503,7 +2512,7 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
           )
         }
 
-        onSuccess?.()
+        await onSuccess?.(PAYMENT_PLAN_CHANGED_SUCCESS_CONTEXT)
         onClose()
       } catch (conektaPlanError: any) {
         showToast('error', 'No se pudo crear el plan con Conekta', conektaPlanError.message || 'Revisa la tarjeta guardada o manda primer pago por link.')

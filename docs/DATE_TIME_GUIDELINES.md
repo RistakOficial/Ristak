@@ -80,6 +80,19 @@ Usa estos formatos de forma intencional:
   tarjeta por la pasarela elegida; no inventes cobro automático.
 - Usa locks/idempotencia al agregar nuevos crones o procesos programados.
 
+## Mutaciones y Refresco Canónico
+
+- Después de crear, editar, cancelar o cobrar entidades programadas con fechas
+  calculadas por backend o por una integración (planes de pago, citas, mensajes,
+  automatizaciones, reportes programados), no pintes filas optimistas como fuente
+  final si contienen fechas. Espera un refetch canónico del backend y descarta
+  respuestas anteriores para evitar que la UI muestre timestamps intermedios o
+  datos sin normalizar.
+- Si la mutación puede detonar webhooks, espejos locales, crones inmediatos o
+  cobros vencidos "hoy", espera la recarga canónica antes de cerrar el flujo o
+  enseñar la tabla. El usuario debe ver la fecha final del negocio, no el estado
+  parcial previo al refresh.
+
 ## Frontend: Prohibido
 
 No uses estas formas para fechas de negocio:
