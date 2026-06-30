@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
-import { Check, ChevronDown, CirclePlus, Lock, Plus, Search, X } from 'lucide-react'
+import { Check, ChevronDown, Lock, Plus, Search, X } from 'lucide-react'
 import { contactTagsService, type ContactTag } from '@/services/contactTagsService'
 import { getFloatingLayerZIndex } from '@/utils/layering'
 import styles from './TagPicker.module.css'
@@ -219,20 +219,15 @@ export const TagPicker: React.FC<TagPickerProps> = (props) => {
   const chipAddButton = (
     <button
       type="button"
-      className={`${styles.chip} ${styles.chipAdd} ${useHeaderChipTrigger ? styles.chipAddHeader : ''} ${isOpen ? styles.chipAddOpen : ''}`}
+      className={`${styles.chipAdd} ${useHeaderChipTrigger ? styles.chipAddHeader : ''} ${isOpen ? styles.chipAddOpen : ''}`}
       onClick={() => !disabled && setIsOpen((open) => !open)}
       disabled={disabled}
       aria-expanded={isOpen}
       aria-haspopup="listbox"
       aria-label={props['aria-label'] || placeholder || 'Agregar etiqueta'}
       title={placeholder || 'Agregar etiqueta'}
-      data-ristak-dropdown-trigger
     >
-      {useHeaderChipTrigger ? (
-        <CirclePlus size={18} strokeWidth={1.8} aria-hidden="true" />
-      ) : (
-        <Plus size={13} aria-hidden="true" />
-      )}
+      <Plus size={useHeaderChipTrigger ? 12 : 13} strokeWidth={2.2} aria-hidden="true" />
     </button>
   )
 
