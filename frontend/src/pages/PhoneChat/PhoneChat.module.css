@@ -1216,8 +1216,8 @@
      (.phoneChatPage[...] .chatItem > .avatar .avatarChannelBadge svg, etc.) que
      fijan el svg del badge a 11-13px (eran para el glifo chico) y le ganan en
      especificidad; !important evita que encojan el logo en la lista de chats. */
-  width: 165% !important;
-  height: 165% !important;
+  width: 137% !important;
+  height: 137% !important;
   filter: none;
   overflow: visible;
 }

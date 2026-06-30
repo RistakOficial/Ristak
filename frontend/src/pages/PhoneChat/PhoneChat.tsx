@@ -191,7 +191,7 @@ const WhatsAppBrandLogo = ({ className }: { className?: string }) => (
       d={WHATSAPP_LOGO_BUBBLE_PATH}
       fill="#25D366"
       stroke="#ffffff"
-      strokeWidth={3.6}
+      strokeWidth={4.2}
       strokeLinejoin="round"
       paintOrder="stroke"
     />
