@@ -15,7 +15,7 @@ import { apiUrl } from '@/services/apiBaseUrl';
 import { useNotification } from '@/contexts/NotificationContext';
 import { useTimezone } from '@/contexts/TimezoneContext';
 import { suppressContactAutofill } from '@/utils/browserAutofill';
-import { addDateOnlyDays, todayDateOnlyInTimezone } from '@/utils/timezone';
+import { DEFAULT_TIMEZONE, addDateOnlyDays, todayDateOnlyInTimezone } from '@/utils/timezone';
 import styles from './AppointmentModal.module.css';
 import { Trash2, Search, Loader2, X, UserPlus } from 'lucide-react';
 
@@ -114,7 +114,6 @@ const ALL_TIMEZONES: string[] =
         'Europe/Madrid'
       ];
 
-const DEFAULT_TIMEZONE = 'UTC';
 const CONTACT_SEARCH_DELAY_MS = 90;
 
 const createGuestId = () => `guest-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;

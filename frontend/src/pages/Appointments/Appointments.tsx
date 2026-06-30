@@ -364,7 +364,7 @@ export const Appointments: React.FC = () => {
   }>({
     start: '',
     end: '',
-    timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC',
+    timeZone: timezone,
     title: ''
   });
   const [createScheduleMode, setCreateScheduleMode] = useState<'default' | 'custom'>('default');

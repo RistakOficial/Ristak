@@ -145,6 +145,16 @@ Usa `businessTodayDateOnly(timezone)`, `normalizeDateOnlyInTimezone()`,
 - Storage/media: los folders por fecha deben usar el día del negocio si el asset
   pertenece a una cuenta o CRM.
 
+## SQL, reportes y SQLite
+
+- En PostgreSQL, agrupa fechas con `AT TIME ZONE` usando la zona del negocio.
+- En SQLite, nunca hardcodees offsets como `'-6 hours'`. SQLite no entiende
+  zonas IANA; usa `sqliteTimezoneOffsetClause(timezone)` desde
+  `backend/src/utils/dateUtils.js` para generar el modificador de fecha.
+- Si agregas una métrica nueva, reutiliza `getGroupExpression(...)`,
+  `timestampLocalExpression(...)` o un helper compartido equivalente. No metas
+  `datetime(col, ...)` a mano en servicios nuevos.
+
 ## Antes de Cerrar un Cambio
 
 Para cambios de fechas corre como mínimo:

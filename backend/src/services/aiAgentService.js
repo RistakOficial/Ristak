@@ -4,7 +4,8 @@ import { decrypt, encrypt } from '../utils/encryption.js'
 import {
   DEFAULT_TIMEZONE as ACCOUNT_DEFAULT_TIMEZONE,
   getAccountTimezone,
-  resolveDateRangeWithGHLTimezone
+  resolveDateRangeWithGHLTimezone,
+  sqliteTimezoneOffsetClause
 } from '../utils/dateUtils.js'
 import { buildHiddenContactsCondition, getHiddenContactFilters } from '../utils/hiddenContactsFilter.js'
 import { getGHLClient } from './ghlClient.js'
@@ -14251,7 +14252,7 @@ function buildBusinessProfileContext(config) {
 
 function sqlMonthExpression(column, timezone = 'UTC') {
   if (!isPostgres) {
-    return `strftime('%Y-%m', datetime(${column}, '-6 hours'))`
+    return `strftime('%Y-%m', datetime(${column}, ${sqliteTimezoneOffsetClause(timezone)}))`
   }
 
   const safeTimezone = String(timezone || 'UTC').replace(/'/g, "''")

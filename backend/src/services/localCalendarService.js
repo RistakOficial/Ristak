@@ -3,7 +3,7 @@ import { db } from '../config/database.js'
 import { logger } from '../utils/logger.js'
 import { updateSingleContactStats } from '../utils/updateContactsStats.js'
 import { normalizePhoneForStorage } from '../utils/phoneUtils.js'
-import { normalizeToUtcIso, getAccountTimezone, isValidTimezone } from '../utils/dateUtils.js'
+import { DEFAULT_TIMEZONE, normalizeToUtcIso, getAccountTimezone, isValidTimezone } from '../utils/dateUtils.js'
 import {
   isRistakContactId,
   linkContactToGhl,
@@ -2078,6 +2078,14 @@ export function renderPublicCalendarHtml(calendar, { host = '', embedded = false
   const bookingPayment = normalizePaymentGateConfig(calendar.bookingPayment || calendar.booking_payment || {})
   const customEvents = normalizeCalendarCustomEventsConfig(calendar.customEvents || calendar.custom_events || calendar.metaEvent || calendar.meta_event || {})
   const showSidebar = effectiveBookingDisplay.showSidebar !== false
+  const fallbackTimezone = [
+    effectiveBookingDisplay.defaultTimezone,
+    calendar.googleCalendarTimeZone,
+    calendar.google_calendar_time_zone,
+    calendar.timeZone,
+    calendar.time_zone,
+    DEFAULT_TIMEZONE
+  ].find(value => isValidTimezone(cleanString(value))) || DEFAULT_TIMEZONE
   const payload = {
     slug,
     name: calendar.name || 'Calendario',
@@ -2093,6 +2101,7 @@ export function renderPublicCalendarHtml(calendar, { host = '', embedded = false
     bookingPayment,
     bookingDisplay: effectiveBookingDisplay,
     customEvents,
+    defaultTimezone: fallbackTimezone,
     styleDefaults: {
       accent,
       background: backgroundColor,
@@ -2598,7 +2607,7 @@ export function renderPublicCalendarHtml(calendar, { host = '', embedded = false
       const browserTimezone = Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
       let timezone = isSupportedTimezone(displayConfig.defaultTimezone)
         ? displayConfig.defaultTimezone
-        : isSupportedTimezone(browserTimezone) ? browserTimezone : 'UTC';
+        : isSupportedTimezone(calendar.defaultTimezone) ? calendar.defaultTimezone : 'UTC';
 
       const pad = (value) => String(value).padStart(2, '0');
       const dateKey = (date) => date.getFullYear() + '-' + pad(date.getMonth() + 1) + '-' + pad(date.getDate());

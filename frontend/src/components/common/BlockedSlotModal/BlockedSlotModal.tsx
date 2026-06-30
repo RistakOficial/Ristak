@@ -7,7 +7,7 @@ import { apiUrl } from '@/services/apiBaseUrl';
 import { Calendar, BlockedSlot } from '@/services/calendarsService';
 import { useNotification } from '@/contexts/NotificationContext';
 import { useTimezone } from '@/contexts/TimezoneContext';
-import { localDateTimeInputToUTCISOString, toDateTimeLocalInputValue } from '@/utils/timezone';
+import { DEFAULT_TIMEZONE, localDateTimeInputToUTCISOString, toDateTimeLocalInputValue } from '@/utils/timezone';
 import styles from './BlockedSlotModal.module.css';
 import { Trash2, Loader2 } from 'lucide-react';
 
@@ -33,8 +33,6 @@ interface User {
   firstName?: string;
   lastName?: string;
 }
-
-const DEFAULT_TIMEZONE = Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
 
 const INITIAL_FORM_STATE = {
   title: 'Ausencia',

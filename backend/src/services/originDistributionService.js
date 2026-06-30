@@ -1,5 +1,6 @@
 import { db } from '../config/database.js'
 import { DateTime } from 'luxon'
+import { sqliteTimezoneOffsetClause } from '../utils/dateUtils.js'
 import { normalizeTrafficSource, normalizeWhatsAppAttributionPlatform } from '../utils/trafficSourceNormalizer.js'
 import { formatPlacementName } from '../utils/placementName.js'
 import { getHiddenContactFilters, buildHiddenContactsCondition } from '../utils/hiddenContactsFilter.js'
@@ -221,7 +222,7 @@ const getWhatsAppApiIdentitySql = (alias = 'msg') => `
 
 function whatsappTimestampExpression(column, timezone = 'UTC') {
   if (!isPostgres) {
-    return `datetime(${column}, '-6 hours')`
+    return `datetime(${column}, ${sqliteTimezoneOffsetClause(timezone)})`
   }
 
   const safeTimezone = String(timezone || 'UTC').replace(/'/g, "''")

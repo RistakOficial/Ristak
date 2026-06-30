@@ -31,6 +31,19 @@ export function resolveTimezone(tz, fallback = DEFAULT_TIMEZONE) {
   return isValidTimezone(tz) ? tz : (isValidTimezone(fallback) ? fallback : DEFAULT_TIMEZONE)
 }
 
+export function getTimezoneOffsetMinutes(timezone = DEFAULT_TIMEZONE, referenceDate = new Date()) {
+  const zone = resolveTimezone(timezone)
+  const date = referenceDate instanceof Date ? referenceDate : new Date(referenceDate)
+  const at = Number.isNaN(date.getTime()) ? new Date() : date
+  const offset = DateTime.fromJSDate(at, { zone }).offset
+  return Number.isFinite(offset) ? offset : DateTime.fromJSDate(at, { zone: DEFAULT_TIMEZONE }).offset
+}
+
+export function sqliteTimezoneOffsetClause(timezone = DEFAULT_TIMEZONE, referenceDate = new Date()) {
+  const offsetMinutes = getTimezoneOffsetMinutes(timezone, referenceDate)
+  return `'${offsetMinutes} minutes'`
+}
+
 /**
  * Invalida el cache de zona horaria. Llamar cuando el usuario cambia la zona
  * en Ristak o cuando se actualiza la config de HighLevel.

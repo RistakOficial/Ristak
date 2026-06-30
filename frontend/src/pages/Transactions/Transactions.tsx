@@ -2078,7 +2078,7 @@ export const Transactions: React.FC = () => {
         // para que el orden descendente refleje cuándo se registró el pago.
         await transactionsService.createTransaction({
           ...transaction,
-          date: buildPaymentTimestamp(transaction.date)
+          date: buildPaymentTimestamp(transaction.date, timezone)
         })
         showToast('success', '¡Pago registrado exitosamente!', `Se registró el pago de ${formatCurrency(transaction.amount, accountCurrency)} para ${contactSnapshot.name}`)
       } else if (modal.type === 'edit') {

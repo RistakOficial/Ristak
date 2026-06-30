@@ -1,7 +1,7 @@
 import crypto from 'crypto'
 import { db } from '../config/database.js'
 import { logger } from '../utils/logger.js'
-import { resolveDateRangeWithGHLTimezone } from '../utils/dateUtils.js'
+import { resolveDateRangeWithGHLTimezone, sqliteTimezoneOffsetClause } from '../utils/dateUtils.js'
 import {
   buildTrackingIdentitySignals,
   recordTrackingIdentityMatch,
@@ -764,7 +764,7 @@ function roundMetric(value, decimals = 1) {
 function buildPlaybackPeriodExpression(hourly = false, timezone = 'UTC') {
   if (!isPostgresRuntime) {
     const format = hourly ? '%Y-%m-%dT%H:00:00' : '%Y-%m-%d'
-    return `strftime('${format}', datetime(vps.last_event_at, '-6 hours'))`
+    return `strftime('${format}', datetime(vps.last_event_at, ${sqliteTimezoneOffsetClause(timezone)}))`
   }
 
   const safeTimezone = String(timezone || 'UTC').replace(/'/g, "''")

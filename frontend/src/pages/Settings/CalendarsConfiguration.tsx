@@ -50,6 +50,7 @@ import {
   Sparkles
 } from 'lucide-react'
 import { useNotification } from '@/contexts/NotificationContext'
+import { useTimezone } from '@/contexts/TimezoneContext'
 import { useAppConfig, useHighLevelConnected } from '@/hooks'
 import { useAuth } from '@/contexts/AuthContext'
 import {
@@ -102,6 +103,7 @@ import {
   getDetectedAccountLocaleDefaults,
   normalizeCurrencyCode
 } from '@/utils/accountLocale'
+import { DEFAULT_TIMEZONE } from '@/utils/timezone'
 import styles from './HighLevelIntegration.module.css'
 import pageStyles from './CalendarsConfiguration.module.css'
 
@@ -443,13 +445,9 @@ const normalizeCalendarTimezoneValue = (value?: string | null) => {
   return CALENDAR_TIMEZONE_VALUES.has(raw) ? raw : ''
 }
 
-const detectCalendarPreviewTimezone = () => {
-  try {
-    return Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC'
-  } catch {
-    return 'UTC'
-  }
-}
+const detectCalendarPreviewTimezone = (fallbackTimezone = DEFAULT_TIMEZONE) => (
+  normalizeCalendarTimezoneValue(fallbackTimezone) || DEFAULT_TIMEZONE
+)
 
 const normalizeCalendarMatchValue = (value?: string | null) => String(value || '').trim().toLowerCase()
 
@@ -773,6 +771,7 @@ export const CalendarsConfiguration: React.FC = () => {
   const routeState = useMemo(() => parseCalendarSettingsRoute(location.pathname), [location.pathname])
   const { showToast, showConfirm } = useNotification()
   const { locationId, accessToken, user } = useAuth()
+  const { timezone: accountTimezone } = useTimezone()
   const detectedAccountLocaleDefaults = useMemo(() => getDetectedAccountLocaleDefaults(), [])
 
   // Estados de configuración (usa sistema híbrido)
@@ -845,7 +844,7 @@ export const CalendarsConfiguration: React.FC = () => {
   const [calendarPreviewStep, setCalendarPreviewStep] = useState<CalendarPreviewStep>('date')
   const [calendarPreviewDate, setCalendarPreviewDate] = useState(CALENDAR_PREVIEW_DEFAULT_DAY)
   const [calendarPreviewSlot, setCalendarPreviewSlot] = useState(CALENDAR_PREVIEW_SLOTS[1].value)
-  const [calendarPreviewTimezone, setCalendarPreviewTimezone] = useState(() => detectCalendarPreviewTimezone())
+  const [calendarPreviewTimezone, setCalendarPreviewTimezone] = useState(() => detectCalendarPreviewTimezone(accountTimezone))
   const [calendarMetaParamsOpen, setCalendarMetaParamsOpen] = useState(false)
   const [loadedMetaVariables, setLoadedMetaVariables] = useState<FlowVariable[]>(BASE_VARIABLES)
   const [savingConfig, setSavingConfig] = useState(false)
@@ -1546,7 +1545,7 @@ export const CalendarsConfiguration: React.FC = () => {
     setCalendarPreviewStep('date')
     setCalendarPreviewDate(CALENDAR_PREVIEW_DEFAULT_DAY)
     setCalendarPreviewSlot(CALENDAR_PREVIEW_SLOTS[1].value)
-    setCalendarPreviewTimezone(bookingDisplay.defaultTimezone || detectCalendarPreviewTimezone())
+    setCalendarPreviewTimezone(bookingDisplay.defaultTimezone || detectCalendarPreviewTimezone(accountTimezone))
     if (googleIntegration?.connected && !loadingGoogleCalendarOptions && !googleCalendarOptions.length) {
       loadGoogleCalendarOptions()
     }
@@ -2420,12 +2419,12 @@ export const CalendarsConfiguration: React.FC = () => {
 
     const handlePreviewTimezoneChange = (timezone: string) => {
       const nextTimezone = normalizeCalendarTimezoneValue(timezone)
-      setCalendarPreviewTimezone(nextTimezone || detectCalendarPreviewTimezone())
+      setCalendarPreviewTimezone(nextTimezone || detectCalendarPreviewTimezone(accountTimezone))
     }
 
     const handleBookingDisplayTimezoneChange = (timezone: string) => {
       const nextTimezone = normalizeCalendarTimezoneValue(timezone)
-      setCalendarPreviewTimezone(nextTimezone || detectCalendarPreviewTimezone())
+      setCalendarPreviewTimezone(nextTimezone || detectCalendarPreviewTimezone(accountTimezone))
       updateBookingDisplayConfig({ defaultTimezone: nextTimezone })
     }
 
@@ -2444,7 +2443,7 @@ export const CalendarsConfiguration: React.FC = () => {
       setCalendarPreviewStep('date')
       setCalendarPreviewDate(CALENDAR_PREVIEW_DEFAULT_DAY)
       setCalendarPreviewSlot(CALENDAR_PREVIEW_SLOTS[1].value)
-      setCalendarPreviewTimezone(bookingDisplayConfig.defaultTimezone || detectCalendarPreviewTimezone())
+      setCalendarPreviewTimezone(bookingDisplayConfig.defaultTimezone || detectCalendarPreviewTimezone(accountTimezone))
     }
 
     const openCalendarWidget = () => {
@@ -2452,7 +2451,7 @@ export const CalendarsConfiguration: React.FC = () => {
       window.open(selectedPublicOpenUrl, '_blank', 'noopener,noreferrer')
     }
 
-    const previewTimezone = bookingDisplayConfig.defaultTimezone || calendarPreviewTimezone || detectCalendarPreviewTimezone()
+    const previewTimezone = bookingDisplayConfig.defaultTimezone || calendarPreviewTimezone || detectCalendarPreviewTimezone(accountTimezone)
     const previewSlotLabel = CALENDAR_PREVIEW_SLOTS.find(slot => slot.value === calendarPreviewSlot)?.label || CALENDAR_PREVIEW_SLOTS[1].label
     const previewDuration = Math.max(1, Number(selectedCalendar.slotDuration || 60))
     const previewCalendarName = selectedCalendar.name || 'Mi calendario'
