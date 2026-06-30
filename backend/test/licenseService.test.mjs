@@ -6,7 +6,7 @@ import http from 'node:http'
 let server
 let baseUrl
 let requestCount = 0
-let serverMode = 'allow' // allow | allow_without_whatsapp | allow_split_ai | block | down
+let serverMode = 'allow' // allow | allow_without_whatsapp | allow_split_ai | allow_split_sites | allow_split_calendar | block | down
 let lastRequestBody = null
 
 let licenseService
@@ -41,16 +41,26 @@ function startMockServer() {
         if (req.url === '/api/license/verify') {
           requestCount += 1
 
-          if (serverMode === 'allow' || serverMode === 'allow_without_whatsapp' || serverMode === 'allow_split_ai') {
+          if (
+            serverMode === 'allow' ||
+            serverMode === 'allow_without_whatsapp' ||
+            serverMode === 'allow_split_ai' ||
+            serverMode === 'allow_split_sites' ||
+            serverMode === 'allow_split_calendar'
+          ) {
             res.end(JSON.stringify({
               allowed: true,
               client_id: 'cli_1',
               plan: 'pro',
               features: serverMode === 'allow_split_ai'
                 ? { app_assistant_ai: true, conversational_ai: false }
-                : serverMode === 'allow_without_whatsapp'
-                  ? { meta_ads: true, ai: false }
-                  : { whatsapp: true, meta_ads: true, ai: false },
+                : serverMode === 'allow_split_sites'
+                  ? { sites: false, settings_media: true, settings_tracking: false, settings_domains: true }
+                  : serverMode === 'allow_split_calendar'
+                    ? { appointments: true, google_calendar: false }
+                    : serverMode === 'allow_without_whatsapp'
+                      ? { meta_ads: true, ai: false }
+                      : { whatsapp: true, meta_ads: true, ai: false },
               ...(serverMode === 'allow'
                 ? {
                     external_modules: {
@@ -359,6 +369,32 @@ test('features de IA separados reconstruyen el alias legacy ai', async () => {
   assert.equal(await licenseService.hasFeature('app_assistant_ai'), true)
   assert.equal(await licenseService.hasFeature('conversational_ai'), false)
   assert.equal(await licenseService.hasFeature('ai'), false)
+})
+
+test('subfeatures explícitos no quedan apagados por el módulo padre', async () => {
+  serverMode = 'allow_split_sites'
+
+  const state = await licenseService.verifyLicenseWithServer('dueno@clinica.com')
+
+  assert.equal(state.features.sites, false)
+  assert.equal(state.features.settings_media, true)
+  assert.equal(state.features.settings_tracking, false)
+  assert.equal(state.features.settings_domains, true)
+  assert.equal(await licenseService.hasFeature('sites'), false)
+  assert.equal(await licenseService.hasFeature('settings_media'), true)
+  assert.equal(await licenseService.hasFeature('settings_tracking'), false)
+  assert.equal(await licenseService.hasFeature('settings_domains'), true)
+})
+
+test('subfeatures explícitos apagados no reviven por el módulo padre', async () => {
+  serverMode = 'allow_split_calendar'
+
+  const state = await licenseService.verifyLicenseWithServer('dueno@clinica.com')
+
+  assert.equal(state.features.appointments, true)
+  assert.equal(state.features.google_calendar, false)
+  assert.equal(await licenseService.hasFeature('appointments'), true)
+  assert.equal(await licenseService.hasFeature('google_calendar'), false)
 })
 
 test('modo estricto: servidor caído sin token vigente bloquea el acceso', async () => {

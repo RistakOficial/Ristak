@@ -1,4 +1,5 @@
 import React, { createContext, useContext, useState, useCallback, useEffect } from 'react'
+import { getLicenseFeatureLabel } from '@/utils/accessControl'
 
 type ToastType = 'success' | 'error' | 'info' | 'warning'
 type ModalActionResult = void | boolean | Promise<void | boolean>
@@ -143,12 +144,15 @@ export const NotificationProvider: React.FC<{ children: React.ReactNode }> = ({ 
   // del plan). Antes esto fallaba en silencio; ahora mostramos un toast claro.
   useEffect(() => {
     const handleFeatureNotAvailable = (event: Event) => {
-      const detail = (event as CustomEvent<{ message?: string }>).detail
+      const detail = (event as CustomEvent<{ message?: string; feature?: string }>).detail
       const message = detail?.message?.trim()
+      const featureLabel = getLicenseFeatureLabel(detail?.feature)
       showToast(
         'warning',
-        'Esta función no está incluida en tu plan',
-        message || 'Contacta al administrador para activarla.'
+        featureLabel ? `${featureLabel} no está disponible en tu plan` : 'Esta función no está incluida en tu plan',
+        featureLabel
+          ? `Tu plan actual no incluye ${featureLabel}. Pídele al administrador que lo active para tu cuenta.`
+          : message || 'Contacta al administrador para activarla.'
       )
     }
     window.addEventListener('ristak:feature-not-available', handleFeatureNotAvailable)

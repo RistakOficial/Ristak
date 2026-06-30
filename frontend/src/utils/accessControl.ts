@@ -248,6 +248,51 @@ const LICENSE_FEATURES_BY_MODULE: Partial<Record<PermissionKey, LicenseFeatureRu
   settings_users: { primary: 'team_access', legacy: ['settings_users'] }
 }
 
+const LICENSE_FEATURE_LABELS: Record<string, string> = {
+  dashboard_metrics: 'métricas del dashboard',
+  contact_tags: 'etiquetas de contactos',
+  contact_custom_data: 'datos personalizados de contactos',
+  contact_import_export: 'importación y exportación de contactos',
+  chat_inbox: 'bandeja de chat',
+  message_templates: 'plantillas de mensajes',
+  google_calendar: 'Google Calendar',
+  appointment_reminders: 'recordatorios de citas',
+  calendar_blocks: 'bloqueos de calendario',
+  payment_checkout: 'checkout de pagos',
+  payment_receipts: 'comprobantes de pago',
+  payment_automations: 'automatizaciones de pagos',
+  payment_gateways: 'pasarelas de pago',
+  highlevel_payments: 'pagos de HighLevel',
+  conekta: 'Conekta',
+  mercadopago: 'Mercado Pago',
+  payment_links: 'links de pago',
+  saved_payment_methods: 'métodos de pago guardados',
+  payment_plans: 'planes de pago',
+  subscriptions: 'suscripciones',
+  payment_taxes: 'impuestos de pago',
+  payment_webhooks: 'webhooks de pago',
+  advanced_reports: 'reportes avanzados',
+  web_analytics: 'analíticas web',
+  conversion_analytics: 'conversiones web',
+  meta_ads: 'Meta Ads',
+  meta_pixel: 'Meta Pixel',
+  meta_catalog: 'catálogo de Meta',
+  site_builder: 'editor de sitios',
+  site_publishing: 'publicación de sitios',
+  site_forms: 'formularios de sitios',
+  app_assistant_ai: 'Ristak AI',
+  conversational_ai: 'agente conversacional',
+  automation_builder: 'constructor de automatizaciones',
+  automation_runs: 'ejecuciones de automatizaciones',
+  whatsapp_api: 'WhatsApp API',
+  whatsapp_templates: 'plantillas de WhatsApp',
+  email_smtp: 'envío de correos',
+  email_templates: 'plantillas de correo',
+  highlevel_integration: 'integración con HighLevel',
+  api_keys: 'API Keys',
+  webhooks: 'webhooks'
+}
+
 export const DEFAULT_EMPLOYEE_ACCESS: AccessConfig = Object.fromEntries(
   ACCESS_MODULES.map((module) => [module.key, module.key === 'settings_account' ? 'write' : 'none'])
 ) as AccessConfig
@@ -305,6 +350,10 @@ export function hasLicenseFeatureAccess(
   if (!rule) return true
 
   const features = user.licenseFeatures || {}
+  if (hasOwn.call(features, moduleKey)) {
+    return features[moduleKey] === true
+  }
+
   if (hasOwn.call(features, rule.primary)) {
     return features[rule.primary] === true
   }
@@ -314,6 +363,16 @@ export function hasLicenseFeatureAccess(
   }
 
   return true
+}
+
+export function getLicenseFeatureLabel(feature: unknown) {
+  const key = String(feature || '').trim()
+  if (!key) return null
+
+  const module = ACCESS_MODULES.find((item) => item.key === key)
+  if (module) return module.label
+
+  return LICENSE_FEATURE_LABELS[key] || key.replace(/_/g, ' ')
 }
 
 export function hasModuleAccess(

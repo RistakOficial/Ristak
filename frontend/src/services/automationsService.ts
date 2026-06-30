@@ -314,8 +314,8 @@ function fetchAutomation(automationId: string): Promise<Automation> {
 }
 
 export const automationsService = {
-  async getOverview(): Promise<AutomationsOverview> {
-    const overview = await apiClient.get<AutomationsOverview>('/automations')
+  async getOverview(options: { suppressFeatureNotAvailableToast?: boolean } = {}): Promise<AutomationsOverview> {
+    const overview = await apiClient.get<AutomationsOverview>('/automations', options)
     automationsCache.overview = overview
     return overview
   },

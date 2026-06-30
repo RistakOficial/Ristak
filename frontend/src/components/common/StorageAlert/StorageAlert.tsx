@@ -1,6 +1,8 @@
 import React, { useEffect, useState } from 'react'
 import { AlertTriangle, X } from 'lucide-react'
+import { useAuth } from '@/contexts/AuthContext'
 import apiClient from '@/services/apiClient'
+import { hasModuleAccess } from '@/utils/accessControl'
 import styles from './StorageAlert.module.css'
 
 interface StorageStatus {
@@ -16,29 +18,45 @@ interface StorageStatus {
 export const StorageAlert: React.FC = () => {
   const [storageStatus, setStorageStatus] = useState<StorageStatus | null>(null)
   const [dismissed, setDismissed] = useState(false)
+  const { isAuthenticated, isLoading, user } = useAuth()
+  const canCheckStorage = !isLoading && isAuthenticated && hasModuleAccess(user, 'dashboard', 'read')
 
   useEffect(() => {
+    if (!canCheckStorage) {
+      setStorageStatus(null)
+      setDismissed(false)
+      return
+    }
+
+    let cancelled = false
+
+    const checkStorage = async () => {
+      try {
+        const data = await apiClient.get<StorageStatus>('/dashboard/storage-status', {
+          suppressFeatureNotAvailableToast: true
+        })
+        if (cancelled) return
+        setStorageStatus(data)
+
+        // Si ya no necesita atención, quitar el dismissed
+        if (!data.needsAttention) {
+          setDismissed(false)
+        }
+      } catch {
+      }
+    }
+
     // Verificar storage al cargar
     checkStorage()
 
     // Verificar cada 1 hora
     const interval = setInterval(checkStorage, 60 * 60 * 1000)
 
-    return () => clearInterval(interval)
-  }, [])
-
-  const checkStorage = async () => {
-    try {
-      const data = await apiClient.get<StorageStatus>('/dashboard/storage-status')
-      setStorageStatus(data)
-
-      // Si ya no necesita atención, quitar el dismissed
-      if (!data.needsAttention) {
-        setDismissed(false)
-      }
-    } catch (error) {
+    return () => {
+      cancelled = true
+      clearInterval(interval)
     }
-  }
+  }, [canCheckStorage])
 
   const handleDismiss = () => {
     setDismissed(true)

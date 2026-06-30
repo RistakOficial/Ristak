@@ -3,6 +3,7 @@ import multer from 'multer'
 import { tmpdir } from 'os'
 import { join } from 'path'
 import { requireAuth } from '../middleware/authMiddleware.js'
+import { requireFeature } from '../middleware/licenseMiddleware.js'
 import { requireModuleAccess } from '../middleware/userAccessMiddleware.js'
 import {
   deleteMediaAssetHandler,
@@ -23,6 +24,7 @@ import {
 
 const router = express.Router()
 const requireMediaAccess = requireModuleAccess('settings_media')
+const requireMediaLicense = requireFeature('settings_media')
 const maxUploadBytes = Number(process.env.MEDIA_MAX_UPLOAD_BYTES || 600 * 1024 * 1024)
 const upload = multer({
   dest: join(tmpdir(), 'ristak-media-uploads'),
@@ -71,18 +73,18 @@ router.get('/assets/:assetId/thumbnail', (req, res, next) => {
 
 router.use(requireAuth)
 
-router.post('/upload', uploadSingleFile, uploadMediaHandler)
-router.get('/assets', requireMediaAccess, listMediaAssetsHandler)
-router.get('/storage/usage', getStorageUsageHandler)
-router.get('/diagnostics', storageDiagnosticsHandler)
-router.get('/assets/:assetId/url', requireMediaAccess, getMediaAssetUrlHandler)
-router.get('/assets/:assetId/download', requireMediaAccess, downloadMediaAssetHandler)
-router.get('/assets/:assetId/stream/analytics', requireMediaAccess, getMediaAssetStreamAnalyticsHandler)
-router.post('/assets/download', requireMediaAccess, downloadMediaAssetsArchiveHandler)
-router.post('/assets/move', requireMediaAccess, moveMediaAssetsHandler)
-router.delete('/assets/:assetId', requireMediaAccess, deleteMediaAssetHandler)
-router.put('/assets/:assetId/replace', requireMediaAccess, uploadSingleFile, replaceMediaAssetHandler)
-router.post('/assets/:assetId/retry', requireMediaAccess, retryMediaAssetHandler)
-router.post('/assets/:assetId/stream/sync', requireMediaAccess, syncMediaAssetStreamHandler)
+router.post('/upload', requireMediaLicense, requireMediaAccess, uploadSingleFile, uploadMediaHandler)
+router.get('/assets', requireMediaLicense, requireMediaAccess, listMediaAssetsHandler)
+router.get('/storage/usage', requireMediaLicense, requireMediaAccess, getStorageUsageHandler)
+router.get('/diagnostics', requireMediaLicense, requireMediaAccess, storageDiagnosticsHandler)
+router.get('/assets/:assetId/url', requireMediaLicense, requireMediaAccess, getMediaAssetUrlHandler)
+router.get('/assets/:assetId/download', requireMediaLicense, requireMediaAccess, downloadMediaAssetHandler)
+router.get('/assets/:assetId/stream/analytics', requireMediaLicense, requireMediaAccess, getMediaAssetStreamAnalyticsHandler)
+router.post('/assets/download', requireMediaLicense, requireMediaAccess, downloadMediaAssetsArchiveHandler)
+router.post('/assets/move', requireMediaLicense, requireMediaAccess, moveMediaAssetsHandler)
+router.delete('/assets/:assetId', requireMediaLicense, requireMediaAccess, deleteMediaAssetHandler)
+router.put('/assets/:assetId/replace', requireMediaLicense, requireMediaAccess, uploadSingleFile, replaceMediaAssetHandler)
+router.post('/assets/:assetId/retry', requireMediaLicense, requireMediaAccess, retryMediaAssetHandler)
+router.post('/assets/:assetId/stream/sync', requireMediaLicense, requireMediaAccess, syncMediaAssetStreamHandler)
 
 export default router

@@ -715,14 +715,6 @@ export const Sidebar: React.FC<SidebarProps> = ({
   onNavigate,
   onLogout
 }) => {
-  // Precalienta la librería de automatizaciones (abre sin parpadeo)
-  React.useEffect(() => {
-    const timer = window.setTimeout(() => {
-      void automationsService.getOverview().catch(() => undefined)
-    }, 2500)
-    return () => window.clearTimeout(timer)
-  }, [])
-
   const location = useLocation()
   const {
     theme,
@@ -735,6 +727,19 @@ export const Sidebar: React.FC<SidebarProps> = ({
     themeFamilies
   } = useTheme()
   const { user } = useAuth()
+  const canPreloadAutomations = hasModuleAccess(user, 'automations', 'read')
+
+  // Precalienta la librería de automatizaciones (abre sin parpadeo) solo cuando
+  // el plan y el permiso del usuario incluyen Automatizaciones.
+  React.useEffect(() => {
+    if (!canPreloadAutomations) return
+
+    const timer = window.setTimeout(() => {
+      void automationsService.getOverview({ suppressFeatureNotAvailableToast: true }).catch(() => undefined)
+    }, 2500)
+    return () => window.clearTimeout(timer)
+  }, [canPreloadAutomations])
+
   const { isInitialized } = useInitialization()
   const [sidebarOrder, setSidebarOrder] = useAppConfig<string[]>('sidebar_navigation_order', [])
   const appVersion = useAppVersion()

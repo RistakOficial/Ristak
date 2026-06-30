@@ -80,26 +80,21 @@ const FEATURE_DEPENDENCIES = {
   developers: ['settings_api_access']
 }
 
+const LEGACY_FEATURE_ALIASES = {
+  ai: 'ai_agent'
+}
+
+const FEATURE_FALLBACK_TO_PARENT = Object.entries(FEATURE_DEPENDENCIES)
+  .reduce((result, [parent, dependencies]) => {
+    for (const dependency of dependencies) {
+      result[dependency] = parent
+    }
+    return result
+  }, {})
+
 const FEATURE_ALIAS_TO_CANONICAL = {
-  google_calendar: 'appointments',
-  settings_calendars: 'appointments',
-  advanced_reports: 'reports',
-  settings_costs: 'reports',
-  meta_ads: 'campaigns',
-  settings_domains: 'sites',
-  settings_tracking: 'sites',
-  settings_media: 'sites',
-  settings_custom_fields: 'forms',
-  app_assistant_ai: 'ai_agent',
-  conversational_ai: 'ai_agent',
-  ai: 'ai_agent',
-  settings_whatsapp: 'whatsapp',
-  settings_email: 'email',
-  settings_payments: 'payments',
-  settings_integrations: 'integrations',
-  settings_users: 'team_access',
-  settings_mobile: 'mobile_app',
-  settings_api_access: 'developers'
+  ...LEGACY_FEATURE_ALIASES,
+  ...FEATURE_FALLBACK_TO_PARENT
 }
 
 function normalizeFeatureKey(key) {
@@ -107,6 +102,19 @@ function normalizeFeatureKey(key) {
 }
 
 const hasOwn = Object.prototype.hasOwnProperty
+
+function readFeatureValue(features = {}, featureKey) {
+  const key = String(featureKey || '').trim()
+  if (!key) return false
+  if (hasOwn.call(features, key)) return features[key] === true
+
+  const fallbackKey = normalizeFeatureKey(key)
+  if (fallbackKey !== key && hasOwn.call(features, fallbackKey)) {
+    return features[fallbackKey] === true
+  }
+
+  return false
+}
 
 // Estado cacheado de la última validación (token temporal de licencia)
 let cachedState = null
@@ -366,7 +374,7 @@ function normalizeLicenseFeatures(features = {}) {
     ...source
   }
 
-  for (const [alias, canonical] of Object.entries(FEATURE_ALIAS_TO_CANONICAL)) {
+  for (const [alias, canonical] of Object.entries(LEGACY_FEATURE_ALIASES)) {
     if (source[canonical] !== undefined || source[alias] === undefined) continue
     normalized[canonical] = !!source[alias]
   }
@@ -379,11 +387,11 @@ function normalizeLicenseFeatures(features = {}) {
       normalized[featureKey] = explicitDependencies.every((dependency) => source[dependency] === true)
     }
     for (const dependency of dependencies) {
-      // (LIC-004) Una sub-feature enviada explícitamente por el portal SIEMPRE gana.
-      // Si el padre tambien vino explícito en false, entonces sí apaga a sus hijos;
-      // si el padre fue derivado desde hijos separados, no debe pisar un hijo true.
+      // (LIC-004) Una sub-feature enviada explícitamente por el portal SIEMPRE gana:
+      // permite overrides finos como settings_media=true aunque sites=false.
+      // Si el portal no mandó el hijo, entonces sí hereda el estado del padre.
       if (hasOwn.call(source, dependency)) {
-        normalized[dependency] = source[dependency] === true && (!hasExplicitFeature || normalized[featureKey] === true)
+        normalized[dependency] = source[dependency] === true
       } else {
         normalized[dependency] = normalized[featureKey] === true
       }
@@ -563,7 +571,7 @@ export async function hasFeature(featureKey) {
   const state = await getLicenseState()
   if (!state.allowed) return false
   if (!state.enforced) return true
-  return !!state.features?.[featureKey] || !!state.features?.[normalizeFeatureKey(featureKey)]
+  return readFeatureValue(state.features, featureKey)
 }
 
 /**
@@ -584,7 +592,7 @@ export async function canRunBackgroundJob(featureKey = null) {
   if (!state.enforced) return true
   if (!featureKey) return true
 
-  return !!state.features?.[featureKey] || !!state.features?.[normalizeFeatureKey(featureKey)]
+  return readFeatureValue(state.features, featureKey)
 }
 
 export async function createCentralGoogleCalendarConnectUrl({ returnPath = '/settings/calendars/google', appUrl = '' } = {}) {
