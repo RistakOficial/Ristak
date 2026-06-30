@@ -24,6 +24,8 @@ const AI_AGENT_DEFAULT_WIDTH = 640
 const AI_AGENT_MAX_WIDTH = 1600
 const AI_AGENT_MIN_MAIN_WIDTH = 320
 const SITES_EDITOR_ACTIVE_EVENT = 'ristak-sites-editor-active'
+// External fullscreen surfaces own the viewport; the global assistant would cover embedded tools.
+const AI_AGENT_EXTERNAL_SURFACE_PATHS = ['/mdp-program']
 
 function getInitialAIAgentOpenState() {
   try {
@@ -56,6 +58,12 @@ function getInitialAIAgentWidth() {
   }
 }
 
+function isAIAgentSuppressedRoute(pathname: string) {
+  return AI_AGENT_EXTERNAL_SURFACE_PATHS.some((pathPrefix) => (
+    pathname === pathPrefix || pathname.startsWith(`${pathPrefix}/`)
+  ))
+}
+
 export const AppShell: React.FC = () => {
   const navigate = useNavigate()
   const location = useLocation()
@@ -77,6 +85,8 @@ export const AppShell: React.FC = () => {
   const aiAgentAvailability = useAIAgentAvailability()
   const routeDataLoadGate = useRouteDataLoadGate(`${location.pathname}${location.search}`)
   const canUseAIAgent = hasModuleAccess(user, 'ai_agent', 'read') && aiAgentAvailability.configured
+  const aiAgentRouteSuppressed = isAIAgentSuppressedRoute(location.pathname)
+  const shouldShowAIAgent = canUseAIAgent && !sitesEditorActive && !aiAgentRouteSuppressed
   const resizePointerIdRef = useRef<number | null>(null)
   const aiAgentWidthRef = useRef(aiAgentWidth)
   const lastSavedAIAgentWidthRef = useRef(aiAgentWidth)
@@ -147,11 +157,11 @@ export const AppShell: React.FC = () => {
   }, [])
 
   useEffect(() => {
-    if (sitesEditorActive && aiAgentOpen) {
+    if ((sitesEditorActive || aiAgentRouteSuppressed) && aiAgentOpen) {
       setAIAgentOpen(false)
       requestAIAgentClose()
     }
-  }, [aiAgentOpen, sitesEditorActive])
+  }, [aiAgentOpen, aiAgentRouteSuppressed, sitesEditorActive])
 
   useEffect(() => {
     const handleResize = () => {
@@ -263,7 +273,7 @@ export const AppShell: React.FC = () => {
       {syncProgressVisible && <SyncProgressBar onClose={handleProgressBarClose} />}
 
       <div
-        className={`${styles.shell} ${aiAgentOpen ? styles.shellWithAIAgent : ''} ${aiAgentResizing ? styles.shellResizingAIAgent : ''} ${syncProgressVisible ? styles.shellWithSyncBar : ''}`}
+        className={`${styles.shell} ${shouldShowAIAgent && aiAgentOpen ? styles.shellWithAIAgent : ''} ${aiAgentResizing ? styles.shellResizingAIAgent : ''} ${syncProgressVisible ? styles.shellWithSyncBar : ''}`}
         style={shellStyle}
       >
         <div className={styles.mainPane}>
@@ -296,7 +306,7 @@ export const AppShell: React.FC = () => {
           </Layout>
         </div>
 
-        {!sitesEditorActive && canUseAIAgent && (
+        {shouldShowAIAgent && (
           <div className={styles.aiAgentSlot}>
             {aiAgentOpen && (
               <button
