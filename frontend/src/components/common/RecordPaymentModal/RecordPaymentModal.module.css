@@ -2900,15 +2900,17 @@ body.dark .tooltipInfo {
 }
 
 .embeddedRoot[data-payment-mode="partial"] .planRow {
-  grid-template-columns: 1fr;
-  gap: 14px;
-  padding: 16px;
+  position: relative;
+  grid-template-columns: repeat(auto-fit, minmax(132px, 1fr));
+  gap: 14px 12px;
+  padding: 16px 16px 18px;
   border: 1px solid var(--record-payment-embedded-border);
   border-radius: 16px;
   background: var(--record-payment-embedded-panel);
 }
 
 .embeddedRoot[data-payment-mode="partial"] .planSeq {
+  grid-column: 1 / -1;
   width: 30px;
   height: 30px;
   justify-self: start;
@@ -2917,6 +2919,7 @@ body.dark .tooltipInfo {
 .embeddedRoot[data-payment-mode="partial"] .planValueCell,
 .embeddedRoot[data-payment-mode="partial"] .planDateCell {
   gap: 8px;
+  min-width: 0;
 }
 
 .embeddedRoot[data-payment-mode="partial"] .planValueCell .cellLabel,
@@ -2924,10 +2927,17 @@ body.dark .tooltipInfo {
   display: block;
 }
 
-.embeddedRoot[data-payment-mode="partial"] .planValueCell .input {
+/* Contorno claro en los campos: fondo blanco sobre la tarjeta gris (mismo criterio
+   visible que los segmentos de IVA), para que se entienda dónde escribir y pulsar. */
+.embeddedRoot[data-payment-mode="partial"] .planValueCell .input,
+.embeddedRoot[data-payment-mode="partial"] .planDateCell .phoneDateButton,
+.embeddedRoot[data-payment-mode="partial"] .planFirstMethod .phoneSelectButton {
   height: 52px;
   min-height: 52px;
   font-size: 16px;
+  background: var(--record-payment-embedded-bg) !important;
+  border: 1px solid var(--record-payment-embedded-tablist-border) !important;
+  border-radius: 12px !important;
 }
 
 .embeddedRoot[data-payment-mode="partial"] .planAmountHint {
@@ -2945,7 +2955,11 @@ body.dark .tooltipInfo {
   flex: 1 1 auto;
 }
 
+/* Bote de basura anclado en la esquina superior derecha de la tarjeta. */
 .embeddedRoot[data-payment-mode="partial"] .planDeleteCell {
+  position: absolute;
+  top: 12px;
+  right: 12px;
   height: auto;
   justify-content: flex-end;
 }
@@ -2955,8 +2969,19 @@ body.dark .tooltipInfo {
 }
 
 .embeddedRoot[data-payment-mode="partial"] .planDeleteCell .iconButton {
-  width: 44px;
-  height: 44px;
+  width: 40px;
+  height: 40px;
+  border: 1px solid var(--record-payment-embedded-tablist-border);
+  border-radius: 10px;
+  background: var(--record-payment-embedded-bg);
+}
+
+/* "Agregar pago" con contorno visible en celular. */
+.embeddedRoot[data-payment-mode="partial"] .addInstallment {
+  min-height: 54px;
+  border: 1px solid var(--record-payment-embedded-tablist-border);
+  border-radius: 14px;
+  background: var(--record-payment-embedded-soft);
 }
 
 .embeddedRoot .optionsContent {
