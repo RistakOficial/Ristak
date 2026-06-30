@@ -2796,20 +2796,11 @@ body.dark .tooltipInfo {
     padding: 0;
   }
 
-  .embeddedRoot[data-payment-layout="wide"][data-payment-mode="partial"] .planSection {
-    display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(min(380px, 100%), 1fr));
-    align-items: start;
-    gap: 20px;
-    padding: 0;
-  }
-
-  .embeddedRoot[data-payment-layout="wide"][data-payment-mode="partial"] .planIntro {
-    grid-column: 1 / -1;
-  }
-
-  .embeddedRoot[data-payment-layout="wide"][data-payment-mode="partial"] .planStep {
-    min-width: 0;
+  /* En "wide" (PhoneChat) el plan conserva el apilado vertical del teléfono,
+     con el contenido acotado para que las tarjetas no se estiren de más. */
+  .embeddedRoot[data-payment-layout="wide"][data-payment-mode="partial"] .planList,
+  .embeddedRoot[data-payment-layout="wide"][data-payment-mode="partial"] .fieldGrid {
+    max-width: 560px;
   }
 }
 
@@ -2897,6 +2888,75 @@ body.dark .tooltipInfo {
   .embeddedRoot[data-payment-mode="partial"] .installmentDelete {
     width: 36px;
   }
+}
+
+/* ===== Plan de pagos unificado en celular (tarjetas apiladas) ===== */
+.embeddedRoot[data-payment-mode="partial"] .planListHead {
+  display: none;
+}
+
+.embeddedRoot[data-payment-mode="partial"] .planList {
+  gap: 14px;
+}
+
+.embeddedRoot[data-payment-mode="partial"] .planRow {
+  grid-template-columns: 1fr;
+  gap: 14px;
+  padding: 16px;
+  border: 1px solid var(--record-payment-embedded-border);
+  border-radius: 16px;
+  background: var(--record-payment-embedded-panel);
+}
+
+.embeddedRoot[data-payment-mode="partial"] .planSeq {
+  width: 30px;
+  height: 30px;
+  justify-self: start;
+}
+
+.embeddedRoot[data-payment-mode="partial"] .planValueCell,
+.embeddedRoot[data-payment-mode="partial"] .planDateCell {
+  gap: 8px;
+}
+
+.embeddedRoot[data-payment-mode="partial"] .planValueCell .cellLabel,
+.embeddedRoot[data-payment-mode="partial"] .planDateCell .cellLabel {
+  display: block;
+}
+
+.embeddedRoot[data-payment-mode="partial"] .planValueCell .input {
+  height: 52px;
+  min-height: 52px;
+  font-size: 16px;
+}
+
+.embeddedRoot[data-payment-mode="partial"] .planAmountHint {
+  font-size: 13px;
+}
+
+.embeddedRoot[data-payment-mode="partial"] .planFirstMethod {
+  grid-column: 1 / -1;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 10px;
+}
+
+.embeddedRoot[data-payment-mode="partial"] .planFirstMethodControl {
+  flex: 1 1 auto;
+}
+
+.embeddedRoot[data-payment-mode="partial"] .planDeleteCell {
+  height: auto;
+  justify-content: flex-end;
+}
+
+.embeddedRoot[data-payment-mode="partial"] .planDeleteCell:empty {
+  display: none;
+}
+
+.embeddedRoot[data-payment-mode="partial"] .planDeleteCell .iconButton {
+  width: 44px;
+  height: 44px;
 }
 
 .embeddedRoot .optionsContent {

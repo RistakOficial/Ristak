@@ -137,15 +137,7 @@ const INSTALLMENT_VALUE_TYPE_OPTIONS = [
   { value: 'percentage', label: 'Porcentaje' }
 ]
 
-const FIRST_PAYMENT_METHOD_OPTIONS = [
-  { value: '', label: 'Seleccionar método', disabled: true },
-  { value: 'bank_transfer', label: 'Transferencia' },
-  { value: 'cash', label: 'Efectivo' },
-  { value: 'deposit', label: 'Depósito' },
-  { value: 'card', label: 'Tarjeta / link' }
-]
-
-// Primer pago integrado en la fila #1 del plan (solo escritorio), en dos niveles:
+// Primer pago integrado en la fila #1 del plan, en dos niveles:
 // 1) cuándo se cobra — 'scheduled' (sin enganche, el #1 es un cobro programado más)
 //    o 'immediate' (enganche cobrado de inmediato).
 const FIRST_PAYMENT_TIMING_OPTIONS = [
@@ -1226,14 +1218,14 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
     setIncludeIVA(Boolean(paymentTaxes.enabled))
     setTaxCalculationMode(paymentTaxes.calculationMode || defaultPaymentSettings.taxes.calculationMode)
     setPaymentMode(initialPaymentMode)
-    // Escritorio: el plan abre por defecto con "Cobrar inmediato" (enganche con
-    // tarjeta). Embedded/celular conserva el default original (cobro programado).
-    setFirstPaymentEnabled(!isEmbedded)
+    // El plan abre por defecto con "Cobrar inmediato" (primer pago con tarjeta),
+    // misma interacción en escritorio y celular.
+    setFirstPaymentEnabled(true)
     setFirstPaymentType('amount')
     setFirstPaymentValue('')
     setFirstPaymentAuto(true)
     setFirstPaymentDate(getBusinessTodayInputValue(timezone))
-    setFirstPaymentMethod(!isEmbedded ? 'card' : '')
+    setFirstPaymentMethod('card')
     setRemainingAutomatic(true)
     setRemainingValueType('amount')
     setRemainingFrequency('monthly')
@@ -1342,14 +1334,13 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
   }, [conektaConnected, highLevelConnected, mercadoPagoConnected, stripeConnected])
 
   useEffect(() => {
-    // En escritorio el método del primer pago vive en la fila #1 y su default visible
-    // es "Tarjeta / link"; comprometemos ese valor para que pantalla, payload y la
-    // validación de envío coincidan aunque la pasarela conectada no sea Stripe.
-    // En embedded se mantiene el comportamiento original (solo Stripe autocompleta).
-    if (isOpen && (stripeConnected || !isEmbedded) && activePaymentMode === 'partial' && firstPaymentEnabled && !firstPaymentMethod) {
+    // El método del primer pago vive en la fila #1 y su default visible es
+    // "Tarjeta / link"; comprometemos ese valor para que pantalla, payload y la
+    // validación de envío coincidan en escritorio y celular.
+    if (isOpen && activePaymentMode === 'partial' && firstPaymentEnabled && !firstPaymentMethod) {
       setFirstPaymentMethod('card')
     }
-  }, [isOpen, stripeConnected, isEmbedded, activePaymentMode, firstPaymentEnabled, firstPaymentMethod])
+  }, [isOpen, activePaymentMode, firstPaymentEnabled, firstPaymentMethod])
 
   useEffect(() => {
     if (!paymentTaxes.enabled && includeIVA) {
@@ -1655,10 +1646,10 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
   useEffect(() => {
     if (activePaymentMode !== 'partial' || !autoDistributeRemaining) return
 
-    // Escritorio con primer pago automático: el #1 cuenta como una parcialidad más,
-    // así el total se reparte en partes iguales (primer pago incluido) y el plan
-    // cuadra desde el inicio sin obligar a teclear el enganche.
-    const firstPaymentParticipates = !isEmbedded && firstPaymentEnabled && firstPaymentAuto
+    // Primer pago automático: el #1 cuenta como una parcialidad más, así el total
+    // se reparte en partes iguales (primer pago incluido) y el plan cuadra desde el
+    // inicio sin obligar a teclear el enganche.
+    const firstPaymentParticipates = firstPaymentEnabled && firstPaymentAuto
     if (firstPaymentParticipates) {
       const values = getRemainingDistributedValues(
         remainingInstallments.length + 1,
@@ -1962,15 +1953,6 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
     )))
   }
 
-  const updateFirstPaymentEnabled = (enabled: boolean) => {
-    setFirstPaymentEnabled(enabled)
-    if (enabled) {
-      setRemainingInstallments(prev => (
-        reflowRemainingDatesAfterFirstPayment(prev, firstPaymentDate, remainingFrequency, timezone)
-      ))
-    }
-    setAutoDistributeRemaining(true)
-  }
 
   const addRemainingInstallment = () => {
     setAutoDistributeRemaining(true)
@@ -2221,13 +2203,8 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
         return
       }
 
-      // En escritorio un primer pago en $0 se envía como "sin enganche" (el backend
-      // lo trata así); solo el flujo embedded/celular conserva el candado.
-      if (isEmbedded && firstPaymentEnabled && firstPaymentAmount <= 0) {
-        showToast('error', 'Configura un primer pago mayor a 0')
-        return
-      }
-
+      // Un primer pago en $0 se envía como "sin enganche" (enabled:false), así que no
+      // se bloquea el envío en ninguna plataforma.
       if (firstPaymentMethodMissing) {
         showToast('error', 'Selecciona un método de pago para el primer pago')
         return
@@ -3509,270 +3486,7 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
           />
         </div>
 
-        {activePaymentMode === 'partial' && (isEmbedded ? (
-          <div className={styles.planSection}>
-            <div className={styles.planIntro}>
-              <div className={styles.planIntroText}>
-                <p>Plan de pagos</p>
-                <span>Configura el enganche y el calendario de cobros automáticos hasta cubrir el total.</span>
-              </div>
-            </div>
-
-            <div className={styles.planStep}>
-              <div className={styles.planStepHead}>
-                <div className={styles.planStepTitle}>
-                  <span className={styles.stepNumber}>1</span>
-                  <div>
-                    <p>Primer pago</p>
-                    <span>Activa un enganche si el plan debe iniciar con un primer pago.</span>
-                  </div>
-                </div>
-                {renderPaymentSegmentedTabs({
-                  ariaLabel: 'Primer pago',
-                  options: [
-                    { value: 'no', label: 'Sin enganche' },
-                    { value: 'yes', label: 'Con enganche' }
-                  ],
-                  value: firstPaymentEnabled ? 'yes' : 'no',
-                  onChange: (value) => updateFirstPaymentEnabled(value === 'yes'),
-                  desktopFullWidth: false
-                })}
-              </div>
-
-              {firstPaymentEnabled && (
-                <div className={styles.planStepBody}>
-                  <div className={styles.fieldGrid}>
-                    <div className={styles.manualField}>
-                      <label>Tipo de valor</label>
-                      {renderPaymentSelect({
-                        value: firstPaymentType,
-                        onChange: (value) => {
-                          setFirstPaymentType(value as InstallmentValueType)
-                          setAutoDistributeRemaining(true)
-                        },
-                        options: INSTALLMENT_VALUE_TYPE_OPTIONS,
-                        title: 'Tipo de valor'
-                      })}
-                    </div>
-                    <div className={styles.manualField}>
-                      <label>{firstPaymentType === 'percentage' ? 'Porcentaje' : 'Monto fijo'}</label>
-                      <div className={styles.amountInput}>
-                        {firstPaymentType === 'percentage'
-                          ? <Percent size={16} className={styles.dollarIcon} />
-                          : <DollarSign size={16} className={styles.dollarIcon} />}
-                        <NumberInput
-                          step="0.01"
-                          min="0"
-                          value={firstPaymentValue}
-                          onChange={(e) => {
-                            setFirstPaymentValue(e.target.value)
-                            setAutoDistributeRemaining(true)
-                          }}
-                          className={styles.input}
-                        />
-                      </div>
-                    </div>
-                    <div className={styles.manualField}>
-                      <label>Fecha límite</label>
-                      <div className={styles.dateInput}>
-                        <PhoneDateField
-                          value={firstPaymentDate}
-                          min={getBusinessTodayInputValue(timezone)}
-                          onChange={setFirstPaymentDate}
-                          title="Fecha límite"
-                          buttonClassName={styles.phoneDateButton}
-                          inlineOnWide
-                        />
-                      </div>
-                    </div>
-                    <div className={styles.manualField}>
-                      <label>Método de pago</label>
-                      {renderPaymentSelect({
-                        value: firstPaymentMethod,
-                        onChange: (value) => setFirstPaymentMethod(value as FirstPaymentMethod),
-                        options: FIRST_PAYMENT_METHOD_OPTIONS,
-                        title: 'Método de pago',
-                        placeholder: 'Seleccionar método',
-                        invalid: firstPaymentMethodMissing
-                      })}
-                    </div>
-                  </div>
-                  {firstPaymentMethodMissing && (
-                    <div className={styles.fieldWarning} role="alert">
-                      <AlertCircle size={14} />
-                      <span>Selecciona el método de pago antes de continuar</span>
-                    </div>
-                  )}
-                  <div className={styles.calcChip}>
-                    <span>Monto del enganche</span>
-                    <strong>{formatCurrency(firstPaymentAmount, currency)}</strong>
-                  </div>
-                </div>
-              )}
-            </div>
-
-            <div className={styles.planStep}>
-              <div className={styles.planStepHead}>
-                <div className={styles.planStepTitle}>
-                  <span className={styles.stepNumber}>2</span>
-                  <div>
-                    <p>Cobros programados</p>
-                    <span>Define la frecuencia y fechas de los cobros automáticos.</span>
-                  </div>
-                </div>
-                <span className={styles.autoTag}>
-                  <ShieldCheck size={13} />
-                  Automáticos
-                </span>
-              </div>
-
-              <div className={styles.planStepBody}>
-                <div className={styles.fieldGrid}>
-                  {!firstPaymentEnabled && (
-                    <div className={styles.manualField}>
-                      <label>Tipo de valor</label>
-                      {renderPaymentSelect({
-                        value: remainingValueType,
-                        onChange: (value) => {
-                          setRemainingValueType(value as InstallmentValueType)
-                          setAutoDistributeRemaining(true)
-                        },
-                        options: INSTALLMENT_VALUE_TYPE_OPTIONS,
-                        title: 'Tipo de valor'
-                      })}
-                    </div>
-                  )}
-                  <div className={styles.manualField}>
-                    <label>Frecuencia de cobro</label>
-                    {renderPaymentSelect({
-                      value: remainingFrequency,
-                      onChange: (value) => setRemainingFrequency(value as RemainingFrequency),
-                      options: remainingFrequencyOptions,
-                      title: 'Frecuencia de cobro'
-                    })}
-                  </div>
-                </div>
-
-                <p className={styles.planHint}>
-                  {remainingFrequency === 'custom'
-                    ? `Ajusta ${effectiveRemainingValueType === 'percentage' ? 'el porcentaje' : 'el monto fijo'} y la fecha de cada pago.`
-                    : 'Las fechas se calculan automáticamente. Cambia a “Personalizada” para editarlas a mano.'}
-                </p>
-
-                <div className={styles.installmentTable}>
-                  <div className={styles.installmentHead}>
-                    <span>#</span>
-                    <span>Valor</span>
-                    <span>Fecha de cobro</span>
-                    <span className={styles.alignRight}>Monto</span>
-                    <span aria-hidden="true" />
-                  </div>
-
-                  <div className={styles.installmentList}>
-                    {resolvedRemainingInstallments.map((installment) => (
-                      <div key={installment.id} className={styles.installmentRow}>
-                        <div className={styles.installmentSeq}>{installment.sequence}</div>
-                        <label className={`${styles.installmentCell} ${styles.installmentValue}`}>
-                          <span className={styles.cellLabel}>{effectiveRemainingValueType === 'percentage' ? 'Porcentaje' : 'Monto fijo'}</span>
-                          <div className={styles.amountInput}>
-                            {effectiveRemainingValueType === 'percentage'
-                              ? <Percent size={16} className={styles.dollarIcon} />
-                              : <DollarSign size={16} className={styles.dollarIcon} />}
-                            <NumberInput
-                              step="0.01"
-                              min="0"
-                              value={installment.value}
-                              onChange={(e) => updateRemainingInstallment(installment.id, { value: e.target.value })}
-                              className={styles.input}
-                              aria-label={`${effectiveRemainingValueType === 'percentage' ? 'Porcentaje' : 'Monto fijo'} de parcialidad ${installment.sequence}`}
-                            />
-                          </div>
-                        </label>
-                        <label className={`${styles.installmentCell} ${styles.installmentDate}`}>
-                          <span className={styles.cellLabel}>Fecha de cobro</span>
-                          <PhoneDateField
-                            value={installment.dueDate}
-                            min={getBusinessTodayInputValue(timezone)}
-                            onChange={(value) => updateRemainingInstallment(installment.id, { dueDate: value })}
-                            disabled={remainingFrequency !== 'custom'}
-                            title={`Fecha de parcialidad ${installment.sequence}`}
-                            ariaLabel={`Fecha de parcialidad ${installment.sequence}`}
-                            buttonClassName={styles.phoneDateButton}
-                            inlineOnWide
-                          />
-                        </label>
-                        <div className={styles.installmentMonto}>
-                          <span className={styles.cellLabel}>Monto</span>
-                          <strong>{formatCurrency(installment.amount, currency)}</strong>
-                        </div>
-                        <button
-                          type="button"
-                          className={`${styles.iconButton} ${styles.installmentDelete}`}
-                          onClick={() => removeRemainingInstallment(installment.id)}
-                          disabled={remainingInstallments.length <= 1}
-                          title="Eliminar parcialidad"
-                        >
-                          <Trash2 size={16} />
-                        </button>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-
-                <button
-                  type="button"
-                  className={styles.addInstallment}
-                  onClick={addRemainingInstallment}
-                >
-                  <Plus size={16} />
-                  Agregar pago
-                </button>
-              </div>
-            </div>
-
-            <div className={`${styles.allocation} ${
-              partialPlanStatus === 'ok'
-                ? styles.allocationOk
-                : partialPlanStatus === 'under'
-                  ? styles.allocationWarn
-                  : styles.allocationError
-            }`}>
-              <div className={styles.allocationTop}>
-                <span>Asignado al plan</span>
-                <strong>
-                  {formatCurrency(partialPlanTotal, currency)}
-                  <em> / {formatCurrency(totalAmount, currency)}</em>
-                </strong>
-              </div>
-              <div className={styles.allocationBar}>
-                <div className={styles.allocationFill} style={{ width: `${partialAllocatedPct}%` }} />
-              </div>
-              <div className={styles.allocationStatus}>
-                {partialPlanStatus === 'ok' ? (
-                  <>
-                    <Check size={15} />
-                    <span>El plan cuadra con el total a cobrar.</span>
-                  </>
-                ) : partialPlanStatus === 'under' ? (
-                  <>
-                    <AlertCircle size={15} />
-                    <span>Faltan {formatCurrency(partialPlanDifference, currency)} por asignar.</span>
-                  </>
-                ) : (
-                  <>
-                    <AlertCircle size={15} />
-                    <span>Te excediste {formatCurrency(Math.abs(partialPlanDifference), currency)} del total.</span>
-                  </>
-                )}
-              </div>
-            </div>
-
-            <div className={styles.authorizationNotice}>
-              <ShieldCheck size={16} />
-              <span>{partialAuthorizationNotice}</span>
-            </div>
-          </div>
-        ) : (
+        {activePaymentMode === 'partial' && (
           <div className={styles.planSection}>
             <div className={styles.planIntro}>
               <div className={styles.planIntroText}>
@@ -3855,6 +3569,7 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
                     <div key="first-payment" className={styles.planRow}>
                       <div className={styles.planSeq}>{index + 1}</div>
                       <div className={styles.planValueCell}>
+                        <span className={styles.cellLabel}>Valor</span>
                         <div className={styles.amountInput}>
                           <ValueIcon size={16} className={styles.dollarIcon} />
                           <NumberInput
@@ -3875,6 +3590,7 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
                         )}
                       </div>
                       <div className={styles.planDateCell}>
+                        <span className={styles.cellLabel}>Fecha de cobro</span>
                         <PhoneDateField
                           value={firstPaymentDate}
                           min={getBusinessTodayInputValue(timezone)}
@@ -3896,6 +3612,7 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
                   <div key={installment.id} className={styles.planRow}>
                     <div className={styles.planSeq}>{index + 1}</div>
                     <div className={styles.planValueCell}>
+                      <span className={styles.cellLabel}>Valor</span>
                       <div className={styles.amountInput}>
                         <ValueIcon size={16} className={styles.dollarIcon} />
                         <NumberInput
@@ -3912,6 +3629,7 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
                       )}
                     </div>
                     <div className={styles.planDateCell}>
+                      <span className={styles.cellLabel}>Fecha de cobro</span>
                       <PhoneDateField
                         value={installment.dueDate}
                         min={getBusinessTodayInputValue(timezone)}
@@ -3991,7 +3709,7 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
               <span>{partialAuthorizationNotice}</span>
             </div>
           </div>
-        ))}
+        )}
 
         {paymentTaxes.enabled && (
           <>
