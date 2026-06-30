@@ -5384,10 +5384,13 @@
     transform 180ms ease;
 }
 
+/* NO fijes width/height aqui: el icono de canal se dibuja como disco
+   (.composerChannelDiscIcon -> .mark) y su glifo se mide con
+   --phone-message-channel-mark-glyph-size (58%). Un width/height aqui gana
+   por especificidad a .markGlyph y revienta el glifo (se desborda del disco,
+   se ve "ancho/pixelado", sobre todo WhatsApp). Solo grosor de trazo y flex. */
 .composerChannelButton svg,
 .composerChannelButton :global(svg) {
-  width: 19px;
-  height: 19px;
   flex: 0 0 auto;
   stroke-width: 1.8;
 }
