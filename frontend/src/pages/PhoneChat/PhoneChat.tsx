@@ -12494,20 +12494,14 @@ export const PhoneChat: React.FC = () => {
     )
   }
 
-  const renderComposerMessageChannelIcon = (value: ComposerMessageChannelValue, surface: 'button' | 'option' = 'option') => {
-    if (value === 'whatsapp_api') {
-      return (
-        <PhoneMessageChannelIcon
-          channel={value}
-          variant={surface === 'button' ? 'disc' : 'glyph'}
-          size={surface === 'button' ? 12 : 20}
-          className={surface === 'button' ? styles.composerChannelDiscIcon : styles.channelIconGlyph}
-        />
-      )
-    }
-
-    return <PhoneMessageChannelIcon channel={value} size={20} className={styles.channelIconGlyph} />
-  }
+  // Todos los canales (incluido WhatsApp) usan el mismo glifo de marca plano, sin
+  // disco ni envoltura especial. El color de marca lo pone el contenedor
+  // (.composerChannelButton[data-channel] / .composerChannelOptionIcon[data-channel]).
+  // Mantenerlo plano y sin hardcodeo es lo que se ve nitido: las capas GPU del chat
+  // movil rasterizan un disco chico con glifo blanco encima y se ve pixelado.
+  const renderComposerMessageChannelIcon = (value: ComposerMessageChannelValue) => (
+    <PhoneMessageChannelIcon channel={value} size={20} className={styles.channelIconGlyph} />
+  )
 
   const getComposerMessageChannelDisabledReason = (value: ComposerMessageChannelValue) => {
     if (!activeContact) return 'Abre un chat para elegir canal.'
@@ -12577,7 +12571,7 @@ export const PhoneChat: React.FC = () => {
           aria-expanded={composerChannelPickerOpen}
           title={`Canal de envío: ${activeLabel}`}
         >
-          {renderComposerMessageChannelIcon(activeValue, 'button')}
+          {renderComposerMessageChannelIcon(activeValue)}
         </button>
 
         {composerChannelPickerOpen && (

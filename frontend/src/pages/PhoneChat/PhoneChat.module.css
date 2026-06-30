@@ -5422,11 +5422,6 @@
   height: 20px;
 }
 
-.composerChannelDiscIcon {
-  --phone-message-channel-mark-size: 18px;
-  --phone-message-channel-mark-glyph-size: 58%;
-}
-
 .composerChannelDropdown {
   position: absolute;
   left: 0;
