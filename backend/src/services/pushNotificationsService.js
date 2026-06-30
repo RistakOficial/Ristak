@@ -135,6 +135,29 @@ const APP_NAME_NOTIFICATION_TEXTS = new Set([
   'de reistack',
   'from reistack'
 ])
+const NOTIFICATION_TITLE_EMOJI_BY_TEXT = new Map([
+  ['Pago recibido', '💸'],
+  ['Pago rechazado', '❌'],
+  ['Pago requiere atención', '⚠️'],
+  ['Pago pendiente', '⏳'],
+  ['Pago parcial', '🧾'],
+  ['Pago vencido', '⏰'],
+  ['Pago reembolsado', '↩️'],
+  ['Pago cancelado', '❌'],
+  ['Pago programado', '📅'],
+  ['Pago enviado', '📤'],
+  ['Pago creado', '🧾'],
+  ['Pago actualizado', '💳'],
+  ['Cita agendada', '📅'],
+  ['Cita confirmada', '✅'],
+  ['Cita reprogramada', '↩️'],
+  ['Cita cancelada', '❌'],
+  ['Cita sin asistencia', '⚠️'],
+  ['Cita actualizada', '📅']
+])
+const NOTIFICATION_TITLE_EMOJI_PREFIXES = Array.from(
+  new Set(NOTIFICATION_TITLE_EMOJI_BY_TEXT.values())
+)
 const PAYMENT_STATUS_TITLES = {
   paid: 'Pago recibido',
   succeeded: 'Pago recibido',
@@ -474,10 +497,23 @@ function isAppNameNotificationText(value = '') {
   return APP_NAME_NOTIFICATION_TEXTS.has(text)
 }
 
+function titleStartsWithNotificationEmoji(value = '') {
+  const text = cleanNotificationText(value)
+  return NOTIFICATION_TITLE_EMOJI_PREFIXES.some((emoji) => text.startsWith(`${emoji} `))
+}
+
+function addNotificationTitleEmoji(value = '') {
+  const title = cleanNotificationText(value)
+  if (!title || titleStartsWithNotificationEmoji(title)) return title
+  const emoji = NOTIFICATION_TITLE_EMOJI_BY_TEXT.get(title)
+  return emoji ? `${emoji} ${title}` : title
+}
+
 function getNotificationTitle(payload = {}) {
   const fallback = payload.category === 'chat' ? 'Mensaje nuevo' : DEFAULT_NOTIFICATION_TITLE
   const title = stripAppNameFromNotificationText(payload.title)
-  return title && !isAppNameNotificationText(title) ? title : fallback
+  const safeTitle = title && !isAppNameNotificationText(title) ? title : fallback
+  return addNotificationTitleEmoji(safeTitle)
 }
 
 function getNotificationBody(payload = {}) {
@@ -663,7 +699,7 @@ function normalizePaymentStatus(value = '') {
 
 function getPaymentNotificationTitle(payment = {}) {
   const status = normalizePaymentStatus(payment.paymentStatus || payment.payment_status || payment.status || 'paid')
-  return PAYMENT_STATUS_TITLES[status] || 'Pago actualizado'
+  return addNotificationTitleEmoji(PAYMENT_STATUS_TITLES[status] || 'Pago actualizado')
 }
 
 function getPaymentContactLabel(payment = {}) {
@@ -727,7 +763,7 @@ function normalizeAppointmentEventType(value = '') {
 }
 
 function getAppointmentNotificationTitle(eventType = 'booked') {
-  return APPOINTMENT_STATUS_TITLES[normalizeAppointmentEventType(eventType)] || 'Cita actualizada'
+  return addNotificationTitleEmoji(APPOINTMENT_STATUS_TITLES[normalizeAppointmentEventType(eventType)] || 'Cita actualizada')
 }
 
 function getAppointmentEventKey(eventType = 'booked') {
