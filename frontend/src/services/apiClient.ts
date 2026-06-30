@@ -7,6 +7,7 @@ import { getApiBaseUrl } from './apiBaseUrl'
 interface ApiRequestOptions extends RequestInit {
   params?: Record<string, string>
   suppressFeatureNotAvailableToast?: boolean
+  showFeatureNotAvailableToast?: boolean
 }
 
 class ApiClient {
@@ -29,7 +30,13 @@ class ApiClient {
     endpoint: string,
     options: ApiRequestOptions = {}
   ): Promise<T> {
-    const { params, suppressFeatureNotAvailableToast = false, ...fetchOptions } = options
+    const {
+      params,
+      suppressFeatureNotAvailableToast = false,
+      showFeatureNotAvailableToast,
+      ...fetchOptions
+    } = options
+    const method = String(fetchOptions.method || 'GET').toUpperCase()
 
     // SIEMPRE agregamos /api si no está presente
     const apiEndpoint = endpoint.startsWith('/api') ? endpoint : `/api${endpoint.startsWith('/') ? '' : '/'}${endpoint}`
@@ -89,13 +96,15 @@ class ApiClient {
       apiError.body = json
 
       // (LIC-005) Cuando el backend bloquea un módulo premium fuera del plan
-      // devuelve 403 con code "feature_not_available". Antes esto fallaba en
-      // silencio. De forma centralizada emitimos un evento global para que la UI
-      // (NotificationContext) muestre un toast claro al usuario, sin acoplar el
-      // apiClient a React. El error igual se lanza para no romper a los callers.
+      // devuelve 403 con code "feature_not_available". Sólo mostramos el toast
+      // global en acciones explícitas: las lecturas GET suelen ser cargas de
+      // pantalla/status y no deben regañar al usuario por funciones que no tocó.
+      // El error igual se lanza para no romper a los callers.
       if (response.status === 403 && json && typeof json === 'object') {
         const code = (json as { code?: unknown }).code
-        if (code === 'feature_not_available' && !suppressFeatureNotAvailableToast && typeof window !== 'undefined') {
+        const shouldShowFeatureToast = showFeatureNotAvailableToast
+          ?? (!suppressFeatureNotAvailableToast && method !== 'GET')
+        if (code === 'feature_not_available' && shouldShowFeatureToast && typeof window !== 'undefined') {
           window.dispatchEvent(
             new CustomEvent('ristak:feature-not-available', {
               detail: {
