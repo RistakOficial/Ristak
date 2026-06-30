@@ -501,6 +501,10 @@ const getNextDueDate = (baseDate: string, frequency: RemainingFrequency, index: 
   return toDateInputValue(addMonths(base, index))
 }
 
+const getRemainingDueDateOffset = (zeroBasedIndex: number, firstPaymentEnabled: boolean) => (
+  firstPaymentEnabled ? zeroBasedIndex + 1 : zeroBasedIndex
+)
+
 const resolvePartialAmount = (type: InstallmentValueType, value: string, totalAmount: number) => {
   const parsedValue = normalizeAmount(value)
   return type === 'percentage'
@@ -1556,9 +1560,13 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
 
     setRemainingInstallments(prev => prev.map((installment, index) => ({
       ...installment,
-      dueDate: getNextDueDate(firstPaymentDate, remainingFrequency, index + 1)
+      dueDate: getNextDueDate(
+        firstPaymentDate,
+        remainingFrequency,
+        getRemainingDueDateOffset(index, firstPaymentEnabled)
+      )
     })))
-  }, [activePaymentMode, firstPaymentDate, remainingFrequency])
+  }, [activePaymentMode, firstPaymentDate, firstPaymentEnabled, remainingFrequency])
 
   useEffect(() => {
     if (activePaymentMode !== 'partial' || !autoDistributeRemaining) return
@@ -1852,14 +1860,18 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
   const addRemainingInstallment = () => {
     setAutoDistributeRemaining(true)
     setRemainingInstallments(prev => {
-      const nextIndex = prev.length + 1
+      const nextIndex = prev.length
       return [
         ...prev,
         {
           id: createInstallmentId(),
           type: effectiveRemainingValueType,
           value: '0',
-          dueDate: getNextDueDate(firstPaymentDate, remainingFrequency === 'custom' ? 'monthly' : remainingFrequency, nextIndex)
+          dueDate: getNextDueDate(
+            firstPaymentDate,
+            remainingFrequency === 'custom' ? 'monthly' : remainingFrequency,
+            getRemainingDueDateOffset(nextIndex, firstPaymentEnabled)
+          )
         }
       ]
     })
