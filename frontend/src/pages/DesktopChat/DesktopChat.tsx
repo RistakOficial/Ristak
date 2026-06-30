@@ -3017,36 +3017,55 @@ export const DesktopChat: React.FC = () => {
       setConversationAgentState(null)
     }
     setMessagesError('')
+    let messagesLoaded = false
     try {
-      const [journey, scheduledMessages, details, contactAgentStates, agentCompletions] = await Promise.all([
+      const [journey, scheduledMessages] = await Promise.all([
         contactsService.getContactJourney(contactId, {
           includeBusinessMessages: true,
           refreshExternalStatuses: false,
+          chatMessagesOnly: true,
           messageLimit: CHAT_CONVERSATION_MESSAGE_LIMIT
         }),
-        whatsappApiService.getScheduledMessages(contactId).catch(() => []),
-        contactsService.getContactDetails(contactId).catch(() => null),
-        conversationalAgentService.getStates(contactId).catch(() => [] as ConversationAgentState[]),
-        conversationalAgentService.listCompletionEvents({ contactId, limit: 20 }).catch(() => [])
+        whatsappApiService.getScheduledMessages(contactId).catch(() => [])
       ])
       if (!isCurrentConversationLoad()) return
 
       const nextMessages = buildConversationMessages(journey, scheduledMessages)
-      const agentState = selectPrimaryAgentState(contactAgentStates)
       setContactJourney((current) => (
         areJourneyEventsEquivalent(current, journey) ? current : journey
       ))
-      setAgentCompletionEvents(agentCompletions)
-      setContactInfoData(details)
-      setConversationAgentState(agentState)
-      setAgentStates((current) => (agentState ? { ...current, [contactId]: agentState } : current))
-      setAgentStateLists((current) => ({ ...current, [contactId]: contactAgentStates }))
       setMessages((current) => (
         (() => {
           const mergedMessages = mergeDesktopMessagesWithOptimistic(nextMessages, current)
           return areDesktopMessagesEquivalent(current, mergedMessages) ? current : mergedMessages
         })()
       ))
+      messagesLoaded = true
+      setMessagesLoading(false)
+      setMessagesRefreshing(false)
+      setChats((current) => {
+        const next = current.map((contact) => contact.id === contactId ? { ...contact, unreadCount: 0 } : contact)
+        writeCachedChatList(next)
+        return next
+      })
+      void contactsService.markChatRead(contactId).catch(() => undefined)
+
+      const [details, contactAgentStates, agentCompletions] = await Promise.all([
+        contactsService.getContactDetails(contactId, {
+          warmProfilePictures: false,
+          refreshExternalAppointments: false
+        }).catch(() => null),
+        conversationalAgentService.getStates(contactId).catch(() => [] as ConversationAgentState[]),
+        conversationalAgentService.listCompletionEvents({ contactId, limit: 20 }).catch(() => [])
+      ])
+      if (!isCurrentConversationLoad()) return
+
+      const agentState = selectPrimaryAgentState(contactAgentStates)
+      setAgentCompletionEvents(agentCompletions)
+      setContactInfoData(details)
+      setConversationAgentState(agentState)
+      setAgentStates((current) => (agentState ? { ...current, [contactId]: agentState } : current))
+      setAgentStateLists((current) => ({ ...current, [contactId]: contactAgentStates }))
       writeCachedConversation(locationId, contactId, {
         journey,
         messages: nextMessages,
@@ -3054,15 +3073,9 @@ export const DesktopChat: React.FC = () => {
         contactInfo: details,
         agentState
       })
-      setChats((current) => {
-        const next = current.map((contact) => contact.id === contactId ? { ...contact, unreadCount: 0 } : contact)
-        writeCachedChatList(next)
-        return next
-      })
-      void contactsService.markChatRead(contactId).catch(() => undefined)
     } catch {
       if (!isCurrentConversationLoad()) return
-      if (!silent && !showedCachedConversation) {
+      if (!messagesLoaded && !silent && !showedCachedConversation) {
         setMessages([])
         setAgentCompletionEvents([])
         setContactJourney([])
@@ -3072,8 +3085,10 @@ export const DesktopChat: React.FC = () => {
       }
     } finally {
       if (!isCurrentConversationLoad()) return
-      setMessagesLoading(false)
-      setMessagesRefreshing(false)
+      if (!messagesLoaded) {
+        setMessagesLoading(false)
+        setMessagesRefreshing(false)
+      }
       setContactInfoLoading(false)
     }
   }, [locationId])

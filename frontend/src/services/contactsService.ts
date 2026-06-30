@@ -28,6 +28,12 @@ interface ContactJourneyOptions {
   includeBusinessMessages?: boolean
   refreshExternalStatuses?: boolean
   messageLimit?: number
+  chatMessagesOnly?: boolean
+}
+
+interface ContactDetailsOptions {
+  warmProfilePictures?: boolean
+  refreshExternalAppointments?: boolean
 }
 
 interface ChatReadStateResult {
@@ -347,8 +353,14 @@ export const contactsService = {
     await apiClient.delete(`/contacts/${id}/permanent`)
   },
 
-  async getContactDetails(id: string): Promise<Contact> {
-    const data = await apiClient.get<Contact>(`/contacts/${id}`)
+  async getContactDetails(id: string, options: ContactDetailsOptions = {}): Promise<Contact> {
+    const params: Record<string, string> = {}
+    if (options.warmProfilePictures === false) params.warmProfilePictures = 'false'
+    if (options.refreshExternalAppointments === false) params.refreshExternalAppointments = 'false'
+
+    const data = await apiClient.get<Contact>(`/contacts/${id}`, {
+      params: Object.keys(params).length > 0 ? params : undefined
+    })
     return normalizeContact(data)
   },
 
@@ -369,6 +381,7 @@ export const contactsService = {
       const params: Record<string, string> = {}
       if (options.includeBusinessMessages) params.includeBusinessMessages = 'true'
       if (options.refreshExternalStatuses === false) params.refreshExternalStatuses = 'false'
+      if (options.chatMessagesOnly) params.chatMessagesOnly = 'true'
       if (options.messageLimit && Number.isFinite(options.messageLimit) && options.messageLimit > 0) {
         params.messageLimit = String(Math.round(options.messageLimit))
       }

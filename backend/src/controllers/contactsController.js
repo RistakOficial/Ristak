@@ -256,6 +256,7 @@ const CONTACT_META_PROFILE_SELECT = `
 const cleanString = (value) => String(value || '').trim()
 const hasOwn = (object, key) => Object.prototype.hasOwnProperty.call(object || {}, key)
 const isTruthyQueryValue = (value) => ['1', 'true', 'yes', 'si', 'sí'].includes(cleanString(value).toLowerCase())
+const isExplicitFalseQueryValue = (value) => ['0', 'false', 'no', 'off'].includes(cleanString(value).toLowerCase())
 const hasTextValue = (value) => cleanString(value).length > 0
 const JOURNEY_MESSAGE_MAX_LIMIT = 500
 
@@ -2649,6 +2650,12 @@ ${CONTACT_META_PROFILE_SELECT},
 export const getContactById = async (req, res) => {
   try {
     const { id } = req.params
+    const shouldWarmProfilePictures = !isExplicitFalseQueryValue(
+      req.query?.warmProfilePictures ?? req.query?.warmProfiles ?? req.query?.hydrateProfilePictures
+    )
+    const shouldRefreshExternalAppointments = !isExplicitFalseQueryValue(
+      req.query?.refreshExternalAppointments ?? req.query?.refreshAppointments
+    )
 
     // (SEC-005 / ACL-002) Aplicar filtro de contactos ocultos también al detalle por ID:
     // si el contacto cae bajo un filtro de ocultos, responder 404 (no exponerlo por ID).
@@ -2739,11 +2746,13 @@ ${CONTACT_META_PROFILE_SELECT},
       })
     }
 
-    const [hydratedContact] = await warmWhatsAppProfilePicturesForRows([contact], {
-      apiLimit: 1,
-      qrLimit: 1
-    })
-    contact = hydratedContact || contact
+    if (shouldWarmProfilePictures) {
+      const [hydratedContact] = await warmWhatsAppProfilePicturesForRows([contact], {
+        apiLimit: 1,
+        qrLimit: 1
+      })
+      contact = hydratedContact || contact
+    }
 
     // Obtener pagos del contacto
     const payments = await db.all(
@@ -2766,99 +2775,101 @@ ${CONTACT_META_PROFILE_SELECT},
       [id]
     )
 
-    // Fallback: Intentar obtener citas de HighLevel API en tiempo real
-    // Solo si no tenemos citas localmente o queremos actualizar con datos frescos
-    try {
-      // Obtener configuración de HighLevel
-      const config = await db.get(
-        'SELECT location_id, api_token FROM highlevel_config LIMIT 1'
-      )
-
-      if (config && config.api_token) {
-        logger.info(`Obteniendo citas de HighLevel para contacto ${id}`)
-
-        // Usar el endpoint correcto: /contacts/{contactId}/appointments
-        const eventsResponse = await fetch(
-          `https://services.leadconnectorhq.com/contacts/${id}/appointments`,
-          {
-            headers: {
-              'Authorization': `Bearer ${config.api_token}`,
-              'Version': '2021-07-28'
-            }
-          }
+    // Fallback: Intentar obtener citas de HighLevel API en tiempo real.
+    // Chat puede pedir refreshExternalAppointments=false para pintar mensajes sin esperar APIs externas.
+    if (shouldRefreshExternalAppointments) {
+      try {
+        // Obtener configuración de HighLevel
+        const config = await db.get(
+          'SELECT location_id, api_token FROM highlevel_config LIMIT 1'
         )
 
-        if (eventsResponse.ok) {
-          const eventsData = await eventsResponse.json()
+        if (config && config.api_token) {
+          logger.info(`Obteniendo citas de HighLevel para contacto ${id}`)
 
-          if (eventsData.events && eventsData.events.length > 0) {
-            logger.info(`Encontradas ${eventsData.events.length} citas en HighLevel para contacto ${id}`)
-
-            // Guardar las citas en la DB para cache
-            for (const appointment of eventsData.events) {
-              await db.run(`
-                INSERT INTO appointments (
-                  id, calendar_id, contact_id, location_id, title,
-                  status, appointment_status, assigned_user_id, notes,
-                  address, start_time, end_time, date_added, date_updated
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                ON CONFLICT (id) DO UPDATE SET
-                  title = excluded.title,
-                  status = excluded.status,
-                  appointment_status = excluded.appointment_status,
-                  start_time = excluded.start_time,
-                  end_time = excluded.end_time,
-                  date_updated = excluded.date_updated
-              `, [
-                appointment.id,
-                appointment.calendarId,
-                appointment.contactId,
-                appointment.locationId || config.location_id,
-                appointment.title || '(Sin título)',
-                appointment.status,
-                appointment.appointmentStatus,
-                appointment.assignedUserId,
-                appointment.notes,
-                appointment.address,
-                appointment.startTime ? new Date(appointment.startTime) : null,
-                appointment.endTime ? new Date(appointment.endTime) : null,
-                appointment.dateAdded ? new Date(appointment.dateAdded) : new Date(),
-                new Date()
-              ])
-            }
-
-            // Combinar con las citas locales (evitando duplicados)
-            const appointmentIds = new Set(appointments.map(a => a.id))
-            for (const appointment of eventsData.events) {
-              if (!appointmentIds.has(appointment.id)) {
-                appointments.push({
-                  id: appointment.id,
-                  calendar_id: appointment.calendarId,
-                  contact_id: appointment.contactId,
-                  title: appointment.title,
-                  status: appointment.status,
-                  appointment_status: appointment.appointmentStatus,
-                  assigned_user_id: appointment.assignedUserId,
-                  notes: appointment.notes,
-                  address: appointment.address,
-                  start_time: appointment.startTime,
-                  end_time: appointment.endTime
-                })
+          // Usar el endpoint correcto: /contacts/{contactId}/appointments
+          const eventsResponse = await fetch(
+            `https://services.leadconnectorhq.com/contacts/${id}/appointments`,
+            {
+              headers: {
+                'Authorization': `Bearer ${config.api_token}`,
+                'Version': '2021-07-28'
               }
             }
+          )
 
-            logger.info(`Total de citas después de combinar: ${appointments.length}`)
+          if (eventsResponse.ok) {
+            const eventsData = await eventsResponse.json()
+
+            if (eventsData.events && eventsData.events.length > 0) {
+              logger.info(`Encontradas ${eventsData.events.length} citas en HighLevel para contacto ${id}`)
+
+              // Guardar las citas en la DB para cache
+              for (const appointment of eventsData.events) {
+                await db.run(`
+                  INSERT INTO appointments (
+                    id, calendar_id, contact_id, location_id, title,
+                    status, appointment_status, assigned_user_id, notes,
+                    address, start_time, end_time, date_added, date_updated
+                  ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                  ON CONFLICT (id) DO UPDATE SET
+                    title = excluded.title,
+                    status = excluded.status,
+                    appointment_status = excluded.appointment_status,
+                    start_time = excluded.start_time,
+                    end_time = excluded.end_time,
+                    date_updated = excluded.date_updated
+                `, [
+                  appointment.id,
+                  appointment.calendarId,
+                  appointment.contactId,
+                  appointment.locationId || config.location_id,
+                  appointment.title || '(Sin título)',
+                  appointment.status,
+                  appointment.appointmentStatus,
+                  appointment.assignedUserId,
+                  appointment.notes,
+                  appointment.address,
+                  appointment.startTime ? new Date(appointment.startTime) : null,
+                  appointment.endTime ? new Date(appointment.endTime) : null,
+                  appointment.dateAdded ? new Date(appointment.dateAdded) : new Date(),
+                  new Date()
+                ])
+              }
+
+              // Combinar con las citas locales (evitando duplicados)
+              const appointmentIds = new Set(appointments.map(a => a.id))
+              for (const appointment of eventsData.events) {
+                if (!appointmentIds.has(appointment.id)) {
+                  appointments.push({
+                    id: appointment.id,
+                    calendar_id: appointment.calendarId,
+                    contact_id: appointment.contactId,
+                    title: appointment.title,
+                    status: appointment.status,
+                    appointment_status: appointment.appointmentStatus,
+                    assigned_user_id: appointment.assignedUserId,
+                    notes: appointment.notes,
+                    address: appointment.address,
+                    start_time: appointment.startTime,
+                    end_time: appointment.endTime
+                  })
+                }
+              }
+
+              logger.info(`Total de citas después de combinar: ${appointments.length}`)
+            } else {
+              logger.info(`No se encontraron citas en HighLevel para contacto ${id}`)
+            }
           } else {
-            logger.info(`No se encontraron citas en HighLevel para contacto ${id}`)
+            const errorText = await eventsResponse.text()
+            logger.warn(`Error obteniendo citas de HighLevel: ${eventsResponse.status} - ${errorText.substring(0, 100)}`)
           }
-        } else {
-          const errorText = await eventsResponse.text()
-          logger.warn(`Error obteniendo citas de HighLevel: ${eventsResponse.status} - ${errorText.substring(0, 100)}`)
         }
+      } catch (error) {
+        logger.warn(`No se pudieron obtener citas de HighLevel para contacto ${id}: ${error.message}`)
+        // Continuar con las citas locales si falla HighLevel
       }
-    } catch (error) {
-      logger.warn(`No se pudieron obtener citas de HighLevel para contacto ${id}: ${error.message}`)
-      // Continuar con las citas locales si falla HighLevel
     }
 
     const normalizedPhone = normalizePhone(contact.phone)
@@ -4446,6 +4457,9 @@ export const getContactJourney = async (req, res) => {
     const { id } = req.params
     const includeBusinessMessages = String(req.query?.includeBusinessMessages || '').toLowerCase() === 'true'
     const refreshExternalStatuses = String(req.query?.refreshExternalStatuses ?? 'true').toLowerCase() !== 'false'
+    const chatMessagesOnly = isTruthyQueryValue(
+      req.query?.chatMessagesOnly ?? req.query?.chatOnly ?? req.query?.messagesOnly
+    )
     const journeyMessageLimit = parseJourneyMessageLimit(
       req.query?.messageLimit ?? req.query?.messagesLimit ?? req.query?.conversationMessageLimit
     )
@@ -4543,66 +4557,68 @@ export const getContactJourney = async (req, res) => {
     // 1. TODAS las visitas/sessions (por contact_id, visitor_id o email)
     let sessions = []
 
-    const contactVisitorId = cleanString(contact.visitor_id)
-    if (isTrustedTrackingVisitorId(contactVisitorId)) {
-      sessions = await db.all(
-        `SELECT * FROM sessions
-         WHERE contact_id = ? OR visitor_id = ?
-         ORDER BY started_at ASC`,
-        [id, contactVisitorId]
-      )
-    } else {
-      if (contactVisitorId) {
-        logger.warn(`Journey ignoró visitor_id no confiable para contacto ${id}: ${contactVisitorId}`)
-      }
-      sessions = await db.all(
-        `SELECT * FROM sessions
-         WHERE contact_id = ?
-         ORDER BY started_at ASC`,
-        [id]
-      )
-    }
-
-    // Fallback por email si no encontró sesiones
-    if (sessions.length === 0 && contact.email) {
-      sessions = await db.all(
-        `SELECT * FROM sessions WHERE email = ? ORDER BY started_at ASC`,
-        [contact.email]
-      )
-      if (sessions.length > 0) {
-        logger.info(`📍 ${sessions.length} sessions encontradas por email para contacto ${id}`)
-      }
-    }
-
-    const videoEngagements = await loadContactVideoEngagements(contact)
-    const sessionSummaries = summarizeJourneySessionRows(sessions)
-    const sessionJourneyEntries = sessionSummaries.map(session => ({
-      session,
-      event: buildPageVisitJourneyEvent(session, { contactCreatedAt: contact.created_at })
-    }))
-    const attachedVideoKeys = attachVideoEngagementsToPageVisits(sessionJourneyEntries, videoEngagements)
-
-    // Agregar todas las visitas al journey, enriquecidas con video si el tracking
-    // detectó reproducción en la misma sesión/página.
-    sessionJourneyEntries.forEach(({ event }) => {
-      journey.push(event)
-    })
-
-    // Si el video se enlazó al contacto pero no hay visita exacta para colgarlo,
-    // no se pierde: queda como evento propio de video dentro del viaje.
-    videoEngagements.forEach(video => {
-      const key = getVideoEngagementKey(video)
-      if (key && attachedVideoKeys.has(key)) return
-
-      journey.push({
-        type: 'video_playback',
-        date: video.first_event_at || video.last_event_at || contact.created_at,
-        data: {
-          ...video,
-          standalone: true
+    if (!chatMessagesOnly) {
+      const contactVisitorId = cleanString(contact.visitor_id)
+      if (isTrustedTrackingVisitorId(contactVisitorId)) {
+        sessions = await db.all(
+          `SELECT * FROM sessions
+           WHERE contact_id = ? OR visitor_id = ?
+           ORDER BY started_at ASC`,
+          [id, contactVisitorId]
+        )
+      } else {
+        if (contactVisitorId) {
+          logger.warn(`Journey ignoró visitor_id no confiable para contacto ${id}: ${contactVisitorId}`)
         }
+        sessions = await db.all(
+          `SELECT * FROM sessions
+           WHERE contact_id = ?
+           ORDER BY started_at ASC`,
+          [id]
+        )
+      }
+
+      // Fallback por email si no encontró sesiones
+      if (sessions.length === 0 && contact.email) {
+        sessions = await db.all(
+          `SELECT * FROM sessions WHERE email = ? ORDER BY started_at ASC`,
+          [contact.email]
+        )
+        if (sessions.length > 0) {
+          logger.info(`📍 ${sessions.length} sessions encontradas por email para contacto ${id}`)
+        }
+      }
+
+      const videoEngagements = await loadContactVideoEngagements(contact)
+      const sessionSummaries = summarizeJourneySessionRows(sessions)
+      const sessionJourneyEntries = sessionSummaries.map(session => ({
+        session,
+        event: buildPageVisitJourneyEvent(session, { contactCreatedAt: contact.created_at })
+      }))
+      const attachedVideoKeys = attachVideoEngagementsToPageVisits(sessionJourneyEntries, videoEngagements)
+
+      // Agregar todas las visitas al journey, enriquecidas con video si el tracking
+      // detectó reproducción en la misma sesión/página.
+      sessionJourneyEntries.forEach(({ event }) => {
+        journey.push(event)
       })
-    })
+
+      // Si el video se enlazó al contacto pero no hay visita exacta para colgarlo,
+      // no se pierde: queda como evento propio de video dentro del viaje.
+      videoEngagements.forEach(video => {
+        const key = getVideoEngagementKey(video)
+        if (key && attachedVideoKeys.has(key)) return
+
+        journey.push({
+          type: 'video_playback',
+          date: video.first_event_at || video.last_event_at || contact.created_at,
+          data: {
+            ...video,
+            standalone: true
+          }
+        })
+      })
+    }
 
     // 2. Movimientos de WhatsApp del cliente: diario antes del pago, atribuidos despues.
     const whatsappJourneyEvents = []
@@ -4903,6 +4919,16 @@ export const getContactJourney = async (req, res) => {
 	        }
 	      })
 	    })
+
+    if (chatMessagesOnly) {
+      journey.sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime())
+      logger.info(`Mensajes de chat obtenidos para contacto ${id}: ${journey.length} eventos`)
+
+      return res.json({
+        success: true,
+        data: journey
+      })
+    }
 
 	    // 3. Contacto creado
     const originEvidence = resolveContactJourneyOrigin({ contact, sessions, whatsappEvents: enrichedWhatsAppJourneyEvents })
