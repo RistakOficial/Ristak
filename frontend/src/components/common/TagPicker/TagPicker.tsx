@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
-import { Check, ChevronDown, Lock, Plus, Search, X } from 'lucide-react'
+import { Check, ChevronDown, CirclePlus, Lock, Plus, Search, X } from 'lucide-react'
 import { contactTagsService, type ContactTag } from '@/services/contactTagsService'
 import { getFloatingLayerZIndex } from '@/utils/layering'
 import styles from './TagPicker.module.css'
@@ -228,7 +228,11 @@ export const TagPicker: React.FC<TagPickerProps> = (props) => {
       title={placeholder || 'Agregar etiqueta'}
       data-ristak-dropdown-trigger
     >
-      <Plus size={13} aria-hidden="true" />
+      {useHeaderChipTrigger ? (
+        <CirclePlus size={18} strokeWidth={1.8} aria-hidden="true" />
+      ) : (
+        <Plus size={13} aria-hidden="true" />
+      )}
     </button>
   )
 
