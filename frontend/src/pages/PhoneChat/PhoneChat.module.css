@@ -1291,6 +1291,30 @@
   fill: #ffffff;
 }
 
+.avatarChannelBadge .avatarChannelBadgeWhatsappGlyph {
+  width: 16px;
+  height: 16px;
+  flex: 0 0 auto;
+  fill: #ffffff;
+  stroke: none !important;
+  stroke-width: 0 !important;
+  overflow: visible;
+  filter: none;
+}
+
+.avatarChannelBadge .avatarChannelBadgeWhatsappGlyph path,
+.avatarChannelBadge .avatarChannelBadgeWhatsappGlyph .whatsappAvatarGlyphMark {
+  fill: #ffffff;
+  stroke: none !important;
+  stroke-width: 0 !important;
+}
+
+.chatItem > .avatar .avatarChannelBadgeWhatsapp .avatarChannelBadgeWhatsappGlyph,
+.phoneChatPage[data-phone-chat-device="phone"] .chatItem > .avatar .avatarChannelBadgeWhatsapp .avatarChannelBadgeWhatsappGlyph {
+  width: 16px;
+  height: 16px;
+}
+
 .avatarChannelBadgeMessenger {
   background: linear-gradient(145deg, #59c8ff 0%, #0084ff 50%, #075bd8 100%);
 }
