@@ -6,6 +6,7 @@ import {
   Layers,
   Megaphone,
   MousePointerClick,
+  Repeat2,
   User
 } from 'lucide-react'
 import { useAuth } from '@/contexts/AuthContext'
@@ -24,6 +25,7 @@ const ICONS: Record<GlobalSearchItemType, React.ComponentType<{ size?: number; c
   contact: User,
   appointment: Calendar,
   payment: CreditCard,
+  payment_plan: Repeat2,
   campaign: Megaphone,
   adset: Layers,
   ad: MousePointerClick
@@ -31,25 +33,25 @@ const ICONS: Record<GlobalSearchItemType, React.ComponentType<{ size?: number; c
 
 const GLOBAL_SEARCH_CACHE_LIMIT = 30
 
+const encodeRouteId = (id: string) => encodeURIComponent(id)
+
 const buildSearchParams = (item: GlobalSearchItem) => {
   const params = new URLSearchParams()
 
   if (item.type === 'contact') {
-    params.set('open', 'contact')
-    params.set('id', item.id)
-    return { pathname: '/contacts', search: `?${params.toString()}` }
+    return { pathname: `/contacts/all/all/${encodeRouteId(item.id)}`, search: '' }
   }
 
   if (item.type === 'appointment') {
-    params.set('open', 'appointment')
-    params.set('id', item.id)
-    return { pathname: '/appointments', search: `?${params.toString()}` }
+    return { pathname: `/appointments/appointments/${encodeRouteId(item.id)}`, search: '' }
   }
 
   if (item.type === 'payment') {
-    params.set('open', 'payment')
-    params.set('id', item.id)
-    return { pathname: '/transactions', search: `?${params.toString()}` }
+    return { pathname: `/transactions/transactions/all/${encodeRouteId(item.id)}`, search: '' }
+  }
+
+  if (item.type === 'payment_plan') {
+    return { pathname: `/transactions/payment-plans/${encodeRouteId(item.id)}`, search: '' }
   }
 
   params.set('open', 'campaign')

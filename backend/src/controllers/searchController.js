@@ -108,11 +108,14 @@ export const globalSearch = async (req, res) => {
     const appointmentStartSort = timestampSortExpression('a.start_time')
     const paymentDateSort = timestampSortExpression('p.date')
     const paymentCreatedSort = timestampSortExpression('p.created_at')
+    const paymentPlanNextRunSort = timestampSortExpression('pp.next_run_at')
+    const paymentPlanUpdatedSort = timestampSortExpression('pp.updated_at')
 
     const [
       contacts,
       appointments,
       payments,
+      paymentPlans,
       campaigns,
       adsets,
       ads
@@ -197,6 +200,59 @@ export const globalSearch = async (req, res) => {
         ORDER BY ${paymentDateSort} DESC, ${paymentCreatedSort} DESC, p.id DESC
         LIMIT ?`,
         [...basicContactSearchClause.params, foldedLike, foldedLike, foldedLike, foldedLike, like, like, CATEGORY_LIMIT]
+      )),
+      runCategoryQuery('planes de pago', () => db.all(
+        `SELECT
+          pp.id,
+          pp.contact_id,
+          pp.name,
+          pp.title,
+          pp.status,
+          pp.total,
+          pp.currency,
+          pp.description,
+          pp.recurrence_label,
+          pp.start_date,
+          pp.next_run_at,
+          pp.source,
+          pp.contact_name AS plan_contact_name,
+          c.full_name AS contact_name,
+          c.first_name AS contact_first_name,
+          c.last_name AS contact_last_name,
+          c.email AS contact_email,
+          c.phone AS contact_phone
+        FROM payment_plans pp
+        LEFT JOIN contacts c ON c.id = pp.contact_id
+        WHERE
+          (${basicContactSearchClause.condition} OR
+          ${textFoldExpression('pp.contact_name')} LIKE ? OR
+          ${textFoldExpression('pp.id')} LIKE ? OR
+          ${textFoldExpression('pp.name')} LIKE ? OR
+          ${textFoldExpression('pp.title')} LIKE ? OR
+          ${textFoldExpression('pp.status')} LIKE ? OR
+          ${textFoldExpression('pp.description')} LIKE ? OR
+          ${textFoldExpression('pp.recurrence_label')} LIKE ? OR
+          ${textFoldExpression('pp.source')} LIKE ? OR
+          CAST(pp.total AS TEXT) LIKE ? OR
+          CAST(pp.start_date AS TEXT) LIKE ? OR
+          CAST(pp.next_run_at AS TEXT) LIKE ?)${hiddenOrExclude}
+        ORDER BY ${paymentPlanNextRunSort} DESC, ${paymentPlanUpdatedSort} DESC, pp.id DESC
+        LIMIT ?`,
+        [
+          ...basicContactSearchClause.params,
+          foldedLike,
+          foldedLike,
+          foldedLike,
+          foldedLike,
+          foldedLike,
+          foldedLike,
+          foldedLike,
+          foldedLike,
+          like,
+          like,
+          like,
+          CATEGORY_LIMIT
+        ]
       )),
       runCategoryQuery('campañas', () => db.all(
         `SELECT
@@ -309,6 +365,25 @@ export const globalSearch = async (req, res) => {
             meta: joinParts(formatDate(payment.date, timezone), payment.status, payment.payment_method),
             metadata: {
               contactId: payment.contact_id
+            }
+          }
+        })
+      },
+      {
+        id: 'payment_plans',
+        label: 'Planes de pago',
+        items: paymentPlans.map((plan) => {
+          const contactName = plan.contact_name || plan.plan_contact_name || joinName(plan.contact_first_name, plan.contact_last_name)
+          const planName = plan.name || plan.title || 'Plan de pago'
+
+          return {
+            type: 'payment_plan',
+            id: plan.id,
+            title: joinParts(planName, contactName),
+            subtitle: joinParts(formatMoney(plan.total, plan.currency), plan.recurrence_label, plan.description),
+            meta: joinParts(formatDate(plan.next_run_at || plan.start_date, timezone), plan.status, plan.source),
+            metadata: {
+              contactId: plan.contact_id
             }
           }
         })

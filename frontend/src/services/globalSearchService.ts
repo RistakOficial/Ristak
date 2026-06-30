@@ -1,6 +1,6 @@
 import apiClient from './apiClient'
 
-export type GlobalSearchItemType = 'contact' | 'appointment' | 'payment' | 'campaign' | 'adset' | 'ad'
+export type GlobalSearchItemType = 'contact' | 'appointment' | 'payment' | 'payment_plan' | 'campaign' | 'adset' | 'ad'
 
 export interface GlobalSearchItem {
   type: GlobalSearchItemType

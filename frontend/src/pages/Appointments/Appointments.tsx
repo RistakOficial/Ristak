@@ -1049,7 +1049,6 @@ export const Appointments: React.FC = () => {
       return;
     }
 
-    handledOpenAppointmentRef.current = appointmentId;
     let isMounted = true;
 
     const clearOpenParams = () => {
@@ -1072,6 +1071,7 @@ export const Appointments: React.FC = () => {
         const normalizedEvent = normalizeCalendarEvent(appointment, appointmentId);
         const eventDate = toDateInTimeZone(normalizedEvent.startTime, timezone) ?? new Date(normalizedEvent.startTime);
         const matchingCalendar = calendars.find((calendar) => calendar.id === normalizedEvent.calendarId);
+        handledOpenAppointmentRef.current = appointmentId;
 
         if (matchingCalendar) {
           selectCalendar(matchingCalendar);
@@ -1081,7 +1081,7 @@ export const Appointments: React.FC = () => {
           setCurrentDate(eventDate);
         }
 
-        setCalendarView('day', eventDate);
+        setViewMode('day');
         setSelectedEvent(normalizedEvent);
         setIsModalOpen(true);
       } catch {
@@ -1100,7 +1100,7 @@ export const Appointments: React.FC = () => {
     return () => {
       isMounted = false;
     };
-  }, [accessToken, calendars, loading, locationId, routeState.appointmentId, searchParams, selectCalendar, setCalendarView, setSearchParams, showToast, timezone]);
+  }, [accessToken, calendars, loading, locationId, routeState.appointmentId, searchParams, selectCalendar, setSearchParams, showToast, timezone]);
 
   const handleCloseModal = () => {
     setIsModalOpen(false);

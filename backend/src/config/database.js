@@ -2050,7 +2050,8 @@ async function initTables() {
         conekta_customer_id TEXT,
         custom_fields ${usePostgres ? "JSONB DEFAULT '[]'::jsonb" : "TEXT DEFAULT '[]'"},
         created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        deleted_at DATETIME
       )
     `)
 
@@ -2076,6 +2077,14 @@ async function initTables() {
 
     try {
       await db.run('ALTER TABLE contacts ADD COLUMN conekta_customer_id TEXT')
+    } catch (err) {
+      if (!err.message.includes('duplicate column') && !err.message.includes('already exists')) {
+        throw err
+      }
+    }
+
+    try {
+      await db.run('ALTER TABLE contacts ADD COLUMN deleted_at DATETIME')
     } catch (err) {
       if (!err.message.includes('duplicate column') && !err.message.includes('already exists')) {
         throw err

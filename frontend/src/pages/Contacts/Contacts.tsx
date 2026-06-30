@@ -693,7 +693,6 @@ const ContactsTable: React.FC = () => {
       return
     }
 
-    handledOpenContactRef.current = contactId
     let isMounted = true
 
     const clearOpenParams = () => {
@@ -710,6 +709,7 @@ const ContactsTable: React.FC = () => {
 
         if (!isMounted) return
 
+        handledOpenContactRef.current = contactId
         setSelectedContact(contact)
         setSelectedContactDetails(null)
         setSelectedContactId(contact.id)

@@ -1650,7 +1650,6 @@ export const Transactions: React.FC = () => {
       return
     }
 
-    handledOpenPaymentRef.current = paymentId
     let isMounted = true
 
     const clearOpenParams = () => {
@@ -1667,6 +1666,7 @@ export const Transactions: React.FC = () => {
 
         if (!isMounted) return
 
+        handledOpenPaymentRef.current = paymentId
         handleEdit(transaction)
       } catch {
         if (isMounted) {
