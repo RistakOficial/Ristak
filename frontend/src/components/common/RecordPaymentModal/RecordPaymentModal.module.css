@@ -879,18 +879,12 @@
 }
 
 .planFirstMethod {
-  grid-column: 2 / -1;
+  grid-column: 1 / -1;
   display: flex;
   align-items: center;
-  gap: 10px;
+  flex-wrap: wrap;
+  gap: 8px 10px;
   margin-top: 2px;
-}
-
-.planFirstMethodLabel {
-  flex: 0 0 auto;
-  font-size: 12px;
-  font-weight: 500;
-  color: var(--text-dim);
 }
 
 .planFirstMethodControl {

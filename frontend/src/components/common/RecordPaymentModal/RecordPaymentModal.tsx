@@ -145,11 +145,15 @@ const FIRST_PAYMENT_METHOD_OPTIONS = [
   { value: 'card', label: 'Tarjeta / link' }
 ]
 
-// Selector compacto del primer pago integrado en la fila #1 del plan (solo escritorio).
-// 'auto' = sin enganche (el #1 es un cobro automático más). Cualquier otro método
-// activa el enganche con ese método, reusando el mismo estado que el flujo actual.
-const FIRST_PAYMENT_INLINE_METHOD_OPTIONS = [
-  { value: 'auto', label: 'Cobro automático' },
+// Primer pago integrado en la fila #1 del plan (solo escritorio), en dos niveles:
+// 1) cuándo se cobra — 'scheduled' (sin enganche, el #1 es un cobro programado más)
+//    o 'immediate' (enganche cobrado de inmediato).
+const FIRST_PAYMENT_TIMING_OPTIONS = [
+  { value: 'scheduled', label: 'Cobro programado' },
+  { value: 'immediate', label: 'Cobrar primer pago de inmediato' }
+]
+// 2) cómo se cobra ese primer pago inmediato (solo visible al elegir 'immediate').
+const FIRST_PAYMENT_IMMEDIATE_METHOD_OPTIONS = [
   { value: 'card', label: 'Tarjeta / link' },
   { value: 'bank_transfer', label: 'Transferencia' },
   { value: 'cash', label: 'Efectivo' },
@@ -1961,14 +1965,15 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
     ))
   }
 
-  // Plan unificado (escritorio): el método del primer pago vive en la fila #1.
-  // 'auto' apaga el enganche; cualquier método manual/tarjeta lo enciende.
-  const handleFirstPaymentMethodChange = (value: string) => {
-    if (value === 'auto') {
-      setFirstPaymentEnabled(false)
-    } else {
+  // Plan unificado (escritorio): la fila #1 elige cuándo se cobra el primer pago.
+  // 'scheduled' lo deja como cobro programado; 'immediate' enciende el enganche y
+  // deja un método por defecto para que se pueda elegir cómo cobrarlo de inmediato.
+  const handleFirstPaymentTimingChange = (value: string) => {
+    if (value === 'immediate') {
       setFirstPaymentEnabled(true)
-      setFirstPaymentMethod(value as FirstPaymentMethod)
+      setFirstPaymentMethod(prev => prev || 'card')
+    } else {
+      setFirstPaymentEnabled(false)
     }
     setAutoDistributeRemaining(true)
   }
@@ -3786,15 +3791,24 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
                 const ValueIcon = isPercentage ? Percent : DollarSign
                 const methodControl = isFirstVisual ? (
                   <div className={styles.planFirstMethod}>
-                    <span className={styles.planFirstMethodLabel}>Primer pago</span>
                     <div className={styles.planFirstMethodControl}>
                       {renderPaymentSelect({
-                        value: firstPaymentEnabled ? (firstPaymentMethod || 'card') : 'auto',
-                        onChange: handleFirstPaymentMethodChange,
-                        options: FIRST_PAYMENT_INLINE_METHOD_OPTIONS,
-                        title: 'Cómo se cobra el primer pago'
+                        value: firstPaymentEnabled ? 'immediate' : 'scheduled',
+                        onChange: handleFirstPaymentTimingChange,
+                        options: FIRST_PAYMENT_TIMING_OPTIONS,
+                        title: 'Primer pago'
                       })}
                     </div>
+                    {firstPaymentEnabled && (
+                      <div className={styles.planFirstMethodControl}>
+                        {renderPaymentSelect({
+                          value: firstPaymentMethod || 'card',
+                          onChange: (value) => setFirstPaymentMethod(value as FirstPaymentMethod),
+                          options: FIRST_PAYMENT_IMMEDIATE_METHOD_OPTIONS,
+                          title: 'Cómo cobrar el primer pago'
+                        })}
+                      </div>
+                    )}
                   </div>
                 ) : null
 
