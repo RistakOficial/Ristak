@@ -2100,6 +2100,7 @@ export const DesktopChat: React.FC = () => {
   const activeContactIdRef = useRef('')
   const messagePanePinnedToBottomRef = useRef(true)
   const scrollContactIdRef = useRef('')
+  const openingConversationScrollContactIdRef = useRef('')
   const conversationLoadGenerationRef = useRef(0)
   const chatLiveRefreshTimeoutRef = useRef<number | null>(null)
   const chatLiveRefreshInFlightRef = useRef(false)
@@ -3229,6 +3230,8 @@ export const DesktopChat: React.FC = () => {
 
   useEffect(() => {
     if (!activeContactId) {
+      openingConversationScrollContactIdRef.current = ''
+      scrollContactIdRef.current = ''
       setMessages([])
       setAgentCompletionEvents([])
       setContactJourney([])
@@ -3237,6 +3240,8 @@ export const DesktopChat: React.FC = () => {
       setMessagesRefreshing(false)
       return
     }
+    openingConversationScrollContactIdRef.current = activeContactId
+    messagePanePinnedToBottomRef.current = true
     setInfoPanelView('summary')
     setAgentHistoryExpanded(false)
     loadConversation(activeContactId)
@@ -3276,6 +3281,7 @@ export const DesktopChat: React.FC = () => {
   useLayoutEffect(() => {
     if (!activeContactId) return
     const contactChanged = scrollContactIdRef.current !== activeContactId
+    const openingConversation = openingConversationScrollContactIdRef.current === activeContactId
     if (contactChanged) {
       scrollContactIdRef.current = activeContactId
       messagePanePinnedToBottomRef.current = true
@@ -3283,14 +3289,26 @@ export const DesktopChat: React.FC = () => {
 
     const lastMessage = messages[messages.length - 1]
     const shouldScroll =
+      openingConversation ||
       contactChanged ||
       messagePanePinnedToBottomRef.current ||
       lastMessage?.direction === 'outbound'
 
     if (shouldScroll) {
-      scrollConversationToBottom(contactChanged ? 'auto' : 'smooth')
+      scrollConversationToBottom(openingConversation || contactChanged ? 'auto' : 'smooth')
     }
-  }, [activeContactId, agentCompletionEvents.length, messages, scrollConversationToBottom])
+    if (openingConversation && !messagesLoading && !messagesRefreshing && !contactInfoLoading) {
+      openingConversationScrollContactIdRef.current = ''
+    }
+  }, [
+    activeContactId,
+    agentCompletionEvents.length,
+    contactInfoLoading,
+    messages,
+    messagesLoading,
+    messagesRefreshing,
+    scrollConversationToBottom
+  ])
 
   const clearVoiceTimer = useCallback(() => {
     if (voiceTimerRef.current) {
