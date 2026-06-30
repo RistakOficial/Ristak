@@ -3,7 +3,7 @@ import React from 'react'
 import * as LucideIcons from 'lucide-react'
 import { MetaIcon, WhatsAppIcon, GoogleIcon, HighLevelIcon } from './CustomIcons'
 
-interface IconProps {
+interface IconProps extends Omit<React.SVGProps<SVGSVGElement>, 'color' | 'name'> {
   name: string
   size?: number
   className?: string
@@ -95,7 +95,7 @@ const iconMap: Record<string, React.FC<any>> = {
   'circle': LucideIcons.Circle
 }
 
-export const Icon: React.FC<IconProps> = ({ name, size = 24, className = '', color = 'currentColor' }) => {
+export const Icon: React.FC<IconProps> = ({ name, size = 24, className = '', color = 'currentColor', ...iconProps }) => {
   const IconComponent = iconMap[name]
 
   if (!IconComponent) {
@@ -103,5 +103,5 @@ export const Icon: React.FC<IconProps> = ({ name, size = 24, className = '', col
     return null
   }
 
-  return <IconComponent size={size} className={className} color={color} />
+  return <IconComponent size={size} className={className} color={color} {...iconProps} />
 }

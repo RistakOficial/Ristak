@@ -1,0 +1,47 @@
+.glyph {
+  display: block;
+  flex: 0 0 auto;
+  color: currentColor;
+}
+
+.mark {
+  --phone-message-channel-mark-size: 24px;
+  --phone-message-channel-mark-glyph-size: 56%;
+  --phone-message-channel-mark-color: #ffffff;
+  --phone-message-channel-color: currentColor;
+
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: var(--phone-message-channel-mark-size);
+  height: var(--phone-message-channel-mark-size);
+  flex: 0 0 auto;
+  border-radius: 999px;
+  color: var(--phone-message-channel-mark-color);
+  background: var(--phone-message-channel-color);
+}
+
+.mark[data-phone-message-channel="whatsapp"] {
+  --phone-message-channel-color: var(--phone-channel-whatsapp, #25d366);
+}
+
+.mark[data-phone-message-channel="messenger"] {
+  --phone-message-channel-color: var(--phone-channel-messenger, #1877f2);
+}
+
+.mark[data-phone-message-channel="instagram"] {
+  --phone-message-channel-color: var(--phone-channel-instagram, #e1306c);
+}
+
+.mark[data-phone-message-channel="email"] {
+  --phone-message-channel-color: var(--phone-channel-email, #64748b);
+}
+
+.mark[data-phone-message-channel="sms"] {
+  --phone-message-channel-color: var(--phone-channel-sms, #475569);
+}
+
+.markGlyph {
+  width: var(--phone-message-channel-mark-glyph-size);
+  height: var(--phone-message-channel-mark-glyph-size);
+}

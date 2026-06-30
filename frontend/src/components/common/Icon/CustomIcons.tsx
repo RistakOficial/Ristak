@@ -1,21 +1,21 @@
 import React from 'react'
 import { SiMeta, SiWhatsapp } from 'react-icons/si'
 
-interface IconProps {
+interface IconProps extends Omit<React.SVGProps<SVGSVGElement>, 'color'> {
   size?: number
   className?: string
   color?: string
 }
 
-export const MetaIcon: React.FC<IconProps> = ({ size = 24, className = '', color = 'currentColor' }) => (
-  <SiMeta size={size} className={className} color={color} />
+export const MetaIcon: React.FC<IconProps> = ({ size = 24, className = '', color = 'currentColor', ...iconProps }) => (
+  <SiMeta size={size} className={className} color={color} {...iconProps} />
 )
 
-export const WhatsAppIcon: React.FC<IconProps> = ({ size = 24, className = '', color = 'currentColor' }) => (
-  <SiWhatsapp size={size} className={className} color={color} />
+export const WhatsAppIcon: React.FC<IconProps> = ({ size = 24, className = '', color = 'currentColor', ...iconProps }) => (
+  <SiWhatsapp size={size} className={className} color={color} {...iconProps} />
 )
 
-export const HighLevelIcon: React.FC<IconProps> = ({ size = 24, className = '', color = 'currentColor' }) => (
+export const HighLevelIcon: React.FC<IconProps> = ({ size = 24, className = '', color = 'currentColor', ...iconProps }) => (
   <svg
     width={size}
     height={size}
@@ -26,6 +26,7 @@ export const HighLevelIcon: React.FC<IconProps> = ({ size = 24, className = '', 
     strokeLinecap="round"
     strokeLinejoin="round"
     className={className}
+    {...iconProps}
   >
     <path d="M6 18V7" />
     <path d="m3.75 9.25 2.25-2.25 2.25 2.25" />
@@ -36,13 +37,14 @@ export const HighLevelIcon: React.FC<IconProps> = ({ size = 24, className = '', 
   </svg>
 )
 
-export const GoogleIcon: React.FC<IconProps> = ({ size = 24, className = '' }) => (
+export const GoogleIcon: React.FC<IconProps> = ({ size = 24, className = '', ...iconProps }) => (
   <svg
     width={size}
     height={size}
     viewBox="0 0 24 24"
     fill="currentColor"
     className={className}
+    {...iconProps}
   >
     <path d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z" fill="#4285F4"/>
     <path d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z" fill="#34A853"/>

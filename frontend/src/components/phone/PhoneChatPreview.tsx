@@ -3,7 +3,6 @@ import {
   ChevronLeft,
   FileText,
   Image as ImageIcon,
-  MessageCircle,
   Mic,
   MoreVertical,
   Pause,
@@ -15,6 +14,7 @@ import {
   Trash2,
   Video
 } from 'lucide-react'
+import { PhoneMessageChannelIcon } from './PhoneMessageChannelIcon'
 import styles from './PhoneChatPreview.module.css'
 
 export type PhoneChatPreviewMessageDirection = 'inbound' | 'outbound' | 'system'
@@ -603,7 +603,7 @@ export const PhoneChatPreview: React.FC<PhoneChatPreviewProps> = ({
           <span className={styles.avatar} aria-hidden="true">
             {initials}
             <span className={styles.avatarBadge}>
-              <MessageCircle size={11} />
+              <PhoneMessageChannelIcon channel="whatsapp" size={11} />
             </span>
           </span>
           <div className={styles.headerIdentity}>

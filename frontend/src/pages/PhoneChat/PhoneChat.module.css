@@ -14,6 +14,11 @@
   --phone-chat-accent: #25d366;
   --phone-chat-accent-rgb: 37, 211, 102;
   --phone-chat-accent-soft: #dff8e8;
+  --phone-channel-whatsapp: var(--phone-chat-accent);
+  --phone-channel-messenger: #1877f2;
+  --phone-channel-instagram: #e1306c;
+  --phone-channel-email: #64748b;
+  --phone-channel-sms: #475569;
   --phone-chat-inbound: #ffffff;
   --phone-chat-outbound: #d8fdd2;
   --phone-chat-outbound-text: #0b0b0d;
@@ -1186,17 +1191,14 @@
 }
 
 .avatarChannelBadgeWhatsapp {
-  background: linear-gradient(145deg, #66f28f 0%, #25d366 46%, #0aa65b 100%);
+  background: var(--phone-channel-whatsapp);
 }
 
-.avatarChannelBadgeWhatsapp svg {
-  width: 14px;
-  height: 14px;
-}
-
-.chatItem > .avatar .avatarChannelBadgeWhatsapp svg {
-  width: 16px;
-  height: 16px;
+.avatarChannelBadge .channelIconGlyph {
+  width: 13px;
+  height: 13px;
+  color: currentColor;
+  filter: none;
 }
 
 .phoneChatPage[data-phone-chat-device="phone"] .archiveRow,
@@ -1245,90 +1247,35 @@
   height: 11px;
 }
 
-.phoneChatPage[data-phone-chat-device="phone"] .chatItem > .avatar .avatarChannelBadgeWhatsapp svg {
-  width: 13px;
-  height: 13px;
-}
-
-.avatarChannelBadge .avatarChannelBadgeBrandIcon {
+.chatItem > .avatar .avatarChannelBadge .channelIconGlyph {
   width: 14px;
   height: 14px;
-  flex: 0 0 auto;
-  fill: currentColor;
-  filter: none;
-  stroke: none;
 }
 
-.avatarChannelBadge .avatarChannelBadgeWhatsappIcon {
-  width: 15px;
-  height: 15px;
-  flex: 0 0 auto;
-  fill: currentColor;
-  stroke: none !important;
-  stroke-width: 0 !important;
-  overflow: visible;
-  filter: none;
+.phoneChatPage[data-phone-chat-device="phone"] .chatItem > .avatar .avatarChannelBadge .channelIconGlyph {
+  width: 12px;
+  height: 12px;
 }
 
-.avatarChannelBadge .avatarChannelBadgeWhatsappIcon path {
-  stroke: none !important;
-  stroke-width: 0 !important;
-}
-
-.whatsappLogoDisc {
-  fill: #25d366;
-}
-
-.whatsappLogoMark {
-  fill: #ffffff;
-}
-
-.avatarChannelBadge .avatarChannelBadgeWhatsappIcon .whatsappLogoDisc {
-  fill: transparent;
-}
-
-.avatarChannelBadge .avatarChannelBadgeWhatsappIcon .whatsappLogoMark {
-  fill: #ffffff;
-}
-
-.avatarChannelBadge .avatarChannelBadgeWhatsappGlyph {
-  width: 16px;
-  height: 16px;
-  flex: 0 0 auto;
-  fill: #ffffff;
-  stroke: none !important;
-  stroke-width: 0 !important;
-  overflow: visible;
-  filter: none;
-}
-
-.avatarChannelBadge .avatarChannelBadgeWhatsappGlyph path,
-.avatarChannelBadge .avatarChannelBadgeWhatsappGlyph .whatsappAvatarGlyphMark {
-  fill: #ffffff;
-  stroke: none !important;
-  stroke-width: 0 !important;
-}
-
-.chatItem > .avatar .avatarChannelBadgeWhatsapp .avatarChannelBadgeWhatsappGlyph,
-.phoneChatPage[data-phone-chat-device="phone"] .chatItem > .avatar .avatarChannelBadgeWhatsapp .avatarChannelBadgeWhatsappGlyph {
-  width: 16px;
-  height: 16px;
+.phoneChatPage[data-phone-chat-device="phone"] .chatItem > .avatar .avatarChannelBadgeWhatsapp .channelIconGlyph {
+  width: 14px;
+  height: 14px;
 }
 
 .avatarChannelBadgeMessenger {
-  background: linear-gradient(145deg, #59c8ff 0%, #0084ff 50%, #075bd8 100%);
+  background: var(--phone-channel-messenger);
 }
 
 .avatarChannelBadgeInstagram {
-  background: linear-gradient(135deg, #f58529 0%, #dd2a7b 45%, #8134af 72%, #515bd4 100%);
+  background: var(--phone-channel-instagram);
 }
 
 .avatarChannelBadgeEmail {
-  background: linear-gradient(145deg, #ff7a70 0%, #ea4335 48%, #b42318 100%);
+  background: var(--phone-channel-email);
 }
 
 .avatarChannelBadgeSms {
-  background: linear-gradient(145deg, #94a3b8 0%, #475569 52%, #1e293b 100%);
+  background: var(--phone-channel-sms);
 }
 
 .avatarAgentBadge {
@@ -1709,7 +1656,12 @@
   height: 11px;
 }
 
-.conversationHeader .avatar .avatarChannelBadgeWhatsapp svg {
+.conversationHeader .avatar .avatarChannelBadge .channelIconGlyph {
+  width: 11px;
+  height: 11px;
+}
+
+.conversationHeader .avatar .avatarChannelBadgeWhatsapp .channelIconGlyph {
   width: 13px;
   height: 13px;
 }
@@ -5441,15 +5393,15 @@
 }
 
 .composerChannelButton[data-channel="whatsapp_api"] {
-  color: #25d366;
+  color: var(--phone-channel-whatsapp);
 }
 
 .composerChannelButton[data-channel="messenger"] {
-  color: #1877f2;
+  color: var(--phone-channel-messenger);
 }
 
 .composerChannelButton[data-channel="instagram"] {
-  color: #e1306c;
+  color: var(--phone-channel-instagram);
 }
 
 .composerChannelButton[data-channel="sms_qr"] {
@@ -5462,37 +5414,14 @@
   transform: scale(0.96);
 }
 
-.composerChannelBrandIcon {
-  width: 21px;
-  height: 21px;
-  flex: 0 0 auto;
-  fill: currentColor;
-  stroke: none;
-  stroke-width: 0;
+.composerChannelButton .channelIconGlyph {
+  width: 20px;
+  height: 20px;
 }
 
-.composerChannelButton .composerChannelWhatsappIcon {
-  width: 22px;
-  height: 22px;
-  flex: 0 0 auto;
-  fill: currentColor;
-  stroke: none !important;
-  stroke-width: 0 !important;
-  overflow: visible;
-  filter: none;
-}
-
-.composerChannelButton .composerChannelWhatsappIcon path {
-  stroke: none !important;
-  stroke-width: 0 !important;
-}
-
-.composerChannelButton .composerChannelWhatsappIcon .whatsappLogoDisc {
-  fill: #25d366;
-}
-
-.composerChannelButton .composerChannelWhatsappIcon .whatsappLogoMark {
-  fill: #ffffff;
+.composerChannelDiscIcon {
+  --phone-message-channel-mark-size: 18px;
+  --phone-message-channel-mark-glyph-size: 58%;
 }
 
 .composerChannelDropdown {
@@ -5553,34 +5482,26 @@
 
 .composerChannelOptionIcon[data-channel="whatsapp_api"] {
   color: #ffffff;
-  background: #25d366;
+  background: var(--phone-channel-whatsapp);
 }
 
-.composerChannelOptionIcon[data-channel="whatsapp_api"] .composerChannelWhatsappIcon {
-  width: 22px;
-  height: 22px;
-}
-
-.composerChannelOptionIcon[data-channel="whatsapp_api"] .whatsappLogoDisc {
-  fill: transparent;
-}
-
-.composerChannelOptionIcon[data-channel="whatsapp_api"] .whatsappLogoMark {
-  fill: #ffffff;
+.composerChannelOptionIcon .channelIconGlyph {
+  width: 20px;
+  height: 20px;
 }
 
 .composerChannelOptionIcon[data-channel="messenger"] {
-  color: #1877f2;
+  color: var(--phone-channel-messenger);
   background: transparent;
 }
 
 .composerChannelOptionIcon[data-channel="instagram"] {
-  color: #e1306c;
+  color: var(--phone-channel-instagram);
   background: transparent;
 }
 
 .composerChannelOptionIcon[data-channel="email"] {
-  background: #64748b;
+  background: var(--phone-channel-email);
 }
 
 .composerChannelOption span:nth-child(2) {
