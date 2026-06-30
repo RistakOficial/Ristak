@@ -1702,6 +1702,8 @@
 
 .calendarTemplateField :global([data-automation-interactive='true'][data-composer-mode='singleline']) {
   height: var(--design-control-height);
+  min-height: var(--design-control-height);
+  overflow: hidden;
 }
 
 .calendarTemplateField :global([data-automation-interactive='true']:hover) {
@@ -1729,6 +1731,12 @@
   min-height: calc(var(--design-control-height) - 2px);
   padding: 0 38px 0 var(--design-control-padding-x);
   line-height: calc(var(--design-control-height) - 2px);
+  overflow: hidden;
+  scrollbar-width: none;
+}
+
+.calendarTemplateField :global([data-automation-interactive='true'] [aria-multiline='false']::-webkit-scrollbar) {
+  display: none;
 }
 
 .calendarTemplateField :global([data-automation-interactive='true'] [aria-multiline='true']) {
@@ -1742,6 +1750,13 @@
 }
 
 .calendarTemplateField :global([data-automation-interactive='true'] [data-variable]) {
+  display: inline-flex;
+  align-items: center;
+  max-width: 100%;
+  min-height: 20px;
+  padding: 1px 7px;
+  line-height: 1.2;
+  vertical-align: middle;
   background: var(--accent-soft);
   color: var(--accent);
 }
