@@ -7,6 +7,7 @@ import {
   deleteContactBulkAction,
   getContactBulkAction,
   pauseContactBulkAction,
+  processDueContactBulkActions,
   rescheduleContactBulkAction
 } from '../src/services/contactBulkActionsService.js'
 
@@ -150,5 +151,44 @@ test('createWhatsAppTemplateBulkAction crea lote programado sin enviar mensajes 
   } finally {
     if (actionId) await deleteContactBulkAction(actionId).catch(() => {})
     await db.run(`DELETE FROM contacts WHERE id IN (${contacts.map(() => '?').join(', ')})`, contacts).catch(() => {})
+  }
+})
+
+test('processDueContactBulkActions marca items processing viejos como error visible', async () => {
+  const suffix = Date.now()
+  const actionId = `bulk_stale_${suffix}`
+  const itemId = `bulk_stale_item_${suffix}`
+  const contactId = `bulk_stale_contact_${suffix}`
+  const oldDate = new Date(Date.now() - 12 * 60 * 1000).toISOString()
+
+  await insertContact(contactId, 'Contacto Atorado', '+5215566666666')
+  await db.run(
+    `INSERT INTO contact_bulk_actions
+       (id, action_type, title, status, total_count, processed_count, success_count, error_count,
+        scheduled_at, config_json, created_at, updated_at, started_at)
+     VALUES (?, 'whatsapp_template', 'Lote interrumpido', 'processing', 1, 0, 0, 0,
+        ?, '{}', ?, ?, ?)`,
+    [actionId, oldDate, oldDate, oldDate, oldDate]
+  )
+  await db.run(
+    `INSERT INTO contact_bulk_action_items
+       (id, bulk_action_id, contact_id, contact_name, scheduled_at, status, created_at, updated_at)
+     VALUES (?, ?, ?, 'Contacto Atorado', ?, 'processing', ?, ?)`,
+    [itemId, actionId, contactId, oldDate, oldDate, oldDate]
+  )
+
+  try {
+    const results = await processDueContactBulkActions({ referenceDate: new Date() })
+    assert.deepEqual(results, [])
+
+    const saved = await getContactBulkAction(actionId)
+    assert.equal(saved.status, 'error')
+    assert.equal(saved.processedCount, 1)
+    assert.equal(saved.errorCount, 1)
+    assert.equal(saved.items[0].status, 'error')
+    assert.match(saved.items[0].error, /interrumpida durante una actualización/)
+  } finally {
+    await deleteContactBulkAction(actionId).catch(() => {})
+    await db.run('DELETE FROM contacts WHERE id = ?', [contactId]).catch(() => {})
   }
 })

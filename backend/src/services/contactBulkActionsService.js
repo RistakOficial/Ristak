@@ -3,10 +3,13 @@ import { logger } from '../utils/logger.js'
 import { normalizePhoneForStorage } from '../utils/phoneUtils.js'
 import { createRistakId } from '../utils/idGenerator.js'
 import { sendWhatsAppApiTemplateMessage } from './whatsappApiService.js'
+import { trackDeployDrainWork } from '../utils/deployDrainTracker.js'
 
 const MAX_BULK_CONTACTS = 1000
 const DUE_BATCH_LIMIT = 50
 const MIN_SCHEDULE_DELAY_MS = 5000
+const STALE_PROCESSING_MS = 10 * 60 * 1000
+const STALE_PROCESSING_ERROR_MESSAGE = 'La acción quedó interrumpida durante una actualización y no se pudo confirmar si terminó. Revísala y vuelve a intentarla manualmente si hace falta.'
 
 function cleanString(value) {
   if (value === null || value === undefined) return ''
@@ -45,6 +48,12 @@ function makeId(prefix) {
 
 function nowIso() {
   return new Date().toISOString()
+}
+
+function parseDateMs(value) {
+  if (!value) return null
+  const parsed = new Date(value).getTime()
+  return Number.isFinite(parsed) ? parsed : null
 }
 
 function contactDisplayName(row = {}) {
@@ -256,6 +265,16 @@ async function createBulkAction({ actionType, title, contactIds, schedule, confi
   return getContactBulkAction(id)
 }
 
+function startImmediateBulkProcessing(actionId, logLabel) {
+  trackDeployDrainWork(
+    'bulk-action:contact-bulk-actions',
+    () => processDueContactBulkActions({ bulkActionId: actionId, limit: DUE_BATCH_LIMIT }),
+    logLabel
+  ).catch((error) => {
+    logger.error(`[Acciones masivas] No se pudo iniciar ${logLabel}: ${error.message}`)
+  })
+}
+
 export async function createWhatsAppTemplateBulkAction(input = {}) {
   const schedule = normalizeSchedule(input.schedule || {})
   const templateId = cleanString(input.templateId)
@@ -293,9 +312,7 @@ export async function createWhatsAppTemplateBulkAction(input = {}) {
   })
 
   if (schedule.mode === 'now') {
-    processDueContactBulkActions({ bulkActionId: action.id, limit: DUE_BATCH_LIMIT }).catch((error) => {
-      logger.error(`[Acciones masivas] No se pudo iniciar lote WhatsApp ${action.id}: ${error.message}`)
-    })
+    startImmediateBulkProcessing(action.id, `lote WhatsApp ${action.id}`)
   }
 
   // (CNT-006) Exponer cuántos contactos seleccionados no tienen teléfono para que
@@ -332,9 +349,7 @@ export async function createAutomationBulkAction(input = {}) {
   })
 
   if (schedule.mode === 'now') {
-    processDueContactBulkActions({ bulkActionId: action.id, limit: DUE_BATCH_LIMIT }).catch((error) => {
-      logger.error(`[Acciones masivas] No se pudo iniciar lote de automatización ${action.id}: ${error.message}`)
-    })
+    startImmediateBulkProcessing(action.id, `lote de automatización ${action.id}`)
   }
 
   return action
@@ -397,6 +412,54 @@ async function markBulkItem(itemId, patch = {}) {
       itemId
     ]
   )
+}
+
+async function markStaleProcessingItems(referenceDate = new Date()) {
+  const referenceMs = referenceDate instanceof Date
+    ? referenceDate.getTime()
+    : new Date(referenceDate).getTime()
+  const cutoffMs = (Number.isFinite(referenceMs) ? referenceMs : Date.now()) - STALE_PROCESSING_MS
+  const rows = await db.all(
+    `SELECT id, bulk_action_id, updated_at, processed_at, created_at
+     FROM contact_bulk_action_items
+     WHERE status = 'processing'`
+  ).catch((error) => {
+    logger.warn(`[Acciones masivas] No se pudieron revisar items interrumpidos: ${error.message}`)
+    return []
+  })
+  const touchedActions = new Set()
+
+  for (const row of rows) {
+    const lastActivityMs = parseDateMs(row.updated_at || row.processed_at || row.created_at)
+    if (lastActivityMs === null || lastActivityMs >= cutoffMs) continue
+
+    const result = await db.run(
+      `UPDATE contact_bulk_action_items
+       SET status = 'error',
+           error = ?,
+           result_json = ?,
+           processed_at = COALESCE(processed_at, CURRENT_TIMESTAMP),
+           updated_at = CURRENT_TIMESTAMP
+       WHERE id = ?
+         AND status = 'processing'`,
+      [
+        STALE_PROCESSING_ERROR_MESSAGE,
+        safeJson({ error: STALE_PROCESSING_ERROR_MESSAGE, interrupted: true }, null),
+        row.id
+      ]
+    ).catch((error) => {
+      logger.warn(`[Acciones masivas] No se pudo liberar item interrumpido ${row.id}: ${error.message}`)
+      return null
+    })
+
+    if (Number(result?.changes || 0) > 0) touchedActions.add(row.bulk_action_id)
+  }
+
+  for (const actionId of touchedActions) {
+    await refreshBulkActionCounters(actionId).catch(() => undefined)
+  }
+
+  return touchedActions.size
 }
 
 async function processWhatsAppTemplateItem({ action, item }) {
@@ -497,6 +560,8 @@ async function processBulkItem(row) {
 }
 
 export async function processDueContactBulkActions({ bulkActionId, limit = DUE_BATCH_LIMIT, referenceDate = new Date() } = {}) {
+  await markStaleProcessingItems(referenceDate)
+
   const dueAt = referenceDate instanceof Date ? referenceDate.toISOString() : new Date(referenceDate).toISOString()
   const params = [dueAt]
   let actionClause = ''
@@ -574,9 +639,7 @@ export async function resumeContactBulkAction(bulkActionId) {
     [id]
   )
   if (Number(result?.changes || 0) === 0) throw serviceError('No se pudo reanudar esta acción.', 404)
-  processDueContactBulkActions({ bulkActionId: id }).catch((error) => {
-    logger.error(`[Acciones masivas] No se pudo reanudar ${id}: ${error.message}`)
-  })
+  startImmediateBulkProcessing(id, `reanudar ${id}`)
   return getContactBulkAction(id)
 }
 

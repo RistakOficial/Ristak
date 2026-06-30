@@ -1,5 +1,8 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
+import { readFile } from 'node:fs/promises'
+import { dirname, join } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import {
   beginDeployDrainWork,
   formatDeployDrainSnapshot,
@@ -10,6 +13,8 @@ import {
   isHealthRequest,
   shouldAllowDuringDeployDrain
 } from '../src/utils/deployDrainPolicy.js'
+
+const __dirname = dirname(fileURLToPath(import.meta.url))
 
 function req(method, path) {
   return { method, path, originalUrl: path }
@@ -73,4 +78,18 @@ test('deploy drain tracker counts and formats active critical work', () => {
   snapshot = getDeployDrainSnapshot()
   assert.equal(snapshot.total, 0)
   assert.equal(formatDeployDrainSnapshot(snapshot), 'sin trabajo critico activo')
+})
+
+test('deploy-sensitive crons keep distributed locks across deploy overlaps', async () => {
+  const criticalCrons = [
+    ['scheduledChatMessages.cron.js', "withCronLock('scheduled-chat-messages'"],
+    ['contactBulkActions.cron.js', "withCronLock('contact-bulk-actions'"],
+    ['paymentAutomations.cron.js', "withCronLock('payment-automations'"]
+  ]
+
+  for (const [file, expected] of criticalCrons) {
+    const source = await readFile(join(__dirname, '..', 'src', 'jobs', file), 'utf8')
+    assert.match(source, /trackDeployDrainWork\('cron:/)
+    assert.ok(source.includes(expected), `${file} debe usar lock distribuido`)
+  }
 })

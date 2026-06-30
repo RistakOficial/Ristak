@@ -91,7 +91,8 @@ import {
   beginDeployDrainWork,
   formatDeployDrainSnapshot,
   getDeployDrainSnapshot,
-  markDeployShutdownStarted
+  markDeployShutdownStarted,
+  trackDeployDrainWork
 } from './utils/deployDrainTracker.js'
 
 const __filename = fileURLToPath(import.meta.url)
@@ -119,6 +120,16 @@ function getStartupStatus() {
   if (startupState.ready) return 'ready'
   if (startupState.error) return 'error'
   return 'starting'
+}
+
+function runStartupDrainTask(kind, task, errorMessage, onSuccess) {
+  trackDeployDrainWork(kind, task, 'startup')
+    .then((result) => {
+      if (typeof onSuccess === 'function') onSuccess(result)
+    })
+    .catch((error) => {
+      logger.error(`${errorMessage}: ${error.message}`)
+    })
 }
 
 // Render y la mayoría de despliegues están detrás de un proxy que envía X-Forwarded-For con la IP real
@@ -361,43 +372,56 @@ async function startRuntimeServices() {
   // Inicializar versión de Meta API desde BD
   await initializeVersion()
 
-  ensureBunnyStreamRuntimeConfigured().catch(error => {
-    logger.error(`No se pudo preparar Bunny Stream al arrancar: ${error.message}`)
-  })
+  runStartupDrainTask(
+    'startup:media-runtime-config',
+    ensureBunnyStreamRuntimeConfigured,
+    'No se pudo preparar Bunny Stream al arrancar'
+  )
 
-  updateMetaVersion({ source: 'startup' }).catch(error => {
-    logger.error(`No se pudo revisar la versión de Meta API al arrancar: ${error.message}`)
-  })
+  runStartupDrainTask(
+    'startup:meta-version',
+    () => updateMetaVersion({ source: 'startup' }),
+    'No se pudo revisar la versión de Meta API al arrancar'
+  )
 
   // (CRON-006) Verificar y actualizar webhooks en producción SIN bloquear el boot:
   // si HighLevel responde lento, el await anterior dejaba la app en 'starting' y
   // devolvía 503 a todo el tráfico. Se ejecuta en segundo plano (best-effort), igual
   // que el resto de tareas de arranque no críticas (repairPendingPaymentFlows, etc.).
-  verifyAndUpdateWebhooks().catch(error => {
-    logger.error(`No se pudo verificar/actualizar webhooks al arrancar: ${error.message}`)
-  })
+  runStartupDrainTask(
+    'startup:webhook-verification',
+    verifyAndUpdateWebhooks,
+    'No se pudo verificar/actualizar webhooks al arrancar'
+  )
 
-  repairPendingPaymentFlows().catch(error => {
-    logger.error(`No se pudo ejecutar reparación inicial de parcialidades: ${error.message}`)
-  })
+  runStartupDrainTask(
+    'startup:payment-flow-repair',
+    repairPendingPaymentFlows,
+    'No se pudo ejecutar reparación inicial de parcialidades'
+  )
 
-  repairDefaultMessageTemplatesForCurrentConnection()
-    .then((result) => {
+  runStartupDrainTask(
+    'startup:message-template-repair',
+    repairDefaultMessageTemplatesForCurrentConnection,
+    'No se pudo ejecutar reparación inicial de plantillas default de WhatsApp',
+    (result) => {
       if (result?.submitted > 0) {
         logger.info(`[WhatsApp] Plantillas default preparadas y enviadas a revisión: ${result.submitted}`)
       }
-    })
-    .catch(error => {
-      logger.error(`No se pudo ejecutar reparación inicial de plantillas default de WhatsApp: ${error.message}`)
-    })
+    }
+  )
 
-  repairStoredYCloudHistoryMessageDirections().catch(error => {
-    logger.error(`No se pudo recalcular historial WhatsApp API afectado: ${error.message}`)
-  })
+  runStartupDrainTask(
+    'startup:ycloud-history-repair',
+    repairStoredYCloudHistoryMessageDirections,
+    'No se pudo recalcular historial WhatsApp API afectado'
+  )
 
-  recoverPendingConversationalAgentConversations().catch(error => {
-    logger.error(`No se pudo recuperar conversaciones pendientes del agente: ${error.message}`)
-  })
+  runStartupDrainTask(
+    'startup:conversational-agent-recovery',
+    recoverPendingConversationalAgentConversations,
+    'No se pudo recuperar conversaciones pendientes del agente'
+  )
 
   // Iniciar cron jobs
   import('./services/automationEngine.js')
