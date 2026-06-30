@@ -59,7 +59,7 @@ import {
   Video,
   X
 } from 'lucide-react'
-import { FaMicrophone } from 'react-icons/fa'
+import { FaMicrophone, FaWhatsapp } from 'react-icons/fa'
 import { MdArchive } from 'react-icons/md'
 import { AppointmentModal, Icon, Modal, RecordPaymentModal } from '@/components/common'
 import { AgentRobot } from '@/components/ai'
@@ -12494,20 +12494,14 @@ export const PhoneChat: React.FC = () => {
     )
   }
 
-  // WhatsApp en el boton del composer va como "disco" a dos tonos (circulo verde +
-  // glifo blanco), igual que el icono real de la app. El resto de canales van como
-  // glifo de marca plano. NO aplanar WhatsApp: en plano el auricular queda hueco
-  // (transparente del color del fondo) y se ve vacio/roto.
-  const renderComposerMessageChannelIcon = (value: ComposerMessageChannelValue, surface: 'button' | 'option' = 'option') => {
+  // WhatsApp usa el glifo fino de Font Awesome (el original, contorno delgado).
+  // El resto de canales via el componente unificado. Plano, sin disco/relleno.
+  // El color de marca lo pone el contenedor ([data-channel]). OJO: el contorno
+  // grueso venia de stroke-width en .composerChannelButton/.avatarChannelBadge svg
+  // (los react-icons traen stroke="currentColor"); eso ya se quito en el CSS.
+  const renderComposerMessageChannelIcon = (value: ComposerMessageChannelValue) => {
     if (value === 'whatsapp_api') {
-      return (
-        <PhoneMessageChannelIcon
-          channel={value}
-          variant={surface === 'button' ? 'disc' : 'glyph'}
-          size={surface === 'button' ? 12 : 20}
-          className={surface === 'button' ? styles.composerChannelDiscIcon : styles.channelIconGlyph}
-        />
-      )
+      return <FaWhatsapp className={styles.channelIconGlyph} aria-hidden="true" />
     }
 
     return <PhoneMessageChannelIcon channel={value} size={20} className={styles.channelIconGlyph} />
@@ -12581,7 +12575,7 @@ export const PhoneChat: React.FC = () => {
           aria-expanded={composerChannelPickerOpen}
           title={`Canal de envío: ${activeLabel}`}
         >
-          {renderComposerMessageChannelIcon(activeValue, 'button')}
+          {renderComposerMessageChannelIcon(activeValue)}
         </button>
 
         {composerChannelPickerOpen && (

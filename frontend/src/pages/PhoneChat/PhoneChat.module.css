@@ -1176,7 +1176,9 @@
   display: block;
   width: 12px;
   height: 12px;
-  stroke-width: 2.5;
+  /* Sin stroke-width: los glifos de marca (react-icons) traen stroke="currentColor"
+     y un stroke-width aqui les pinta un contorno grueso encima del relleno
+     (se ven anchos/pixelados). Cada icono usa su propio strokeWidth de atributo. */
   filter: drop-shadow(0 1px 1px rgba(0, 0, 0, 0.2));
 }
 
@@ -5388,11 +5390,13 @@
    (.composerChannelDiscIcon -> .mark) y su glifo se mide con
    --phone-message-channel-mark-glyph-size (58%). Un width/height aqui gana
    por especificidad a .markGlyph y revienta el glifo (se desborda del disco,
-   se ve "ancho/pixelado", sobre todo WhatsApp). Solo grosor de trazo y flex. */
+   se ve "ancho/pixelado", sobre todo WhatsApp).
+   TAMPOCO pongas stroke-width: los glifos de marca (WhatsApp/Messenger/Instagram)
+   son react-icons con stroke="currentColor", asi que un stroke-width aqui les
+   pinta un CONTORNO encima del relleno y se ven gruesos/pixelados. Sin stroke. */
 .composerChannelButton svg,
 .composerChannelButton :global(svg) {
   flex: 0 0 auto;
-  stroke-width: 1.8;
 }
 
 .composerChannelButton[data-channel="whatsapp_api"] {
@@ -5420,14 +5424,6 @@
 .composerChannelButton .channelIconGlyph {
   width: 20px;
   height: 20px;
-}
-
-/* WhatsApp en el boton del composer: disco a dos tonos (circulo verde + glifo
-   blanco), como el icono real de la app. El glifo se mide al 58% del disco para
-   que no toque el borde ni se desborde. */
-.composerChannelDiscIcon {
-  --phone-message-channel-mark-size: 22px;
-  --phone-message-channel-mark-glyph-size: 58%;
 }
 
 .composerChannelDropdown {
