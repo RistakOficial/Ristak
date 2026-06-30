@@ -1269,9 +1269,24 @@
 }
 
 .avatarChannelBadge .avatarChannelBadgeWhatsappIcon path {
-  fill: currentColor;
   stroke: none !important;
   stroke-width: 0 !important;
+}
+
+.whatsappLogoDisc {
+  fill: #25d366;
+}
+
+.whatsappLogoMark {
+  fill: #ffffff;
+}
+
+.avatarChannelBadge .avatarChannelBadgeWhatsappIcon .whatsappLogoDisc {
+  fill: #25d366;
+}
+
+.avatarChannelBadge .avatarChannelBadgeWhatsappIcon .whatsappLogoMark {
+  fill: #ffffff;
 }
 
 .avatarChannelBadgeMessenger {
@@ -5440,9 +5455,16 @@
 }
 
 .composerChannelButton .composerChannelWhatsappIcon path {
-  fill: currentColor;
   stroke: none !important;
   stroke-width: 0 !important;
+}
+
+.composerChannelButton .composerChannelWhatsappIcon .whatsappLogoDisc {
+  fill: #25d366;
+}
+
+.composerChannelButton .composerChannelWhatsappIcon .whatsappLogoMark {
+  fill: #ffffff;
 }
 
 .composerChannelDropdown {
