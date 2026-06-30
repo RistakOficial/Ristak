@@ -23,6 +23,7 @@ import {
   sendWhatsAppApiInteractiveMessage,
   sendWhatsAppApiTemplateMessage,
   sendWhatsAppApiTextMessage,
+  sendWhatsAppApiVideoMessage,
   sendMetaDirectTestMessage,
   setWhatsAppActiveProvider,
   setWhatsAppApiDefaultPhoneNumber,
@@ -677,6 +678,33 @@ export async function sendWhatsAppApiDocumentMessageView(req, res) {
     res.status(400).json({
       success: false,
       error: error.message || 'No se pudo enviar el documento por WhatsApp_API'
+    })
+  }
+}
+
+export async function sendWhatsAppApiVideoMessageView(req, res) {
+  try {
+    const data = await sendWhatsAppApiVideoMessage({
+      to: req.body?.to,
+      from: req.body?.from,
+      videoDataUrl: req.body?.videoDataUrl,
+      videoUrl: req.body?.videoUrl,
+      caption: req.body?.caption,
+      externalId: req.body?.externalId,
+      transport: req.body?.transport,
+      contactId: req.body?.contactId,
+      userId: req.user?.userId,
+      phoneNumberId: req.body?.phoneNumberId,
+      publicBaseUrl: getPublicBaseUrl(req),
+      skipQrSendProtection: isManualChatMessageOrigin(req.body?.messageOrigin)
+    })
+    notifyHumanTakeover({ contactId: req.body?.contactId, toPhone: req.body?.to })
+    res.json({ success: true, data })
+  } catch (error) {
+    logger.error(`Error enviando video WhatsApp_API: ${error.message}`)
+    res.status(400).json({
+      success: false,
+      error: error.message || 'No se pudo enviar el video por WhatsApp_API'
     })
   }
 }

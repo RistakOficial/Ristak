@@ -27,13 +27,13 @@
 	<key>ITSAppUsesNonExemptEncryption</key>
 	<false/>
 	<key>NSCameraUsageDescription</key>
-	<string>Ristak usa la cámara para tomar fotos y enviarlas desde el chat.</string>
+	<string>Ristak usa la cámara para tomar fotos y grabar videos desde el chat.</string>
 	<key>NSMicrophoneUsageDescription</key>
-	<string>Ristak usa el micrófono para grabar y transcribir notas de voz en el chat.</string>
+	<string>Ristak usa el micrófono para grabar notas de voz y videos desde el chat.</string>
 	<key>NSPhotoLibraryAddUsageDescription</key>
 	<string>Ristak puede guardar fotos tomadas desde el chat si decides conservarlas.</string>
 	<key>NSPhotoLibraryUsageDescription</key>
-	<string>Ristak usa tus fotos solo cuando eliges una imagen para enviarla desde el chat.</string>
+	<string>Ristak usa tus fotos y videos solo cuando eliges contenido para enviarlo desde el chat.</string>
 	<key>UILaunchStoryboardName</key>
 	<string>LaunchScreen</string>
 	<key>UIRequiresFullScreen</key>

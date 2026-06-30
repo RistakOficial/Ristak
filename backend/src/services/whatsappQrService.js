@@ -43,6 +43,15 @@ const AUDIO_MIME_BY_EXTENSION = {
   wav: 'audio/wav',
   webm: 'audio/webm'
 }
+const VIDEO_MIME_BY_EXTENSION = {
+  mp4: 'video/mp4',
+  m4v: 'video/mp4',
+  mov: 'video/quicktime',
+  qt: 'video/quicktime',
+  '3gp': 'video/3gpp',
+  '3gpp': 'video/3gpp',
+  webm: 'video/webm'
+}
 const DOCUMENT_MIME_BY_EXTENSION = {
   pdf: 'application/pdf',
   doc: 'application/msword',
@@ -255,6 +264,12 @@ function inferAudioMimeType({ mimeType, url } = {}) {
   const cleanMimeType = cleanString(mimeType).toLowerCase()
   if (cleanMimeType) return cleanMimeType
   return AUDIO_MIME_BY_EXTENSION[getFileExtensionFromUrl(url)] || 'audio/mpeg'
+}
+
+function inferVideoMimeType({ mimeType, url } = {}) {
+  const cleanMimeType = cleanString(mimeType).toLowerCase()
+  if (cleanMimeType) return cleanMimeType
+  return VIDEO_MIME_BY_EXTENSION[getFileExtensionFromUrl(url)] || 'video/mp4'
 }
 
 function getFilenameFromUrl(url = '') {
@@ -2153,6 +2168,68 @@ export async function sendWhatsAppQrImageMessage({ phoneNumberId, from, to, imag
     image: {
       link: media.sourceUrl,
       mimeType: media.mimeType,
+      ...(cleanCaption ? { caption: cleanCaption } : {})
+    },
+    status: sendResult.status,
+    transport: 'qr',
+    createTime: nowIso(),
+    raw: sendResult.raw
+  }
+}
+
+export async function sendWhatsAppQrVideoMessage({ phoneNumberId, from, to, videoDataUrl, videoUrl, caption, mimeType, externalId, skipQrSendProtection = false } = {}) {
+  const phone = await resolveQrPhone({ phoneNumberId, from })
+  const toPhone = normalizePhoneForStorage(to) || cleanString(to)
+  const cleanCaption = cleanString(caption).slice(0, 1024)
+
+  if (await markMissingAuthStateIfNeeded(phone)) {
+    throw new Error('El QR necesita reconectarse. Abre Configuración > WhatsApp y genera un QR nuevo.')
+  }
+  if (Number(phone.qr_send_enabled || 0) !== 1) {
+    throw new Error('Ese número no tiene el envío por QR activado')
+  }
+  if (!toPhone) throw new Error('Falta el número destino')
+
+  const media = buildQrMediaPayload({
+    dataUrl: videoDataUrl,
+    url: videoUrl,
+    label: 'el video'
+  })
+  const videoMimeType = inferVideoMimeType({ mimeType: media.mimeType || mimeType, url: media.sourceUrl || videoUrl })
+  const sock = await ensureOpenSocket(phone)
+  const recipient = await resolveRecipientJid(sock, toPhone)
+  rememberRistakQrOutboundAttempt({
+    phoneId: phone.id,
+    contactPhone: recipient.verifiedPhone || toPhone,
+    type: 'video',
+    text: cleanCaption
+  })
+  const response = await sendProtectedQrMessage({
+    sock,
+    phone,
+    recipient,
+    type: 'video',
+    payload: {
+      video: media.content,
+      mimetype: videoMimeType,
+      ...(cleanCaption ? { caption: cleanCaption } : {})
+    },
+    skipQrSendProtection
+  })
+  const sendResult = await finalizeQrSendResponse({ response, recipient, externalId })
+
+  return {
+    id: sendResult.id,
+    wamid: sendResult.wamid,
+    from: phone.expectedPhone,
+    to: recipient.verifiedPhone || toPhone,
+    recipientJid: sendResult.recipientJid,
+    type: 'video',
+    video: {
+      link: media.sourceUrl || cleanString(videoUrl),
+      url: media.sourceUrl || cleanString(videoUrl),
+      mimeType: videoMimeType,
+      mimetype: videoMimeType,
       ...(cleanCaption ? { caption: cleanCaption } : {})
     },
     status: sendResult.status,

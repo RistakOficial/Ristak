@@ -9,6 +9,7 @@ import {
   sendWhatsAppQrAudioMessage,
   sendWhatsAppQrDocumentMessage,
   sendWhatsAppQrImageMessage,
+  sendWhatsAppQrVideoMessage,
   sendWhatsAppQrTextMessage,
   setBaileysRuntimeForTest
 } from '../src/services/whatsappQrService.js'
@@ -226,13 +227,23 @@ test('WhatsApp QR aplica pausas automáticas a todos los tipos de mensaje QR', a
         documentDataUrl: 'data:application/pdf;base64,JVBERi0x',
         filename: 'contrato.pdf'
       })
+      await sendWhatsAppQrVideoMessage({
+        phoneNumberId,
+        to: CONTACT_PHONE,
+        videoDataUrl: 'data:video/mp4;base64,AAAAIGZ0eXBpc29t',
+        caption: 'Video'
+      })
     })
 
-    assert.equal(sentMessages.length, 4)
-    assert.equal(sleeps.length, 3)
+    assert.equal(sentMessages.length, 5)
+    assert.equal(sentMessages[4].payload.video instanceof Buffer, true)
+    assert.equal(sentMessages[4].payload.mimetype, 'video/mp4')
+    assert.equal(sentMessages[4].payload.caption, 'Video')
+    assert.equal(sleeps.length, 4)
     assert.ok(sleeps[0] >= 14_000 && sleeps[0] <= 16_000)
     assert.ok(sleeps[1] >= 28_000 && sleeps[1] <= 31_000)
     assert.ok(sleeps[2] >= 42_000 && sleeps[2] <= 46_000)
+    assert.ok(sleeps[3] >= 56_000 && sleeps[3] <= 61_000)
   })
 })
 

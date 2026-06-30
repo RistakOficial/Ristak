@@ -156,7 +156,8 @@ import {
   type MobileAppNotificationDetail,
   type MobileChatAttachment,
   type MobileDocumentAttachment,
-  type MobilePhotoAttachment
+  type MobilePhotoAttachment,
+  type MobileVideoAttachment
 } from '@/services/mobileAppService'
 import { getPhoneDailyCacheKey, readPhoneDailyCache, writePhoneDailyCache } from '@/services/phoneDailyCache'
 import { pushNotificationsService } from '@/services/pushNotificationsService'
@@ -306,6 +307,8 @@ const MESSAGE_ACTION_LONG_PRESS_MS = 460
 const MESSAGE_ACTION_MOVE_TOLERANCE = 9
 const MAX_VOICE_MESSAGE_BYTES = 16 * 1024 * 1024
 const MAX_DOCUMENT_ATTACHMENT_BYTES = 20 * 1024 * 1024
+const MAX_VIDEO_ATTACHMENT_BYTES = 25 * 1024 * 1024
+const CAMERA_ATTACHMENT_ACCEPT = 'image/*,video/*'
 const DOCUMENT_ATTACHMENT_ACCEPT = [
   '.pdf',
   '.doc',
@@ -336,6 +339,15 @@ const DOCUMENT_MIME_BY_EXTENSION: Record<string, string> = {
   pptx: 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
   txt: 'text/plain',
   csv: 'text/csv'
+}
+const VIDEO_MIME_BY_EXTENSION: Record<string, string> = {
+  mp4: 'video/mp4',
+  m4v: 'video/mp4',
+  mov: 'video/quicktime',
+  qt: 'video/quicktime',
+  webm: 'video/webm',
+  '3gp': 'video/3gpp',
+  '3gpp': 'video/3gpp'
 }
 const MIN_VOICE_RECORDING_MS = 600
 const MAX_VOICE_RECORDING_MS = 3 * 60 * 1000
@@ -377,6 +389,7 @@ type WhatsAppNumberMode = 'merged' | 'separated'
 type ConversationSortMode = 'recent' | 'unread'
 type PhotoPickDestination = 'chat' | 'cameraShare'
 type AddDraftAttachmentOptions = { showReadyToast?: boolean }
+type MobileCameraAttachment = MobilePhotoAttachment | MobileVideoAttachment
 type ContactInfoDetailPanel = 'payments' | 'appointments' | 'journey' | 'agent_history' | null
 type ContactInfoRecordDetail = { type: 'payment'; id: string } | { type: 'appointment'; id: string } | null
 type ContactInfoArchiveTab = 'media' | 'links' | 'documents'
@@ -3637,6 +3650,19 @@ function getDocumentMimeType(file: File) {
   return DOCUMENT_MIME_BY_EXTENSION[extension] || fileType || 'application/octet-stream'
 }
 
+function getVideoMimeType(file: File) {
+  const fileType = String(file.type || '').trim().toLowerCase()
+  const extension = getFileExtension(file.name)
+  if (VIDEO_MIME_BY_EXTENSION[extension]) return VIDEO_MIME_BY_EXTENSION[extension]
+  if (fileType.startsWith('video/')) return fileType
+  return ''
+}
+
+function isSupportedVideoFile(file: File) {
+  const mimeType = getVideoMimeType(file)
+  return Boolean(VIDEO_MIME_BY_EXTENSION[getFileExtension(file.name)] || Object.values(VIDEO_MIME_BY_EXTENSION).includes(mimeType))
+}
+
 function isSupportedDocumentFile(file: File) {
   const extension = getFileExtension(file.name)
   const mimeType = getDocumentMimeType(file)
@@ -3649,7 +3675,9 @@ function normalizeDataUrlMimeType(dataUrl: string, mimeType: string) {
 }
 
 function getDraftAttachmentKind(attachment: MobileChatAttachment): ChatAttachmentType {
-  return attachment.attachmentType === 'image' ? 'image' : 'document'
+  if (attachment.attachmentType === 'image') return 'image'
+  if (attachment.attachmentType === 'video') return 'video'
+  return 'document'
 }
 
 function getAIAgentAttachmentKind(attachment: MobileChatAttachment): AIAgentAttachmentKind {
@@ -3657,6 +3685,7 @@ function getAIAgentAttachmentKind(attachment: MobileChatAttachment): AIAgentAtta
   const extension = getFileExtension(attachment.name)
 
   if (attachment.attachmentType === 'image' || mimeType.startsWith('image/')) return 'image'
+  if (attachment.attachmentType === 'video') return 'video'
   if (mimeType.startsWith('video/')) return 'video'
   if (mimeType === 'application/pdf' || extension === 'pdf') return 'pdf'
   if (mimeType.startsWith('text/') || ['csv', 'txt', 'md', 'json'].includes(extension)) return 'text'
@@ -3692,8 +3721,10 @@ function getAIAgentAttachmentPromptText(attachments: AIAgentAttachment[]) {
 
 function getAttachmentPreviewText(attachments: MobileChatAttachment[], fallbackText = '') {
   if (!attachments.length) return fallbackText
-  const hasDocument = attachments.some((attachment) => getDraftAttachmentKind(attachment) !== 'image')
-  if (attachments.length > 1) return hasDocument ? 'Archivos' : 'Fotos'
+  const hasDocument = attachments.some((attachment) => getDraftAttachmentKind(attachment) === 'document')
+  const hasVideo = attachments.some((attachment) => getDraftAttachmentKind(attachment) === 'video')
+  if (attachments.length > 1) return hasDocument ? 'Archivos' : hasVideo ? 'Fotos y videos' : 'Fotos'
+  if (hasVideo) return 'Video'
   return hasDocument ? 'Documento' : 'Foto'
 }
 
@@ -3932,7 +3963,7 @@ export const PhoneChat: React.FC = () => {
   const [messageText, setMessageText] = useState('')
   const [draftAttachments, setDraftAttachments] = useState<MobileChatAttachment[]>([])
   const [attachmentSheetAnchor, setAttachmentSheetAnchor] = useState<{ left: number; bottom: number } | null>(null)
-  const [cameraSharePhoto, setCameraSharePhoto] = useState<MobilePhotoAttachment | null>(null)
+  const [cameraShareMedia, setCameraShareMedia] = useState<MobileCameraAttachment | null>(null)
   const [cameraShareQuery, setCameraShareQuery] = useState('')
   const [cameraShareCaption, setCameraShareCaption] = useState('')
   const [cameraShareSelectedContacts, setCameraShareSelectedContacts] = useState<Contact[]>([])
@@ -5144,7 +5175,7 @@ export const PhoneChat: React.FC = () => {
     [cameraShareSelectedContacts]
   )
   const cameraShareContactOptions = useMemo(() => {
-    if (!cameraSharePhoto) return []
+    if (!cameraShareMedia) return []
 
     const normalizedQuery = cameraShareQuery.trim()
     const seen = new Set<string>()
@@ -5159,7 +5190,7 @@ export const PhoneChat: React.FC = () => {
       seen.add(contact.id)
       return true
     })
-  }, [cameraSharePhoto, cameraShareQuery, chats, contactResults])
+  }, [cameraShareMedia, cameraShareQuery, chats, contactResults])
   const ensureChatContact = useCallback((contact: Contact) => {
     const nextContact = toChatContact(contact)
     setChats((current) => {
@@ -6173,7 +6204,7 @@ export const PhoneChat: React.FC = () => {
     resetPhoneFrameHorizontalScroll()
     const frameId = window.requestAnimationFrame(resetPhoneFrameHorizontalScroll)
     return () => window.cancelAnimationFrame(frameId)
-  }, [cameraSharePhoto, contactInfoArchiveOpen, contactInfoOpen, conversationVisible, resetPhoneFrameHorizontalScroll])
+  }, [cameraShareMedia, contactInfoArchiveOpen, contactInfoOpen, conversationVisible, resetPhoneFrameHorizontalScroll])
 
   useLayoutEffect(() => {
     chatSwipeGenerationRef.current += 1
@@ -6724,7 +6755,7 @@ export const PhoneChat: React.FC = () => {
 
     const shouldSearchContacts = sheet === 'newChat' ||
       (isWideChatDevice && wideSidebarMode !== 'chats') ||
-      Boolean(cameraSharePhoto) ||
+      Boolean(cameraShareMedia) ||
       (!hasChats && chatQuery.trim().length >= 2)
     if (!shouldSearchContacts) {
       setContactResults([])
@@ -6732,11 +6763,11 @@ export const PhoneChat: React.FC = () => {
     }
 
     const timer = window.setTimeout(() => {
-      loadContactResults(sheet === 'newChat' || (isWideChatDevice && wideSidebarMode !== 'chats') ? contactQuery : cameraSharePhoto ? cameraShareQuery : chatQuery)
+      loadContactResults(sheet === 'newChat' || (isWideChatDevice && wideSidebarMode !== 'chats') ? contactQuery : cameraShareMedia ? cameraShareQuery : chatQuery)
     }, 160)
 
     return () => window.clearTimeout(timer)
-  }, [accessState, cameraSharePhoto, cameraShareQuery, chatQuery, contactQuery, hasChats, isWideChatDevice, loadContactResults, sheet, wideSidebarMode])
+  }, [accessState, cameraShareMedia, cameraShareQuery, chatQuery, contactQuery, hasChats, isWideChatDevice, loadContactResults, sheet, wideSidebarMode])
 
   useEffect(() => {
     if (sheet !== 'settings') {
@@ -7018,7 +7049,7 @@ export const PhoneChat: React.FC = () => {
 
     const pendingComposerText = aiAgentConversationOpen ? aiMessageText.trim() : messageText.trim()
     if (pendingComposerText || draftAttachments.length > 0) {
-      showToast('info', 'Manda primero lo que ya tienes', 'Para evitar confusiones, envía o borra el texto/foto antes de grabar audio.')
+      showToast('info', 'Manda primero lo que ya tienes', 'Para evitar confusiones, envía o borra el texto/archivo antes de grabar audio.')
       return
     }
 
@@ -7496,7 +7527,7 @@ export const PhoneChat: React.FC = () => {
     setConversationSearchOpen(false)
     setConversationSearchQuery('')
     setConversationSearchIndex(0)
-    setCameraSharePhoto(null)
+    setCameraShareMedia(null)
   }
 
   const closeWideSidebarMode = () => {
@@ -8036,7 +8067,7 @@ export const PhoneChat: React.FC = () => {
     closeComposerChannelPicker()
     setContactInfoOpen(false)
     setMessageInfoOpen(false)
-    setCameraSharePhoto(null)
+    setCameraShareMedia(null)
     closeSwipeActions()
     loadAgentData()
     loadAgentEditorSupportData()
@@ -8639,12 +8670,17 @@ export const PhoneChat: React.FC = () => {
   const addDraftAttachment = (attachment: MobileChatAttachment, options: AddDraftAttachmentOptions = {}) => {
     setDraftAttachments((current) => [attachment, ...current].slice(0, 4))
     if (options.showReadyToast === false) return
-    showToast('success', attachment.attachmentType === 'image' ? 'Foto lista' : 'Documento listo', 'Revisa la vista previa y toca enviar.')
+    const label = attachment.attachmentType === 'image'
+      ? 'Foto lista'
+      : attachment.attachmentType === 'video'
+        ? 'Video listo'
+        : 'Documento listo'
+    showToast('success', label, 'Revisa la vista previa y toca enviar.')
   }
 
-  const openCameraShare = (attachment: MobilePhotoAttachment) => {
+  const openCameraShare = (attachment: MobileCameraAttachment) => {
     actionSheetDismiss.requestClose(() => {
-      setCameraSharePhoto(attachment)
+      setCameraShareMedia(attachment)
       setCameraShareQuery('')
       setCameraShareCaption('')
       setCameraShareSelectedContacts([])
@@ -8656,7 +8692,7 @@ export const PhoneChat: React.FC = () => {
   }
 
   const closeCameraShare = () => {
-    setCameraSharePhoto(null)
+    setCameraShareMedia(null)
     setCameraShareQuery('')
     setCameraShareCaption('')
     setCameraShareSelectedContacts([])
@@ -8666,7 +8702,7 @@ export const PhoneChat: React.FC = () => {
     }
   }
 
-  const handlePickedPhoto = (attachment: MobilePhotoAttachment, destination: PhotoPickDestination) => {
+  const handlePickedCameraMedia = (attachment: MobileCameraAttachment, destination: PhotoPickDestination) => {
     if (destination === 'cameraShare') {
       openCameraShare(attachment)
       return
@@ -8674,56 +8710,86 @@ export const PhoneChat: React.FC = () => {
     addDraftAttachment(attachment, { showReadyToast: false })
   }
 
-  const readImageFile = (file: File, source: 'camera' | 'photos', destination: PhotoPickDestination) => {
-    if (!file.type.startsWith('image/')) {
-      showToast('error', 'Archivo no válido', 'Elige una foto JPG, PNG o WebP.')
+  const readCameraMediaFile = (file: File, source: 'camera' | 'photos', destination: PhotoPickDestination) => {
+    const fileType = String(file.type || '').toLowerCase()
+    const isImage = fileType.startsWith('image/')
+    const isVideo = fileType.startsWith('video/') || Boolean(getVideoMimeType(file))
+
+    if (!isImage && !isVideo) {
+      showToast('error', 'Archivo no válido', 'Elige una foto o un video compatible.')
       return
     }
 
-    if (file.size > 8 * 1024 * 1024) {
+    if (isImage && file.size > 8 * 1024 * 1024) {
       showToast('error', 'La foto pesa demasiado', 'Elige una foto más ligera para poder enviarla por WhatsApp.')
       return
     }
 
-    const reader = new FileReader()
-    reader.onload = () => {
-      const dataUrl = typeof reader.result === 'string' ? reader.result : ''
-      if (!dataUrl) {
-        showToast('error', 'No se pudo leer', 'Intenta elegir la foto otra vez.')
+    if (isVideo) {
+      if (!isSupportedVideoFile(file)) {
+        showToast('error', 'Video no válido', 'Graba o elige un MP4, MOV, WebM o 3GP.')
         return
       }
 
-      handlePickedPhoto({
+      if (file.size > MAX_VIDEO_ATTACHMENT_BYTES) {
+        showToast('error', 'Video muy pesado', 'Graba uno más corto. Ristak lo comprimirá para WhatsApp, pero la captura inicial debe pesar menos de 25 MB.')
+        return
+      }
+    }
+
+    const mimeType = isVideo ? getVideoMimeType(file) : file.type || 'image/jpeg'
+    const reader = new FileReader()
+    reader.onload = () => {
+      const dataUrl = typeof reader.result === 'string' ? normalizeDataUrlMimeType(reader.result, mimeType) : ''
+      if (!dataUrl) {
+        showToast('error', 'No se pudo leer', isVideo ? 'Intenta grabar el video otra vez.' : 'Intenta elegir la foto otra vez.')
+        return
+      }
+
+      if (isVideo) {
+        handlePickedCameraMedia({
+          id: `video-${Date.now()}`,
+          name: file.name || `video-${Date.now()}.mp4`,
+          type: mimeType || 'video/mp4',
+          dataUrl,
+          attachmentType: 'video',
+          size: file.size,
+          source
+        }, destination)
+        return
+      }
+
+      handlePickedCameraMedia({
         id: `photo-${Date.now()}`,
         name: file.name || `photo-${Date.now()}`,
-        type: file.type || 'image/jpeg',
+        type: mimeType || 'image/jpeg',
         dataUrl,
         attachmentType: 'image',
         size: file.size,
         source
       }, destination)
     }
-    reader.onerror = () => showToast('error', 'No se pudo leer', 'Intenta elegir la foto otra vez.')
+    reader.onerror = () => showToast('error', 'No se pudo leer', isVideo ? 'Intenta grabar el video otra vez.' : 'Intenta elegir la foto otra vez.')
     reader.readAsDataURL(file)
   }
 
-  const handleWebPhotoSelected = (source: 'camera' | 'photos', event: React.ChangeEvent<HTMLInputElement>) => {
+  const handleWebCameraMediaSelected = (source: 'camera' | 'photos', event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0]
     event.target.value = ''
     if (!file) return
-    readImageFile(file, source, photoPickDestinationRef.current)
+    readCameraMediaFile(file, source, photoPickDestinationRef.current)
   }
 
   const handlePickPhoto = async (source: 'camera' | 'photos', destination: PhotoPickDestination = 'chat') => {
     photoPickDestinationRef.current = destination
     actionSheetDismiss.requestClose()
 
-    if (mobileAppService.isNative()) {
+    if (mobileAppService.isNative() && source === 'photos') {
       try {
         const photo = await mobileAppService.pickPhoto(source)
-        if (photo) handlePickedPhoto(photo, destination)
+        if (photo) handlePickedCameraMedia(photo, destination)
       } catch (error: any) {
-        showToast('error', source === 'camera' ? 'No se abrió la cámara' : 'No se abrieron las fotos', error?.message || 'Revisa los permisos del celular e intenta otra vez.')
+        showToast('error', 'No se abrieron las fotos', error?.message || 'Revisa los permisos del celular e intenta otra vez.')
       }
       return
     }
@@ -8800,7 +8866,7 @@ export const PhoneChat: React.FC = () => {
 
   const toggleCameraShareContact = (contact: Contact) => {
     if (!contact.phone) {
-      showToast('warning', 'Sin teléfono', 'Guarda el número del contacto para poder enviarle la foto.')
+      showToast('warning', 'Sin teléfono', 'Guarda el número del contacto para poder enviarle la captura.')
       return
     }
 
@@ -8811,7 +8877,9 @@ export const PhoneChat: React.FC = () => {
     ))
   }
 
-  const updateCameraShareChats = (targets: Contact[], caption: string, sentAt: string) => {
+  const updateCameraShareChats = (targets: Contact[], caption: string, sentAt: string, media: MobileCameraAttachment) => {
+    const mediaKind = media.attachmentType === 'video' ? 'video' : 'image'
+    const fallbackLabel = media.attachmentType === 'video' ? 'Video' : 'Foto'
     const targetById = new Map(targets.map((contact) => [contact.id, contact]))
     setChats((current) => {
       const existingIds = new Set(current.map((contact) => contact.id))
@@ -8819,8 +8887,8 @@ export const PhoneChat: React.FC = () => {
         targetById.has(contact.id)
           ? {
               ...contact,
-              lastMessageText: caption || 'Foto',
-              lastMessageType: 'image',
+              lastMessageText: caption || fallbackLabel,
+              lastMessageType: mediaKind,
               lastMessageDate: sentAt,
               lastMessageDirection: 'outbound',
               messageCount: Number(contact.messageCount || 0) + 1
@@ -8831,8 +8899,8 @@ export const PhoneChat: React.FC = () => {
         .filter((contact) => !existingIds.has(contact.id))
         .map((contact) => ({
           ...toChatContact(contact),
-          lastMessageText: caption || 'Foto',
-          lastMessageType: 'image',
+          lastMessageText: caption || fallbackLabel,
+          lastMessageType: mediaKind,
           lastMessageDate: sentAt,
           lastMessageDirection: 'outbound',
           messageCount: 1
@@ -8844,24 +8912,28 @@ export const PhoneChat: React.FC = () => {
     })
   }
 
-  const handleSendCameraSharePhoto = async () => {
-    const photo = cameraSharePhoto
+  const handleSendCameraShareMedia = async () => {
+    const media = cameraShareMedia
     const targets = cameraShareSelectedContacts.filter((contact) => Boolean(contact.phone))
     const caption = cameraShareCaption.trim()
-    if (!photo || cameraShareSending) return
+    if (!media || cameraShareSending) return
+    const isVideo = media.attachmentType === 'video'
+    const successTitle = targets.length === 1
+      ? (isVideo ? 'Video enviado' : 'Foto enviada')
+      : (isVideo ? 'Videos enviados' : 'Fotos enviadas')
 
     if (targets.length === 0) {
-      showToast('warning', 'Elige un contacto', 'Selecciona una o varias personas para mandar la foto.')
+      showToast('warning', 'Elige un contacto', `Selecciona una o varias personas para mandar ${isVideo ? 'el video' : 'la foto'}.`)
       return
     }
 
     if (!cameraShareBusinessPhoneValue) {
-      showToast('error', 'Falta el WhatsApp del negocio', 'Configura el número conectado para enviar fotos.')
+      showToast('error', 'Falta el WhatsApp del negocio', 'Configura el número conectado para enviar capturas.')
       return
     }
 
     if (!whatsappConnected && !cameraShareQrReady) {
-      showToast('error', 'WhatsApp no está conectado', 'Conecta WhatsApp API o QR para mandar fotos desde la cámara.')
+      showToast('error', 'WhatsApp no está conectado', 'Conecta WhatsApp API o QR para mandar capturas desde la cámara.')
       return
     }
 
@@ -8869,40 +8941,53 @@ export const PhoneChat: React.FC = () => {
     setCameraShareSending(true)
 
     const results = await Promise.allSettled(targets.map((contact, index) => (
-      whatsappApiService.sendImage({
-        to: contact.phone || '',
-        from: cameraShareBusinessPhoneValue,
-        contactId: contact.id,
-        imageDataUrl: photo.dataUrl,
-        caption,
-        externalId: `camera-share-${Date.now()}-${index}`,
-        transport: cameraShareTransport,
-        phoneNumberId: cameraShareBusinessPhone?.id || undefined
-      })
+      isVideo
+        ? whatsappApiService.sendVideo({
+            to: contact.phone || '',
+            from: cameraShareBusinessPhoneValue,
+            contactId: contact.id,
+            videoDataUrl: media.dataUrl,
+            caption,
+            externalId: `camera-share-${Date.now()}-${index}`,
+            transport: cameraShareTransport,
+            phoneNumberId: cameraShareBusinessPhone?.id || undefined,
+            messageOrigin: 'manual_chat'
+          })
+        : whatsappApiService.sendImage({
+            to: contact.phone || '',
+            from: cameraShareBusinessPhoneValue,
+            contactId: contact.id,
+            imageDataUrl: media.dataUrl,
+            caption,
+            externalId: `camera-share-${Date.now()}-${index}`,
+            transport: cameraShareTransport,
+            phoneNumberId: cameraShareBusinessPhone?.id || undefined,
+            messageOrigin: 'manual_chat'
+          })
     )))
 
     const failedContacts = targets.filter((_, index) => results[index].status === 'rejected')
     const successfulContacts = targets.filter((_, index) => results[index].status === 'fulfilled')
     const firstFailure = results.find((result) => result.status === 'rejected')
     if (successfulContacts.length > 0) {
-      updateCameraShareChats(successfulContacts, caption, sentAt)
+      updateCameraShareChats(successfulContacts, caption, sentAt, media)
     }
 
     try {
       await loadChats({ silent: true, useCache: false })
     } catch {
-      // La foto ya se intentó enviar; la lista se refrescará sola en la siguiente carga.
+      // La captura ya se intentó enviar; la lista se refrescará sola en la siguiente carga.
     }
 
     if (failedContacts.length > 0) {
       const reason = firstFailure && firstFailure.status === 'rejected'
-        ? getErrorMessage(firstFailure.reason, 'Intenta enviar la foto otra vez.')
-        : 'Intenta enviar la foto otra vez.'
+        ? getErrorMessage(firstFailure.reason, `Intenta enviar ${isVideo ? 'el video' : 'la foto'} otra vez.`)
+        : `Intenta enviar ${isVideo ? 'el video' : 'la foto'} otra vez.`
       setCameraShareSelectedContacts(failedContacts)
       setCameraShareSending(false)
       showToast(
         'error',
-        failedContacts.length === targets.length ? 'No se envió la foto' : 'Algunos contactos fallaron',
+        failedContacts.length === targets.length ? `No se envió ${isVideo ? 'el video' : 'la foto'}` : 'Algunos contactos fallaron',
         failedContacts.length === targets.length
           ? reason
           : `Se mandó a ${targets.length - failedContacts.length}, faltan ${failedContacts.length}. ${reason}`
@@ -8913,7 +8998,7 @@ export const PhoneChat: React.FC = () => {
     closeCameraShare()
     showToast(
       'success',
-      targets.length === 1 ? 'Foto enviada' : 'Fotos enviadas',
+      successTitle,
       targets.length === 1
         ? `Se mandó a ${getContactName(targets[0])}.`
         : `Se mandó a ${targets.length} contactos.`
@@ -9240,7 +9325,7 @@ export const PhoneChat: React.FC = () => {
     }
 
     if (draftAttachments.length > 0 || voiceDraft) {
-      showToast('warning', 'Solo texto por ahora', 'Programa mensajes escritos; las fotos, documentos y audios se mandan al momento.')
+      showToast('warning', 'Solo texto por ahora', 'Programa mensajes escritos; las fotos, videos, documentos y audios se mandan al momento.')
       return
     }
 
@@ -9982,9 +10067,10 @@ export const PhoneChat: React.FC = () => {
             : message
         )))
       } else if (attachmentsToSend.length > 0) {
-        const results = await Promise.all(attachmentsToSend.map((attachment, index) => (
-          getDraftAttachmentKind(attachment) === 'image'
-            ? whatsappApiService.sendImage({
+        const results = await Promise.all(attachmentsToSend.map((attachment, index) => {
+          const attachmentKind = getDraftAttachmentKind(attachment)
+          if (attachmentKind === 'image') {
+            return whatsappApiService.sendImage({
                 to: activeContact.phone || '',
                 from: selectedBusinessPhoneValue,
                 contactId: activeContact.id,
@@ -9995,28 +10081,44 @@ export const PhoneChat: React.FC = () => {
                 phoneNumberId: selectedBusinessPhone?.id || undefined,
                 messageOrigin: 'manual_chat'
               })
-            : whatsappApiService.sendDocument({
-                to: activeContact.phone || '',
-                from: selectedBusinessPhoneValue,
-                contactId: activeContact.id,
-                documentDataUrl: attachment.dataUrl,
-                filename: attachment.name,
-                mimeType: attachment.type,
-                caption: index === 0 ? text : '',
-                externalId: `${optimisticId}-attachment-${index}`,
-                transport: resolvedTransport,
-                phoneNumberId: selectedBusinessPhone?.id || undefined,
-                messageOrigin: 'manual_chat'
-              })
-        )))
+          }
+
+          if (attachmentKind === 'video') {
+            return whatsappApiService.sendVideo({
+              to: activeContact.phone || '',
+              from: selectedBusinessPhoneValue,
+              contactId: activeContact.id,
+              videoDataUrl: attachment.dataUrl,
+              caption: index === 0 ? text : '',
+              externalId: `${optimisticId}-attachment-${index}`,
+              transport: resolvedTransport,
+              phoneNumberId: selectedBusinessPhone?.id || undefined,
+              messageOrigin: 'manual_chat'
+            })
+          }
+
+          return whatsappApiService.sendDocument({
+            to: activeContact.phone || '',
+            from: selectedBusinessPhoneValue,
+            contactId: activeContact.id,
+            documentDataUrl: attachment.dataUrl,
+            filename: attachment.name,
+            mimeType: attachment.type,
+            caption: index === 0 ? text : '',
+            externalId: `${optimisticId}-attachment-${index}`,
+            transport: resolvedTransport,
+            phoneNumberId: selectedBusinessPhone?.id || undefined,
+            messageOrigin: 'manual_chat'
+          })
+        }))
         setMessages((current) => current.map((message) => (
           message.id.startsWith(`${optimisticId}-attachment-`)
             ? (() => {
                 const result = results[Number(message.id.replace(`${optimisticId}-attachment-`, ''))]
-                const resultMedia = result?.document || result?.image || null
+                const resultMedia = result?.document || result?.image || result?.video || null
                 const mediaUrl = resultMedia?.link || resultMedia?.url || result?.localMedia?.publicUrl || ''
                 const mediaMimeType = resultMedia?.mimeType || resultMedia?.mimetype || result?.localMedia?.mimeType || ''
-                const mediaFilename = result?.document?.filename || result?.document?.fileName || result?.localMedia?.filename || ''
+                const mediaFilename = result?.document?.filename || result?.document?.fileName || result?.video?.filename || result?.localMedia?.filename || ''
                 return {
                   ...message,
                   status: result?.status || 'sent',
@@ -11046,18 +11148,19 @@ export const PhoneChat: React.FC = () => {
   }
 
   const renderCameraShareScreen = () => {
-    if (!cameraSharePhoto) return null
+    if (!cameraShareMedia) return null
 
     const canSendCameraShare = cameraShareSelectedContacts.length > 0 && !cameraShareSending
+    const isVideo = cameraShareMedia.attachmentType === 'video'
 
     return (
-      <section className={styles.cameraShareScreen} aria-label="Enviar foto">
+      <section className={styles.cameraShareScreen} aria-label={isVideo ? 'Enviar video' : 'Enviar foto'}>
         <header className={styles.cameraShareHeader}>
           <button type="button" className={styles.backButton} onClick={closeCameraShare} aria-label="Volver a chats">
             <ChevronLeft size={32} />
           </button>
           <div>
-            <strong>Enviar foto</strong>
+            <strong>{isVideo ? 'Enviar video' : 'Enviar foto'}</strong>
             <span>
               {cameraShareSelectedContacts.length > 0
                 ? `${cameraShareSelectedContacts.length} seleccionado${cameraShareSelectedContacts.length === 1 ? '' : 's'}`
@@ -11065,7 +11168,11 @@ export const PhoneChat: React.FC = () => {
             </span>
           </div>
           <figure className={styles.cameraShareThumb}>
-            <img src={cameraSharePhoto.dataUrl} alt="" />
+            {isVideo ? (
+              <video src={cameraShareMedia.dataUrl} muted playsInline preload="metadata" aria-label="Video listo" />
+            ) : (
+              <img src={cameraShareMedia.dataUrl} alt="" />
+            )}
           </figure>
         </header>
 
@@ -11075,7 +11182,7 @@ export const PhoneChat: React.FC = () => {
             value={cameraShareQuery}
             onChange={(event) => setCameraShareQuery(event.target.value)}
             placeholder="Buscar nombre, número o correo"
-            aria-label="Buscar contacto para enviar foto"
+            aria-label={isVideo ? 'Buscar contacto para enviar video' : 'Buscar contacto para enviar foto'}
           />
           {cameraShareQuery && (
             <button type="button" onClick={() => setCameraShareQuery('')} aria-label="Limpiar búsqueda">
@@ -11097,7 +11204,7 @@ export const PhoneChat: React.FC = () => {
                 <User size={28} />
               </span>
               <strong>No hay contactos</strong>
-              <small>Busca por nombre, número o correo para elegir a quién mandarle la foto.</small>
+              <small>Busca por nombre, número o correo para elegir a quién mandarle {isVideo ? 'el video' : 'la foto'}.</small>
             </div>
           )}
         </div>
@@ -11125,7 +11232,7 @@ export const PhoneChat: React.FC = () => {
                 className={styles.composerInput}
                 role="textbox"
                 aria-multiline="true"
-                aria-label="Mensaje para acompañar la foto"
+                aria-label={isVideo ? 'Mensaje para acompañar el video' : 'Mensaje para acompañar la foto'}
                 data-placeholder="Escribe un mensaje"
                 contentEditable={!cameraShareSending}
                 suppressContentEditableWarning
@@ -11140,7 +11247,7 @@ export const PhoneChat: React.FC = () => {
                   if (event.key === 'Enter' && !event.shiftKey) {
                     event.preventDefault()
                     event.stopPropagation()
-                    handleSendCameraSharePhoto()
+                    handleSendCameraShareMedia()
                   }
                 }}
               />
@@ -11148,9 +11255,9 @@ export const PhoneChat: React.FC = () => {
             <button
               type="button"
               className={`${styles.composerIconButton} ${styles.composerSendButton}`}
-              onClick={handleSendCameraSharePhoto}
+              onClick={handleSendCameraShareMedia}
               disabled={!canSendCameraShare}
-              aria-label="Enviar foto"
+              aria-label={isVideo ? 'Enviar video' : 'Enviar foto'}
             >
               {cameraShareSending ? <Loader2 size={23} className={styles.spinIcon} /> : <ArrowRight size={23} />}
             </button>
@@ -12399,9 +12506,11 @@ export const PhoneChat: React.FC = () => {
     return (
       <div className={styles.draftAttachments} data-phone-chat-scrollable="true">
         {draftAttachments.map((attachment) => (
-          <figure key={attachment.id} className={`${styles.draftAttachment} ${attachment.attachmentType !== 'image' ? styles.draftAttachmentFile : ''}`}>
+          <figure key={attachment.id} className={`${styles.draftAttachment} ${attachment.attachmentType === 'document' ? styles.draftAttachmentFile : ''}`}>
             {attachment.attachmentType === 'image' ? (
               <img src={attachment.dataUrl} alt={attachment.name || 'Foto lista'} />
+            ) : attachment.attachmentType === 'video' ? (
+              <video src={attachment.dataUrl} muted playsInline preload="metadata" aria-label={attachment.name || 'Video listo'} />
             ) : (
               <span className={styles.draftAttachmentFileContent}>
                 <FileText size={21} />
@@ -12409,7 +12518,7 @@ export const PhoneChat: React.FC = () => {
                 <small>{formatAttachmentSize(attachment.size)}</small>
               </span>
             )}
-            <button type="button" onClick={() => removeDraftAttachment(attachment.id)} aria-label={attachment.attachmentType === 'image' ? 'Quitar foto' : 'Quitar documento'}>
+            <button type="button" onClick={() => removeDraftAttachment(attachment.id)} aria-label={attachment.attachmentType === 'image' ? 'Quitar foto' : attachment.attachmentType === 'video' ? 'Quitar video' : 'Quitar documento'}>
               <X size={15} />
             </button>
           </figure>
@@ -17735,22 +17844,22 @@ export const PhoneChat: React.FC = () => {
 
       {renderMessageActionMenu()}
 
-      {!isWideChatDevice && !conversationOpen && !cameraSharePhoto && !aiAgentHubOpen && !aiAgentHubClosing && !agentPickerOpen && <PhoneEcosystemNav active="chat" badges={{ chat: unreadTotal }} />}
+      {!isWideChatDevice && !conversationOpen && !cameraShareMedia && !aiAgentHubOpen && !aiAgentHubClosing && !agentPickerOpen && <PhoneEcosystemNav active="chat" badges={{ chat: unreadTotal }} />}
 
       <input
         ref={cameraInputRef}
         type="file"
-        accept="image/*"
+        accept={CAMERA_ATTACHMENT_ACCEPT}
         capture="environment"
         className={styles.hiddenFileInput}
-        onChange={(event) => handleWebPhotoSelected('camera', event)}
+        onChange={(event) => handleWebCameraMediaSelected('camera', event)}
       />
       <input
         ref={photosInputRef}
         type="file"
         accept="image/*"
         className={styles.hiddenFileInput}
-        onChange={(event) => handleWebPhotoSelected('photos', event)}
+        onChange={(event) => handleWebCameraMediaSelected('photos', event)}
       />
       <input
         ref={documentInputRef}

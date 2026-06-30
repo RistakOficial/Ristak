@@ -18,6 +18,7 @@ import {
   sendWhatsAppQrAudioMessage,
   sendWhatsAppQrDocumentMessage,
   sendWhatsAppQrImageMessage,
+  sendWhatsAppQrVideoMessage,
   sendWhatsAppQrTextMessage,
   startWhatsAppQrConnection
 } from './whatsappQrService.js'
@@ -79,6 +80,11 @@ const MAX_WHATSAPP_AUDIO_BYTES = 16 * 1024 * 1024
 const WHATSAPP_DOCUMENT_UPLOAD_ROOT = join(__dirname, '../../uploads/whatsapp-documents')
 const WHATSAPP_DOCUMENT_PUBLIC_PATH = '/uploads/whatsapp-documents'
 const MAX_WHATSAPP_DOCUMENT_BYTES = 20 * 1024 * 1024
+const WHATSAPP_VIDEO_UPLOAD_ROOT = join(__dirname, '../../uploads/whatsapp-videos')
+const WHATSAPP_VIDEO_PUBLIC_PATH = '/uploads/whatsapp-videos'
+const MAX_WHATSAPP_VIDEO_INPUT_BYTES = 25 * 1024 * 1024
+const MAX_WHATSAPP_VIDEO_OUTPUT_BYTES = 16 * 1024 * 1024
+const WHATSAPP_VIDEO_MIME_TYPE = 'video/mp4'
 const WHATSAPP_VOICE_NOTE_MIME_TYPE = 'audio/ogg; codecs=opus'
 const WHATSAPP_API_PROFILE_PICTURE_CACHE_TTL_MS = 24 * 60 * 60 * 1000
 const WHATSAPP_API_PROFILE_PICTURE_BATCH_LIMIT = 40
@@ -109,6 +115,13 @@ const AUDIO_EXTENSION_BY_MIME = {
   // them as video/mp4. This endpoint only accepts audio payloads, so we treat
   // that input as something that must be transcoded before WhatsApp sees it.
   'video/mp4': 'mp4'
+}
+const VIDEO_EXTENSION_BY_MIME = {
+  'video/mp4': 'mp4',
+  'video/quicktime': 'mov',
+  'video/webm': 'webm',
+  'video/3gpp': '3gp',
+  'video/3gp': '3gp'
 }
 const DOCUMENT_EXTENSION_BY_MIME = {
   'application/pdf': 'pdf',
@@ -742,6 +755,30 @@ function parseDocumentDataUrl(value = '', filename = '', providedMimeType = '') 
   }
 }
 
+function parseVideoDataUrl(value = '') {
+  const match = cleanString(value).match(/^data:([^;,]+)(?:;[^,]*)?;base64,([a-z0-9+/=\s]+)$/i)
+  if (!match) {
+    throw new Error('El video no llegó en un formato válido.')
+  }
+
+  const mimeType = cleanMimeType(match[1])
+  const extension = VIDEO_EXTENSION_BY_MIME[mimeType]
+  if (!extension) {
+    throw new Error('El video debe ser MP4, MOV, WebM o 3GP para poder prepararlo para WhatsApp.')
+  }
+
+  const buffer = Buffer.from(match[2].replace(/\s/g, ''), 'base64')
+  if (!buffer.length) {
+    throw new Error('El video está vacío.')
+  }
+
+  if (buffer.length > MAX_WHATSAPP_VIDEO_INPUT_BYTES) {
+    throw new Error('El video pesa demasiado. Graba uno más corto para poder comprimirlo y enviarlo por WhatsApp.')
+  }
+
+  return { buffer, mimeType, extension }
+}
+
 function audioNeedsWhatsAppConversion({ mimeType, params }) {
   return !(mimeType === 'audio/ogg' && String(params || '').includes('opus'))
 }
@@ -754,18 +791,22 @@ function normalizeVoiceNoteMimeType({ mimeType, params } = {}) {
   return cleanMimeType
 }
 
-function runFfmpeg(args = []) {
+function runFfmpeg(args = [], options = {}) {
   return new Promise((resolve, reject) => {
     const binary = process.env.FFMPEG_PATH || 'ffmpeg'
     const child = spawn(binary, args)
     let stderr = ''
+    const unavailableMessage = cleanString(options.unavailableMessage) ||
+      'El audio salió en un formato que WhatsApp no acepta y este servidor no pudo adaptarlo. Intenta grabarlo otra vez.'
+    const failureMessage = cleanString(options.failureMessage) ||
+      'No se pudo preparar el audio para WhatsApp. Intenta grabarlo otra vez.'
 
     child.stderr.on('data', chunk => {
       stderr += chunk.toString()
     })
 
     child.on('error', () => {
-      reject(new Error('El audio salió en un formato que WhatsApp no acepta y este servidor no pudo adaptarlo. Intenta grabarlo otra vez.'))
+      reject(new Error(unavailableMessage))
     })
 
     child.on('close', code => {
@@ -775,9 +816,90 @@ function runFfmpeg(args = []) {
       }
 
       const detail = stderr.trim().slice(0, 240)
-      reject(new Error(detail || 'No se pudo preparar el audio para WhatsApp. Intenta grabarlo otra vez.'))
+      reject(new Error(detail || failureMessage))
     })
   })
+}
+
+async function convertVideoToWhatsAppMp4({ buffer, extension }) {
+  const folder = await fs.mkdtemp(join(tmpdir(), 'ristak-whatsapp-video-'))
+  const inputPath = join(folder, `input.${extension || 'video'}`)
+  const attempts = [
+    { maxDimension: 1280, crf: 28, audioBitrate: '96k', label: '1280_crf28' },
+    { maxDimension: 960, crf: 32, audioBitrate: '80k', label: '960_crf32' },
+    { maxDimension: 720, crf: 35, audioBitrate: '64k', label: '720_crf35' },
+    { maxDimension: 480, crf: 38, audioBitrate: '48k', label: '480_crf38' }
+  ]
+
+  try {
+    await fs.writeFile(inputPath, buffer)
+
+    for (const attempt of attempts) {
+      const outputPath = join(folder, `video-${attempt.label}.mp4`)
+      await runFfmpeg([
+        '-y',
+        '-i',
+        inputPath,
+        '-map',
+        '0:v:0',
+        '-map',
+        '0:a?',
+        '-vf',
+        `scale=w=${attempt.maxDimension}:h=${attempt.maxDimension}:force_original_aspect_ratio=decrease:force_divisible_by=2`,
+        '-c:v',
+        'libx264',
+        '-preset',
+        'veryfast',
+        '-profile:v',
+        'baseline',
+        '-level',
+        '3.1',
+        '-pix_fmt',
+        'yuv420p',
+        '-crf',
+        String(attempt.crf),
+        '-c:a',
+        'aac',
+        '-ac',
+        '2',
+        '-ar',
+        '44100',
+        '-b:a',
+        attempt.audioBitrate,
+        '-movflags',
+        '+faststart',
+        outputPath
+      ], {
+        unavailableMessage: 'El video salió en un formato que WhatsApp no acepta y este servidor no pudo adaptarlo. Intenta grabarlo otra vez.',
+        failureMessage: 'No se pudo preparar el video para WhatsApp. Intenta grabarlo otra vez.'
+      })
+
+      const converted = await fs.readFile(outputPath)
+      if (!converted.length) {
+        throw new Error('El video convertido quedó vacío. Intenta grabarlo otra vez.')
+      }
+      if (converted.length <= MAX_WHATSAPP_VIDEO_OUTPUT_BYTES) {
+        return {
+          buffer: converted,
+          compression: `whatsapp_mp4_h264_aac_${attempt.label}`
+        }
+      }
+    }
+
+    throw new Error('El video sigue pesando más de 16 MB después de comprimirlo. Graba uno más corto para enviarlo por WhatsApp.')
+  } finally {
+    await fs.rm(folder, { recursive: true, force: true }).catch(() => undefined)
+  }
+}
+
+async function prepareWhatsAppVideo(parsed) {
+  const converted = await convertVideoToWhatsAppMp4(parsed)
+  return {
+    buffer: converted.buffer,
+    mimeType: WHATSAPP_VIDEO_MIME_TYPE,
+    extension: 'mp4',
+    compression: converted.compression
+  }
 }
 
 async function convertAudioToOggOpus({ buffer, extension }) {
@@ -943,6 +1065,59 @@ export async function saveWhatsAppAudioDataUrl(dataUrl = '') {
   }
 }
 
+export async function saveWhatsAppVideoDataUrl(dataUrl = '') {
+  const parsed = parseVideoDataUrl(dataUrl)
+  const originalMimeType = parsed.mimeType
+  const media = await prepareWhatsAppVideo(parsed)
+  try {
+    const { uploadMediaAsset } = await import('./mediaStorageService.js')
+    const asset = await uploadMediaAsset({
+      buffer: media.buffer,
+      mimeType: media.mimeType,
+      filename: `whatsapp-video.${media.extension}`,
+      module: 'chat',
+      isPublic: true,
+      skipCompression: true,
+      metadata: {
+        whatsappApiCompatible: true,
+        whatsappVideoCompression: media.compression,
+        originalMimeType,
+        originalExtension: parsed.extension
+      }
+    })
+    return {
+      mimeType: media.mimeType,
+      originalMimeType,
+      size: asset.sizeProcessed,
+      publicPath: asset.publicUrl,
+      filename: asset.storedFilename,
+      mediaAssetId: asset.id
+    }
+  } catch (error) {
+    handleWhatsAppMediaStorageError('video de chat', error)
+  }
+
+  const dayKey = await getBusinessDayKey()
+  const folder = join(WHATSAPP_VIDEO_UPLOAD_ROOT, dayKey)
+  const filename = `${crypto.randomUUID()}.${media.extension}`
+  const filePath = join(folder, filename)
+
+  await fs.mkdir(folder, { recursive: true })
+  await fs.writeFile(filePath, media.buffer)
+
+  return {
+    mimeType: media.mimeType,
+    originalMimeType,
+    size: media.buffer.length,
+    // (WA-006) Fallback local: solo válido para QR (ruta relativa sin HTTPS).
+    localFallback: true,
+    qrOnly: true,
+    filePath,
+    publicPath: `${WHATSAPP_VIDEO_PUBLIC_PATH}/${dayKey}/${filename}`,
+    filename
+  }
+}
+
 async function saveWhatsAppDocumentDataUrl(dataUrl = '', filename = '', mimeType = '') {
   const parsed = parseDocumentDataUrl(dataUrl, filename, mimeType)
   try {
@@ -1022,6 +1197,23 @@ async function prepareWhatsAppAudioForProviderUpload(dataUrl = '') {
   }
 }
 
+async function prepareWhatsAppVideoForProviderUpload(dataUrl = '') {
+  const parsed = parseVideoDataUrl(dataUrl)
+  const media = await prepareWhatsAppVideo(parsed)
+  return {
+    buffer: media.buffer,
+    mimeType: media.mimeType,
+    filename: `whatsapp-video.${media.extension}`,
+    size: media.buffer.length,
+    metadata: {
+      whatsappApiCompatible: true,
+      whatsappVideoCompression: media.compression,
+      originalMimeType: parsed.mimeType,
+      originalExtension: parsed.extension
+    }
+  }
+}
+
 async function prepareWhatsAppDocumentForProviderUpload(dataUrl = '', filename = '', mimeType = '') {
   const parsed = parseDocumentDataUrl(dataUrl, filename, mimeType)
   return {
@@ -1041,6 +1233,7 @@ function inferWhatsAppMediaExtension(mimeType = '') {
   const cleanType = cleanMimeType(mimeType)
   return IMAGE_EXTENSION_BY_MIME[cleanType] ||
     AUDIO_EXTENSION_BY_MIME[cleanType] ||
+    VIDEO_EXTENSION_BY_MIME[cleanType] ||
     DOCUMENT_EXTENSION_BY_MIME[cleanType] ||
     cleanType.split('/')[1] ||
     'bin'
@@ -1102,6 +1295,11 @@ async function uploadPreparedMediaToYCloud({ config, fromPhone, media, type } = 
     metadata: media?.metadata || {},
     rawUpload: uploaded.raw || {}
   }
+}
+
+function buildPreparedMediaDataUrl(media = {}) {
+  if (!Buffer.isBuffer(media.buffer) || !media.buffer.length || !media.mimeType) return ''
+  return `data:${media.mimeType};base64,${media.buffer.toString('base64')}`
 }
 
 function parseJsonValue(value, fallback = null) {
@@ -3898,12 +4096,7 @@ function getInboundMediaExtension({ messageType = '', mimeType = '', filename = 
   if (type === 'audio' || type === 'voice') return AUDIO_EXTENSION_BY_MIME[cleanMime] || 'ogg'
   if (type === 'image' || type === 'sticker') return IMAGE_EXTENSION_BY_MIME[cleanMime] || 'jpg'
   if (type === 'document') return DOCUMENT_EXTENSION_BY_MIME[cleanMime] || 'bin'
-  if (type === 'video') {
-    if (cleanMime === 'video/mp4') return 'mp4'
-    if (cleanMime === 'video/quicktime') return 'mov'
-    if (cleanMime === 'video/webm') return 'webm'
-    return 'mp4'
-  }
+  if (type === 'video') return VIDEO_EXTENSION_BY_MIME[cleanMime] || 'mp4'
   return DOCUMENT_EXTENSION_BY_MIME[cleanMime] || 'bin'
 }
 
@@ -7701,6 +7894,81 @@ async function sendDocumentViaQrFallback({ fromPhone, toPhone, requestDocument, 
   }
 }
 
+async function sendVideoViaQrFallback({ fromPhone, toPhone, requestVideo, videoDataUrl, externalId, phoneNumberId, contactId, localMedia, publicBaseUrl, fallbackReason, originalError, persist = true, skipQrSendProtection = false } = {}) {
+  try {
+    const localMediaUrl = localMedia ? buildLocalMediaUrl(localMedia, publicBaseUrl) : ''
+    const response = await sendWhatsAppQrVideoMessage({
+      phoneNumberId,
+      from: fromPhone,
+      to: toPhone,
+      videoDataUrl,
+      videoUrl: requestVideo?.link || requestVideo?.url || localMediaUrl,
+      caption: requestVideo?.caption,
+      mimeType: requestVideo?.mimeType || requestVideo?.mimetype || localMedia?.mimeType,
+      externalId,
+      skipQrSendProtection
+    })
+    const responseVideo = isPlainObject(response.video) ? response.video : {}
+    const qrMetadata = buildQrInlineMediaMetadata({
+      dataUrl: videoDataUrl,
+      mimeType: requestVideo?.mimeType || requestVideo?.mimetype || localMedia?.mimeType,
+      filename: requestVideo?.filename || localMedia?.filename,
+      defaultBasename: 'whatsapp-video',
+      type: 'video'
+    })
+    const mergedMetadata = mergeMediaMetadata(qrMetadata.metadata, requestVideo?.metadata, responseVideo.metadata)
+    const finalVideo = {
+      ...(requestVideo || {}),
+      ...qrMetadata,
+      ...responseVideo,
+      link: cleanString(responseVideo.link || requestVideo?.link || requestVideo?.url || localMediaUrl),
+      url: cleanString(responseVideo.url || responseVideo.link || requestVideo?.url || requestVideo?.link || localMediaUrl),
+      mimeType: cleanString(responseVideo.mimeType || requestVideo?.mimeType || requestVideo?.mimetype || qrMetadata.mimeType || localMedia?.mimeType),
+      filename: cleanString(responseVideo.filename || requestVideo?.filename || qrMetadata.filename || localMedia?.filename),
+      ...(requestVideo?.caption || response.video?.caption ? { caption: requestVideo?.caption || response.video?.caption } : {})
+    }
+    if (finalVideo.mimeType) finalVideo.mimetype = finalVideo.mimeType
+    if (!finalVideo.filename) delete finalVideo.filename
+    if (mergedMetadata) finalVideo.metadata = mergedMetadata
+
+    if (persist) {
+      await upsertMessage({
+        payload: {
+          id: response.id || externalId || hashId('waqr_video_event', `${fromPhone}|${toPhone}|${finalVideo.link}`),
+          type: fallbackReason ? 'whatsapp.qr.message.fallback_sent' : 'whatsapp.qr.message.sent',
+          transport: 'qr',
+          fallbackReason: fallbackReason || null,
+          createTime: response.createTime || nowIso(),
+          whatsappMessage: response
+        },
+        message: {
+          ...response,
+          from: response.from || fromPhone,
+          to: response.to || toPhone,
+          type: response.type || 'video',
+          video: finalVideo,
+          transport: 'qr',
+          createTime: response.createTime || nowIso()
+        },
+        direction: 'outbound',
+        transport: 'qr',
+        contactId
+      })
+    }
+
+    return {
+      ...decorateQrFallbackResponse(response, fallbackReason),
+      video: finalVideo,
+      localMedia: localMedia
+        ? { ...localMedia, publicUrl: localMediaUrl }
+        : localMedia
+    }
+  } catch (fallbackError) {
+    if (originalError) throw buildQrFallbackError(originalError, fallbackError)
+    throw fallbackError
+  }
+}
+
 async function sendAudioViaQrFallback({ fromPhone, toPhone, requestAudio, audioDataUrl, externalId, phoneNumberId, contactId, localMedia, publicBaseUrl, durationMs, fallbackReason, originalError, persist = true, skipQrSendProtection = false } = {}) {
   try {
     const localMediaUrl = localMedia ? buildLocalMediaUrl(localMedia, publicBaseUrl) : ''
@@ -8320,6 +8588,227 @@ export async function sendWhatsAppApiDocumentMessage({
     document: {
       ...storedDocument,
       ...(response.document || {})
+    },
+    localMedia: null
+  }
+}
+
+export async function sendWhatsAppApiVideoMessage({
+  to,
+  from,
+  videoDataUrl,
+  videoUrl,
+  caption,
+  externalId,
+  transport = 'api',
+  allowQrFallback = true,
+  contactId,
+  userId,
+  extraVariables,
+  publicBaseUrl,
+  phoneNumberId,
+  skipQrSendProtection = false
+} = {}) {
+  const config = await loadConfig({ includeSecrets: true })
+  const cleanTransport = cleanString(transport).toLowerCase() === 'qr' ? 'qr' : 'api'
+  if (cleanTransport !== 'qr' && (!config.enabled || !config.apiKey)) {
+    throw new Error('WhatsApp_API no está conectado')
+  }
+
+  const fromPhone = normalizePhoneForStorage(from || config.senderPhone) || cleanString(from || config.senderPhone)
+  const toPhone = normalizePhoneForStorage(to) || cleanString(to)
+  const renderedCaption = await renderTemplateVariables(caption, {
+    contactId,
+    phone: toPhone || to,
+    userId,
+    publicBaseUrl,
+    extraVariables
+  })
+  const cleanCaption = cleanString(renderedCaption).slice(0, 1024)
+  const cleanVideoUrl = cleanString(videoUrl)
+
+  if (!fromPhone) throw new Error('Falta el número emisor de WhatsApp_API')
+  if (!toPhone) throw new Error('Falta el número destino')
+
+  let link = cleanVideoUrl
+  let providerVideo = null
+  let preparedVideo = null
+  let qrVideoDataUrl = ''
+
+  const getPreparedVideo = async () => {
+    if (!preparedVideo) {
+      preparedVideo = await prepareWhatsAppVideoForProviderUpload(videoDataUrl)
+      qrVideoDataUrl = buildPreparedMediaDataUrl(preparedVideo)
+    }
+    return preparedVideo
+  }
+
+  const buildQrRequestVideo = async () => {
+    if (link) {
+      return {
+        link,
+        ...(cleanCaption ? { caption: cleanCaption } : {})
+      }
+    }
+
+    const media = await getPreparedVideo()
+    return {
+      mimeType: media.mimeType,
+      mimetype: media.mimeType,
+      filename: media.filename,
+      metadata: media.metadata,
+      ...(cleanCaption ? { caption: cleanCaption } : {})
+    }
+  }
+
+  if (cleanTransport === 'qr') {
+    return sendVideoViaQrFallback({
+      phoneNumberId,
+      fromPhone,
+      toPhone,
+      requestVideo: await buildQrRequestVideo(),
+      videoDataUrl: link ? undefined : qrVideoDataUrl,
+      externalId,
+      contactId,
+      publicBaseUrl,
+      skipQrSendProtection
+    })
+  }
+
+  const fallbackDecision = await getOfficialApiFallbackDecision({
+    config,
+    fromPhone,
+    phoneNumberId
+  })
+  if (allowQrFallback && fallbackDecision.shouldFallback) {
+    return sendVideoViaQrFallback({
+      phoneNumberId: fallbackDecision.phoneRow?.id || phoneNumberId,
+      fromPhone,
+      toPhone,
+      requestVideo: await buildQrRequestVideo(),
+      videoDataUrl: link ? undefined : qrVideoDataUrl,
+      externalId,
+      contactId,
+      publicBaseUrl,
+      fallbackReason: fallbackDecision.reason,
+      skipQrSendProtection
+    })
+  }
+
+  if (!link) {
+    const media = await getPreparedVideo()
+    providerVideo = await uploadPreparedMediaToYCloud({
+      config,
+      fromPhone,
+      media,
+      type: 'video'
+    })
+  }
+
+  if (cleanTransport !== 'qr' && link && !/^https:\/\//i.test(link)) {
+    throw new Error('El video necesita un enlace público HTTPS para poder enviarse por WhatsApp.')
+  }
+
+  const requestVideo = {
+    ...(providerVideo ? { id: providerVideo.id } : { link }),
+    ...(cleanCaption ? { caption: cleanCaption } : {})
+  }
+  const storedVideo = {
+    ...requestVideo,
+    ...(providerVideo ? {
+      mediaId: providerVideo.id,
+      providerMediaId: providerVideo.providerMediaId,
+      providerMediaExpiresAt: providerVideo.providerMediaExpiresAt,
+      mimeType: providerVideo.mimeType,
+      mimetype: providerVideo.mimeType,
+      filename: providerVideo.filename,
+      size: providerVideo.size,
+      storage: providerVideo.storage,
+      storageProvider: providerVideo.storageProvider,
+      metadata: providerVideo.metadata
+    } : {})
+  }
+  const requestBody = {
+    from: fromPhone,
+    to: toPhone,
+    type: 'video',
+    video: requestVideo,
+    filterUnsubscribed: true,
+    filterBlocked: true,
+    ...(externalId ? { externalId } : {})
+  }
+
+  let response
+  try {
+    response = await ycloudRequest('/whatsapp/messages', {
+      apiKey: config.apiKey,
+      method: 'POST',
+      body: requestBody
+    })
+  } catch (error) {
+    const retryDecision = await getOfficialApiFallbackDecision({
+      config,
+      fromPhone,
+      phoneNumberId,
+      error
+    })
+    if (allowQrFallback && retryDecision.shouldFallback) {
+      logger.warn(`[WhatsApp API] Envio de video API fallo; usando QR para ${fromPhone}: ${retryDecision.reason}`)
+      return sendVideoViaQrFallback({
+        phoneNumberId: retryDecision.phoneRow?.id || phoneNumberId,
+        fromPhone,
+        toPhone,
+        requestVideo: providerVideo ? storedVideo : requestBody.video,
+        videoDataUrl: providerVideo ? qrVideoDataUrl : undefined,
+        externalId,
+        contactId,
+        publicBaseUrl,
+        fallbackReason: retryDecision.reason,
+        originalError: error,
+        skipQrSendProtection
+      })
+    }
+    await persistFailedOutboundApiMessage({
+      fromPhone,
+      toPhone,
+      type: 'video',
+      content: { video: storedVideo },
+      externalId,
+      contactId,
+      error
+    })
+    throw error
+  }
+
+  await upsertMessage({
+    payload: {
+      id: response.id || externalId || hashId('waapi_video_event', `${fromPhone}|${toPhone}|${link || providerVideo?.id || ''}`),
+      type: 'whatsapp.message.updated',
+      createTime: nowIso(),
+      whatsappMessage: response
+    },
+    message: {
+      ...response,
+      from: response.from || fromPhone,
+      to: response.to || toPhone,
+      type: response.type || 'video',
+      video: {
+        ...storedVideo,
+        ...(response.video || {})
+      },
+      transport: 'api',
+      createTime: response.createTime || nowIso()
+    },
+    direction: 'outbound',
+    transport: 'api',
+    contactId
+  })
+
+  return {
+    ...response,
+    video: {
+      ...storedVideo,
+      ...(response.video || {})
     },
     localMedia: null
   }

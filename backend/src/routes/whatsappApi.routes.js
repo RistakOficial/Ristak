@@ -27,6 +27,7 @@ import {
   sendWhatsAppApiInteractiveMessageView,
   sendWhatsAppApiTemplateMessageView,
   sendWhatsAppApiTextMessageView,
+  sendWhatsAppApiVideoMessageView,
   sendMetaDirectTestMessageView,
   sendMetaSocialTextMessageView,
   setWhatsAppActiveProviderView,
@@ -77,6 +78,7 @@ router.post('/messages/text', sendWhatsAppApiTextMessageView)
 router.post('/messages/interactive', sendWhatsAppApiInteractiveMessageView)
 router.post('/messages/image', sendWhatsAppApiImageMessageView)
 router.post('/messages/document', sendWhatsAppApiDocumentMessageView)
+router.post('/messages/video', sendWhatsAppApiVideoMessageView)
 router.post('/messages/audio', sendWhatsAppApiAudioMessageView)
 router.get('/templates', getWhatsAppApiTemplatesView)
 router.post('/templates/send', sendWhatsAppApiTemplateMessageView)

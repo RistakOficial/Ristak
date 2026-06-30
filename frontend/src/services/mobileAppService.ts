@@ -63,6 +63,16 @@ export interface MobilePhotoAttachment {
   size?: number
 }
 
+export interface MobileVideoAttachment {
+  id: string
+  name: string
+  type: string
+  dataUrl: string
+  attachmentType: 'video'
+  source: PhotoSource
+  size: number
+}
+
 export interface MobileDocumentAttachment {
   id: string
   name: string
@@ -73,7 +83,7 @@ export interface MobileDocumentAttachment {
   size: number
 }
 
-export type MobileChatAttachment = MobilePhotoAttachment | MobileDocumentAttachment
+export type MobileChatAttachment = MobilePhotoAttachment | MobileVideoAttachment | MobileDocumentAttachment
 
 let shellConfigured = false
 let notificationListenersConfigured = false

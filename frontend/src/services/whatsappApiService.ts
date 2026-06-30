@@ -335,6 +335,19 @@ export interface WhatsAppApiDocumentSendPayload {
   messageOrigin?: 'manual_chat' | string
 }
 
+export interface WhatsAppApiVideoSendPayload {
+  to: string
+  from?: string
+  contactId?: string
+  videoDataUrl?: string
+  videoUrl?: string
+  caption?: string
+  externalId?: string
+  transport?: 'api' | 'qr'
+  phoneNumberId?: string
+  messageOrigin?: 'manual_chat' | string
+}
+
 export interface WhatsAppApiAudioSendPayload {
   to: string
   from?: string
@@ -385,6 +398,14 @@ export interface WhatsAppApiSendResponse {
     url?: string
     mimeType?: string
     mimetype?: string
+    caption?: string
+  }
+  video?: {
+    link?: string
+    url?: string
+    mimeType?: string
+    mimetype?: string
+    filename?: string
     caption?: string
   }
   document?: {
@@ -477,6 +498,7 @@ export const whatsappApiService = {
   sendInteractive: (payload: WhatsAppApiInteractiveSendPayload) => apiClient.post<WhatsAppApiSendResponse>('/whatsapp-api/messages/interactive', payload),
   sendImage: (payload: WhatsAppApiImageSendPayload) => apiClient.post<WhatsAppApiSendResponse>('/whatsapp-api/messages/image', payload),
   sendDocument: (payload: WhatsAppApiDocumentSendPayload) => apiClient.post<WhatsAppApiSendResponse>('/whatsapp-api/messages/document', payload),
+  sendVideo: (payload: WhatsAppApiVideoSendPayload) => apiClient.post<WhatsAppApiSendResponse>('/whatsapp-api/messages/video', payload),
   sendAudio: (payload: WhatsAppApiAudioSendPayload) => apiClient.post<WhatsAppApiSendResponse>('/whatsapp-api/messages/audio', payload),
   sendTemplate: (payload: WhatsAppApiTemplateSendPayload) => apiClient.post<WhatsAppApiSendResponse>('/whatsapp-api/templates/send', payload)
 }

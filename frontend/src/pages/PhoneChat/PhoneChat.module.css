@@ -2648,7 +2648,8 @@
   box-shadow: 0 8px 18px rgba(var(--phone-chat-primary-rgb), 0.12);
 }
 
-.cameraShareThumb img {
+.cameraShareThumb img,
+.cameraShareThumb video {
   display: block;
   width: 100%;
   height: 100%;
@@ -6066,7 +6067,8 @@
   box-shadow: 0 10px 20px rgba(var(--phone-chat-primary-rgb), 0.12);
 }
 
-.draftAttachment img {
+.draftAttachment img,
+.draftAttachment video {
   display: block;
   width: 100%;
   height: 100%;

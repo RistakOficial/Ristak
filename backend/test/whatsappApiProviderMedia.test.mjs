@@ -1,6 +1,9 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { randomUUID } from 'node:crypto'
+import fs from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { db, setAppConfig } from '../src/config/database.js'
 import { encrypt, initializeMasterKey } from '../src/utils/encryption.js'
 import {
@@ -8,12 +11,14 @@ import {
   sendWhatsAppApiAudioMessage,
   sendWhatsAppApiDocumentMessage,
   sendWhatsAppApiImageMessage,
+  sendWhatsAppApiVideoMessage,
   setYCloudFetchForTest
 } from '../src/services/whatsappApiService.js'
 
 const ONE_PIXEL_PNG_DATA_URL = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAACXBIWXMAAAPoAAAD6AG1e1JrAAAADElEQVQImWP4//8/AAX+Av5Y8msOAAAAAElFTkSuQmCC'
 const PDF_DATA_URL = 'data:application/pdf;base64,JVBERi0xLjQKJcTl8uXrp/Og0MTGCjEgMCBvYmoKPDwvVHlwZSAvQ2F0YWxvZyAvUGFnZXMgMiAwIFI+PgplbmRvYmoKMiAwIG9iago8PC9UeXBlIC9QYWdlcyAvQ291bnQgMD4+CmVuZG9iago='
 const OGG_OPUS_DATA_URL = `data:audio/ogg;codecs=opus;base64,${Buffer.from('OggSprovider-media-test').toString('base64')}`
+const WEBM_VIDEO_DATA_URL = `data:video/webm;base64,${Buffer.from('webm-provider-media-test').toString('base64')}`
 
 function ycloudJsonResponse(body, { status = 200, statusText = 'OK' } = {}) {
   return {
@@ -22,6 +27,29 @@ function ycloudJsonResponse(body, { status = 200, statusText = 'OK' } = {}) {
     statusText,
     json: async () => body,
     text: async () => JSON.stringify(body)
+  }
+}
+
+async function withFakeFfmpeg(callback) {
+  const previousPath = process.env.FFMPEG_PATH
+  const folder = await fs.mkdtemp(join(tmpdir(), 'ristak-fake-ffmpeg-'))
+  const scriptPath = join(folder, 'ffmpeg-fake.mjs')
+  await fs.writeFile(scriptPath, [
+    '#!/usr/bin/env node',
+    "import fs from 'node:fs';",
+    'const outputPath = process.argv[process.argv.length - 1];',
+    "fs.writeFileSync(outputPath, Buffer.from('converted-video-for-whatsapp'));",
+    ''
+  ].join('\n'))
+  await fs.chmod(scriptPath, 0o755)
+  process.env.FFMPEG_PATH = scriptPath
+
+  try {
+    return await callback()
+  } finally {
+    if (previousPath === undefined) delete process.env.FFMPEG_PATH
+    else process.env.FFMPEG_PATH = previousPath
+    await fs.rm(folder, { recursive: true, force: true })
   }
 }
 
@@ -277,5 +305,60 @@ test('envío API de audio sube nota de voz al proveedor sin usar URL propia', as
       await db.run('DELETE FROM whatsapp_api_contacts WHERE phone = ?', [to])
       await db.run('DELETE FROM contacts WHERE phone = ?', [to])
     }
+  })
+})
+
+test('envío API de video comprime a MP4 y manda media tipo video', async () => {
+  await withFakeFfmpeg(async () => {
+    await withYCloudProviderMediaCapture(async (captures) => {
+      const suffix = randomUUID()
+      const to = `+52159${Date.now().toString().slice(-8)}`
+      const externalId = `provider-video-${suffix}`
+
+      try {
+        const response = await sendWhatsAppApiVideoMessage({
+          to,
+          videoDataUrl: WEBM_VIDEO_DATA_URL,
+          caption: 'Video por proveedor',
+          externalId,
+          allowQrFallback: false
+        })
+
+        assert.equal(captures.uploads.length, 1)
+        assert.equal(captures.uploads[0].filename, 'whatsapp-video.mp4')
+        assert.equal(captures.uploads[0].mimeType, 'video/mp4')
+        assert.ok(captures.uploads[0].size > 0)
+
+        assert.equal(captures.messages.length, 1)
+        assert.equal(captures.messages[0].type, 'video')
+        assert.equal(captures.messages[0].video.id, 'provider_media_1')
+        assert.equal(captures.messages[0].video.link, undefined)
+        assert.equal(captures.messages[0].video.caption, 'Video por proveedor')
+        assert.equal(response.video.providerMediaId, 'provider_media_1')
+        assert.equal(response.video.storage, 'provider')
+        assert.equal(response.video.storageProvider, 'ycloud')
+        assert.equal(response.video.mimeType, 'video/mp4')
+
+        const row = await db.get(
+          `SELECT media_url, media_mime_type, media_filename, raw_payload_json
+           FROM whatsapp_api_messages
+           WHERE ycloud_message_id = ?`,
+          ['ycloud_provider_message_1']
+        )
+        assert.ok(row)
+        assert.equal(row.media_url, null)
+        assert.equal(row.media_mime_type, 'video/mp4')
+        assert.equal(row.media_filename, 'whatsapp-video.mp4')
+        const raw = JSON.parse(row.raw_payload_json)
+        assert.equal(raw.video.id, 'provider_media_1')
+        assert.equal(raw.video.storage, 'provider')
+        assert.equal(raw.video.storageProvider, 'ycloud')
+        assert.equal(raw.video.metadata.originalMimeType, 'video/webm')
+      } finally {
+        await db.run('DELETE FROM whatsapp_api_messages WHERE ycloud_message_id = ? OR to_phone = ?', ['ycloud_provider_message_1', to])
+        await db.run('DELETE FROM whatsapp_api_contacts WHERE phone = ?', [to])
+        await db.run('DELETE FROM contacts WHERE phone = ?', [to])
+      }
+    })
   })
 })
