@@ -1,9 +1,9 @@
 import React, { useEffect, useMemo, useState } from 'react'
 import { CheckCircle2, Play, UserPlus } from 'lucide-react'
 import { Button, ContactSearchInput, Modal, SegmentTabs } from '@/components/common'
+import type { ContactSearchInputContact } from '@/components/common/ContactSearchInput/ContactSearchInput'
 import { useNotification } from '@/contexts/NotificationContext'
 import automationsService, { type AutomationTestRunResult } from '@/services/automationsService'
-import type { Contact } from '@/types'
 import styles from './AutomationEditor.module.css'
 
 type TestContactMode = 'existing' | 'new'
@@ -37,7 +37,7 @@ export const AutomationTestRunModal: React.FC<AutomationTestRunModalProps> = ({
 }) => {
   const { showToast } = useNotification()
   const [mode, setMode] = useState<TestContactMode>('existing')
-  const [selectedContact, setSelectedContact] = useState<Contact | null>(null)
+  const [selectedContact, setSelectedContact] = useState<ContactSearchInputContact | null>(null)
   const [draftContact, setDraftContact] = useState(EMPTY_TEST_CONTACT)
   const [running, setRunning] = useState(false)
   const [error, setError] = useState('')
