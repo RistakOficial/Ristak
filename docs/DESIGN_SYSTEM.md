@@ -253,6 +253,21 @@ suelto de `showConfirm`. Para `<Modal>` inline es el prop `typeToConfirm="ELIMIN
     dentro del `message` (el Modal ya lo pinta). Prohibido `confirmText='Aceptar'`
     en algo destructivo (no se pone rojo). Prohibido ejecutar un borrado
     irreversible/masivo/de integración sin `typeToConfirm`.
+12. **`stroke-width` en un `<svg>` contenedor que también envuelve íconos de
+    marca rellenos.** Los íconos de `react-icons` (`FaWhatsapp`, `SiWhatsapp`,
+    `FaFacebookMessenger`, `FaInstagram`, `Ri*Fill`…) se renderizan con
+    `stroke="currentColor"`. Si una regla del contenedor tipo
+    `.algoButton svg { stroke-width: N }` los alcanza, les **pinta un contorno
+    encima del relleno** y el glifo se ve **grueso / "pixelado"** (esto rompió el
+    ícono de WhatsApp del composer y de los badges en el chat móvil `/movil`
+    cuando se "adelgazaron" los íconos —`stroke-width` se filtró a los glifos de
+    marca). Regla: el `stroke-width` va **solo en el ícono de línea** que lo pide
+    (lucide/feather, `fill:none`), **nunca** en un `svg` contenedor que también
+    cacha glifos de marca rellenos. Si conviven en el mismo contenedor, deja que
+    cada ícono use su `strokeWidth` de atributo (marca = `0`) o fuerza
+    `stroke: none; stroke-width: 0` en el glifo de marca. **Verifica íconos
+    móviles corriendo la app real (no renders aislados):** un SVG suelto se ve
+    fino porque no arrastra esa cascada del contenedor.
 
 ---
 

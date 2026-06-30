@@ -64,3 +64,27 @@ APNS_ENV=production
 ```
 
 Para enviar fotos por WhatsApp, el backend debe estar publicado en HTTPS porque WhatsApp/YCloud necesita descargar la imagen desde una URL pública.
+
+## Gotchas (no repetir)
+
+- **Íconos de marca rellenos + `stroke-width` = contorno grueso / "pixelado".**
+  Los íconos de `react-icons` (`FaWhatsapp`, `SiWhatsapp`, `FaFacebookMessenger`,
+  `FaInstagram`, `Ri*Fill`…) se renderizan con `stroke="currentColor"`. Una regla
+  de contenedor como `.composerChannelButton svg { stroke-width: N }` o
+  `.avatarChannelBadge svg { stroke-width: N }` les pinta un **contorno encima del
+  relleno** y el glifo se ve grueso/pixelado. Pasó con el WhatsApp del composer y
+  de los avatares al "adelgazar" los íconos del chat: el `stroke-width` se filtró
+  a los glifos de marca. El `stroke-width` va **solo** en íconos de línea
+  (lucide/feather, `fill:none`), nunca en un `svg` contenedor que también cacha
+  glifos de marca. Detalle y regla en `docs/DESIGN_SYSTEM.md` §5 (#12).
+- **Verifica cambios de UI móvil corriendo la app real, no con renders SVG
+  aislados.** Un SVG suelto se ve bien porque no arrastra la cascada del
+  contenedor (tamaño, stroke, disco); el bug solo aparece dentro del chat. Levanta
+  el front (`/movil`) y míralo.
+- **"No cambió nada" casi siempre es el build/deploy, no el código.** `/movil`
+  corre un **build estático**: la web la sirve Render tras `push → workflow
+  docker-image → deploy` (~2–3 min, ver `docs/DEPLOY-RENDER.md`), y la app nativa
+  empaqueta `frontend/dist` al compilar. Un `git push` **no** actualiza nada hasta
+  que ese build termina. Para comprobar la web recarga en **pestaña privada**
+  (evita caché); la **app instalada** no se actualiza con el push — hay que
+  recompilarla (`docs/MOBILE_STORE_RELEASES.md`).
