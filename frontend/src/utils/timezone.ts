@@ -12,6 +12,36 @@
  * Extrae los componentes (año, mes, ...) de una fecha en una zona horaria dada.
  */
 export const DEFAULT_TIMEZONE = 'America/Mexico_City'
+const DATE_ONLY_PATTERN = /^(\d{4})-(\d{2})-(\d{2})$/
+
+export function isDateOnlyString(value: unknown): value is string {
+  return typeof value === 'string' && DATE_ONLY_PATTERN.test(value.trim())
+}
+
+function parseDateOnlyParts(value: string): { year: number; month: number; day: number } | null {
+  const match = DATE_ONLY_PATTERN.exec(value.trim())
+  if (!match) return null
+
+  const year = Number(match[1])
+  const month = Number(match[2])
+  const day = Number(match[3])
+  if (!Number.isInteger(year) || !Number.isInteger(month) || !Number.isInteger(day)) return null
+  if (month < 1 || month > 12 || day < 1 || day > 31) return null
+
+  return { year, month, day }
+}
+
+function dateOnlyToLocalDate(value: string): Date | null {
+  const parts = parseDateOnlyParts(value)
+  if (!parts) return null
+  return new Date(parts.year, parts.month - 1, parts.day)
+}
+
+function dateOnlyToUtcDate(value: string): Date | null {
+  const parts = parseDateOnlyParts(value)
+  if (!parts) return null
+  return new Date(Date.UTC(parts.year, parts.month - 1, parts.day))
+}
 
 function getZonedParts(date: Date, timeZone: string): Record<string, number> {
   const formatter = new Intl.DateTimeFormat('en-US', {
@@ -87,6 +117,11 @@ export function ensureUTC(date: string | Date): string {
  * @param userTimezone Zona horaria del usuario (IANA)
  */
 export function convertUTCToLocal(utcDate: string | Date, userTimezone: string): Date {
+  if (typeof utcDate === 'string' && isDateOnlyString(utcDate)) {
+    const dateOnly = dateOnlyToLocalDate(utcDate)
+    if (dateOnly) return dateOnly
+  }
+
   const date = utcDate instanceof Date ? utcDate : new Date(ensureUTC(utcDate))
   if (Number.isNaN(date.getTime())) return date
 
@@ -125,6 +160,10 @@ export function convertLocalToUTC(localDate: string | Date, timezone: string): D
 }
 
 export function toDateTimeLocalInputValue(utcDate: string | Date, timezone: string): string {
+  if (typeof utcDate === 'string' && isDateOnlyString(utcDate)) {
+    return `${utcDate.trim()}T00:00`
+  }
+
   const local = convertUTCToLocal(utcDate, timezone)
   if (Number.isNaN(local.getTime())) return ''
 
@@ -164,15 +203,17 @@ export function formatInTimezone(
   timezone: string,
   options?: Intl.DateTimeFormatOptions
 ): string {
-  const date = utcDate instanceof Date ? utcDate : new Date(ensureUTC(utcDate))
+  const isDateOnly = typeof utcDate === 'string' && isDateOnlyString(utcDate)
+  const date = isDateOnly
+    ? dateOnlyToUtcDate(utcDate) || new Date(NaN)
+    : utcDate instanceof Date ? utcDate : new Date(ensureUTC(utcDate))
 
   const defaultOptions: Intl.DateTimeFormatOptions = {
-    timeZone: timezone,
+    timeZone: isDateOnly ? 'UTC' : timezone,
     year: 'numeric',
     month: '2-digit',
     day: '2-digit',
-    hour: '2-digit',
-    minute: '2-digit',
+    ...(isDateOnly ? {} : { hour: '2-digit', minute: '2-digit' }),
     ...options
   }
 

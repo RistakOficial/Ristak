@@ -13,7 +13,7 @@ import apiClient from '@/services/apiClient'
 import { getPhoneDailyCacheKey, readPhoneDailyCache, writePhoneDailyCache } from '@/services/phoneDailyCache'
 import { transactionsService, type Transaction } from '@/services/transactionsService'
 import { isLocalPhonePreviewHost } from '@/utils/phoneAccess'
-import { ensureUTC, todayDateOnlyInTimezone } from '@/utils/timezone'
+import { ensureUTC, isDateOnlyString, todayDateOnlyInTimezone } from '@/utils/timezone'
 import styles from './PhonePayments.module.css'
 
 const PORTABLE_WIDTH_QUERY = '(max-width: 1366px)'
@@ -120,6 +120,16 @@ function formatCurrency(value: number, currency = 'MXN') {
 
 function formatPaymentDate(value?: string | null, timezone = 'UTC') {
   if (!value) return 'Sin fecha'
+
+  if (isDateOnlyString(value)) {
+    const [year, month, day] = value.split('-').map(Number)
+    return new Intl.DateTimeFormat('es-MX', {
+      timeZone: 'UTC',
+      day: 'numeric',
+      month: 'short'
+    }).format(new Date(Date.UTC(year, month - 1, day)))
+  }
+
   const date = new Date(ensureUTC(value))
   if (Number.isNaN(date.getTime())) return 'Sin fecha'
 

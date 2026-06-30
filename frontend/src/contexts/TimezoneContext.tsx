@@ -1,6 +1,6 @@
 import React, { createContext, useContext, useState, useEffect, ReactNode } from 'react'
 import { apiUrl } from '@/services/apiBaseUrl'
-import { DEFAULT_TIMEZONE, convertUTCToLocal, convertLocalToUTC, formatInTimezone, ensureUTC } from '@/utils/timezone'
+import { DEFAULT_TIMEZONE, convertUTCToLocal, convertLocalToUTC, formatInTimezone } from '@/utils/timezone'
 
 // Nombres de meses en español (formato corto)
 const MONTHS_SHORT = ['ene', 'feb', 'mar', 'abr', 'may', 'jun', 'jul', 'ago', 'sept', 'oct', 'nov', 'dic']
@@ -78,8 +78,7 @@ export const TimezoneProvider: React.FC<{ children: ReactNode }> = ({ children }
 
   // Convierte una fecha UTC a la hora local del usuario
   const convertToLocalTime = (utcDate: string | Date): Date => {
-    const normalized = new Date(ensureUTC(utcDate))
-    return convertUTCToLocal(normalized, timezone)
+    return convertUTCToLocal(utcDate, timezone)
   }
 
   // Convierte una fecha local a UTC
@@ -89,12 +88,10 @@ export const TimezoneProvider: React.FC<{ children: ReactNode }> = ({ children }
 
   // Formatea una fecha UTC para mostrarla en la zona horaria local
   const formatLocalDate = (utcDate: string | Date): string => {
-    const normalized = ensureUTC(utcDate)
-
     try {
-      return formatInTimezone(new Date(normalized), timezone)
+      return formatInTimezone(utcDate, timezone)
     } catch (error) {
-      const date = typeof normalized === 'string' ? new Date(normalized) : normalized
+      const date = utcDate instanceof Date ? utcDate : new Date(String(utcDate))
       return date.toLocaleString('es-MX')
     }
   }
