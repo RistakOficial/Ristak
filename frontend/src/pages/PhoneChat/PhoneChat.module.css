@@ -8,6 +8,7 @@
   --phone-chat-text: #0b0b0d;
   --phone-chat-muted: #77736c;
   --phone-chat-border: rgba(20, 20, 20, 0.09);
+  --phone-field-border: color-mix(in srgb, var(--phone-chat-text) 18%, var(--phone-chat-border) 82%);
   --phone-chat-primary: #101010;
   --phone-chat-primary-rgb: 16, 16, 16;
   --phone-chat-text-on-primary: #ffffff;
@@ -90,6 +91,7 @@
   --phone-chat-text: #e9edef;
   --phone-chat-muted: #a9b4bd;
   --phone-chat-border: rgba(233, 237, 239, 0.1);
+  --phone-field-border: color-mix(in srgb, var(--phone-chat-text) 22%, var(--phone-chat-border) 78%);
   --phone-chat-primary: #25d366;
   --phone-chat-primary-rgb: 37, 211, 102;
   --phone-chat-text-on-primary: #07140d;
@@ -1194,6 +1196,26 @@
 
 .avatarChannelBadgeWhatsapp {
   background: var(--phone-channel-whatsapp);
+}
+
+/* WhatsApp: logo oficial completo (burbuja verde + auricular + borde blanco),
+   sin circulo de fondo ni sombra/brillo del badge — el borde blanco del propio
+   logo lo separa del avatar. */
+.avatarChannelBadgeWhatsappLogo {
+  background: none;
+  box-shadow: none;
+  overflow: visible;
+}
+
+.avatarChannelBadgeWhatsappLogo::before {
+  display: none;
+}
+
+.avatarChannelBadge .avatarWhatsappLogo {
+  width: 116%;
+  height: 116%;
+  filter: none;
+  overflow: visible;
 }
 
 .avatarChannelBadge .channelIconGlyph {
