@@ -2380,7 +2380,6 @@ export function ContactDetailsModal({
 
                   {/* Etiquetas: la interna (según actividad) + las del usuario como chips */}
                   <div className={styles.detailSection}>
-                    <h5 className={styles.detailSectionTitle}>Etiquetas</h5>
                     <TagPicker
                       multiple
                       selectedIds={selectedContact.tags || []}
@@ -2394,6 +2393,10 @@ export function ContactDetailsModal({
                       placeholder="Agregar etiqueta"
                       aria-label="Agregar etiqueta al contacto"
                       triggerVariant="chip"
+                      chipTriggerPlacement="header"
+                      headerLabel="Etiquetas"
+                      headerClassName={styles.contactTagHeader}
+                      headerLabelClassName={styles.contactTagTitle}
                       closeOnSelect
                       portal
                       className={styles.contactTagPicker}

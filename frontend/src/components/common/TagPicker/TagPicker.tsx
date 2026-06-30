@@ -38,6 +38,10 @@ interface TagPickerBaseProps {
   portal?: boolean
   size?: 'default' | 'large'
   triggerVariant?: 'button' | 'chip'
+  chipTriggerPlacement?: 'chips' | 'header'
+  headerLabel?: React.ReactNode
+  headerClassName?: string
+  headerLabelClassName?: string
   closeOnSelect?: boolean
   className?: string
   missingLabel?: string
@@ -72,11 +76,16 @@ export const TagPicker: React.FC<TagPickerProps> = (props) => {
     portal = false,
     size = 'default',
     triggerVariant = 'button',
+    chipTriggerPlacement = 'chips',
+    headerLabel,
+    headerClassName = '',
+    headerLabelClassName = '',
     closeOnSelect = false,
     className = ''
   } = props
   const isMultiple = props.multiple === true
   const useChipTrigger = isMultiple && triggerVariant === 'chip'
+  const useHeaderChipTrigger = useChipTrigger && chipTriggerPlacement === 'header'
 
   const { tags, loading } = useContactTags(includeSystem)
   const [isOpen, setIsOpen] = useState(false)
@@ -205,6 +214,23 @@ export const TagPicker: React.FC<TagPickerProps> = (props) => {
   const missingSingleValue = !isMultiple && Boolean(singleValue) && !singleSelected && !loading
   const singleLabel = singleSelected?.name ||
     (missingSingleValue && props.missingLabel ? props.missingLabel : contactTagsService.getDisplayName(singleValue))
+  const hasMultipleChips = isMultiple && (lockedTags.length > 0 || selectedIds.length > 0)
+
+  const chipAddButton = (
+    <button
+      type="button"
+      className={`${styles.chip} ${styles.chipAdd} ${useHeaderChipTrigger ? styles.chipAddHeader : ''} ${isOpen ? styles.chipAddOpen : ''}`}
+      onClick={() => !disabled && setIsOpen((open) => !open)}
+      disabled={disabled}
+      aria-expanded={isOpen}
+      aria-haspopup="listbox"
+      aria-label={props['aria-label'] || placeholder || 'Agregar etiqueta'}
+      title={placeholder || 'Agregar etiqueta'}
+      data-ristak-dropdown-trigger
+    >
+      <Plus size={13} aria-hidden="true" />
+    </button>
+  )
 
   const dropdown = isOpen && !disabled ? (
     <div
@@ -278,7 +304,18 @@ export const TagPicker: React.FC<TagPickerProps> = (props) => {
 
   return (
     <div ref={containerRef} className={`${styles.container} ${size === 'large' ? styles.large : ''} ${className}`}>
-      {isMultiple && (lockedTags.length > 0 || selectedIds.length > 0 || useChipTrigger) && (
+      {useHeaderChipTrigger && (
+        <div className={`${styles.chipHeader} ${hasMultipleChips ? styles.chipHeaderWithChips : ''} ${headerClassName}`}>
+          {headerLabel ? (
+            <span className={`${styles.chipHeaderLabel} ${headerLabelClassName}`}>
+              {headerLabel}
+            </span>
+          ) : null}
+          {chipAddButton}
+        </div>
+      )}
+
+      {isMultiple && (hasMultipleChips || (useChipTrigger && !useHeaderChipTrigger)) && (
         <div className={`${styles.chips} ${useChipTrigger ? styles.chipsInline : ''}`}>
           {lockedTags.map((tag) => (
             <span key={tag.id} className={`${styles.chip} ${styles.chipSystem}`} title="Etiqueta interna: se asigna sola según la actividad del contacto">
@@ -305,21 +342,7 @@ export const TagPicker: React.FC<TagPickerProps> = (props) => {
               </span>
             )
           })}
-          {useChipTrigger && (
-            <button
-              type="button"
-              className={`${styles.chip} ${styles.chipAdd} ${isOpen ? styles.chipAddOpen : ''}`}
-              onClick={() => !disabled && setIsOpen((open) => !open)}
-              disabled={disabled}
-              aria-expanded={isOpen}
-              aria-haspopup="listbox"
-              aria-label={props['aria-label'] || placeholder || 'Agregar etiqueta'}
-              title={placeholder || 'Agregar etiqueta'}
-              data-ristak-dropdown-trigger
-            >
-              <Plus size={13} aria-hidden="true" />
-            </button>
-          )}
+          {useChipTrigger && !useHeaderChipTrigger ? chipAddButton : null}
         </div>
       )}
 
