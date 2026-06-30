@@ -6539,8 +6539,7 @@ export const DesktopChat: React.FC = () => {
                   <div><dt><Tag size={14} /> Estado</dt><dd>{stageLabel}</dd></div>
                 </dl>
                 <div className={styles.contactTools}>
-                  <label>
-                    <span>Etiquetas</span>
+                  <div className={styles.contactTagTool}>
                     <TagPicker
                       multiple
                       selectedIds={(contactInfoData || activeContact).tags || []}
@@ -6550,11 +6549,15 @@ export const DesktopChat: React.FC = () => {
                       portal
                       placeholder="Agregar etiqueta"
                       triggerVariant="chip"
+                      chipTriggerPlacement="header"
+                      headerLabel="Etiquetas"
+                      headerClassName={styles.contactTagHeader}
+                      headerLabelClassName={styles.contactTagTitle}
                       closeOnSelect
                       aria-label="Etiquetas del contacto"
                     />
                     {savingTags ? <small>Guardando etiquetas...</small> : null}
-                  </label>
+                  </div>
                   <button type="button" className={styles.automationButton} onClick={openAutomationModal}>
                     <Workflow size={15} />
                     <span>Mandar a automatización</span>

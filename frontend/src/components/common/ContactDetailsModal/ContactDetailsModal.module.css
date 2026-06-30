@@ -1053,6 +1053,15 @@
   margin: 0 0 0.5rem 0;
 }
 
+.contactTagHeader {
+  margin-bottom: 0.5rem;
+}
+
+.contactTagTitle {
+  composes: detailSectionTitle;
+  margin: 0;
+}
+
 .detailSectionContent {
   display: flex;
   flex-direction: column;
