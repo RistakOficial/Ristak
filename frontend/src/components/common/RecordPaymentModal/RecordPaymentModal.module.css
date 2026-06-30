@@ -528,59 +528,6 @@
   line-height: 1.4;
 }
 
-.planSummaryGrid {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 8px;
-  width: 100%;
-}
-
-.planSummaryGrid span {
-  display: grid;
-  gap: 3px;
-  min-width: 0;
-  padding: 10px 12px;
-  border: 1px solid var(--border);
-  border-radius: 12px;
-  background: var(--surface);
-}
-
-.planSummaryGrid small {
-  min-width: 0;
-  overflow: hidden;
-  color: var(--text-dim);
-  font-size: 11px;
-  font-weight: 600;
-  line-height: 1.15;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.planSummaryGrid strong {
-  min-width: 0;
-  overflow: hidden;
-  color: var(--text);
-  font-size: 14px;
-  font-weight: 700;
-  line-height: 1.15;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.planColumns {
-  display: grid;
-  gap: 16px;
-  min-width: 0;
-}
-
-.planSetupColumn,
-.planScheduleColumn {
-  display: grid;
-  align-content: start;
-  gap: 14px;
-  min-width: 0;
-}
-
 /* Numbered flat steps */
 .planStep {
   display: flex;
@@ -2721,8 +2668,6 @@ body.dark .tooltipInfo {
 }
 
 .embeddedRoot .planSection {
-  gap: 16px;
-  min-width: 0;
   background: transparent;
   border-color: transparent;
 }
@@ -2738,239 +2683,107 @@ body.dark .tooltipInfo {
 
 .embeddedRoot .fieldGrid,
 .embeddedRoot .manualGrid {
-  gap: 14px;
+  gap: 18px;
   grid-template-columns: 1fr;
-}
-
-.embeddedRoot[data-payment-mode="partial"] .planIntro {
-  display: grid;
-  gap: 12px;
-}
-
-.embeddedRoot[data-payment-mode="partial"] .planSummaryGrid {
-  grid-template-columns: 1fr;
-}
-
-.embeddedRoot[data-payment-mode="partial"] .planSummaryGrid span {
-  border-color: var(--record-payment-embedded-border);
-  background: var(--record-payment-embedded-panel);
-}
-
-.embeddedRoot[data-payment-mode="partial"] .planSummaryGrid small,
-.embeddedRoot[data-payment-mode="partial"] .planSummaryGrid strong {
-  color: inherit;
-}
-
-.embeddedRoot[data-payment-mode="partial"] .planSummaryGrid small {
-  color: var(--record-payment-embedded-muted);
-}
-
-.embeddedRoot[data-payment-mode="partial"] .planColumns {
-  grid-template-columns: 1fr;
-}
-
-.embeddedRoot[data-payment-mode="partial"] .planSetupColumn,
-.embeddedRoot[data-payment-mode="partial"] .planScheduleColumn {
-  min-width: 0;
-}
-
-.embeddedRoot[data-payment-mode="partial"] .planStep,
-.embeddedRoot[data-payment-mode="partial"] .allocation,
-.embeddedRoot[data-payment-mode="partial"] .authorizationNotice {
-  padding: 14px;
-  border: 1px solid var(--record-payment-embedded-border);
-  border-radius: 16px;
-  background: var(--record-payment-embedded-panel);
-}
-
-.embeddedRoot[data-payment-mode="partial"] .planStep + .planStep {
-  padding-top: 14px;
-  border-top: 1px solid var(--record-payment-embedded-border);
-}
-
-.embeddedRoot[data-payment-mode="partial"] .planStepHead {
-  display: grid;
-  gap: 12px;
-  align-items: stretch;
-}
-
-.embeddedRoot[data-payment-mode="partial"] .planStepHead [data-ristak-tablist] {
-  width: 100%;
-}
-
-.embeddedRoot[data-payment-mode="partial"] .planStepTitle {
-  align-items: flex-start;
-}
-
-.embeddedRoot[data-payment-mode="partial"] .planStepTitle p {
-  color: var(--record-payment-embedded-text);
-  font-size: 15px;
-}
-
-.embeddedRoot[data-payment-mode="partial"] .planStepTitle > div > span,
-.embeddedRoot[data-payment-mode="partial"] .planHint {
-  color: var(--record-payment-embedded-muted);
-}
-
-.embeddedRoot[data-payment-mode="partial"] .stepNumber,
-.embeddedRoot[data-payment-mode="partial"] .installmentSeq {
-  background: color-mix(in srgb, var(--phone-chat-accent, var(--record-payment-embedded-text)) 18%, var(--record-payment-embedded-bg) 82%);
-  color: var(--phone-chat-accent, var(--record-payment-embedded-text));
-}
-
-.embeddedRoot[data-payment-mode="partial"] .autoTag {
-  justify-self: start;
-  color: var(--phone-chat-accent, var(--record-payment-embedded-text));
-  background: color-mix(in srgb, var(--phone-chat-accent, var(--record-payment-embedded-text)) 16%, var(--record-payment-embedded-bg) 84%);
 }
 
 .embeddedRoot[data-payment-mode="partial"] .planStepBody {
   container-type: inline-size;
-  gap: 14px;
 }
 
-.embeddedRoot[data-payment-mode="partial"] .installmentTable {
-  gap: 8px;
+@media (min-width: 768px) {
+  .embeddedRoot[data-payment-mode="partial"] .fieldGrid,
+  .embeddedRoot[data-payment-mode="partial"] .manualGrid {
+    grid-template-columns: repeat(auto-fit, minmax(min(230px, 100%), 1fr));
+  }
+
+  .embeddedRoot[data-payment-mode="partial"] .planSection {
+    padding: 0;
+  }
+
+  .embeddedRoot[data-payment-layout="wide"][data-payment-mode="partial"] .planSection {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(min(380px, 100%), 1fr));
+    align-items: start;
+    gap: 20px;
+    padding: 0;
+  }
+
+  .embeddedRoot[data-payment-layout="wide"][data-payment-mode="partial"] .planIntro {
+    grid-column: 1 / -1;
+  }
+
+  .embeddedRoot[data-payment-layout="wide"][data-payment-mode="partial"] .planStep {
+    min-width: 0;
+  }
 }
 
 .embeddedRoot[data-payment-mode="partial"] .installmentHead {
   display: none;
 }
 
-.embeddedRoot[data-payment-mode="partial"] .installmentList {
-  gap: 10px;
-}
-
 .embeddedRoot[data-payment-mode="partial"] .installmentRow {
-  grid-template-columns: 38px minmax(0, 1fr) 40px;
+  grid-template-columns: 1fr 1fr;
   gap: 10px;
-  align-items: start;
   padding: 12px;
   border: 1px solid var(--record-payment-embedded-border);
-  border-radius: 14px;
-  background: var(--record-payment-embedded-bg);
+  border-radius: 12px;
+  background: var(--record-payment-embedded-panel);
+  align-items: end;
 }
 
 .embeddedRoot[data-payment-mode="partial"] .installmentSeq {
-  grid-column: 1;
-  grid-row: 1;
-  width: 34px;
-  height: 34px;
-  border-radius: 10px;
+  grid-column: 1 / -1;
+  justify-self: start;
 }
 
 .embeddedRoot[data-payment-mode="partial"] .cellLabel {
   display: block;
-  color: var(--record-payment-embedded-muted);
-}
-
-.embeddedRoot[data-payment-mode="partial"] .installmentValue {
-  grid-column: 2;
-  grid-row: 1;
 }
 
 .embeddedRoot[data-payment-mode="partial"] .installmentDate {
-  grid-column: 2 / 4;
-  grid-row: 2;
+  grid-column: 1 / -1;
 }
 
 .embeddedRoot[data-payment-mode="partial"] .installmentMonto {
   grid-column: 1 / -1;
-  grid-row: 3;
   flex-direction: row;
   align-items: center;
   justify-content: space-between;
-  min-height: 34px;
-  padding-top: 10px;
-  border-top: 1px dashed var(--record-payment-embedded-border);
   text-align: left;
-}
-
-.embeddedRoot[data-payment-mode="partial"] .installmentMonto strong {
-  color: var(--record-payment-embedded-text);
-  font-size: 15px;
+  padding-top: 8px;
+  border-top: 1px dashed var(--record-payment-embedded-border);
 }
 
 .embeddedRoot[data-payment-mode="partial"] .installmentDelete {
-  grid-column: 3;
-  grid-row: 1;
-  justify-self: end;
-  width: 40px;
-  height: 52px;
-  border-color: var(--record-payment-control-border);
-  background: var(--record-payment-embedded-panel);
+  grid-column: 1 / -1;
+  width: 100%;
 }
 
-.embeddedRoot[data-payment-mode="partial"] .addInstallment {
-  min-height: 48px;
-  border-color: var(--record-payment-embedded-border);
-  border-radius: 14px;
-  color: var(--phone-chat-accent, var(--record-payment-embedded-text));
-  background: transparent;
-}
-
-.embeddedRoot[data-payment-mode="partial"] .allocation,
-.embeddedRoot[data-payment-mode="partial"] .authorizationNotice {
-  margin: 0;
-}
-
-.embeddedRoot[data-payment-mode="partial"] .allocationTop {
-  align-items: flex-start;
-}
-
-.embeddedRoot[data-payment-mode="partial"] .allocationTop strong {
-  text-align: right;
-}
-
-@media (min-width: 560px) {
-  .embeddedRoot[data-payment-mode="partial"] .planSummaryGrid {
-    grid-template-columns: repeat(3, minmax(0, 1fr));
-  }
-}
-
-@media (min-width: 768px) {
-  .embeddedRoot[data-payment-mode="partial"] .fieldGrid,
-  .embeddedRoot[data-payment-mode="partial"] .manualGrid {
-    grid-template-columns: repeat(auto-fit, minmax(min(210px, 100%), 1fr));
-  }
-
-  .embeddedRoot[data-payment-layout="wide"][data-payment-mode="partial"] .content,
-  .embeddedRoot[data-payment-layout="wide"][data-payment-mode="partial"] .embeddedActions {
-    width: min(100%, 1180px);
-  }
-
-  .embeddedRoot[data-payment-layout="wide"][data-payment-mode="partial"] .planColumns {
-    grid-template-columns: minmax(300px, 0.85fr) minmax(460px, 1.35fr);
-    gap: 18px;
-    align-items: start;
-  }
-
-  .embeddedRoot[data-payment-layout="wide"][data-payment-mode="partial"] .planSetupColumn {
-    position: sticky;
-    top: 14px;
-  }
-}
-
-@container (min-width: 620px) {
+@container (min-width: 680px) {
   .embeddedRoot[data-payment-mode="partial"] .installmentHead {
     display: grid;
-    grid-template-columns: 36px minmax(118px, 0.9fr) minmax(170px, 1fr) minmax(92px, auto) 40px;
-    padding: 0 8px 2px;
+  }
+
+  .embeddedRoot[data-payment-mode="partial"] .installmentRow,
+  .embeddedRoot[data-payment-mode="partial"] .installmentHead {
+    grid-template-columns: 34px minmax(112px, 0.8fr) minmax(170px, 1fr) minmax(92px, auto) 36px;
   }
 
   .embeddedRoot[data-payment-mode="partial"] .installmentRow {
-    grid-template-columns: 36px minmax(118px, 0.9fr) minmax(170px, 1fr) minmax(92px, auto) 40px;
+    gap: 8px;
+    padding: 0;
+    border: 0;
+    border-radius: 0;
+    background: transparent;
     align-items: center;
-    padding: 8px;
   }
 
   .embeddedRoot[data-payment-mode="partial"] .installmentSeq,
-  .embeddedRoot[data-payment-mode="partial"] .installmentValue,
   .embeddedRoot[data-payment-mode="partial"] .installmentDate,
   .embeddedRoot[data-payment-mode="partial"] .installmentMonto,
   .embeddedRoot[data-payment-mode="partial"] .installmentDelete {
     grid-column: auto;
-    grid-row: auto;
   }
 
   .embeddedRoot[data-payment-mode="partial"] .cellLabel {
@@ -2981,14 +2794,13 @@ body.dark .tooltipInfo {
     flex-direction: column;
     align-items: stretch;
     justify-content: flex-start;
-    min-height: 0;
+    text-align: right;
     padding-top: 0;
     border-top: 0;
-    text-align: right;
   }
 
   .embeddedRoot[data-payment-mode="partial"] .installmentDelete {
-    width: 40px;
+    width: 36px;
   }
 }
 
