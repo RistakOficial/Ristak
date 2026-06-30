@@ -129,6 +129,10 @@ export function classifyDeployDrainRequest(req = {}) {
     return 'http:integration-read'
   }
 
+  if (READ_METHODS.has(method) && path.startsWith('/api/')) {
+    return 'http:api-read'
+  }
+
   if (isMutation && path.startsWith('/api/')) {
     return 'http:api-mutation'
   }
@@ -137,6 +141,5 @@ export function classifyDeployDrainRequest(req = {}) {
 }
 
 export function shouldAllowDuringDeployDrain(req = {}) {
-  const classification = classifyDeployDrainRequest(req)
-  return Boolean(classification && classification !== 'health')
+  return !isHealthRequest(req)
 }

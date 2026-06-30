@@ -54,11 +54,20 @@ test('deploy drain policy protects appointments, integration reads, callbacks, a
   assert.equal(classifyDeployDrainRequest(req('PUT', '/api/sites/site_123')), 'http:api-mutation')
 })
 
-test('deploy drain policy keeps health special and rejects ordinary private reads during shutdown', () => {
+test('deploy drain policy keeps health special and keeps private traffic available during shutdown', () => {
   assert.equal(isHealthRequest(req('GET', '/api/health')), true)
-  assert.equal(classifyDeployDrainRequest(req('GET', '/api/dashboard/stats')), null)
-  assert.equal(shouldAllowDuringDeployDrain(req('GET', '/api/dashboard/stats')), false)
+  assert.equal(classifyDeployDrainRequest(req('GET', '/api/dashboard/stats')), 'http:api-read')
+  assert.equal(shouldAllowDuringDeployDrain(req('GET', '/api/dashboard/stats')), true)
   assert.equal(shouldAllowDuringDeployDrain(req('POST', '/api/dashboard/recalculate')), true)
+  assert.equal(shouldAllowDuringDeployDrain(req('GET', '/api/health')), false)
+  assert.equal(shouldAllowDuringDeployDrain(req('GET', '/settings')), true)
+})
+
+test('deploy shutdown path does not expose a deploy blocker to user traffic', async () => {
+  const source = await readFile(join(__dirname, '..', 'src', 'server.js'), 'utf8')
+  assert.doesNotMatch(source, /Aplicación actualizándose/)
+  assert.doesNotMatch(source, /startupState\.ready\s*=\s*false/)
+  assert.match(source, /if \(shuttingDown && !isHealthRequest\(req\)\) \{\s+res\.set\('Connection', 'close'\)\s+\}/)
 })
 
 test('deploy drain tracker counts and formats active critical work', () => {

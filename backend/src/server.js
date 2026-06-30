@@ -84,8 +84,7 @@ import { recoverPendingConversationalAgentConversations } from './agents/convers
 import { repairStoredYCloudHistoryMessageDirections } from './services/whatsappApiService.js'
 import {
   classifyDeployDrainRequest,
-  isHealthRequest,
-  shouldAllowDuringDeployDrain
+  isHealthRequest
 } from './utils/deployDrainPolicy.js'
 import {
   beginDeployDrainWork,
@@ -139,12 +138,10 @@ app.use((req, res, next) => {
   const drainClassification = classifyDeployDrainRequest(req)
   const drainAllowed = Boolean(drainClassification && drainClassification !== 'health')
 
-  if (shuttingDown && !isHealthRequest(req) && !shouldAllowDuringDeployDrain(req)) {
+  // El healthcheck es la señal de drain para Render. El tráfico de usuario no
+  // debe recibir 503 aquí; debe terminar en la instancia vieja o pasar a la nueva.
+  if (shuttingDown && !isHealthRequest(req)) {
     res.set('Connection', 'close')
-    return res.status(503).json({
-      error: 'Aplicación actualizándose',
-      message: 'La app está aplicando una actualización. Reintenta en unos segundos.'
-    })
   }
 
   activeRequests += 1
@@ -459,7 +456,8 @@ const server = app.listen(PORT, '0.0.0.0', () => {
 function handleShutdown(signal) {
   if (shuttingDown) return
   shuttingDown = true
-  startupState.ready = false
+  // No apagar startupState.ready: /health ya falla por shuttingDown, pero los
+  // requests normales deben seguir pasando mientras la instancia vieja drena.
   markDeployShutdownStarted()
   logger.warn(
     `[Shutdown] ${signal} recibido. Drenando ${activeRequests} request(s) activa(s), ` +
