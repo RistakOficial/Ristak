@@ -2693,8 +2693,8 @@ body[data-phone-chat-theme='active'] [class*='chatSwipeContent'] {
    La app móvil (data-phone-app / data-phone-chat-theme) queda excluida
    de la capa de compatibilidad y conserva su sistema propio.
    ============================================================ */
-  body[data-dir='a'], body:not([data-dir]) {
-    /* ===== Nimbus (A) — limpio, profesional, neutro frío ===== */
+  body[data-dir^='a'], body:not([data-dir]) {
+    /* ===== Nimbus (A*) — limpio, profesional, neutro frío. Variantes: Clásico (a), Violeta (av), Azul (ab), Sobria (am) ===== */
     --font-display: 'Sora', 'Sora', system-ui, -apple-system, sans-serif; --font-body: 'Hanken Grotesk', system-ui, -apple-system, sans-serif; --font-mono: 'IBM Plex Mono', ui-monospace, 'SF Mono', monospace;
     --label-font: var(--font-body); --label-transform: none; --label-spacing: 0.005em; --num-font: var(--font-display);
     --radius-card: 14px; --radius-ctl: 10px; --radius-pill: 999px;
@@ -2707,7 +2707,7 @@ body[data-phone-chat-theme='active'] [class*='chatSwipeContent'] {
     --warn:#e0a64b; --warn-soft:rgba(224,166,75,0.16); --info:#38b2c4; --info-soft:rgba(56,178,196,0.16);
     --sidebar:#070a0e; --topbar:rgba(11,14,19,0.82); --chart-grid:rgba(255,255,255,0.06);
   }
-  body[data-dir='a'].light {
+  body[data-dir^='a'].light {
     --bg:#e7ebf1; --bg-soft:#dfe4ec; --surface:#ffffff; --surface-2:#eef1f6; --surface-hover:#e5eaf1;
     --border:rgba(15,23,42,0.12); --border-strong:rgba(15,23,42,0.22);
     --text:#0f172a; --text-dim:#525e74; --text-mute:#7e8a9d;
@@ -2717,6 +2717,15 @@ body[data-phone-chat-theme='active'] [class*='chatSwipeContent'] {
     --sidebar:#ffffff; --topbar:rgba(231,235,241,0.86); --chart-grid:rgba(15,23,42,0.08);
     --shadow-card: 0 1px 2px rgba(15,23,42,0.07), 0 1px 3px rgba(15,23,42,0.05); --shadow-xs: 0 1px 2px rgba(15,23,42,0.06); --shadow-pop: 0 22px 48px -24px rgba(15,23,42,0.28);
   }
+  /* Nimbus · Violeta */
+  body[data-dir='av'].dark { --accent:#8b7bff; --accent-rgb:139,123,255; --accent-2:#b9a6ff; --on-accent:#0c0e1a; --accent-soft:rgba(139,123,255,0.22); }
+  body[data-dir='av'].light { --accent:#6d5cff; --accent-rgb:109,92,255; --accent-2:#9a87ff; --on-accent:#ffffff; --accent-soft:rgba(109,92,255,0.14); }
+  /* Nimbus · Azul */
+  body[data-dir='ab'].dark { --accent:#3d8bff; --accent-rgb:61,139,255; --accent-2:#7aa9ff; --on-accent:#06101f; --accent-soft:rgba(61,139,255,0.2); }
+  body[data-dir='ab'].light { --accent:#2f6fed; --accent-rgb:47,111,237; --accent-2:#5a8cf5; --on-accent:#ffffff; --accent-soft:rgba(47,111,237,0.12); }
+  /* Nimbus · Sobria */
+  body[data-dir='am'].dark { --accent:#c6a256; --accent-rgb:198,162,86; --accent-2:#ddc187; --on-accent:#15130c; --accent-soft:rgba(198,162,86,0.18); }
+  body[data-dir='am'].light { --accent:#9c7a2a; --accent-rgb:156,122,42; --accent-2:#b89542; --on-accent:#ffffff; --accent-soft:rgba(156,122,42,0.13); }
   /* ===== Onyx (C*) — alto contraste, audaz, panel lateral siempre oscuro. 4 versiones de color: Esmeralda (c), Azul (cb), Violeta (cv), Ámbar (ca) ===== */
   body[data-dir^='c'] {
     --font-display: 'Outfit', 'Sora', system-ui, -apple-system, sans-serif; --font-body: 'Outfit', system-ui, -apple-system, sans-serif; --font-mono: 'IBM Plex Mono', ui-monospace, 'SF Mono', monospace;
@@ -2823,22 +2832,22 @@ body[data-phone-chat-theme='active'] [class*='chatSwipeContent'] {
   }
   /* Aurora · Neutral (equilibrado) */
   body[data-dir='en'].dark {
-    --bg:#0b0e14; --bg-soft:#10141c; --surface:rgba(30,36,46,0.66); --surface-2:rgba(44,52,64,0.6); --surface-hover:rgba(56,64,78,0.66);
-    --border:rgba(180,196,214,0.15); --border-strong:rgba(180,196,214,0.3);
-    --text:#eef1f5; --text-dim:#a4afbd; --text-mute:#6e7886;
-    --accent:#6f8fc4; --accent-rgb:111,143,196; --accent-2:#9bb4dc; --on-accent:#0b0e14; --accent-soft:rgba(111,143,196,0.2);
+    --bg:#080a0d; --bg-soft:#0d1015; --surface:rgba(24,28,36,0.72); --surface-2:rgba(34,40,50,0.68); --surface-hover:rgba(44,51,62,0.72);
+    --border:rgba(160,170,184,0.14); --border-strong:rgba(160,170,184,0.28);
+    --text:#edf0f4; --text-dim:#a0a8b3; --text-mute:#68717c;
+    --accent:#64748b; --accent-rgb:100,116,139; --accent-2:#94a3b8; --on-accent:#080a0d; --accent-soft:rgba(100,116,139,0.2);
     --pos:#54c8a0; --pos-soft:rgba(84,200,160,0.17); --neg:#e87d80; --neg-soft:rgba(232,125,128,0.17);
-    --warn:#d8b46a; --warn-soft:rgba(216,180,106,0.17); --info:#6fb4cc; --info-soft:rgba(111,180,204,0.17);
-    --sidebar:rgba(12,15,21,0.74); --topbar:rgba(11,14,20,0.55); --chart-grid:rgba(180,196,214,0.1);
+    --warn:#d8b46a; --warn-soft:rgba(216,180,106,0.17); --info:#6f8794; --info-soft:rgba(111,135,148,0.16);
+    --sidebar:rgba(8,10,13,0.78); --topbar:rgba(8,10,13,0.68); --chart-grid:rgba(160,170,184,0.08);
   }
   body[data-dir='en'].light {
-    --bg:#eef1f5; --bg-soft:#e6eaf0; --surface:rgba(255,255,255,0.68); --surface-2:rgba(244,247,251,0.78); --surface-hover:rgba(235,239,245,0.85);
-    --border:rgba(70,90,120,0.16); --border-strong:rgba(70,90,120,0.3);
-    --text:#1b2230; --text-dim:#536074; --text-mute:#828d9e;
-    --accent:#4f6fb0; --accent-rgb:79,111,176; --accent-2:#7790cb; --on-accent:#ffffff; --accent-soft:rgba(79,111,176,0.13);
+    --bg:#e3e7ec; --bg-soft:#dbe0e7; --surface:rgba(252,253,255,0.78); --surface-2:rgba(235,239,244,0.86); --surface-hover:rgba(225,230,237,0.9);
+    --border:rgba(42,52,66,0.14); --border-strong:rgba(42,52,66,0.26);
+    --text:#17202c; --text-dim:#4e5968; --text-mute:#788390;
+    --accent:#475569; --accent-rgb:71,85,105; --accent-2:#64748b; --on-accent:#ffffff; --accent-soft:rgba(71,85,105,0.13);
     --pos:#1d9b73; --pos-soft:rgba(29,155,115,0.14); --neg:#d65560; --neg-soft:rgba(214,85,96,0.12);
-    --warn:#b6862a; --warn-soft:rgba(182,134,42,0.15); --info:#2f7f9c; --info-soft:rgba(47,127,156,0.13);
-    --sidebar:rgba(255,255,255,0.72); --topbar:rgba(238,241,245,0.55); --chart-grid:rgba(70,90,120,0.1);
+    --warn:#b6862a; --warn-soft:rgba(182,134,42,0.15); --info:#526978; --info-soft:rgba(82,105,120,0.12);
+    --sidebar:rgba(252,253,255,0.82); --topbar:rgba(227,231,236,0.76); --chart-grid:rgba(42,52,66,0.08);
   }
   /* Aurora · Azul (profesional, universal) */
   body[data-dir='eb'].dark {
@@ -2883,7 +2892,7 @@ body[data-phone-chat-theme='active'] [class*='chatSwipeContent'] {
      nodos del canvas (que se solapan entre sí, así que cualquier translucidez deja
      ver el nodo de atrás). Las tarjetas normales siguen usando --surface (glass). */
   body[data-dir='e'].dark  { --surface-solid: rgb(33,38,72); }
-  body[data-dir='en'].dark { --surface-solid: rgb(31,37,48); }
+  body[data-dir='en'].dark { --surface-solid: rgb(26,30,38); }
   body[data-dir='eb'].dark { --surface-solid: rgb(24,35,58); }
   body[data-dir='em'].dark { --surface-solid: rgb(30,32,39); }
   body[data-dir^='e'].light { --surface-solid: rgb(255,255,255); }
@@ -3384,8 +3393,8 @@ body[data-phone-chat-theme='active'] [class*='chatSwipeContent'] {
   body[data-dir^='e'] .nav-ic path, body[data-dir^='e'] .nav-ic rect, body[data-dir^='e'] .nav-ic circle, body[data-dir^='e'] .nav-ic line { stroke-width:1.6px; }
   body[data-dir='e'] [data-ristak-layout-main], [data-main-scroll] { background: radial-gradient(130% 110% at 0% 0%, #1b2150 0%, rgba(12,14,26,0) 52%), radial-gradient(120% 120% at 100% 28%, #3a1f5e 0%, rgba(12,14,26,0) 52%), var(--bg) !important; }
   body[data-dir='e'].light [data-ristak-layout-main], [data-main-scroll] { background: radial-gradient(130% 110% at 0% 0%, #dfe2ff 0%, rgba(238,240,255,0) 52%), radial-gradient(120% 120% at 100% 28%, #ffe2f4 0%, rgba(238,240,255,0) 52%), var(--bg) !important; }
-  body[data-dir='en'] [data-ristak-layout-main], [data-main-scroll] { background: radial-gradient(130% 110% at 0% 0%, #1a2436 0%, rgba(11,14,20,0) 52%), radial-gradient(120% 120% at 100% 28%, #16323a 0%, rgba(11,14,20,0) 52%), var(--bg) !important; }
-  body[data-dir='en'].light [data-ristak-layout-main], [data-main-scroll] { background: radial-gradient(130% 110% at 0% 0%, #dde4f0 0%, rgba(238,241,245,0) 52%), radial-gradient(120% 120% at 100% 28%, #d6ecee 0%, rgba(238,241,245,0) 52%), var(--bg) !important; }
+  body[data-dir='en'] [data-ristak-layout-main], [data-main-scroll] { background: radial-gradient(130% 110% at 0% 0%, #111820 0%, rgba(8,10,13,0) 52%), radial-gradient(120% 120% at 100% 28%, #121719 0%, rgba(8,10,13,0) 52%), var(--bg) !important; }
+  body[data-dir='en'].light [data-ristak-layout-main], [data-main-scroll] { background: radial-gradient(130% 110% at 0% 0%, #d3d9e2 0%, rgba(227,231,236,0) 52%), radial-gradient(120% 120% at 100% 28%, #d5dae1 0%, rgba(227,231,236,0) 52%), var(--bg) !important; }
   body[data-dir='eb'] [data-ristak-layout-main], [data-main-scroll] { background: radial-gradient(130% 110% at 0% 0%, #102a52 0%, rgba(10,15,26,0) 52%), radial-gradient(120% 120% at 100% 28%, #103a4e 0%, rgba(10,15,26,0) 52%), var(--bg) !important; }
   body[data-dir='eb'].light [data-ristak-layout-main], [data-main-scroll] { background: radial-gradient(130% 110% at 0% 0%, #d8e6ff 0%, rgba(233,240,252,0) 52%), radial-gradient(120% 120% at 100% 28%, #d6f0fb 0%, rgba(233,240,252,0) 52%), var(--bg) !important; }
   body[data-dir='em'] [data-ristak-layout-main], [data-main-scroll] { background: radial-gradient(130% 110% at 0% 0%, #1d1f28 0%, rgba(12,13,16,0) 52%), radial-gradient(120% 120% at 100% 28%, #2b2417 0%, rgba(12,13,16,0) 52%), var(--bg) !important; }

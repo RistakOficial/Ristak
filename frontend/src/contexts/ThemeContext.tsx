@@ -41,7 +41,7 @@ const LEGACY_DESIGN_PRESET_STORAGE_KEY = 'ristak-design-preset'
 
 // ===== Familias visuales (data-dir) =====
 export type ThemeDir =
-  | 'a'
+  | 'a' | 'av' | 'ab' | 'am'
   | 'c' | 'cb' | 'cv' | 'ca'
   | 'd' | 'db' | 'dl' | 'dm'
   | 'e' | 'en' | 'eb' | 'em'
@@ -96,7 +96,12 @@ export const THEME_FAMILIES: ThemeFamily[] = [
     id: 'nimbus',
     label: 'Nimbus',
     description: 'Limpio, profesional, neutro frío',
-    variants: [{ dir: 'a', label: 'Clásico' }]
+    variants: [
+      { dir: 'a', label: 'Clásico' },
+      { dir: 'av', label: 'Violeta' },
+      { dir: 'ab', label: 'Azul' },
+      { dir: 'am', label: 'Sobria' }
+    ]
   }
 ]
 

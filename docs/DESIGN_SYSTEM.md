@@ -39,7 +39,7 @@ con variantes de color y modo claro/oscuro. El **default es Aurora · Neutral**.
 | **Aurora** (default) | `en` Neutral, `e` Violeta, `eb` Azul, `em` Sobria | Glass, profundidad, degradados suaves |
 | **Onyx** | `c` Esmeralda, `cb` Azul, `cv` Violeta, `ca` Ámbar | Alto contraste, **panel lateral SIEMPRE oscuro** |
 | **Brut** | `d` Rojo, `db` Azul, `dl` Lima, `dm` Magenta | Neobrutalismo: bordes duros, mono, sombras sólidas |
-| **Nimbus** | `a` | Limpio, profesional, neutro frío |
+| **Nimbus** | `a` Clásico, `av` Violeta, `ab` Azul, `am` Sobria | Limpio, profesional, neutro frío |
 
 - El usuario elige familia/variante/modo en el **menú de usuario del sidebar**;
   el motor está en `frontend/src/contexts/ThemeContext.tsx` (atributo `data-dir`

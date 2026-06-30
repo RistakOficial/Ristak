@@ -12,6 +12,9 @@ import { cn } from '@/utils/cn'
 
 const RISTAK_TO_MDP_THEME_PRESET: Record<ThemeDir, string> = {
   a: 'nimbus-classic',
+  av: 'nimbus-violet',
+  ab: 'nimbus-blue',
+  am: 'nimbus-graphite',
   c: 'onyx-emerald',
   cb: 'onyx-blue',
   cv: 'onyx-violet',
