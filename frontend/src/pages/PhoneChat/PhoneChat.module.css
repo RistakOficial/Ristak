@@ -5422,6 +5422,14 @@
   height: 20px;
 }
 
+/* WhatsApp en el boton del composer: disco a dos tonos (circulo verde + glifo
+   blanco), como el icono real de la app. El glifo se mide al 58% del disco para
+   que no toque el borde ni se desborde. */
+.composerChannelDiscIcon {
+  --phone-message-channel-mark-size: 22px;
+  --phone-message-channel-mark-glyph-size: 58%;
+}
+
 .composerChannelDropdown {
   position: absolute;
   left: 0;
