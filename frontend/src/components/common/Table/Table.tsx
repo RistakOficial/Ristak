@@ -19,6 +19,7 @@ export interface Column<T> {
   key: string
   header: React.ReactNode
   render?: (value: any, item: T) => React.ReactNode
+  sortValue?: (value: any, item: T) => unknown
   searchValue?: (value: any, item: T) => unknown | unknown[]
   searchable?: boolean
   sortable?: boolean
@@ -393,9 +394,10 @@ export function Table<T extends Record<string, any>>({
     }
 
     if (sortBy) {
+      const sortColumn = columns.find(column => column.key === sortBy)
       const compare = (a: T, b: T) => {
-        const aValue = a[sortBy]
-        const bValue = b[sortBy]
+        const aValue = sortColumn?.sortValue ? sortColumn.sortValue(a[sortBy], a) : a[sortBy]
+        const bValue = sortColumn?.sortValue ? sortColumn.sortValue(b[sortBy], b) : b[sortBy]
 
         if (aValue === bValue) return 0
 

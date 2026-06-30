@@ -31,6 +31,7 @@ import { getAccountCurrency, normalizePhoneForAccount } from '../utils/accountLo
 import { buildContactSearchClause, containsPattern, normalizePhoneDigits } from '../utils/searchText.js'
 import { createRistakPaymentEntityId } from '../utils/idGenerator.js'
 
+const isPostgresDatabase = Boolean(process.env.DATABASE_URL)
 const SUCCESS_PAYMENT_STATUSES = new Set(['succeeded', 'paid', 'completed', 'complete', 'fulfilled', 'success'])
 const CLOSED_PAYMENT_STATUSES = new Set(['paid', 'succeeded', 'completed', 'complete', 'fulfilled', 'success', 'refunded', 'void', 'deleted', 'failed'])
 const STRIPE_PLAN_AUTHORIZATION_TRIGGERS = new Set(['card_setup', 'card_setup_authorization', 'first_payment', 'first_payment_saved_card'])
@@ -88,6 +89,16 @@ const normalizeAmount = (amount) => {
 const cleanString = (value) => String(value || '').trim()
 
 const createLocalId = (prefix) => createRistakPaymentEntityId(prefix)
+
+const paymentTimestampSortExpression = (column) => (
+  isPostgresDatabase
+    ? `COALESCE(EXTRACT(EPOCH FROM ${column}::timestamptz), 0)`
+    : `COALESCE(julianday(${column}), julianday(REPLACE(REPLACE(${column}, 'T', ' '), 'Z', '')), 0)`
+)
+
+export const __transactionsControllerTestHooks = {
+  paymentTimestampSortExpression
+}
 
 // (PAY-007) Idempotencia del registro manual de pago: un reintento de red NO debe
 // crear un pago duplicado. Si el cliente manda Idempotency-Key (o un id estable en el
@@ -907,18 +918,20 @@ export const getTransactions = async (req, res) => {
     const countResult = await db.get(`SELECT COUNT(*) as total FROM payments p ${whereClause}`, params)
     const totalTransactions = countResult?.total || 0
 
+    const dateSortExpression = paymentTimestampSortExpression('p.date')
+    const createdAtSortExpression = paymentTimestampSortExpression('p.created_at')
     const sortableMap = {
-      date: 'p.date',
-      created_at: 'p.created_at',
+      date: dateSortExpression,
+      created_at: createdAtSortExpression,
       amount: 'p.amount',
       status: 'p.status'
     }
 
-    const safeSortBy = sortableMap[sortBy] || 'p.date'
+    const safeSortBy = sortableMap[sortBy] || dateSortExpression
     const orderDirection = String(sortOrder).toUpperCase() === 'ASC' ? 'ASC' : 'DESC'
     // Desempate estable por el momento real de registro: si dos pagos comparten la
     // misma fecha, gana el registrado más recientemente (orden descendente correcto).
-    const orderTieBreaker = `p.created_at ${orderDirection}, p.id ${orderDirection}`
+    const orderTieBreaker = `${createdAtSortExpression} ${orderDirection}, p.id ${orderDirection}`
 
     const transactionsQuery = `
       SELECT

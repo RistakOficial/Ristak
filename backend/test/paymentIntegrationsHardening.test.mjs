@@ -4,7 +4,10 @@ import { readFileSync } from 'node:fs'
 
 import { db } from '../src/config/database.js'
 import { clearHighLevelMirrorDataForLocationChange } from '../src/controllers/highlevelController.js'
-import { recordPayment as recordTransactionPayment } from '../src/controllers/transactionsController.js'
+import {
+  __transactionsControllerTestHooks,
+  recordPayment as recordTransactionPayment
+} from '../src/controllers/transactionsController.js'
 import GHLClient from '../src/services/ghlClient.js'
 import { handlePaymentWebhook } from '../src/controllers/webhooksController.js'
 import { __invoicesSyncTestHooks, syncAllInvoices, syncLocalPaymentsToHighLevel } from '../src/services/invoicesSyncService.js'
@@ -290,6 +293,54 @@ test('enganche manual de plan HighLevel conserva modo test aunque el invoice rem
     })
   } finally {
     mock.restoreAll()
+    await cleanup(ids)
+  }
+})
+
+test('listado de transacciones ordena pagos del mismo día por hora real aunque mezclen formatos de timestamp', async () => {
+  const ids = idsFor('sortmix')
+  const marker = `sortmix_${ids.manualPaymentId}`
+  const paymentIds = {
+    earlyIso: `${ids.manualPaymentId}_early_iso`,
+    lateSql: `${ids.manualPaymentId}_late_sql`,
+    middleIso: `${ids.manualPaymentId}_middle_iso`
+  }
+
+  await cleanup(ids)
+  await seedContact(ids)
+
+  try {
+    const rows = [
+      [paymentIds.earlyIso, '2099-04-04T17:30:00.000Z', '2099-04-04 17:30:01', `${marker} temprano ISO`],
+      [paymentIds.lateSql, '2099-04-04 19:00:00', '2099-04-04 19:00:01', `${marker} tarde SQL`],
+      [paymentIds.middleIso, '2099-04-04T18:00:00.000Z', '2099-04-04 18:00:01', `${marker} medio ISO`]
+    ]
+
+    for (const [paymentId, paymentDate, createdAt, title] of rows) {
+      await db.run(
+        `INSERT INTO payments (
+          id, contact_id, amount, currency, status, payment_method, payment_mode,
+          payment_provider, reference, title, description, date, created_at, updated_at
+        ) VALUES (?, ?, 100, 'MXN', 'paid', 'cash', 'live', 'manual', ?, ?, ?, ?, ?, ?)`,
+        [paymentId, ids.contactId, marker, title, title, paymentDate, createdAt, createdAt]
+      )
+    }
+
+    const dateSortExpression = __transactionsControllerTestHooks.paymentTimestampSortExpression('p.date')
+    const createdAtSortExpression = __transactionsControllerTestHooks.paymentTimestampSortExpression('p.created_at')
+    const sortedPayments = await db.all(
+      `SELECT p.id
+       FROM payments p
+       WHERE p.reference = ?
+       ORDER BY ${dateSortExpression} DESC, ${createdAtSortExpression} DESC, p.id DESC`,
+      [marker]
+    )
+
+    assert.deepEqual(
+      sortedPayments.map(payment => payment.id),
+      [paymentIds.lateSql, paymentIds.middleIso, paymentIds.earlyIso]
+    )
+  } finally {
     await cleanup(ids)
   }
 })
