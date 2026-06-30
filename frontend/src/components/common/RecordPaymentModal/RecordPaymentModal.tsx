@@ -526,9 +526,34 @@ const getNextDueDate = (baseDate: string, frequency: RemainingFrequency, index: 
   return toDateInputValue(addMonths(base, index))
 }
 
-const getRemainingDueDateOffset = (zeroBasedIndex: number, firstPaymentEnabled: boolean) => (
-  firstPaymentEnabled ? zeroBasedIndex + 1 : zeroBasedIndex
+const getRemainingDueDateOffset = (zeroBasedIndex: number) => zeroBasedIndex + 1
+
+const getDateOnly = (value: string) => {
+  const match = String(value || '').match(/^(\d{4}-\d{2}-\d{2})/)
+  return match ? match[1] : ''
+}
+
+const getCollisionReflowFrequency = (frequency: RemainingFrequency): RemainingFrequency => (
+  frequency === 'custom' ? 'monthly' : frequency
 )
+
+const reflowRemainingDatesAfterFirstPayment = (
+  installments: InstallmentDraft[],
+  firstPaymentDate: string,
+  frequency: RemainingFrequency,
+  timezone: string
+) => {
+  const firstDate = getDateOnly(firstPaymentDate)
+  if (!firstDate || !installments.some((installment) => getDateOnly(installment.dueDate) === firstDate)) {
+    return installments
+  }
+
+  const reflowFrequency = getCollisionReflowFrequency(frequency)
+  return installments.map((installment, index) => ({
+    ...installment,
+    dueDate: getNextDueDate(firstPaymentDate, reflowFrequency, getRemainingDueDateOffset(index), timezone)
+  }))
+}
 
 const resolvePartialAmount = (type: InstallmentValueType, value: string, totalAmount: number) => {
   const parsedValue = normalizeAmount(value)
@@ -1586,11 +1611,32 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
       dueDate: getNextDueDate(
         firstPaymentDate,
         remainingFrequency,
-        getRemainingDueDateOffset(index, firstPaymentEnabled),
+        getRemainingDueDateOffset(index),
         timezone
       )
     })))
-  }, [activePaymentMode, firstPaymentDate, firstPaymentEnabled, remainingFrequency, timezone])
+  }, [activePaymentMode, firstPaymentDate, remainingFrequency, remainingInstallments.length, timezone])
+
+  useEffect(() => {
+    if (activePaymentMode !== 'partial' || !firstPaymentEnabled) return
+
+    const reflowed = reflowRemainingDatesAfterFirstPayment(
+      remainingInstallments,
+      firstPaymentDate,
+      remainingFrequency,
+      timezone
+    )
+    if (reflowed !== remainingInstallments) {
+      setRemainingInstallments(reflowed)
+    }
+  }, [
+    activePaymentMode,
+    firstPaymentDate,
+    firstPaymentEnabled,
+    remainingFrequency,
+    remainingInstallments,
+    timezone
+  ])
 
   useEffect(() => {
     if (activePaymentMode !== 'partial' || !autoDistributeRemaining) return
@@ -1877,6 +1923,16 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
     )))
   }
 
+  const updateFirstPaymentEnabled = (enabled: boolean) => {
+    setFirstPaymentEnabled(enabled)
+    if (enabled) {
+      setRemainingInstallments(prev => (
+        reflowRemainingDatesAfterFirstPayment(prev, firstPaymentDate, remainingFrequency, timezone)
+      ))
+    }
+    setAutoDistributeRemaining(true)
+  }
+
   const addRemainingInstallment = () => {
     setAutoDistributeRemaining(true)
     setRemainingInstallments(prev => {
@@ -1890,7 +1946,7 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
           dueDate: getNextDueDate(
             firstPaymentDate,
             remainingFrequency === 'custom' ? 'monthly' : remainingFrequency,
-            getRemainingDueDateOffset(nextIndex, firstPaymentEnabled),
+            getRemainingDueDateOffset(nextIndex),
             timezone
           )
         }
@@ -3435,10 +3491,7 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
                     { value: 'yes', label: 'Con enganche' }
                   ],
                   value: firstPaymentEnabled ? 'yes' : 'no',
-                  onChange: (value) => {
-                    setFirstPaymentEnabled(value === 'yes')
-                    setAutoDistributeRemaining(true)
-                  },
+                  onChange: (value) => updateFirstPaymentEnabled(value === 'yes'),
                   desktopFullWidth: false
                 })}
               </div>
