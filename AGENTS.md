@@ -1,5 +1,18 @@
 # Codex Instructions
 
+## Fechas y zonas horarias — OBLIGATORIO
+
+- **ALTO antes de tocar fechas.** Antes de crear o modificar cualquier lógica de
+  fechas, horas, rangos, crones, pagos programados, citas, contactos, anuncios,
+  reportes, sitios, formularios, mensajes programados o integraciones externas,
+  lee **`docs/DATE_TIME_GUIDELINES.md`** completo.
+- Regla base: la zona horaria del negocio manda. La base guarda instantes en UTC,
+  las fechas de calendario se interpretan en la zona del negocio, y el frontend no
+  debe depender de la zona horaria del navegador para datos del CRM.
+- No uses `new Date().toISOString().slice(0, 10)`, `DateTime.local()`,
+  `DateTime.now().toISODate()` ni conversiones manuales para fechas de negocio.
+  Usa `backend/src/utils/dateUtils.js` y `frontend/src/utils/timezone.ts`.
+
 ## UI / diseño — OBLIGATORIO
 
 - **ALTO antes de tocar UI.** Antes de crear o modificar CUALQUIER pantalla,
