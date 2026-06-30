@@ -75,6 +75,8 @@ async function waitForValue(fn, { timeoutMs = 2000, intervalMs = 25, label = 'co
 async function createBunnyMockServer() {
   const requests = []
   let baseUrl = ''
+  let streamVideoTitle = 'Hero video (sites) site_1'
+  let streamVideoCollectionId = ''
 
   const server = http.createServer(async (req, res) => {
     try {
@@ -170,6 +172,8 @@ async function createBunnyMockServer() {
       if (path === '/stream/library/123/videos' && req.method === 'POST') {
         const body = JSON.parse((await readRequestBuffer(req)).toString('utf8') || '{}')
         requests.push({ kind: 'stream-create-video', body, accessKey: req.headers.accesskey })
+        streamVideoTitle = body.title || streamVideoTitle
+        streamVideoCollectionId = body.collectionId || ''
         sendJson(res, 200, {
           videoLibraryId: 123,
           guid: 'stream-video-1',
@@ -189,7 +193,21 @@ async function createBunnyMockServer() {
           hasMP4Fallback: false,
           averageWatchTime: 0,
           totalWatchTime: 0,
-          collectionId: body.collectionId
+          collectionId: streamVideoCollectionId
+        })
+        return
+      }
+
+      if (path === '/stream/library/123/videos/stream-video-1' && req.method === 'POST') {
+        const body = JSON.parse((await readRequestBuffer(req)).toString('utf8') || '{}')
+        requests.push({ kind: 'stream-update-video', body, accessKey: req.headers.accesskey })
+        streamVideoTitle = body.title || streamVideoTitle
+        streamVideoCollectionId = body.collectionId || ''
+        sendJson(res, 200, {
+          videoLibraryId: 123,
+          guid: 'stream-video-1',
+          title: streamVideoTitle,
+          collectionId: streamVideoCollectionId
         })
         return
       }
@@ -211,7 +229,7 @@ async function createBunnyMockServer() {
         sendJson(res, 200, {
           videoLibraryId: 123,
           guid: 'stream-video-1',
-          title: 'Hero video (sites) site_1',
+          title: streamVideoTitle,
           dateUploaded: '2026-06-18T00:00:00Z',
           views: 7,
           isPublic: true,
@@ -228,7 +246,7 @@ async function createBunnyMockServer() {
           averageWatchTime: 5,
           totalWatchTime: 35,
           availableResolutions: '360p,720p',
-          collectionId: 'collection-sites-forms',
+          collectionId: streamVideoCollectionId,
           chapters: [{ title: 'Inicio', start: 0, end: 17 }],
           moments: [{ label: 'CTA', timestamp: 10 }],
           metaTags: [{ property: 'ristak:asset', value: 'site_1' }],
@@ -546,6 +564,103 @@ test('videos de Sites se copian a Bunny Stream y guardan metadata del video', as
     assert.ok(bunny.requests.some(request => request.kind === 'stream-heatmap'))
     assert.ok(bunny.requests.filter(request => request.kind === 'stream-get-video').length >= 2)
     assert.ok(bunny.requests.every(request => !request.accessKey || request.accessKey === 'stream-secret' || request.accessKey === 'storage-secret'))
+  } finally {
+    if (mediaAssetId) {
+      const { softDeleteMediaAsset } = await import('../src/services/mediaStorageService.js')
+      await softDeleteMediaAsset(mediaAssetId).catch(() => undefined)
+    }
+    if (db && mediaAssetId) {
+      await db.run('DELETE FROM media_assets WHERE id = ?', [mediaAssetId]).catch(() => undefined)
+    }
+    bunny.close()
+    restoreEnv(previousEnv)
+  }
+})
+
+test('resync mueve videos existentes de Sites a la colección de la cuenta', async () => {
+  const previousEnv = snapshotEnv()
+  const bunny = await createBunnyMockServer()
+  let db = null
+  let mediaAssetId = ''
+
+  try {
+    configureBunnyEnv(bunny.baseUrl)
+
+    const [mediaStorageService, database] = await Promise.all([
+      import('../src/services/mediaStorageService.js'),
+      import('../src/config/database.js')
+    ])
+    mediaStorageService.resetCentralStorageConfigCache()
+    db = database.db
+
+    const created = await mediaStorageService.uploadMediaAsset({
+      buffer: Buffer.from('fake mp4 bytes uploaded before stream collections'),
+      filename: 'legacy-video.mp4',
+      mimeType: 'video/mp4',
+      module: 'chat',
+      moduleEntityId: 'conversation_legacy',
+      businessId: 'default',
+      clientAccountId: 'loc_repair',
+      isPublic: true,
+      skipCompression: true
+    })
+    mediaAssetId = created.id
+
+    assert.equal(created.module, 'chat')
+    assert.equal(created.metadata.stream, undefined)
+    assert.equal(bunny.requests.some(request => request.kind === 'stream-create-video'), false)
+
+    const legacyMetadata = {
+      ...created.metadata,
+      stream: {
+        provider: 'bunny_stream',
+        enabled: true,
+        providerReady: true,
+        syncStatus: 'uploaded',
+        libraryId: '123',
+        collectionId: '',
+        collectionName: '',
+        videoId: 'stream-video-1',
+        title: 'Legacy video without collection',
+        clientAccount: created.metadata.clientAccount,
+        source: {
+          mediaAssetId: created.id,
+          businessId: created.businessId,
+          clientAccountId: 'loc_repair',
+          accountRootPath: 'accounts/loc_repair',
+          module: 'sites',
+          moduleEntityId: 'site_repair',
+          storagePath: created.bunnyPath,
+          storagePublicUrl: created.publicUrl,
+          mimeType: created.mimeType
+        }
+      }
+    }
+    await db.run('UPDATE media_assets SET metadata_json = ? WHERE id = ?', [
+      JSON.stringify(legacyMetadata),
+      created.id
+    ])
+
+    const synced = await mediaStorageService.syncMediaAssetBunnyStream(created.id, {
+      module: 'sites',
+      moduleEntityId: 'site_repair'
+    })
+
+    assert.equal(synced.metadata.stream.syncStatus, 'synced')
+    assert.equal(synced.metadata.stream.collectionId, 'collection-sites-forms')
+    assert.equal(synced.metadata.stream.collectionName, 'Ristak Sites & Forms / loc_repair')
+    assert.equal(synced.metadata.stream.clientAccount.id, 'loc_repair')
+    assert.equal(synced.metadata.stream.source.clientAccountId, 'loc_repair')
+    assert.equal(synced.metadata.stream.source.accountRootPath, 'accounts/loc_repair')
+    assert.equal(synced.metadata.stream.video.collectionId, 'collection-sites-forms')
+
+    const collectionRequest = bunny.requests.find(request => request.kind === 'stream-create-collection')
+    assert.equal(collectionRequest.body.name, 'Ristak Sites & Forms / loc_repair')
+    const updateRequest = bunny.requests.find(request => request.kind === 'stream-update-video')
+    assert.equal(updateRequest.body.collectionId, 'collection-sites-forms')
+    assert.equal(updateRequest.body.title, 'Legacy video without collection')
+    assert.equal(bunny.requests.some(request => request.kind === 'stream-create-video'), false)
+    assert.equal(bunny.requests.some(request => request.kind === 'stream-upload-video'), false)
   } finally {
     if (mediaAssetId) {
       const { softDeleteMediaAsset } = await import('../src/services/mediaStorageService.js')

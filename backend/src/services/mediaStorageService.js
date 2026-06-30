@@ -1097,6 +1097,21 @@ async function getBunnyStreamVideo(config, videoId) {
   )
 }
 
+async function updateBunnyStreamVideo(config, { videoId, title, collectionId } = {}) {
+  if (!videoId) return null
+  return await bunnyStreamRequest(
+    config,
+    `/library/${encodeURIComponent(config.bunnyStreamLibraryId)}/videos/${encodeURIComponent(videoId)}`,
+    {
+      method: 'POST',
+      body: {
+        ...(title ? { title } : {}),
+        collectionId: collectionId || null
+      }
+    }
+  )
+}
+
 async function getBunnyStreamVideoStatistics(config, { videoGuid = '', dateFrom = '', dateTo = '', hourly = false } = {}) {
   return await bunnyStreamRequest(
     config,
@@ -1169,10 +1184,13 @@ async function syncVideoToBunnyStream({
 
   try {
     const collection = await ensureBunnyStreamCollection(config, account)
+    if (!collection?.id) {
+      throw errorWithStatus('Bunny Stream no regresó una colección usable para esta cuenta.', 502, 'bunny_stream_collection_required')
+    }
     logger.info(`[MediaStorage] Bunny Stream sync iniciada: ${id}`)
     const created = await createBunnyStreamVideo(config, {
       title,
-      collectionId: collection?.id || ''
+      collectionId: collection.id
     })
     const videoId = cleanString(created?.guid || created?.videoId || created?.id)
     if (!videoId) {
@@ -1195,8 +1213,8 @@ async function syncVideoToBunnyStream({
       syncStatus: 'uploaded',
       syncedAt: nowIso(),
       libraryId: config.bunnyStreamLibraryId,
-      collectionId: collection?.id || cleanString(normalizedVideo?.collectionId),
-      collectionName: collection?.name || config.bunnyStreamCollectionName || '',
+      collectionId: collection.id,
+      collectionName: collection.name || buildBunnyStreamCollectionName(config, account),
       videoId,
       title,
       clientAccount: account,
@@ -2695,7 +2713,29 @@ export async function syncMediaAssetBunnyStream(assetId, context = {}) {
   let stream
 
   if (currentVideoId && config.bunnyStreamConfigured) {
-    const video = await getBunnyStreamVideo(config, currentVideoId)
+    let video = await getBunnyStreamVideo(config, currentVideoId)
+    const collection = await ensureBunnyStreamCollection(config, clientAccount)
+    if (!collection?.id) {
+      throw errorWithStatus('Bunny Stream no regresó una colección usable para esta cuenta.', 502, 'bunny_stream_collection_required')
+    }
+    const videoCollectionId = cleanString(video?.collectionId)
+    if (videoCollectionId !== collection.id) {
+      const nextTitle = currentStream.title || cleanString(video?.title) || buildBunnyStreamTitle({
+        originalFilename: asset.originalFilename,
+        module: usageContext.module,
+        moduleEntityId: usageContext.moduleEntityId,
+        id: asset.id
+      })
+      await updateBunnyStreamVideo(config, {
+        videoId: currentVideoId,
+        title: nextTitle,
+        collectionId: collection.id
+      })
+      video = await getBunnyStreamVideo(config, currentVideoId).catch((error) => {
+        logger.warn(`[MediaStorage] Bunny Stream movió ${currentVideoId}, pero no se pudo leer metadata actualizada: ${error.message}`)
+        return { ...video, collectionId: collection.id, title: nextTitle }
+      })
+    }
     stream = {
       ...currentStream,
       provider: 'bunny_stream',
@@ -2704,8 +2744,8 @@ export async function syncMediaAssetBunnyStream(assetId, context = {}) {
       syncStatus: 'synced',
       syncedAt: nowIso(),
       libraryId: config.bunnyStreamLibraryId,
-      collectionId: currentStream.collectionId || cleanString(video?.collectionId) || config.bunnyStreamCollectionId || null,
-      collectionName: currentStream.collectionName || config.bunnyStreamCollectionName || null,
+      collectionId: collection.id,
+      collectionName: collection.name || buildBunnyStreamCollectionName(config, clientAccount),
       videoId: currentVideoId,
       title: currentStream.title || cleanString(video?.title),
       source: {
