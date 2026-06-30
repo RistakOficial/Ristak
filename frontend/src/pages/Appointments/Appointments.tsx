@@ -10,10 +10,10 @@ import { useAppConfig } from '@/hooks';
 import { calendarsService, type Calendar, type CalendarEvent, type AppointmentStats, type BlockedSlot, type RawBlockedSlot } from '@/services/calendarsService';
 import { Badge, type BadgeVariant } from '@/components/common/Badge';
 import { getAppointmentStatusBadge } from '@/utils/statusBadges';
-import { formatTime12h } from '@/utils/format'
+import { formatTime12h, getBusinessDateRangeTimestamps } from '@/utils/format'
 import { buildSearchIndex, prepareSearchQuery, searchIndexIncludes } from '@/utils/searchText'
 import { useTimezone } from '@/contexts/TimezoneContext';
-import { convertLocalToUTC } from '@/utils/timezone';
+import { convertLocalToUTC, formatDateOnlyFromDate, formatInTimezone } from '@/utils/timezone';
 import {
   appointmentRemindersService,
   formatReminderOffsetLabel,
@@ -115,7 +115,7 @@ const getTimeZoneParts = (date: Date, timeZone?: string) => {
   const result: Record<string, number> = {};
   for (const part of parts) {
     if (part.type !== 'literal') {
-      result[part.type] = Number(part.value);
+      result[part.type] = part.type === 'hour' && part.value === '24' ? 0 : Number(part.value);
     }
   }
   return result;
@@ -569,11 +569,9 @@ export const Appointments: React.FC = () => {
       end.setHours(23, 59, 59, 999);
     }
 
-    return {
-      startTime: start.getTime(),
-      endTime: end.getTime()
-    };
-  }, [currentDate, viewMode]);
+    const { startTime, endTime } = getBusinessDateRangeTimestamps(start, end, timezone);
+    return { startTime, endTime };
+  }, [currentDate, timezone, viewMode]);
 
   const loadCalendars = useCallback(async () => {
     try {
@@ -634,16 +632,14 @@ export const Appointments: React.FC = () => {
       setEvents(eventsData);
 
       // Calcular estadísticas del mes visible
-      const monthStart = new Date(currentDate);
-      monthStart.setDate(1);
-      monthStart.setHours(0, 0, 0, 0);
-      const monthEnd = new Date(monthStart);
-      monthEnd.setMonth(monthEnd.getMonth() + 1);
+      const monthStart = new Date(currentDate.getFullYear(), currentDate.getMonth(), 1);
+      const monthEnd = new Date(currentDate.getFullYear(), currentDate.getMonth() + 1, 0);
+      const { startTime: monthStartTime, endTime: monthEndTime } = getBusinessDateRangeTimestamps(monthStart, monthEnd, timezone);
 
       const monthlyData = await calendarsService.getEvents(
         locationId || '',
-        monthStart.getTime(),
-        monthEnd.getTime(),
+        monthStartTime,
+        monthEndTime,
         accessToken || undefined,
         selectedCalendar.id
       );
@@ -655,7 +651,7 @@ export const Appointments: React.FC = () => {
       setLoading(false);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [locationId, accessToken, selectedCalendar, currentDate, getDateRange]);
+  }, [locationId, accessToken, selectedCalendar, currentDate, getDateRange, timezone]);
 
   useEffect(() => {
     const isOverlayRoute = routeState.create || Boolean(routeState.appointmentId);
@@ -2184,12 +2180,12 @@ export const Appointments: React.FC = () => {
               <div className={styles.dayHeader}>
                 <div className={styles.dayHeaderInfo}>
                   <div className={styles.dayHeaderWeekday}>
-                    {currentDate.toLocaleDateString('es-MX', { weekday: 'short' }).toUpperCase()}
+                    {formatInTimezone(formatDateOnlyFromDate(currentDate), timezone, { weekday: 'short' }).toUpperCase()}
                   </div>
                   <div className={styles.dayHeaderDate}>
                     <span className={styles.dayHeaderDay}>{currentDate.getDate()}</span>
                     <div className={styles.dayHeaderMeta}>
-                      <span>{currentDate.toLocaleDateString('es-MX', { month: 'long' })}</span>
+                      <span>{formatInTimezone(formatDateOnlyFromDate(currentDate), timezone, { month: 'long' })}</span>
                       <span>{currentDate.getFullYear()}</span>
                     </div>
                   </div>

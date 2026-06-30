@@ -59,7 +59,8 @@ import mediaService, {
   type StorageUsage,
   type StreamChartPoint
 } from '@/services/mediaService'
-import { formatDateToISO, parseLocalDateString } from '@/utils/format'
+import { formatDateTime as formatBusinessDateTime, formatDateToISO, parseLocalDateString } from '@/utils/format'
+import { getDateOnlyFromCalendarLikeString } from '@/utils/timezone'
 import styles from './MediaSettings.module.css'
 
 type MediaFilter = 'all' | 'image' | 'video' | 'audio' | 'document' | 'other'
@@ -176,16 +177,16 @@ function formatBytes(bytes?: number | null) {
 }
 
 function formatDate(value?: string | null) {
-  if (!value) return 'Sin fecha'
-  const date = new Date(value)
-  if (Number.isNaN(date.getTime())) return 'Sin fecha'
-  return new Intl.DateTimeFormat('es-MX', {
-    day: '2-digit',
-    month: 'short',
-    year: 'numeric',
-    hour: 'numeric',
-    minute: '2-digit'
-  }).format(date)
+  return formatBusinessDateTime(value, {
+    fallback: 'Sin fecha',
+    intlOptions: {
+      day: '2-digit',
+      month: 'short',
+      year: 'numeric',
+      hour: 'numeric',
+      minute: '2-digit'
+    }
+  })
 }
 
 function formatCompactNumber(value?: number | null) {
@@ -245,12 +246,13 @@ function readString(value: unknown) {
 }
 
 function formatChartLabel(value: string, compact = false) {
-  const date = new Date(value)
-  if (Number.isNaN(date.getTime())) return value
-  return new Intl.DateTimeFormat('es-MX', compact
-    ? { day: '2-digit', month: 'short' }
-    : { day: '2-digit', month: 'short', hour: '2-digit' }
-  ).format(date)
+  const calendarDate = getDateOnlyFromCalendarLikeString(value)
+  return formatBusinessDateTime(value, {
+    fallback: value,
+    intlOptions: compact || calendarDate
+      ? { day: '2-digit', month: 'short' }
+      : { day: '2-digit', month: 'short', hour: '2-digit' }
+  })
 }
 
 function chartPoints(points: StreamChartPoint[] = [], mode: 'count' | 'seconds' = 'count') {

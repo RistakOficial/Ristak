@@ -39,6 +39,7 @@ import {
 } from 'lucide-react'
 import type { CatalogKind } from '@/services/automationCatalogsService'
 import { contactTagsService } from '@/services/contactTagsService'
+import { formatDate } from '@/utils/format'
 import {
   emptyAdvancedCondition,
   summarizeAdvancedCondition,
@@ -448,13 +449,7 @@ const SCHEDULE_RECURRENCE_LABELS: Record<string, string> = {
 function formatScheduleDatetime(value: string): string {
   const [date = '', time = ''] = value.split('T')
   if (!date) return ''
-  const parsed = new Date(`${date}T${time || '00:00'}`)
-  if (Number.isNaN(parsed.getTime())) return value.replace('T', ' a las ')
-  const dateLabel = parsed.toLocaleDateString('es-MX', {
-    day: 'numeric',
-    month: 'long',
-    year: 'numeric'
-  })
+  const dateLabel = formatDate(date, { includeYear: true, padDay: false, fallback: date })
   return `${dateLabel}${time ? ` a las ${time}` : ''}`
 }
 

@@ -39,6 +39,7 @@ import {
 import { useNotification } from '@/contexts/NotificationContext'
 import { useUrlStringState } from '@/hooks'
 import { WhatsAppApiAlert, WhatsAppApiPhoneNumber, WhatsAppApiStatus, WhatsAppQrDripDelayUnit, WhatsAppQrDripSettings, WhatsAppQrSession, whatsappApiService } from '@/services/whatsappApiService'
+import { formatInTimezone, getStoredBusinessTimezone } from '@/utils/timezone'
 import { MessageTemplates } from './MessageTemplates'
 import styles from './WhatsAppSettings.module.css'
 
@@ -209,18 +210,18 @@ function formatQrDripDelay(seconds: number) {
 
 function buildQrDripExample(delaySeconds: number) {
   const base = new Date()
-  const formatter = new Intl.DateTimeFormat('es-MX', {
-    hour: '2-digit',
-    minute: '2-digit',
-    second: '2-digit'
-  })
+  const timezone = getStoredBusinessTimezone()
 
   return QR_DRIP_EXAMPLE_NAMES.map((name, index) => {
     const sendAt = new Date(base.getTime() + (index * Math.max(1, delaySeconds) * 1000))
     return {
       name,
       offset: index === 0 ? 'Ahora' : `+${formatQrDripDelay(index * delaySeconds)}`,
-      time: formatter.format(sendAt)
+      time: formatInTimezone(sendAt, timezone, {
+        hour: '2-digit',
+        minute: '2-digit',
+        second: '2-digit'
+      })
     }
   })
 }

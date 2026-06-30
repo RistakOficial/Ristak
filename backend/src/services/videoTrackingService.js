@@ -801,7 +801,11 @@ function addPlaybackPeriod(date, hourly = false, amount = 1) {
 function playbackPeriodKeyFromDate(date, hourly = false) {
   return hourly
     ? date.toISOString().slice(0, 13) + ':00:00'
-    : date.toISOString().slice(0, 10)
+    : [
+      date.getUTCFullYear(),
+      String(date.getUTCMonth() + 1).padStart(2, '0'),
+      String(date.getUTCDate()).padStart(2, '0')
+    ].join('-')
 }
 
 function buildPlaybackPeriodKeys(input = {}, hourly = false) {

@@ -20,6 +20,7 @@ import {
   type TriggerLink,
   type SaveTriggerLinkInput
 } from '@/services/triggerLinksService'
+import { formatDateTime as formatBusinessDateTime } from '@/utils/format'
 import styles from './CustomFields.module.css'
 
 type TriggerLinkDraft = {
@@ -34,13 +35,13 @@ const emptyDraft = (): TriggerLinkDraft => ({
 })
 
 const formatDateTime = (value?: string | null) => {
-  if (!value) return '-'
-  const date = new Date(value)
-  if (Number.isNaN(date.getTime())) return '-'
-  return new Intl.DateTimeFormat('es-MX', {
-    dateStyle: 'medium',
-    timeStyle: 'short'
-  }).format(date)
+  return formatBusinessDateTime(value, {
+    fallback: '-',
+    intlOptions: {
+      dateStyle: 'medium',
+      timeStyle: 'short'
+    }
+  })
 }
 
 const triggerLinkParameter = (link: Pick<TriggerLink, 'publicId'>) => `{{trigger_link.${link.publicId}}}`

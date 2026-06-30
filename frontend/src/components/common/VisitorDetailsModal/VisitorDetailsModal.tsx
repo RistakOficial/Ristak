@@ -74,7 +74,7 @@ export function VisitorDetailsModal({
   const [searchQuery, setSearchQuery] = useState('')
   const [appointmentsExpanded, setAppointmentsExpanded] = useState(false)
   const { labels } = useLabels()
-  const { formatLocalDateTime } = useTimezone()
+  const { formatLocalDateTime, timezone } = useTimezone()
 
   // Helper para formatear texto de estado
   const formatStatusText = (text: string): string => {
@@ -406,7 +406,7 @@ export function VisitorDetailsModal({
                           .map((appointment: any) => {
                             const statusInfo = getAppointmentStatusLabel(appointment?.status)
                             const appointmentDate = new Date(appointment.start_time)
-                            const timeStr = appointmentDate.toLocaleTimeString('es-MX', { hour: '2-digit', minute: '2-digit', hour12: true })
+                            const timeStr = appointmentDate.toLocaleTimeString('es-MX', { hour: '2-digit', minute: '2-digit', hour12: true, timeZone: timezone })
 
                             return (
                               <li key={appointment.id} className={styles.paymentItem}>

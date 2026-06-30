@@ -5,7 +5,9 @@ import { Link, useLocation, useNavigate } from 'react-router-dom'
 import { useScrollDirection } from '@/hooks/useScrollDirection'
 import { Button } from '@/components/common'
 import { GlobalSearch } from '@/components/common/GlobalSearch/GlobalSearch'
+import { useTimezone } from '@/contexts/TimezoneContext'
 import { notificationsService, type SystemNotification } from '@/services/notificationsService'
+import { formatDate } from '@/utils/format'
 import {
   PHONE_APP_HOME_PATH,
   TABLET_VIEW_PREFERENCE_EVENT,
@@ -39,7 +41,7 @@ function saveSeenNotificationIds(ids: Set<string>) {
   }
 }
 
-function formatNotificationTime(value?: string) {
+function formatNotificationTime(value?: string, timezone?: string) {
   if (!value) return ''
 
   const date = new Date(value)
@@ -56,7 +58,7 @@ function formatNotificationTime(value?: string) {
   const days = Math.round(hours / 24)
   if (days < 7) return `Hace ${days} d`
 
-  return date.toLocaleDateString('es-MX', { month: 'short', day: 'numeric' })
+  return formatDate(value, { timezone, padDay: false, fallback: '' })
 }
 
 function getNotificationTone(severity?: string) {
@@ -89,6 +91,7 @@ function getNotificationTone(severity?: string) {
 export const Header: React.FC<HeaderProps> = ({ sitesEditorActive = false }) => {
   const navigate = useNavigate()
   const location = useLocation()
+  const { timezone } = useTimezone()
   const [showNotifications, setShowNotifications] = useState(false)
   const [showTabletSwitcher, setShowTabletSwitcher] = useState(false)
   const [notifications, setNotifications] = useState<SystemNotification[]>([])
@@ -333,7 +336,7 @@ export const Header: React.FC<HeaderProps> = ({ sitesEditorActive = false }) => 
                             {notification.updatedAt && (
                               <>
                                 <span>·</span>
-                                <span>{formatNotificationTime(notification.updatedAt)}</span>
+                                <span>{formatNotificationTime(notification.updatedAt, timezone)}</span>
                               </>
                             )}
                           </div>

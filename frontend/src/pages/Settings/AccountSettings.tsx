@@ -33,6 +33,7 @@ import {
   getCountryDefaults,
   getDetectedAccountLocaleDefaults
 } from '@/utils/accountLocale'
+import { formatDate } from '@/utils/format'
 import styles from './Settings.module.css'
 
 const PROFILE_PHOTO_KEY = 'admin_profile_photo'
@@ -1748,7 +1749,7 @@ export const AccountSettings: React.FC = () => {
             <div className={styles.exportSummaryGrid}>
               <span>{cancellationResult.export.table_count} tablas</span>
               <span>{cancellationResult.export.row_count} filas</span>
-              <span>Vence {new Date(cancellationResult.export.expires_at).toLocaleDateString('es-MX')}</span>
+              <span>Vence {formatDate(cancellationResult.export.expires_at, { timezone, includeYear: true })}</span>
             </div>
             <div className={styles.cancelModalActions}>
               <a

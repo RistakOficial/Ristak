@@ -29,7 +29,7 @@ import { reportsService, type ContactListItem } from '@/services/reportsService'
 import { transactionsService, type Transaction } from '@/services/transactionsService'
 import { calendarsService, type CalendarEvent } from '@/services/calendarsService'
 import { campaignsService, type Campaign } from '@/services/campaignsService'
-import { formatCurrency, formatRoas, formatChartDate, formatDateToISO, formatEndDateToISO, parseLocalDateString, formatChartCurrency, formatChartNumber, formatDate } from '@/utils/format'
+import { formatCurrency, formatRoas, formatChartDate, formatDateToISO, formatEndDateToISO, getBusinessDateRangeTimestamps, parseLocalDateString, formatChartCurrency, formatChartNumber, formatDate } from '@/utils/format'
 import { dateOnlyToLocalDate, todayDateOnlyInTimezone } from '@/utils/timezone'
 import { getTransactionStatusBadge, getAppointmentStatusBadge } from '@/utils/statusBadges'
 import { Badge } from '@/components/common/Badge'
@@ -784,10 +784,10 @@ export const Dashboard: React.FC = () => {
   }, [chartConfig.color, chartConfig.color2, chartConfig.label1, chartConfig.label2])
 
   const selectedRangeLabel = React.useMemo(() => {
-    const from = formatDateToISO(dateRange.start)
-    const to = formatDateToISO(dateRange.end)
+    const from = formatDateToISO(dateRange.start, { timezone })
+    const to = formatDateToISO(dateRange.end, { timezone })
     return from === to ? from : `${from} - ${to}`
-  }, [dateRange.start, dateRange.end])
+  }, [dateRange.start, dateRange.end, timezone])
 
   const getFunnelStageKind = React.useCallback((stage: string): FunnelStageKind | null => {
     const normalized = stage.trim().toLowerCase()
@@ -852,8 +852,8 @@ export const Dashboard: React.FC = () => {
 
     try {
       const result = await reportsService.getContactsList({
-        from: formatDateToISO(dateRange.start),
-        to: formatEndDateToISO(dateRange.end),
+        from: formatDateToISO(dateRange.start, { timezone }),
+        to: formatEndDateToISO(dateRange.end, { timezone }),
         type: contactConfig.listType,
         scope: funnelScope
       })
@@ -867,7 +867,7 @@ export const Dashboard: React.FC = () => {
     } finally {
       setContactModalLoading(false)
     }
-  }, [analyticsEnabled, dateRange.end, dateRange.start, funnelScope, getFunnelStageKind, labels.customers, labels.leads, selectedRangeLabel])
+  }, [analyticsEnabled, dateRange.end, dateRange.start, funnelScope, getFunnelStageKind, labels.customers, labels.leads, selectedRangeLabel, timezone])
 
   const financialScopeOptions = React.useMemo(
     () => [
@@ -1081,12 +1081,8 @@ export const Dashboard: React.FC = () => {
     const loadOperationalSnapshot = async () => {
       setOperationsLoading(true)
 
-      const from = formatDateToISO(dateRange.start)
-      const to = formatEndDateToISO(dateRange.end)
-      const rangeStart = new Date(dateRange.start)
-      rangeStart.setHours(0, 0, 0, 0)
-      const rangeEnd = new Date(dateRange.end)
-      rangeEnd.setHours(23, 59, 59, 999)
+      const { startTime, endTime, startDate: from, endDate } = getBusinessDateRangeTimestamps(dateRange.start, dateRange.end, timezone)
+      const to = `${endDate}T23:59:59`
 
       // Una sola llamada sin calendarId devuelve los eventos de todos los
       // calendarios. No requiere HighLevel: el backend usa su config guardada
@@ -1096,8 +1092,8 @@ export const Dashboard: React.FC = () => {
           calendarsService.getCalendars(locationId, accessToken),
           calendarsService.getEvents(
             locationId || '',
-            rangeStart.getTime(),
-            rangeEnd.getTime(),
+            startTime,
+            endTime,
             accessToken || undefined
           )
         ])
@@ -1156,7 +1152,7 @@ export const Dashboard: React.FC = () => {
     return () => {
       mounted = false
     }
-  }, [accessToken, dateRange.end, dateRange.start, locationId, user])
+  }, [accessToken, dateRange.end, dateRange.start, locationId, timezone, user])
 
   // useEffect separado solo para el funnel (no recarga toda la página)
   React.useEffect(() => {
@@ -1568,8 +1564,8 @@ export const Dashboard: React.FC = () => {
           subtitle="Resumen de ingresos, citas y rendimiento de tu negocio."
           actions={(
             <DateRangePicker
-              startDate={formatDateToISO(dateRange.start)}
-              endDate={formatDateToISO(dateRange.end)}
+              startDate={formatDateToISO(dateRange.start, { timezone })}
+              endDate={formatDateToISO(dateRange.end, { timezone })}
               onChange={(start, end) => setDateRange({
                 start: parseLocalDateString(start),
                 end: parseLocalDateString(end),

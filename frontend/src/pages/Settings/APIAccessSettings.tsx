@@ -5,6 +5,7 @@ import { Badge } from '@/components/common/Badge'
 import { useAuth } from '@/contexts/AuthContext'
 import { useNotification } from '@/contexts/NotificationContext'
 import { apiUrl, getApiBaseUrl } from '@/services/apiBaseUrl'
+import { formatDateTime } from '@/utils/format'
 import styles from './Settings.module.css'
 
 interface ApiTokenMetadata {
@@ -110,10 +111,12 @@ export const APIAccessSettings: React.FC = () => {
   }
 
   const formatDate = (value: string | null) => {
-    if (!value) return 'Nunca'
-    return new Date(value).toLocaleString('es-MX', {
-      dateStyle: 'medium',
-      timeStyle: 'short'
+    return formatDateTime(value, {
+      fallback: 'Nunca',
+      intlOptions: {
+        dateStyle: 'medium',
+        timeStyle: 'short'
+      }
     })
   }
 

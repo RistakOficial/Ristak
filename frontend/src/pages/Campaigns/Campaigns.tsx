@@ -20,7 +20,7 @@ import {
 } from 'lucide-react'
 import { useDateRange } from '@/contexts/DateRangeContext'
 import { useLabels } from '@/contexts/LabelsContext'
-import { formatCurrency, formatRoas, formatDateToISO, formatEndDateToISO, parseLocalDateString, formatChartCurrency, formatChartNumber } from '@/utils/format'
+import { formatCurrency, formatRoas, formatDateToISO, formatEndDateToISO, normalizeDateInputToLocalDate, parseLocalDateString, formatChartCurrency, formatChartNumber } from '@/utils/format'
 import { campaignsService, type CampaignContact } from '@/services/campaignsService'
 import { reportsService, type CampaignsReport } from '@/services/reportsService'
 import { useAppConfig, useMetaTimezone, useUrlDateRangeSync } from '@/hooks'
@@ -1113,8 +1113,8 @@ export const Campaigns: React.FC = () => {
         : Boolean(matchingAd)
 
     if (!targetExists && targetDate && !Number.isNaN(targetDate.getTime())) {
-      const start = dateRange.start instanceof Date ? dateRange.start : new Date(dateRange.start)
-      const end = dateRange.end instanceof Date ? dateRange.end : new Date(dateRange.end)
+      const start = normalizeDateInputToLocalDate(dateRange.start)
+      const end = normalizeDateInputToLocalDate(dateRange.end)
 
       if (!isDateWithinRange(targetDate, start, end) && adjustedCampaignRangeRef.current !== signature) {
         adjustedCampaignRangeRef.current = signature
@@ -2250,8 +2250,8 @@ export const Campaigns: React.FC = () => {
           actions={(
             <>
               <DateRangePicker
-                startDate={formatDateToISO(dateRange.start instanceof Date ? dateRange.start : new Date(dateRange.start))}
-                endDate={formatDateToISO(dateRange.end instanceof Date ? dateRange.end : new Date(dateRange.end))}
+                startDate={formatDateToISO(dateRange.start)}
+                endDate={formatDateToISO(dateRange.end)}
                 onChange={(start, end) => setDateRange({
                   start: parseLocalDateString(start),
                   end: parseLocalDateString(end),

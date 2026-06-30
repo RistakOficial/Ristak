@@ -24,6 +24,7 @@ import {
   EmailStatus,
   emailService
 } from '@/services/emailService'
+import { formatDateTime as formatBusinessDateTime } from '@/utils/format'
 import styles from './EmailSettings.module.css'
 
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
@@ -37,12 +38,10 @@ const SECURITY_OPTIONS = [
 const EMPTY_SIGNATURE_HTML = ''
 
 function formatDateTime(value?: string | null) {
-  if (!value) return 'Sin registro'
-  try {
-    return new Intl.DateTimeFormat('es-MX', { dateStyle: 'medium', timeStyle: 'short' }).format(new Date(value))
-  } catch {
-    return 'Sin registro'
-  }
+  return formatBusinessDateTime(value, {
+    fallback: 'Sin registro',
+    intlOptions: { dateStyle: 'medium', timeStyle: 'short' }
+  })
 }
 
 function getSecurityLabel(value?: string | null) {

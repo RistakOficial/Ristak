@@ -20,7 +20,7 @@ import {
   type PublicStripePayment,
   type StripePaymentIntentResponse
 } from '@/services/stripePaymentsService'
-import { formatCurrency } from '@/utils/format'
+import { formatCurrency, formatDate as formatBusinessDate } from '@/utils/format'
 import {
   buildInvoiceStyleVars,
   resolveInvoiceDesign,
@@ -38,6 +38,14 @@ type MetaPixelFn = ((...args: unknown[]) => void) & {
   queue?: unknown[]
   loaded?: boolean
   version?: string
+}
+
+function formatDate(value?: string | null, timezone = DEFAULT_TIMEZONE) {
+  return formatBusinessDate(value, {
+    timezone,
+    includeYear: true,
+    fallback: 'Sin vencimiento'
+  })
 }
 type MercadoPagoBrickBuilder = {
   create: (
@@ -197,21 +205,6 @@ const PAYMENT_TEST_GUIDES: Record<PaymentTestProvider, PaymentTestGuide> = {
       { kind: 'Credito', brand: 'Visa', number: '4000 0000 0000 0002', cvc: '123', expiry: '12/34', result: 'Pago rechazado' }
     ]
   }
-}
-
-function formatDate(value?: string | null, timezone = DEFAULT_TIMEZONE) {
-  if (!value) return 'Sin vencimiento'
-  const dateOnlyMatch = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value)
-  const date = dateOnlyMatch
-    ? new Date(Date.UTC(Number(dateOnlyMatch[1]), Number(dateOnlyMatch[2]) - 1, Number(dateOnlyMatch[3]), 12))
-    : new Date(value)
-  if (Number.isNaN(date.getTime())) return String(value).split('T')[0]
-  return new Intl.DateTimeFormat('es-MX', {
-    timeZone: timezone,
-    day: '2-digit',
-    month: 'short',
-    year: 'numeric'
-  }).format(date)
 }
 
 // (PAY2-004) Parámetros que Mercado Pago (Checkout Pro) adjunta en sus back_urls al

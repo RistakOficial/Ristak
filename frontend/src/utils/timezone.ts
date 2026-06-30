@@ -21,6 +21,15 @@ export function isDateOnlyString(value: unknown): value is string {
   return typeof value === 'string' && DATE_ONLY_PATTERN.test(value.trim())
 }
 
+export function getStoredBusinessTimezone(): string {
+  if (typeof window === 'undefined') return DEFAULT_TIMEZONE
+  try {
+    return window.localStorage.getItem('userTimezone') || DEFAULT_TIMEZONE
+  } catch {
+    return DEFAULT_TIMEZONE
+  }
+}
+
 export function getDateOnlyFromCalendarLikeString(value: unknown): string | null {
   if (typeof value !== 'string') return null
 
@@ -134,7 +143,8 @@ function getZoneOffsetMs(timeZone: string, atDate: Date): number {
     parts.day,
     parts.hour ?? 0,
     parts.minute ?? 0,
-    parts.second ?? 0
+    parts.second ?? 0,
+    atDate.getUTCMilliseconds()
   )
   return zoneWallAsUtc - atDate.getTime()
 }
@@ -208,7 +218,8 @@ export function convertLocalToUTC(localDate: string | Date, timezone: string): D
     date.getDate(),
     date.getHours(),
     date.getMinutes(),
-    date.getSeconds()
+    date.getSeconds(),
+    date.getMilliseconds()
   )
 
   // El offset se evalúa en el instante aproximado para respetar DST.
@@ -267,12 +278,17 @@ export function formatInTimezone(
     ? dateOnlyToUtcDate(calendarDate || '') || new Date(NaN)
     : utcDate instanceof Date ? utcDate : new Date(ensureUTC(utcDate))
 
+  const usesStyleOptions = Boolean(options?.dateStyle || options?.timeStyle)
   const defaultOptions: Intl.DateTimeFormatOptions = {
     timeZone: isDateOnly ? 'UTC' : timezone,
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit',
-    ...(isDateOnly ? {} : { hour: '2-digit', minute: '2-digit' }),
+    ...(usesStyleOptions
+      ? {}
+      : {
+        year: 'numeric',
+        month: '2-digit',
+        day: '2-digit',
+        ...(isDateOnly ? {} : { hour: '2-digit', minute: '2-digit' })
+      }),
     ...options
   }
 

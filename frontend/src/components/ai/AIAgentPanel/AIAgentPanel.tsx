@@ -5,6 +5,7 @@ import { aiAgentService, type AIAgentAttachment, type AIAgentAttachmentKind, typ
 import { sitesService, type SitesAICreationMessage } from '@/services/sitesService'
 import { useNotification } from '@/contexts/NotificationContext'
 import { AI_AGENT_CLOSE_REQUEST_EVENT, AI_AGENT_OPEN_REQUEST_EVENT, type AIAgentOpenRequestDetail, type AIAgentSitesCreationKind } from '@/utils/aiAgentEvents'
+import { formatDateTime } from '@/utils/format'
 import styles from './AIAgentPanel.module.css'
 
 const AI_AGENT_FLOATING_OPEN_KEY = 'ristak.aiAgentFloating.open'
@@ -816,15 +817,13 @@ function buildAttachmentPrompt(attachments: AIAgentAttachment[]) {
 }
 
 function formatTranscriptTimestamp(value?: string | null) {
-  if (!value) return ''
-
-  const date = new Date(value)
-  if (Number.isNaN(date.getTime())) return ''
-
-  return new Intl.DateTimeFormat('es-MX', {
-    dateStyle: 'medium',
-    timeStyle: 'short'
-  }).format(date)
+  return formatDateTime(value, {
+    fallback: '',
+    intlOptions: {
+      dateStyle: 'medium',
+      timeStyle: 'short'
+    }
+  })
 }
 
 function formatTranscriptAttachments(attachments?: AIAgentAttachment[]) {

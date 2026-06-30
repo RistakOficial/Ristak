@@ -91,8 +91,7 @@ export const TimezoneProvider: React.FC<{ children: ReactNode }> = ({ children }
     try {
       return formatInTimezone(utcDate, timezone)
     } catch (error) {
-      const date = utcDate instanceof Date ? utcDate : new Date(String(utcDate))
-      return date.toLocaleString('es-MX')
+      return '—'
     }
   }
 

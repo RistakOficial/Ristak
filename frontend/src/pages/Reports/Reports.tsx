@@ -30,7 +30,7 @@ import {
   type ManualBusinessExpense
 } from '@/services/reportsService'
 import { costsService, type Cost } from '@/services/costsService'
-import { formatCurrency, formatNumber, formatDate, formatDateToISO, parseLocalDateString } from '@/utils/format'
+import { formatCurrency, formatNumber, formatDate, formatDateToISO, normalizeDateInputToLocalDate, parseLocalDateString } from '@/utils/format'
 import { dateOnlyToLocalDate, todayDateOnlyInTimezone } from '@/utils/timezone'
 import { useAppConfig, useChartHover, useMetaTimezone, useTableConfig, useUrlDateRangeSync } from '@/hooks'
 import { readNumberParam, setSearchParam } from '@/utils/urlState'
@@ -1931,8 +1931,8 @@ export const Reports: React.FC = () => {
   }, [displayMode, location.pathname, location.search, navigate, reportType, viewType])
 
   const baseRange = {
-    start: dateRange.start instanceof Date ? dateRange.start : new Date(dateRange.start),
-    end: dateRange.end instanceof Date ? dateRange.end : new Date(dateRange.end)
+    start: normalizeDateInputToLocalDate(dateRange.start, { timezone }),
+    end: normalizeDateInputToLocalDate(dateRange.end, { timezone })
   }
 
   const apiRange = computeRangeForView(
@@ -2461,7 +2461,7 @@ export const Reports: React.FC = () => {
       displayDate = `${monthNames[parseInt(month) - 1]} ${year}`
     } else {
       // Fecha completa: 2025-10-18
-      displayDate = new Date(date).toLocaleDateString('es-MX', { year: 'numeric', month: 'short', day: 'numeric' })
+      displayDate = formatDate(date, { includeYear: true, padDay: false, fallback: date })
     }
 
     setVisitorsModalDate(displayDate)

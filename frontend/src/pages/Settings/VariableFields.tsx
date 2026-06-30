@@ -16,6 +16,7 @@ import {
   type SaveVariableFieldInput,
   type VariableField
 } from '@/services/variableFieldsService'
+import { formatDateTime as formatBusinessDateTime } from '@/utils/format'
 import styles from './CustomFields.module.css'
 
 type VariableFieldDraft = {
@@ -42,13 +43,13 @@ const normalizeFieldKey = (value: string) => {
 }
 
 const formatDateTime = (value?: string | null) => {
-  if (!value) return '-'
-  const date = new Date(value)
-  if (Number.isNaN(date.getTime())) return '-'
-  return new Intl.DateTimeFormat('es-MX', {
-    dateStyle: 'medium',
-    timeStyle: 'short'
-  }).format(date)
+  return formatBusinessDateTime(value, {
+    fallback: '-',
+    intlOptions: {
+      dateStyle: 'medium',
+      timeStyle: 'short'
+    }
+  })
 }
 
 const variableParameter = (field: VariableField | Pick<VariableFieldDraft, 'fieldKey'>) => `{{variable.${field.fieldKey || 'campo_variable'}}}`

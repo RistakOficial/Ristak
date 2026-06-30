@@ -11,7 +11,9 @@ import {
   Users
 } from 'lucide-react'
 import { cn } from '@/utils/cn'
+import { useTimezone } from '@/contexts/TimezoneContext'
 import { apiUrl } from '@/services/apiBaseUrl'
+import { formatInTimezone } from '@/utils/timezone'
 
 type SyncStatus = 'idle' | 'syncing' | 'running' | 'completed' | 'error'
 
@@ -132,6 +134,7 @@ const STEP_STYLE_MAP: Record<StepState, { container: string; progress: string; i
 }
 
 export const SyncProgressBar: React.FC<SyncProgressBarProps> = ({ onClose }) => {
+  const { timezone } = useTimezone()
   const [progress, setProgress] = useState<SyncProgress | null>(null)
   const [isVisible, setIsVisible] = useState(false)
   const [isClosing, setIsClosing] = useState(false)
@@ -324,15 +327,15 @@ export const SyncProgressBar: React.FC<SyncProgressBarProps> = ({ onClose }) => 
     if (!lastUpdated) return null
 
     try {
-      return new Intl.DateTimeFormat('es-MX', {
+      return formatInTimezone(new Date(lastUpdated), timezone, {
         hour: '2-digit',
         minute: '2-digit',
         second: '2-digit'
-      }).format(lastUpdated)
+      })
     } catch (error) {
-      return new Date(lastUpdated).toLocaleTimeString()
+      return ''
     }
-  }, [lastUpdated])
+  }, [lastUpdated, timezone])
 
   const formatNumber = (value?: number) =>
     typeof value === 'number' ? value.toLocaleString('es-MX') : '0'

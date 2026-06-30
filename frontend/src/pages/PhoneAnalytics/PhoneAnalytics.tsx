@@ -28,6 +28,7 @@ import {
   type WhatsAppNumberOriginDatum
 } from '@/services/dashboardService'
 import { whatsappApiService, type WhatsAppApiPhoneNumber } from '@/services/whatsappApiService'
+import { formatDate } from '@/utils/format'
 import { formatCurrency, formatNumber, formatRoas } from '@/utils/format'
 import { dateOnlyToLocalDate, todayDateOnlyInTimezone } from '@/utils/timezone'
 import styles from './PhoneAnalytics.module.css'
@@ -134,13 +135,12 @@ function combineSeries(first: Array<{ label: string; value: number }>, second: A
   }))
 }
 
-function formatShortDateLabel(label: string) {
-  const parsed = new Date(label)
-  if (!Number.isNaN(parsed.getTime())) {
-    return new Intl.DateTimeFormat('es-MX', { day: 'numeric', month: 'short' }).format(parsed)
-  }
-
-  return label
+function formatShortDateLabel(label: string, timezone: string) {
+  return formatDate(label, {
+    timezone,
+    padDay: false,
+    fallback: label
+  })
 }
 
 function formatCompactValue(value: number, currency: boolean) {
@@ -223,10 +223,12 @@ function buildPhoneNumberRows(
 
 function MobileDualLineChart({
   data,
-  meta
+  meta,
+  timezone
 }: {
   data: ChartPoint[]
   meta: ChartMeta
+  timezone: string
 }) {
   const width = 320
   const height = 176
@@ -281,7 +283,7 @@ function MobileDualLineChart({
 
           return (
             <text key={index} x={x} y={height - 6} textAnchor="middle" className={styles.axisLabel}>
-              {formatShortDateLabel(data[index]?.label || '')}
+              {formatShortDateLabel(data[index]?.label || '', timezone)}
             </text>
           )
         })}
@@ -634,7 +636,7 @@ export const PhoneAnalytics: React.FC = () => {
               <Loader2 size={17} className={styles.spinIcon} aria-hidden="true" />
             </div>
           ) : hasChartData ? (
-            <MobileDualLineChart data={chartData} meta={chartMeta} />
+            <MobileDualLineChart data={chartData} meta={chartMeta} timezone={timezone} />
           ) : (
             <div className={styles.emptyState}>Sin datos para este periodo.</div>
           )}

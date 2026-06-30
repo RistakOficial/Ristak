@@ -12,7 +12,7 @@ import {
   fetchMetaCreativeMediaForAds,
   fetchMetaCreativeMediaForAd
 } from '../services/metaAdsService.js';
-import { resolveDateRange, resolveDateRangeWithGHLTimezone } from '../utils/dateUtils.js';
+import { formatDate, resolveDateRange, resolveDateRangeWithGHLTimezone } from '../utils/dateUtils.js';
 import {
   getContactsWithAppointmentsHybrid,
   getContactsWithShowedAppointmentsHybrid
@@ -1403,7 +1403,7 @@ export const updateRecent = async (req, res) => {
 
     const startDate = new Date();
     startDate.setMonth(startDate.getMonth() - 35);
-    const startDateStr = startDate.toISOString().split('T')[0];
+    const startDateStr = formatDate(startDate);
 
     logger.info(`Actualización reciente completada. Iniciando sincronización histórica de Meta Ads (35 meses) desde: ${startDateStr}`);
 
@@ -2792,11 +2792,13 @@ export const getFunnelMetrics = async (req, res) => {
     const allDates = [];
     let currentDate = new Date(startUtc);
     const endDateObj = new Date(endUtc);
+    currentDate.setUTCHours(0, 0, 0, 0);
+    endDateObj.setUTCHours(0, 0, 0, 0);
 
     while (currentDate <= endDateObj) {
-      const dateStr = currentDate.toISOString().split('T')[0];
+      const dateStr = formatDate(currentDate);
       allDates.push(dateStr);
-      currentDate.setDate(currentDate.getDate() + 1);
+      currentDate.setUTCDate(currentDate.getUTCDate() + 1);
     }
 
     // Mapear al formato esperado con todas las métricas
@@ -3047,7 +3049,7 @@ export const saveAndSyncMeta = async (req, res) => {
     // 5. Iniciar sincronización de anuncios (últimos 7 días)
     const startDate = new Date();
     startDate.setDate(startDate.getDate() - 7);
-    const startDateStr = startDate.toISOString().split('T')[0];
+    const startDateStr = formatDate(startDate);
 
     logger.info(`Iniciando sincronización de anuncios desde: ${startDateStr}`);
 
@@ -3197,7 +3199,7 @@ export const syncFromHighLevel = async (req, res) => {
     // 5. Iniciar sincronización de anuncios (últimos 7 días)
     const startDate = new Date();
     startDate.setDate(startDate.getDate() - 7);
-    const startDateStr = startDate.toISOString().split('T')[0];
+    const startDateStr = formatDate(startDate);
 
     logger.info(`Iniciando sincronización de anuncios desde: ${startDateStr}`);
 

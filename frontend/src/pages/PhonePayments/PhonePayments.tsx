@@ -13,7 +13,7 @@ import apiClient from '@/services/apiClient'
 import { getPhoneDailyCacheKey, readPhoneDailyCache, writePhoneDailyCache } from '@/services/phoneDailyCache'
 import { transactionsService, type Transaction } from '@/services/transactionsService'
 import { isLocalPhonePreviewHost } from '@/utils/phoneAccess'
-import { addDateOnlyDays, ensureUTC, isDateOnlyString, todayDateOnlyInTimezone } from '@/utils/timezone'
+import { DEFAULT_TIMEZONE, addDateOnlyDays, formatInTimezone, getDateOnlyFromCalendarLikeString, todayDateOnlyInTimezone } from '@/utils/timezone'
 import styles from './PhonePayments.module.css'
 
 const PORTABLE_WIDTH_QUERY = '(max-width: 1366px)'
@@ -112,28 +112,19 @@ function formatCurrency(value: number, currency = 'MXN') {
   }).format(value || 0)
 }
 
-function formatPaymentDate(value?: string | null, timezone = 'UTC') {
+function formatPaymentDate(value?: string | null, timezone = DEFAULT_TIMEZONE) {
   if (!value) return 'Sin fecha'
 
-  if (isDateOnlyString(value)) {
-    const [year, month, day] = value.split('-').map(Number)
-    return new Intl.DateTimeFormat('es-MX', {
-      timeZone: 'UTC',
+  try {
+    const calendarDate = getDateOnlyFromCalendarLikeString(value)
+    return formatInTimezone(value, timezone, {
       day: 'numeric',
-      month: 'short'
-    }).format(new Date(Date.UTC(year, month - 1, day)))
+      month: 'short',
+      ...(calendarDate ? {} : { hour: 'numeric', minute: '2-digit' })
+    })
+  } catch {
+    return 'Sin fecha'
   }
-
-  const date = new Date(ensureUTC(value))
-  if (Number.isNaN(date.getTime())) return 'Sin fecha'
-
-  return new Intl.DateTimeFormat('es-MX', {
-    timeZone: timezone,
-    day: 'numeric',
-    month: 'short',
-    hour: 'numeric',
-    minute: '2-digit'
-  }).format(date)
 }
 
 function getPaymentMethodLabel(method?: string | null) {

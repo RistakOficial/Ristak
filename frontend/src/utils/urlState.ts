@@ -1,3 +1,5 @@
+import { getDateOnlyFromCalendarLikeString } from './timezone'
+
 export type UrlFilterState = Record<string, string[]>
 
 export const normalizeUrlFilters = (filters?: UrlFilterState | null): UrlFilterState => {
@@ -43,6 +45,9 @@ export const urlFiltersEqual = (a?: UrlFilterState | null, b?: UrlFilterState | 
   stringifyUrlFiltersParam(a) === stringifyUrlFiltersParam(b)
 
 export const formatUrlDate = (value: Date | string) => {
+  const calendarDate = typeof value === 'string' ? getDateOnlyFromCalendarLikeString(value) : null
+  if (calendarDate) return calendarDate
+
   const date = value instanceof Date ? value : new Date(value)
   if (Number.isNaN(date.getTime())) return ''
 

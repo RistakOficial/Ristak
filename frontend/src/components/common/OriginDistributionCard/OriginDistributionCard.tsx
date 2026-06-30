@@ -4,6 +4,7 @@ import { ViewSelector } from '../ViewSelector/ViewSelector'
 import { useDateRange } from '@/contexts/DateRangeContext'
 import { dashboardService, type OriginDistributionData } from '@/services/dashboardService'
 import { trackingService } from '@/services/trackingService'
+import { normalizeDateInputToLocalDate } from '@/utils/format'
 
 type TrafficDimension = 'sources' | 'platforms' | 'devices' | 'placements' | 'browsers' | 'os'
 
@@ -50,8 +51,8 @@ export const OriginDistributionCard: React.FC = () => {
     let active = true
     setLoading(true)
 
-    const start = dateRange.start instanceof Date ? dateRange.start : new Date(dateRange.start)
-    const end = dateRange.end instanceof Date ? dateRange.end : new Date(dateRange.end)
+    const start = normalizeDateInputToLocalDate(dateRange.start)
+    const end = normalizeDateInputToLocalDate(dateRange.end)
 
     dashboardService.getOriginDistribution({ start, end })
       .then((result) => { if (active) setData(result) })

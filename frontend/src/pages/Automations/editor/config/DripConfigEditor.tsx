@@ -1,6 +1,7 @@
 import React, { useMemo, useState } from 'react'
 import { Clock } from 'lucide-react'
 import { useTimezone } from '@/contexts/TimezoneContext'
+import { formatDateTime as formatBusinessDateTime } from '@/utils/format'
 import { CustomSelect, Field, NumberTextInput } from './configPrimitives'
 import styles from '../AutomationEditor.module.css'
 
@@ -33,13 +34,15 @@ const positiveNumber = (value: unknown, fallback: number): number => {
 const positiveInteger = (value: unknown, fallback: number): number => Math.max(1, Math.floor(positiveNumber(value, fallback)))
 
 const formatDate = (date: Date, timezone: string): string =>
-  date.toLocaleString('es-MX', {
-    timeZone: timezone,
-    day: '2-digit',
-    month: 'short',
-    year: 'numeric',
-    hour: 'numeric',
-    minute: '2-digit'
+  formatBusinessDateTime(date, {
+    timezone,
+    intlOptions: {
+      day: '2-digit',
+      month: 'short',
+      year: 'numeric',
+      hour: 'numeric',
+      minute: '2-digit'
+    }
   })
 
 export const DripConfigEditor: React.FC<DripConfigEditorProps> = ({ config, onChange }) => {

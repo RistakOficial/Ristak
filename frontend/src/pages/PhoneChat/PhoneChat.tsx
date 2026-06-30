@@ -75,7 +75,16 @@ import { hasLicenseFeature } from '@/utils/accessControl'
 import { useLabels } from '@/contexts/LabelsContext'
 import { useNotification } from '@/contexts/NotificationContext'
 import { useTimezone } from '@/contexts/TimezoneContext'
-import { localDateTimeInputToUTCISOString, toDateTimeLocalInputValue, todayDateOnlyInTimezone } from '@/utils/timezone'
+import {
+  addDateOnlyDays,
+  convertUTCToLocal,
+  formatDateOnlyFromDate,
+  formatInTimezone,
+  getStoredBusinessTimezone,
+  localDateTimeInputToUTCISOString,
+  toDateTimeLocalInputValue,
+  todayDateOnlyInTimezone
+} from '@/utils/timezone'
 import { PhoneAnalytics } from '@/pages/PhoneAnalytics'
 import { PhoneCalendar, type PhoneCalendarCreateRequest } from '@/pages/PhoneCalendar'
 import { PhoneSettings } from '@/pages/PhoneSettings'
@@ -160,7 +169,7 @@ import {
   getContactCustomFieldIdentity,
   getContactCustomFieldKeys
 } from '@/utils/contactCustomFields'
-import { formatCurrency, formatUrlParameter } from '@/utils/format'
+import { formatCurrency, formatDate, formatUrlParameter } from '@/utils/format'
 import { PHONE_APP_HOME_PATH, getLocalPhonePreviewDeviceMode, getPortableDeviceMode, toCanonicalPhoneAppPath, writeTabletViewPreference, type PortableDeviceMode } from '@/utils/phoneAccess'
 import { normalizeTrafficSource } from '@/utils/trafficSourceNormalizer'
 import styles from './PhoneChat.module.css'
@@ -1630,34 +1639,35 @@ function getBusinessProfilePhotoFromJson(value?: string | null) {
 
 function formatMessageTime(value?: string | null) {
   if (!value) return ''
-  const date = new Date(value)
-  if (Number.isNaN(date.getTime())) return ''
-
-  return new Intl.DateTimeFormat('es-MX', {
-    hour: 'numeric',
-    minute: '2-digit',
-    hour12: true
-  }).format(date)
+  try {
+    return formatInTimezone(value, getStoredBusinessTimezone(), {
+      hour: 'numeric',
+      minute: '2-digit',
+      hour12: true
+    })
+  } catch {
+    return ''
+  }
 }
 
 function formatMessageDate(value?: string | null) {
   if (!value) return ''
-  const date = new Date(value)
+  const timezone = getStoredBusinessTimezone()
+  const date = convertUTCToLocal(value, timezone)
   if (Number.isNaN(date.getTime())) return ''
 
-  const now = new Date()
-  const sameDay = date.toDateString() === now.toDateString()
-  if (sameDay) return formatMessageTime(value)
+  const dayKey = formatDateOnlyFromDate(date)
+  const todayKey = todayDateOnlyInTimezone(timezone)
+  if (dayKey === todayKey) return formatMessageTime(value)
 
-  const yesterday = new Date(now)
-  yesterday.setDate(now.getDate() - 1)
-  if (date.toDateString() === yesterday.toDateString()) return 'Ayer'
+  const yesterdayKey = addDateOnlyDays(todayKey, -1)
+  if (dayKey === yesterdayKey) return 'Ayer'
 
-  return new Intl.DateTimeFormat('es-MX', {
+  return formatInTimezone(value, timezone, {
     day: '2-digit',
     month: 'short',
-    ...(date.getFullYear() !== now.getFullYear() ? { year: '2-digit' } : {})
-  }).format(date).replace('.', '')
+    ...(date.getFullYear() !== Number(todayKey.slice(0, 4)) ? { year: '2-digit' } : {})
+  }).replace('.', '')
 }
 
 function padTwoDigits(value: number) {
@@ -1669,17 +1679,7 @@ function formatDateInputValue(date: Date) {
 }
 
 function formatScheduleDateDisplay(value: string) {
-  const [year, month, day] = value.split('-').map(Number)
-  if (!year || !month || !day) return 'Elige fecha'
-
-  const date = new Date(year, month - 1, day)
-  if (Number.isNaN(date.getTime())) return 'Elige fecha'
-
-  return new Intl.DateTimeFormat('es-MX', {
-    day: 'numeric',
-    month: 'short',
-    year: 'numeric'
-  }).format(date).replace('.', '')
+  return formatDate(value, { includeYear: true, padDay: false, fallback: 'Elige fecha' }).replace('.', '')
 }
 
 function createDefaultScheduleDraft(timezone?: string): ScheduleDraft {

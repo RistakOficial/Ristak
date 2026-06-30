@@ -523,7 +523,11 @@ function addDateOnlyDays(dateOnly, days) {
   const [year, month, day] = String(dateOnly || '').split('-').map(Number);
   if (!year || !month || !day) return dateOnly;
   const next = new Date(Date.UTC(year, month - 1, day + days));
-  return next.toISOString().slice(0, 10);
+  return [
+    next.getUTCFullYear(),
+    String(next.getUTCMonth() + 1).padStart(2, '0'),
+    String(next.getUTCDate()).padStart(2, '0')
+  ].join('-');
 }
 
 function getCalendarSlotLimit(calendar = {}) {

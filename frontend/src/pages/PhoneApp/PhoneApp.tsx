@@ -33,7 +33,7 @@ import { dashboardService, type ChartData, type DashboardMetrics } from '@/servi
 import { getPhoneDailyCacheKey, readPhoneDailyCache, writePhoneDailyCache } from '@/services/phoneDailyCache'
 import { reportsService, type ContactListItem, type ReportMetricRow, type ReportsSummary } from '@/services/reportsService'
 import { transactionsService, type Transaction, type TransactionSummary } from '@/services/transactionsService'
-import { formatCurrency, formatDate, formatDateToISO, formatNumber, formatRoas } from '@/utils/format'
+import { formatCurrency, formatDate, formatDateTime as formatBusinessDateTime, formatDateToISO, formatNumber, formatRoas, getBusinessDateRangeTimestamps, normalizeDateInputToLocalDate } from '@/utils/format'
 import { PHONE_APP_PREFIX, isLocalPhonePreviewHost } from '@/utils/phoneAccess'
 import styles from './PhoneApp.module.css'
 
@@ -320,17 +320,17 @@ function normalizeCalendarEvent(event: any, fallbackId: string): CalendarEvent {
   }
 }
 
-function formatDateTime(value?: string | null) {
-  if (!value) return 'Sin fecha'
-  const date = new Date(value)
-  if (Number.isNaN(date.getTime())) return 'Sin fecha'
-
-  return new Intl.DateTimeFormat('es-MX', {
-    day: '2-digit',
-    month: 'short',
-    hour: '2-digit',
-    minute: '2-digit'
-  }).format(date)
+function formatDateTime(value?: string | null, timezone?: string) {
+  return formatBusinessDateTime(value, {
+    timezone,
+    fallback: 'Sin fecha',
+    intlOptions: {
+      day: '2-digit',
+      month: 'short',
+      hour: '2-digit',
+      minute: '2-digit'
+    }
+  })
 }
 
 function formatPeriodLabel(start: Date, end: Date) {
@@ -380,10 +380,14 @@ export const PhoneApp: React.FC = () => {
   const sectionParam = params.section as string | undefined
   const activeSectionId = isPhoneSectionId(sectionParam) ? sectionParam : null
   const activeSection = activeSectionId ? SECTION_BY_ID[activeSectionId] : SECTION_BY_ID.dashboard
-  const startDate = dateRange.start instanceof Date ? dateRange.start : new Date(dateRange.start)
-  const endDate = dateRange.end instanceof Date ? dateRange.end : new Date(dateRange.end)
-  const startIso = formatDateToISO(startDate)
-  const endIso = formatDateToISO(endDate)
+  const startDate = useMemo(() => normalizeDateInputToLocalDate(dateRange.start, { timezone }), [dateRange.start, timezone])
+  const endDate = useMemo(() => normalizeDateInputToLocalDate(dateRange.end, { timezone }), [dateRange.end, timezone])
+  const { startTime: rangeStartTime, endTime: rangeEndTime } = useMemo(
+    () => getBusinessDateRangeTimestamps(startDate, endDate, timezone),
+    [endDate, startDate, timezone]
+  )
+  const startIso = formatDateToISO(startDate, { timezone })
+  const endIso = formatDateToISO(endDate, { timezone })
 
   useEffect(() => {
     document.title = `${activeSection.label} mobile | Ristak`
@@ -551,7 +555,6 @@ export const PhoneApp: React.FC = () => {
       }
 
       const groupBy = getDaysBetween(startDate, endDate) > 95 ? 'month' : 'day'
-      const inclusiveEnd = getInclusiveEnd(endDate)
 
       try {
         const [
@@ -599,7 +602,7 @@ export const PhoneApp: React.FC = () => {
         const [calendars, rawEvents] = await Promise.all([
           safe(calendarsService.getCalendars(locationId, accessToken), [] as Calendar[]),
           safe(
-            calendarsService.getEvents(locationId || '', startDate.getTime(), inclusiveEnd.getTime(), accessToken || undefined),
+            calendarsService.getEvents(locationId || '', rangeStartTime, rangeEndTime, accessToken || undefined),
             [] as CalendarEvent[]
           )
         ])
@@ -649,7 +652,7 @@ export const PhoneApp: React.FC = () => {
     return () => {
       cancelled = true
     }
-  }, [accessState, accessToken, activeSectionId, endDate, endIso, locationId, refreshKey, startDate, startIso, timezone]) // (MOB-007) recarga si cambia la zona del negocio
+  }, [accessState, accessToken, activeSectionId, endDate, endIso, locationId, rangeEndTime, rangeStartTime, refreshKey, startDate, startIso, timezone]) // (MOB-007) recarga si cambia la zona del negocio
 
   const dashboardTiles = useMemo(() => {
     const metrics = phoneData.dashboardMetrics
@@ -887,6 +890,7 @@ export const PhoneApp: React.FC = () => {
                   events={upcomingAppointments}
                   calendars={phoneData.calendars}
                   trend={appointmentsTrend}
+                  timezone={timezone}
                 />
               )}
 
@@ -894,6 +898,7 @@ export const PhoneApp: React.FC = () => {
                 <TransactionsSection
                   summary={phoneData.transactionSummary}
                   transactions={recentTransactions}
+                  timezone={timezone}
                 />
               )}
 
@@ -989,9 +994,10 @@ interface AppointmentsSectionProps {
   events: CalendarEvent[]
   calendars: Calendar[]
   trend: TrendPoint[]
+  timezone: string
 }
 
-function AppointmentsSection({ stats, events, calendars, trend }: AppointmentsSectionProps) {
+function AppointmentsSection({ stats, events, calendars, trend, timezone }: AppointmentsSectionProps) {
   return (
     <div className={styles.sectionStack}>
       <div className={styles.metricGrid}>
@@ -1011,7 +1017,7 @@ function AppointmentsSection({ stats, events, calendars, trend }: AppointmentsSe
             <ListItem
               key={event.id}
               title={event.title}
-              meta={`${formatDateTime(event.startTime)} · ${getStatusLabel(event.appointmentStatus)}`}
+              meta={`${formatDateTime(event.startTime, timezone)} · ${getStatusLabel(event.appointmentStatus)}`}
               value={event.appointmentStatus === 'showed' ? 'OK' : ''}
             />
           ))}
@@ -1024,9 +1030,10 @@ function AppointmentsSection({ stats, events, calendars, trend }: AppointmentsSe
 interface TransactionsSectionProps {
   summary: TransactionSummary
   transactions: Transaction[]
+  timezone: string
 }
 
-function TransactionsSection({ summary, transactions }: TransactionsSectionProps) {
+function TransactionsSection({ summary, transactions, timezone }: TransactionsSectionProps) {
   const { connected: highLevelConnected } = useHighLevelConnected()
   const revenueDelta = calculateDelta(summary.totalRevenue, summary.totalRevenuePrev)
   const paidDelta = calculateDelta(summary.completedPayments, summary.completedPaymentsPrev)
@@ -1081,7 +1088,7 @@ function TransactionsSection({ summary, transactions }: TransactionsSectionProps
             <ListItem
               key={transaction.id}
               title={transaction.contactName || transaction.email || 'Customer'}
-              meta={`${formatDateTime(transaction.date || transaction.createdAt)} · ${getStatusLabel(transaction.status)}`}
+              meta={`${formatDateTime(transaction.date || transaction.createdAt, timezone)} · ${getStatusLabel(transaction.status)}`}
               value={formatCompactCurrency(transaction.amount)}
             />
           ))}

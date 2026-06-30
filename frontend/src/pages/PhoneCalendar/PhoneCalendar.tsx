@@ -24,7 +24,7 @@ import { contactsService } from '@/services/contactsService'
 import { getPhoneDailyCacheKey, readPhoneDailyCache, writePhoneDailyCache } from '@/services/phoneDailyCache'
 import type { Contact } from '@/types'
 import { PHONE_APP_HOME_PATH, isLocalPhonePreviewHost } from '@/utils/phoneAccess'
-import { convertLocalToUTC, dateOnlyToLocalDate, todayDateOnlyInTimezone } from '@/utils/timezone'
+import { convertLocalToUTC, dateOnlyToLocalDate, formatDateOnlyFromDate, formatInTimezone, todayDateOnlyInTimezone } from '@/utils/timezone'
 import styles from './PhoneCalendar.module.css'
 
 const PORTABLE_WIDTH_QUERY = '(max-width: 1366px)'
@@ -1594,11 +1594,11 @@ export const PhoneCalendar: React.FC<PhoneCalendarProps> = ({ embedded = false, 
     )
   }
 
-  const selectedDayLabel = capitalizeFirst(new Intl.DateTimeFormat('es-MX', {
+  const selectedDayLabel = capitalizeFirst(formatInTimezone(formatDateOnlyFromDate(selectedDate), timezone, {
     weekday: 'long',
     day: 'numeric',
     month: 'long'
-  }).format(selectedDate))
+  }))
   const selectedDayShortLabel = formatShortDate(selectedDate)
   const weekStart = weekDays[0]?.date ?? selectedDate
   const weekEnd = weekDays[6]?.date ?? selectedDate

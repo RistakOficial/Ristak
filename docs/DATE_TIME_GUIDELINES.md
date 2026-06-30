@@ -31,10 +31,18 @@ Frontend:
 
 - Usa `useTimezone()` para leer la zona activa.
 - Usa utilidades de `frontend/src/utils/timezone.ts`:
+  - `getStoredBusinessTimezone()`
   - `todayDateOnlyInTimezone(timezone)`
   - `localDateTimeInputToUTCISOString(value, timezone)`
   - `toDateTimeLocalInputValue(utcDate, timezone)`
   - `formatInTimezone(utcDate, timezone)`
+- Para texto visible reutiliza `frontend/src/utils/format.ts`:
+  - `formatDate(value, { timezone })`
+  - `formatDateTime(value, { timezone })`
+  - `formatDateToISO(value, { timezone })`
+  - `formatEndDateToISO(value, { timezone })`
+  - `normalizeDateInputToLocalDate(value, { timezone })`
+  - `getBusinessDateRangeTimestamps(start, end, timezone)`
 - Para pagos usa `frontend/src/utils/paymentDate.ts` y pásale la zona de la
   cuenta cuando armes timestamps.
 
@@ -82,11 +90,18 @@ DateTime.local()
 DateTime.now().toISODate()
 new Date(year, month, day) // para interpretar una fecha del negocio
 value.toLocaleDateString() // sin pasar timeZone explícito
+new Date(dateRange.start) // si puede venir como YYYY-MM-DD
 ```
 
 Excepción: se permite `new Date()` como referencia del instante actual, siempre
 que la fecha de negocio se derive después con `todayDateOnlyInTimezone(timezone)`
 o una utilidad equivalente.
+
+No crees formatters locales en pantallas (`function formatDate(...)`,
+`formatDateTime(...)`, `new Intl.DateTimeFormat('es-MX', ...)`) para datos del
+CRM. Si el texto es visible para el usuario, usa los helpers globales y pasa la
+zona del negocio, o justifica claramente por qué el valor es una fecha local del
+control y no un dato de negocio.
 
 ## Backend: Prohibido
 
@@ -94,6 +109,7 @@ No hagas esto para lógica de negocio:
 
 ```js
 new Date().toISOString().slice(0, 10)
+new Date().toISOString().split('T')[0]
 DateTime.local()
 DateTime.now().toISODate()
 new Date('2026-06-29') // interpreta UTC y puede mover el día mostrado
@@ -136,7 +152,9 @@ cd frontend && npm run design:audit
 Haz un grep final buscando patrones peligrosos:
 
 ```bash
-rg "toISOString\\(\\)\\.slice\\(0, 10\\)|DateTime\\.local\\(|DateTime\\.now\\(\\)\\.toISODate\\(|new Date\\('[0-9]{4}-[0-9]{2}-[0-9]{2}'\\)" backend/src frontend/src
+rg "toISOString\\(\\)\\.slice\\(0, 10\\)|toISOString\\(\\)\\.split\\('T'\\)\\[0\\]|DateTime\\.local\\(|DateTime\\.now\\(\\)\\.toISODate\\(|new Date\\('[0-9]{4}-[0-9]{2}-[0-9]{2}'\\)" backend/src frontend/src
+rg "new Date\\([^)]*dateRange|dateRange\\.(start|end) instanceof Date" frontend/src
+rg "toLocaleDateString\\('es-MX'|toLocaleString\\('es-MX'|new Intl\\.DateTimeFormat\\('es-MX'" frontend/src
 ```
 
 Si aparece algo, justifícalo claramente o corrígelo.

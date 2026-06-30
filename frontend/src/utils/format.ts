@@ -1,8 +1,10 @@
 import {
-  DEFAULT_TIMEZONE,
   convertUTCToLocal,
   dateOnlyToLocalDate,
-  getDateOnlyFromCalendarLikeString
+  formatInTimezone,
+  getDateOnlyFromCalendarLikeString,
+  getStoredBusinessTimezone,
+  localDateTimeInputToUTCISOString
 } from './timezone'
 
 const MONTHS_SHORT = ['ene', 'feb', 'mar', 'abr', 'may', 'jun', 'jul', 'ago', 'sept', 'oct', 'nov', 'dic'] as const
@@ -127,18 +129,42 @@ export const formatName = (value?: string | null): string => {
  * Esto evita problemas donde new Date("2025-10-05") lo parsea como UTC
  */
 export const parseLocalDateString = (dateStr: string): Date => {
-  const [year, month, day] = dateStr.split('-').map(Number)
+  const dateOnly = getDateOnlyFromCalendarLikeString(dateStr) || dateStr
+  const [year, month, day] = dateOnly.split('-').map(Number)
   return new Date(year, month - 1, day, 0, 0, 0, 0)
+}
+
+type DateRangeInput = Date | string
+
+interface BusinessDateOptions {
+  timezone?: string
+}
+
+export const normalizeDateInputToLocalDate = (
+  date: DateRangeInput,
+  options: BusinessDateOptions = {}
+): Date => {
+  if (date instanceof Date) return date
+
+  const timezone = options.timezone || getStoredTimezone()
+  const calendarDate = getDateOnlyFromCalendarLikeString(date)
+  if (calendarDate) return dateOnlyToLocalDate(calendarDate) || new Date(NaN)
+
+  return convertUTCToLocal(date, timezone)
 }
 
 /**
  * Formatea una fecha a YYYY-MM-DD usando la zona horaria LOCAL (no UTC)
  * Esto evita problemas donde toISOString() cambia el día al convertir a UTC
  */
-export const formatDateToISO = (date: Date): string => {
-  const year = date.getFullYear()
-  const month = String(date.getMonth() + 1).padStart(2, '0')
-  const day = String(date.getDate()).padStart(2, '0')
+export const formatDateToISO = (
+  date: DateRangeInput,
+  options: BusinessDateOptions = {}
+): string => {
+  const normalizedDate = normalizeDateInputToLocalDate(date, options)
+  const year = normalizedDate.getFullYear()
+  const month = String(normalizedDate.getMonth() + 1).padStart(2, '0')
+  const day = String(normalizedDate.getDate()).padStart(2, '0')
   return `${year}-${month}-${day}`
 }
 
@@ -146,11 +172,29 @@ export const formatDateToISO = (date: Date): string => {
  * Formatea una fecha de fin para incluir TODO el día (hasta 23:59:59) en formato ISO
  * Usa esto para endDate en queries que necesitan ser inclusivos
  */
-export const formatEndDateToISO = (date: Date): string => {
-  const year = date.getFullYear()
-  const month = String(date.getMonth() + 1).padStart(2, '0')
-  const day = String(date.getDate()).padStart(2, '0')
-  return `${year}-${month}-${day}T23:59:59`
+export const formatEndDateToISO = (
+  date: DateRangeInput,
+  options: BusinessDateOptions = {}
+): string => {
+  return `${formatDateToISO(date, options)}T23:59:59`
+}
+
+export const getBusinessDateRangeTimestamps = (
+  start: DateRangeInput,
+  end: DateRangeInput,
+  timezone = getStoredTimezone()
+): { startTime: number; endTime: number; startDate: string; endDate: string } => {
+  const startDate = formatDateToISO(start, { timezone })
+  const endDate = formatDateToISO(end, { timezone })
+  const startIso = localDateTimeInputToUTCISOString(`${startDate}T00:00:00.000`, timezone)
+  const endIso = localDateTimeInputToUTCISOString(`${endDate}T23:59:59.999`, timezone)
+
+  return {
+    startTime: startIso ? new Date(startIso).getTime() : NaN,
+    endTime: endIso ? new Date(endIso).getTime() : NaN,
+    startDate,
+    endDate
+  }
 }
 
 export const formatCurrency = (value: number, currency = 'MXN'): string => {
@@ -175,22 +219,19 @@ interface FormatDateOptions {
   referenceDate?: Date
   padDay?: boolean
   timezone?: string
+  fallback?: string
 }
 
 const getStoredTimezone = (): string => {
-  if (typeof window === 'undefined') return DEFAULT_TIMEZONE
-  try {
-    return window.localStorage.getItem('userTimezone') || DEFAULT_TIMEZONE
-  } catch {
-    return DEFAULT_TIMEZONE
-  }
+  return getStoredBusinessTimezone()
 }
 
 export const formatDate = (
   date: string | Date | null | undefined,
   options: FormatDateOptions = {}
 ): string => {
-  if (!date) return '—'
+  const fallback = options.fallback || '—'
+  if (!date) return fallback
 
   const timezone = options.timezone || getStoredTimezone()
   const calendarDate = typeof date === 'string' ? getDateOnlyFromCalendarLikeString(date) : null
@@ -200,7 +241,7 @@ export const formatDate = (
       : convertUTCToLocal(date, timezone)
     : date
 
-  if (Number.isNaN(parsedDate.getTime())) return '—'
+  if (Number.isNaN(parsedDate.getTime())) return fallback
 
   const padDay = options.padDay ?? true
   const day = padDay
@@ -216,6 +257,35 @@ export const formatDate = (
       : year !== referenceYear
 
   return shouldIncludeYear ? `${day} ${monthLabel} ${year}` : `${day} ${monthLabel}`
+}
+
+interface FormatDateTimeOptions {
+  timezone?: string
+  fallback?: string
+  includeTime?: boolean
+  intlOptions?: Intl.DateTimeFormatOptions
+}
+
+export const formatDateTime = (
+  date: string | Date | null | undefined,
+  options: FormatDateTimeOptions = {}
+): string => {
+  const fallback = options.fallback || '—'
+  if (!date) return fallback
+
+  const timezone = options.timezone || getStoredTimezone()
+  const calendarDate = typeof date === 'string' ? getDateOnlyFromCalendarLikeString(date) : null
+  const includeTime = options.includeTime ?? !calendarDate
+  const intlOptions: Intl.DateTimeFormatOptions = options.intlOptions || {
+    dateStyle: 'medium',
+    ...(includeTime ? { timeStyle: 'short' } : {})
+  }
+
+  try {
+    return formatInTimezone(date, timezone, intlOptions)
+  } catch {
+    return fallback
+  }
 }
 
 interface ParsedChartDate {

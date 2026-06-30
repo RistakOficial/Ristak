@@ -1,4 +1,5 @@
 import type { ConversationalAIProviderId } from '@/constants/conversationalAIProviders'
+import { getStoredBusinessTimezone } from '@/utils/timezone'
 import { apiUrl } from './apiBaseUrl'
 
 export type ConversationalObjective = 'citas' | 'ventas' | 'datos' | 'filtrar' | 'custom'
@@ -707,6 +708,7 @@ function formatHumanDateFromSummary(summary = '') {
   if (Number.isNaN(date.getTime())) return ''
   try {
     const parts = new Intl.DateTimeFormat('es-MX', {
+      timeZone: getStoredBusinessTimezone(),
       weekday: 'long',
       day: 'numeric',
       month: 'long',

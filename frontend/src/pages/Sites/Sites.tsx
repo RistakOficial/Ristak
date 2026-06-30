@@ -191,7 +191,8 @@ import mediaService, {
   type StreamChartPoint
 } from '@/services/mediaService'
 import { getApiBaseUrl } from '@/services/apiBaseUrl'
-import { formatDateToISO, parseLocalDateString } from '@/utils/format'
+import { formatDateTime as formatBusinessDateTime, formatDateToISO, parseLocalDateString } from '@/utils/format'
+import { dateOnlyToLocalDate, formatInTimezone, getDateOnlyFromCalendarLikeString, getStoredBusinessTimezone, todayDateOnlyInTimezone } from '@/utils/timezone'
 import {
   customFieldsService,
   isSystemCustomFieldDefinition,
@@ -1996,16 +1997,16 @@ const getManualRedirectPages = (pages: SitePage[], activePageId?: string) => (
 )
 
 const formatDate = (value?: string | null) => {
-  if (!value) return 'Sin fecha'
-  const date = new Date(value)
-  if (Number.isNaN(date.getTime())) return value
-  return new Intl.DateTimeFormat('es-MX', {
-    day: '2-digit',
-    month: 'short',
-    year: 'numeric',
-    hour: '2-digit',
-    minute: '2-digit'
-  }).format(date)
+  return formatBusinessDateTime(value, {
+    fallback: value || 'Sin fecha',
+    intlOptions: {
+      day: '2-digit',
+      month: 'short',
+      year: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit'
+    }
+  })
 }
 
 const formatSubmissionValue = (value: unknown) => {
@@ -2155,12 +2156,13 @@ const getSiteAnalyticsStats = (site: PublicSite) => {
 }
 
 const formatSitesChartLabel = (value = '', compact = false) => {
-  const date = new Date(value)
-  if (Number.isNaN(date.getTime())) return value
-  return new Intl.DateTimeFormat('es-MX', compact
-    ? { day: '2-digit', month: 'short' }
-    : { day: '2-digit', month: 'short', hour: '2-digit' }
-  ).format(date)
+  const calendarDate = getDateOnlyFromCalendarLikeString(value)
+  return formatBusinessDateTime(value, {
+    fallback: value,
+    intlOptions: compact || calendarDate
+      ? { day: '2-digit', month: 'short' }
+      : { day: '2-digit', month: 'short', hour: '2-digit' }
+  })
 }
 
 const buildSitesChartPoints = (points: StreamChartPoint[] = [], mode: 'count' | 'seconds' = 'count') => (
@@ -5774,13 +5776,15 @@ const getCalendarPreviewSlots = (calendar?: CalendarType) => {
 }
 
 const getCalendarPreviewMonth = (calendar?: CalendarType) => {
-  const today = new Date()
+  const businessTimezone = getStoredBusinessTimezone()
+  const businessToday = todayDateOnlyInTimezone(businessTimezone)
+  const today = dateOnlyToLocalDate(businessToday) || new Date()
   const year = today.getFullYear()
   const month = today.getMonth()
   const firstWeekday = new Date(year, month, 1).getDay()
   const daysInMonth = new Date(year, month + 1, 0).getDate()
   const openWeekdays = getCalendarPreviewOpenWeekdays(calendar)
-  const monthLabel = new Intl.DateTimeFormat('es-MX', { month: 'long', year: 'numeric' }).format(today)
+  const monthLabel = formatInTimezone(businessToday, businessTimezone, { month: 'long', year: 'numeric' })
   const todayStart = new Date(year, month, today.getDate()).getTime()
   const days: Array<{ key: string; label: string; muted: boolean; available: boolean; today: boolean }> = []
 

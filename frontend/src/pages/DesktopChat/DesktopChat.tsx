@@ -67,7 +67,16 @@ import { useAuth } from '@/contexts/AuthContext'
 import { useLabels } from '@/contexts/LabelsContext'
 import { useNotification } from '@/contexts/NotificationContext'
 import { useTimezone } from '@/contexts/TimezoneContext'
-import { localDateTimeInputToUTCISOString, toDateTimeLocalInputValue, todayDateOnlyInTimezone } from '@/utils/timezone'
+import {
+  addDateOnlyDays,
+  convertUTCToLocal,
+  formatDateOnlyFromDate,
+  formatInTimezone,
+  getStoredBusinessTimezone,
+  localDateTimeInputToUTCISOString,
+  toDateTimeLocalInputValue,
+  todayDateOnlyInTimezone
+} from '@/utils/timezone'
 import { hasLicenseFeature } from '@/utils/accessControl'
 import apiClient from '@/services/apiClient'
 import automationsService, { type AutomationSummary } from '@/services/automationsService'
@@ -98,7 +107,7 @@ import {
 } from '@/services/whatsappApiService'
 import type { Contact, ContactAppointment, ContactPayment, ContactPhoneNumber } from '@/types'
 import { getContactStageBadge } from '@/utils/contactStageBadge'
-import { formatCurrency, formatUrlParameter } from '@/utils/format'
+import { formatCurrency, formatDate, formatUrlParameter } from '@/utils/format'
 import styles from './DesktopChat.module.css'
 
 type ChatFilter = 'all' | 'agent' | 'unread' | 'appointments' | 'customers'
@@ -1257,28 +1266,31 @@ function countAdvancedFilters(filters: AdvancedChatFilters) {
 
 function formatMessageTime(value?: string | null) {
   if (!value) return ''
-  const date = new Date(value)
-  if (Number.isNaN(date.getTime())) return ''
-  return new Intl.DateTimeFormat('es-MX', { hour: 'numeric', minute: '2-digit', hour12: true }).format(date)
+  try {
+    return formatInTimezone(value, getStoredBusinessTimezone(), { hour: 'numeric', minute: '2-digit', hour12: true })
+  } catch {
+    return ''
+  }
 }
 
 function formatMessageDate(value?: string | null) {
   if (!value) return ''
-  const date = new Date(value)
+  const timezone = getStoredBusinessTimezone()
+  const date = convertUTCToLocal(value, timezone)
   if (Number.isNaN(date.getTime())) return ''
 
-  const now = new Date()
-  if (date.toDateString() === now.toDateString()) return formatMessageTime(value)
+  const dayKey = formatDateOnlyFromDate(date)
+  const todayKey = todayDateOnlyInTimezone(timezone)
+  if (dayKey === todayKey) return formatMessageTime(value)
 
-  const yesterday = new Date(now)
-  yesterday.setDate(now.getDate() - 1)
-  if (date.toDateString() === yesterday.toDateString()) return 'Ayer'
+  const yesterdayKey = addDateOnlyDays(todayKey, -1)
+  if (dayKey === yesterdayKey) return 'Ayer'
 
-  return new Intl.DateTimeFormat('es-MX', {
+  return formatInTimezone(value, timezone, {
     day: '2-digit',
     month: 'short',
-    ...(date.getFullYear() !== now.getFullYear() ? { year: '2-digit' } : {})
-  }).format(date).replace('.', '')
+    ...(date.getFullYear() !== Number(todayKey.slice(0, 4)) ? { year: '2-digit' } : {})
+  }).replace('.', '')
 }
 
 function padTwoDigits(value: number) {
@@ -1290,17 +1302,7 @@ function formatDateInputValue(date: Date) {
 }
 
 function formatScheduleDateDisplay(value: string) {
-  const [year, month, day] = value.split('-').map(Number)
-  if (!year || !month || !day) return 'Elige fecha'
-
-  const date = new Date(year, month - 1, day)
-  if (Number.isNaN(date.getTime())) return 'Elige fecha'
-
-  return new Intl.DateTimeFormat('es-MX', {
-    day: 'numeric',
-    month: 'short',
-    year: 'numeric'
-  }).format(date).replace('.', '')
+  return formatDate(value, { includeYear: true, padDay: false, fallback: 'Elige fecha' }).replace('.', '')
 }
 
 function createDefaultScheduleDraft(timezone?: string): ScheduleDraft {
@@ -1674,15 +1676,17 @@ function getJourneyMediaAttachment(event: JourneyEvent): DesktopChatMessage['att
 
 function formatAppointmentConfirmationTime(value?: unknown) {
   if (!value) return ''
-  const date = new Date(String(value))
-  if (Number.isNaN(date.getTime())) return ''
-  return new Intl.DateTimeFormat('es-MX', {
-    day: 'numeric',
-    month: 'short',
-    hour: 'numeric',
-    minute: '2-digit',
-    hour12: true
-  }).format(date).replace('.', '')
+  try {
+    return formatInTimezone(String(value), getStoredBusinessTimezone(), {
+      day: 'numeric',
+      month: 'short',
+      hour: 'numeric',
+      minute: '2-digit',
+      hour12: true
+    }).replace('.', '')
+  } catch {
+    return ''
+  }
 }
 
 function getAppointmentConfirmationSystemText(event: JourneyEvent) {

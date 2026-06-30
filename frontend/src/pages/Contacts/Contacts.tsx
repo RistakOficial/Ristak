@@ -1200,11 +1200,8 @@ const ContactsTable: React.FC = () => {
 
       // Solo usar fechas si está en modo 'by-date'
       if (viewMode === 'by-date') {
-        // Ensure dates are Date objects
-        const start = dateRange.start instanceof Date ? dateRange.start : new Date(dateRange.start)
-        const end = dateRange.end instanceof Date ? dateRange.end : new Date(dateRange.end)
-        startDate = formatDateToISO(start)
-        endDate = formatEndDateToISO(end) // Incluir día completo
+        startDate = formatDateToISO(dateRange.start)
+        endDate = formatEndDateToISO(dateRange.end) // Incluir día completo
       }
       // Si viewMode === 'all', no enviamos fechas para obtener TODOS los contactos
 

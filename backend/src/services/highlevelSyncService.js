@@ -6,6 +6,7 @@
 import fetch from 'node-fetch'
 import { db, setAppConfig, getAppConfig } from '../config/database.js'
 import { logger } from '../utils/logger.js'
+import { formatDate } from '../utils/dateUtils.js'
 import { getMetaConfig, saveMetaConfig, syncMetaAds } from './metaAdsService.js'
 import { updateContactsStats } from '../utils/updateContactsStats.js'
 import {
@@ -1386,7 +1387,7 @@ async function syncHighLevelAppointments(locationId, apiToken) {
   const startTime = new Date(now.getFullYear() - 5, 0, 1).getTime() // Hace 5 años, enero 1
   const endTime = new Date(now.getFullYear() + 5, 11, 31).getTime() // Dentro de 5 años, diciembre 31
 
-  logger.info(`Sincronizando citas desde ${new Date(startTime).toISOString().split('T')[0]} hasta ${new Date(endTime).toISOString().split('T')[0]}`)
+  logger.info(`Sincronizando citas desde ${formatDate(startTime)} hasta ${formatDate(endTime)}`)
 
   updateAppointments(0, 0, 'running', 'Obteniendo citas de HighLevel...')
 
@@ -2289,7 +2290,7 @@ export async function syncHighLevelData(locationId, apiToken, triggerSource = 'm
         const startDate = new Date()
         startDate.setMonth(startDate.getMonth() - 35)
 
-        logger.info(`Sincronizando anuncios desde: ${startDate.toISOString().split('T')[0]}`)
+        logger.info(`Sincronizando anuncios desde: ${formatDate(startDate)}`)
 
         // Sincronizar anuncios con callback de progreso
         const metaResult = await syncMetaAds(startDate, (progress) => {

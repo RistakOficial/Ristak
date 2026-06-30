@@ -3172,6 +3172,11 @@ async function persistLocalInvoiceSchedules(schedules = []) {
 
 function paymentPlanFromRow(row = {}) {
   const raw = safeJsonParse(row.raw_json, {});
+  const formatUtcDateOnly = (date) => ([
+    date.getUTCFullYear(),
+    String(date.getUTCMonth() + 1).padStart(2, '0'),
+    String(date.getUTCDate()).padStart(2, '0')
+  ].join('-'));
   const serializePlanCalendarDate = (value) => {
     if (!value) return undefined;
     if (value instanceof Date) {
@@ -3182,7 +3187,7 @@ function paymentPlanFromRow(row = {}) {
         && value.getUTCSeconds() === 0
         && value.getUTCMilliseconds() === 0;
 
-      return isUtcMidnight ? value.toISOString().slice(0, 10) : value.toISOString();
+      return isUtcMidnight ? formatUtcDateOnly(value) : value.toISOString();
     }
 
     const text = String(value).trim();

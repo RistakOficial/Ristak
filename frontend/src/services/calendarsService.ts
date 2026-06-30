@@ -1,4 +1,5 @@
 import apiClient from './apiClient';
+import { getStoredBusinessTimezone, localDateTimeInputToUTCISOString, todayDateOnlyInTimezone } from '@/utils/timezone';
 
 /**
  * Tipos para calendarios y eventos de Ristak, Google y HighLevel opcional.
@@ -760,22 +761,22 @@ export const calendarsService = {
     calendarId: string,
     locationId: string,
     accessToken?: string,
-    limit: number = 8
+    limit: number = 8,
+    timezone: string = getStoredBusinessTimezone()
   ): Promise<CalendarEvent[]> {
     try {
-      // Fecha de hoy 00:00:00
-      const today = new Date();
-      today.setHours(0, 0, 0, 0);
-
-      // Fecha de hoy 23:59:59
-      const endOfDay = new Date(today);
-      endOfDay.setHours(23, 59, 59, 999);
+      const today = todayDateOnlyInTimezone(timezone);
+      const startIso = localDateTimeInputToUTCISOString(`${today}T00:00:00.000`, timezone);
+      const endIso = localDateTimeInputToUTCISOString(`${today}T23:59:59.999`, timezone);
+      const startTimestamp = startIso ? new Date(startIso).getTime() : NaN;
+      const endTimestamp = endIso ? new Date(endIso).getTime() : NaN;
+      if (!Number.isFinite(startTimestamp) || !Number.isFinite(endTimestamp)) return [];
 
       // Obtener eventos del día actual usando timestamps
       const events = await this.getEvents(
         locationId,
-        today.getTime(),
-        endOfDay.getTime(),
+        startTimestamp,
+        endTimestamp,
         accessToken,
         calendarId
       );

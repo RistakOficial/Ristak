@@ -37,7 +37,7 @@ import {
 } from '../../services/analyticsService'
 import { trackingService, type TrackingSession } from '../../services/trackingService'
 import type { ContactListItem } from '../../services/reportsService'
-import { formatDateToISO, parseLocalDateString, formatUrlParameter, formatChartNumber } from '../../utils/format'
+import { formatDateToISO, normalizeDateInputToLocalDate, parseLocalDateString, formatUrlParameter, formatChartNumber } from '../../utils/format'
 import { dateOnlyToLocalDate, todayDateOnlyInTimezone } from '../../utils/timezone'
 import { normalizeTrafficSource } from '../../utils/trafficSourceNormalizer'
 import { readNumberParam, setSearchParam } from '../../utils/urlState'
@@ -1283,8 +1283,8 @@ const Analytics: React.FC = () => {
   const formatTrafficTooltip = useCallback((value: number, _key: string) => formatTrafficTooltipValue(value), [formatTrafficTooltipValue])
 
   const baseRange = {
-    start: dateRange.start instanceof Date ? dateRange.start : new Date(dateRange.start),
-    end: dateRange.end instanceof Date ? dateRange.end : new Date(dateRange.end)
+    start: normalizeDateInputToLocalDate(dateRange.start, { timezone }),
+    end: normalizeDateInputToLocalDate(dateRange.end, { timezone })
   }
 
   const apiRange = computeRangeForView(viewType, baseRange, monthPreset, yearRange, businessToday)

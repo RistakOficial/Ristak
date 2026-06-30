@@ -175,7 +175,11 @@ const parseIsoDateToUtc = (value) => {
   return new Date(Date.UTC(year, month - 1, day))
 }
 
-const formatUtcDateKey = (date) => date.toISOString().slice(0, 10)
+const formatUtcDateKey = (date) => [
+  date.getUTCFullYear(),
+  String(date.getUTCMonth() + 1).padStart(2, '0'),
+  String(date.getUTCDate()).padStart(2, '0')
+].join('-')
 
 function contactAnalyticsSourceCondition(alias = 'c') {
   const prefix = alias ? `${alias}.` : ''
