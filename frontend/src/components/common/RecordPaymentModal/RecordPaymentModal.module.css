@@ -2901,7 +2901,10 @@ body.dark .tooltipInfo {
 
 .embeddedRoot[data-payment-mode="partial"] .planRow {
   position: relative;
-  grid-template-columns: repeat(auto-fit, minmax(132px, 1fr));
+  /* Columnas explícitas (no auto-fit): valor y fecha SIEMPRE lado a lado, como el
+     widget. Con auto-fit los elementos a todo el ancho (#, método) lo colapsaban a
+     una sola columna y todo quedaba apilado. */
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
   gap: 14px 12px;
   padding: 16px 16px 18px;
   border: 1px solid var(--record-payment-embedded-border);
@@ -2976,12 +2979,12 @@ body.dark .tooltipInfo {
   background: var(--record-payment-embedded-bg);
 }
 
-/* "Agregar pago" con contorno visible en celular. */
+/* "Agregar pago" como botón con contorno limpio (no bloque gris), igual que el widget. */
 .embeddedRoot[data-payment-mode="partial"] .addInstallment {
   min-height: 54px;
   border: 1px solid var(--record-payment-embedded-tablist-border);
   border-radius: 14px;
-  background: var(--record-payment-embedded-soft);
+  background: var(--record-payment-embedded-bg);
 }
 
 .embeddedRoot .optionsContent {
