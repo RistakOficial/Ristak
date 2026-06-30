@@ -2,7 +2,7 @@ import {
   DEFAULT_TIMEZONE,
   convertUTCToLocal,
   dateOnlyToLocalDate,
-  isDateOnlyString
+  getDateOnlyFromCalendarLikeString
 } from './timezone'
 
 const MONTHS_SHORT = ['ene', 'feb', 'mar', 'abr', 'may', 'jun', 'jul', 'ago', 'sept', 'oct', 'nov', 'dic'] as const
@@ -193,9 +193,10 @@ export const formatDate = (
   if (!date) return '—'
 
   const timezone = options.timezone || getStoredTimezone()
+  const calendarDate = typeof date === 'string' ? getDateOnlyFromCalendarLikeString(date) : null
   const parsedDate = typeof date === 'string'
-    ? isDateOnlyString(date)
-      ? dateOnlyToLocalDate(date) || new Date(NaN)
+    ? calendarDate
+      ? dateOnlyToLocalDate(calendarDate) || new Date(NaN)
       : convertUTCToLocal(date, timezone)
     : date
 

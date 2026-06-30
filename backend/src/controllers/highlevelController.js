@@ -3172,6 +3172,33 @@ async function persistLocalInvoiceSchedules(schedules = []) {
 
 function paymentPlanFromRow(row = {}) {
   const raw = safeJsonParse(row.raw_json, {});
+  const serializePlanCalendarDate = (value) => {
+    if (!value) return undefined;
+    if (value instanceof Date) {
+      if (Number.isNaN(value.getTime())) return undefined;
+
+      const isUtcMidnight = value.getUTCHours() === 0
+        && value.getUTCMinutes() === 0
+        && value.getUTCSeconds() === 0
+        && value.getUTCMilliseconds() === 0;
+
+      return isUtcMidnight ? value.toISOString().slice(0, 10) : value.toISOString();
+    }
+
+    const text = String(value).trim();
+    const calendarDate = text.match(/^(\d{4}-\d{2}-\d{2})$/);
+    if (calendarDate) return calendarDate[1];
+
+    const sqlMidnight = text.match(/^(\d{4}-\d{2}-\d{2})(?:[ T]00:00(?::00(?:\.0{1,6})?)?)$/);
+    if (sqlMidnight) return sqlMidnight[1];
+
+    return text;
+  };
+  const startDate = serializePlanCalendarDate(row.start_date);
+  const nextRunAt = serializePlanCalendarDate(row.next_run_at);
+  const endDate = serializePlanCalendarDate(row.end_date);
+  const updatedAt = row.updated_at || undefined;
+  const createdAt = row.created_at || undefined;
 
   return {
     id: row.id || row.ghl_schedule_id,
@@ -3185,16 +3212,16 @@ function paymentPlanFromRow(row = {}) {
     email: row.email || '',
     phone: row.phone || '',
     description: row.description || '',
-    startDate: row.start_date || undefined,
-    nextRunAt: row.next_run_at || undefined,
-    endDate: row.end_date || undefined,
+    startDate,
+    nextRunAt,
+    endDate,
     recurrenceLabel: row.recurrence_label || 'Sin recurrencia',
     liveMode: dbToBoolean(row.live_mode),
     itemCount: Number(row.item_count || 0),
     source: row.source || 'ghl',
-    createdAt: row.created_at || undefined,
-    updatedAt: row.updated_at || undefined,
-    sortDate: row.next_run_at || row.updated_at || row.created_at,
+    createdAt,
+    updatedAt,
+    sortDate: nextRunAt || updatedAt || createdAt,
     raw: raw && Object.keys(raw).length ? raw : {
       id: row.id || row.ghl_schedule_id,
       schedule: safeJsonParse(row.schedule_json, {})

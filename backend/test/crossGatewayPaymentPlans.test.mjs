@@ -117,6 +117,48 @@ async function collectListInvoiceSchedules(params = {}) {
   })
 }
 
+test('planes de pago: listado conserva fechas de calendario guardadas como medianoche SQL', async () => {
+  const idSuffix = suffix('sql_midnight_plan')
+  const contactId = `contact_${idSuffix}`
+  const planId = `rstk_payment_flow_${idSuffix}`
+  const email = `${contactId}@example.test`
+  const phone = testPhoneFromSuffix(idSuffix)
+
+  await cleanupContact(contactId)
+
+  try {
+    await db.run(
+      `INSERT INTO contacts (
+        id, full_name, email, phone, source, created_at, updated_at
+      ) VALUES (?, 'Cliente Fecha SQL', ?, ?, 'test', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+      [contactId, email, phone]
+    )
+
+    await db.run(
+      `INSERT INTO payment_plans (
+        id, ghl_schedule_id, contact_id, contact_name, email, phone,
+        name, title, status, total, currency, description, recurrence_label,
+        start_date, next_run_at, end_date, live_mode, item_count,
+        schedule_json, raw_json, source, last_synced_at, created_at, updated_at
+      ) VALUES (?, NULL, ?, 'Cliente Fecha SQL', ?, ?, ?, ?, 'active', 10000, 'MXN', ?, 'Diario',
+        '2026-06-29 00:00:00', '2026-06-29 00:00:00', '2026-07-03 00:00:00', 0, 4,
+        '{}', '{}', 'stripe', CURRENT_TIMESTAMP, '2026-06-29 00:00:00', CURRENT_TIMESTAMP)`,
+      [planId, contactId, email, phone, 'Plan fecha SQL', 'Plan fecha SQL', 'Plan fecha SQL']
+    )
+
+    const listed = await collectListInvoiceSchedules({ activeOnly: 'false', source: 'stripe' })
+    const plan = (listed.data || []).find((item) => item.id === planId)
+
+    assert.ok(plan, 'el plan insertado debe aparecer en el listado')
+    assert.equal(plan.startDate, '2026-06-29')
+    assert.equal(plan.nextRunAt, '2026-06-29')
+    assert.equal(plan.endDate, '2026-07-03')
+    assert.equal(plan.sortDate, '2026-06-29')
+  } finally {
+    await cleanupContact(contactId)
+  }
+})
+
 test('planes de pago: Stripe y Conekta coexisten para el mismo contacto y el listado devuelve ambos', async () => {
   await initializeMasterKey()
 

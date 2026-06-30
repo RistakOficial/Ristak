@@ -13,6 +13,7 @@
  */
 export const DEFAULT_TIMEZONE = 'America/Mexico_City'
 const DATE_ONLY_PATTERN = /^(\d{4})-(\d{2})-(\d{2})$/
+const DATE_ONLY_MIDNIGHT_PATTERN = /^(\d{4})-(\d{2})-(\d{2})(?:[ T]00:00(?::00(?:\.0{1,6})?)?)$/
 const WEEKDAY_CODES = ['su', 'mo', 'tu', 'we', 'th', 'fr', 'sa'] as const
 const MONTH_CODES = ['jan', 'feb', 'mar', 'apr', 'may', 'jun', 'jul', 'aug', 'sep', 'oct', 'nov', 'dec'] as const
 
@@ -20,8 +21,24 @@ export function isDateOnlyString(value: unknown): value is string {
   return typeof value === 'string' && DATE_ONLY_PATTERN.test(value.trim())
 }
 
+export function getDateOnlyFromCalendarLikeString(value: unknown): string | null {
+  if (typeof value !== 'string') return null
+
+  const clean = value.trim()
+  const dateOnlyMatch = DATE_ONLY_PATTERN.exec(clean)
+  if (dateOnlyMatch) return clean
+
+  const midnightMatch = DATE_ONLY_MIDNIGHT_PATTERN.exec(clean)
+  if (midnightMatch) return `${midnightMatch[1]}-${midnightMatch[2]}-${midnightMatch[3]}`
+
+  return null
+}
+
 export function parseDateOnlyParts(value: string): { year: number; month: number; day: number } | null {
-  const match = DATE_ONLY_PATTERN.exec(value.trim())
+  const dateOnly = getDateOnlyFromCalendarLikeString(value)
+  if (!dateOnly) return null
+
+  const match = DATE_ONLY_PATTERN.exec(dateOnly)
   if (!match) return null
 
   const year = Number(match[1])
@@ -156,8 +173,9 @@ export function ensureUTC(date: string | Date): string {
  * @param userTimezone Zona horaria del usuario (IANA)
  */
 export function convertUTCToLocal(utcDate: string | Date, userTimezone: string): Date {
-  if (typeof utcDate === 'string' && isDateOnlyString(utcDate)) {
-    const dateOnly = dateOnlyToLocalDate(utcDate)
+  if (typeof utcDate === 'string') {
+    const calendarDate = getDateOnlyFromCalendarLikeString(utcDate)
+    const dateOnly = calendarDate ? dateOnlyToLocalDate(calendarDate) : null
     if (dateOnly) return dateOnly
   }
 
@@ -199,8 +217,9 @@ export function convertLocalToUTC(localDate: string | Date, timezone: string): D
 }
 
 export function toDateTimeLocalInputValue(utcDate: string | Date, timezone: string): string {
-  if (typeof utcDate === 'string' && isDateOnlyString(utcDate)) {
-    return `${utcDate.trim()}T00:00`
+  if (typeof utcDate === 'string') {
+    const calendarDate = getDateOnlyFromCalendarLikeString(utcDate)
+    if (calendarDate) return `${calendarDate}T00:00`
   }
 
   const local = convertUTCToLocal(utcDate, timezone)
@@ -242,9 +261,10 @@ export function formatInTimezone(
   timezone: string,
   options?: Intl.DateTimeFormatOptions
 ): string {
-  const isDateOnly = typeof utcDate === 'string' && isDateOnlyString(utcDate)
+  const calendarDate = typeof utcDate === 'string' ? getDateOnlyFromCalendarLikeString(utcDate) : null
+  const isDateOnly = Boolean(calendarDate)
   const date = isDateOnly
-    ? dateOnlyToUtcDate(utcDate) || new Date(NaN)
+    ? dateOnlyToUtcDate(calendarDate || '') || new Date(NaN)
     : utcDate instanceof Date ? utcDate : new Date(ensureUTC(utcDate))
 
   const defaultOptions: Intl.DateTimeFormatOptions = {
