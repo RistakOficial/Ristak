@@ -67,6 +67,7 @@ import {
 } from '@/utils/phoneAccess'
 import {
   getFirstAllowedAppPath,
+  hasLicenseFeature,
   hasModuleAccess,
   type PermissionKey
 } from '@/utils/accessControl'
@@ -252,10 +253,14 @@ const ProtectedRoute: React.FC<{ children: React.ReactNode }> = ({ children }) =
   return <>{children}</>
 }
 
-const AccessRoute: React.FC<{ moduleKey: PermissionKey; children: React.ReactNode }> = ({ moduleKey, children }) => {
+const AccessRoute: React.FC<{ moduleKey: PermissionKey; featureKeys?: readonly string[]; children: React.ReactNode }> = ({ moduleKey, featureKeys, children }) => {
   const { user } = useAuth()
 
   if (!hasModuleAccess(user, moduleKey, 'read')) {
+    return <Navigate to={getFirstAllowedAppPath(user)} replace />
+  }
+
+  if (featureKeys?.length && !hasLicenseFeature(user, featureKeys)) {
     return <Navigate to={getFirstAllowedAppPath(user)} replace />
   }
 
@@ -792,7 +797,8 @@ const AppWithNotifications: React.FC = () => {
             <Route path="chat/*" element={<AccessRoute moduleKey="chat"><DesktopChat /></AccessRoute>} />
             <Route path="reports/*" element={<AccessRoute moduleKey="reports"><Reports /></AccessRoute>} />
             <Route path="campaigns/*" element={<AccessRoute moduleKey="campaigns"><Campaigns /></AccessRoute>} />
-            <Route path="transactions/subscriptions/*" element={<AccessRoute moduleKey="payments"><PaymentSubscriptions /></AccessRoute>} />
+            <Route path="transactions/payment-plans/*" element={<AccessRoute moduleKey="payments" featureKeys={['payment_plans']}><Transactions /></AccessRoute>} />
+            <Route path="transactions/subscriptions/*" element={<AccessRoute moduleKey="payments" featureKeys={['subscriptions']}><PaymentSubscriptions /></AccessRoute>} />
             <Route path="transactions/products/*" element={<AccessRoute moduleKey="payments"><PaymentProducts /></AccessRoute>} />
             <Route path="transactions/*" element={<AccessRoute moduleKey="payments"><Transactions /></AccessRoute>} />
             <Route path="contacts/*" element={<AccessRoute moduleKey="contacts"><Contacts /></AccessRoute>} />

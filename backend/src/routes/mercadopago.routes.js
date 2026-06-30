@@ -18,8 +18,10 @@ import {
 } from '../controllers/mercadoPagoPaymentsController.js'
 import { requireAuth } from '../middleware/authMiddleware.js'
 import { requireModuleAccess } from '../middleware/userAccessMiddleware.js'
+import { requireFeature } from '../middleware/licenseMiddleware.js'
 
 const router = express.Router()
+const requirePaymentPlansFeature = requireFeature('payment_plans')
 
 router.post('/webhook', mercadoPagoWebhookView)
 router.get('/subscriptions/return', mercadoPagoSubscriptionReturnView)
@@ -38,6 +40,6 @@ router.post('/connect/url', requireModuleAccess('settings_payments'), createMerc
 router.post('/connect/sync', requireModuleAccess('settings_payments'), syncMercadoPagoConnectView)
 router.post('/connect/mode', requireModuleAccess('settings_payments'), setMercadoPagoModeView)
 router.post('/payment-links', requireModuleAccess('payments'), createMercadoPagoPaymentLinkView)
-router.post('/payment-plans', requireModuleAccess('payments'), createMercadoPagoPaymentPlanView)
+router.post('/payment-plans', requireModuleAccess('payments'), requirePaymentPlansFeature, createMercadoPagoPaymentPlanView)
 
 export default router

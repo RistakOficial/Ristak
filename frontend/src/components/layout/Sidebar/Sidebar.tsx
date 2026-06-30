@@ -81,14 +81,15 @@ interface SidebarNavChild {
   to: string
   label: string
   exact?: boolean
+  featureKeys?: readonly string[]
 }
 
 const MDP_PROGRAM_ROOT_PATH = '/mdp-program'
 
 const PAYMENTS_NAV_ITEMS: SidebarNavChild[] = [
   { to: '/transactions', label: 'Transacciones', exact: true },
-  { to: '/transactions/payment-plans', label: 'Planes de pago' },
-  { to: '/transactions/subscriptions', label: 'Suscripciones' },
+  { to: '/transactions/payment-plans', label: 'Planes de pago', featureKeys: ['payment_plans'] },
+  { to: '/transactions/subscriptions', label: 'Suscripciones', featureKeys: ['subscriptions'] },
   { to: '/transactions/products', label: 'Productos' }
 ]
 
@@ -740,7 +741,10 @@ export const Sidebar: React.FC<SidebarProps> = ({
     setPaymentsOpen(isPaymentsRoute)
   }, [isPaymentsRoute])
 
-  const visiblePaymentsNavigation = PAYMENTS_NAV_ITEMS
+  const visiblePaymentsNavigation = useMemo(
+    () => PAYMENTS_NAV_ITEMS.filter((item) => !item.featureKeys || hasLicenseFeature(user, item.featureKeys)),
+    [user]
+  )
   useEffect(() => {
     if (!collapsed) return
     setIsEditMode(false)

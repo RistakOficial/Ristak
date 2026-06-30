@@ -9,11 +9,13 @@ import {
 } from '../controllers/subscriptionsController.js'
 import { requireAuth } from '../middleware/authMiddleware.js'
 import { requireModuleAccess } from '../middleware/userAccessMiddleware.js'
+import { requireFeature } from '../middleware/licenseMiddleware.js'
 
 const router = express.Router()
 
 router.use(requireAuth)
 router.use(requireModuleAccess('payments'))
+router.use(requireFeature('subscriptions'))
 
 router.get('/', listSubscriptionsView)
 router.post('/', createSubscriptionView)
