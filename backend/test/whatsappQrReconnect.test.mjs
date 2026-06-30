@@ -12,12 +12,13 @@ import {
 
 const BUSINESS_PHONE = '+526561234567'
 const CONNECTED_JID = '526561234567@s.whatsapp.net'
+const DEFAULT_FAKE_WA_WEB_VERSION = [2, 3000, 1035194821]
 
 function sqlFuture(offsetMs = 60_000) {
   return new Date(Date.now() + offsetMs).toISOString().slice(0, 19).replace('T', ' ')
 }
 
-function createFakeBaileysRuntime(sockets = []) {
+function createFakeBaileysRuntime(sockets = [], options = {}) {
   const DisconnectReason = {
     connectionClosed: 428,
     connectionLost: 408,
@@ -27,9 +28,18 @@ function createFakeBaileysRuntime(sockets = []) {
     badSession: 500,
     restartRequired: 515
   }
+  const defaultVersion = options.defaultVersion || DEFAULT_FAKE_WA_WEB_VERSION
+  const socketUser = options.user || { id: CONNECTED_JID }
+  const fetchLatestWaWebVersion = options.fetchLatestWaWebVersion ||
+    (options.latestWaWebVersion ? async () => ({ version: options.latestWaWebVersion, isLatest: true }) : undefined)
 
   return {
     DisconnectReason,
+    DEFAULT_CONNECTION_CONFIG: {
+      version: defaultVersion
+    },
+    defaultConnectionVersion: defaultVersion,
+    fetchLatestWaWebVersion,
     BufferJSON: {
       replacer: (_key, value) => value,
       reviver: (_key, value) => value
@@ -38,7 +48,7 @@ function createFakeBaileysRuntime(sockets = []) {
       macOS: (name) => ['macOS', name, 'Ristak']
     },
     initAuthCreds: () => ({
-      me: { id: CONNECTED_JID },
+      me: options.authMe || { id: CONNECTED_JID },
       registered: true
     }),
     makeCacheableSignalKeyStore: (keys) => keys,
@@ -53,8 +63,9 @@ function createFakeBaileysRuntime(sockets = []) {
       const listeners = new Map()
       const sock = {
         options,
-        user: { id: CONNECTED_JID },
+        user: socketUser,
         closed: false,
+        signalRepository: options.signalRepository,
         ev: {
           on: (eventName, handler) => {
             const eventListeners = listeners.get(eventName) || []
@@ -172,6 +183,82 @@ test('resumeWhatsAppQrSessions no abre otra sesión si un lease vigente pertenec
     assert.equal(result.resumed, 0)
     assert.equal(sockets.length, 0)
     assert.equal(lock.owner_id, 'other-render-instance')
+  })
+})
+
+test('WhatsApp QR usa la versión viva de WhatsApp Web al crear el socket', async () => {
+  const sockets = []
+  const latestVersion = [2, 3000, 1042401057]
+  let fetchCalls = 0
+
+  await withQrFixture({ status: 'connected' }, async () => {
+    setBaileysRuntimeForTest(createFakeBaileysRuntime(sockets, {
+      fetchLatestWaWebVersion: async (options = {}) => {
+        fetchCalls += 1
+        assert.ok(options.signal)
+        return { version: latestVersion, isLatest: true }
+      }
+    }))
+
+    const result = await resumeWhatsAppQrSessions({ source: 'test' })
+
+    assert.equal(result.resumed, 1)
+    assert.equal(fetchCalls, 1)
+    assert.deepEqual(sockets[0].options.version, latestVersion)
+  })
+})
+
+test('WHATSAPP_WEB_VERSION tiene prioridad sobre la consulta viva', async () => {
+  const sockets = []
+  const previousVersion = process.env.WHATSAPP_WEB_VERSION
+  let fetchCalls = 0
+
+  process.env.WHATSAPP_WEB_VERSION = '2,3000,1111111111'
+  try {
+    await withQrFixture({ status: 'connected' }, async () => {
+      setBaileysRuntimeForTest(createFakeBaileysRuntime(sockets, {
+        fetchLatestWaWebVersion: async () => {
+          fetchCalls += 1
+          return { version: [2, 3000, 2222222222], isLatest: true }
+        }
+      }))
+
+      const result = await resumeWhatsAppQrSessions({ source: 'test' })
+
+      assert.equal(result.resumed, 1)
+      assert.equal(fetchCalls, 0)
+      assert.deepEqual(sockets[0].options.version, [2, 3000, 1111111111])
+    })
+  } finally {
+    if (previousVersion === undefined) delete process.env.WHATSAPP_WEB_VERSION
+    else process.env.WHATSAPP_WEB_VERSION = previousVersion
+  }
+})
+
+test('la validación del número conectado no confunde LID con el teléfono esperado', async () => {
+  const sockets = []
+
+  await withQrFixture({ status: 'connected' }, async ({ phoneNumberId }) => {
+    setBaileysRuntimeForTest(createFakeBaileysRuntime(sockets, {
+      user: {
+        id: '123456789@lid',
+        lid: '123456789@lid'
+      }
+    }))
+
+    const result = await resumeWhatsAppQrSessions({ source: 'test' })
+    assert.equal(result.resumed, 1)
+    assert.equal(sockets.length, 1)
+
+    await sockets[0].emit('connection.update', { connection: 'open' })
+
+    const session = await db.get(
+      'SELECT status, connected_phone, last_error FROM whatsapp_qr_sessions WHERE phone_number_id = ?',
+      [phoneNumberId]
+    )
+    assert.equal(session.status, 'connected')
+    assert.equal(session.connected_phone, BUSINESS_PHONE)
+    assert.equal(session.last_error, null)
   })
 })
 

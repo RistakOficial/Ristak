@@ -20,6 +20,9 @@ const RECONNECT_MAX_DELAY_MS = 60000
 const MAX_RECONNECT_ATTEMPTS = 8
 const QR_SESSION_LEASE_TTL_MS = 90 * 1000
 const QR_SESSION_LEASE_HEARTBEAT_MS = 30 * 1000
+const WA_WEB_VERSION_FETCH_TIMEOUT_MS = 4000
+const WA_WEB_VERSION_CACHE_TTL_MS = 10 * 60 * 1000
+const WA_WEB_VERSION_FALLBACK_CACHE_TTL_MS = 60 * 1000
 const QR_ACK_STATUS = {
   ERROR: 0,
   PENDING: 1,
@@ -59,6 +62,8 @@ const qrRecentMessageAcks = new Map()
 const qrRecentRistakOutboundAttempts = new Map()
 let baileysRuntime = null
 let reconnectDelayOverrideForTest = null
+let whatsappWebVersionCache = null
+let whatsappWebVersionPromise = null
 
 // Cache de mensajes enviados para responder reintentos de descifrado
 // (getMessage de Baileys). Sin esto, cuando el receptor no puede descifrar un
@@ -84,13 +89,101 @@ function cacheSentQrMessage(response) {
 function getWhatsAppWebVersionOverride() {
   const raw = cleanString(process.env.WHATSAPP_WEB_VERSION)
   if (!raw) return null
-  const parts = raw.split(/[.,]/).map(part => Number(part.trim())).filter(Number.isFinite)
-  return parts.length === 3 ? parts : null
+  return normalizeWhatsAppWebVersion(raw.split(/[.,]/))
 }
 
 function cleanString(value) {
   if (value === null || value === undefined) return ''
   return String(value).trim()
+}
+
+function normalizeWhatsAppWebVersion(value) {
+  if (!Array.isArray(value) || value.length !== 3) return null
+  const parts = value.map(part => Number(part))
+  return parts.every(part => Number.isInteger(part) && part >= 0) ? parts : null
+}
+
+function formatWhatsAppWebVersion(value) {
+  const version = normalizeWhatsAppWebVersion(value)
+  return version ? version.join('.') : ''
+}
+
+function sameWhatsAppWebVersion(left, right) {
+  const leftVersion = normalizeWhatsAppWebVersion(left)
+  const rightVersion = normalizeWhatsAppWebVersion(right)
+  return Boolean(leftVersion && rightVersion && leftVersion.every((part, index) => part === rightVersion[index]))
+}
+
+function getBaileysDefaultWebVersion(baileys = {}) {
+  return normalizeWhatsAppWebVersion(
+    baileys.defaultConnectionVersion ||
+    baileys.DEFAULT_CONNECTION_CONFIG?.version
+  )
+}
+
+async function fetchCurrentWhatsAppWebVersion(fetchLatestWaWebVersion) {
+  if (typeof fetchLatestWaWebVersion !== 'function') return null
+
+  const controller = typeof AbortController === 'function' ? new AbortController() : null
+  const timeout = controller
+    ? setTimeout(() => controller.abort(), WA_WEB_VERSION_FETCH_TIMEOUT_MS)
+    : null
+
+  try {
+    const result = await fetchLatestWaWebVersion(controller ? { signal: controller.signal } : {})
+    const version = normalizeWhatsAppWebVersion(result?.version)
+
+    if (result?.isLatest && version) {
+      return version
+    }
+
+    if (result?.error) {
+      logger.warn(`[WhatsApp QR] No se pudo leer la versión viva de WhatsApp Web: ${result.error.message || result.error}`)
+    }
+    return null
+  } catch (error) {
+    logger.warn(`[WhatsApp QR] No se pudo leer la versión viva de WhatsApp Web: ${error.message}`)
+    return null
+  } finally {
+    if (timeout) clearTimeout(timeout)
+  }
+}
+
+async function resolveWhatsAppWebVersion(baileys = {}) {
+  const override = getWhatsAppWebVersionOverride()
+  if (override) return override
+
+  const now = Date.now()
+  if (whatsappWebVersionCache?.expiresAt > now) {
+    return whatsappWebVersionCache.version
+  }
+
+  if (!whatsappWebVersionPromise) {
+    whatsappWebVersionPromise = (async () => {
+      const defaultVersion = getBaileysDefaultWebVersion(baileys)
+      const fetchedVersion = await fetchCurrentWhatsAppWebVersion(baileys.fetchLatestWaWebVersion)
+      const version = fetchedVersion || defaultVersion
+
+      if (!version) return null
+
+      const usingFetchedVersion = Boolean(fetchedVersion)
+      whatsappWebVersionCache = {
+        version,
+        expiresAt: Date.now() + (usingFetchedVersion ? WA_WEB_VERSION_CACHE_TTL_MS : WA_WEB_VERSION_FALLBACK_CACHE_TTL_MS)
+      }
+
+      if (usingFetchedVersion && !sameWhatsAppWebVersion(fetchedVersion, defaultVersion)) {
+        logger.info(`[WhatsApp QR] Usando versión viva de WhatsApp Web ${formatWhatsAppWebVersion(fetchedVersion)} para generar QR`)
+      }
+
+      return version
+    })()
+      .finally(() => {
+        whatsappWebVersionPromise = null
+      })
+  }
+
+  return whatsappWebVersionPromise
 }
 
 function nowIso() {
@@ -217,8 +310,13 @@ function buildQrMediaPayload({ dataUrl, url, label }) {
 
 function normalizeConnectedPhone(value = '') {
   const text = cleanString(value)
+  if (isLidJid(text)) return ''
   const bare = text.split('@')[0]?.split(':')[0] || text
   return normalizePhoneForStorage(bare) || bare.replace(/\D/g, '')
+}
+
+function isLidJid(value = '') {
+  return /@(?:hosted\.)?lid$/i.test(cleanString(value))
 }
 
 function normalizeJid(value = '') {
@@ -234,6 +332,19 @@ function normalizeJid(value = '') {
 function normalizePhoneFromJid(jid = '') {
   const digits = normalizePhoneDigits(String(jid || '').split('@')[0]?.split(':')[0] || '')
   return digits ? `+${digits}` : ''
+}
+
+async function resolvePhoneFromLid(sock, value = '') {
+  const lid = normalizeJid(value)
+  if (!isLidJid(lid)) return ''
+
+  try {
+    const pn = await sock?.signalRepository?.lidMapping?.getPNForLID?.(lid)
+    return normalizeConnectedPhone(pn)
+  } catch (error) {
+    logger.warn(`[WhatsApp QR] No se pudo resolver LID ${lid}: ${error.message}`)
+    return ''
+  }
 }
 
 function phoneMatches(left = '', right = '') {
@@ -873,7 +984,7 @@ function getReconnectDelayMs(statusCode, lastError = '', reconnectAttempt = 0, D
     Math.floor(Math.random() * 1500)
 }
 
-function getConnectedPhoneFromSocket(sock, authState) {
+async function getConnectedPhoneFromSocket(sock, authState) {
   const candidates = [
     sock?.user?.id,
     authState?.creds?.me?.id,
@@ -885,6 +996,11 @@ function getConnectedPhoneFromSocket(sock, authState) {
   for (const candidate of candidates) {
     const normalized = normalizeConnectedPhone(candidate)
     if (normalized) return normalized
+  }
+
+  for (const candidate of candidates) {
+    const resolved = await resolvePhoneFromLid(sock, candidate)
+    if (resolved) return resolved
   }
 
   return ''
@@ -964,6 +1080,9 @@ async function loadBaileys() {
       BufferJSON: baileys.BufferJSON,
       DisconnectReason: baileys.DisconnectReason || {},
       Browsers: baileys.Browsers || null,
+      DEFAULT_CONNECTION_CONFIG: baileys.DEFAULT_CONNECTION_CONFIG || null,
+      defaultConnectionVersion: baileys.DEFAULT_CONNECTION_CONFIG?.version || null,
+      fetchLatestWaWebVersion: baileys.fetchLatestWaWebVersion,
       initAuthCreds: baileys.initAuthCreds,
       makeCacheableSignalKeyStore: baileys.makeCacheableSignalKeyStore,
       proto: baileys.proto
@@ -985,6 +1104,8 @@ async function loadQrCode() {
 
 export function setBaileysRuntimeForTest(runtime = null) {
   baileysRuntime = runtime || null
+  whatsappWebVersionCache = null
+  whatsappWebVersionPromise = null
 }
 
 export function setWhatsAppQrReconnectDelayForTest(delayMs = null) {
@@ -1000,6 +1121,8 @@ export function resetWhatsAppQrServiceForTest() {
   }
   baileysRuntime = null
   reconnectDelayOverrideForTest = null
+  whatsappWebVersionCache = null
+  whatsappWebVersionPromise = null
   qrSendAckWaiters.clear()
   qrRecentMessageAcks.clear()
   qrRecentRistakOutboundAttempts.clear()
@@ -1510,6 +1633,7 @@ async function openSocket(phone, { requireConsent = true, reconnectAttempt = 0, 
   } = baileys
   const { state, saveCreds } = await useQrDbAuthState(phone.id, baileys)
   const lease = await acquireQrSessionLease(phone.id)
+  const webVersion = await resolveWhatsAppWebVersion(baileys)
 
   closeLiveSession(phone.id, { releaseLease: false })
 
@@ -1529,7 +1653,6 @@ async function openSocket(phone, { requireConsent = true, reconnectAttempt = 0, 
     deferred.reject(error)
   }
 
-  const versionOverride = getWhatsAppWebVersionOverride()
   let sock
   try {
     sock = makeWASocket({
@@ -1550,7 +1673,7 @@ async function openSocket(phone, { requireConsent = true, reconnectAttempt = 0, 
       defaultQueryTimeoutMs: 60000,
       retryRequestDelayMs: 250,
       getMessage: async (key) => qrSentMessageCache.get(cleanString(key?.id)) || undefined,
-      ...(versionOverride ? { version: versionOverride } : {})
+      ...(webVersion ? { version: webVersion } : {})
     })
   } catch (error) {
     await releaseQrSessionLease(lease)
@@ -1601,10 +1724,12 @@ async function openSocket(phone, { requireConsent = true, reconnectAttempt = 0, 
     }
 
     if (update.connection === 'open') {
-      const connectedPhone = getConnectedPhoneFromSocket(sock, state)
+      const connectedPhone = await getConnectedPhoneFromSocket(sock, state)
 
       if (!phoneMatches(connectedPhone, phone.expectedPhone)) {
-        const message = `El QR conecto ${connectedPhone || 'otro número'}, pero esperabamos ${phone.expectedPhone}`
+        const message = connectedPhone
+          ? `El QR conecto ${connectedPhone}, pero esperabamos ${phone.expectedPhone}`
+          : `WhatsApp no entrego el número conectado para validar que sea ${phone.expectedPhone}. Genera otro QR e intentalo de nuevo.`
         await clearAuthState(phone.id).catch(error => {
           logger.warn(`[WhatsApp QR] No se pudo limpiar auth con número incorrecto ${phone.id}: ${error.message}`)
         })
