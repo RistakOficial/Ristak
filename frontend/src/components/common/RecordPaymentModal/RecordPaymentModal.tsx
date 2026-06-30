@@ -885,6 +885,21 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
   const hasPaymentPlanGateways = paymentPlanGatewayLabels.length > 0
   const hasMultiplePaymentPlanGateways = paymentPlanGatewayLabels.length > 1
   const hasPaymentPlanSavedCards = hasStripeSavedCards || hasConektaSavedCards
+  const partialAuthorizationNotice = (() => {
+    if (!hasPaymentPlanGateways) {
+      return 'El plan se preparará con la pasarela conectada que elijas en el siguiente paso.'
+    }
+
+    if (hasPaymentPlanSavedCards) {
+      return 'En el siguiente paso eliges la pasarela. Si esa pasarela ya tiene una tarjeta guardada, se usará para los cobros programados.'
+    }
+
+    if (firstPaymentEnabled && firstPaymentMethod === 'card') {
+      return 'Si el primer pago se cobra con tarjeta o link, esa autorización puede activar los cobros futuros del plan.'
+    }
+
+    return `Si el contacto no tiene una tarjeta guardada, la pasarela que elijas enviará una liga de domiciliación por ${formatCurrency(cardSetupAmount, currency)}. El plan no se activa hasta que esa tarjeta quede autorizada.`
+  })()
   const defaultPaymentLinkOption: PaymentOption | null = stripeConnected
     ? 'stripe'
     : conektaConnected
@@ -3403,12 +3418,8 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
           <div className={styles.planSection}>
             <div className={styles.planIntro}>
               <div className={styles.planIntroText}>
-                <p>Plan de parcialidades</p>
-                <span>Define si habrá enganche y programa los cobros automáticos hasta cubrir el total.</span>
-              </div>
-              <div className={styles.planTotalChip}>
-                <span>Total a financiar</span>
-                <strong>{formatCurrency(totalAmount, currency)}</strong>
+                <p>Plan de pagos</p>
+                <span>Configura el enganche y el calendario de cobros automáticos hasta cubrir el total.</span>
               </div>
             </div>
 
@@ -3513,8 +3524,8 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
                 <div className={styles.planStepTitle}>
                   <span className={styles.stepNumber}>2</span>
                   <div>
-                    <p>Pagos restantes</p>
-                    <span>Se cobran solos a la tarjeta del cliente.</span>
+                    <p>Cobros programados</p>
+                    <span>Define la frecuencia y fechas de los cobros automáticos.</span>
                   </div>
                 </div>
                 <span className={styles.autoTag}>
@@ -3547,10 +3558,6 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
                       options: remainingFrequencyOptions,
                       title: 'Frecuencia de cobro'
                     })}
-                  </div>
-                  <div className={styles.calcChip}>
-                    <span>Suma de pagos restantes</span>
-                    <strong>{formatCurrency(remainingTotalAmount, currency)}</strong>
                   </div>
                 </div>
 
@@ -3670,25 +3677,7 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
 
             <div className={styles.authorizationNotice}>
               <ShieldCheck size={16} />
-              <span>
-                {stripeConnected
-                  ? (savedPaymentMethods.length > 0
-                      ? 'En el siguiente paso eliges si Stripe usa una tarjeta guardada o si manda link de domiciliación para otra tarjeta.'
-                      : firstPaymentEnabled && firstPaymentMethod === 'card'
-                        ? 'Si el primer pago es con tarjeta/link de Stripe, esa tarjeta quedará guardada y activará los cobros futuros.'
-                        : `Stripe enviará una liga de domiciliación por ${formatCurrency(cardSetupAmount, currency)}. El plan no se activa hasta que esa tarjeta quede autorizada.`)
-                  : conektaConnected
-                    ? (savedConektaPaymentSources.length > 0
-                        ? 'En el siguiente paso eliges si Conekta usa una tarjeta guardada o si manda link para autorizar otra tarjeta.'
-                        : firstPaymentEnabled && firstPaymentMethod === 'card'
-                          ? 'Si el primer pago es con tarjeta/link de Conekta, esa tarjeta quedará guardada y activará los cobros futuros.'
-                          : `Conekta enviará una liga de domiciliación por ${formatCurrency(cardSetupAmount, currency)}. El plan no se activa hasta que esa tarjeta quede autorizada.`)
-                  : highLevelConnected
-                    ? (partialNeedsCardAuthorization
-                        ? `GoHighLevel validará si existe una tarjeta guardada. Si no existe, se enviará un cobro separado de ${formatCurrency(cardSetupAmount, currency)} para domiciliar. El plan no se activa hasta que esa tarjeta quede autorizada.`
-                        : 'El primer pago con tarjeta autoriza la tarjeta en GoHighLevel. El plan no se activa hasta que ese pago sea exitoso y la tarjeta quede guardada.')
-                    : 'El plan se preparará con la pasarela conectada que elijas en el siguiente paso.'}
-              </span>
+              <span>{partialAuthorizationNotice}</span>
             </div>
           </div>
         )}
@@ -3846,7 +3835,7 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
                 </div>
               )}
               <div className={styles.summaryRow}>
-                <span>Pagos restantes</span>
+                <span>Cobros programados</span>
                 <span>{resolvedRemainingInstallments.length} pagos programados</span>
               </div>
               <div className={styles.summaryRow}>
