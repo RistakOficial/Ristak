@@ -82,6 +82,10 @@ import {
   isHealthRequest
 } from './utils/deployDrainPolicy.js'
 import {
+  isRuntimeReadyForTraffic,
+  runtimeHealthStatusCode
+} from './utils/startupReadiness.js'
+import {
   beginDeployDrainWork,
   formatDeployDrainSnapshot,
   getDeployDrainSnapshot,
@@ -114,6 +118,19 @@ function getStartupStatus() {
   if (startupState.ready) return 'ready'
   if (startupState.error) return 'error'
   return 'starting'
+}
+
+function getRuntimeReadiness() {
+  const state = {
+    ready: startupState.ready,
+    error: startupState.error,
+    shuttingDown
+  }
+
+  return {
+    ok: isRuntimeReadyForTraffic(state),
+    statusCode: runtimeHealthStatusCode(state)
+  }
 }
 
 function runStartupDrainTask(kind, task, errorMessage, onSuccess) {
@@ -206,8 +223,10 @@ app.use('/uploads', express.static(join(__dirname, '../uploads'), {
 
 // Health check
 app.get('/api/health', (req, res) => {
-  res.status(startupState.error || shuttingDown ? 503 : 200).json({
-    status: 'ok',
+  const readiness = getRuntimeReadiness()
+
+  res.status(readiness.statusCode).json({
+    status: readiness.ok ? 'ok' : getStartupStatus(),
     startup: getStartupStatus(),
     timestamp: new Date().toISOString(),
     environment: process.env.NODE_ENV || 'development',
@@ -218,8 +237,11 @@ app.get('/api/health', (req, res) => {
 // Health check de instalación (lo consulta el portal instalador para saber
 // si la app ya está lista). Debe ir antes del host router de Sites.
 app.get('/health', (req, res) => {
-  res.status(startupState.error || shuttingDown ? 503 : 200).json({
+  const readiness = getRuntimeReadiness()
+
+  res.status(readiness.statusCode).json({
     ...getHealthInfo(),
+    ok: readiness.ok,
     startup: getStartupStatus()
   })
 })
