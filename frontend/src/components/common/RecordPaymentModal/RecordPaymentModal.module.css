@@ -879,16 +879,16 @@
 }
 
 .planFirstMethod {
-  grid-column: 1 / -1;
+  grid-column: 2 / 3;
   display: flex;
   align-items: center;
-  flex-wrap: wrap;
-  gap: 8px 10px;
+  gap: 10px;
   margin-top: 2px;
+  min-width: 0;
 }
 
 .planFirstMethodControl {
-  flex: 0 1 240px;
+  flex: 1 1 0;
   min-width: 0;
 }
 

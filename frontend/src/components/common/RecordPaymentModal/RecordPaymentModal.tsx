@@ -149,8 +149,8 @@ const FIRST_PAYMENT_METHOD_OPTIONS = [
 // 1) cuándo se cobra — 'scheduled' (sin enganche, el #1 es un cobro programado más)
 //    o 'immediate' (enganche cobrado de inmediato).
 const FIRST_PAYMENT_TIMING_OPTIONS = [
-  { value: 'scheduled', label: 'Cobro programado' },
-  { value: 'immediate', label: 'Cobrar primer pago de inmediato' }
+  { value: 'immediate', label: 'Cobrar inmediato' },
+  { value: 'scheduled', label: 'Cobro programado' }
 ]
 // 2) cómo se cobra ese primer pago inmediato (solo visible al elegir 'immediate').
 const FIRST_PAYMENT_IMMEDIATE_METHOD_OPTIONS = [
@@ -1219,11 +1219,13 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
     setIncludeIVA(Boolean(paymentTaxes.enabled))
     setTaxCalculationMode(paymentTaxes.calculationMode || defaultPaymentSettings.taxes.calculationMode)
     setPaymentMode(initialPaymentMode)
-    setFirstPaymentEnabled(false)
+    // Escritorio: el plan abre por defecto con "Cobrar inmediato" (enganche con
+    // tarjeta). Embedded/celular conserva el default original (cobro programado).
+    setFirstPaymentEnabled(!isEmbedded)
     setFirstPaymentType('amount')
     setFirstPaymentValue('')
     setFirstPaymentDate(getBusinessTodayInputValue(timezone))
-    setFirstPaymentMethod('')
+    setFirstPaymentMethod(!isEmbedded ? 'card' : '')
     setRemainingAutomatic(true)
     setRemainingValueType('amount')
     setRemainingFrequency('monthly')
