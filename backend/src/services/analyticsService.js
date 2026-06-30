@@ -11,6 +11,7 @@ import {
 } from './appointmentsMerge.js'
 import { getHiddenContactFilters, buildHiddenContactsCondition } from '../utils/hiddenContactsFilter.js'
 import { nonTestPaymentCondition, SUCCESS_PAYMENT_STATUSES } from '../utils/paymentMode.js'
+import { timestampSortExpression } from '../utils/sqlTimestampSort.js'
 import { getVisitorIdentityExpression } from './trackingService.js'
 
 const isPostgres = Boolean(process.env.DATABASE_URL)
@@ -1371,7 +1372,7 @@ export async function fetchPaymentsForContacts(contactIds, range = {}) {
     SELECT id, contact_id, amount, status, payment_mode, date
     FROM payments
     WHERE ${conditions.join(' AND ')}
-    ORDER BY date DESC
+    ORDER BY ${timestampSortExpression('date')} DESC, id DESC
   `
 
   const rows = await db.all(paymentsQuery, params)
@@ -1415,7 +1416,7 @@ export async function fetchAppointmentsForContacts(contactIds, range = {}) {
     SELECT id, contact_id, title, status, appointment_status, start_time
     FROM appointments
     WHERE contact_id IN (${placeholders})${calendarCondition}
-    ORDER BY start_time DESC
+    ORDER BY ${timestampSortExpression('start_time')} DESC, id DESC
   `
 
   const rows = await db.all(appointmentsQuery, params)
@@ -1710,7 +1711,7 @@ export async function buildContactsList ({ startDate, endDate, type = 'interesad
                contacts.attribution_ad_id,
                contacts.attribution_ad_name,
                contacts.source
-      ORDER BY contacts.created_at DESC
+      ORDER BY ${timestampSortExpression('contacts.created_at')} DESC, contacts.id DESC
     `
     contacts = await db.all(contactsQuery, contactIds)
   } else {

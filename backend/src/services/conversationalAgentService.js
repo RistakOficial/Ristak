@@ -5,6 +5,7 @@ import { PUBLIC_URL } from '../config/constants.js'
 import { CHEAPEST_OPENAI_MODEL } from '../config/openAIModels.js'
 import { logger } from '../utils/logger.js'
 import { DEFAULT_TIMEZONE, getAccountTimezone } from '../utils/dateUtils.js'
+import { coalescedTimestampSortExpression } from '../utils/sqlTimestampSort.js'
 import { buildTagMatchKeys, resolveTagIds, tagNamesForIds } from './contactTagsService.js'
 import { getOpenAIApiKey } from './aiAgentService.js'
 import {
@@ -2967,7 +2968,7 @@ export async function buildRuleContext({ contactId = null, messageText = '', cha
       SELECT amount, status, title, description
       FROM payments
       WHERE contact_id = ?
-      ORDER BY COALESCE(date, created_at) DESC
+      ORDER BY ${coalescedTimestampSortExpression('date', 'created_at')} DESC
       LIMIT 100
     `, [contactId]).catch(() => []) : [],
     // Atribución de anuncios: clics CTWA y anuncios detectados en sus mensajes

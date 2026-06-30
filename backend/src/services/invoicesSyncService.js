@@ -30,6 +30,7 @@ import {
   buildInvoiceReferenceCandidates,
   normalizeInvoiceNumber
 } from '../utils/invoiceIdentity.js'
+import { timestampSortExpression } from '../utils/sqlTimestampSort.js'
 
 const PAID_INVOICE_STATUSES = new Set(['paid', 'succeeded', 'completed'])
 const PAID_STATUS_DOWNGRADE_PROTECTED_STATUSES = new Set(['draft', 'sent', 'pending', 'overdue', 'payment_processing'])
@@ -1615,7 +1616,7 @@ export async function getInvoicesFromDB({ status, contactId, limit = 100, offset
       params.push(contactId)
     }
 
-    query += ' ORDER BY date DESC LIMIT ? OFFSET ?'
+    query += ` ORDER BY ${timestampSortExpression('date')} DESC, ${timestampSortExpression('created_at')} DESC, id DESC LIMIT ? OFFSET ?`
     params.push(limit, offset)
 
     const invoices = await db.all(query, params)

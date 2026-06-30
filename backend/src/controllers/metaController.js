@@ -38,6 +38,7 @@ import { signScopedToken, verifyScopedToken } from '../utils/auth.js';
 import { getActiveMetaTestEventCode } from '../utils/metaTestCode.js';
 import { buildMetaBrowserUserData } from '../services/metaParameterManagerService.js';
 import { syncRegisteredIntegrationCronsForProvider } from '../jobs/integrationCronRegistry.js';
+import { timestampSortExpression } from '../utils/sqlTimestampSort.js';
 
 const SUCCESS_PAYMENT_STATUSES = new Set([
   'succeeded',
@@ -2062,7 +2063,7 @@ export const getContactsByType = async (req, res) => {
                c.purchases_count,
                c.custom_fields,
                c.created_at
-      ORDER BY c.created_at DESC
+      ORDER BY ${timestampSortExpression('c.created_at')} DESC, c.id DESC
     `;
 
     const contactsParams = [...adIdsList, range.startUtc, range.endUtc];
@@ -2141,7 +2142,7 @@ export const getContactsByType = async (req, res) => {
           appointment_status
         FROM appointments
         WHERE contact_id IN (${placeholders})
-        ORDER BY start_time DESC
+        ORDER BY ${timestampSortExpression('start_time')} DESC, id DESC
       `;
 
       const appointmentRows = await db.all(appointmentsQuery, contactIds);

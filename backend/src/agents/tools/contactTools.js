@@ -5,6 +5,7 @@ import { createContact, updateContact, deleteContact } from '../../controllers/c
 import { invokeController, toToolResult } from '../invokeController.js'
 import { listContactPhoneNumbers, recordContactPhoneNumber } from '../../services/contactIdentityService.js'
 import { normalizePhoneForStorage } from '../../utils/phoneUtils.js'
+import { timestampSortExpression } from '../../utils/sqlTimestampSort.js'
 
 const CONTACT_SUMMARY_FIELDS = (row) => ({
   id: row.id,
@@ -112,7 +113,7 @@ export const searchContactsTool = tool({
        WHERE LOWER(COALESCE(full_name, '')) LIKE ?
           OR LOWER(COALESCE(email, '')) LIKE ?
           OR COALESCE(phone, '') LIKE ?
-       ORDER BY created_at DESC
+       ORDER BY ${timestampSortExpression('created_at')} DESC, id DESC
        LIMIT ?`,
       [like, like, phoneLike, limit || 20]
     )
@@ -138,7 +139,7 @@ export const getContactTool = tool({
     const lastAppointment = await db.get(
       `SELECT id, title, start_time, appointment_status FROM appointments
        WHERE contact_id = ? AND deleted_at IS NULL
-       ORDER BY start_time DESC LIMIT 1`,
+       ORDER BY ${timestampSortExpression('start_time')} DESC, id DESC LIMIT 1`,
       [contactId]
     ).catch(() => null)
 

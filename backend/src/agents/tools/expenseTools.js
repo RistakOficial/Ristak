@@ -12,6 +12,7 @@ import {
   normalizeManualBusinessExpenseRow,
   roundCurrencyValue
 } from '../../services/manualBusinessExpensesService.js'
+import { timestampSortExpression } from '../../utils/sqlTimestampSort.js'
 
 const COST_FIELDS = (row) => ({
   id: row.id,
@@ -322,8 +323,8 @@ export const listCostsTool = tool({
   }),
   execute: async ({ includeInactive }) => {
     const rows = includeInactive
-      ? await db.all('SELECT * FROM costs ORDER BY created_at DESC')
-      : await db.all('SELECT * FROM costs WHERE is_active = 1 ORDER BY created_at DESC')
+      ? await db.all(`SELECT * FROM costs ORDER BY ${timestampSortExpression('created_at')} DESC, id DESC`)
+      : await db.all(`SELECT * FROM costs WHERE is_active = 1 ORDER BY ${timestampSortExpression('created_at')} DESC, id DESC`)
     return { ok: true, total: rows.length, costs: rows.map(COST_FIELDS) }
   }
 })

@@ -10,6 +10,7 @@ import {
   ChevronRight
 } from 'lucide-react'
 import { useTableConfig } from '@/hooks'
+import { getDateSortValueForKey } from '@/utils/dateSort'
 import { buildSearchIndex, prepareSearchQuery, searchIndexIncludes } from '@/utils/searchText'
 import { TabList } from '../TabList'
 import { SearchField } from '../SearchField'
@@ -140,6 +141,26 @@ function getSearchValues<T extends Record<string, any>>(item: T, columns: Column
     const rawValue = item[column.key]
     const searchValue = column.searchValue ? column.searchValue(rawValue, item) : rawValue
     return Array.isArray(searchValue) ? searchValue : [searchValue]
+  })
+}
+
+function compareSortableValues(aValue: unknown, bValue: unknown): number {
+  if (aValue === bValue) return 0
+
+  const aMissing = aValue === null || aValue === undefined || aValue === ''
+  const bMissing = bValue === null || bValue === undefined || bValue === ''
+  if (aMissing || bMissing) {
+    if (aMissing && bMissing) return 0
+    return aMissing ? -1 : 1
+  }
+
+  if (typeof aValue === 'number' && typeof bValue === 'number') {
+    return aValue > bValue ? 1 : -1
+  }
+
+  return String(aValue).localeCompare(String(bValue), undefined, {
+    numeric: true,
+    sensitivity: 'base'
   })
 }
 
@@ -396,12 +417,14 @@ export function Table<T extends Record<string, any>>({
     if (sortBy) {
       const sortColumn = columns.find(column => column.key === sortBy)
       const compare = (a: T, b: T) => {
-        const aValue = sortColumn?.sortValue ? sortColumn.sortValue(a[sortBy], a) : a[sortBy]
-        const bValue = sortColumn?.sortValue ? sortColumn.sortValue(b[sortBy], b) : b[sortBy]
+        const aValue = sortColumn?.sortValue
+          ? sortColumn.sortValue(a[sortBy], a)
+          : getDateSortValueForKey(sortBy, a[sortBy])
+        const bValue = sortColumn?.sortValue
+          ? sortColumn.sortValue(b[sortBy], b)
+          : getDateSortValueForKey(sortBy, b[sortBy])
 
-        if (aValue === bValue) return 0
-
-        const result = aValue > bValue ? 1 : -1
+        const result = compareSortableValues(aValue, bValue)
         return sortOrder === 'asc' ? result : -result
       }
 

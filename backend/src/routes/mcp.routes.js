@@ -16,6 +16,7 @@ import { getHighLevelConfig } from '../config/database.js'
 import { verifyOAuthAccessToken } from '../utils/oauthTokens.js'
 import { buildContactSearchClause, buildContactSearchRank } from '../utils/searchText.js'
 import { nonTestPaymentCondition } from '../utils/paymentMode.js'
+import { timestampSortExpression } from '../utils/sqlTimestampSort.js'
 import { logger } from '../utils/logger.js'
 
 const router = express.Router()
@@ -417,7 +418,7 @@ async function searchContacts(args = {}) {
        c.created_at
      FROM contacts c
      WHERE ${searchClause.condition}
-     ORDER BY ${searchRank.expression} DESC, c.created_at DESC
+     ORDER BY ${searchRank.expression} DESC, ${timestampSortExpression('c.created_at')} DESC, c.id DESC
      LIMIT ?`,
     [...searchClause.params, ...searchRank.params, limit]
   )
@@ -456,7 +457,7 @@ async function getContact(args = {}) {
       `SELECT id, amount, currency, status, payment_method, description, date
        FROM payments
        WHERE contact_id = ?
-       ORDER BY date DESC
+       ORDER BY ${timestampSortExpression('date')} DESC, ${timestampSortExpression('created_at')} DESC, id DESC
        LIMIT 10`,
       [id]
     ),
@@ -464,7 +465,7 @@ async function getContact(args = {}) {
       `SELECT id, title, status, appointment_status, start_time, end_time
        FROM appointments
        WHERE contact_id = ?
-       ORDER BY start_time DESC
+       ORDER BY ${timestampSortExpression('start_time')} DESC, id DESC
        LIMIT 10`,
       [id]
     )
@@ -520,7 +521,7 @@ async function listTransactions(args = {}) {
      FROM payments p
      LEFT JOIN contacts c ON c.id = p.contact_id
      WHERE ${filters.join(' AND ')}
-     ORDER BY p.date DESC, p.created_at DESC, p.id DESC
+     ORDER BY ${timestampSortExpression('p.date')} DESC, ${timestampSortExpression('p.created_at')} DESC, p.id DESC
      LIMIT ?`,
     [...params, limit]
   )

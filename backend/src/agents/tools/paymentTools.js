@@ -3,6 +3,7 @@ import { z } from 'zod'
 import { db } from '../../config/database.js'
 import { createTransaction, updateTransaction, deleteTransaction } from '../../controllers/transactionsController.js'
 import { invokeController, toToolResult } from '../invokeController.js'
+import { timestampSortExpression } from '../../utils/sqlTimestampSort.js'
 
 const PAYMENT_FIELDS = (row) => ({
   id: row.id,
@@ -76,7 +77,7 @@ export const listPaymentsTool = tool({
       sql += ' AND p.date <= ?'
       params.push(normalizePaymentDateParam(endDate, { endOfDay: true }))
     }
-    sql += ' ORDER BY p.date DESC, p.created_at DESC, p.id DESC LIMIT ?'
+    sql += ` ORDER BY ${timestampSortExpression('p.date')} DESC, ${timestampSortExpression('p.created_at')} DESC, p.id DESC LIMIT ?`
     params.push(limit || 30)
 
     const rows = await db.all(sql, params)

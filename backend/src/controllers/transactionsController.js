@@ -30,8 +30,8 @@ import { findContactByPhoneCandidates, generateContactId } from '../services/con
 import { getAccountCurrency, normalizePhoneForAccount } from '../utils/accountLocale.js'
 import { buildContactSearchClause, containsPattern, normalizePhoneDigits } from '../utils/searchText.js'
 import { createRistakPaymentEntityId } from '../utils/idGenerator.js'
+import { timestampSortExpression } from '../utils/sqlTimestampSort.js'
 
-const isPostgresDatabase = Boolean(process.env.DATABASE_URL)
 const SUCCESS_PAYMENT_STATUSES = new Set(['succeeded', 'paid', 'completed', 'complete', 'fulfilled', 'success'])
 const CLOSED_PAYMENT_STATUSES = new Set(['paid', 'succeeded', 'completed', 'complete', 'fulfilled', 'success', 'refunded', 'void', 'deleted', 'failed'])
 const STRIPE_PLAN_AUTHORIZATION_TRIGGERS = new Set(['card_setup', 'card_setup_authorization', 'first_payment', 'first_payment_saved_card'])
@@ -90,14 +90,8 @@ const cleanString = (value) => String(value || '').trim()
 
 const createLocalId = (prefix) => createRistakPaymentEntityId(prefix)
 
-const paymentTimestampSortExpression = (column) => (
-  isPostgresDatabase
-    ? `COALESCE(EXTRACT(EPOCH FROM ${column}::timestamptz), 0)`
-    : `COALESCE(julianday(${column}), julianday(REPLACE(REPLACE(${column}, 'T', ' '), 'Z', '')), 0)`
-)
-
 export const __transactionsControllerTestHooks = {
-  paymentTimestampSortExpression
+  paymentTimestampSortExpression: timestampSortExpression
 }
 
 // (PAY-007) Idempotencia del registro manual de pago: un reintento de red NO debe
@@ -918,8 +912,8 @@ export const getTransactions = async (req, res) => {
     const countResult = await db.get(`SELECT COUNT(*) as total FROM payments p ${whereClause}`, params)
     const totalTransactions = countResult?.total || 0
 
-    const dateSortExpression = paymentTimestampSortExpression('p.date')
-    const createdAtSortExpression = paymentTimestampSortExpression('p.created_at')
+    const dateSortExpression = timestampSortExpression('p.date')
+    const createdAtSortExpression = timestampSortExpression('p.created_at')
     const sortableMap = {
       date: dateSortExpression,
       created_at: createdAtSortExpression,

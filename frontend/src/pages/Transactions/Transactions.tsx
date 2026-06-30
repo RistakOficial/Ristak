@@ -37,6 +37,7 @@ import { useTimezone } from '@/contexts/TimezoneContext'
 import { useAccountCurrency, useHighLevelConnected, useUrlDateRangeSync, useUrlFilterState } from '@/hooks'
 import { formatCurrency, formatDateToISO, formatEndDateToISO, formatNumber, parseLocalDateString, formatName } from '@/utils/format'
 import { buildPaymentTimestamp } from '@/utils/paymentDate'
+import { parseSortableDateValue } from '@/utils/dateSort'
 import {
   DEFAULT_TIMEZONE,
   getDateOnlyDayOfMonth,
@@ -168,30 +169,10 @@ const buildTransactionDetailPath = (viewMode: TransactionsViewMode, transactionI
   `${buildTransactionsPath(viewMode)}/${encodeURIComponent(transactionId)}`
 const buildPaymentPlansPath = () => '/transactions/payment-plans'
 const buildPaymentPlanDetailPath = (planId: string) => `${buildPaymentPlansPath()}/${encodeURIComponent(planId)}`
-const parseTransactionSortTimestamp = (value?: string | null): number => {
-  const raw = String(value || '').trim()
-  if (!raw) return 0
-
-  let normalized = raw
-  if (/^\d{4}-\d{2}-\d{2}$/.test(raw)) {
-    normalized = `${raw}T12:00:00.000Z`
-  } else if (/^\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}/.test(raw)) {
-    const withDateSeparator = raw.replace(/\s+/, 'T')
-    const withNormalizedOffset = withDateSeparator
-      .replace(/([+-]\d{2})(\d{2})$/, '$1:$2')
-      .replace(/([+-]\d{2})$/, '$1:00')
-    normalized = /[zZ]$|[+-]\d{2}:\d{2}$/.test(withNormalizedOffset)
-      ? withNormalizedOffset
-      : `${withNormalizedOffset}Z`
-  }
-
-  const timestamp = Date.parse(normalized)
-  return Number.isFinite(timestamp) ? timestamp : 0
-}
 const getTransactionDateSortValue = (transaction: Transaction) => (
-  parseTransactionSortTimestamp(transaction.date)
-  || parseTransactionSortTimestamp(transaction.paidAt)
-  || parseTransactionSortTimestamp(transaction.createdAt)
+  parseSortableDateValue(transaction.date)
+  || parseSortableDateValue(transaction.paidAt)
+  || parseSortableDateValue(transaction.createdAt)
 )
 const isStripePaymentPlan = (plan: PaymentPlan) => plan.source === 'stripe' || plan.raw?.provider === 'stripe'
 const isConektaPaymentPlan = (plan: PaymentPlan) => plan.source === 'conekta' || plan.raw?.provider === 'conekta' || plan.raw?.schedule?.provider === 'conekta'

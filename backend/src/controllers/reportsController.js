@@ -16,6 +16,7 @@ import {
   normalizeManualBusinessExpenseRow
 } from '../services/manualBusinessExpensesService.js'
 import { nonTestPaymentCondition } from '../utils/paymentMode.js'
+import { timestampSortExpression } from '../utils/sqlTimestampSort.js'
 // (ACL-002) Excluir contactos ocultos en la lista de transacciones de reportes (LEFT JOIN expone PII).
 import { getHiddenContactFilters, buildHiddenContactsCondition } from '../utils/hiddenContactsFilter.js'
 
@@ -375,6 +376,8 @@ export const getTransactionsList = async (req, res) => {
 
     const countResult = await db.get(`SELECT COUNT(*) as total FROM payments p LEFT JOIN contacts c ON c.id = p.contact_id ${whereClause}`, params)
     const total = Number(countResult?.total || 0)
+    const paymentDateSort = timestampSortExpression('p.date')
+    const paymentCreatedSort = timestampSortExpression('p.created_at')
 
     const query = `
       SELECT
@@ -391,7 +394,7 @@ export const getTransactionsList = async (req, res) => {
       FROM payments p
       LEFT JOIN contacts c ON c.id = p.contact_id
       ${whereClause}
-      ORDER BY p.date DESC, p.created_at DESC, p.id DESC
+      ORDER BY ${paymentDateSort} DESC, ${paymentCreatedSort} DESC, p.id DESC
       LIMIT ? OFFSET ?
     `
 

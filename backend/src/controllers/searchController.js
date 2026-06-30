@@ -7,6 +7,7 @@ import {
   textFoldExpression
 } from '../utils/searchText.js'
 import { DEFAULT_TIMEZONE, getAccountTimezone, normalizeDateOnlyInTimezone } from '../utils/dateUtils.js'
+import { timestampSortExpression } from '../utils/sqlTimestampSort.js'
 // (ACL-002) Excluir contactos ocultos también en la búsqueda global.
 import { getHiddenContactFilters, buildHiddenContactsCondition } from '../utils/hiddenContactsFilter.js'
 
@@ -103,6 +104,10 @@ export const globalSearch = async (req, res) => {
     const hiddenContactCondition = buildHiddenContactsCondition(hiddenFilters, 'c', false)
     const hiddenAnd = hiddenContactCondition ? ` AND ${hiddenContactCondition}` : ''
     const hiddenOrExclude = hiddenContactCondition ? ` AND ${hiddenContactCondition}` : ''
+    const contactCreatedSort = timestampSortExpression('c.created_at')
+    const appointmentStartSort = timestampSortExpression('a.start_time')
+    const paymentDateSort = timestampSortExpression('p.date')
+    const paymentCreatedSort = timestampSortExpression('p.created_at')
 
     const [
       contacts,
@@ -132,7 +137,7 @@ export const globalSearch = async (req, res) => {
           ) AS has_appointments
         FROM contacts c
         WHERE ${contactSearchClause.condition} AND c.deleted_at IS NULL${hiddenAnd}
-        ORDER BY ${contactSearchRank.expression} DESC, c.created_at DESC
+        ORDER BY ${contactSearchRank.expression} DESC, ${contactCreatedSort} DESC, c.id DESC
         LIMIT ?`,
         [...contactSearchClause.params, ...contactSearchRank.params, CATEGORY_LIMIT]
       )),
@@ -159,7 +164,7 @@ export const globalSearch = async (req, res) => {
           ${textFoldExpression('a.appointment_status')} LIKE ? OR
           ${basicContactSearchClause.condition} OR
           CAST(a.start_time AS TEXT) LIKE ?)${hiddenOrExclude}
-        ORDER BY a.start_time DESC
+        ORDER BY ${appointmentStartSort} DESC, a.id DESC
         LIMIT ?`,
         [foldedLike, foldedLike, foldedLike, ...basicContactSearchClause.params, like, CATEGORY_LIMIT]
       )),
@@ -189,7 +194,7 @@ export const globalSearch = async (req, res) => {
           ${textFoldExpression('p.description')} LIKE ? OR
           CAST(p.amount AS TEXT) LIKE ? OR
           CAST(p.date AS TEXT) LIKE ?)${hiddenOrExclude}
-        ORDER BY p.date DESC, p.created_at DESC, p.id DESC
+        ORDER BY ${paymentDateSort} DESC, ${paymentCreatedSort} DESC, p.id DESC
         LIMIT ?`,
         [...basicContactSearchClause.params, foldedLike, foldedLike, foldedLike, foldedLike, like, like, CATEGORY_LIMIT]
       )),

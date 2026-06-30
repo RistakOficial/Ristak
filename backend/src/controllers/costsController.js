@@ -1,5 +1,6 @@
 import { db } from '../config/database.js'
 import { logger } from '../utils/logger.js'
+import { timestampSortExpression } from '../utils/sqlTimestampSort.js'
 import { randomBytes } from 'crypto'
 
 /**
@@ -11,7 +12,7 @@ export async function getAllCosts(req, res) {
     const costs = await db.all(`
       SELECT * FROM costs
       WHERE is_active = 1
-      ORDER BY created_at DESC
+      ORDER BY ${timestampSortExpression('created_at')} DESC, id DESC
     `)
 
     res.json({

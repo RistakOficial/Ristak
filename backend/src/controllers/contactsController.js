@@ -17,6 +17,7 @@ import { getHiddenContactFilters, buildHiddenContactsCondition } from '../utils/
 import { recordAudit } from '../utils/auditLog.js'
 import { nonTestPaymentCondition } from '../utils/paymentMode.js'
 import { buildContactSearchClause, buildContactSearchRank } from '../utils/searchText.js'
+import { parseSortableTimestamp, timestampSortExpression } from '../utils/sqlTimestampSort.js'
 import { normalizeTrafficSource, normalizeWhatsAppAttributionPlatform } from '../utils/trafficSourceNormalizer.js'
 import { loadFirstWhatsAppAttributions, buildContactAttributionFields } from '../services/contactSourceService.js'
 import { findWhatsAppProfilePictureUrl, getWhatsAppApiStatus, warmWhatsAppApiProfilePictures } from '../services/whatsappApiService.js'
@@ -2352,21 +2353,22 @@ export const getContacts = async (req, res) => {
     const mainWhereClause = mainConditions.length > 0 ? `WHERE ${mainConditions.join(' AND ')}` : ''
 
     // Obtener los contactos
-    const sortableColumns = new Set([
-      'created_at',
-      'full_name',
-      'email',
-      'phone',
-      'total_paid',
-      'purchases_count'
-    ])
-    const safeSortBy = sortableColumns.has(sortBy) ? sortBy : 'created_at'
+    const createdAtSortExpression = timestampSortExpression('c.created_at')
+    const sortableMap = {
+      created_at: createdAtSortExpression,
+      full_name: 'c.full_name',
+      email: 'c.email',
+      phone: 'c.phone',
+      total_paid: 'COALESCE(ps.total_paid, 0)',
+      purchases_count: 'COALESCE(ps.purchases_count, 0)'
+    }
+    const safeSortBy = sortableMap[sortBy] || createdAtSortExpression
     const orderDirection = String(sortOrder).toUpperCase() === 'ASC' ? 'ASC' : 'DESC'
 
     const searchRank = search ? buildContactSearchRank('c', search) : null
     const orderBy = searchRank
-      ? `${searchRank.expression} DESC, ${safeSortBy} ${orderDirection}`
-      : `${safeSortBy} ${orderDirection}`
+      ? `${searchRank.expression} DESC, ${safeSortBy} ${orderDirection}, c.id ${orderDirection}`
+      : `${safeSortBy} ${orderDirection}, c.id ${orderDirection}`
 
     const contactsQuery = `
       WITH payment_stats AS (
@@ -2755,11 +2757,13 @@ ${CONTACT_META_PROFILE_SELECT},
     }
 
     // Obtener pagos del contacto
+    const paymentDateSort = timestampSortExpression('date')
+    const paymentCreatedSort = timestampSortExpression('created_at')
     const payments = await db.all(
       `SELECT * FROM payments
        WHERE contact_id = ?
        AND LOWER(COALESCE(status, '')) != 'deleted'
-       ORDER BY date DESC, created_at DESC, id DESC`,
+       ORDER BY ${paymentDateSort} DESC, ${paymentCreatedSort} DESC, id DESC`,
       [id]
     )
 
@@ -2768,10 +2772,11 @@ ${CONTACT_META_PROFILE_SELECT},
     // 2. Si hay configuración de HighLevel, hacemos fallback a API en tiempo real
     // 3. Las citas nuevas de la API se guardan en DB para cache futuro
     // Esto garantiza mejor performance y resiliencia (funciona offline)
+    const appointmentStartSort = timestampSortExpression('start_time')
     let appointments = await db.all(
       `SELECT * FROM appointments
        WHERE contact_id = ?
-       ORDER BY start_time DESC`,
+       ORDER BY ${appointmentStartSort} DESC, id DESC`,
       [id]
     )
 
@@ -2897,7 +2902,7 @@ ${CONTACT_META_PROFILE_SELECT},
         `SELECT *
          FROM appointments
          WHERE contact_id IN (${placeholders})
-         ORDER BY start_time DESC`,
+         ORDER BY ${appointmentStartSort} DESC, id DESC`,
         relatedContactIds
       )
       appointments = appointments.concat(relatedAppointments)
@@ -2905,7 +2910,7 @@ ${CONTACT_META_PROFILE_SELECT},
 
     const dedupedAppointments = dedupeAppointments(appointments)
     const sortedAppointmentsAsc = [...dedupedAppointments].sort((a, b) =>
-      new Date(a.start_time).getTime() - new Date(b.start_time).getTime()
+      parseSortableTimestamp(a.start_time) - parseSortableTimestamp(b.start_time)
     )
 
     // Calcular primera cita y próxima cita
@@ -2932,7 +2937,7 @@ ${CONTACT_META_PROFILE_SELECT},
     }
 
     const appointmentsOrdered = dedupedAppointments.sort((a, b) =>
-      new Date(b.start_time).getTime() - new Date(a.start_time).getTime()
+      parseSortableTimestamp(b.start_time) - parseSortableTimestamp(a.start_time)
     )
     const hasShowedAppointment =
       Boolean(contact.has_showed_appointment) ||
@@ -3161,7 +3166,7 @@ ${CONTACT_META_PROFILE_SELECT},
       FROM contacts c
       LEFT JOIN payment_stats ps ON ps.contact_id = c.id
       WHERE ${searchClause.condition} AND c.deleted_at IS NULL${hiddenCondition ? ` AND ${hiddenCondition}` : ''}
-      ORDER BY ${searchRank.expression} DESC, c.created_at DESC
+      ORDER BY ${searchRank.expression} DESC, ${timestampSortExpression('c.created_at')} DESC, c.id DESC
       LIMIT 20`,
       [...searchClause.params, ...searchRank.params]
     )
@@ -4628,7 +4633,7 @@ export const getContactJourney = async (req, res) => {
          SELECT *
          FROM whatsapp_attribution
          WHERE contact_id = ?
-         ORDER BY created_at DESC, id DESC
+         ORDER BY ${timestampSortExpression('created_at')} DESC, id DESC
          ${optionalLimitClause(journeyMessageLimit)}
        ) recent_whatsapp_attribution
        ORDER BY created_at ASC, id ASC`,

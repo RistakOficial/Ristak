@@ -17,6 +17,7 @@ import { createConektaPaymentLink, createConektaPaymentPlan, getConektaPaymentCo
 import { recordAttendanceAttributionSignal } from './appointmentsMerge.js'
 import { triggerWhatsappAppointmentBookedEvent } from './metaWhatsappEventsService.js'
 import { PAYMENT_MODE_LIVE, PAYMENT_MODE_TEST, normalizePaymentMode, nonTestPaymentCondition } from '../utils/paymentMode.js'
+import { coalescedTimestampSortExpression, timestampSortExpression } from '../utils/sqlTimestampSort.js'
 import { logger } from '../utils/logger.js'
 import { DEFAULT_OPENAI_MODEL, LEGACY_DEFAULT_OPENAI_MODEL } from '../config/openAIModels.js'
 import {
@@ -15838,7 +15839,7 @@ async function getContactClarificationOptions(runtimeContext) {
       COALESCE(c.total_paid, 0) AS total_paid
     FROM contacts c
     WHERE ${where.join(' AND ')}
-    ORDER BY c.created_at DESC
+    ORDER BY ${timestampSortExpression('c.created_at')} DESC, c.id DESC
     LIMIT ${CLARIFICATION_OPTION_LIMIT}
   `)
 
@@ -15866,7 +15867,7 @@ async function getAppointmentClarificationOptions(runtimeContext) {
     FROM appointments a
     LEFT JOIN contacts c ON c.id = a.contact_id
     WHERE COALESCE(a.start_time, a.date_added) IS NOT NULL
-    ORDER BY COALESCE(a.start_time, a.date_added) DESC
+    ORDER BY ${coalescedTimestampSortExpression('a.start_time', 'a.date_added')} DESC, a.id DESC
     LIMIT ${CLARIFICATION_OPTION_LIMIT}
   `)
 
@@ -15893,7 +15894,7 @@ async function getPaymentClarificationOptions(runtimeContext) {
     FROM payments p
     LEFT JOIN contacts c ON c.id = p.contact_id
     WHERE COALESCE(p.date, p.created_at) IS NOT NULL
-    ORDER BY COALESCE(p.date, p.created_at) DESC
+    ORDER BY ${coalescedTimestampSortExpression('p.date', 'p.created_at')} DESC, p.id DESC
     LIMIT ${CLARIFICATION_OPTION_LIMIT}
   `)
 
@@ -17837,7 +17838,7 @@ async function buildDatabaseContext() {
       c.email
     FROM payments p
     LEFT JOIN contacts c ON c.id = p.contact_id
-    ORDER BY COALESCE(p.date, p.created_at) DESC
+    ORDER BY ${coalescedTimestampSortExpression('p.date', 'p.created_at')} DESC, p.id DESC
     LIMIT 8
   `)
 
