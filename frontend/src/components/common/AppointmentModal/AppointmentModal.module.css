@@ -593,13 +593,13 @@
   font-weight: 500;
 }
 
-/* Cajas sin contorno, como las del Registrar pago: solo el relleno oscuro
-   sobre la superficie las define. */
+/* Campos con contorno claro (rectángulo redondeado), igual que el resto de los
+   formularios del app móvil. */
 .mobileSheetContainer .input,
 .mobileSheetContainer .select,
 .mobileSheetContainer .textarea {
   min-height: 44px;
-  border-color: transparent;
+  border-color: var(--phone-field-border, var(--appointment-mobile-border));
   border-radius: 12px;
   color: var(--appointment-mobile-text);
   background: var(--appointment-mobile-panel);
@@ -610,7 +610,7 @@
 
 .mobileSheetContainer :global([data-ristak-dropdown-trigger]) {
   min-height: 44px;
-  border-color: transparent !important;
+  border-color: var(--phone-field-border, var(--appointment-mobile-border)) !important;
   border-radius: 12px !important;
   color: var(--appointment-mobile-text) !important;
   background: var(--appointment-mobile-panel) !important;
@@ -702,7 +702,7 @@
   border-radius: 12px;
   color: var(--appointment-mobile-text);
   background: var(--appointment-mobile-panel);
-  border-color: transparent;
+  border-color: var(--phone-field-border, var(--appointment-mobile-border));
   font-size: 16px;
   font-weight: 500;
 }

@@ -2254,7 +2254,7 @@ body.dark .tooltipInfo {
   --record-payment-embedded-tablist-border: color-mix(in srgb, var(--record-payment-embedded-text) 24%, var(--record-payment-embedded-border) 76%);
   --record-payment-embedded-tab-active-bg: color-mix(in srgb, var(--record-payment-embedded-text) 18%, var(--record-payment-embedded-bg) 82%);
   --record-payment-embedded-top-padding: calc(env(safe-area-inset-top, 0px) + 72px);
-  --record-payment-control-border: color-mix(in srgb, var(--record-payment-embedded-text) 14%, var(--record-payment-embedded-border) 86%);
+  --record-payment-control-border: var(--phone-field-border, color-mix(in srgb, var(--record-payment-embedded-text) 14%, var(--record-payment-embedded-border) 86%));
   --color-background: var(--record-payment-embedded-bg);
   --color-surface: var(--record-payment-embedded-panel);
   --color-text-primary: var(--record-payment-embedded-text);

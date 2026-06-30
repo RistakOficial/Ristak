@@ -7,7 +7,7 @@
   --phone-payment-form-border: var(--phone-chat-border, var(--border));
   --phone-payment-form-accent: var(--phone-chat-accent, var(--accent));
   --phone-payment-form-on-accent: var(--phone-chat-text-on-primary, var(--on-accent));
-  --phone-payment-form-control-border: color-mix(in srgb, var(--phone-payment-form-text) 14%, var(--phone-payment-form-border) 86%);
+  --phone-payment-form-control-border: var(--phone-field-border, color-mix(in srgb, var(--phone-payment-form-text) 14%, var(--phone-payment-form-border) 86%));
   --phone-payment-form-tablist-bg: color-mix(in srgb, var(--phone-payment-form-text) 9%, var(--phone-payment-form-bg) 91%);
   --phone-payment-form-tablist-border: color-mix(in srgb, var(--phone-payment-form-text) 24%, var(--phone-payment-form-border) 76%);
   --phone-payment-form-tab-active-bg: color-mix(in srgb, var(--phone-payment-form-text) 18%, var(--phone-payment-form-bg) 82%);
