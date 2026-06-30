@@ -810,6 +810,107 @@
   background: var(--accent-soft);
 }
 
+/* ===== Plan de pagos unificado (solo escritorio) ===== */
+.planList {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.planListHead {
+  display: grid;
+  grid-template-columns: 30px minmax(0, 1fr) 150px 32px;
+  gap: 10px;
+  align-items: center;
+  padding: 0 2px 2px;
+}
+
+.planListHead span {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--color-text-tertiary);
+  white-space: nowrap;
+}
+
+.planRow {
+  display: grid;
+  grid-template-columns: 30px minmax(0, 1fr) 150px 32px;
+  gap: 8px 10px;
+  align-items: start;
+}
+
+.planSeq {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 40px;
+  border-radius: 8px;
+  background: rgba(var(--color-primary-rgb), 0.1);
+  color: var(--color-primary);
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.planValueCell {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.planAmountHint {
+  padding-left: 2px;
+  font-size: 11px;
+  color: var(--color-text-tertiary);
+}
+
+.planDateCell {
+  min-width: 0;
+}
+
+.planDeleteCell {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 40px;
+}
+
+.planFirstMethod {
+  grid-column: 2 / -1;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 2px;
+}
+
+.planFirstMethodLabel {
+  flex: 0 0 auto;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text-dim);
+}
+
+.planFirstMethodControl {
+  flex: 0 1 240px;
+  min-width: 0;
+}
+
+/* Alturas parejas: input, fecha, # y borrar comparten 40px para que la fila quede a ras. */
+.planValueCell .input,
+.planDateCell .phoneDateButton {
+  height: 40px;
+  min-height: 40px;
+}
+
+.planDeleteCell .iconButton {
+  width: 32px;
+  height: 32px;
+  box-sizing: border-box;
+}
+
 @container (max-width: 430px) {
   .installmentHead {
     display: none;
