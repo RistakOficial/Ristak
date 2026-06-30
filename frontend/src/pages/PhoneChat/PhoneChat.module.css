@@ -1284,7 +1284,7 @@
 }
 
 .avatarChannelBadge .avatarChannelBadgeWhatsappIcon .whatsappLogoDisc {
-  fill: #25d366;
+  fill: transparent;
 }
 
 .avatarChannelBadge .avatarChannelBadgeWhatsappIcon .whatsappLogoMark {
