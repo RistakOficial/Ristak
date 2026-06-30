@@ -13,7 +13,7 @@ import { getGHLClient } from './ghlClient.js'
 import { ensureContactExists } from './highlevelSyncService.js'
 import { logger } from '../utils/logger.js'
 import { getInvoicePaymentMode, nonTestPaymentCondition } from '../utils/paymentMode.js'
-import { sanitizeContactName } from '../utils/phoneUtils.js'
+import { buildPhoneMatchCandidates, sanitizeContactName } from '../utils/phoneUtils.js'
 import { markPaymentFlowInvoicePaid } from './paymentFlowService.js'
 import {
   finalizePreparedPhoneUpsert,
@@ -150,6 +150,74 @@ function localExportPrefixParams() {
   return LOCAL_EXPORT_ID_PREFIXES.map(prefix => `${prefix}%`)
 }
 
+async function getEquivalentContactIdsForPayment(payment = {}) {
+  const contactIds = new Set()
+  const addContactId = (value) => {
+    const id = cleanString(value)
+    if (id) contactIds.add(id)
+  }
+
+  const localContactId = cleanString(payment.contact_local_id || payment.contact_id)
+  const explicitGhlContactId = cleanString(payment.contact_ghl_id || payment.ghl_contact_id)
+  addContactId(localContactId)
+  addContactId(explicitGhlContactId)
+
+  let contactRow = null
+  if (localContactId) {
+    contactRow = await db.get(
+      'SELECT id, ghl_contact_id, email, phone FROM contacts WHERE id = ? LIMIT 1',
+      [localContactId]
+    ).catch(() => null)
+  }
+
+  const email = cleanString(payment.contact_email || contactRow?.email).toLowerCase()
+  const phoneCandidates = buildPhoneMatchCandidates(payment.contact_phone || contactRow?.phone)
+  const linkedGhlContactId = cleanString(explicitGhlContactId || contactRow?.ghl_contact_id)
+  addContactId(contactRow?.id)
+  addContactId(linkedGhlContactId)
+
+  const filters = []
+  const params = []
+
+  if (localContactId) {
+    filters.push('contacts.id = ?')
+    params.push(localContactId)
+  }
+
+  if (linkedGhlContactId) {
+    filters.push('(contacts.id = ? OR contacts.ghl_contact_id = ?)')
+    params.push(linkedGhlContactId, linkedGhlContactId)
+  }
+
+  if (email) {
+    filters.push("LOWER(COALESCE(contacts.email, '')) = ?")
+    params.push(email)
+  }
+
+  if (phoneCandidates.length) {
+    const phonePlaceholders = phoneCandidates.map(() => '?').join(', ')
+    filters.push(`(contacts.phone IN (${phonePlaceholders}) OR cpn.phone IN (${phonePlaceholders}))`)
+    params.push(...phoneCandidates, ...phoneCandidates)
+  }
+
+  if (!filters.length) return [...contactIds]
+
+  const rows = await db.all(
+    `SELECT DISTINCT contacts.id, contacts.ghl_contact_id
+     FROM contacts
+     LEFT JOIN contact_phone_numbers cpn ON cpn.contact_id = contacts.id
+     WHERE ${filters.join(' OR ')}`,
+    params
+  ).catch(() => [])
+
+  for (const row of rows) {
+    addContactId(row.id)
+    addContactId(row.ghl_contact_id)
+  }
+
+  return [...contactIds]
+}
+
 function preserveLocalPaymentProviderSql() {
   const prefix = `${LOCAL_EXPORT_ID_PREFIXES[0]}%`
   return `CASE
@@ -277,6 +345,7 @@ async function getLocalPaymentsPendingHighLevel({ paymentId, limit = 100 } = {})
     `SELECT
        p.*,
        c.id as contact_local_id,
+       c.ghl_contact_id as contact_ghl_id,
        c.full_name as contact_name,
        c.first_name,
        c.last_name,
@@ -475,24 +544,31 @@ function buildInvoicePayloadForLocalPayment({ payment, contactId, context }) {
   }
 }
 
-async function findUnlinkedLocalPaymentForInvoice({ contactId, amount, invoiceNumber, reference, title, description } = {}) {
+async function findUnlinkedLocalPaymentForInvoice({ contactId, ghlContactId, amount, invoiceNumber, reference, title, description } = {}) {
   if (!contactId || !(Number(amount) > 0)) return null
 
   const identityTexts = buildPaymentIdentityTexts({ invoiceNumber, reference, title, description })
   if (!identityTexts.length) return null
 
+  const contactCandidates = await getEquivalentContactIdsForPayment({
+    contact_id: contactId,
+    contact_ghl_id: ghlContactId
+  })
+  if (!contactCandidates.length) return null
+  const contactPlaceholders = contactCandidates.map(() => '?').join(', ')
+
   const rows = await db.all(
     `SELECT id, contact_id, status, payment_method, payment_mode, payment_provider,
             reference, title, description, ghl_invoice_id, invoice_number
      FROM payments
-     WHERE contact_id = ?
+     WHERE contact_id IN (${contactPlaceholders})
        AND (ghl_invoice_id IS NULL OR ghl_invoice_id = '')
        AND COALESCE(payment_provider, 'manual') = 'manual'
        AND ${localExportPrefixWhere('id')}
        AND ABS(COALESCE(amount, 0) - ?) < 0.005
      ORDER BY created_at DESC
      LIMIT 25`,
-    [contactId, ...localExportPrefixParams(), Number(amount)]
+    [...contactCandidates, ...localExportPrefixParams(), Number(amount)]
   )
 
   return rows.find(row => {
@@ -513,18 +589,22 @@ async function findHighLevelMirrorForLocalPayment(payment = {}) {
   })
   if (!identityTexts.length) return null
 
+  const contactCandidates = await getEquivalentContactIdsForPayment(payment)
+  if (!contactCandidates.length) return null
+  const contactPlaceholders = contactCandidates.map(() => '?').join(', ')
+
   const rows = await db.all(
     `SELECT id, contact_id, amount, status, payment_method, payment_mode, payment_provider,
             reference, title, description, ghl_invoice_id, invoice_number
      FROM payments
      WHERE id != ?
-       AND contact_id = ?
+       AND contact_id IN (${contactPlaceholders})
        AND COALESCE(ghl_invoice_id, '') != ''
        AND COALESCE(payment_provider, 'highlevel') != 'stripe'
        AND ABS(COALESCE(amount, 0) - ?) < 0.005
      ORDER BY created_at DESC
      LIMIT 25`,
-    [payment.id, contactId, Number(payment.amount)]
+    [payment.id, ...contactCandidates, Number(payment.amount)]
   )
 
   return rows.find(row => {
@@ -710,6 +790,7 @@ async function ensureLocalContactForInvoice(ghlClient, contactId) {
 async function findExistingPaymentForInvoice({
   invoiceId,
   contactId,
+  ghlContactId = null,
   invoiceNumber,
   importedLocalPaymentId = null,
   amount,
@@ -740,6 +821,12 @@ async function findExistingPaymentForInvoice({
   if (!contactId) return null
 
   const normalizedInvoiceNumber = normalizeInvoiceNumber(invoiceNumber)
+  const contactCandidates = await getEquivalentContactIdsForPayment({
+    contact_id: contactId,
+    contact_ghl_id: ghlContactId
+  })
+  if (!contactCandidates.length) return null
+  const contactPlaceholders = contactCandidates.map(() => '?').join(', ')
 
   if (normalizedInvoiceNumber) {
     const referenceCandidates = buildInvoiceReferenceCandidates(normalizedInvoiceNumber)
@@ -749,14 +836,14 @@ async function findExistingPaymentForInvoice({
     const existingByReference = await db.get(
       `SELECT id, contact_id, status, payment_mode, payment_provider, ghl_invoice_id
        FROM payments
-       WHERE contact_id = ?
+       WHERE contact_id IN (${contactPlaceholders})
          AND (
            LOWER(COALESCE(invoice_number, '')) IN (${referencePlaceholders})
            OR LOWER(COALESCE(reference, '')) IN (${referencePlaceholders})
          )
        ORDER BY created_at DESC
        LIMIT 1`,
-      [contactId, ...normalizedCandidates, ...normalizedCandidates]
+      [...contactCandidates, ...normalizedCandidates, ...normalizedCandidates]
     )
 
     if (existingByReference) return existingByReference
@@ -764,6 +851,7 @@ async function findExistingPaymentForInvoice({
 
   return await findUnlinkedLocalPaymentForInvoice({
     contactId,
+    ghlContactId,
     amount,
     invoiceNumber,
     reference,
@@ -823,9 +911,10 @@ async function activatePaymentFlowFromPaidInvoice(invoiceId, invoiceData) {
  * @param {number} options.limit - Número de invoices a obtener (default: 100)
  * @param {number} options.offset - Offset para paginación (default: 0)
  * @param {string} options.contactId - Filtrar por contacto específico
+ * @param {boolean} options.exportLocal - Si true, exporta pagos locales pendientes a HighLevel después de importar
  * @returns {Promise<Object>} - Estadísticas de sincronización
  */
-export async function syncInvoices({ limit = 100, offset = 0, contactId } = {}) {
+export async function syncInvoices({ limit = 100, offset = 0, contactId, exportLocal = false } = {}) {
   try {
     logger.info(`Iniciando sincronización de invoices (limit: ${limit}, offset: ${offset})`)
 
@@ -882,6 +971,7 @@ export async function syncInvoices({ limit = 100, offset = 0, contactId } = {}) 
         const existing = await findExistingPaymentForInvoice({
           invoiceId: ghlInvoiceId,
           contactId: localContactId || contactId,
+          ghlContactId: contactId,
           invoiceNumber,
           importedLocalPaymentId,
           amount: invoiceAmount,
@@ -1025,7 +1115,7 @@ export async function syncInvoices({ limit = 100, offset = 0, contactId } = {}) 
       localExport: null
     }
 
-    if (!contactId && offset === 0) {
+    if (exportLocal && !contactId && offset === 0) {
       stats.localExport = await syncLocalPaymentsToHighLevel({ limit: 1000 })
       if (stats.localExport.exported > 0 || stats.localExport.linkedDuplicates > 0 || stats.localExport.failed > 0) {
         logger.info(`Exportación local posterior: ${stats.localExport.exported} pagos exportados, ${stats.localExport.linkedDuplicates} enlazados, ${stats.localExport.failed} fallidos`)
@@ -1048,9 +1138,10 @@ export async function syncInvoices({ limit = 100, offset = 0, contactId } = {}) 
  *
  * @param {Object} options - Opciones de sincronización
  * @param {string} options.contactId - Filtrar por contacto específico (opcional)
+ * @param {boolean} options.exportLocal - Si true, exporta pagos locales pendientes a HighLevel después de importar
  * @returns {Promise<Object>} - Estadísticas de sincronización completa
  */
-export async function syncAllInvoices({ contactId } = {}) {
+export async function syncAllInvoices({ contactId, exportLocal = false } = {}) {
   try {
     logger.info('🔄 Iniciando sincronización COMPLETA de invoices desde HighLevel...')
 
@@ -1119,6 +1210,7 @@ export async function syncAllInvoices({ contactId } = {}) {
         const existing = await findExistingPaymentForInvoice({
           invoiceId: ghlInvoiceId,
           contactId: localContactId || contactId,
+          ghlContactId: contactId,
           invoiceNumber,
           importedLocalPaymentId,
           amount: invoiceAmount,
@@ -1250,7 +1342,7 @@ export async function syncAllInvoices({ contactId } = {}) {
       localExport: null
     }
 
-    if (!contactId) {
+    if (exportLocal && !contactId) {
       stats.localExport = await syncLocalPaymentsToHighLevel({ limit: 1000 })
       if (stats.localExport.exported > 0 || stats.localExport.linkedDuplicates > 0 || stats.localExport.failed > 0) {
         logger.info(`Exportación local posterior: ${stats.localExport.exported} pagos exportados, ${stats.localExport.linkedDuplicates} enlazados, ${stats.localExport.failed} fallidos`)
@@ -1306,6 +1398,7 @@ export async function syncSingleInvoice(invoiceId) {
     const existing = await findExistingPaymentForInvoice({
       invoiceId: ghlInvoiceId,
       contactId: localContactId || contactId,
+      ghlContactId: contactId,
       invoiceNumber,
       importedLocalPaymentId,
       amount: invoiceAmount,

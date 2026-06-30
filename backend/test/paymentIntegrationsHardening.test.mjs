@@ -7,7 +7,7 @@ import { clearHighLevelMirrorDataForLocationChange } from '../src/controllers/hi
 import { recordPayment as recordTransactionPayment } from '../src/controllers/transactionsController.js'
 import GHLClient from '../src/services/ghlClient.js'
 import { handlePaymentWebhook } from '../src/controllers/webhooksController.js'
-import { __invoicesSyncTestHooks } from '../src/services/invoicesSyncService.js'
+import { __invoicesSyncTestHooks, syncAllInvoices, syncLocalPaymentsToHighLevel } from '../src/services/invoicesSyncService.js'
 import { createInstallmentPaymentFlow } from '../src/services/paymentFlowService.js'
 
 function createResponse() {
@@ -303,7 +303,7 @@ async function seedHighLevelMirror(ids, overrides = {}) {
     ) VALUES (?, ?, ?, 'MXN', ?, 'card', 'live', 'highlevel', ?, ?, ?, CURRENT_TIMESTAMP, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
     [
       overrides.id || ids.highLevelInvoiceId,
-      ids.contactId,
+      overrides.contactId || ids.contactId,
       overrides.amount ?? 500,
       overrides.status || 'paid',
       overrides.reference || 'Anticipo ortodoncia',
@@ -360,6 +360,101 @@ test('exportar manual a HighLevel liga un espejo existente y elimina la fila dup
     assert.equal(linkedManual.invoice_number, 'INV-9988')
     assert.equal(deletedMirror, null)
   } finally {
+    await cleanup(ids)
+  }
+})
+
+test('exportar manual a HighLevel liga espejo con contact_id legacy de GHL sin crear ni registrar otro pago', async () => {
+  const ids = idsFor('legacy_ghl_contact_link')
+  await cleanup(ids)
+  await seedContact(ids)
+  await seedManualPayment(ids)
+  await seedHighLevelMirror(ids, { contactId: ids.ghlContactId })
+
+  let createInvoiceCalls = 0
+  let recordPaymentCalls = 0
+
+  mock.method(GHLClient.prototype, 'createInvoice', async function createInvoice() {
+    createInvoiceCalls += 1
+    throw new Error('No debe crear invoice duplicada')
+  })
+  mock.method(GHLClient.prototype, 'recordPayment', async function recordPayment() {
+    recordPaymentCalls += 1
+    throw new Error('No debe registrar pago duplicado')
+  })
+
+  try {
+    await replaceHighLevelConfigForTest({
+      locationId: `pit_location_${ids.contactId}`,
+      invoiceMode: 'live'
+    }, async () => {
+      const result = await syncLocalPaymentsToHighLevel({ paymentId: ids.manualPaymentId, limit: 1 })
+
+      assert.equal(result.exported, 0)
+      assert.equal(result.linkedDuplicates, 1)
+      assert.equal(result.failed, 0)
+      assert.equal(createInvoiceCalls, 0)
+      assert.equal(recordPaymentCalls, 0)
+    })
+
+    const linkedManual = await db.get(
+      'SELECT contact_id, payment_provider, ghl_invoice_id, invoice_number FROM payments WHERE id = ?',
+      [ids.manualPaymentId]
+    )
+    const deletedMirror = await db.get('SELECT id FROM payments WHERE id = ?', [ids.highLevelInvoiceId])
+
+    assert.equal(linkedManual.contact_id, ids.contactId)
+    assert.equal(linkedManual.payment_provider, 'manual')
+    assert.equal(linkedManual.ghl_invoice_id, ids.highLevelInvoiceId)
+    assert.equal(linkedManual.invoice_number, 'INV-9988')
+    assert.equal(deletedMirror, null)
+  } finally {
+    mock.restoreAll()
+    await cleanup(ids)
+  }
+})
+
+test('sync de HighLevel no exporta pagos locales pendientes por defecto', async () => {
+  const ids = idsFor('sync_import_only')
+  await cleanup(ids)
+  await seedContact(ids)
+  await seedManualPayment(ids)
+
+  let createInvoiceCalls = 0
+  let recordPaymentCalls = 0
+
+  mock.method(GHLClient.prototype, 'listInvoices', async function listInvoices() {
+    return { invoices: [] }
+  })
+  mock.method(GHLClient.prototype, 'createInvoice', async function createInvoice() {
+    createInvoiceCalls += 1
+    throw new Error('La sync de importación no debe crear invoices')
+  })
+  mock.method(GHLClient.prototype, 'recordPayment', async function recordPayment() {
+    recordPaymentCalls += 1
+    throw new Error('La sync de importación no debe registrar pagos')
+  })
+
+  try {
+    await replaceHighLevelConfigForTest({
+      locationId: `pit_location_${ids.contactId}`,
+      invoiceMode: 'live'
+    }, async () => {
+      const result = await syncAllInvoices()
+
+      assert.equal(result.totalFetched, 0)
+      assert.equal(result.localExport, null)
+      assert.equal(createInvoiceCalls, 0)
+      assert.equal(recordPaymentCalls, 0)
+    })
+
+    const localPayment = await db.get(
+      'SELECT ghl_invoice_id FROM payments WHERE id = ?',
+      [ids.manualPaymentId]
+    )
+    assert.equal(localPayment.ghl_invoice_id, null)
+  } finally {
+    mock.restoreAll()
     await cleanup(ids)
   }
 })
