@@ -24,7 +24,7 @@ import { contactsService } from '@/services/contactsService'
 import { getPhoneDailyCacheKey, readPhoneDailyCache, writePhoneDailyCache } from '@/services/phoneDailyCache'
 import type { Contact } from '@/types'
 import { PHONE_APP_HOME_PATH, isLocalPhonePreviewHost } from '@/utils/phoneAccess'
-import { convertLocalToUTC } from '@/utils/timezone'
+import { convertLocalToUTC, dateOnlyToLocalDate, todayDateOnlyInTimezone } from '@/utils/timezone'
 import styles from './PhoneCalendar.module.css'
 
 const PORTABLE_WIDTH_QUERY = '(max-width: 1366px)'
@@ -338,14 +338,18 @@ export const PhoneCalendar: React.FC<PhoneCalendarProps> = ({ embedded = false, 
 
   const [accessState, setAccessState] = useState<AccessState>(() => embedded ? 'allowed' : getAccessState())
   usePhoneElasticScroll({ enabled: !embedded && accessState === 'allowed' })
+  const businessToday = useMemo(
+    () => dateOnlyToLocalDate(todayDateOnlyInTimezone(timezone)) || new Date(),
+    [timezone]
+  )
 
   const [calendars, setCalendars] = useState<Calendar[]>([])
   const [selectedCalendar, setSelectedCalendar] = useState<Calendar | null>(null)
   const [events, setEvents] = useState<CalendarEvent[]>([])
   const [loading, setLoading] = useState(true)
   const [cacheRefreshing, setCacheRefreshing] = useState(false)
-  const [currentDate, setCurrentDate] = useState(() => new Date())
-  const [selectedDate, setSelectedDate] = useState(() => new Date())
+  const [currentDate, setCurrentDate] = useState(() => businessToday)
+  const [selectedDate, setSelectedDate] = useState(() => businessToday)
   const [calendarView, setCalendarView] = useState<CalendarView>('month')
   const [sheetView, setSheetView] = useState<SheetView>(null)
   const [appointmentContactQuery, setAppointmentContactQuery] = useState('')
@@ -373,6 +377,7 @@ export const PhoneCalendar: React.FC<PhoneCalendarProps> = ({ embedded = false, 
   const monthSwipeSettleDirectionRef = useRef<MonthSwipeDirection>(0)
   const handledOpenAppointmentRef = useRef<string | null>(null)
   const calendarTouchStartRef = useRef<{ x: number; y: number } | null>(null)
+  const previousBusinessTodayRef = useRef(businessToday)
   // Para distinguir un swipe horizontal (cambiar de día) del arrastre vertical que selecciona hora
   const timelinePointerStartRef = useRef<{ x: number; y: number } | null>(null)
   const timelineSwipeAbortRef = useRef(false)
@@ -412,6 +417,13 @@ export const PhoneCalendar: React.FC<PhoneCalendarProps> = ({ embedded = false, 
       timelineSelectionRef.current = null
     }
   }, [clearTimelinePendingSelection])
+
+  useEffect(() => {
+    const previousBusinessToday = previousBusinessTodayRef.current
+    setCurrentDate((current) => isSameDay(current, previousBusinessToday) ? businessToday : current)
+    setSelectedDate((current) => isSameDay(current, previousBusinessToday) ? businessToday : current)
+    previousBusinessTodayRef.current = businessToday
+  }, [businessToday])
   const calendarNavStyle = useMemo<React.CSSProperties | undefined>(() => {
     if (!sheetView) return undefined
 

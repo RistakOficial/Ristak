@@ -13,7 +13,7 @@ import apiClient from '@/services/apiClient'
 import { getPhoneDailyCacheKey, readPhoneDailyCache, writePhoneDailyCache } from '@/services/phoneDailyCache'
 import { transactionsService, type Transaction } from '@/services/transactionsService'
 import { isLocalPhonePreviewHost } from '@/utils/phoneAccess'
-import { ensureUTC, isDateOnlyString, todayDateOnlyInTimezone } from '@/utils/timezone'
+import { addDateOnlyDays, ensureUTC, isDateOnlyString, todayDateOnlyInTimezone } from '@/utils/timezone'
 import styles from './PhonePayments.module.css'
 
 const PORTABLE_WIDTH_QUERY = '(max-width: 1366px)'
@@ -91,12 +91,6 @@ function getAccessState(): AccessState {
 function getInitialView(mode: string | null): PaymentView {
   if (mode === 'single' || mode === 'partial' || mode === 'subscription' || mode === 'products') return mode
   return 'select'
-}
-
-const addDateOnlyDays = (dateOnly: string, days: number): string => {
-  const [year, month, day] = dateOnly.split('-').map(Number)
-  if (!year || !month || !day) return dateOnly
-  return new Date(Date.UTC(year, month - 1, day + days)).toISOString().slice(0, 10)
 }
 
 function getRecentPaymentRange(period: RecentPaymentsPeriod, timezone: string) {

@@ -20,6 +20,7 @@ import type { Column } from '@/components/common'
 import { useDateRange } from '@/contexts/DateRangeContext'
 import { useNotification } from '@/contexts/NotificationContext'
 import { useLabels } from '@/contexts/LabelsContext'
+import { useTimezone } from '@/contexts/TimezoneContext'
 import {
   reportsService,
   type ReportsSummary,
@@ -30,6 +31,7 @@ import {
 } from '@/services/reportsService'
 import { costsService, type Cost } from '@/services/costsService'
 import { formatCurrency, formatNumber, formatDate, formatDateToISO, parseLocalDateString } from '@/utils/format'
+import { dateOnlyToLocalDate, todayDateOnlyInTimezone } from '@/utils/timezone'
 import { useAppConfig, useChartHover, useMetaTimezone, useTableConfig, useUrlDateRangeSync } from '@/hooks'
 import { readNumberParam, setSearchParam } from '@/utils/urlState'
 import { DEFAULT_BAR_RADIUS, getTopRoundedBarPath } from '@/components/common/chartShapes'
@@ -364,10 +366,9 @@ const monthRangeOptions = [
   { value: 'custom', label: 'Rango personalizado' }
 ]
 
-const now = new Date()
-const currentYear = now.getFullYear()
 const allTimeStartYear = 2020
-const defaultYearRange = { start: currentYear - 2, end: currentYear }
+const getBusinessToday = (timezone: string) => dateOnlyToLocalDate(todayDateOnlyInTimezone(timezone)) || new Date()
+const getDefaultYearRange = (currentYear: number) => ({ start: currentYear - 2, end: currentYear })
 
 // Usar formatDateToISO en vez de toIsoDate para evitar problemas de zona horaria
 const toIsoDate = formatDateToISO
@@ -805,8 +806,12 @@ const computeRangeForView = (
   viewType: ViewType,
   baseRange: { start: Date; end: Date },
   monthPreset: ReportMonthPreset,
-  yearRange: { start: number; end: number }
+  yearRange: { start: number; end: number },
+  businessToday: Date
 ) => {
+  const currentYear = businessToday.getFullYear()
+  const currentMonth = businessToday.getMonth()
+
   if (viewType === 'day') {
     return {
       from: toIsoDate(baseRange.start),
@@ -817,13 +822,13 @@ const computeRangeForView = (
   if (viewType === 'month') {
     if (monthPreset === 'thisYear') {
       const start = startOfYear(currentYear)
-      const end = endOfMonth(currentYear, now.getMonth())
+      const end = endOfMonth(currentYear, currentMonth)
       return { from: toIsoDate(start), to: toIsoDate(end) }
     }
 
     if (monthPreset === 'all') {
       const start = allTimeStart()
-      const end = endOfMonth(currentYear, now.getMonth())
+      const end = endOfMonth(currentYear, currentMonth)
       return { from: toIsoDate(start), to: toIsoDate(end) }
     }
 
@@ -833,8 +838,8 @@ const computeRangeForView = (
       return { from: toIsoDate(start), to: toIsoDate(end) }
     }
 
-    const end = endOfMonth(now.getFullYear(), now.getMonth())
-    const start = startOfMonth(now.getFullYear(), now.getMonth() - 11)
+    const end = endOfMonth(currentYear, currentMonth)
+    const start = startOfMonth(currentYear, currentMonth - 11)
     return { from: toIsoDate(start), to: toIsoDate(end) }
   }
 
@@ -1787,6 +1792,12 @@ export const Reports: React.FC = () => {
   const { dateRange, setDateRange } = useDateRange()
   const { showToast } = useNotification()
   const { labels } = useLabels()
+  const { timezone } = useTimezone()
+  const businessToday = useMemo(() => getBusinessToday(timezone), [timezone])
+  const defaultYearRange = useMemo(
+    () => getDefaultYearRange(businessToday.getFullYear()),
+    [businessToday]
+  )
   const routeState = useMemo(() => parseReportsPath(location.pathname), [location.pathname])
   const routeMonthPreset = useMemo<ReportMonthPreset>(
     () => isReportMonthPreset(searchParams.get('preset')) ? searchParams.get('preset') as ReportMonthPreset : 'last12',
@@ -1799,7 +1810,7 @@ export const Reports: React.FC = () => {
     }
 
     return nextRange.start <= nextRange.end ? nextRange : defaultYearRange
-  }, [searchParams])
+  }, [defaultYearRange, searchParams])
 
   // Detectar discrepancia de timezone con Meta
   const timezoneInfo = useMetaTimezone()
@@ -1928,7 +1939,8 @@ export const Reports: React.FC = () => {
     viewType,
     baseRange,
     monthPreset,
-    yearRange
+    yearRange,
+    businessToday
   )
   const canShowYearView = shouldShowYearView(monthPreset, baseRange, viewType, dateRange.preset, yearRange)
   const availableViewTabs = useMemo(

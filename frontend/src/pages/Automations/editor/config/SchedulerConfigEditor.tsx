@@ -1,6 +1,8 @@
 import React, { useEffect, useMemo, useState } from 'react'
 import { CalendarDays, ChevronLeft, ChevronRight, Repeat, Timer } from 'lucide-react'
+import { useTimezone } from '@/contexts/TimezoneContext'
 import { cn } from '@/utils/cn'
+import { dateOnlyToLocalDate, todayDateOnlyInTimezone } from '@/utils/timezone'
 import { CustomSelect, Field, TextInput, WeekdaysPicker } from './configPrimitives'
 import styles from '../AutomationEditor.module.css'
 
@@ -62,11 +64,15 @@ export const SchedulerConfigEditor: React.FC<{
   config: ConfigValue
   onChange: (config: ConfigValue) => void
 }> = ({ config, onChange }) => {
+  const { timezone } = useTimezone()
   const recurrence = str(config.recurrence) || 'none'
   const mode = str(config.scheduleMode) || (recurrence === 'none' ? 'once' : 'recurring')
   const { date, time } = splitDatetime(str(config.datetime))
   const selectedDate = dateFromKey(date)
-  const today = useMemo(() => new Date(), [])
+  const today = useMemo(
+    () => dateOnlyToLocalDate(todayDateOnlyInTimezone(timezone)) || new Date(),
+    [timezone]
+  )
   const [viewDate, setViewDate] = useState(() => selectedDate || today)
 
   useEffect(() => {

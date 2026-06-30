@@ -1362,7 +1362,10 @@ export function ContactDetailsModal({
   const activeAutomationItems = automationActivity?.active || []
   const pastAutomationItems = automationActivity?.past || []
   const automationActivityCount = activeAutomationItems.length + pastAutomationItems.length
-  const automationInputMin = useMemo(() => toDateTimeLocalInputValue(new Date()), [enrollModalOpen])
+  const automationInputMin = useMemo(
+    () => toZonedDateTimeLocalInputValue(new Date(), timezone),
+    [enrollModalOpen, timezone]
+  )
   const availableWhatsAppPhones = useMemo<ContactChatPhoneOption[]>(() => {
     const statusPhones = whatsappStatus?.phoneNumbers || []
     return statusPhones.length > 0 ? statusPhones : whatsappPhoneNumbers

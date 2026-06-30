@@ -225,14 +225,14 @@ const expandBlockedSlots = (
 const appointmentViews: ViewMode[] = ['month', 'week', 'day'];
 const isAppointmentView = (value?: string): value is ViewMode => appointmentViews.includes(value as ViewMode);
 
-const parseDateKey = (value?: string): Date => {
-  if (!value || !/^\d{4}-\d{2}-\d{2}$/.test(value)) return new Date();
+const parseDateKey = (value?: string, fallbackDate: Date = new Date()): Date => {
+  if (!value || !/^\d{4}-\d{2}-\d{2}$/.test(value)) return fallbackDate;
   const [year, month, day] = value.split('-').map(Number);
   const date = new Date(year, month - 1, day);
-  return Number.isNaN(date.getTime()) ? new Date() : date;
+  return Number.isNaN(date.getTime()) ? fallbackDate : date;
 };
 
-const getAppointmentRouteState = (pathname: string) => {
+const getAppointmentRouteState = (pathname: string, fallbackDate: Date = new Date()) => {
   const segments = pathname
     .replace(/^\/+|\/+$/g, '')
     .split('/')
@@ -244,7 +244,7 @@ const getAppointmentRouteState = (pathname: string) => {
   if (first === 'appointments' && routeSegments[1]) {
     return {
       viewMode: 'day' as ViewMode,
-      currentDate: new Date(),
+      currentDate: fallbackDate,
       calendarId: '',
       appointmentId: decodeURIComponent(routeSegments[1]),
       create: false
@@ -254,7 +254,7 @@ const getAppointmentRouteState = (pathname: string) => {
   if (first === 'new') {
     return {
       viewMode: 'day' as ViewMode,
-      currentDate: new Date(),
+      currentDate: fallbackDate,
       calendarId: '',
       appointmentId: '',
       create: true
@@ -262,7 +262,7 @@ const getAppointmentRouteState = (pathname: string) => {
   }
 
   const viewMode = isAppointmentView(first) ? first : 'month';
-  const currentDate = parseDateKey(routeSegments[1]);
+  const currentDate = parseDateKey(routeSegments[1], fallbackDate);
   const calendarIndex = routeSegments.indexOf('calendar');
 
   return {
@@ -282,6 +282,10 @@ export const Appointments: React.FC = () => {
   const { showToast } = useNotification();
   const { theme } = useTheme();
   const { formatLocalDateShort, timezone } = useTimezone();
+  const businessToday = useMemo(
+    () => toDateInTimeZone(new Date().toISOString(), timezone) ?? new Date(),
+    [timezone]
+  );
 
   // Formatea la hora de un evento (instante UTC) en 12h, en la zona de la cuenta.
   const formatEventTime = (value?: string | null): string => {
@@ -314,8 +318,8 @@ export const Appointments: React.FC = () => {
   const location = useLocation();
   const [searchParams, setSearchParams] = useSearchParams();
   const routeState = useMemo(
-    () => getAppointmentRouteState(location.pathname),
-    [location.pathname]
+    () => getAppointmentRouteState(location.pathname, businessToday),
+    [businessToday, location.pathname]
   );
 
   // Estado del calendario
@@ -856,7 +860,7 @@ export const Appointments: React.FC = () => {
   };
 
   const handleToday = () => {
-    const today = new Date();
+    const today = businessToday;
     setCurrentDate(today);
     navigateCalendarView({ date: today });
   };
@@ -1817,7 +1821,7 @@ export const Appointments: React.FC = () => {
               {/* Grid de días */}
               <div className={styles.monthGrid}>
                 {(() => {
-                  const todayString = new Date().toDateString();
+                  const todayString = businessToday.toDateString();
                   return monthCells.map((cell, index) => {
                     if (!cell) {
                       return (
@@ -1975,7 +1979,7 @@ export const Appointments: React.FC = () => {
                   return Array.from({ length: 7 }).map((_, i) => {
                     const date = new Date(startOfWeek);
                     date.setDate(startOfWeek.getDate() + i);
-                    const isToday = date.toDateString() === new Date().toDateString();
+                    const isToday = date.toDateString() === businessToday.toDateString();
 
                     return (
                       <div key={i} className={`${styles.weekDayHeader} ${isToday ? styles.weekDayHeaderToday : ''}`}>
@@ -2008,7 +2012,7 @@ export const Appointments: React.FC = () => {
                   return Array.from({ length: 7 }).map((_, dayIndex) => {
                     const columnDate = new Date(startOfWeek);
                     columnDate.setDate(startOfWeek.getDate() + dayIndex);
-                    const isToday = columnDate.toDateString() === new Date().toDateString();
+                    const isToday = columnDate.toDateString() === businessToday.toDateString();
                     const dayEvents = events.filter((event) => {
                       const eventDate = toDateInTimeZone(event.startTime, timezone) ?? new Date(event.startTime);
                       const eventColumnDate = toDateInTimeZone(columnDate.toISOString(), timezone) ?? columnDate;
@@ -2190,7 +2194,7 @@ export const Appointments: React.FC = () => {
                     </div>
                   </div>
                 </div>
-                {currentDate.toDateString() === new Date().toDateString() && (
+                {currentDate.toDateString() === businessToday.toDateString() && (
                   <span className={styles.dayHeaderChip}>Hoy</span>
                 )}
               </div>

@@ -38,6 +38,7 @@ import {
 import { trackingService, type TrackingSession } from '../../services/trackingService'
 import type { ContactListItem } from '../../services/reportsService'
 import { formatDateToISO, parseLocalDateString, formatUrlParameter, formatChartNumber } from '../../utils/format'
+import { dateOnlyToLocalDate, todayDateOnlyInTimezone } from '../../utils/timezone'
 import { normalizeTrafficSource } from '../../utils/trafficSourceNormalizer'
 import { readNumberParam, setSearchParam } from '../../utils/urlState'
 
@@ -86,10 +87,9 @@ const monthRangeOptions = [
   { value: 'custom', label: 'Rango personalizado' }
 ]
 
-const now = new Date()
-const currentYear = now.getFullYear()
 const allTimeStartYear = 2020
-const defaultYearRange = { start: currentYear - 2, end: currentYear }
+const getBusinessToday = (timezone: string) => dateOnlyToLocalDate(todayDateOnlyInTimezone(timezone)) || new Date()
+const getDefaultYearRange = (currentYear: number) => ({ start: currentYear - 2, end: currentYear })
 
 const startOfMonth = (year: number, monthIndex: number) => new Date(year, monthIndex, 1, 0, 0, 0)
 const endOfMonth = (year: number, monthIndex: number) => new Date(year, monthIndex + 1, 0, 23, 59, 59)
@@ -101,8 +101,12 @@ const computeRangeForView = (
   viewType: ViewType,
   baseRange: { start: Date; end: Date },
   monthPreset: MonthPreset,
-  yearRange: { start: number; end: number }
+  yearRange: { start: number; end: number },
+  businessToday: Date
 ) => {
+  const currentYear = businessToday.getFullYear()
+  const currentMonth = businessToday.getMonth()
+
   if (viewType === 'day') {
     return {
       from: formatDateToISO(baseRange.start),
@@ -113,13 +117,13 @@ const computeRangeForView = (
   if (viewType === 'month') {
     if (monthPreset === 'thisYear') {
       const start = startOfYear(currentYear)
-      const end = endOfMonth(currentYear, now.getMonth())
+      const end = endOfMonth(currentYear, currentMonth)
       return { from: formatDateToISO(start), to: formatDateToISO(end) }
     }
 
     if (monthPreset === 'all') {
       const start = allTimeStart()
-      const end = endOfMonth(currentYear, now.getMonth())
+      const end = endOfMonth(currentYear, currentMonth)
       return { from: formatDateToISO(start), to: formatDateToISO(end) }
     }
 
@@ -129,8 +133,8 @@ const computeRangeForView = (
       return { from: formatDateToISO(start), to: formatDateToISO(end) }
     }
 
-    const end = endOfMonth(now.getFullYear(), now.getMonth())
-    const start = startOfMonth(now.getFullYear(), now.getMonth() - 11)
+    const end = endOfMonth(currentYear, currentMonth)
+    const start = startOfMonth(currentYear, currentMonth - 11)
     return { from: formatDateToISO(start), to: formatDateToISO(end) }
   }
 
@@ -1153,6 +1157,13 @@ const Analytics: React.FC = () => {
     () => isAnalyticsMonthPreset(searchParams.get('preset')) ? searchParams.get('preset') as MonthPreset : 'last12',
     [searchParams]
   )
+  const { dateRange, setDateRange } = useDateRange()
+  const { convertToLocalTime, timezone } = useTimezone()
+  const businessToday = React.useMemo(() => getBusinessToday(timezone), [timezone])
+  const defaultYearRange = React.useMemo(
+    () => getDefaultYearRange(businessToday.getFullYear()),
+    [businessToday]
+  )
   const routeYearRange = React.useMemo(() => {
     const nextRange = {
       start: readNumberParam(searchParams, 'yearStart', defaultYearRange.start, { min: 2000, max: 2100 }),
@@ -1160,9 +1171,7 @@ const Analytics: React.FC = () => {
     }
 
     return nextRange.start <= nextRange.end ? nextRange : defaultYearRange
-  }, [searchParams])
-  const { dateRange, setDateRange } = useDateRange()
-  const { convertToLocalTime } = useTimezone()
+  }, [defaultYearRange, searchParams])
   const { labels: appLabels } = useLabels()
   const [loading, setLoading] = useState(false)
   const [hasLoadedAnalytics, setHasLoadedAnalytics] = useState(false)
@@ -1278,7 +1287,7 @@ const Analytics: React.FC = () => {
     end: dateRange.end instanceof Date ? dateRange.end : new Date(dateRange.end)
   }
 
-  const apiRange = computeRangeForView(viewType, baseRange, monthPreset, yearRange)
+  const apiRange = computeRangeForView(viewType, baseRange, monthPreset, yearRange, businessToday)
   const canShowYearView = shouldShowYearView(monthPreset, baseRange, viewType, dateRange.preset, yearRange)
   const availableViewTabs = React.useMemo(
     () => canShowYearView ? viewTabs : viewTabs.filter(tab => tab.value !== 'year'),

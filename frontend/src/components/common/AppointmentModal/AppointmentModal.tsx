@@ -15,7 +15,7 @@ import { apiUrl } from '@/services/apiBaseUrl';
 import { useNotification } from '@/contexts/NotificationContext';
 import { useTimezone } from '@/contexts/TimezoneContext';
 import { suppressContactAutofill } from '@/utils/browserAutofill';
-import { todayDateOnlyInTimezone } from '@/utils/timezone';
+import { addDateOnlyDays, todayDateOnlyInTimezone } from '@/utils/timezone';
 import styles from './AppointmentModal.module.css';
 import { Trash2, Search, Loader2, X, UserPlus } from 'lucide-react';
 
@@ -166,13 +166,6 @@ const INITIAL_FORM_STATE = {
   timeZone: '',
   contactId: '',
   assignedUserId: ''
-};
-
-const addDateOnlyDays = (dateOnly: string, days: number): string => {
-  const [year, month, day] = dateOnly.split('-').map(Number);
-  if (!year || !month || !day) return dateOnly;
-  const date = new Date(Date.UTC(year, month - 1, day + days));
-  return date.toISOString().slice(0, 10);
 };
 
 const getTimeZoneParts = (date: Date, timeZone: string) => {

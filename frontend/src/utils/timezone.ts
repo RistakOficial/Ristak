@@ -13,12 +13,14 @@
  */
 export const DEFAULT_TIMEZONE = 'America/Mexico_City'
 const DATE_ONLY_PATTERN = /^(\d{4})-(\d{2})-(\d{2})$/
+const WEEKDAY_CODES = ['su', 'mo', 'tu', 'we', 'th', 'fr', 'sa'] as const
+const MONTH_CODES = ['jan', 'feb', 'mar', 'apr', 'may', 'jun', 'jul', 'aug', 'sep', 'oct', 'nov', 'dec'] as const
 
 export function isDateOnlyString(value: unknown): value is string {
   return typeof value === 'string' && DATE_ONLY_PATTERN.test(value.trim())
 }
 
-function parseDateOnlyParts(value: string): { year: number; month: number; day: number } | null {
+export function parseDateOnlyParts(value: string): { year: number; month: number; day: number } | null {
   const match = DATE_ONLY_PATTERN.exec(value.trim())
   if (!match) return null
 
@@ -31,7 +33,7 @@ function parseDateOnlyParts(value: string): { year: number; month: number; day: 
   return { year, month, day }
 }
 
-function dateOnlyToLocalDate(value: string): Date | null {
+export function dateOnlyToLocalDate(value: string): Date | null {
   const parts = parseDateOnlyParts(value)
   if (!parts) return null
   return new Date(parts.year, parts.month - 1, parts.day)
@@ -41,6 +43,43 @@ function dateOnlyToUtcDate(value: string): Date | null {
   const parts = parseDateOnlyParts(value)
   if (!parts) return null
   return new Date(Date.UTC(parts.year, parts.month - 1, parts.day))
+}
+
+export function formatDateOnlyFromDate(date: Date): string {
+  if (Number.isNaN(date.getTime())) return ''
+  return [
+    date.getFullYear(),
+    padDateTimePart(date.getMonth() + 1),
+    padDateTimePart(date.getDate())
+  ].join('-')
+}
+
+export function addDateOnlyDays(dateOnly: string, days: number): string {
+  const parts = parseDateOnlyParts(dateOnly)
+  if (!parts) return dateOnly
+  return formatDateOnlyFromDate(new Date(parts.year, parts.month - 1, parts.day + days))
+}
+
+export function getDateOnlyDayOfMonth(dateOnly: string): number {
+  const parts = parseDateOnlyParts(dateOnly)
+  return parts?.day || 1
+}
+
+export function getDateOnlyDayOfWeekCode(dateOnly: string): typeof WEEKDAY_CODES[number] {
+  const date = dateOnlyToLocalDate(dateOnly)
+  return date ? WEEKDAY_CODES[date.getDay()] : 'mo'
+}
+
+export function getDateOnlyMonthOfYearCode(dateOnly: string): typeof MONTH_CODES[number] {
+  const date = dateOnlyToLocalDate(dateOnly)
+  return date ? MONTH_CODES[date.getMonth()] : 'jan'
+}
+
+export function isLastDateOnlyOfMonth(dateOnly: string): boolean {
+  const parts = parseDateOnlyParts(dateOnly)
+  if (!parts) return false
+  const lastDay = new Date(parts.year, parts.month, 0).getDate()
+  return parts.day === lastDay
 }
 
 function getZonedParts(date: Date, timeZone: string): Record<string, number> {

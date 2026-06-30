@@ -1,5 +1,6 @@
 import React, { useMemo, useState } from 'react'
 import { Clock } from 'lucide-react'
+import { useTimezone } from '@/contexts/TimezoneContext'
 import { CustomSelect, Field, NumberTextInput } from './configPrimitives'
 import styles from '../AutomationEditor.module.css'
 
@@ -31,8 +32,9 @@ const positiveNumber = (value: unknown, fallback: number): number => {
 
 const positiveInteger = (value: unknown, fallback: number): number => Math.max(1, Math.floor(positiveNumber(value, fallback)))
 
-const formatDate = (date: Date): string =>
+const formatDate = (date: Date, timezone: string): string =>
   date.toLocaleString('es-MX', {
+    timeZone: timezone,
     day: '2-digit',
     month: 'short',
     year: 'numeric',
@@ -41,6 +43,7 @@ const formatDate = (date: Date): string =>
   })
 
 export const DripConfigEditor: React.FC<DripConfigEditorProps> = ({ config, onChange }) => {
+  const { timezone } = useTimezone()
   const [previewStartedAt, setPreviewStartedAt] = useState<Date | null>(null)
   const batchSize = positiveInteger(config.batchSize, 100)
   const intervalAmount = positiveNumber(config.intervalAmount, 1)
@@ -106,7 +109,7 @@ export const DripConfigEditor: React.FC<DripConfigEditorProps> = ({ config, onCh
 
         {previewStartedAt && (
           <div className={styles.dripPreviewResult}>
-            <p className={styles.dripPreviewNow}>Si se activa el flujo ahora ({formatDate(previewStartedAt)})</p>
+            <p className={styles.dripPreviewNow}>Si se activa el flujo ahora ({formatDate(previewStartedAt, timezone)})</p>
             <table className={styles.dripPreviewTable}>
               <thead>
                 <tr>
@@ -119,7 +122,7 @@ export const DripConfigEditor: React.FC<DripConfigEditorProps> = ({ config, onCh
                 {previewRows.map((row) => (
                   <tr key={row.batch}>
                     <td>{row.batch}</td>
-                    <td>{formatDate(row.scheduledAt)}</td>
+                    <td>{formatDate(row.scheduledAt, timezone)}</td>
                     <td>{batchSize}</td>
                   </tr>
                 ))}

@@ -18,6 +18,7 @@ import {
 import { PhoneEcosystemNav } from '@/components/phone/PhoneEcosystemNav'
 import { PhonePageTransition } from '@/components/phone/PhonePageTransition'
 import { useLabels } from '@/contexts/LabelsContext'
+import { useTimezone } from '@/contexts/TimezoneContext'
 import { usePhoneElasticScroll } from '@/hooks'
 import {
   dashboardService,
@@ -28,6 +29,7 @@ import {
 } from '@/services/dashboardService'
 import { whatsappApiService, type WhatsAppApiPhoneNumber } from '@/services/whatsappApiService'
 import { formatCurrency, formatNumber, formatRoas } from '@/utils/format'
+import { dateOnlyToLocalDate, todayDateOnlyInTimezone } from '@/utils/timezone'
 import styles from './PhoneAnalytics.module.css'
 
 type AnalyticsPeriod = '30d' | '60d' | '180d' | 'year'
@@ -100,10 +102,11 @@ const shortNumberFormatter = new Intl.NumberFormat('es-MX', {
   maximumFractionDigits: 1
 })
 
-function getAnalyticsRange(period: AnalyticsPeriod) {
+function getAnalyticsRange(period: AnalyticsPeriod, timezone: string) {
   const option = PERIOD_OPTIONS.find((item) => item.id === period) || PERIOD_OPTIONS[0]
-  const end = new Date()
-  const start = new Date()
+  const businessToday = dateOnlyToLocalDate(todayDateOnlyInTimezone(timezone)) || new Date()
+  const end = new Date(businessToday)
+  const start = new Date(businessToday)
 
   start.setHours(0, 0, 0, 0)
   end.setHours(23, 59, 59, 999)
@@ -289,6 +292,7 @@ function MobileDualLineChart({
 
 export const PhoneAnalytics: React.FC = () => {
   const { labels } = useLabels()
+  const { timezone } = useTimezone()
   usePhoneElasticScroll()
 
   const [period, setPeriod] = useState<AnalyticsPeriod>('30d')
@@ -307,7 +311,7 @@ export const PhoneAnalytics: React.FC = () => {
   const [funnelLoading, setFunnelLoading] = useState(true)
   const [originLoading, setOriginLoading] = useState(true)
 
-  const range = useMemo(() => getAnalyticsRange(period), [period])
+  const range = useMemo(() => getAnalyticsRange(period, timezone), [period, timezone])
   const groupBy = useMemo(() => getGroupBy(period), [period])
   const activePeriod = PERIOD_OPTIONS.find((option) => option.id === period) || PERIOD_OPTIONS[0]
 

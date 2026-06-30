@@ -37,7 +37,16 @@ import { useTimezone } from '@/contexts/TimezoneContext'
 import { useAccountCurrency, useHighLevelConnected, useUrlDateRangeSync, useUrlFilterState } from '@/hooks'
 import { formatCurrency, formatDateToISO, formatEndDateToISO, formatNumber, parseLocalDateString, formatName } from '@/utils/format'
 import { buildPaymentTimestamp } from '@/utils/paymentDate'
-import { localDateTimeInputToUTCISOString, toDateTimeLocalInputValue, todayDateOnlyInTimezone } from '@/utils/timezone'
+import {
+  DEFAULT_TIMEZONE,
+  getDateOnlyDayOfMonth,
+  getDateOnlyDayOfWeekCode,
+  getDateOnlyMonthOfYearCode,
+  isLastDateOnlyOfMonth,
+  localDateTimeInputToUTCISOString,
+  toDateTimeLocalInputValue,
+  todayDateOnlyInTimezone
+} from '@/utils/timezone'
 import { transactionsService, type Transaction, type TransactionSummary, type PaymentPlan } from '@/services/transactionsService'
 import { highLevelService } from '@/services/highLevelService'
 import { getIntegrationsStatus } from '@/services/integrationsService'
@@ -207,12 +216,21 @@ const STRIPE_PLAN_FREQUENCY_OPTIONS = [
   { value: 'yearly', label: 'Anual' }
 ]
 
-const toDateInputValue = (value?: string | null): string => {
-  if (!value) return formatDateToISO(new Date())
-  return String(value).split('T')[0]
+const toDateInputValue = (value?: string | null, timezone?: string): string => {
+  if (!value) return getTodayInputValue(timezone)
+
+  const raw = String(value).trim()
+  if (/^\d{4}-\d{2}-\d{2}$/.test(raw)) return raw
+
+  if (timezone) {
+    const zonedValue = toDateTimeLocalInputValue(raw, timezone)
+    if (zonedValue) return zonedValue.slice(0, 10)
+  }
+
+  return raw.split('T')[0]
 }
 
-const getTodayInputValue = (timezone?: string) => timezone ? todayDateOnlyInTimezone(timezone) : formatDateToISO(new Date())
+const getTodayInputValue = (timezone?: string) => todayDateOnlyInTimezone(timezone || DEFAULT_TIMEZONE)
 
 const isDateBeforeToday = (value?: string | null, timezone?: string) => Boolean(value && value < getTodayInputValue(timezone))
 
@@ -310,7 +328,7 @@ const getStripePlanMethodLabel = (method?: string | null, provider: LocalCheckou
 const isOfflinePlanPaymentMethod = (method?: string | null) => OFFLINE_PLAN_PAYMENT_METHODS.has(String(method || '').toLowerCase())
 
 const getEditablePlanDate = (value: string | null | undefined, method: string | null | undefined, locked?: boolean, timezone?: string) => {
-  const date = toDateInputValue(value)
+  const date = toDateInputValue(value, timezone)
   return locked || isOfflinePlanPaymentMethod(method) ? date : clampDateToToday(date, timezone)
 }
 
@@ -333,8 +351,8 @@ const getStripePlanPaymentStatusBadgeConfig = (status?: string | null): { label:
   return { label: normalized ? normalized.charAt(0).toUpperCase() + normalized.slice(1) : 'Pendiente', variant: 'neutral' }
 }
 
-const getNextPlanDueDate = (installments: StripePlanPaymentDraft[], fallback?: string | null) => {
-  const lastDate = [...installments].reverse().find(item => item.dueDate)?.dueDate || fallback || formatDateToISO(new Date())
+const getNextPlanDueDate = (installments: StripePlanPaymentDraft[], fallback?: string | null, timezone?: string) => {
+  const lastDate = [...installments].reverse().find(item => item.dueDate)?.dueDate || fallback || getTodayInputValue(timezone)
   const date = parseLocalDateString(lastDate)
   date.setMonth(date.getMonth() + 1)
   return formatDateToISO(date)
@@ -429,20 +447,6 @@ const canVoidHighLevelTransaction = (transaction: Transaction) => (
   isHighLevelTransaction(transaction) &&
   VOIDABLE_HIGHLEVEL_TRANSACTION_STATUSES.has(String(transaction.status || '').toLowerCase())
 )
-
-const getDayOfWeekCode = (date: Date) => {
-  const codes = ['su', 'mo', 'tu', 'we', 'th', 'fr', 'sa']
-  return codes[date.getDay()]
-}
-
-const getMonthOfYearCode = (date: Date) => {
-  const codes = ['jan', 'feb', 'mar', 'apr', 'may', 'jun', 'jul', 'aug', 'sep', 'oct', 'nov', 'dec']
-  return codes[date.getMonth()]
-}
-
-const isLastDayOfMonth = (date: Date) => {
-  return date.getDate() === new Date(date.getFullYear(), date.getMonth() + 1, 0).getDate()
-}
 
 interface PaymentPlanProgress {
   known: boolean
@@ -573,7 +577,6 @@ const buildPaymentPlanSchedule = ({
   timezone
 }: PaymentPlanScheduleOptions) => {
   const executeAt = localDateTimeInputToUTCISOString(`${startDate}T${startTime || getDefaultScheduleTime()}`, timezone) || ''
-  const dateOnly = new Date(`${startDate}T00:00:00`)
   const normalizedInterval = Number.isFinite(interval) && interval > 0 ? interval : 1
 
   if (scheduleMode === 'one_time') {
@@ -607,24 +610,24 @@ const buildPaymentPlanSchedule = ({
   }
 
   if (frequency === 'weekly') {
-    rrule.dayOfWeek = dayOfWeek || getDayOfWeekCode(dateOnly)
+    rrule.dayOfWeek = dayOfWeek || getDateOnlyDayOfWeekCode(startDate)
   }
 
   if (frequency === 'monthly' || frequency === 'yearly') {
     if (monthlyMode === 'weekOfMonth') {
-      rrule.dayOfWeek = dayOfWeek || getDayOfWeekCode(dateOnly)
+      rrule.dayOfWeek = dayOfWeek || getDateOnlyDayOfWeekCode(startDate)
       rrule.numOfWeek = Number(numOfWeek || 1)
     } else if (dayOfMonth) {
       rrule.dayOfMonth = Number(dayOfMonth)
-    } else if (isLastDayOfMonth(dateOnly)) {
+    } else if (isLastDateOnlyOfMonth(startDate)) {
       rrule.dayOfMonth = -1
     } else {
-      rrule.dayOfMonth = Math.min(dateOnly.getDate(), 28)
+      rrule.dayOfMonth = Math.min(getDateOnlyDayOfMonth(startDate), 28)
     }
   }
 
   if (frequency === 'yearly') {
-    rrule.monthOfYear = monthOfYear || getMonthOfYearCode(dateOnly)
+    rrule.monthOfYear = monthOfYear || getDateOnlyMonthOfYearCode(startDate)
   }
 
   return {
@@ -1096,7 +1099,7 @@ export const Transactions: React.FC = () => {
       id: 'stripe_first_payment',
       label: 'Primer pago',
       amount: '',
-      dueDate: clampDateToToday(toDateInputValue(paymentPlanModal.plan?.startDate || paymentPlanModal.plan?.nextRunAt), timezone),
+      dueDate: clampDateToToday(toDateInputValue(paymentPlanModal.plan?.startDate || paymentPlanModal.plan?.nextRunAt, timezone), timezone),
       method: getDefaultPlanMethod(provider),
       status: 'pending',
       paymentId: null,
@@ -1122,7 +1125,7 @@ export const Transactions: React.FC = () => {
     setStripePlanInstallmentDrafts(prev => {
       const provider = getLocalCheckoutPlanProvider(paymentPlanModal.plan)
       const nextIndex = prev.length + 1
-      const nextDueDate = clampDateToToday(getNextPlanDueDate(prev, paymentPlanModal.plan?.nextRunAt || paymentPlanModal.plan?.startDate), timezone)
+      const nextDueDate = clampDateToToday(getNextPlanDueDate(prev, paymentPlanModal.plan?.nextRunAt || paymentPlanModal.plan?.startDate, timezone), timezone)
 
       return [
         ...prev,
@@ -3376,7 +3379,7 @@ export const Transactions: React.FC = () => {
                 <input
                   name="date"
                   type="date"
-                  defaultValue={toDateInputValue(modal.transaction?.date)}
+                  defaultValue={toDateInputValue(modal.transaction?.date, timezone)}
                   required
                 />
               </div>
@@ -3385,7 +3388,7 @@ export const Transactions: React.FC = () => {
                 <input
                   name="dueDate"
                   type="date"
-                  defaultValue={modal.transaction?.dueDate ? toDateInputValue(modal.transaction.dueDate) : ''}
+                  defaultValue={modal.transaction?.dueDate ? toDateInputValue(modal.transaction.dueDate, timezone) : ''}
                 />
               </div>
               <div className={styles.formGroup}>
@@ -3664,7 +3667,7 @@ export const Transactions: React.FC = () => {
                   <input
                     name="startDate"
                     type="date"
-                    defaultValue={formatDateToISO(new Date())}
+                    defaultValue={getTodayInputValue(timezone)}
                     min={getTodayInputValue(timezone)}
                     required
                   />

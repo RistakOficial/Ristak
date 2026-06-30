@@ -2,6 +2,8 @@ import React, { useState, useRef, useEffect, useCallback } from 'react'
 import { Calendar, ChevronLeft, ChevronRight, ChevronDown, Clock, TrendingUp } from 'lucide-react'
 import styles from './DateRangePicker.module.css'
 import { formatDateToISO } from '@/utils/format'
+import { useTimezone } from '@/contexts/TimezoneContext'
+import { dateOnlyToLocalDate, todayDateOnlyInTimezone } from '@/utils/timezone'
 
 interface DateRangePickerProps {
   startDate: string
@@ -14,7 +16,7 @@ interface DateRangePickerProps {
 interface DatePreset {
   label: string
   icon?: React.ReactNode
-  getValue: () => { start: Date; end: Date }
+  getValue: (businessToday: Date) => { start: Date; end: Date }
 }
 
 const MONTHS = [
@@ -23,9 +25,6 @@ const MONTHS = [
 ]
 
 const WEEKDAYS = ['Do', 'Lu', 'Ma', 'Mi', 'Ju', 'Vi', 'Sa']
-
-const CURRENT_YEAR = new Date().getFullYear()
-const YEARS = Array.from({ length: CURRENT_YEAR - 2017 + 3 }, (_, i) => 2018 + i)
 
 // Helper: Normalizar fecha a medianoche local (00:00:00.000)
 const toMidnight = (date: Date): Date => {
@@ -36,23 +35,23 @@ const DATE_PRESETS: DatePreset[] = [
   {
     label: 'Hoy',
     icon: <Clock size={14} />,
-    getValue: () => {
-      const today = toMidnight(new Date())
+    getValue: (businessToday) => {
+      const today = toMidnight(businessToday)
       return { start: today, end: today }
     }
   },
   {
     label: 'Ayer',
-    getValue: () => {
-      const yesterday = toMidnight(new Date())
+    getValue: (businessToday) => {
+      const yesterday = toMidnight(businessToday)
       yesterday.setDate(yesterday.getDate() - 1)
       return { start: yesterday, end: yesterday }
     }
   },
   {
     label: 'Últimos 7 días',
-    getValue: () => {
-      const end = toMidnight(new Date())
+    getValue: (businessToday) => {
+      const end = toMidnight(businessToday)
       const start = new Date(end)
       start.setDate(start.getDate() - 6)
       return { start, end }
@@ -60,8 +59,8 @@ const DATE_PRESETS: DatePreset[] = [
   },
   {
     label: 'Últimos 14 días',
-    getValue: () => {
-      const end = toMidnight(new Date())
+    getValue: (businessToday) => {
+      const end = toMidnight(businessToday)
       const start = new Date(end)
       start.setDate(start.getDate() - 13)
       return { start, end }
@@ -69,8 +68,8 @@ const DATE_PRESETS: DatePreset[] = [
   },
   {
     label: 'Últimos 30 días',
-    getValue: () => {
-      const end = toMidnight(new Date())
+    getValue: (businessToday) => {
+      const end = toMidnight(businessToday)
       const start = new Date(end)
       start.setDate(start.getDate() - 29)
       return { start, end }
@@ -78,8 +77,8 @@ const DATE_PRESETS: DatePreset[] = [
   },
   {
     label: 'Este mes',
-    getValue: () => {
-      const now = new Date()
+    getValue: (businessToday) => {
+      const now = businessToday
       const start = new Date(now.getFullYear(), now.getMonth(), 1)
       const end = new Date(now.getFullYear(), now.getMonth() + 1, 0)
       return { start, end }
@@ -87,8 +86,8 @@ const DATE_PRESETS: DatePreset[] = [
   },
   {
     label: 'Mes anterior',
-    getValue: () => {
-      const now = new Date()
+    getValue: (businessToday) => {
+      const now = businessToday
       const start = new Date(now.getFullYear(), now.getMonth() - 1, 1)
       const end = new Date(now.getFullYear(), now.getMonth(), 0)
       return { start, end }
@@ -96,8 +95,8 @@ const DATE_PRESETS: DatePreset[] = [
   },
   {
     label: 'Últimos 90 días',
-    getValue: () => {
-      const end = toMidnight(new Date())
+    getValue: (businessToday) => {
+      const end = toMidnight(businessToday)
       const start = new Date(end)
       start.setDate(start.getDate() - 89)
       return { start, end }
@@ -105,8 +104,8 @@ const DATE_PRESETS: DatePreset[] = [
   },
   {
     label: 'Últimos 12 meses',
-    getValue: () => {
-      const end = toMidnight(new Date())
+    getValue: (businessToday) => {
+      const end = toMidnight(businessToday)
       const start = new Date(end)
       start.setMonth(start.getMonth() - 12)
       return { start, end }
@@ -115,8 +114,8 @@ const DATE_PRESETS: DatePreset[] = [
   {
     label: 'Este año',
     icon: <TrendingUp size={14} />,
-    getValue: () => {
-      const now = new Date()
+    getValue: (businessToday) => {
+      const now = businessToday
       const start = new Date(now.getFullYear(), 0, 1, 0, 0, 0, 0)
       const end = toMidnight(now)
       return { start, end }
@@ -124,8 +123,8 @@ const DATE_PRESETS: DatePreset[] = [
   },
   {
     label: 'Todo el tiempo',
-    getValue: () => {
-      const end = toMidnight(new Date())
+    getValue: (businessToday) => {
+      const end = toMidnight(businessToday)
       const start = new Date(2020, 0, 1, 0, 0, 0, 0)
       return { start, end }
     }
@@ -135,13 +134,7 @@ const DATE_PRESETS: DatePreset[] = [
 // Helper: Parsear string YYYY-MM-DD como fecha LOCAL (no UTC)
 const parseLocalDate = (dateStr: string | undefined | null): Date | null => {
   if (!dateStr) return null
-  try {
-    const [year, month, day] = dateStr.split('-').map(Number)
-    if (isNaN(year) || isNaN(month) || isNaN(day)) return null
-    return new Date(year, month - 1, day, 0, 0, 0, 0)
-  } catch {
-    return null
-  }
+  return dateOnlyToLocalDate(dateStr)
 }
 export const DateRangePicker: React.FC<DateRangePickerProps> = ({
   startDate,
@@ -150,6 +143,15 @@ export const DateRangePicker: React.FC<DateRangePickerProps> = ({
   placeholder = 'Seleccionar fechas',
   variant = 'single'
 }) => {
+  const { timezone } = useTimezone()
+  const businessToday = React.useMemo(
+    () => dateOnlyToLocalDate(todayDateOnlyInTimezone(timezone)) || new Date(),
+    [timezone]
+  )
+  const years = React.useMemo(() => {
+    const currentYear = businessToday.getFullYear()
+    return Array.from({ length: currentYear - 2017 + 3 }, (_, i) => 2018 + i)
+  }, [businessToday])
   const [isOpen, setIsOpen] = useState(false)
   const [activeField, setActiveField] = useState<'start' | 'end' | null>(null)
   const [leftMonth, setLeftMonth] = useState(() => {
@@ -157,7 +159,7 @@ export const DateRangePicker: React.FC<DateRangePickerProps> = ({
       const date = parseLocalDate(startDate)
       if (date) return new Date(date.getFullYear(), date.getMonth(), 1)
     }
-    return new Date()
+    return new Date(businessToday.getFullYear(), businessToday.getMonth(), 1)
   })
   const [rightMonth, setRightMonth] = useState(() => {
     if (startDate) {
@@ -167,7 +169,7 @@ export const DateRangePicker: React.FC<DateRangePickerProps> = ({
         return next
       }
     }
-    const date = new Date()
+    const date = new Date(businessToday.getFullYear(), businessToday.getMonth(), 1)
     date.setMonth(date.getMonth() + 1)
     return date
   })
@@ -397,7 +399,7 @@ export const DateRangePicker: React.FC<DateRangePickerProps> = ({
   }
 
   const handlePresetClick = (preset: DatePreset) => {
-    const { start, end } = preset.getValue()
+    const { start, end } = preset.getValue(businessToday)
     setTempStart(start)
     setTempEnd(end)
     setLeftMonth(new Date(start.getFullYear(), start.getMonth(), 1))
@@ -486,7 +488,7 @@ export const DateRangePicker: React.FC<DateRangePickerProps> = ({
     // Days of the month
     for (let day = 1; day <= daysInMonth; day++) {
       const date = new Date(currentMonth.getFullYear(), currentMonth.getMonth(), day)
-      const isToday = new Date().toDateString() === date.toDateString()
+      const isToday = businessToday.toDateString() === date.toDateString()
       const isInRange = isDateInRange(date)
       const isStart = isStartDate(date)
       const isEnd = isEndDate(date)
@@ -566,7 +568,7 @@ export const DateRangePicker: React.FC<DateRangePickerProps> = ({
               </button>
               {openDropdown === `${isLeftCalendar ? 'left' : 'right'}-year` && (
                 <div className={styles.pickerDropdown} data-ristak-dropdown-panel>
-                  {YEARS.map(year => (
+                  {years.map(year => (
                     <button
                       key={year}
                       ref={(el) => {
@@ -656,7 +658,7 @@ export const DateRangePicker: React.FC<DateRangePickerProps> = ({
             <h4 className={styles.sidebarTitle}>Seleccionar fechas</h4>
             <div className={styles.presetList}>
               {DATE_PRESETS.map(preset => {
-                const { start, end } = preset.getValue()
+                const { start, end } = preset.getValue(businessToday)
                 const isActive = tempStart && tempEnd &&
                   start.toDateString() === tempStart.toDateString() &&
                   end.toDateString() === tempEnd.toDateString()

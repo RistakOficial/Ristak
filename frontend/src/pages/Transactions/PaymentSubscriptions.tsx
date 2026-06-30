@@ -44,9 +44,11 @@ import {
 } from '@/components/common'
 import type { BadgeVariant, Column, PaymentLinkReadyData, PaymentPlatformLogoId } from '@/components/common'
 import { useNotification } from '@/contexts/NotificationContext'
+import { useTimezone } from '@/contexts/TimezoneContext'
 import { useAccountCurrency } from '@/hooks'
 import type { Contact } from '@/types'
-import { formatCurrency, formatDate } from '@/utils/format'
+import { formatCurrency } from '@/utils/format'
+import { toDateTimeLocalInputValue, todayDateOnlyInTimezone } from '@/utils/timezone'
 import { getIntegrationsStatus } from '@/services/integrationsService'
 import { conektaPaymentsService, type ConektaSavedPaymentSource } from '@/services/conektaPaymentsService'
 import { stripePaymentsService, type StripeSavedPaymentMethod } from '@/services/stripePaymentsService'
@@ -198,37 +200,36 @@ function getStartModeForPaymentMethod(value?: string | null): SubscriptionStartM
   return ''
 }
 
-function formatLocalDateInput(date: Date) {
-  const year = date.getFullYear()
-  const month = String(date.getMonth() + 1).padStart(2, '0')
-  const day = String(date.getDate()).padStart(2, '0')
-  return `${year}-${month}-${day}`
-}
-
-function toDateInputValue(value?: string | null) {
+function toDateInputValue(value?: string | null, timezone?: string) {
   if (!value) return ''
-  const dateOnly = String(value).match(/^(\d{4}-\d{2}-\d{2})/)
-  if (dateOnly) return dateOnly[1]
-  const date = new Date(value)
-  if (Number.isNaN(date.getTime())) return String(value).slice(0, 10)
-  return formatLocalDateInput(date)
+
+  const raw = String(value).trim()
+  if (/^\d{4}-\d{2}-\d{2}$/.test(raw)) return raw
+
+  if (timezone) {
+    const zonedValue = toDateTimeLocalInputValue(raw, timezone)
+    if (zonedValue) return zonedValue.slice(0, 10)
+  }
+
+  const dateOnly = raw.match(/^(\d{4}-\d{2}-\d{2})/)
+  return dateOnly?.[1] || raw.slice(0, 10)
 }
 
-function getTodayInputValue() {
-  return formatLocalDateInput(new Date())
+function getTodayInputValue(timezone: string) {
+  return todayDateOnlyInTimezone(timezone)
 }
 
-function isDateBeforeToday(value?: string | null) {
-  return Boolean(value && value < getTodayInputValue())
+function isDateBeforeToday(value?: string | null, timezone?: string) {
+  return Boolean(value && timezone && value < getTodayInputValue(timezone))
 }
 
-function clampDateToToday(value?: string | null) {
-  const today = getTodayInputValue()
+function clampDateToToday(value: string | null | undefined, timezone: string) {
+  const today = getTodayInputValue(timezone)
   return value && value >= today ? value : today
 }
 
-function createEmptyForm(): SubscriptionFormState {
-  const today = getTodayInputValue()
+function createEmptyForm(timezone: string): SubscriptionFormState {
+  const today = getTodayInputValue(timezone)
 
   return {
     name: '',
@@ -528,6 +529,7 @@ export const PaymentSubscriptions: React.FC = () => {
   const navigate = useNavigate()
   const location = useLocation()
   const { showConfirm, showToast } = useNotification()
+  const { formatLocalDateShort, timezone } = useTimezone()
   const [accountCurrency] = useAccountCurrency()
   const [subscriptions, setSubscriptions] = useState<PaymentSubscription[]>([])
   const [summary, setSummary] = useState<SubscriptionSummary>(EMPTY_SUMMARY)
@@ -545,7 +547,7 @@ export const PaymentSubscriptions: React.FC = () => {
   const [formStep, setFormStep] = useState<SubscriptionFormStep>('details')
   const [editingSubscription, setEditingSubscription] = useState<PaymentSubscription | null>(null)
   const [selectedContact, setSelectedContact] = useState<Contact | null>(null)
-  const [form, setForm] = useState<SubscriptionFormState>(() => createEmptyForm())
+  const [form, setForm] = useState<SubscriptionFormState>(() => createEmptyForm(timezone))
   const [stripeConnected, setStripeConnected] = useState(false)
   const [conektaConnected, setConektaConnected] = useState(false)
   const [mercadoPagoConnected, setMercadoPagoConnected] = useState(false)
@@ -727,6 +729,11 @@ export const PaymentSubscriptions: React.FC = () => {
   const submitDisabled = saving || (showSavedCardStep && (loadingSavedCards || !selectedSavedCardReady))
 
   useEffect(() => {
+    if (formMode) return
+    setForm(createEmptyForm(timezone))
+  }, [formMode, timezone])
+
+  useEffect(() => {
     if (integrationsLoading || hasSubscriptionGateway) return
 
     showToast('warning', 'Suscripciones no disponibles', 'Conecta Stripe, Conekta o Mercado Pago para crear suscripciones automáticas.')
@@ -777,7 +784,7 @@ export const PaymentSubscriptions: React.FC = () => {
     setCreatedSubscriptionLink(null)
     setEditingSubscription(null)
     setSelectedContact(null)
-    setForm(createEmptyForm())
+    setForm(createEmptyForm(timezone))
     setFormStep('details')
     setFormMode('create')
   }
@@ -792,9 +799,9 @@ export const PaymentSubscriptions: React.FC = () => {
       amount: subscription.amount ? String(subscription.amount) : '',
       intervalType: (subscription.intervalType as SubscriptionInterval) || 'monthly',
       intervalCount: String(subscription.intervalCount || 1),
-      startDate: clampDateToToday(toDateInputValue(subscription.startDate)),
-      nextRunAt: clampDateToToday(toDateInputValue(subscription.nextRunAt)),
-      cancelAt: toDateInputValue(subscription.cancelAt),
+      startDate: clampDateToToday(toDateInputValue(subscription.startDate, timezone), timezone),
+      nextRunAt: clampDateToToday(toDateInputValue(subscription.nextRunAt, timezone), timezone),
+      cancelAt: toDateInputValue(subscription.cancelAt, timezone),
       durationType: subscription.cancelAt ? 'until_date' : 'continuous',
       status: (subscription.status as SubscriptionStatus) || 'active',
       startMode: getStartModeForPaymentMethod(subscription.paymentMethod),
@@ -828,7 +835,7 @@ export const PaymentSubscriptions: React.FC = () => {
     setFormStep('details')
     setEditingSubscription(null)
     setSelectedContact(null)
-    setForm(createEmptyForm())
+    setForm(createEmptyForm(timezone))
   }
 
   const patchForm = (field: keyof SubscriptionFormState, value: string) => {
@@ -844,7 +851,7 @@ export const PaymentSubscriptions: React.FC = () => {
     setForm((current) => ({
       ...current,
       [field]: field === 'startDate' || field === 'nextRunAt' || field === 'cancelAt'
-        ? clampDateToToday(value)
+        ? clampDateToToday(value, timezone)
         : value
       }))
   }
@@ -994,7 +1001,7 @@ export const PaymentSubscriptions: React.FC = () => {
         return false
       }
 
-      if (isDateBeforeToday(form.cancelAt) || form.cancelAt <= form.startDate) {
+      if (isDateBeforeToday(form.cancelAt, timezone) || form.cancelAt <= form.startDate) {
         showToast('warning', 'Duración inválida', 'La fecha final debe ser posterior al inicio de la suscripción.')
         return false
       }
@@ -1029,7 +1036,7 @@ export const PaymentSubscriptions: React.FC = () => {
         return null
       }
 
-      if (isDateBeforeToday(currentForm.cancelAt) || currentForm.cancelAt <= currentForm.startDate) {
+      if (isDateBeforeToday(currentForm.cancelAt, timezone) || currentForm.cancelAt <= currentForm.startDate) {
         showToast('warning', 'Duración inválida', 'La fecha final debe ser posterior al inicio de la suscripción.')
         return null
       }
@@ -1069,7 +1076,7 @@ export const PaymentSubscriptions: React.FC = () => {
       return null
     }
 
-    if (isDateBeforeToday(currentForm.startDate) || (!startByLink && isDateBeforeToday(currentForm.nextRunAt))) {
+    if (isDateBeforeToday(currentForm.startDate, timezone) || (!startByLink && isDateBeforeToday(currentForm.nextRunAt, timezone))) {
       showToast('warning', 'Fecha inválida', 'Las suscripciones automáticas no pueden iniciar ni cobrarse en fechas pasadas.')
       return null
     }
@@ -1451,7 +1458,7 @@ export const PaymentSubscriptions: React.FC = () => {
     {
       key: 'nextRunAt',
       header: 'Próximo cobro',
-      render: (value) => value ? formatDate(value, { includeYear: true }) : <span className={styles.mutedCell}>Sin fecha</span>,
+      render: (value) => value ? formatLocalDateShort(value) : <span className={styles.mutedCell}>Sin fecha</span>,
       sortable: true
     },
     {
@@ -1664,7 +1671,7 @@ export const PaymentSubscriptions: React.FC = () => {
         <div className={styles.metricsGrid}>
           <KpiCard title="Activas" value={summary.active} icon={Repeat2} loading={loading} />
           <KpiCard title="Ingreso mensual" value={formatCurrency(summary.monthlyRevenue, accountCurrency)} icon={CreditCard} loading={loading} />
-          <KpiCard title="Próximo cobro" value={summary.nextRunAt ? formatDate(summary.nextRunAt, { includeYear: true }) : 'Sin fecha'} icon={CalendarClock} loading={loading} />
+          <KpiCard title="Próximo cobro" value={summary.nextRunAt ? formatLocalDateShort(summary.nextRunAt) : 'Sin fecha'} icon={CalendarClock} loading={loading} />
           <KpiCard title="Vencidas / pausadas" value={`${summary.pastDue} / ${summary.paused}`} icon={Pause} loading={loading} />
         </div>
 
@@ -1941,7 +1948,7 @@ export const PaymentSubscriptions: React.FC = () => {
                   value={form.startDate}
                   onChange={(event) => patchForm('startDate', event.target.value)}
                   type="date"
-                  min={getTodayInputValue()}
+                  min={getTodayInputValue(timezone)}
                 />
               </div>
 
@@ -1964,7 +1971,7 @@ export const PaymentSubscriptions: React.FC = () => {
                     value={form.cancelAt}
                     onChange={(event) => patchForm('cancelAt', event.target.value)}
                     type="date"
-                    min={form.startDate || getTodayInputValue()}
+                    min={form.startDate || getTodayInputValue(timezone)}
                     required
                   />
                 </div>
@@ -1977,7 +1984,7 @@ export const PaymentSubscriptions: React.FC = () => {
                     value={form.nextRunAt}
                     onChange={(event) => patchForm('nextRunAt', event.target.value)}
                     type="date"
-                    min={getTodayInputValue()}
+                    min={getTodayInputValue(timezone)}
                   />
                 </div>
               )}

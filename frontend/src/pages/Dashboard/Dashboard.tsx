@@ -30,6 +30,7 @@ import { transactionsService, type Transaction } from '@/services/transactionsSe
 import { calendarsService, type CalendarEvent } from '@/services/calendarsService'
 import { campaignsService, type Campaign } from '@/services/campaignsService'
 import { formatCurrency, formatRoas, formatChartDate, formatDateToISO, formatEndDateToISO, parseLocalDateString, formatChartCurrency, formatChartNumber, formatDate } from '@/utils/format'
+import { dateOnlyToLocalDate, todayDateOnlyInTimezone } from '@/utils/timezone'
 import { getTransactionStatusBadge, getAppointmentStatusBadge } from '@/utils/statusBadges'
 import { Badge } from '@/components/common/Badge'
 
@@ -466,7 +467,11 @@ export const Dashboard: React.FC = () => {
   const { dateRange, setDateRange } = useDateRange()
   const { user, locationId, accessToken } = useAuth()
   const { labels } = useLabels()
-  const { formatLocalDateTime } = useTimezone()
+  const { formatLocalDateTime, timezone } = useTimezone()
+  const businessToday = React.useMemo(
+    () => dateOnlyToLocalDate(todayDateOnlyInTimezone(timezone)) || new Date(),
+    [timezone]
+  )
 
   // Sistema híbrido de configuración
   const [showAnalyticsConfig] = useAppConfig<string | number | boolean>('show_analytics', '1')
@@ -613,7 +618,7 @@ export const Dashboard: React.FC = () => {
   }, [chartPeriodOptions, chartPeriodPreference])
 
   const chartWindow = React.useMemo<ChartWindow>(() => {
-    const today = startOfLocalDay(new Date())
+    const today = startOfLocalDay(businessToday)
     let start = dateRange.start
     let end = dateRange.end
     let granularity: ChartBucketGranularity = effectiveCalendarGranularity
@@ -636,7 +641,7 @@ export const Dashboard: React.FC = () => {
       granularity,
       buckets: buildChartBuckets(normalizedStart, normalizedEnd, granularity)
     }
-  }, [chartPeriodPreference, dateRange.end, dateRange.start, effectiveCalendarGranularity])
+  }, [businessToday, chartPeriodPreference, dateRange.end, dateRange.start, effectiveCalendarGranularity])
 
   const chartApiGroupBy = chartWindow.granularity === 'day' || chartWindow.granularity === 'week' || chartWindow.granularity === 'fortnight'
     ? 'day'

@@ -1,4 +1,10 @@
 import React, { createContext, useContext, useState, useCallback, useEffect, ReactNode } from 'react'
+import { useTimezone } from './TimezoneContext'
+import {
+  dateOnlyToLocalDate,
+  formatDateOnlyFromDate,
+  todayDateOnlyInTimezone
+} from '@/utils/timezone'
 
 type DatePreset =
   | 'today'
@@ -26,9 +32,9 @@ interface DateRangeContextType {
 
 const DateRangeContext = createContext<DateRangeContextType | undefined>(undefined)
 
-const getPresetDates = (preset: DatePreset): { start: Date; end: Date } => {
-  const now = new Date()
-  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate())
+const getPresetDates = (preset: DatePreset, timezone: string): { start: Date; end: Date } => {
+  const todayDateOnly = todayDateOnlyInTimezone(timezone)
+  const today = dateOnlyToLocalDate(todayDateOnly) || new Date()
 
   switch (preset) {
     case 'today':
@@ -47,7 +53,7 @@ const getPresetDates = (preset: DatePreset): { start: Date; end: Date } => {
     }
 
     case 'thisMonth': {
-      const start = new Date(now.getFullYear(), now.getMonth(), 1)
+      const start = new Date(today.getFullYear(), today.getMonth(), 1)
       return { start, end: today }
     }
 
@@ -64,9 +70,7 @@ const getPresetDates = (preset: DatePreset): { start: Date; end: Date } => {
     }
 
     case 'last12months': {
-      const start = new Date(today)
-      start.setMonth(start.getMonth() - 11)
-      start.setDate(1)
+      const start = new Date(today.getFullYear(), today.getMonth() - 11, 1)
       return { start, end: today }
     }
 
@@ -81,9 +85,16 @@ const getPresetDates = (preset: DatePreset): { start: Date; end: Date } => {
 }
 
 // Versión del formato de sessionStorage - incrementar si cambia el formato
-const STORAGE_VERSION = 2
+const STORAGE_VERSION = 3
+
+const normalizeStoredRangeDate = (value: Date | string): Date => {
+  if (value instanceof Date) return value
+  return dateOnlyToLocalDate(value) || new Date(value)
+}
 
 export const DateRangeProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
+  const { timezone } = useTimezone()
+
   // Intentar cargar desde sessionStorage, si no existe usar "Este mes" como default
   const [dateRange, setDateRange] = useState<DateRange>(() => {
     const saved = sessionStorage.getItem('dateRange')
@@ -93,7 +104,7 @@ export const DateRangeProvider: React.FC<{ children: ReactNode }> = ({ children 
     if (version !== String(STORAGE_VERSION)) {
       sessionStorage.removeItem('dateRange')
       sessionStorage.setItem('dateRangeVersion', String(STORAGE_VERSION))
-      const { start, end } = getPresetDates('thisMonth')
+      const { start, end } = getPresetDates('thisMonth', timezone)
       return { start, end, preset: 'thisMonth' }
     }
 
@@ -101,17 +112,9 @@ export const DateRangeProvider: React.FC<{ children: ReactNode }> = ({ children 
       try {
         const parsed = JSON.parse(saved)
 
-        // Parsear fechas YYYY-MM-DD como fecha LOCAL, no UTC
-        // new Date("2025-10-05") lo parsea como UTC, causando problemas de zona horaria
         const parseLocalDate = (dateStr: string | undefined | null): Date | null => {
           if (!dateStr) return null
-          try {
-            const [year, month, day] = dateStr.split('-').map(Number)
-            if (isNaN(year) || isNaN(month) || isNaN(day)) return null
-            return new Date(year, month - 1, day, 0, 0, 0, 0)
-          } catch {
-            return null
-          }
+          return dateOnlyToLocalDate(dateStr)
         }
 
         const start = parseLocalDate(parsed.start)
@@ -119,7 +122,7 @@ export const DateRangeProvider: React.FC<{ children: ReactNode }> = ({ children 
 
         // Si las fechas no son válidas, usar default
         if (!start || !end) {
-          const defaultDates = getPresetDates('thisMonth')
+          const defaultDates = getPresetDates('thisMonth', timezone)
           return { start: defaultDates.start, end: defaultDates.end, preset: 'thisMonth' }
         }
 
@@ -134,33 +137,40 @@ export const DateRangeProvider: React.FC<{ children: ReactNode }> = ({ children 
     }
 
     // Default: "Este mes"
-    const { start, end } = getPresetDates('thisMonth')
+    const { start, end } = getPresetDates('thisMonth', timezone)
     return { start, end, preset: 'thisMonth' }
   })
+
+  useEffect(() => {
+    setDateRange(current => {
+      if (current.preset === 'custom') return current
+
+      const { start, end } = getPresetDates(current.preset, timezone)
+      if (
+        formatDateOnlyFromDate(current.start) === formatDateOnlyFromDate(start) &&
+        formatDateOnlyFromDate(current.end) === formatDateOnlyFromDate(end)
+      ) {
+        return current
+      }
+
+      return { ...current, start, end }
+    })
+  }, [timezone])
 
   // Save to sessionStorage whenever dateRange changes
   useEffect(() => {
     // Ensure dates are Date objects before saving
-    const start = dateRange.start instanceof Date ? dateRange.start : new Date(dateRange.start)
-    const end = dateRange.end instanceof Date ? dateRange.end : new Date(dateRange.end)
+    const start = normalizeStoredRangeDate(dateRange.start)
+    const end = normalizeStoredRangeDate(dateRange.end)
 
     // Validar que las fechas sean válidas
     if (isNaN(start.getTime()) || isNaN(end.getTime())) {
       return // No guardar fechas inválidas
     }
 
-    // Guardar fechas en formato YYYY-MM-DD LOCAL (sin hora, sin UTC)
-    // para evitar problemas de zona horaria al cargar
-    const formatLocalDate = (date: Date) => {
-      const year = date.getFullYear()
-      const month = String(date.getMonth() + 1).padStart(2, '0')
-      const day = String(date.getDate()).padStart(2, '0')
-      return `${year}-${month}-${day}`
-    }
-
     sessionStorage.setItem('dateRange', JSON.stringify({
-      start: formatLocalDate(start),
-      end: formatLocalDate(end),
+      start: formatDateOnlyFromDate(start),
+      end: formatDateOnlyFromDate(end),
       preset: dateRange.preset
     }))
     sessionStorage.setItem('dateRangeVersion', String(STORAGE_VERSION))
@@ -171,9 +181,9 @@ export const DateRangeProvider: React.FC<{ children: ReactNode }> = ({ children 
   }, [])
 
   const setPreset = useCallback((preset: DatePreset) => {
-    const { start, end } = getPresetDates(preset)
+    const { start, end } = getPresetDates(preset, timezone)
     setDateRange({ start, end, preset })
-  }, [])
+  }, [timezone])
 
   return (
     <DateRangeContext.Provider

@@ -1,3 +1,10 @@
+import {
+  DEFAULT_TIMEZONE,
+  convertUTCToLocal,
+  dateOnlyToLocalDate,
+  isDateOnlyString
+} from './timezone'
+
 const MONTHS_SHORT = ['ene', 'feb', 'mar', 'abr', 'may', 'jun', 'jul', 'ago', 'sept', 'oct', 'nov', 'dic'] as const
 
 const capitalize = (value: string): string => {
@@ -167,6 +174,16 @@ interface FormatDateOptions {
   includeYear?: boolean
   referenceDate?: Date
   padDay?: boolean
+  timezone?: string
+}
+
+const getStoredTimezone = (): string => {
+  if (typeof window === 'undefined') return DEFAULT_TIMEZONE
+  try {
+    return window.localStorage.getItem('userTimezone') || DEFAULT_TIMEZONE
+  } catch {
+    return DEFAULT_TIMEZONE
+  }
 }
 
 export const formatDate = (
@@ -175,7 +192,12 @@ export const formatDate = (
 ): string => {
   if (!date) return '—'
 
-  const parsedDate = typeof date === 'string' ? new Date(date) : date
+  const timezone = options.timezone || getStoredTimezone()
+  const parsedDate = typeof date === 'string'
+    ? isDateOnlyString(date)
+      ? dateOnlyToLocalDate(date) || new Date(NaN)
+      : convertUTCToLocal(date, timezone)
+    : date
 
   if (Number.isNaN(parsedDate.getTime())) return '—'
 
