@@ -30,11 +30,24 @@ Define:
   asi que un Blueprint sync puede fallar si una base existente ya fue aumentada
   manualmente por encima de 1 GB.
 
-Los jobs automáticos viven dentro del backend:
+Los jobs automáticos viven dentro del backend. No hay cron services separados en
+Render.
 
-- Meta Ads: `backend/src/jobs/metaSync.cron.js`.
+Los crons de sistema arrancan con el backend. Los crons de integraciones se
+registran en `backend/src/jobs/integrationCronRegistry.js` y sólo se activan si
+la integración está conectada localmente. Esa regla está documentada en
+[INTEGRATION_CRON_RULES.md](./INTEGRATION_CRON_RULES.md).
+
+Crons de integración actuales:
+
+- Google Calendar: `backend/src/jobs/googleCalendarSync.cron.js`.
+- Meta Ads/social: `backend/src/jobs/metaSync.cron.js`.
+- Versiones Meta API: `backend/src/jobs/metaVersionCron.js`.
 - HighLevel: `backend/src/jobs/highlevelSync.cron.js`.
-- Versiones Meta API: `backend/src/jobs/metaVersionCron.js`, revisa al arrancar el backend y el día 1 de cada mes.
+- Stripe: `backend/src/jobs/stripePaymentPlans.cron.js`.
+- Conekta: `backend/src/jobs/conektaPaymentPlans.cron.js`.
+- Mercado Pago: `backend/src/jobs/mercadoPagoPaymentPlans.cron.js`.
+- WhatsApp QR: `backend/src/jobs/whatsappQrWatchdog.cron.js`.
 
 ## Deploy
 

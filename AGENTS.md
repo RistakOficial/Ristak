@@ -33,6 +33,22 @@
   Automatizaciones tienen su propio sistema visual y quedan fuera de los cambios
   de diseño de escritorio.
 
+## Backend / integraciones con crons — OBLIGATORIO
+
+- Si agregas una integración externa que requiera un cron, job periódico,
+  watchdog, polling o reintento automático, primero lee
+  **`docs/INTEGRATION_CRON_RULES.md`**.
+- Regla central: un cron que depende de una integración externa NO debe arrancar
+  sólo porque el backend arrancó. Debe activarse únicamente cuando esa
+  integración esté conectada localmente y apagarse al desconectarla.
+- Los crons de sistema sí pueden vivir siempre activos; los crons de
+  integraciones deben registrarse en `backend/src/jobs/integrationCronRegistry.js`
+  y evaluarse con detectores locales en
+  `backend/src/services/integrationConnectionStateService.js`.
+- Al conectar, desconectar o cambiar modo relevante de una integración, el
+  controller debe llamar `syncRegisteredIntegrationCronsForProvider(...)` para
+  prender/apagar el cron sin reiniciar el backend.
+
 ## Git publishing
 
 - `main` is the only base and publish target for this repo.
