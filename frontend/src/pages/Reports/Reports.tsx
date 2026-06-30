@@ -227,6 +227,10 @@ const getMetricPeriodKey = (date: string, viewType: ViewType) => {
   return sanitized
 }
 
+const compareMetricPeriods = (left: string, right: string, viewType: ViewType) => (
+  getMetricPeriodKey(left, viewType).localeCompare(getMetricPeriodKey(right, viewType))
+)
+
 const createEmptyMetricRow = (date: string): ReportMetricRow => ({
   date,
   spend: 0,
@@ -1411,9 +1415,7 @@ const MetricsGrid: React.FC<MetricsGridProps> = ({
   // Ordenar cronológicamente (fecha más antigua a la izquierda, más reciente a la derecha)
   const chartData = React.useMemo(() => {
     return metrics.slice().sort((a, b) => {
-      const dateA = new Date(a.date).getTime()
-      const dateB = new Date(b.date).getTime()
-      return dateA - dateB // Orden ascendente
+      return compareMetricPeriods(a.date, b.date, viewType) // Orden ascendente
     }).map(m => {
       const businessExpenses = applyManualBusinessExpenses ? (businessExpensesByPeriod[m.date] || 0) : 0
       const fixedBusinessExpenses = applyFixedBusinessExpenses ? (fixedBusinessExpensesByPeriod[m.date] || 0) : 0
@@ -2306,9 +2308,7 @@ export const Reports: React.FC = () => {
       }
     }).sort((a, b) => {
       // Ordenar por fecha descendente (más reciente primero) sin activar indicador visual
-      const dateA = new Date(a.date).getTime()
-      const dateB = new Date(b.date).getTime()
-      return dateB - dateA
+      return compareMetricPeriods(b.date, a.date, viewType)
     })
   ), [currentMetrics, viewType, includeYearForTable, timezoneInfo, businessExpensesByPeriod, fixedBusinessExpensesByPeriod, applyManualBusinessExpenses, applyFixedBusinessExpenses])
 

@@ -25,6 +25,7 @@ import { useTimezone } from '@/contexts/TimezoneContext'
 import { useLabels } from '@/contexts/LabelsContext'
 import { useUrlDateRangeSync, useUrlFilterState } from '@/hooks'
 import { formatCurrency, formatDateToISO, formatEndDateToISO, formatNumber, formatUrlParameter, parseLocalDateString } from '@/utils/format'
+import { parseSortableDateValue } from '@/utils/dateSort'
 import { contactsService, type Contact, type ContactStats } from '@/services/contactsService'
 import { contactTagsService } from '@/services/contactTagsService'
 import { whatsappApiService, type WhatsAppApiPhoneNumber } from '@/services/whatsappApiService'
@@ -168,7 +169,7 @@ const summarizeRevenuePayments = (payments: ContactPayment[] = []) => {
       if (!isRevenuePayment(payment)) return summary
 
       const amount = Number(payment.amount || 0)
-      const timestamp = payment.date ? Date.parse(payment.date) : Number.NaN
+      const timestamp = payment.date ? parseSortableDateValue(payment.date) : Number.NaN
 
       return {
         purchases: summary.purchases + 1,
@@ -416,7 +417,7 @@ const mergeContactPhoneNumbers = (contacts: Contact[], primaryPhone?: string | n
     })
     .sort((left, right) => {
       if (left.isPrimary !== right.isPrimary) return left.isPrimary ? -1 : 1
-      return String(left.createdAt || '').localeCompare(String(right.createdAt || ''))
+      return parseSortableDateValue(left.createdAt) - parseSortableDateValue(right.createdAt)
     })
 }
 
@@ -450,7 +451,7 @@ const mergeContactDetailRecords = (
     template.mergedContactIds.forEach(id => id && mergedIds.add(id))
   }
 
-  let latestPurchaseTimestamp = merged.lastPurchase ? Date.parse(merged.lastPurchase) : Number.NEGATIVE_INFINITY
+  let latestPurchaseTimestamp = merged.lastPurchase ? parseSortableDateValue(merged.lastPurchase) : Number.NEGATIVE_INFINITY
 
   const paymentMap = new Map<string, ContactPayment>()
   merged.payments?.forEach(payment => {
@@ -512,8 +513,8 @@ const mergeContactDetailRecords = (
     }
 
     if ((!hasAuthoritativeDetails || authoritativeContactIds.has(contact.id)) && contact.lastPurchase) {
-      const ts = Date.parse(contact.lastPurchase)
-      if (!Number.isNaN(ts) && ts > latestPurchaseTimestamp) {
+      const ts = parseSortableDateValue(contact.lastPurchase)
+      if (ts > latestPurchaseTimestamp) {
         latestPurchaseTimestamp = ts
         merged.lastPurchase = contact.lastPurchase
       }
@@ -541,7 +542,7 @@ const mergeContactDetailRecords = (
   }
 
   const appointments = Array.from(appointmentMap.values()).sort((a, b) =>
-    new Date(a.start_time).getTime() - new Date(b.start_time).getTime()
+    parseSortableDateValue(a.start_time) - parseSortableDateValue(b.start_time)
   )
   const activeAppointments = appointments.filter(isActiveAppointment)
 
@@ -554,8 +555,8 @@ const mergeContactDetailRecords = (
 
   const now = Date.now()
   const upcomingAppointment = appointments.find(appointment => {
-    const start = Date.parse(appointment.start_time)
-    if (Number.isNaN(start) || start < now) {
+    const start = parseSortableDateValue(appointment.start_time)
+    if (!start || start < now) {
       return false
     }
     return isActiveAppointment(appointment)
@@ -975,15 +976,15 @@ const ContactsTable: React.FC = () => {
   const contactAppointments = useMemo(() => {
     if (!contactData?.appointments) return []
     return [...contactData.appointments].sort((a, b) =>
-      new Date(a.start_time).getTime() - new Date(b.start_time).getTime()
+      parseSortableDateValue(a.start_time) - parseSortableDateValue(b.start_time)
     )
   }, [contactData?.appointments])
 
   const contactPayments = useMemo(() => {
     if (!contactData?.payments) return []
     return [...contactData.payments].sort((a, b) => {
-      const dateA = a?.date ? Date.parse(a.date) : 0
-      const dateB = b?.date ? Date.parse(b.date) : 0
+      const dateA = parseSortableDateValue(a?.date)
+      const dateB = parseSortableDateValue(b?.date)
       return dateB - dateA
     })
   }, [contactData?.payments])

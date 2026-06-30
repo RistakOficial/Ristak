@@ -13,7 +13,8 @@ import { getAppointmentStatusBadge } from '@/utils/statusBadges';
 import { formatTime12h, getBusinessDateRangeTimestamps } from '@/utils/format'
 import { buildSearchIndex, prepareSearchQuery, searchIndexIncludes } from '@/utils/searchText'
 import { useTimezone } from '@/contexts/TimezoneContext';
-import { convertLocalToUTC, formatDateOnlyFromDate, formatInTimezone } from '@/utils/timezone';
+import { convertLocalToUTC, ensureUTC, formatDateOnlyFromDate, formatInTimezone } from '@/utils/timezone';
+import { parseSortableDateValue } from '@/utils/dateSort'
 import {
   appointmentRemindersService,
   formatReminderOffsetLabel,
@@ -123,7 +124,7 @@ const getTimeZoneParts = (date: Date, timeZone?: string) => {
 
 const toDateInTimeZone = (value?: string | null, timeZone?: string): Date | null => {
   if (!value) return null;
-  const base = new Date(value);
+  const base = new Date(ensureUTC(value));
   if (Number.isNaN(base.getTime())) return null;
   if (!timeZone) return base;
 
@@ -1269,8 +1270,8 @@ export const Appointments: React.FC = () => {
     if (!draggedEvent) return;
 
     // Calcular nueva fecha/hora manteniendo la hora original (en la zona de la cuenta)
-    const zonedStart = toDateInTimeZone(draggedEvent.startTime, timezone) ?? new Date(draggedEvent.startTime);
-    const originalDuration = new Date(draggedEvent.endTime).getTime() - new Date(draggedEvent.startTime).getTime();
+    const zonedStart = toDateInTimeZone(draggedEvent.startTime, timezone) ?? new Date(ensureUTC(draggedEvent.startTime));
+    const originalDuration = parseSortableDateValue(draggedEvent.endTime) - parseSortableDateValue(draggedEvent.startTime);
     const duration = Number.isFinite(originalDuration) && originalDuration > 0 ? originalDuration : 60 * 60 * 1000;
 
     // Misma hora de pared (zona de la cuenta) sobre el nuevo día → instante UTC

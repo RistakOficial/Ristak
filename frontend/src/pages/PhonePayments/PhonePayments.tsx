@@ -12,6 +12,7 @@ import { useAccountCurrency, usePaymentGatewayCapabilities, usePhoneElasticScrol
 import apiClient from '@/services/apiClient'
 import { getPhoneDailyCacheKey, readPhoneDailyCache, writePhoneDailyCache } from '@/services/phoneDailyCache'
 import { transactionsService, type Transaction } from '@/services/transactionsService'
+import { parseSortableDateValue } from '@/utils/dateSort'
 import { isLocalPhonePreviewHost } from '@/utils/phoneAccess'
 import { DEFAULT_TIMEZONE, addDateOnlyDays, formatInTimezone, getDateOnlyFromCalendarLikeString, todayDateOnlyInTimezone } from '@/utils/timezone'
 import styles from './PhonePayments.module.css'
@@ -508,7 +509,7 @@ export const PhonePayments: React.FC = () => {
 
         const receivedPayments = transactions
           .filter((transaction) => transaction.amount > 0 && SUCCESS_PAYMENT_STATUSES.has(String(transaction.status || '').toLowerCase()))
-          .sort((left, right) => Date.parse(right.date || right.createdAt || '') - Date.parse(left.date || left.createdAt || ''))
+          .sort((left, right) => parseSortableDateValue(right.date || right.createdAt) - parseSortableDateValue(left.date || left.createdAt))
 
         setRecentPayments(receivedPayments)
         setSelectedRecentPaymentId((current) => (

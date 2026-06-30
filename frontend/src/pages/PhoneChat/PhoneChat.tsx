@@ -164,6 +164,7 @@ import { pushNotificationsService } from '@/services/pushNotificationsService'
 import { whatsappApiService, type ScheduledChatMessage, type WhatsAppApiPendingRestore, type WhatsAppApiPhoneNumber, type WhatsAppApiStatus, type WhatsAppApiTemplate } from '@/services/whatsappApiService'
 import type { Contact, ContactCustomField, ContactCustomFieldDefinition } from '@/types'
 import { getContactStageBadge } from '@/utils/contactStageBadge'
+import { parseSortableDateValue } from '@/utils/dateSort'
 import { normalizeSearchText } from '@/utils/searchText'
 import {
   formatContactCustomFieldDisplayValue,
@@ -1422,7 +1423,7 @@ function selectPrimaryAgentState(states: ConversationAgentState[] = []) {
     }
     const priorityDiff = priority(left) - priority(right)
     if (priorityDiff !== 0) return priorityDiff
-    return Date.parse(right.updatedAt || right.activatedAt || right.signalAt || '') - Date.parse(left.updatedAt || left.activatedAt || left.signalAt || '')
+    return parseSortableDateValue(right.updatedAt || right.activatedAt || right.signalAt) - parseSortableDateValue(left.updatedAt || left.activatedAt || left.signalAt)
   })[0] || null
 }
 
@@ -1539,7 +1540,7 @@ function applyLocalUnreadState(contact: ChatContact, readState: ChatReadState): 
   const messageCount = getContactMessageCount(contact)
   const countDelta = messageCount - Number(stored.messageCount || 0)
   const lastMessageDate = contact.lastMessageDate || ''
-  const hasNewerMessage = Boolean(lastMessageDate && stored.lastMessageDate && Date.parse(lastMessageDate) > Date.parse(stored.lastMessageDate))
+  const hasNewerMessage = Boolean(lastMessageDate && stored.lastMessageDate && parseSortableDateValue(lastMessageDate) > parseSortableDateValue(stored.lastMessageDate))
   const unreadCount = countDelta > 0 ? countDelta : hasNewerMessage ? 1 : 0
 
   return { ...contact, unreadCount: Math.max(0, unreadCount) }
@@ -2071,7 +2072,7 @@ function shouldTrackOutboundReceipt(message: ChatMessage) {
   const status = getMessageReceiptStatus(message)
   if (status === 'read') return false
 
-  const sentAt = new Date(message.date).getTime()
+  const sentAt = parseSortableDateValue(message.date)
   if (!Number.isFinite(sentAt)) return true
   return Date.now() - sentAt < 30 * 60 * 1000
 }
@@ -2157,8 +2158,7 @@ function normalizeMessageMatchText(value?: string) {
 }
 
 function getMessageTimeValue(value?: string) {
-  const timestamp = Date.parse(String(value || ''))
-  return Number.isFinite(timestamp) ? timestamp : 0
+  return parseSortableDateValue(value)
 }
 
 function isOptimisticMessage(message: ChatMessage) {
@@ -2499,7 +2499,7 @@ function getContactInfoArchiveItems(journey: JourneyEvent[] = []): ContactInfoAr
     })
   })
 
-  return items.sort((left, right) => Date.parse(right.date) - Date.parse(left.date))
+  return items.sort((left, right) => parseSortableDateValue(right.date) - parseSortableDateValue(left.date))
 }
 
 function getJourneyMessage(event: JourneyEvent, index: number): ChatMessage | null {
@@ -2762,7 +2762,7 @@ function getMessageRoutingReason(message: ChatMessage) {
 
 function inferHighLevelChatChannel(contact?: ChatContact | null, messages: ChatMessage[] = []): HighLevelChatChannel {
   const newestMessageChannel = [...messages]
-    .sort((left, right) => Date.parse(right.date) - Date.parse(left.date))
+    .sort((left, right) => getMessageTimeValue(right.date) - getMessageTimeValue(left.date))
     .map((message) => normalizeGhlChatChannelValue(message.transport || message.businessPhoneNumberId || ''))
     .find(Boolean)
 
@@ -2828,7 +2828,7 @@ function getContactInfoPayments(contact?: Contact | null, journey: JourneyEvent[
     }))
 
   if (contactPayments.length > 0) {
-    return contactPayments.sort((left, right) => Date.parse(right.date) - Date.parse(left.date))
+    return contactPayments.sort((left, right) => parseSortableDateValue(right.date) - parseSortableDateValue(left.date))
   }
 
   return journey
@@ -2840,7 +2840,7 @@ function getContactInfoPayments(contact?: Contact | null, journey: JourneyEvent[
       date: event.date,
       title: event.data?.title || event.data?.type || null
     }))
-    .sort((left, right) => Date.parse(right.date) - Date.parse(left.date))
+    .sort((left, right) => parseSortableDateValue(right.date) - parseSortableDateValue(left.date))
 }
 
 function getContactInfoAppointments(contact?: Contact | null, journey: JourneyEvent[] = []): ContactInfoAppointment[] {
@@ -2855,7 +2855,7 @@ function getContactInfoAppointments(contact?: Contact | null, journey: JourneyEv
     }))
 
   if (contactAppointments.length > 0) {
-    return contactAppointments.sort((left, right) => Date.parse(left.startTime) - Date.parse(right.startTime))
+    return contactAppointments.sort((left, right) => parseSortableDateValue(left.startTime) - parseSortableDateValue(right.startTime))
   }
 
   return journey
@@ -2868,7 +2868,7 @@ function getContactInfoAppointments(contact?: Contact | null, journey: JourneyEv
       endTime: event.data?.end_time ? String(event.data.end_time) : null,
       notes: event.data?.notes ? String(event.data.notes) : null
     }))
-    .sort((left, right) => Date.parse(left.startTime) - Date.parse(right.startTime))
+    .sort((left, right) => parseSortableDateValue(left.startTime) - parseSortableDateValue(right.startTime))
 }
 
 function getTrackingData(contact?: Contact | null, journey: JourneyEvent[] = []) {
@@ -3225,8 +3225,8 @@ function isAdAttributedJourneyEvent(event: JourneyEvent) {
 }
 
 function getJourneyEventTime(event: JourneyEvent) {
-  const time = Date.parse(event.date || '')
-  return Number.isFinite(time) ? time : null
+  const time = parseSortableDateValue(event.date)
+  return time || null
 }
 
 function getFirstSuccessfulJourneyPaymentTime(events: JourneyEvent[]) {
@@ -3387,7 +3387,7 @@ function buildContactInfoJourney(
   })
 
   return [...otherEvents, ...mergedWhatsAppEvents].sort(
-    (left, right) => Date.parse(right.date) - Date.parse(left.date)
+    (left, right) => parseSortableDateValue(right.date) - parseSortableDateValue(left.date)
   )
 }
 
@@ -3613,18 +3613,14 @@ function getBusinessPhoneLabel(phone?: WhatsAppApiStatus['phoneNumbers'][number]
 
 function isInsideReplyWindow(date?: string | null) {
   if (!date) return false
-  const timestamp = Date.parse(date)
-  if (!Number.isFinite(timestamp)) return false
+  const timestamp = parseSortableDateValue(date)
+  if (!timestamp) return false
   return Date.now() - timestamp < 24 * 60 * 60 * 1000
 }
 
 function getNewestMessageByDate(messagesToSearch: ChatMessage[]) {
   return [...messagesToSearch]
-    .sort((left, right) => {
-      const rightDate = Date.parse(right.date)
-      const leftDate = Date.parse(left.date)
-      return (Number.isFinite(rightDate) ? rightDate : 0) - (Number.isFinite(leftDate) ? leftDate : 0)
-    })[0] || null
+    .sort((left, right) => getMessageTimeValue(right.date) - getMessageTimeValue(left.date))[0] || null
 }
 
 function messageCanOpenWhatsAppReplyWindow(message: ChatMessage) {
@@ -4466,9 +4462,7 @@ export const PhoneChat: React.FC = () => {
         completion
       }))
     ].sort((left, right) => {
-      const leftTime = Date.parse(left.date)
-      const rightTime = Date.parse(right.date)
-      return (Number.isFinite(leftTime) ? leftTime : 0) - (Number.isFinite(rightTime) ? rightTime : 0)
+      return parseSortableDateValue(left.date) - parseSortableDateValue(right.date)
     })
 
     items.forEach((item) => {
@@ -4687,10 +4681,10 @@ export const PhoneChat: React.FC = () => {
 
     const newestInboundMessageWithBusinessPhone = [...messages]
       .filter((message) => message.direction === 'inbound' && (message.businessPhoneNumberId || message.businessPhone))
-      .sort((left, right) => Date.parse(right.date) - Date.parse(left.date))[0] || null
+      .sort((left, right) => getMessageTimeValue(right.date) - getMessageTimeValue(left.date))[0] || null
     const newestMessageWithBusinessPhone = [...messages]
       .filter((message) => message.businessPhoneNumberId || message.businessPhone)
-      .sort((left, right) => Date.parse(right.date) - Date.parse(left.date))[0] || null
+      .sort((left, right) => getMessageTimeValue(right.date) - getMessageTimeValue(left.date))[0] || null
 
     const fromInboundMessageId = newestInboundMessageWithBusinessPhone?.businessPhoneNumberId
       ? businessPhones.find((phone) => phone.id === newestInboundMessageWithBusinessPhone.businessPhoneNumberId)
@@ -4779,7 +4773,7 @@ export const PhoneChat: React.FC = () => {
         if (!selectedBusinessPhoneValue) return true
         return phoneLooksSame(message.businessPhone, selectedBusinessPhoneValue)
       })
-      .sort((left, right) => Date.parse(right.date) - Date.parse(left.date))[0] || null
+      .sort((left, right) => getMessageTimeValue(right.date) - getMessageTimeValue(left.date))[0] || null
   }, [messages, selectedBusinessPhoneValue])
   const lastInboundWhatsAppReplyWindowMessage = useMemo(() => (
     getNewestMessageByDate(messages.filter(messageCanOpenWhatsAppReplyWindow))
@@ -4991,8 +4985,8 @@ export const PhoneChat: React.FC = () => {
       .sort((left, right) => {
         const leftState = agentStates[left.id]
         const rightState = agentStates[right.id]
-        return Date.parse(rightState?.updatedAt || right.lastMessageDate || right.createdAt) -
-          Date.parse(leftState?.updatedAt || left.lastMessageDate || left.createdAt)
+        return parseSortableDateValue(rightState?.updatedAt || right.lastMessageDate || right.createdAt) -
+          parseSortableDateValue(leftState?.updatedAt || left.lastMessageDate || left.createdAt)
       })
   }, [activeAiAgentHubAgentFilter, agentStateLists, agentStates, aiAgentHubQuery, aiAgentHubSourceChats, aiAgentHubStatusFilter, archivedChatIdSet])
   const agentPriorityChatRows = useMemo(() => {
@@ -5002,8 +4996,8 @@ export const PhoneChat: React.FC = () => {
       .sort((left, right) => {
         const leftState = agentStates[left.id]
         const rightState = agentStates[right.id]
-        return Date.parse(rightState?.signalAt || right.lastMessageDate || right.createdAt) -
-          Date.parse(leftState?.signalAt || left.lastMessageDate || left.createdAt)
+        return parseSortableDateValue(rightState?.signalAt || right.lastMessageDate || right.createdAt) -
+          parseSortableDateValue(leftState?.signalAt || left.lastMessageDate || left.createdAt)
       })
   }, [agentPriorityChatIdSet, agentPriorityViewOpen, agentStates, archivedViewOpen, chatFilter, chats])
   const agentActiveChatIdSet = useMemo(() => {
@@ -5125,7 +5119,7 @@ export const PhoneChat: React.FC = () => {
     return [...chipFilteredChats].sort((left, right) => {
       const unreadDelta = Number(right.unreadCount || 0) - Number(left.unreadCount || 0)
       if (unreadDelta !== 0) return unreadDelta
-      return Date.parse(right.lastMessageDate || right.createdAt) - Date.parse(left.lastMessageDate || left.createdAt)
+      return parseSortableDateValue(right.lastMessageDate || right.createdAt) - parseSortableDateValue(left.lastMessageDate || left.createdAt)
     })
   }, [
     agentActiveChatIdSet,
@@ -5181,7 +5175,7 @@ export const PhoneChat: React.FC = () => {
     const seen = new Set<string>()
     const recentChats = [...chats]
       .filter((contact) => contact.phone && contactMatchesQuery(contact, normalizedQuery))
-      .sort((left, right) => Date.parse(right.lastMessageDate || right.createdAt) - Date.parse(left.lastMessageDate || left.createdAt))
+      .sort((left, right) => parseSortableDateValue(right.lastMessageDate || right.createdAt) - parseSortableDateValue(left.lastMessageDate || left.createdAt))
     const searchedContacts = contactResults
       .filter((contact) => contact.phone && contactMatchesQuery(contact, normalizedQuery))
 
@@ -5940,7 +5934,7 @@ export const PhoneChat: React.FC = () => {
         .map(getScheduledChatMessageBubble)
         .filter((message): message is ChatMessage => Boolean(message))
       const nextMessages = [...journeyMessages, ...scheduledMessageBubbles]
-        .sort((left, right) => new Date(left.date).getTime() - new Date(right.date).getTime())
+        .sort((left, right) => getMessageTimeValue(left.date) - getMessageTimeValue(right.date))
 
       setMessages((currentMessages) => (
         (() => {
@@ -6627,7 +6621,7 @@ export const PhoneChat: React.FC = () => {
   const scheduledRefreshIntervalMs = useMemo(() => {
     const scheduledTimes = messages
       .filter((message) => isMessageScheduled(message) && !isMessageFailed(message))
-      .map((message) => new Date(message.scheduledAt || message.date).getTime())
+      .map((message) => parseSortableDateValue(message.scheduledAt || message.date))
       .filter(Number.isFinite)
 
     if (scheduledTimes.length === 0) return 0
@@ -8907,7 +8901,7 @@ export const PhoneChat: React.FC = () => {
         }))
 
       return [...inserted, ...updated].sort((left, right) => (
-        Date.parse(right.lastMessageDate || right.createdAt) - Date.parse(left.lastMessageDate || left.createdAt)
+        parseSortableDateValue(right.lastMessageDate || right.createdAt) - parseSortableDateValue(left.lastMessageDate || left.createdAt)
       ))
     })
   }
@@ -9449,8 +9443,8 @@ export const PhoneChat: React.FC = () => {
         return
       }
 
-      const lastInboundTime = new Date(lastInboundForSelectedPhone?.date || '').getTime()
-      if (transport === 'api' && !selectedQrReady && Number.isFinite(lastInboundTime) && scheduledDate.getTime() > lastInboundTime + 24 * 60 * 60 * 1000) {
+      const lastInboundTime = parseSortableDateValue(lastInboundForSelectedPhone?.date)
+      if (transport === 'api' && !selectedQrReady && lastInboundTime && scheduledDate.getTime() > lastInboundTime + 24 * 60 * 60 * 1000) {
         setScheduleError('Para esa hora WhatsApp ya no dejará responder así. Usa una plantilla o QR.')
         return
       }
@@ -9491,7 +9485,7 @@ export const PhoneChat: React.FC = () => {
         setMessages((current) => {
           const next = current.filter((message) => message.id !== scheduledBubble.id)
           next.push(scheduledBubble)
-          return next.sort((left, right) => new Date(left.date).getTime() - new Date(right.date).getTime())
+          return next.sort((left, right) => getMessageTimeValue(left.date) - getMessageTimeValue(right.date))
         })
         setChats((current) => current.map((contact) => (
           contact.id === activeContact.id
@@ -12959,9 +12953,9 @@ export const PhoneChat: React.FC = () => {
 
     const revenueTotal = contactInfoSuccessfulPayments.reduce((sum, payment) => sum + payment.amount, 0)
     const paymentsCount = contactInfoPayments.length || Number(contactInfoData.purchases || 0) || contactInfoSuccessfulPayments.length
-    const nextAppointment = contactInfoActiveAppointments.find((appointment) => Date.parse(appointment.startTime) >= Date.now()) || contactInfoActiveAppointments[0]
+    const nextAppointment = contactInfoActiveAppointments.find((appointment) => parseSortableDateValue(appointment.startTime) >= Date.now()) || contactInfoActiveAppointments[0]
     const firstSuccessfulPayment = [...contactInfoSuccessfulPayments]
-      .sort((left, right) => Date.parse(left.date) - Date.parse(right.date))[0]
+      .sort((left, right) => parseSortableDateValue(left.date) - parseSortableDateValue(right.date))[0]
     const firstAppointment = contactInfoAppointments[0]
     const leadEvent = contactJourney.find((event) => event.type === 'contact_created')
     const leadDate = leadEvent?.date || contactInfoData.createdAt

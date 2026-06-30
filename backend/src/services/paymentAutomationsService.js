@@ -1,10 +1,15 @@
 import { db } from '../config/database.js'
 import { logger } from '../utils/logger.js'
+import { DateTime } from 'luxon'
+import {
+  DEFAULT_TIMEZONE,
+  getAccountTimezone,
+  resolveTimezone
+} from '../utils/dateUtils.js'
 import { getPaymentSettings } from './paymentSettingsService.js'
 import { buildDefaultMessageTemplateSendComponents } from './messageTemplatesService.js'
 import { sendWhatsAppApiTemplateMessage } from './whatsappApiService.js'
 
-const DAY_MS = 24 * 60 * 60 * 1000
 const HOUR_MS = 60 * 60 * 1000
 const DEFAULT_LANGUAGE = 'es_MX'
 
@@ -76,15 +81,46 @@ function safeJson(value) {
 function parseDateMs(value) {
   const text = cleanString(value, 80)
   if (!text) return null
-  const normalized = /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}/.test(text)
-    ? text.replace(' ', 'T')
-    : text
+  let normalized = text
+  if (/^\d{4}-\d{2}-\d{2}$/.test(text)) {
+    normalized = `${text}T00:00:00.000Z`
+  } else if (/^\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}/.test(text)) {
+    const withDateSeparator = text.replace(/\s+/, 'T')
+    normalized = /[zZ]$|[+-]\d{2}:?\d{2}$/.test(withDateSeparator)
+      ? withDateSeparator
+      : `${withDateSeparator}Z`
+  }
   const parsed = Date.parse(normalized)
   return Number.isFinite(parsed) ? parsed : null
 }
 
-function startOfLocalDayMs(date = new Date()) {
-  return new Date(date.getFullYear(), date.getMonth(), date.getDate()).getTime()
+function addDateOnlyDays(dateOnly, days, timezone = DEFAULT_TIMEZONE) {
+  const date = DateTime.fromISO(String(dateOnly || ''), { zone: resolveTimezone(timezone) })
+  return date.isValid ? date.plus({ days }).toISODate() : ''
+}
+
+function businessDateOnlyFromValue(value, timezone = DEFAULT_TIMEZONE) {
+  const zone = resolveTimezone(timezone)
+
+  if (value instanceof Date) {
+    const date = DateTime.fromJSDate(value).setZone(zone)
+    return date.isValid ? date.toISODate() : null
+  }
+
+  const text = cleanString(value, 80)
+  if (!text) return null
+
+  const calendarDate = text.match(/^(\d{4}-\d{2}-\d{2})(?:[ T]00:00(?::00(?:\.0{1,6})?)?)?$/)
+  if (calendarDate) return calendarDate[1]
+
+  const normalized = text.replace(/\s+/, 'T')
+  const hasExplicitZone = /(?:Z|[+-]\d{2}:?\d{2})$/i.test(normalized)
+  const parsed = hasExplicitZone
+    ? DateTime.fromISO(normalized, { setZone: true }).setZone(zone)
+    : DateTime.fromISO(`${normalized}Z`, { zone: 'utc' }).setZone(zone)
+
+  if (!parsed.isValid) return null
+  return parsed.toISODate()
 }
 
 function appendReceiptQuery(url = '') {
@@ -143,11 +179,13 @@ function formatPaymentAmount(amount, currency = 'MXN') {
   }
 }
 
-function formatPaymentDate(value) {
-  const parsed = parseDateMs(value)
-  if (!parsed) return ''
+function formatPaymentDate(value, timezone = DEFAULT_TIMEZONE) {
+  const dateOnly = businessDateOnlyFromValue(value, timezone)
+  if (!dateOnly) return ''
+
   try {
-    return new Intl.DateTimeFormat('es-MX', { dateStyle: 'long' }).format(new Date(parsed))
+    const date = DateTime.fromISO(dateOnly, { zone: resolveTimezone(timezone) }).setLocale('es-MX')
+    return date.isValid ? date.toLocaleString(DateTime.DATE_FULL) : cleanString(value, 80)
   } catch {
     return cleanString(value, 80)
   }
@@ -204,7 +242,7 @@ async function loadPaymentWithContact(paymentInput) {
   }
 }
 
-function buildPaymentVariableMap(payment = {}, { publicBaseUrl = '' } = {}) {
+function buildPaymentVariableMap(payment = {}, { publicBaseUrl = '', timezone = DEFAULT_TIMEZONE } = {}) {
   const baseUrl = resolvePublicBaseUrl(payment, publicBaseUrl)
   const paymentUrl = buildPaymentUrl(payment, baseUrl)
   const publicPaymentId = cleanString(payment.public_payment_id || payment.publicPaymentId, 200)
@@ -230,7 +268,7 @@ function buildPaymentVariableMap(payment = {}, { publicBaseUrl = '' } = {}) {
     'payment.provider': cleanString(payment.payment_provider || payment.paymentProvider, 120),
     'payment.receipt': cleanString(payment.reference || payment.invoice_number || payment.ghl_invoice_id || payment.id, 240),
     'payment.invoice_number': cleanString(payment.invoice_number || payment.invoiceNumber, 120),
-    'payment.date': formatPaymentDate(payment.paid_at || payment.date || payment.created_at),
+    'payment.date': formatPaymentDate(payment.paid_at || payment.date || payment.created_at, timezone),
     'payment.url': paymentUrl,
     'payment.receipt_url': receiptUrl,
     'payment.receipt_path': publicPaymentId ? `${publicPaymentId}?receipt=1` : ''
@@ -321,6 +359,7 @@ function shouldRequirePaymentLink(type) {
 
 export async function sendPaymentAutomationMessage(type, paymentInput, options = {}) {
   const settings = options.settings || await getPaymentSettings()
+  const timezone = options.timezone || await getAccountTimezone().catch(() => DEFAULT_TIMEZONE)
   const definition = getAutomationDefinition(type, settings)
   if (!definition) return { sent: false, skipped: true, reason: 'unknown_type' }
   if (!definition.enabled) return { sent: false, skipped: true, reason: 'disabled' }
@@ -334,7 +373,7 @@ export async function sendPaymentAutomationMessage(type, paymentInput, options =
   if (!contact.phone) return { sent: false, skipped: true, reason: 'missing_phone' }
 
   const publicBaseUrl = resolvePublicBaseUrl(payment, options.publicBaseUrl)
-  const extraVariables = buildPaymentVariableMap(payment, { publicBaseUrl })
+  const extraVariables = buildPaymentVariableMap(payment, { publicBaseUrl, timezone })
   const hasPaymentTarget = Boolean(extraVariables['payment.public_id'] || /^https?:\/\//i.test(extraVariables['payment.url']))
   if (shouldRequirePaymentLink(type) && !hasPaymentTarget) {
     return { sent: false, skipped: true, reason: 'missing_payment_url' }
@@ -403,10 +442,10 @@ export function queuePaymentAutomationMessage(type, paymentInput, options = {}) 
     })
 }
 
-async function getReminderCandidates(settings, now, limit, paymentIds = []) {
+async function getReminderCandidates(settings, now, limit, paymentIds = [], timezone = DEFAULT_TIMEZONE) {
   const daysBefore = Math.max(1, Number(settings.automations?.reminderDaysBefore || 3))
-  const todayStart = startOfLocalDayMs(now)
-  const targetEnd = todayStart + (daysBefore * DAY_MS) + DAY_MS - 1
+  const todayDate = businessDateOnlyFromValue(now, timezone)
+  const targetEndDate = addDateOnlyDays(todayDate, daysBefore, timezone)
   const closed = [...CLOSED_PAYMENT_STATUSES]
   const placeholders = closed.map(() => '?').join(', ')
   const cleanPaymentIds = paymentIds.map((id) => cleanString(id, 200)).filter(Boolean)
@@ -427,9 +466,9 @@ async function getReminderCandidates(settings, now, limit, paymentIds = []) {
   `, [...closed, ...cleanPaymentIds, Math.max(limit * 3, limit)])
 
   return rows.filter((row) => {
-    // PAY2-007: parseDateMs devuelve null si due_date es invalida/vacia => se excluye (no se inventa fecha)
-    const dueMs = parseDateMs(row.due_date)
-    return dueMs !== null && dueMs >= todayStart && dueMs <= targetEnd
+    // PAY2-007: fechas invalidas/vacias se excluyen; no se inventa vencimiento.
+    const dueDate = businessDateOnlyFromValue(row.due_date, timezone)
+    return dueDate !== null && dueDate >= todayDate && dueDate <= targetEndDate
   }).slice(0, limit)
 }
 
@@ -457,13 +496,14 @@ async function getFailedCandidates(settings, now, limit, paymentIds = []) {
 
 export async function processDuePaymentAutomations({ now = new Date(), limit = 100, paymentIds = [] } = {}) {
   const settings = await getPaymentSettings()
+  const timezone = await getAccountTimezone().catch(() => DEFAULT_TIMEZONE)
   const results = []
 
   const reminderDefinition = getAutomationDefinition('reminder', settings)
   if (reminderDefinition?.enabled && channelUsesWhatsApp(reminderDefinition.channel)) {
-    const reminders = await getReminderCandidates(settings, now, limit, paymentIds)
+    const reminders = await getReminderCandidates(settings, now, limit, paymentIds, timezone)
     for (const payment of reminders) {
-      results.push(await sendPaymentAutomationMessage('reminder', payment, { settings }))
+      results.push(await sendPaymentAutomationMessage('reminder', payment, { settings, timezone }))
     }
   }
 
@@ -471,7 +511,7 @@ export async function processDuePaymentAutomations({ now = new Date(), limit = 1
   if (failedDefinition?.enabled && channelUsesWhatsApp(failedDefinition.channel)) {
     const failed = await getFailedCandidates(settings, now, limit, paymentIds)
     for (const payment of failed) {
-      results.push(await sendPaymentAutomationMessage('failed', payment, { settings }))
+      results.push(await sendPaymentAutomationMessage('failed', payment, { settings, timezone }))
     }
   }
 

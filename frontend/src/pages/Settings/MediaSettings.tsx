@@ -59,6 +59,7 @@ import mediaService, {
   type StorageUsage,
   type StreamChartPoint
 } from '@/services/mediaService'
+import { parseSortableDateValue } from '@/utils/dateSort'
 import { formatDateTime as formatBusinessDateTime, formatDateToISO, parseLocalDateString } from '@/utils/format'
 import { getDateOnlyFromCalendarLikeString } from '@/utils/timezone'
 import styles from './MediaSettings.module.css'
@@ -579,9 +580,8 @@ export const MediaSettings: React.FC = () => {
       : typeFilteredFiles.filter((file) => fileMatchesPath(file, currentPath))
 
     return [...scopedFiles].sort((a, b) => {
-      const aDate = new Date(a.asset.updatedAt || a.asset.createdAt || 0).getTime()
-      const bDate = new Date(b.asset.updatedAt || b.asset.createdAt || 0).getTime()
-      return bDate - aDate
+      return parseSortableDateValue(b.asset.updatedAt || b.asset.createdAt) -
+        parseSortableDateValue(a.asset.updatedAt || a.asset.createdAt)
     })
   }, [currentPath, normalizedQuery, typeFilteredFiles])
   const folderSummaries = useMemo(() => (

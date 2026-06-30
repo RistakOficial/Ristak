@@ -41,6 +41,7 @@ import { getContactAvatarUrl, getContactDetailLabel, getContactDisplayName, getC
 import { normalizeTrafficSource } from '@/utils/trafficSourceNormalizer'
 import { CONTACT_STAGE_BADGE_VARIANTS, getContactStageBadge } from '@/utils/contactStageBadge'
 import { buildSearchIndex, prepareSearchQuery, searchIndexIncludes } from '@/utils/searchText'
+import { parseSortableDateValue } from '@/utils/dateSort'
 import { localDateTimeInputToUTCISOString, toDateTimeLocalInputValue as toZonedDateTimeLocalInputValue } from '@/utils/timezone'
 import { AgentRobot } from '@/components/ai'
 import { useLabels } from '@/contexts/LabelsContext'
@@ -586,8 +587,7 @@ const normalizeContactChatMatchText = (value?: string) =>
   String(value || '').replace(/\s+/g, ' ').trim().toLowerCase()
 
 const getContactChatTimeValue = (value?: string) => {
-  const timestamp = Date.parse(String(value || ''))
-  return Number.isFinite(timestamp) ? timestamp : 0
+  return parseSortableDateValue(value)
 }
 
 const isOptimisticContactChatMessage = (message: ContactChatMessage) => {
@@ -973,7 +973,7 @@ export function ContactDetailsModal({
         .filter((message): message is ContactChatMessage => Boolean(message))
 
       const loadedMessages = [...journeyMessages, ...scheduledBubbles]
-        .sort((left, right) => Date.parse(left.date) - Date.parse(right.date))
+        .sort((left, right) => parseSortableDateValue(left.date) - parseSortableDateValue(right.date))
       setAgentCompletionEvents(agentCompletions)
       setChatMessages((current) => mergeContactChatMessagesWithOptimistic(loadedMessages, current))
     } catch {
@@ -1553,9 +1553,7 @@ export function ContactDetailsModal({
         completion
       }))
     ].sort((left, right) => {
-      const leftTime = Date.parse(left.date)
-      const rightTime = Date.parse(right.date)
-      return (Number.isFinite(leftTime) ? leftTime : 0) - (Number.isFinite(rightTime) ? rightTime : 0)
+      return parseSortableDateValue(left.date) - parseSortableDateValue(right.date)
     })
     const groups: Array<{ key: string; label: string; items: ContactChatTimelineItem[] }> = []
     items.forEach((item) => {

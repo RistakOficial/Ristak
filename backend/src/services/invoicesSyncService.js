@@ -567,7 +567,7 @@ async function findUnlinkedLocalPaymentForInvoice({ contactId, ghlContactId, amo
        AND COALESCE(payment_provider, 'manual') = 'manual'
        AND ${localExportPrefixWhere('id')}
        AND ABS(COALESCE(amount, 0) - ?) < 0.005
-     ORDER BY created_at DESC
+     ORDER BY ${timestampSortExpression('created_at')} DESC, id DESC
      LIMIT 25`,
     [...contactCandidates, ...localExportPrefixParams(), Number(amount)]
   )
@@ -603,7 +603,7 @@ async function findHighLevelMirrorForLocalPayment(payment = {}) {
        AND COALESCE(ghl_invoice_id, '') != ''
        AND COALESCE(payment_provider, 'highlevel') != 'stripe'
        AND ABS(COALESCE(amount, 0) - ?) < 0.005
-     ORDER BY created_at DESC
+     ORDER BY ${timestampSortExpression('created_at')} DESC, id DESC
      LIMIT 25`,
     [payment.id, ...contactCandidates, Number(payment.amount)]
   )
@@ -842,7 +842,7 @@ async function findExistingPaymentForInvoice({
            LOWER(COALESCE(invoice_number, '')) IN (${referencePlaceholders})
            OR LOWER(COALESCE(reference, '')) IN (${referencePlaceholders})
          )
-       ORDER BY created_at DESC
+       ORDER BY ${timestampSortExpression('created_at')} DESC, id DESC
        LIMIT 1`,
       [...contactCandidates, ...normalizedCandidates, ...normalizedCandidates]
     )

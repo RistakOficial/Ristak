@@ -107,6 +107,7 @@ import {
 } from '@/services/whatsappApiService'
 import type { Contact, ContactAppointment, ContactPayment, ContactPhoneNumber } from '@/types'
 import { getContactStageBadge } from '@/utils/contactStageBadge'
+import { parseSortableDateValue } from '@/utils/dateSort'
 import { formatCurrency, formatDate, formatUrlParameter } from '@/utils/format'
 import styles from './DesktopChat.module.css'
 
@@ -753,7 +754,7 @@ function selectPrimaryAgentState(states: ConversationAgentState[] = []) {
     }
     const priorityDiff = priority(left) - priority(right)
     if (priorityDiff !== 0) return priorityDiff
-    return Date.parse(right.updatedAt || right.activatedAt || right.signalAt || '') - Date.parse(left.updatedAt || left.activatedAt || left.signalAt || '')
+    return parseSortableDateValue(right.updatedAt || right.activatedAt || right.signalAt) - parseSortableDateValue(left.updatedAt || left.activatedAt || left.signalAt)
   })[0] || null
 }
 
@@ -1006,8 +1007,7 @@ function normalizeMessageMatchText(value?: string) {
 }
 
 function getMessageTimeValue(value?: string) {
-  const timestamp = Date.parse(String(value || ''))
-  return Number.isFinite(timestamp) ? timestamp : 0
+  return parseSortableDateValue(value)
 }
 
 function isOptimisticDesktopMessage(message: DesktopChatMessage) {
@@ -1774,7 +1774,7 @@ function buildConversationMessages(journey: JourneyEvent[], scheduledMessages: S
   const journeyMessages = journey.map(getJourneyMessage).filter((message): message is DesktopChatMessage => Boolean(message))
   const scheduledBubbles = scheduledMessages.map(getScheduledChatMessageBubble).filter((message): message is DesktopChatMessage => Boolean(message))
   return [...journeyMessages, ...scheduledBubbles]
-    .sort((left, right) => Date.parse(left.date) - Date.parse(right.date))
+    .sort((left, right) => getMessageTimeValue(left.date) - getMessageTimeValue(right.date))
 }
 
 function isMessageScheduled(message: DesktopChatMessage) {
@@ -1839,7 +1839,7 @@ function getContactInfoPayments(contact?: Contact | null, journey: JourneyEvent[
     date: payment.date || contact?.createdAt || new Date().toISOString(),
     title: null
   }))
-  if (contactPayments.length > 0) return contactPayments.sort((left, right) => Date.parse(right.date) - Date.parse(left.date))
+  if (contactPayments.length > 0) return contactPayments.sort((left, right) => parseSortableDateValue(right.date) - parseSortableDateValue(left.date))
   return journey
     .filter((event) => event.type === 'payment')
     .map((event, index) => ({
@@ -1849,7 +1849,7 @@ function getContactInfoPayments(contact?: Contact | null, journey: JourneyEvent[
       date: event.date,
       title: event.data?.title || event.data?.type || null
     }))
-    .sort((left, right) => Date.parse(right.date) - Date.parse(left.date))
+    .sort((left, right) => parseSortableDateValue(right.date) - parseSortableDateValue(left.date))
 }
 
 function getContactInfoAppointments(contact?: Contact | null, journey: JourneyEvent[] = []): ContactInfoAppointment[] {
@@ -1865,7 +1865,7 @@ function getContactInfoAppointments(contact?: Contact | null, journey: JourneyEv
     address: (appointment as Record<string, any>).address || (appointment as Record<string, any>).location || null,
     assignedUserId: (appointment as Record<string, any>).assignedUserId || (appointment as Record<string, any>).assigned_user_id || null
   }))
-  if (contactAppointments.length > 0) return contactAppointments.sort((left, right) => Date.parse(left.startTime) - Date.parse(right.startTime))
+  if (contactAppointments.length > 0) return contactAppointments.sort((left, right) => parseSortableDateValue(left.startTime) - parseSortableDateValue(right.startTime))
   return journey
     .filter((event) => event.type === 'appointment')
     .map((event, index) => ({
@@ -1880,7 +1880,7 @@ function getContactInfoAppointments(contact?: Contact | null, journey: JourneyEv
       address: event.data?.address || event.data?.location || null,
       assignedUserId: event.data?.assigned_user_id || event.data?.assignedUserId || null
     }))
-    .sort((left, right) => Date.parse(left.startTime) - Date.parse(right.startTime))
+    .sort((left, right) => parseSortableDateValue(left.startTime) - parseSortableDateValue(right.startTime))
 }
 
 function isSuccessfulPayment(payment: ContactInfoPayment) {
@@ -1910,10 +1910,14 @@ function toCalendarEvent(
   fallbackLocationId: string | null | undefined,
   fallbackTimeZone: string
 ): CalendarEvent {
-  const parsedStart = new Date(appointment.startTime)
-  const startTime = Number.isNaN(parsedStart.getTime()) ? new Date().toISOString() : parsedStart.toISOString()
-  const parsedEnd = appointment.endTime ? new Date(appointment.endTime) : new Date(Date.parse(startTime) + 60 * 60 * 1000)
-  const endTime = Number.isNaN(parsedEnd.getTime()) ? new Date(Date.parse(startTime) + 60 * 60 * 1000).toISOString() : parsedEnd.toISOString()
+  const startTimestamp = parseSortableDateValue(appointment.startTime)
+  const effectiveStartTimestamp = startTimestamp > 0 ? startTimestamp : Date.now()
+  const startTime = new Date(effectiveStartTimestamp).toISOString()
+  const parsedEndTimestamp = appointment.endTime ? parseSortableDateValue(appointment.endTime) : 0
+  const effectiveEndTimestamp = parsedEndTimestamp > effectiveStartTimestamp
+    ? parsedEndTimestamp
+    : effectiveStartTimestamp + 60 * 60 * 1000
+  const endTime = new Date(effectiveEndTimestamp).toISOString()
 
   return {
     id: appointment.id,
@@ -2402,8 +2406,8 @@ export const DesktopChat: React.FC = () => {
       .sort((left, right) => {
         const leftState = agentStates[left.id]
         const rightState = agentStates[right.id]
-        return Date.parse(rightState?.signalAt || right.lastMessageDate || right.createdAt) -
-          Date.parse(leftState?.signalAt || left.lastMessageDate || left.createdAt)
+        return parseSortableDateValue(rightState?.signalAt || right.lastMessageDate || right.createdAt) -
+          parseSortableDateValue(leftState?.signalAt || left.lastMessageDate || left.createdAt)
       })
   }, [activeAdvancedFilterCount, agentPriorityChatIdSet, agentStates, archivedChatIdSet, archivedViewOpen, chatFilter, isChatQueryActive, visibleChatsForList])
   const selectableChatRows = useMemo(() => {
@@ -2593,9 +2597,7 @@ export const DesktopChat: React.FC = () => {
         completion
       }))
     ].sort((left, right) => {
-      const leftTime = Date.parse(left.date)
-      const rightTime = Date.parse(right.date)
-      return (Number.isFinite(leftTime) ? leftTime : 0) - (Number.isFinite(rightTime) ? rightTime : 0)
+      return parseSortableDateValue(left.date) - parseSortableDateValue(right.date)
     })
     const groups: Array<{ key: string; label: string; items: DesktopConversationTimelineItem[] }> = []
     items.forEach((item) => {
@@ -4038,7 +4040,7 @@ export const DesktopChat: React.FC = () => {
             message.scheduledMessageId !== editingScheduledMessageId
           ))
           next.push(scheduledBubble)
-          return next.sort((left, right) => Date.parse(left.date) - Date.parse(right.date))
+          return next.sort((left, right) => getMessageTimeValue(left.date) - getMessageTimeValue(right.date))
         })
         setChats((current) => current.map((contact) => (
           contact.id === activeContact.id

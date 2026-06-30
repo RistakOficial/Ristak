@@ -2112,7 +2112,7 @@ export const getContactsByType = async (req, res) => {
           date
         FROM payments
         WHERE contact_id IN (${placeholders})
-        ORDER BY date DESC
+        ORDER BY ${timestampSortExpression('date')} DESC, ${timestampSortExpression('created_at')} DESC, id DESC
       `;
 
       const paymentRows = await db.all(paymentsQuery, contactIds);

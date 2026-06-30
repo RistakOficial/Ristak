@@ -31,6 +31,7 @@ import { calendarsService, type CalendarEvent } from '@/services/calendarsServic
 import { campaignsService, type Campaign } from '@/services/campaignsService'
 import { formatCurrency, formatRoas, formatChartDate, formatDateToISO, formatEndDateToISO, getBusinessDateRangeTimestamps, parseLocalDateString, formatChartCurrency, formatChartNumber, formatDate } from '@/utils/format'
 import { dateOnlyToLocalDate, todayDateOnlyInTimezone } from '@/utils/timezone'
+import { parseSortableDateValue } from '@/utils/dateSort'
 import { getTransactionStatusBadge, getAppointmentStatusBadge } from '@/utils/statusBadges'
 import { Badge } from '@/components/common/Badge'
 
@@ -419,8 +420,7 @@ const aggregateDualSeries = (
 
 const getTimeValue = (date?: string | null) => {
   if (!date) return 0
-  const time = new Date(date).getTime()
-  return Number.isNaN(time) ? 0 : time
+  return parseSortableDateValue(date)
 }
 
 const getTransactionDate = (transaction: Transaction) => (

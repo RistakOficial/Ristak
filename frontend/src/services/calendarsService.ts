@@ -1,4 +1,5 @@
 import apiClient from './apiClient';
+import { parseSortableDateValue } from '@/utils/dateSort';
 import { getStoredBusinessTimezone, localDateTimeInputToUTCISOString, todayDateOnlyInTimezone } from '@/utils/timezone';
 
 /**
@@ -749,7 +750,7 @@ export const calendarsService = {
     const now = new Date();
     return events
       .filter((event) => new Date(event.startTime) >= now)
-      .sort((a, b) => a.startTime.localeCompare(b.startTime))
+      .sort((a, b) => parseSortableDateValue(a.startTime) - parseSortableDateValue(b.startTime))
       .slice(0, limit);
   },
 
@@ -768,8 +769,8 @@ export const calendarsService = {
       const today = todayDateOnlyInTimezone(timezone);
       const startIso = localDateTimeInputToUTCISOString(`${today}T00:00:00.000`, timezone);
       const endIso = localDateTimeInputToUTCISOString(`${today}T23:59:59.999`, timezone);
-      const startTimestamp = startIso ? new Date(startIso).getTime() : NaN;
-      const endTimestamp = endIso ? new Date(endIso).getTime() : NaN;
+      const startTimestamp = parseSortableDateValue(startIso);
+      const endTimestamp = parseSortableDateValue(endIso);
       if (!Number.isFinite(startTimestamp) || !Number.isFinite(endTimestamp)) return [];
 
       // Obtener eventos del día actual usando timestamps

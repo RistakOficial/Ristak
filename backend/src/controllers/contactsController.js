@@ -17,7 +17,7 @@ import { getHiddenContactFilters, buildHiddenContactsCondition } from '../utils/
 import { recordAudit } from '../utils/auditLog.js'
 import { nonTestPaymentCondition } from '../utils/paymentMode.js'
 import { buildContactSearchClause, buildContactSearchRank } from '../utils/searchText.js'
-import { parseSortableTimestamp, timestampSortExpression } from '../utils/sqlTimestampSort.js'
+import { coalescedTimestampSortExpression, parseSortableTimestamp, timestampSortExpression } from '../utils/sqlTimestampSort.js'
 import { normalizeTrafficSource, normalizeWhatsAppAttributionPlatform } from '../utils/trafficSourceNormalizer.js'
 import { loadFirstWhatsAppAttributions, buildContactAttributionFields } from '../services/contactSourceService.js'
 import { findWhatsAppProfilePictureUrl, getWhatsAppApiStatus, warmWhatsAppApiProfilePictures } from '../services/whatsappApiService.js'
@@ -365,8 +365,8 @@ const pickPrimaryWebConversionSession = (sessions = []) => {
     .filter(item => item.score > 0)
     .sort((left, right) => {
       if (right.score !== left.score) return right.score - left.score
-      const leftTime = new Date(left.session.started_at || left.session.created_at || 0).getTime()
-      const rightTime = new Date(right.session.started_at || right.session.created_at || 0).getTime()
+      const leftTime = parseSortableTimestamp(left.session.started_at || left.session.created_at)
+      const rightTime = parseSortableTimestamp(right.session.started_at || right.session.created_at)
       return (Number.isFinite(leftTime) ? leftTime : 0) - (Number.isFinite(rightTime) ? rightTime : 0)
     })
 
@@ -526,8 +526,8 @@ const getWhatsAppEventScore = (event = {}, contactCreatedAt = null) => {
   if (cleanString(data.referral_source_id) || cleanString(data.attribution_ad_id)) score += 20
   if (cleanString(data.referral_source_app) || cleanString(data.referral_entry_point)) score += 10
 
-  const contactTime = contactCreatedAt ? new Date(contactCreatedAt).getTime() : null
-  const eventTime = event.date ? new Date(event.date).getTime() : null
+  const contactTime = contactCreatedAt ? parseSortableTimestamp(contactCreatedAt) : null
+  const eventTime = event.date ? parseSortableTimestamp(event.date) : null
   if (Number.isFinite(contactTime) && Number.isFinite(eventTime)) {
     score += eventTime <= contactTime + 5 * 60 * 1000 ? 25 : -20
   }
@@ -582,8 +582,8 @@ const parseJourneyJsonObject = (value) => {
 }
 
 const buildPreRegistrationJourneyMeta = (eventDate, contactCreatedAt) => {
-  const eventTime = new Date(eventDate || 0).getTime()
-  const contactTime = new Date(contactCreatedAt || 0).getTime()
+  const eventTime = parseSortableTimestamp(eventDate)
+  const contactTime = parseSortableTimestamp(contactCreatedAt)
 
   if (!Number.isFinite(eventTime) || !Number.isFinite(contactTime) || eventTime <= 0 || contactTime <= 0) {
     return {
@@ -693,7 +693,7 @@ const getVideoEngagementKey = (video = {}) => cleanString(video.playback_id || v
 
 const getJourneyRowTime = (row = {}, fallback = 0) => {
   const raw = row.first_event_at || row.started_at || row.last_event_at || row.created_at || row.date
-  const time = new Date(raw || 0).getTime()
+  const time = parseSortableTimestamp(raw)
   return Number.isFinite(time) ? time : fallback
 }
 
@@ -831,7 +831,7 @@ const buildPageVisitJourneyEvent = (session, { contactCreatedAt } = {}) => ({
 const JOURNEY_SESSION_VIEW_EVENTS = new Set(['session_start', 'page_view', 'native_site_view'])
 
 const getJourneySessionTime = (session = {}) => {
-  const time = new Date(session.started_at || session.created_at || 0).getTime()
+  const time = parseSortableTimestamp(session.started_at || session.created_at)
   return Number.isFinite(time) ? time : 0
 }
 
@@ -966,8 +966,8 @@ const mergeJourneySessionSummaries = (summaries = [], { useBestMatch = true } = 
   const lastPage = pageRows[pageRows.length - 1]
   const startedAt = first?.session_started_at || first?.started_at || first?.created_at || base.started_at
   const endedAt = last?.session_ended_at || last?.started_at || last?.created_at || startedAt
-  const startedTime = new Date(startedAt || 0).getTime()
-  const endedTime = new Date(endedAt || 0).getTime()
+  const startedTime = parseSortableTimestamp(startedAt)
+  const endedTime = parseSortableTimestamp(endedAt)
   const durationSeconds = Number.isFinite(startedTime) && Number.isFinite(endedTime) && endedTime > startedTime
     ? Math.round((endedTime - startedTime) / 1000)
     : 0
@@ -1699,7 +1699,7 @@ const getMetaAttributionForContact = async (contact = {}, firstSession = null, w
     const rows = await db.all(
       `${selectMetaFields}
        WHERE ad_id IN (${adIdCandidates.map(() => '?').join(', ')})
-       ORDER BY date DESC`,
+       ORDER BY ${timestampSortExpression('date')} DESC`,
       adIdCandidates
     )
 
@@ -1718,7 +1718,7 @@ const getMetaAttributionForContact = async (contact = {}, firstSession = null, w
     const rows = await db.all(
       `${selectMetaFields}
        WHERE LOWER(ad_name) IN (${adNameCandidates.map(() => '?').join(', ')})
-       ORDER BY date DESC`,
+       ORDER BY ${timestampSortExpression('date')} DESC`,
       adNameCandidates
     )
 
@@ -1760,7 +1760,7 @@ const loadMetaAdsByAdIds = async (adIds = []) => {
        creative_preview_url
      FROM meta_ads
      WHERE ad_id IN (${uniqueIds.map(() => '?').join(', ')})
-     ORDER BY date DESC`,
+     ORDER BY ${timestampSortExpression('date')} DESC`,
     uniqueIds
   )
 
@@ -3430,8 +3430,9 @@ export const createContact = async (req, res) => {
       firstName: firstNameInput,
       lastName: lastNameInput
     }
-    const createdAtValue = createdAt && !Number.isNaN(Date.parse(createdAt))
-      ? new Date(createdAt).toISOString()
+    const createdAtTimestamp = parseSortableTimestamp(createdAt)
+    const createdAtValue = createdAt && createdAtTimestamp > 0
+      ? new Date(createdAtTimestamp).toISOString()
       : new Date().toISOString()
     const sourceValue = cleanString(source) || 'ristak_manual'
 
@@ -4487,7 +4488,7 @@ export const getContactJourney = async (req, res) => {
       FROM contacts
       LEFT JOIN meta_ads ON meta_ads.ad_id = contacts.attribution_ad_id
       WHERE contacts.id = ?${hiddenCondition ? ` AND ${hiddenCondition}` : ''}
-      ORDER BY meta_ads.date DESC
+      ORDER BY ${timestampSortExpression('meta_ads.date')} DESC
       LIMIT 1
     `, [id])
     if (!contact) {
@@ -4516,16 +4517,15 @@ export const getContactJourney = async (req, res) => {
     const firstPayment = await db.get(
       `SELECT date FROM payments
        WHERE ${successfulPaymentsCondition}
-       ORDER BY date ASC
+       ORDER BY ${timestampSortExpression('date')} ASC, ${timestampSortExpression('created_at')} ASC, id ASC
        LIMIT 1`,
       [id]
     )
-    const rawFirstPaymentTime = firstPayment?.date ? new Date(firstPayment.date).getTime() : null
+    const rawFirstPaymentTime = firstPayment?.date ? parseSortableTimestamp(firstPayment.date) : null
     const firstPaymentTime = Number.isFinite(rawFirstPaymentTime) ? rawFirstPaymentTime : null
 
     const getDateTime = (value) => {
-      const time = new Date(value).getTime()
-      return Number.isFinite(time) ? time : 0
+      return parseSortableTimestamp(value)
     }
 
     const detectWhatsAppAdPlatform = (data = {}) => normalizeWhatsAppAttributionPlatform(data)
@@ -4926,7 +4926,7 @@ export const getContactJourney = async (req, res) => {
 	    })
 
     if (chatMessagesOnly) {
-      journey.sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime())
+      journey.sort((a, b) => parseSortableTimestamp(a.date) - parseSortableTimestamp(b.date))
       logger.info(`Mensajes de chat obtenidos para contacto ${id}: ${journey.length} eventos`)
 
       return res.json({
@@ -4979,7 +4979,7 @@ export const getContactJourney = async (req, res) => {
             `SELECT * FROM appointments
              WHERE contact_id = ?
                AND calendar_id IN (${placeholders})
-             ORDER BY date_added ASC`,
+             ORDER BY ${timestampSortExpression('date_added')} ASC, id ASC`,
             [id, ...calendarIds]
           )
         } else {
@@ -4987,7 +4987,7 @@ export const getContactJourney = async (req, res) => {
           appointments = await db.all(
             `SELECT * FROM appointments
              WHERE contact_id = ?
-             ORDER BY date_added ASC`,
+             ORDER BY ${timestampSortExpression('date_added')} ASC, id ASC`,
             [id]
           )
         }
@@ -4997,7 +4997,7 @@ export const getContactJourney = async (req, res) => {
         appointments = await db.all(
           `SELECT * FROM appointments
            WHERE contact_id = ?
-           ORDER BY date_added ASC`,
+           ORDER BY ${timestampSortExpression('date_added')} ASC, id ASC`,
           [id]
         )
       }
@@ -5006,7 +5006,7 @@ export const getContactJourney = async (req, res) => {
       appointments = await db.all(
         `SELECT * FROM appointments
          WHERE contact_id = ?
-         ORDER BY date_added ASC`,
+         ORDER BY ${timestampSortExpression('date_added')} ASC, id ASC`,
         [id]
       )
     }
@@ -5043,7 +5043,7 @@ export const getContactJourney = async (req, res) => {
          AND w.status = 'done'
          AND w.result = 'confirmed'
          AND COALESCE(w.confirmation_success_action, 'chat_card') = 'chat_card'
-       ORDER BY COALESCE(w.processed_at, w.updated_at, w.created_at) ASC`,
+       ORDER BY ${coalescedTimestampSortExpression('w.processed_at', 'w.updated_at', 'w.created_at')} ASC, w.id ASC`,
       [id]
     ).catch(() => [])
 
@@ -5067,7 +5067,7 @@ export const getContactJourney = async (req, res) => {
     const payments = await db.all(
       `SELECT * FROM payments
        WHERE ${successfulPaymentsCondition}
-       ORDER BY date ASC, created_at ASC, id ASC`,
+       ORDER BY ${timestampSortExpression('date')} ASC, ${timestampSortExpression('created_at')} ASC, id ASC`,
       [id]
     )
 
@@ -5086,7 +5086,7 @@ export const getContactJourney = async (req, res) => {
     })
 
     // Ordenar TODOS los eventos por fecha cronológica
-    journey.sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime())
+    journey.sort((a, b) => parseSortableTimestamp(a.date) - parseSortableTimestamp(b.date))
 
     logger.info(`Journey obtenido para contacto ${id}: ${journey.length} eventos`)
 

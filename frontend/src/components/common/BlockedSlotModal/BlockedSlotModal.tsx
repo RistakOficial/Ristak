@@ -7,6 +7,7 @@ import { apiUrl } from '@/services/apiBaseUrl';
 import { Calendar, BlockedSlot } from '@/services/calendarsService';
 import { useNotification } from '@/contexts/NotificationContext';
 import { useTimezone } from '@/contexts/TimezoneContext';
+import { parseSortableDateValue } from '@/utils/dateSort';
 import { DEFAULT_TIMEZONE, localDateTimeInputToUTCISOString, toDateTimeLocalInputValue } from '@/utils/timezone';
 import styles from './BlockedSlotModal.module.css';
 import { Trash2, Loader2 } from 'lucide-react';
@@ -468,7 +469,7 @@ export const BlockedSlotModal: React.FC<BlockedSlotModalProps> = ({
       const startIso = formData.startTime ? businessInstantFromPickerValue(formData.startTime, formData.timeZone || effectiveTimeZone) : null;
       const endIso = formData.endTime ? businessInstantFromPickerValue(formData.endTime, formData.timeZone || effectiveTimeZone) : null;
 
-      if (startIso && endIso && new Date(endIso).getTime() <= new Date(startIso).getTime()) {
+      if (startIso && endIso && parseSortableDateValue(endIso) <= parseSortableDateValue(startIso)) {
         showToast('error', 'Rango inválido', 'La hora de fin debe ser posterior a la de inicio');
         setIsSaving(false);
         return;

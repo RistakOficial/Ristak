@@ -192,6 +192,7 @@ import mediaService, {
 } from '@/services/mediaService'
 import { getApiBaseUrl } from '@/services/apiBaseUrl'
 import { formatDateTime as formatBusinessDateTime, formatDateToISO, parseLocalDateString } from '@/utils/format'
+import { parseSortableDateValue } from '@/utils/dateSort'
 import { dateOnlyToLocalDate, formatInTimezone, getDateOnlyFromCalendarLikeString, getStoredBusinessTimezone, todayDateOnlyInTimezone } from '@/utils/timezone'
 import {
   customFieldsService,
@@ -2381,7 +2382,7 @@ const getStatusLabel = (site: PublicSite, domainConfig: SitesDomainConfig) => {
 // Fecha de edición relativa, compacta (estilo "hace 2 días" del ZIP)
 const formatSiteEdited = (value?: string | null): string | null => {
   if (!value) return null
-  const then = new Date(value).getTime()
+  const then = parseSortableDateValue(value)
   if (!Number.isFinite(then)) return null
   const days = Math.floor((Date.now() - then) / 86400000)
   if (days <= 0) return 'hoy'
@@ -3006,7 +3007,7 @@ const getCountdownPreviewParts = (settings: Record<string, unknown>) => {
   const now = Date.now()
   const mode = getCountdownMode(settings)
   if (mode === 'date') {
-    const targetTime = Date.parse(getSettingString(settings, 'countdownTargetDate'))
+    const targetTime = parseSortableDateValue(getSettingString(settings, 'countdownTargetDate'))
     if (Number.isFinite(targetTime)) return splitCountdownSeconds(Math.max(0, Math.floor((targetTime - now) / 1000)))
   }
   return splitCountdownSeconds(getCountdownDurationSeconds(settings))
@@ -9466,7 +9467,7 @@ export const Sites: React.FC = () => {
           ...submission,
           siteName: site.name
         }))
-        .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
+        .sort((a, b) => parseSortableDateValue(b.createdAt) - parseSortableDateValue(a.createdAt))
 
       setSelectedResponsesSite(site)
       setFormResponseRows(rows)
@@ -38344,7 +38345,7 @@ const SitesAnalyticsPanel: React.FC<SitesAnalyticsPanelProps> = ({
   const averageConversions = sites.length > 0 ? totalConversions / sites.length : 0
   const publishedCount = sites.filter(site => site.status === 'published').length
   const latestUpdatedSite = [...siteRows]
-    .sort((a, b) => new Date(b.site.updatedAt).getTime() - new Date(a.site.updatedAt).getTime())[0]?.site || null
+    .sort((a, b) => parseSortableDateValue(b.site.updatedAt) - parseSortableDateValue(a.site.updatedAt))[0]?.site || null
   const rowsByViews = [...siteRows].sort((a, b) => b.stats.views - a.stats.views)
   const rowsByConversions = [...siteRows].sort((a, b) =>
     b.stats.conversions - a.stats.conversions || b.stats.conversionRate - a.stats.conversionRate

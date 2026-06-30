@@ -24,6 +24,7 @@ import { contactsService } from '@/services/contactsService'
 import { getPhoneDailyCacheKey, readPhoneDailyCache, writePhoneDailyCache } from '@/services/phoneDailyCache'
 import type { Contact } from '@/types'
 import { PHONE_APP_HOME_PATH, isLocalPhonePreviewHost } from '@/utils/phoneAccess'
+import { parseSortableDateValue } from '@/utils/dateSort'
 import { convertLocalToUTC, dateOnlyToLocalDate, formatDateOnlyFromDate, formatInTimezone, todayDateOnlyInTimezone } from '@/utils/timezone'
 import styles from './PhoneCalendar.module.css'
 
@@ -289,8 +290,7 @@ function getContactSortTime(contact: Contact) {
     contact.nextAppointmentDate ||
     contact.firstAppointmentDate ||
     contact.createdAt
-  const time = Date.parse(rawValue || '')
-  return Number.isFinite(time) ? time : 0
+  return parseSortableDateValue(rawValue)
 }
 
 function normalizeCalendarEvent(event: any, fallbackId: string): CalendarEvent {

@@ -34,6 +34,7 @@ import { getPhoneDailyCacheKey, readPhoneDailyCache, writePhoneDailyCache } from
 import { reportsService, type ContactListItem, type ReportMetricRow, type ReportsSummary } from '@/services/reportsService'
 import { transactionsService, type Transaction, type TransactionSummary } from '@/services/transactionsService'
 import { formatCurrency, formatDate, formatDateTime as formatBusinessDateTime, formatDateToISO, formatNumber, formatRoas, getBusinessDateRangeTimestamps, normalizeDateInputToLocalDate } from '@/utils/format'
+import { parseSortableDateValue } from '@/utils/dateSort'
 import { PHONE_APP_PREFIX, isLocalPhonePreviewHost } from '@/utils/phoneAccess'
 import styles from './PhoneApp.module.css'
 
@@ -717,17 +718,17 @@ export const PhoneApp: React.FC = () => {
   }, [phoneData.campaigns])
 
   const upcomingAppointments = useMemo(() => {
-    const now = new Date()
+    const now = Date.now()
     return phoneData.appointmentEvents
-      .filter((event) => new Date(event.startTime) >= now)
-      .sort((a, b) => a.startTime.localeCompare(b.startTime))
+      .filter((event) => parseSortableDateValue(event.startTime) >= now)
+      .sort((a, b) => parseSortableDateValue(a.startTime) - parseSortableDateValue(b.startTime))
       .slice(0, 5)
   }, [phoneData.appointmentEvents])
 
   const recentTransactions = useMemo(() => {
     return phoneData.transactions
       .slice()
-      .sort((a, b) => (b.date || b.createdAt || '').localeCompare(a.date || a.createdAt || ''))
+      .sort((a, b) => parseSortableDateValue(b.date || b.createdAt) - parseSortableDateValue(a.date || a.createdAt))
       .slice(0, 5)
   }, [phoneData.transactions])
 

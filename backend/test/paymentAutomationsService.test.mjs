@@ -14,6 +14,10 @@ import {
   processDuePaymentAutomations,
   sendPaymentAutomationMessage
 } from '../src/services/paymentAutomationsService.js'
+import {
+  ACCOUNT_TIMEZONE_CONFIG_KEY,
+  invalidateTimezoneCache
+} from '../src/utils/dateUtils.js'
 
 const PAYMENT_SETTINGS_CONFIG_KEY = 'payments_settings'
 const PUBLIC_BASE_URL = 'https://pagos.example.test'
@@ -109,6 +113,19 @@ async function withYCloudCapture(callback) {
       return await callback(captures)
     } finally {
       setYCloudFetchForTest(null)
+    }
+  })
+}
+
+async function withAccountTimezoneForTest(timezone, callback) {
+  return snapshotAppConfig([ACCOUNT_TIMEZONE_CONFIG_KEY], async () => {
+    await setAppConfig(ACCOUNT_TIMEZONE_CONFIG_KEY, timezone)
+    invalidateTimezoneCache()
+
+    try {
+      return await callback()
+    } finally {
+      invalidateTimezoneCache()
     }
   })
 }
@@ -304,6 +321,45 @@ test('cola de automatizaciones respeta recordatorios y cobros fallidos encendido
         failedOffFixture.paymentId
       ])
     }
+  })
+})
+
+test('recordatorios de pago usan el dia del negocio, no el dia UTC del servidor', async () => {
+  await withYCloudCapture(async (captures) => {
+    await withAccountTimezoneForTest('America/Los_Angeles', async () => {
+      const now = new Date('2026-06-30T06:30:00.000Z') // 29 jun 2026 23:30 en Los Angeles
+      const reminderFixture = await createPaymentFixture({
+        status: 'sent',
+        dueDate: '2026-06-29T19:00:00.000Z',
+        suffix: 'tzremind'
+      })
+
+      try {
+        await setAppConfig(PAYMENT_SETTINGS_CONFIG_KEY, {
+          automations: {
+            remindersEnabled: true,
+            reminderDaysBefore: 1,
+            reminderChannel: 'whatsapp',
+            reminderTemplateName: 'recordatorio_pago_pendiente',
+            reminderTemplateLanguage: 'es_MX',
+            failedPaymentEnabled: false,
+            failedPaymentChannel: 'whatsapp'
+          }
+        })
+
+        const results = await processDuePaymentAutomations({
+          now,
+          limit: 10,
+          paymentIds: [reminderFixture.paymentId]
+        })
+
+        assert.equal(results.filter((result) => result.sent).length, 1)
+        assert.equal(captures.length, 1)
+        assert.equal(captures[0].template.name, 'recordatorio_pago_pendiente')
+      } finally {
+        await cleanupFixtures([reminderFixture.paymentId])
+      }
+    })
   })
 })
 

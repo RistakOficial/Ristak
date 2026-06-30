@@ -45,6 +45,7 @@ import { applyStripePaymentPlanAction, refreshStripePaymentPlanMirrors, updateSt
 import { applyConektaPaymentPlanAction, refreshConektaPaymentPlanMirrors, updateConektaPaymentPlanSchedule } from '../services/conektaPaymentService.js';
 import { applyMercadoPagoPaymentPlanAction, updateMercadoPagoPaymentPlanSchedule } from '../services/mercadoPagoPaymentService.js';
 import { syncRegisteredIntegrationCronsForProvider } from '../jobs/integrationCronRegistry.js';
+import { coalescedTimestampSortExpression, parseSortableTimestamp } from '../utils/sqlTimestampSort.js';
 
 const normalizeGhlInvoiceMode = (mode) => mode === 'test' ? 'test' : 'live';
 const INACTIVE_INVOICE_SCHEDULE_STATUSES = new Set([
@@ -406,7 +407,7 @@ function parseTimestampMs(value) {
     return Number.isFinite(time) ? time : null;
   }
 
-  const parsed = Date.parse(raw);
+  const parsed = parseSortableTimestamp(raw);
   return Number.isFinite(parsed) ? parsed : null;
 }
 
@@ -2917,9 +2918,7 @@ function resolveSchedulePrimaryDate(schedule = {}) {
 }
 
 function timestamp(value) {
-  if (!value) return 0;
-  const parsed = Date.parse(value);
-  return Number.isFinite(parsed) ? parsed : 0;
+  return parseSortableTimestamp(value);
 }
 
 function numberOrNull(value) {
@@ -3249,9 +3248,10 @@ async function listLocalInvoiceSchedules({ activeOnly = false, source = '' } = {
   }
 
   const where = filters.length ? `WHERE ${filters.join(' AND ')}` : '';
+  const sortExpression = coalescedTimestampSortExpression('next_run_at', 'updated_at', 'created_at');
   const rows = await db.all(
     `SELECT * FROM payment_plans ${where}
-     ORDER BY COALESCE(next_run_at, updated_at, created_at) DESC`,
+     ORDER BY ${sortExpression} DESC, id DESC`,
     params
   );
 

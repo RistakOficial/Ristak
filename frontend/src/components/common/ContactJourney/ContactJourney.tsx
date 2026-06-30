@@ -3,6 +3,7 @@ import { createPortal } from 'react-dom'
 import { Icon } from '@/components/common'
 import { contactsService, type JourneyEvent } from '@/services/contactsService'
 import { formatCurrency, formatUrlParameter } from '@/utils/format'
+import { parseSortableDateValue } from '@/utils/dateSort'
 import { getFloatingLayerZIndex } from '@/utils/layering'
 import { normalizeTrafficSource } from '@/utils/trafficSourceNormalizer'
 import { useTimezone } from '@/contexts/TimezoneContext'
@@ -976,7 +977,7 @@ const buildDisplayJourney = (events: JourneyEvent[], timezone: string): JourneyE
   })
 
   return [...otherEvents, ...mergedDailyContactEvents].sort(
-    (a, b) => new Date(a.date).getTime() - new Date(b.date).getTime()
+    (a, b) => parseSortableDateValue(a.date) - parseSortableDateValue(b.date)
   )
 }
 

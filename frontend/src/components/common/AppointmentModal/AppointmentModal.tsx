@@ -15,7 +15,7 @@ import { apiUrl } from '@/services/apiBaseUrl';
 import { useNotification } from '@/contexts/NotificationContext';
 import { useTimezone } from '@/contexts/TimezoneContext';
 import { suppressContactAutofill } from '@/utils/browserAutofill';
-import { DEFAULT_TIMEZONE, addDateOnlyDays, todayDateOnlyInTimezone } from '@/utils/timezone';
+import { DEFAULT_TIMEZONE, addDateOnlyDays, localDateTimeInputToUTCISOString, todayDateOnlyInTimezone } from '@/utils/timezone';
 import styles from './AppointmentModal.module.css';
 import { Trash2, Search, Loader2, X, UserPlus } from 'lucide-react';
 
@@ -226,51 +226,52 @@ const parseDateSafe = (value?: string | null): Date | null => {
   return Number.isNaN(parsed.getTime()) ? null : parsed;
 };
 
-const convertLocalInputToISO = (value: string, timeZone: string): string | null => {
-  if (!value) return null;
-
-  // El input viene como "2025-10-18T14:30" (formato datetime-local del navegador)
-  // Necesitamos convertirlo a "2025-10-18T14:30:00-06:00" (ISO 8601 con timezone offset de America/Mexico_City)
-
-  // Parsear el input del datetime-local
-  const [datePart, timePart] = value.split('T');
-  if (!timePart) return null;
-
-  // Extraer componentes
-  const [year, month, day] = datePart.split('-');
-  const [hour, minute, second = '00'] = timePart.split(':');
-  const safeSecond = String(Math.min(59, Math.max(0, Number(second) || 0))).padStart(2, '0');
-
-  // Crear fecha en la timezone especificada para obtener el offset correcto
-  const dateInTz = new Date(`${year}-${month}-${day}T${hour}:${minute}:${safeSecond}`);
-
-  // Obtener el offset usando Intl.DateTimeFormat
-  const offsetMinutes = getTimezoneOffset(dateInTz, timeZone);
-
-  // Convertir offset a formato +/-HH:MM
-  const offsetHours = Math.floor(Math.abs(offsetMinutes) / 60);
-  const offsetMins = Math.abs(offsetMinutes) % 60;
-  const offsetSign = offsetMinutes <= 0 ? '+' : '-';
-  const offsetStr = `${offsetSign}${String(offsetHours).padStart(2, '0')}:${String(offsetMins).padStart(2, '0')}`;
-
-  // Construir ISO 8601: 2025-10-18T14:30:00-06:00
-  return `${year}-${month}-${day}T${hour}:${minute}:${safeSecond}${offsetStr}`;
-};
-
-// Helper para obtener el offset de timezone en minutos (formato: -360 para -06:00)
-const getTimezoneOffset = (date: Date, timeZone: string): number => {
-  // Crear dos versiones de la fecha: una en UTC y otra en la timezone especificada
-  const utcDate = new Date(date.toLocaleString('en-US', { timeZone: 'UTC' }));
-  const tzDate = new Date(date.toLocaleString('en-US', { timeZone }));
-
-  // La diferencia en milisegundos nos da el offset (invertido porque queremos UTC - TZ)
-  return (utcDate.getTime() - tzDate.getTime()) / (1000 * 60);
-};
-
 // ¿La cadena ya trae zona explícita (Z u offset ±HH:MM)? → es un instante absoluto.
 const isAbsoluteIso = (value: string): boolean => /(?:Z|[+-]\d{2}:?\d{2})$/i.test(value.trim());
 
 const padTwo = (value: number) => String(value).padStart(2, '0');
+
+const parseLocalDateTimeParts = (value: string): {
+  year: number;
+  month: number;
+  day: number;
+  hour: number;
+  minute: number;
+  second: number;
+} | null => {
+  const match = /^(\d{4})-(\d{2})-(\d{2})T(\d{1,2}):(\d{2})(?::(\d{2}))?$/.exec(String(value || '').trim());
+  if (!match) return null;
+
+  const [, year, month, day, hour, minute, second = '00'] = match;
+  const parts = {
+    year: Number(year),
+    month: Number(month),
+    day: Number(day),
+    hour: Number(hour),
+    minute: Number(minute),
+    second: Math.min(59, Math.max(0, Number(second) || 0))
+  };
+
+  return Object.values(parts).every(Number.isFinite) ? parts : null;
+};
+
+const getLocalDateTimeEpoch = (value: string): number => {
+  const parts = parseLocalDateTimeParts(value);
+  if (!parts) return Number.NaN;
+
+  return Date.UTC(parts.year, parts.month - 1, parts.day, parts.hour, parts.minute, parts.second);
+};
+
+const addMinutesToLocalDateTime = (datePart: string, timePart: string, durationMinutes: number): string | null => {
+  const parts = parseLocalDateTimeParts(`${datePart}T${timePart}`);
+  if (!parts) return null;
+
+  const durationMs = Math.max(1000, Math.round(durationMinutes * 60000));
+  const end = new Date(Date.UTC(parts.year, parts.month - 1, parts.day, parts.hour, parts.minute, parts.second) + durationMs);
+  const includeSeconds = end.getUTCSeconds() > 0 || durationMs % 60000 !== 0;
+
+  return `${end.getUTCFullYear()}-${padTwo(end.getUTCMonth() + 1)}-${padTwo(end.getUTCDate())}T${padTwo(end.getUTCHours())}:${padTwo(end.getUTCMinutes())}${includeSeconds ? `:${padTwo(end.getUTCSeconds())}` : ''}`;
+};
 
 /**
  * Convierte el valor del formulario a un ISO listo para guardar.
@@ -286,7 +287,7 @@ const toIsoForSave = (value: string, timeZone: string): string | null => {
     const parsed = new Date(value);
     return Number.isNaN(parsed.getTime()) ? null : parsed.toISOString();
   }
-  return convertLocalInputToISO(value, timeZone);
+  return localDateTimeInputToUTCISOString(value, timeZone) || null;
 };
 
 export const AppointmentModal: React.FC<AppointmentModalProps> = ({
@@ -1344,8 +1345,8 @@ export const AppointmentModal: React.FC<AppointmentModalProps> = ({
   const customTimePart = startLocalValue.slice(11, 16);
   const derivedDuration = (() => {
     if (!startLocalValue || !endLocalValue) return fallbackDuration;
-    const startMs = new Date(startLocalValue).getTime();
-    const endMs = new Date(endLocalValue).getTime();
+    const startMs = getLocalDateTimeEpoch(startLocalValue);
+    const endMs = getLocalDateTimeEpoch(endLocalValue);
     if (!Number.isFinite(startMs) || !Number.isFinite(endMs) || endMs <= startMs) return fallbackDuration;
     return (endMs - startMs) / 60000;
   })();
@@ -1353,12 +1354,8 @@ export const AppointmentModal: React.FC<AppointmentModalProps> = ({
 
   const applyCustomSchedule = (datePart: string, timePart: string, durationMinutes: number) => {
     if (!datePart || !timePart) return;
-    const start = new Date(`${datePart}T${timePart}:00`);
-    if (Number.isNaN(start.getTime())) return;
-    const durationMs = Math.max(1000, Math.round(durationMinutes * 60000));
-    const end = new Date(start.getTime() + durationMs);
-    const includeSeconds = end.getSeconds() > 0 || durationMs % 60000 !== 0;
-    const endLocal = `${end.getFullYear()}-${padTwo(end.getMonth() + 1)}-${padTwo(end.getDate())}T${padTwo(end.getHours())}:${padTwo(end.getMinutes())}${includeSeconds ? `:${padTwo(end.getSeconds())}` : ''}`;
+    const endLocal = addMinutesToLocalDateTime(datePart, timePart, durationMinutes);
+    if (!endLocal) return;
     setFormData((prev) => ({ ...prev, startTime: `${datePart}T${timePart}`, endTime: endLocal }));
   };
 

@@ -1,4 +1,5 @@
 import type { Contact as ContactType, ContactCustomField, ContactCustomFieldDefinition } from '@/types'
+import { parseSortableDateValue } from '@/utils/dateSort'
 import { formatName } from '@/utils/format'
 import { apiUrl } from './apiBaseUrl'
 import apiClient from './apiClient'
@@ -162,7 +163,7 @@ const normalizeContact = <T extends Record<string, any>>(contact: T): T => {
 
   const phones = Array.from(phonesByValue.values()).sort((left, right) => {
     if (left.isPrimary !== right.isPrimary) return left.isPrimary ? -1 : 1
-    return String(left.createdAt || '').localeCompare(String(right.createdAt || ''))
+    return parseSortableDateValue(left.createdAt) - parseSortableDateValue(right.createdAt)
   })
   ;(result as any).phones = phones
   ;(result as any).phoneNumbers = phones
