@@ -2,12 +2,38 @@ import React from 'react'
 import { RefreshCw } from 'lucide-react'
 import { useLocation } from 'react-router-dom'
 import { Button } from '@/components/common'
+import { useTheme, type ThemeDir } from '@/contexts/ThemeContext'
 import {
   getMdpProgramNavigation,
   type MdpProgramNavigation,
   type MdpProgramNavItem
 } from '@/services/mdpProgramService'
 import { cn } from '@/utils/cn'
+
+const RISTAK_TO_MDP_THEME_PRESET: Record<ThemeDir, string> = {
+  a: 'nimbus-classic',
+  c: 'onyx-emerald',
+  cb: 'onyx-blue',
+  cv: 'onyx-violet',
+  ca: 'onyx-amber',
+  d: 'brut-red',
+  db: 'brut-blue',
+  dl: 'brut-lime',
+  dm: 'brut-magenta',
+  e: 'aurora-violet',
+  en: 'aurora-neutral',
+  eb: 'aurora-blue',
+  em: 'aurora-graphite'
+}
+
+interface MdpBridgeThemePayload {
+  type: 'ristak:theme'
+  source: 'ristak'
+  version: 1
+  mode: 'light' | 'dark'
+  ristakDir: ThemeDir
+  mdpPreset: string
+}
 
 function selectItem(items: MdpProgramNavItem[], itemId?: string) {
   if (!items.length) return null
@@ -20,14 +46,46 @@ function readLegacyItemIdFromPath() {
   return parts[0] === 'mdp-program' ? parts[1] : undefined
 }
 
+function getMdpTargetOrigin(url: string) {
+  try {
+    return new URL(url).origin
+  } catch {
+    return '*'
+  }
+}
+
+function withMdpBridgeThemeParams(url: string, payload: MdpBridgeThemePayload) {
+  try {
+    const nextUrl = new URL(url)
+    nextUrl.searchParams.set('embedded', 'ristak')
+    nextUrl.searchParams.set('ristak_theme_mode', payload.mode)
+    nextUrl.searchParams.set('ristak_theme_dir', payload.ristakDir)
+    nextUrl.searchParams.set('ristak_theme_preset', payload.mdpPreset)
+    return nextUrl.toString()
+  } catch {
+    return url
+  }
+}
+
 export const MDPProgram: React.FC = () => {
   const location = useLocation()
+  const { theme, themeDir } = useTheme()
   const [navigation, setNavigation] = React.useState<MdpProgramNavigation | null>(null)
   const [requestedItemId, setRequestedItemId] = React.useState(readLegacyItemIdFromPath)
   const [launchItem, setLaunchItem] = React.useState<MdpProgramNavItem | null>(null)
+  const [iframeSrc, setIframeSrc] = React.useState('')
   const [loading, setLoading] = React.useState(true)
   const [error, setError] = React.useState('')
+  const iframeRef = React.useRef<HTMLIFrameElement | null>(null)
   const loadSeqRef = React.useRef(0)
+  const mdpThemePayload = React.useMemo<MdpBridgeThemePayload>(() => ({
+    type: 'ristak:theme',
+    source: 'ristak',
+    version: 1,
+    mode: theme,
+    ristakDir: themeDir,
+    mdpPreset: RISTAK_TO_MDP_THEME_PRESET[themeDir] || RISTAK_TO_MDP_THEME_PRESET.en
+  }), [theme, themeDir])
 
   const load = React.useCallback(async (requestedId?: string) => {
     const loadSeq = loadSeqRef.current + 1
@@ -51,6 +109,13 @@ export const MDPProgram: React.FC = () => {
     }
   }, [])
 
+  const postThemeToIframe = React.useCallback(() => {
+    const frameWindow = iframeRef.current?.contentWindow
+    if (!frameWindow || !launchItem?.launchUrl) return
+
+    frameWindow.postMessage(mdpThemePayload, getMdpTargetOrigin(launchItem.launchUrl))
+  }, [launchItem?.launchUrl, mdpThemePayload])
+
   React.useEffect(() => {
     void load(requestedItemId)
   }, [requestedItemId, load])
@@ -59,6 +124,19 @@ export const MDPProgram: React.FC = () => {
     const parts = location.pathname.split('/').filter(Boolean)
     setRequestedItemId(parts[0] === 'mdp-program' ? parts[1] : undefined)
   }, [location.pathname])
+
+  React.useEffect(() => {
+    if (!launchItem?.launchUrl) {
+      setIframeSrc('')
+      return
+    }
+
+    setIframeSrc(withMdpBridgeThemeParams(launchItem.launchUrl, mdpThemePayload))
+  }, [launchItem?.launchUrl])
+
+  React.useEffect(() => {
+    postThemeToIframe()
+  }, [postThemeToIframe])
 
   const items = navigation?.items || []
   const activeItem = selectItem(items, requestedItemId)
@@ -93,15 +171,21 @@ export const MDPProgram: React.FC = () => {
         <div className="grid h-full place-items-center text-sm text-[var(--text-mute)]">
           Abriendo {activeItem.label}
         </div>
-      ) : (
+      ) : iframeSrc ? (
         <iframe
+          ref={iframeRef}
           key={launchItem.launchUrl}
           title={`${programTitle} - ${launchItem.label}`}
-          src={launchItem.launchUrl}
+          src={iframeSrc}
           className={cn('h-full min-h-0 w-full border-0 bg-[var(--surface)]')}
           allow="fullscreen; clipboard-read; clipboard-write"
           allowFullScreen
+          onLoad={postThemeToIframe}
         />
+      ) : (
+        <div className="grid h-full place-items-center text-sm text-[var(--text-mute)]">
+          Abriendo {activeItem.label}
+        </div>
       )}
     </section>
   )

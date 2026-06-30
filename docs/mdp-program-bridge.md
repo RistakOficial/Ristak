@@ -30,6 +30,12 @@ MDP_PROGRAM_BRIDGE_SECRET=...
 - MDP devuelve las secciones disponibles para ese usuario y sus launch URLs.
 - Ristak abre la primera seccion autorizada en un iframe de ancho y alto completo. Desde ahi, la navegacion de curso, mentoria, MediTalk y futuras paginas ocurre dentro de MDP sin tocar Ristak.
 
+## Sincronizacion visual
+
+Cuando Ristak abre el iframe, agrega parametros `embedded=ristak`, `ristak_theme_mode`, `ristak_theme_dir` y `ristak_theme_preset` al launch URL de MDP.
+
+Despues de cargar el iframe, Ristak tambien envia `postMessage` con `type: "ristak:theme"` cada vez que cambia el modo claro/oscuro o la familia visual. MDP aplica ese tema en memoria mientras esta embebido y no debe guardar esa preferencia como tema propio del curso.
+
 ## Archivos de esta integracion
 
 - `backend/src/services/mdpProgramBridgeService.js`
