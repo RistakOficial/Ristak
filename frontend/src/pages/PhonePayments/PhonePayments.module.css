@@ -117,7 +117,7 @@
   color: var(--phone-payments-text);
   font-size: clamp(40px, 10.8vw, 54px);
   font-weight: 850;
-  line-height: 0.98;
+  line-height: 1.12;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -129,7 +129,7 @@
   font-size: 11px;
   font-weight: 800;
   letter-spacing: 0.08em;
-  line-height: 1;
+  line-height: 1.12;
   text-transform: uppercase;
 }
 
@@ -218,7 +218,7 @@
   color: var(--phone-payments-text);
   font-size: clamp(31px, 9vw, 42px);
   font-weight: 860;
-  line-height: 0.98;
+  line-height: 1.12;
   letter-spacing: 0;
 }
 
