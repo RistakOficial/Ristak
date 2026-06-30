@@ -1,6 +1,6 @@
 import React from 'react'
 import { RefreshCw } from 'lucide-react'
-import { useLocation } from 'react-router-dom'
+import { useLocation, useNavigate } from 'react-router-dom'
 import { Button } from '@/components/common'
 import { useTheme, type ThemeDir } from '@/contexts/ThemeContext'
 import {
@@ -38,15 +38,41 @@ interface MdpBridgeThemePayload {
   mdpPreset: string
 }
 
+interface MdpRouteState {
+  itemId?: string
+  suffix: string
+  search: string
+  hash: string
+}
+
+const MDP_INTERNAL_URL_BASE = 'https://mdp.local'
+
 function selectItem(items: MdpProgramNavItem[], itemId?: string) {
   if (!items.length) return null
   if (!itemId) return items[0]
   return items.find(item => item.id === itemId) || items[0]
 }
 
-function readLegacyItemIdFromPath() {
-  const parts = window.location.pathname.split('/').filter(Boolean)
-  return parts[0] === 'mdp-program' ? parts[1] : undefined
+function safeDecode(value: string) {
+  try {
+    return decodeURIComponent(value)
+  } catch {
+    return value
+  }
+}
+
+function readMdpRouteState(pathname: string, search = '', hash = ''): MdpRouteState {
+  const parts = pathname.split('/').filter(Boolean)
+  if (parts[0] !== 'mdp-program') {
+    return { suffix: '', search: '', hash: '' }
+  }
+
+  return {
+    itemId: parts[1] ? safeDecode(parts[1]) : undefined,
+    suffix: parts.length > 2 ? `/${parts.slice(2).join('/')}` : '',
+    search,
+    hash
+  }
 }
 
 function getMdpTargetOrigin(url: string) {
@@ -57,13 +83,100 @@ function getMdpTargetOrigin(url: string) {
   }
 }
 
-function withMdpBridgeThemeParams(url: string, payload: MdpBridgeThemePayload) {
+function parseMessageData(value: unknown) {
+  if (typeof value !== 'string') return value
+  try {
+    return JSON.parse(value)
+  } catch {
+    return value
+  }
+}
+
+function normalizePathname(pathname: string) {
+  const trimmed = String(pathname || '').replace(/\/+$/, '')
+  return trimmed || '/'
+}
+
+function normalizeMdpInnerPath(value: unknown) {
+  const raw = String(value || '').trim()
+  if (!raw.startsWith('/') || raw.startsWith('//') || raw.startsWith('/api/')) return ''
+
+  try {
+    const parsed = new URL(raw, MDP_INTERNAL_URL_BASE)
+    if (parsed.origin !== MDP_INTERNAL_URL_BASE) return ''
+    const pathname = parsed.pathname || '/'
+    if (!pathname.startsWith('/') || pathname.startsWith('//') || pathname.startsWith('/api/')) return ''
+    return `${pathname}${parsed.search}${parsed.hash}`.slice(0, 800)
+  } catch {
+    return ''
+  }
+}
+
+function getMdpItemPath(item: MdpProgramNavItem) {
+  const path = normalizeMdpInnerPath(item.path || `/${item.id}`)
+  if (!path) return ''
+  return normalizePathname(new URL(path, MDP_INTERNAL_URL_BASE).pathname)
+}
+
+function getMdpTargetPathForRoute(item: MdpProgramNavItem, route: MdpRouteState) {
+  const basePath = getMdpItemPath(item)
+  if (!basePath) return ''
+
+  const suffix = route.itemId === item.id ? route.suffix : ''
+  const targetPath = `${basePath === '/' ? '' : basePath}${suffix}${route.search}${route.hash}`
+  return normalizeMdpInnerPath(targetPath) || basePath
+}
+
+function getMdpNavigationPathFromMessage(value: unknown) {
+  const data = parseMessageData(value)
+  if (!data || typeof data !== 'object') return ''
+
+  const payload = data as Record<string, unknown>
+  if (payload.type !== 'ristak:navigation' || payload.source !== 'mdp') return ''
+
+  return normalizeMdpInnerPath(payload.path ?? payload.pathname)
+}
+
+function findItemForMdpPath(items: MdpProgramNavItem[], innerPath: string) {
+  const cleanPath = normalizeMdpInnerPath(innerPath)
+  if (!cleanPath) return null
+
+  const pathname = normalizePathname(new URL(cleanPath, MDP_INTERNAL_URL_BASE).pathname)
+
+  return items
+    .map((item) => ({ item, basePath: getMdpItemPath(item) }))
+    .filter(({ basePath }) => basePath && (pathname === basePath || pathname.startsWith(`${basePath}/`)))
+    .sort((a, b) => b.basePath.length - a.basePath.length)[0]?.item || null
+}
+
+function getRistakPathForMdpPath(items: MdpProgramNavItem[], innerPath: string) {
+  const item = findItemForMdpPath(items, innerPath)
+  const cleanPath = normalizeMdpInnerPath(innerPath)
+  if (!item || !cleanPath) return ''
+
+  const parsed = new URL(cleanPath, MDP_INTERNAL_URL_BASE)
+  const pathname = normalizePathname(parsed.pathname)
+  const basePath = getMdpItemPath(item)
+  const suffix = pathname === basePath ? '' : pathname.slice(basePath.length)
+
+  return `/mdp-program/${encodeURIComponent(item.id)}${suffix}${parsed.search}${parsed.hash}`
+}
+
+function isExpectedMdpOrigin(eventOrigin: string, launchUrl: string) {
+  const targetOrigin = getMdpTargetOrigin(launchUrl)
+  return targetOrigin === '*' || eventOrigin === targetOrigin
+}
+
+function withMdpBridgeThemeParams(url: string, payload: MdpBridgeThemePayload, targetPath = '') {
   try {
     const nextUrl = new URL(url)
     nextUrl.searchParams.set('embedded', 'ristak')
     nextUrl.searchParams.set('ristak_theme_mode', payload.mode)
     nextUrl.searchParams.set('ristak_theme_dir', payload.ristakDir)
     nextUrl.searchParams.set('ristak_theme_preset', payload.mdpPreset)
+    if (targetPath) {
+      nextUrl.searchParams.set('to', targetPath)
+    }
     return nextUrl.toString()
   } catch {
     return url
@@ -72,15 +185,21 @@ function withMdpBridgeThemeParams(url: string, payload: MdpBridgeThemePayload) {
 
 export const MDPProgram: React.FC = () => {
   const location = useLocation()
+  const navigate = useNavigate()
   const { theme, themeDir } = useTheme()
   const [navigation, setNavigation] = React.useState<MdpProgramNavigation | null>(null)
-  const [requestedItemId, setRequestedItemId] = React.useState(readLegacyItemIdFromPath)
   const [launchItem, setLaunchItem] = React.useState<MdpProgramNavItem | null>(null)
   const [iframeSrc, setIframeSrc] = React.useState('')
   const [loading, setLoading] = React.useState(true)
   const [error, setError] = React.useState('')
   const iframeRef = React.useRef<HTMLIFrameElement | null>(null)
   const loadSeqRef = React.useRef(0)
+  const routeSyncSkipRef = React.useRef('')
+  const routeState = React.useMemo(
+    () => readMdpRouteState(location.pathname, location.search, location.hash),
+    [location.hash, location.pathname, location.search]
+  )
+  const requestedItemId = routeState.itemId
   const mdpThemePayload = React.useMemo<MdpBridgeThemePayload>(() => ({
     type: 'ristak:theme',
     source: 'ristak',
@@ -112,6 +231,9 @@ export const MDPProgram: React.FC = () => {
     }
   }, [])
 
+  const items = navigation?.items || []
+  const currentRistakPath = `${location.pathname}${location.search}${location.hash}`
+
   const postThemeToIframe = React.useCallback(() => {
     const frameWindow = iframeRef.current?.contentWindow
     if (!frameWindow || !launchItem?.launchUrl) return
@@ -124,24 +246,47 @@ export const MDPProgram: React.FC = () => {
   }, [requestedItemId, load])
 
   React.useEffect(() => {
-    const parts = location.pathname.split('/').filter(Boolean)
-    setRequestedItemId(parts[0] === 'mdp-program' ? parts[1] : undefined)
-  }, [location.pathname])
-
-  React.useEffect(() => {
     if (!launchItem?.launchUrl) {
       setIframeSrc('')
       return
     }
 
-    setIframeSrc(withMdpBridgeThemeParams(launchItem.launchUrl, mdpThemePayload))
-  }, [launchItem?.launchUrl])
+    if (routeSyncSkipRef.current === currentRistakPath) {
+      routeSyncSkipRef.current = ''
+      return
+    }
+
+    setIframeSrc(withMdpBridgeThemeParams(
+      launchItem.launchUrl,
+      mdpThemePayload,
+      getMdpTargetPathForRoute(launchItem, routeState)
+    ))
+  }, [currentRistakPath, launchItem?.id, launchItem?.launchUrl, launchItem?.path])
+
+  React.useEffect(() => {
+    const handleMdpNavigation = (event: MessageEvent) => {
+      const frameWindow = iframeRef.current?.contentWindow
+      if (!frameWindow || event.source !== frameWindow || !launchItem?.launchUrl) return
+      if (!isExpectedMdpOrigin(event.origin, launchItem.launchUrl)) return
+
+      const innerPath = getMdpNavigationPathFromMessage(event.data)
+      if (!innerPath) return
+
+      const nextRistakPath = getRistakPathForMdpPath(items, innerPath)
+      if (!nextRistakPath || nextRistakPath === currentRistakPath) return
+
+      routeSyncSkipRef.current = nextRistakPath
+      navigate(nextRistakPath, { replace: true })
+    }
+
+    window.addEventListener('message', handleMdpNavigation)
+    return () => window.removeEventListener('message', handleMdpNavigation)
+  }, [currentRistakPath, items, launchItem?.launchUrl, navigate])
 
   React.useEffect(() => {
     postThemeToIframe()
   }, [postThemeToIframe])
 
-  const items = navigation?.items || []
   const activeItem = selectItem(items, requestedItemId)
   const programTitle = navigation?.program?.title || 'Magnetismo de Pacientes'
 

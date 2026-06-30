@@ -28,7 +28,10 @@ MDP_PROGRAM_BRIDGE_SECRET=...
 - Ristak llama `GET /api/mdp-program/navigation`.
 - El backend de Ristak firma un POST hacia MDP: `/api/ristak/navigation`.
 - MDP devuelve las secciones disponibles para ese usuario y sus launch URLs.
-- Ristak abre la primera seccion autorizada en un iframe de ancho y alto completo. Desde ahi, la navegacion de curso, mentoria, MediTalk y futuras paginas ocurre dentro de MDP sin tocar Ristak.
+- Ristak abre la primera seccion autorizada en un iframe de ancho y alto completo.
+- Cuando MDP navega dentro del iframe, emite `postMessage` con `type: "ristak:navigation"` y `path` interno (`/curso`, `/curso/leccion/:id`, `/mentoria`, etc.). Ristak traduce eso a `/mdp-program/:itemId/...` para que refresh, copiar URL o abrir una pestana nueva conserve la pantalla exacta.
+
+Ejemplo: si MDP esta en `/curso/leccion/abc`, Ristak muestra `/mdp-program/curso/leccion/abc`. Al refrescar, Ristak pide un launch token nuevo y lo relanza con `to=/curso/leccion/abc`.
 
 ## Sincronizacion visual
 
