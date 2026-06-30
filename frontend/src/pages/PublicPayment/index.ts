@@ -1,1 +1,1 @@
-export { PublicPayment } from './PublicPayment'
+export { PublicPayment, PublicPaymentGatewayReturn } from './PublicPayment'

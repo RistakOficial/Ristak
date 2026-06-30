@@ -932,6 +932,8 @@ test('suscripciones Stripe: link crea Checkout de suscripcion en Stripe', async 
     assert.equal(created.subscriptionStartUrl, 'https://checkout.stripe.test/cs_stress_1')
     assert.equal(calls.checkoutSessionsCreate.length, 1)
     assert.equal(calls.checkoutSessionsCreate[0].params.mode, 'subscription')
+    assert.equal(calls.checkoutSessionsCreate[0].params.success_url, 'https://app.example.test/pay/success?provider=stripe&type=subscription&result=success&session_id={CHECKOUT_SESSION_ID}')
+    assert.equal(calls.checkoutSessionsCreate[0].params.cancel_url, 'https://app.example.test/pay/success?provider=stripe&type=subscription&result=cancelled')
     assert.equal(calls.checkoutSessionsCreate[0].params.metadata.ristak_subscription_id, created.id)
     assert.equal(calls.checkoutSessionsCreate[0].params.metadata.public_payment_id, created.subscriptionStartPublicPaymentId)
     assert.ok(calls.checkoutSessionsCreate[0].params.success_url.includes(`/pay/${created.subscriptionStartPublicPaymentId}`))

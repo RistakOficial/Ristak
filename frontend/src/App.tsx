@@ -31,7 +31,7 @@ import { PhoneCalendar } from '@/pages/PhoneCalendar'
 import { PhoneChat } from '@/pages/PhoneChat'
 import { PhonePayments } from '@/pages/PhonePayments'
 import { PhoneSettings } from '@/pages/PhoneSettings'
-import { PublicPayment } from '@/pages/PublicPayment'
+import { PublicPayment, PublicPaymentGatewayReturn } from '@/pages/PublicPayment'
 import { Login } from '@/pages/Login'
 import { Setup } from '@/pages/Login/Setup'
 import { LicenseBlocked } from '@/pages/Login/LicenseBlocked'
@@ -655,6 +655,7 @@ const AppWithNotifications: React.FC = () => {
           <Route path="/sso" element={<Sso />} />
           <Route path="/login" element={<Login />} />
           <Route path="/reset-password" element={<ResetPassword />} />
+          <Route path="/pay/success" element={<PublicPaymentGatewayReturn />} />
           <Route path="/pay/:publicPaymentId" element={<PublicPayment />} />
           <Route path={PHONE_APP_TENANT_PATH} element={<MobileTenantSetup />} />
           <Route path={PHONE_APP_LOGIN_PATH} element={<Login />} />

@@ -423,9 +423,10 @@ function buildSubscriptionReturnUrl(baseUrl, result, publicPaymentId = '') {
   const cleanBase = cleanString(baseUrl || getConfiguredBaseUrl()).replace(/\/+$/, '') || 'https://www.ristak.com'
   const cleanPublicPaymentId = cleanString(publicPaymentId)
   if (cleanPublicPaymentId) {
-    return `${cleanBase}/pay/${encodeURIComponent(cleanPublicPaymentId)}?payment=return&stripe_subscription=${encodeURIComponent(result)}&session_id={CHECKOUT_SESSION_ID}`
+    return `${cleanBase}/pay/${encodeURIComponent(cleanPublicPaymentId)}?payment=success&stripe_subscription=${encodeURIComponent(result)}&session_id={CHECKOUT_SESSION_ID}`
   }
-  return `${cleanBase}/transactions/subscriptions?stripe_subscription=${encodeURIComponent(result)}&session_id={CHECKOUT_SESSION_ID}`
+  const checkoutSessionParam = result === 'success' ? '&session_id={CHECKOUT_SESSION_ID}' : ''
+  return `${cleanBase}/pay/success?provider=stripe&type=subscription&result=${encodeURIComponent(result)}${checkoutSessionParam}`
 }
 
 async function readRawConfig() {

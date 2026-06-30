@@ -656,6 +656,7 @@ test('Conekta suscripciones: link crea checkout hospedado y webhook activa suscr
         assert.equal(body.order_template.metadata.ristak_subscription_id.startsWith('rstk_sub_'), true)
         assert.match(String(body.order_template.metadata.public_payment_id || ''), /^rstk_pay_[A-Za-z0-9]{20}$/)
         assert.ok(String(body.success_url).includes('/pay/rstk_pay_'))
+        assert.ok(String(body.success_url).includes('payment=success'))
         assert.ok(String(body.success_url).includes('conekta_subscription=success'))
         return jsonResponse({
           id: checkoutId,

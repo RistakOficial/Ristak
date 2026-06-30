@@ -1,7 +1,7 @@
 import React, { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { Elements, PaymentElement, useElements, useStripe } from '@stripe/react-stripe-js'
 import { loadStripe, type StripeElementsOptions, type StripePaymentElementOptions } from '@stripe/stripe-js'
-import { AlertCircle, CheckCircle2, ChevronDown, Copy, CreditCard, Download, ExternalLink, Info, Loader2, ShieldCheck } from 'lucide-react'
+import { AlertCircle, CheckCircle2, ChevronDown, Copy, CreditCard, Download, ExternalLink, Info, Loader2, ShieldCheck, Sparkles } from 'lucide-react'
 import { useParams, useSearchParams } from 'react-router-dom'
 import { Badge, Button, type BadgeVariant } from '@/components/common'
 import { PaymentPlatformLogo, type PaymentPlatformLogoId } from '@/components/common/PaymentPlatformLogo'
@@ -70,6 +70,21 @@ type ConektaCheckoutComponents = {
     options?: Record<string, unknown>
   }) => void
 }
+type SuccessDetailRow = {
+  label: string
+  value: React.ReactNode
+}
+type PaymentSuccessExperienceProps = {
+  providerLogo: PaymentPlatformLogoId
+  providerLabel: string
+  title: string
+  description: string
+  amountLabel?: string
+  amountValue?: React.ReactNode
+  details?: SuccessDetailRow[]
+  businessDetails?: string[]
+  action?: React.ReactNode
+}
 type MercadoPagoCardSubmitData = {
   token?: string
   payment_method_id?: string
@@ -118,6 +133,7 @@ const STRIPE_SPANISH_COUNTRIES = new Set([
   'AR', 'BO', 'CL', 'CO', 'CR', 'CU', 'DO', 'EC', 'ES', 'GT', 'HN', 'MX', 'NI', 'PA', 'PE', 'PR', 'PY', 'SV', 'UY', 'VE'
 ])
 const PUBLIC_PAYMENT_LIGHT_MODE_FLAG = 'publicPaymentLightMode'
+const SUCCESS_CONFETTI_PIECES = Array.from({ length: 18 }, (_, index) => index)
 
 const printTemplateClassById: Record<PaymentInvoiceTemplateId, string> = {
   classic: 'printThemeClassic',
@@ -221,9 +237,66 @@ const MERCADOPAGO_RETURN_PARAMS = [
 // (PAY2-004) ¿Volvimos del checkout? true para Stripe (?payment=return) y para
 // Mercado Pago (sus parámetros de retorno, incluido status=approved|pending|...).
 function isPaymentReturn(params: URLSearchParams) {
-  if (params.get('payment') === 'return') return true
+  const paymentParam = params.get('payment')
+  if (paymentParam === 'return' || paymentParam === 'success') return true
   if (params.has('status')) return true
   return MERCADOPAGO_RETURN_PARAMS.some((key) => params.has(key))
+}
+
+function usePublicPaymentLightMode(theme: DocumentThemeMode) {
+  const restoreThemeRef = useRef<DocumentThemeMode>(theme)
+  restoreThemeRef.current = theme
+
+  useLayoutEffect(() => {
+    if (typeof document === 'undefined') return undefined
+
+    const root = document.documentElement
+    const body = document.body
+    const applyPublicPaymentLightMode = () => {
+      body.dataset[PUBLIC_PAYMENT_LIGHT_MODE_FLAG] = 'true'
+      root.dataset[PUBLIC_PAYMENT_LIGHT_MODE_FLAG] = 'true'
+      applyDocumentThemeMode('light')
+    }
+
+    applyPublicPaymentLightMode()
+
+    const observer = typeof MutationObserver !== 'undefined'
+      ? new MutationObserver(() => {
+          const alreadyLight = body.dataset.mode === 'light' && root.dataset.mode === 'light' && !body.classList.contains('dark')
+          if (!alreadyLight) applyPublicPaymentLightMode()
+        })
+      : null
+
+    observer?.observe(body, { attributes: true, attributeFilter: ['class', 'data-theme', 'data-mode'] })
+    observer?.observe(root, { attributes: true, attributeFilter: ['data-theme', 'data-mode'] })
+
+    return () => {
+      observer?.disconnect()
+      delete body.dataset[PUBLIC_PAYMENT_LIGHT_MODE_FLAG]
+      delete root.dataset[PUBLIC_PAYMENT_LIGHT_MODE_FLAG]
+      applyDocumentThemeMode(restoreThemeRef.current)
+    }
+  }, [])
+}
+
+function resolveGatewayProvider(provider?: string | null): { label: string; logo: PaymentPlatformLogoId } {
+  const normalized = String(provider || '').trim().toLowerCase()
+  if (normalized.includes('mercado')) return { label: 'Mercado Pago', logo: 'mercadopago' }
+  if (normalized.includes('conekta')) return { label: 'Conekta', logo: 'conekta' }
+  return { label: 'Stripe', logo: 'stripe' }
+}
+
+function resolveGatewayReturnState(params: URLSearchParams): 'success' | 'pending' | 'cancelled' {
+  const explicitResult = String(params.get('result') || '').trim().toLowerCase()
+  const gatewayStatus = String(params.get('status') || params.get('collection_status') || '').trim().toLowerCase()
+  const normalized = gatewayStatus || explicitResult
+
+  if (['cancelled', 'canceled', 'cancel', 'failure', 'failed', 'rejected', 'void', 'error'].includes(normalized)) return 'cancelled'
+  if (['pending', 'processing', 'in_process', 'in-process', 'requires_action'].includes(normalized)) return 'pending'
+  if (['success', 'approved', 'authorized', 'paid', 'succeeded', 'completed'].includes(normalized)) return 'success'
+  if (explicitResult === 'cancelled' || explicitResult === 'canceled') return 'cancelled'
+  if (explicitResult === 'pending') return 'pending'
+  return 'success'
 }
 
 function getStatusCopy(status: string) {
@@ -788,6 +861,83 @@ function buildMercadoPagoCardPayload(payment: PublicMercadoPagoPayment, formData
   }
 }
 
+const PaymentSuccessExperience: React.FC<PaymentSuccessExperienceProps> = ({
+  providerLogo,
+  providerLabel,
+  title,
+  description,
+  amountLabel,
+  amountValue,
+  details = [],
+  businessDetails = [],
+  action
+}) => {
+  const visibleBusinessDetails = businessDetails.filter(Boolean)
+
+  return (
+    <div className={styles.successExperience}>
+      <div className={styles.successConfetti} aria-hidden="true">
+        {SUCCESS_CONFETTI_PIECES.map((piece) => (
+          <span key={piece} />
+        ))}
+      </div>
+
+      <div className={styles.successHero}>
+        <div className={styles.successSeal} aria-hidden="true">
+          <span />
+          <CheckCircle2 size={42} />
+        </div>
+
+        <div className={styles.successHeroCopy}>
+          <span className={styles.successKicker}>
+            <Sparkles size={14} />
+            Pago exitoso
+          </span>
+          <h3>{title}</h3>
+          <p>{description}</p>
+        </div>
+      </div>
+
+      {amountValue !== undefined && amountValue !== null && (
+        <div className={styles.successAmount}>
+          <span>{amountLabel || 'Total pagado'}</span>
+          <strong>{amountValue}</strong>
+        </div>
+      )}
+
+      <div className={styles.successProvider}>
+        <PaymentPlatformLogo platform={providerLogo} size="md" decorative />
+        <span>{providerLabel}</span>
+      </div>
+
+      {details.length > 0 && (
+        <div className={styles.successRows}>
+          {details.map((detail) => (
+            <div key={detail.label}>
+              <span>{detail.label}</span>
+              <strong>{detail.value}</strong>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {action && (
+        <div className={styles.successActions}>
+          {action}
+        </div>
+      )}
+
+      {visibleBusinessDetails.length > 0 && (
+        <div className={styles.successBusinessInfo}>
+          {visibleBusinessDetails.map((detail, index) => (
+            <span key={`${detail}-${index}`}>{detail}</span>
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
+
 const PublicPaymentForm: React.FC<{
   payment: PublicStripePayment
   onPaid: () => Promise<void>
@@ -1283,11 +1433,85 @@ const ConektaCardTokenizerForm: React.FC<{
   )
 }
 
+export const PublicPaymentGatewayReturn: React.FC = () => {
+  const [searchParams] = useSearchParams()
+  const { theme } = useTheme()
+  usePublicPaymentLightMode(theme)
+
+  const provider = resolveGatewayProvider(
+    searchParams.get('provider') ||
+    searchParams.get('gateway') ||
+    searchParams.get('payment_provider')
+  )
+  const returnState = resolveGatewayReturnState(searchParams)
+  const isSuccess = returnState === 'success'
+  const isPending = returnState === 'pending'
+  const badgeVariant: BadgeVariant = isSuccess ? 'success' : isPending ? 'info' : 'error'
+  const title = isSuccess
+    ? 'Pago exitoso'
+    : isPending
+      ? 'Pago en proceso'
+      : 'Checkout no completado'
+  const description = isSuccess
+    ? `La autorización de la suscripción volvió desde ${provider.label}. Ristak actualizará el registro con el webhook de la pasarela.`
+    : isPending
+      ? `${provider.label} todavía está procesando el resultado. Ristak actualizará la suscripción en cuanto la pasarela lo confirme.`
+      : `No recibimos una autorización completada desde ${provider.label}. Puedes volver a intentar desde el enlace original.`
+
+  return (
+    <main className={styles.page}>
+      <div className={`${styles.shell} ${styles.gatewayReturnShell}`}>
+        <header className={styles.header}>
+          <div className={styles.brandLockup}>
+            <div>
+              <span className={styles.eyebrow}>Ristak Payments</span>
+              <strong>Checkout seguro</strong>
+            </div>
+          </div>
+          <Badge variant={badgeVariant} className={styles.statusBadge}>
+            {isSuccess ? <CheckCircle2 size={15} /> : isPending ? <ShieldCheck size={15} /> : <AlertCircle size={15} />}
+            {isSuccess ? 'Exitoso' : isPending ? 'Procesando' : 'No completado'}
+          </Badge>
+        </header>
+
+        <section className={`${styles.payPanel} ${styles.gatewayReturnPanel}`} aria-label="Resultado del checkout">
+          {isSuccess ? (
+            <PaymentSuccessExperience
+              providerLogo={provider.logo}
+              providerLabel={provider.label}
+              title="Suscripción autorizada"
+              description={description}
+              details={[
+                { label: 'Tipo', value: 'Suscripción' },
+                { label: 'Estado', value: 'Autorización recibida' },
+                { label: 'Pasarela', value: provider.label }
+              ]}
+            />
+          ) : (
+            <div className={styles.gatewayReturnNotice}>
+              <div className={styles.gatewayReturnIcon} aria-hidden="true">
+                {isPending ? <ShieldCheck size={34} /> : <AlertCircle size={34} />}
+              </div>
+              <div className={styles.gatewayReturnCopy}>
+                <span className={styles.successKicker}>
+                  <PaymentPlatformLogo platform={provider.logo} size="sm" decorative />
+                  {provider.label}
+                </span>
+                <h1>{title}</h1>
+                <p>{description}</p>
+              </div>
+            </div>
+          )}
+        </section>
+      </div>
+    </main>
+  )
+}
+
 export const PublicPayment: React.FC = () => {
   const { publicPaymentId = '' } = useParams()
   const [searchParams] = useSearchParams()
   const { theme } = useTheme()
-  const restoreThemeRef = useRef<DocumentThemeMode>(theme)
   const autoReceiptPrintRef = useRef('')
   const metaPurchasePixelRef = useRef('')
   const autoStartedStripePaymentRef = useRef('')
@@ -1297,43 +1521,12 @@ export const PublicPayment: React.FC = () => {
   const [startingPayment, setStartingPayment] = useState(false)
   const [error, setError] = useState('')
 
-  restoreThemeRef.current = theme
+  usePublicPaymentLightMode(theme)
 
   useEffect(() => {
     autoStartedStripePaymentRef.current = ''
     setIntent(null)
   }, [publicPaymentId])
-
-  useLayoutEffect(() => {
-    if (typeof document === 'undefined') return undefined
-
-    const root = document.documentElement
-    const body = document.body
-    const applyPublicPaymentLightMode = () => {
-      body.dataset[PUBLIC_PAYMENT_LIGHT_MODE_FLAG] = 'true'
-      root.dataset[PUBLIC_PAYMENT_LIGHT_MODE_FLAG] = 'true'
-      applyDocumentThemeMode('light')
-    }
-
-    applyPublicPaymentLightMode()
-
-    const observer = typeof MutationObserver !== 'undefined'
-      ? new MutationObserver(() => {
-          const alreadyLight = body.dataset.mode === 'light' && root.dataset.mode === 'light' && !body.classList.contains('dark')
-          if (!alreadyLight) applyPublicPaymentLightMode()
-        })
-      : null
-
-    observer?.observe(body, { attributes: true, attributeFilter: ['class', 'data-theme', 'data-mode'] })
-    observer?.observe(root, { attributes: true, attributeFilter: ['data-theme', 'data-mode'] })
-
-    return () => {
-      observer?.disconnect()
-      delete body.dataset[PUBLIC_PAYMENT_LIGHT_MODE_FLAG]
-      delete root.dataset[PUBLIC_PAYMENT_LIGHT_MODE_FLAG]
-      applyDocumentThemeMode(restoreThemeRef.current)
-    }
-  }, [])
 
   const status = getStatusCopy(payment?.status || '')
   const isPaid = Boolean(payment && ['paid', 'succeeded', 'completed'].includes(payment.status.toLowerCase()))
@@ -1598,6 +1791,55 @@ export const PublicPayment: React.FC = () => {
   const planTotal = Number(paymentPlan?.total || 0)
   const addedInstallmentCount = Number(paymentPlan?.changeSummary?.addedInstallmentCount || 0)
   const hasPlanSummary = Boolean(paymentPlan && (planTotal > 0 || firstPlanPayment || scheduledPlanCount > 0))
+  const successDetails: SuccessDetailRow[] = [
+    ...(showBusinessInfo
+      ? [{
+          label: 'Negocio',
+          value: receiptSettings?.businessName || 'Negocio'
+        }]
+      : []),
+    ...(showCustomerInfo
+      ? [{
+          label: 'Cliente',
+          value: payment.contact?.name || 'Cliente'
+        }]
+      : []),
+    {
+      label: 'Fecha de pago',
+      value: formatDate(payment.paidAt || new Date().toISOString())
+    },
+    {
+      label: 'Vencimiento',
+      value: formatDate(payment.dueDate)
+    },
+    ...(hasTaxBreakdown
+      ? [{
+          label: 'Impuesto',
+          value: formatCurrency(taxAmount, payment.currency)
+        }]
+      : []),
+    {
+      label: 'Pasarela',
+      value: (
+        <span className={styles.providerValue}>
+          <PaymentPlatformLogo platform={providerLogo} size="sm" decorative />
+          <span>{providerLabel} · {paymentModeLabel}</span>
+        </span>
+      )
+    },
+    {
+      label: 'Referencia',
+      value: payment.publicPaymentId
+    }
+  ]
+  const successBusinessDetails = showBusinessInfo && receiptSettings
+    ? [
+        receiptSettings.businessEmail,
+        receiptSettings.businessPhone,
+        receiptSettings.businessAddress,
+        receiptSettings.businessWebsite
+      ].filter(Boolean) as string[]
+    : []
 
   return (
     <main className={styles.page}>
@@ -1814,55 +2056,18 @@ export const PublicPayment: React.FC = () => {
             )}
 
             {isPaid ? (
-              <div className={styles.receiptBox}>
-                <p className={`${styles.message} ${styles.messageSuccess}`}>
-                  <CheckCircle2 size={16} />
-                  <span>{isSubscriptionStart ? 'Listo. La suscripción quedó autorizada.' : 'Listo. El pago fue recibido y el invoice quedó marcado como pagado.'}</span>
-                </p>
-                <div className={styles.receiptRows}>
-                  {showBusinessInfo && (
-                    <div>
-                      <span>Negocio</span>
-                      <strong>{receiptSettings?.businessName || 'Negocio'}</strong>
-                    </div>
-                  )}
-                  {showCustomerInfo && (
-                    <div>
-                      <span>Cliente</span>
-                      <strong>{payment.contact?.name || 'Cliente'}</strong>
-                    </div>
-                  )}
-                  <div>
-                    <span>Total pagado</span>
-                    <strong>{formatCurrency(totalAmount, payment.currency)}</strong>
-                  </div>
-                  <div>
-                    <span>Fecha de pago</span>
-                    <strong>{formatDate(payment.paidAt || new Date().toISOString(), publicTimezone)}</strong>
-                  </div>
-                  <div>
-                    <span>Vencimiento</span>
-                    <strong>{formatDate(payment.dueDate, publicTimezone)}</strong>
-                  </div>
-                  {hasTaxBreakdown && (
-                    <div>
-                      <span>Impuesto</span>
-                      <strong>{formatCurrency(taxAmount, payment.currency)}</strong>
-                    </div>
-                  )}
-                  <div>
-                    <span>Pasarela</span>
-                    <strong className={styles.providerValue}>
-                      <PaymentPlatformLogo platform={providerLogo} size="sm" decorative />
-                      <span>{providerLabel} · {paymentModeLabel}</span>
-                    </strong>
-                  </div>
-                  <div>
-                    <span>Referencia</span>
-                    <strong>{payment.publicPaymentId}</strong>
-                  </div>
-                </div>
-                <div className={styles.actions}>
+              <PaymentSuccessExperience
+                providerLogo={providerLogo}
+                providerLabel={`${providerLabel} · ${paymentModeLabel}`}
+                title={isSubscriptionStart ? 'Suscripción autorizada' : 'Pago confirmado'}
+                description={isSubscriptionStart
+                  ? 'Tu suscripción quedó autorizada correctamente. Ya puedes cerrar esta ventana con tranquilidad.'
+                  : 'Tu pago quedó recibido y confirmado. Puedes cerrar esta ventana o descargar tu comprobante cuando lo necesites.'}
+                amountLabel={isSubscriptionStart ? 'Monto autorizado' : 'Total pagado'}
+                amountValue={formatCurrency(totalAmount, payment.currency)}
+                details={successDetails}
+                businessDetails={successBusinessDetails}
+                action={(
                   <Button
                     type="button"
                     variant="secondary"
@@ -1871,16 +2076,8 @@ export const PublicPayment: React.FC = () => {
                   >
                     Descargar PDF
                   </Button>
-                </div>
-                {showBusinessInfo && receiptSettings && (
-                  <div className={styles.businessInfo}>
-                    {receiptSettings.businessEmail && <span>{receiptSettings.businessEmail}</span>}
-                    {receiptSettings.businessPhone && <span>{receiptSettings.businessPhone}</span>}
-                    {receiptSettings.businessAddress && <span>{receiptSettings.businessAddress}</span>}
-                    {receiptSettings.businessWebsite && <span>{receiptSettings.businessWebsite}</span>}
-                  </div>
                 )}
-              </div>
+              />
             ) : isClosed ? (
               <p className={`${styles.message} ${styles.messageError}`}>
                 <AlertCircle size={16} />

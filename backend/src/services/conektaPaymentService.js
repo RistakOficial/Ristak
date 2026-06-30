@@ -257,9 +257,9 @@ function buildConektaSubscriptionReturnUrl(baseUrl, result, publicPaymentId = ''
   const cleanBase = cleanString(baseUrl || getConfiguredBaseUrl()).replace(/\/+$/, '') || 'https://www.ristak.com'
   const cleanPublicPaymentId = cleanString(publicPaymentId)
   if (cleanPublicPaymentId) {
-    return `${cleanBase}/pay/${encodeURIComponent(cleanPublicPaymentId)}?payment=return&conekta_subscription=${encodeURIComponent(result)}`
+    return `${cleanBase}/pay/${encodeURIComponent(cleanPublicPaymentId)}?payment=success&conekta_subscription=${encodeURIComponent(result)}`
   }
-  return `${cleanBase}/transactions/subscriptions?conekta_subscription=${encodeURIComponent(result)}`
+  return `${cleanBase}/pay/success?provider=conekta&type=subscription&result=${encodeURIComponent(result)}`
 }
 
 function parseJson(value, fallback = {}) {
