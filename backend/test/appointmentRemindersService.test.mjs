@@ -6,6 +6,7 @@ import { db, setAppConfig } from '../src/config/database.js'
 import { encrypt, initializeMasterKey } from '../src/utils/encryption.js'
 import {
   createAppointmentReminder,
+  getAppointmentRemindersOverview,
   processDueAppointmentReminders
 } from '../src/services/appointmentRemindersService.js'
 import { createMessageTemplate } from '../src/services/messageTemplatesService.js'
@@ -265,7 +266,7 @@ test('recordatorios de citas envían plantilla aprobada por WhatsApp API', async
 
 test('recordatorios no mandan texto normal si la plantilla no está aprobada y QR está apagado', async () => {
   await withYCloudMessageCapture(async (captures) => {
-    await withReminderFixture({ ycloudStatus: 'PENDING', qrFallbackEnabled: false }, async ({ appointmentId }) => {
+    await withReminderFixture({ ycloudStatus: 'PENDING', qrFallbackEnabled: false }, async ({ reminder, appointmentId }) => {
       const result = await processDueAppointmentReminders({ batchSize: 1 })
 
       assert.equal(result.sent, 0)
@@ -278,7 +279,26 @@ test('recordatorios no mandan texto normal si la plantilla no está aprobada y Q
       )
       assert.equal(send.status, 'error')
       assert.match(send.error_message, /APPROVED/)
+
+      const overview = await getAppointmentRemindersOverview()
+      const overviewReminder = overview.reminders.find((item) => item.id === reminder.id)
+      assert.equal(overviewReminder?.deliveryHealth?.status, 'error')
+      assert.match(overviewReminder?.deliveryHealth?.message || '', /APPROVED/)
+      assert.equal(overviewReminder?.failures?.errorCount, 1)
+      assert.match(overviewReminder?.failures?.lastErrorMessage || '', /APPROVED/)
     })
+  })
+})
+
+test('overview marca recordatorios bloqueados si no hay remitente de WhatsApp', async () => {
+  await withReminderFixture({ ycloudStatus: 'APPROVED' }, async ({ reminder, phoneNumberId }) => {
+    await db.run('DELETE FROM whatsapp_api_phone_numbers WHERE id = ?', [phoneNumberId])
+
+    const overview = await getAppointmentRemindersOverview()
+    const overviewReminder = overview.reminders.find((item) => item.id === reminder.id)
+
+    assert.equal(overviewReminder?.deliveryHealth?.status, 'error')
+    assert.match(overviewReminder?.deliveryHealth?.message || '', /WhatsApp API|remitente/)
   })
 })
 

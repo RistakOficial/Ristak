@@ -8,7 +8,7 @@ import { useNotification } from '@/contexts/NotificationContext';
 import { useTheme } from '@/contexts/ThemeContext';
 import { useAppConfig } from '@/hooks';
 import { calendarsService, type Calendar, type CalendarEvent, type AppointmentStats, type BlockedSlot, type RawBlockedSlot } from '@/services/calendarsService';
-import { Badge } from '@/components/common/Badge';
+import { Badge, type BadgeVariant } from '@/components/common/Badge';
 import { getAppointmentStatusBadge } from '@/utils/statusBadges';
 import { formatTime12h } from '@/utils/format'
 import { buildSearchIndex, prepareSearchQuery, searchIndexIncludes } from '@/utils/searchText'
@@ -42,6 +42,30 @@ const MONTH_NAMES = [
 ];
 
 const DAYS_SHORT = ['Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'Sáb', 'Dom'];
+
+const getReminderHealthBadge = (reminder: AppointmentReminder): { label: string; variant: BadgeVariant } => {
+  const failureCount = reminder.failures?.errorCount ?? 0;
+  const healthStatus = reminder.deliveryHealth?.status;
+
+  if (!reminder.enabled) return { label: 'Pausado', variant: 'neutral' };
+  if (healthStatus === 'error') return { label: 'Revisar', variant: 'error' };
+  if (failureCount > 0) return { label: 'Con errores', variant: 'error' };
+  if (healthStatus === 'warning') return { label: 'Atención', variant: 'warning' };
+  return { label: 'Activo', variant: 'success' };
+};
+
+const getReminderHealthMessage = (reminder: AppointmentReminder) => {
+  if (!reminder.enabled) return '';
+
+  const health = reminder.deliveryHealth;
+  if (health && health.status !== 'ready' && health.status !== 'paused') {
+    const details = (health.details || []).filter(Boolean);
+    return details.length ? details.slice(0, 2).join(' ') : health.message;
+  }
+
+  const lastError = reminder.failures?.lastErrorMessage;
+  return lastError ? `Último error: ${lastError}` : '';
+};
 
 const viewTabs = [
   { value: 'month', label: 'Mes' },
@@ -2392,6 +2416,12 @@ export const Appointments: React.FC = () => {
             ) : (
               reminders.map((reminder) => {
                 const ReminderIcon = reminder.messageType === 'confirmation' ? Sparkles : Bell;
+                const healthBadge = getReminderHealthBadge(reminder);
+                const healthMessage = getReminderHealthMessage(reminder);
+                const healthTextClassName = [
+                  styles.automationHealthText,
+                  reminder.deliveryHealth?.status === 'warning' ? styles.automationHealthWarning : ''
+                ].filter(Boolean).join(' ');
                 return (
                   <div key={reminder.id} className={styles.automationItem}>
                     <div className={styles.automationIcon}>
@@ -2399,13 +2429,19 @@ export const Appointments: React.FC = () => {
                     </div>
                     <div className={styles.automationCopy}>
                       <div className={styles.automationTitle}>
-                        {formatReminderOffsetLabel(reminder.offsetValue, reminder.offsetUnit, reminder.timingAnchor)}
+                        <span>{formatReminderOffsetLabel(reminder.offsetValue, reminder.offsetUnit, reminder.timingAnchor)}</span>
+                        <Badge variant={healthBadge.variant}>{healthBadge.label}</Badge>
                       </div>
                       <div className={styles.automationDetail}>
                         {reminder.messageType === 'confirmation'
                           ? `Confirmación de cita${reminder.aiEnabled ? ' · IA' : ''}`
                           : 'Recordatorio de cita'}
                       </div>
+                      {healthMessage && (
+                        <div className={healthTextClassName}>
+                          {healthMessage}
+                        </div>
+                      )}
                       <button
                         type="button"
                         className={styles.automationDetailsButton}

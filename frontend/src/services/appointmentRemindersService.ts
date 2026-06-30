@@ -12,6 +12,19 @@ export type ReminderSenderMode = 'contact' | 'default' | 'specific'
 export type ReminderSmartOverflow = 'before' | 'next_day'
 export type ReminderNoConfirmAction = 'no_action' | 'cancel_appointment' | 'notify_push'
 export type ReminderConfirmationSuccessAction = 'mark_confirmed' | 'chat_card' | 'notify_push' | 'chat_badge'
+export type ReminderDeliveryHealthStatus = 'ready' | 'warning' | 'error' | 'paused'
+
+export interface ReminderDeliveryHealth {
+  status: ReminderDeliveryHealthStatus
+  message: string
+  details: string[]
+}
+
+export interface ReminderFailures {
+  errorCount: number
+  lastErrorAt: string | null
+  lastErrorMessage: string | null
+}
 
 export interface AppointmentReminder {
   id: string
@@ -40,6 +53,8 @@ export interface AppointmentReminder {
   position: number
   createdAt: string
   updatedAt: string
+  deliveryHealth?: ReminderDeliveryHealth
+  failures?: ReminderFailures
 }
 
 export interface ReminderSenderOption {

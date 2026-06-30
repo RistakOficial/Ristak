@@ -1867,10 +1867,18 @@
 }
 
 .automationTitle {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
   font-size: 0.875rem;
   font-weight: 700;
   color: var(--color-text-primary);
   margin-bottom: 0.15rem;
+  min-width: 0;
+}
+
+.automationTitle > span {
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -1882,6 +1890,21 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.automationHealthText {
+  display: -webkit-box;
+  margin-top: 0.3rem;
+  color: var(--neg);
+  font-size: 0.72rem;
+  line-height: 1.35;
+  overflow: hidden;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
+.automationHealthWarning {
+  color: var(--warn);
 }
 
 .automationBadge {

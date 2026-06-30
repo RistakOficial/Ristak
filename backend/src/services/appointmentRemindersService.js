@@ -262,7 +262,7 @@ async function getRecentReminderFailures() {
   const rows = await db.all(`
     SELECT reminder_id,
       COUNT(*) AS error_count,
-      MAX(COALESCE(sent_at, send_at, '')) AS last_error_at,
+      MAX(COALESCE(sent_at, send_at, created_at)) AS last_error_at,
       MAX(id) AS latest_id
     FROM appointment_reminder_sends
     WHERE status = 'error'
@@ -275,7 +275,7 @@ async function getRecentReminderFailures() {
     if (!reminderId) continue
     // Trae el mensaje de error más reciente para mostrarlo en la UI.
     const latest = await db.get(`
-      SELECT error_message, COALESCE(sent_at, send_at) AS occurred_at
+      SELECT error_message, COALESCE(sent_at, send_at, created_at) AS occurred_at
       FROM appointment_reminder_sends
       WHERE reminder_id = ? AND status = 'error'
       ORDER BY COALESCE(sent_at, send_at, created_at) DESC, id DESC
@@ -290,6 +290,95 @@ async function getRecentReminderFailures() {
   return byReminder
 }
 
+async function getReminderTemplatesForOverview(reminders = []) {
+  const templatesByReminder = new Map()
+  const ids = [...new Set(reminders.map(reminder => cleanString(reminder.templateId)).filter(Boolean))]
+  const templatesById = new Map()
+
+  if (ids.length) {
+    const placeholders = ids.map(() => '?').join(', ')
+    const rows = await db.all(
+      `SELECT * FROM whatsapp_message_templates WHERE id IN (${placeholders})`,
+      ids
+    )
+    for (const row of rows) {
+      const template = mapReminderTemplateRow(row)
+      if (template?.id) templatesById.set(template.id, template)
+    }
+  }
+
+  for (const reminder of reminders) {
+    let template = templatesById.get(cleanString(reminder.templateId)) || null
+    if (!template && reminder.templateName) {
+      template = await getReminderTemplateByName(reminder.templateName, reminder.templateLanguage)
+    }
+    if (template) templatesByReminder.set(reminder.id, template)
+  }
+
+  return templatesByReminder
+}
+
+function describeTemplateStatus(status = '') {
+  return normalizeTemplateStatus(status) || 'sin enviar a revisión'
+}
+
+function buildReminderDeliveryHealth(reminder, template, senders = []) {
+  if (!reminder.enabled) {
+    return {
+      status: 'paused',
+      message: 'Este mensaje automático está pausado.',
+      details: []
+    }
+  }
+
+  const errors = []
+  const warnings = []
+  const apiSenders = senders.filter(sender => sender.apiEnabled)
+  const qrSenders = senders.filter(sender => sender.qrConnected)
+
+  if (!template) {
+    errors.push('Selecciona una plantilla de WhatsApp para este recordatorio.')
+  } else {
+    const templateStatus = normalizeTemplateStatus(template.ycloudStatus)
+    if (!APPROVED_TEMPLATE_STATUSES.has(templateStatus)) {
+      const statusLabel = describeTemplateStatus(templateStatus)
+      if (reminder.qrFallbackEnabled && FALLBACK_TEMPLATE_STATUSES.has(templateStatus)) {
+        if (qrSenders.length) {
+          warnings.push(`La plantilla ${template.name} está ${statusLabel}; se usará QR como respaldo.`)
+        } else {
+          errors.push(`La plantilla ${template.name} está ${statusLabel} y no hay un número QR conectado para usar como respaldo.`)
+        }
+      } else {
+        errors.push(`La plantilla ${template.name} está ${statusLabel}; debe estar APPROVED para enviarse por WhatsApp API.`)
+      }
+    }
+  }
+
+  if (reminder.senderMode === 'specific') {
+    const selectedSender = senders.find(sender => sender.id === reminder.senderPhoneNumberId)
+    if (!selectedSender) {
+      errors.push('El remitente elegido ya no está conectado.')
+    } else if (!selectedSender.apiEnabled && !reminder.qrFallbackEnabled) {
+      errors.push('El remitente elegido no puede enviar por WhatsApp API.')
+    }
+  }
+
+  if (!apiSenders.length && !reminder.qrFallbackEnabled) {
+    errors.push('Conecta un número de WhatsApp API para enviar este recordatorio.')
+  }
+
+  if (reminder.qrFallbackEnabled && !apiSenders.length && !qrSenders.length) {
+    errors.push('No hay WhatsApp API ni QR conectado para enviar este recordatorio.')
+  }
+
+  const details = errors.length ? errors : warnings
+  return {
+    status: errors.length ? 'error' : warnings.length ? 'warning' : 'ready',
+    message: details[0] || 'Listo para enviar por WhatsApp.',
+    details
+  }
+}
+
 export async function getAppointmentRemindersOverview() {
   // (PANEL-FIX) El panel de "mensajes automáticos" no debe caerse entero por un fallo
   // en un paso de enriquecimiento (rellenar plantillas, remitentes de WhatsApp o el
@@ -302,6 +391,7 @@ export async function getAppointmentRemindersOverview() {
   }
 
   const rows = await db.all('SELECT * FROM appointment_reminders ORDER BY position ASC, created_at ASC')
+  const baseReminders = rows.map(normalizeReminderRow)
 
   let senders = []
   try {
@@ -319,8 +409,16 @@ export async function getAppointmentRemindersOverview() {
     logger.warn(`[Recordatorios] No se pudo cargar el historial de fallos (no crítico): ${error.message}`)
   }
 
-  const reminders = rows.map(normalizeReminderRow).map(reminder => ({
+  let templatesByReminder = new Map()
+  try {
+    templatesByReminder = await getReminderTemplatesForOverview(baseReminders)
+  } catch (error) {
+    logger.warn(`[Recordatorios] No se pudo cargar el estado de plantillas (no crítico): ${error.message}`)
+  }
+
+  const reminders = baseReminders.map(reminder => ({
     ...reminder,
+    deliveryHealth: buildReminderDeliveryHealth(reminder, templatesByReminder.get(reminder.id) || null, senders),
     failures: failuresByReminder.get(reminder.id) || { errorCount: 0, lastErrorAt: null, lastErrorMessage: null }
   }))
   return {
