@@ -985,30 +985,54 @@ export const Sidebar: React.FC<SidebarProps> = ({
           {showUserMenu && (
             <div
               data-ristak-user-menu
-              className="absolute left-2 top-[calc(100%-0.5rem)] z-[var(--z-index-popover)] w-[min(22rem,calc(100vw-1rem))] overflow-hidden rounded-xl border border-[rgba(148,163,184,0.18)] bg-[var(--color-background-secondary)] shadow-xl"
+              className="absolute left-2 top-[calc(100%_-_0.5rem)] z-[var(--z-index-popover)] flex max-h-[calc(100vh_-_var(--header-height)_-_1rem)] w-[min(22rem,calc(100vw_-_1rem))] flex-col overflow-hidden rounded-[var(--radius-card)] border border-[var(--border)] bg-[var(--surface)] shadow-[var(--shadow-pop)]"
               role="menu"
             >
-              <div className="border-b border-[rgba(148,163,184,0.1)] p-4">
+              <div className="border-b border-[var(--border)] p-4">
                 <div className="flex items-center gap-3">
                   <div className="flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-full bg-[var(--accent-soft)] text-sm font-semibold text-[var(--accent)]">
                     {initials}
                   </div>
                   <div className="min-w-0 flex-1">
-                    <p className="truncate text-sm font-semibold text-[var(--color-text-primary)]">{accountMenuLabel}</p>
+                    <p className="truncate text-sm font-semibold text-[var(--text)]">{accountMenuLabel}</p>
                   </div>
                 </div>
               </div>
 
-              <div className="py-2">
+              <div className="min-h-0 overflow-y-auto py-2">
+                <Link
+                  to="/settings"
+                  onClick={handleNavigate}
+                  className="flex min-h-[40px] items-center gap-3 px-4 py-2.5 text-sm font-medium text-[var(--text)] transition-colors hover:bg-[var(--surface-hover)]"
+                  role="menuitem"
+                >
+                  <Settings className="h-4 w-4" />
+                  Configuración
+                </Link>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowUserMenu(false)
+                    onLogout?.()
+                  }}
+                  className="flex min-h-[40px] w-full items-center gap-3 px-4 py-2.5 text-left text-sm font-medium text-[var(--neg)] transition-colors hover:bg-[var(--neg-soft)]"
+                  role="menuitem"
+                >
+                  <LogOut className="h-4 w-4" />
+                  Cerrar sesión
+                </button>
+
+                <div className="mx-4 my-2 border-t border-[var(--border)]" />
+
                 <div className="px-4 py-2">
-                  <div className="mb-2 flex items-center gap-2 text-xs font-semibold uppercase text-[var(--color-text-tertiary)]">
+                  <div className="mb-2 flex items-center gap-2 text-xs font-semibold uppercase text-[var(--text-mute)]">
                     <Palette className="h-3.5 w-3.5" />
                     Diseño de app
                   </div>
                   <div className="space-y-2.5">
                     {themeFamilies.map((family) => (
                       <div key={family.id}>
-                        <div className="mb-1 text-[10px] font-semibold uppercase tracking-wide text-[var(--color-text-tertiary)]">
+                        <div className="mb-1 text-[10px] font-semibold uppercase tracking-wide text-[var(--text-mute)]">
                           {family.label}
                         </div>
                         <div className="flex flex-wrap gap-1.5">
@@ -1024,8 +1048,8 @@ export const Sidebar: React.FC<SidebarProps> = ({
                                 className={cn(
                                   'rounded-md border px-2.5 py-1 text-xs font-medium transition-colors',
                                   isActive
-                                    ? 'border-[var(--color-primary)] bg-[rgba(var(--color-primary-rgb),0.14)] text-[var(--color-text-primary)]'
-                                    : 'border-[rgba(148,163,184,0.18)] text-[var(--color-text-secondary)] hover:bg-[rgba(148,163,184,0.12)]'
+                                    ? 'border-[var(--accent)] bg-[var(--accent-soft)] text-[var(--text)]'
+                                    : 'border-[var(--border)] text-[var(--text-dim)] hover:bg-[var(--surface-hover)] hover:text-[var(--text)]'
                                 )}
                               >
                                 {variant.label}
@@ -1040,7 +1064,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
                     <button
                       type="button"
                       onClick={toggleTheme}
-                      className="flex min-h-[42px] items-center justify-center gap-2 rounded-lg border border-[rgba(148,163,184,0.14)] px-3 py-2 text-sm font-semibold text-[var(--color-text-primary)] transition-colors hover:glass-hover"
+                      className="flex min-h-[42px] items-center justify-center gap-2 rounded-[var(--radius-ctl)] border border-[var(--border)] px-3 py-2 text-sm font-medium text-[var(--text)] transition-colors hover:bg-[var(--surface-hover)]"
                     >
                       {theme === 'light' ? <Moon className="h-4 w-4" /> : <Sun className="h-4 w-4" />}
                       {theme === 'light' ? 'Modo noche' : 'Modo claro'}
@@ -1050,45 +1074,20 @@ export const Sidebar: React.FC<SidebarProps> = ({
                       onClick={resetToSystem}
                       disabled={isSystemTheme}
                       className={cn(
-                        'flex min-h-[42px] items-center justify-center gap-2 rounded-lg border border-[rgba(148,163,184,0.14)] px-3 py-2 text-sm font-semibold text-[var(--color-text-primary)] transition-colors',
-                        isSystemTheme ? 'opacity-70' : 'hover:glass-hover'
+                        'flex min-h-[42px] items-center justify-center gap-2 rounded-[var(--radius-ctl)] border border-[var(--border)] px-3 py-2 text-sm font-medium text-[var(--text)] transition-colors',
+                        isSystemTheme ? 'opacity-70' : 'hover:bg-[var(--surface-hover)]'
                       )}
                     >
-                      {isSystemTheme && <Check className="h-4 w-4 text-[var(--color-status-success)]" />}
+                      {isSystemTheme && <Check className="h-4 w-4 text-[var(--pos)]" />}
                       {themeSource === 'system' ? 'Automático' : 'Auto'}
                     </button>
                   </div>
                 </div>
 
-                <div className="mx-4 my-2 border-t border-[rgba(148,163,184,0.12)]" />
-
-                <Link
-                  to="/settings"
-                  onClick={handleNavigate}
-                  className="flex items-center gap-3 px-4 py-2.5 text-sm text-[var(--color-text-primary)] transition-colors hover:glass-hover"
-                  role="menuitem"
-                >
-                  <Settings className="h-4 w-4" />
-                  Configuración
-                </Link>
-                <div className="mx-4 my-2 border-t border-[rgba(148,163,184,0.12)]" />
-                <button
-                  type="button"
-                  onClick={() => {
-                    setShowUserMenu(false)
-                    onLogout?.()
-                  }}
-                  className="flex w-full items-center gap-3 px-4 py-2.5 text-left text-sm text-[var(--neg)] transition-colors hover:glass-hover"
-                  role="menuitem"
-                >
-                  <LogOut className="h-4 w-4" />
-                  Cerrar sesión
-                </button>
-
                 {appVersion && (
                   <>
-                    <div className="mx-4 my-2 border-t border-[rgba(148,163,184,0.12)]" />
-                    <p className="px-4 pb-1 pt-0.5 text-xs text-[var(--color-text-tertiary)]">
+                    <div className="mx-4 my-2 border-t border-[var(--border)]" />
+                    <p className="px-4 pb-1 pt-0.5 text-xs text-[var(--text-mute)]">
                       Versión {appVersion}
                     </p>
                   </>
