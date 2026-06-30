@@ -685,6 +685,9 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
   const [firstPaymentEnabled, setFirstPaymentEnabled] = useState(false)
   const [firstPaymentType, setFirstPaymentType] = useState<InstallmentValueType>('amount')
   const [firstPaymentValue, setFirstPaymentValue] = useState('')
+  // Escritorio: cuando está en true, el primer pago se reparte como una parcialidad
+  // más (parte igual del total). Se apaga en cuanto el usuario edita su monto.
+  const [firstPaymentAuto, setFirstPaymentAuto] = useState(true)
   const [firstPaymentDate, setFirstPaymentDate] = useState(() => getBusinessTodayInputValue(timezone))
   const [firstPaymentMethod, setFirstPaymentMethod] = useState<FirstPaymentMethod>('')
   const [remainingAutomatic, setRemainingAutomatic] = useState(true)
@@ -819,6 +822,10 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
   const firstPaymentAmount = firstPaymentEnabled
     ? resolvePartialAmount(firstPaymentType, firstPaymentValue, totalAmount)
     : 0
+  // El primer pago solo "cuenta" si tiene monto > 0. Un primer pago en $0 se envía
+  // como sin enganche (enabled:false) para que TODAS las pasarelas lo acepten igual
+  // que el flujo de parcialidades, en vez de rebotar con un error del servidor.
+  const firstPaymentActive = firstPaymentEnabled && firstPaymentAmount > 0
   const effectiveRemainingValueType = firstPaymentEnabled ? firstPaymentType : remainingValueType
   const resolvedRemainingInstallments = useMemo(() => {
     return remainingInstallments.map((installment, index) => ({
@@ -842,7 +849,7 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
     : partialPlanDifference > 0
       ? 'under'
       : 'over'
-  const firstPaymentMethodMissing = activePaymentMode === 'partial' && firstPaymentEnabled && !firstPaymentMethod
+  const firstPaymentMethodMissing = activePaymentMode === 'partial' && firstPaymentActive && !firstPaymentMethod
   const partialNeedsCardAuthorization = activePaymentMode === 'partial' && remainingAutomatic && (
     !firstPaymentEnabled || isOfflineFirstPaymentMethod(firstPaymentMethod)
   )
@@ -1224,6 +1231,7 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
     setFirstPaymentEnabled(!isEmbedded)
     setFirstPaymentType('amount')
     setFirstPaymentValue('')
+    setFirstPaymentAuto(true)
     setFirstPaymentDate(getBusinessTodayInputValue(timezone))
     setFirstPaymentMethod(!isEmbedded ? 'card' : '')
     setRemainingAutomatic(true)
@@ -1647,6 +1655,29 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
   useEffect(() => {
     if (activePaymentMode !== 'partial' || !autoDistributeRemaining) return
 
+    // Escritorio con primer pago automático: el #1 cuenta como una parcialidad más,
+    // así el total se reparte en partes iguales (primer pago incluido) y el plan
+    // cuadra desde el inicio sin obligar a teclear el enganche.
+    const firstPaymentParticipates = !isEmbedded && firstPaymentEnabled && firstPaymentAuto
+    if (firstPaymentParticipates) {
+      const values = getRemainingDistributedValues(
+        remainingInstallments.length + 1,
+        effectiveRemainingValueType,
+        false,
+        'amount',
+        '',
+        totalAmount
+      )
+      const firstValue = values[0] || '0'
+      setFirstPaymentValue(prev => (prev === firstValue ? prev : firstValue))
+      setRemainingInstallments(prev => prev.map((installment, index) => ({
+        ...installment,
+        type: effectiveRemainingValueType,
+        value: values[index + 1] || '0'
+      })))
+      return
+    }
+
     setRemainingInstallments(prev => {
       const distributedValues = getRemainingDistributedValues(
         prev.length,
@@ -1665,7 +1696,9 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
     })
   }, [
     autoDistributeRemaining,
+    isEmbedded,
     firstPaymentEnabled,
+    firstPaymentAuto,
     firstPaymentType,
     firstPaymentValue,
     effectiveRemainingValueType,
@@ -1974,6 +2007,7 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
     if (value === 'immediate') {
       setFirstPaymentEnabled(true)
       setFirstPaymentMethod(prev => prev || 'card')
+      setFirstPaymentAuto(true)
     } else {
       setFirstPaymentEnabled(false)
     }
@@ -1987,12 +2021,12 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
     description: summary.description,
     invoicePayload: payload,
     firstPayment: {
-      enabled: firstPaymentEnabled,
+      enabled: firstPaymentActive,
       type: firstPaymentType,
       value: normalizeAmount(firstPaymentValue),
       amount: firstPaymentAmount,
       date: firstPaymentDate,
-      method: firstPaymentEnabled ? firstPaymentMethod : 'none'
+      method: firstPaymentActive ? firstPaymentMethod : 'none'
     },
     remainingAutomatic,
     remainingFrequency,
@@ -2021,10 +2055,10 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
     title: payload.title || payload.name || DEFAULT_INVOICE_TITLE,
     invoicePayload: payload,
     firstPayment: {
-      enabled: firstPaymentEnabled,
+      enabled: firstPaymentActive,
       amount: firstPaymentAmount,
       date: firstPaymentDate,
-      method: firstPaymentEnabled ? firstPaymentMethod || 'card' : 'none'
+      method: firstPaymentActive ? firstPaymentMethod || 'card' : 'none'
     },
     remainingFrequency,
     remainingPayments: resolvedRemainingInstallments.map(installment => ({
@@ -2187,7 +2221,9 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
         return
       }
 
-      if (firstPaymentEnabled && firstPaymentAmount <= 0) {
+      // En escritorio un primer pago en $0 se envía como "sin enganche" (el backend
+      // lo trata así); solo el flujo embedded/celular conserva el candado.
+      if (isEmbedded && firstPaymentEnabled && firstPaymentAmount <= 0) {
         showToast('error', 'Configura un primer pago mayor a 0')
         return
       }
@@ -3827,6 +3863,7 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
                             value={firstPaymentValue}
                             onChange={(e) => {
                               setFirstPaymentValue(e.target.value)
+                              setFirstPaymentAuto(false)
                               setAutoDistributeRemaining(true)
                             }}
                             className={styles.input}
