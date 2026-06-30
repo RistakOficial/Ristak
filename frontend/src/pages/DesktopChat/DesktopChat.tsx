@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import {
   ArrowUp,
   Archive,
@@ -3253,13 +3253,27 @@ export const DesktopChat: React.FC = () => {
   }, [])
 
   const scrollConversationToBottom = useCallback((behavior: ScrollBehavior = 'auto') => {
-    window.requestAnimationFrame(() => {
-      messagesEndRef.current?.scrollIntoView({ block: 'end', behavior })
+    const pane = messagePaneRef.current
+    if (!pane) return
+
+    if (behavior === 'smooth') {
+      window.requestAnimationFrame(() => {
+        messagesEndRef.current?.scrollIntoView({ block: 'end', behavior })
+        messagePanePinnedToBottomRef.current = true
+      })
+      return
+    }
+
+    const pinToBottom = () => {
+      pane.scrollTop = pane.scrollHeight
       messagePanePinnedToBottomRef.current = true
-    })
+    }
+
+    pinToBottom()
+    window.requestAnimationFrame(pinToBottom)
   }, [])
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (!activeContactId) return
     const contactChanged = scrollContactIdRef.current !== activeContactId
     if (contactChanged) {
