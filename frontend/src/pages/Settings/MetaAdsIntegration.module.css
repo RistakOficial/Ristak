@@ -335,6 +335,29 @@
   padding: 18px 0 0;
 }
 
+.utmSection {
+  padding: 18px 0 0;
+}
+
+.utmCopyBox {
+  min-width: 0;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-ctl);
+  background: var(--surface);
+}
+
+.utmCode {
+  display: block;
+  overflow-wrap: anywhere;
+  color: var(--text);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 1.55;
+  user-select: all;
+  white-space: pre-wrap;
+}
+
 .connectedExtrasRows {
   display: flex;
   flex-direction: column;

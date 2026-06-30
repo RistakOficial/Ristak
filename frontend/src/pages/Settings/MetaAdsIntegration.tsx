@@ -2,7 +2,7 @@ import React, { useEffect, useRef, useState } from 'react'
 import { useLocation, useNavigate } from 'react-router-dom'
 import { Button, Icon, Modal, CustomSelect, PageHeader, Switch } from '@/components/common'
 import { Badge, type BadgeVariant } from '@/components/common/Badge'
-import { ArrowLeft, ArrowRight, CheckCircle, ExternalLink, FlaskConical, Pencil, Plus, Power, RefreshCw, Save, Send, Settings2, Trash2, XCircle } from 'lucide-react'
+import { ArrowLeft, ArrowRight, CheckCircle, Copy, ExternalLink, FlaskConical, Pencil, Plus, Power, RefreshCw, Save, Send, Settings2, Trash2, XCircle } from 'lucide-react'
 import { useNotification } from '@/contexts/NotificationContext'
 import { useAppConfig, useIsRenderDomain } from '@/hooks'
 import {
@@ -135,6 +135,18 @@ const metaTestEventOptions = [
 
 const defaultMetaTestEventName = 'Lead'
 const serverOnlyMetaTestEvents = new Set(['LeadSubmitted'])
+const META_AD_UTM_PARAMETERS = [
+  'utm_source=fb_ad',
+  'utm_medium={{adset.name}}',
+  'utm_campaign={{campaign.name}}',
+  'utm_content={{ad.name}}',
+  'campaign_id={{campaign.id}}',
+  'adset_id={{adset.id}}',
+  'ad_id={{ad.id}}',
+  'placement={{placement}}',
+  'site_source_name={{site_source_name}}',
+  'rkvi_id={{ad.id}}'
+].join('&')
 
 const metaTestParameterFieldLabels: Record<MetaTestParameterFieldKey, string> = {
   value: 'Valor',
@@ -314,6 +326,19 @@ export const MetaAdsIntegration: React.FC = () => {
   const [instagramMessagingEnabled, setInstagramMessagingEnabled, savingInstagramMessaging] = useAppConfig('meta_instagram_messaging_enabled', false)
   const [metaTestEventCode, setMetaTestEventCode, savingMetaTestEventCode] = useAppConfig('meta_test_event_code', '')
   const [metaTestEventCodeSetAt, setMetaTestEventCodeSetAt] = useAppConfig('meta_test_event_code_set_at', '')
+
+  const handleCopyMetaAdUtmParameters = async () => {
+    try {
+      if (!navigator.clipboard?.writeText) {
+        throw new Error('Clipboard unavailable')
+      }
+
+      await navigator.clipboard.writeText(META_AD_UTM_PARAMETERS)
+      showToast('success', 'UTM copiado', 'Pégalo en Parámetros de URL del anuncio en Meta.')
+    } catch {
+      showToast('error', 'No se pudo copiar', 'Selecciona el texto y cópialo manualmente.')
+    }
+  }
 
   // El código de Test Events se auto-desactiva 30 min después de ponerse, para que
   // al lanzar publicidad no queden conversiones reales atrapadas en modo prueba.
@@ -2125,6 +2150,29 @@ export const MetaAdsIntegration: React.FC = () => {
               </div>
             </section>
             )}
+
+            <section className={`${styles.section} ${styles.utmSection}`}>
+              <div className={styles.sectionHeader}>
+                <div>
+                  <h3 className={styles.sectionTitle}>Parámetros UTM</h3>
+                  <p className={styles.sectionDescription}>
+                    Copia esta cadena completa y pégala en Parámetros de URL dentro del anuncio de Meta.
+                  </p>
+                </div>
+                <Button
+                  type="button"
+                  variant="secondary"
+                  onClick={handleCopyMetaAdUtmParameters}
+                >
+                  <Copy size={16} />
+                  Copiar UTM
+                </Button>
+              </div>
+
+              <div className={styles.utmCopyBox} aria-label="Parámetros UTM para anuncios de Meta">
+                <code className={styles.utmCode}>{META_AD_UTM_PARAMETERS}</code>
+              </div>
+            </section>
 
             {!shouldShowWizard && (
               <section className={`${styles.section} ${styles.connectedExtrasSection}`}>
