@@ -59,7 +59,7 @@ import {
   Video,
   X
 } from 'lucide-react'
-import { FaMicrophone } from 'react-icons/fa'
+import { FaFacebookMessenger, FaInstagram, FaMicrophone, FaWhatsapp } from 'react-icons/fa'
 import { MdArchive } from 'react-icons/md'
 import { AppointmentModal, Icon, Modal, RecordPaymentModal } from '@/components/common'
 import { AgentRobot } from '@/components/ai'
@@ -3823,7 +3823,13 @@ export const PhoneChat: React.FC = () => {
   }, [navigate])
   const actionSheetDismiss = useBottomSheetDismiss({
     isOpen: Boolean(sheet),
-    onClose: closeSheetNow
+    onClose: closeSheetNow,
+    closeDurationMs: isWideChatDevice && (
+      sheet === 'attachments' ||
+      sheet === 'schedule' ||
+      sheet === 'payment' ||
+      sheet === 'appointment'
+    ) ? 190 : 260
   })
   const actionFormSheetOpen = sheet === 'payment' || sheet === 'appointment'
   const actionSheetMoving = actionSheetDismiss.dragging || actionSheetDismiss.closing || actionSheetDismiss.dragOffset > 0
@@ -10006,9 +10012,9 @@ export const PhoneChat: React.FC = () => {
   }
 
   const renderChannelBadgeIcon = (kind: ContactChannelBadgeKind) => {
-    if (kind === 'whatsapp') return <Icon name="whatsapp" size={16} className={styles.avatarChannelBadgeWhatsappGlyph} />
-    if (kind === 'messenger') return <Icon name="facebook" size={12} />
-    if (kind === 'instagram') return <Icon name="instagram" size={12} />
+    if (kind === 'whatsapp') return <FaWhatsapp className={styles.avatarChannelBadgeBrandIcon} aria-hidden="true" />
+    if (kind === 'messenger') return <FaFacebookMessenger className={styles.avatarChannelBadgeBrandIcon} aria-hidden="true" />
+    if (kind === 'instagram') return <FaInstagram className={styles.avatarChannelBadgeBrandIcon} aria-hidden="true" />
     if (kind === 'email') return <Mail size={12} />
     return <MessageCircle size={12} />
   }
@@ -12029,10 +12035,10 @@ export const PhoneChat: React.FC = () => {
 
   const renderComposerMessageChannelIcon = (value: ComposerMessageChannelValue) => {
     if (value === 'email') return <Mail size={20} aria-hidden="true" />
-    if (value === 'messenger') return <Icon name="facebook" size={18} />
-    if (value === 'instagram') return <Icon name="instagram" size={18} />
+    if (value === 'messenger') return <FaFacebookMessenger className={styles.composerChannelBrandIcon} aria-hidden="true" />
+    if (value === 'instagram') return <FaInstagram className={styles.composerChannelBrandIcon} aria-hidden="true" />
     if (value === 'sms_qr') return <MessageCircle size={20} aria-hidden="true" />
-    return <Icon name="whatsapp" size={21} className={styles.composerChannelWhatsappGlyph} />
+    return <FaWhatsapp className={styles.composerChannelBrandIcon} aria-hidden="true" />
   }
 
   const getComposerMessageChannelDisabledReason = (value: ComposerMessageChannelValue) => {
@@ -15947,11 +15953,11 @@ export const PhoneChat: React.FC = () => {
               </div>
             )}
 
-            {aiAgentConversationOpen ? (
+            {aiAgentConversationOpen || !activeContact ? (
               <span className={styles.conversationHeaderSpacer} aria-hidden="true" />
             ) : (
               <div className={styles.conversationActionCluster}>
-                {activeContact && agentEnabled && (
+                {agentEnabled && (
                   isWideChatDevice ? (
                     <div
                       className={`${styles.conversationAgentDropdownHost} ${styles.conversationHeaderActionAgent}`}
@@ -15974,7 +15980,7 @@ export const PhoneChat: React.FC = () => {
                     robotSize: 40
                   })
                 )}
-                {isWideChatDevice && activeContact && (
+                {isWideChatDevice && (
                   <div
                     className={`${styles.conversationTagDropdownHost} ${styles.conversationHeaderActionTag}`}
                     ref={tagDropdownRef}
@@ -15993,7 +15999,7 @@ export const PhoneChat: React.FC = () => {
                     {renderTagDropdown()}
                   </div>
                 )}
-                {isWideChatDevice && activeContact && (
+                {isWideChatDevice && (
                   <button
                     type="button"
                     className={`${styles.conversationHeaderIconButton} ${styles.conversationHeaderActionSearch}`}
@@ -16010,9 +16016,7 @@ export const PhoneChat: React.FC = () => {
                   </button>
                   <button
                     type="button"
-                    onClick={() => {
-                      if (activeContact) openPaymentSheetForContact(activeContact)
-                    }}
+                    onClick={() => openPaymentSheetForContact(activeContact)}
                     aria-label="Cobrar"
                   >
                     <CircleDollarSign size={25} />

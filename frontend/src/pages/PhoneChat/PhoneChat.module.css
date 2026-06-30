@@ -620,6 +620,7 @@
 .chatItem {
   position: relative;
   border-radius: 0;
+  transition: background-color 160ms ease;
 }
 
 .chatSwipeRow {
@@ -683,7 +684,9 @@
   z-index: 1;
   border-radius: 0 !important;
   background: var(--phone-chat-bg);
-  transition: transform 260ms ease;
+  transition:
+    transform 260ms ease,
+    background-color 160ms ease;
   will-change: transform;
   backface-visibility: hidden;
   transform: translate3d(0, 0, 0);
@@ -896,6 +899,18 @@
 .phoneChatPage:is([data-phone-chat-device="tablet"], [data-phone-chat-device="desktop"])[data-phone-chat-tone="dark"] .chatItemActive::before,
 .phoneChatPage:is([data-phone-chat-device="tablet"], [data-phone-chat-device="desktop"])[data-phone-chat-tone="dark"] .chatSwipeRowActive .chatSwipeContent::before {
   background: color-mix(in srgb, var(--phone-chat-muted) 78%, var(--phone-chat-border) 22%);
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .phoneChatPage:is([data-phone-chat-device="tablet"], [data-phone-chat-device="desktop"]) .chatItem:not(.chatItemActive):not(.chatItemSelected):hover,
+  .phoneChatPage:is([data-phone-chat-device="tablet"], [data-phone-chat-device="desktop"]) .chatSwipeRow:not(.chatSwipeRowActive):not(.chatSwipeRowSelected):hover .chatSwipeContent:not(.chatItemSelected) {
+    background: color-mix(in srgb, var(--phone-chat-muted) 7%, var(--phone-chat-surface) 93%);
+  }
+
+  .phoneChatPage:is([data-phone-chat-device="tablet"], [data-phone-chat-device="desktop"])[data-phone-chat-tone="dark"] .chatItem:not(.chatItemActive):not(.chatItemSelected):hover,
+  .phoneChatPage:is([data-phone-chat-device="tablet"], [data-phone-chat-device="desktop"])[data-phone-chat-tone="dark"] .chatSwipeRow:not(.chatSwipeRowActive):not(.chatSwipeRowSelected):hover .chatSwipeContent:not(.chatItemSelected) {
+    background: color-mix(in srgb, var(--phone-chat-muted) 6%, var(--phone-chat-surface) 94%);
+  }
 }
 
 .chatSelectionPanel {
@@ -1233,15 +1248,12 @@
   height: 13px;
 }
 
-.avatarChannelBadgeWhatsappGlyph {
-  color: #ffffff;
+.avatarChannelBadge .avatarChannelBadgeBrandIcon {
+  width: 14px;
+  height: 14px;
+  flex: 0 0 auto;
   fill: currentColor;
-  overflow: visible;
-  shape-rendering: geometricPrecision;
-  transform: translateY(-0.25px);
-}
-
-.avatarChannelBadgeWhatsappGlyph path {
+  filter: none;
   stroke: none;
 }
 
@@ -5369,7 +5381,7 @@
 }
 
 .composerChannelButton[data-channel="whatsapp_api"] {
-  color: #1fa855;
+  color: #25d366;
 }
 
 .composerChannelButton[data-channel="messenger"] {
@@ -5377,7 +5389,7 @@
 }
 
 .composerChannelButton[data-channel="instagram"] {
-  color: #d946ef;
+  color: #e1306c;
 }
 
 .composerChannelButton[data-channel="sms_qr"] {
@@ -5390,9 +5402,13 @@
   transform: scale(0.96);
 }
 
-.composerChannelWhatsappGlyph {
-  width: 19px;
-  height: 19px;
+.composerChannelBrandIcon {
+  width: 21px;
+  height: 21px;
+  flex: 0 0 auto;
+  fill: currentColor;
+  stroke: none;
+  stroke-width: 0;
 }
 
 .composerChannelDropdown {
@@ -5452,15 +5468,18 @@
 }
 
 .composerChannelOptionIcon[data-channel="whatsapp_api"] {
-  background: #25d366;
+  color: #25d366;
+  background: transparent;
 }
 
 .composerChannelOptionIcon[data-channel="messenger"] {
-  background: #1877f2;
+  color: #1877f2;
+  background: transparent;
 }
 
 .composerChannelOptionIcon[data-channel="instagram"] {
-  background: linear-gradient(135deg, #f97316, #d946ef 55%, #6366f1);
+  color: #e1306c;
+  background: transparent;
 }
 
 .composerChannelOptionIcon[data-channel="email"] {
@@ -6205,8 +6224,9 @@
 }
 
 .sheetBackdropClosing::before {
+  opacity: 0;
   animation: none;
-  transition: opacity 180ms ease-out;
+  transition: opacity 150ms ease-out;
 }
 
 .sheetPanel {
@@ -8717,8 +8737,9 @@
   opacity: 0;
   transform: translate3d(0, 104%, 0) !important;
   transition:
-    transform 220ms cubic-bezier(0.22, 1, 0.36, 1) !important,
-    opacity 160ms ease-out !important;
+    transform 180ms cubic-bezier(0.22, 1, 0.36, 1) !important,
+    opacity 140ms ease-out !important;
+  will-change: transform, opacity;
 }
 
 .phoneChatPage:is([data-phone-chat-device="tablet"], [data-phone-chat-device="desktop"]) .actionFormSheetBackdrop {
