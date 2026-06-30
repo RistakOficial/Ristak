@@ -8,6 +8,7 @@ import {
 import { getAccountBusinessProfile } from '../services/accountBusinessProfileService.js'
 import { renderPaymentReceiptPreviewHtml } from '../services/paymentReceiptPreviewService.js'
 import { logger } from '../utils/logger.js'
+import { syncRegisteredIntegrationCronsForProvider } from '../jobs/integrationCronRegistry.js'
 
 const PAYMENT_RECEIPT_PREVIEW_TTL_MS = 60 * 60 * 1000
 const paymentReceiptPreviewSessions = new Map()
@@ -100,6 +101,9 @@ export async function getPaymentSettingsView(_req, res) {
 export async function savePaymentSettingsView(req, res) {
   try {
     const settings = await savePaymentSettings(req.body || {})
+    await syncRegisteredIntegrationCronsForProvider('stripe', { reason: 'payment-mode-changed' })
+    await syncRegisteredIntegrationCronsForProvider('conekta', { reason: 'payment-mode-changed' })
+    await syncRegisteredIntegrationCronsForProvider('mercadopago', { reason: 'payment-mode-changed' })
     res.json({ success: true, data: settings })
   } catch (error) {
     logger.error(`Error guardando configuración de pagos: ${error.message}`)

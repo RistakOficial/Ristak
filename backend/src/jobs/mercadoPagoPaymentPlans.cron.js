@@ -8,6 +8,7 @@ const MERCADOPAGO_PAYMENT_PLANS_INTERVAL_MS = 30 * 60 * 1000
 
 let started = false
 let running = false
+let intervalId = null
 
 async function runMercadoPagoPaymentPlans(source = 'interval') {
   if (running || isDeployShutdownStarted()) return
@@ -45,7 +46,7 @@ export function startMercadoPagoPaymentPlansCron() {
   started = true
 
   logger.info('Iniciando cola de planes de pago Mercado Pago')
-  setInterval(() => {
+  intervalId = setInterval(() => {
     runMercadoPagoPaymentPlans().catch((error) => {
       logger.error(`[Mercado Pago Planes] Error no manejado: ${error.message}`)
     })
@@ -54,4 +55,10 @@ export function startMercadoPagoPaymentPlansCron() {
   runMercadoPagoPaymentPlans('startup').catch((error) => {
     logger.error(`[Mercado Pago Planes] Error inicial: ${error.message}`)
   })
+}
+
+export function stopMercadoPagoPaymentPlansCron() {
+  if (intervalId) clearInterval(intervalId)
+  intervalId = null
+  started = false
 }

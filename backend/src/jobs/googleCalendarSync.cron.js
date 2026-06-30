@@ -16,6 +16,7 @@ const GOOGLE_CALENDAR_SYNC_LOCK_TTL_MS = 60 * 60 * 1000
 // el intervalo si hay muchas citas pendientes. Si un tick anterior sigue corriendo, no
 // encimamos otro. Mismo patrón que highlevelSync (CRON-008) / appointmentReminders.
 let googleCalendarSyncRunning = false
+let googleCalendarSyncTask = null
 
 async function runGoogleCalendarSyncRetry(source = 'interval') {
   if (isDeployShutdownStarted()) return
@@ -54,14 +55,22 @@ async function runGoogleCalendarSyncRetry(source = 'interval') {
 }
 
 export function startGoogleCalendarSyncCron() {
+  if (googleCalendarSyncTask) return
   logger.info('(GCAL-002) Iniciando cron de reintento de sincronización de Google Calendar (cada hora)')
 
   // (GCAL-002) Minuto 37 para no competir con Meta (:00), HighLevel (:17) ni sus conversaciones (cada 10).
-  cron.schedule('37 * * * *', () => {
+  googleCalendarSyncTask = cron.schedule('37 * * * *', () => {
     runGoogleCalendarSyncRetry('interval').catch(error => {
       logger.warn(`(GCAL-002) Error no manejado en reintento de sincronización de Google Calendar: ${error.message}`)
     })
   })
 
   logger.success('(GCAL-002) Cron de Google Calendar configurado (cada hora a las XX:37)')
+}
+
+export function stopGoogleCalendarSyncCron() {
+  if (!googleCalendarSyncTask) return
+  googleCalendarSyncTask.stop()
+  googleCalendarSyncTask.destroy?.()
+  googleCalendarSyncTask = null
 }

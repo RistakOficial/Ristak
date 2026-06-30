@@ -36,6 +36,7 @@ import {
   normalizePaymentGateConfig,
   paymentGateMatches
 } from '../services/publicPaymentGateService.js';
+import { syncRegisteredIntegrationCronsForProvider } from '../jobs/integrationCronRegistry.js';
 
 /**
  * Controlador para calendarios de Ristak con sincronizaciones externas opcionales.
@@ -657,6 +658,7 @@ export async function claimGoogleCalendarOAuth(req, res) {
     await localCalendarService.reconcileCalendarDefaults().catch(error => {
       logger.warn(`[Calendars Controller] No se pudo reconciliar calendario predeterminado tras OAuth Google: ${error.message}`);
     });
+    await syncRegisteredIntegrationCronsForProvider('google-calendar', { reason: 'google-calendar-connected' });
 
     res.json({
       success: true,
@@ -855,6 +857,7 @@ export async function deleteGoogleCalendarIntegration(req, res) {
       await localCalendarService.reconcileCalendarDefaults().catch(error => {
         logger.warn(`[Calendars Controller] No se pudo reconciliar calendario predeterminado tras desconectar Google central: ${error.message}`);
       });
+      await syncRegisteredIntegrationCronsForProvider('google-calendar', { reason: 'google-calendar-disconnected' });
       return res.json({
         success: true,
         data: await googleCalendarService.getGoogleCalendarConfig()
@@ -865,6 +868,7 @@ export async function deleteGoogleCalendarIntegration(req, res) {
     await localCalendarService.reconcileCalendarDefaults().catch(error => {
       logger.warn(`[Calendars Controller] No se pudo reconciliar calendario predeterminado tras desconectar Google: ${error.message}`);
     });
+    await syncRegisteredIntegrationCronsForProvider('google-calendar', { reason: 'google-calendar-disconnected' });
     res.json({
       success: true,
       data: await googleCalendarService.getGoogleCalendarConfig()

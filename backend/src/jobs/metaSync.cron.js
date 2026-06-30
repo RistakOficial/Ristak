@@ -14,12 +14,15 @@ import { isDeployShutdownStarted, trackDeployDrainWork } from '../utils/deployDr
 // la misma tarea. Evita doble sync de Meta Ads / doble refresh de perfiles.
 let metaAdsSyncRunning = false
 let metaSocialRefreshRunning = false
+let metaAdsSyncTask = null
+let metaSocialRefreshTask = null
 
 export function startMetaSyncCron() {
+  if (metaAdsSyncTask || metaSocialRefreshTask) return
   logger.info('Iniciando cron job de Meta Ads (cada hora)')
 
   // Ejecutar cada hora en punto.
-  cron.schedule('0 * * * *', async () => {
+  metaAdsSyncTask = cron.schedule('0 * * * *', async () => {
     if (isDeployShutdownStarted()) return
     // (META-006) Claim intra-proceso antes de actuar.
     if (metaAdsSyncRunning) {
@@ -45,7 +48,7 @@ export function startMetaSyncCron() {
   })
 
   // Refresca una vez al dia los seguidores usados por perfiles sociales publicados.
-  cron.schedule('17 5 * * *', async () => {
+  metaSocialRefreshTask = cron.schedule('17 5 * * *', async () => {
     if (isDeployShutdownStarted()) return
     // (META-006) Claim intra-proceso antes de actuar.
     if (metaSocialRefreshRunning) {
@@ -71,4 +74,13 @@ export function startMetaSyncCron() {
   })
 
   logger.success('Cron job de Meta Ads configurado (cada hora en punto)')
+}
+
+export function stopMetaSyncCron() {
+  for (const task of [metaAdsSyncTask, metaSocialRefreshTask]) {
+    task?.stop()
+    task?.destroy?.()
+  }
+  metaAdsSyncTask = null
+  metaSocialRefreshTask = null
 }

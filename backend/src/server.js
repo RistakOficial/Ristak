@@ -8,18 +8,13 @@ import { databaseReady } from './config/database.js'
 import { logger } from './utils/logger.js'
 import { initializeMasterKey } from './utils/encryption.js'
 import { initializeDefaultUser } from './utils/auth.js'
-import { startMetaSyncCron } from './jobs/metaSync.cron.js'
-import { startHighLevelSyncCron } from './jobs/highlevelSync.cron.js'
-import { startMetaVersionCron, updateMetaVersion } from './jobs/metaVersionCron.js'
+import { updateMetaVersion } from './jobs/metaVersionCron.js'
 import { startScheduledChatMessagesCron } from './jobs/scheduledChatMessages.cron.js'
 import { startContactBulkActionsCron } from './jobs/contactBulkActions.cron.js'
 import { startAppointmentRemindersCron } from './jobs/appointmentReminders.cron.js'
-import { startWhatsAppQrWatchdogCron } from './jobs/whatsappQrWatchdog.cron.js'
-import { startStripePaymentPlansCron } from './jobs/stripePaymentPlans.cron.js'
-import { startConektaPaymentPlansCron } from './jobs/conektaPaymentPlans.cron.js'
-import { startMercadoPagoPaymentPlansCron } from './jobs/mercadoPagoPaymentPlans.cron.js' // (CRON-005)
 import { startPaymentAutomationsCron } from './jobs/paymentAutomations.cron.js'
-import { startGoogleCalendarSyncCron } from './jobs/googleCalendarSync.cron.js' // (GCAL-002)
+import { syncRegisteredIntegrationCrons } from './jobs/integrationCronRegistry.js'
+import { isMetaConnected } from './services/integrationConnectionStateService.js'
 import { initializeVersion } from './services/metaVersionService.js'
 import { verifyAndUpdateWebhooks } from './startup/webhookVerification.js'
 import { runVersionedMigrations } from './startup/runMigrations.js'
@@ -377,7 +372,13 @@ async function startRuntimeServices() {
 
   runStartupDrainTask(
     'startup:meta-version',
-    () => updateMetaVersion({ source: 'startup' }),
+    async () => {
+      if (!(await isMetaConnected())) {
+        logger.info('Meta API version startup omitido: Meta no está conectado')
+        return { skipped: true, reason: 'meta-disconnected' }
+      }
+      return updateMetaVersion({ source: 'startup' })
+    },
     'No se pudo revisar la versión de Meta API al arrancar'
   )
 
@@ -424,18 +425,11 @@ async function startRuntimeServices() {
   import('./services/automationEngine.js')
     .then((engine) => engine.startAutomationScheduler())
     .catch((error) => logger.error(`No se pudo iniciar el motor de automatizaciones: ${error.message}`))
-  startMetaSyncCron()              // Sincroniza anuncios de Meta Ads cada hora
-  startHighLevelSyncCron()         // Sincroniza contactos, citas y pagos de HighLevel cada hora (silencioso)
-  startMetaVersionCron()           // Revisa versión Meta API una vez al mes
   startScheduledChatMessagesCron() // Envía mensajes de chat cuando llegue su hora programada
   startContactBulkActionsCron()    // Ejecuta lotes masivos de contactos programados o en goteo
   startAppointmentRemindersCron()  // Envía recordatorios y confirmaciones de citas
-  startWhatsAppQrWatchdogCron()    // Reabre sesiones de WhatsApp Web al arrancar y las mantiene vivas
-  startStripePaymentPlansCron()    // Cobra parcialidades Stripe vencidas con tarjetas guardadas
-  startConektaPaymentPlansCron()   // Cobra parcialidades Conekta vencidas con tarjetas guardadas
-  startMercadoPagoPaymentPlansCron() // (CRON-005) Genera links de pago de parcialidades MP vencidas (no cobra tarjeta off-session)
   startPaymentAutomationsCron()    // Envía recordatorios, comprobantes y cobros fallidos de pagos
-  startGoogleCalendarSyncCron()    // (GCAL-002) Reintenta sync Google Calendar<->local de citas con error/pendiente
+  await syncRegisteredIntegrationCrons({ reason: 'startup' }) // Integraciones: sólo si están conectadas
   startupState.ready = true
   logger.success('App lista para recibir tráfico')
 }

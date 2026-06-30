@@ -17,6 +17,7 @@ import {
 } from '../services/mercadoPagoPaymentService.js'
 import { getAppConfig } from '../config/database.js'
 import { logger } from '../utils/logger.js'
+import { syncRegisteredIntegrationCronsForProvider } from '../jobs/integrationCronRegistry.js'
 
 const MERCADOPAGO_WEBHOOK_PATH = '/api/mercadopago/webhook'
 
@@ -175,6 +176,7 @@ export async function syncMercadoPagoConnectView(req, res) {
     const config = await syncMercadoPagoFromCentral({
       handoffToken: req.body?.handoffToken || req.body?.handoff_token || ''
     })
+    await syncRegisteredIntegrationCronsForProvider('mercadopago', { reason: 'mercadopago-connected' })
     res.json({ success: true, data: await withMercadoPagoWebhookEndpoints(req, config) })
   } catch (error) {
     logger.error(`Error sincronizando Mercado Pago central: ${error.message}`)
@@ -185,6 +187,7 @@ export async function syncMercadoPagoConnectView(req, res) {
 export async function setMercadoPagoModeView(req, res) {
   try {
     const config = await setMercadoPagoActiveMode(req.body?.mode || 'live')
+    await syncRegisteredIntegrationCronsForProvider('mercadopago', { reason: 'mercadopago-mode-changed' })
     res.json({ success: true, data: await withMercadoPagoWebhookEndpoints(req, config) })
   } catch (error) {
     logger.error(`Error cambiando modo Mercado Pago: ${error.message}`)
@@ -195,6 +198,7 @@ export async function setMercadoPagoModeView(req, res) {
 export async function deleteMercadoPagoConfigView(req, res) {
   try {
     const config = await deleteMercadoPagoPaymentConfig()
+    await syncRegisteredIntegrationCronsForProvider('mercadopago', { reason: 'mercadopago-disconnected' })
     res.json({ success: true, data: await withMercadoPagoWebhookEndpoints(req, config) })
   } catch (error) {
     logger.error(`Error desconectando Mercado Pago: ${error.message}`)

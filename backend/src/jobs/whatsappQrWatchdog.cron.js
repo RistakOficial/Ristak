@@ -9,6 +9,10 @@ const WATCHDOG_INTERVAL_MS = 4 * 60 * 1000
 // Pequeña espera al arrancar para que la base y el resto del boot terminen.
 const BOOT_DELAY_MS = 8000
 
+let started = false
+let bootTimeoutId = null
+let watchdogIntervalId = null
+
 /**
  * Mantiene vivas las sesiones de WhatsApp Web (Baileys):
  * - Al arrancar el servidor reabre las sesiones que quedaron conectadas antes
@@ -19,12 +23,14 @@ const BOOT_DELAY_MS = 8000
  * que comparten base de datos con produccion).
  */
 export function startWhatsAppQrWatchdogCron() {
+  if (started) return
   if (process.env.WHATSAPP_QR_AUTO_RESUME === '0') {
     logger.info('[WhatsApp QR] Auto-reconexion desactivada por WHATSAPP_QR_AUTO_RESUME=0')
-    return
+    return false
   }
+  started = true
 
-  setTimeout(() => {
+  bootTimeoutId = setTimeout(() => {
     if (isDeployShutdownStarted()) return
     trackDeployDrainWork(
       'cron:whatsapp-qr-watchdog',
@@ -39,7 +45,7 @@ export function startWhatsAppQrWatchdogCron() {
       })
   }, BOOT_DELAY_MS)
 
-  setInterval(() => {
+  watchdogIntervalId = setInterval(() => {
     if (isDeployShutdownStarted()) return
     // (WA-003) Lock distribuido: con varias instancias solo una corre el watchdog por tick,
     // evitando que reabran/reemplacen los mismos sockets Baileys en bucle. TTL = el intervalo
@@ -52,4 +58,14 @@ export function startWhatsAppQrWatchdogCron() {
       logger.warn(`[WhatsApp QR] Watchdog de sesiones fallo: ${error.message}`)
     })
   }, WATCHDOG_INTERVAL_MS)
+
+  return true
+}
+
+export function stopWhatsAppQrWatchdogCron() {
+  if (bootTimeoutId) clearTimeout(bootTimeoutId)
+  if (watchdogIntervalId) clearInterval(watchdogIntervalId)
+  bootTimeoutId = null
+  watchdogIntervalId = null
+  started = false
 }

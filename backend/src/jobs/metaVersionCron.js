@@ -10,6 +10,8 @@ import {
   saveVersion
 } from '../services/metaVersionService.js'
 
+let metaVersionTask = null
+
 /**
  * Actualiza la versión de Meta API si es necesario.
  */
@@ -94,8 +96,9 @@ export async function updateMetaVersion({ source = 'manual' } = {}) {
  * Se ejecuta el día 1 de cada mes a las 3:00 AM
  */
 export function startMetaVersionCron() {
+  if (metaVersionTask) return
   // Ejecutar el día 1 de cada mes a las 3:00 AM
-  cron.schedule('0 3 1 * *', async () => {
+  metaVersionTask = cron.schedule('0 3 1 * *', async () => {
     if (isDeployShutdownStarted()) return
     logger.info('⏰ Ejecutando verificación mensual de versión de Meta API...')
 
@@ -113,6 +116,13 @@ export function startMetaVersionCron() {
   })
 
   logger.info('✅ Cron de actualización de versión Meta API iniciado (día 1 de cada mes a las 3 AM)')
+}
+
+export function stopMetaVersionCron() {
+  if (!metaVersionTask) return
+  metaVersionTask.stop()
+  metaVersionTask.destroy?.()
+  metaVersionTask = null
 }
 
 /**

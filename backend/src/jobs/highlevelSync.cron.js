@@ -95,12 +95,15 @@ async function isHighLevelConnected(config) {
 // encimamos otra ejecución de la misma tarea. Mismo patrón que metaSync (META-006).
 let highLevelSyncRunning = false
 let highLevelConversationsSyncRunning = false
+let highLevelSyncTask = null
+let highLevelConversationsTask = null
 
 export function startHighLevelSyncCron() {
+  if (highLevelSyncTask || highLevelConversationsTask) return
   logger.info('🔄 Iniciando cron job de sincronización completa de HighLevel (cada hora, solo si está conectado)')
 
   // Ejecutar cada hora (minuto 17) para no competir con el cron de Meta Ads
-  cron.schedule('17 * * * *', async () => {
+  highLevelSyncTask = cron.schedule('17 * * * *', async () => {
     if (isDeployShutdownStarted()) return
     // (CRON-008) Claim intra-proceso antes de actuar.
     if (highLevelSyncRunning) {
@@ -166,7 +169,7 @@ export function startHighLevelSyncCron() {
   // Es ligera: solo pide a HighLevel los mensajes desde el último checkpoint,
   // para que los mensajes entrantes aparezcan en el chat de la app
   // aunque el workflow de webhook no esté configurado en GHL.
-  cron.schedule('*/10 * * * *', async () => {
+  highLevelConversationsTask = cron.schedule('*/10 * * * *', async () => {
     if (isDeployShutdownStarted()) return
     // (CRON-008) Claim intra-proceso antes de actuar.
     if (highLevelConversationsSyncRunning) {
@@ -206,4 +209,13 @@ export function startHighLevelSyncCron() {
   })
 
   logger.success('✅ Cron job de conversaciones HighLevel configurado (cada 10 minutos)')
+}
+
+export function stopHighLevelSyncCron() {
+  for (const task of [highLevelSyncTask, highLevelConversationsTask]) {
+    task?.stop()
+    task?.destroy?.()
+  }
+  highLevelSyncTask = null
+  highLevelConversationsTask = null
 }

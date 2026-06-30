@@ -14,6 +14,7 @@ import {
 } from '../services/stripePaymentService.js'
 import { getAppConfig } from '../config/database.js'
 import { logger } from '../utils/logger.js'
+import { syncRegisteredIntegrationCronsForProvider } from '../jobs/integrationCronRegistry.js'
 
 const STRIPE_WEBHOOK_PATH = '/api/stripe/webhook'
 
@@ -152,6 +153,7 @@ export async function saveStripeConfigView(req, res) {
     const config = await saveStripePaymentConfig(req.body || {}, {
       webhookUrl: await getPreferredStripeWebhookUrl(req)
     })
+    await syncRegisteredIntegrationCronsForProvider('stripe', { reason: 'stripe-connected' })
     res.json({ success: true, data: await withStripeWebhookEndpoints(req, config) })
   } catch (error) {
     logger.error(`Error guardando configuración Stripe: ${error.message}`)
@@ -162,6 +164,7 @@ export async function saveStripeConfigView(req, res) {
 export async function deleteStripeConfigView(req, res) {
   try {
     const config = await deleteStripePaymentConfig()
+    await syncRegisteredIntegrationCronsForProvider('stripe', { reason: 'stripe-disconnected' })
     res.json({ success: true, data: await withStripeWebhookEndpoints(req, config) })
   } catch (error) {
     logger.error(`Error desconectando Stripe: ${error.message}`)

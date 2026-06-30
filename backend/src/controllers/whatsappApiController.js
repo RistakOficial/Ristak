@@ -48,6 +48,7 @@ import {
 import { getAppConfig } from '../config/database.js'
 import { logger } from '../utils/logger.js'
 import { markHumanTakeoverByPhone, markHumanTakeoverIfActive } from '../services/conversationalAgentService.js'
+import { syncRegisteredIntegrationCronsForProvider } from '../jobs/integrationCronRegistry.js'
 
 // Un envío manual desde la app significa intervención humana. Si la UI ya pausó
 // u omitió al agente, esta llamada no pisa ese estado porque solo toca activos.
@@ -423,6 +424,7 @@ export async function connectWhatsAppQrView(req, res) {
       acceptedRisk: req.body?.acceptedRisk,
       acceptedBy: req.user?.username || req.user?.email || 'usuario'
     })
+    await syncRegisteredIntegrationCronsForProvider('whatsapp', { reason: 'whatsapp-qr-connected' })
     res.json({ success: true, data })
   } catch (error) {
     logger.error(`Error conectando WhatsApp QR: ${error.message}`)
@@ -469,6 +471,7 @@ export async function disconnectWhatsAppQrView(req, res) {
     const data = await disconnectWhatsAppQrForPhone({
       phoneNumberId: req.body?.phoneNumberId
     })
+    await syncRegisteredIntegrationCronsForProvider('whatsapp', { reason: 'whatsapp-qr-disconnected' })
     res.json({ success: true, data })
   } catch (error) {
     logger.error(`Error desconectando WhatsApp QR: ${error.message}`)

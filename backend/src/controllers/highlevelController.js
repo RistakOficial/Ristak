@@ -37,6 +37,7 @@ import {
 import { applyStripePaymentPlanAction, refreshStripePaymentPlanMirrors, updateStripePaymentPlanSchedule } from '../services/stripePaymentService.js';
 import { applyConektaPaymentPlanAction, refreshConektaPaymentPlanMirrors, updateConektaPaymentPlanSchedule } from '../services/conektaPaymentService.js';
 import { applyMercadoPagoPaymentPlanAction, updateMercadoPagoPaymentPlanSchedule } from '../services/mercadoPagoPaymentService.js';
+import { syncRegisteredIntegrationCronsForProvider } from '../jobs/integrationCronRegistry.js';
 
 const normalizeGhlInvoiceMode = (mode) => mode === 'test' ? 'test' : 'live';
 const INACTIVE_INVOICE_SCHEDULE_STATUSES = new Set([
@@ -1035,6 +1036,7 @@ export const saveConfig = async (req, res) => {
     await localCalendarService.reconcileCalendarDefaults().catch(error => {
       logger.warn(`[HighLevel Controller] No se pudo reconciliar calendario predeterminado tras guardar HighLevel: ${error.message}`);
     });
+    await syncRegisteredIntegrationCronsForProvider('highlevel', { reason: 'highlevel-connected' });
 
     // Iniciar sincronización automáticamente después de guardar
     logger.info('Iniciando sincronización automática después de guardar configuración');
@@ -1507,6 +1509,7 @@ export const deleteConfig = async (req, res) => {
     await localCalendarService.reconcileCalendarDefaults().catch(error => {
       logger.warn(`[HighLevel Controller] No se pudo reconciliar calendario predeterminado tras desconectar HighLevel: ${error.message}`);
     });
+    await syncRegisteredIntegrationCronsForProvider('highlevel', { reason: 'highlevel-disconnected' });
 
     res.json({
       success: true,
