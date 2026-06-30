@@ -5294,7 +5294,7 @@
   --phone-chat-composer-channel: 31px;
   --phone-chat-composer-plus: 32px;
   --phone-chat-composer-row: 35px;
-  --phone-chat-composer-input: 31px;
+  --phone-chat-composer-input: 30px;
   display: grid;
   grid-template-columns: var(--phone-chat-composer-channel) var(--phone-chat-composer-plus) minmax(0, 1fr) auto;
   align-items: center;
@@ -5511,9 +5511,9 @@
   display: grid;
   grid-template-columns: minmax(0, 1fr);
   align-items: center;
-  min-height: var(--phone-chat-composer-row);
+  min-height: var(--phone-chat-composer-input);
   border: 1px solid var(--phone-chat-border);
-  border-radius: 17px;
+  border-radius: calc(var(--phone-chat-composer-input) / 2);
   background: var(--phone-chat-surface);
   box-sizing: border-box;
   overflow: hidden;
@@ -5535,16 +5535,16 @@
 .composerInput {
   box-sizing: border-box;
   width: 100%;
-  min-height: var(--phone-chat-composer-row);
+  min-height: var(--phone-chat-composer-input);
   max-height: 118px;
-  padding: 7px 7px 6px 13px;
+  padding: 5px 7px 5px 13px;
   border: 0;
   outline: none;
   color: var(--phone-chat-text);
   background: transparent;
   font: inherit;
   font-size: 16px;
-  line-height: 1.2;
+  line-height: 1.15;
   letter-spacing: 0;
   white-space: pre-wrap;
   overflow-x: hidden;
