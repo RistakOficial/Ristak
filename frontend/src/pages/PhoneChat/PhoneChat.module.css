@@ -5524,8 +5524,21 @@
 }
 
 .composerChannelOptionIcon[data-channel="whatsapp_api"] {
-  color: #25d366;
-  background: transparent;
+  color: #ffffff;
+  background: #25d366;
+}
+
+.composerChannelOptionIcon[data-channel="whatsapp_api"] .composerChannelWhatsappIcon {
+  width: 26px;
+  height: 26px;
+}
+
+.composerChannelOptionIcon[data-channel="whatsapp_api"] .whatsappLogoDisc {
+  fill: transparent;
+}
+
+.composerChannelOptionIcon[data-channel="whatsapp_api"] .whatsappLogoMark {
+  fill: #ffffff;
 }
 
 .composerChannelOptionIcon[data-channel="messenger"] {
