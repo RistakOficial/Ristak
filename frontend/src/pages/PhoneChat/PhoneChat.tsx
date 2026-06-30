@@ -59,7 +59,7 @@ import {
   Video,
   X
 } from 'lucide-react'
-import { FaFacebookMessenger, FaInstagram, FaMicrophone, FaWhatsapp } from 'react-icons/fa'
+import { FaFacebookMessenger, FaInstagram, FaMicrophone } from 'react-icons/fa'
 import { MdArchive } from 'react-icons/md'
 import { AppointmentModal, Icon, Modal, RecordPaymentModal } from '@/components/common'
 import { AgentRobot } from '@/components/ai'
@@ -10026,7 +10026,7 @@ export const PhoneChat: React.FC = () => {
   }
 
   const renderChannelBadgeIcon = (kind: ContactChannelBadgeKind) => {
-    if (kind === 'whatsapp') return <FaWhatsapp className={styles.avatarChannelBadgeBrandIcon} aria-hidden="true" />
+    if (kind === 'whatsapp') return <Icon name="whatsapp" size={15} className={styles.avatarChannelBadgeWhatsappIcon} />
     if (kind === 'messenger') return <FaFacebookMessenger className={styles.avatarChannelBadgeBrandIcon} aria-hidden="true" />
     if (kind === 'instagram') return <FaInstagram className={styles.avatarChannelBadgeBrandIcon} aria-hidden="true" />
     if (kind === 'email') return <Mail size={12} />
@@ -12052,7 +12052,7 @@ export const PhoneChat: React.FC = () => {
     if (value === 'messenger') return <FaFacebookMessenger className={styles.composerChannelBrandIcon} aria-hidden="true" />
     if (value === 'instagram') return <FaInstagram className={styles.composerChannelBrandIcon} aria-hidden="true" />
     if (value === 'sms_qr') return <MessageCircle size={20} aria-hidden="true" />
-    return <FaWhatsapp className={styles.composerChannelBrandIcon} aria-hidden="true" />
+    return <Icon name="whatsapp" size={22} className={styles.composerChannelWhatsappIcon} />
   }
 
   const getComposerMessageChannelDisabledReason = (value: ComposerMessageChannelValue) => {

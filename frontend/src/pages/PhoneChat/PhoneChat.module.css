@@ -1257,6 +1257,23 @@
   stroke: none;
 }
 
+.avatarChannelBadge .avatarChannelBadgeWhatsappIcon {
+  width: 15px;
+  height: 15px;
+  flex: 0 0 auto;
+  fill: currentColor;
+  stroke: none !important;
+  stroke-width: 0 !important;
+  overflow: visible;
+  filter: none;
+}
+
+.avatarChannelBadge .avatarChannelBadgeWhatsappIcon path {
+  fill: currentColor;
+  stroke: none !important;
+  stroke-width: 0 !important;
+}
+
 .avatarChannelBadgeMessenger {
   background: linear-gradient(145deg, #59c8ff 0%, #0084ff 50%, #075bd8 100%);
 }
@@ -5409,6 +5426,23 @@
   fill: currentColor;
   stroke: none;
   stroke-width: 0;
+}
+
+.composerChannelButton .composerChannelWhatsappIcon {
+  width: 22px;
+  height: 22px;
+  flex: 0 0 auto;
+  fill: currentColor;
+  stroke: none !important;
+  stroke-width: 0 !important;
+  overflow: visible;
+  filter: none;
+}
+
+.composerChannelButton .composerChannelWhatsappIcon path {
+  fill: currentColor;
+  stroke: none !important;
+  stroke-width: 0 !important;
 }
 
 .composerChannelDropdown {
