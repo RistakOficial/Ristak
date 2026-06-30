@@ -82,14 +82,25 @@ import { useAIAgentAvailability, useAccountCurrency, useAppConfig, useUserConfig
 import { aiAgentService, type AIAgentAttachment, type AIAgentAttachmentKind, type AIAgentMessage, type AIAgentViewContext } from '@/services/aiAgentService'
 import {
   CONVERSATIONAL_AGENT_LIVE_CACHE_EVENT,
+  DEFAULT_AGENT_GOAL_WORKFLOW,
   conversationalAgentService,
   readConversationalAgentLiveCache,
+  type AgentCompletionMode,
+  type AgentFilterOptions,
+  type AgentFollowUpConfig,
+  type AgentFollowUpStepConfig,
+  type AgentFollowUpUnit,
+  type AgentIdentityMode,
   type AgentReplyDeliveryConfig,
   type AgentReplyDeliveryMode,
   type AgentResponseDelayConfig,
   type AgentResponseDelayMode,
   type AgentResponseDelayUnit,
+  type AgentSalesPaymentMode,
+  type AgentSuccessExtra,
   type AgentGoalWorkflowConfig,
+  type ClosingStrategyMode,
+  type ConversationalAIProviderStatus,
   type ConversationalAgentLiveCache,
   type ConversationAgentState,
   type ConversationStateAction,
@@ -97,10 +108,21 @@ import {
   type ConversationalAgentCompletionEvent,
   type ConversationalAgentDef,
   type ConversationalAgentDefInput,
+  type ConversationalContactScope,
+  type ConversationalLanguageLevel,
   type ConversationalObjective,
-  type ConversationalSuccessAction
+  type ConversationalPersuasionLevel,
+  type ConversationalSuccessAction,
+  type SuccessExtraType,
 } from '@/services/conversationalAgentService'
-import { DEFAULT_AI_MODEL, aiModelOptions, getKnownAIModel } from '@/constants/aiModels'
+import {
+  conversationalAIProviderOptions,
+  getConversationalAIProviderOption,
+  getDefaultConversationalModel,
+  getKnownConversationalAIProvider,
+  getKnownConversationalModel,
+  type ConversationalAIProviderId
+} from '@/constants/conversationalAIProviders'
 import apiClient from '@/services/apiClient'
 import { calendarsService, type Calendar, type CalendarEvent } from '@/services/calendarsService'
 import { subscribeToChatLiveEvents } from '@/services/chatLiveEventsService'
@@ -113,6 +135,10 @@ import {
   type MessageTemplateCategory,
   type MessageTemplatePayload
 } from '@/services/messageTemplatesService'
+import { triggerLinksService, type TriggerLink } from '@/services/triggerLinksService'
+import { userAccessService, type TeamUser } from '@/services/userAccessService'
+import { ConditionBuilder } from '@/pages/Settings/ConditionBuilder'
+import { buildInitialAgentWizardDraft, buildOverridesFromDraft, type AgentWizardDraft } from '@/pages/Settings/agentCreationWizardModel'
 import {
   MOBILE_APP_NOTIFICATION_EVENT,
   mobileAppService,
@@ -317,7 +343,7 @@ type PaymentSheetStep = 'choice' | 'form'
 type ActionSheet = 'attachments' | 'templates' | 'clabe' | 'payment' | 'appointment' | 'settings' | 'newChat' | 'chatMore' | 'schedule' | 'agentMenu' | 'tag' | null
 type WideSidebarMode = 'chats' | 'newChat' | 'appointment'
 type ChatMoreMode = 'default' | 'agentControls'
-type AgentMenuSection = 'menu' | 'agents' | 'agent_detail' | 'ready_human'
+type AgentMenuSection = 'menu' | 'agents' | 'agent_detail' | 'create_agent' | 'provider_key' | 'ready_human'
 type ChatFilter = 'all' | 'agent' | 'unread' | 'appointments' | 'customers' | 'leads'
 type AIAgentHubStatusFilter = 'active' | 'completed' | 'paused' | 'skipped' | 'unassigned'
 type TemplateMode = 'choice' | 'send' | 'create'
@@ -378,6 +404,30 @@ const DEFAULT_PHONE_AGENT_REPLY_DELIVERY: AgentReplyDeliveryConfig = {
   maxDelaySeconds: 7
 }
 
+const MAX_PHONE_AGENT_FOLLOW_UP_MINUTES = 23 * 60
+const DEFAULT_PHONE_AGENT_FOLLOW_UP_STRATEGY = [
+  'Lee el historial y el contexto actual antes de escribir.',
+  'Abre la conversación con un solo mensaje natural, corto y contextual.',
+  'No menciones que es seguimiento automático ni que pasó cierto tiempo.',
+  'Retoma el último punto útil que dejó la persona y deja una razón clara para responder.',
+  'No cobres, no agendes y no ejecutes acciones de avance en este mensaje.'
+].join(' ')
+
+const DEFAULT_PHONE_AGENT_FOLLOW_UP: AgentFollowUpConfig = {
+  enabled: false,
+  first: {
+    enabled: true,
+    value: 30,
+    unit: 'minutes'
+  },
+  second: {
+    enabled: false,
+    value: 2,
+    unit: 'hours'
+  },
+  strategy: DEFAULT_PHONE_AGENT_FOLLOW_UP_STRATEGY
+}
+
 const PHONE_AGENT_RESPONSE_DELAY_MODE_OPTIONS: Array<{ value: AgentResponseDelayMode; label: string; description: string }> = [
   { value: 'none', label: 'No esperar', description: 'Responde en cuanto termina de preparar el mensaje.' },
   { value: 'fixed', label: 'Tiempo fijo', description: 'Siempre espera el mismo tiempo antes de responder.' },
@@ -387,6 +437,11 @@ const PHONE_AGENT_RESPONSE_DELAY_MODE_OPTIONS: Array<{ value: AgentResponseDelay
 const PHONE_AGENT_RESPONSE_DELAY_UNIT_OPTIONS: Array<{ value: AgentResponseDelayUnit; label: string }> = [
   { value: 'seconds', label: 'Segundos' },
   { value: 'minutes', label: 'Minutos' }
+]
+
+const PHONE_AGENT_FOLLOW_UP_UNIT_OPTIONS: Array<{ value: AgentFollowUpUnit; label: string }> = [
+  { value: 'minutes', label: 'Minutos' },
+  { value: 'hours', label: 'Horas' }
 ]
 
 const DEFAULT_PHONE_AGENT_GOAL_WORKFLOW: AgentGoalWorkflowConfig = {
@@ -444,6 +499,79 @@ const PHONE_AGENT_OWNER_OPTIONS = [
   { value: 'url', label: 'Mandar enlace' }
 ]
 
+const PHONE_AGENT_IDENTITY_MODE_OPTIONS: Array<{ value: AgentIdentityMode; label: string }> = [
+  { value: 'business', label: 'Representante del negocio' },
+  { value: 'user', label: 'Persona del equipo' },
+  { value: 'custom', label: 'Nombre personalizado' },
+  { value: 'agent', label: 'Nombre del agente' }
+]
+
+const PHONE_AGENT_PERSUASION_OPTIONS: Array<{ value: ConversationalPersuasionLevel; label: string }> = [
+  { value: 'low', label: 'Anfitrión' },
+  { value: 'medium', label: 'Estratega' },
+  { value: 'high', label: 'Cerrador' }
+]
+
+const PHONE_AGENT_LANGUAGE_OPTIONS: Array<{ value: ConversationalLanguageLevel; label: string }> = [
+  { value: 'professional', label: 'Ejecutivo' },
+  { value: 'intermediate', label: 'Cómplice' },
+  { value: 'colloquial', label: 'Callejero' }
+]
+
+const PHONE_AGENT_CONTACT_SCOPE_OPTIONS: Array<{ value: ConversationalContactScope; label: string }> = [
+  { value: 'all', label: 'Cualquier chat' },
+  { value: 'new_only', label: 'Sólo contactos nuevos' }
+]
+
+const PHONE_AGENT_DEPOSIT_MODE_OPTIONS: Array<{ value: AgentGoalWorkflowConfig['deposit']['mode']; label: string }> = [
+  { value: 'fixed', label: 'Valor único' },
+  { value: 'range', label: 'Rango' }
+]
+
+const PHONE_AGENT_SALES_PAYMENT_MODE_OPTIONS: Array<{ value: AgentSalesPaymentMode; label: string }> = [
+  { value: 'full_payment', label: 'Pago completo' },
+  { value: 'deposit', label: 'Solicitar anticipo' }
+]
+
+const PHONE_AGENT_COMPLETION_MODE_OPTIONS: Array<{ value: AgentCompletionMode; label: string }> = [
+  { value: 'notify_only', label: 'Notificar al equipo' },
+  { value: 'assign_user', label: 'Asignar usuario' }
+]
+
+const PHONE_AGENT_SUCCESS_EXTRA_TYPE_OPTIONS: Array<{ value: SuccessExtraType; label: string }> = [
+  { value: 'add_tag', label: 'Agregar etiqueta' },
+  { value: 'remove_tag', label: 'Quitar etiqueta' },
+  { value: 'set_custom_field', label: 'Cambiar campo' }
+]
+
+const PHONE_AGENT_GOAL_EXECUTION_OPTIONS: Record<ConversationalObjective, Array<{ value: ConversationalSuccessAction; label: string }>> = {
+  citas: [
+    { value: 'ready_for_human', label: 'Pasar a humano' },
+    { value: 'book_appointment', label: 'Que la IA agende' },
+    { value: 'send_goal_url', label: 'Mandar enlace' }
+  ],
+  ventas: [
+    { value: 'ready_for_human', label: 'Pasar a humano' },
+    { value: 'ready_to_buy', label: 'Que la IA cobre' },
+    { value: 'send_goal_url', label: 'Mandar enlace' }
+  ],
+  datos: [
+    { value: 'ready_for_human', label: 'Pasar a humano' }
+  ],
+  filtrar: [
+    { value: 'ready_for_human', label: 'Pasar a humano' }
+  ],
+  custom: [
+    { value: 'ready_for_human', label: 'Pasar a humano' },
+    { value: 'send_trigger_link', label: 'Mandar enlace y detenerse' }
+  ]
+}
+
+const PHONE_AGENT_EMPTY_FILTERS: ConversationalAgentDef['filters'] = {
+  entry: { groups: [] },
+  exit: { groups: [] }
+}
+
 interface ProductPrice {
   id?: string
   _id?: string
@@ -475,6 +603,24 @@ function getPhoneAgentReplyDelivery(agent: ConversationalAgentDef): AgentReplyDe
   return {
     ...DEFAULT_PHONE_AGENT_REPLY_DELIVERY,
     ...((agent.replyDelivery || {}) as Partial<AgentReplyDeliveryConfig>)
+  }
+}
+
+function getPhoneAgentFollowUp(agent: ConversationalAgentDef): AgentFollowUpConfig {
+  const followUp = (agent.followUp || {}) as Partial<AgentFollowUpConfig>
+  return {
+    ...DEFAULT_PHONE_AGENT_FOLLOW_UP,
+    ...followUp,
+    first: {
+      ...DEFAULT_PHONE_AGENT_FOLLOW_UP.first,
+      ...((followUp.first || {}) as Partial<AgentFollowUpStepConfig>),
+      enabled: true
+    },
+    second: {
+      ...DEFAULT_PHONE_AGENT_FOLLOW_UP.second,
+      ...((followUp.second || {}) as Partial<AgentFollowUpStepConfig>)
+    },
+    strategy: String(followUp.strategy || DEFAULT_PHONE_AGENT_FOLLOW_UP.strategy)
   }
 }
 
@@ -520,6 +666,139 @@ function getPhoneAgentGoalWorkflow(agent: ConversationalAgentDef): AgentGoalWork
       ...((workflow.completion || {}) as Partial<AgentGoalWorkflowConfig['completion']>)
     }
   }
+}
+
+function getPhoneAgentFilters(agent: ConversationalAgentDef): ConversationalAgentDef['filters'] {
+  return {
+    entry: {
+      groups: Array.isArray(agent.filters?.entry?.groups) ? agent.filters.entry.groups : []
+    },
+    exit: {
+      groups: Array.isArray(agent.filters?.exit?.groups) ? agent.filters.exit.groups : []
+    }
+  }
+}
+
+function mergePhoneAgentGoalWorkflow(
+  base: AgentGoalWorkflowConfig,
+  patch: Partial<AgentGoalWorkflowConfig>
+): AgentGoalWorkflowConfig {
+  return {
+    ...base,
+    ...patch,
+    appointments: {
+      ...base.appointments,
+      ...((patch.appointments || {}) as Partial<AgentGoalWorkflowConfig['appointments']>)
+    },
+    sales: {
+      ...base.sales,
+      ...((patch.sales || {}) as Partial<AgentGoalWorkflowConfig['sales']>)
+    },
+    data: {
+      ...base.data,
+      ...((patch.data || {}) as Partial<AgentGoalWorkflowConfig['data']>)
+    },
+    qualification: {
+      ...base.qualification,
+      ...((patch.qualification || {}) as Partial<AgentGoalWorkflowConfig['qualification']>)
+    },
+    triggerLink: {
+      ...base.triggerLink,
+      ...((patch.triggerLink || {}) as Partial<AgentGoalWorkflowConfig['triggerLink']>)
+    },
+    deposit: {
+      ...base.deposit,
+      ...((patch.deposit || {}) as Partial<AgentGoalWorkflowConfig['deposit']>)
+    },
+    completion: {
+      ...base.completion,
+      ...((patch.completion || {}) as Partial<AgentGoalWorkflowConfig['completion']>)
+    }
+  }
+}
+
+function getPhoneFollowUpDelayMinutes(step: AgentFollowUpStepConfig) {
+  return Math.max(1, Number(step.value) || 1) * (step.unit === 'hours' ? 60 : 1)
+}
+
+function getPhoneFollowUpMaxValue(unit: AgentFollowUpUnit) {
+  return unit === 'hours' ? 23 : MAX_PHONE_AGENT_FOLLOW_UP_MINUTES
+}
+
+function clampPhoneFollowUpStepValue(value: number, unit: AgentFollowUpUnit) {
+  return Math.min(Math.max(Math.round(Number(value) || 1), 1), getPhoneFollowUpMaxValue(unit))
+}
+
+function getPhoneFollowUpSummary(followUp: AgentFollowUpConfig) {
+  if (!followUp.enabled) return 'Sin recordatorio'
+  const first = `${followUp.first.value} ${followUp.first.unit === 'hours' ? 'h' : 'min'}`
+  if (!followUp.second.enabled) return `1 recordatorio · ${first}`
+  const second = `${followUp.second.value} ${followUp.second.unit === 'hours' ? 'h' : 'min'}`
+  return `2 recordatorios · ${first} / ${second}`
+}
+
+function getPhoneFollowUpError(followUp: AgentFollowUpConfig) {
+  if (!followUp.enabled) return ''
+  const firstDelay = getPhoneFollowUpDelayMinutes(followUp.first)
+  if (firstDelay > MAX_PHONE_AGENT_FOLLOW_UP_MINUTES) return 'El primer recordatorio debe ser dentro de las primeras 23 horas.'
+  if (followUp.second.enabled) {
+    const secondDelay = getPhoneFollowUpDelayMinutes(followUp.second)
+    if (secondDelay > MAX_PHONE_AGENT_FOLLOW_UP_MINUTES || secondDelay <= firstDelay) {
+      return 'El segundo recordatorio debe ir después del primero y dentro de 23 horas.'
+    }
+  }
+  if (!followUp.strategy.trim()) return 'Falta decir qué debe escribir en el recordatorio.'
+  return ''
+}
+
+function getPhoneResponseDelayError(delay: AgentResponseDelayConfig) {
+  if (delay.mode === 'random' && Number(delay.minValue) > Number(delay.maxValue)) return 'El mínimo no puede ser mayor que el máximo.'
+  return ''
+}
+
+function getPhoneReplyDeliveryError(delivery: AgentReplyDeliveryConfig) {
+  if ((delivery.splitMessagesEnabled || delivery.mode === 'split') && Number(delivery.minDelaySeconds) > Number(delivery.maxDelaySeconds)) {
+    return 'La pausa mínima no puede ser mayor que la máxima.'
+  }
+  return ''
+}
+
+function getTeamUserDisplayName(user?: TeamUser | null) {
+  return user?.fullName || user?.email || user?.phone || user?.username || ''
+}
+
+function getProviderStatus(providers: ConversationalAIProviderStatus[], providerId: ConversationalAIProviderId) {
+  return providers.find((provider) => provider.id === providerId) || null
+}
+
+function getPhoneGoalExecutionOptions(objective: ConversationalObjective) {
+  return PHONE_AGENT_GOAL_EXECUTION_OPTIONS[objective] || PHONE_AGENT_GOAL_EXECUTION_OPTIONS.custom
+}
+
+function getPhoneObjectiveSuccessAction(
+  objective: ConversationalObjective,
+  workflow: AgentGoalWorkflowConfig
+): ConversationalSuccessAction {
+  if (objective === 'citas') {
+    if (workflow.appointments.owner === 'ai') return 'book_appointment'
+    if (workflow.appointments.owner === 'url') return 'send_goal_url'
+    return 'ready_for_human'
+  }
+  if (objective === 'ventas') {
+    if (workflow.sales.owner === 'ai') return 'ready_to_buy'
+    if (workflow.sales.owner === 'url') return 'send_goal_url'
+    return 'ready_for_human'
+  }
+  if (objective === 'custom' && workflow.triggerLink.triggerLinkId) return 'send_trigger_link'
+  return 'ready_for_human'
+}
+
+function normalizePhoneCurrency(value?: string | null) {
+  return String(value || '').trim().toUpperCase().slice(0, 12)
+}
+
+function buildPhoneAgentCreateDraft(defaultName: string): AgentWizardDraft {
+  return buildInitialAgentWizardDraft(defaultName)
 }
 
 function getProductId(product: ProductItem) {
@@ -3578,6 +3857,18 @@ export const PhoneChat: React.FC = () => {
   const [agentMenuSection, setAgentMenuSection] = useState<AgentMenuSection>('menu')
   const [selectedAgentId, setSelectedAgentId] = useState(() => initialAgentLiveCache?.agents?.[0]?.id || '')
   const [agentConfigSaving, setAgentConfigSaving] = useState(false)
+  const [agentCreating, setAgentCreating] = useState(false)
+  const [agentCreateDraft, setAgentCreateDraft] = useState<AgentWizardDraft>(() => buildPhoneAgentCreateDraft('Agente 1'))
+  const [aiProviders, setAIProviders] = useState<ConversationalAIProviderStatus[]>(() => initialAgentLiveCache?.config?.aiProviders || [])
+  const [agentFilterOptions, setAgentFilterOptions] = useState<AgentFilterOptions | undefined>(undefined)
+  const [agentTriggerLinks, setAgentTriggerLinks] = useState<TriggerLink[]>([])
+  const [agentTriggerLinksLoading, setAgentTriggerLinksLoading] = useState(false)
+  const [agentTeamUsers, setAgentTeamUsers] = useState<TeamUser[]>([])
+  const [agentTeamUsersLoading, setAgentTeamUsersLoading] = useState(false)
+  const [agentProviderKeyTarget, setAgentProviderKeyTarget] = useState<ConversationalAIProviderId | null>(null)
+  const [agentProviderKeyAgentId, setAgentProviderKeyAgentId] = useState('')
+  const [agentProviderKeyValue, setAgentProviderKeyValue] = useState('')
+  const [agentProviderKeySaving, setAgentProviderKeySaving] = useState(false)
   const [resettingAgentSkipsId, setResettingAgentSkipsId] = useState<string | null>(null)
   const [agentStatusPhraseIndex, setAgentStatusPhraseIndex] = useState(0)
   const [manualAgentSendPrompt, setManualAgentSendPrompt] = useState<ManualAgentSendPrompt | null>(null)
@@ -5142,21 +5433,47 @@ export const PhoneChat: React.FC = () => {
     const includeDefinitions = options.includeDefinitions !== false
 
     try {
-      const [config, states, defs] = await Promise.all([
+      const [config, states, defs, providers] = await Promise.all([
         conversationalAgentService.getConfig(),
         conversationalAgentService.listStates(),
         includeDefinitions
           ? conversationalAgentService.listAgents().catch(() => [] as ConversationalAgentDef[])
+          : Promise.resolve(null),
+        includeDefinitions
+          ? conversationalAgentService.listAIProviders().catch(() => [] as ConversationalAIProviderStatus[])
           : Promise.resolve(null)
       ])
       if (agentLoadGenerationRef.current !== requestGeneration) return
       setAgentConfig(config)
       if (defs) setAgentDefs(defs)
+      if (providers) setAIProviders(config.aiProviders || providers)
       setAgentStates(mapAgentStatesByContactId(states))
       setAgentStateLists(mapAgentStateListsByContactId(states))
     } catch {
       // El agente conversacional puede no estar disponible (feature apagada);
       // el chat sigue funcionando normal sin él.
+    }
+  }, [openAIConfigured, openAILoading])
+
+  const loadAgentEditorSupportData = useCallback(async () => {
+    if (openAILoading || !openAIConfigured) return
+
+    setAgentTriggerLinksLoading(true)
+    setAgentTeamUsersLoading(true)
+    try {
+      const [providers, filterOptions, triggerLinks, users] = await Promise.all([
+        conversationalAgentService.listAIProviders().catch(() => [] as ConversationalAIProviderStatus[]),
+        conversationalAgentService.getFilterOptions().catch(() => undefined),
+        triggerLinksService.list().catch(() => [] as TriggerLink[]),
+        userAccessService.listUsers().catch(() => [] as TeamUser[])
+      ])
+      setAIProviders(providers)
+      setAgentFilterOptions(filterOptions)
+      setAgentTriggerLinks(triggerLinks.filter((link) => link.active && !link.archived))
+      setAgentTeamUsers(users.filter((teamUser) => teamUser.isActive))
+    } finally {
+      setAgentTriggerLinksLoading(false)
+      setAgentTeamUsersLoading(false)
     }
   }, [openAIConfigured, openAILoading])
 
@@ -5207,6 +5524,128 @@ export const PhoneChat: React.FC = () => {
       setAgentConfigSaving(false)
     }
   }, [showToast, updateAgentDraft])
+
+  const openAgentProviderKeyScreen = useCallback((providerId: ConversationalAIProviderId, agentId = '') => {
+    const provider = getConversationalAIProviderOption(providerId)
+    if (providerId === 'openai') {
+      showToast('warning', 'OpenAI no está listo', 'Conecta OpenAI desde la configuración general del asistente para usarlo aquí.')
+      return
+    }
+    setAgentProviderKeyTarget(provider.id)
+    setAgentProviderKeyAgentId(agentId)
+    setAgentProviderKeyValue('')
+    setAgentMenuSection('provider_key')
+  }, [showToast])
+
+  const handleSaveAgentProviderKey = useCallback(async () => {
+    if (!agentProviderKeyTarget) return
+    const cleanKey = agentProviderKeyValue.trim()
+    if (!cleanKey) {
+      showToast('warning', 'Falta la API key', 'Pega la llave del proveedor para conectarlo.')
+      return
+    }
+
+    setAgentProviderKeySaving(true)
+    try {
+      const providers = await conversationalAgentService.connectAIProvider(agentProviderKeyTarget, cleanKey)
+      setAIProviders(providers)
+      if (agentProviderKeyAgentId) {
+        await saveAgentPatch(agentProviderKeyAgentId, {
+          aiProvider: agentProviderKeyTarget,
+          model: getDefaultConversationalModel(agentProviderKeyTarget)
+        })
+      }
+      const provider = getConversationalAIProviderOption(agentProviderKeyTarget)
+      setAgentProviderKeyTarget(null)
+      setAgentProviderKeyAgentId('')
+      setAgentProviderKeyValue('')
+      setAgentMenuSection(agentProviderKeyAgentId ? 'agent_detail' : 'create_agent')
+      showToast('success', `${provider.label} conectado`, 'Ya puedes usarlo en tus agentes conversacionales.')
+    } catch (error: any) {
+      showToast('error', 'No se pudo conectar', error?.message || 'Revisa la API key.')
+    } finally {
+      setAgentProviderKeySaving(false)
+    }
+  }, [agentProviderKeyAgentId, agentProviderKeyTarget, agentProviderKeyValue, saveAgentPatch, showToast])
+
+  const handleCreateMobileAgent = useCallback(async () => {
+    if (!openAIConfigured) {
+      showToast('warning', 'OpenAI no está listo', openAIUnavailableMessage)
+      return
+    }
+
+    const defaultProvider = getKnownConversationalAIProvider(agentConfig?.aiProvider)
+    const defaultModel = getKnownConversationalModel(
+      defaultProvider,
+      agentConfig?.model || getDefaultConversationalModel(defaultProvider)
+    )
+    const fallbackName = `Agente ${agentDefs.length + 1}`
+    const draftForCreate: AgentWizardDraft = {
+      ...agentCreateDraft,
+      calendarId: agentCreateDraft.objective === 'citas' && agentCreateDraft.successAction === 'book_appointment'
+        ? agentCreateDraft.calendarId || calendars[0]?.id || null
+        : agentCreateDraft.calendarId
+    }
+    const overrides = buildOverridesFromDraft(draftForCreate, accountCurrency, fallbackName, {
+      aiProvider: defaultProvider,
+      model: defaultModel
+    })
+
+    setAgentCreating(true)
+    try {
+      const agent = await conversationalAgentService.createAgent({
+        enabled: false,
+        filters: PHONE_AGENT_EMPTY_FILTERS,
+        goalWorkflow: {
+          ...DEFAULT_AGENT_GOAL_WORKFLOW,
+          ...overrides.goalWorkflow
+        },
+        ...overrides
+      })
+      if (agentConfig && !agentConfig.enabled) {
+        const nextConfig = await conversationalAgentService.saveConfig({ enabled: true })
+        setAgentConfig(nextConfig)
+      }
+      setAgentDefs((current) => [...current, agent])
+      setSelectedAgentId(agent.id)
+      setAgentCreateDraft(buildPhoneAgentCreateDraft(`Agente ${agentDefs.length + 2}`))
+      setAgentMenuSection('agent_detail')
+      showToast('success', 'Agente creado', 'Quedó listo en pausa para que lo revises y publiques.')
+    } catch (error: any) {
+      showToast('error', 'No se pudo crear', error?.message || 'Revisa la configuración del agente.')
+    } finally {
+      setAgentCreating(false)
+    }
+  }, [accountCurrency, agentConfig, agentCreateDraft, agentDefs.length, calendars, openAIConfigured, openAIUnavailableMessage, showToast])
+
+  const handleDeleteMobileAgent = useCallback((agent: ConversationalAgentDef) => {
+    showConfirm(
+      `Eliminar "${agent.name || 'Agente sin nombre'}"`,
+      'Se borra este agente y las conversaciones que atendía quedan libres para otro agente o para el equipo.',
+      async () => {
+        setAgentConfigSaving(true)
+        try {
+          await conversationalAgentService.deleteAgent(agent.id)
+          setAgentDefs((current) => current.filter((item) => item.id !== agent.id))
+          setSelectedAgentId((current) => {
+            if (current !== agent.id) return current
+            const nextAgent = agentDefs.find((item) => item.id !== agent.id)
+            return nextAgent?.id || ''
+          })
+          setAgentMenuSection('agents')
+          showToast('success', 'Agente eliminado', 'La lista quedó actualizada.')
+        } catch (error: any) {
+          showToast('error', 'No se pudo eliminar', error?.message || 'Intenta otra vez.')
+        } finally {
+          setAgentConfigSaving(false)
+        }
+      },
+      'Eliminar',
+      'Cancelar',
+      undefined,
+      { typeToConfirm: 'ELIMINAR' }
+    )
+  }, [agentDefs, showConfirm, showToast])
 
   const handleAgentStateAction = useCallback(async (
     contactId: string,
@@ -7428,6 +7867,7 @@ export const PhoneChat: React.FC = () => {
     setAgentPickerOpen(true)
     setSheet(null)
     loadAgentData()
+    loadAgentEditorSupportData()
   }
 
   const toggleAgentGlobalEnabled = async () => {
@@ -7482,6 +7922,7 @@ export const PhoneChat: React.FC = () => {
     setAgentPickerOpen(true)
     setSheet(null)
     loadAgentData()
+    loadAgentEditorSupportData()
   }
 
   const toggleSelectedAIAgentHubAgent = async () => {
@@ -7574,6 +8015,7 @@ export const PhoneChat: React.FC = () => {
     setCameraSharePhoto(null)
     closeSwipeActions()
     loadAgentData()
+    loadAgentEditorSupportData()
   }
 
   const openConversationAgentControls = (contact?: Contact | null) => {
@@ -14541,12 +14983,268 @@ export const PhoneChat: React.FC = () => {
       )
     }
 
+    if (agentMenuSection === 'provider_key') {
+      const provider = agentProviderKeyTarget ? getConversationalAIProviderOption(agentProviderKeyTarget) : null
+      return (
+        <>
+          <button
+            type="button"
+            className={styles.agentMenuBack}
+            onClick={() => setAgentMenuSection(agentProviderKeyAgentId ? 'agent_detail' : 'create_agent')}
+            disabled={agentProviderKeySaving}
+          >
+            <ChevronLeft size={18} />
+            Volver
+          </button>
+          <div className={styles.agentMenuBody} data-phone-chat-scrollable="true">
+            <section className={styles.agentMenuSection} aria-label="Conectar proveedor de IA">
+              <div className={styles.agentMenuSectionHeader}>
+                <span>{provider ? `Conectar ${provider.label}` : 'Conectar IA'}</span>
+                <small>API key</small>
+              </div>
+              <p className={styles.agentMenuHint}>
+                La llave se guarda cifrada igual que en escritorio y sólo se usa para el agente conversacional.
+              </p>
+              <PhoneTextField
+                label="API key"
+                type="password"
+                value={agentProviderKeyValue}
+                onChange={setAgentProviderKeyValue}
+                placeholder="Pega la llave del proveedor"
+                disabled={agentProviderKeySaving}
+                autoFocus
+              />
+              <button
+                type="button"
+                className={styles.agentPublishButton}
+                disabled={agentProviderKeySaving || !agentProviderKeyValue.trim()}
+                onClick={handleSaveAgentProviderKey}
+              >
+                {agentProviderKeySaving ? <Loader2 size={16} className={styles.spinIcon} /> : <KeyRound size={16} />}
+                Conectar IA
+              </button>
+            </section>
+          </div>
+        </>
+      )
+    }
+
+    if (agentMenuSection === 'create_agent') {
+      const objectiveOptions = [
+        { value: 'citas', label: 'Agendar citas' },
+        { value: 'ventas', label: 'Cerrar ventas' },
+        { value: 'datos', label: 'Pedir datos' },
+        { value: 'filtrar', label: 'Filtrar curiosos' },
+        { value: 'custom', label: 'Objetivo propio' }
+      ]
+      const actionOptions = getPhoneGoalExecutionOptions(agentCreateDraft.objective)
+      const patchCreateDraft = (patch: Partial<AgentWizardDraft>) => setAgentCreateDraft((current) => ({ ...current, ...patch }))
+      const chooseCreateObjective = (objective: ConversationalObjective) => {
+        const nextAction = getPhoneGoalExecutionOptions(objective)[0]?.value || 'ready_for_human'
+        patchCreateDraft({
+          objective,
+          successAction: nextAction,
+          customObjective: objective === 'custom' ? agentCreateDraft.customObjective : '',
+          askDeposit: false,
+          depositAmount: null
+        })
+      }
+      const createNeedsCalendar = agentCreateDraft.objective === 'citas' && agentCreateDraft.successAction === 'book_appointment'
+      const createCanAskDeposit = createNeedsCalendar || (agentCreateDraft.objective === 'ventas' && agentCreateDraft.successAction === 'ready_to_buy')
+
+      return (
+        <>
+          <button type="button" className={styles.agentMenuBack} onClick={() => setAgentMenuSection('agents')}>
+            <ChevronLeft size={18} />
+            Lista de agentes
+          </button>
+          <div className={styles.agentMenuBody} data-phone-chat-scrollable="true">
+            <section className={styles.agentMenuSection} aria-label="Crear agente conversacional">
+              <div className={styles.agentMenuSectionHeader}>
+                <span>Nuevo agente</span>
+                <small>Desde el celular</small>
+              </div>
+              <PhoneTextField
+                label="Nombre del agente"
+                value={agentCreateDraft.name}
+                onChange={(name) => patchCreateDraft({ name })}
+                placeholder="Ejemplo: Sofía de Recepción"
+                disabled={agentCreating}
+                autoFocus
+              />
+              <label className={styles.agentMenuField}>
+                <span>Qué debe lograr</span>
+                <PhoneSelect
+                  value={agentCreateDraft.objective}
+                  onChange={(value) => chooseCreateObjective(value as ConversationalObjective)}
+                  options={objectiveOptions}
+                  title="Objetivo"
+                  ariaLabel="Objetivo del nuevo agente"
+                  disabled={agentCreating}
+                  buttonClassName={styles.agentMenuSelectButton}
+                />
+              </label>
+              {agentCreateDraft.objective === 'custom' && (
+                <PhoneTextArea
+                  label="Meta propia"
+                  value={agentCreateDraft.customObjective}
+                  onChange={(customObjective) => patchCreateDraft({ customObjective })}
+                  placeholder="Ejemplo: que pida una cotización formal."
+                  rows={3}
+                  disabled={agentCreating}
+                />
+              )}
+              <label className={styles.agentMenuField}>
+                <span>Cómo se identifica</span>
+                <PhoneSelect
+                  value={agentCreateDraft.identityMode}
+                  onChange={(value) => patchCreateDraft({ identityMode: value as AgentIdentityMode })}
+                  options={PHONE_AGENT_IDENTITY_MODE_OPTIONS.filter((option) => option.value === 'business' || option.value === 'custom' || option.value === 'agent')}
+                  title="Identidad"
+                  ariaLabel="Identidad del nuevo agente"
+                  disabled={agentCreating}
+                  buttonClassName={styles.agentMenuSelectButton}
+                />
+              </label>
+              {agentCreateDraft.identityMode === 'custom' && (
+                <PhoneTextField
+                  label="Nombre visible"
+                  value={agentCreateDraft.identityCustomName}
+                  onChange={(identityCustomName) => patchCreateDraft({ identityCustomName })}
+                  placeholder="Ejemplo: Sofía"
+                  disabled={agentCreating}
+                />
+              )}
+              <label className={styles.agentMenuField}>
+                <span>Quién cumple la meta</span>
+                <PhoneSelect
+                  value={agentCreateDraft.successAction}
+                  onChange={(value) => patchCreateDraft({ successAction: value as ConversationalSuccessAction })}
+                  options={actionOptions}
+                  title="Meta"
+                  ariaLabel="Quién cumple la meta"
+                  disabled={agentCreating}
+                  buttonClassName={styles.agentMenuSelectButton}
+                />
+              </label>
+              {createNeedsCalendar && (
+                <label className={styles.agentMenuField}>
+                  <span>Calendario</span>
+                  <PhoneSelect
+                    value={agentCreateDraft.calendarId || ''}
+                    onChange={(calendarId) => patchCreateDraft({ calendarId: calendarId || null })}
+                    options={[
+                      { value: '', label: calendarsLoading ? '...' : 'Elegir calendario' },
+                      ...calendars.map((calendar) => ({ value: calendar.id, label: calendar.name }))
+                    ]}
+                    title="Calendario"
+                    ariaLabel="Calendario del nuevo agente"
+                    disabled={agentCreating || calendarsLoading || calendars.length === 0}
+                    buttonClassName={styles.agentMenuSelectButton}
+                  />
+                </label>
+              )}
+              {createCanAskDeposit && (
+                <label className={`${styles.agentCompactToggle} ${agentCreateDraft.askDeposit || agentCreateDraft.paymentMode === 'deposit' ? styles.agentCompactToggleActive : ''}`}>
+                  <input
+                    type="checkbox"
+                    checked={agentCreateDraft.objective === 'ventas' ? agentCreateDraft.paymentMode === 'deposit' : agentCreateDraft.askDeposit}
+                    disabled={agentCreating}
+                    onChange={(event) => {
+                      const enabled = event.target.checked
+                      patchCreateDraft(agentCreateDraft.objective === 'ventas'
+                        ? { paymentMode: enabled ? 'deposit' : 'full_payment', askDeposit: enabled }
+                        : { askDeposit: enabled })
+                    }}
+                  />
+                  <span>
+                    <strong>Pedir anticipo</strong>
+                    <small>El agente avanza cuando recibe comprobante del monto configurado.</small>
+                  </span>
+                </label>
+              )}
+              {createCanAskDeposit && (agentCreateDraft.askDeposit || agentCreateDraft.paymentMode === 'deposit') && (
+                <PhoneTextField
+                  label={`Monto (${accountCurrency})`}
+                  type="number"
+                  inputMode="decimal"
+                  value={String(agentCreateDraft.depositAmount || '')}
+                  onChange={(value) => patchCreateDraft({ depositAmount: Number(value) || null })}
+                  placeholder="Ejemplo: 500"
+                  disabled={agentCreating}
+                />
+              )}
+            </section>
+
+            <section className={styles.agentMenuSection} aria-label="Tono y alcance">
+              <div className={styles.agentMenuSectionHeader}>
+                <span>Tono y alcance</span>
+                <small>Editable después</small>
+              </div>
+              <label className={styles.agentMenuField}>
+                <span>Qué tan persuasivo</span>
+                <PhoneSelect
+                  value={agentCreateDraft.persuasionLevel}
+                  onChange={(value) => patchCreateDraft({ persuasionLevel: value as ConversationalPersuasionLevel })}
+                  options={PHONE_AGENT_PERSUASION_OPTIONS}
+                  title="Persuasión"
+                  ariaLabel="Persuasión del nuevo agente"
+                  disabled={agentCreating}
+                  buttonClassName={styles.agentMenuSelectButton}
+                />
+              </label>
+              <label className={styles.agentMenuField}>
+                <span>Cómo debe hablar</span>
+                <PhoneSelect
+                  value={agentCreateDraft.languageLevel}
+                  onChange={(value) => patchCreateDraft({ languageLevel: value as ConversationalLanguageLevel })}
+                  options={PHONE_AGENT_LANGUAGE_OPTIONS}
+                  title="Lenguaje"
+                  ariaLabel="Lenguaje del nuevo agente"
+                  disabled={agentCreating}
+                  buttonClassName={styles.agentMenuSelectButton}
+                />
+              </label>
+              <label className={styles.agentMenuField}>
+                <span>A quién puede atender</span>
+                <PhoneSelect
+                  value={agentCreateDraft.contactScope}
+                  onChange={(value) => patchCreateDraft({ contactScope: value as ConversationalContactScope })}
+                  options={PHONE_AGENT_CONTACT_SCOPE_OPTIONS}
+                  title="Alcance"
+                  ariaLabel="Alcance del nuevo agente"
+                  disabled={agentCreating}
+                  buttonClassName={styles.agentMenuSelectButton}
+                />
+              </label>
+              <PhoneTextArea
+                label="Datos que debe pedir"
+                value={agentCreateDraft.requiredData}
+                onChange={(requiredData) => patchCreateDraft({ requiredData })}
+                placeholder={'Ejemplo:\n- Nombre completo\n- Servicio que le interesa'}
+                rows={3}
+                disabled={agentCreating}
+              />
+              <button
+                type="button"
+                className={styles.agentPublishButton}
+                disabled={agentCreating || !agentCreateDraft.name.trim() || (agentCreateDraft.objective === 'custom' && !agentCreateDraft.customObjective.trim())}
+                onClick={handleCreateMobileAgent}
+              >
+                {agentCreating ? <Loader2 size={16} className={styles.spinIcon} /> : <Plus size={16} />}
+                Crear agente
+              </button>
+            </section>
+          </div>
+        </>
+      )
+    }
+
     const readyHumanCount = agentPriorityStates.length
     const selectedAgentDef = agentDefs.find((agent) => agent.id === selectedAgentId) || agentDefs[0] || null
     const selectedObjectiveLabel = selectedAgentDef
       ? agentObjectiveOptions.find((option) => option.value === selectedAgentDef.objective)?.label || 'Objetivo'
       : 'Sin agente'
-    const selectedAgentModelValue = selectedAgentDef ? getKnownAIModel(selectedAgentDef.model || DEFAULT_AI_MODEL) : DEFAULT_AI_MODEL
     const responseDelay = selectedAgentDef ? getPhoneAgentResponseDelay(selectedAgentDef) : DEFAULT_PHONE_AGENT_RESPONSE_DELAY
     const replyDelivery = selectedAgentDef ? getPhoneAgentReplyDelivery(selectedAgentDef) : DEFAULT_PHONE_AGENT_REPLY_DELIVERY
     const goalWorkflow = selectedAgentDef ? getPhoneAgentGoalWorkflow(selectedAgentDef) : DEFAULT_PHONE_AGENT_GOAL_WORKFLOW
@@ -14554,6 +15252,53 @@ export const PhoneChat: React.FC = () => {
     const selectedSalesPrice = selectedSalesProduct
       ? (selectedSalesProduct.prices || []).find((price) => getPriceId(price) === goalWorkflow.sales.priceId) || getPrimaryPrice(selectedSalesProduct)
       : null
+    const selectedProviderId = selectedAgentDef
+      ? getKnownConversationalAIProvider(selectedAgentDef.aiProvider || agentConfig?.aiProvider)
+      : getKnownConversationalAIProvider(agentConfig?.aiProvider)
+    const selectedProvider = getConversationalAIProviderOption(selectedProviderId)
+    const selectedProviderStatus = getProviderStatus(aiProviders, selectedProviderId)
+    const selectedProviderConnected = Boolean(selectedProviderStatus?.connected)
+    const selectedConversationalModelValue = selectedAgentDef
+      ? getKnownConversationalModel(selectedProviderId, selectedAgentDef.model || agentConfig?.model || getDefaultConversationalModel(selectedProviderId))
+      : getKnownConversationalModel(selectedProviderId, agentConfig?.model || getDefaultConversationalModel(selectedProviderId))
+    const selectedProviderModelOptions = selectedProvider.modelGroups.flatMap((group) => (
+      group.options.map((option) => ({
+        value: option.value,
+        label: `${group.label} · ${option.label}`
+      }))
+    ))
+    const followUp = selectedAgentDef ? getPhoneAgentFollowUp(selectedAgentDef) : DEFAULT_PHONE_AGENT_FOLLOW_UP
+    const followUpError = getPhoneFollowUpError(followUp)
+    const responseDelayError = getPhoneResponseDelayError(responseDelay)
+    const replyDeliveryError = getPhoneReplyDeliveryError(replyDelivery)
+    const selectedAgentFilters = selectedAgentDef ? getPhoneAgentFilters(selectedAgentDef) : PHONE_AGENT_EMPTY_FILTERS
+    const selectedCompletionUser = agentTeamUsers.find((teamUser) => teamUser.id === goalWorkflow.completion.userId) || null
+    const teamUserOptions = [
+      { value: '', label: agentTeamUsersLoading ? 'Cargando usuarios...' : 'Elegir usuario' },
+      ...agentTeamUsers.map((teamUser) => ({
+        value: teamUser.id,
+        label: getTeamUserDisplayName(teamUser)
+      }))
+    ]
+    const triggerLinkOptions = [
+      { value: '', label: agentTriggerLinksLoading ? 'Cargando enlaces...' : 'Elegir enlace' },
+      ...agentTriggerLinks.map((link) => ({ value: link.id, label: link.name }))
+    ]
+    const selectedTriggerLink = agentTriggerLinks.find((link) => link.id === goalWorkflow.triggerLink.triggerLinkId) || null
+    const normalizedAccountCurrency = normalizePhoneCurrency(accountCurrency) || 'MXN'
+    const selectedGoalExecutionOptions = selectedAgentDef ? getPhoneGoalExecutionOptions(selectedAgentDef.objective) : []
+    const selectedGoalExecutionAction = selectedAgentDef && selectedGoalExecutionOptions.some((option) => option.value === selectedAgentDef.successAction)
+      ? selectedAgentDef.successAction
+      : selectedAgentDef
+        ? getPhoneObjectiveSuccessAction(selectedAgentDef.objective, goalWorkflow)
+        : 'ready_for_human'
+    const selectedClosingStrategyMode = selectedAgentDef?.closingStrategyMode === 'custom' ? 'custom' : 'system'
+    const selectedClosingStrategyText = selectedAgentDef
+      ? selectedClosingStrategyMode === 'custom'
+        ? selectedAgentDef.closingStrategyCustom || ''
+        : selectedAgentDef.systemClosingStrategy || agentConfig?.systemClosingStrategy || ''
+      : ''
+    const customFieldOptions = agentFilterOptions?.customFields || []
 
     const saveSelectedAgentPatch = (patch: ConversationalAgentDefInput) => {
       if (!selectedAgentDef) return
@@ -14561,37 +15306,28 @@ export const PhoneChat: React.FC = () => {
     }
 
     const updateResponseDelay = (patch: Partial<AgentResponseDelayConfig>) => {
-      saveSelectedAgentPatch({ responseDelay: { ...responseDelay, ...patch } })
+      const nextDelay = { ...responseDelay, ...patch }
+      const error = getPhoneResponseDelayError(nextDelay)
+      if (error) {
+        showToast('warning', 'Rango inválido', error)
+        return
+      }
+      saveSelectedAgentPatch({ responseDelay: nextDelay })
     }
 
     const updateReplyDelivery = (patch: Partial<AgentReplyDeliveryConfig>) => {
-      saveSelectedAgentPatch({ replyDelivery: { ...replyDelivery, ...patch } })
+      const nextDelivery = { ...replyDelivery, ...patch }
+      const error = getPhoneReplyDeliveryError(nextDelivery)
+      if (error) {
+        showToast('warning', 'Rango inválido', error)
+        return
+      }
+      saveSelectedAgentPatch({ replyDelivery: nextDelivery })
     }
 
-    const mergeGoalWorkflow = (patch: Partial<AgentGoalWorkflowConfig>): AgentGoalWorkflowConfig => ({
-      ...goalWorkflow,
-      ...patch,
-      appointments: {
-        ...goalWorkflow.appointments,
-        ...((patch.appointments || {}) as Partial<AgentGoalWorkflowConfig['appointments']>)
-      },
-      sales: {
-        ...goalWorkflow.sales,
-        ...((patch.sales || {}) as Partial<AgentGoalWorkflowConfig['sales']>)
-      },
-      data: {
-        ...goalWorkflow.data,
-        ...((patch.data || {}) as Partial<AgentGoalWorkflowConfig['data']>)
-      },
-      qualification: {
-        ...goalWorkflow.qualification,
-        ...((patch.qualification || {}) as Partial<AgentGoalWorkflowConfig['qualification']>)
-      },
-      triggerLink: {
-        ...goalWorkflow.triggerLink,
-        ...((patch.triggerLink || {}) as Partial<AgentGoalWorkflowConfig['triggerLink']>)
-      }
-    })
+    const mergeGoalWorkflow = (patch: Partial<AgentGoalWorkflowConfig>): AgentGoalWorkflowConfig => (
+      mergePhoneAgentGoalWorkflow(goalWorkflow, patch)
+    )
 
     const updateGoalWorkflow = (patch: Partial<AgentGoalWorkflowConfig>) => {
       saveSelectedAgentPatch({ goalWorkflow: mergeGoalWorkflow(patch) })
@@ -14643,6 +15379,132 @@ export const PhoneChat: React.FC = () => {
           amount: price ? getPriceAmount(price) : null,
           currency: price?.currency || product?.currency || ''
         }
+      })
+    }
+
+    const updateIdentityMode = (identityMode: AgentIdentityMode) => {
+      if (!selectedAgentDef) return
+      if (identityMode === 'user') {
+        const user = agentTeamUsers.find((teamUser) => teamUser.id === selectedAgentDef.identityUserId) || agentTeamUsers[0] || null
+        saveSelectedAgentPatch({
+          identityMode,
+          identityUserId: user?.id || '',
+          identityUserName: getTeamUserDisplayName(user),
+          identityCustomName: ''
+        })
+        return
+      }
+
+      saveSelectedAgentPatch({
+        identityMode,
+        identityUserId: '',
+        identityUserName: '',
+        identityCustomName: identityMode === 'custom' ? selectedAgentDef.identityCustomName || '' : ''
+      })
+    }
+
+    const updateCompletion = (patch: Partial<AgentGoalWorkflowConfig['completion']>) => {
+      updateGoalWorkflow({ completion: { ...goalWorkflow.completion, ...patch } })
+    }
+
+    const updateDeposit = (patch: Partial<AgentGoalWorkflowConfig['deposit']>) => {
+      const nextDeposit = { ...goalWorkflow.deposit, ...patch }
+      if ((nextDeposit.enabled || patch.enabled) && !normalizePhoneCurrency(nextDeposit.currency)) {
+        nextDeposit.currency = normalizedAccountCurrency
+      }
+      updateGoalWorkflow({ deposit: nextDeposit })
+    }
+
+    const updateSalesPaymentMode = (paymentMode: AgentSalesPaymentMode) => {
+      const needsDeposit = paymentMode === 'deposit'
+      updateGoalWorkflow({
+        sales: { ...goalWorkflow.sales, paymentMode },
+        deposit: {
+          ...goalWorkflow.deposit,
+          enabled: needsDeposit,
+          currency: needsDeposit ? normalizedAccountCurrency : goalWorkflow.deposit.currency
+        }
+      })
+    }
+
+    const updateFollowUp = (patch: Partial<AgentFollowUpConfig>) => {
+      const nextFollowUp = { ...followUp, ...patch }
+      const error = getPhoneFollowUpError(nextFollowUp)
+      if (error && error !== 'Falta decir qué debe escribir en el recordatorio.') {
+        showToast('warning', 'Seguimiento inválido', error)
+        return
+      }
+      saveSelectedAgentPatch({ followUp: nextFollowUp })
+    }
+
+    const updateFollowUpStep = (stepKey: 'first' | 'second', patch: Partial<AgentFollowUpStepConfig>) => {
+      const currentStep = followUp[stepKey]
+      const unit = (patch.unit || currentStep.unit) as AgentFollowUpUnit
+      const rawValue = patch.value === undefined ? currentStep.value : patch.value
+      const nextStep: AgentFollowUpStepConfig = {
+        ...currentStep,
+        ...patch,
+        unit,
+        value: clampPhoneFollowUpStepValue(rawValue, unit)
+      }
+      if (stepKey === 'first') nextStep.enabled = true
+      updateFollowUp({ [stepKey]: nextStep } as Partial<AgentFollowUpConfig>)
+    }
+
+    const updateSuccessExtra = (index: number, patch: Partial<AgentSuccessExtra>) => {
+      if (!selectedAgentDef) return
+      saveSelectedAgentPatch({
+        successExtras: (selectedAgentDef.successExtras || []).map((extra, extraIndex) => (
+          extraIndex === index ? { ...extra, ...patch } : extra
+        ))
+      })
+    }
+
+    const getTriggerLinkWorkflow = (triggerLink?: TriggerLink | null): AgentGoalWorkflowConfig['triggerLink'] => ({
+      triggerLinkId: triggerLink?.id || '',
+      triggerLinkPublicId: triggerLink?.publicId || '',
+      triggerLinkName: triggerLink?.name || '',
+      triggerLinkUrl: triggerLink?.publicUrl || ''
+    })
+
+    const handleGoalExecutionChange = (successAction: ConversationalSuccessAction) => {
+      if (!selectedAgentDef) return
+      const patch: ConversationalAgentDefInput = { successAction }
+      let nextGoalWorkflow: AgentGoalWorkflowConfig | null = null
+
+      if (selectedAgentDef.objective === 'citas') {
+        const owner = successAction === 'book_appointment' ? 'ai' : successAction === 'send_goal_url' ? 'url' : 'human'
+        const calendarId = owner === 'ai' || owner === 'url'
+          ? goalWorkflow.appointments.calendarId || selectedAgentDef.defaultCalendarId || calendars[0]?.id || null
+          : goalWorkflow.appointments.calendarId
+        nextGoalWorkflow = mergeGoalWorkflow({
+          appointments: { ...goalWorkflow.appointments, owner, calendarId },
+          ...(owner === 'ai' ? {} : { deposit: { ...goalWorkflow.deposit, enabled: false } })
+        })
+        patch.defaultCalendarId = owner === 'ai' ? calendarId : selectedAgentDef.defaultCalendarId || null
+      }
+
+      if (selectedAgentDef.objective === 'ventas') {
+        const owner = successAction === 'ready_to_buy' ? 'ai' : successAction === 'send_goal_url' ? 'url' : 'human'
+        nextGoalWorkflow = mergePhoneAgentGoalWorkflow(nextGoalWorkflow || goalWorkflow, {
+          sales: {
+            ...goalWorkflow.sales,
+            owner,
+            paymentMode: owner === 'ai' ? goalWorkflow.sales.paymentMode : 'full_payment'
+          },
+          ...(owner === 'ai' ? {} : { deposit: { ...goalWorkflow.deposit, enabled: false } })
+        })
+      }
+
+      if (successAction === 'send_trigger_link') {
+        nextGoalWorkflow = mergePhoneAgentGoalWorkflow(nextGoalWorkflow || goalWorkflow, {
+          triggerLink: getTriggerLinkWorkflow(selectedTriggerLink || agentTriggerLinks[0] || null)
+        })
+      }
+
+      saveSelectedAgentPatch({
+        ...patch,
+        ...(nextGoalWorkflow ? { goalWorkflow: nextGoalWorkflow } : {})
       })
     }
 
@@ -14720,6 +15582,83 @@ export const PhoneChat: React.FC = () => {
                 <p className={styles.agentMenuHint}>
                   La IA revisa horarios reales, confirma el horario con la persona y agenda en este calendario.
                 </p>
+                <label className={`${styles.agentCompactToggle} ${goalWorkflow.appointments.allowOverlappingAppointments ? styles.agentCompactToggleActive : ''}`}>
+                  <input
+                    type="checkbox"
+                    checked={Boolean(goalWorkflow.appointments.allowOverlappingAppointments)}
+                    disabled={agentConfigSaving}
+                    onChange={(event) => updateGoalWorkflow({
+                      appointments: {
+                        ...goalWorkflow.appointments,
+                        allowOverlappingAppointments: event.target.checked
+                      }
+                    })}
+                  />
+                  <span>
+                    <strong>Permitir mismo horario</strong>
+                    <small>Úsalo sólo si tu operación sí puede atender varias citas al mismo tiempo.</small>
+                  </span>
+                </label>
+                <label className={`${styles.agentCompactToggle} ${goalWorkflow.deposit.enabled ? styles.agentCompactToggleActive : ''}`}>
+                  <input
+                    type="checkbox"
+                    checked={Boolean(goalWorkflow.deposit.enabled)}
+                    disabled={agentConfigSaving}
+                    onChange={(event) => updateDeposit({
+                      enabled: event.target.checked,
+                      currency: event.target.checked ? normalizedAccountCurrency : goalWorkflow.deposit.currency
+                    })}
+                  />
+                  <span>
+                    <strong>Pedir anticipo antes de agendar</strong>
+                    <small>La IA espera comprobante antes de confirmar la cita.</small>
+                  </span>
+                </label>
+                {goalWorkflow.deposit.enabled && (
+                  <div className={styles.agentNumberGrid}>
+                    <label className={styles.agentMenuField}>
+                      <span>Tipo</span>
+                      <PhoneSelect
+                        value={goalWorkflow.deposit.mode}
+                        onChange={(value) => updateDeposit({ mode: value as AgentGoalWorkflowConfig['deposit']['mode'] })}
+                        options={PHONE_AGENT_DEPOSIT_MODE_OPTIONS}
+                        title="Anticipo"
+                        ariaLabel="Tipo de anticipo"
+                        disabled={agentConfigSaving}
+                        buttonClassName={styles.agentMenuSelectButton}
+                      />
+                    </label>
+                    {goalWorkflow.deposit.mode === 'fixed' ? (
+                      <PhoneTextField
+                        label={`Monto (${normalizedAccountCurrency})`}
+                        type="number"
+                        inputMode="decimal"
+                        value={String(goalWorkflow.deposit.amount || '')}
+                        onChange={(value) => updateDeposit({ amount: Number(value) || null, currency: normalizedAccountCurrency })}
+                        disabled={agentConfigSaving}
+                      />
+                    ) : (
+                      <>
+                        <PhoneTextField
+                          label={`Mínimo (${normalizedAccountCurrency})`}
+                          type="number"
+                          inputMode="decimal"
+                          value={String(goalWorkflow.deposit.minAmount || '')}
+                          onChange={(value) => updateDeposit({ minAmount: Number(value) || null, currency: normalizedAccountCurrency })}
+                          disabled={agentConfigSaving}
+                        />
+                        <PhoneTextField
+                          label={`Máximo (${normalizedAccountCurrency})`}
+                          type="number"
+                          inputMode="decimal"
+                          value={String(goalWorkflow.deposit.maxAmount || '')}
+                          onChange={(value) => updateDeposit({ maxAmount: Number(value) || null, currency: normalizedAccountCurrency })}
+                          disabled={agentConfigSaving}
+                        />
+                      </>
+                    )}
+                  </div>
+                )}
               </div>
             ) : goalWorkflow.appointments.owner === 'url' ? (
               <div className={styles.agentGoalPanel}>
@@ -14869,6 +15808,63 @@ export const PhoneChat: React.FC = () => {
                 <p className={styles.agentMenuHint}>
                   La IA confirma el cobro y el canal antes de mandar el link de pago.
                 </p>
+                <label className={styles.agentMenuField}>
+                  <span>Qué cobra</span>
+                  <PhoneSelect
+                    value={goalWorkflow.sales.paymentMode || 'full_payment'}
+                    onChange={(value) => updateSalesPaymentMode(value as AgentSalesPaymentMode)}
+                    options={PHONE_AGENT_SALES_PAYMENT_MODE_OPTIONS}
+                    title="Cobro"
+                    ariaLabel="Modo de cobro"
+                    disabled={agentConfigSaving}
+                    buttonClassName={styles.agentMenuSelectButton}
+                  />
+                </label>
+                {goalWorkflow.sales.paymentMode === 'deposit' && (
+                  <div className={styles.agentNumberGrid}>
+                    <label className={styles.agentMenuField}>
+                      <span>Tipo</span>
+                      <PhoneSelect
+                        value={goalWorkflow.deposit.mode}
+                        onChange={(value) => updateDeposit({ mode: value as AgentGoalWorkflowConfig['deposit']['mode'], enabled: true })}
+                        options={PHONE_AGENT_DEPOSIT_MODE_OPTIONS}
+                        title="Anticipo"
+                        ariaLabel="Tipo de anticipo"
+                        disabled={agentConfigSaving}
+                        buttonClassName={styles.agentMenuSelectButton}
+                      />
+                    </label>
+                    {goalWorkflow.deposit.mode === 'fixed' ? (
+                      <PhoneTextField
+                        label={`Monto (${normalizedAccountCurrency})`}
+                        type="number"
+                        inputMode="decimal"
+                        value={String(goalWorkflow.deposit.amount || '')}
+                        onChange={(value) => updateDeposit({ enabled: true, amount: Number(value) || null, currency: normalizedAccountCurrency })}
+                        disabled={agentConfigSaving}
+                      />
+                    ) : (
+                      <>
+                        <PhoneTextField
+                          label={`Mínimo (${normalizedAccountCurrency})`}
+                          type="number"
+                          inputMode="decimal"
+                          value={String(goalWorkflow.deposit.minAmount || '')}
+                          onChange={(value) => updateDeposit({ enabled: true, minAmount: Number(value) || null, currency: normalizedAccountCurrency })}
+                          disabled={agentConfigSaving}
+                        />
+                        <PhoneTextField
+                          label={`Máximo (${normalizedAccountCurrency})`}
+                          type="number"
+                          inputMode="decimal"
+                          value={String(goalWorkflow.deposit.maxAmount || '')}
+                          onChange={(value) => updateDeposit({ enabled: true, maxAmount: Number(value) || null, currency: normalizedAccountCurrency })}
+                          disabled={agentConfigSaving}
+                        />
+                      </>
+                    )}
+                  </div>
+                )}
               </div>
             ) : goalWorkflow.sales.owner === 'url' ? (
               <div className={styles.agentGoalPanel}>
@@ -15013,11 +16009,34 @@ export const PhoneChat: React.FC = () => {
         <section className={styles.agentMenuSection} aria-label="Flujo de objetivo propio">
           <div className={styles.agentMenuSectionHeader}>
             <span>Al cumplir</span>
-            <small>Pasar a humano</small>
+            <small>{selectedGoalExecutionAction === 'send_trigger_link' ? 'Manda enlace' : 'Pasar a humano'}</small>
           </div>
-          <p className={styles.agentMenuHint}>
-            Cuando cumpla el objetivo propio, el chat se marca como prioridad para que el equipo lo tome.
-          </p>
+          {selectedGoalExecutionAction === 'send_trigger_link' ? (
+            <div className={styles.agentGoalPanel}>
+              <label className={styles.agentMenuField}>
+                <span>Trigger link</span>
+                <PhoneSelect
+                  value={goalWorkflow.triggerLink.triggerLinkId}
+                  onChange={(triggerLinkId) => {
+                    const triggerLink = agentTriggerLinks.find((link) => link.id === triggerLinkId) || null
+                    updateGoalWorkflow({ triggerLink: getTriggerLinkWorkflow(triggerLink) })
+                  }}
+                  options={triggerLinkOptions}
+                  title="Trigger link"
+                  ariaLabel="Trigger link del objetivo"
+                  disabled={agentConfigSaving || agentTriggerLinksLoading || agentTriggerLinks.length === 0}
+                  buttonClassName={styles.agentMenuSelectButton}
+                />
+              </label>
+              <p className={styles.agentMenuHint}>
+                La IA manda este enlace y deja de responder cuando la persona lo abre.
+              </p>
+            </div>
+          ) : (
+            <p className={styles.agentMenuHint}>
+              Cuando cumpla el objetivo propio, el chat se marca como prioridad para que el equipo lo tome.
+            </p>
+          )}
         </section>
       )
     }
@@ -15046,6 +16065,23 @@ export const PhoneChat: React.FC = () => {
                 <span>Lista de agentes</span>
                 <small>{agentDefs.length ? `${agentDefs.length} configurados` : 'Sin agentes'}</small>
               </div>
+              <button
+                type="button"
+                className={styles.agentMenuPrimaryRow}
+                onClick={() => {
+                  setAgentCreateDraft(buildPhoneAgentCreateDraft(`Agente ${agentDefs.length + 1}`))
+                  setAgentMenuSection('create_agent')
+                }}
+              >
+                <span className={styles.agentPickerIcon}>
+                  <Plus size={17} />
+                </span>
+                <span>
+                  <strong>Crear nuevo agente</strong>
+                  <small>Configúralo desde el celular y déjalo en pausa para revisar.</small>
+                </span>
+                <ChevronRight size={18} />
+              </button>
 
               {agentDefs.length ? (
                 <div className={styles.agentListStack}>
@@ -15074,7 +16110,9 @@ export const PhoneChat: React.FC = () => {
                         </button>
 
                         <div className={styles.agentListMeta}>
-                          <span>{getKnownAIModel(agent.model || DEFAULT_AI_MODEL)}</span>
+                          <span>
+                            {getConversationalAIProviderOption(getKnownConversationalAIProvider(agent.aiProvider)).label} · {getKnownConversationalModel(getKnownConversationalAIProvider(agent.aiProvider), agent.model)}
+                          </span>
                           <span>{getPhoneReplyDeliverySummary(delivery)}</span>
                           {agent.hideAttendedNotifications && <span>Silencia hasta meta</span>}
                         </div>
@@ -15119,7 +16157,7 @@ export const PhoneChat: React.FC = () => {
                 <div className={styles.emptySheetState}>
                   <Bot size={24} />
                   <strong>Aún no hay agentes</strong>
-                  <span>Crea agentes desde Ristak AI → Agente conversacional.</span>
+                  <span>Crea el primero desde este celular y después publícalo cuando esté listo.</span>
                 </div>
               )}
             </section>
@@ -15192,6 +16230,15 @@ export const PhoneChat: React.FC = () => {
                 {selectedAgentResettingSkips ? <Loader2 size={16} className={styles.spinIcon} /> : <Repeat2 size={16} />}
                 Reiniciar omisiones
               </button>
+              <button
+                type="button"
+                className={styles.agentDangerButton}
+                disabled={agentConfigSaving}
+                onClick={() => handleDeleteMobileAgent(selectedAgentDef)}
+              >
+                <Trash2 size={16} />
+                Eliminar agente
+              </button>
             </section>
 
             <section className={styles.agentMenuSection} aria-label="Modelo y objetivo">
@@ -15200,15 +16247,53 @@ export const PhoneChat: React.FC = () => {
                 <small>{selectedObjectiveLabel}</small>
               </div>
               <label className={styles.agentMenuField}>
-                <span>Modelo de OpenAI</span>
+                <span>IA del agente</span>
                 <PhoneSelect
-                  value={selectedAgentModelValue}
+                  value={selectedProviderId}
+                  onChange={(value) => {
+                    const providerId = getKnownConversationalAIProvider(value)
+                    const status = getProviderStatus(aiProviders, providerId)
+                    if (!status?.connected) {
+                      openAgentProviderKeyScreen(providerId, selectedAgentDef.id)
+                      return
+                    }
+                    saveSelectedAgentPatch({
+                      aiProvider: providerId,
+                      model: getKnownConversationalModel(
+                        providerId,
+                        selectedProviderId === providerId ? selectedAgentDef.model : getDefaultConversationalModel(providerId)
+                      )
+                    })
+                  }}
+                  ariaLabel={`Proveedor de ${selectedAgentDef.name || 'agente conversacional'}`}
+                  options={conversationalAIProviderOptions.map((provider) => {
+                    const status = getProviderStatus(aiProviders, provider.id)
+                    return {
+                      value: provider.id,
+                      label: `${provider.label} · ${status?.connected ? 'Conectado' : 'Conectar'}`
+                    }
+                  })}
+                  title="IA"
+                  placeholder="Proveedor"
+                  disabled={agentConfigSaving}
+                  buttonClassName={styles.agentMenuSelectButton}
+                />
+                {!selectedProviderConnected && (
+                  <p className={styles.agentMenuHint}>
+                    {selectedProvider.label} debe conectarse antes de publicar cambios con ese proveedor.
+                  </p>
+                )}
+              </label>
+              <label className={styles.agentMenuField}>
+                <span>Modelo de {selectedProvider.label}</span>
+                <PhoneSelect
+                  value={selectedConversationalModelValue}
                   onChange={(value) => saveSelectedAgentPatch({ model: value })}
                   ariaLabel={`Modelo de ${selectedAgentDef.name || 'agente conversacional'}`}
-                  options={aiModelOptions.map((option) => ({ value: option.value, label: option.label }))}
-                  title="Modelo de OpenAI"
+                  options={selectedProviderModelOptions}
+                  title={`Modelo de ${selectedProvider.label}`}
                   placeholder="Modelo"
-                  disabled={agentConfigSaving}
+                  disabled={agentConfigSaving || !selectedProviderConnected}
                   buttonClassName={styles.agentMenuSelectButton}
                 />
               </label>
@@ -15218,17 +16303,16 @@ export const PhoneChat: React.FC = () => {
                   value={selectedAgentDef.objective}
                   onChange={(value) => {
                     const objective = value as ConversationalObjective
-                    const nextSuccessAction: ConversationalSuccessAction = objective === 'citas' && goalWorkflow.appointments.owner === 'ai'
-                      ? 'book_appointment'
-                      : objective === 'citas' && goalWorkflow.appointments.owner === 'url'
-                      ? 'send_goal_url'
-                      : objective === 'ventas' && goalWorkflow.sales.owner === 'ai'
-                      ? 'ready_to_buy'
-                      : objective === 'ventas' && goalWorkflow.sales.owner === 'url'
-                      ? 'send_goal_url'
-                      : 'ready_for_human'
+                    const options = getPhoneGoalExecutionOptions(objective)
+                    const objectiveSuccessAction = getPhoneObjectiveSuccessAction(objective, goalWorkflow)
+                    const nextSuccessAction = options.some((option) => option.value === selectedAgentDef.successAction)
+                      ? selectedAgentDef.successAction
+                      : options.some((option) => option.value === objectiveSuccessAction)
+                        ? objectiveSuccessAction
+                        : options[0]?.value || 'ready_for_human'
                     saveSelectedAgentPatch({
                       objective,
+                      customObjective: objective === 'custom' ? selectedAgentDef.customObjective : '',
                       successAction: nextSuccessAction
                     })
                   }}
@@ -15253,9 +16337,280 @@ export const PhoneChat: React.FC = () => {
               )}
             </section>
 
+            <section className={styles.agentMenuSection} aria-label="Identidad y tono">
+              <div className={styles.agentMenuSectionHeader}>
+                <span>Identidad y tono</span>
+                <small>{selectedAgentDef.identityMode === 'custom' ? selectedAgentDef.identityCustomName || 'Personalizado' : 'Cómo habla'}</small>
+              </div>
+              <label className={styles.agentMenuField}>
+                <span>Cómo se identifica</span>
+                <PhoneSelect
+                  value={selectedAgentDef.identityMode || 'business'}
+                  onChange={(value) => updateIdentityMode(value as AgentIdentityMode)}
+                  options={PHONE_AGENT_IDENTITY_MODE_OPTIONS.map((option) => ({
+                    ...option,
+                    disabled: option.value === 'user' && (agentTeamUsersLoading || agentTeamUsers.length === 0)
+                  }))}
+                  title="Identidad"
+                  ariaLabel="Identidad del agente"
+                  disabled={agentConfigSaving}
+                  buttonClassName={styles.agentMenuSelectButton}
+                />
+              </label>
+              {selectedAgentDef.identityMode === 'user' && (
+                <label className={styles.agentMenuField}>
+                  <span>Persona visible</span>
+                  <PhoneSelect
+                    value={selectedAgentDef.identityUserId || ''}
+                    onChange={(userId) => {
+                      const teamUser = agentTeamUsers.find((item) => item.id === userId) || null
+                      saveSelectedAgentPatch({
+                        identityUserId: teamUser?.id || '',
+                        identityUserName: getTeamUserDisplayName(teamUser),
+                        identityCustomName: ''
+                      })
+                    }}
+                    options={teamUserOptions}
+                    title="Persona"
+                    ariaLabel="Persona visible del agente"
+                    disabled={agentConfigSaving || agentTeamUsersLoading || agentTeamUsers.length === 0}
+                    buttonClassName={styles.agentMenuSelectButton}
+                  />
+                </label>
+              )}
+              {selectedAgentDef.identityMode === 'custom' && (
+                <PhoneTextField
+                  label="Nombre visible"
+                  value={selectedAgentDef.identityCustomName || ''}
+                  onChange={(value) => updateAgentDraft(selectedAgentDef.id, { identityCustomName: value })}
+                  onBlur={() => saveSelectedAgentPatch({ identityCustomName: selectedAgentDef.identityCustomName || '' })}
+                  placeholder="Ejemplo: Sofía, Marcos o Ristak Bot"
+                  disabled={agentConfigSaving}
+                />
+              )}
+              <label className={styles.agentMenuField}>
+                <span>Qué tan persuasivo</span>
+                <PhoneSelect
+                  value={selectedAgentDef.persuasionLevel || 'high'}
+                  onChange={(value) => saveSelectedAgentPatch({ persuasionLevel: value as ConversationalPersuasionLevel })}
+                  options={PHONE_AGENT_PERSUASION_OPTIONS}
+                  title="Persuasión"
+                  ariaLabel="Persuasión del agente"
+                  disabled={agentConfigSaving}
+                  buttonClassName={styles.agentMenuSelectButton}
+                />
+              </label>
+              <label className={styles.agentMenuField}>
+                <span>Cómo debe hablar</span>
+                <PhoneSelect
+                  value={selectedAgentDef.languageLevel || 'intermediate'}
+                  onChange={(value) => saveSelectedAgentPatch({ languageLevel: value as ConversationalLanguageLevel })}
+                  options={PHONE_AGENT_LANGUAGE_OPTIONS}
+                  title="Lenguaje"
+                  ariaLabel="Lenguaje del agente"
+                  disabled={agentConfigSaving}
+                  buttonClassName={styles.agentMenuSelectButton}
+                />
+              </label>
+            </section>
+
+            <section className={styles.agentMenuSection} aria-label="Cumplimiento de meta">
+              <div className={styles.agentMenuSectionHeader}>
+                <span>Cumplimiento</span>
+                <small>Meta y cierre</small>
+              </div>
+              <label className={styles.agentMenuField}>
+                <span>Quién cumple la meta</span>
+                <PhoneSelect
+                  value={selectedGoalExecutionAction}
+                  onChange={(value) => handleGoalExecutionChange(value as ConversationalSuccessAction)}
+                  options={selectedGoalExecutionOptions}
+                  title="Meta"
+                  ariaLabel="Quién cumple la meta"
+                  disabled={agentConfigSaving}
+                  buttonClassName={styles.agentMenuSelectButton}
+                />
+              </label>
+              <label className={styles.agentMenuField}>
+                <span>Al terminar</span>
+                <PhoneSelect
+                  value={goalWorkflow.completion.mode === 'assign_user' ? 'assign_user' : 'notify_only'}
+                  onChange={(value) => {
+                    const mode = value as AgentCompletionMode
+                    if (mode === 'assign_user') {
+                      const teamUser = selectedCompletionUser || agentTeamUsers[0] || null
+                      updateCompletion({
+                        mode,
+                        userId: teamUser?.id || '',
+                        userName: getTeamUserDisplayName(teamUser)
+                      })
+                      return
+                    }
+                    updateCompletion({ mode: 'notify_only', userId: '', userName: '' })
+                  }}
+                  options={PHONE_AGENT_COMPLETION_MODE_OPTIONS.map((option) => ({
+                    ...option,
+                    disabled: option.value === 'assign_user' && (agentTeamUsersLoading || agentTeamUsers.length === 0)
+                  }))}
+                  title="Al terminar"
+                  ariaLabel="Qué pasa al terminar"
+                  disabled={agentConfigSaving}
+                  buttonClassName={styles.agentMenuSelectButton}
+                />
+              </label>
+              {goalWorkflow.completion.mode === 'assign_user' && (
+                <label className={styles.agentMenuField}>
+                  <span>Usuario asignado</span>
+                  <PhoneSelect
+                    value={goalWorkflow.completion.userId}
+                    onChange={(userId) => {
+                      const teamUser = agentTeamUsers.find((item) => item.id === userId) || null
+                      updateCompletion({
+                        userId: teamUser?.id || '',
+                        userName: getTeamUserDisplayName(teamUser)
+                      })
+                    }}
+                    options={teamUserOptions}
+                    title="Usuario"
+                    ariaLabel="Usuario asignado al cumplir la meta"
+                    disabled={agentConfigSaving || agentTeamUsersLoading || agentTeamUsers.length === 0}
+                    buttonClassName={styles.agentMenuSelectButton}
+                  />
+                </label>
+              )}
+            </section>
+
             {renderGoalWorkflowControls(selectedAgentDef)}
 
             {renderAgentOrderControls(selectedAgentDef)}
+
+            <section className={styles.agentMenuSection} aria-label="Cuándo empieza y se detiene">
+              <div className={styles.agentMenuSectionHeader}>
+                <span>Entrada y salida</span>
+                <small>{selectedAgentFilters.entry.groups.length ? 'Con reglas' : 'Cualquier chat'}</small>
+              </div>
+              <label className={styles.agentMenuField}>
+                <span>A quién puede atender</span>
+                <PhoneSelect
+                  value={selectedAgentDef.contactScope || 'all'}
+                  onChange={(value) => saveSelectedAgentPatch({ contactScope: value as ConversationalContactScope })}
+                  options={PHONE_AGENT_CONTACT_SCOPE_OPTIONS}
+                  title="Alcance"
+                  ariaLabel="Alcance del agente"
+                  disabled={agentConfigSaving}
+                  buttonClassName={styles.agentMenuSelectButton}
+                />
+              </label>
+              <div className={styles.agentConditionBuilderShell}>
+                <ConditionBuilder
+                  groups={selectedAgentFilters.entry.groups}
+                  mode="entry"
+                  calendars={calendars}
+                  options={agentFilterOptions}
+                  emptyText="Sin reglas: puede contestar cualquier chat nuevo."
+                  onChange={(groups) => saveSelectedAgentPatch({
+                    filters: {
+                      ...selectedAgentFilters,
+                      entry: { groups }
+                    }
+                  })}
+                />
+              </div>
+              <div className={styles.agentConditionBuilderShell}>
+                <ConditionBuilder
+                  groups={selectedAgentFilters.exit.groups}
+                  mode="exit"
+                  calendars={calendars}
+                  options={agentFilterOptions}
+                  emptyText="Opcional: se detiene cuando cumple la meta o un humano toma el chat."
+                  onChange={(groups) => saveSelectedAgentPatch({
+                    filters: {
+                      ...selectedAgentFilters,
+                      exit: { groups }
+                    }
+                  })}
+                />
+              </div>
+            </section>
+
+            <section className={styles.agentMenuSection} aria-label="Acciones extra al terminar">
+              <div className={styles.agentMenuSectionHeader}>
+                <span>Acciones extra</span>
+                <small>{selectedAgentDef.successExtras?.length ? `${selectedAgentDef.successExtras.length} activas` : 'Opcional'}</small>
+              </div>
+              {(selectedAgentDef.successExtras || []).map((extra, index) => (
+                <div key={`phone-agent-extra-${index}`} className={styles.agentExtraRow}>
+                  <label className={styles.agentMenuField}>
+                    <span>Acción</span>
+                    <PhoneSelect
+                      value={extra.type}
+                      onChange={(value) => updateSuccessExtra(index, { type: value as SuccessExtraType })}
+                      options={PHONE_AGENT_SUCCESS_EXTRA_TYPE_OPTIONS}
+                      title="Acción extra"
+                      ariaLabel="Tipo de acción extra"
+                      disabled={agentConfigSaving}
+                      buttonClassName={styles.agentMenuSelectButton}
+                    />
+                  </label>
+                  {extra.type === 'set_custom_field' ? (
+                    <>
+                      <label className={styles.agentMenuField}>
+                        <span>Campo</span>
+                        <PhoneSelect
+                          value={extra.field || ''}
+                          onChange={(field) => updateSuccessExtra(index, { field })}
+                          options={[
+                            { value: '', label: customFieldOptions.length ? 'Elegir campo' : 'Sin campos activos' },
+                            ...customFieldOptions.map((field) => ({ value: field.key, label: field.label }))
+                          ]}
+                          title="Campo"
+                          ariaLabel="Campo personalizado"
+                          disabled={agentConfigSaving || customFieldOptions.length === 0}
+                          buttonClassName={styles.agentMenuSelectButton}
+                        />
+                      </label>
+                      <PhoneTextField
+                        label="Valor"
+                        value={extra.value || ''}
+                        onChange={(value) => updateSuccessExtra(index, { value })}
+                        placeholder="Valor a guardar"
+                        disabled={agentConfigSaving}
+                      />
+                    </>
+                  ) : (
+                    <PhoneTextField
+                      label="Etiqueta"
+                      value={extra.tag || ''}
+                      onChange={(tag) => updateSuccessExtra(index, { tag })}
+                      placeholder="Nombre o ID de etiqueta"
+                      disabled={agentConfigSaving}
+                    />
+                  )}
+                  <button
+                    type="button"
+                    className={styles.agentListReset}
+                    disabled={agentConfigSaving}
+                    onClick={() => saveSelectedAgentPatch({
+                      successExtras: (selectedAgentDef.successExtras || []).filter((_, extraIndex) => extraIndex !== index)
+                    })}
+                  >
+                    <Trash2 size={16} />
+                    Quitar acción
+                  </button>
+                </div>
+              ))}
+              <button
+                type="button"
+                className={styles.agentListToggle}
+                disabled={agentConfigSaving}
+                onClick={() => saveSelectedAgentPatch({
+                  successExtras: [...(selectedAgentDef.successExtras || []), { type: 'add_tag', tag: '' }]
+                })}
+              >
+                <Plus size={16} />
+                Añadir acción
+              </button>
+            </section>
 
             <section className={styles.agentMenuSection} aria-label="Cuándo responde">
               <div className={styles.agentMenuSectionHeader}>
@@ -15430,11 +16785,116 @@ export const PhoneChat: React.FC = () => {
               )}
             </section>
 
+            <section className={styles.agentMenuSection} aria-label="Seguimiento automático">
+              <div className={styles.agentMenuSectionHeader}>
+                <span>Seguimiento</span>
+                <small>{getPhoneFollowUpSummary(followUp)}</small>
+              </div>
+              <label className={`${styles.agentCompactToggle} ${followUp.enabled ? styles.agentCompactToggleActive : ''}`}>
+                <input
+                  type="checkbox"
+                  checked={Boolean(followUp.enabled)}
+                  disabled={agentConfigSaving}
+                  onChange={(event) => updateFollowUp({
+                    enabled: event.target.checked,
+                    first: { ...followUp.first, enabled: true },
+                    second: { ...followUp.second, enabled: event.target.checked ? followUp.second.enabled : false },
+                    strategy: followUp.strategy || DEFAULT_PHONE_AGENT_FOLLOW_UP_STRATEGY
+                  })}
+                />
+                <span>
+                  <strong>Mandar recordatorio</strong>
+                  <small>Sólo se manda si la persona no responde.</small>
+                </span>
+              </label>
+              {followUp.enabled && (
+                <>
+                  <div className={styles.agentNumberGrid}>
+                    <PhoneTextField
+                      label="Primer tiempo"
+                      type="number"
+                      inputMode="numeric"
+                      value={String(followUp.first.value)}
+                      onChange={(value) => updateFollowUpStep('first', { value: Number(value) || 1 })}
+                      disabled={agentConfigSaving}
+                    />
+                    <label className={styles.agentMenuField}>
+                      <span>Unidad</span>
+                      <PhoneSelect
+                        value={followUp.first.unit}
+                        onChange={(value) => updateFollowUpStep('first', { unit: value as AgentFollowUpUnit })}
+                        options={PHONE_AGENT_FOLLOW_UP_UNIT_OPTIONS}
+                        title="Primer recordatorio"
+                        ariaLabel="Unidad del primer recordatorio"
+                        disabled={agentConfigSaving}
+                        buttonClassName={styles.agentMenuSelectButton}
+                      />
+                    </label>
+                  </div>
+                  <label className={`${styles.agentCompactToggle} ${followUp.second.enabled ? styles.agentCompactToggleActive : ''}`}>
+                    <input
+                      type="checkbox"
+                      checked={Boolean(followUp.second.enabled)}
+                      disabled={agentConfigSaving}
+                      onChange={(event) => updateFollowUpStep('second', { enabled: event.target.checked })}
+                    />
+                    <span>
+                      <strong>Segundo recordatorio</strong>
+                      <small>Un último empujón si todavía no contesta.</small>
+                    </span>
+                  </label>
+                  {followUp.second.enabled && (
+                    <div className={styles.agentNumberGrid}>
+                      <PhoneTextField
+                        label="Segundo tiempo"
+                        type="number"
+                        inputMode="numeric"
+                        value={String(followUp.second.value)}
+                        onChange={(value) => updateFollowUpStep('second', { value: Number(value) || 1 })}
+                        disabled={agentConfigSaving}
+                      />
+                      <label className={styles.agentMenuField}>
+                        <span>Unidad</span>
+                        <PhoneSelect
+                          value={followUp.second.unit}
+                          onChange={(value) => updateFollowUpStep('second', { unit: value as AgentFollowUpUnit })}
+                          options={PHONE_AGENT_FOLLOW_UP_UNIT_OPTIONS}
+                          title="Segundo recordatorio"
+                          ariaLabel="Unidad del segundo recordatorio"
+                          disabled={agentConfigSaving}
+                          buttonClassName={styles.agentMenuSelectButton}
+                        />
+                      </label>
+                    </div>
+                  )}
+                  <PhoneTextArea
+                    label="Qué debe decir"
+                    value={followUp.strategy}
+                    onChange={(value) => updateFollowUp({ strategy: value })}
+                    placeholder="Ejemplo: retoma lo último que dijo y abre con una pregunta corta."
+                    rows={4}
+                    disabled={agentConfigSaving}
+                    hint={followUpError || 'No menciona que es automático; sólo retoma la conversación.'}
+                    invalid={Boolean(followUpError)}
+                  />
+                </>
+              )}
+            </section>
+
             <section className={styles.agentMenuSection} aria-label="Qué debe cuidar">
               <div className={styles.agentMenuSectionHeader}>
                 <span>Qué debe cuidar</span>
                 <small>Instrucciones</small>
               </div>
+              <PhoneTextArea
+                label="Datos que debe pedir"
+                value={selectedAgentDef.requiredData || ''}
+                onChange={(value) => updateAgentDraft(selectedAgentDef.id, { requiredData: value })}
+                onBlur={() => saveSelectedAgentPatch({ requiredData: selectedAgentDef.requiredData || '' })}
+                placeholder={'Ejemplo:\n- Nombre completo\n- Servicio que le interesa\n- Presupuesto aproximado'}
+                rows={3}
+                disabled={agentConfigSaving}
+              />
               <PhoneTextArea
                 label="Cuándo pasar al equipo"
                 value={selectedAgentDef.handoffRules || ''}
@@ -15465,6 +16925,40 @@ export const PhoneChat: React.FC = () => {
                   <small>Déjalo apagado si quieres un tono más serio.</small>
                 </span>
               </label>
+              <div className={styles.agentAdvancedBlock}>
+                <div className={styles.agentMenuSectionHeader}>
+                  <span>Estrategia de cierre</span>
+                  <small>{selectedClosingStrategyMode === 'custom' ? 'Editada' : 'Normal'}</small>
+                </div>
+                <PhoneTextArea
+                  label="Cómo debe vender o cerrar"
+                  value={selectedClosingStrategyText}
+                  onChange={(value) => {
+                    updateAgentDraft(selectedAgentDef.id, {
+                      closingStrategyMode: 'custom' as ClosingStrategyMode,
+                      closingStrategyCustom: value
+                    })
+                  }}
+                  onBlur={() => saveSelectedAgentPatch({
+                    closingStrategyMode: 'custom' as ClosingStrategyMode,
+                    closingStrategyCustom: selectedAgentDef.closingStrategyCustom ?? selectedClosingStrategyText
+                  })}
+                  placeholder="Describe cómo debe cerrar, qué debe evitar y cuándo debe detenerse."
+                  rows={5}
+                  disabled={agentConfigSaving}
+                />
+                {selectedClosingStrategyMode === 'custom' && (
+                  <button
+                    type="button"
+                    className={styles.agentListToggle}
+                    disabled={agentConfigSaving}
+                    onClick={() => saveSelectedAgentPatch({ closingStrategyMode: 'system', closingStrategyCustom: '' })}
+                  >
+                    <Repeat2 size={16} />
+                    Usar estrategia normal
+                  </button>
+                )}
+              </div>
             </section>
           </div>
         </>
@@ -15488,9 +16982,26 @@ export const PhoneChat: React.FC = () => {
             </span>
             <ChevronRight size={18} />
           </button>
+          <button
+            type="button"
+            className={styles.agentMenuPrimaryRow}
+            onClick={() => {
+              setAgentCreateDraft(buildPhoneAgentCreateDraft(`Agente ${agentDefs.length + 1}`))
+              setAgentMenuSection('create_agent')
+            }}
+          >
+            <span className={styles.agentPickerIcon}>
+              <Plus size={17} />
+            </span>
+            <span>
+              <strong>Crear agente</strong>
+              <small>Haz el alta desde móvil con el mismo flujo de datos del escritorio.</small>
+            </span>
+            <ChevronRight size={18} />
+          </button>
           {!agentDefs.length && (
             <p className={styles.agentMenuHint}>
-              No hay agentes todavía. Créalo en Ristak AI → Agente conversacional.
+              No hay agentes todavía. Créalo aquí y luego publícalo cuando quede fino.
             </p>
           )}
         </section>

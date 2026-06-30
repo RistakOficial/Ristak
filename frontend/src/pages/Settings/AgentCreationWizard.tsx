@@ -10,39 +10,23 @@ import { useAccountCurrency } from '@/hooks'
 import { calendarsService, type Calendar as CalendarRecord } from '@/services/calendarsService'
 import { formatCurrency } from '@/utils/format'
 import {
-  DEFAULT_AGENT_GOAL_WORKFLOW,
-  type AgentGoalWorkflowConfig,
   type AgentIdentityMode,
-  type AgentSalesPaymentMode,
   type ConversationalAgentDefInput,
-  type ConversationalContactScope,
   type ConversationalLanguageLevel,
   type ConversationalObjective,
   type ConversationalPersuasionLevel,
   type ConversationalSuccessAction
 } from '@/services/conversationalAgentService'
+import {
+  buildInitialAgentWizardDraft as buildInitialDraft,
+  buildOverridesFromDraft,
+  isAgentWizardCitasBooking as isCitasBooking,
+  isAgentWizardVentasCharging as isVentasCharging,
+  type AgentWizardDraft
+} from './agentCreationWizardModel'
 import { StepArt } from './AgentCreationWizardArt'
 import { WizardTestChat } from './WizardTestChat'
 import styles from './AgentCreationWizard.module.css'
-
-export interface AgentWizardDraft {
-  name: string
-  objective: ConversationalObjective
-  customObjective: string
-  identityMode: AgentIdentityMode
-  identityCustomName: string
-  successAction: ConversationalSuccessAction
-  requiredData: string
-  persuasionLevel: ConversationalPersuasionLevel
-  languageLevel: ConversationalLanguageLevel
-  // Condicionales (citas que la IA agenda / ventas que la IA cobra):
-  calendarId: string | null
-  paymentMode: AgentSalesPaymentMode
-  askDeposit: boolean
-  depositAmount: number | null
-  // Seguridad: ¿atiende a tus contactos existentes o solo a los nuevos desde ahora?
-  contactScope: ConversationalContactScope
-}
 
 interface Choice<T extends string> {
   value: T
@@ -103,86 +87,6 @@ const actionChoicesByObjective: Record<ConversationalObjective, Array<Choice<Con
 type StepId =
   | 'welcome' | 'name' | 'objective' | 'identity' | 'persuasion' | 'language'
   | 'action' | 'calendar' | 'payment' | 'data' | 'scope' | 'recap' | 'test'
-
-// Reglas if/if-not: el calendario solo si la IA agenda; el cobro solo si la IA agenda
-// (anticipo de cita) o si la IA cobra una venta.
-function isCitasBooking(d: AgentWizardDraft) {
-  return d.objective === 'citas' && d.successAction === 'book_appointment'
-}
-function isVentasCharging(d: AgentWizardDraft) {
-  return d.objective === 'ventas' && d.successAction === 'ready_to_buy'
-}
-
-function buildInitialDraft(defaultName: string): AgentWizardDraft {
-  return {
-    name: defaultName,
-    objective: 'citas',
-    customObjective: '',
-    identityMode: 'business',
-    identityCustomName: '',
-    successAction: 'ready_for_human',
-    requiredData: '',
-    persuasionLevel: 'high',
-    languageLevel: 'intermediate',
-    calendarId: null,
-    paymentMode: 'full_payment',
-    askDeposit: false,
-    depositAmount: null,
-    contactScope: 'all'
-  }
-}
-
-function buildGoalWorkflowFromDraft(draft: AgentWizardDraft, accountCurrency: string): AgentGoalWorkflowConfig {
-  const wf: AgentGoalWorkflowConfig = {
-    ...DEFAULT_AGENT_GOAL_WORKFLOW,
-    appointments: { ...DEFAULT_AGENT_GOAL_WORKFLOW.appointments },
-    sales: { ...DEFAULT_AGENT_GOAL_WORKFLOW.sales },
-    data: { ...DEFAULT_AGENT_GOAL_WORKFLOW.data },
-    qualification: { ...DEFAULT_AGENT_GOAL_WORKFLOW.qualification },
-    triggerLink: { ...DEFAULT_AGENT_GOAL_WORKFLOW.triggerLink },
-    deposit: { ...DEFAULT_AGENT_GOAL_WORKFLOW.deposit },
-    completion: { ...DEFAULT_AGENT_GOAL_WORKFLOW.completion }
-  }
-  if (isCitasBooking(draft)) {
-    wf.appointments = { ...wf.appointments, owner: 'ai', calendarId: draft.calendarId }
-    if (draft.askDeposit) {
-      wf.deposit = { ...wf.deposit, enabled: true, mode: 'fixed', amount: draft.depositAmount, currency: accountCurrency }
-    }
-  }
-  if (isVentasCharging(draft)) {
-    wf.sales = { ...wf.sales, owner: 'ai', paymentMode: draft.paymentMode, currency: accountCurrency }
-    // Consistencia legacy: en ventas, "pide pago previo" vive en deposit.enabled y en sales.paymentMode.
-    if (draft.paymentMode === 'deposit') {
-      wf.deposit = { ...wf.deposit, enabled: true, mode: 'fixed', amount: draft.depositAmount, currency: accountCurrency }
-    }
-  }
-  return wf
-}
-
-export function buildOverridesFromDraft(
-  draft: AgentWizardDraft,
-  accountCurrency: string,
-  fallbackName: string,
-  defaults: { aiProvider?: ConversationalAIProviderId; model?: string } = {}
-): ConversationalAgentDefInput {
-  return {
-    name: draft.name.trim() || fallbackName,
-    objective: draft.objective,
-    customObjective: draft.objective === 'custom' ? draft.customObjective.trim() : '',
-    identityMode: draft.identityMode,
-    identityCustomName: draft.identityMode === 'custom' ? draft.identityCustomName.trim() : '',
-    successAction: draft.successAction,
-    requiredData: draft.requiredData.trim(),
-    persuasionLevel: draft.persuasionLevel,
-    languageLevel: draft.languageLevel,
-    goalWorkflow: buildGoalWorkflowFromDraft(draft, accountCurrency),
-    defaultCalendarId: isCitasBooking(draft) ? draft.calendarId : null,
-    contactScope: draft.contactScope,
-    // Proveedor/modelo: así la PRUEBA usa exactamente la misma IA que el agente creado.
-    ...(defaults.aiProvider ? { aiProvider: defaults.aiProvider } : {}),
-    ...(defaults.model ? { model: defaults.model } : {})
-  }
-}
 
 interface Props {
   isOpen: boolean
