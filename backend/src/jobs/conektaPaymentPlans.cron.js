@@ -8,6 +8,7 @@ const CONEKTA_PAYMENT_PLANS_INTERVAL_MS = 60 * 1000
 
 let started = false
 let running = false
+let intervalId = null
 
 async function runConektaPaymentPlans(source = 'interval') {
   if (running || isDeployShutdownStarted()) return
@@ -40,7 +41,7 @@ export function startConektaPaymentPlansCron() {
   started = true
 
   logger.info('Iniciando cola de planes de pago Conekta')
-  setInterval(() => {
+  intervalId = setInterval(() => {
     runConektaPaymentPlans().catch((error) => {
       logger.error(`[Conekta Planes] Error no manejado: ${error.message}`)
     })
@@ -49,4 +50,10 @@ export function startConektaPaymentPlansCron() {
   runConektaPaymentPlans('startup').catch((error) => {
     logger.error(`[Conekta Planes] Error inicial: ${error.message}`)
   })
+}
+
+export function stopConektaPaymentPlansCron() {
+  if (intervalId) clearInterval(intervalId)
+  intervalId = null
+  started = false
 }

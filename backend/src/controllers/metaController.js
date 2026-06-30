@@ -37,6 +37,7 @@ import { getVisitorIdentityExpression } from '../services/trackingService.js';
 import { signScopedToken, verifyScopedToken } from '../utils/auth.js';
 import { getActiveMetaTestEventCode } from '../utils/metaTestCode.js';
 import { buildMetaBrowserUserData } from '../services/metaParameterManagerService.js';
+import { syncRegisteredIntegrationCronsForProvider } from '../jobs/integrationCronRegistry.js';
 
 const SUCCESS_PAYMENT_STATUSES = new Set([
   'succeeded',
@@ -575,6 +576,7 @@ export const saveConfig = async (req, res) => {
       instagram_account_id || null
     );
     await setAppConfig('meta_config_disconnected', '0');
+    await syncRegisteredIntegrationCronsForProvider('meta', { reason: 'meta-connected' });
 
     logger.info('Configuración de Meta guardada exitosamente');
 
@@ -1171,6 +1173,7 @@ export const deleteMetaConfig = async (req, res) => {
   try {
     await clearMetaIntegrationCredentials();
     await setAppConfig('meta_config_disconnected', '1');
+    await syncRegisteredIntegrationCronsForProvider('meta', { reason: 'meta-disconnected' });
 
     logger.info('Configuración de Meta eliminada');
 
@@ -2999,6 +3002,7 @@ export const saveAndSyncMeta = async (req, res) => {
       normalizedInstagramAccountId || null
     );
     await setAppConfig('meta_config_disconnected', '0');
+    await syncRegisteredIntegrationCronsForProvider('meta', { reason: 'meta-connected' });
 
     if (normalizedWhatsappBusinessAccountId) {
       await setAppConfig('meta_whatsapp_business_account_id', normalizedWhatsappBusinessAccountId);

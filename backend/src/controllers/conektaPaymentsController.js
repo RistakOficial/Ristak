@@ -15,6 +15,7 @@ import {
 } from '../services/conektaPaymentService.js'
 import { getAppConfig } from '../config/database.js'
 import { logger } from '../utils/logger.js'
+import { syncRegisteredIntegrationCronsForProvider } from '../jobs/integrationCronRegistry.js'
 
 const CONEKTA_WEBHOOK_PATH = '/api/conekta/webhook'
 
@@ -188,6 +189,7 @@ export async function saveConektaConfigView(req, res) {
     const config = await saveConektaPaymentConfig(req.body || {}, {
       webhookUrl: await getPreferredConektaWebhookUrl(req)
     })
+    await syncRegisteredIntegrationCronsForProvider('conekta', { reason: 'conekta-connected' })
     res.json({ success: true, data: await withConektaWebhookEndpoints(req, config) })
   } catch (error) {
     logger.error(`Error guardando configuración Conekta: ${error.message}`)
@@ -198,6 +200,7 @@ export async function saveConektaConfigView(req, res) {
 export async function deleteConektaConfigView(req, res) {
   try {
     const config = await deleteConektaPaymentConfig()
+    await syncRegisteredIntegrationCronsForProvider('conekta', { reason: 'conekta-disconnected' })
     res.json({ success: true, data: await withConektaWebhookEndpoints(req, config) })
   } catch (error) {
     logger.error(`Error desconectando Conekta: ${error.message}`)

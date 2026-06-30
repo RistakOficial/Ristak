@@ -8,6 +8,7 @@ const STRIPE_PAYMENT_PLANS_INTERVAL_MS = 60 * 1000
 
 let started = false
 let running = false
+let intervalId = null
 
 async function runStripePaymentPlans(source = 'interval') {
   if (running || isDeployShutdownStarted()) return
@@ -46,7 +47,7 @@ export function startStripePaymentPlansCron() {
   started = true
 
   logger.info('Iniciando cola de planes de pago Stripe')
-  setInterval(() => {
+  intervalId = setInterval(() => {
     runStripePaymentPlans().catch((error) => {
       logger.error(`[Stripe Planes] Error no manejado: ${error.message}`)
     })
@@ -55,4 +56,10 @@ export function startStripePaymentPlansCron() {
   runStripePaymentPlans('startup').catch((error) => {
     logger.error(`[Stripe Planes] Error inicial: ${error.message}`)
   })
+}
+
+export function stopStripePaymentPlansCron() {
+  if (intervalId) clearInterval(intervalId)
+  intervalId = null
+  started = false
 }
