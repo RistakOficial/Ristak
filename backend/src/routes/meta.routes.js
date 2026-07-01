@@ -29,7 +29,9 @@ import {
   deleteMetaConfig,
   savePixelToken,
   sendMetaTestEvent,
-  createMetaPixelTestLink
+  createMetaPixelTestLink,
+  subscribeMetaSocialMessaging,
+  getMetaSocialMessagingSubscription
 } from '../controllers/metaController.js'
 import {
   createCampaignBuilderDraft,
@@ -57,6 +59,9 @@ router.get('/config/reveal/access_token', revealMetaToken)
 router.get('/config/reveal/pixel_api_token', revealMetaPixelApiToken)
 router.get('/webhook-info', getMetaWebhookInfo)
 router.get('/verify-token', verifyToken)
+// Suscribir la Página al webhook de mensajería (Messenger/Instagram DM)
+router.post('/social/messaging/subscribe', subscribeMetaSocialMessaging)
+router.get('/social/messaging/subscription', getMetaSocialMessagingSubscription)
 router.post('/test-event', sendMetaTestEvent)
 router.post('/pixel-test/link', createMetaPixelTestLink)
 

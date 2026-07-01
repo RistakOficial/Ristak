@@ -1331,13 +1331,40 @@ export const MetaAdsIntegration: React.FC = () => {
         await setMessengerMessagingEnabled(newValue)
       }
 
-      showToast(
-        'success',
-        `${platformLabel} actualizado`,
-        newValue
-          ? `${platformLabel} ya puede recibir y mandar mensajes`
-          : `${platformLabel} quedó apagado`
-      )
+      if (!newValue) {
+        showToast('success', `${platformLabel} actualizado`, `${platformLabel} quedó apagado`)
+        return
+      }
+
+      // Prender la bandera no basta: hay que suscribir la Página en Meta para que
+      // Meta entregue los mensajes entrantes al webhook. Lo hacemos aquí y damos
+      // feedback real de si Meta aceptó la suscripción.
+      let subscribed = false
+      let subscribeError = ''
+      try {
+        const response = await fetch('/api/meta/social/messaging/subscribe', { method: 'POST' })
+        const data = await response.json().catch(() => ({})) as { subscribed?: boolean; error?: string }
+        subscribed = data.subscribed === true
+        subscribeError = data.error || ''
+      } catch {
+        subscribeError = 'No se pudo contactar al servidor'
+      }
+
+      if (subscribed) {
+        showToast(
+          'success',
+          `${platformLabel} activado`,
+          `Listo: la Página quedó suscrita en Meta y los mensajes entrantes llegarán al chat.`
+        )
+      } else {
+        showToast(
+          'warning',
+          `${platformLabel} activado, falta un paso`,
+          subscribeError
+            ? `Ristak quedó listo, pero Meta no aceptó la suscripción de la Página: ${subscribeError}`
+            : `Ristak quedó listo, pero no se pudo suscribir la Página en Meta. Revisa el webhook de tu app de Meta.`
+        )
+      }
     } catch {
       showToast('error', 'Error', `No se pudo actualizar ${platformLabel}`)
     }

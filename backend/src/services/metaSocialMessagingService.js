@@ -279,6 +279,102 @@ async function metaSocialGraphRequest(path, { method = 'GET', token, query, body
   return data
 }
 
+// Campos de webhook de la Página que Ristak sabe procesar (ver
+// processMetaSocialWebhook: message, postback, reaction, referral). Los mismos
+// campos cubren Messenger e Instagram DM, porque el IG va enlazado a la Página.
+const META_PAGE_SUBSCRIBED_FIELDS = 'messages,messaging_postbacks,message_reactions,messaging_referrals'
+
+// El token guardado en meta_config es un token de USUARIO. Para operar la Página
+// (suscribir webhooks, enviar DMs, leer perfiles) Meta exige un token de PÁGINA.
+// Lo derivamos on-demand desde el token de usuario y lo cacheamos en memoria:
+// un token de Página derivado de un token de usuario de larga duración no expira
+// mientras el de usuario siga vivo, así que cachearlo es seguro y evita una
+// llamada extra por cada mensaje. Ante un 190 (token inválido) se re-deriva.
+const PAGE_TOKEN_TTL_MS = 30 * 60 * 1000
+let pageTokenCache = { pageId: '', token: '', at: 0 }
+
+export async function resolveMetaPageAccessToken({ config, forceRefresh = false } = {}) {
+  const cfg = config || await getMetaConfig().catch(() => null)
+  const pageId = cleanString(cfg?.page_id)
+  const userToken = cleanString(cfg?.access_token)
+  if (!pageId) throw createMetaSocialMessageError('Falta seleccionar la Página de Facebook en Meta Ads.', 409)
+  if (!userToken) throw createMetaSocialMessageError('Conecta Meta Ads para operar Messenger/Instagram.', 409)
+
+  const now = Date.now()
+  if (
+    !forceRefresh &&
+    pageTokenCache.token &&
+    pageTokenCache.pageId === pageId &&
+    (now - pageTokenCache.at) < PAGE_TOKEN_TTL_MS
+  ) {
+    return pageTokenCache.token
+  }
+
+  const data = await metaSocialGraphRequest(`/${encodeURIComponent(pageId)}`, {
+    token: userToken,
+    query: { fields: 'access_token' }
+  })
+  const pageToken = cleanString(data?.access_token)
+  if (!pageToken) {
+    throw createMetaSocialMessageError(
+      'Meta no devolvió el token de la Página. Revisa que tu usuario administre esa Página y tenga permisos de mensajería.',
+      409
+    )
+  }
+
+  pageTokenCache = { pageId, token: pageToken, at: now }
+  return pageToken
+}
+
+// Devuelve el mejor token disponible para leer/enviar por la Página, cayendo al
+// token de usuario si por alguna razón no se puede derivar el de Página (para no
+// romper el flujo de recepción por un fallo transitorio de derivación).
+async function resolveMetaPageTokenSafe(config) {
+  return resolveMetaPageAccessToken({ config }).catch(error => {
+    logger.warn(`No se pudo derivar token de Página, usando token base: ${error.message}`)
+    return cleanString(config?.access_token)
+  })
+}
+
+/**
+ * Suscribe la Página de Facebook al webhook de la app (subscribed_apps).
+ * Este es el paso que le dice a Meta "mándame los mensajes de esta Página".
+ * Activar el toggle en Ristak NO basta: sin esta suscripción Meta nunca llama al
+ * webhook. Es idempotente: se puede llamar cuantas veces se quiera.
+ */
+export async function ensureMetaPageMessagingSubscription() {
+  const config = await getMetaConfig().catch(() => null)
+  const pageId = cleanString(config?.page_id)
+  if (!pageId) throw createMetaSocialMessageError('Falta seleccionar la Página de Facebook en Meta Ads.', 409)
+
+  const pageToken = await resolveMetaPageAccessToken({ config })
+  await metaSocialGraphRequest(`/${encodeURIComponent(pageId)}/subscribed_apps`, {
+    method: 'POST',
+    token: pageToken,
+    query: { subscribed_fields: META_PAGE_SUBSCRIBED_FIELDS }
+  })
+
+  logger.info(`[Meta social] Página ${pageId} suscrita al webhook de mensajería (${META_PAGE_SUBSCRIBED_FIELDS})`)
+  return { pageId, subscribedFields: META_PAGE_SUBSCRIBED_FIELDS.split(',') }
+}
+
+/** Lee la suscripción actual de la Página (para verificar/diagnosticar). */
+export async function getMetaPageMessagingSubscription() {
+  const config = await getMetaConfig().catch(() => null)
+  const pageId = cleanString(config?.page_id)
+  if (!pageId) return { pageId: '', subscribed: false, apps: [] }
+
+  const pageToken = await resolveMetaPageAccessToken({ config })
+  const data = await metaSocialGraphRequest(`/${encodeURIComponent(pageId)}/subscribed_apps`, {
+    token: pageToken
+  })
+  const apps = Array.isArray(data?.data) ? data.data : []
+  const subscribed = apps.some(app => Array.isArray(app?.subscribed_fields)
+    ? app.subscribed_fields.some(f => (typeof f === 'string' ? f : f?.name) === 'messages')
+    : false)
+  return { pageId, subscribed, apps }
+}
+
 function getMetaSocialBusinessId(platform, config = {}, profile = {}) {
   if (platform === 'instagram') {
     return cleanString(profile.instagram_account_id) || cleanString(config.instagram_account_id)
@@ -416,15 +512,30 @@ export async function sendMetaSocialTextMessage({ contactId, platform, message, 
     )
   }
 
-  const response = await metaSocialGraphRequest(`/${encodeURIComponent(businessId)}/messages`, {
-    method: 'POST',
-    token: config.access_token,
-    body: {
-      messaging_type: 'RESPONSE',
-      recipient: { id: recipientId },
-      message: { text: body }
-    }
-  })
+  // Messenger/Instagram exigen el token de PÁGINA para /{id}/messages (el token
+  // de usuario da "se necesita un token de acceso a la página"). Lo derivamos y,
+  // si caducó/rotó, lo re-derivamos una vez y reintentamos.
+  const sendPayload = {
+    messaging_type: 'RESPONSE',
+    recipient: { id: recipientId },
+    message: { text: body }
+  }
+  let response
+  try {
+    response = await metaSocialGraphRequest(`/${encodeURIComponent(businessId)}/messages`, {
+      method: 'POST',
+      token: await resolveMetaPageAccessToken({ config }),
+      body: sendPayload
+    })
+  } catch (error) {
+    const looksLikeTokenIssue = error?.statusCode === 401 || /oauth|access token|\b190\b/i.test(error?.message || '')
+    if (!looksLikeTokenIssue) throw error
+    response = await metaSocialGraphRequest(`/${encodeURIComponent(businessId)}/messages`, {
+      method: 'POST',
+      token: await resolveMetaPageAccessToken({ config, forceRefresh: true }),
+      body: sendPayload
+    })
+  }
 
   const sent = await saveMetaSocialOutboundMessage({
     platform: cleanPlatform,
@@ -736,7 +847,7 @@ export async function processMetaSocialWebhook({ payload = {}, rawBody = '', sig
         const profile = await fetchMetaSenderProfile({
           platform: socialMessage.platform,
           senderId: socialMessage.senderId,
-          accessToken: config?.access_token
+          accessToken: await resolveMetaPageTokenSafe(config)
         })
         const localContact = await upsertLocalSocialContact({ socialMessage, profile })
         const socialContactId = await upsertMetaSocialContact({

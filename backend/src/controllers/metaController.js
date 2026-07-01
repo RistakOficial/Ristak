@@ -31,7 +31,7 @@ import { getHiddenContactFilters, buildHiddenContactsCondition } from '../utils/
 import { parseContactCustomFields } from '../utils/contactCustomFields.js';
 import { API_URLS } from '../config/constants.js';
 import fetch from 'node-fetch';
-import { getMetaWebhookVerifyToken } from '../services/metaSocialMessagingService.js';
+import { getMetaWebhookVerifyToken, ensureMetaPageMessagingSubscription, getMetaPageMessagingSubscription } from '../services/metaSocialMessagingService.js';
 import { clearMetaIntegrationCredentials } from '../services/integrationCredentialsCleanupService.js';
 import { getVisitorIdentityExpression } from '../services/trackingService.js';
 import { signScopedToken, verifyScopedToken } from '../utils/auth.js';
@@ -1164,6 +1164,42 @@ export const getMetaWebhookInfo = async (req, res) => {
       success: false,
       error: 'Error al obtener datos del webhook de Meta'
     });
+  }
+};
+
+/**
+ * Suscribe la Página de Facebook al webhook de mensajería de la app.
+ * Este es el "avisarle al cartero": activar el toggle en Ristak sólo prende la
+ * bandera local; sin esta suscripción Meta nunca entrega los mensajes al webhook.
+ * Es idempotente. Devuelve 200 aun si falla la suscripción (con subscribed:false
+ * + motivo), porque el toggle ya se guardó por su cuenta y el usuario necesita el
+ * motivo exacto para completar la configuración en el panel de Meta.
+ */
+export const subscribeMetaSocialMessaging = async (req, res) => {
+  try {
+    const result = await ensureMetaPageMessagingSubscription();
+    logger.info(`[Meta social] Página suscrita al webhook por el usuario: ${result.pageId}`);
+    res.json({ success: true, subscribed: true, ...result });
+  } catch (error) {
+    logger.warn(`No se pudo suscribir la Página al webhook de Meta: ${error.message}`);
+    res.status(200).json({
+      success: false,
+      subscribed: false,
+      error: error.message || 'No se pudo suscribir la Página al webhook de Meta'
+    });
+  }
+};
+
+/**
+ * Lee el estado real de la suscripción de la Página (para diagnóstico/UI).
+ */
+export const getMetaSocialMessagingSubscription = async (req, res) => {
+  try {
+    const status = await getMetaPageMessagingSubscription();
+    res.json({ success: true, ...status });
+  } catch (error) {
+    logger.warn(`No se pudo leer la suscripción de la Página: ${error.message}`);
+    res.status(200).json({ success: false, subscribed: false, error: error.message });
   }
 };
 
