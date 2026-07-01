@@ -2131,6 +2131,9 @@ export const DesktopChat: React.FC = () => {
   const [messagesError, setMessagesError] = useState('')
   const [contactJourney, setContactJourney] = useState<JourneyEvent[]>([])
   const [contactInfoData, setContactInfoData] = useState<Contact | null>(null)
+  // (Asignación) Responsable del contacto: lista de usuarios y asignado actual.
+  const [assignableUsers, setAssignableUsers] = useState<{ id: string; name: string }[]>([])
+  const [assignedUserId, setAssignedUserId] = useState<string>('')
   const [contactInfoLoading, setContactInfoLoading] = useState(false)
   const [savingPrimaryPhone, setSavingPrimaryPhone] = useState<string | null>(null)
   const [infoPanelView, setInfoPanelView] = useState<InfoPanelView>('summary')
@@ -3249,6 +3252,65 @@ export const DesktopChat: React.FC = () => {
       reportViewing(null, false)
     }
   }, [activeContactId])
+
+  // (Asignación) Lista de usuarios asignables (una vez).
+  useEffect(() => {
+    let cancelled = false
+    fetch('/api/contacts/assignable-users')
+      .then((response) => (response.ok ? response.json() : null))
+      .then((data) => {
+        if (!cancelled && data?.success && Array.isArray(data.users)) {
+          setAssignableUsers(data.users.map((user: { id: string; name: string }) => ({
+            id: String(user.id),
+            name: String(user.name)
+          })))
+        }
+      })
+      .catch(() => undefined)
+    return () => { cancelled = true }
+  }, [])
+
+  // (Asignación) Responsable actual al abrir/cambiar de contacto.
+  useEffect(() => {
+    if (!activeContactId) {
+      setAssignedUserId('')
+      return
+    }
+    let cancelled = false
+    fetch(`/api/contacts/${encodeURIComponent(activeContactId)}/assignment`)
+      .then((response) => (response.ok ? response.json() : null))
+      .then((data) => {
+        if (!cancelled && data?.success) setAssignedUserId(data.assignedUserId ? String(data.assignedUserId) : '')
+      })
+      .catch(() => undefined)
+    return () => { cancelled = true }
+  }, [activeContactId])
+
+  const handleAssignContact = useCallback(async (userId: string) => {
+    if (!activeContactId) return
+    const nextUserId = userId || ''
+    const previous = assignedUserId
+    setAssignedUserId(nextUserId)
+    try {
+      const response = await fetch(`/api/contacts/${encodeURIComponent(activeContactId)}/assignment`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ userId: nextUserId || null })
+      })
+      if (!response.ok) throw new Error('assign_failed')
+    } catch {
+      setAssignedUserId(previous)
+      showToast('error', 'No se pudo asignar', 'Intenta de nuevo en un momento.')
+    }
+  }, [activeContactId, assignedUserId, showToast])
+
+  const assignableUserOptions = useMemo(
+    () => [
+      { value: '', label: 'Sin asignar' },
+      ...assignableUsers.map((user) => ({ value: user.id, label: user.name }))
+    ],
+    [assignableUsers]
+  )
 
   useEffect(() => {
     writeStoredChatIds(CHAT_ARCHIVED_STATE_KEY, archivedChatIds)
@@ -6632,6 +6694,19 @@ export const DesktopChat: React.FC = () => {
                       <span><strong>{contactAppointments.length}</strong><small>Citas totales</small></span>
                       <span><strong>{Number(activeContact.messageCount || messages.length)}</strong><small>Mensajes</small></span>
                     </div>
+                  </div>
+
+                  <div className={styles.infoSection}>
+                    <div className={styles.sectionTitleRow}>
+                      <h3>Responsable</h3>
+                    </div>
+                    <CustomSelect
+                      value={assignedUserId}
+                      options={assignableUserOptions}
+                      onValueChange={handleAssignContact}
+                      placeholder="Sin asignar"
+                      aria-label="Responsable del contacto"
+                    />
                   </div>
 
                   <div className={styles.infoSection}>
