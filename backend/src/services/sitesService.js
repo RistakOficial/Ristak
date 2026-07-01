@@ -19745,9 +19745,11 @@ const RSTK_BASE_CSS = `
     margin-right:var(--rstk-media-margin-right,auto);
   }
 
-  .rstk-checkout-card{display:grid;gap:14px;width:100%;max-width:var(--rstk-checkout-width,460px);margin-inline:auto;padding:var(--rstk-checkout-pad,22px);background:var(--rstk-surface);border:1px solid var(--rstk-border);border-radius:var(--rstk-radius-lg);box-shadow:var(--rstk-shadow,none);text-align:left}
+  .rstk-checkout-card{display:grid;gap:14px;width:100%;max-width:var(--rstk-checkout-width,460px);margin-inline:auto;padding:var(--rstk-block-pad,22px);background:var(--rstk-block-bg,var(--rstk-surface));color:var(--rstk-block-text,var(--rstk-ink));border:var(--rstk-block-border-width,1px) solid var(--rstk-block-border,var(--rstk-border));border-radius:var(--rstk-block-radius,var(--rstk-radius-lg));box-shadow:var(--rstk-shadow,none);text-align:left}
+  .rstk-block-style:has(> .rstk-payment-block){background:transparent;border:0;padding:0;box-shadow:none}
   .rstk-payment-banner .rstk-checkout-card{max-width:var(--rstk-checkout-width,640px)}
   .rstk-payment-minimal .rstk-checkout-card{border:0;box-shadow:none;padding:0;background:transparent}
+  .rstkBlockFullWidth .rstk-checkout-card{max-width:none}
   .rstk-checkout-head{display:grid;gap:4px}
   .rstk-checkout-head .rstk-payment-kicker{color:var(--rstk-accent);font-size:.74rem;font-weight:800;text-transform:uppercase;letter-spacing:.08em}
   .rstk-checkout-title{color:var(--rstk-ink);font-size:1.12rem;font-weight:700;line-height:1.25}

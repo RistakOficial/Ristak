@@ -471,6 +471,7 @@
   padding: 0;
 }
 .rstkCanvas .rstkBlockFullWidth .rstk-checkout-card { max-width: none; }
+.rstkCanvas .rstk-block-style:has(> .rstk-payment-block) { background: transparent; border: 0; padding: 0; box-shadow: none; }
 .rstkCanvas .rstk-checkout-head { display: grid; gap: 4px; }
 .rstkCanvas .rstk-checkout-head .rstk-payment-kicker {
   color: var(--rstk-accent);
