@@ -1590,8 +1590,8 @@ const mapChatContactRowForResponse = (contact = {}) => ({
   unreadCount: Number(contact.unread_count || 0)
 })
 
-const CHAT_CONTACTS_DEFAULT_LIMIT = 100
-const CHAT_CONTACTS_MAX_LIMIT = 250
+const CHAT_CONTACTS_DEFAULT_LIMIT = 50
+const CHAT_CONTACTS_MAX_LIMIT = 100
 
 const getRequestUserId = (req) => req.user?.userId || req.user?.id || null
 

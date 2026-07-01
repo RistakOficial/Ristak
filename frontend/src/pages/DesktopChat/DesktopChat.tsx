@@ -294,19 +294,15 @@ const CHAT_CONVERSATION_CACHE_MAX_AGE_MS = 24 * 60 * 60 * 1000
 const CHAT_CONVERSATION_CACHE_MAX_ENTRY_CHARS = 360_000
 const CHAT_CONVERSATION_MESSAGE_LIMIT = 250
 const CHAT_REFRESH_INTERVAL_MS = 20000
-// Lotes amplios: el endpoint ya pagina, pero una app de chat no debe hacer esperar cada
-// 30 filas. Con 100 se reducen viajes y la lista queda lista antes de que el usuario toque fondo.
-const CHAT_LIST_PAGE_SIZE = 100
+// Lotes moderados: la bandeja calcula stats de mensajes y debe pintar rápido sin ahogar Postgres.
+const CHAT_LIST_PAGE_SIZE = 50
 // Distancia mínima al fondo para empezar a prefetch del siguiente lote. El disparo real
 // usa varias pantallas (ver loadMoreChatsIfNeeded) para que el lote llegue ANTES de tocar
 // el fondo y nunca se sienta "trabado".
 const CHAT_LIST_AUTO_LOAD_GAP_PX = 900
 const CHAT_LIST_PREFETCH_VIEWPORTS = 3
-// Cargamos el historial COMPLETO en segundo plano (no bloqueante): la primera página pinta
-// al instante y el resto se trae solo, lote por lote, hasta este tope. Así aparecen TODAS las
-// conversaciones (no solo las recientes) sin depender del scroll. Pasado el tope, el resto se
-// sigue cargando con el prefetch por scroll (protege cuentas enormes / rendimiento de render).
-const CHAT_LIST_BACKGROUND_LOAD_CAP = 1000
+// Precargamos un bloque razonable en segundo plano. El resto sigue por scroll, sin ráfagas enormes.
+const CHAT_LIST_BACKGROUND_LOAD_CAP = 250
 const MESSAGE_PANE_BOTTOM_LOCK_GAP_PX = 120
 const BULK_CHAT_ARCHIVE_CONFIRM_WORD = 'ARCHIVAR'
 const BULK_CHAT_RESTORE_CONFIRM_WORD = 'RESTAURAR'
@@ -2997,9 +2993,7 @@ export const DesktopChat: React.FC = () => {
     if (chatListLoadingMoreRef.current || !chatListHasMoreRef.current) return
     const list = chatListRef.current
     if (!list) return
-    // Hasta el tope, cargamos el historial completo en segundo plano: cada lote que llega
-    // dispara el siguiente automáticamente (sin requerir scroll), para que aparezcan TODAS las
-    // conversaciones, no solo las más recientes.
+    // Hasta el tope, precargamos algunos lotes en segundo plano. El resto queda para scroll.
     if (chats.length < CHAT_LIST_BACKGROUND_LOAD_CAP) {
       void loadChats({ silent: true, append: true })
       return

@@ -183,16 +183,14 @@ const CHAT_STARRED_MESSAGES_KEY = 'ristak_phone_chat_starred_messages_v1'
 const CHAT_FAST_START_INBOX_KEY = 'ristak_phone_chat_fast_start_inbox_v1'
 const CHAT_FAST_START_MAX_AGE_MS = 3 * 24 * 60 * 60 * 1000
 const CHAT_FAST_START_INBOX_LIMIT = 300
-// Lotes amplios: menos viajes al backend y más conversaciones listas antes de tocar fondo.
-const CHAT_LIST_PAGE_SIZE = 100
+// Lotes moderados: la bandeja calcula stats de mensajes y debe pintar rápido sin ahogar Postgres.
+const CHAT_LIST_PAGE_SIZE = 50
 // Mínimo para prefetch del siguiente lote. El disparo real usa varias pantallas (ver
 // loadMoreChatsIfNeeded) para que el lote llegue antes de tocar el fondo.
 const CHAT_LIST_AUTO_LOAD_GAP_PX = 900
 const CHAT_LIST_PREFETCH_VIEWPORTS = 3
-// Cargamos el historial COMPLETO en segundo plano (no bloqueante) hasta este tope: la primera
-// página pinta al instante y el resto se trae solo, lote por lote, para que aparezcan TODAS las
-// conversaciones sin depender del scroll. Pasado el tope, el resto se carga con prefetch.
-const CHAT_LIST_BACKGROUND_LOAD_CAP = 1000
+// Precargamos un bloque razonable en segundo plano. El resto sigue por scroll, sin ráfagas enormes.
+const CHAT_LIST_BACKGROUND_LOAD_CAP = 250
 const CHAT_CONVERSATION_MESSAGE_LIMIT = 250
 const OPTIMISTIC_MESSAGE_ID_PREFIXES = ['local-', 'template-', 'local-meta-', 'local-ghl-']
 const OPTIMISTIC_MESSAGE_MAX_AGE_MS = 10 * 60 * 1000
@@ -5905,6 +5903,7 @@ export const PhoneChat: React.FC = () => {
         contactsService.getContactJourney(contactId, {
           includeBusinessMessages: true,
           refreshExternalStatuses: false,
+          chatMessagesOnly: true,
           messageLimit: CHAT_CONVERSATION_MESSAGE_LIMIT
         }),
         whatsappApiService.getScheduledMessages(contactId).catch(() => []),
@@ -6488,9 +6487,7 @@ export const PhoneChat: React.FC = () => {
     if (chatListLoadingMoreRef.current || !chatListHasMoreRef.current) return
     const list = chatListRef.current
     if (!list) return
-    // Hasta el tope, cargamos el historial completo en segundo plano: cada lote que llega
-    // dispara el siguiente automáticamente (sin requerir scroll), para que aparezcan TODAS las
-    // conversaciones, no solo las más recientes.
+    // Hasta el tope, precargamos algunos lotes en segundo plano. El resto queda para scroll.
     if (chats.length < CHAT_LIST_BACKGROUND_LOAD_CAP) {
       void loadChats({ silent: true, append: true, useCache: false })
       return

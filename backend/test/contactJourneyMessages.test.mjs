@@ -66,7 +66,7 @@ async function insertRow(table, values) {
   )
 }
 
-test('chat contacts supports larger pages for deep inbox prefetch', async () => {
+test('chat contacts caps oversized pages for safer inbox prefetch', async () => {
   const id = randomUUID().replace(/-/g, '')
   const prefix = `chat_page_${id}`
   const phoneSeed = Date.now().toString().slice(-6)
@@ -107,11 +107,11 @@ test('chat contacts supports larger pages for deep inbox prefetch', async () => 
 
     const firstPage = await readChatContacts({ limit: '110' })
     const firstPageSyntheticChats = firstPage.filter(chat => String(chat.id).startsWith(prefix))
-    assert.equal(firstPageSyntheticChats.length, 110)
+    assert.equal(firstPageSyntheticChats.length, 100)
 
-    const secondPage = await readChatContacts({ limit: '110', offset: '110' })
+    const secondPage = await readChatContacts({ limit: '110', offset: '100' })
     const secondPageSyntheticChats = secondPage.filter(chat => String(chat.id).startsWith(prefix))
-    assert.equal(secondPageSyntheticChats.length, 10)
+    assert.equal(secondPageSyntheticChats.length, 20)
   } finally {
     await db.run('DELETE FROM whatsapp_api_messages WHERE contact_id LIKE ?', [`${prefix}%`]).catch(() => undefined)
     await db.run('DELETE FROM contacts WHERE id LIKE ?', [`${prefix}%`]).catch(() => undefined)

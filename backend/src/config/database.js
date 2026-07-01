@@ -66,7 +66,31 @@ const POSTGRES_CONNECT_RETRY_CODES = new Set([
   '57P03'
 ])
 
+const POSTGRES_TRANSIENT_CONNECTION_MESSAGES = [
+  'connection terminated unexpectedly',
+  'connection terminated',
+  'connection ended unexpectedly',
+  'connection closed unexpectedly',
+  'client has encountered a connection error',
+  'connection is not queryable',
+  'terminating connection'
+]
+
 const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms))
+
+function isTransientPostgresConnectionError(error) {
+  const code = String(error?.code || '').trim()
+  if (POSTGRES_CONNECT_RETRY_CODES.has(code)) return true
+
+  const message = String(error?.message || '').toLowerCase()
+  return POSTGRES_TRANSIENT_CONNECTION_MESSAGES.some(pattern => message.includes(pattern))
+}
+
+function describePostgresConnectionError(error) {
+  const code = String(error?.code || '').trim()
+  const message = String(error?.message || 'Error desconocido').trim()
+  return code ? `${code}: ${message}` : message
+}
 
 const WHATSAPP_API_SYSTEM_CUSTOM_FIELD_KEYS = new Set([
   'whatsapp_api_provider',
@@ -178,9 +202,15 @@ if (usePostgres) {
   const pool = new pg.default.Pool({
     connectionString: DATABASE_URL,
     options: '-c timezone=UTC',
+    keepAlive: true,
+    connectionTimeoutMillis: 5000,
     ssl: {
       rejectUnauthorized: false
     }
+  })
+
+  pool.on('error', (error) => {
+    logger.warn(`PostgreSQL cerró una conexión idle del pool: ${describePostgresConnectionError(error)}. Se descartará y se abrirá otra cuando haga falta.`)
   })
 
   async function connectWithRetry() {
@@ -191,12 +221,12 @@ if (usePostgres) {
       try {
         return await pool.connect()
       } catch (error) {
-        const canRetry = POSTGRES_CONNECT_RETRY_CODES.has(error.code)
+        const canRetry = isTransientPostgresConnectionError(error)
         if (!canRetry || attempt === maxAttempts) {
           throw error
         }
 
-        logger.warn(`PostgreSQL no aceptó conexión (${error.code || error.message}). Reintentando ${attempt}/${maxAttempts}...`)
+        logger.warn(`PostgreSQL no aceptó conexión (${describePostgresConnectionError(error)}). Reintentando ${attempt}/${maxAttempts}...`)
         await sleep(delayMs)
         delayMs = Math.min(Math.round(delayMs * 1.8), 5000)
       }
@@ -251,56 +281,84 @@ if (usePostgres) {
     }
   })
 
+  async function withPostgresClient(operation, { retryTransientRead = false, label = 'consulta' } = {}) {
+    const maxAttempts = retryTransientRead ? 2 : 1
+    let delayMs = 150
+
+    for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+      const client = await connectWithRetry()
+      let releaseError = null
+      try {
+        const result = await operation(createPostgresAdapter(client))
+        client.release()
+        return result
+      } catch (error) {
+        releaseError = isTransientPostgresConnectionError(error) ? error : null
+        try {
+          client.release(releaseError || undefined)
+        } catch (releaseFailure) {
+          logger.warn(`No se pudo liberar conexión PostgreSQL después de ${label}: ${describePostgresConnectionError(releaseFailure)}`)
+        }
+
+        if (retryTransientRead && releaseError && attempt < maxAttempts) {
+          logger.warn(`PostgreSQL cortó ${label} (${describePostgresConnectionError(error)}). Reintentando ${attempt + 1}/${maxAttempts}...`)
+          await sleep(delayMs)
+          delayMs = Math.min(Math.round(delayMs * 2), 1000)
+          continue
+        }
+
+        throw error
+      }
+    }
+  }
+
   db = {
     run: async (sql, params = []) => {
-      const client = await connectWithRetry()
-      try {
-        return await createPostgresAdapter(client).run(sql, params)
-      } finally {
-        client.release()
-      }
+      return withPostgresClient((clientDb) => clientDb.run(sql, params), {
+        label: 'escritura'
+      })
     },
 
     get: async (sql, params = []) => {
-      const client = await connectWithRetry()
-      try {
-        return await createPostgresAdapter(client).get(sql, params)
-      } finally {
-        client.release()
-      }
+      return withPostgresClient((clientDb) => clientDb.get(sql, params), {
+        retryTransientRead: true,
+        label: 'lectura get'
+      })
     },
 
     all: async (sql, params = []) => {
-      const client = await connectWithRetry()
-      try {
-        return await createPostgresAdapter(client).all(sql, params)
-      } finally {
-        client.release()
-      }
+      return withPostgresClient((clientDb) => clientDb.all(sql, params), {
+        retryTransientRead: true,
+        label: 'lectura all'
+      })
     },
 
     exec: async (sql) => {
-      const client = await connectWithRetry()
-      try {
-        await createPostgresAdapter(client).exec(sql)
-      } finally {
-        client.release()
-      }
+      return withPostgresClient((clientDb) => clientDb.exec(sql), {
+        label: 'exec'
+      })
     },
 
     transaction: async (callback) => {
-      const client = await pool.connect()
+      const client = await connectWithRetry()
       const txDb = createPostgresAdapter(client)
+      let releaseError = null
       try {
         await client.query('BEGIN')
         const result = await callback(txDb)
         await client.query('COMMIT')
         return result
       } catch (error) {
-        await client.query('ROLLBACK')
+        releaseError = isTransientPostgresConnectionError(error) ? error : null
+        try {
+          await client.query('ROLLBACK')
+        } catch (rollbackError) {
+          logger.warn(`No se pudo revertir transacción PostgreSQL después de un error: ${describePostgresConnectionError(rollbackError)}`)
+          releaseError = releaseError || (isTransientPostgresConnectionError(rollbackError) ? rollbackError : null)
+        }
         throw error
       } finally {
-        client.release()
+        client.release(releaseError || undefined)
       }
     }
   }
