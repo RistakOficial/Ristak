@@ -79,7 +79,7 @@ async function insertInboundMessageForOpenReplyWindow({
   ])
 }
 
-function createFakeBaileysRuntime({ connectedJid, sentMessages = [] } = {}) {
+function createFakeBaileysRuntime({ connectedJid, sentMessages = [], ackDelayMs = null } = {}) {
   let messageIndex = 0
 
   return {
@@ -139,10 +139,17 @@ function createFakeBaileysRuntime({ connectedJid, sentMessages = [] } = {}) {
           messageIndex += 1
           const id = `qr_fallback_msg_${messageIndex}`
           sentMessages.push({ id, jid, payload })
-          await emit('messages.update', [{
+          const ackPayload = [{
             key: { id, remoteJid: jid, fromMe: true },
             update: { status: 3 }
-          }])
+          }]
+          if (typeof ackDelayMs === 'number') {
+            setTimeout(() => {
+              emit('messages.update', ackPayload).catch(() => undefined)
+            }, ackDelayMs)
+          } else {
+            await emit('messages.update', ackPayload)
+          }
           return {
             key: { id, remoteJid: jid, fromMe: true },
             message: payload
@@ -610,7 +617,7 @@ test('envio API fallido inmediato responde y persiste el respaldo QR limpio', as
         phoneNumberId
       })
 
-      setBaileysRuntimeForTest(createFakeBaileysRuntime({ connectedJid, sentMessages }))
+      setBaileysRuntimeForTest(createFakeBaileysRuntime({ connectedJid, sentMessages, ackDelayMs: 0 }))
       setYCloudFetchForTest(async (url, options = {}) => {
         const parsed = new URL(String(url))
         const path = parsed.pathname.replace(/^\/v2/, '')

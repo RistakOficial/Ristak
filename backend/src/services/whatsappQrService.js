@@ -541,12 +541,14 @@ function pickBestQrAck(current, next) {
 }
 
 function shouldResolveQrAck(ack = {}) {
+  if (!ack) return false
   const status = cleanString(ack.status).toLowerCase()
   const code = getBaileysStatusCode(ack.statusCode)
   return status === 'failed' || code === QR_ACK_STATUS.ERROR || code >= QR_ACK_STATUS.DELIVERY_ACK
 }
 
 function isConfirmedQrSendAck(ack = {}) {
+  if (!ack) return false
   const status = cleanString(ack.status).toLowerCase()
   const code = getBaileysStatusCode(ack.statusCode)
   return ['delivered', 'read', 'played'].includes(status) || code >= QR_ACK_STATUS.DELIVERY_ACK

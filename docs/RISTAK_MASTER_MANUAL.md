@@ -301,6 +301,8 @@ respaldo QR usable o cuando el respaldo QR tambien falla.
 Si una ruta de envio responde exitosamente pero sin payload de mensaje, el
 frontend debe tratarla como aceptada y refrescar el historial, no convertir ese
 `null` en un error local del globo.
+Los ACK de Baileys pueden llegar despues de que `sendMessage` ya devolvio el id;
+ese lapso debe tratarse como pendiente/enviado, nunca como error de la API.
 
 El respaldo QR se resuelve por telefono, no solo por el id exacto del numero API.
 Si el numero oficial y la conexion QR quedaron en filas distintas de
