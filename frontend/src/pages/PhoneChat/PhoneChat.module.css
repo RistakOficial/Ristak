@@ -117,14 +117,14 @@
   inset: 0;
   z-index: 65;
   pointer-events: none;
+  /* Experiencia unificada con la barra de estado / isla: se quitó el glow
+     superior (at 50% -18%), el borde de 1px perimetral (inset 0 0 0 1px) y el
+     glow interno que rodeaba todo el marco. Solo queda profundidad suave en los
+     lados/abajo, sin ningún borde ni panel arriba. */
   background:
-    radial-gradient(120% 46% at 50% -18%, rgba(var(--phone-chat-accent-rgb), 0.14), transparent 48%),
     radial-gradient(120% 46% at 50% 118%, rgba(var(--phone-chat-accent-rgb), 0.12), transparent 50%),
     radial-gradient(42% 112% at -18% 50%, rgba(var(--phone-chat-accent-rgb), 0.1), transparent 54%),
     radial-gradient(42% 112% at 118% 50%, rgba(var(--phone-chat-accent-rgb), 0.1), transparent 54%);
-  box-shadow:
-    inset 0 0 0 1px rgba(var(--phone-chat-accent-rgb), 0.07),
-    inset 0 0 30px rgba(var(--phone-chat-accent-rgb), 0.08);
   opacity: 0.5;
   mix-blend-mode: screen;
   transition: opacity 220ms ease;
@@ -936,17 +936,37 @@
 
 .chatSelectionPanelTop {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto auto;
+  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-areas:
+    "count close"
+    "toggle toggle";
   align-items: center;
-  gap: 8px;
+  gap: 10px 8px;
 }
 
+/* El conteo manda como encabezado; el toggle "Seleccionar visibles" baja a su
+   propia fila para que su etiqueta larga nunca choque con el conteo ni la X. */
 .chatSelectionPanelTop strong {
+  grid-area: count;
   min-width: 0;
+  overflow: hidden;
   color: var(--phone-chat-text);
-  font-size: 14px;
-  font-weight: 780;
+  font-size: 15px;
+  font-weight: 800;
   white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.chatSelectionPanelTop .chatSelectionSelectAll {
+  grid-area: toggle;
+  justify-self: start;
+  max-width: 100%;
+  white-space: nowrap;
+}
+
+.chatSelectionPanelTop .chatSelectionClearButton {
+  grid-area: close;
+  justify-self: end;
 }
 
 .chatSelectionSelectAll,
