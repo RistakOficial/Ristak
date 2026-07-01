@@ -191,7 +191,8 @@ const CHAT_LIST_AUTO_LOAD_GAP_PX = 900
 const CHAT_LIST_PREFETCH_VIEWPORTS = 3
 // Precargamos un bloque razonable en segundo plano. El resto sigue por scroll, sin ráfagas enormes.
 const CHAT_LIST_BACKGROUND_LOAD_CAP = 250
-const CHAT_CONVERSATION_MESSAGE_LIMIT = 250
+const CHAT_CONVERSATION_MESSAGE_LIMIT = 50
+const CHAT_CONVERSATION_TOP_LOAD_GAP_PX = 96
 const OPTIMISTIC_MESSAGE_ID_PREFIXES = ['local-', 'template-', 'local-meta-', 'local-ghl-']
 const OPTIMISTIC_MESSAGE_MAX_AGE_MS = 10 * 60 * 1000
 const PAYMENT_BANK_CLABES_CONFIG_KEY = 'payment_bank_clabes'
@@ -2212,6 +2213,43 @@ function areJourneyEventsEquivalent(left: JourneyEvent[], right: JourneyEvent[])
   return left.every((event, index) => getJourneyEventSignature(event) === getJourneyEventSignature(right[index]))
 }
 
+function isConversationJourneyMessage(event: JourneyEvent) {
+  return event.type === 'whatsapp_message' || event.type === 'meta_message' || event.type === 'email_message'
+}
+
+function mergeJourneyEvents(...eventGroups: JourneyEvent[][]) {
+  const merged = new Map<string, JourneyEvent>()
+
+  eventGroups.flat().forEach((event) => {
+    const key = getJourneyEventSignature(event)
+    if (!key) return
+    merged.set(key, event)
+  })
+
+  return Array.from(merged.values())
+    .sort((left, right) => getMessageTimeValue(left.date) - getMessageTimeValue(right.date))
+}
+
+function getOldestConversationMessageDate(journey: JourneyEvent[]) {
+  let oldestDate = ''
+  let oldestTime = Number.POSITIVE_INFINITY
+
+  journey.forEach((event) => {
+    if (!isConversationJourneyMessage(event) || !event.date) return
+    const time = getMessageTimeValue(event.date)
+    if (!Number.isFinite(time) || time <= 0) {
+      if (!oldestDate) oldestDate = event.date
+      return
+    }
+    if (time < oldestTime) {
+      oldestTime = time
+      oldestDate = event.date
+    }
+  })
+
+  return oldestDate
+}
+
 function getMediaPathExtension(value = '') {
   const clean = String(value || '').trim().split('?')[0].split('#')[0].toLowerCase()
   const leaf = clean.split('/').pop() || clean
@@ -2551,6 +2589,34 @@ function getScheduledChatMessageBubble(message: ScheduledChatMessage): ChatMessa
     businessPhoneNumberId: message.businessPhoneNumberId || '',
     transport: message.transport || (message.provider === 'highlevel' ? message.channel || 'ghl_whatsapp' : 'api')
   }
+}
+
+function mergeChatMessagesById(messages: ChatMessage[]) {
+  const merged = new Map<string, ChatMessage>()
+
+  messages.forEach((message) => {
+    if (!message.id) return
+    merged.set(message.id, message)
+  })
+
+  return Array.from(merged.values())
+    .sort((left, right) => getMessageTimeValue(left.date) - getMessageTimeValue(right.date))
+}
+
+function buildConversationMessages(journey: JourneyEvent[], scheduledMessages: ScheduledChatMessage[] = []) {
+  const journeyMessages = journey
+    .map(getJourneyMessage)
+    .filter((message): message is ChatMessage => Boolean(message))
+  const scheduledMessageBubbles = scheduledMessages
+    .map(getScheduledChatMessageBubble)
+    .filter((message): message is ChatMessage => Boolean(message))
+
+  return mergeChatMessagesById([...journeyMessages, ...scheduledMessageBubbles])
+}
+
+function mergeConversationMessagesWithCurrent(loadedMessages: ChatMessage[], currentMessages: ChatMessage[]) {
+  const scheduledMessages = currentMessages.filter(isMessageScheduled)
+  return mergeMessagesWithOptimistic(mergeChatMessagesById([...loadedMessages, ...scheduledMessages]), currentMessages)
 }
 
 function getMessageTypeLabel(type = '', fallback = 'Mensaje de WhatsApp') {
@@ -3918,6 +3984,7 @@ export const PhoneChat: React.FC = () => {
   const [contactJourney, setContactJourney] = useState<JourneyEvent[]>([])
   const [messagesLoading, setMessagesLoading] = useState(false)
   const [messagesRefreshing, setMessagesRefreshing] = useState(false)
+  const [olderMessagesLoading, setOlderMessagesLoading] = useState(false)
   const [conversationSearchOpen, setConversationSearchOpen] = useState(false)
   const [conversationSearchQuery, setConversationSearchQuery] = useState('')
   const [conversationSearchIndex, setConversationSearchIndex] = useState(0)
@@ -4053,10 +4120,14 @@ export const PhoneChat: React.FC = () => {
   const composerChannelPickerRef = useRef<HTMLDivElement | null>(null)
   const tagSearchInputRef = useRef<HTMLInputElement | null>(null)
   const messageTextRef = useRef('')
+  const contactJourneyRef = useRef<JourneyEvent[]>([])
   const messagesPaneNearBottomRef = useRef(true)
   const activeContactIdRef = useRef<string | null>(null)
   const conversationOpenRef = useRef(false)
   const conversationLoadGenerationRef = useRef(0)
+  const olderMessagesLoadingRef = useRef(false)
+  const conversationHasOlderMessagesRef = useRef(false)
+  const conversationHistoryExhaustedContactIdRef = useRef<string | null>(null)
   const agentLoadGenerationRef = useRef(0)
   const conversationInitialBottomLockRef = useRef({
     contactId: null as string | null,
@@ -4327,13 +4398,78 @@ export const PhoneChat: React.FC = () => {
     return Boolean(contactId && lock.contactId === contactId && Date.now() < lock.expiresAt)
   }, [])
 
+  const loadOlderConversationMessages = useCallback(async (contactId: string) => {
+    if (!contactId || contactId === AI_AGENT_CHAT_ID) return
+    if (olderMessagesLoadingRef.current || !conversationHasOlderMessagesRef.current) return
+
+    const beforeMessageDate = getOldestConversationMessageDate(contactJourneyRef.current)
+    if (!beforeMessageDate) {
+      conversationHasOlderMessagesRef.current = false
+      conversationHistoryExhaustedContactIdRef.current = contactId
+      return
+    }
+
+    const pane = messagesPaneRef.current
+    const previousScrollHeight = pane?.scrollHeight || 0
+    const previousScrollTop = pane?.scrollTop || 0
+
+    messagesPaneNearBottomRef.current = false
+    olderMessagesLoadingRef.current = true
+    setOlderMessagesLoading(true)
+
+    try {
+      const olderJourney = await contactsService.getContactJourney(contactId, {
+        includeBusinessMessages: true,
+        refreshExternalStatuses: false,
+        chatMessagesOnly: true,
+        messageLimit: CHAT_CONVERSATION_MESSAGE_LIMIT,
+        beforeMessageDate
+      })
+      if (activeContactIdRef.current !== contactId) return
+
+      const receivedFullPage = olderJourney.filter(isConversationJourneyMessage).length >= CHAT_CONVERSATION_MESSAGE_LIMIT
+      conversationHasOlderMessagesRef.current = receivedFullPage
+      if (!receivedFullPage) {
+        conversationHistoryExhaustedContactIdRef.current = contactId
+      }
+      if (olderJourney.length === 0) return
+
+      const nextJourney = mergeJourneyEvents(olderJourney, contactJourneyRef.current)
+      contactJourneyRef.current = nextJourney
+      setContactJourney((currentJourney) => (
+        areJourneyEventsEquivalent(currentJourney, nextJourney) ? currentJourney : nextJourney
+      ))
+
+      const nextMessages = buildConversationMessages(nextJourney)
+      setMessages((currentMessages) => {
+        const mergedMessages = mergeConversationMessagesWithCurrent(nextMessages, currentMessages)
+        return areMessagesEquivalent(currentMessages, mergedMessages) ? currentMessages : mergedMessages
+      })
+
+      window.requestAnimationFrame(() => {
+        const currentPane = messagesPaneRef.current
+        if (!currentPane || previousScrollHeight <= 0) return
+        currentPane.scrollTop = Math.max(0, currentPane.scrollHeight - previousScrollHeight + previousScrollTop)
+      })
+    } finally {
+      olderMessagesLoadingRef.current = false
+      setOlderMessagesLoading(false)
+    }
+  }, [])
+
   const handleMessagesPaneScroll = useCallback((event: React.UIEvent<HTMLDivElement>) => {
     const bottomGap = event.currentTarget.scrollHeight - event.currentTarget.scrollTop - event.currentTarget.clientHeight
     messagesPaneNearBottomRef.current = isConversationBottomLockActive(activeContactIdRef.current) || bottomGap < 96
     if (event.currentTarget.scrollLeft !== 0) {
       event.currentTarget.scrollLeft = 0
     }
-  }, [isConversationBottomLockActive])
+    if (event.currentTarget.scrollTop <= CHAT_CONVERSATION_TOP_LOAD_GAP_PX) {
+      const contactId = activeContactIdRef.current
+      if (conversationOpenRef.current && contactId) {
+        void loadOlderConversationMessages(contactId)
+      }
+    }
+  }, [isConversationBottomLockActive, loadOlderConversationMessages])
   const markConversationScrollSettling = useCallback((duration = 620) => {
     if (conversationScrollSettlingTimeoutRef.current !== null) {
       window.clearTimeout(conversationScrollSettlingTimeoutRef.current)
@@ -4403,6 +4539,11 @@ export const PhoneChat: React.FC = () => {
     [activeContactId, aiAgentConversationOpen, chats]
   )
   const conversationVisible = conversationOpen && (aiAgentConversationOpen || Boolean(activeContact))
+
+  useEffect(() => {
+    contactJourneyRef.current = contactJourney
+  }, [contactJourney])
+
   const messageInfoMessage = useMemo(
     () => messageInfoMessageId ? messages.find((message) => message.id === messageInfoMessageId) || null : null,
     [messageInfoMessageId, messages]
@@ -5870,6 +6011,12 @@ export const PhoneChat: React.FC = () => {
     const silentRefresh = options.silent === true
     const showCacheRefresh = options.showCacheRefresh === true && !silentRefresh
     const useCache = options.useCache !== false && !silentRefresh
+    if (!silentRefresh) {
+      conversationHistoryExhaustedContactIdRef.current = null
+      olderMessagesLoadingRef.current = false
+      conversationHasOlderMessagesRef.current = false
+      setOlderMessagesLoading(false)
+    }
     const cacheKey = getPhoneDailyCacheKey('phone-chat', 'conversation', locationId || 'default', contactId)
     const cachedConversation = useCache ? readPhoneDailyCache<{ journey: JourneyEvent[]; messages: ChatMessage[]; agentCompletions?: ConversationalAgentCompletionEvent[] }>(cacheKey, timezone) : null // (MOB-007) bucket por día del negocio
     const showedCachedConversation = Boolean(cachedConversation)
@@ -5878,6 +6025,7 @@ export const PhoneChat: React.FC = () => {
       const cachedJourney = Array.isArray(cachedConversation.data.journey) ? cachedConversation.data.journey : []
       const cachedMessages = Array.isArray(cachedConversation.data.messages) ? cachedConversation.data.messages : []
       const cachedAgentCompletions = Array.isArray(cachedConversation.data.agentCompletions) ? cachedConversation.data.agentCompletions : []
+      contactJourneyRef.current = cachedJourney
       setContactJourney((currentJourney) => (
         areJourneyEventsEquivalent(currentJourney, cachedJourney) ? currentJourney : cachedJourney
       ))
@@ -5888,12 +6036,18 @@ export const PhoneChat: React.FC = () => {
         })()
       ))
       setAgentCompletionEvents(cachedAgentCompletions)
+      conversationHasOlderMessagesRef.current = cachedJourney.filter(isConversationJourneyMessage).length >= CHAT_CONVERSATION_MESSAGE_LIMIT &&
+        conversationHistoryExhaustedContactIdRef.current !== contactId
       setMessagesLoading(false)
       setMessagesRefreshing(showCacheRefresh)
     } else if (!silentRefresh) {
       setMessages([])
       setAgentCompletionEvents([])
       setContactJourney([])
+      contactJourneyRef.current = []
+      olderMessagesLoadingRef.current = false
+      conversationHasOlderMessagesRef.current = false
+      setOlderMessagesLoading(false)
       setMessagesLoading(true)
       setMessagesRefreshing(false)
     }
@@ -5910,26 +6064,26 @@ export const PhoneChat: React.FC = () => {
         conversationalAgentService.listCompletionEvents({ contactId, limit: 20 }).catch(() => [])
       ])
       if (!isCurrentConversationLoad()) return
+      const receivedFullPage = journey.filter(isConversationJourneyMessage).length >= CHAT_CONVERSATION_MESSAGE_LIMIT
+      conversationHasOlderMessagesRef.current = receivedFullPage &&
+        conversationHistoryExhaustedContactIdRef.current !== contactId
+      const nextJourney = silentRefresh
+        ? mergeJourneyEvents(contactJourneyRef.current, journey)
+        : journey
+      contactJourneyRef.current = nextJourney
       setContactJourney((currentJourney) => (
-        areJourneyEventsEquivalent(currentJourney, journey) ? currentJourney : journey
+        areJourneyEventsEquivalent(currentJourney, nextJourney) ? currentJourney : nextJourney
       ))
       setAgentCompletionEvents(agentCompletions)
-      const journeyMessages = journey
-        .map(getJourneyMessage)
-        .filter((message): message is ChatMessage => Boolean(message))
-      const scheduledMessageBubbles = scheduledMessages
-        .map(getScheduledChatMessageBubble)
-        .filter((message): message is ChatMessage => Boolean(message))
-      const nextMessages = [...journeyMessages, ...scheduledMessageBubbles]
-        .sort((left, right) => getMessageTimeValue(left.date) - getMessageTimeValue(right.date))
+      const nextMessages = buildConversationMessages(nextJourney, scheduledMessages)
 
       setMessages((currentMessages) => (
         (() => {
-          const mergedMessages = mergeMessagesWithOptimistic(nextMessages, currentMessages)
+          const mergedMessages = mergeConversationMessagesWithCurrent(nextMessages, currentMessages)
           return areMessagesEquivalent(currentMessages, mergedMessages) ? currentMessages : mergedMessages
         })()
       ))
-      writePhoneDailyCache(cacheKey, { journey, messages: nextMessages, agentCompletions }, { maxEntryChars: 360_000 }, timezone) // (MOB-007)
+      writePhoneDailyCache(cacheKey, { journey: nextJourney, messages: nextMessages, agentCompletions }, { maxEntryChars: 360_000 }, timezone) // (MOB-007)
       persistChatsRead([contactId], { silent: true })
       setChats((currentChats) => currentChats.map((contact) => (
         contact.id === contactId ? { ...contact, unreadCount: 0 } : contact
@@ -5939,6 +6093,7 @@ export const PhoneChat: React.FC = () => {
         setMessages([])
         setAgentCompletionEvents([])
         setContactJourney([])
+        contactJourneyRef.current = []
       }
     } finally {
       if (isCurrentConversationLoad()) {
@@ -6634,6 +6789,11 @@ export const PhoneChat: React.FC = () => {
       setMessages([])
       setAgentCompletionEvents([])
       setContactJourney([])
+      contactJourneyRef.current = []
+      olderMessagesLoadingRef.current = false
+      conversationHasOlderMessagesRef.current = false
+      conversationHistoryExhaustedContactIdRef.current = null
+      setOlderMessagesLoading(false)
       return
     }
     loadConversation(activeContact.id)
@@ -6733,6 +6893,11 @@ export const PhoneChat: React.FC = () => {
     setContactInfoRecordDetail(null)
     setMessages([])
     setContactJourney([])
+    contactJourneyRef.current = []
+    olderMessagesLoadingRef.current = false
+    conversationHasOlderMessagesRef.current = false
+    conversationHistoryExhaustedContactIdRef.current = null
+    setOlderMessagesLoading(false)
     setDraftAttachments([])
     setVoiceDraft(null)
   }, [chatsLoading, conversationOpen, conversationVisible])
@@ -12438,6 +12603,12 @@ export const PhoneChat: React.FC = () => {
 
     return (
       <>
+        {olderMessagesLoading && (
+          <div className={styles.cacheRefreshPill} role="status">
+            <Loader2 size={14} className={styles.spinIcon} />
+            Cargando mensajes anteriores
+          </div>
+        )}
         {messagesRefreshing && (
           <div className={styles.cacheRefreshPill} role="status">
             <Loader2 size={14} className={styles.spinIcon} />

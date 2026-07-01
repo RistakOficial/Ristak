@@ -30,6 +30,7 @@ interface ContactJourneyOptions {
   refreshExternalStatuses?: boolean
   messageLimit?: number
   chatMessagesOnly?: boolean
+  beforeMessageDate?: string
 }
 
 interface ContactDetailsOptions {
@@ -386,6 +387,7 @@ export const contactsService = {
       if (options.messageLimit && Number.isFinite(options.messageLimit) && options.messageLimit > 0) {
         params.messageLimit = String(Math.round(options.messageLimit))
       }
+      if (options.beforeMessageDate) params.beforeMessageDate = options.beforeMessageDate
 
       const data = await apiClient.get<JourneyEvent[]>(`/contacts/${id}/journey`, {
         params: Object.keys(params).length > 0 ? params : undefined

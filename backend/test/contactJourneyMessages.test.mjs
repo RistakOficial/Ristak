@@ -453,6 +453,84 @@ test('contact journey messageLimit returns the most recent chat messages in chro
   }
 })
 
+test('chat-only journey applies messageLimit globally and pages older messages with beforeMessageDate', async () => {
+  const id = randomUUID()
+  const contactId = `journey_global_page_${id}`
+  const phone = `+52993${Date.now().toString().slice(-7)}`
+
+  await cleanup(contactId, phone)
+
+  try {
+    await insertRow('contacts', {
+      id: contactId,
+      phone,
+      full_name: 'Cliente con historial mezclado',
+      first_name: 'Cliente',
+      source: 'manual',
+      created_at: '2026-06-18T09:00:00.000Z',
+      updated_at: '2026-06-18T09:00:00.000Z'
+    })
+
+    for (let index = 0; index < 12; index += 1) {
+      const timestamp = `2026-06-18T10:${String(index).padStart(2, '0')}:00.000Z`
+      if (index % 2 === 0) {
+        await insertRow('whatsapp_api_messages', {
+          id: `api_global_page_${id}_${index}`,
+          contact_id: contactId,
+          phone,
+          from_phone: phone,
+          to_phone: '+526561000000',
+          business_phone: '+526561000000',
+          transport: 'api',
+          direction: 'inbound',
+          message_type: 'text',
+          message_text: `Global ${index}`,
+          message_timestamp: timestamp,
+          created_at: timestamp
+        })
+      } else {
+        await insertRow('meta_social_messages', {
+          id: `meta_global_page_${id}_${index}`,
+          platform: 'instagram',
+          meta_message_id: `meta_global_page_message_${id}_${index}`,
+          contact_id: contactId,
+          sender_id: 'ig_customer',
+          recipient_id: 'ig_business',
+          direction: 'inbound',
+          status: 'received',
+          message_type: 'text',
+          message_text: `Global ${index}`,
+          message_timestamp: timestamp,
+          created_at: timestamp
+        })
+      }
+    }
+
+    const firstPage = await readJourney(contactId, {
+      includeBusinessMessages: 'true',
+      chatMessagesOnly: 'true',
+      messageLimit: '5'
+    })
+    assert.deepEqual(
+      firstPage.map(event => event.data.message_text),
+      ['Global 7', 'Global 8', 'Global 9', 'Global 10', 'Global 11']
+    )
+
+    const olderPage = await readJourney(contactId, {
+      includeBusinessMessages: 'true',
+      chatMessagesOnly: 'true',
+      messageLimit: '5',
+      beforeMessageDate: firstPage[0].date
+    })
+    assert.deepEqual(
+      olderPage.map(event => event.data.message_text),
+      ['Global 2', 'Global 3', 'Global 4', 'Global 5', 'Global 6']
+    )
+  } finally {
+    await cleanup(contactId, phone)
+  }
+})
+
 test('chat and journey include WhatsApp messages from secondary contact phones', async () => {
   const id = randomUUID()
   const suffix = Date.now().toString().slice(-7)

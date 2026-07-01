@@ -270,6 +270,13 @@ Ristak maneja varias superficies de comunicacion:
 La mensajeria usa servicios especializados para plantillas, media, atribucion,
 sincronizacion de conversaciones, read states, presencia y eventos.
 
+La lista de chats se carga por lotes de 50 conversaciones. Al abrir una
+conversacion, el frontend pide solo los ultimos 50 mensajes combinados del hilo
+(`chatMessagesOnly` + `messageLimit`) y conserva el historial ya visible durante
+refresh silenciosos. Si el usuario sube al inicio de la conversacion, la UI pide
+otro bloque anterior usando `beforeMessageDate`; no debe precargar el historial
+completo de todas las conversaciones de la bandeja.
+
 Cuando un envio saliente intenta WhatsApp API/YCloud y la API lo rechaza por una
 restriccion recuperable o por la ventana de 24 horas, `whatsappApiService` debe
 usar WhatsApp QR/Baileys como respaldo si el numero tiene QR habilitado y

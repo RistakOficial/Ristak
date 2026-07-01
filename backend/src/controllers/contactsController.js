@@ -268,6 +268,20 @@ const parseJourneyMessageLimit = (value) => {
   return Math.min(Math.max(Math.round(limit), 1), JOURNEY_MESSAGE_MAX_LIMIT)
 }
 
+const parseJourneyMessageBefore = (value) => {
+  const raw = cleanString(value)
+  if (!raw) return null
+  return parseSortableTimestamp(raw) > 0 ? raw : null
+}
+
+const appendOptionalBeforeParam = (params, beforeDate) => (
+  beforeDate ? [...params, beforeDate] : params
+)
+
+const optionalBeforeClause = (expression, beforeDate) => (
+  beforeDate ? `AND ${expression} < ?` : ''
+)
+
 const appendOptionalLimitParam = (params, limit) => (
   limit ? [...params, limit] : params
 )
@@ -4588,6 +4602,9 @@ export const getContactJourney = async (req, res) => {
     const journeyMessageLimit = parseJourneyMessageLimit(
       req.query?.messageLimit ?? req.query?.messagesLimit ?? req.query?.conversationMessageLimit
     )
+    const journeyMessageBefore = parseJourneyMessageBefore(
+      req.query?.beforeMessageDate ?? req.query?.messageBeforeDate ?? req.query?.beforeMessage
+    )
     const outboundMessageDirectionPlaceholders = OUTBOUND_JOURNEY_MESSAGE_DIRECTIONS.map(() => '?').join(', ')
 
     // (SEC-005 / ACL-002) No exponer el journey de un contacto oculto: si cae bajo un
@@ -4752,11 +4769,15 @@ export const getContactJourney = async (req, res) => {
          SELECT *
          FROM whatsapp_attribution
          WHERE contact_id = ?
+         ${optionalBeforeClause('created_at', journeyMessageBefore)}
          ORDER BY ${timestampSortExpression('created_at')} DESC, id DESC
          ${optionalLimitClause(journeyMessageLimit)}
        ) recent_whatsapp_attribution
        ORDER BY created_at ASC, id ASC`,
-      appendOptionalLimitParam([id], journeyMessageLimit)
+      appendOptionalLimitParam(
+        appendOptionalBeforeParam([id], journeyMessageBefore),
+        journeyMessageLimit
+      )
     )
 
     whatsappMessages.forEach(msg => {
@@ -4840,12 +4861,16 @@ export const getContactJourney = async (req, res) => {
            ? = 1
            OR LOWER(COALESCE(msg.direction, 'inbound')) NOT IN (${outboundMessageDirectionPlaceholders})
          )
+         ${optionalBeforeClause('COALESCE(msg.message_timestamp, msg.created_at)', journeyMessageBefore)}
        ORDER BY COALESCE(msg.message_timestamp, msg.created_at) DESC, msg.created_at DESC, msg.id DESC
        ${optionalLimitClause(journeyMessageLimit)}
        ) recent_whatsapp_api_messages
        ORDER BY journey_message_date ASC, created_at ASC, whatsapp_api_message_id ASC`,
       appendOptionalLimitParam(
-        [...whatsappApiMessageContactMatch.params, includeBusinessMessages ? 1 : 0, ...OUTBOUND_JOURNEY_MESSAGE_DIRECTIONS],
+        appendOptionalBeforeParam(
+          [...whatsappApiMessageContactMatch.params, includeBusinessMessages ? 1 : 0, ...OUTBOUND_JOURNEY_MESSAGE_DIRECTIONS],
+          journeyMessageBefore
+        ),
         journeyMessageLimit
       )
     )
@@ -4943,12 +4968,16 @@ export const getContactJourney = async (req, res) => {
            ? = 1
            OR LOWER(COALESCE(msg.direction, 'inbound')) NOT IN (${outboundMessageDirectionPlaceholders})
          )
+         ${optionalBeforeClause('COALESCE(msg.message_timestamp, msg.created_at)', journeyMessageBefore)}
        ORDER BY COALESCE(msg.message_timestamp, msg.created_at) DESC, msg.created_at DESC, msg.id DESC
        ${optionalLimitClause(journeyMessageLimit)}
        ) recent_meta_social_messages
        ORDER BY journey_message_date ASC, created_at ASC, meta_social_message_id ASC`,
       appendOptionalLimitParam(
-        [id, includeBusinessMessages ? 1 : 0, ...OUTBOUND_JOURNEY_MESSAGE_DIRECTIONS],
+        appendOptionalBeforeParam(
+          [id, includeBusinessMessages ? 1 : 0, ...OUTBOUND_JOURNEY_MESSAGE_DIRECTIONS],
+          journeyMessageBefore
+        ),
         journeyMessageLimit
       )
     )
@@ -5018,12 +5047,16 @@ export const getContactJourney = async (req, res) => {
 	           ? = 1
 	           OR LOWER(COALESCE(direction, 'outbound')) NOT IN (${outboundMessageDirectionPlaceholders})
 	         )
+	         ${optionalBeforeClause('COALESCE(message_timestamp, created_at)', journeyMessageBefore)}
 	       ORDER BY COALESCE(message_timestamp, created_at) DESC, created_at DESC, id DESC
 	       ${optionalLimitClause(journeyMessageLimit)}
 	       ) recent_email_messages
 	       ORDER BY journey_message_date ASC, created_at ASC, email_message_id ASC`,
 	      appendOptionalLimitParam(
-	        [id, includeBusinessMessages ? 1 : 0, ...OUTBOUND_JOURNEY_MESSAGE_DIRECTIONS],
+	        appendOptionalBeforeParam(
+	          [id, includeBusinessMessages ? 1 : 0, ...OUTBOUND_JOURNEY_MESSAGE_DIRECTIONS],
+	          journeyMessageBefore
+	        ),
 	        journeyMessageLimit
 	      )
 	    )
@@ -5055,11 +5088,12 @@ export const getContactJourney = async (req, res) => {
 
     if (chatMessagesOnly) {
       journey.sort((a, b) => parseSortableTimestamp(a.date) - parseSortableTimestamp(b.date))
-      logger.info(`Mensajes de chat obtenidos para contacto ${id}: ${journey.length} eventos`)
+      const limitedJourney = journeyMessageLimit ? journey.slice(-journeyMessageLimit) : journey
+      logger.info(`Mensajes de chat obtenidos para contacto ${id}: ${limitedJourney.length} eventos`)
 
       return res.json({
         success: true,
-        data: journey
+        data: limitedJourney
       })
     }
 
