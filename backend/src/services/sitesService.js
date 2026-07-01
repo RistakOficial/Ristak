@@ -26367,6 +26367,10 @@ export async function initSitePaymentCheckout(req, body = {}) {
   const baseUrl = getRequestBaseUrl(req)
   const expectedBlockId = cleanString(context.blockId)
 
+  // (SEC) Rate-limit del checkout público: evita enumeración de links y creación masiva
+  // de registros de pago desde una IP. Reusa el limitador del submit con namespace propio.
+  enforcePublicSubmitRateLimit(req, `checkout:${site.id}:${expectedBlockId}`)
+
   // Reusar el link que el runtime tenga en sessionStorage si sigue vigente y es del mismo
   // bloque; si ya está pagado, devolver descriptor pagado para que corra la acción de éxito.
   let publicPaymentId = ''
