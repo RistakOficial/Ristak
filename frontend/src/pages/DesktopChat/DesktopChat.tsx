@@ -37,7 +37,6 @@ import {
 } from 'lucide-react'
 import { FaFacebook, FaFacebookMessenger, FaInstagram, FaWhatsapp } from 'react-icons/fa'
 import { useAppConfig } from '@/hooks'
-import { useLocation } from 'react-router-dom'
 import {
   AppointmentModal,
   Button,
@@ -2122,13 +2121,10 @@ function toChatContact(contact: Contact): DesktopChatContact {
 }
 
 export const DesktopChat: React.FC = () => {
-  const location = useLocation()
-  const locationTransition = (location.state as { chatViewTransition?: 'to-desktop' | 'to-simple' } | null)?.chatViewTransition
   const { accessToken, locationId, user } = useAuth()
   const { labels } = useLabels()
   const { showToast } = useNotification()
   const { timezone, formatLocalDateTime } = useTimezone()
-  const messagesEndRef = useRef<HTMLDivElement | null>(null)
   const messagePaneRef = useRef<HTMLDivElement | null>(null)
   const chatsRequestRef = useRef<AbortController | null>(null)
   const chatListRef = useRef<HTMLDivElement | null>(null)
@@ -2158,8 +2154,14 @@ export const DesktopChat: React.FC = () => {
   const activeContactIdRef = useRef('')
   const contactJourneyRef = useRef<JourneyEvent[]>([])
   const messagePanePinnedToBottomRef = useRef(true)
+  const conversationHistoryPrependRef = useRef(false)
   const scrollContactIdRef = useRef('')
   const openingConversationScrollContactIdRef = useRef('')
+  const previousMessagesScrollRef = useRef({
+    activeContactId: '',
+    count: 0,
+    lastMessageId: ''
+  })
   const conversationLoadGenerationRef = useRef(0)
   const olderMessagesLoadingRef = useRef(false)
   const conversationHasOlderMessagesRef = useRef(false)
@@ -2170,13 +2172,6 @@ export const DesktopChat: React.FC = () => {
   const archivedChatIdSetRef = useRef<Set<string>>(new Set())
   const removedChatStatesRef = useRef<RemovedChatState[]>([])
   const agentPriorityChatIdSetRef = useRef<Set<string>>(new Set())
-  const pageTransitionClass =
-    locationTransition === 'to-desktop'
-      ? styles.desktopChatTransitionFromSimple
-      : locationTransition === 'to-simple'
-        ? styles.desktopChatTransitionFromDesktop
-        : ''
-
   const [chats, setChats] = useState<DesktopChatContact[]>(() => initialChatCache.chats)
   const [chatsLoading, setChatsLoading] = useState(() => initialChatCache.chats.length === 0)
   const [isLoadingMoreChats, setIsLoadingMoreChats] = useState(false)
@@ -3235,8 +3230,10 @@ export const DesktopChat: React.FC = () => {
     const previousScrollTop = pane?.scrollTop || 0
 
     messagePanePinnedToBottomRef.current = false
+    conversationHistoryPrependRef.current = true
     olderMessagesLoadingRef.current = true
     setOlderMessagesLoading(true)
+    let restoreScheduled = false
 
     try {
       const olderJourney = await contactsService.getContactJourney(contactId, {
@@ -3267,14 +3264,32 @@ export const DesktopChat: React.FC = () => {
         return areDesktopMessagesEquivalent(current, mergedMessages) ? current : mergedMessages
       })
 
+      restoreScheduled = true
       window.requestAnimationFrame(() => {
         const currentPane = messagePaneRef.current
-        if (!currentPane || previousScrollHeight <= 0) return
-        currentPane.scrollTop = Math.max(0, currentPane.scrollHeight - previousScrollHeight + previousScrollTop)
+        if (!currentPane || activeContactIdRef.current !== contactId || previousScrollHeight <= 0) {
+          conversationHistoryPrependRef.current = false
+          return
+        }
+        const restoreScrollTop = () => {
+          currentPane.scrollTop = Math.max(0, currentPane.scrollHeight - previousScrollHeight + previousScrollTop)
+          currentPane.scrollLeft = 0
+          messagePanePinnedToBottomRef.current = false
+        }
+        restoreScrollTop()
+        window.requestAnimationFrame(() => {
+          if (activeContactIdRef.current === contactId) {
+            restoreScrollTop()
+          }
+          conversationHistoryPrependRef.current = false
+        })
       })
     } finally {
       olderMessagesLoadingRef.current = false
       setOlderMessagesLoading(false)
+      if (!restoreScheduled) {
+        conversationHistoryPrependRef.current = false
+      }
     }
   }, [])
 
@@ -3564,17 +3579,10 @@ export const DesktopChat: React.FC = () => {
     }
   }, [loadOlderConversationMessages])
 
-  const scrollConversationToBottom = useCallback((behavior: ScrollBehavior = 'auto') => {
+  const scrollConversationToBottom = useCallback(() => {
+    if (conversationHistoryPrependRef.current) return
     const pane = messagePaneRef.current
     if (!pane) return
-
-    if (behavior === 'smooth') {
-      window.requestAnimationFrame(() => {
-        messagesEndRef.current?.scrollIntoView({ block: 'end', behavior })
-        messagePanePinnedToBottomRef.current = true
-      })
-      return
-    }
 
     const pinToBottom = () => {
       pane.scrollTop = pane.scrollHeight
@@ -3587,6 +3595,7 @@ export const DesktopChat: React.FC = () => {
 
   useLayoutEffect(() => {
     if (!activeContactId) return
+    const previous = previousMessagesScrollRef.current
     const contactChanged = scrollContactIdRef.current !== activeContactId
     const openingConversation = openingConversationScrollContactIdRef.current === activeContactId
     if (contactChanged) {
@@ -3595,14 +3604,26 @@ export const DesktopChat: React.FC = () => {
     }
 
     const lastMessage = messages[messages.length - 1]
+    const lastMessageId = lastMessage?.id || ''
+    const messageWasAppended = messages.length > previous.count && lastMessageId !== previous.lastMessageId
     const shouldScroll =
       openingConversation ||
       contactChanged ||
       messagePanePinnedToBottomRef.current ||
-      lastMessage?.direction === 'outbound'
+      (messageWasAppended && lastMessage?.direction === 'outbound')
+
+    previousMessagesScrollRef.current = {
+      activeContactId,
+      count: messages.length,
+      lastMessageId
+    }
+
+    if (conversationHistoryPrependRef.current) {
+      return
+    }
 
     if (shouldScroll) {
-      scrollConversationToBottom(openingConversation || contactChanged ? 'auto' : 'smooth')
+      scrollConversationToBottom()
     }
     if (openingConversation && !messagesLoading && !messagesRefreshing && !contactInfoLoading) {
       openingConversationScrollContactIdRef.current = ''
@@ -6021,7 +6042,7 @@ export const DesktopChat: React.FC = () => {
 
   return (
     <div
-      className={`${styles.page} ${agentAssignedViewOpen ? styles.pageAgentInbox : ''} ${pageTransitionClass}`}
+      className={`${styles.page} ${agentAssignedViewOpen ? styles.pageAgentInbox : ''}`}
       data-ristak-page
       data-fullbleed="true"
       data-desktop-chat-agent-view={agentAssignedViewOpen ? 'true' : undefined}
@@ -6622,7 +6643,6 @@ export const DesktopChat: React.FC = () => {
                     })}
                   </div>
                 ))}
-                <div ref={messagesEndRef} />
               </ChatMessageSurface>
 
 	              <form

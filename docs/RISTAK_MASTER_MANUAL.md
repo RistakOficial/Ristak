@@ -275,7 +275,9 @@ conversacion, el frontend pide solo los ultimos 50 mensajes combinados del hilo
 (`chatMessagesOnly` + `messageLimit`) y conserva el historial ya visible durante
 refresh silenciosos. Si el usuario sube al inicio de la conversacion, la UI pide
 otro bloque anterior usando `beforeMessageDate`; no debe precargar el historial
-completo de todas las conversaciones de la bandeja.
+completo de todas las conversaciones de la bandeja. Al insertar mensajes antiguos
+arriba del hilo, la UI debe conservar la posicion visible del usuario y nunca
+forzar scroll al ultimo mensaje.
 
 Antes de mandar mensajes libres por WhatsApp API/YCloud, `whatsappApiService`
 debe revisar la ultima respuesta entrante del cliente para ese contacto y numero

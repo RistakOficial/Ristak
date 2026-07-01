@@ -52,36 +52,6 @@
   -webkit-text-size-adjust: 100%;
 }
 
-.phoneChatTransitionFromDesktop {
-  animation: chatTransitionFromDesktop 220ms cubic-bezier(0.22, 1, 0.36, 1) both;
-}
-
-.phoneChatTransitionFromSimple {
-  animation: chatTransitionFromSimple 220ms cubic-bezier(0.22, 1, 0.36, 1) both;
-}
-
-@keyframes chatTransitionFromDesktop {
-  from {
-    transform: translate3d(12px, 0, 0);
-    opacity: 0.98;
-  }
-  to {
-    transform: translate3d(0, 0, 0);
-    opacity: 1;
-  }
-}
-
-@keyframes chatTransitionFromSimple {
-  from {
-    transform: translate3d(-12px, 0, 0);
-    opacity: 0.98;
-  }
-  to {
-    transform: translate3d(0, 0, 0);
-    opacity: 1;
-  }
-}
-
 .phoneChatPage[data-phone-chat-tone="dark"] {
   --phone-chat-bg: #0b0f14;
   --phone-chat-bg-rgb: 11, 15, 20;
@@ -171,7 +141,6 @@
   min-height: 0;
   backface-visibility: hidden;
   contain: layout;
-  transition: transform 280ms cubic-bezier(0.22, 1, 0.36, 1);
 }
 
 .chatListScreen {
@@ -4110,17 +4079,6 @@
   pointer-events: none;
   opacity: 0.96;
   overflow-anchor: none;
-}
-
-.messagesPane[data-phone-chat-scroll-settling="true"] {
-  -webkit-overflow-scrolling: auto;
-}
-
-.messagesPane[data-phone-chat-scroll-settling="true"] .messageDaySeparator {
-  position: relative;
-  top: auto;
-  z-index: 1;
-  transform: none;
 }
 
 .messageDaySeparator span {
