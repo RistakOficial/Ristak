@@ -2048,12 +2048,22 @@ async function initTables() {
         ghl_contact_id TEXT,
         stripe_customer_id TEXT,
         conekta_customer_id TEXT,
+        assigned_user_id TEXT,
         custom_fields ${usePostgres ? "JSONB DEFAULT '[]'::jsonb" : "TEXT DEFAULT '[]'"},
         created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
         updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
         deleted_at DATETIME
       )
     `)
+
+    // Asignación de contacto a un usuario (para ruteo de notificaciones de chat).
+    try {
+      await db.run('ALTER TABLE contacts ADD COLUMN assigned_user_id TEXT')
+    } catch (err) {
+      if (!err.message.includes('duplicate column') && !err.message.includes('already exists')) {
+        throw err
+      }
+    }
 
     try {
       await db.run('ALTER TABLE contacts ADD COLUMN preferred_whatsapp_phone_number_id TEXT')

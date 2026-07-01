@@ -33,6 +33,11 @@ import {
   getContactWhatsAppRoutingEvents,
   bulkUpdateContactCustomFields
 } from '../controllers/contactsController.js'
+import {
+  getAssignableUsers,
+  getContactAssignment,
+  setContactAssignment
+} from '../controllers/contactAssignmentController.js'
 import { requireAuth } from '../middleware/authMiddleware.js'
 import { requireModuleAccess } from '../middleware/userAccessMiddleware.js'
 
@@ -50,6 +55,8 @@ router.get('/chats', requireModuleAccess('chat'), getChatContacts)
 router.post('/chats/read', requireModuleAccess('chat'), markChatContactsRead)
 router.post('/chats/:id/read', requireModuleAccess('chat'), markChatContactRead)
 router.get('/search', searchContacts)
+// Asignación de responsable (antes de /:id para no colisionar con el param).
+router.get('/assignable-users', getAssignableUsers)
 router.get('/stats', getContactStats)
 // (CNT-007) Papelera de contactos (debe ir ANTES de '/:id' para no capturarse como un id).
 router.get('/trash', getTrashedContacts)
@@ -74,6 +81,8 @@ router.get('/:id/payment-link-delivery-options', getContactPaymentLinkDeliveryOp
 router.get('/:id', getContactById)
 router.get('/:id/journey', getContactJourney)
 router.get('/:id/whatsapp-routing-events', getContactWhatsAppRoutingEvents)
+router.get('/:id/assignment', getContactAssignment)
+router.put('/:id/assignment', setContactAssignment)
 router.put('/:id', updateContact)
 router.delete('/:id', deleteContact)
 // (CNT-007) Restaurar desde la papelera o borrar permanentemente (conservando pagos).

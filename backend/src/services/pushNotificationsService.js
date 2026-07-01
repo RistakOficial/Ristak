@@ -1554,8 +1554,25 @@ export async function sendChatMessageNotification(message = {}) {
   if (hidden) {
     return { sent: 0, skipped: true, reason: 'hidden_contact' }
   }
+  const chatContactId = String(message.contactId || '').trim()
+
+  // (Asignación) El usuario asignado al contacto siempre entra al set de
+  // destinatarios (sumado a la config de "quién recibe chat"), respetando su
+  // propia preferencia on/off y la supresión por presencia.
+  let assignedUserId = ''
+  if (chatContactId) {
+    try {
+      const assignedRow = await db.get('SELECT assigned_user_id FROM contacts WHERE id = ?', [chatContactId])
+      assignedUserId = String(assignedRow?.assigned_user_id || '').trim()
+    } catch (error) {
+      logger.warn(`[Push] No se pudo leer el usuario asignado del contacto: ${error.message}`)
+    }
+  }
+
   const preferenceTarget = await getPushPreferenceTarget('conversations')
-  if (isPushPreferenceDisabled(preferenceTarget)) {
+  // Config "nadie" apaga el chat para todos... salvo que el contacto tenga un
+  // asignado: a ese responsable sí se le notifica (la asignación enruta al dueño).
+  if (isPushPreferenceDisabled(preferenceTarget) && !assignedUserId) {
     return { sent: 0, skipped: true, reason: 'disabled_by_preferences' }
   }
 
@@ -1563,7 +1580,6 @@ export async function sendChatMessageNotification(message = {}) {
   // A ellos NO se les manda push (lo están viendo) y se les marca leído — como en
   // un chat real. Fail-open: ante cualquier error de presencia, no se excluye a
   // nadie (mejor una push de más que perder una legítima).
-  const chatContactId = String(message.contactId || '').trim()
   let viewingUserIds = []
   if (chatContactId) {
     try {
@@ -1596,11 +1612,25 @@ export async function sendChatMessageNotification(message = {}) {
   }
 
   // (MOB-006) enabledKey => on/off de chat por usuario destinatario (fallback global).
-  // (Presencia) excludeUserIds => se resta a quien está viendo el chat ahora.
+  // (Asignación) sumamos el asignado a los destinatarios; (Presencia) restamos a
+  // quien está viendo el chat ahora.
+  const baseOptions = getPushPreferenceOptions(preferenceTarget, {
+    enabledKey: 'chat_push_notifications_enabled'
+  })
+  let recipientUserIds = Object.prototype.hasOwnProperty.call(baseOptions, 'userIds')
+    ? baseOptions.userIds
+    : null
+  if (assignedUserId && Array.isArray(recipientUserIds)) {
+    // userIds === null ("todos") ya incluye al asignado; solo hace falta sumarlo
+    // cuando la config es una lista concreta (o "nadie" con asignado => solo él).
+    if (!recipientUserIds.map(String).includes(assignedUserId)) {
+      recipientUserIds = [...recipientUserIds, assignedUserId]
+    }
+  }
+
   return sendAppNotificationPayload(payload, {
-    ...getPushPreferenceOptions(preferenceTarget, {
-      enabledKey: 'chat_push_notifications_enabled'
-    }),
+    ...baseOptions,
+    userIds: recipientUserIds,
     excludeUserIds: viewingUserIds
   })
 }
