@@ -21397,3 +21397,31 @@
   flex-wrap: wrap;
   row-gap: 8px;
 }
+
+/* Banner de modo test global + hint del bloque de pago (Fase 4). */
+.paymentTestBanner {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 10px 12px;
+  margin-bottom: 4px;
+  border: 1px solid color-mix(in srgb, var(--warn) 35%, var(--border));
+  border-radius: var(--radius-ctl);
+  background: color-mix(in srgb, var(--warn) 10%, var(--surface));
+  color: var(--text-dim);
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.paymentTestBanner svg {
+  flex: 0 0 auto;
+  margin-top: 1px;
+  color: var(--warn);
+}
+
+.paymentHint {
+  margin: 0;
+  color: var(--text-mute);
+  font-size: 12px;
+  line-height: 1.4;
+}

@@ -42,6 +42,7 @@ import {
   Copy,
   CornerDownRight,
   DollarSign,
+  FlaskConical,
   Eye,
   EyeOff,
   ExternalLink,
@@ -180,6 +181,7 @@ import {
   type SiteType
 } from '@/services/sitesService'
 import { aiAgentService } from '@/services/aiAgentService'
+import { paymentSettingsService } from '@/services/paymentSettingsService'
 import { campaignsService, type ConnectedSocialProfile } from '@/services/campaignsService'
 import { calendarsService, type Calendar as CalendarType } from '@/services/calendarsService'
 import mediaService, {
@@ -3998,6 +4000,139 @@ const paymentBlockLayoutOptions: Array<{ value: PaymentBlockLayout; label: strin
 const normalizePaymentBlockLayout = (value: unknown): PaymentBlockLayout => {
   const raw = String(value || '').trim().toLowerCase()
   return raw === 'banner' || raw === 'minimal' ? raw : 'card'
+}
+
+// Acción posterior al pago EXITOSO. Se guarda en block.settings.postPayment y el backend
+// (resolvePaymentPostAction / runtime) la ejecuta SOLO cuando el proveedor confirma el pago.
+type PaymentPostActionKind = 'success_message' | 'next_page' | 'specific_page' | 'redirect_url'
+
+const paymentPostActionOptions: Array<{ value: PaymentPostActionKind; label: string }> = [
+  { value: 'success_message', label: 'Mostrar mensaje de éxito' },
+  { value: 'next_page', label: 'Ir a la siguiente página' },
+  { value: 'specific_page', label: 'Ir a una página específica' },
+  { value: 'redirect_url', label: 'Redirigir a una URL externa' }
+]
+const paymentPostActionValues = new Set<PaymentPostActionKind>(paymentPostActionOptions.map(option => option.value))
+
+interface PaymentPostAction {
+  action: PaymentPostActionKind
+  message: string
+  pageId: string
+  url: string
+}
+
+const normalizePaymentPostAction = (value: unknown): PaymentPostAction => {
+  const source = (value && typeof value === 'object' ? value : {}) as Partial<PaymentPostAction>
+  const action = paymentPostActionValues.has(source.action as PaymentPostActionKind)
+    ? (source.action as PaymentPostActionKind)
+    : 'success_message'
+  return {
+    action,
+    message: typeof source.message === 'string' ? source.message : '',
+    pageId: typeof source.pageId === 'string' ? source.pageId : '',
+    url: typeof source.url === 'string' ? source.url : ''
+  }
+}
+
+const getPaymentPostActionFromSettings = (settings: Record<string, unknown> = {}): PaymentPostAction =>
+  normalizePaymentPostAction((settings as { postPayment?: unknown }).postPayment)
+
+// Modo global de pagos (test/live), cacheado a nivel módulo para el banner del panel.
+let cachedGlobalPaymentMode: 'test' | 'live' | null = null
+const useGlobalPaymentMode = (): 'test' | 'live' | null => {
+  const [mode, setMode] = useState<'test' | 'live' | null>(cachedGlobalPaymentMode)
+  useEffect(() => {
+    if (cachedGlobalPaymentMode) { setMode(cachedGlobalPaymentMode); return }
+    let active = true
+    paymentSettingsService.getSettings()
+      .then(settings => {
+        cachedGlobalPaymentMode = settings.paymentMode === 'test' ? 'test' : 'live'
+        if (active) setMode(cachedGlobalPaymentMode)
+      })
+      .catch(() => {})
+    return () => { active = false }
+  }, [])
+  return mode
+}
+
+const PaymentBlockTestBanner: React.FC = () => {
+  const globalMode = useGlobalPaymentMode()
+  if (globalMode !== 'test') return null
+  return (
+    <div className={styles.paymentTestBanner}>
+      <FlaskConical size={15} />
+      <span>Esta página está en modo test. Los pagos realizados aquí no serán cobros reales.</span>
+    </div>
+  )
+}
+
+const PaymentPostActionSection: React.FC<{
+  settings: Record<string, unknown>
+  pages: SitePage[]
+  onPatchSettings: (patch: Record<string, unknown>) => void
+  onSave: () => void
+}> = ({ settings, pages, onPatchSettings, onSave }) => {
+  const post = getPaymentPostActionFromSettings(settings)
+  const patchPost = (patch: Partial<PaymentPostAction>) => {
+    onPatchSettings({ postPayment: normalizePaymentPostAction({ ...post, ...patch }) })
+  }
+  const pageOptions = pages.map(page => ({ value: page.id, label: page.title || page.id }))
+
+  return (
+    <AccordionSection id="edit-payment-post" title="Después del pago">
+      <label className={styles.field}>
+        <span>Cuando el pago sea exitoso</span>
+        <CustomSelect
+          value={post.action}
+          onValueChange={(value) => {
+            patchPost({ action: paymentPostActionValues.has(value as PaymentPostActionKind) ? (value as PaymentPostActionKind) : 'success_message' })
+            window.setTimeout(onSave, 0)
+          }}
+          options={paymentPostActionOptions}
+        />
+      </label>
+
+      {post.action === 'success_message' && (
+        <label className={styles.field}>
+          <span>Mensaje de éxito</span>
+          <textarea
+            rows={2}
+            value={post.message}
+            placeholder="Tu pago fue realizado correctamente. Gracias por tu compra."
+            onChange={(event) => patchPost({ message: event.target.value })}
+            onBlur={onSave}
+          />
+        </label>
+      )}
+
+      {post.action === 'specific_page' && (
+        <label className={styles.field}>
+          <span>Página destino</span>
+          <CustomSelect
+            value={post.pageId}
+            onValueChange={(value) => { patchPost({ pageId: value }); window.setTimeout(onSave, 0) }}
+            options={pageOptions}
+          />
+        </label>
+      )}
+
+      {post.action === 'redirect_url' && (
+        <label className={styles.field}>
+          <span>URL de redirección</span>
+          <input
+            value={post.url}
+            placeholder="https://tusitio.com/gracias"
+            onChange={(event) => patchPost({ url: event.target.value })}
+            onBlur={onSave}
+          />
+        </label>
+      )}
+
+      {post.action === 'next_page' && (
+        <p className={styles.paymentHint}>Al confirmar el pago, el cliente avanza automáticamente a la siguiente página del embudo.</p>
+      )}
+    </AccordionSection>
+  )
 }
 
 const defaultPaymentGateConfig = (currencyFallback = 'MXN'): CommonPaymentGateConfig => normalizePaymentGateConfig({
@@ -36070,6 +36205,8 @@ const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
   ) : null
   const paymentEditControls = block.blockType === 'payment' ? (
     <>
+      <PaymentBlockTestBanner />
+
       <AccordionSection id="edit-payment-gate" title="Cobro" defaultGroupOpen>
         <PaymentGateControls
           value={getPaymentGateFromSettings(settings, paymentCurrencyFallback)}
@@ -36080,6 +36217,13 @@ const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
           currencyFallback={paymentCurrencyFallback}
         />
       </AccordionSection>
+
+      <PaymentPostActionSection
+        settings={settings}
+        pages={pages}
+        onPatchSettings={onPatchSettings}
+        onSave={onSave}
+      />
 
       <AccordionSection id="edit-payment-layout" title="Diseño del bloque">
         <label className={styles.field}>
