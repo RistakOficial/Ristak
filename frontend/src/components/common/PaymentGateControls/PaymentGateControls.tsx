@@ -260,7 +260,7 @@ export const PaymentGateControls: React.FC<PaymentGateControlsProps> = ({
                 onValueChange={applyCatalogProduct}
                 onBlur={onCommit}
                 options={[
-                  { value: '', label: loadingProducts ? 'Cargando productos…' : 'Sin producto — captura manual' },
+                  { value: '', label: loadingProducts ? 'Cargando productos…' : (products.length ? 'Sin producto — captura manual' : 'No tienes productos guardados — captura manual') },
                   ...products.map(product => ({ value: productKeyOf(product), label: product.name }))
                 ]}
               />
@@ -289,7 +289,7 @@ export const PaymentGateControls: React.FC<PaymentGateControlsProps> = ({
                 onBlur={onCommit}
                 options={gatewayOptions.map(option => ({
                   value: option.value,
-                  label: `${option.label} · ${isGatewayConnected(integrationsStatus, option.value) ? 'Conectada' : 'Sin conectar'}`,
+                  label: `${option.label} · ${isGatewayConnected(integrationsStatus, option.value) ? 'Conectado' : 'Sin conectar'}`,
                   icon: <PaymentPlatformLogo platform={option.logo} size="sm" decorative className={styles.gatewayLogo} />
                 }))}
               />

@@ -2732,6 +2732,23 @@ const relLum = (hex: string): number => {
   return 0.2126 * lin(parseInt(h.slice(0, 2), 16)) + 0.7152 * lin(parseInt(h.slice(2, 4), 16)) + 0.0722 * lin(parseInt(h.slice(4, 6), 16))
 }
 
+const MIN_TEXT_CONTRAST_RATIO = 4.5
+const AUTO_DARK_TEXT = '#0f172a'
+const AUTO_LIGHT_TEXT = '#f4f4f6'
+
+const contrastRatio = (foreground: string, background: string) => {
+  const fg = relLum(foreground)
+  const bg = relLum(background)
+  return (Math.max(fg, bg) + 0.05) / (Math.min(fg, bg) + 0.05)
+}
+
+const readableTextOnBackground = (paint: string, background: string, fallback: string) => {
+  const textColor = paintFallbackColor(paint, fallback)
+  if (!isCssColor(textColor) || !isCssColor(background)) return textColor
+  if (contrastRatio(textColor, background) >= MIN_TEXT_CONTRAST_RATIO) return textColor
+  return relLum(background) < 0.5 ? AUTO_LIGHT_TEXT : AUTO_DARK_TEXT
+}
+
 // Readable foreground for a solid accent/button background. Mirrors the backend
 // onAccent resolution so the editor never renders white text on a white button.
 const onAccentFor = (hex: string): string => (isCssColor(hex) && relLum(hex) > 0.6 ? '#08080a' : '#ffffff')
@@ -4068,6 +4085,7 @@ const PaymentBlockTestBanner: React.FC = () => {
 
 const defaultPaymentGateConfig = (currencyFallback = 'MXN'): CommonPaymentGateConfig => normalizePaymentGateConfig({
   enabled: true,
+  mode: 'test',
   gateway: 'stripe',
   amount: 100,
   currency: currencyFallback,
@@ -4185,7 +4203,11 @@ const getParentSectionBlock = (block: SiteBlock, blocks: SiteBlock[]) => {
 }
 
 const getPageTextPaint = (site: PublicSite) =>
-  getThemePaint(site.theme, 'textColor', isSiteDark(site) ? '#ffffff' : '#111827')
+  readableTextOnBackground(
+    getThemePaint(site.theme, 'textColor', isSiteDark(site) ? AUTO_LIGHT_TEXT : AUTO_DARK_TEXT),
+    resolvedPageBg(site),
+    isSiteDark(site) ? AUTO_LIGHT_TEXT : AUTO_DARK_TEXT
+  )
 
 const getBlockTextAlignFallback = (site: PublicSite, block: SiteBlock, blocks: SiteBlock[] = []): HorizontalAlign => {
   const parent = isLanding(site) && !isTopLevelLandingBlock(block) ? getParentSectionBlock(block, blocks) : null
@@ -4365,10 +4387,30 @@ const combineSpacingValues = (
 
 // Mirrors backend renderBlockStyleVars so per-block overrides resolve to the same
 // CSS variables the published .rstk-block-style wrapper consumes.
-const getBlockCanvasStyle = (block: SiteBlock): React.CSSProperties => {
+type BlockCanvasStyleContext = {
+  site?: PublicSite | null
+  parentBlock?: SiteBlock | null
+}
+
+const getBlockSolidBackground = (block?: SiteBlock | null) => {
+  const settings = block?.settings || {}
+  const rawBg = getSettingString(settings, 'blockBg')
+  if (!isCssPaint(rawBg)) return ''
+  const normalized = normalizeCssPaint(rawBg, '')
+  if (!isCssColor(normalized) || isTransparentCssColorValue(normalized)) return ''
+  return normalized
+}
+
+const getBlockTextContrastBackground = (block: SiteBlock, context: BlockCanvasStyleContext = {}) =>
+  getBlockSolidBackground(block) ||
+  getBlockSolidBackground(context.parentBlock) ||
+  (context.site ? resolvedPageBg(context.site) : '')
+
+const getBlockCanvasStyle = (block: SiteBlock, context: BlockCanvasStyleContext = {}): React.CSSProperties => {
   const normalizedBlock = normalizeLegacyLandingBlockSpacing(block)
   const settings = normalizedBlock.settings || {}
   const style: Record<string, string> = {}
+  const textContrastBackground = getBlockTextContrastBackground(normalizedBlock, context)
   const bg = getSettingString(settings, 'blockBg')
   const text = getSettingString(settings, 'blockText')
   const buttonBg = getSettingString(settings, 'buttonBg')
@@ -4411,7 +4453,7 @@ const getBlockCanvasStyle = (block: SiteBlock): React.CSSProperties => {
   }
   if (isCssPaint(text)) {
     const normalized = normalizeCssPaint(text, '#111827')
-    style['--rstk-block-text'] = paintFallbackColor(normalized, '#111827')
+    style['--rstk-block-text'] = readableTextOnBackground(normalized, textContrastBackground, '#111827')
     if (isCssGradient(normalized)) style['--rstk-block-text-paint'] = normalized
   }
   if (isCssPaint(buttonBg)) {
@@ -6471,7 +6513,7 @@ const defaultBlockPayload = (blockType: SiteBlockType, siteOrId: PublicSite | st
         sectionColumns: 1,
         sectionGap: DEFAULT_SECTION_GAP,
         blockBg: 'transparent',
-        blockText: resolvedSiteType === 'landing_page' ? '#f4f4f6' : '#111827',
+        blockText: pageTextDefault,
         blockPaddingTop: 48,
         blockPaddingRight: 42,
         blockPaddingBottom: 48,
@@ -13578,7 +13620,7 @@ export const Sites: React.FC = () => {
 	                    <DragOverlay dropAnimation={{ duration: 340, easing: 'cubic-bezier(0.2, 0.8, 0.2, 1)' }}>
                       {activeDragBlock ? (
                         <div className={`rstkCanvas ${canvasTheme!.bodyClass}`} style={{ ...canvasTheme!.vars, width: 460, ['--rstk-scale' as string]: 1 } as React.CSSProperties}>
-                          <div className={getBlockStyleClassName(activeDragBlock)} style={getBlockCanvasStyle(activeDragBlock)}>
+                          <div className={getBlockStyleClassName(activeDragBlock)} style={getBlockCanvasStyle(activeDragBlock, { site: editorSite, parentBlock: getParentSectionBlock(activeDragBlock, canvasBlocks) })}>
                             <CanvasPreviewBlock block={activeDragBlock} site={editorSite} forms={forms} calendars={calendars} />
                           </div>
                         </div>
@@ -22854,7 +22896,7 @@ const LibrarySitePreview: React.FC<{
   } as React.CSSProperties
 
   const renderBlockPreview = (block: SiteBlock) => (
-    <div key={block.id} className={getBlockStyleClassName(block)} style={getBlockCanvasStyle(block)}>
+    <div key={block.id} className={getBlockStyleClassName(block)} style={getBlockCanvasStyle(block, { site, parentBlock: getParentSectionBlock(block, blocks) })}>
       <BlockBackgroundVideo block={block} />
       <CanvasPreviewBlock
         block={block}
@@ -22895,7 +22937,7 @@ const LibrarySitePreview: React.FC<{
       <section
         key={section.id}
         className={getBlockStyleClassName(section, 'rstk-section-lane')}
-        style={getBlockCanvasStyle(section)}
+        style={getBlockCanvasStyle(section, { site })}
       >
         <BlockBackgroundVideo block={section} />
         <div className="rstk-section-inner">
@@ -28854,7 +28896,7 @@ const SortableCanvasBlock: React.FC<SortableCanvasBlockProps> = ({
 	        transition: transition || 'transform 520ms cubic-bezier(0.2, 0.8, 0.2, 1)',
         opacity: isDragging ? 0.34 : undefined,
         zIndex: isDragging ? 8 : undefined,
-        ...getBlockCanvasStyle(block)
+        ...getBlockCanvasStyle(block, { site, parentBlock: getParentSectionBlock(block, blocks) })
       }}
       className={getBlockStyleClassName(block, `rstkSel ${surfaceSelectionBlockTypes.has(block.blockType) ? 'rstkSurfaceSelectionHost' : ''} ${selected ? 'rstkSelActive' : ''} ${toolbarPositionClass} ${isDragging ? 'rstkSelDragging' : ''} ${videoActionHoverTargetId === block.id ? 'rstkVideoActionHover' : ''} ${videoActionHiddenNote ? 'rstkVideoActionGhost' : ''}`)}
       onClick={handleClick}
@@ -29227,7 +29269,7 @@ const LandingCanvasSections: React.FC<LandingCanvasSectionsProps> = ({
 	        return (
 	          <React.Fragment key={lane.id}>
 	            {topLevelPreviewBefore && palettePreviewBlock && (
-	              <PaletteInsertPreview block={palettePreviewBlock} forms={forms} calendars={calendars} />
+	              <PaletteInsertPreview block={palettePreviewBlock} site={site} forms={forms} calendars={calendars} />
 	            )}
 	            <SortableLandingSection
 	              lane={lane}
@@ -29260,7 +29302,7 @@ const LandingCanvasSections: React.FC<LandingCanvasSectionsProps> = ({
 	        )
 	      })}
 	      {showTopLevelPreview && palettePreviewBlock && paletteInsertIndex !== null && paletteInsertIndex >= blocks.length && (
-	        <PaletteInsertPreview block={palettePreviewBlock} forms={forms} calendars={calendars} />
+            <PaletteInsertPreview block={palettePreviewBlock} site={site} forms={forms} calendars={calendars} />
 	      )}
 	      {legacyLane && !legacyRendered && (
 	        <LegacyLandingSection
@@ -29375,14 +29417,14 @@ const LandingSectionColumns: React.FC<LandingSectionRenderProps> = ({
             data-rstk-section-column={lane.section ? columnIndex : undefined}
           >
             {isTargetColumn && columnBlocks.length === 0 && palettePreviewBlock && (
-              <PaletteInsertPreview block={palettePreviewBlock} forms={forms} calendars={calendars} />
+                <PaletteInsertPreview block={palettePreviewBlock} site={site} forms={forms} calendars={calendars} />
             )}
             {columnBlocks.map(block => {
               const moveState = getBlockMoveState(block)
               return (
                 <React.Fragment key={block.id}>
                   {isTargetColumn && previewBeforeBlockId === block.id && palettePreviewBlock && (
-                    <PaletteInsertPreview block={palettePreviewBlock} forms={forms} calendars={calendars} />
+                    <PaletteInsertPreview block={palettePreviewBlock} site={site} forms={forms} calendars={calendars} />
                   )}
                   <SortableCanvasBlock
                     block={block}
@@ -29414,7 +29456,7 @@ const LandingSectionColumns: React.FC<LandingSectionRenderProps> = ({
               )
             })}
             {showPreviewAfterColumn && palettePreviewBlock && (
-              <PaletteInsertPreview block={palettePreviewBlock} forms={forms} calendars={calendars} />
+              <PaletteInsertPreview block={palettePreviewBlock} site={site} forms={forms} calendars={calendars} />
             )}
             {lane.section && columnBlocks.length === 0 && !isTargetColumn && (
               <div className="rstkColumnDropZone">Suelta contenido aquí</div>
@@ -29480,7 +29522,7 @@ const SortableLandingSection: React.FC<LandingSectionRenderProps> = ({
 	        transition: transition || 'transform 520ms cubic-bezier(0.2, 0.8, 0.2, 1)',
         opacity: isDragging ? 0.34 : undefined,
         zIndex: isDragging ? 8 : undefined,
-        ...getBlockCanvasStyle(section)
+        ...getBlockCanvasStyle(section, { site })
       }}
       onClick={(event) => {
         event.stopPropagation()
@@ -29585,7 +29627,7 @@ const PaletteInsertPreview: React.FC<{
   forms: PublicSite[]
   calendars: CalendarType[]
 }> = ({ block, site, forms, calendars }) => (
-  <div className={getBlockStyleClassName(block, 'rstkPalettePreview')} style={getBlockCanvasStyle(block)}>
+  <div className={getBlockStyleClassName(block, 'rstkPalettePreview')} style={getBlockCanvasStyle(block, { site })}>
     <CanvasPreviewBlock block={block} site={site} forms={forms} calendars={calendars} />
   </div>
 )
@@ -32691,8 +32733,8 @@ const FieldControlPreview: React.FC<{ block: SiteBlock }> = ({ block }) => {
 }
 
 // Read-only field preview (rstk markup) for embedded form fields on the canvas.
-const FieldStaticPreview: React.FC<{ block: SiteBlock }> = ({ block }) => (
-  <section className={getBlockStyleClassName(block, `rstk-field${getFieldOwnStyleClass(block)}`)} style={getBlockCanvasStyle(block)}>
+const FieldStaticPreview: React.FC<{ block: SiteBlock; site?: PublicSite }> = ({ block, site }) => (
+  <section className={getBlockStyleClassName(block, `rstk-field${getFieldOwnStyleClass(block)}`)} style={getBlockCanvasStyle(block, { site })}>
     <label>{block.label || 'Pregunta'}{block.required ? <span className="rstk-required">*</span> : null}</label>
     {block.content ? <p className="rstk-help">{block.content}</p> : null}
     <FieldControlPreview block={block} />
@@ -32720,10 +32762,10 @@ const EmbeddedFormStaticBlockPreview: React.FC<{
   calendars: CalendarType[]
 }> = ({ block, site, forms, calendars }) => {
   if (fieldBlockTypes.has(block.blockType)) {
-    return <FieldStaticPreview block={block} />
+    return <FieldStaticPreview block={block} site={site} />
   }
 
-  const style = getBlockCanvasStyle(block)
+  const style = getBlockCanvasStyle(block, { site })
   const content = <CanvasPreviewBlock block={block} site={site} forms={forms} calendars={calendars} />
 
   if (!blockNeedsStaticPreviewWrapper(block, style)) {
@@ -32779,7 +32821,7 @@ const EmbeddedFormCanvasFields: React.FC<{
         {fields.map((field, index) => {
           const selected = !editor.submitSelected && editor.activeFieldId === field.id
           const isFieldBlock = fieldBlockTypes.has(field.blockType)
-          const blockStyle = getBlockCanvasStyle(field)
+          const blockStyle = getBlockCanvasStyle(field, { site })
           const needsBlockStyleWrapper = blockNeedsStaticPreviewWrapper(field, blockStyle)
           return (
             <React.Fragment key={field.id}>
