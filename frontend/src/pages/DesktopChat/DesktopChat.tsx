@@ -1396,22 +1396,7 @@ function getConversationDayKey(value?: string | null, timeZone?: string) {
 }
 
 function getConversationDayLabel(value?: string | null, timeZone?: string) {
-  const dayKey = getConversationDayKey(value, timeZone)
-  if (!dayKey) return ''
-  const todayKey = getConversationDayKey(new Date().toISOString(), timeZone)
-  const yesterday = new Date()
-  yesterday.setDate(yesterday.getDate() - 1)
-  const yesterdayKey = getConversationDayKey(yesterday.toISOString(), timeZone)
-  if (dayKey === todayKey) return 'Hoy'
-  if (dayKey === yesterdayKey) return 'Ayer'
-
-  const date = new Date(value || '')
-  return new Intl.DateTimeFormat('es-MX', {
-    day: 'numeric',
-    month: 'short',
-    year: dayKey.slice(0, 4) === todayKey.slice(0, 4) ? undefined : 'numeric',
-    timeZone: timeZone || undefined
-  }).format(date).replace('.', '')
+  return formatChatDayLabel(value, timeZone || getStoredBusinessTimezone())
 }
 
 function formatPlainStatus(value?: string | null) {
@@ -6315,7 +6300,6 @@ export const DesktopChat: React.FC = () => {
                         </span>
                       </span>
                       <span className={styles.chatRowAside}>
-                        {unread > 0 ? <span className={styles.unreadDot} data-chat-unread-dot aria-label="Mensaje nuevo" /> : null}
                         {unread > 0 ? <span className={styles.unread} aria-label={`${unread} mensajes no leídos`}>{unread > 99 ? '99+' : unread}</span> : null}
                         {renderChatActionsMenu(contact)}
                       </span>
@@ -6372,7 +6356,6 @@ export const DesktopChat: React.FC = () => {
                         </span>
                       </span>
                       <span className={styles.chatRowAside}>
-                        {unread > 0 ? <span className={styles.unreadDot} data-chat-unread-dot aria-label="Mensaje nuevo" /> : null}
                         {unread > 0 ? <span className={styles.unread} aria-label={`${unread} mensajes no leídos`}>{unread > 99 ? '99+' : unread}</span> : null}
                         {renderChatActionsMenu(contact)}
                       </span>

@@ -270,6 +270,12 @@ Ristak maneja varias superficies de comunicacion:
 La mensajeria usa servicios especializados para plantillas, media, atribucion,
 sincronizacion de conversaciones, read states, presencia y eventos.
 
+En las listas y separadores del chat, los mensajes del dia actual muestran hora
+o `Hoy`, los del dia anterior muestran `Ayer`, y los anteriores usan fecha
+compacta sin `de` (`29 junio`, agregando año solo si no pertenece al año actual).
+La bandeja desktop marca mensajes no leidos con el contador numerico y el resaltado
+del renglon, sin punto adicional antes del numero.
+
 ## Citas y calendarios
 
 Ristak tiene calendarios locales, sincronizacion con HighLevel/Google y flujos

@@ -6,7 +6,20 @@ import {
   todayDateOnlyInTimezone
 } from './timezone'
 
-const cleanFormattedDate = (value: string) => value.replace(/\./g, '').trim()
+const CHAT_MONTH_NAMES = [
+  'enero',
+  'febrero',
+  'marzo',
+  'abril',
+  'mayo',
+  'junio',
+  'julio',
+  'agosto',
+  'septiembre',
+  'octubre',
+  'noviembre',
+  'diciembre'
+]
 
 const getLocalChatDate = (value: string | null | undefined, timezone: string) => {
   if (!value) return null
@@ -14,23 +27,22 @@ const getLocalChatDate = (value: string | null | undefined, timezone: string) =>
   return Number.isNaN(date.getTime()) ? null : date
 }
 
-const formatChatDateOnly = (date: Date, includeYear: boolean) => cleanFormattedDate(
-  new Intl.DateTimeFormat('es-MX', {
-    day: 'numeric',
-    month: 'long',
-    ...(includeYear ? { year: 'numeric' } : {})
-  }).format(date)
-)
+const padTimePart = (value: number) => String(value).padStart(2, '0')
+
+const formatChatDateOnly = (date: Date, includeYear: boolean) => {
+  const month = CHAT_MONTH_NAMES[date.getMonth()]
+  if (!month) return ''
+  return [date.getDate(), month, includeYear ? date.getFullYear() : null].filter(Boolean).join(' ')
+}
 
 export function formatChatMessageTime(value?: string | null, timezone = getStoredBusinessTimezone()) {
   const localDate = getLocalChatDate(value, timezone)
   if (!value || !localDate) return ''
 
-  return new Intl.DateTimeFormat('es-MX', {
-    hour: 'numeric',
-    minute: '2-digit',
-    hour12: true
-  }).format(localDate)
+  const hour = localDate.getHours()
+  const displayHour = hour % 12 || 12
+  const period = hour >= 12 ? 'p.m.' : 'a.m.'
+  return `${displayHour}:${padTimePart(localDate.getMinutes())} ${period}`
 }
 
 export function formatChatDayLabel(value?: string | null, timezone = getStoredBusinessTimezone()) {
@@ -59,7 +71,8 @@ export function formatChatDaySeparatorLabel(value?: string | null, timezone = ge
   const yesterdayKey = addDateOnlyDays(todayKey, -1)
   if (dayKey === yesterdayKey) return 'Ayer'
 
-  return formatChatDateOnly(localDate, true)
+  const currentYear = Number(todayKey.slice(0, 4))
+  return formatChatDateOnly(localDate, localDate.getFullYear() !== currentYear)
 }
 
 export function isChatTimestampToday(value?: string | null, timezone = getStoredBusinessTimezone()) {
@@ -76,6 +89,9 @@ export function formatChatListTimestamp(value?: string | null, timezone = getSto
   const dayKey = formatDateOnlyFromDate(localDate)
   const todayKey = todayDateOnlyInTimezone(timezone)
   if (dayKey === todayKey) return formatChatMessageTime(value, timezone)
+
+  const yesterdayKey = addDateOnlyDays(todayKey, -1)
+  if (dayKey === yesterdayKey) return 'Ayer'
 
   const currentYear = Number(todayKey.slice(0, 4))
   return formatChatDateOnly(localDate, localDate.getFullYear() !== currentYear)

@@ -803,16 +803,7 @@
   min-width: 28px;
 }
 
-.unreadDot {
-  width: 8px;
-  height: 8px;
-  border-radius: var(--radius-pill);
-  background: var(--accent);
-  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent-soft) 78%, transparent);
-}
-
-.chatRowAgentAction .unread,
-.chatRowAgentAction .unreadDot {
+.chatRowAgentAction .unread {
   background: var(--neg);
   box-shadow: 0 0 0 3px color-mix(in srgb, var(--neg-soft) 78%, transparent);
 }
