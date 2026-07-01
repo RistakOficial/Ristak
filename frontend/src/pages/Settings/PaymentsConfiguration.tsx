@@ -2422,7 +2422,7 @@ export const PaymentsConfiguration: React.FC = () => {
               <div>
                 <strong>Modo inteligente</strong>
                 <small>
-                  Si el contacto nació por WhatsApp con atribución, se manda LeadSubmitted por Business Messaging.
+                  Si el contacto nació por WhatsApp con atribución, se manda Purchase por Business Messaging.
                   Si no se detecta ese origen, se manda desde Sitios con acción de Website.
                 </small>
               </div>

@@ -453,7 +453,7 @@ test('payment smart default sends WhatsApp Business Messaging data when attribut
         assert.equal(metaCalls.length, 1)
 
         const payload = JSON.parse(metaCalls[0].body)
-        assert.equal(payload.data[0].event_name, 'LeadSubmitted')
+        assert.equal(payload.data[0].event_name, 'Purchase')
         assert.equal(payload.data[0].action_source, 'business_messaging')
         assert.equal(payload.data[0].messaging_channel, 'whatsapp')
         assert.equal(payload.data[0].event_id, `purchase_contact_${contactId}`)

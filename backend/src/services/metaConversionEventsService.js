@@ -26,7 +26,7 @@ const EVENT_TYPES = {
   purchase: 'first_purchase'
 }
 const DEFAULT_CALENDAR_WHATSAPP_EVENT_NAME = 'LeadSubmitted'
-const DEFAULT_PAYMENT_WHATSAPP_EVENT_NAME = 'LeadSubmitted'
+const DEFAULT_PAYMENT_WHATSAPP_EVENT_NAME = 'Purchase'
 const DEFAULT_PAYMENT_EVENT_NAME = 'Purchase'
 const DEFAULT_PAYMENT_EVENT_CHANNEL = 'smart'
 const PAYMENT_META_DEFAULT_CURRENCY = 'MXN'
