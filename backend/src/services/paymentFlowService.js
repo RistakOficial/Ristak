@@ -14,9 +14,11 @@ import { createRistakPaymentEntityId } from '../utils/idGenerator.js'
 import {
   DEFAULT_TIMEZONE as ACCOUNT_DEFAULT_TIMEZONE,
   assertDateOnlyNotInPast,
+  assertLocalDateTimeNotInPast,
   businessTodayDateOnly,
   getAccountTimezone,
   normalizeDateOnlyInTimezone,
+  normalizeToUtcIso,
   resolveTimezone
 } from '../utils/dateUtils.js'
 
@@ -39,6 +41,9 @@ const DEFAULT_PAYMENT_TIMEZONE = ACCOUNT_DEFAULT_TIMEZONE
 const OFFLINE_METHODS = new Set(['cash', 'bank_transfer', 'transfer', 'deposit', 'offline', 'manual', 'check', 'other'])
 const CARD_METHODS = new Set(['card', 'payment_link', 'direct_card', 'saved_card'])
 const CURRENCY_DEFAULT = 'MXN'
+const TIMED_PLAN_FREQUENCY = 'scheduled_time'
+const TIMED_PLAN_FREQUENCY_ALIASES = new Set([TIMED_PLAN_FREQUENCY, 'scheduled-time', 'scheduledat', 'scheduled_at', 'timed', 'datetime'])
+const PLAN_FREQUENCIES = new Set(['custom', 'daily', 'weekly', 'biweekly', 'monthly', 'yearly', TIMED_PLAN_FREQUENCY])
 
 function normalizeGhlInvoiceMode(mode) {
   return mode === 'test' ? 'test' : 'live'
@@ -64,6 +69,42 @@ function todayDateOnly(timezone = DEFAULT_PAYMENT_TIMEZONE) {
 
 function assertDateNotInPast(value, message, timezone = DEFAULT_PAYMENT_TIMEZONE) {
   return assertDateOnlyNotInPast(value, timezone, message)
+}
+
+function normalizePlanFrequency(value, fallback = 'custom') {
+  const normalized = normalizeText(value || fallback).replace(/[\s-]+/g, '_')
+  if (TIMED_PLAN_FREQUENCY_ALIASES.has(normalized)) return TIMED_PLAN_FREQUENCY
+  return PLAN_FREQUENCIES.has(normalized) ? normalized : fallback
+}
+
+function isTimedPlanFrequency(value) {
+  return normalizePlanFrequency(value) === TIMED_PLAN_FREQUENCY
+}
+
+function assertPlanDueDateNotInPast(value, frequency, message, timezone = DEFAULT_PAYMENT_TIMEZONE) {
+  if (isTimedPlanFrequency(frequency)) {
+    return assertLocalDateTimeNotInPast(value, timezone, message)
+  }
+  return assertDateNotInPast(value, message, timezone)
+}
+
+function normalizePlanDueDate(value, frequency, timezone = DEFAULT_PAYMENT_TIMEZONE) {
+  if (value === null || value === undefined || value === '') return null
+  if (isTimedPlanFrequency(frequency)) {
+    return normalizeToUtcIso(value, timezone)
+  }
+  return normalizeDateOnly(value, timezone)
+}
+
+function isPlanChargeDueNow(value, frequency, timezone = DEFAULT_PAYMENT_TIMEZONE) {
+  if (!value) return false
+  if (!isTimedPlanFrequency(frequency)) {
+    return normalizeDateOnly(value, timezone) <= todayDateOnly(timezone)
+  }
+
+  const utcIso = normalizeToUtcIso(value, timezone)
+  const timestamp = Date.parse(utcIso)
+  return Number.isFinite(timestamp) && timestamp <= Date.now()
 }
 
 function resolveInvoiceDates(dueDate, fallbackDueDate, timezone = DEFAULT_PAYMENT_TIMEZONE) {
@@ -1104,9 +1145,12 @@ function resolveScheduleTimezone(timezone) {
 }
 
 function buildScheduleExecuteAt(dueDate, timezone = DEFAULT_PAYMENT_TIMEZONE) {
-  const date = normalizeDateOnly(dueDate, timezone)
   const zone = resolveScheduleTimezone(timezone)
-  const scheduledAt = DateTime.fromISO(`${date}T09:00:00`, { zone }).toUTC()
+  const rawDueDate = String(dueDate || '').trim()
+  const hasDateTime = /[T ]\d{2}:\d{2}/.test(rawDueDate)
+  const scheduledAt = hasDateTime
+    ? DateTime.fromISO(normalizeToUtcIso(rawDueDate, timezone), { zone: 'utc' })
+    : DateTime.fromISO(`${normalizeDateOnly(dueDate, timezone)}T09:00:00`, { zone }).toUTC()
   const minimumFutureAt = DateTime.utc().plus({ minutes: 5 })
 
   const executeAt = scheduledAt.isValid && scheduledAt.toMillis() > minimumFutureAt.toMillis()
@@ -1144,6 +1188,10 @@ function getEffectiveInstallmentDueDate(flow, installment, timezone = DEFAULT_PA
   const sequence = Number(installment.sequence || 1)
   const zone = resolveScheduleTimezone(timezone)
   const firstPaymentDate = flow?.first_payment_date || flow?.firstPaymentDate
+
+  if (isTimedPlanFrequency(frequency)) {
+    return installment.due_date || installment.dueDate
+  }
 
   if (!hasFirstPlanPayment(flow) || !firstPaymentDate || sequence <= 0) {
     return normalizeDateOnly(installment.due_date || installment.dueDate, timezone)
@@ -1717,6 +1765,8 @@ async function createRemainingInstallments({ flowId, payments, automatic, timezo
   const initialStatus = automatic ? 'pending_card_authorization' : 'manual_pending'
 
   for (const payment of payments) {
+    const frequency = normalizePlanFrequency(payment.frequency || 'custom')
+    const rawDueDate = payment.dueDate || payment.due_date
     await db.run(
       `INSERT INTO installment_payments (
         id, flow_id, sequence, amount, percentage, due_date,
@@ -1728,8 +1778,8 @@ async function createRemainingInstallments({ flowId, payments, automatic, timezo
         Number(payment.sequence || 1),
         normalizeAmount(payment.amount),
         payment.percentage === null || payment.percentage === undefined ? null : Number(payment.percentage),
-        payment.dueDate || payment.due_date ? normalizeDateOnly(payment.dueDate || payment.due_date, timezone) : null,
-        payment.frequency || 'custom',
+        normalizePlanDueDate(rawDueDate, frequency, timezone),
+        frequency,
         automatic ? 'card' : (payment.paymentMethod || 'manual'),
         automatic ? 1 : 0,
         initialStatus,
@@ -1805,9 +1855,12 @@ export async function createInstallmentPaymentFlow(payload) {
   const remainingAutomatic = Boolean(payload.remainingAutomatic)
   const concept = payload.description || payload.concept || 'Plan de parcialidades'
   const flowId = createId('flow')
+  const remainingFrequency = normalizePlanFrequency(payload.remainingFrequency || 'custom')
   const firstPaymentType = firstPaymentEnabled ? (firstPayment.type || 'amount') : 'none'
   const firstPaymentValue = firstPaymentEnabled ? Number(firstPayment.value || firstPaymentAmount) : 0
-  const firstPaymentDate = firstPaymentEnabled ? normalizeDateOnly(firstPayment.date || todayDateOnly(accountTimezone), accountTimezone) : null
+  const firstPaymentDate = firstPaymentEnabled
+    ? normalizePlanDueDate(firstPayment.date || todayDateOnly(accountTimezone), remainingFrequency, accountTimezone)
+    : null
   const firstPaymentIsOffline = firstPaymentEnabled && OFFLINE_METHODS.has(firstPaymentMethod)
   const firstPaymentIsCard = firstPaymentEnabled && CARD_METHODS.has(firstPaymentMethod)
   const { cardSetupAmount, liveMode } = await getPaymentFlowConfig()
@@ -1820,20 +1873,21 @@ export async function createInstallmentPaymentFlow(payload) {
     payload.useStoredCard === true &&
     !forceNewCardAuthorization
   const firstPaymentStoredCardShouldRecordNow = firstPaymentUsesStoredCard &&
-    normalizeDateOnly(firstPaymentDate, accountTimezone) <= todayDateOnly(accountTimezone)
+    isPlanChargeDueNow(firstPaymentDate, remainingFrequency, accountTimezone)
   const cardSetupRequired = remainingAutomatic && !firstPaymentIsCard && (
     forceNewCardAuthorization ||
     (!alreadyHasAuthorizedCard && (!firstPaymentEnabled || firstPaymentIsOffline))
   )
 
   if (firstPaymentEnabled && !firstPaymentIsOffline) {
-    assertDateNotInPast(firstPaymentDate, 'Los pagos automáticos no pueden programarse en fechas pasadas.', accountTimezone)
+    assertPlanDueDateNotInPast(firstPaymentDate, remainingFrequency, 'Los pagos automáticos no pueden programarse en fechas pasadas.', accountTimezone)
   }
 
   if (remainingAutomatic) {
     for (const payment of remainingPayments) {
-      assertDateNotInPast(
+      assertPlanDueDateNotInPast(
         payment.dueDate || payment.due_date,
+        normalizePlanFrequency(payment.frequency || remainingFrequency),
         'Los pagos restantes automáticos no pueden programarse en fechas pasadas.',
         accountTimezone
       )
@@ -1885,7 +1939,7 @@ export async function createInstallmentPaymentFlow(payload) {
       JSON.stringify(stateHistory),
       JSON.stringify({
         channels: payload.channels || {},
-        remainingFrequency: payload.remainingFrequency || 'custom',
+        remainingFrequency,
         installmentFeePercentage: payload.installmentFeePercentage ?? payload.paymentPlanFeePercentage ?? payload.planFeePercentage ?? payload.financingPercentage ?? payload.surchargePercentage,
         cardAuthorizationPreference: forceNewCardAuthorization ? 'new_card' : payload.cardAuthorizationPreference || null,
         forceCardSetup: forceNewCardAuthorization,
@@ -1912,7 +1966,7 @@ export async function createInstallmentPaymentFlow(payload) {
   )
   const installmentsForSummaryWithDates = withEffectiveInstallmentDates(flowForSummary, installmentsForSummary, accountTimezone)
   const planSummary = buildPaymentPlanSummary(flowForSummary, installmentsForSummaryWithDates, {
-    frequency: payload.remainingFrequency || 'custom',
+    frequency: remainingFrequency,
     timezone: accountTimezone
   })
 

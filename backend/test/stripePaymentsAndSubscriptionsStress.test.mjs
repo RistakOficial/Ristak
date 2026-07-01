@@ -779,6 +779,73 @@ test('planes Stripe: respeta hora programada interna y no cobra antes ni duplica
   }
 })
 
+test('planes Stripe: primer pago con hora exacta no se cobra antes de la hora programada', async () => {
+  const { contactId, contact, savedMethodId } = await seedContactWithSavedCard('timed_first_payment')
+  const { stripe, calls } = createStripeMock()
+  setStripeFactoryForTest(() => stripe)
+
+  try {
+    await configureStripe()
+    const futureFirstPayment = new Date(Date.now() + 60 * 60 * 1000).toISOString()
+    const futureInstallment = new Date(Date.now() + 2 * 60 * 60 * 1000).toISOString()
+
+    const plan = await createStripePaymentPlan({
+      contact,
+      title: 'Plan con primer pago exacto',
+      description: 'Primer pago programado por hora exacta',
+      totalAmount: 300,
+      paymentMethodId: savedMethodId,
+      firstPayment: {
+        enabled: true,
+        amount: 100,
+        date: futureFirstPayment,
+        frequency: 'scheduled_time',
+        method: 'saved_card'
+      },
+      remainingFrequency: 'scheduled_time',
+      remainingPayments: [
+        { sequence: 1, amount: 200, dueDate: futureInstallment, frequency: 'scheduled_time' }
+      ]
+    }, { baseUrl: 'https://example.test' })
+
+    assert.equal(calls.paymentIntentsCreate.length, 0)
+
+    const earlyRun = await processDueStripePaymentPlanCharges({ limit: 10 })
+    assert.equal(earlyRun.length, 0)
+    assert.equal(calls.paymentIntentsCreate.length, 0)
+
+    const pastDue = new Date(Date.now() - 2 * 60 * 1000).toISOString()
+    await db.run(
+      `UPDATE payment_flows
+       SET first_payment_date = ?, updated_at = CURRENT_TIMESTAMP
+       WHERE id = ?`,
+      [pastDue, plan.flowId]
+    )
+
+    const dueRun = await processDueStripePaymentPlanCharges({ limit: 10 })
+    assert.equal(dueRun.length, 1)
+    assert.equal(dueRun[0].firstPayment, true)
+    assert.equal(dueRun[0].charged, true)
+    assert.equal(calls.paymentIntentsCreate.length, 1)
+    assert.equal(calls.paymentIntentsCreate[0].params.amount, 10000)
+
+    const flow = await db.get(
+      'SELECT first_payment_status FROM payment_flows WHERE id = ?',
+      [plan.flowId]
+    )
+    const payment = await db.get(
+      'SELECT status, stripe_payment_intent_id FROM payments WHERE id = ?',
+      [plan.firstPaymentPaymentId]
+    )
+    assert.equal(flow.first_payment_status, 'paid')
+    assert.equal(payment.status, 'paid')
+    assert.equal(payment.stripe_payment_intent_id, 'pi_stress_1')
+  } finally {
+    setStripeFactoryForTest(null)
+    await cleanupContact(contactId)
+  }
+})
+
 test('suscripciones Stripe test: crea, sube/baja precio, pausa, reanuda, cancela y permite limpieza total', async () => {
   const { contactId, contact, savedMethodId, stripeCustomerId, stripePaymentMethodId } = await seedContactWithSavedCard('subscription_lifecycle')
   const { stripe, calls } = createStripeMock()

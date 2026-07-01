@@ -1245,6 +1245,63 @@ test('Conekta planes: conserva varios planes del mismo contacto y procesa solo v
     const duplicateTimedRun = await processDueConektaPaymentPlanCharges({ limit: 10 })
     assert.equal(duplicateTimedRun.processed, 0)
     assert.equal(orderCalls.length, 2)
+
+    const futureFirstPayment = new Date(Date.now() + 60 * 60 * 1000).toISOString()
+    const futureInstallment = new Date(Date.now() + 2 * 60 * 60 * 1000).toISOString()
+    const timedFirstPaymentPlan = await createConektaPaymentPlan({
+      contact,
+      totalAmount: 350,
+      currency: 'MXN',
+      title: 'Plan Conekta primer pago exacto',
+      description: 'Plan Conekta primer pago exacto',
+      paymentMethodId: conektaSourceId,
+      firstPayment: {
+        enabled: true,
+        amount: 125,
+        date: futureFirstPayment,
+        frequency: 'scheduled_time',
+        method: 'conekta_saved_card'
+      },
+      remainingFrequency: 'scheduled_time',
+      remainingPayments: [{
+        sequence: 1,
+        amount: 225,
+        dueDate: futureInstallment,
+        frequency: 'scheduled_time'
+      }]
+    }, { baseUrl: 'https://app.example.test' })
+
+    assert.equal(orderCalls.length, 2)
+
+    const earlyFirstPaymentRun = await processDueConektaPaymentPlanCharges({ limit: 10 })
+    assert.equal(earlyFirstPaymentRun.processed, 0)
+    assert.equal(orderCalls.length, 2)
+
+    await db.run(
+      `UPDATE payment_flows
+       SET first_payment_date = ?, updated_at = CURRENT_TIMESTAMP
+       WHERE id = ?`,
+      [new Date(Date.now() - 2 * 60 * 1000).toISOString(), timedFirstPaymentPlan.flowId]
+    )
+
+    const dueFirstPaymentRun = await processDueConektaPaymentPlanCharges({ limit: 10 })
+    assert.equal(dueFirstPaymentRun.processed, 1)
+    assert.equal(dueFirstPaymentRun.succeeded, 1)
+    assert.equal(dueFirstPaymentRun.results[0].type, 'first_payment')
+    assert.equal(orderCalls.length, 3)
+    assert.equal(orderCalls[2].body.line_items[0].unit_price, 12500)
+
+    const paidFirstPaymentFlow = await db.get(
+      'SELECT first_payment_status FROM payment_flows WHERE id = ?',
+      [timedFirstPaymentPlan.flowId]
+    )
+    const paidFirstPayment = await db.get(
+      'SELECT status, conekta_order_id FROM payments WHERE id = ?',
+      [timedFirstPaymentPlan.firstPaymentPaymentId]
+    )
+    assert.equal(paidFirstPaymentFlow.first_payment_status, 'paid')
+    assert.equal(paidFirstPayment.status, 'paid')
+    assert.equal(paidFirstPayment.conekta_order_id, 'ord_multi_3')
   })
 
   try {
