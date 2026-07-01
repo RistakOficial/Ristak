@@ -39,8 +39,9 @@ export interface PaymentGateConfig {
   msi: PaymentGateMsi
 }
 
-// Meses sin intereses: solo Conekta y Mercado Pago lo permiten en cobro simple.
-export const MSI_GATEWAYS = new Set<PaymentGateGateway>(['conekta', 'mercadopago'])
+// Meses sin intereses: Stripe (Payment Element, solo MXN y monto ≥ 300), Conekta y
+// Mercado Pago. En Stripe, si el bloque no cumple MXN/≥300 se cobra de contado sin romper.
+export const MSI_GATEWAYS = new Set<PaymentGateGateway>(['stripe', 'conekta', 'mercadopago'])
 export const MSI_INSTALLMENT_CHOICES = [3, 6, 9, 12, 18, 24]
 
 interface PaymentGateControlsProps {
@@ -267,14 +268,39 @@ export const PaymentGateControls: React.FC<PaymentGateControlsProps> = ({
           </div>
 
           <div className={styles.grid}>
-            <div className={`${styles.field} ${styles.fieldWide}`}>
-              <span>Producto del catálogo (opcional)</span>
+            <label className={`${styles.field} ${styles.fieldWide}`}>
+              <span>Pasarela</span>
+              <CustomSelect
+                value={config.gateway}
+                onValueChange={(gateway) => patchConfig({ gateway: normalizeGateway(gateway) })}
+                onBlur={onCommit}
+                options={gatewayOptions.map(option => ({
+                  value: option.value,
+                  label: `${option.label} · ${isGatewayConnected(integrationsStatus, option.value) ? 'Conectado' : 'Sin conectar'}`,
+                  icon: <PaymentPlatformLogo platform={option.logo} size="sm" decorative className={styles.gatewayLogo} />
+                }))}
+              />
+            </label>
+
+            <div className={styles.field}>
+              <div className={styles.catalogLabelRow}>
+                <span>Producto del catálogo</span>
+                <button
+                  type="button"
+                  className={styles.catalogCreate}
+                  onClick={() => setCreateProductOpen(true)}
+                  title="Crear producto"
+                >
+                  <Plus size={13} />
+                  Crear
+                </button>
+              </div>
               <CustomSelect
                 value={selectedProductId}
                 onValueChange={applyCatalogProduct}
                 onBlur={onCommit}
                 options={[
-                  { value: '', label: loadingProducts ? 'Cargando productos…' : 'Sin producto — captura manual' },
+                  { value: '', label: loadingProducts ? 'Cargando…' : (productsError ? 'No se pudieron cargar' : 'Sin producto — captura manual') },
                   ...products.map(product => {
                     const firstPrice = (product.prices || [])[0]
                     const amount = firstPrice ? priceAmountOf(firstPrice) : 0
@@ -287,49 +313,14 @@ export const PaymentGateControls: React.FC<PaymentGateControlsProps> = ({
                   })
                 ]}
               />
-              <div className={styles.catalogRow}>
-                <span className={styles.catalogHint}>
-                  {productsError
-                    ? 'No se pudieron cargar tus productos.'
-                    : (!loadingProducts && products.length === 0 ? 'Aún no tienes productos guardados.' : '')}
-                </span>
-                <button
-                  type="button"
-                  className={styles.catalogCreate}
-                  onClick={() => setCreateProductOpen(true)}
-                >
-                  <Plus size={14} />
-                  Crear producto
-                </button>
-              </div>
             </div>
 
-            {selectedProduct && productPrices.length > 1 && (
-              <label className={`${styles.field} ${styles.fieldWide}`}>
-                <span>Precio del producto</span>
-                <CustomSelect
-                  value=""
-                  onValueChange={applyCatalogPrice}
-                  onBlur={onCommit}
-                  options={productPrices.map(price => ({
-                    value: priceKeyOf(price),
-                    label: `${price.name || 'Precio'} · ${priceAmountOf(price).toFixed(2)} ${price.currency || config.currency}`
-                  }))}
-                />
-              </label>
-            )}
-
             <label className={styles.field}>
-              <span>Pasarela</span>
-              <CustomSelect
-                value={config.gateway}
-                onValueChange={(gateway) => patchConfig({ gateway: normalizeGateway(gateway) })}
+              <span>Concepto</span>
+              <input
+                value={config.productName}
+                onChange={(event) => patchConfig({ productName: event.target.value })}
                 onBlur={onCommit}
-                options={gatewayOptions.map(option => ({
-                  value: option.value,
-                  label: `${option.label} · ${isGatewayConnected(integrationsStatus, option.value) ? 'Conectado' : 'Sin conectar'}`,
-                  icon: <PaymentPlatformLogo platform={option.logo} size="sm" decorative className={styles.gatewayLogo} />
-                }))}
               />
             </label>
 
@@ -344,14 +335,20 @@ export const PaymentGateControls: React.FC<PaymentGateControlsProps> = ({
               />
             </label>
 
-            <label className={styles.field}>
-              <span>Producto</span>
-              <input
-                value={config.productName}
-                onChange={(event) => patchConfig({ productName: event.target.value })}
-                onBlur={onCommit}
-              />
-            </label>
+            {selectedProduct && productPrices.length > 1 && (
+              <label className={styles.field}>
+                <span>Precio del producto</span>
+                <CustomSelect
+                  value=""
+                  onValueChange={applyCatalogPrice}
+                  onBlur={onCommit}
+                  options={productPrices.map(price => ({
+                    value: priceKeyOf(price),
+                    label: `${price.name || 'Precio'} · ${priceAmountOf(price).toFixed(2)} ${price.currency || config.currency}`
+                  }))}
+                />
+              </label>
+            )}
 
             <label className={`${styles.field} ${styles.fieldWide}`}>
               <span>Descripción</span>

@@ -461,7 +461,7 @@
   color: var(--rstk-block-text, var(--rstk-ink));
   border: var(--rstk-block-border-width, 1px) solid var(--rstk-block-border, var(--rstk-border));
   border-radius: var(--rstk-block-radius, var(--rstk-radius-lg));
-  text-align: left;
+  text-align: var(--rstk-checkout-align, var(--rstk-block-align, left));
 }
 .rstkCanvas .rstk-checkout-card *,
 .rstkCanvas .rstk-checkout-card *::before,
@@ -527,7 +527,9 @@
 /* Mock de campos (fallback: Conekta/MP, o mientras Stripe carga el Payment Element real).
    Usa tokens del tema para adaptarse a claro/oscuro; solo las marcas llevan su color. */
 .rstkCanvas .rstk-checkout-fields-mock { display: grid; gap: 12px; }
-.rstkCanvas .rstk-mock-lbl { font-size: .82rem; color: var(--rstk-ink); font-weight: 500; }
+.rstkCanvas .rstk-mock-lbl { font-size: .82rem; color: var(--rstk-checkout-field-text, var(--rstk-ink)); font-weight: 500; }
+.rstkCanvas .rstk-mock-country > span:first-child,
+.rstkCanvas .rstk-mock-save > span:last-child { color: var(--rstk-checkout-field-text, var(--rstk-ink)); }
 .rstkCanvas .rstk-mock-input {
   display: flex;
   align-items: center;
@@ -588,7 +590,12 @@
   align-items: center;
   justify-content: center;
 }
-.rstkCanvas .rstk-checkout-secure { margin: 0; color: var(--rstk-muted); font-size: .76rem; text-align: center; }
+.rstkCanvas .rstk-checkout-secure { margin: 0; color: var(--rstk-muted); font-size: .76rem; text-align: inherit; }
+
+/* Editor: oculta el pill de autollenado de tarjetas de prueba que Stripe inyecta en modo
+   test. Solo apunta al iframe CONTROLADOR (__privateStripeController*), NUNCA a los iframes
+   de los campos de tarjeta (__privateStripeFrame*), y solo carga en el editor. */
+iframe[name^="__privateStripeController"] { display: none !important; }
 
 .rstkCanvas .rstk-list-grid { display: grid; grid-template-columns: var(--rstk-list-columns, repeat(auto-fit, minmax(190px, 1fr))); gap: 12px; }
 .rstkCanvas .rstk-list-grid article { border: var(--rstk-card-border-width, var(--rstk-block-border-width, 1px)) solid var(--rstk-card-border, var(--rstk-block-border, var(--rstk-border))); border-radius: var(--rstk-card-radius, var(--rstk-radius)); background: var(--rstk-card-bg, var(--rstk-block-bg, var(--rstk-surface2))); padding: 16px; text-align: var(--rstk-card-align, left); }

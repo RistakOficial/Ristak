@@ -4020,6 +4020,10 @@ const normalizePaymentBlockLayout = (value: unknown): PaymentBlockLayout => {
   return raw === 'banner' || raw === 'minimal' ? raw : 'card'
 }
 
+// Nota de seguridad por defecto — DEBE coincidir con PAYMENT_SECURE_NOTE_DEFAULT en
+// backend/src/services/sitesService.js para que el preview y el checkout vivo sean idénticos.
+const PAYMENT_SECURE_NOTE_DEFAULT = 'Pago seguro. La tarjeta se captura en campos cifrados del proveedor.'
+
 // Acción posterior al pago EXITOSO. Se guarda en block.settings.postPayment y el backend
 // (resolvePaymentPostAction / runtime) la ejecuta SOLO cuando el proveedor confirma el pago.
 type PaymentPostActionKind = 'success_message' | 'next_page' | 'specific_page' | 'redirect_url'
@@ -32193,9 +32197,18 @@ const CanvasPreviewBlock: React.FC<CanvasPreviewBlockProps> = ({
     const description = paymentGate.description || ''
     const amountText = formatPaymentAmount(paymentGate.amount, paymentGate.currency)
     const buttonLabel = paymentGate.buttonText || 'Pagar'
-    const showMsi = (paymentGate.gateway === 'conekta' || paymentGate.gateway === 'mercadopago') && Boolean(paymentGate.msi?.enabled)
+    const showMsi = Boolean(paymentGate.msi?.enabled)
     const isTest = paymentGate.mode === 'test'
     const isStripe = paymentGate.gateway === 'stripe'
+    const showKicker = getSettingBoolean(settings, 'paymentShowGatewayName', true)
+    const showCountry = getSettingBoolean(settings, 'paymentShowCountry', true)
+    const showSaveCard = getSettingBoolean(settings, 'paymentShowSaveCard', true)
+    const showSecureNote = getSettingBoolean(settings, 'paymentShowSecureNote', true)
+    const secureNoteText = getSettingString(settings, 'paymentSecureNote') || PAYMENT_SECURE_NOTE_DEFAULT
+    const paymentTextAlign = getHorizontalAlign(settings, 'paymentTextAlign', 'left')
+    const fieldTextColor = getSettingPaint(settings, 'paymentFieldTextColor', '')
+    const paymentSectionStyle: Record<string, string> = { '--rstk-checkout-align': paymentTextAlign }
+    if (fieldTextColor) paymentSectionStyle['--rstk-checkout-field-text'] = fieldTextColor
     // Preview WYSIWYG: clon fiel del checkout real (Stripe Elements / tokenizer). Los campos
     // son un mock no interactivo; en Stripe montamos el Payment Element REAL (diferido)
     // para que se vea IDÉNTICO al vivo; en otros proveedores usamos el mock de tarjeta.
@@ -32220,21 +32233,26 @@ const CanvasPreviewBlock: React.FC<CanvasPreviewBlockProps> = ({
             <div className="rstk-mock-input"><span className="rstk-mock-ph">CVC</span><span className="rstk-mock-cvc" /></div>
           </div>
         </div>
-        {isStripe && (
+        {isStripe && showCountry && (
           <>
             <span className="rstk-mock-lbl">País</span>
             <div className="rstk-mock-input rstk-mock-country"><span>México</span><span className="rstk-mock-chev" /></div>
-            <label className="rstk-mock-save"><span className="rstk-mock-check" /><span>Guardar mi información para un pago más rápido</span></label>
           </>
+        )}
+        {isStripe && showSaveCard && (
+          <label className="rstk-mock-save"><span className="rstk-mock-check" /><span>Guardar mi información para un pago más rápido</span></label>
         )}
       </div>
     )
     return (
-      <section className={`rstk-payment-block rstk-payment-${layout}`}>
+      <section
+        className={`rstk-payment-block rstk-payment-${layout}`}
+        style={paymentSectionStyle as React.CSSProperties}
+      >
         <div className="rstk-checkout-card">
           <div className="rstk-checkout-inner">
             <div className="rstk-checkout-head">
-              <span className="rstk-payment-kicker">{getPaymentGatewayLabel(paymentGate.gateway)}</span>
+              {showKicker && <span className="rstk-payment-kicker">{getPaymentGatewayLabel(paymentGate.gateway)}</span>}
               <strong className="rstk-checkout-title">{productName}</strong>
               {description ? <p className="rstk-checkout-desc">{description}</p> : null}
               <span className="rstk-checkout-amount">{amountText}</span>
@@ -32245,6 +32263,8 @@ const CanvasPreviewBlock: React.FC<CanvasPreviewBlockProps> = ({
                 <StripePaymentElementPreview
                   amount={paymentGate.amount}
                   currency={paymentGate.currency}
+                  fieldTextColor={fieldTextColor || undefined}
+                  showCountry={showCountry}
                   fallback={mockFields}
                 />
               ) : mockFields}
@@ -32258,7 +32278,7 @@ const CanvasPreviewBlock: React.FC<CanvasPreviewBlockProps> = ({
               <button type="button" className="rstk-button-link rstk-checkout-pay" disabled>
                 <SubmitButtonContent label={`${buttonLabel} · ${amountText}`} settings={settings} />
               </button>
-              <p className="rstk-checkout-secure">Pago seguro. La tarjeta se captura en campos cifrados del proveedor.</p>
+              {showSecureNote && <p className="rstk-checkout-secure">{secureNoteText}</p>}
             </div>
           </div>
         </div>
@@ -36530,6 +36550,82 @@ const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
               options={paymentBlockLayoutOptions}
             />
           </label>
+
+          <AlignmentControl
+            label="Alineación del texto"
+            value={getHorizontalAlign(settings, 'paymentTextAlign', 'left')}
+            options={horizontalAlignOptions}
+            onChange={(value) => onPatchSettings({ paymentTextAlign: value })}
+            onCommit={onSave}
+          />
+
+          <ColorField
+            label="Color de texto de los campos"
+            value={getSettingPaint(settings, 'paymentFieldTextColor', '')}
+            allowGradient={false}
+            onChange={(value) => onPatchSettings({ paymentFieldTextColor: value })}
+            onCommit={onSave}
+          />
+
+          <div className={styles.videoFormGateSwitchRow}>
+            <div>
+              <strong>Mostrar nombre de la pasarela</strong>
+              <span>El rótulo de la pasarela (p. ej. “Stripe”) arriba del checkout.</span>
+            </div>
+            <Switch
+              checked={getSettingBoolean(settings, 'paymentShowGatewayName', true)}
+              onChange={(checked) => { onPatchSettings({ paymentShowGatewayName: checked }); window.setTimeout(() => { onSave() }, 0) }}
+              aria-label="Mostrar nombre de la pasarela"
+            />
+          </div>
+
+          <div className={styles.videoFormGateSwitchRow}>
+            <div>
+              <strong>Mostrar campo País</strong>
+              <span>Pide el país en el formulario de tarjeta (Stripe).</span>
+            </div>
+            <Switch
+              checked={getSettingBoolean(settings, 'paymentShowCountry', true)}
+              onChange={(checked) => { onPatchSettings({ paymentShowCountry: checked }); window.setTimeout(() => { onSave() }, 0) }}
+              aria-label="Mostrar campo País"
+            />
+          </div>
+
+          <div className={styles.videoFormGateSwitchRow}>
+            <div>
+              <strong>Mostrar “Guardar mi información”</strong>
+              <span>Casilla para guardar la tarjeta y pagar más rápido.</span>
+            </div>
+            <Switch
+              checked={getSettingBoolean(settings, 'paymentShowSaveCard', true)}
+              onChange={(checked) => { onPatchSettings({ paymentShowSaveCard: checked }); window.setTimeout(() => { onSave() }, 0) }}
+              aria-label="Mostrar guardar mi información"
+            />
+          </div>
+
+          <div className={styles.videoFormGateSwitchRow}>
+            <div>
+              <strong>Mostrar nota de seguridad</strong>
+              <span>El texto pequeño debajo del botón de pago.</span>
+            </div>
+            <Switch
+              checked={getSettingBoolean(settings, 'paymentShowSecureNote', true)}
+              onChange={(checked) => { onPatchSettings({ paymentShowSecureNote: checked }); window.setTimeout(() => { onSave() }, 0) }}
+              aria-label="Mostrar nota de seguridad"
+            />
+          </div>
+
+          {getSettingBoolean(settings, 'paymentShowSecureNote', true) && (
+            <label className={styles.field}>
+              <span>Texto de la nota de seguridad</span>
+              <input
+                value={getSettingString(settings, 'paymentSecureNote')}
+                placeholder="Pago seguro. La tarjeta se captura en campos cifrados del proveedor."
+                onChange={(event) => onPatchSettings({ paymentSecureNote: event.target.value })}
+                onBlur={onSave}
+              />
+            </label>
+          )}
         </AccordionSection>
       )}
 

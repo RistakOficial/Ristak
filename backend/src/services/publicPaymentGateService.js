@@ -171,10 +171,16 @@ export async function createPaymentGateLink(configInput = {}, {
   // 'test' = fuerza modo prueba. Nunca puede forzar live (lo garantiza normalizeGateMode).
   const forcedMode = config.mode === 'test' ? 'test' : ''
 
-  // MSI solo aplica a Conekta / Mercado Pago. Se pasa como `installments` que ambos
-  // servicios ya saben normalizar (normalizeConektaInstallmentOptions /
-  // normalizeMercadoPagoInstallmentOptions).
-  const installments = MSI_GATEWAYS.has(config.gateway) && config.msi?.enabled && config.msi.maxInstallments > 1
+  // MSI: Conekta / Mercado Pago lo aceptan siempre (normalizeConektaInstallmentOptions /
+  // normalizeMercadoPagoInstallmentOptions). Stripe también lo soporta vía Payment Element,
+  // pero SOLO en MXN y con monto >= 300 (STRIPE_INSTALLMENT_MIN_AMOUNT); fuera de eso su
+  // normalizador lanza error. Guardamos ese caso para que un bloque mal configurado NUNCA
+  // rompa el cobro: si no aplica, simplemente se cobra de contado.
+  const msiRequested = config.msi?.enabled && config.msi.maxInstallments > 1
+  const stripeMsiEligible = config.gateway === 'stripe'
+    && String(config.currency || '').toUpperCase() === 'MXN'
+    && Number(config.amount) >= 300
+  const installments = msiRequested && (MSI_GATEWAYS.has(config.gateway) || stripeMsiEligible)
     ? { enabled: true, maxInstallments: config.msi.maxInstallments }
     : null
 

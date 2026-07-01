@@ -47,9 +47,11 @@ interface StripePaymentElementPreviewProps {
   amount: number
   currency: string
   fallback: React.ReactNode
+  fieldTextColor?: string
+  showCountry?: boolean
 }
 
-export const StripePaymentElementPreview: React.FC<StripePaymentElementPreviewProps> = ({ amount, currency, fallback }) => {
+export const StripePaymentElementPreview: React.FC<StripePaymentElementPreviewProps> = ({ amount, currency, fallback, fieldTextColor, showCountry = true }) => {
   const containerRef = useRef<HTMLDivElement>(null)
   const [stripePromise, setStripePromise] = useState<StripePromise | null>(cachedStripePromise)
   const [failed, setFailed] = useState(false)
@@ -81,20 +83,31 @@ export const StripePaymentElementPreview: React.FC<StripePaymentElementPreviewPr
     const card = el.closest('.rstk-checkout-card')
     const cardBg = card ? getComputedStyle(card).backgroundColor : ''
     const dark = luminanceOf(cardBg) < 0.5 || Boolean(el.closest('.rstk-dark'))
+    // Color de texto de los campos: el ajuste manual gana; si no, el token de tinta del tema.
+    const fieldText = fieldTextColor || token('--rstk-checkout-field-text') || token('--rstk-ink')
+    const muted = token('--rstk-muted')
     setAppearance(
       dark
-        ? { theme: 'night', variables: { colorPrimary: token('--rstk-accent'), borderRadius: token('--rstk-radius') } }
+        ? { theme: 'night', variables: {
+            colorPrimary: token('--rstk-accent'),
+            colorText: fieldText,
+            colorTextSecondary: muted,
+            colorTextPlaceholder: muted,
+            borderRadius: token('--rstk-radius'),
+          } }
         : {
             theme: 'stripe',
             variables: {
               colorPrimary: token('--rstk-accent'),
-              colorText: token('--rstk-ink'),
+              colorText: fieldText,
+              colorTextSecondary: muted,
+              colorTextPlaceholder: muted,
               colorBackground: token('--rstk-input-bg'),
               borderRadius: token('--rstk-radius'),
             },
           },
     )
-  }, [stripePromise, amount, currency])
+  }, [stripePromise, amount, currency, fieldTextColor])
 
   const options = useMemo(
     () => ({
@@ -115,8 +128,8 @@ export const StripePaymentElementPreview: React.FC<StripePaymentElementPreviewPr
   return (
     <div ref={containerRef} className="rstk-checkout-fields" style={{ pointerEvents: 'none' }}>
       {showReal ? (
-        <Elements key={`${options.amount}-${options.currency}-${(options.appearance as { theme?: string })?.theme}`} stripe={stripePromise!} options={options}>
-          <PaymentElement options={{ layout: 'tabs', readOnly: true }} />
+        <Elements key={`${options.amount}-${options.currency}-${(options.appearance as { theme?: string })?.theme}-${fieldTextColor || ''}-${showCountry ? '1' : '0'}`} stripe={stripePromise!} options={options}>
+          <PaymentElement options={{ layout: 'tabs', readOnly: true, fields: { billingDetails: { address: { country: showCountry ? 'auto' : 'never' } } } }} />
         </Elements>
       ) : (
         fallback

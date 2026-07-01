@@ -15588,18 +15588,31 @@ function buildPaymentCheckoutRuntimeScript() {
           // fondo oscuro -> tema 'night' (labels claros, legibles); claro -> 'stripe'.
           var payCard = root.querySelector('.rstk-checkout-card');
           var payDark = (payCard && luminanceOf(getComputedStyle(payCard).backgroundColor) < 0.5) || isDark();
+          // Color de texto de los campos: ajuste manual del bloque (var --rstk-checkout-field-text
+          // en la <section>) o, si no, la tinta del tema. El País se muestra/oculta por bloque.
+          var fieldTextTok = (getComputedStyle(root).getPropertyValue('--rstk-checkout-field-text').trim()) || readToken('--rstk-ink') || undefined;
+          var mutedTok = readToken('--rstk-muted') || undefined;
+          var showCountry = root.getAttribute('data-show-country') !== 'false';
           var appearance = payDark
-            ? { theme: 'night', variables: { colorPrimary: readToken('--rstk-accent') || undefined, borderRadius: readToken('--rstk-radius') || undefined } }
+            ? { theme: 'night', variables: {
+                colorPrimary: readToken('--rstk-accent') || undefined,
+                colorText: fieldTextTok,
+                colorTextSecondary: mutedTok,
+                colorTextPlaceholder: mutedTok,
+                borderRadius: readToken('--rstk-radius') || undefined
+              } }
             : { theme: 'stripe', variables: {
                 colorPrimary: readToken('--rstk-accent') || undefined,
-                colorText: readToken('--rstk-ink') || undefined,
+                colorText: fieldTextTok,
+                colorTextSecondary: mutedTok,
+                colorTextPlaceholder: mutedTok,
                 colorBackground: readToken('--rstk-input-bg') || undefined,
                 borderRadius: readToken('--rstk-radius') || undefined
               } };
           // Modo DIFERIDO: monta el formulario SIN crear un PaymentIntent (sin fila). El
           // intent y la fila se crean solo al cobrar (payCharge), tras validar la tarjeta.
           var elements = stripe.elements({ mode: 'payment', amount: Math.max(1, Math.round((Number(d.amount) || 1) * 100)), currency: (d.currency || 'mxn').toLowerCase(), appearance: appearance, locale: 'es' });
-          var paymentElement = elements.create('payment', { layout: 'tabs' });
+          var paymentElement = elements.create('payment', { layout: 'tabs', fields: { billingDetails: { address: { country: showCountry ? 'auto' : 'never' } } } });
           paymentElement.mount(els.fields);
           els.fields.hidden = false; els.pay.hidden = false; showLoading(false);
           payLabel(d.amount, d.currency);
@@ -15659,7 +15672,7 @@ function buildPaymentCheckoutRuntimeScript() {
               onCreateTokenError: function (err) { setPayBusy(false); setMessage('error', (err && err.message) || 'Conekta no pudo procesar la tarjeta.'); },
               onGetInfoSuccess: function () { showLoading(false); }
             },
-            options: { backgroundMode: isDark() ? 'darkMode' : 'lightMode', inputType: 'minimalMode', hideLogo: true, colorPrimary: readToken('--rstk-accent'), colorText: readToken('--rstk-ink'), colorLabel: readToken('--rstk-muted'), autoResize: true }
+            options: { backgroundMode: isDark() ? 'darkMode' : 'lightMode', inputType: 'minimalMode', hideLogo: true, colorPrimary: readToken('--rstk-accent'), colorText: (getComputedStyle(root).getPropertyValue('--rstk-checkout-field-text').trim() || readToken('--rstk-ink')), colorLabel: readToken('--rstk-muted'), autoResize: true }
           });
           els.pay.hidden = false; payLabel(d.amount, d.currency);
           els.pay.addEventListener('click', function () {
@@ -18428,6 +18441,10 @@ function resolvePaymentPostAction(settings = {}, paymentGate = {}, block = {}, c
   }
 }
 
+// Nota de seguridad por defecto — DEBE coincidir con PAYMENT_SECURE_NOTE_DEFAULT en
+// frontend/src/pages/Sites/Sites.tsx para que preview y checkout vivo sean idénticos.
+const PAYMENT_SECURE_NOTE_DEFAULT = 'Pago seguro. La tarjeta se captura en campos cifrados del proveedor.'
+
 function renderPaymentBlock(block = {}, context = {}) {
   const settings = block.settings || {}
   const paymentGate = getPaymentGateFromBlock(block)
@@ -18442,6 +18459,14 @@ function renderPaymentBlock(block = {}, context = {}) {
   const amountText = formatPaymentAmount(paymentGate.amount, paymentGate.currency)
   const post = resolvePaymentPostAction(settings, paymentGate, block, context)
   const isTestBlock = paymentGate.mode === 'test'
+  // Personalización de diseño del checkout (todas con default = comportamiento actual).
+  const showKicker = settings.paymentShowGatewayName !== false
+  const showSecure = settings.paymentShowSecureNote !== false
+  const secureNote = cleanString(settings.paymentSecureNote) || PAYMENT_SECURE_NOTE_DEFAULT
+  const showCountry = settings.paymentShowCountry !== false
+  const checkoutAlign = blockHorizontalAlign(settings, 'paymentTextAlign', 'left')
+  const fieldTextColor = cleanString(settings.paymentFieldTextColor).replace(/[^a-zA-Z0-9#().,%\s-]/g, '')
+  const checkoutStyle = `--rstk-checkout-align:${checkoutAlign}${fieldTextColor ? `;--rstk-checkout-field-text:${fieldTextColor}` : ''}`
 
   // Shell del checkout EMBEBIDO inline. El runtime del sitio publicado llama a
   // /api/sites/public/checkout/init, monta el SDK del proveedor dentro de
@@ -18449,6 +18474,7 @@ function renderPaymentBlock(block = {}, context = {}) {
   // (data-post-*). Los campos de tarjeta viven en iframes cifrados del proveedor.
   return `
     <section class="rstk-payment-block rstk-payment-${escapeHtml(layout)}"
+      style="${escapeHtml(checkoutStyle)}"
       data-rstk-payment-block
       data-rstk-checkout
       data-site-id="${escapeHtml(siteId)}"
@@ -18461,11 +18487,12 @@ function renderPaymentBlock(block = {}, context = {}) {
       data-post-action="${escapeHtml(post.action)}"
       data-post-url="${escapeHtml(post.url)}"
       data-post-message="${escapeHtml(post.message)}"
+      data-show-country="${showCountry ? 'true' : 'false'}"
       ${isTestBlock ? 'data-test-mode="true"' : ''}>
       <div class="rstk-checkout-card">
         <div class="rstk-checkout-inner">
           <div class="rstk-checkout-head">
-            <span class="rstk-payment-kicker">${escapeHtml(getPaymentGatewayLabel(paymentGate.gateway))}</span>
+            ${showKicker ? `<span class="rstk-payment-kicker">${escapeHtml(getPaymentGatewayLabel(paymentGate.gateway))}</span>` : ''}
             <strong class="rstk-checkout-title">${escapeHtml(productName)}</strong>
             ${description ? `<p class="rstk-checkout-desc">${escapeHtml(description)}</p>` : ''}
             <span class="rstk-checkout-amount">${escapeHtml(amountText)}</span>
@@ -18482,7 +18509,7 @@ function renderPaymentBlock(block = {}, context = {}) {
               <span data-rstk-checkout-pay-label>${escapeHtml(buttonLabel)} · ${escapeHtml(amountText)}</span>
             </button>
             <p class="rstk-checkout-message" data-rstk-checkout-message role="status" hidden></p>
-            <p class="rstk-checkout-secure">Pago seguro. La tarjeta se captura en campos cifrados del proveedor.</p>
+            ${showSecure ? `<p class="rstk-checkout-secure">${escapeHtml(secureNote)}</p>` : ''}
           </div>
           <div class="rstk-checkout-success" data-rstk-checkout-success hidden></div>
         </div>
@@ -19806,7 +19833,7 @@ const RSTK_BASE_CSS = `
     margin-right:var(--rstk-media-margin-right,auto);
   }
 
-  .rstk-checkout-card{box-sizing:border-box;width:100%;max-width:var(--rstk-checkout-width,504px);margin-inline:auto;padding:var(--rstk-block-pad,22px);background:var(--rstk-block-bg,var(--rstk-surface));color:var(--rstk-block-text,var(--rstk-ink));border:var(--rstk-block-border-width,1px) solid var(--rstk-block-border,var(--rstk-border));border-radius:var(--rstk-block-radius,var(--rstk-radius-lg));box-shadow:var(--rstk-shadow,none);text-align:left}
+  .rstk-checkout-card{box-sizing:border-box;width:100%;max-width:var(--rstk-checkout-width,504px);margin-inline:auto;padding:var(--rstk-block-pad,22px);background:var(--rstk-block-bg,var(--rstk-surface));color:var(--rstk-block-text,var(--rstk-ink));border:var(--rstk-block-border-width,1px) solid var(--rstk-block-border,var(--rstk-border));border-radius:var(--rstk-block-radius,var(--rstk-radius-lg));box-shadow:var(--rstk-shadow,none);text-align:var(--rstk-checkout-align,var(--rstk-block-align,left))}
   .rstk-checkout-card *,.rstk-checkout-card *::before,.rstk-checkout-card *::after{box-sizing:border-box}
   .rstk-checkout-inner{box-sizing:border-box;width:100%;max-width:var(--rstk-checkout-content-width,456px);margin-inline:auto;min-width:0;display:grid;gap:16px}
   .rstk-block-style:has(> .rstk-payment-block){background:transparent;border:0;padding:0;box-shadow:none}
@@ -19835,7 +19862,7 @@ const RSTK_BASE_CSS = `
   .rstk-checkout-message{margin:0;font-size:.88rem;line-height:1.4;padding:10px 12px;border-radius:var(--rstk-radius);border:1px solid var(--rstk-border);color:var(--rstk-ink);background:color-mix(in srgb,var(--rstk-ink) 4%,transparent);min-width:0;overflow-wrap:anywhere;word-break:break-word}
   .rstk-checkout-message[data-kind="success"]{color:var(--rstk-accent);border-color:color-mix(in srgb,var(--rstk-accent) 35%,var(--rstk-border));background:color-mix(in srgb,var(--rstk-accent) 8%,transparent)}
   .rstk-checkout-message[data-kind="error"]{color:var(--rstk-danger,#d64545);border-color:color-mix(in srgb,var(--rstk-danger,#d64545) 35%,var(--rstk-border));background:color-mix(in srgb,var(--rstk-danger,#d64545) 8%,transparent)}
-  .rstk-checkout-secure{margin:0;color:var(--rstk-muted);font-size:.76rem;text-align:center}
+  .rstk-checkout-secure{margin:0;color:var(--rstk-muted);font-size:.76rem;text-align:inherit}
   .rstk-checkout-success{display:grid;gap:8px;padding:22px;text-align:center;color:var(--rstk-ink);font-size:1.02rem;font-weight:600}
 
   .rstk-kind-form .rstk-shell{
