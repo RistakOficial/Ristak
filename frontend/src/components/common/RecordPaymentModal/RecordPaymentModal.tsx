@@ -739,6 +739,7 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
   const [installmentChargeMode, setInstallmentChargeMode] = useState<InstallmentChargeMode>('single')
   const [mercadoPagoInstallmentChoice, setMercadoPagoInstallmentChoice] = useState<MercadoPagoInstallmentChoice>('none')
   const [conektaInstallmentChoice, setConektaInstallmentChoice] = useState<ConektaInstallmentChoice>('none')
+  const [conektaSavedCardGatewayConfirmed, setConektaSavedCardGatewayConfirmed] = useState(false)
   const [manualPaymentData, setManualPaymentData] = useState<ManualPaymentData>(() => defaultManualPaymentData(timezone))
   const [transferInfoUrl, setTransferInfoUrl] = useState<string | null>(null)
   const [savedPaymentMethods, setSavedPaymentMethods] = useState<StripeSavedPaymentMethod[]>([])
@@ -1105,6 +1106,7 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
     if (!nextPaymentOption) return
 
     resetInstallmentChargeMode()
+    setConektaSavedCardGatewayConfirmed(false)
     setSinglePaymentAction('saved_card')
     setPaymentOption(nextPaymentOption)
     setSinglePaymentOptionsStage('saved_cards')
@@ -1115,6 +1117,7 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
     const nextPaymentOption = defaultPaymentLinkOption || 'manual'
     setPaymentOption(nextPaymentOption)
     resetInstallmentChargeMode()
+    setConektaSavedCardGatewayConfirmed(false)
 
     if (hasMultiplePaymentLinkGateways) {
       setSinglePaymentOptionsStage('gateway')
@@ -1135,6 +1138,7 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
     setSinglePaymentAction('payment_link')
     setStripePlanCardSource('new_card')
     setPaymentOption(nextPaymentOption)
+    setConektaSavedCardGatewayConfirmed(false)
     setSinglePaymentOptionsStage(hasMultiplePaymentPlanGateways ? 'gateway' : 'confirm')
   }
 
@@ -1145,6 +1149,7 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
     setSinglePaymentAction('saved_card')
     setStripePlanCardSource('saved_card')
     setPaymentOption(nextPaymentOption)
+    setConektaSavedCardGatewayConfirmed(false)
     setSinglePaymentOptionsStage('saved_cards')
   }
 
@@ -1921,6 +1926,7 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
     setSinglePaymentOptionsStage('method')
     setPaymentOption(getDefaultPaymentOption())
     resetInstallmentChargeMode()
+    setConektaSavedCardGatewayConfirmed(false)
     setCreatedPaymentLink(null)
   }
 
@@ -1936,6 +1942,17 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
     }
 
     if (isSinglePaymentInstallmentContext && installmentChargeMode === 'installments') {
+      resetInstallmentChargeMode()
+      return
+    }
+
+    if (
+      singlePaymentAction === 'saved_card' &&
+      singlePaymentOptionsStage === 'saved_cards' &&
+      paymentOption === 'conekta_saved_card' &&
+      conektaSavedCardGatewayConfirmed
+    ) {
+      setConektaSavedCardGatewayConfirmed(false)
       resetInstallmentChargeMode()
       return
     }
@@ -4094,8 +4111,14 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
     const showGatewayPicker = singlePaymentOptionsStage === 'gateway' && singlePaymentAction === 'payment_link'
     const showGatewayConfiguration = singlePaymentOptionsStage === 'gateway_config' && singlePaymentAction === 'payment_link'
     const showManualPaymentFields = singlePaymentOptionsStage === 'method' && singlePaymentAction === 'manual' && paymentOption === 'manual'
-    const showPrimaryPaymentOptions = !showManualPaymentFields
-    const showInstallmentModeChoice = isSinglePaymentInstallmentContext && installmentChargeMode === 'single'
+    const showConektaSavedCardChargeChoice = showSavedCardPicker &&
+      paymentOption === 'conekta_saved_card' &&
+      conektaSavedCardGatewayConfirmed
+    const showSavedCardGatewayOptions = showSavedCardPicker && !showConektaSavedCardChargeChoice
+    const showPrimaryPaymentOptions = !showManualPaymentFields && (!showSavedCardPicker || showSavedCardGatewayOptions)
+    const showInstallmentModeChoice = isSinglePaymentInstallmentContext &&
+      installmentChargeMode === 'single' &&
+      (paymentOption !== 'conekta_saved_card' || showConektaSavedCardChargeChoice)
     const showStripeInstallmentPanel = showGatewayConfiguration &&
       paymentOption === 'stripe' &&
       installmentChargeMode === 'installments'
@@ -4105,7 +4128,7 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
     const showConektaInstallmentControls = (
       showGatewayConfiguration && paymentOption === 'conekta'
     ) || (
-      showSavedCardPicker && paymentOption === 'conekta_saved_card'
+      showConektaSavedCardChargeChoice
     )
     const showConektaInstallmentPanel = showConektaInstallmentControls && installmentChargeMode === 'installments'
     const installmentProviderLabel = paymentOption === 'mercadopago'
@@ -4395,6 +4418,7 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
                     active: paymentOption === 'stripe_saved_card',
                     onSelect: (value) => {
                       resetInstallmentChargeMode()
+                      setConektaSavedCardGatewayConfirmed(false)
                       setSinglePaymentAction('saved_card')
                       setPaymentOption('stripe_saved_card')
                       setSelectedSavedPaymentMethodId(value)
@@ -4416,6 +4440,7 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
                       }
                       setSinglePaymentAction('saved_card')
                       setPaymentOption('conekta_saved_card')
+                      setConektaSavedCardGatewayConfirmed(true)
                       setSelectedConektaPaymentSourceId(value)
                     }
                   })
@@ -4470,6 +4495,7 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
                   className={`${styles.optionButton} ${singlePaymentAction === 'manual' && paymentOption === 'manual' ? styles.optionButtonActive : ''}`}
                   onClick={() => {
                     resetInstallmentChargeMode()
+                    setConektaSavedCardGatewayConfirmed(false)
                     setSinglePaymentAction('manual')
                     setSinglePaymentOptionsStage('method')
                     setPaymentOption('manual')
@@ -4530,51 +4556,50 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
 
         {showConektaInstallmentPanel && invoiceSummary && (
           <div className={styles.mercadoPagoInstallmentsPanel}>
-            <div className={styles.mercadoPagoInstallmentsHeader}>
-              <div>
+            <div className={`${styles.mercadoPagoInstallmentsHeader} ${styles.conektaInstallmentsHeader}`}>
+              <div className={styles.conektaInstallmentIntro}>
                 <span>Conekta</span>
                 <p>Meses sin intereses</p>
-              </div>
-              <strong>{conektaInstallmentPaymentLabel}</strong>
-            </div>
-
-            <div className={styles.mercadoPagoInstallmentsGrid}>
-              <div className={styles.manualField}>
-                <label>Máximo de meses</label>
-                {renderPaymentSelect({
-                  value: conektaInstallmentChoice,
-                  onChange: (value) => setConektaInstallmentChoice(value as ConektaInstallmentChoice),
-                  options: conektaInstallmentOptions,
-                  title: 'Máximo de meses',
-                  placeholder: 'Selecciona un plazo',
-                  includeDisabledOptions: true,
-                  dropdownMinWidth: 420
-                })}
-              </div>
-
-              <div className={styles.conektaInstallmentMinimums} aria-label="Montos mínimos de Conekta">
-                <span>Montos mínimos</span>
-                <div className={styles.conektaMinimumList}>
-                  {CONEKTA_INSTALLMENT_TERMS.map((term) => {
-                    const available = invoiceSummary.amount >= term.minAmount
-
-                    return (
-                      <div
-                        key={term.value}
-                        className={styles.conektaMinimumRow}
-                        data-available={available ? 'true' : 'false'}
-                      >
-                        <span>{getConektaInstallmentTermLabel(term)}</span>
-                        <strong>{formatConektaInstallmentMinimum(term.minAmount, invoiceSummary.currency)}</strong>
-                      </div>
-                    )
+                <div className={styles.conektaInstallmentSelectField}>
+                  <label>Máximo de meses</label>
+                  {renderPaymentSelect({
+                    value: conektaInstallmentChoice,
+                    onChange: (value) => setConektaInstallmentChoice(value as ConektaInstallmentChoice),
+                    options: conektaInstallmentOptions,
+                    title: 'Máximo de meses',
+                    placeholder: 'Selecciona un plazo',
+                    includeDisabledOptions: true,
+                    dropdownMinWidth: 420
                   })}
                 </div>
-                {!conektaInstallmentsAvailable && (
-                  <p className={styles.conektaInstallmentHelp}>
-                    Sube el monto del cobro para habilitar meses sin intereses.
-                  </p>
-                )}
+              </div>
+
+              <div className={styles.conektaInstallmentSupport}>
+                <strong>{conektaInstallmentPaymentLabel}</strong>
+                <div className={styles.conektaInstallmentMinimums} aria-label="Montos mínimos de Conekta">
+                  <span>Montos mínimos</span>
+                  <div className={styles.conektaMinimumList}>
+                    {CONEKTA_INSTALLMENT_TERMS.map((term) => {
+                      const available = invoiceSummary.amount >= term.minAmount
+
+                      return (
+                        <div
+                          key={term.value}
+                          className={styles.conektaMinimumRow}
+                          data-available={available ? 'true' : 'false'}
+                        >
+                          <span>{getConektaInstallmentTermLabel(term)}</span>
+                          <strong>{formatConektaInstallmentMinimum(term.minAmount, invoiceSummary.currency)}</strong>
+                        </div>
+                      )
+                    })}
+                  </div>
+                  {!conektaInstallmentsAvailable && (
+                    <p className={styles.conektaInstallmentHelp}>
+                      Sube el monto del cobro para habilitar meses sin intereses.
+                    </p>
+                  )}
+                </div>
               </div>
             </div>
 
