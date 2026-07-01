@@ -50,6 +50,7 @@ import {
   buildReplyPartDelaySchedule,
   buildPendingReplyContextMessage,
   normalizeConversationalChannel,
+  RECOVERABLE_CONVERSATIONAL_CHANNELS,
   sanitizeAgentReply,
   sendReplyParts,
   shouldSendConversationalReplyThroughHighLevel,
@@ -124,6 +125,10 @@ test('normaliza aliases de canal conversacional sin forzar WhatsApp', () => {
   assert.equal(normalizeConversationalChannel('no-existe'), 'whatsapp')
 })
 
+test('recuperacion de pendientes cubre todos los canales conversacionales', () => {
+  assert.deepEqual(RECOVERABLE_CONVERSATIONAL_CHANNELS, ['whatsapp', 'instagram', 'messenger', 'sms', 'webchat', 'email'])
+})
+
 test('responde por HighLevel cuando el WhatsApp entrante viene de GHL', () => {
   assert.equal(
     shouldSendConversationalReplyThroughHighLevel({
@@ -153,6 +158,37 @@ test('responde por HighLevel cuando el chat entrante es webchat de GHL', () => {
     shouldSendConversationalReplyThroughHighLevel({
       channel: 'webchat',
       latest: { transport: 'ghl_webchat' }
+    }),
+    true
+  )
+})
+
+test('responde Messenger e Instagram por Meta directo salvo que el origen sea HighLevel', () => {
+  assert.equal(
+    shouldSendConversationalReplyThroughHighLevel({
+      channel: 'messenger',
+      latest: { provider: 'meta', transport: 'messenger' }
+    }),
+    false
+  )
+  assert.equal(
+    shouldSendConversationalReplyThroughHighLevel({
+      channel: 'instagram',
+      latest: { provider: 'meta', transport: 'instagram' }
+    }),
+    false
+  )
+  assert.equal(
+    shouldSendConversationalReplyThroughHighLevel({
+      channel: 'messenger',
+      latest: { provider: 'highlevel', source: 'conversations_sync' }
+    }),
+    true
+  )
+  assert.equal(
+    shouldSendConversationalReplyThroughHighLevel({
+      channel: 'instagram',
+      latest: { transport: 'ghl_instagram' }
     }),
     true
   )

@@ -114,6 +114,7 @@ const CONVERSATIONAL_CHANNEL_ALIASES = new Map([
   ['mail', 'email'],
   ['e-mail', 'email']
 ])
+export const RECOVERABLE_CONVERSATIONAL_CHANNELS = ['whatsapp', 'instagram', 'messenger', 'sms', 'webchat', 'email']
 
 // Palabras internas que jamás deben llegar al cliente final.
 const INTERNAL_TOKEN_PATTERN = /\b(AGENDAR|SALTAR|ready_for_human|ready_to_schedule|ready_to_buy|purchase_completed|mark_ready_to_advance|send_to_human|discard_conversation|stay_silent|book_appointment|create_payment_link|send_goal_url|send_trigger_link)\b/gi
@@ -156,10 +157,19 @@ function normalizeTransportKey(value = '') {
   return String(value || '').trim().toLowerCase().replace(/[\s-]+/g, '_')
 }
 
+function isHighLevelMessageSource(message = {}) {
+  const provider = normalizeTransportKey(message?.provider)
+  const source = normalizeTransportKey(message?.source)
+  const transport = normalizeTransportKey(message?.transport)
+  return provider === 'highlevel' || source === 'conversations_sync' || transport.startsWith('ghl_')
+}
+
 export function shouldSendConversationalReplyThroughHighLevel({ channel = 'whatsapp', latest = {} } = {}) {
   const rawChannel = normalizeTransportKey(channel || latest?.channel)
   const normalizedChannel = normalizeConversationalChannel(channel || latest?.channel)
-  if (HIGHLEVEL_CHAT_CHANNELS.has(normalizedChannel)) return true
+  if (HIGHLEVEL_CHAT_CHANNELS.has(normalizedChannel)) {
+    return isHighLevelMessageSource(latest) || rawChannel.startsWith('ghl_')
+  }
   return normalizedChannel === 'whatsapp' && (
     HIGHLEVEL_WHATSAPP_TRANSPORTS.has(normalizeTransportKey(latest?.transport)) ||
     HIGHLEVEL_WHATSAPP_CHANNEL_ALIASES.has(rawChannel)
@@ -629,6 +639,14 @@ export function buildPendingReplyContextMessage(pendingMessages = []) {
 function rowToConversationalMessage(row, channel = 'whatsapp') {
   const normalizedChannel = normalizeConversationalChannel(channel)
   const direction = String(row.direction || '').toLowerCase()
+  const rawPayload = safeJsonParse(row.raw_payload_json, {})
+  const provider = String(row.provider || rawPayload?.provider || '').trim()
+  const source = String(row.source || rawPayload?.source || '').trim()
+  const transport = String(
+    row.transport ||
+    rawPayload?.transport ||
+    ((provider === 'highlevel' || source === 'conversations_sync') ? `ghl_${normalizedChannel}` : '')
+  ).trim()
   const role = direction === 'outbound' || direction === 'business_echo' || direction === 'sent'
     ? 'assistant'
     : 'user'
@@ -646,7 +664,9 @@ function rowToConversationalMessage(row, channel = 'whatsapp') {
     media_filename: row.media_filename,
     media_duration_ms: row.media_duration_ms,
     subject: row.subject || null,
-    transport: row.transport || null,
+    provider: provider || null,
+    source: source || null,
+    transport: transport || null,
     phone: row.phone || null,
     business_phone: row.business_phone || null,
     business_phone_number_id: row.business_phone_number_id || null,
@@ -668,7 +688,7 @@ async function loadConversationRows(contactId, channel = 'whatsapp', { inboundOn
     const rows = await db.all(`
       SELECT id, direction, message_type, message_text, media_url, media_mime_type,
              NULL AS media_filename, NULL AS media_duration_ms, message_timestamp, created_at,
-             platform
+             platform, raw_payload_json
       FROM meta_social_messages
       WHERE contact_id = ? AND platform = ?
         ${inboundOnly ? "AND LOWER(COALESCE(direction, 'inbound')) = 'inbound'" : ''}
@@ -682,7 +702,7 @@ async function loadConversationRows(contactId, channel = 'whatsapp', { inboundOn
     const rows = await db.all(`
       SELECT id, direction, 'email' AS message_type, message_text, NULL AS media_url,
              NULL AS media_mime_type, NULL AS media_filename, NULL AS media_duration_ms,
-             subject, from_email, to_email, reply_to, message_timestamp, created_at
+             subject, from_email, to_email, reply_to, message_timestamp, created_at, raw_payload_json
       FROM email_messages
       WHERE contact_id = ?
         ${inboundOnly ? "AND LOWER(COALESCE(direction, 'inbound')) = 'inbound'" : ''}
@@ -695,7 +715,7 @@ async function loadConversationRows(contactId, channel = 'whatsapp', { inboundOn
   const rows = await db.all(`
     SELECT id, direction, message_type, message_text, media_url, media_mime_type,
            media_filename, media_duration_ms, phone, business_phone, business_phone_number_id,
-           NULL AS subject, transport, message_timestamp, created_at
+           NULL AS subject, transport, message_timestamp, created_at, raw_payload_json
     FROM whatsapp_api_messages
     WHERE contact_id = ?
       ${inboundOnly ? "AND LOWER(COALESCE(direction, 'inbound')) = 'inbound'" : ''}
@@ -747,7 +767,7 @@ async function loadInboundMessageById(contactId, messageId, channel = 'whatsapp'
     const row = await db.get(`
       SELECT id, direction, message_type, message_text, media_url, media_mime_type,
              NULL AS media_filename, NULL AS media_duration_ms, message_timestamp, created_at,
-             platform
+             platform, raw_payload_json
       FROM meta_social_messages
       WHERE id = ? AND contact_id = ? AND platform = ?
       LIMIT 1
@@ -759,7 +779,7 @@ async function loadInboundMessageById(contactId, messageId, channel = 'whatsapp'
     const row = await db.get(`
       SELECT id, direction, 'email' AS message_type, message_text, NULL AS media_url,
              NULL AS media_mime_type, NULL AS media_filename, NULL AS media_duration_ms,
-             subject, from_email, to_email, reply_to, message_timestamp, created_at
+             subject, from_email, to_email, reply_to, message_timestamp, created_at, raw_payload_json
       FROM email_messages
       WHERE id = ? AND contact_id = ?
       LIMIT 1
@@ -770,7 +790,7 @@ async function loadInboundMessageById(contactId, messageId, channel = 'whatsapp'
   const row = await db.get(`
     SELECT id, direction, message_type, message_text, media_url, media_mime_type,
            media_filename, media_duration_ms, phone, business_phone, business_phone_number_id,
-           NULL AS subject, transport, message_timestamp, created_at
+           NULL AS subject, transport, message_timestamp, created_at, raw_payload_json
     FROM whatsapp_api_messages
     WHERE id = ? AND contact_id = ?
       ${phoneMessageTransportFilter(normalizedChannel)}
@@ -785,7 +805,7 @@ async function loadRecentInboundMessagesForRecovery(channel = 'whatsapp', limit 
     const rows = await db.all(`
       SELECT id, contact_id, direction, message_type, message_text, media_url, media_mime_type,
              NULL AS media_filename, NULL AS media_duration_ms, message_timestamp, created_at,
-             platform
+             platform, raw_payload_json
       FROM meta_social_messages
       WHERE platform = ?
         AND LOWER(COALESCE(direction, 'inbound')) = 'inbound'
@@ -800,7 +820,7 @@ async function loadRecentInboundMessagesForRecovery(channel = 'whatsapp', limit 
     const rows = await db.all(`
       SELECT id, contact_id, direction, 'email' AS message_type, message_text, NULL AS media_url,
              NULL AS media_mime_type, NULL AS media_filename, NULL AS media_duration_ms,
-             subject, from_email, to_email, reply_to, message_timestamp, created_at
+             subject, from_email, to_email, reply_to, message_timestamp, created_at, raw_payload_json
       FROM email_messages
       WHERE LOWER(COALESCE(direction, 'inbound')) = 'inbound'
         AND contact_id IS NOT NULL
@@ -813,7 +833,7 @@ async function loadRecentInboundMessagesForRecovery(channel = 'whatsapp', limit 
   const rows = await db.all(`
     SELECT id, contact_id, direction, message_type, message_text, media_url, media_mime_type,
            media_filename, media_duration_ms, phone, business_phone,
-           business_phone_number_id, NULL AS subject, transport, message_timestamp, created_at
+           business_phone_number_id, NULL AS subject, transport, message_timestamp, created_at, raw_payload_json
     FROM whatsapp_api_messages
     WHERE direction = 'inbound' AND contact_id IS NOT NULL
       ${phoneMessageTransportFilter(normalizedChannel)}
@@ -1110,6 +1130,16 @@ async function sendConversationalChannelTextMessage({
       toNumber: phone || latest.phone || undefined,
       externalId
     }, { markHumanTakeover: false })
+  }
+
+  if (SOCIAL_CHAT_CHANNELS.has(normalizedChannel)) {
+    const { sendMetaSocialTextMessage } = await import('../../services/metaSocialMessagingService.js')
+    return sendMetaSocialTextMessage({
+      contactId,
+      platform: normalizedChannel,
+      message: text,
+      externalId
+    })
   }
 
   const { sendWhatsAppApiTextMessage } = await import('../../services/whatsappApiService.js')
@@ -1922,7 +1952,7 @@ export async function recoverPendingConversationalAgentConversations({
   if (!(await hasFeature('conversational_ai'))) return { scanned: 0, scheduled: 0 }
 
   const rowsByChannel = await Promise.all(
-    ['whatsapp', 'instagram', 'messenger', 'sms'].map((channel) => loadRecentInboundMessagesForRecovery(channel, PENDING_RECOVERY_SCAN_LIMIT))
+    RECOVERABLE_CONVERSATIONAL_CHANNELS.map((channel) => loadRecentInboundMessagesForRecovery(channel, PENDING_RECOVERY_SCAN_LIMIT))
   )
   const rows = rowsByChannel.flat()
     .sort((left, right) => messageTimestampMs(right) - messageTimestampMs(left))
