@@ -305,6 +305,27 @@ async function softRemoveComment(comment) {
   )
 }
 
+// El webhook de comentarios trae from.{id,name} pero NO la foto. Para FB la
+// obtenemos consultando el propio comment_id (from{picture}) con el token de
+// Página. IG no expone foto del comentarista por esta vía (se queda con username).
+async function fetchMetaCommentAuthorProfile({ platform, commentId, accessToken }) {
+  if (!accessToken || !commentId || platform === 'instagram') return {}
+  try {
+    const data = await metaSocialGraphRequest(`/${encodeURIComponent(commentId)}`, {
+      token: accessToken,
+      query: { fields: 'from{id,name,picture}' }
+    })
+    const from = data?.from || {}
+    return {
+      name: cleanString(from.name),
+      profilePictureUrl: cleanString(from.picture?.data?.url)
+    }
+  } catch (error) {
+    logger.warn(`No se pudo leer perfil del comentarista ${commentId}: ${error.message}`)
+    return {}
+  }
+}
+
 async function fetchMetaSenderProfile({ platform, senderId, accessToken }) {
   if (!senderId || !accessToken) return {}
 
@@ -1093,7 +1114,17 @@ export async function processMetaSocialWebhook({ payload = {}, rawBody = '', sig
             continue
           }
 
-          const profile = { name: comment.authorName, username: comment.authorUsername, raw: change }
+          const commentAuthor = await fetchMetaCommentAuthorProfile({
+            platform: comment.platform,
+            commentId: comment.commentId,
+            accessToken: await resolveMetaPageTokenSafe(config)
+          })
+          const profile = {
+            name: commentAuthor.name || comment.authorName,
+            username: comment.authorUsername,
+            profilePictureUrl: commentAuthor.profilePictureUrl || '',
+            raw: change
+          }
           const localContact = await upsertLocalSocialContact({ socialMessage: comment, profile })
           const socialContactId = await upsertMetaSocialContact({ contactId: localContact.id, socialMessage: comment, profile })
           const savedComment = await upsertMetaSocialMessage({ socialContactId, contactId: localContact.id, socialMessage: comment })
