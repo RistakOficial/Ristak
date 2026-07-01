@@ -1,8 +1,8 @@
 import React, { useEffect, useRef, useState } from 'react'
 import { useLocation, useNavigate } from 'react-router-dom'
-import { Button, Icon, Modal, CustomSelect, PageHeader, Switch } from '@/components/common'
+import { Button, Icon, Modal, CustomSelect, PageHeader, SegmentTabs, Switch } from '@/components/common'
 import { Badge, type BadgeVariant } from '@/components/common/Badge'
-import { ArrowLeft, ArrowRight, CheckCircle, Copy, ExternalLink, FlaskConical, Pencil, Plus, Power, RefreshCw, Save, Send, Settings2, Trash2, XCircle } from 'lucide-react'
+import { Activity, ArrowLeft, ArrowRight, CheckCircle, Copy, ExternalLink, FlaskConical, Link2, MessageCircle, Pencil, Plus, Power, RefreshCw, Save, Send, Settings2, Trash2, XCircle } from 'lucide-react'
 import { useNotification } from '@/contexts/NotificationContext'
 import { useAppConfig, useIsRenderDomain } from '@/hooks'
 import {
@@ -66,6 +66,14 @@ type MetaTestParameterFieldKey =
 
 type SecretTokenField = 'accessToken'
 type MetaMessagingPlatform = 'messenger' | 'instagram'
+type MetaConnectedTab = 'cuenta' | 'mensajes' | 'rastreo' | 'pruebas'
+
+const metaConnectedTabs: Array<{ id: MetaConnectedTab; label: string; icon: React.ReactNode }> = [
+  { id: 'cuenta', label: 'Cuenta', icon: <Link2 size={16} /> },
+  { id: 'mensajes', label: 'Mensajes', icon: <MessageCircle size={16} /> },
+  { id: 'rastreo', label: 'Rastreo', icon: <Activity size={16} /> },
+  { id: 'pruebas', label: 'Pruebas', icon: <FlaskConical size={16} /> }
+]
 
 const MASKED_SECRET_PREFIX = '***'
 const SECRET_MASK_FILL = '*'.repeat(180)
@@ -317,6 +325,7 @@ export const MetaAdsIntegration: React.FC = () => {
   const [isOpeningMetaPixelTest, setIsOpeningMetaPixelTest] = useState(false)
   const [metaTestResult, setMetaTestResult] = useState<MetaTestEventResponse | null>(null)
   const [activeStep, setActiveStep] = useState(routeStep)
+  const [activeMetaTab, setActiveMetaTab] = useState<MetaConnectedTab>('cuenta')
   const accessTokenInputRef = useRef<HTMLInputElement>(null)
 
   const { showToast } = useNotification()
@@ -1974,7 +1983,16 @@ export const MetaAdsIntegration: React.FC = () => {
 
       <div className={styles.sections}>
             {!shouldShowWizard && (
-              <section className={`${styles.section} ${styles.connectedSection}`}>
+              <SegmentTabs
+                aria-label="Secciones de configuración de Meta"
+                className={styles.metaTabs}
+                tabs={metaConnectedTabs}
+                value={activeMetaTab}
+                onChange={(id) => setActiveMetaTab(id as MetaConnectedTab)}
+              />
+            )}
+            {!shouldShowWizard && activeMetaTab === 'cuenta' && (
+              <section className={styles.tabPanel}>
                 <div className={styles.connectedHeader}>
                   <span className={styles.connectedIcon} aria-hidden="true">
                     <CheckCircle size={20} />
@@ -1986,6 +2004,10 @@ export const MetaAdsIntegration: React.FC = () => {
                     </p>
                   </div>
                   <div className={styles.connectedActions}>
+                    <Button type="button" variant="secondary" onClick={handleSyncMetaAds} disabled={isSyncingMetaAds}>
+                      <RefreshCw size={16} className={isSyncingMetaAds ? styles.spinning : ''} />
+                      {isSyncingMetaAds ? 'Sincronizando' : 'Sincronizar'}
+                    </Button>
                     <Button type="button" variant="secondary" onClick={handleEditMetaConfig}>
                       <Pencil size={16} />
                       Editar
@@ -2035,7 +2057,11 @@ export const MetaAdsIntegration: React.FC = () => {
                     )}
                   </div>
                 </div>
+              </section>
+            )}
 
+            {!shouldShowWizard && activeMetaTab === 'mensajes' && (
+              <section className={styles.tabPanel}>
                 <div className={styles.connectedPagesHeader}>
                   <h4 className={styles.connectedPagesTitle}>Páginas conectadas</h4>
                   <p className={styles.connectedPagesDescription}>
@@ -2178,47 +2204,29 @@ export const MetaAdsIntegration: React.FC = () => {
             </section>
             )}
 
-            <section className={`${styles.section} ${styles.utmSection}`}>
-              <div className={styles.sectionHeader}>
-                <div>
-                  <h3 className={styles.sectionTitle}>Parámetros UTM</h3>
-                  <p className={styles.sectionDescription}>
-                    Copia esta cadena completa y pégala en Parámetros de URL dentro del anuncio de Meta.
-                  </p>
-                </div>
-                <Button
-                  type="button"
-                  variant="secondary"
-                  onClick={handleCopyMetaAdUtmParameters}
-                >
-                  <Copy size={16} />
-                  Copiar UTM
-                </Button>
-              </div>
-
-              <div className={styles.utmCopyBox} aria-label="Parámetros UTM para anuncios de Meta">
-                <code className={styles.utmCode}>{META_AD_UTM_PARAMETERS}</code>
-              </div>
-            </section>
-
-            {!shouldShowWizard && (
-              <section className={`${styles.section} ${styles.connectedExtrasSection}`}>
-                <div className={styles.sectionHeader}>
-                  <div>
-                    <h3 className={styles.sectionTitle}>Acciones de Meta</h3>
-                    <p className={styles.sectionDescription}>
-                      Controles operativos para snippet y sincronización.
-                    </p>
+            {!shouldShowWizard && activeMetaTab === 'rastreo' && (
+              <section className={styles.tabPanel}>
+                <div className={styles.utmBlock}>
+                  <div className={styles.sectionHeader}>
+                    <div>
+                      <h3 className={styles.sectionTitle}>Parámetros UTM</h3>
+                      <p className={styles.sectionDescription}>
+                        Copia esta cadena completa y pégala en Parámetros de URL dentro del anuncio de Meta.
+                      </p>
+                    </div>
+                    <Button
+                      type="button"
+                      variant="secondary"
+                      onClick={handleCopyMetaAdUtmParameters}
+                    >
+                      <Copy size={16} />
+                      Copiar UTM
+                    </Button>
                   </div>
-                  <Button
-                    type="button"
-                    variant="secondary"
-                    onClick={handleSyncMetaAds}
-                    disabled={isSyncingMetaAds}
-                  >
-                    <RefreshCw size={16} className={isSyncingMetaAds ? styles.spinning : ''} />
-                    {isSyncingMetaAds ? 'Sincronizando' : 'Sincronizar anuncios'}
-                  </Button>
+
+                  <div className={styles.utmCopyBox} aria-label="Parámetros UTM para anuncios de Meta">
+                    <code className={styles.utmCode}>{META_AD_UTM_PARAMETERS}</code>
+                  </div>
                 </div>
 
                 <div className={styles.connectedExtrasRows}>
@@ -2249,11 +2257,25 @@ export const MetaAdsIntegration: React.FC = () => {
                       Sincronizando snippet...
                     </div>
                   )}
+                </div>
+              </section>
+            )}
 
+            {!shouldShowWizard && activeMetaTab === 'pruebas' && (
+              <section className={styles.tabPanel}>
+                <div className={styles.sectionHeader}>
+                  <div>
+                    <h3 className={styles.sectionTitle}>Probar eventos CAPI</h3>
+                    <p className={styles.sectionDescription}>
+                      Manda un evento de prueba a Meta con el código TEST antes de lanzar campañas de verdad.
+                    </p>
+                  </div>
+                </div>
+
+                <div className={styles.connectedExtrasRows}>
                   <div className={styles.connectedExtraRow}>
                     <div className={styles.metaTestRowCopy}>
-                      <span className={styles.railSwitchLabel}>Probar eventos CAPI</span>
-                      <span className={styles.railSecondaryValue}>Guarda el código TEST de Meta y manda una prueba desde ajustes.</span>
+                      <span className={styles.railSwitchLabel}>Estado del modo prueba</span>
                       <span className={styles.metaTestRowMeta}>
                         <Badge variant={metaTestEventCode ? 'warning' : 'neutral'}>
                           {metaTestEventCode ? 'Test activo' : 'Sin código'}
@@ -2277,7 +2299,7 @@ export const MetaAdsIntegration: React.FC = () => {
               </section>
             )}
 
-            
+
       </div>
 
       <Modal

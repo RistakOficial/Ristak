@@ -108,6 +108,46 @@
   border-top: 0;
 }
 
+/* Navegación por pestañas de la vista ya configurada (Cuenta / Mensajes /
+   Rastreo / Pruebas). Reusa el recipe global de SegmentTabs; aquí solo se
+   reparte el ancho y se separa del panel. */
+.metaTabs {
+  margin: 20px 0 4px;
+  flex-wrap: wrap;
+  row-gap: 8px;
+}
+
+.metaTabs :global([data-segdir]) {
+  flex: 1 1 120px;
+}
+
+/* Contenedor del contenido de la pestaña activa. Cada pestaña muestra una sola
+   sección, así que no lleva el borde separador de `.section`; el `gap` unifica
+   la separación entre bloques. */
+.tabPanel {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+  padding-top: 12px;
+  min-width: 0;
+}
+
+/* El `gap` del panel manda: neutraliza los `margin-top` intrínsecos de bloques
+   que fueron pensados para apilarse sueltos, y el `margin-bottom` de un
+   `sectionHeader` que sea hijo directo del panel. */
+.tabPanel > .connectedMetaGrid,
+.tabPanel > .connectedPagesHeader {
+  margin-top: 0;
+}
+
+.tabPanel > .sectionHeader {
+  margin-bottom: 0;
+}
+
+.utmBlock {
+  min-width: 0;
+}
+
 .wizardSection {
   padding: 24px 0 0;
 }
