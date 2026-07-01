@@ -2754,6 +2754,11 @@ async function initTables() {
         message_timestamp DATETIME,
         raw_payload_json TEXT,
         referral_json TEXT,
+        comment_id TEXT,
+        post_id TEXT,
+        parent_comment_id TEXT,
+        media_id TEXT,
+        permalink TEXT,
         created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
         updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
         FOREIGN KEY (meta_social_contact_id) REFERENCES meta_social_contacts(id) ON DELETE SET NULL,
@@ -3858,6 +3863,17 @@ async function initTables() {
       } catch (err) {
         if (!err.message.includes('duplicate column') && !err.message.includes('already exists')) {
           throw err
+        }
+      }
+
+      // Columnas de comentarios (FB/IG) en meta_social_messages (idempotente).
+      for (const col of ['comment_id', 'post_id', 'parent_comment_id', 'media_id', 'permalink']) {
+        try {
+          await db.run(`ALTER TABLE meta_social_messages ADD COLUMN ${col} TEXT`)
+        } catch (err) {
+          if (!err.message.includes('duplicate column') && !err.message.includes('already exists')) {
+            throw err
+          }
         }
       }
 

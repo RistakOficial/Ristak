@@ -14,6 +14,8 @@ const DEFAULT_VERIFY_TOKEN = 'ristak-meta-webhook'
 const META_SIGNATURE_HEADER = 'x-hub-signature-256'
 const META_MESSENGER_MESSAGING_ENABLED_KEY = 'meta_messenger_messaging_enabled'
 const META_INSTAGRAM_MESSAGING_ENABLED_KEY = 'meta_instagram_messaging_enabled'
+const META_FACEBOOK_COMMENTS_ENABLED_KEY = 'meta_facebook_comments_enabled'
+const META_INSTAGRAM_COMMENTS_ENABLED_KEY = 'meta_instagram_comments_enabled'
 
 function cleanString(value) {
   if (value === null || value === undefined) return ''
@@ -59,6 +61,21 @@ export async function isMetaSocialMessagingEnabled(platform = '') {
 
   const value = await getAppConfig(key).catch(error => {
     logger.warn(`No se pudo leer switch de mensajería Meta (${key}): ${error.message}`)
+    return ''
+  })
+
+  return isEnabledConfigValue(value)
+}
+
+// Switch de COMENTARIOS, independiente del de DMs (auto-responder no aplica aquí).
+export async function isMetaSocialCommentsEnabled(platform = '') {
+  const normalizedPlatform = cleanString(platform).toLowerCase()
+  const key = normalizedPlatform === 'instagram'
+    ? META_INSTAGRAM_COMMENTS_ENABLED_KEY
+    : META_FACEBOOK_COMMENTS_ENABLED_KEY
+
+  const value = await getAppConfig(key).catch(error => {
+    logger.warn(`No se pudo leer switch de comentarios Meta (${key}): ${error.message}`)
     return ''
   })
 
@@ -208,6 +225,86 @@ function extractSocialMessage({ objectType, entry, messaging, config }) {
   return null
 }
 
+// Normaliza un comentario (FB 'feed' item=comment / IG 'comments') al mismo shape
+// que un DM, más campos de comentario. CLAVE: el senderId lleva un prefijo
+// sintético ("fb_comment:"/"ig_comment:") para NO colisionar con el PSID de los
+// DMs (Meta usa espacios de ID distintos para la misma persona). Los nombres
+// vienen en el propio payload, así que no hace falta pedir perfil.
+function extractCommentEvent({ objectType, entry, change, config = {} }) {
+  const field = cleanString(change?.field).toLowerCase()
+  const value = change?.value || {}
+  const object = cleanString(objectType).toLowerCase()
+
+  const isFacebookComment = field === 'feed' && cleanString(value.item).toLowerCase() === 'comment'
+  const isInstagramComment = field === 'comments' || field === 'live_comments'
+  if (!isFacebookComment && !isInstagramComment) return null
+
+  const platform = (object === 'instagram' || isInstagramComment) ? 'instagram' : 'messenger'
+
+  const commentId = cleanString(value.comment_id || value.id)
+  if (!commentId) return null
+
+  const from = value.from || {}
+  const authorId = cleanString(from.id)
+  const authorName = cleanString(from.name)
+  const authorUsername = cleanString(from.username)
+
+  const pageId = cleanString(config.page_id)
+  const igId = cleanString(config.instagram_account_id)
+  // Anti-loop: si el autor es la propia Página/cuenta IG, es NUESTRA respuesta.
+  const isEcho = Boolean(authorId && (authorId === pageId || authorId === igId))
+  const direction = isEcho ? 'outbound' : 'inbound'
+  const verb = cleanString(value.verb).toLowerCase() || 'add' // IG no manda verb
+
+  const authorKey = authorId || commentId
+  const senderId = `${platform === 'instagram' ? 'ig' : 'fb'}_comment:${authorKey}`
+
+  const text = cleanString(value.message || value.text)
+  const rawTs = Number(value.created_time || entry?.time || Date.now())
+  const messageTimestamp = Number.isFinite(rawTs)
+    ? new Date(rawTs > 9999999999 ? rawTs : rawTs * 1000).toISOString()
+    : new Date().toISOString()
+
+  return {
+    platform,
+    direction,
+    senderId,
+    recipientId: platform === 'instagram' ? igId : pageId,
+    pageId: platform === 'messenger' ? pageId : '',
+    instagramAccountId: platform === 'instagram' ? igId : '',
+    metaMessageId: commentId, // dedup natural (edits/reenvíos llegan con el mismo id)
+    messageType: 'comment',
+    messageText: text || '(comentario sin texto)',
+    mediaUrl: '',
+    mediaMimeType: '',
+    postbackPayload: '',
+    referral: null,
+    messageTimestamp,
+    // Campos de comentario:
+    commentId,
+    postId: cleanString(value.post_id),
+    parentCommentId: cleanString(value.parent_id),
+    mediaId: cleanString(value.media?.id || value.media_id),
+    permalink: cleanString(value.permalink_url || value.permalink),
+    verb,
+    isEcho,
+    authorName,
+    authorUsername,
+    raw: change
+  }
+}
+
+// Marca (soft) un comentario eliminado sin borrar la fila, para no perder el hilo.
+async function softRemoveComment(comment) {
+  const messageId = hashId('meta_social_msg', comment.commentId)
+  await db.run(
+    `UPDATE meta_social_messages
+     SET message_text = '(comentario eliminado)', status = 'removed', updated_at = CURRENT_TIMESTAMP
+     WHERE id = ?`,
+    [messageId]
+  )
+}
+
 async function fetchMetaSenderProfile({ platform, senderId, accessToken }) {
   if (!senderId || !accessToken) return {}
 
@@ -286,7 +383,8 @@ async function metaSocialGraphRequest(path, { method = 'GET', token, query, body
 // Campos de webhook de la Página que Ristak sabe procesar (ver
 // processMetaSocialWebhook: message, postback, reaction, referral). Los mismos
 // campos cubren Messenger e Instagram DM, porque el IG va enlazado a la Página.
-const META_PAGE_SUBSCRIBED_FIELDS = 'messages,messaging_postbacks,message_reactions,messaging_referrals'
+// messaging_* para DMs; feed (comentarios FB) y comments (comentarios IG).
+const META_PAGE_SUBSCRIBED_FIELDS = 'messages,messaging_postbacks,message_reactions,messaging_referrals,feed,comments'
 
 // El token guardado en meta_config es un token de USUARIO. Para operar la Página
 // (suscribir webhooks, enviar DMs, leer perfiles) Meta exige un token de PÁGINA.
@@ -670,8 +768,9 @@ async function upsertMetaSocialMessage({ socialContactId, contactId, socialMessa
       id, platform, meta_message_id, meta_social_contact_id, contact_id,
       sender_id, recipient_id, page_id, instagram_account_id,
       direction, message_type, message_text, media_url, media_mime_type,
-      postback_payload, message_timestamp, raw_payload_json, referral_json, updated_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+      postback_payload, message_timestamp, raw_payload_json, referral_json,
+      comment_id, post_id, parent_comment_id, media_id, permalink, updated_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
     ON CONFLICT(id) DO UPDATE SET
       meta_social_contact_id = COALESCE(excluded.meta_social_contact_id, meta_social_messages.meta_social_contact_id),
       contact_id = COALESCE(excluded.contact_id, meta_social_messages.contact_id),
@@ -688,6 +787,11 @@ async function upsertMetaSocialMessage({ socialContactId, contactId, socialMessa
       message_timestamp = COALESCE(excluded.message_timestamp, meta_social_messages.message_timestamp),
       raw_payload_json = excluded.raw_payload_json,
       referral_json = COALESCE(NULLIF(excluded.referral_json, 'null'), meta_social_messages.referral_json),
+      comment_id = COALESCE(NULLIF(excluded.comment_id, ''), meta_social_messages.comment_id),
+      post_id = COALESCE(NULLIF(excluded.post_id, ''), meta_social_messages.post_id),
+      parent_comment_id = COALESCE(NULLIF(excluded.parent_comment_id, ''), meta_social_messages.parent_comment_id),
+      media_id = COALESCE(NULLIF(excluded.media_id, ''), meta_social_messages.media_id),
+      permalink = COALESCE(NULLIF(excluded.permalink, ''), meta_social_messages.permalink),
       updated_at = CURRENT_TIMESTAMP
   `, [
     messageId,
@@ -707,7 +811,12 @@ async function upsertMetaSocialMessage({ socialContactId, contactId, socialMessa
     socialMessage.postbackPayload || null,
     socialMessage.messageTimestamp,
     safeJson(socialMessage.raw),
-    safeJson(socialMessage.referral)
+    safeJson(socialMessage.referral),
+    socialMessage.commentId || null,
+    socialMessage.postId || null,
+    socialMessage.parentCommentId || null,
+    socialMessage.mediaId || null,
+    socialMessage.permalink || null
   ])
 
   return {
@@ -749,6 +858,7 @@ async function saveWebhookEvent({ payload, rawBody, signatureValid, processedSta
   const objectType = cleanString(payload?.object)
   const firstEntry = Array.isArray(payload?.entry) ? payload.entry[0] : null
   const firstMessaging = Array.isArray(firstEntry?.messaging) ? firstEntry.messaging[0] : null
+  const firstChange = Array.isArray(firstEntry?.changes) ? firstEntry.changes[0] : null
   const platform = objectType === 'instagram' ? 'instagram' : 'messenger'
   const eventType = firstMessaging?.message
     ? 'message'
@@ -758,7 +868,9 @@ async function saveWebhookEvent({ payload, rawBody, signatureValid, processedSta
         ? 'referral'
         : firstMessaging?.reaction
           ? 'reaction'
-          : 'unknown'
+          : firstChange
+            ? `change:${cleanString(firstChange.field) || 'unknown'}`
+            : 'unknown'
 
   await db.run(`
     INSERT INTO meta_social_webhook_events (
@@ -819,6 +931,7 @@ export async function processMetaSocialWebhook({ payload = {}, rawBody = '', sig
   const entries = Array.isArray(payload.entry) ? payload.entry : []
   const results = []
   const enabledByPlatform = new Map()
+  const commentsEnabledByPlatform = new Map()
   let skippedMessages = 0
 
   try {
@@ -950,6 +1063,71 @@ export async function processMetaSocialWebhook({ payload = {}, rawBody = '', sig
           }).catch(error => {
             logger.warn(`[Push] No se pudo avisar DM Meta ${result.messageId || ''}: ${error.message}`)
           })
+        }
+      }
+
+      // --- COMENTARIOS (FB 'feed' item=comment / IG 'comments') ---
+      // Llegan en entry.changes[] (no messaging[]). Cada uno en su try/catch para
+      // que un comentario problemático nunca tumbe el batch (y no re-procese DMs).
+      const changeItems = Array.isArray(entry?.changes) ? entry.changes : []
+      for (const change of changeItems) {
+        try {
+          const comment = extractCommentEvent({ objectType: payload.object, entry, change, config: config || {} })
+          if (!comment) continue
+
+          if (!commentsEnabledByPlatform.has(comment.platform)) {
+            commentsEnabledByPlatform.set(comment.platform, await isMetaSocialCommentsEnabled(comment.platform))
+          }
+          if (!commentsEnabledByPlatform.get(comment.platform)) {
+            skippedMessages += 1
+            continue
+          }
+
+          if (comment.isEcho) continue // nuestra propia respuesta pública → no re-procesar (anti-loop)
+          if (comment.verb === 'remove' || comment.verb === 'hide') {
+            await softRemoveComment(comment).catch(error => {
+              logger.warn(`No se pudo marcar comentario eliminado: ${error.message}`)
+            })
+            continue
+          }
+
+          const profile = { name: comment.authorName, username: comment.authorUsername, raw: change }
+          const localContact = await upsertLocalSocialContact({ socialMessage: comment, profile })
+          const socialContactId = await upsertMetaSocialContact({ contactId: localContact.id, socialMessage: comment, profile })
+          const savedComment = await upsertMetaSocialMessage({ socialContactId, contactId: localContact.id, socialMessage: comment })
+
+          results.push({
+            messageId: savedComment.messageId,
+            isNew: savedComment.isNew,
+            contactId: localContact.id,
+            platform: comment.platform,
+            direction: comment.direction,
+            messageType: 'comment',
+            timestamp: comment.messageTimestamp
+          })
+
+          publishChatMessageEvent({
+            contactId: localContact.id,
+            messageId: savedComment.messageId,
+            channel: comment.platform,
+            provider: 'meta',
+            transport: comment.platform,
+            direction: comment.direction,
+            messageType: 'comment',
+            messageTimestamp: comment.messageTimestamp,
+            isNew: savedComment.isNew
+          })
+
+          if (comment.direction === 'inbound' && savedComment.isNew !== false) {
+            recordInboundChatUnread({ contactId: localContact.id, messageTimestamp: comment.messageTimestamp })
+              .catch(error => {
+                logger.warn(`[Chat Read State] No se pudo incrementar unread de comentario: ${error.message}`)
+              })
+          }
+          // v1: comentarios SIN push, SIN automatizaciones, SIN agente conversacional
+          // (auto-responder comentarios públicos es riesgo de spam/política de Meta).
+        } catch (error) {
+          logger.warn(`Comentario Meta no procesado: ${error.message}`)
         }
       }
     }
