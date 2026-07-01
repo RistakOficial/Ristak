@@ -1409,7 +1409,7 @@
 }
 
 .chatMeta small {
-  color: #707070;
+  color: var(--phone-chat-muted);
   font-size: 14px;
   font-weight: 560;
 }
@@ -1442,7 +1442,7 @@
 }
 
 .chatMeta .aiAgentPin {
-  color: #0f5132;
+  color: color-mix(in srgb, var(--phone-chat-accent) 82%, var(--phone-chat-text));
   background: rgba(var(--phone-chat-accent-rgb), 0.18);
   font-size: 11px;
 }
@@ -1454,8 +1454,8 @@
   width: 20px;
   height: 20px;
   border-radius: 999px;
-  color: #707070;
-  background: #eeeeee;
+  color: var(--phone-chat-muted);
+  background: color-mix(in srgb, var(--phone-chat-text) 10%, transparent);
 }
 
 .contactResultGroup {
@@ -5200,7 +5200,7 @@
 }
 
 .messageErrorIcon {
-  color: #dc2626;
+  color: var(--neg, var(--color-status-error, #dc2626));
 }
 
 .messageSendingIcon {
@@ -5216,7 +5216,7 @@
   height: 16px;
   padding: 0;
   border: 0;
-  color: #dc2626;
+  color: var(--neg, var(--color-status-error, #dc2626));
   background: transparent;
   line-height: 1;
   user-select: none;
@@ -5241,7 +5241,7 @@
   gap: 8px;
   min-width: 0;
   padding: 4px 6px 0;
-  color: #0f5132;
+  color: color-mix(in srgb, var(--phone-chat-accent) 72%, var(--phone-chat-text));
   font-size: 10px;
   font-weight: 760;
 }
@@ -5782,7 +5782,7 @@
 }
 
 .composerMicRecording {
-  color: #dc2626;
+  color: var(--neg, var(--color-status-error, #dc2626));
 }
 
 .composerVoiceMode {
@@ -6178,7 +6178,7 @@
   height: 58px;
   border-radius: 999px;
   color: var(--phone-chat-accent);
-  background: #e9f9ef;
+  background: var(--phone-chat-accent-soft);
 }
 
 .emptyChats strong,
@@ -6193,7 +6193,7 @@
 .emptyConversation span,
 .emptySheetState span {
   max-width: 280px;
-  color: #737373;
+  color: var(--phone-chat-muted);
   font-size: 15px;
   line-height: 1.45;
 }
@@ -6564,6 +6564,21 @@
 .chatMoreMute {
   color: #525252;
   background: #eeeeee;
+}
+
+.phoneChatPage[data-phone-chat-tone="dark"] .chatMoreAppointment {
+  color: #c4b5fd;
+  background: rgba(109, 40, 217, 0.22);
+}
+
+.phoneChatPage[data-phone-chat-tone="dark"] .chatMorePayment {
+  color: #6ee7b7;
+  background: rgba(4, 120, 87, 0.22);
+}
+
+.phoneChatPage[data-phone-chat-tone="dark"] .chatMoreMute {
+  color: var(--phone-chat-muted);
+  background: color-mix(in srgb, var(--phone-chat-text) 12%, transparent);
 }
 
 .chatMoreTag {

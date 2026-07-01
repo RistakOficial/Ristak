@@ -602,10 +602,18 @@
   border-color: var(--phone-field-border, var(--appointment-mobile-border));
   border-radius: 12px;
   color: var(--appointment-mobile-text);
-  background: var(--appointment-mobile-panel);
+  background: var(--appointment-mobile-surface);
   font-size: 16px;
   font-weight: 500;
   box-shadow: none;
+}
+
+.mobileSheetContainer .input:focus,
+.mobileSheetContainer .select:focus,
+.mobileSheetContainer .textarea:focus {
+  border-color: color-mix(in srgb, var(--phone-chat-accent, #25d366) 54%, var(--phone-field-border, var(--appointment-mobile-border)) 46%);
+  box-shadow: none;
+  outline: none;
 }
 
 .mobileSheetContainer :global([data-ristak-dropdown-trigger]) {
@@ -613,7 +621,7 @@
   border-color: var(--phone-field-border, var(--appointment-mobile-border)) !important;
   border-radius: 12px !important;
   color: var(--appointment-mobile-text) !important;
-  background: var(--appointment-mobile-panel) !important;
+  background: var(--appointment-mobile-surface) !important;
   box-shadow: none !important;
   font-size: 16px !important;
   font-weight: 500 !important;
@@ -701,7 +709,7 @@
   min-height: 44px;
   border-radius: 12px;
   color: var(--appointment-mobile-text);
-  background: var(--appointment-mobile-panel);
+  background: var(--appointment-mobile-surface);
   border-color: var(--phone-field-border, var(--appointment-mobile-border));
   font-size: 16px;
   font-weight: 500;
@@ -930,6 +938,8 @@
 }
 
 .guestToggleChips .guestToggleChipActive {
+  /* Regla base (también escritorio): se queda con el verde fijo original; el token
+     de contraste en oscuro se aplica solo en la variante móvil (.mobileSheetContainer). */
   color: #165c40;
   border-color: rgba(var(--phone-chat-accent-rgb, 37, 211, 102), 0.28);
   background: color-mix(in srgb, var(--phone-chat-accent, #25d366) 18%, var(--color-background-secondary));
@@ -944,7 +954,7 @@
 }
 
 .mobileSheetContainer .guestToggleChips .guestToggleChipActive {
-  color: #165c40;
+  color: var(--badge-primary-text, #165c40);
   border-color: rgba(var(--phone-chat-accent-rgb, 37, 211, 102), 0.32);
   background: var(--phone-chat-accent-soft, rgba(37, 211, 102, 0.16));
 }

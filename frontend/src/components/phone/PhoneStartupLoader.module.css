@@ -18,8 +18,8 @@
 .spinner {
   width: 34px;
   height: 34px;
-  border: 3px solid color-mix(in srgb, var(--phone-loader-muted) 24%, transparent);
-  border-top-color: var(--phone-loader-text);
+  border: 3px solid color-mix(in srgb, var(--phone-chat-accent, #25d366) 20%, transparent);
+  border-top-color: var(--phone-chat-accent, #25d366);
   border-radius: 999px;
   animation: spin 0.8s linear infinite;
 }

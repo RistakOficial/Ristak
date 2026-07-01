@@ -172,8 +172,12 @@
 
 .iconButton:hover {
   transform: translateY(-1px);
-  border-color: rgba(16, 185, 129, 0.36);
-  background: color-mix(in srgb, var(--color-background-tertiary) 92%, #10b981 8%);
+  border-color: color-mix(in srgb, var(--phone-chat-accent) 36%, transparent);
+  background: color-mix(in srgb, var(--color-background-tertiary) 92%, var(--phone-chat-accent) 8%);
+}
+
+.iconButton:active {
+  transform: scale(0.94);
 }
 
 .spinIcon {

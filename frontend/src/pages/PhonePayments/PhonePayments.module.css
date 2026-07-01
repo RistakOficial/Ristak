@@ -458,8 +458,9 @@
 }
 
 .recentPaymentItemSelected {
-  color: #0f5132;
-  background: transparent;
+  color: var(--phone-payments-accent);
+  background: color-mix(in srgb, var(--phone-payments-accent) 8%, transparent);
+  box-shadow: inset 3px 0 0 var(--phone-payments-accent);
 }
 
 .recentPaymentMain,
@@ -515,9 +516,10 @@
 
 .recentPaymentCheck {
   position: absolute;
-  top: 8px;
+  top: 50%;
   right: 8px;
-  color: #16a34a;
+  transform: translateY(-50%);
+  color: var(--phone-payments-accent);
 }
 
 .productsHost {
@@ -530,7 +532,7 @@
   height: 100%;
   max-height: 100%;
   padding: calc(env(safe-area-inset-top, 0px) + 76px) 16px calc(132px + env(safe-area-inset-bottom, 0px));
-  background: var(--phone-payments-surface);
+  background: var(--phone-frame-bg);
   overflow-x: hidden;
   overflow-y: scroll;
   overscroll-behavior-y: contain;
@@ -580,7 +582,7 @@
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  min-height: 38px;
+  min-height: 44px;
   border: 0;
   font-weight: 800;
   cursor: pointer;
@@ -588,7 +590,7 @@
 }
 
 .productIconButton {
-  width: 38px;
+  width: 44px;
   border-radius: 999px;
   color: var(--phone-payments-text);
   background: var(--phone-payments-soft);
@@ -598,7 +600,7 @@
   gap: 7px;
   padding: 0 13px;
   border-radius: 999px;
-  color: var(--phone-payments-text-on-accent);
+  color: var(--phone-payments-on-primary);
   background: var(--phone-payments-primary);
   font-size: 13px;
 }
@@ -625,7 +627,7 @@
   margin-bottom: 8px;
   padding: 14px;
   border: 1px solid var(--phone-payments-border);
-  border-radius: 8px;
+  border-radius: 16px;
   background: var(--phone-payments-soft);
 }
 
@@ -691,7 +693,7 @@
   box-sizing: border-box;
   padding: 0 11px;
   border: 1px solid var(--phone-payments-border);
-  border-radius: 8px;
+  border-radius: 12px;
   color: var(--phone-payments-text);
   background: var(--phone-payments-surface);
   font: inherit;
@@ -703,7 +705,7 @@
 .productSelectButton {
   min-height: 42px;
   padding-inline: 11px;
-  border-radius: 8px;
+  border-radius: 12px;
   font-size: 15px;
   font-weight: 650;
 }
@@ -767,6 +769,13 @@
   line-height: 1.42;
 }
 
+/* Empty-state CTA con presencia real (no auto-width apretado), como los CTAs del form. */
+.productsEmpty .productPrimaryButton {
+  width: min(100%, 260px);
+  min-height: 46px;
+  font-size: 14px;
+}
+
 .productsList {
   display: grid;
   gap: 10px;
@@ -780,7 +789,7 @@
   min-height: 78px;
   padding: 12px;
   border: 1px solid var(--phone-payments-border);
-  border-radius: 8px;
+  border-radius: 16px;
   background: var(--phone-payments-surface);
 }
 
@@ -801,7 +810,7 @@
   height: 44px;
   border-radius: 999px;
   color: #15803d;
-  background: rgba(var(--phone-payments-accent-rgb), 0.14);
+  background: rgba(var(--phone-chat-accent-rgb, 37, 211, 102), 0.14);
   overflow: hidden;
 }
 
@@ -841,20 +850,20 @@
 .productItemActions {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
+  gap: 10px;
 }
 
 .productItemActions button {
-  width: 38px;
-  height: 38px;
+  width: 44px;
+  height: 44px;
   border-radius: 999px;
   color: var(--phone-payments-text);
   background: var(--phone-payments-soft);
 }
 
 .productItemActions .productDeleteButton {
-  color: #b91c1c;
-  background: #fef2f2;
+  color: var(--neg);
+  background: color-mix(in srgb, var(--neg) 10%, var(--phone-payments-surface));
 }
 
 .spinIcon {

@@ -32,8 +32,18 @@
   -webkit-tap-highlight-color: transparent;
 }
 
+.trigger:focus-visible {
+  outline: none;
+  border-color: var(--phone-chat-accent, #25d366);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--phone-chat-accent, #25d366) 16%, transparent);
+}
+
+.trigger:active:not(:disabled) {
+  transform: scale(0.99);
+}
+
 .trigger:disabled {
-  opacity: 0.55;
+  opacity: var(--phone-disabled-opacity, 0.5);
 }
 
 .trigger svg {
@@ -161,14 +171,14 @@
 }
 
 .doneButton {
-  min-height: 48px;
+  min-height: 52px;
   margin-top: 2px;
   border: 0;
   border-radius: 999px;
   color: var(--phone-chat-text-on-primary, #07140d);
   background: var(--phone-chat-accent, #25d366);
   font: inherit;
-  font-size: 15px;
+  font-size: 16px;
   font-weight: 850;
   -webkit-tap-highlight-color: transparent;
 }

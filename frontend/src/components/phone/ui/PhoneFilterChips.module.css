@@ -61,7 +61,7 @@
 
 .chip:disabled {
   cursor: not-allowed;
-  opacity: 0.48;
+  opacity: var(--phone-disabled-opacity, 0.5);
 }
 
 .chip span {
@@ -87,13 +87,13 @@
 }
 
 .chipActive {
-  color: #165c40;
+  color: var(--badge-primary-text, #165c40);
   border-color: rgba(var(--phone-chat-accent-rgb), 0.28);
   background: var(--phone-chat-accent-soft);
 }
 
 .chipActive small {
-  color: #165c40;
+  color: var(--badge-primary-text, #165c40);
   background: rgba(var(--phone-chat-accent-rgb), 0.14);
 }
 

@@ -19,7 +19,7 @@
 }
 
 .button:disabled {
-  opacity: 0.55;
+  opacity: var(--phone-disabled-opacity, 0.5);
 }
 
 .lg {
@@ -45,8 +45,8 @@
 }
 
 .danger {
-  color: #ffffff;
-  background: #ef4444;
+  color: var(--phone-chat-text-on-danger, #ffffff);
+  background: var(--neg, #ef4444);
 }
 
 .ghost {

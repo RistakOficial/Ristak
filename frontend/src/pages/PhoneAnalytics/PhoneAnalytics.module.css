@@ -12,6 +12,7 @@
   --phone-analytics-contrast-line: #101010;
   --phone-analytics-blue-line: #2563eb;
   --phone-analytics-warning-line: #f59e0b;
+  --phone-analytics-danger: #dc2626;
   --phone-analytics-chart-stroke: 5;
   --phone-analytics-chart-point: 4;
   position: fixed;
@@ -55,6 +56,7 @@
   --phone-analytics-contrast-line: #d9e3ea;
   --phone-analytics-blue-line: #7db3ff;
   --phone-analytics-warning-line: #ffd166;
+  --phone-analytics-danger: #ef6a6a;
   color-scheme: dark;
 }
 
@@ -379,11 +381,11 @@
 }
 
 .deltaPositive {
-  color: #128a43;
+  color: var(--phone-analytics-accent);
 }
 
 .deltaNegative {
-  color: #dc2626;
+  color: var(--phone-analytics-danger);
 }
 
 .panel {

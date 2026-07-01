@@ -8,7 +8,8 @@ import {
   MonitorX,
   Plus,
   Search,
-  User
+  User,
+  X
 } from 'lucide-react'
 import { AppointmentModal } from '@/components/common'
 import { PhoneEcosystemNav } from '@/components/phone/PhoneEcosystemNav'
@@ -2125,7 +2126,7 @@ export const PhoneCalendar: React.FC<PhoneCalendarProps> = ({ embedded = false, 
                   />
                   {appointmentContactQuery && (
                     <button type="button" onClick={() => setAppointmentContactQuery('')} aria-label="Limpiar búsqueda">
-                      x
+                      <X size={16} aria-hidden="true" />
                     </button>
                   )}
                 </div>

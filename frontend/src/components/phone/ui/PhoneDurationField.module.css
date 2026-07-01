@@ -12,20 +12,30 @@
   min-width: 0;
   min-height: 44px;
   box-sizing: border-box;
-  padding: 0 12px;
+  padding: 0 14px;
   border: 1px solid var(--phone-field-border, var(--phone-chat-border, rgba(17, 24, 39, 0.1)));
   border-radius: 12px;
   color: var(--phone-chat-text, #111111);
   background: var(--phone-chat-panel, #ffffff);
   font: inherit;
   font-size: 16px;
-  font-weight: 650;
+  font-weight: 600;
   text-align: left;
   -webkit-tap-highlight-color: transparent;
 }
 
+.trigger:focus-visible {
+  outline: none;
+  border-color: var(--phone-chat-accent, #25d366);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--phone-chat-accent, #25d366) 16%, transparent);
+}
+
+.trigger:active:not(:disabled) {
+  transform: scale(0.99);
+}
+
 .trigger:disabled {
-  opacity: 0.55;
+  opacity: var(--phone-disabled-opacity, 0.5);
 }
 
 .trigger svg {
@@ -108,7 +118,7 @@
 
 .doneButton {
   width: 100%;
-  min-height: 48px;
+  min-height: 52px;
   margin-top: 12px;
   border: 0;
   border-radius: 999px;

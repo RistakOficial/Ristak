@@ -38,7 +38,7 @@
   align-items: center;
   justify-content: center;
   min-width: 0;
-  min-height: 40px;
+  min-height: 44px;
   padding: 0 10px;
   border: 0;
   border-radius: 10px;
@@ -46,7 +46,7 @@
   color: var(--phone-segmented-tabs-muted);
   font: inherit;
   font-size: 14px;
-  font-weight: 750;
+  font-weight: 760;
   line-height: 1.15;
   text-align: center;
   cursor: pointer;
@@ -56,13 +56,13 @@
 }
 
 .tab:focus-visible {
-  outline: 2px solid color-mix(in srgb, var(--phone-segmented-tabs-text) 28%, transparent);
+  outline: 2px solid rgba(var(--phone-chat-accent-rgb), 0.38);
   outline-offset: 2px;
 }
 
 .tab:disabled {
   cursor: not-allowed;
-  opacity: 0.48;
+  opacity: var(--phone-disabled-opacity, 0.5);
 }
 
 .tabLabel {

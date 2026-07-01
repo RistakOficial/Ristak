@@ -2469,7 +2469,7 @@ body.dark .tooltipInfo {
 .embeddedRoot .select,
 .embeddedRoot .textArea,
 .embeddedRoot .searchInput input {
-  min-height: 52px;
+  min-height: 44px;
   border: 1px solid var(--record-payment-control-border);
   border-radius: 12px;
   color: var(--record-payment-embedded-text);
@@ -2497,7 +2497,7 @@ body.dark .tooltipInfo {
 
 /* Misma piel que el resto de los campos: mismo borde, mismo radio */
 .embeddedRoot .contactSearchBox {
-  min-height: 52px;
+  min-height: 44px;
   box-sizing: border-box;
   border: 1px solid var(--record-payment-control-border);
   border-radius: 999px;
@@ -2750,7 +2750,7 @@ body.dark .tooltipInfo {
 
 .embeddedRoot .phoneSelectButton,
 .embeddedRoot .phoneDateButton {
-  min-height: 52px;
+  min-height: 44px;
   border: 1px solid var(--record-payment-control-border) !important;
   border-radius: 12px;
   color: var(--record-payment-embedded-text);
@@ -2941,13 +2941,14 @@ body.dark .tooltipInfo {
 
 /* Los campos del plan NO llevan estilo propio: heredan el estilo global de campo
    (.embeddedRoot .input / .phoneDateButton / .phoneSelectButton) — fondo gris,
-   contorno control-border, 52px, radio 12 — para ser consistentes y reutilizables
-   con el resto del formulario móvil (Monto, Título, contacto, etc.). Solo fijamos
-   la altura exacta a 52 para que valor y fecha queden a ras. */
+   contorno control-border, radio 12 — para ser consistentes y reutilizables
+   con el resto del formulario móvil (Monto, Título, contacto, etc.). Fijamos la
+   altura exacta a 44 (misma que todos los campos del /movil) para que valor y
+   fecha queden a ras. */
 .embeddedRoot[data-payment-mode="partial"] .planValueCell .input,
 .embeddedRoot[data-payment-mode="partial"] .planDateCell .phoneDateButton,
 .embeddedRoot[data-payment-mode="partial"] .planFirstMethod .phoneSelectButton {
-  height: 52px;
+  height: 44px;
 }
 
 .embeddedRoot[data-payment-mode="partial"] .planAmountHint {
