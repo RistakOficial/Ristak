@@ -2910,10 +2910,11 @@ body.dark .tooltipInfo {
   grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
   gap: 14px 12px;
   padding: 16px 16px 18px;
-  border: 1px solid var(--record-payment-embedded-border);
+  /* Tarjeta blanca con contorno VISIBLE (como el widget): el borde 0.08 por defecto
+     se perdía sobre la página blanca. Usamos el mismo control-border que los campos
+     para que el contenedor padre se vea claramente delimitado. */
+  border: 1px solid var(--record-payment-control-border);
   border-radius: 16px;
-  /* Tarjeta blanca para que los campos (gris, mismo estilo global que el resto del
-     formulario) contrasten y su contorno se vea, en vez de invertir el color. */
   background: var(--record-payment-embedded-bg);
 }
 
