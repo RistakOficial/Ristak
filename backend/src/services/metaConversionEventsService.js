@@ -239,7 +239,7 @@ function normalizePaymentMetaPurchaseEventConfig(value = null) {
 
   return {
     enabled: parseBoolean(eventSource.enabled, false),
-    channel: ['site', 'whatsapp', 'smart'].includes(channel) ? channel : DEFAULT_PAYMENT_EVENT_CHANNEL,
+    channel: ['site', 'whatsapp', 'smart', 'messenger', 'instagram'].includes(channel) ? channel : DEFAULT_PAYMENT_EVENT_CHANNEL,
     eventName: DEFAULT_PAYMENT_EVENT_NAME,
     parameters: normalizePaymentMetaPurchaseEventParameters(eventSource.parameters || {})
   }
@@ -932,25 +932,63 @@ function normalizeBusinessMessagingEventName(value) {
   return aliases[eventName.toLowerCase()] || eventName
 }
 
-function buildBusinessMessagingUserData(contact, metaConfig, whatsappAttribution) {
+// Identidad de user_data para eventos business_messaging, según el canal.
+// NOTA: los nombres de campo de Messenger/Instagram (page_scoped_user_id,
+// ig_account_id, ig_scoped_user_id) están centralizados AQUÍ. Meta exige que el
+// dataset tenga una Página asociada para eventos CTM/CTWA; una vez asociada, si
+// Meta pidiera otro nombre de campo, se ajusta en este único lugar.
+function buildBusinessMessagingUserData(contact, metaConfig, whatsappAttribution, channel = 'whatsapp', socialIdentity = null) {
   const userData = buildUserData(contact)
-  const ctwaClid = cleanString(contact.attribution_ctwa_clid || whatsappAttribution?.referral_ctwa_clid)
   const pageId = cleanString(metaConfig?.pageId)
+
+  if (channel === 'messenger') {
+    const mPageId = cleanString(socialIdentity?.pageId) || pageId
+    const psid = cleanString(socialIdentity?.senderId)
+    if (mPageId) userData.page_id = mPageId
+    if (psid) userData.page_scoped_user_id = psid
+    return userData
+  }
+
+  if (channel === 'instagram') {
+    const igAccountId = cleanString(socialIdentity?.igAccountId)
+    const igsid = cleanString(socialIdentity?.senderId)
+    if (igAccountId) userData.ig_account_id = igAccountId
+    if (igsid) userData.ig_scoped_user_id = igsid
+    return userData
+  }
+
+  // WhatsApp (default): ctwa_clid + page_id + whatsapp_business_account_id.
+  const ctwaClid = cleanString(contact.attribution_ctwa_clid || whatsappAttribution?.referral_ctwa_clid)
   const whatsappBusinessAccountId = cleanString(metaConfig?.whatsappBusinessAccountId)
 
-  if (ctwaClid) {
-    userData.ctwa_clid = ctwaClid
-  }
-
-  if (pageId) {
-    userData.page_id = pageId
-  }
-
-  if (whatsappBusinessAccountId) {
-    userData.whatsapp_business_account_id = whatsappBusinessAccountId
-  }
+  if (ctwaClid) userData.ctwa_clid = ctwaClid
+  if (pageId) userData.page_id = pageId
+  if (whatsappBusinessAccountId) userData.whatsapp_business_account_id = whatsappBusinessAccountId
 
   return userData
+}
+
+// Identidad de mensajería social (Messenger/Instagram) de un contacto, para CAPI.
+// Excluye contactos que solo comentaron (senderId sintético 'fb_comment:'/'ig_comment:'):
+// esos no tienen PSID/IGSID real y no deben atribuir un evento.
+async function getSocialMessagingIdentity(contactId) {
+  if (!contactId) return null
+  const row = await db.get(
+    `SELECT platform, sender_id, page_id, instagram_account_id
+     FROM meta_social_contacts
+     WHERE contact_id = ? AND COALESCE(sender_id, '') NOT LIKE '%comment:%'
+     ORDER BY updated_at DESC, last_seen_at DESC
+     LIMIT 1`,
+    [contactId]
+  ).catch(() => null)
+  if (!row || !cleanString(row.sender_id)) return null
+  const channel = cleanString(row.platform).toLowerCase() === 'instagram' ? 'instagram' : 'messenger'
+  return {
+    channel,
+    senderId: cleanString(row.sender_id),
+    pageId: cleanString(row.page_id),
+    igAccountId: cleanString(row.instagram_account_id)
+  }
 }
 
 function buildBusinessMessagingCustomData(customData, contact, whatsappAttribution) {
@@ -1230,8 +1268,12 @@ async function sendMetaWhatsappEvent({
   metaEventName,
   eventId,
   customData,
-  skipContactDedupe = false
+  skipContactDedupe = false,
+  channel = 'whatsapp',
+  socialIdentity = null
 }) {
+  const cleanChannel = ['messenger', 'instagram'].includes(channel) ? channel : 'whatsapp'
+  const isWhatsapp = cleanChannel === 'whatsapp'
   const contact = await getContactForMetaEvent(contactId)
 
   if (!contact) {
@@ -1246,7 +1288,8 @@ async function sendMetaWhatsappEvent({
     return { sent: false, reason: 'contact_not_found' }
   }
 
-  if (!contact.phone) {
+  // WhatsApp exige teléfono; Messenger/Instagram se atribuyen por PSID/IGSID.
+  if (isWhatsapp && !contact.phone) {
     await logMetaEvent({
       contactId,
       eventType,
@@ -1262,7 +1305,7 @@ async function sendMetaWhatsappEvent({
     return { sent: false, reason: 'already_sent' }
   }
 
-  const whatsappAttribution = await getLatestWhatsappAttribution(contact)
+  const whatsappAttribution = isWhatsapp ? await getLatestWhatsappAttribution(contact) : null
   const metaConfig = await getMetaCapiConfig()
   if (!metaConfig.datasetId || !metaConfig.accessToken) {
     await logMetaEvent({
@@ -1276,29 +1319,34 @@ async function sendMetaWhatsappEvent({
     return { sent: false, reason: 'missing_meta_config' }
   }
 
-  const userData = buildBusinessMessagingUserData(contact, metaConfig, whatsappAttribution)
-  if (!userData.ph || !userData.external_id) {
-    await logMetaEvent({
-      contactId,
-      eventType,
-      metaEventName,
-      eventId,
-      status: 'skipped',
-      errorMessage: 'user_data insuficiente para Meta'
-    })
+  const userData = buildBusinessMessagingUserData(contact, metaConfig, whatsappAttribution, cleanChannel, socialIdentity)
+
+  if (!userData.external_id) {
+    await logMetaEvent({ contactId, eventType, metaEventName, eventId, status: 'skipped', errorMessage: 'user_data insuficiente para Meta' })
     return { sent: false, reason: 'insufficient_user_data' }
   }
 
-  if (!userData.ctwa_clid) {
-    await logMetaEvent({
-      contactId,
-      eventType,
-      metaEventName,
-      eventId,
-      status: 'skipped',
-      errorMessage: 'Falta ctwa_clid para atribuir el evento de WhatsApp'
-    })
-    return { sent: false, reason: 'missing_ctwa_clid' }
+  if (isWhatsapp) {
+    if (!userData.ph) {
+      await logMetaEvent({ contactId, eventType, metaEventName, eventId, status: 'skipped', errorMessage: 'user_data insuficiente para Meta' })
+      return { sent: false, reason: 'insufficient_user_data' }
+    }
+    if (!userData.ctwa_clid) {
+      await logMetaEvent({ contactId, eventType, metaEventName, eventId, status: 'skipped', errorMessage: 'Falta ctwa_clid para atribuir el evento de WhatsApp' })
+      return { sent: false, reason: 'missing_ctwa_clid' }
+    }
+  } else {
+    // Messenger/Instagram: se requiere la identidad de mensajería social.
+    const hasIdentity = Boolean(
+      cleanString(socialIdentity?.senderId) &&
+      (cleanChannel === 'messenger'
+        ? (cleanString(socialIdentity?.pageId) || cleanString(metaConfig.pageId))
+        : cleanString(socialIdentity?.igAccountId))
+    )
+    if (!hasIdentity) {
+      await logMetaEvent({ contactId, eventType, metaEventName, eventId, status: 'skipped', errorMessage: `Falta identidad de ${cleanChannel} (PSID/IGSID + page/ig id)` })
+      return { sent: false, reason: 'missing_messaging_identity' }
+    }
   }
 
   const enrichedCustomData = buildBusinessMessagingCustomData(customData, contact, whatsappAttribution)
@@ -1308,7 +1356,7 @@ async function sendMetaWhatsappEvent({
         event_name: metaEventName,
         event_time: Math.floor(Date.now() / 1000),
         action_source: 'business_messaging',
-        messaging_channel: 'whatsapp',
+        messaging_channel: cleanChannel,
         event_id: eventId,
         user_data: userData,
         custom_data: enrichedCustomData
@@ -1338,7 +1386,7 @@ async function sendMetaWhatsappEvent({
       responsePayload
     })
 
-    logger.info(`✅ Evento WhatsApp ${eventType} enviado a Meta para contacto ${contactId}`)
+    logger.info(`✅ Evento ${cleanChannel} ${eventType} enviado a Meta para contacto ${contactId}`)
     return { sent: true, eventId, responsePayload }
   } catch (error) {
     await logMetaEvent({
@@ -1561,7 +1609,7 @@ export async function triggerWhatsappAppointmentBookedEvent(contactId, options =
     ? `schedule_appointment_${appointmentId}`
     : `schedule_contact_${contactId}`
 
-  return sendMetaWhatsappEvent({
+  const scheduleArgs = {
     contactId,
     eventType: EVENT_TYPES.schedule,
     metaEventName,
@@ -1573,7 +1621,22 @@ export async function triggerWhatsappAppointmentBookedEvent(contactId, options =
       calendar_id: calendarCustomEvents?.calendarId || calendarId || '',
       calendar_name: calendarCustomEvents?.calendarName || options.calendarName || ''
     }
-  })
+  }
+  const isConversionResult = (r) => Boolean(r) && (r.sent || r.reason === 'already_sent' || r.reason === 'meta_error')
+
+  // WhatsApp primero (comportamiento actual). Si no hay señal WhatsApp para
+  // atribuir (contacto sin teléfono/ctwa) e proviene de Messenger/Instagram,
+  // disparamos el LeadSubmitted por ese canal con su identidad (PSID/IGSID).
+  const whatsappResult = await sendMetaWhatsappEvent({ ...scheduleArgs, channel: 'whatsapp' })
+  if (isConversionResult(whatsappResult)) return whatsappResult
+
+  const socialIdentity = await getSocialMessagingIdentity(contactId)
+  if (socialIdentity) {
+    const socialResult = await sendMetaWhatsappEvent({ ...scheduleArgs, channel: socialIdentity.channel, socialIdentity })
+    if (isConversionResult(socialResult)) return socialResult
+  }
+
+  return whatsappResult
 }
 
 export async function triggerMetaPaymentPurchaseEvent(contactId, payment = {}) {
@@ -1617,33 +1680,40 @@ export async function triggerMetaPaymentPurchaseEvent(contactId, payment = {}) {
     ...(eventContext.customDataOptions || {})
   })
 
+  const purchaseArgs = {
+    contactId,
+    eventType: EVENT_TYPES.purchase,
+    metaEventName: whatsappMetaEventName,
+    eventId,
+    customData,
+    skipContactDedupe: eventContext.skipContactDedupe
+  }
+  const isConversionResult = (r) => Boolean(r) && (r.sent || r.reason === 'already_sent' || r.reason === 'meta_error')
+
   if (paymentMetaConfig.channel === 'whatsapp') {
-    return sendMetaWhatsappEvent({
-      contactId,
-      eventType: EVENT_TYPES.purchase,
-      metaEventName: whatsappMetaEventName,
-      eventId,
-      customData,
-      skipContactDedupe: eventContext.skipContactDedupe
-    })
+    return sendMetaWhatsappEvent({ ...purchaseArgs, channel: 'whatsapp' })
   }
 
-  const smartChannel = paymentMetaConfig.channel === 'smart'
-    ? hasWhatsappAttributionSignal(await getLatestWhatsappAttribution(contact))
-    : false
+  // Canal explícito de mensajería social (Messenger/Instagram).
+  if (paymentMetaConfig.channel === 'messenger' || paymentMetaConfig.channel === 'instagram') {
+    const socialIdentity = await getSocialMessagingIdentity(contactId)
+    if (socialIdentity && socialIdentity.channel === paymentMetaConfig.channel) {
+      const socialResult = await sendMetaWhatsappEvent({ ...purchaseArgs, channel: socialIdentity.channel, socialIdentity })
+      if (isConversionResult(socialResult)) return socialResult
+    }
+    return sendMetaSiteEvent({ contactId, eventType: EVENT_TYPES.purchase, metaEventName: siteMetaEventName, eventId, customData, eventSourceUrl, actionSource, skipContactDedupe: eventContext.skipContactDedupe })
+  }
 
-  if (smartChannel) {
-    const whatsappResult = await sendMetaWhatsappEvent({
-      contactId,
-      eventType: EVENT_TYPES.purchase,
-      metaEventName: whatsappMetaEventName,
-      eventId,
-      customData,
-      skipContactDedupe: eventContext.skipContactDedupe
-    })
-
-    if (whatsappResult.sent || whatsappResult.reason === 'already_sent' || whatsappResult.reason === 'meta_error') {
-      return whatsappResult
+  // smart: WhatsApp (por señal ctwa) → mensajería social (Messenger/IG) → sitio.
+  if (paymentMetaConfig.channel === 'smart') {
+    if (hasWhatsappAttributionSignal(await getLatestWhatsappAttribution(contact))) {
+      const whatsappResult = await sendMetaWhatsappEvent({ ...purchaseArgs, channel: 'whatsapp' })
+      if (isConversionResult(whatsappResult)) return whatsappResult
+    }
+    const socialIdentity = await getSocialMessagingIdentity(contactId)
+    if (socialIdentity) {
+      const socialResult = await sendMetaWhatsappEvent({ ...purchaseArgs, channel: socialIdentity.channel, socialIdentity })
+      if (isConversionResult(socialResult)) return socialResult
     }
   }
 
