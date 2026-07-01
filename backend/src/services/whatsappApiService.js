@@ -2799,10 +2799,11 @@ async function retryFailedOfficialApiMessageViaQr({
   const fromPhone = identity?.businessPhone || normalizedMessage?.from
   const toPhone = identity?.phone || normalizedMessage?.to
   const fallbackExternalId = `${cleanString(normalizedMessage?.externalId || messageId) || hashId('waapi_failed', safeJson(normalizedMessage))}-qr-fallback`
+  const cleanMessageType = cleanString(messageType).toLowerCase()
 
   try {
     let fallbackResponse = null
-    if (messageType === 'text' && messageText) {
+    if (['text', 'interactive', 'template'].includes(cleanMessageType) && messageText) {
       fallbackResponse = await sendTextViaQrFallback({
         phoneNumberId: phoneRow.id,
         fromPhone,
@@ -2812,7 +2813,7 @@ async function retryFailedOfficialApiMessageViaQr({
         fallbackReason: reason,
         persist: false
       })
-    } else if (messageType === 'image') {
+    } else if (cleanMessageType === 'image') {
       const image = normalizedMessage?.image || {}
       const link = cleanString(image.link || image.url)
       if (!link) return null
@@ -2828,7 +2829,7 @@ async function retryFailedOfficialApiMessageViaQr({
         fallbackReason: reason,
         persist: false
       })
-    } else if (messageType === 'audio') {
+    } else if (cleanMessageType === 'audio') {
       const audio = normalizedMessage?.audio || {}
       const link = cleanString(audio.link || audio.url)
       if (!link) return null
@@ -2841,7 +2842,7 @@ async function retryFailedOfficialApiMessageViaQr({
         fallbackReason: reason,
         persist: false
       })
-    } else if (messageType === 'document') {
+    } else if (cleanMessageType === 'document') {
       const document = normalizedMessage?.document || {}
       const link = cleanString(document.link || document.url)
       if (!link) return null
@@ -2859,16 +2860,42 @@ async function retryFailedOfficialApiMessageViaQr({
         fallbackReason: reason,
         persist: false
       })
+    } else if (cleanMessageType === 'video') {
+      const video = normalizedMessage?.video || {}
+      const link = cleanString(video.link || video.url)
+      if (!link) return null
+      fallbackResponse = await sendVideoViaQrFallback({
+        phoneNumberId: phoneRow.id,
+        fromPhone,
+        toPhone,
+        requestVideo: {
+          link,
+          ...(video.caption ? { caption: video.caption } : {}),
+          ...(video.mimeType || video.mimetype ? { mimeType: video.mimeType || video.mimetype } : {})
+        },
+        externalId: fallbackExternalId,
+        fallbackReason: reason,
+        persist: false
+      })
     }
 
     if (!fallbackResponse) return null
-    await applyQrFallbackToExistingApiMessage({
+    const applied = await applyQrFallbackToExistingApiMessage({
       messageId,
       fallbackResponse,
       reason,
       messageType
     })
-    return fallbackResponse
+    return {
+      ...fallbackResponse,
+      fallback: true,
+      fallbackFrom: 'api',
+      fallbackReason: cleanString(reason),
+      routingReason: cleanString(reason),
+      transport: 'qr',
+      status: applied?.status || fallbackResponse.status || 'sent',
+      localMessageId: applied?.id || messageId
+    }
   } catch (error) {
     logger.warn(`[WhatsApp API] No se pudo reintentar por QR ${messageId}: ${error.message}`)
   }
@@ -2926,6 +2953,32 @@ async function applyQrFallbackToExistingApiMessage({ messageId, fallbackResponse
   })
 
   return { ...existing, transport: 'qr', status: fallbackStatus }
+}
+
+function buildSendResponseFromQrFallback(apiResponse = {}, fallbackResponse = null) {
+  if (cleanString(fallbackResponse?.transport).toLowerCase() !== 'qr') return null
+
+  const {
+    error: _error,
+    errors: _errors,
+    errorCode: _errorCode,
+    errorMessage: _errorMessage,
+    ...cleanApiResponse
+  } = apiResponse || {}
+  const fallbackReason = cleanString(fallbackResponse.fallbackReason || fallbackResponse.routingReason)
+
+  return {
+    ...cleanApiResponse,
+    ...fallbackResponse,
+    fallback: true,
+    fallbackFrom: 'api',
+    transport: 'qr',
+    status: normalizeMessageDeliveryStatus(fallbackResponse.status) || 'sent',
+    ...(fallbackReason ? {
+      fallbackReason,
+      routingReason: fallbackReason
+    } : {})
+  }
 }
 
 function normalizeYCloudContactRecord(record = {}) {
@@ -5046,6 +5099,7 @@ async function upsertMessage({ payload, message, direction, businessPhoneHints =
     ? getOfficialApiConversationWindowReason({ message: failureText })
     : ''
 
+  let qrFallbackResponse = null
   if (cleanTransport === 'api' && identity.direction === 'outbound' && !existingQrFallbackApplied && (restrictionReason || conversationWindowReason)) {
     if (restrictionReason) {
       await activateOfficialApiRestrictionFromFailedMessage({
@@ -5055,7 +5109,7 @@ async function upsertMessage({ payload, message, direction, businessPhoneHints =
         reason: restrictionReason
       })
     }
-    await retryFailedOfficialApiMessageViaQr({
+    qrFallbackResponse = await retryFailedOfficialApiMessageViaQr({
       normalizedMessage,
       identity,
       businessPhoneNumberId,
@@ -5066,6 +5120,14 @@ async function upsertMessage({ payload, message, direction, businessPhoneHints =
       existingMessage
     })
   }
+
+  const finalTransport = qrFallbackResponse || existingQrFallbackApplied ? 'qr' : cleanTransport
+  const finalRoutingReason = cleanString(
+    qrFallbackResponse?.routingReason ||
+    qrFallbackResponse?.fallbackReason ||
+    (existingQrFallbackApplied ? existingMessage?.routing_reason : routingReason)
+  )
+  const finalStatus = qrFallbackResponse?.status || status
 
   // La API confirmo un envio saliente: cualquier alerta de bloqueo de este
   // número o de la cuenta quedo obsoleta y se resuelve sola.
@@ -5136,7 +5198,7 @@ async function upsertMessage({ payload, message, direction, businessPhoneHints =
     messageId,
     channel: 'whatsapp',
     provider,
-    transport: cleanTransport,
+    transport: finalTransport,
     direction: identity.direction,
     messageType,
     messageTimestamp,
@@ -5163,7 +5225,12 @@ async function upsertMessage({ payload, message, direction, businessPhoneHints =
     phone: identity.phone,
     businessPhone: identity.businessPhone,
     businessPhoneNumberId,
-    transport: cleanTransport,
+    transport: finalTransport,
+    status: finalStatus,
+    routingReason: finalRoutingReason,
+    fallbackApplied: Boolean(qrFallbackResponse),
+    fallbackResponse: qrFallbackResponse || null,
+    fallbackReason: qrFallbackResponse?.fallbackReason || '',
     contactName: localContact.contactName,
     profileName,
     messageText,
@@ -7504,7 +7571,7 @@ export async function sendWhatsAppApiTemplateMessage({
     renderedText: renderedTemplateText
   })
 
-  await upsertMessage({
+  const persistedMessage = await upsertMessage({
     payload: {
       id: response.id || externalId || hashId('waapi_tpl_send_event', `${fromPhone}|${toPhone}|${finalTemplate.name}`),
       type: 'whatsapp.message.updated',
@@ -7525,6 +7592,14 @@ export async function sendWhatsAppApiTemplateMessage({
     transport: 'api',
     contactId
   })
+  const fallbackSendResponse = buildSendResponseFromQrFallback(response, persistedMessage?.fallbackResponse)
+  if (fallbackSendResponse) {
+    return {
+      ...fallbackSendResponse,
+      type: 'template',
+      template: requestBody.template
+    }
+  }
 
   return response
 }
@@ -7658,7 +7733,7 @@ export async function sendWhatsAppApiInteractiveMessage({
     throw error
   }
 
-  await upsertMessage({
+  const persistedMessage = await upsertMessage({
     payload: {
       id: response.id || externalId || hashId('waapi_interactive_send_event', `${fromPhone}|${toPhone}|${safeJson(interactivePayload.interactive)}`),
       type: 'whatsapp.message.updated',
@@ -7678,6 +7753,8 @@ export async function sendWhatsAppApiInteractiveMessage({
     transport: 'api',
     contactId
   })
+  const fallbackSendResponse = buildSendResponseFromQrFallback(response, persistedMessage?.fallbackResponse)
+  if (fallbackSendResponse) return fallbackSendResponse
 
   return response
 }
@@ -8162,7 +8239,7 @@ export async function sendWhatsAppApiTextMessage({
     throw error
   }
 
-  await upsertMessage({
+  const persistedMessage = await upsertMessage({
     payload: {
       id: response.id || externalId || hashId('waapi_send_event', `${fromPhone}|${toPhone}|${body}`),
       type: 'whatsapp.message.updated',
@@ -8182,6 +8259,8 @@ export async function sendWhatsAppApiTextMessage({
     transport: 'api',
     contactId
   })
+  const fallbackSendResponse = buildSendResponseFromQrFallback(response, persistedMessage?.fallbackResponse)
+  if (fallbackSendResponse) return fallbackSendResponse
 
   return response
 }
@@ -8351,7 +8430,7 @@ export async function sendWhatsAppApiImageMessage({
     throw error
   }
 
-  await upsertMessage({
+  const persistedMessage = await upsertMessage({
     payload: {
       id: response.id || externalId || hashId('waapi_img_event', `${fromPhone}|${toPhone}|${link}`),
       type: 'whatsapp.message.updated',
@@ -8374,6 +8453,8 @@ export async function sendWhatsAppApiImageMessage({
     transport: 'api',
     contactId
   })
+  const fallbackSendResponse = buildSendResponseFromQrFallback(response, persistedMessage?.fallbackResponse)
+  if (fallbackSendResponse) return fallbackSendResponse
 
   return {
     ...response,
@@ -8559,7 +8640,7 @@ export async function sendWhatsAppApiDocumentMessage({
     throw error
   }
 
-  await upsertMessage({
+  const persistedMessage = await upsertMessage({
     payload: {
       id: response.id || externalId || hashId('waapi_doc_event', `${fromPhone}|${toPhone}|${link}`),
       type: 'whatsapp.message.updated',
@@ -8582,6 +8663,8 @@ export async function sendWhatsAppApiDocumentMessage({
     transport: 'api',
     contactId
   })
+  const fallbackSendResponse = buildSendResponseFromQrFallback(response, persistedMessage?.fallbackResponse)
+  if (fallbackSendResponse) return fallbackSendResponse
 
   return {
     ...response,
@@ -8780,7 +8863,7 @@ export async function sendWhatsAppApiVideoMessage({
     throw error
   }
 
-  await upsertMessage({
+  const persistedMessage = await upsertMessage({
     payload: {
       id: response.id || externalId || hashId('waapi_video_event', `${fromPhone}|${toPhone}|${link || providerVideo?.id || ''}`),
       type: 'whatsapp.message.updated',
@@ -8803,6 +8886,8 @@ export async function sendWhatsAppApiVideoMessage({
     transport: 'api',
     contactId
   })
+  const fallbackSendResponse = buildSendResponseFromQrFallback(response, persistedMessage?.fallbackResponse)
+  if (fallbackSendResponse) return fallbackSendResponse
 
   return {
     ...response,
@@ -8977,7 +9062,7 @@ export async function sendWhatsAppApiAudioMessage({
     throw error
   }
 
-  await upsertMessage({
+  const persistedMessage = await upsertMessage({
     payload: {
       id: response.id || externalId || hashId('waapi_audio_event', `${fromPhone}|${toPhone}|${link}`),
       type: 'whatsapp.message.updated',
@@ -9001,6 +9086,8 @@ export async function sendWhatsAppApiAudioMessage({
     transport: 'api',
     contactId
   })
+  const fallbackSendResponse = buildSendResponseFromQrFallback(response, persistedMessage?.fallbackResponse)
+  if (fallbackSendResponse) return fallbackSendResponse
 
   return {
     ...response,

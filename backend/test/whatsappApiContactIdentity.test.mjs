@@ -15,10 +15,16 @@ import {
   getWhatsAppApiConfigKeys,
   processYCloudWhatsAppWebhook,
   repairStoredYCloudHistoryMessageDirections,
+  sendWhatsAppApiTextMessage,
   setYCloudFetchForTest,
   syncYCloudContacts,
   syncYCloudMessageRecords
 } from '../src/services/whatsappApiService.js'
+import {
+  QR_CONSENT_TEXT,
+  resetWhatsAppQrServiceForTest,
+  setBaileysRuntimeForTest
+} from '../src/services/whatsappQrService.js'
 
 async function cleanup({ contactId, apiContactId, messageId, phone, eventId }) {
   await db.run('DELETE FROM whatsapp_api_attribution WHERE whatsapp_api_message_id = ? OR contact_id = ? OR phone = ?', [messageId, contactId, phone]).catch(() => undefined)
@@ -34,6 +40,91 @@ function ycloudJsonResponse(body, { status = 200, statusText = 'OK' } = {}) {
     status,
     statusText,
     text: async () => JSON.stringify(body)
+  }
+}
+
+function normalizeDigits(value = '') {
+  return String(value || '').replace(/\D/g, '')
+}
+
+function createFakeBaileysRuntime({ connectedJid, sentMessages = [] } = {}) {
+  let messageIndex = 0
+
+  return {
+    DisconnectReason: {
+      loggedOut: 401,
+      badSession: 500,
+      connectionReplaced: 440,
+      restartRequired: 515
+    },
+    BufferJSON: {
+      replacer: (_key, value) => value,
+      reviver: (_key, value) => value
+    },
+    Browsers: {
+      macOS: (name) => ['macOS', name, 'Ristak']
+    },
+    initAuthCreds: () => ({
+      me: { id: connectedJid },
+      registered: true
+    }),
+    makeCacheableSignalKeyStore: (keys) => keys,
+    proto: {
+      Message: {
+        AppStateSyncKeyData: {
+          fromObject: (value) => value
+        }
+      }
+    },
+    makeWASocket: () => {
+      const listeners = new Map()
+      const emit = async (eventName, payload) => {
+        for (const handler of listeners.get(eventName) || []) {
+          await handler(payload)
+        }
+      }
+      const sock = {
+        user: { id: connectedJid },
+        ev: {
+          on: (eventName, handler) => {
+            const eventListeners = listeners.get(eventName) || []
+            eventListeners.push(handler)
+            listeners.set(eventName, eventListeners)
+          },
+          removeAllListeners: (eventName) => {
+            if (eventName) listeners.delete(eventName)
+            else listeners.clear()
+          }
+        },
+        ws: {
+          close: () => {}
+        },
+        onWhatsApp: async (...candidates) => candidates.map(candidate => ({
+          exists: true,
+          jid: `${normalizeDigits(candidate)}@s.whatsapp.net`
+        })),
+        sendMessage: async (jid, payload) => {
+          messageIndex += 1
+          const id = `qr_fallback_msg_${messageIndex}`
+          sentMessages.push({ id, jid, payload })
+          await emit('messages.update', [{
+            key: { id, remoteJid: jid, fromMe: true },
+            update: { status: 3 }
+          }])
+          return {
+            key: { id, remoteJid: jid, fromMe: true },
+            message: payload
+          }
+        },
+        emit
+      }
+
+      queueMicrotask(() => {
+        emit('connection.update', { connection: 'open' }).catch(() => undefined)
+      })
+
+      return sock
+    }
   }
 }
 
@@ -303,6 +394,137 @@ test('webhook fallido repetido conserva el globo respaldado por QR', async () =>
     assert.equal(message.raw_payload_json, rawPayload)
   } finally {
     await cleanup({ contactId, messageId, phone, eventId })
+  }
+})
+
+test('envio API fallido inmediato responde y persiste el respaldo QR limpio', async () => {
+  const id = randomUUID()
+  const phone = `+52994${Date.now().toString().slice(-7)}`
+  const businessPhone = '+526561000002'
+  const connectedJid = `${normalizeDigits(businessPhone)}@s.whatsapp.net`
+  const phoneNumberId = `phone_api_qr_fallback_${id}`
+  const contactId = `rstk_contact_api_qr_fallback_${id}`
+  const ycloudMessageId = `ycloud_api_failed_${id}`
+  const externalId = `manual_chat_${id}`
+  const body = 'Hola, esto debe salir por QR'
+  const fallbackReason = 'Message failed to send because more than 24 hours have passed since the customer last replied to this number.'
+  const keys = getWhatsAppApiConfigKeys()
+  const configKeys = [keys.enabled, keys.apiKey, keys.senderPhone, keys.phoneNumberId, keys.wabaId, keys.provider]
+  const sentMessages = []
+
+  await cleanup({ contactId, messageId: ycloudMessageId, phone })
+  await db.run('DELETE FROM distributed_locks WHERE name = ?', [`whatsapp-qr-session:${phoneNumberId}`]).catch(() => undefined)
+  await db.run('DELETE FROM whatsapp_qr_auth_state WHERE phone_number_id = ?', [phoneNumberId]).catch(() => undefined)
+  await db.run('DELETE FROM whatsapp_qr_sessions WHERE phone_number_id = ?', [phoneNumberId]).catch(() => undefined)
+  await db.run('DELETE FROM whatsapp_api_phone_numbers WHERE id = ?', [phoneNumberId]).catch(() => undefined)
+
+  try {
+    await snapshotAppConfig(configKeys, async () => {
+      await initializeMasterKey()
+      await setAppConfig(keys.enabled, '1')
+      await setAppConfig(keys.apiKey, encrypt('ycloud_qr_fallback_secret'))
+      await setAppConfig(keys.senderPhone, businessPhone)
+      await setAppConfig(keys.phoneNumberId, phoneNumberId)
+      await setAppConfig(keys.wabaId, 'waba_api_qr_fallback_test')
+      await setAppConfig(keys.provider, 'ycloud')
+
+      await db.run(`
+        INSERT INTO whatsapp_api_phone_numbers (
+          id, provider, waba_id, phone_number, display_phone_number, verified_name,
+          is_default_sender, api_send_enabled, qr_send_enabled, qr_status, status
+        ) VALUES (?, 'ycloud', 'waba_api_qr_fallback_test', ?, ?, 'API QR Fallback Test', 1, 1, 1, 'connected', 'CONNECTED')
+      `, [phoneNumberId, businessPhone, businessPhone])
+
+      await db.run(`
+        INSERT INTO whatsapp_qr_sessions (
+          id, phone_number_id, expected_phone, connected_phone, status,
+          consent_accepted, consent_text, consent_accepted_at, last_connected_at, updated_at
+        ) VALUES (?, ?, ?, ?, 'connected', 1, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+      `, [
+        `qr_${phoneNumberId}`,
+        phoneNumberId,
+        businessPhone,
+        businessPhone,
+        QR_CONSENT_TEXT
+      ])
+
+      await db.run(`
+        INSERT INTO whatsapp_qr_auth_state (phone_number_id, auth_key, value_json, updated_at)
+        VALUES (?, 'creds', ?, CURRENT_TIMESTAMP)
+      `, [
+        phoneNumberId,
+        JSON.stringify({
+          me: { id: connectedJid },
+          registered: true
+        })
+      ])
+
+      setBaileysRuntimeForTest(createFakeBaileysRuntime({ connectedJid, sentMessages }))
+      setYCloudFetchForTest(async (url, options = {}) => {
+        const parsed = new URL(String(url))
+        const path = parsed.pathname.replace(/^\/v2/, '')
+        const method = String(options.method || 'GET').toUpperCase()
+        if (path === '/whatsapp/messages' && method === 'POST') {
+          return ycloudJsonResponse({
+            id: ycloudMessageId,
+            from: businessPhone,
+            to: phone,
+            status: 'failed',
+            type: 'text',
+            text: { body },
+            error: {
+              code: '131047',
+              message: fallbackReason
+            },
+            createTime: '2024-05-07T08:09:10.000Z'
+          })
+        }
+        return ycloudJsonResponse({ items: [], total: 0 })
+      })
+
+      const result = await sendWhatsAppApiTextMessage({
+        to: phone,
+        from: businessPhone,
+        text: body,
+        externalId,
+        contactId,
+        phoneNumberId,
+        skipQrSendProtection: true
+      })
+
+      assert.equal(result.transport, 'qr')
+      assert.equal(result.status, 'delivered')
+      assert.equal(result.fallback, true)
+      assert.equal(result.fallbackFrom, 'api')
+      assert.equal(result.routingReason, 'La conversación lleva más de 24 horas sin respuesta del cliente; WhatsApp API solo permite plantillas.')
+      assert.equal(sentMessages.length, 1)
+      assert.equal(sentMessages[0].payload.text, body)
+
+      const message = await db.get(`
+        SELECT transport, routing_reason, status, error_code, error_message, raw_payload_json, message_text
+        FROM whatsapp_api_messages
+        WHERE ycloud_message_id = ?
+      `, [ycloudMessageId])
+
+      assert.equal(message.transport, 'qr')
+      assert.equal(message.status, 'delivered')
+      assert.equal(message.error_code, null)
+      assert.equal(message.error_message, null)
+      assert.equal(message.message_text, body)
+      assert.equal(message.routing_reason, 'La conversación lleva más de 24 horas sin respuesta del cliente; WhatsApp API solo permite plantillas.')
+      const rawPayload = JSON.parse(message.raw_payload_json)
+      assert.equal(rawPayload.fallbackFrom, 'api')
+      assert.equal(rawPayload.fallbackTransport, 'qr')
+      assert.equal(rawPayload.whatsappMessage.transport, 'qr')
+    })
+  } finally {
+    setYCloudFetchForTest(null)
+    resetWhatsAppQrServiceForTest()
+    await db.run('DELETE FROM distributed_locks WHERE name = ?', [`whatsapp-qr-session:${phoneNumberId}`]).catch(() => undefined)
+    await db.run('DELETE FROM whatsapp_qr_auth_state WHERE phone_number_id = ?', [phoneNumberId]).catch(() => undefined)
+    await db.run('DELETE FROM whatsapp_qr_sessions WHERE phone_number_id = ?', [phoneNumberId]).catch(() => undefined)
+    await db.run('DELETE FROM whatsapp_api_phone_numbers WHERE id = ?', [phoneNumberId]).catch(() => undefined)
+    await cleanup({ contactId, messageId: ycloudMessageId, phone })
   }
 })
 

@@ -270,6 +270,14 @@ Ristak maneja varias superficies de comunicacion:
 La mensajeria usa servicios especializados para plantillas, media, atribucion,
 sincronizacion de conversaciones, read states, presencia y eventos.
 
+Cuando un envio saliente intenta WhatsApp API/YCloud y la API lo rechaza por una
+restriccion recuperable o por la ventana de 24 horas, `whatsappApiService` debe
+usar WhatsApp QR/Baileys como respaldo si el numero tiene QR habilitado y
+conectado. Si el respaldo QR confirma el envio, el historial y la respuesta al
+frontend deben quedar como mensaje `qr` exitoso, sin exponer el error de la API
+en el globo del chat. Solo se guarda error visible cuando no existe respaldo QR
+usable o cuando el respaldo QR tambien falla.
+
 En las listas y separadores del chat, los mensajes del dia actual muestran hora
 o `Hoy`, los del dia anterior muestran `Ayer`, y los anteriores usan fecha
 compacta sin `de` (`29 junio`, agregando año solo si no pertenece al año actual).
