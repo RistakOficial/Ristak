@@ -135,7 +135,6 @@ jobs:
           KEYCHAIN_PASSWORD="${KEYCHAIN_PASSWORD:-temporary-ci-keychain}"
 
           CERT_PATH="$RUNNER_TEMP/ios_distribution.p12"
-          CERT_PEM_PATH="$RUNNER_TEMP/ios_distribution.pem"
           PROFILE_DIR="$RUNNER_TEMP/profiles"
           PROFILE_PATH="$PROFILE_DIR/RistakAppStoreCI.mobileprovision"
           PROFILE_PLIST="$RUNNER_TEMP/ristak_appstore.plist"
@@ -152,18 +151,13 @@ jobs:
           security list-keychain -d user -s "$KEYCHAIN_PATH"
           security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
           security find-identity -v -p codesigning "$KEYCHAIN_PATH"
-          IOS_SIGNING_IDENTITY="$(security find-identity -v -p codesigning "$KEYCHAIN_PATH" | sed -nE 's/.*"((Apple|iOS) Distribution:.*)".*/\1/p' | head -n 1)"
+          IOS_SIGNING_IDENTITY_LINE="$(security find-identity -v -p codesigning "$KEYCHAIN_PATH" | sed -nE 's/^[[:space:]]*[0-9]+[)][[:space:]]+([A-F0-9]+)[[:space:]]+"((Apple|iOS) Distribution:.*)"$/\1|\2/p' | head -n 1)"
+          IOS_CERT_SHA1="${IOS_SIGNING_IDENTITY_LINE%%|*}"
+          IOS_SIGNING_IDENTITY="${IOS_SIGNING_IDENTITY_LINE#*|}"
           if [ -z "$IOS_SIGNING_IDENTITY" ]; then
             echo "No Apple Distribution signing identity with private key was imported from the .p12 certificate."
             exit 1
           fi
-
-          export IOS_CERTIFICATE_PASSWORD
-          if ! openssl pkcs12 -in "$CERT_PATH" -clcerts -nokeys -passin env:IOS_CERTIFICATE_PASSWORD > "$CERT_PEM_PATH"; then
-            echo "Could not read the Apple Distribution certificate from the .p12 payload."
-            exit 1
-          fi
-          IOS_CERT_SHA1="$(openssl x509 -in "$CERT_PEM_PATH" -outform DER | shasum -a 1 | awk '{print toupper($1)}')"
           test -n "$IOS_CERT_SHA1"
 
           security cms -D -i "$PROFILE_PATH" > "$PROFILE_PLIST"
