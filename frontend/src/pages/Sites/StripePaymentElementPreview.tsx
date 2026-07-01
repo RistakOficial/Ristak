@@ -85,6 +85,8 @@ export const StripePaymentElementPreview: React.FC<StripePaymentElementPreviewPr
       // Stripe exige monto/moneda en modo diferido. Clamp a un mínimo razonable (MXN ≈ 10).
       amount: Math.max(1000, Math.round((Number(amount) || 1) * 100)),
       currency: (currency || 'mxn').toLowerCase(),
+      // Mismo locale que el runtime publicado (mountStripe usa 'es') para labels idénticos.
+      locale: 'es' as const,
       appearance: appearance || undefined,
     }),
     [amount, currency, appearance],
