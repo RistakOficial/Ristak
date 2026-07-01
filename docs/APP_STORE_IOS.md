@@ -61,7 +61,8 @@ móviles`. The provisioning profile must include the exact certificate from the
 stored `.p12`; App Store profiles only carry one distribution certificate. CI
 supports both manually named App Store profiles and Xcode-managed App Store
 profiles. When the profile is Xcode-managed, the archive/export runs with
-automatic signing so Xcode does not reject the managed profile as a manual one.
+automatic signing and does not force a manual code signing identity, so Xcode
+does not reject the managed profile as a manual one.
 
 If local signing fails, open `frontend/ios/App/App.xcodeproj` in Xcode and check:
 
