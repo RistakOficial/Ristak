@@ -332,6 +332,9 @@ Reglas base:
 - La base guarda instantes en UTC.
 - Fechas de calendario se interpretan en zona del negocio.
 - No dependas del timezone del navegador para datos CRM.
+- Si Meta esta configurado con dataset/pixel y token guardado, los calendarios
+  locales nuevos activan `customEvents.enabled` por default para mandar `Schedule`
+  al agendar. Ediciones posteriores respetan el apagado manual del usuario.
 
 Documentacion especifica:
 
@@ -389,6 +392,10 @@ Ristak usa Meta en varias areas:
 - Conversions API usa siempre el System User Access Token guardado en
   `meta_config.access_token` (o `META_ACCESS_TOKEN` como fallback). No hay un
   token separado para CAPI: no se pide, no se genera y no se sincroniza.
+- Cuando Meta ya tiene dataset/pixel y token guardado, las nuevas superficies nacen
+  con eventos Meta encendidos por default: Sites/landings usan `ViewContent` al
+  aterrizar, formularios usan `Lead` al enviar y calendarios usan `Schedule` al
+  agendar. El usuario puede apagarlos manualmente despues.
 - Social messaging.
 - Business Messaging events.
 - Campaign Builder en modo preview/validacion segun entorno.
@@ -426,6 +433,11 @@ Sites es el constructor/publicador de paginas. Incluye:
 
 La ruta publica puede depender de dominio, slug, host o rutas internas. Cualquier
 cambio a Sites debe revisar editor, renderer publico, submissions y tracking.
+Cuando Meta ya tiene dataset/pixel y token guardado, los sitios nuevos activan
+Meta CAPI por default. Las landings nuevas encienden `ViewContent` al aterrizar
+la pagina; los formularios nativos/importados/creados por IA encienden `Lead` al
+enviar. Las actualizaciones de sitios existentes no reactivan eventos que el
+usuario apago manualmente.
 
 ## Automaciones
 

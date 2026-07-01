@@ -484,6 +484,16 @@ export function resolveMetaCapiAccessToken(metaConfig = {}) {
   return normalizeId(metaConfig?.access_token || process.env.META_ACCESS_TOKEN) || ''
 }
 
+export async function hasConnectedMetaDatasetConfig() {
+  const metaConfig = await db.get('SELECT pixel_id, access_token FROM meta_config LIMIT 1').catch(error => {
+    logger.warn(`No se pudo leer configuración Meta para defaults de eventos: ${error.message}`)
+    return null
+  })
+  const datasetId = normalizeId(metaConfig?.pixel_id || process.env.META_PIXEL_ID || process.env.META_DATASET_ID)
+  const accessToken = normalizeId(metaConfig?.access_token || process.env.META_ACCESS_TOKEN)
+  return Boolean(datasetId && accessToken)
+}
+
 export async function saveMetaAccessToken(accessToken) {
   const normalizedToken = normalizeId(accessToken)
   if (!normalizedToken || normalizedToken.startsWith('***')) {

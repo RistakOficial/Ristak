@@ -35,7 +35,7 @@ import {
   findMediaAssetsByBunnyStreamVideoIds,
   findMediaAssetsByPublicUrls
 } from './mediaStorageService.js'
-import { getMetaConfig, resolveMetaCapiAccessToken } from './metaAdsService.js'
+import { getMetaConfig, hasConnectedMetaDatasetConfig, resolveMetaCapiAccessToken } from './metaAdsService.js'
 import { createSession, getVisitorIdentityExpression, linkVisitorToContact, unifyVisitorIds } from './trackingService.js'
 import {
   buildMetaBrowserUserData,
@@ -237,6 +237,9 @@ const META_STANDARD_PIXEL_EVENTS = new Set(['Lead', 'Schedule', 'Purchase', 'Vie
 const SITE_META_TRIGGERS = new Set(['page_view', 'form_submit', 'calendar_schedule'])
 const SITE_META_SUBMIT_CONDITIONS = new Set(['always', 'qualified_only'])
 const SITE_TYPES_WITH_PAGE_META = new Set(['landing_page', 'interactive_form', 'standard_form'])
+const DEFAULT_SITE_META_PAGE_VIEW_EVENT_NAME = 'ViewContent'
+const DEFAULT_SITE_META_FORM_SUBMIT_EVENT_NAME = 'Lead'
+const DEFAULT_SITE_META_CALENDAR_EVENT_NAME = 'Schedule'
 const SITE_META_PARAMETER_FIELDS = {
   Lead: ['value', 'predictedLtv'],
   Schedule: ['value', 'predictedLtv'],
@@ -965,6 +968,92 @@ function normalizeFormDisqualifiedCompletionAction(value, fallback = 'disqualifi
 function normalizeSiteMetaSubmitCondition(value, fallback = 'always') {
   const condition = cleanString(value)
   return SITE_META_SUBMIT_CONDITIONS.has(condition) ? condition : fallback
+}
+
+function shouldDefaultSiteSubmitMetaEvent(siteType, { hasDetectedForms = false } = {}) {
+  return FORM_SITE_TYPES.has(siteType) || Boolean(hasDetectedForms)
+}
+
+function shouldDefaultSitePageViewMetaEvent(siteType) {
+  return siteType === 'landing_page'
+}
+
+function normalizeThemeMetaCalendarEvents(theme = {}) {
+  const source = theme?.metaCalendarEvents && typeof theme.metaCalendarEvents === 'object'
+    ? theme.metaCalendarEvents
+    : theme?.meta_calendar_events && typeof theme.meta_calendar_events === 'object'
+      ? theme.meta_calendar_events
+      : {}
+  return source && typeof source === 'object' && !Array.isArray(source) ? source : {}
+}
+
+function applyConnectedMetaDefaultsToTheme(theme = {}, { enabled = false, siteType = 'landing_page', calendarSurfaceIds = [] } = {}) {
+  if (!enabled) return theme
+
+  const nextTheme = { ...theme }
+
+  if (shouldDefaultSitePageViewMetaEvent(siteType) && Array.isArray(nextTheme.pages) && nextTheme.pages.length) {
+    nextTheme.pages = nextTheme.pages.map(page => {
+      const eventName = normalizeSiteMetaEventName(
+        page?.metaEventName || page?.meta_event_name,
+        { allowNone: true, fallback: SITE_META_NO_EVENT }
+      )
+      const hasEvent = eventName !== SITE_META_NO_EVENT
+      return {
+        ...page,
+        metaCapiEnabled: true,
+        metaEventName: hasEvent ? eventName : DEFAULT_SITE_META_PAGE_VIEW_EVENT_NAME,
+        metaTrigger: 'page_view'
+      }
+    })
+  }
+
+  const surfaceIds = [...new Set((Array.isArray(calendarSurfaceIds) ? calendarSurfaceIds : [])
+    .map(surfaceId => cleanString(surfaceId))
+    .filter(Boolean))]
+  if (surfaceIds.length) {
+    const currentEvents = normalizeThemeMetaCalendarEvents(nextTheme)
+    const nextEvents = { ...currentEvents }
+    for (const surfaceId of surfaceIds) {
+      const existing = currentEvents[surfaceId] && typeof currentEvents[surfaceId] === 'object'
+        ? currentEvents[surfaceId]
+        : {}
+      const eventName = normalizeSiteMetaEventName(
+        existing.eventName || existing.event_name,
+        { allowNone: true, fallback: SITE_META_NO_EVENT }
+      )
+      nextEvents[surfaceId] = {
+        ...existing,
+        enabled: true,
+        eventName: eventName === SITE_META_NO_EVENT ? DEFAULT_SITE_META_CALENDAR_EVENT_NAME : eventName
+      }
+    }
+    nextTheme.metaCalendarEvents = nextEvents
+    delete nextTheme.meta_calendar_events
+  }
+
+  return nextTheme
+}
+
+async function resolveConnectedMetaSiteCreateDefaults(input = {}, { siteType = 'landing_page', theme = {}, hasDetectedForms = false, calendarSurfaceIds = [] } = {}) {
+  const connectedMetaDataset = await hasConnectedMetaDatasetConfig()
+  const requestedMetaEventName = normalizeSiteMetaEventName(input.metaEventName, {
+    allowNone: true,
+    fallback: SITE_META_NO_EVENT
+  })
+  const shouldDefaultSubmit = connectedMetaDataset && shouldDefaultSiteSubmitMetaEvent(siteType, { hasDetectedForms })
+
+  return {
+    metaCapiEnabled: connectedMetaDataset ? true : normalizeBoolean(input.metaCapiEnabled),
+    metaEventName: shouldDefaultSubmit && requestedMetaEventName === SITE_META_NO_EVENT
+      ? DEFAULT_SITE_META_FORM_SUBMIT_EVENT_NAME
+      : requestedMetaEventName,
+    theme: applyConnectedMetaDefaultsToTheme(theme, {
+      enabled: connectedMetaDataset,
+      siteType,
+      calendarSurfaceIds
+    })
+  }
 }
 
 function normalizeSubmitIncompleteOnExit(theme = {}) {
@@ -8267,7 +8356,7 @@ export async function createSite(input = {}) {
     : name
   const description = cleanString(input.description)
   const domain = ''
-  const theme = { ...DEFAULT_THEME, ...(input.theme || {}) }
+  let theme = { ...DEFAULT_THEME, ...(input.theme || {}) }
   const blankCanvas = Boolean(normalizeBoolean(input.blankCanvas || input.blank_canvas || theme.blankCanvas || theme.blank_canvas))
   delete theme.blankCanvas
   delete theme.blank_canvas
@@ -8295,7 +8384,21 @@ export async function createSite(input = {}) {
   if (isSocialTemplate(theme.template)) {
     theme[SOCIAL_PROFILE_BLOCK_READY_KEY] = true
   }
-  const initialMetaEventName = normalizeSiteMetaEventName(input.metaEventName, { allowNone: true, fallback: SITE_META_NO_EVENT })
+  const initialBlocks = !blankCanvas
+    ? buildDefaultBlocks(id, siteType, theme.template, { name, title, theme })
+    : siteType === 'standard_form'
+      ? buildDefaultStandardFormResultBlockRows(id)
+      : []
+  const calendarSurfaceIds = initialBlocks
+    .filter(block => (block.block_type || block.blockType) === 'calendar_embed')
+    .map(block => block.id)
+  const metaDefaults = await resolveConnectedMetaSiteCreateDefaults(input, {
+    siteType,
+    theme,
+    calendarSurfaceIds
+  })
+  theme = metaDefaults.theme
+  const initialMetaEventName = metaDefaults.metaEventName
   const initialMetaEventParameters = pruneSiteMetaEventParametersForEvent(
     theme.metaEventParameters || theme.meta_event_parameters,
     initialMetaEventName
@@ -8333,15 +8436,9 @@ export async function createSite(input = {}) {
     input.antiTrackingEnabled === undefined && input.anti_tracking_enabled === undefined
       ? 1
       : normalizeBoolean(input.antiTrackingEnabled ?? input.anti_tracking_enabled),
-    normalizeBoolean(input.metaCapiEnabled),
+    metaDefaults.metaCapiEnabled,
     initialMetaEventName
   ])
-
-  const initialBlocks = !blankCanvas
-    ? buildDefaultBlocks(id, siteType, theme.template, { name, title, theme })
-    : siteType === 'standard_form'
-      ? buildDefaultStandardFormResultBlockRows(id)
-      : []
 
   if (initialBlocks.length) {
     for (const block of initialBlocks) {
@@ -9204,7 +9301,7 @@ export async function createImportedSiteFromHtml(input = {}) {
   const publicTitle = getImportedHtmlTitle(prepared.sanitized.html, input.title || filename.replace(/\.[^.]+$/, '') || 'Página importada')
   const publicDescription = getImportedHtmlDescription(prepared.sanitized.html, input.description || 'Página importada desde HTML propio')
   const slug = await ensureUniqueSlug(slugify(input.slug || publicTitle || 'pagina-importada'))
-  const theme = {
+  let theme = {
     ...DEFAULT_THEME,
     template: IMPORTED_SITE_TEMPLATE,
     importedHtml: true,
@@ -9215,6 +9312,12 @@ export async function createImportedSiteFromHtml(input = {}) {
       ? prepared.pages
       : [{ id: DEFAULT_FUNNEL_PAGE_ID, title: 'Página 1', sortOrder: 0 }]
   }
+  const metaDefaults = await resolveConnectedMetaSiteCreateDefaults(input, {
+    siteType,
+    theme,
+    hasDetectedForms: detectedForms.length > 0
+  })
+  theme = metaDefaults.theme
 
   await db.run(`
     INSERT INTO public_sites (
@@ -9229,8 +9332,8 @@ export async function createImportedSiteFromHtml(input = {}) {
     publicTitle,
     publicDescription || 'Página importada desde HTML propio',
     jsonString(theme),
-    normalizeBoolean(input.metaCapiEnabled),
-    normalizeSiteMetaEventName(input.metaEventName, { allowNone: true, fallback: SITE_META_NO_EVENT })
+    metaDefaults.metaCapiEnabled,
+    metaDefaults.metaEventName
   ])
 
   await db.run(`

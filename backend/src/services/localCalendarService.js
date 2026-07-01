@@ -19,6 +19,7 @@ import GHLClient from './ghlClient.js'
 import * as highlevelCalendarService from './highlevelCalendarService.js'
 import { getCalendarPublicBaseUrlStatus } from './sitesService.js'
 import { isPaymentGateEnabled, normalizePaymentGateConfig } from './publicPaymentGateService.js'
+import { hasConnectedMetaDatasetConfig } from './metaAdsService.js'
 import { createEntityId, generateShortId } from '../utils/idGenerator.js'
 
 const LOCAL_CALENDAR_PREFIX = 'rstk_cal'
@@ -1314,8 +1315,23 @@ export async function upsertLocalCalendar(raw = {}, options = {}) {
 }
 
 export async function createLocalCalendar(calendarData = {}) {
+  const connectedMetaDataset = await hasConnectedMetaDatasetConfig()
+  const customEvents = connectedMetaDataset
+    ? {
+        ...normalizeCalendarCustomEventsConfig(
+          calendarData.customEvents ||
+          calendarData.custom_events ||
+          calendarData.metaEvent ||
+          calendarData.meta_event ||
+          {}
+        ),
+        enabled: true
+      }
+    : calendarData.customEvents
+
   return upsertLocalCalendar({
     ...calendarData,
+    ...(connectedMetaDataset ? { customEvents } : {}),
     id: calendarData.id || makeId(LOCAL_CALENDAR_PREFIX),
     source: 'ristak'
   }, {
