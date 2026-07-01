@@ -4066,75 +4066,6 @@ const PaymentBlockTestBanner: React.FC = () => {
   )
 }
 
-const PaymentPostActionSection: React.FC<{
-  settings: Record<string, unknown>
-  pages: SitePage[]
-  onPatchSettings: (patch: Record<string, unknown>) => void
-  onSave: () => void
-}> = ({ settings, pages, onPatchSettings, onSave }) => {
-  const post = getPaymentPostActionFromSettings(settings)
-  const patchPost = (patch: Partial<PaymentPostAction>) => {
-    onPatchSettings({ postPayment: normalizePaymentPostAction({ ...post, ...patch }) })
-  }
-  const pageOptions = pages.map(page => ({ value: page.id, label: page.title || page.id }))
-
-  return (
-    <AccordionSection id="edit-payment-post" title="Después del pago">
-      <label className={styles.field}>
-        <span>Cuando el pago sea exitoso</span>
-        <CustomSelect
-          value={post.action}
-          onValueChange={(value) => {
-            patchPost({ action: paymentPostActionValues.has(value as PaymentPostActionKind) ? (value as PaymentPostActionKind) : 'success_message' })
-            window.setTimeout(onSave, 0)
-          }}
-          options={paymentPostActionOptions}
-        />
-      </label>
-
-      {post.action === 'success_message' && (
-        <label className={styles.field}>
-          <span>Mensaje de éxito</span>
-          <textarea
-            rows={2}
-            value={post.message}
-            placeholder="Tu pago fue realizado correctamente. Gracias por tu compra."
-            onChange={(event) => patchPost({ message: event.target.value })}
-            onBlur={onSave}
-          />
-        </label>
-      )}
-
-      {post.action === 'specific_page' && (
-        <label className={styles.field}>
-          <span>Página destino</span>
-          <CustomSelect
-            value={post.pageId}
-            onValueChange={(value) => { patchPost({ pageId: value }); window.setTimeout(onSave, 0) }}
-            options={pageOptions}
-          />
-        </label>
-      )}
-
-      {post.action === 'redirect_url' && (
-        <label className={styles.field}>
-          <span>URL de redirección</span>
-          <input
-            value={post.url}
-            placeholder="https://tusitio.com/gracias"
-            onChange={(event) => patchPost({ url: event.target.value })}
-            onBlur={onSave}
-          />
-        </label>
-      )}
-
-      {post.action === 'next_page' && (
-        <p className={styles.paymentHint}>Al confirmar el pago, el cliente avanza automáticamente a la siguiente página del embudo.</p>
-      )}
-    </AccordionSection>
-  )
-}
-
 const defaultPaymentGateConfig = (currencyFallback = 'MXN'): CommonPaymentGateConfig => normalizePaymentGateConfig({
   enabled: true,
   gateway: 'stripe',
@@ -8539,6 +8470,9 @@ export const Sites: React.FC = () => {
   // sube al toolbar superior (no al panel de propiedades de la derecha).
   const calendarEditBlock = selectedBlock?.blockType === 'calendar_embed' ? selectedBlock : null
   const calendarEditMode = Boolean(editorSite && calendarEditBlock && !formEditMode)
+  // El pago imita a form/calendario: al seleccionarlo, "Después del pago" sube al toolbar.
+  const paymentEditBlock = selectedBlock?.blockType === 'payment' ? selectedBlock : null
+  const paymentEditMode = Boolean(editorSite && paymentEditBlock && !formEditMode && !calendarEditMode)
   const formEditSourceId = formEditBlock ? getEmbeddedFormSourceId(formEditBlock) : ''
   const formEditSourceSite = useMemo(
     () => formEditSourceId ? forms.find(form => form.id === formEditSourceId) || null : null,
@@ -12977,7 +12911,28 @@ export const Sites: React.FC = () => {
                       />
                     </div>
                   )}
-                  {!formEditMode && !calendarEditMode && editorToolbarSettingsSite && (
+                  {paymentEditMode && paymentEditBlock && (
+                    <div className={`${styles.editorToolbarTools} ${styles.editorToolbarFormControls}`} aria-label="Herramientas de pago">
+                      <div className={styles.formModeStatus}>
+                        <span aria-hidden="true" />
+                        <DollarSign size={15} />
+                        <strong>Editando pago</strong>
+                        <small>{getPaymentGateFromSettings(paymentEditBlock.settings || {}).productName || paymentEditBlock.label || 'Pago'}</small>
+                      </div>
+                      {editorPageSelector && (
+                        <div className={styles.editorPageSelectorSlot}>
+                          {editorPageSelector}
+                        </div>
+                      )}
+                      <PaymentToolbarConfigSlot
+                        block={paymentEditBlock}
+                        pages={pages}
+                        onPatchSettings={(patch) => patchBlockSettingsLocal(paymentEditBlock, patch)}
+                        onSave={() => { void handleSaveBlock(paymentEditBlock.id) }}
+                      />
+                    </div>
+                  )}
+                  {!formEditMode && !calendarEditMode && !paymentEditMode && editorToolbarSettingsSite && (
                     <div className={styles.editorToolbarTools} aria-label="Herramientas de edición">
                       {editorPageSelector && (
                         <div className={styles.editorPageSelectorSlot}>
@@ -33735,6 +33690,96 @@ const CalendarToolbarConfigSlot: React.FC<{
   )
 }
 
+// Controles de "Después del pago" en el toolbar superior (congruente con form/calendario).
+// Reusan la misma config block.settings.postPayment que ejecuta el runtime al confirmar pago.
+const PaymentCompletionToolbarControls: React.FC<{
+  block: SiteBlock
+  pages: SitePage[]
+  onPatchSettings: (patch: Record<string, unknown>) => void
+  onSave: () => void
+}> = ({ block, pages, onPatchSettings, onSave }) => {
+  const post = getPaymentPostActionFromSettings(block.settings || {})
+  const patchPost = (patch: Partial<PaymentPostAction>) => {
+    onPatchSettings({ postPayment: normalizePaymentPostAction({ ...post, ...patch }) })
+  }
+  const commitSoon = () => { window.setTimeout(onSave, 0) }
+
+  return (
+    <div className={styles.formEmbedToolbarControls}>
+      <div className={styles.formCompletionToolbarControls}>
+        <label className={`${styles.field} ${styles.formToolbarField}`}>
+          <span>Después del pago</span>
+          <CustomSelect
+            value={post.action}
+            dropdownMinWidth={280}
+            onChange={(event) => { patchPost({ action: normalizePaymentPostAction({ action: event.target.value }).action }); commitSoon() }}
+            onBlur={onSave}
+          >
+            <option value="success_message">Mostrar mensaje de éxito</option>
+            <option value="next_page">Ir a la siguiente página</option>
+            <option value="specific_page">Ir a una página específica</option>
+            <option value="redirect_url">Redirigir a una URL externa</option>
+          </CustomSelect>
+        </label>
+        {post.action === 'success_message' && (
+          <label className={`${styles.field} ${styles.formToolbarField}`}>
+            <span>Mensaje de éxito</span>
+            <input
+              value={post.message}
+              placeholder="Tu pago fue realizado correctamente. Gracias por tu compra."
+              onChange={(event) => patchPost({ message: event.target.value })}
+              onBlur={onSave}
+            />
+          </label>
+        )}
+        {post.action === 'specific_page' && (
+          <label className={`${styles.field} ${styles.formToolbarField}`}>
+            <span>Página destino</span>
+            <CustomSelect
+              value={post.pageId}
+              dropdownMinWidth={240}
+              onChange={(event) => { patchPost({ pageId: event.target.value }); commitSoon() }}
+              onBlur={onSave}
+            >
+              <option value="">Selecciona una página</option>
+              {pages.map(page => (
+                <option key={page.id} value={page.id}>{page.title || page.id}</option>
+              ))}
+            </CustomSelect>
+          </label>
+        )}
+        {post.action === 'redirect_url' && (
+          <label className={`${styles.field} ${styles.formToolbarField}`}>
+            <span>URL destino</span>
+            <input
+              value={post.url}
+              placeholder="https://tusitio.com/gracias"
+              onChange={(event) => patchPost({ url: event.target.value })}
+              onBlur={onSave}
+            />
+          </label>
+        )}
+      </div>
+    </div>
+  )
+}
+
+// Slot del toolbar para el bloque de pago (espejo del de calendario).
+const PaymentToolbarConfigSlot: React.FC<{
+  block: SiteBlock
+  pages: SitePage[]
+  onPatchSettings: (patch: Record<string, unknown>) => void
+  onSave: () => void
+}> = (props) => (
+  <ToolbarConfigPopover
+    label="Después del pago"
+    title="Configuración del pago"
+    icon={<SlidersHorizontal size={15} />}
+  >
+    <PaymentCompletionToolbarControls {...props} />
+  </ToolbarConfigPopover>
+)
+
 const FormSubmitContentControls: React.FC<{
   site: PublicSite
   settings?: Record<string, unknown>
@@ -36253,13 +36298,6 @@ const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
           currencyFallback={paymentCurrencyFallback}
         />
       </AccordionSection>
-
-      <PaymentPostActionSection
-        settings={settings}
-        pages={pages}
-        onPatchSettings={onPatchSettings}
-        onSave={onSave}
-      />
 
       <AccordionSection id="edit-payment-layout" title="Diseño del bloque">
         <label className={styles.field}>
