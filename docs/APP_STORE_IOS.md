@@ -58,7 +58,10 @@ npm run mobile:ios:upload
 GitHub Actions releases use the Apple Distribution `.p12` and App Store
 `.mobileprovision` stored in Ristak Installer under `Configuración > Tiendas
 móviles`. The provisioning profile must include the exact certificate from the
-stored `.p12`; App Store profiles only carry one distribution certificate.
+stored `.p12`; App Store profiles only carry one distribution certificate. CI
+supports both manually named App Store profiles and Xcode-managed App Store
+profiles. When the profile is Xcode-managed, the archive/export runs with
+automatic signing so Xcode does not reject the managed profile as a manual one.
 
 If local signing fails, open `frontend/ios/App/App.xcodeproj` in Xcode and check:
 

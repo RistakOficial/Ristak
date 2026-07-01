@@ -166,6 +166,7 @@ jobs:
           IOS_PROFILE_TEAM_ID="$(/usr/libexec/PlistBuddy -c 'Print TeamIdentifier:0' "$PROFILE_PLIST")"
           IOS_PROFILE_APP_ID="$(/usr/libexec/PlistBuddy -c 'Print Entitlements:application-identifier' "$PROFILE_PLIST")"
           IOS_PROFILE_GET_TASK_ALLOW="$(/usr/libexec/PlistBuddy -c 'Print Entitlements:get-task-allow' "$PROFILE_PLIST" 2>/dev/null || true)"
+          IOS_PROFILE_IS_XCODE_MANAGED="$(/usr/libexec/PlistBuddy -c 'Print IsXcodeManaged' "$PROFILE_PLIST" 2>/dev/null || true)"
 
           test -n "$IOS_PROFILE_UUID"
           test -n "$IOS_PROFILE_NAME"
@@ -180,6 +181,18 @@ jobs:
           if [ "$IOS_PROFILE_GET_TASK_ALLOW" = "true" ]; then
             echo "Provisioning profile is a development profile; App Store builds require a distribution profile."
             exit 1
+          fi
+          if [ "$IOS_PROFILE_IS_XCODE_MANAGED" != "true" ]; then
+            case "$IOS_PROFILE_NAME" in
+              "iOS Team "*|"XC "*)
+                IOS_PROFILE_IS_XCODE_MANAGED="true"
+                ;;
+            esac
+          fi
+          if [ "$IOS_PROFILE_IS_XCODE_MANAGED" = "true" ]; then
+            IOS_SIGNING_STYLE="automatic"
+          else
+            IOS_SIGNING_STYLE="manual"
           fi
           export IOS_CERT_SHA1 IOS_SIGNING_IDENTITY PROFILE_PLIST
           python3 - <<'PY'
@@ -217,6 +230,7 @@ jobs:
             echo "IOS_PROFILE_UUID=$IOS_PROFILE_UUID"
             echo "IOS_PROFILE_NAME=$IOS_PROFILE_NAME"
             echo "IOS_SIGNING_IDENTITY=$IOS_SIGNING_IDENTITY"
+            echo "IOS_SIGNING_STYLE=$IOS_SIGNING_STYLE"
           } >> "$GITHUB_ENV"
 
       - name: Set iOS version and build number
@@ -231,20 +245,54 @@ jobs:
       - name: Archive iOS app
         run: |
           cd frontend
-          xcodebuild \
-            -project ios/App/App.xcodeproj \
-            -scheme App \
-            -configuration Release \
-            -sdk iphoneos \
-            -destination 'generic/platform=iOS' \
-            -archivePath ios/build/RistakChat.xcarchive \
-            CODE_SIGN_STYLE=Manual \
-            CODE_SIGN_IDENTITY="$IOS_SIGNING_IDENTITY" \
-            DEVELOPMENT_TEAM="$APPLE_TEAM_ID" \
-            PROVISIONING_PROFILE="$IOS_PROFILE_UUID" \
-            PROVISIONING_PROFILE_SPECIFIER="$IOS_PROFILE_NAME" \
-            OTHER_CODE_SIGN_FLAGS="--keychain $KEYCHAIN_PATH" \
-            archive
+          ruby - <<'RUBY'
+          require "xcodeproj"
+
+          project = Xcodeproj::Project.open("ios/App/App.xcodeproj")
+          target = project.targets.find { |candidate| candidate.name == "App" }
+          raise "Target App not found" unless target
+
+          release = target.build_configurations.find { |configuration| configuration.name == "Release" }
+          raise "Release configuration not found for App target" unless release
+
+          settings = release.build_settings
+          settings["CODE_SIGN_IDENTITY"] = ENV.fetch("IOS_SIGNING_IDENTITY")
+          settings["DEVELOPMENT_TEAM"] = ENV.fetch("APPLE_TEAM_ID")
+
+          case ENV.fetch("IOS_SIGNING_STYLE")
+          when "automatic"
+            settings["CODE_SIGN_STYLE"] = "Automatic"
+            settings.delete("PROVISIONING_PROFILE")
+            settings.delete("PROVISIONING_PROFILE_SPECIFIER")
+          when "manual"
+            settings["CODE_SIGN_STYLE"] = "Manual"
+            settings["PROVISIONING_PROFILE"] = ENV.fetch("IOS_PROFILE_UUID")
+            settings["PROVISIONING_PROFILE_SPECIFIER"] = ENV.fetch("IOS_PROFILE_NAME")
+          else
+            raise "Unsupported IOS_SIGNING_STYLE=#{ENV.fetch('IOS_SIGNING_STYLE')}"
+          end
+
+          project.save
+          RUBY
+
+          archive_args=(
+            -project ios/App/App.xcodeproj
+            -scheme App
+            -configuration Release
+            -sdk iphoneos
+            -destination 'generic/platform=iOS'
+            -archivePath ios/build/RistakChat.xcarchive
+            "OTHER_CODE_SIGN_FLAGS=--keychain $KEYCHAIN_PATH"
+          )
+          if [ "$IOS_SIGNING_STYLE" = "automatic" ]; then
+            archive_args+=(
+              -allowProvisioningUpdates
+              -authenticationKeyPath "$ASC_KEY_PATH"
+              -authenticationKeyID "$ASC_KEY_ID"
+              -authenticationKeyIssuerID "$ASC_ISSUER_ID"
+            )
+          fi
+          xcodebuild "${archive_args[@]}" archive
 
       - name: Export IPA
         run: |
@@ -252,28 +300,40 @@ jobs:
           import os
           import plistlib
 
+          signing_style = os.environ.get("IOS_SIGNING_STYLE", "manual")
           options = {
               "destination": "export",
               "manageAppVersionAndBuildNumber": False,
               "method": "app-store-connect",
-              "provisioningProfiles": {
-                  os.environ["APP_BUNDLE_ID"]: os.environ["IOS_PROFILE_NAME"],
-              },
-              "signingCertificate": os.environ["IOS_SIGNING_IDENTITY"],
-              "signingStyle": "manual",
+              "signingStyle": signing_style,
               "stripSwiftSymbols": True,
               "teamID": os.environ["APPLE_TEAM_ID"],
               "uploadSymbols": True,
           }
+          if signing_style == "manual":
+              options["provisioningProfiles"] = {
+                  os.environ["APP_BUNDLE_ID"]: os.environ["IOS_PROFILE_NAME"],
+              }
+              options["signingCertificate"] = os.environ["IOS_SIGNING_IDENTITY"]
           with open(os.path.join(os.environ["RUNNER_TEMP"], "ExportOptions-AppStore-CI.plist"), "wb") as file:
               plistlib.dump(options, file)
           PY
           cd frontend
-          xcodebuild \
-            -exportArchive \
-            -archivePath ios/build/RistakChat.xcarchive \
-            -exportPath ios/build/AppStore-CI \
+          export_args=(
+            -exportArchive
+            -archivePath ios/build/RistakChat.xcarchive
+            -exportPath ios/build/AppStore-CI
             -exportOptionsPlist "$RUNNER_TEMP/ExportOptions-AppStore-CI.plist"
+          )
+          if [ "$IOS_SIGNING_STYLE" = "automatic" ]; then
+            export_args+=(
+              -allowProvisioningUpdates
+              -authenticationKeyPath "$ASC_KEY_PATH"
+              -authenticationKeyID "$ASC_KEY_ID"
+              -authenticationKeyIssuerID "$ASC_ISSUER_ID"
+            )
+          fi
+          xcodebuild "${export_args[@]}"
 
       - name: Upload to App Store Connect
         env:
