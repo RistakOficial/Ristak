@@ -39,6 +39,7 @@ import { getActiveMetaTestEventCode } from '../utils/metaTestCode.js';
 import { buildMetaBrowserUserData } from '../services/metaParameterManagerService.js';
 import { syncRegisteredIntegrationCronsForProvider } from '../jobs/integrationCronRegistry.js';
 import { timestampSortExpression } from '../utils/sqlTimestampSort.js';
+import { normalizeBaseUrl, resolvePublicServiceBaseUrl } from '../utils/publicUrl.js';
 
 const SUCCESS_PAYMENT_STATUSES = new Set([
   'succeeded',
@@ -297,16 +298,11 @@ function normalizeMetaAdAccountId(value) {
   return cleanString(value).replace(/^act_/i, '');
 }
 
-function normalizeBaseUrl(value = '') {
-  return cleanString(value).replace(/\/+$/, '');
-}
-
 function getPublicBaseUrl(req) {
-  return normalizeBaseUrl(
-    process.env.RENDER_EXTERNAL_URL ||
-    process.env.PUBLIC_URL ||
-    `${req.protocol}://${req.get('host')}`
-  );
+  return resolvePublicServiceBaseUrl(req, [
+    process.env.RENDER_EXTERNAL_URL,
+    process.env.PUBLIC_URL
+  ]);
 }
 
 function hasUsableLocalMetaConfig(metaConfig) {

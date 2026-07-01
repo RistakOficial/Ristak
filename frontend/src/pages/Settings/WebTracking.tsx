@@ -19,6 +19,7 @@ export const WebTracking: React.FC = () => {
   const [visitorSource, setVisitorSource] = useAppConfig<'platform' | 'tracking'>('visitor_source', 'platform')
 
   const [trackingDomain, setTrackingDomain] = useState('')
+  const [serviceDomain, setServiceDomain] = useState('')
   const [loadingConfig, setLoadingConfig] = useState(true)
   const [configuringTracking, setConfiguringTracking] = useState(false)
   const [isConfigured, setIsConfigured] = useState(false)
@@ -35,6 +36,7 @@ export const WebTracking: React.FC = () => {
     try {
       const config = await trackingService.getTrackingConfig({ forceRefresh: true })
       setTrackingDomain(config.trackingDomain || '')
+      setServiceDomain(config.serviceDomain || '')
       setIsConfigured(config.isConfigured)
       setHasHighLevel(config.hasHighLevel)
       setTrackingSnippet(config.trackingSnippet || '')
@@ -90,6 +92,9 @@ export const WebTracking: React.FC = () => {
       showToast('error', 'Error', 'No se pudo copiar el código del pixel')
     }
   }
+
+  const cnameTargetDomain = serviceDomain.trim() || trackingDomain.trim() || window.location.hostname
+  const cnameTargetLabel = cnameTargetDomain || 'el dominio .onrender.com de esta instalación'
 
   return (
     <div className={styles.integrationContainer}>
@@ -150,7 +155,7 @@ export const WebTracking: React.FC = () => {
                   <p>
                     En tu proveedor (Cloudflare, GoDaddy, Namecheap...): tipo <code>CNAME</code>,
                     nombre <code>track</code> (o el subdominio que prefieras), apuntando a{' '}
-                    <code>ristak-app.onrender.com</code>. Ejemplo: con miempresa.com queda
+                    <code>{cnameTargetLabel}</code>. Ejemplo: con miempresa.com queda
                     track.miempresa.com.
                   </p>
                 </div>
@@ -159,8 +164,9 @@ export const WebTracking: React.FC = () => {
                 <div className={trackStyles.stepBody}>
                   <strong>Agrega el dominio en Render</strong>
                   <p>
-                    En tu servicio <code>ristak-app</code>: Settings → Custom Domains → Add Custom
-                    Domain → <code>track.tudominio.com</code>. Espera el estado Verified (5–10 min).
+                    En el servicio de Render donde corre esta instalación: Settings → Custom Domains
+                    → Add Custom Domain → <code>track.tudominio.com</code>. Espera el estado Verified
+                    (5–10 min).
                   </p>
                 </div>
               </li>
@@ -197,9 +203,9 @@ export const WebTracking: React.FC = () => {
                 </div>
                 <div className={styles.infoBoxContent}>
                   En tu proveedor de DNS crea un registro tipo <code className={styles.codeInline}>CNAME</code> con
-                  nombre <code className={styles.codeInline}>collect</code> apuntando a{' '}
-                  <code className={styles.codeInline}>ristak-app.onrender.com</code>, y vuelve a abrir esta página
-                  desde <code className={styles.codeInline}>collect.tudominio.com</code>.
+                  nombre <code className={styles.codeInline}>track</code> apuntando a{' '}
+                  <code className={styles.codeInline}>{cnameTargetLabel}</code>, y vuelve a abrir esta página
+                  desde <code className={styles.codeInline}>track.tudominio.com</code>.
                 </div>
               </div>
             ) : (

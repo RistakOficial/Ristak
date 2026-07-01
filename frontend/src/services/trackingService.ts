@@ -100,6 +100,8 @@ export interface TrackingSession {
 
 interface TrackingConfig {
   trackingDomain: string | null
+  serviceDomain?: string | null
+  serviceBaseUrl?: string | null
   isConfigured: boolean
   hasHighLevel: boolean
   showAnalytics: boolean

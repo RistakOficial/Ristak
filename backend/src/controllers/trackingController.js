@@ -10,6 +10,12 @@ import { getMessageAnalyticsSummary, getWhatsAppApiAnalyticsSummary } from '../s
 import { nonTestPaymentCondition, SUCCESS_PAYMENT_STATUSES } from '../utils/paymentMode.js'
 import { getNoTrackReason } from '../utils/noTracking.js'
 import {
+  isLoopbackHost,
+  normalizePublicHost,
+  resolvePublicServiceBaseUrl,
+  resolvePublicServiceHost
+} from '../utils/publicUrl.js'
+import {
   collectMetaParameterSignals,
   getMetaParameterBuilderClientBundle,
   setMetaParameterCookies
@@ -227,6 +233,24 @@ src="https://www.facebook.com/tr?id=${metaPixelId}&ev=PageView&noscript=1"
   }
 
   return snippet
+}
+
+function getTrackingPublicFallbacks() {
+  return [
+    process.env.RENDER_EXTERNAL_URL,
+    process.env.PUBLIC_URL,
+    process.env.APP_URL
+  ]
+}
+
+function resolveTrackingDomain(req, submittedDomain = '') {
+  const frontendDomain = normalizePublicHost(submittedDomain)
+  if (frontendDomain && !isLoopbackHost(frontendDomain)) return frontendDomain
+
+  const configuredTrackingDomain = normalizePublicHost(process.env.TRACKING_DOMAIN)
+  if (configuredTrackingDomain && !isLoopbackHost(configuredTrackingDomain)) return configuredTrackingDomain
+
+  return resolvePublicServiceHost(req, getTrackingPublicFallbacks())
 }
 
 /**
@@ -1388,26 +1412,9 @@ export async function deleteSessionsHandler(req, res) {
  */
 export async function getTrackingConfig(req, res) {
   try {
-    // Detectar dominio automáticamente
-    let trackingDomain = null
-
-    // PRIORIDAD 0: Si el frontend envía su dominio, usar ese
-    if (req.query.frontendDomain && req.query.frontendDomain !== 'localhost') {
-      trackingDomain = req.query.frontendDomain
-    }
-    // PRIORIDAD 1: Variable de entorno TRACKING_DOMAIN (dominio personalizado configurado)
-    else if (process.env.TRACKING_DOMAIN) {
-      trackingDomain = process.env.TRACKING_DOMAIN
-    }
-    // PRIORIDAD 2: Host del request (captura custom domains como ristak.midominio.com)
-    // Esto SIEMPRE refleja el dominio real desde el cual el usuario accede
-    else if (req.headers.host) {
-      trackingDomain = req.headers.host
-    }
-    // PRIORIDAD 3: RENDER_EXTERNAL_URL como último recurso
-    else if (process.env.RENDER_EXTERNAL_URL) {
-      trackingDomain = process.env.RENDER_EXTERNAL_URL.replace(/^https?:\/\//, '')
-    }
+    const trackingDomain = resolveTrackingDomain(req, req.query.frontendDomain)
+    const serviceBaseUrl = resolvePublicServiceBaseUrl(req, getTrackingPublicFallbacks())
+    const serviceDomain = normalizePublicHost(serviceBaseUrl)
 
     // Verificar si ya está configurado en HighLevel
     const ghlConfig = await getHighLevelConfig()
@@ -1464,6 +1471,8 @@ export async function getTrackingConfig(req, res) {
 
     res.json({
       trackingDomain,
+      serviceDomain,
+      serviceBaseUrl,
       isConfigured,
       hasHighLevel: !!(ghlConfig && ghlConfig.location_id && ghlConfig.api_token),
       showAnalytics,
@@ -1495,26 +1504,7 @@ export async function configureTracking(req, res) {
       })
     }
 
-    // Detectar dominio automáticamente (misma lógica que getTrackingConfig)
-    let trackingDomain = null
-
-    // PRIORIDAD 0: Si el frontend envía su dominio, usar ese
-    if (req.body.frontendDomain && req.body.frontendDomain !== 'localhost') {
-      trackingDomain = req.body.frontendDomain
-    }
-    // PRIORIDAD 1: Variable de entorno TRACKING_DOMAIN (dominio personalizado configurado)
-    else if (process.env.TRACKING_DOMAIN) {
-      trackingDomain = process.env.TRACKING_DOMAIN
-    }
-    // PRIORIDAD 2: Host del request (captura custom domains como ristak.midominio.com)
-    // Esto SIEMPRE refleja el dominio real desde el cual el usuario accede
-    else if (req.headers.host) {
-      trackingDomain = req.headers.host
-    }
-    // PRIORIDAD 3: RENDER_EXTERNAL_URL como fallback
-    else if (process.env.RENDER_EXTERNAL_URL) {
-      trackingDomain = process.env.RENDER_EXTERNAL_URL.replace(/^https?:\/\//, '')
-    }
+    const trackingDomain = resolveTrackingDomain(req, req.body.frontendDomain)
 
     if (!trackingDomain) {
       return res.status(400).json({

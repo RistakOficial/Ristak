@@ -3,8 +3,8 @@ import { useMemo } from 'react'
 /**
  * Hook para detectar si estamos en un dominio de Render (.onrender.com)
  * Ejemplos de dominios Render:
- * - ristak-app.onrender.com
- * - ristak-app342.onrender.com
+ * - cliente-demo.onrender.com
+ * - cliente-demo-342.onrender.com
  * - drramirez.onrender.com
  * - mipagina.onrender.com
  *
