@@ -1956,8 +1956,8 @@ async function createOrderForPayment(row, options = {}) {
   return { order: payload, payment: updated, config }
 }
 
-export async function createConektaPaymentLink(input = {}, { baseUrl } = {}) {
-  const config = await getConektaPaymentConfig()
+export async function createConektaPaymentLink(input = {}, { baseUrl, mode = '' } = {}) {
+  const config = await getConektaPaymentConfig({ mode })
   if (!config.configured) {
     const error = new Error('Conekta no está configurado todavía. Guarda las llaves primero.')
     error.status = 400

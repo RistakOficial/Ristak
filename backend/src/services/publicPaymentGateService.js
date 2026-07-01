@@ -80,6 +80,31 @@ function normalizeAmount(value) {
   return Math.round(amount * 100) / 100
 }
 
+// Meses sin intereses: solo Conekta y Mercado Pago soportan diferido a meses en el
+// cobro simple. Stripe (cobro one-off en MX) no, así que ahí se ignora.
+const MSI_GATEWAYS = new Set(['conekta', 'mercadopago'])
+const MSI_INSTALLMENT_CHOICES = [3, 6, 9, 12, 18, 24]
+
+// Modo por bloque SEGURO: un bloque solo puede FORZAR 'test' (para probar sin cobrar
+// aunque la plataforma esté en live). Nunca puede forzar 'live'. Cualquier otro valor
+// = 'inherit' (hereda el modo global de la plataforma). Esto hace imposible un cobro
+// real por accidente desde un bloque marcado como prueba.
+function normalizeGateMode(value) {
+  return cleanString(value, 20).toLowerCase() === 'test' ? 'test' : 'inherit'
+}
+
+function normalizeGateMsi(value = {}) {
+  const source = value && typeof value === 'object' && !Array.isArray(value) ? value : {}
+  const enabled = normalizeBoolean(source.enabled || source.required)
+  const requested = Number(source.maxInstallments || source.max_installments || source.months || 0)
+  if (!enabled || !Number.isFinite(requested) || requested <= 1) {
+    return { enabled: false, maxInstallments: 0 }
+  }
+  const allowed = MSI_INSTALLMENT_CHOICES.filter(months => months <= requested)
+  const maxInstallments = allowed.length ? allowed[allowed.length - 1] : MSI_INSTALLMENT_CHOICES[0]
+  return { enabled: true, maxInstallments }
+}
+
 export function normalizePaymentGateConfig(value = {}) {
   const source = value && typeof value === 'object' && !Array.isArray(value)
     ? value.paymentGate && typeof value.paymentGate === 'object'
@@ -118,7 +143,9 @@ export function normalizePaymentGateConfig(value = {}) {
       source.paid_message ||
       'Pago confirmado. Continuamos con tu solicitud.',
       220
-    )
+    ),
+    mode: normalizeGateMode(source.mode),
+    msi: normalizeGateMsi(source.msi || source.installments)
   }
 }
 
@@ -140,6 +167,17 @@ export async function createPaymentGateLink(configInput = {}, {
     throw error
   }
 
+  // Modo forzado por el bloque: '' = hereda el global (comportamiento por defecto),
+  // 'test' = fuerza modo prueba. Nunca puede forzar live (lo garantiza normalizeGateMode).
+  const forcedMode = config.mode === 'test' ? 'test' : ''
+
+  // MSI solo aplica a Conekta / Mercado Pago. Se pasa como `installments` que ambos
+  // servicios ya saben normalizar (normalizeConektaInstallmentOptions /
+  // normalizeMercadoPagoInstallmentOptions).
+  const installments = MSI_GATEWAYS.has(config.gateway) && config.msi?.enabled && config.msi.maxInstallments > 1
+    ? { enabled: true, maxInstallments: config.msi.maxInstallments }
+    : null
+
   const payload = {
     amount: config.amount,
     currency: config.currency,
@@ -150,6 +188,7 @@ export async function createPaymentGateLink(configInput = {}, {
     email: cleanString(contact.email, 180),
     phone: cleanString(contact.phone, 80),
     source,
+    ...(installments ? { installments } : {}),
     lineItems: [
       {
         name: config.productName,
@@ -167,7 +206,9 @@ export async function createPaymentGateLink(configInput = {}, {
         gateway: config.gateway,
         amount: config.amount,
         currency: config.currency,
-        productName: config.productName
+        productName: config.productName,
+        mode: config.mode,
+        ...(installments ? { msi: installments } : {})
       }
     }
   }
@@ -175,12 +216,12 @@ export async function createPaymentGateLink(configInput = {}, {
   const paymentBaseUrl = await resolvePaymentBaseUrl(baseUrl)
 
   if (config.gateway === 'conekta') {
-    return createConektaPaymentLink(payload, { baseUrl: paymentBaseUrl })
+    return createConektaPaymentLink(payload, { baseUrl: paymentBaseUrl, mode: forcedMode })
   }
   if (config.gateway === 'mercadopago') {
-    return createMercadoPagoPaymentLink(payload, { baseUrl: paymentBaseUrl })
+    return createMercadoPagoPaymentLink(payload, { baseUrl: paymentBaseUrl, mode: forcedMode })
   }
-  return createStripePaymentLink(payload, { baseUrl: paymentBaseUrl })
+  return createStripePaymentLink(payload, { baseUrl: paymentBaseUrl, mode: forcedMode })
 }
 
 export async function getPaymentGateStatus(publicPaymentId) {

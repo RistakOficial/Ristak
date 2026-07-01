@@ -695,8 +695,8 @@ export async function deleteMercadoPagoPaymentConfig() {
   return getMercadoPagoPaymentConfig()
 }
 
-async function getMercadoPagoClientConfig() {
-  let config = await getMercadoPagoPaymentConfig({ includeSecrets: true })
+async function getMercadoPagoClientConfig(mode = '') {
+  let config = await getMercadoPagoPaymentConfig({ includeSecrets: true, mode })
 
   if (!config.configured || !config.accessToken) {
     const error = new Error('Mercado Pago no está configurado.')
@@ -1176,9 +1176,10 @@ async function insertPaymentRow({
   dueDate = null,
   metadata = {},
   createPreference = true,
-  baseUrl = ''
+  baseUrl = '',
+  mode = ''
 } = {}) {
-  const config = await getMercadoPagoClientConfig()
+  const config = await getMercadoPagoClientConfig(mode)
   const publicPaymentId = createPublicId()
   const id = createId('mp_payment')
   const now = new Date().toISOString()
@@ -1226,7 +1227,7 @@ async function insertPaymentRow({
   }
 }
 
-export async function createMercadoPagoPaymentLink(input = {}, { baseUrl } = {}) {
+export async function createMercadoPagoPaymentLink(input = {}, { baseUrl, mode = '' } = {}) {
   const amount = Number(input.amount)
   if (!Number.isFinite(amount) || amount <= 0) {
     const error = new Error('El monto debe ser mayor a 0.')
@@ -1274,10 +1275,11 @@ export async function createMercadoPagoPaymentLink(input = {}, { baseUrl } = {})
     dueDate: input.dueDate || null,
     metadata,
     createPreference: true,
-    baseUrl
+    baseUrl,
+    mode
   })
 
-  const config = await getMercadoPagoPaymentConfig()
+  const config = await getMercadoPagoPaymentConfig({ mode })
   return {
     payment: mapPublicPayment(await findPaymentById(result.payment.id), config, baseUrl, paymentSettings),
     paymentUrl: result.paymentUrl,

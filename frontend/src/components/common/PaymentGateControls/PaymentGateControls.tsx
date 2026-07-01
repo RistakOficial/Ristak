@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react'
+import { FlaskConical } from 'lucide-react'
 import { CustomSelect } from '../CustomSelect'
 import { NumberInput } from '../NumberInput'
 import { Switch } from '../Switch'
@@ -12,6 +13,16 @@ import styles from './PaymentGateControls.module.css'
 
 export type PaymentGateGateway = 'stripe' | 'conekta' | 'mercadopago'
 
+// Modo por bloque SEGURO: solo puede forzar 'test' (probar sin cobrar aunque la
+// plataforma esté en live). 'inherit' = usa el modo global. Nunca 'live' → imposible
+// cobrar de verdad por accidente desde un bloque marcado como prueba.
+export type PaymentGateMode = 'inherit' | 'test'
+
+export interface PaymentGateMsi {
+  enabled: boolean
+  maxInstallments: number
+}
+
 export interface PaymentGateConfig {
   enabled: boolean
   gateway: PaymentGateGateway
@@ -22,7 +33,13 @@ export interface PaymentGateConfig {
   buttonText: string
   pendingMessage: string
   paidMessage: string
+  mode: PaymentGateMode
+  msi: PaymentGateMsi
 }
+
+// Meses sin intereses: solo Conekta y Mercado Pago lo permiten en cobro simple.
+export const MSI_GATEWAYS = new Set<PaymentGateGateway>(['conekta', 'mercadopago'])
+export const MSI_INSTALLMENT_CHOICES = [3, 6, 9, 12, 18, 24]
 
 interface PaymentGateControlsProps {
   value?: Partial<PaymentGateConfig> | null
@@ -59,6 +76,18 @@ const normalizeGateway = (value: unknown): PaymentGateGateway => {
   return gatewayValues.has(gateway) ? gateway : 'stripe'
 }
 
+const normalizeMode = (value: unknown): PaymentGateMode =>
+  cleanText(value).toLowerCase() === 'test' ? 'test' : 'inherit'
+
+const normalizeMsi = (value: unknown): PaymentGateMsi => {
+  const source = (value && typeof value === 'object' ? value : {}) as Partial<PaymentGateMsi> & { months?: number; max_installments?: number }
+  const enabled = Boolean(source.enabled)
+  const requested = Number(source.maxInstallments ?? source.max_installments ?? source.months ?? 0)
+  if (!enabled || !Number.isFinite(requested) || requested <= 1) return { enabled: false, maxInstallments: 0 }
+  const allowed = MSI_INSTALLMENT_CHOICES.filter(months => months <= requested)
+  return { enabled: true, maxInstallments: allowed.length ? allowed[allowed.length - 1] : MSI_INSTALLMENT_CHOICES[0] }
+}
+
 export const normalizePaymentGateConfig = (
   value?: Partial<PaymentGateConfig> | null,
   currencyFallback = 'MXN'
@@ -79,7 +108,9 @@ export const normalizePaymentGateConfig = (
       'Para continuar, completa el pago y deja esta página abierta.'
     ) || 'Para continuar, completa el pago y deja esta página abierta.',
     paidMessage: cleanText(source.paidMessage, 'Pago confirmado. Continuamos con tu solicitud.') ||
-      'Pago confirmado. Continuamos con tu solicitud.'
+      'Pago confirmado. Continuamos con tu solicitud.',
+    mode: normalizeMode(source.mode),
+    msi: normalizeMsi(source.msi ?? (source as { installments?: unknown }).installments)
   }
 }
 
@@ -234,6 +265,59 @@ export const PaymentGateControls: React.FC<PaymentGateControlsProps> = ({
                 onBlur={onCommit}
               />
             </label>
+          </div>
+
+          {MSI_GATEWAYS.has(config.gateway) && (
+            <div className={styles.field}>
+              <div className={styles.toggleRow}>
+                <div className={styles.toggleCopy}>
+                  <strong>Meses sin intereses</strong>
+                  <span>Ofrece diferido a meses en {selectedGateway.label}.</span>
+                </div>
+                <Switch
+                  checked={config.msi.enabled}
+                  onChange={(enabled) => {
+                    patchConfig({ msi: { enabled, maxInstallments: enabled ? (config.msi.maxInstallments || 12) : 0 } })
+                    window.setTimeout(() => { onCommit?.() }, 0)
+                  }}
+                  aria-label={config.msi.enabled ? 'Desactivar meses sin intereses' : 'Activar meses sin intereses'}
+                />
+              </div>
+              {config.msi.enabled && (
+                <label className={styles.field}>
+                  <span>Diferir hasta</span>
+                  <CustomSelect
+                    value={String(config.msi.maxInstallments || 12)}
+                    onValueChange={(value) => patchConfig({ msi: { enabled: true, maxInstallments: Number(value) } })}
+                    onBlur={onCommit}
+                    options={MSI_INSTALLMENT_CHOICES.map(months => ({ value: String(months), label: `${months} meses` }))}
+                  />
+                </label>
+              )}
+            </div>
+          )}
+
+          <div className={styles.field}>
+            <div className={styles.toggleRow}>
+              <div className={styles.toggleCopy}>
+                <strong>Modo prueba en este bloque</strong>
+                <span>Cobra en modo prueba aunque la plataforma esté en vivo.</span>
+              </div>
+              <Switch
+                checked={config.mode === 'test'}
+                onChange={(checked) => {
+                  patchConfig({ mode: checked ? 'test' : 'inherit' })
+                  window.setTimeout(() => { onCommit?.() }, 0)
+                }}
+                aria-label={config.mode === 'test' ? 'Desactivar modo prueba del bloque' : 'Activar modo prueba del bloque'}
+              />
+            </div>
+            {config.mode === 'test' && (
+              <p className={styles.testNote}>
+                <FlaskConical size={15} />
+                Este bloque está en modo prueba. Los pagos aquí no serán cobros reales.
+              </p>
+            )}
           </div>
         </div>
       )}

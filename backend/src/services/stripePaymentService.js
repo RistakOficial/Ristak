@@ -1346,8 +1346,8 @@ async function resolveStripeCardSetupAmount(inputAmount) {
   }
 }
 
-export async function createStripePaymentLink(input = {}, { baseUrl } = {}) {
-  const { stripe, config, requestOptions } = await getStripeClient()
+export async function createStripePaymentLink(input = {}, { baseUrl, mode = '' } = {}) {
+  const { stripe, config, requestOptions } = await getStripeClient(mode)
   const amount = Number(input.amount)
   if (!Number.isFinite(amount) || amount <= 0) {
     const error = new Error('El monto debe ser mayor a 0.')
