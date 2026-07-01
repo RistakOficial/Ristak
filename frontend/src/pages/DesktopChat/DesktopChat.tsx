@@ -2071,6 +2071,7 @@ export const DesktopChat: React.FC = () => {
   const photoInputRef = useRef<HTMLInputElement | null>(null)
   const documentInputRef = useRef<HTMLInputElement | null>(null)
   const composerMenuRef = useRef<HTMLDivElement | null>(null)
+  const agentComposerMenuRef = useRef<HTMLDivElement | null>(null)
   const voiceRecorderRef = useRef<MediaRecorder | null>(null)
   const voiceStreamRef = useRef<MediaStream | null>(null)
   const voiceChunksRef = useRef<Blob[]>([])
@@ -2495,6 +2496,29 @@ export const DesktopChat: React.FC = () => {
       document.removeEventListener('keydown', closeOnEscape)
     }
   }, [composerMenuOpen, templatePanelOpen])
+  useEffect(() => {
+    if (!agentComposerMenuOpen && !agentPickerOpen) return
+
+    const closeOnOutsidePointer = (event: PointerEvent) => {
+      const target = event.target
+      if (target instanceof Node && agentComposerMenuRef.current?.contains(target)) return
+      setAgentComposerMenuOpen(false)
+      setAgentPickerOpen(false)
+    }
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        setAgentComposerMenuOpen(false)
+        setAgentPickerOpen(false)
+      }
+    }
+
+    document.addEventListener('pointerdown', closeOnOutsidePointer)
+    document.addEventListener('keydown', closeOnEscape)
+    return () => {
+      document.removeEventListener('pointerdown', closeOnOutsidePointer)
+      document.removeEventListener('keydown', closeOnEscape)
+    }
+  }, [agentComposerMenuOpen, agentPickerOpen])
   const visibleChatCount = filteredChats.length + agentPriorityChatRows.length
   const inboxTitle = archivedViewOpen
     ? 'Archivados'
@@ -5429,7 +5453,7 @@ export const DesktopChat: React.FC = () => {
   }
 
   const renderComposerAgentControl = () => (
-    <div className={styles.agentComposerWrap}>
+    <div ref={agentComposerMenuRef} className={styles.agentComposerWrap}>
       <button
         type="button"
         className={styles.agentComposerButton}
