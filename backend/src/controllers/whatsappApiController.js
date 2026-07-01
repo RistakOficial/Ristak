@@ -41,7 +41,7 @@ import {
   buildDefaultMessageTemplateSendComponents,
   ensureDefaultWhatsAppApiMessageTemplates
 } from '../services/messageTemplatesService.js'
-import { sendMetaSocialTextMessage } from '../services/metaSocialMessagingService.js'
+import { sendMetaSocialTextMessage, sendMetaSocialCommentReply } from '../services/metaSocialMessagingService.js'
 import {
   getWhatsAppQrDripSettings,
   saveWhatsAppQrDripSettings
@@ -414,6 +414,30 @@ export async function sendMetaSocialTextMessageView(req, res) {
     res.status(error.statusCode || 400).json({
       success: false,
       error: error.message || 'No se pudo enviar el mensaje por Meta'
+    })
+  }
+}
+
+// Responder un comentario de FB/IG (público en el post o por DM privado).
+export async function sendMetaSocialCommentReplyView(req, res) {
+  try {
+    const data = await sendMetaSocialCommentReply({
+      contactId: req.body?.contactId,
+      platform: req.body?.platform,
+      message: req.body?.message || req.body?.text,
+      replyType: req.body?.replyType,
+      commentId: req.body?.commentId,
+      postId: req.body?.postId,
+      externalId: req.body?.externalId
+    })
+    // Respuesta manual desde el inbox: el humano toma el hilo (pausa el agente).
+    notifyHumanTakeover({ contactId: req.body?.contactId })
+    res.json({ success: true, data })
+  } catch (error) {
+    logger.error(`Error respondiendo comentario Meta: ${error.message}`)
+    res.status(error.statusCode || 400).json({
+      success: false,
+      error: error.message || 'No se pudo responder el comentario'
     })
   }
 }

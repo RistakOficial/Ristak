@@ -508,9 +508,10 @@ function getMetaSocialBusinessId(platform, config = {}, profile = {}) {
   return cleanString(profile.page_id) || cleanString(config.page_id)
 }
 
-async function saveMetaSocialOutboundMessage({ platform, contactId, profile, messageId, text, response, externalId }) {
+async function saveMetaSocialOutboundMessage({ platform, contactId, profile, messageId, text, response, externalId, messageType = 'text', commentId = '', postId = '', parentCommentId = '' }) {
   const now = new Date().toISOString()
   const cleanPlatform = platform === 'instagram' ? 'instagram' : 'messenger'
+  const cleanMessageType = cleanString(messageType) || 'text'
   const remoteMessageId = cleanString(
     messageId ||
     response?.message_id ||
@@ -535,8 +536,9 @@ async function saveMetaSocialOutboundMessage({ platform, contactId, profile, mes
       id, platform, meta_message_id, meta_social_contact_id, contact_id,
       sender_id, recipient_id, page_id, instagram_account_id,
       direction, status, message_type, message_text,
-      postback_payload, message_timestamp, raw_payload_json, referral_json, updated_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+      postback_payload, message_timestamp, raw_payload_json, referral_json,
+      comment_id, post_id, parent_comment_id, updated_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
     ON CONFLICT(id) DO UPDATE SET
       meta_social_contact_id = COALESCE(excluded.meta_social_contact_id, meta_social_messages.meta_social_contact_id),
       contact_id = COALESCE(excluded.contact_id, meta_social_messages.contact_id),
@@ -550,6 +552,9 @@ async function saveMetaSocialOutboundMessage({ platform, contactId, profile, mes
       message_text = COALESCE(NULLIF(excluded.message_text, ''), meta_social_messages.message_text),
       message_timestamp = COALESCE(excluded.message_timestamp, meta_social_messages.message_timestamp),
       raw_payload_json = excluded.raw_payload_json,
+      comment_id = COALESCE(NULLIF(excluded.comment_id, ''), meta_social_messages.comment_id),
+      post_id = COALESCE(NULLIF(excluded.post_id, ''), meta_social_messages.post_id),
+      parent_comment_id = COALESCE(NULLIF(excluded.parent_comment_id, ''), meta_social_messages.parent_comment_id),
       updated_at = CURRENT_TIMESTAMP
   `, [
     localMessageId,
@@ -563,12 +568,15 @@ async function saveMetaSocialOutboundMessage({ platform, contactId, profile, mes
     cleanPlatform === 'instagram' ? cleanString(profile.instagram_account_id) || null : null,
     'outbound',
     'sent',
-    'text',
+    cleanMessageType,
     text,
     null,
     now,
     rawPayload,
-    null
+    null,
+    cleanString(commentId) || null,
+    cleanString(postId) || null,
+    cleanString(parentCommentId) || null
   ])
 
   publishChatMessageEvent({
@@ -578,7 +586,7 @@ async function saveMetaSocialOutboundMessage({ platform, contactId, profile, mes
     provider: 'meta',
     transport: cleanPlatform,
     direction: 'outbound',
-    messageType: 'text',
+    messageType: cleanMessageType,
     messageTimestamp: now,
     isNew: true
   })
@@ -677,6 +685,122 @@ export async function sendMetaSocialTextMessage({ contactId, platform, message, 
     id: sent.remoteMessageId || sent.localMessageId,
     platform: cleanPlatform,
     provider: 'meta',
+    data: sent
+  }
+}
+
+// Responder un COMENTARIO. replyType:
+//  - 'public'  => responde en la publicación (FB: /{comment_id}/comments, IG: /{comment_id}/replies)
+//  - 'private' => abre/continúa un DM con quien comentó (/{businessId}/messages recipient:{comment_id})
+// Se apoya en el token de PÁGINA y en el comment_id del último comentario entrante
+// del contacto (si no se pasa explícito). NO usa el senderId sintético (no es un PSID).
+export async function sendMetaSocialCommentReply({ contactId, platform, message, replyType = 'private', commentId = '', postId = '', externalId } = {}) {
+  const cleanContactId = cleanString(contactId)
+  const cleanPlatform = cleanString(platform).toLowerCase() === 'instagram' ? 'instagram' : 'messenger'
+  const body = cleanString(message)
+  const mode = cleanString(replyType).toLowerCase() === 'public' ? 'public' : 'private'
+
+  if (!cleanContactId) throw createMetaSocialMessageError('Falta el contacto', 400)
+  if (!body) throw createMetaSocialMessageError('Falta el texto de la respuesta', 400)
+
+  const enabled = await isMetaSocialCommentsEnabled(cleanPlatform)
+  if (!enabled) {
+    throw createMetaSocialMessageError(`Activa los comentarios de ${getPlatformLabel(cleanPlatform)} en Configuración > Meta Ads para responder.`, 409)
+  }
+
+  const config = await getMetaConfig().catch(error => {
+    logger.warn(`No se pudo leer Meta para responder comentario: ${error.message}`)
+    return null
+  })
+  if (!config?.access_token) {
+    throw createMetaSocialMessageError('Conecta Meta Ads para responder comentarios.', 409)
+  }
+
+  // Perfil del contacto-comentario (para guardar el saliente en el mismo hilo).
+  const profile = await db.get(
+    `SELECT id, sender_id, recipient_id, page_id, instagram_account_id
+     FROM meta_social_contacts
+     WHERE contact_id = ? AND platform = ?
+     ORDER BY updated_at DESC, last_seen_at DESC
+     LIMIT 1`,
+    [cleanContactId, cleanPlatform]
+  ).catch(() => null)
+
+  // Resolver el comentario objetivo (último entrante) si no viene explícito.
+  let targetCommentId = cleanString(commentId)
+  let targetPostId = cleanString(postId)
+  if (!targetCommentId) {
+    const row = await db.get(
+      `SELECT comment_id, post_id FROM meta_social_messages
+       WHERE contact_id = ? AND platform = ? AND message_type = 'comment'
+         AND LOWER(COALESCE(direction,'')) = 'inbound' AND COALESCE(comment_id,'') <> ''
+       ORDER BY COALESCE(message_timestamp, created_at) DESC
+       LIMIT 1`,
+      [cleanContactId, cleanPlatform]
+    ).catch(() => null)
+    targetCommentId = cleanString(row?.comment_id)
+    targetPostId = targetPostId || cleanString(row?.post_id)
+  }
+  if (!targetCommentId) {
+    throw createMetaSocialMessageError('No se encontró el comentario al que responder.', 404)
+  }
+
+  let path
+  let payload
+  if (mode === 'public') {
+    path = cleanPlatform === 'instagram'
+      ? `/${encodeURIComponent(targetCommentId)}/replies`
+      : `/${encodeURIComponent(targetCommentId)}/comments`
+    payload = { message: body }
+  } else {
+    const businessId = getMetaSocialBusinessId(cleanPlatform, config, profile || {})
+    if (!businessId) {
+      throw createMetaSocialMessageError(
+        cleanPlatform === 'instagram' ? 'Falta la cuenta de Instagram en Meta Ads.' : 'Falta la página de Facebook en Meta Ads.',
+        409
+      )
+    }
+    path = `/${encodeURIComponent(businessId)}/messages`
+    payload = { recipient: { comment_id: targetCommentId }, message: { text: body } }
+  }
+
+  let response
+  try {
+    response = await metaSocialGraphRequest(path, {
+      method: 'POST',
+      token: await resolveMetaPageAccessToken({ config }),
+      body: payload
+    })
+  } catch (error) {
+    const looksLikeTokenIssue = error?.statusCode === 401 || /oauth|access token|\b190\b/i.test(error?.message || '')
+    if (!looksLikeTokenIssue) throw error
+    response = await metaSocialGraphRequest(path, {
+      method: 'POST',
+      token: await resolveMetaPageAccessToken({ config, forceRefresh: true }),
+      body: payload
+    })
+  }
+
+  const sent = await saveMetaSocialOutboundMessage({
+    platform: cleanPlatform,
+    contactId: cleanContactId,
+    profile: profile || {},
+    messageId: response?.id || response?.message_id,
+    text: body,
+    response,
+    externalId,
+    messageType: mode === 'public' ? 'comment_reply_public' : 'comment_reply_private',
+    commentId: targetCommentId,
+    postId: targetPostId
+  })
+
+  return {
+    ...sent,
+    id: sent.remoteMessageId || sent.localMessageId,
+    platform: cleanPlatform,
+    provider: 'meta',
+    replyType: mode,
+    commentId: targetCommentId,
     data: sent
   }
 }

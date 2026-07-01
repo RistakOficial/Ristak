@@ -30,6 +30,7 @@ import {
   sendWhatsAppApiVideoMessageView,
   sendMetaDirectTestMessageView,
   sendMetaSocialTextMessageView,
+  sendMetaSocialCommentReplyView,
   setWhatsAppActiveProviderView,
   setWhatsAppApiDefaultPhoneNumberView,
   syncMetaDirectHistoryView,
@@ -55,6 +56,7 @@ router.post('/meta/provider', setWhatsAppActiveProviderView)
 router.post('/meta/test', testMetaDirectConnectionView)
 router.post('/meta/messages/test', sendMetaDirectTestMessageView)
 router.post('/meta/social/messages/text', sendMetaSocialTextMessageView)
+router.post('/meta/social/comments/reply', sendMetaSocialCommentReplyView)
 router.post('/meta/sync-history', syncMetaDirectHistoryView)
 router.post('/meta/disconnect', disconnectMetaDirectConnectionView)
 router.post('/connect', connectWhatsAppApiView)
