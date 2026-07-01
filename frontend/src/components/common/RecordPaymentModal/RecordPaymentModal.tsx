@@ -4743,7 +4743,9 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
     }
 
     return (
-      <PaymentLinkReadyPanel link={createdPaymentLink} businessName={businessName} />
+      <div className={styles.paymentLinkReady}>
+        <PaymentLinkReadyPanel link={createdPaymentLink} businessName={businessName} />
+      </div>
     )
   }
 

@@ -1,12 +1,17 @@
 .root {
   display: grid;
   gap: 18px;
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
 }
 
 .header {
   display: flex;
   align-items: flex-start;
   gap: 14px;
+  min-width: 0;
 }
 
 .icon {
@@ -77,6 +82,7 @@
 .linkBox {
   display: grid;
   gap: 10px;
+  min-width: 0;
 }
 
 .linkActions {
@@ -84,6 +90,7 @@
   align-items: stretch;
   gap: 10px;
   flex-wrap: wrap;
+  min-width: 0;
 }
 
 .url {
@@ -97,6 +104,11 @@
   font-size: 13px;
   line-height: 1.35;
   word-break: break-word;
+  overflow-wrap: anywhere;
+}
+
+.linkActions :global([data-btn]) {
+  flex: 0 0 auto;
 }
 
 .delivery {
