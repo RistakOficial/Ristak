@@ -45,7 +45,8 @@ import {
 import {
   assertPaidPaymentGate,
   createPaymentGateLink,
-  getPaymentGateCheckoutDescriptor,
+  createPaymentGateCharge,
+  getPaymentGateCheckoutKeys,
   getPaymentGateStatus,
   isPaymentGateEnabled,
   normalizePaymentGateConfig
@@ -15430,6 +15431,7 @@ function buildPaymentCheckoutRuntimeScript() {
     var CONEKTA_SDK = 'https://pay.conekta.com/v1.0/js/conekta-checkout.min.js';
     var STATUS_URL = '/api/sites/public/payments/';
     var INIT_URL = '/api/sites/public/checkout/init';
+    var PAY_URL = '/api/sites/public/checkout/pay';
 
     function loadScript(src, ready) {
       return new Promise(function (resolve, reject) {
@@ -15550,15 +15552,26 @@ function buildPaymentCheckoutRuntimeScript() {
         setPayBusy(false); setMessage('error', 'El pago fue rechazado. Revisa los datos o intenta con otra tarjeta.');
       }
 
+      // Crea el registro de pago (fila) y cobra — SOLO cuando el cliente intenta pagar.
+      // Guarda el id resultante para reanudar (recarga) y para la unificación pagar-para-enviar.
+      function payCharge(chargeBody) {
+        return postJson(PAY_URL, Object.assign({ siteId: cfg.siteId, blockId: cfg.blockId, pageId: cfg.pageId }, chargeBody || {})).then(function (r) {
+          if (r && r.publicPaymentId) {
+            try { sessionStorage.setItem(storageKey, r.publicPaymentId); } catch (e) {}
+            root.setAttribute('data-checkout-public-id', r.publicPaymentId);
+          }
+          return r;
+        });
+      }
+
       var stored = '';
       try { stored = sessionStorage.getItem(storageKey) || ''; } catch (e) {}
       showLoading(true);
+      // init NO crea ninguna fila de pago: solo trae las llaves públicas para montar el SDK.
+      // Abrir la página no genera pagos incompletos. Si un pago previo (esta sesión) ya está
+      // pagado, corre la acción de éxito.
       postJson(INIT_URL, { siteId: cfg.siteId, blockId: cfg.blockId, pageId: cfg.pageId, paymentPublicId: stored }).then(function (d) {
-        try { if (d.publicPaymentId) sessionStorage.setItem(storageKey, d.publicPaymentId); } catch (e) {}
-        // Expone el id para que un formulario que exige pago pueda esperar ESTE checkout
-        // inline (unificación pagar-para-enviar) en vez de abrir un link externo.
-        if (d.publicPaymentId) root.setAttribute('data-checkout-public-id', d.publicPaymentId);
-        if (d.paid) { showLoading(false); runPostAction(); return; }
+        if (d.paid) { showLoading(false); if (d.publicPaymentId) root.setAttribute('data-checkout-public-id', d.publicPaymentId); runPostAction(); return; }
         if (d.provider === 'conekta') return mountConekta(d);
         if (d.provider === 'mercadopago') return mountMercadoPago(d);
         return mountStripe(d);
@@ -15569,7 +15582,7 @@ function buildPaymentCheckoutRuntimeScript() {
 
       function mountStripe(d) {
         return loadScript(STRIPE_JS, function () { return !!window.Stripe; }).then(function () {
-          if (!d.clientSecret) throw new Error('Stripe no está listo. Recarga la página.');
+          if (!d.publishableKey) throw new Error('Stripe no está configurado en esta cuenta.');
           var stripe = window.Stripe(d.publishableKey);
           // Auto-adapta el tema de Stripe al fondo REAL de la tarjeta (custom incluido):
           // fondo oscuro -> tema 'night' (labels claros, legibles); claro -> 'stripe'.
@@ -15583,7 +15596,9 @@ function buildPaymentCheckoutRuntimeScript() {
                 colorBackground: readToken('--rstk-input-bg') || undefined,
                 borderRadius: readToken('--rstk-radius') || undefined
               } };
-          var elements = stripe.elements({ clientSecret: d.clientSecret, appearance: appearance, locale: 'es' });
+          // Modo DIFERIDO: monta el formulario SIN crear un PaymentIntent (sin fila). El
+          // intent y la fila se crean solo al cobrar (payCharge), tras validar la tarjeta.
+          var elements = stripe.elements({ mode: 'payment', amount: Math.max(1, Math.round((Number(d.amount) || 1) * 100)), currency: (d.currency || 'mxn').toLowerCase(), appearance: appearance, locale: 'es' });
           var paymentElement = elements.create('payment', { layout: 'tabs' });
           paymentElement.mount(els.fields);
           els.fields.hidden = false; els.pay.hidden = false; showLoading(false);
@@ -15591,11 +15606,17 @@ function buildPaymentCheckoutRuntimeScript() {
           els.pay.addEventListener('click', function () {
             if (els.pay.disabled) return;
             setPayBusy(true); setMessage('info', 'Procesando…');
-            stripe.confirmPayment({ elements: elements, confirmParams: { return_url: window.location.href }, redirect: 'if_required' }).then(function (result) {
-              if (result.error) { setPayBusy(false); setMessage('error', result.error.message || 'No se pudo completar el pago.'); return; }
-              var st = result.paymentIntent && result.paymentIntent.status;
-              if (st === 'succeeded' || st === 'processing') onChargeResult(d.publicPaymentId, 'paid');
-              else { setPayBusy(false); setMessage('info', 'Tu banco pide una acción adicional. Sigue las instrucciones.'); }
+            elements.submit().then(function (sub) {
+              if (sub && sub.error) { setPayBusy(false); setMessage('error', sub.error.message || 'Revisa los datos de la tarjeta.'); return; }
+              return payCharge({}).then(function (r) {
+                if (!r || !r.clientSecret) throw new Error('No se pudo iniciar el pago.');
+                return stripe.confirmPayment({ elements: elements, clientSecret: r.clientSecret, confirmParams: { return_url: window.location.href }, redirect: 'if_required' }).then(function (result) {
+                  if (result.error) { setPayBusy(false); setMessage('error', result.error.message || 'No se pudo completar el pago.'); return; }
+                  var st = result.paymentIntent && result.paymentIntent.status;
+                  if (st === 'succeeded' || st === 'processing') onChargeResult(r.publicPaymentId, 'paid');
+                  else { setPayBusy(false); setMessage('info', 'Tu banco pide una acción adicional. Sigue las instrucciones.'); }
+                });
+              });
             }).catch(function (e) { setPayBusy(false); setMessage('error', (e && e.message) || 'No se pudo completar el pago.'); });
           });
         });
@@ -15630,8 +15651,9 @@ function buildPaymentCheckoutRuntimeScript() {
               onCreateTokenSucceeded: function (token) {
                 var tokenId = typeof token === 'string' ? token : String((token && token.id) || '');
                 if (!tokenId) { setPayBusy(false); setMessage('error', 'Conekta no devolvió un token válido.'); return; }
-                postJson('/api/conekta/public/payments/' + encodeURIComponent(d.publicPaymentId) + '/card', { tokenId: tokenId, installments: selectedInstallments }).then(function (res) {
-                  onChargeResult(d.publicPaymentId, (res.payment && res.payment.status) || res.status);
+                // Crea la fila + cobra recién ahora (intento real), con el token.
+                payCharge({ tokenId: tokenId, installments: selectedInstallments }).then(function (r) {
+                  onChargeResult(r.publicPaymentId, r.status);
                 }).catch(function (e) { setPayBusy(false); setMessage('error', (e && e.message) || 'No se pudo cobrar con Conekta.'); });
               },
               onCreateTokenError: function (err) { setPayBusy(false); setMessage('error', (err && err.message) || 'Conekta no pudo procesar la tarjeta.'); },
@@ -15665,15 +15687,15 @@ function buildPaymentCheckoutRuntimeScript() {
               onSubmit: function (formData) {
                 var fd = formData || {};
                 setMessage('info', 'Procesando…');
-                var payload = {
+                // Crea la fila + cobra recién ahora (intento real), con el token del brick.
+                return payCharge({
                   token: fd.token,
                   paymentMethodId: fd.payment_method_id,
                   issuerId: fd.issuer_id,
                   installments: Number(fd.installments) || 1,
                   payer: fd.payer || {}
-                };
-                return postJson('/api/mercadopago/public/payments/' + encodeURIComponent(d.publicPaymentId) + '/card', payload).then(function (res) {
-                  onChargeResult(d.publicPaymentId, (res.payment && res.payment.status) || res.status);
+                }).then(function (r) {
+                  onChargeResult(r.publicPaymentId, r.status);
                 }).catch(function (e) { setMessage('error', (e && e.message) || 'No se pudo cobrar con Mercado Pago.'); throw e; });
               },
               onError: function () { setMessage('error', 'No se pudo montar el formulario de Mercado Pago. Recarga la página.'); }
@@ -26398,79 +26420,64 @@ export async function getPublicSitePaymentStatus(publicPaymentId) {
   }
 }
 
-function buildSiteCheckoutResponse(paymentGate = {}, context = {}, descriptor = {}) {
+function buildSiteCheckoutMountResponse(paymentGate = {}, context = {}, keys = {}) {
+  const msi = paymentGate.msi && paymentGate.msi.enabled && paymentGate.msi.maxInstallments > 1
+    ? { enabled: true, maxInstallments: paymentGate.msi.maxInstallments }
+    : null
   return {
-    publicPaymentId: cleanString(descriptor.publicPaymentId),
-    provider: cleanString(descriptor.provider) || paymentGate.gateway,
-    status: cleanString(descriptor.status) || 'sent',
-    paid: Boolean(descriptor.paid),
-    amount: Number(descriptor.amount || paymentGate.amount) || paymentGate.amount,
-    currency: cleanString(descriptor.currency || paymentGate.currency) || paymentGate.currency,
-    paymentMode: cleanString(descriptor.paymentMode),
-    // Llaves públicas para el SDK (seguras de exponer). Secretos NUNCA.
-    publishableKey: cleanString(descriptor.publishableKey),
-    clientSecret: cleanString(descriptor.clientSecret),
-    publicKey: cleanString(descriptor.publicKey),
-    installments: descriptor.installments || null,
-    // Copys y acción posterior configurados en el bloque.
+    provider: cleanString(keys.provider) || paymentGate.gateway,
+    // Llaves PÚBLICAS del SDK (seguras de exponer). Secretos NUNCA. Sin clientSecret aquí:
+    // Stripe se monta en modo diferido y el intent se crea al cobrar.
+    publishableKey: cleanString(keys.publishableKey),
+    publicKey: cleanString(keys.publicKey),
+    paymentMode: cleanString(keys.paymentMode),
+    // Reanudación: si un pago previo (misma sesión) ya está pagado.
+    paid: Boolean(keys.paid),
+    publicPaymentId: cleanString(keys.publicPaymentId),
+    status: cleanString(keys.status),
+    amount: paymentGate.amount,
+    currency: paymentGate.currency,
     productName: paymentGate.productName,
     description: paymentGate.description,
     buttonText: paymentGate.buttonText,
     pendingMessage: paymentGate.pendingMessage,
     paidMessage: paymentGate.paidMessage,
+    installments: msi,
     msi: paymentGate.msi || null,
     blockId: cleanString(context.blockId),
     blockPageId: cleanString(context.blockPageId)
   }
 }
 
-// Arranca el checkout embebido de un bloque de pago concreto de una página publicada.
-// El monto/pasarela/modo/MSI vienen del bloque PERSISTIDO (nunca del cliente). Reutiliza
-// un link aún no pagado si el runtime lo re-manda (evita crear un registro por recarga).
-export async function initSitePaymentCheckout(req, body = {}) {
-  const {
-    host,
-    submittedSiteId,
-    domainResolution,
-    previewContext
-  } = await resolvePublicRequestAccess(req, body, {})
+// Resuelve el sitio + bloque de pago de una petición pública de checkout. El monto,
+// pasarela, modo y MSI vienen SIEMPRE del bloque PERSISTIDO (nunca del cliente).
+async function resolveSiteCheckoutBlock(req, body = {}) {
+  const { host, submittedSiteId, domainResolution, previewContext } = await resolvePublicRequestAccess(req, body, {})
   const site = submittedSiteId
     ? await getSite(submittedSiteId, { includeBlocks: false, includeSubmissions: false })
     : await findSiteByRoutePath(req.path)
 
-  if (!site) {
-    const error = new Error('Site público no encontrado')
-    error.status = 404
-    throw error
-  }
-  if (!canExecutePublicSiteAction(site, previewContext)) {
-    const error = new Error('Este site no esta publicado')
-    error.status = 404
-    throw error
-  }
+  if (!site) { const error = new Error('Site público no encontrado'); error.status = 404; throw error }
+  if (!canExecutePublicSiteAction(site, previewContext)) { const error = new Error('Este site no esta publicado'); error.status = 404; throw error }
 
   site.domain = domainResolution.domain || host
   site.blocks = await hydrateEmbeddedForms(await listSiteBlocks(site.id))
 
   const blockId = cleanString(body.blockId || body.block_id || body.meta?.blockId)
   const context = findEnabledPaymentBlockById(site.blocks, site, blockId)
-  if (!context) {
-    const error = new Error('Bloque de pago no encontrado o deshabilitado')
-    error.status = 404
-    throw error
-  }
+  if (!context) { const error = new Error('Bloque de pago no encontrado o deshabilitado'); error.status = 404; throw error }
 
-  const paymentGate = context.paymentGate
-  const baseUrl = getRequestBaseUrl(req)
-  const expectedBlockId = cleanString(context.blockId)
+  return { site, context, paymentGate: context.paymentGate, baseUrl: getRequestBaseUrl(req), expectedBlockId: cleanString(context.blockId) }
+}
 
-  // (SEC) Rate-limit del checkout público: evita enumeración de links y creación masiva
-  // de registros de pago desde una IP. Reusa el limitador del submit con namespace propio.
-  enforcePublicSubmitRateLimit(req, `checkout:${site.id}:${expectedBlockId}`)
+// Arranca el checkout embebido SIN crear ningún registro de pago: solo devuelve las llaves
+// públicas del proveedor para montar el SDK. Abrir la página NO genera pagos incompletos;
+// la fila se crea únicamente al cobrar (paySiteCheckout). Si el runtime re-manda un pago
+// previo (misma sesión) ya pagado, responde con el estado para correr la acción de éxito.
+export async function initSitePaymentCheckout(req, body = {}) {
+  const { site, context, paymentGate, expectedBlockId } = await resolveSiteCheckoutBlock(req, body)
+  enforcePublicSubmitRateLimit(req, `checkout-init:${site.id}:${expectedBlockId}`)
 
-  // Reusar el link que el runtime tenga en sessionStorage si sigue vigente y es del mismo
-  // bloque; si ya está pagado, devolver descriptor pagado para que corra la acción de éxito.
-  let publicPaymentId = ''
   const existing = getBodyPaymentPublicId(body)
   if (existing) {
     const pending = await getPaymentGateStatus(existing)
@@ -26478,39 +26485,51 @@ export async function initSitePaymentCheckout(req, body = {}) {
       pending.metadata?.paymentGate?.paymentBlockId || pending.metadata?.paymentBlockId
     ) === expectedBlockId
     if (pending && pending.paid && sameBlock) {
-      const descriptor = await getPaymentGateCheckoutDescriptor(existing, { baseUrl })
-      return buildSiteCheckoutResponse(paymentGate, context, descriptor || {
-        publicPaymentId: existing,
-        paid: true,
-        status: pending.status
-      })
-    }
-    if (pending && !pending.paid && sameBlock && cleanString(pending.provider) === paymentGate.gateway) {
-      publicPaymentId = existing
+      return buildSiteCheckoutMountResponse(paymentGate, context, { paid: true, publicPaymentId: existing, status: pending.status })
     }
   }
 
-  if (!publicPaymentId) {
-    const result = await createPaymentGateLink(paymentGate, {
-      baseUrl,
-      source: 'site_checkout',
-      metadata: {
-        siteId: site.id,
-        siteName: site.name || '',
-        pageId: cleanString(body.pageId || body.page_id || context.blockPageId),
-        paymentBlockId: expectedBlockId,
-        paymentGate: {
-          source: 'site_checkout',
-          siteId: site.id,
-          paymentBlockId: expectedBlockId
-        }
-      }
-    })
-    publicPaymentId = result.publicPaymentId
-  }
+  const keys = await getPaymentGateCheckoutKeys(paymentGate.gateway, paymentGate.mode === 'test' ? 'test' : '')
+  return buildSiteCheckoutMountResponse(paymentGate, context, keys)
+}
 
-  const descriptor = await getPaymentGateCheckoutDescriptor(publicPaymentId, { baseUrl })
-  return buildSiteCheckoutResponse(paymentGate, context, descriptor)
+// Crea el registro de pago (fila) y COBRA — SOLO cuando el cliente intenta pagar de verdad.
+// El monto viene del bloque persistido (nunca del cliente). Stripe devuelve clientSecret para
+// confirmar en el cliente; Conekta/MP cobran con el token recibido.
+export async function paySiteCheckout(req, body = {}) {
+  const { site, context, paymentGate, baseUrl, expectedBlockId } = await resolveSiteCheckoutBlock(req, body)
+  enforcePublicSubmitRateLimit(req, `checkout-pay:${site.id}:${expectedBlockId}`)
+
+  const result = await createPaymentGateLink(paymentGate, {
+    baseUrl,
+    source: 'site_checkout',
+    metadata: {
+      siteId: site.id,
+      siteName: site.name || '',
+      pageId: cleanString(body.pageId || body.page_id || context.blockPageId),
+      paymentBlockId: expectedBlockId,
+      paymentGate: { source: 'site_checkout', siteId: site.id, paymentBlockId: expectedBlockId }
+    }
+  })
+  const publicPaymentId = result.publicPaymentId
+
+  const charge = await createPaymentGateCharge(publicPaymentId, paymentGate.gateway, {
+    tokenId: cleanString(body.tokenId || body.token_id),
+    token: cleanString(body.token),
+    paymentMethodId: cleanString(body.paymentMethodId || body.payment_method_id),
+    issuerId: cleanString(body.issuerId || body.issuer_id),
+    installments: body.installments,
+    payer: body.payer && typeof body.payer === 'object' ? body.payer : {}
+  }, { baseUrl })
+
+  return {
+    publicPaymentId,
+    provider: charge.provider,
+    clientSecret: cleanString(charge.clientSecret),
+    status: cleanString(charge.status),
+    statusDetail: cleanString(charge.statusDetail),
+    paidMessage: paymentGate.paidMessage
+  }
 }
 
 export async function createSubmissionFromRequest(req, body = {}, options = {}) {

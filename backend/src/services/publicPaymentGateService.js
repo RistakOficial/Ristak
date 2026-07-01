@@ -1,7 +1,7 @@
 import { db, getAppConfig } from '../config/database.js'
-import { createStripePaymentLink, createStripePaymentIntent } from './stripePaymentService.js'
-import { createConektaPaymentLink, getPublicConektaPayment } from './conektaPaymentService.js'
-import { createMercadoPagoPaymentLink, getPublicMercadoPagoPayment } from './mercadoPagoPaymentService.js'
+import { createStripePaymentLink, createStripePaymentIntent, getStripePaymentConfig } from './stripePaymentService.js'
+import { createConektaPaymentLink, getPublicConektaPayment, getConektaPaymentConfig, createPublicConektaCardPayment } from './conektaPaymentService.js'
+import { createMercadoPagoPaymentLink, getPublicMercadoPagoPayment, getMercadoPagoPaymentConfig, createPublicMercadoPagoCardPayment } from './mercadoPagoPaymentService.js'
 
 const PAYMENT_GATEWAYS = new Set(['stripe', 'conekta', 'mercadopago'])
 const PAID_STATUSES = new Set(['paid', 'succeeded', 'success', 'completed', 'complete', 'fulfilled'])
@@ -309,6 +309,58 @@ export async function getPaymentGateCheckoutDescriptor(publicPaymentId, { baseUr
   }
 
   return base
+}
+
+// Llaves PÚBLICAS del proveedor para montar el checkout SIN crear ningún registro de pago.
+// Así abrir la página no genera pagos incompletos: la fila se crea solo al cobrar (pay).
+export async function getPaymentGateCheckoutKeys(gateway, mode = '') {
+  const g = normalizeGateway(gateway)
+  if (g === 'conekta') {
+    const config = await getConektaPaymentConfig({ mode })
+    return { provider: 'conekta', publicKey: config.publicKey || '', paymentMode: config.mode || '', configured: Boolean(config.configured) }
+  }
+  if (g === 'mercadopago') {
+    const config = await getMercadoPagoPaymentConfig({ mode })
+    return { provider: 'mercadopago', publicKey: config.publicKey || '', paymentMode: config.mode || '', configured: Boolean(config.configured) }
+  }
+  const config = await getStripePaymentConfig({ mode })
+  return { provider: 'stripe', publishableKey: config.publishableKey || '', paymentMode: config.mode || '', configured: Boolean(config.configured) }
+}
+
+// Cobra un pago ya creado (fila existente). Stripe: crea el PaymentIntent y devuelve el
+// clientSecret para confirmar del lado del cliente. Conekta/MP: cobran con el token recibido.
+export async function createPaymentGateCharge(publicPaymentId, gateway, chargeInput = {}, { baseUrl = '' } = {}) {
+  const g = normalizeGateway(gateway)
+  if (g === 'stripe') {
+    const intent = await createStripePaymentIntent(publicPaymentId, {})
+    return {
+      provider: 'stripe',
+      publicPaymentId,
+      clientSecret: intent?.clientSecret || '',
+      publishableKey: intent?.publishableKey || '',
+      status: intent?.status || 'pending'
+    }
+  }
+  if (g === 'conekta') {
+    const res = await createPublicConektaCardPayment(publicPaymentId, {
+      tokenId: chargeInput.tokenId,
+      installments: chargeInput.installments
+    }, { baseUrl })
+    return { provider: 'conekta', publicPaymentId, status: cleanString(res?.payment?.status || res?.status) }
+  }
+  if (g === 'mercadopago') {
+    const res = await createPublicMercadoPagoCardPayment(publicPaymentId, {
+      token: chargeInput.token,
+      paymentMethodId: chargeInput.paymentMethodId,
+      issuerId: chargeInput.issuerId,
+      installments: chargeInput.installments,
+      payer: chargeInput.payer
+    }, { baseUrl })
+    return { provider: 'mercadopago', publicPaymentId, status: cleanString(res?.payment?.status || res?.status), statusDetail: cleanString(res?.statusDetail) }
+  }
+  const error = new Error('Pasarela no soportada.')
+  error.status = 400
+  throw error
 }
 
 export function paymentGateMatches(status, expected = {}) {

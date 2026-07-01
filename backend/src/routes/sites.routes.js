@@ -30,6 +30,7 @@ import {
   publicSiteContactPrefillHandler,
   publicSitePaymentStatusHandler,
   sitePaymentCheckoutInitHandler,
+  sitePaymentCheckoutPayHandler,
   reorderBlocksHandler,
   restoreBlocksHandler,
   setSitesDefaultRouteHandler,
@@ -54,6 +55,7 @@ router.post('/public/submit', submitPublicSiteHandler)
 router.get('/public/contact-prefill', publicSiteContactPrefillHandler)
 router.get('/public/payments/:publicPaymentId/status', publicSitePaymentStatusHandler)
 router.post('/public/checkout/init', sitePaymentCheckoutInitHandler)
+router.post('/public/checkout/pay', sitePaymentCheckoutPayHandler)
 router.post('/public/meta-event', metaPageEventPublicHandler)
 router.get('/public/fonts.css', sitesFontCssHandler)
 router.get('/public/font-file', sitesFontFileHandler)

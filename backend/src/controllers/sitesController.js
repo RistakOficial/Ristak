@@ -15,6 +15,7 @@ import {
   getImportedSiteAssetResponse,
   getPublicSitePaymentStatus,
   initSitePaymentCheckout,
+  paySiteCheckout,
   getSitesFontCss,
   getSitesFontFile,
   getSite,
@@ -819,6 +820,16 @@ export async function sitePaymentCheckoutInitHandler(req, res) {
   }
 }
 
+export async function sitePaymentCheckoutPayHandler(req, res) {
+  try {
+    const result = await paySiteCheckout(req, req.body || {})
+    res.status(201).json({ success: true, data: result })
+  } catch (error) {
+    logger.warn(`Cobro de checkout embebido rechazado: ${error.message}`)
+    sendError(res, error, 'No se pudo procesar el pago')
+  }
+}
+
 export async function metaPageEventPublicHandler(req, res) {
   try {
     const body = req.body || {}
@@ -877,6 +888,7 @@ export async function publicSiteHostMiddleware(req, res, next) {
       req.path === '/api/health' ||
       req.path === '/api/sites/public/submit' ||
       req.path === '/api/sites/public/checkout/init' ||
+      req.path === '/api/sites/public/checkout/pay' ||
       req.path === '/api/sites/public/meta-event' ||
       req.path.startsWith('/api/sites/public/payments/') ||
       req.path === '/api/sites/public/fonts.css' ||
