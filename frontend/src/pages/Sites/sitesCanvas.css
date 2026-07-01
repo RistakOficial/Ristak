@@ -506,23 +506,21 @@
   border: 1px solid color-mix(in srgb, var(--rstk-accent) 30%, var(--rstk-border));
 }
 .rstkCanvas .rstk-checkout-body { display: grid; gap: 14px; }
-/* Mock de campos = clon fiel de Stripe Elements para que el editor luzca como el
-   checkout en vivo. Paleta clara de Stripe por defecto; noche en sitios oscuros.
-   Colores fijos de Stripe a propósito: replican una UI externa, no el tema del sitio. */
+/* Mock de campos (fallback: Conekta/MP, o mientras Stripe carga el Payment Element real).
+   Usa tokens del tema para adaptarse a claro/oscuro; solo las marcas llevan su color. */
 .rstkCanvas .rstk-checkout-fields-mock { display: grid; gap: 12px; }
-.rstkCanvas .rstk-mock-lbl { font-size: .82rem; color: #30313d; font-weight: 400; }
+.rstkCanvas .rstk-mock-lbl { font-size: .82rem; color: var(--rstk-ink); font-weight: 500; }
 .rstkCanvas .rstk-mock-input {
   display: flex;
   align-items: center;
   gap: 8px;
   min-height: 44px;
   padding: 0 12px;
-  background: #fff;
-  border: 1px solid #e6e6e6;
-  border-radius: 6px;
-  box-shadow: 0 1px 1px rgba(0, 0, 0, .03);
+  background: var(--rstk-input-bg, var(--rstk-surface));
+  border: 1px solid var(--rstk-input-border, var(--rstk-border));
+  border-radius: var(--rstk-radius);
 }
-.rstkCanvas .rstk-mock-ph { flex: 1; color: #757680; font-size: .95rem; font-variant-numeric: tabular-nums; }
+.rstkCanvas .rstk-mock-ph { flex: 1; color: var(--rstk-muted); font-size: .95rem; font-variant-numeric: tabular-nums; }
 .rstkCanvas .rstk-mock-cols { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
 .rstkCanvas .rstk-mock-col { display: grid; gap: 6px; }
 .rstkCanvas .rstk-mock-brands { display: inline-flex; align-items: center; gap: 4px; }
@@ -544,18 +542,12 @@
 .rstkCanvas .rstk-mock-mc span { width: 10px; height: 10px; border-radius: 50%; }
 .rstkCanvas .rstk-mock-mc span:first-child { background: #eb001b; margin-right: -4px; }
 .rstkCanvas .rstk-mock-mc span:last-child { background: #f79e1b; opacity: .9; }
-.rstkCanvas .rstk-mock-cvc { width: 26px; height: 16px; border-radius: 3px; background: #e6e6e6; }
+.rstkCanvas .rstk-mock-cvc { width: 26px; height: 16px; border-radius: 3px; background: color-mix(in srgb, var(--rstk-ink) 12%, transparent); }
 .rstkCanvas .rstk-mock-country { justify-content: space-between; }
-.rstkCanvas .rstk-mock-country > span:first-child { color: #30313d; font-size: .95rem; }
-.rstkCanvas .rstk-mock-chev { width: 0; height: 0; border-left: 4px solid transparent; border-right: 4px solid transparent; border-top: 5px solid #6b7280; }
-.rstkCanvas .rstk-mock-save { display: flex; align-items: center; gap: 8px; font-size: .82rem; color: #30313d; }
-.rstkCanvas .rstk-mock-check { flex: 0 0 auto; width: 16px; height: 16px; border: 1px solid #c9c9d0; border-radius: 4px; background: #fff; }
-.rstkCanvas.rstk-dark .rstk-mock-lbl,
-.rstkCanvas.rstk-dark .rstk-mock-save,
-.rstkCanvas.rstk-dark .rstk-mock-country > span:first-child { color: #fff; }
-.rstkCanvas.rstk-dark .rstk-mock-input { background: #30313d; border-color: #424353; box-shadow: none; }
-.rstkCanvas.rstk-dark .rstk-mock-ph { color: #b3b3c0; }
-.rstkCanvas.rstk-dark .rstk-mock-check { background: #30313d; border-color: #545465; }
+.rstkCanvas .rstk-mock-country > span:first-child { color: var(--rstk-ink); font-size: .95rem; }
+.rstkCanvas .rstk-mock-chev { width: 0; height: 0; border-left: 4px solid transparent; border-right: 4px solid transparent; border-top: 5px solid var(--rstk-muted); }
+.rstkCanvas .rstk-mock-save { display: flex; align-items: center; gap: 8px; font-size: .82rem; color: var(--rstk-ink); }
+.rstkCanvas .rstk-mock-check { flex: 0 0 auto; width: 16px; height: 16px; border: 1px solid var(--rstk-input-border, var(--rstk-border)); border-radius: 4px; background: var(--rstk-input-bg, var(--rstk-surface)); }
 .rstkCanvas.rstk-dark .rstk-mock-cvc { background: #424353; }
 .rstkCanvas .rstk-mock-select {
   display: flex;

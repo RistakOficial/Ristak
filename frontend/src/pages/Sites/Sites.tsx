@@ -215,6 +215,7 @@ import styles from './Sites.module.css'
 import customFieldModalStyles from '../Settings/CustomFields.module.css'
 import './sitesCanvas.css'
 import { buildCanvasTheme } from './sitesCanvasTheme'
+import { StripePaymentElementPreview } from './StripePaymentElementPreview'
 import { SITE_FONT_OPTIONS, normalizeSiteFontFamily } from './siteFonts'
 
 type SitesSection = 'landings' | 'forms' | 'analytics' | 'domains'
@@ -32176,7 +32177,38 @@ const CanvasPreviewBlock: React.FC<CanvasPreviewBlockProps> = ({
     const isTest = paymentGate.mode === 'test'
     const isStripe = paymentGate.gateway === 'stripe'
     // Preview WYSIWYG: clon fiel del checkout real (Stripe Elements / tokenizer). Los campos
-    // son un mock no interactivo; en vivo los monta el SDK del proveedor idéntico a esto.
+    // son un mock no interactivo; en Stripe montamos el Payment Element REAL (diferido)
+    // para que se vea IDÉNTICO al vivo; en otros proveedores usamos el mock de tarjeta.
+    const mockFields = (
+      <div className="rstk-checkout-fields rstk-checkout-fields-mock" aria-hidden="true">
+        <span className="rstk-mock-lbl">Número de tarjeta</span>
+        <div className="rstk-mock-input rstk-mock-card">
+          <span className="rstk-mock-ph">1234 1234 1234 1234</span>
+          <span className="rstk-mock-brands">
+            <span className="rstk-mock-brand rstk-mock-visa">VISA</span>
+            <span className="rstk-mock-brand rstk-mock-mc"><span /><span /></span>
+            <span className="rstk-mock-brand rstk-mock-amex">AMEX</span>
+          </span>
+        </div>
+        <div className="rstk-mock-cols">
+          <div className="rstk-mock-col">
+            <span className="rstk-mock-lbl">Fecha de caducidad</span>
+            <div className="rstk-mock-input"><span className="rstk-mock-ph">MM / AA</span></div>
+          </div>
+          <div className="rstk-mock-col">
+            <span className="rstk-mock-lbl">Código de seguridad</span>
+            <div className="rstk-mock-input"><span className="rstk-mock-ph">CVC</span><span className="rstk-mock-cvc" /></div>
+          </div>
+        </div>
+        {isStripe && (
+          <>
+            <span className="rstk-mock-lbl">País</span>
+            <div className="rstk-mock-input rstk-mock-country"><span>México</span><span className="rstk-mock-chev" /></div>
+            <label className="rstk-mock-save"><span className="rstk-mock-check" /><span>Guardar mi información para un pago más rápido</span></label>
+          </>
+        )}
+      </div>
+    )
     return (
       <section className={`rstk-payment-block rstk-payment-${layout}`}>
         <div className="rstk-checkout-card">
@@ -32188,34 +32220,13 @@ const CanvasPreviewBlock: React.FC<CanvasPreviewBlockProps> = ({
           </div>
           {isTest && <p className="rstk-checkout-testbadge">Modo prueba · no es un cobro real</p>}
           <div className="rstk-checkout-body">
-            <div className="rstk-checkout-fields rstk-checkout-fields-mock" aria-hidden="true">
-              <span className="rstk-mock-lbl">Número de tarjeta</span>
-              <div className="rstk-mock-input rstk-mock-card">
-                <span className="rstk-mock-ph">1234 1234 1234 1234</span>
-                <span className="rstk-mock-brands">
-                  <span className="rstk-mock-brand rstk-mock-visa">VISA</span>
-                  <span className="rstk-mock-brand rstk-mock-mc"><span /><span /></span>
-                  <span className="rstk-mock-brand rstk-mock-amex">AMEX</span>
-                </span>
-              </div>
-              <div className="rstk-mock-cols">
-                <div className="rstk-mock-col">
-                  <span className="rstk-mock-lbl">Fecha de caducidad</span>
-                  <div className="rstk-mock-input"><span className="rstk-mock-ph">MM / AA</span></div>
-                </div>
-                <div className="rstk-mock-col">
-                  <span className="rstk-mock-lbl">Código de seguridad</span>
-                  <div className="rstk-mock-input"><span className="rstk-mock-ph">CVC</span><span className="rstk-mock-cvc" /></div>
-                </div>
-              </div>
-              {isStripe && (
-                <>
-                  <span className="rstk-mock-lbl">País</span>
-                  <div className="rstk-mock-input rstk-mock-country"><span>México</span><span className="rstk-mock-chev" /></div>
-                  <label className="rstk-mock-save"><span className="rstk-mock-check" /><span>Guardar mi información para un pago más rápido</span></label>
-                </>
-              )}
-            </div>
+            {isStripe ? (
+              <StripePaymentElementPreview
+                amount={paymentGate.amount}
+                currency={paymentGate.currency}
+                fallback={mockFields}
+              />
+            ) : mockFields}
             {showMsi && (
               <div className="rstk-checkout-installments">
                 <div className="rstk-checkout-select rstk-mock-select" aria-hidden="true">
