@@ -32167,20 +32167,51 @@ const CanvasPreviewBlock: React.FC<CanvasPreviewBlockProps> = ({
     const paymentGate = getPaymentGateFromSettings(settings)
     const layout = normalizePaymentBlockLayout(settings.paymentLayout)
     const productName = paymentGate.productName || block.content || block.label || 'Pago requerido'
-    const description = paymentGate.description || paymentGate.pendingMessage || 'Completa el pago para continuar.'
+    const description = paymentGate.description || ''
+    const amountText = formatPaymentAmount(paymentGate.amount, paymentGate.currency)
+    const buttonLabel = paymentGate.buttonText || 'Pagar'
+    const showMsi = (paymentGate.gateway === 'conekta' || paymentGate.gateway === 'mercadopago') && Boolean(paymentGate.msi?.enabled)
+    const isTest = paymentGate.mode === 'test'
+    // Preview WYSIWYG: refleja el checkout real (tarjeta + campos + MSI + botón), no la
+    // barra estática. Los campos son un mock no interactivo; en vivo los monta el SDK.
     return (
       <section className={`rstk-payment-block rstk-payment-${layout}`}>
-        <div className="rstk-payment-panel">
-          <div className="rstk-payment-copy">
+        <div className="rstk-checkout-card">
+          <div className="rstk-checkout-head">
             <span className="rstk-payment-kicker">{getPaymentGatewayLabel(paymentGate.gateway)}</span>
-            <strong>{productName}</strong>
-            {description ? <p>{description}</p> : null}
+            <strong className="rstk-checkout-title">{productName}</strong>
+            {description ? <p className="rstk-checkout-desc">{description}</p> : null}
+            <span className="rstk-checkout-amount">{amountText}</span>
           </div>
-          <div className="rstk-payment-side">
-            <span className="rstk-payment-amount">{formatPaymentAmount(paymentGate.amount, paymentGate.currency)}</span>
-            <button type="button" className="rstk-button-link">
-              <SubmitButtonContent label={paymentGate.buttonText || 'Completar pago'} settings={settings} />
+          {isTest && <p className="rstk-checkout-testbadge">Modo prueba · no es un cobro real</p>}
+          <div className="rstk-checkout-body">
+            <div className="rstk-checkout-fields rstk-checkout-fields-mock" aria-hidden="true">
+              <div className="rstk-mock-field">
+                <span className="rstk-mock-label">Número de tarjeta</span>
+                <span className="rstk-mock-value">1234 1234 1234 1234</span>
+              </div>
+              <div className="rstk-mock-field-row">
+                <div className="rstk-mock-field">
+                  <span className="rstk-mock-label">Vencimiento</span>
+                  <span className="rstk-mock-value">MM / AA</span>
+                </div>
+                <div className="rstk-mock-field">
+                  <span className="rstk-mock-label">CVC</span>
+                  <span className="rstk-mock-value">•••</span>
+                </div>
+              </div>
+            </div>
+            {showMsi && (
+              <div className="rstk-checkout-installments">
+                <div className="rstk-checkout-select rstk-mock-select" aria-hidden="true">
+                  <span>{paymentGate.msi.maxInstallments} meses sin intereses</span>
+                </div>
+              </div>
+            )}
+            <button type="button" className="rstk-button-link rstk-checkout-pay" disabled>
+              <SubmitButtonContent label={`${buttonLabel} · ${amountText}`} settings={settings} />
             </button>
+            <p className="rstk-checkout-secure">Pago seguro. La tarjeta se captura en campos cifrados del proveedor.</p>
           </div>
         </div>
       </section>
