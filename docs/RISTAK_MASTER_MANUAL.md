@@ -278,6 +278,16 @@ frontend deben quedar como mensaje `qr` exitoso, sin exponer el error de la API
 en el globo del chat. Solo se guarda error visible cuando no existe respaldo QR
 usable o cuando el respaldo QR tambien falla.
 
+El respaldo QR se resuelve por telefono, no solo por el id exacto del numero API.
+Si el numero oficial y la conexion QR quedaron en filas distintas de
+`whatsapp_api_phone_numbers`, el backend debe localizar la fila QR del mismo
+telefono (`phone_number`, `display_phone_number` o `qr_connected_phone`) y enviar
+desde ahi. Tambien cuenta como usable una sesion QR conectada o en reconexion
+tecnica (`connected`, `reconnecting`, `restarting`, `connection_replaced` o
+`disconnected_*`); estados terminales como `logged_out`, `bad_session` o
+`number_mismatch` requieren escanear un QR nuevo y no se usan como respaldo
+automatico.
+
 En las listas y separadores del chat, los mensajes del dia actual muestran hora
 o `Hoy`, los del dia anterior muestran `Ayer`, y los anteriores usan fecha
 compacta sin `de` (`29 junio`, agregando año solo si no pertenece al año actual).

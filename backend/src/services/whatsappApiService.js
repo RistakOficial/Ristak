@@ -145,6 +145,7 @@ const API_FALLBACK_PHONE_STATUSES = new Set([
   'DISCONNECTED',
   'MIGRATED'
 ])
+const QR_FALLBACK_READY_STATUSES = new Set(['connected', 'reconnecting', 'restarting', 'connection_replaced'])
 const API_FALLBACK_ERROR_PATTERN = /\b(WABA|BUSINESS ACCOUNT|PHONE NUMBER|SENDER|FROM|ACCOUNT|QUALITY|MESSAGING LIMIT|RATE.?LIMIT|RESTRICT|BANNED|BLOCKED|DISABLED|SUSPENDED|LOCKED|NOT ALLOWED|NOT_ALLOWED|CUSTOMER SERVICE WINDOW|24.?HOUR|24 HORAS|OUTSIDE.*WINDOW)\b/i
 const API_FALLBACK_RECIPIENT_ERROR_PATTERN = /\b(RECIPIENT|CUSTOMER|USER|DESTINATION|TO PHONE|UNSUBSCRIBED|OPTED.?OUT|BLOCKED BY USER|USER BLOCKED)\b/i
 
@@ -2557,12 +2558,17 @@ async function findBusinessPhoneNumberId(phone = '') {
   return match?.id || null
 }
 
+const BUSINESS_PHONE_ROW_SELECT = `
+  id, waba_id, phone_number, display_phone_number, status,
+  quality_rating, api_send_enabled, qr_send_enabled, qr_status,
+  qr_connected_phone, qr_last_error, is_default_sender, updated_at
+`
+
 async function findBusinessPhoneRowForSender({ phoneNumberId, fromPhone } = {}) {
   const cleanPhoneNumberId = cleanString(phoneNumberId)
   if (cleanPhoneNumberId) {
     return db.get(`
-      SELECT id, waba_id, phone_number, display_phone_number, status,
-        quality_rating, api_send_enabled, qr_send_enabled, qr_status, qr_last_error
+      SELECT ${BUSINESS_PHONE_ROW_SELECT}
       FROM whatsapp_api_phone_numbers
       WHERE id = ?
     `, [cleanPhoneNumberId]).catch(() => null)
@@ -2572,8 +2578,7 @@ async function findBusinessPhoneRowForSender({ phoneNumberId, fromPhone } = {}) 
   if (!normalized) return null
 
   const rows = await db.all(`
-    SELECT id, waba_id, phone_number, display_phone_number, status,
-      quality_rating, api_send_enabled, qr_send_enabled, qr_status, qr_last_error
+    SELECT ${BUSINESS_PHONE_ROW_SELECT}
     FROM whatsapp_api_phone_numbers
     ORDER BY is_default_sender DESC, updated_at DESC
   `).catch(() => [])
@@ -2586,11 +2591,51 @@ async function findBusinessPhoneRowForSender({ phoneNumberId, fromPhone } = {}) 
 }
 
 function isQrFallbackReady(phoneRow = {}) {
+  const status = cleanString(phoneRow.qr_status).toLowerCase()
+  const resumableStatus = QR_FALLBACK_READY_STATUSES.has(status) || status.startsWith('disconnected_')
+  const legacyConnectedPhone = !status && cleanString(phoneRow.qr_connected_phone)
   return Boolean(
     phoneRow?.id &&
     Number(phoneRow.qr_send_enabled || 0) === 1 &&
-    cleanString(phoneRow.qr_status).toLowerCase() === 'connected'
+    (resumableStatus || legacyConnectedPhone)
   )
+}
+
+function getPhoneRowMatchValues(phoneRow = {}) {
+  return [
+    phoneRow.phone_number,
+    phoneRow.display_phone_number,
+    phoneRow.qr_connected_phone
+  ].map(value => normalizePhoneForStorage(value) || cleanString(value)).filter(Boolean)
+}
+
+function rowMatchesAnyPhone(row = {}, phones = []) {
+  const candidates = getPhoneRowMatchValues(row)
+  return candidates.some(candidate => phones.some(phone => phoneMatches(candidate, phone)))
+}
+
+async function findQrFallbackPhoneRowForSender({ phoneNumberId, fromPhone, phoneRow } = {}) {
+  const sourceRow = phoneRow || await findBusinessPhoneRowForSender({ phoneNumberId, fromPhone })
+  if (isQrFallbackReady(sourceRow)) return sourceRow
+
+  const searchPhones = [
+    normalizePhoneForStorage(fromPhone) || cleanString(fromPhone),
+    ...getPhoneRowMatchValues(sourceRow)
+  ].filter(Boolean)
+  if (!searchPhones.length) return null
+
+  const rows = await db.all(`
+    SELECT ${BUSINESS_PHONE_ROW_SELECT}
+    FROM whatsapp_api_phone_numbers
+    WHERE qr_send_enabled = 1
+    ORDER BY is_default_sender DESC, updated_at DESC
+  `).catch(() => [])
+
+  return rows.find(row =>
+    cleanString(row.id) !== cleanString(sourceRow?.id) &&
+    isQrFallbackReady(row) &&
+    rowMatchesAnyPhone(row, searchPhones)
+  ) || null
 }
 
 function getPhoneRowRestrictionReason(phoneRow = {}) {
@@ -2736,11 +2781,15 @@ async function getOfficialApiFallbackDecision({ config, fromPhone, phoneNumberId
   // ESTA conversación: decide el fallback sin marcar nada como restringido.
   const windowReason = error && !errorReason ? getOfficialApiConversationWindowReason(error) : ''
   const reason = errorReason || windowReason || signalReason
+  const fallbackPhoneRow = reason
+    ? await findQrFallbackPhoneRowForSender({ phoneNumberId, fromPhone, phoneRow })
+    : null
 
   return {
     phoneRow,
+    fallbackPhoneRow,
     reason,
-    shouldFallback: Boolean(reason && isQrFallbackReady(phoneRow))
+    shouldFallback: Boolean(reason && fallbackPhoneRow?.id)
   }
 }
 
@@ -2787,11 +2836,11 @@ async function retryFailedOfficialApiMessageViaQr({
   const currentStatus = cleanString(normalizedMessage?.status).toLowerCase()
   if ((previousTransport === 'qr' && cleanString(existingMessage?.routing_reason)) || previousStatus === 'failed' || currentStatus !== 'failed') return null
 
-  const phoneRow = await findBusinessPhoneRowForSender({
+  const phoneRow = await findQrFallbackPhoneRowForSender({
     phoneNumberId: businessPhoneNumberId,
     fromPhone: identity?.businessPhone || normalizedMessage?.from
   })
-  if (!isQrFallbackReady(phoneRow)) {
+  if (!phoneRow?.id) {
     logger.warn(`[WhatsApp API] Cuenta restringida pero QR no está listo para ${identity?.businessPhone || normalizedMessage?.from || 'número desconocido'}`)
     return null
   }
@@ -7518,7 +7567,7 @@ export async function sendWhatsAppApiTemplateMessage({
   if (allowQrFallback && fallbackDecision.shouldFallback) {
     return sendTemplateViaQr({
       fallbackReason: fallbackDecision.reason,
-      fallbackPhoneNumberId: fallbackDecision.phoneRow?.id
+      fallbackPhoneNumberId: fallbackDecision.fallbackPhoneRow?.id
     })
   }
 
@@ -7541,7 +7590,7 @@ export async function sendWhatsAppApiTemplateMessage({
       return sendTemplateViaQr({
         fallbackReason: retryDecision.reason,
         originalError: error,
-        fallbackPhoneNumberId: retryDecision.phoneRow?.id
+        fallbackPhoneNumberId: retryDecision.fallbackPhoneRow?.id
       })
     }
     // (WA-009) Sin fallback QR: registrar el saliente fallido antes de propagar.
@@ -7673,7 +7722,7 @@ export async function sendWhatsAppApiInteractiveMessage({
   })
   if (allowQrFallback && fallbackDecision.shouldFallback) {
     return sendTextViaQrFallback({
-      phoneNumberId: fallbackDecision.phoneRow?.id || phoneNumberId,
+      phoneNumberId: fallbackDecision.fallbackPhoneRow?.id || phoneNumberId,
       fromPhone,
       toPhone,
       body: interactivePayload.fallbackText,
@@ -7709,7 +7758,7 @@ export async function sendWhatsAppApiInteractiveMessage({
     if (allowQrFallback && retryDecision.shouldFallback) {
       logger.warn(`[WhatsApp API] Envio interactivo API fallo; usando QR para ${fromPhone}: ${retryDecision.reason}`)
       return sendTextViaQrFallback({
-        phoneNumberId: retryDecision.phoneRow?.id || phoneNumberId,
+        phoneNumberId: retryDecision.fallbackPhoneRow?.id || phoneNumberId,
         fromPhone,
         toPhone,
         body: interactivePayload.fallbackText,
@@ -8181,7 +8230,7 @@ export async function sendWhatsAppApiTextMessage({
   })
   if (allowQrFallback && fallbackDecision.shouldFallback) {
     return sendTextViaQrFallback({
-      phoneNumberId: fallbackDecision.phoneRow?.id || phoneNumberId,
+      phoneNumberId: fallbackDecision.fallbackPhoneRow?.id || phoneNumberId,
       fromPhone,
       toPhone,
       body,
@@ -8215,7 +8264,7 @@ export async function sendWhatsAppApiTextMessage({
     if (allowQrFallback && retryDecision.shouldFallback) {
       logger.warn(`[WhatsApp API] Envio API fallo; usando QR para ${fromPhone}: ${retryDecision.reason}`)
       return sendTextViaQrFallback({
-        phoneNumberId: retryDecision.phoneRow?.id || phoneNumberId,
+        phoneNumberId: retryDecision.fallbackPhoneRow?.id || phoneNumberId,
         fromPhone,
         toPhone,
         body,
@@ -8329,7 +8378,7 @@ export async function sendWhatsAppApiImageMessage({
   })
   if (allowQrFallback && fallbackDecision.shouldFallback) {
     return sendImageViaQrFallback({
-      phoneNumberId: fallbackDecision.phoneRow?.id || phoneNumberId,
+      phoneNumberId: fallbackDecision.fallbackPhoneRow?.id || phoneNumberId,
       fromPhone,
       toPhone,
       requestImage: {
@@ -8404,7 +8453,7 @@ export async function sendWhatsAppApiImageMessage({
     if (allowQrFallback && retryDecision.shouldFallback) {
       logger.warn(`[WhatsApp API] Envio de foto API fallo; usando QR para ${fromPhone}: ${retryDecision.reason}`)
       return sendImageViaQrFallback({
-        phoneNumberId: retryDecision.phoneRow?.id || phoneNumberId,
+        phoneNumberId: retryDecision.fallbackPhoneRow?.id || phoneNumberId,
         fromPhone,
         toPhone,
         requestImage: requestBody.image,
@@ -8535,7 +8584,7 @@ export async function sendWhatsAppApiDocumentMessage({
   })
   if (allowQrFallback && fallbackDecision.shouldFallback) {
     return sendDocumentViaQrFallback({
-      phoneNumberId: fallbackDecision.phoneRow?.id || phoneNumberId,
+      phoneNumberId: fallbackDecision.fallbackPhoneRow?.id || phoneNumberId,
       fromPhone,
       toPhone,
       requestDocument: {
@@ -8612,7 +8661,7 @@ export async function sendWhatsAppApiDocumentMessage({
     if (allowQrFallback && retryDecision.shouldFallback) {
       logger.warn(`[WhatsApp API] Envio de documento API fallo; usando QR para ${fromPhone}: ${retryDecision.reason}`)
       return sendDocumentViaQrFallback({
-        phoneNumberId: retryDecision.phoneRow?.id || phoneNumberId,
+        phoneNumberId: retryDecision.fallbackPhoneRow?.id || phoneNumberId,
         fromPhone,
         toPhone,
         requestDocument: {
@@ -8765,7 +8814,7 @@ export async function sendWhatsAppApiVideoMessage({
   })
   if (allowQrFallback && fallbackDecision.shouldFallback) {
     return sendVideoViaQrFallback({
-      phoneNumberId: fallbackDecision.phoneRow?.id || phoneNumberId,
+      phoneNumberId: fallbackDecision.fallbackPhoneRow?.id || phoneNumberId,
       fromPhone,
       toPhone,
       requestVideo: await buildQrRequestVideo(),
@@ -8838,7 +8887,7 @@ export async function sendWhatsAppApiVideoMessage({
     if (allowQrFallback && retryDecision.shouldFallback) {
       logger.warn(`[WhatsApp API] Envio de video API fallo; usando QR para ${fromPhone}: ${retryDecision.reason}`)
       return sendVideoViaQrFallback({
-        phoneNumberId: retryDecision.phoneRow?.id || phoneNumberId,
+        phoneNumberId: retryDecision.fallbackPhoneRow?.id || phoneNumberId,
         fromPhone,
         toPhone,
         requestVideo: providerVideo ? storedVideo : requestBody.video,
@@ -8956,7 +9005,7 @@ export async function sendWhatsAppApiAudioMessage({
   })
   if (allowQrFallback && fallbackDecision.shouldFallback) {
     return sendAudioViaQrFallback({
-      phoneNumberId: fallbackDecision.phoneRow?.id || phoneNumberId,
+      phoneNumberId: fallbackDecision.fallbackPhoneRow?.id || phoneNumberId,
       fromPhone,
       toPhone,
       requestAudio: {
@@ -9033,7 +9082,7 @@ export async function sendWhatsAppApiAudioMessage({
     if (allowQrFallback && retryDecision.shouldFallback) {
       logger.warn(`[WhatsApp API] Envio de audio API fallo; usando QR para ${fromPhone}: ${retryDecision.reason}`)
       return sendAudioViaQrFallback({
-        phoneNumberId: retryDecision.phoneRow?.id || phoneNumberId,
+        phoneNumberId: retryDecision.fallbackPhoneRow?.id || phoneNumberId,
         fromPhone,
         toPhone,
         requestAudio: {
