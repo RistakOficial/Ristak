@@ -125,20 +125,25 @@ jobs:
       - name: Install signing certificate and provisioning profile
         run: |
           CREDS="$RUNNER_TEMP/mobile-ios-credentials.json"
-          IOS_CERTIFICATE_BASE64="$(jq -r '.credentials.ios_distribution_certificate_base64' "$CREDS")"
-          IOS_CERTIFICATE_PASSWORD="$(jq -r '.credentials.ios_distribution_certificate_password' "$CREDS")"
+          IOS_CERTIFICATE_BASE64="$(jq -r '.credentials.ios_distribution_certificate_base64 // empty' "$CREDS")"
+          IOS_CERTIFICATE_PASSWORD="$(jq -r '.credentials.ios_distribution_certificate_password // empty' "$CREDS")"
+          IOS_PROFILE_BASE64="$(jq -r '.credentials.ios_appstore_provisioning_profile_base64 // empty' "$CREDS")"
           KEYCHAIN_PASSWORD="$(jq -r '.credentials.ios_ci_keychain_password // empty' "$CREDS")"
           test -n "$IOS_CERTIFICATE_BASE64"
           test -n "$IOS_CERTIFICATE_PASSWORD"
+          test -n "$IOS_PROFILE_BASE64"
           KEYCHAIN_PASSWORD="${KEYCHAIN_PASSWORD:-temporary-ci-keychain}"
 
           CERT_PATH="$RUNNER_TEMP/ios_distribution.p12"
+          CERT_PEM_PATH="$RUNNER_TEMP/ios_distribution.pem"
           PROFILE_DIR="$RUNNER_TEMP/profiles"
           PROFILE_PATH="$PROFILE_DIR/RistakAppStoreCI.mobileprovision"
           PROFILE_PLIST="$RUNNER_TEMP/ristak_appstore.plist"
           KEYCHAIN_PATH="$RUNNER_TEMP/app-signing.keychain-db"
 
-          echo "$IOS_CERTIFICATE_BASE64" | base64 --decode > "$CERT_PATH"
+          mkdir -p "$PROFILE_DIR"
+          printf '%s' "$IOS_CERTIFICATE_BASE64" | base64 --decode > "$CERT_PATH"
+          printf '%s' "$IOS_PROFILE_BASE64" | base64 --decode > "$PROFILE_PATH"
 
           security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
           security set-keychain-settings -lut 21600 "$KEYCHAIN_PATH"
@@ -147,23 +152,19 @@ jobs:
           security list-keychain -d user -s "$KEYCHAIN_PATH"
           security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
           security find-identity -v -p codesigning "$KEYCHAIN_PATH"
-          if ! security find-identity -v -p codesigning "$KEYCHAIN_PATH" | grep -Eq '"(Apple|iOS) Distribution:'; then
+          IOS_SIGNING_IDENTITY="$(security find-identity -v -p codesigning "$KEYCHAIN_PATH" | sed -nE 's/.*"((Apple|iOS) Distribution:.*)".*/\1/p' | head -n 1)"
+          if [ -z "$IOS_SIGNING_IDENTITY" ]; then
             echo "No Apple Distribution signing identity with private key was imported from the .p12 certificate."
             exit 1
           fi
 
-          gem install fastlane --no-document
-          mkdir -p "$PROFILE_DIR"
-          fastlane sigh \
-            --api_key_path "$RUNNER_TEMP/appstore/api_key.json" \
-            --app_identifier "$APP_BUNDLE_ID" \
-            --team_id "$APPLE_TEAM_ID" \
-            --platform ios \
-            --provisioning_name "Ristak App Store CI" \
-            --output_path "$PROFILE_DIR" \
-            --filename "RistakAppStoreCI.mobileprovision" \
-            --skip_certificate_verification true \
-            --force
+          export IOS_CERTIFICATE_PASSWORD
+          if ! openssl pkcs12 -in "$CERT_PATH" -clcerts -nokeys -passin env:IOS_CERTIFICATE_PASSWORD > "$CERT_PEM_PATH"; then
+            echo "Could not read the Apple Distribution certificate from the .p12 payload."
+            exit 1
+          fi
+          IOS_CERT_SHA1="$(openssl x509 -in "$CERT_PEM_PATH" -outform DER | shasum -a 1 | awk '{print toupper($1)}')"
+          test -n "$IOS_CERT_SHA1"
 
           security cms -D -i "$PROFILE_PATH" > "$PROFILE_PLIST"
           IOS_PROFILE_UUID="$(/usr/libexec/PlistBuddy -c 'Print UUID' "$PROFILE_PLIST")"
@@ -186,13 +187,42 @@ jobs:
             echo "Provisioning profile is a development profile; App Store builds require a distribution profile."
             exit 1
           fi
+          export IOS_CERT_SHA1 IOS_SIGNING_IDENTITY PROFILE_PLIST
+          python3 - <<'PY'
+          import hashlib
+          import os
+          import plistlib
+          import sys
+
+          with open(os.environ["PROFILE_PLIST"], "rb") as file:
+              profile = plistlib.load(file)
+
+          expected = os.environ["IOS_CERT_SHA1"].replace(":", "").upper()
+          profile_hashes = {
+              hashlib.sha1(certificate).hexdigest().upper()
+              for certificate in profile.get("DeveloperCertificates", [])
+          }
+
+          if profile.get("ProvisionedDevices"):
+              print("Provisioning profile contains provisioned devices; App Store builds require an App Store Connect profile, not Ad Hoc.")
+              sys.exit(1)
+
+          if expected not in profile_hashes:
+              profile_name = profile.get("Name", "unknown")
+              identity = os.environ["IOS_SIGNING_IDENTITY"]
+              print(f"Provisioning profile '{profile_name}' does not include the imported signing certificate '{identity}'.")
+              print("Regenerate/download the App Store profile in Apple Developer with that exact Apple Distribution certificate, then update Configuracion > Tiendas moviles with the new .mobileprovision base64.")
+              sys.exit(1)
+          PY
 
           mkdir -p "$HOME/Library/MobileDevice/Provisioning Profiles"
           cp "$PROFILE_PATH" "$HOME/Library/MobileDevice/Provisioning Profiles/${IOS_PROFILE_UUID}.mobileprovision"
+          gem install fastlane --no-document
           {
             echo "KEYCHAIN_PATH=$KEYCHAIN_PATH"
             echo "IOS_PROFILE_UUID=$IOS_PROFILE_UUID"
             echo "IOS_PROFILE_NAME=$IOS_PROFILE_NAME"
+            echo "IOS_SIGNING_IDENTITY=$IOS_SIGNING_IDENTITY"
           } >> "$GITHUB_ENV"
 
       - name: Set iOS version and build number
@@ -214,11 +244,11 @@ jobs:
             -sdk iphoneos \
             -destination 'generic/platform=iOS' \
             -archivePath ios/build/RistakChat.xcarchive \
-            -allowProvisioningUpdates \
-            -authenticationKeyPath "$ASC_KEY_PATH" \
-            -authenticationKeyID "$ASC_KEY_ID" \
-            -authenticationKeyIssuerID "$ASC_ISSUER_ID" \
+            CODE_SIGN_STYLE=Manual \
+            CODE_SIGN_IDENTITY="$IOS_SIGNING_IDENTITY" \
             DEVELOPMENT_TEAM="$APPLE_TEAM_ID" \
+            PROVISIONING_PROFILE="$IOS_PROFILE_UUID" \
+            PROVISIONING_PROFILE_SPECIFIER="$IOS_PROFILE_NAME" \
             OTHER_CODE_SIGN_FLAGS="--keychain $KEYCHAIN_PATH" \
             archive
 
@@ -232,8 +262,11 @@ jobs:
               "destination": "export",
               "manageAppVersionAndBuildNumber": False,
               "method": "app-store-connect",
-              "signingCertificate": "Apple Distribution",
-              "signingStyle": "automatic",
+              "provisioningProfiles": {
+                  os.environ["APP_BUNDLE_ID"]: os.environ["IOS_PROFILE_NAME"],
+              },
+              "signingCertificate": os.environ["IOS_SIGNING_IDENTITY"],
+              "signingStyle": "manual",
               "stripSwiftSymbols": True,
               "teamID": os.environ["APPLE_TEAM_ID"],
               "uploadSymbols": True,
@@ -246,11 +279,7 @@ jobs:
             -exportArchive \
             -archivePath ios/build/RistakChat.xcarchive \
             -exportPath ios/build/AppStore-CI \
-            -exportOptionsPlist "$RUNNER_TEMP/ExportOptions-AppStore-CI.plist" \
-            -allowProvisioningUpdates \
-            -authenticationKeyPath "$ASC_KEY_PATH" \
-            -authenticationKeyID "$ASC_KEY_ID" \
-            -authenticationKeyIssuerID "$ASC_ISSUER_ID"
+            -exportOptionsPlist "$RUNNER_TEMP/ExportOptions-AppStore-CI.plist"
 
       - name: Upload to App Store Connect
         env:

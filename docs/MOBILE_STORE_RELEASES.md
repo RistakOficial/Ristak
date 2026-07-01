@@ -33,6 +33,13 @@ iOS:
 - iOS App Store provisioning profile encoded as base64
 - iOS CI keychain password (optional)
 
+The iOS provisioning profile must be the App Store Connect profile for
+`com.ristak.app` and must include the exact Apple Distribution certificate stored
+above. If the `.p12` certificate is rotated, regenerate/download the App Store
+profile in Apple Developer with that same certificate and update this field too.
+CI installs the stored profile directly; it does not regenerate profiles by name
+inside GitHub Actions.
+
 Android:
 
 - Android release keystore encoded as base64

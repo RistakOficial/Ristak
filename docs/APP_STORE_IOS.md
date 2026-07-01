@@ -55,10 +55,15 @@ npm run mobile:ios:upload
 
 `mobile:ios:upload` uploads that archive to App Store Connect using `ios/App/ExportOptions-AppStore.plist`.
 
-If signing fails, open `frontend/ios/App/App.xcodeproj` in Xcode and check:
+GitHub Actions releases use the Apple Distribution `.p12` and App Store
+`.mobileprovision` stored in Ristak Installer under `Configuración > Tiendas
+móviles`. The provisioning profile must include the exact certificate from the
+stored `.p12`; App Store profiles only carry one distribution certificate.
+
+If local signing fails, open `frontend/ios/App/App.xcodeproj` in Xcode and check:
 
 - Target `App` uses team `Y2L8669JNL`.
-- Signing is automatic.
+- Release signing uses an App Store provisioning profile for `com.ristak.app`.
 - Push Notifications capability is enabled.
 - Bundle ID is still `com.ristak.app`.
 
