@@ -3141,6 +3141,16 @@ export const DesktopChat: React.FC = () => {
   useEffect(() => {
     const intervalId = window.setInterval(() => {
       void loadChats({ silent: true })
+      // Red de seguridad: la conversación ABIERTA también se reconcilia en el
+      // intervalo. Antes SOLO la lista se refrescaba aquí, así que si se perdía
+      // el frame SSE (proxy, reconexión, app en 2º plano) el globo se quedaba
+      // congelado hasta salir y volver a entrar. loadConversation es no-op
+      // visual cuando no hay cambios (areDesktopMessagesEquivalent), sin spinner
+      // ni salto de scroll.
+      const openContactId = activeContactIdRef.current
+      if (openContactId) {
+        void loadConversation(openContactId, { silent: true, useCache: false })
+      }
       void conversationalAgentService.listStates()
         .then((states) => {
           setAgentStates(mapAgentStatesByContactId(states))
@@ -3150,7 +3160,7 @@ export const DesktopChat: React.FC = () => {
     }, CHAT_REFRESH_INTERVAL_MS)
 
     return () => window.clearInterval(intervalId)
-  }, [loadChats])
+  }, [loadChats, loadConversation])
 
   const refreshFromLiveChatEvent = useCallback((event?: ChatLiveMessageEvent) => {
     if (chatLiveRefreshTimeoutRef.current !== null) {
@@ -3192,6 +3202,23 @@ export const DesktopChat: React.FC = () => {
     return subscribeToChatLiveEvents({
       onMessage: refreshFromLiveChatEvent
     })
+  }, [refreshFromLiveChatEvent])
+
+  // Al volver a la app/pestaña (o tras despertar de 2º plano) reconciliamos de
+  // inmediato lista + conversación abierta. Cubre el caso clásico: el stream SSE
+  // se congeló mientras la ventana estaba en 2º plano, llegó la notificación
+  // push, y al regresar el globo debe estar ya, sin tener que salir y entrar.
+  useEffect(() => {
+    const reconcileOnReturn = () => {
+      if (typeof document !== 'undefined' && document.visibilityState === 'hidden') return
+      refreshFromLiveChatEvent()
+    }
+    window.addEventListener('focus', reconcileOnReturn)
+    document.addEventListener('visibilitychange', reconcileOnReturn)
+    return () => {
+      window.removeEventListener('focus', reconcileOnReturn)
+      document.removeEventListener('visibilitychange', reconcileOnReturn)
+    }
   }, [refreshFromLiveChatEvent])
 
   useEffect(() => {

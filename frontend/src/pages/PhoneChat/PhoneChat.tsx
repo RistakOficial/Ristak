@@ -4069,6 +4069,10 @@ export const PhoneChat: React.FC = () => {
   const voiceAnimationFrameRef = useRef<number | null>(null)
   const voiceLastWaveUpdateRef = useRef(0)
   const chatInboxRefreshInFlightRef = useRef(false)
+  // Si llega un evento mientras ya hay un refresh en curso, NO lo descartamos:
+  // encolamos un re-run con el contactId más reciente (igual que el escritorio).
+  const chatInboxRefreshQueuedRef = useRef(false)
+  const chatInboxRefreshQueuedContactIdRef = useRef('')
   const chatPullRefreshHandlerRef = useRef<((payload: PhonePullReleasePayload) => void) | null>(null)
   const handlePhonePullRelease = useCallback((payload: PhonePullReleasePayload) => {
     chatPullRefreshHandlerRef.current?.(payload)
@@ -5911,7 +5915,15 @@ export const PhoneChat: React.FC = () => {
 
   const refreshChatInboxNow = useCallback(async (options: { contactId?: string; showIndicator?: boolean } = {}) => {
     if (accessState !== 'allowed') return
-    if (chatInboxRefreshInFlightRef.current) return
+    if (chatInboxRefreshInFlightRef.current) {
+      // Ya hay un refresh en curso: en vez de descartar este evento (bug que
+      // hacía que un mensaje llegado a mitad de refresh nunca apareciera en el
+      // hilo abierto hasta salir/entrar), lo encolamos y re-corremos al terminar
+      // con el contactId más reciente.
+      chatInboxRefreshQueuedRef.current = true
+      if (options.contactId) chatInboxRefreshQueuedContactIdRef.current = options.contactId
+      return
+    }
 
     chatInboxRefreshInFlightRef.current = true
     const showIndicator = options.showIndicator === true
@@ -5936,6 +5948,12 @@ export const PhoneChat: React.FC = () => {
     } finally {
       chatInboxRefreshInFlightRef.current = false
       if (showIndicator) setChatsRefreshing(false)
+      if (chatInboxRefreshQueuedRef.current) {
+        chatInboxRefreshQueuedRef.current = false
+        const queuedContactId = chatInboxRefreshQueuedContactIdRef.current
+        chatInboxRefreshQueuedContactIdRef.current = ''
+        void refreshChatInboxNow(queuedContactId ? { contactId: queuedContactId } : {})
+      }
     }
   }, [accessState, loadAgentData, loadChats, loadConversation])
 
@@ -6601,6 +6619,30 @@ export const PhoneChat: React.FC = () => {
 
     return () => window.clearInterval(interval)
   }, [accessState, activeContact?.id, conversationVisible, loadConversation, shouldRefreshReceipts])
+
+  // (Realtime) Red de seguridad del hilo ABIERTO, INDEPENDIENTE de acuses. El
+  // interval de arriba solo corre si hay salientes con acuse pendiente
+  // (shouldRefreshReceipts), así que un chat con puros mensajes ENTRANTES no se
+  // reconciliaba nunca y el globo se quedaba congelado hasta salir/entrar si se
+  // perdía el frame SSE. Aquí reconciliamos la conversación abierta cada 7s y al
+  // volver a foco/visibilidad (p. ej. tras tocar la notificación push). Es no-op
+  // visual cuando no hay cambios (areMessagesEquivalent), sin spinner ni salto.
+  useEffect(() => {
+    if (!activeContact?.id || accessState !== 'allowed' || !conversationVisible) return
+    const openId = activeContact.id
+    const reconcileOpenThread = () => {
+      if (document.visibilityState !== 'visible') return
+      void loadConversation(openId, { silent: true, useCache: false })
+    }
+    const interval = window.setInterval(reconcileOpenThread, 7000)
+    window.addEventListener('focus', reconcileOpenThread)
+    document.addEventListener('visibilitychange', reconcileOpenThread)
+    return () => {
+      window.clearInterval(interval)
+      window.removeEventListener('focus', reconcileOpenThread)
+      document.removeEventListener('visibilitychange', reconcileOpenThread)
+    }
+  }, [accessState, activeContact?.id, conversationVisible, loadConversation])
 
   useEffect(() => {
     if (!activeContact?.id || accessState !== 'allowed' || !conversationVisible || !scheduledRefreshIntervalMs) return
