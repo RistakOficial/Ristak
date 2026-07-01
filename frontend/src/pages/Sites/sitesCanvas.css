@@ -452,10 +452,9 @@
 /* WYSIWYG del checkout embebido: espeja el render publicado, honrando los vars de
    diseño del bloque (--rstk-block-*) para que la pestaña Diseño lo afecte en vivo. */
 .rstkCanvas .rstk-checkout-card {
-  display: grid;
-  gap: 14px;
+  box-sizing: border-box;
   width: 100%;
-  max-width: var(--rstk-checkout-width, 460px);
+  max-width: var(--rstk-checkout-width, 504px);
   margin-inline: auto;
   padding: var(--rstk-block-pad, 22px);
   background: var(--rstk-block-bg, var(--rstk-surface));
@@ -464,7 +463,19 @@
   border-radius: var(--rstk-block-radius, var(--rstk-radius-lg));
   text-align: left;
 }
-.rstkCanvas .rstk-payment-banner .rstk-checkout-card { max-width: var(--rstk-checkout-width, 620px); }
+.rstkCanvas .rstk-checkout-card *,
+.rstkCanvas .rstk-checkout-card *::before,
+.rstkCanvas .rstk-checkout-card *::after { box-sizing: border-box; }
+.rstkCanvas .rstk-checkout-inner {
+  box-sizing: border-box;
+  width: 100%;
+  max-width: var(--rstk-checkout-content-width, 456px);
+  margin-inline: auto;
+  min-width: 0;
+  display: grid;
+  gap: 16px;
+}
+.rstkCanvas .rstk-payment-banner .rstk-checkout-card { max-width: var(--rstk-checkout-width, 672px); }
 .rstkCanvas .rstk-payment-minimal .rstk-checkout-card {
   border-width: 0;
   background: transparent;
@@ -505,7 +516,7 @@
   background: color-mix(in srgb, var(--rstk-accent) 12%, transparent);
   border: 1px solid color-mix(in srgb, var(--rstk-accent) 30%, var(--rstk-border));
 }
-.rstkCanvas .rstk-checkout-body { display: grid; gap: 14px; }
+.rstkCanvas .rstk-checkout-body { display: grid; gap: 14px; min-width: 0; max-width: 100%; }
 /* Mock de campos (fallback: Conekta/MP, o mientras Stripe carga el Payment Element real).
    Usa tokens del tema para adaptarse a claro/oscuro; solo las marcas llevan su color. */
 .rstkCanvas .rstk-checkout-fields-mock { display: grid; gap: 12px; }

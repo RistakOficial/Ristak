@@ -15447,6 +15447,15 @@ function buildPaymentCheckoutRuntimeScript() {
     }
     function readToken(name) { try { return getComputedStyle(document.body).getPropertyValue(name).trim(); } catch (e) { return ''; } }
     function isDark() { return !!(document.body && document.body.classList && document.body.classList.contains('rstk-dark')); }
+    // Brillo de un color rgb/rgba (0=negro, 1=blanco). Transparente => se trata como claro.
+    function luminanceOf(color) {
+      var m = String(color || '').match(/rgba?\(([^)]+)\)/);
+      if (!m) return 1;
+      var p = m[1].split(',');
+      var a = p.length > 3 ? parseFloat(p[3]) : 1;
+      if (!(a > 0.15)) return 1;
+      return (0.299 * parseFloat(p[0]) + 0.587 * parseFloat(p[1]) + 0.114 * parseFloat(p[2])) / 255;
+    }
     function money(amount, currency) {
       var n = Number(amount) || 0;
       try { return new Intl.NumberFormat('es-MX', { style: 'currency', currency: currency || 'MXN' }).format(n); }
@@ -15562,12 +15571,18 @@ function buildPaymentCheckoutRuntimeScript() {
         return loadScript(STRIPE_JS, function () { return !!window.Stripe; }).then(function () {
           if (!d.clientSecret) throw new Error('Stripe no está listo. Recarga la página.');
           var stripe = window.Stripe(d.publishableKey);
-          var appearance = { theme: isDark() ? 'night' : 'stripe', variables: {
-            colorPrimary: readToken('--rstk-accent') || undefined,
-            colorText: readToken('--rstk-ink') || undefined,
-            colorBackground: readToken('--rstk-input-bg') || undefined,
-            borderRadius: readToken('--rstk-radius') || undefined
-          } };
+          // Auto-adapta el tema de Stripe al fondo REAL de la tarjeta (custom incluido):
+          // fondo oscuro -> tema 'night' (labels claros, legibles); claro -> 'stripe'.
+          var payCard = root.querySelector('.rstk-checkout-card');
+          var payDark = (payCard && luminanceOf(getComputedStyle(payCard).backgroundColor) < 0.5) || isDark();
+          var appearance = payDark
+            ? { theme: 'night', variables: { colorPrimary: readToken('--rstk-accent') || undefined, borderRadius: readToken('--rstk-radius') || undefined } }
+            : { theme: 'stripe', variables: {
+                colorPrimary: readToken('--rstk-accent') || undefined,
+                colorText: readToken('--rstk-ink') || undefined,
+                colorBackground: readToken('--rstk-input-bg') || undefined,
+                borderRadius: readToken('--rstk-radius') || undefined
+              } };
           var elements = stripe.elements({ clientSecret: d.clientSecret, appearance: appearance, locale: 'es' });
           var paymentElement = elements.create('payment', { layout: 'tabs' });
           paymentElement.mount(els.fields);
@@ -18426,27 +18441,29 @@ function renderPaymentBlock(block = {}, context = {}) {
       data-post-message="${escapeHtml(post.message)}"
       ${isTestBlock ? 'data-test-mode="true"' : ''}>
       <div class="rstk-checkout-card">
-        <div class="rstk-checkout-head">
-          <span class="rstk-payment-kicker">${escapeHtml(getPaymentGatewayLabel(paymentGate.gateway))}</span>
-          <strong class="rstk-checkout-title">${escapeHtml(productName)}</strong>
-          ${description ? `<p class="rstk-checkout-desc">${escapeHtml(description)}</p>` : ''}
-          <span class="rstk-checkout-amount">${escapeHtml(amountText)}</span>
-        </div>
-        ${isTestBlock ? '<p class="rstk-checkout-testbadge">Modo prueba · no es un cobro real</p>' : ''}
-        <div class="rstk-checkout-body" data-rstk-checkout-body>
-          <div class="rstk-checkout-loading" data-rstk-checkout-loading>
-            <span class="rstk-checkout-spinner" aria-hidden="true"></span>
-            <span>Cargando pago seguro…</span>
+        <div class="rstk-checkout-inner">
+          <div class="rstk-checkout-head">
+            <span class="rstk-payment-kicker">${escapeHtml(getPaymentGatewayLabel(paymentGate.gateway))}</span>
+            <strong class="rstk-checkout-title">${escapeHtml(productName)}</strong>
+            ${description ? `<p class="rstk-checkout-desc">${escapeHtml(description)}</p>` : ''}
+            <span class="rstk-checkout-amount">${escapeHtml(amountText)}</span>
           </div>
-          <div class="rstk-checkout-fields" data-rstk-checkout-fields hidden></div>
-          <div class="rstk-checkout-installments" data-rstk-checkout-installments hidden></div>
-          <button type="button" class="rstk-button-link rstk-checkout-pay" data-rstk-checkout-pay hidden>
-            <span data-rstk-checkout-pay-label>${escapeHtml(buttonLabel)} · ${escapeHtml(amountText)}</span>
-          </button>
-          <p class="rstk-checkout-message" data-rstk-checkout-message role="status" hidden></p>
-          <p class="rstk-checkout-secure">Pago seguro. La tarjeta se captura en campos cifrados del proveedor.</p>
+          ${isTestBlock ? '<p class="rstk-checkout-testbadge">Modo prueba · no es un cobro real</p>' : ''}
+          <div class="rstk-checkout-body" data-rstk-checkout-body>
+            <div class="rstk-checkout-loading" data-rstk-checkout-loading>
+              <span class="rstk-checkout-spinner" aria-hidden="true"></span>
+              <span>Cargando pago seguro…</span>
+            </div>
+            <div class="rstk-checkout-fields" data-rstk-checkout-fields hidden></div>
+            <div class="rstk-checkout-installments" data-rstk-checkout-installments hidden></div>
+            <button type="button" class="rstk-button-link rstk-checkout-pay" data-rstk-checkout-pay hidden>
+              <span data-rstk-checkout-pay-label>${escapeHtml(buttonLabel)} · ${escapeHtml(amountText)}</span>
+            </button>
+            <p class="rstk-checkout-message" data-rstk-checkout-message role="status" hidden></p>
+            <p class="rstk-checkout-secure">Pago seguro. La tarjeta se captura en campos cifrados del proveedor.</p>
+          </div>
+          <div class="rstk-checkout-success" data-rstk-checkout-success hidden></div>
         </div>
-        <div class="rstk-checkout-success" data-rstk-checkout-success hidden></div>
       </div>
     </section>
   `
@@ -19767,9 +19784,11 @@ const RSTK_BASE_CSS = `
     margin-right:var(--rstk-media-margin-right,auto);
   }
 
-  .rstk-checkout-card{display:grid;gap:14px;width:100%;max-width:var(--rstk-checkout-width,460px);margin-inline:auto;padding:var(--rstk-block-pad,22px);background:var(--rstk-block-bg,var(--rstk-surface));color:var(--rstk-block-text,var(--rstk-ink));border:var(--rstk-block-border-width,1px) solid var(--rstk-block-border,var(--rstk-border));border-radius:var(--rstk-block-radius,var(--rstk-radius-lg));box-shadow:var(--rstk-shadow,none);text-align:left}
+  .rstk-checkout-card{box-sizing:border-box;width:100%;max-width:var(--rstk-checkout-width,504px);margin-inline:auto;padding:var(--rstk-block-pad,22px);background:var(--rstk-block-bg,var(--rstk-surface));color:var(--rstk-block-text,var(--rstk-ink));border:var(--rstk-block-border-width,1px) solid var(--rstk-block-border,var(--rstk-border));border-radius:var(--rstk-block-radius,var(--rstk-radius-lg));box-shadow:var(--rstk-shadow,none);text-align:left}
+  .rstk-checkout-card *,.rstk-checkout-card *::before,.rstk-checkout-card *::after{box-sizing:border-box}
+  .rstk-checkout-inner{box-sizing:border-box;width:100%;max-width:var(--rstk-checkout-content-width,456px);margin-inline:auto;min-width:0;display:grid;gap:16px}
   .rstk-block-style:has(> .rstk-payment-block){background:transparent;border:0;padding:0;box-shadow:none}
-  .rstk-payment-banner .rstk-checkout-card{max-width:var(--rstk-checkout-width,640px)}
+  .rstk-payment-banner .rstk-checkout-card{max-width:var(--rstk-checkout-width,672px)}
   .rstk-payment-minimal .rstk-checkout-card{border:0;box-shadow:none;padding:0;background:transparent}
   .rstkBlockFullWidth .rstk-checkout-card{max-width:none}
   .rstk-checkout-head{display:grid;gap:4px}
@@ -19778,16 +19797,19 @@ const RSTK_BASE_CSS = `
   .rstk-checkout-desc{margin:0;color:var(--rstk-muted);font-size:.92rem;line-height:1.4}
   .rstk-checkout-amount{color:var(--rstk-ink);font-size:1.5rem;font-weight:800;margin-top:2px}
   .rstk-checkout-testbadge{margin:0;justify-self:start;padding:4px 10px;border-radius:999px;font-size:.72rem;font-weight:700;color:var(--rstk-ink);background:color-mix(in srgb,var(--rstk-accent) 12%,transparent);border:1px solid color-mix(in srgb,var(--rstk-accent) 30%,var(--rstk-border))}
-  .rstk-checkout-body{display:grid;gap:14px}
+  .rstk-checkout-body{display:grid;gap:14px;min-width:0;max-width:100%}
   .rstk-checkout-loading{display:flex;align-items:center;gap:10px;color:var(--rstk-muted);font-size:.9rem;padding:8px 0}
   .rstk-checkout-spinner{width:18px;height:18px;border-radius:50%;border:2px solid color-mix(in srgb,var(--rstk-ink) 20%,transparent);border-top-color:var(--rstk-accent);animation:rstk-checkout-spin .7s linear infinite}
   @keyframes rstk-checkout-spin{to{transform:rotate(360deg)}}
-  .rstk-checkout-fields{display:grid;gap:10px;min-height:20px}
+  .rstk-checkout-fields{display:grid;gap:10px;min-height:20px;min-width:0;max-width:100%}
   .rstk-checkout-installments{display:grid;gap:6px}
   .rstk-checkout-select{width:100%;min-height:44px;padding:0 12px;background:var(--rstk-input-bg);color:var(--rstk-input-ink,var(--rstk-ink));border:1px solid var(--rstk-input-border);border-radius:var(--rstk-radius);font:inherit;font-size:.92rem}
   .rstk-checkout-pay{display:inline-flex;align-items:center;justify-content:center;width:100%;min-height:48px;padding:0 18px;border:0;border-radius:var(--rstk-btn-radius,var(--rstk-radius));background:var(--rstk-accent);color:var(--rstk-on-accent,#fff);font:inherit;font-size:1rem;font-weight:var(--rstk-btn-weight,700);cursor:pointer;transition:filter .15s var(--rstk-ease,ease),opacity .15s}
   .rstk-checkout-pay:hover{filter:brightness(1.05)}
   .rstk-checkout-pay:disabled{opacity:.6;cursor:default}
+  /* button.<clase> gana en especificidad al legacy .rstk-payment-block .rstk-button-link
+     (que alineaba el botón a la derecha), sin importar el orden en la hoja. */
+  .rstk-payment-block button.rstk-checkout-pay{justify-self:stretch;width:100%;max-width:100%;margin-inline:0}
   .rstk-checkout-message{margin:0;font-size:.88rem;line-height:1.4;padding:10px 12px;border-radius:var(--rstk-radius);border:1px solid var(--rstk-border);color:var(--rstk-ink);background:color-mix(in srgb,var(--rstk-ink) 4%,transparent)}
   .rstk-checkout-message[data-kind="success"]{color:var(--rstk-accent);border-color:color-mix(in srgb,var(--rstk-accent) 35%,var(--rstk-border));background:color-mix(in srgb,var(--rstk-accent) 8%,transparent)}
   .rstk-checkout-message[data-kind="error"]{color:var(--rstk-danger,#d64545);border-color:color-mix(in srgb,var(--rstk-danger,#d64545) 35%,var(--rstk-border));background:color-mix(in srgb,var(--rstk-danger,#d64545) 8%,transparent)}

@@ -33,6 +33,16 @@ function getPreviewPublishableKey(): Promise<string> {
   return publishableKeyFetch
 }
 
+// Brillo de un color rgb/rgba (0=negro, 1=blanco). Transparente => se trata como claro.
+function luminanceOf(color: string): number {
+  const m = String(color || '').match(/rgba?\(([^)]+)\)/)
+  if (!m) return 1
+  const p = m[1].split(',')
+  const a = p.length > 3 ? parseFloat(p[3]) : 1
+  if (!(a > 0.15)) return 1
+  return (0.299 * parseFloat(p[0]) + 0.587 * parseFloat(p[1]) + 0.114 * parseFloat(p[2])) / 255
+}
+
 interface StripePaymentElementPreviewProps {
   amount: number
   currency: string
@@ -58,7 +68,8 @@ export const StripePaymentElementPreview: React.FC<StripePaymentElementPreviewPr
     return () => { active = false }
   }, [])
 
-  // Lee los tokens del lienzo para replicar EXACTO la apariencia del checkout en vivo.
+  // Lee los tokens del lienzo para replicar EXACTO la apariencia del checkout en vivo,
+  // y auto-adapta el tema al fondo REAL de la tarjeta (custom incluido) para legibilidad.
   useLayoutEffect(() => {
     const el = containerRef.current
     if (!el) return
@@ -67,17 +78,23 @@ export const StripePaymentElementPreview: React.FC<StripePaymentElementPreviewPr
       const value = cs.getPropertyValue(name).trim()
       return value || undefined
     }
-    const dark = Boolean(el.closest('.rstk-dark'))
-    setAppearance({
-      theme: dark ? 'night' : 'stripe',
-      variables: {
-        colorPrimary: token('--rstk-accent'),
-        colorText: token('--rstk-ink'),
-        colorBackground: token('--rstk-input-bg'),
-        borderRadius: token('--rstk-radius'),
-      },
-    })
-  }, [stripePromise])
+    const card = el.closest('.rstk-checkout-card')
+    const cardBg = card ? getComputedStyle(card).backgroundColor : ''
+    const dark = luminanceOf(cardBg) < 0.5 || Boolean(el.closest('.rstk-dark'))
+    setAppearance(
+      dark
+        ? { theme: 'night', variables: { colorPrimary: token('--rstk-accent'), borderRadius: token('--rstk-radius') } }
+        : {
+            theme: 'stripe',
+            variables: {
+              colorPrimary: token('--rstk-accent'),
+              colorText: token('--rstk-ink'),
+              colorBackground: token('--rstk-input-bg'),
+              borderRadius: token('--rstk-radius'),
+            },
+          },
+    )
+  }, [stripePromise, amount, currency])
 
   const options = useMemo(
     () => ({

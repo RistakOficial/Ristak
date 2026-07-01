@@ -32212,32 +32212,34 @@ const CanvasPreviewBlock: React.FC<CanvasPreviewBlockProps> = ({
     return (
       <section className={`rstk-payment-block rstk-payment-${layout}`}>
         <div className="rstk-checkout-card">
-          <div className="rstk-checkout-head">
-            <span className="rstk-payment-kicker">{getPaymentGatewayLabel(paymentGate.gateway)}</span>
-            <strong className="rstk-checkout-title">{productName}</strong>
-            {description ? <p className="rstk-checkout-desc">{description}</p> : null}
-            <span className="rstk-checkout-amount">{amountText}</span>
-          </div>
-          {isTest && <p className="rstk-checkout-testbadge">Modo prueba · no es un cobro real</p>}
-          <div className="rstk-checkout-body">
-            {isStripe ? (
-              <StripePaymentElementPreview
-                amount={paymentGate.amount}
-                currency={paymentGate.currency}
-                fallback={mockFields}
-              />
-            ) : mockFields}
-            {showMsi && (
-              <div className="rstk-checkout-installments">
-                <div className="rstk-checkout-select rstk-mock-select" aria-hidden="true">
-                  <span>{paymentGate.msi.maxInstallments} meses sin intereses</span>
+          <div className="rstk-checkout-inner">
+            <div className="rstk-checkout-head">
+              <span className="rstk-payment-kicker">{getPaymentGatewayLabel(paymentGate.gateway)}</span>
+              <strong className="rstk-checkout-title">{productName}</strong>
+              {description ? <p className="rstk-checkout-desc">{description}</p> : null}
+              <span className="rstk-checkout-amount">{amountText}</span>
+            </div>
+            {isTest && <p className="rstk-checkout-testbadge">Modo prueba · no es un cobro real</p>}
+            <div className="rstk-checkout-body">
+              {isStripe ? (
+                <StripePaymentElementPreview
+                  amount={paymentGate.amount}
+                  currency={paymentGate.currency}
+                  fallback={mockFields}
+                />
+              ) : mockFields}
+              {showMsi && (
+                <div className="rstk-checkout-installments">
+                  <div className="rstk-checkout-select rstk-mock-select" aria-hidden="true">
+                    <span>{paymentGate.msi.maxInstallments} meses sin intereses</span>
+                  </div>
                 </div>
-              </div>
-            )}
-            <button type="button" className="rstk-button-link rstk-checkout-pay" disabled>
-              <SubmitButtonContent label={`${buttonLabel} · ${amountText}`} settings={settings} />
-            </button>
-            <p className="rstk-checkout-secure">Pago seguro. La tarjeta se captura en campos cifrados del proveedor.</p>
+              )}
+              <button type="button" className="rstk-button-link rstk-checkout-pay" disabled>
+                <SubmitButtonContent label={`${buttonLabel} · ${amountText}`} settings={settings} />
+              </button>
+              <p className="rstk-checkout-secure">Pago seguro. La tarjeta se captura en campos cifrados del proveedor.</p>
+            </div>
           </div>
         </div>
       </section>
