@@ -288,6 +288,7 @@ function extractCommentEvent({ objectType, entry, change, config = {} }) {
     permalink: cleanString(value.permalink_url || value.permalink),
     verb,
     isEcho,
+    authorId,
     authorName,
     authorUsername,
     raw: change
@@ -308,9 +309,27 @@ async function softRemoveComment(comment) {
 // El webhook de comentarios trae from.{id,name} pero NO la foto. Para FB la
 // obtenemos consultando el propio comment_id (from{picture}) con el token de
 // Página. IG no expone foto del comentarista por esta vía (se queda con username).
-async function fetchMetaCommentAuthorProfile({ platform, commentId, accessToken }) {
-  if (!accessToken || !commentId || platform === 'instagram') return {}
+async function fetchMetaCommentAuthorProfile({ platform, commentId, authorId, accessToken }) {
+  if (!accessToken) return {}
   try {
+    if (platform === 'instagram') {
+      // IG: el autor del comentario se consulta por su id (IGSID) igual que un DM
+      // de IG (name,username,profile_pic). El comment_id/from no trae foto en IG.
+      if (!authorId) return {}
+      const data = await metaSocialGraphRequest(`/${encodeURIComponent(authorId)}`, {
+        token: accessToken,
+        query: { fields: 'name,username,profile_pic' }
+      })
+      return {
+        name: cleanString(data?.name),
+        username: cleanString(data?.username),
+        profilePictureUrl: cleanString(data?.profile_pic)
+      }
+    }
+    // Facebook: vía el comment_id (from{picture}). OJO: Meta suele OCULTAR la foto
+    // (y el from) de comentaristas ajenos por privacidad — el nombre igual viene
+    // en el webhook, así que este fetch es best-effort para la foto.
+    if (!commentId) return {}
     const data = await metaSocialGraphRequest(`/${encodeURIComponent(commentId)}`, {
       token: accessToken,
       query: { fields: 'from{id,name,picture}' }
@@ -321,7 +340,7 @@ async function fetchMetaCommentAuthorProfile({ platform, commentId, accessToken 
       profilePictureUrl: cleanString(from.picture?.data?.url)
     }
   } catch (error) {
-    logger.warn(`No se pudo leer perfil del comentarista ${commentId}: ${error.message}`)
+    logger.warn(`No se pudo leer perfil del comentarista (${platform}): ${error.message}`)
     return {}
   }
 }
@@ -1241,11 +1260,12 @@ export async function processMetaSocialWebhook({ payload = {}, rawBody = '', sig
           const commentAuthor = await fetchMetaCommentAuthorProfile({
             platform: comment.platform,
             commentId: comment.commentId,
+            authorId: comment.authorId,
             accessToken: await resolveMetaPageTokenSafe(config)
           })
           const profile = {
             name: commentAuthor.name || comment.authorName,
-            username: comment.authorUsername,
+            username: commentAuthor.username || comment.authorUsername,
             profilePictureUrl: commentAuthor.profilePictureUrl || '',
             raw: change
           }
