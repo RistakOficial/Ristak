@@ -36210,8 +36210,8 @@ const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
       <AccordionSection id="edit-payment-gate" title="Cobro" defaultGroupOpen>
         <PaymentGateControls
           value={getPaymentGateFromSettings(settings, paymentCurrencyFallback)}
-          title="Pasarela de pago"
-          description="La persona debe completar este pago para continuar."
+          title="Realizar pago obligatorio para continuar"
+          description="Tu cliente debe completar este pago para avanzar."
           onChange={(paymentGate) => onPatchSettings({ paymentGate })}
           onCommit={onSave}
           currencyFallback={paymentCurrencyFallback}

@@ -135,7 +135,6 @@ export const PaymentGateControls: React.FC<PaymentGateControlsProps> = ({
   const [integrationsStatus, setIntegrationsStatus] = useState<IntegrationsStatus | null>(() => readCachedIntegrationsStatus())
   const config = useMemo(() => normalizePaymentGateConfig(value, currencyFallback), [currencyFallback, value])
   const selectedGateway = gatewayOptions.find(option => option.value === config.gateway) || gatewayOptions[0]
-  const selectedGatewayConnected = isGatewayConnected(integrationsStatus, config.gateway)
 
   useEffect(() => {
     let active = true
@@ -179,6 +178,29 @@ export const PaymentGateControls: React.FC<PaymentGateControlsProps> = ({
 
       {config.enabled && (
         <div className={styles.body}>
+          <div className={styles.field}>
+            <div className={styles.toggleRow}>
+              <div className={styles.toggleCopy}>
+                <strong>Realizar cobro modo test</strong>
+                <span>Cobra en modo prueba aunque la plataforma esté en vivo.</span>
+              </div>
+              <Switch
+                checked={config.mode === 'test'}
+                onChange={(checked) => {
+                  patchConfig({ mode: checked ? 'test' : 'inherit' })
+                  window.setTimeout(() => { onCommit?.() }, 0)
+                }}
+                aria-label={config.mode === 'test' ? 'Desactivar cobro modo test' : 'Activar cobro modo test'}
+              />
+            </div>
+            {config.mode === 'test' && (
+              <p className={styles.testNote}>
+                <FlaskConical size={15} />
+                Este bloque está en modo prueba. Los pagos aquí no serán cobros reales.
+              </p>
+            )}
+          </div>
+
           <div className={styles.grid}>
             <label className={styles.field}>
               <span>Pasarela</span>
@@ -188,14 +210,10 @@ export const PaymentGateControls: React.FC<PaymentGateControlsProps> = ({
                 onBlur={onCommit}
                 options={gatewayOptions.map(option => ({
                   value: option.value,
-                  label: option.label,
+                  label: `${option.label} · ${isGatewayConnected(integrationsStatus, option.value) ? 'Conectada' : 'Sin conectar'}`,
                   icon: <PaymentPlatformLogo platform={option.logo} size="sm" decorative className={styles.gatewayLogo} />
                 }))}
               />
-              <small className={styles.gatewayStatus} data-connected={selectedGatewayConnected ? 'true' : undefined}>
-                <PaymentPlatformLogo platform={selectedGateway.logo} size="sm" decorative className={styles.gatewayLogo} />
-                {selectedGatewayConnected ? 'Conectada' : 'Pendiente de conectar'}
-              </small>
             </label>
 
             <label className={styles.field}>
@@ -205,16 +223,6 @@ export const PaymentGateControls: React.FC<PaymentGateControlsProps> = ({
                 min="0"
                 step="0.01"
                 onValueChange={(amount) => patchConfig({ amount })}
-                onBlur={onCommit}
-              />
-            </label>
-
-            <label className={styles.field}>
-              <span>Moneda</span>
-              <input
-                value={config.currency}
-                maxLength={3}
-                onChange={(event) => patchConfig({ currency: event.target.value.toUpperCase() })}
                 onBlur={onCommit}
               />
             </label>
@@ -297,28 +305,6 @@ export const PaymentGateControls: React.FC<PaymentGateControlsProps> = ({
             </div>
           )}
 
-          <div className={styles.field}>
-            <div className={styles.toggleRow}>
-              <div className={styles.toggleCopy}>
-                <strong>Modo prueba en este bloque</strong>
-                <span>Cobra en modo prueba aunque la plataforma esté en vivo.</span>
-              </div>
-              <Switch
-                checked={config.mode === 'test'}
-                onChange={(checked) => {
-                  patchConfig({ mode: checked ? 'test' : 'inherit' })
-                  window.setTimeout(() => { onCommit?.() }, 0)
-                }}
-                aria-label={config.mode === 'test' ? 'Desactivar modo prueba del bloque' : 'Activar modo prueba del bloque'}
-              />
-            </div>
-            {config.mode === 'test' && (
-              <p className={styles.testNote}>
-                <FlaskConical size={15} />
-                Este bloque está en modo prueba. Los pagos aquí no serán cobros reales.
-              </p>
-            )}
-          </div>
         </div>
       )}
     </div>

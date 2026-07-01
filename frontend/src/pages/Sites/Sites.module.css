@@ -21402,15 +21402,15 @@
 .paymentTestBanner {
   display: flex;
   align-items: flex-start;
-  gap: 8px;
-  padding: 10px 12px;
-  margin-bottom: 4px;
+  gap: 10px;
+  padding: 14px 16px;
+  margin: 4px 0 12px;
   border: 1px solid color-mix(in srgb, var(--warn) 35%, var(--border));
-  border-radius: var(--radius-ctl);
+  border-radius: var(--radius-card, var(--radius-ctl));
   background: color-mix(in srgb, var(--warn) 10%, var(--surface));
   color: var(--text-dim);
-  font-size: 12px;
-  line-height: 1.4;
+  font-size: 12.5px;
+  line-height: 1.5;
 }
 
 .paymentTestBanner svg {
