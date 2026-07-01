@@ -5153,8 +5153,14 @@ async function upsertMessage({ payload, message, direction, businessPhoneHints =
       status = COALESCE(NULLIF(excluded.status, ''), whatsapp_api_messages.status),
       business_echo = COALESCE(excluded.business_echo, whatsapp_api_messages.business_echo),
       relay_event_id = COALESCE(NULLIF(excluded.relay_event_id, ''), whatsapp_api_messages.relay_event_id),
-      error_code = COALESCE(NULLIF(excluded.error_code, ''), whatsapp_api_messages.error_code),
-      error_message = COALESCE(NULLIF(excluded.error_message, ''), whatsapp_api_messages.error_message),
+      error_code = CASE
+        WHEN LOWER(COALESCE(excluded.transport, whatsapp_api_messages.transport, '')) = 'qr' THEN NULL
+        ELSE COALESCE(NULLIF(excluded.error_code, ''), whatsapp_api_messages.error_code)
+      END,
+      error_message = CASE
+        WHEN LOWER(COALESCE(excluded.transport, whatsapp_api_messages.transport, '')) = 'qr' THEN NULL
+        ELSE COALESCE(NULLIF(excluded.error_message, ''), whatsapp_api_messages.error_message)
+      END,
       message_timestamp = COALESCE(excluded.message_timestamp, whatsapp_api_messages.message_timestamp),
       raw_payload_json = COALESCE(NULLIF(excluded.raw_payload_json, ''), whatsapp_api_messages.raw_payload_json),
       context_json = COALESCE(NULLIF(excluded.context_json, 'null'), whatsapp_api_messages.context_json),

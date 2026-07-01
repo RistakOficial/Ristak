@@ -367,8 +367,9 @@ test('webhook fallido repetido conserva el globo respaldado por QR', async () =>
       INSERT INTO whatsapp_api_messages (
         id, provider, ycloud_message_id, contact_id, phone, from_phone, to_phone,
         business_phone, transport, routing_reason, direction, message_type,
-        message_text, status, raw_payload_json, message_timestamp, created_at, updated_at
-      ) VALUES (?, 'ycloud', ?, ?, ?, ?, ?, ?, 'qr', ?, 'outbound', 'text', ?, 'sent', ?, ?, ?, ?)
+        message_text, status, error_code, error_message, raw_payload_json,
+        message_timestamp, created_at, updated_at
+      ) VALUES (?, 'ycloud', ?, ?, ?, ?, ?, ?, 'qr', ?, 'outbound', 'text', ?, 'sent', '131047', ?, ?, ?, ?, ?)
     `, [
       messageId,
       messageId,
@@ -379,6 +380,7 @@ test('webhook fallido repetido conserva el globo respaldado por QR', async () =>
       businessPhone,
       fallbackReason,
       'Hola, seguimos aquí',
+      fallbackReason,
       rawPayload,
       messageAt,
       messageAt,

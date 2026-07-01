@@ -291,9 +291,11 @@ conectado. Si el respaldo QR confirma el envio, el historial y la respuesta al
 frontend deben quedar como mensaje `qr` exitoso, sin exponer el error de la API
 en el globo del chat. Si Baileys captura despues el eco saliente de un mensaje
 que coincide con un registro API fallido, ese registro debe repararse como
-enviado por `qr`, limpiando `error_code` y `error_message`. Solo se guarda error
-visible cuando no existe respaldo QR usable o cuando el respaldo QR tambien
-falla.
+enviado por `qr`, limpiando `error_code` y `error_message`. Si despues llega un
+webhook tardio de WhatsApp API con estado `failed` para un mensaje que ya quedo
+resuelto por QR, el historial debe conservar el transporte `qr` y mantener
+limpios esos campos de error. Solo se guarda error visible cuando no existe
+respaldo QR usable o cuando el respaldo QR tambien falla.
 
 El respaldo QR se resuelve por telefono, no solo por el id exacto del numero API.
 Si el numero oficial y la conexion QR quedaron en filas distintas de
