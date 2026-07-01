@@ -62,6 +62,7 @@ type MetaTestParameterFieldKey =
   | 'orderId'
   | 'status'
   | 'searchString'
+  | 'ctwaClid'
 
 type SecretTokenField = 'accessToken'
 type MetaMessagingPlatform = 'messenger' | 'instagram'
@@ -175,7 +176,8 @@ const metaTestParameterFieldLabels: Record<MetaTestParameterFieldKey, string> = 
   numItems: 'Cantidad',
   orderId: 'Orden',
   status: 'Estado',
-  searchString: 'Búsqueda'
+  searchString: 'Búsqueda',
+  ctwaClid: 'ctwa_clid'
 }
 
 const metaTestParameterFieldPlaceholders: Record<MetaTestParameterFieldKey, string> = {
@@ -189,7 +191,8 @@ const metaTestParameterFieldPlaceholders: Record<MetaTestParameterFieldKey, stri
   numItems: '1',
   orderId: 'ORD-123',
   status: 'nuevos',
-  searchString: 'buscar servicio'
+  searchString: 'buscar servicio',
+  ctwaClid: 'AfghPKzHPYknB7A...'
 }
 
 const metaTestEventParameterFields: Record<string, MetaTestParameterFieldKey[]> = {
@@ -201,11 +204,15 @@ const metaTestEventParameterFields: Record<string, MetaTestParameterFieldKey[]> 
   Contact: ['value', 'predictedLtv', 'currency', 'status'],
   ViewContent: ['value', 'currency', 'contentName', 'contentCategory', 'contentIds', 'contentType'],
   AddPaymentInfo: ['value', 'predictedLtv', 'currency', 'status'],
-  LeadSubmitted: ['value', 'predictedLtv', 'currency', 'status']
+  LeadSubmitted: ['value', 'predictedLtv', 'currency', 'status', 'ctwaClid']
 }
 
 const getMetaTestEventFieldsForEvent = (eventName?: string): MetaTestParameterFieldKey[] => {
   return metaTestEventParameterFields[eventName || defaultMetaTestEventName] || []
+}
+
+const isWhatsappBusinessMetaTestEvent = (eventName?: string) => {
+  return String(eventName || '').trim() === 'LeadSubmitted'
 }
 
 const createDefaultMetaTestCustomParameter = (): MetaTestCustomParameter => ({
@@ -237,7 +244,8 @@ const normalizeMetaTestEventParameters = (parameters?: MetaTestEventParameters |
     'numItems',
     'orderId',
     'status',
-    'searchString'
+    'searchString',
+    'ctwaClid'
   ] as MetaTestParameterFieldKey[]).forEach((field) => {
     const value = cleanMetaTestParameterString(source[field])
     if (value) {
@@ -1259,6 +1267,19 @@ export const MetaAdsIntegration: React.FC = () => {
     if (!/^[A-Za-z][A-Za-z0-9_]{0,99}$/.test(eventName)) {
       showToast('warning', 'Evento inválido', 'Usa letras, números y guion bajo; por ejemplo LeadSubmitted')
       return
+    }
+
+    if (isWhatsappBusinessMetaTestEvent(eventName)) {
+      if (!hasPageId) {
+        showToast('warning', 'Facebook Page requerida', 'Selecciona una Facebook Page antes de probar LeadSubmitted de WhatsApp')
+        return
+      }
+
+      if (!cleanMetaTestParameterString(eventParameters.ctwaClid)) {
+        setIsMetaTestParametersOpen(true)
+        showToast('warning', 'ctwa_clid requerido', 'Pega un ctwa_clid real en los parámetros del evento para probar WhatsApp')
+        return
+      }
     }
 
     setIsSendingMetaTestEvent(true)

@@ -37,6 +37,7 @@ export interface MetaTestEventParameters {
   orderId?: string
   status?: string
   searchString?: string
+  ctwaClid?: string
   custom?: MetaTestCustomParameter[]
 }
 

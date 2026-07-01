@@ -142,7 +142,7 @@ const metaTestEventParameterFields = {
   Contact: ['value', 'predictedLtv', 'currency', 'status'],
   ViewContent: ['value', 'currency', 'contentName', 'contentCategory', 'contentIds', 'contentType'],
   AddPaymentInfo: ['value', 'predictedLtv', 'currency', 'status'],
-  LeadSubmitted: ['value', 'predictedLtv', 'currency', 'status']
+  LeadSubmitted: ['value', 'predictedLtv', 'currency', 'status', 'ctwaClid']
 }
 
 function getMetaTestEventFieldsForEvent(eventName) {
@@ -187,12 +187,16 @@ function normalizeMetaTestEventParameters(parameters = {}) {
   const source = parameters && typeof parameters === 'object' ? parameters : {};
   const normalized = {};
 
-  ['value', 'predictedLtv', 'currency', 'contentName', 'contentCategory', 'contentIds', 'contentType', 'numItems', 'orderId', 'status', 'searchString'].forEach((field) => {
+  ['value', 'predictedLtv', 'currency', 'contentName', 'contentCategory', 'contentIds', 'contentType', 'numItems', 'orderId', 'status', 'searchString', 'ctwaClid'].forEach((field) => {
     const value = cleanMetaTestString(source[field]);
     if (value) {
       normalized[field] = value;
     }
   });
+  if (!normalized.ctwaClid) {
+    const ctwaClid = cleanMetaTestString(source.ctwa_clid);
+    if (ctwaClid) normalized.ctwaClid = ctwaClid;
+  }
 
   const custom = Array.isArray(source.custom)
     ? source.custom
@@ -288,6 +292,32 @@ function buildMetaTestCustomData(parameters = {}, eventName = 'LeadSubmitted') {
   }
 
   return customData;
+}
+
+function isWhatsappBusinessMessagingTestEvent(eventName = '') {
+  return cleanString(eventName) === 'LeadSubmitted';
+}
+
+function buildMetaTestUserData({ req, eventSourceUrl, datasetId, eventParameters = {}, metaConfig = {}, eventName = '' }) {
+  if (isWhatsappBusinessMessagingTestEvent(eventName)) {
+    const userData = {};
+    const ctwaClid = cleanString(eventParameters.ctwaClid || eventParameters.ctwa_clid);
+    const pageId = cleanString(metaConfig?.page_id || process.env.META_PAGE_ID || process.env.FACEBOOK_PAGE_ID);
+    if (ctwaClid) userData.ctwa_clid = ctwaClid;
+    if (pageId) userData.page_id = pageId;
+    return userData;
+  }
+
+  return buildMetaBrowserUserData({
+    req,
+    requestMeta: {
+      ip: getRequestIp(req),
+      userAgent: cleanString(req.headers?.['user-agent']) || 'Ristak Meta CAPI Test',
+      meta: { pageUrl: eventSourceUrl }
+    },
+    externalId: `ristak_meta_test_${datasetId}`,
+    sourceUrl: eventSourceUrl
+  });
 }
 
 function getRequestIp(req) {
@@ -701,35 +731,52 @@ async function performMetaCapiTestEvent({ req, metaConfig, eventName, eventParam
     return { ok: false, status: 400, error: 'Usa un nombre de evento válido, por ejemplo LeadSubmitted', eventId, eventName };
   }
 
-  const userData = buildMetaBrowserUserData({
+  const normalizedEventParameters = normalizeMetaTestEventParameters(eventParameters);
+  const isBusinessMessaging = isWhatsappBusinessMessagingTestEvent(eventName);
+  const userData = buildMetaTestUserData({
     req,
-    requestMeta: {
-      ip: getRequestIp(req),
-      userAgent: cleanString(req.headers?.['user-agent']) || 'Ristak Meta CAPI Test',
-      meta: { pageUrl: eventSourceUrl }
-    },
-    externalId: `ristak_meta_test_${datasetId}`,
-    sourceUrl: eventSourceUrl
+    eventSourceUrl,
+    datasetId,
+    eventParameters: normalizedEventParameters,
+    metaConfig,
+    eventName
   });
+
+  if (isBusinessMessaging) {
+    if (!userData.ctwa_clid) {
+      return { ok: false, status: 400, error: 'Pega un ctwa_clid real para probar LeadSubmitted de WhatsApp', eventId, eventName };
+    }
+    if (!userData.page_id) {
+      return { ok: false, status: 400, error: 'Configura una Facebook Page antes de probar LeadSubmitted de WhatsApp', eventId, eventName };
+    }
+  }
+
+  const eventPayload = {
+    event_name: eventName,
+    event_time: Math.floor(Date.now() / 1000),
+    event_id: eventId,
+    user_data: userData,
+    custom_data: {
+      source: 'ristak_settings',
+      conversion_type: 'settings_test_event',
+      ...buildMetaTestCustomData(normalizedEventParameters, eventName)
+    }
+  };
+
+  if (isBusinessMessaging) {
+    eventPayload.action_source = 'business_messaging';
+    eventPayload.messaging_channel = 'whatsapp';
+  } else {
+    eventPayload.action_source = 'website';
+    eventPayload.event_source_url = eventSourceUrl;
+    if (!eventPayload.custom_data.content_name) {
+      eventPayload.custom_data.content_name = 'Ristak Meta CAPI test';
+    }
+  }
 
   const payload = {
     test_event_code: testEventCode,
-    data: [
-      {
-        event_name: eventName,
-        event_time: Math.floor(Date.now() / 1000),
-        action_source: 'website',
-        event_source_url: eventSourceUrl,
-        event_id: eventId,
-        user_data: userData,
-        custom_data: {
-          source: 'ristak_settings',
-          conversion_type: 'settings_test_event',
-          content_name: 'Ristak Meta CAPI test',
-          ...buildMetaTestCustomData(eventParameters, eventName)
-        }
-      }
-    ]
+    data: [eventPayload]
   };
 
   try {
