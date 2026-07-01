@@ -9,6 +9,11 @@ import {
   triggerMetaPaymentPurchaseEvent,
   triggerMetaPurchaseEventForPaymentRow
 } from '../src/services/metaConversionEventsService.js'
+import {
+  QR_CONSENT_TEXT,
+  resetWhatsAppQrServiceForTest,
+  setBaileysRuntimeForTest
+} from '../src/services/whatsappQrService.js'
 import { saveAccountLocaleSettings } from '../src/utils/accountLocale.js'
 import { encrypt, initializeMasterKey } from '../src/utils/encryption.js'
 
@@ -20,6 +25,89 @@ const APP_CONFIG_KEYS = [
   'meta_test_event_code',
   'meta_test_event_code_set_at'
 ]
+
+const QR_LABEL_BUSINESS_PHONE = '+526561234567'
+const QR_LABEL_CONNECTED_JID = '526561234567@s.whatsapp.net'
+const QR_LABEL_PAID_ID = 'paid-label-real'
+
+function normalizeDigits(value = '') {
+  return String(value || '').replace(/\D/g, '')
+}
+
+function createFakeQrLabelRuntime(appliedLabels = [], {
+  labels = [{ id: QR_LABEL_PAID_ID, name: 'Paid', color: 3, predefinedId: '3', deleted: false }]
+} = {}) {
+  return {
+    DisconnectReason: {
+      loggedOut: 401,
+      badSession: 500,
+      connectionReplaced: 440,
+      restartRequired: 515
+    },
+    BufferJSON: {
+      replacer: (_key, value) => value,
+      reviver: (_key, value) => value
+    },
+    Browsers: {
+      macOS: (name) => ['macOS', name, 'Ristak']
+    },
+    initAuthCreds: () => ({
+      me: { id: QR_LABEL_CONNECTED_JID },
+      registered: true
+    }),
+    makeCacheableSignalKeyStore: (keys) => keys,
+    proto: {
+      Message: {
+        AppStateSyncKeyData: {
+          fromObject: (value) => value
+        }
+      }
+    },
+    makeWASocket: () => {
+      const listeners = new Map()
+      const emit = async (eventName, payload) => {
+        for (const handler of listeners.get(eventName) || []) {
+          await handler(payload)
+        }
+      }
+      const sock = {
+        user: { id: QR_LABEL_CONNECTED_JID },
+        ev: {
+          on: (eventName, handler) => {
+            const eventListeners = listeners.get(eventName) || []
+            eventListeners.push(handler)
+            listeners.set(eventName, eventListeners)
+          },
+          removeAllListeners: (eventName) => {
+            if (eventName) listeners.delete(eventName)
+            else listeners.clear()
+          }
+        },
+        ws: {
+          close: () => {}
+        },
+        onWhatsApp: async (...candidates) => candidates.map(candidate => ({
+          exists: true,
+          jid: `${normalizeDigits(candidate)}@s.whatsapp.net`
+        })),
+        addChatLabel: async (jid, labelId) => {
+          appliedLabels.push({ jid, labelId })
+          return { ok: true }
+        },
+        emit
+      }
+
+      queueMicrotask(async () => {
+        for (const label of labels) {
+          await emit('labels.edit', label)
+        }
+        await emit('connection.update', { connection: 'open' })
+      })
+
+      return sock
+    }
+  }
+}
 
 async function snapshotAppConfig(keys = [], callback) {
   const uniqueKeys = [...new Set(keys)]
@@ -42,6 +130,23 @@ async function snapshotAppConfig(keys = [], callback) {
     }
     for (const row of previousRows) {
       await setAppConfig(row.config_key, row.config_value)
+    }
+  }
+}
+
+async function withNoMetaDatasetEnv(callback) {
+  const keys = ['META_PIXEL_ID', 'META_DATASET_ID', 'DATASET_ID']
+  const previous = Object.fromEntries(keys.map(key => [key, process.env[key]]))
+
+  try {
+    for (const key of keys) {
+      delete process.env[key]
+    }
+    return await callback()
+  } finally {
+    for (const key of keys) {
+      if (previous[key] === undefined) delete process.env[key]
+      else process.env[key] = previous[key]
     }
   }
 }
@@ -108,6 +213,57 @@ async function deletePaymentMetaTestContact(contactId) {
   await db.run('DELETE FROM meta_conversion_event_logs WHERE contact_id = ?', [contactId]).catch(() => undefined)
   await db.run('DELETE FROM whatsapp_attribution WHERE contact_id = ?', [contactId]).catch(() => undefined)
   await db.run('DELETE FROM contacts WHERE id = ?', [contactId]).catch(() => undefined)
+}
+
+async function cleanupQrPaymentLabelFixture(phoneNumberId) {
+  resetWhatsAppQrServiceForTest()
+  await db.run('DELETE FROM distributed_locks WHERE name = ?', [`whatsapp-qr-session:${phoneNumberId}`]).catch(() => undefined)
+  await db.run('DELETE FROM whatsapp_qr_labels WHERE phone_number_id = ?', [phoneNumberId]).catch(() => undefined)
+  await db.run('DELETE FROM whatsapp_qr_auth_state WHERE phone_number_id = ?', [phoneNumberId]).catch(() => undefined)
+  await db.run('DELETE FROM whatsapp_qr_sessions WHERE phone_number_id = ?', [phoneNumberId]).catch(() => undefined)
+  await db.run('DELETE FROM whatsapp_api_phone_numbers WHERE id = ?', [phoneNumberId]).catch(() => undefined)
+}
+
+async function withQrPaymentLabelFixture(contactId, callback) {
+  const phoneNumberId = `phone_qr_meta_purchase_label_${contactId}`
+  await cleanupQrPaymentLabelFixture(phoneNumberId)
+
+  try {
+    await db.run(`
+      INSERT INTO whatsapp_api_phone_numbers (
+        id, provider, waba_id, phone_number, display_phone_number, verified_name,
+        is_default_sender, api_send_enabled, qr_send_enabled, qr_status, status
+      ) VALUES (?, 'qr', 'waba_qr_meta_purchase_label_test', ?, ?, 'QR Purchase Label Test', 1, 0, 1, 'connected', 'CONNECTED')
+    `, [phoneNumberId, QR_LABEL_BUSINESS_PHONE, QR_LABEL_BUSINESS_PHONE])
+
+    await db.run(`
+      INSERT INTO whatsapp_qr_sessions (
+        id, phone_number_id, expected_phone, connected_phone, status,
+        consent_accepted, consent_text, consent_accepted_at, last_connected_at, updated_at
+      ) VALUES (?, ?, ?, ?, 'connected', 1, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+    `, [
+      `qr_${phoneNumberId}`,
+      phoneNumberId,
+      QR_LABEL_BUSINESS_PHONE,
+      QR_LABEL_BUSINESS_PHONE,
+      QR_CONSENT_TEXT
+    ])
+
+    await db.run(`
+      INSERT INTO whatsapp_qr_auth_state (phone_number_id, auth_key, value_json, updated_at)
+      VALUES (?, 'creds', ?, CURRENT_TIMESTAMP)
+    `, [
+      phoneNumberId,
+      JSON.stringify({
+        me: { id: QR_LABEL_CONNECTED_JID },
+        registered: true
+      })
+    ])
+
+    return await callback({ phoneNumberId })
+  } finally {
+    await cleanupQrPaymentLabelFixture(phoneNumberId)
+  }
 }
 
 test('payment Purchase CAPI event uses real payment amount and account currency', async () => {
@@ -284,6 +440,204 @@ test('payment Purchase CAPI skips test payments when Meta Test Events is not act
     assert.equal(result.sent, false)
     assert.equal(result.reason, 'test_payment')
   })
+})
+
+test('payment Purchase uses WhatsApp QR Paid label fallback when Meta dataset is not connected', async () => {
+  const contactId = 'contact_meta_purchase_qr_label_fallback'
+  const contactPhone = '+525512345690'
+  const appliedLabels = []
+
+  try {
+    await withNoMetaDatasetEnv(async () => {
+      await snapshotMetaConfig(async () => {
+        await snapshotAppConfig(APP_CONFIG_KEYS, async () => {
+          await deletePaymentMetaTestContact(contactId)
+          await withQrPaymentLabelFixture(contactId, async ({ phoneNumberId }) => {
+            setBaileysRuntimeForTest(createFakeQrLabelRuntime(appliedLabels))
+
+            await db.run(
+              `INSERT INTO contacts (
+                 id, email, full_name, phone, source, preferred_whatsapp_phone_number_id,
+                 created_at, updated_at
+               ) VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+              [
+                contactId,
+                'qr-label-buyer@example.test',
+                'QR Label Buyer',
+                contactPhone,
+                'whatsapp',
+                phoneNumberId
+              ]
+            )
+
+            const result = await triggerMetaPaymentPurchaseEvent(contactId, {
+              id: 'payment_meta_qr_label_fallback',
+              amount: 120,
+              currency: 'MXN',
+              status: 'paid',
+              payment_provider: 'stripe',
+              payment_method: 'stripe',
+              payment_mode: 'live',
+              reference: 'qr-label-order-1'
+            })
+
+            assert.equal(result.sent, true)
+            assert.equal(result.transport, 'whatsapp_qr_label')
+            assert.equal(result.eventId, `purchase_contact_${contactId}`)
+            assert.equal(result.labelResult.applied, true)
+            assert.equal(result.labelResult.labelId, QR_LABEL_PAID_ID)
+            assert.equal(result.labelResult.predefinedId, '3')
+            assert.equal(result.labelResult.phoneNumberId, phoneNumberId)
+
+            assert.equal(appliedLabels.length, 1)
+            assert.deepEqual(appliedLabels[0], {
+              jid: `${normalizeDigits(contactPhone)}@s.whatsapp.net`,
+              labelId: QR_LABEL_PAID_ID
+            })
+
+            const contact = await db.get(
+              `SELECT meta_purchase_event_sent, meta_purchase_event_id
+               FROM contacts
+               WHERE id = ?`,
+              [contactId]
+            )
+            assert.equal(Number(contact.meta_purchase_event_sent), 1)
+            assert.equal(contact.meta_purchase_event_id, `purchase_contact_${contactId}`)
+
+            const storedLabel = await db.get(
+              `SELECT label_id, name, predefined_id, deleted
+               FROM whatsapp_qr_labels
+               WHERE phone_number_id = ? AND label_id = ?`,
+              [phoneNumberId, QR_LABEL_PAID_ID]
+            )
+            assert.equal(storedLabel.label_id, QR_LABEL_PAID_ID)
+            assert.equal(storedLabel.name, 'Paid')
+            assert.equal(storedLabel.predefined_id, '3')
+            assert.equal(Number(storedLabel.deleted), 0)
+
+            const logRow = await db.get(
+              `SELECT status, request_payload, response_payload
+               FROM meta_conversion_event_logs
+               WHERE contact_id = ? AND event_id = ?
+               ORDER BY created_at DESC
+               LIMIT 1`,
+              [contactId, `purchase_contact_${contactId}`]
+            )
+            assert.equal(logRow.status, 'success')
+            const requestPayload = JSON.parse(logRow.request_payload)
+            assert.equal(requestPayload.source, 'whatsapp_qr_label_fallback')
+            assert.equal(requestPayload.label, 'Paid')
+            assert.equal(requestPayload.custom_data.value, 120)
+            assert.equal(requestPayload.custom_data.currency, 'MXN')
+            const responsePayload = JSON.parse(logRow.response_payload)
+            assert.equal(responsePayload.labelId, QR_LABEL_PAID_ID)
+          })
+        })
+      })
+    })
+  } finally {
+    await deletePaymentMetaTestContact(contactId)
+  }
+})
+
+test('payment Purchase QR label fallback skips test payments without Meta dataset', async () => {
+  const contactId = 'contact_meta_purchase_qr_label_test_blocked'
+
+  await withNoMetaDatasetEnv(async () => {
+    await snapshotMetaConfig(async () => {
+      await snapshotAppConfig(APP_CONFIG_KEYS, async () => {
+        const result = await triggerMetaPaymentPurchaseEvent(contactId, {
+          id: 'payment_meta_qr_label_test_blocked',
+          amount: 120,
+          status: 'paid',
+          payment_provider: 'stripe',
+          payment_mode: 'test'
+        })
+
+        assert.equal(result.sent, false)
+        assert.equal(result.reason, 'test_payment')
+      })
+    })
+  })
+})
+
+test('payment Purchase does not apply WhatsApp QR label when Meta dataset is connected', async () => {
+  const previousMetaGraphDescriptor = Object.getOwnPropertyDescriptor(API_URLS, 'META_GRAPH')
+  const contactId = 'contact_meta_purchase_dataset_no_qr_label'
+  const contactPhone = '+525512345691'
+  const appliedLabels = []
+  const metaCalls = []
+  let metaServer
+
+  try {
+    await initializeMasterKey()
+
+    await snapshotMetaConfig(async () => {
+      await snapshotAppConfig(APP_CONFIG_KEYS, async () => {
+        await deletePaymentMetaTestContact(contactId)
+        await withQrPaymentLabelFixture(contactId, async ({ phoneNumberId }) => {
+          setBaileysRuntimeForTest(createFakeQrLabelRuntime(appliedLabels))
+
+          await db.run(
+            `INSERT INTO contacts (
+               id, email, full_name, phone, source, preferred_whatsapp_phone_number_id,
+               created_at, updated_at
+             ) VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+            [
+              contactId,
+              'dataset-buyer@example.test',
+              'Dataset Buyer',
+              contactPhone,
+              'whatsapp',
+              phoneNumberId
+            ]
+          )
+
+          await insertMetaPixelConfig({ pixelId: 'pixel-dataset-no-qr-label' })
+          await saveAccountLocaleSettings({ countryCode: 'MX', currency: 'MXN', dialCode: '52' })
+          await setAppConfig('meta_payment_purchase_event_config', JSON.stringify({
+            enabled: true,
+            channel: 'site',
+            eventName: 'Purchase',
+            parameters: {
+              sendValue: true,
+              usePaymentPlanTotalValue: false,
+              value: '',
+              predictedLtv: '',
+              custom: []
+            }
+          }))
+
+          metaServer = await startMetaCaptureServer(metaCalls)
+
+          const result = await triggerMetaPaymentPurchaseEvent(contactId, {
+            id: 'payment_meta_dataset_no_qr_label',
+            amount: 150,
+            currency: 'MXN',
+            status: 'paid',
+            payment_provider: 'stripe',
+            payment_method: 'stripe',
+            payment_mode: 'live',
+            eventSourceUrl: 'https://checkout.example.test/pay/payment_meta_dataset_no_qr_label'
+          })
+
+          assert.equal(result.sent, true)
+          assert.notEqual(result.transport, 'whatsapp_qr_label')
+          assert.equal(appliedLabels.length, 0)
+          assert.equal(metaCalls.length, 1)
+
+          const payload = JSON.parse(metaCalls[0].body)
+          assert.equal(payload.data[0].event_name, 'Purchase')
+          assert.equal(payload.data[0].event_id, `purchase_contact_${contactId}`)
+          assert.equal(payload.data[0].custom_data.value, 150)
+        })
+      })
+    })
+  } finally {
+    if (metaServer) await new Promise(resolve => metaServer.close(resolve))
+    if (previousMetaGraphDescriptor) Object.defineProperty(API_URLS, 'META_GRAPH', previousMetaGraphDescriptor)
+    await deletePaymentMetaTestContact(contactId)
+  }
 })
 
 test('payment Purchase CAPI sends test payments only to Meta Test Events when active', async () => {

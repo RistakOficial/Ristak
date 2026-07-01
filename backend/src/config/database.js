@@ -3530,6 +3530,22 @@ async function initTables() {
     `)
 
     await db.run(`
+      CREATE TABLE IF NOT EXISTS whatsapp_qr_labels (
+        phone_number_id TEXT NOT NULL,
+        label_id TEXT NOT NULL,
+        name TEXT,
+        color INTEGER,
+        predefined_id TEXT,
+        deleted INTEGER DEFAULT 0,
+        raw_payload_json TEXT,
+        first_seen_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        PRIMARY KEY (phone_number_id, label_id),
+        FOREIGN KEY (phone_number_id) REFERENCES whatsapp_api_phone_numbers(id) ON DELETE CASCADE
+      )
+    `)
+
+    await db.run(`
       CREATE TABLE IF NOT EXISTS whatsapp_routing_events (
         id TEXT PRIMARY KEY,
         contact_id TEXT NOT NULL,
@@ -3577,6 +3593,8 @@ async function initTables() {
     await db.run('CREATE INDEX IF NOT EXISTS idx_whatsapp_qr_sessions_phone ON whatsapp_qr_sessions(phone_number_id)')
     await db.run('CREATE INDEX IF NOT EXISTS idx_whatsapp_qr_sessions_status ON whatsapp_qr_sessions(status, updated_at)')
     await db.run('CREATE INDEX IF NOT EXISTS idx_whatsapp_qr_auth_state_phone ON whatsapp_qr_auth_state(phone_number_id)')
+    await db.run('CREATE INDEX IF NOT EXISTS idx_whatsapp_qr_labels_predefined ON whatsapp_qr_labels(phone_number_id, predefined_id)')
+    await db.run('CREATE INDEX IF NOT EXISTS idx_whatsapp_qr_labels_name ON whatsapp_qr_labels(phone_number_id, name)')
     await db.run('CREATE INDEX IF NOT EXISTS idx_whatsapp_routing_events_contact ON whatsapp_routing_events(contact_id, created_at)')
 
     // Tabla de versiones de Meta API (para auto-actualización)

@@ -375,6 +375,15 @@ Implementacion esperada:
 - Si Configuracion > Meta tiene activo `meta_test_event_code`, el backend puede
   mandar el evento CAPI con `test_event_code`. Eso debe entrar a Meta Test
   Events, no a conversiones reales.
+- Si no hay Dataset/Pixel conectado en Configuracion > Meta, una compra `live`
+  puede usar WhatsApp QR/Baileys como fallback aplicando la etiqueta nativa
+  `Paid` al chat del contacto. Esto solo aplica si el contacto tiene telefono,
+  el numero QR esta conectado y Baileys ya sincronizo esa etiqueta nativa.
+- Si existe Dataset/Pixel conectado, no se aplica la etiqueta QR de compra:
+  CAPI/dataset es la fuente principal y no se deben duplicar senales de compra.
+- Los pagos `test`, `sandbox` o `demo` tampoco deben aplicar etiquetas QR de
+  compra, porque las etiquetas nativas de WhatsApp no tienen equivalente de
+  Meta Test Events.
 - El pixel publico de navegador para checkout no debe usarse para pagos test si
   no hay aislamiento equivalente al `test_event_code` de CAPI.
 - Tests: `backend/test/metaPaymentPurchaseEvent.test.mjs`.

@@ -14,6 +14,12 @@ const QR_RECENT_RISTAK_OUTBOUND_RETENTION_MS = 90000
 const QR_PROFILE_PICTURE_TIMEOUT_MS = 4500
 const QR_PROFILE_PICTURE_CACHE_TTL_MS = 24 * 60 * 60 * 1000
 const QR_PROFILE_PICTURE_BATCH_LIMIT = 8
+const WHATSAPP_PREDEFINED_LABELS = {
+  paid: {
+    name: 'Paid',
+    predefinedId: '3'
+  }
+}
 const RECONNECT_BASE_DELAY_MS = 2500
 const CONNECTION_REPLACED_RECONNECT_BASE_DELAY_MS = 5000
 const RECONNECT_MAX_DELAY_MS = 60000
@@ -1330,12 +1336,124 @@ async function getConnectedQrPhoneRowsForContact(contact = {}) {
   const fullRows = []
   for (const row of sortedRows) {
     const phone = await getPhoneRow(row.id).catch(error => {
-      logger.warn(`[WhatsApp QR] No se pudo preparar número QR ${row.id} para foto de perfil: ${error.message}`)
+      logger.warn(`[WhatsApp QR] No se pudo preparar número QR ${row.id}: ${error.message}`)
       return null
     })
     if (phone) fullRows.push(phone)
   }
   return fullRows
+}
+
+async function upsertQrLabel(phoneNumberId, label = {}) {
+  const phoneId = cleanString(phoneNumberId)
+  const labelId = cleanString(label.id || label.labelId)
+  if (!phoneId || !labelId) return
+
+  await db.run(`
+    INSERT INTO whatsapp_qr_labels (
+      phone_number_id, label_id, name, color, predefined_id, deleted,
+      raw_payload_json, first_seen_at, updated_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+    ON CONFLICT(phone_number_id, label_id) DO UPDATE SET
+      name = excluded.name,
+      color = excluded.color,
+      predefined_id = excluded.predefined_id,
+      deleted = excluded.deleted,
+      raw_payload_json = excluded.raw_payload_json,
+      updated_at = CURRENT_TIMESTAMP
+  `, [
+    phoneId,
+    labelId,
+    cleanString(label.name) || null,
+    Number.isFinite(Number(label.color)) ? Number(label.color) : null,
+    cleanString(label.predefinedId || label.predefined_id) || null,
+    label.deleted ? 1 : 0,
+    safeJson(label)
+  ])
+}
+
+async function handleQrLabelEdit(phone, label = {}) {
+  await upsertQrLabel(phone?.id, label)
+}
+
+async function getQrPaidLabelIds(phoneNumberId) {
+  const phoneId = cleanString(phoneNumberId)
+  if (!phoneId) return []
+
+  const paid = WHATSAPP_PREDEFINED_LABELS.paid
+  const rows = await db.all(`
+    SELECT label_id, name, predefined_id
+    FROM whatsapp_qr_labels
+    WHERE phone_number_id = ?
+      AND COALESCE(deleted, 0) = 0
+      AND (
+        predefined_id = ?
+        OR LOWER(COALESCE(name, '')) IN ('paid', 'pagado')
+      )
+    ORDER BY
+      CASE WHEN predefined_id = ? THEN 0 ELSE 1 END,
+      updated_at DESC
+  `, [phoneId, paid.predefinedId, paid.predefinedId]).catch(error => {
+    logger.warn(`[WhatsApp QR] No se pudieron leer labels QR ${phoneId}: ${error.message}`)
+    return []
+  })
+
+  return [...new Set((rows || []).map(row => cleanString(row.label_id)).filter(Boolean))]
+}
+
+export async function applyWhatsAppQrPaidLabelForContact(contact = {}) {
+  const contactId = cleanString(contact.id)
+  const toPhone = normalizePhoneForStorage(contact.phone) || cleanString(contact.phone)
+  if (!contactId) return { applied: false, reason: 'missing_contact_id' }
+  if (!toPhone) return { applied: false, reason: 'missing_phone' }
+
+  const qrPhones = (await getConnectedQrPhoneRowsForContact(contact))
+    .filter(phone => cleanString(phone.qr_status).toLowerCase() === 'connected')
+  if (!qrPhones.length) return { applied: false, reason: 'qr_not_connected' }
+
+  for (const phone of qrPhones) {
+    try {
+      if (await markMissingAuthStateIfNeeded(phone)) continue
+
+      const sock = await ensureOpenSocket(phone)
+      if (typeof sock?.addChatLabel !== 'function') {
+        throw new Error('Baileys no trae soporte para aplicar etiquetas de chat')
+      }
+
+      const recipient = await resolveRecipientJid(sock, toPhone)
+      const labelIds = await getQrPaidLabelIds(phone.id)
+      if (!labelIds.length) {
+        logger.warn(`[WhatsApp QR] No se encontró label nativa Paid sincronizada para ${phone.id}; se omitió fallback de compra ${contactId}`)
+        return { applied: false, reason: 'paid_label_not_synced', phoneNumberId: phone.id }
+      }
+
+      let lastError = null
+      for (const labelId of labelIds) {
+        try {
+          await sock.addChatLabel(recipient.jid, labelId)
+          return {
+            applied: true,
+            reason: 'applied',
+            label: WHATSAPP_PREDEFINED_LABELS.paid.name,
+            labelId,
+            predefinedId: WHATSAPP_PREDEFINED_LABELS.paid.predefinedId,
+            phoneNumberId: phone.id,
+            to: recipient.verifiedPhone || toPhone,
+            recipientJid: recipient.jid,
+            transport: 'qr'
+          }
+        } catch (error) {
+          lastError = error
+        }
+      }
+
+      throw lastError || new Error('No se pudo aplicar la etiqueta Paid')
+    } catch (error) {
+      logger.warn(`[WhatsApp QR] No se pudo aplicar label Paid a ${toPhone} con ${phone.id}: ${error.message}`)
+    }
+  }
+
+  return { applied: false, reason: 'qr_label_failed' }
 }
 
 async function fetchQrProfilePictureForContact(contact = {}, { force = false, type = 'preview' } = {}) {
@@ -1629,6 +1747,7 @@ function closeLiveSession(phoneNumberId, { releaseLease = true } = {}) {
     live.sock.ev?.removeAllListeners?.('creds.update')
     live.sock.ev?.removeAllListeners?.('messages.update')
     live.sock.ev?.removeAllListeners?.('message-receipt.update')
+    live.sock.ev?.removeAllListeners?.('labels.edit')
     live.sock.ws?.close?.()
   } catch (error) {
     logger.warn(`[WhatsApp QR] No se pudo cerrar socket ${phoneNumberId}: ${error.message}`)
@@ -1715,6 +1834,11 @@ async function openSocket(phone, { requireConsent = true, reconnectAttempt = 0, 
   sock.ev.on('message-receipt.update', (updates) => {
     handleQrMessageReceipts(phone, updates).catch(error => {
       logger.warn(`[WhatsApp QR] No se pudieron procesar recibos de mensajes ${phone.id}: ${error.message}`)
+    })
+  })
+  sock.ev.on('labels.edit', (label) => {
+    handleQrLabelEdit(phone, label).catch(error => {
+      logger.warn(`[WhatsApp QR] No se pudo guardar label ${phone.id}: ${error.message}`)
     })
   })
   sock.ev.on('messages.upsert', (upsert) => {

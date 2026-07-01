@@ -11,6 +11,7 @@ import { buildMetaParameterUserData, sanitizeMetaUrlForEvent } from './metaParam
 import { parseContactCustomFields } from '../utils/contactCustomFields.js'
 import { renderTemplate } from './automationEngine.js'
 import { getVariableFieldValueMap } from './variableFieldsService.js'
+import { applyWhatsAppQrPaidLabelForContact } from './whatsappQrService.js'
 
 const CONFIG_KEYS = {
   scheduleEnabled: 'meta_whatsapp_schedule_enabled',
@@ -29,6 +30,18 @@ const DEFAULT_CALENDAR_WHATSAPP_EVENT_NAME = 'LeadSubmitted'
 const DEFAULT_PAYMENT_WHATSAPP_EVENT_NAME = 'Purchase'
 const DEFAULT_PAYMENT_EVENT_NAME = 'Purchase'
 const DEFAULT_PAYMENT_EVENT_CHANNEL = 'smart'
+const QR_LABEL_FALLBACK_PAYMENT_META_CONFIG = {
+  enabled: true,
+  channel: DEFAULT_PAYMENT_EVENT_CHANNEL,
+  eventName: DEFAULT_PAYMENT_EVENT_NAME,
+  parameters: {
+    sendValue: true,
+    usePaymentPlanTotalValue: true,
+    value: '',
+    predictedLtv: '',
+    custom: []
+  }
+}
 const PAYMENT_META_DEFAULT_CURRENCY = 'MXN'
 const PAYMENT_META_MAX_CUSTOM_PARAMETERS = 12
 const META_ACTION_SOURCES = new Set([
@@ -1090,6 +1103,7 @@ async function getContactForMetaEvent(contactId) {
        first_name,
        last_name,
        custom_fields,
+       preferred_whatsapp_phone_number_id,
        attribution_ctwa_clid,
        attribution_ad_id,
        attribution_ad_name,
@@ -1210,6 +1224,72 @@ async function logMetaEvent({
       errorMessage || null
     ]
   )
+}
+
+async function sendWhatsAppQrPurchaseLabelFallback({ contact, eventType, metaEventName, eventId, customData } = {}) {
+  if (!contact?.id) {
+    await logMetaEvent({
+      contactId: contact?.id,
+      eventType,
+      metaEventName,
+      eventId,
+      status: 'skipped',
+      errorMessage: 'Contacto no encontrado para fallback de label QR'
+    })
+    return { sent: false, reason: 'contact_not_found' }
+  }
+
+  if (!contact.phone) {
+    await logMetaEvent({
+      contactId: contact.id,
+      eventType,
+      metaEventName,
+      eventId,
+      status: 'skipped',
+      errorMessage: 'Contacto sin teléfono para fallback de label QR'
+    })
+    return { sent: false, reason: 'missing_phone' }
+  }
+
+  if (contactAlreadySent(contact, eventType)) {
+    return { sent: false, reason: 'already_sent' }
+  }
+
+  const labelResult = await applyWhatsAppQrPaidLabelForContact(contact)
+  const requestPayload = {
+    source: 'whatsapp_qr_label_fallback',
+    event_name: metaEventName,
+    event_id: eventId,
+    label: 'Paid',
+    custom_data: customData || {}
+  }
+
+  if (labelResult.applied) {
+    await markContactEventSent(contact.id, eventType, eventId)
+    await logMetaEvent({
+      contactId: contact.id,
+      eventType,
+      metaEventName,
+      eventId,
+      status: 'success',
+      requestPayload,
+      responsePayload: labelResult
+    })
+    logger.info(`Fallback QR aplicó label Paid para compra Meta del contacto ${contact.id}`)
+    return { sent: true, eventId, transport: 'whatsapp_qr_label', labelResult }
+  }
+
+  await logMetaEvent({
+    contactId: contact.id,
+    eventType,
+    metaEventName,
+    eventId,
+    status: 'skipped',
+    requestPayload,
+    responsePayload: labelResult,
+    errorMessage: `Fallback label QR no aplicado: ${labelResult.reason || 'unknown'}`
+  })
+  return { sent: false, reason: labelResult.reason || 'qr_label_fallback_skipped', labelResult }
 }
 
 function contactAlreadySent(contact, eventType) {
@@ -1637,31 +1717,54 @@ export async function triggerWhatsappAppointmentBookedEvent(contactId, options =
 
 export async function triggerMetaPaymentPurchaseEvent(contactId, payment = {}) {
   const paymentMetaConfig = await getPaymentMetaPurchaseEventConfig()
-  if (!paymentMetaConfig.enabled) {
-    return { sent: false, reason: 'disabled' }
-  }
-
   if (!contactId) {
     return { sent: false, reason: 'missing_contact_id' }
   }
 
-  if (await shouldSkipTestPaymentForMeta(payment)) {
+  const metaConfig = await getMetaCapiConfig()
+  const hasDataset = Boolean(metaConfig.datasetId)
+  const paymentMode = getMetaPaymentMode(payment)
+
+  if (!hasDataset && paymentMode === PAYMENT_MODE_TEST) {
     return { sent: false, reason: 'test_payment' }
   }
 
-  const siteMetaEventName = paymentMetaConfig.eventName || DEFAULT_PAYMENT_EVENT_NAME
+  if (hasDataset && await shouldSkipTestPaymentForMeta(payment)) {
+    return { sent: false, reason: 'test_payment' }
+  }
+
+  if (!paymentMetaConfig.enabled && hasDataset) {
+    return { sent: false, reason: 'disabled' }
+  }
+
+  const effectivePaymentMetaConfig = paymentMetaConfig.enabled
+    ? paymentMetaConfig
+    : QR_LABEL_FALLBACK_PAYMENT_META_CONFIG
+  const siteMetaEventName = effectivePaymentMetaConfig.eventName || DEFAULT_PAYMENT_EVENT_NAME
   const whatsappMetaEventName = normalizeBusinessMessagingEventName(
-    paymentMetaConfig.channel === 'whatsapp'
-      ? paymentMetaConfig.eventName || DEFAULT_PAYMENT_WHATSAPP_EVENT_NAME
+    effectivePaymentMetaConfig.channel === 'whatsapp'
+      ? effectivePaymentMetaConfig.eventName || DEFAULT_PAYMENT_WHATSAPP_EVENT_NAME
       : DEFAULT_PAYMENT_WHATSAPP_EVENT_NAME
   )
   const eventSourceUrl = sanitizeMetaUrlForEvent(extractPaymentMetaEventSourceUrl(payment))
   const actionSource = resolvePaymentMetaActionSource(payment, eventSourceUrl)
-  const eventContext = await buildPaymentPurchaseEventContext(contactId, payment, paymentMetaConfig)
+  const eventContext = await buildPaymentPurchaseEventContext(contactId, payment, effectivePaymentMetaConfig)
   if (eventContext.skip) return { sent: false, reason: eventContext.reason, eventId: eventContext.eventId }
   const eventId = eventContext.eventId
   const accountCurrency = await getPaymentMetaCurrency()
   const contact = await getContactForMetaEvent(contactId)
+  if (!contact) {
+    await logMetaEvent({
+      contactId,
+      eventType: EVENT_TYPES.purchase,
+      metaEventName: hasDataset ? whatsappMetaEventName : DEFAULT_PAYMENT_WHATSAPP_EVENT_NAME,
+      eventId,
+      status: 'skipped',
+      errorMessage: 'Contacto no encontrado para evento de compra Meta'
+    })
+    return { sent: false, reason: 'contact_not_found', eventId }
+  }
+
   const variableFields = await getVariableFieldValueMap().catch(() => ({}))
   const templateContext = buildPaymentMetaTemplateContext({
     contact,
@@ -1670,11 +1773,21 @@ export async function triggerMetaPaymentPurchaseEvent(contactId, payment = {}) {
     currency: accountCurrency,
     variableFields
   })
-  const customData = buildPaymentMetaPurchaseEventCustomData(paymentMetaConfig.parameters, eventContext.payment || payment, {
+  const customData = buildPaymentMetaPurchaseEventCustomData(effectivePaymentMetaConfig.parameters, eventContext.payment || payment, {
     currency: accountCurrency,
     templateContext,
     ...(eventContext.customDataOptions || {})
   })
+
+  if (!hasDataset) {
+    return sendWhatsAppQrPurchaseLabelFallback({
+      contact,
+      eventType: EVENT_TYPES.purchase,
+      metaEventName: DEFAULT_PAYMENT_WHATSAPP_EVENT_NAME,
+      eventId,
+      customData
+    })
+  }
 
   const purchaseArgs = {
     contactId,
