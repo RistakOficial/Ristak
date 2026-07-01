@@ -169,8 +169,7 @@ function isSystemLikeTagRow(row, systemTagNameSet) {
 
 /** Lista etiquetas del usuario; las internas sólo se anexan si se piden explícitamente. */
 export async function listContactTags({ includeSystem = false } = {}) {
-  const rows = await db.all('SELECT * FROM contact_tags ORDER BY name COLLATE NOCASE ASC')
-    .catch(async () => db.all('SELECT * FROM contact_tags ORDER BY LOWER(name) ASC'))
+  const rows = await db.all('SELECT * FROM contact_tags ORDER BY LOWER(name) ASC')
   const systemTagNameSet = await getSystemTagNameSet()
   const customTags = rows.filter((row) => !isSystemLikeTagRow(row, systemTagNameSet)).map(mapRow)
   return includeSystem ? [...(await listSystemContactTags()), ...customTags] : customTags
@@ -279,8 +278,7 @@ export async function renameContactTag(id, name) {
 // ---------------------------------------------------------------------------
 
 export async function listContactTagFolders() {
-  const rows = await db.all('SELECT * FROM contact_tag_folders ORDER BY name COLLATE NOCASE ASC')
-    .catch(async () => db.all('SELECT * FROM contact_tag_folders ORDER BY LOWER(name) ASC'))
+  const rows = await db.all('SELECT * FROM contact_tag_folders ORDER BY LOWER(name) ASC')
   return rows.map(mapFolderRow)
 }
 

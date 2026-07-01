@@ -1958,8 +1958,45 @@ export const getChatContacts = async (req, res) => {
 
     const whereClause = conditions.length ? `WHERE ${conditions.join(' AND ')}` : ''
     const whatsappBaseWhereClause = whatsappMessageConditions.length ? `WHERE ${whatsappMessageConditions.join(' AND ')}` : ''
-    const messageRowsSql = `
-        SELECT *
+    const messageStatsRowsSql = `
+        SELECT
+          contact_id,
+          COUNT(*) AS message_count,
+          MAX(message_date) AS last_message_date
+        FROM (
+          SELECT
+            ${resolvedWhatsAppContactIdSql} AS contact_id,
+            COALESCE(msg.message_timestamp, msg.created_at) AS message_date
+          FROM whatsapp_api_messages msg
+          LEFT JOIN whatsapp_api_contacts api_profile ON api_profile.id = msg.whatsapp_api_contact_id
+          ${whatsappBaseWhereClause}
+        ) whatsapp_stats_rows
+        WHERE contact_id IS NOT NULL
+        GROUP BY contact_id
+        ${includeMetaSocialMessages ? `
+        UNION ALL
+        SELECT
+          contact_id,
+          COUNT(*) AS message_count,
+          MAX(COALESCE(message_timestamp, created_at)) AS last_message_date
+        FROM meta_social_messages
+        WHERE contact_id IS NOT NULL
+        GROUP BY contact_id
+        ` : ''}
+        ${includeMetaSocialMessages ? `
+        UNION ALL
+        SELECT
+          contact_id,
+          COUNT(*) AS message_count,
+          MAX(COALESCE(message_timestamp, created_at)) AS last_message_date
+        FROM email_messages
+        WHERE contact_id IS NOT NULL
+        GROUP BY contact_id
+        ` : ''}
+    `
+
+    const selectedMessageRowsSql = `
+        SELECT whatsapp_rows.*
         FROM (
           SELECT
             ${resolvedWhatsAppContactIdSql} AS contact_id,
@@ -1977,60 +2014,63 @@ export const getChatContacts = async (req, res) => {
           LEFT JOIN whatsapp_api_contacts api_profile ON api_profile.id = msg.whatsapp_api_contact_id
           ${whatsappBaseWhereClause}
         ) whatsapp_rows
-        WHERE contact_id IS NOT NULL
+        JOIN ranked_chats ON ranked_chats.contact_id = whatsapp_rows.contact_id
+        WHERE whatsapp_rows.contact_id IS NOT NULL
         ${includeMetaSocialMessages ? `
         UNION ALL
         SELECT
-          contact_id,
-          'meta:' || id AS message_row_id,
-          message_text,
-          message_type,
-          direction,
+          meta_social_messages.contact_id,
+          'meta:' || meta_social_messages.id AS message_row_id,
+          meta_social_messages.message_text,
+          meta_social_messages.message_type,
+          meta_social_messages.direction,
           NULL AS business_phone,
           NULL AS business_phone_number_id,
           NULL AS transport,
-          COALESCE(message_timestamp, created_at) AS message_date,
-          created_at,
-          platform AS message_channel
+          COALESCE(meta_social_messages.message_timestamp, meta_social_messages.created_at) AS message_date,
+          meta_social_messages.created_at,
+          meta_social_messages.platform AS message_channel
         FROM meta_social_messages
-        WHERE contact_id IS NOT NULL
+        JOIN ranked_chats ON ranked_chats.contact_id = meta_social_messages.contact_id
+        WHERE meta_social_messages.contact_id IS NOT NULL
         ` : ''}
         ${includeMetaSocialMessages ? `
         UNION ALL
         SELECT
-          contact_id,
-          'email:' || id AS message_row_id,
+          email_messages.contact_id,
+          'email:' || email_messages.id AS message_row_id,
           CASE
-            WHEN COALESCE(subject, '') != '' AND COALESCE(message_text, '') != '' THEN subject || ' · ' || message_text
-            WHEN COALESCE(subject, '') != '' THEN subject
-            ELSE COALESCE(message_text, '')
+            WHEN COALESCE(email_messages.subject, '') != '' AND COALESCE(email_messages.message_text, '') != '' THEN email_messages.subject || ' · ' || email_messages.message_text
+            WHEN COALESCE(email_messages.subject, '') != '' THEN email_messages.subject
+            ELSE COALESCE(email_messages.message_text, '')
           END AS message_text,
           'email' AS message_type,
-          direction,
+          email_messages.direction,
           NULL AS business_phone,
           NULL AS business_phone_number_id,
           CASE
-            WHEN raw_payload_json LIKE '%"provider":"highlevel"%' THEN 'ghl_email'
+            WHEN email_messages.raw_payload_json LIKE '%"provider":"highlevel"%' THEN 'ghl_email'
             ELSE 'smtp'
           END AS transport,
-          COALESCE(message_timestamp, created_at) AS message_date,
-          created_at,
+          COALESCE(email_messages.message_timestamp, email_messages.created_at) AS message_date,
+          email_messages.created_at,
           'email' AS message_channel
         FROM email_messages
-        WHERE contact_id IS NOT NULL
+        JOIN ranked_chats ON ranked_chats.contact_id = email_messages.contact_id
+        WHERE email_messages.contact_id IS NOT NULL
         ` : ''}
     `
 
     const rows = await db.all(`
-      WITH message_rows AS (
-        ${messageRowsSql}
+      WITH message_stats_rows AS (
+        ${messageStatsRowsSql}
       ),
       chat_stats AS (
         SELECT
           contact_id,
-          COUNT(*) AS message_count,
-          MAX(message_date) AS last_message_date
-        FROM message_rows
+          SUM(message_count) AS message_count,
+          MAX(last_message_date) AS last_message_date
+        FROM message_stats_rows
         GROUP BY contact_id
       ),
       ranked_chats AS (
@@ -2045,9 +2085,7 @@ export const getChatContacts = async (req, res) => {
         LIMIT ? OFFSET ?
       ),
       selected_message_rows AS (
-        SELECT message_rows.*
-        FROM message_rows
-        JOIN ranked_chats ON ranked_chats.contact_id = message_rows.contact_id
+        ${selectedMessageRowsSql}
       ),
       latest_messages AS (
         SELECT
@@ -2166,7 +2204,7 @@ ${CONTACT_META_PROFILE_SELECT},
       LEFT JOIN latest_inbound_messages lim ON lim.contact_id = c.id AND lim.row_rank = 1
       LEFT JOIN first_inbound_messages fim ON fim.contact_id = c.id AND fim.row_rank = 1
       ORDER BY ranked_chats.last_message_date DESC, ranked_chats.contact_id DESC
-    `, [...whatsappMessageParams, ...params, limitNumber, offsetNumber])
+    `, [...whatsappMessageParams, ...params, limitNumber, offsetNumber, ...whatsappMessageParams])
 
     const responseRows = shouldWarmProfilePictures
       ? await warmWhatsAppProfilePicturesForRows(rows, {

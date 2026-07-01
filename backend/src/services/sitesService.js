@@ -8955,7 +8955,7 @@ async function listImportedSiteCodeFiles(siteId, imported = {}) {
     SELECT asset_path, content_type, content_base64, size_bytes, updated_at, media_asset_id, public_url
     FROM public_site_import_assets
     WHERE site_id = ?
-    ORDER BY asset_path COLLATE NOCASE ASC
+    ORDER BY LOWER(asset_path) ASC
   `, [siteId]).catch(() => [])
 
   const assetFiles = rows
@@ -9607,7 +9607,7 @@ export async function updateImportedSiteCodeFiles(siteId, input = {}) {
     SELECT *
     FROM public_site_import_assets
     WHERE site_id = ?
-    ORDER BY asset_path COLLATE NOCASE ASC
+    ORDER BY LOWER(asset_path) ASC
   `, [siteId]).catch(() => [])
   const assetByPath = new Map(assetRows.map(row => [normalizeImportedAssetPath(row.asset_path), row]))
   const availablePaths = new Set(assetRows.map(row => normalizeImportedAssetPath(row.asset_path)).filter(Boolean))

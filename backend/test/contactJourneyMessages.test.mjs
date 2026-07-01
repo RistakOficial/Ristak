@@ -174,6 +174,78 @@ test('chat contacts returns persisted unread counts for requester', async () => 
   }
 })
 
+test('chat contacts combines channel stats before loading selected messages', async () => {
+  const id = randomUUID()
+  const contactId = `chat_channel_stats_${id}`
+  const phone = `+52994${Date.now().toString().slice(-7)}`
+
+  await cleanup(contactId, phone)
+
+  try {
+    await insertRow('contacts', {
+      id: contactId,
+      phone,
+      full_name: 'Cliente Multicanal',
+      first_name: 'Cliente',
+      source: 'manual',
+      created_at: '2099-07-03T12:00:00.000Z',
+      updated_at: '2099-07-03T12:00:00.000Z'
+    })
+    await insertRow('whatsapp_api_messages', {
+      id: `api_channel_${id}`,
+      contact_id: contactId,
+      phone,
+      from_phone: phone,
+      to_phone: '+526561000000',
+      business_phone: '+526561000000',
+      transport: 'api',
+      direction: 'inbound',
+      message_type: 'text',
+      message_text: 'WhatsApp viejo',
+      message_timestamp: '2099-07-03T12:01:00.000Z',
+      created_at: '2099-07-03T12:01:00.000Z'
+    })
+    await insertRow('meta_social_messages', {
+      id: `meta_channel_${id}`,
+      platform: 'instagram',
+      meta_message_id: `meta_channel_message_${id}`,
+      contact_id: contactId,
+      sender_id: 'ig_customer',
+      recipient_id: 'ig_business',
+      direction: 'inbound',
+      status: 'received',
+      message_type: 'text',
+      message_text: 'DM intermedio',
+      message_timestamp: '2099-07-03T12:02:00.000Z',
+      created_at: '2099-07-03T12:02:00.000Z'
+    })
+    await insertRow('email_messages', {
+      id: `email_channel_${id}`,
+      contact_id: contactId,
+      from_email: `cliente_${id}@example.test`,
+      to_email: 'negocio@example.test',
+      direction: 'inbound',
+      status: 'received',
+      subject: 'Correo final',
+      message_text: 'Respuesta reciente',
+      message_timestamp: '2099-07-03T12:03:00.000Z',
+      created_at: '2099-07-03T12:03:00.000Z',
+      raw_payload_json: '{"provider":"highlevel"}'
+    })
+
+    const chats = await readChatContacts({ limit: '100' })
+    const chat = chats.find(item => item.id === contactId)
+
+    assert.ok(chat)
+    assert.equal(chat.messageCount, 3)
+    assert.equal(chat.lastMessageText, 'Correo final · Respuesta reciente')
+    assert.equal(chat.lastMessageChannel, 'email')
+    assert.equal(chat.lastMessageTransport, 'ghl_email')
+  } finally {
+    await cleanup(contactId, phone)
+  }
+})
+
 test('contact journey defaults to contact-authored messages only', async () => {
   const id = randomUUID()
   const contactId = `journey_msg_${id}`
