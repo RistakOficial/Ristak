@@ -91,6 +91,13 @@
   border-color: rgba(var(--phone-chat-accent-rgb), 0.28);
   background: var(--phone-chat-accent-soft);
 }
+/* Chip de la vista de Comentarios: color info, distinto del acento de los
+   filtros de mensajes, para dejar claro que es una vista aparte. */
+.chipComments {
+  color: var(--info);
+  border-color: var(--info);
+  background: var(--info-soft);
+}
 
 .chipActive small {
   color: var(--badge-primary-text, #165c40);

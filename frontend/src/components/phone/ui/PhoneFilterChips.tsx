@@ -7,6 +7,9 @@ export interface PhoneFilterChipOption<Value extends string = string> {
   label: React.ReactNode
   count?: React.ReactNode
   disabled?: boolean
+  /** 'comments' pinta el chip con el color info (vista de Comentarios, aparte de
+   *  los filtros de mensajes). */
+  tone?: 'comments'
 }
 
 interface PhoneFilterChipsProps<Value extends string = string> {
@@ -49,7 +52,7 @@ export function PhoneFilterChips<Value extends string = string>({
             key={option.value}
             type="button"
             role="tab"
-            className={cn(styles.chip, isActive && styles.chipActive)}
+            className={cn(styles.chip, isActive && styles.chipActive, option.tone === 'comments' && styles.chipComments)}
             aria-selected={isActive}
             aria-pressed={isActive}
             tabIndex={isActive ? 0 : -1}

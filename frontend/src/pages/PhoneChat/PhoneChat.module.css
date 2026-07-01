@@ -1294,6 +1294,16 @@
   background: var(--phone-channel-instagram);
 }
 
+/* Comentarios: glifo de la red social pero fondo SÓLIDO (no el de los DMs),
+   para no confundirse con un mensaje directo. */
+.avatarChannelBadgeFacebookComment {
+  background: #1877f2;
+}
+
+.avatarChannelBadgeInstagramComment {
+  background: #d62976;
+}
+
 .avatarChannelBadgeEmail {
   background: var(--phone-channel-email);
 }

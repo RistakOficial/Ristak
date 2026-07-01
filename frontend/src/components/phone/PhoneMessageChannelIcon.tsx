@@ -1,6 +1,6 @@
 import React from 'react'
 import { Mail, MessageCircle } from 'lucide-react'
-import { FaFacebookMessenger, FaInstagram } from 'react-icons/fa'
+import { FaFacebook, FaFacebookMessenger, FaInstagram } from 'react-icons/fa'
 import { Icon } from '@/components/common'
 import { cn } from '@/utils/cn'
 import styles from './PhoneMessageChannelIcon.module.css'
@@ -13,8 +13,10 @@ export type PhoneMessageChannelIconKey =
   | 'email'
   | 'sms'
   | 'sms_qr'
+  | 'facebook_comment'
+  | 'instagram_comment'
 
-type NormalizedPhoneMessageChannelIconKey = 'whatsapp' | 'messenger' | 'instagram' | 'email' | 'sms'
+type NormalizedPhoneMessageChannelIconKey = 'whatsapp' | 'messenger' | 'instagram' | 'email' | 'sms' | 'facebook_comment' | 'instagram_comment'
 type PhoneMessageChannelIconVariant = 'glyph' | 'disc'
 
 interface PhoneMessageChannelIconProps {
@@ -43,6 +45,14 @@ function renderPhoneMessageChannelGlyph(channel: NormalizedPhoneMessageChannelIc
   }
 
   if (channel === 'instagram') {
+    return <FaInstagram size={size} className={glyphClassName} aria-hidden="true" />
+  }
+
+  if (channel === 'facebook_comment') {
+    return <FaFacebook size={size} className={glyphClassName} aria-hidden="true" />
+  }
+
+  if (channel === 'instagram_comment') {
     return <FaInstagram size={size} className={glyphClassName} aria-hidden="true" />
   }
 

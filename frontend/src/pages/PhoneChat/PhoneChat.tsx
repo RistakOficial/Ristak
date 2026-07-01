@@ -995,7 +995,7 @@ const COMPOSER_MESSAGE_CHANNEL_OPTIONS: Array<{
   { value: 'messenger', label: 'Messenger', description: 'Responde por Facebook Messenger.' },
   { value: 'instagram', label: 'Instagram DM', description: 'Responde por Instagram Direct.' }
 ]
-type ContactChannelBadgeKind = 'whatsapp' | 'messenger' | 'instagram' | 'email' | 'sms'
+type ContactChannelBadgeKind = 'whatsapp' | 'messenger' | 'instagram' | 'email' | 'sms' | 'facebook_comment' | 'instagram_comment'
 type ContactChannelBadge = {
   kind: ContactChannelBadgeKind
   label: string
@@ -2624,10 +2624,27 @@ function normalizeChannelProbe(value?: string | null) {
   return String(value || '').trim().toLowerCase().replace(/[\s-]+/g, '_')
 }
 
+// Un chat es "comentario" cuando su último mensaje es de tipo comment (feed de
+// Facebook u objeto de comentarios de Instagram). No se mezclan con los DMs.
+function isCommentContact(contact?: unknown): boolean {
+  return String((contact as Record<string, unknown> | null)?.lastMessageType || '').toLowerCase() === 'comment'
+}
+
+function getCommentPlatform(contact?: unknown): 'facebook' | 'instagram' {
+  const channel = String((contact as Record<string, unknown> | null)?.lastMessageChannel || '').toLowerCase()
+  return channel.includes('instagram') ? 'instagram' : 'facebook'
+}
+
 function getContactChannelBadge(contact?: (Partial<Contact> & {
   lastMessageChannel?: string | null
   lastMessageTransport?: string | null
 }) | null): ContactChannelBadge | null {
+  if (isCommentContact(contact)) {
+    return getCommentPlatform(contact) === 'instagram'
+      ? { kind: 'instagram_comment', label: 'Comentario de Instagram' }
+      : { kind: 'facebook_comment', label: 'Comentario de Facebook' }
+  }
+
   const channelValues = [
     contact?.lastMessageChannel,
     contact?.lastMessageTransport,
@@ -2666,6 +2683,8 @@ function getAvatarChannelClass(contact?: (Partial<Contact> & { lastMessageChanne
 }
 
 function getAvatarChannelBadgeClass(kind: ContactChannelBadgeKind) {
+  if (kind === 'facebook_comment') return styles.avatarChannelBadgeFacebookComment
+  if (kind === 'instagram_comment') return styles.avatarChannelBadgeInstagramComment
   if (kind === 'instagram') return styles.avatarChannelBadgeInstagram
   if (kind === 'messenger') return styles.avatarChannelBadgeMessenger
   if (kind === 'email') return styles.avatarChannelBadgeEmail
@@ -3839,6 +3858,11 @@ export const PhoneChat: React.FC = () => {
   const [chatsError, setChatsError] = useState('')
   const [chatQuery, setChatQuery] = useState('')
   const [chatFilter, setChatFilter] = useState<ChatFilter>('all')
+  const [commentsView, setCommentsView] = useState(false)
+  const [commentsPlatform, setCommentsPlatform] = useState<'all' | 'facebook' | 'instagram'>('all')
+  const [facebookCommentsEnabled] = useAppConfig<boolean>('meta_facebook_comments_enabled', false)
+  const [instagramCommentsEnabled] = useAppConfig<boolean>('meta_instagram_comments_enabled', false)
+  const commentsFeatureEnabled = facebookCommentsEnabled === true || instagramCommentsEnabled === true
   const [archivedViewOpen, setArchivedViewOpen] = useState(false)
   const [agentPriorityViewOpen, setAgentPriorityViewOpen] = useState(false)
   const [aiAgentHubOpen, setAiAgentHubOpen] = useState(false)
@@ -5058,6 +5082,16 @@ export const PhoneChat: React.FC = () => {
       : sourceChats
 
     const chipFilteredChats = phoneFilteredChats.filter((contact) => {
+      const isComment = isCommentContact(contact)
+      // Vista de Comentarios: aparte, solo comentarios (opcional por red social).
+      if (commentsView) {
+        if (!isComment) return false
+        if (commentsPlatform === 'facebook') return getCommentPlatform(contact) === 'facebook'
+        if (commentsPlatform === 'instagram') return getCommentPlatform(contact) === 'instagram'
+        return true
+      }
+      // Vista normal de mensajes: nunca mostrar comentarios (no se mezclan).
+      if (isComment) return false
       if (chatFilter === 'agent') return true
       if (chatFilter === 'unread') return Number(contact.unreadCount || 0) > 0
       if (chatFilter === 'appointments') return isAppointmentContact(contact)
@@ -5077,6 +5111,8 @@ export const PhoneChat: React.FC = () => {
     agentActiveChatIdSet,
     archivedChatIdSet,
     chatFilter,
+    commentsView,
+    commentsPlatform,
     chats,
     conversationSortMode,
     effectiveSelectedChatPhone,
@@ -17541,25 +17577,54 @@ export const PhoneChat: React.FC = () => {
               )}
             </div>
             {wideSidebarMode === 'chats' && !chatSelectionActive && (
-              <PhoneFilterChips<ChatFilter>
-                className={styles.filterChips}
-                ariaLabel="Filtros de chat"
-                hidden={sidebarSearchExpanded}
-                wrapOnWide
-                value={chatFilter}
-                options={[
-                  { value: 'all', label: 'Todos' },
-                  { value: 'unread', label: unreadTotal > 0 ? `No leídos ${unreadTotal > 99 ? '99+' : unreadTotal}` : 'No leídos' },
-                  { value: 'appointments', label: 'Agendados' },
-                  { value: 'customers', label: customersLabel },
-                  { value: 'leads', label: leadsLabel }
-                ]}
-                onChange={(nextFilter) => {
-                  setArchivedViewOpen(false)
-                  setAgentPriorityViewOpen(false)
-                  setChatFilter(nextFilter)
-                }}
-              />
+              commentsView ? (
+                <PhoneFilterChips<string>
+                  className={styles.filterChips}
+                  ariaLabel="Filtros de comentarios"
+                  hidden={sidebarSearchExpanded}
+                  wrapOnWide
+                  value={commentsPlatform}
+                  options={[
+                    { value: '__comments_exit__', label: 'Comentarios', tone: 'comments' },
+                    { value: 'all', label: 'Todas' },
+                    ...(facebookCommentsEnabled === true ? [{ value: 'facebook', label: 'Facebook' }] : []),
+                    ...(instagramCommentsEnabled === true ? [{ value: 'instagram', label: 'Instagram' }] : [])
+                  ]}
+                  onChange={(next) => {
+                    if (next === '__comments_exit__') {
+                      setCommentsView(false)
+                      return
+                    }
+                    setCommentsPlatform(next as 'all' | 'facebook' | 'instagram')
+                  }}
+                />
+              ) : (
+                <PhoneFilterChips<string>
+                  className={styles.filterChips}
+                  ariaLabel="Filtros de chat"
+                  hidden={sidebarSearchExpanded}
+                  wrapOnWide
+                  value={chatFilter}
+                  options={[
+                    { value: 'all', label: 'Todos' },
+                    { value: 'unread', label: unreadTotal > 0 ? `No leídos ${unreadTotal > 99 ? '99+' : unreadTotal}` : 'No leídos' },
+                    { value: 'appointments', label: 'Agendados' },
+                    { value: 'customers', label: customersLabel },
+                    { value: 'leads', label: leadsLabel },
+                    ...(commentsFeatureEnabled ? [{ value: '__comments_enter__', label: 'Comentarios' }] : [])
+                  ]}
+                  onChange={(next) => {
+                    setArchivedViewOpen(false)
+                    setAgentPriorityViewOpen(false)
+                    if (next === '__comments_enter__') {
+                      setCommentsPlatform('all')
+                      setCommentsView(true)
+                      return
+                    }
+                    setChatFilter(next as ChatFilter)
+                  }}
+                />
+              )
             )}
           </header>
 
