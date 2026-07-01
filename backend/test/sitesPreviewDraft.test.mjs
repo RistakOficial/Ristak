@@ -126,3 +126,65 @@ test('preview draft is ignored when it does not belong to the requested site', a
 
   assert.equal(previewSite, null)
 })
+
+test('white landing pages render legacy light block text with readable contrast', async () => {
+  const site = {
+    ...baseSite,
+    theme: {
+      ...baseSite.theme,
+      backgroundColor: '#ffffff',
+      textColor: '#ffffff',
+      textColorCustom: true
+    },
+    blocks: [
+      {
+        id: 'white-section',
+        siteId: baseSite.id,
+        blockType: 'section',
+        label: 'Franja 1 columna',
+        content: '',
+        placeholder: '',
+        required: false,
+        options: [],
+        sortOrder: 0,
+        settings: {
+          pageId: 'page-1',
+          sectionColumns: 1,
+          blockBg: 'transparent',
+          blockText: '#f4f4f6'
+        },
+        createdAt: '',
+        updatedAt: ''
+      },
+      {
+        id: 'faq-on-white',
+        siteId: baseSite.id,
+        blockType: 'faq',
+        label: 'Preguntas frecuentes',
+        content: 'Preguntas frecuentes',
+        placeholder: '',
+        required: false,
+        options: [],
+        sortOrder: 1,
+        settings: {
+          pageId: 'page-1',
+          sectionId: 'white-section',
+          sectionColumn: 0,
+          items: [{ title: 'Elemento 1', text: 'Descripcion breve.' }]
+        },
+        createdAt: '',
+        updatedAt: ''
+      }
+    ]
+  }
+
+  const html = await renderPublicSiteHtml(site, {
+    pageId: 'page-1',
+    preview: true,
+    trackingEnabled: false
+  })
+
+  assert.match(html, /--rstk-ink:#0f172a/)
+  assert.match(html, /--rstk-block-text:#0f172a/)
+  assert.doesNotMatch(html, /--rstk-block-text:#f4f4f6/)
+})

@@ -130,6 +130,9 @@ const DEFAULT_THEME = {
   backgroundColor: '#ffffff',
   textColor: '#111827'
 }
+const MIN_TEXT_CONTRAST_RATIO = 4.5
+const AUTO_DARK_TEXT = '#0f172a'
+const AUTO_LIGHT_TEXT = '#f4f4f6'
 const EMBEDDED_FORM_DEFAULT_THEME = {
   pageBorderWidth: 0,
   pageBorderColor: 'transparent'
@@ -17286,6 +17289,19 @@ function blockSettingPaint(settings, key) {
   return normalizeCssPaint(settings && settings[key], '')
 }
 
+function blockSolidBackground(block) {
+  const settings = block?.settings || {}
+  const blockBg = blockSettingPaint(settings, 'blockBg')
+  if (!blockBg || !isCssColor(blockBg) || isTransparentCssColorValue(blockBg)) return ''
+  return blockBg
+}
+
+function blockTextContrastBackground(block, context = {}) {
+  return blockSolidBackground(block) ||
+    blockSolidBackground(context.parentBlock) ||
+    cleanString(context.pageBg || context.formStyleContext?.pageBg)
+}
+
 function blockSettingNumber(settings, key, min, max) {
   const value = Number(settings && settings[key])
   if (!Number.isFinite(value)) return null
@@ -17624,9 +17640,10 @@ function blockTextListStyle(value) {
   return normalized === 'disc' || normalized === 'decimal' ? normalized : ''
 }
 
-function renderBlockStyleVars(block) {
+function renderBlockStyleVars(block, context = {}) {
   const settings = normalizeLegacyLandingBlockSettings(block)
   const vars = []
+  const textContrastBackground = blockTextContrastBackground(block, context)
   const blockBg = blockSettingPaint(settings, 'blockBg')
   const blockText = blockSettingPaint(settings, 'blockText')
   const blockBorder = blockSettingPaint(settings, 'blockBorderColor')
@@ -17698,7 +17715,7 @@ function renderBlockStyleVars(block) {
     }
   }
   if (blockText) {
-    vars.push(`--rstk-block-text:${paintFallbackColor(blockText, '#111827')}`)
+    vars.push(`--rstk-block-text:${readableTextOnBackground(blockText, textContrastBackground, '#111827')}`)
     if (isCssGradient(blockText)) vars.push(`--rstk-block-text-paint:${blockText}`)
   }
   if (!isCalendarEmbed && blockBorder) vars.push(`--rstk-block-border:${paintFallbackColor(blockBorder, '#dbe3ef')}`)
@@ -17876,7 +17893,7 @@ function renderBlockBackgroundVideo(block) {
 }
 
 function wrapRenderedBlock(block, html, context = {}) {
-  const style = renderBlockStyleVars(block)
+  const style = renderBlockStyleVars(block, context)
   const className = renderBlockStyleClassName(block)
   const hasClassOnlyStyle = block?.settings?.blockFullWidth === true
   const backgroundVideo = renderBlockBackgroundVideo(block)
@@ -17904,9 +17921,10 @@ function renderPublicBlock(block, context = {}) {
 }
 
 function renderLandingSectionLane(lane, context = {}) {
+  const columnContext = lane.section ? { ...context, parentBlock: lane.section } : context
   const columnsHtml = lane.columnBlocks.map((columnBlocks, index) => `
     <div class="rstk-section-column" data-section-column="${index}">
-      ${columnBlocks.map(block => renderPublicBlock(block, context)).join('\n')}
+      ${columnBlocks.map(block => renderPublicBlock(block, columnContext)).join('\n')}
     </div>
   `).join('\n')
 
@@ -17924,7 +17942,7 @@ function renderLandingSectionLane(lane, context = {}) {
 
   const section = lane.section
   const settings = section.settings || {}
-  const style = renderBlockStyleVars(section)
+  const style = renderBlockStyleVars(section, context)
   const className = `${renderBlockStyleClassName(section)} rstk-section-lane`
   const videoActionTargetAttr = renderVideoActionTargetAttribute(section, context)
   const countdownActionTargetAttr = renderCountdownActionTargetAttribute(section, context)
@@ -18122,11 +18140,15 @@ function buildEmbeddedFormProxyStyle(theme = {}, formStyleContext = null) {
 
   const rawBg = normalizeCssPaint(theme.backgroundColor, '')
   const hasExplicitBg = rawBg && rawBg.toLowerCase() !== String(DEFAULT_THEME.backgroundColor).toLowerCase()
+  const inheritedBg = formStyleContext.pageBg || formStyleContext.v.pageBg
+  const proxyBg = hasExplicitBg && !(isCssColor(rawBg) && isTransparentCssColorValue(rawBg))
+    ? paintFallbackColor(rawBg, inheritedBg)
+    : inheritedBg
   const rawTextPaint = normalizeCssPaint(theme.textColor, '')
   const textPaint = rawTextPaint && (theme.textColorCustom || rawTextPaint.toLowerCase() !== String(DEFAULT_THEME.textColor).toLowerCase()) ? rawTextPaint : ''
-  const ink = textPaint ? paintFallbackColor(textPaint, formStyleContext.ink) : formStyleContext.ink
+  const ink = textPaint ? readableTextOnBackground(textPaint, proxyBg, formStyleContext.ink) : formStyleContext.ink
   const muted = textPaint && isCssColor(textPaint)
-    ? `color-mix(in srgb, ${ink} 60%, ${hasExplicitBg && isCssColor(rawBg) ? rawBg : formStyleContext.pageBg || formStyleContext.v.pageBg})`
+    ? `color-mix(in srgb, ${ink} 60%, ${proxyBg})`
     : formStyleContext.muted
   const styleVars = buildFormThemeStyleVars(theme, {
     baseFont: formStyleContext.baseFont,
@@ -18178,7 +18200,7 @@ function buildEmbeddedFormSourceTheme(site = {}) {
   const pageBg = backgroundPaint && isCssColor(backgroundPaint) ? normalizeCssColor(backgroundPaint, v.pageBg) : v.pageBg
   const rawTextPaint = normalizeCssPaint(theme.textColor, '')
   const textPaint = rawTextPaint && (theme.textColorCustom || rawTextPaint.toLowerCase() !== String(DEFAULT_THEME.textColor).toLowerCase()) ? rawTextPaint : ''
-  const ink = textPaint ? paintFallbackColor(textPaint, v.ink) : v.ink
+  const ink = textPaint ? readableTextOnBackground(textPaint, pageBg, v.ink) : v.ink
   const muted = textPaint && isCssColor(textPaint) ? `color-mix(in srgb, ${ink} 60%, ${pageBg})` : v.muted
   const formVars = buildFormThemeStyleVars(theme, { baseFont, v, accent, ink, muted }).replace(/\s+/g, ' ').trim()
   const bodyClass = [
@@ -20330,6 +20352,19 @@ function relLuminance(hex) {
   return 0.2126 * r + 0.7152 * g + 0.0722 * b
 }
 
+function contrastRatio(foreground, background) {
+  const fg = relLuminance(foreground)
+  const bg = relLuminance(background)
+  return (Math.max(fg, bg) + 0.05) / (Math.min(fg, bg) + 0.05)
+}
+
+function readableTextOnBackground(paint, background, fallback = AUTO_DARK_TEXT) {
+  const textColor = paintFallbackColor(paint, fallback)
+  if (!isCssColor(textColor) || !isCssColor(background)) return textColor
+  if (contrastRatio(textColor, background) >= MIN_TEXT_CONTRAST_RATIO) return textColor
+  return relLuminance(background) < 0.5 ? AUTO_LIGHT_TEXT : AUTO_DARK_TEXT
+}
+
 function cssImageUrl(value) {
   const raw = cleanString(value)
   if (!raw) return ''
@@ -20534,7 +20569,7 @@ function buildStyleSheet(template, maxWidth, overrides = {}, pageVars = {}) {
   const pageOverlay = pageVars.pageOverlay || 'none'
   const pageBg = pageVars.pageBg || v.pageBg
   const textPaint = pageVars.textPaint || ''
-  const ink = textPaint ? paintFallbackColor(textPaint, v.ink) : v.ink
+  const ink = textPaint ? readableTextOnBackground(textPaint, pageBg, v.ink) : v.ink
   const muted = textPaint && isCssColor(textPaint) ? `color-mix(in srgb, ${ink} 60%, ${pageBg})` : v.muted
   const theme = pageVars.theme || {}
   const formStyleVars = buildFormThemeStyleVars(theme, { baseFont, v, accent, ink, muted })
@@ -22132,7 +22167,7 @@ export async function renderPublicSiteHtml(site, { pageId, pagePath, trackingEna
   const renderOverrides = resolveRenderOverrides(template, theme, isLandingType)
   const renderVars = { ...template.vars, ...(renderOverrides.vars || {}) }
   const renderAccent = renderOverrides.accent || renderVars.accent
-  const renderInk = textPaint ? paintFallbackColor(textPaint, renderVars.ink) : renderVars.ink
+  const renderInk = textPaint ? readableTextOnBackground(textPaint, pageBg || renderVars.pageBg, renderVars.ink) : renderVars.ink
   const renderMuted = textPaint && isCssColor(textPaint) ? `color-mix(in srgb, ${renderInk} 60%, ${pageBg || renderVars.pageBg})` : renderVars.muted
   const styleSheet = buildStyleSheet(template, maxWidth, renderOverrides, {
     framePad: `${pagePadding}px`,
@@ -22180,7 +22215,7 @@ export async function renderPublicSiteHtml(site, { pageId, pagePath, trackingEna
     buildVideoStreamAssetsByStorageUrl(videoLookupBlocks, { enabled: !noTrack }),
     buildVideoStorageAssetsByStreamVideoId(videoLookupBlocks, { enabled: true })
   ])
-	  const renderContext = { site, pageId: activePage?.id, pages, isInteractive, isLandingType, isStandardForm: isStandardFormType, revealFormActionControlled, submitText, submitSubtitle, continueText, nextText, backText, phoneLocale, linkStyle, websiteMode, noTrack, preview, videoStreamAssetsByStorageUrl, videoStorageAssetsByStreamVideoId, videoActionTargetIds, videoActionInitialHiddenTargetIds, countdownActionTargetIds, formStyleContext: { baseFont: sanitizeCssFont(theme.siteBodyFontFamily) || template.font, v: renderVars, accent: renderAccent, ink: renderInk, muted: renderMuted, pageBg: pageBg || renderVars.pageBg } }
+	  const renderContext = { site, pageId: activePage?.id, pages, isInteractive, isLandingType, isStandardForm: isStandardFormType, revealFormActionControlled, submitText, submitSubtitle, continueText, nextText, backText, phoneLocale, linkStyle, websiteMode, noTrack, preview, pageBg: pageBg || renderVars.pageBg, videoStreamAssetsByStorageUrl, videoStorageAssetsByStreamVideoId, videoActionTargetIds, videoActionInitialHiddenTargetIds, countdownActionTargetIds, formStyleContext: { baseFont: sanitizeCssFont(theme.siteBodyFontFamily) || template.font, v: renderVars, accent: renderAccent, ink: renderInk, muted: renderMuted, pageBg: pageBg || renderVars.pageBg } }
   const bodyBlocks = isLandingType
     ? renderLandingBlocks(blocks, renderContext)
     : blocks.map(block => renderPublicBlock(block, renderContext)).join('\n')

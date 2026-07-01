@@ -348,6 +348,23 @@ const relLuminance = (hex: string): number => {
   return 0.2126 * lin(parseInt(h.slice(0, 2), 16)) + 0.7152 * lin(parseInt(h.slice(2, 4), 16)) + 0.0722 * lin(parseInt(h.slice(4, 6), 16))
 }
 
+const MIN_TEXT_CONTRAST_RATIO = 4.5
+const AUTO_DARK_TEXT = '#0f172a'
+const AUTO_LIGHT_TEXT = '#f4f4f6'
+
+const contrastRatio = (foreground: string, background: string) => {
+  const fg = relLuminance(foreground)
+  const bg = relLuminance(background)
+  return (Math.max(fg, bg) + 0.05) / (Math.min(fg, bg) + 0.05)
+}
+
+const readableTextOnBackground = (paint: string, background: string, fallback: string) => {
+  const textColor = paintFallbackColor(paint, fallback)
+  if (!isCssColor(textColor) || !isCssColor(background)) return textColor
+  if (contrastRatio(textColor, background) >= MIN_TEXT_CONTRAST_RATIO) return textColor
+  return relLuminance(background) < 0.5 ? AUTO_LIGHT_TEXT : AUTO_DARK_TEXT
+}
+
 const resolveTemplate = (site: PublicSite): Template => {
   const id = site?.theme?.template
   if (id && SITE_TEMPLATES[id]) return SITE_TEMPLATES[id]
@@ -514,7 +531,7 @@ export const buildCanvasTheme = (site: PublicSite, device: 'desktop' | 'mobile' 
   const pageIsDark = isCssColor(pageBg) && relLuminance(pageBg) < 0.5
   const rawTextPaint = normalizeCssPaint(theme.textColor, '')
   const textPaint = rawTextPaint && (theme.textColorCustom || rawTextPaint.toLowerCase() !== DEFAULT_ACCENT.toLowerCase()) ? rawTextPaint : ''
-  const ink = textPaint ? paintFallbackColor(textPaint, v.ink) : v.ink
+  const ink = textPaint ? readableTextOnBackground(textPaint, pageBg, v.ink) : v.ink
   const formSurfacePaint = themePaint(theme, 'formSurfaceColor', '')
   const formFieldAlign = normalizeFormFieldAlign(theme.formContentAlign)
   const formPageMargins = marginsForAlign(formFieldAlign)
