@@ -15543,6 +15543,9 @@ function buildPaymentCheckoutRuntimeScript() {
       showLoading(true);
       postJson(INIT_URL, { siteId: cfg.siteId, blockId: cfg.blockId, pageId: cfg.pageId, paymentPublicId: stored }).then(function (d) {
         try { if (d.publicPaymentId) sessionStorage.setItem(storageKey, d.publicPaymentId); } catch (e) {}
+        // Expone el id para que un formulario que exige pago pueda esperar ESTE checkout
+        // inline (unificación pagar-para-enviar) en vez de abrir un link externo.
+        if (d.publicPaymentId) root.setAttribute('data-checkout-public-id', d.publicPaymentId);
         if (d.paid) { showLoading(false); runPostAction(); return; }
         if (d.provider === 'conekta') return mountConekta(d);
         if (d.provider === 'mercadopago') return mountMercadoPago(d);
@@ -23558,6 +23561,23 @@ export async function renderPublicSiteHtml(site, { pageId, pagePath, trackingEna
       };
 
       const waitForPaymentGate = (payment) => new Promise((resolve, reject) => {
+        // Unificación pagar-para-enviar: si hay un checkout embebido inline en la página,
+        // el cliente paga AHÍ (sin abrir otra pestaña). Esperamos su confirmación real y
+        // devolvemos SU publicPaymentId para completar el envío.
+        const checkoutBlock = document.querySelector('[data-rstk-checkout]');
+        if (checkoutBlock) {
+          const finishInline = () => {
+            const cid = checkoutBlock.getAttribute('data-checkout-public-id') || (payment && payment.publicPaymentId) || '';
+            if (message) message.textContent = (payment && payment.paidMessage) || 'Pago confirmado. Continuamos.';
+            resolve({ paid: true, publicPaymentId: cid, status: 'paid' });
+          };
+          if (checkoutBlock.getAttribute('data-checkout-paid') === 'true') { finishInline(); return; }
+          if (message) message.textContent = (payment && payment.pendingMessage) || 'Completa el pago aquí para enviar tu información.';
+          try { checkoutBlock.scrollIntoView({ behavior: 'smooth', block: 'center' }); } catch (e) {}
+          checkoutBlock.addEventListener('rstk:checkout-paid', finishInline, { once: true });
+          return;
+        }
+        // Fallback: flujo con link externo + polling (páginas sin checkout inline).
         if (!payment || !payment.publicPaymentId || !payment.paymentUrl) {
           reject(new Error('No se pudo preparar el pago. Intenta de nuevo.'));
           return;
@@ -23663,15 +23683,25 @@ export async function renderPublicSiteHtml(site, { pageId, pagePath, trackingEna
             }
             return data && data.data ? data.data : {};
           };
+          // Unificación pagar-para-enviar: si hay un checkout embebido con su pago ya
+          // iniciado, mándalo desde el primer submit para que el servidor reutilice ESE
+          // link (sin crear otro) y complete el envío cuando quede pagado.
+          const inlineCheckoutEl = document.querySelector('[data-rstk-checkout][data-checkout-public-id]');
+          const inlineCheckoutId = inlineCheckoutEl ? (inlineCheckoutEl.getAttribute('data-checkout-public-id') || '') : '';
+          if (inlineCheckoutId) {
+            requestBody.paymentPublicId = inlineCheckoutId;
+            requestBody.meta = { ...(requestBody.meta || {}), paymentPublicId: inlineCheckoutId };
+          }
           let submission = await postSubmission(requestBody);
           if (submission.paymentRequired) {
             const paymentStatus = await waitForPaymentGate(submission);
+            const paidPublicId = paymentStatus.publicPaymentId || submission.publicPaymentId;
             submission = await postSubmission({
               ...requestBody,
-              paymentPublicId: submission.publicPaymentId,
+              paymentPublicId: paidPublicId,
               meta: {
                 ...requestBody.meta,
-                paymentPublicId: submission.publicPaymentId,
+                paymentPublicId: paidPublicId,
                 paymentStatus: paymentStatus.status || ''
               }
             });
@@ -26208,10 +26238,15 @@ function paymentGateMatchesAnySiteContext(status, expected = {}) {
   const gate = status?.metadata?.paymentGate && typeof status.metadata.paymentGate === 'object'
     ? status.metadata.paymentGate
     : {}
-  return cleanString(gate.source || status?.metadata?.source) === expected.source &&
-    cleanString(gate.siteId || status?.metadata?.siteId) === expected.siteId &&
-    cleanString(gate.formSiteId || status?.metadata?.formSiteId) === expected.formSiteId &&
-    (!expected.paymentBlockId || cleanString(gate.paymentBlockId || status?.metadata?.paymentBlockId) === expected.paymentBlockId)
+  const matchKey = (key) => cleanString(gate[key] || status?.metadata?.[key])
+  // Solo se validan las claves presentes en expected: así un pago hecho por el checkout
+  // embebido inline (source 'site_checkout') satisface un gate de formulario del mismo
+  // sitio+bloque. El monto es autoritativo del bloque persistido, así que es seguro.
+  if (expected.source && matchKey('source') !== expected.source) return false
+  if (expected.siteId && matchKey('siteId') !== expected.siteId) return false
+  if (expected.formSiteId && matchKey('formSiteId') !== expected.formSiteId) return false
+  if (expected.paymentBlockId && matchKey('paymentBlockId') !== expected.paymentBlockId) return false
+  return true
 }
 
 function buildSitePaymentRequiredResponse(paymentGate, paymentStatus = {}) {
@@ -26239,14 +26274,17 @@ async function resolveSitePaymentGate({ req, body, site, paymentGate, contact, n
     formSiteId: nativeFormContext.formSiteId || site.id,
     paymentBlockId: cleanString(paymentGate.blockId)
   }
+  // Para ACEPTAR un pago ya realizado basta con que sea del mismo sitio + bloque: el
+  // checkout embebido inline crea su link con source 'site_checkout', no 'site_form'.
+  const matchExpected = { siteId: site.id, paymentBlockId: cleanString(paymentGate.blockId) }
   const existingPublicPaymentId = getBodyPaymentPublicId(body)
 
   if (existingPublicPaymentId) {
-    const status = await assertPaidPaymentGate(existingPublicPaymentId, expected)
+    const status = await assertPaidPaymentGate(existingPublicPaymentId, matchExpected)
     if (status) return { paid: true, status }
 
     const pendingStatus = await getPaymentGateStatus(existingPublicPaymentId)
-    if (pendingStatus && paymentGateMatchesAnySiteContext(pendingStatus, expected)) {
+    if (pendingStatus && paymentGateMatchesAnySiteContext(pendingStatus, matchExpected)) {
       return {
         paid: false,
         response: buildSitePaymentRequiredResponse(paymentGate, pendingStatus)
