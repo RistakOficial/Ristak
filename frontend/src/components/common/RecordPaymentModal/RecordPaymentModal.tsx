@@ -1039,6 +1039,9 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
   const conektaInstallmentEstimate = invoiceSummary && conektaInstallmentEnabled
     ? normalizeAmount(invoiceSummary.amount / conektaInstallmentLimit)
     : 0
+  const conektaSavedCardDescription = conektaInstallmentsAvailable
+    ? 'Elige cobro único o meses sin intereses antes de cobrar.'
+    : 'Se cobrará de contado; MSI requiere monto mínimo.'
 
   useEffect(() => {
     if (conektaInstallmentChoice === 'none') return
@@ -4403,12 +4406,14 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
                   renderSavedCardGatewayRow({
                     platform: 'conekta',
                     label: 'Conekta',
-                    description: 'Se cobrará inmediatamente con Conekta.',
+                    description: conektaSavedCardDescription,
                     value: selectedConektaPaymentSourceId,
                     options: savedConektaPaymentSourceOptions,
                     active: paymentOption === 'conekta_saved_card',
                     onSelect: (value) => {
-                      resetInstallmentChargeMode()
+                      if (paymentOption !== 'conekta_saved_card') {
+                        resetInstallmentChargeMode()
+                      }
                       setSinglePaymentAction('saved_card')
                       setPaymentOption('conekta_saved_card')
                       setSelectedConektaPaymentSourceId(value)
@@ -4789,8 +4794,10 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
           ? 'Continuar'
         : singlePaymentOptionsStage === 'gateway'
           ? 'Continuar'
+        : paymentOption === 'conekta_saved_card' && conektaMsiEnabled
+        ? `Cobrar a ${conektaInstallmentLimit} MSI`
         : paymentOption === 'stripe_saved_card' || paymentOption === 'conekta_saved_card'
-        ? 'Cobrar tarjeta'
+          ? 'Cobrar tarjeta'
         : (paymentOption === 'stripe' || paymentOption === 'conekta') && activePaymentMode === 'partial'
           ? stripePlanCardSource === 'saved_card'
             ? 'Programar con tarjeta'
