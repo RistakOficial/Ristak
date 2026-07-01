@@ -78,7 +78,7 @@ const metaConnectedTabs: Array<{ id: MetaConnectedTab; label: string; icon: Reac
   { id: 'cuenta', label: 'Cuenta', icon: <Link2 size={16} /> },
   { id: 'mensajes', label: 'Mensajes', icon: <MessageCircle size={16} /> },
   { id: 'rastreo', label: 'Rastreo', icon: <Activity size={16} /> },
-  { id: 'pruebas', label: 'Dataset y CAPI', icon: <FlaskConical size={16} /> }
+  { id: 'pruebas', label: 'Dataset Test', icon: <FlaskConical size={16} /> }
 ]
 
 const MASKED_SECRET_PREFIX = '***'
@@ -2495,7 +2495,7 @@ export const MetaAdsIntegration: React.FC = () => {
               <section className={styles.tabPanel}>
                 <div className={styles.sectionHeader}>
                   <div>
-                    <h3 className={styles.sectionTitle}>Dataset y CAPI</h3>
+                    <h3 className={styles.sectionTitle}>Dataset Test</h3>
                     <p className={styles.sectionDescription}>
                       Guarda el código TEST de Events Manager y manda un evento de prueba (navegador + servidor) antes de lanzar campañas de verdad.
                     </p>

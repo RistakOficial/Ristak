@@ -348,7 +348,7 @@ prueba. No la debilites por comodidad.
 Ristak usa Meta en varias areas:
 
 - Meta Ads config y sync.
-- Dataset/CAPI en la UI de Configuracion > Meta; las rutas internas pueden
+- Dataset Test en la UI de Configuracion > Meta; las rutas internas pueden
   conservar `pixel` por contrato con Meta y tracking.
 - Social messaging.
 - Business Messaging events.
