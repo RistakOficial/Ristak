@@ -42,7 +42,8 @@ import { normalizeTrafficSource } from '@/utils/trafficSourceNormalizer'
 import { CONTACT_STAGE_BADGE_VARIANTS, getContactStageBadge } from '@/utils/contactStageBadge'
 import { buildSearchIndex, prepareSearchQuery, searchIndexIncludes } from '@/utils/searchText'
 import { parseSortableDateValue } from '@/utils/dateSort'
-import { localDateTimeInputToUTCISOString, toDateTimeLocalInputValue as toZonedDateTimeLocalInputValue } from '@/utils/timezone'
+import { formatChatDaySeparatorLabel, formatChatMessageTime } from '@/utils/chatTimestamps'
+import { convertUTCToLocal, formatDateOnlyFromDate, localDateTimeInputToUTCISOString, toDateTimeLocalInputValue as toZonedDateTimeLocalInputValue } from '@/utils/timezone'
 import { AgentRobot } from '@/components/ai'
 import { useLabels } from '@/contexts/LabelsContext'
 import { useTimezone } from '@/contexts/TimezoneContext'
@@ -554,30 +555,17 @@ const getScheduledChatBubble = (message: ScheduledChatMessage): ContactChatMessa
 }
 
 const getChatDayKey = (date: string, timeZone: string) => {
-  const value = new Date(date)
+  const value = convertUTCToLocal(date, timeZone)
   if (Number.isNaN(value.getTime())) return 'unknown'
-  return new Intl.DateTimeFormat('en-CA', { timeZone, year: 'numeric', month: '2-digit', day: '2-digit' }).format(value)
+  return formatDateOnlyFromDate(value)
 }
 
 const getChatDayLabel = (date: string, timeZone: string) => {
-  const key = getChatDayKey(date, timeZone)
-  const todayKey = getChatDayKey(new Date().toISOString(), timeZone)
-  const yesterday = new Date()
-  yesterday.setDate(yesterday.getDate() - 1)
-  const yesterdayKey = getChatDayKey(yesterday.toISOString(), timeZone)
-
-  if (key === todayKey) return 'Hoy'
-  if (key === yesterdayKey) return 'Ayer'
-
-  const value = new Date(date)
-  if (Number.isNaN(value.getTime())) return 'Sin fecha'
-  return new Intl.DateTimeFormat('es-MX', { timeZone, day: 'numeric', month: 'short', year: 'numeric' }).format(value).replace('.', '')
+  return formatChatDaySeparatorLabel(date, timeZone)
 }
 
 const getChatTimeLabel = (date: string, timeZone: string) => {
-  const value = new Date(date)
-  if (Number.isNaN(value.getTime())) return ''
-  return new Intl.DateTimeFormat('es-MX', { timeZone, hour: 'numeric', minute: '2-digit', hour12: true }).format(value)
+  return formatChatMessageTime(date, timeZone)
 }
 
 const isScheduledContactChatMessage = (message: ContactChatMessage) =>

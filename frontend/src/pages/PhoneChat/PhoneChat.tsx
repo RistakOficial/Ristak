@@ -77,11 +77,6 @@ import { useLabels } from '@/contexts/LabelsContext'
 import { useNotification } from '@/contexts/NotificationContext'
 import { useTimezone } from '@/contexts/TimezoneContext'
 import {
-  addDateOnlyDays,
-  convertUTCToLocal,
-  formatDateOnlyFromDate,
-  formatInTimezone,
-  getStoredBusinessTimezone,
   localDateTimeInputToUTCISOString,
   toDateTimeLocalInputValue,
   todayDateOnlyInTimezone
@@ -163,6 +158,7 @@ import { getPhoneDailyCacheKey, readPhoneDailyCache, writePhoneDailyCache } from
 import { pushNotificationsService } from '@/services/pushNotificationsService'
 import { whatsappApiService, type ScheduledChatMessage, type WhatsAppApiPendingRestore, type WhatsAppApiPhoneNumber, type WhatsAppApiStatus, type WhatsAppApiTemplate } from '@/services/whatsappApiService'
 import type { Contact, ContactCustomField, ContactCustomFieldDefinition } from '@/types'
+import { formatChatDayLabel, formatChatListTimestamp, formatChatMessageTime, isChatTimestampToday } from '@/utils/chatTimestamps'
 import { getContactStageBadge } from '@/utils/contactStageBadge'
 import { parseSortableDateValue } from '@/utils/dateSort'
 import { normalizeSearchText } from '@/utils/searchText'
@@ -1665,36 +1661,11 @@ function getBusinessProfilePhotoFromJson(value?: string | null) {
 }
 
 function formatMessageTime(value?: string | null) {
-  if (!value) return ''
-  try {
-    return formatInTimezone(value, getStoredBusinessTimezone(), {
-      hour: 'numeric',
-      minute: '2-digit',
-      hour12: true
-    })
-  } catch {
-    return ''
-  }
+  return formatChatMessageTime(value)
 }
 
 function formatMessageDate(value?: string | null) {
-  if (!value) return ''
-  const timezone = getStoredBusinessTimezone()
-  const date = convertUTCToLocal(value, timezone)
-  if (Number.isNaN(date.getTime())) return ''
-
-  const dayKey = formatDateOnlyFromDate(date)
-  const todayKey = todayDateOnlyInTimezone(timezone)
-  if (dayKey === todayKey) return formatMessageTime(value)
-
-  const yesterdayKey = addDateOnlyDays(todayKey, -1)
-  if (dayKey === yesterdayKey) return 'Ayer'
-
-  return formatInTimezone(value, timezone, {
-    day: '2-digit',
-    month: 'short',
-    ...(date.getFullYear() !== Number(todayKey.slice(0, 4)) ? { year: '2-digit' } : {})
-  }).replace('.', '')
+  return formatChatDayLabel(value)
 }
 
 function padTwoDigits(value: number) {
@@ -1766,8 +1737,7 @@ function formatScheduledMessageLabel(value?: string | null) {
   if (Number.isNaN(date.getTime())) return 'Programado'
 
   const time = formatMessageTime(value)
-  const sameDay = date.toDateString() === new Date().toDateString()
-  if (sameDay) return `Programado ${time}`
+  if (isChatTimestampToday(value)) return `Programado ${time}`
 
   return `Programado ${formatMessageDate(value)} ${time}`.trim()
 }
@@ -1795,8 +1765,7 @@ function formatSchedulePreviewLabel(value?: string | null) {
   if (Number.isNaN(date.getTime())) return 'Elige fecha y hora'
 
   const time = formatMessageTime(value)
-  const sameDay = date.toDateString() === new Date().toDateString()
-  if (sameDay) return `Se enviará a las ${time}`
+  if (isChatTimestampToday(value)) return `Se enviará a las ${time}`
 
   return `Se enviará el ${formatMessageDate(value)} a las ${time}`.trim()
 }
@@ -10650,7 +10619,7 @@ export const PhoneChat: React.FC = () => {
 
   const renderAIAgentChatButton = () => {
     const lastAiMessage = aiMessages[aiMessages.length - 1]
-    const dateLabel = formatMessageDate(lastAiMessage?.createdAt)
+    const dateLabel = formatChatListTimestamp(lastAiMessage?.createdAt)
     const subtitle = showLastMessagePreview
       ? getAIAgentMessagePreview(lastAiMessage)
       : AI_AGENT_CHAT_SUBTITLE
@@ -10686,7 +10655,7 @@ export const PhoneChat: React.FC = () => {
   const renderContactButton = (contact: Contact, source: 'chat' | 'contact') => {
     const chatContact = contact as ChatContact
     const subtitle = source === 'chat' && showLastMessagePreview ? getChatPreview(chatContact) : getContactDetail(contact)
-    const dateLabel = source === 'chat' ? formatMessageDate(chatContact.lastMessageDate || contact.createdAt) : ''
+    const dateLabel = source === 'chat' ? formatChatListTimestamp(chatContact.lastMessageDate || contact.createdAt) : ''
     const contactDisplayName = contact.id === AI_AGENT_CHAT_ID ? AI_AGENT_CHAT_DISPLAY_NAME : getContactName(contact)
     const unreadCount = Number(chatContact.unreadCount || 0)
     const hasUnread = showUnreadIndicators && source === 'chat' && unreadCount > 0
@@ -10821,7 +10790,7 @@ export const PhoneChat: React.FC = () => {
         : ''
     const preview = showLastMessagePreview ? getChatPreview(contact) : getContactDetail(contact)
     const subtitle = agentStatusLabel ? `${agentStatusLabel} · ${preview}` : preview
-    const dateLabel = formatMessageDate(contact.lastMessageDate || contact.createdAt)
+    const dateLabel = formatChatListTimestamp(contact.lastMessageDate || contact.createdAt)
     const unreadCount = Number(contact.unreadCount || 0)
     const hasUnread = showUnreadIndicators && unreadCount > 0
     const isMuted = mutedChatIdSet.has(contact.id)
@@ -11122,7 +11091,7 @@ export const PhoneChat: React.FC = () => {
     const chatContact = contact as ChatContact
     const lastDate = chatContact.lastMessageDate || contact.createdAt
     const subtitle = chatContact.lastMessageDate
-      ? `Reciente · ${formatMessageDate(lastDate)}`
+      ? `Reciente · ${formatChatListTimestamp(lastDate)}`
       : getContactDetail(contact)
 
     return (

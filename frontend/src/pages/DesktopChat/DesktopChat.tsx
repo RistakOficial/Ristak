@@ -68,9 +68,6 @@ import { useLabels } from '@/contexts/LabelsContext'
 import { useNotification } from '@/contexts/NotificationContext'
 import { useTimezone } from '@/contexts/TimezoneContext'
 import {
-  addDateOnlyDays,
-  convertUTCToLocal,
-  formatDateOnlyFromDate,
   formatInTimezone,
   getStoredBusinessTimezone,
   localDateTimeInputToUTCISOString,
@@ -106,6 +103,7 @@ import {
   type WhatsAppApiTemplate
 } from '@/services/whatsappApiService'
 import type { Contact, ContactAppointment, ContactPayment, ContactPhoneNumber } from '@/types'
+import { formatChatDayLabel, formatChatListTimestamp, formatChatMessageTime, isChatTimestampToday } from '@/utils/chatTimestamps'
 import { getContactStageBadge } from '@/utils/contactStageBadge'
 import { parseSortableDateValue } from '@/utils/dateSort'
 import { formatCurrency, formatDate, formatUrlParameter } from '@/utils/format'
@@ -1265,32 +1263,11 @@ function countAdvancedFilters(filters: AdvancedChatFilters) {
 }
 
 function formatMessageTime(value?: string | null) {
-  if (!value) return ''
-  try {
-    return formatInTimezone(value, getStoredBusinessTimezone(), { hour: 'numeric', minute: '2-digit', hour12: true })
-  } catch {
-    return ''
-  }
+  return formatChatMessageTime(value)
 }
 
 function formatMessageDate(value?: string | null) {
-  if (!value) return ''
-  const timezone = getStoredBusinessTimezone()
-  const date = convertUTCToLocal(value, timezone)
-  if (Number.isNaN(date.getTime())) return ''
-
-  const dayKey = formatDateOnlyFromDate(date)
-  const todayKey = todayDateOnlyInTimezone(timezone)
-  if (dayKey === todayKey) return formatMessageTime(value)
-
-  const yesterdayKey = addDateOnlyDays(todayKey, -1)
-  if (dayKey === yesterdayKey) return 'Ayer'
-
-  return formatInTimezone(value, timezone, {
-    day: '2-digit',
-    month: 'short',
-    ...(date.getFullYear() !== Number(todayKey.slice(0, 4)) ? { year: '2-digit' } : {})
-  }).replace('.', '')
+  return formatChatDayLabel(value)
 }
 
 function padTwoDigits(value: number) {
@@ -1362,7 +1339,7 @@ function formatScheduledMessageLabel(value?: string | null) {
   if (Number.isNaN(date.getTime())) return 'Programado'
 
   const time = formatMessageTime(value)
-  if (date.toDateString() === new Date().toDateString()) return `Programado ${time}`
+  if (isChatTimestampToday(value)) return `Programado ${time}`
 
   return `Programado ${formatMessageDate(value)} ${time}`.trim()
 }
@@ -1373,7 +1350,7 @@ function formatSchedulePreviewLabel(value?: string | null) {
   if (Number.isNaN(date.getTime())) return 'Elige fecha y hora'
 
   const time = formatMessageTime(value)
-  if (date.toDateString() === new Date().toDateString()) return `Se enviará a las ${time}`
+  if (isChatTimestampToday(value)) return `Se enviará a las ${time}`
 
   return `Se enviará el ${formatMessageDate(value)} a las ${time}`.trim()
 }
@@ -6089,7 +6066,7 @@ export const DesktopChat: React.FC = () => {
                       <span className={styles.chatRowBody}>
                         <span className={styles.chatRowTop}>
                           <strong>{getContactName(contact)}</strong>
-                          <small>{contact.lastMessageDate ? formatMessageDate(contact.lastMessageDate) : ''}</small>
+                          <small>{contact.lastMessageDate ? formatChatListTimestamp(contact.lastMessageDate) : ''}</small>
                         </span>
                         <span className={styles.chatPreviewLine}>
                           <span className={styles.agentPriorityText}>
@@ -6147,7 +6124,7 @@ export const DesktopChat: React.FC = () => {
                       <span className={styles.chatRowBody}>
                         <span className={styles.chatRowTop}>
                           <strong>{getContactName(contact)}</strong>
-                          <small>{contact.lastMessageDate ? formatMessageDate(contact.lastMessageDate) : ''}</small>
+                          <small>{contact.lastMessageDate ? formatChatListTimestamp(contact.lastMessageDate) : ''}</small>
                         </span>
                         <span className={styles.chatPreviewLine}>
                           {agentStatusLabel ? <span className={styles.agentInboxStatusText}>{agentStatusLabel}</span> : null}
