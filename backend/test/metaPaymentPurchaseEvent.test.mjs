@@ -89,14 +89,13 @@ async function insertMetaPixelConfig({
 } = {}) {
   await db.run(`
     INSERT INTO meta_config (
-      ad_account_id, access_token, pixel_id, pixel_api_token,
+      ad_account_id, access_token, pixel_id,
       page_id, instagram_account_id, timezone_id, timezone_name, timezone_offset_hours_utc
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
   `, [
     '123456',
     encrypt('meta-access-token'),
     pixelId,
-    encrypt('legacy-pixel-api-token'),
     pageId,
     null,
     null,
@@ -146,14 +145,13 @@ test('payment Purchase CAPI event uses real payment amount and account currency'
 
         await db.run(`
           INSERT INTO meta_config (
-            ad_account_id, access_token, pixel_id, pixel_api_token,
+            ad_account_id, access_token, pixel_id,
             page_id, instagram_account_id, timezone_id, timezone_name, timezone_offset_hours_utc
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
         `, [
           '123456',
           encrypt('meta-access-token'),
           'pixel-payment-123',
-          encrypt('legacy-pixel-api-token'),
           null,
           null,
           null,
@@ -219,7 +217,6 @@ test('payment Purchase CAPI event uses real payment amount and account currency'
         assert.equal(result.sent, true)
         assert.equal(metaCalls.length, 1)
         assert.match(decodeURIComponent(metaCalls[0].url), /access_token=meta-access-token/)
-        assert.doesNotMatch(decodeURIComponent(metaCalls[0].url), /legacy-pixel-api-token/)
 
         const payload = JSON.parse(metaCalls[0].body)
         assert.equal(payload.data[0].event_name, 'Purchase')

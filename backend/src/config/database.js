@@ -1125,6 +1125,54 @@ async function ensureTableColumns(tableName, columns) {
   }
 }
 
+async function removeObsoleteMetaCapiColumn() {
+  if (usePostgres) {
+    await db.run('ALTER TABLE meta_config DROP COLUMN IF EXISTS pixel_api_token')
+    return
+  }
+
+  const columns = await db.all('PRAGMA table_info(meta_config)').catch(() => [])
+  const hasColumn = columns.some(column => column.name === 'pixel_api_token')
+  if (!hasColumn) return
+
+  await db.run('PRAGMA foreign_keys=off')
+  try {
+    await db.exec(`
+      DROP TABLE IF EXISTS meta_config_capi_cleanup;
+      CREATE TABLE meta_config_capi_cleanup (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        ad_account_id TEXT UNIQUE,
+        access_token TEXT NOT NULL,
+        app_id TEXT,
+        app_secret TEXT,
+        token_expires_at DATETIME,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        timezone_id INTEGER,
+        timezone_name TEXT,
+        timezone_offset_hours_utc INTEGER,
+        pixel_id TEXT,
+        page_id TEXT,
+        instagram_account_id TEXT
+      );
+      INSERT INTO meta_config_capi_cleanup (
+        id, ad_account_id, access_token, app_id, app_secret, token_expires_at,
+        created_at, updated_at, timezone_id, timezone_name, timezone_offset_hours_utc,
+        pixel_id, page_id, instagram_account_id
+      )
+      SELECT
+        id, ad_account_id, access_token, app_id, app_secret, token_expires_at,
+        created_at, updated_at, timezone_id, timezone_name, timezone_offset_hours_utc,
+        pixel_id, page_id, instagram_account_id
+      FROM meta_config;
+      DROP TABLE meta_config;
+      ALTER TABLE meta_config_capi_cleanup RENAME TO meta_config;
+    `)
+  } finally {
+    await db.run('PRAGMA foreign_keys=on')
+  }
+}
+
 const CONVERSATIONAL_AGENT_STATE_COLUMNS = [
   'id',
   'contact_id',
@@ -3847,16 +3895,6 @@ async function initTables() {
         }
       }
 
-      // Columna legacy: Ristak ya no usa Pixel API Token para CAPI; se conserva
-      // para no romper instalaciones antiguas ni migraciones existentes.
-      try {
-        await db.run('ALTER TABLE meta_config ADD COLUMN pixel_api_token TEXT')
-      } catch (err) {
-        if (!err.message.includes('duplicate column name') && !err.message.includes('already exists')) {
-          throw err
-        }
-      }
-
       // Agregar columna page_id a meta_config
       try {
         await db.run('ALTER TABLE meta_config ADD COLUMN page_id TEXT')
@@ -3898,19 +3936,18 @@ async function initTables() {
                 timezone_name TEXT,
                 timezone_offset_hours_utc INTEGER,
                 pixel_id TEXT,
-                pixel_api_token TEXT,
                 page_id TEXT,
                 instagram_account_id TEXT
               );
               INSERT INTO meta_config_shared_token_migration (
                 id, ad_account_id, access_token, app_id, app_secret, token_expires_at,
                 created_at, updated_at, timezone_id, timezone_name, timezone_offset_hours_utc,
-                pixel_id, pixel_api_token, page_id, instagram_account_id
+                pixel_id, page_id, instagram_account_id
               )
               SELECT
                 id, ad_account_id, access_token, app_id, app_secret, token_expires_at,
                 created_at, updated_at, timezone_id, timezone_name, timezone_offset_hours_utc,
-                pixel_id, pixel_api_token, page_id, instagram_account_id
+                pixel_id, page_id, instagram_account_id
               FROM meta_config;
               DROP TABLE meta_config;
               ALTER TABLE meta_config_shared_token_migration RENAME TO meta_config;
@@ -3922,6 +3959,12 @@ async function initTables() {
         if (!err.message.includes('already exists')) {
           logger.warn('Advertencia al permitir token Meta compartido sin cuenta de anuncios:', err.message)
         }
+      }
+
+      try {
+        await removeObsoleteMetaCapiColumn()
+      } catch (err) {
+        logger.warn('Advertencia al eliminar columna obsoleta de Meta CAPI:', err.message)
       }
 
       // Agregar columnas de creative a meta_ads para previsualizar anuncios

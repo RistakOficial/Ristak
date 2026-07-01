@@ -473,12 +473,6 @@ export async function getMetaConfig() {
       }
     }
 
-    // `pixel_api_token` queda como columna legacy para instalaciones viejas, pero
-    // Ristak ya no lo lee ni lo devuelve: CAPI usa siempre el System User Token.
-    if (Object.prototype.hasOwnProperty.call(config, 'pixel_api_token')) {
-      config.pixel_api_token = null
-    }
-
     return config
   } catch (error) {
     logger.error('Error obteniendo configuración de Meta:', error.message)
@@ -665,10 +659,10 @@ async function syncMetaCustomValues(adAccountId, accessToken, pixelId, pageId = 
 /**
  * Guarda la configuración de Meta en la base de datos
  * ENCRIPTA el access_token antes de guardar.
- * CAPI usa siempre System User Token; `pixel_api_token` se conserva sólo como columna legacy.
+ * CAPI usa siempre System User Token.
  * CREA/ACTUALIZA custom values en HighLevel automáticamente
  */
-export async function saveMetaConfig(adAccountId, accessToken, pixelId = null, _legacyPixelApiToken = null, pageId = null, instagramAccountId = null) {
+export async function saveMetaConfig(adAccountId, accessToken, pixelId = null, pageId = null, instagramAccountId = null) {
   try {
     // Encriptar el access_token
     const encryptedToken = encrypt(accessToken)
@@ -693,13 +687,12 @@ export async function saveMetaConfig(adAccountId, accessToken, pixelId = null, _
 
     // Insertar la nueva configuración (System User - solo necesita access_token + ad_account_id)
     await db.run(`
-      INSERT INTO meta_config (ad_account_id, access_token, pixel_id, pixel_api_token, page_id, instagram_account_id, timezone_id, timezone_name, timezone_offset_hours_utc)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO meta_config (ad_account_id, access_token, pixel_id, page_id, instagram_account_id, timezone_id, timezone_name, timezone_offset_hours_utc)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
     `, [
       adAccountId,
       encryptedToken,
       pixelId,
-      null,
       pageId,
       instagramAccountId,
       timezoneData?.timezone_id,

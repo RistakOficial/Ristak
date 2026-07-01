@@ -568,7 +568,6 @@ export const saveConfig = async (req, res) => {
       ad_account_id,
       access_token,
       pixel_id || null,
-      null,
       page_id || null,
       instagram_account_id || null
     );
@@ -3014,7 +3013,6 @@ export const saveAndSyncMeta = async (req, res) => {
       normalizedAdAccountId,
       effectiveAccessToken,
       effectivePixelId || null,
-      null,
       normalizedPageId || null,
       normalizedInstagramAccountId || null
     );

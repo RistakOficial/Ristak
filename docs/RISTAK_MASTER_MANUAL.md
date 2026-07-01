@@ -387,9 +387,8 @@ Ristak usa Meta en varias areas:
 - Dataset Test en la UI de Configuracion > Meta; las rutas internas pueden
   conservar `pixel` por contrato con Meta y tracking.
 - Conversions API usa siempre el System User Access Token guardado en
-  `meta_config.access_token` (o `META_ACCESS_TOKEN` como fallback). El campo
-  `meta_config.pixel_api_token` queda como legacy ignorado y no debe pedirse,
-  generarse ni sincronizarse.
+  `meta_config.access_token` (o `META_ACCESS_TOKEN` como fallback). No hay un
+  token separado para CAPI: no se pide, no se genera y no se sincroniza.
 - Social messaging.
 - Business Messaging events.
 - Campaign Builder en modo preview/validacion segun entorno.

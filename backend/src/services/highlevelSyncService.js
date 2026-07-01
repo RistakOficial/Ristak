@@ -1850,7 +1850,6 @@ export async function reconcileMetaBusinessWithHighLevel(locationId, apiToken, o
         credentialsToSave.adAccountId,
         credentialsToSave.accessToken,
         credentialsToSave.pixelId || null,
-        null,
         credentialsToSave.pageId || null,
         credentialsToSave.instagramAccountId || null
       )
@@ -1887,7 +1886,6 @@ export async function reconcileMetaBusinessWithHighLevel(locationId, apiToken, o
           mergedLocal.adAccountId,
           mergedLocal.accessToken,
           mergedLocal.pixelId || null,
-          null,
           mergedLocal.pageId || null,
           mergedLocal.instagramAccountId || null
         )
@@ -1933,7 +1931,6 @@ export async function reconcileMetaBusinessWithHighLevel(locationId, apiToken, o
         credentialsToSave.adAccountId,
         credentialsToSave.accessToken,
         credentialsToSave.pixelId || null,
-        null,
         credentialsToSave.pageId || null,
         credentialsToSave.instagramAccountId || null
       )

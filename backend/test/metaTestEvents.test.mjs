@@ -34,14 +34,13 @@ test('sendMetaTestEvent posts CAPI payload with test_event_code', async () => {
     await db.run('DELETE FROM app_config WHERE config_key = ?', ['meta_test_event_code'])
     await db.run(`
       INSERT INTO meta_config (
-        ad_account_id, access_token, pixel_id, pixel_api_token,
+        ad_account_id, access_token, pixel_id,
         page_id, instagram_account_id, timezone_id, timezone_name, timezone_offset_hours_utc
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
     `, [
       '123456',
       encrypt('meta-access-token'),
       'pixel-test-123',
-      encrypt('legacy-pixel-api-token'),
       null,
       null,
       null,
@@ -104,7 +103,6 @@ test('sendMetaTestEvent posts CAPI payload with test_event_code', async () => {
     assert.match(response.payload.eventId, /^ristak_meta_test_/)
     assert.equal(metaCalls.length, 1)
     assert.match(decodeURIComponent(metaCalls[0].url), /access_token=meta-access-token/)
-    assert.doesNotMatch(decodeURIComponent(metaCalls[0].url), /legacy-pixel-api-token/)
 
     const payload = JSON.parse(metaCalls[0].body)
     assert.equal(payload.test_event_code, 'TEST98765')

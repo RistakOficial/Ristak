@@ -103,8 +103,7 @@ test('saving Meta token with pixel enables calendar and payment conversion event
         await saveMetaConfig(
           '123456',
           'meta-access-token',
-          'pixel-123',
-          'legacy-pixel-capi-token'
+          'pixel-123'
         )
 
         assert.equal(await getAppConfig('meta_whatsapp_schedule_enabled'), '1')
@@ -160,8 +159,7 @@ test('saving Meta token creates smart payment conversion defaults when none exis
         await saveMetaConfig(
           '123456',
           'meta-access-token',
-          'pixel-123',
-          'legacy-pixel-capi-token'
+          'pixel-123'
         )
 
         const paymentConfig = JSON.parse(await getAppConfig('meta_payment_purchase_event_config'))
