@@ -339,7 +339,6 @@ Todos se inician en `server.js`; no son servicios cron de Render.
 - `GET /api/meta/pixels`
 - `GET /api/meta/custom-values`
 - `POST /api/meta/save-and-sync`
-- `POST /api/meta/save-pixel-token`
 - `POST /api/meta/sync`
 - `POST /api/meta/sync-from-highlevel`
 - `GET /api/meta/sync/progress`

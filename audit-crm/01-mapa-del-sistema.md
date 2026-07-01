@@ -94,9 +94,9 @@ Inventario de los módulos auditados, qué intenta hacer cada uno y sus archivos
 - invoices, invoices/:invoiceId/record-payment, text2pay, users
 
 **Meta** (`/api/meta`)
-- config (GET/POST/DELETE), reveal/access_token, reveal/pixel_api_token, webhook-info, verify-token, test-event
+- config (GET/POST/DELETE), reveal/access_token, webhook-info, verify-token, test-event
 - pixel-test/link, **pixel-test (público firmado)**, **pixel-test/event (público firmado)**
-- ad-accounts, pixels, pages, social-profiles, custom-values, save-and-sync, save-pixel-token, sync, sync-from-highlevel, sync/progress, sync/status, update-recent
+- ad-accounts, pixels, pages, social-profiles, custom-values, save-and-sync, sync, sync-from-highlevel, sync/progress, sync/status, update-recent
 - campaigns, creative-preview/:creativeId, spend-over-time, contacts, leads-over-time, appointments-over-time, visitors-over-time, funnel-metrics, campaign-builder/\*
 
 **WhatsApp** (`/api/whatsapp-api`)
