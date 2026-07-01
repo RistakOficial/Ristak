@@ -131,8 +131,11 @@ const tokenSetupScopes = [
   'pages_show_list',
   'pages_manage_metadata',
   'pages_messaging',
+  'pages_read_engagement',
+  'pages_manage_engagement',
   'instagram_basic',
-  'instagram_manage_messages'
+  'instagram_manage_messages',
+  'instagram_manage_comments'
 ]
 
 const metaTestEventOptions = [
@@ -2223,6 +2226,46 @@ export const MetaAdsIntegration: React.FC = () => {
                     <li>Repite en <strong>Instagram</strong>: la misma URL y el mismo token, verifica y suscríbete a esos campos para recibir los DMs.</li>
                     <li>Si iniciaste sesión con Facebook, la suscripción de la Página suele quedar automática; en Instagram hazla manual si no aparece.</li>
                   </ol>
+
+                  <div className={styles.webhookComments}>
+                    <span className={styles.webhookFieldLabel}>Comentarios de Facebook e Instagram — opcional</span>
+                    <p className={styles.connectedPagesDescription}>
+                      Si además quieres recibir comentarios (de publicaciones y anuncios), suscribe también estos campos. En Facebook van en el webhook de la Página; en Instagram, en el objeto Instagram del panel.
+                    </p>
+                    <div className={styles.webhookFields}>
+                      <div className={styles.webhookField}>
+                        <span className={styles.webhookFieldLabel}>Facebook — campo a suscribir</span>
+                        <div className={styles.webhookFieldRow}>
+                          <code className={styles.webhookFieldValue}>feed</code>
+                          <Button
+                            type="button"
+                            variant="secondary"
+                            onClick={() => handleCopyValue('feed', 'Campo')}
+                          >
+                            <Copy size={16} />
+                            Copiar
+                          </Button>
+                        </div>
+                      </div>
+                      <div className={styles.webhookField}>
+                        <span className={styles.webhookFieldLabel}>Instagram — campos a suscribir</span>
+                        <div className={styles.webhookFieldRow}>
+                          <code className={styles.webhookFieldValue}>comments, mentions</code>
+                          <Button
+                            type="button"
+                            variant="secondary"
+                            onClick={() => handleCopyValue('comments,mentions', 'Campos')}
+                          >
+                            <Copy size={16} />
+                            Copiar
+                          </Button>
+                        </div>
+                      </div>
+                    </div>
+                    <p className={styles.connectedPagesDescription}>
+                      Para leerlos y responderlos, el token también necesita <strong>pages_read_engagement</strong> y <strong>pages_manage_engagement</strong> (Facebook) e <strong>instagram_manage_comments</strong> (Instagram). Ya vienen incluidos en el asistente del token de arriba.
+                    </p>
+                  </div>
                 </div>
               </section>
             )}
