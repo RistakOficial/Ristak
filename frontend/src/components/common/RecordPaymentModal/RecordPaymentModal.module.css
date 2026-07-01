@@ -2912,7 +2912,9 @@ body.dark .tooltipInfo {
   padding: 16px 16px 18px;
   border: 1px solid var(--record-payment-embedded-border);
   border-radius: 16px;
-  background: var(--record-payment-embedded-panel);
+  /* Tarjeta blanca para que los campos (gris, mismo estilo global que el resto del
+     formulario) contrasten y su contorno se vea, en vez de invertir el color. */
+  background: var(--record-payment-embedded-bg);
 }
 
 .embeddedRoot[data-payment-mode="partial"] .planSeq {
@@ -2933,17 +2935,15 @@ body.dark .tooltipInfo {
   display: block;
 }
 
-/* Contorno claro en los campos: fondo blanco sobre la tarjeta gris (mismo criterio
-   visible que los segmentos de IVA), para que se entienda dónde escribir y pulsar. */
+/* Los campos del plan NO llevan estilo propio: heredan el estilo global de campo
+   (.embeddedRoot .input / .phoneDateButton / .phoneSelectButton) — fondo gris,
+   contorno control-border, 52px, radio 12 — para ser consistentes y reutilizables
+   con el resto del formulario móvil (Monto, Título, contacto, etc.). Solo fijamos
+   la altura exacta a 52 para que valor y fecha queden a ras. */
 .embeddedRoot[data-payment-mode="partial"] .planValueCell .input,
 .embeddedRoot[data-payment-mode="partial"] .planDateCell .phoneDateButton,
 .embeddedRoot[data-payment-mode="partial"] .planFirstMethod .phoneSelectButton {
   height: 52px;
-  min-height: 52px;
-  font-size: 16px;
-  background: var(--record-payment-embedded-bg) !important;
-  border: 1px solid var(--record-payment-embedded-tablist-border) !important;
-  border-radius: 12px !important;
 }
 
 .embeddedRoot[data-payment-mode="partial"] .planAmountHint {
@@ -2977,17 +2977,17 @@ body.dark .tooltipInfo {
 .embeddedRoot[data-payment-mode="partial"] .planDeleteCell .iconButton {
   width: 40px;
   height: 40px;
-  border: 1px solid var(--record-payment-embedded-tablist-border);
-  border-radius: 10px;
-  background: var(--record-payment-embedded-bg);
+  border: 1px solid var(--record-payment-control-border);
+  border-radius: 12px;
+  background: var(--record-payment-embedded-panel);
 }
 
-/* "Agregar pago" como botón con contorno limpio (no bloque gris), igual que el widget. */
+/* "Agregar pago" con el mismo estilo de campo global (gris + control-border). */
 .embeddedRoot[data-payment-mode="partial"] .addInstallment {
   min-height: 54px;
-  border: 1px solid var(--record-payment-embedded-tablist-border);
-  border-radius: 14px;
-  background: var(--record-payment-embedded-bg);
+  border: 1px solid var(--record-payment-control-border);
+  border-radius: 12px;
+  background: var(--record-payment-embedded-panel);
 }
 
 .embeddedRoot .optionsContent {
