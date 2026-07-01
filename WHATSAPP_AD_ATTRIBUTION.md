@@ -1,5 +1,9 @@
 # WhatsApp Ad Attribution
 
+> Documento historico especializado. La entrada canonica actual de
+> documentacion es [`docs/README.md`](docs/README.md); el mapa general vive en
+> [`docs/RISTAK_MASTER_MANUAL.md`](docs/RISTAK_MASTER_MANUAL.md).
+
 Esta documentación describe el comportamiento real de `backend/src/controllers/webhooksController.js` al 2026-05-28.
 
 ## Endpoint

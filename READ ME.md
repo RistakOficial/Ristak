@@ -1,6 +1,11 @@
 # Contexto Maestro - Ristak App
 
-Este archivo es la fuente de verdad operativa del proyecto. Actualizado contra el código actual el 2026-05-28.
+> Documento historico. La entrada canonica actual de documentacion es
+> [`docs/README.md`](docs/README.md) y el manual consolidado vive en
+> [`docs/RISTAK_MASTER_MANUAL.md`](docs/RISTAK_MASTER_MANUAL.md).
+
+Este archivo fue una fuente de verdad operativa del proyecto y queda como
+snapshot historico actualizado contra el codigo de 2026-05-28.
 
 ## Reglas Críticas
 

@@ -1,5 +1,9 @@
 # Deploy En Render
 
+> Documento operativo historico. Para ubicar la documentacion vigente, empieza en
+> [`docs/README.md`](docs/README.md). La guia especifica de Render sigue en
+> [`docs/DEPLOY-RENDER.md`](docs/DEPLOY-RENDER.md).
+
 Esta guía refleja el `render.yaml` actual del repo. No hay cron jobs separados en Render: las sincronizaciones automáticas corren dentro del backend con `node-cron`.
 
 ## Requisitos

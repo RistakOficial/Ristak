@@ -1,5 +1,9 @@
 # CLAUDE.md — Ristak
 
+> Documento historico para Claude. La regla vigente para agentes vive en
+> [`AGENTS.md`](AGENTS.md); el sistema canonico de documentacion empieza en
+> [`docs/README.md`](docs/README.md).
+
 ## 🛑 Diseño / UI — LÉEME ANTES DE TOCAR CUALQUIER INTERFAZ
 
 Ristak tiene **un sistema de diseño global obligatorio**. Cada función o pantalla

@@ -62,6 +62,24 @@
   controller debe llamar `syncRegisteredIntegrationCronsForProvider(...)` para
   prender/apagar el cron sin reiniciar el backend.
 
+## Documentación — OBLIGATORIO
+
+- Antes de crear, mover o modificar documentación, lee **`docs/README.md`** y
+  **`docs/DOCUMENTATION_SYSTEM.md`**.
+- Para cualquier cambio de producto, arquitectura, rutas, servicios, tablas,
+  permisos, licencias, pagos, integraciones, jobs, IA, app móvil, Sites, tracking
+  o comportamiento visible, actualiza la sección correspondiente en
+  **`docs/RISTAK_MASTER_MANUAL.md`** o el documento especializado indicado en
+  `docs/README.md`.
+- Si agregas un documento nuevo, debe quedar enlazado en **`docs/README.md`** y
+  explicado en **`docs/DOCUMENTATION_SYSTEM.md`** si introduce una ruta nueva de
+  mantenimiento.
+- Nunca documentes valores reales de secrets, tokens, contraseñas, connection
+  strings, certificados o claves privadas. Documenta sólo nombre, ubicación,
+  propósito y si es obligatorio para arrancar.
+- En el resumen final de cada implementación, menciona qué documentación
+  actualizaste o por qué no aplicaba actualizar documentación.
+
 ## Git publishing
 
 - `main` is the only base and publish target for this repo.

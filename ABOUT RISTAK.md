@@ -1,5 +1,9 @@
 # Ristak - CRM, marketing, pagos y mensajería
 
+> Documento historico. La entrada canonica actual de documentacion es
+> [`docs/README.md`](docs/README.md) y el manual consolidado vive en
+> [`docs/RISTAK_MASTER_MANUAL.md`](docs/RISTAK_MASTER_MANUAL.md).
+
 Ristak es una app full-stack autónoma para operar marketing, ventas, contactos, calendarios, pagos, mensajería y tracking web. HighLevel, Meta, Google, Stripe, Conekta y Mercado Pago funcionan como integraciones opcionales, no como dependencia central de la app.
 
 ## Stack Real
