@@ -200,6 +200,7 @@ const PAYMENT_TEST_GUIDES: Record<PaymentTestProvider, PaymentTestGuide> = {
     description: 'En modo prueba usa fecha futura, cualquier CVC y cualquier dato de cliente. Algunas tarjetas fuerzan rechazo o autenticacion bancaria.',
     emailHint: 'Correo: cualquier correo con formato valido.',
     cards: [
+      { kind: 'Credito', brand: 'Visa MX MSI', number: '4000 0048 4000 0008', cvc: '123', expiry: '12/34', result: 'Muestra planes MSI disponibles' },
       { kind: 'Credito', brand: 'Visa', number: '4242 4242 4242 4242', cvc: '123', expiry: '12/34', result: 'Pago aprobado' },
       { kind: 'Debito', brand: 'Visa', number: '4000 0566 5566 5556', cvc: '123', expiry: '12/34', result: 'Pago aprobado' },
       { kind: 'Credito', brand: 'Mastercard', number: '5555 5555 5555 4444', cvc: '123', expiry: '12/34', result: 'Pago aprobado' },
@@ -952,6 +953,7 @@ const PublicPaymentForm: React.FC<{
     ? 'Autorizar tarjeta'
     : payment.settings?.checkout?.buttonLabel || 'Pagar'
   const submitAmount = Number(payment.amount || 0) > 0 ? ` ${formatCurrency(payment.amount, payment.currency)}` : ''
+  const showStripeInstallmentsNotice = Boolean(payment.stripeInstallments?.enabled)
   const showSecureNotice = payment.settings?.checkout?.showSecureBadge !== false
   const isTestMode = payment.paymentMode === 'test' || String(payment.publishableKey || '').startsWith('pk_test_')
 
@@ -1020,6 +1022,13 @@ const PublicPaymentForm: React.FC<{
         <p className={styles.cardAuthorizationNotice}>
           <ShieldCheck size={16} />
           <span>La tarjeta se captura en campos seguros de Stripe. Ristak solo recibe el resultado del cobro.</span>
+        </p>
+      )}
+
+      {showStripeInstallmentsNotice && (
+        <p className={styles.cardAuthorizationNotice}>
+          <Info size={16} />
+          <span>Si tu tarjeta de crédito aplica, Stripe mostrará los meses sin intereses disponibles antes de confirmar el pago.</span>
         </p>
       )}
 

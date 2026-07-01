@@ -77,6 +77,7 @@ const MANUAL_PLAN_PAYMENT_METHODS = new Set(['cash', 'bank_transfer', 'transfer'
 const TIMED_PLAN_FREQUENCY = 'scheduled_time'
 const TIMED_PLAN_FREQUENCY_ALIASES = new Set([TIMED_PLAN_FREQUENCY, 'scheduled-time', 'scheduledat', 'scheduled_at', 'timed', 'datetime'])
 const PLAN_FREQUENCIES = new Set(['custom', 'daily', 'weekly', 'biweekly', 'monthly', 'yearly', TIMED_PLAN_FREQUENCY])
+const STRIPE_INSTALLMENT_MIN_AMOUNT = 300
 const ZERO_DECIMAL_CURRENCIES = new Set([
   'bif', 'clp', 'djf', 'gnf', 'jpy', 'kmf', 'krw', 'mga', 'pyg', 'rwf',
   'ugx', 'vnd', 'vuv', 'xaf', 'xof', 'xpf'
@@ -352,6 +353,49 @@ function normalizePositiveAmount(value, fallback = 25) {
   const amount = Number(value)
   if (Number.isFinite(amount) && amount > 0) return Math.round(amount * 100) / 100
   return Math.round(Number(fallback || 25) * 100) / 100
+}
+
+function normalizeStripeInstallmentOptions(input, { amount = null, currency = DEFAULT_CURRENCY, emptyAsNull = false } = {}) {
+  if (input === undefined || input === null || input === '' || input === false) {
+    return emptyAsNull ? null : {
+      enabled: false,
+      label: 'Pago de contado'
+    }
+  }
+
+  const source = typeof input === 'object' && !Array.isArray(input)
+    ? input
+    : { enabled: true }
+  const enabled = normalizeBoolean(source.enabled, true)
+
+  if (!enabled) {
+    return emptyAsNull ? null : {
+      enabled: false,
+      label: 'Pago de contado'
+    }
+  }
+
+  const normalizedCurrency = normalizeCurrency(currency)
+  if (normalizedCurrency !== 'MXN') {
+    const error = new Error('Stripe sólo permite meses sin intereses en pagos con moneda MXN.')
+    error.status = 400
+    throw error
+  }
+
+  const parsedAmount = Number(amount)
+  if (Number.isFinite(parsedAmount) && parsedAmount < STRIPE_INSTALLMENT_MIN_AMOUNT) {
+    const error = new Error(`Para ofrecer meses sin intereses en Stripe, el monto mínimo es ${STRIPE_INSTALLMENT_MIN_AMOUNT} MXN.`)
+    error.status = 400
+    throw error
+  }
+
+  return {
+    enabled: true,
+    minAmount: STRIPE_INSTALLMENT_MIN_AMOUNT,
+    label: 'Meses sin intereses',
+    provider: 'stripe',
+    selectionMode: 'stripe_payment_element'
+  }
 }
 
 function extractStripeObjectId(value) {
@@ -896,6 +940,11 @@ function mapPublicPayment(row, config, baseUrl = '', settings = null, paymentPla
   if (!row) return null
   const metadata = parseJson(row.metadata_json, {})
   const tax = metadata.tax && typeof metadata.tax === 'object' ? metadata.tax : null
+  const stripeInstallments = normalizeStripeInstallmentOptions(metadata.stripeInstallments, {
+    amount: row.amount,
+    currency: row.currency || config?.defaultCurrency || DEFAULT_CURRENCY,
+    emptyAsNull: true
+  })
   const subscriptionStart = getPublicSubscriptionStart(metadata)
   const publicPaymentId = row.public_payment_id
   return {
@@ -923,6 +972,7 @@ function mapPublicPayment(row, config, baseUrl = '', settings = null, paymentPla
     stripePaymentIntentId: row.stripe_payment_intent_id || null,
     publishableKey: config?.publishableKey || '',
     stripeAccountId: '',
+    stripeInstallments,
     subscriptionStart,
     tax,
     paymentPlan,
@@ -1264,6 +1314,11 @@ export async function createStripePaymentLink(input = {}, { baseUrl } = {}) {
   const publicPaymentId = createPublicId()
   const id = createId('stripe_payment')
   const currency = await getConfiguredCurrency()
+  const stripeInstallments = normalizeStripeInstallmentOptions(input.installments || input.stripeInstallments, {
+    amount: chargeAmount,
+    currency,
+    emptyAsNull: true
+  })
   const now = new Date().toISOString()
   const paymentUrl = buildPaymentUrl(baseUrl, publicPaymentId)
   const contactId = cleanString(input.contactId) || null
@@ -1278,6 +1333,7 @@ export async function createStripePaymentLink(input = {}, { baseUrl } = {}) {
     source: cleanString(input.source || 'ristak'),
     lineItems: Array.isArray(input.lineItems) ? input.lineItems : [],
     ...(input.metadata && typeof input.metadata === 'object' ? input.metadata : {}),
+    ...(stripeInstallments ? { stripeInstallments } : {}),
     ...(tax ? { tax } : {})
   }
 
@@ -1406,6 +1462,11 @@ export async function createStripePaymentIntent(publicPaymentId, options = {}) {
 
   const currency = normalizeCurrency(row.currency || config.defaultCurrency)
   const rowMetadata = parseJson(row.metadata_json, {})
+  const stripeInstallments = normalizeStripeInstallmentOptions(rowMetadata.stripeInstallments, {
+    amount: row.amount,
+    currency,
+    emptyAsNull: true
+  })
   const paymentSettings = await getPaymentSettings()
   const shouldSendReceipt = shouldSendStripeReceiptEmail(paymentSettings)
   const paymentPlanMetadata = rowMetadata.paymentPlan && typeof rowMetadata.paymentPlan === 'object'
@@ -1438,6 +1499,17 @@ export async function createStripePaymentIntent(publicPaymentId, options = {}) {
       amount: toStripeAmount(row.amount, currency),
       currency: currency.toLowerCase(),
       automatic_payment_methods: { enabled: true },
+      ...(stripeInstallments
+        ? {
+            payment_method_options: {
+              card: {
+                installments: {
+                  enabled: true
+                }
+              }
+            }
+          }
+        : {}),
       ...(stripeCustomerId ? { customer: stripeCustomerId } : {}),
       ...(savePaymentMethod && stripeCustomerId ? { setup_future_usage: 'off_session' } : {}),
       description: row.title || row.description || 'Pago Ristak',

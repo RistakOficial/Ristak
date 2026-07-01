@@ -78,6 +78,9 @@ export interface StripePaymentLinkPayload {
   dueDate?: string
   source?: string
   lineItems?: Array<Record<string, unknown>>
+  installments?: {
+    enabled?: boolean
+  }
 }
 
 export interface PublicMetaPurchaseEvent {
@@ -165,6 +168,13 @@ export interface PublicStripePayment {
   stripePaymentIntentId?: string | null
   publishableKey: string
   stripeAccountId?: string
+  stripeInstallments?: {
+    enabled: boolean
+    minAmount?: number
+    label?: string
+    provider?: 'stripe'
+    selectionMode?: string
+  } | null
   subscriptionStart?: PublicStripeSubscriptionStart | null
   paymentPlan?: PublicStripePaymentPlan | null
   tax?: {
