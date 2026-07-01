@@ -419,6 +419,25 @@ export interface WhatsAppApiSendResponse {
   }
 }
 
+function normalizeSendResponse(
+  response: WhatsAppApiSendResponse | null | undefined,
+  fallback: Pick<WhatsAppApiSendResponse, 'status' | 'transport'> = {}
+): WhatsAppApiSendResponse {
+  if (response && typeof response === 'object') return response
+
+  return {
+    status: fallback.status || 'sent',
+    transport: fallback.transport || 'api'
+  }
+}
+
+async function postSendResponse(endpoint: string, payload: any): Promise<WhatsAppApiSendResponse> {
+  const response = await apiClient.post<WhatsAppApiSendResponse | null>(endpoint, payload)
+  return normalizeSendResponse(response, {
+    transport: payload?.transport
+  })
+}
+
 export interface MetaSocialTextSendPayload {
   contactId: string
   platform: 'messenger' | 'instagram'
@@ -506,11 +525,11 @@ export const whatsappApiService = {
   cancelScheduledMessage: (id: string, contactId?: string) => (
     apiClient.delete<ScheduledChatMessage>(`/whatsapp-api/messages/scheduled/${encodeURIComponent(id)}`, contactId ? { contactId } : undefined)
   ),
-  sendText: (payload: WhatsAppApiTextSendPayload) => apiClient.post<WhatsAppApiSendResponse>('/whatsapp-api/messages/text', payload),
-  sendInteractive: (payload: WhatsAppApiInteractiveSendPayload) => apiClient.post<WhatsAppApiSendResponse>('/whatsapp-api/messages/interactive', payload),
-  sendImage: (payload: WhatsAppApiImageSendPayload) => apiClient.post<WhatsAppApiSendResponse>('/whatsapp-api/messages/image', payload),
-  sendDocument: (payload: WhatsAppApiDocumentSendPayload) => apiClient.post<WhatsAppApiSendResponse>('/whatsapp-api/messages/document', payload),
-  sendVideo: (payload: WhatsAppApiVideoSendPayload) => apiClient.post<WhatsAppApiSendResponse>('/whatsapp-api/messages/video', payload),
-  sendAudio: (payload: WhatsAppApiAudioSendPayload) => apiClient.post<WhatsAppApiSendResponse>('/whatsapp-api/messages/audio', payload),
-  sendTemplate: (payload: WhatsAppApiTemplateSendPayload) => apiClient.post<WhatsAppApiSendResponse>('/whatsapp-api/templates/send', payload)
+  sendText: (payload: WhatsAppApiTextSendPayload) => postSendResponse('/whatsapp-api/messages/text', payload),
+  sendInteractive: (payload: WhatsAppApiInteractiveSendPayload) => postSendResponse('/whatsapp-api/messages/interactive', payload),
+  sendImage: (payload: WhatsAppApiImageSendPayload) => postSendResponse('/whatsapp-api/messages/image', payload),
+  sendDocument: (payload: WhatsAppApiDocumentSendPayload) => postSendResponse('/whatsapp-api/messages/document', payload),
+  sendVideo: (payload: WhatsAppApiVideoSendPayload) => postSendResponse('/whatsapp-api/messages/video', payload),
+  sendAudio: (payload: WhatsAppApiAudioSendPayload) => postSendResponse('/whatsapp-api/messages/audio', payload),
+  sendTemplate: (payload: WhatsAppApiTemplateSendPayload) => postSendResponse('/whatsapp-api/templates/send', payload)
 }
