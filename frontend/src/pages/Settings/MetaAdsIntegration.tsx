@@ -68,11 +68,17 @@ type SecretTokenField = 'accessToken'
 type MetaMessagingPlatform = 'messenger' | 'instagram'
 type MetaConnectedTab = 'cuenta' | 'mensajes' | 'rastreo' | 'pruebas'
 
+interface MetaWebhookInfo {
+  webhookUrl: string
+  verifyToken: string
+  fields: string[]
+}
+
 const metaConnectedTabs: Array<{ id: MetaConnectedTab; label: string; icon: React.ReactNode }> = [
   { id: 'cuenta', label: 'Cuenta', icon: <Link2 size={16} /> },
   { id: 'mensajes', label: 'Mensajes', icon: <MessageCircle size={16} /> },
   { id: 'rastreo', label: 'Rastreo', icon: <Activity size={16} /> },
-  { id: 'pruebas', label: 'Pruebas', icon: <FlaskConical size={16} /> }
+  { id: 'pruebas', label: 'Meta Pixel y CAPI', icon: <FlaskConical size={16} /> }
 ]
 
 const MASKED_SECRET_PREFIX = '***'
@@ -316,7 +322,6 @@ export const MetaAdsIntegration: React.FC = () => {
   const [isEditingMetaConfig, setIsEditingMetaConfig] = useState(false)
   const [isDisconnectModalOpen, setIsDisconnectModalOpen] = useState(false)
   const [isDisconnectingMeta, setIsDisconnectingMeta] = useState(false)
-  const [isMetaTestModalOpen, setIsMetaTestModalOpen] = useState(false)
   const [metaTestDraftCode, setMetaTestDraftCode] = useState('')
   const [metaTestEventName, setMetaTestEventName] = useState(defaultMetaTestEventName)
   const [metaTestEventParameters, setMetaTestEventParameters] = useState<MetaTestEventParameters>({})
@@ -326,6 +331,7 @@ export const MetaAdsIntegration: React.FC = () => {
   const [metaTestResult, setMetaTestResult] = useState<MetaTestEventResponse | null>(null)
   const [activeStep, setActiveStep] = useState(routeStep)
   const [activeMetaTab, setActiveMetaTab] = useState<MetaConnectedTab>('cuenta')
+  const [metaWebhookInfo, setMetaWebhookInfo] = useState<MetaWebhookInfo | null>(null)
   const accessTokenInputRef = useRef<HTMLInputElement>(null)
 
   const { showToast } = useNotification()
@@ -344,6 +350,18 @@ export const MetaAdsIntegration: React.FC = () => {
 
       await navigator.clipboard.writeText(META_AD_UTM_PARAMETERS)
       showToast('success', 'UTM copiado', 'Pégalo en Parámetros de URL del anuncio en Meta.')
+    } catch {
+      showToast('error', 'No se pudo copiar', 'Selecciona el texto y cópialo manualmente.')
+    }
+  }
+
+  const handleCopyValue = async (value: string, label: string) => {
+    try {
+      if (!value || !navigator.clipboard?.writeText) {
+        throw new Error('Clipboard unavailable')
+      }
+      await navigator.clipboard.writeText(value)
+      showToast('success', `${label} copiado`, 'Pégalo en Meta Developers.')
     } catch {
       showToast('error', 'No se pudo copiar', 'Selecciona el texto y cópialo manualmente.')
     }
@@ -370,13 +388,34 @@ export const MetaAdsIntegration: React.FC = () => {
     setActiveStep(current => current === routeStep ? current : routeStep)
   }, [routeStep])
 
+  // El código de prueba vive inline (sin modal): siembra el borrador con el
+  // código guardado en la carga inicial y cada vez que cambie el guardado.
   useEffect(() => {
-    if (!isMetaTestModalOpen) return
     setMetaTestDraftCode(metaTestEventCode || '')
-    setMetaTestEventParameters((current) => pruneMetaTestEventParametersForEvent(current, metaTestEventName || defaultMetaTestEventName))
-    setIsMetaTestParametersOpen(false)
-    setMetaTestResult(null)
-  }, [isMetaTestModalOpen, metaTestEventCode])
+  }, [metaTestEventCode])
+
+  // Datos del webhook de Meta para el mini-tutorial de Mensajes (URL a pegar en
+  // Meta Developers, token de verificación y campos a suscribir).
+  useEffect(() => {
+    let cancelled = false
+    const loadWebhookInfo = async () => {
+      try {
+        const response = await fetch('/api/meta/webhook-info')
+        const data = await response.json()
+        if (!cancelled && data?.success && data.data) {
+          setMetaWebhookInfo({
+            webhookUrl: data.data.webhookUrl || '',
+            verifyToken: data.data.verifyToken || '',
+            fields: Array.isArray(data.data.fields) ? data.data.fields : []
+          })
+        }
+      } catch {
+        // El tutorial simplemente no muestra los valores si el endpoint falla.
+      }
+    }
+    void loadWebhookInfo()
+    return () => { cancelled = true }
+  }, [])
 
   const goToMetaStep = (stepIndex: number, options?: { replace?: boolean }) => {
     const nextStep = Math.max(0, Math.min(stepIndex, metaStepSlugs.length - 1))
@@ -1169,14 +1208,6 @@ export const MetaAdsIntegration: React.FC = () => {
     }))
   }
 
-  const handleOpenMetaTestModal = () => {
-    setMetaTestDraftCode(metaTestEventCode || '')
-    setMetaTestEventName(current => normalizeMetaTestEventName(current))
-    setMetaTestEventParameters(current => pruneMetaTestEventParametersForEvent(current, normalizeMetaTestEventName(metaTestEventName)))
-    setIsMetaTestParametersOpen(false)
-    setMetaTestResult(null)
-    setIsMetaTestModalOpen(true)
-  }
 
   const handleSaveMetaTestEventCode = async () => {
     const nextCode = normalizeMetaTestCode(metaTestDraftCode)
@@ -2019,41 +2050,44 @@ export const MetaAdsIntegration: React.FC = () => {
                   </div>
                 </div>
 
-                <div className={styles.connectedMetaGrid}>
-                  <div className={styles.connectedMetaItem}>
-                    <span>Cuenta publicitaria</span>
-                    <strong>{getSelectedAdAccountLabel()}</strong>
+                <div className={styles.connectedList}>
+                  <div className={styles.connectedListRow}>
+                    <span className={styles.connectedListLabel}>Cuenta publicitaria</span>
+                    <span className={styles.connectedListValue}>{getSelectedAdAccountLabel()}</span>
                   </div>
-                  <div className={styles.connectedMetaItem}>
-                    <span>Facebook Page</span>
-                    <strong>{getSelectedPageLabel()}</strong>
+                  <div className={styles.connectedListRow}>
+                    <span className={styles.connectedListLabel}>Facebook Page</span>
+                    <span className={styles.connectedListValue}>{getSelectedPageLabel()}</span>
                   </div>
-                  <div className={styles.connectedMetaItem}>
-                    <span>Meta Pixel</span>
-                    <strong>{hasPixel ? getSelectedPixelLabel() : 'Sin pixel'}</strong>
+                  <div className={styles.connectedListRow}>
+                    <span className={styles.connectedListLabel}>Meta Pixel</span>
+                    <span className={styles.connectedListValue}>{hasPixel ? getSelectedPixelLabel() : 'Sin pixel'}</span>
                   </div>
-                  <div className={styles.connectedMetaItem}>
-                    <span>Instagram</span>
-                    <strong>{hasInstagramAccount ? getSelectedInstagramLabel() : 'Sin Instagram'}</strong>
+                  <div className={styles.connectedListRow}>
+                    <span className={styles.connectedListLabel}>Instagram</span>
+                    <span className={styles.connectedListValue}>{hasInstagramAccount ? getSelectedInstagramLabel() : 'Sin Instagram'}</span>
                   </div>
-                  <div className={styles.connectedMetaItem}>
-                    <span>Token de Meta</span>
+                  <div className={styles.connectedListRow}>
+                    <span className={styles.connectedListLabel}>Token de Meta</span>
                     {metaTokenStatus ? (
-                      <Badge
-                        variant={
-                          !metaTokenStatus.valid
-                            ? 'error'
-                            : (typeof metaTokenStatus.daysUntilExpiry === 'number' && metaTokenStatus.daysUntilExpiry <= 7 ? 'warning' : 'success')
-                        }
-                      >
-                        {metaTokenStatus.valid
-                          ? (typeof metaTokenStatus.daysUntilExpiry === 'number'
-                              ? `Válido · expira en ${metaTokenStatus.daysUntilExpiry} día${metaTokenStatus.daysUntilExpiry === 1 ? '' : 's'}`
-                              : 'Válido')
-                          : 'Inválido o expirado'}
-                      </Badge>
+                      <span className={styles.connectedListValue}>
+                        <Badge
+                          variant={
+                            !metaTokenStatus.valid
+                              ? 'error'
+                              : (typeof metaTokenStatus.daysUntilExpiry === 'number' && metaTokenStatus.daysUntilExpiry <= 7 ? 'warning' : 'success')
+                          }
+                        >
+                          {metaTokenStatus.valid ? 'Válido' : 'Inválido'}
+                        </Badge>
+                        {metaTokenStatus.valid && typeof metaTokenStatus.daysUntilExpiry === 'number' && (
+                          <span className={styles.tokenExpiry}>
+                            expira en {metaTokenStatus.daysUntilExpiry} día{metaTokenStatus.daysUntilExpiry === 1 ? '' : 's'}
+                          </span>
+                        )}
+                      </span>
                     ) : (
-                      <strong>—</strong>
+                      <span className={styles.connectedListValue}>—</span>
                     )}
                   </div>
                 </div>
@@ -2118,6 +2152,72 @@ export const MetaAdsIntegration: React.FC = () => {
                       </div>
                     </div>
                   </div>
+
+                <div className={styles.webhookGuide}>
+                  <div className={styles.connectedPagesHeader}>
+                    <h4 className={styles.connectedPagesTitle}>Conectar los mensajes en Meta Developers</h4>
+                    <p className={styles.connectedPagesDescription}>
+                      Para que Ristak reciba Messenger e Instagram DM, pega estos valores en tu app de Meta (Configuración de la API con Facebook → Webhooks).
+                    </p>
+                  </div>
+
+                  <div className={styles.webhookFields}>
+                    <div className={styles.webhookField}>
+                      <span className={styles.webhookFieldLabel}>URL de devolución de llamada</span>
+                      <div className={styles.webhookFieldRow}>
+                        <code className={styles.webhookFieldValue}>{metaWebhookInfo?.webhookUrl || 'Cargando…'}</code>
+                        <Button
+                          type="button"
+                          variant="secondary"
+                          onClick={() => handleCopyValue(metaWebhookInfo?.webhookUrl || '', 'URL')}
+                          disabled={!metaWebhookInfo?.webhookUrl}
+                        >
+                          <Copy size={16} />
+                          Copiar
+                        </Button>
+                      </div>
+                    </div>
+
+                    <div className={styles.webhookField}>
+                      <span className={styles.webhookFieldLabel}>Token de verificación</span>
+                      <div className={styles.webhookFieldRow}>
+                        <code className={styles.webhookFieldValue}>{metaWebhookInfo?.verifyToken || 'Cargando…'}</code>
+                        <Button
+                          type="button"
+                          variant="secondary"
+                          onClick={() => handleCopyValue(metaWebhookInfo?.verifyToken || '', 'Token')}
+                          disabled={!metaWebhookInfo?.verifyToken}
+                        >
+                          <Copy size={16} />
+                          Copiar
+                        </Button>
+                      </div>
+                    </div>
+
+                    <div className={styles.webhookField}>
+                      <span className={styles.webhookFieldLabel}>Campos del webhook a suscribir</span>
+                      <div className={styles.webhookFieldRow}>
+                        <code className={styles.webhookFieldValue}>{(metaWebhookInfo?.fields?.length ? metaWebhookInfo.fields : ['messages', 'messaging_postbacks', 'message_reactions', 'messaging_referrals']).join(', ')}</code>
+                        <Button
+                          type="button"
+                          variant="secondary"
+                          onClick={() => handleCopyValue((metaWebhookInfo?.fields?.length ? metaWebhookInfo.fields : ['messages', 'messaging_postbacks', 'message_reactions', 'messaging_referrals']).join(','), 'Campos')}
+                        >
+                          <Copy size={16} />
+                          Copiar
+                        </Button>
+                      </div>
+                    </div>
+                  </div>
+
+                  <ol className={styles.webhookSteps}>
+                    <li>En Meta Developers abre tu app y entra a <strong>Configuración de la API con Facebook</strong> (o el producto <strong>Messenger</strong>) → <strong>Webhooks</strong>.</li>
+                    <li>Pega la <strong>URL de devolución de llamada</strong> y el <strong>token de verificación</strong> de arriba, y da <strong>Verificar y guardar</strong>.</li>
+                    <li>En <strong>Campos del webhook</strong> suscríbete a los campos de arriba y da <strong>Suscribir</strong>.</li>
+                    <li>Repite en <strong>Instagram</strong>: la misma URL y el mismo token, verifica y suscríbete a esos campos para recibir los DMs.</li>
+                    <li>Si iniciaste sesión con Facebook, la suscripción de la Página suele quedar automática; en Instagram hazla manual si no aparece.</li>
+                  </ol>
+                </div>
               </section>
             )}
             {shouldShowWizard && (
@@ -2230,11 +2330,11 @@ export const MetaAdsIntegration: React.FC = () => {
                 </div>
 
                 <div className={styles.connectedExtrasRows}>
-                  {credentials.pixelId && !isRenderDomain ? (
+                  {hasPixel && !isRenderDomain && (
                     <div className={styles.connectedExtraRow}>
                       <div>
                         <span className={styles.railSwitchLabel}>Incluir Meta Pixel en snippet</span>
-                        <span className={styles.railSecondaryValue}>Agrega el pixel al Web Tracking.</span>
+                        <span className={styles.railSecondaryValue}>Agrega el pixel ({getSelectedPixelLabel()}) al Web Tracking.</span>
                       </div>
                       <Switch
                         checked={includeMetaPixel === true}
@@ -2242,11 +2342,22 @@ export const MetaAdsIntegration: React.FC = () => {
                         disabled={isSyncingSnippet || savingPixelPref}
                       />
                     </div>
-                  ) : (
+                  )}
+
+                  {hasPixel && isRenderDomain && (
                     <div className={styles.connectedExtraRow}>
                       <div>
-                        <span className={styles.railSwitchLabel}>Snippet</span>
-                        <span className={styles.railSecondaryValue}>Configura un Meta Pixel para activar esta opción.</span>
+                        <span className={styles.railSwitchLabel}>Meta Pixel en snippet</span>
+                        <span className={styles.railSecondaryValue}>El pixel está configurado, pero el snippet solo se inyecta desde tu dominio personalizado, no en el dominio de Render.</span>
+                      </div>
+                    </div>
+                  )}
+
+                  {!hasPixel && (
+                    <div className={styles.connectedExtraRow}>
+                      <div>
+                        <span className={styles.railSwitchLabel}>Meta Pixel en snippet</span>
+                        <span className={styles.railSecondaryValue}>Elige un Meta Pixel en el paso del wizard para activar esta opción.</span>
                       </div>
                     </div>
                   )}
@@ -2265,37 +2376,215 @@ export const MetaAdsIntegration: React.FC = () => {
               <section className={styles.tabPanel}>
                 <div className={styles.sectionHeader}>
                   <div>
-                    <h3 className={styles.sectionTitle}>Probar eventos CAPI</h3>
+                    <h3 className={styles.sectionTitle}>Meta Pixel y CAPI</h3>
                     <p className={styles.sectionDescription}>
-                      Manda un evento de prueba a Meta con el código TEST antes de lanzar campañas de verdad.
+                      Guarda el código TEST de Events Manager y manda un evento de prueba (navegador + servidor) antes de lanzar campañas de verdad.
                     </p>
                   </div>
+                  <Badge variant={metaTestEventCode ? 'warning' : 'neutral'}>
+                    {metaTestEventCode ? 'Test activo' : 'Sin código'}
+                  </Badge>
                 </div>
 
-                <div className={styles.connectedExtrasRows}>
+                {!hasPixel ? (
                   <div className={styles.connectedExtraRow}>
-                    <div className={styles.metaTestRowCopy}>
-                      <span className={styles.railSwitchLabel}>Estado del modo prueba</span>
-                      <span className={styles.metaTestRowMeta}>
-                        <Badge variant={metaTestEventCode ? 'warning' : 'neutral'}>
-                          {metaTestEventCode ? 'Test activo' : 'Sin código'}
-                        </Badge>
-                        {metaTestEventCode && (
-                          <span className={styles.metaTestSavedCode}>{metaTestEventCode}</span>
-                        )}
-                      </span>
+                    <div>
+                      <span className={styles.railSwitchLabel}>Meta Pixel requerido</span>
+                      <span className={styles.railSecondaryValue}>Elige un Meta Pixel en el wizard para poder mandar pruebas de eventos CAPI.</span>
                     </div>
-                    <Button
-                      type="button"
-                      variant="secondary"
-                      onClick={handleOpenMetaTestModal}
-                      disabled={!hasPixel}
-                    >
-                      <FlaskConical size={16} />
-                      Abrir pruebas
-                    </Button>
                   </div>
-                </div>
+                ) : (
+                  <div className={styles.metaTestPanel}>
+                    <p className={styles.metaTestHelp}>
+                      Pega el código de la pestaña Test Events. Mientras esté activo, los eventos de tus páginas (navegador + servidor) se mandan como prueba, incluso si la página está en anti-tracking. Se <strong>desactiva solo a los 30 minutos</strong> para que, al lanzar publicidad, no queden conversiones reales atrapadas en modo prueba.
+                    </p>
+                    {metaTestCodeActive && (
+                      <p className={styles.metaTestHelp}>
+                        <Badge variant="warning">Modo prueba activo</Badge>{' '}
+                        {metaTestCodeSetAtMs
+                          ? `Se desactiva solo en ~${metaTestCodeRemainingMin} min${metaTestCodeExpiresAtLabel ? ` (a las ${metaTestCodeExpiresAtLabel})` : ''}. Quítalo con "Limpiar" cuando termines de probar.`
+                          : 'Recuerda quitarlo con "Limpiar" cuando termines de probar para no perder conversiones reales.'}
+                      </p>
+                    )}
+
+                    <div className={styles.metaTestGrid}>
+                      <label className={styles.formGroup}>
+                        <span className={styles.formLabel}>Código de test</span>
+                        <input
+                          className={styles.formInput}
+                          value={metaTestDraftCode}
+                          onChange={(event) => setMetaTestDraftCode(event.target.value)}
+                          placeholder="TEST12345"
+                          autoComplete="off"
+                          spellCheck={false}
+                        />
+                      </label>
+                      <label className={styles.formGroup}>
+                        <span className={styles.formLabel}>Evento</span>
+                        <CustomSelect
+                          value={normalizedMetaTestEventName}
+                          onChange={(event) => setMetaTestEventNameAndResetParameters(event.target.value)}
+                        >
+                          {metaTestEventOptions.map((option) => (
+                            <option key={option.value} value={option.value}>
+                              {option.label}
+                            </option>
+                          ))}
+                        </CustomSelect>
+                      </label>
+                    </div>
+
+                    <button
+                      type="button"
+                      className={[
+                        styles.metaTestParametersToggle,
+                        isMetaTestParametersOpen ? styles.metaTestParametersToggleActive : '',
+                        hasMetaTestEventParameters(normalizedMetaTestEventParameters) ? styles.metaTestParametersToggleFilled : ''
+                      ].filter(Boolean).join(' ')}
+                      onClick={() => setIsMetaTestParametersOpen(current => !current)}
+                    >
+                      <Settings2 size={15} />
+                      Parámetros del evento
+                    </button>
+
+                    {isMetaTestParametersOpen && (
+                      <div className={styles.metaTestParametersForm}>
+                        {metaTestEventFieldKeys.length > 0 && (
+                          <div className={styles.metaTestParametersGrid}>
+                            {metaTestEventFieldKeys.map((field) => (
+                              <label key={field} className={styles.metaTestParameterField}>
+                                <span>{metaTestParameterFieldLabels[field]}</span>
+                                <input
+                                  value={normalizedMetaTestEventParameters[field] || ''}
+                                  placeholder={metaTestParameterFieldPlaceholders[field]}
+                                  onChange={(event) => setMetaTestEventParameterField(
+                                    field,
+                                    event.target.value
+                                  )}
+                                />
+                              </label>
+                            ))}
+                          </div>
+                        )}
+
+                        <div className={styles.metaTestCustomParameters}>
+                          <span>Parámetros custom</span>
+                          {visibleMetaTestCustomRows.map((parameter, index) => {
+                            const isDefaultRow = index >= (normalizedMetaTestEventParameters.custom?.length || 0)
+
+                            return (
+                              <div key={parameter.id || `meta-test-parameter-${index}`} className={styles.metaTestCustomParameterRow}>
+                                <input
+                                  value={parameter.key}
+                                  placeholder="parametro_meta"
+                                  onChange={(event) => patchMetaTestCustomParameter(index, { key: event.target.value })}
+                                />
+                                <input
+                                  value={parameter.value}
+                                  placeholder="valor"
+                                  onChange={(event) => patchMetaTestCustomParameter(index, { value: event.target.value })}
+                                />
+                                <button
+                                  type="button"
+                                  className={styles.metaTestCustomParameterDelete}
+                                  disabled={isDefaultRow}
+                                  title="Eliminar parámetro"
+                                  onClick={() => removeMetaTestCustomParameter(index)}
+                                >
+                                  <Trash2 size={13} />
+                                </button>
+                              </div>
+                            )
+                          })}
+
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            onClick={() => void addMetaTestCustomParameter()}
+                            disabled={(normalizedMetaTestEventParameters.custom || []).length >= 12}
+                          >
+                            <Plus size={14} />
+                            Añadir parámetro
+                          </Button>
+                        </div>
+                      </div>
+                    )}
+
+                    {metaTestResult && (
+                      <div
+                        className={styles.metaTestResult}
+                        data-status={metaTestResult.success ? 'success' : 'error'}
+                        role="status"
+                      >
+                        <strong>{metaTestResult.success ? 'Evento enviado' : 'No se pudo enviar'}</strong>
+                        {metaTestResult.eventId && (
+                          <span className={styles.metaTestResultCode}>{metaTestResult.eventId}</span>
+                        )}
+                        {metaTestResult.error && (
+                          <span>{metaTestResult.error}</span>
+                        )}
+                      </div>
+                    )}
+
+                    <div className={styles.metaTestActions}>
+                      <div className={styles.metaTestSecondaryActions}>
+                        {shouldShowClearMetaTestCode && (
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            onClick={() => void handleClearMetaTestEventCode()}
+                            disabled={savingMetaTestEventCode || isSendingMetaTestEvent || isOpeningMetaPixelTest}
+                          >
+                            <Trash2 size={16} />
+                            Limpiar
+                          </Button>
+                        )}
+                      </div>
+                      <div className={styles.metaTestPrimaryActions}>
+                        {shouldShowSaveMetaTestCode && (
+                          <Button
+                            type="button"
+                            variant="secondary"
+                            onClick={() => void handleSaveMetaTestEventCode()}
+                            disabled={savingMetaTestEventCode || isSendingMetaTestEvent || isOpeningMetaPixelTest}
+                          >
+                            <Save size={16} />
+                            {savingMetaTestEventCode ? 'Guardando' : 'Guardar código'}
+                          </Button>
+                        )}
+                        {isServerOnlyMetaTestEvent ? (
+                          <Button
+                            type="button"
+                            variant="primary"
+                            onClick={() => void handleSendMetaTestEvent()}
+                            disabled={savingMetaTestEventCode || isSendingMetaTestEvent || isOpeningMetaPixelTest}
+                          >
+                            {isSendingMetaTestEvent ? (
+                              <RefreshCw size={16} className={styles.spinning} />
+                            ) : (
+                              <Send size={16} />
+                            )}
+                            {isSendingMetaTestEvent ? 'Enviando' : 'Solo servidor'}
+                          </Button>
+                        ) : (
+                          <Button
+                            type="button"
+                            variant="primary"
+                            onClick={() => void handleOpenMetaPixelTest()}
+                            disabled={savingMetaTestEventCode || isOpeningMetaPixelTest || isSendingMetaTestEvent}
+                          >
+                            {isOpeningMetaPixelTest ? (
+                              <RefreshCw size={16} className={styles.spinning} />
+                            ) : (
+                              <ExternalLink size={16} />
+                            )}
+                            {isOpeningMetaPixelTest ? 'Abriendo' : 'Abrir prueba completa'}
+                          </Button>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                )}
               </section>
             )}
 
@@ -2319,209 +2608,6 @@ export const MetaAdsIntegration: React.FC = () => {
           void handleDisconnectMetaConfig()
         }}
       />
-
-      <Modal
-        isOpen={isMetaTestModalOpen}
-        onClose={() => {
-          if (!isSendingMetaTestEvent && !savingMetaTestEventCode) {
-            setIsMetaTestModalOpen(false)
-          }
-        }}
-        title="Pruebas de eventos Meta"
-        type="custom"
-        size="md"
-      >
-        <div className={styles.metaTestPanel}>
-          <p className={styles.metaTestHelp}>
-            Pega el código de la pestaña Test Events. Mientras esté activo, los eventos de tus páginas (navegador + servidor) se mandan como prueba, incluso si la página está en anti-tracking. Se <strong>desactiva solo a los 30 minutos</strong> para que, al lanzar publicidad, no queden conversiones reales atrapadas en modo prueba.
-          </p>
-          {metaTestCodeActive && (
-            <p className={styles.metaTestHelp}>
-              <Badge variant="warning">Modo prueba activo</Badge>{' '}
-              {metaTestCodeSetAtMs
-                ? `Se desactiva solo en ~${metaTestCodeRemainingMin} min${metaTestCodeExpiresAtLabel ? ` (a las ${metaTestCodeExpiresAtLabel})` : ''}. Quítalo con "Limpiar" cuando termines de probar.`
-                : 'Recuerda quitarlo con "Limpiar" cuando termines de probar para no perder conversiones reales.'}
-            </p>
-          )}
-
-          <div className={styles.metaTestGrid}>
-            <label className={styles.formGroup}>
-              <span className={styles.formLabel}>Código de test</span>
-              <input
-                className={styles.formInput}
-                value={metaTestDraftCode}
-                onChange={(event) => setMetaTestDraftCode(event.target.value)}
-                placeholder="TEST12345"
-                autoComplete="off"
-                spellCheck={false}
-              />
-            </label>
-            <label className={styles.formGroup}>
-              <span className={styles.formLabel}>Evento</span>
-              <CustomSelect
-                value={normalizedMetaTestEventName}
-                onChange={(event) => setMetaTestEventNameAndResetParameters(event.target.value)}
-              >
-                {metaTestEventOptions.map((option) => (
-                  <option key={option.value} value={option.value}>
-                    {option.label}
-                  </option>
-                ))}
-              </CustomSelect>
-            </label>
-          </div>
-
-          <button
-            type="button"
-            className={[
-              styles.metaTestParametersToggle,
-              isMetaTestParametersOpen ? styles.metaTestParametersToggleActive : '',
-              hasMetaTestEventParameters(normalizedMetaTestEventParameters) ? styles.metaTestParametersToggleFilled : ''
-            ].filter(Boolean).join(' ')}
-            onClick={() => setIsMetaTestParametersOpen(current => !current)}
-          >
-            <Settings2 size={15} />
-            Parámetros del evento
-          </button>
-
-          {isMetaTestParametersOpen && (
-            <div className={styles.metaTestParametersForm}>
-              {metaTestEventFieldKeys.length > 0 && (
-                <div className={styles.metaTestParametersGrid}>
-                  {metaTestEventFieldKeys.map((field) => (
-                    <label key={field} className={styles.metaTestParameterField}>
-                      <span>{metaTestParameterFieldLabels[field]}</span>
-                      <input
-                        value={normalizedMetaTestEventParameters[field] || ''}
-                        placeholder={metaTestParameterFieldPlaceholders[field]}
-                        onChange={(event) => setMetaTestEventParameterField(
-                          field,
-                          event.target.value
-                        )}
-                      />
-                    </label>
-                  ))}
-                </div>
-              )}
-
-              <div className={styles.metaTestCustomParameters}>
-                <span>Parámetros custom</span>
-                {visibleMetaTestCustomRows.map((parameter, index) => {
-                  const isDefaultRow = index >= (normalizedMetaTestEventParameters.custom?.length || 0)
-
-                  return (
-                    <div key={parameter.id || `meta-test-parameter-${index}`} className={styles.metaTestCustomParameterRow}>
-                      <input
-                        value={parameter.key}
-                        placeholder="parametro_meta"
-                        onChange={(event) => patchMetaTestCustomParameter(index, { key: event.target.value })}
-                      />
-                      <input
-                        value={parameter.value}
-                        placeholder="valor"
-                        onChange={(event) => patchMetaTestCustomParameter(index, { value: event.target.value })}
-                      />
-                      <button
-                        type="button"
-                        className={styles.metaTestCustomParameterDelete}
-                        disabled={isDefaultRow}
-                        title="Eliminar parámetro"
-                        onClick={() => removeMetaTestCustomParameter(index)}
-                      >
-                        <Trash2 size={13} />
-                      </button>
-                    </div>
-                  )
-                })}
-
-                <Button
-                  type="button"
-                  variant="ghost"
-                  onClick={() => void addMetaTestCustomParameter()}
-                  disabled={(normalizedMetaTestEventParameters.custom || []).length >= 12}
-                >
-                  <Plus size={14} />
-                  Añadir parámetro
-                </Button>
-              </div>
-            </div>
-          )}
-
-          {metaTestResult && (
-            <div
-              className={styles.metaTestResult}
-              data-status={metaTestResult.success ? 'success' : 'error'}
-              role="status"
-            >
-              <strong>{metaTestResult.success ? 'Evento enviado' : 'No se pudo enviar'}</strong>
-              {metaTestResult.eventId && (
-                <span className={styles.metaTestResultCode}>{metaTestResult.eventId}</span>
-              )}
-              {metaTestResult.error && (
-                <span>{metaTestResult.error}</span>
-              )}
-            </div>
-          )}
-
-          <div className={styles.metaTestActions}>
-            <div className={styles.metaTestSecondaryActions}>
-              {shouldShowClearMetaTestCode && (
-                <Button
-                  type="button"
-                  variant="ghost"
-                  onClick={() => void handleClearMetaTestEventCode()}
-                  disabled={savingMetaTestEventCode || isSendingMetaTestEvent || isOpeningMetaPixelTest}
-                >
-                  <Trash2 size={16} />
-                  Limpiar
-                </Button>
-              )}
-            </div>
-            <div className={styles.metaTestPrimaryActions}>
-              {shouldShowSaveMetaTestCode && (
-                <Button
-                  type="button"
-                  variant="secondary"
-                  onClick={() => void handleSaveMetaTestEventCode()}
-                  disabled={savingMetaTestEventCode || isSendingMetaTestEvent || isOpeningMetaPixelTest}
-                >
-                  <Save size={16} />
-                  {savingMetaTestEventCode ? 'Guardando' : 'Guardar código'}
-                </Button>
-              )}
-              {isServerOnlyMetaTestEvent ? (
-                <Button
-                  type="button"
-                  variant="primary"
-                  onClick={() => void handleSendMetaTestEvent()}
-                  disabled={savingMetaTestEventCode || isSendingMetaTestEvent || isOpeningMetaPixelTest}
-                >
-                  {isSendingMetaTestEvent ? (
-                    <RefreshCw size={16} className={styles.spinning} />
-                  ) : (
-                    <Send size={16} />
-                  )}
-                  {isSendingMetaTestEvent ? 'Enviando' : 'Solo servidor'}
-                </Button>
-              ) : (
-                <Button
-                  type="button"
-                  variant="primary"
-                  onClick={() => void handleOpenMetaPixelTest()}
-                  disabled={savingMetaTestEventCode || isOpeningMetaPixelTest || isSendingMetaTestEvent}
-                >
-                  {isOpeningMetaPixelTest ? (
-                    <RefreshCw size={16} className={styles.spinning} />
-                  ) : (
-                    <ExternalLink size={16} />
-                  )}
-                  {isOpeningMetaPixelTest ? 'Abriendo' : 'Abrir prueba completa'}
-                </Button>
-              )}
-            </div>
-          </div>
-        </div>
-      </Modal>
     </div>
   )
 }
