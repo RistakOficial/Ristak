@@ -4,7 +4,7 @@ import { API_URLS } from '../config/constants.js'
 import { logger } from '../utils/logger.js'
 import { getMetaConfig } from './metaAdsService.js'
 import { getActiveMetaTestEventCode } from '../utils/metaTestCode.js'
-import { nonTestPaymentCondition } from '../utils/paymentMode.js'
+import { PAYMENT_MODE_LIVE, PAYMENT_MODE_TEST, normalizePaymentMode } from '../utils/paymentMode.js'
 import { buildPhoneMatchCandidates } from '../utils/phoneUtils.js'
 import { getAccountCurrency } from '../utils/accountLocale.js'
 import { buildMetaParameterUserData, sanitizeMetaUrlForEvent } from './metaParameterManagerService.js'
@@ -349,6 +349,27 @@ function asArray(value) {
 
 function getPaymentMetadata(payment = {}) {
   return parseJson(payment.metadata_json || payment.metadataJson || payment.metadata, {})
+}
+
+function getMetaPaymentMode(payment = {}) {
+  const metadata = getPaymentMetadata(payment)
+  return normalizePaymentMode(firstPaymentValue([
+    payment.payment_mode,
+    payment.paymentMode,
+    payment.mode,
+    metadata.payment_mode,
+    metadata.paymentMode,
+    metadata.mode,
+    metadata.stripeMode,
+    metadata.conektaMode,
+    metadata.mercadoPagoMode,
+    metadata.mercadopagoMode
+  ]), PAYMENT_MODE_LIVE)
+}
+
+async function shouldSkipTestPaymentForMeta(payment = {}, { allowWithMetaTestMode = true } = {}) {
+  if (getMetaPaymentMode(payment) !== PAYMENT_MODE_TEST) return false
+  return !(allowWithMetaTestMode && cleanString(await getActiveMetaTestEventCode()))
 }
 
 function normalizeMetaContentId(value = '') {
@@ -791,8 +812,7 @@ function prunePublicMetaPixelCustomData(customData = {}) {
 export async function buildMetaPublicPurchasePixelEvent(payment = {}, options = {}) {
   if (!isSuccessfulPaymentStatus(payment.status)) return null
 
-  const paymentMode = cleanString(payment.payment_mode || payment.paymentMode).toLowerCase()
-  if (paymentMode === 'test') return null
+  if (await shouldSkipTestPaymentForMeta(payment, { allowWithMetaTestMode: false })) return null
 
   const contactId = cleanString(
     options.contactId ||
@@ -1566,8 +1586,7 @@ export async function triggerMetaPaymentPurchaseEvent(contactId, payment = {}) {
     return { sent: false, reason: 'missing_contact_id' }
   }
 
-  const paymentMode = String(payment.payment_mode || payment.paymentMode || '').trim().toLowerCase()
-  if (paymentMode === 'test') {
+  if (await shouldSkipTestPaymentForMeta(payment)) {
     return { sent: false, reason: 'test_payment' }
   }
 
@@ -1649,8 +1668,7 @@ export async function triggerMetaPurchaseEventForPaymentRow(paymentId) {
     `SELECT *
      FROM payments
      WHERE id = ?
-       AND amount > 0
-       AND ${nonTestPaymentCondition()}`,
+       AND amount > 0`,
     [paymentId]
   )
 

@@ -6,7 +6,8 @@ import { db, setAppConfig } from '../src/config/database.js'
 import { API_URLS } from '../src/config/constants.js'
 import {
   buildMetaPublicPurchasePixelEvent,
-  triggerMetaPaymentPurchaseEvent
+  triggerMetaPaymentPurchaseEvent,
+  triggerMetaPurchaseEventForPaymentRow
 } from '../src/services/metaConversionEventsService.js'
 import { saveAccountLocaleSettings } from '../src/utils/accountLocale.js'
 import { encrypt, initializeMasterKey } from '../src/utils/encryption.js'
@@ -16,7 +17,8 @@ const APP_CONFIG_KEYS = [
   'account_currency',
   'account_default_dial_code',
   'meta_payment_purchase_event_config',
-  'meta_test_event_code'
+  'meta_test_event_code',
+  'meta_test_event_code_set_at'
 ]
 
 async function snapshotAppConfig(keys = [], callback) {
@@ -252,6 +254,178 @@ test('payment Purchase CAPI event uses real payment amount and account currency'
     if (previousMetaGraphDescriptor) Object.defineProperty(API_URLS, 'META_GRAPH', previousMetaGraphDescriptor)
     await db.run('DELETE FROM meta_conversion_event_logs WHERE contact_id = ?', [contactId]).catch(() => undefined)
     await db.run('DELETE FROM contacts WHERE id = ?', [contactId]).catch(() => undefined)
+  }
+})
+
+test('payment Purchase CAPI skips test payments when Meta Test Events is not active', async () => {
+  const contactId = 'contact_meta_purchase_test_blocked'
+
+  await snapshotAppConfig(APP_CONFIG_KEYS, async () => {
+    await setAppConfig('meta_payment_purchase_event_config', JSON.stringify({
+      enabled: true,
+      channel: 'site',
+      eventName: 'Purchase',
+      parameters: {
+        sendValue: true,
+        usePaymentPlanTotalValue: false,
+        value: '',
+        predictedLtv: '',
+        custom: []
+      }
+    }))
+
+    const result = await triggerMetaPaymentPurchaseEvent(contactId, {
+      id: 'payment_meta_test_blocked',
+      amount: 111,
+      status: 'paid',
+      payment_provider: 'stripe',
+      payment_mode: 'test'
+    })
+
+    assert.equal(result.sent, false)
+    assert.equal(result.reason, 'test_payment')
+  })
+})
+
+test('payment Purchase CAPI sends test payments only to Meta Test Events when active', async () => {
+  const previousMetaGraphDescriptor = Object.getOwnPropertyDescriptor(API_URLS, 'META_GRAPH')
+  const contactId = 'contact_meta_purchase_test_allowed'
+  const metaCalls = []
+  let metaServer
+
+  try {
+    await initializeMasterKey()
+
+    await snapshotMetaConfig(async () => {
+      await snapshotAppConfig(APP_CONFIG_KEYS, async () => {
+        await deletePaymentMetaTestContact(contactId)
+        await db.run(
+          `INSERT INTO contacts (id, email, full_name, phone, source, created_at, updated_at)
+           VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+          [contactId, 'test-buyer@example.test', 'Test Buyer', '+525512345684', 'test']
+        )
+
+        await insertMetaPixelConfig()
+        await saveAccountLocaleSettings({ countryCode: 'MX', currency: 'MXN', dialCode: '52' })
+        await setAppConfig('meta_test_event_code', 'TESTPAY123')
+        await setAppConfig('meta_test_event_code_set_at', String(Date.now()))
+        await setAppConfig('meta_payment_purchase_event_config', JSON.stringify({
+          enabled: true,
+          channel: 'site',
+          eventName: 'Purchase',
+          parameters: {
+            sendValue: true,
+            usePaymentPlanTotalValue: false,
+            value: '',
+            predictedLtv: '',
+            custom: []
+          }
+        }))
+
+        metaServer = await startMetaCaptureServer(metaCalls)
+
+        const result = await triggerMetaPaymentPurchaseEvent(contactId, {
+          id: 'payment_meta_test_allowed',
+          amount: 222.5,
+          status: 'paid',
+          payment_provider: 'stripe',
+          payment_method: 'stripe',
+          payment_mode: 'test',
+          eventSourceUrl: 'https://checkout.example.test/pay/payment_meta_test_allowed'
+        })
+
+        assert.equal(result.sent, true)
+        assert.equal(metaCalls.length, 1)
+
+        const payload = JSON.parse(metaCalls[0].body)
+        assert.equal(payload.test_event_code, 'TESTPAY123')
+        assert.equal(payload.data[0].event_name, 'Purchase')
+        assert.equal(payload.data[0].event_id, `purchase_contact_${contactId}`)
+        assert.equal(payload.data[0].custom_data.value, 222.5)
+        assert.equal(payload.data[0].custom_data.payment_id, 'payment_meta_test_allowed')
+        assert.equal(payload.data[0].custom_data.payment_provider, 'stripe')
+        assert.equal(payload.data[0].custom_data.payment_status, 'paid')
+      })
+    })
+  } finally {
+    if (metaServer) await new Promise(resolve => metaServer.close(resolve))
+    if (previousMetaGraphDescriptor) Object.defineProperty(API_URLS, 'META_GRAPH', previousMetaGraphDescriptor)
+    await deletePaymentMetaTestContact(contactId)
+  }
+})
+
+test('payment row Purchase trigger allows test rows while Meta Test Events is active', async () => {
+  const previousMetaGraphDescriptor = Object.getOwnPropertyDescriptor(API_URLS, 'META_GRAPH')
+  const contactId = 'contact_meta_purchase_test_row'
+  const paymentId = 'payment_meta_test_row'
+  const metaCalls = []
+  let metaServer
+
+  try {
+    await initializeMasterKey()
+
+    await snapshotMetaConfig(async () => {
+      await snapshotAppConfig(APP_CONFIG_KEYS, async () => {
+        await deletePaymentMetaTestContact(contactId)
+        await db.run('DELETE FROM payments WHERE id = ?', [paymentId]).catch(() => undefined)
+        await db.run(
+          `INSERT INTO contacts (id, email, full_name, phone, source, created_at, updated_at)
+           VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+          [contactId, 'test-row-buyer@example.test', 'Test Row Buyer', '+525512345685', 'test']
+        )
+        await db.run(
+          `INSERT INTO payments (
+             id, contact_id, amount, currency, status, payment_method, payment_mode,
+             payment_provider, title, date, created_at, updated_at
+           ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+          [
+            paymentId,
+            contactId,
+            333,
+            'MXN',
+            'paid',
+            'stripe',
+            'test',
+            'stripe',
+            'Pago de prueba Meta'
+          ]
+        )
+
+        await insertMetaPixelConfig()
+        await saveAccountLocaleSettings({ countryCode: 'MX', currency: 'MXN', dialCode: '52' })
+        await setAppConfig('meta_test_event_code', 'TESTROW123')
+        await setAppConfig('meta_test_event_code_set_at', String(Date.now()))
+        await setAppConfig('meta_payment_purchase_event_config', JSON.stringify({
+          enabled: true,
+          channel: 'site',
+          eventName: 'Purchase',
+          parameters: {
+            sendValue: true,
+            usePaymentPlanTotalValue: false,
+            value: '',
+            predictedLtv: '',
+            custom: []
+          }
+        }))
+
+        metaServer = await startMetaCaptureServer(metaCalls)
+
+        const result = await triggerMetaPurchaseEventForPaymentRow(paymentId)
+
+        assert.equal(result.sent, true)
+        assert.equal(metaCalls.length, 1)
+
+        const payload = JSON.parse(metaCalls[0].body)
+        assert.equal(payload.test_event_code, 'TESTROW123')
+        assert.equal(payload.data[0].custom_data.payment_id, paymentId)
+        assert.equal(payload.data[0].custom_data.payment_provider, 'stripe')
+      })
+    })
+  } finally {
+    if (metaServer) await new Promise(resolve => metaServer.close(resolve))
+    if (previousMetaGraphDescriptor) Object.defineProperty(API_URLS, 'META_GRAPH', previousMetaGraphDescriptor)
+    await db.run('DELETE FROM payments WHERE id = ?', [paymentId]).catch(() => undefined)
+    await deletePaymentMetaTestContact(contactId)
   }
 })
 
