@@ -426,6 +426,17 @@ export interface MetaSocialTextSendPayload {
   externalId?: string
 }
 
+export interface MetaSocialCommentReplyPayload {
+  contactId: string
+  platform: 'messenger' | 'instagram'
+  message: string
+  // 'public' = responder en la publicación; 'private' = DM a quien comentó.
+  replyType: 'public' | 'private'
+  commentId?: string
+  postId?: string
+  externalId?: string
+}
+
 export interface WhatsAppQrSession {
   id: string
   phoneNumberId: string
@@ -462,6 +473,7 @@ export const whatsappApiService = {
   testMetaDirect: () => apiClient.post<WhatsAppMetaDirectTestResponse>('/whatsapp-api/meta/test'),
   sendMetaDirectTestMessage: (payload: { to: string; text?: string }) => apiClient.post<WhatsAppApiSendResponse>('/whatsapp-api/meta/messages/test', payload),
   sendMetaSocialText: (payload: MetaSocialTextSendPayload) => apiClient.post<WhatsAppApiSendResponse>('/whatsapp-api/meta/social/messages/text', payload),
+  sendMetaSocialCommentReply: (payload: MetaSocialCommentReplyPayload) => apiClient.post<WhatsAppApiSendResponse>('/whatsapp-api/meta/social/comments/reply', payload),
   syncMetaDirectHistory: () => apiClient.post<WhatsAppMetaDirectTestResponse>('/whatsapp-api/meta/sync-history'),
   disconnectMetaDirect: () => apiClient.post<WhatsAppApiStatus>('/whatsapp-api/meta/disconnect'),
   connect: (payload: WhatsAppApiConnectPayload) => apiClient.post<WhatsAppApiStatus>('/whatsapp-api/connect', payload),

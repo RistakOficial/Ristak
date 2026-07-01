@@ -4810,6 +4810,10 @@ export const getContactJourney = async (req, res) => {
           msg.status,
           msg.postback_payload,
           msg.referral_json,
+          msg.comment_id,
+          msg.post_id,
+          msg.parent_comment_id,
+          msg.permalink,
           COALESCE(msg.message_timestamp, msg.created_at) as journey_message_date,
           profile.profile_name,
           profile.username
@@ -4859,7 +4863,12 @@ export const getContactJourney = async (req, res) => {
           meta_message_id: msg.meta_message_id,
           direction: msg.direction || 'inbound',
           status: msg.status || null,
-          transport: platform === 'instagram' ? 'instagram' : 'messenger'
+          transport: platform === 'instagram' ? 'instagram' : 'messenger',
+          // Contexto de comentario (para etiquetar "comentó" y responder desde el inbox).
+          comment_id: msg.comment_id || null,
+          post_id: msg.post_id || null,
+          parent_comment_id: msg.parent_comment_id || null,
+          permalink: msg.permalink || null
         }
       })
 	    })
