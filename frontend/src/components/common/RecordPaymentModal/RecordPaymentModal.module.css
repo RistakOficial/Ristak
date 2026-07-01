@@ -407,9 +407,11 @@
   min-height: 72px;
   padding: 8px 4px;
   border: 0;
-  border-bottom: 1px solid var(--border);
+  /* Separador sutil como la lista de chats (var(--border) era el token de escritorio,
+     que en algunas familias es casi negro sólido). Esta hoja es solo móvil. */
+  border-bottom: 1px solid var(--phone-chat-border, rgba(20, 20, 20, 0.09));
   border-radius: 0;
-  color: #050505;
+  color: var(--phone-chat-text, #050505);
   background: transparent;
   text-align: left;
   cursor: pointer;
@@ -444,7 +446,7 @@
 }
 
 .contactOption strong {
-  color: #050505;
+  color: var(--phone-chat-text, #050505);
   font-size: 17px;
   font-weight: 730;
   line-height: 1.12;
@@ -2302,10 +2304,18 @@ body.dark .tooltipInfo {
   cursor: pointer;
   box-shadow: none;
   -webkit-tap-highlight-color: transparent;
+  transition: transform 240ms cubic-bezier(0.22, 1, 0.36, 1), opacity 200ms ease;
 }
 
 .embeddedBackButton:active {
-  transform: scale(0.98);
+  transform: scale(0.97);
+}
+
+/* Se oculta al scrollear hacia abajo y reaparece al subir. */
+.embeddedBackButton[data-hidden='true'] {
+  transform: translateY(-160%);
+  opacity: 0;
+  pointer-events: none;
 }
 
 .embeddedScroll {
@@ -3125,7 +3135,7 @@ body.dark .tooltipInfo {
 
 .embeddedRoot .contactOption {
   color: var(--record-payment-embedded-text);
-  border-bottom-color: var(--record-payment-embedded-border);
+  border-bottom-color: var(--phone-chat-border, rgba(20, 20, 20, 0.09));
   background: transparent;
   box-shadow: none;
 }

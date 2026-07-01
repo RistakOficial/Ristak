@@ -9,6 +9,7 @@ import { PhoneSubscriptionForm } from '@/components/phone/PhoneSubscriptionForm'
 import { useNotification } from '@/contexts/NotificationContext'
 import { useTimezone } from '@/contexts/TimezoneContext' // (MOB-007) zona del negocio para el bucket de caché diaria
 import { useAccountCurrency, usePaymentGatewayCapabilities, usePhoneElasticScroll } from '@/hooks'
+import { useHideOnScrollDown } from '@/hooks/useHideOnScrollDown'
 import apiClient from '@/services/apiClient'
 import { getPhoneDailyCacheKey, readPhoneDailyCache, writePhoneDailyCache } from '@/services/phoneDailyCache'
 import { transactionsService, type Transaction } from '@/services/transactionsService'
@@ -185,6 +186,8 @@ export const PhonePayments: React.FC = () => {
   const [accountCurrency] = useAccountCurrency()
   const [accessState, setAccessState] = useState<AccessState>(getAccessState)
   usePhoneElasticScroll({ enabled: accessState === 'allowed' })
+  const [productsScrollEl, setProductsScrollEl] = useState<HTMLElement | null>(null)
+  const productsBackHidden = useHideOnScrollDown(productsScrollEl)
 
   const [view, setView] = useState<PaymentView>(() => getInitialView(searchParams.get('mode')))
   const [recentPaymentsOpen, setRecentPaymentsOpen] = useState(false)
@@ -556,6 +559,7 @@ export const PhonePayments: React.FC = () => {
 
   const renderProductsView = () => (
     <section
+      ref={setProductsScrollEl}
       className={styles.productsHost}
       data-phone-scrollable="true"
       data-phone-payments-scroll-root="true"
@@ -759,6 +763,7 @@ export const PhonePayments: React.FC = () => {
             <button
               type="button"
               className={styles.backButton}
+              data-hidden={productsBackHidden ? 'true' : undefined}
               onClick={() => setView('select')}
             >
               <ArrowLeft size={18} />

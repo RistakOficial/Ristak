@@ -2467,6 +2467,20 @@
   white-space: nowrap;
 }
 
+/* El botón "Atrás" se esconde al scrollear hacia abajo y reaparece al subir.
+   El título y la barra quedan estables (su celda de 44px se conserva). */
+.contactInfoTopbar .backButton,
+.cameraShareHeader .backButton {
+  transition: transform 240ms cubic-bezier(0.22, 1, 0.36, 1), opacity 200ms ease;
+}
+
+.contactInfoTopbar[data-hidden='true'] .backButton,
+.cameraShareHeader[data-hidden='true'] .backButton {
+  transform: translateY(-160%);
+  opacity: 0;
+  pointer-events: none;
+}
+
 .contactInfoTopbarAction {
   display: inline-flex;
   align-items: center;

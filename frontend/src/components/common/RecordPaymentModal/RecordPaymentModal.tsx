@@ -9,6 +9,7 @@ import { PhoneSelect } from '@/components/phone/PhoneSelect'
 import { PhoneSegmentedTabs } from '@/components/phone/ui'
 import { PaymentPlatformLogo } from '@/components/common/PaymentPlatformLogo'
 import { ContactSearchInput, type ContactSearchInputContact } from '../ContactSearchInput/ContactSearchInput'
+import { useHideOnScrollDown } from '@/hooks/useHideOnScrollDown'
 import {
   Search,
   Loader2,
@@ -749,6 +750,8 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
   const { showToast } = useNotification()
   const [accountCurrency] = useAccountCurrency()
   const embeddedScrollRef = useRef<HTMLDivElement | null>(null)
+  const [embeddedScrollEl, setEmbeddedScrollEl] = useState<HTMLDivElement | null>(null)
+  const embeddedBackHidden = useHideOnScrollDown(embeddedScrollEl)
   const renderPaymentSelect = ({
     value,
     onChange,
@@ -4897,13 +4900,22 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
           <button
             type="button"
             className={styles.embeddedBackButton}
+            data-hidden={embeddedBackHidden ? 'true' : undefined}
             onClick={handleEmbeddedBack}
           >
             <ChevronLeft size={20} aria-hidden="true" />
             <span>Atrás</span>
           </button>
         )}
-        <div ref={embeddedScrollRef} className={styles.embeddedScroll} data-phone-chat-scrollable="true" data-phone-scrollable="true">
+        <div
+          ref={(el) => {
+            embeddedScrollRef.current = el
+            setEmbeddedScrollEl(el)
+          }}
+          className={styles.embeddedScroll}
+          data-phone-chat-scrollable="true"
+          data-phone-scrollable="true"
+        >
           {step === 'processing' && renderProcessing()}
           {step === 'form' && renderForm()}
           {step === 'options' && renderPaymentOptions()}

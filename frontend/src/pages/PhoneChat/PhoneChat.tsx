@@ -66,6 +66,7 @@ import { AgentRobot } from '@/components/ai'
 import { PhoneEcosystemNav } from '@/components/phone/PhoneEcosystemNav'
 import { PhoneMessageChannelIcon } from '@/components/phone/PhoneMessageChannelIcon'
 import { PhonePageTransition } from '@/components/phone/PhonePageTransition'
+import { PhoneScrollHideHeader } from '@/components/phone/PhoneScrollHideHeader'
 import { PhoneSelect } from '@/components/phone/PhoneSelect'
 import { PhoneStartupLoader } from '@/components/phone/PhoneStartupLoader'
 import { PhoneSubscriptionForm } from '@/components/phone/PhoneSubscriptionForm'
@@ -11124,7 +11125,7 @@ export const PhoneChat: React.FC = () => {
 
     return (
       <section className={styles.cameraShareScreen} aria-label={isVideo ? 'Enviar video' : 'Enviar foto'}>
-        <header className={styles.cameraShareHeader}>
+        <PhoneScrollHideHeader className={styles.cameraShareHeader}>
           <button type="button" className={styles.backButton} onClick={closeCameraShare} aria-label="Volver a chats">
             <ChevronLeft size={32} />
           </button>
@@ -11143,7 +11144,7 @@ export const PhoneChat: React.FC = () => {
               <img src={cameraShareMedia.dataUrl} alt="" />
             )}
           </figure>
-        </header>
+        </PhoneScrollHideHeader>
 
         <div className={styles.cameraShareSearch}>
           <Search size={20} />
@@ -11938,13 +11939,13 @@ export const PhoneChat: React.FC = () => {
         aria-label="Info del mensaje"
         aria-hidden={!messageInfoOpen}
       >
-        <header className={styles.contactInfoTopbar}>
+        <PhoneScrollHideHeader className={styles.contactInfoTopbar}>
           <button type="button" className={styles.backButton} onClick={closeMessageInfo} aria-label="Volver al chat">
             <ChevronLeft size={32} />
           </button>
           <strong>Info del mensaje</strong>
           <span className={styles.contactInfoTopbarSpacer} aria-hidden="true" />
-        </header>
+        </PhoneScrollHideHeader>
 
         <div className={styles.messageInfoContent} data-phone-chat-scrollable="true">
           <section className={styles.messageInfoPreview} aria-label="Mensaje seleccionado">
@@ -12984,13 +12985,13 @@ export const PhoneChat: React.FC = () => {
           aria-label="Archivos del chat"
           aria-hidden={!contactInfoOpen}
         >
-          <header className={styles.contactInfoTopbar}>
+          <PhoneScrollHideHeader className={styles.contactInfoTopbar}>
             <button type="button" className={styles.backButton} onClick={() => setContactInfoArchiveOpen(false)} aria-label="Volver a info del contacto">
               <ChevronLeft size={32} />
             </button>
             <strong>Archivos del chat</strong>
             <span className={styles.contactInfoTopbarSpacer} aria-hidden="true" />
-          </header>
+          </PhoneScrollHideHeader>
 
           <div className={`${styles.contactInfoContent} ${styles.contactInfoArchiveDetailContent}`} data-phone-chat-scrollable="true">
             <section className={styles.contactInfoArchiveDetailSection}>
@@ -13050,13 +13051,13 @@ export const PhoneChat: React.FC = () => {
             aria-label="Detalle de pago"
             aria-hidden={!contactInfoOpen}
           >
-            <header className={styles.contactInfoTopbar}>
+            <PhoneScrollHideHeader className={styles.contactInfoTopbar}>
               <button type="button" className={styles.backButton} onClick={() => setContactInfoRecordDetail(null)} aria-label="Volver a pagos">
                 <ChevronLeft size={32} />
               </button>
               <strong>Detalle de pago</strong>
               <span className={styles.contactInfoTopbarSpacer} aria-hidden="true" />
-            </header>
+            </PhoneScrollHideHeader>
 
             <div className={`${styles.contactInfoContent} ${styles.contactInfoDetailContent}`} data-phone-chat-scrollable="true">
               <section className={styles.contactInfoDetailSection}>
@@ -13099,13 +13100,13 @@ export const PhoneChat: React.FC = () => {
             aria-label="Detalle de cita"
             aria-hidden={!contactInfoOpen}
           >
-            <header className={styles.contactInfoTopbar}>
+            <PhoneScrollHideHeader className={styles.contactInfoTopbar}>
               <button type="button" className={styles.backButton} onClick={() => setContactInfoRecordDetail(null)} aria-label="Volver a citas">
                 <ChevronLeft size={32} />
               </button>
               <strong>Detalle de cita</strong>
               <span className={styles.contactInfoTopbarSpacer} aria-hidden="true" />
-            </header>
+            </PhoneScrollHideHeader>
 
             <div className={`${styles.contactInfoContent} ${styles.contactInfoDetailContent}`} data-phone-chat-scrollable="true">
               <section className={styles.contactInfoDetailSection}>
@@ -13153,7 +13154,7 @@ export const PhoneChat: React.FC = () => {
           aria-label={detailTitle}
           aria-hidden={!contactInfoOpen}
         >
-          <header className={styles.contactInfoTopbar}>
+          <PhoneScrollHideHeader className={styles.contactInfoTopbar}>
             <button
               type="button"
               className={styles.backButton}
@@ -13167,7 +13168,7 @@ export const PhoneChat: React.FC = () => {
             </button>
             <strong>{detailTitle}</strong>
             <span className={styles.contactInfoTopbarSpacer} aria-hidden="true" />
-          </header>
+          </PhoneScrollHideHeader>
 
           <div className={`${styles.contactInfoContent} ${styles.contactInfoDetailContent}`} data-phone-chat-scrollable="true">
             {contactInfoDetailPanel === 'payments' && (
@@ -13278,13 +13279,13 @@ export const PhoneChat: React.FC = () => {
         aria-label="Información del contacto"
         aria-hidden={!contactInfoOpen}
       >
-        <header className={styles.contactInfoTopbar}>
+        <PhoneScrollHideHeader className={styles.contactInfoTopbar}>
           <button type="button" className={styles.backButton} onClick={() => setContactInfoOpen(false)} aria-label="Volver al chat">
             <ChevronLeft size={32} />
           </button>
           <strong>Info del contacto</strong>
           <span className={styles.contactInfoTopbarSpacer} aria-hidden="true" />
-        </header>
+        </PhoneScrollHideHeader>
 
         <div className={styles.contactInfoContent} data-phone-chat-scrollable="true">
           <section className={styles.contactInfoHero}>

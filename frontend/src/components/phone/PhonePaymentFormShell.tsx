@@ -1,5 +1,6 @@
-import React from 'react'
+import React, { useState } from 'react'
 import { ChevronLeft } from 'lucide-react'
+import { useHideOnScrollDown } from '../../hooks/useHideOnScrollDown'
 import styles from './PhonePaymentFormShell.module.css'
 
 interface PhonePaymentFormShellSummary {
@@ -37,7 +38,11 @@ export const PhonePaymentFormShell: React.FC<PhonePaymentFormShellProps> = ({
   summary = null,
   className = '',
   contentClassName = ''
-}) => (
+}) => {
+  const [scrollEl, setScrollEl] = useState<HTMLDivElement | null>(null)
+  const backHidden = useHideOnScrollDown(scrollEl)
+
+  return (
   <section
     className={[
       styles.root,
@@ -50,6 +55,7 @@ export const PhonePaymentFormShell: React.FC<PhonePaymentFormShellProps> = ({
       <button
         type="button"
         className={styles.backButton}
+        data-hidden={backHidden ? 'true' : undefined}
         onClick={onBack}
       >
         <ChevronLeft size={20} aria-hidden="true" />
@@ -58,6 +64,7 @@ export const PhonePaymentFormShell: React.FC<PhonePaymentFormShellProps> = ({
     )}
 
     <div
+      ref={setScrollEl}
       className={styles.scroll}
       data-phone-chat-scrollable="true"
       data-phone-scrollable="true"
@@ -95,4 +102,5 @@ export const PhonePaymentFormShell: React.FC<PhonePaymentFormShellProps> = ({
       )}
     </div>
   </section>
-)
+  )
+}
