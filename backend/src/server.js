@@ -4,7 +4,11 @@ import express from 'express'
 import cors from 'cors'
 import { fileURLToPath } from 'url'
 import { dirname, join } from 'path'
-import { databaseReady } from './config/database.js'
+import {
+  databaseReady,
+  describePostgresConnectionError,
+  isTransientPostgresConnectionError
+} from './config/database.js'
 import { logger } from './utils/logger.js'
 import { initializeMasterKey } from './utils/encryption.js'
 import { initializeDefaultUser } from './utils/auth.js'
@@ -533,6 +537,11 @@ process.on('unhandledRejection', (reason, promise) => {
 })
 
 process.on('uncaughtException', (error) => {
+  if (isTransientPostgresConnectionError(error)) {
+    logger.warn(`PostgreSQL emitió un error transitorio fuera del flujo de request: ${describePostgresConnectionError(error)}. El proceso sigue vivo y abrirá otra conexión.`)
+    return
+  }
+
   logger.error('Excepción no capturada:', error)
   process.exit(1)
 })

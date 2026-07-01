@@ -76,9 +76,12 @@ const POSTGRES_TRANSIENT_CONNECTION_MESSAGES = [
   'terminating connection'
 ]
 
+const POSTGRES_CLIENT_ERROR_LISTENER = Symbol('ristakPostgresClientErrorListener')
+const POSTGRES_CLIENT_CONNECTION_ERROR = Symbol('ristakPostgresClientConnectionError')
+
 const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms))
 
-function isTransientPostgresConnectionError(error) {
+export function isTransientPostgresConnectionError(error) {
   const code = String(error?.code || '').trim()
   if (POSTGRES_CONNECT_RETRY_CODES.has(code)) return true
 
@@ -86,7 +89,7 @@ function isTransientPostgresConnectionError(error) {
   return POSTGRES_TRANSIENT_CONNECTION_MESSAGES.some(pattern => message.includes(pattern))
 }
 
-function describePostgresConnectionError(error) {
+export function describePostgresConnectionError(error) {
   const code = String(error?.code || '').trim()
   const message = String(error?.message || 'Error desconocido').trim()
   return code ? `${code}: ${message}` : message
@@ -213,13 +216,42 @@ if (usePostgres) {
     logger.warn(`PostgreSQL cerró una conexión idle del pool: ${describePostgresConnectionError(error)}. Se descartará y se abrirá otra cuando haga falta.`)
   })
 
+  function attachPostgresClientErrorHandler(client) {
+    client[POSTGRES_CLIENT_CONNECTION_ERROR] = null
+
+    if (client[POSTGRES_CLIENT_ERROR_LISTENER]) {
+      return client
+    }
+
+    const handleClientError = (error) => {
+      client[POSTGRES_CLIENT_CONNECTION_ERROR] = error
+      const message = describePostgresConnectionError(error)
+
+      if (isTransientPostgresConnectionError(error)) {
+        logger.warn(`PostgreSQL cerró una conexión activa del pool: ${message}. Se descartará al liberarla.`)
+        return
+      }
+
+      logger.error(`PostgreSQL reportó un error en una conexión activa: ${message}`)
+    }
+
+    client.on('error', handleClientError)
+    client[POSTGRES_CLIENT_ERROR_LISTENER] = handleClientError
+    return client
+  }
+
+  function getPostgresClientConnectionError(client) {
+    return client?.[POSTGRES_CLIENT_CONNECTION_ERROR] || null
+  }
+
   async function connectWithRetry() {
     const maxAttempts = 6
     let delayMs = 500
 
     for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
       try {
-        return await pool.connect()
+        const client = await pool.connect()
+        return attachPostgresClientErrorHandler(client)
       } catch (error) {
         const canRetry = isTransientPostgresConnectionError(error)
         if (!canRetry || attempt === maxAttempts) {
@@ -287,28 +319,37 @@ if (usePostgres) {
 
     for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
       const client = await connectWithRetry()
+      let result
+      let operationError = null
       let releaseError = null
       try {
-        const result = await operation(createPostgresAdapter(client))
-        client.release()
-        return result
+        result = await operation(createPostgresAdapter(client))
       } catch (error) {
-        releaseError = isTransientPostgresConnectionError(error) ? error : null
-        try {
-          client.release(releaseError || undefined)
-        } catch (releaseFailure) {
-          logger.warn(`No se pudo liberar conexión PostgreSQL después de ${label}: ${describePostgresConnectionError(releaseFailure)}`)
-        }
-
-        if (retryTransientRead && releaseError && attempt < maxAttempts) {
-          logger.warn(`PostgreSQL cortó ${label} (${describePostgresConnectionError(error)}). Reintentando ${attempt + 1}/${maxAttempts}...`)
-          await sleep(delayMs)
-          delayMs = Math.min(Math.round(delayMs * 2), 1000)
-          continue
-        }
-
-        throw error
+        operationError = error
       }
+
+      releaseError = isTransientPostgresConnectionError(operationError)
+        ? operationError
+        : getPostgresClientConnectionError(client)
+
+      try {
+        client.release(releaseError || undefined)
+      } catch (releaseFailure) {
+        logger.warn(`No se pudo liberar conexión PostgreSQL después de ${label}: ${describePostgresConnectionError(releaseFailure)}`)
+      }
+
+      if (!operationError) {
+        return result
+      }
+
+      if (retryTransientRead && releaseError && attempt < maxAttempts) {
+        logger.warn(`PostgreSQL cortó ${label} (${describePostgresConnectionError(operationError)}). Reintentando ${attempt + 1}/${maxAttempts}...`)
+        await sleep(delayMs)
+        delayMs = Math.min(Math.round(delayMs * 2), 1000)
+        continue
+      }
+
+      throw operationError
     }
   }
 
@@ -358,6 +399,7 @@ if (usePostgres) {
         }
         throw error
       } finally {
+        releaseError = releaseError || getPostgresClientConnectionError(client)
         client.release(releaseError || undefined)
       }
     }
