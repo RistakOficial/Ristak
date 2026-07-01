@@ -42,6 +42,77 @@ import { syncRegisteredIntegrationCronsForProvider } from '../jobs/integrationCr
  * Controlador para calendarios de Ristak con sincronizaciones externas opcionales.
  */
 
+const MS_PER_DAY = 24 * 60 * 60 * 1000;
+const CALENDAR_EVENTS_MAX_RANGE_DAYS = 370;
+const CALENDAR_AVAILABILITY_MAX_RANGE_DAYS = 45;
+const CALENDAR_BLOCKED_SLOTS_MAX_RANGE_DAYS = 45;
+
+function calendarRangeError(message) {
+  const error = new Error(message);
+  error.status = 400;
+  return error;
+}
+
+function parseEpochMillis(value, fieldName) {
+  const timestamp = Number(value);
+  if (!Number.isFinite(timestamp)) {
+    throw calendarRangeError(`${fieldName} inválido`);
+  }
+
+  const date = new Date(timestamp);
+  if (Number.isNaN(date.getTime())) {
+    throw calendarRangeError(`${fieldName} inválido`);
+  }
+
+  return timestamp;
+}
+
+function parseDateOnly(value, fieldName) {
+  const clean = cleanString(value);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(clean)) {
+    throw calendarRangeError(`${fieldName} inválido`);
+  }
+
+  const date = new Date(`${clean}T00:00:00.000Z`);
+  if (Number.isNaN(date.getTime()) || date.toISOString().slice(0, 10) !== clean) {
+    throw calendarRangeError(`${fieldName} inválido`);
+  }
+
+  return { value: clean, timestamp: date.getTime() };
+}
+
+function assertEpochRangeLimit({ startTime, endTime, maxDays, label }) {
+  const start = parseEpochMillis(startTime, 'startTime');
+  const end = parseEpochMillis(endTime, 'endTime');
+
+  if (end < start) {
+    throw calendarRangeError('endTime debe ser mayor o igual a startTime');
+  }
+
+  const rangeDays = Math.ceil((end - start + 1) / MS_PER_DAY);
+  if (rangeDays > maxDays) {
+    throw calendarRangeError(`${label} permite rangos de hasta ${maxDays} días por solicitud`);
+  }
+
+  return { start, end };
+}
+
+function assertDateOnlyRangeLimit({ startDate, endDate, maxDays, label }) {
+  const start = parseDateOnly(startDate, 'startDate');
+  const end = parseDateOnly(endDate, 'endDate');
+
+  if (end.timestamp < start.timestamp) {
+    throw calendarRangeError('endDate debe ser mayor o igual a startDate');
+  }
+
+  const rangeDays = Math.floor((end.timestamp - start.timestamp) / MS_PER_DAY) + 1;
+  if (rangeDays > maxDays) {
+    throw calendarRangeError(`${label} permite rangos de hasta ${maxDays} días por solicitud`);
+  }
+
+  return { startDate: start.value, endDate: end.value };
+}
+
 async function getSavedHighLevelConfig() {
   return db.get('SELECT location_id, api_token FROM highlevel_config LIMIT 1');
 }
@@ -1118,7 +1189,6 @@ export async function getCalendar(req, res) {
 export async function getEvents(req, res) {
   try {
     const { startTime, endTime, calendarId } = req.query;
-    const { locationId, accessToken } = await getHighLevelContext(req);
 
     if (!startTime || !endTime) {
       return res.status(400).json({
@@ -1127,6 +1197,14 @@ export async function getEvents(req, res) {
       });
     }
 
+    const range = assertEpochRangeLimit({
+      startTime,
+      endTime,
+      maxDays: CALENDAR_EVENTS_MAX_RANGE_DAYS,
+      label: 'El calendario'
+    });
+    const { locationId, accessToken } = await getHighLevelContext(req);
+
     // Refresca desde HighLevel y persiste todo en la tabla appointments.
     const refreshFromHighLevel = async () => {
       if (!locationId || !accessToken) return;
@@ -1134,8 +1212,8 @@ export async function getEvents(req, res) {
       const remoteCalendarId = localCalendar?.ghlCalendarId || calendarId || null;
       const remoteEvents = await calendarService.getCalendarEvents(
         locationId,
-        parseInt(startTime, 10),
-        parseInt(endTime, 10),
+        range.start,
+        range.end,
         accessToken,
         remoteCalendarId
       );
@@ -1165,8 +1243,8 @@ export async function getEvents(req, res) {
     // refrescar desde HighLevel/Google en segundo plano (sin bloquear la UI).
     // Solo se espera a HighLevel cuando la BD todavía está vacía (primera carga).
     let events = await localCalendarService.listLocalAppointments({
-      startTime,
-      endTime,
+      startTime: range.start,
+      endTime: range.end,
       calendarId
     });
 
@@ -1189,8 +1267,8 @@ export async function getEvents(req, res) {
       });
 
       events = await localCalendarService.listLocalAppointments({
-        startTime,
-        endTime,
+        startTime: range.start,
+        endTime: range.end,
         calendarId
       });
     }
@@ -1200,8 +1278,9 @@ export async function getEvents(req, res) {
       data: events
     });
   } catch (error) {
-    logger.error(`[Calendars Controller] Error en getEvents: ${error.message}`);
-    res.status(500).json({
+    const log = error.status && error.status < 500 ? logger.warn : logger.error;
+    log(`[Calendars Controller] Error en getEvents: ${error.message}`);
+    res.status(error.status || 500).json({
       success: false,
       error: error.message
     });
@@ -1279,11 +1358,17 @@ export async function getPublicFreeSlots(req, res) {
       });
     }
 
+    const range = assertDateOnlyRangeLimit({
+      startDate,
+      endDate,
+      maxDays: CALENDAR_AVAILABILITY_MAX_RANGE_DAYS,
+      label: 'La disponibilidad'
+    });
     const { calendar } = await ensurePublicCalendarRequest(req, slug);
     const resolvedTimezone = cleanString(timezone) || await getAccountTimezone();
     const slots = await getCalendarFreeSlotsForPublic(calendar, {
-      startDate,
-      endDate,
+      startDate: range.startDate,
+      endDate: range.endDate,
       timezone: resolvedTimezone
     });
 
@@ -1651,7 +1736,6 @@ export async function getFreeSlots(req, res) {
   try {
     const { id } = req.params;
     const { startDate, endDate, timezone } = req.query;
-    const { accessToken } = await getHighLevelContext(req);
 
     if (!startDate || !endDate) {
       return res.status(400).json({
@@ -1660,13 +1744,20 @@ export async function getFreeSlots(req, res) {
       });
     }
 
+    const range = assertDateOnlyRangeLimit({
+      startDate,
+      endDate,
+      maxDays: CALENDAR_AVAILABILITY_MAX_RANGE_DAYS,
+      label: 'La disponibilidad'
+    });
+    const { accessToken } = await getHighLevelContext(req);
     const localCalendar = await localCalendarService.getLocalCalendar(id);
     let slots;
 
     await googleCalendarService.syncGoogleEventsForDateRange({
       calendarId: localCalendar?.id || id,
-      startDate,
-      endDate,
+      startDate: range.startDate,
+      endDate: range.endDate,
       timezone
     }).catch(error => {
       logger.warn(`[Calendars Controller] Sync Google para slots falló, usando DB local: ${error.message}`);
@@ -1675,16 +1766,16 @@ export async function getFreeSlots(req, res) {
     if (localCalendar && shouldUseLocalAvailabilityForOverlaps(localCalendar)) {
       slots = await localCalendarService.getLocalFreeSlots(
         localCalendar.id,
-        startDate,
-        endDate,
+        range.startDate,
+        range.endDate,
         timezone
       );
     } else if (accessToken && (localCalendar?.ghlCalendarId || (!localCalendar && id))) {
       try {
         slots = await calendarService.getFreeSlots(
           localCalendar?.ghlCalendarId || id,
-          startDate,
-          endDate,
+          range.startDate,
+          range.endDate,
           accessToken,
           timezone
         );
@@ -1696,8 +1787,8 @@ export async function getFreeSlots(req, res) {
     if (!slots) {
       slots = await localCalendarService.getLocalFreeSlots(
         localCalendar?.id || id,
-        startDate,
-        endDate,
+        range.startDate,
+        range.endDate,
         timezone
       );
     }
@@ -1707,8 +1798,9 @@ export async function getFreeSlots(req, res) {
       data: slots
     });
   } catch (error) {
-    logger.error(`[Calendars Controller] Error en getFreeSlots: ${error.message}`);
-    res.status(500).json({
+    const log = error.status && error.status < 500 ? logger.warn : logger.error;
+    log(`[Calendars Controller] Error en getFreeSlots: ${error.message}`);
+    res.status(error.status || 500).json({
       success: false,
       error: error.message
     });
@@ -1723,23 +1815,33 @@ export async function getBlockedSlots(req, res) {
   try {
     const { calendarId } = req.params;
     const { startTime, endTime } = req.query;
+
+    if (!startTime || !endTime) {
+      return res.status(400).json({
+        success: false,
+        error: 'Se requiere startTime y endTime'
+      });
+    }
+
+    const range = assertEpochRangeLimit({
+      startTime,
+      endTime,
+      maxDays: CALENDAR_BLOCKED_SLOTS_MAX_RANGE_DAYS,
+      label: 'La consulta de bloqueos del calendario'
+    });
     const { locationId, accessToken } = await getHighLevelContext(req);
 
     // (APT-004) Sin HighLevel: devolver los bloqueos NATIVOS guardados localmente.
     if (!accessToken) {
-      const toIso = (epoch) => {
-        const n = parseInt(epoch, 10);
-        return Number.isFinite(n) ? new Date(n).toISOString() : null;
-      };
       const data = await localCalendarService.listLocalBlockedSlots({
         calendarId,
-        startTime: startTime ? toIso(startTime) : null,
-        endTime: endTime ? toIso(endTime) : null
+        startTime: new Date(range.start).toISOString(),
+        endTime: new Date(range.end).toISOString()
       });
       return res.json({ success: true, data });
     }
 
-    if (!locationId || !startTime || !endTime) {
+    if (!locationId) {
       return res.json({
         success: true,
         data: []
@@ -1763,8 +1865,8 @@ export async function getBlockedSlots(req, res) {
     const timezone = await getAccountTimezone();
     const blockedSlots = await calendarService.getBlockedSlots(
       locationId,
-      parseInt(startTime, 10),
-      parseInt(endTime, 10),
+      range.start,
+      range.end,
       accessToken,
       remoteCalendarId,
       calendar, // Pasar el objeto calendario completo con teamMembers
@@ -1776,8 +1878,9 @@ export async function getBlockedSlots(req, res) {
       data: blockedSlots
     });
   } catch (error) {
-    logger.error(`[Calendars Controller] Error en getBlockedSlots: ${error.message}`);
-    res.status(500).json({
+    const log = error.status && error.status < 500 ? logger.warn : logger.error;
+    log(`[Calendars Controller] Error en getBlockedSlots: ${error.message}`);
+    res.status(error.status || 500).json({
       success: false,
       error: error.message
     });

@@ -874,24 +874,35 @@ const ContactsTable: React.FC = () => {
     const loadAllEvents = async () => {
       setLoadingEvents(true)
       try {
-        // Obtener eventos de TODOS los calendarios (sin filtro de fecha)
         const now = new Date()
-        const past = new Date(now.getFullYear() - 10, 0, 1) // 10 años atrás
-        const future = new Date(now.getFullYear() + 10, 11, 31) // 10 años adelante
+        const past = new Date(now)
+        past.setFullYear(now.getFullYear() - 1)
+        const future = new Date(now)
+        future.setFullYear(now.getFullYear() + 1)
 
-        // Una sola llamada sin calendarId devuelve los eventos de todos los
-        // calendarios; se filtran los de calendarios inactivos.
-        const [calendars, events] = await Promise.all([
+        // Mantener estos rangos acotados evita que el filtro de contactos intente
+        // cargar décadas de citas cuando solo necesita apoyo reciente/futuro.
+        const [calendars, pastEvents, futureEvents] = await Promise.all([
           calendarsService.getCalendars(locationId, accessToken),
           calendarsService.getEvents(
             locationId || '',
             past.getTime(),
+            now.getTime(),
+            accessToken || undefined
+          ),
+          calendarsService.getEvents(
+            locationId || '',
+            now.getTime(),
             future.getTime(),
             accessToken || undefined
           )
         ])
 
         if (cancelled) return
+
+        const events = Array.from(
+          new Map([...pastEvents, ...futureEvents].map((event, index) => [event.id || `event-${index}`, event])).values()
+        )
 
         const inactiveCalendarIds = new Set(
           calendars.filter(calendar => !calendar.isActive).map(calendar => calendar.id)
