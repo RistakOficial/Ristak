@@ -78,7 +78,7 @@ const metaConnectedTabs: Array<{ id: MetaConnectedTab; label: string; icon: Reac
   { id: 'cuenta', label: 'Cuenta', icon: <Link2 size={16} /> },
   { id: 'mensajes', label: 'Mensajes', icon: <MessageCircle size={16} /> },
   { id: 'rastreo', label: 'Rastreo', icon: <Activity size={16} /> },
-  { id: 'pruebas', label: 'Meta Pixel y CAPI', icon: <FlaskConical size={16} /> }
+  { id: 'pruebas', label: 'Dataset y CAPI', icon: <FlaskConical size={16} /> }
 ]
 
 const MASKED_SECRET_PREFIX = '***'
@@ -116,7 +116,7 @@ const tokenSetupGuideSteps = [
   },
   {
     title: 'Asigna activos',
-    body: 'En Añadir activos agrega la Página que hará publicidad, la cuenta publicitaria, la app recién creada, el conjunto de datos o pixel, Instagram si aplica, y concede acceso de administración donde Meta lo pida.'
+    body: 'En Añadir activos agrega la Página que hará publicidad, la cuenta publicitaria, la app recién creada, el Dataset, Instagram si aplica, y concede acceso de administración donde Meta lo pida.'
   },
   {
     title: 'Genera el token',
@@ -568,7 +568,7 @@ export const MetaAdsIntegration: React.FC = () => {
         }
 
         if (!options.silent) {
-          showToast('success', 'Pixeles cargados', `Se encontraron ${result.pixels.length} pixeles`)
+          showToast('success', 'Datasets cargados', `Se encontraron ${result.pixels.length} datasets`)
         }
 
         return { success: true, count: result.pixels.length }
@@ -576,20 +576,20 @@ export const MetaAdsIntegration: React.FC = () => {
 
       if (result.success) {
         if (!options.silent) {
-          showToast('info', 'Sin pixeles', 'No se encontraron pixeles para esta cuenta')
+          showToast('info', 'Sin datasets', 'No se encontraron datasets para esta cuenta')
         }
         setPixels([])
         return { success: true, count: 0 }
       } else {
         if (!options.silent) {
-          showToast('error', 'Error', 'No se pudieron cargar los pixeles')
+          showToast('error', 'Error', 'No se pudieron cargar los datasets')
         }
         setPixels([])
         return { success: false, count: 0 }
       }
     } catch {
       if (!options.silent) {
-        showToast('error', 'Error', 'No se pudieron cargar los pixeles')
+        showToast('error', 'Error', 'No se pudieron cargar los datasets')
       }
       setPixels([])
       return { success: false, count: 0 }
@@ -922,7 +922,7 @@ export const MetaAdsIntegration: React.FC = () => {
       if (data.success) {
         showToast('success', 'Cuenta guardada', `${account.name} configurada`)
         // El backend auto-asocia el pixel de la cuenta cuando no se eligió uno;
-        // reflejarlo de inmediato para que "Meta Pixel" y el snippet ya lo tengan.
+        // reflejarlo de inmediato para que el Dataset visible y el snippet ya lo tengan.
         const autoPixelId = String(data.data?.pixelId || '').trim()
         if (autoPixelId) {
           setCredentials(prev => ({ ...prev, pixelId: autoPixelId }))
@@ -962,14 +962,14 @@ export const MetaAdsIntegration: React.FC = () => {
       const data = await response.json()
 
       if (data.success) {
-        showToast('success', 'Pixel guardado', `${pixel.name} configurado`)
+        showToast('success', 'Dataset guardado', `${pixel.name} configurado`)
         await loadCredentials()
         goToMetaStep(3)
       } else {
-        showToast('error', 'Error', data.error || 'No se pudo guardar el pixel')
+        showToast('error', 'Error', data.error || 'No se pudo guardar el dataset')
       }
     } catch {
-      showToast('error', 'Error', 'No se pudo guardar el pixel')
+      showToast('error', 'Error', 'No se pudo guardar el dataset')
     }
   }
 
@@ -1129,8 +1129,8 @@ export const MetaAdsIntegration: React.FC = () => {
           'success',
           'Snippet actualizado',
           newValue
-            ? 'El snippet ahora incluye el Meta Pixel'
-            : 'El snippet ahora NO incluye el Meta Pixel'
+            ? 'El snippet ahora incluye el Dataset'
+            : 'El snippet ahora NO incluye el Dataset'
         )
       } else {
         showToast('error', 'Error', data.error || 'No se pudo sincronizar el snippet')
@@ -1255,7 +1255,7 @@ export const MetaAdsIntegration: React.FC = () => {
 
   const handleSendMetaTestEvent = async () => {
     if (!hasPixel) {
-      showToast('warning', 'Pixel requerido', 'Configura un Meta Pixel antes de enviar una prueba')
+      showToast('warning', 'Dataset requerido', 'Configura un Dataset antes de enviar una prueba')
       return
     }
 
@@ -1305,7 +1305,7 @@ export const MetaAdsIntegration: React.FC = () => {
 
   const handleOpenMetaPixelTest = async () => {
     if (!hasPixel) {
-      showToast('warning', 'Pixel requerido', 'Configura un Meta Pixel antes de probarlo')
+      showToast('warning', 'Dataset requerido', 'Configura un Dataset antes de probarlo')
       return
     }
 
@@ -1345,7 +1345,7 @@ export const MetaAdsIntegration: React.FC = () => {
       }
     } catch (error) {
       if (testWindow) testWindow.close()
-      const message = error instanceof Error ? error.message : 'No se pudo abrir la prueba del pixel'
+      const message = error instanceof Error ? error.message : 'No se pudo abrir la prueba del dataset'
       showToast('error', 'Error al abrir la prueba', message)
     } finally {
       setIsOpeningMetaPixelTest(false)
@@ -1523,7 +1523,7 @@ export const MetaAdsIntegration: React.FC = () => {
       unlocked: hasAccessToken
     },
     {
-      title: 'Meta Pixel',
+      title: 'Dataset',
       description: 'Medición web opcional',
       done: hasPixel,
       required: false,
@@ -1753,7 +1753,7 @@ export const MetaAdsIntegration: React.FC = () => {
             <span className={styles.stepEyebrow}>Paso 2</span>
             <h3 className={styles.stepTitle}>Selecciona la cuenta de anuncios</h3>
             <p className={styles.stepText}>
-              Esta cuenta alimenta campañas, costos y reportes. Al seleccionarla se guarda automáticamente y se cargan los pixeles disponibles.
+              Esta cuenta alimenta campañas, costos y reportes. Al seleccionarla se guarda automáticamente y se cargan los datasets disponibles.
             </p>
           </div>
 
@@ -1812,9 +1812,9 @@ export const MetaAdsIntegration: React.FC = () => {
         <>
           <div className={styles.stepIntro}>
             <span className={styles.stepEyebrow}>Paso 3</span>
-            <h3 className={styles.stepTitle}>Elige el Meta Pixel</h3>
+            <h3 className={styles.stepTitle}>Elige el Dataset</h3>
             <p className={styles.stepText}>
-              Es opcional para reportes de anuncios, pero necesario si quieres incluir el pixel en el snippet o usar Conversions API.
+              Es opcional para reportes de anuncios, pero necesario si quieres activar medición web en el snippet o usar Conversions API.
             </p>
           </div>
 
@@ -1823,7 +1823,7 @@ export const MetaAdsIntegration: React.FC = () => {
           ) : (
             <>
               <label className={`${styles.formGroup} ${styles.formGroupWide}`}>
-                <span className={styles.formLabel}>Meta Pixel</span>
+                <span className={styles.formLabel}>Dataset</span>
                 {credentials.pixelId ? (
                   <div className={styles.filterChip}>
                     <span className={styles.chipText}>{getSelectedPixelLabel()}</span>
@@ -1831,13 +1831,13 @@ export const MetaAdsIntegration: React.FC = () => {
                       onClick={() => handleRemoveCredential('pixelId')}
                       className={styles.chipDeleteButton}
                       type="button"
-                      aria-label="Eliminar Meta Pixel"
+                      aria-label="Eliminar Dataset"
                     >
                       <Trash2 size={16} />
                     </button>
                   </div>
                 ) : isLoadingPixels ? (
-                  <div className={styles.inlineStatus} role="status" aria-live="polite" aria-label="Cargando pixeles">
+                  <div className={styles.inlineStatus} role="status" aria-live="polite" aria-label="Cargando datasets">
                     <RefreshCw size={14} className={styles.spinning} aria-hidden="true" />
                   </div>
                 ) : pixels.length > 0 ? (
@@ -1848,7 +1848,7 @@ export const MetaAdsIntegration: React.FC = () => {
                     }}
                     value={credentials.pixelId || ''}
                   >
-                    <option value="">-- Sin pixel (opcional) --</option>
+                    <option value="">-- Sin Dataset (opcional) --</option>
                     {pixels.map((pixel) => (
                       <option key={pixel.id} value={pixel.id}>
                         {pixel.name} ({pixel.id})
@@ -1866,7 +1866,7 @@ export const MetaAdsIntegration: React.FC = () => {
                 )}
               </label>
               <p className={styles.stepHint}>
-                Si no necesitas pixel por ahora, puedes saltar directo a las páginas de Meta.
+                Si no necesitas Dataset por ahora, puedes saltar directo a las páginas de Meta.
               </p>
             </>
           )}
@@ -2091,8 +2091,8 @@ export const MetaAdsIntegration: React.FC = () => {
                     <span className={styles.connectedListValue}>{getSelectedPageLabel()}</span>
                   </div>
                   <div className={styles.connectedListRow}>
-                    <span className={styles.connectedListLabel}>Meta Pixel</span>
-                    <span className={styles.connectedListValue}>{hasPixel ? getSelectedPixelLabel() : 'Sin pixel'}</span>
+                    <span className={styles.connectedListLabel}>Dataset</span>
+                    <span className={styles.connectedListValue}>{hasPixel ? getSelectedPixelLabel() : 'Sin Dataset'}</span>
                   </div>
                   <div className={styles.connectedListRow}>
                     <span className={styles.connectedListLabel}>Instagram</span>
@@ -2463,8 +2463,8 @@ export const MetaAdsIntegration: React.FC = () => {
                   {hasPixel ? (
                     <div className={styles.connectedExtraRow}>
                       <div>
-                        <span className={styles.railSwitchLabel}>Incluir Meta Pixel en snippet</span>
-                        <span className={styles.railSecondaryValue}>Agrega el pixel ({getSelectedPixelLabel()}) al snippet de Web Tracking de tus sitios.</span>
+                        <span className={styles.railSwitchLabel}>Incluir Dataset en snippet</span>
+                        <span className={styles.railSecondaryValue}>Agrega el Dataset ({getSelectedPixelLabel()}) al snippet de Web Tracking de tus sitios.</span>
                       </div>
                       <Switch
                         checked={includeMetaPixel === true}
@@ -2475,8 +2475,8 @@ export const MetaAdsIntegration: React.FC = () => {
                   ) : (
                     <div className={styles.connectedExtraRow}>
                       <div>
-                        <span className={styles.railSwitchLabel}>Meta Pixel en snippet</span>
-                        <span className={styles.railSecondaryValue}>Aún no hay un Meta Pixel asociado a la cuenta. Se toma automáticamente al conectar; si no aparece, elígelo en el wizard.</span>
+                        <span className={styles.railSwitchLabel}>Dataset en snippet</span>
+                        <span className={styles.railSecondaryValue}>Aún no hay un Dataset asociado a la cuenta. Se toma automáticamente al conectar; si no aparece, elígelo en el wizard.</span>
                       </div>
                     </div>
                   )}
@@ -2495,7 +2495,7 @@ export const MetaAdsIntegration: React.FC = () => {
               <section className={styles.tabPanel}>
                 <div className={styles.sectionHeader}>
                   <div>
-                    <h3 className={styles.sectionTitle}>Meta Pixel y CAPI</h3>
+                    <h3 className={styles.sectionTitle}>Dataset y CAPI</h3>
                     <p className={styles.sectionDescription}>
                       Guarda el código TEST de Events Manager y manda un evento de prueba (navegador + servidor) antes de lanzar campañas de verdad.
                     </p>
@@ -2508,8 +2508,8 @@ export const MetaAdsIntegration: React.FC = () => {
                 {!hasPixel ? (
                   <div className={styles.connectedExtraRow}>
                     <div>
-                      <span className={styles.railSwitchLabel}>Meta Pixel requerido</span>
-                      <span className={styles.railSecondaryValue}>Elige un Meta Pixel en el wizard para poder mandar pruebas de eventos CAPI.</span>
+                      <span className={styles.railSwitchLabel}>Dataset requerido</span>
+                      <span className={styles.railSecondaryValue}>Elige un Dataset en el wizard para poder mandar pruebas de eventos CAPI.</span>
                     </div>
                   </div>
                 ) : (
@@ -2718,7 +2718,7 @@ export const MetaAdsIntegration: React.FC = () => {
           }
         }}
         title="Eliminar configuración de Meta"
-        message="Se eliminará el token, la cuenta de anuncios, el pixel, la Página e Instagram, y se apagarán Messenger e Instagram DM. Esta acción no se puede deshacer."
+        message="Se eliminará el token, la cuenta de anuncios, el Dataset, la Página e Instagram, y se apagarán Messenger e Instagram DM. Esta acción no se puede deshacer."
         type="confirm"
         typeToConfirm="ELIMINAR"
         confirmText={isDisconnectingMeta ? 'Eliminando...' : 'Eliminar'}
