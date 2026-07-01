@@ -70,6 +70,62 @@ function todayConektaDateOnly() {
   }).format(new Date())
 }
 
+function addDaysConektaDateOnly(days) {
+  const date = new Date()
+  date.setDate(date.getDate() + days)
+  return new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'America/Mexico_City',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit'
+  }).format(date)
+}
+
+function zonedDateTimeParts(value, timeZone = 'America/Mexico_City') {
+  const date = value instanceof Date ? value : new Date(value)
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+    hourCycle: 'h23'
+  }).formatToParts(date)
+
+  return Object.fromEntries(
+    parts
+      .filter((part) => part.type !== 'literal')
+      .map((part) => [part.type, Number(part.value)])
+  )
+}
+
+function zonedDateOnly(value, timeZone = 'America/Mexico_City') {
+  const parts = zonedDateTimeParts(value, timeZone)
+  return [
+    String(parts.year).padStart(4, '0'),
+    String(parts.month).padStart(2, '0'),
+    String(parts.day).padStart(2, '0')
+  ].join('-')
+}
+
+function secondsOfDay(value, timeZone = 'America/Mexico_City') {
+  const parts = zonedDateTimeParts(value, timeZone)
+  return Number(parts.hour || 0) * 3600 + Number(parts.minute || 0) * 60 + Number(parts.second || 0)
+}
+
+function assertPlanTimeMatchesCreation(storedValue, expectedDateOnly, createdBefore, createdAfter) {
+  assert.equal(zonedDateOnly(storedValue), expectedDateOnly)
+  const storedSeconds = secondsOfDay(storedValue)
+  const beforeSeconds = Math.max(0, secondsOfDay(createdBefore) - 1)
+  const afterSeconds = Math.min(86399, secondsOfDay(createdAfter) + 1)
+  const inRange = beforeSeconds <= afterSeconds
+    ? storedSeconds >= beforeSeconds && storedSeconds <= afterSeconds
+    : storedSeconds >= beforeSeconds || storedSeconds <= afterSeconds
+  assert.ok(inRange, `expected stored plan time ${storedSeconds} to be between ${beforeSeconds} and ${afterSeconds}`)
+}
+
 test('Conekta manual: el modo global de pasarelas selecciona las credenciales activas', async () => {
   await initializeMasterKey()
 
@@ -1302,6 +1358,50 @@ test('Conekta planes: conserva varios planes del mismo contacto y procesa solo v
     assert.equal(paidFirstPaymentFlow.first_payment_status, 'paid')
     assert.equal(paidFirstPayment.status, 'paid')
     assert.equal(paidFirstPayment.conekta_order_id, 'ord_multi_3')
+
+    const defaultTimeDate = addDaysConektaDateOnly(5)
+    const defaultTimeCreatedBefore = new Date()
+    const defaultTimePlan = await createConektaPaymentPlan({
+      contact,
+      totalAmount: 525,
+      currency: 'MXN',
+      title: 'Plan Conekta con hora automática',
+      description: 'Plan Conekta con fecha simple y hora de creación',
+      paymentMethodId: conektaSourceId,
+      firstPayment: {
+        enabled: true,
+        amount: 175,
+        date: defaultTimeDate,
+        method: 'conekta_saved_card'
+      },
+      remainingFrequency: 'monthly',
+      remainingPayments: [{
+        sequence: 1,
+        amount: 350,
+        dueDate: defaultTimeDate,
+        frequency: 'monthly'
+      }]
+    }, { baseUrl: 'https://app.example.test' })
+    const defaultTimeCreatedAfter = new Date()
+
+    assert.equal(orderCalls.length, 3)
+
+    const defaultTimeFlow = await db.get(
+      'SELECT first_payment_date, metadata FROM payment_flows WHERE id = ?',
+      [defaultTimePlan.flowId]
+    )
+    const defaultTimeInstallment = await db.get(
+      'SELECT due_date, frequency FROM installment_payments WHERE id = ?',
+      [defaultTimePlan.scheduledPayments[0].installmentId]
+    )
+    assert.equal(JSON.parse(defaultTimeFlow.metadata).remainingFrequency, 'monthly')
+    assert.equal(defaultTimeInstallment.frequency, 'monthly')
+    assertPlanTimeMatchesCreation(defaultTimeFlow.first_payment_date, defaultTimeDate, defaultTimeCreatedBefore, defaultTimeCreatedAfter)
+    assertPlanTimeMatchesCreation(defaultTimeInstallment.due_date, defaultTimeDate, defaultTimeCreatedBefore, defaultTimeCreatedAfter)
+
+    const defaultTimeEarlyRun = await processDueConektaPaymentPlanCharges({ limit: 10 })
+    assert.equal(defaultTimeEarlyRun.processed, 0)
+    assert.equal(orderCalls.length, 3)
   })
 
   try {

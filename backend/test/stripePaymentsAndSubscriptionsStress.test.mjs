@@ -45,6 +45,51 @@ function addDaysDateOnly(days) {
   }).format(date)
 }
 
+function zonedDateTimeParts(value, timeZone = 'America/Mexico_City') {
+  const date = value instanceof Date ? value : new Date(value)
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+    hourCycle: 'h23'
+  }).formatToParts(date)
+
+  return Object.fromEntries(
+    parts
+      .filter((part) => part.type !== 'literal')
+      .map((part) => [part.type, Number(part.value)])
+  )
+}
+
+function zonedDateOnly(value, timeZone = 'America/Mexico_City') {
+  const parts = zonedDateTimeParts(value, timeZone)
+  return [
+    String(parts.year).padStart(4, '0'),
+    String(parts.month).padStart(2, '0'),
+    String(parts.day).padStart(2, '0')
+  ].join('-')
+}
+
+function secondsOfDay(value, timeZone = 'America/Mexico_City') {
+  const parts = zonedDateTimeParts(value, timeZone)
+  return Number(parts.hour || 0) * 3600 + Number(parts.minute || 0) * 60 + Number(parts.second || 0)
+}
+
+function assertPlanTimeMatchesCreation(storedValue, expectedDateOnly, createdBefore, createdAfter) {
+  assert.equal(zonedDateOnly(storedValue), expectedDateOnly)
+  const storedSeconds = secondsOfDay(storedValue)
+  const beforeSeconds = Math.max(0, secondsOfDay(createdBefore) - 1)
+  const afterSeconds = Math.min(86399, secondsOfDay(createdAfter) + 1)
+  const inRange = beforeSeconds <= afterSeconds
+    ? storedSeconds >= beforeSeconds && storedSeconds <= afterSeconds
+    : storedSeconds >= beforeSeconds || storedSeconds <= afterSeconds
+  assert.ok(inRange, `expected stored plan time ${storedSeconds} to be between ${beforeSeconds} and ${afterSeconds}`)
+}
+
 function testPhoneFromSuffix(idSuffix) {
   const digits = String(idSuffix).replace(/[^0-9]/g, '')
   const entropyDigits = Array.from(String(idSuffix))
@@ -840,6 +885,60 @@ test('planes Stripe: primer pago con hora exacta no se cobra antes de la hora pr
     assert.equal(flow.first_payment_status, 'paid')
     assert.equal(payment.status, 'paid')
     assert.equal(payment.stripe_payment_intent_id, 'pi_stress_1')
+  } finally {
+    setStripeFactoryForTest(null)
+    await cleanupContact(contactId)
+  }
+})
+
+test('planes Stripe: fechas sin hora usan la hora de creación del plan', async () => {
+  const { contactId, contact, savedMethodId } = await seedContactWithSavedCard('default_plan_time')
+  const { stripe, calls } = createStripeMock()
+  setStripeFactoryForTest(() => stripe)
+
+  try {
+    await configureStripe()
+    const futureDate = addDaysDateOnly(4)
+    const createdBefore = new Date()
+
+    const plan = await createStripePaymentPlan({
+      contact,
+      title: 'Plan con hora automática',
+      description: 'Plan con fecha simple y hora de creación',
+      totalAmount: 300,
+      paymentMethodId: savedMethodId,
+      firstPayment: {
+        enabled: true,
+        amount: 100,
+        date: futureDate,
+        method: 'saved_card'
+      },
+      remainingFrequency: 'monthly',
+      remainingPayments: [
+        { sequence: 1, amount: 200, dueDate: futureDate, frequency: 'monthly' }
+      ]
+    }, { baseUrl: 'https://example.test' })
+
+    const createdAfter = new Date()
+    assert.equal(calls.paymentIntentsCreate.length, 0)
+
+    const flow = await db.get(
+      'SELECT first_payment_date, metadata FROM payment_flows WHERE id = ?',
+      [plan.flowId]
+    )
+    const installment = await db.get(
+      'SELECT due_date, frequency FROM installment_payments WHERE id = ?',
+      [plan.scheduledPayments[0].installmentId]
+    )
+
+    assert.equal(JSON.parse(flow.metadata).remainingFrequency, 'monthly')
+    assert.equal(installment.frequency, 'monthly')
+    assertPlanTimeMatchesCreation(flow.first_payment_date, futureDate, createdBefore, createdAfter)
+    assertPlanTimeMatchesCreation(installment.due_date, futureDate, createdBefore, createdAfter)
+
+    const earlyRun = await processDueStripePaymentPlanCharges({ limit: 10 })
+    assert.equal(earlyRun.length, 0)
+    assert.equal(calls.paymentIntentsCreate.length, 0)
   } finally {
     setStripeFactoryForTest(null)
     await cleanupContact(contactId)

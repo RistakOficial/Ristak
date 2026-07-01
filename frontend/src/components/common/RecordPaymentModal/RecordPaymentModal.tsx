@@ -36,7 +36,7 @@ import { apiUrl } from '@/services/apiBaseUrl'
 import { getIntegrationsStatus } from '@/services/integrationsService'
 import { formatCurrency as formatMxCurrency } from '@/utils/format'
 import { buildPaymentTimestamp } from '@/utils/paymentDate'
-import { localDateTimeInputToUTCISOString, todayDateOnlyInTimezone } from '@/utils/timezone'
+import { todayDateOnlyInTimezone } from '@/utils/timezone'
 import { highLevelService } from '@/services/highLevelService'
 import { transactionsService } from '@/services/transactionsService'
 import { conektaPaymentsService, type ConektaSavedPaymentSource } from '@/services/conektaPaymentsService'
@@ -122,7 +122,7 @@ type SinglePaymentAction = 'payment_link' | 'saved_card' | 'manual'
 type SinglePaymentOptionsStage = 'method' | 'saved_cards' | 'gateway' | 'gateway_config' | 'confirm'
 type InstallmentValueType = 'percentage' | 'amount'
 type FirstPaymentMethod = '' | 'cash' | 'bank_transfer' | 'deposit' | 'card'
-type RemainingFrequency = 'custom' | 'daily' | 'weekly' | 'biweekly' | 'monthly' | 'yearly' | 'scheduled_time'
+type RemainingFrequency = 'custom' | 'daily' | 'weekly' | 'biweekly' | 'monthly' | 'yearly'
 type StripePlanCardSource = 'new_card' | 'saved_card'
 type SendMethod = 'whatsapp' | 'sms' | 'email' | 'email_whatsapp' | 'email_sms' | 'all'
 type InvoiceSendMethod = 'email' | 'sms' | 'both'
@@ -137,8 +137,6 @@ const INSTALLMENT_VALUE_TYPE_OPTIONS = [
   { value: 'amount', label: 'Monto fijo' },
   { value: 'percentage', label: 'Porcentaje' }
 ]
-
-const PLAN_EXACT_TIME_FREQUENCY: RemainingFrequency = 'scheduled_time'
 
 // Primer pago integrado en la fila #1 del plan, en dos niveles:
 // 1) cuándo se cobra — 'scheduled' (sin enganche, el #1 es un cobro programado más)
@@ -161,7 +159,6 @@ const REMAINING_FREQUENCY_OPTIONS = [
   { value: 'biweekly', label: 'Quincenal' },
   { value: 'monthly', label: 'Mensual' },
   { value: 'yearly', label: 'Anual' },
-  { value: PLAN_EXACT_TIME_FREQUENCY, label: 'Fecha y hora exactas' },
   { value: 'custom', label: 'Personalizada' }
 ]
 
@@ -535,17 +532,10 @@ const getDateOnly = (value: string) => {
   return match ? match[1] : ''
 }
 
-const buildPlanChargeDateValue = (
-  dateValue: string,
-  frequency: RemainingFrequency,
-  paymentTime: string,
-  timezone: string
-) => {
+const buildPlanChargeDateValue = (dateValue: string) => {
   const dateOnly = getDateOnly(dateValue)
   if (!dateOnly) return ''
-  if (frequency !== PLAN_EXACT_TIME_FREQUENCY) return dateOnly
-  if (!paymentTime) return ''
-  return localDateTimeInputToUTCISOString(`${dateOnly}T${paymentTime}`, timezone) || ''
+  return dateOnly
 }
 
 const getCollisionReflowFrequency = (frequency: RemainingFrequency): RemainingFrequency => (
@@ -704,7 +694,6 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
   const [remainingAutomatic, setRemainingAutomatic] = useState(true)
   const [remainingValueType, setRemainingValueType] = useState<InstallmentValueType>('amount')
   const [remainingFrequency, setRemainingFrequency] = useState<RemainingFrequency>('monthly')
-  const [planPaymentTime, setPlanPaymentTime] = useState('')
   const [remainingInstallments, setRemainingInstallments] = useState<InstallmentDraft[]>(() => defaultPartialInstallments(timezone))
   const [autoDistributeRemaining, setAutoDistributeRemaining] = useState(true)
 
@@ -863,7 +852,6 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
     : partialPlanDifference > 0
       ? 'under'
       : 'over'
-  const planUsesExactTime = remainingFrequency === PLAN_EXACT_TIME_FREQUENCY
   const firstPaymentMethodMissing = activePaymentMode === 'partial' && firstPaymentActive && !firstPaymentMethod
   const partialNeedsCardAuthorization = activePaymentMode === 'partial' && remainingAutomatic && (
     !firstPaymentEnabled || isOfflineFirstPaymentMethod(firstPaymentMethod)
@@ -1266,7 +1254,6 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
     setRemainingAutomatic(true)
     setRemainingValueType('amount')
     setRemainingFrequency('monthly')
-    setPlanPaymentTime('')
     setRemainingInstallments(defaultPartialInstallments(timezone))
     setAutoDistributeRemaining(true)
     setSelectedProduct(null)
@@ -2045,7 +2032,7 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
       type: firstPaymentType,
       value: normalizeAmount(firstPaymentValue),
       amount: firstPaymentAmount,
-      date: buildPlanChargeDateValue(firstPaymentDate, remainingFrequency, planPaymentTime, timezone),
+      date: buildPlanChargeDateValue(firstPaymentDate),
       frequency: remainingFrequency,
       method: firstPaymentActive ? firstPaymentMethod : 'none'
     },
@@ -2057,7 +2044,7 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
       value: normalizeAmount(installment.value),
       amount: installment.amount,
       percentage: installment.percentage,
-      dueDate: buildPlanChargeDateValue(installment.dueDate, remainingFrequency, planPaymentTime, timezone),
+      dueDate: buildPlanChargeDateValue(installment.dueDate),
       frequency: remainingFrequency
     })),
     channels
@@ -2078,7 +2065,7 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
     firstPayment: {
       enabled: firstPaymentActive,
       amount: firstPaymentAmount,
-      date: buildPlanChargeDateValue(firstPaymentDate, remainingFrequency, planPaymentTime, timezone),
+      date: buildPlanChargeDateValue(firstPaymentDate),
       frequency: remainingFrequency,
       method: firstPaymentActive ? firstPaymentMethod || 'card' : 'none'
     },
@@ -2089,7 +2076,7 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
       value: normalizeAmount(installment.value),
       amount: installment.amount,
       percentage: installment.percentage,
-      dueDate: buildPlanChargeDateValue(installment.dueDate, remainingFrequency, planPaymentTime, timezone),
+      dueDate: buildPlanChargeDateValue(installment.dueDate),
       frequency: remainingFrequency
     })),
     paymentMethodId: provider === 'conekta'
@@ -2262,11 +2249,6 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
 
       if (resolvedRemainingInstallments.some(installment => installment.amount <= 0 || !installment.dueDate)) {
         showToast('error', 'Todos los pagos restantes necesitan monto y fecha')
-        return
-      }
-
-      if (planUsesExactTime && !planPaymentTime) {
-        showToast('error', 'Elige la hora exacta de cobro para el plan')
         return
       }
 
@@ -3579,24 +3561,10 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
                   title: 'Tipo de valor'
                 })}
               </div>
-              {planUsesExactTime && (
-                <div className={styles.manualField}>
-                  <label>Hora de cobro</label>
-                  <input
-                    type="time"
-                    value={planPaymentTime}
-                    onChange={(event) => setPlanPaymentTime(event.target.value)}
-                    className={styles.input}
-                    aria-label="Hora exacta de cobro del plan"
-                  />
-                </div>
-              )}
             </div>
 
             <p className={styles.planHint}>
-              {planUsesExactTime
-                ? 'Cada fecha del plan se cobrará a la hora indicada, usando la zona horaria del negocio.'
-                : remainingFrequency === 'custom'
+              {remainingFrequency === 'custom'
                 ? `Ajusta ${effectiveRemainingValueType === 'percentage' ? 'el porcentaje' : 'el monto'} y la fecha de cada cobro.`
                 : 'Las fechas se calculan automáticamente. Cambia a “Personalizada” para editarlas a mano.'}
             </p>
@@ -3709,7 +3677,7 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
                         value={installment.dueDate}
                         min={getBusinessTodayInputValue(timezone)}
                         onChange={(value) => updateRemainingInstallment(installment.id, { dueDate: value })}
-                        disabled={remainingFrequency !== 'custom' && !planUsesExactTime}
+                        disabled={remainingFrequency !== 'custom'}
                         title={`Fecha del cobro ${index + 1}`}
                         ariaLabel={`Fecha del cobro ${index + 1}`}
                         buttonClassName={styles.phoneDateButton}

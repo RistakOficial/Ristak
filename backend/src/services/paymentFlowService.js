@@ -81,24 +81,52 @@ function isTimedPlanFrequency(value) {
   return normalizePlanFrequency(value) === TIMED_PLAN_FREQUENCY
 }
 
-function assertPlanDueDateNotInPast(value, frequency, message, timezone = DEFAULT_PAYMENT_TIMEZONE) {
-  if (isTimedPlanFrequency(frequency)) {
-    return assertLocalDateTimeNotInPast(value, timezone, message)
-  }
-  return assertDateNotInPast(value, message, timezone)
+function hasExplicitPlanTime(value) {
+  const clean = normalizeText(value)
+  const match = clean.match(/[T ](\d{2}):(\d{2})(?::(\d{2}))?/)
+  if (!match) return false
+  return !(match[1] === '00' && match[2] === '00' && (!match[3] || match[3] === '00'))
 }
 
-function normalizePlanDueDate(value, frequency, timezone = DEFAULT_PAYMENT_TIMEZONE) {
-  if (value === null || value === undefined || value === '') return null
-  if (isTimedPlanFrequency(frequency)) {
-    return normalizeToUtcIso(value, timezone)
+function getCurrentBusinessPlanTime(timezone = DEFAULT_PAYMENT_TIMEZONE, referenceDate = new Date()) {
+  return DateTime.fromJSDate(referenceDate instanceof Date ? referenceDate : new Date(referenceDate), {
+    zone: resolveTimezone(timezone)
+  })
+    .set({ millisecond: 0 })
+    .toFormat('HH:mm:ss')
+}
+
+function withDefaultPlanTime(value, timezone = DEFAULT_PAYMENT_TIMEZONE, referenceDate = new Date()) {
+  if (value === null || value === undefined || value === '') return value
+  if (hasExplicitPlanTime(value)) return value
+  const date = normalizeDateOnly(value, timezone)
+  return `${date}T${getCurrentBusinessPlanTime(timezone, referenceDate)}`
+}
+
+function shouldUseExactPlanTime(value, frequency) {
+  return isTimedPlanFrequency(frequency) || hasExplicitPlanTime(value)
+}
+
+function assertPlanDueDateNotInPast(value, frequency, message, timezone = DEFAULT_PAYMENT_TIMEZONE) {
+  const dueValue = withDefaultPlanTime(value, timezone)
+  if (shouldUseExactPlanTime(dueValue, frequency)) {
+    return assertLocalDateTimeNotInPast(dueValue, timezone, message)
   }
-  return normalizeDateOnly(value, timezone)
+  return assertDateNotInPast(dueValue, message, timezone)
+}
+
+function normalizePlanDueDate(value, frequency, timezone = DEFAULT_PAYMENT_TIMEZONE, referenceDate = new Date()) {
+  if (value === null || value === undefined || value === '') return null
+  const dueValue = withDefaultPlanTime(value, timezone, referenceDate)
+  if (shouldUseExactPlanTime(dueValue, frequency)) {
+    return normalizeToUtcIso(dueValue, timezone)
+  }
+  return normalizeDateOnly(dueValue, timezone)
 }
 
 function isPlanChargeDueNow(value, frequency, timezone = DEFAULT_PAYMENT_TIMEZONE) {
   if (!value) return false
-  if (!isTimedPlanFrequency(frequency)) {
+  if (!shouldUseExactPlanTime(value, frequency)) {
     return normalizeDateOnly(value, timezone) <= todayDateOnly(timezone)
   }
 
@@ -1188,17 +1216,18 @@ function getEffectiveInstallmentDueDate(flow, installment, timezone = DEFAULT_PA
   const sequence = Number(installment.sequence || 1)
   const zone = resolveScheduleTimezone(timezone)
   const firstPaymentDate = flow?.first_payment_date || flow?.firstPaymentDate
+  const installmentDueDate = installment.due_date || installment.dueDate
 
-  if (isTimedPlanFrequency(frequency)) {
-    return installment.due_date || installment.dueDate
+  if (isTimedPlanFrequency(frequency) || hasExplicitPlanTime(installmentDueDate)) {
+    return installmentDueDate
   }
 
   if (!hasFirstPlanPayment(flow) || !firstPaymentDate || sequence <= 0) {
-    return normalizeDateOnly(installment.due_date || installment.dueDate, timezone)
+    return normalizeDateOnly(installmentDueDate, timezone)
   }
 
   const baseDate = DateTime.fromISO(normalizeDateOnly(firstPaymentDate, timezone), { zone }).startOf('day')
-  if (!baseDate.isValid) return normalizeDateOnly(installment.due_date || installment.dueDate, timezone)
+  if (!baseDate.isValid) return normalizeDateOnly(installmentDueDate, timezone)
 
   if (frequency === 'monthly') {
     return addMonthsClamped(baseDate, sequence).toISODate()
@@ -1220,7 +1249,7 @@ function getEffectiveInstallmentDueDate(flow, installment, timezone = DEFAULT_PA
     return addMonthsClamped(baseDate, 12 * sequence).toISODate()
   }
 
-  return normalizeDateOnly(installment.due_date || installment.dueDate, timezone)
+  return normalizeDateOnly(installmentDueDate, timezone)
 }
 
 function withEffectiveInstallmentDates(flow, installments, timezone = DEFAULT_PAYMENT_TIMEZONE) {
@@ -1761,7 +1790,7 @@ async function updateFlowState(flowId, state, stateHistory, fields = {}) {
   await db.run(`UPDATE payment_flows SET ${setFields.join(', ')} WHERE id = ?`, values)
 }
 
-async function createRemainingInstallments({ flowId, payments, automatic, timezone = DEFAULT_PAYMENT_TIMEZONE }) {
+async function createRemainingInstallments({ flowId, payments, automatic, timezone = DEFAULT_PAYMENT_TIMEZONE, referenceDate = new Date() }) {
   const initialStatus = automatic ? 'pending_card_authorization' : 'manual_pending'
 
   for (const payment of payments) {
@@ -1778,7 +1807,7 @@ async function createRemainingInstallments({ flowId, payments, automatic, timezo
         Number(payment.sequence || 1),
         normalizeAmount(payment.amount),
         payment.percentage === null || payment.percentage === undefined ? null : Number(payment.percentage),
-        normalizePlanDueDate(rawDueDate, frequency, timezone),
+        normalizePlanDueDate(rawDueDate, frequency, timezone, referenceDate),
         frequency,
         automatic ? 'card' : (payment.paymentMethod || 'manual'),
         automatic ? 1 : 0,
@@ -1855,11 +1884,12 @@ export async function createInstallmentPaymentFlow(payload) {
   const remainingAutomatic = Boolean(payload.remainingAutomatic)
   const concept = payload.description || payload.concept || 'Plan de parcialidades'
   const flowId = createId('flow')
+  const planCreatedAt = new Date()
   const remainingFrequency = normalizePlanFrequency(payload.remainingFrequency || 'custom')
   const firstPaymentType = firstPaymentEnabled ? (firstPayment.type || 'amount') : 'none'
   const firstPaymentValue = firstPaymentEnabled ? Number(firstPayment.value || firstPaymentAmount) : 0
   const firstPaymentDate = firstPaymentEnabled
-    ? normalizePlanDueDate(firstPayment.date || todayDateOnly(accountTimezone), remainingFrequency, accountTimezone)
+    ? normalizePlanDueDate(firstPayment.date || todayDateOnly(accountTimezone), remainingFrequency, accountTimezone, planCreatedAt)
     : null
   const firstPaymentIsOffline = firstPaymentEnabled && OFFLINE_METHODS.has(firstPaymentMethod)
   const firstPaymentIsCard = firstPaymentEnabled && CARD_METHODS.has(firstPaymentMethod)
@@ -1953,7 +1983,8 @@ export async function createInstallmentPaymentFlow(payload) {
     flowId,
     payments: remainingPayments,
     automatic: remainingAutomatic,
-    timezone: accountTimezone
+    timezone: accountTimezone,
+    referenceDate: planCreatedAt
   })
 
   const flowForSummary = await db.get('SELECT * FROM payment_flows WHERE id = ?', [flowId])

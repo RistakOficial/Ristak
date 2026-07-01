@@ -32,6 +32,51 @@ function createResponse() {
   }
 }
 
+function zonedDateTimeParts(value, timeZone = 'America/Mexico_City') {
+  const date = value instanceof Date ? value : new Date(value)
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+    hourCycle: 'h23'
+  }).formatToParts(date)
+
+  return Object.fromEntries(
+    parts
+      .filter((part) => part.type !== 'literal')
+      .map((part) => [part.type, Number(part.value)])
+  )
+}
+
+function zonedDateOnly(value, timeZone = 'America/Mexico_City') {
+  const parts = zonedDateTimeParts(value, timeZone)
+  return [
+    String(parts.year).padStart(4, '0'),
+    String(parts.month).padStart(2, '0'),
+    String(parts.day).padStart(2, '0')
+  ].join('-')
+}
+
+function secondsOfDay(value, timeZone = 'America/Mexico_City') {
+  const parts = zonedDateTimeParts(value, timeZone)
+  return Number(parts.hour || 0) * 3600 + Number(parts.minute || 0) * 60 + Number(parts.second || 0)
+}
+
+function assertPlanTimeMatchesCreation(storedValue, expectedDateOnly, createdBefore, createdAfter) {
+  assert.equal(zonedDateOnly(storedValue), expectedDateOnly)
+  const storedSeconds = secondsOfDay(storedValue)
+  const beforeSeconds = Math.max(0, secondsOfDay(createdBefore) - 1)
+  const afterSeconds = Math.min(86399, secondsOfDay(createdAfter) + 1)
+  const inRange = beforeSeconds <= afterSeconds
+    ? storedSeconds >= beforeSeconds && storedSeconds <= afterSeconds
+    : storedSeconds >= beforeSeconds || storedSeconds <= afterSeconds
+  assert.ok(inRange, `expected stored plan time ${storedSeconds} to be between ${beforeSeconds} and ${afterSeconds}`)
+}
+
 async function cleanup(ids) {
   await db.run('DELETE FROM payment_plans WHERE id = ?', [ids.flowId]).catch(() => undefined)
   await db.run('DELETE FROM installment_payments WHERE flow_id = ?', [ids.flowId]).catch(() => undefined)
@@ -471,6 +516,7 @@ test('edita calendario de pagos de un plan Stripe local', async () => {
 
   try {
     const res = createResponse()
+    const editedBefore = new Date()
     await updateInvoiceSchedule({
       params: { scheduleId: ids.flowId },
       body: {
@@ -493,6 +539,7 @@ test('edita calendario de pagos de un plan Stripe local', async () => {
         }
       }
     }, res)
+    const editedAfter = new Date()
 
     assert.equal(res.statusCode, 200)
     assert.equal(res.payload.success, true)
@@ -513,11 +560,12 @@ test('edita calendario de pagos de un plan Stripe local', async () => {
     assert.equal(flow.concept, 'Plan local Stripe editado')
     assert.equal(installments.length, 2)
     assert.equal(installments[0].amount, 500)
-    assert.equal(installments[0].due_date, '2099-02-01')
+    assertPlanTimeMatchesCreation(installments[0].due_date, '2099-02-01', editedBefore, editedAfter)
     assert.equal(installments[0].automatic, 1)
     assert.equal(installments[1].amount, 250)
     assert.equal(installments[1].payment_method, 'bank_transfer')
     assert.equal(installments[1].automatic, 0)
+    assertPlanTimeMatchesCreation(installments[1].due_date, '2099-03-01', editedBefore, editedAfter)
 
     await ensurePublicStripeConfig()
     const publicPayment = await getPublicStripePayment('pay_setup_test', { baseUrl: 'https://example.test' })
@@ -527,7 +575,7 @@ test('edita calendario de pagos de un plan Stripe local', async () => {
     assert.equal(publicPayment.paymentPlan.changeSummary.label, '1 pago agregado')
     assert.ok(addedInstallment)
     assert.equal(addedInstallment.amount, 250)
-    assert.equal(addedInstallment.dueDate, '2099-03-01')
+    assertPlanTimeMatchesCreation(addedInstallment.dueDate, '2099-03-01', editedBefore, editedAfter)
   } finally {
     await cleanup(ids)
   }

@@ -1,4 +1,5 @@
 import Stripe from 'stripe'
+import { DateTime } from 'luxon'
 import { db, setAppConfig } from '../config/database.js'
 import { decrypt, encrypt, isEncrypted } from '../utils/encryption.js'
 import { logger } from '../utils/logger.js'
@@ -22,7 +23,8 @@ import {
   businessTodayDateOnly,
   getAccountTimezone,
   normalizeDateOnlyInTimezone,
-  normalizeToUtcIso
+  normalizeToUtcIso,
+  resolveTimezone
 } from '../utils/dateUtils.js'
 
 const CONFIG_KEYS = {
@@ -209,9 +211,28 @@ function hasExplicitPlanTime(value) {
   return !(match[1] === '00' && match[2] === '00' && (!match[3] || match[3] === '00'))
 }
 
+function getCurrentBusinessPlanTime(timezone = DEFAULT_PAYMENT_TIMEZONE, referenceDate = new Date()) {
+  return DateTime.fromJSDate(referenceDate instanceof Date ? referenceDate : new Date(referenceDate), {
+    zone: resolveTimezone(timezone)
+  })
+    .set({ millisecond: 0 })
+    .toFormat('HH:mm:ss')
+}
+
+function withDefaultPlanTime(value, timezone = DEFAULT_PAYMENT_TIMEZONE, referenceDate = new Date()) {
+  if (value === null || value === undefined || value === '') return value
+  if (hasExplicitPlanTime(value)) return value
+  const date = normalizeDateOnly(value, timezone)
+  return `${date}T${getCurrentBusinessPlanTime(timezone, referenceDate)}`
+}
+
+function shouldUseExactPlanTime(value, frequency) {
+  return isTimedPlanFrequency(frequency) || hasExplicitPlanTime(value)
+}
+
 function isPlanChargeDueNow(value, frequency, timezone = DEFAULT_PAYMENT_TIMEZONE) {
   if (!value) return false
-  if (!isTimedPlanFrequency(frequency) && !hasExplicitPlanTime(value)) {
+  if (!shouldUseExactPlanTime(value, frequency)) {
     return isDueTodayOrPast(value, timezone)
   }
 
@@ -235,16 +256,31 @@ function isTimedPlanFrequency(value) {
 }
 
 function assertPlanDueDateNotInPast(value, frequency, message, timezone = DEFAULT_PAYMENT_TIMEZONE) {
-  if (!isTimedPlanFrequency(frequency)) return assertDateNotInPast(value, message, timezone)
-  return assertLocalDateTimeNotInPast(value, timezone, message)
+  const dueValue = withDefaultPlanTime(value, timezone)
+  if (!shouldUseExactPlanTime(dueValue, frequency)) return assertDateNotInPast(dueValue, message, timezone)
+  return assertLocalDateTimeNotInPast(dueValue, timezone, message)
+}
+
+function normalizePlanDueDate(value, frequency, timezone = DEFAULT_PAYMENT_TIMEZONE, referenceDate = new Date()) {
+  const dueValue = withDefaultPlanTime(value, timezone, referenceDate)
+  if (shouldUseExactPlanTime(dueValue, frequency)) return normalizeToUtcIso(dueValue, timezone)
+  return normalizeDateOnly(dueValue, timezone)
+}
+
+function hasStoredExplicitPlanTimeSql(expression) {
+  if (isPostgresRuntime) {
+    const textExpression = `COALESCE((${expression})::text, '')`
+    return `(${textExpression} ~ '[ T][0-9]{2}:[0-9]{2}' AND ${textExpression} !~ '[ T]00:00(?::00(?:\\.0+)?)?$')`
+  }
+  return `COALESCE(time(${expression}), '00:00:00') <> '00:00:00'`
 }
 
 function duePlanInstallmentCondition(alias = 'i') {
   const frequencySql = `LOWER(COALESCE(${alias}.frequency, 'custom'))`
-  const timedFrequencySql = `${frequencySql} = '${TIMED_PLAN_FREQUENCY}'`
+  const timedFrequencySql = `(${frequencySql} = '${TIMED_PLAN_FREQUENCY}' OR ${hasStoredExplicitPlanTimeSql(`${alias}.due_date`)})`
   const timedDueSql = `${timestampSql(`${alias}.due_date`)} <= ${timestampComparisonPlaceholder()}`
   const dateDueSql = `${dateOnlySql(`${alias}.due_date`)} <= ${dateOnlyPlaceholder()}`
-  return `((${timedFrequencySql} AND ${timedDueSql}) OR (${frequencySql} <> '${TIMED_PLAN_FREQUENCY}' AND ${dateDueSql}))`
+  return `((${timedFrequencySql} AND ${timedDueSql}) OR (NOT ${timedFrequencySql} AND ${dateDueSql}))`
 }
 
 function isMaskedSecret(value) {
@@ -3137,10 +3173,9 @@ function validateStripePaymentPlanPayload(input = {}, timezone = DEFAULT_PAYMENT
   const remainingPayments = Array.isArray(input.remainingPayments) ? input.remainingPayments : []
   const remainingFrequency = normalizePlanFrequency(input.remainingFrequency || 'custom')
   const firstPaymentFrequency = normalizePlanFrequency(firstPayment.frequency || remainingFrequency)
+  const planCreatedAt = new Date()
   const firstPaymentDate = firstPaymentEnabled
-    ? isTimedPlanFrequency(firstPaymentFrequency)
-      ? assertLocalDateTimeNotInPast(firstPayment.date, timezone, 'El primer pago automático no puede programarse en una fecha y hora pasada.')
-      : normalizeDateOnly(firstPayment.date, timezone)
+    ? normalizePlanDueDate(firstPayment.date || todayDateOnly(timezone), firstPaymentFrequency, timezone, planCreatedAt)
     : null
   const cardSetupAmount = normalizePositiveAmount(input.cardSetupAmount, 25)
 
@@ -3177,7 +3212,8 @@ function validateStripePaymentPlanPayload(input = {}, timezone = DEFAULT_PAYMENT
     }
 
     const frequency = normalizePlanFrequency(payment.frequency || input.remainingFrequency || 'custom')
-    const dueDate = assertPlanDueDateNotInPast(payment.dueDate, frequency, 'Los pagos futuros automáticos no pueden programarse en fechas pasadas.', timezone)
+    const dueDate = normalizePlanDueDate(payment.dueDate, frequency, timezone, planCreatedAt)
+    assertPlanDueDateNotInPast(dueDate, frequency, 'Los pagos futuros automáticos no pueden programarse en fechas pasadas.', timezone)
 
     return {
       sequence: Number(payment.sequence || index + 1),
@@ -3189,7 +3225,7 @@ function validateStripePaymentPlanPayload(input = {}, timezone = DEFAULT_PAYMENT
   })
 
   if (firstPaymentEnabled && !MANUAL_PLAN_PAYMENT_METHODS.has(firstPaymentMethod)) {
-    assertDateNotInPast(firstPaymentDate, 'El primer pago automático no puede programarse en una fecha pasada.', timezone)
+    assertPlanDueDateNotInPast(firstPaymentDate, firstPaymentFrequency, 'El primer pago automático no puede programarse en una fecha pasada.', timezone)
   }
 
   const remainingTotal = normalizedRemaining.reduce((sum, payment) => sum + payment.amount, 0)
