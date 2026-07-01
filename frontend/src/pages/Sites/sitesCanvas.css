@@ -1917,11 +1917,11 @@ html body :is(.rstkCanvas.rstk-kind-form.rstk-choice-grid, .rstkCanvas.rstk-kind
   padding: clamp(22px, 4vw, 42px) 0;
 }
 .rstkCanvas .rstk-calendar-preview-theme-night .rstk-calendar-preview-shell {
-  gap: clamp(14px, 2vw, 24px);
-  padding: clamp(18px, 3vw, 30px);
+  gap: clamp(16px, 2.4vw, 28px);
+  padding: clamp(18px, 3vw, 32px);
   border: 1px solid var(--rstk-calendar-preview-line);
-  border-radius: clamp(18px, 2.4vw, 28px);
-  background: color-mix(in srgb, var(--rstk-calendar-preview-text) 88%, transparent);
+  border-radius: clamp(10px, 1.4vw, 16px);
+  background: transparent;
 }
 .rstkCanvas .rstk-calendar-preview-theme-agenda .rstk-calendar-preview-shell {
   gap: 0;
@@ -1971,19 +1971,34 @@ html body :is(.rstkCanvas.rstk-kind-form.rstk-choice-grid, .rstkCanvas.rstk-kind
 .rstkCanvas .rstk-calendar-preview-theme-agenda .rstk-calendar-preview-slots {
   padding: clamp(16px, 2vw, 24px);
 }
+.rstkCanvas .rstk-calendar-preview-theme-night .rstk-calendar-preview-intro,
+.rstkCanvas .rstk-calendar-preview-theme-night .rstk-calendar-preview-month,
+.rstkCanvas .rstk-calendar-preview-theme-night .rstk-calendar-preview-slots {
+  padding: clamp(14px, 2vw, 22px);
+  border: 1px solid var(--rstk-calendar-preview-line);
+  border-radius: clamp(8px, 1vw, 12px);
+  background: color-mix(in srgb, var(--rstk-calendar-preview-line) 8%, transparent);
+}
+
 .rstkCanvas .rstk-calendar-preview-theme-night .rstk-calendar-preview-title,
 .rstkCanvas .rstk-calendar-preview-theme-night .rstk-calendar-preview-kicker,
 .rstkCanvas .rstk-calendar-preview-theme-night .rstk-calendar-preview-month-head strong,
 .rstkCanvas .rstk-calendar-preview-theme-night .rstk-calendar-preview-weekdays span,
-.rstkCanvas .rstk-calendar-preview-theme-night .rstk-calendar-preview-slots > strong,
-.rstkCanvas .rstk-calendar-preview-theme-night .rstk-calendar-preview-day-available {
-  color: var(--rstk-surface);
+.rstkCanvas .rstk-calendar-preview-theme-night .rstk-calendar-preview-slots > strong {
+  color: var(--rstk-calendar-preview-text);
 }
+
 .rstkCanvas .rstk-calendar-preview-theme-night .rstk-calendar-preview-description,
 .rstkCanvas .rstk-calendar-preview-theme-night .rstk-calendar-preview-meta,
-.rstkCanvas .rstk-calendar-preview-theme-night .rstk-calendar-preview-nav,
+.rstkCanvas .rstk-calendar-preview-theme-night .rstk-calendar-preview-nav {
+  color: var(--rstk-calendar-preview-muted);
+}
+
 .rstkCanvas .rstk-calendar-preview-theme-night .rstk-calendar-preview-day {
-  color: color-mix(in srgb, var(--rstk-surface) 68%, transparent);
+  border: 1px solid transparent;
+  border-radius: var(--rstk-calendar-preview-slot-radius);
+  background: var(--rstk-calendar-preview-control-bg);
+  color: var(--rstk-calendar-preview-muted);
 }
 .rstkCanvas .rstk-calendar-preview-avatar {
   width: clamp(76px, 9vw, 104px);
@@ -2095,6 +2110,11 @@ html body :is(.rstkCanvas.rstk-kind-form.rstk-choice-grid, .rstkCanvas.rstk-kind
 .rstkCanvas .rstk-calendar-preview-day-available {
   color: var(--rstk-calendar-preview-slot-text);
 }
+.rstkCanvas .rstk-calendar-preview-theme-night .rstk-calendar-preview-day-available {
+  border-color: var(--rstk-calendar-preview-accent);
+  background: transparent;
+  color: var(--rstk-calendar-preview-text);
+}
 .rstkCanvas .rstk-calendar-preview-theme-night .rstk-calendar-preview-day-available::after {
   content: '';
   position: absolute;
@@ -2151,9 +2171,10 @@ html body :is(.rstkCanvas.rstk-kind-form.rstk-choice-grid, .rstkCanvas.rstk-kind
   text-align: center;
 }
 .rstkCanvas .rstk-calendar-preview-theme-night .rstk-calendar-preview-slot {
-  border-color: color-mix(in srgb, var(--rstk-surface) 24%, transparent);
-  background: color-mix(in srgb, var(--rstk-surface) 10%, transparent);
-  color: var(--rstk-surface);
+  min-height: clamp(40px, 4.8vw, 50px);
+  border-color: var(--rstk-calendar-preview-line);
+  background: var(--rstk-calendar-preview-slot-bg);
+  color: var(--rstk-calendar-preview-slot-text);
 }
 .rstkCanvas .rstk-calendar-preview-theme-agenda .rstk-calendar-preview-slot {
   min-height: clamp(34px, 4vw, 42px);

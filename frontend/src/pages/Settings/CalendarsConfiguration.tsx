@@ -195,7 +195,7 @@ const CALENDAR_PUBLIC_LAYOUT_OPTIONS: Array<{ value: CalendarBookingLayout; labe
 ]
 const CALENDAR_PUBLIC_WIDGET_THEME_OPTIONS: Array<{ value: CalendarBookingWidgetTheme; label: string; description: string }> = [
   { value: 'ristak', label: 'Ristak', description: 'Balanceado, limpio y flexible para cualquier negocio.' },
-  { value: 'night', label: 'Nocturno', description: 'Tarjeta oscura, slots marcados y fechas con punto.' },
+  { value: 'night', label: 'Sesiones', description: 'Diseño tipo mentorías: limpio, con días marcados y compatible con claro u oscuro.' },
   { value: 'agenda', label: 'Agenda', description: 'Cuadricula editorial, dias cuadrados y separadores claros.' },
   { value: 'minimal', label: 'Minimal', description: 'Superficie abierta, menos borde y controles suaves.' }
 ]

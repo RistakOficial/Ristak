@@ -5686,7 +5686,7 @@ const calendarEmbedFontOptions = [
 type CalendarEmbedFontFamily = typeof calendarEmbedFontOptions[number]['value']
 const calendarEmbedThemeOptions = [
   { value: 'ristak', label: 'Ristak', description: 'Balanceado y flexible.' },
-  { value: 'night', label: 'Nocturno', description: 'Tarjeta oscura y disponibilidad con puntos.' },
+  { value: 'night', label: 'Sesiones', description: 'Diseño tipo mentorías, limpio y compatible con claro u oscuro.' },
   { value: 'agenda', label: 'Agenda', description: 'Dias cuadrados y separadores claros.' },
   { value: 'minimal', label: 'Minimal', description: 'Superficie abierta y controles suaves.' }
 ] as const

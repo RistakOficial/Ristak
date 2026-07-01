@@ -2333,15 +2333,17 @@ export function renderPublicCalendarHtml(calendar, { host = '', embedded = false
     .successContent{width:100%;display:grid;gap:14px;text-align:left}
     .successContent[hidden]{display:none}
     .successContent .calendarContentBlock{gap:10px}
-    body.rstk-calendar-theme-night .shell{border-radius:28px;background:color-mix(in srgb,var(--heading) 90%,var(--surface) 10%);box-shadow:0 34px 90px -58px color-mix(in srgb,var(--heading) 84%,transparent)}
-    body.rstk-calendar-theme-night .intro,body.rstk-calendar-theme-night .calendarPane,body.rstk-calendar-theme-night form{background:color-mix(in srgb,var(--heading) 86%,var(--surface) 14%)}
-    body.rstk-calendar-theme-night .timesPane{background:color-mix(in srgb,var(--heading) 82%,var(--surface) 18%)}
-    body.rstk-calendar-theme-night h1,body.rstk-calendar-theme-night h2,body.rstk-calendar-theme-night h3,body.rstk-calendar-theme-night label,body.rstk-calendar-theme-night .host,body.rstk-calendar-theme-night .timezoneControl strong,body.rstk-calendar-theme-night .timezoneControl > span:first-child,body.rstk-calendar-theme-night .day.available{color:var(--surface)}
-    body.rstk-calendar-theme-night p,body.rstk-calendar-theme-night .meta,body.rstk-calendar-theme-night .weekdays,body.rstk-calendar-theme-night .timezone,body.rstk-calendar-theme-night .changeSlot,body.rstk-calendar-theme-night .day{color:color-mix(in srgb,var(--surface) 70%,transparent)}
-    body.rstk-calendar-theme-night .navBtn,body.rstk-calendar-theme-night .slot,body.rstk-calendar-theme-night input,body.rstk-calendar-theme-night textarea,body.rstk-calendar-theme-night select,body.rstk-calendar-theme-night .option{background:color-mix(in srgb,var(--surface) 12%,transparent);border-color:color-mix(in srgb,var(--surface) 18%,var(--line));color:var(--surface)}
-    body.rstk-calendar-theme-night .day.available::after{content:'';position:absolute;left:50%;bottom:6px;width:3px;height:3px;border-radius:999px;background:var(--accent);transform:translateX(-50%)}
-    body.rstk-calendar-theme-night .day.selected{background:var(--surface);color:var(--accent)}
-    body.rstk-calendar-theme-night .day.selected::after{background:var(--accent)}
+    body.rstk-calendar-theme-night .shell{border-radius:16px;background:var(--surface);box-shadow:0 32px 90px -60px color-mix(in srgb,var(--heading) 42%,transparent)}
+    body.rstk-calendar-theme-night .intro,body.rstk-calendar-theme-night .calendarPane,body.rstk-calendar-theme-night form{background:var(--surface)}
+    body.rstk-calendar-theme-night .timesPane{background:var(--bg)}
+    body.rstk-calendar-theme-night .avatar{border-radius:var(--field-radius)}
+    body.rstk-calendar-theme-night .navBtn{width:40px;height:40px;border:1px solid var(--line);border-radius:var(--field-radius);background:var(--control-bg);color:var(--muted)}
+    body.rstk-calendar-theme-night .day{width:44px;height:44px;border:1px solid transparent;border-radius:var(--field-radius);background:var(--control-bg);color:var(--muted);font-weight:650}
+    body.rstk-calendar-theme-night .day.available{border-color:var(--accent);background:transparent;color:var(--heading)}
+    body.rstk-calendar-theme-night .day.available::after{content:'';position:absolute;left:50%;bottom:7px;width:4px;height:4px;border-radius:999px;background:var(--accent);transform:translateX(-50%)}
+    body.rstk-calendar-theme-night .day.selected{border-color:var(--accent);background:var(--accent);color:var(--selected-text)}
+    body.rstk-calendar-theme-night .day.selected::after{background:var(--selected-text)}
+    body.rstk-calendar-theme-night .slot{min-height:42px;border-color:var(--line);background:var(--slot-bg);color:var(--slot-text);font-weight:650}
     body.rstk-calendar-theme-agenda .shell{border-radius:0;box-shadow:none}
     body.rstk-calendar-theme-agenda .intro,body.rstk-calendar-theme-agenda .calendarPane,body.rstk-calendar-theme-agenda .timesPane{background:transparent}
     body.rstk-calendar-theme-agenda .calendarPane{gap:18px}

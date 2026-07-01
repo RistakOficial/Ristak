@@ -1149,12 +1149,32 @@
 }
 
 .calendarThemeOption[data-widget-theme='night'] .calendarThemeMock {
-  border-radius: calc(var(--radius-ctl) + 6px);
-  background: color-mix(in srgb, var(--text) 88%, var(--surface) 12%);
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 6px;
+  border-radius: var(--radius-ctl);
+  background: var(--surface);
 }
 
 .calendarThemeOption[data-widget-theme='night'] .calendarThemeMock span {
-  background: color-mix(in srgb, var(--accent) 42%, var(--surface-solid));
+  min-height: 16px;
+  border: 1px solid color-mix(in srgb, var(--accent) 40%, var(--border));
+  background: transparent;
+}
+
+.calendarThemeOption[data-widget-theme='night'] .calendarThemeMock span:first-child,
+.calendarThemeOption[data-widget-theme='night'] .calendarThemeMock span:nth-child(2) {
+  grid-row: auto;
+  width: auto;
+  border-radius: var(--radius-ctl);
+}
+
+.calendarThemeOption[data-widget-theme='night'] .calendarThemeMock span:first-child {
+  background: var(--accent);
+}
+
+.calendarThemeOption[data-widget-theme='night'] .calendarThemeMock span:nth-child(2),
+.calendarThemeOption[data-widget-theme='night'] .calendarThemeMock span:nth-child(3) {
+  background: color-mix(in srgb, var(--accent) 12%, var(--surface));
 }
 
 .calendarThemeOption[data-widget-theme='agenda'] .calendarThemeMock {
@@ -1238,45 +1258,28 @@
 }
 
 .bookingPreviewFrame[data-widget-theme='night'] {
-  border-radius: calc(var(--radius-card) + 10px);
-  background: color-mix(in srgb, var(--calendar-preview-text, var(--text)) 90%, var(--calendar-preview-surface, var(--surface)) 10%);
+  background: var(--calendar-preview-bg, var(--bg));
 }
 
 .bookingPreviewFrame[data-widget-theme='night'] .bookingPreviewIntro,
 .bookingPreviewFrame[data-widget-theme='night'] .bookingPreviewCalendar,
 .bookingPreviewFrame[data-widget-theme='night'] .bookingPreviewForm {
-  background: color-mix(in srgb, var(--calendar-preview-text, var(--text)) 86%, var(--calendar-preview-surface, var(--surface)) 14%);
+  background: var(--calendar-preview-surface, var(--surface));
 }
 
 .bookingPreviewFrame[data-widget-theme='night'] .bookingPreviewTimes {
-  background: color-mix(in srgb, var(--calendar-preview-text, var(--text)) 82%, var(--calendar-preview-surface, var(--surface)) 18%);
+  background: var(--calendar-preview-bg, var(--bg));
 }
 
-.bookingPreviewFrame[data-widget-theme='night'] .bookingPreviewIntro > span,
-.bookingPreviewFrame[data-widget-theme='night'] .bookingPreviewIntro h4,
-.bookingPreviewFrame[data-widget-theme='night'] .bookingPreviewPaneTitle strong,
-.bookingPreviewFrame[data-widget-theme='night'] .bookingPreviewMonth strong,
-.bookingPreviewFrame[data-widget-theme='night'] .bookingPreviewTimes strong,
-.bookingPreviewFrame[data-widget-theme='night'] .bookingPreviewForm strong,
-.bookingPreviewFrame[data-widget-theme='night'] .bookingPreviewWeekdays span {
-  color: var(--calendar-preview-surface, var(--surface));
+.bookingPreviewFrame[data-widget-theme='night'] .bookingPreviewAvatar {
+  border-radius: var(--radius-ctl);
 }
 
-.bookingPreviewFrame[data-widget-theme='night'] .bookingPreviewIntro p,
-.bookingPreviewFrame[data-widget-theme='night'] .bookingPreviewMeta small,
-.bookingPreviewFrame[data-widget-theme='night'] .bookingPreviewPaneTitle span,
-.bookingPreviewFrame[data-widget-theme='night'] .bookingPreviewTimes span,
-.bookingPreviewFrame[data-widget-theme='night'] .bookingPreviewForm span,
-.bookingPreviewFrame[data-widget-theme='night'] .bookingPreviewMonth button,
-.bookingPreviewFrame[data-widget-theme='night'] .bookingPreviewTimezone {
-  color: color-mix(in srgb, var(--calendar-preview-surface, var(--surface)) 68%, transparent);
-}
-
-.bookingPreviewFrame[data-widget-theme='night'] .bookingPreviewTimezone strong,
-.bookingPreviewFrame[data-widget-theme='night'] .bookingPreviewTimezone select {
-  border-color: color-mix(in srgb, var(--calendar-preview-surface, var(--surface)) 18%, var(--calendar-preview-line, var(--border)));
-  background: color-mix(in srgb, var(--calendar-preview-surface, var(--surface)) 10%, transparent);
-  color: var(--calendar-preview-surface, var(--surface));
+.bookingPreviewFrame[data-widget-theme='night'] .bookingPreviewMonth button {
+  border: 1px solid var(--calendar-preview-line, var(--border));
+  border-radius: var(--radius-ctl);
+  background: var(--calendar-preview-control-bg, var(--surface));
+  color: var(--calendar-preview-muted, var(--text-mute));
 }
 
 .bookingPreviewFrame[data-widget-theme='agenda'] {
@@ -1508,22 +1511,32 @@
   content: '';
   position: absolute;
   left: 50%;
-  bottom: 5px;
-  width: 3px;
-  height: 3px;
+  bottom: 6px;
+  width: 4px;
+  height: 4px;
   border-radius: var(--radius-pill);
-  background: currentColor;
+  background: var(--calendar-preview-accent, var(--accent));
   transform: translateX(-50%);
 }
 
+.bookingPreviewFrame[data-widget-theme='night'] .bookingPreviewDays button {
+  width: 36px;
+  height: 36px;
+  border-radius: var(--radius-ctl);
+  background: var(--calendar-preview-control-bg, var(--surface));
+  font-weight: 700;
+}
+
 .bookingPreviewFrame[data-widget-theme='night'] .bookingPreviewDays .bookingPreviewDayAvailable {
-  color: var(--calendar-preview-surface, var(--surface));
+  border-color: var(--calendar-preview-accent, var(--accent));
+  background: transparent;
+  color: var(--calendar-preview-text, var(--text));
 }
 
 .bookingPreviewFrame[data-widget-theme='night'] .bookingPreviewDays .bookingPreviewDaySelected {
-  border-color: var(--calendar-preview-surface, var(--surface));
-  background: var(--calendar-preview-surface, var(--surface));
-  color: var(--calendar-preview-accent, var(--accent));
+  border-color: var(--calendar-preview-accent, var(--accent));
+  background: var(--calendar-preview-accent, var(--accent));
+  color: var(--calendar-preview-selected-text, var(--on-accent));
 }
 
 .bookingPreviewFrame[data-widget-theme='agenda'] .bookingPreviewDays button {
@@ -1626,8 +1639,9 @@
 
 .bookingPreviewFrame[data-widget-theme='night'] .bookingPreviewSlotList button {
   min-height: 42px;
-  border-color: color-mix(in srgb, var(--calendar-preview-line, var(--border)) 70%, var(--calendar-preview-text, var(--text)));
-  background: color-mix(in srgb, var(--calendar-preview-surface, var(--surface)) 18%, transparent);
+  border-color: var(--calendar-preview-line, var(--border));
+  background: var(--calendar-preview-slot-bg, var(--surface));
+  color: var(--calendar-preview-slot-text, var(--accent));
 }
 
 .bookingPreviewFrame[data-widget-theme='agenda'] .bookingPreviewSlotList button,
