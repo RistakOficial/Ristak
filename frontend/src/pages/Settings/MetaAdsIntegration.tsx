@@ -4,7 +4,7 @@ import { Button, Icon, Modal, CustomSelect, PageHeader, SegmentTabs, Switch } fr
 import { Badge, type BadgeVariant } from '@/components/common/Badge'
 import { Activity, ArrowLeft, ArrowRight, CheckCircle, Copy, ExternalLink, FlaskConical, Link2, MessageCircle, Pencil, Plus, Power, RefreshCw, Save, Send, Settings2, Trash2, XCircle } from 'lucide-react'
 import { useNotification } from '@/contexts/NotificationContext'
-import { useAppConfig, useIsRenderDomain } from '@/hooks'
+import { useAppConfig } from '@/hooks'
 import {
   campaignsService,
   type ConnectedSocialProfile,
@@ -335,7 +335,6 @@ export const MetaAdsIntegration: React.FC = () => {
   const accessTokenInputRef = useRef<HTMLInputElement>(null)
 
   const { showToast } = useNotification()
-  const isRenderDomain = useIsRenderDomain()
   const [includeMetaPixel, setIncludeMetaPixel, savingPixelPref] = useAppConfig('include_meta_pixel', true)
   const [messengerMessagingEnabled, setMessengerMessagingEnabled, savingMessengerMessaging] = useAppConfig('meta_messenger_messaging_enabled', false)
   const [instagramMessagingEnabled, setInstagramMessagingEnabled, savingInstagramMessaging] = useAppConfig('meta_instagram_messaging_enabled', false)
@@ -917,10 +916,16 @@ export const MetaAdsIntegration: React.FC = () => {
 
       if (data.success) {
         showToast('success', 'Cuenta guardada', `${account.name} configurada`)
+        // El backend auto-asocia el pixel de la cuenta cuando no se eligió uno;
+        // reflejarlo de inmediato para que "Meta Pixel" y el snippet ya lo tengan.
+        const autoPixelId = String(data.data?.pixelId || '').trim()
+        if (autoPixelId) {
+          setCredentials(prev => ({ ...prev, pixelId: autoPixelId }))
+        }
         goToMetaStep(2)
         const token = realAccessToken || credentials.accessToken
         if (token) {
-          fetchPixels(account.id, token)
+          fetchPixels(account.id, token, autoPixelId || credentials.pixelId, { silent: true })
           fetchPages(token, credentials.pageId, { silent: true })
           fetchInstagramAccounts(token, credentials.instagramAccountId, { silent: true })
         }
@@ -1996,6 +2001,7 @@ export const MetaAdsIntegration: React.FC = () => {
   return (
     <div className={styles.container}>
       <PageHeader
+        className={styles.metaHeader}
         eyebrow="Integración"
         title="Meta"
         subtitle="Conecta anuncios, Página, Messenger e Instagram DM desde un solo lugar."
@@ -2330,11 +2336,11 @@ export const MetaAdsIntegration: React.FC = () => {
                 </div>
 
                 <div className={styles.connectedExtrasRows}>
-                  {hasPixel && !isRenderDomain && (
+                  {hasPixel ? (
                     <div className={styles.connectedExtraRow}>
                       <div>
                         <span className={styles.railSwitchLabel}>Incluir Meta Pixel en snippet</span>
-                        <span className={styles.railSecondaryValue}>Agrega el pixel ({getSelectedPixelLabel()}) al Web Tracking.</span>
+                        <span className={styles.railSecondaryValue}>Agrega el pixel ({getSelectedPixelLabel()}) al snippet de Web Tracking de tus sitios.</span>
                       </div>
                       <Switch
                         checked={includeMetaPixel === true}
@@ -2342,22 +2348,11 @@ export const MetaAdsIntegration: React.FC = () => {
                         disabled={isSyncingSnippet || savingPixelPref}
                       />
                     </div>
-                  )}
-
-                  {hasPixel && isRenderDomain && (
+                  ) : (
                     <div className={styles.connectedExtraRow}>
                       <div>
                         <span className={styles.railSwitchLabel}>Meta Pixel en snippet</span>
-                        <span className={styles.railSecondaryValue}>El pixel está configurado, pero el snippet solo se inyecta desde tu dominio personalizado, no en el dominio de Render.</span>
-                      </div>
-                    </div>
-                  )}
-
-                  {!hasPixel && (
-                    <div className={styles.connectedExtraRow}>
-                      <div>
-                        <span className={styles.railSwitchLabel}>Meta Pixel en snippet</span>
-                        <span className={styles.railSecondaryValue}>Elige un Meta Pixel en el paso del wizard para activar esta opción.</span>
+                        <span className={styles.railSecondaryValue}>Aún no hay un Meta Pixel asociado a la cuenta. Se toma automáticamente al conectar; si no aparece, elígelo en el wizard.</span>
                       </div>
                     </div>
                   )}

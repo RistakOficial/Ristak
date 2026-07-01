@@ -3027,11 +3027,36 @@ export const saveAndSyncMeta = async (req, res) => {
     const normalizedInstagramAccountId = cleanString(instagramAccountId);
     const normalizedWhatsappBusinessAccountId = cleanString(whatsappBusinessAccountId);
 
+    // 2.b Auto-asociar el Meta Pixel de la cuenta de anuncios cuando el usuario
+    // no eligió uno manualmente. La mayoría de las cuentas ya traen su
+    // pixel/dataset asociado, así que lo tomamos automáticamente para que
+    // reportes, CAPI y el snippet de Web Tracking ya lo tengan sin un paso extra.
+    let effectivePixelId = normalizedPixelId;
+    if (!effectivePixelId) {
+      try {
+        const accountForPixels = normalizedAdAccountId.startsWith('act_')
+          ? normalizedAdAccountId
+          : `act_${normalizedAdAccountId}`;
+        const pixelsUrl = `${API_URLS.META_GRAPH}/${accountForPixels}/adspixels?fields=id,name&limit=1&access_token=${effectiveAccessToken}`;
+        const pixelsResp = await fetch(pixelsUrl);
+        const pixelsData = await pixelsResp.json();
+        const firstPixel = Array.isArray(pixelsData?.data) ? pixelsData.data[0] : null;
+        if (firstPixel?.id) {
+          effectivePixelId = cleanString(firstPixel.id);
+          logger.info(`Pixel auto-asociado desde la cuenta ${accountForPixels}: ${effectivePixelId} (${firstPixel.name || 'sin nombre'})`);
+        } else {
+          logger.info(`La cuenta ${accountForPixels} no reporta pixeles; se guarda sin pixel`);
+        }
+      } catch (pixelError) {
+        logger.warn(`No se pudo auto-asociar el pixel de la cuenta: ${pixelError.message}`);
+      }
+    }
+
     // 3. Guardar en meta_config local (encriptado)
     await saveMetaConfig(
       normalizedAdAccountId,
       effectiveAccessToken,
-      normalizedPixelId || null,
+      effectivePixelId || null,
       cleanString(effectivePixelApiToken) || null,
       normalizedPageId || null,
       normalizedInstagramAccountId || null
@@ -3058,7 +3083,7 @@ export const saveAndSyncMeta = async (req, res) => {
         highLevelSyncResult = await saveMetaCustomValues(hlConfig.location_id, hlConfig.api_token, {
           adAccountId: normalizedAdAccountId,
           accessToken: effectiveAccessToken,
-          pixelId: normalizedPixelId || '',
+          pixelId: effectivePixelId || '',
           pageId: normalizedPageId || '',
           instagramAccountId: normalizedInstagramAccountId || '',
           pixelApiToken: cleanString(effectivePixelApiToken) || '',
@@ -3091,9 +3116,11 @@ export const saveAndSyncMeta = async (req, res) => {
       logger.error(`Error en sincronización de Meta Ads: ${error.message}`);
     });
 
-    // 8. Si tenemos dominio personalizado (NO estamos en .onrender.com), sincronizar snippet automáticamente
-    const isRenderDomain = req.headers.host?.includes('onrender.com')
-    if (!isRenderDomain && req.headers.host && normalizedPixelId) {
+    // 8. Sincronizar el snippet de Web Tracking con el Meta Pixel automáticamente.
+    // El snippet se inyecta en el SITIO del cliente (su dominio de rastreo), no en
+    // el dominio donde corre Ristak; por eso NO se condiciona a onrender.com. El
+    // generador del snippet resuelve el dominio de rastreo correcto por su cuenta.
+    if (req.headers.host && effectivePixelId) {
       // Leer preferencia del usuario: ¿quiere incluir Meta Pixel en el snippet?
       // Default: true (ON por default)
       const { getAppConfig } = await import('../config/database.js')
@@ -3103,7 +3130,7 @@ export const saveAndSyncMeta = async (req, res) => {
         : (includeMetaPixelPref === '1' || includeMetaPixelPref === 1 || includeMetaPixelPref === true || includeMetaPixelPref === 'true')
 
       if (includeMetaPixel) {
-        logger.info(`Dominio personalizado detectado (${req.headers.host}), sincronizando snippet con Meta Pixel ${normalizedPixelId}...`)
+        logger.info(`Sincronizando snippet de Web Tracking con Meta Pixel ${effectivePixelId}...`)
 
         // Importar la función de configuración de tracking
         const { configureTracking } = await import('./trackingController.js')
@@ -3130,13 +3157,11 @@ export const saveAndSyncMeta = async (req, res) => {
           logger.warn(`⚠️ Error sincronizando snippet automáticamente: ${err.message}`)
         })
       } else {
-        logger.info(`Usuario configuró Meta Pixel (${normalizedPixelId}) pero tiene DESACTIVADA la inclusión en snippet (include_meta_pixel = false)`)
+        logger.info(`Meta Pixel (${effectivePixelId}) disponible pero la inclusión en snippet está DESACTIVADA (include_meta_pixel = false)`)
         logger.info('NO se auto-sincronizará el snippet. El usuario puede activar el switch en Settings → Meta Ads')
       }
-    } else if (isRenderDomain) {
-      logger.info('Dominio .onrender.com detectado, NO sincronizando snippet (requiere dominio personalizado)')
-    } else if (!normalizedPixelId) {
-      logger.info('No se proporcionó Pixel ID, snippet NO incluirá Meta Pixel')
+    } else if (!effectivePixelId) {
+      logger.info('No hay Pixel ID (ni auto-asociado), snippet NO incluirá Meta Pixel')
     }
 
     res.json({
@@ -3146,6 +3171,7 @@ export const saveAndSyncMeta = async (req, res) => {
         savedInHighLevel: highLevelSyncResult.success === true,
         highLevelSync: highLevelSyncResult,
         adAccountId: normalizedAdAccountId,
+        pixelId: effectivePixelId,
         instagramAccountId: normalizedInstagramAccountId,
         tokenValid: validation.valid,
         syncStarted: true

@@ -88,11 +88,23 @@
   border: 1px solid rgba(239, 68, 68, 0.22);
 }
 
+/* La página de Meta se lee como una columna centrada y cómoda, no estirada de
+   borde a borde del panel ancho de Configuración. El header comparte el mismo
+   ancho para que todo quede alineado. */
+.metaHeader {
+  width: 100%;
+  max-width: var(--meta-content-max, 860px);
+  margin-inline: auto;
+}
+
 .sections {
   display: flex;
   flex-direction: column;
   gap: 22px;
   min-width: 0;
+  width: 100%;
+  max-width: var(--meta-content-max, 860px);
+  margin-inline: auto;
 }
 
 .section {
