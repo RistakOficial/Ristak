@@ -2473,7 +2473,8 @@ body.dark .tooltipInfo {
   border: 1px solid var(--record-payment-control-border);
   border-radius: 12px;
   color: var(--record-payment-embedded-text);
-  background: var(--record-payment-embedded-panel);
+  /* Campos blancos con contorno, como el widget (antes gris). */
+  background: var(--record-payment-embedded-bg);
   font-size: 16px;
   font-weight: 500;
   box-shadow: none;
@@ -2753,7 +2754,8 @@ body.dark .tooltipInfo {
   border: 1px solid var(--record-payment-control-border) !important;
   border-radius: 12px;
   color: var(--record-payment-embedded-text);
-  background: var(--record-payment-embedded-panel) !important;
+  /* Blanco con contorno, como el widget (antes gris). */
+  background: var(--record-payment-embedded-bg) !important;
   font-size: 16px;
   font-weight: 500;
   box-shadow: none !important;
@@ -2915,7 +2917,8 @@ body.dark .tooltipInfo {
      para que el contenedor padre se vea claramente delimitado. */
   border: 1px solid var(--record-payment-control-border);
   border-radius: 16px;
-  background: var(--record-payment-embedded-bg);
+  /* Tarjeta gris suave + campos blancos dentro = look del widget. */
+  background: var(--record-payment-embedded-panel);
 }
 
 .embeddedRoot[data-payment-mode="partial"] .planSeq {
@@ -2980,15 +2983,16 @@ body.dark .tooltipInfo {
   height: 40px;
   border: 1px solid var(--record-payment-control-border);
   border-radius: 12px;
-  background: var(--record-payment-embedded-panel);
+  background: var(--record-payment-embedded-bg);
+  color: var(--neg);
 }
 
-/* "Agregar pago" con el mismo estilo de campo global (gris + control-border). */
+/* "Agregar pago": campo blanco con contorno, como el widget. */
 .embeddedRoot[data-payment-mode="partial"] .addInstallment {
   min-height: 54px;
   border: 1px solid var(--record-payment-control-border);
   border-radius: 12px;
-  background: var(--record-payment-embedded-panel);
+  background: var(--record-payment-embedded-bg);
 }
 
 .embeddedRoot .optionsContent {
