@@ -88,3 +88,41 @@ Para enviar fotos por WhatsApp, el backend debe estar publicado en HTTPS porque 
   que ese build termina. Para comprobar la web recarga en **pestaña privada**
   (evita caché); la **app instalada** no se actualiza con el push — hay que
   recompilarla (`docs/MOBILE_STORE_RELEASES.md`).
+
+## Íconos de WhatsApp en el chat (`/movil`) — dónde ajustar
+
+Hay **dos** íconos de WhatsApp distintos, con estilos separados. No los confundas.
+
+**1. Ícono del composer** (botón de canal, abajo, junto al `+`, donde se escribe).
+
+- Se dibuja en `renderComposerMessageChannelIcon` (`frontend/src/pages/PhoneChat/PhoneChat.tsx`) con `<FaWhatsapp>`: glifo **fino, plano, verde, sin relleno ni disco**.
+- Color: lo pone el contenedor `.composerChannelButton[data-channel="whatsapp_api"]` (verde).
+- Tamaño: `.composerChannelButton .channelIconGlyph` en `PhoneChat.module.css` (20px).
+- ⚠️ **NO** le pongas `stroke-width` en `.composerChannelButton svg`: engrosa el contorno del glifo relleno y se ve "ancho/pixelado" (ver `docs/DESIGN_SYSTEM.md` §5 #12).
+
+**2. Logo de WhatsApp de los avatares** (badge en la esquina inferior del avatar, en la lista de chats y en el header). Es el **logo oficial a 3 tonos** armado a mano.
+
+- Componente: `WhatsAppBrandLogo` (cerca del inicio de `PhoneChat.tsx`). Dos paths:
+  `WHATSAPP_LOGO_BUBBLE_PATH` (burbuja) y `WHATSAPP_LOGO_HANDSET_PATH` (auricular).
+- Se usa en `renderChannelBadgeIcon` (rama `kind === 'whatsapp'`), con la clase `avatarWhatsappLogo`.
+
+Perillas (todas con sus valores actuales):
+
+| Qué quieres cambiar | Dónde | Valor actual |
+|---|---|---|
+| **Tamaño del logo** | `.avatarChannelBadge .avatarWhatsappLogo` en `PhoneChat.module.css` → `width`/`height` (% del badge, **con `!important`**) | `90%` (~17px) |
+| **Grosor del contorno/borde blanco** | `WhatsAppBrandLogo` en `PhoneChat.tsx` → `strokeWidth` del path de la **burbuja** | `5.3` |
+| **Grosor del auricular (el "tel" de adentro)** | `WhatsAppBrandLogo` → `strokeWidth` del path del **auricular** | `0.5` |
+| **Verde / blanco** | `WhatsAppBrandLogo` → `fill`/`stroke` | `#25D366` / `#ffffff` |
+
+Reglas al tocarlo:
+
+- El tamaño **necesita `!important`**: hay reglas por dispositivo
+  (`.phoneChatPage[data-phone-chat-device="phone"] .chatItem > .avatar .avatarChannelBadge svg { width: 11px }`, etc.)
+  que le ganan en especificidad y lo encogen en la **lista de chats** si no.
+- El badge de WhatsApp va **sin fondo** (transparente, sin círculo verde ni sombra):
+  clase `.avatarChannelBadgeWhatsappLogo`, asignada en `getAvatarChannelBadgeClass`.
+  El borde blanco del propio logo es lo que lo separa del avatar.
+- Verifícalo corriendo la app en la **lista de chats** (no solo el header: el header
+  no tiene las reglas por dispositivo, así que puede engañar). Si la lista local está
+  vacía, revisa al menos el header + los tamaños computados.
