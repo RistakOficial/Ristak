@@ -14,6 +14,7 @@ import {
   getImportedSiteBySiteId,
   getImportedSiteAssetResponse,
   getPublicSitePaymentStatus,
+  initSitePaymentCheckout,
   getSitesFontCss,
   getSitesFontFile,
   getSite,
@@ -805,6 +806,16 @@ export async function publicSitePaymentStatusHandler(req, res) {
   } catch (error) {
     logger.warn(`Estado público de pago rechazado: ${error.message}`)
     sendError(res, error, 'No se pudo consultar el pago')
+  }
+}
+
+export async function sitePaymentCheckoutInitHandler(req, res) {
+  try {
+    const result = await initSitePaymentCheckout(req, req.body || {})
+    res.status(200).json({ success: true, data: result })
+  } catch (error) {
+    logger.warn(`Init de checkout embebido rechazado: ${error.message}`)
+    sendError(res, error, 'No se pudo preparar el pago')
   }
 }
 

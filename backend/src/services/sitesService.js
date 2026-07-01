@@ -45,6 +45,7 @@ import {
 import {
   assertPaidPaymentGate,
   createPaymentGateLink,
+  getPaymentGateCheckoutDescriptor,
   getPaymentGateStatus,
   isPaymentGateEnabled,
   normalizePaymentGateConfig
@@ -15410,6 +15411,267 @@ function scriptJson(value) {
 // links/navegaciones internas con TODOS los params preservados y los redirects
 // externos con los params de tracking, y expone helpers globales para el resto
 // de los runtimes (window.ristakPreserveParams / window.ristakPreservedParams).
+// Runtime del CHECKOUT EMBEBIDO. Escanea [data-rstk-checkout], pide el descriptor a
+// /api/sites/public/checkout/init, monta el SDK del proveedor (Stripe Elements /
+// Conekta tokenizer / Mercado Pago Bricks) DENTRO de la página, cobra, y solo tras
+// confirmar el pago (respuesta del proveedor + polling autoritativo al status endpoint)
+// ejecuta la acción posterior. Los campos de tarjeta viven en iframes cifrados del
+// proveedor: la tarjeta nunca toca el DOM de Ristak. Escrito en JS clásico (sin
+// template literals ni ${}) para no chocar con la interpolación del literal externo.
+function buildPaymentCheckoutRuntimeScript() {
+  return `
+  <script>
+  (function () {
+    var STRIPE_JS = 'https://js.stripe.com/v3/';
+    var MP_SDK = 'https://sdk.mercadopago.com/js/v2';
+    var CONEKTA_SDK = 'https://pay.conekta.com/v1.0/js/conekta-checkout.min.js';
+    var STATUS_URL = '/api/sites/public/payments/';
+    var INIT_URL = '/api/sites/public/checkout/init';
+
+    function loadScript(src, ready) {
+      return new Promise(function (resolve, reject) {
+        if (ready()) { resolve(); return; }
+        var existing = document.querySelector('script[src="' + src + '"]');
+        var done = function () { if (ready()) resolve(); else reject(new Error('No se pudo cargar el pago seguro.')); };
+        var fail = function () { reject(new Error('No se pudo cargar el pago seguro.')); };
+        if (existing) { existing.addEventListener('load', done, { once: true }); existing.addEventListener('error', fail, { once: true }); setTimeout(done, 0); return; }
+        var s = document.createElement('script'); s.src = src; s.async = true;
+        if (src === CONEKTA_SDK) s.crossOrigin = 'anonymous';
+        s.addEventListener('load', done, { once: true });
+        s.addEventListener('error', fail, { once: true });
+        document.head.appendChild(s);
+      });
+    }
+    function readToken(name) { try { return getComputedStyle(document.body).getPropertyValue(name).trim(); } catch (e) { return ''; } }
+    function isDark() { return !!(document.body && document.body.classList && document.body.classList.contains('rstk-dark')); }
+    function money(amount, currency) {
+      var n = Number(amount) || 0;
+      try { return new Intl.NumberFormat('es-MX', { style: 'currency', currency: currency || 'MXN' }).format(n); }
+      catch (e) { return n.toFixed(2) + ' ' + (currency || 'MXN'); }
+    }
+    function readData(resp) {
+      return resp.json().catch(function () { return {}; }).then(function (d) {
+        if (!resp.ok || (d && d.success === false)) throw new Error((d && d.error) || 'Hubo un problema con el pago.');
+        return d && d.data ? d.data : {};
+      });
+    }
+    function postJson(url, body) {
+      return fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' }, body: JSON.stringify(body || {}) }).then(readData);
+    }
+    function getJson(url) { return fetch(url, { headers: { 'Accept': 'application/json' } }).then(readData); }
+    function preserve(url) { try { return window.ristakPreserveParams ? window.ristakPreserveParams(url) : url; } catch (e) { return url; } }
+    var PAID = ['paid', 'succeeded', 'success', 'completed', 'approved', 'accredited'];
+    var PENDING = ['pending', 'pending_payment', 'processing', 'in_process', 'authorized'];
+    function isPaidStatus(s) { return PAID.indexOf(String(s || '').toLowerCase()) >= 0; }
+    function isPendingStatus(s) { return PENDING.indexOf(String(s || '').toLowerCase()) >= 0; }
+
+    function initBlock(root) {
+      if (root.__rstkCheckout) return;
+      root.__rstkCheckout = true;
+      var cfg = {
+        siteId: root.getAttribute('data-site-id') || '',
+        blockId: root.getAttribute('data-payment-block-id') || '',
+        pageId: root.getAttribute('data-payment-page-id') || '',
+        provider: root.getAttribute('data-provider') || 'stripe',
+        buttonText: root.getAttribute('data-button-text') || 'Pagar',
+        postAction: root.getAttribute('data-post-action') || 'success_message',
+        postUrl: root.getAttribute('data-post-url') || '',
+        postMessage: root.getAttribute('data-post-message') || ''
+      };
+      var safeId = cfg.blockId.replace(/[^a-zA-Z0-9_-]/g, '') || 'blk';
+      var els = {
+        body: root.querySelector('.rstk-checkout-body'),
+        loading: root.querySelector('[data-rstk-checkout-loading]'),
+        fields: root.querySelector('[data-rstk-checkout-fields]'),
+        installments: root.querySelector('[data-rstk-checkout-installments]'),
+        pay: root.querySelector('[data-rstk-checkout-pay]'),
+        payLabel: root.querySelector('[data-rstk-checkout-pay-label]'),
+        message: root.querySelector('[data-rstk-checkout-message]'),
+        success: root.querySelector('[data-rstk-checkout-success]')
+      };
+      if (els.fields && !els.fields.id) els.fields.id = 'rstk-checkout-fields-' + safeId;
+      var storageKey = 'rstk-checkout:' + cfg.siteId + ':' + cfg.blockId;
+      var done = false;
+
+      function setMessage(kind, text) {
+        if (!els.message) return;
+        els.message.hidden = !text;
+        els.message.textContent = text || '';
+        els.message.setAttribute('data-kind', kind || 'info');
+      }
+      function showLoading(on) { if (els.loading) els.loading.hidden = !on; }
+      function setPayBusy(busy) { if (els.pay) { els.pay.disabled = busy; els.pay.setAttribute('data-busy', busy ? 'true' : 'false'); } }
+      function payLabel(amount, currency) { if (els.payLabel) els.payLabel.textContent = cfg.buttonText + ' · ' + money(amount, currency); }
+
+      function runPostAction() {
+        if (done) return; done = true;
+        try { sessionStorage.removeItem(storageKey); } catch (e) {}
+        if (els.body) els.body.hidden = true;
+        if (els.success) { els.success.hidden = false; els.success.textContent = cfg.postMessage || 'Pago confirmado. Gracias.'; }
+        root.setAttribute('data-checkout-paid', 'true');
+        try { root.dispatchEvent(new CustomEvent('rstk:checkout-paid', { bubbles: true })); } catch (e) {}
+        if ((cfg.postAction === 'redirect_url' || cfg.postAction === 'next_page' || cfg.postAction === 'specific_page') && cfg.postUrl) {
+          setTimeout(function () { window.location.href = preserve(cfg.postUrl); }, 900);
+        }
+      }
+
+      var polling = false;
+      function pollUntilPaid(publicPaymentId) {
+        if (polling || done) return; polling = true;
+        var attempts = 0;
+        function tick() {
+          if (done) { polling = false; return; }
+          getJson(STATUS_URL + encodeURIComponent(publicPaymentId) + '/status').then(function (s) {
+            if (s && s.paid) { polling = false; runPostAction(); return; }
+            attempts++; if (attempts > 80) { polling = false; setMessage('info', 'Seguimos esperando la confirmación del pago.'); return; }
+            setTimeout(tick, 2500);
+          }).catch(function () { attempts++; if (attempts > 80) { polling = false; return; } setTimeout(tick, 2500); });
+        }
+        tick();
+      }
+      // El pago solo se da por bueno cuando el proveedor lo confirma; la acción posterior
+      // se ejecuta tras verificar el estado autoritativo (webhook -> status). Un status
+      // inmediato "paid" del cobro basta; si viene "pending" hacemos polling.
+      function onChargeResult(publicPaymentId, status) {
+        if (isPaidStatus(status)) { setMessage('success', 'Pago recibido. Gracias.'); pollUntilPaid(publicPaymentId); if (!polling && !done) runPostAction(); return; }
+        if (isPendingStatus(status)) { setMessage('info', 'El pago se está confirmando. No cierres esta página.'); pollUntilPaid(publicPaymentId); return; }
+        setPayBusy(false); setMessage('error', 'El pago fue rechazado. Revisa los datos o intenta con otra tarjeta.');
+      }
+
+      var stored = '';
+      try { stored = sessionStorage.getItem(storageKey) || ''; } catch (e) {}
+      showLoading(true);
+      postJson(INIT_URL, { siteId: cfg.siteId, blockId: cfg.blockId, pageId: cfg.pageId, paymentPublicId: stored }).then(function (d) {
+        try { if (d.publicPaymentId) sessionStorage.setItem(storageKey, d.publicPaymentId); } catch (e) {}
+        if (d.paid) { showLoading(false); runPostAction(); return; }
+        if (d.provider === 'conekta') return mountConekta(d);
+        if (d.provider === 'mercadopago') return mountMercadoPago(d);
+        return mountStripe(d);
+      }).catch(function (err) {
+        showLoading(false);
+        setMessage('error', (err && err.message) || 'No se pudo preparar el pago. Recarga la página.');
+      });
+
+      function mountStripe(d) {
+        return loadScript(STRIPE_JS, function () { return !!window.Stripe; }).then(function () {
+          if (!d.clientSecret) throw new Error('Stripe no está listo. Recarga la página.');
+          var stripe = window.Stripe(d.publishableKey);
+          var appearance = { theme: isDark() ? 'night' : 'stripe', variables: {
+            colorPrimary: readToken('--rstk-accent') || undefined,
+            colorText: readToken('--rstk-ink') || undefined,
+            colorBackground: readToken('--rstk-input-bg') || undefined,
+            borderRadius: readToken('--rstk-radius') || undefined
+          } };
+          var elements = stripe.elements({ clientSecret: d.clientSecret, appearance: appearance, locale: 'es' });
+          var paymentElement = elements.create('payment', { layout: 'tabs' });
+          paymentElement.mount(els.fields);
+          els.fields.hidden = false; els.pay.hidden = false; showLoading(false);
+          payLabel(d.amount, d.currency);
+          els.pay.addEventListener('click', function () {
+            if (els.pay.disabled) return;
+            setPayBusy(true); setMessage('info', 'Procesando…');
+            stripe.confirmPayment({ elements: elements, confirmParams: { return_url: window.location.href }, redirect: 'if_required' }).then(function (result) {
+              if (result.error) { setPayBusy(false); setMessage('error', result.error.message || 'No se pudo completar el pago.'); return; }
+              var st = result.paymentIntent && result.paymentIntent.status;
+              if (st === 'succeeded' || st === 'processing') onChargeResult(d.publicPaymentId, 'paid');
+              else { setPayBusy(false); setMessage('info', 'Tu banco pide una acción adicional. Sigue las instrucciones.'); }
+            }).catch(function (e) { setPayBusy(false); setMessage('error', (e && e.message) || 'No se pudo completar el pago.'); });
+          });
+        });
+      }
+
+      function conektaInstallmentMonths(d) {
+        var out = []; var c = d.installments;
+        if (!c || !c.enabled) return out;
+        var max = Math.trunc(Number(c.maxInstallments || 0)); if (!(max > 1)) return out;
+        var amount = Number(d.amount || 0);
+        [3, 6, 9, 12, 18, 24].forEach(function (m) { if (m <= max && amount >= m * 100) out.push(m); });
+        return out;
+      }
+      function mountConekta(d) {
+        return loadScript(CONEKTA_SDK, function () { return !!window.ConektaCheckoutComponents; }).then(function () {
+          var selectedInstallments = 1;
+          var months = conektaInstallmentMonths(d);
+          if (months.length && els.installments) {
+            els.installments.hidden = false;
+            var sel = document.createElement('select');
+            sel.className = 'rstk-checkout-select';
+            var base = document.createElement('option'); base.value = '1'; base.textContent = 'Un solo pago'; sel.appendChild(base);
+            months.forEach(function (m) { var o = document.createElement('option'); o.value = String(m); o.textContent = m + ' meses sin intereses'; sel.appendChild(o); });
+            sel.addEventListener('change', function () { selectedInstallments = Number(sel.value) || 1; });
+            els.installments.appendChild(sel);
+          }
+          var submitTrigger = null;
+          window.ConektaCheckoutComponents.Card({
+            config: { targetIFrame: '#' + els.fields.id, publicKey: d.publicKey, locale: 'es', useExternalSubmit: true },
+            callbacks: {
+              onUpdateSubmitTrigger: function (fn) { submitTrigger = fn; els.fields.hidden = false; els.pay.hidden = false; showLoading(false); payLabel(d.amount, d.currency); },
+              onCreateTokenSucceeded: function (token) {
+                var tokenId = typeof token === 'string' ? token : String((token && token.id) || '');
+                if (!tokenId) { setPayBusy(false); setMessage('error', 'Conekta no devolvió un token válido.'); return; }
+                postJson('/api/conekta/public/payments/' + encodeURIComponent(d.publicPaymentId) + '/card', { tokenId: tokenId, installments: selectedInstallments }).then(function (res) {
+                  onChargeResult(d.publicPaymentId, (res.payment && res.payment.status) || res.status);
+                }).catch(function (e) { setPayBusy(false); setMessage('error', (e && e.message) || 'No se pudo cobrar con Conekta.'); });
+              },
+              onCreateTokenError: function (err) { setPayBusy(false); setMessage('error', (err && err.message) || 'Conekta no pudo procesar la tarjeta.'); },
+              onGetInfoSuccess: function () { showLoading(false); }
+            },
+            options: { backgroundMode: isDark() ? 'darkMode' : 'lightMode', inputType: 'minimalMode', hideLogo: true, colorPrimary: readToken('--rstk-accent'), colorText: readToken('--rstk-ink'), colorLabel: readToken('--rstk-muted'), autoResize: true }
+          });
+          els.pay.hidden = false; payLabel(d.amount, d.currency);
+          els.pay.addEventListener('click', function () {
+            if (els.pay.disabled || !submitTrigger) return;
+            setPayBusy(true); setMessage('info', 'Procesando…');
+            submitTrigger();
+          });
+        });
+      }
+
+      function mountMercadoPago(d) {
+        return loadScript(MP_SDK, function () { return !!window.MercadoPago; }).then(function () {
+          els.fields.hidden = false; showLoading(false);
+          if (els.pay) els.pay.hidden = true;
+          var mp = new window.MercadoPago(d.publicKey, { locale: 'es-MX' });
+          var builder = mp.bricks();
+          var maxInst = (d.installments && d.installments.enabled && Number(d.installments.maxInstallments) > 1) ? Number(d.installments.maxInstallments) : 1;
+          var customization = { visual: { style: { theme: isDark() ? 'dark' : 'default' } } };
+          if (maxInst > 1) customization.paymentMethods = { minInstallments: 1, maxInstallments: maxInst };
+          builder.create('cardPayment', els.fields.id, {
+            initialization: { amount: Number(d.amount || 0) },
+            customization: customization,
+            callbacks: {
+              onReady: function () { showLoading(false); },
+              onSubmit: function (formData) {
+                var fd = formData || {};
+                setMessage('info', 'Procesando…');
+                var payload = {
+                  token: fd.token,
+                  paymentMethodId: fd.payment_method_id,
+                  issuerId: fd.issuer_id,
+                  installments: Number(fd.installments) || 1,
+                  payer: fd.payer || {}
+                };
+                return postJson('/api/mercadopago/public/payments/' + encodeURIComponent(d.publicPaymentId) + '/card', payload).then(function (res) {
+                  onChargeResult(d.publicPaymentId, (res.payment && res.payment.status) || res.status);
+                }).catch(function (e) { setMessage('error', (e && e.message) || 'No se pudo cobrar con Mercado Pago.'); throw e; });
+              },
+              onError: function () { setMessage('error', 'No se pudo montar el formulario de Mercado Pago. Recarga la página.'); }
+            }
+          });
+        });
+      }
+    }
+
+    function initAll() {
+      var nodes = document.querySelectorAll('[data-rstk-checkout]');
+      for (var i = 0; i < nodes.length; i++) initBlock(nodes[i]);
+    }
+    if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', initAll, { once: true });
+    else initAll();
+  })();
+  </script>`;
+}
+
 function buildParamPreservationScript() {
   return `
   <script>
@@ -18071,6 +18333,39 @@ function formatPaymentAmount(amount, currency = 'MXN') {
   }
 }
 
+// Resuelve, en el servidor, qué pasa tras un pago CONFIRMADO. Espeja el patrón de
+// completion de formularios (getNextPage/buildPageHref) para que "siguiente página" y
+// "página específica" ya vengan como URL lista; el runtime solo la ejecuta al confirmar paid.
+function normalizePaymentPostActionKind(value) {
+  const raw = cleanString(value).toLowerCase()
+  return ['next_page', 'specific_page', 'redirect_url', 'success_message'].includes(raw) ? raw : 'success_message'
+}
+
+function resolvePaymentPostAction(settings = {}, paymentGate = {}, block = {}, context = {}) {
+  const source = settings.postPayment && typeof settings.postPayment === 'object' ? settings.postPayment : {}
+  const action = normalizePaymentPostActionKind(source.action)
+  const site = context.site
+  const pages = Array.isArray(context.pages) ? context.pages : normalizeSitePages(site)
+  const pageId = getBlockPageId(block, pages)
+  let url = ''
+
+  if (action === 'redirect_url') {
+    url = safeUrl(source.url || source.redirectUrl)
+  } else if (action === 'next_page') {
+    const next = getNextPage(site, pageId)
+    url = next ? buildPageHref(next.id, context) : ''
+  } else if (action === 'specific_page') {
+    const targetPageId = cleanString(source.pageId || source.targetPageId)
+    if (targetPageId) url = buildPageHref(targetPageId, context)
+  }
+
+  return {
+    action,
+    url,
+    message: cleanString(source.message || paymentGate.paidMessage || 'Pago confirmado. Gracias.', 300)
+  }
+}
+
 function renderPaymentBlock(block = {}, context = {}) {
   const settings = block.settings || {}
   const paymentGate = getPaymentGateFromBlock(block)
@@ -18078,22 +18373,55 @@ function renderPaymentBlock(block = {}, context = {}) {
   const layout = normalizePaymentBlockLayout(settings.paymentLayout || settings.payment_layout)
   const pages = Array.isArray(context.pages) ? context.pages : normalizeSitePages(context.site)
   const pageId = getBlockPageId(block, pages)
+  const siteId = cleanString(context.site?.id)
   const productName = cleanString(paymentGate.productName || block.content || block.label) || 'Pago requerido'
-  const description = cleanString(paymentGate.description || paymentGate.pendingMessage) || 'Completa el pago para continuar.'
-  const buttonLabel = cleanString(paymentGate.buttonText) || 'Completar pago'
+  const description = cleanString(paymentGate.description) || ''
+  const buttonLabel = cleanString(paymentGate.buttonText) || 'Pagar'
+  const amountText = formatPaymentAmount(paymentGate.amount, paymentGate.currency)
+  const post = resolvePaymentPostAction(settings, paymentGate, block, context)
+  const isTestBlock = paymentGate.mode === 'test'
 
+  // Shell del checkout EMBEBIDO inline. El runtime del sitio publicado llama a
+  // /api/sites/public/checkout/init, monta el SDK del proveedor dentro de
+  // [data-rstk-checkout-fields] y, al confirmar paid, ejecuta la acción posterior
+  // (data-post-*). Los campos de tarjeta viven en iframes cifrados del proveedor.
   return `
-    <section class="rstk-payment-block rstk-payment-${escapeHtml(layout)}" data-rstk-payment-block data-payment-page-id="${escapeHtml(pageId)}" data-payment-block-id="${escapeHtml(block.id || '')}">
-      <div class="rstk-payment-panel">
-        <div class="rstk-payment-copy">
+    <section class="rstk-payment-block rstk-payment-${escapeHtml(layout)}"
+      data-rstk-payment-block
+      data-rstk-checkout
+      data-site-id="${escapeHtml(siteId)}"
+      data-payment-page-id="${escapeHtml(pageId)}"
+      data-payment-block-id="${escapeHtml(block.id || '')}"
+      data-provider="${escapeHtml(paymentGate.gateway)}"
+      data-amount="${escapeHtml(String(paymentGate.amount))}"
+      data-currency="${escapeHtml(paymentGate.currency)}"
+      data-button-text="${escapeHtml(buttonLabel)}"
+      data-post-action="${escapeHtml(post.action)}"
+      data-post-url="${escapeHtml(post.url)}"
+      data-post-message="${escapeHtml(post.message)}"
+      ${isTestBlock ? 'data-test-mode="true"' : ''}>
+      <div class="rstk-checkout-card">
+        <div class="rstk-checkout-head">
           <span class="rstk-payment-kicker">${escapeHtml(getPaymentGatewayLabel(paymentGate.gateway))}</span>
-          <strong>${escapeHtml(productName)}</strong>
-          ${description ? `<p>${escapeHtml(description)}</p>` : ''}
+          <strong class="rstk-checkout-title">${escapeHtml(productName)}</strong>
+          ${description ? `<p class="rstk-checkout-desc">${escapeHtml(description)}</p>` : ''}
+          <span class="rstk-checkout-amount">${escapeHtml(amountText)}</span>
         </div>
-        <div class="rstk-payment-side">
-          <span class="rstk-payment-amount">${escapeHtml(formatPaymentAmount(paymentGate.amount, paymentGate.currency))}</span>
-          <button type="button" class="rstk-button-link" data-rstk-payment-submit>${renderSubmitButtonContent(buttonLabel, '', settings)}</button>
+        ${isTestBlock ? '<p class="rstk-checkout-testbadge">Modo prueba · no es un cobro real</p>' : ''}
+        <div class="rstk-checkout-body" data-rstk-checkout-body>
+          <div class="rstk-checkout-loading" data-rstk-checkout-loading>
+            <span class="rstk-checkout-spinner" aria-hidden="true"></span>
+            <span>Cargando pago seguro…</span>
+          </div>
+          <div class="rstk-checkout-fields" data-rstk-checkout-fields hidden></div>
+          <div class="rstk-checkout-installments" data-rstk-checkout-installments hidden></div>
+          <button type="button" class="rstk-button-link rstk-checkout-pay" data-rstk-checkout-pay hidden>
+            <span data-rstk-checkout-pay-label>${escapeHtml(buttonLabel)} · ${escapeHtml(amountText)}</span>
+          </button>
+          <p class="rstk-checkout-message" data-rstk-checkout-message role="status" hidden></p>
+          <p class="rstk-checkout-secure">Pago seguro. La tarjeta se captura en campos cifrados del proveedor.</p>
         </div>
+        <div class="rstk-checkout-success" data-rstk-checkout-success hidden></div>
       </div>
     </section>
   `
@@ -19413,6 +19741,31 @@ const RSTK_BASE_CSS = `
     margin-left:var(--rstk-media-margin-left,auto);
     margin-right:var(--rstk-media-margin-right,auto);
   }
+
+  .rstk-checkout-card{display:grid;gap:14px;width:100%;max-width:var(--rstk-checkout-width,460px);margin-inline:auto;padding:var(--rstk-checkout-pad,22px);background:var(--rstk-surface);border:1px solid var(--rstk-border);border-radius:var(--rstk-radius-lg);box-shadow:var(--rstk-shadow,none);text-align:left}
+  .rstk-payment-banner .rstk-checkout-card{max-width:var(--rstk-checkout-width,640px)}
+  .rstk-payment-minimal .rstk-checkout-card{border:0;box-shadow:none;padding:0;background:transparent}
+  .rstk-checkout-head{display:grid;gap:4px}
+  .rstk-checkout-head .rstk-payment-kicker{color:var(--rstk-accent);font-size:.74rem;font-weight:800;text-transform:uppercase;letter-spacing:.08em}
+  .rstk-checkout-title{color:var(--rstk-ink);font-size:1.12rem;font-weight:700;line-height:1.25}
+  .rstk-checkout-desc{margin:0;color:var(--rstk-muted);font-size:.92rem;line-height:1.4}
+  .rstk-checkout-amount{color:var(--rstk-ink);font-size:1.5rem;font-weight:800;margin-top:2px}
+  .rstk-checkout-testbadge{margin:0;justify-self:start;padding:4px 10px;border-radius:999px;font-size:.72rem;font-weight:700;color:var(--rstk-ink);background:color-mix(in srgb,var(--rstk-accent) 12%,transparent);border:1px solid color-mix(in srgb,var(--rstk-accent) 30%,var(--rstk-border))}
+  .rstk-checkout-body{display:grid;gap:14px}
+  .rstk-checkout-loading{display:flex;align-items:center;gap:10px;color:var(--rstk-muted);font-size:.9rem;padding:8px 0}
+  .rstk-checkout-spinner{width:18px;height:18px;border-radius:50%;border:2px solid color-mix(in srgb,var(--rstk-ink) 20%,transparent);border-top-color:var(--rstk-accent);animation:rstk-checkout-spin .7s linear infinite}
+  @keyframes rstk-checkout-spin{to{transform:rotate(360deg)}}
+  .rstk-checkout-fields{display:grid;gap:10px;min-height:20px}
+  .rstk-checkout-installments{display:grid;gap:6px}
+  .rstk-checkout-select{width:100%;min-height:44px;padding:0 12px;background:var(--rstk-input-bg);color:var(--rstk-input-ink,var(--rstk-ink));border:1px solid var(--rstk-input-border);border-radius:var(--rstk-radius);font:inherit;font-size:.92rem}
+  .rstk-checkout-pay{display:inline-flex;align-items:center;justify-content:center;width:100%;min-height:48px;padding:0 18px;border:0;border-radius:var(--rstk-btn-radius,var(--rstk-radius));background:var(--rstk-accent);color:var(--rstk-on-accent,#fff);font:inherit;font-size:1rem;font-weight:var(--rstk-btn-weight,700);cursor:pointer;transition:filter .15s var(--rstk-ease,ease),opacity .15s}
+  .rstk-checkout-pay:hover{filter:brightness(1.05)}
+  .rstk-checkout-pay:disabled{opacity:.6;cursor:default}
+  .rstk-checkout-message{margin:0;font-size:.88rem;line-height:1.4;padding:10px 12px;border-radius:var(--rstk-radius);border:1px solid var(--rstk-border);color:var(--rstk-ink);background:color-mix(in srgb,var(--rstk-ink) 4%,transparent)}
+  .rstk-checkout-message[data-kind="success"]{color:var(--rstk-accent);border-color:color-mix(in srgb,var(--rstk-accent) 35%,var(--rstk-border));background:color-mix(in srgb,var(--rstk-accent) 8%,transparent)}
+  .rstk-checkout-message[data-kind="error"]{color:var(--rstk-danger,#d64545);border-color:color-mix(in srgb,var(--rstk-danger,#d64545) 35%,var(--rstk-border));background:color-mix(in srgb,var(--rstk-danger,#d64545) 8%,transparent)}
+  .rstk-checkout-secure{margin:0;color:var(--rstk-muted);font-size:.76rem;text-align:center}
+  .rstk-checkout-success{display:grid;gap:8px;padding:22px;text-align:center;color:var(--rstk-ink);font-size:1.02rem;font-weight:600}
 
   .rstk-kind-form .rstk-shell{
     background:var(--rstk-form-surface,var(--rstk-surface));border:var(--rstk-page-border-width,0) solid var(--rstk-page-border,var(--rstk-border));
@@ -21866,6 +22219,7 @@ export async function renderPublicSiteHtml(site, { pageId, pagePath, trackingEna
   // En páginas publicadas (no preview) los params de URL se preservan siempre,
   // aunque el tracking esté apagado: la atribución no debe perderse nunca.
   const paramPreservationScript = preview ? '' : buildParamPreservationScript()
+  const paymentCheckoutScript = !preview ? buildPaymentCheckoutRuntimeScript() : ''
   const metaPixelSite = buildSiteWithEmbeddedSubmitMetaFallback(site, blocks, activePage?.id)
   const metaPixel = await buildMetaPixelSnippet(metaPixelSite, trackingEnabled, activePage, preview)
   const headerTrackingCode = trackingEnabled ? buildHeaderTrackingCode(site, activePage) : ''
@@ -21913,6 +22267,7 @@ export async function renderPublicSiteHtml(site, { pageId, pagePath, trackingEna
   ${videoFormGateScript}
   ${countdownRuntimeScript}
   ${paramPreservationScript}
+  ${paymentCheckoutScript}
   ${siteNavHtml ? `<script>${SITE_NAV_SCRIPT}</script>` : ''}
   <script>
     (() => {
@@ -25766,6 +26121,36 @@ function withPaymentBlockMetadata(paymentGate = {}, context = {}) {
   }
 }
 
+// Igual que findEnabledPaymentBlockContext pero busca un bloque de pago ESPECÍFICO por
+// id (una página puede tener varios). Si no se pasa id, devuelve el primero habilitado.
+// Recorre también bloques embebidos (formularios dentro de landings).
+function findEnabledPaymentBlockById(blocks = [], site = {}, blockId = '', parentBlockId = '') {
+  const items = Array.isArray(blocks) ? blocks : []
+  const pages = normalizeSitePages(site)
+  const wanted = cleanString(blockId)
+
+  for (const block of items) {
+    if (!block || typeof block !== 'object') continue
+    if ((!wanted || cleanString(block.id) === wanted) && isPaymentBlockEnabled(block)) {
+      return {
+        block,
+        blockId: cleanString(block.id),
+        parentBlockId: cleanString(parentBlockId),
+        blockPageId: getBlockPageId(block, pages),
+        paymentGate: getPaymentGateFromBlock(block)
+      }
+    }
+
+    const settings = block.settings || {}
+    if (Array.isArray(settings.embeddedBlocks)) {
+      const nested = findEnabledPaymentBlockById(settings.embeddedBlocks, site, wanted, block.id)
+      if (nested) return nested
+    }
+  }
+
+  return null
+}
+
 function resolveSitePaymentGateConfig(site = {}, contexts = {}) {
   const blockCandidates = [
     contexts.submissionBlocks,
@@ -25914,6 +26299,117 @@ export async function getPublicSitePaymentStatus(publicPaymentId) {
     currency: status.currency,
     updatedAt: status.updatedAt
   }
+}
+
+function buildSiteCheckoutResponse(paymentGate = {}, context = {}, descriptor = {}) {
+  return {
+    publicPaymentId: cleanString(descriptor.publicPaymentId),
+    provider: cleanString(descriptor.provider) || paymentGate.gateway,
+    status: cleanString(descriptor.status) || 'sent',
+    paid: Boolean(descriptor.paid),
+    amount: Number(descriptor.amount || paymentGate.amount) || paymentGate.amount,
+    currency: cleanString(descriptor.currency || paymentGate.currency) || paymentGate.currency,
+    paymentMode: cleanString(descriptor.paymentMode),
+    // Llaves públicas para el SDK (seguras de exponer). Secretos NUNCA.
+    publishableKey: cleanString(descriptor.publishableKey),
+    clientSecret: cleanString(descriptor.clientSecret),
+    publicKey: cleanString(descriptor.publicKey),
+    installments: descriptor.installments || null,
+    // Copys y acción posterior configurados en el bloque.
+    productName: paymentGate.productName,
+    description: paymentGate.description,
+    buttonText: paymentGate.buttonText,
+    pendingMessage: paymentGate.pendingMessage,
+    paidMessage: paymentGate.paidMessage,
+    msi: paymentGate.msi || null,
+    blockId: cleanString(context.blockId),
+    blockPageId: cleanString(context.blockPageId)
+  }
+}
+
+// Arranca el checkout embebido de un bloque de pago concreto de una página publicada.
+// El monto/pasarela/modo/MSI vienen del bloque PERSISTIDO (nunca del cliente). Reutiliza
+// un link aún no pagado si el runtime lo re-manda (evita crear un registro por recarga).
+export async function initSitePaymentCheckout(req, body = {}) {
+  const {
+    host,
+    submittedSiteId,
+    domainResolution,
+    previewContext
+  } = await resolvePublicRequestAccess(req, body, {})
+  const site = submittedSiteId
+    ? await getSite(submittedSiteId, { includeBlocks: false, includeSubmissions: false })
+    : await findSiteByRoutePath(req.path)
+
+  if (!site) {
+    const error = new Error('Site público no encontrado')
+    error.status = 404
+    throw error
+  }
+  if (!canExecutePublicSiteAction(site, previewContext)) {
+    const error = new Error('Este site no esta publicado')
+    error.status = 404
+    throw error
+  }
+
+  site.domain = domainResolution.domain || host
+  site.blocks = await hydrateEmbeddedForms(await listSiteBlocks(site.id))
+
+  const blockId = cleanString(body.blockId || body.block_id || body.meta?.blockId)
+  const context = findEnabledPaymentBlockById(site.blocks, site, blockId)
+  if (!context) {
+    const error = new Error('Bloque de pago no encontrado o deshabilitado')
+    error.status = 404
+    throw error
+  }
+
+  const paymentGate = context.paymentGate
+  const baseUrl = getRequestBaseUrl(req)
+  const expectedBlockId = cleanString(context.blockId)
+
+  // Reusar el link que el runtime tenga en sessionStorage si sigue vigente y es del mismo
+  // bloque; si ya está pagado, devolver descriptor pagado para que corra la acción de éxito.
+  let publicPaymentId = ''
+  const existing = getBodyPaymentPublicId(body)
+  if (existing) {
+    const pending = await getPaymentGateStatus(existing)
+    const sameBlock = pending && cleanString(
+      pending.metadata?.paymentGate?.paymentBlockId || pending.metadata?.paymentBlockId
+    ) === expectedBlockId
+    if (pending && pending.paid && sameBlock) {
+      const descriptor = await getPaymentGateCheckoutDescriptor(existing, { baseUrl })
+      return buildSiteCheckoutResponse(paymentGate, context, descriptor || {
+        publicPaymentId: existing,
+        paid: true,
+        status: pending.status
+      })
+    }
+    if (pending && !pending.paid && sameBlock && cleanString(pending.provider) === paymentGate.gateway) {
+      publicPaymentId = existing
+    }
+  }
+
+  if (!publicPaymentId) {
+    const result = await createPaymentGateLink(paymentGate, {
+      baseUrl,
+      source: 'site_checkout',
+      metadata: {
+        siteId: site.id,
+        siteName: site.name || '',
+        pageId: cleanString(body.pageId || body.page_id || context.blockPageId),
+        paymentBlockId: expectedBlockId,
+        paymentGate: {
+          source: 'site_checkout',
+          siteId: site.id,
+          paymentBlockId: expectedBlockId
+        }
+      }
+    })
+    publicPaymentId = result.publicPaymentId
+  }
+
+  const descriptor = await getPaymentGateCheckoutDescriptor(publicPaymentId, { baseUrl })
+  return buildSiteCheckoutResponse(paymentGate, context, descriptor)
 }
 
 export async function createSubmissionFromRequest(req, body = {}, options = {}) {

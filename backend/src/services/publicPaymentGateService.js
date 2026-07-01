@@ -1,7 +1,7 @@
 import { db, getAppConfig } from '../config/database.js'
-import { createStripePaymentLink } from './stripePaymentService.js'
-import { createConektaPaymentLink } from './conektaPaymentService.js'
-import { createMercadoPagoPaymentLink } from './mercadoPagoPaymentService.js'
+import { createStripePaymentLink, createStripePaymentIntent } from './stripePaymentService.js'
+import { createConektaPaymentLink, getPublicConektaPayment } from './conektaPaymentService.js'
+import { createMercadoPagoPaymentLink, getPublicMercadoPagoPayment } from './mercadoPagoPaymentService.js'
 
 const PAYMENT_GATEWAYS = new Set(['stripe', 'conekta', 'mercadopago'])
 const PAID_STATUSES = new Set(['paid', 'succeeded', 'success', 'completed', 'complete', 'fulfilled'])
@@ -253,6 +253,62 @@ export async function getPaymentGateStatus(publicPaymentId) {
     metadata,
     updatedAt: row.updated_at || row.created_at || null
   }
+}
+
+// Descriptor para MONTAR el checkout embebido inline en la página publicada.
+// Devuelve exactamente lo que el runtime necesita para arrancar el SDK del proveedor
+// (Stripe Elements necesita clientSecret; Conekta/MP solo la llave pública + MSI).
+// El monto/estado siguen viniendo del registro persistido — nunca del cliente.
+export async function getPaymentGateCheckoutDescriptor(publicPaymentId, { baseUrl = '' } = {}) {
+  const status = await getPaymentGateStatus(publicPaymentId)
+  if (!status) return null
+
+  const base = {
+    publicPaymentId: status.publicPaymentId,
+    provider: status.provider,
+    status: status.status,
+    paid: status.paid,
+    amount: status.amount,
+    currency: status.currency
+  }
+
+  // Si ya está pagado no montamos SDK: el runtime salta directo a la acción de éxito.
+  if (status.paid) return base
+
+  if (status.provider === 'stripe') {
+    const intent = await createStripePaymentIntent(publicPaymentId, {})
+    return {
+      ...base,
+      provider: 'stripe',
+      publishableKey: intent?.publishableKey || '',
+      clientSecret: intent?.clientSecret || '',
+      status: intent?.status || base.status
+    }
+  }
+
+  if (status.provider === 'conekta') {
+    const payment = await getPublicConektaPayment(publicPaymentId, { baseUrl })
+    return {
+      ...base,
+      provider: 'conekta',
+      publicKey: payment?.publicKey || '',
+      paymentMode: payment?.paymentMode || '',
+      installments: payment?.conektaInstallments || null
+    }
+  }
+
+  if (status.provider === 'mercadopago') {
+    const payment = await getPublicMercadoPagoPayment(publicPaymentId, { baseUrl })
+    return {
+      ...base,
+      provider: 'mercadopago',
+      publicKey: payment?.publicKey || '',
+      paymentMode: payment?.paymentMode || '',
+      installments: payment?.mercadoPagoInstallments || null
+    }
+  }
+
+  return base
 }
 
 export function paymentGateMatches(status, expected = {}) {
