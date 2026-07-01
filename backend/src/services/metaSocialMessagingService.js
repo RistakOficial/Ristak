@@ -383,8 +383,10 @@ async function metaSocialGraphRequest(path, { method = 'GET', token, query, body
 // Campos de webhook de la Página que Ristak sabe procesar (ver
 // processMetaSocialWebhook: message, postback, reaction, referral). Los mismos
 // campos cubren Messenger e Instagram DM, porque el IG va enlazado a la Página.
-// messaging_* para DMs; feed (comentarios FB) y comments (comentarios IG).
-const META_PAGE_SUBSCRIBED_FIELDS = 'messages,messaging_postbacks,message_reactions,messaging_referrals,feed,comments'
+// messaging_* para DMs; feed = comentarios de la Página de Facebook. Los
+// comentarios de Instagram NO son campo de la Página: llegan por el objeto
+// 'instagram' (comments/live_comments) suscrito a nivel de app en el panel de Meta.
+const META_PAGE_SUBSCRIBED_FIELDS = 'messages,messaging_postbacks,message_reactions,messaging_referrals,feed'
 
 // El token guardado en meta_config es un token de USUARIO. Para operar la Página
 // (suscribir webhooks, enviar DMs, leer perfiles) Meta exige un token de PÁGINA.
