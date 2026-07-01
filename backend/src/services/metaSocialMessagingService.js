@@ -211,8 +211,12 @@ function extractSocialMessage({ objectType, entry, messaging, config }) {
 async function fetchMetaSenderProfile({ platform, senderId, accessToken }) {
   if (!senderId || !accessToken) return {}
 
+  // OJO Instagram: un IGSID NO tiene el campo `profile_picture_url` — pedirlo
+  // hace que Meta rechace TODA la petición con (#100) y el perfil vuelve vacío
+  // (por eso el DM caía como "Instagram DM 0895…" sin nombre ni foto). Los
+  // campos válidos para IG son name,username,profile_pic.
   const fields = platform === 'instagram'
-    ? 'id,name,username,profile_pic,profile_picture_url'
+    ? 'name,username,profile_pic'
     : 'id,name,first_name,last_name,profile_pic'
 
   try {
