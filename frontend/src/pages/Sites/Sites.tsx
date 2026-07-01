@@ -11374,6 +11374,11 @@ export const Sites: React.FC = () => {
       showToast('warning', 'Acceso no incluido', 'Este bloque no está disponible con los accesos actuales.')
       return
     }
+    // Un solo bloque de pago por página: evita cobros duplicados/ambiguos en la misma pantalla.
+    if (blockType === 'payment' && canvasBlocks.some(existing => existing?.blockType === 'payment')) {
+      showToast('warning', 'Solo un bloque de pago', 'Cada página permite un único bloque de pago.')
+      return
+    }
     try {
       const options = typeof addOptions === 'number' ? { insertIndex: addOptions } : addOptions
       const initialSettings = socialProfileAutoPresetForNewBlock(

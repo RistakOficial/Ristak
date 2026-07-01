@@ -9,6 +9,7 @@ import {
   readCachedIntegrationsStatus,
   type IntegrationsStatus
 } from '@/services/integrationsService'
+import { productsService, type ProductItem, type ProductPrice } from '@/services/productsService'
 import styles from './PaymentGateControls.module.css'
 
 export type PaymentGateGateway = 'stripe' | 'conekta' | 'mercadopago'
@@ -88,6 +89,14 @@ const normalizeMsi = (value: unknown): PaymentGateMsi => {
   return { enabled: true, maxInstallments: allowed.length ? allowed[allowed.length - 1] : MSI_INSTALLMENT_CHOICES[0] }
 }
 
+// Catálogo de productos (opcional): el id y el monto pueden venir en varios campos.
+const productKeyOf = (product: ProductItem) => String(product.id || product._id || product.localId || '')
+const priceKeyOf = (price: ProductPrice) => String(price.id || price._id || price.localId || '')
+const priceAmountOf = (price: ProductPrice) => {
+  const amount = Number(price.amount ?? price.price ?? 0)
+  return Number.isFinite(amount) && amount > 0 ? Math.round(amount * 100) / 100 : 0
+}
+
 export const normalizePaymentGateConfig = (
   value?: Partial<PaymentGateConfig> | null,
   currencyFallback = 'MXN'
@@ -162,6 +171,48 @@ export const PaymentGateControls: React.FC<PaymentGateControlsProps> = ({
     window.setTimeout(() => { onCommit?.() }, 0)
   }
 
+  // Catálogo opcional: sincroniza nombre + precio de un producto de la DB (editable).
+  const [products, setProducts] = useState<ProductItem[]>([])
+  const [loadingProducts, setLoadingProducts] = useState(false)
+  const [selectedProductId, setSelectedProductId] = useState('')
+
+  useEffect(() => {
+    if (!config.enabled) return
+    let active = true
+    setLoadingProducts(true)
+    productsService.listProducts({ limit: 100, includePrices: true })
+      .then(result => { if (active) setProducts(result.products) })
+      .catch(() => {})
+      .finally(() => { if (active) setLoadingProducts(false) })
+    return () => { active = false }
+  }, [config.enabled])
+
+  const selectedProduct = useMemo(
+    () => products.find(product => productKeyOf(product) === selectedProductId) || null,
+    [products, selectedProductId]
+  )
+  const productPrices = selectedProduct?.prices || []
+
+  const applyCatalogProduct = (id: string) => {
+    setSelectedProductId(id)
+    if (!id) return
+    const product = products.find(item => productKeyOf(item) === id)
+    if (!product) return
+    const firstPrice = (product.prices || [])[0]
+    patchConfig({
+      productName: product.name || config.productName,
+      ...(firstPrice ? { amount: priceAmountOf(firstPrice) } : {})
+    })
+    window.setTimeout(() => { onCommit?.() }, 0)
+  }
+
+  const applyCatalogPrice = (key: string) => {
+    const price = productPrices.find(item => priceKeyOf(item) === key)
+    if (!price) return
+    patchConfig({ amount: priceAmountOf(price) })
+    window.setTimeout(() => { onCommit?.() }, 0)
+  }
+
   return (
     <div className={styles.root}>
       <div className={styles.header}>
@@ -202,6 +253,34 @@ export const PaymentGateControls: React.FC<PaymentGateControlsProps> = ({
           </div>
 
           <div className={styles.grid}>
+            <label className={`${styles.field} ${styles.fieldWide}`}>
+              <span>Producto del catálogo (opcional)</span>
+              <CustomSelect
+                value={selectedProductId}
+                onValueChange={applyCatalogProduct}
+                onBlur={onCommit}
+                options={[
+                  { value: '', label: loadingProducts ? 'Cargando productos…' : 'Sin producto — captura manual' },
+                  ...products.map(product => ({ value: productKeyOf(product), label: product.name }))
+                ]}
+              />
+            </label>
+
+            {selectedProduct && productPrices.length > 1 && (
+              <label className={`${styles.field} ${styles.fieldWide}`}>
+                <span>Precio del producto</span>
+                <CustomSelect
+                  value=""
+                  onValueChange={applyCatalogPrice}
+                  onBlur={onCommit}
+                  options={productPrices.map(price => ({
+                    value: priceKeyOf(price),
+                    label: `${price.name || 'Precio'} · ${priceAmountOf(price).toFixed(2)} ${price.currency || config.currency}`
+                  }))}
+                />
+              </label>
+            )}
+
             <label className={styles.field}>
               <span>Pasarela</span>
               <CustomSelect
