@@ -473,25 +473,10 @@ export async function getMetaConfig() {
       }
     }
 
-    if (config.pixel_api_token) {
-      try {
-        if (isEncrypted(config.pixel_api_token)) {
-          config.pixel_api_token = decrypt(config.pixel_api_token)
-        } else {
-          logger.warn('⚠️ Pixel API Token de Meta NO estaba encriptado. Encriptando ahora...')
-          const plainPixelApiToken = config.pixel_api_token
-          const encryptedPixelApiToken = encrypt(plainPixelApiToken)
-
-          await db.run(
-            'UPDATE meta_config SET pixel_api_token = ? WHERE id = ?',
-            [encryptedPixelApiToken, config.id]
-          )
-
-          config.pixel_api_token = plainPixelApiToken
-        }
-      } catch (error) {
-        logger.warn('No se pudo desencriptar pixel_api_token:', error.message)
-      }
+    // `pixel_api_token` queda como columna legacy para instalaciones viejas, pero
+    // Ristak ya no lo lee ni lo devuelve: CAPI usa siempre el System User Token.
+    if (Object.prototype.hasOwnProperty.call(config, 'pixel_api_token')) {
+      config.pixel_api_token = null
     }
 
     return config
@@ -499,6 +484,10 @@ export async function getMetaConfig() {
     logger.error('Error obteniendo configuración de Meta:', error.message)
     throw error
   }
+}
+
+export function resolveMetaCapiAccessToken(metaConfig = {}) {
+  return normalizeId(metaConfig?.access_token || process.env.META_ACCESS_TOKEN) || ''
 }
 
 export async function saveMetaAccessToken(accessToken) {
@@ -553,42 +542,9 @@ async function getAdAccountTimezone(adAccountId, accessToken) {
 }
 
 /**
- * Genera un Pixel API Token (Conversions API Token) automáticamente
- * Este token es específico para el pixel y se usa para enviar eventos mediante Conversions API
- * @param {string} pixelId - ID del pixel de Meta
- * @param {string} accessToken - Access Token de Meta (System User)
- * @returns {Promise<string>} Token generado para el pixel
- */
-export async function generatePixelCapiToken(pixelId, accessToken) {
-  try {
-    logger.info(`Generando Pixel API Token para pixel ${pixelId}...`)
-
-    const url = `${API_URLS.META_GRAPH}/${pixelId}/access_tokens?access_token=${accessToken}`
-
-    const response = await fetch(url, { method: 'POST' })
-    const data = await response.json()
-
-    if (data.error) {
-      logger.error(`Error generando Pixel API Token: ${data.error.message}`)
-      throw new Error(`Error generando Pixel API Token: ${data.error.message}`)
-    }
-
-    if (!data.access_token) {
-      throw new Error('Meta API no devolvió un token válido')
-    }
-
-    logger.success(`✅ Pixel API Token generado exitosamente para pixel ${pixelId}`)
-    return data.access_token
-  } catch (error) {
-    logger.error('Error generando Pixel API Token:', error.message)
-    throw error
-  }
-}
-
-/**
  * Sincroniza custom values de Meta en HighLevel
  */
-async function syncMetaCustomValues(adAccountId, accessToken, pixelId, pixelApiToken = null, pageId = null, instagramAccountId = null) {
+async function syncMetaCustomValues(adAccountId, accessToken, pixelId, pageId = null, instagramAccountId = null) {
   try {
     // Obtener configuración de HighLevel
     const ghlConfig = await db.get('SELECT location_id, api_token FROM highlevel_config LIMIT 1')
@@ -605,7 +561,6 @@ async function syncMetaCustomValues(adAccountId, accessToken, pixelId, pixelApiT
       'Facebook - Ad Account ID': adAccountId,
       'Facebook - App Access Token': accessToken,
       'Facebook - Pixel ID': pixelId || '',
-      'Facebook - Pixel API Token': pixelApiToken || '',
       'Facebook - Page ID': pageId || '',
       'Facebook - Instagram Account ID': instagramAccountId || ''
     }
@@ -709,36 +664,15 @@ async function syncMetaCustomValues(adAccountId, accessToken, pixelId, pixelApiT
 
 /**
  * Guarda la configuración de Meta en la base de datos
- * ENCRIPTA el access_token y pixel_api_token antes de guardar
- * USA System User Token (no requiere App ID ni App Secret)
+ * ENCRIPTA el access_token antes de guardar.
+ * CAPI usa siempre System User Token; `pixel_api_token` se conserva sólo como columna legacy.
  * CREA/ACTUALIZA custom values en HighLevel automáticamente
- * GENERA AUTOMÁTICAMENTE el Pixel API Token si se proporciona pixelId
  */
-export async function saveMetaConfig(adAccountId, accessToken, pixelId = null, pixelApiToken = null, pageId = null, instagramAccountId = null) {
+export async function saveMetaConfig(adAccountId, accessToken, pixelId = null, _legacyPixelApiToken = null, pageId = null, instagramAccountId = null) {
   try {
     // Encriptar el access_token
     const encryptedToken = encrypt(accessToken)
     logger.info('Token de Meta encriptado correctamente')
-
-    // Si hay pixelId pero NO hay pixelApiToken, generarlo automáticamente
-    let finalPixelApiToken = pixelApiToken
-    if (pixelId && !pixelApiToken) {
-      try {
-        logger.info('🔄 Generando Pixel API Token automáticamente...')
-        finalPixelApiToken = await generatePixelCapiToken(pixelId, accessToken)
-        logger.success('✅ Pixel API Token generado y será guardado')
-      } catch (error) {
-        logger.warn(`⚠️ No se pudo generar Pixel API Token automáticamente: ${error.message}`)
-        // Continuar sin el token (no es crítico)
-      }
-    }
-
-    // Encriptar pixel_api_token si existe (Conversions API Token)
-    let encryptedPixelApiToken = null
-    if (finalPixelApiToken) {
-      encryptedPixelApiToken = encrypt(finalPixelApiToken)
-      logger.info('Pixel API Token de Meta encriptado correctamente')
-    }
 
     // Obtener timezone de la cuenta de Meta
     logger.info('Obteniendo timezone de la cuenta de Meta...')
@@ -765,7 +699,7 @@ export async function saveMetaConfig(adAccountId, accessToken, pixelId = null, p
       adAccountId,
       encryptedToken,
       pixelId,
-      encryptedPixelApiToken,
+      null,
       pageId,
       instagramAccountId,
       timezoneData?.timezone_id,
@@ -784,12 +718,11 @@ export async function saveMetaConfig(adAccountId, accessToken, pixelId = null, p
     }
 
     // Sincronizar custom values en HighLevel (no bloquear si falla)
-    // Incluye Pixel API Token si fue generado o proporcionado
-    syncMetaCustomValues(adAccountId, accessToken, pixelId, finalPixelApiToken, pageId, instagramAccountId).catch(err => {
+    syncMetaCustomValues(adAccountId, accessToken, pixelId, pageId, instagramAccountId).catch(err => {
       logger.warn('No se pudieron sincronizar custom values de Meta en HighLevel:', err.message)
     })
 
-    return { success: true, pixelApiTokenGenerated: !!finalPixelApiToken && !pixelApiToken }
+    return { success: true, capiCredential: 'system_user_token' }
   } catch (error) {
     logger.error('Error guardando configuración de Meta:', error.message)
     throw error

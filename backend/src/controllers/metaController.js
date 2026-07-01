@@ -8,6 +8,7 @@ import {
   updateRecentAds,
   getMetaSyncProgress,
   getMetaConfig,
+  resolveMetaCapiAccessToken,
   verifyMetaToken,
   fetchMetaCreativeMediaForAds,
   fetchMetaCreativeMediaForAd
@@ -316,7 +317,6 @@ function toMaskedMetaCredentials(metaConfig = {}, whatsappBusinessAccountId = ''
     pixelId: cleanString(metaConfig.pixel_id),
     pageId: cleanString(metaConfig.page_id),
     instagramAccountId: cleanString(metaConfig.instagram_account_id),
-    pixelApiToken: maskSecret(metaConfig.pixel_api_token),
     whatsappBusinessAccountId: cleanString(whatsappBusinessAccountId)
   };
 }
@@ -553,7 +553,7 @@ async function hydrateMissingCreativeMedia(rows = []) {
  */
 export const saveConfig = async (req, res) => {
   try {
-    const { ad_account_id, access_token, pixel_id, pixel_api_token, page_id, instagram_account_id } = req.body;
+    const { ad_account_id, access_token, pixel_id, page_id, instagram_account_id } = req.body;
 
     if (!ad_account_id || !access_token) {
       return res.status(400).json({
@@ -562,13 +562,13 @@ export const saveConfig = async (req, res) => {
       });
     }
 
-    logger.info(`Guardando configuración de Meta para account: ${ad_account_id}${pixel_id ? ` con pixel: ${pixel_id}` : ''}${page_id ? ` con page: ${page_id}` : ''}${pixel_api_token ? ' (con Pixel API Token para Conversions API)' : ''}`);
+    logger.info(`Guardando configuración de Meta para account: ${ad_account_id}${pixel_id ? ` con pixel: ${pixel_id}` : ''}${page_id ? ` con page: ${page_id}` : ''}`);
 
     await saveMetaConfig(
       ad_account_id,
       access_token,
       pixel_id || null,
-      pixel_api_token || null,
+      null,
       page_id || null,
       instagram_account_id || null
     );
@@ -597,7 +597,7 @@ export const saveConfig = async (req, res) => {
 export const getConfig = async (req, res) => {
   try {
     const config = await db.get(
-      'SELECT ad_account_id, access_token, pixel_id, pixel_api_token, page_id, instagram_account_id, timezone_id, timezone_name, timezone_offset_hours_utc, updated_at FROM meta_config LIMIT 1'
+      'SELECT ad_account_id, access_token, pixel_id, page_id, instagram_account_id, timezone_id, timezone_name, timezone_offset_hours_utc, updated_at FROM meta_config LIMIT 1'
     );
 
     if (!config) {
@@ -610,7 +610,6 @@ export const getConfig = async (req, res) => {
 
     // Verificar si está encriptado
     const tokenEncrypted = isEncrypted(config.access_token);
-    const pixelApiTokenEncrypted = config.pixel_api_token ? isEncrypted(config.pixel_api_token) : false;
 
     res.json({
       success: true,
@@ -621,10 +620,8 @@ export const getConfig = async (req, res) => {
         pixelId: config.pixel_id || null,
         pageId: config.page_id || null,
         instagramAccountId: config.instagram_account_id || null,
-        pixelApiToken: config.pixel_api_token ? '***' + config.pixel_api_token.substring(config.pixel_api_token.length - 8) : null,
         updatedAt: config.updated_at,
         isEncrypted: tokenEncrypted, // Mostrar si está encriptado
-        pixelApiTokenIsEncrypted: pixelApiTokenEncrypted,
         // Timezone info
         timezoneId: config.timezone_id,
         timezoneName: config.timezone_name,
@@ -693,10 +690,10 @@ function registerMetaPixelTestSend(token, expSeconds) {
  */
 async function performMetaCapiTestEvent({ req, metaConfig, eventName, eventParameters = {}, testEventCode, eventId, eventSourceUrl }) {
   const datasetId = cleanString(metaConfig?.pixel_id || process.env.META_PIXEL_ID || process.env.META_DATASET_ID);
-  const accessToken = cleanString(metaConfig?.pixel_api_token || process.env.META_ACCESS_TOKEN || metaConfig?.access_token);
+  const accessToken = cleanString(resolveMetaCapiAccessToken(metaConfig));
 
   if (!datasetId || !accessToken) {
-    return { ok: false, status: 400, error: 'Configura Meta Pixel y Pixel API Token antes de enviar una prueba', eventId, eventName };
+    return { ok: false, status: 400, error: 'Configura Meta Pixel y System User Access Token antes de enviar una prueba', eventId, eventName };
   }
   if (!testEventCode) {
     return { ok: false, status: 400, error: 'Pega el código de Test Events de Meta', eventId, eventName };
@@ -805,7 +802,7 @@ export const createMetaPixelTestLink = async (req, res) => {
     if (!pixelId) {
       return res.status(400).json({ success: false, error: 'Configura un Meta Pixel antes de abrir la prueba' });
     }
-    const accessToken = cleanString(metaConfig?.pixel_api_token || process.env.META_ACCESS_TOKEN || metaConfig?.access_token);
+    const accessToken = cleanString(resolveMetaCapiAccessToken(metaConfig));
     const eventName = normalizeMetaTestEventName(req.body?.eventName || req.body?.event_name);
     if (!eventName) {
       return res.status(400).json({ success: false, error: 'Usa un nombre de evento válido, por ejemplo LeadSubmitted' });
@@ -1014,7 +1011,7 @@ function renderMetaPixelTestPageHtml({ pixelId, eventName, method, hasServer, to
       function recompute(){
         if(!browserDone || !serverDone) return;
         if(browserOk && serverOk) setVerdict('ok', 'Todo jaló: el pixel del navegador y el servidor (CAPI) enviaron el evento.');
-        else if(browserOk && !CFG.hasServer) setVerdict('warn', 'El pixel del navegador disparó. El servidor (CAPI) quedó omitido (agrega el Pixel API Token y el código de Test Events).');
+        else if(browserOk && !CFG.hasServer) setVerdict('warn', 'El pixel del navegador disparó. El servidor (CAPI) quedó omitido (agrega el System User Token y el código de Test Events).');
         else if(browserOk && !serverOk) setVerdict('warn', 'El navegador disparó pero el servidor (CAPI) falló. Revisa el detalle de abajo.');
         else if(!browserOk && serverOk) setVerdict('warn', 'El servidor (CAPI) jaló pero el navegador no (probable bloqueador). Prueba en incógnito o sin ad-blocker.');
         else if(!browserOk && !CFG.hasServer) setVerdict('err', 'El navegador no pudo enviar el evento (probable bloqueador). El servidor (CAPI) quedó omitido.');
@@ -1045,7 +1042,7 @@ function renderMetaPixelTestPageHtml({ pixelId, eventName, method, hasServer, to
 
       if (!CFG.hasServer) {
         serverDone = true; serverOk = false;
-        setRow('serverRow', 'skip', 'Omitido: agrega el Pixel API Token y el código de Test Events para probar el servidor.');
+        setRow('serverRow', 'skip', 'Omitido: agrega el System User Token y el código de Test Events para probar el servidor.');
         recompute();
       } else {
         fetch('/api/meta/pixel-test/event?t=' + encodeURIComponent(CFG.token), {
@@ -1102,41 +1099,6 @@ export const revealMetaToken = async (req, res) => {
     res.status(500).json({
       success: false,
       error: 'Error al revelar el token de Meta'
-    });
-  }
-};
-
-/**
- * Revela el Pixel API Token completo (desencriptado) para verlo/copiarlo desde Settings
- */
-export const revealMetaPixelApiToken = async (req, res) => {
-  try {
-    const metaConfig = await getMetaConfig();
-
-    if (!metaConfig) {
-      return res.status(404).json({
-        success: false,
-        error: 'No hay configuración de Meta guardada'
-      });
-    }
-
-    if (!metaConfig.pixel_api_token) {
-      return res.status(404).json({
-        success: false,
-        error: 'No hay Pixel API Token guardado'
-      });
-    }
-
-    res.json({
-      success: true,
-      pixelApiToken: metaConfig.pixel_api_token
-    });
-
-  } catch (error) {
-    logger.error(`Error en revealMetaPixelApiToken: ${error.message}`);
-    res.status(500).json({
-      success: false,
-      error: 'Error al revelar el Pixel API Token de Meta'
     });
   }
 };
@@ -2918,7 +2880,6 @@ export const getMetaCustomValues = async (req, res) => {
         metaCustomValues.pixelId ||
         metaCustomValues.pageId ||
         metaCustomValues.instagramAccountId ||
-        metaCustomValues.pixelApiToken ||
         metaCustomValues.whatsappBusinessAccountId
       )) {
         return res.json({
@@ -2956,7 +2917,6 @@ export const getMetaCustomValues = async (req, res) => {
         pixelId: '',
         pageId: '',
         instagramAccountId: '',
-        pixelApiToken: '',
         whatsappBusinessAccountId: ''
       },
       source: 'empty'
@@ -2977,7 +2937,7 @@ export const getMetaCustomValues = async (req, res) => {
  */
 export const saveAndSyncMeta = async (req, res) => {
   try {
-    const { adAccountId, accessToken, pixelId, pageId, instagramAccountId, pixelApiToken, whatsappBusinessAccountId } = req.body;
+    const { adAccountId, accessToken, pixelId, pageId, instagramAccountId, whatsappBusinessAccountId } = req.body;
 
     logger.info('Guardando credenciales de Meta Business...');
 
@@ -2997,9 +2957,6 @@ export const saveAndSyncMeta = async (req, res) => {
     const effectiveAccessToken = isMaskedSecret(accessToken)
       ? existingMetaConfig?.access_token
       : accessToken;
-    const effectivePixelApiToken = isMaskedSecret(pixelApiToken)
-      ? existingMetaConfig?.pixel_api_token
-      : pixelApiToken;
 
     if (!effectiveAccessToken) {
       return res.status(400).json({
@@ -3057,7 +3014,7 @@ export const saveAndSyncMeta = async (req, res) => {
       normalizedAdAccountId,
       effectiveAccessToken,
       effectivePixelId || null,
-      cleanString(effectivePixelApiToken) || null,
+      null,
       normalizedPageId || null,
       normalizedInstagramAccountId || null
     );
@@ -3086,7 +3043,6 @@ export const saveAndSyncMeta = async (req, res) => {
           pixelId: effectivePixelId || '',
           pageId: normalizedPageId || '',
           instagramAccountId: normalizedInstagramAccountId || '',
-          pixelApiToken: cleanString(effectivePixelApiToken) || '',
           whatsappBusinessAccountId: normalizedWhatsappBusinessAccountId || ''
         });
 
@@ -3562,98 +3518,6 @@ export const getSocialProfiles = async (req, res) => {
     res.status(400).json({
       success: false,
       error: error.message || 'Error al obtener perfiles sociales conectados'
-    });
-  }
-};
-
-/**
- * Guarda SOLO el Pixel API Token en la base de datos y en HighLevel Custom Values
- * POST /api/meta/save-pixel-token
- * Body: { pixelApiToken: 'xxx' }
- */
-export const savePixelToken = async (req, res) => {
-  try {
-    const { pixelApiToken } = req.body;
-
-    if (!pixelApiToken || pixelApiToken.trim() === '') {
-      return res.status(400).json({
-        success: false,
-        error: 'Se requiere pixelApiToken'
-      });
-    }
-
-    logger.info('Guardando Pixel API Token');
-
-    // 1. Verificar que exista configuración de Meta
-    const metaConfig = await getMetaConfig();
-
-    if (!metaConfig || !metaConfig.ad_account_id) {
-      return res.status(400).json({
-        success: false,
-        error: 'No hay configuración de Meta. Primero debes guardar Access Token y Ad Account.'
-      });
-    }
-
-    // 2. Primero actualizar en HighLevel Custom Values (si está configurado)
-    const hlConfig = await db.get('SELECT location_id, api_token FROM highlevel_config LIMIT 1');
-
-    if (hlConfig && hlConfig.location_id && hlConfig.api_token) {
-
-      try {
-        const { saveMetaCustomValues } = await import('../services/highlevelSyncService.js');
-
-        const credentialsToSave = {
-          adAccountId: metaConfig.ad_account_id,
-          accessToken: metaConfig.access_token,
-          pixelId: metaConfig.pixel_id || '',
-          pageId: metaConfig.page_id || '',
-          instagramAccountId: metaConfig.instagram_account_id || '',
-          pixelApiToken: pixelApiToken // Token fresco del request body
-        };
-
-        logger.info('Credenciales a guardar en HighLevel:');
-        logger.info(`  - adAccountId: ${credentialsToSave.adAccountId}`);
-        logger.info(`  - accessToken: ${credentialsToSave.accessToken ? 'presente (encriptado)' : 'VACÍO'}`);
-        logger.info(`  - pixelId: ${credentialsToSave.pixelId || 'vacío'}`);
-        logger.info(`  - pageId: ${credentialsToSave.pageId || 'vacío'}`);
-        logger.info(`  - pixelApiToken: ${credentialsToSave.pixelApiToken.substring(0, 20)}...`);
-
-        // Pasar DIRECTAMENTE el pixelApiToken del request (no del metaConfig)
-        const result = await saveMetaCustomValues(hlConfig.location_id, hlConfig.api_token, credentialsToSave);
-
-        logger.info('Resultado de saveMetaCustomValues:', JSON.stringify(result, null, 2));
-        logger.info('✅ Pixel API Token actualizado en HighLevel Custom Values');
-      } catch (hlError) {
-        logger.error(`❌ Error actualizando Pixel API Token en HighLevel: ${hlError.message}`);
-        logger.error('Stack:', hlError.stack);
-        // No fallar si HighLevel falla, continuar con DB
-      }
-    } else {
-      logger.warn('Sin integración opcional de HighLevel; se omite actualización de custom values externos.');
-    }
-
-    // 3. Actualizar en meta_config local
-    await saveMetaConfig(
-      metaConfig.ad_account_id,
-      metaConfig.access_token, // Mantener el access_token existente
-      metaConfig.pixel_id || null,
-      pixelApiToken, // Actualizar solo este campo
-      metaConfig.page_id || null,
-      metaConfig.instagram_account_id || null
-    );
-
-    logger.info('Pixel API Token guardado en base de datos local');
-
-    res.json({
-      success: true,
-      message: 'Pixel API Token guardado exitosamente'
-    });
-
-  } catch (error) {
-    logger.error(`Error en savePixelToken: ${error.message}`);
-    res.status(500).json({
-      success: false,
-      error: 'Error al guardar Pixel API Token'
     });
   }
 };

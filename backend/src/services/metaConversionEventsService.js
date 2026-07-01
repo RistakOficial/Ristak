@@ -2,7 +2,7 @@ import fetch from 'node-fetch'
 import { db, getAppConfig } from '../config/database.js'
 import { API_URLS } from '../config/constants.js'
 import { logger } from '../utils/logger.js'
-import { getMetaConfig } from './metaAdsService.js'
+import { getMetaConfig, resolveMetaCapiAccessToken } from './metaAdsService.js'
 import { getActiveMetaTestEventCode } from '../utils/metaTestCode.js'
 import { PAYMENT_MODE_LIVE, PAYMENT_MODE_TEST, normalizePaymentMode } from '../utils/paymentMode.js'
 import { buildPhoneMatchCandidates } from '../utils/phoneUtils.js'
@@ -1051,11 +1051,7 @@ async function getMetaCapiConfig() {
     process.env.DATASET_ID
   )
 
-  const accessToken = cleanString(
-    metaConfig?.pixel_api_token ||
-    process.env.META_ACCESS_TOKEN ||
-    metaConfig?.access_token
-  )
+  const accessToken = cleanString(resolveMetaCapiAccessToken(metaConfig))
 
   const testEventCode = cleanString(await getActiveMetaTestEventCode())
 
@@ -1314,7 +1310,7 @@ async function sendMetaWhatsappEvent({
       metaEventName,
       eventId,
       status: 'error',
-      errorMessage: 'Falta META_PIXEL_ID/DATASET_ID o META_ACCESS_TOKEN/Pixel API Token'
+      errorMessage: 'Falta META_PIXEL_ID/DATASET_ID o System User Access Token'
     })
     return { sent: false, reason: 'missing_meta_config' }
   }
@@ -1441,7 +1437,7 @@ async function sendMetaSiteEvent({
       metaEventName,
       eventId,
       status: 'error',
-      errorMessage: 'Falta META_PIXEL_ID/DATASET_ID o META_ACCESS_TOKEN/Pixel API Token'
+      errorMessage: 'Falta META_PIXEL_ID/DATASET_ID o System User Access Token'
     })
     return { sent: false, reason: 'missing_meta_config' }
   }

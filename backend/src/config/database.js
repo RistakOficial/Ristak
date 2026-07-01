@@ -3847,7 +3847,8 @@ async function initTables() {
         }
       }
 
-      // Agregar columna pixel_api_token a meta_config (Conversions API Token)
+      // Columna legacy: Ristak ya no usa Pixel API Token para CAPI; se conserva
+      // para no romper instalaciones antiguas ni migraciones existentes.
       try {
         await db.run('ALTER TABLE meta_config ADD COLUMN pixel_api_token TEXT')
       } catch (err) {

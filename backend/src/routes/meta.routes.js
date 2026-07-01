@@ -3,7 +3,6 @@ import {
   saveConfig,
   getConfig,
   revealMetaToken,
-  revealMetaPixelApiToken,
   getMetaWebhookInfo,
   syncAds,
   getSyncProgressEndpoint,
@@ -27,7 +26,6 @@ import {
   getPages,
   getSocialProfiles,
   deleteMetaConfig,
-  savePixelToken,
   sendMetaTestEvent,
   createMetaPixelTestLink,
   subscribeMetaSocialMessaging,
@@ -56,7 +54,6 @@ router.post('/config', saveConfig)
 router.get('/config', getConfig)
 router.delete('/config', deleteMetaConfig)
 router.get('/config/reveal/access_token', revealMetaToken)
-router.get('/config/reveal/pixel_api_token', revealMetaPixelApiToken)
 router.get('/webhook-info', getMetaWebhookInfo)
 router.get('/verify-token', verifyToken)
 // Suscribir la Página al webhook de mensajería (Messenger/Instagram DM)
@@ -74,7 +71,6 @@ router.get('/social-profiles', getSocialProfiles)
 // Custom Values de HighLevel
 router.get('/custom-values', getMetaCustomValues)
 router.post('/save-and-sync', saveAndSyncMeta)
-router.post('/save-pixel-token', savePixelToken)
 
 // Sincronización
 router.post('/sync', syncAds)

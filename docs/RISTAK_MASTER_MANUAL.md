@@ -386,6 +386,10 @@ Ristak usa Meta en varias areas:
 - Meta Ads config y sync.
 - Dataset Test en la UI de Configuracion > Meta; las rutas internas pueden
   conservar `pixel` por contrato con Meta y tracking.
+- Conversions API usa siempre el System User Access Token guardado en
+  `meta_config.access_token` (o `META_ACCESS_TOKEN` como fallback). El campo
+  `meta_config.pixel_api_token` queda como legacy ignorado y no debe pedirse,
+  generarse ni sincronizarse.
 - Social messaging.
 - Business Messaging events.
 - Campaign Builder en modo preview/validacion segun entorno.
@@ -560,7 +564,7 @@ Registro de ubicacion:
 | Base de datos produccion | `DATABASE_URL` | Si en Render/Postgres | SQLite local si no existe |
 | URL publica/CORS | `APP_URL`, `PUBLIC_URL`, `RENDER_EXTERNAL_URL`, `CORS_ALLOWED_ORIGINS` | No siempre | Necesaria para webhooks y links correctos |
 | HighLevel | `highlevel_config` y servicios HighLevel | No | Tokens deben estar cifrados o gestionados internamente |
-| Meta Ads/Dataset | `meta_config`, `app_config`, env fallback | No | `meta_test_event_code` activa Test Events |
+| Meta Ads/Dataset | `meta_config`, `app_config`, env fallback | No | CAPI usa System User Token; `meta_test_event_code` activa Test Events |
 | Pagos | config interna de pagos y metadata por provider | No | Modo `test/live` debe persistir por pago |
 | Bunny/media | `storage_settings`, env fallback, licencia central | No | API keys nunca en docs |
 | Push web/movil | env VAPID/FCM/APNS o configuracion segura | No | Provider puede exigir secrets externos |

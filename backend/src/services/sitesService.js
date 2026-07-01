@@ -35,7 +35,7 @@ import {
   findMediaAssetsByBunnyStreamVideoIds,
   findMediaAssetsByPublicUrls
 } from './mediaStorageService.js'
-import { getMetaConfig } from './metaAdsService.js'
+import { getMetaConfig, resolveMetaCapiAccessToken } from './metaAdsService.js'
 import { createSession, getVisitorIdentityExpression, linkVisitorToContact, unifyVisitorIds } from './trackingService.js'
 import {
   buildMetaBrowserUserData,
@@ -25209,7 +25209,7 @@ async function sendSiteLeadMetaEvent({ site, submissionId, submittedPageId, cont
     return null
   })
   const datasetId = cleanString(metaConfig?.pixel_id || process.env.META_PIXEL_ID || process.env.META_DATASET_ID)
-  const accessToken = cleanString(metaConfig?.pixel_api_token || process.env.META_ACCESS_TOKEN || metaConfig?.access_token)
+  const accessToken = cleanString(resolveMetaCapiAccessToken(metaConfig))
 
   if (!datasetId || !accessToken) {
     await logMetaEvent({
@@ -25218,7 +25218,7 @@ async function sendSiteLeadMetaEvent({ site, submissionId, submittedPageId, cont
       metaEventName: eventName,
       eventId,
       status: 'skipped',
-      errorMessage: 'Falta Pixel/Dataset ID o Pixel API Token de Meta'
+      errorMessage: 'Falta Pixel/Dataset ID o System User Access Token de Meta'
     })
     return { sent: false, reason: 'missing_meta_config', eventId, eventName }
   }
@@ -25350,7 +25350,7 @@ async function sendSitePageMetaEvent({ site, page, eventName, eventId, contactId
     return null
   })
   const datasetId = cleanString(metaConfig?.pixel_id || process.env.META_PIXEL_ID || process.env.META_DATASET_ID)
-  const accessToken = cleanString(metaConfig?.pixel_api_token || process.env.META_ACCESS_TOKEN || metaConfig?.access_token)
+  const accessToken = cleanString(resolveMetaCapiAccessToken(metaConfig))
 
   if (!datasetId || !accessToken) {
     await logMetaEvent({
@@ -25359,7 +25359,7 @@ async function sendSitePageMetaEvent({ site, page, eventName, eventId, contactId
       metaEventName: eventName,
       eventId,
       status: 'skipped',
-      errorMessage: 'Falta Pixel/Dataset ID o Pixel API Token de Meta'
+      errorMessage: 'Falta Pixel/Dataset ID o System User Access Token de Meta'
     })
     return { sent: false, reason: 'missing_meta_config', eventId, eventName }
   }
@@ -25482,7 +25482,7 @@ export async function sendCalendarBookingSiteMetaEvent({ calendar, appointment, 
     return null
   })
   const datasetId = cleanString(metaConfig?.pixel_id || process.env.META_PIXEL_ID || process.env.META_DATASET_ID)
-  const accessToken = cleanString(metaConfig?.pixel_api_token || process.env.META_ACCESS_TOKEN || metaConfig?.access_token)
+  const accessToken = cleanString(resolveMetaCapiAccessToken(metaConfig))
 
   if (!datasetId || !accessToken) {
     await logMetaEvent({
@@ -25491,7 +25491,7 @@ export async function sendCalendarBookingSiteMetaEvent({ calendar, appointment, 
       metaEventName: config.eventName,
       eventId,
       status: 'skipped',
-      errorMessage: 'Falta Pixel/Dataset ID o Pixel API Token de Meta'
+      errorMessage: 'Falta Pixel/Dataset ID o System User Access Token de Meta'
     })
     return { sent: false, reason: 'missing_meta_config', eventId, eventName: config.eventName }
   }
@@ -25622,7 +25622,7 @@ async function sendSiteVideoActionMetaEvent({ site, block, rule, eventName, para
     return null
   })
   const datasetId = cleanString(metaConfig?.pixel_id || process.env.META_PIXEL_ID || process.env.META_DATASET_ID)
-  const accessToken = cleanString(metaConfig?.pixel_api_token || process.env.META_ACCESS_TOKEN || metaConfig?.access_token)
+  const accessToken = cleanString(resolveMetaCapiAccessToken(metaConfig))
 
   if (!datasetId || !accessToken) {
     await logMetaEvent({
@@ -25631,7 +25631,7 @@ async function sendSiteVideoActionMetaEvent({ site, block, rule, eventName, para
       metaEventName: eventName,
       eventId,
       status: 'skipped',
-      errorMessage: 'Falta Pixel/Dataset ID o Pixel API Token de Meta'
+      errorMessage: 'Falta Pixel/Dataset ID o System User Access Token de Meta'
     })
     return { sent: false, reason: 'missing_meta_config', eventId, eventName }
   }

@@ -14,7 +14,6 @@ interface MetaCredentials {
   pixelId: string
   pageId: string
   instagramAccountId: string
-  pixelApiToken: string
 }
 
 interface AdAccount {
@@ -112,8 +111,7 @@ export const MetaAdsIntegration: React.FC = () => {
     accessToken: '',
     pixelId: '',
     pageId: '',
-    instagramAccountId: '',
-    pixelApiToken: ''
+    instagramAccountId: ''
   })
   const [adAccounts, setAdAccounts] = useState<AdAccount[]>([])
   const [pixels, setPixels] = useState<Pixel[]>([])
@@ -460,8 +458,7 @@ export const MetaAdsIntegration: React.FC = () => {
         accessToken: '',
         pixelId: '',
         pageId: '',
-        instagramAccountId: '',
-        pixelApiToken: ''
+        instagramAccountId: ''
       })
       setRealAccessToken('')
       setAdAccounts([])
@@ -475,16 +472,14 @@ export const MetaAdsIntegration: React.FC = () => {
       setCredentials(prev => ({
         ...prev,
         adAccountId: '',
-        pixelId: '',
-        pixelApiToken: ''
+        pixelId: ''
       }))
       setPixels([])
       goToMetaStep(1, { replace: true })
     } else if (field === 'pixelId') {
       setCredentials(prev => ({
         ...prev,
-        pixelId: '',
-        pixelApiToken: ''
+        pixelId: ''
       }))
       goToMetaStep(2, { replace: true })
     } else if (field === 'pageId') {
@@ -496,8 +491,6 @@ export const MetaAdsIntegration: React.FC = () => {
       setCredentials(prev => ({ ...prev, instagramAccountId: '' }))
       setSavedInstagramAccountId('')
       void setInstagramMessagingEnabled(false)
-    } else if (field === 'pixelApiToken') {
-      setCredentials(prev => ({ ...prev, pixelApiToken: '' }))
     } else {
       setCredentials(prev => ({ ...prev, [field]: '' }))
     }
@@ -585,8 +578,7 @@ export const MetaAdsIntegration: React.FC = () => {
       accessToken: '',
       pixelId: '',
       pageId: '',
-      instagramAccountId: '',
-      pixelApiToken: ''
+      instagramAccountId: ''
     })
     setAdAccounts([])
     setPixels([])
@@ -646,8 +638,7 @@ export const MetaAdsIntegration: React.FC = () => {
           accessToken: realAccessToken || credentials.accessToken,
           pixelId: credentials.pixelId,
           pageId: credentials.pageId,
-          instagramAccountId: credentials.instagramAccountId,
-          pixelApiToken: ''
+          instagramAccountId: credentials.instagramAccountId
         })
       })
 
@@ -682,8 +673,7 @@ export const MetaAdsIntegration: React.FC = () => {
           accessToken: realAccessToken || credentials.accessToken,
           pixelId: pixel.id,
           pageId: credentials.pageId,
-          instagramAccountId: credentials.instagramAccountId,
-          pixelApiToken: ''
+          instagramAccountId: credentials.instagramAccountId
         })
       })
 
@@ -723,8 +713,7 @@ export const MetaAdsIntegration: React.FC = () => {
           accessToken: realAccessToken || credentials.accessToken,
           pixelId: credentials.pixelId || '',
           pageId,
-          instagramAccountId: credentials.instagramAccountId || '',
-          pixelApiToken: credentials.pixelApiToken || ''
+          instagramAccountId: credentials.instagramAccountId || ''
         })
       })
 
@@ -774,8 +763,7 @@ export const MetaAdsIntegration: React.FC = () => {
           accessToken: realAccessToken || credentials.accessToken,
           pixelId: credentials.pixelId || '',
           pageId: credentials.pageId || savedPageId || '',
-          instagramAccountId,
-          pixelApiToken: credentials.pixelApiToken || ''
+          instagramAccountId
         })
       })
 

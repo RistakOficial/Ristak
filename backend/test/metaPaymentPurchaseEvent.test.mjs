@@ -96,7 +96,7 @@ async function insertMetaPixelConfig({
     '123456',
     encrypt('meta-access-token'),
     pixelId,
-    encrypt('pixel-api-token'),
+    encrypt('legacy-pixel-api-token'),
     pageId,
     null,
     null,
@@ -153,7 +153,7 @@ test('payment Purchase CAPI event uses real payment amount and account currency'
           '123456',
           encrypt('meta-access-token'),
           'pixel-payment-123',
-          encrypt('pixel-api-token'),
+          encrypt('legacy-pixel-api-token'),
           null,
           null,
           null,
@@ -218,6 +218,8 @@ test('payment Purchase CAPI event uses real payment amount and account currency'
 
         assert.equal(result.sent, true)
         assert.equal(metaCalls.length, 1)
+        assert.match(decodeURIComponent(metaCalls[0].url), /access_token=meta-access-token/)
+        assert.doesNotMatch(decodeURIComponent(metaCalls[0].url), /legacy-pixel-api-token/)
 
         const payload = JSON.parse(metaCalls[0].body)
         assert.equal(payload.data[0].event_name, 'Purchase')

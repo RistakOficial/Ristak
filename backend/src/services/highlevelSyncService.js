@@ -42,7 +42,6 @@ const META_CUSTOM_VALUE_FIELDS = [
   { key: 'pixelId', names: ['Facebook - Pixel ID', 'pixel_id'] },
   { key: 'pageId', names: ['Facebook - Page ID'] },
   { key: 'instagramAccountId', names: ['Facebook - Instagram Account ID', 'Instagram Account ID'] },
-  { key: 'pixelApiToken', names: ['Facebook - Pixel API Token'], secret: true },
   { key: 'whatsappBusinessAccountId', names: ['Facebook - WhatsApp Business Account ID', 'WhatsApp Business Account ID', 'WABA ID'] }
 ]
 const HIGHLEVEL_CONVERSATION_BACKGROUND_THRESHOLD = 100
@@ -309,7 +308,6 @@ function buildLocalMetaCredentials(metaConfig = {}, whatsappBusinessAccountId = 
     pixelId: cleanString(metaConfig.pixel_id),
     pageId: cleanString(metaConfig.page_id),
     instagramAccountId: cleanString(metaConfig.instagram_account_id),
-    pixelApiToken: cleanString(metaConfig.pixel_api_token),
     whatsappBusinessAccountId: cleanString(whatsappBusinessAccountId)
   }
 }
@@ -322,7 +320,6 @@ function maskMetaCredentials(credentials = {}) {
     pixelId: cleanString(credentials.pixelId),
     pageId: cleanString(credentials.pageId),
     instagramAccountId: cleanString(credentials.instagramAccountId),
-    pixelApiToken: maskSecret(credentials.pixelApiToken),
     whatsappBusinessAccountId: cleanString(credentials.whatsappBusinessAccountId)
   }
 }
@@ -336,7 +333,6 @@ function mergeMetaCredentials(primary = {}, fallback = {}) {
     pixelId: cleanString(primary.pixelId || fallback.pixelId),
     pageId: cleanString(primary.pageId || fallback.pageId),
     instagramAccountId: cleanString(primary.instagramAccountId || fallback.instagramAccountId),
-    pixelApiToken: cleanString(primary.pixelApiToken || fallback.pixelApiToken),
     whatsappBusinessAccountId: cleanString(primary.whatsappBusinessAccountId || fallback.whatsappBusinessAccountId)
   }
 }
@@ -344,7 +340,7 @@ function mergeMetaCredentials(primary = {}, fallback = {}) {
 function credentialsMissingValues(target = {}, source = {}) {
   target = target || {}
   source = source || {}
-  return ['pixelId', 'pageId', 'instagramAccountId', 'pixelApiToken', 'whatsappBusinessAccountId'].some(key =>
+  return ['pixelId', 'pageId', 'instagramAccountId', 'whatsappBusinessAccountId'].some(key =>
     !cleanString(target[key]) && cleanString(source[key])
   )
 }
@@ -1679,7 +1675,7 @@ export async function saveMetaCustomValues(locationId, apiToken, metaCredentials
     const data = await getResponse.json()
     const existingCustomValues = data.customValues || []
 
-    // Mapeo de campos (System User - solo necesita Access Token + Ad Account + Pixel + Page ID + Pixel API Token)
+    // Mapeo de campos: System User Token es la única credencial usada por Meta CAPI.
     const fieldsToSave = META_CUSTOM_VALUE_FIELDS.map(field => ({
       key: field.key,
       name: field.names[0],
@@ -1854,7 +1850,7 @@ export async function reconcileMetaBusinessWithHighLevel(locationId, apiToken, o
         credentialsToSave.adAccountId,
         credentialsToSave.accessToken,
         credentialsToSave.pixelId || null,
-        credentialsToSave.pixelApiToken || null,
+        null,
         credentialsToSave.pageId || null,
         credentialsToSave.instagramAccountId || null
       )
@@ -1883,7 +1879,7 @@ export async function reconcileMetaBusinessWithHighLevel(locationId, apiToken, o
         // Nunca se pisan campos que el usuario ya configuró. Dejamos aviso
         // explícito de qué campos opcionales se completaron desde HighLevel para
         // que la escritura en meta_config no sea silenciosa en cada corrida.
-        const filledFields = ['pixelId', 'pageId', 'instagramAccountId', 'pixelApiToken', 'whatsappBusinessAccountId']
+        const filledFields = ['pixelId', 'pageId', 'instagramAccountId', 'whatsappBusinessAccountId']
           .filter(key => !cleanString(localCredentials[key]) && cleanString(highLevelCredentials[key]))
         logger.info(`GHL-009: Se completan campos faltantes de Meta local desde HighLevel (sin sobrescribir lo configurado): ${filledFields.join(', ') || 'ninguno'}`)
         const mergedLocal = mergeMetaCredentials(localCredentials, highLevelCredentials)
@@ -1891,7 +1887,7 @@ export async function reconcileMetaBusinessWithHighLevel(locationId, apiToken, o
           mergedLocal.adAccountId,
           mergedLocal.accessToken,
           mergedLocal.pixelId || null,
-          mergedLocal.pixelApiToken || null,
+          null,
           mergedLocal.pageId || null,
           mergedLocal.instagramAccountId || null
         )
@@ -1937,7 +1933,7 @@ export async function reconcileMetaBusinessWithHighLevel(locationId, apiToken, o
         credentialsToSave.adAccountId,
         credentialsToSave.accessToken,
         credentialsToSave.pixelId || null,
-        credentialsToSave.pixelApiToken || null,
+        null,
         credentialsToSave.pageId || null,
         credentialsToSave.instagramAccountId || null
       )
@@ -1987,7 +1983,7 @@ export async function fetchAndSaveMetaConfig(locationId, apiToken) {
     const maskedCredentials = maskMetaCredentials(rawCredentials)
 
     // Debug: Ver qué valores se encontraron
-    logger.info(`Valores encontrados - AdAccountId: ${rawCredentials.adAccountId ? 'SÍ' : 'NO'}, AccessToken: ${rawCredentials.accessToken ? 'SÍ' : 'NO'}, PixelId: ${rawCredentials.pixelId ? 'SÍ' : 'NO'}, PageId: ${rawCredentials.pageId ? 'SÍ' : 'NO'}, Instagram: ${rawCredentials.instagramAccountId ? 'SÍ' : 'NO'}, PixelApiToken: ${rawCredentials.pixelApiToken ? 'SÍ' : 'NO'}, WABA: ${rawCredentials.whatsappBusinessAccountId ? 'SÍ' : 'NO'}`)
+    logger.info(`Valores encontrados - AdAccountId: ${rawCredentials.adAccountId ? 'SÍ' : 'NO'}, AccessToken: ${rawCredentials.accessToken ? 'SÍ' : 'NO'}, PixelId: ${rawCredentials.pixelId ? 'SÍ' : 'NO'}, PageId: ${rawCredentials.pageId ? 'SÍ' : 'NO'}, Instagram: ${rawCredentials.instagramAccountId ? 'SÍ' : 'NO'}, WABA: ${rawCredentials.whatsappBusinessAccountId ? 'SÍ' : 'NO'}`)
 
     if (rawCredentials.whatsappBusinessAccountId) {
       await setAppConfig('meta_whatsapp_business_account_id', rawCredentials.whatsappBusinessAccountId)
