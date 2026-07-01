@@ -35,7 +35,8 @@ import {
   Workflow,
   X
 } from 'lucide-react'
-import { FaFacebookMessenger, FaInstagram, FaWhatsapp } from 'react-icons/fa'
+import { FaFacebook, FaFacebookMessenger, FaInstagram, FaWhatsapp } from 'react-icons/fa'
+import { useAppConfig } from '@/hooks'
 import { useLocation } from 'react-router-dom'
 import {
   AppointmentModal,
@@ -122,7 +123,7 @@ type DraftAttachmentKind = 'image' | 'document'
 type InfoPanelView = 'summary' | 'journey'
 type BulkChatConfirmAction = 'archive' | 'remove'
 type BulkAgentSelectionAction = Extract<ConversationStateAction, 'activate' | 'pause' | 'take_over' | 'skip'>
-type ContactChannelBadgeKind = 'whatsapp' | 'messenger' | 'instagram' | 'email' | 'sms' | 'webchat' | 'meta'
+type ContactChannelBadgeKind = 'whatsapp' | 'messenger' | 'instagram' | 'email' | 'sms' | 'webchat' | 'meta' | 'facebook_comment' | 'instagram_comment'
 type SchedulePeriod = 'AM' | 'PM'
 type TemplatePanelMode = 'choice' | 'select' | 'create'
 type ComposerChannel = 'whatsapp' | 'messenger' | 'instagram' | 'email'
@@ -702,8 +703,28 @@ function getContactChannelKind(contact: DesktopChatContact): AdvancedChannelFilt
   return ''
 }
 
+// Un chat es "comentario" cuando su último mensaje es de tipo comment (llega de
+// feed de Facebook o del objeto de comentarios de Instagram). Los comentarios NO
+// se mezclan con los DMs: viven en su propia vista de filtro.
+function isCommentContact(contact?: DesktopChatContact | Contact | null): boolean {
+  const record = contact as unknown as Record<string, unknown>
+  return String(record?.lastMessageType || '').toLowerCase() === 'comment'
+}
+
+function getCommentPlatform(contact?: DesktopChatContact | Contact | null): 'facebook' | 'instagram' {
+  const record = contact as unknown as Record<string, unknown>
+  const channel = String(record?.lastMessageChannel || '').toLowerCase()
+  return channel.includes('instagram') ? 'instagram' : 'facebook'
+}
+
 function getContactChannelBadge(contact?: DesktopChatContact | Contact | null): ContactChannelBadge | null {
   if (!contact) return null
+
+  if (isCommentContact(contact)) {
+    return getCommentPlatform(contact) === 'instagram'
+      ? { kind: 'instagram_comment', label: 'Comentario de Instagram' }
+      : { kind: 'facebook_comment', label: 'Comentario de Facebook' }
+  }
 
   const channel = getContactChannelKind(contact as DesktopChatContact)
   const social = getContactSocialKind(contact as DesktopChatContact)
@@ -723,6 +744,8 @@ function getContactChannelBadge(contact?: DesktopChatContact | Contact | null): 
 }
 
 function getAvatarChannelBadgeClass(kind: ContactChannelBadgeKind) {
+  if (kind === 'facebook_comment') return styles.avatarChannelBadgeFacebookComment
+  if (kind === 'instagram_comment') return styles.avatarChannelBadgeInstagramComment
   if (kind === 'instagram') return styles.avatarChannelBadgeInstagram
   if (kind === 'messenger') return styles.avatarChannelBadgeMessenger
   if (kind === 'email') return styles.avatarChannelBadgeEmail
@@ -2115,6 +2138,11 @@ export const DesktopChat: React.FC = () => {
   const [chatsError, setChatsError] = useState('')
   const [chatQuery, setChatQuery] = useState('')
   const [chatFilter, setChatFilter] = useState<ChatFilter>('all')
+  const [commentsView, setCommentsView] = useState(false)
+  const [commentsPlatform, setCommentsPlatform] = useState<'all' | 'facebook' | 'instagram'>('all')
+  const [facebookCommentsEnabled] = useAppConfig('meta_facebook_comments_enabled', false)
+  const [instagramCommentsEnabled] = useAppConfig('meta_instagram_comments_enabled', false)
+  const commentsFeatureEnabled = facebookCommentsEnabled === true || instagramCommentsEnabled === true
   const [advancedFilters, setAdvancedFilters] = useState<AdvancedChatFilters>(DEFAULT_ADVANCED_FILTERS)
   const [advancedFiltersOpen, setAdvancedFiltersOpen] = useState(false)
   const [archivedViewOpen, setArchivedViewOpen] = useState(false)
@@ -2373,13 +2401,24 @@ export const DesktopChat: React.FC = () => {
       .filter((contact) => (isChatQueryActive ? true : contactMatchesQuery(contact, normalizedChatQuery)))
       .filter((contact) => contactMatchesAdvancedFilters(contact, advancedFilters))
       .filter((contact) => {
+        const isComment = isCommentContact(contact)
+        // La vista de Comentarios es aparte: solo comentarios, opcionalmente por
+        // red social. Los mensajes/DMs no se mezclan aquí.
+        if (commentsView) {
+          if (!isComment) return false
+          if (commentsPlatform === 'facebook') return getCommentPlatform(contact) === 'facebook'
+          if (commentsPlatform === 'instagram') return getCommentPlatform(contact) === 'instagram'
+          return true
+        }
+        // Vista normal de mensajes: nunca mostrar comentarios.
+        if (isComment) return false
         if (chatFilter === 'agent') return true
         if (chatFilter === 'unread') return Number(contact.unreadCount || 0) > 0
         if (chatFilter === 'appointments') return Boolean(contact.hasAppointments || contact.nextAppointmentDate)
         if (chatFilter === 'customers') return contact.status === 'customer'
         return true
       })
-  }, [advancedFilters, chatFilter, isChatQueryActive, normalizedChatQuery, listBaseChats])
+  }, [advancedFilters, chatFilter, commentsView, commentsPlatform, isChatQueryActive, normalizedChatQuery, listBaseChats])
   const agentPriorityChatRows = useMemo(() => {
     if (archivedViewOpen || chatFilter !== 'all' || isChatQueryActive || activeAdvancedFilterCount > 0) return []
     return visibleChatsForList
@@ -5476,6 +5515,8 @@ export const DesktopChat: React.FC = () => {
     if (kind === 'whatsapp') return <FaWhatsapp className={styles.avatarChannelBadgeBrandIcon} aria-hidden="true" />
     if (kind === 'messenger') return <FaFacebookMessenger className={styles.avatarChannelBadgeBrandIcon} aria-hidden="true" />
     if (kind === 'instagram') return <FaInstagram className={styles.avatarChannelBadgeBrandIcon} aria-hidden="true" />
+    if (kind === 'facebook_comment') return <FaFacebook className={styles.avatarChannelBadgeBrandIcon} aria-hidden="true" />
+    if (kind === 'instagram_comment') return <FaInstagram className={styles.avatarChannelBadgeBrandIcon} aria-hidden="true" />
     if (kind === 'email') return <Mail size={iconSize} />
     if (kind === 'sms') return <Phone size={iconSize} />
     if (kind === 'webchat') return <Icon name="globe" size={iconSize} />
@@ -5891,18 +5932,57 @@ export const DesktopChat: React.FC = () => {
 
           <div className={`${styles.chatFilterStack} ${advancedFiltersOpen ? styles.chatFilterStackOpen : ''}`}>
             <div className={styles.filterRow} role="tablist" aria-label="Filtros de chat">
-              <button
-                type="button"
-                className={`${styles.filterToolButton} ${advancedFiltersOpen || activeAdvancedFilterCount > 0 ? styles.filterActive : ''}`}
-                onClick={() => setAdvancedFiltersOpen((current) => !current)}
-                aria-expanded={advancedFiltersOpen}
-                aria-label="Modificar filtros"
-              >
-                <ListFilter size={14} />
-                <span>Filtros</span>
-                {activeAdvancedFilterCount > 0 ? <strong>{activeAdvancedFilterCount}</strong> : null}
-              </button>
-              {agentAssignedViewOpen ? (
+              {!commentsView ? (
+                <button
+                  type="button"
+                  className={`${styles.filterToolButton} ${advancedFiltersOpen || activeAdvancedFilterCount > 0 ? styles.filterActive : ''}`}
+                  onClick={() => setAdvancedFiltersOpen((current) => !current)}
+                  aria-expanded={advancedFiltersOpen}
+                  aria-label="Modificar filtros"
+                >
+                  <ListFilter size={14} />
+                  <span>Filtros</span>
+                  {activeAdvancedFilterCount > 0 ? <strong>{activeAdvancedFilterCount}</strong> : null}
+                </button>
+              ) : null}
+              {commentsView ? (
+                <>
+                  <button
+                    type="button"
+                    className={`${styles.filterCommentsChip} ${styles.filterCommentsChipActive}`}
+                    onClick={() => setCommentsView(false)}
+                    aria-pressed
+                  >
+                    Comentarios
+                  </button>
+                  <span className={styles.filterSeparator} aria-hidden="true" />
+                  <button
+                    type="button"
+                    className={`${styles.filterCommentsPlatform} ${commentsPlatform === 'all' ? styles.filterActive : ''}`}
+                    onClick={() => setCommentsPlatform('all')}
+                  >
+                    Todas
+                  </button>
+                  {facebookCommentsEnabled === true ? (
+                    <button
+                      type="button"
+                      className={`${styles.filterCommentsPlatform} ${commentsPlatform === 'facebook' ? styles.filterActive : ''}`}
+                      onClick={() => setCommentsPlatform('facebook')}
+                    >
+                      Facebook
+                    </button>
+                  ) : null}
+                  {instagramCommentsEnabled === true ? (
+                    <button
+                      type="button"
+                      className={`${styles.filterCommentsPlatform} ${commentsPlatform === 'instagram' ? styles.filterActive : ''}`}
+                      onClick={() => setCommentsPlatform('instagram')}
+                    >
+                      Instagram
+                    </button>
+                  ) : null}
+                </>
+              ) : agentAssignedViewOpen ? (
                 AGENT_INBOX_STATUS_FILTERS.map((filter) => (
                   <button
                     key={filter.id}
@@ -5915,19 +5995,37 @@ export const DesktopChat: React.FC = () => {
                   </button>
                 ))
               ) : (
-                CHAT_FILTERS.map((filter) => (
-                  <button
-                    key={filter.id}
-                    type="button"
-                    className={filter.id === chatFilter ? styles.filterActive : ''}
-                    onClick={() => {
-                      setArchivedViewOpen(false)
-                      setChatFilter(filter.id)
-                    }}
-                  >
-                    {filter.label}
-                  </button>
-                ))
+                <>
+                  {CHAT_FILTERS.map((filter) => (
+                    <button
+                      key={filter.id}
+                      type="button"
+                      className={filter.id === chatFilter ? styles.filterActive : ''}
+                      onClick={() => {
+                        setArchivedViewOpen(false)
+                        setChatFilter(filter.id)
+                      }}
+                    >
+                      {filter.label}
+                    </button>
+                  ))}
+                  {commentsFeatureEnabled ? (
+                    <>
+                      <span className={styles.filterSeparator} aria-hidden="true" />
+                      <button
+                        type="button"
+                        className={styles.filterCommentsChip}
+                        onClick={() => {
+                          setArchivedViewOpen(false)
+                          setCommentsPlatform('all')
+                          setCommentsView(true)
+                        }}
+                      >
+                        Comentarios
+                      </button>
+                    </>
+                  ) : null}
+                </>
               )}
             </div>
 

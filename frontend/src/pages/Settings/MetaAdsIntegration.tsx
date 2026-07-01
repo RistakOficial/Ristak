@@ -341,6 +341,8 @@ export const MetaAdsIntegration: React.FC = () => {
   const [includeMetaPixel, setIncludeMetaPixel, savingPixelPref] = useAppConfig('include_meta_pixel', true)
   const [messengerMessagingEnabled, setMessengerMessagingEnabled, savingMessengerMessaging] = useAppConfig('meta_messenger_messaging_enabled', false)
   const [instagramMessagingEnabled, setInstagramMessagingEnabled, savingInstagramMessaging] = useAppConfig('meta_instagram_messaging_enabled', false)
+  const [facebookCommentsEnabled, setFacebookCommentsEnabled, savingFacebookComments] = useAppConfig('meta_facebook_comments_enabled', false)
+  const [instagramCommentsEnabled, setInstagramCommentsEnabled, savingInstagramComments] = useAppConfig('meta_instagram_comments_enabled', false)
   const [metaTestEventCode, setMetaTestEventCode, savingMetaTestEventCode] = useAppConfig('meta_test_event_code', '')
   const [metaTestEventCodeSetAt, setMetaTestEventCodeSetAt] = useAppConfig('meta_test_event_code_set_at', '')
 
@@ -1350,6 +1352,26 @@ export const MetaAdsIntegration: React.FC = () => {
     }
   }
 
+  const handleToggleMetaComments = async (platform: 'facebook' | 'instagram', newValue: boolean) => {
+    const label = platform === 'instagram' ? 'Comentarios de Instagram' : 'Comentarios de Facebook'
+    try {
+      if (platform === 'instagram') {
+        await setInstagramCommentsEnabled(newValue)
+      } else {
+        await setFacebookCommentsEnabled(newValue)
+      }
+      showToast(
+        'success',
+        `${label} ${newValue ? 'activados' : 'apagados'}`,
+        newValue
+          ? 'Ristak guardará los comentarios nuevos en la bandeja de chats.'
+          : 'Ristak dejará de guardar comentarios nuevos.'
+      )
+    } catch {
+      showToast('error', 'Error', 'No se pudo actualizar la preferencia de comentarios')
+    }
+  }
+
   const handleToggleMetaMessaging = async (platform: MetaMessagingPlatform, newValue: boolean) => {
     const isInstagram = platform === 'instagram'
     const platformLabel = isInstagram ? 'Instagram DM' : 'Messenger'
@@ -2161,6 +2183,65 @@ export const MetaAdsIntegration: React.FC = () => {
                       </div>
                     </div>
                   </div>
+
+                <div className={styles.commentsBlock}>
+                  <div className={styles.connectedPagesHeader}>
+                    <h4 className={styles.connectedPagesTitle}>Comentarios</h4>
+                    <p className={styles.connectedPagesDescription}>
+                      Recibe en la bandeja los comentarios de tus publicaciones y anuncios. Llegan aparte de los mensajes, en el filtro "Comentarios" del chat.
+                    </p>
+                  </div>
+
+                  <div className={styles.connectedPagesList}>
+                    <div className={[
+                      styles.connectedPageCard,
+                      !hasPageId ? styles.connectedPageCardLocked : ''
+                    ].filter(Boolean).join(' ')}>
+                      <span className={`${styles.connectedPageIcon} ${styles.connectedPageIconFacebook}`} aria-hidden="true">
+                        <Icon name="facebook" size={19} />
+                      </span>
+                      <div className={styles.connectedPageMain}>
+                        <strong>Comentarios de Facebook</strong>
+                        <span>{hasPageId ? getSelectedPageLabel() : 'Selecciona una Facebook Page'}</span>
+                      </div>
+                      <div className={styles.connectedPageControl}>
+                        <Badge variant={facebookCommentsEnabled ? 'success' : 'neutral'}>
+                          {facebookCommentsEnabled ? 'Activo' : 'Apagado'}
+                        </Badge>
+                        <Switch
+                          aria-label="Activar comentarios de Facebook"
+                          checked={facebookCommentsEnabled === true}
+                          onChange={(next) => handleToggleMetaComments('facebook', next)}
+                          disabled={!hasPageId || savingFacebookComments}
+                        />
+                      </div>
+                    </div>
+
+                    <div className={[
+                      styles.connectedPageCard,
+                      !hasInstagramAccount ? styles.connectedPageCardLocked : ''
+                    ].filter(Boolean).join(' ')}>
+                      <span className={`${styles.connectedPageIcon} ${styles.connectedPageIconInstagram}`} aria-hidden="true">
+                        <Icon name="instagram" size={19} />
+                      </span>
+                      <div className={styles.connectedPageMain}>
+                        <strong>Comentarios de Instagram</strong>
+                        <span>{hasInstagramAccount ? getSelectedInstagramLabel() : 'Selecciona una cuenta de Instagram'}</span>
+                      </div>
+                      <div className={styles.connectedPageControl}>
+                        <Badge variant={instagramCommentsEnabled ? 'success' : 'neutral'}>
+                          {instagramCommentsEnabled ? 'Activo' : 'Apagado'}
+                        </Badge>
+                        <Switch
+                          aria-label="Activar comentarios de Instagram"
+                          checked={instagramCommentsEnabled === true}
+                          onChange={(next) => handleToggleMetaComments('instagram', next)}
+                          disabled={!hasInstagramAccount || savingInstagramComments}
+                        />
+                      </div>
+                    </div>
+                  </div>
+                </div>
 
                 <div className={styles.webhookGuide}>
                   <div className={styles.connectedPagesHeader}>

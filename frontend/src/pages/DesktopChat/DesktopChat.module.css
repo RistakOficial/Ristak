@@ -312,6 +312,25 @@
   color: currentColor;
 }
 
+/* Separador entre los filtros de mensajes y el botón de Comentarios. */
+.filterSeparator {
+  flex: 0 0 auto;
+  align-self: center;
+  width: 1px;
+  height: 18px;
+  margin: 0 3px;
+  background: var(--border-strong);
+}
+
+/* El filtro "Comentarios" activa una VISTA aparte (no un filtro más de mensajes),
+   por eso usa un color distinto (info) al acento de los demás chips. */
+.filterRow button.filterCommentsChip.filterCommentsChipActive,
+.filterRow button.filterCommentsPlatform.filterActive {
+  border-color: var(--info);
+  background: var(--info-soft);
+  color: var(--info);
+}
+
 .filterToolButton strong {
   display: inline-flex;
   align-items: center;
@@ -962,6 +981,16 @@
 
 .avatarChannelBadgeMeta {
   background: #1877f2;
+}
+
+/* Comentarios: glifo de la red social pero fondo SÓLIDO (no el gradiente de los
+   DMs), para leerse como comentario y no confundirse con un mensaje directo. */
+.avatarChannelBadgeFacebookComment {
+  background: #1877f2;
+}
+
+.avatarChannelBadgeInstagramComment {
+  background: #d62976;
 }
 
 .avatarAgentBadge {
