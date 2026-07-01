@@ -2247,7 +2247,7 @@ export const MetaAdsIntegration: React.FC = () => {
                   <div className={styles.connectedPagesHeader}>
                     <h4 className={styles.connectedPagesTitle}>Conectar los mensajes en Meta Developers</h4>
                     <p className={styles.connectedPagesDescription}>
-                      Para que Ristak reciba Messenger e Instagram DM, pega estos valores en tu app de Meta (Configuración de la API con Facebook → Webhooks).
+                      Para que Ristak reciba Messenger e Instagram DM, pega estos valores en los Webhooks de tu app de Meta. Facebook e Instagram se configuran por separado (mira los pasos de abajo).
                     </p>
                   </div>
 
@@ -2301,10 +2301,10 @@ export const MetaAdsIntegration: React.FC = () => {
                   </div>
 
                   <ol className={styles.webhookSteps}>
-                    <li>En Meta Developers abre tu app y entra a <strong>Configuración de la API con Facebook</strong> (o el producto <strong>Messenger</strong>) → <strong>Webhooks</strong>.</li>
-                    <li>Pega la <strong>URL de devolución de llamada</strong> y el <strong>token de verificación</strong> de arriba, y da <strong>Verificar y guardar</strong>.</li>
-                    <li>En <strong>Campos del webhook</strong> suscríbete a los campos de arriba y da <strong>Suscribir</strong>.</li>
-                    <li>Repite en <strong>Instagram</strong>: la misma URL y el mismo token, verifica y suscríbete a esos campos para recibir los DMs.</li>
+                    <li><strong>Facebook / Messenger:</strong> en Meta Developers entra a <strong>Configuración de la API con Facebook</strong> → <strong>Webhooks</strong>, pega la <strong>URL de devolución de llamada</strong> y el <strong>token de verificación</strong> de arriba, da <strong>Verificar y guardar</strong> y suscríbete a los campos.</li>
+                    <li><strong>Instagram va en otro lugar:</strong> entra a <strong>Configuración de la API con inicio de sesión de empresa de Instagram</strong>.</li>
+                    <li>Ahí primero, en <strong>Generar tokens de acceso</strong>, agrega tu cuenta de Instagram: te pedirá <strong>iniciar sesión</strong> para generar el token de acceso.</li>
+                    <li>Ya con el token, en <strong>Configurar webhooks</strong> pega la <strong>misma URL</strong> y el <strong>mismo token de verificación</strong> de arriba, y suscríbete a los campos.</li>
                     <li>Si iniciaste sesión con Facebook, la suscripción de la Página suele quedar automática; en Instagram hazla manual si no aparece.</li>
                   </ol>
 
