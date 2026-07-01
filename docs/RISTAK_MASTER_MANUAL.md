@@ -277,13 +277,23 @@ refresh silenciosos. Si el usuario sube al inicio de la conversacion, la UI pide
 otro bloque anterior usando `beforeMessageDate`; no debe precargar el historial
 completo de todas las conversaciones de la bandeja.
 
+Antes de mandar mensajes libres por WhatsApp API/YCloud, `whatsappApiService`
+debe revisar la ultima respuesta entrante del cliente para ese contacto y numero
+de negocio. Si la ventana de 24 horas ya esta cerrada, no debe intentar YCloud:
+debe usar WhatsApp QR/Baileys directamente cuando exista un QR usable. Las
+plantillas quedan fuera de este bloqueo porque son el camino permitido por
+WhatsApp cuando la conversacion esta cerrada.
+
 Cuando un envio saliente intenta WhatsApp API/YCloud y la API lo rechaza por una
 restriccion recuperable o por la ventana de 24 horas, `whatsappApiService` debe
 usar WhatsApp QR/Baileys como respaldo si el numero tiene QR habilitado y
 conectado. Si el respaldo QR confirma el envio, el historial y la respuesta al
 frontend deben quedar como mensaje `qr` exitoso, sin exponer el error de la API
-en el globo del chat. Solo se guarda error visible cuando no existe respaldo QR
-usable o cuando el respaldo QR tambien falla.
+en el globo del chat. Si Baileys captura despues el eco saliente de un mensaje
+que coincide con un registro API fallido, ese registro debe repararse como
+enviado por `qr`, limpiando `error_code` y `error_message`. Solo se guarda error
+visible cuando no existe respaldo QR usable o cuando el respaldo QR tambien
+falla.
 
 El respaldo QR se resuelve por telefono, no solo por el id exacto del numero API.
 Si el numero oficial y la conexion QR quedaron en filas distintas de

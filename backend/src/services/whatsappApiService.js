@@ -86,6 +86,7 @@ const MAX_WHATSAPP_VIDEO_INPUT_BYTES = 25 * 1024 * 1024
 const MAX_WHATSAPP_VIDEO_OUTPUT_BYTES = 16 * 1024 * 1024
 const WHATSAPP_VIDEO_MIME_TYPE = 'video/mp4'
 const WHATSAPP_VOICE_NOTE_MIME_TYPE = 'audio/ogg; codecs=opus'
+const WHATSAPP_CUSTOMER_SERVICE_WINDOW_MS = 24 * 60 * 60 * 1000
 const WHATSAPP_API_PROFILE_PICTURE_CACHE_TTL_MS = 24 * 60 * 60 * 1000
 const WHATSAPP_API_PROFILE_PICTURE_BATCH_LIMIT = 40
 const WHATSAPP_INTERACTIVE_REPLY_BUTTON_LIMIT = 3
@@ -2591,6 +2592,7 @@ async function findBusinessPhoneRowForSender({ phoneNumberId, fromPhone } = {}) 
 }
 
 function isQrFallbackReady(phoneRow = {}) {
+  if (!phoneRow?.id) return false
   const status = cleanString(phoneRow.qr_status).toLowerCase()
   const resumableStatus = QR_FALLBACK_READY_STATUSES.has(status) || status.startsWith('disconnected_')
   const legacyConnectedPhone = !status && cleanString(phoneRow.qr_connected_phone)
@@ -2602,10 +2604,11 @@ function isQrFallbackReady(phoneRow = {}) {
 }
 
 function getPhoneRowMatchValues(phoneRow = {}) {
+  const row = phoneRow || {}
   return [
-    phoneRow.phone_number,
-    phoneRow.display_phone_number,
-    phoneRow.qr_connected_phone
+    row.phone_number,
+    row.display_phone_number,
+    row.qr_connected_phone
   ].map(value => normalizePhoneForStorage(value) || cleanString(value)).filter(Boolean)
 }
 
@@ -2636,6 +2639,64 @@ async function findQrFallbackPhoneRowForSender({ phoneNumberId, fromPhone, phone
     isQrFallbackReady(row) &&
     rowMatchesAnyPhone(row, searchPhones)
   ) || null
+}
+
+function buildSqlInClause(values = []) {
+  const uniqueValues = [...new Set(values.map(cleanString).filter(Boolean))]
+  if (!uniqueValues.length) return { clause: '', params: [] }
+  return {
+    clause: uniqueValues.map(() => '?').join(', '),
+    params: uniqueValues
+  }
+}
+
+async function getOfficialApiClosedReplyWindowReason({ contactId, toPhone, fromPhone, phoneNumberId } = {}) {
+  const contactIdValue = cleanString(contactId)
+  const contactPhone = normalizePhoneForStorage(toPhone) || cleanString(toPhone)
+  const businessPhone = normalizePhoneForStorage(fromPhone) || cleanString(fromPhone)
+  const phoneNumberIdValue = cleanString(phoneNumberId)
+
+  const contactClauses = []
+  const params = []
+  if (contactIdValue) {
+    contactClauses.push('contact_id = ?')
+    params.push(contactIdValue)
+  }
+  const contactPhoneMatches = buildSqlInClause(buildPhoneMatchCandidates(contactPhone))
+  if (contactPhoneMatches.clause) {
+    contactClauses.push(`(phone IN (${contactPhoneMatches.clause}) OR from_phone IN (${contactPhoneMatches.clause}))`)
+    params.push(...contactPhoneMatches.params, ...contactPhoneMatches.params)
+  }
+  if (!contactClauses.length) return ''
+
+  const businessClauses = []
+  const businessPhoneMatches = buildSqlInClause(buildPhoneMatchCandidates(businessPhone))
+  if (businessPhoneMatches.clause) {
+    businessClauses.push(`(business_phone IN (${businessPhoneMatches.clause}) OR to_phone IN (${businessPhoneMatches.clause}))`)
+    params.push(...businessPhoneMatches.params, ...businessPhoneMatches.params)
+  }
+  if (phoneNumberIdValue) {
+    businessClauses.push('business_phone_number_id = ?')
+    params.push(phoneNumberIdValue)
+  }
+
+  const row = await db.get(`
+    SELECT message_timestamp, created_at
+    FROM whatsapp_api_messages
+    WHERE LOWER(COALESCE(direction, '')) = 'inbound'
+      AND (${contactClauses.join(' OR ')})
+      ${businessClauses.length ? `AND (${businessClauses.join(' OR ')})` : ''}
+    ORDER BY COALESCE(message_timestamp, created_at) DESC, created_at DESC
+    LIMIT 1
+  `, params).catch(() => null)
+
+  const lastInboundAt = toDateTime(row?.message_timestamp || row?.created_at)
+  if (!lastInboundAt) return ''
+  const lastInboundMs = Date.parse(lastInboundAt)
+  if (!Number.isFinite(lastInboundMs)) return ''
+  return Date.now() - lastInboundMs >= WHATSAPP_CUSTOMER_SERVICE_WINDOW_MS
+    ? 'La conversación lleva más de 24 horas sin respuesta del cliente; WhatsApp API solo permite plantillas.'
+    : ''
 }
 
 function getPhoneRowRestrictionReason(phoneRow = {}) {
@@ -2773,14 +2834,25 @@ function getOfficialApiRestrictionErrorReason(error) {
   return ''
 }
 
-async function getOfficialApiFallbackDecision({ config, fromPhone, phoneNumberId, error } = {}) {
+async function getOfficialApiFallbackDecision({
+  config,
+  fromPhone,
+  phoneNumberId,
+  toPhone,
+  contactId,
+  error,
+  checkReplyWindow = false
+} = {}) {
   const phoneRow = await findBusinessPhoneRowForSender({ phoneNumberId, fromPhone })
   const signalReason = await getOfficialApiRestrictionReason({ phoneRow, config })
   const errorReason = error ? getOfficialApiRestrictionErrorReason(error) : ''
   // La ventana de 24 horas también amerita respaldo QR, pero es un asunto de
   // ESTA conversación: decide el fallback sin marcar nada como restringido.
   const windowReason = error && !errorReason ? getOfficialApiConversationWindowReason(error) : ''
-  const reason = errorReason || windowReason || signalReason
+  const preflightWindowReason = !error && checkReplyWindow
+    ? await getOfficialApiClosedReplyWindowReason({ contactId, toPhone, fromPhone, phoneNumberId })
+    : ''
+  const reason = errorReason || windowReason || signalReason || preflightWindowReason
   const fallbackPhoneRow = reason
     ? await findQrFallbackPhoneRowForSender({ phoneNumberId, fromPhone, phoneRow })
     : null
@@ -2789,8 +2861,15 @@ async function getOfficialApiFallbackDecision({ config, fromPhone, phoneNumberId
     phoneRow,
     fallbackPhoneRow,
     reason,
-    shouldFallback: Boolean(reason && fallbackPhoneRow?.id)
+    preflightWindowReason,
+    shouldFallback: Boolean(reason && fallbackPhoneRow?.id),
+    shouldBlockOfficialApi: Boolean(preflightWindowReason && !fallbackPhoneRow?.id)
   }
+}
+
+function throwIfOfficialApiBlockedByReplyWindow(decision = {}) {
+  if (!decision.shouldBlockOfficialApi) return
+  throw new Error(decision.reason || 'La conversación está fuera de la ventana de 24 horas; usa una plantilla o QR.')
 }
 
 async function activateOfficialApiRestrictionFromFailedMessage({ normalizedMessage, businessPhoneNumberId, businessPhone, reason } = {}) {
@@ -2831,10 +2910,9 @@ async function retryFailedOfficialApiMessageViaQr({
   reason,
   existingMessage
 } = {}) {
-  const previousStatus = cleanString(existingMessage?.status).toLowerCase()
   const previousTransport = cleanString(existingMessage?.transport).toLowerCase()
   const currentStatus = cleanString(normalizedMessage?.status).toLowerCase()
-  if ((previousTransport === 'qr' && cleanString(existingMessage?.routing_reason)) || previousStatus === 'failed' || currentStatus !== 'failed') return null
+  if ((previousTransport === 'qr' && cleanString(existingMessage?.routing_reason)) || currentStatus !== 'failed') return null
 
   const phoneRow = await findQrFallbackPhoneRowForSender({
     phoneNumberId: businessPhoneNumberId,
@@ -5353,14 +5431,6 @@ export async function captureQrChatMessage({
 
   const config = await loadConfig({ includeSecrets: true })
   const phoneRow = await findBusinessPhoneRowForSender({ phoneNumberId, fromPhone: cleanBusinessPhone })
-  const officialApiOperational = Boolean(config.enabled && config.apiKey) &&
-    Boolean(phoneRow?.id) &&
-    Number(phoneRow.api_send_enabled ?? 1) === 1 &&
-    !(await getOfficialApiRestrictionReason({ phoneRow, config }))
-  if (officialApiOperational) {
-    return { skipped: true, reason: 'official_api_active' }
-  }
-
   const messageText = cleanString(text)
   const messageTimestamp = toDateTime(timestamp) || nowIso()
 
@@ -5371,19 +5441,100 @@ export async function captureQrChatMessage({
     // Se ramifica a INTERVAL en Postgres manteniendo el mismo orden de parámetros.
     const lowerBoundExpr = isPostgres() ? "(?::timestamp - INTERVAL '2 minutes')" : "datetime(?, '-2 minutes')"
     const upperBoundExpr = isPostgres() ? "(?::timestamp + INTERVAL '2 minutes')" : "datetime(?, '+2 minutes')"
+    const messageTimeExpr = isPostgres()
+      ? 'COALESCE(message_timestamp, created_at)::timestamp'
+      : 'datetime(COALESCE(message_timestamp, created_at))'
     const duplicate = await db.get(`
-      SELECT id
+      SELECT
+        id,
+        contact_id,
+        status,
+        transport,
+        routing_reason,
+        error_code,
+        error_message,
+        direction,
+        message_type,
+        message_timestamp,
+        created_at
       FROM whatsapp_api_messages
       WHERE phone = ?
         AND direction = ?
         AND message_text = ?
         AND COALESCE(wamid, '') != ?
-        AND COALESCE(message_timestamp, created_at) BETWEEN ${lowerBoundExpr} AND ${upperBoundExpr}
+        AND ${messageTimeExpr} BETWEEN ${lowerBoundExpr} AND ${upperBoundExpr}
       LIMIT 1
     `, [cleanContactPhone, cleanDirection, messageText, cleanWamid, messageTimestamp, messageTimestamp]).catch(() => null)
     if (duplicate) {
+      const duplicateStatus = normalizeMessageDeliveryStatus(duplicate.status)
+      const duplicateTransport = cleanString(duplicate.transport).toLowerCase()
+      const duplicateHasError = Boolean(cleanString(duplicate.error_code || duplicate.error_message))
+      const duplicateFailed = ['failed', 'error', 'undelivered', 'rejected', 'cancelled'].includes(duplicateStatus) || duplicateHasError
+      if (cleanDirection === 'outbound' && duplicateTransport !== 'qr' && duplicateFailed) {
+        await db.run(`
+          UPDATE whatsapp_api_messages
+          SET transport = 'qr',
+              routing_reason = ?,
+              status = 'sent',
+              error_code = NULL,
+              error_message = NULL,
+              wamid = COALESCE(NULLIF(?, ''), wamid),
+              raw_payload_json = ?,
+              updated_at = CURRENT_TIMESTAMP
+          WHERE id = ?
+        `, [
+          'Capturado desde la sesión de WhatsApp Web.',
+          cleanWamid,
+          safeJson({
+            fallbackFrom: 'api',
+            fallbackTransport: 'qr',
+            qrEcho: true,
+            clearedApiError: {
+              code: cleanString(duplicate.error_code) || null,
+              message: cleanString(duplicate.error_message) || null
+            },
+            whatsappMessage: {
+              id: cleanWamid,
+              status: 'sent',
+              transport: 'qr'
+            },
+            ...(raw ? { raw } : {})
+          }),
+          duplicate.id
+        ])
+
+        publishChatMessageEvent({
+          contactId: duplicate.contact_id,
+          messageId: duplicate.id,
+          channel: 'whatsapp',
+          provider: PROVIDER_NAME,
+          transport: 'qr',
+          direction: duplicate.direction || cleanDirection,
+          messageType: cleanString(duplicate.message_type || messageType) || messageType,
+          messageTimestamp: duplicate.message_timestamp || duplicate.created_at || messageTimestamp,
+          isNew: false
+        })
+
+        return {
+          skipped: false,
+          repaired: true,
+          reason: 'duplicate_failed_api_repaired',
+          messageId: duplicate.id,
+          contactId: duplicate.contact_id,
+          transport: 'qr',
+          status: 'sent'
+        }
+      }
       return { skipped: true, reason: 'duplicate_recent', messageId: duplicate.id }
     }
+  }
+
+  const officialApiOperational = Boolean(config.enabled && config.apiKey) &&
+    Boolean(phoneRow?.id) &&
+    Number(phoneRow.api_send_enabled ?? 1) === 1 &&
+    !(await getOfficialApiRestrictionReason({ phoneRow, config }))
+  if (officialApiOperational) {
+    return { skipped: true, reason: 'official_api_active' }
   }
 
   const result = await upsertMessage({
@@ -7718,7 +7869,10 @@ export async function sendWhatsAppApiInteractiveMessage({
   const fallbackDecision = await getOfficialApiFallbackDecision({
     config,
     fromPhone,
-    phoneNumberId
+    phoneNumberId,
+    toPhone,
+    contactId,
+    checkReplyWindow: true
   })
   if (allowQrFallback && fallbackDecision.shouldFallback) {
     return sendTextViaQrFallback({
@@ -7732,6 +7886,7 @@ export async function sendWhatsAppApiInteractiveMessage({
       skipQrSendProtection
     })
   }
+  throwIfOfficialApiBlockedByReplyWindow(fallbackDecision)
 
   const requestBody = {
     from: fromPhone,
@@ -8226,7 +8381,10 @@ export async function sendWhatsAppApiTextMessage({
   const fallbackDecision = await getOfficialApiFallbackDecision({
     config,
     fromPhone,
-    phoneNumberId
+    phoneNumberId,
+    toPhone,
+    contactId,
+    checkReplyWindow: true
   })
   if (allowQrFallback && fallbackDecision.shouldFallback) {
     return sendTextViaQrFallback({
@@ -8240,6 +8398,7 @@ export async function sendWhatsAppApiTextMessage({
       skipQrSendProtection
     })
   }
+  throwIfOfficialApiBlockedByReplyWindow(fallbackDecision)
 
   let response
   try {
@@ -8374,7 +8533,10 @@ export async function sendWhatsAppApiImageMessage({
   const fallbackDecision = await getOfficialApiFallbackDecision({
     config,
     fromPhone,
-    phoneNumberId
+    phoneNumberId,
+    toPhone,
+    contactId,
+    checkReplyWindow: true
   })
   if (allowQrFallback && fallbackDecision.shouldFallback) {
     return sendImageViaQrFallback({
@@ -8393,6 +8555,7 @@ export async function sendWhatsAppApiImageMessage({
       skipQrSendProtection
     })
   }
+  throwIfOfficialApiBlockedByReplyWindow(fallbackDecision)
 
   if (!link) {
     const preparedImage = await prepareWhatsAppImageForProviderUpload(imageDataUrl)
@@ -8580,7 +8743,10 @@ export async function sendWhatsAppApiDocumentMessage({
   const fallbackDecision = await getOfficialApiFallbackDecision({
     config,
     fromPhone,
-    phoneNumberId
+    phoneNumberId,
+    toPhone,
+    contactId,
+    checkReplyWindow: true
   })
   if (allowQrFallback && fallbackDecision.shouldFallback) {
     return sendDocumentViaQrFallback({
@@ -8601,6 +8767,7 @@ export async function sendWhatsAppApiDocumentMessage({
       skipQrSendProtection
     })
   }
+  throwIfOfficialApiBlockedByReplyWindow(fallbackDecision)
 
   if (!link) {
     const preparedDocument = await prepareWhatsAppDocumentForProviderUpload(documentDataUrl, filename, mimeType)
@@ -8810,7 +8977,10 @@ export async function sendWhatsAppApiVideoMessage({
   const fallbackDecision = await getOfficialApiFallbackDecision({
     config,
     fromPhone,
-    phoneNumberId
+    phoneNumberId,
+    toPhone,
+    contactId,
+    checkReplyWindow: true
   })
   if (allowQrFallback && fallbackDecision.shouldFallback) {
     return sendVideoViaQrFallback({
@@ -8826,6 +8996,7 @@ export async function sendWhatsAppApiVideoMessage({
       skipQrSendProtection
     })
   }
+  throwIfOfficialApiBlockedByReplyWindow(fallbackDecision)
 
   if (!link) {
     const media = await getPreparedVideo()
@@ -9001,7 +9172,10 @@ export async function sendWhatsAppApiAudioMessage({
   const fallbackDecision = await getOfficialApiFallbackDecision({
     config,
     fromPhone,
-    phoneNumberId
+    phoneNumberId,
+    toPhone,
+    contactId,
+    checkReplyWindow: true
   })
   if (allowQrFallback && fallbackDecision.shouldFallback) {
     return sendAudioViaQrFallback({
@@ -9021,6 +9195,7 @@ export async function sendWhatsAppApiAudioMessage({
       skipQrSendProtection
     })
   }
+  throwIfOfficialApiBlockedByReplyWindow(fallbackDecision)
 
   if (!link) {
     const preparedAudio = await prepareWhatsAppAudioForProviderUpload(audioDataUrl)
