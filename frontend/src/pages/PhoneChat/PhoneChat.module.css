@@ -1198,30 +1198,6 @@
   background: var(--phone-channel-whatsapp);
 }
 
-/* WhatsApp: logo oficial completo (burbuja verde + auricular + borde blanco),
-   sin circulo de fondo ni sombra/brillo del badge — el borde blanco del propio
-   logo lo separa del avatar. */
-.avatarChannelBadgeWhatsappLogo {
-  background: none;
-  box-shadow: none;
-  overflow: visible;
-}
-
-.avatarChannelBadgeWhatsappLogo::before {
-  display: none;
-}
-
-.avatarChannelBadge .avatarWhatsappLogo {
-  /* El logo va GRANDE en todos los contextos. Hay reglas por dispositivo
-     (.phoneChatPage[...] .chatItem > .avatar .avatarChannelBadge svg, etc.) que
-     fijan el svg del badge a 11-13px (eran para el glifo chico) y le ganan en
-     especificidad; !important evita que encojan el logo en la lista de chats. */
-  width: 90% !important;
-  height: 90% !important;
-  filter: none;
-  overflow: visible;
-}
-
 .avatarChannelBadge .channelIconGlyph {
   width: 13px;
   height: 13px;
