@@ -12,6 +12,9 @@ import {
 import { shouldSuppressChatNotificationForConversationalAgent } from './conversationalAgentService.js'
 // (MOB-002 / NOTI-004) Importamos el chequeo de contactos ocultos para no exponerlos en el push
 import { resolvePushNotificationTargetForEvent, isContactHiddenFromNotifications } from './notificationPreferencesService.js'
+// (Presencia) No notificar a quien ya tiene el chat abierto; marcarle leído.
+import { getViewingUserIds } from './presenceService.js'
+import { markChatContactReadForUser } from './chatReadStateService.js'
 
 const ENV_VAPID_PUBLIC_KEY = process.env.WEB_PUSH_PUBLIC_KEY || process.env.VAPID_PUBLIC_KEY || ''
 const ENV_VAPID_PRIVATE_KEY = process.env.WEB_PUSH_PRIVATE_KEY || process.env.VAPID_PRIVATE_KEY || ''
@@ -1312,10 +1315,10 @@ async function filterRowsByUserPreference(rows, { enabledKey = '', calendarId = 
 
 // (MOB-006) enabledKey: clave on/off del evento para resolver la preferencia POR
 // usuario destinatario (con fallback al global). Si se omite, no se filtra por usuario.
-export async function sendAppNotificationPayload(payload = {}, { calendarId = '', userIds = null, enabledKey = '' } = {}) {
+export async function sendAppNotificationPayload(payload = {}, { calendarId = '', userIds = null, enabledKey = '', excludeUserIds = null } = {}) {
   const normalizedPayload = normalizeNotificationPayload(payload)
   if (appNotificationPayloadSenderForTest) {
-    return appNotificationPayloadSenderForTest(normalizedPayload, { calendarId, userIds, enabledKey })
+    return appNotificationPayloadSenderForTest(normalizedPayload, { calendarId, userIds, enabledKey, excludeUserIds })
   }
 
   const transport = await getEffectivePushTransportStatus()
@@ -1338,12 +1341,26 @@ export async function sendAppNotificationPayload(payload = {}, { calendarId = ''
       : Promise.resolve([])
   ])
 
-  const matrixWebRows = filterByUser
+  // (Presencia) Excluir dispositivos de usuarios que YA están viendo el chat.
+  // Corre DESPUÉS del filtro de matriz, así que resta correctamente incluso
+  // cuando userIds === null ("todos"). Filas sin user_id se conservan (no pueden
+  // ser "el que está viendo"). Fail-open: sin exclusiones, no cambia nada.
+  const excludeSet = Array.isArray(excludeUserIds) && excludeUserIds.length
+    ? new Set(excludeUserIds.map((id) => String(id ?? '').trim()).filter(Boolean))
+    : null
+  const applyExclude = (rows) => (excludeSet
+    ? rows.filter((row) => {
+        const rowUserId = String(row.user_id || '').trim()
+        return !rowUserId || !excludeSet.has(rowUserId)
+      })
+    : rows)
+
+  const matrixWebRows = applyExclude(filterByUser
     ? webRows.filter((row) => normalizedUserIds.includes(String(row.user_id || '').trim()))
-    : webRows
-  const matrixNativeRows = filterByUser
+    : webRows)
+  const matrixNativeRows = applyExclude(filterByUser
     ? nativeRows.filter((row) => normalizedUserIds.includes(String(row.user_id || '').trim()))
-    : nativeRows
+    : nativeRows)
 
   // (MOB-006) Tercer eje: override por-usuario de las 7 claves. La entrega final llega a
   // un device del user U solo si (matrix permite a U) AND (preferencia de U on/off true,
@@ -1542,6 +1559,28 @@ export async function sendChatMessageNotification(message = {}) {
     return { sent: 0, skipped: true, reason: 'disabled_by_preferences' }
   }
 
+  // (Presencia) Usuarios que tienen ESTE chat abierto y al frente ahora mismo.
+  // A ellos NO se les manda push (lo están viendo) y se les marca leído — como en
+  // un chat real. Fail-open: ante cualquier error de presencia, no se excluye a
+  // nadie (mejor una push de más que perder una legítima).
+  const chatContactId = String(message.contactId || '').trim()
+  let viewingUserIds = []
+  if (chatContactId) {
+    try {
+      viewingUserIds = getViewingUserIds(chatContactId)
+    } catch (error) {
+      logger.warn(`[Push] No se pudo leer presencia de chat: ${error.message}`)
+      viewingUserIds = []
+    }
+    if (viewingUserIds.length) {
+      await Promise.all(viewingUserIds.map((userId) =>
+        markChatContactReadForUser({ userId, contactId: chatContactId }).catch((error) => {
+          logger.warn(`[Push] No se pudo marcar leído por presencia (${userId}): ${error.message}`)
+        })
+      ))
+    }
+  }
+
   const senderName = getChatSenderName(message)
   const bodyText = getChatMessageBody(message)
   const messageKey = cleanNotificationText(message.messageId || message.timestamp || `${senderName}-${bodyText}-${Date.now()}`)
@@ -1557,9 +1596,13 @@ export async function sendChatMessageNotification(message = {}) {
   }
 
   // (MOB-006) enabledKey => on/off de chat por usuario destinatario (fallback global).
-  return sendAppNotificationPayload(payload, getPushPreferenceOptions(preferenceTarget, {
-    enabledKey: 'chat_push_notifications_enabled'
-  }))
+  // (Presencia) excludeUserIds => se resta a quien está viendo el chat ahora.
+  return sendAppNotificationPayload(payload, {
+    ...getPushPreferenceOptions(preferenceTarget, {
+      enabledKey: 'chat_push_notifications_enabled'
+    }),
+    excludeUserIds: viewingUserIds
+  })
 }
 
 export async function sendConversationalAgentPriorityNotification(signal = {}) {

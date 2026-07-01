@@ -1,7 +1,16 @@
 import { randomUUID } from 'crypto'
+import { clearPresence } from './presenceService.js'
 
 const HEARTBEAT_INTERVAL_MS = 25_000
 const clients = new Map()
+
+function userHasOtherClients(userId, exceptClientId) {
+  if (!userId) return false
+  for (const [id, client] of clients.entries()) {
+    if (id !== exceptClientId && client.userId === userId) return true
+  }
+  return false
+}
 
 let eventSequence = 0
 
@@ -29,10 +38,18 @@ function cleanupClient(clientId) {
 
   clearInterval(client.heartbeatId)
   clients.delete(clientId)
+
+  // Respaldo de vida: si al usuario ya no le queda ninguna conexión viva,
+  // limpiamos su presencia (aunque nunca haya llegado el "blur"). Con multi-tab
+  // no la borramos si aún tiene otra pestaña abierta.
+  if (client.userId && !userHasOtherClients(client.userId, clientId)) {
+    clearPresence(client.userId)
+  }
 }
 
 export function subscribeChatLiveEvents(req, res) {
   const clientId = randomUUID()
+  const userId = cleanString(req.user?.userId)
 
   res.status(200)
   res.set({
@@ -51,7 +68,7 @@ export function subscribeChatLiveEvents(req, res) {
     res.write(`: heartbeat ${Date.now()}\n\n`)
   }, HEARTBEAT_INTERVAL_MS)
 
-  clients.set(clientId, { res, heartbeatId })
+  clients.set(clientId, { res, heartbeatId, userId })
   writeSseEvent(res, 'connected', {
     connected: true,
     serverTime: new Date().toISOString()

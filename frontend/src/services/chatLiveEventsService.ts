@@ -25,8 +25,35 @@ interface SseFrame {
 }
 
 const STREAM_ENDPOINT = '/api/chat-events/stream'
+const VIEWING_ENDPOINT = '/api/chat-events/viewing'
 const INITIAL_RECONNECT_MS = 1_000
 const MAX_RECONNECT_MS = 15_000
+
+// Presencia: le avisa al backend qué contacto tiene abierto este usuario y si la
+// app está al frente. Con esto, cuando llega un mensaje, NO se le manda push a
+// quien ya lo está viendo (y solo a él). contactId null / foreground false =>
+// deja de suprimir. Es best-effort: si falla la red, no rompemos nada.
+export function reportViewing(contactId: string | null, foreground: boolean): void {
+  if (typeof fetch === 'undefined') return
+  const headers = new Headers()
+  headers.set('Content-Type', 'application/json')
+  try {
+    const token = window.localStorage.getItem('auth_token')
+    if (token) headers.set('Authorization', `Bearer ${token}`)
+  } catch {
+    // Storage no disponible en contextos restringidos.
+  }
+  try {
+    void fetch(apiUrl(VIEWING_ENDPOINT), {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ contactId: contactId || '', foreground: foreground !== false }),
+      keepalive: true
+    }).catch(() => undefined)
+  } catch {
+    // Nunca romper el chat por un fallo de reporte de presencia.
+  }
+}
 
 function buildStreamHeaders() {
   const headers = new Headers()

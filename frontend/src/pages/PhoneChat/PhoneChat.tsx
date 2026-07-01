@@ -132,7 +132,7 @@ import {
 } from '@/constants/conversationalAIProviders'
 import apiClient from '@/services/apiClient'
 import { calendarsService, type Calendar, type CalendarEvent } from '@/services/calendarsService'
-import { subscribeToChatLiveEvents } from '@/services/chatLiveEventsService'
+import { subscribeToChatLiveEvents, reportViewing } from '@/services/chatLiveEventsService'
 import { contactTagsService, type ContactTag } from '@/services/contactTagsService'
 import { contactsService, type JourneyEvent } from '@/services/contactsService'
 import { highLevelService, type HighLevelChatChannel } from '@/services/highLevelService'
@@ -6531,6 +6531,36 @@ export const PhoneChat: React.FC = () => {
       }
     })
   }, [accessState, refreshChatInboxNow])
+
+  // (Presencia) Reportamos al backend qué contacto tengo abierto y si la app está
+  // al frente, para no recibir push del chat que estoy viendo (solo yo; los demás
+  // sí). Se reporta al abrir/cambiar/cerrar el chat, al ganar/perder foreground,
+  // y con un latido cada 20s; se limpia al salir del chat o desmontar.
+  useEffect(() => {
+    if (accessState !== 'allowed') return
+    const openId = conversationOpen && activeContact?.id ? activeContact.id : null
+    const isForeground = () => typeof document === 'undefined' || document.visibilityState !== 'hidden'
+    reportViewing(openId, isForeground())
+    if (!openId) return
+
+    const onFocus = () => reportViewing(openId, true)
+    const onBlur = () => reportViewing(openId, false)
+    const onVisibility = () => reportViewing(openId, isForeground())
+    const keepAlive = window.setInterval(() => {
+      if (isForeground()) reportViewing(openId, true)
+    }, 20_000)
+
+    window.addEventListener('focus', onFocus)
+    window.addEventListener('blur', onBlur)
+    document.addEventListener('visibilitychange', onVisibility)
+    return () => {
+      window.clearInterval(keepAlive)
+      window.removeEventListener('focus', onFocus)
+      window.removeEventListener('blur', onBlur)
+      document.removeEventListener('visibilitychange', onVisibility)
+      reportViewing(null, false)
+    }
+  }, [accessState, activeContact?.id, conversationOpen])
 
   useEffect(() => {
     if (accessState !== 'allowed') return

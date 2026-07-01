@@ -86,7 +86,7 @@ import {
   type ConversationalAgentDef
 } from '@/services/conversationalAgentService'
 import { contactsService, type JourneyEvent } from '@/services/contactsService'
-import { subscribeToChatLiveEvents, type ChatLiveMessageEvent } from '@/services/chatLiveEventsService'
+import { subscribeToChatLiveEvents, reportViewing, type ChatLiveMessageEvent } from '@/services/chatLiveEventsService'
 import { emailService } from '@/services/emailService'
 import { highLevelService, type HighLevelChatChannel } from '@/services/highLevelService'
 import { getIntegrationsStatus } from '@/services/integrationsService'
@@ -3220,6 +3220,35 @@ export const DesktopChat: React.FC = () => {
       document.removeEventListener('visibilitychange', reconcileOnReturn)
     }
   }, [refreshFromLiveChatEvent])
+
+  // (Presencia) Le reportamos al backend qué contacto tengo abierto y si la app
+  // está al frente, para que NO me llegue push del chat que estoy viendo (solo a
+  // mí; los demás sí reciben). Se reporta al cambiar de chat, al ganar/perder
+  // foco y con un latido cada 20s; se limpia al salir del chat o al desmontar.
+  useEffect(() => {
+    const openId = activeContactId || null
+    const isForeground = () => typeof document === 'undefined' || document.visibilityState !== 'hidden'
+    reportViewing(openId, isForeground())
+    if (!openId) return
+
+    const onFocus = () => reportViewing(openId, true)
+    const onBlur = () => reportViewing(openId, false)
+    const onVisibility = () => reportViewing(openId, isForeground())
+    const keepAlive = window.setInterval(() => {
+      if (isForeground()) reportViewing(openId, true)
+    }, 20_000)
+
+    window.addEventListener('focus', onFocus)
+    window.addEventListener('blur', onBlur)
+    document.addEventListener('visibilitychange', onVisibility)
+    return () => {
+      window.clearInterval(keepAlive)
+      window.removeEventListener('focus', onFocus)
+      window.removeEventListener('blur', onBlur)
+      document.removeEventListener('visibilitychange', onVisibility)
+      reportViewing(null, false)
+    }
+  }, [activeContactId])
 
   useEffect(() => {
     writeStoredChatIds(CHAT_ARCHIVED_STATE_KEY, archivedChatIds)
