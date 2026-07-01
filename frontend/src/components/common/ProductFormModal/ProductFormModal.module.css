@@ -1,0 +1,42 @@
+.form {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.formGroup {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  min-width: 0;
+}
+
+.formGroup label {
+  color: var(--text-dim);
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.formGroup textarea {
+  resize: vertical;
+}
+
+.priceRow {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 12px;
+}
+
+.footer {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
+  padding-top: 4px;
+}
+
+@media (max-width: 520px) {
+  .priceRow {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}

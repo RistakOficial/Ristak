@@ -1,5 +1,5 @@
-import React, { useEffect, useMemo, useState } from 'react'
-import { FlaskConical } from 'lucide-react'
+import React, { useCallback, useEffect, useMemo, useState } from 'react'
+import { FlaskConical, Plus } from 'lucide-react'
 import { CustomSelect } from '../CustomSelect'
 import { NumberInput } from '../NumberInput'
 import { Switch } from '../Switch'
@@ -10,6 +10,7 @@ import {
   type IntegrationsStatus
 } from '@/services/integrationsService'
 import { productsService, type ProductItem, type ProductPrice } from '@/services/productsService'
+import { ProductFormModal } from '@/components/common/ProductFormModal/ProductFormModal'
 import styles from './PaymentGateControls.module.css'
 
 export type PaymentGateGateway = 'stripe' | 'conekta' | 'mercadopago'
@@ -61,6 +62,12 @@ const gatewayValues = new Set<PaymentGateGateway>(gatewayOptions.map(option => o
 
 const cleanText = (value: unknown, fallback = '') => String(value ?? fallback).trim()
 
+// Texto libre en vivo: NO recorta (preserva espacios internos y finales mientras se
+// escribe) y solo cae al fallback si el valor es null/undefined — así el usuario puede
+// escribir "Mi Producto" sin que el espacio se borre a cada tecla. El backend recorta y
+// aplica defaults al publicar (renderPaymentBlock), aquí priorizamos poder escribir.
+const asText = (value: unknown, fallback = '') => (value === null || value === undefined ? fallback : String(value))
+
 const normalizeCurrency = (value: unknown, fallback = 'MXN') => {
   const currency = cleanText(value || fallback || 'MXN').toUpperCase().slice(0, 3)
   return /^[A-Z]{3}$/.test(currency) ? currency : 'MXN'
@@ -102,7 +109,7 @@ export const normalizePaymentGateConfig = (
   currencyFallback = 'MXN'
 ): PaymentGateConfig => {
   const source = value || {}
-  const productName = cleanText(source.productName, 'Pago requerido') || 'Pago requerido'
+  const productName = asText(source.productName, 'Pago requerido')
 
   return {
     enabled: Boolean(source.enabled),
@@ -110,14 +117,10 @@ export const normalizePaymentGateConfig = (
     amount: normalizeAmount(source.amount),
     currency: normalizeCurrency(source.currency, currencyFallback),
     productName,
-    description: cleanText(source.description, productName) || productName,
-    buttonText: cleanText(source.buttonText, 'Completar pago') || 'Completar pago',
-    pendingMessage: cleanText(
-      source.pendingMessage,
-      'Para continuar, completa el pago y deja esta página abierta.'
-    ) || 'Para continuar, completa el pago y deja esta página abierta.',
-    paidMessage: cleanText(source.paidMessage, 'Pago confirmado. Continuamos con tu solicitud.') ||
-      'Pago confirmado. Continuamos con tu solicitud.',
+    description: asText(source.description, productName),
+    buttonText: asText(source.buttonText, 'Completar pago'),
+    pendingMessage: asText(source.pendingMessage, 'Para continuar, completa el pago y deja esta página abierta.'),
+    paidMessage: asText(source.paidMessage, 'Pago confirmado. Continuamos con tu solicitud.'),
     mode: normalizeMode(source.mode),
     msi: normalizeMsi(source.msi ?? (source as { installments?: unknown }).installments)
   }
@@ -174,18 +177,29 @@ export const PaymentGateControls: React.FC<PaymentGateControlsProps> = ({
   // Catálogo opcional: sincroniza nombre + precio de un producto de la DB (editable).
   const [products, setProducts] = useState<ProductItem[]>([])
   const [loadingProducts, setLoadingProducts] = useState(false)
+  const [productsError, setProductsError] = useState(false)
   const [selectedProductId, setSelectedProductId] = useState('')
+  const [createProductOpen, setCreateProductOpen] = useState(false)
+
+  const loadProducts = useCallback(async () => {
+    setLoadingProducts(true)
+    setProductsError(false)
+    try {
+      const result = await productsService.listProducts({ limit: 100, includePrices: true })
+      setProducts(result.products)
+      return result.products
+    } catch {
+      setProductsError(true)
+      return [] as ProductItem[]
+    } finally {
+      setLoadingProducts(false)
+    }
+  }, [])
 
   useEffect(() => {
     if (!config.enabled) return
-    let active = true
-    setLoadingProducts(true)
-    productsService.listProducts({ limit: 100, includePrices: true })
-      .then(result => { if (active) setProducts(result.products) })
-      .catch(() => {})
-      .finally(() => { if (active) setLoadingProducts(false) })
-    return () => { active = false }
-  }, [config.enabled])
+    void loadProducts()
+  }, [config.enabled, loadProducts])
 
   const selectedProduct = useMemo(
     () => products.find(product => productKeyOf(product) === selectedProductId) || null,
@@ -253,18 +267,42 @@ export const PaymentGateControls: React.FC<PaymentGateControlsProps> = ({
           </div>
 
           <div className={styles.grid}>
-            <label className={`${styles.field} ${styles.fieldWide}`}>
+            <div className={`${styles.field} ${styles.fieldWide}`}>
               <span>Producto del catálogo (opcional)</span>
               <CustomSelect
                 value={selectedProductId}
                 onValueChange={applyCatalogProduct}
                 onBlur={onCommit}
                 options={[
-                  { value: '', label: loadingProducts ? 'Cargando productos…' : (products.length ? 'Sin producto — captura manual' : 'No tienes productos guardados — captura manual') },
-                  ...products.map(product => ({ value: productKeyOf(product), label: product.name }))
+                  { value: '', label: loadingProducts ? 'Cargando productos…' : 'Sin producto — captura manual' },
+                  ...products.map(product => {
+                    const firstPrice = (product.prices || [])[0]
+                    const amount = firstPrice ? priceAmountOf(firstPrice) : 0
+                    return {
+                      value: productKeyOf(product),
+                      label: amount > 0
+                        ? `${product.name} · ${amount.toFixed(2)} ${firstPrice?.currency || config.currency}`
+                        : product.name
+                    }
+                  })
                 ]}
               />
-            </label>
+              <div className={styles.catalogRow}>
+                <span className={styles.catalogHint}>
+                  {productsError
+                    ? 'No se pudieron cargar tus productos.'
+                    : (!loadingProducts && products.length === 0 ? 'Aún no tienes productos guardados.' : '')}
+                </span>
+                <button
+                  type="button"
+                  className={styles.catalogCreate}
+                  onClick={() => setCreateProductOpen(true)}
+                >
+                  <Plus size={14} />
+                  Crear producto
+                </button>
+              </div>
+            </div>
 
             {selectedProduct && productPrices.length > 1 && (
               <label className={`${styles.field} ${styles.fieldWide}`}>
@@ -386,6 +424,28 @@ export const PaymentGateControls: React.FC<PaymentGateControlsProps> = ({
 
         </div>
       )}
+
+      <ProductFormModal
+        isOpen={createProductOpen}
+        onClose={() => setCreateProductOpen(false)}
+        defaultCurrency={config.currency}
+        onCreated={(product) => {
+          setCreateProductOpen(false)
+          const key = productKeyOf(product)
+          void loadProducts().then((list) => {
+            // Preferimos el producto ya listado (trae prices por includePrices) para
+            // sincronizar el monto; si no aparece, caemos al que devolvió la creación.
+            const fresh = list.find(item => productKeyOf(item) === key) || product
+            setSelectedProductId(key)
+            const firstPrice = (fresh.prices || [])[0]
+            patchConfig({
+              productName: fresh.name || config.productName,
+              ...(firstPrice ? { amount: priceAmountOf(firstPrice) } : {})
+            })
+            window.setTimeout(() => { onCommit?.() }, 0)
+          })
+        }}
+      />
     </div>
   )
 }

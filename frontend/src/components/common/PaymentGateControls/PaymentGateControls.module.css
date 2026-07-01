@@ -64,7 +64,9 @@
 .field input,
 .field textarea,
 .field :global([data-ristak-dropdown-trigger]) {
+  box-sizing: border-box;
   width: 100%;
+  max-width: 100%;
   min-height: var(--design-control-height, 40px);
   border: 1px solid var(--design-control-border, var(--border));
   border-radius: var(--design-control-radius, var(--radius-ctl));
@@ -77,6 +79,8 @@
   line-height: 1.25rem;
   outline: none;
   padding: 0 var(--design-control-padding-x, 12px);
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 
 .field textarea {
@@ -84,6 +88,46 @@
   resize: vertical;
   padding-top: 10px;
   padding-bottom: 10px;
+}
+
+/* Catálogo de productos: fila de ayuda + botón "Crear producto" */
+.catalogRow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  min-width: 0;
+  margin-top: 2px;
+}
+
+.catalogHint {
+  min-width: 0;
+  color: var(--text-dim, var(--muted));
+  font-size: 12px;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+}
+
+.catalogCreate {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+  padding: 6px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-ctl);
+  background: var(--surface);
+  color: var(--accent);
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1;
+  cursor: pointer;
+  transition: border-color 0.15s ease, background 0.15s ease;
+}
+
+.catalogCreate:hover {
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 8%, var(--surface));
 }
 
 .field input:focus,

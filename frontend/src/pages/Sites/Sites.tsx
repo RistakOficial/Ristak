@@ -6610,7 +6610,27 @@ const defaultBlockPayload = (blockType: SiteBlockType, siteOrId: PublicSite | st
         paymentLayout: 'card',
         textAlign: 'left',
         ...DEFAULT_BUTTON_SETTINGS,
-        buttonAlign: 'right'
+        buttonAlign: 'right',
+        // Estilo del contenedor por defecto de un bloque de pago nuevo:
+        // interior Amplio (56), exterior Poco (12), fondo transparente, esquinas
+        // Redondo (28), borde Fino (1) en #F1F1F1. SpacingPresetField requiere base
+        // + los 4 lados + *Linked para que el preset se muestre seleccionado.
+        blockPaddingLinked: true,
+        blockPadding: 56,
+        blockPaddingTop: 56,
+        blockPaddingRight: 56,
+        blockPaddingBottom: 56,
+        blockPaddingLeft: 56,
+        blockMarginLinked: true,
+        blockMargin: 12,
+        blockMarginTop: 12,
+        blockMarginRight: 12,
+        blockMarginBottom: 12,
+        blockMarginLeft: 12,
+        blockBg: 'rgba(219,219,219,0)',
+        blockRadius: 28,
+        blockBorderWidth: 1,
+        blockBorderColor: '#F1F1F1'
       })
     }
   }
@@ -36366,20 +36386,6 @@ const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
           currencyFallback={paymentCurrencyFallback}
         />
       </AccordionSection>
-
-      <AccordionSection id="edit-payment-layout" title="Diseño del bloque">
-        <label className={styles.field}>
-          <span>Estilo de pasarela</span>
-          <CustomSelect
-            value={normalizePaymentBlockLayout(settings.paymentLayout)}
-            onValueChange={(value) => {
-              onPatchSettings({ paymentLayout: normalizePaymentBlockLayout(value) })
-              window.setTimeout(onSave, 0)
-            }}
-            options={paymentBlockLayoutOptions}
-          />
-        </label>
-      </AccordionSection>
     </>
   ) : null
   const choiceEditControls = isChoiceBlock(block.blockType) ? (
@@ -36510,6 +36516,22 @@ const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
         onPatchSettings={onPatchSettings}
         onSave={onSave}
       />
+
+      {block.blockType === 'payment' && (
+        <AccordionSection id="design-payment-layout" title="Diseño del bloque">
+          <label className={styles.field}>
+            <span>Estilo de pasarela</span>
+            <CustomSelect
+              value={normalizePaymentBlockLayout(settings.paymentLayout)}
+              onValueChange={(value) => {
+                onPatchSettings({ paymentLayout: normalizePaymentBlockLayout(value) })
+                window.setTimeout(onSave, 0)
+              }}
+              options={paymentBlockLayoutOptions}
+            />
+          </label>
+        </AccordionSection>
+      )}
 
       {isField && (
         <FieldOwnStyleControls site={site} block={block} onPatchSettings={onPatchSettings} onSave={onSave} />

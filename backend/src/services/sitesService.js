@@ -19813,11 +19813,11 @@ const RSTK_BASE_CSS = `
   .rstk-payment-banner .rstk-checkout-card{max-width:var(--rstk-checkout-width,672px)}
   .rstk-payment-minimal .rstk-checkout-card{border:0;box-shadow:none;padding:0;background:transparent}
   .rstkBlockFullWidth .rstk-checkout-card{max-width:none}
-  .rstk-checkout-head{display:grid;gap:4px}
-  .rstk-checkout-head .rstk-payment-kicker{color:var(--rstk-accent);font-size:.74rem;font-weight:800;text-transform:uppercase;letter-spacing:.08em}
-  .rstk-checkout-title{color:var(--rstk-ink);font-size:1.12rem;font-weight:700;line-height:1.25}
-  .rstk-checkout-desc{margin:0;color:var(--rstk-muted);font-size:.92rem;line-height:1.4}
-  .rstk-checkout-amount{color:var(--rstk-ink);font-size:1.5rem;font-weight:800;margin-top:2px}
+  .rstk-checkout-head{display:grid;gap:4px;min-width:0}
+  .rstk-checkout-head .rstk-payment-kicker{color:var(--rstk-accent);font-size:.74rem;font-weight:800;text-transform:uppercase;letter-spacing:.08em;overflow-wrap:anywhere}
+  .rstk-checkout-title{color:var(--rstk-ink);font-size:1.12rem;font-weight:700;line-height:1.25;min-width:0;overflow-wrap:anywhere;word-break:break-word}
+  .rstk-checkout-desc{margin:0;color:var(--rstk-muted);font-size:.92rem;line-height:1.4;min-width:0;overflow-wrap:anywhere;word-break:break-word}
+  .rstk-checkout-amount{color:var(--rstk-ink);font-size:1.5rem;font-weight:800;margin-top:2px;min-width:0;overflow-wrap:anywhere;word-break:break-word}
   .rstk-checkout-testbadge{margin:0;justify-self:start;padding:4px 10px;border-radius:999px;font-size:.72rem;font-weight:700;color:var(--rstk-ink);background:color-mix(in srgb,var(--rstk-accent) 12%,transparent);border:1px solid color-mix(in srgb,var(--rstk-accent) 30%,var(--rstk-border))}
   .rstk-checkout-body{display:grid;gap:14px;min-width:0;max-width:100%}
   .rstk-checkout-loading{display:flex;align-items:center;gap:10px;color:var(--rstk-muted);font-size:.9rem;padding:8px 0}
@@ -19832,7 +19832,7 @@ const RSTK_BASE_CSS = `
   /* button.<clase> gana en especificidad al legacy .rstk-payment-block .rstk-button-link
      (que alineaba el botón a la derecha), sin importar el orden en la hoja. */
   .rstk-payment-block button.rstk-checkout-pay{justify-self:stretch;width:100%;max-width:100%;margin-inline:0}
-  .rstk-checkout-message{margin:0;font-size:.88rem;line-height:1.4;padding:10px 12px;border-radius:var(--rstk-radius);border:1px solid var(--rstk-border);color:var(--rstk-ink);background:color-mix(in srgb,var(--rstk-ink) 4%,transparent)}
+  .rstk-checkout-message{margin:0;font-size:.88rem;line-height:1.4;padding:10px 12px;border-radius:var(--rstk-radius);border:1px solid var(--rstk-border);color:var(--rstk-ink);background:color-mix(in srgb,var(--rstk-ink) 4%,transparent);min-width:0;overflow-wrap:anywhere;word-break:break-word}
   .rstk-checkout-message[data-kind="success"]{color:var(--rstk-accent);border-color:color-mix(in srgb,var(--rstk-accent) 35%,var(--rstk-border));background:color-mix(in srgb,var(--rstk-accent) 8%,transparent)}
   .rstk-checkout-message[data-kind="error"]{color:var(--rstk-danger,#d64545);border-color:color-mix(in srgb,var(--rstk-danger,#d64545) 35%,var(--rstk-border));background:color-mix(in srgb,var(--rstk-danger,#d64545) 8%,transparent)}
   .rstk-checkout-secure{margin:0;color:var(--rstk-muted);font-size:.76rem;text-align:center}

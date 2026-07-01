@@ -483,27 +483,34 @@
 }
 .rstkCanvas .rstkBlockFullWidth .rstk-checkout-card { max-width: none; }
 .rstkCanvas .rstk-block-style:has(> .rstk-payment-block) { background: transparent; border: 0; padding: 0; box-shadow: none; }
-.rstkCanvas .rstk-checkout-head { display: grid; gap: 4px; }
+.rstkCanvas .rstk-checkout-head { display: grid; gap: 4px; min-width: 0; }
 .rstkCanvas .rstk-checkout-head .rstk-payment-kicker {
   color: var(--rstk-accent);
   font-size: .74rem;
   font-weight: 800;
   text-transform: uppercase;
   letter-spacing: .08em;
+  overflow-wrap: anywhere;
 }
 .rstkCanvas .rstk-checkout-title {
   color: var(--rstk-block-text, var(--rstk-ink));
   font-size: 1.12rem;
   font-weight: 700;
   line-height: 1.25;
+  min-width: 0;
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
-.rstkCanvas .rstk-checkout-desc { margin: 0; color: var(--rstk-muted); font-size: .92rem; line-height: 1.4; }
+.rstkCanvas .rstk-checkout-desc { margin: 0; color: var(--rstk-muted); font-size: .92rem; line-height: 1.4; min-width: 0; overflow-wrap: anywhere; word-break: break-word; }
 .rstkCanvas .rstk-checkout-amount {
   color: var(--rstk-block-text, var(--rstk-ink));
   font-size: 1.5rem;
   font-weight: 800;
   font-variant-numeric: tabular-nums;
   margin-top: 2px;
+  min-width: 0;
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 .rstkCanvas .rstk-checkout-testbadge {
   margin: 0;
@@ -526,14 +533,15 @@
   align-items: center;
   gap: 8px;
   min-height: 44px;
+  min-width: 0;
   padding: 0 12px;
   background: var(--rstk-input-bg, var(--rstk-surface));
   border: 1px solid var(--rstk-input-border, var(--rstk-border));
   border-radius: var(--rstk-radius);
 }
-.rstkCanvas .rstk-mock-ph { flex: 1; color: var(--rstk-muted); font-size: .95rem; font-variant-numeric: tabular-nums; }
-.rstkCanvas .rstk-mock-cols { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
-.rstkCanvas .rstk-mock-col { display: grid; gap: 6px; }
+.rstkCanvas .rstk-mock-ph { flex: 1; min-width: 0; color: var(--rstk-muted); font-size: .95rem; font-variant-numeric: tabular-nums; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.rstkCanvas .rstk-mock-cols { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 12px; }
+.rstkCanvas .rstk-mock-col { display: grid; gap: 6px; min-width: 0; }
 .rstkCanvas .rstk-mock-brands { display: inline-flex; align-items: center; gap: 4px; }
 .rstkCanvas .rstk-mock-brand {
   height: 16px;
