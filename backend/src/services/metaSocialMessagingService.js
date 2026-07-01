@@ -1280,9 +1280,28 @@ export async function processMetaSocialWebhook({ payload = {}, rawBody = '', sig
               .catch(error => {
                 logger.warn(`[Chat Read State] No se pudo incrementar unread de comentario: ${error.message}`)
               })
+
+            // Automatizaciones de comentarios: evento AISLADO 'comment-received'.
+            // Va por su propio carril (NO handleIncomingMessage), así que las
+            // automatizaciones de DM nunca se disparan con comentarios. Sigue SIN
+            // push y SIN agente (el agente se conecta aparte, por condiciones de
+            // ingreso, más adelante).
+            import('./automationEngine.js')
+              .then(engine => engine.handleAutomationEvent('comment-received', {
+                contactId: localContact.id,
+                contactName: localContact.contactName,
+                platform: comment.platform,
+                messageText: comment.messageText,
+                commentId: comment.commentId,
+                postId: comment.postId,
+                mediaId: comment.mediaId,
+                parentCommentId: comment.parentCommentId,
+                permalink: comment.permalink
+              }))
+              .catch(error => {
+                logger.warn(`[Automatizaciones] Comentario no procesado: ${error.message}`)
+              })
           }
-          // v1: comentarios SIN push, SIN automatizaciones, SIN agente conversacional
-          // (auto-responder comentarios públicos es riesgo de spam/política de Meta).
         } catch (error) {
           logger.warn(`Comentario Meta no procesado: ${error.message}`)
         }

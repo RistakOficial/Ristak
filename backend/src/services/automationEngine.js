@@ -1298,6 +1298,23 @@ export function findUnknownTemplateTokens(text, ctx) {
 // Coincidencia de disparadores y filtros
 // ---------------------------------------------------------------------------
 
+// Empata la "Publicación" configurada (URL o ID) contra el post/permalink del
+// comentario. El usuario pega una URL o un ID; el webhook trae post_id/media_id
+// (y a veces permalink), así que aceptamos coincidencia exacta o que uno contenga
+// al otro (URL contiene el ID). Umbral de 6 chars para no empatar por basura.
+function postMatches(post, ctx) {
+  const wanted = normalizeText(str(post))
+  if (!wanted) return true
+  const candidates = [ctx.postId, ctx.mediaId, ctx.permalink, ctx.parentCommentId]
+    .map((v) => normalizeText(str(v)))
+    .filter(Boolean)
+  return candidates.some((c) => (
+    c === wanted ||
+    (wanted.length >= 6 && c.includes(wanted)) ||
+    (c.length >= 6 && wanted.includes(c))
+  ))
+}
+
 function keywordsMatch(config, messageText) {
   const keywords = Array.isArray(config.keywords) ? config.keywords.filter(Boolean) : []
   if (keywords.length === 0) return true
@@ -1675,6 +1692,19 @@ function triggerMatches(trigger, eventType, ctx) {
       return keywordsMatch(config, ctx.messageText)
     }
 
+    case 'comment-received': {
+      // AISLADO de 'message-received' a propósito: solo los disparos de comentario
+      // entran aquí, así que las automatizaciones de DM NUNCA se disparan con
+      // comentarios (y viceversa). Se filtra por platform (campo de ctx, no por el
+      // canal normalizado, que colapsa *_comment → messenger/instagram).
+      if (trigger.type !== 'trigger-facebook-comment' && trigger.type !== 'trigger-instagram-comment') return false
+      const wantPlatform = trigger.type === 'trigger-instagram-comment' ? 'instagram' : 'messenger'
+      if (str(ctx.platform) !== wantPlatform) return false
+      const post = str(config.post)
+      if (post && !postMatches(post, ctx)) return false
+      return keywordsMatch(config, ctx.messageText)
+    }
+
     case 'contact-created': {
       if (trigger.type !== 'trigger-contact-created') return false
       const source = str(config.source)
@@ -1773,6 +1803,7 @@ function triggerMatches(trigger, eventType, ctx) {
 
 const EVENT_DESCRIPTIONS = {
   'message-received': (ctx) => `llegó un mensaje por ${ctx.channel || 'el canal configurado'}`,
+  'comment-received': (ctx) => `comentó en tu publicación de ${str(ctx.platform) === 'instagram' ? 'Instagram' : 'Facebook'}`,
   'contact-created': () => 'se creó el contacto',
   'contact-updated': (ctx) => `cambió ${(ctx.changedFields || []).join(', ') || 'un campo'} del contacto`,
   'tag-changed': (ctx) => `etiqueta "${ctx.tag}" ${ctx.tagAction === 'removed' ? 'eliminada' : 'añadida'}`,
@@ -4272,6 +4303,51 @@ export async function handleIncomingMessage({
   }
 }
 
+// Ejecuta las respuestas inline configuradas en un disparo de comentario:
+// pública (en el post) y/o por DM privado, con variables renderizadas. Respeta
+// 'first_only' (una sola vez por persona por publicación). Echo-safe: nuestra
+// respuesta pública vuelve como isEcho y no re-dispara.
+async function maybeReplyToCommentFromTrigger(trigger, ctx) {
+  const config = trigger.config || {}
+  const contactId = ctx.contact?.id
+  const commentId = str(ctx.commentId)
+  if (!contactId || !commentId) return
+  if (!config.publicReplyEnabled && !config.dmReplyEnabled) return
+
+  const platform = str(ctx.platform) === 'instagram' ? 'instagram' : 'messenger'
+  const postId = str(ctx.postId)
+
+  if (str(config.allowedComments) === 'first_only') {
+    const already = await db.get(
+      `SELECT 1 FROM meta_social_messages
+       WHERE contact_id = ? AND platform = ?
+         AND message_type IN ('comment_reply_public','comment_reply_private')
+         AND COALESCE(post_id, '') = ?
+       LIMIT 1`,
+      [contactId, platform, postId]
+    ).catch(() => null)
+    if (already) return
+  }
+
+  const { sendMetaSocialCommentReply } = await import('./metaSocialMessagingService.js')
+
+  if (config.publicReplyEnabled) {
+    const text = renderTemplate(str(config.publicReply), ctx, { preserveUnknown: true }).trim()
+    if (text) {
+      await sendMetaSocialCommentReply({ contactId, platform, message: text, replyType: 'public', commentId, postId })
+        .catch((error) => logger.warn(`[Automatizaciones] Respuesta pública a comentario falló: ${error.message}`))
+    }
+  }
+
+  if (config.dmReplyEnabled) {
+    const text = renderTemplate(str(config.dmReply), ctx, { preserveUnknown: true }).trim()
+    if (text) {
+      await sendMetaSocialCommentReply({ contactId, platform, message: text, replyType: 'private', commentId, postId })
+        .catch((error) => logger.warn(`[Automatizaciones] Respuesta privada a comentario falló: ${error.message}`))
+    }
+  }
+}
+
 async function enrollMatching(automations, eventType, baseCtx) {
   const contact = baseCtx.contact || {}
   for (const automation of automations) {
@@ -4280,6 +4356,15 @@ async function enrollMatching(automations, eventType, baseCtx) {
     if (!startNode) continue
     const matched = getTriggers(startNode).find((trigger) => triggerMatches(trigger, eventType, baseCtx))
     if (!matched) continue
+
+    // Respuestas inline del disparo de comentario (público / DM), configuradas en
+    // el propio trigger. Se ejecutan al empatar, aunque el contacto ya esté
+    // inscrito, porque cada comentario nuevo merece su respuesta.
+    if (eventType === 'comment-received') {
+      await maybeReplyToCommentFromTrigger(matched, baseCtx).catch((error) => {
+        logger.warn(`[Automatizaciones] Respuesta inline a comentario falló: ${error.message}`)
+      })
+    }
 
     const settings = flow.settings || {}
     if (contact.id && settings.preventDuplicateActiveEnrollment !== false) {
