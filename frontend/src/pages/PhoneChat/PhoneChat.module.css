@@ -4276,6 +4276,15 @@
     0 12px 30px rgba(var(--phone-chat-primary-rgb), 0.14);
 }
 
+.messageImageBubble {
+  width: fit-content;
+  padding: 4px;
+}
+
+.messageImageBubble p {
+  padding: 2px 5px 0;
+}
+
 .messageStarBadge {
   display: inline-flex;
   align-items: center;
@@ -4457,14 +4466,15 @@
 
 .messageImage {
   display: block;
-  width: min(252px, 62vw);
-  aspect-ratio: 1 / 1;
+  align-self: flex-start;
+  width: auto;
+  max-width: min(252px, 62vw);
   height: auto;
-  max-height: 318px;
+  max-height: min(318px, 58vh);
   margin: 0 0 5px;
   border-radius: 8px;
-  object-fit: cover;
-  background: color-mix(in srgb, var(--phone-chat-muted) 20%, var(--phone-chat-surface) 80%);
+  object-fit: contain;
+  background: transparent;
   contain: paint;
   user-select: none;
   -webkit-user-select: none;
@@ -4901,7 +4911,7 @@
   display: flex;
   align-self: flex-end;
   justify-content: flex-end;
-  margin: 5px 0 -1px;
+  margin: 5px 3px -1px;
 }
 
 .messageRow_outbound .messageMeta {

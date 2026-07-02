@@ -12608,6 +12608,7 @@ export const PhoneChat: React.FC = () => {
               const message = item.message
               const isAudioAttachment = message.attachment?.type === 'audio'
               const isAudioMessage = isAudioAttachment && Boolean(message.attachment?.dataUrl || message.attachment?.url)
+              const isImageMessage = message.attachment?.type === 'image' && Boolean(message.attachment.dataUrl || message.attachment.url)
               const isVideoMessage = message.attachment?.type === 'video' && Boolean(message.attachment.dataUrl || message.attachment.url)
               const isGifVideoMessage = isVideoMessage && Boolean(message.attachment?.isGif)
               const isFileMessage = Boolean(message.attachment && ['document', 'file'].includes(message.attachment.type))
@@ -12639,7 +12640,7 @@ export const PhoneChat: React.FC = () => {
                       <ReceiptText size={17} />
                     </span>
                     <div
-                      className={`${styles.messageBubble} ${styles.messageBubbleActionTarget} ${scheduled ? styles.messageBubbleScheduled : ''} ${isAudioMessage ? styles.messageAudioBubble : ''} ${isFileMessage ? styles.messageFileBubble : ''} ${messageSwipeOffset > 0 ? styles.messageBubbleSwipeDragging : ''} ${isSearchMatch ? styles.messageBubbleSearchMatch : ''} ${isActiveSearchMatch ? styles.messageBubbleSearchActive : ''} ${message.isComment ? styles.messageComment : ''}`}
+                      className={`${styles.messageBubble} ${styles.messageBubbleActionTarget} ${scheduled ? styles.messageBubbleScheduled : ''} ${isImageMessage ? styles.messageImageBubble : ''} ${isAudioMessage ? styles.messageAudioBubble : ''} ${isFileMessage ? styles.messageFileBubble : ''} ${messageSwipeOffset > 0 ? styles.messageBubbleSwipeDragging : ''} ${isSearchMatch ? styles.messageBubbleSearchMatch : ''} ${isActiveSearchMatch ? styles.messageBubbleSearchActive : ''} ${message.isComment ? styles.messageComment : ''}`}
                       data-chat-message-id={message.id}
                       data-chat-search-id={searchTargetId}
                       style={messageSwipeOffset > 0 ? { transform: `translate3d(-${messageSwipeOffset}px, 0, 0)` } : undefined}
