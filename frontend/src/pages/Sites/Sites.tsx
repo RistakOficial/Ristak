@@ -4461,10 +4461,13 @@ const getBlockCanvasStyle = (block: SiteBlock, context: BlockCanvasStyleContext 
     style['--rstk-block-text'] = readableTextOnBackground(normalized, textContrastBackground, '#111827')
     if (isCssGradient(normalized)) style['--rstk-block-text-paint'] = normalized
   }
+  const buttonHoverBg = getSettingPaint(settings, 'buttonHoverBg', '')
   if (isCssPaint(buttonBg)) {
     const normalized = normalizeCssPaint(buttonBg, '#111827')
     style['--rstk-button-bg'] = normalized
-    style['--rstk-button-hover-bg'] = normalized
+    style['--rstk-button-hover-bg'] = buttonHoverBg || normalized
+  } else if (buttonHoverBg) {
+    style['--rstk-button-hover-bg'] = buttonHoverBg
   }
   if (isCssPaint(buttonText)) {
     const normalized = normalizeCssPaint(buttonText, '#ffffff')
@@ -4472,6 +4475,10 @@ const getBlockCanvasStyle = (block: SiteBlock, context: BlockCanvasStyleContext 
     if (isCssGradient(normalized)) style['--rstk-button-text-paint'] = normalized
   }
   if (isCssPaint(buttonBorder)) style['--rstk-button-border'] = paintFallbackColor(normalizeCssPaint(buttonBorder, '#111827'), '#111827')
+  const buttonShadowPreset = getSettingString(settings, 'buttonShadow')
+  if (buttonShadowPreset === 'soft') style['--rstk-button-shadow'] = '0 4px 12px color-mix(in srgb, var(--rstk-ink) 14%, transparent)'
+  if (buttonShadowPreset === 'medium') style['--rstk-button-shadow'] = '0 8px 22px color-mix(in srgb, var(--rstk-ink) 20%, transparent)'
+  if (buttonShadowPreset === 'strong') style['--rstk-button-shadow'] = '0 14px 34px color-mix(in srgb, var(--rstk-ink) 28%, transparent)'
   if (isCssPaint(cardBg)) style['--rstk-card-bg'] = normalizeCssPaint(cardBg, '#ffffff')
   if (isCssPaint(cardBorder)) style['--rstk-card-border'] = paintFallbackColor(normalizeCssPaint(cardBorder, '#dbe3ef'), '#dbe3ef')
   if (isCssPaint(countdownNumberColor)) style['--rstk-countdown-number'] = paintFallbackColor(normalizeCssPaint(countdownNumberColor, '#111827'), '#111827')
@@ -30128,6 +30135,24 @@ const InlineBlockStyleControls: React.FC<{
             onChange={(value) => onPatchSettings({ buttonBg: value })}
             onCommit={onSave}
           />
+          <ColorField
+            label="Fondo al pasar el mouse"
+            value={getSettingPaint(settings, 'buttonHoverBg', getSettingPaint(settings, 'buttonBg', defaultAccent))}
+            allowGradient
+            onChange={(value) => onPatchSettings({ buttonHoverBg: value })}
+            onCommit={onSave}
+          />
+          <label className={styles.field}>
+            <span>Sombra del botón</span>
+            <CustomSelect
+              value={getSettingString(settings, 'buttonShadow') || ''}
+              onValueChange={(value) => {
+                onPatchSettings({ buttonShadow: value })
+                window.setTimeout(onSave, 0)
+              }}
+              options={[{ value: '', label: 'Sin sombra' }, { value: 'soft', label: 'Suave' }, { value: 'medium', label: 'Media' }, { value: 'strong', label: 'Fuerte' }]}
+            />
+          </label>
           <div className={styles.twoColumn}>
             <DimensionField
               label="Radio botón"
@@ -32206,8 +32231,22 @@ const CanvasPreviewBlock: React.FC<CanvasPreviewBlockProps> = ({
     const showSecureNote = getSettingBoolean(settings, 'paymentShowSecureNote', true)
     const secureNoteText = getSettingString(settings, 'paymentSecureNote') || PAYMENT_SECURE_NOTE_DEFAULT
     const paymentTextAlign = getHorizontalAlign(settings, 'paymentTextAlign', 'left')
-    const fieldTextColor = getSettingPaint(settings, 'paymentFieldTextColor', '')
-    const paymentSectionStyle: Record<string, string> = { '--rstk-checkout-align': paymentTextAlign }
+    // Ajuste manual > color de texto del bloque — mismo orden que el checkout publicado.
+    // Se aplana a color sólido (un degradado no es válido para el SDK de la pasarela).
+    const fieldTextPaint = getSettingPaint(settings, 'paymentFieldTextColor', '')
+      || getSettingPaint(settings, 'blockText', '')
+    const fieldTextColor = fieldTextPaint ? paintFallbackColor(fieldTextPaint, '#111827') : ''
+    // Ancho/posición del botón de pago — MISMA lógica que renderPaymentBlock (backend):
+    // default ancho completo; buttonWidth>0 + buttonAlign lo controlan.
+    const payButtonAlign = getButtonAlign(settings, 'full')
+    const payButtonWidthPct = Number(settings.buttonWidth)
+    const payWidth = payButtonAlign === 'full' || !(payButtonWidthPct > 0) ? '100%' : `${Math.min(100, Math.max(10, Math.round(payButtonWidthPct)))}%`
+    const payJustify = payWidth === '100%' ? 'stretch' : (payButtonAlign === 'left' ? 'start' : payButtonAlign === 'right' ? 'end' : 'center')
+    const paymentSectionStyle: Record<string, string> = {
+      '--rstk-checkout-align': paymentTextAlign,
+      '--rstk-checkout-pay-width': payWidth,
+      '--rstk-checkout-pay-justify': payJustify
+    }
     if (fieldTextColor) paymentSectionStyle['--rstk-checkout-field-text'] = fieldTextColor
     // Preview WYSIWYG: clon fiel del checkout real (Stripe Elements / tokenizer). Los campos
     // son un mock no interactivo; en Stripe montamos el Payment Element REAL (diferido)

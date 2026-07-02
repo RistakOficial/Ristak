@@ -180,6 +180,7 @@ export const PaymentGateControls: React.FC<PaymentGateControlsProps> = ({
   const [loadingProducts, setLoadingProducts] = useState(false)
   const [productsError, setProductsError] = useState(false)
   const [selectedProductId, setSelectedProductId] = useState('')
+  const [selectedPriceId, setSelectedPriceId] = useState('')
   const [createProductOpen, setCreateProductOpen] = useState(false)
 
   const loadProducts = useCallback(async () => {
@@ -210,10 +211,16 @@ export const PaymentGateControls: React.FC<PaymentGateControlsProps> = ({
 
   const applyCatalogProduct = (id: string) => {
     setSelectedProductId(id)
-    if (!id) return
+    if (!id) {
+      setSelectedPriceId('')
+      return
+    }
     const product = products.find(item => productKeyOf(item) === id)
     if (!product) return
+    // Autoselecciona el primer precio (visible en el dropdown) y sincroniza el monto;
+    // el usuario puede cambiar de precio o editar el monto a mano después.
     const firstPrice = (product.prices || [])[0]
+    setSelectedPriceId(firstPrice ? priceKeyOf(firstPrice) : '')
     patchConfig({
       productName: product.name || config.productName,
       ...(firstPrice ? { amount: priceAmountOf(firstPrice) } : {})
@@ -222,6 +229,7 @@ export const PaymentGateControls: React.FC<PaymentGateControlsProps> = ({
   }
 
   const applyCatalogPrice = (key: string) => {
+    setSelectedPriceId(key)
     const price = productPrices.find(item => priceKeyOf(item) === key)
     if (!price) return
     patchConfig({ amount: priceAmountOf(price) })
@@ -324,6 +332,24 @@ export const PaymentGateControls: React.FC<PaymentGateControlsProps> = ({
               />
             </label>
 
+            {selectedProduct && (
+              <div className={styles.field}>
+                <span>Precio del producto</span>
+                <CustomSelect
+                  value={selectedPriceId}
+                  onValueChange={applyCatalogPrice}
+                  onBlur={onCommit}
+                  disabled={productPrices.length === 0}
+                  options={productPrices.length === 0
+                    ? [{ value: '', label: 'Sin precios — escribe el monto' }]
+                    : productPrices.map(price => ({
+                        value: priceKeyOf(price),
+                        label: `${price.name || 'Precio'} · ${priceAmountOf(price).toFixed(2)} ${price.currency || config.currency}`
+                      }))}
+                />
+              </div>
+            )}
+
             <label className={styles.field}>
               <span>Monto</span>
               <NumberInput
@@ -334,21 +360,6 @@ export const PaymentGateControls: React.FC<PaymentGateControlsProps> = ({
                 onBlur={onCommit}
               />
             </label>
-
-            {selectedProduct && productPrices.length > 1 && (
-              <label className={styles.field}>
-                <span>Precio del producto</span>
-                <CustomSelect
-                  value=""
-                  onValueChange={applyCatalogPrice}
-                  onBlur={onCommit}
-                  options={productPrices.map(price => ({
-                    value: priceKeyOf(price),
-                    label: `${price.name || 'Precio'} · ${priceAmountOf(price).toFixed(2)} ${price.currency || config.currency}`
-                  }))}
-                />
-              </label>
-            )}
 
             <label className={`${styles.field} ${styles.fieldWide}`}>
               <span>Descripción</span>
@@ -435,6 +446,7 @@ export const PaymentGateControls: React.FC<PaymentGateControlsProps> = ({
             const fresh = list.find(item => productKeyOf(item) === key) || product
             setSelectedProductId(key)
             const firstPrice = (fresh.prices || [])[0]
+            setSelectedPriceId(firstPrice ? priceKeyOf(firstPrice) : '')
             patchConfig({
               productName: fresh.name || config.productName,
               ...(firstPrice ? { amount: priceAmountOf(firstPrice) } : {})

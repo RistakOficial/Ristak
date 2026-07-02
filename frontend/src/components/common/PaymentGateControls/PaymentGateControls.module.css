@@ -2,6 +2,9 @@
   display: grid;
   gap: 12px;
   min-width: 0;
+  /* Contenedor para las container queries de abajo: el panel de propiedades tiene ancho
+     fijo (~300px) sin relación con el viewport, así que las media queries no sirven aquí. */
+  container-type: inline-size;
 }
 
 .header {
@@ -67,6 +70,7 @@
   box-sizing: border-box;
   width: 100%;
   max-width: 100%;
+  min-width: 0;
   min-height: var(--design-control-height, 40px);
   border: 1px solid var(--design-control-border, var(--border));
   border-radius: var(--design-control-radius, var(--radius-ctl));
@@ -97,6 +101,9 @@
   justify-content: space-between;
   gap: 8px;
   min-width: 0;
+  width: 100%;
+  max-width: 100%;
+  overflow: hidden;
 }
 
 .catalogLabelRow > span {
@@ -208,6 +215,14 @@
 }
 
 @media (max-width: 720px) {
+  .grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* Si el panel (no el viewport) queda angosto, las parejas se apilan en 1 columna para
+   que ningún campo se encime ni se desborde. ~280px = dos columnas útiles de ~130px. */
+@container (max-width: 280px) {
   .grid {
     grid-template-columns: 1fr;
   }

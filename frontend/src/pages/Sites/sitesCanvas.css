@@ -324,6 +324,7 @@
   background: var(--rstk-button-bg, var(--rstk-accent)); color: var(--rstk-button-text, var(--rstk-on-accent));
   font-family: var(--rstk-button-font, inherit); font-weight: var(--rstk-button-weight, var(--rstk-btn-weight)); font-size: var(--rstk-button-size, 1.02rem); font-style: var(--rstk-button-font-style, normal); line-height: var(--rstk-button-line-height, 1.08);
   padding: var(--rstk-button-pad-y, 8px) var(--rstk-button-pad-x, 22px); text-decoration: var(--rstk-button-text-decoration, none); text-transform: var(--rstk-button-text-transform, none);
+  box-shadow: var(--rstk-button-shadow, none);
 }
 .rstkCanvas .rstk-button-link {
   justify-self: var(--rstk-button-justify, center);
@@ -461,6 +462,7 @@
   color: var(--rstk-block-text, var(--rstk-ink));
   border: var(--rstk-block-border-width, 1px) solid var(--rstk-block-border, var(--rstk-border));
   border-radius: var(--rstk-block-radius, var(--rstk-radius-lg));
+  box-shadow: var(--rstk-shadow, none);
   text-align: var(--rstk-checkout-align, var(--rstk-block-align, left));
 }
 .rstkCanvas .rstk-checkout-card *,
@@ -506,7 +508,6 @@
   color: var(--rstk-block-text, var(--rstk-ink));
   font-size: 1.5rem;
   font-weight: 800;
-  font-variant-numeric: tabular-nums;
   margin-top: 2px;
   min-width: 0;
   overflow-wrap: anywhere;
@@ -524,12 +525,21 @@
   border: 1px solid color-mix(in srgb, var(--rstk-accent) 30%, var(--rstk-border));
 }
 .rstkCanvas .rstk-checkout-body { display: grid; gap: 14px; min-width: 0; max-width: 100%; }
+.rstkCanvas .rstk-checkout-loading { display: flex; align-items: center; gap: 10px; color: var(--rstk-muted); font-size: .9rem; padding: 8px 0; }
+.rstkCanvas .rstk-checkout-spinner { width: 18px; height: 18px; border-radius: 50%; border: 2px solid color-mix(in srgb, var(--rstk-ink) 20%, transparent); border-top-color: var(--rstk-accent); animation: rstk-checkout-spin .7s linear infinite; }
+@keyframes rstk-checkout-spin { to { transform: rotate(360deg); } }
+.rstkCanvas .rstk-checkout-fields { display: grid; gap: 10px; min-height: 20px; min-width: 0; max-width: 100%; }
+.rstkCanvas .rstk-checkout-installments { display: grid; gap: 6px; }
+.rstkCanvas .rstk-checkout-select { width: 100%; min-height: 44px; padding: 0 12px; background: var(--rstk-input-bg); color: var(--rstk-input-ink, var(--rstk-ink)); border: 1px solid var(--rstk-input-border); border-radius: var(--rstk-radius); font: inherit; font-size: .92rem; }
+.rstkCanvas .rstk-checkout-message { margin: 0; font-size: .88rem; line-height: 1.4; padding: 10px 12px; border-radius: var(--rstk-radius); border: 1px solid var(--rstk-border); color: var(--rstk-ink); background: color-mix(in srgb, var(--rstk-ink) 4%, transparent); min-width: 0; overflow-wrap: anywhere; word-break: break-word; }
+.rstkCanvas .rstk-checkout-message[data-kind="success"] { color: var(--rstk-accent); border-color: color-mix(in srgb, var(--rstk-accent) 35%, var(--rstk-border)); background: color-mix(in srgb, var(--rstk-accent) 8%, transparent); }
+.rstkCanvas .rstk-checkout-message[data-kind="error"] { color: var(--rstk-danger, #d64545); border-color: color-mix(in srgb, var(--rstk-danger, #d64545) 35%, var(--rstk-border)); background: color-mix(in srgb, var(--rstk-danger, #d64545) 8%, transparent); }
+.rstkCanvas .rstk-checkout-success { display: grid; gap: 8px; padding: 22px; text-align: center; color: var(--rstk-ink); font-size: 1.02rem; font-weight: 600; }
 /* Mock de campos (fallback: Conekta/MP, o mientras Stripe carga el Payment Element real).
-   Usa tokens del tema para adaptarse a claro/oscuro; solo las marcas llevan su color. */
-.rstkCanvas .rstk-checkout-fields-mock { display: grid; gap: 12px; }
-.rstkCanvas .rstk-mock-lbl { font-size: .82rem; color: var(--rstk-checkout-field-text, var(--rstk-ink)); font-weight: 500; }
-.rstkCanvas .rstk-mock-country > span:first-child,
-.rstkCanvas .rstk-mock-save > span:last-child { color: var(--rstk-checkout-field-text, var(--rstk-ink)); }
+   Usa tokens del tema para adaptarse a claro/oscuro; solo las marcas llevan su color. El
+   color de texto sigue: ajuste del bloque > color de texto del bloque > tinta del tema. */
+.rstkCanvas .rstk-checkout-fields-mock { display: grid; gap: 10px; }
+.rstkCanvas .rstk-mock-lbl { font-size: .82rem; color: var(--rstk-checkout-field-text, var(--rstk-block-text, var(--rstk-ink))); font-weight: 500; }
 .rstkCanvas .rstk-mock-input {
   display: flex;
   align-items: center;
@@ -565,15 +575,15 @@
 .rstkCanvas .rstk-mock-mc span:last-child { background: #f79e1b; opacity: .9; }
 .rstkCanvas .rstk-mock-cvc { width: 26px; height: 16px; border-radius: 3px; background: color-mix(in srgb, var(--rstk-ink) 12%, transparent); }
 .rstkCanvas .rstk-mock-country { justify-content: space-between; }
-.rstkCanvas .rstk-mock-country > span:first-child { color: var(--rstk-ink); font-size: .95rem; }
+.rstkCanvas .rstk-mock-country > span:first-child { color: var(--rstk-checkout-field-text, var(--rstk-block-text, var(--rstk-ink))); font-size: .95rem; }
 .rstkCanvas .rstk-mock-chev { width: 0; height: 0; border-left: 4px solid transparent; border-right: 4px solid transparent; border-top: 5px solid var(--rstk-muted); }
-.rstkCanvas .rstk-mock-save { display: flex; align-items: center; gap: 8px; font-size: .82rem; color: var(--rstk-ink); }
+.rstkCanvas .rstk-mock-save { display: flex; align-items: center; gap: 8px; font-size: .82rem; color: var(--rstk-checkout-field-text, var(--rstk-block-text, var(--rstk-ink))); }
 .rstkCanvas .rstk-mock-check { flex: 0 0 auto; width: 16px; height: 16px; border: 1px solid var(--rstk-input-border, var(--rstk-border)); border-radius: 4px; background: var(--rstk-input-bg, var(--rstk-surface)); }
 .rstkCanvas.rstk-dark .rstk-mock-cvc { background: #424353; }
 .rstkCanvas .rstk-mock-select {
   display: flex;
   align-items: center;
-  min-height: 42px;
+  min-height: 44px;
   padding: 0 12px;
   border: 1px solid var(--rstk-input-border, var(--rstk-border));
   border-radius: var(--rstk-radius);
@@ -581,14 +591,40 @@
   color: var(--rstk-ink);
   font-size: .9rem;
 }
-.rstkCanvas .rstk-payment-block .rstk-checkout-pay {
-  justify-self: stretch;
-  width: 100%;
-  min-height: 48px;
-  margin-inline: 0;
+/* El botón de pago espeja el publicado: consume las variables de diseño de botón
+   (--rstk-button-*) con los mismos fallbacks, y su ancho/posición por bloque. */
+.rstkCanvas .rstk-checkout-pay {
   display: inline-flex;
   align-items: center;
   justify-content: center;
+  width: 100%;
+  min-height: var(--rstk-button-height, 48px);
+  padding: var(--rstk-button-pad-y, 0) var(--rstk-button-pad-x, 18px);
+  border: var(--rstk-button-border-width, 0) solid var(--rstk-button-border, var(--rstk-button-bg, var(--rstk-accent)));
+  border-radius: var(--rstk-block-button-radius, var(--rstk-btn-radius, var(--rstk-radius)));
+  background: var(--rstk-button-bg, var(--rstk-accent));
+  color: var(--rstk-button-text, var(--rstk-on-accent, #fff));
+  font: inherit;
+  font-family: var(--rstk-button-font, inherit);
+  font-size: var(--rstk-button-size, 1rem);
+  font-weight: var(--rstk-button-weight, var(--rstk-btn-weight, 700));
+  font-style: var(--rstk-button-font-style, normal);
+  line-height: var(--rstk-button-line-height, 1.2);
+  text-decoration: var(--rstk-button-text-decoration, none);
+  text-transform: var(--rstk-button-text-transform, none);
+  box-shadow: var(--rstk-button-shadow, none);
+  cursor: pointer;
+  transition: background .15s ease, border-color .15s ease, filter .15s ease, opacity .15s;
+}
+.rstkCanvas .rstk-checkout-pay:hover { background: var(--rstk-button-hover-bg, var(--rstk-button-bg, var(--rstk-accent))); filter: brightness(1.05); }
+/* En el canvas el botón vive con [disabled] solo para no ser clickeable: se ve a plena
+   opacidad para que el preview muestre el estado normal del botón, no el de "procesando". */
+.rstkCanvas .rstk-checkout-pay:disabled { opacity: 1; cursor: default; }
+.rstkCanvas .rstk-payment-block button.rstk-checkout-pay {
+  justify-self: var(--rstk-checkout-pay-justify, stretch);
+  width: var(--rstk-checkout-pay-width, 100%);
+  max-width: 100%;
+  margin-inline: 0;
 }
 .rstkCanvas .rstk-checkout-secure { margin: 0; color: var(--rstk-muted); font-size: .76rem; text-align: inherit; }
 

@@ -15691,9 +15691,10 @@ function buildPaymentCheckoutRuntimeScript() {
           // fondo oscuro -> tema 'night' (labels claros, legibles); claro -> 'stripe'.
           var payCard = root.querySelector('.rstk-checkout-card');
           var payDark = (payCard && luminanceOf(getComputedStyle(payCard).backgroundColor) < 0.5) || isDark();
-          // Color de texto de los campos: ajuste manual del bloque (var --rstk-checkout-field-text
-          // en la <section>) o, si no, la tinta del tema. El País se muestra/oculta por bloque.
-          var fieldTextTok = (getComputedStyle(root).getPropertyValue('--rstk-checkout-field-text').trim()) || readToken('--rstk-ink') || undefined;
+          // Color de texto de los campos: ajuste manual del bloque > color de texto del
+          // bloque (--rstk-block-text) > tinta del tema. El País se muestra/oculta por bloque.
+          var rootCs = getComputedStyle(root);
+          var fieldTextTok = rootCs.getPropertyValue('--rstk-checkout-field-text').trim() || rootCs.getPropertyValue('--rstk-block-text').trim() || readToken('--rstk-ink') || undefined;
           var mutedTok = readToken('--rstk-muted') || undefined;
           var showCountry = root.getAttribute('data-show-country') !== 'false';
           var appearance = payDark
@@ -15748,6 +15749,8 @@ function buildPaymentCheckoutRuntimeScript() {
       }
       function mountConekta(d) {
         return loadScript(CONEKTA_SDK, function () { return !!window.ConektaCheckoutComponents; }).then(function () {
+          var conektaCs = getComputedStyle(root);
+          var conektaText = conektaCs.getPropertyValue('--rstk-checkout-field-text').trim() || conektaCs.getPropertyValue('--rstk-block-text').trim() || readToken('--rstk-ink');
           var selectedInstallments = 1;
           var months = conektaInstallmentMonths(d);
           if (months.length && els.installments) {
@@ -15775,7 +15778,7 @@ function buildPaymentCheckoutRuntimeScript() {
               onCreateTokenError: function (err) { setPayBusy(false); setMessage('error', (err && err.message) || 'Conekta no pudo procesar la tarjeta.'); },
               onGetInfoSuccess: function () { showLoading(false); }
             },
-            options: { backgroundMode: isDark() ? 'darkMode' : 'lightMode', inputType: 'minimalMode', hideLogo: true, colorPrimary: readToken('--rstk-accent'), colorText: (getComputedStyle(root).getPropertyValue('--rstk-checkout-field-text').trim() || readToken('--rstk-ink')), colorLabel: readToken('--rstk-muted'), autoResize: true }
+            options: { backgroundMode: isDark() ? 'darkMode' : 'lightMode', inputType: 'minimalMode', hideLogo: true, colorPrimary: readToken('--rstk-accent'), colorText: conektaText, colorLabel: readToken('--rstk-muted'), autoResize: true }
           });
           els.pay.hidden = false; payLabel(d.amount, d.currency);
           els.pay.addEventListener('click', function () {
@@ -15794,6 +15797,14 @@ function buildPaymentCheckoutRuntimeScript() {
           var builder = mp.bricks();
           var maxInst = (d.installments && d.installments.enabled && Number(d.installments.maxInstallments) > 1) ? Number(d.installments.maxInstallments) : 1;
           var customization = { visual: { style: { theme: isDark() ? 'dark' : 'default' } } };
+          // Color de texto configurable también en Bricks (mismo orden de prioridad que Stripe).
+          var mpCs = getComputedStyle(root);
+          var mpText = mpCs.getPropertyValue('--rstk-checkout-field-text').trim() || mpCs.getPropertyValue('--rstk-block-text').trim() || readToken('--rstk-ink');
+          var mpVars = {};
+          if (mpText) { mpVars.textPrimaryColor = mpText; }
+          var mpMuted = readToken('--rstk-muted');
+          if (mpMuted) { mpVars.textSecondaryColor = mpMuted; }
+          if (mpVars.textPrimaryColor || mpVars.textSecondaryColor) customization.visual.style.customVariables = mpVars;
           if (maxInst > 1) customization.paymentMethods = { minInstallments: 1, maxInstallments: maxInst };
           builder.create('cardPayment', els.fields.id, {
             initialization: { amount: Number(d.amount || 0) },
@@ -17872,15 +17883,22 @@ function renderBlockStyleVars(block, context = {}) {
     if (isCssGradient(blockText)) vars.push(`--rstk-block-text-paint:${blockText}`)
   }
   if (!isCalendarEmbed && blockBorder) vars.push(`--rstk-block-border:${paintFallbackColor(blockBorder, '#dbe3ef')}`)
+  const buttonHoverBg = blockSettingPaint(settings, 'buttonHoverBg')
   if (buttonBg) {
     vars.push(`--rstk-button-bg:${buttonBg}`)
-    vars.push(`--rstk-button-hover-bg:${buttonBg}`)
+    vars.push(`--rstk-button-hover-bg:${buttonHoverBg || buttonBg}`)
+  } else if (buttonHoverBg) {
+    vars.push(`--rstk-button-hover-bg:${buttonHoverBg}`)
   }
   if (buttonText) {
     vars.push(`--rstk-button-text:${paintFallbackColor(buttonText, '#ffffff')}`)
     if (isCssGradient(buttonText)) vars.push(`--rstk-button-text-paint:${buttonText}`)
   }
   if (buttonBorder) vars.push(`--rstk-button-border:${paintFallbackColor(buttonBorder, '#111827')}`)
+  const buttonShadowPreset = cleanString(settings.buttonShadow)
+  if (buttonShadowPreset === 'soft') vars.push('--rstk-button-shadow:0 4px 12px color-mix(in srgb,var(--rstk-ink) 14%,transparent)')
+  if (buttonShadowPreset === 'medium') vars.push('--rstk-button-shadow:0 8px 22px color-mix(in srgb,var(--rstk-ink) 20%,transparent)')
+  if (buttonShadowPreset === 'strong') vars.push('--rstk-button-shadow:0 14px 34px color-mix(in srgb,var(--rstk-ink) 28%,transparent)')
   if (cardBg) vars.push(`--rstk-card-bg:${cardBg}`)
   if (cardBorder) vars.push(`--rstk-card-border:${paintFallbackColor(cardBorder, '#dbe3ef')}`)
   if (countdownNumberColor) vars.push(`--rstk-countdown-number:${paintFallbackColor(countdownNumberColor, '#111827')}`)
@@ -18569,7 +18587,14 @@ function renderPaymentBlock(block = {}, context = {}) {
   const showCountry = settings.paymentShowCountry !== false
   const checkoutAlign = blockHorizontalAlign(settings, 'paymentTextAlign', 'left')
   const fieldTextColor = cleanString(settings.paymentFieldTextColor).replace(/[^a-zA-Z0-9#().,%\s-]/g, '')
-  const checkoutStyle = `--rstk-checkout-align:${checkoutAlign}${fieldTextColor ? `;--rstk-checkout-field-text:${fieldTextColor}` : ''}`
+  // Ancho/posición del botón de pago: por defecto ancho completo (comportamiento actual).
+  // buttonAlign 'full' o buttonWidth>0 lo controlan; con ancho parcial, buttonAlign
+  // decide dónde se ancla dentro del checkout.
+  const payButtonAlign = blockButtonAlign(settings, 'full')
+  const payButtonWidthPct = Number(settings.buttonWidth)
+  const payWidth = payButtonAlign === 'full' || !(payButtonWidthPct > 0) ? '100%' : `${Math.min(100, Math.max(10, Math.round(payButtonWidthPct)))}%`
+  const payJustify = payWidth === '100%' ? 'stretch' : (payButtonAlign === 'left' ? 'start' : payButtonAlign === 'right' ? 'end' : 'center')
+  const checkoutStyle = `--rstk-checkout-align:${checkoutAlign};--rstk-checkout-pay-width:${payWidth};--rstk-checkout-pay-justify:${payJustify}${fieldTextColor ? `;--rstk-checkout-field-text:${fieldTextColor}` : ''}`
 
   // Shell del checkout EMBEBIDO inline. El runtime del sitio publicado llama a
   // /api/sites/public/checkout/init, monta el SDK del proveedor dentro de
@@ -19945,10 +19970,10 @@ const RSTK_BASE_CSS = `
   .rstkBlockFullWidth .rstk-checkout-card{max-width:none}
   .rstk-checkout-head{display:grid;gap:4px;min-width:0}
   .rstk-checkout-head .rstk-payment-kicker{color:var(--rstk-accent);font-size:.74rem;font-weight:800;text-transform:uppercase;letter-spacing:.08em;overflow-wrap:anywhere}
-  .rstk-checkout-title{color:var(--rstk-ink);font-size:1.12rem;font-weight:700;line-height:1.25;min-width:0;overflow-wrap:anywhere;word-break:break-word}
+  .rstk-checkout-title{color:var(--rstk-block-text,var(--rstk-ink));font-size:1.12rem;font-weight:700;line-height:1.25;min-width:0;overflow-wrap:anywhere;word-break:break-word}
   .rstk-checkout-desc{margin:0;color:var(--rstk-muted);font-size:.92rem;line-height:1.4;min-width:0;overflow-wrap:anywhere;word-break:break-word}
-  .rstk-checkout-amount{color:var(--rstk-ink);font-size:1.5rem;font-weight:800;margin-top:2px;min-width:0;overflow-wrap:anywhere;word-break:break-word}
-  .rstk-checkout-testbadge{margin:0;justify-self:start;padding:4px 10px;border-radius:999px;font-size:.72rem;font-weight:700;color:var(--rstk-ink);background:color-mix(in srgb,var(--rstk-accent) 12%,transparent);border:1px solid color-mix(in srgb,var(--rstk-accent) 30%,var(--rstk-border))}
+  .rstk-checkout-amount{color:var(--rstk-block-text,var(--rstk-ink));font-size:1.5rem;font-weight:800;margin-top:2px;min-width:0;overflow-wrap:anywhere;word-break:break-word}
+  .rstk-checkout-testbadge{margin:0;justify-self:start;padding:4px 10px;border-radius:999px;font-size:.72rem;font-weight:700;color:var(--rstk-block-text,var(--rstk-ink));background:color-mix(in srgb,var(--rstk-accent) 12%,transparent);border:1px solid color-mix(in srgb,var(--rstk-accent) 30%,var(--rstk-border))}
   .rstk-checkout-body{display:grid;gap:14px;min-width:0;max-width:100%}
   .rstk-checkout-loading{display:flex;align-items:center;gap:10px;color:var(--rstk-muted);font-size:.9rem;padding:8px 0}
   .rstk-checkout-spinner{width:18px;height:18px;border-radius:50%;border:2px solid color-mix(in srgb,var(--rstk-ink) 20%,transparent);border-top-color:var(--rstk-accent);animation:rstk-checkout-spin .7s linear infinite}
@@ -19956,12 +19981,16 @@ const RSTK_BASE_CSS = `
   .rstk-checkout-fields{display:grid;gap:10px;min-height:20px;min-width:0;max-width:100%}
   .rstk-checkout-installments{display:grid;gap:6px}
   .rstk-checkout-select{width:100%;min-height:44px;padding:0 12px;background:var(--rstk-input-bg);color:var(--rstk-input-ink,var(--rstk-ink));border:1px solid var(--rstk-input-border);border-radius:var(--rstk-radius);font:inherit;font-size:.92rem}
-  .rstk-checkout-pay{display:inline-flex;align-items:center;justify-content:center;width:100%;min-height:48px;padding:0 18px;border:0;border-radius:var(--rstk-btn-radius,var(--rstk-radius));background:var(--rstk-accent);color:var(--rstk-on-accent,#fff);font:inherit;font-size:1rem;font-weight:var(--rstk-btn-weight,700);cursor:pointer;transition:filter .15s var(--rstk-ease,ease),opacity .15s}
-  .rstk-checkout-pay:hover{filter:brightness(1.05)}
+  /* El botón de pago consume las MISMAS variables de diseño de botón que el resto de
+     bloques (--rstk-button-*): fondo, texto, borde, radio, padding, tipografía, sombra
+     y hover. Los fallbacks reproducen el look anterior si el bloque no define nada. */
+  .rstk-checkout-pay{display:inline-flex;align-items:center;justify-content:center;width:100%;min-height:var(--rstk-button-height,48px);padding:var(--rstk-button-pad-y,0) var(--rstk-button-pad-x,18px);border:var(--rstk-button-border-width,0) solid var(--rstk-button-border,var(--rstk-button-bg,var(--rstk-accent)));border-radius:var(--rstk-block-button-radius,var(--rstk-btn-radius,var(--rstk-radius)));background:var(--rstk-button-bg,var(--rstk-accent));color:var(--rstk-button-text,var(--rstk-on-accent,#fff));font:inherit;font-family:var(--rstk-button-font,inherit);font-size:var(--rstk-button-size,1rem);font-weight:var(--rstk-button-weight,var(--rstk-btn-weight,700));font-style:var(--rstk-button-font-style,normal);line-height:var(--rstk-button-line-height,1.2);text-decoration:var(--rstk-button-text-decoration,none);text-transform:var(--rstk-button-text-transform,none);box-shadow:var(--rstk-button-shadow,none);cursor:pointer;transition:background .15s ease,border-color .15s ease,filter .15s var(--rstk-ease,ease),opacity .15s}
+  .rstk-checkout-pay:hover{background:var(--rstk-button-hover-bg,var(--rstk-button-bg,var(--rstk-accent)));filter:brightness(1.05)}
   .rstk-checkout-pay:disabled{opacity:.6;cursor:default}
   /* button.<clase> gana en especificidad al legacy .rstk-payment-block .rstk-button-link
-     (que alineaba el botón a la derecha), sin importar el orden en la hoja. */
-  .rstk-payment-block button.rstk-checkout-pay{justify-self:stretch;width:100%;max-width:100%;margin-inline:0}
+     (que alineaba el botón a la derecha), sin importar el orden en la hoja. El ancho y
+     la posición se controlan por bloque (--rstk-checkout-pay-*): default ancho completo. */
+  .rstk-payment-block button.rstk-checkout-pay{justify-self:var(--rstk-checkout-pay-justify,stretch);width:var(--rstk-checkout-pay-width,100%);max-width:100%;margin-inline:0}
   .rstk-checkout-message{margin:0;font-size:.88rem;line-height:1.4;padding:10px 12px;border-radius:var(--rstk-radius);border:1px solid var(--rstk-border);color:var(--rstk-ink);background:color-mix(in srgb,var(--rstk-ink) 4%,transparent);min-width:0;overflow-wrap:anywhere;word-break:break-word}
   .rstk-checkout-message[data-kind="success"]{color:var(--rstk-accent);border-color:color-mix(in srgb,var(--rstk-accent) 35%,var(--rstk-border));background:color-mix(in srgb,var(--rstk-accent) 8%,transparent)}
   .rstk-checkout-message[data-kind="error"]{color:var(--rstk-danger,#d64545);border-color:color-mix(in srgb,var(--rstk-danger,#d64545) 35%,var(--rstk-border));background:color-mix(in srgb,var(--rstk-danger,#d64545) 8%,transparent)}
@@ -20001,6 +20030,7 @@ const RSTK_BASE_CSS = `
     background:var(--rstk-button-bg,var(--rstk-accent));color:var(--rstk-button-text,var(--rstk-on-accent));
     font-family:var(--rstk-button-font,inherit);font-weight:var(--rstk-button-weight,var(--rstk-btn-weight));font-size:var(--rstk-button-size,1.02rem);font-style:var(--rstk-button-font-style,normal);line-height:var(--rstk-button-line-height,1.08);
     padding:var(--rstk-button-pad-y,8px) var(--rstk-button-pad-x,22px);text-decoration:var(--rstk-button-text-decoration,none);text-transform:var(--rstk-button-text-transform,none);
+    box-shadow:var(--rstk-button-shadow,none);
     transition:background .15s ease,border-color .15s ease,transform .04s ease,box-shadow .15s ease;
   }
 	  .rstk-button-link{justify-self:var(--rstk-button-justify,center);width:var(--rstk-button-width,fit-content);margin-left:var(--rstk-button-margin-left,auto);margin-right:var(--rstk-button-margin-right,auto)}
@@ -22433,7 +22463,10 @@ export async function renderPublicSiteHtml(site, { pageId, pagePath, trackingEna
   // En páginas publicadas (no preview) los params de URL se preservan siempre,
   // aunque el tracking esté apagado: la atribución no debe perderse nunca.
   const paramPreservationScript = preview ? '' : buildParamPreservationScript()
-  const paymentCheckoutScript = !preview ? buildPaymentCheckoutRuntimeScript() : ''
+  // El runtime del checkout corre TAMBIÉN en preview: montar el formulario ya no crea
+  // registros de pago (creación perezosa — la fila nace solo al intentar cobrar), y así
+  // Previsualizar es espejo exacto del sitio publicado en vez de un spinner eterno.
+  const paymentCheckoutScript = buildPaymentCheckoutRuntimeScript()
   const metaPixelSite = buildSiteWithEmbeddedSubmitMetaFallback(site, blocks, activePage?.id)
   const metaPixel = await buildMetaPixelSnippet(metaPixelSite, trackingEnabled, activePage, preview)
   const headerTrackingCode = trackingEnabled ? buildHeaderTrackingCode(site, activePage) : ''

@@ -83,8 +83,9 @@ export const StripePaymentElementPreview: React.FC<StripePaymentElementPreviewPr
     const card = el.closest('.rstk-checkout-card')
     const cardBg = card ? getComputedStyle(card).backgroundColor : ''
     const dark = luminanceOf(cardBg) < 0.5 || Boolean(el.closest('.rstk-dark'))
-    // Color de texto de los campos: el ajuste manual gana; si no, el token de tinta del tema.
-    const fieldText = fieldTextColor || token('--rstk-checkout-field-text') || token('--rstk-ink')
+    // Color de texto de los campos: ajuste manual > var del bloque > color de texto del
+    // bloque (--rstk-block-text) > tinta del tema — mismo orden que el runtime publicado.
+    const fieldText = fieldTextColor || token('--rstk-checkout-field-text') || token('--rstk-block-text') || token('--rstk-ink')
     const muted = token('--rstk-muted')
     setAppearance(
       dark
