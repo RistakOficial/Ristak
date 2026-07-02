@@ -2772,10 +2772,12 @@ function isCommentContact(contact?: unknown): boolean {
   return String(record?.lastMessageType || '').toLowerCase().startsWith('comment')
 }
 
-// (Obsoleto tras la fusión: ya no hay contacto-comentario separado.) Se conserva
-// el nombre para no tocar el filtro; equivale a "el contacto ya tiene DM privado".
-function commentContactHasLinkedDm(contact?: unknown): boolean {
-  return Boolean((contact as Record<string, unknown> | null)?.hasPrivateDm)
+// LENTE de Comentarios: cualquier contacto que haya comentado, aunque también
+// tenga chat privado. Al abrirlo bajo la lente se ven solo sus comentarios.
+function contactHasCommentActivity(contact?: unknown): boolean {
+  const record = contact as Record<string, unknown> | null
+  if (record?.hasCommentMessage !== undefined) return Boolean(record.hasCommentMessage)
+  return String(record?.lastMessageType || '').toLowerCase().startsWith('comment')
 }
 
 function getCommentPlatform(contact?: unknown): 'facebook' | 'instagram' {
@@ -4553,14 +4555,18 @@ export const PhoneChat: React.FC = () => {
       items: PhoneConversationTimelineItem[]
     }> = []
 
+    // Bajo la lente de Comentarios se ven SOLO los comentarios de la persona (no
+    // la conversación privada ni eventos del agente).
+    const timelineMessages = commentsView ? messages.filter((message) => message.isComment) : messages
+    const timelineCompletions = commentsView ? [] : agentCompletionEvents
     const items: PhoneConversationTimelineItem[] = [
-      ...messages.map((message) => ({
+      ...timelineMessages.map((message) => ({
         type: 'message' as const,
         id: `message-${message.id}`,
         date: message.date,
         message
       })),
-      ...agentCompletionEvents.map((completion) => ({
+      ...timelineCompletions.map((completion) => ({
         type: 'agentCompletion' as const,
         id: `agent-completion-${completion.id}`,
         date: completion.createdAt,
@@ -4587,7 +4593,7 @@ export const PhoneChat: React.FC = () => {
     })
 
     return groups
-  }, [agentCompletionEvents, messages, timezone])
+  }, [agentCompletionEvents, messages, timezone, commentsView])
   const normalizedConversationSearch = useMemo(
     () => normalizeSearchText(conversationSearchQuery),
     [conversationSearchQuery]
@@ -5204,13 +5210,11 @@ export const PhoneChat: React.FC = () => {
 
     const chipFilteredChats = phoneFilteredChats.filter((contact) => {
       const isComment = isCommentContact(contact)
-      // Vista de Comentarios: bandeja aparte SOLO para perfiles que únicamente
-      // comentaron y aún no tienen chat privado. Si ya existe un DM enlazado de la
-      // misma persona, el registro-comentario se oculta (su historial se ve dentro
-      // del chat privado, en la vista normal).
+      // LENTE de Comentarios: muestra a CUALQUIER contacto que haya comentado,
+      // aunque también tenga chat privado. Al abrirlo aquí solo se ven sus
+      // comentarios (la conversación se filtra a comentarios más abajo).
       if (commentsView) {
-        if (!isComment) return false
-        if (commentContactHasLinkedDm(contact)) return false
+        if (!contactHasCommentActivity(contact)) return false
         if (commentsPlatform === 'facebook') return getCommentPlatform(contact) === 'facebook'
         if (commentsPlatform === 'instagram') return getCommentPlatform(contact) === 'instagram'
         return true
@@ -12880,12 +12884,12 @@ export const PhoneChat: React.FC = () => {
       )
     }
 
-    if (messages.length === 0 && agentCompletionEvents.length === 0) {
+    if (conversationMessageGroups.length === 0) {
       return (
         <div className={styles.emptyConversation}>
           <Icon name="whatsapp" size={38} />
-          <strong>Aún no hay mensajes</strong>
-          <span>Escribe el primer mensaje o abre + para cobrar o agendar.</span>
+          <strong>{commentsView ? 'Sin comentarios' : 'Aún no hay mensajes'}</strong>
+          <span>{commentsView ? 'Este contacto no tiene comentarios registrados.' : 'Escribe el primer mensaje o abre + para cobrar o agendar.'}</span>
         </div>
       )
     }
@@ -12993,7 +12997,7 @@ export const PhoneChat: React.FC = () => {
                                   )}
                                 </span>
                                 {post.permalink ? (
-                                  <ExternalLink size={15} className={styles.commentPostExternal} aria-hidden="true" />
+                                  <ExternalLink size={13} className={styles.commentPostExternal} aria-hidden="true" />
                                 ) : null}
                               </>
                             )

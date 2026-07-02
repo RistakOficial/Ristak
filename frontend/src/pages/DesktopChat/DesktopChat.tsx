@@ -852,10 +852,12 @@ function isCommentContact(contact?: DesktopChatContact | Contact | null): boolea
   return String(record?.lastMessageType || '').toLowerCase().startsWith('comment')
 }
 
-// (Obsoleto tras la fusión: ya no hay un contacto-comentario separado.) Se conserva
-// el nombre para no tocar el filtro; equivale a "el contacto ya tiene DM privado".
-function commentContactHasLinkedDm(contact?: DesktopChatContact | Contact | null): boolean {
-  return Boolean((contact as unknown as Record<string, unknown>)?.hasPrivateDm)
+// LENTE de Comentarios: cualquier contacto que haya comentado, AUNQUE también
+// tenga chat privado. Al abrirlo bajo esta lente se ven solo sus comentarios.
+function contactHasCommentActivity(contact?: DesktopChatContact | Contact | null): boolean {
+  const record = contact as unknown as Record<string, unknown>
+  if (record?.hasCommentMessage !== undefined) return Boolean(record.hasCommentMessage)
+  return String(record?.lastMessageType || '').toLowerCase().startsWith('comment')
 }
 
 function getCommentPlatform(contact?: DesktopChatContact | Contact | null): 'facebook' | 'instagram' {
@@ -2633,13 +2635,11 @@ export const DesktopChat: React.FC = () => {
       .filter((contact) => contactMatchesAdvancedFilters(contact, advancedFilters))
       .filter((contact) => {
         const isComment = isCommentContact(contact)
-        // La vista de Comentarios es una bandeja aparte SOLO para perfiles que
-        // únicamente comentaron y todavía NO tienen chat privado. Si ya existe
-        // un DM enlazado de la misma persona, el registro-comentario se oculta
-        // aquí (su historial se ve dentro del chat privado, en los tabs normales).
+        // LENTE de Comentarios: muestra a CUALQUIER contacto que haya comentado,
+        // aunque también tenga chat privado. Al abrirlo aquí solo se ven sus
+        // comentarios (la conversación se filtra a comentarios más abajo).
         if (commentsView) {
-          if (!isComment) return false
-          if (commentContactHasLinkedDm(contact)) return false
+          if (!contactHasCommentActivity(contact)) return false
           if (commentsPlatform === 'facebook') return getCommentPlatform(contact) === 'facebook'
           if (commentsPlatform === 'instagram') return getCommentPlatform(contact) === 'instagram'
           return true
@@ -2865,14 +2865,18 @@ export const DesktopChat: React.FC = () => {
     ? 'Gestiona estos chats o mándalos a un agente.'
     : 'Gestiona estos chats sin abrirlos uno por uno.'
   const conversationTimelineGroups = useMemo(() => {
+    // Bajo la lente de Comentarios se ven SOLO los comentarios de la persona (no
+    // la conversación privada ni eventos del agente).
+    const timelineMessages = commentsView ? messages.filter((message) => message.isComment) : messages
+    const timelineCompletions = commentsView ? [] : agentCompletionEvents
     const items: DesktopConversationTimelineItem[] = [
-      ...messages.map((message) => ({
+      ...timelineMessages.map((message) => ({
         type: 'message' as const,
         id: `message-${message.id}`,
         date: message.date,
         message
       })),
-      ...agentCompletionEvents.map((completion) => ({
+      ...timelineCompletions.map((completion) => ({
         type: 'agentCompletion' as const,
         id: `agent-completion-${completion.id}`,
         date: completion.createdAt,
@@ -2892,7 +2896,7 @@ export const DesktopChat: React.FC = () => {
       current.items.push(item)
     })
     return groups
-  }, [agentCompletionEvents, messages, timezone])
+  }, [agentCompletionEvents, messages, timezone, commentsView])
   const detectedComposerChannel = normalizeComposerChannel(activeContact?.lastMessageChannel || activeContact?.lastMessageTransport || messages[messages.length - 1]?.transport || '')
   const activeConversationChannel = getHighLevelChannelForComposer(composerChannel)
   const hasEmailAccess = hasLicenseFeature(user, ['email'])
@@ -7110,11 +7114,11 @@ export const DesktopChat: React.FC = () => {
                       <span>{messagesError}</span>
                       <Button variant="secondary" size="sm" onClick={() => { void loadConversation(activeContact.id) }}>Reintentar</Button>
                     </div>
-                  ) : messages.length === 0 && agentCompletionEvents.length === 0 ? (
+                  ) : conversationTimelineGroups.length === 0 ? (
                     <div className={styles.emptyConversation}>
                       <MessageCircle size={22} />
-                      <strong>Sin mensajes todavía</strong>
-                      <span>Escribe abajo para empezar la conversación.</span>
+                      <strong>{commentsView ? 'Sin comentarios' : 'Sin mensajes todavía'}</strong>
+                      <span>{commentsView ? 'Este contacto no tiene comentarios registrados.' : 'Escribe abajo para empezar la conversación.'}</span>
                     </div>
                   ) : conversationTimelineGroups.map((group) => (
                     <div key={group.key} className={styles.messageGroup}>
@@ -7162,7 +7166,7 @@ export const DesktopChat: React.FC = () => {
 	                                          )}
 	                                        </span>
 	                                        {message.commentPost.permalink ? (
-	                                          <ExternalLink size={15} className={styles.commentPostExternal} aria-hidden="true" />
+	                                          <ExternalLink size={14} className={styles.commentPostExternal} aria-hidden="true" />
 	                                        ) : null}
 	                                      </>
 	                                    )
