@@ -614,10 +614,10 @@
   gap: 8px;
   width: fit-content;
   min-height: 38px;
-  border: 1px solid var(--color-border);
-  border-radius: 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-ctl);
   background: var(--surface);
-  color: var(--color-text-secondary);
+  color: var(--text-dim);
   padding: 0 12px;
   font-size: 13px;
   font-weight: 600;
@@ -626,32 +626,32 @@
 }
 
 .metaTestParametersToggle:hover {
-  border-color: var(--color-text-secondary);
+  border-color: var(--border-strong);
   color: var(--text);
 }
 
 .metaTestParametersToggleActive {
-  border-color: var(--color-primary);
-  color: var(--color-primary);
+  border-color: var(--accent);
+  color: var(--accent);
 }
 
 .metaTestParametersToggleFilled {
-  color: var(--color-text-primary);
+  color: var(--text);
   border-color: var(--pos);
 }
 
 .metaTestParametersForm {
   display: grid;
   gap: 12px;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-ctl);
+  background: var(--surface);
 }
 
 .metaTestMessagingParameters {
   display: grid;
   gap: 10px;
-  padding: 12px;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-ctl);
-  background: var(--surface);
 }
 
 .metaTestMessagingHeader {
@@ -689,7 +689,7 @@
 
 .metaTestParameterField span,
 .metaTestCustomParameters > span {
-  color: var(--color-text-tertiary);
+  color: var(--text-mute);
   font-size: 11px;
   font-weight: 600;
   letter-spacing: 0.02em;
@@ -702,10 +702,10 @@
   width: 100%;
   min-width: 0;
   min-height: 40px;
-  border: 1px solid var(--color-border-subtle);
-  border-radius: 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-ctl);
   background: var(--color-background);
-  color: var(--color-text-primary);
+  color: var(--text);
   padding: 0 10px;
   font-size: 13px;
   outline: none;
@@ -713,7 +713,7 @@
 
 .metaTestParameterField input:focus,
 .metaTestCustomParameterRow input:focus {
-  border-color: var(--color-primary);
+  border-color: var(--accent);
   box-shadow: var(--shadow-ring);
 }
 
@@ -741,16 +741,16 @@
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  border: 1px solid var(--color-border-subtle);
-  border-radius: 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-ctl);
   background: var(--color-background);
-  color: var(--color-text-tertiary);
+  color: var(--text-mute);
   cursor: pointer;
 }
 
 .metaTestCustomParameterDelete:hover:not(:disabled) {
-  border-color: var(--color-status-error);
-  color: var(--color-status-error);
+  border-color: var(--neg);
+  color: var(--neg);
 }
 
 .metaTestCustomParameterDelete:disabled {
