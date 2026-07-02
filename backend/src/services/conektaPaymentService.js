@@ -278,6 +278,13 @@ function duePlanInstallmentCondition(alias = 'i') {
   return `((${timedFrequencySql} AND ${timedDueSql}) OR (NOT ${timedFrequencySql} AND ${dateDueSql}))`
 }
 
+function duePlanFirstPaymentCondition(expression) {
+  const hasExplicitTimeSql = hasStoredExplicitPlanTimeSql(expression)
+  const timedDueSql = `${timestampSql(expression)} <= ${timestampComparisonPlaceholder()}`
+  const dateDueSql = `${dateOnlySql(expression)} <= ${dateOnlyPlaceholder()}`
+  return `((${hasExplicitTimeSql} AND ${timedDueSql}) OR (NOT ${hasExplicitTimeSql} AND ${dateDueSql}))`
+}
+
 async function getConfiguredCurrency() {
   try {
     return normalizeCurrency(await getAccountCurrency())
@@ -3264,9 +3271,9 @@ export async function processDueConektaPaymentPlanCharges({ limit = 25 } = {}) {
   const dueDate = todayDateOnly(accountTimezone)
   const dueTimestamp = new Date().toISOString()
   const normalizedLimit = Math.max(1, Math.min(Number(limit) || 25, 100))
-  const firstPaymentDueDateSql = dateOnlySql('COALESCE(f.first_payment_date, p.due_date, p.date)')
+  const firstPaymentDueExpression = 'COALESCE(f.first_payment_date, p.due_date, p.date)'
+  const firstPaymentDueSql = duePlanFirstPaymentCondition(firstPaymentDueExpression)
   const installmentDueSql = duePlanInstallmentCondition('i')
-  const dueDatePlaceholder = dateOnlyPlaceholder()
   const staleFirstPaymentSql = staleProcessingSql('f.updated_at')
   const staleInstallmentSql = staleProcessingSql('i.updated_at')
   const staleFirstPaymentClaimSql = staleProcessingSql('updated_at')
@@ -3293,11 +3300,11 @@ export async function processDueConektaPaymentPlanCharges({ limit = 25 } = {}) {
        )
        AND f.first_payment_method IN ('card', 'payment_link', 'direct_card', 'saved_card', 'conekta', 'conekta_saved_card')
        AND f.conekta_payment_source_id IS NOT NULL
-       AND ${firstPaymentDueDateSql} <= ${dueDatePlaceholder}
+       AND ${firstPaymentDueSql}
        AND p.status IN ('pending', 'scheduled', 'processing')
      ORDER BY COALESCE(f.first_payment_date, p.due_date, p.date) ASC
      LIMIT ?`,
-    [CONEKTA_PLAN_STATES.INSTALLMENT_PLAN_ACTIVE, dueDate, normalizedLimit]
+    [CONEKTA_PLAN_STATES.INSTALLMENT_PLAN_ACTIVE, dueTimestamp, dueDate, normalizedLimit]
   )
   const rows = await db.all(
     `SELECT

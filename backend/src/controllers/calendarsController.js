@@ -73,12 +73,19 @@ function parseDateOnly(value, fieldName) {
     throw calendarRangeError(`${fieldName} inválido`);
   }
 
-  const date = new Date(`${clean}T00:00:00.000Z`);
-  if (Number.isNaN(date.getTime()) || date.toISOString().slice(0, 10) !== clean) {
+  const [year, month, day] = clean.split('-').map(Number);
+  const timestamp = Date.UTC(year, month - 1, day);
+  const date = new Date(timestamp);
+  if (
+    Number.isNaN(date.getTime()) ||
+    date.getUTCFullYear() !== year ||
+    date.getUTCMonth() !== month - 1 ||
+    date.getUTCDate() !== day
+  ) {
     throw calendarRangeError(`${fieldName} inválido`);
   }
 
-  return { value: clean, timestamp: date.getTime() };
+  return { value: clean, timestamp };
 }
 
 function assertEpochRangeLimit({ startTime, endTime, maxDays, label }) {

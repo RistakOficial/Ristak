@@ -283,6 +283,13 @@ function duePlanInstallmentCondition(alias = 'i') {
   return `((${timedFrequencySql} AND ${timedDueSql}) OR (NOT ${timedFrequencySql} AND ${dateDueSql}))`
 }
 
+function duePlanFirstPaymentCondition(expression) {
+  const hasExplicitTimeSql = hasStoredExplicitPlanTimeSql(expression)
+  const timedDueSql = `${timestampSql(expression)} <= ${timestampComparisonPlaceholder()}`
+  const dateDueSql = `${dateOnlySql(expression)} <= ${dateOnlyPlaceholder()}`
+  return `((${hasExplicitTimeSql} AND ${timedDueSql}) OR (NOT ${hasExplicitTimeSql} AND ${dateDueSql}))`
+}
+
 function isMaskedSecret(value) {
   return cleanString(value).startsWith(MASKED_PREFIX)
 }
@@ -4811,9 +4818,9 @@ export async function processDueStripePaymentPlanCharges({ limit = 25 } = {}) {
   const dueDate = todayDateOnly(accountTimezone)
   const dueTimestamp = new Date().toISOString()
   const normalizedLimit = Math.max(1, Math.min(Number(limit) || 25, 100))
-  const firstPaymentDueDateSql = dateOnlySql('COALESCE(f.first_payment_date, p.due_date, p.date)')
+  const firstPaymentDueExpression = 'COALESCE(f.first_payment_date, p.due_date, p.date)'
+  const firstPaymentDueSql = duePlanFirstPaymentCondition(firstPaymentDueExpression)
   const installmentDueSql = duePlanInstallmentCondition('i')
-  const dueDatePlaceholder = dateOnlyPlaceholder()
   const staleFirstPaymentSql = staleProcessingSql('f.updated_at')
   const staleInstallmentSql = staleProcessingSql('i.updated_at')
   const firstPaymentRows = await db.all(
@@ -4838,11 +4845,11 @@ export async function processDueStripePaymentPlanCharges({ limit = 25 } = {}) {
        )
        AND f.first_payment_method IN ('card', 'payment_link', 'direct_card', 'saved_card')
        AND f.stripe_payment_method_id IS NOT NULL
-       AND ${firstPaymentDueDateSql} <= ${dueDatePlaceholder}
+       AND ${firstPaymentDueSql}
        AND p.status IN ('pending', 'scheduled', 'processing')
      ORDER BY COALESCE(f.first_payment_date, p.due_date, p.date) ASC
      LIMIT ?`,
-    [STRIPE_PLAN_STATES.INSTALLMENT_PLAN_ACTIVE, dueDate, normalizedLimit]
+    [STRIPE_PLAN_STATES.INSTALLMENT_PLAN_ACTIVE, dueTimestamp, dueDate, normalizedLimit]
   )
   const rows = await db.all(
     `SELECT
