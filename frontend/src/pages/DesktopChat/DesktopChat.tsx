@@ -51,6 +51,7 @@ import {
   EmailRichTextEditor,
   Icon,
   InlineEditableText,
+  SegmentTabs,
   Modal,
   RecordPaymentModal,
   SearchField,
@@ -2217,6 +2218,9 @@ export const DesktopChat: React.FC = () => {
 
   const [composerText, setComposerText] = useState('')
   const [composerChannel, setComposerChannel] = useState<ComposerChannel>('whatsapp')
+  // Modo de respuesta cuando el contacto es un comentario (FB/IG): pública en el
+  // post, o privada por DM.
+  const [commentReplyMode, setCommentReplyMode] = useState<'public' | 'private'>('public')
   const [composerBusinessPhoneId, setComposerBusinessPhoneId] = useState('')
   const [emailSubject, setEmailSubject] = useState('')
   const [emailBodyHtml, setEmailBodyHtml] = useState('')
@@ -4883,6 +4887,42 @@ export const DesktopChat: React.FC = () => {
 		    if (!activeContact) return
 		    if (!isEmailMessage && !text && attachmentsToSend.length === 0 && !voiceToSend) return
 
+		    // Contacto de comentario (FB/IG): el envío es una RESPUESTA al comentario
+		    // (pública en el post o privada por DM), no un mensaje directo normal.
+		    if (!isEmailMessage && isCommentContact(activeContact)) {
+		      if (!text) return
+		      const commentPlatform = getCommentPlatform(activeContact) === 'instagram' ? 'instagram' : 'messenger'
+		      const optimisticId = `desktop-comment-${Date.now()}`
+		      const sentAt = new Date().toISOString()
+		      setComposerStatus('sending')
+		      if (!textOverride) setComposerText('')
+		      setComposerMenuOpen(false)
+		      setMessages((current) => [...current, {
+		        id: optimisticId,
+		        optimisticId,
+		        text,
+		        date: sentAt,
+		        direction: 'outbound',
+		        status: 'enviando',
+		        transport: commentPlatform
+		      } as DesktopChatMessage])
+		      try {
+		        await whatsappApiService.sendMetaSocialCommentReply({
+		          contactId: activeContact.id,
+		          platform: commentPlatform,
+		          message: text,
+		          replyType: commentReplyMode
+		        })
+		        setComposerStatus('idle')
+		        void loadConversation(activeContact.id, { silent: true, useCache: false })
+		      } catch (error) {
+		        setComposerStatus('idle')
+		        setMessages((current) => current.filter((message) => message.id !== optimisticId))
+		        showToast('error', 'No se pudo responder', error instanceof Error ? error.message : 'Intenta de nuevo en un momento.')
+		      }
+		      return
+		    }
+
 		    if (
 		      !options.skipAgentInterruptionConfirm &&
 		      !isEmailMessage &&
@@ -6699,6 +6739,17 @@ export const DesktopChat: React.FC = () => {
 	                {!isEmailComposer ? renderVoiceDraft() : null}
 	                {composerChannelHint ? (
 	                  <span className={styles.composerChannelHint}>{composerChannelHint}</span>
+	                ) : null}
+	                {!isEmailComposer && isCommentContact(activeContact) ? (
+	                  <SegmentTabs
+	                    aria-label="Modo de respuesta al comentario"
+	                    value={commentReplyMode}
+	                    onChange={(id) => setCommentReplyMode(id === 'private' ? 'private' : 'public')}
+	                    tabs={[
+	                      { id: 'public', label: 'Responder público' },
+	                      { id: 'private', label: 'Responder por privado' }
+	                    ]}
+	                  />
 	                ) : null}
 	                {isEmailComposer ? (
 		                  <>
