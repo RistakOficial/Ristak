@@ -2092,14 +2092,17 @@ body[data-design-preset='editorial'] [class*='scopeButtonActive'] {
     font: inherit;
   }
 
-  select,
-  input[type='date'],
-  input[type='time'],
-  input[type='datetime-local'],
-  input[type='month'],
-  input[type='week'],
-  input[type='color'],
-  input[type='file']::file-selector-button {
+  /* El lienzo de Sites (.rstkCanvas) renderiza la página que el usuario diseña:
+     el skin nativo del CRM NO debe aplicar ahí (la hoja compartida del sitio ya
+     pinta esos controles). :not(:where(...)) suma cero especificidad. */
+  select:not(:where(.rstkCanvas *, .rstk-block-style *, .rstk-phone-input *)),
+  input[type='date']:not(:where(.rstkCanvas *, .rstk-block-style *, .rstk-phone-input *)),
+  input[type='time']:not(:where(.rstkCanvas *, .rstk-block-style *, .rstk-phone-input *)),
+  input[type='datetime-local']:not(:where(.rstkCanvas *, .rstk-block-style *, .rstk-phone-input *)),
+  input[type='month']:not(:where(.rstkCanvas *, .rstk-block-style *, .rstk-phone-input *)),
+  input[type='week']:not(:where(.rstkCanvas *, .rstk-block-style *, .rstk-phone-input *)),
+  input[type='color']:not(:where(.rstkCanvas *, .rstk-block-style *, .rstk-phone-input *)),
+  input[type='file']:not(:where(.rstkCanvas *, .rstk-block-style *, .rstk-phone-input *))::file-selector-button {
     border: 1px solid var(--native-control-border) !important;
     border-radius: var(--native-control-radius) !important;
     color: var(--color-text-primary) !important;
@@ -2112,17 +2115,17 @@ body[data-design-preset='editorial'] [class*='scopeButtonActive'] {
       transform var(--transition-fast) !important;
   }
 
-  select,
-  input[type='date'],
-  input[type='time'],
-  input[type='datetime-local'],
-  input[type='month'],
-  input[type='week'] {
+  select:not(:where(.rstkCanvas *, .rstk-block-style *, .rstk-phone-input *)),
+  input[type='date']:not(:where(.rstkCanvas *, .rstk-block-style *, .rstk-phone-input *)),
+  input[type='time']:not(:where(.rstkCanvas *, .rstk-block-style *, .rstk-phone-input *)),
+  input[type='datetime-local']:not(:where(.rstkCanvas *, .rstk-block-style *, .rstk-phone-input *)),
+  input[type='month']:not(:where(.rstkCanvas *, .rstk-block-style *, .rstk-phone-input *)),
+  input[type='week']:not(:where(.rstkCanvas *, .rstk-block-style *, .rstk-phone-input *)) {
     min-height: var(--native-control-height);
     padding: 0 42px 0 14px !important;
   }
 
-  select {
+  select:not(:where(.rstkCanvas *, .rstk-block-style *, .rstk-phone-input *)) {
     appearance: none !important;
     -webkit-appearance: none !important;
     -moz-appearance: none !important;
@@ -2138,43 +2141,43 @@ body[data-design-preset='editorial'] [class*='scopeButtonActive'] {
     background-repeat: no-repeat !important;
   }
 
-  select:hover:not(:disabled),
-  input[type='date']:hover:not(:disabled),
-  input[type='time']:hover:not(:disabled),
-  input[type='datetime-local']:hover:not(:disabled),
-  input[type='month']:hover:not(:disabled),
-  input[type='week']:hover:not(:disabled),
-  input[type='color']:hover:not(:disabled),
-  input[type='file']::file-selector-button:hover {
+  select:hover:not(:disabled):not(:where(.rstkCanvas *, .rstk-block-style *, .rstk-phone-input *)),
+  input[type='date']:hover:not(:disabled):not(:where(.rstkCanvas *, .rstk-block-style *, .rstk-phone-input *)),
+  input[type='time']:hover:not(:disabled):not(:where(.rstkCanvas *, .rstk-block-style *, .rstk-phone-input *)),
+  input[type='datetime-local']:hover:not(:disabled):not(:where(.rstkCanvas *, .rstk-block-style *, .rstk-phone-input *)),
+  input[type='month']:hover:not(:disabled):not(:where(.rstkCanvas *, .rstk-block-style *, .rstk-phone-input *)),
+  input[type='week']:hover:not(:disabled):not(:where(.rstkCanvas *, .rstk-block-style *, .rstk-phone-input *)),
+  input[type='color']:hover:not(:disabled):not(:where(.rstkCanvas *, .rstk-block-style *, .rstk-phone-input *)),
+  input[type='file']:not(:where(.rstkCanvas *, .rstk-block-style *, .rstk-phone-input *))::file-selector-button:hover {
     border-color: var(--native-control-border-hover) !important;
     background-color: var(--native-control-bg-hover) !important;
   }
 
-  select:focus-visible,
-  input[type='date']:focus-visible,
-  input[type='time']:focus-visible,
-  input[type='datetime-local']:focus-visible,
-  input[type='month']:focus-visible,
-  input[type='week']:focus-visible,
-  input[type='color']:focus-visible {
+  select:focus-visible:not(:where(.rstkCanvas *, .rstk-block-style *, .rstk-phone-input *)),
+  input[type='date']:focus-visible:not(:where(.rstkCanvas *, .rstk-block-style *, .rstk-phone-input *)),
+  input[type='time']:focus-visible:not(:where(.rstkCanvas *, .rstk-block-style *, .rstk-phone-input *)),
+  input[type='datetime-local']:focus-visible:not(:where(.rstkCanvas *, .rstk-block-style *, .rstk-phone-input *)),
+  input[type='month']:focus-visible:not(:where(.rstkCanvas *, .rstk-block-style *, .rstk-phone-input *)),
+  input[type='week']:focus-visible:not(:where(.rstkCanvas *, .rstk-block-style *, .rstk-phone-input *)),
+  input[type='color']:focus-visible:not(:where(.rstkCanvas *, .rstk-block-style *, .rstk-phone-input *)) {
     border-color: var(--color-primary) !important;
     background-color: var(--native-control-bg-hover) !important;
   }
 
-  select:disabled,
-  input[type='date']:disabled,
-  input[type='time']:disabled,
-  input[type='datetime-local']:disabled,
-  input[type='month']:disabled,
-  input[type='week']:disabled,
-  input[type='color']:disabled,
-  input[type='file']:disabled::file-selector-button {
+  select:disabled:not(:where(.rstkCanvas *, .rstk-block-style *, .rstk-phone-input *)),
+  input[type='date']:disabled:not(:where(.rstkCanvas *, .rstk-block-style *, .rstk-phone-input *)),
+  input[type='time']:disabled:not(:where(.rstkCanvas *, .rstk-block-style *, .rstk-phone-input *)),
+  input[type='datetime-local']:disabled:not(:where(.rstkCanvas *, .rstk-block-style *, .rstk-phone-input *)),
+  input[type='month']:disabled:not(:where(.rstkCanvas *, .rstk-block-style *, .rstk-phone-input *)),
+  input[type='week']:disabled:not(:where(.rstkCanvas *, .rstk-block-style *, .rstk-phone-input *)),
+  input[type='color']:disabled:not(:where(.rstkCanvas *, .rstk-block-style *, .rstk-phone-input *)),
+  input[type='file']:disabled:not(:where(.rstkCanvas *, .rstk-block-style *, .rstk-phone-input *))::file-selector-button {
     cursor: not-allowed !important;
     opacity: var(--opacity-disabled) !important;
   }
 
-  select option,
-  select optgroup {
+  select:not(:where(.rstkCanvas *, .rstk-block-style *, .rstk-phone-input *)) option,
+  select:not(:where(.rstkCanvas *, .rstk-block-style *, .rstk-phone-input *)) optgroup {
     background: var(--color-background-secondary) !important;
     color: var(--color-text-primary) !important;
   }
@@ -2205,7 +2208,7 @@ body[data-design-preset='editorial'] [class*='scopeButtonActive'] {
     background-color: color-mix(in srgb, var(--color-primary) 26%, transparent);
   }
 
-  input[type='color'] {
+  input[type='color']:not(:where(.rstkCanvas *, .rstk-block-style *, .rstk-phone-input *)) {
     appearance: none !important;
     -webkit-appearance: none !important;
     width: 44px;
@@ -2233,7 +2236,7 @@ body[data-design-preset='editorial'] [class*='scopeButtonActive'] {
     color: var(--color-text-secondary);
   }
 
-  input[type='file']::file-selector-button {
+  input[type='file']:not(:where(.rstkCanvas *, .rstk-block-style *, .rstk-phone-input *))::file-selector-button {
     min-height: 36px;
     margin: 0 12px 0 0;
     padding: 0 14px;
@@ -2242,8 +2245,8 @@ body[data-design-preset='editorial'] [class*='scopeButtonActive'] {
     cursor: pointer;
   }
 
-  input[type='checkbox'],
-  input[type='radio'] {
+  input[type='checkbox']:not(:where(.rstkCanvas *, .rstk-block-style *, .rstk-phone-input *)),
+  input[type='radio']:not(:where(.rstkCanvas *, .rstk-block-style *, .rstk-phone-input *)) {
     appearance: none !important;
     -webkit-appearance: none !important;
     -moz-appearance: none !important;
@@ -2266,32 +2269,32 @@ body[data-design-preset='editorial'] [class*='scopeButtonActive'] {
       transform var(--transition-fast) !important;
   }
 
-  input[type='checkbox'] {
+  input[type='checkbox']:not(:where(.rstkCanvas *, .rstk-block-style *, .rstk-phone-input *)) {
     border-radius: 6px !important;
   }
 
-  input[type='radio'] {
+  input[type='radio']:not(:where(.rstkCanvas *, .rstk-block-style *, .rstk-phone-input *)) {
     border-radius: 50% !important;
   }
 
-  input[type='checkbox']:hover:not(:disabled),
-  input[type='radio']:hover:not(:disabled) {
+  input[type='checkbox']:hover:not(:disabled):not(:where(.rstkCanvas *, .rstk-block-style *, .rstk-phone-input *)),
+  input[type='radio']:hover:not(:disabled):not(:where(.rstkCanvas *, .rstk-block-style *, .rstk-phone-input *)) {
     border-color: var(--accent, var(--color-primary)) !important;
     background-color: var(--native-control-bg-hover) !important;
     transform: translateY(-1px);
   }
 
-  input[type='checkbox']:checked {
+  input[type='checkbox']:checked:not(:where(.rstkCanvas *, .rstk-block-style *, .rstk-phone-input *)) {
     border-color: var(--accent, var(--color-primary)) !important;
     background: var(--accent, var(--color-primary)) !important;
   }
 
-  input[type='radio']:checked {
+  input[type='radio']:checked:not(:where(.rstkCanvas *, .rstk-block-style *, .rstk-phone-input *)) {
     border-color: var(--accent, var(--color-primary)) !important;
     background: var(--native-control-bg) !important;
   }
 
-  input[type='checkbox']:checked::after {
+  input[type='checkbox']:checked:not(:where(.rstkCanvas *, .rstk-block-style *, .rstk-phone-input *))::after {
     content: '';
     width: 5px;
     height: 9px;
@@ -2300,7 +2303,7 @@ body[data-design-preset='editorial'] [class*='scopeButtonActive'] {
     transform: translateY(-1px) rotate(45deg);
   }
 
-  input[type='radio']::after {
+  input[type='radio']:not(:where(.rstkCanvas *, .rstk-block-style *, .rstk-phone-input *))::after {
     content: '';
     width: 7px;
     height: 7px;
@@ -2310,12 +2313,12 @@ body[data-design-preset='editorial'] [class*='scopeButtonActive'] {
     transition: transform var(--transition-fast);
   }
 
-  input[type='radio']:checked::after {
+  input[type='radio']:checked:not(:where(.rstkCanvas *, .rstk-block-style *, .rstk-phone-input *))::after {
     transform: scale(1);
   }
 
-  input[type='checkbox']:disabled,
-  input[type='radio']:disabled {
+  input[type='checkbox']:disabled:not(:where(.rstkCanvas *, .rstk-block-style *, .rstk-phone-input *)),
+  input[type='radio']:disabled:not(:where(.rstkCanvas *, .rstk-block-style *, .rstk-phone-input *)) {
     cursor: not-allowed !important;
     opacity: var(--opacity-disabled) !important;
     transform: none !important;
@@ -2351,13 +2354,14 @@ body[data-design-preset='editorial'] [class*='scopeButtonActive'] {
   }
 }
 
-/* Final hardening: estas reglas viven fuera de @layer para ganarle a resets viejos y CSS modules agresivos. */
-html body select,
-html body input[type='date'],
-html body input[type='time'],
-html body input[type='datetime-local'],
-html body input[type='month'],
-html body input[type='week'] {
+/* Final hardening: estas reglas viven fuera de @layer para ganarle a resets viejos y CSS modules agresivos.
+   El lienzo de Sites (.rstkCanvas) queda excluido: ahí manda la hoja compartida del sitio publicado. */
+html body select:not(:where(.rstkCanvas *, .rstk-block-style *, .rstk-phone-input *)),
+html body input[type='date']:not(:where(.rstkCanvas *, .rstk-block-style *, .rstk-phone-input *)),
+html body input[type='time']:not(:where(.rstkCanvas *, .rstk-block-style *, .rstk-phone-input *)),
+html body input[type='datetime-local']:not(:where(.rstkCanvas *, .rstk-block-style *, .rstk-phone-input *)),
+html body input[type='month']:not(:where(.rstkCanvas *, .rstk-block-style *, .rstk-phone-input *)),
+html body input[type='week']:not(:where(.rstkCanvas *, .rstk-block-style *, .rstk-phone-input *)) {
   border: 1px solid var(--native-control-border) !important;
   border-radius: var(--native-control-radius) !important;
   min-height: var(--native-control-height) !important;
@@ -2367,7 +2371,7 @@ html body input[type='week'] {
   box-shadow: var(--native-control-shadow) !important;
 }
 
-html body select {
+html body select:not(:where(.rstkCanvas *, .rstk-block-style *, .rstk-phone-input *)) {
   appearance: none !important;
   -webkit-appearance: none !important;
   -moz-appearance: none !important;
@@ -2383,8 +2387,8 @@ html body select {
   background-repeat: no-repeat !important;
 }
 
-html body input[type='checkbox'],
-html body input[type='radio'] {
+html body input[type='checkbox']:not(:where(.rstkCanvas *, .rstk-block-style *, .rstk-phone-input *)),
+html body input[type='radio']:not(:where(.rstkCanvas *, .rstk-block-style *, .rstk-phone-input *)) {
   appearance: none !important;
   -webkit-appearance: none !important;
   -moz-appearance: none !important;
@@ -2404,32 +2408,32 @@ html body input[type='radio'] {
   cursor: pointer !important;
 }
 
-html body input[type='checkbox'] {
+html body input[type='checkbox']:not(:where(.rstkCanvas *, .rstk-block-style *, .rstk-phone-input *)) {
   border-radius: 6px !important;
 }
 
-html body input[type='radio'] {
+html body input[type='radio']:not(:where(.rstkCanvas *, .rstk-block-style *, .rstk-phone-input *)) {
   border-radius: 50% !important;
 }
 
-html body input[type='checkbox']::after,
-html body input[type='radio']::after {
+html body input[type='checkbox']:not(:where(.rstkCanvas *, .rstk-block-style *, .rstk-phone-input *))::after,
+html body input[type='radio']:not(:where(.rstkCanvas *, .rstk-block-style *, .rstk-phone-input *))::after {
   position: static !important;
   left: auto !important;
   top: auto !important;
 }
 
-html body input[type='checkbox']:checked {
+html body input[type='checkbox']:checked:not(:where(.rstkCanvas *, .rstk-block-style *, .rstk-phone-input *)) {
   border-color: var(--accent, var(--color-primary)) !important;
   background: var(--accent, var(--color-primary)) !important;
 }
 
-html body input[type='radio']:checked {
+html body input[type='radio']:checked:not(:where(.rstkCanvas *, .rstk-block-style *, .rstk-phone-input *)) {
   border-color: var(--accent, var(--color-primary)) !important;
   background: var(--native-control-bg) !important;
 }
 
-html body input[type='checkbox']:checked::after {
+html body input[type='checkbox']:checked:not(:where(.rstkCanvas *, .rstk-block-style *, .rstk-phone-input *))::after {
   content: '' !important;
   width: 5px !important;
   height: 9px !important;
@@ -2438,7 +2442,7 @@ html body input[type='checkbox']:checked::after {
   transform: translateY(-1px) rotate(45deg) !important;
 }
 
-html body input[type='radio']::after {
+html body input[type='radio']:not(:where(.rstkCanvas *, .rstk-block-style *, .rstk-phone-input *))::after {
   content: '' !important;
   width: 7px !important;
   height: 7px !important;
@@ -2448,16 +2452,16 @@ html body input[type='radio']::after {
   transform: scale(0) !important;
 }
 
-html body input[type='radio']:checked::after {
+html body input[type='radio']:checked:not(:where(.rstkCanvas *, .rstk-block-style *, .rstk-phone-input *))::after {
   transform: scale(1) !important;
 }
 
-html body input[type='radio']:focus-visible {
+html body input[type='radio']:focus-visible:not(:where(.rstkCanvas *, .rstk-block-style *, .rstk-phone-input *)) {
   outline: none !important;
   box-shadow: var(--ristak-focus-ring) !important;
 }
 
-html body input[type='color'] {
+html body input[type='color']:not(:where(.rstkCanvas *, .rstk-block-style *, .rstk-phone-input *)) {
   appearance: none !important;
   -webkit-appearance: none !important;
   width: 44px !important;
@@ -2471,7 +2475,7 @@ html body input[type='color'] {
   cursor: pointer !important;
 }
 
-html body input[type='file']::file-selector-button {
+html body input[type='file']:not(:where(.rstkCanvas *, .rstk-block-style *, .rstk-phone-input *))::file-selector-button {
   min-height: 36px !important;
   margin: 0 12px 0 0 !important;
   padding: 0 14px !important;

@@ -988,13 +988,21 @@ test('video player uses the same visual signature for direct and Bunny Stream re
       videoAutoplay: true
     }), { trackingEnabled: false, preview: true })
     const autoplaySignature = getVideoPlayerVisualSignature(autoplayHtml)
+    // Actualizado por la paridad preview/publicado (pipeline #8): el candado
+    // inicial de la barra ya no se fuerza en preview — con autoplay la barra
+    // arranca visible igual que en el sitio publicado.
+    const autoplayLiveHtml = await render(baseSite({
+      ...visualSettings,
+      mediaUrl: plainUrl,
+      videoAutoplay: true
+    }), { trackingEnabled: true, preview: false })
+    assert.deepEqual(getVideoPlayerVisualSignature(autoplayLiveHtml), autoplaySignature)
     assert.equal(autoplaySignature.classes, [
       'rstk-video',
       'rstk-video-player',
       'rstk-video-custom-controls',
       'rstk-video-has-control-bar',
-      'rstk-video-controls-hidden',
-      'rstk-video-controls-start-hidden',
+      'rstk-video-controls-visible',
       'rstk-video-is-muted',
       'rstk-video-landscape',
       'rstk-video-wauto',

@@ -8,6 +8,9 @@ WORKDIR /app/frontend
 COPY frontend/package*.json ./
 RUN npm ci --include=dev --include=optional --no-audit --no-fund
 COPY frontend/ ./
+# Contrato de render compartido: el frontend lo importa como ../shared desde
+# /app/frontend, así que debe vivir en /app/shared antes del build.
+COPY shared/ /app/shared/
 # VITE_API_URL vacío: el backend sirve el frontend desde el mismo origen
 ENV NODE_ENV=production
 RUN npm run build
@@ -30,6 +33,8 @@ ENV APP_VERSION=$APP_VERSION
 WORKDIR /app
 
 COPY backend/ ./backend/
+# El backend importa ../../../shared desde backend/src/services → /app/shared.
+COPY shared/ ./shared/
 COPY --from=backend-deps /app/backend/node_modules ./backend/node_modules
 COPY --from=frontend-build /app/frontend/dist ./frontend/dist
 

@@ -11,6 +11,7 @@ import {
 } from '@/services/integrationsService'
 import { productsService, type ProductItem, type ProductPrice } from '@/services/productsService'
 import { ProductFormModal } from '@/components/common/ProductFormModal/ProductFormModal'
+import { MSI_INSTALLMENT_CHOICES as SHARED_MSI_INSTALLMENT_CHOICES } from '../../../../../shared/sites/paymentGateContract.js'
 import styles from './PaymentGateControls.module.css'
 
 export type PaymentGateGateway = 'stripe' | 'conekta' | 'mercadopago'
@@ -41,8 +42,12 @@ export interface PaymentGateConfig {
 
 // Meses sin intereses: Stripe (Payment Element, solo MXN y monto ≥ 300), Conekta y
 // Mercado Pago. En Stripe, si el bloque no cumple MXN/≥300 se cobra de contado sin romper.
+// El toggle se ofrece para las tres, pero la fila standalone que ve el visitante es
+// exclusiva de Conekta (Stripe/MP resuelven los meses dentro de su propio widget) —
+// esa lógica vive en msiEligibility del contrato compartido.
 export const MSI_GATEWAYS = new Set<PaymentGateGateway>(['stripe', 'conekta', 'mercadopago'])
-export const MSI_INSTALLMENT_CHOICES = [3, 6, 9, 12, 18, 24]
+// Lista de opciones en el contrato compartido para no divergir con el backend/runtime.
+export const MSI_INSTALLMENT_CHOICES = SHARED_MSI_INSTALLMENT_CHOICES
 
 interface PaymentGateControlsProps {
   value?: Partial<PaymentGateConfig> | null

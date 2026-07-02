@@ -2,6 +2,7 @@ import React, { useEffect, useLayoutEffect, useMemo, useRef, useState } from 're
 import { Elements, PaymentElement } from '@stripe/react-stripe-js'
 import { loadStripe } from '@stripe/stripe-js'
 import { stripePaymentsService } from '@/services/stripePaymentsService'
+import { buildStripeAppearanceVariables } from '../../../../shared/sites/paymentGateContract.js'
 
 // Preview del editor que monta el Stripe Payment Element REAL (modo diferido, sin crear
 // PaymentIntent ni cargo) para que el bloque de pago luzca IDÉNTICO al checkout en vivo.
@@ -87,27 +88,16 @@ export const StripePaymentElementPreview: React.FC<StripePaymentElementPreviewPr
     // bloque (--rstk-block-text) > tinta del tema — mismo orden que el runtime publicado.
     const fieldText = fieldTextColor || token('--rstk-checkout-field-text') || token('--rstk-block-text') || token('--rstk-ink')
     const muted = token('--rstk-muted')
-    setAppearance(
-      dark
-        ? { theme: 'night', variables: {
-            colorPrimary: token('--rstk-accent'),
-            colorText: fieldText,
-            colorTextSecondary: muted,
-            colorTextPlaceholder: muted,
-            borderRadius: token('--rstk-radius'),
-          } }
-        : {
-            theme: 'stripe',
-            variables: {
-              colorPrimary: token('--rstk-accent'),
-              colorText: fieldText,
-              colorTextSecondary: muted,
-              colorTextPlaceholder: muted,
-              colorBackground: token('--rstk-input-bg'),
-              borderRadius: token('--rstk-radius'),
-            },
-          },
-    )
+    // Misma fórmula de apariencia que el runtime publicado (mountStripe), en el contrato
+    // compartido — un test de equivalencia en backend garantiza que no se separen.
+    setAppearance(buildStripeAppearanceVariables({
+      dark,
+      accent: token('--rstk-accent'),
+      fieldText,
+      muted,
+      inputBg: token('--rstk-input-bg'),
+      radius: token('--rstk-radius'),
+    }) as unknown as Record<string, unknown>)
   }, [stripePromise, amount, currency, fieldTextColor])
 
   const options = useMemo(

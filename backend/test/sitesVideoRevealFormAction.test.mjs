@@ -84,7 +84,10 @@ test('standard form without the rule keeps the submit button visible', async () 
   assert.doesNotMatch(html, /class="rstk-actions"[^>]*data-rstk-video-action-hidden/)
 })
 
-test('editor preview never hides the submit button (rule only applies to the published page)', async () => {
+// Actualizado por la paridad preview/publicado (pipeline #4/#8): el preview ya
+// NO diverge del sitio publicado — la regla de revelado marca el área de acciones
+// y el runtime de acciones de video también se inyecta en preview.
+test('preview mirrors the published page: reveal rule marks the action area and injects the runtime', async () => {
   const html = await renderPublicSiteHtml(revealFormActionSite(REVEAL_RULES), {
     pageId: 'page-1',
     trackingEnabled: false,
@@ -92,9 +95,8 @@ test('editor preview never hides the submit button (rule only applies to the pub
   })
 
   assert.match(html, /data-submit/)
-  // No initial hide and no runtime in the editor preview.
-  assert.doesNotMatch(html, /data-rstk-form-action-area/)
-  assert.doesNotMatch(html, /ristakVideoActionsRuntimeLoaded/)
+  assert.match(html, /class="rstk-actions" data-rstk-form-action-area data-rstk-video-action-hidden="true" aria-hidden="true"/)
+  assert.match(html, /ristakVideoActionsRuntimeLoaded/)
 })
 
 test('reveal_form_action persists the unlock per visitor with a TTL', async () => {

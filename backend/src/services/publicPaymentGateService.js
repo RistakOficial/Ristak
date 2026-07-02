@@ -2,8 +2,13 @@ import { db, getAppConfig } from '../config/database.js'
 import { createStripePaymentLink, createStripePaymentIntent, getStripePaymentConfig } from './stripePaymentService.js'
 import { createConektaPaymentLink, getPublicConektaPayment, getConektaPaymentConfig, createPublicConektaCardPayment } from './conektaPaymentService.js'
 import { createMercadoPagoPaymentLink, getPublicMercadoPagoPayment, getMercadoPagoPaymentConfig, createPublicMercadoPagoCardPayment } from './mercadoPagoPaymentService.js'
+import {
+  PAYMENT_GATEWAYS,
+  MSI_INSTALLMENT_CHOICES,
+  MSI_LINK_GATEWAYS,
+  STRIPE_MSI_MIN_AMOUNT
+} from '../../../shared/sites/paymentGateContract.js'
 
-const PAYMENT_GATEWAYS = new Set(['stripe', 'conekta', 'mercadopago'])
 const PAID_STATUSES = new Set(['paid', 'succeeded', 'success', 'completed', 'complete', 'fulfilled'])
 
 function cleanString(value, maxLength = 300) {
@@ -82,8 +87,9 @@ function normalizeAmount(value) {
 
 // Meses sin intereses: solo Conekta y Mercado Pago soportan diferido a meses en el
 // cobro simple. Stripe (cobro one-off en MX) no, así que ahí se ignora.
-const MSI_GATEWAYS = new Set(['conekta', 'mercadopago'])
-const MSI_INSTALLMENT_CHOICES = [3, 6, 9, 12, 18, 24]
+// Constantes en el contrato compartido (shared/sites/paymentGateContract.js) para
+// que backend, runtime publicado y preview del editor usen la misma lista.
+const MSI_GATEWAYS = MSI_LINK_GATEWAYS
 
 // Modo por bloque SEGURO: un bloque solo puede FORZAR 'test' (para probar sin cobrar
 // aunque la plataforma esté en live). Nunca puede forzar 'live'. Cualquier otro valor
@@ -179,7 +185,7 @@ export async function createPaymentGateLink(configInput = {}, {
   const msiRequested = config.msi?.enabled && config.msi.maxInstallments > 1
   const stripeMsiEligible = config.gateway === 'stripe'
     && String(config.currency || '').toUpperCase() === 'MXN'
-    && Number(config.amount) >= 300
+    && Number(config.amount) >= STRIPE_MSI_MIN_AMOUNT
   const installments = msiRequested && (MSI_GATEWAYS.has(config.gateway) || stripeMsiEligible)
     ? { enabled: true, maxInstallments: config.msi.maxInstallments }
     : null

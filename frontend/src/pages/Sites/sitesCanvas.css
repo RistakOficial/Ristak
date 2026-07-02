@@ -1,27 +1,70 @@
 /*
- * WYSIWYG editor canvas styles.
+ * WYSIWYG editor canvas — SOLO chrome del editor.
  *
- * Everything under `.rstkCanvas` is a 1:1 scoped copy of the backend public-site
- * stylesheet (backend/src/services/sitesService.js -> RSTK_BASE_CSS) so the
- * editor "cajita" renders identically to the published page. The `--rstk-*`
- * variables are supplied inline by buildCanvasTheme(). Keep in sync with the
- * backend. Editor-only chrome (selection outline, handles, inline-edit
- * placeholders) lives in the clearly marked block at the bottom.
+ * El CSS de CONTENIDO del sitio ya NO vive aquí: la hoja compartida
+ * (shared/sites/renderContract.js -> RSTK_BASE_CSS + RSTK_TEMPLATE_EXTRAS +
+ * RSTK_POPUP_CSS) se rescopea a `.rstkCanvas` y se inyecta en runtime como
+ * <style data-rstk-canvas-site-css> (ver canvasSiteCss.ts). Esa hoja inyectada
+ * cae DESPUÉS de este archivo en el documento, así que gana todo empate de
+ * cascada: aquí no se usa !important para ninguna propiedad que la hoja
+ * compartida también declare.
+ *
+ * Este archivo contiene:
+ *  1. Escudo anti-preflight: neutraliza los resets globales del CRM (Tailwind
+ *     preflight) con `:where()` a especificidad (0,1,0), SIEMPRE por debajo de
+ *     la hoja compartida.
+ *  2. Chrome del editor: selección, drag&drop, herramientas de bloque, edición
+ *     inline, mocks de pago, preview del video-gate, preview de calendario,
+ *     editor de popup y layout del stage (canvasViewport/Scaler/Stage).
+ * Las reglas que divergen a propósito del render publicado van marcadas con
+ * ALLOWED-DIVERGENCE.
  */
-.rstkCanvas,
-.rstkCanvas *,
-.rstkCanvas *::before,
-.rstkCanvas *::after { box-sizing: border-box; }
-.rstkCanvas [hidden] { display: none !important; }
 
+/* ============================================================
+ * 1. ESCUDO ANTI-PREFLIGHT
+ * `revert` regresa cada propiedad al valor del user-agent — exactamente lo que
+ * ve la página publicada (que no carga el preflight del CRM). Especificidad
+ * (0,1,0) vía :where(): gana a los resets de elemento del preflight (0,0,1)
+ * y pierde contra CUALQUIER regla de la hoja compartida inyectada (>= 0,1,1 y
+ * posterior en el documento), así que nunca voltea un ganador de cascada.
+ * ============================================================ */
+.rstkCanvas :where(blockquote, dl, dd, h1, h2, h3, h4, h5, h6, figure, p, pre) { margin: revert; }
+.rstkCanvas :where(h1, h2, h3, h4, h5, h6) { font-size: revert; font-weight: revert; }
+.rstkCanvas :where(hr) { height: revert; color: revert; border-top-width: revert; }
+.rstkCanvas :where(a) { color: revert; text-decoration: revert; }
+.rstkCanvas :where(b, strong) { font-weight: revert; }
+.rstkCanvas :where(ol, ul, menu) { list-style: revert; margin: revert; padding: revert; }
+.rstkCanvas :where(img, svg, video, canvas, iframe, embed, object) { display: revert; vertical-align: revert; }
+.rstkCanvas :where(img, video) { max-width: revert; height: revert; }
+.rstkCanvas :where(table) { text-indent: revert; border-color: revert; border-collapse: revert; }
+.rstkCanvas :where(button, input, optgroup, select, textarea) { font: revert; letter-spacing: revert; color: revert; margin: revert; padding: revert; border: revert; }
+.rstkCanvas :where(button, select) { text-transform: revert; }
+.rstkCanvas :where(button, input[type='button'], input[type='reset'], input[type='submit']) { appearance: revert; background-color: revert; background-image: revert; }
+.rstkCanvas :where(input, textarea)::placeholder { opacity: revert; color: revert; }
+.rstkCanvas :where(option, optgroup) { background: revert; color: revert; padding: revert; }
+.rstkCanvas :where(input[type='number']) { appearance: revert; -webkit-appearance: revert; -moz-appearance: revert; }
+.rstkCanvas :where(input[type='number'])::-webkit-outer-spin-button,
+.rstkCanvas :where(input[type='number'])::-webkit-inner-spin-button { margin: revert; -webkit-appearance: revert; }
+.rstkCanvas :where(input[type='date'], input[type='time'], input[type='datetime-local'], input[type='month'], input[type='week'])::-webkit-calendar-picker-indicator { all: revert; }
+/* El transition:all del checkbox/radio global del CRM (0,1,1) necesita un pelo
+   más de especificidad; el orden del bundle (este archivo va después de
+   index.css) desempata a favor del canvas. */
+body .rstkCanvas :where(input[type='checkbox'], input[type='radio']) { transition: revert; }
+/* ::selection del CRM vive en @layer base (normal): cualquier regla sin layer
+   le gana. El ::selection del template (tiktok) llega en la hoja inyectada. */
+.rstkCanvas ::selection { background-color: revert; color: revert; }
+
+/* ============================================================
+ * 2. RAÍZ DEL CANVAS
+ * Variables puente + aislamiento de tokens del CRM. Los estilos de "body"
+ * (font, color, fondo, min-height) llegan de la hoja compartida inyectada.
+ * ============================================================ */
 .rstkCanvas {
   color-scheme: var(--rstk-color-scheme, light);
-  font-family: var(--rstk-font);
-  color: var(--rstk-ink);
-  line-height: 1.5;
-  letter-spacing: 0;
-  -webkit-font-smoothing: antialiased;
-  text-rendering: optimizeLegibility;
+  /* Contenedor con nombre para las @container rstk-canvas que emite el
+     rescoper (@media de ancho de la hoja pública). inline-size: el ancho del
+     canvas es el "viewport" simulado de la página. */
+  container: rstk-canvas / inline-size;
   --color-primary: var(--rstk-accent);
   --color-primary-hover: var(--rstk-accent-strong);
   --color-primary-light: var(--rstk-ring);
@@ -66,478 +109,41 @@
   --transition-base: .18s ease;
   --opacity-disabled: .56;
 }
-.rstkCanvas img { max-width: 100%; display: block; }
 
-/* The frame carries the page background + image (published <body>). */
-.rstkCanvas .rstk-frame {
-  position: relative;
-  isolation: isolate;
-  overflow: hidden;
-  background-color: var(--rstk-page-bg);
-  background-image: var(--rstk-page-image);
-  background-position: var(--rstk-page-image-position, center top);
-  background-repeat: var(--rstk-page-image-repeat, no-repeat);
-  background-size: var(--rstk-page-image-size, auto);
-  background-attachment: var(--rstk-page-image-attachment, scroll);
-  padding: var(--rstk-frame-pad, clamp(10px, 3vw, 32px)) 16px;
+/* ALLOWED-DIVERGENCE: la regla body{} de la hoja publicada (fondo de página +
+   min-height 100vh) la emula SOLO el stage principal. Los demás roots
+   .rstkCanvas (overlay de drag, popup host, biblioteca, video-gate, form
+   embebido anidado) son portadores de vars/clases, no "páginas". */
+html body .rstkCanvas {
+  min-height: 0;
+  background: none;
 }
-.rstkCanvas .rstk-frame::before { content: ""; position: absolute; inset: 0; z-index: 1; background: var(--rstk-page-overlay, none); pointer-events: none; }
-.rstkCanvas .rstk-bg-video { position: absolute; inset: 0; z-index: 0; width: 100%; height: 100%; object-fit: var(--rstk-page-video-fit, cover); pointer-events: none; }
-.rstkCanvas .rstk-page { position: relative; z-index: 2; width: 100%; max-width: var(--rstk-max); margin: 0 auto; border: var(--rstk-page-border-width, 0) solid var(--rstk-page-border, transparent); border-radius: var(--rstk-page-radius, 0); }
-.rstkCanvas .rstk-shell { display: grid; gap: var(--rstk-gap); }
-.rstkCanvas.rstk-centered .rstk-shell { text-align: center; justify-items: center; }
-.rstkCanvas.rstk-centered .rstk-subheading, .rstkCanvas.rstk-centered .rstk-text { margin-inline: auto; }
-
-.rstkCanvas .rstk-section-lane.rstk-block-style,
-.rstkCanvas .rstk-section-lane {
-  position: relative;
-  width: 100%;
-  margin: var(--rstk-block-margin, 0);
-  background-color: var(--rstk-block-bg-color, var(--rstk-block-bg, transparent));
-  background-image: var(--rstk-block-bg-layer, none), var(--rstk-block-bg-image, none);
-  background-position: center center, var(--rstk-block-bg-position, center center);
-  background-repeat: no-repeat, var(--rstk-block-bg-repeat, no-repeat);
-  background-size: 100% 100%, var(--rstk-block-bg-size, cover);
-  color: var(--rstk-block-text, var(--rstk-ink));
-  border: var(--rstk-block-border-width, 0) solid var(--rstk-block-border, transparent);
-  border-radius: var(--rstk-block-radius, 0);
-  padding: 0;
+html body .canvasStage.rstkCanvas {
+  min-height: var(--rstk-vh100, 100vh);
+  /* Como el navegador: el page-bg se compone SOBRE blanco. Así un fondo
+     transparente (formulario en blanco) se ve blanco standalone, y los colores
+     opacos cubren el blanco igual que antes. */
+  background-color: #ffffff;
+  background-image: linear-gradient(var(--rstk-page-bg, transparent), var(--rstk-page-bg, transparent));
 }
-.rstkCanvas .rstk-section-inner {
-  width: 100%;
-  max-width: var(--rstk-max);
-  margin: 0 auto;
-  padding: var(--rstk-block-pad, 0);
-  display: grid;
-  gap: var(--rstk-section-gap, clamp(18px, 3vw, 30px));
-}
-.rstkCanvas .rstk-section-heading {
-  display: grid;
-  gap: 10px;
-  justify-items: var(--rstk-block-justify, stretch);
-  text-align: var(--rstk-block-align, inherit);
-}
-.rstkCanvas .rstk-section-heading h2,
-.rstkCanvas .rstk-section-heading p { margin: 0; }
-.rstkCanvas .rstk-section-columns {
-  display: grid;
-  grid-template-columns: repeat(var(--rstk-section-columns, 1), minmax(0, 1fr));
-  gap: var(--rstk-section-gap, clamp(18px, 3vw, 30px));
-  align-items: start;
-}
-.rstkCanvas .rstk-section-column {
-  min-width: 0;
-  display: grid;
-  align-content: start;
-  gap: var(--rstk-gap);
-}
-/* Los bloques dentro de una franja dejan ver el fondo de la franja por defecto,
-   PERO si el bloque tiene su propio fondo/borde explícito, se respeta (libertad total). */
-.rstkCanvas .rstk-section-column > .rstk-block-style:not(.rstkBlockBgSet) {
-  --rstk-block-bg: transparent;
-  --rstk-block-bg-color: transparent;
-  --rstk-block-bg-layer: none;
-  --rstk-block-bg-image: none;
-}
-.rstkCanvas .rstk-section-column > .rstk-block-style:not(.rstkBlockBorderSet) {
-  --rstk-block-border: transparent;
-  --rstk-block-border-width: 0px;
-  --rstk-block-shell-border-width: 0px;
+html body .rstkCanvas.rstkPopupEditorHost {
+  min-height: 100%;
 }
 
-.rstkCanvas .rstk-block-style {
-  position: relative;
-  width: auto;
-  min-width: 0;
-  margin: var(--rstk-block-margin, 0);
-  background-color: var(--rstk-block-bg-color, var(--rstk-block-bg, transparent));
-  background-image: var(--rstk-block-bg-layer, none), var(--rstk-block-bg-image, none);
-  background-position: center center, var(--rstk-block-bg-position, center center);
-  background-repeat: no-repeat, var(--rstk-block-bg-repeat, no-repeat);
-  background-size: 100% 100%, var(--rstk-block-bg-size, cover);
-  color: var(--rstk-block-text, var(--rstk-ink));
-  font-family: var(--rstk-block-font, var(--rstk-font));
-  font-size: var(--rstk-block-size, inherit);
-  font-weight: var(--rstk-block-weight, inherit);
-  text-align: var(--rstk-block-align, inherit);
-  border: var(--rstk-block-shell-border-width, 0) solid var(--rstk-block-border, transparent);
-  border-radius: var(--rstk-block-radius, 0);
-  padding: var(--rstk-block-pad, 0);
-}
-.rstkCanvas .rstkCalendarBlock.rstk-block-style {
-  background: transparent;
-  border: 0;
-  padding: 0;
-}
-.rstkCanvas .rstkSocialProfileBlock.rstk-block-style {
-  width: fit-content;
-  min-width: 0;
-  max-width: 100%;
-}
-.rstkCanvas.rstk-kind-form .rstkSocialProfileBlock.rstk-block-style {
-  justify-self: start;
-  transform: translateX(var(--rstk-social-profile-nudge, clamp(-22px, -5vw, -14px)));
-}
-.rstkCanvas .rstkHasBgVideo {
-  isolation: isolate;
-  overflow: hidden;
-}
-.rstkCanvas .rstk-block-bg-video {
-  position: absolute;
-  inset: 0;
-  z-index: 0;
-  width: 100%;
-  height: 100%;
-  object-fit: var(--rstk-block-bg-size, cover);
-  pointer-events: none;
-}
-.rstkCanvas .rstkHasBgVideo > :not(.rstk-block-bg-video) {
-  position: relative;
-  z-index: 1;
-}
-.rstkCanvas .rstkHeaderPanelBlock { z-index: 6; }
-.rstkCanvas .rstkFooterPanelBlock { z-index: 1; }
-.rstkCanvas .rstk-block-style .rstk-headline,
-.rstkCanvas .rstk-block-style h2,
-.rstkCanvas .rstk-block-style .rstk-subheading,
-.rstkCanvas .rstk-block-style .rstk-text,
-.rstkCanvas .rstk-block-style .rstk-help {
-  margin-left: var(--rstk-content-margin-left, 0);
-  margin-right: var(--rstk-content-margin-right, 0);
-}
-.rstkCanvas .rstk-block-style .rstk-headline,
-.rstkCanvas .rstk-block-style h2,
-.rstkCanvas .rstk-block-style label,
-.rstkCanvas .rstk-block-style strong { color: var(--rstk-block-text, var(--rstk-ink)); }
-.rstkCanvas .rstk-block-style .rstk-social-name { color: color-mix(in srgb, var(--rstk-block-text, var(--rstk-ink)) 92%, var(--rstk-muted) 8%); }
-.rstkCanvas .rstk-block-style .rstk-subheading,
-.rstkCanvas .rstk-block-style .rstk-text,
-.rstkCanvas .rstk-block-style .rstk-help,
-.rstkCanvas .rstk-block-style p,
-.rstkCanvas .rstk-block-style .rstk-social-followers { color: color-mix(in srgb, var(--rstk-block-text, var(--rstk-ink)) 50%, var(--rstk-muted) 50%); }
-.rstkCanvas .rstk-block-style .rstk-social-name,
-.rstkCanvas .rstk-block-style .rstk-social-followers {
-  font-family: var(--rstk-block-font, var(--rstk-font));
-  font-style: var(--rstk-block-font-style, normal);
-  text-decoration: var(--rstk-block-text-decoration, none);
-}
-.rstkCanvas .rstk-block-style .rstk-social-name {
-  font-size: var(--rstk-social-name-size, var(--rstk-block-size, 18px));
-  font-weight: 700;
-}
-.rstkCanvas .rstk-block-style .rstk-social-followers {
-  font-size: var(--rstk-social-followers-size, 14px);
-  font-weight: 500;
-}
-.rstkCanvas .rstk-block-style .rstk-button-link,
-.rstkCanvas .rstk-block-style button[data-rstk-edit-type="button"],
-.rstkCanvas .rstk-block-style .rstk-actions button { border-radius: var(--rstk-block-button-radius, var(--rstk-btn-radius)); }
-.rstkCanvas .rstk-block-style input,
-.rstkCanvas .rstk-block-style textarea,
-.rstkCanvas .rstk-block-style select,
-.rstkCanvas .rstk-block-style .rstk-option {
-  background: var(--rstk-field-bg, var(--rstk-input-bg));
-  border-color: var(--rstk-field-border, var(--rstk-input-border));
-  border-radius: var(--rstk-field-radius, var(--rstk-radius));
-}
-.rstkCanvas .rstk-block-style .rstk-media,
-.rstkCanvas .rstk-block-style .rstk-video {
-  justify-self: var(--rstk-media-justify, center);
-  width: var(--rstk-media-width, 100%);
-  margin-left: var(--rstk-media-margin-left, auto);
-  margin-right: var(--rstk-media-margin-right, auto);
-}
-
-.rstkCanvas.rstk-kind-form .rstk-shell {
-  background: var(--rstk-form-surface, var(--rstk-surface)); border: var(--rstk-page-border-width, 0) solid var(--rstk-page-border, var(--rstk-border));
-  border-radius: var(--rstk-radius-lg); box-shadow: none;
-  padding: var(--rstk-pad); overflow: hidden;
-}
+/* ALLOWED-DIVERGENCE: el canvas renderiza <div class="rstk-form"> donde la
+   página publicada renderiza <form>; estas tres reglas espejean las reglas de
+   `form` de la hoja compartida (el rescoper no reescribe nombres de elemento). */
 .rstkCanvas .rstk-form { width: 100%; display: grid; gap: 18px; background: transparent; border: 0; box-shadow: none; padding: 0; margin: 0; }
 .rstkCanvas.rstk-kind-landing .rstk-form { gap: 0; }
+.rstkCanvas.rstk-kind-form .rstk-form { font-family: var(--rstk-form-font, var(--rstk-font)); }
 
-.rstkCanvas .rstk-headline { margin: 0; font-family: var(--rstk-block-font, var(--rstk-site-title-font, inherit)); font-weight: var(--rstk-heading-weight); font-size: clamp(1.7rem, 4.6vw, 3rem); line-height: 1.05; letter-spacing: 0; }
-.rstkCanvas.rstk-kind-landing .rstk-headline { font-size: clamp(2rem, 5.4vw, 3.6rem); }
-.rstkCanvas .rstk-subheading { margin: 0; font-family: var(--rstk-block-font, var(--rstk-site-subtitle-font, inherit)); color: var(--rstk-muted); font-size: clamp(1rem, 2vw, 1.18rem); max-width: var(--rstk-content-max, 60ch); }
-.rstkCanvas .rstk-kicker { margin: 0; color: var(--rstk-accent); font-size: .78rem; font-weight: 800; text-transform: uppercase; letter-spacing: .09em; }
-.rstkCanvas .rstk-text { margin: 0; color: color-mix(in srgb, var(--rstk-ink) 80%, transparent); max-width: var(--rstk-content-max, 66ch); }
-.rstkCanvas .rstk-hero, .rstkCanvas .rstk-section-break, .rstkCanvas .rstk-cta, .rstkCanvas .rstk-section-list, .rstkCanvas .rstk-countdown, .rstkCanvas .rstk-embedded-form { display: grid; gap: 14px; justify-items: var(--rstk-block-justify, stretch); text-align: var(--rstk-block-align, inherit); }
-.rstkCanvas .rstk-hero { gap: 16px; }
-.rstkCanvas .rstk-section-break h2, .rstkCanvas .rstk-section-list h2, .rstkCanvas .rstk-cta h2, .rstkCanvas .rstk-embedded-form h2 { margin: 0; font-family: var(--rstk-block-font, var(--rstk-site-title-font, inherit)); font-size: clamp(1.25rem, 2.6vw, 1.7rem); font-weight: var(--rstk-heading-weight); letter-spacing: 0; }
-.rstkCanvas .rstk-countdown {
-  width: 100%;
-  max-width: var(--rstk-content-max, 720px);
-  margin-left: var(--rstk-content-margin-left, 0);
-  margin-right: var(--rstk-content-margin-right, 0);
-}
-.rstkCanvas .rstk-countdown-title,
-.rstkCanvas .rstk-countdown-note {
-  margin: 0;
-}
-.rstkCanvas .rstk-countdown-title {
-  color: var(--rstk-block-text, var(--rstk-ink));
-  font-weight: var(--rstk-block-weight, 700);
-  font-size: var(--rstk-block-size, 1.05rem);
-  line-height: var(--rstk-block-line-height, 1.35);
-}
-.rstkCanvas .rstk-countdown-grid {
-  width: 100%;
-  display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: var(--rstk-countdown-gap, 10px);
-}
-.rstkCanvas .rstk-countdown-unit {
-  min-width: 0;
-  display: grid;
-  gap: 4px;
-  justify-items: center;
-  align-content: center;
-  border: var(--rstk-block-border-width, 1px) solid var(--rstk-countdown-unit-border, var(--rstk-block-border, var(--rstk-border)));
-  border-radius: var(--rstk-countdown-unit-radius, var(--rstk-block-radius, var(--rstk-radius)));
-  background: var(--rstk-countdown-unit-bg, var(--rstk-block-bg, transparent));
-  padding: clamp(12px, 2vw, 20px) 8px;
-}
-.rstkCanvas .rstk-countdown-unit strong {
-  color: var(--rstk-countdown-number, var(--rstk-block-text, var(--rstk-ink)));
-  font-family: var(--rstk-block-font, var(--rstk-display));
-  font-size: var(--rstk-countdown-number-size, clamp(2rem, 5vw, 3rem));
-  font-weight: 850;
-  line-height: .95;
-  letter-spacing: 0;
-}
-.rstkCanvas .rstk-countdown-unit span {
-  color: color-mix(in srgb, var(--rstk-block-text, var(--rstk-ink)) 66%, var(--rstk-muted) 34%);
-  font-size: .72rem;
-  font-weight: 700;
-  letter-spacing: 0;
-  text-transform: uppercase;
-}
-.rstkCanvas .rstk-countdown-note {
-  color: color-mix(in srgb, var(--rstk-block-text, var(--rstk-ink)) 72%, var(--rstk-muted) 28%);
-  font-size: .9rem;
-}
-
-.rstkCanvas .rstk-button-link, .rstkCanvas .rstk-actions button {
-  -webkit-appearance: none; appearance: none; cursor: pointer;
-  min-height: var(--rstk-button-height, 50px); display: inline-flex; flex-direction: column; align-items: center; justify-content: center; gap: 3px;
-  border: var(--rstk-button-border-width, 1px) solid var(--rstk-button-border, var(--rstk-button-bg, var(--rstk-accent))); border-radius: var(--rstk-block-button-radius, var(--rstk-btn-radius));
-  background: var(--rstk-button-bg, var(--rstk-accent)); color: var(--rstk-button-text, var(--rstk-on-accent));
-  font-family: var(--rstk-button-font, inherit); font-weight: var(--rstk-button-weight, var(--rstk-btn-weight)); font-size: var(--rstk-button-size, 1.02rem); font-style: var(--rstk-button-font-style, normal); line-height: var(--rstk-button-line-height, 1.08);
-  padding: var(--rstk-button-pad-y, 8px) var(--rstk-button-pad-x, 22px); text-decoration: var(--rstk-button-text-decoration, none); text-transform: var(--rstk-button-text-transform, none);
-  box-shadow: var(--rstk-button-shadow, none);
-}
-.rstkCanvas .rstk-button-link {
-  justify-self: var(--rstk-button-justify, center);
-  width: var(--rstk-button-width, fit-content);
-  margin-left: var(--rstk-button-margin-left, auto);
-  margin-right: var(--rstk-button-margin-right, auto);
-}
-.rstkCanvas .rstk-button-content {
-  min-width: 0;
-  max-width: 100%;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: .55em;
-}
-.rstkCanvas .rstk-button-text-stack {
-  min-width: 0;
-  display: inline-grid;
-  gap: 2px;
-  justify-items: center;
-}
-.rstkCanvas .rstk-button-icon {
-  flex: 0 0 auto;
-  width: 1.05em;
-  height: 1.05em;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  color: currentColor;
-}
-.rstkCanvas .rstk-button-icon svg {
-  width: 1em;
-  height: 1em;
-  display: block;
-}
-.rstkCanvas .rstk-button-label { display: inline-block; }
-.rstkCanvas .rstk-button-subtitle { display: block; font-size: var(--rstk-button-subtitle-size, .78em); font-weight: 650; line-height: 1.25; opacity: .82; }
-.rstkCanvas.rstk-centered .rstk-button-link { margin-inline: auto; }
-.rstkCanvas .rstk-secondary { background: transparent !important; color: var(--rstk-ink) !important; border-color: var(--rstk-border) !important; }
-
-.rstkCanvas .rstk-payment-block {
-  width: 100%;
-  display: grid;
-  justify-self: var(--rstk-form-field-justify, stretch);
-  text-align: var(--rstk-block-align, left);
-}
-.rstkCanvas .rstk-payment-panel {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  align-items: center;
-  gap: 18px;
-  width: 100%;
-  border: var(--rstk-block-border-width, 1px) solid var(--rstk-block-border, var(--rstk-border));
-  border-radius: var(--rstk-block-radius, var(--rstk-radius));
-  background: var(--rstk-block-bg, var(--rstk-surface));
-  color: var(--rstk-block-text, var(--rstk-ink));
-  padding: clamp(16px, 3vw, 24px);
-}
-.rstkCanvas .rstk-payment-copy {
-  min-width: 0;
-  display: grid;
-  gap: 5px;
-}
-.rstkCanvas .rstk-payment-kicker {
-  color: color-mix(in srgb, var(--rstk-block-text, var(--rstk-ink)) 58%, var(--rstk-muted) 42%);
-  font-size: .78rem;
-  font-weight: 750;
-  letter-spacing: 0;
-  text-transform: uppercase;
-}
-.rstkCanvas .rstk-payment-copy strong {
-  color: var(--rstk-block-text, var(--rstk-ink));
-  font-size: clamp(1.05rem, 2vw, 1.35rem);
-  font-weight: 850;
-  line-height: 1.1;
-}
-.rstkCanvas .rstk-payment-copy p {
-  margin: 0;
-  color: color-mix(in srgb, var(--rstk-block-text, var(--rstk-ink)) 60%, var(--rstk-muted) 40%);
-}
-.rstkCanvas .rstk-payment-side {
-  min-width: min(220px, 100%);
-  display: grid;
-  gap: 10px;
-  justify-items: end;
-}
-.rstkCanvas .rstk-payment-amount {
-  color: var(--rstk-block-text, var(--rstk-ink));
-  font-size: clamp(1.05rem, 2.1vw, 1.5rem);
-  font-weight: 850;
-  font-variant-numeric: tabular-nums;
-  line-height: 1;
-}
-.rstkCanvas .rstk-payment-block .rstk-button-link {
-  justify-self: var(--rstk-button-justify, end);
-  width: var(--rstk-button-width, fit-content);
-  margin-left: var(--rstk-button-margin-left, auto);
-  margin-right: var(--rstk-button-margin-right, 0);
-}
-.rstkCanvas .rstk-payment-banner .rstk-payment-panel {
-  border-left-width: max(var(--rstk-block-border-width, 1px), 4px);
-  background: color-mix(in srgb, var(--rstk-block-bg, var(--rstk-surface)) 88%, var(--rstk-accent) 12%);
-}
-.rstkCanvas .rstk-payment-minimal .rstk-payment-panel {
-  grid-template-columns: minmax(0, 1fr);
-  border-width: 0;
-  background: transparent;
-  padding: 0;
-}
-.rstkCanvas .rstk-payment-minimal .rstk-payment-side {
-  justify-items: start;
-}
-@media (max-width: 640px) {
-  .rstkCanvas .rstk-payment-panel {
-    grid-template-columns: 1fr;
-  }
-  .rstkCanvas .rstk-payment-side {
-    justify-items: stretch;
-  }
-  .rstkCanvas .rstk-payment-block .rstk-button-link {
-    width: 100%;
-    margin-inline: 0;
-  }
-}
-
-/* WYSIWYG del checkout embebido: espeja el render publicado, honrando los vars de
-   diseño del bloque (--rstk-block-*) para que la pestaña Diseño lo afecte en vivo. */
-.rstkCanvas .rstk-checkout-card {
-  box-sizing: border-box;
-  width: 100%;
-  max-width: var(--rstk-checkout-width, 504px);
-  margin-inline: auto;
-  padding: var(--rstk-block-pad, 22px);
-  background: var(--rstk-block-bg, var(--rstk-surface));
-  color: var(--rstk-block-text, var(--rstk-ink));
-  border: var(--rstk-block-border-width, 1px) solid var(--rstk-block-border, var(--rstk-border));
-  border-radius: var(--rstk-block-radius, var(--rstk-radius-lg));
-  box-shadow: none;
-  text-align: var(--rstk-checkout-align, var(--rstk-block-align, left));
-}
-.rstkCanvas .rstk-checkout-card *,
-.rstkCanvas .rstk-checkout-card *::before,
-.rstkCanvas .rstk-checkout-card *::after { box-sizing: border-box; }
-.rstkCanvas .rstk-checkout-inner {
-  box-sizing: border-box;
-  width: 100%;
-  max-width: var(--rstk-checkout-content-width, 456px);
-  margin-inline: auto;
-  min-width: 0;
-  display: grid;
-  gap: 16px;
-}
-.rstkCanvas .rstk-payment-banner .rstk-checkout-card { max-width: var(--rstk-checkout-width, 672px); }
-.rstkCanvas .rstk-payment-minimal .rstk-checkout-card {
-  border-width: 0;
-  background: transparent;
-  padding: 0;
-}
-.rstkCanvas .rstkBlockFullWidth .rstk-checkout-card { max-width: none; }
-.rstkCanvas .rstk-block-style:has(> .rstk-payment-block) { background: transparent; border: 0; padding: 0; box-shadow: none; }
-.rstkCanvas .rstk-checkout-head { display: grid; gap: 4px; min-width: 0; }
-.rstkCanvas .rstk-checkout-head .rstk-payment-kicker {
-  color: var(--rstk-accent);
-  font-size: .74rem;
-  font-weight: 800;
-  text-transform: uppercase;
-  letter-spacing: .08em;
-  overflow-wrap: anywhere;
-}
-.rstkCanvas .rstk-checkout-title {
-  color: var(--rstk-block-text, var(--rstk-ink));
-  font-size: 1.12rem;
-  font-weight: 700;
-  line-height: 1.25;
-  min-width: 0;
-  overflow-wrap: anywhere;
-  word-break: break-word;
-}
-.rstkCanvas .rstk-checkout-desc { margin: 0; color: var(--rstk-muted); font-size: .92rem; line-height: 1.4; min-width: 0; overflow-wrap: anywhere; word-break: break-word; }
-.rstkCanvas .rstk-checkout-amount {
-  color: var(--rstk-block-text, var(--rstk-ink));
-  font-size: 1.5rem;
-  font-weight: 800;
-  margin-top: 2px;
-  min-width: 0;
-  overflow-wrap: anywhere;
-  word-break: break-word;
-}
-.rstkCanvas .rstk-checkout-testbadge {
-  margin: 0;
-  justify-self: start;
-  padding: 4px 10px;
-  border-radius: 999px;
-  font-size: .72rem;
-  font-weight: 700;
-  color: var(--rstk-block-text, var(--rstk-ink));
-  background: color-mix(in srgb, var(--rstk-accent) 12%, transparent);
-  border: 1px solid color-mix(in srgb, var(--rstk-accent) 30%, var(--rstk-border));
-}
-.rstkCanvas .rstk-checkout-body { display: grid; gap: 14px; min-width: 0; max-width: 100%; }
-.rstkCanvas .rstk-checkout-loading { display: flex; align-items: center; gap: 10px; color: var(--rstk-muted); font-size: .9rem; padding: 8px 0; }
-.rstkCanvas .rstk-checkout-spinner { width: 18px; height: 18px; border-radius: 50%; border: 2px solid color-mix(in srgb, var(--rstk-ink) 20%, transparent); border-top-color: var(--rstk-accent); animation: rstk-checkout-spin .7s linear infinite; }
-@keyframes rstk-checkout-spin { to { transform: rotate(360deg); } }
-.rstkCanvas .rstk-checkout-fields { display: grid; gap: 10px; min-height: 20px; min-width: 0; max-width: 100%; }
-.rstkCanvas .rstk-checkout-installments { display: grid; gap: 6px; }
-.rstkCanvas .rstk-checkout-select { width: 100%; min-height: 44px; padding: 0 12px; background: var(--rstk-input-bg); color: var(--rstk-input-ink, var(--rstk-ink)); border: 1px solid var(--rstk-input-border); border-radius: var(--rstk-radius); font: inherit; font-size: .92rem; }
-.rstkCanvas .rstk-checkout-message { margin: 0; font-size: .88rem; line-height: 1.4; padding: 10px 12px; border-radius: var(--rstk-radius); border: 1px solid var(--rstk-border); color: var(--rstk-ink); background: color-mix(in srgb, var(--rstk-ink) 4%, transparent); min-width: 0; overflow-wrap: anywhere; word-break: break-word; }
-.rstkCanvas .rstk-checkout-message[data-kind="success"] { color: var(--rstk-accent); border-color: color-mix(in srgb, var(--rstk-accent) 35%, var(--rstk-border)); background: color-mix(in srgb, var(--rstk-accent) 8%, transparent); }
-.rstkCanvas .rstk-checkout-message[data-kind="error"] { color: var(--rstk-danger, #d64545); border-color: color-mix(in srgb, var(--rstk-danger, #d64545) 35%, var(--rstk-border)); background: color-mix(in srgb, var(--rstk-danger, #d64545) 8%, transparent); }
-.rstkCanvas .rstk-checkout-success { display: grid; gap: 8px; padding: 22px; text-align: center; color: var(--rstk-ink); font-size: 1.02rem; font-weight: 600; }
-/* Mock de campos (fallback: Conekta/MP, o mientras Stripe carga el Payment Element real).
-   Usa tokens del tema para adaptarse a claro/oscuro; solo las marcas llevan su color. El
-   color de texto sigue: ajuste del bloque > color de texto del bloque > tinta del tema. */
+/* ============================================================
+ * Checkout: mocks del editor (el publicado monta el Payment Element real)
+ * ============================================================ */
+/* ALLOWED-DIVERGENCE: mock de campos (fallback: Conekta/MP, o mientras Stripe
+   carga el Payment Element real). Usa tokens del tema para adaptarse a
+   claro/oscuro; solo las marcas llevan su color. El color de texto sigue:
+   ajuste del bloque > color de texto del bloque > tinta del tema. */
 .rstkCanvas .rstk-checkout-fields-mock { display: grid; gap: 10px; }
 .rstkCanvas .rstk-mock-lbl { font-size: .82rem; color: var(--rstk-checkout-field-text, var(--rstk-block-text, var(--rstk-ink))); font-weight: 500; }
 .rstkCanvas .rstk-mock-input {
@@ -591,1803 +197,77 @@
   color: var(--rstk-ink);
   font-size: .9rem;
 }
-/* El botón de pago espeja el publicado: consume las variables de diseño de botón
-   (--rstk-button-*) con los mismos fallbacks, y su ancho/posición por bloque. */
-.rstkCanvas .rstk-checkout-pay {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 100%;
-  min-height: var(--rstk-button-height, 48px);
-  padding: var(--rstk-button-pad-y, 0) var(--rstk-button-pad-x, 18px);
-  border: var(--rstk-button-border-width, 0) solid var(--rstk-button-border, var(--rstk-button-bg, var(--rstk-accent)));
-  border-radius: var(--rstk-block-button-radius, var(--rstk-btn-radius, var(--rstk-radius)));
-  background: var(--rstk-button-bg, var(--rstk-accent));
-  color: var(--rstk-button-text, var(--rstk-on-accent, #fff));
-  font: inherit;
-  font-family: var(--rstk-button-font, inherit);
-  font-size: var(--rstk-button-size, 1rem);
-  font-weight: var(--rstk-button-weight, var(--rstk-btn-weight, 700));
-  font-style: var(--rstk-button-font-style, normal);
-  line-height: var(--rstk-button-line-height, 1.2);
-  text-decoration: var(--rstk-button-text-decoration, none);
-  text-transform: var(--rstk-button-text-transform, none);
-  box-shadow: var(--rstk-button-shadow, none);
-  cursor: pointer;
-  transition: background .15s ease, border-color .15s ease, filter .15s ease, opacity .15s;
-}
-.rstkCanvas .rstk-checkout-pay:hover { background: var(--rstk-button-hover-bg, var(--rstk-button-bg, var(--rstk-accent))); filter: brightness(1.05); }
-/* En el canvas el botón vive con [disabled] solo para no ser clickeable: se ve a plena
-   opacidad para que el preview muestre el estado normal del botón, no el de "procesando". */
-.rstkCanvas .rstk-checkout-pay:disabled { opacity: 1; cursor: default; }
-.rstkCanvas .rstk-payment-block button.rstk-checkout-pay {
-  justify-self: var(--rstk-checkout-pay-justify, stretch);
-  width: var(--rstk-checkout-pay-width, 100%);
-  max-width: 100%;
-  margin-inline: 0;
-}
-.rstkCanvas .rstk-checkout-secure { margin: 0; color: var(--rstk-muted); font-size: .76rem; text-align: inherit; }
+/* ALLOWED-DIVERGENCE: en el canvas el botón de pago vive con [disabled] solo
+   para no ser clickeable; se ve a plena opacidad para que el preview muestre el
+   estado normal del botón, no el de "procesando" (el publicado usa opacity .6).
+   html body: especificidad suficiente para ganarle a la hoja inyectada. */
+html body .rstkCanvas .rstk-checkout-pay:disabled { opacity: 1; cursor: default; }
 
-/* Editor: oculta el pill de autollenado de tarjetas de prueba que Stripe inyecta en modo
-   test. Solo apunta al iframe CONTROLADOR (__privateStripeController*), NUNCA a los iframes
-   de los campos de tarjeta (__privateStripeFrame*), y solo carga en el editor. */
+/* ALLOWED-DIVERGENCE (editor): oculta el pill de autollenado de tarjetas de
+   prueba que Stripe inyecta en modo test. Solo apunta al iframe CONTROLADOR
+   (__privateStripeController*), NUNCA a los iframes de los campos de tarjeta
+   (__privateStripeFrame*), y solo carga en el editor. */
 iframe[name^="__privateStripeController"] { display: none !important; }
 
-.rstkCanvas .rstk-list-grid { display: grid; grid-template-columns: var(--rstk-list-columns, repeat(auto-fit, minmax(190px, 1fr))); gap: 12px; }
-.rstkCanvas .rstk-list-grid article { border: var(--rstk-card-border-width, var(--rstk-block-border-width, 1px)) solid var(--rstk-card-border, var(--rstk-block-border, var(--rstk-border))); border-radius: var(--rstk-card-radius, var(--rstk-radius)); background: var(--rstk-card-bg, var(--rstk-block-bg, var(--rstk-surface2))); padding: 16px; text-align: var(--rstk-card-align, left); }
-.rstkCanvas .rstk-list-grid strong { display: block; font-weight: 750; }
-.rstkCanvas .rstk-list-grid p { margin: 6px 0 0; color: var(--rstk-muted); font-size: .92rem; }
-.rstkCanvas .rstk-list-grid small { display: block; margin-top: 8px; color: var(--rstk-muted); font-weight: 700; }
+/* ALLOWED-DIVERGENCE (editor): Mercado Pago monta su Brick en vivo. El editor
+   muestra un placeholder neutral (no interactivo) con el mismo alto aproximado. */
+.rstkCanvas .rstk-checkout-mp-placeholder {
+  display: grid;
+  place-items: center;
+  min-height: 132px;
+  padding: 18px;
+  text-align: center;
+  border: 1px dashed var(--rstk-input-border, var(--rstk-border));
+  border-radius: var(--rstk-radius);
+  background: var(--rstk-input-bg, var(--rstk-surface));
+}
 
-.rstkCanvas .rstk-check-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 11px; text-align: left; }
-.rstkCanvas .rstk-check { display: flex; align-items: flex-start; gap: 11px; }
-.rstkCanvas .rstk-check-icon { flex: 0 0 auto; width: 26px; height: 26px; border-radius: 50%; display: grid; place-items: center; margin-top: 1px; }
-.rstkCanvas .rstk-check-pro .rstk-check-icon { background: color-mix(in srgb, #16a34a 16%, var(--rstk-surface)); color: #16a34a; }
-.rstkCanvas .rstk-check-con .rstk-check-icon { background: color-mix(in srgb, #dc2626 14%, var(--rstk-surface)); color: #dc2626; }
-.rstkCanvas .rstk-check-neutral .rstk-check-icon { background: color-mix(in srgb, var(--rstk-accent) 14%, var(--rstk-surface)); color: var(--rstk-accent); }
-.rstkCanvas .rstk-check-body { display: grid; gap: 2px; }
-.rstkCanvas .rstk-check-body strong { font-weight: 650; font-size: 1rem; }
-.rstkCanvas .rstk-check-body span { color: var(--rstk-muted); font-size: .92rem; }
-
-.rstkCanvas .rstk-media, .rstkCanvas .rstk-video { width: var(--rstk-media-width, 100%); margin-top: 0; margin-bottom: 0; margin-left: var(--rstk-media-margin-left, 0); margin-right: var(--rstk-media-margin-right, 0); overflow: hidden; border: var(--rstk-block-border-width, 1px) solid var(--rstk-block-border, var(--rstk-border)); border-radius: var(--rstk-media-radius, var(--rstk-block-radius, var(--rstk-radius))); background: var(--rstk-block-bg, var(--rstk-surface2)); }
-.rstkCanvas .rstk-media img, .rstkCanvas .rstk-video iframe, .rstkCanvas .rstk-video video { width: 100%; display: block; border: 0; }
-.rstkCanvas .rstk-video { aspect-ratio: var(--rstk-video-aspect-ratio, 16/9); position: relative; border-width: var(--rstk-video-border-width, var(--rstk-block-border-width, 1px)); border-color: var(--rstk-video-border-color, var(--rstk-block-border, var(--rstk-border))); border-radius: var(--rstk-video-radius, var(--rstk-media-radius, var(--rstk-block-radius, var(--rstk-radius)))); background: var(--rstk-video-bg, var(--rstk-block-bg, var(--rstk-surface2))); }
-.rstkCanvas .rstk-video-portrait { aspect-ratio: var(--rstk-video-aspect-ratio, 9/16); }
-/* Video vertical: en contenedores angostos (formularios) ocupa todo el ancho del bloque;
-   la protección de ancho reducido solo aplica en páginas anchas (landing). Modo "Automático".
-   Nota: en formularios publicados el video NO se envuelve en .rstk-block-style, por eso el
-   selector apunta directo al host del video. */
-.rstkCanvas.rstk-kind-form .rstk-video.rstk-video-portrait.rstk-video-wauto:not(.rstk-video-form-gate-fit-wide) { width: 100%; margin-left: auto; margin-right: auto; }
-/* Modo "Ocupar todo el bloque": llena el ancho en cualquier contenedor. */
-.rstkCanvas .rstk-video.rstk-video-portrait.rstk-video-fill-width:not(.rstk-video-form-gate-fit-wide) { width: 100%; margin-left: auto; margin-right: auto; }
-.rstkCanvas .rstk-video iframe, .rstkCanvas .rstk-video video { height: 100%; }
-.rstkCanvas .rstk-video video { background: var(--rstk-video-bg, #000); object-fit: cover; }
-.rstkCanvas .rstk-video-player {
-  container-type: inline-size;
-  isolation: isolate;
-}
-.rstkCanvas .rstk-video-form-gate-fit-expanded,
-.rstkCanvas .rstk-video-gate-active.rstk-video-form-gate-fit-expanded {
-  aspect-ratio: auto;
-  min-height: var(--rstk-video-form-gate-fit-height, min(760px, max(520px, 86svh)));
-}
-.rstkCanvas .rstk-video-form-gate-fit-wide,
-.rstkCanvas .rstk-video-gate-active.rstk-video-form-gate-fit-wide {
-  width: min(100%, var(--rstk-video-form-gate-fit-width, 100%));
-  margin-inline: auto;
-}
-.rstkCanvas .rstk-video-custom-controls video { cursor: pointer; }
-.rstkCanvas .rstk-video-overlay {
+/* ALLOWED-DIVERGENCE (editor): el bloque de pago deshabilitado NO se publica; el
+   badge avisa al editor sin alterar el layout (posición absoluta, sin ocupar flujo). */
+.rstkCanvas .rstk-payment-block { position: relative; }
+.rstkCanvas .rstkPaymentUnpublishedBadge {
   position: absolute;
-  inset: 0;
-  z-index: 2;
-  display: grid;
-  place-items: center;
-  border: 0;
-  background: transparent;
-  color: var(--rstk-video-play-color, #fff);
-  cursor: pointer;
-}
-.rstkCanvas .rstk-video-form-gate-preview {
-  position: absolute;
-  inset: 0;
-  z-index: 5;
-  display: grid;
-  place-items: center;
-  min-width: 0;
-  padding: clamp(8px, 3cqw, 22px);
-  background: var(--rstk-video-form-gate-video-bg, color-mix(in srgb, var(--rstk-video-bg, #000) 84%, transparent));
-  color: var(--rstk-ink);
-  font-family: var(--rstk-form-font, var(--rstk-font));
-  pointer-events: none;
-  backdrop-filter: blur(12px);
-}
-.rstkCanvas .rstk-video-form-gate-preview.rstk-video-form-gate-editing {
-  pointer-events: auto;
-}
-.rstkCanvas .rstk-video-form-gate-preview .rstk-video-form-gate-panel {
-  width: min(100%, 680px);
-  height: auto;
-  max-width: 100%;
-  max-height: 100%;
-  min-height: 0;
-  --rstk-video-form-item-gap: clamp(8px, 2cqw, 14px);
-  display: grid;
-  grid-template-rows: auto auto minmax(0, max-content) auto auto;
-  gap: var(--rstk-video-form-item-gap);
-  overflow: hidden;
-  border: var(--rstk-video-form-panel-border-width, 0) solid var(--rstk-form-field-border, var(--rstk-input-border));
-  border-radius: clamp(10px, 2.4cqw, 20px);
-  background: var(--rstk-video-form-panel-bg, var(--rstk-block-bg, var(--rstk-surface)));
-  color: var(--rstk-ink);
-  box-shadow: 0 24px 70px -42px rgba(0, 0, 0, .66);
-  padding: clamp(12px, 3cqw, 24px);
-  text-align: var(--rstk-form-content-align, left);
-}
-.rstkCanvas .rstk-video-form-gate-fit-expanded .rstk-video-form-gate-preview .rstk-video-form-gate-panel,
-.rstkCanvas .rstk-video-gate-active.rstk-video-form-gate-fit-expanded .rstk-video-form-gate-panel {
-  height: 100%;
-  grid-template-rows: auto auto minmax(0, 1fr) auto auto;
-}
-.rstkCanvas .rstk-video-form-gate-preview .rstk-video-form-gate-header {
-  display: grid;
-  gap: 4px;
-  text-align: var(--rstk-form-content-align, left);
-}
-.rstkCanvas .rstk-video-form-gate-preview .rstk-video-form-gate-header strong {
-  display: block;
-  color: var(--rstk-ink);
-  font-family: var(--rstk-form-font, var(--rstk-font));
-  font-size: clamp(1rem, 3.2cqw, 1.5rem);
-  font-weight: 800;
-  line-height: 1.1;
-}
-.rstkCanvas .rstk-video-form-gate-preview .rstk-video-form-gate-header p {
-  margin: 0;
-  color: var(--rstk-form-help-color, var(--rstk-muted));
-  font-size: clamp(.78rem, 2.1cqw, .95rem);
-  line-height: 1.35;
-}
-.rstkCanvas .rstk-video-form-gate-preview .rstk-video-form-gate-progress {
-  min-height: 18px;
-  color: var(--rstk-form-help-color, var(--rstk-muted));
-  font-size: clamp(.72rem, 1.8cqw, .86rem);
-  font-weight: 700;
-  text-align: var(--rstk-form-content-align, left);
-}
-.rstkCanvas .rstk-video-form-gate-preview .rstk-video-form-fields {
-  min-height: 0;
-  display: grid;
-  overflow-y: auto;
-  overflow-x: hidden;
-  overscroll-behavior: contain;
-  padding: 2px 4px 0;
-}
-.rstkCanvas .rstk-video-form-gate-preview .rstk-video-form-field-stack {
-  display: grid;
-  width: min(100%, var(--rstk-form-field-width, 560px));
-  max-width: 100%;
-  justify-self: var(--rstk-form-field-justify, center);
-  gap: var(--rstk-video-form-item-gap);
-  min-width: 0;
-}
-.rstkCanvas .rstk-video-form-gate-preview .rstk-video-form-field {
-  display: grid;
-  gap: clamp(5px, 1.3cqw, 8px);
-  min-width: 0;
-  max-width: 100%;
-  text-align: var(--rstk-form-content-align, left);
-}
-.rstkCanvas .rstk-video-form-gate-preview .rstk-video-form-content {
-  min-width: 0;
-  max-width: 100%;
-  --rstk-block-text: var(--rstk-ink);
-  text-align: var(--rstk-form-content-align, left);
-}
-.rstkCanvas .rstk-video-form-gate-preview .rstk-video-form-content > .rstk-block-style {
-  width: 100%;
-}
-.rstkCanvas .rstk-video-form-gate-preview .rstk-video-form-content .rstk-media {
-  margin: 0;
-}
-.rstkCanvas .rstk-video-form-gate-preview .rstk-video-form-field > label {
-  color: var(--rstk-form-label-color, var(--rstk-ink));
-  font-family: var(--rstk-form-font, var(--rstk-font));
-  font-size: clamp(.84rem, 2.2cqw, .98rem);
-  font-style: var(--rstk-form-font-style, normal);
-  font-weight: 650;
-  text-decoration: var(--rstk-form-text-decoration, none);
-  line-height: 1.25;
-}
-.rstkCanvas .rstk-video-form-gate-preview .rstk-help {
-  color: var(--rstk-form-help-color, var(--rstk-muted));
-  font-family: var(--rstk-form-font, var(--rstk-font));
-  font-size: clamp(.74rem, 1.9cqw, .9rem);
-  line-height: 1.3;
-}
-.rstkCanvas .rstk-video-form-gate-preview input,
-.rstkCanvas .rstk-video-form-gate-preview textarea,
-.rstkCanvas .rstk-video-form-gate-preview select {
-  width: 100%;
-  max-width: 100%;
-  min-width: 0;
-  min-height: clamp(38px, 8cqw, var(--rstk-form-field-height, 50px));
-  border-width: var(--rstk-form-field-border-width, 1px);
-  border-color: var(--rstk-form-field-border, var(--rstk-input-border));
-  border-radius: var(--rstk-form-field-radius, var(--rstk-field-radius, var(--rstk-radius)));
-  background: var(--rstk-form-field-bg, var(--rstk-input-bg));
-  color: var(--rstk-form-field-text, var(--rstk-input-ink));
-  font-family: var(--rstk-form-font, var(--rstk-font));
-  font-size: clamp(.86rem, 2.4cqw, var(--rstk-form-input-size, 1rem));
-  font-style: var(--rstk-form-font-style, normal);
-  font-weight: var(--rstk-form-weight, 500);
-  text-decoration: var(--rstk-form-text-decoration, none);
-  padding: clamp(9px, 2cqw, var(--rstk-form-field-pad-y, 13px)) clamp(10px, 2.4cqw, var(--rstk-form-field-pad-x, 14px));
-}
-.rstkCanvas .rstk-video-form-gate-preview textarea {
-  min-height: clamp(78px, 18cqw, 108px);
-}
-.rstkCanvas .rstk-video-form-gate-preview .rstk-phone-input {
-  display: grid;
-  width: 100%;
-  max-width: 100%;
-  min-width: 0;
-  grid-template-columns: minmax(98px, clamp(98px, 18%, 108px)) minmax(0, 1fr);
-  gap: 8px;
-  align-items: stretch;
-}
-.rstkCanvas .rstk-video-form-gate-preview .rstk-phone-input[data-phone-country-hidden] {
-  grid-template-columns: minmax(0, 1fr);
-}
-.rstkCanvas .rstk-video-form-gate-preview .rstk-phone-input[data-phone-country-hidden] > select {
-  display: none;
-}
-.rstkCanvas .rstk-video-form-gate-preview .rstk-phone-input > input,
-.rstkCanvas .rstk-video-form-gate-preview .rstk-phone-input > select {
-  min-width: 0;
-}
-.rstkCanvas .rstk-video-form-gate-preview .rstk-phone-input > select {
-  appearance: none;
-  -webkit-appearance: none;
-  background:
-    linear-gradient(45deg, transparent 50%, var(--rstk-form-field-text, var(--rstk-muted)) 50%) calc(100% - 15px) calc(50% - 3px) / 5px 5px no-repeat,
-    linear-gradient(135deg, var(--rstk-form-field-text, var(--rstk-muted)) 50%, transparent 50%) calc(100% - 10px) calc(50% - 3px) / 5px 5px no-repeat,
-    var(--rstk-form-field-bg, var(--rstk-input-bg));
-  color: var(--rstk-form-field-text, var(--rstk-input-ink));
-  padding-left: 9px;
-  padding-right: 26px;
-}
-.rstkCanvas .rstk-video-form-gate-preview .rstk-options {
-  display: grid;
-  gap: clamp(7px, 1.8cqw, 10px);
-  width: 100%;
-  max-width: 100%;
-  min-width: 0;
-}
-.rstkCanvas .rstk-video-form-gate-preview .rstk-option {
-  width: 100%;
-  max-width: 100%;
-  min-width: 0;
-  min-height: clamp(38px, 8cqw, var(--rstk-form-field-height, 50px));
-  border-width: var(--rstk-form-field-border-width, 1px);
-  border-color: var(--rstk-form-field-border, var(--rstk-input-border));
-  border-radius: var(--rstk-form-field-radius, var(--rstk-field-radius, var(--rstk-radius)));
-  background: var(--rstk-form-field-bg, var(--rstk-input-bg));
-  color: var(--rstk-form-field-text, var(--rstk-input-ink));
-  font-family: var(--rstk-form-font, var(--rstk-font));
-  font-size: clamp(.84rem, 2.2cqw, var(--rstk-form-input-size, 1rem));
-  font-style: var(--rstk-form-font-style, normal);
-  font-weight: var(--rstk-form-weight, 500);
-  text-decoration: var(--rstk-form-text-decoration, none);
-  padding: clamp(9px, 2cqw, var(--rstk-form-field-pad-y, 13px)) clamp(10px, 2.4cqw, var(--rstk-form-field-pad-x, 14px));
-}
-.rstkCanvas .rstk-video-form-gate-preview .rstk-option:has(input:checked) {
-  border-color: var(--rstk-form-choice-selected-border, var(--rstk-accent));
-  background: var(--rstk-form-choice-selected-bg, color-mix(in srgb, var(--rstk-accent) 8%, transparent));
-}
-.rstkCanvas .rstk-video-form-gate-preview .rstk-error {
-  margin: 0;
-  color: var(--rstk-form-error, var(--neg, var(--rstk-accent)));
-  font-size: clamp(.72rem, 1.8cqw, .84rem);
-  font-weight: 700;
-}
-.rstkCanvas .rstk-video-form-gate-preview .rstk-video-form-field[data-invalid] input,
-.rstkCanvas .rstk-video-form-gate-preview .rstk-video-form-field[data-invalid] textarea,
-.rstkCanvas .rstk-video-form-gate-preview .rstk-video-form-field[data-invalid] select,
-.rstkCanvas .rstk-video-form-gate-preview .rstk-video-form-field[data-invalid] .rstk-option {
-  border-color: var(--rstk-form-error, var(--neg, var(--rstk-accent))) !important;
-  box-shadow: 0 0 0 3px color-mix(in srgb, var(--rstk-form-error, var(--neg, var(--rstk-accent))) 16%, transparent);
-}
-.rstkCanvas .rstk-video-form-gate-preview .rstk-video-form-actions {
-  display: flex;
-  align-items: center;
-  justify-content: var(--rstk-submit-justify, center);
-  gap: 8px;
-  min-width: 0;
-}
-.rstkCanvas .rstk-video-form-gate-preview .rstk-video-form-actions button {
-  box-sizing: border-box;
-  width: var(--rstk-submit-width, fit-content);
-  max-width: 100%;
-  min-width: min(128px, 46%);
-  min-height: clamp(38px, 7.5cqw, var(--rstk-submit-height, 48px));
-  border: var(--rstk-submit-border-width, 1px) solid var(--rstk-submit-border, var(--rstk-accent));
-  border-radius: var(--rstk-submit-radius, var(--rstk-btn-radius));
-  background: var(--rstk-submit-bg, var(--rstk-accent));
-  color: var(--rstk-submit-text, var(--rstk-on-accent));
-  font-family: var(--rstk-form-font, var(--rstk-font));
-  font-size: clamp(.84rem, 2.1cqw, var(--rstk-submit-size, .98rem));
-  font-weight: var(--rstk-btn-weight, 800);
-  cursor: default;
-  flex: 0 1 var(--rstk-submit-width, fit-content);
-  padding: var(--rstk-submit-pad-y, 9px) var(--rstk-submit-pad-x, 14px);
-}
-.rstkCanvas .rstk-video-form-gate-preview .rstk-submit-message {
-  min-height: 18px;
-  margin: 0;
-  color: var(--rstk-form-help-color, var(--rstk-muted));
-  font-size: clamp(.74rem, 1.8cqw, .88rem);
-  font-weight: 650;
-  text-align: var(--rstk-form-content-align, left);
-}
-@container (max-width: 460px) {
-  .rstkCanvas .rstk-video-form-gate-preview {
-    padding: 8px;
-  }
-  .rstkCanvas .rstk-video-form-gate-preview .rstk-video-form-gate-panel {
-    --rstk-video-form-item-gap: 8px;
-    gap: var(--rstk-video-form-item-gap);
-    padding: 10px;
-    border-radius: 12px;
-  }
-  .rstkCanvas .rstk-video-form-gate-preview .rstk-video-form-actions {
-    justify-content: stretch;
-  }
-  .rstkCanvas .rstk-video-form-gate-preview .rstk-video-form-actions button {
-    flex: 1 1 0;
-    min-width: 0;
-    padding-inline: 10px;
-  }
-  .rstkCanvas .rstk-video-form-gate-preview .rstk-phone-input {
-    grid-template-columns: minmax(96px, 104px) minmax(0, 1fr);
-  }
-  .rstkCanvas .rstk-video-form-gate-preview .rstk-phone-input[data-phone-country-hidden] {
-    grid-template-columns: minmax(0, 1fr);
-  }
-}
-@media (max-width: 760px) {
-  .rstkCanvas .rstk-video-form-gate-fit-expanded,
-  .rstkCanvas .rstk-video-gate-active.rstk-video-form-gate-fit-expanded {
-    width: min(100%, var(--rstk-video-form-gate-fit-width, 100%));
-    margin-inline: auto;
-  }
-}
-@supports not (height: 1svh) {
-  .rstkCanvas .rstk-video-form-gate-fit-expanded,
-  .rstkCanvas .rstk-video-gate-active.rstk-video-form-gate-fit-expanded {
-    min-height: var(--rstk-video-form-gate-fit-height, min(760px, max(520px, 86vh)));
-  }
-}
-.rstkCanvas .rstk-video-play-dot {
-  width: var(--rstk-video-play-width, var(--rstk-video-play-size, 160px));
-  height: var(--rstk-video-play-size, 160px);
-  display: grid;
-  place-items: center;
-  border: 0;
-  border-radius: var(--rstk-video-play-radius, 0);
-  background: var(--rstk-video-player-color, #000000);
-  color: var(--rstk-video-play-color, #fff);
-  box-shadow: none;
-  transition: opacity .18s ease, transform .18s ease;
-}
-.rstkCanvas .rstk-video-play-shape-round .rstk-video-play-dot { border-radius: var(--rstk-video-play-radius, 999px); }
-.rstkCanvas .rstk-video-play-shape-rectangle .rstk-video-play-dot { border-radius: var(--rstk-video-play-radius, 0); }
-.rstkCanvas .rstk-video-play-dot svg {
-  width: var(--rstk-video-play-icon-size, 95px);
-  height: var(--rstk-video-play-icon-size, 95px);
-}
-.rstkCanvas .rstk-video-sound {
-  --rstk-video-sound-size: 58px;
-  --rstk-video-sound-icon-size: 34px;
-  position: absolute;
-  top: 22px;
-  right: 22px;
-  z-index: 3;
-  box-sizing: border-box;
-  display: inline-flex;
-  flex-direction: row-reverse;
-  align-items: center;
-  justify-content: flex-start;
-  gap: 10px;
-  width: max-content;
-  max-width: var(--rstk-video-sound-size);
-  min-width: var(--rstk-video-sound-size);
-  height: var(--rstk-video-sound-size);
-  min-height: var(--rstk-video-sound-size);
-  overflow: hidden;
-  border-radius: 999px;
-  background: transparent;
-  color: var(--rstk-video-sound-color, var(--rstk-video-play-color, #fff));
-  box-shadow: none;
-  padding: 0 12px;
-  pointer-events: none;
-  isolation: isolate;
-  contain: paint;
-  -webkit-font-smoothing: antialiased;
-  text-rendering: geometricPrecision;
-  transform-origin: right center;
-}
-.rstkCanvas .rstk-video-sound::before {
-  content: "";
-  position: absolute;
-  inset: 0;
-  z-index: 0;
-  border-radius: inherit;
-  background: color-mix(in srgb, #020617 72%, transparent);
-  backdrop-filter: blur(14px);
-  -webkit-backdrop-filter: blur(14px);
-}
-.rstkCanvas .rstk-video-has-control-bar .rstk-video-sound { top: 22px; }
-.rstkCanvas .rstk-video-sound-auto { animation: rstkVideoSoundNotice var(--rstk-video-sound-cycle, 6.6s) cubic-bezier(.2, .8, .2, 1) .45s both; }
-.rstkCanvas .rstk-video-sound-persistent { animation: rstkVideoSoundNoticeOpen .8s cubic-bezier(.2, .8, .2, 1) .45s both; }
-.rstkCanvas .rstk-video-sound-icon {
-  position: relative;
-  z-index: 1;
-  display: grid;
-  place-items: center;
-  flex: 0 0 var(--rstk-video-sound-icon-size);
-  width: var(--rstk-video-sound-icon-size);
-  min-width: var(--rstk-video-sound-icon-size);
-  height: var(--rstk-video-sound-icon-size);
-  border-radius: 999px;
-}
-.rstkCanvas .rstk-video-sound-icon svg {
-  display: block;
-  width: 22px;
-  height: 22px;
-  flex: 0 0 auto;
-  shape-rendering: geometricPrecision;
-}
-.rstkCanvas .rstk-video-sound-text {
-  position: relative;
-  z-index: 1;
-  display: inline-block;
-  max-width: min(260px, calc(100vw - 150px));
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  color: currentColor;
-  font-size: 1rem;
-  font-weight: 500;
-  line-height: 1.25;
-  letter-spacing: 0;
-  opacity: 0;
-  transform: translateX(10px);
-}
-.rstkCanvas .rstk-video-sound-auto .rstk-video-sound-text { animation: rstkVideoSoundText var(--rstk-video-sound-cycle, 6.6s) ease .45s both; }
-.rstkCanvas .rstk-video-sound-persistent .rstk-video-sound-text { animation: rstkVideoSoundTextOpen .8s ease .55s both; }
-.rstkCanvas .rstk-video-control-bar {
-  position: absolute;
-  left: 12px;
-  right: 12px;
-  bottom: 12px;
-  z-index: 4;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  border: 1px solid rgba(255,255,255,.14);
-  border-radius: var(--rstk-video-control-radius, 24px);
-  background: var(--rstk-video-player-color, #000000);
-  color: var(--rstk-video-play-color, #fff);
-  box-shadow: none;
-  opacity: 1;
-  padding: 7px;
-  pointer-events: auto;
-  transform: translateY(0);
-  transition: opacity .2s ease, transform .2s ease;
-  backdrop-filter: blur(14px);
-}
-.rstkCanvas .rstk-video-controls-hidden .rstk-video-control-bar {
-  opacity: 0;
-  pointer-events: none;
-  transform: translateY(8px);
-}
-.rstkCanvas .rstk-video-controls-hidden .rstk-video-control-bar:focus-within {
-  opacity: 1;
-  pointer-events: auto;
-  transform: translateY(0);
-}
-.rstkCanvas .rstk-video-controls-start-hidden.rstk-video-controls-hidden .rstk-video-control-bar:focus-within {
-  opacity: 0;
-  pointer-events: none;
-  transform: translateY(8px);
-}
-.rstkCanvas .rstk-video-custom-controls.rstk-video-is-playing.rstk-video-controls-hidden video {
-  cursor: none;
-}
-.rstkCanvas .rstk-video-control-button {
-  flex: 0 0 auto;
-  width: 30px;
-  height: 30px;
-  display: grid;
-  place-items: center;
-  border: 0;
-  border-radius: 999px;
-  background: rgba(255,255,255,.12);
-  color: inherit;
-  cursor: pointer;
-}
-.rstkCanvas .rstk-video-control-button:hover { background: rgba(255,255,255,.2); }
-.rstkCanvas .rstk-video-control-button svg {
-  display: block;
-  flex: 0 0 auto;
-  width: 15px;
-  height: 15px;
-}
-.rstkCanvas .rstk-video-control-play-icon {
-  transform: translateX(1px);
-}
-.rstkCanvas .rstk-video-progress {
-  flex: 1 1 44px;
-  min-width: 44px;
-  position: relative;
-  height: 18px;
-  overflow: visible;
-  border-radius: 999px;
-  background: transparent;
-  cursor: pointer;
-  touch-action: none;
-}
-.rstkCanvas .rstk-video-progress::before {
-  content: "";
-  position: absolute;
-  inset: 50% 0 auto;
-  height: 5px;
-  border-radius: inherit;
-  background: rgba(255,255,255,.2);
-  transform: translateY(-50%);
-}
-.rstkCanvas .rstk-video-progress span {
-  position: absolute;
-  left: 0;
-  top: 50%;
-  display: block;
-  width: 0;
-  height: 5px;
-  border-radius: inherit;
-  background: currentColor;
-  transform: translateY(-50%);
-}
-.rstkCanvas .rstk-video-progress:focus-visible {
-  outline: 2px solid currentColor;
-  outline-offset: 3px;
-}
-.rstkCanvas .rstk-video-speed-control {
-  flex: 0 0 auto;
-  position: relative;
-  min-width: 66px;
-  height: 30px;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 5px;
-  border-radius: 999px;
-  background: rgba(255,255,255,.12);
-  color: inherit;
-  padding: 0 20px 0 8px;
-}
-.rstkCanvas .rstk-video-speed-no-settings {
-  min-width: 48px;
-  padding-left: 10px;
-}
-.rstkCanvas .rstk-video-settings-icon {
-  display: grid;
-  place-items: center;
-  flex: 0 0 auto;
-}
-.rstkCanvas .rstk-video-settings-icon svg {
-  display: block;
-}
-.rstkCanvas .rstk-video-speed-control::after {
-  content: "";
-  position: absolute;
-  top: 50%;
+  top: 8px;
   right: 8px;
-  width: 0;
-  height: 0;
-  border-top: 4px solid currentColor;
-  border-right: 4px solid transparent;
-  border-left: 4px solid transparent;
-  opacity: 0.72;
-  pointer-events: none;
-  transform: translateY(-35%);
-}
-.rstkCanvas .rstk-video-speed-control select {
-  -webkit-appearance: none;
-  appearance: none;
-  width: 34px;
-  min-width: 0;
-  height: 100%;
-  margin: 0;
-  border: 0 !important;
-  border-radius: 0;
-  background: transparent !important;
-  background-image: none !important;
-  box-shadow: none !important;
-  color: inherit;
-  cursor: pointer;
-  font: inherit;
-  font-size: .76rem;
-  font-weight: 750;
-  line-height: 1;
-  outline: 0;
-  padding: 0;
-}
-.rstkCanvas .rstk-video-speed-control option { color: #111827; }
-.rstkCanvas .rstk-video-timecode {
-  flex: 0 0 auto;
-  min-width: 98px;
-  height: 30px;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 5px;
-  border-radius: 999px;
-  background: rgba(255,255,255,.1);
-  color: inherit;
-  padding: 0 10px;
-  font-size: .72rem;
-  font-variant-numeric: tabular-nums;
-  font-weight: 700;
-  line-height: 1;
-  white-space: nowrap;
-}
-.rstkCanvas .rstk-video-timecode span + span {
-  opacity: .68;
-}
-@supports (width: 1cqw) {
-  .rstkCanvas .rstk-video-play-dot {
-    width: min(var(--rstk-video-play-size, 160px), max(72px, min(15cqw, calc(100% - 32px))));
-    height: min(var(--rstk-video-play-size, 160px), max(72px, min(15cqw, calc(100% - 32px))));
-  }
-
-  .rstkCanvas .rstk-video-play-shape-rectangle .rstk-video-play-dot {
-    width: min(var(--rstk-video-play-width, 232px), max(104px, min(22cqw, calc(100% - 32px))));
-  }
-
-  .rstkCanvas .rstk-video-play-dot svg {
-    width: min(var(--rstk-video-play-icon-size, 95px), max(42px, min(9cqw, calc(100% - 20px))));
-    height: min(var(--rstk-video-play-icon-size, 95px), max(42px, min(9cqw, calc(100% - 20px))));
-  }
-
-  .rstkCanvas .rstk-video-control-bar {
-    left: max(6px, min(12px, 2cqw));
-    right: max(6px, min(12px, 2cqw));
-    bottom: max(6px, min(12px, 2cqw));
-    gap: max(4px, min(8px, 1.4cqw));
-    padding: max(5px, min(7px, 1.2cqw));
-  }
-
-  .rstkCanvas .rstk-video-control-button {
-    width: max(24px, min(30px, 5cqw));
-    height: max(24px, min(30px, 5cqw));
-  }
-
-  .rstkCanvas .rstk-video-speed-control {
-    min-width: max(54px, min(66px, 11cqw));
-    height: max(24px, min(30px, 5cqw));
-    padding-inline: max(6px, min(8px, 1.5cqw)) max(18px, min(20px, 3cqw));
-  }
-
-  .rstkCanvas .rstk-video-timecode {
-    min-width: max(76px, min(98px, 16cqw));
-    height: max(24px, min(30px, 5cqw));
-    gap: max(3px, min(5px, 1cqw));
-    padding-inline: max(7px, min(10px, 1.7cqw));
-    font-size: max(.62rem, min(.72rem, 1.4cqw));
-  }
-
-  .rstkCanvas .rstk-video-sound {
-    --rstk-video-sound-size: max(46px, min(58px, 9cqw));
-    --rstk-video-sound-icon-size: max(27px, min(34px, 5.6cqw));
-    top: max(10px, min(22px, 3cqw));
-    right: max(10px, min(22px, 3cqw));
-  }
-
-  .rstkCanvas .rstk-video-has-control-bar .rstk-video-sound {
-    top: max(10px, min(22px, 3cqw));
-  }
-
-  @media (max-width: 760px) {
-    .rstkCanvas .rstk-video-play-dot {
-      width: min(var(--rstk-video-play-size, 160px), max(60px, min(12cqw, calc(100% - 32px))));
-      height: min(var(--rstk-video-play-size, 160px), max(60px, min(12cqw, calc(100% - 32px))));
-    }
-
-    .rstkCanvas .rstk-video-play-shape-rectangle .rstk-video-play-dot {
-      width: min(var(--rstk-video-play-width, 232px), max(88px, min(18cqw, calc(100% - 32px))));
-    }
-
-    .rstkCanvas .rstk-video-play-dot svg {
-      width: min(var(--rstk-video-play-icon-size, 95px), max(36px, min(7cqw, calc(100% - 20px))));
-      height: min(var(--rstk-video-play-icon-size, 95px), max(36px, min(7cqw, calc(100% - 20px))));
-    }
-  }
-}
-
-@media (max-width: 760px) {
-  .rstkCanvas .rstk-block-style .rstk-video-portrait {
-    width: 100%;
-    margin-left: auto;
-    margin-right: auto;
-  }
-}
-@keyframes rstkVideoSoundNotice {
-  0% { max-width: var(--rstk-video-sound-size, 58px); opacity: 0; transform: translateY(-4px); }
-  10%, 18% { max-width: var(--rstk-video-sound-size, 58px); opacity: 1; transform: translateY(0); }
-  28%, 70% { max-width: min(calc(100% - 44px), 360px); opacity: 1; transform: translateY(0); }
-  86% { max-width: var(--rstk-video-sound-size, 58px); opacity: 1; transform: translateY(0); }
-  100% { max-width: var(--rstk-video-sound-size, 58px); opacity: 0; transform: translateY(-4px); }
-}
-@keyframes rstkVideoSoundNoticeOpen {
-  0% { max-width: var(--rstk-video-sound-size, 58px); opacity: 0; transform: translateY(-4px); }
-  45% { opacity: 1; transform: translateY(0); }
-  100% { max-width: min(calc(100% - 44px), 360px); opacity: 1; transform: translateY(0); }
-}
-@keyframes rstkVideoSoundText {
-  0%, 17%, 76%, 100% { opacity: 0; transform: translateX(10px); }
-  26%, 68% { opacity: 1; transform: translateX(0); }
-}
-@keyframes rstkVideoSoundTextOpen {
-  0% { opacity: 0; transform: translateX(10px); }
-  100% { opacity: 1; transform: translateX(0); }
-}
-.rstkCanvas .rstk-media-empty { min-height: 190px; display: grid; place-items: center; gap: 8px; color: var(--rstk-muted); font-size: .92rem; }
-.rstkCanvas .rstk-play { display: grid; place-items: center; width: 58px; height: 58px; border-radius: 50%; background: var(--rstk-accent); color: var(--rstk-on-accent); }
-
-.rstkCanvas .rstk-site-panel { width: 100%; display: flex; align-items: center; justify-content: space-between; gap: 18px; color: var(--rstk-block-text, var(--rstk-ink)); }
-.rstkCanvas .rstk-site-panel-copy { margin: 0; color: inherit; font: inherit; font-weight: 800; }
-.rstkCanvas .rstk-site-panel-footer .rstk-site-panel-copy { font-weight: 600; color: color-mix(in srgb, var(--rstk-block-text, var(--rstk-ink)) 72%, var(--rstk-muted) 28%); }
-.rstkCanvas .rstk-site-panel-links { display: flex; align-items: center; justify-content: flex-end; gap: 14px; flex-wrap: wrap; }
-.rstkCanvas .rstk-site-panel-links a { color: inherit; text-decoration: none; font-size: .92rem; font-weight: 750; }
-.rstkCanvas .rstk-site-panel-footer { justify-content: center; text-align: center; flex-wrap: wrap; }
-.rstkCanvas .rstk-site-panel-footer .rstk-site-panel-links { justify-content: center; }
-
-.rstkCanvas .rstk-field { display: grid; gap: 8px; text-align: left; }
-.rstkCanvas.rstk-kind-form .rstk-field,
-.rstkCanvas.rstk-kind-form .rstk-options,
-.rstkCanvas.rstk-kind-form .rstk-actions,
-.rstkCanvas.rstk-kind-form .rstk-payment-block,
-.rstkCanvas .rstk-embedded-form .rstk-field,
-.rstkCanvas .rstk-embedded-form .rstk-options,
-.rstkCanvas .rstk-embedded-form .rstk-actions,
-.rstkCanvas .rstk-embedded-form .rstk-payment-block {
-  width: min(100%, var(--rstk-form-field-width, 560px));
-  justify-self: var(--rstk-form-field-justify, center);
-  text-align: var(--rstk-block-align, left);
-}
-.rstkCanvas .rstk-embedded-form > .rstk-help {
-  width: min(100%, 620px);
-  justify-self: center;
-}
-.rstkCanvas .rstk-embedded-pages,
-.rstkCanvas .rstk-embedded-pages [data-embedded-page-content] {
-  width: min(100%, var(--rstk-form-field-width, 560px));
-  justify-self: var(--rstk-form-field-justify, center);
-  display: grid;
-  gap: 14px;
-}
-.rstkCanvas .rstkEmbeddedFormEditor {
-  width: min(100%, var(--rstk-form-field-width, 560px));
-  justify-self: var(--rstk-form-field-justify, center);
-  display: grid;
-  gap: 8px;
-}
-.rstkCanvas .rstk-block-style.rstk-field,
-.rstkCanvas .rstk-block-style > .rstk-field,
-.rstkCanvas .rstkEmbeddedFormField.rstk-block-style {
-  width: min(100%, var(--rstk-field-width, 100%));
-  justify-self: center;
-}
-.rstkCanvas .rstkEmbeddedFormItem.rstk-block-style {
-  width: 100%;
-  justify-self: center;
-}
-.rstkCanvas .rstkEmbeddedFormField,
-.rstkCanvas .rstkEmbeddedFormItem {
-  position: relative;
-  width: 100%;
-  border: 1px solid transparent;
-  border-radius: calc(var(--rstk-radius) + 4px);
-  padding: var(--rstk-block-pad, 0);
-  transition: border-color .16s ease, background .16s ease, box-shadow .16s ease;
-}
-.rstkCanvas .rstkEmbeddedFormField {
-  border-radius: calc(var(--rstk-field-radius, var(--rstk-radius)) + 4px);
-}
-.rstkCanvas .rstkEmbeddedFormField > .rstk-field {
-  width: 100%;
-}
-/* Hover hint: faint accent tint only. The selection itself is the shared
-   animated marching-ants overlay (::after) defined in the editor-chrome block
-   below, so embedded form sub-elements look identical to main blocks. */
-.rstkCanvas .rstkEmbeddedFormField:not(.rstkEmbeddedFormFieldActive):hover {
-  border-color: color-mix(in srgb, var(--rstk-accent) 38%, transparent);
-  background: color-mix(in srgb, var(--rstk-accent) 6%, transparent);
-}
-.rstkCanvas .rstkEmbeddedFormItem:not(.rstkEmbeddedFormItemActive):hover {
-  border-color: color-mix(in srgb, var(--rstk-accent) 38%, transparent);
-  background: transparent;
-}
-.rstkCanvas .rstkEmbeddedFormFieldActive,
-.rstkCanvas .rstkEmbeddedFormItemActive {
-  border-color: transparent;
-  background: transparent;
-  box-shadow: none;
-}
-.rstkCanvas .rstk-embed-actions {
-  position: relative;
-  border: 1px solid transparent;
-  border-radius: calc(var(--rstk-submit-radius, var(--rstk-radius)) + 6px);
-  padding: 0;
-  transition: border-color .16s ease, background .16s ease, box-shadow .16s ease;
-}
-.rstkCanvas .rstk-embed-actions:not(.rstkEmbeddedFormSubmitActive):hover {
-  border-color: color-mix(in srgb, var(--rstk-accent) 38%, transparent);
-  background: color-mix(in srgb, var(--rstk-accent) 6%, transparent);
-}
-.rstkCanvas .rstkEmbeddedFormSubmitActive {
-  border-color: transparent;
-  background: transparent;
-  box-shadow: none;
-}
-.rstkCanvas .rstkEmbeddedFormFieldTools {
-  position: absolute;
-  top: 7px;
-  right: 7px;
   z-index: 3;
-  display: inline-flex;
-  gap: 4px;
-  opacity: 0;
-  transform: translateY(-2px);
-  transition: opacity .14s ease, transform .14s ease;
-}
-.rstkCanvas .rstkEmbeddedFormField:hover .rstkEmbeddedFormFieldTools,
-.rstkCanvas .rstkEmbeddedFormItem:hover .rstkEmbeddedFormFieldTools,
-.rstkCanvas .rstkEmbeddedFormFieldActive .rstkEmbeddedFormFieldTools,
-.rstkCanvas .rstkEmbeddedFormItemActive .rstkEmbeddedFormFieldTools {
-  opacity: 1;
-  transform: translateY(0);
-}
-.rstkCanvas .rstkEmbeddedFormFieldTools button {
-  width: 26px;
-  height: 26px;
-  display: grid;
-  place-items: center;
-  border: 1px solid color-mix(in srgb, var(--rstk-input-border) 78%, transparent);
+  padding: 3px 8px;
   border-radius: 999px;
-  background: color-mix(in srgb, var(--rstk-field-bg, var(--rstk-input-bg)) 94%, var(--rstk-ink) 6%);
-  color: var(--rstk-ink);
-  cursor: pointer;
-}
-.rstkCanvas .rstkEmbeddedFormFieldTools button:disabled {
-  cursor: not-allowed;
-  opacity: .36;
-}
-.rstkCanvas .rstkEmbeddedFormDrop {
-  position: relative;
-  width: 100%;
-  min-height: 9px;
-  display: grid;
-  grid-template-columns: auto auto;
-  justify-content: center;
-  align-items: center;
-  gap: 6px;
-  border-radius: var(--rstk-field-radius, var(--rstk-radius));
-  color: transparent;
-  font-size: .78rem;
-  font-weight: 750;
-  transition: min-height .16s ease, color .16s ease, background .16s ease;
-}
-.rstkCanvas .rstkEmbeddedFormDropActive,
-.rstkCanvas .rstkEmbeddedFormDropEmpty {
-  min-height: 38px;
-  background: color-mix(in srgb, var(--rstk-accent) 10%, transparent);
-  color: var(--rstk-ink);
-}
-.rstkCanvas .rstkEmbeddedFormDropEmpty {
-  min-height: 86px;
-}
-/* Animated contour for the embedded-form drop indicator — same marching-ants
-   as selection/drag so dropping a field into the form feels identical. */
-.rstkCanvas .rstkEmbeddedFormDropActive::after,
-.rstkCanvas .rstkEmbeddedFormDropEmpty::after {
-  content: "";
-  position: absolute;
-  inset: 0;
-  border-radius: inherit;
+  background: color-mix(in srgb, var(--rstk-ink) 78%, transparent);
+  color: var(--rstk-page-bg, #fff);
+  font-size: .72rem;
+  font-weight: 600;
+  letter-spacing: .01em;
   pointer-events: none;
-  background-image: var(--rstk-march-bg);
-  background-size: 14px 3px, 14px 3px, 3px 14px, 3px 14px;
-  background-position: 0 0, 0 100%, 0 0, 100% 0;
-  background-repeat: repeat-x, repeat-x, repeat-y, repeat-y;
-  filter: drop-shadow(0 0 1px var(--rstk-selection-contrast, rgba(15, 23, 42, 0.28)));
-  animation: rstkSelMarch 1s linear infinite;
 }
-.rstkCanvas.rstk-kind-form .rstk-form,
-.rstkCanvas .rstk-embedded-form { font-family: var(--rstk-form-font, var(--rstk-font)); }
-.rstkCanvas label { font-size: .95rem; font-weight: 700; color: var(--rstk-ink); }
-.rstkCanvas.rstk-kind-form .rstk-field > label,
-.rstkCanvas .rstk-embedded-form .rstk-field > label {
-  color: var(--rstk-form-label-color, var(--rstk-ink));
-  font-family: var(--rstk-form-font, var(--rstk-font));
-  font-size: var(--rstk-form-label-size, .95rem);
-  font-style: var(--rstk-form-font-style, normal);
-  font-weight: var(--rstk-form-weight, 500);
-  text-decoration: var(--rstk-form-text-decoration, none);
-}
-.rstkCanvas .rstk-required { color: var(--rstk-form-error, var(--neg, var(--rstk-accent))); margin-left: 3px; }
-.rstkCanvas .rstk-help { margin: 0; color: var(--rstk-muted); font-size: .9rem; }
-.rstkCanvas.rstk-kind-form .rstk-help,
-.rstkCanvas .rstk-embedded-form .rstk-help {
-  color: var(--rstk-form-help-color, var(--rstk-muted));
-  font-family: var(--rstk-form-font, var(--rstk-font));
-  font-size: var(--rstk-form-help-size, .9rem);
-  font-style: var(--rstk-form-font-style, normal);
-  text-decoration: var(--rstk-form-text-decoration, none);
-}
-.rstkCanvas .rstk-error {
-  margin: 2px 0 0;
-  color: var(--rstk-form-error, var(--neg, var(--rstk-accent)));
-  font-size: .85rem;
-  font-weight: 650;
-}
-.rstkCanvas input, .rstkCanvas textarea, .rstkCanvas select {
-  width: 100%; border: 1px solid var(--rstk-input-border); border-radius: var(--rstk-field-radius, var(--rstk-radius));
-  background: var(--rstk-input-bg); color: var(--rstk-input-ink); font: inherit; font-size: 1rem;
-  padding: 13px 14px; outline: none;
-}
-.rstkCanvas.rstk-kind-form .rstk-field > input,
-.rstkCanvas.rstk-kind-form .rstk-field > textarea,
-.rstkCanvas.rstk-kind-form .rstk-field > select,
-.rstkCanvas .rstk-embedded-form .rstk-field > input,
-.rstkCanvas .rstk-embedded-form .rstk-field > textarea,
-.rstkCanvas .rstk-embedded-form .rstk-field > select {
-  min-height: var(--rstk-form-field-height, 50px);
-  border-width: var(--rstk-form-field-border-width, 1px);
-  border-color: var(--rstk-form-field-border, var(--rstk-input-border));
-  border-radius: var(--rstk-form-field-radius, var(--rstk-field-radius, var(--rstk-radius)));
-  background: var(--rstk-form-field-bg, var(--rstk-input-bg));
-  color: var(--rstk-form-field-text, var(--rstk-input-ink));
-  font-family: var(--rstk-form-font, var(--rstk-font));
-  font-size: var(--rstk-form-input-size, 1rem);
-  font-style: var(--rstk-form-font-style, normal);
-  font-weight: var(--rstk-form-weight, 500);
-  text-decoration: var(--rstk-form-text-decoration, none);
-  padding: var(--rstk-form-field-pad-y, 13px) var(--rstk-form-field-pad-x, 14px);
-}
-.rstkCanvas .rstk-field[data-invalid] > input,
-.rstkCanvas .rstk-field[data-invalid] > textarea,
-.rstkCanvas .rstk-field[data-invalid] > select,
-.rstkCanvas .rstk-field[data-invalid] .rstk-phone-input > input,
-.rstkCanvas .rstk-field[data-invalid] .rstk-phone-input > select,
-.rstkCanvas .rstk-field[data-invalid] .rstk-option {
-  border-color: var(--rstk-form-error, var(--neg, var(--rstk-accent))) !important;
-  box-shadow: 0 0 0 3px color-mix(in srgb, var(--rstk-form-error, var(--neg, var(--rstk-accent))) 14%, transparent);
-}
-.rstkCanvas .rstk-phone-input {
-  display: grid;
-  grid-template-columns: minmax(132px, clamp(132px, 24%, 142px)) minmax(0, 1fr);
-  gap: 8px;
-  align-items: stretch;
-  max-width: 100%;
-}
-.rstkCanvas .rstk-phone-input[data-phone-country-hidden] {
-  grid-template-columns: minmax(0, 1fr);
-}
-.rstkCanvas .rstk-phone-input[data-phone-country-hidden] > select {
-  display: none;
-}
-.rstkCanvas .rstk-phone-input > select,
-.rstkCanvas .rstk-phone-input > input {
-  min-width: 0;
-}
-.rstkCanvas.rstk-kind-form .rstk-field .rstk-phone-input > input,
-.rstkCanvas.rstk-kind-form .rstk-field .rstk-phone-input > select,
-.rstkCanvas .rstk-embedded-form .rstk-field .rstk-phone-input > input,
-.rstkCanvas .rstk-embedded-form .rstk-field .rstk-phone-input > select {
-  min-height: var(--rstk-form-field-height, 50px);
-  border-width: var(--rstk-form-field-border-width, 1px);
-  border-color: var(--rstk-form-field-border, var(--rstk-input-border));
-  border-radius: var(--rstk-form-field-radius, var(--rstk-field-radius, var(--rstk-radius)));
-  background: var(--rstk-form-field-bg, var(--rstk-input-bg));
-  color: var(--rstk-form-field-text, var(--rstk-input-ink));
-  font-family: var(--rstk-form-font, var(--rstk-font));
-  font-size: var(--rstk-form-input-size, 1rem);
-  font-style: var(--rstk-form-font-style, normal);
-  font-weight: var(--rstk-form-weight, 500);
-  text-decoration: var(--rstk-form-text-decoration, none);
-  padding: var(--rstk-form-field-pad-y, 13px) var(--rstk-form-field-pad-x, 14px);
-}
-/* Estilos de caja de texto (campos input/textarea). 'box' = sin reglas extra (default). */
-.rstkCanvas.rstk-kind-form.rstk-input-underline .rstk-field > input,
-.rstkCanvas.rstk-kind-form.rstk-input-underline .rstk-field > textarea,
-.rstkCanvas.rstk-input-underline .rstk-embedded-form .rstk-field > input,
-.rstkCanvas.rstk-input-underline .rstk-embedded-form .rstk-field > textarea {
-  border-width: 0 0 var(--rstk-form-field-border-width, 1px);
-  border-radius: 0;
-  background: transparent;
-  padding-left: 0;
-  padding-right: 0;
-}
-.rstkCanvas.rstk-kind-form.rstk-input-filled .rstk-field > input,
-.rstkCanvas.rstk-kind-form.rstk-input-filled .rstk-field > textarea,
-.rstkCanvas.rstk-input-filled .rstk-embedded-form .rstk-field > input,
-.rstkCanvas.rstk-input-filled .rstk-embedded-form .rstk-field > textarea {
-  border-width: 0 0 var(--rstk-form-field-border-width, 1px);
-  border-color: var(--rstk-form-field-border, var(--rstk-input-border));
-  border-radius: var(--rstk-form-field-radius, var(--rstk-field-radius, var(--rstk-radius))) var(--rstk-form-field-radius, var(--rstk-field-radius, var(--rstk-radius))) 0 0;
-  background: color-mix(in srgb, var(--rstk-muted) 10%, transparent);
-}
-.rstkCanvas.rstk-kind-form.rstk-input-soft .rstk-field > input,
-.rstkCanvas.rstk-input-soft .rstk-embedded-form .rstk-field > input {
-  border-radius: 999px;
-  border-color: transparent;
-  background: color-mix(in srgb, var(--rstk-muted) 8%, transparent);
-  padding-left: calc(var(--rstk-form-field-pad-x, 14px) + 6px);
-  padding-right: calc(var(--rstk-form-field-pad-x, 14px) + 6px);
-}
-.rstkCanvas.rstk-kind-form.rstk-input-soft .rstk-field > textarea,
-.rstkCanvas.rstk-input-soft .rstk-embedded-form .rstk-field > textarea {
-  border-radius: 20px;
-  border-color: transparent;
-  background: color-mix(in srgb, var(--rstk-muted) 8%, transparent);
-}
-.rstkCanvas textarea { resize: vertical; min-height: 108px; }
-.rstkCanvas input::placeholder, .rstkCanvas textarea::placeholder { color: color-mix(in srgb, var(--rstk-muted) 80%, transparent); }
-.rstkCanvas.rstk-kind-form input::placeholder,
-.rstkCanvas.rstk-kind-form textarea::placeholder,
-.rstkCanvas .rstk-embedded-form input::placeholder,
-.rstkCanvas .rstk-embedded-form textarea::placeholder { color: var(--rstk-form-placeholder, color-mix(in srgb, var(--rstk-muted) 80%, transparent)); }
-.rstkCanvas select { appearance: none; -webkit-appearance: none; background-image: linear-gradient(45deg, transparent 50%, var(--rstk-muted) 50%), linear-gradient(135deg, var(--rstk-muted) 50%, transparent 50%); background-position: calc(100% - 20px) calc(50% - 3px), calc(100% - 15px) calc(50% - 3px); background-size: 5px 5px, 5px 5px; background-repeat: no-repeat; padding-right: 42px; }
-.rstkCanvas.rstk-kind-form.rstk-select-filled select,
-.rstkCanvas.rstk-select-filled .rstk-embedded-form select { background-color: color-mix(in srgb, var(--rstk-form-field-bg, transparent) 88%, var(--rstk-accent) 12%); }
-.rstkCanvas.rstk-kind-form.rstk-select-underline select,
-.rstkCanvas.rstk-select-underline .rstk-embedded-form select { border-width: 0 0 var(--rstk-form-field-border-width, 1px); border-radius: 0; background-color: transparent; padding-left: 0; padding-right: 36px; }
-.rstkCanvas.rstk-kind-form.rstk-select-soft select,
-.rstkCanvas.rstk-select-soft .rstk-embedded-form select { border-radius: 999px; background-color: color-mix(in srgb, var(--rstk-form-field-bg, var(--rstk-input-bg)) 90%, var(--rstk-accent) 10%); padding-left: 20px; }
-.rstkCanvas .rstk-phone-input > select {
-  background:
-    linear-gradient(45deg, transparent 50%, var(--rstk-muted) 50%) calc(100% - 15px) calc(50% - 3px) / 5px 5px no-repeat,
-    linear-gradient(135deg, var(--rstk-muted) 50%, transparent 50%) calc(100% - 10px) calc(50% - 3px) / 5px 5px no-repeat,
-    var(--rstk-input-bg);
-}
-.rstkCanvas.rstk-kind-form .rstk-field .rstk-phone-input > select,
-.rstkCanvas.rstk-kind-form.rstk-select-filled .rstk-field .rstk-phone-input > select,
-.rstkCanvas.rstk-kind-form.rstk-select-underline .rstk-field .rstk-phone-input > select,
-.rstkCanvas .rstk-embedded-form .rstk-field .rstk-phone-input > select,
-.rstkCanvas.rstk-select-filled .rstk-embedded-form .rstk-field .rstk-phone-input > select,
-.rstkCanvas.rstk-select-underline .rstk-embedded-form .rstk-field .rstk-phone-input > select {
-  border-width: var(--rstk-form-field-border-width, 1px);
-  border-radius: var(--rstk-form-field-radius, var(--rstk-field-radius, var(--rstk-radius)));
-  background:
-    linear-gradient(45deg, transparent 50%, var(--rstk-muted) 50%) calc(100% - 15px) calc(50% - 3px) / 5px 5px no-repeat,
-    linear-gradient(135deg, var(--rstk-muted) 50%, transparent 50%) calc(100% - 10px) calc(50% - 3px) / 5px 5px no-repeat,
-    var(--rstk-form-field-bg, var(--rstk-input-bg));
-  padding-left: 9px;
-  padding-right: 26px;
-}
-
-.rstkCanvas .rstk-options { display: grid; gap: 10px; }
-.rstkCanvas .rstk-option { display: flex; align-items: center; gap: 11px; min-height: 50px; border: 1px solid var(--rstk-input-border); border-radius: var(--rstk-field-radius, var(--rstk-radius)); padding: 11px 14px; background: var(--rstk-input-bg); color: var(--rstk-input-ink); font-weight: 600; }
-.rstkCanvas .rstk-option input { width: 19px; height: 19px; padding: 0; flex: 0 0 auto; accent-color: var(--rstk-accent); }
-.rstkCanvas.rstk-kind-form .rstk-option,
-.rstkCanvas .rstk-embedded-form .rstk-option {
-  min-height: var(--rstk-form-field-height, 50px);
-  border-width: var(--rstk-form-field-border-width, 1px);
-  border-color: var(--rstk-form-field-border, var(--rstk-input-border));
-  border-radius: var(--rstk-form-field-radius, var(--rstk-field-radius, var(--rstk-radius)));
-  background: var(--rstk-form-field-bg, var(--rstk-input-bg));
-  color: var(--rstk-form-field-text, var(--rstk-input-ink));
-  font-family: var(--rstk-form-font, var(--rstk-font));
-  font-size: var(--rstk-form-input-size, 1rem);
-  font-style: var(--rstk-form-font-style, normal);
-  font-weight: var(--rstk-form-weight, 500);
-  text-decoration: var(--rstk-form-text-decoration, none);
-  padding: var(--rstk-form-field-pad-y, 13px) var(--rstk-form-field-pad-x, 14px);
-}
-.rstkCanvas.rstk-kind-form .rstk-option:has(input:checked),
-.rstkCanvas .rstk-embedded-form .rstk-option:has(input:checked) { border-color: var(--rstk-form-choice-selected-border, var(--rstk-accent)); background: var(--rstk-form-choice-selected-bg, color-mix(in srgb, var(--rstk-accent) 8%, transparent)); }
-.rstkCanvas.rstk-kind-form.rstk-choice-cards .rstk-option,
-.rstkCanvas.rstk-kind-form.rstk-choice-pills .rstk-option,
-.rstkCanvas.rstk-choice-cards .rstk-embedded-form .rstk-option,
-.rstkCanvas.rstk-choice-pills .rstk-embedded-form .rstk-option { position: relative; gap: 0; }
-.rstkCanvas.rstk-kind-form.rstk-choice-cards .rstk-option input,
-.rstkCanvas.rstk-kind-form.rstk-choice-pills .rstk-option input,
-.rstkCanvas.rstk-choice-cards .rstk-embedded-form .rstk-option input,
-.rstkCanvas.rstk-choice-pills .rstk-embedded-form .rstk-option input { position: absolute; opacity: 0; pointer-events: none; }
-.rstkCanvas.rstk-kind-form.rstk-choice-cards .rstk-option,
-.rstkCanvas.rstk-choice-cards .rstk-embedded-form .rstk-option { position: relative; padding-left: var(--rstk-form-field-pad-x, 14px); box-shadow: inset 4px 0 0 transparent; }
-.rstkCanvas.rstk-kind-form.rstk-choice-cards .rstk-option:has(input:checked),
-.rstkCanvas.rstk-choice-cards .rstk-embedded-form .rstk-option:has(input:checked) { box-shadow: inset 4px 0 0 var(--rstk-form-choice-selected-border, var(--rstk-accent)); }
-.rstkCanvas.rstk-kind-form.rstk-choice-pills .rstk-options,
-.rstkCanvas.rstk-choice-pills .rstk-embedded-form .rstk-options { display: flex; flex-wrap: wrap; gap: 8px; }
-.rstkCanvas.rstk-kind-form.rstk-choice-pills .rstk-option,
-.rstkCanvas.rstk-choice-pills .rstk-embedded-form .rstk-option { flex: 0 1 auto; min-height: 40px; border-radius: 999px; padding: 9px 16px; }
-.rstkCanvas.rstk-kind-form.rstk-choice-minimal .rstk-option,
-.rstkCanvas.rstk-choice-minimal .rstk-embedded-form .rstk-option { min-height: 38px; border-width: 0 0 var(--rstk-form-field-border-width, 1px); border-radius: 0; background: transparent; padding-inline: 0; }
-
-/* Cuadrícula: tarjetas en 2 columnas, control nativo oculto. */
-.rstkCanvas.rstk-kind-form.rstk-choice-grid .rstk-options,
-.rstkCanvas.rstk-choice-grid .rstk-embedded-form .rstk-options { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-.rstkCanvas.rstk-kind-form.rstk-choice-grid .rstk-option,
-.rstkCanvas.rstk-choice-grid .rstk-embedded-form .rstk-option,
-.rstkCanvas.rstk-kind-form.rstk-choice-button .rstk-option,
-.rstkCanvas.rstk-choice-button .rstk-embedded-form .rstk-option { justify-content: center; text-align: center; gap: 0; }
-
-/* Botones sólidos: la opción activa se rellena con el color seleccionado. */
-.rstkCanvas.rstk-kind-form.rstk-choice-button .rstk-option:has(input:checked),
-.rstkCanvas.rstk-choice-button .rstk-embedded-form .rstk-option:has(input:checked) { background: var(--rstk-form-choice-selected-border, var(--rstk-accent)); border-color: var(--rstk-form-choice-selected-border, var(--rstk-accent)); color: var(--rstk-on-accent); }
-
-/* Lista con palomita: filas aireadas con indicador circular a la derecha. */
-.rstkCanvas.rstk-kind-form.rstk-choice-check .rstk-option,
-.rstkCanvas.rstk-choice-check .rstk-embedded-form .rstk-option { justify-content: space-between; gap: 12px; border-width: 0 0 var(--rstk-form-field-border-width, 1px); border-radius: 0; background: transparent; padding-inline: 0; }
-.rstkCanvas.rstk-kind-form.rstk-choice-check .rstk-option::after,
-.rstkCanvas.rstk-choice-check .rstk-embedded-form .rstk-option::after { content: ''; flex: 0 0 auto; width: 20px; height: 20px; border-radius: 999px; border: 2px solid var(--rstk-form-field-border, var(--rstk-input-border)); box-sizing: border-box; transition: border-color .15s ease, background .15s ease; }
-.rstkCanvas.rstk-kind-form.rstk-choice-check .rstk-option:has(input:checked),
-.rstkCanvas.rstk-choice-check .rstk-embedded-form .rstk-option:has(input:checked) { background: transparent; }
-.rstkCanvas.rstk-kind-form.rstk-choice-check .rstk-option:has(input:checked)::after,
-.rstkCanvas.rstk-choice-check .rstk-embedded-form .rstk-option:has(input:checked)::after { border-color: var(--rstk-form-choice-selected-border, var(--rstk-accent)); background: var(--rstk-form-choice-selected-border, var(--rstk-accent)); box-shadow: inset 0 0 0 3px var(--rstk-form-field-bg, var(--rstk-input-bg)); }
-
-/* Segmentado: control unido horizontal, segmento activo relleno. */
-.rstkCanvas.rstk-kind-form.rstk-choice-segmented .rstk-options,
-.rstkCanvas.rstk-choice-segmented .rstk-embedded-form .rstk-options { display: flex; flex-wrap: wrap; gap: 0; }
-.rstkCanvas.rstk-kind-form.rstk-choice-segmented .rstk-option,
-.rstkCanvas.rstk-choice-segmented .rstk-embedded-form .rstk-option { position: relative; flex: 1 1 0; justify-content: center; text-align: center; gap: 0; border-radius: 0; margin-left: calc(-1 * var(--rstk-form-field-border-width, 1px)); }
-.rstkCanvas.rstk-kind-form.rstk-choice-segmented .rstk-option:first-child,
-.rstkCanvas.rstk-choice-segmented .rstk-embedded-form .rstk-option:first-child { margin-left: 0; border-top-left-radius: var(--rstk-form-field-radius, var(--rstk-field-radius, var(--rstk-radius))); border-bottom-left-radius: var(--rstk-form-field-radius, var(--rstk-field-radius, var(--rstk-radius))); }
-.rstkCanvas.rstk-kind-form.rstk-choice-segmented .rstk-option:last-child,
-.rstkCanvas.rstk-choice-segmented .rstk-embedded-form .rstk-option:last-child { border-top-right-radius: var(--rstk-form-field-radius, var(--rstk-field-radius, var(--rstk-radius))); border-bottom-right-radius: var(--rstk-form-field-radius, var(--rstk-field-radius, var(--rstk-radius))); }
-.rstkCanvas.rstk-kind-form.rstk-choice-segmented .rstk-option:has(input:checked),
-.rstkCanvas.rstk-choice-segmented .rstk-embedded-form .rstk-option:has(input:checked) { z-index: 1; background: var(--rstk-form-choice-selected-border, var(--rstk-accent)); border-color: var(--rstk-form-choice-selected-border, var(--rstk-accent)); color: var(--rstk-on-accent); }
-
-/* Oculta el control nativo en los estilos que pintan la opción completa. */
-.rstkCanvas.rstk-kind-form.rstk-choice-grid .rstk-option input,
-.rstkCanvas.rstk-kind-form.rstk-choice-button .rstk-option input,
-.rstkCanvas.rstk-kind-form.rstk-choice-check .rstk-option input,
-.rstkCanvas.rstk-kind-form.rstk-choice-segmented .rstk-option input,
-.rstkCanvas.rstk-choice-grid .rstk-embedded-form .rstk-option input,
-.rstkCanvas.rstk-choice-button .rstk-embedded-form .rstk-option input,
-.rstkCanvas.rstk-choice-check .rstk-embedded-form .rstk-option input,
-.rstkCanvas.rstk-choice-segmented .rstk-embedded-form .rstk-option input { position: absolute; opacity: 0; pointer-events: none; }
 
 /* ============================================================
-   Estilo de opciones/lista/caja POR CAMPO (override del global).
-   Aditivo: el estilo global del lienzo sigue intacto. Un campo que define su
-   propio estilo lleva en su .rstk-field la clase .rstk-fieldstyled (reset a base
-   para no heredar residuos del estilo global) + la variante elegida. Va al final
-   para ganar por orden a las reglas globales (misma especificidad). En lockstep
-   con backend sitesService.js y Sites.tsx (getFieldOwnStyleClass).
-   ============================================================ */
-.rstkCanvas .rstk-field.rstk-fieldstyled .rstk-options { display: grid; grid-template-columns: none; flex-wrap: nowrap; gap: 10px; }
-.rstkCanvas .rstk-field.rstk-fieldstyled .rstk-option { position: static; gap: 11px; min-height: var(--rstk-form-field-height, 50px); border-width: var(--rstk-form-field-border-width, 1px); border-radius: var(--rstk-form-field-radius, var(--rstk-field-radius, var(--rstk-radius))); background: var(--rstk-form-field-bg, var(--rstk-input-bg)); box-shadow: none; justify-content: flex-start; text-align: left; flex: 0 1 auto; margin-left: 0; padding: var(--rstk-form-field-pad-y, 13px) var(--rstk-form-field-pad-x, 14px); }
-.rstkCanvas .rstk-field.rstk-fieldstyled .rstk-option input { position: static; opacity: 1; pointer-events: auto; }
-.rstkCanvas .rstk-field.rstk-fieldstyled .rstk-option::after { content: none; }
-.rstkCanvas .rstk-field.rstk-fieldstyled select { border-width: var(--rstk-form-field-border-width, 1px); border-radius: var(--rstk-form-field-radius, var(--rstk-field-radius, var(--rstk-radius))); background-color: var(--rstk-form-field-bg, var(--rstk-input-bg)); padding-left: 9px; padding-right: 42px; }
-.rstkCanvas .rstk-field.rstk-fieldstyled > input,
-.rstkCanvas .rstk-field.rstk-fieldstyled > textarea { border-width: var(--rstk-form-field-border-width, 1px); border-color: var(--rstk-form-field-border, var(--rstk-input-border)); border-radius: var(--rstk-form-field-radius, var(--rstk-field-radius, var(--rstk-radius))); background: var(--rstk-form-field-bg, var(--rstk-input-bg)); padding-left: var(--rstk-form-field-pad-x, 14px); padding-right: var(--rstk-form-field-pad-x, 14px); }
-
-/* Opciones: tarjeta con barra lateral */
-.rstkCanvas .rstk-field.rstk-choice-cards .rstk-option { position: relative; gap: 0; padding-left: var(--rstk-form-field-pad-x, 14px); box-shadow: inset 4px 0 0 transparent; }
-.rstkCanvas .rstk-field.rstk-choice-cards .rstk-option input { position: absolute; opacity: 0; pointer-events: none; }
-.rstkCanvas .rstk-field.rstk-choice-cards .rstk-option:has(input:checked) { box-shadow: inset 4px 0 0 var(--rstk-form-choice-selected-border, var(--rstk-accent)); }
-/* Opciones: píldoras */
-.rstkCanvas .rstk-field.rstk-choice-pills .rstk-options { display: flex; flex-wrap: wrap; gap: 8px; }
-.rstkCanvas .rstk-field.rstk-choice-pills .rstk-option { position: relative; flex: 0 1 auto; min-height: 40px; border-radius: 999px; padding: 9px 16px; gap: 0; }
-.rstkCanvas .rstk-field.rstk-choice-pills .rstk-option input { position: absolute; opacity: 0; pointer-events: none; }
-/* Opciones: línea simple */
-.rstkCanvas .rstk-field.rstk-choice-minimal .rstk-option { min-height: 38px; border-width: 0 0 var(--rstk-form-field-border-width, 1px); border-radius: 0; background: transparent; padding-inline: 0; }
-/* Opciones: cuadrícula 2 columnas */
-.rstkCanvas .rstk-field.rstk-choice-grid .rstk-options { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-.rstkCanvas .rstk-field.rstk-choice-grid .rstk-option { justify-content: center; text-align: center; gap: 0; }
-.rstkCanvas .rstk-field.rstk-choice-grid .rstk-option input { position: absolute; opacity: 0; pointer-events: none; }
-/* Opciones: botones sólidos */
-.rstkCanvas .rstk-field.rstk-choice-button .rstk-option { justify-content: center; text-align: center; gap: 0; }
-.rstkCanvas .rstk-field.rstk-choice-button .rstk-option input { position: absolute; opacity: 0; pointer-events: none; }
-.rstkCanvas .rstk-field.rstk-choice-button .rstk-option:has(input:checked) { background: var(--rstk-form-choice-selected-border, var(--rstk-accent)); border-color: var(--rstk-form-choice-selected-border, var(--rstk-accent)); color: var(--rstk-on-accent); }
-/* Opciones: lista con palomita */
-.rstkCanvas .rstk-field.rstk-choice-check .rstk-option { justify-content: space-between; gap: 12px; border-width: 0 0 var(--rstk-form-field-border-width, 1px); border-radius: 0; background: transparent; padding-inline: 0; }
-.rstkCanvas .rstk-field.rstk-choice-check .rstk-option input { position: absolute; opacity: 0; pointer-events: none; }
-.rstkCanvas .rstk-field.rstk-choice-check .rstk-option::after { content: ''; flex: 0 0 auto; width: 20px; height: 20px; border-radius: 999px; border: 2px solid var(--rstk-form-field-border, var(--rstk-input-border)); box-sizing: border-box; }
-.rstkCanvas .rstk-field.rstk-choice-check .rstk-option:has(input:checked)::after { border-color: var(--rstk-form-choice-selected-border, var(--rstk-accent)); background: var(--rstk-form-choice-selected-border, var(--rstk-accent)); box-shadow: inset 0 0 0 3px var(--rstk-form-field-bg, var(--rstk-input-bg)); }
-/* Opciones: segmentado */
-.rstkCanvas .rstk-field.rstk-choice-segmented .rstk-options { display: flex; flex-wrap: wrap; gap: 0; }
-.rstkCanvas .rstk-field.rstk-choice-segmented .rstk-option { position: relative; flex: 1 1 0; justify-content: center; text-align: center; gap: 0; border-radius: 0; margin-left: calc(-1 * var(--rstk-form-field-border-width, 1px)); }
-.rstkCanvas .rstk-field.rstk-choice-segmented .rstk-option input { position: absolute; opacity: 0; pointer-events: none; }
-.rstkCanvas .rstk-field.rstk-choice-segmented .rstk-option:first-child { margin-left: 0; }
-.rstkCanvas .rstk-field.rstk-choice-segmented .rstk-option:has(input:checked) { z-index: 1; background: var(--rstk-form-choice-selected-border, var(--rstk-accent)); border-color: var(--rstk-form-choice-selected-border, var(--rstk-accent)); color: var(--rstk-on-accent); }
-/* Lista desplegable */
-.rstkCanvas .rstk-field.rstk-select-filled select { background-color: color-mix(in srgb, var(--rstk-form-field-bg, transparent) 88%, var(--rstk-accent) 12%); }
-.rstkCanvas .rstk-field.rstk-select-underline select { border-width: 0 0 var(--rstk-form-field-border-width, 1px); border-radius: 0; background-color: transparent; padding-left: 0; padding-right: 36px; }
-.rstkCanvas .rstk-field.rstk-select-soft select { border-radius: 999px; background-color: color-mix(in srgb, var(--rstk-form-field-bg, var(--rstk-input-bg)) 90%, var(--rstk-accent) 10%); padding-left: 20px; }
-/* Caja de texto */
-.rstkCanvas .rstk-field.rstk-input-underline > input,
-.rstkCanvas .rstk-field.rstk-input-underline > textarea { border-width: 0 0 var(--rstk-form-field-border-width, 1px); border-radius: 0; background: transparent; padding-left: 0; padding-right: 0; }
-.rstkCanvas .rstk-field.rstk-input-filled > input,
-.rstkCanvas .rstk-field.rstk-input-filled > textarea { border-width: 0 0 var(--rstk-form-field-border-width, 1px); border-color: var(--rstk-form-field-border, var(--rstk-input-border)); border-radius: var(--rstk-form-field-radius, var(--rstk-field-radius, var(--rstk-radius))) var(--rstk-form-field-radius, var(--rstk-field-radius, var(--rstk-radius))) 0 0; background: color-mix(in srgb, var(--rstk-muted) 10%, transparent); }
-.rstkCanvas .rstk-field.rstk-input-soft > input { border-radius: 999px; border-color: transparent; background: color-mix(in srgb, var(--rstk-muted) 8%, transparent); padding-left: calc(var(--rstk-form-field-pad-x, 14px) + 6px); padding-right: calc(var(--rstk-form-field-pad-x, 14px) + 6px); }
-.rstkCanvas .rstk-field.rstk-input-soft > textarea { border-radius: 20px; border-color: transparent; background: color-mix(in srgb, var(--rstk-muted) 8%, transparent); }
-
-/* Keep app dark/light mode out of the page being designed. Global app styles use
-   hardening selectors like `html body select` and themed checkbox/radio rules,
-   so the canvas needs its own stronger boundary. */
-html body .rstkCanvas select,
-html body .rstkCanvas input[type='date'],
-html body .rstkCanvas input[type='time'],
-html body .rstkCanvas input[type='datetime-local'],
-html body .rstkCanvas input[type='month'],
-html body .rstkCanvas input[type='week'] {
-  min-height: var(--rstk-form-field-height, 50px) !important;
-  border-width: var(--rstk-form-field-border-width, 1px) !important;
-  border-color: var(--rstk-form-field-border, var(--rstk-input-border)) !important;
-  border-radius: var(--rstk-form-field-radius, var(--rstk-field-radius, var(--rstk-radius))) !important;
-  background: var(--rstk-form-field-bg, var(--rstk-input-bg)) !important;
-  color: var(--rstk-form-field-text, var(--rstk-input-ink)) !important;
-  box-shadow: none !important;
-  font-family: var(--rstk-form-font, var(--rstk-font)) !important;
-  font-size: var(--rstk-form-input-size, 1rem) !important;
-  font-style: var(--rstk-form-font-style, normal) !important;
-  font-weight: var(--rstk-form-weight, 500) !important;
-  padding: var(--rstk-form-field-pad-y, 13px) var(--rstk-form-field-pad-x, 14px) !important;
-}
-
-html body .rstkCanvas select {
-  appearance: none !important;
-  -webkit-appearance: none !important;
-  -moz-appearance: none !important;
-  background:
-    linear-gradient(45deg, transparent 50%, var(--rstk-muted) 50%) calc(100% - 20px) calc(50% - 3px) / 5px 5px no-repeat,
-    linear-gradient(135deg, var(--rstk-muted) 50%, transparent 50%) calc(100% - 15px) calc(50% - 3px) / 5px 5px no-repeat,
-    var(--rstk-form-field-bg, var(--rstk-input-bg)) !important;
-  padding-right: 42px !important;
-}
-/* El select de lada del teléfono es más angosto: flecha pegada y padding
-   compacto. Más específico que la regla de select genérica (gana al shorthand
-   y al endurecimiento !important) para reflejar el render en vivo. */
-html body .rstkCanvas .rstk-phone-input > select {
-  appearance: none !important;
-  -webkit-appearance: none !important;
-  -moz-appearance: none !important;
-  background:
-    linear-gradient(45deg, transparent 50%, var(--rstk-muted) 50%) calc(100% - 15px) calc(50% - 3px) / 5px 5px no-repeat,
-    linear-gradient(135deg, var(--rstk-muted) 50%, transparent 50%) calc(100% - 10px) calc(50% - 3px) / 5px 5px no-repeat,
-    var(--rstk-form-field-bg, var(--rstk-input-bg)) !important;
-  padding-left: 9px !important;
-  padding-right: 26px !important;
-}
-
-html body .rstkCanvas.rstk-kind-form.rstk-select-filled select,
-html body .rstkCanvas.rstk-select-filled .rstk-embedded-form select {
-  background:
-    linear-gradient(45deg, transparent 50%, var(--rstk-muted) 50%) calc(100% - 20px) calc(50% - 3px) / 5px 5px no-repeat,
-    linear-gradient(135deg, var(--rstk-muted) 50%, transparent 50%) calc(100% - 15px) calc(50% - 3px) / 5px 5px no-repeat,
-    color-mix(in srgb, var(--rstk-form-field-bg, transparent) 88%, var(--rstk-accent) 12%) !important;
-}
-
-html body .rstkCanvas.rstk-kind-form.rstk-select-underline select,
-html body .rstkCanvas.rstk-select-underline .rstk-embedded-form select {
-  border-width: 0 0 var(--rstk-form-field-border-width, 1px) !important;
-  border-radius: 0 !important;
-  background:
-    linear-gradient(45deg, transparent 50%, var(--rstk-muted) 50%) calc(100% - 20px) calc(50% - 3px) / 5px 5px no-repeat,
-    linear-gradient(135deg, var(--rstk-muted) 50%, transparent 50%) calc(100% - 15px) calc(50% - 3px) / 5px 5px no-repeat,
-    transparent !important;
-  padding-left: 0 !important;
-  padding-right: 36px !important;
-}
-
-html body .rstkCanvas.rstk-kind-form.rstk-select-soft select,
-html body .rstkCanvas.rstk-select-soft .rstk-embedded-form select {
-  border-radius: 999px !important;
-  background:
-    linear-gradient(45deg, transparent 50%, var(--rstk-muted) 50%) calc(100% - 20px) calc(50% - 3px) / 5px 5px no-repeat,
-    linear-gradient(135deg, var(--rstk-muted) 50%, transparent 50%) calc(100% - 15px) calc(50% - 3px) / 5px 5px no-repeat,
-    color-mix(in srgb, var(--rstk-form-field-bg, var(--rstk-input-bg)) 90%, var(--rstk-accent) 10%) !important;
-  padding-left: 20px !important;
-}
-
-/* Estilos de caja de texto: también para inputs de fecha/hora endurecidos. */
-html body .rstkCanvas.rstk-kind-form.rstk-input-underline .rstk-field > input,
-html body .rstkCanvas.rstk-kind-form.rstk-input-underline .rstk-field > textarea,
-html body .rstkCanvas.rstk-input-underline .rstk-embedded-form .rstk-field > input,
-html body .rstkCanvas.rstk-input-underline .rstk-embedded-form .rstk-field > textarea {
-  border-width: 0 0 var(--rstk-form-field-border-width, 1px) !important;
-  border-radius: 0 !important;
-  background: transparent !important;
-  padding-left: 0 !important;
-  padding-right: 0 !important;
-}
-html body .rstkCanvas.rstk-kind-form.rstk-input-filled .rstk-field > input,
-html body .rstkCanvas.rstk-kind-form.rstk-input-filled .rstk-field > textarea,
-html body .rstkCanvas.rstk-input-filled .rstk-embedded-form .rstk-field > input,
-html body .rstkCanvas.rstk-input-filled .rstk-embedded-form .rstk-field > textarea {
-  border-width: 0 0 var(--rstk-form-field-border-width, 1px) !important;
-  border-radius: var(--rstk-form-field-radius, var(--rstk-field-radius, var(--rstk-radius))) var(--rstk-form-field-radius, var(--rstk-field-radius, var(--rstk-radius))) 0 0 !important;
-  background: color-mix(in srgb, var(--rstk-muted) 10%, transparent) !important;
-}
-html body .rstkCanvas.rstk-kind-form.rstk-input-soft .rstk-field > input,
-html body .rstkCanvas.rstk-input-soft .rstk-embedded-form .rstk-field > input {
-  border-radius: 999px !important;
-  border-color: transparent !important;
-  background: color-mix(in srgb, var(--rstk-muted) 8%, transparent) !important;
-  padding-left: calc(var(--rstk-form-field-pad-x, 14px) + 6px) !important;
-  padding-right: calc(var(--rstk-form-field-pad-x, 14px) + 6px) !important;
-}
-html body .rstkCanvas.rstk-kind-form.rstk-input-soft .rstk-field > textarea,
-html body .rstkCanvas.rstk-input-soft .rstk-embedded-form .rstk-field > textarea {
-  border-radius: 20px !important;
-  border-color: transparent !important;
-  background: color-mix(in srgb, var(--rstk-muted) 8%, transparent) !important;
-}
-
-html body .rstkCanvas select option,
-html body .rstkCanvas select optgroup {
-  background: var(--rstk-form-field-bg, var(--rstk-input-bg)) !important;
-  color: var(--rstk-form-field-text, var(--rstk-input-ink)) !important;
-}
-
-html body .rstkCanvas .rstk-option input[type='checkbox'],
-html body .rstkCanvas .rstk-option input[type='radio'] {
-  appearance: none !important;
-  -webkit-appearance: none !important;
-  -moz-appearance: none !important;
-  position: relative !important;
-  display: inline-grid !important;
-  place-content: center !important;
-  width: 19px !important;
-  min-width: 19px !important;
-  height: 19px !important;
-  min-height: 19px !important;
-  margin: 0 !important;
-  flex: 0 0 auto !important;
-  border: 1.5px solid var(--rstk-form-field-border, var(--rstk-input-border)) !important;
-  background: var(--rstk-form-field-bg, var(--rstk-input-bg)) !important;
-  box-shadow: none !important;
-  color: var(--rstk-form-field-text, var(--rstk-input-ink)) !important;
-  transform: none !important;
-  transition: border-color .15s ease, background .15s ease !important;
-}
-
-html body .rstkCanvas .rstk-option input[type='checkbox'] {
-  border-radius: min(6px, var(--rstk-form-field-radius, var(--rstk-field-radius, var(--rstk-radius)))) !important;
-}
-
-html body .rstkCanvas .rstk-option input[type='radio'] {
-  border-radius: 999px !important;
-}
-
-html body .rstkCanvas .rstk-option input[type='checkbox']:checked {
-  border-color: var(--rstk-form-choice-selected-border, var(--rstk-accent)) !important;
-  background: var(--rstk-form-choice-selected-border, var(--rstk-accent)) !important;
-}
-
-html body .rstkCanvas .rstk-option input[type='checkbox']:checked::after {
-  content: '' !important;
-  position: static !important;
-  width: 5px !important;
-  height: 9px !important;
-  border: solid var(--rstk-on-accent) !important;
-  border-width: 0 2px 2px 0 !important;
-  background: transparent !important;
-  transform: translateY(-1px) rotate(45deg) !important;
-}
-
-html body .rstkCanvas .rstk-option input[type='radio']::after {
-  content: '' !important;
-  position: static !important;
-  width: 7px !important;
-  height: 7px !important;
-  border: 0 !important;
-  border-radius: 999px !important;
-  background: var(--rstk-form-choice-selected-border, var(--rstk-accent)) !important;
-  transform: scale(0) !important;
-  transition: transform .15s ease !important;
-}
-
-html body .rstkCanvas .rstk-option input[type='radio']:checked {
-  border-color: var(--rstk-form-choice-selected-border, var(--rstk-accent)) !important;
-  background: var(--rstk-form-field-bg, var(--rstk-input-bg)) !important;
-}
-
-html body .rstkCanvas .rstk-option input[type='radio']:checked::after {
-  transform: scale(1) !important;
-}
-
-html body .rstkCanvas.rstk-kind-form.rstk-choice-cards .rstk-option input[type='checkbox'],
-html body .rstkCanvas.rstk-kind-form.rstk-choice-cards .rstk-option input[type='radio'],
-html body .rstkCanvas.rstk-kind-form.rstk-choice-pills .rstk-option input[type='checkbox'],
-html body .rstkCanvas.rstk-kind-form.rstk-choice-pills .rstk-option input[type='radio'],
-html body .rstkCanvas.rstk-choice-cards .rstk-embedded-form .rstk-option input[type='checkbox'],
-html body .rstkCanvas.rstk-choice-cards .rstk-embedded-form .rstk-option input[type='radio'],
-html body .rstkCanvas.rstk-choice-pills .rstk-embedded-form .rstk-option input[type='checkbox'],
-html body .rstkCanvas.rstk-choice-pills .rstk-embedded-form .rstk-option input[type='radio'] {
-  position: absolute !important;
-  width: 0 !important;
-  min-width: 0 !important;
-  height: 0 !important;
-  min-height: 0 !important;
-  opacity: 0 !important;
-  border: 0 !important;
-  background: transparent !important;
-  box-shadow: none !important;
-  pointer-events: none !important;
-}
-
-html body .rstkCanvas.rstk-kind-form.rstk-choice-cards .rstk-option input[type='checkbox']::after,
-html body .rstkCanvas.rstk-kind-form.rstk-choice-cards .rstk-option input[type='radio']::after,
-html body .rstkCanvas.rstk-kind-form.rstk-choice-pills .rstk-option input[type='checkbox']::after,
-html body .rstkCanvas.rstk-kind-form.rstk-choice-pills .rstk-option input[type='radio']::after,
-html body .rstkCanvas.rstk-choice-cards .rstk-embedded-form .rstk-option input[type='checkbox']::after,
-html body .rstkCanvas.rstk-choice-cards .rstk-embedded-form .rstk-option input[type='radio']::after,
-html body .rstkCanvas.rstk-choice-pills .rstk-embedded-form .rstk-option input[type='checkbox']::after,
-html body .rstkCanvas.rstk-choice-pills .rstk-embedded-form .rstk-option input[type='radio']::after {
-  content: none !important;
-}
-
-/* Oculta el control nativo (endurecido) para grid/button/check/segmented. */
-html body :is(.rstkCanvas.rstk-kind-form.rstk-choice-grid, .rstkCanvas.rstk-kind-form.rstk-choice-button, .rstkCanvas.rstk-kind-form.rstk-choice-check, .rstkCanvas.rstk-kind-form.rstk-choice-segmented, .rstkCanvas.rstk-choice-grid .rstk-embedded-form, .rstkCanvas.rstk-choice-button .rstk-embedded-form, .rstkCanvas.rstk-choice-check .rstk-embedded-form, .rstkCanvas.rstk-choice-segmented .rstk-embedded-form) .rstk-option input[type='checkbox'],
-html body :is(.rstkCanvas.rstk-kind-form.rstk-choice-grid, .rstkCanvas.rstk-kind-form.rstk-choice-button, .rstkCanvas.rstk-kind-form.rstk-choice-check, .rstkCanvas.rstk-kind-form.rstk-choice-segmented, .rstkCanvas.rstk-choice-grid .rstk-embedded-form, .rstkCanvas.rstk-choice-button .rstk-embedded-form, .rstkCanvas.rstk-choice-check .rstk-embedded-form, .rstkCanvas.rstk-choice-segmented .rstk-embedded-form) .rstk-option input[type='radio'] {
-  position: absolute !important;
-  width: 0 !important;
-  min-width: 0 !important;
-  height: 0 !important;
-  min-height: 0 !important;
-  opacity: 0 !important;
-  border: 0 !important;
-  background: transparent !important;
-  box-shadow: none !important;
-  pointer-events: none !important;
-}
-html body :is(.rstkCanvas.rstk-kind-form.rstk-choice-grid, .rstkCanvas.rstk-kind-form.rstk-choice-button, .rstkCanvas.rstk-kind-form.rstk-choice-check, .rstkCanvas.rstk-kind-form.rstk-choice-segmented, .rstkCanvas.rstk-choice-grid .rstk-embedded-form, .rstkCanvas.rstk-choice-button .rstk-embedded-form, .rstkCanvas.rstk-choice-check .rstk-embedded-form, .rstkCanvas.rstk-choice-segmented .rstk-embedded-form) .rstk-option input[type='checkbox']::after,
-html body :is(.rstkCanvas.rstk-kind-form.rstk-choice-grid, .rstkCanvas.rstk-kind-form.rstk-choice-button, .rstkCanvas.rstk-kind-form.rstk-choice-check, .rstkCanvas.rstk-kind-form.rstk-choice-segmented, .rstkCanvas.rstk-choice-grid .rstk-embedded-form, .rstkCanvas.rstk-choice-button .rstk-embedded-form, .rstkCanvas.rstk-choice-check .rstk-embedded-form, .rstkCanvas.rstk-choice-segmented .rstk-embedded-form) .rstk-option input[type='radio']::after {
-  content: none !important;
-}
-
-.rstkCanvas .rstk-embed { width: 100%; min-height: var(--rstk-embed-height, 360px); display: block; border: var(--rstk-block-border-width, 1px) solid var(--rstk-block-border, var(--rstk-border)); border-radius: var(--rstk-block-radius, var(--rstk-radius)); background: var(--rstk-block-bg, var(--rstk-surface2)); }
-.rstkCanvas .rstk-calendar-embed {
-  width: var(--rstk-media-width, 100%);
-  min-height: var(--rstk-embed-height, 760px);
-  margin-left: var(--rstk-media-margin-left, 0);
-  margin-right: var(--rstk-media-margin-right, 0);
-  border: var(--rstk-calendar-frame-border-width, 0) solid var(--rstk-calendar-frame-border, transparent);
-  border-radius: var(--rstk-media-radius, 0);
-  background: transparent;
-  box-shadow: none;
-}
-.rstkCanvas .rstk-calendar-preview {
-  --rstk-calendar-preview-accent: var(--rstk-accent);
-  --rstk-calendar-preview-text: var(--rstk-block-text, var(--rstk-ink));
-  --rstk-calendar-preview-muted: var(--rstk-muted);
-  --rstk-calendar-preview-line: var(--rstk-border);
-  --rstk-calendar-preview-control-bg: transparent;
-  --rstk-calendar-preview-slot-bg: transparent;
-  --rstk-calendar-preview-slot-text: var(--rstk-calendar-preview-accent);
-  --rstk-calendar-preview-slot-radius: 8px;
-  width: var(--rstk-media-width, 100%);
-  min-height: var(--rstk-embed-height, 760px);
-  margin-left: var(--rstk-media-margin-left, 0);
-  margin-right: var(--rstk-media-margin-right, 0);
-  display: grid;
-  align-items: stretch;
-  border: var(--rstk-calendar-frame-border-width, 0) solid var(--rstk-calendar-frame-border, transparent);
-  border-radius: var(--rstk-media-radius, 0);
-  background: transparent;
-  color: var(--rstk-calendar-preview-text);
-  box-shadow: none;
-  box-sizing: border-box;
-  container-type: inline-size;
-  overflow: hidden;
-  text-align: left;
+ * Video con formulario (gate): el shell del gate (panel, campos, acciones,
+ * animaciones y variantes fit-*) viene ÍNTEGRO de la hoja compartida
+ * (.rstk-video-form-gate en RSTK_BASE_CSS). Aquí queda SOLO el modificador de
+ * chrome del editor (.rstk-video-form-gate-editor).
+ * ============================================================ */
+/* ALLOWED-DIVERGENCE (editor): el gate del canvas es estático — inerte salvo
+   en modo edición, z-index 5 (bajo los overlays del editor, en vivo 9) y sin
+   animación de entrada (en vivo anima al des-ocultarse). */
+.rstkCanvas .rstk-video-form-gate.rstk-video-form-gate-editor {
+  z-index: 5;
   pointer-events: none;
+  animation: none;
 }
-.rstkCanvas .rstk-calendar-preview-shell {
-  min-height: inherit;
-  display: grid;
-  grid-template-columns: minmax(180px, .72fr) minmax(320px, 1.2fr) minmax(178px, .64fr);
-  grid-template-areas: "intro month slots";
-  gap: clamp(18px, 3vw, 34px);
-  align-items: stretch;
-  padding: clamp(22px, 4vw, 42px) 0;
+.rstkCanvas .rstk-video-form-gate.rstk-video-form-gate-editor.rstk-video-form-gate-editing {
+  pointer-events: auto;
 }
-.rstkCanvas .rstk-calendar-preview-theme-night .rstk-calendar-preview-shell {
-  gap: clamp(16px, 2.4vw, 28px);
-  padding: clamp(18px, 3vw, 32px);
-  border: 1px solid var(--rstk-calendar-preview-line);
-  border-radius: clamp(10px, 1.4vw, 16px);
-  background: transparent;
-}
-.rstkCanvas .rstk-calendar-preview-theme-agenda .rstk-calendar-preview-shell {
-  gap: 0;
-  padding: 0;
-  border: 1px solid var(--rstk-calendar-preview-line);
-  border-radius: 0;
-}
-.rstkCanvas .rstk-calendar-preview-theme-minimal .rstk-calendar-preview-shell {
-  gap: clamp(20px, 4vw, 44px);
-  padding: clamp(18px, 4vw, 38px) 0;
-  border: 0;
-  background: transparent;
-}
-.rstkCanvas .rstk-calendar-preview-compact .rstk-calendar-preview-shell {
-  grid-template-columns: minmax(0, 1.2fr) minmax(178px, .62fr);
-  grid-template-areas:
-    "intro intro"
-    "month slots";
-  align-content: start;
-}
-.rstkCanvas .rstk-calendar-preview-stacked .rstk-calendar-preview-shell {
-  grid-template-columns: minmax(0, 1fr);
-  grid-template-areas:
-    "intro"
-    "month"
-    "slots";
-  align-content: start;
-}
-.rstkCanvas .rstk-calendar-preview-no-sidebar .rstk-calendar-preview-shell {
-  grid-template-columns: minmax(320px, 1.4fr) minmax(178px, .62fr);
-  grid-template-areas: "month slots";
-}
-.rstkCanvas .rstk-calendar-preview-intro,
-.rstkCanvas .rstk-calendar-preview-month,
-.rstkCanvas .rstk-calendar-preview-slots {
-  min-width: 0;
-  color: var(--rstk-calendar-preview-text);
-}
-.rstkCanvas .rstk-calendar-preview-intro {
-  grid-area: intro;
-  display: grid;
-  align-content: start;
-  gap: 14px;
-}
-.rstkCanvas .rstk-calendar-preview-theme-agenda .rstk-calendar-preview-intro,
-.rstkCanvas .rstk-calendar-preview-theme-agenda .rstk-calendar-preview-month,
-.rstkCanvas .rstk-calendar-preview-theme-agenda .rstk-calendar-preview-slots {
-  padding: clamp(16px, 2vw, 24px);
-}
-.rstkCanvas .rstk-calendar-preview-theme-night .rstk-calendar-preview-intro,
-.rstkCanvas .rstk-calendar-preview-theme-night .rstk-calendar-preview-month,
-.rstkCanvas .rstk-calendar-preview-theme-night .rstk-calendar-preview-slots {
-  padding: clamp(14px, 2vw, 22px);
-  border: 1px solid var(--rstk-calendar-preview-line);
-  border-radius: clamp(8px, 1vw, 12px);
-  background: color-mix(in srgb, var(--rstk-calendar-preview-line) 8%, transparent);
+/* ALLOWED-DIVERGENCE (editor): el botón del gate no es clickeable como "submit"
+   (solo selecciona el botón para editar su copy). */
+.rstkCanvas .rstk-video-form-gate-editor .rstk-video-form-actions button {
+  cursor: default;
 }
 
-.rstkCanvas .rstk-calendar-preview-theme-night .rstk-calendar-preview-title,
-.rstkCanvas .rstk-calendar-preview-theme-night .rstk-calendar-preview-kicker,
-.rstkCanvas .rstk-calendar-preview-theme-night .rstk-calendar-preview-month-head strong,
-.rstkCanvas .rstk-calendar-preview-theme-night .rstk-calendar-preview-weekdays span,
-.rstkCanvas .rstk-calendar-preview-theme-night .rstk-calendar-preview-slots > strong {
-  color: var(--rstk-calendar-preview-text);
-}
 
-.rstkCanvas .rstk-calendar-preview-theme-night .rstk-calendar-preview-description,
-.rstkCanvas .rstk-calendar-preview-theme-night .rstk-calendar-preview-meta,
-.rstkCanvas .rstk-calendar-preview-theme-night .rstk-calendar-preview-nav {
-  color: var(--rstk-calendar-preview-muted);
-}
-
-.rstkCanvas .rstk-calendar-preview-theme-night .rstk-calendar-preview-day {
-  border: 1px solid transparent;
-  border-radius: var(--rstk-calendar-preview-slot-radius);
-  background: var(--rstk-calendar-preview-control-bg);
-  color: var(--rstk-calendar-preview-muted);
-}
-.rstkCanvas .rstk-calendar-preview-avatar {
-  width: clamp(76px, 9vw, 104px);
-  aspect-ratio: 1;
-  display: grid;
-  place-items: center;
-  overflow: hidden;
-  border: 1px solid var(--rstk-calendar-preview-line);
-  border-radius: clamp(10px, 1.4vw, 16px);
-  background: color-mix(in srgb, var(--rstk-calendar-preview-accent) 10%, transparent);
-  color: var(--rstk-calendar-preview-accent);
-  font-size: clamp(2rem, 4vw, 3.3rem);
-  font-weight: 850;
-}
-.rstkCanvas .rstk-calendar-preview-avatar img {
-  width: 100%;
-  height: 100%;
-  display: block;
-  object-fit: cover;
-}
-.rstkCanvas .rstk-calendar-preview-kicker {
-  margin-top: 10px;
-  color: var(--rstk-calendar-preview-muted);
-  font-size: clamp(.86rem, 1.3vw, .98rem);
-  font-weight: 750;
-}
-.rstkCanvas .rstk-calendar-preview-title {
-  display: block;
-  color: var(--rstk-calendar-preview-text);
-  font-size: clamp(1.9rem, 4vw, 2.85rem);
-  font-weight: 850;
-  line-height: 1.04;
-  overflow-wrap: anywhere;
-}
-.rstkCanvas .rstk-calendar-preview-description {
-  color: var(--rstk-calendar-preview-muted);
-  font-size: clamp(.94rem, 1.5vw, 1.06rem);
-  line-height: 1.45;
-}
-.rstkCanvas .rstk-calendar-preview-meta {
-  display: inline-flex;
-  align-items: center;
-  gap: 9px;
-  min-width: 0;
-  color: var(--rstk-calendar-preview-muted);
-  font-size: .95rem;
-  font-weight: 720;
-}
-.rstkCanvas .rstk-calendar-preview-meta svg {
-  flex: 0 0 auto;
-}
-.rstkCanvas .rstk-calendar-preview-month {
-  grid-area: month;
-  display: grid;
-  align-content: start;
-  gap: clamp(14px, 2vw, 22px);
-}
-.rstkCanvas .rstk-calendar-preview-month-head {
-  display: grid;
-  grid-template-columns: 34px minmax(0, 1fr) 34px;
-  align-items: center;
-  gap: 10px;
-}
-.rstkCanvas .rstk-calendar-preview-month-head strong {
-  text-align: center;
-  color: var(--rstk-calendar-preview-text);
-  font-size: clamp(1.02rem, 1.8vw, 1.22rem);
-  font-weight: 820;
-}
-.rstkCanvas .rstk-calendar-preview-nav {
-  width: 34px;
-  height: 34px;
-  display: grid;
-  place-items: center;
-  color: var(--rstk-calendar-preview-muted);
-  border-radius: 999px;
-  background: var(--rstk-calendar-preview-control-bg);
-}
-.rstkCanvas .rstk-calendar-preview-nav-prev svg {
-  transform: rotate(180deg);
-}
-.rstkCanvas .rstk-calendar-preview-weekdays,
-.rstkCanvas .rstk-calendar-preview-days {
-  display: grid;
-  grid-template-columns: repeat(7, minmax(0, 1fr));
-  gap: clamp(6px, 1vw, 12px);
-}
-.rstkCanvas .rstk-calendar-preview-weekdays span {
-  color: var(--rstk-calendar-preview-text);
-  font-size: clamp(.66rem, 1.1vw, .78rem);
-  font-weight: 820;
-  text-align: center;
-}
-.rstkCanvas .rstk-calendar-preview-day {
-  min-width: 0;
-  min-height: clamp(34px, 5vw, 48px);
-  aspect-ratio: 1;
-  position: relative;
-  display: grid;
-  place-items: center;
-  border-radius: 999px;
-  color: var(--rstk-calendar-preview-muted);
-  font-size: clamp(.86rem, 1.5vw, 1.05rem);
-  font-weight: 760;
-}
-.rstkCanvas .rstk-calendar-preview-day-muted {
-  opacity: .38;
-}
-.rstkCanvas .rstk-calendar-preview-day-available {
-  color: var(--rstk-calendar-preview-slot-text);
-}
-.rstkCanvas .rstk-calendar-preview-theme-night .rstk-calendar-preview-day-available {
-  border-color: var(--rstk-calendar-preview-accent);
-  background: transparent;
-  color: var(--rstk-calendar-preview-text);
-}
-.rstkCanvas .rstk-calendar-preview-theme-night .rstk-calendar-preview-day-available::after {
-  content: '';
-  position: absolute;
-  left: 50%;
-  bottom: 13%;
-  width: 4px;
-  height: 4px;
-  border-radius: 999px;
-  background: var(--rstk-calendar-preview-accent);
-  transform: translateX(-50%);
-}
-.rstkCanvas .rstk-calendar-preview-theme-agenda .rstk-calendar-preview-day {
-  border-radius: 4px;
-  background: var(--rstk-calendar-preview-control-bg);
-}
-.rstkCanvas .rstk-calendar-preview-theme-agenda .rstk-calendar-preview-day-available {
-  background: var(--rstk-calendar-preview-slot-bg);
-}
-.rstkCanvas .rstk-calendar-preview-theme-minimal .rstk-calendar-preview-day {
-  border-radius: 0;
-}
-.rstkCanvas .rstk-calendar-preview-theme-minimal .rstk-calendar-preview-day-today {
-  box-shadow: inset 0 -2px 0 var(--rstk-calendar-preview-accent);
-}
-.rstkCanvas .rstk-calendar-preview-day-today {
-  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--rstk-calendar-preview-accent) 34%, transparent);
-}
-.rstkCanvas .rstk-calendar-preview-slots {
-  grid-area: slots;
-  display: grid;
-  align-content: start;
-  gap: 12px;
-}
-.rstkCanvas .rstk-calendar-preview-slots > strong {
-  color: var(--rstk-calendar-preview-text);
-  font-size: clamp(1rem, 1.7vw, 1.18rem);
-  font-weight: 840;
-}
-.rstkCanvas .rstk-calendar-preview-slot-list {
-  display: grid;
-  gap: 10px;
-}
-.rstkCanvas .rstk-calendar-preview-slot {
-  display: grid;
-  place-items: center;
-  min-height: clamp(42px, 5vw, 52px);
-  border: 1px solid var(--rstk-calendar-preview-accent);
-  border-radius: var(--rstk-calendar-preview-slot-radius);
-  background: var(--rstk-calendar-preview-slot-bg);
-  color: var(--rstk-calendar-preview-slot-text);
-  font-size: clamp(.9rem, 1.5vw, 1rem);
-  font-weight: 820;
-  line-height: 1.2;
-  text-align: center;
-}
-.rstkCanvas .rstk-calendar-preview-theme-night .rstk-calendar-preview-slot {
-  min-height: clamp(40px, 4.8vw, 50px);
-  border-color: var(--rstk-calendar-preview-line);
-  background: var(--rstk-calendar-preview-slot-bg);
-  color: var(--rstk-calendar-preview-slot-text);
-}
-.rstkCanvas .rstk-calendar-preview-theme-agenda .rstk-calendar-preview-slot {
-  min-height: clamp(34px, 4vw, 42px);
-  border-radius: 4px;
-}
-.rstkCanvas .rstk-calendar-preview-theme-minimal .rstk-calendar-preview-slot {
-  border-color: var(--rstk-calendar-preview-line);
-  border-radius: 999px;
-  background: transparent;
-}
-@container (max-width: 820px) {
-  .rstkCanvas .rstk-calendar-preview-classic .rstk-calendar-preview-shell,
-  .rstkCanvas .rstk-calendar-preview-compact .rstk-calendar-preview-shell {
-    grid-template-columns: minmax(0, 1fr);
-    grid-template-areas:
-      "intro"
-      "month"
-      "slots";
-  }
-  .rstkCanvas .rstk-calendar-preview-no-sidebar .rstk-calendar-preview-shell {
-    grid-template-columns: minmax(0, 1fr);
-    grid-template-areas:
-      "month"
-      "slots";
-  }
-}
-.rstkCanvas iframe.rstk-embed { overflow: hidden; }
-.rstkCanvas .rstk-embed-code { background: transparent; }
-.rstkCanvas .rstk-embed-empty { display: grid; place-items: center; min-height: 160px; color: var(--rstk-muted); }
+/* ============================================================
+ * Setup inline de bloques (selector de form/calendario dentro del canvas)
+ * ALLOWED-DIVERGENCE: solo existe en el editor.
+ * ============================================================ */
 .rstkCanvas .rstk-inline-setup-surface {
   min-height: clamp(176px, 22vw, 232px);
   padding: clamp(18px, 3vw, 30px);
@@ -2539,229 +419,169 @@ html body :is(.rstkCanvas.rstk-kind-form.rstk-choice-grid, .rstkCanvas.rstk-kind
   opacity: .62;
 }
 
-.rstkCanvas .rstk-actions { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 4px; }
-.rstkCanvas .rstk-actions [data-submit], .rstkCanvas .rstk-actions [data-next] { flex: 1 1 auto; }
-.rstkCanvas.rstk-kind-form .rstk-actions,
-.rstkCanvas .rstk-embedded-form .rstk-actions {
-  justify-content: var(--rstk-submit-justify, center);
+/* ============================================================
+ * Formulario embebido: chrome del editor (campos/ítems seleccionables, drop)
+ * ============================================================ */
+.rstkCanvas .rstkEmbeddedFormEditor {
+  width: min(100%, var(--rstk-form-field-width, 560px));
+  justify-self: var(--rstk-form-field-justify, center);
+  display: grid;
+  gap: 8px;
 }
-.rstkCanvas.rstk-kind-form .rstk-actions [data-submit],
-.rstkCanvas .rstk-embedded-form .rstk-actions [data-submit] {
-  min-height: var(--rstk-submit-height, var(--rstk-button-height, 50px));
-  border-width: var(--rstk-submit-border-width, var(--rstk-button-border-width, 1px));
-  border-color: var(--rstk-submit-border, var(--rstk-button-border, var(--rstk-accent)));
-  border-radius: var(--rstk-submit-radius, var(--rstk-btn-radius));
-  background: var(--rstk-submit-bg, var(--rstk-accent));
-  color: var(--rstk-submit-text, var(--rstk-on-accent));
-  flex-direction: column;
-  gap: 2px;
-  font-size: var(--rstk-submit-size, var(--rstk-button-size, 1.02rem));
-  padding: var(--rstk-submit-pad-y, var(--rstk-button-pad-y, 8px)) var(--rstk-submit-pad-x, var(--rstk-button-pad-x, 22px));
-  flex: 0 1 var(--rstk-submit-width, fit-content);
-  width: var(--rstk-submit-width, fit-content);
+.rstkCanvas .rstkEmbeddedFormField.rstk-block-style {
+  width: min(100%, var(--rstk-field-width, 100%));
+  justify-self: center;
 }
-.rstkCanvas .rstk-progress { display: grid; gap: 8px; }
-.rstkCanvas .rstk-progress-track { height: 6px; border-radius: 999px; background: color-mix(in srgb, var(--rstk-ink) 12%, transparent); overflow: hidden; }
-.rstkCanvas .rstk-progress-fill { display: block; height: 100%; border-radius: 999px; background: var(--rstk-accent); }
-.rstkCanvas .rstk-progress b { font-size: .8rem; color: var(--rstk-muted); font-weight: 700; }
-
-@media (max-width: 640px) {
-  .rstkCanvas .rstk-list-grid { grid-template-columns: 1fr; }
-  .rstkCanvas .rstk-phone-input { grid-template-columns: minmax(124px, 132px) minmax(0, 1fr); }
-  .rstkCanvas .rstk-phone-input[data-phone-country-hidden] { grid-template-columns: minmax(0, 1fr); }
+.rstkCanvas .rstkEmbeddedFormItem.rstk-block-style {
+  width: 100%;
+  justify-self: center;
+}
+.rstkCanvas .rstkEmbeddedFormField,
+.rstkCanvas .rstkEmbeddedFormItem {
+  position: relative;
+  width: 100%;
+  border: 1px solid transparent;
+  border-radius: calc(var(--rstk-radius) + 4px);
+  padding: var(--rstk-block-pad, 0);
+  transition: border-color .16s ease, background .16s ease, box-shadow .16s ease;
+}
+.rstkCanvas .rstkEmbeddedFormField {
+  border-radius: calc(var(--rstk-field-radius, var(--rstk-radius)) + 4px);
+}
+.rstkCanvas .rstkEmbeddedFormField > .rstk-field {
+  width: 100%;
+}
+/* Hover hint: faint accent tint only. The selection itself is the shared
+   animated marching-ants overlay (::after) defined in the editor-chrome block
+   below, so embedded form sub-elements look identical to main blocks. */
+.rstkCanvas .rstkEmbeddedFormField:not(.rstkEmbeddedFormFieldActive):hover {
+  border-color: color-mix(in srgb, var(--rstk-accent) 38%, transparent);
+  background: color-mix(in srgb, var(--rstk-accent) 6%, transparent);
+}
+.rstkCanvas .rstkEmbeddedFormItem:not(.rstkEmbeddedFormItemActive):hover {
+  border-color: color-mix(in srgb, var(--rstk-accent) 38%, transparent);
+  background: transparent;
+}
+.rstkCanvas .rstkEmbeddedFormFieldActive,
+.rstkCanvas .rstkEmbeddedFormItemActive {
+  border-color: transparent;
+  background: transparent;
+  box-shadow: none;
+}
+.rstkCanvas .rstk-embed-actions {
+  position: relative;
+  border: 1px solid transparent;
+  border-radius: calc(var(--rstk-submit-radius, var(--rstk-radius)) + 6px);
+  padding: 0;
+  transition: border-color .16s ease, background .16s ease, box-shadow .16s ease;
+}
+.rstkCanvas .rstk-embed-actions:not(.rstkEmbeddedFormSubmitActive):hover {
+  border-color: color-mix(in srgb, var(--rstk-accent) 38%, transparent);
+  background: color-mix(in srgb, var(--rstk-accent) 6%, transparent);
+}
+.rstkCanvas .rstkEmbeddedFormSubmitActive {
+  border-color: transparent;
+  background: transparent;
+  box-shadow: none;
+}
+.rstkCanvas .rstkEmbeddedFormFieldTools {
+  position: absolute;
+  top: 7px;
+  right: 7px;
+  z-index: 3;
+  display: inline-flex;
+  gap: 4px;
+  opacity: 0;
+  transform: translateY(-2px);
+  transition: opacity .14s ease, transform .14s ease;
+}
+.rstkCanvas .rstkEmbeddedFormField:hover .rstkEmbeddedFormFieldTools,
+.rstkCanvas .rstkEmbeddedFormItem:hover .rstkEmbeddedFormFieldTools,
+.rstkCanvas .rstkEmbeddedFormFieldActive .rstkEmbeddedFormFieldTools,
+.rstkCanvas .rstkEmbeddedFormItemActive .rstkEmbeddedFormFieldTools {
+  opacity: 1;
+  transform: translateY(0);
+}
+.rstkCanvas .rstkEmbeddedFormFieldTools button {
+  width: 26px;
+  height: 26px;
+  display: grid;
+  place-items: center;
+  border: 1px solid color-mix(in srgb, var(--rstk-input-border) 78%, transparent);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--rstk-field-bg, var(--rstk-input-bg)) 94%, var(--rstk-ink) 6%);
+  color: var(--rstk-ink);
+  cursor: pointer;
+}
+.rstkCanvas .rstkEmbeddedFormFieldTools button:disabled {
+  cursor: not-allowed;
+  opacity: .36;
+}
+.rstkCanvas .rstkEmbeddedFormDrop {
+  position: relative;
+  width: 100%;
+  min-height: 9px;
+  display: grid;
+  grid-template-columns: auto auto;
+  justify-content: center;
+  align-items: center;
+  gap: 6px;
+  border-radius: var(--rstk-field-radius, var(--rstk-radius));
+  color: transparent;
+  font-size: .78rem;
+  font-weight: 750;
+  transition: min-height .16s ease, color .16s ease, background .16s ease;
+}
+.rstkCanvas .rstkEmbeddedFormDropActive,
+.rstkCanvas .rstkEmbeddedFormDropEmpty {
+  min-height: 38px;
+  background: color-mix(in srgb, var(--rstk-accent) 10%, transparent);
+  color: var(--rstk-ink);
+}
+.rstkCanvas .rstkEmbeddedFormDropEmpty {
+  min-height: 86px;
+}
+/* Animated contour for the embedded-form drop indicator — same marching-ants
+   as selection/drag so dropping a field into the form feels identical. */
+.rstkCanvas .rstkEmbeddedFormDropActive::after,
+.rstkCanvas .rstkEmbeddedFormDropEmpty::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  pointer-events: none;
+  background-image: var(--rstk-march-bg);
+  background-size: 14px 3px, 14px 3px, 3px 14px, 3px 14px;
+  background-position: 0 0, 0 100%, 0 0, 100% 0;
+  background-repeat: repeat-x, repeat-x, repeat-y, repeat-y;
+  filter: drop-shadow(0 0 1px var(--rstk-selection-contrast, rgba(15, 23, 42, 0.28)));
+  animation: rstkSelMarch 1s linear infinite;
 }
 
-@media (max-width: 340px) {
-  .rstkCanvas .rstk-phone-input { grid-template-columns: 1fr; }
-  .rstkCanvas .rstk-phone-input[data-phone-country-hidden] { grid-template-columns: minmax(0, 1fr); }
+/* ALLOWED-DIVERGENCE (editor, embeds #5): en vivo un formulario embebido sin
+   campos ni cobro NO tiene fila de acciones; con el embed en edición se pinta
+   esta pista fantasma punteada para poder seleccionar/configurar el botón. */
+.rstkCanvas .rstk-embed-actions.rstkEmbeddedFormActionsGhost {
+  opacity: .55;
+  outline: 1.5px dashed color-mix(in srgb, var(--rstk-selection-border, #2563eb) 55%, transparent);
+  outline-offset: 4px;
+  border-radius: var(--rstk-submit-radius, var(--rstk-btn-radius, 12px));
 }
 
-/* ---------- Premium landing ---------- */
-.rstkCanvas.rstk-kind-landing .rstk-frame { padding: 0; }
-.rstkCanvas.rstk-kind-landing .rstk-page { max-width: none; margin: 0; border-radius: var(--rstk-page-radius, 0); overflow: hidden; }
-.rstkCanvas.rstk-kind-landing .rstk-shell { gap: 0; padding-top: 0; }
-.rstkCanvas.rstk-kind-landing .rstk-section-column { gap: 0; }
-.rstkCanvas.rstk-kind-landing .rstk-headline { font-family: var(--rstk-block-font, var(--rstk-site-title-font, var(--rstk-display))); font-size: clamp(2.3rem, 5.6vw, 4rem); line-height: 1.03; letter-spacing: 0; background: none; color: var(--rstk-block-text, var(--rstk-ink)); }
-.rstkCanvas.rstk-kind-landing .rstk-subheading { font-size: clamp(1.05rem, 1.7vw, 1.28rem); max-width: 60ch; line-height: 1.6; }
-.rstkCanvas.rstk-kind-landing h2 { font-family: var(--rstk-block-font, var(--rstk-site-title-font, var(--rstk-display))); }
-.rstkCanvas.rstk-kind-landing .rstk-text { font-size: 1.06rem; line-height: 1.7; }
-
-.rstkCanvas.rstk-kind-landing .rstk-kicker { display: inline-flex; align-items: center; gap: 8px; width: fit-content; padding: 7px 14px 7px 12px; border: var(--rstk-block-border-width, 0) solid var(--rstk-block-border, var(--rstk-border)); border-radius: 999px; background: var(--rstk-block-bg, transparent); color: var(--rstk-muted); font-size: .72rem; font-weight: 700; letter-spacing: 0; text-transform: uppercase; }
-.rstkCanvas.rstk-kind-landing .rstk-kicker::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: var(--rstk-accent); }
-
-.rstkCanvas.rstk-kind-landing .rstk-hero { position: relative; isolation: isolate; overflow: hidden; gap: 22px; justify-items: var(--rstk-block-justify, center); text-align: var(--rstk-block-align, center); padding: clamp(32px, 4.8vw, 68px) clamp(20px, 3.2vw, 44px); border: var(--rstk-block-border-width, 0) solid var(--rstk-block-border, transparent); border-radius: var(--rstk-block-radius, 0); background: var(--rstk-block-bg, transparent); }
-.rstkCanvas.rstk-kind-landing .rstk-hero::before,
-.rstkCanvas.rstk-kind-landing .rstk-hero::after { content: none; }
-.rstkCanvas.rstk-kind-landing .rstk-hero .rstk-headline { font-size: clamp(2.6rem, 6.2vw, 4.6rem); max-width: var(--rstk-content-max, 16ch); }
-.rstkCanvas.rstk-kind-landing .rstk-hero .rstk-subheading {
-  margin-left: var(--rstk-content-margin-left, auto);
-  margin-right: var(--rstk-content-margin-right, auto);
-}
-
-.rstkCanvas.rstk-kind-landing .rstk-section-break { min-height: clamp(160px, 24vw, 360px); align-content: center; padding: clamp(28px, 5vw, 76px) clamp(20px, 4vw, 56px); }
-.rstkCanvas.rstk-kind-landing .rstk-section-break h2 { font-family: var(--rstk-block-font, var(--rstk-site-title-font, var(--rstk-display))); font-size: clamp(2rem, 4.6vw, 3.4rem); line-height: 1.08; }
-.rstkCanvas.rstk-kind-landing .rstk-section-break p { max-width: var(--rstk-content-max, 58ch); margin: 0; color: color-mix(in srgb, var(--rstk-block-text, var(--rstk-ink)) 74%, transparent); }
-
-.rstkCanvas.rstk-kind-landing .rstk-section-list { gap: clamp(20px, 3vw, 38px); }
-.rstkCanvas.rstk-kind-landing .rstk-section-list h2 { text-align: var(--rstk-block-align, center); max-width: var(--rstk-content-max, 20ch); margin-left: var(--rstk-content-margin-left, auto); margin-right: var(--rstk-content-margin-right, auto); font-size: clamp(1.85rem, 3.4vw, 2.85rem); line-height: 1.08; letter-spacing: 0; }
-.rstkCanvas.rstk-kind-landing .rstk-list-grid { gap: 16px; }
-.rstkCanvas.rstk-kind-landing .rstk-list-grid article { padding: 24px; border: var(--rstk-card-border-width, var(--rstk-block-border-width, 0)) solid var(--rstk-card-border, var(--rstk-block-border, transparent)); border-radius: var(--rstk-card-radius, 0); background: var(--rstk-card-bg, var(--rstk-block-bg, transparent)); }
-.rstkCanvas.rstk-kind-landing .rstk-list-grid strong { font-size: 1.06rem; }
-
-.rstkCanvas.rstk-kind-landing .rstk-checklist { padding: clamp(24px, 3vw, 40px); border: var(--rstk-block-border-width, 0) solid var(--rstk-block-border, transparent); border-radius: var(--rstk-block-radius, 0); background: var(--rstk-block-bg, transparent); width: 100%; margin-inline: auto; }
-.rstkCanvas.rstk-kind-landing .rstk-checklist h2 { text-align: var(--rstk-block-align, center); margin-bottom: 4px; }
-.rstkCanvas.rstk-kind-landing .rstk-check-body strong { font-size: 1.04rem; }
-
-.rstkCanvas.rstk-kind-landing .rstk-cta { position: relative; overflow: hidden; justify-items: var(--rstk-block-justify, center); text-align: var(--rstk-block-align, center); gap: 18px; padding: clamp(30px, 4.4vw, 62px) clamp(20px, 3.2vw, 44px); border: var(--rstk-block-border-width, 0) solid var(--rstk-block-border, transparent); border-radius: var(--rstk-block-radius, 0); background: var(--rstk-block-bg, transparent); }
-.rstkCanvas.rstk-kind-landing .rstk-cta::after { content: none; }
-.rstkCanvas.rstk-kind-landing .rstk-cta > * { position: relative; z-index: 1; }
-.rstkCanvas.rstk-kind-landing .rstk-cta h2 { font-size: clamp(2rem, 4vw, 3.1rem); }
-.rstkCanvas.rstk-kind-landing .rstk-cta p { font-size: 1.1rem; max-width: var(--rstk-content-max, 52ch); margin-left: var(--rstk-content-margin-left, auto); margin-right: var(--rstk-content-margin-right, auto); }
-
-.rstkCanvas.rstk-kind-landing .rstk-button-link { border-radius: var(--rstk-block-button-radius, 999px); min-height: var(--rstk-button-height, 54px); padding: var(--rstk-button-pad-y, 0) var(--rstk-button-pad-x, 28px); font-family: var(--rstk-button-font, var(--rstk-display)); font-weight: var(--rstk-button-weight, 600); }
-.rstkCanvas .rstkButtonPaddingOverride .rstk-button-link,
-.rstkCanvas .rstkButtonPaddingOverride .rstk-actions button { min-height: auto; }
-.rstkCanvas.rstk-kind-landing .rstk-media, .rstkCanvas.rstk-kind-landing .rstk-embed { border-radius: var(--rstk-media-radius, var(--rstk-block-radius, clamp(16px, 2vw, 22px))); box-shadow: none; }
-.rstkCanvas.rstk-kind-landing .rstk-video { border-radius: var(--rstk-video-radius, var(--rstk-media-radius, var(--rstk-block-radius, clamp(16px, 2vw, 22px)))); box-shadow: none; }
-.rstkCanvas.rstk-kind-landing .rstk-calendar-embed { border-radius: var(--rstk-media-radius, 0); }
-.rstkCanvas.rstk-kind-landing .rstk-embedded-form { padding: clamp(24px, 3vw, 40px); border: var(--rstk-block-border-width, 0) solid var(--rstk-block-border, transparent); border-radius: var(--rstk-block-radius, 0); background: var(--rstk-block-bg, transparent); width: 100%; margin-inline: auto; }
-
+/* ============================================================
+ * Formulario embebido: host del canvas anidado (root/frame)
+ * El estilado real del frame llega de la hoja compartida vía la clase pública
+ * .rstk-embedded-form-source-frame (el markup del editor lleva ambas clases).
+ * ============================================================ */
 .rstkCanvas .rstkEmbeddedFormSourceRoot {
   width: 100%;
   max-width: 100%;
   min-width: 0;
   overflow: visible;
-  --rstk-block-text: var(--rstk-ink);
-  --rstk-block-font: var(--rstk-font);
-  --rstk-block-font-style: normal;
-  --rstk-block-text-decoration: none;
-  --rstk-block-text-transform: none;
 }
-
-.rstkCanvas .rstk-section-lane:has(.rstkEmbeddedFormSourceRoot),
-.rstkCanvas .rstk-section-column:has(.rstkEmbeddedFormSourceRoot),
-.rstkCanvas .rstk-block-style:has(.rstkEmbeddedFormSourceRoot) {
-  overflow: visible;
-}
-
 .rstkCanvas .rstkEmbeddedFormSourceFrame {
   --rstk-selection-surface-radius: var(--rstk-page-radius, 0px);
-  /* Aísla el formulario embebido de la alineación del sitio anfitrión: corta la herencia
-     de la PROPIEDAD text-align del landing (que centraba títulos/subtítulos). Baseline
-     'left' = el del body.rstk-kind-form standalone; si el form fuente es centrado,
-     '.rstk-centered .rstk-shell' (mayor especificidad) lo vuelve a centrar. Así el
-     embebido sigue SOLO la alineación de su form fuente, nunca la del sitio. */
-  --rstk-block-align: initial;
-  --rstk-block-justify: initial;
-  --rstk-content-margin-left: initial;
-  --rstk-content-margin-right: initial;
-  text-align: var(--rstk-block-align, left);
-  position: relative;
-  isolation: isolate;
-  min-height: auto;
-  box-sizing: border-box;
-  width: 100%;
-  max-width: 100%;
-  min-width: 0;
-  margin: 0;
-  padding: 0;
-  background-color: var(--rstk-page-bg);
-  background-image: var(--rstk-page-image);
-  background-position: var(--rstk-page-image-position, center top);
-  background-repeat: var(--rstk-page-image-repeat, no-repeat);
-  background-size: var(--rstk-page-image-size, auto);
-  background-attachment: var(--rstk-page-image-attachment, scroll);
-  border-radius: var(--rstk-page-radius, 0);
-  overflow: visible;
 }
-
-.rstkCanvas .rstkEmbeddedFormSourceFrame::before {
-  content: "";
-  position: absolute;
-  inset: 0;
-  z-index: 1;
-  background: var(--rstk-page-overlay, none);
-  pointer-events: none;
-}
-
-.rstkCanvas .rstkEmbeddedFormSourceFrame > .rstk-page {
-  position: relative;
-  z-index: 2;
-  isolation: isolate;
-  width: 100%;
-  min-width: 0;
-  max-width: min(100%, var(--rstk-max));
-  margin-top: 0;
-  margin-bottom: 0;
-  margin-left: var(--rstk-form-page-margin-left, auto);
-  margin-right: var(--rstk-form-page-margin-right, auto);
-  border: var(--rstk-page-border-width, 0) solid var(--rstk-page-border, transparent);
-  border-radius: var(--rstk-page-radius, 0);
-  overflow: visible;
-}
-
-/* "Estirar a la franja": el FONDO ocupa todo el ancho de la página, pero el CONTENIDO
-   (la franja) se queda en una columna centrada de ancho --rstk-max. Así los elementos
-   se alinean DENTRO de la franja (izquierda = inicio de la franja, no la orilla de la
-   página). El frame full-width pinta el fondo; la página interna centra el contenido. */
-.rstkCanvas.rstk-kind-form .rstk-page:has(.rstkEmbeddedFormStretch) {
-  max-width: none;
-  margin: 0;
-}
-.rstkCanvas .rstkEmbeddedFormSourceFrame.rstkEmbeddedFormStretch {
-  width: 100%;
-  max-width: none;
-  margin: 0;
-}
-.rstkCanvas .rstkEmbeddedFormSourceFrame.rstkEmbeddedFormStretch > .rstk-page {
-  max-width: min(100%, var(--rstk-max));
-  width: 100%;
-  margin-top: 0;
-  margin-bottom: 0;
-  margin-left: var(--rstk-form-page-margin-left, auto);
-  margin-right: var(--rstk-form-page-margin-right, auto);
-}
-/* El text-align del contenido embebido lo dan las reglas del standalone (.rstk-block-style
-   para alineación por-bloque, y la herencia del shell para el default), igual que en el
-   formulario standalone. El frame ya corta la herencia del sitio anfitrión. */
-/* Bloque genérico a ancho completo (full-bleed por viewport, recortado al lienzo). */
-.rstkCanvas .rstk-frame:has(.rstkBlockFullWidth),
-.rstkCanvas.rstk-kind-form .rstk-shell:has(.rstkBlockFullWidth),
-.rstkCanvas.rstk-kind-landing .rstk-page:has(.rstkBlockFullWidth),
-.rstkCanvas .rstk-section-lane:has(.rstkBlockFullWidth),
-.rstkCanvas .rstk-section-inner:has(.rstkBlockFullWidth),
-.rstkCanvas .rstk-section-column:has(.rstkBlockFullWidth) {
-  overflow: visible;
-}
-.rstkCanvas .rstk-block-style.rstkBlockFullWidth {
-  width: 100vw;
-  max-width: 100vw;
-  margin-left: calc(50% - 50vw);
-  margin-right: calc(50% - 50vw);
-  padding-inline: max(24px, calc(50vw - var(--rstk-max) / 2));
-}
-
-.rstkCanvas .rstkEmbeddedFormSourceFrame .rstk-block-style.rstkBlockFullWidth {
-  width: 100%;
-  max-width: 100%;
-  margin-left: 0;
-  margin-right: 0;
-  padding-inline: max(24px, calc(50% - var(--rstk-max) / 2));
-}
-
-.rstkCanvas .rstkEmbeddedFormSourceFrame .rstk-shell {
-  grid-template-columns: minmax(0, 1fr);
-  width: 100%;
-  max-width: 100%;
-  min-width: 0;
-  gap: var(--rstk-gap);
-  padding: 0;
-  background: var(--rstk-form-surface, var(--rstk-surface));
-  border: var(--rstk-page-border-width, 0) solid var(--rstk-page-border, var(--rstk-border));
-  border-radius: var(--rstk-page-radius, var(--rstk-radius-lg));
-  overflow: hidden;
-}
-
 .rstkCanvas .rstkEmbeddedFormFallbackSurface,
 .rstkCanvas .rstkEmbedSelectionSurface {
   width: 100%;
@@ -2782,129 +602,6 @@ html body :is(.rstkCanvas.rstk-kind-form.rstk-choice-grid, .rstkCanvas.rstk-kind
 
 .rstkCanvas .rstk-video[data-rstk-selection-surface="true"] {
   --rstk-selection-surface-radius: var(--rstk-video-radius, var(--rstk-media-radius, var(--rstk-block-radius, 12px)));
-}
-
-.rstkCanvas .rstk-calendar-preview[data-rstk-selection-surface="true"] {
-  --rstk-selection-surface-radius: var(--rstk-media-radius, 0px);
-}
-
-.rstkCanvas .rstkEmbeddedFormSourceFrame .rstk-shell:has(.rstkBlockFullWidth) {
-  overflow: visible;
-}
-
-.rstkCanvas.rstk-kind-landing .rstkEmbeddedFormSourceFrame .rstk-embedded-form,
-.rstkCanvas .rstkEmbeddedFormSourceFrame .rstk-embedded-form {
-  width: 100%;
-  max-width: 100%;
-  min-width: 0;
-  justify-self: stretch;
-  margin: 0;
-  padding: 0;
-  border: 0;
-  border-radius: 0;
-  background: transparent;
-}
-
-.rstkCanvas .rstkEmbeddedFormSourceFrame .rstk-embedded-pages,
-.rstkCanvas .rstkEmbeddedFormSourceFrame .rstk-embedded-pages [data-embedded-page-content] {
-  width: 100%;
-  max-width: 100%;
-  min-width: 0;
-  justify-self: stretch;
-}
-
-.rstkCanvas .rstkEmbeddedFormSourceFrame .rstk-block-style {
-  max-width: 100%;
-  min-width: 0;
-}
-
-.rstkCanvas .rstkEmbeddedFormSourceFrame .rstkSocialProfileBlock.rstk-block-style {
-  justify-self: start;
-  transform: none;
-}
-
-.rstkCanvas .rstkEmbeddedFormSourceFrame .rstk-social-profile-block {
-  padding: 0;
-}
-
-/* Contenido del formulario embebido: igual al standalone. font-family var(--rstk-font)
-   (NO --rstk-display) y line-height 1.5 del subtítulo replican EXACTO lo que renderiza
-   el formulario standalone; estas reglas existen para neutralizar las del sitio anfitrión
-   (.rstk-kind-landing .rstk-headline, más grandes), no para divergir. La protección del
-   gradiente de texto vive en la regla .rstkPageTextGradient. */
-.rstkCanvas .rstkEmbeddedFormSourceFrame .rstk-headline {
-  margin: 0;
-  color: var(--rstk-ink);
-  font-family: var(--rstk-font);
-  font-size: clamp(1.7rem, 4.6vw, 3rem);
-  font-weight: var(--rstk-heading-weight);
-  line-height: 1.05;
-  letter-spacing: 0;
-  max-width: 100%;
-  min-width: 0;
-  overflow-wrap: break-word;
-  background-image: none;
-  -webkit-text-fill-color: currentColor;
-}
-
-.rstkCanvas .rstkEmbeddedFormSourceFrame .rstk-subheading {
-  margin: 0;
-  color: var(--rstk-muted);
-  font-size: clamp(1rem, 2vw, 1.18rem);
-  line-height: 1.5;
-  max-width: min(100%, var(--rstk-content-max, 60ch));
-  min-width: 0;
-  overflow-wrap: break-word;
-  background-image: none;
-  -webkit-text-fill-color: currentColor;
-}
-
-.rstkCanvas .rstkEmbeddedFormSourceFrame .rstk-text {
-  margin: 0;
-  color: color-mix(in srgb, var(--rstk-ink) 80%, transparent);
-  font-size: 1rem;
-  line-height: 1.55;
-  max-width: min(100%, var(--rstk-content-max, 66ch));
-  min-width: 0;
-  overflow-wrap: break-word;
-  background-image: none;
-  -webkit-text-fill-color: currentColor;
-}
-
-.rstkCanvas .rstkEmbeddedFormSourceFrame .rstk-media,
-.rstkCanvas .rstkEmbeddedFormSourceFrame .rstk-video {
-  max-width: 100%;
-  min-width: 0;
-}
-
-.rstkCanvas .rstkEmbeddedFormSourceFrame .rstk-media img,
-.rstkCanvas .rstkEmbeddedFormSourceFrame .rstk-video iframe,
-.rstkCanvas .rstkEmbeddedFormSourceFrame .rstk-video video {
-  max-width: 100%;
-  min-width: 0;
-}
-
-.rstkCanvas .rstkEmbeddedFormSourceFrame .rstk-video-control-bar {
-  max-width: calc(100% - 24px);
-  min-width: 0;
-}
-
-.rstkCanvas .rstkEmbeddedFormSourceFrame .rstk-field > label {
-  color: var(--rstk-form-label-color, var(--rstk-ink));
-}
-
-.rstkCanvas .rstkEmbeddedFormSourceFrame .rstk-help {
-  color: var(--rstk-form-help-color, var(--rstk-muted));
-  background-image: none;
-  -webkit-text-fill-color: currentColor;
-}
-
-@media (max-width: 760px) {
-  .rstkCanvas .rstk-section-columns { grid-template-columns: 1fr; }
-  .rstkCanvas .rstk-countdown-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-  .rstkCanvas .rstk-site-panel { align-items: flex-start; flex-direction: column; }
-  .rstkCanvas .rstk-site-panel-footer { align-items: center; }
-  .rstkCanvas .rstk-site-panel-links { justify-content: flex-start; }
 }
 
 /* ============================================================
@@ -2991,12 +688,19 @@ html body :is(.rstkCanvas.rstk-kind-form.rstk-choice-grid, .rstkCanvas.rstk-kind
 .canvasViewportFlush .canvasStage { border-radius: 0; }
 
 /* The scaler reserves the natural footprint. The page itself renders at the
-   editor width so text and controls stay crisp instead of being transform-scaled. */
+   editor width so text and controls stay crisp instead of being transform-scaled.
+   También es container rstk-canvas: una @container no puede evaluar a su PROPIO
+   elemento, así que las reglas cuyo sujeto es el scope (.rstkCanvas / body-class)
+   resuelven contra el scaler (mismo ancho render). Los mounts secundarios
+   (popup host, overlay de drag, biblioteca, video-gate, form embebido) no
+   tienen scaler: sus reglas responsivas con sujeto en el scope no disparan
+   (limitación conocida); las de sujetos descendientes sí, vía .rstkCanvas. */
 .canvasScaler {
   position: relative;
   flex: 0 0 auto;
   overflow: hidden;
   border-radius: inherit;
+  container: rstk-canvas / inline-size;
   background-color: #ffffff;
   background-image: linear-gradient(var(--rstk-page-bg, transparent), var(--rstk-page-bg, transparent));
 }
@@ -3017,6 +721,12 @@ html body :is(.rstkCanvas.rstk-kind-form.rstk-choice-grid, .rstkCanvas.rstk-kind
     inset 0 0 0 6px color-mix(in srgb, var(--rstk-accent, #2563eb) 16%, transparent);
 }
 
+/* ============================================================
+ * Popup del sitio: el shell (backdrop, caja, cierre, contenido) viene ÍNTEGRO
+ * de la hoja compartida RSTK_POPUP_CSS inyectada (mismo DOM .rstk-site-popup*
+ * y variables --rstk-popup-* que el publicado). Aquí queda SOLO el chrome del
+ * editor: host superpuesto, cursor/selección y zona de drop vacía.
+ * ============================================================ */
 .rstkPopupEditorHost {
   position: absolute;
   inset: 0;
@@ -3025,32 +735,14 @@ html body :is(.rstkCanvas.rstk-kind-form.rstk-choice-grid, .rstkCanvas.rstk-kind
   pointer-events: none;
 }
 
-.rstkPopupEditorLayer {
-  position: absolute;
-  inset: 0;
-  display: grid;
-  place-items: start center;
-  min-height: max(100%, 620px);
-  padding: 74px 32px;
+/* ALLOWED-DIVERGENCE (editor): la superficie del popup es clickeable para
+   seleccionarla (el host por encima es pointer-events:none). */
+.rstkCanvas .rstk-site-popup.rstkPopupEditorLayer {
   cursor: pointer;
-  overflow: visible;
   pointer-events: auto;
 }
 
-.rstkPopupEditorBackdrop {
-  position: absolute;
-  inset: 0;
-  pointer-events: none;
-  backdrop-filter: blur(8px);
-}
-
-.rstkPopupEditorModal {
-  position: relative;
-  z-index: 1;
-  width: min(var(--rstk-popup-width, 560px), calc(100% - 48px));
-  min-height: 180px;
-  border-style: solid;
-  box-shadow: 0 28px 84px -38px rgba(2, 6, 23, 0.92);
+.rstkCanvas .rstk-site-popup__box.rstkPopupEditorModal {
   cursor: default;
 }
 
@@ -3059,43 +751,8 @@ html body :is(.rstkCanvas.rstk-kind-form.rstk-choice-grid, .rstkCanvas.rstk-kind
   outline: none;
 }
 
-.rstkPopupEditorClose {
-  position: absolute;
-  top: 12px;
-  right: auto;
-  left: 12px;
-  z-index: 4;
-  min-width: 34px;
-  height: 34px;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 6px;
-  border: 1px solid rgba(148, 163, 184, 0.28);
-  border-radius: 10px;
-  background: rgba(255, 255, 255, 0.14);
-  color: inherit;
-  padding: 0 10px;
-  font: 800 14px/1 "Inter", Arial, sans-serif;
-  cursor: pointer;
-}
-
-.rstkPopupEditorClose span {
-  font-size: 22px;
-  line-height: 1;
-}
-
-.rstkPopupEditorClose strong {
-  font-size: 12px;
-  line-height: 1;
-}
-
-.rstkPopupEditorContent {
-  display: grid;
-  gap: 14px;
-  min-height: 118px;
-}
-
+/* ALLOWED-DIVERGENCE (editor): alto mínimo para la zona de drop del popup
+   vacío (en vivo un popup sin contenido solo mide 96px por :empty). */
 .rstkPopupDropEmpty {
   min-height: 118px;
   border-color: rgba(37, 99, 235, 0.38);
@@ -3107,7 +764,6 @@ html body :is(.rstkCanvas.rstk-kind-form.rstk-choice-grid, .rstkCanvas.rstk-kind
 .rstkCanvas iframe { pointer-events: none; }
 
 /* Selectable block wrapper. */
-.rstkCanvas .rstk-block-style { position: relative; }
 .rstkCanvas .rstkSel {
   position: relative;
   z-index: 1;
@@ -3117,6 +773,21 @@ html body :is(.rstkCanvas.rstk-kind-form.rstk-choice-grid, .rstkCanvas.rstk-kind
     transform .32s cubic-bezier(.2,.8,.2,1),
     opacity .16s ease,
     box-shadow .16s ease;
+}
+/* ALLOWED-DIVERGENCE (C2, form-fields #5 / content #3): cuando el publicado NO
+   envuelve el bloque (sin .rstk-block-style), el wrapper del editor debe ser
+   transparente para el layout: grid + justify-items para que el .rstk-field
+   interno respete --rstk-form-field-width/--rstk-form-field-justify como si
+   fuera hijo directo de .rstk-shell. display:grid (NUNCA display:contents)
+   conserva un box real para que dnd-kit mida el rect del bloque. */
+.rstkCanvas .rstkSel:not(.rstk-block-style),
+.rstkCanvas .rstkStaticSel:not(.rstk-block-style) {
+  display: grid;
+  justify-items: stretch;
+}
+.rstkCanvas.rstk-centered .rstkSel:not(.rstk-block-style),
+.rstkCanvas.rstk-centered .rstkStaticSel:not(.rstk-block-style) {
+  justify-items: center;
 }
 .rstkCanvas .rstkCalendarBlock.rstkSel {
   will-change: auto;
@@ -3475,6 +1146,12 @@ html body :is(.rstkCanvas.rstk-kind-form.rstk-choice-grid, .rstkCanvas.rstk-kind
 .rstkCanvas [data-rstk-edit][data-empty="true"]:not(:focus)::before {
   content: attr(data-placeholder); opacity: .45; pointer-events: none;
 }
+/* Paridad content #4: fallbacks que el publicado imprime como contenido real
+   (label del bloque, 'Continuar', 'Tu marca', pie legal) se pintan a opacidad
+   completa; el placeholder tenue queda solo donde el vivo no renderiza nada. */
+.rstkCanvas [data-rstk-edit][data-empty="true"][data-placeholder-live="true"]:not(:focus)::before {
+  opacity: 1;
+}
 
 
 /* Focus keeps the same effective block color; gradient cases are handled below. */
@@ -3483,172 +1160,11 @@ html body :is(.rstkCanvas.rstk-kind-form.rstk-choice-grid, .rstkCanvas.rstk-kind
   -webkit-text-fill-color: currentColor;
 }
 
-.rstkCanvas .rstkFontOverride .rstk-headline,
-.rstkCanvas .rstkFontOverride .rstk-subheading,
-.rstkCanvas .rstkFontOverride .rstk-text,
-.rstkCanvas .rstkFontOverride h2,
-.rstkCanvas .rstkFontOverride label,
-.rstkCanvas .rstkFontOverride .rstk-help,
-.rstkCanvas .rstkFontOverride .rstk-list-grid strong,
-.rstkCanvas .rstkFontOverride .rstk-list-grid p,
-.rstkCanvas .rstkFontOverride .rstk-check-body strong,
-.rstkCanvas .rstkFontOverride .rstk-check-body span {
-  font-family: var(--rstk-block-font, inherit);
-}
-
-.rstkCanvas .rstkSizeOverride .rstk-headline,
-.rstkCanvas .rstkSizeOverride .rstk-subheading,
-.rstkCanvas .rstkSizeOverride .rstk-text,
-.rstkCanvas .rstkSizeOverride h2,
-.rstkCanvas .rstkSizeOverride label,
-.rstkCanvas .rstkSizeOverride .rstk-help,
-.rstkCanvas .rstkSizeOverride .rstk-list-grid strong,
-.rstkCanvas .rstkSizeOverride .rstk-list-grid p,
-.rstkCanvas .rstkSizeOverride .rstk-list-grid small,
-.rstkCanvas .rstkSizeOverride .rstk-check-body strong,
-.rstkCanvas .rstkSizeOverride .rstk-check-body span {
-  font-size: var(--rstk-block-size);
-}
-
-.rstkCanvas .rstkWeightOverride .rstk-headline,
-.rstkCanvas .rstkWeightOverride .rstk-subheading,
-.rstkCanvas .rstkWeightOverride .rstk-text,
-.rstkCanvas .rstkWeightOverride h2,
-.rstkCanvas .rstkWeightOverride label,
-.rstkCanvas .rstkWeightOverride .rstk-help,
-.rstkCanvas .rstkWeightOverride .rstk-list-grid strong,
-.rstkCanvas .rstkWeightOverride .rstk-check-body strong {
-  font-weight: var(--rstk-block-weight, 850);
-}
-
-.rstkCanvas .rstkItalicOverride .rstk-headline,
-.rstkCanvas .rstkItalicOverride .rstk-subheading,
-.rstkCanvas .rstkItalicOverride .rstk-text,
-.rstkCanvas .rstkItalicOverride h2,
-.rstkCanvas .rstkItalicOverride label,
-.rstkCanvas .rstkItalicOverride .rstk-help,
-.rstkCanvas .rstkItalicOverride .rstk-list-grid strong,
-.rstkCanvas .rstkItalicOverride .rstk-list-grid p,
-.rstkCanvas .rstkItalicOverride .rstk-check-body strong,
-.rstkCanvas .rstkItalicOverride .rstk-check-body span {
-  font-style: var(--rstk-block-font-style, italic);
-}
-
-.rstkCanvas .rstkUnderlineOverride .rstk-headline,
-.rstkCanvas .rstkUnderlineOverride .rstk-subheading,
-.rstkCanvas .rstkUnderlineOverride .rstk-text,
-.rstkCanvas .rstkUnderlineOverride h2,
-.rstkCanvas .rstkUnderlineOverride label,
-.rstkCanvas .rstkUnderlineOverride .rstk-help,
-.rstkCanvas .rstkUnderlineOverride .rstk-list-grid strong,
-.rstkCanvas .rstkUnderlineOverride .rstk-list-grid p,
-.rstkCanvas .rstkUnderlineOverride .rstk-check-body strong,
-.rstkCanvas .rstkUnderlineOverride .rstk-check-body span {
-  text-decoration: var(--rstk-block-text-decoration, underline);
-}
-
-.rstkCanvas .rstkTextTransformOverride .rstk-headline,
-.rstkCanvas .rstkTextTransformOverride .rstk-subheading,
-.rstkCanvas .rstkTextTransformOverride .rstk-text,
-.rstkCanvas .rstkTextTransformOverride h2,
-.rstkCanvas .rstkTextTransformOverride label,
-.rstkCanvas .rstkTextTransformOverride .rstk-help,
-.rstkCanvas .rstkTextTransformOverride .rstk-list-grid strong,
-.rstkCanvas .rstkTextTransformOverride .rstk-list-grid p,
-.rstkCanvas .rstkTextTransformOverride .rstk-check-body strong,
-.rstkCanvas .rstkTextTransformOverride .rstk-check-body span {
-  text-transform: var(--rstk-block-text-transform, none);
-}
-
-.rstkCanvas .rstkLineHeightOverride .rstk-headline,
-.rstkCanvas .rstkLineHeightOverride .rstk-subheading,
-.rstkCanvas .rstkLineHeightOverride .rstk-text,
-.rstkCanvas .rstkLineHeightOverride h2,
-.rstkCanvas .rstkLineHeightOverride label,
-.rstkCanvas .rstkLineHeightOverride .rstk-help,
-.rstkCanvas .rstkLineHeightOverride .rstk-list-grid strong,
-.rstkCanvas .rstkLineHeightOverride .rstk-list-grid p,
-.rstkCanvas .rstkLineHeightOverride .rstk-check-body strong,
-.rstkCanvas .rstkLineHeightOverride .rstk-check-body span {
-  line-height: var(--rstk-block-line-height);
-}
-
-.rstkCanvas .rstkListStyleOverride .rstk-text {
-  display: list-item;
-  list-style-position: inside;
-  list-style-type: var(--rstk-text-list-style, disc);
-}
-
-.rstkCanvas .rstkStrokeOverride .rstk-headline,
-.rstkCanvas .rstkStrokeOverride .rstk-subheading,
-.rstkCanvas .rstkStrokeOverride .rstk-text,
-.rstkCanvas .rstkStrokeOverride h2,
-.rstkCanvas .rstkStrokeOverride label,
-.rstkCanvas .rstkStrokeOverride .rstk-help,
-.rstkCanvas .rstkStrokeOverride .rstk-list-grid strong,
-.rstkCanvas .rstkStrokeOverride .rstk-list-grid p,
-.rstkCanvas .rstkStrokeOverride .rstk-check-body strong,
-.rstkCanvas .rstkStrokeOverride .rstk-check-body span {
-  -webkit-text-stroke: var(--rstk-text-stroke-width, 0) var(--rstk-text-stroke-color, currentColor);
-}
-
-.rstkCanvas .rstkTextGradient .rstk-headline,
-.rstkCanvas .rstkTextGradient .rstk-subheading,
-.rstkCanvas .rstkTextGradient .rstk-text,
-.rstkCanvas .rstkTextGradient h2,
-.rstkCanvas .rstkTextGradient label,
-.rstkCanvas .rstkTextGradient .rstk-help,
-.rstkCanvas .rstkTextGradient .rstk-site-panel-copy,
-.rstkCanvas .rstkTextGradient .rstk-list-grid strong,
-.rstkCanvas .rstkTextGradient .rstk-list-grid p,
-.rstkCanvas .rstkTextGradient .rstk-check-body strong,
-.rstkCanvas .rstkTextGradient .rstk-check-body span,
-.rstkCanvas.rstkPageTextGradient .rstk-block-style:not(.rstkBlockTextOverride) .rstk-headline,
-.rstkCanvas.rstkPageTextGradient .rstk-block-style:not(.rstkBlockTextOverride) .rstk-subheading,
-.rstkCanvas.rstkPageTextGradient .rstk-block-style:not(.rstkBlockTextOverride) .rstk-text,
-.rstkCanvas.rstkPageTextGradient .rstk-block-style:not(.rstkBlockTextOverride) h2,
-.rstkCanvas.rstkPageTextGradient .rstk-block-style:not(.rstkBlockTextOverride) label,
-.rstkCanvas.rstkPageTextGradient .rstk-block-style:not(.rstkBlockTextOverride) .rstk-help,
-.rstkCanvas.rstkPageTextGradient .rstk-block-style:not(.rstkBlockTextOverride) .rstk-site-panel-copy,
-.rstkCanvas.rstkPageTextGradient .rstk-block-style:not(.rstkBlockTextOverride) .rstk-list-grid strong,
-.rstkCanvas.rstkPageTextGradient .rstk-block-style:not(.rstkBlockTextOverride) .rstk-list-grid p,
-.rstkCanvas.rstkPageTextGradient .rstk-block-style:not(.rstkBlockTextOverride) .rstk-check-body strong,
-.rstkCanvas.rstkPageTextGradient .rstk-block-style:not(.rstkBlockTextOverride) .rstk-check-body span {
-  background-image: var(--rstk-block-text-paint, var(--rstk-page-text-paint));
-  background-clip: text;
-  -webkit-background-clip: text;
-  color: transparent !important;
-  -webkit-text-fill-color: transparent;
-}
-
-.rstkCanvas .rstkButtonTextGradient .rstk-button-label {
-  background-image: var(--rstk-button-text-paint);
-  background-clip: text;
-  -webkit-background-clip: text;
-  color: transparent;
-  -webkit-text-fill-color: transparent;
-}
-
 .rstkCanvas.rstk-kind-landing .rstkTextGradient .rstk-headline[data-rstk-edit]:focus,
 .rstkCanvas.rstk-kind-landing.rstkPageTextGradient .rstk-block-style:not(.rstkBlockTextOverride) .rstk-headline[data-rstk-edit]:focus {
   background-image: var(--rstk-block-text-paint, var(--rstk-page-text-paint));
   color: transparent;
   -webkit-text-fill-color: transparent;
-}
-
-.rstkCanvas.rstkPageTextGradient .rstk-block-style:not(.rstkBlockTextOverride) .rstkEmbeddedFormSourceRoot:not(.rstkPageTextGradient) .rstk-headline,
-.rstkCanvas.rstkPageTextGradient .rstk-block-style:not(.rstkBlockTextOverride) .rstkEmbeddedFormSourceRoot:not(.rstkPageTextGradient) .rstk-subheading,
-.rstkCanvas.rstkPageTextGradient .rstk-block-style:not(.rstkBlockTextOverride) .rstkEmbeddedFormSourceRoot:not(.rstkPageTextGradient) .rstk-text,
-.rstkCanvas.rstkPageTextGradient .rstk-block-style:not(.rstkBlockTextOverride) .rstkEmbeddedFormSourceRoot:not(.rstkPageTextGradient) label,
-.rstkCanvas.rstkPageTextGradient .rstk-block-style:not(.rstkBlockTextOverride) .rstkEmbeddedFormSourceRoot:not(.rstkPageTextGradient) .rstk-help {
-  background-image: none !important;
-  color: var(--rstk-ink) !important;
-  -webkit-text-fill-color: currentColor !important;
-}
-
-.rstkCanvas.rstkPageTextGradient .rstk-block-style:not(.rstkBlockTextOverride) .rstkEmbeddedFormSourceRoot:not(.rstkPageTextGradient) .rstk-subheading,
-.rstkCanvas.rstkPageTextGradient .rstk-block-style:not(.rstkBlockTextOverride) .rstkEmbeddedFormSourceRoot:not(.rstkPageTextGradient) .rstk-help {
-  color: var(--rstk-muted) !important;
 }
 
 .rstkCanvas .rstkVideoActionHover {
@@ -3682,6 +1198,20 @@ html body :is(.rstkCanvas.rstk-kind-form.rstk-choice-grid, .rstkCanvas.rstk-kind
   text-align: left;
   box-shadow: var(--rstk-shadow-soft);
   pointer-events: none;
+}
+
+/* ALLOWED-DIVERGENCE (form-fields #12): pista editor-only para campos de
+   opciones sin configurar; solo visible con el bloque seleccionado y en vivo
+   no existe (el campo publica su contenedor vacío). */
+.rstkCanvas .rstkOptionsEmptyHint {
+  display: grid;
+  place-items: center;
+  min-height: 44px;
+  padding: 10px 14px;
+  border: 1.5px dashed var(--rstk-border);
+  border-radius: var(--rstk-radius);
+  color: var(--rstk-muted);
+  font-size: 13px;
 }
 
 .rstkCanvas .rstkDropEmpty {

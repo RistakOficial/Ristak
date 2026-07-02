@@ -793,3 +793,83 @@ test('immediate disqualify choices run when advancing, not when selecting', asyn
   assert.ok(html.includes("handleBlockingRule(immediateSubmitRule, rulePageId, message, { immediate: true, fieldId: immediateSubmitRule.fieldId || ruleFieldId })"))
   assert.ok(html.includes("handleBlockingRule(blockingRule, getCurrentPageId(), message, blockingRule.action === 'disqualify' ? { immediate: true, fieldId: blockingRule.fieldId || '' } : {})"))
 })
+
+// Contrato de paridad (Paquete D / riesgo B-a): la clase rstkPageTextGradient
+// del theme embebido vive EN el frame (.rstk-embedded-form-source-frame), que
+// es el elemento donde la guarda de gradiente de la hoja compartida evalúa su
+// :not(.rstkPageTextGradient). El editor pone la clase en el mismo elemento.
+test('embedded form frame carries its own rstkPageTextGradient class on the frame element', async () => {
+  const gradient = 'linear-gradient(90deg, #ff0055, #5500ff)'
+  const buildSite = (embeddedTheme) => ({
+    id: 'site_embedded_gradient',
+    name: 'Landing gradiente',
+    title: 'Landing gradiente',
+    description: '',
+    slug: 'landing-gradiente',
+    siteType: 'landing_page',
+    status: 'published',
+    theme: {
+      template: 'ristak',
+      // Anfitrión con gradiente de texto propio (caso del corner B-a).
+      textColor: gradient,
+      textColorCustom: true,
+      pages: [{ id: 'page-1', title: 'Pagina 1', sortOrder: 0 }]
+    },
+    blocks: [
+      {
+        id: 'embed-form',
+        siteId: 'site_embedded_gradient',
+        blockType: 'form_embed',
+        label: 'Formulario',
+        content: 'Formulario',
+        placeholder: '',
+        required: false,
+        options: [],
+        sortOrder: 0,
+        settings: {
+          pageId: 'page-1',
+          embeddedPages: [{ id: 'step-1', title: 'Paso 1', sortOrder: 0 }],
+          embeddedTheme,
+          embeddedBlocks: [
+            {
+              id: 'field-name',
+              siteId: 'site_embedded_gradient',
+              blockType: 'short_text',
+              label: 'Nombre',
+              content: '',
+              placeholder: '',
+              required: true,
+              options: [],
+              sortOrder: 0,
+              settings: { pageId: 'step-1' }
+            }
+          ]
+        }
+      }
+    ]
+  })
+
+  const frameClass = (html) => {
+    const match = html.match(/class="([^"]*rstk-embedded-form-source-frame[^"]*)"/)
+    assert.ok(match, 'embedded frame element not found')
+    return match[1]
+  }
+
+  // Embed con gradiente propio: la clase va EN el frame (el :not de la guarda
+  // no aplica y el gradiente del embed sobrevive, igual que en el canvas).
+  const withGradient = await renderPublicSiteHtml(buildSite({ textColor: gradient, textColorCustom: true }), {
+    pageId: 'page-1',
+    trackingEnabled: false,
+    preview: true
+  })
+  assert.match(frameClass(withGradient), /\brstkPageTextGradient\b/)
+
+  // Embed con texto sólido propio: el frame NO lleva la clase aunque el
+  // anfitrión tenga gradiente (la guarda apaga el gradiente heredado dentro).
+  const withSolid = await renderPublicSiteHtml(buildSite({ textColor: '#111111', textColorCustom: true }), {
+    pageId: 'page-1',
+    trackingEnabled: false,
+    preview: true
+  })
+  assert.doesNotMatch(frameClass(withSolid), /\brstkPageTextGradient\b/)
+})

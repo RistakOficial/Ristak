@@ -71,7 +71,6 @@ import {
   Monitor,
   MoreVertical,
   Moon,
-  Music2,
   MousePointerClick,
   PanelBottom,
   PanelTop,
@@ -217,6 +216,36 @@ import './sitesCanvas.css'
 import { buildCanvasTheme } from './sitesCanvasTheme'
 import { StripePaymentElementPreview } from './StripePaymentElementPreview'
 import { SITE_FONT_OPTIONS, normalizeSiteFontFamily } from './siteFonts'
+// Contrato de bloques compartido con el renderer público (Paquete C): las
+// variables/clases por bloque y los helpers de paridad vienen de UNA copia.
+import {
+  DEFAULT_THEME as SHARED_DEFAULT_THEME,
+  appendCalendarEmbedParams,
+  blockHasStyleWrapper,
+  blockTextContrastBackground,
+  buildBlockStyleClassName,
+  buildBlockStyleVars,
+  buildEmbeddedFormProxyVars,
+  buildEmbeddedFormTheme,
+  buildFormStyleContext,
+  buildPopupSurfaceVars,
+  buildVideoFrameStyleVars,
+  computeSitePageRenderState,
+  countdownShowLabelsValue,
+  extractWistiaMediaId,
+  isSocialTemplate,
+  normalizeFormChoiceStyle as normalizeSharedFormChoiceStyle,
+  normalizeFormInputStyle as normalizeSharedFormInputStyle,
+  normalizeFormSelectStyle as normalizeSharedFormSelectStyle,
+  normalizeSocialPlatform as normalizeSharedSocialPlatform,
+  normalizeVideoOrientation,
+  parseCountdownTargetDate,
+  safeHref,
+  safeUrl as safeAbsoluteUrl,
+  wistiaEmbedIframeUrl
+} from '../../../../shared/sites/renderContract.js'
+import type { SiteLike, SiteBlockLike } from '../../../../shared/sites/renderContract.js'
+import { msiEligibility } from '../../../../shared/sites/paymentGateContract.js'
 
 type SitesSection = 'landings' | 'forms' | 'analytics' | 'domains'
 type DeviceMode = 'desktop' | 'mobile'
@@ -3027,8 +3056,10 @@ const getCountdownPreviewParts = (settings: Record<string, unknown>) => {
   const now = Date.now()
   const mode = getCountdownMode(settings)
   if (mode === 'date') {
-    const targetTime = parseSortableDateValue(getSettingString(settings, 'countdownTargetDate'))
-    if (Number.isFinite(targetTime)) return splitCountdownSeconds(Math.max(0, Math.floor((targetTime - now) / 1000)))
+    // Parser compartido con el SSR del publicado (content #12): mismas fechas,
+    // mismos dígitos iniciales; una fecha inválida cae a la duración (como vivo).
+    const targetTime = parseCountdownTargetDate(getSettingString(settings, 'countdownTargetDate'))
+    if (targetTime !== null) return splitCountdownSeconds(Math.max(0, Math.floor((targetTime - now) / 1000)))
   }
   return splitCountdownSeconds(getCountdownDurationSeconds(settings))
 }
@@ -3884,10 +3915,10 @@ const getFieldOwnStyleClass = (block: SiteBlock): string => {
   return variant ? ` rstk-fieldstyled ${variant}` : ''
 }
 
-const normalizeSocialPlatform = (value: unknown): SocialPlatform => {
-  const raw = String(value || '').trim()
-  return socialPlatformOptions.some(option => option.value === raw) ? raw as SocialPlatform : 'facebook'
-}
+// Unificado con el publicado (content #7): mismo normalizador compartido, con
+// fallback configurable (el bloque de perfil cae al template social del sitio).
+const normalizeSocialPlatform = (value: unknown, fallback: SocialPlatform = 'facebook'): SocialPlatform =>
+  normalizeSharedSocialPlatform(value, fallback) as SocialPlatform
 
 const socialProfileOptionLabel = (profile: ConnectedSocialProfile) => {
   const platform = socialPlatformOptions.find(option => option.value === profile.platform)?.label || profile.platform
@@ -4111,6 +4142,22 @@ const getPaymentGateFromSettings = (settings: Record<string, unknown> = {}, curr
 const getPaymentGatewayLabel = (gateway: CommonPaymentGateConfig['gateway']) => (
   gateway === 'mercadopago' ? 'Mercado Pago' : gateway === 'conekta' ? 'Conekta' : 'Stripe'
 )
+
+// Espejo de isPaymentGateEnabled del backend (publicPaymentGateService):
+// habilitado + monto > 0 + pasarela conocida.
+const PAYMENT_GATE_GATEWAYS = new Set<CommonPaymentGateConfig['gateway']>(['stripe', 'conekta', 'mercadopago'])
+
+const isPaymentGateConfigEnabled = (config: CommonPaymentGateConfig) =>
+  Boolean(config.enabled && config.amount > 0 && PAYMENT_GATE_GATEWAYS.has(config.gateway))
+
+// Paridad form-fields #9: el publicado muestra el área de acciones también en
+// páginas que solo tienen bloques de pago habilitados (incluidos los anidados
+// en formularios embebidos), igual que findEnabledPaymentBlockContext.
+const canvasHasEnabledPaymentBlock = (blocks: SiteBlock[]): boolean => blocks.some(block => {
+  if (block.blockType === 'payment' && isPaymentGateConfigEnabled(getPaymentGateFromSettings(block.settings || {}))) return true
+  const embedded = block.settings?.embeddedBlocks
+  return Array.isArray(embedded) && canvasHasEnabledPaymentBlock(embedded as SiteBlock[])
+})
 
 const formatPaymentAmount = (amount: number, currency: string) => {
   const safeCurrency = /^[A-Z]{3}$/.test(currency || '') ? currency : 'MXN'
@@ -4397,261 +4444,44 @@ type BlockCanvasStyleContext = {
   parentBlock?: SiteBlock | null
 }
 
-const getBlockSolidBackground = (block?: SiteBlock | null) => {
-  const settings = block?.settings || {}
-  const rawBg = getSettingString(settings, 'blockBg')
-  if (!isCssPaint(rawBg)) return ''
-  const normalized = normalizeCssPaint(rawBg, '')
-  if (!isCssColor(normalized) || isTransparentCssColorValue(normalized)) return ''
-  return normalized
+// Fondo de contraste de página para blockText (content #8): MISMO helper
+// compartido que usa el renderer público (pageBg sólido del usuario o el del
+// template — nunca el primer stop de un gradiente ni swatches hardcodeados).
+// Memo por sitio: el estado de página no cambia entre bloques del mismo render.
+const canvasContrastBgCache = new WeakMap<object, string>()
+
+const getCanvasPageContrastBg = (site?: PublicSite | null): string => {
+  if (!site) return ''
+  const cached = canvasContrastBgCache.get(site)
+  if (cached !== undefined) return cached
+  const value = blockTextContrastBackground(computeSitePageRenderState(site as unknown as SiteLike))
+  canvasContrastBgCache.set(site, value)
+  return value
 }
 
-const getBlockTextContrastBackground = (block: SiteBlock, context: BlockCanvasStyleContext = {}) =>
-  getBlockSolidBackground(block) ||
-  getBlockSolidBackground(context.parentBlock) ||
-  (context.site ? resolvedPageBg(context.site) : '')
+const buildCanvasBlockVarsCtx = (context: BlockCanvasStyleContext = {}) => ({
+  parentBlock: context.parentBlock as unknown as SiteBlockLike | null,
+  pageBg: getCanvasPageContrastBg(context.site)
+})
 
-const getBlockCanvasStyle = (block: SiteBlock, context: BlockCanvasStyleContext = {}): React.CSSProperties => {
-  const normalizedBlock = normalizeLegacyLandingBlockSpacing(block)
-  const settings = normalizedBlock.settings || {}
-  const style: Record<string, string> = {}
-  const textContrastBackground = getBlockTextContrastBackground(normalizedBlock, context)
-  const bg = getSettingString(settings, 'blockBg')
-  const text = getSettingString(settings, 'blockText')
-  const buttonBg = getSettingString(settings, 'buttonBg')
-  const buttonText = getSettingString(settings, 'buttonTextColor')
-  const buttonBorder = getSettingString(settings, 'buttonBorderColor')
-  const cardBg = getSettingString(settings, 'cardBg')
-  const cardBorder = getSettingString(settings, 'cardBorderColor')
-  const countdownNumberColor = getSettingString(settings, 'countdownNumberColor')
-  const countdownUnitBg = getSettingString(settings, 'countdownUnitBg')
-  const countdownUnitBorder = getSettingString(settings, 'countdownUnitBorder')
-  const fontFamily = normalizeSiteFontFamily(getSettingString(settings, 'fontFamily'))
-  const buttonFontFamily = normalizeSiteFontFamily(getSettingString(settings, 'buttonFontFamily'))
-  const textStrokeColor = getSettingString(settings, 'textStrokeColor')
-  const textDecoration = getTextDecorationTokens(settings.textDecoration).join(' ')
-  const buttonTextDecoration = getTextDecorationTokens(settings.buttonTextDecoration).join(' ')
-  const textTransform = getTextTransformValue(settings.textTransform)
-  const buttonTextTransform = getTextTransformValue(settings.buttonTextTransform)
-  const textListStyle = getTextListStyleValue(settings.textListStyle)
-  const fieldBg = getSettingString(settings, 'fieldBg')
-  const fieldBorder = getSettingString(settings, 'fieldBorder')
-  const blockBorder = getSettingString(settings, 'blockBorderColor')
-  const blockBackgroundImage = getSettingString(settings, 'blockBackgroundImage')
-  const blockHasNativeBorder = nativeBorderBlockTypes.has(block.blockType)
-  const supportsButton = block.blockType === 'hero' || block.blockType === 'button' || block.blockType === 'cta' || block.blockType === 'form_embed' || block.blockType === 'payment'
-  const isCalendarEmbed = block.blockType === 'calendar_embed'
+// Consumidor directo del contrato compartido (content #10/#11: semántica del
+// publicado — números no finitos se omiten, posiciones sanitizadas, paints sin
+// fallback blanco). No agrega variables propias del editor.
+const getBlockCanvasStyle = (block: SiteBlock, context: BlockCanvasStyleContext = {}): React.CSSProperties =>
+  buildBlockStyleVars(block as unknown as SiteBlockLike, buildCanvasBlockVarsCtx(context)) as React.CSSProperties
 
-  if (!isCalendarEmbed && isCssPaint(bg)) {
-    const normalized = normalizeCssPaint(bg, '#ffffff')
-    style['--rstk-block-bg'] = normalized
-    style['--rstk-block-bg-layer'] = paintToBackgroundLayer(normalized)
-    style['--rstk-block-bg-color'] = isCssGradient(normalized) ? 'transparent' : normalized
-  }
-  if (!isCalendarEmbed && blockBackgroundImage && getSettingString(settings, 'blockBackgroundMediaType') !== 'video') {
-    const imageLayer = cssPublicImageUrl(blockBackgroundImage)
-    if (imageLayer) {
-      style['--rstk-block-bg-image'] = imageLayer
-      style['--rstk-block-bg-size'] = getBackgroundSizeCss(getSettingString(settings, 'blockBackgroundFit') || 'cover')
-      style['--rstk-block-bg-position'] = getSettingString(settings, 'blockBackgroundPosition') || 'center center'
-    }
-  }
-  if (isCssPaint(text)) {
-    const normalized = normalizeCssPaint(text, '#111827')
-    style['--rstk-block-text'] = readableTextOnBackground(normalized, textContrastBackground, '#111827')
-    if (isCssGradient(normalized)) style['--rstk-block-text-paint'] = normalized
-  }
-  const buttonHoverBg = getSettingPaint(settings, 'buttonHoverBg', '')
-  if (isCssPaint(buttonBg)) {
-    const normalized = normalizeCssPaint(buttonBg, '#111827')
-    style['--rstk-button-bg'] = normalized
-    style['--rstk-button-hover-bg'] = buttonHoverBg || normalized
-  } else if (buttonHoverBg) {
-    style['--rstk-button-hover-bg'] = buttonHoverBg
-  }
-  if (isCssPaint(buttonText)) {
-    const normalized = normalizeCssPaint(buttonText, '#ffffff')
-    style['--rstk-button-text'] = paintFallbackColor(normalized, '#ffffff')
-    if (isCssGradient(normalized)) style['--rstk-button-text-paint'] = normalized
-  }
-  if (isCssPaint(buttonBorder)) style['--rstk-button-border'] = paintFallbackColor(normalizeCssPaint(buttonBorder, '#111827'), '#111827')
-  const buttonShadowPreset = getSettingString(settings, 'buttonShadow')
-  if (buttonShadowPreset === 'soft') style['--rstk-button-shadow'] = '0 4px 12px color-mix(in srgb, var(--rstk-ink) 14%, transparent)'
-  if (buttonShadowPreset === 'medium') style['--rstk-button-shadow'] = '0 8px 22px color-mix(in srgb, var(--rstk-ink) 20%, transparent)'
-  if (buttonShadowPreset === 'strong') style['--rstk-button-shadow'] = '0 14px 34px color-mix(in srgb, var(--rstk-ink) 28%, transparent)'
-  if (isCssPaint(cardBg)) style['--rstk-card-bg'] = normalizeCssPaint(cardBg, '#ffffff')
-  if (isCssPaint(cardBorder)) style['--rstk-card-border'] = paintFallbackColor(normalizeCssPaint(cardBorder, '#dbe3ef'), '#dbe3ef')
-  if (isCssPaint(countdownNumberColor)) style['--rstk-countdown-number'] = paintFallbackColor(normalizeCssPaint(countdownNumberColor, '#111827'), '#111827')
-  if (isCssPaint(countdownUnitBg)) style['--rstk-countdown-unit-bg'] = normalizeCssPaint(countdownUnitBg, '#ffffff')
-  if (isCssPaint(countdownUnitBorder)) style['--rstk-countdown-unit-border'] = paintFallbackColor(normalizeCssPaint(countdownUnitBorder, '#dbe3ef'), '#dbe3ef')
-  if (fontFamily) style['--rstk-block-font'] = fontFamily
-  if (buttonFontFamily) style['--rstk-button-font'] = buttonFontFamily
-  if (settings.fontStyle === 'italic') style['--rstk-block-font-style'] = 'italic'
-  if (textDecoration) style['--rstk-block-text-decoration'] = textDecoration
-  if (textTransform) style['--rstk-block-text-transform'] = textTransform
-  if (textListStyle && block.blockType === 'text') style['--rstk-text-list-style'] = textListStyle
-  if (settings.lineHeight !== undefined && getSettingString(settings, 'lineHeight')) {
-    style['--rstk-block-line-height'] = `${getSettingNumber(settings, 'lineHeight', 1.5, 0.8, 2.6)}`
-  }
-  if (settings.textStrokeWidth !== undefined) style['--rstk-text-stroke-width'] = `${getSettingNumber(settings, 'textStrokeWidth', 0, 0, 12)}px`
-  if (isCssPaint(textStrokeColor)) style['--rstk-text-stroke-color'] = paintFallbackColor(normalizeCssPaint(textStrokeColor, '#111827'), '#111827')
-  if (isCssPaint(fieldBg)) style['--rstk-field-bg'] = normalizeCssPaint(fieldBg, '#ffffff')
-  if (isCssPaint(fieldBorder)) style['--rstk-field-border'] = paintFallbackColor(normalizeCssPaint(fieldBorder, '#dbe3ef'), '#dbe3ef')
-  if (!isCalendarEmbed && isCssPaint(blockBorder)) style['--rstk-block-border'] = paintFallbackColor(normalizeCssPaint(blockBorder, '#dbe3ef'), '#dbe3ef')
-  if (settings.fontWeight === 'bold') style['--rstk-block-weight'] = '850'
-  if (settings.fontWeight === 'normal') style['--rstk-block-weight'] = '400'
-  if (block.blockType === 'social_profile') {
-    const profileScale = getSettingNumber(settings, 'socialProfileScale', DEFAULT_SOCIAL_PROFILE_SCALE, SOCIAL_PROFILE_SCALE_MIN, SOCIAL_PROFILE_SCALE_MAX) / 100
-    const socialFontSize = getSettingNumber(settings, 'fontSize', 18, 12, 96)
-    const socialPx = (value: number) => `${Number(value.toFixed(3))}px`
+type BlockWrapperMode = 'auto' | 'always'
 
-    style['--rstk-social-profile-scale'] = String(Number(profileScale.toFixed(3)))
-    style['--rstk-social-avatar-size'] = socialPx(64 * profileScale)
-    style['--rstk-social-avatar-font-size'] = socialPx(20 * profileScale)
-    style['--rstk-social-badge-size'] = socialPx(23 * profileScale)
-    style['--rstk-social-badge-icon-size'] = socialPx(13 * profileScale)
-    style['--rstk-social-gap'] = socialPx(11 * profileScale)
-    style['--rstk-social-name-size'] = socialPx(socialFontSize * profileScale)
-    style['--rstk-social-followers-size'] = socialPx(Math.max(11, socialFontSize * profileScale * 0.82))
-    style['--rstk-social-verified-size'] = socialPx(16.5 * profileScale)
-    // El ancho del chip lo dan las reglas CSS (.rstkSocialProfileBlock /
-    // .rstk-embedded-form > .rstkSocialProfileBlock), NO inline: así dentro de un
-    // formulario puede seguir --rstk-form-field-justify (alinearse en su franja).
-  }
-
-  if (settings.textAlign !== undefined) {
-    const align = getHorizontalAlign(settings, 'textAlign', 'left')
-    const margins = marginVarsForAlign(align)
-    style['--rstk-block-align'] = align
-    style['--rstk-block-justify'] = justifyForAlign(align)
-    style['--rstk-content-margin-left'] = margins.left
-    style['--rstk-content-margin-right'] = margins.right
-  }
-  if (settings.contentMaxWidth !== undefined) style['--rstk-content-max'] = `${getSettingNumber(settings, 'contentMaxWidth', 66, 10, 120)}ch`
-  if (settings.fontSize !== undefined) style['--rstk-block-size'] = `${getSettingNumber(settings, 'fontSize', 18, 12, 96)}px`
-  const hasBlockPadding = settings.blockPadding !== undefined || hasSpacingSideValue(settings, 'blockPadding')
-  const hasBlockMargin = settings.blockMargin !== undefined || hasSpacingSideValue(settings, 'blockMargin')
-  const paddingValues = hasBlockPadding
-    ? getSpacingValues(settings, 'blockPadding', 0, SPACING_OVERLAP_MIN, SPACING_MAX)
-    : null
-  const marginValues = hasBlockMargin
-    ? getSpacingValues(settings, 'blockMargin', 0, SPACING_OVERLAP_MIN, SPACING_MARGIN_MAX)
-    : null
-
-  if (!isCalendarEmbed && paddingValues) {
-    style['--rstk-block-pad'] = getSpacingShorthand(getPositiveSpacing(paddingValues))
-  }
-
-  if (marginValues || !isCalendarEmbed && paddingValues && hasNegativeSpacing(paddingValues)) {
-    const safeMargin = marginValues || { Top: 0, Right: 0, Bottom: 0, Left: 0 }
-    const paddingOverlap = !isCalendarEmbed && paddingValues ? getNegativeSpacing(paddingValues) : { Top: 0, Right: 0, Bottom: 0, Left: 0 }
-    style['--rstk-block-margin'] = getSpacingShorthand(combineSpacingValues(safeMargin, paddingOverlap))
-  }
-  if (!isCalendarEmbed && settings.blockRadius !== undefined) style['--rstk-block-radius'] = `${getSettingNumber(settings, 'blockRadius', 8, 0, BLOCK_RADIUS_MAX)}px`
-  if (!isCalendarEmbed && settings.blockBorderWidth !== undefined) {
-    const width = `${getSettingNumber(settings, 'blockBorderWidth', 0, 0, BLOCK_BORDER_WIDTH_MAX)}px`
-    style['--rstk-block-border-width'] = width
-    if (!blockHasNativeBorder) style['--rstk-block-shell-border-width'] = width
-  }
-  if (supportsButton) {
-    const align = getButtonAlign(settings, 'center')
-    const margins = marginVarsForAlign(align)
-    const buttonWidth = getSettingNumber(settings, 'buttonWidth', 0, 0, 100)
-    style['--rstk-button-justify'] = justifyForAlign(align)
-    style['--rstk-button-margin-left'] = margins.left
-    style['--rstk-button-margin-right'] = margins.right
-    style['--rstk-button-width'] = align === 'full' ? '100%' : buttonWidth > 0 ? `${buttonWidth}%` : 'fit-content'
-  }
-  if (settings.buttonRadius !== undefined) style['--rstk-block-button-radius'] = `${getSettingNumber(settings, 'buttonRadius', 28, 0, 80)}px`
-  if (settings.buttonHeight !== undefined) style['--rstk-button-height'] = `${getSettingNumber(settings, 'buttonHeight', 54, 34, 88)}px`
-  if (settings.buttonPaddingX !== undefined) style['--rstk-button-pad-x'] = `${getSettingNumber(settings, 'buttonPaddingX', 28, 8, 72)}px`
-  if (settings.buttonPaddingY !== undefined) style['--rstk-button-pad-y'] = `${getSettingNumber(settings, 'buttonPaddingY', 8, 0, 40)}px`
-  if (settings.buttonFontSize !== undefined) style['--rstk-button-size'] = `${getSettingNumber(settings, 'buttonFontSize', 16, 11, 32)}px`
-  if (settings.buttonSubtitleFontSize !== undefined) style['--rstk-button-subtitle-size'] = `${getSettingNumber(settings, 'buttonSubtitleFontSize', 13, 10, 24)}px`
-  if (settings.buttonBorderWidth !== undefined) style['--rstk-button-border-width'] = `${getSettingNumber(settings, 'buttonBorderWidth', 1, 0, 8)}px`
-  if (settings.buttonFontWeight === 'bold') style['--rstk-button-weight'] = '850'
-  if (settings.buttonFontWeight === 'normal') style['--rstk-button-weight'] = '400'
-  if (settings.buttonFontStyle === 'italic') style['--rstk-button-font-style'] = 'italic'
-  if (buttonTextDecoration) style['--rstk-button-text-decoration'] = buttonTextDecoration
-  if (buttonTextTransform) style['--rstk-button-text-transform'] = buttonTextTransform
-  if (settings.buttonLineHeight !== undefined && getSettingString(settings, 'buttonLineHeight')) {
-    style['--rstk-button-line-height'] = `${getSettingNumber(settings, 'buttonLineHeight', 1.08, 0.8, 2.6)}`
-  }
-  if (settings.mediaWidth !== undefined) style['--rstk-media-width'] = `${getSettingNumber(settings, 'mediaWidth', 100, 30, 100)}%`
-  if (settings.mediaAlign !== undefined) {
-    const align = getHorizontalAlign(settings, 'mediaAlign', 'center')
-    const margins = marginVarsForAlign(align)
-    style['--rstk-media-justify'] = justifyForAlign(align)
-    style['--rstk-media-margin-left'] = margins.left
-    style['--rstk-media-margin-right'] = margins.right
-  }
-  if (settings.mediaRadius !== undefined) style['--rstk-media-radius'] = `${getSettingNumber(settings, 'mediaRadius', 18, 0, 48)}px`
-  if (settings.embedHeight !== undefined) {
-    const embedHeight = getSettingNumber(settings, 'embedHeight', isCalendarEmbed ? CALENDAR_EMBED_DEFAULT_HEIGHT : EMBED_DEFAULT_HEIGHT, EMBED_MIN_HEIGHT, EMBED_MAX_HEIGHT)
-    const minHeight = isCalendarEmbed ? getCalendarEmbedLayoutMinHeight(settings) : EMBED_MIN_HEIGHT
-    style['--rstk-embed-height'] = `${Math.max(embedHeight, minHeight)}px`
-  }
-  if (isCalendarEmbed && settings.calendarFrameBorderWidth !== undefined) {
-    style['--rstk-calendar-frame-border-width'] = `${getSettingNumber(settings, 'calendarFrameBorderWidth', 0, 0, 8)}px`
-  }
-  if (isCalendarEmbed) {
-    const calendarFrameBorder = getSettingString(settings, 'calendarFrameBorderColor')
-    if (isCssPaint(calendarFrameBorder)) {
-      style['--rstk-calendar-frame-border'] = paintFallbackColor(normalizeCssPaint(calendarFrameBorder, '#dbe3ef'), '#dbe3ef')
-    }
-  }
-  if (settings.cardRadius !== undefined) style['--rstk-card-radius'] = `${getSettingNumber(settings, 'cardRadius', 18, 0, 48)}px`
-  if (settings.cardBorderWidth !== undefined) style['--rstk-card-border-width'] = `${getSettingNumber(settings, 'cardBorderWidth', 1, 0, 8)}px`
-  if (settings.listColumns !== undefined) style['--rstk-list-columns'] = `repeat(${getSettingNumber(settings, 'listColumns', 3, 1, 4)}, minmax(0, 1fr))`
-  if (settings.cardAlign !== undefined) style['--rstk-card-align'] = getHorizontalAlign(settings, 'cardAlign', 'left')
-  if (settings.fieldWidth !== undefined) style['--rstk-field-width'] = `${getSettingNumber(settings, 'fieldWidth', 100, FORM_FIELD_WIDTH_MIN, 100)}%`
-  if (settings.fieldRadius !== undefined) style['--rstk-field-radius'] = `${getSettingNumber(settings, 'fieldRadius', 12, 0, 32)}px`
-  if (settings.countdownNumberSize !== undefined) style['--rstk-countdown-number-size'] = `${getSettingNumber(settings, 'countdownNumberSize', 38, 14, 96)}px`
-  if (settings.countdownUnitRadius !== undefined) style['--rstk-countdown-unit-radius'] = `${getSettingNumber(settings, 'countdownUnitRadius', 14, 0, 48)}px`
-  if (settings.countdownUnitGap !== undefined) style['--rstk-countdown-gap'] = `${getSettingNumber(settings, 'countdownUnitGap', 10, 0, 48)}px`
-  if (block.blockType === SECTION_BLOCK_TYPE) {
-    style['--rstk-section-columns'] = `${getSectionColumns(block)}`
-    style['--rstk-section-gap'] = `${getSettingNumber(settings, 'sectionGap', DEFAULT_SECTION_GAP, 0, SECTION_GAP_MAX)}px`
-  }
-
-  return style as React.CSSProperties
-}
-
-const blockHasExplicitBg = (settings: Record<string, unknown>) => {
-  const paint = getSettingString(settings, 'blockBg')
-  if (isCssPaint(paint) && paint.trim().toLowerCase() !== 'transparent') return true
-  return Boolean(getSettingString(settings, 'blockBackgroundImage'))
-}
-
-const blockHasExplicitBorder = (settings: Record<string, unknown>) =>
-  getSettingNumber(settings, 'blockBorderWidth', 0, 0, BLOCK_BORDER_WIDTH_MAX) > 0
-
-const getBlockStyleClassName = (block: SiteBlock, extra = '') => {
-  const settings = block.settings || {}
+// Paridad content #3 / form-fields #5: el publicado solo envuelve el bloque en
+// div.rstk-block-style cuando hay variables/full-width/video de fondo/oculto
+// (blockHasStyleWrapper, compartido). En modo 'auto' el editor espeja ese
+// predicado; 'always' se reserva para superficies que en vivo SIEMPRE llevan
+// las clases (franjas de sección) y para el overlay de drag de la paleta.
+const getBlockStyleClassName = (block: SiteBlock, extra = '', wrapper: BlockWrapperMode = 'auto') => {
+  const hasWrapper = wrapper === 'always' || blockHasStyleWrapper(block as unknown as SiteBlockLike)
   return [
-    'rstk-block-style',
-    blockHasExplicitBg(settings) ? 'rstkBlockBgSet' : '',
-    blockHasExplicitBorder(settings) ? 'rstkBlockBorderSet' : '',
-    getSettingBoolean(settings, 'blockFullWidth') ? 'rstkBlockFullWidth' : '',
-    block.blockType === HEADER_PANEL_BLOCK_TYPE ? 'rstkHeaderPanelBlock' : '',
-    block.blockType === FOOTER_PANEL_BLOCK_TYPE ? 'rstkFooterPanelBlock' : '',
-    block.blockType === 'calendar_embed' ? 'rstkCalendarBlock' : '',
-    block.blockType === 'social_profile' ? 'rstkSocialProfileBlock' : '',
-    getSettingString(settings, 'blockText') ? 'rstkBlockTextOverride' : '',
-    isCssGradient(getSettingString(settings, 'blockText')) ? 'rstkTextGradient' : '',
-    isCssGradient(getSettingString(settings, 'buttonTextColor')) ? 'rstkButtonTextGradient' : '',
-    settings.buttonPaddingY !== undefined ? 'rstkButtonPaddingOverride' : '',
-    getSettingString(settings, 'blockBackgroundMediaType') === 'video' && safePublicMediaUrl(getSettingString(settings, 'blockBackgroundImage'), 'video') ? 'rstkHasBgVideo' : '',
+    hasWrapper ? buildBlockStyleClassName(block as unknown as SiteBlockLike) : '',
     isBlockHidden(block) ? 'rstkHiddenBlock' : '',
-    settings.fontFamily ? 'rstkFontOverride' : '',
-    settings.fontSize !== undefined ? 'rstkSizeOverride' : '',
-    settings.fontWeight === 'bold' || settings.fontWeight === 'normal' ? 'rstkWeightOverride' : '',
-    settings.fontStyle === 'italic' ? 'rstkItalicOverride' : '',
-    getTextDecorationTokens(settings.textDecoration).length ? 'rstkUnderlineOverride' : '',
-    getTextTransformValue(settings.textTransform) ? 'rstkTextTransformOverride' : '',
-    settings.lineHeight !== undefined && getSettingString(settings, 'lineHeight') ? 'rstkLineHeightOverride' : '',
-    block.blockType === 'text' && getTextListStyleValue(settings.textListStyle) ? 'rstkListStyleOverride' : '',
-    settings.textStrokeWidth !== undefined ? 'rstkStrokeOverride' : '',
     extra
   ].filter(Boolean).join(' ')
 }
@@ -5811,12 +5641,6 @@ const calendarEmbedThemeOptions = [
   { value: 'minimal', label: 'Minimal', description: 'Superficie abierta y controles suaves.' }
 ] as const
 type CalendarEmbedWidgetTheme = typeof calendarEmbedThemeOptions[number]['value']
-const CALENDAR_EMBED_FONT_STACKS: Record<CalendarEmbedFontFamily, string> = {
-  system: '-apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
-  modern: '"Inter", "SF Pro Display", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
-  serif: 'Georgia, "Times New Roman", serif',
-  mono: '"SFMono-Regular", "Roboto Mono", "Cascadia Code", monospace'
-}
 const getCalendarEmbedFontFamily = (settings: Record<string, unknown>): CalendarEmbedFontFamily => {
   const value = getSettingString(settings, 'calendarFontFamily')
   return value === 'modern' || value === 'serif' || value === 'mono' ? value : 'system'
@@ -5839,151 +5663,9 @@ const calendarEmbedDisplayToggles: Array<{ key: string; label: string; descripti
   { key: 'calendarAllowTimezoneSelection', label: 'Cambio de zona horaria', description: 'Permite a la persona cambiar su zona horaria.' }
 ]
 
-const calendarEmbedLayoutOptions = [
-  { value: 'classic', label: 'Clásico', description: 'Info, calendario y horarios en columnas.' },
-  { value: 'compact', label: 'Compacto', description: 'Info arriba; fecha y horarios juntos.' },
-  { value: 'stacked', label: 'Vertical', description: 'Todo fluye hacia abajo sin columnas.' }
-] as const
-
-type CalendarEmbedLayout = typeof calendarEmbedLayoutOptions[number]['value']
-
-const calendarEmbedLayoutRecommendedHeights: Record<CalendarEmbedLayout, number> = {
-  classic: CALENDAR_EMBED_DEFAULT_HEIGHT,
-  compact: 720,
-  stacked: 980
-}
-
 const getCalendarEmbedDesignMode = (settings: Record<string, unknown>) => (
   getSettingString(settings, 'calendarDesignMode') === 'original' ? 'original' : 'custom'
 )
-
-// El calendario del sitio usa SIEMPRE el layout clásico: ya no exponemos el
-// selector de layout, así que ignoramos cualquier valor guardado (compact/stacked).
-const getCalendarEmbedLayout = (_settings: Record<string, unknown>): CalendarEmbedLayout => 'classic'
-
-const getCalendarEmbedLayoutMinHeight = (settings: Record<string, unknown>) => (
-  calendarEmbedLayoutRecommendedHeights[getCalendarEmbedLayout(settings)]
-)
-
-type CalendarPreviewStyle = React.CSSProperties & Record<string, string | number>
-
-const calendarPreviewWeekdays = ['DOM', 'LUN', 'MAR', 'MIE', 'JUE', 'VIE', 'SAB']
-const calendarPreviewFallbackSlots = [9 * 60, 10 * 60, 11 * 60, 12 * 60, 13 * 60, 14 * 60]
-
-const formatCalendarPreviewTime = (totalMinutes: number) => {
-  const normalized = ((Math.round(totalMinutes) % 1440) + 1440) % 1440
-  const hour24 = Math.floor(normalized / 60)
-  const minute = normalized % 60
-  const hour12 = ((hour24 + 11) % 12) + 1
-  return `${String(hour12).padStart(2, '0')}:${String(minute).padStart(2, '0')} ${hour24 < 12 ? 'a.m.' : 'p.m.'}`
-}
-
-const getCalendarPreviewOpenWeekdays = (calendar?: CalendarType) => {
-  const configured = (calendar?.openHours || [])
-    .flatMap(item => Array.isArray(item.daysOfTheWeek) ? item.daysOfTheWeek : [])
-    .map(day => Number(day))
-    .filter(day => Number.isFinite(day))
-
-  if (!configured.length) return new Set([1, 2, 3, 4, 5])
-  return new Set(configured.map(day => ((Math.round(day) % 7) + 7) % 7))
-}
-
-const getCalendarPreviewSlots = (calendar?: CalendarType) => {
-  const firstRange = (calendar?.openHours || [])
-    .flatMap(item => Array.isArray(item.hours) ? item.hours : [])
-    .find(range => {
-      const start = Number(range?.openHour) * 60 + Number(range?.openMinute || 0)
-      const end = Number(range?.closeHour) * 60 + Number(range?.closeMinute || 0)
-      return Number.isFinite(start) && Number.isFinite(end) && end > start
-    })
-
-  const interval = Math.max(15, Math.min(180, Number(calendar?.slotInterval || calendar?.slotDuration || 60) || 60))
-  const start = firstRange
-    ? Number(firstRange.openHour) * 60 + Number(firstRange.openMinute || 0)
-    : calendarPreviewFallbackSlots[0]
-  const end = firstRange
-    ? Number(firstRange.closeHour) * 60 + Number(firstRange.closeMinute || 0)
-    : start + interval * calendarPreviewFallbackSlots.length
-  const slots: number[] = []
-
-  for (let cursor = start; cursor < end && slots.length < 6; cursor += interval) {
-    slots.push(cursor)
-  }
-
-  return (slots.length >= 3 ? slots : calendarPreviewFallbackSlots).slice(0, 6).map(formatCalendarPreviewTime)
-}
-
-const getCalendarPreviewMonth = (calendar?: CalendarType) => {
-  const businessTimezone = getStoredBusinessTimezone()
-  const businessToday = todayDateOnlyInTimezone(businessTimezone)
-  const today = dateOnlyToLocalDate(businessToday) || new Date()
-  const year = today.getFullYear()
-  const month = today.getMonth()
-  const firstWeekday = new Date(year, month, 1).getDay()
-  const daysInMonth = new Date(year, month + 1, 0).getDate()
-  const openWeekdays = getCalendarPreviewOpenWeekdays(calendar)
-  const monthLabel = formatInTimezone(businessToday, businessTimezone, { month: 'long', year: 'numeric' })
-  const todayStart = new Date(year, month, today.getDate()).getTime()
-  const days: Array<{ key: string; label: string; muted: boolean; available: boolean; today: boolean }> = []
-
-  for (let index = 0; index < firstWeekday; index += 1) {
-    days.push({ key: `empty-start-${index}`, label: '', muted: true, available: false, today: false })
-  }
-
-  for (let day = 1; day <= daysInMonth; day += 1) {
-    const date = new Date(year, month, day)
-    const dateStart = date.getTime()
-    days.push({
-      key: `day-${day}`,
-      label: String(day),
-      muted: dateStart < todayStart,
-      available: dateStart >= todayStart && openWeekdays.has(date.getDay()),
-      today: dateStart === todayStart
-    })
-  }
-
-  while (days.length % 7 !== 0 || days.length < 35) {
-    days.push({ key: `empty-end-${days.length}`, label: '', muted: true, available: false, today: false })
-  }
-
-  return { monthLabel, days }
-}
-
-const getCalendarPreviewStyle = (
-  settings: Record<string, unknown>,
-  site?: PublicSite,
-  calendar?: CalendarType
-): CalendarPreviewStyle => {
-  const siteIsDark = site ? isSiteDark(site) : false
-  const fallbackAccent = site ? defaultAccentForSite(site) : '#2563eb'
-  const defaultAccent = getSettingHex({ value: calendar?.eventColor || fallbackAccent }, 'value', fallbackAccent)
-  const defaultText = site ? paintFallbackColor(getPageTextPaint(site), siteIsDark ? '#ffffff' : '#111827') : '#111827'
-  const defaultMuted = siteIsDark ? 'rgba(255, 255, 255, 0.72)' : '#6b7280'
-  const defaultLine = siteIsDark ? 'rgba(255, 255, 255, 0.22)' : '#e5e7eb'
-  const designMode = getCalendarEmbedDesignMode(settings)
-  const style: CalendarPreviewStyle = {
-    '--rstk-calendar-preview-accent': defaultAccent,
-    '--rstk-calendar-preview-text': defaultText,
-    '--rstk-calendar-preview-muted': defaultMuted,
-    '--rstk-calendar-preview-line': defaultLine,
-    '--rstk-calendar-preview-control-bg': 'transparent',
-    '--rstk-calendar-preview-slot-bg': 'transparent',
-    '--rstk-calendar-preview-slot-text': defaultAccent,
-    '--rstk-calendar-preview-slot-radius': `${getSettingNumber(settings, 'calendarSlotRadius', 8, 0, 32)}px`
-  }
-
-  if (designMode === 'custom') {
-    style['--rstk-calendar-preview-accent'] = getSettingHex(settings, 'calendarAccentColor', defaultAccent)
-    style['--rstk-calendar-preview-text'] = getSettingHex(settings, 'calendarTextColor', defaultText)
-    style['--rstk-calendar-preview-muted'] = getSettingHex(settings, 'calendarMutedColor', defaultMuted)
-    style['--rstk-calendar-preview-line'] = getSettingHex(settings, 'calendarLineColor', defaultLine)
-    style['--rstk-calendar-preview-control-bg'] = getSettingHex(settings, 'calendarControlBg', 'transparent')
-    style['--rstk-calendar-preview-slot-bg'] = getSettingHex(settings, 'calendarSlotBg', 'transparent')
-    style['--rstk-calendar-preview-slot-text'] = getSettingHex(settings, 'calendarSlotText', defaultAccent)
-  }
-
-  return style
-}
 
 const decodeHtmlEntities = (value: string) => value
   .replace(/&amp;/g, '&')
@@ -6167,29 +5849,11 @@ const paintToBackgroundLayer = (paint: string) => {
   return `linear-gradient(${paint}, ${paint})`
 }
 
-function extractImportedWistiaMediaId(value: string) {
-  const raw = decodeHtmlEntities(String(value || '')).trim()
-  if (!raw) return ''
+// El matcher de Wistia vive en el contrato compartido (content #9): es el MISMO
+// que usa el renderer público en resolveEmbedContent.
+const extractImportedWistiaMediaId = (value: string) => extractWistiaMediaId(value)
 
-  const patterns = [
-    /(?:media-id|data-media-id)\s*=\s*(?:"([^"]+)"|'([^']+)'|([^\s>]+))/i,
-    /(?:hashedId|mediaId)\s*[:=]\s*(?:"([^"]+)"|'([^']+)'|([a-z0-9]+))/i,
-    /wistia_async_([a-z0-9]+)/i,
-    /fast\.wistia\.(?:com|net)\/embed\/([a-z0-9]+)\.js/i,
-    /(?:fast\.)?wistia\.(?:com|net)\/embed\/iframe\/([a-z0-9]+)/i,
-    /(?:fast\.)?wistia\.(?:com|net)\/embed\/medias\/([a-z0-9]+)\/swatch/i,
-    /wistia\.com\/medias\/([a-z0-9]+)/i
-  ]
-
-  for (const pattern of patterns) {
-    const match = raw.match(pattern)
-    const mediaId = String(match?.[1] || match?.[2] || match?.[3] || '').trim()
-    if (/^[a-z0-9]+$/i.test(mediaId)) return mediaId
-  }
-  return ''
-}
-
-const getWistiaEmbedUrl = (mediaId: string) => `https://fast.wistia.net/embed/iframe/${encodeURIComponent(mediaId)}`
+const getWistiaEmbedUrl = (mediaId: string) => wistiaEmbedIframeUrl(mediaId)
 
 const getIframeSrcFromHtml = (html: string) => {
   if (!/<iframe\b/i.test(html) || typeof DOMParser === 'undefined') return ''
@@ -6324,14 +5988,17 @@ const resolveEmbedPreview = (rawValue: string): EmbedPreviewConfig => {
   const raw = rawValue.trim()
   if (!raw || raw.toLowerCase() === 'embed') return { kind: 'empty' }
 
+  // Paridad content #2: los embeds por URL NO llevan altura inline propia — la
+  // altura configurada fluye por --rstk-embed-height (o el default 360px de la
+  // hoja compartida), igual que en el publicado.
   const wistiaId = extractImportedWistiaMediaId(raw)
   if (wistiaId) {
-    return { kind: 'url', src: getWistiaEmbedUrl(wistiaId), title: 'Video personalizado', allow: DEFAULT_EMBED_ALLOW, height: EMBED_DEFAULT_HEIGHT }
+    return { kind: 'url', src: getWistiaEmbedUrl(wistiaId), title: 'Video personalizado', allow: DEFAULT_EMBED_ALLOW }
   }
 
   const directUrl = safeEmbedUrl(raw)
   if (directUrl) {
-    return { kind: 'url', src: directUrl, title: 'Embed', height: EMBED_DEFAULT_HEIGHT }
+    return { kind: 'url', src: directUrl, title: 'Embed' }
   }
 
   if (/<iframe\b/i.test(raw) && typeof DOMParser !== 'undefined') {
@@ -8657,6 +8324,9 @@ export const Sites: React.FC = () => {
     isFormSite(editorSite) &&
     (
       canvasBlocks.some(block => fieldBlockTypes.has(block.blockType)) ||
+      // Paridad form-fields #9: una página con solo un bloque de pago habilitado
+      // también publica el botón (hasFormActions del backend).
+      canvasHasEnabledPaymentBlock(canvasBlocks) ||
       (activePage && isStandardForm(editorSite) && !isFormFinalPage(activePage))
     )
   )
@@ -13652,7 +13322,7 @@ export const Sites: React.FC = () => {
 	                    <DragOverlay dropAnimation={{ duration: 340, easing: 'cubic-bezier(0.2, 0.8, 0.2, 1)' }}>
                       {activeDragBlock ? (
                         <div className={`rstkCanvas ${canvasTheme!.bodyClass}`} style={{ ...canvasTheme!.vars, width: 460, ['--rstk-scale' as string]: 1 } as React.CSSProperties}>
-                          <div className={getBlockStyleClassName(activeDragBlock)} style={getBlockCanvasStyle(activeDragBlock, { site: editorSite, parentBlock: getParentSectionBlock(activeDragBlock, canvasBlocks) })}>
+                          <div className={getBlockStyleClassName(activeDragBlock, 'rstkStaticSel')} style={getBlockCanvasStyle(activeDragBlock, { site: editorSite, parentBlock: getParentSectionBlock(activeDragBlock, canvasBlocks) })}>
                             <CanvasPreviewBlock block={activeDragBlock} site={editorSite} forms={forms} calendars={calendars} />
                           </div>
                         </div>
@@ -22928,7 +22598,7 @@ const LibrarySitePreview: React.FC<{
   } as React.CSSProperties
 
   const renderBlockPreview = (block: SiteBlock) => (
-    <div key={block.id} className={getBlockStyleClassName(block)} style={getBlockCanvasStyle(block, { site, parentBlock: getParentSectionBlock(block, blocks) })}>
+    <div key={block.id} className={getBlockStyleClassName(block, 'rstkStaticSel')} style={getBlockCanvasStyle(block, { site, parentBlock: getParentSectionBlock(block, blocks) })}>
       <BlockBackgroundVideo block={block} />
       <CanvasPreviewBlock
         block={block}
@@ -22968,7 +22638,7 @@ const LibrarySitePreview: React.FC<{
     return (
       <section
         key={section.id}
-        className={getBlockStyleClassName(section, 'rstk-section-lane')}
+        className={getBlockStyleClassName(section, 'rstk-section-lane', 'always')}
         style={getBlockCanvasStyle(section, { site })}
       >
         <BlockBackgroundVideo block={section} />
@@ -26057,30 +25727,51 @@ const BlockBackgroundVideo: React.FC<{ block: SiteBlock }> = ({ block }) => {
   return <video className="rstk-block-bg-video" src={src} autoPlay muted loop playsInline aria-hidden="true" />
 }
 
-const CanvasAvatar: React.FC<{ name: string; avatar?: string }> = ({ name, avatar }) => (
-  <span className={styles.chromeAvatar}>
-    {avatar ? <img src={avatar} alt={name} /> : (name.trim()[0] || 'R').toUpperCase()}
-  </span>
-)
-
-const SocialPlatformBadge: React.FC<{ platform: SocialPlatform }> = ({ platform }) => {
-  const platformClass = platform === 'facebook'
-    ? styles.socialPlatformFacebook
-    : platform === 'instagram'
-      ? styles.socialPlatformInstagram
-      : platform === 'threads'
-        ? styles.socialPlatformThreads
-        : styles.socialPlatformTiktok
-
-  return (
-    <span className={`${styles.socialPlatformBadge} ${platformClass}`} aria-hidden="true">
-      {platform === 'instagram' && <Instagram size={16} strokeWidth={2.2} />}
-      {platform === 'tiktok' && <Music2 size={16} strokeWidth={2.2} />}
-      {platform === 'threads' && <span className={styles.socialPlatformThreadsGlyph}>@</span>}
-    </span>
-  )
+// Espejo exacto de normalizeBoolean(...) === 1 del backend para brandVerified
+// (content #7): 'false'/'0' en string también apagan la insignia.
+const socialVerifiedFlag = (value: unknown): boolean => {
+  if (value === undefined) return true
+  if (value === true || value === 1) return true
+  if (typeof value === 'string') return ['1', 'true', 'yes', 'on', 'enabled'].includes(value.trim().toLowerCase())
+  return false
 }
 
+// Iconos del chrome social: MISMOS SVG que publica el backend (RSTK_ICONS).
+const SocialPlatformGlyph: React.FC<{ platform: SocialPlatform }> = ({ platform }) => {
+  if (platform === 'instagram') {
+    return (
+      <svg viewBox="0 0 24 24" width="24" height="24" aria-hidden="true">
+        <rect x="3" y="3" width="18" height="18" rx="5.4" fill="none" stroke="currentColor" strokeWidth="1.8" />
+        <circle cx="12" cy="12" r="4.2" fill="none" stroke="currentColor" strokeWidth="1.8" />
+        <circle cx="17.6" cy="6.4" r="1.25" fill="currentColor" />
+      </svg>
+    )
+  }
+  if (platform === 'tiktok') {
+    return (
+      <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true">
+        <path fill="currentColor" d="M9 17.2a3.1 3.1 0 1 1-2-2.9V5l9-2v9.2a3.1 3.1 0 1 1-2-2.9V6.6L9 7.8z" />
+      </svg>
+    )
+  }
+  if (platform === 'threads') return <>@</>
+  return null
+}
+
+const SocialVerifiedIcon: React.FC = () => (
+  <svg className="rstk-verified" viewBox="0 0 24 24" width="15" height="15" aria-hidden="true">
+    <path fill="currentColor" d="M12 2.2l2.3 1.7 2.85.05.95 2.7 2.25 1.8-.95 2.75.95 2.75-2.25 1.8-.95 2.7L14.3 18.6 12 20.3l-2.3-1.7-2.85-.05-.95-2.7-2.25-1.8.95-2.75-.95-2.75 2.25-1.8.95-2.7L9.7 3.9z" />
+    <path d="M8.4 12.3l2.4 2.4 4.8-4.9" fill="none" stroke="#fff" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+  </svg>
+)
+
+const socialPlatformLabel = (platform: SocialPlatform) =>
+  platform === 'facebook' ? 'Facebook' : platform === 'instagram' ? 'Instagram' : platform === 'threads' ? 'Threads' : 'TikTok'
+
+// Chrome de perfil social del canvas (content #7 / stylesheet #11): mismo
+// markup y clases rstk-* que publica renderSocialProfileBlock /
+// renderEmbeddedFormSourceChrome; el estilo viene de la hoja compartida
+// inyectada (nada de copias en Sites.module.css).
 const CanvasChrome: React.FC<{
   platform: SocialPlatform
   site: PublicSite
@@ -26089,43 +25780,39 @@ const CanvasChrome: React.FC<{
   profileBlock?: boolean
   onPatchTheme: (patch: Partial<SiteTheme>) => void
   onSave: () => void
-}> = ({ platform, site, embedded = false, sourceEmbedded = false, profileBlock = false }) => {
+}> = ({ platform, site, sourceEmbedded = false }) => {
   const theme = site.theme || {}
   const name = theme.brandName || site.title || site.name || 'Tu marca'
   const subtitle = theme.brandSubtitle || (platform === 'instagram' ? 'Publicación pagada' : 'Patrocinado')
   const followers = String(theme.followers || '')
   const secondary = followers ? `${followers} seguidores` : subtitle
-  const platformClass = platform === 'facebook'
-    ? styles.chromeFacebook
-    : platform === 'instagram'
-      ? styles.chromeInstagram
-      : platform === 'threads'
-        ? styles.chromeThreads
-        : styles.chromeTiktok
+  const avatarUrl = safeAbsoluteUrl(theme.brandAvatar)
+  const initial = (String(name).trim()[0] || 'R').toUpperCase()
+  const verified = socialVerifiedFlag(theme.brandVerified)
   const chromeClassName = [
-    styles.canvasChrome,
-    embedded ? styles.canvasChromeEmbedded : '',
-    sourceEmbedded ? styles.canvasChromeSourceForm : '',
-    profileBlock ? styles.canvasChromeProfileBlock : '',
-    platformClass
+    'rstk-chrome rstk-social-profile rstk-social-profile-block',
+    sourceEmbedded ? 'rstk-embedded-form-source-chrome' : '',
+    `rstk-social-profile-${platform}`
   ].filter(Boolean).join(' ')
 
   return (
-    <div className={chromeClassName} aria-label={`Perfil de ${platform}`}>
-      <div className={styles.socialImageWrap}>
-        <CanvasAvatar name={name} avatar={theme.brandAvatar} />
-        <SocialPlatformBadge platform={platform} />
+    <section className={chromeClassName} aria-label={`Perfil de ${socialPlatformLabel(platform)}`}>
+      <div className="rstk-social-image">
+        <span className="rstk-avatar">
+          {avatarUrl ? <img src={avatarUrl} alt={name} /> : initial}
+        </span>
+        <span className={`rstk-social-platform rstk-social-platform-${platform}`} aria-hidden="true">
+          <SocialPlatformGlyph platform={platform} />
+        </span>
       </div>
-      <div className={styles.chromeMeta}>
-        <div className={styles.chromeName}>
+      <div className="rstk-social-details">
+        <div className="rstk-social-name">
           {name}
-          {theme.brandVerified !== false && (
-            <svg viewBox="0 0 24 24" width="14" height="14" className={styles.chromeVerified} aria-hidden="true" focusable="false"><path fill="#1877f2" d="M12 2.2l2.3 1.7 2.85.05.95 2.7 2.25 1.8-.95 2.75.95 2.75-2.25 1.8-.95 2.7L14.3 18.6 12 20.3l-2.3-1.7-2.85-.05-.95-2.7L3.95 14.3l.95-2.75-.95-2.75 2.25-1.8.95-2.7L9.7 3.9z"/><path d="M8.4 12.3l2.4 2.4 4.8-4.9" fill="none" stroke="#fff" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/></svg>
-          )}
+          {verified && <SocialVerifiedIcon />}
         </div>
-        <div className={styles.chromeSub}>{secondary}</div>
+        <div className="rstk-social-followers">{secondary}</div>
       </div>
-    </div>
+    </section>
   )
 }
 
@@ -26135,7 +25822,15 @@ const CanvasChrome: React.FC<{
 // se vean idénticos. Espejo del backend renderSocialProfileBlock.
 const buildSocialProfileBlockSite = (block: SiteBlock, fallbackSite: PublicSite | null): { platform: SocialPlatform; site: PublicSite } => {
   const settings = block.settings || {}
-  const platform = normalizeSocialPlatform(getSettingString(settings, 'platform'))
+  // Paridad content #7: misma resolución que renderSocialProfileBlock —
+  // platform || socialSourcePlatform, con el template social del sitio como
+  // respaldo; avatar sanitizado; verified con coerción del backend.
+  const siteTemplateId = resolveTemplateId(fallbackSite)
+  const fallbackPlatform: SocialPlatform = isSocialTemplate(siteTemplateId) ? siteTemplateId as SocialPlatform : 'facebook'
+  const platform = normalizeSocialPlatform(
+    getSettingString(settings, 'platform') || getSettingString(settings, 'socialSourcePlatform'),
+    fallbackPlatform
+  )
   const fallbackTheme = fallbackSite?.theme || {}
   const brandName = getSettingString(settings, 'brandName') || fallbackTheme.brandName || fallbackSite?.title || fallbackSite?.name || 'Tu marca'
   const site = {
@@ -26148,10 +25843,12 @@ const buildSocialProfileBlockSite = (block: SiteBlock, fallbackSite: PublicSite 
       template: platform,
       brandName,
       brandSubtitle: getSettingString(settings, 'brandSubtitle') || fallbackTheme.brandSubtitle || (platform === 'instagram' ? 'Publicación pagada' : 'Patrocinado'),
-      brandAvatar: getSettingString(settings, 'brandAvatar') || fallbackTheme.brandAvatar || '',
+      brandAvatar: safeAbsoluteUrl(getSettingString(settings, 'brandAvatar')) || safeAbsoluteUrl(fallbackTheme.brandAvatar) || '',
       followers: getSettingString(settings, 'followers') || fallbackTheme.followers || '',
       socialProfileScale: getSettingNumber(settings, 'socialProfileScale', DEFAULT_SOCIAL_PROFILE_SCALE, SOCIAL_PROFILE_SCALE_MIN, SOCIAL_PROFILE_SCALE_MAX),
-      brandVerified: settings.brandVerified === undefined ? fallbackTheme.brandVerified : settings.brandVerified !== false
+      brandVerified: settings.brandVerified === undefined
+        ? fallbackTheme.brandVerified
+        : socialVerifiedFlag(settings.brandVerified)
     }
   } as PublicSite
   return { platform, site }
@@ -28623,6 +28320,10 @@ interface InlineEditableProps {
   className?: string
   value: string
   placeholder?: string
+  /** Paridad content #4: el publicado imprime este fallback como contenido real
+      (label del bloque, 'Continuar', 'Tu marca'...), así que el canvas lo pinta
+      a opacidad completa en vez del placeholder tenue. */
+  placeholderAsContent?: boolean
   disabled?: boolean
   multiline?: boolean
   onChange: (value: string) => void
@@ -28630,7 +28331,7 @@ interface InlineEditableProps {
 }
 
 const InlineEditable: React.FC<InlineEditableProps> = ({
-  as = 'div', className, value, placeholder, disabled, multiline, onChange, onCommit
+  as = 'div', className, value, placeholder, placeholderAsContent, disabled, multiline, onChange, onCommit
 }) => {
   const ref = useRef<HTMLElement>(null)
   const editingRef = useRef(false)
@@ -28661,6 +28362,7 @@ const InlineEditable: React.FC<InlineEditableProps> = ({
       data-rstk-edit=""
       data-empty={hasInlineEditableText(value) ? 'false' : 'true'}
       data-placeholder={placeholder || ''}
+      data-placeholder-live={placeholderAsContent ? 'true' : undefined}
       onFocus={(event: React.FocusEvent<HTMLElement>) => {
         editingRef.current = true
         syncInlineEditableEmptyState(event.currentTarget, readInlineEditableText(event.currentTarget, Boolean(multiline), placeholder, value))
@@ -29062,40 +28764,36 @@ const PopupCanvasSurface: React.FC<PopupCanvasSurfaceProps> = ({
   const closeText = getThemeString(theme, 'popupCloseText') || 'Cerrar'
   const showCloseIcon = closeDisplay !== 'text' && closeIcon
   const showCloseText = closeDisplay !== 'icon'
-  const modalStyle = {
-    background: getThemePaint(theme, 'popupBackgroundColor', isSiteDark(site) ? '#0f172a' : '#ffffff'),
-    color: getThemePaint(theme, 'popupTextColor', isSiteDark(site) ? '#f8fafc' : '#111827'),
-    borderColor: getThemePaint(theme, 'popupBorderColor', 'rgba(148, 163, 184, 0.32)'),
-    borderWidth: getThemeNumber(theme, 'popupBorderWidth', 1, 0, 12),
-    borderRadius: getThemeNumber(theme, 'popupRadius', 18, 0, 60),
-    padding: getThemeNumber(theme, 'popupPadding', 24, 0, 96),
-    maxWidth: getThemeNumber(theme, 'popupMaxWidth', 560, 320, 960)
-  }
+  // Paridad embeds #12: MISMO DOM (.rstk-site-popup*) y MISMAS variables
+  // --rstk-popup-* del contrato compartido que el publicado; el shell lo pinta
+  // la hoja RSTK_POPUP_CSS inyectada (canvasSiteCss), no CSS copiado a mano.
+  // siteIsDark del contrato (igual que renderSitePopup en vivo).
+  const popupVars = useMemo(() => ({
+    ...buildPopupSurfaceVars(
+      (theme || {}) as Record<string, unknown>,
+      computeSitePageRenderState(site as unknown as SiteLike).siteIsDark
+    )
+  }) as React.CSSProperties, [site, theme])
+  // Paridad embeds #13: sin bloques, el contenido legacy del theme se pinta con
+  // el mismo DOM que el publicado (h2 / p / .rstk-site-popup__action).
+  const legacyTitle = getThemeString(theme, 'popupTitle')
+  const legacyBody = getThemeString(theme, 'popupBody')
+  const legacyButtonText = getThemeString(theme, 'popupButtonText')
+  const legacyButtonUrl = safeAbsoluteUrl(theme.popupButtonUrl)
+  const hasLegacyContent = Boolean(legacyTitle || legacyBody || legacyButtonText || legacyButtonUrl)
 
   return (
     <div
-      className="rstkPopupEditorLayer"
+      className="rstk-site-popup rstkPopupEditorLayer"
+      style={popupVars}
       onClick={(event) => {
         event.stopPropagation()
         onSelectPopup()
       }}
     >
-      <div
-        className="rstkPopupEditorBackdrop"
-        style={{ background: getThemePaint(theme, 'popupBackdropColor', 'rgba(2, 6, 23, 0.62)') }}
-      />
       <section
-        className={`rstkPopupEditorModal ${selected ? 'rstkPopupEditorModalSelected' : ''}`}
+        className={`rstk-site-popup__box rstkPopupEditorModal ${selected ? 'rstkPopupEditorModalSelected' : ''}`}
         data-rstk-popup-surface="true"
-        style={{
-          background: modalStyle.background,
-          color: modalStyle.color,
-          borderColor: modalStyle.borderColor,
-          borderWidth: modalStyle.borderWidth,
-          borderRadius: modalStyle.borderRadius,
-          padding: modalStyle.padding,
-          width: `min(${modalStyle.maxWidth}px, calc(100% - 48px))`
-        }}
         role="dialog"
         aria-modal="true"
         aria-label="Pop up editable"
@@ -29106,7 +28804,7 @@ const PopupCanvasSurface: React.FC<PopupCanvasSurfaceProps> = ({
       >
         <button
           type="button"
-          className="rstkPopupEditorClose"
+          className="rstk-site-popup__close rstkPopupEditorClose"
           onClick={(event) => {
             event.stopPropagation()
             onClosePopup()
@@ -29116,10 +28814,35 @@ const PopupCanvasSurface: React.FC<PopupCanvasSurfaceProps> = ({
           {showCloseIcon && <span aria-hidden="true">{closeIcon}</span>}
           {showCloseText && <strong>{closeText}</strong>}
         </button>
-        <div className="rstkPopupEditorContent">
+        <div className="rstk-site-popup__content rstkPopupEditorContent">
           {blocks.length === 0 ? (
             palettePreviewBlock && isTopLevelLandingBlockType(palettePreviewBlock.blockType) ? (
               <PaletteInsertPreview block={palettePreviewBlock} site={site} forms={forms} calendars={calendars} />
+            ) : hasLegacyContent ? (
+              <>
+                {legacyTitle ? <h2>{legacyTitle}</h2> : null}
+                {legacyBody ? (
+                  <p>
+                    {legacyBody.split('\n').map((line, index) => (
+                      <React.Fragment key={index}>
+                        {index > 0 && <br />}
+                        {line}
+                      </React.Fragment>
+                    ))}
+                  </p>
+                ) : null}
+                {legacyButtonText || legacyButtonUrl ? (
+                  legacyButtonUrl ? (
+                    <a className="rstk-site-popup__action" href={legacyButtonUrl} onClick={(event) => event.preventDefault()}>
+                      {legacyButtonText || 'Abrir'}
+                    </a>
+                  ) : (
+                    <button type="button" className="rstk-site-popup__action">
+                      {legacyButtonText || 'Cerrar'}
+                    </button>
+                  )
+                ) : null}
+              </>
             ) : (
               <div className="rstkDropEmpty rstkPopupDropEmpty">
                 <Plus size={22} />
@@ -29538,7 +29261,12 @@ const SortableLandingSection: React.FC<LandingSectionRenderProps> = ({
     animateLayoutChanges: sortableAnimateLayoutChanges,
     transition: sortableTransition
   })
-  const hasHeading = Boolean(section.content || getSettingString(settings, 'subtitle'))
+  // Paridad content #14: el publicado pinta cada elemento del heading SOLO si
+  // tiene contenido propio. ALLOWED-DIVERGENCE: con la franja seleccionada, el
+  // canvas enseña también el que falta (editable) para poder escribirlo.
+  const hasHeadingTitle = Boolean(section.content)
+  const hasHeadingSubtitle = Boolean(getSettingString(settings, 'subtitle'))
+  const hasHeading = hasHeadingTitle || hasHeadingSubtitle || selected
 
   return (
 	    <section
@@ -29548,7 +29276,7 @@ const SortableLandingSection: React.FC<LandingSectionRenderProps> = ({
 	      data-rstk-page-block="true"
 	      data-rstk-section-index={blockIndexById.get(section.id) ?? 0}
       data-rstk-section-id={section.id}
-      className={getBlockStyleClassName(section, `rstk-section-lane rstkSel ${selected ? 'rstkSelActive' : ''} ${toolbarPositionClass} ${isDragging ? 'rstkSelDragging' : ''} ${videoActionHoverTargetId === section.id ? 'rstkVideoActionHover' : ''} ${videoActionHiddenNote ? 'rstkVideoActionGhost' : ''}`)}
+      className={getBlockStyleClassName(section, `rstk-section-lane rstkSel ${selected ? 'rstkSelActive' : ''} ${toolbarPositionClass} ${isDragging ? 'rstkSelDragging' : ''} ${videoActionHoverTargetId === section.id ? 'rstkVideoActionHover' : ''} ${videoActionHiddenNote ? 'rstkVideoActionGhost' : ''}`, 'always')}
       style={{
         transform: CSS.Transform.toString(transform),
 	        transition: transition || 'transform 520ms cubic-bezier(0.2, 0.8, 0.2, 1)',
@@ -29609,8 +29337,12 @@ const SortableLandingSection: React.FC<LandingSectionRenderProps> = ({
       <div className="rstk-section-inner">
         {hasHeading && (
           <div className="rstk-section-heading">
-            <InlineEditable as="h2" value={section.content} placeholder="Título opcional" onChange={(value) => onPatchBlock(section.id, { content: value })} onCommit={() => onSaveBlock(section.id)} />
-            <InlineEditable as="p" multiline value={getSettingString(settings, 'subtitle')} placeholder="Texto breve opcional" onChange={(value) => onPatchBlockSettings(section, { subtitle: value })} onCommit={() => onSaveBlock(section.id)} />
+            {(hasHeadingTitle || selected) && (
+              <InlineEditable as="h2" value={section.content} placeholder="Título opcional" onChange={(value) => onPatchBlock(section.id, { content: value })} onCommit={() => onSaveBlock(section.id)} />
+            )}
+            {(hasHeadingSubtitle || selected) && (
+              <InlineEditable as="p" multiline value={getSettingString(settings, 'subtitle')} placeholder="Texto breve opcional" onChange={(value) => onPatchBlockSettings(section, { subtitle: value })} onCommit={() => onSaveBlock(section.id)} />
+            )}
           </div>
         )}
         <LandingSectionColumns
@@ -29659,7 +29391,7 @@ const PaletteInsertPreview: React.FC<{
   forms: PublicSite[]
   calendars: CalendarType[]
 }> = ({ block, site, forms, calendars }) => (
-  <div className={getBlockStyleClassName(block, 'rstkPalettePreview')} style={getBlockCanvasStyle(block, { site })}>
+  <div className={getBlockStyleClassName(block, 'rstkPalettePreview', 'always')} style={getBlockCanvasStyle(block, { site })}>
     <CanvasPreviewBlock block={block} site={site} forms={forms} calendars={calendars} />
   </div>
 )
@@ -30927,33 +30659,52 @@ const VideoFormGateCanvasPreview: React.FC<{
   calendars: CalendarType[]
   editor?: EmbeddedFormCanvasEditorBridge | null
 }> = ({ site, settings, blocks, forms, calendars, editor }) => {
-  const videoGateTheme = useMemo(() => buildVideoFormGateSourceTheme(site, settings), [site, settings])
-  const videoGateSite = useMemo(() => ({
-    ...site,
-    siteType: 'standard_form' as SiteType,
-    theme: videoGateTheme
-  }), [site, videoGateTheme])
-  const canvasTheme = useMemo(() => buildCanvasTheme(videoGateSite, 'desktop'), [videoGateSite])
-  const canvasVars = canvasTheme.vars as React.CSSProperties & Record<string, string | number>
+  // Paridad embeds #14: el gate hereda acento/superficies/radios/fuentes de la
+  // página ANFITRIONA (el preview vive dentro del canvas del sitio) y solo
+  // aplica inline las variables PROXY del contrato compartido — exactamente lo
+  // que emite renderVideoFormGateMarkup en vivo (ink/muted/(block-bg) + form/
+  // submit). Misma cadena de theme del gate: DEFAULT_THEME + preset + theme
+  // embebido guardado.
+  const gateTheme = useMemo(() => ({
+    ...SHARED_DEFAULT_THEME,
+    ...getVideoFormGateThemePreset(getVideoFormGateThemeMode(settings)),
+    ...getVideoFormGateEmbeddedTheme(settings)
+  }) as Record<string, unknown>, [settings])
+  const proxyVars = useMemo(() => buildEmbeddedFormProxyVars(
+    gateTheme,
+    buildFormStyleContext(computeSitePageRenderState(site as unknown as SiteLike))
+  ), [gateTheme, site])
+  // Mismo copy que el shell estático publicado: título con default del vivo,
+  // descripción SOLO si existe, submit con la cadena settings → theme → default.
   const title = getSettingString(settings, 'videoFormGateTitle') || VIDEO_FORM_GATE_DEFAULT_TITLE
-  const description = getSettingString(settings, 'videoFormGateDescription') || VIDEO_FORM_GATE_DEFAULT_DESCRIPTION
-  const submitText = getSettingString(settings, 'videoFormGateSubmitText') || VIDEO_FORM_GATE_DEFAULT_SUBMIT_TEXT
+  const description = getSettingString(settings, 'videoFormGateDescription')
+  const submitText = getSettingString(settings, 'videoFormGateSubmitText') ||
+    getThemeString(getVideoFormGateEmbeddedTheme(settings), 'submitText') ||
+    VIDEO_FORM_GATE_DEFAULT_SUBMIT_TEXT
   const videoBackground = getVideoFormGateVideoBackground(settings)
-  const panelBackground = getThemePaint(
-    videoGateTheme,
-    'backgroundColor',
-    String(canvasVars['--rstk-page-bg'] || canvasVars['--rstk-surface'] || 'transparent')
-  )
+  // --rstk-video-form-panel-bg SOLO con backgroundColor no vacío en la cadena
+  // del gate (espejo del emisor del publicado); si no, la hoja compartida cae a
+  // var(--rstk-block-bg, var(--rstk-surface)) del anfitrión.
+  const panelBackground = normalizeCssPaint(String(gateTheme.backgroundColor ?? ''), '')
+  const gateClasses = [
+    'rstk-video-form-gate',
+    `rstk-video-form-gate-anim-${getVideoFormGateAnimation(settings)}`,
+    `rstk-choice-${normalizeSharedFormChoiceStyle(gateTheme.formChoiceStyle)}`,
+    `rstk-select-${normalizeSharedFormSelectStyle(gateTheme.formSelectStyle)}`,
+    `rstk-input-${normalizeSharedFormInputStyle(gateTheme.formInputStyle)}`,
+    // Modificador de chrome del editor: inerte, z-index bajo overlays, sin
+    // animación de entrada (ALLOWED-DIVERGENCE, ver sitesCanvas.css).
+    'rstk-video-form-gate-editor',
+    editor ? 'rstk-video-form-gate-editing' : ''
+  ].filter(Boolean).join(' ')
 
   return (
     <div
-      className={`rstk-video-form-gate-preview ${editor ? 'rstk-video-form-gate-editing' : ''} rstkCanvas ${canvasTheme.bodyClass}`}
+      className={gateClasses}
       style={{
-        ...canvasVars,
-        width: '100%',
-        ['--rstk-block-bg' as string]: canvasVars['--rstk-page-bg'] || canvasVars['--rstk-surface'] || 'transparent',
-        ['--rstk-video-form-panel-bg' as string]: panelBackground,
-        ['--rstk-video-form-gate-video-bg' as string]: videoBackground
+        ...proxyVars,
+        ...(panelBackground ? { '--rstk-video-form-panel-bg': panelBackground } : {}),
+        '--rstk-video-form-gate-video-bg': videoBackground
       } as React.CSSProperties}
       aria-hidden={editor ? undefined : true}
     >
@@ -30966,10 +30717,12 @@ const VideoFormGateCanvasPreview: React.FC<{
         <div className="rstk-video-form-fields">
           <div className="rstk-video-form-field-stack">
             {editor ? (
+              // Los ítems del gate se pintan con el contexto del sitio ANFITRIÓN,
+              // igual que renderVideoFormGateItemBlock recibe el context del host.
               <EmbeddedFormCanvasFields
                 fields={blocks}
                 editor={editor}
-                site={videoGateSite}
+                site={site}
                 forms={forms}
                 calendars={calendars}
               />
@@ -30990,9 +30743,9 @@ const VideoFormGateCanvasPreview: React.FC<{
                     <p className="rstk-error" data-field-error="true" aria-live="polite" hidden>Esta respuesta es requerida.</p>
                   </section>
                 ) : (
-                  <div key={item.id} className="rstk-video-form-content">
-                    <EmbeddedFormStaticBlockPreview block={item} site={videoGateSite} forms={forms} calendars={calendars} />
-                  </div>
+                  <section key={item.id} className="rstk-video-form-content">
+                    <EmbeddedFormStaticBlockPreview block={item} site={site} forms={forms} calendars={calendars} />
+                  </section>
                 )
               ))
             ) : (
@@ -31127,7 +30880,7 @@ const VideoPlayerPreview: React.FC<{
       resetGateFit()
       return
     }
-    const gate = player.querySelector<HTMLElement>('.rstk-video-form-gate-preview')
+    const gate = player.querySelector<HTMLElement>('.rstk-video-form-gate')
     const panel = gate?.querySelector<HTMLElement>('.rstk-video-form-gate-panel') || null
     const stack = panel?.querySelector<HTMLElement>('.rstk-video-form-field-stack') || null
     if (!gate || !panel || !stack) {
@@ -31307,7 +31060,7 @@ const VideoPlayerPreview: React.FC<{
 
     scheduleMeasure()
     const player = playerRef.current
-    const gate = player?.querySelector<HTMLElement>('.rstk-video-form-gate-preview') || null
+    const gate = player?.querySelector<HTMLElement>('.rstk-video-form-gate') || null
     const panel = gate?.querySelector<HTMLElement>('.rstk-video-form-gate-panel') || null
     const stack = gate?.querySelector<HTMLElement>('.rstk-video-form-field-stack') || null
     const resizeObserver = 'ResizeObserver' in window ? new ResizeObserver(scheduleMeasure) : null
@@ -31973,121 +31726,52 @@ const BunnyStreamStoragePreview: React.FC<{
   )
 }
 
-const CalendarEmbedStaticPreview: React.FC<{
+// Paridad embeds #8/#9/#10: el canvas embebe el WIDGET REAL de reservas (el
+// mismo documento que el publicado) vía la ruta pública de preview, con los
+// MISMOS query params (appendCalendarEmbedParams, contrato compartido).
+// editor_preview=1 hace que el widget no cree citas; test=1 evita tracking.
+const CalendarEmbedLivePreview: React.FC<{
   calendarName: string
-  calendar?: CalendarType
-  site?: PublicSite
+  calendarSlug: string
   settings: Record<string, unknown>
-}> = ({ calendarName, calendar, site, settings }) => {
-  const layout = getCalendarEmbedLayout(settings)
-  const monthPreview = useMemo(() => getCalendarPreviewMonth(calendar), [calendar])
-  const slots = useMemo(() => getCalendarPreviewSlots(calendar), [calendar])
-  const baseStyle = useMemo(() => getCalendarPreviewStyle(settings, site, calendar), [settings, site, calendar])
-  const profileImage = safePublicMediaUrl(getSettingString(settings, 'calendarCoverImage') || calendar?.calendarCoverImage || '', 'image')
-  const title = calendarName || calendar?.name || 'Calendario'
-  const eventTitle = calendar?.eventTitle || 'Cita'
-  const description = calendar?.description || 'Calendario principal creado en Ristak'
-  const duration = `${Math.max(1, Number(calendar?.slotDuration) || 60)} min`
-  const confirmation = calendar?.autoConfirm === false ? 'Confirmacion manual' : 'Confirmacion automatica'
-  const initial = (title.trim()[0] || 'C').toUpperCase()
-
-  // En "Personalizar para sitio" mandan los toggles del bloque (ON por defecto);
-  // en modo original respetamos la config del calendario. Espejo del widget en vivo.
-  const designMode = getCalendarEmbedDesignMode(settings)
-  const calendarBookingDisplay = (calendar?.bookingDisplay || {}) as Record<string, unknown>
-  const showElement = (toggleKey: string, bookingKey: string) => (
-    designMode === 'custom'
-      ? getSettingBoolean(settings, toggleKey, true)
-      : calendarBookingDisplay[bookingKey] !== false
+}> = ({ calendarName, calendarSlug, settings }) => {
+  const iframeRef = useRef<HTMLIFrameElement>(null)
+  const [autoHeight, setAutoHeight] = useState<number | null>(null)
+  const src = appendCalendarEmbedParams(
+    `/api/sites/public/calendar-preview/${encodeURIComponent(calendarSlug)}?test=1`,
+    settings,
+    { preview: true }
   )
-  const showSidebar = showElement('calendarShowSidebar', 'showSidebar')
-  const showIcon = showElement('calendarShowIcon', 'showIcon')
-  const showEventTitle = showElement('calendarShowEventTitle', 'showEventTitle')
-  const showCalendarName = showElement('calendarShowCalendarName', 'showCalendarName')
-  const showDescription = showElement('calendarShowDescription', 'showDescription')
-  const showDuration = showElement('calendarShowDuration', 'showDuration')
-  const showConfirmation = showElement('calendarShowConfirmation', 'showConfirmation')
-  const fontFamilyKey = designMode === 'custom'
-    ? getCalendarEmbedFontFamily(settings)
-    : getCalendarEmbedFontFamily({ calendarFontFamily: calendarBookingDisplay.fontFamily })
-  const widgetTheme = designMode === 'custom'
-    ? getCalendarEmbedWidgetTheme(settings)
-    : getCalendarEmbedWidgetTheme({ calendarWidgetTheme: calendarBookingDisplay.widgetTheme })
-  const style = { ...baseStyle, fontFamily: CALENDAR_EMBED_FONT_STACKS[fontFamilyKey] }
+
+  // Mismo runtime de alto que el publicado: el widget postea
+  // 'ristak:calendar-embed-height' y el frame se ajusta con los mismos clamps.
+  useEffect(() => {
+    const handleCalendarHeight = (event: MessageEvent) => {
+      if (event.source !== iframeRef.current?.contentWindow) return
+      const data = event.data as { type?: string; height?: number } | null
+      if (data?.type !== 'ristak:calendar-embed-height') return
+      const nextHeight = clampNumber(Number(data.height || 0), EMBED_MIN_HEIGHT, EMBED_MAX_HEIGHT)
+      if (Number.isFinite(nextHeight)) setAutoHeight(Math.round(nextHeight))
+    }
+    window.addEventListener('message', handleCalendarHeight)
+    return () => window.removeEventListener('message', handleCalendarHeight)
+  }, [])
 
   return (
-    <section
-      className={`rstk-calendar-preview rstk-calendar-preview-${layout} rstk-calendar-preview-theme-${widgetTheme} ${showSidebar ? '' : 'rstk-calendar-preview-no-sidebar'}`}
-      data-rstk-selection-surface="true"
-      data-widget-theme={widgetTheme}
-      style={style}
-      aria-label={`Vista previa de ${title}`}
-    >
-      <div className="rstk-calendar-preview-shell">
-        {showSidebar && (
-          <aside className="rstk-calendar-preview-intro">
-            {showIcon && (
-              <span className="rstk-calendar-preview-avatar" aria-hidden="true">
-                {profileImage ? <img src={profileImage} alt="" loading="lazy" /> : initial}
-              </span>
-            )}
-            {showEventTitle && <span className="rstk-calendar-preview-kicker">{eventTitle}</span>}
-            {showCalendarName && <strong className="rstk-calendar-preview-title">{title}</strong>}
-            {showDescription && <span className="rstk-calendar-preview-description">{description}</span>}
-            {showDuration && (
-              <span className="rstk-calendar-preview-meta">
-                <Clock3 size={16} aria-hidden="true" />
-                {duration}
-              </span>
-            )}
-            {showConfirmation && (
-              <span className="rstk-calendar-preview-meta">
-                <Check size={16} aria-hidden="true" />
-                {confirmation}
-              </span>
-            )}
-          </aside>
-        )}
-
-        <section className="rstk-calendar-preview-month" aria-label={monthPreview.monthLabel}>
-          <header className="rstk-calendar-preview-month-head">
-            <span className="rstk-calendar-preview-nav rstk-calendar-preview-nav-prev" aria-hidden="true">
-              <ChevronRight size={18} />
-            </span>
-            <strong>{monthPreview.monthLabel}</strong>
-            <span className="rstk-calendar-preview-nav" aria-hidden="true">
-              <ChevronRight size={18} />
-            </span>
-          </header>
-          <div className="rstk-calendar-preview-weekdays" aria-hidden="true">
-            {calendarPreviewWeekdays.map(day => <span key={day}>{day}</span>)}
-          </div>
-          <div className="rstk-calendar-preview-days">
-            {monthPreview.days.map(day => (
-              <span
-                key={day.key}
-                className={[
-                  'rstk-calendar-preview-day',
-                  day.muted ? 'rstk-calendar-preview-day-muted' : '',
-                  day.available ? 'rstk-calendar-preview-day-available' : '',
-                  day.today ? 'rstk-calendar-preview-day-today' : ''
-                ].filter(Boolean).join(' ')}
-                aria-hidden={!day.label}
-              >
-                {day.label}
-              </span>
-            ))}
-          </div>
-        </section>
-
-        <aside className="rstk-calendar-preview-slots" aria-label="Horarios disponibles">
-          <strong>Horarios disponibles</strong>
-          <div className="rstk-calendar-preview-slot-list">
-            {slots.map(slot => <span key={slot} className="rstk-calendar-preview-slot">{slot}</span>)}
-          </div>
-        </aside>
-      </div>
-    </section>
+    // Capa transparente de selección: el iframe es inerte en el canvas
+    // (.rstkCanvas iframe { pointer-events: none }) y los clicks caen aquí.
+    <div className="rstkEmbedSelectionSurface" data-rstk-selection-surface="true">
+      <iframe
+        ref={iframeRef}
+        className="rstk-embed rstk-calendar-embed"
+        src={src}
+        title={calendarName || 'Calendario'}
+        loading="lazy"
+        scrolling="no"
+        sandbox="allow-scripts allow-same-origin allow-forms allow-popups"
+        style={autoHeight ? { minHeight: `${autoHeight}px`, height: `${autoHeight}px` } : undefined}
+      />
+    </div>
   )
 }
 
@@ -32124,7 +31808,8 @@ const CanvasPreviewBlock: React.FC<CanvasPreviewBlockProps> = ({
           className="rstk-site-panel-copy"
           multiline={!isHeader}
           value={block.content}
-          placeholder={isHeader ? 'Nombre de marca' : 'Texto del pie de página'}
+          placeholder={isHeader ? (block.label || 'Tu marca') : 'Tu información esta protegida.'}
+          placeholderAsContent
           disabled={!editable}
           onChange={(value) => patchBlock({ content: value })}
           onCommit={save}
@@ -32132,7 +31817,7 @@ const CanvasPreviewBlock: React.FC<CanvasPreviewBlockProps> = ({
         {links.length > 0 && (
           <nav className="rstk-site-panel-links" aria-label={isHeader ? 'Enlaces superiores' : 'Enlaces inferiores'}>
             {links.map((link, index) => (
-              <a key={`${link.label}-${index}`} href={link.url}>{link.label}</a>
+              <a key={`${link.label}-${index}`} href={safeHref(link.url, '#')}>{link.label}</a>
             ))}
           </nav>
         )}
@@ -32161,14 +31846,15 @@ const CanvasPreviewBlock: React.FC<CanvasPreviewBlockProps> = ({
   }
 
   if (['headline', 'title'].includes(block.blockType)) {
+    // Paridad content #4: vacío, el publicado imprime block.label como texto real.
     return (
-      <InlineEditable as="h1" className="rstk-headline" multiline value={block.content} placeholder={block.label || 'Título'} disabled={!editable} onChange={(value) => patchBlock({ content: value })} onCommit={save} />
+      <InlineEditable as="h1" className="rstk-headline" multiline value={block.content} placeholder={block.label || 'Título'} placeholderAsContent={Boolean(block.label)} disabled={!editable} onChange={(value) => patchBlock({ content: value })} onCommit={save} />
     )
   }
 
   if (['subheading', 'subtitle', 'description'].includes(block.blockType)) {
     return (
-      <InlineEditable as="p" className="rstk-subheading" multiline value={block.content} placeholder={block.label || 'Subtítulo'} disabled={!editable} onChange={(value) => patchBlock({ content: value })} onCommit={save} />
+      <InlineEditable as="p" className="rstk-subheading" multiline value={block.content} placeholder={block.label || 'Subtítulo'} placeholderAsContent={Boolean(block.label)} disabled={!editable} onChange={(value) => patchBlock({ content: value })} onCommit={save} />
     )
   }
 
@@ -32180,7 +31866,8 @@ const CanvasPreviewBlock: React.FC<CanvasPreviewBlockProps> = ({
 
   if (block.blockType === 'countdown') {
     const parts = getCountdownPreviewParts(settings)
-    const showLabels = getSettingBoolean(settings, 'countdownShowLabels', true)
+    // Coerción compartida con el publicado (content #12).
+    const showLabels = countdownShowLabelsValue(settings.countdownShowLabels)
     const units = [
       { key: 'days', label: 'Días', value: parts.days },
       { key: 'hours', label: 'Horas', value: parts.hours },
@@ -32208,8 +31895,12 @@ const CanvasPreviewBlock: React.FC<CanvasPreviewBlockProps> = ({
             </span>
           ))}
         </div>
-        {getSettingString(settings, 'countdownExpiredText') && (
-          <p className="rstk-countdown-note">{getSettingString(settings, 'countdownExpiredText')}</p>
+        {/* ALLOWED-DIVERGENCE (content #6): en el publicado la nota existe
+            oculta (default 'Tiempo terminado') y solo aparece al expirar; el
+            canvas la enseña ÚNICAMENTE con el bloque seleccionado para poder
+            verla/editarla sin alterar el layout del estado por defecto. */}
+        {selected && (
+          <p className="rstk-countdown-note">{getSettingString(settings, 'countdownExpiredText') || 'Tiempo terminado'}</p>
         )}
       </section>
     )
@@ -32222,19 +31913,29 @@ const CanvasPreviewBlock: React.FC<CanvasPreviewBlockProps> = ({
     const description = paymentGate.description || ''
     const amountText = formatPaymentAmount(paymentGate.amount, paymentGate.currency)
     const buttonLabel = paymentGate.buttonText || 'Pagar'
-    const showMsi = Boolean(paymentGate.msi?.enabled)
+    // Paridad payment #1/#2: el gate deshabilitado (o monto 0 / pasarela desconocida)
+    // NO se publica; el editor lo sigue mostrando para editarlo pero avisa que no será
+    // visible en el sitio. La elegibilidad de MSI decide qué fila muestra el vivo.
+    const gateEnabled = isPaymentGateConfigEnabled(paymentGate)
+    const msiInfo = msiEligibility({
+      gateway: paymentGate.gateway,
+      currency: paymentGate.currency,
+      amount: paymentGate.amount,
+      msi: paymentGate.msi
+    })
     const isTest = paymentGate.mode === 'test'
     const isStripe = paymentGate.gateway === 'stripe'
+    const isConekta = paymentGate.gateway === 'conekta'
+    const isMercadoPago = paymentGate.gateway === 'mercadopago'
     const showKicker = getSettingBoolean(settings, 'paymentShowGatewayName', true)
     const showCountry = getSettingBoolean(settings, 'paymentShowCountry', true)
-    const showSaveCard = getSettingBoolean(settings, 'paymentShowSaveCard', true)
     const showSecureNote = getSettingBoolean(settings, 'paymentShowSecureNote', true)
     const secureNoteText = getSettingString(settings, 'paymentSecureNote') || PAYMENT_SECURE_NOTE_DEFAULT
     const paymentTextAlign = getHorizontalAlign(settings, 'paymentTextAlign', 'left')
-    // Ajuste manual > color de texto del bloque — mismo orden que el checkout publicado.
-    // Se aplana a color sólido (un degradado no es válido para el SDK de la pasarela).
+    // Paridad payment #5: SOLO el ajuste manual explícito fija --rstk-checkout-field-text
+    // (igual que renderPaymentBlock). Sin él, el texto de los campos hereda
+    // --rstk-block-text (ya corregido por contraste), no el color crudo del bloque.
     const fieldTextPaint = getSettingPaint(settings, 'paymentFieldTextColor', '')
-      || getSettingPaint(settings, 'blockText', '')
     const fieldTextColor = fieldTextPaint ? paintFallbackColor(fieldTextPaint, '#111827') : ''
     // Ancho/posición del botón de pago — MISMA lógica que renderPaymentBlock (backend):
     // default ancho completo; buttonWidth>0 + buttonAlign lo controlan.
@@ -32253,6 +31954,13 @@ const CanvasPreviewBlock: React.FC<CanvasPreviewBlockProps> = ({
     // para que se vea IDÉNTICO al vivo; en otros proveedores usamos el mock de tarjeta.
     const mockFields = (
       <div className="rstk-checkout-fields rstk-checkout-fields-mock" aria-hidden="true">
+        {/* Conekta captura también el nombre del titular en su tokenizer. */}
+        {isConekta && (
+          <>
+            <span className="rstk-mock-lbl">Nombre del titular</span>
+            <div className="rstk-mock-input"><span className="rstk-mock-ph">Como aparece en la tarjeta</span></div>
+          </>
+        )}
         <span className="rstk-mock-lbl">Número de tarjeta</span>
         <div className="rstk-mock-input rstk-mock-card">
           <span className="rstk-mock-ph">1234 1234 1234 1234</span>
@@ -32278,9 +31986,19 @@ const CanvasPreviewBlock: React.FC<CanvasPreviewBlockProps> = ({
             <div className="rstk-mock-input rstk-mock-country"><span>México</span><span className="rstk-mock-chev" /></div>
           </>
         )}
-        {isStripe && showSaveCard && (
+        {/* Paridad payment #3: Stripe Link/guardar tarjeta NO es ocultable por código,
+            así que el checkout en vivo siempre muestra esta fila. El mock también. */}
+        {isStripe && (
           <label className="rstk-mock-save"><span className="rstk-mock-check" /><span>Guardar mi información para un pago más rápido</span></label>
         )}
+      </div>
+    )
+    // Paridad payment #7: en vivo, Mercado Pago monta su Brick (formulario + botón
+    // propios) y OCULTA el botón de pago con tema. El editor muestra un placeholder
+    // neutral y también oculta el botón, en vez del mock de tarjeta genérico.
+    const mpPlaceholder = (
+      <div className="rstk-checkout-fields rstk-checkout-mp-placeholder" aria-hidden="true">
+        <span className="rstk-mock-ph">Formulario de Mercado Pago (se muestra al publicar)</span>
       </div>
     )
     return (
@@ -32288,6 +32006,9 @@ const CanvasPreviewBlock: React.FC<CanvasPreviewBlockProps> = ({
         className={`rstk-payment-block rstk-payment-${layout}`}
         style={paymentSectionStyle as React.CSSProperties}
       >
+        {!gateEnabled && (
+          <span className="rstkPaymentUnpublishedBadge" aria-hidden="true">No visible en el sitio publicado</span>
+        )}
         <div className="rstk-checkout-card">
           <div className="rstk-checkout-inner">
             <div className="rstk-checkout-head">
@@ -32306,17 +32027,22 @@ const CanvasPreviewBlock: React.FC<CanvasPreviewBlockProps> = ({
                   showCountry={showCountry}
                   fallback={mockFields}
                 />
-              ) : mockFields}
-              {showMsi && (
+              ) : isMercadoPago ? mpPlaceholder : mockFields}
+              {/* Fila de meses standalone: SOLO Conekta la tiene en vivo (Stripe/MP
+                  resuelven los meses dentro de su propio widget). Estado inicial = "Un
+                  solo pago", igual que el <select> que arma mountConekta. */}
+              {isConekta && msiInfo.standaloneMonths.length > 0 && (
                 <div className="rstk-checkout-installments">
                   <div className="rstk-checkout-select rstk-mock-select" aria-hidden="true">
-                    <span>{paymentGate.msi.maxInstallments} meses sin intereses</span>
+                    <span>Un solo pago</span>
                   </div>
                 </div>
               )}
-              <button type="button" className="rstk-button-link rstk-checkout-pay" disabled>
-                <SubmitButtonContent label={`${buttonLabel} · ${amountText}`} settings={settings} />
-              </button>
+              {!isMercadoPago && (
+                <button type="button" className="rstk-button-link rstk-checkout-pay" disabled>
+                  <SubmitButtonContent label={`${buttonLabel} · ${amountText}`} settings={settings} />
+                </button>
+              )}
               {showSecureNote && <p className="rstk-checkout-secure">{secureNoteText}</p>}
             </div>
           </div>
@@ -32384,17 +32110,29 @@ const CanvasPreviewBlock: React.FC<CanvasPreviewBlockProps> = ({
               selected={selected}
             />
           )
-          : <div className="rstk-video" data-rstk-selection-surface="true"><iframe src={appendEditorNoTrackParam(videoUrl)} title={block.label || 'Video'} loading="lazy" allow={DEFAULT_EMBED_ALLOW} allowFullScreen sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-presentation" /></div>
+          : (
+            // Paridad content #1: mismo marco que el publicado para iframes de
+            // video (clases rstk-video-embed-frame/orientación + vars --rstk-video-*).
+            <div
+              className={`rstk-video rstk-video-embed-frame rstk-video-${normalizeVideoOrientation(settings)}`}
+              style={buildVideoFrameStyleVars(settings) as React.CSSProperties}
+              data-rstk-selection-surface="true"
+            >
+              <iframe src={appendEditorNoTrackParam(videoUrl)} title={block.label || 'Video'} loading="lazy" allow={DEFAULT_EMBED_ALLOW} allowFullScreen sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-presentation" />
+            </div>
+          )
       : <div className="rstk-media rstk-media-empty" data-rstk-selection-surface="true"><span className="rstk-play"><Play size={22} /></span>Agrega la URL del video</div>
   }
 
   if (block.blockType === 'button') {
+    // Paridad content #4: vacío, el publicado imprime block.label || 'Continuar'.
     return (
       <InlineButtonEditable
         settings={settings}
         value={getSettingString(settings, 'buttonText') || block.content || ''}
         subtitle={getSettingString(settings, 'buttonSubtitle')}
-        placeholder="Botón"
+        placeholder={block.label || 'Continuar'}
+        placeholderAsContent
         disabled={!editable}
         onChange={(value) => patchSettings({ buttonText: value })}
         onSubtitleChange={getSettingString(settings, 'buttonSubtitle') ? (value) => patchSettings({ buttonSubtitle: value }) : undefined}
@@ -32520,22 +32258,29 @@ const CanvasPreviewBlock: React.FC<CanvasPreviewBlockProps> = ({
     const resolvedItems = hasLinkedForm ? selectedFormBlocks : embeddedBlocks.length ? embeddedBlocks : selectedFormBlocks
     const resolvedPages = embeddedFormEditor?.pages || (hasLinkedForm ? selectedFormPages : embeddedBlocks.length ? normalizeEmbeddedFormPages(settings.embeddedPages) : selectedFormPages)
     const embeddedThemeOverride = getEmbeddedFormThemeOverride(block)
-    const draftFormForPreview: PublicSite | null = !form && hasDraftForm && site
-      ? {
-          ...site,
-          siteType: 'standard_form' as SiteType,
-          theme: buildEmbeddedFormSourceTheme(site, settings, resolvedPages)
-        }
-      : null
-    const sourceFormForPreview: PublicSite | null = form || draftFormForPreview
+    // Paridad embeds #1/#2/#3 (theme-vars #4): la MISMA cadena de merge que el
+    // publicado — theme del landing ANFITRIÓN + defaults de embed (solo lienzos
+    // nuevos) + theme del formulario fuente + override del bloque. previewForm
+    // lleva la cadena CRUDA (sourceTheme, sin DEFAULT_THEME): verificado que
+    // computeSitePageRenderState mergea DEFAULT_THEME por dentro y calcula la
+    // explicitud (fondo/texto) sobre el theme crudo — exactamente el mismo
+    // contrato raw-vs-merged que buildEmbeddedFormSourceTheme en el backend.
+    const isImportedForm = hasLinkedForm || Boolean(getSettingString(settings, 'embeddedSiteId'))
+    const { sourceTheme: embeddedRawTheme } = buildEmbeddedFormTheme({
+      hostTheme: (site?.theme || {}) as Record<string, unknown>,
+      sourceFormTheme: (form?.theme || {}) as Record<string, unknown>,
+      embeddedThemeOverride: (embeddedThemeOverride || {}) as Record<string, unknown>,
+      isImportedForm
+    })
+    // Paridad embeds #6: el tipo del formulario fuente viaja al frame (un
+    // interactive_form embebido conserva rstk-interactive y su ancho propio).
+    const embeddedSiteType = ((form?.siteType || getSettingString(settings, 'embeddedSiteType')) || 'standard_form') as SiteType
+    const sourceFormForPreview: PublicSite | null = form || (hasDraftForm && site ? site : null)
     const previewForm: PublicSite | null = sourceFormForPreview
       ? {
           ...sourceFormForPreview,
-          siteType: 'standard_form' as SiteType,
-          theme: {
-            ...(sourceFormForPreview.theme || {}),
-            ...(embeddedThemeOverride || {})
-          }
+          siteType: embeddedSiteType,
+          theme: embeddedRawTheme as unknown as SiteTheme
         }
       : null
     const activeEmbeddedPageId = embeddedFormEditor?.activePageId || resolvedPages[0]?.id || DEFAULT_FUNNEL_PAGE_ID
@@ -32546,7 +32291,20 @@ const CanvasPreviewBlock: React.FC<CanvasPreviewBlockProps> = ({
         : resolvedItems
     const buttonCopySite = previewForm || site
     const embeddedButtonLabel = getFormPageActionLabel(buttonCopySite, resolvedPages, activeEmbeddedPageId)
-    const embeddedButtonSubtitle = getFormPageActionSubtitle(buttonCopySite, resolvedPages, activeEmbeddedPageId)
+    // Paridad embeds #4: en multipágina el publicado arranca con el botón
+    // "siguiente" de la PRIMERA página y ese botón nunca lleva subtítulo
+    // (renderSubmitButtonContent(label, '')); el subtítulo solo existe en el
+    // botón de envío de la última página. Deseleccionado, activeEmbeddedPageId
+    // ya es la primera página (= primer frame del publicado); editando, espeja
+    // el estado runtime de la página activa.
+    const embeddedButtonSubtitle = isLastFormActionPage(buttonCopySite, resolvedPages, activeEmbeddedPageId)
+      ? getFormPageActionSubtitle(buttonCopySite, resolvedPages, activeEmbeddedPageId)
+      : ''
+    // Paridad embeds #5: el publicado solo emite .rstk-actions.rstk-embed-actions
+    // cuando el formulario tiene campos o un cobro habilitado (espejo de
+    // `fields.length || hasEmbeddedPaymentBlock`).
+    const embeddedHasFields = resolvedItems.some(item => fieldBlockTypes.has(item.blockType))
+    const showEmbeddedActions = embeddedHasFields || canvasHasEnabledPaymentBlock(resolvedItems)
     const sourceCanvasTheme = previewForm ? buildCanvasTheme(previewForm, 'desktop') : null
     const sourceCanvasVars = sourceCanvasTheme?.vars as (React.CSSProperties & Record<string, string | number>) | undefined
     const sourceThemeVars = sourceCanvasTheme
@@ -32595,24 +32353,34 @@ const CanvasPreviewBlock: React.FC<CanvasPreviewBlockProps> = ({
             ))
             : <p className="rstk-help">Agrega campos o contenido al formulario.</p>
         )}
-        <div className={`rstk-actions rstk-embed-actions ${embeddedFormEditor?.submitSelected ? 'rstkEmbeddedFormSubmitActive' : ''}`}>
-          <button
-            type="button"
-            data-submit
-            onClick={embeddedFormEditor ? (event) => {
-              event.stopPropagation()
-              embeddedFormEditor.onSelectSubmit()
-            } : undefined}
-          >
-            <SubmitButtonContent theme={buttonCopySite?.theme} label={embeddedButtonLabel} subtitle={embeddedButtonSubtitle} settings={settings} />
-          </button>
-        </div>
+        {/* Paridad embeds #5: sin campos ni cobro, el publicado NO tiene fila de
+            acciones. ALLOWED-DIVERGENCE: con el embed en edición se pinta una
+            pista fantasma (rstkEmbeddedFormActionsGhost) para poder seleccionar
+            y configurar el botón; deseleccionado desaparece, como en vivo. */}
+        {(showEmbeddedActions || embeddedFormEditor) && (
+          <div className={`rstk-actions rstk-embed-actions ${embeddedFormEditor?.submitSelected ? 'rstkEmbeddedFormSubmitActive' : ''} ${showEmbeddedActions ? '' : 'rstkEmbeddedFormActionsGhost'}`}>
+            <button
+              type="button"
+              data-submit
+              onClick={embeddedFormEditor ? (event) => {
+                event.stopPropagation()
+                embeddedFormEditor.onSelectSubmit()
+              } : undefined}
+            >
+              <SubmitButtonContent theme={buttonCopySite?.theme} label={embeddedButtonLabel} subtitle={embeddedButtonSubtitle} settings={settings} />
+            </button>
+          </div>
+        )}
       </section>
     )
 
     return sourceCanvasTheme ? (
       <div className={`rstkCanvas ${sourceCanvasTheme.bodyClass} rstkEmbeddedFormSourceRoot`} style={sourceThemeVars}>
-        <div className={`rstk-frame rstkEmbeddedFormSourceFrame rstk-embedded-form-theme rstk-embedded-form-source-frame${getSettingBoolean(settings, 'embeddedFullWidth') ? ' rstkEmbeddedFormStretch' : ''}`} data-rstk-selection-surface="true">
+        {/* Paridad (riesgo B-a): la guarda de gradiente de la hoja compartida
+            (.rstk-embedded-form-source-frame:not(.rstkPageTextGradient)) se
+            evalúa sobre el FRAME; el publicado pone la clase ahí (bodyClass del
+            frame), así que el canvas también, además del root anidado. */}
+        <div className={`rstk-frame rstkEmbeddedFormSourceFrame rstk-embedded-form-theme rstk-embedded-form-source-frame${sourceCanvasTheme.bodyClass.split(' ').includes('rstkPageTextGradient') ? ' rstkPageTextGradient' : ''}${getSettingBoolean(settings, 'embeddedFullWidth') ? ' rstkEmbeddedFormStretch' : ''}`} data-rstk-selection-surface="true">
           <CanvasBackgroundVideo theme={previewForm?.theme} />
           <main className="rstk-page">
             <div
@@ -32667,14 +32435,12 @@ const CanvasPreviewBlock: React.FC<CanvasPreviewBlockProps> = ({
     const selectedCalendarId = getSettingString(settings, 'calendarId')
     const calendarName = getSettingString(settings, 'calendarName')
     const calendarSlug = getSettingString(settings, 'calendarSlug')
-    const calendar = calendars.find(item => item.id === selectedCalendarId)
     const hasSelectedCalendarOption = calendars.some(calendar => calendar.id === selectedCalendarId)
     if (calendarSlug) {
       return (
-        <CalendarEmbedStaticPreview
+        <CalendarEmbedLivePreview
           calendarName={calendarName}
-          calendar={calendar}
-          site={site}
+          calendarSlug={calendarSlug}
           settings={settings}
         />
       )
@@ -32717,7 +32483,7 @@ const CanvasPreviewBlock: React.FC<CanvasPreviewBlockProps> = ({
     return <EmbedPreview rawCode={block.content} />
   }
 
-  return <FieldPreview block={block} editable={editable} bindingEnabled={editable} onPatchBlock={patchBlock} onSave={save} />
+  return <FieldPreview block={block} editable={editable} bindingEnabled={editable} selected={selected} onPatchBlock={patchBlock} onSave={save} />
 }
 
 const EmbedPreview: React.FC<{ rawCode: string }> = ({ rawCode }) => {
@@ -32745,9 +32511,20 @@ const EmbedPreview: React.FC<{ rawCode: string }> = ({ rawCode }) => {
     return <div className="rstk-embed rstk-embed-empty" data-rstk-selection-surface="true">Pega una URL, iframe o código embed</div>
   }
 
-  const resolvedHeight = embed.kind === 'html'
+  // Paridad content #2: embeds por URL solo llevan min-height inline cuando la
+  // altura venía en el iframe pegado (espejo exacto del publicado); la altura
+  // configurada (settings.embedHeight) fluye por --rstk-embed-height.
+  // ALLOWED-DIVERGENCE: los embeds de código (html) conservan la altura inline
+  // del flujo postMessage autoHeight — es el espejo editor del runtime
+  // auto-height que el publicado inyecta para iframe.rstk-embed-code.
+  const inlineHeight = embed.kind === 'html'
     ? autoHeight || embed.height || EMBED_DEFAULT_HEIGHT
-    : embed.height || EMBED_DEFAULT_HEIGHT
+    : embed.height || 0
+  const inlineStyle = embed.kind === 'html'
+    ? { minHeight: `${inlineHeight}px`, height: `${inlineHeight}px` }
+    : inlineHeight
+      ? { minHeight: `${inlineHeight}px` }
+      : undefined
 
   return (
     <div className="rstkEmbedSelectionSurface" data-rstk-selection-surface="true">
@@ -32762,15 +32539,25 @@ const EmbedPreview: React.FC<{ rawCode: string }> = ({ rawCode }) => {
         sandbox={embed.kind === 'url' ? EMBED_SANDBOX_URL : EMBED_SANDBOX_HTML}
         allow={embed.kind === 'url' ? embed.allow || DEFAULT_EMBED_ALLOW : DEFAULT_EMBED_ALLOW}
         allowFullScreen
-        style={{ minHeight: `${resolvedHeight}px`, height: `${resolvedHeight}px` }}
+        style={inlineStyle}
       />
     </div>
   )
 }
 
-const PhoneCountryInputPreview: React.FC<{ placeholder?: string }> = ({ placeholder }) => {
+const PhoneCountryInputPreview: React.FC<{ block: SiteBlock; placeholder?: string }> = ({ block, placeholder }) => {
+  // Paridad form-fields #15: misma cadena que el publicado —
+  // settings.defaultCountryCode || settings.countryCode || locale (en vivo es
+  // el del visitante; en el canvas, el de la cuenta) con 'MX' de respaldo.
+  const settings = block.settings || {}
   const detected = getDetectedAccountLocaleDefaults()
-  const selectedCountry = getCountryDefaults(detected.countryCode)
+  const configuredCountry = (
+    getSettingString(settings, 'defaultCountryCode') ||
+    getSettingString(settings, 'countryCode') ||
+    detected.countryCode ||
+    'MX'
+  ).toUpperCase()
+  const selectedCountry = getCountryDefaults(configuredCountry)
 
   return (
     <div className="rstk-phone-input">
@@ -32796,21 +32583,19 @@ const getFieldPreviewInputType = (block: SiteBlock) => {
   return 'text'
 }
 
-const getPreviewOptions = (block: SiteBlock): SiteBlockOption[] => {
-  const options = getOptions(block)
-  return options.length ? options : [{ id: 'preview-option', label: 'Opción', value: 'Opción', action: 'continue' }]
-}
-
-const FieldControlPreview: React.FC<{ block: SiteBlock }> = ({ block }) => {
+const FieldControlPreview: React.FC<{ block: SiteBlock; selected?: boolean }> = ({ block, selected = false }) => {
   if (block.blockType === 'paragraph') {
-    return <textarea readOnly rows={4} placeholder={block.placeholder || ''} />
+    // Paridad form-fields #8: mismas filas que el publicado (rows=5).
+    return <textarea readOnly rows={5} placeholder={block.placeholder || ''} />
   }
 
   if (block.blockType === 'dropdown') {
+    // Paridad form-fields #12: sin opciones configuradas, solo el placeholder
+    // (nada de la opción falsa 'Opción').
     return (
       <select defaultValue="" aria-label={block.label || 'Pregunta'}>
         <option value="">{block.placeholder || 'Selecciona una opción'}</option>
-        {getPreviewOptions(block).map(option => (
+        {getOptions(block).map(option => (
           <option key={option.id || option.label} value={option.value || option.label}>{option.label}</option>
         ))}
       </select>
@@ -32818,28 +32603,45 @@ const FieldControlPreview: React.FC<{ block: SiteBlock }> = ({ block }) => {
   }
 
   if (block.blockType === 'radio' || block.blockType === 'checkboxes') {
+    const options = getOptions(block)
     return (
       <div className="rstk-options">
-        {getPreviewOptions(block).map(option => (
+        {options.map(option => (
           <label key={option.id || option.label} className="rstk-option">
             <input type={block.blockType === 'checkboxes' ? 'checkbox' : 'radio'} name={block.id || block.label} readOnly />
             <span>{option.label}</span>
           </label>
         ))}
+        {/* ALLOWED-DIVERGENCE (form-fields #12): en vivo un campo sin opciones
+            queda vacío; el canvas enseña una pista punteada SOLO al seleccionar
+            el bloque, para que el autor sepa dónde configurarlas. */}
+        {!options.length && selected && (
+          <span className="rstkOptionsEmptyHint">Agrega opciones en el panel</span>
+        )}
       </div>
     )
   }
 
   if (block.blockType === 'phone' && isPhoneCountrySelectorEnabled(block)) {
-    return <PhoneCountryInputPreview placeholder={block.placeholder || ''} />
+    return <PhoneCountryInputPreview block={block} placeholder={block.placeholder || ''} />
   }
 
-  return <input type={getFieldPreviewInputType(block)} readOnly placeholder={block.placeholder || 'Respuesta'} />
+  // Paridad form-fields #7: mismos fallbacks que el publicado — currency '0.00',
+  // phone 'Número' (con o sin selector), el resto sin placeholder.
+  const fallbackPlaceholder = block.blockType === 'currency'
+    ? '0.00'
+    : block.blockType === 'phone'
+      ? 'Número'
+      : ''
+  return <input type={getFieldPreviewInputType(block)} readOnly placeholder={block.placeholder || fallbackPlaceholder} />
 }
 
 // Read-only field preview (rstk markup) for embedded form fields on the canvas.
-const FieldStaticPreview: React.FC<{ block: SiteBlock; site?: PublicSite }> = ({ block, site }) => (
-  <section className={getBlockStyleClassName(block, `rstk-field${getFieldOwnStyleClass(block)}`)} style={getBlockCanvasStyle(block, { site })}>
+// Paridad (semántica del publicado, revisado en Paquete D): renderFieldBlock
+// emite la <section class="rstk-field"> PELADA y wrapRenderedBlock la envuelve
+// en un div.rstk-block-style EXTERNO solo cuando el bloque tiene estilo propio.
+const FieldStaticPreview: React.FC<{ block: SiteBlock }> = ({ block }) => (
+  <section className={`rstk-field${getFieldOwnStyleClass(block)}`}>
     <label>{block.label || 'Pregunta'}{block.required ? <span className="rstk-required">*</span> : null}</label>
     {block.content ? <p className="rstk-help">{block.content}</p> : null}
     <FieldControlPreview block={block} />
@@ -32866,12 +32668,12 @@ const EmbeddedFormStaticBlockPreview: React.FC<{
   forms: PublicSite[]
   calendars: CalendarType[]
 }> = ({ block, site, forms, calendars }) => {
-  if (fieldBlockTypes.has(block.blockType)) {
-    return <FieldStaticPreview block={block} site={site} />
-  }
-
   const style = getBlockCanvasStyle(block, { site })
-  const content = <CanvasPreviewBlock block={block} site={site} forms={forms} calendars={calendars} />
+  // Campos y contenido comparten la misma semántica de wrapper que el publicado
+  // (wrapRenderedBlock): div.rstk-block-style EXTERNO solo cuando hay estilo.
+  const content = fieldBlockTypes.has(block.blockType)
+    ? <FieldStaticPreview block={block} />
+    : <CanvasPreviewBlock block={block} site={site} forms={forms} calendars={calendars} />
 
   if (!blockNeedsStaticPreviewWrapper(block, style)) {
     return content
@@ -33188,9 +32990,10 @@ const FieldPreview: React.FC<{
   block: SiteBlock
   editable: boolean
   bindingEnabled?: boolean
+  selected?: boolean
   onPatchBlock: (patch: Partial<SiteBlock>) => void
   onSave: () => void
-}> = ({ block, editable, bindingEnabled = false, onPatchBlock, onSave }) => {
+}> = ({ block, editable, bindingEnabled = false, selected = false, onPatchBlock, onSave }) => {
   const binding = useContext(FormFieldBindingContext)
   const settings = block.settings || {}
   const showPrompt = Boolean(
@@ -33207,10 +33010,13 @@ const FieldPreview: React.FC<{
         <InlineEditable as="span" value={block.label} placeholder="Pregunta" disabled={!editable} onChange={(value) => onPatchBlock({ label: value })} onCommit={onSave} />
         {block.required ? <span className="rstk-required">*</span> : null}
       </label>
-      {(editable || block.content) && (
+      {/* Paridad form-fields #11: la fila de ayuda existe SOLO con contenido (como
+          en vivo) o con el campo seleccionado (para poder escribirla) — un campo
+          sin ayuda ya no suma alto fantasma al canvas. */}
+      {(block.content || selected) && (
         <InlineEditable as="p" className="rstk-help" multiline value={block.content} placeholder="Texto de ayuda (opcional)" disabled={!editable} onChange={(value) => onPatchBlock({ content: value })} onCommit={onSave} />
       )}
-      <FieldControlPreview block={block} />
+      <FieldControlPreview block={block} selected={selected} />
       {showPrompt && binding && (
         <FieldCustomFieldPrompt block={block} binding={binding} onPatchBlock={onPatchBlock} onSave={onSave} />
       )}
@@ -36630,17 +36436,10 @@ const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
             />
           </div>
 
-          <div className={styles.videoFormGateSwitchRow}>
-            <div>
-              <strong>Mostrar “Guardar mi información”</strong>
-              <span>Casilla para guardar la tarjeta y pagar más rápido.</span>
-            </div>
-            <Switch
-              checked={getSettingBoolean(settings, 'paymentShowSaveCard', true)}
-              onChange={(checked) => { onPatchSettings({ paymentShowSaveCard: checked }); window.setTimeout(() => { onSave() }, 0) }}
-              aria-label="Mostrar guardar mi información"
-            />
-          </div>
+          {/* Paridad payment #3: se retiró el toggle "Guardar mi información". Stripe
+              Link/guardar tarjeta NO es ocultable por código, así que prometía algo que
+              el checkout en vivo no puede cumplir. El valor guardado se ignora sin
+              migración de datos. */}
 
           <div className={styles.videoFormGateSwitchRow}>
             <div>

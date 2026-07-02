@@ -569,6 +569,49 @@ la pagina; los formularios nativos/importados/creados por IA encienden `Lead` al
 enviar. Las actualizaciones de sitios existentes no reactivan eventos que el
 usuario apago manualmente.
 
+### Paridad de render editor/preview/publicado (contrato compartido)
+
+Editor (canvas React), preview autenticado, preview-session publico y sitio
+publicado/live comparten UNA sola fuente de verdad para estilos, defaults y CSS:
+**`shared/sites/renderContract.js`** (ESM puro, sin dependencias) mas
+**`shared/sites/paymentGateContract.js`**. Backend (`backend/src/services/sitesService.js`)
+y frontend (`frontend/src/pages/Sites/*`) lo importan; el `Dockerfile` copia
+`shared/` a ambos stages.
+
+- Tema -> variables: `computeSitePageRenderState(site)` calcula TODAS las variables
+  `--rstk-*` de pagina. Regla de contrato: la "explicitud" de `backgroundColor`/
+  `textColor` se evalua sobre el theme CRUDO guardado; las lecturas de valores usan
+  el theme mergeado con `DEFAULT_THEME`. Asi, un sitio SIN `backgroundColor`
+  guardado conserva la paleta de su template en TODAS las superficies (antes el
+  live mergeaba `#ffffff` y perdia la paleta del template: p. ej. un landing con
+  template oscuro se publicaba en blanco). **Los sitios con fondo explicito no
+  cambian.**
+- Hoja publica: `buildStyleSheet(state)` = `:root` + `RSTK_BASE_CSS` +
+  `RSTK_TEMPLATE_EXTRAS`. El canvas del editor inyecta esa MISMA hoja transformada
+  con `rescopeSiteCssForCanvas` (prefijo `.rstkCanvas`, `@media`->`@container
+  rstk-canvas`, `vw`->`cqw`, `100vh`->`var(--rstk-vh100)`), de modo que el
+  responsive del editor simula el viewport real. `sitesCanvas.css` queda reducido
+  a chrome del editor (seleccion, drag, mocks) con divergencias marcadas
+  `/* ALLOWED-DIVERGENCE */`.
+- Bloques: `buildBlockStyleVars`/`buildBlockStyleClassName`/`blockHasStyleWrapper`
+  son compartidos; el wrapper `.rstk-block-style` se emite bajo las mismas
+  condiciones en editor y live, y el override de ancho por campo cuelga de
+  `.rstk-field-width-set` (solo con `fieldWidth`).
+- Pago: el shell del checkout comparte estilos; el preview del editor solo muestra
+  lo que el vivo mostraria (fila de meses standalone solo Conekta via
+  `msiEligibility`, boton de pago con icono, badge "No visible en el sitio
+  publicado" cuando el gate esta deshabilitado). El toggle "guardar tarjeta" se
+  retiro (Stripe Link no es ocultable por codigo).
+- Diferencias permitidas entre superficies: SOLO auth, tracking/pixel, param
+  preservation y `headerTrackingCode` (nunca corren en editor/preview por
+  seguridad), y el chrome de edicion. NO se permite divergencia en CSS visual,
+  defaults de tema, estructura del bloque, border, color, fuente, radius o
+  spacing.
+- Compatibilidad legacy: no hay migracion de datos; la normalizacion maneja
+  shapes viejos. **Impacto en produccion:** sitios ya publicados que dependian de
+  la paleta del template sin fondo explicito cambiaran su apariencia live para
+  coincidir con lo que el editor siempre mostro.
+
 ## Automaciones
 
 Automations incluye:

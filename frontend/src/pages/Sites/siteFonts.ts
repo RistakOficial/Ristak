@@ -1,30 +1,19 @@
-const SITE_FONT_FAMILIES = [
-  'Archivo',
-  'Barlow',
-  'Bebas Neue',
-  'Inter',
-  'Inter Tight',
-  'Lato',
-  'Libre Baskerville',
-  'Manrope',
-  'Merriweather',
-  'Montserrat',
-  'Nunito',
-  'Open Sans',
-  'Oswald',
-  'Playfair Display',
-  'Poppins',
-  'Raleway',
-  'Roboto',
-  'Work Sans'
-]
+// Fuentes de Sites: la lista canónica y el normalizador viven en el contrato
+// compartido (shared/sites/renderContract.js), la misma copia que usa el
+// renderer público del backend. Aquí solo queda el catálogo de opciones para
+// los selectores de la UI del editor.
+import {
+  RSTK_DEFAULT_FONT,
+  RSTK_DEFAULT_SERIF_FONT,
+  normalizeSiteFontFamily as normalizeSharedSiteFontFamily
+} from '../../../../shared/sites/renderContract.js'
 
-const DEFAULT_SITE_FONT = "'Inter', Arial, sans-serif"
-const DEFAULT_SERIF_SITE_FONT = "'Libre Baskerville', Georgia, serif"
+export const normalizeSiteFontFamily = (value?: string | null): string =>
+  normalizeSharedSiteFontFamily(value)
 
 export const SITE_FONT_OPTIONS: Array<{ label: string; value: string }> = [
   { label: 'Predeterminada', value: '' },
-  { label: 'Inter', value: DEFAULT_SITE_FONT },
+  { label: 'Inter', value: RSTK_DEFAULT_FONT },
   { label: 'Inter Tight', value: "'Inter Tight', 'Inter', Arial, sans-serif" },
   { label: 'Roboto', value: "'Roboto', Arial, sans-serif" },
   { label: 'Open Sans', value: "'Open Sans', Arial, sans-serif" },
@@ -41,34 +30,5 @@ export const SITE_FONT_OPTIONS: Array<{ label: string; value: string }> = [
   { label: 'Bebas Neue', value: "'Bebas Neue', Impact, sans-serif" },
   { label: 'Playfair Display', value: "'Playfair Display', Georgia, serif" },
   { label: 'Merriweather', value: "'Merriweather', Georgia, serif" },
-  { label: 'Libre Baskerville', value: DEFAULT_SERIF_SITE_FONT }
+  { label: 'Libre Baskerville', value: RSTK_DEFAULT_SERIF_FONT }
 ]
-
-const hasKnownSiteFontFamily = (value: string) => {
-  const normalized = value.toLowerCase()
-  return SITE_FONT_FAMILIES.some((family) => normalized.includes(family.toLowerCase()))
-}
-
-export const normalizeSiteFontFamily = (value?: string | null) => {
-  const font = String(value || '').replace(/[;"{}<>]/g, '').trim()
-  if (!font) return ''
-  if (hasKnownSiteFontFamily(font)) return font
-
-  const normalized = font.toLowerCase().replace(/['"]/g, '')
-  if (normalized.includes('georgia') || normalized.includes('times new roman') || normalized === 'serif') {
-    return DEFAULT_SERIF_SITE_FONT
-  }
-  if (
-    normalized.includes('-apple-system') ||
-    normalized.includes('blinkmacsystemfont') ||
-    normalized.includes('system-ui') ||
-    normalized.includes('segoe ui') ||
-    normalized === 'arial' ||
-    normalized === 'helvetica' ||
-    normalized === 'sans-serif'
-  ) {
-    return DEFAULT_SITE_FONT
-  }
-
-  return font
-}

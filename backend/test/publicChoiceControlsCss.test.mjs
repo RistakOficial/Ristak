@@ -16,7 +16,9 @@ test('public calendar choice radios do not inherit text field sizing or focus ch
 })
 
 test('public site choice radios render as compact circular controls', async () => {
-  const source = await readFile(join(backendRoot, 'src/services/sitesService.js'), 'utf8')
+  // La hoja pública de Sites (RSTK_BASE_CSS) vive ahora en el contrato de render
+  // compartido con el editor, no en sitesService.js.
+  const source = await readFile(join(backendRoot, '../shared/sites/renderContract.js'), 'utf8')
 
   assert.match(source, /input:not\(\[type='radio'\]\):not\(\[type='checkbox'\]\):focus/)
   assert.match(source, /\.rstk-option input\[type='radio'\],\.rstk-option input\[type='checkbox'\]\{[^}]*min-height:19px/)
