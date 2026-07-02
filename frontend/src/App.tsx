@@ -112,6 +112,15 @@ const ROUTE_BRANDING: Record<'ristak' | 'phone' | 'phoneChat', AppBranding> = {
   }
 }
 
+const PHONE_LOCKED_VIEWPORT_CONTENT = [
+  'width=device-width',
+  'initial-scale=1',
+  'minimum-scale=1',
+  'maximum-scale=1',
+  'user-scalable=no',
+  'viewport-fit=cover'
+].join(', ')
+
 function getRouteBranding(pathname: string) {
   const canonicalPathname = toCanonicalPhoneAppPath(pathname)
 
@@ -309,6 +318,49 @@ const PhoneRouteEffects: React.FC = () => {
   React.useEffect(() => {
     applyRouteBranding(location.pathname)
   }, [location.pathname])
+
+  React.useLayoutEffect(() => {
+    if (!isPhoneRoute) return
+
+    const viewportMeta = document.querySelector<HTMLMetaElement>('meta[name="viewport"]')
+    if (!viewportMeta) return
+
+    const previousViewportContent = viewportMeta.getAttribute('content') || ''
+    viewportMeta.setAttribute('content', PHONE_LOCKED_VIEWPORT_CONTENT)
+
+    return () => {
+      viewportMeta.setAttribute('content', previousViewportContent)
+    }
+  }, [isPhoneRoute])
+
+  React.useEffect(() => {
+    if (!isPhoneRoute) return
+
+    const nonPassiveOptions: AddEventListenerOptions = { passive: false }
+    const preventDefault = (event: Event) => event.preventDefault()
+    const preventMultiTouchZoom = (event: TouchEvent) => {
+      if (event.touches.length > 1) event.preventDefault()
+    }
+    const preventTrackpadZoom = (event: WheelEvent) => {
+      if (event.ctrlKey) event.preventDefault()
+    }
+
+    document.addEventListener('gesturestart', preventDefault, nonPassiveOptions)
+    document.addEventListener('gesturechange', preventDefault, nonPassiveOptions)
+    document.addEventListener('gestureend', preventDefault, nonPassiveOptions)
+    document.addEventListener('touchmove', preventMultiTouchZoom, nonPassiveOptions)
+    document.addEventListener('wheel', preventTrackpadZoom, nonPassiveOptions)
+    document.addEventListener('dblclick', preventDefault, nonPassiveOptions)
+
+    return () => {
+      document.removeEventListener('gesturestart', preventDefault)
+      document.removeEventListener('gesturechange', preventDefault)
+      document.removeEventListener('gestureend', preventDefault)
+      document.removeEventListener('touchmove', preventMultiTouchZoom)
+      document.removeEventListener('wheel', preventTrackpadZoom)
+      document.removeEventListener('dblclick', preventDefault)
+    }
+  }, [isPhoneRoute])
 
   React.useEffect(() => {
     if (!isPhoneRoute) return

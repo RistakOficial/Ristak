@@ -6,6 +6,14 @@ En iOS el contenedor nativo está configurado como app de iPhone/iPad enfocada e
 
 Orientación: iPhone usa portrait; iPad usa landscape para que la lista de chats y la conversación se vean completas. En web/PWA, si una tablet abre el chat en portrait, la pantalla muestra un aviso para girarla.
 
+Zoom: las rutas moviles (`/movil/*` y legacy `/phone/*`) bloquean zoom accidental
+en el WebView para evitar que la app quede atorada ampliada. El candado vive en
+tres capas: viewport `user-scalable=no` solo mientras la ruta movil esta activa,
+bloqueo de gestos pinch/doble tap/trackpad dentro del shell movil y ajustes
+nativos en iOS/Android para mantener el WebView en escala `1.0`. Los inputs de la
+app movil deben conservar fuente de al menos `16px` para evitar el zoom de foco
+de iOS.
+
 ## Requisitos
 
 - Node 22 o superior para usar Capacitor 8.

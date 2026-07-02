@@ -177,6 +177,20 @@ body.dark {
     min-height: 100vh;
   }
 
+  html[data-phone-app='active'],
+  body[data-phone-app='active'] {
+    overscroll-behavior: none;
+    touch-action: pan-x pan-y;
+    -webkit-text-size-adjust: 100%;
+    text-size-adjust: 100%;
+  }
+
+  body[data-phone-app='active'] input,
+  body[data-phone-app='active'] textarea,
+  body[data-phone-app='active'] select {
+    font-size: max(16px, 1em);
+  }
+
   button:not(:disabled) {
     cursor: pointer;
   }
