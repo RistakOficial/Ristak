@@ -57,9 +57,11 @@ const OUTBOUND_JOURNEY_MESSAGE_DIRECTIONS = new Set([
   'echo',
   'message_echo'
 ])
-const MESSAGE_JOURNEY_EVENT_TYPES = new Set(['whatsapp_message', 'meta_message'])
+const MESSAGE_JOURNEY_EVENT_TYPES = new Set(['whatsapp_message', 'meta_message', 'email_message'])
 const WEB_JOURNEY_SOURCE_PATTERN = /(ristak_site|native_site|site|website|web|form|landing|pagina|página)/i
 const WHATSAPP_JOURNEY_SOURCE_PATTERN = /(whatsapp|waapi|ycloud|click_to_whatsapp|ctwa)/i
+const INSTAGRAM_META_MESSAGE_PATTERN = /(instagram|ig)/i
+const MESSENGER_META_MESSAGE_PATTERN = /(messenger|facebook|fb)/i
 
 const getEventData = (event?: JourneyEvent | null): Record<string, any> =>
   event && event.data && typeof event.data === 'object' ? event.data : {}
@@ -484,6 +486,54 @@ const getPlatformColor = (platform?: string | null) => {
   return ''
 }
 
+const getMetaMessagePlatformText = (event?: JourneyEvent | null): string => {
+  const data = getEventData(event)
+  return [
+    data.source,
+    data.social_platform,
+    data.transport
+  ].filter(Boolean).join(' ')
+}
+
+const getMetaMessageTitle = (event?: JourneyEvent | null): string => {
+  const platformText = getMetaMessagePlatformText(event)
+  if (INSTAGRAM_META_MESSAGE_PATTERN.test(platformText)) return 'Instagram'
+  if (MESSENGER_META_MESSAGE_PATTERN.test(platformText)) return 'Messenger'
+  return 'Meta'
+}
+
+const getMetaMessageSurfaceLabel = (event?: JourneyEvent | null): string => {
+  const data = getEventData(event)
+  const source = String(data.source || '').trim()
+  if (source) return source
+
+  const title = getMetaMessageTitle(event)
+  return title === 'Meta' ? 'Mensaje social' : title
+}
+
+const getMetaMessageSubtypeLabel = (event?: JourneyEvent | null): string => {
+  const data = getEventData(event)
+  if (data.comment_id) return 'Comentario'
+  if (String(data.source || '').toLowerCase().includes('dm')) return 'DM'
+  if (data.media_url) return 'Multimedia'
+  if (data.postback_payload) return 'Respuesta'
+  return 'Mensaje'
+}
+
+const getMetaMessageIcon = (event: JourneyEvent) => {
+  const platformText = getMetaMessagePlatformText(event)
+  if (INSTAGRAM_META_MESSAGE_PATTERN.test(platformText)) return 'instagram'
+  if (MESSENGER_META_MESSAGE_PATTERN.test(platformText)) return 'message-circle'
+  return 'message-square'
+}
+
+const getMetaMessageColor = (event: JourneyEvent) => {
+  const platformText = getMetaMessagePlatformText(event)
+  if (INSTAGRAM_META_MESSAGE_PATTERN.test(platformText)) return 'instagram'
+  if (MESSENGER_META_MESSAGE_PATTERN.test(platformText)) return 'facebook'
+  return 'blue'
+}
+
 const getEventIcon = (event: JourneyEvent) => {
   if (event.type === 'video_playback') {
     return 'circle-play'
@@ -498,6 +548,10 @@ const getEventIcon = (event: JourneyEvent) => {
   }
 
   switch (event.type) {
+    case 'meta_message':
+      return getMetaMessageIcon(event)
+    case 'email_message':
+      return 'mail'
     case 'contact_created':
       return 'user-plus'
     case 'appointment':
@@ -516,6 +570,10 @@ const getEventTitle = (event: JourneyEvent) => {
   }
 
   switch (event.type) {
+    case 'meta_message':
+      return getMetaMessageTitle(event)
+    case 'email_message':
+      return 'Correo'
     case 'page_visit':
       return 'Visita'
     case 'video_playback':
@@ -547,6 +605,10 @@ const getEventColor = (event: JourneyEvent) => {
   }
 
   switch (event.type) {
+    case 'meta_message':
+      return getMetaMessageColor(event)
+    case 'email_message':
+      return 'blue'
     case 'contact_created':
       return 'purple'
     case 'appointment':
@@ -603,6 +665,15 @@ const getEventDescription = (event?: JourneyEvent | null): string => {
       return platform ? `Anuncio ${platform}` : 'Anuncio'
     }
     return 'WhatsApp'
+  }
+
+  if (type === 'meta_message') {
+    return getMetaMessageSubtypeLabel(event)
+  }
+
+  if (type === 'email_message') {
+    const subject = String(data.subject || '').trim()
+    return subject.length > 18 ? 'Mensaje' : subject || 'Mensaje'
   }
 
   if (type === 'contact_created') {
@@ -756,6 +827,35 @@ const getTooltipContent = (event?: JourneyEvent | null, timezone?: string): Tool
     appendTooltipItem(items, 'CTWA CLID', data.referral_ctwa_clid, undefined, { section: 'Tracking', kind: 'id' })
   }
 
+  if (type === 'meta_message') {
+    items.push({ label: 'Canal', value: getMetaMessageSurfaceLabel(event), section: 'Origen' })
+    appendTooltipItem(items, 'Perfil', data.profile_name, undefined, { section: 'Origen' })
+    appendTooltipItem(items, 'Usuario', data.username ? `@${String(data.username).replace(/^@+/, '')}` : '', undefined, { section: 'Origen' })
+    appendTooltipItem(items, 'Mensaje', data.message_text, undefined, { section: 'Mensaje' })
+    appendTooltipItem(items, 'Tipo', data.message_type || getMetaMessageSubtypeLabel(event), undefined, { section: 'Mensaje' })
+    appendTooltipItem(items, 'Medio', data.media_url, undefined, { section: 'Mensaje', kind: 'url' })
+    appendTooltipItem(items, 'Respuesta', data.postback_payload, undefined, { section: 'Mensaje' })
+    appendTooltipItem(items, 'Dirección', data.direction, undefined, { section: 'Detalles' })
+    appendTooltipItem(items, 'Estado', data.status, undefined, { section: 'Detalles' })
+    appendTooltipItem(items, 'Publicación', data.post_message, undefined, { section: 'Detalles' })
+    appendTooltipItem(items, 'Link publicación', data.post_permalink || data.permalink, undefined, { section: 'Detalles', kind: 'url' })
+    appendTooltipItem(items, 'Comentario ID', data.comment_id, undefined, { section: 'Detalles', kind: 'id' })
+    appendTooltipItem(items, 'Mensaje ID', data.meta_message_id || data.meta_social_message_id, undefined, { section: 'Tracking', kind: 'id' })
+  }
+
+  if (type === 'email_message') {
+    items.push({ label: 'Canal', value: 'Correo', section: 'Origen' })
+    appendTooltipItem(items, 'Asunto', data.subject, undefined, { section: 'Mensaje' })
+    appendTooltipItem(items, 'Mensaje', data.message_text || data.html_body, undefined, { section: 'Mensaje' })
+    appendTooltipItem(items, 'De', data.from_email, undefined, { section: 'Origen' })
+    appendTooltipItem(items, 'Para', data.to_email, undefined, { section: 'Origen' })
+    appendTooltipItem(items, 'Responder a', data.reply_to, undefined, { section: 'Origen' })
+    appendTooltipItem(items, 'Dirección', data.direction, undefined, { section: 'Detalles' })
+    appendTooltipItem(items, 'Estado', data.status, undefined, { section: 'Detalles' })
+    appendTooltipItem(items, 'Error', data.error_message, undefined, { section: 'Detalles' })
+    appendTooltipItem(items, 'Mensaje ID', data.smtp_message_id || data.email_message_id, undefined, { section: 'Tracking', kind: 'id' })
+  }
+
   if (type === 'contact_created') {
     const source = getEventSourceLabel(event) || data.source
     if (source) {
@@ -818,6 +918,13 @@ const getTooltipContent = (event?: JourneyEvent | null, timezone?: string): Tool
     appendTooltipItem(items, 'Concepto', data.title, undefined, { section: 'Pago' })
     appendTooltipItem(items, 'Tipo', data.type, undefined, { section: 'Pago' })
     appendTooltipItem(items, 'Proveedor', data.payment_provider, undefined, { section: 'Pago' })
+  }
+
+  if (items.length === 0) {
+    items.push({ label: 'Tipo de evento', value: type, section: 'Detalles' })
+    appendTooltipItem(items, 'Fuente', data.source, undefined, { section: 'Origen' })
+    appendTooltipItem(items, 'Mensaje', data.message_text, undefined, { section: 'Mensaje' })
+    appendTooltipItem(items, 'Estado', data.status, undefined, { section: 'Detalles' })
   }
 
   return items

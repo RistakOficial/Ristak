@@ -264,6 +264,11 @@ Capacidades:
 - Filtros ocultos.
 - Acciones masivas con job propio.
 - Atribucion por UTMs, click IDs, WhatsApp referrals, Meta y tracking identity.
+- El Viaje del Cliente en la ficha debe mostrar cada actividad con una etiqueta
+  legible: visitas, contactos, WhatsApp, Messenger, Instagram, correo, citas y
+  compras. Si un evento trae metadata de mensaje social o email, el tooltip debe
+  explicar canal, contenido, perfil/usuario, estado e identificadores utiles; no
+  debe quedarse como "Evento" sin detalle.
 
 Los contactos alimentan reportes, automations, chat, pagos, citas y conversiones.
 
