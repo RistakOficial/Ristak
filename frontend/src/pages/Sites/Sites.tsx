@@ -29848,6 +29848,15 @@ const InlineBlockStyleControls: React.FC<{
 
       {supportsButton && (
         <AccordionSection id="block-button" title="Botón">
+          {/* Presets de diseño del botón (incluye ícono) — viven en DISEÑO, no en
+              Editar. El usuario elige una base y luego afina con los controles de
+              abajo. Reorg del panel: solo cambia de pestaña, mismas settingKeys. */}
+          <ButtonPresetPicker
+            site={site}
+            settings={settings}
+            onPatchSettings={onPatchSettings}
+            onSave={onSave}
+          />
           <TypographyFormatInspector
             target="button"
             settings={settings}
@@ -34460,10 +34469,9 @@ const SiteGlobalSettings: React.FC<{
 const hasBlockExtraSettingsContent = (block: SiteBlock) => (
   isPanelBlock(block) ||
   block.blockType === SECTION_BLOCK_TYPE ||
+  // hero/cta/button ya NO están aquí: su única config de settings era la acción del
+  // botón, que se movió arriba en Editar (buttonActionEditControls).
   [
-    'hero',
-    'cta',
-    'button',
     'social_profile',
     'image',
     'video',
@@ -36284,6 +36292,19 @@ const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
     </>
   )
 
+  // La ACCIÓN del botón (qué hace: URL / página / popup) es FUNCIÓN, no diseño →
+  // va ARRIBA en Editar junto al texto del botón, no enterrada en los settings del
+  // fondo. Antes vivía como último hijo (LandingBlockSettings) y quedaba hasta abajo.
+  const buttonActionEditControls = hasButtonCopy ? (
+    <ButtonActionFields
+      settings={settings}
+      pages={pages}
+      activePageId={activePageId}
+      onPatchSettings={onPatchSettings}
+      onSave={onSave}
+    />
+  ) : null
+
   const contentAccordion = (
     <AccordionSection id="edit-content" title={contentSectionTitle} defaultGroupOpen={shouldOpenContentEditorByDefault}>
       {contentField}
@@ -36331,12 +36352,7 @@ const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
               <input value={getSettingString(settings, 'buttonSubtitle')} onChange={(event) => onPatchSettings({ buttonSubtitle: event.target.value })} onBlur={onSave} />
             </label>
           </div>
-          <ButtonPresetPicker
-            site={site}
-            settings={settings}
-            onPatchSettings={onPatchSettings}
-            onSave={onSave}
-          />
+          {buttonActionEditControls}
           </div>
         </AccordionSection>
       )}
@@ -37991,21 +38007,8 @@ const LandingBlockSettings: React.FC<LandingBlockSettingsProps> = ({ site, block
     )
   }
 
-  if (['hero', 'cta'].includes(block.blockType)) {
-    return (
-      <div className={styles.settingsGroup}>
-        <ButtonActionFields settings={settings} pages={pages} activePageId={activePageId} onPatchSettings={onPatchSettings} onSave={onSave} />
-      </div>
-    )
-  }
-
-  if (block.blockType === 'button') {
-    return (
-      <div className={styles.settingsGroup}>
-        <ButtonActionFields settings={settings} pages={pages} activePageId={activePageId} onPatchSettings={onPatchSettings} onSave={onSave} />
-      </div>
-    )
-  }
+  // La acción del botón (hero/cta/button) se movió a la sección 'Botón' de Editar
+  // (buttonActionEditControls). Ya no se renderiza aquí para no duplicarla.
 
   if (block.blockType === 'social_profile') {
     return (
