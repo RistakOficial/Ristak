@@ -3128,6 +3128,7 @@ async function initTables() {
     // Crear índices DESPUÉS de asegurar que las columnas existen
     await db.run('CREATE INDEX IF NOT EXISTS idx_whatsapp_contact ON whatsapp_attribution(contact_id)')
     await db.run('CREATE INDEX IF NOT EXISTS idx_whatsapp_ad_id ON whatsapp_attribution(ad_id_thru_message)')
+    await db.run('CREATE INDEX IF NOT EXISTS idx_whatsapp_attribution_phone ON whatsapp_attribution(phone)')
 
     const oldWhatsAppPrefix = ['whatsapp', 'web'].join('_')
     for (const suffix of [
@@ -3826,6 +3827,33 @@ async function initTables() {
         }
       }
 
+      // Snapshot de atribución por conversión (último paid touch + superficie
+      // real). Lo escribe conversionAttributionService al registrar la compra.
+      const conversionAttributionColumns = [
+        ['attribution_channel', 'TEXT'],
+        ['attribution_source', 'TEXT'],
+        ['attribution_touch_type', 'TEXT'],
+        ['attribution_touch_at', 'DATETIME'],
+        ['attribution_campaign_id', 'TEXT'],
+        ['attribution_adset_id', 'TEXT'],
+        ['attribution_ad_id', 'TEXT'],
+        ['attribution_ad_name', 'TEXT'],
+        ['attribution_ids_json', 'TEXT'],
+        ['conversion_surface', 'TEXT']
+      ]
+
+      for (const table of ['payments', 'appointments']) {
+        for (const [column, type] of conversionAttributionColumns) {
+          try {
+            await db.run(`ALTER TABLE ${table} ADD COLUMN ${column} ${type}`)
+          } catch (err) {
+            if (!err.message.includes('duplicate column name') && !err.message.includes('already exists')) {
+              throw err
+            }
+          }
+        }
+      }
+
       try {
         await db.run('CREATE INDEX IF NOT EXISTS idx_payments_payment_mode ON payments(payment_mode)')
       } catch (err) {
@@ -4050,6 +4078,7 @@ async function initTables() {
       await db.run('CREATE INDEX IF NOT EXISTS idx_meta_social_messages_sender ON meta_social_messages(platform, sender_id)')
       await db.run('CREATE INDEX IF NOT EXISTS idx_meta_social_messages_created ON meta_social_messages(created_at)')
       await db.run('CREATE INDEX IF NOT EXISTS idx_meta_social_messages_meta_id ON meta_social_messages(meta_message_id)')
+      await db.run('CREATE INDEX IF NOT EXISTS idx_meta_social_messages_social_contact ON meta_social_messages(meta_social_contact_id)')
       await db.run('CREATE INDEX IF NOT EXISTS idx_meta_social_events_status ON meta_social_webhook_events(processed_status, created_at)')
       await db.run('CREATE INDEX IF NOT EXISTS idx_email_messages_contact ON email_messages(contact_id)')
       await db.run('CREATE INDEX IF NOT EXISTS idx_email_messages_contact_date ON email_messages(contact_id, message_timestamp, created_at)')
@@ -4469,6 +4498,12 @@ async function initTables() {
     await db.run('CREATE INDEX IF NOT EXISTS idx_sessions_identity_hash ON sessions(identity_hash)')
     await db.run('CREATE INDEX IF NOT EXISTS idx_sessions_device_network ON sessions(device_signature, network_signature)')
     await db.run('CREATE INDEX IF NOT EXISTS idx_sessions_match_method ON sessions(match_method, match_confidence)')
+    // Lookup por email en atribución de conversiones (OR con LOWER(email)).
+    try {
+      await db.run('CREATE INDEX IF NOT EXISTS idx_sessions_email_lower ON sessions(LOWER(email))')
+    } catch (err) {
+      logger.warn('Advertencia al crear índice idx_sessions_email_lower:', err.message)
+    }
 
     // Tracking granular de reproducciones de video.
     // video_playback_sessions es el resumen por reproducción; video_playback_events

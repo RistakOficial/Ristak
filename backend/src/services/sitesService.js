@@ -54,6 +54,7 @@ import {
 import { renderTemplate } from './automationEngine.js'
 import { getVariableFieldValueMap } from './variableFieldsService.js'
 import { createRistakId } from '../utils/idGenerator.js'
+import { resolveConversionAttribution, persistAppointmentConversionAttribution } from './conversionAttributionService.js'
 
 let domainHealthFetch = fetch
 
@@ -25596,6 +25597,23 @@ export async function sendCalendarBookingSiteMetaEvent({ calendar, appointment, 
   const config = getCalendarSiteMetaEventConfig(calendar, siteOverride)
   const eventId = `calendar_${cleanString(calendar?.id) || 'unknown'}_${cleanString(appointment?.id) || crypto.randomUUID()}`
 
+  // Snapshot de atribución interna de la cita (último paid touch + superficie
+  // website: el booking ocurrió en la página/widget). Se guarda aunque el
+  // envío a Meta se salte más abajo.
+  if (contactId && cleanString(appointment?.id)) {
+    const conversionResolution = await resolveConversionAttribution({
+      contactId,
+      conversionType: 'appointment',
+      conversionSurface: 'website'
+    }).catch(error => {
+      logger.warn(`No se pudo resolver atribución de conversión para cita ${appointment?.id}: ${error.message}`)
+      return null
+    })
+    if (conversionResolution) {
+      await persistAppointmentConversionAttribution(cleanString(appointment.id), conversionResolution)
+    }
+  }
+
   const testModeActive = await isMetaTestModeActive()
   if (shouldSkipTracking({ meta: requestMeta?.meta }) && !testModeActive) {
     return { sent: false, reason: NO_TRACK_REASON, eventId, eventName: config.eventName }
@@ -25724,6 +25742,23 @@ export async function sendCalendarBookingSiteMetaEvent({ calendar, appointment, 
       requestPayload: payload,
       responsePayload
     })
+
+    // Marca el dedup de agenda a nivel contacto: si más tarde llega un echo
+    // (webhook GHL de la misma cita) por el trigger de business_messaging,
+    // el flag evita una SEGUNDA conversión con otro event_id.
+    if (contactId) {
+      await db.run(
+        `UPDATE contacts
+         SET meta_schedule_event_sent = 1,
+             meta_schedule_event_sent_at = CURRENT_TIMESTAMP,
+             meta_schedule_event_id = ?,
+             updated_at = CURRENT_TIMESTAMP
+         WHERE id = ?`,
+        [eventId, contactId]
+      ).catch(error => {
+        logger.warn(`No se pudo marcar meta_schedule_event_sent para contacto ${contactId}: ${error.message}`)
+      })
+    }
 
     return {
       sent: true,

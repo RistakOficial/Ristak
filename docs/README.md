@@ -16,6 +16,7 @@ correcto. Si de verdad hace falta un documento nuevo, debe quedar enlazado aqui.
 | Reglas obligatorias para moneda, currency, importes, pagos, precios y reportes financieros | [CURRENCY_GUIDELINES.md](./CURRENCY_GUIDELINES.md) |
 | Reglas obligatorias de UI desktop | [DESIGN_SYSTEM.md](./DESIGN_SYSTEM.md) |
 | Reglas obligatorias para crons/jobs de integraciones externas | [INTEGRATION_CRON_RULES.md](./INTEGRATION_CRON_RULES.md) |
+| Reglas obligatorias de atribucion de conversiones y eventos Meta CAPI | [CONVERSION_ATTRIBUTION.md](./CONVERSION_ATTRIBUTION.md) |
 
 ## Rutas por tipo de cambio
 
@@ -31,6 +32,7 @@ correcto. Si de verdad hace falta un documento nuevo, debe quedar enlazado aqui.
 | Licenciamiento, distribucion managed Docker, restricciones por plan | [LICENSING.md](./LICENSING.md) |
 | API externa, OAuth, MCP y tokens de integracion | [EXTERNAL_API_ACCESS.md](./EXTERNAL_API_ACCESS.md) |
 | Pixel, tracking, sesiones, conversiones y rastreo web | [TRACKING_PIXEL.md](./TRACKING_PIXEL.md) y [PIXEL_SETUP.md](./PIXEL_SETUP.md) |
+| Atribucion de compras/citas, ultimo paid touch, superficie y payload Meta CAPI | [CONVERSION_ATTRIBUTION.md](./CONVERSION_ATTRIBUTION.md) |
 | Media, Bunny Storage, Bunny Stream y cuotas | [MEDIA_STORAGE_BUNNY.md](./MEDIA_STORAGE_BUNNY.md) |
 | App movil nativa y rutas moviles | [MOBILE_APP.md](./MOBILE_APP.md) |
 | Builds para App Store / Play Store | [MOBILE_STORE_RELEASES.md](./MOBILE_STORE_RELEASES.md) |

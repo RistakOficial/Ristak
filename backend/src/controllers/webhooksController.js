@@ -1267,6 +1267,7 @@ export const handlePaymentWebhook = async (req, res) => {
       }
 
       await triggerMetaPaymentPurchaseEvent(contactId, {
+        id: processedPaymentId,
         amount,
         currency,
         paymentMode
@@ -1584,7 +1585,10 @@ export const handleAppointmentWebhook = async (req, res) => {
       previousStatusNormalized.includes('deleted');
 
     if (contactId && !isCancelledAppointment) {
-      await triggerWhatsappAppointmentBookedEvent(contactId, { calendarId: appointmentCalendarId });
+      await triggerWhatsappAppointmentBookedEvent(contactId, {
+        calendarId: appointmentCalendarId,
+        appointmentId
+      });
     }
 
     if (contactId) {
@@ -2079,6 +2083,7 @@ export const handleInvoiceWebhook = async (req, res) => {
 
           if (isSuccessfulPaymentStatus(payment.status || newStatus)) {
             await triggerMetaPaymentPurchaseEvent(payment.contact_id, {
+              id: payment.id,
               amount: payment.amount,
               currency: payment.currency,
               paymentMode: payment.payment_mode

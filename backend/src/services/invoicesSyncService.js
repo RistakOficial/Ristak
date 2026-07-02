@@ -1096,6 +1096,7 @@ export async function syncInvoices({ limit = 100, offset = 0, contactId, exportL
 
         if (transitionedToPaid) {
           await triggerMetaPaymentPurchaseEvent(invoiceData.contact_id, {
+            id: existing?.id || ghlInvoiceId,
             amount: invoiceData.amount,
             currency: invoiceData.currency,
             paymentMode: invoiceData.payment_mode
@@ -1323,6 +1324,7 @@ export async function syncAllInvoices({ contactId, exportLocal = false } = {}) {
 
         if (transitionedToPaid) {
           await triggerMetaPaymentPurchaseEvent(invoiceData.contact_id, {
+            id: existing?.id || ghlInvoiceId,
             amount: invoiceData.amount,
             currency: invoiceData.currency,
             paymentMode: invoiceData.payment_mode
@@ -1509,6 +1511,7 @@ export async function syncSingleInvoice(invoiceId) {
 
     if (transitionedToPaid) {
       await triggerMetaPaymentPurchaseEvent(invoiceData.contact_id, {
+        id: existing?.id || ghlInvoiceId,
         amount: invoiceData.amount,
         currency: invoiceData.currency,
         paymentMode: invoiceData.payment_mode

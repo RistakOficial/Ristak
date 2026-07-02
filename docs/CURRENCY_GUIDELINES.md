@@ -78,8 +78,12 @@ Lee y aplica esta guia antes de tocar:
   eventos locales con importe, persiste la moneda resuelta en el registro.
 - `DEFAULT_CURRENCY` en servicios de pasarela es fallback defensivo para datos
   vacios o invalidos. No lo uses como fuente principal para nuevas rutas.
-- En Meta/CAPI, manda la moneda del pago o del evento real. Si el evento nace de
-  un importe nuevo de la cuenta, usa `getAccountCurrency()`.
+- En Meta/CAPI, los eventos `Purchase` (y cualquier evento con `currency` en
+  `custom_data`) usan SIEMPRE la moneda configurada en la cuenta via
+  `getAccountCurrency()` (`getPaymentMetaCurrency()` en
+  `metaConversionEventsService.js`), para que Meta reciba señales consistentes.
+  El pago conserva su propia `currency` guardada en la BD para reportes locales;
+  esa moneda NO se manda a Meta.
 - En automatizaciones e IA, si el contexto no trae moneda de un pago existente,
   resuelve la moneda desde la cuenta antes de construir el mensaje o accion.
 

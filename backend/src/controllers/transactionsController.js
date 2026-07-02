@@ -738,6 +738,7 @@ export const createTransaction = async (req, res) => {
 
     if (SUCCESS_PAYMENT_STATUSES.has(finalStatus)) {
       await triggerMetaPaymentPurchaseEvent(finalContactId, {
+        id: transactionId,
         amount: finalAmount,
         currency: finalCurrency,
         paymentMode: finalPaymentMode
@@ -1362,6 +1363,7 @@ export const updateTransaction = async (req, res) => {
 
     if (finalContactId && statusChanged && SUCCESS_PAYMENT_STATUSES.has(finalStatus)) {
       await triggerMetaPaymentPurchaseEvent(finalContactId, {
+        id,
         amount: finalAmount,
         currency: finalCurrency,
         paymentMode: finalPaymentMode
@@ -1689,6 +1691,7 @@ export const recordPayment = async (req, res) => {
     if (transaction.contact_id) {
       await updateSingleContactStats(transaction.contact_id)
       await triggerMetaPaymentPurchaseEvent(transaction.contact_id, {
+        id,
         amount: amount || transaction.amount,
         currency: transaction.currency || 'MXN',
         paymentMode
