@@ -203,11 +203,10 @@ html body .rstkCanvas.rstkPopupEditorHost {
    html body: especificidad suficiente para ganarle a la hoja inyectada. */
 html body .rstkCanvas .rstk-checkout-pay:disabled { opacity: 1; cursor: default; }
 
-/* ALLOWED-DIVERGENCE (editor): oculta el pill de autollenado de tarjetas de
-   prueba que Stripe inyecta en modo test. Solo apunta al iframe CONTROLADOR
-   (__privateStripeController*), NUNCA a los iframes de los campos de tarjeta
-   (__privateStripeFrame*), y solo carga en el editor. */
-iframe[name^="__privateStripeController"] { display: none !important; }
+/* El helper de test de Stripe ya no se combate con CSS (apuntaba al iframe
+   controlador invisible y quedaba pegado en document.body). En su lugar, el preview
+   del editor monta Stripe con la llave LIVE (StripePaymentElementPreview) para que el
+   helper nunca se inyecte; el modo test real vive en el publicado / preview público. */
 
 /* ALLOWED-DIVERGENCE (editor): Mercado Pago monta su Brick en vivo. El editor
    muestra un placeholder neutral (no interactivo) con el mismo alto aproximado. */

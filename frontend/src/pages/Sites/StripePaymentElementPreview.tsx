@@ -21,8 +21,19 @@ function getPreviewPublishableKey(): Promise<string> {
     publishableKeyFetch = stripePaymentsService
       .getConfig()
       .then((config) => {
-        // Para el preview preferimos la llave de prueba; si no, la activa.
-        const key = config.manualModes?.test?.publishableKey || config.publishableKey || ''
+        // El preview del editor es SOLO visual (readOnly, sin cobro), así que la llave que
+        // use no afecta la función. Preferimos una llave LIVE (pk_live_) para que Stripe NO
+        // inyecte su "helper" de tarjetas de prueba (solo aparece con pk_test_ y se queda
+        // pegado en document.body aunque cambies de pasarela o de página). El modo test real
+        // (con su helper) aplica en el sitio PUBLICADO y en el preview de ruta pública.
+        const liveKey = config.manualModes?.live?.publishableKey || ''
+        const activeKey = config.publishableKey || ''
+        const testKey = config.manualModes?.test?.publishableKey || ''
+        const key = liveKey
+          || (activeKey && !activeKey.startsWith('pk_test_') ? activeKey : '')
+          || activeKey
+          || testKey
+          || ''
         cachedPublishableKey = key
         return key
       })
