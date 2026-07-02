@@ -7082,11 +7082,137 @@ export const DesktopChat: React.FC = () => {
                 </div>
               </header>
 
-              <ChatMessageSurface
-                ref={messagePaneRef}
-                className={`${styles.messagePane} ${draggingFilesOverChat ? styles.messagePaneDropActive : ''}`}
-                onScroll={updateMessagePaneBottomLock}
-              >
+              <div className={styles.messagePaneFrame}>
+                <ChatMessageSurface
+                  ref={messagePaneRef}
+                  className={`${styles.messagePane} ${draggingFilesOverChat ? styles.messagePaneDropActive : ''}`}
+                  onScroll={updateMessagePaneBottomLock}
+                >
+                  {olderMessagesLoading ? (
+                    <div className={styles.cacheRefreshPill} role="status" aria-live="polite">
+                      <Loader2 size={13} className={styles.spin} aria-hidden="true" />
+                      Cargando mensajes anteriores
+                    </div>
+                  ) : null}
+                  {messagesRefreshing && !messagesLoading ? (
+                    <div className={styles.cacheRefreshPill} role="status" aria-live="polite">
+                      <Loader2 size={13} className={styles.spin} aria-hidden="true" />
+                      Actualizando conversación
+                    </div>
+                  ) : null}
+                  {messagesLoading ? (
+                    <div className={styles.stateBlock} role="status" aria-live="polite" aria-label="Cargando conversación">
+                      <Loader2 size={18} className={styles.spin} aria-hidden="true" />
+                    </div>
+                  ) : messagesError ? (
+                    <div className={styles.stateBlock}>
+                      <CircleAlert size={18} />
+                      <span>{messagesError}</span>
+                      <Button variant="secondary" size="sm" onClick={() => { void loadConversation(activeContact.id) }}>Reintentar</Button>
+                    </div>
+                  ) : messages.length === 0 && agentCompletionEvents.length === 0 ? (
+                    <div className={styles.emptyConversation}>
+                      <MessageCircle size={22} />
+                      <strong>Sin mensajes todavía</strong>
+                      <span>Escribe abajo para empezar la conversación.</span>
+                    </div>
+                  ) : conversationTimelineGroups.map((group) => (
+                    <div key={group.key} className={styles.messageGroup}>
+                      <div className={styles.dayDivider}>{group.label}</div>
+                      {group.items.map((item) => {
+                        if (item.type === 'agentCompletion') {
+                          return (
+                            <div key={item.id} className={styles.agentCompletionRow}>
+                              {renderAgentCompletionCard(item.completion)}
+                            </div>
+                          )
+                        }
+                        const message = item.message
+                        const routingDetails = getMessageRoutingDetails(message, whatsappStatus)
+                        return (
+                          <article
+                            key={item.id}
+                            className={`${styles.messageBubble} ${message.direction === 'outbound' ? styles.messageOutbound : message.direction === 'system' ? styles.messageSystem : styles.messageInbound} ${isMessageScheduled(message) ? styles.messageScheduled : ''} ${message.isComment ? styles.messageComment : ''}`}
+                          >
+	                            {message.isComment ? (
+	                              <div className={styles.commentCard}>
+	                                <span className={styles.commentContextLabel}>
+	                                  <MessageCircle size={13} aria-hidden="true" />
+	                                  {message.commentReplyMode === 'public'
+	                                    ? 'Respuesta pública al comentario'
+	                                    : message.commentReplyMode === 'private'
+	                                      ? 'Respuesta por privado'
+	                                      : 'Comentó en tu publicación'}
+	                                </span>
+	                                {message.commentPost && (message.commentPost.imageUrl || message.commentPost.message) ? (
+	                                  (() => {
+	                                    const postInner = (
+	                                      <>
+	                                        {message.commentPost.imageUrl ? (
+	                                          <img src={message.commentPost.imageUrl} alt="" className={styles.commentPostThumb} loading="lazy" />
+	                                        ) : (
+	                                          <span className={styles.commentPostThumbPlaceholder}><ImageIcon size={30} aria-hidden="true" /></span>
+	                                        )}
+	                                        <span className={styles.commentPostMeta}>
+	                                          <span className={styles.commentPostKind}>Publicación</span>
+	                                          {message.commentPost.message ? (
+	                                            <span className={styles.commentPostText}>{message.commentPost.message}</span>
+	                                          ) : (
+	                                            <span className={styles.commentPostTextMuted}>Ver publicación</span>
+	                                          )}
+	                                        </span>
+	                                        {message.commentPost.permalink ? (
+	                                          <ExternalLink size={15} className={styles.commentPostExternal} aria-hidden="true" />
+	                                        ) : null}
+	                                      </>
+	                                    )
+	                                    return message.commentPost.permalink ? (
+	                                      <a className={styles.commentPostChip} href={message.commentPost.permalink} target="_blank" rel="noopener noreferrer">
+	                                        {postInner}
+	                                      </a>
+	                                    ) : (
+	                                      <div className={`${styles.commentPostChip} ${styles.commentPostChipStatic}`}>
+	                                        {postInner}
+	                                      </div>
+	                                    )
+	                                  })()
+	                                ) : null}
+	                                {message.text ? <p className={styles.commentBody}>{message.text}</p> : null}
+	                                {renderMessageMeta(message, routingDetails.label)}
+	                                {message.direction === 'inbound' && !message.commentReplyMode && message.commentId ? (
+	                                  <button
+	                                    type="button"
+	                                    className={styles.commentReplyButton}
+	                                    onClick={() => setCommentReplyTarget({
+	                                      messageId: message.id,
+	                                      commentId: message.commentId as string,
+	                                      platform: message.commentPlatform || 'messenger',
+	                                      preview: String(message.text || '').replace(/\s+/g, ' ').trim().slice(0, 60)
+	                                    })}
+	                                  >
+	                                    <MessageCircle size={13} aria-hidden="true" />
+	                                    Responder en la publicación
+	                                  </button>
+	                                ) : null}
+	                              </div>
+	                            ) : (
+	                              <>
+	                                {renderAttachment(message)}
+	                                {message.subject ? <strong className={styles.emailMessageSubject}>{message.subject}</strong> : null}
+	                                {message.text ? <p>{message.text}</p> : null}
+	                              </>
+	                            )}
+                            {routingDetails.reason ? <small className={styles.messageRoutingNote}>{routingDetails.reason}</small> : null}
+                            {message.errorReason ? <small className={styles.errorText}>{message.errorReason}</small> : null}
+                            {message.scheduledAt ? <small className={styles.scheduledText}>Programado para {formatLocalDateTime(message.scheduledAt)}</small> : null}
+                            {renderScheduledMessageActions(message)}
+                            {!message.isComment ? renderMessageMeta(message, routingDetails.label) : null}
+                          </article>
+                        )
+                      })}
+                    </div>
+                  ))}
+                </ChatMessageSurface>
                 {draggingFilesOverChat ? (
                   <div className={styles.chatDropOverlay} aria-live="polite">
                     <div className={styles.chatDropOverlayCard}>
@@ -7096,131 +7222,7 @@ export const DesktopChat: React.FC = () => {
                     </div>
                   </div>
                 ) : null}
-                {olderMessagesLoading ? (
-                  <div className={styles.cacheRefreshPill} role="status" aria-live="polite">
-                    <Loader2 size={13} className={styles.spin} aria-hidden="true" />
-                    Cargando mensajes anteriores
-                  </div>
-                ) : null}
-                {messagesRefreshing && !messagesLoading ? (
-                  <div className={styles.cacheRefreshPill} role="status" aria-live="polite">
-                    <Loader2 size={13} className={styles.spin} aria-hidden="true" />
-                    Actualizando conversación
-                  </div>
-                ) : null}
-                {messagesLoading ? (
-                  <div className={styles.stateBlock} role="status" aria-live="polite" aria-label="Cargando conversación">
-                    <Loader2 size={18} className={styles.spin} aria-hidden="true" />
-                  </div>
-                ) : messagesError ? (
-                  <div className={styles.stateBlock}>
-                    <CircleAlert size={18} />
-                    <span>{messagesError}</span>
-                    <Button variant="secondary" size="sm" onClick={() => { void loadConversation(activeContact.id) }}>Reintentar</Button>
-                  </div>
-                ) : messages.length === 0 && agentCompletionEvents.length === 0 ? (
-                  <div className={styles.emptyConversation}>
-                    <MessageCircle size={22} />
-                    <strong>Sin mensajes todavía</strong>
-                    <span>Escribe abajo para empezar la conversación.</span>
-                  </div>
-                ) : conversationTimelineGroups.map((group) => (
-                  <div key={group.key} className={styles.messageGroup}>
-                    <div className={styles.dayDivider}>{group.label}</div>
-                    {group.items.map((item) => {
-                      if (item.type === 'agentCompletion') {
-                        return (
-                          <div key={item.id} className={styles.agentCompletionRow}>
-                            {renderAgentCompletionCard(item.completion)}
-                          </div>
-                        )
-                      }
-                      const message = item.message
-                      const routingDetails = getMessageRoutingDetails(message, whatsappStatus)
-                      return (
-                        <article
-                          key={item.id}
-                          className={`${styles.messageBubble} ${message.direction === 'outbound' ? styles.messageOutbound : message.direction === 'system' ? styles.messageSystem : styles.messageInbound} ${isMessageScheduled(message) ? styles.messageScheduled : ''} ${message.isComment ? styles.messageComment : ''}`}
-                        >
-	                          {message.isComment ? (
-	                            <div className={styles.commentCard}>
-	                              <span className={styles.commentContextLabel}>
-	                                <MessageCircle size={13} aria-hidden="true" />
-	                                {message.commentReplyMode === 'public'
-	                                  ? 'Respuesta pública al comentario'
-	                                  : message.commentReplyMode === 'private'
-	                                    ? 'Respuesta por privado'
-	                                    : 'Comentó en tu publicación'}
-	                              </span>
-	                              {message.commentPost && (message.commentPost.imageUrl || message.commentPost.message) ? (
-	                                (() => {
-	                                  const postInner = (
-	                                    <>
-	                                      {message.commentPost.imageUrl ? (
-	                                        <img src={message.commentPost.imageUrl} alt="" className={styles.commentPostThumb} loading="lazy" />
-	                                      ) : (
-	                                        <span className={styles.commentPostThumbPlaceholder}><ImageIcon size={30} aria-hidden="true" /></span>
-	                                      )}
-	                                      <span className={styles.commentPostMeta}>
-	                                        <span className={styles.commentPostKind}>Publicación</span>
-	                                        {message.commentPost.message ? (
-	                                          <span className={styles.commentPostText}>{message.commentPost.message}</span>
-	                                        ) : (
-	                                          <span className={styles.commentPostTextMuted}>Ver publicación</span>
-	                                        )}
-	                                      </span>
-	                                      {message.commentPost.permalink ? (
-	                                        <ExternalLink size={15} className={styles.commentPostExternal} aria-hidden="true" />
-	                                      ) : null}
-	                                    </>
-	                                  )
-	                                  return message.commentPost.permalink ? (
-	                                    <a className={styles.commentPostChip} href={message.commentPost.permalink} target="_blank" rel="noopener noreferrer">
-	                                      {postInner}
-	                                    </a>
-	                                  ) : (
-	                                    <div className={`${styles.commentPostChip} ${styles.commentPostChipStatic}`}>
-	                                      {postInner}
-	                                    </div>
-	                                  )
-	                                })()
-	                              ) : null}
-	                              {message.text ? <p className={styles.commentBody}>{message.text}</p> : null}
-	                              {renderMessageMeta(message, routingDetails.label)}
-	                              {message.direction === 'inbound' && !message.commentReplyMode && message.commentId ? (
-	                                <button
-	                                  type="button"
-	                                  className={styles.commentReplyButton}
-	                                  onClick={() => setCommentReplyTarget({
-	                                    messageId: message.id,
-	                                    commentId: message.commentId as string,
-	                                    platform: message.commentPlatform || 'messenger',
-	                                    preview: String(message.text || '').replace(/\s+/g, ' ').trim().slice(0, 60)
-	                                  })}
-	                                >
-	                                  <MessageCircle size={13} aria-hidden="true" />
-	                                  Responder en la publicación
-	                                </button>
-	                              ) : null}
-	                            </div>
-	                          ) : (
-	                            <>
-	                              {renderAttachment(message)}
-	                              {message.subject ? <strong className={styles.emailMessageSubject}>{message.subject}</strong> : null}
-	                              {message.text ? <p>{message.text}</p> : null}
-	                            </>
-	                          )}
-                          {routingDetails.reason ? <small className={styles.messageRoutingNote}>{routingDetails.reason}</small> : null}
-                          {message.errorReason ? <small className={styles.errorText}>{message.errorReason}</small> : null}
-                          {message.scheduledAt ? <small className={styles.scheduledText}>Programado para {formatLocalDateTime(message.scheduledAt)}</small> : null}
-                          {renderScheduledMessageActions(message)}
-                          {!message.isComment ? renderMessageMeta(message, routingDetails.label) : null}
-                        </article>
-                      )
-                    })}
-                  </div>
-                ))}
-              </ChatMessageSurface>
+              </div>
 
 	              <form
 	                className={styles.composer}
