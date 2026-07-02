@@ -49,6 +49,10 @@
 
 .field {
   display: grid;
+  /* Columna interna acotada: sin esto, la columna implícita es `auto` y se estira al
+     max-content del contenido (la fila de etiqueta con el botón "Crear" no encoge), lo
+     que desbordaba el campo sobre la columna vecina ("Concepto"). */
+  grid-template-columns: minmax(0, 1fr);
   gap: 6px;
   min-width: 0;
 }
@@ -128,7 +132,7 @@
   align-items: center;
   gap: 4px;
   flex-shrink: 0;
-  padding: 3px 8px;
+  padding: 3px 7px;
   border: 1px solid var(--border);
   border-radius: var(--radius-ctl);
   background: var(--surface);

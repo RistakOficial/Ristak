@@ -297,7 +297,7 @@ export const PaymentGateControls: React.FC<PaymentGateControlsProps> = ({
 
             <div className={styles.field}>
               <div className={styles.catalogLabelRow}>
-                <span>Producto del catálogo</span>
+                <span title="Producto del catálogo">Catálogo</span>
                 <button
                   type="button"
                   className={styles.catalogCreate}
