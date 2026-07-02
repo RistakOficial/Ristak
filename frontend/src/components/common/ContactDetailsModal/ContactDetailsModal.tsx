@@ -7,6 +7,7 @@ import {
   Badge,
   Button,
   ChatMessageSurface,
+  ContactCustomFieldsPanel,
   ContactPhoneSelector,
   CustomSelect,
   EmailRichTextEditor,
@@ -49,7 +50,7 @@ import { useLabels } from '@/contexts/LabelsContext'
 import { useTimezone } from '@/contexts/TimezoneContext'
 import { useAuth } from '@/contexts/AuthContext'
 import { hasLicenseFeature } from '@/utils/accessControl'
-import type { ContactCustomField, ContactCustomFieldValue, ContactMetaAttribution, ContactPhoneNumber } from '@/types'
+import type { ContactCustomField, ContactMetaAttribution, ContactPhoneNumber } from '@/types'
 import styles from './ContactDetailsModal.module.css'
 
 interface ContactPaymentDetail {
@@ -237,12 +238,6 @@ const getContactPhoneEntries = (contact?: ContactDetail | null): ContactPhoneNum
     return String(left.createdAt || '').localeCompare(String(right.createdAt || ''))
   })
 }
-
-const getCustomFieldIdentity = (field: ContactCustomField, index: number) =>
-  field.id || field.key || field.fieldKey || field.label || field.name || `custom-field-${index}`
-
-const getCustomFieldLabel = (field: ContactCustomField, index: number) =>
-  field.label || field.name || field.key || field.fieldKey || field.id || `Campo personalizado ${index + 1}`
 
 const getWhatsAppPhoneLabel = (phone: ContactChatPhoneOption) => {
   const number = phone.display_phone_number || phone.phone_number || phone.id
@@ -682,96 +677,6 @@ const getResolvedAttributionDisplay = (contact?: ContactDetail | null) => ({
   adId: contact?.metaAttribution?.adId || contact?.ad_id || null
 })
 
-const WHATSAPP_RESERVED_CUSTOM_FIELD_KEYS = new Set([
-  'whatsapp_api_provider',
-  'whatsapp_api_first_message',
-  'whatsapp_api_source_id',
-  'whatsapp_api_ctwa_clid',
-  'whatsapp_api_source_url'
-])
-
-const normalizeCustomFieldToken = (value?: string | null) =>
-  String(value || '')
-    .trim()
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, '_')
-    .replace(/^_+|_+$/g, '')
-
-const isWhatsAppReservedCustomField = (field: ContactCustomField) => {
-  const tokens = [
-    field.id,
-    field.key,
-    field.fieldKey,
-    field.label,
-    field.name
-  ].map(normalizeCustomFieldToken).filter(Boolean)
-
-  return tokens.some(token =>
-    WHATSAPP_RESERVED_CUSTOM_FIELD_KEYS.has(token) ||
-    token.startsWith('whatsapp_api_') ||
-    token.includes('_ctwa_') ||
-    token === 'ctwa' ||
-    token === 'ctwa_clid'
-  )
-}
-
-const isObjectValue = (value: ContactCustomFieldValue | undefined): value is Record<string, unknown> =>
-  Boolean(value) && typeof value === 'object' && !Array.isArray(value)
-
-const isComplexCustomField = (field: ContactCustomField) =>
-  Array.isArray(field.value) || isObjectValue(field.value)
-
-const formatCustomFieldDraft = (value: ContactCustomFieldValue | undefined) => {
-  if (value === null || value === undefined) return ''
-  if (Array.isArray(value) || isObjectValue(value)) return JSON.stringify(value, null, 2)
-  return String(value)
-}
-
-const buildCustomFieldDrafts = (fields: ContactCustomField[] = []) =>
-  fields.reduce<Record<string, string>>((drafts, field, index) => {
-    drafts[getCustomFieldIdentity(field, index)] = formatCustomFieldDraft(field.value)
-    return drafts
-  }, {})
-
-const parseJsonDraft = (draft: string) => {
-  try {
-    return JSON.parse(draft)
-  } catch {
-    throw new Error('Ese campo espera JSON válido.')
-  }
-}
-
-const parseCustomFieldDraft = (draft: string, field: ContactCustomField): ContactCustomFieldValue => {
-  const trimmed = draft.trim()
-  const dataType = String(field.dataType || '').toLowerCase()
-
-  if (Array.isArray(field.value) || dataType.includes('multi') || dataType.includes('checkbox')) {
-    if (!trimmed) return []
-    if (trimmed.startsWith('[')) return parseJsonDraft(trimmed) as ContactCustomFieldValue
-    return trimmed.split(',').map(item => item.trim()).filter(Boolean)
-  }
-
-  if (isObjectValue(field.value) || dataType.includes('file')) {
-    if (!trimmed) return {}
-    return parseJsonDraft(trimmed) as ContactCustomFieldValue
-  }
-
-  if (typeof field.value === 'boolean' || dataType.includes('bool')) {
-    return ['true', '1', 'si', 'sí', 'yes'].includes(trimmed.toLowerCase())
-  }
-
-  if (typeof field.value === 'number' || dataType.includes('number') || dataType.includes('numeric') || dataType.includes('monet')) {
-    if (!trimmed) return null
-    const numericValue = Number(trimmed)
-    if (Number.isNaN(numericValue)) {
-      throw new Error('Ese campo espera un número válido.')
-    }
-    return numericValue
-  }
-
-  return draft
-}
-
 export function ContactDetailsModal({
   isOpen,
   onClose,
@@ -813,11 +718,7 @@ export function ContactDetailsModal({
   const [refundsExpanded, setRefundsExpanded] = useState(false)
   const [appointmentsExpanded, setAppointmentsExpanded] = useState(false)
   const [agentHistoryExpanded, setAgentHistoryExpanded] = useState(false)
-  const [customFieldsExpanded, setCustomFieldsExpanded] = useState(false)
   const [automationsExpanded, setAutomationsExpanded] = useState(false)
-  const [customFieldDrafts, setCustomFieldDrafts] = useState<Record<string, string>>({})
-  const [savingCustomField, setSavingCustomField] = useState<string | null>(null)
-  const [customFieldError, setCustomFieldError] = useState<string | null>(null)
   const [automationActivity, setAutomationActivity] = useState<ContactAutomationActivity | null>(null)
   const [automationActivityLoading, setAutomationActivityLoading] = useState(false)
   const [automationCatalogLoading, setAutomationCatalogLoading] = useState(false)
@@ -838,10 +739,6 @@ export function ContactDetailsModal({
   const [savingPrimaryPhone, setSavingPrimaryPhone] = useState<string | null>(null)
   const { labels } = useLabels()
   const { formatLocalDateShort, formatLocalDateTime, timezone } = useTimezone()
-  const visibleCustomFields = useMemo(
-    () => (selectedContact?.customFields || []).filter(field => !isWhatsAppReservedCustomField(field)),
-    [selectedContact?.customFields]
-  )
 
   // Seleccionar automáticamente el primer contacto cuando se abre el modal
   useEffect(() => {
@@ -872,11 +769,7 @@ export function ContactDetailsModal({
       setRefundsExpanded(false)
       setAppointmentsExpanded(false)
       setAgentHistoryExpanded(false)
-      setCustomFieldsExpanded(false)
       setAutomationsExpanded(false)
-      setCustomFieldDrafts({})
-      setSavingCustomField(null)
-      setCustomFieldError(null)
       setAutomationActivity(null)
       setAutomationActivityLoading(false)
       setAutomationCatalogLoading(false)
@@ -902,7 +795,6 @@ export function ContactDetailsModal({
     setRefundsExpanded(false)
     setAppointmentsExpanded(false)
     setAgentHistoryExpanded(false)
-    setCustomFieldsExpanded(false)
     setAutomationsExpanded(false)
     setChatMessages([])
     setAgentCompletionEvents([])
@@ -914,9 +806,6 @@ export function ContactDetailsModal({
     setChatEmailIncludeSignature(true)
     setChatChannelValue('whatsapp')
     setChatSending(false)
-    setCustomFieldDrafts({})
-    setSavingCustomField(null)
-    setCustomFieldError(null)
     setAutomationActivity(null)
     setAutomationActivityLoading(false)
     setAutomationCatalogLoading(false)
@@ -935,11 +824,6 @@ export function ContactDetailsModal({
     setTagsError(null)
     setSavingPrimaryPhone(null)
   }, [selectedContact?.id])
-
-  useEffect(() => {
-    if (!selectedContact) return
-    setCustomFieldDrafts(buildCustomFieldDrafts(visibleCustomFields))
-  }, [selectedContact?.id, visibleCustomFields])
 
   const loadContactChat = useCallback(async (contactId: string, options: { silent?: boolean } = {}) => {
     if (!contactId) return
@@ -1212,40 +1096,6 @@ export function ContactDetailsModal({
 
   const resolveContactBadge = (contact?: ContactDetail | null) =>
     getContactStageBadge(contact, labels)
-
-  const updateCustomFieldDraft = (field: ContactCustomField, index: number, value: string) => {
-    const identity = getCustomFieldIdentity(field, index)
-    setCustomFieldDrafts(prev => ({
-      ...prev,
-      [identity]: value
-    }))
-    setCustomFieldError(null)
-  }
-
-  const saveCustomField = async (field: ContactCustomField, index: number) => {
-    if (!selectedContact || !onUpdateCustomFields) return
-    if (isWhatsAppReservedCustomField(field)) return
-
-    const identity = getCustomFieldIdentity(field, index)
-    const draft = customFieldDrafts[identity] ?? formatCustomFieldDraft(field.value)
-
-    try {
-      const value = parseCustomFieldDraft(draft, field)
-      const updatedField: ContactCustomField = { ...field, value }
-
-      setSavingCustomField(identity)
-      setCustomFieldError(null)
-
-      const customFields = await onUpdateCustomFields(selectedContact.id, [updatedField])
-      setSelectedContact(prev => prev?.id === selectedContact.id ? { ...prev, customFields } : prev)
-      setCustomFieldDrafts(buildCustomFieldDrafts(customFields.filter(field => !isWhatsAppReservedCustomField(field))))
-    } catch (error) {
-      const message = error instanceof Error ? error.message : 'No se pudo guardar el campo personalizado.'
-      setCustomFieldError(message)
-    } finally {
-      setSavingCustomField(null)
-    }
-  }
 
   const saveContactIdentityField = async (field: ContactIdentityField, value: string) => {
     if (!selectedContact || !onUpdateContact) return
@@ -2399,85 +2249,17 @@ export function ContactDetailsModal({
                   </div>
 
                 <div className={styles.detailSection}>
-                  <button
-                    type="button"
-                    className={styles.customFieldsToggle}
-                    onClick={() => setCustomFieldsExpanded(prev => !prev)}
-                    aria-expanded={customFieldsExpanded}
-                  >
-                    <span className={styles.customFieldsToggleLabel}>
-                      <Icon name={customFieldsExpanded ? 'chevron-down' : 'chevron-right'} size={14} />
-                      Campos personalizados
-                    </span>
-                    <span className={styles.customFieldsToggleMeta}>
-                      {visibleCustomFields.length}
-                    </span>
-                  </button>
-
-                  {customFieldsExpanded && (
-                    <div className={styles.customFieldsList}>
-                      {visibleCustomFields.length === 0 ? (
-                        <p className={styles.emptyText}>Sin campos personalizados</p>
-                      ) : (
-                        visibleCustomFields.map((field, index) => {
-                          const identity = getCustomFieldIdentity(field, index)
-                          const isSaving = savingCustomField === identity
-                          const isComplex = isComplexCustomField(field)
-                          const fieldInputId = `custom-field-${selectedContact.id}-${index}`
-                          const fieldValue = customFieldDrafts[identity] ?? formatCustomFieldDraft(field.value)
-                          const originalValue = formatCustomFieldDraft(field.value)
-                          const hasChanges = fieldValue !== originalValue
-
-                          return (
-                            <div key={identity} className={styles.customFieldRow}>
-                              <label className={styles.customFieldLabel} htmlFor={fieldInputId}>
-                                <span>{getCustomFieldLabel(field, index)}</span>
-                                {(field.key || field.fieldKey || field.id) && (
-                                  <span className={styles.customFieldKey}>
-                                    {field.key || field.fieldKey || field.id}
-                                  </span>
-                                )}
-                              </label>
-
-                              <div className={`${styles.customFieldControl} ${isComplex ? styles.customFieldControlMultiline : ''}`}>
-                                {isComplex ? (
-                                  <textarea
-                                    id={fieldInputId}
-                                    className={`${styles.customFieldTextarea} ${hasChanges ? styles.customFieldInputWithButton : ''}`}
-                                    value={fieldValue}
-                                    onChange={(event) => updateCustomFieldDraft(field, index, event.target.value)}
-                                    rows={4}
-                                    readOnly={!onUpdateCustomFields}
-                                  />
-                                ) : (
-                                  <input
-                                    id={fieldInputId}
-                                    className={`${styles.customFieldInput} ${hasChanges ? styles.customFieldInputWithButton : ''}`}
-                                    value={fieldValue}
-                                    onChange={(event) => updateCustomFieldDraft(field, index, event.target.value)}
-                                    readOnly={!onUpdateCustomFields}
-                                  />
-                                )}
-                                {onUpdateCustomFields && hasChanges && (
-                                  <button
-                                    type="button"
-                                    className={styles.customFieldSaveButton}
-                                    onClick={() => saveCustomField(field, index)}
-                                    disabled={isSaving}
-                                  >
-                                    {isSaving ? 'Guardando...' : 'Guardar'}
-                                  </button>
-                                )}
-                              </div>
-                            </div>
-                          )
-                        })
-                      )}
-                    </div>
-                  )}
-                  {customFieldError && (
-                    <p className={styles.customFieldError}>{customFieldError}</p>
-                  )}
+                  <ContactCustomFieldsPanel
+                    contactId={selectedContact.id}
+                    customFields={selectedContact.customFields || []}
+                    onUpdateCustomFields={onUpdateCustomFields}
+                    onCustomFieldsChange={(customFields) => {
+                      setSelectedContact(prev => prev?.id === selectedContact.id ? { ...prev, customFields } : prev)
+                    }}
+                    collapsible
+                    defaultExpanded={false}
+                    compact
+                  />
                 </div>
 
                 <div className={styles.detailSection}>

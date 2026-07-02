@@ -36,7 +36,6 @@ import { clearRuntimeApiBaseUrl, isNativeAppRuntime } from '@/services/apiBaseUr
 import { pushNotificationsService } from '@/services/pushNotificationsService'
 import { whatsappApiService, type WhatsAppApiTemplate } from '@/services/whatsappApiService'
 import type { ContactCustomFieldDefinition } from '@/types'
-import { getContactCustomFieldIdentity } from '@/utils/contactCustomFields'
 import { PHONE_APP_LOGIN_PATH, PHONE_APP_TENANT_PATH } from '@/utils/phoneAccess'
 import styles from './PhoneSettings.module.css'
 
@@ -138,7 +137,6 @@ export const PhoneSettings: React.FC = () => {
   const [conversationSortMode, setConversationSortMode] = useAppConfig<ConversationSortMode>('mobile_chat_sort_mode', 'recent')
   const [showLastMessagePreview, setShowLastMessagePreview] = useAppConfig<boolean>('mobile_chat_show_last_preview', true)
   const [showUnreadIndicators, setShowUnreadIndicators] = useAppConfig<boolean>('mobile_chat_show_unread_indicators', true)
-  const [enabledContactInfoCustomFieldIds, setEnabledContactInfoCustomFieldIds] = useAppConfig<string[]>('mobile_chat_contact_info_custom_field_ids', [])
   const [calendarPushEnabled, setCalendarPushEnabled] = useUserConfig<boolean>('calendar_push_notifications_enabled', false) // (MOB-006) preferencia por usuario
   const [appointmentConfirmationPushEnabled, setAppointmentConfirmationPushEnabled] = useUserConfig<boolean>('appointment_confirmation_push_notifications_enabled', true) // (MOB-006) preferencia por usuario
   const [chatPushEnabled, setChatPushEnabled] = useUserConfig<boolean>('chat_push_notifications_enabled', true) // (MOB-006) preferencia por usuario
@@ -334,8 +332,6 @@ export const PhoneSettings: React.FC = () => {
   const permissionLabel = getNotificationPermissionLabel(permission)
   const showPhoneActivation = shouldShowPhoneActivation(permission)
   const blockedTemplates = templates.filter((template) => TEMPLATE_BLOCKED_STATUSES.has(getTemplateStatus(template))).length
-  const enabledCustomFieldCount = enabledContactInfoCustomFieldIds.length
-
   const togglePushCalendar = (calendarId: string) => {
     const next = pushCalendarIds.includes(calendarId)
       ? pushCalendarIds.filter((id) => id !== calendarId)
@@ -348,13 +344,6 @@ export const PhoneSettings: React.FC = () => {
     if (enabled && calendars.length === 1 && pushCalendarIds.length === 0) {
       saveConfigPreference(setPushCalendarIds, [calendars[0].id])
     }
-  }
-
-  const toggleContactInfoCustomField = (fieldId: string) => {
-    const next = enabledContactInfoCustomFieldIds.includes(fieldId)
-      ? enabledContactInfoCustomFieldIds.filter((id) => id !== fieldId)
-      : [...enabledContactInfoCustomFieldIds, fieldId]
-    saveConfigPreference(setEnabledContactInfoCustomFieldIds, next)
   }
 
   const handleRequestPush = async () => {
@@ -607,7 +596,7 @@ export const PhoneSettings: React.FC = () => {
       { id: 'templates', title: 'Plantillas', description: 'Crear y revisar estados de Meta.', meta: templates.length ? `${templates.length} guardadas` : 'Revisar', Icon: FileText, tone: 'black' },
       { id: 'agent', title: PERSONAL_ASSISTANT_AI_LABEL, mobileTitle: PERSONAL_ASSISTANT_AI_LABEL, description: 'Chat fijo y sugerencias.', meta: aiAvailability.configured ? aiAgentChatEnabled ? 'Activo' : 'Apagado' : 'Sin OpenAI', Icon: Bot, tone: 'blue' },
       { id: 'chats', title: 'Lista de chats', mobileTitle: 'Lista de chat', description: 'Orden, archivados y vista previa.', meta: conversationSortMode === 'recent' ? 'Recientes' : 'No leídas', Icon: MessageCircle, tone: 'green' },
-      { id: 'custom-fields', title: 'Campos personalizados', description: 'Datos visibles en cada contacto.', meta: enabledCustomFieldCount ? `${enabledCustomFieldCount} activo${enabledCustomFieldCount === 1 ? '' : 's'}` : 'Elegir', Icon: ListChecks, tone: 'gold' },
+      { id: 'custom-fields', title: 'Campos personalizados', description: 'Datos visibles en cada contacto.', meta: 'Todos', Icon: ListChecks, tone: 'gold' },
       { id: 'appearance', title: 'Apariencia', description: 'Claro, noche, sistema u horario.', meta: themeMeta, Icon: Sun, tone: 'blue' },
       { id: 'notifications', title: 'Notificaciones', description: 'Mensajes, citas, sonido y vibración.', meta: permissionLabel, Icon: Bell, tone: 'red' }
     ]
@@ -821,23 +810,21 @@ export const PhoneSettings: React.FC = () => {
           <Loader2 size={17} className={styles.spinIcon} aria-hidden="true" />
         </div>
       ) : customFieldDefinitions.length ? (
-        <div className={styles.customFieldsList}>
-          {customFieldDefinitions.map((definition, index) => {
-            const fieldId = getContactCustomFieldIdentity(definition)
-            if (!fieldId) return null
-            const checked = enabledContactInfoCustomFieldIds.includes(fieldId)
-            return (
-              <React.Fragment key={fieldId}>
-                {renderToggle(
-                  definition.label || definition.name || `Campo ${index + 1}`,
-                  definition.description || (definition.folderName ? `Carpeta: ${definition.folderName}` : 'Disponible para la info del contacto.'),
-                  checked,
-                  () => toggleContactInfoCustomField(fieldId)
-                )}
-              </React.Fragment>
-            )
-          })}
-        </div>
+        <section className={styles.settingsSection}>
+          <strong className={styles.fieldTitle}>Todos aparecen en la info del contacto</strong>
+          <small>El chat móvil muestra el catálogo completo, agrupado por carpeta, y cada campo se edita desde la ficha del contacto.</small>
+          <div className={styles.customFieldsList}>
+            {customFieldDefinitions.map((definition, index) => (
+              <div key={definition.definitionId || definition.fieldKey || definition.key || index} className={styles.customFieldSummaryRow}>
+                <span>
+                  <strong>{definition.label || definition.name || `Campo ${index + 1}`}</strong>
+                  <small>{definition.folderName || 'Campos personalizados'} · {definition.dataType || 'text'}</small>
+                </span>
+                <Check size={17} aria-hidden="true" />
+              </div>
+            ))}
+          </div>
+        </section>
       ) : (
         <div className={styles.emptyState}>Todavía no hay campos personalizados guardados.</div>
       )}

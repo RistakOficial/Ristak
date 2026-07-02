@@ -725,6 +725,47 @@
   margin-top: 16px;
 }
 
+.customFieldSummaryRow {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 24px;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 0;
+  color: var(--phone-settings-text);
+  border-top: 1px solid var(--phone-settings-border);
+}
+
+.customFieldSummaryRow:first-child {
+  border-top: 0;
+}
+
+.customFieldSummaryRow span {
+  display: grid;
+  min-width: 0;
+  gap: 3px;
+}
+
+.customFieldSummaryRow strong,
+.customFieldSummaryRow small {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.customFieldSummaryRow strong {
+  font-size: 14px;
+  font-weight: 850;
+}
+
+.customFieldSummaryRow small {
+  color: var(--phone-settings-muted);
+  font-size: 12px;
+  font-weight: 760;
+}
+
+.customFieldSummaryRow svg {
+  color: var(--phone-settings-primary);
+}
+
 .templateRow,
 .choiceButton {
   display: grid;

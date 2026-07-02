@@ -252,7 +252,13 @@ Capacidades:
 - CRUD y busqueda.
 - Detalle con historial y actividad.
 - Tags y carpetas.
-- Campos personalizados y variables.
+- Campos personalizados y variables. El catalogo de campos personalizados vive
+  en Configuracion > Campos personalizados y se muestra completo en la ficha de
+  contacto, el panel derecho del chat desktop y la info de contacto del chat
+  movil. Las carpetas del catalogo se respetan como secciones desplegables; los
+  campos sin carpeta quedan bajo "Campos personalizados". La edicion se guarda
+  como actualizacion manual del contacto y conserva el flujo normal de
+  automatizaciones.
 - Telefonos normalizados.
 - Filtros ocultos.
 - Acciones masivas con job propio.

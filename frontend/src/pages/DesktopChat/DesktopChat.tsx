@@ -43,6 +43,7 @@ import {
   AppointmentModal,
   Button,
   ChatMessageSurface,
+  ContactCustomFieldsPanel,
   CustomSelect,
   ContactPhoneSelector,
   DropdownMenu,
@@ -104,8 +105,9 @@ import {
   type WhatsAppApiStatus,
   type WhatsAppApiTemplate
 } from '@/services/whatsappApiService'
-import type { Contact, ContactAppointment, ContactPayment, ContactPhoneNumber } from '@/types'
+import type { Contact, ContactAppointment, ContactCustomField, ContactPayment, ContactPhoneNumber } from '@/types'
 import { formatChatDayLabel, formatChatListTimestamp, formatChatMessageTime, isChatTimestampToday } from '@/utils/chatTimestamps'
+import { mergeContactCustomFields } from '@/utils/contactCustomFields'
 import { getContactStageBadge } from '@/utils/contactStageBadge'
 import { parseSortableDateValue } from '@/utils/dateSort'
 import { formatCurrency, formatDate, formatUrlParameter } from '@/utils/format'
@@ -4212,6 +4214,31 @@ export const DesktopChat: React.FC = () => {
     }
   }, [activeContact, contactInfoData, showToast])
 
+  const handleUpdateContactCustomFields = useCallback(async (contactId: string, customFields: ContactCustomField[]) => {
+    if (!contactId) return []
+    const currentContact = contactInfoData?.id === contactId
+      ? contactInfoData
+      : activeContact?.id === contactId ? activeContact : null
+
+    try {
+      const updatedContact = await contactsService.updateContact(contactId, { customFields } as Partial<Contact>)
+      const nextCustomFields = Array.isArray(updatedContact.customFields)
+        ? updatedContact.customFields
+        : mergeContactCustomFields(currentContact?.customFields || [], customFields)
+
+      setContactInfoData((current) => current?.id === contactId ? { ...current, ...updatedContact, customFields: nextCustomFields } : current)
+      setChats((current) => current.map((contact) => contact.id === contactId
+        ? { ...contact, ...updatedContact, customFields: nextCustomFields }
+        : contact
+      ))
+      showToast('success', 'Campo actualizado', 'El dato quedó guardado en el contacto.')
+      return nextCustomFields
+    } catch (error: any) {
+      showToast('error', 'No se guardó el campo', error?.message || 'Intenta editarlo otra vez.')
+      throw error
+    }
+  }, [activeContact, contactInfoData, showToast])
+
   const handleUpdateContactIdentityField = useCallback(async (field: ContactIdentityField, value: string) => {
     if (!activeContact?.id) return
 
@@ -7208,6 +7235,22 @@ export const DesktopChat: React.FC = () => {
                     <span>Mandar a automatización</span>
                   </button>
                 </div>
+              </div>
+
+              <div className={styles.infoSection}>
+                <ContactCustomFieldsPanel
+                  contactId={(contactInfoData || activeContact).id}
+                  customFields={(contactInfoData || activeContact).customFields || []}
+                  onUpdateCustomFields={handleUpdateContactCustomFields}
+                  onCustomFieldsChange={(customFields) => {
+                    const contactId = (contactInfoData || activeContact).id
+                    setContactInfoData((current) => current?.id === contactId ? { ...current, customFields } : current)
+                    setChats((current) => current.map((contact) => contact.id === contactId ? { ...contact, customFields } : contact))
+                  }}
+                  collapsible
+                  defaultExpanded={false}
+                  compact
+                />
               </div>
 
               {(socialProfiles.length > 0 || linkedSocialContacts.length > 0) ? (

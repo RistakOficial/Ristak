@@ -27,6 +27,8 @@ export { TreeFilter } from './TreeFilter'
 
 // Componentes de contacto
 export { ContactDetailsModal } from './ContactDetailsModal'
+export { ContactCustomFieldsPanel } from './ContactCustomFieldsPanel'
+export type { ContactCustomFieldsPanelProps } from './ContactCustomFieldsPanel'
 export { ContactPhoneSelector } from './ContactPhoneSelector'
 export { ContactSearchInput } from './ContactSearchInput/ContactSearchInput'
 export { VisitorDetailsModal } from './VisitorDetailsModal'

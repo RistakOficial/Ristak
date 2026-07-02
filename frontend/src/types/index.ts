@@ -78,6 +78,9 @@ export interface ContactCustomField {
   dataType?: string | null
   value?: ContactCustomFieldValue
   options?: unknown[]
+  folderId?: string | null
+  folderName?: string | null
+  fieldGroup?: string | null
   model?: string | null
   syncTarget?: string | null
   sourceType?: string | null

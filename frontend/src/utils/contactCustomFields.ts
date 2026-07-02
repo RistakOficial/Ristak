@@ -1,4 +1,5 @@
 import type {
+  ContactCustomField,
   ContactCustomFieldValue
 } from '@/types'
 
@@ -41,8 +42,63 @@ export function getContactCustomFieldIdentity(field?: ContactCustomFieldLike | n
   return getContactCustomFieldKeys(field)[0] || ''
 }
 
+export function mergeContactCustomFields(baseFields: ContactCustomField[] = [], nextFields: ContactCustomField[] = []) {
+  const byIdentity = new Map<string, ContactCustomField>()
+
+  baseFields.forEach((field) => {
+    const identity = getContactCustomFieldIdentity(field)
+    if (identity) byIdentity.set(identity, field)
+  })
+
+  nextFields.forEach((field) => {
+    const identity = getContactCustomFieldIdentity(field)
+    if (!identity) return
+    byIdentity.set(identity, {
+      ...(byIdentity.get(identity) || {}),
+      ...field
+    })
+  })
+
+  return [...byIdentity.values()]
+}
+
 export function getContactCustomFieldDisplayLabel(field?: ContactCustomFieldLike | null, index = 0) {
   return cleanString(field?.label || field?.name || field?.fieldKey || field?.key || field?.id) || `Dato ${index + 1}`
+}
+
+const WHATSAPP_RESERVED_CUSTOM_FIELD_KEYS = new Set([
+  'whatsapp_api_provider',
+  'whatsapp_api_first_message',
+  'whatsapp_api_source_id',
+  'whatsapp_api_ctwa_clid',
+  'whatsapp_api_source_url'
+])
+
+const normalizeCustomFieldToken = (value?: string | null) =>
+  String(value || '')
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '_')
+    .replace(/^_+|_+$/g, '')
+
+export function isReservedContactCustomField(field?: ContactCustomFieldLike | null) {
+  if (!field) return false
+
+  const tokens = [
+    field.id,
+    field.key,
+    field.fieldKey,
+    field.label,
+    field.name
+  ].map(normalizeCustomFieldToken).filter(Boolean)
+
+  return tokens.some(token =>
+    WHATSAPP_RESERVED_CUSTOM_FIELD_KEYS.has(token) ||
+    token.startsWith('whatsapp_api_') ||
+    token.includes('_ctwa_') ||
+    token === 'ctwa' ||
+    token === 'ctwa_clid'
+  )
 }
 
 export function formatContactCustomFieldDisplayValue(value: ContactCustomFieldValue | undefined) {
