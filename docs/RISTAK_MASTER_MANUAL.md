@@ -443,12 +443,15 @@ Ristak usa Meta en varias areas:
 - Meta Ads config y sync.
 - Dataset Test en la UI de Configuracion > Meta; las rutas internas pueden
   conservar `pixel` por contrato con Meta y tracking.
-- En Dataset Test, los eventos web usan `action_source=website`; `LeadSubmitted`
-  y `Purchase (WhatsApp)` usan `action_source=business_messaging`,
-  `messaging_channel=whatsapp` y requieren `ctwa_clid` mas la Facebook Page
-  configurada. `Purchase (WhatsApp)` se envia a Meta como `event_name=Purchase`
-  y toma `currency` desde la cuenta publicitaria de Meta, no desde un campo
-  manual.
+- En Dataset Test, los eventos web usan `action_source=website`; los eventos
+  `LeadSubmitted (Messaging)` y `Purchase (Messaging)` usan
+  `action_source=business_messaging` y permiten probar WhatsApp, Messenger o
+  Instagram DM desde la UI. WhatsApp requiere `ctwa_clid` + `page_id`;
+  Messenger requiere `page_scoped_user_id` + `page_id`; Instagram requiere
+  `ig_scoped_user_id` + `ig_account_id`. La Page/Instagram se toma de la
+  configuracion detectada por el wizard de Meta. `Purchase (Messaging)` se
+  envia a Meta como `event_name=Purchase` y usa por default la moneda de la
+  cuenta (`app_config.account_currency`).
 - Conversions API usa siempre el System User Access Token guardado en
   `meta_config.access_token` (o `META_ACCESS_TOKEN` como fallback). No hay un
   token separado para CAPI: no se pide, no se genera y no se sincroniza.

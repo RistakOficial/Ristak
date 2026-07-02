@@ -4,7 +4,7 @@ import { Button, Icon, Modal, CustomSelect, PageHeader, SegmentTabs, Switch } fr
 import { Badge, type BadgeVariant } from '@/components/common/Badge'
 import { Activity, ArrowLeft, ArrowRight, CheckCircle, Copy, ExternalLink, FlaskConical, Link2, MessageCircle, Pencil, Plus, Power, RefreshCw, Save, Send, Settings2, Trash2, XCircle } from 'lucide-react'
 import { useNotification } from '@/contexts/NotificationContext'
-import { useAppConfig } from '@/hooks'
+import { useAccountCurrency, useAppConfig } from '@/hooks'
 import {
   campaignsService,
   type ConnectedSocialProfile,
@@ -67,6 +67,15 @@ type MetaTestParameterFieldKey =
 type SecretTokenField = 'accessToken'
 type MetaMessagingPlatform = 'messenger' | 'instagram'
 type MetaConnectedTab = 'cuenta' | 'mensajes' | 'rastreo' | 'pruebas'
+type MetaTestMessagingChannel = 'whatsapp' | 'messenger' | 'instagram'
+type MetaTestIdentityParameterKey =
+  | 'ctwaClid'
+  | 'messagingChannel'
+  | 'pageId'
+  | 'pageScopedUserId'
+  | 'igScopedUserId'
+  | 'instagramAccountId'
+type MetaTestStringParameterKey = Exclude<keyof MetaTestEventParameters, 'custom'>
 
 interface MetaWebhookInfo {
   webhookUrl: string
@@ -142,17 +151,44 @@ const metaTestEventOptions = [
   { value: 'Lead', label: 'Lead' },
   { value: 'Schedule', label: 'Schedule' },
   { value: 'Purchase', label: 'Purchase' },
-  { value: 'WhatsAppPurchase', label: 'Purchase (WhatsApp)' },
   { value: 'FormSubmitted', label: 'FormSubmitted' },
   { value: 'CompleteRegistration', label: 'CompleteRegistration' },
   { value: 'ViewContent', label: 'ViewContent' },
   { value: 'Contact', label: 'Contact' },
   { value: 'AddPaymentInfo', label: 'AddPaymentInfo (Pago)' },
-  { value: 'LeadSubmitted', label: 'LeadSubmitted (WhatsApp)' }
+  { value: 'LeadSubmitted', label: 'LeadSubmitted (Messaging)' },
+  { value: 'WhatsAppPurchase', label: 'Purchase (Messaging)' }
 ]
 
 const defaultMetaTestEventName = 'Lead'
 const serverOnlyMetaTestEvents = new Set(['LeadSubmitted', 'WhatsAppPurchase'])
+const defaultMetaTestMessagingChannel: MetaTestMessagingChannel = 'whatsapp'
+const metaTestMessagingChannelOptions: Array<{ value: MetaTestMessagingChannel; label: string; helper: string }> = [
+  { value: 'whatsapp', label: 'WhatsApp', helper: 'Usa ctwa_clid + Page ID.' },
+  { value: 'messenger', label: 'Messenger', helper: 'Usa PSID + Page ID.' },
+  { value: 'instagram', label: 'Instagram DM', helper: 'Usa IGSID + Instagram ID.' }
+]
+const metaTestIdentityCustomParameterAliases: Record<string, MetaTestIdentityParameterKey> = {
+  ctwa: 'ctwaClid',
+  ctwaclid: 'ctwaClid',
+  ctwa_clid: 'ctwaClid',
+  referral_ctwa_clid: 'ctwaClid',
+  page: 'pageId',
+  pageid: 'pageId',
+  page_id: 'pageId',
+  psid: 'pageScopedUserId',
+  page_scoped_user_id: 'pageScopedUserId',
+  pagescopeduserid: 'pageScopedUserId',
+  igsid: 'igScopedUserId',
+  ig_scoped_user_id: 'igScopedUserId',
+  igscopeduserid: 'igScopedUserId',
+  instagram_account_id: 'instagramAccountId',
+  instagramaccountid: 'instagramAccountId',
+  ig_account_id: 'instagramAccountId',
+  messaging_channel: 'messagingChannel',
+  messagingchannel: 'messagingChannel',
+  channel: 'messagingChannel'
+}
 const META_AD_UTM_PARAMETERS = [
   'utm_source=fb_ad',
   'utm_medium={{adset.name}}',
@@ -184,7 +220,7 @@ const metaTestParameterFieldLabels: Record<MetaTestParameterFieldKey, string> = 
 const metaTestParameterFieldPlaceholders: Record<MetaTestParameterFieldKey, string> = {
   value: '2500',
   predictedLtv: '12000',
-  currency: 'MXN',
+  currency: '',
   contentName: 'Plan premium',
   contentCategory: 'Consultoría',
   contentIds: 'sku-1, sku-2',
@@ -200,13 +236,13 @@ const metaTestEventParameterFields: Record<string, MetaTestParameterFieldKey[]> 
   Lead: ['value', 'predictedLtv', 'currency', 'status'],
   Schedule: ['value', 'predictedLtv', 'currency', 'status'],
   Purchase: ['value', 'currency', 'orderId', 'contentIds', 'contentName', 'contentType', 'numItems'],
-  WhatsAppPurchase: ['value', 'ctwaClid'],
+  WhatsAppPurchase: ['value', 'currency', 'orderId', 'contentIds', 'contentName', 'contentType', 'numItems'],
   FormSubmitted: ['value', 'predictedLtv', 'currency', 'status'],
   CompleteRegistration: ['value', 'predictedLtv', 'currency', 'status'],
   Contact: ['value', 'predictedLtv', 'currency', 'status'],
   ViewContent: ['value', 'currency', 'contentName', 'contentCategory', 'contentIds', 'contentType'],
   AddPaymentInfo: ['value', 'predictedLtv', 'currency', 'status'],
-  LeadSubmitted: ['value', 'predictedLtv', 'currency', 'status', 'ctwaClid']
+  LeadSubmitted: ['value', 'predictedLtv', 'currency', 'status']
 }
 
 const getMetaTestEventFieldsForEvent = (eventName?: string): MetaTestParameterFieldKey[] => {
@@ -229,6 +265,42 @@ const createDefaultMetaTestCustomParameter = (): MetaTestCustomParameter => ({
 
 const cleanMetaTestParameterString = (value: unknown) => String(value ?? '').trim()
 
+const normalizeMetaTestMessagingChannel = (value?: unknown): MetaTestMessagingChannel => {
+  const channel = cleanMetaTestParameterString(value).toLowerCase().replace(/[^a-z]/g, '')
+  if (channel === 'messenger' || channel === 'facebookmessenger' || channel === 'fbmessenger' || channel === 'facebook') {
+    return 'messenger'
+  }
+  if (channel === 'instagram' || channel === 'instagramdm' || channel === 'ig') {
+    return 'instagram'
+  }
+  return defaultMetaTestMessagingChannel
+}
+
+const normalizeMetaTestIdentityAliasKey = (key: unknown) => (
+  cleanMetaTestParameterString(key).toLowerCase().replace(/[^a-z0-9_]/g, '')
+)
+
+const applyMetaTestIdentityAlias = (
+  parameters: MetaTestEventParameters,
+  key: unknown,
+  value: unknown
+) => {
+  const normalizedKey = normalizeMetaTestIdentityAliasKey(key)
+  const field = metaTestIdentityCustomParameterAliases[normalizedKey]
+  const cleanValue = cleanMetaTestParameterString(value)
+  if (!field || !cleanValue) return false
+
+  if (field === 'messagingChannel') {
+    parameters.messagingChannel = normalizeMetaTestMessagingChannel(cleanValue)
+    return true
+  }
+
+  if (!cleanMetaTestParameterString(parameters[field])) {
+    parameters[field] = cleanValue
+  }
+  return true
+}
+
 const normalizeMetaTestCustomParameter = (parameter?: Partial<MetaTestCustomParameter> | null): MetaTestCustomParameter => ({
   ...(cleanMetaTestParameterString(parameter?.id) ? { id: cleanMetaTestParameterString(parameter?.id) } : {}),
   key: cleanMetaTestParameterString(parameter?.key),
@@ -237,6 +309,7 @@ const normalizeMetaTestCustomParameter = (parameter?: Partial<MetaTestCustomPara
 
 const normalizeMetaTestEventParameters = (parameters?: MetaTestEventParameters | null): MetaTestEventParameters => {
   const source = parameters && typeof parameters === 'object' ? parameters : {}
+  const sourceRecord = source as Record<string, unknown>
   const normalized: MetaTestEventParameters = {}
 
   ;([
@@ -251,17 +324,39 @@ const normalizeMetaTestEventParameters = (parameters?: MetaTestEventParameters |
     'orderId',
     'status',
     'searchString',
-    'ctwaClid'
-  ] as MetaTestParameterFieldKey[]).forEach((field) => {
+    'ctwaClid',
+    'messagingChannel',
+    'pageId',
+    'pageScopedUserId',
+    'igScopedUserId',
+    'instagramAccountId'
+  ] as MetaTestStringParameterKey[]).forEach((field) => {
     const value = cleanMetaTestParameterString(source[field])
     if (value) {
-      normalized[field] = value
+      normalized[field] = field === 'messagingChannel' ? normalizeMetaTestMessagingChannel(value) : value
     }
+  })
+
+  ;[
+    ['ctwa_clid', 'ctwaClid'],
+    ['referral_ctwa_clid', 'ctwaClid'],
+    ['page_id', 'pageId'],
+    ['page_scoped_user_id', 'pageScopedUserId'],
+    ['psid', 'pageScopedUserId'],
+    ['ig_scoped_user_id', 'igScopedUserId'],
+    ['igsid', 'igScopedUserId'],
+    ['instagram_account_id', 'instagramAccountId'],
+    ['ig_account_id', 'instagramAccountId'],
+    ['messaging_channel', 'messagingChannel'],
+    ['channel', 'messagingChannel']
+  ].forEach(([sourceKey, targetKey]) => {
+    applyMetaTestIdentityAlias(normalized, targetKey, sourceRecord[sourceKey])
   })
 
   const custom = Array.isArray(source.custom)
     ? source.custom
       .map(parameter => normalizeMetaTestCustomParameter(parameter))
+      .filter((parameter) => !applyMetaTestIdentityAlias(normalized, parameter.key, parameter.value))
       .filter(parameter => parameter.key || parameter.value)
       .slice(0, 12)
     : []
@@ -290,6 +385,14 @@ const pruneMetaTestEventParametersForEvent = (
     const value = cleanMetaTestParameterString(normalized[field])
     if (value) next[field] = value
   })
+
+  if (isWhatsappBusinessMetaTestEvent(eventName)) {
+    next.messagingChannel = normalizeMetaTestMessagingChannel(normalized.messagingChannel)
+    ;(['ctwaClid', 'pageId', 'pageScopedUserId', 'igScopedUserId', 'instagramAccountId'] as MetaTestIdentityParameterKey[]).forEach((field) => {
+      const value = cleanMetaTestParameterString(normalized[field])
+      if (value) next[field] = value
+    })
+  }
 
   if (normalized.custom?.length) next.custom = normalized.custom
   return next
@@ -357,6 +460,7 @@ export const MetaAdsIntegration: React.FC = () => {
   const [instagramCommentsEnabled, setInstagramCommentsEnabled, savingInstagramComments] = useAppConfig('meta_instagram_comments_enabled', false)
   const [metaTestEventCode, setMetaTestEventCode, savingMetaTestEventCode] = useAppConfig('meta_test_event_code', '')
   const [metaTestEventCodeSetAt, setMetaTestEventCodeSetAt] = useAppConfig('meta_test_event_code_set_at', '')
+  const [accountCurrency] = useAccountCurrency()
 
   const handleCopyMetaAdUtmParameters = async () => {
     try {
@@ -1157,6 +1261,30 @@ export const MetaAdsIntegration: React.FC = () => {
       || Boolean(normalized.custom?.length)
   }
 
+  const withMetaTestDefaultsForEvent = (
+    parameters: MetaTestEventParameters | null | undefined,
+    eventName: string
+  ): MetaTestEventParameters => {
+    const normalizedEventName = normalizeMetaTestEventName(eventName)
+    const next = pruneMetaTestEventParametersForEvent(parameters, normalizedEventName)
+    const fields = getMetaTestEventFieldsForEvent(normalizedEventName)
+
+    if (fields.includes('currency') && !cleanMetaTestParameterString(next.currency)) {
+      next.currency = accountCurrency
+    }
+
+    if (isWhatsappBusinessMetaTestEvent(normalizedEventName)) {
+      next.messagingChannel = normalizeMetaTestMessagingChannel(next.messagingChannel)
+
+      const detectedPageId = cleanMetaTestParameterString(savedPageId || credentials.pageId)
+      const detectedInstagramAccountId = cleanMetaTestParameterString(savedInstagramAccountId || credentials.instagramAccountId)
+      if (detectedPageId) next.pageId = detectedPageId
+      if (detectedInstagramAccountId) next.instagramAccountId = detectedInstagramAccountId
+    }
+
+    return next
+  }
+
   const addMetaTestCustomParameter = () => {
     setMetaTestEventParameters(current => {
       const normalized = normalizeMetaTestEventParameters(current)
@@ -1209,14 +1337,26 @@ export const MetaAdsIntegration: React.FC = () => {
   const setMetaTestEventNameAndResetParameters = (value: string) => {
     const normalizedEventName = normalizeMetaTestEventName(value)
     setMetaTestEventName(normalizedEventName)
+    if (isWhatsappBusinessMetaTestEvent(normalizedEventName)) {
+      setIsMetaTestParametersOpen(true)
+    }
 
-    setMetaTestEventParameters(current => pruneMetaTestEventParametersForEvent(current, normalizedEventName))
+    setMetaTestEventParameters(current => withMetaTestDefaultsForEvent(current, normalizedEventName))
   }
 
   const setMetaTestEventParameterField = (field: MetaTestParameterFieldKey, value: string) => {
     setMetaTestEventParameters(current => ({
       ...normalizeMetaTestEventParameters(current),
       [field]: String(value ?? '').trim()
+    }))
+  }
+
+  const setMetaTestIdentityParameterField = (field: MetaTestIdentityParameterKey, value: string) => {
+    setMetaTestEventParameters(current => ({
+      ...withMetaTestDefaultsForEvent(current, normalizeMetaTestEventName(metaTestEventName)),
+      [field]: field === 'messagingChannel'
+        ? normalizeMetaTestMessagingChannel(value)
+        : String(value ?? '').trim()
     }))
   }
 
@@ -1263,7 +1403,7 @@ export const MetaAdsIntegration: React.FC = () => {
 
     const testEventCode = normalizeMetaTestCode(metaTestDraftCode)
     const eventName = normalizeMetaTestEventName(metaTestEventName)
-    const eventParameters = pruneMetaTestEventParametersForEvent(metaTestEventParameters, eventName)
+    const eventParameters = withMetaTestDefaultsForEvent(metaTestEventParameters, eventName)
 
     if (!testEventCode) {
       showToast('warning', 'Código requerido', 'Pega el código TEST de Events Manager')
@@ -1276,21 +1416,35 @@ export const MetaAdsIntegration: React.FC = () => {
     }
 
     if (isWhatsappBusinessMetaTestEvent(eventName)) {
-      const whatsappEventLabel = isWhatsappPurchaseMetaTestEvent(eventName) ? 'Purchase de WhatsApp' : 'LeadSubmitted de WhatsApp'
-      if (!hasPageId) {
-        showToast('warning', 'Facebook Page requerida', `Selecciona una Facebook Page antes de probar ${whatsappEventLabel}`)
+      const messagingChannel = normalizeMetaTestMessagingChannel(eventParameters.messagingChannel)
+      const channelLabel = metaTestMessagingChannelOptions.find(option => option.value === messagingChannel)?.label || 'Messaging'
+      const messagingEventLabel = isWhatsappPurchaseMetaTestEvent(eventName) ? `Purchase de ${channelLabel}` : `LeadSubmitted de ${channelLabel}`
+      if (messagingChannel !== 'instagram' && !hasPageId) {
+        showToast('warning', 'Facebook Page requerida', `Selecciona una Facebook Page antes de probar ${messagingEventLabel}`)
+        return
+      }
+      if (messagingChannel === 'instagram' && !cleanMetaTestParameterString(eventParameters.instagramAccountId)) {
+        showToast('warning', 'Instagram requerido', `Selecciona una cuenta de Instagram antes de probar ${messagingEventLabel}`)
         return
       }
 
       if (isWhatsappPurchaseMetaTestEvent(eventName) && !cleanMetaTestParameterString(eventParameters.value)) {
         setIsMetaTestParametersOpen(true)
-        showToast('warning', 'Valor requerido', 'Agrega el valor de compra para probar Purchase de WhatsApp')
+        showToast('warning', 'Valor requerido', `Agrega el valor de compra para probar ${messagingEventLabel}`)
         return
       }
 
-      if (!cleanMetaTestParameterString(eventParameters.ctwaClid)) {
+      const missingIdentity = (
+        messagingChannel === 'whatsapp'
+          ? !cleanMetaTestParameterString(eventParameters.ctwaClid)
+          : messagingChannel === 'messenger'
+            ? !cleanMetaTestParameterString(eventParameters.pageScopedUserId)
+            : !cleanMetaTestParameterString(eventParameters.igScopedUserId)
+      )
+      if (missingIdentity) {
         setIsMetaTestParametersOpen(true)
-        showToast('warning', 'ctwa_clid requerido', 'Pega un ctwa_clid real en los parámetros del evento para probar WhatsApp')
+        const fieldLabel = messagingChannel === 'whatsapp' ? 'ctwa_clid' : messagingChannel === 'messenger' ? 'PSID' : 'IGSID'
+        showToast('warning', `${fieldLabel} requerido`, `Pega un ${fieldLabel} real para probar ${messagingEventLabel}`)
         return
       }
     }
@@ -1333,7 +1487,7 @@ export const MetaAdsIntegration: React.FC = () => {
 
     const testEventCode = normalizeMetaTestCode(metaTestDraftCode)
     const eventName = normalizeMetaTestEventName(metaTestEventName)
-    const eventParameters = pruneMetaTestEventParametersForEvent(metaTestEventParameters, eventName)
+    const eventParameters = withMetaTestDefaultsForEvent(metaTestEventParameters, eventName)
 
     if (!/^[A-Za-z][A-Za-z0-9_]{0,99}$/.test(eventName)) {
       showToast('warning', 'Evento inválido', 'Usa letras, números y guion bajo; por ejemplo LeadSubmitted')
@@ -1508,8 +1662,11 @@ export const MetaAdsIntegration: React.FC = () => {
   const hasInstagramAccount = Boolean(savedInstagramAccountId || credentials.instagramAccountId)
   const isMetaConfigured = Boolean(hasAccessToken && hasAdAccount)
   const normalizedMetaTestEventName = normalizeMetaTestEventName(metaTestEventName)
-  const normalizedMetaTestEventParameters = normalizeMetaTestEventParameters(metaTestEventParameters)
+  const normalizedMetaTestEventParameters = withMetaTestDefaultsForEvent(metaTestEventParameters, normalizedMetaTestEventName)
   const metaTestEventFieldKeys = getMetaTestEventFieldsForEvent(normalizedMetaTestEventName)
+  const isBusinessMessagingMetaTestEvent = isWhatsappBusinessMetaTestEvent(normalizedMetaTestEventName)
+  const normalizedMetaTestMessagingChannel = normalizeMetaTestMessagingChannel(normalizedMetaTestEventParameters.messagingChannel)
+  const selectedMetaTestMessagingChannelOption = metaTestMessagingChannelOptions.find(option => option.value === normalizedMetaTestMessagingChannel) || metaTestMessagingChannelOptions[0]
   const normalizedMetaTestDraftCode = normalizeMetaTestCode(metaTestDraftCode)
   const normalizedSavedMetaTestCode = normalizeMetaTestCode(metaTestEventCode)
   const isServerOnlyMetaTestEvent = serverOnlyMetaTestEvents.has(normalizedMetaTestEventName)
@@ -2590,6 +2747,96 @@ export const MetaAdsIntegration: React.FC = () => {
 
                     {isMetaTestParametersOpen && (
                       <div className={styles.metaTestParametersForm}>
+                        {isBusinessMessagingMetaTestEvent && (
+                          <div className={styles.metaTestMessagingParameters}>
+                            <div className={styles.metaTestMessagingHeader}>
+                              <span>Parámetros de messaging</span>
+                              <small>{selectedMetaTestMessagingChannelOption.helper}</small>
+                            </div>
+                            <div className={styles.metaTestParametersGrid}>
+                              <label className={styles.metaTestParameterField}>
+                                <span>Canal</span>
+                                <CustomSelect
+                                  value={normalizedMetaTestMessagingChannel}
+                                  onChange={(event) => setMetaTestIdentityParameterField('messagingChannel', event.target.value)}
+                                >
+                                  {metaTestMessagingChannelOptions.map((option) => (
+                                    <option key={option.value} value={option.value}>
+                                      {option.label}
+                                    </option>
+                                  ))}
+                                </CustomSelect>
+                              </label>
+
+                              {normalizedMetaTestMessagingChannel === 'whatsapp' && (
+                                <>
+                                  <label className={styles.metaTestParameterField}>
+                                    <span>ctwa_clid</span>
+                                    <input
+                                      value={normalizedMetaTestEventParameters.ctwaClid || ''}
+                                      placeholder="AfghPKzHPYknB7A..."
+                                      onChange={(event) => setMetaTestIdentityParameterField('ctwaClid', event.target.value)}
+                                    />
+                                  </label>
+                                  <label className={styles.metaTestParameterField}>
+                                    <span>Page ID detectada</span>
+                                    <input
+                                      value={normalizedMetaTestEventParameters.pageId || ''}
+                                      placeholder="Sin Page del wizard"
+                                      readOnly
+                                      disabled
+                                    />
+                                  </label>
+                                </>
+                              )}
+
+                              {normalizedMetaTestMessagingChannel === 'messenger' && (
+                                <>
+                                  <label className={styles.metaTestParameterField}>
+                                    <span>PSID</span>
+                                    <input
+                                      value={normalizedMetaTestEventParameters.pageScopedUserId || ''}
+                                      placeholder="page_scoped_user_id"
+                                      onChange={(event) => setMetaTestIdentityParameterField('pageScopedUserId', event.target.value)}
+                                    />
+                                  </label>
+                                  <label className={styles.metaTestParameterField}>
+                                    <span>Page ID detectada</span>
+                                    <input
+                                      value={normalizedMetaTestEventParameters.pageId || ''}
+                                      placeholder="Sin Page del wizard"
+                                      readOnly
+                                      disabled
+                                    />
+                                  </label>
+                                </>
+                              )}
+
+                              {normalizedMetaTestMessagingChannel === 'instagram' && (
+                                <>
+                                  <label className={styles.metaTestParameterField}>
+                                    <span>IGSID</span>
+                                    <input
+                                      value={normalizedMetaTestEventParameters.igScopedUserId || ''}
+                                      placeholder="ig_scoped_user_id"
+                                      onChange={(event) => setMetaTestIdentityParameterField('igScopedUserId', event.target.value)}
+                                    />
+                                  </label>
+                                  <label className={styles.metaTestParameterField}>
+                                    <span>Instagram ID detectado</span>
+                                    <input
+                                      value={normalizedMetaTestEventParameters.instagramAccountId || ''}
+                                      placeholder="Sin Instagram del wizard"
+                                      readOnly
+                                      disabled
+                                    />
+                                  </label>
+                                </>
+                              )}
+                            </div>
+                          </div>
+                        )}
+
                         {metaTestEventFieldKeys.length > 0 && (
                           <div className={styles.metaTestParametersGrid}>
                             {metaTestEventFieldKeys.map((field) => (
@@ -2597,7 +2844,7 @@ export const MetaAdsIntegration: React.FC = () => {
                                 <span>{metaTestParameterFieldLabels[field]}</span>
                                 <input
                                   value={normalizedMetaTestEventParameters[field] || ''}
-                                  placeholder={metaTestParameterFieldPlaceholders[field]}
+                                  placeholder={field === 'currency' ? accountCurrency : metaTestParameterFieldPlaceholders[field]}
                                   onChange={(event) => setMetaTestEventParameterField(
                                     field,
                                     event.target.value

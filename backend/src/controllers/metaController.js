@@ -41,6 +41,7 @@ import { buildMetaBrowserUserData } from '../services/metaParameterManagerServic
 import { syncRegisteredIntegrationCronsForProvider } from '../jobs/integrationCronRegistry.js';
 import { timestampSortExpression } from '../utils/sqlTimestampSort.js';
 import { normalizeBaseUrl, resolvePublicServiceBaseUrl } from '../utils/publicUrl.js';
+import { getAccountCurrency } from '../utils/accountLocale.js';
 
 const SUCCESS_PAYMENT_STATUSES = new Set([
   'succeeded',
@@ -137,13 +138,13 @@ const metaTestEventParameterFields = {
   Lead: ['value', 'predictedLtv', 'currency', 'status'],
   Schedule: ['value', 'predictedLtv', 'currency', 'status'],
   Purchase: ['value', 'currency', 'orderId', 'contentIds', 'contentName', 'contentType', 'numItems'],
-  WhatsAppPurchase: ['value', 'ctwaClid'],
+  WhatsAppPurchase: ['value', 'currency', 'orderId', 'contentIds', 'contentName', 'contentType', 'numItems'],
   FormSubmitted: ['value', 'predictedLtv', 'currency', 'status'],
   CompleteRegistration: ['value', 'predictedLtv', 'currency', 'status'],
   Contact: ['value', 'predictedLtv', 'currency', 'status'],
   ViewContent: ['value', 'currency', 'contentName', 'contentCategory', 'contentIds', 'contentType'],
   AddPaymentInfo: ['value', 'predictedLtv', 'currency', 'status'],
-  LeadSubmitted: ['value', 'predictedLtv', 'currency', 'status', 'ctwaClid']
+  LeadSubmitted: ['value', 'predictedLtv', 'currency', 'status']
 }
 
 const WHATSAPP_PURCHASE_TEST_EVENT_NAME = 'WhatsAppPurchase';
@@ -151,6 +152,29 @@ const WHATSAPP_BUSINESS_MESSAGING_TEST_EVENTS = new Set([
   'LeadSubmitted',
   WHATSAPP_PURCHASE_TEST_EVENT_NAME
 ]);
+const DEFAULT_META_TEST_MESSAGING_CHANNEL = 'whatsapp';
+const META_TEST_MESSAGING_CHANNELS = new Set(['whatsapp', 'messenger', 'instagram']);
+const META_TEST_IDENTITY_CUSTOM_PARAMETER_ALIASES = {
+  ctwa: 'ctwaClid',
+  ctwaclid: 'ctwaClid',
+  ctwa_clid: 'ctwaClid',
+  referral_ctwa_clid: 'ctwaClid',
+  page: 'pageId',
+  pageid: 'pageId',
+  page_id: 'pageId',
+  psid: 'pageScopedUserId',
+  page_scoped_user_id: 'pageScopedUserId',
+  pagescopeduserid: 'pageScopedUserId',
+  igsid: 'igScopedUserId',
+  ig_scoped_user_id: 'igScopedUserId',
+  igscopeduserid: 'igScopedUserId',
+  instagram_account_id: 'instagramAccountId',
+  instagramaccountid: 'instagramAccountId',
+  ig_account_id: 'instagramAccountId',
+  messaging_channel: 'messagingChannel',
+  messagingchannel: 'messagingChannel',
+  channel: 'messagingChannel'
+};
 
 function getMetaTestEventFieldsForEvent(eventName) {
   return metaTestEventParameterFields[eventName] || [];
@@ -190,25 +214,88 @@ function normalizeMetaTestCustomParameter(parameter) {
   return { key, value }
 }
 
+function normalizeMetaTestMessagingChannel(value) {
+  const channel = cleanMetaTestString(value).toLowerCase().replace(/[^a-z]/g, '');
+  if (channel === 'messenger' || channel === 'facebookmessenger' || channel === 'fbmessenger' || channel === 'facebook') {
+    return 'messenger';
+  }
+  if (channel === 'instagram' || channel === 'instagramdm' || channel === 'ig') {
+    return 'instagram';
+  }
+  return META_TEST_MESSAGING_CHANNELS.has(channel) ? channel : DEFAULT_META_TEST_MESSAGING_CHANNEL;
+}
+
+function normalizeMetaTestIdentityAliasKey(key) {
+  return cleanMetaTestString(key).toLowerCase().replace(/[^a-z0-9_]/g, '');
+}
+
+function applyMetaTestIdentityAlias(normalized, key, value) {
+  const cleanValue = cleanMetaTestString(value);
+  if (!cleanValue) return false;
+  const field = META_TEST_IDENTITY_CUSTOM_PARAMETER_ALIASES[normalizeMetaTestIdentityAliasKey(key)];
+  if (!field) return false;
+
+  if (field === 'messagingChannel') {
+    normalized.messagingChannel = normalizeMetaTestMessagingChannel(cleanValue);
+    return true;
+  }
+
+  if (!cleanMetaTestString(normalized[field])) {
+    normalized[field] = cleanValue;
+  }
+  return true;
+}
+
 function normalizeMetaTestEventParameters(parameters = {}) {
   const source = parameters && typeof parameters === 'object' ? parameters : {};
   const normalized = {};
 
-  ['value', 'predictedLtv', 'currency', 'contentName', 'contentCategory', 'contentIds', 'contentType', 'numItems', 'orderId', 'status', 'searchString', 'ctwaClid'].forEach((field) => {
+  [
+    'value',
+    'predictedLtv',
+    'currency',
+    'contentName',
+    'contentCategory',
+    'contentIds',
+    'contentType',
+    'numItems',
+    'orderId',
+    'status',
+    'searchString',
+    'ctwaClid',
+    'messagingChannel',
+    'pageId',
+    'pageScopedUserId',
+    'igScopedUserId',
+    'instagramAccountId'
+  ].forEach((field) => {
     const value = cleanMetaTestString(source[field]);
     if (value) {
-      normalized[field] = value;
+      normalized[field] = field === 'messagingChannel' ? normalizeMetaTestMessagingChannel(value) : value;
     }
   });
-  if (!normalized.ctwaClid) {
-    const ctwaClid = cleanMetaTestString(source.ctwa_clid);
-    if (ctwaClid) normalized.ctwaClid = ctwaClid;
-  }
+
+  [
+    ['ctwa_clid', 'ctwaClid'],
+    ['referral_ctwa_clid', 'ctwaClid'],
+    ['page_id', 'pageId'],
+    ['page_scoped_user_id', 'pageScopedUserId'],
+    ['psid', 'pageScopedUserId'],
+    ['ig_scoped_user_id', 'igScopedUserId'],
+    ['igsid', 'igScopedUserId'],
+    ['instagram_account_id', 'instagramAccountId'],
+    ['ig_account_id', 'instagramAccountId'],
+    ['messaging_channel', 'messagingChannel'],
+    ['channel', 'messagingChannel']
+  ].forEach(([sourceKey, targetKey]) => {
+    applyMetaTestIdentityAlias(normalized, targetKey, source[sourceKey]);
+  });
 
   const custom = Array.isArray(source.custom)
     ? source.custom
       .map(normalizeMetaTestCustomParameter)
       .filter(Boolean)
+      .filter(parameter => !applyMetaTestIdentityAlias(normalized, parameter.key, parameter.value))
       .slice(0, 12)
     : [];
 
@@ -238,6 +325,14 @@ function pruneMetaTestEventParametersForEvent(parameters, eventName) {
       next[field] = value;
     }
   });
+
+  if (isWhatsappBusinessMessagingTestEvent(eventName)) {
+    next.messagingChannel = normalizeMetaTestMessagingChannel(normalized.messagingChannel);
+    ['ctwaClid', 'pageId', 'pageScopedUserId', 'igScopedUserId', 'instagramAccountId'].forEach((field) => {
+      const value = cleanMetaTestString(normalized[field]);
+      if (value) next[field] = value;
+    });
+  }
 
   if (Array.isArray(normalized.custom)) {
     next.custom = normalized.custom;
@@ -321,10 +416,36 @@ function isWhatsappPurchaseTestEvent(eventName = '') {
 function buildMetaTestUserData({ req, eventSourceUrl, datasetId, eventParameters = {}, metaConfig = {}, eventName = '' }) {
   if (isWhatsappBusinessMessagingTestEvent(eventName)) {
     const userData = {};
+    const messagingChannel = normalizeMetaTestMessagingChannel(eventParameters.messagingChannel || eventParameters.messaging_channel);
+    const pageId = cleanString(eventParameters.pageId || eventParameters.page_id || metaConfig?.page_id || process.env.META_PAGE_ID || process.env.FACEBOOK_PAGE_ID);
+    const instagramAccountId = cleanString(
+      eventParameters.instagramAccountId ||
+      eventParameters.instagram_account_id ||
+      eventParameters.ig_account_id ||
+      metaConfig?.instagram_account_id ||
+      process.env.META_INSTAGRAM_ACCOUNT_ID ||
+      process.env.INSTAGRAM_ACCOUNT_ID
+    );
+
+    if (messagingChannel === 'messenger') {
+      const psid = cleanString(eventParameters.pageScopedUserId || eventParameters.page_scoped_user_id || eventParameters.psid);
+      if (pageId) userData.page_id = pageId;
+      if (psid) userData.page_scoped_user_id = psid;
+      return userData;
+    }
+
+    if (messagingChannel === 'instagram') {
+      const igsid = cleanString(eventParameters.igScopedUserId || eventParameters.ig_scoped_user_id || eventParameters.igsid);
+      if (instagramAccountId) userData.ig_account_id = instagramAccountId;
+      if (igsid) userData.ig_scoped_user_id = igsid;
+      return userData;
+    }
+
     const ctwaClid = cleanString(eventParameters.ctwaClid || eventParameters.ctwa_clid);
-    const pageId = cleanString(metaConfig?.page_id || process.env.META_PAGE_ID || process.env.FACEBOOK_PAGE_ID);
+    const whatsappBusinessAccountId = cleanString(metaConfig?.whatsapp_business_account_id || process.env.META_WHATSAPP_BUSINESS_ACCOUNT_ID);
     if (ctwaClid) userData.ctwa_clid = ctwaClid;
     if (pageId) userData.page_id = pageId;
+    if (whatsappBusinessAccountId) userData.whatsapp_business_account_id = whatsappBusinessAccountId;
     return userData;
   }
 
@@ -776,8 +897,12 @@ async function performMetaCapiTestEvent({ req, metaConfig, eventName, eventParam
   const normalizedEventParameters = normalizeMetaTestEventParameters(eventParameters);
   const isBusinessMessaging = isWhatsappBusinessMessagingTestEvent(eventName);
   const isWhatsappPurchase = isWhatsappPurchaseTestEvent(eventName);
+  const messagingChannel = isBusinessMessaging
+    ? normalizeMetaTestMessagingChannel(normalizedEventParameters.messagingChannel)
+    : '';
   const outboundEventName = getOutboundMetaTestEventName(eventName);
-  const whatsappEventLabel = isWhatsappPurchase ? 'Purchase de WhatsApp' : 'LeadSubmitted de WhatsApp';
+  const messagingChannelLabel = messagingChannel === 'instagram' ? 'Instagram' : messagingChannel === 'messenger' ? 'Messenger' : 'WhatsApp';
+  const messagingEventLabel = isWhatsappPurchase ? `Purchase de ${messagingChannelLabel}` : `LeadSubmitted de ${messagingChannelLabel}`;
   const userData = buildMetaTestUserData({
     req,
     eventSourceUrl,
@@ -788,11 +913,20 @@ async function performMetaCapiTestEvent({ req, metaConfig, eventName, eventParam
   });
 
   if (isBusinessMessaging) {
-    if (!userData.ctwa_clid) {
-      return { ok: false, status: 400, error: `Pega un ctwa_clid real para probar ${whatsappEventLabel}`, eventId, eventName };
+    if (messagingChannel === 'whatsapp' && !userData.ctwa_clid) {
+      return { ok: false, status: 400, error: `Pega un ctwa_clid real para probar ${messagingEventLabel}`, eventId, eventName };
     }
-    if (!userData.page_id) {
-      return { ok: false, status: 400, error: `Configura una Facebook Page antes de probar ${whatsappEventLabel}`, eventId, eventName };
+    if (messagingChannel === 'messenger' && !userData.page_scoped_user_id) {
+      return { ok: false, status: 400, error: `Pega un page_scoped_user_id real para probar ${messagingEventLabel}`, eventId, eventName };
+    }
+    if (messagingChannel === 'instagram' && !userData.ig_scoped_user_id) {
+      return { ok: false, status: 400, error: `Pega un ig_scoped_user_id real para probar ${messagingEventLabel}`, eventId, eventName };
+    }
+    if (messagingChannel === 'instagram' && !userData.ig_account_id) {
+      return { ok: false, status: 400, error: `Configura una cuenta de Instagram antes de probar ${messagingEventLabel}`, eventId, eventName };
+    }
+    if (messagingChannel !== 'instagram' && !userData.page_id) {
+      return { ok: false, status: 400, error: `Configura una Facebook Page antes de probar ${messagingEventLabel}`, eventId, eventName };
     }
   }
 
@@ -801,12 +935,12 @@ async function performMetaCapiTestEvent({ req, metaConfig, eventName, eventParam
       return { ok: false, status: 400, error: 'Agrega un valor para probar Purchase de WhatsApp', eventId, eventName };
     }
 
-    const accountCurrency = await resolveMetaAdAccountCurrency({ metaConfig, accessToken });
+    const accountCurrency = normalizeMetaCurrency(normalizedEventParameters.currency) || normalizeMetaCurrency(await getAccountCurrency()) || await resolveMetaAdAccountCurrency({ metaConfig, accessToken });
     if (!accountCurrency) {
       return {
         ok: false,
         status: 400,
-        error: 'No se pudo resolver la moneda de la cuenta publicitaria de Meta para Purchase de WhatsApp',
+        error: `No se pudo resolver la moneda de la cuenta para ${messagingEventLabel}`,
         eventId,
         eventName
       };
@@ -829,7 +963,8 @@ async function performMetaCapiTestEvent({ req, metaConfig, eventName, eventParam
 
   if (isBusinessMessaging) {
     eventPayload.action_source = 'business_messaging';
-    eventPayload.messaging_channel = 'whatsapp';
+    eventPayload.messaging_channel = messagingChannel;
+    eventPayload.custom_data.messaging_channel = messagingChannel;
   } else {
     eventPayload.action_source = 'website';
     eventPayload.event_source_url = eventSourceUrl;

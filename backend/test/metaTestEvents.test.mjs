@@ -177,7 +177,12 @@ test('sendMetaTestEvent posts WhatsApp LeadSubmitted as business_messaging', asy
         eventParameters: {
           value: '100',
           currency: 'usd',
-          ctwaClid: 'AfghPKzHPYknB7A_wzcLuy2YRb0_x89LmCfBkaFRDDqXe2AtJPwqOCkdzUutPbEzk09QAkEtfddmEN7c-P1gLEXv-_4Rv3igOnEPWww4P_cq8cQG'
+          custom: [
+            {
+              key: 'ctwa_clid',
+              value: 'AfghPKzHPYknB7A_wzcLuy2YRb0_x89LmCfBkaFRDDqXe2AtJPwqOCkdzUutPbEzk09QAkEtfddmEN7c-P1gLEXv-_4Rv3igOnEPWww4P_cq8cQG'
+            }
+          ]
         }
       },
       headers: {
@@ -206,6 +211,8 @@ test('sendMetaTestEvent posts WhatsApp LeadSubmitted as business_messaging', asy
     assert.equal(payload.data[0].user_data.page_id, '104840954631643')
     assert.equal(payload.data[0].custom_data.value, 100)
     assert.equal(payload.data[0].custom_data.currency, 'USD')
+    assert.equal(payload.data[0].custom_data.ctwa_clid, undefined)
+    assert.equal(payload.data[0].custom_data.messaging_channel, 'whatsapp')
     assert.equal(payload.data[0].custom_data.content_name, undefined)
     assert.equal(payload.data[0].custom_data.conversion_type, 'settings_test_event')
   } finally {
@@ -216,7 +223,7 @@ test('sendMetaTestEvent posts WhatsApp LeadSubmitted as business_messaging', asy
   }
 })
 
-test('sendMetaTestEvent posts WhatsAppPurchase as Purchase with ad account currency', async () => {
+test('sendMetaTestEvent posts WhatsAppPurchase as Purchase with account currency', async () => {
   const previousMetaGraphDescriptor = Object.getOwnPropertyDescriptor(API_URLS, 'META_GRAPH')
   const metaCalls = []
   const accountCurrencyCalls = []
@@ -226,6 +233,7 @@ test('sendMetaTestEvent posts WhatsAppPurchase as Purchase with ad account curre
     await initializeMasterKey()
     await db.run('DELETE FROM meta_config')
     await db.run('DELETE FROM app_config WHERE config_key = ?', ['meta_test_event_code'])
+    await setAppConfig('account_currency', 'USD')
     await db.run(`
       INSERT INTO meta_config (
         ad_account_id, access_token, pixel_id,
@@ -272,7 +280,6 @@ test('sendMetaTestEvent posts WhatsAppPurchase as Purchase with ad account curre
         eventSourceUrl: 'https://app.test/settings/meta-ads',
         eventParameters: {
           value: '100',
-          currency: 'mxn',
           ctwaClid: 'AfghPKzHPYknB7A_wzcLuy2YRb0_x89LmCfBkaFRDDqXe2AtJPwqOCkdzUutPbEzk09QAkEtfddmEN7c-P1gLEXv-_4Rv3igOnEPWww4P_cq8cQG'
         }
       },
@@ -290,9 +297,7 @@ test('sendMetaTestEvent posts WhatsAppPurchase as Purchase with ad account curre
     assert.equal(response.statusCode, 200)
     assert.equal(response.payload.success, true)
     assert.equal(response.payload.eventName, 'Purchase')
-    assert.equal(accountCurrencyCalls.length, 1)
-    assert.match(decodeURIComponent(accountCurrencyCalls[0].url), /fields=currency/)
-    assert.match(decodeURIComponent(accountCurrencyCalls[0].url), /access_token=meta-access-token/)
+    assert.equal(accountCurrencyCalls.length, 0)
     assert.equal(metaCalls.length, 1)
 
     const payload = JSON.parse(metaCalls[0].body)
@@ -305,8 +310,128 @@ test('sendMetaTestEvent posts WhatsAppPurchase as Purchase with ad account curre
     assert.equal(payload.data[0].user_data.page_id, '104840954631643')
     assert.equal(payload.data[0].custom_data.value, 100)
     assert.equal(payload.data[0].custom_data.currency, 'USD')
+    assert.equal(payload.data[0].custom_data.messaging_channel, 'whatsapp')
     assert.equal(payload.data[0].custom_data.content_name, undefined)
     assert.equal(payload.data[0].custom_data.conversion_type, 'settings_test_event')
+  } finally {
+    if (metaServer) await new Promise(resolve => metaServer.close(resolve))
+    if (previousMetaGraphDescriptor) Object.defineProperty(API_URLS, 'META_GRAPH', previousMetaGraphDescriptor)
+    await db.run('DELETE FROM meta_config').catch(() => undefined)
+    await db.run('DELETE FROM app_config WHERE config_key = ?', ['meta_test_event_code']).catch(() => undefined)
+    await db.run('DELETE FROM app_config WHERE config_key = ?', ['account_currency']).catch(() => undefined)
+  }
+})
+
+test('sendMetaTestEvent posts Messenger and Instagram LeadSubmitted as business_messaging', async () => {
+  const previousMetaGraphDescriptor = Object.getOwnPropertyDescriptor(API_URLS, 'META_GRAPH')
+  const metaCalls = []
+  let metaServer
+
+  try {
+    await initializeMasterKey()
+    await db.run('DELETE FROM meta_config')
+    await db.run('DELETE FROM app_config WHERE config_key = ?', ['meta_test_event_code'])
+    await db.run(`
+      INSERT INTO meta_config (
+        ad_account_id, access_token, pixel_id,
+        page_id, instagram_account_id, timezone_id, timezone_name, timezone_offset_hours_utc
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    `, [
+      '123456',
+      encrypt('meta-access-token'),
+      'pixel-test-123',
+      '104840954631643',
+      '17841400000000000',
+      null,
+      null,
+      null
+    ])
+
+    metaServer = http.createServer((req, res) => {
+      let body = ''
+      req.on('data', chunk => { body += chunk })
+      req.on('end', () => {
+        metaCalls.push({ url: req.url, body })
+        res.writeHead(200, { 'Content-Type': 'application/json' })
+        res.end(JSON.stringify({ events_received: 1 }))
+      })
+    })
+    await new Promise(resolve => metaServer.listen(0, '127.0.0.1', resolve))
+    Object.defineProperty(API_URLS, 'META_GRAPH', {
+      value: `http://127.0.0.1:${metaServer.address().port}`,
+      configurable: true
+    })
+
+    const messengerResponse = createResponse()
+    await sendMetaTestEvent({
+      body: {
+        testEventCode: 'TEST98765',
+        eventName: 'LeadSubmitted',
+        eventSourceUrl: 'https://app.test/settings/meta-ads',
+        eventParameters: {
+          messagingChannel: 'messenger',
+          value: '75',
+          custom: [
+            {
+              key: 'page_scoped_user_id',
+              value: 'psid-test-123'
+            }
+          ]
+        }
+      },
+      headers: {
+        host: 'app.test',
+        'user-agent': 'node-test',
+        'x-forwarded-for': '203.0.113.10'
+      },
+      protocol: 'https',
+      get: (name) => name === 'host' ? 'app.test' : '',
+      ip: '127.0.0.1',
+      socket: { remoteAddress: '127.0.0.1' }
+    }, messengerResponse)
+
+    const instagramResponse = createResponse()
+    await sendMetaTestEvent({
+      body: {
+        testEventCode: 'TEST98765',
+        eventName: 'LeadSubmitted',
+        eventSourceUrl: 'https://app.test/settings/meta-ads',
+        eventParameters: {
+          messagingChannel: 'instagram',
+          igScopedUserId: 'igsid-test-123'
+        }
+      },
+      headers: {
+        host: 'app.test',
+        'user-agent': 'node-test',
+        'x-forwarded-for': '203.0.113.10'
+      },
+      protocol: 'https',
+      get: (name) => name === 'host' ? 'app.test' : '',
+      ip: '127.0.0.1',
+      socket: { remoteAddress: '127.0.0.1' }
+    }, instagramResponse)
+
+    assert.equal(messengerResponse.statusCode, 200)
+    assert.equal(instagramResponse.statusCode, 200)
+    assert.equal(metaCalls.length, 2)
+
+    const messengerPayload = JSON.parse(metaCalls[0].body)
+    assert.equal(messengerPayload.data[0].event_name, 'LeadSubmitted')
+    assert.equal(messengerPayload.data[0].action_source, 'business_messaging')
+    assert.equal(messengerPayload.data[0].messaging_channel, 'messenger')
+    assert.equal(messengerPayload.data[0].user_data.page_id, '104840954631643')
+    assert.equal(messengerPayload.data[0].user_data.page_scoped_user_id, 'psid-test-123')
+    assert.equal(messengerPayload.data[0].custom_data.page_scoped_user_id, undefined)
+    assert.equal(messengerPayload.data[0].custom_data.messaging_channel, 'messenger')
+
+    const instagramPayload = JSON.parse(metaCalls[1].body)
+    assert.equal(instagramPayload.data[0].event_name, 'LeadSubmitted')
+    assert.equal(instagramPayload.data[0].action_source, 'business_messaging')
+    assert.equal(instagramPayload.data[0].messaging_channel, 'instagram')
+    assert.equal(instagramPayload.data[0].user_data.ig_account_id, '17841400000000000')
+    assert.equal(instagramPayload.data[0].user_data.ig_scoped_user_id, 'igsid-test-123')
+    assert.equal(instagramPayload.data[0].custom_data.messaging_channel, 'instagram')
   } finally {
     if (metaServer) await new Promise(resolve => metaServer.close(resolve))
     if (previousMetaGraphDescriptor) Object.defineProperty(API_URLS, 'META_GRAPH', previousMetaGraphDescriptor)

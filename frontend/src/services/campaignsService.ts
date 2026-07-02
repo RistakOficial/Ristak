@@ -38,6 +38,11 @@ export interface MetaTestEventParameters {
   status?: string
   searchString?: string
   ctwaClid?: string
+  messagingChannel?: string
+  pageId?: string
+  pageScopedUserId?: string
+  igScopedUserId?: string
+  instagramAccountId?: string
   custom?: MetaTestCustomParameter[]
 }
 
