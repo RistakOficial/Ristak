@@ -4,6 +4,8 @@
   "description": "Ristak - CRM, marketing, pagos y mensajería con integraciones opcionales",
   "scripts": {
     "build": "cd frontend && npm install && npm run build",
+    "mobile:release:check": "node scripts/mobile-release/check-local-config.mjs",
+    "mobile:release:init": "node scripts/mobile-release/init-local-config.mjs",
     "start": "cd backend && npm install && npm start"
   },
   "engines": {

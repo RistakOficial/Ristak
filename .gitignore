@@ -7,8 +7,12 @@ backend/node_modules/
 .env
 .env.local
 .env.production
+.mobile-release.local.env
 frontend/.env
 backend/.env
+
+# Mobile store release credentials - local private vault
+.mobile-release/
 
 # Build outputs
 frontend/dist/
@@ -47,4 +51,5 @@ _harness/
 frontend/android/app/*.keystore
 frontend/android/app/*.jks
 frontend/android/app/keystore.properties
+frontend/android/app/google-services.json
 frontend/android/local.properties

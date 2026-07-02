@@ -44,6 +44,13 @@ APNS_ENV=production
 
 ## Build and upload
 
+Before a local archive or upload, validate the private operator config from the
+repo root:
+
+```bash
+npm run mobile:release:check -- --platform ios
+```
+
 Run from `frontend/`:
 
 ```bash

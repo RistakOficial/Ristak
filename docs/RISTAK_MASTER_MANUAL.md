@@ -738,6 +738,12 @@ Documentos:
 
 Las credenciales de stores no deben vivir en el repo. Los builds de tienda se
 manejan con flujo manual/Installer segun el documento de releases.
+Para operar desde esta Mac existe una configuracion local privada en
+`.mobile-release.local.env` y una boveda local `.mobile-release/`, ambas
+ignoradas por Git. La fuente recomendada para produccion sigue siendo Ristak
+Installer; el archivo local guarda defaults operativos, rutas y fallback local.
+Antes de publicar, se valida con `npm run mobile:release:check` para detectar
+credenciales o archivos faltantes sin imprimir valores sensibles.
 
 ## Licenciamiento y distribucion
 
