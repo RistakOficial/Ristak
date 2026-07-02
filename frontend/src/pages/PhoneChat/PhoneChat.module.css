@@ -10329,3 +10329,161 @@
   font-size: 12.5px;
   font-weight: 580;
 }
+
+/* ─── Comentarios FB/IG: globo distinto, contexto del post, responder, perfil social ─── */
+.messageComment {
+  border-left: 3px solid var(--phone-chat-accent);
+  background: color-mix(in srgb, var(--phone-chat-accent-soft) 55%, var(--phone-chat-inbound));
+}
+
+.messageRow_outbound .messageComment {
+  border-left: 0;
+  border-right: 3px solid var(--phone-chat-accent);
+  background: color-mix(in srgb, var(--phone-chat-accent-soft) 40%, var(--phone-chat-outbound));
+}
+
+.commentContext {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-bottom: 5px;
+}
+
+.commentContextLabel {
+  color: var(--phone-chat-accent);
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+}
+
+.commentPostChip {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  border: 1px solid var(--phone-chat-border);
+  border-radius: 10px;
+  background: var(--phone-chat-surface);
+  color: var(--phone-chat-muted);
+  text-decoration: none;
+}
+
+.commentPostChipStatic {
+  cursor: default;
+}
+
+.commentPostThumb {
+  width: 34px;
+  height: 34px;
+  flex: 0 0 auto;
+  border-radius: 8px;
+  object-fit: cover;
+}
+
+.commentPostText {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  color: var(--phone-chat-text);
+  font-size: 12px;
+  line-height: 1.35;
+}
+
+/* Barra de modo de respuesta (público en el post / privado por DM) sobre el composer */
+.commentReplyModeBar {
+  display: flex;
+  gap: 6px;
+  padding: 6px 10px 0;
+}
+
+.commentReplyModeButton {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 7px 12px;
+  border: 1px solid var(--phone-chat-border);
+  border-radius: 999px;
+  background: var(--phone-chat-surface);
+  color: var(--phone-chat-muted);
+  font-size: 13px;
+  font-weight: 650;
+  cursor: pointer;
+}
+
+.commentReplyModeButtonActive {
+  border-color: var(--phone-chat-accent);
+  background: var(--phone-chat-accent-soft);
+  color: var(--phone-chat-accent);
+}
+
+/* Contacto vinculado (mismo usuario DM ↔ comentario) en Perfil social */
+.linkedContacts {
+  display: grid;
+  gap: 8px;
+  margin-top: 4px;
+}
+
+.linkedContactsLabel {
+  color: var(--phone-chat-muted);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.linkedContactButton {
+  display: grid;
+  grid-template-columns: 34px minmax(0, 1fr) 18px;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 8px 10px;
+  border: 1px solid var(--phone-chat-border);
+  border-radius: 12px;
+  background: var(--phone-chat-surface);
+  color: var(--phone-chat-muted);
+  text-align: left;
+  cursor: pointer;
+}
+
+.linkedContactAvatar {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 34px;
+  flex: 0 0 auto;
+  border-radius: 999px;
+  background: var(--phone-chat-accent-soft);
+  color: var(--phone-chat-accent);
+  font-size: 13px;
+  font-weight: 800;
+  overflow: hidden;
+}
+
+.linkedContactAvatar img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.linkedContactBody {
+  display: grid;
+  gap: 1px;
+  min-width: 0;
+}
+
+.linkedContactBody strong {
+  overflow: hidden;
+  color: var(--phone-chat-text);
+  font-size: 14px;
+  font-weight: 720;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.linkedContactBody small {
+  color: var(--phone-chat-muted);
+  font-size: 12px;
+}

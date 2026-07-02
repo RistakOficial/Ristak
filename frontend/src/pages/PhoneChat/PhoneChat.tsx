@@ -59,7 +59,7 @@ import {
   Video,
   X
 } from 'lucide-react'
-import { FaMicrophone, FaWhatsapp } from 'react-icons/fa'
+import { FaFacebook, FaFacebookMessenger, FaInstagram, FaMicrophone, FaWhatsapp } from 'react-icons/fa'
 import { MdArchive } from 'react-icons/md'
 import { AppointmentModal, Icon, Modal, RecordPaymentModal } from '@/components/common'
 import { AgentRobot } from '@/components/ai'
@@ -1020,6 +1020,14 @@ interface ChatMessage {
   businessPhoneNumberId?: string
   transport?: 'api' | 'qr' | string
   routingReason?: string
+  // Comentarios FB/IG: globo distinto + contexto de la publicación comentada.
+  isComment?: boolean
+  commentReplyMode?: 'public' | 'private'
+  commentPost?: {
+    message?: string
+    imageUrl?: string
+    permalink?: string
+  }
   attachment?: {
     type: ChatAttachmentType
     dataUrl?: string
@@ -1091,6 +1099,28 @@ interface ChatContact extends Contact {
   photoUrl?: string | null
   pictureUrl?: string | null
   profile_picture_url?: string | null
+}
+
+// Perfil social del contacto + contacto ENLAZADO (misma persona en el mismo
+// canal, viviendo como registro separado: DM ↔ comentario).
+interface LinkedSocialProfile {
+  platform: string
+  platformLabel: string
+  kind: 'dm' | 'comment'
+  name: string | null
+  username: string | null
+  photo: string | null
+  metaUserId: string | null
+}
+
+interface LinkedSocialContact {
+  contactId: string
+  platform: string
+  platformLabel: string
+  kind: 'dm' | 'comment'
+  name: string | null
+  username: string | null
+  photo: string | null
 }
 
 interface ChatFastStartInboxSnapshot {
@@ -2563,6 +2593,16 @@ function getJourneyMessage(event: JourneyEvent, index: number): ChatMessage | nu
     businessPhoneNumberId: String(event.data?.business_phone_number_id || ''),
     transport: String(event.data?.transport || (isMetaMessage ? event.data?.social_platform || 'meta' : 'api')),
     routingReason: String(event.data?.routing_reason || event.data?.routingReason || event.data?.fallbackReason || ''),
+    messageType,
+    isComment: messageType === 'comment' || messageType === 'comment_reply_public' || messageType === 'comment_reply_private',
+    commentReplyMode: messageType === 'comment_reply_public' ? 'public' : messageType === 'comment_reply_private' ? 'private' : undefined,
+    commentPost: (messageType.startsWith('comment') && (eventData.post_message || eventData.post_image_url || eventData.post_permalink))
+      ? {
+          message: String(eventData.post_message || '').trim(),
+          imageUrl: String(eventData.post_image_url || '').trim(),
+          permalink: String(eventData.post_permalink || eventData.permalink || '').trim()
+        }
+      : undefined,
     attachment
   }
 }
@@ -3928,6 +3968,10 @@ export const PhoneChat: React.FC = () => {
   const [chatFilter, setChatFilter] = useState<ChatFilter>('all')
   const [commentsView, setCommentsView] = useState(false)
   const [commentsPlatform, setCommentsPlatform] = useState<'all' | 'facebook' | 'instagram'>('all')
+  // Responder comentarios FB/IG: modo (público/privado) + perfil social enlazado.
+  const [commentReplyMode, setCommentReplyMode] = useState<'public' | 'private'>('public')
+  const [socialProfiles, setSocialProfiles] = useState<LinkedSocialProfile[]>([])
+  const [linkedSocialContacts, setLinkedSocialContacts] = useState<LinkedSocialContact[]>([])
   const [facebookCommentsEnabled] = useAppConfig<boolean>('meta_facebook_comments_enabled', false)
   const [instagramCommentsEnabled] = useAppConfig<boolean>('meta_instagram_comments_enabled', false)
   const commentsFeatureEnabled = facebookCommentsEnabled === true || instagramCommentsEnabled === true
@@ -5333,6 +5377,51 @@ export const PhoneChat: React.FC = () => {
     })
     return nextContact
   }, [])
+
+  // (Social enlazado) Carga el perfil social del contacto + el mismo contacto en
+  // otro canal (DM ↔ comentario) al abrir/cambiar de conversación. Reutiliza el
+  // mismo endpoint del escritorio; degrada en silencio si no hay match.
+  useEffect(() => {
+    if (!activeContactId || activeContactId === AI_AGENT_CHAT_ID) {
+      setSocialProfiles([])
+      setLinkedSocialContacts([])
+      return
+    }
+    let cancelled = false
+    fetch(`/api/contacts/${encodeURIComponent(activeContactId)}/linked-social`)
+      .then((response) => (response.ok ? response.json() : null))
+      .then((data) => {
+        if (cancelled || !data?.success) return
+        setSocialProfiles(Array.isArray(data.profiles) ? (data.profiles as LinkedSocialProfile[]) : [])
+        setLinkedSocialContacts(Array.isArray(data.linked) ? (data.linked as LinkedSocialContact[]) : [])
+      })
+      .catch(() => undefined)
+    return () => { cancelled = true }
+  }, [activeContactId])
+
+  // (Social enlazado) Abre el contacto vinculado. Como es un registro SEPARADO,
+  // puede no estar en la lista ya cargada; lo inyectamos (deduplicado) para que
+  // la conversación resuelva. loadConversation lo hidrata al abrir.
+  const handleOpenLinkedContact = useCallback((link: LinkedSocialContact) => {
+    const injected = {
+      id: link.contactId,
+      name: link.name || 'Contacto vinculado',
+      source: link.platform,
+      profilePhotoUrl: link.photo || null,
+      lastMessageType: link.kind === 'comment' ? 'comment' : undefined,
+      lastMessageChannel: link.platform
+    } as ChatContact
+    setChats((current) => (
+      current.some((item) => item.id === link.contactId)
+        ? current
+        : dedupeChatsById([injected, ...current])
+    ))
+    setContactInfoOpen(false)
+    setActiveContactId(link.contactId)
+    setConversationOpen(true)
+    startConversationBottomLock(link.contactId)
+  }, [startConversationBottomLock])
+
   const persistChatsRead = useCallback((contactIds: string[], options: { silent?: boolean } = {}) => {
     const ids = [...new Set(contactIds.filter(Boolean))]
     if (!ids.length) return
@@ -9895,6 +9984,89 @@ export const PhoneChat: React.FC = () => {
       return
     }
 
+    if (isCommentContact(activeContact)) {
+      if (!text) {
+        showToast('warning', 'Escribe algo', 'Escribe tu respuesta al comentario.')
+        return
+      }
+      if (voiceToSend || attachmentsToSend.length > 0) {
+        showToast('warning', 'Solo texto', 'Las respuestas a comentarios son solo de texto por ahora.')
+        return
+      }
+
+      const commentPlatform = getCommentPlatform(activeContact) === 'instagram' ? 'instagram' : 'messenger'
+      const replyType = commentReplyMode
+      const optimisticId = `local-comment-${Date.now()}`
+      const sentAt = new Date().toISOString()
+
+      setComposerStatus('sending')
+      if (!preserveComposer) {
+        setComposerMessageText('')
+        setReplyingToMessageId(null)
+        if (composerInputRef.current) {
+          composerInputRef.current.textContent = ''
+        }
+        setDraftAttachments([])
+        stopVoicePreview(true)
+        voiceSendAfterStopRef.current = false
+        setVoiceDraft(null)
+      }
+
+      const optimisticMessage: ChatMessage = {
+        id: optimisticId,
+        text,
+        date: sentAt,
+        direction: 'outbound',
+        status: 'enviando',
+        transport: commentPlatform,
+        isComment: true,
+        commentReplyMode: replyType
+      }
+
+      setMessages((current) => [...current, optimisticMessage])
+      setChats((current) => current.map((contact) => (
+        contact.id === activeContact.id
+          ? {
+              ...contact,
+              lastMessageText: text,
+              lastMessageDate: sentAt,
+              lastMessageDirection: 'outbound',
+              messageCount: Number(contact.messageCount || 0) + 1
+            }
+          : contact
+      )))
+
+      try {
+        await whatsappApiService.sendMetaSocialCommentReply({
+          contactId: activeContact.id,
+          platform: commentPlatform,
+          message: text,
+          replyType
+        })
+        setMessages((current) => current.map((message) => (
+          message.id === optimisticId ? { ...message, status: 'sent' } : message
+        )))
+        showToast('success', 'Respuesta enviada', replyType === 'private' ? 'Se envió por privado.' : 'Se publicó en el comentario.')
+        await loadConversation(activeContact.id, { silent: true, useCache: false })
+        await loadChats({ silent: true, useCache: false })
+      } catch (error: any) {
+        const errorMessage = getErrorMessage(error, 'Intenta responder otra vez.')
+        setMessages((current) => current.map((message) => (
+          message.id === optimisticId
+            ? { ...message, status: 'error', errorReason: errorMessage }
+            : message
+        )))
+        if (!preserveComposer && text && !messageTextRef.current.trim() && composerInputRef.current) {
+          setComposerMessageText(text)
+          composerInputRef.current.textContent = text
+        }
+        showToast('error', 'No se pudo responder', errorMessage)
+      } finally {
+        setComposerStatus('idle')
+      }
+      return
+    }
+
     if (sendingThroughMetaSocial && activeMetaSocialChannel) {
       const channelLabel = GHL_CHAT_CHANNEL_LABELS[activeMetaSocialChannel]
 
@@ -12668,7 +12840,7 @@ export const PhoneChat: React.FC = () => {
                       <ReceiptText size={17} />
                     </span>
                     <div
-                      className={`${styles.messageBubble} ${styles.messageBubbleActionTarget} ${scheduled ? styles.messageBubbleScheduled : ''} ${isAudioMessage ? styles.messageAudioBubble : ''} ${isFileMessage ? styles.messageFileBubble : ''} ${messageSwipeOffset > 0 ? styles.messageBubbleSwipeDragging : ''} ${isSearchMatch ? styles.messageBubbleSearchMatch : ''} ${isActiveSearchMatch ? styles.messageBubbleSearchActive : ''}`}
+                      className={`${styles.messageBubble} ${styles.messageBubbleActionTarget} ${scheduled ? styles.messageBubbleScheduled : ''} ${isAudioMessage ? styles.messageAudioBubble : ''} ${isFileMessage ? styles.messageFileBubble : ''} ${messageSwipeOffset > 0 ? styles.messageBubbleSwipeDragging : ''} ${isSearchMatch ? styles.messageBubbleSearchMatch : ''} ${isActiveSearchMatch ? styles.messageBubbleSearchActive : ''} ${message.isComment ? styles.messageComment : ''}`}
                       data-chat-message-id={message.id}
                       data-chat-search-id={searchTargetId}
                       style={messageSwipeOffset > 0 ? { transform: `translate3d(-${messageSwipeOffset}px, 0, 0)` } : undefined}
@@ -12682,6 +12854,43 @@ export const PhoneChat: React.FC = () => {
                       onTouchEnd={canOpenMessageInfo ? handleMessageInfoTouchEnd : undefined}
                       onTouchCancel={canOpenMessageInfo ? handleMessageInfoTouchEnd : undefined}
                     >
+                    {message.isComment && (
+                      <div className={styles.commentContext}>
+                        <span className={styles.commentContextLabel}>
+                          {message.commentReplyMode === 'public'
+                            ? 'Respuesta pública al comentario'
+                            : message.commentReplyMode === 'private'
+                              ? 'Respuesta por privado'
+                              : 'Comentó en tu publicación'}
+                        </span>
+                        {message.commentPost && (message.commentPost.imageUrl || message.commentPost.message) ? (
+                          message.commentPost.permalink ? (
+                            <a
+                              className={styles.commentPostChip}
+                              href={message.commentPost.permalink}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                            >
+                              {message.commentPost.imageUrl ? (
+                                <img src={message.commentPost.imageUrl} alt="" className={styles.commentPostThumb} loading="lazy" />
+                              ) : null}
+                              {message.commentPost.message ? (
+                                <span className={styles.commentPostText}>{message.commentPost.message}</span>
+                              ) : null}
+                            </a>
+                          ) : (
+                            <div className={`${styles.commentPostChip} ${styles.commentPostChipStatic}`}>
+                              {message.commentPost.imageUrl ? (
+                                <img src={message.commentPost.imageUrl} alt="" className={styles.commentPostThumb} loading="lazy" />
+                              ) : null}
+                              {message.commentPost.message ? (
+                                <span className={styles.commentPostText}>{message.commentPost.message}</span>
+                              ) : null}
+                            </div>
+                          )
+                        ) : null}
+                      </div>
+                    )}
                     {message.attachment?.type === 'image' && (message.attachment.dataUrl || message.attachment.url) && (
                       <img className={styles.messageImage} src={message.attachment.dataUrl || message.attachment.url} alt={message.attachment.name || (message.attachment.isGif ? 'GIF enviado' : 'Foto enviada')} />
                     )}
@@ -12720,6 +12929,34 @@ export const PhoneChat: React.FC = () => {
           </section>
         ))}
       </>
+    )
+  }
+
+  // Barra de modo de respuesta para comentarios FB/IG: público (en el post) o
+  // privado (DM). Solo aparece cuando el chat activo es un comentario.
+  const renderCommentReplyModeBar = () => {
+    if (!activeContact || !isCommentContact(activeContact)) return null
+    return (
+      <div className={styles.commentReplyModeBar} role="group" aria-label="Modo de respuesta al comentario">
+        <button
+          type="button"
+          className={`${styles.commentReplyModeButton} ${commentReplyMode === 'public' ? styles.commentReplyModeButtonActive : ''}`}
+          onClick={() => setCommentReplyMode('public')}
+          aria-pressed={commentReplyMode === 'public'}
+        >
+          <Globe2 size={15} />
+          Público
+        </button>
+        <button
+          type="button"
+          className={`${styles.commentReplyModeButton} ${commentReplyMode === 'private' ? styles.commentReplyModeButtonActive : ''}`}
+          onClick={() => setCommentReplyMode('private')}
+          aria-pressed={commentReplyMode === 'private'}
+        >
+          <MessageCircle size={15} />
+          Privado
+        </button>
+      </div>
     )
   }
 
@@ -13876,6 +14113,49 @@ export const PhoneChat: React.FC = () => {
               {renderContactInfoRow('integration-origin', <MousePointerClick size={17} />, 'Origen', integrationOrigin)}
             </div>
           </section>
+
+          {(socialProfiles.length > 0 || linkedSocialContacts.length > 0) && (
+            <section className={styles.contactInfoSection}>
+              <h3>Perfil social</h3>
+              <div className={styles.contactInfoRows}>
+                {socialProfiles.map((profile) => renderContactInfoRow(
+                  `social-${profile.platform}-${profile.kind}`,
+                  profile.platform === 'instagram'
+                    ? <FaInstagram size={17} />
+                    : profile.kind === 'comment'
+                      ? <FaFacebook size={17} />
+                      : <FaFacebookMessenger size={17} />,
+                  `${profile.platformLabel} · ${profile.kind === 'comment' ? 'Comentarios' : 'Mensajes directos'}`,
+                  profile.name || (profile.username ? `@${profile.username}` : 'Sin nombre'),
+                  profile.name && profile.username ? `@${profile.username}` : undefined
+                ))}
+              </div>
+              {linkedSocialContacts.length > 0 && (
+                <div className={styles.linkedContacts}>
+                  <span className={styles.linkedContactsLabel}>Mismo contacto en otro canal</span>
+                  {linkedSocialContacts.map((link) => (
+                    <button
+                      key={link.contactId}
+                      type="button"
+                      className={styles.linkedContactButton}
+                      onClick={() => handleOpenLinkedContact(link)}
+                    >
+                      <span className={styles.linkedContactAvatar}>
+                        {link.photo
+                          ? <img src={link.photo} alt="" loading="lazy" />
+                          : (link.name || '?').slice(0, 1).toUpperCase()}
+                      </span>
+                      <span className={styles.linkedContactBody}>
+                        <strong>{link.name || 'Contacto vinculado'}</strong>
+                        <small>{link.kind === 'comment' ? 'Comentarios' : 'Mensajes directos'} · {link.platformLabel}</small>
+                      </span>
+                      <ChevronRight size={16} aria-hidden="true" />
+                    </button>
+                  ))}
+                </div>
+              )}
+            </section>
+          )}
 
         </div>
       </section>
@@ -17963,6 +18243,7 @@ export const PhoneChat: React.FC = () => {
                   {!composerTemplateOnlyMode && renderAISuggestionBar()}
                   {!composerTemplateOnlyMode && renderReplyPreviewBar()}
                   {!composerTemplateOnlyMode && renderDraftAttachments()}
+                  {!composerTemplateOnlyMode && renderCommentReplyModeBar()}
                   <div className={`${styles.composer} ${hasComposerContent ? styles.composerHasContent : ''} ${composerTemplateOnlyMode ? styles.composerTemplateOnly : ''} ${voicePanelActive ? styles.composerVoiceMode : ''}`}>
                     {voicePanelActive ? (
                       renderVoiceComposerPanel()
