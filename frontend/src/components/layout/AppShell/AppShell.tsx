@@ -24,8 +24,8 @@ const AI_AGENT_DEFAULT_WIDTH = 640
 const AI_AGENT_MAX_WIDTH = 1600
 const AI_AGENT_MIN_MAIN_WIDTH = 320
 const SITES_EDITOR_ACTIVE_EVENT = 'ristak-sites-editor-active'
-// External fullscreen surfaces own the viewport; the global assistant would cover embedded tools.
-const AI_AGENT_EXTERNAL_SURFACE_PATHS = ['/mdp-program']
+// Routes with their own working surface should not be covered by the global assistant.
+const AI_AGENT_SUPPRESSED_PATHS = ['/chat', '/mdp-program']
 
 function getInitialAIAgentOpenState() {
   try {
@@ -59,7 +59,7 @@ function getInitialAIAgentWidth() {
 }
 
 function isAIAgentSuppressedRoute(pathname: string) {
-  return AI_AGENT_EXTERNAL_SURFACE_PATHS.some((pathPrefix) => (
+  return AI_AGENT_SUPPRESSED_PATHS.some((pathPrefix) => (
     pathname === pathPrefix || pathname.startsWith(`${pathPrefix}/`)
   ))
 }

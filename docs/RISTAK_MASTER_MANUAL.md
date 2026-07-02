@@ -281,6 +281,11 @@ Ristak maneja varias superficies de comunicacion:
 La mensajeria usa servicios especializados para plantillas, media, atribucion,
 sincronizacion de conversaciones, read states, presencia y eventos.
 
+La bandeja desktop de Chat (`/chat` y subrutas) es una superficie de trabajo
+propia y no debe montar el globo global del Asistente Personal AI, para no tapar
+el historial, composer ni acciones rapidas del chat. El asistente interno sigue
+disponible desde las rutas dedicadas de Ristak AI en el menu lateral.
+
 La lista de chats se carga por lotes de 50 conversaciones. Al abrir una
 conversacion, el frontend pide solo los ultimos 50 mensajes combinados del hilo
 (`chatMessagesOnly` + `messageLimit`) y conserva el historial ya visible durante
