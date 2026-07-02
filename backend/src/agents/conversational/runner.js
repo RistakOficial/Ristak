@@ -1606,7 +1606,7 @@ async function resolveInboundAgentForContact({ contactId, messageText, channel, 
  * Punto de entrada genérico para conversaciones atendidas por el agente.
  * Los chats y el correo comparten cerebro, pero cada canal conserva su entrega.
  */
-export async function handleInboundConversationalMessage({ contactId, phone, messageId, channel = 'whatsapp' }) {
+export async function handleInboundConversationalMessage({ contactId, phone, messageId, channel = 'whatsapp', postContext = null }) {
   const normalizedChannel = normalizeConversationalChannel(channel)
   const runKey = getRunKey(contactId, normalizedChannel)
   try {
@@ -1671,6 +1671,7 @@ export async function handleInboundConversationalMessage({ contactId, phone, mes
       const ruleContext = await buildRuleContext({
         contactId,
         messageText: latestMessageText,
+        post: postContext,
 	        channel: normalizedChannel
 	      })
 
@@ -1904,8 +1905,8 @@ export async function handleInboundConversationalMessage({ contactId, phone, mes
   }
 }
 
-export async function handleInboundConversationalChatMessage({ contactId, phone, messageId, channel = 'whatsapp' }) {
-  return handleInboundConversationalMessage({ contactId, phone, messageId, channel })
+export async function handleInboundConversationalChatMessage({ contactId, phone, messageId, channel = 'whatsapp', postContext = null }) {
+  return handleInboundConversationalMessage({ contactId, phone, messageId, channel, postContext })
 }
 
 export async function handleInboundConversationalEmailMessage({ contactId, messageId }) {

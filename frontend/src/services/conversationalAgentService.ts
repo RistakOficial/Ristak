@@ -241,6 +241,10 @@ export interface AgentConditionParam {
   // Solo para canales de comentario (facebook_comment/instagram_comment): cómo
   // responde el agente — 'public' | 'private' | 'public_then_private'.
   replyMode?: string
+  // Solo para canales de comentario: publicación específica (postId FB / mediaId
+  // IG). Vacío = cualquier publicación.
+  postId?: string
+  postName?: string
 }
 
 /**

@@ -1633,7 +1633,8 @@ export async function processMetaSocialWebhook({ payload = {}, rawBody = '', sig
               .then(runner => runner.handleInboundConversationalChatMessage({
                 contactId: localContact.id,
                 messageId: savedComment.messageId,
-                channel: commentAgentChannel
+                channel: commentAgentChannel,
+                postContext: { postId: comment.postId, mediaId: comment.mediaId, permalink: comment.permalink }
               }))
               .catch(error => {
                 logger.warn(`[Agente conversacional] Comentario no atendido: ${error.message}`)

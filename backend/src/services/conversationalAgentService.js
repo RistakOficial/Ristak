@@ -870,9 +870,11 @@ function normalizeParam(category, param) {
   if (field === 'channel') {
     base.value = CONDITION_CHANNELS.has(param.value) ? param.value : 'chat'
     // Canal de comentario: preservar el modo de respuesta del agente (público /
-    // privado / público-luego-privado).
+    // privado / público-luego-privado) y la publicación específica (opcional).
     if (COMMENT_CONDITION_CHANNELS.has(base.value)) {
       base.replyMode = COMMENT_REPLY_MODES.has(param.replyMode) ? param.replyMode : 'private'
+      if (param.postId) base.postId = String(param.postId).trim()
+      if (param.postName) base.postName = String(param.postName).trim()
     }
   } else if (field === 'date') {
     base.date = cleanDate(param.date)
@@ -2955,7 +2957,7 @@ const CONTACT_DATE_FIELDS = new Set(['created', 'updated', 'last_purchase'])
  * citas, pagos y asignados del contacto) para evaluar varios agentes sin
  * repetir consultas.
  */
-export async function buildRuleContext({ contactId = null, messageText = '', channel = 'whatsapp' } = {}) {
+export async function buildRuleContext({ contactId = null, messageText = '', channel = 'whatsapp', post = null } = {}) {
   const nowIso = new Date().toISOString()
 
   const [contact, appointmentRows, paymentRows, adRows, latestInbound, timezone] = await Promise.all([
@@ -3074,6 +3076,9 @@ export async function buildRuleContext({ contactId = null, messageText = '', cha
     now: Date.now(),
     nowIso,
     channel,
+    postId: String(post?.postId || '').trim(),
+    mediaId: String(post?.mediaId || '').trim(),
+    postPermalink: String(post?.permalink || '').trim(),
     text: normalizeMatchText(messageText),
     tags,
     appointments,
@@ -3362,6 +3367,22 @@ function scheduleParamMatches(param, ctx) {
   return param.operator === 'outside' ? !inside : inside
 }
 
+// Compara la publicación configurada en una condición de comentario contra el
+// post/media del comentario entrante (postId FB / mediaId IG / permalink). Vacío
+// = cualquiera. Tolerante como postMatches del motor de automatizaciones.
+function commentPostMatches(wanted, ctx) {
+  const target = String(wanted || '').trim().toLowerCase()
+  if (!target) return true
+  const candidates = [ctx.postId, ctx.mediaId, ctx.postPermalink]
+    .map((value) => String(value || '').trim().toLowerCase())
+    .filter(Boolean)
+  return candidates.some((c) => (
+    c === target ||
+    (target.length >= 6 && c.includes(target)) ||
+    (c.length >= 6 && target.includes(c))
+  ))
+}
+
 function conditionMatches(condition, ctx) {
   const { category } = condition
   const params = condition.params || []
@@ -3370,9 +3391,14 @@ function conditionMatches(condition, ctx) {
     return params.every((param) => {
       const targetChannel = String(param.value || '').trim().toLowerCase()
       const currentChannel = String(ctx.channel || '').trim().toLowerCase()
-      const matches = targetChannel === 'chat'
+      let matches = targetChannel === 'chat'
         ? CHAT_CONDITION_CHANNELS.has(currentChannel)
         : targetChannel === currentChannel
+      // Canal de comentario con publicación específica: además el comentario debe
+      // ser de esa publicación. Vacío ("Todas") = cualquiera.
+      if (matches && COMMENT_CONDITION_CHANNELS.has(targetChannel) && param.postId) {
+        matches = commentPostMatches(param.postId, ctx)
+      }
       return param.operator === 'is_not' ? !matches : matches
     })
   }

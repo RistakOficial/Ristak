@@ -10,6 +10,7 @@ import type {
 } from '@/services/conversationalAgentService'
 import type { Calendar } from '@/services/calendarsService'
 import { NumberInput, TagPicker, useContactTags } from '@/components/common'
+import { MetaPostSelector } from '@/components/MetaPostSelector/MetaPostSelector'
 import { contactTagsService } from '@/services/contactTagsService'
 import styles from './AIAgentSettings.module.css'
 
@@ -852,6 +853,15 @@ export const ConditionBuilder: React.FC<ConditionBuilderProps> = ({ groups, cale
                   <option key={option.value} value={option.value}>{option.label}</option>
                 ))}
               </select>
+            ) : null}
+            {COMMENT_CONDITION_CHANNELS.has(param.value || '') ? (
+              <MetaPostSelector
+                platform={param.value === 'instagram_comment' ? 'instagram' : 'facebook'}
+                value={param.postId || ''}
+                valueLabel={param.postName || ''}
+                onChange={(value, label) => updateParam(groupIndex, conditionIndex, paramIndex, { postId: value, postName: label })}
+                aria-label="Publicación del comentario"
+              />
             ) : null}
           </>
         )
