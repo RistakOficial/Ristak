@@ -25,6 +25,7 @@ import { runVersionedMigrations } from './startup/runMigrations.js'
 import { repairPendingPaymentFlows } from './services/paymentFlowService.js'
 import { ensureBunnyStreamRuntimeConfigured } from './services/mediaStorageService.js'
 import { repairDefaultMessageTemplatesForCurrentConnection } from './services/messageTemplatesService.js'
+import { shutdownWhatsAppQrService } from './services/whatsappQrService.js'
 
 // Force redeploy to ensure latest logs are active
 
@@ -489,9 +490,10 @@ function handleShutdown(signal) {
   let exiting = false
   let poller = null
   let timeout = null
+  let qrShutdownDone = false
 
   const finishShutdownIfIdle = () => {
-    if (exiting || !serverClosed) return
+    if (exiting || !serverClosed || !qrShutdownDone) return
     const snapshot = getDeployDrainSnapshot()
     if (activeRequests > 0 || snapshot.total > 0) return
 
@@ -501,6 +503,15 @@ function handleShutdown(signal) {
     logger.info('[Shutdown] Servidor cerrado correctamente y trabajo critico drenado.')
     process.exit(0)
   }
+
+  shutdownWhatsAppQrService({ reason: signal })
+    .catch((error) => {
+      logger.warn(`[Shutdown] No se pudieron cerrar sesiones QR: ${error.message}`)
+    })
+    .finally(() => {
+      qrShutdownDone = true
+      finishShutdownIfIdle()
+    })
 
   server.close((error) => {
     if (error) {

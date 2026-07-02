@@ -7,7 +7,8 @@ import {
   resetWhatsAppQrServiceForTest,
   resumeWhatsAppQrSessions,
   setBaileysRuntimeForTest,
-  setWhatsAppQrReconnectDelayForTest
+  setWhatsAppQrReconnectDelayForTest,
+  shutdownWhatsAppQrService
 } from '../src/services/whatsappQrService.js'
 
 const BUSINESS_PHONE = '+526561234567'
@@ -183,6 +184,26 @@ test('resumeWhatsAppQrSessions no abre otra sesión si un lease vigente pertenec
     assert.equal(result.resumed, 0)
     assert.equal(sockets.length, 0)
     assert.equal(lock.owner_id, 'other-render-instance')
+  })
+})
+
+test('shutdownWhatsAppQrService libera el lease QR del proceso durante deploy drain', async () => {
+  const sockets = []
+
+  await withQrFixture({ status: 'connected' }, async ({ phoneNumberId }) => {
+    setBaileysRuntimeForTest(createFakeBaileysRuntime(sockets))
+
+    const result = await resumeWhatsAppQrSessions({ source: 'test' })
+    const shutdown = await shutdownWhatsAppQrService({ reason: 'test-shutdown' })
+    const lock = await db.get(
+      'SELECT owner_id, locked_until <= CURRENT_TIMESTAMP AS expired FROM distributed_locks WHERE name = ?',
+      [`whatsapp-qr-session:${phoneNumberId}`]
+    )
+
+    assert.equal(result.resumed, 1)
+    assert.equal(shutdown.closed, 1)
+    assert.equal(shutdown.released, 1)
+    assert.equal(Number(lock.expired), 1)
   })
 })
 

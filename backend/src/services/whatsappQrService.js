@@ -1209,6 +1209,30 @@ export function resetWhatsAppQrServiceForTest() {
   qrRecentRistakOutboundAttempts.clear()
 }
 
+export async function shutdownWhatsAppQrService({ reason = 'shutdown' } = {}) {
+  const sessions = [...liveSessions.entries()].map(([phoneNumberId, live]) => ({
+    phoneNumberId,
+    lease: live?.lease
+  }))
+
+  for (const { phoneNumberId } of sessions) {
+    closeLiveSession(phoneNumberId, { releaseLease: false })
+  }
+
+  const results = await Promise.allSettled(
+    sessions
+      .filter(({ lease }) => Boolean(lease))
+      .map(({ lease }) => releaseQrSessionLease(lease))
+  )
+  const released = results.filter(result => result.status === 'fulfilled' && result.value).length
+
+  if (sessions.length) {
+    logger.info(`[WhatsApp QR] ${reason}: ${sessions.length} sesión(es) QR cerradas, ${released} lease(s) liberado(s)`)
+  }
+
+  return { closed: sessions.length, released }
+}
+
 async function getPhoneRow(phoneNumberId) {
   const id = cleanString(phoneNumberId)
   if (!id) throw new Error('Elige el número que quieres conectar por QR')

@@ -308,6 +308,9 @@ deploy o reinicio, los envios manuales y los fallback deben esperar y reintentar
 la apertura del socket en silencio. Ese lock no debe exponerse como globo rojo
 ni como toast de "no se envio" mientras el QR pueda recuperar el control y
 confirmar el mensaje.
+Durante `SIGTERM`/deploy drain, el proceso viejo debe cerrar sus sockets QR y
+liberar el lease de sesion antes de quedarse drenando requests; no debe seguir
+renovando el candado mientras la instancia nueva ya esta live.
 
 El respaldo QR se resuelve por telefono, no solo por el id exacto del numero API.
 Si el numero oficial y la conexion QR quedaron en filas distintas de
