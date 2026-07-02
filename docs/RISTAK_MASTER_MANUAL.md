@@ -291,9 +291,12 @@ restriccion recuperable o por la ventana de 24 horas, `whatsappApiService` debe
 usar WhatsApp QR/Baileys como respaldo si el numero tiene QR habilitado y
 conectado. Si el respaldo QR confirma el envio, el historial y la respuesta al
 frontend deben quedar como mensaje `qr` exitoso, sin exponer el error de la API
-en el globo del chat. Si Baileys captura despues el eco saliente de un mensaje
-que coincide con un registro API fallido, ese registro debe repararse como
-enviado por `qr`, limpiando `error_code` y `error_message`. Si despues llega un
+en el globo del chat. La burbuja del chat debe mostrar solo el contenido y la
+etiqueta `QR`; la razon tecnica de ruteo/fallback no debe pintarse como nota
+debajo del mensaje cuando el envio QR fue exitoso. Si Baileys captura despues el
+eco saliente de un mensaje que coincide con un registro API fallido, ese
+registro debe repararse como enviado por `qr`, limpiando `error_code` y
+`error_message`. Si despues llega un
 webhook tardio de WhatsApp API con estado `failed` para un mensaje que ya quedo
 resuelto por QR, el historial debe conservar el transporte `qr` y mantener
 limpios esos campos de error. Solo se guarda error visible cuando no existe

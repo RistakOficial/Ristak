@@ -2785,8 +2785,14 @@ function getMessageTransportBadge(message: ChatMessage, status?: WhatsAppApiStat
   return getHighLevelChatChannelLabel(raw)
 }
 
+function isQrTransport(value?: string | null) {
+  return String(value || '').trim().toLowerCase() === 'qr'
+}
+
 function getMessageRoutingReason(message: ChatMessage) {
   if (message.direction !== 'outbound') return ''
+  if (isQrTransport(message.transport)) return ''
+
   const reason = String(message.routingReason || '').trim()
   return reason === 'Capturado desde la sesión de WhatsApp Web.' ? '' : reason
 }

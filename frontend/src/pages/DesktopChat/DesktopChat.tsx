@@ -2101,9 +2101,15 @@ function getMessageTransportLabel(message: DesktopChatMessage, status?: WhatsApp
   return ''
 }
 
+function isQrTransport(value?: string | null) {
+  return String(value || '').trim().toLowerCase() === 'qr'
+}
+
 function getMessageRoutingDetails(message: DesktopChatMessage, status?: WhatsAppApiStatus | null) {
   if (message.direction !== 'outbound') return { label: '', reason: '' }
   const label = getMessageTransportLabel(message, status)
+  if (isQrTransport(message.transport)) return { label, reason: '' }
+
   const reason = String(message.routingReason || '').trim()
   const cleanReason = reason === 'Capturado desde la sesión de WhatsApp Web.' ? '' : reason
   return { label, reason: cleanReason }
