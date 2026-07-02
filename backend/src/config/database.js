@@ -2871,6 +2871,7 @@ async function initTables() {
         username TEXT,
         profile_picture_url TEXT,
         raw_profile_json TEXT,
+        meta_user_id TEXT,
         first_seen_at DATETIME DEFAULT CURRENT_TIMESTAMP,
         last_seen_at DATETIME DEFAULT CURRENT_TIMESTAMP,
         message_count INTEGER DEFAULT 0,
@@ -2878,6 +2879,32 @@ async function initTables() {
         updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
         UNIQUE(platform, sender_id),
         FOREIGN KEY (contact_id) REFERENCES contacts(id) ON DELETE SET NULL
+      )
+    `)
+
+    // meta_user_id = id "crudo" del usuario (PSID/IGSID) SIN el prefijo sintético
+    // de comentario. Enlaza el contacto-DM y el contacto-comentario de la misma
+    // persona (mismo platform + meta_user_id) sin fusionarlos.
+    try {
+      await db.run('ALTER TABLE meta_social_contacts ADD COLUMN meta_user_id TEXT')
+    } catch (err) {
+      if (!err.message.includes('duplicate column') && !err.message.includes('already exists')) throw err
+    }
+    await db.run('CREATE INDEX IF NOT EXISTS idx_meta_social_contacts_meta_user ON meta_social_contacts (platform, meta_user_id)').catch(() => undefined)
+
+    // Caché del contenido de la publicación/media comentada (para mostrar "de qué
+    // publicación comentó" dentro del globo, sin re-pedirlo a Meta cada vez).
+    await db.run(`
+      CREATE TABLE IF NOT EXISTS meta_social_posts (
+        id TEXT PRIMARY KEY,
+        platform TEXT,
+        post_type TEXT,
+        message TEXT,
+        image_url TEXT,
+        permalink TEXT,
+        raw_json TEXT,
+        fetched_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
       )
     `)
 

@@ -4957,12 +4957,19 @@ export const getContactJourney = async (req, res) => {
           msg.comment_id,
           msg.post_id,
           msg.parent_comment_id,
+          msg.media_id,
           msg.permalink,
+          post.message AS post_message,
+          post.image_url AS post_image_url,
+          post.permalink AS post_permalink,
+          post.post_type AS post_type,
           COALESCE(msg.message_timestamp, msg.created_at) as journey_message_date,
           profile.profile_name,
-          profile.username
+          profile.username,
+          profile.meta_user_id
        FROM meta_social_messages msg
        LEFT JOIN meta_social_contacts profile ON profile.id = msg.meta_social_contact_id
+       LEFT JOIN meta_social_posts post ON post.id = COALESCE(NULLIF(msg.post_id, ''), msg.media_id)
        WHERE msg.contact_id = ?
          AND (
            ? = 1
@@ -5015,8 +5022,16 @@ export const getContactJourney = async (req, res) => {
           // Contexto de comentario (para etiquetar "comentó" y responder desde el inbox).
           comment_id: msg.comment_id || null,
           post_id: msg.post_id || null,
+          media_id: msg.media_id || null,
           parent_comment_id: msg.parent_comment_id || null,
-          permalink: msg.permalink || null
+          permalink: msg.permalink || null,
+          meta_user_id: msg.meta_user_id || null,
+          // Contenido de la publicación comentada (para mostrar "de qué publicación
+          // comentó" dentro del globo): texto, imagen y link a la publicación.
+          post_message: msg.post_message || null,
+          post_image_url: msg.post_image_url || null,
+          post_permalink: msg.post_permalink || msg.permalink || null,
+          post_type: msg.post_type || null
         }
       })
 	    })

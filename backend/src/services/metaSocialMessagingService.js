@@ -345,6 +345,45 @@ async function fetchMetaCommentAuthorProfile({ platform, commentId, authorId, ac
   }
 }
 
+// Saca y cachea el contenido de la publicación/media comentada (texto + imagen +
+// permalink) para mostrar "de qué publicación comentó" dentro del globo. Se pide
+// una sola vez por publicación (cache en meta_social_posts).
+async function fetchAndCacheSocialPost(comment, accessToken) {
+  const platform = comment.platform
+  const postId = platform === 'instagram' ? cleanString(comment.mediaId) : cleanString(comment.postId)
+  if (!postId || !accessToken) return
+  const existing = await db.get('SELECT id FROM meta_social_posts WHERE id = ?', [postId]).catch(() => null)
+  if (existing) return
+
+  try {
+    const fields = platform === 'instagram'
+      ? 'caption,media_type,media_url,thumbnail_url,permalink,timestamp'
+      : 'message,permalink_url,created_time,full_picture'
+    const data = await metaSocialGraphRequest(`/${encodeURIComponent(postId)}`, { token: accessToken, query: { fields } })
+    const message = platform === 'instagram' ? cleanString(data?.caption) : cleanString(data?.message)
+    const imageUrl = platform === 'instagram'
+      ? cleanString(data?.thumbnail_url || data?.media_url)
+      : cleanString(data?.full_picture)
+    const permalink = cleanString(data?.permalink || data?.permalink_url)
+    const postType = platform === 'instagram' ? cleanString(data?.media_type) || 'media' : 'post'
+
+    await db.run(`
+      INSERT INTO meta_social_posts (id, platform, post_type, message, image_url, permalink, raw_json, fetched_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+      ON CONFLICT(id) DO UPDATE SET
+        platform = excluded.platform,
+        post_type = excluded.post_type,
+        message = COALESCE(NULLIF(excluded.message, ''), meta_social_posts.message),
+        image_url = COALESCE(NULLIF(excluded.image_url, ''), meta_social_posts.image_url),
+        permalink = COALESCE(NULLIF(excluded.permalink, ''), meta_social_posts.permalink),
+        raw_json = excluded.raw_json,
+        updated_at = CURRENT_TIMESTAMP
+    `, [postId, platform, postType, message || null, imageUrl || null, permalink || null, safeJson(data)])
+  } catch (error) {
+    logger.warn(`No se pudo cachear la publicación comentada ${postId}: ${error.message}`)
+  }
+}
+
 async function fetchMetaSenderProfile({ platform, senderId, accessToken }) {
   if (!senderId || !accessToken) return {}
 
@@ -876,14 +915,15 @@ async function upsertMetaSocialContact({ contactId, socialMessage, profile }) {
   await db.run(`
     INSERT INTO meta_social_contacts (
       id, contact_id, platform, sender_id, recipient_id, page_id, instagram_account_id,
-      profile_name, username, profile_picture_url, raw_profile_json,
+      profile_name, username, profile_picture_url, raw_profile_json, meta_user_id,
       first_seen_at, last_seen_at, message_count, updated_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, CURRENT_TIMESTAMP)
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, CURRENT_TIMESTAMP)
     ON CONFLICT(platform, sender_id) DO UPDATE SET
       contact_id = COALESCE(excluded.contact_id, meta_social_contacts.contact_id),
       recipient_id = COALESCE(NULLIF(excluded.recipient_id, ''), meta_social_contacts.recipient_id),
       page_id = COALESCE(NULLIF(excluded.page_id, ''), meta_social_contacts.page_id),
       instagram_account_id = COALESCE(NULLIF(excluded.instagram_account_id, ''), meta_social_contacts.instagram_account_id),
+      meta_user_id = COALESCE(NULLIF(excluded.meta_user_id, ''), meta_social_contacts.meta_user_id),
       profile_name = COALESCE(NULLIF(excluded.profile_name, ''), meta_social_contacts.profile_name),
       username = COALESCE(NULLIF(excluded.username, ''), meta_social_contacts.username),
       profile_picture_url = COALESCE(NULLIF(excluded.profile_picture_url, ''), meta_social_contacts.profile_picture_url),
@@ -914,6 +954,9 @@ async function upsertMetaSocialContact({ contactId, socialMessage, profile }) {
     profile.username || null,
     profile.profilePictureUrl || null,
     safeJson(profile.raw || null),
+    // id crudo del usuario (PSID/IGSID): para DMs es senderId; para comentarios
+    // es authorId (senderId trae el prefijo sintético 'fb_comment:'/'ig_comment:').
+    cleanString(socialMessage.authorId) || cleanString(socialMessage.senderId) || null,
     socialMessage.messageTimestamp,
     socialMessage.messageTimestamp
   ])
@@ -1300,6 +1343,11 @@ export async function processMetaSocialWebhook({ payload = {}, rawBody = '', sig
               .catch(error => {
                 logger.warn(`[Chat Read State] No se pudo incrementar unread de comentario: ${error.message}`)
               })
+
+            // Cachear el contenido de la publicación comentada (no bloquea el flujo).
+            resolveMetaPageTokenSafe(config)
+              .then(token => fetchAndCacheSocialPost(comment, token))
+              .catch(error => logger.warn(`[Comentario] publicación no cacheada: ${error.message}`))
 
             // Automatizaciones de comentarios: evento AISLADO 'comment-received'.
             // Va por su propio carril (NO handleIncomingMessage), así que las
