@@ -435,7 +435,7 @@ const isWebContactJourneyEvent = (event?: JourneyEvent | null) => {
 }
 
 const isDailyContactJourneyEvent = (event?: JourneyEvent | null) =>
-  Boolean(event && (event.type === 'contact_created' || isWhatsAppJourneyEvent(event)))
+  Boolean(event && (event.type === 'contact_created' || isWhatsAppJourneyEvent(event) || isMetaMessageJourneyEvent(event)))
 
 const getKnownPlatformIcon = (platform?: string | null) => {
   const normalized = String(platform || '').toLowerCase()
@@ -495,10 +495,20 @@ const getMetaMessagePlatformText = (event?: JourneyEvent | null): string => {
   ].filter(Boolean).join(' ')
 }
 
-const getMetaMessageTitle = (event?: JourneyEvent | null): string => {
+const getMetaMessagePlatformKey = (event?: JourneyEvent | null): string => {
   const platformText = getMetaMessagePlatformText(event)
-  if (INSTAGRAM_META_MESSAGE_PATTERN.test(platformText)) return 'Instagram'
-  if (MESSENGER_META_MESSAGE_PATTERN.test(platformText)) return 'Messenger'
+  if (INSTAGRAM_META_MESSAGE_PATTERN.test(platformText)) return 'instagram'
+  if (MESSENGER_META_MESSAGE_PATTERN.test(platformText)) return 'messenger'
+  return 'meta'
+}
+
+const isMetaMessageJourneyEvent = (event?: JourneyEvent | null) =>
+  Boolean(event?.type === 'meta_message' && !isOutboundJourneyMessage(event))
+
+const getMetaMessageTitle = (event?: JourneyEvent | null): string => {
+  const platform = getMetaMessagePlatformKey(event)
+  if (platform === 'instagram') return 'Instagram'
+  if (platform === 'messenger') return 'Messenger'
   return 'Meta'
 }
 
@@ -521,16 +531,16 @@ const getMetaMessageSubtypeLabel = (event?: JourneyEvent | null): string => {
 }
 
 const getMetaMessageIcon = (event: JourneyEvent) => {
-  const platformText = getMetaMessagePlatformText(event)
-  if (INSTAGRAM_META_MESSAGE_PATTERN.test(platformText)) return 'instagram'
-  if (MESSENGER_META_MESSAGE_PATTERN.test(platformText)) return 'message-circle'
+  const platform = getMetaMessagePlatformKey(event)
+  if (platform === 'instagram') return 'instagram'
+  if (platform === 'messenger') return 'message-circle'
   return 'message-square'
 }
 
 const getMetaMessageColor = (event: JourneyEvent) => {
-  const platformText = getMetaMessagePlatformText(event)
-  if (INSTAGRAM_META_MESSAGE_PATTERN.test(platformText)) return 'instagram'
-  if (MESSENGER_META_MESSAGE_PATTERN.test(platformText)) return 'facebook'
+  const platform = getMetaMessagePlatformKey(event)
+  if (platform === 'instagram') return 'instagram'
+  if (platform === 'messenger') return 'facebook'
   return 'blue'
 }
 
@@ -1000,6 +1010,25 @@ const whatsAppEventScore = (event: JourneyEvent): number => {
   return (isAdAttributedEvent(event) ? 1000 : 0) + (event.type === 'whatsapp_message' ? 10 : 0) + completeness
 }
 
+const metaMessageEventScore = (event: JourneyEvent): number => {
+  const data = getEventData(event)
+  const completenessFields = [
+    'message_text', 'message_type', 'profile_name', 'username', 'media_url',
+    'postback_payload', 'comment_id', 'post_message', 'post_permalink',
+    'permalink', 'meta_message_id', 'meta_social_message_id', 'status'
+  ]
+  const completeness = completenessFields.reduce(
+    (score, field) => score + (hasMeaningfulValue(data[field]) ? 1 : 0),
+    0
+  )
+  return 10 + completeness
+}
+
+const dailyJourneyEventScore = (event: JourneyEvent): number => {
+  if (isMetaMessageJourneyEvent(event)) return metaMessageEventScore(event)
+  return whatsAppEventScore(event)
+}
+
 // Clave de día en la MISMA zona horaria con la que la UI muestra las fechas, para que el
 // "uno por día" coincida con lo que ve el usuario (evita duplicados al cruzar la medianoche
 // UTC, p. ej. mensajes a las 5:55 PM y 6:04 PM en México).
@@ -1022,15 +1051,17 @@ const getDailyContactJourneyGroupKey = (event: JourneyEvent, timezone: string): 
     getLocalDayKey(event.date, timezone),
     isWhatsAppJourneyEvent(event)
       ? `whatsapp:${isAdAttributedEvent(event) ? 'ad' : 'direct'}`
+      : isMetaMessageJourneyEvent(event)
+        ? `meta:${getMetaMessagePlatformKey(event)}`
       : isWebContactJourneyEvent(event)
         ? 'contact:web'
         : 'contact'
   ].join(':')
 
-// Colapsa los eventos de contacto/WhatsApp por día local. Si el mismo día hay varios,
-// gana el que trae metadata de anuncio (source_id, CTWA, campaña o anuncio resuelto).
+// Colapsa los eventos de contacto/mensajería por día local. Si el mismo día hay varios,
+// gana el que trae más metadata útil para explicar el origen o mensaje.
 const buildDisplayJourney = (events: JourneyEvent[], timezone: string): JourneyEvent[] => {
-  const dailyContactEvents: JourneyEvent[] = []
+  const dailyJourneyEvents: JourneyEvent[] = []
   const otherEvents: JourneyEvent[] = []
 
   events.forEach(event => {
@@ -1039,14 +1070,14 @@ const buildDisplayJourney = (events: JourneyEvent[], timezone: string): JourneyE
     }
 
     if (isDailyContactJourneyEvent(event)) {
-      dailyContactEvents.push(event)
+      dailyJourneyEvents.push(event)
     } else {
       otherEvents.push(event)
     }
   })
 
   const byGroup = new Map<string, JourneyEvent[]>()
-  dailyContactEvents.forEach(event => {
+  dailyJourneyEvents.forEach(event => {
     const key = getDailyContactJourneyGroupKey(event, timezone)
     const bucket = byGroup.get(key)
     if (bucket) {
@@ -1056,9 +1087,9 @@ const buildDisplayJourney = (events: JourneyEvent[], timezone: string): JourneyE
     }
   })
 
-  const mergedDailyContactEvents: JourneyEvent[] = []
+  const mergedDailyJourneyEvents: JourneyEvent[] = []
   byGroup.forEach(dayEvents => {
-    const sorted = [...dayEvents].sort((a, b) => whatsAppEventScore(b) - whatsAppEventScore(a))
+    const sorted = [...dayEvents].sort((a, b) => dailyJourneyEventScore(b) - dailyJourneyEventScore(a))
     const primary = sorted[0]
     const hasWhatsAppEvent = dayEvents.some(isWhatsAppJourneyEvent)
     const isWhatsAppAdAttributed = dayEvents.some(event => isWhatsAppJourneyEvent(event) && isAdAttributedEvent(event))
@@ -1076,14 +1107,14 @@ const buildDisplayJourney = (events: JourneyEvent[], timezone: string): JourneyE
       mergedData.is_ad_attributed = isWhatsAppAdAttributed
     }
 
-    mergedDailyContactEvents.push({
+    mergedDailyJourneyEvents.push({
       ...primary,
       type: hasWhatsAppEvent ? 'whatsapp_message' : primary.type,
       data: mergedData
     })
   })
 
-  return [...otherEvents, ...mergedDailyContactEvents].sort(
+  return [...otherEvents, ...mergedDailyJourneyEvents].sort(
     (a, b) => parseSortableDateValue(a.date) - parseSortableDateValue(b.date)
   )
 }

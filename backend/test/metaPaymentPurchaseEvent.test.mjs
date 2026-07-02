@@ -1237,7 +1237,19 @@ test('calendar appointment Business Messaging events support Messenger and Insta
           senderId: 'psid-appointment-123',
           pageId: 'page-appointment-msg-123'
         })
+        await insertMetaSocialDmMessage({
+          contactId: messengerContactId,
+          platform: 'messenger',
+          senderId: 'psid-appointment-123',
+          pageId: 'page-appointment-msg-123'
+        })
         await insertMetaSocialContact({
+          contactId: instagramContactId,
+          platform: 'instagram',
+          senderId: 'igsid-appointment-456',
+          instagramAccountId: 'ig-account-appointment-456'
+        })
+        await insertMetaSocialDmMessage({
           contactId: instagramContactId,
           platform: 'instagram',
           senderId: 'igsid-appointment-456',
