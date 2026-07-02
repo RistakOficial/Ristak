@@ -41,7 +41,7 @@ export interface MetaTestEventParameters {
   messagingChannel?: string
   pageId?: string
   pageScopedUserId?: string
-  igScopedUserId?: string
+  igSid?: string
   instagramAccountId?: string
   custom?: MetaTestCustomParameter[]
 }

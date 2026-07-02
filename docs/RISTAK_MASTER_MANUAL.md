@@ -349,7 +349,7 @@ Reglas base:
 - Si el contacto que agenda viene de una conversacion Meta, el canal `smart`
   manda la conversion por CAPI con `action_source=business_messaging`: WhatsApp
   usa `ctwa_clid`, Messenger usa `page_scoped_user_id` + `page_id` e Instagram
-  usa `ig_scoped_user_id` + `ig_account_id`. En esos canales de mensajeria el
+  usa `ig_sid` + `ig_account_id`. En esos canales de mensajeria el
   evento de cita se normaliza a `LeadSubmitted`; el evento web sigue usando
   `Schedule`.
 
@@ -448,7 +448,7 @@ Ristak usa Meta en varias areas:
   `action_source=business_messaging` y permiten probar WhatsApp, Messenger o
   Instagram DM desde la UI. WhatsApp requiere `ctwa_clid` + `page_id`;
   Messenger requiere `page_scoped_user_id` + `page_id`; Instagram requiere
-  `ig_scoped_user_id` + `ig_account_id`. La Page/Instagram se toma de la
+  `ig_sid` + `ig_account_id`. La Page/Instagram se toma de la
   configuracion detectada por el wizard de Meta. `Purchase (Messaging)` se
   envia a Meta como `event_name=Purchase` y usa por default la moneda de la
   cuenta (`app_config.account_currency`).

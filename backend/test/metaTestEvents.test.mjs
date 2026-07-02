@@ -398,7 +398,7 @@ test('sendMetaTestEvent posts Messenger and Instagram LeadSubmitted as business_
         eventSourceUrl: 'https://app.test/settings/meta-ads',
         eventParameters: {
           messagingChannel: 'instagram',
-          igScopedUserId: 'igsid-test-123'
+          igSid: 'igsid-test-123'
         }
       },
       headers: {
@@ -430,7 +430,9 @@ test('sendMetaTestEvent posts Messenger and Instagram LeadSubmitted as business_
     assert.equal(instagramPayload.data[0].action_source, 'business_messaging')
     assert.equal(instagramPayload.data[0].messaging_channel, 'instagram')
     assert.equal(instagramPayload.data[0].user_data.ig_account_id, '17841400000000000')
-    assert.equal(instagramPayload.data[0].user_data.ig_scoped_user_id, 'igsid-test-123')
+    assert.equal(instagramPayload.data[0].user_data.ig_sid, 'igsid-test-123')
+    assert.equal(instagramPayload.data[0].user_data.ig_scoped_user_id, undefined)
+    assert.equal(instagramPayload.data[0].custom_data.ig_sid, undefined)
     assert.equal(instagramPayload.data[0].custom_data.messaging_channel, 'instagram')
   } finally {
     if (metaServer) await new Promise(resolve => metaServer.close(resolve))

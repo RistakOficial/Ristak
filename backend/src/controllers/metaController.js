@@ -165,9 +165,10 @@ const META_TEST_IDENTITY_CUSTOM_PARAMETER_ALIASES = {
   psid: 'pageScopedUserId',
   page_scoped_user_id: 'pageScopedUserId',
   pagescopeduserid: 'pageScopedUserId',
-  igsid: 'igScopedUserId',
-  ig_scoped_user_id: 'igScopedUserId',
-  igscopeduserid: 'igScopedUserId',
+  igsid: 'igSid',
+  ig_sid: 'igSid',
+  ig_scoped_user_id: 'igSid',
+  igscopeduserid: 'igSid',
   instagram_account_id: 'instagramAccountId',
   instagramaccountid: 'instagramAccountId',
   ig_account_id: 'instagramAccountId',
@@ -266,7 +267,7 @@ function normalizeMetaTestEventParameters(parameters = {}) {
     'messagingChannel',
     'pageId',
     'pageScopedUserId',
-    'igScopedUserId',
+    'igSid',
     'instagramAccountId'
   ].forEach((field) => {
     const value = cleanMetaTestString(source[field]);
@@ -281,8 +282,9 @@ function normalizeMetaTestEventParameters(parameters = {}) {
     ['page_id', 'pageId'],
     ['page_scoped_user_id', 'pageScopedUserId'],
     ['psid', 'pageScopedUserId'],
-    ['ig_scoped_user_id', 'igScopedUserId'],
-    ['igsid', 'igScopedUserId'],
+    ['ig_sid', 'igSid'],
+    ['ig_scoped_user_id', 'igSid'],
+    ['igsid', 'igSid'],
     ['instagram_account_id', 'instagramAccountId'],
     ['ig_account_id', 'instagramAccountId'],
     ['messaging_channel', 'messagingChannel'],
@@ -328,7 +330,7 @@ function pruneMetaTestEventParametersForEvent(parameters, eventName) {
 
   if (isWhatsappBusinessMessagingTestEvent(eventName)) {
     next.messagingChannel = normalizeMetaTestMessagingChannel(normalized.messagingChannel);
-    ['ctwaClid', 'pageId', 'pageScopedUserId', 'igScopedUserId', 'instagramAccountId'].forEach((field) => {
+    ['ctwaClid', 'pageId', 'pageScopedUserId', 'igSid', 'instagramAccountId'].forEach((field) => {
       const value = cleanMetaTestString(normalized[field]);
       if (value) next[field] = value;
     });
@@ -435,9 +437,9 @@ function buildMetaTestUserData({ req, eventSourceUrl, datasetId, eventParameters
     }
 
     if (messagingChannel === 'instagram') {
-      const igsid = cleanString(eventParameters.igScopedUserId || eventParameters.ig_scoped_user_id || eventParameters.igsid);
+      const igsid = cleanString(eventParameters.igSid || eventParameters.ig_sid || eventParameters.igScopedUserId || eventParameters.ig_scoped_user_id || eventParameters.igsid);
       if (instagramAccountId) userData.ig_account_id = instagramAccountId;
-      if (igsid) userData.ig_scoped_user_id = igsid;
+      if (igsid) userData.ig_sid = igsid;
       return userData;
     }
 
@@ -919,8 +921,8 @@ async function performMetaCapiTestEvent({ req, metaConfig, eventName, eventParam
     if (messagingChannel === 'messenger' && !userData.page_scoped_user_id) {
       return { ok: false, status: 400, error: `Pega un page_scoped_user_id real para probar ${messagingEventLabel}`, eventId, eventName };
     }
-    if (messagingChannel === 'instagram' && !userData.ig_scoped_user_id) {
-      return { ok: false, status: 400, error: `Pega un ig_scoped_user_id real para probar ${messagingEventLabel}`, eventId, eventName };
+    if (messagingChannel === 'instagram' && !userData.ig_sid) {
+      return { ok: false, status: 400, error: `Pega un ig_sid real para probar ${messagingEventLabel}`, eventId, eventName };
     }
     if (messagingChannel === 'instagram' && !userData.ig_account_id) {
       return { ok: false, status: 400, error: `Configura una cuenta de Instagram antes de probar ${messagingEventLabel}`, eventId, eventName };

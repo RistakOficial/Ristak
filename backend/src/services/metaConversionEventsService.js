@@ -951,7 +951,7 @@ function normalizeBusinessMessagingEventName(value) {
 
 // Identidad de user_data para eventos business_messaging, según el canal.
 // NOTA: los nombres de campo de Messenger/Instagram (page_scoped_user_id,
-// ig_account_id, ig_scoped_user_id) están centralizados AQUÍ. Meta exige que el
+// ig_account_id, ig_sid) están centralizados AQUÍ. Meta exige que el
 // dataset tenga una Página asociada para eventos CTM/CTWA; una vez asociada, si
 // Meta pidiera otro nombre de campo, se ajusta en este único lugar.
 function buildBusinessMessagingUserData(contact, metaConfig, whatsappAttribution, channel = 'whatsapp', socialIdentity = null) {
@@ -970,7 +970,7 @@ function buildBusinessMessagingUserData(contact, metaConfig, whatsappAttribution
     const igAccountId = cleanString(socialIdentity?.igAccountId)
     const igsid = cleanString(socialIdentity?.senderId)
     if (igAccountId) userData.ig_account_id = igAccountId
-    if (igsid) userData.ig_scoped_user_id = igsid
+    if (igsid) userData.ig_sid = igsid
     return userData
   }
 

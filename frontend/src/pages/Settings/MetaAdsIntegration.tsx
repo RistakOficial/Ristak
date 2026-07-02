@@ -73,7 +73,7 @@ type MetaTestIdentityParameterKey =
   | 'messagingChannel'
   | 'pageId'
   | 'pageScopedUserId'
-  | 'igScopedUserId'
+  | 'igSid'
   | 'instagramAccountId'
 type MetaTestStringParameterKey = Exclude<keyof MetaTestEventParameters, 'custom'>
 
@@ -168,7 +168,7 @@ const metaTestIdentityParameterKeys = new Set<string>([
   'messagingChannel',
   'pageId',
   'pageScopedUserId',
-  'igScopedUserId',
+  'igSid',
   'instagramAccountId'
 ])
 const metaTestMessagingChannelOptions: Array<{ value: MetaTestMessagingChannel; label: string; helper: string }> = [
@@ -187,9 +187,10 @@ const metaTestIdentityCustomParameterAliases: Record<string, MetaTestIdentityPar
   psid: 'pageScopedUserId',
   page_scoped_user_id: 'pageScopedUserId',
   pagescopeduserid: 'pageScopedUserId',
-  igsid: 'igScopedUserId',
-  ig_scoped_user_id: 'igScopedUserId',
-  igscopeduserid: 'igScopedUserId',
+  igsid: 'igSid',
+  ig_sid: 'igSid',
+  ig_scoped_user_id: 'igSid',
+  igscopeduserid: 'igSid',
   instagram_account_id: 'instagramAccountId',
   instagramaccountid: 'instagramAccountId',
   ig_account_id: 'instagramAccountId',
@@ -336,7 +337,7 @@ const normalizeMetaTestEventParameters = (parameters?: MetaTestEventParameters |
     'messagingChannel',
     'pageId',
     'pageScopedUserId',
-    'igScopedUserId',
+    'igSid',
     'instagramAccountId'
   ] as MetaTestStringParameterKey[]).forEach((field) => {
     const value = cleanMetaTestParameterString(source[field])
@@ -351,8 +352,9 @@ const normalizeMetaTestEventParameters = (parameters?: MetaTestEventParameters |
     ['page_id', 'pageId'],
     ['page_scoped_user_id', 'pageScopedUserId'],
     ['psid', 'pageScopedUserId'],
-    ['ig_scoped_user_id', 'igScopedUserId'],
-    ['igsid', 'igScopedUserId'],
+    ['ig_sid', 'igSid'],
+    ['ig_scoped_user_id', 'igSid'],
+    ['igsid', 'igSid'],
     ['instagram_account_id', 'instagramAccountId'],
     ['ig_account_id', 'instagramAccountId'],
     ['messaging_channel', 'messagingChannel'],
@@ -396,7 +398,7 @@ const pruneMetaTestEventParametersForEvent = (
 
   if (isWhatsappBusinessMetaTestEvent(eventName)) {
     next.messagingChannel = normalizeMetaTestMessagingChannel(normalized.messagingChannel)
-    ;(['ctwaClid', 'pageId', 'pageScopedUserId', 'igScopedUserId', 'instagramAccountId'] as MetaTestIdentityParameterKey[]).forEach((field) => {
+    ;(['ctwaClid', 'pageId', 'pageScopedUserId', 'igSid', 'instagramAccountId'] as MetaTestIdentityParameterKey[]).forEach((field) => {
       const value = cleanMetaTestParameterString(normalized[field])
       if (value) next[field] = value
     })
@@ -1447,7 +1449,7 @@ export const MetaAdsIntegration: React.FC = () => {
           ? !cleanMetaTestParameterString(eventParameters.ctwaClid)
           : messagingChannel === 'messenger'
             ? !cleanMetaTestParameterString(eventParameters.pageScopedUserId)
-            : !cleanMetaTestParameterString(eventParameters.igScopedUserId)
+            : !cleanMetaTestParameterString(eventParameters.igSid)
       )
       if (missingIdentity) {
         const fieldLabel = messagingChannel === 'whatsapp' ? 'ctwa_clid' : messagingChannel === 'messenger' ? 'PSID' : 'IGSID'
@@ -2809,9 +2811,9 @@ export const MetaAdsIntegration: React.FC = () => {
                               <label className={styles.metaTestParameterField}>
                                 <span>IGSID</span>
                                 <input
-                                  value={normalizedMetaTestEventParameters.igScopedUserId || ''}
-                                  placeholder="ig_scoped_user_id"
-                                  onChange={(event) => setMetaTestIdentityParameterField('igScopedUserId', event.target.value)}
+                                  value={normalizedMetaTestEventParameters.igSid || ''}
+                                  placeholder="ig_sid"
+                                  onChange={(event) => setMetaTestIdentityParameterField('igSid', event.target.value)}
                                 />
                               </label>
                               <label className={styles.metaTestParameterField}>
