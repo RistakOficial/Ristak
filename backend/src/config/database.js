@@ -279,12 +279,24 @@ if (usePostgres) {
       .replace(/DATETIME/g, 'TIMESTAMP')
   )
 
+  // Postgres (a diferencia de SQLite) NO coacciona booleanos hacia las columnas
+  // INTEGER que usamos para TODOS los flags (required, *_enabled, *_verified, ...):
+  // el driver pg envía `true`/`false` como texto y Postgres lanza
+  // "invalid input syntax for type integer: true". El esquema no tiene columnas
+  // BOOLEAN reales, así que normalizamos aquí, en un solo lugar, cualquier bind
+  // booleano a 1/0 — mismo comportamiento que SQLite y misma data en ambos motores.
+  const toPostgresParams = (params) => (
+    Array.isArray(params)
+      ? params.map((value) => (value === true ? 1 : value === false ? 0 : value))
+      : params
+  )
+
   const createPostgresAdapter = (client) => ({
     run: async (sql, params = []) => {
       sql = normalizePostgresSql(sql)
       sql = convertPlaceholders(sql)
 
-      const result = await client.query(sql, params)
+      const result = await client.query(sql, toPostgresParams(params))
       return {
         lastID: result.rows[0]?.id || null,
         changes: result.rowCount
@@ -295,7 +307,7 @@ if (usePostgres) {
       sql = sql.replace(/DATETIME/g, 'TIMESTAMP')
       sql = convertPlaceholders(sql)
 
-      const result = await client.query(sql, params)
+      const result = await client.query(sql, toPostgresParams(params))
       return result.rows[0] || null
     },
 
@@ -303,7 +315,7 @@ if (usePostgres) {
       sql = sql.replace(/DATETIME/g, 'TIMESTAMP')
       sql = convertPlaceholders(sql)
 
-      const result = await client.query(sql, params)
+      const result = await client.query(sql, toPostgresParams(params))
       return result.rows
     },
 
