@@ -1307,6 +1307,27 @@ function buildQrProfileRawProfile({ recipient, profilePictureUrl, type, errorMes
   }
 }
 
+// Rehospeda (best-effort) el avatar de WhatsApp QR al Bunny para que no caduque.
+// Devuelve la URL a guardar (Bunny si se pudo, cruda si no). Nunca lanza.
+async function rehostQrAvatarUrl(canonicalPhone, profilePictureUrl) {
+  const raw = cleanString(profilePictureUrl)
+  try {
+    const currentRow = await db
+      .get('SELECT profile_picture_url FROM whatsapp_api_contacts WHERE phone = ?', [canonicalPhone])
+      .catch(() => null)
+    const { resolveAvatarForPersist } = await import('./mediaStorageService.js')
+    const resolved = await resolveAvatarForPersist({
+      incomingUrl: raw,
+      currentUrl: currentRow?.profile_picture_url || '',
+      channel: 'whatsapp',
+      filename: `wa-${canonicalPhone}.jpg`
+    })
+    return resolved?.url || raw
+  } catch {
+    return raw
+  }
+}
+
 async function upsertQrProfilePicture({
   contactId,
   phone,
@@ -1317,6 +1338,10 @@ async function upsertQrProfilePicture({
 } = {}) {
   const canonicalPhone = normalizePhoneForStorage(phone) || cleanString(phone)
   if (!canonicalPhone) return ''
+
+  // Rehospedar el avatar al Bunny (una vez por contacto) para que no caduque.
+  // Best-effort: si falla o no hay Bunny, se guarda la URL cruda como antes.
+  const storedPictureUrl = await rehostQrAvatarUrl(canonicalPhone, profilePictureUrl)
 
   const rawProfile = buildQrProfileRawProfile({ recipient, profilePictureUrl, type })
   await db.run(`
@@ -1340,11 +1365,11 @@ async function upsertQrProfilePicture({
     cleanString(contactId) || null,
     canonicalPhone,
     cleanString(profileName) || null,
-    cleanString(profilePictureUrl) || null,
+    cleanString(storedPictureUrl) || null,
     safeJson(rawProfile)
   ])
 
-  return cleanString(profilePictureUrl)
+  return cleanString(storedPictureUrl)
 }
 
 async function markQrProfilePictureError({ contactId, phone, profileName, errorMessage } = {}) {

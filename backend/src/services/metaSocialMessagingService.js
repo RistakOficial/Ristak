@@ -921,8 +921,42 @@ async function upsertLocalSocialContact({ socialMessage, profile }) {
   }
 }
 
+// Rehospeda (best-effort) el avatar social al Bunny para que no caduque. CRÍTICO
+// para comentarios: su foto no se puede re-pedir después, así que se rehospeda
+// aquí mismo (síncrono) con la URL que ya tenemos en mano. Nunca lanza.
+async function rehostMetaAvatarUrl({ incomingUrl, currentUrl, platform, senderId }) {
+  const raw = cleanString(incomingUrl)
+  if (!raw) return ''
+  try {
+    const { resolveAvatarForPersist } = await import('./mediaStorageService.js')
+    const channel = cleanString(platform).toLowerCase() || 'social'
+    const idHint = cleanString(senderId).replace(/[^a-zA-Z0-9_.-]+/g, '_').slice(0, 40) || 'contact'
+    const resolved = await resolveAvatarForPersist({
+      incomingUrl: raw,
+      currentUrl: cleanString(currentUrl),
+      channel,
+      subFolder: channel,
+      filename: `${channel}-${idHint}.jpg`
+    })
+    return resolved?.url || raw
+  } catch {
+    return raw
+  }
+}
+
 async function upsertMetaSocialContact({ contactId, socialMessage, profile }) {
   const socialContactId = hashId('meta_social_profile', `${socialMessage.platform}:${socialMessage.senderId}`)
+
+  // Rehospedar el avatar al Bunny (una vez por contacto) para que no caduque.
+  const currentSocialRow = await db
+    .get('SELECT profile_picture_url FROM meta_social_contacts WHERE platform = ? AND sender_id = ? LIMIT 1', [socialMessage.platform, socialMessage.senderId])
+    .catch(() => null)
+  const storedPictureUrl = await rehostMetaAvatarUrl({
+    incomingUrl: profile.profilePictureUrl,
+    currentUrl: currentSocialRow?.profile_picture_url,
+    platform: socialMessage.platform,
+    senderId: socialMessage.senderId
+  })
 
   await db.run(`
     INSERT INTO meta_social_contacts (
@@ -964,7 +998,7 @@ async function upsertMetaSocialContact({ contactId, socialMessage, profile }) {
     socialMessage.instagramAccountId || null,
     profile.name || null,
     profile.username || null,
-    profile.profilePictureUrl || null,
+    storedPictureUrl || null,
     safeJson(profile.raw || null),
     // id crudo del usuario (PSID/IGSID): para DMs es senderId; para comentarios
     // es authorId (senderId trae el prefijo sintético 'fb_comment:'/'ig_comment:').

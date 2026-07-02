@@ -109,6 +109,49 @@ test('best-effort: URL rota / no-imagen / inválida devuelven null (se conserva 
   assert.equal(await media.rehostRemoteImageToBunny({ url: '', clientAccountId: 'loc_test' }), null)
 })
 
+test('resolveAvatarForPersist: contacto nuevo rehospeda la URL cruda', async () => {
+  const res = await media.resolveAvatarForPersist({
+    incomingUrl: `${mock.baseUrl}/remote/avatar.png`,
+    currentUrl: '',
+    channel: 'whatsapp',
+    clientAccountId: 'loc_test'
+  })
+  assert.equal(res.rehosted, true)
+  assert.match(res.url, /\/cdn\/accounts\/loc_test\/avatars\/whatsapp\//)
+})
+
+test('resolveAvatarForPersist: si ya hay foto en Bunny NO la pisa ni re-descarga', async () => {
+  const bunnyCurrent = `${mock.baseUrl}/cdn/accounts/loc_test/avatars/whatsapp/ya.png`
+  const before = mock.requests.length
+  const res = await media.resolveAvatarForPersist({
+    incomingUrl: `${mock.baseUrl}/remote/avatar.png`, // llega una cruda nueva...
+    currentUrl: bunnyCurrent, // ...pero ya tenemos la permanente
+    channel: 'whatsapp',
+    clientAccountId: 'loc_test'
+  })
+  assert.equal(res.kept, true)
+  assert.equal(res.rehosted, false)
+  assert.equal(res.url, bunnyCurrent)
+  assert.equal(mock.requests.length, before, 'no debió tocar la red')
+})
+
+test('resolveAvatarForPersist: sin URL nueva conserva la actual', async () => {
+  const res = await media.resolveAvatarForPersist({ incomingUrl: '', currentUrl: 'https://x/y.jpg', channel: 'whatsapp' })
+  assert.equal(res.url, 'https://x/y.jpg')
+  assert.equal(res.kept, true)
+})
+
+test('resolveAvatarForPersist: si el rehospedado falla, devuelve la URL cruda (fallback)', async () => {
+  const res = await media.resolveAvatarForPersist({
+    incomingUrl: `${mock.baseUrl}/remote/missing`, // 404 → no se puede rehospedar
+    currentUrl: '',
+    channel: 'instagram',
+    clientAccountId: 'loc_test'
+  })
+  assert.equal(res.rehosted, false)
+  assert.equal(res.url, `${mock.baseUrl}/remote/missing`)
+})
+
 after(async () => {
   mock.close()
   await db.run("DELETE FROM media_assets WHERE module = 'avatars'").catch(() => {})

@@ -2366,6 +2366,45 @@ export async function rehostRemoteImageToBunny({
   }
 }
 
+// Decide qué URL de avatar persistir para un contacto, con memoria y gating:
+//  - Si el contacto YA tiene una foto en nuestro Bunny → la conservamos (no la
+//    pisamos con una URL cruda que caduca, ni re-hospedamos en cada mensaje).
+//  - Si llega una URL cruda nueva → la rehospedamos una vez.
+//  - Si el rehospedado falla → devolvemos la URL cruda (best-effort, nunca se
+//    pierde la imagen).
+// Devuelve { url, rehosted, kept }. El caller guarda `url` en profile_picture_url.
+export async function resolveAvatarForPersist({
+  incomingUrl,
+  currentUrl = '',
+  channel = '',
+  subFolder = '',
+  clientAccountId = '',
+  businessId = '',
+  filename = ''
+} = {}) {
+  const incoming = cleanString(incomingUrl)
+  const current = cleanString(currentUrl)
+  const config = await getStorageRuntimeConfig().catch(() => null)
+  const cdnBase = cleanString(config?.bunnyCdnBaseUrl)
+  const isBunny = (value) => Boolean(cdnBase) && value.startsWith(cdnBase)
+
+  if (current && isBunny(current)) return { url: current, rehosted: false, kept: true }
+  if (!incoming) return { url: current, rehosted: false, kept: true }
+  if (isBunny(incoming)) return { url: incoming, rehosted: false, kept: true }
+
+  const rehosted = await rehostRemoteImageToBunny({
+    url: incoming,
+    module: 'avatars',
+    subFolder: subFolder || channel,
+    clientAccountId,
+    businessId,
+    filename: filename || `${channel || 'avatar'}.jpg`,
+    metadata: { source: 'contact_avatar', channel }
+  })
+  if (rehosted?.publicUrl) return { url: rehosted.publicUrl, rehosted: true, kept: false }
+  return { url: incoming, rehosted: false, kept: false }
+}
+
 function normalizeStreamChart(chart = {}) {
   const source = chart && typeof chart === 'object' ? chart : {}
   return Object.entries(source)

@@ -4723,6 +4723,25 @@ async function upsertLocalContact({ contactId, phone, profileName, messageTimest
   }
 }
 
+// Rehospeda (best-effort) el avatar de WhatsApp Cloud API al Bunny para que no
+// caduque. Devuelve la URL a guardar (Bunny si se pudo, cruda si no). Nunca lanza.
+async function rehostApiAvatarUrl({ incomingUrl, currentUrl, canonicalPhone }) {
+  const raw = cleanString(incomingUrl)
+  if (!raw) return ''
+  try {
+    const { resolveAvatarForPersist } = await import('./mediaStorageService.js')
+    const resolved = await resolveAvatarForPersist({
+      incomingUrl: raw,
+      currentUrl: cleanString(currentUrl),
+      channel: 'whatsapp',
+      filename: `wa-${canonicalPhone}.jpg`
+    })
+    return resolved?.url || raw
+  } catch {
+    return raw
+  }
+}
+
 async function upsertWhatsAppApiContact({
   contactId,
   phone,
@@ -4739,7 +4758,7 @@ async function upsertWhatsAppApiContact({
 
   const apiContactId = hashId('waapi_profile', canonicalPhone)
   const existingApiContact = await db.get(
-    'SELECT profile_name FROM whatsapp_api_contacts WHERE phone = ? LIMIT 1',
+    'SELECT profile_name, profile_picture_url FROM whatsapp_api_contacts WHERE phone = ? LIMIT 1',
     [canonicalPhone]
   ).catch(() => null)
   const cleanProfileName = normalizeWhatsAppProfileName(profileName, canonicalPhone)
@@ -4749,10 +4768,17 @@ async function upsertWhatsAppApiContact({
     ? cleanProfileName
     : ''
   const cleanProfilePictureUrl = cleanString(profilePictureUrl) || findProfilePictureUrlInValue(rawProfile)
-  const cleanProfilePictureSource = cleanProfilePictureUrl
+  // Rehospedar el avatar al Bunny (una vez por contacto) para que no caduque.
+  // Best-effort: si falla o no hay Bunny, cae a la URL cruda como antes.
+  const storedPictureUrl = await rehostApiAvatarUrl({
+    incomingUrl: cleanProfilePictureUrl,
+    currentUrl: existingApiContact?.profile_picture_url,
+    canonicalPhone
+  })
+  const cleanProfilePictureSource = storedPictureUrl
     ? cleanString(profilePictureSource) || 'whatsapp_api'
     : null
-  const profilePictureUpdatedAt = cleanProfilePictureUrl ? nowIso() : null
+  const profilePictureUpdatedAt = storedPictureUrl ? nowIso() : null
   const safeMessageCountDelta = Math.max(Number(messageCountDelta) || 0, 0)
   const firstSeenAt = toDateTime(seenAt) || nowIso()
   const cleanLastSeenAt = toDateTime(lastSeenAt) || firstSeenAt
@@ -4799,7 +4825,7 @@ async function upsertWhatsAppApiContact({
     contactId || null,
     canonicalPhone,
     profileNameForStorage || null,
-    cleanProfilePictureUrl || null,
+    storedPictureUrl || null,
     cleanProfilePictureSource,
     profilePictureUpdatedAt,
     safeJson(rawProfile),
