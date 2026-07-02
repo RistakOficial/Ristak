@@ -21169,3 +21169,20 @@
   font-size: 12px;
   line-height: 1.4;
 }
+
+/* Aviso de edición responsive en el panel de Diseño (móvil/tablet). */
+.responsiveEditHint {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  margin-bottom: 4px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-ctl);
+  background: var(--accent-soft);
+  color: var(--text-dim);
+  font-size: 12px;
+  line-height: 1.35;
+}
+.responsiveEditHint strong { color: var(--text); font-weight: 600; }
+.responsiveEditHint svg { flex: 0 0 auto; color: var(--accent); }

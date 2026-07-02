@@ -225,6 +225,8 @@ import {
   blockTextContrastBackground,
   buildBlockStyleClassName,
   buildBlockStyleVars,
+  buildBlocksResponsiveCss,
+  resolveDeviceBlockSettings,
   buildEmbeddedFormProxyVars,
   buildEmbeddedFormTheme,
   buildFormStyleContext,
@@ -8369,6 +8371,26 @@ export const Sites: React.FC = () => {
   const isFocusedSitesMode = createFlow !== 'closed' || editorActive
   const createFlowHeaderCopy = getCreateFlowHeaderCopy(createFlow)
   const canvasTheme = editorSite ? buildCanvasTheme(editorSite, device) : null
+  // Overrides responsive por bloque → CSS @container en el canvas. Como en modo
+  // móvil el canvas mide 390px, la query (max-width:640px) dispara y el canvas
+  // muestra los valores de móvil; en desktop no dispara. Mismo contrato que el
+  // sitio publicado (que usa @media). Se recomputa al cambiar los bloques.
+  const canvasResponsiveCss = useMemo(
+    () => (editorSite ? buildBlocksResponsiveCss(editorSite.blocks || [], { queryType: 'container' }) : ''),
+    [editorSite]
+  )
+  useEffect(() => {
+    const id = 'rstk-canvas-responsive-css'
+    let tag = document.getElementById(id) as HTMLStyleElement | null
+    if (!canvasResponsiveCss) { if (tag) tag.remove(); return }
+    if (!tag) {
+      tag = document.createElement('style')
+      tag.id = id
+      tag.setAttribute('data-rstk-canvas-responsive', '')
+      document.head.appendChild(tag)
+    }
+    tag.textContent = canvasResponsiveCss
+  }, [canvasResponsiveCss])
   const navigateSitesSection = useCallback((nextSection: SitesSection, options?: { replace?: boolean }) => {
     navigate(buildSitesSectionPath(nextSection), { replace: options?.replace })
   }, [navigate])
@@ -13363,6 +13385,7 @@ export const Sites: React.FC = () => {
                   <PropertiesPanel
                     site={editorSite}
 	                  block={selectedBlock}
+	                  device={device}
 	                  surfaceSelectionId={selectedBlockId}
 	                  blocks={editableCanvasBlocks}
 	                  allBlocks={blocks}
@@ -29753,10 +29776,27 @@ const InlineBlockStyleControls: React.FC<{
   blocks: SiteBlock[]
   surfaceOnly?: boolean
   mode?: InlineBlockStyleControlsMode
+  device?: DeviceMode
   onPatchSettings: (patch: Record<string, unknown>) => void
   onSave: () => void
-}> = ({ site, block, blocks, surfaceOnly = false, mode = 'all', onPatchSettings, onSave }) => {
-  const settings = getPanelStyleSettings(site, block, blocks)
+}> = ({ site, block, blocks, surfaceOnly = false, mode = 'all', device = 'desktop', onPatchSettings: onPatchSettingsProp, onSave }) => {
+  const rawSettings = getPanelStyleSettings(site, block, blocks)
+  // Responsive: en móvil/tablet los controles VISUALES leen y escriben en
+  // settings.responsive[device] (no en el desktop base). Un mismo control edita el
+  // valor del dispositivo activo; sin override, muestra el heredado de desktop.
+  const isDeviceOverride = device !== 'desktop'
+  const settings = isDeviceOverride ? resolveDeviceBlockSettings(rawSettings, device) : rawSettings
+  const onPatchSettings = isDeviceOverride
+    ? (patch: Record<string, unknown>) => {
+        const currentResponsive = (block.settings && typeof block.settings.responsive === 'object' && !Array.isArray(block.settings.responsive))
+          ? block.settings.responsive as Record<string, Record<string, unknown>>
+          : {}
+        const currentDevice = (currentResponsive[device] && typeof currentResponsive[device] === 'object')
+          ? currentResponsive[device]
+          : {}
+        onPatchSettingsProp({ responsive: { ...currentResponsive, [device]: { ...currentDevice, ...patch } } })
+      }
+    : onPatchSettingsProp
   const defaultAccent = defaultAccentForSite(site)
   const isSection = block.blockType === SECTION_BLOCK_TYPE
   const isLandingContent = isLanding(site) && !isSection
@@ -33017,6 +33057,7 @@ const FieldPreview: React.FC<{
 interface PropertiesPanelProps {
   site: PublicSite
   block: SiteBlock | null
+  device: DeviceMode
   surfaceSelectionId?: string
   blocks: SiteBlock[]
   allBlocks?: SiteBlock[]
@@ -35988,6 +36029,7 @@ const VideoActionsPanel: React.FC<{
 const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
   site,
   block,
+  device,
   surfaceSelectionId,
   blocks,
   allBlocks,
@@ -36366,11 +36408,18 @@ const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
 
   const designContent = (
     <AccordionGroup>
+      {device !== 'desktop' && (
+        <div className={styles.responsiveEditHint} role="status">
+          <Smartphone size={13} />
+          <span>Editando <strong>Móvil</strong>. Los cambios de diseño aplican solo en móvil; el resto hereda de Escritorio.</span>
+        </div>
+      )}
       <InlineBlockStyleControls
         site={site}
         block={block}
         blocks={blocks}
         mode="all"
+        device={device}
         onPatchSettings={onPatchSettings}
         onSave={onSave}
       />

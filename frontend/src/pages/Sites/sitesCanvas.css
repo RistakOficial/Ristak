@@ -441,7 +441,11 @@ html body .rstkCanvas .rstk-checkout-pay:disabled { opacity: 1; cursor: default;
   width: 100%;
   border: 1px solid transparent;
   border-radius: calc(var(--rstk-radius) + 4px);
-  padding: var(--rstk-block-pad, 0);
+  /* El wrapper de edición NO debe heredar --rstk-block-pad (el padding del bloque
+     del formulario, p. ej. 30px): eso metía 30px por campo SOLO al editar y los
+     separaba enormemente (bug del "form que se expande al seleccionarlo"). El
+     espacio de selección lo da el overlay ::after (outset), no el padding. */
+  padding: 0;
   transition: border-color .16s ease, background .16s ease, box-shadow .16s ease;
 }
 .rstkCanvas .rstkEmbeddedFormField {
@@ -1150,6 +1154,17 @@ html body .rstkCanvas .rstk-checkout-pay:disabled { opacity: 1; cursor: default;
    completa; el placeholder tenue queda solo donde el vivo no renderiza nada. */
 .rstkCanvas [data-rstk-edit][data-empty="true"][data-placeholder-live="true"]:not(:focus)::before {
   opacity: 1;
+}
+/* El kicker landing es un pill cuyo ::before es un PUNTO decorativo de 6x6px. El
+   placeholder del editor sobrescribe el content del ::before con "Kicker (opcional)"
+   pero HEREDABA el width:6px del punto → el texto se metía en 6px y se envolvía
+   letra por letra (vertical). Reseteamos la caja del ::before para el placeholder. */
+.rstkCanvas .rstk-kicker[data-rstk-edit][data-empty="true"]:not(:focus)::before {
+  width: auto;
+  height: auto;
+  white-space: nowrap;
+  background: none;
+  border-radius: 0;
 }
 
 
