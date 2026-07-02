@@ -388,7 +388,42 @@ async function fetchAndCacheSocialPost(comment, accessToken) {
   }
 }
 
-async function fetchMetaSenderProfile({ platform, senderId, accessToken }) {
+// Nombre del participante vía el endpoint de CONVERSACIONES. El perfil directo
+// (GET /{psid}) está restringido para usuarios que NO son rol de la app (Meta lo
+// rechaza con #100/33), pero el NOMBRE sí viene por conversaciones (verificado en
+// prod: "Berenice Chacon" salía aquí aunque el perfil directo fallaba). La foto NO
+// se obtiene por ningún lado para no-roles (eso sí es límite de Meta: requiere app
+// en modo Live + Acceso Avanzado de pages_messaging).
+async function fetchMetaConversationParticipantName({ platform, senderId, pageId, accessToken }) {
+  if (!senderId || !pageId || !accessToken) return ''
+  try {
+    const params = new URLSearchParams({
+      platform: platform === 'instagram' ? 'instagram' : 'messenger',
+      user_id: senderId,
+      fields: 'participants',
+      access_token: accessToken
+    })
+    const response = await fetch(`${API_URLS.META_GRAPH}/${encodeURIComponent(pageId)}/conversations?${params.toString()}`)
+    const data = await response.json()
+    if (data.error) {
+      logger.warn(`Meta conversaciones no dio nombre ${platform} ${senderId}: ${data.error.message}`)
+      return ''
+    }
+    for (const conversation of data.data || []) {
+      for (const participant of conversation.participants?.data || []) {
+        if (cleanString(participant.id) === cleanString(senderId)) {
+          return compactName(participant.name)
+        }
+      }
+    }
+    return ''
+  } catch (error) {
+    logger.warn(`No se pudo leer nombre por conversaciones ${platform} ${senderId}: ${error.message}`)
+    return ''
+  }
+}
+
+async function fetchMetaSenderProfile({ platform, senderId, pageId = '', accessToken }) {
   if (!senderId || !accessToken) return {}
 
   // OJO Instagram: un IGSID NO tiene el campo `profile_picture_url` — pedirlo
@@ -399,6 +434,7 @@ async function fetchMetaSenderProfile({ platform, senderId, accessToken }) {
     ? 'name,username,profile_pic'
     : 'id,name,first_name,last_name,profile_pic'
 
+  let result = {}
   try {
     const params = new URLSearchParams({
       fields,
@@ -408,20 +444,28 @@ async function fetchMetaSenderProfile({ platform, senderId, accessToken }) {
     const data = await response.json()
 
     if (data.error) {
+      // Común para usuarios que no son rol de la app; caemos al fallback de nombre.
       logger.warn(`Meta no dejo leer perfil ${platform} ${senderId}: ${data.error.message}`)
-      return {}
-    }
-
-    return {
-      name: compactName(data.name) || compactName(data.first_name, data.last_name),
-      username: cleanString(data.username),
-      profilePictureUrl: cleanString(data.profile_picture_url || data.profile_pic),
-      raw: data
+    } else {
+      result = {
+        name: compactName(data.name) || compactName(data.first_name, data.last_name),
+        username: cleanString(data.username),
+        profilePictureUrl: cleanString(data.profile_picture_url || data.profile_pic),
+        raw: data
+      }
     }
   } catch (error) {
     logger.warn(`No se pudo leer perfil ${platform} ${senderId}: ${error.message}`)
-    return {}
   }
+
+  // Fallback de NOMBRE: si el perfil directo no dio nombre (usuario no-rol), lo
+  // sacamos de las conversaciones (ahí Meta sí lo entrega). La foto queda vacía.
+  if (!cleanString(result.name)) {
+    const conversationName = await fetchMetaConversationParticipantName({ platform, senderId, pageId, accessToken })
+    if (conversationName) result.name = conversationName
+  }
+
+  return result
 }
 
 function getFallbackContactName(platform, senderId) {
@@ -1238,6 +1282,7 @@ export async function processMetaSocialWebhook({ payload = {}, rawBody = '', sig
         const profile = await fetchMetaSenderProfile({
           platform: socialMessage.platform,
           senderId: socialMessage.senderId,
+          pageId: cleanString(config?.page_id),
           accessToken: await resolveMetaPageTokenSafe(config)
         })
         const localContact = await upsertLocalSocialContact({ socialMessage, profile })
