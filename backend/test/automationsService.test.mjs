@@ -168,7 +168,7 @@ test('updateAutomation separa borrador guardado de flujo publicado', async () =>
   }
 })
 
-test('testAutomationRun inscribe un contacto real como prueba y devuelve bitácora', async () => {
+test('testAutomationRun inscribe un contacto real desde una automatización guardada sin publicar', async () => {
   const suffix = Date.now()
   const tagId = `tag_test_run_${suffix}`
   const contactId = `contact_test_run_${suffix}`
@@ -186,7 +186,6 @@ test('testAutomationRun inscribe un contacto real como prueba y devuelve bitáco
       name: `Prueba runner ${suffix}`,
       flow: makeTagActionFlow(tagId)
     })
-    await updateAutomation(automation.id, { status: 'published' })
 
     const result = await testAutomationRun(automation.id, { contactId })
     const contact = await db.get('SELECT tags FROM contacts WHERE id = ?', [contactId])
@@ -208,6 +207,51 @@ test('testAutomationRun inscribe un contacto real como prueba y devuelve bitáco
   }
 })
 
+test('testAutomationRun usa el flujo guardado aunque tenga cambios sin publicar', async () => {
+  const suffix = Date.now()
+  const liveTagId = `tag_test_run_live_${suffix}`
+  const draftTagId = `tag_test_run_saved_${suffix}`
+  const contactId = `contact_test_run_saved_${suffix}`
+  let automation
+
+  await db.run('INSERT INTO contact_tags (id, name) VALUES (?, ?)', [liveTagId, 'Etiqueta publicada'])
+  await db.run('INSERT INTO contact_tags (id, name) VALUES (?, ?)', [draftTagId, 'Etiqueta guardada'])
+  await db.run(
+    `INSERT INTO contacts (id, full_name, first_name, phone, email, source, created_at, updated_at)
+     VALUES (?, ?, ?, ?, ?, 'test', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+    [contactId, 'Contacto Cambios Guardados', 'Contacto', `+521557${suffix}`, `saved-run-${suffix}@example.com`]
+  )
+
+  try {
+    automation = await createAutomation({
+      name: `Prueba cambios guardados ${suffix}`,
+      flow: makeTagActionFlow(liveTagId)
+    })
+    await updateAutomation(automation.id, { status: 'published' })
+    const savedDraft = await updateAutomation(automation.id, {
+      flow: makeTagActionFlow(draftTagId)
+    })
+    assert.equal(savedDraft.status, 'published')
+    assert.equal(savedDraft.hasUnpublishedChanges, true)
+
+    const result = await testAutomationRun(automation.id, { contactId })
+    const contact = await db.get('SELECT tags FROM contacts WHERE id = ?', [contactId])
+    const tags = JSON.parse(contact.tags || '[]')
+
+    assert.equal(result.mode, 'test')
+    assert.equal(result.automationId, automation.id)
+    assert.ok(tags.includes(draftTagId))
+    assert.ok(!tags.includes(liveTagId))
+  } finally {
+    if (automation?.id) {
+      await db.run('DELETE FROM automation_enrollments WHERE automation_id = ?', [automation.id]).catch(() => undefined)
+      await db.run('DELETE FROM automations WHERE id = ?', [automation.id]).catch(() => undefined)
+    }
+    await db.run('DELETE FROM contacts WHERE id = ?', [contactId]).catch(() => undefined)
+    await db.run('DELETE FROM contact_tags WHERE id IN (?, ?)', [liveTagId, draftTagId]).catch(() => undefined)
+  }
+})
+
 test('testAutomationRun crea contacto de prueba sin disparar trigger global de contacto creado', async () => {
   const suffix = Date.now()
   const tagId = `tag_test_run_draft_${suffix}`
@@ -221,7 +265,6 @@ test('testAutomationRun crea contacto de prueba sin disparar trigger global de c
       name: `Prueba contacto inline ${suffix}`,
       flow: makeTagActionFlow(tagId)
     })
-    await updateAutomation(automation.id, { status: 'published' })
 
     const result = await testAutomationRun(automation.id, {
       contact: {

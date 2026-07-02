@@ -115,7 +115,7 @@ export const AutomationTestRunModal: React.FC<AutomationTestRunModalProps> = ({
       contentClassName={styles.testRunContent}
     >
       <div className={styles.testRunNotice}>
-        Usa la versión publicada. Si el flujo envía mensajes, cambia etiquetas o ejecuta acciones,
+        Usa la última versión guardada. Si el flujo envía mensajes, cambia etiquetas o ejecuta acciones,
         lo hará sobre el contacto elegido.
       </div>
 

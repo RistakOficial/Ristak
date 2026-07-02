@@ -677,6 +677,39 @@ async function getPublishedAutomationForEnrollment(automationId) {
   return automation
 }
 
+async function getSavedAutomationForTestRun(automationId) {
+  const id = typeof automationId === 'string' ? automationId.trim() : ''
+  if (!id) throw badRequest('Selecciona una automatización')
+  const automation = await db.get(
+    `SELECT id, name, status, flow
+     FROM automations
+     WHERE id = ?`,
+    [id]
+  )
+  if (!automation) throw notFound('Automatización no encontrada')
+  if (automation.status === 'archived') {
+    throw badRequest('No puedes probar una automatización archivada')
+  }
+
+  const flow = normalizeFlow(parseFlow(automation.flow))
+  const validationErrors = validateFlowForPublish(flow)
+  if (validationErrors.length > 0) {
+    const error = badRequest(validationErrors.join('. '))
+    error.validationErrors = validationErrors
+    throw error
+  }
+
+  const reviewStatus = getAutomationReviewStatus(flow, await loadAutomationReferenceCatalogs())
+  if (reviewStatus.state === 'requires_review') {
+    const referenceErrors = reviewStatus.issues.map((issue) => issue.message)
+    const error = badRequest(reviewStatus.summary || referenceErrors.join('. '))
+    error.validationErrors = referenceErrors
+    throw error
+  }
+
+  return { id: automation.id, name: automation.name, status: automation.status, flow }
+}
+
 async function normalizeScheduledAt(value) {
   const raw = typeof value === 'string' ? value.trim() : ''
   if (!raw) throw badRequest('Elige cuándo quieres agregar el contacto')
@@ -1267,12 +1300,13 @@ export async function enrollContactInAutomation(automationId, input = {}) {
 }
 
 export async function testAutomationRun(automationId, input = {}) {
+  const automation = await getSavedAutomationForTestRun(automationId)
   const contact = await resolveTestAutomationContact(input)
-  const automation = await getPublishedAutomationForEnrollment(automationId)
   const enrollment = await enrollContactManually({
     automationId: automation.id,
     contactId: contact.id,
-    source: 'test-run'
+    source: 'test-run',
+    useSavedDraftFlow: true
   })
 
   return {

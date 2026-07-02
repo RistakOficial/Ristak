@@ -4062,14 +4062,29 @@ async function getPublishedAutomation(automationId) {
   const id = cleanString(automationId)
   if (!id) throw engineError(400, 'Selecciona una automatización')
 
+  const row = await getAutomationEnrollmentRow(id)
+  if (!row || row.status !== 'published') throw engineError(404, 'Automatización publicada no encontrada')
+  return { id: row.id, name: row.name, flow: parseJson(row.published_flow || row.flow, { nodes: [], edges: [] }) }
+}
+
+async function getSavedAutomationForTestRun(automationId) {
+  const id = cleanString(automationId)
+  if (!id) throw engineError(400, 'Selecciona una automatización')
+
+  const row = await getAutomationEnrollmentRow(id)
+  if (!row) throw engineError(404, 'Automatización guardada no encontrada')
+  if (row.status === 'archived') throw engineError(400, 'No puedes probar una automatización archivada')
+  return { id: row.id, name: row.name, flow: parseJson(row.flow, { nodes: [], edges: [] }) }
+}
+
+async function getAutomationEnrollmentRow(id) {
   const row = await db.get(
-    `SELECT id, name, COALESCE(published_flow, flow) AS flow
+    `SELECT id, name, status, flow, published_flow
      FROM automations
-     WHERE id = ? AND status = 'published'`,
+     WHERE id = ?`,
     [id]
   )
-  if (!row) throw engineError(404, 'Automatización publicada no encontrada')
-  return { id: row.id, name: row.name, flow: parseJson(row.flow, { nodes: [], edges: [] }) }
+  return row || null
 }
 
 function mapEnrollmentResult(enrollment) {
@@ -4086,14 +4101,22 @@ function mapEnrollmentResult(enrollment) {
   }
 }
 
-export async function enrollContactManually({ automationId, contactId, source = 'manual', scheduledFor = null } = {}) {
+export async function enrollContactManually({
+  automationId,
+  contactId,
+  source = 'manual',
+  scheduledFor = null,
+  useSavedDraftFlow = false
+} = {}) {
   const cleanContactId = cleanString(contactId)
   if (!cleanContactId) throw engineError(400, 'Selecciona un contacto')
 
   const contactExists = await db.get('SELECT id FROM contacts WHERE id = ?', [cleanContactId])
   if (!contactExists) throw engineError(404, 'Contacto no encontrado')
 
-  const automation = await getPublishedAutomation(automationId)
+  const automation = useSavedDraftFlow
+    ? await getSavedAutomationForTestRun(automationId)
+    : await getPublishedAutomation(automationId)
   const flow = automation.flow || {}
   const startNode = getStartNode(flow)
   if (!startNode) throw engineError(400, 'La automatización no tiene inicio configurado')

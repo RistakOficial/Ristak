@@ -1651,20 +1651,26 @@ export const AutomationEditor: React.FC = () => {
       : 'Publicar'
 
   const openTestRun = () => {
-    if (status !== 'published') {
-      showToast('warning', 'Publica la automatización antes de probarla')
-      return
-    }
-    if (hasDraftChanges) {
+    if (hasUnsavedChanges) {
       showToast(
         'warning',
-        'Publica los cambios antes de probar',
-        'La prueba usa la versión publicada para no ejecutar una versión distinta a la que ves.'
+        'Guarda la automatización antes de probar',
+        'La prueba usa la última versión guardada para ejecutar lo mismo que estás validando.'
       )
       return
     }
-    if (requiresReview) {
-      showToast('warning', 'Corrige la automatización antes de probarla', reviewSummary)
+
+    const validation = validateAutomationFlow(stateRef.current.present.nodes, stateRef.current.present.edges)
+    if (!validation.valid) {
+      setNodeErrors(validation.nodeErrors)
+      const summary = validation.issues.slice(0, 3).map((issue) => issue.message).join('. ')
+      const extra = validation.issues.length > 3 ? ` (+${validation.issues.length - 3} más)` : ''
+      showToast('warning', 'Corrige la automatización antes de probar', `${summary}${extra}`)
+      return
+    }
+
+    if (status === 'archived') {
+      showToast('warning', 'No puedes probar una automatización archivada')
       return
     }
     setTestRunOpen(true)
