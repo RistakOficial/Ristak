@@ -8,6 +8,15 @@ const PNG_1x1 = Buffer.from(
   'base64'
 )
 
+async function waitFor(fn, timeoutMs = 1000) {
+  const start = Date.now()
+  while (Date.now() - start < timeoutMs) {
+    if (fn()) return true
+    await new Promise((r) => setTimeout(r, 20))
+  }
+  return fn()
+}
+
 async function createMock() {
   const requests = []
   const server = http.createServer((req, res) => {
@@ -150,6 +159,40 @@ test('resolveAvatarForPersist: si el rehospedado falla, devuelve la URL cruda (f
   })
   assert.equal(res.rehosted, false)
   assert.equal(res.url, `${mock.baseUrl}/remote/missing`)
+})
+
+test('refresco: avatar en Bunny RECIENTE se conserva (no re-descarga)', async () => {
+  const bunnyCurrent = `${mock.baseUrl}/cdn/accounts/loc_test/avatars/whatsapp/2020/01/01/old.png`
+  const before = mock.requests.length
+  const res = await media.resolveAvatarForPersist({
+    incomingUrl: `${mock.baseUrl}/remote/avatar.png`,
+    currentUrl: bunnyCurrent,
+    channel: 'whatsapp',
+    clientAccountId: 'loc_test',
+    refreshAfterMs: Number.MAX_SAFE_INTEGER // nunca se considera vieja
+  })
+  assert.equal(res.kept, true)
+  assert.equal(res.url, bunnyCurrent)
+  assert.equal(mock.requests.length, before, 'no debió tocar la red')
+})
+
+test('refresco: avatar en Bunny VIEJO se re-baja y borra la copia vieja', async () => {
+  const bunnyCurrent = `${mock.baseUrl}/cdn/accounts/loc_test/avatars/whatsapp/2020/01/01/old.png`
+  const before = mock.requests.length
+  const res = await media.resolveAvatarForPersist({
+    incomingUrl: `${mock.baseUrl}/remote/avatar.png`, // foto actual (cruda)
+    currentUrl: bunnyCurrent, // copia de 2020 → vieja con la ventana default (7 días)
+    channel: 'whatsapp',
+    clientAccountId: 'loc_test'
+  })
+  assert.equal(res.refreshed, true)
+  assert.equal(res.rehosted, true)
+  assert.match(res.url, /\/accounts\/loc_test\/avatars\/whatsapp\//)
+  assert.notEqual(res.url, bunnyCurrent) // es una copia nueva
+  // El borrado de la vieja es best-effort (fire-and-forget); esperamos a que llegue.
+  const sawDelete = await waitFor(() =>
+    mock.requests.slice(before).some((r) => r.method === 'DELETE' && r.url.includes('/2020/01/01/old.png')))
+  assert.ok(sawDelete, 'debió borrar la vieja')
 })
 
 after(async () => {

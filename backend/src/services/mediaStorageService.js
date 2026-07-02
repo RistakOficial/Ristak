@@ -2398,13 +2398,43 @@ export async function rehostRemoteImageToBunny({
   }
 }
 
-// Decide qué URL de avatar persistir para un contacto, con memoria y gating:
-//  - Si el contacto YA tiene una foto en nuestro Bunny → la conservamos (no la
+// Ventana de refresco de avatares: si la copia en Bunny ya tiene más de esto y
+// llega una foto cruda nueva (contacto activo), se re-baja para atrapar cambios de
+// foto de perfil. Por defecto 7 días; configurable por env.
+const AVATAR_REFRESH_AFTER_MS = Math.max(
+  60 * 60 * 1000,
+  Number(process.env.AVATAR_REFRESH_AFTER_MS) > 0
+    ? Number(process.env.AVATAR_REFRESH_AFTER_MS)
+    : (Number(process.env.AVATAR_REFRESH_AFTER_DAYS) > 0 ? Number(process.env.AVATAR_REFRESH_AFTER_DAYS) : 7) * 24 * 60 * 60 * 1000
+)
+
+// Antigüedad del avatar a partir del bucket de fecha en su ruta de Bunny
+// (…/avatars/<canal>/YYYY/MM/DD/archivo). Sin fecha reconocible → null (se conserva).
+function avatarAgeMsFromBunnyUrl(url = '') {
+  const m = /\/(\d{4})\/(\d{2})\/(\d{2})\//.exec(cleanString(url))
+  if (!m) return null
+  const t = Date.parse(`${m[1]}-${m[2]}-${m[3]}T12:00:00Z`)
+  return Number.isNaN(t) ? null : Date.now() - t
+}
+
+// objectPath a partir de una URL pública de Bunny (para borrar la copia vieja al
+// refrescar). Devuelve '' si la URL no es de nuestro CDN.
+function bunnyObjectPathFromPublicUrl(config, url = '') {
+  const base = cleanString(config?.bunnyCdnBaseUrl)
+  const clean = cleanString(url)
+  if (!base || !clean.startsWith(base)) return ''
+  const rest = clean.slice(base.length).replace(/^\/+/, '').split('?')[0]
+  return rest.split('/').map((s) => { try { return decodeURIComponent(s) } catch { return s } }).join('/')
+}
+
+// Decide qué URL de avatar persistir para un contacto, con memoria y refresco:
+//  - Si YA está en nuestro Bunny y la copia es RECIENTE → la conservamos (no la
 //    pisamos con una URL cruda que caduca, ni re-hospedamos en cada mensaje).
-//  - Si llega una URL cruda nueva → la rehospedamos una vez.
-//  - Si el rehospedado falla → devolvemos la URL cruda (best-effort, nunca se
-//    pierde la imagen).
-// Devuelve { url, rehosted, kept }. El caller guarda `url` en profile_picture_url.
+//  - Si está en Bunny pero ya es VIEJA (> ventana) y llega una foto cruda nueva →
+//    la refrescamos (rehospeda la actual) y borra la vieja. Atrapa cambios de foto.
+//  - Si aún no está en Bunny → la rehospedamos.
+//  - Si algo falla → conserva la Bunny actual o cae a la cruda (nunca se pierde).
+// Devuelve { url, rehosted, kept, refreshed }. El caller guarda `url`.
 export async function resolveAvatarForPersist({
   incomingUrl,
   currentUrl = '',
@@ -2412,17 +2442,26 @@ export async function resolveAvatarForPersist({
   subFolder = '',
   clientAccountId = '',
   businessId = '',
-  filename = ''
+  filename = '',
+  refreshAfterMs = AVATAR_REFRESH_AFTER_MS
 } = {}) {
   const incoming = cleanString(incomingUrl)
   const current = cleanString(currentUrl)
   const config = await getStorageRuntimeConfig().catch(() => null)
   const cdnBase = cleanString(config?.bunnyCdnBaseUrl)
   const isBunny = (value) => Boolean(cdnBase) && value.startsWith(cdnBase)
+  const currentIsBunny = current && isBunny(current)
 
-  if (current && isBunny(current)) return { url: current, rehosted: false, kept: true }
-  if (!incoming) return { url: current, rehosted: false, kept: true }
-  if (isBunny(incoming)) return { url: incoming, rehosted: false, kept: true }
+  if (currentIsBunny) {
+    const ageMs = avatarAgeMsFromBunnyUrl(current)
+    const stale = ageMs !== null && ageMs >= refreshAfterMs
+    // Reciente, o sin foto nueva, o la nueva ya es de Bunny → conservar.
+    if (!stale || !incoming || isBunny(incoming)) return { url: current, rehosted: false, kept: true }
+    // Vieja + hay cruda nueva → refrescar (cae al rehospedado de abajo).
+  } else {
+    if (!incoming) return { url: current, rehosted: false, kept: true }
+    if (isBunny(incoming)) return { url: incoming, rehosted: false, kept: true }
+  }
 
   const rehosted = await rehostRemoteImageToBunny({
     url: incoming,
@@ -2433,8 +2472,17 @@ export async function resolveAvatarForPersist({
     filename: filename || `${channel || 'avatar'}.jpg`,
     metadata: { source: 'contact_avatar', channel }
   })
-  if (rehosted?.publicUrl) return { url: rehosted.publicUrl, rehosted: true, kept: false }
-  return { url: incoming, rehosted: false, kept: false }
+  if (rehosted?.publicUrl) {
+    // Si fue un refresco, borra la copia vieja para no acumular huérfanos.
+    if (currentIsBunny && config) {
+      const oldPath = bunnyObjectPathFromPublicUrl(config, current)
+      if (oldPath) deleteFromBunny({ config, objectPath: oldPath }).catch(() => {})
+    }
+    return { url: rehosted.publicUrl, rehosted: true, kept: false, refreshed: currentIsBunny }
+  }
+  // Falló: si refrescábamos, conservar la Bunny actual (no perder la buena);
+  // si era nueva, caer a la cruda.
+  return { url: currentIsBunny ? current : incoming, rehosted: false, kept: currentIsBunny }
 }
 
 // ── Helpers expuestos para el script de migración de taxonomía (Fase D) ──────────
