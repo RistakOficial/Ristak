@@ -803,6 +803,21 @@ export async function sendMetaSocialCommentReply({ contactId, platform, message,
     throw createMetaSocialMessageError('No se encontró el comentario al que responder.', 404)
   }
 
+  // Resolver la publicación del comentario para guardarla en el saliente y que el
+  // globo de la respuesta muestre la misma tarjeta de la publicación que el
+  // comentario original. El comment_id de Meta es único global, así que basta con
+  // él (funciona aunque el comentario viva en el contacto-comentario enlazado).
+  if (!targetPostId) {
+    const postRow = await db.get(
+      `SELECT post_id, media_id FROM meta_social_messages
+       WHERE comment_id = ? AND (COALESCE(post_id, '') <> '' OR COALESCE(media_id, '') <> '')
+       ORDER BY COALESCE(message_timestamp, created_at) DESC
+       LIMIT 1`,
+      [targetCommentId]
+    ).catch(() => null)
+    targetPostId = cleanString(postRow?.post_id) || cleanString(postRow?.media_id)
+  }
+
   let path
   let payload
   if (mode === 'public') {
