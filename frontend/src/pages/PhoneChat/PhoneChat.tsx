@@ -2306,6 +2306,15 @@ function getMediaPathExtension(value = '') {
   return /^[a-z0-9]{2,8}$/.test(extension) ? extension : ''
 }
 
+const INLINE_IMAGE_MEDIA_EXTENSIONS = new Set(['jpg', 'jpeg', 'png', 'webp', 'gif', 'avif'])
+
+function hasImageFileSignature(mimeType = '', name = '', mediaUrl = '') {
+  const normalizedMime = mimeType.split(';')[0].trim().toLowerCase()
+  return normalizedMime.startsWith('image/') ||
+    INLINE_IMAGE_MEDIA_EXTENSIONS.has(getMediaPathExtension(name)) ||
+    INLINE_IMAGE_MEDIA_EXTENSIONS.has(getMediaPathExtension(mediaUrl))
+}
+
 function hasGifFileSignature(mimeType = '', name = '', mediaUrl = '') {
   const normalizedMime = mimeType.split(';')[0].trim().toLowerCase()
   return normalizedMime === 'image/gif' || getMediaPathExtension(name) === 'gif' || getMediaPathExtension(mediaUrl) === 'gif'
@@ -2320,6 +2329,7 @@ function getMediaAttachmentType(messageType = '', mimeType = '', name = '', medi
   const normalizedMime = mimeType.split(';')[0].trim().toLowerCase()
   const normalizedName = name.toLowerCase()
   const gifFile = hasGifFileSignature(mimeType, name, mediaUrl)
+  const imageFile = hasImageFileSignature(mimeType, name, mediaUrl)
   const gifMessageType = normalizedType.includes('gif')
 
   if (normalizedType.includes('audio') || normalizedType.includes('voice') || normalizedMime.startsWith('audio/')) {
@@ -2330,7 +2340,7 @@ function getMediaAttachmentType(messageType = '', mimeType = '', name = '', medi
     return 'image'
   }
 
-  if (normalizedType.includes('image') || normalizedType.includes('sticker') || normalizedMime.startsWith('image/')) {
+  if (normalizedType.includes('image') || normalizedType.includes('sticker') || imageFile) {
     return 'image'
   }
 
