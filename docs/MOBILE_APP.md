@@ -34,6 +34,18 @@ Si tu terminal sigue en Node 20, usa Node 22 temporal:
 npx -p node@22 -p @capacitor/cli@8.4.0 cap sync
 ```
 
+## Icono de instalación
+
+El icono público de la app móvil usa el isotipo de Ristak. Los assets nativos y
+PWA deben mantenerse sincronizados para que el icono sea el mismo en App Store,
+Play Store, Android launcher y "Agregar a pantalla de inicio":
+
+- iOS: `frontend/ios/App/App/Assets.xcassets/AppIcon.appiconset/`.
+- Android: `frontend/android/app/src/main/res/mipmap-*/ic_launcher*.png` y el
+  fondo adaptive en `frontend/android/app/src/main/res/values/ic_launcher_background.xml`.
+- Web/PWA móvil: `frontend/public/ristak-chat-icon-*`,
+  `frontend/public/ristak-chat-home-icon-*` y los `apple-touch-icon` móviles.
+
 ## Variables de servidor
 
 Web/PWA:
