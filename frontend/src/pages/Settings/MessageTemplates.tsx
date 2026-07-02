@@ -34,7 +34,7 @@ import {
   Video,
   X
 } from 'lucide-react'
-import { Button, Loading, CustomSelect, PageHeader, SearchField } from '@/components/common'
+import { Button, Loading, CustomSelect, PageHeader, SearchField, Table, TableSelectionToolbar, type Column } from '@/components/common'
 import { PhoneChatPreview, type PhoneChatPreviewMessage } from '@/components/phone/PhoneChatPreview'
 import { useAuth } from '@/contexts/AuthContext'
 import { useNotification } from '@/contexts/NotificationContext'
@@ -610,15 +610,7 @@ export const MessageTemplates: React.FC<MessageTemplatesProps> = ({
     bundle.templates.filter((template) => selectedTemplateIds.has(template.id))
   ), [bundle.templates, selectedTemplateIds])
 
-  const visibleTemplateIds = useMemo(() => (
-    visibleTemplates.map((template) => template.id)
-  ), [visibleTemplates])
-
   const selectedTotal = selectedTemplateIds.size
-  const allVisibleSelected = Boolean(
-    visibleTemplateIds.length &&
-    visibleTemplateIds.every((id) => selectedTemplateIds.has(id))
-  )
 
   const variableByMergeField = useMemo(() => (
     new Map(bundle.variables.map((variable) => [variable.mergeField, variable]))
@@ -932,28 +924,6 @@ export const MessageTemplates: React.FC<MessageTemplatesProps> = ({
 
   const clearSelection = () => {
     setSelectedTemplateIds(new Set())
-  }
-
-  const toggleTemplateSelection = (templateId: string) => {
-    setSelectedTemplateIds((current) => {
-      const next = new Set(current)
-      if (next.has(templateId)) next.delete(templateId)
-      else next.add(templateId)
-      return next
-    })
-  }
-
-  const toggleVisibleSelection = () => {
-    if (allVisibleSelected) {
-      setSelectedTemplateIds((current) => {
-        const next = new Set(current)
-        visibleTemplateIds.forEach((id) => next.delete(id))
-        return next
-      })
-      return
-    }
-
-    setSelectedTemplateIds((current) => new Set([...current, ...visibleTemplateIds]))
   }
 
   const moveTemplatesToFolder = async (templates: MessageTemplate[], folderId: string | null) => {
@@ -1475,6 +1445,120 @@ export const MessageTemplates: React.FC<MessageTemplatesProps> = ({
       : activeFolderId === 'all'
         ? 'Todavía no hay plantillas'
         : 'No hay plantillas en esta carpeta'
+    const templateSelectionToolbar = selectedTotal > 0 ? (
+      <TableSelectionToolbar
+        count={selectedTotal}
+        singularLabel="seleccionada"
+        pluralLabel="seleccionadas"
+        onClearSelection={clearSelection}
+      >
+        <CustomSelect value={bulkTargetFolderId} onChange={(event) => setBulkTargetFolderId(event.target.value)}>
+          <option value={ROOT_FOLDER_KEY}>Sin carpeta</option>
+          {folderOptions.map((option) => (
+            <option key={option.id} value={option.id}>{option.label}</option>
+          ))}
+        </CustomSelect>
+        <Button variant="secondary" size="sm" onClick={() => moveSelectionToFolder()} loading={bulkWorking}>
+          <FolderInput size={15} />
+          Mover
+        </Button>
+        <Button variant="secondary" size="sm" onClick={syncSelectedTemplates} disabled={!selectedTemplates.length || bulkWorking}>
+          <RefreshCw size={15} />
+          Sincronizar
+        </Button>
+        <Button variant="danger" size="sm" onClick={deleteSelection} disabled={!selectedTemplates.length || bulkWorking}>
+          <Trash2 size={15} />
+          Eliminar
+        </Button>
+      </TableSelectionToolbar>
+    ) : null
+    const templateColumns: Column<MessageTemplate>[] = [
+      {
+        key: 'drag',
+        header: '',
+        width: '40px',
+        searchable: false,
+        sortable: false,
+        render: () => (
+          <span className={styles.dragHandle} aria-hidden="true">
+            <GripVertical size={15} />
+          </span>
+        )
+      },
+      {
+        key: 'name',
+        header: 'Plantilla',
+        render: (_value, template) => {
+          const templateLockedForEditing = isTemplateUnderReviewStatus(template.ycloudStatus)
+          return (
+            <button
+              type="button"
+              className={styles.collectionNameButton}
+              onClick={() => editTemplate(template)}
+              disabled={templateLockedForEditing}
+              title={templateLockedForEditing ? 'En revisión: espera respuesta de Meta antes de editar' : 'Editar plantilla'}
+            >
+              <strong>{template.name}</strong>
+              <small>{template.bodyText || template.description || 'Sin texto principal'}</small>
+            </button>
+          )
+        }
+      },
+      {
+        key: 'category',
+        header: 'Tipo',
+        render: (_value, template) => (
+          <span className={`${styles.collectionTypeBadge} ${styles.collectionTypeTemplate}`}>
+            <FileText size={14} />
+            {getCategoryLabel(template.category)}
+          </span>
+        )
+      },
+      {
+        key: 'folderId',
+        header: 'Carpeta',
+        render: (_value, template) => folderMap.get(template.folderId || '')?.name || 'Sin carpeta'
+      },
+      {
+        key: 'language',
+        header: 'Idioma'
+      },
+      {
+        key: 'ycloudStatus',
+        header: 'Estado',
+        render: (_value, template) => (
+          <span className={`${styles.ycloudBadge} ${styles[`ycloudBadge${getYCloudStatusTone(template.ycloudStatus)}`]}`}>
+            {getYCloudStatusLabel(template.ycloudStatus)}
+          </span>
+        )
+      },
+      {
+        key: 'actions',
+        header: '',
+        searchable: false,
+        sortable: false,
+        render: (_value, template) => {
+          const templateLockedForEditing = isTemplateUnderReviewStatus(template.ycloudStatus)
+          return (
+            <div className={styles.collectionTableActions}>
+              <button
+                type="button"
+                className={styles.iconButton}
+                onClick={() => editTemplate(template)}
+                disabled={templateLockedForEditing}
+                aria-label={templateLockedForEditing ? `${template.name} está en revisión` : `Editar ${template.name}`}
+                title={templateLockedForEditing ? 'En revisión' : 'Editar'}
+              >
+                <Edit3 size={15} />
+              </button>
+              <button type="button" className={styles.iconButton} onClick={() => confirmDeleteTemplate(template)} aria-label={`Eliminar ${template.name}`} title="Eliminar">
+                <Trash2 size={15} />
+              </button>
+            </div>
+          )
+        }
+      }
+    ]
 
     return (
       <div className={styles.managerGrid}>
@@ -1668,143 +1752,31 @@ export const MessageTemplates: React.FC<MessageTemplatesProps> = ({
             )}
           </div>
 
-          {selectedTotal > 0 && (
-            <div className={styles.bulkBar}>
-              <strong>{selectedTotal} seleccionada{selectedTotal === 1 ? '' : 's'}</strong>
-              <button type="button" onClick={toggleVisibleSelection}>
-                {allVisibleSelected ? 'Quitar visibles' : 'Seleccionar visibles'}
-              </button>
-              <label>
-                <span>Mover a</span>
-                <CustomSelect value={bulkTargetFolderId} onChange={(event) => setBulkTargetFolderId(event.target.value)}>
-                  <option value={ROOT_FOLDER_KEY}>Sin carpeta</option>
-                  {folderOptions.map((option) => (
-                    <option key={option.id} value={option.id}>{option.label}</option>
-                  ))}
-                </CustomSelect>
-              </label>
-              <Button variant="outline" size="sm" onClick={() => moveSelectionToFolder()} loading={bulkWorking}>
-                <FolderInput size={15} />
-                Mover
-              </Button>
-              <Button variant="outline" size="sm" onClick={syncSelectedTemplates} disabled={!selectedTemplates.length || bulkWorking}>
-                <RefreshCw size={15} />
-                Sincronizar
-              </Button>
-              <Button variant="danger" size="sm" onClick={deleteSelection} disabled={!selectedTemplates.length || bulkWorking}>
-                <Trash2 size={15} />
-                Eliminar
-              </Button>
-              <Button variant="ghost" size="sm" onClick={clearSelection} disabled={bulkWorking}>
-                <X size={15} />
-              </Button>
-            </div>
-          )}
-
-          {visibleTemplates.length ? (
-            <div className={styles.collectionTableWrap}>
-              <table className={styles.collectionTable} data-ristak-table data-ristak-table-element>
-                <thead>
-                  <tr>
-                    <th className={styles.selectionHead}>
-                      <input
-                        type="checkbox"
-                        aria-label="Seleccionar plantillas visibles"
-                        checked={allVisibleSelected}
-                        onChange={toggleVisibleSelection}
-                      />
-                    </th>
-                    <th>Plantilla</th>
-                    <th>Tipo</th>
-                    <th>Carpeta</th>
-                    <th>Idioma</th>
-                    <th>Estado</th>
-                    <th aria-label="Acciones" />
-                  </tr>
-                </thead>
-                <tbody>
-                  {visibleTemplates.map((template) => {
-                    const templateLockedForEditing = isTemplateUnderReviewStatus(template.ycloudStatus)
-                    return (
-                      <tr
-                        key={template.id}
-                        className={[
-                          selectedTemplateIds.has(template.id) ? styles.collectionRowSelected : '',
-                          templateLockedForEditing ? styles.collectionRowLocked : ''
-                        ].filter(Boolean).join(' ')}
-                        draggable
-                        onDragStart={(event) => handleDragStart(event, template.id)}
-                        onDragEnd={() => {
-                          setDragging(null)
-                          setDropTargetFolderId(null)
-                        }}
-                      >
-                        <td className={styles.selectionCell}>
-                          <span className={styles.dragHandle} aria-hidden="true">
-                            <GripVertical size={15} />
-                          </span>
-                          <input
-                            type="checkbox"
-                            aria-label={`Seleccionar ${template.name}`}
-                            checked={selectedTemplateIds.has(template.id)}
-                            onChange={() => toggleTemplateSelection(template.id)}
-                          />
-                        </td>
-                        <td>
-                          <button
-                            type="button"
-                            className={styles.collectionNameButton}
-                            onClick={() => editTemplate(template)}
-                            disabled={templateLockedForEditing}
-                            title={templateLockedForEditing ? 'En revisión: espera respuesta de Meta antes de editar' : 'Editar plantilla'}
-                          >
-                            <strong>{template.name}</strong>
-                            <small>{template.bodyText || template.description || 'Sin texto principal'}</small>
-                          </button>
-                        </td>
-                        <td>
-                          <span className={`${styles.collectionTypeBadge} ${styles.collectionTypeTemplate}`}>
-                            <FileText size={14} />
-                            {getCategoryLabel(template.category)}
-                          </span>
-                        </td>
-                        <td>{folderMap.get(template.folderId || '')?.name || 'Sin carpeta'}</td>
-                        <td>{template.language}</td>
-                        <td>
-                          <span className={`${styles.ycloudBadge} ${styles[`ycloudBadge${getYCloudStatusTone(template.ycloudStatus)}`]}`}>
-                            {getYCloudStatusLabel(template.ycloudStatus)}
-                          </span>
-                        </td>
-                        <td>
-                          <div className={styles.collectionTableActions}>
-                            <button
-                              type="button"
-                              className={styles.iconButton}
-                              onClick={() => editTemplate(template)}
-                              disabled={templateLockedForEditing}
-                              aria-label={templateLockedForEditing ? `${template.name} está en revisión` : `Editar ${template.name}`}
-                              title={templateLockedForEditing ? 'En revisión' : 'Editar'}
-                            >
-                              <Edit3 size={15} />
-                            </button>
-                            <button type="button" className={styles.iconButton} onClick={() => confirmDeleteTemplate(template)} aria-label={`Eliminar ${template.name}`} title="Eliminar">
-                              <Trash2 size={15} />
-                            </button>
-                          </div>
-                        </td>
-                      </tr>
-                    )
-                  })}
-                </tbody>
-              </table>
-            </div>
-          ) : (
-            <div className={styles.emptyState}>
-              <ListTree size={28} />
-              <strong>{emptyTitle}</strong>
-              <span>{hasTemplateFilters ? 'Prueba con otro número, tipo o estado.' : 'Crea una plantilla nueva o cambia de carpeta.'}</span>
-            </div>
-          )}
+          <Table<MessageTemplate>
+            initialColumns={templateColumns}
+            data={visibleTemplates}
+            keyExtractor={(template) => template.id}
+            emptyMessage={emptyTitle}
+            searchable={false}
+            paginated={false}
+            showColumnEditor={false}
+            selectionActions={templateSelectionToolbar}
+            rowSelection={{
+              selectedKeys: Array.from(selectedTemplateIds),
+              onChange: (nextSelectedIds) => setSelectedTemplateIds(new Set(nextSelectedIds)),
+              getRowLabel: (template) => template.name,
+              selectVisibleLabel: 'Seleccionar plantillas visibles'
+            }}
+            getRowProps={(template) => ({
+              className: isTemplateUnderReviewStatus(template.ycloudStatus) ? styles.collectionRowLocked : '',
+              draggable: true,
+              onDragStart: (event) => handleDragStart(event, template.id),
+              onDragEnd: () => {
+                setDragging(null)
+                setDropTargetFolderId(null)
+              }
+            })}
+          />
         </main>
       </div>
     )

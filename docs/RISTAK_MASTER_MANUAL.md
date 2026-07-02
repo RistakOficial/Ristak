@@ -189,6 +189,11 @@ Configuracion se organiza en:
 - Personalizacion: campos, variables, trigger links, etiquetas.
 - Avanzado: Developers.
 
+Las tablas de Configuracion que permiten seleccion multiple usan el patron
+compartido de `Table` con acciones integradas en el encabezado de la tabla. No
+deben crear barras locales separadas para mover, sincronizar o eliminar
+selecciones; ese comportamiento debe reutilizar `TableSelectionToolbar`.
+
 ## Permisos, licencia y acceso
 
 Hay tres capas distintas:

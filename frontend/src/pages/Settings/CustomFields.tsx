@@ -6,14 +6,13 @@ import {
   Folder,
   FolderPlus,
   Hash as HashIcon,
-  Loader2,
   MoreHorizontal,
   Plus,
   Save,
   Trash2,
   X
 } from 'lucide-react'
-import { Button, CustomSelect, PageHeader, SearchField } from '@/components/common'
+import { Button, CustomSelect, PageHeader, SearchField, Table, TableSelectionToolbar, type Column } from '@/components/common'
 import { Badge } from '@/components/common/Badge'
 import { useNotification } from '@/contexts/NotificationContext'
 import {
@@ -208,13 +207,7 @@ export const CustomFields: React.FC = () => {
     [fields, selectedFieldIds]
   )
 
-  const visibleSelectableFields = useMemo(
-    () => visibleFields.filter(field => !isSystemCustomFieldDefinition(field)),
-    [visibleFields]
-  )
   const selectedCount = selectedFields.length
-  const visibleSelectedCount = visibleSelectableFields.filter(field => selectedFieldIds.has(field.definitionId)).length
-  const allVisibleSelected = visibleSelectableFields.length > 0 && visibleSelectedCount === visibleSelectableFields.length
   const selectionBusy = movingFields || deletingFields
   const isDraggingFields = draggingFieldIds.length > 0
 
@@ -405,30 +398,6 @@ export const CustomFields: React.FC = () => {
     }
   }
 
-  const toggleFieldSelection = (definitionId: string) => {
-    const field = fields.find(item => item.definitionId === definitionId)
-    if (!field || isSystemCustomFieldDefinition(field)) return
-
-    setSelectedFieldIds(current => {
-      const next = new Set(current)
-      if (next.has(definitionId)) next.delete(definitionId)
-      else next.add(definitionId)
-      return next
-    })
-  }
-
-  const toggleVisibleSelection = () => {
-    setSelectedFieldIds(current => {
-      const next = new Set(current)
-      if (allVisibleSelected) {
-        visibleSelectableFields.forEach(field => next.delete(field.definitionId))
-      } else {
-        visibleSelectableFields.forEach(field => next.add(field.definitionId))
-      }
-      return next
-    })
-  }
-
   const clearSelection = () => {
     setSelectedFieldIds(new Set())
   }
@@ -603,6 +572,101 @@ export const CustomFields: React.FC = () => {
     )
   }
 
+  const fieldSelectionToolbar = selectedCount > 0 ? (
+    <TableSelectionToolbar
+      count={selectedCount}
+      onClearSelection={clearSelection}
+    >
+      <CustomSelect
+        defaultValue=""
+        disabled={selectionBusy}
+        onChange={(event) => {
+          handleMoveSelectedChange(event.target.value)
+          event.currentTarget.value = ''
+        }}
+      >
+        <option value="" disabled>Mover a carpeta</option>
+        <option value="unfiled">Sin carpeta</option>
+        {folders.map(folder => (
+          <option key={folder.id} value={folder.id}>{folder.name}</option>
+        ))}
+        <option value="__new_folder">Crear carpeta...</option>
+      </CustomSelect>
+      <Button
+        type="button"
+        variant="danger"
+        size="sm"
+        onClick={handleDeleteSelectedFields}
+        loading={deletingFields}
+        disabled={selectionBusy}
+        leftIcon={<Trash2 size={15} />}
+      >
+        Eliminar
+      </Button>
+    </TableSelectionToolbar>
+  ) : null
+
+  const fieldColumns: Column<CustomFieldDefinition>[] = [
+    {
+      key: 'label',
+      header: 'Campo',
+      render: (_value, field) => (
+        <span className={styles.primaryCell}>
+          <strong>{field.label}</strong>
+        </span>
+      )
+    },
+    {
+      key: 'fieldKey',
+      header: 'Parámetro',
+      render: (_value, field) => <code>{customFieldParameter(field)}</code>
+    },
+    {
+      key: 'dataType',
+      header: 'Tipo',
+      render: (_value, field) => <Badge variant="neutral">{getTypeLabel(field.dataType)}</Badge>
+    },
+    {
+      key: 'folderName',
+      header: 'Carpeta',
+      render: (_value, field) => field.folderName || getFolderName(folders, field.folderId)
+    },
+    {
+      key: 'options',
+      header: 'Opciones',
+      render: (_value, field) => field.options?.length ? `${field.options.length} opciones` : '-'
+    },
+    {
+      key: 'sourceType',
+      header: 'Origen',
+      render: (_value, field) => getSourceLabel(field.sourceType)
+    },
+    {
+      key: 'actions',
+      header: '',
+      searchable: false,
+      sortable: false,
+      render: (_value, field) => {
+        const systemField = isSystemCustomFieldDefinition(field)
+        if (systemField) return <span className={styles.lockedAction}>Protegido</span>
+
+        return (
+          <div className={styles.rowActions}>
+            <button type="button" onClick={() => copyText(customFieldParameter(field), 'Parámetro')} aria-label={`Copiar ${field.label}`} title="Copiar parámetro">
+              <Copy size={15} />
+            </button>
+            <button type="button" onClick={() => openEditEditor(field)} aria-label={`Editar ${field.label}`} title="Editar">
+              <Edit3 size={15} />
+            </button>
+            <button type="button" onClick={() => handleArchiveField(field)} aria-label={`Eliminar ${field.label}`} title="Eliminar">
+              <Trash2 size={15} />
+            </button>
+          </div>
+        )
+      }
+    }
+  ]
+
   return (
     <div className={styles.page}>
       <PageHeader
@@ -689,129 +753,34 @@ export const CustomFields: React.FC = () => {
             <span>{visibleFields.length} campos</span>
           </div>
 
-          {selectedCount > 0 && (
-            <div className={styles.selectionBar}>
-              <strong>{selectedCount} seleccionado{selectedCount === 1 ? '' : 's'}</strong>
-              <CustomSelect
-                defaultValue=""
-                disabled={selectionBusy}
-                onChange={(event) => {
-                  handleMoveSelectedChange(event.target.value)
-                  event.currentTarget.value = ''
-                }}
-              >
-                <option value="" disabled>Mover a carpeta</option>
-                <option value="unfiled">Sin carpeta</option>
-                {folders.map(folder => (
-                  <option key={folder.id} value={folder.id}>{folder.name}</option>
-                ))}
-                <option value="__new_folder">Crear carpeta...</option>
-              </CustomSelect>
-              <Button
-                type="button"
-                variant="danger"
-                size="sm"
-                onClick={handleDeleteSelectedFields}
-                loading={deletingFields}
-                disabled={selectionBusy}
-                leftIcon={<Trash2 size={15} />}
-              >
-                Eliminar
-              </Button>
-              <Button type="button" variant="ghost" size="sm" onClick={clearSelection} disabled={selectionBusy} leftIcon={<X size={15} />}>
-                Limpiar
-              </Button>
-            </div>
-          )}
-
-          {loading ? (
-            <div className={styles.loadingState} role="status" aria-live="polite" aria-label="Cargando campos">
-              <Loader2 className={styles.spin} size={22} aria-hidden="true" />
-            </div>
-          ) : visibleFields.length === 0 ? (
-            <div className={styles.emptyState}>
-              <HashIcon size={26} />
-              <strong>No hay campos en esta vista</strong>
-              <span>Crea un campo nuevo o cambia de carpeta.</span>
-            </div>
-          ) : (
-            <div className={styles.tableWrap}>
-              <table className={styles.table} data-ristak-table data-ristak-table-element>
-                <thead>
-                  <tr>
-                    <th className={styles.selectionHead}>
-                      <input
-                        type="checkbox"
-                        aria-label="Seleccionar campos visibles"
-                        checked={allVisibleSelected}
-                        disabled={visibleSelectableFields.length === 0}
-                        onChange={toggleVisibleSelection}
-                      />
-                    </th>
-                    <th>Campo</th>
-                    <th>Parámetro</th>
-                    <th>Tipo</th>
-                    <th>Carpeta</th>
-                    <th>Opciones</th>
-                    <th>Origen</th>
-                    <th aria-label="Acciones" />
-                  </tr>
-                </thead>
-                <tbody>
-                  {visibleFields.map(field => {
-                    const systemField = isSystemCustomFieldDefinition(field)
-                    const selected = !systemField && selectedFieldIds.has(field.definitionId)
-                    const dragging = draggingFieldIds.includes(field.definitionId)
-                    return (
-                    <tr
-                      key={field.definitionId}
-                      className={`${systemField ? styles.lockedRow : styles.draggableRow} ${selected ? styles.rowSelected : ''} ${dragging ? styles.rowDragging : ''}`}
-                      draggable={!selectionBusy && !systemField}
-                      onDragStart={(event) => handleFieldDragStart(field, event)}
-                      onDragEnd={handleDragEnd}
-                    >
-                      <td className={styles.selectionCell}>
-                        <input
-                          type="checkbox"
-                          aria-label={systemField ? `${field.label} protegido por el sistema` : `Seleccionar ${field.label}`}
-                          checked={selected}
-                          disabled={systemField || selectionBusy}
-                          onChange={() => toggleFieldSelection(field.definitionId)}
-                          onClick={(event) => event.stopPropagation()}
-                        />
-                      </td>
-                      <td>
-                        <strong>{field.label}</strong>
-                      </td>
-                      <td><code>{customFieldParameter(field)}</code></td>
-                      <td><Badge variant="neutral">{getTypeLabel(field.dataType)}</Badge></td>
-                      <td>{field.folderName || getFolderName(folders, field.folderId)}</td>
-                      <td>{field.options?.length ? `${field.options.length} opciones` : '-'}</td>
-                      <td>{getSourceLabel(field.sourceType)}</td>
-                      <td>
-                        {systemField ? (
-                          <span className={styles.lockedAction}>Protegido</span>
-                        ) : (
-                          <div className={styles.rowActions}>
-                            <button type="button" onClick={() => copyText(customFieldParameter(field), 'Parámetro')} aria-label={`Copiar ${field.label}`} title="Copiar parámetro">
-                              <Copy size={15} />
-                            </button>
-                            <button type="button" onClick={() => openEditEditor(field)} aria-label={`Editar ${field.label}`} title="Editar">
-                              <Edit3 size={15} />
-                            </button>
-                            <button type="button" onClick={() => handleArchiveField(field)} aria-label={`Eliminar ${field.label}`} title="Eliminar">
-                              <Trash2 size={15} />
-                            </button>
-                          </div>
-                        )}
-                      </td>
-                    </tr>
-                    )
-                  })}
-                </tbody>
-              </table>
-            </div>
-          )}
+          <Table<CustomFieldDefinition>
+            initialColumns={fieldColumns}
+            data={visibleFields}
+            keyExtractor={(field) => field.definitionId}
+            loading={loading}
+            emptyMessage="No hay campos en esta vista"
+            searchable={false}
+            paginated={false}
+            showColumnEditor={false}
+            selectionActions={fieldSelectionToolbar}
+            rowSelection={{
+              selectedKeys: Array.from(selectedFieldIds),
+              onChange: (nextSelectedIds) => setSelectedFieldIds(new Set(nextSelectedIds)),
+              isRowDisabled: isSystemCustomFieldDefinition,
+              getRowLabel: (field) => field.label,
+              selectVisibleLabel: 'Seleccionar campos visibles'
+            }}
+            getRowProps={(field) => {
+              const systemField = isSystemCustomFieldDefinition(field)
+              const dragging = draggingFieldIds.includes(field.definitionId)
+              return {
+                className: `${systemField ? styles.lockedRow : styles.draggableRow} ${dragging ? styles.rowDragging : ''}`,
+                draggable: !selectionBusy && !systemField,
+                onDragStart: (event) => handleFieldDragStart(field, event),
+                onDragEnd: handleDragEnd
+              }
+            }}
+          />
         </main>
       </div>
 

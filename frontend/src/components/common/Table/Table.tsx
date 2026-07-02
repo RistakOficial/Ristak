@@ -186,6 +186,7 @@ interface TableProps<T> {
   loadingVariant?: 'spinner'
   focusedRowKey?: string | null
   rowClassName?: (item: T) => string | undefined
+  getRowProps?: (item: T) => React.HTMLAttributes<HTMLTableRowElement>
   toolbarStart?: React.ReactNode
   selectionActions?: React.ReactNode
   searchPosition?: 'left' | 'right'
@@ -193,6 +194,7 @@ interface TableProps<T> {
   serverSideSearch?: boolean
   searchTerm?: string
   onSearchTermChange?: (nextSearchTerm: string) => void
+  showColumnEditor?: boolean
 }
 
 export function Table<T extends Record<string, any>>({
@@ -216,13 +218,15 @@ export function Table<T extends Record<string, any>>({
   loadingVariant,
   focusedRowKey,
   rowClassName,
+  getRowProps,
   toolbarStart,
   selectionActions,
   searchPosition = 'left',
   rowSelection,
   serverSideSearch = false,
   searchTerm,
-  onSearchTermChange
+  onSearchTermChange,
+  showColumnEditor = true
 }: TableProps<T>) {
   // Sistema híbrido de configuración de tablas
   const [savedTableConfig, updateTableConfig] = useTableConfig(tableId || 'default')
@@ -489,7 +493,7 @@ export function Table<T extends Record<string, any>>({
   const someVisibleRowsSelected =
     visibleSelectableKeys.some(key => selectedKeySet.has(key))
   const hasSelectionActions = Boolean(selectionActions)
-  const columnEditMode = editMode && !hasSelectionActions
+  const columnEditMode = editMode && !hasSelectionActions && showColumnEditor
 
   const handleToggleVisibleRows = () => {
     if (!rowSelection) return
@@ -544,10 +548,10 @@ export function Table<T extends Record<string, any>>({
   }
 
   useEffect(() => {
-    if (hasSelectionActions && editMode) {
+    if ((hasSelectionActions || !showColumnEditor) && editMode) {
       setEditMode(false)
     }
-  }, [editMode, hasSelectionActions])
+  }, [editMode, hasSelectionActions, showColumnEditor])
 
   const searchControl = searchable ? (
     <div className={styles.searchContainer}>
@@ -574,6 +578,9 @@ export function Table<T extends Record<string, any>>({
       <Loader2 aria-hidden="true" size={16} className={styles.refreshIcon} />
     </span>
   ) : null
+  const hasFilters = Boolean(filters && onFilterChange)
+  const hasRightActions = Boolean((searchPosition === 'right' && searchControl) || refreshIndicator || showColumnEditor)
+  const hasStandardToolbar = Boolean(toolbarStart || searchControl || hasFilters || hasRightActions)
 
   if (showInitialSkeleton) {
     const skeletonColumnCount = Math.max(3, Math.min(totalVisibleColumns || visibleColumns.length || 4, 8))
@@ -629,52 +636,58 @@ export function Table<T extends Record<string, any>>({
 
   return (
     <div className={styles.container} data-ristak-table aria-busy={isRefreshing ? 'true' : undefined}>
-      <div className={`${styles.tableHeader} ${hasSelectionActions ? styles.tableHeaderSelection : ''}`}>
-        {hasSelectionActions ? (
-          <div className={styles.selectionActions}>
-            {selectionActions}
-          </div>
-        ) : (
-          <>
-            <div className={styles.leftControls}>
-              {toolbarStart}
-
-              {searchPosition === 'left' && searchControl}
-
-              {filters && onFilterChange && (
-                <TabList
-                  tabs={filters}
-                  activeTab={activeFilter}
-                  onTabChange={onFilterChange}
-                />
-              )}
+      {(hasSelectionActions || hasStandardToolbar) && (
+        <div className={`${styles.tableHeader} ${hasSelectionActions ? styles.tableHeaderSelection : ''}`}>
+          {hasSelectionActions ? (
+            <div className={styles.selectionActions}>
+              {selectionActions}
             </div>
+          ) : (
+            <>
+              <div className={styles.leftControls}>
+                {toolbarStart}
 
-            <div className={styles.tableActions}>
-              {searchPosition === 'right' && searchControl}
-              {refreshIndicator}
+                {searchPosition === 'left' && searchControl}
 
-              <button
-                className={`${styles.actionButton} ${columnEditMode ? styles.active : ''}`}
-                onClick={() => setEditMode(!editMode)}
-                title={columnEditMode ? "Finalizar edición" : "Editar columnas"}
-              >
-                {columnEditMode ? (
-                  <>
-                    <Check size={18} />
-                    <span className={styles.buttonText}>Listo</span>
-                  </>
-                ) : (
-                  <>
-                    <Settings size={18} />
-                    <span className={styles.buttonText}>Editar</span>
-                  </>
+                {filters && onFilterChange && (
+                  <TabList
+                    tabs={filters}
+                    activeTab={activeFilter}
+                    onTabChange={onFilterChange}
+                  />
                 )}
-              </button>
-            </div>
-          </>
-        )}
-      </div>
+              </div>
+
+              {hasRightActions && (
+                <div className={styles.tableActions}>
+                  {searchPosition === 'right' && searchControl}
+                  {refreshIndicator}
+
+                  {showColumnEditor && (
+                    <button
+                      className={`${styles.actionButton} ${columnEditMode ? styles.active : ''}`}
+                      onClick={() => setEditMode(!editMode)}
+                      title={columnEditMode ? "Finalizar edición" : "Editar columnas"}
+                    >
+                      {columnEditMode ? (
+                        <>
+                          <Check size={18} />
+                          <span className={styles.buttonText}>Listo</span>
+                        </>
+                      ) : (
+                        <>
+                          <Settings size={18} />
+                          <span className={styles.buttonText}>Editar</span>
+                        </>
+                      )}
+                    </button>
+                  )}
+                </div>
+              )}
+            </>
+          )}
+        </div>
+      )}
 
       <div className={styles.tableWrapper}>
         <table className={styles.table} data-ristak-table-element>
@@ -785,6 +798,14 @@ export function Table<T extends Record<string, any>>({
             ) : (
               paginatedData.map((item) => {
                 const rowKey = keyExtractor(item)
+                const selected = selectedKeySet.has(rowKey)
+                const rowProps = getRowProps?.(item) ?? {}
+                const {
+                  className: extraRowClassName,
+                  style: extraRowStyle,
+                  onClick: extraRowClick,
+                  ...extraRowProps
+                } = rowProps
                 const rowStyle: React.CSSProperties = {
                   // Borde lateral en lugar de fondo de color
                   borderLeft: item.level === 'adset'
@@ -808,12 +829,23 @@ export function Table<T extends Record<string, any>>({
 
                 return (
                   <tr
+                    {...extraRowProps}
                     key={rowKey}
-                    className={`${onRowClick ? styles.clickable : ''} ${rowClassName?.(item) ?? ''}`.trim()}
-                    onClick={() => onRowClick?.(item)}
+                    className={[
+                      onRowClick ? styles.clickable : '',
+                      selected ? styles.selectedRow : '',
+                      rowClassName?.(item) ?? '',
+                      extraRowClassName ?? ''
+                    ].filter(Boolean).join(' ')}
+                    onClick={(event) => {
+                      extraRowClick?.(event)
+                      if (!event.defaultPrevented) onRowClick?.(item)
+                    }}
+                    aria-selected={rowSelection ? selected : undefined}
+                    data-selected={selected ? 'true' : undefined}
                     data-level={item.level || ''}
                     data-row-key={rowKey}
-                    style={rowStyle}
+                    style={{ ...rowStyle, ...(extraRowStyle || {}) }}
                   >
                     {rowSelection && (
                       <td

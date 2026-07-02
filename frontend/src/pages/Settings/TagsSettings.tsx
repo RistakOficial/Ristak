@@ -3,7 +3,6 @@ import {
   Edit3,
   Folder,
   FolderPlus,
-  Loader2,
   MoreHorizontal,
   Plus,
   Save,
@@ -11,7 +10,7 @@ import {
   Trash2,
   X
 } from 'lucide-react'
-import { Button, CustomSelect, PageHeader, SearchField } from '@/components/common'
+import { Button, CustomSelect, PageHeader, SearchField, Table, TableSelectionToolbar, type Column } from '@/components/common'
 import { Badge } from '@/components/common/Badge'
 import { useNotification } from '@/contexts/NotificationContext'
 import { useUrlStringState } from '@/hooks'
@@ -143,13 +142,7 @@ export const TagsSettings: React.FC = () => {
     [selectedTagIds, tags]
   )
 
-  const visibleSelectableTags = useMemo(
-    () => visibleTags.filter(tag => !tag.isSystem),
-    [visibleTags]
-  )
   const selectedCount = selectedTags.length
-  const visibleSelectedCount = visibleSelectableTags.filter(tag => selectedTagIds.has(tag.id)).length
-  const allVisibleSelected = visibleSelectableTags.length > 0 && visibleSelectedCount === visibleSelectableTags.length
   const selectionBusy = movingTags || deletingTags
   const isDraggingTags = draggingTagIds.length > 0
 
@@ -253,30 +246,6 @@ export const TagsSettings: React.FC = () => {
     } finally {
       setCreatingFolder(false)
     }
-  }
-
-  const toggleTagSelection = (tagId: string) => {
-    const tag = tags.find(item => item.id === tagId)
-    if (!tag || tag.isSystem) return
-
-    setSelectedTagIds(current => {
-      const next = new Set(current)
-      if (next.has(tagId)) next.delete(tagId)
-      else next.add(tagId)
-      return next
-    })
-  }
-
-  const toggleVisibleSelection = () => {
-    setSelectedTagIds(current => {
-      const next = new Set(current)
-      if (allVisibleSelected) {
-        visibleSelectableTags.forEach(tag => next.delete(tag.id))
-      } else {
-        visibleSelectableTags.forEach(tag => next.add(tag.id))
-      }
-      return next
-    })
   }
 
   const clearSelection = () => {
@@ -453,6 +422,94 @@ export const TagsSettings: React.FC = () => {
     )
   }
 
+  const tagSelectionToolbar = selectedCount > 0 ? (
+    <TableSelectionToolbar
+      count={selectedCount}
+      singularLabel="seleccionada"
+      pluralLabel="seleccionadas"
+      onClearSelection={clearSelection}
+    >
+      <CustomSelect
+        defaultValue=""
+        disabled={selectionBusy}
+        onChange={(event) => {
+          handleMoveSelectedChange(event.target.value)
+          event.currentTarget.value = ''
+        }}
+      >
+        <option value="" disabled>Mover a carpeta</option>
+        <option value="unfiled">Sin carpeta</option>
+        {folders.map(folder => (
+          <option key={folder.id} value={folder.id}>{folder.name}</option>
+        ))}
+        <option value="__new_folder">Crear carpeta...</option>
+      </CustomSelect>
+      <Button
+        type="button"
+        variant="danger"
+        size="sm"
+        onClick={handleDeleteSelectedTags}
+        loading={deletingTags}
+        disabled={selectionBusy}
+        leftIcon={<Trash2 size={15} />}
+      >
+        Eliminar
+      </Button>
+    </TableSelectionToolbar>
+  ) : null
+
+  const tagColumns: Column<ContactTag>[] = [
+    {
+      key: 'name',
+      header: 'Etiqueta',
+      render: (_value, tag) => (
+        <span className={styles.primaryCell}>
+          <strong>{tag.name}</strong>
+          {tag.isSystem && <span>Se asigna sola según la actividad del contacto.</span>}
+        </span>
+      )
+    },
+    {
+      key: 'usageCount',
+      header: 'Contactos',
+      render: (_value, tag) => (
+        tag.isSystem
+          ? <Badge variant="info">Automática</Badge>
+          : (tag.usageCount === 1 ? '1 contacto' : `${tag.usageCount || 0} contactos`)
+      )
+    },
+    {
+      key: 'folderId',
+      header: 'Carpeta',
+      render: (_value, tag) => tag.isSystem ? '-' : getFolderName(folders, tag.folderId)
+    },
+    {
+      key: 'source',
+      header: 'Origen',
+      render: (_value, tag) => getSourceLabel(tag)
+    },
+    {
+      key: 'actions',
+      header: '',
+      searchable: false,
+      sortable: false,
+      render: (_value, tag) => {
+        if (tag.isSystem) return <span className={styles.lockedAction}>Protegida</span>
+
+        return (
+          <div className={styles.rowActions}>
+            <button type="button" onClick={() => openEditEditor(tag)} aria-label={`Editar ${tag.name}`} title="Editar">
+              <Edit3 size={15} />
+            </button>
+            <button type="button" onClick={() => handleDeleteTag(tag)} aria-label={`Eliminar ${tag.name}`} title="Eliminar">
+              <Trash2 size={15} />
+            </button>
+          </div>
+        )
+      }
+    }
+  ]
+
   return (
     <div className={styles.page}>
       <PageHeader
@@ -553,127 +610,33 @@ export const TagsSettings: React.FC = () => {
             <span>{visibleTags.length} etiquetas</span>
           </div>
 
-          {selectedCount > 0 && (
-            <div className={styles.selectionBar}>
-              <strong>{selectedCount} seleccionada{selectedCount === 1 ? '' : 's'}</strong>
-              <CustomSelect
-                defaultValue=""
-                disabled={selectionBusy}
-                onChange={(event) => {
-                  handleMoveSelectedChange(event.target.value)
-                  event.currentTarget.value = ''
-                }}
-              >
-                <option value="" disabled>Mover a carpeta</option>
-                <option value="unfiled">Sin carpeta</option>
-                {folders.map(folder => (
-                  <option key={folder.id} value={folder.id}>{folder.name}</option>
-                ))}
-                <option value="__new_folder">Crear carpeta...</option>
-              </CustomSelect>
-              <Button
-                type="button"
-                variant="danger"
-                size="sm"
-                onClick={handleDeleteSelectedTags}
-                loading={deletingTags}
-                disabled={selectionBusy}
-                leftIcon={<Trash2 size={15} />}
-              >
-                Eliminar
-              </Button>
-              <Button type="button" variant="ghost" size="sm" onClick={clearSelection} disabled={selectionBusy} leftIcon={<X size={15} />}>
-                Limpiar
-              </Button>
-            </div>
-          )}
-
-          {loading ? (
-            <div className={styles.loadingState} role="status" aria-live="polite" aria-label="Cargando etiquetas">
-              <Loader2 className={styles.spin} size={22} aria-hidden="true" />
-            </div>
-          ) : visibleTags.length === 0 ? (
-            <div className={styles.emptyState}>
-              <TagIcon size={26} />
-              <strong>No hay etiquetas en esta vista</strong>
-              <span>Crea una etiqueta nueva o cambia de carpeta.</span>
-            </div>
-          ) : (
-            <div className={styles.tableWrap}>
-              <table className={styles.table} data-ristak-table data-ristak-table-element>
-                <thead>
-                  <tr>
-                    <th className={styles.selectionHead}>
-                      <input
-                        type="checkbox"
-                        aria-label="Seleccionar etiquetas visibles"
-                        checked={allVisibleSelected}
-                        disabled={visibleSelectableTags.length === 0}
-                        onChange={toggleVisibleSelection}
-                      />
-                    </th>
-                    <th>Etiqueta</th>
-                    <th>Contactos</th>
-                    <th>Carpeta</th>
-                    <th>Origen</th>
-                    <th aria-label="Acciones" />
-                  </tr>
-                </thead>
-                <tbody>
-                  {visibleTags.map(tag => {
-                    const systemTag = tag.isSystem
-                    const selected = !systemTag && selectedTagIds.has(tag.id)
-                    const dragging = draggingTagIds.includes(tag.id)
-                    return (
-                    <tr
-                      key={tag.id}
-                      className={`${systemTag ? styles.lockedRow : styles.draggableRow} ${selected ? styles.rowSelected : ''} ${dragging ? styles.rowDragging : ''}`}
-                      draggable={!selectionBusy && !systemTag}
-                      onDragStart={(event) => handleTagDragStart(tag, event)}
-                      onDragEnd={handleDragEnd}
-                    >
-                      <td className={styles.selectionCell}>
-                        <input
-                          type="checkbox"
-                          aria-label={systemTag ? `${tag.name} protegida por el sistema` : `Seleccionar ${tag.name}`}
-                          checked={selected}
-                          disabled={systemTag || selectionBusy}
-                          onChange={() => toggleTagSelection(tag.id)}
-                          onClick={(event) => event.stopPropagation()}
-                        />
-                      </td>
-                      <td>
-                        <strong>{tag.name}</strong>
-                        {systemTag && <span>Se asigna sola según la actividad del contacto.</span>}
-                      </td>
-                      <td>
-                        {systemTag
-                          ? <Badge variant="info">Automática</Badge>
-                          : (tag.usageCount === 1 ? '1 contacto' : `${tag.usageCount || 0} contactos`)}
-                      </td>
-                      <td>{systemTag ? '-' : getFolderName(folders, tag.folderId)}</td>
-                      <td>{getSourceLabel(tag)}</td>
-                      <td>
-                        {systemTag ? (
-                          <span className={styles.lockedAction}>Protegida</span>
-                        ) : (
-                          <div className={styles.rowActions}>
-                            <button type="button" onClick={() => openEditEditor(tag)} aria-label={`Editar ${tag.name}`} title="Editar">
-                              <Edit3 size={15} />
-                            </button>
-                            <button type="button" onClick={() => handleDeleteTag(tag)} aria-label={`Eliminar ${tag.name}`} title="Eliminar">
-                              <Trash2 size={15} />
-                            </button>
-                          </div>
-                        )}
-                      </td>
-                    </tr>
-                    )
-                  })}
-                </tbody>
-              </table>
-            </div>
-          )}
+          <Table<ContactTag>
+            initialColumns={tagColumns}
+            data={visibleTags}
+            keyExtractor={(tag) => tag.id}
+            loading={loading}
+            emptyMessage="No hay etiquetas en esta vista"
+            searchable={false}
+            paginated={false}
+            showColumnEditor={false}
+            selectionActions={tagSelectionToolbar}
+            rowSelection={{
+              selectedKeys: Array.from(selectedTagIds),
+              onChange: (nextSelectedIds) => setSelectedTagIds(new Set(nextSelectedIds)),
+              isRowDisabled: (tag) => tag.isSystem,
+              getRowLabel: (tag) => tag.name,
+              selectVisibleLabel: 'Seleccionar etiquetas visibles'
+            }}
+            getRowProps={(tag) => {
+              const dragging = draggingTagIds.includes(tag.id)
+              return {
+                className: `${tag.isSystem ? styles.lockedRow : styles.draggableRow} ${dragging ? styles.rowDragging : ''}`,
+                draggable: !selectionBusy && !tag.isSystem,
+                onDragStart: (event) => handleTagDragStart(tag, event),
+                onDragEnd: handleDragEnd
+              }
+            }}
+          />
         </main>
       </div>
 

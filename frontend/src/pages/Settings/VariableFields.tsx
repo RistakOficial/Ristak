@@ -3,13 +3,12 @@ import {
   Copy,
   Edit3,
   Hash as HashIcon,
-  Loader2,
   Plus,
   Save,
   Trash2,
   X
 } from 'lucide-react'
-import { Button, PageHeader, SearchField } from '@/components/common'
+import { Button, PageHeader, SearchField, Table, TableSelectionToolbar, type Column } from '@/components/common'
 import { useNotification } from '@/contexts/NotificationContext'
 import {
   variableFieldsService,
@@ -110,8 +109,6 @@ export const VariableFields: React.FC = () => {
   )
 
   const selectedCount = selectedFields.length
-  const visibleSelectedCount = visibleFields.filter(field => selectedFieldIds.has(field.id)).length
-  const allVisibleSelected = visibleFields.length > 0 && visibleSelectedCount === visibleFields.length
 
   const patchDraft = (patch: Partial<VariableFieldDraft>) => {
     setDraft(current => ({ ...current, ...patch }))
@@ -147,27 +144,6 @@ export const VariableFields: React.FC = () => {
     } catch {
       showToast('error', 'No se pudo copiar', 'Cópialo manualmente.')
     }
-  }
-
-  const toggleFieldSelection = (fieldId: string) => {
-    setSelectedFieldIds(current => {
-      const next = new Set(current)
-      if (next.has(fieldId)) next.delete(fieldId)
-      else next.add(fieldId)
-      return next
-    })
-  }
-
-  const toggleVisibleSelection = () => {
-    setSelectedFieldIds(current => {
-      const next = new Set(current)
-      if (allVisibleSelected) {
-        visibleFields.forEach(field => next.delete(field.id))
-      } else {
-        visibleFields.forEach(field => next.add(field.id))
-      }
-      return next
-    })
   }
 
   const clearSelection = () => {
@@ -276,6 +252,70 @@ export const VariableFields: React.FC = () => {
     )
   }
 
+  const fieldSelectionToolbar = selectedCount > 0 ? (
+    <TableSelectionToolbar
+      count={selectedCount}
+      onClearSelection={clearSelection}
+    >
+      <Button
+        type="button"
+        variant="danger"
+        size="sm"
+        onClick={handleDeleteSelectedFields}
+        loading={deletingFields}
+        leftIcon={<Trash2 size={15} />}
+      >
+        Eliminar
+      </Button>
+    </TableSelectionToolbar>
+  ) : null
+
+  const fieldColumns: Column<VariableField>[] = [
+    {
+      key: 'label',
+      header: 'Campo',
+      render: (_value, field) => (
+        <span className={styles.primaryCell}>
+          <strong>{field.label}</strong>
+        </span>
+      )
+    },
+    {
+      key: 'parameter',
+      header: 'Parámetro',
+      render: (_value, field) => <code>{field.parameter || variableParameter(field)}</code>
+    },
+    {
+      key: 'value',
+      header: 'Valor',
+      render: (_value, field) => <code>{field.value || '-'}</code>
+    },
+    {
+      key: 'updatedAt',
+      header: 'Última actualización',
+      render: (_value, field) => formatDateTime(field.updatedAt)
+    },
+    {
+      key: 'actions',
+      header: '',
+      searchable: false,
+      sortable: false,
+      render: (_value, field) => (
+        <div className={styles.rowActions}>
+          <button type="button" onClick={() => copyText(field.parameter || variableParameter(field), 'Parámetro')} aria-label={`Copiar ${field.label}`} title="Copiar parámetro">
+            <Copy size={15} />
+          </button>
+          <button type="button" onClick={() => openEditEditor(field)} aria-label={`Editar ${field.label}`} title="Editar">
+            <Edit3 size={15} />
+          </button>
+          <button type="button" onClick={() => handleDeleteField(field)} aria-label={`Eliminar ${field.label}`} title="Eliminar">
+            <Trash2 size={15} />
+          </button>
+        </div>
+      )
+    }
+  ]
+
   return (
     <div className={styles.page}>
       <PageHeader
@@ -317,97 +357,23 @@ export const VariableFields: React.FC = () => {
             <span>{visibleFields.length} campos</span>
           </div>
 
-          {selectedCount > 0 && (
-            <div className={styles.selectionBar}>
-              <strong>{selectedCount} seleccionado{selectedCount === 1 ? '' : 's'}</strong>
-              <Button
-                type="button"
-                variant="danger"
-                size="sm"
-                onClick={handleDeleteSelectedFields}
-                loading={deletingFields}
-                leftIcon={<Trash2 size={15} />}
-              >
-                Eliminar
-              </Button>
-              <Button type="button" variant="ghost" size="sm" onClick={clearSelection} disabled={deletingFields} leftIcon={<X size={15} />}>
-                Limpiar
-              </Button>
-            </div>
-          )}
-
-          {loading ? (
-            <div className={styles.loadingState} role="status" aria-live="polite" aria-label="Cargando campos">
-              <Loader2 className={styles.spin} size={22} aria-hidden="true" />
-            </div>
-          ) : visibleFields.length === 0 ? (
-            <div className={styles.emptyState}>
-              <HashIcon size={26} />
-              <strong>No hay campos en esta vista</strong>
-              <span>Crea un campo nuevo o ajusta la búsqueda.</span>
-            </div>
-          ) : (
-            <div className={styles.tableWrap}>
-              <table className={`${styles.table} ${styles.plainTable}`} data-ristak-table data-ristak-table-element>
-                <thead>
-                  <tr>
-                    <th className={styles.selectionHead}>
-                      <input
-                        type="checkbox"
-                        aria-label="Seleccionar campos visibles"
-                        checked={allVisibleSelected}
-                        disabled={visibleFields.length === 0 || deletingFields}
-                        onChange={toggleVisibleSelection}
-                      />
-                    </th>
-                    <th>Campo</th>
-                    <th>Parámetro</th>
-                    <th>Valor</th>
-                    <th>Última actualización</th>
-                    <th aria-label="Acciones" />
-                  </tr>
-                </thead>
-                <tbody>
-                  {visibleFields.map(field => {
-                    const selected = selectedFieldIds.has(field.id)
-                    return (
-                    <tr key={field.id} className={selected ? styles.rowSelected : ''}>
-                      <td className={styles.selectionCell}>
-                        <input
-                          type="checkbox"
-                          aria-label={`Seleccionar ${field.label}`}
-                          checked={selected}
-                          disabled={deletingFields}
-                          onChange={() => toggleFieldSelection(field.id)}
-                          onClick={(event) => event.stopPropagation()}
-                        />
-                      </td>
-                      <td className={styles.primaryCell}>
-                        <strong>{field.label}</strong>
-                      </td>
-                      <td><code>{field.parameter || variableParameter(field)}</code></td>
-                      <td><code>{field.value || '-'}</code></td>
-                      <td>{formatDateTime(field.updatedAt)}</td>
-                      <td>
-                        <div className={styles.rowActions}>
-                          <button type="button" onClick={() => copyText(field.parameter || variableParameter(field), 'Parámetro')} aria-label={`Copiar ${field.label}`} title="Copiar parámetro">
-                            <Copy size={15} />
-                          </button>
-                          <button type="button" onClick={() => openEditEditor(field)} aria-label={`Editar ${field.label}`} title="Editar">
-                            <Edit3 size={15} />
-                          </button>
-                          <button type="button" onClick={() => handleDeleteField(field)} aria-label={`Eliminar ${field.label}`} title="Eliminar">
-                            <Trash2 size={15} />
-                          </button>
-                        </div>
-                      </td>
-                    </tr>
-                    )
-                  })}
-                </tbody>
-              </table>
-            </div>
-          )}
+          <Table<VariableField>
+            initialColumns={fieldColumns}
+            data={visibleFields}
+            keyExtractor={(field) => field.id}
+            loading={loading}
+            emptyMessage="No hay campos en esta vista"
+            searchable={false}
+            paginated={false}
+            showColumnEditor={false}
+            selectionActions={fieldSelectionToolbar}
+            rowSelection={{
+              selectedKeys: Array.from(selectedFieldIds),
+              onChange: (nextSelectedIds) => setSelectedFieldIds(new Set(nextSelectedIds)),
+              getRowLabel: (field) => field.label,
+              selectVisibleLabel: 'Seleccionar campos visibles'
+            }}
+          />
         </main>
       </div>
 

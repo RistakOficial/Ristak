@@ -4,15 +4,13 @@ import {
   Edit3,
   ExternalLink,
   Hash as HashIcon,
-  Link2,
-  Loader2,
   MousePointerClick,
   Plus,
   Save,
   Trash2,
   X
 } from 'lucide-react'
-import { Button, PageHeader, SearchField } from '@/components/common'
+import { Button, PageHeader, SearchField, Table, TableSelectionToolbar, type Column } from '@/components/common'
 import { useNotification } from '@/contexts/NotificationContext'
 import { useUrlStringState } from '@/hooks'
 import {
@@ -103,8 +101,6 @@ export const TriggerLinks: React.FC = () => {
   )
 
   const selectedCount = selectedLinks.length
-  const visibleSelectedCount = visibleLinks.filter(link => selectedLinkIds.has(link.id)).length
-  const allVisibleSelected = visibleLinks.length > 0 && visibleSelectedCount === visibleLinks.length
 
   const patchDraft = (patch: Partial<TriggerLinkDraft>) => {
     setDraft(current => ({ ...current, ...patch }))
@@ -139,27 +135,6 @@ export const TriggerLinks: React.FC = () => {
     } catch {
       showToast('error', 'No se pudo copiar', 'Copia el enlace manualmente.')
     }
-  }
-
-  const toggleLinkSelection = (linkId: string) => {
-    setSelectedLinkIds(current => {
-      const next = new Set(current)
-      if (next.has(linkId)) next.delete(linkId)
-      else next.add(linkId)
-      return next
-    })
-  }
-
-  const toggleVisibleSelection = () => {
-    setSelectedLinkIds(current => {
-      const next = new Set(current)
-      if (allVisibleSelected) {
-        visibleLinks.forEach(link => next.delete(link.id))
-      } else {
-        visibleLinks.forEach(link => next.add(link.id))
-      }
-      return next
-    })
   }
 
   const clearSelection = () => {
@@ -259,6 +234,78 @@ export const TriggerLinks: React.FC = () => {
     )
   }
 
+  const linkSelectionToolbar = selectedCount > 0 ? (
+    <TableSelectionToolbar
+      count={selectedCount}
+      onClearSelection={clearSelection}
+    >
+      <Button
+        type="button"
+        variant="danger"
+        size="sm"
+        onClick={handleDeleteSelectedLinks}
+        loading={deletingLinks}
+        leftIcon={<Trash2 size={15} />}
+      >
+        Eliminar
+      </Button>
+    </TableSelectionToolbar>
+  ) : null
+
+  const linkColumns: Column<TriggerLink>[] = [
+    {
+      key: 'name',
+      header: 'Enlace',
+      render: (_value, link) => (
+        <span className={styles.primaryCell}>
+          <strong>{link.name}</strong>
+          <span>{link.publicUrl}</span>
+        </span>
+      )
+    },
+    {
+      key: 'publicId',
+      header: 'Parámetro',
+      render: (_value, link) => <code>{triggerLinkParameter(link)}</code>
+    },
+    {
+      key: 'destinationUrl',
+      header: 'Destino',
+      render: (_value, link) => <code>{link.destinationUrl}</code>
+    },
+    {
+      key: 'clickCount',
+      header: 'Disparos'
+    },
+    {
+      key: 'lastClickedAt',
+      header: 'Último disparo',
+      render: (_value, link) => formatDateTime(link.lastClickedAt)
+    },
+    {
+      key: 'actions',
+      header: '',
+      searchable: false,
+      sortable: false,
+      render: (_value, link) => (
+        <div className={styles.rowActions}>
+          <button type="button" onClick={() => copyText(triggerLinkParameter(link), 'Parámetro')} aria-label={`Copiar ${link.name}`} title="Copiar parámetro">
+            <Copy size={15} />
+          </button>
+          <button type="button" onClick={() => window.open(link.publicUrl, '_blank', 'noopener,noreferrer')} aria-label={`Abrir ${link.name}`} title="Abrir">
+            <ExternalLink size={15} />
+          </button>
+          <button type="button" onClick={() => openEditEditor(link)} aria-label={`Editar ${link.name}`} title="Editar">
+            <Edit3 size={15} />
+          </button>
+          <button type="button" onClick={() => handleDeleteLink(link)} aria-label={`Eliminar ${link.name}`} title="Eliminar">
+            <Trash2 size={15} />
+          </button>
+        </div>
+      )
+    }
+  ]
+
   const renderFilterButton = () => (
     <div className={`${styles.folderRow} ${styles.folderSystemRow} ${styles.folderSystemRowActive}`}>
       <button type="button" aria-current="true">
@@ -304,103 +351,23 @@ export const TriggerLinks: React.FC = () => {
             <span>{visibleLinks.length} enlaces</span>
           </div>
 
-          {selectedCount > 0 && (
-            <div className={styles.selectionBar}>
-              <strong>{selectedCount} seleccionado{selectedCount === 1 ? '' : 's'}</strong>
-              <Button
-                type="button"
-                variant="danger"
-                size="sm"
-                onClick={handleDeleteSelectedLinks}
-                loading={deletingLinks}
-                leftIcon={<Trash2 size={15} />}
-              >
-                Eliminar
-              </Button>
-              <Button type="button" variant="ghost" size="sm" onClick={clearSelection} disabled={deletingLinks} leftIcon={<X size={15} />}>
-                Limpiar
-              </Button>
-            </div>
-          )}
-
-          {loading ? (
-            <div className={styles.loadingState} role="status" aria-live="polite" aria-label="Cargando enlaces">
-              <Loader2 className={styles.spin} size={22} aria-hidden="true" />
-            </div>
-          ) : visibleLinks.length === 0 ? (
-            <div className={styles.emptyState}>
-              <Link2 size={26} />
-              <strong>No hay enlaces en esta vista</strong>
-              <span>Crea un enlace nuevo o ajusta la búsqueda.</span>
-            </div>
-          ) : (
-            <div className={styles.tableWrap}>
-              <table className={`${styles.table} ${styles.plainTable}`} data-ristak-table data-ristak-table-element>
-                <thead>
-                  <tr>
-                    <th className={styles.selectionHead}>
-                      <input
-                        type="checkbox"
-                        aria-label="Seleccionar enlaces visibles"
-                        checked={allVisibleSelected}
-                        disabled={visibleLinks.length === 0 || deletingLinks}
-                        onChange={toggleVisibleSelection}
-                      />
-                    </th>
-                    <th>Enlace</th>
-                    <th>Parámetro</th>
-                    <th>Destino</th>
-                    <th>Disparos</th>
-                    <th>Último disparo</th>
-                    <th aria-label="Acciones" />
-                  </tr>
-                </thead>
-                <tbody>
-                  {visibleLinks.map(link => {
-                    const selected = selectedLinkIds.has(link.id)
-                    return (
-                    <tr key={link.id} className={selected ? styles.rowSelected : ''}>
-                      <td className={styles.selectionCell}>
-                        <input
-                          type="checkbox"
-                          aria-label={`Seleccionar ${link.name}`}
-                          checked={selected}
-                          disabled={deletingLinks}
-                          onChange={() => toggleLinkSelection(link.id)}
-                          onClick={(event) => event.stopPropagation()}
-                        />
-                      </td>
-                      <td className={styles.primaryCell}>
-                        <strong>{link.name}</strong>
-                        <span>{link.publicUrl}</span>
-                      </td>
-                      <td><code>{triggerLinkParameter(link)}</code></td>
-                      <td><code>{link.destinationUrl}</code></td>
-                      <td>{link.clickCount}</td>
-                      <td>{formatDateTime(link.lastClickedAt)}</td>
-                      <td>
-                        <div className={styles.rowActions}>
-                          <button type="button" onClick={() => copyText(triggerLinkParameter(link), 'Parámetro')} aria-label={`Copiar ${link.name}`} title="Copiar parámetro">
-                            <Copy size={15} />
-                          </button>
-                          <button type="button" onClick={() => window.open(link.publicUrl, '_blank', 'noopener,noreferrer')} aria-label={`Abrir ${link.name}`} title="Abrir">
-                            <ExternalLink size={15} />
-                          </button>
-                          <button type="button" onClick={() => openEditEditor(link)} aria-label={`Editar ${link.name}`} title="Editar">
-                            <Edit3 size={15} />
-                          </button>
-                          <button type="button" onClick={() => handleDeleteLink(link)} aria-label={`Eliminar ${link.name}`} title="Eliminar">
-                            <Trash2 size={15} />
-                          </button>
-                        </div>
-                      </td>
-                    </tr>
-                    )
-                  })}
-                </tbody>
-              </table>
-            </div>
-          )}
+          <Table<TriggerLink>
+            initialColumns={linkColumns}
+            data={visibleLinks}
+            keyExtractor={(link) => link.id}
+            loading={loading}
+            emptyMessage="No hay enlaces en esta vista"
+            searchable={false}
+            paginated={false}
+            showColumnEditor={false}
+            selectionActions={linkSelectionToolbar}
+            rowSelection={{
+              selectedKeys: Array.from(selectedLinkIds),
+              onChange: (nextSelectedIds) => setSelectedLinkIds(new Set(nextSelectedIds)),
+              getRowLabel: (link) => link.name,
+              selectVisibleLabel: 'Seleccionar enlaces visibles'
+            }}
+          />
         </main>
       </div>
 

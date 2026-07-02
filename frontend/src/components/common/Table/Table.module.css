@@ -316,6 +316,12 @@ body.light input.selectionCheckbox:checked:hover::after {
   opacity: 0.85;
 }
 
+.table tbody tr.selectedRow,
+.table tbody tr.selectedRow:hover {
+  background: var(--accent-soft);
+  opacity: 1;
+}
+
 .table tbody tr:last-child {
   border-bottom: none;
 }
