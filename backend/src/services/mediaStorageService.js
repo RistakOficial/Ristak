@@ -167,12 +167,110 @@ function buildClientAccountRootPath(accountId = DEFAULT_CLIENT_ACCOUNT_ID) {
   return [CLIENT_ACCOUNT_ROOT_FOLDER, normalizeClientAccountId(accountId)].join('/')
 }
 
+// ── Slug legible, estable y ÚNICO por cuenta (carpeta raíz en el Bunny central) ──
+// Todas las instalaciones comparten el MISMO Bunny, así que la carpeta de cada
+// cliente debe ser: (1) legible para navegar la bodega ("alexis-fitness-a1b2c3")
+// y (2) única, para que dos instalaciones jamás se pisen ni mezclen datos entre
+// clientes. Por eso el slug = nombre-del-negocio + sufijo corto determinístico
+// derivado del id real de la cuenta.
+const ACCOUNT_SLUG_CACHE_TTL_MS = Math.max(
+  30_000,
+  Number(process.env.ACCOUNT_SLUG_CACHE_TTL_MS || 5 * 60 * 1000) || 5 * 60 * 1000
+)
+// Caché keyeado por cuenta: dos ids distintos (p.ej. una subida que resuelve el
+// locationId real y otra que cae a 'default') NUNCA deben contaminarse entre sí.
+const accountSlugCache = new Map()
+const accountSlugInflight = new Map()
+
+export function resetAccountSlugCache() {
+  accountSlugCache.clear()
+  accountSlugInflight.clear()
+}
+
+function slugifyAccountName(value = '') {
+  return cleanString(value)
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 40)
+}
+
+function shortAccountSuffix(accountId = '') {
+  // Sufijo corto y estable derivado del id real de la cuenta: garantiza unicidad
+  // en el Bunny compartido sin que las instalaciones tengan que coordinarse.
+  const seed = cleanString(accountId) || DEFAULT_CLIENT_ACCOUNT_ID
+  return crypto.createHash('sha1').update(seed).digest('hex').slice(0, 6)
+}
+
+export async function resolveAccountSlug(accountId = DEFAULT_CLIENT_ACCOUNT_ID) {
+  const key = normalizeClientAccountId(accountId)
+  const cached = accountSlugCache.get(key)
+  if (cached && cached.expiresAt > Date.now()) return cached.value
+  const inflight = accountSlugInflight.get(key)
+  if (inflight) return inflight
+
+  const promise = (async () => {
+    try {
+      // 1) Un slug ya guardado manda (estable: no cambia aunque cambie el nombre
+      //    del negocio, para no romper rutas ya creadas). Editable desde el panel.
+      const row = await db
+        .get('SELECT account_slug, account_label FROM storage_settings WHERE id = 1')
+        .catch(() => null)
+      let slug = cleanString(row?.account_slug)
+      let label = cleanString(row?.account_label)
+
+      if (!slug) {
+        // 2) Derivar SOLO del nombre del negocio (users.business_name). El nombre
+        //    de la persona o el email no sirven de carpeta: queremos el negocio.
+        const userRow = await db
+          .get('SELECT business_name FROM users ORDER BY id ASC LIMIT 1')
+          .catch(() => null)
+        const businessName = cleanString(userRow?.business_name)
+        const nameBase = slugifyAccountName(businessName)
+        if (nameBase) {
+          // Nombre real del negocio → carpeta legible + sufijo anti-colisión (dos
+          // negocios homónimos en el Bunny compartido jamás se pisan). Se fija.
+          label = businessName
+          slug = `${nameBase}-${shortAccountSuffix(accountId)}`
+          await db
+            .run(
+              'UPDATE storage_settings SET account_slug = ?, account_label = ?, updated_at = CURRENT_TIMESTAMP WHERE id = 1',
+              [slug, label]
+            )
+            .catch(() => {})
+        } else {
+          // Aún sin nombre de negocio → usamos el id técnico tal cual (ya es único)
+          // sin persistir, para que se "cure" al slug legible al configurarlo.
+          slug = normalizeClientAccountId(accountId)
+        }
+      }
+
+      const value = { slug: normalizeClientAccountId(slug), label }
+      accountSlugCache.set(key, { value, expiresAt: Date.now() + ACCOUNT_SLUG_CACHE_TTL_MS })
+      return value
+    } finally {
+      accountSlugInflight.delete(key)
+    }
+  })()
+
+  accountSlugInflight.set(key, promise)
+  return promise
+}
+
 function normalizeClientAccountContext(input = {}) {
   const id = normalizeClientAccountId(input.id || input.clientAccountId || input.client_account_id || input.accountId || input.account_id || input.locationId || input.location_id)
-  return {
-    id,
-    rootPath: buildClientAccountRootPath(id)
-  }
+  // Si ya viene un slug/rootPath resuelto (contexto legible por cliente) se
+  // respeta; si no, caemos al esquema legacy accounts/<id> por compatibilidad.
+  const slug = cleanString(input.slug) ? normalizeClientAccountId(input.slug, '') : ''
+  const rootPath = cleanString(input.rootPath)
+    || (slug ? [CLIENT_ACCOUNT_ROOT_FOLDER, slug].join('/') : buildClientAccountRootPath(id))
+  const context = { id, rootPath }
+  if (slug) context.slug = slug
+  const label = cleanString(input.label)
+  if (label) context.label = label
+  return context
 }
 
 function normalizeModule(value = '') {
@@ -321,7 +419,10 @@ async function resolveClientAccountContext(input = {}) {
     DEFAULT_CLIENT_ACCOUNT_ID
   )
 
-  return normalizeClientAccountContext({ id: accountId })
+  // El id sigue siendo el identificador técnico (para lógica/legacy/migración),
+  // pero la carpeta raíz del cliente usa el slug legible: accounts/<slug>/…
+  const { slug, label } = await resolveAccountSlug(accountId)
+  return normalizeClientAccountContext({ id: accountId, slug, label })
 }
 
 function mapAssetRow(row) {

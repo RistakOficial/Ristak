@@ -1870,7 +1870,12 @@ async function initTables() {
       ['bunny_stream_enabled', 'INTEGER DEFAULT 1'],
       ['bunny_stream_library_name', 'TEXT'],
       ['bunny_stream_collection_id', 'TEXT'],
-      ['bunny_stream_collection_name', 'TEXT']
+      ['bunny_stream_collection_name', 'TEXT'],
+      // Slug legible y estable de la cuenta para las carpetas del Bunny central.
+      // account_slug = nombre de la carpeta raíz del cliente (p.ej. "alexis-fitness-a1b2c3").
+      // account_label = nombre bonito del negocio para documentar los _LEEME.txt.
+      ['account_slug', 'TEXT'],
+      ['account_label', 'TEXT']
     ]) {
       try {
         if (usePostgres) {
