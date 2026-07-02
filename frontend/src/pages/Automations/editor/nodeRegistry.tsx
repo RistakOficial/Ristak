@@ -98,6 +98,7 @@ export type ConfigFieldType =
   | 'webhookUrl'
   | 'catalogSelect'
   | 'catalogTags'
+  | 'postSelect'
   | 'weekdays'
   | 'info'
 
@@ -111,6 +112,8 @@ export interface ConfigField {
   options?: ConfigFieldOption[]
   /** Catálogo CRM para selects dinámicos (etiquetas, calendarios…) */
   catalog?: CatalogKind
+  /** Sólo para postSelect: plataforma de las publicaciones (FB/IG) a listar */
+  platform?: 'facebook' | 'instagram'
   /** Sólo para catálogos de etiquetas: incluye estados internos calculados */
   includeSystemTags?: boolean
   /** Muestra las variables de contacto disponibles bajo el campo */
@@ -1108,7 +1111,7 @@ const TRIGGERS: NodeDefinition[] = [
     category: 'trigger-fbig',
     description: 'Se activa con comentarios en tus publicaciones de Facebook',
     icon: Facebook,
-    accent: 'green',
+    accent: 'blue',
     addButtonLabel: 'Responder comentario',
     allowedChannels: ['messenger'],
     defaultConfig: () => ({
@@ -1123,13 +1126,12 @@ const TRIGGERS: NodeDefinition[] = [
       dmReply: ''
     }),
     fields: [
-      { key: 'post', label: 'Publicación', type: 'text', placeholder: 'URL o ID de la publicación', required: true },
+      { key: 'post', label: 'Publicación', type: 'postSelect', platform: 'facebook', help: 'Elige una publicación o deja "Todas" para disparar con cualquier comentario.' },
       { key: 'keywords', label: 'Palabras clave (opcional)', type: 'keywords', placeholder: 'Escribe y presiona Enter', advanced: true },
       {
         key: 'match',
         label: 'Regla de coincidencia',
         type: 'select',
-        showIf: (config) => Boolean(str(config.post)),
         options: [
           { value: 'contains', label: 'Contiene' },
           { value: 'exact', label: 'Coincidencia exacta' }
@@ -1139,36 +1141,36 @@ const TRIGGERS: NodeDefinition[] = [
         key: 'allowedComments',
         label: 'Comentarios permitidos',
         type: 'select',
-        showIf: (config) => Boolean(str(config.post)),
         options: [
           { value: 'all', label: 'Todos los comentarios' },
           { value: 'first_only', label: 'Solo el primer comentario de cada persona' }
         ]
       },
-      { key: 'avoidDuplicates', label: 'Evitar respuestas duplicadas', type: 'toggle', showIf: (config) => Boolean(str(config.post)) },
-      { key: 'publicReplyEnabled', label: 'Responder públicamente al comentario', type: 'toggle', showIf: (config) => Boolean(str(config.post)) },
+      { key: 'avoidDuplicates', label: 'Evitar respuestas duplicadas', type: 'toggle' },
+      { key: 'publicReplyEnabled', label: 'Responder públicamente al comentario', type: 'toggle' },
       {
         key: 'publicReply',
         label: 'Respuesta pública',
         type: 'textarea',
         placeholder: '¡Gracias por comentar! Te escribimos por privado…',
         showVariables: true,
-        showIf: (config) => Boolean(str(config.post)) && Boolean(config.publicReplyEnabled)
+        showIf: (config) => Boolean(config.publicReplyEnabled)
       },
-      { key: 'dmReplyEnabled', label: 'Responder por Messenger', type: 'toggle', showIf: (config) => Boolean(str(config.post)) },
+      { key: 'dmReplyEnabled', label: 'Responder por Messenger', type: 'toggle' },
       {
         key: 'dmReply',
         label: 'Mensaje por Messenger',
         type: 'textarea',
         placeholder: 'Hola {{nombre}}, vimos tu comentario…',
         showVariables: true,
-        showIf: (config) => Boolean(str(config.post)) && Boolean(config.dmReplyEnabled)
+        showIf: (config) => Boolean(config.dmReplyEnabled)
       }
     ],
     outputs: () => SINGLE_OUTPUT,
     summary: (config) => ({
-      text: str(config.post) ? `Cuando comenten tu publicación de Facebook${triggerFiltersSentence(config.filters)}` : undefined,
-      empty: 'Selecciona la publicación'
+      text: str(config.post)
+        ? `Cuando comenten esa publicación de Facebook${triggerFiltersSentence(config.filters)}`
+        : `Cuando comenten cualquier publicación de Facebook${triggerFiltersSentence(config.filters)}`
     })
   },
   {
@@ -1179,7 +1181,7 @@ const TRIGGERS: NodeDefinition[] = [
     category: 'trigger-fbig',
     description: 'Se activa con comentarios en tus publicaciones o reels',
     icon: Instagram,
-    accent: 'green',
+    accent: 'pink',
     addButtonLabel: 'Responder comentario',
     allowedChannels: ['instagram'],
     defaultConfig: () => ({
@@ -1193,13 +1195,12 @@ const TRIGGERS: NodeDefinition[] = [
       dmReply: ''
     }),
     fields: [
-      { key: 'post', label: 'Publicación o reel', type: 'text', placeholder: 'URL o ID de la publicación', required: true },
+      { key: 'post', label: 'Publicación o reel', type: 'postSelect', platform: 'instagram', help: 'Elige una publicación o reel, o deja "Todas" para disparar con cualquier comentario.' },
       { key: 'keywords', label: 'Palabras clave (opcional)', type: 'keywords', placeholder: 'Escribe y presiona Enter', advanced: true },
       {
         key: 'match',
         label: 'Regla de coincidencia',
         type: 'select',
-        showIf: (config) => Boolean(str(config.post)),
         options: [
           { value: 'contains', label: 'Contiene' },
           { value: 'exact', label: 'Coincidencia exacta' }
@@ -1209,35 +1210,35 @@ const TRIGGERS: NodeDefinition[] = [
         key: 'allowedComments',
         label: 'Comentarios permitidos',
         type: 'select',
-        showIf: (config) => Boolean(str(config.post)),
         options: [
           { value: 'all', label: 'Todos los comentarios' },
           { value: 'first_only', label: 'Solo el primer comentario de cada persona' }
         ]
       },
-      { key: 'publicReplyEnabled', label: 'Responder públicamente al comentario', type: 'toggle', showIf: (config) => Boolean(str(config.post)) },
+      { key: 'publicReplyEnabled', label: 'Responder públicamente al comentario', type: 'toggle' },
       {
         key: 'publicReply',
         label: 'Respuesta pública',
         type: 'textarea',
         placeholder: '¡Gracias por comentar!',
         showVariables: true,
-        showIf: (config) => Boolean(str(config.post)) && Boolean(config.publicReplyEnabled)
+        showIf: (config) => Boolean(config.publicReplyEnabled)
       },
-      { key: 'dmReplyEnabled', label: 'Responder por Instagram Direct', type: 'toggle', showIf: (config) => Boolean(str(config.post)) },
+      { key: 'dmReplyEnabled', label: 'Responder por Instagram Direct', type: 'toggle' },
       {
         key: 'dmReply',
         label: 'Mensaje por Instagram Direct',
         type: 'textarea',
         placeholder: 'Hola {{nombre}}, vimos tu comentario…',
         showVariables: true,
-        showIf: (config) => Boolean(str(config.post)) && Boolean(config.dmReplyEnabled)
+        showIf: (config) => Boolean(config.dmReplyEnabled)
       }
     ],
     outputs: () => SINGLE_OUTPUT,
     summary: (config) => ({
-      text: str(config.post) ? `Cuando comenten tu publicación de Instagram${triggerFiltersSentence(config.filters)}` : undefined,
-      empty: 'Selecciona la publicación'
+      text: str(config.post)
+        ? `Cuando comenten esa publicación de Instagram${triggerFiltersSentence(config.filters)}`
+        : `Cuando comenten cualquier publicación de Instagram${triggerFiltersSentence(config.filters)}`
     })
   },
   {

@@ -456,6 +456,33 @@ export interface MetaSocialCommentReplyPayload {
   externalId?: string
 }
 
+// Publicación de FB/IG para el selector de disparadores, condiciones y acciones.
+export interface MetaSocialPost {
+  id: string
+  platform: 'facebook' | 'instagram'
+  type: string
+  message: string
+  imageUrl: string
+  permalink: string
+  postedAt: string
+}
+
+export interface MetaSocialPostsResponse {
+  success: boolean
+  posts: MetaSocialPost[]
+  total: number
+  hasMore: boolean
+  error?: string
+}
+
+export interface MetaSocialPostsQuery {
+  platform: string
+  search?: string
+  limit?: number
+  offset?: number
+  refresh?: boolean
+}
+
 export interface WhatsAppQrSession {
   id: string
   phoneNumberId: string
@@ -493,6 +520,14 @@ export const whatsappApiService = {
   sendMetaDirectTestMessage: (payload: { to: string; text?: string }) => apiClient.post<WhatsAppApiSendResponse>('/whatsapp-api/meta/messages/test', payload),
   sendMetaSocialText: (payload: MetaSocialTextSendPayload) => apiClient.post<WhatsAppApiSendResponse>('/whatsapp-api/meta/social/messages/text', payload),
   sendMetaSocialCommentReply: (payload: MetaSocialCommentReplyPayload) => apiClient.post<WhatsAppApiSendResponse>('/whatsapp-api/meta/social/comments/reply', payload),
+  listMetaSocialPosts: (params: MetaSocialPostsQuery) => {
+    const qs = new URLSearchParams({ platform: params.platform })
+    if (params.search) qs.set('search', params.search)
+    if (params.limit != null) qs.set('limit', String(params.limit))
+    if (params.offset != null) qs.set('offset', String(params.offset))
+    if (params.refresh) qs.set('refresh', '1')
+    return apiClient.get<MetaSocialPostsResponse>(`/whatsapp-api/meta/social/posts?${qs.toString()}`)
+  },
   syncMetaDirectHistory: () => apiClient.post<WhatsAppMetaDirectTestResponse>('/whatsapp-api/meta/sync-history'),
   disconnectMetaDirect: () => apiClient.post<WhatsAppApiStatus>('/whatsapp-api/meta/disconnect'),
   connect: (payload: WhatsAppApiConnectPayload) => apiClient.post<WhatsAppApiStatus>('/whatsapp-api/connect', payload),

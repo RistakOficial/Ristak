@@ -3056,6 +3056,7 @@ async function initTables() {
         message TEXT,
         image_url TEXT,
         permalink TEXT,
+        posted_at DATETIME,
         raw_json TEXT,
         fetched_at DATETIME DEFAULT CURRENT_TIMESTAMP,
         updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
@@ -4246,6 +4247,16 @@ async function initTables() {
           if (!err.message.includes('duplicate column') && !err.message.includes('already exists')) {
             throw err
           }
+        }
+      }
+
+      // Fecha de publicación (created_time FB / timestamp IG) para ordenar el
+      // selector de publicaciones por más reciente. Idempotente.
+      try {
+        await db.run('ALTER TABLE meta_social_posts ADD COLUMN posted_at DATETIME')
+      } catch (err) {
+        if (!err.message.includes('duplicate column') && !err.message.includes('already exists')) {
+          throw err
         }
       }
 

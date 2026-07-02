@@ -41,7 +41,7 @@ import {
   buildDefaultMessageTemplateSendComponents,
   ensureDefaultWhatsAppApiMessageTemplates
 } from '../services/messageTemplatesService.js'
-import { sendMetaSocialTextMessage, sendMetaSocialCommentReply } from '../services/metaSocialMessagingService.js'
+import { sendMetaSocialTextMessage, sendMetaSocialCommentReply, listMetaSocialPosts } from '../services/metaSocialMessagingService.js'
 import {
   getWhatsAppQrDripSettings,
   saveWhatsAppQrDripSettings
@@ -438,6 +438,30 @@ export async function sendMetaSocialCommentReplyView(req, res) {
     res.status(error.statusCode || 400).json({
       success: false,
       error: error.message || 'No se pudo responder el comentario'
+    })
+  }
+}
+
+// Lista las publicaciones (FB/IG) para el selector de disparadores, condiciones
+// del agente y acciones. Paginado + búsqueda por texto/ID, servido desde caché.
+export async function listMetaSocialPostsView(req, res) {
+  try {
+    const data = await listMetaSocialPosts({
+      platform: req.query?.platform,
+      search: req.query?.search,
+      limit: req.query?.limit,
+      offset: req.query?.offset,
+      refresh: req.query?.refresh === 'true' || req.query?.refresh === '1'
+    })
+    res.json({ success: true, ...data })
+  } catch (error) {
+    logger.error(`Error listando publicaciones Meta: ${error.message}`)
+    res.status(error.statusCode || 400).json({
+      success: false,
+      error: error.message || 'No se pudieron cargar las publicaciones',
+      posts: [],
+      total: 0,
+      hasMore: false
     })
   }
 }

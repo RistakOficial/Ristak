@@ -2,6 +2,7 @@ import React, { useEffect, useRef, useState } from 'react'
 import { Check, ChevronRight, Copy, Loader2, Pencil, Plus, RefreshCw, Save, Trash2, X } from 'lucide-react'
 import { cn } from '@/utils/cn'
 import type { AutomationWebhookActionTestResult } from '@/services/automationsService'
+import { MetaPostSelector } from '@/components/MetaPostSelector/MetaPostSelector'
 import { CustomSelect } from './config/configPrimitives'
 import { validateNodeConfig, type ConfigField, type NodeDefinition } from './nodeRegistry'
 import { genId, type WaitMessageSourceOption } from './flowUtils'
@@ -289,6 +290,21 @@ export const NodeConfigBubble: React.FC<NodeConfigBubbleProps> = ({
                 onChange({ ...config, [field.key]: value, [`${field.key}Name`]: label })
               }
               placeholder={field.placeholder || 'Selecciona una opción'}
+              aria-label={field.label}
+            />
+          </Field>
+        )
+
+      case 'postSelect':
+        return (
+          <Field key={field.key} label={field.label} help={field.help}>
+            <MetaPostSelector
+              platform={field.platform || 'facebook'}
+              value={str(config[field.key])}
+              valueLabel={str(config[`${field.key}Name`])}
+              onChange={(value, label) =>
+                onChange({ ...config, [field.key]: value, [`${field.key}Name`]: label })
+              }
               aria-label={field.label}
             />
           </Field>

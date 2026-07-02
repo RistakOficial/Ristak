@@ -567,6 +567,152 @@ async function resolveMetaPageTokenSafe(config) {
   })
 }
 
+// ─── Listado de publicaciones para el selector de disparadores/condiciones ───
+// Trae las publicaciones de la Página (FB published_posts) o de la cuenta (IG
+// media) paginando contra Graph, las cachea en meta_social_posts, y luego sirve
+// desde el caché con búsqueda por texto o ID. Así el dropdown carga rápido y la
+// carga fuerte contra Meta solo ocurre una vez cada POSTS_SYNC_TTL_MS.
+const POSTS_SYNC_TTL_MS = 10 * 60 * 1000
+const POSTS_MAX_SYNC = 200
+const postsSyncState = new Map() // 'facebook' | 'instagram' -> timestamp del último sync OK
+
+function normalizeSocialPostPlatform(platform) {
+  return String(platform || '').toLowerCase() === 'instagram' ? 'instagram' : 'facebook'
+}
+
+async function syncMetaSocialPostsFromGraph(platform, config, pageToken) {
+  const isIg = platform === 'instagram'
+  const businessId = isIg ? cleanString(config?.instagram_account_id) : cleanString(config?.page_id)
+  if (!businessId) return 0
+  const edge = isIg ? 'media' : 'published_posts'
+  const fields = isIg
+    ? 'id,caption,media_type,media_url,thumbnail_url,permalink,timestamp'
+    : 'id,message,story,full_picture,permalink_url,created_time'
+
+  let after = ''
+  let fetched = 0
+  const rows = []
+  while (fetched < POSTS_MAX_SYNC) {
+    const query = { fields, limit: 50 }
+    if (after) query.after = after
+    let data
+    try {
+      data = await metaSocialGraphRequest(`/${encodeURIComponent(businessId)}/${edge}`, { token: pageToken, query })
+    } catch (error) {
+      if (!rows.length) throw error // primer batch falla (permiso/token) → propaga
+      logger.warn(`[Meta posts] paginación cortada en ${platform}: ${error.message}`)
+      break
+    }
+    const items = Array.isArray(data?.data) ? data.data : []
+    for (const it of items) {
+      const id = cleanString(it?.id)
+      if (!id) continue
+      rows.push({
+        id,
+        message: isIg ? cleanString(it?.caption) : (cleanString(it?.message) || cleanString(it?.story)),
+        imageUrl: isIg ? cleanString(it?.thumbnail_url || it?.media_url) : cleanString(it?.full_picture),
+        permalink: isIg ? cleanString(it?.permalink) : cleanString(it?.permalink_url),
+        postType: isIg ? (cleanString(it?.media_type) || 'media') : 'post',
+        postedAt: cleanString(it?.timestamp || it?.created_time) || null,
+        raw: it
+      })
+    }
+    fetched += items.length
+    after = cleanString(data?.paging?.cursors?.after)
+    if (!after || !items.length) break
+  }
+
+  for (const r of rows) {
+    await db.run(`
+      INSERT INTO meta_social_posts (id, platform, post_type, message, image_url, permalink, posted_at, raw_json, fetched_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+      ON CONFLICT(id) DO UPDATE SET
+        platform = excluded.platform,
+        post_type = excluded.post_type,
+        message = COALESCE(NULLIF(excluded.message, ''), meta_social_posts.message),
+        image_url = COALESCE(NULLIF(excluded.image_url, ''), meta_social_posts.image_url),
+        permalink = COALESCE(NULLIF(excluded.permalink, ''), meta_social_posts.permalink),
+        posted_at = COALESCE(excluded.posted_at, meta_social_posts.posted_at),
+        raw_json = excluded.raw_json,
+        updated_at = CURRENT_TIMESTAMP
+    `, [r.id, platform, r.postType, r.message || null, r.imageUrl || null, r.permalink || null, r.postedAt, safeJson(r.raw)])
+      .catch((error) => logger.warn(`[Meta posts] no se pudo guardar ${r.id}: ${error.message}`))
+  }
+  return rows.length
+}
+
+export async function listMetaSocialPosts({ platform = 'facebook', search = '', limit = 25, offset = 0, refresh = false } = {}) {
+  const cleanPlatform = normalizeSocialPostPlatform(platform)
+  const config = await getMetaConfig().catch(() => null)
+  const businessId = cleanPlatform === 'instagram'
+    ? cleanString(config?.instagram_account_id)
+    : cleanString(config?.page_id)
+  if (!businessId) {
+    throw createMetaSocialMessageError(
+      cleanPlatform === 'instagram'
+        ? 'Conecta una cuenta de Instagram en Meta Ads para elegir publicaciones.'
+        : 'Selecciona la Página de Facebook en Meta Ads para elegir publicaciones.',
+      409
+    )
+  }
+
+  // FB puede estar cacheado como 'facebook' o (legado, desde comentarios) 'messenger'.
+  const platformFilter = cleanPlatform === 'instagram' ? ['instagram'] : ['facebook', 'messenger']
+  const inClause = platformFilter.map(() => '?').join(',')
+
+  const cachedCount = await db.get(
+    `SELECT COUNT(*) AS n FROM meta_social_posts WHERE platform IN (${inClause})`,
+    platformFilter
+  ).then((r) => Number(r?.n) || 0).catch(() => 0)
+
+  const lastSync = postsSyncState.get(cleanPlatform) || 0
+  const stale = (Date.now() - lastSync) > POSTS_SYNC_TTL_MS
+  if (refresh || stale || cachedCount === 0) {
+    try {
+      const pageToken = await resolveMetaPageAccessToken({ config })
+      const synced = await syncMetaSocialPostsFromGraph(cleanPlatform, config, pageToken)
+      postsSyncState.set(cleanPlatform, Date.now())
+      logger.info(`[Meta posts] ${cleanPlatform}: ${synced} publicaciones sincronizadas`)
+    } catch (error) {
+      if (cachedCount === 0) throw error // sin caché y sin poder traer → error claro al usuario
+      logger.warn(`[Meta posts] no se pudo refrescar ${cleanPlatform}, sirvo caché: ${error.message}`)
+    }
+  }
+
+  const cleanSearch = cleanString(search).toLowerCase()
+  const where = [`platform IN (${inClause})`]
+  const params = [...platformFilter]
+  if (cleanSearch) {
+    where.push('(LOWER(message) LIKE ? OR LOWER(id) LIKE ? OR LOWER(permalink) LIKE ?)')
+    const like = `%${cleanSearch}%`
+    params.push(like, like, like)
+  }
+  const whereSql = where.join(' AND ')
+
+  const total = await db.get(`SELECT COUNT(*) AS n FROM meta_social_posts WHERE ${whereSql}`, params)
+    .then((r) => Number(r?.n) || 0).catch(() => 0)
+  const safeLimit = Math.min(Math.max(Number(limit) || 25, 1), 100)
+  const safeOffset = Math.max(Number(offset) || 0, 0)
+  const rows = await db.all(
+    `SELECT id, platform, post_type, message, image_url, permalink, posted_at
+     FROM meta_social_posts WHERE ${whereSql}
+     ORDER BY (posted_at IS NULL), posted_at DESC, updated_at DESC
+     LIMIT ? OFFSET ?`,
+    [...params, safeLimit, safeOffset]
+  ).catch(() => [])
+
+  const posts = rows.map((r) => ({
+    id: r.id,
+    platform: r.platform === 'instagram' ? 'instagram' : 'facebook',
+    type: r.post_type || '',
+    message: r.message || '',
+    imageUrl: r.image_url || '',
+    permalink: r.permalink || '',
+    postedAt: r.posted_at || ''
+  }))
+  return { posts, total, hasMore: safeOffset + posts.length < total }
+}
+
 /**
  * Suscribe la Página de Facebook al webhook de la app (subscribed_apps).
  * Este es el paso que le dice a Meta "mándame los mensajes de esta Página".
