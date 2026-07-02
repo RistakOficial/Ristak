@@ -303,6 +303,11 @@ frontend debe tratarla como aceptada y refrescar el historial, no convertir ese
 `null` en un error local del globo.
 Los ACK de Baileys pueden llegar despues de que `sendMessage` ya devolvio el id;
 ese lapso debe tratarse como pendiente/enviado, nunca como error de la API.
+Si el QR esta temporalmente bloqueado por el lease de otra instancia durante un
+deploy o reinicio, los envios manuales y los fallback deben esperar y reintentar
+la apertura del socket en silencio. Ese lock no debe exponerse como globo rojo
+ni como toast de "no se envio" mientras el QR pueda recuperar el control y
+confirmar el mensaje.
 
 El respaldo QR se resuelve por telefono, no solo por el id exacto del numero API.
 Si el numero oficial y la conexion QR quedaron en filas distintas de

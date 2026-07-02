@@ -28,6 +28,10 @@ function normalizeDigits(value = '') {
   return String(value || '').replace(/\D/g, '')
 }
 
+function sqlFuture(offsetMs = 1500) {
+  return new Date(Date.now() + offsetMs).toISOString().slice(0, 19).replace('T', ' ')
+}
+
 function createFakeBaileysRuntime(sentMessages = []) {
   let messageIndex = 0
 
@@ -274,5 +278,33 @@ test('WhatsApp QR omite pausas automáticas para mensajes de chat manual', async
 
     assert.equal(sentMessages.length, 2)
     assert.deepEqual(sleeps, [])
+  })
+})
+
+test('WhatsApp QR espera un lease temporal de otra instancia antes de enviar', async () => {
+  const sentMessages = []
+
+  await withQrFixture(async ({ phoneNumberId }) => {
+    await db.run(`
+      INSERT INTO distributed_locks (name, owner_id, locked_until, updated_at)
+      VALUES (?, ?, ?, CURRENT_TIMESTAMP)
+    `, [`whatsapp-qr-session:${phoneNumberId}`, 'other-render-instance', sqlFuture()])
+
+    setBaileysRuntimeForTest(createFakeBaileysRuntime(sentMessages))
+
+    await sendWhatsAppQrTextMessage({
+      phoneNumberId,
+      to: CONTACT_PHONE,
+      text: 'Mensaje despues de esperar lease',
+      skipQrSendProtection: true
+    })
+
+    const lock = await db.get(
+      'SELECT owner_id FROM distributed_locks WHERE name = ?',
+      [`whatsapp-qr-session:${phoneNumberId}`]
+    )
+
+    assert.equal(sentMessages.length, 1)
+    assert.notEqual(lock.owner_id, 'other-render-instance')
   })
 })

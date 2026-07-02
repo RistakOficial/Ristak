@@ -26,6 +26,9 @@ const RECONNECT_MAX_DELAY_MS = 60000
 const MAX_RECONNECT_ATTEMPTS = 8
 const QR_SESSION_LEASE_TTL_MS = 90 * 1000
 const QR_SESSION_LEASE_HEARTBEAT_MS = 30 * 1000
+const QR_SESSION_LEASE_RETRY_INTERVAL_MS = 1000
+const QR_SESSION_LEASE_RETRY_BUFFER_MS = 500
+const QR_SESSION_LEASE_MAX_WAIT_MS = QR_SESSION_LEASE_TTL_MS + 5000
 const WA_WEB_VERSION_FETCH_TIMEOUT_MS = 4000
 const WA_WEB_VERSION_CACHE_TTL_MS = 10 * 60 * 1000
 const WA_WEB_VERSION_FALLBACK_CACHE_TTL_MS = 60 * 1000
@@ -1037,6 +1040,22 @@ function getSessionLeaseName(phoneNumberId) {
   return `whatsapp-qr-session:${phoneNumberId}`
 }
 
+function sleep(ms) {
+  return new Promise(resolve => setTimeout(resolve, ms))
+}
+
+function parseSqlUtcTimestampMs(value) {
+  const raw = cleanString(value)
+  if (!raw) return 0
+
+  const iso = raw
+    .replace(' ', 'T')
+    .replace(/(\.\d{3})\d+/, '$1')
+  const normalized = /(?:Z|[+-]\d{2}:?\d{2})$/i.test(iso) ? iso : `${iso}Z`
+  const parsed = Date.parse(normalized)
+  return Number.isFinite(parsed) ? parsed : 0
+}
+
 async function renewQrSessionLease(lease) {
   return renewDistributedLock(lease)
 }
@@ -1045,23 +1064,62 @@ async function releaseQrSessionLease(lease) {
   return releaseDistributedLock(lease)
 }
 
-async function acquireQrSessionLease(phoneNumberId) {
+async function getQrSessionLeaseSnapshot(phoneNumberId) {
+  return db.get(`
+    SELECT owner_id, locked_until
+    FROM distributed_locks
+    WHERE name = ?
+  `, [getSessionLeaseName(phoneNumberId)]).catch(() => null)
+}
+
+async function waitForQrSessionLeaseRetry(phoneNumberId, startedAt) {
+  const elapsedMs = Date.now() - startedAt
+  const remainingWaitMs = QR_SESSION_LEASE_MAX_WAIT_MS - elapsedMs
+  if (remainingWaitMs <= 0) return false
+
+  const snapshot = await getQrSessionLeaseSnapshot(phoneNumberId)
+  const lockedUntilMs = parseSqlUtcTimestampMs(snapshot?.locked_until)
+  const untilExpiryMs = lockedUntilMs ? lockedUntilMs - Date.now() : 0
+  const waitMs = Math.max(
+    250,
+    Math.min(
+      QR_SESSION_LEASE_RETRY_INTERVAL_MS,
+      remainingWaitMs,
+      untilExpiryMs > 0 ? untilExpiryMs + QR_SESSION_LEASE_RETRY_BUFFER_MS : QR_SESSION_LEASE_RETRY_INTERVAL_MS
+    )
+  )
+
+  await sleep(waitMs)
+  return true
+}
+
+async function acquireQrSessionLease(phoneNumberId, { waitForRelease = false, reason = 'socket' } = {}) {
   const existingLease = liveSessions.get(phoneNumberId)?.lease
   if (existingLease && await renewQrSessionLease(existingLease)) {
     return existingLease
   }
 
-  const { acquired, lock } = await acquireDistributedLock(
-    getSessionLeaseName(phoneNumberId),
-    QR_SESSION_LEASE_TTL_MS
-  )
-  if (!acquired) {
-    const error = new Error('Esta conexión QR ya está activa en otra instancia. El watchdog no abrirá otro socket para no desincronizar WhatsApp.')
-    error.code = 'whatsapp_qr_session_locked'
-    throw error
-  }
+  const startedAt = Date.now()
+  let didLogWait = false
 
-  return lock
+  while (true) {
+    const { acquired, lock } = await acquireDistributedLock(
+      getSessionLeaseName(phoneNumberId),
+      QR_SESSION_LEASE_TTL_MS
+    )
+    if (acquired) return lock
+
+    if (!waitForRelease || !(await waitForQrSessionLeaseRetry(phoneNumberId, startedAt))) {
+      const error = new Error('Esta conexión QR ya está activa en otra instancia. El watchdog no abrirá otro socket para no desincronizar WhatsApp.')
+      error.code = 'whatsapp_qr_session_locked'
+      throw error
+    }
+
+    if (!didLogWait) {
+      didLogWait = true
+      logger.warn(`[WhatsApp QR] Esperando lease activo de sesión ${phoneNumberId} para ${reason}; se reintentará el envío sin mostrar error al chat`)
+    }
+  }
 }
 
 function startQrSessionLeaseHeartbeat(phoneNumberId, lease) {
@@ -1754,7 +1812,7 @@ function closeLiveSession(phoneNumberId, { releaseLease = true } = {}) {
   }
 }
 
-async function openSocket(phone, { requireConsent = true, reconnectAttempt = 0, openDeferred = null } = {}) {
+async function openSocket(phone, { requireConsent = true, reconnectAttempt = 0, openDeferred = null, waitForLease = false, leaseReason = 'socket' } = {}) {
   const existing = await getSessionRow(phone.id)
   if (requireConsent && Number(existing?.consent_accepted || 0) !== 1) {
     throw new Error('Primero acepta el riesgo de usar conexión por QR para este número')
@@ -1768,7 +1826,7 @@ async function openSocket(phone, { requireConsent = true, reconnectAttempt = 0, 
     makeCacheableSignalKeyStore
   } = baileys
   const { state, saveCreds } = await useQrDbAuthState(phone.id, baileys)
-  const lease = await acquireQrSessionLease(phone.id)
+  const lease = await acquireQrSessionLease(phone.id, { waitForRelease: waitForLease, reason: leaseReason })
   const webVersion = await resolveWhatsAppWebVersion(baileys)
 
   closeLiveSession(phone.id, { releaseLease: false })
@@ -2023,7 +2081,7 @@ async function waitForSessionReady(phoneNumberId, timeoutMs = 6000) {
   return getSessionRow(phoneNumberId)
 }
 
-async function ensureOpenSocket(phone) {
+async function ensureOpenSocket(phone, { waitForLease = false, leaseReason = 'send' } = {}) {
   const live = liveSessions.get(phone.id)
   if (live?.sock && live.connected) return live.sock
 
@@ -2037,7 +2095,7 @@ async function ensureOpenSocket(phone) {
     if (currentLive?.sock && currentLive.connected) return currentLive.sock
   }
 
-  const { sock, openPromise } = await openSocket(phone)
+  const { sock, openPromise } = await openSocket(phone, { waitForLease, leaseReason })
   const timeout = new Promise((_, reject) => {
     setTimeout(() => reject(new Error('El QR no está conectado. Abre Configuración > WhatsApp y escanea el código.')), CONNECT_TIMEOUT_MS)
   })
@@ -2211,7 +2269,7 @@ export async function sendWhatsAppQrTextMessage({ phoneNumberId, from, to, text,
   if (!toPhone) throw new Error('Falta el número destino')
   if (!body) throw new Error('Falta el texto del mensaje')
 
-  const sock = await ensureOpenSocket(phone)
+  const sock = await ensureOpenSocket(phone, { waitForLease: true, leaseReason: 'envío de texto' })
   const recipient = await resolveRecipientJid(sock, toPhone)
   rememberRistakQrOutboundAttempt({
     phoneId: phone.id,
@@ -2262,7 +2320,7 @@ export async function sendWhatsAppQrImageMessage({ phoneNumberId, from, to, imag
     url: imageUrl,
     label: 'la foto'
   })
-  const sock = await ensureOpenSocket(phone)
+  const sock = await ensureOpenSocket(phone, { waitForLease: true, leaseReason: 'envío de imagen' })
   const recipient = await resolveRecipientJid(sock, toPhone)
   rememberRistakQrOutboundAttempt({
     phoneId: phone.id,
@@ -2322,7 +2380,7 @@ export async function sendWhatsAppQrVideoMessage({ phoneNumberId, from, to, vide
     label: 'el video'
   })
   const videoMimeType = inferVideoMimeType({ mimeType: media.mimeType || mimeType, url: media.sourceUrl || videoUrl })
-  const sock = await ensureOpenSocket(phone)
+  const sock = await ensureOpenSocket(phone, { waitForLease: true, leaseReason: 'envío de video' })
   const recipient = await resolveRecipientJid(sock, toPhone)
   rememberRistakQrOutboundAttempt({
     phoneId: phone.id,
@@ -2384,7 +2442,7 @@ export async function sendWhatsAppQrAudioMessage({ phoneNumberId, from, to, audi
   })
   const mimeType = normalizeVoiceNoteMimeType(inferAudioMimeType({ mimeType: media.mimeType, url: media.sourceUrl }))
   const seconds = getAudioDurationSeconds(durationMs)
-  const sock = await ensureOpenSocket(phone)
+  const sock = await ensureOpenSocket(phone, { waitForLease: true, leaseReason: 'envío de audio' })
   const recipient = await resolveRecipientJid(sock, toPhone)
   rememberRistakQrOutboundAttempt({
     phoneId: phone.id,
@@ -2455,7 +2513,7 @@ export async function sendWhatsAppQrDocumentMessage({ phoneNumberId, from, to, d
     url: media.sourceUrl || documentUrl,
     filename: cleanFilename
   })
-  const sock = await ensureOpenSocket(phone)
+  const sock = await ensureOpenSocket(phone, { waitForLease: true, leaseReason: 'envío de documento' })
   const recipient = await resolveRecipientJid(sock, toPhone)
   rememberRistakQrOutboundAttempt({
     phoneId: phone.id,
