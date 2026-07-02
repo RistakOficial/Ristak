@@ -1287,6 +1287,20 @@ function dedupeChatsById<T extends { id?: string | null }>(chats: T[]) {
   return Array.from(map.values())
 }
 
+// Reconcilia la cola cacheada contra la primera página fresca del servidor: descarta
+// contactos que el servidor ya NO devuelve (fusionados/borrados/ocultos) SIN perder la
+// cola real revelada con scroll. Página incompleta (< pageSize) = lista COMPLETA → no se
+// conserva nada extra; página llena = solo lo cacheado más viejo que el borde de la página.
+function reconcileCachedChatTail(freshPage: ChatContact[], current: ChatContact[], pageSize: number): ChatContact[] {
+  const freshIds = new Set(freshPage.map((contact) => contact.id))
+  const notFresh = current.filter((contact) => !freshIds.has(contact.id))
+  if (freshPage.length < pageSize) return []
+  const oldestFresh = Math.min(
+    ...freshPage.map((contact) => parseSortableDateValue(contact.lastMessageDate || contact.createdAt))
+  )
+  return notFresh.filter((contact) => parseSortableDateValue(contact.lastMessageDate || contact.createdAt) < oldestFresh)
+}
+
 function sanitizeAIAgentAttachment(value: unknown): AIAgentAttachment | null {
   if (!value || typeof value !== 'object') return null
   const attachment = value as Partial<AIAgentAttachment>
@@ -5521,14 +5535,13 @@ export const PhoneChat: React.FC = () => {
         const freshPage = dedupeChatsById(await fetchChatPage(0))
         if (chatsRequestRef.current !== controller) return
 
-        const freshIds = new Set(freshPage.map((contact) => contact.id))
         const loadedBeyondFreshPage = chatListOffsetRef.current > freshPage.length
         chatListOffsetRef.current = Math.max(chatListOffsetRef.current, freshPage.length)
         chatListHasMoreRef.current = freshPage.length >= CHAT_LIST_PAGE_SIZE ||
           (loadedBeyondFreshPage && chatListHasMoreRef.current)
         const merged = dedupeChatsById([
           ...freshPage,
-          ...chatsRef.current.filter((contact) => !freshIds.has(contact.id))
+          ...reconcileCachedChatTail(freshPage, chatsRef.current, CHAT_LIST_PAGE_SIZE)
         ])
         const displayedChats = applyLoadedChats(merged)
         if (cacheEnabled) {
@@ -5547,10 +5560,9 @@ export const PhoneChat: React.FC = () => {
         const hasSearch = trimmed.length > 0
         const shouldReplace = hasSearch || chatListLoadedSearchRef.current !== ''
         chatListLoadedSearchRef.current = trimmed
-        const freshIds = new Set(freshPage.map((contact) => contact.id))
         const merged = dedupeChatsById([
           ...freshPage,
-          ...(shouldReplace ? [] : chatsRef.current.filter((contact) => !freshIds.has(contact.id)))
+          ...(shouldReplace ? [] : reconcileCachedChatTail(freshPage, chatsRef.current, CHAT_LIST_PAGE_SIZE))
         ])
 
         // El offset representa páginas reales traídas del servidor, no filas pintadas desde
