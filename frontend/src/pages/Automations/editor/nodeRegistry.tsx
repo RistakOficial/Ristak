@@ -493,6 +493,17 @@ const WHATSAPP_REPLY_FIELDS: VariableSchemaField[] = [
   ])
 ]
 
+// Variable del comentario FB/IG: se puede mapear en las acciones (ej. responder
+// citando el texto del comentario, o mandarlo por webhook).
+const COMMENT_FIELDS: VariableSchemaField[] = [
+  field('Texto del comentario', 'texto'),
+  field('Autor', 'autor'),
+  field('ID del comentario', 'id_comentario'),
+  field('ID de la publicación', 'id_publicacion'),
+  field('Enlace de la publicación', 'permalink'),
+  field('Plataforma', 'plataforma')
+]
+
 const FORM_FIELDS: VariableSchemaField[] = [
   field('ID del formulario', 'id_formulario'),
   field('Nombre del formulario', 'nombre_formulario'),
@@ -1119,11 +1130,7 @@ const TRIGGERS: NodeDefinition[] = [
       keywords: [],
       match: 'contains',
       allowedComments: 'all',
-      avoidDuplicates: true,
-      publicReplyEnabled: false,
-      publicReply: '',
-      dmReplyEnabled: false,
-      dmReply: ''
+      avoidDuplicates: true
     }),
     fields: [
       { key: 'post', label: 'Publicación', type: 'postSelect', platform: 'facebook', help: 'Elige una publicación o deja "Todas" para disparar con cualquier comentario.' },
@@ -1146,27 +1153,15 @@ const TRIGGERS: NodeDefinition[] = [
           { value: 'first_only', label: 'Solo el primer comentario de cada persona' }
         ]
       },
-      { key: 'avoidDuplicates', label: 'Evitar respuestas duplicadas', type: 'toggle' },
-      { key: 'publicReplyEnabled', label: 'Responder públicamente al comentario', type: 'toggle' },
-      {
-        key: 'publicReply',
-        label: 'Respuesta pública',
-        type: 'textarea',
-        placeholder: '¡Gracias por comentar! Te escribimos por privado…',
-        showVariables: true,
-        showIf: (config) => Boolean(config.publicReplyEnabled)
-      },
-      { key: 'dmReplyEnabled', label: 'Responder por Messenger', type: 'toggle' },
-      {
-        key: 'dmReply',
-        label: 'Mensaje por Messenger',
-        type: 'textarea',
-        placeholder: 'Hola {{nombre}}, vimos tu comentario…',
-        showVariables: true,
-        showIf: (config) => Boolean(config.dmReplyEnabled)
-      }
+      { key: 'avoidDuplicates', label: 'Evitar disparos duplicados', type: 'toggle', help: 'No vuelvas a disparar por el mismo comentario.' }
     ],
     outputs: () => SINGLE_OUTPUT,
+    variableOutput: () => ({
+      baseId: 'comentario',
+      baseLabel: 'Comentario',
+      fields: COMMENT_FIELDS,
+      fixedTokenRoot: 'comentario'
+    }),
     summary: (config) => ({
       text: str(config.post)
         ? `Cuando comenten esa publicación de Facebook${triggerFiltersSentence(config.filters)}`
@@ -1188,11 +1183,7 @@ const TRIGGERS: NodeDefinition[] = [
       post: '',
       keywords: [],
       match: 'contains',
-      allowedComments: 'all',
-      publicReplyEnabled: false,
-      publicReply: '',
-      dmReplyEnabled: false,
-      dmReply: ''
+      allowedComments: 'all'
     }),
     fields: [
       { key: 'post', label: 'Publicación o reel', type: 'postSelect', platform: 'instagram', help: 'Elige una publicación o reel, o deja "Todas" para disparar con cualquier comentario.' },
@@ -1214,27 +1205,15 @@ const TRIGGERS: NodeDefinition[] = [
           { value: 'all', label: 'Todos los comentarios' },
           { value: 'first_only', label: 'Solo el primer comentario de cada persona' }
         ]
-      },
-      { key: 'publicReplyEnabled', label: 'Responder públicamente al comentario', type: 'toggle' },
-      {
-        key: 'publicReply',
-        label: 'Respuesta pública',
-        type: 'textarea',
-        placeholder: '¡Gracias por comentar!',
-        showVariables: true,
-        showIf: (config) => Boolean(config.publicReplyEnabled)
-      },
-      { key: 'dmReplyEnabled', label: 'Responder por Instagram Direct', type: 'toggle' },
-      {
-        key: 'dmReply',
-        label: 'Mensaje por Instagram Direct',
-        type: 'textarea',
-        placeholder: 'Hola {{nombre}}, vimos tu comentario…',
-        showVariables: true,
-        showIf: (config) => Boolean(config.dmReplyEnabled)
       }
     ],
     outputs: () => SINGLE_OUTPUT,
+    variableOutput: () => ({
+      baseId: 'comentario',
+      baseLabel: 'Comentario',
+      fields: COMMENT_FIELDS,
+      fixedTokenRoot: 'comentario'
+    }),
     summary: (config) => ({
       text: str(config.post)
         ? `Cuando comenten esa publicación de Instagram${triggerFiltersSentence(config.filters)}`
@@ -1544,7 +1523,7 @@ const CHANNEL_NODES: NodeDefinition[] = [
     label: 'Responder comentario (público)',
     brand: 'Facebook',
     category: 'action-content',
-    description: 'Responde el comentario en la publicación (visible para todos)',
+    description: 'Responde en la publicación (visible para todos). Facebook admite texto + 1 imagen; Instagram solo texto.',
     icon: MessageCircleReply,
     accent: 'green',
     addButtonLabel: 'Agregar respuesta',
@@ -1567,7 +1546,7 @@ const CHANNEL_NODES: NodeDefinition[] = [
     label: 'Responder por privado (DM)',
     brand: 'Messenger',
     category: 'action-content',
-    description: 'Manda un mensaje privado (DM) a quien comentó',
+    description: 'Manda un DM privado a quien comentó. Admite texto, imagen, video, audio y archivo.',
     icon: MessageSquareText,
     accent: 'blue',
     addButtonLabel: 'Agregar mensaje',

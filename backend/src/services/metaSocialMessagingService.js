@@ -574,13 +574,16 @@ async function resolveMetaPageTokenSafe(config) {
 // carga fuerte contra Meta solo ocurre una vez cada POSTS_SYNC_TTL_MS.
 const POSTS_SYNC_TTL_MS = 10 * 60 * 1000
 const POSTS_MAX_SYNC = 200
-const postsSyncState = new Map() // 'facebook' | 'instagram' -> timestamp del último sync OK
+const POSTS_QUICK_PAGES = 1        // primera carga: 1 página (~50) para responder ya
+const POSTS_UPSERT_CHUNK = 40      // filas por INSERT en lote
+const postsSyncState = new Map()   // 'facebook' | 'instagram' -> timestamp del último sync completo
+const postsSyncing = new Set()     // plataformas con sync en curso (evita duplicar)
 
 function normalizeSocialPostPlatform(platform) {
   return String(platform || '').toLowerCase() === 'instagram' ? 'instagram' : 'facebook'
 }
 
-async function syncMetaSocialPostsFromGraph(platform, config, pageToken) {
+async function syncMetaSocialPostsFromGraph(platform, config, pageToken, { maxPages = Infinity } = {}) {
   const isIg = platform === 'instagram'
   const businessId = isIg ? cleanString(config?.instagram_account_id) : cleanString(config?.page_id)
   if (!businessId) return 0
@@ -591,8 +594,9 @@ async function syncMetaSocialPostsFromGraph(platform, config, pageToken) {
 
   let after = ''
   let fetched = 0
+  let pages = 0
   const rows = []
-  while (fetched < POSTS_MAX_SYNC) {
+  while (fetched < POSTS_MAX_SYNC && pages < maxPages) {
     const query = { fields, limit: 50 }
     if (after) query.after = after
     let data
@@ -618,14 +622,23 @@ async function syncMetaSocialPostsFromGraph(platform, config, pageToken) {
       })
     }
     fetched += items.length
+    pages += 1
     after = cleanString(data?.paging?.cursors?.after)
     if (!after || !items.length) break
   }
 
-  for (const r of rows) {
+  // Upsert por LOTES (un INSERT por chunk, no uno por fila) → mucho menos
+  // round-trips a Postgres, que es lo que hacía lenta la carga inicial.
+  for (let i = 0; i < rows.length; i += POSTS_UPSERT_CHUNK) {
+    const chunk = rows.slice(i, i + POSTS_UPSERT_CHUNK)
+    const valuesSql = chunk.map(() => '(?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)').join(', ')
+    const params = []
+    for (const r of chunk) {
+      params.push(r.id, platform, r.postType, r.message || null, r.imageUrl || null, r.permalink || null, r.postedAt, safeJson(r.raw))
+    }
     await db.run(`
       INSERT INTO meta_social_posts (id, platform, post_type, message, image_url, permalink, posted_at, raw_json, fetched_at, updated_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+      VALUES ${valuesSql}
       ON CONFLICT(id) DO UPDATE SET
         platform = excluded.platform,
         post_type = excluded.post_type,
@@ -635,10 +648,26 @@ async function syncMetaSocialPostsFromGraph(platform, config, pageToken) {
         posted_at = COALESCE(excluded.posted_at, meta_social_posts.posted_at),
         raw_json = excluded.raw_json,
         updated_at = CURRENT_TIMESTAMP
-    `, [r.id, platform, r.postType, r.message || null, r.imageUrl || null, r.permalink || null, r.postedAt, safeJson(r.raw)])
-      .catch((error) => logger.warn(`[Meta posts] no se pudo guardar ${r.id}: ${error.message}`))
+    `, params).catch((error) => logger.warn(`[Meta posts] no se pudo guardar lote: ${error.message}`))
   }
   return rows.length
+}
+
+// Ejecuta UNA sincronización con guard anti-duplicado. Marca "fresco" solo tras
+// una pasada COMPLETA; el quick-sync de la primera carga no la marca para que el
+// sync de fondo la complete después.
+async function syncPostsOnce(platform, config, { maxPages = Infinity } = {}) {
+  if (postsSyncing.has(platform)) return 0
+  postsSyncing.add(platform)
+  try {
+    const pageToken = await resolveMetaPageAccessToken({ config })
+    const n = await syncMetaSocialPostsFromGraph(platform, config, pageToken, { maxPages })
+    if (maxPages === Infinity) postsSyncState.set(platform, Date.now())
+    logger.info(`[Meta posts] ${platform}: ${n} publicaciones sincronizadas`)
+    return n
+  } finally {
+    postsSyncing.delete(platform)
+  }
 }
 
 export async function listMetaSocialPosts({ platform = 'facebook', search = '', limit = 25, offset = 0, refresh = false } = {}) {
@@ -667,16 +696,19 @@ export async function listMetaSocialPosts({ platform = 'facebook', search = '', 
 
   const lastSync = postsSyncState.get(cleanPlatform) || 0
   const stale = (Date.now() - lastSync) > POSTS_SYNC_TTL_MS
-  if (refresh || stale || cachedCount === 0) {
-    try {
-      const pageToken = await resolveMetaPageAccessToken({ config })
-      const synced = await syncMetaSocialPostsFromGraph(cleanPlatform, config, pageToken)
-      postsSyncState.set(cleanPlatform, Date.now())
-      logger.info(`[Meta posts] ${cleanPlatform}: ${synced} publicaciones sincronizadas`)
-    } catch (error) {
-      if (cachedCount === 0) throw error // sin caché y sin poder traer → error claro al usuario
-      logger.warn(`[Meta posts] no se pudo refrescar ${cleanPlatform}, sirvo caché: ${error.message}`)
-    }
+  if (cachedCount === 0) {
+    // Sin caché: trae SOLO la primera página de forma síncrona para responder ya,
+    // y completa el resto en segundo plano (el dropdown ya muestra publicaciones).
+    const pageToken = await resolveMetaPageAccessToken({ config })
+    await syncMetaSocialPostsFromGraph(cleanPlatform, config, pageToken, { maxPages: POSTS_QUICK_PAGES })
+    void syncPostsOnce(cleanPlatform, config).catch(() => {})
+  } else if (refresh) {
+    // Refresco manual: el usuario lo pidió, esperamos la pasada completa.
+    await syncPostsOnce(cleanPlatform, config).catch((error) =>
+      logger.warn(`[Meta posts] refresco ${cleanPlatform} falló: ${error.message}`))
+  } else if (stale) {
+    // Caché viejo: responde YA del caché y refresca en segundo plano.
+    void syncPostsOnce(cleanPlatform, config).catch(() => {})
   }
 
   const cleanSearch = cleanString(search).toLowerCase()
@@ -946,14 +978,18 @@ export async function sendMetaSocialTextMessage({ contactId, platform, message, 
 //  - 'private' => abre/continúa un DM con quien comentó (/{businessId}/messages recipient:{comment_id})
 // Se apoya en el token de PÁGINA y en el comment_id del último comentario entrante
 // del contacto (si no se pasa explícito). NO usa el senderId sintético (no es un PSID).
-export async function sendMetaSocialCommentReply({ contactId, platform, message, replyType = 'private', commentId = '', postId = '', externalId } = {}) {
+export async function sendMetaSocialCommentReply({ contactId, platform, message, replyType = 'private', commentId = '', postId = '', externalId, attachment = null } = {}) {
   const cleanContactId = cleanString(contactId)
   const cleanPlatform = cleanString(platform).toLowerCase() === 'instagram' ? 'instagram' : 'messenger'
   const body = cleanString(message)
   const mode = cleanString(replyType).toLowerCase() === 'public' ? 'public' : 'private'
+  // Un envío lleva texto O un adjunto ({ type, url }). El nodo separa cada bloque.
+  const att = attachment && cleanString(attachment.url)
+    ? { type: cleanString(attachment.type).toLowerCase() || 'image', url: cleanString(attachment.url) }
+    : null
 
   if (!cleanContactId) throw createMetaSocialMessageError('Falta el contacto', 400)
-  if (!body) throw createMetaSocialMessageError('Falta el texto de la respuesta', 400)
+  if (!body && !att) throw createMetaSocialMessageError('Falta el contenido de la respuesta', 400)
 
   const enabled = await isMetaSocialCommentsEnabled(cleanPlatform)
   if (!enabled) {
@@ -1018,7 +1054,18 @@ export async function sendMetaSocialCommentReply({ contactId, platform, message,
     path = cleanPlatform === 'instagram'
       ? `/${encodeURIComponent(targetCommentId)}/replies`
       : `/${encodeURIComponent(targetCommentId)}/comments`
-    payload = { message: body }
+    if (att) {
+      // Público: Instagram es SOLO texto; Facebook admite UNA imagen (attachment_url).
+      if (cleanPlatform === 'instagram') {
+        throw createMetaSocialMessageError('Instagram no permite adjuntos en respuestas públicas; responde por privado (DM).', 422)
+      }
+      if (att.type !== 'image') {
+        throw createMetaSocialMessageError('En respuestas públicas de Facebook solo puedes adjuntar una imagen.', 422)
+      }
+      payload = body ? { message: body, attachment_url: att.url } : { attachment_url: att.url }
+    } else {
+      payload = { message: body }
+    }
   } else {
     const businessId = getMetaSocialBusinessId(cleanPlatform, config, profile || {})
     if (!businessId) {
@@ -1028,7 +1075,10 @@ export async function sendMetaSocialCommentReply({ contactId, platform, message,
       )
     }
     path = `/${encodeURIComponent(businessId)}/messages`
-    payload = { recipient: { comment_id: targetCommentId }, message: { text: body } }
+    // DM: un envío es texto O adjunto (imagen/video/audio/archivo).
+    payload = att
+      ? { recipient: { comment_id: targetCommentId }, message: { attachment: { type: att.type, payload: { url: att.url, is_reusable: false } } } }
+      : { recipient: { comment_id: targetCommentId }, message: { text: body } }
   }
 
   let response

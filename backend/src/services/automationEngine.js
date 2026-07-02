@@ -972,6 +972,19 @@ function replyDataFromContext(ctx = {}) {
   }
 }
 
+// Datos del comentario FB/IG para exponerlos como variable {{comentario.*}} en
+// las acciones. Las claves coinciden con COMMENT_FIELDS del nodeRegistry.
+function commentDataFromContext(ctx = {}) {
+  return {
+    texto: ctx.messageText || '',
+    autor: ctx.contact?.fullName || ctx.contact?.firstName || ctx.contactName || '',
+    id_comentario: ctx.commentId || '',
+    id_publicacion: ctx.postId || ctx.mediaId || '',
+    permalink: ctx.permalink || '',
+    plataforma: ctx.platform || ''
+  }
+}
+
 function formDisqualifiedFromContext(ctx = {}) {
   const explicit = ctx.formDisqualified ?? ctx.form_disqualified ?? ctx.disqualified ?? ctx.importedDisqualified ?? ctx.imported_disqualified
   if (typeof explicit === 'boolean') return explicit
@@ -1158,6 +1171,11 @@ function buildVariableMap(ctx) {
   if (reply.cuerpo || reply.numero_contacto || reply.id_mensaje || reply.canal) {
     setDeepVariable(map, 'respuesta_whatsapp', reply)
     setDeepVariable(map, 'respuesta_whatsapp_1', reply)
+  }
+  const comment = commentDataFromContext(ctx)
+  if (comment.texto || comment.id_comentario) {
+    setDeepVariable(map, 'comentario', comment)
+    setDeepVariable(map, 'comentario_1', comment)
   }
   const payment = paymentDataFromContext(ctx)
   if (Object.values(payment).some((value) => value !== '')) {
@@ -3518,29 +3536,72 @@ function evaluateGoalMet(config, ctx) {
 // mitad de un flujo. Usa ctx.commentId/ctx.platform del disparo de comentario;
 // si no vienen (flujo disparado por otra cosa), el servicio resuelve el último
 // comentario entrante del contacto.
+// Qué adjuntos acepta Meta al responder un comentario, por tipo de respuesta y
+// plataforma (verificado en la doc oficial): público FB = 1 imagen; público IG =
+// solo texto; DM (Messenger/Instagram) = imagen/video/audio/archivo.
+const COMMENT_MEDIA_BLOCKS = ['image', 'video', 'audio', 'file']
+function commentAttachmentAllowed(replyType, platform, blockType) {
+  if (replyType === 'public') return platform !== 'instagram' && blockType === 'image'
+  return COMMENT_MEDIA_BLOCKS.includes(blockType)
+}
+
 async function sendCommentReplyFromNode(node, ctx, replyType) {
   const config = node.config || {}
   const contactId = ctx.contact?.id
   if (!contactId) throw new Error('Falta el contacto para responder el comentario')
 
   const platform = str(ctx.platform) === 'instagram' ? 'instagram' : 'messenger'
-  const blocks = Array.isArray(config.messageBlocks) ? config.messageBlocks : []
-  const textBlock = blocks.find((block) => block.type === 'text')
-  const raw = textBlock ? (textBlock.compiledText || textBlock.text || textBlock.message) : (config.message || config.text)
-  const text = renderTemplate(str(raw), ctx, { preserveUnknown: true }).trim()
-  if (!text) throw new Error('El mensaje de respuesta al comentario está vacío')
+  const rawBlocks = Array.isArray(config.messageBlocks) ? config.messageBlocks : []
+  // Compatibilidad con configs viejas de texto plano.
+  const blocks = rawBlocks.length
+    ? rawBlocks
+    : (str(config.message || config.text) ? [{ type: 'text', compiledText: config.message || config.text }] : [])
 
   const { sendMetaSocialCommentReply } = await import('./metaSocialMessagingService.js')
-  await sendMetaSocialCommentReply({
-    contactId,
-    platform,
-    message: text,
-    replyType,
-    commentId: str(ctx.commentId),
-    postId: str(ctx.postId),
-    externalId: `${ctx.automationId || 'automation'}:${ctx.enrollmentId || ''}:${node.id}`
-  })
-  return { detail: `Respuesta ${replyType === 'public' ? 'pública' : 'por privado'} al comentario enviada` }
+  const baseExternal = `${ctx.automationId || 'automation'}:${ctx.enrollmentId || ''}:${node.id}`
+
+  let sent = 0
+  let index = 0
+  const skipped = []
+  for (const block of blocks) {
+    index += 1
+    if (block.type === 'text') {
+      const text = renderTemplate(str(block.compiledText || block.text || block.message), ctx, { preserveUnknown: true }).trim()
+      if (!text) continue
+      await sendMetaSocialCommentReply({
+        contactId, platform, message: text, replyType,
+        commentId: str(ctx.commentId), postId: str(ctx.postId),
+        externalId: `${baseExternal}:${index}`
+      })
+      sent += 1
+    } else if (COMMENT_MEDIA_BLOCKS.includes(block.type)) {
+      const url = str(block.url)
+      if (!url) continue
+      if (!commentAttachmentAllowed(replyType, platform, block.type)) {
+        skipped.push(block.type)
+        continue
+      }
+      // El pie de foto solo se combina con la imagen en respuestas públicas de FB;
+      // en DM el texto va en su propio bloque.
+      const caption = replyType === 'public' && block.caption
+        ? renderTemplate(str(block.caption), ctx, { preserveUnknown: true }).trim()
+        : ''
+      await sendMetaSocialCommentReply({
+        contactId, platform, replyType, message: caption,
+        attachment: { type: block.type, url },
+        commentId: str(ctx.commentId), postId: str(ctx.postId),
+        externalId: `${baseExternal}:${index}`
+      })
+      sent += 1
+    }
+  }
+
+  if (!sent) throw new Error('La respuesta al comentario no tiene contenido válido para este canal')
+  const kind = replyType === 'public' ? 'pública' : 'por privado'
+  const note = skipped.length
+    ? ` (adjuntos no soportados aquí: ${[...new Set(skipped)].join(', ')})`
+    : ''
+  return { detail: `Respuesta ${kind} al comentario enviada${note}` }
 }
 
 /**
@@ -4375,51 +4436,6 @@ export async function handleIncomingMessage({
   }
 }
 
-// Ejecuta las respuestas inline configuradas en un disparo de comentario:
-// pública (en el post) y/o por DM privado, con variables renderizadas. Respeta
-// 'first_only' (una sola vez por persona por publicación). Echo-safe: nuestra
-// respuesta pública vuelve como isEcho y no re-dispara.
-async function maybeReplyToCommentFromTrigger(trigger, ctx) {
-  const config = trigger.config || {}
-  const contactId = ctx.contact?.id
-  const commentId = str(ctx.commentId)
-  if (!contactId || !commentId) return
-  if (!config.publicReplyEnabled && !config.dmReplyEnabled) return
-
-  const platform = str(ctx.platform) === 'instagram' ? 'instagram' : 'messenger'
-  const postId = str(ctx.postId)
-
-  if (str(config.allowedComments) === 'first_only') {
-    const already = await db.get(
-      `SELECT 1 FROM meta_social_messages
-       WHERE contact_id = ? AND platform = ?
-         AND message_type IN ('comment_reply_public','comment_reply_private')
-         AND COALESCE(post_id, '') = ?
-       LIMIT 1`,
-      [contactId, platform, postId]
-    ).catch(() => null)
-    if (already) return
-  }
-
-  const { sendMetaSocialCommentReply } = await import('./metaSocialMessagingService.js')
-
-  if (config.publicReplyEnabled) {
-    const text = renderTemplate(str(config.publicReply), ctx, { preserveUnknown: true }).trim()
-    if (text) {
-      await sendMetaSocialCommentReply({ contactId, platform, message: text, replyType: 'public', commentId, postId })
-        .catch((error) => logger.warn(`[Automatizaciones] Respuesta pública a comentario falló: ${error.message}`))
-    }
-  }
-
-  if (config.dmReplyEnabled) {
-    const text = renderTemplate(str(config.dmReply), ctx, { preserveUnknown: true }).trim()
-    if (text) {
-      await sendMetaSocialCommentReply({ contactId, platform, message: text, replyType: 'private', commentId, postId })
-        .catch((error) => logger.warn(`[Automatizaciones] Respuesta privada a comentario falló: ${error.message}`))
-    }
-  }
-}
-
 async function enrollMatching(automations, eventType, baseCtx) {
   const contact = baseCtx.contact || {}
   for (const automation of automations) {
@@ -4429,14 +4445,9 @@ async function enrollMatching(automations, eventType, baseCtx) {
     const matched = getTriggers(startNode).find((trigger) => triggerMatches(trigger, eventType, baseCtx))
     if (!matched) continue
 
-    // Respuestas inline del disparo de comentario (público / DM), configuradas en
-    // el propio trigger. Se ejecutan al empatar, aunque el contacto ya esté
-    // inscrito, porque cada comentario nuevo merece su respuesta.
-    if (eventType === 'comment-received') {
-      await maybeReplyToCommentFromTrigger(matched, baseCtx).catch((error) => {
-        logger.warn(`[Automatizaciones] Respuesta inline a comentario falló: ${error.message}`)
-      })
-    }
+    // La respuesta al comentario ya NO se configura en el disparador: se hace con
+    // los nodos de acción "Responder comentario (público)" / "Responder por
+    // privado (DM)" dentro del flujo.
 
     const settings = flow.settings || {}
     if (contact.id && settings.preventDuplicateActiveEnrollment !== false) {
