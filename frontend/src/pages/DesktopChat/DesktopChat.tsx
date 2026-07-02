@@ -11,6 +11,7 @@ import {
   CircleAlert,
   Clock,
   CreditCard,
+  ExternalLink,
   FileText,
   Image as ImageIcon,
   Loader2,
@@ -589,7 +590,12 @@ function getContactName(contact?: Partial<Contact> | null) {
 }
 
 function getContactDetail(contact?: Partial<Contact> | null) {
-  return contact?.phone || contact?.email || 'Sin teléfono guardado'
+  // Teléfono si hay; si no, el @usuario de la red social; si no, correo; y
+  // como último recurso, un estado genérico.
+  if (contact?.phone) return contact.phone
+  const username = String(contact?.socialUsername || '').trim().replace(/^@+/, '')
+  if (username) return `@${username}`
+  return contact?.email || 'Sin datos de contacto'
 }
 
 function getContactInitials(contact?: Partial<Contact> | null) {
@@ -735,8 +741,24 @@ function getContactChannelKind(contact: DesktopChatContact): AdvancedChannelFilt
 // feed de Facebook o del objeto de comentarios de Instagram). Los comentarios NO
 // se mezclan con los DMs: viven en su propia vista de filtro.
 function isCommentContact(contact?: DesktopChatContact | Contact | null): boolean {
+  // Identidad primero: el backend marca socialKind='comment' para contactos que
+  // vienen de un comentario (por sender_id, no por el último mensaje). Fallback
+  // por tipo de último mensaje cubre 'comment' y las respuestas a comentario
+  // ('comment_reply_public/private') para que un contacto-comentario NO se
+  // "descomente" cuando el negocio ya respondió (evita que se filtre a los tabs
+  // normales).
   const record = contact as unknown as Record<string, unknown>
-  return String(record?.lastMessageType || '').toLowerCase() === 'comment'
+  const kind = String(record?.socialKind || '').toLowerCase()
+  if (kind === 'comment') return true
+  if (kind === 'dm') return false
+  return String(record?.lastMessageType || '').toLowerCase().startsWith('comment')
+}
+
+// Un contacto-comentario cuya MISMA persona ya tiene un chat privado (DM). En ese
+// caso NO debe aparecer en ninguna bandeja: su historial se fusiona dentro del
+// chat privado (el registro DM lo representa en los tabs normales).
+function commentContactHasLinkedDm(contact?: DesktopChatContact | Contact | null): boolean {
+  return Boolean((contact as unknown as Record<string, unknown>)?.hasLinkedDmContact)
 }
 
 function getCommentPlatform(contact?: DesktopChatContact | Contact | null): 'facebook' | 'instagram' {
@@ -2496,15 +2518,20 @@ export const DesktopChat: React.FC = () => {
       .filter((contact) => contactMatchesAdvancedFilters(contact, advancedFilters))
       .filter((contact) => {
         const isComment = isCommentContact(contact)
-        // La vista de Comentarios es aparte: solo comentarios, opcionalmente por
-        // red social. Los mensajes/DMs no se mezclan aquí.
+        // La vista de Comentarios es una bandeja aparte SOLO para perfiles que
+        // únicamente comentaron y todavía NO tienen chat privado. Si ya existe
+        // un DM enlazado de la misma persona, el registro-comentario se oculta
+        // aquí (su historial se ve dentro del chat privado, en los tabs normales).
         if (commentsView) {
           if (!isComment) return false
+          if (commentContactHasLinkedDm(contact)) return false
           if (commentsPlatform === 'facebook') return getCommentPlatform(contact) === 'facebook'
           if (commentsPlatform === 'instagram') return getCommentPlatform(contact) === 'instagram'
           return true
         }
-        // Vista normal de mensajes: nunca mostrar comentarios.
+        // Vista normal de mensajes: nunca mostrar registros-comentario. El perfil
+        // que también tiene DM aparece por su registro DM (separado, socialKind
+        // 'dm'); el perfil que solo comentó vive únicamente en Comentarios.
         if (isComment) return false
         if (chatFilter === 'agent') return true
         if (chatFilter === 'unread') return Number(contact.unreadCount || 0) > 0
@@ -6756,8 +6783,9 @@ export const DesktopChat: React.FC = () => {
                           className={`${styles.messageBubble} ${message.direction === 'outbound' ? styles.messageOutbound : message.direction === 'system' ? styles.messageSystem : styles.messageInbound} ${isMessageScheduled(message) ? styles.messageScheduled : ''} ${message.isComment ? styles.messageComment : ''}`}
                         >
 	                          {message.isComment ? (
-	                            <div className={styles.commentContext}>
+	                            <div className={styles.commentCard}>
 	                              <span className={styles.commentContextLabel}>
+	                                <MessageCircle size={13} aria-hidden="true" />
 	                                {message.commentReplyMode === 'public'
 	                                  ? 'Respuesta pública al comentario'
 	                                  : message.commentReplyMode === 'private'
@@ -6765,41 +6793,53 @@ export const DesktopChat: React.FC = () => {
 	                                    : 'Comentó en tu publicación'}
 	                              </span>
 	                              {message.commentPost && (message.commentPost.imageUrl || message.commentPost.message) ? (
-	                                message.commentPost.permalink ? (
-	                                  <a
-	                                    className={styles.commentPostChip}
-	                                    href={message.commentPost.permalink}
-	                                    target="_blank"
-	                                    rel="noopener noreferrer"
-	                                  >
-	                                    {message.commentPost.imageUrl ? (
-	                                      <img src={message.commentPost.imageUrl} alt="" className={styles.commentPostThumb} loading="lazy" />
-	                                    ) : null}
-	                                    {message.commentPost.message ? (
-	                                      <span className={styles.commentPostText}>{message.commentPost.message}</span>
-	                                    ) : null}
-	                                  </a>
-	                                ) : (
-	                                  <div className={`${styles.commentPostChip} ${styles.commentPostChipStatic}`}>
-	                                    {message.commentPost.imageUrl ? (
-	                                      <img src={message.commentPost.imageUrl} alt="" className={styles.commentPostThumb} loading="lazy" />
-	                                    ) : null}
-	                                    {message.commentPost.message ? (
-	                                      <span className={styles.commentPostText}>{message.commentPost.message}</span>
-	                                    ) : null}
-	                                  </div>
-	                                )
+	                                (() => {
+	                                  const postInner = (
+	                                    <>
+	                                      {message.commentPost.imageUrl ? (
+	                                        <img src={message.commentPost.imageUrl} alt="" className={styles.commentPostThumb} loading="lazy" />
+	                                      ) : (
+	                                        <span className={styles.commentPostThumbPlaceholder}><ImageIcon size={18} aria-hidden="true" /></span>
+	                                      )}
+	                                      <span className={styles.commentPostMeta}>
+	                                        <span className={styles.commentPostKind}>Publicación</span>
+	                                        {message.commentPost.message ? (
+	                                          <span className={styles.commentPostText}>{message.commentPost.message}</span>
+	                                        ) : (
+	                                          <span className={styles.commentPostTextMuted}>Ver publicación</span>
+	                                        )}
+	                                      </span>
+	                                      {message.commentPost.permalink ? (
+	                                        <ExternalLink size={15} className={styles.commentPostExternal} aria-hidden="true" />
+	                                      ) : null}
+	                                    </>
+	                                  )
+	                                  return message.commentPost.permalink ? (
+	                                    <a className={styles.commentPostChip} href={message.commentPost.permalink} target="_blank" rel="noopener noreferrer">
+	                                      {postInner}
+	                                    </a>
+	                                  ) : (
+	                                    <div className={`${styles.commentPostChip} ${styles.commentPostChipStatic}`}>
+	                                      {postInner}
+	                                    </div>
+	                                  )
+	                                })()
 	                              ) : null}
+	                              {message.text ? <p className={styles.commentBody}>{message.text}</p> : null}
+	                              {renderMessageMeta(message, routingDetails.label)}
 	                            </div>
-	                          ) : null}
-	                          {renderAttachment(message)}
-	                          {message.subject ? <strong className={styles.emailMessageSubject}>{message.subject}</strong> : null}
-	                          {message.text ? <p>{message.text}</p> : null}
+	                          ) : (
+	                            <>
+	                              {renderAttachment(message)}
+	                              {message.subject ? <strong className={styles.emailMessageSubject}>{message.subject}</strong> : null}
+	                              {message.text ? <p>{message.text}</p> : null}
+	                            </>
+	                          )}
                           {routingDetails.reason ? <small className={styles.messageRoutingNote}>{routingDetails.reason}</small> : null}
                           {message.errorReason ? <small className={styles.errorText}>{message.errorReason}</small> : null}
                           {message.scheduledAt ? <small className={styles.scheduledText}>Programado para {formatLocalDateTime(message.scheduledAt)}</small> : null}
                           {renderScheduledMessageActions(message)}
-                          {renderMessageMeta(message, routingDetails.label)}
+                          {!message.isComment ? renderMessageMeta(message, routingDetails.label) : null}
                         </article>
                       )
                     })}
@@ -6857,15 +6897,17 @@ export const DesktopChat: React.FC = () => {
 	                  <span className={styles.composerChannelHint}>{composerChannelHint}</span>
 	                ) : null}
 	                {!isEmailComposer && isCommentContact(activeContact) ? (
-	                  <SegmentTabs
-	                    aria-label="Modo de respuesta al comentario"
-	                    value={commentReplyMode}
-	                    onChange={(id) => setCommentReplyMode(id === 'private' ? 'private' : 'public')}
-	                    tabs={[
-	                      { id: 'public', label: 'Responder público' },
-	                      { id: 'private', label: 'Responder por privado' }
-	                    ]}
-	                  />
+	                  <div className={styles.composerReplyMode}>
+	                    <SegmentTabs
+	                      aria-label="Modo de respuesta al comentario"
+	                      value={commentReplyMode}
+	                      onChange={(id) => setCommentReplyMode(id === 'private' ? 'private' : 'public')}
+	                      tabs={[
+	                        { id: 'public', label: 'Responder público' },
+	                        { id: 'private', label: 'Responder por privado' }
+	                      ]}
+	                    />
+	                  </div>
 	                ) : null}
 	                {isEmailComposer ? (
 		                  <>

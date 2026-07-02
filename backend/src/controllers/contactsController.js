@@ -252,7 +252,55 @@ const CONTACT_META_PROFILE_SELECT = `
           WHERE contact_id = c.id
           ORDER BY updated_at DESC
           LIMIT 1
-        ) AS meta_social_profile_picture_url`
+        ) AS meta_social_profile_picture_url,
+        (
+          SELECT profile_name
+          FROM meta_social_contacts
+          WHERE contact_id = c.id
+          ORDER BY updated_at DESC
+          LIMIT 1
+        ) AS meta_social_profile_name,
+        (
+          SELECT username
+          FROM meta_social_contacts
+          WHERE contact_id = c.id
+          ORDER BY updated_at DESC
+          LIMIT 1
+        ) AS meta_social_username,
+        (
+          SELECT CASE WHEN COALESCE(sender_id, '') LIKE '%comment:%' THEN 'comment' ELSE 'dm' END
+          FROM meta_social_contacts
+          WHERE contact_id = c.id
+          ORDER BY updated_at DESC
+          LIMIT 1
+        ) AS meta_social_kind`
+
+// Solo bandeja de chat: ¿este contacto de COMENTARIO tiene un contacto de DM
+// enlazado (misma persona: mismo platform + meta_user_id) que YA tuvo mensajes
+// privados reales? Si sí, el registro-comentario se oculta de todas las vistas
+// (su historial se fusiona dentro del chat privado). meta_user_id vacío nunca
+// enlaza (evita agrupar contactos sin id).
+const CONTACT_META_LINK_SELECT = `
+        (
+          SELECT CASE WHEN EXISTS (
+            SELECT 1
+            FROM meta_social_contacts self_sc
+            JOIN meta_social_contacts dm_sc
+              ON dm_sc.platform = self_sc.platform
+             AND dm_sc.meta_user_id = self_sc.meta_user_id
+            WHERE self_sc.contact_id = c.id
+              AND COALESCE(self_sc.sender_id, '') LIKE '%comment:%'
+              AND COALESCE(self_sc.meta_user_id, '') <> ''
+              AND COALESCE(dm_sc.sender_id, '') NOT LIKE '%comment:%'
+              AND dm_sc.contact_id IS NOT NULL
+              AND dm_sc.contact_id <> c.id
+              AND EXISTS (
+                SELECT 1 FROM meta_social_messages m
+                WHERE m.contact_id = dm_sc.contact_id
+                  AND m.message_type NOT IN ('comment', 'comment_reply_public', 'comment_reply_private')
+              )
+          ) THEN 1 ELSE 0 END
+        ) AS meta_has_linked_dm`
 
 const cleanString = (value) => String(value || '').trim()
 const hasOwn = (object, key) => Object.prototype.hasOwnProperty.call(object || {}, key)
@@ -1425,6 +1473,17 @@ const getContactProfilePhotoUrl = (contact = {}) =>
 const getContactDisplayName = (contact = {}) => {
   const phone = normalizePhoneForStorage(contact.phone) || cleanString(contact.phone)
   const storedName = cleanString(contact.full_name)
+  const socialName = cleanString(contact.meta_social_profile_name)
+  const socialUsername = cleanString(contact.meta_social_username).replace(/^@+/, '')
+  // Un contacto que solo vino de un comentario puede tener el @usuario guardado
+  // como full_name (se creó antes de resolver el nombre). Prefiere el nombre
+  // real del perfil social sobre un @handle.
+  const storedLooksLikeHandle = !storedName ||
+    storedName.startsWith('@') ||
+    (Boolean(socialUsername) && storedName.replace(/^@+/, '').toLowerCase() === socialUsername.toLowerCase())
+  if (socialName && storedLooksLikeHandle) {
+    return socialName
+  }
   if (storedName && !shouldReplaceWhatsAppApiContactName(storedName, phone)) {
     return storedName
   }
@@ -1432,6 +1491,7 @@ const getContactDisplayName = (contact = {}) => {
   return normalizeWhatsAppProfileName(contact.whatsapp_profile_name, phone) ||
     extractWhatsAppProfileName(contact.whatsapp_raw_profile_json, phone) ||
     normalizeWhatsAppProfileName(contact.first_name, phone) ||
+    socialName ||
     phone ||
     ''
 }
@@ -1582,6 +1642,9 @@ const mapContactRowForResponse = (contact = {}) => {
     phones,
     phoneNumbers: phones,
     customFields: parseContactCustomFields(contact.custom_fields),
+    socialProfileName: cleanString(contact.meta_social_profile_name) || null,
+    socialUsername: cleanString(contact.meta_social_username).replace(/^@+/, '') || null,
+    socialKind: cleanString(contact.meta_social_kind) || null,
     notes: ''
   }
 }
@@ -1601,7 +1664,8 @@ const mapChatContactRowForResponse = (contact = {}) => ({
   firstInboundBusinessPhoneNumberId: contact.first_inbound_business_phone_number_id || '',
   lastMessageTransport: contact.last_message_transport || '',
   messageCount: Number(contact.message_count || 0),
-  unreadCount: Number(contact.unread_count || 0)
+  unreadCount: Number(contact.unread_count || 0),
+  hasLinkedDmContact: Boolean(Number(contact.meta_has_linked_dm || 0))
 })
 
 const CHAT_CONTACTS_DEFAULT_LIMIT = 50
@@ -2240,6 +2304,7 @@ export const getChatContacts = async (req, res) => {
         c.tags,
 ${CONTACT_WHATSAPP_PROFILE_SELECTS},
 ${CONTACT_META_PROFILE_SELECT},
+${CONTACT_META_LINK_SELECT},
         COALESCE(ps.total_paid, 0) AS total_paid,
         COALESCE(ps.purchases_count, 0) AS purchases_count,
         ps.last_purchase_date AS last_purchase_date,
@@ -4639,6 +4704,42 @@ export const getContactJourney = async (req, res) => {
       : buildContactPhoneCandidates(contact.phone)
     const whatsappApiMessageContactMatch = buildWhatsAppApiMessageContactMatch(id, contactPhoneCandidates)
 
+    // (Social enlazado) La misma persona puede vivir como DOS contactos separados
+    // (DM y comentario) enlazados por (platform, meta_user_id). Para que el chat
+    // muestre TODO el historial de esa persona (mensajes privados + comentarios)
+    // sin cambiar de filtro, juntamos los ids de los contactos enlazados y
+    // consultamos meta_social_messages para todos ellos. Falla-seguro: si algo
+    // truena, se queda solo con [id] (comportamiento anterior).
+    let metaPersonContactIds = [id]
+    try {
+      const ownSocialRows = await db.all(
+        `SELECT platform, meta_user_id
+           FROM meta_social_contacts
+          WHERE contact_id = ? AND COALESCE(meta_user_id, '') <> ''`,
+        [id]
+      )
+      const linkedContactIds = new Set()
+      for (const row of ownSocialRows) {
+        const linkedRows = await db.all(
+          `SELECT DISTINCT contact_id
+             FROM meta_social_contacts
+            WHERE platform = ? AND meta_user_id = ?
+              AND contact_id IS NOT NULL AND contact_id <> ?`,
+          [row.platform, row.meta_user_id, id]
+        )
+        for (const linked of linkedRows) {
+          if (linked.contact_id) linkedContactIds.add(String(linked.contact_id))
+        }
+      }
+      if (linkedContactIds.size > 0) {
+        metaPersonContactIds = [id, ...linkedContactIds]
+      }
+    } catch (linkErr) {
+      logger.warn(`No se pudieron resolver contactos sociales enlazados para ${id}: ${linkErr.message}`)
+      metaPersonContactIds = [id]
+    }
+    const metaContactIdPlaceholders = metaPersonContactIds.map(() => '?').join(', ')
+
     const journey = []
     if (refreshExternalStatuses) {
       await refreshHighLevelConversationMessageStatuses(id)
@@ -4970,7 +5071,7 @@ export const getContactJourney = async (req, res) => {
        FROM meta_social_messages msg
        LEFT JOIN meta_social_contacts profile ON profile.id = msg.meta_social_contact_id
        LEFT JOIN meta_social_posts post ON post.id = COALESCE(NULLIF(msg.post_id, ''), msg.media_id)
-       WHERE msg.contact_id = ?
+       WHERE msg.contact_id IN (${metaContactIdPlaceholders})
          AND (
            ? = 1
            OR LOWER(COALESCE(msg.direction, 'inbound')) NOT IN (${outboundMessageDirectionPlaceholders})
@@ -4982,7 +5083,7 @@ export const getContactJourney = async (req, res) => {
        ORDER BY journey_message_date ASC, created_at ASC, meta_social_message_id ASC`,
       appendOptionalLimitParam(
         appendOptionalBeforeParam(
-          [id, includeBusinessMessages ? 1 : 0, ...OUTBOUND_JOURNEY_MESSAGE_DIRECTIONS],
+          [...metaPersonContactIds, includeBusinessMessages ? 1 : 0, ...OUTBOUND_JOURNEY_MESSAGE_DIRECTIONS],
           journeyMessageBefore
         ),
         journeyMessageLimit

@@ -178,6 +178,12 @@ export interface Contact {
   ad_id?: string
   preferredWhatsAppPhoneNumberId?: string | null
   preferred_whatsapp_phone_number_id?: string | null
+  // Identidad social (Meta): nombre real del perfil + @usuario + tipo de canal
+  // (comentario vs DM) + si el contacto-comentario tiene un DM enlazado.
+  socialProfileName?: string | null
+  socialUsername?: string | null
+  socialKind?: 'comment' | 'dm' | null
+  hasLinkedDmContact?: boolean
   notes?: string
   normalizedPhone?: string | null
   duplicateCount?: number
