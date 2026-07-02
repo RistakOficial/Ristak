@@ -53,7 +53,6 @@ import {
   EmailRichTextEditor,
   Icon,
   InlineEditableText,
-  SegmentTabs,
   Modal,
   RecordPaymentModal,
   SearchField,
@@ -202,6 +201,8 @@ interface DesktopChatMessage {
   // Comentarios de FB/IG: globo distinto + contexto de la publicación comentada.
   isComment?: boolean
   commentReplyMode?: 'public' | 'private'
+  commentId?: string
+  commentPlatform?: 'instagram' | 'messenger'
   commentPost?: {
     message?: string
     imageUrl?: string
@@ -1843,6 +1844,8 @@ function getJourneyMessage(event: JourneyEvent, index: number): DesktopChatMessa
     routingReason: String(data.routing_reason || data.routingReason || data.fallbackReason || '').trim(),
     isComment: messageType === 'comment' || messageType === 'comment_reply_public' || messageType === 'comment_reply_private',
     commentReplyMode: messageType === 'comment_reply_public' ? 'public' : messageType === 'comment_reply_private' ? 'private' : undefined,
+    commentId: String(data.comment_id || data.commentId || '').trim() || undefined,
+    commentPlatform: String(data.social_platform || data.platform || '').toLowerCase() === 'instagram' ? 'instagram' : 'messenger',
     commentPost: (messageType.startsWith('comment') && (data.post_message || data.post_image_url || data.post_permalink))
       ? {
           message: String(data.post_message || '').trim(),
@@ -2283,9 +2286,10 @@ export const DesktopChat: React.FC = () => {
 
   const [composerText, setComposerText] = useState('')
   const [composerChannel, setComposerChannel] = useState<ComposerChannel>('whatsapp')
-  // Modo de respuesta cuando el contacto es un comentario (FB/IG): pública en el
-  // post, o privada por DM.
-  const [commentReplyMode, setCommentReplyMode] = useState<'public' | 'private'>('public')
+  // La barra de abajo SIEMPRE manda privado. Responder PÚBLICO a un comentario es
+  // una acción explícita: el botón de la tarjeta del comentario fija este target
+  // y el composer entra en modo "respuesta pública" (con banner cancelable).
+  const [commentReplyTarget, setCommentReplyTarget] = useState<{ messageId: string; commentId: string; platform: 'instagram' | 'messenger'; preview: string } | null>(null)
   const [composerBusinessPhoneId, setComposerBusinessPhoneId] = useState('')
   const [emailSubject, setEmailSubject] = useState('')
   const [emailBodyHtml, setEmailBodyHtml] = useState('')
@@ -2364,6 +2368,7 @@ export const DesktopChat: React.FC = () => {
   const selectedBusinessPhoneValue = getBusinessPhoneValue(selectedBusinessPhone)
   const whatsappConnected = Boolean(whatsappStatus?.connected && selectedBusinessPhoneValue)
   useEffect(() => {
+    setCommentReplyTarget(null)
     if (!activeContact) {
       setComposerChannel('whatsapp')
       setComposerBusinessPhoneId('')
@@ -4993,11 +4998,19 @@ export const DesktopChat: React.FC = () => {
 		    if (!activeContact) return
 		    if (!isEmailMessage && !text && attachmentsToSend.length === 0 && !voiceToSend) return
 
-		    // Contacto de comentario (FB/IG): el envío es una RESPUESTA al comentario
-		    // (pública en el post o privada por DM), no un mensaje directo normal.
-		    if (!isEmailMessage && isCommentContact(activeContact)) {
+		    // Respuesta a un COMENTARIO (FB/IG). Dos caminos:
+		    //  - commentReplyTarget presente (botón "Responder" en la tarjeta) → respuesta
+		    //    PÚBLICA en el post, apuntando a ese comentario exacto (commentId).
+		    //  - contacto que SOLO comentó (aún sin DM) → la barra manda respuesta PRIVADA
+		    //    al comentario (inicia el chat privado).
+		    // Un contacto con DM ya existente NO entra aquí por la barra (cae al DM normal);
+		    // para responderle en público usa el botón de la tarjeta (que fija el target).
+		    if (!isEmailMessage && (commentReplyTarget || isCommentContact(activeContact))) {
 		      if (!text) return
-		      const commentPlatform = getCommentPlatform(activeContact) === 'instagram' ? 'instagram' : 'messenger'
+		      const replyType: 'public' | 'private' = commentReplyTarget ? 'public' : 'private'
+		      const commentPlatform = commentReplyTarget
+		        ? commentReplyTarget.platform
+		        : (getCommentPlatform(activeContact) === 'instagram' ? 'instagram' : 'messenger')
 		      const optimisticId = `desktop-comment-${Date.now()}`
 		      const sentAt = new Date().toISOString()
 		      setComposerStatus('sending')
@@ -5017,8 +5030,10 @@ export const DesktopChat: React.FC = () => {
 		          contactId: activeContact.id,
 		          platform: commentPlatform,
 		          message: text,
-		          replyType: commentReplyMode
+		          replyType,
+		          commentId: commentReplyTarget?.commentId
 		        })
+		        setCommentReplyTarget(null)
 		        setComposerStatus('idle')
 		        void loadConversation(activeContact.id, { silent: true, useCache: false })
 		      } catch (error) {
@@ -6827,6 +6842,21 @@ export const DesktopChat: React.FC = () => {
 	                              ) : null}
 	                              {message.text ? <p className={styles.commentBody}>{message.text}</p> : null}
 	                              {renderMessageMeta(message, routingDetails.label)}
+	                              {message.direction === 'inbound' && !message.commentReplyMode && message.commentId ? (
+	                                <button
+	                                  type="button"
+	                                  className={styles.commentReplyButton}
+	                                  onClick={() => setCommentReplyTarget({
+	                                    messageId: message.id,
+	                                    commentId: message.commentId as string,
+	                                    platform: message.commentPlatform || 'messenger',
+	                                    preview: String(message.text || '').replace(/\s+/g, ' ').trim().slice(0, 60)
+	                                  })}
+	                                >
+	                                  <MessageCircle size={13} aria-hidden="true" />
+	                                  Responder en la publicación
+	                                </button>
+	                              ) : null}
 	                            </div>
 	                          ) : (
 	                            <>
@@ -6896,18 +6926,28 @@ export const DesktopChat: React.FC = () => {
 	                {composerChannelHint ? (
 	                  <span className={styles.composerChannelHint}>{composerChannelHint}</span>
 	                ) : null}
-	                {!isEmailComposer && isCommentContact(activeContact) ? (
-	                  <div className={styles.composerReplyMode}>
-	                    <SegmentTabs
-	                      aria-label="Modo de respuesta al comentario"
-	                      value={commentReplyMode}
-	                      onChange={(id) => setCommentReplyMode(id === 'private' ? 'private' : 'public')}
-	                      tabs={[
-	                        { id: 'public', label: 'Responder público' },
-	                        { id: 'private', label: 'Responder por privado' }
-	                      ]}
-	                    />
+	                {!isEmailComposer && commentReplyTarget ? (
+	                  <div className={styles.commentReplyBanner}>
+	                    <span className={styles.commentReplyBannerLabel}>
+	                      <MessageCircle size={13} aria-hidden="true" />
+	                      <span>Respondiendo <strong>público</strong> al comentario</span>
+	                      {commentReplyTarget.preview ? (
+	                        <span className={styles.commentReplyBannerPreview}>“{commentReplyTarget.preview}”</span>
+	                      ) : null}
+	                    </span>
+	                    <button
+	                      type="button"
+	                      className={styles.commentReplyBannerClose}
+	                      onClick={() => setCommentReplyTarget(null)}
+	                      aria-label="Cancelar respuesta pública"
+	                    >
+	                      <X size={14} />
+	                    </button>
 	                  </div>
+	                ) : (!isEmailComposer && (isCommentContact(activeContact) || messages.some((message) => message.isComment))) ? (
+	                  <span className={styles.composerPrivateHint}>
+	                    Mensaje privado — para responder en la publicación usa “Responder” en el comentario.
+	                  </span>
 	                ) : null}
 	                {isEmailComposer ? (
 		                  <>
