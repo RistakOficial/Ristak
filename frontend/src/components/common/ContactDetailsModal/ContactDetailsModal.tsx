@@ -2185,20 +2185,11 @@ export function ContactDetailsModal({
 
                   {whatsappPreferenceOptions.length > 0 && (
                     <div className={styles.detailSection}>
-                      <div className={styles.whatsappPreference}>
-                        <div className={styles.whatsappPreferenceHeader}>
-                          <Icon name="whatsapp" size={16} />
-                          <div className={styles.whatsappPreferenceCopy}>
-                            <span className={styles.whatsappPreferenceTitle}>Respuesta por WhatsApp</span>
-                            <span className={styles.whatsappPreferenceDescription}>
-                              {whatsappPreferenceModeLabel} · {whatsappPreferenceDescription}
-                            </span>
-                          </div>
-                        </div>
-                        <div className={styles.whatsappPreferenceRouteSummary}>
-                          <span>{whatsappPreferenceRouteMode}</span>
-                          <span>{whatsappPreferenceRouteDisplay}</span>
-                        </div>
+                      <h5 className={styles.detailSectionTitle}>Respuesta por WhatsApp</h5>
+                      <div className={styles.detailSectionContent}>
+                        <p className={styles.whatsappPreferenceDescription}>
+                          {whatsappPreferenceModeLabel} · {whatsappPreferenceDescription}
+                        </p>
                         <CustomSelect
                           value={preferredWhatsAppPhoneNumberId}
                           onChange={(event) => updatePreferredWhatsAppPhoneNumber(event.target.value)}
@@ -2211,6 +2202,10 @@ export function ContactDetailsModal({
                             </option>
                           ))}
                         </CustomSelect>
+                        <p className={styles.whatsappPreferenceRoute}>
+                          <strong>{whatsappPreferenceRouteMode}</strong>
+                          <span>{whatsappPreferenceRouteDisplay}</span>
+                        </p>
                         {savingWhatsAppPreference && (
                           <p className={styles.whatsappPreferenceHint}>Guardando cambio...</p>
                         )}
@@ -2671,20 +2666,28 @@ export function ContactDetailsModal({
                   <div className={styles.detailSection}>
                     <button
                       type="button"
-                      className={styles.toggleButton}
+                      className={`${styles.summaryCardButton} ${refundsExpanded ? styles.summaryCardButtonOpen : ''}`}
                       onClick={() => setRefundsExpanded(prev => !prev)}
+                      aria-expanded={refundsExpanded}
+                      data-contact-summary-trigger="refunds"
                     >
-                      <div className={styles.toggleLabel}>
-                        <Icon name={refundsExpanded ? 'chevron-down' : 'chevron-right'} size={16} />
-                        <span>Reembolsos ({refunds.length})</span>
+                      <div className={styles.summaryCardContent}>
+                        <div>
+                          <h5 className={styles.summaryTitle}>Reembolsos</h5>
+                          <p className={styles.summaryAmountNeutral}>
+                            {formatCurrency(refunds.reduce((sum, refund) => sum + Math.abs(refund.amount), 0))}
+                          </p>
+                        </div>
+                        <Icon
+                          name={refundsExpanded ? 'chevron-down' : 'chevron-right'}
+                          size={20}
+                          className={styles.summaryCardChevron}
+                        />
                       </div>
-                      <span className={styles.toggleValue}>
-                        {formatCurrency(refunds.reduce((sum, refund) => sum + Math.abs(refund.amount), 0))}
-                      </span>
                     </button>
 
                     {refundsExpanded && (
-                      <ul className={styles.paymentList}>
+                      <ul className={styles.paymentList} data-contact-summary-list="refunds">
                         {refunds.map(refund => {
                           const statusInfo = getStatusLabel(refund.status)
                           return (

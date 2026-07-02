@@ -5,53 +5,6 @@
   color: var(--text);
 }
 
-.panelHeader,
-.staticHeader {
-  width: 100%;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 10px;
-  min-width: 0;
-  padding: 0;
-  border: 0;
-  background: transparent;
-  color: var(--text-mute);
-  text-align: left;
-}
-
-.panelHeader {
-  cursor: pointer;
-}
-
-.panelHeader:hover {
-  color: var(--text);
-}
-
-.panelHeader > span,
-.staticHeader > strong {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  min-width: 0;
-  font: var(--label-font);
-  font-weight: 700;
-  text-transform: var(--label-transform);
-  letter-spacing: var(--label-spacing);
-}
-
-.panelHeader strong,
-.staticHeader strong {
-  min-width: 0;
-  overflow-wrap: anywhere;
-}
-
-.panelHeader svg {
-  flex: 0 0 auto;
-}
-
-.panelHeader > small,
-.staticHeader > small,
 .groupHeader > small {
   flex: 0 0 auto;
   min-width: 24px;
@@ -66,12 +19,6 @@
   color: var(--text-dim);
   font-size: 12px;
   font-weight: 600;
-}
-
-.content {
-  display: grid;
-  gap: 10px;
-  min-width: 0;
 }
 
 .loading {
@@ -134,12 +81,16 @@
   padding: 0;
   border: 0;
   background: transparent;
-  color: var(--text-dim);
+  color: var(--text-mute);
   text-align: left;
   cursor: pointer;
 }
 
-.groupHeader:hover {
+.groupHeader[data-static='true'] {
+  cursor: default;
+}
+
+.groupHeader:not([data-static='true']):hover {
   color: var(--text);
 }
 
@@ -153,8 +104,11 @@
 .groupHeader strong {
   min-width: 0;
   color: inherit;
-  font-size: 13px;
-  font-weight: 650;
+  font-family: var(--label-font);
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: var(--label-transform);
+  letter-spacing: var(--label-spacing);
   overflow-wrap: anywhere;
 }
 
@@ -298,23 +252,19 @@
   color: var(--cfp-text);
 }
 
-[data-cfp-variant='phone'] .panelHeader,
-[data-cfp-variant='phone'] .staticHeader,
 [data-cfp-variant='phone'] .groupHeader {
   color: var(--cfp-muted);
 }
 
-[data-cfp-variant='phone'] .panelHeader > span,
-[data-cfp-variant='phone'] .staticHeader > strong {
+[data-cfp-variant='phone'] .groupHeader strong {
   font-family: var(--phone-chat-font);
   font-size: 12px;
   font-weight: 800;
   letter-spacing: 0;
   text-transform: none;
+  color: var(--cfp-text);
 }
 
-[data-cfp-variant='phone'] .panelHeader > small,
-[data-cfp-variant='phone'] .staticHeader > small,
 [data-cfp-variant='phone'] .groupHeader > small {
   border-color: var(--cfp-border);
   background: var(--cfp-bg-soft);
@@ -325,7 +275,6 @@
   border-top-color: var(--cfp-border);
 }
 
-[data-cfp-variant='phone'] .groupHeader strong,
 [data-cfp-variant='phone'] .fieldLabel,
 [data-cfp-variant='phone'] .choiceOption,
 [data-cfp-variant='phone'] .booleanOption {

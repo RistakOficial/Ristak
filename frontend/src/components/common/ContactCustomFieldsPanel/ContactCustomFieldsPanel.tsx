@@ -338,7 +338,8 @@ const buildEditableFields = (
 
 const buildGroups = (
   fields: EditableCustomField[],
-  folders: CustomFieldFolder[]
+  folders: CustomFieldFolder[],
+  unfiledLabel: string
 ): FieldGroup[] => {
   const byGroup = new Map<string, FieldGroup>()
   const folderById = new Map(folders.map(folder => [folder.id, folder]))
@@ -355,12 +356,26 @@ const buildGroups = (
   fields.forEach((field) => {
     const folderId = cleanString(field.folderId)
     const folder = folderId ? folderById.get(folderId) : null
-    const label = folder?.name || field.folderName || field.fieldGroup || 'Campos personalizados'
-    const groupId = folderId || `unfiled:${label}`
+    // Los campos dentro de una carpeta forman su propia seccion (nombre de la
+    // carpeta). Los que NO tienen carpeta caen todos en un unico grupo
+    // "sin archivar" etiquetado con `unfiledLabel` (por defecto "Campos
+    // personalizados"), para que no se dupliquen headers.
+    const folderLabel = folder?.name || field.folderName || field.fieldGroup
+    const label = folderLabel || unfiledLabel
+    const groupId = folderId || (folderLabel ? `group:${folderLabel}` : 'unfiled')
     ensureGroup(groupId, label).fields.push(field)
   })
 
   const folderOrder = new Map(folders.map((folder, index) => [folder.id, index]))
+
+  // Orden: primero las carpetas reales (en su orden), luego cualquier grupo
+  // heredado por nombre, y SIEMPRE al final el grupo "sin archivar"
+  // (unfiled = "Campos personalizados"), como pidio el usuario.
+  const orderOf = (group: FieldGroup) => {
+    if (group.id === 'unfiled') return Number.MAX_SAFE_INTEGER
+    if (folderOrder.has(group.id)) return folderOrder.get(group.id)!
+    return Number.MAX_SAFE_INTEGER - 1
+  }
 
   return [...byGroup.values()]
     .map(group => ({
@@ -370,9 +385,8 @@ const buildGroups = (
       )
     }))
     .sort((left, right) => {
-      const leftOrder = folderOrder.has(left.id) ? folderOrder.get(left.id)! : Number.MAX_SAFE_INTEGER
-      const rightOrder = folderOrder.has(right.id) ? folderOrder.get(right.id)! : Number.MAX_SAFE_INTEGER
-      if (leftOrder !== rightOrder) return leftOrder - rightOrder
+      const orderDiff = orderOf(left) - orderOf(right)
+      if (orderDiff !== 0) return orderDiff
       return left.label.localeCompare(right.label, 'es')
     })
 }
@@ -397,7 +411,6 @@ export function ContactCustomFieldsPanel({
   const [catalogFolders, setCatalogFolders] = useState<CustomFieldFolder[]>([])
   const [catalogLoading, setCatalogLoading] = useState(false)
   const [catalogError, setCatalogError] = useState('')
-  const [expanded, setExpanded] = useState(defaultExpanded)
   const [expandedGroups, setExpandedGroups] = useState<Set<string>>(() => new Set())
   const [drafts, setDrafts] = useState<Record<string, DraftValue>>({})
   const [savingFieldId, setSavingFieldId] = useState<string | null>(null)
@@ -410,10 +423,6 @@ export function ContactCustomFieldsPanel({
   useEffect(() => {
     setLocalCustomFields(customFields)
   }, [contactId, customFieldsFingerprint])
-
-  useEffect(() => {
-    setExpanded(defaultExpanded)
-  }, [contactId, defaultExpanded])
 
   useEffect(() => {
     if (externalCatalog) return
@@ -456,8 +465,8 @@ export function ContactCustomFieldsPanel({
     [effectiveDefinitions, localCustomFields]
   )
   const groups = useMemo(
-    () => buildGroups(editableFields, effectiveFolders),
-    [editableFields, effectiveFolders]
+    () => buildGroups(editableFields, effectiveFolders, title),
+    [editableFields, effectiveFolders, title]
   )
   const groupFingerprint = useMemo(() => stableStringify(groups.map(group => [group.id, group.fields.map(field => fieldIdentity(field))])), [groups])
   const valuesFingerprint = useMemo(
@@ -470,8 +479,8 @@ export function ContactCustomFieldsPanel({
   }, [contactId, valuesFingerprint, timezone])
 
   useEffect(() => {
-    setExpandedGroups(new Set(groups.map(group => group.id)))
-  }, [contactId, groupFingerprint, groups])
+    setExpandedGroups(defaultExpanded ? new Set(groups.map(group => group.id)) : new Set())
+  }, [contactId, groupFingerprint, defaultExpanded])
 
   const updateDraft = (identity: string, value: DraftValue) => {
     setDrafts(current => ({ ...current, [identity]: value }))
@@ -673,8 +682,59 @@ export function ContactCustomFieldsPanel({
     )
   }
 
-  const content = (
-    <div className={styles.content}>
+  // Cada grupo (carpeta o "sin archivar") se pinta como una seccion propia de
+  // primer nivel, con el MISMO header. Asi las carpetas quedan al lado de
+  // "Campos personalizados" en vez de anidadas dentro de el.
+  const renderGroupSection = (group: FieldGroup) => {
+    const groupOpen = !collapsible || expandedGroups.has(group.id)
+
+    const toggleGroup = () => {
+      setExpandedGroups(current => {
+        const next = new Set(current)
+        if (next.has(group.id)) next.delete(group.id)
+        else next.add(group.id)
+        return next
+      })
+    }
+
+    return (
+      <section key={group.id} className={styles.group}>
+        {collapsible ? (
+          <button
+            type="button"
+            className={styles.groupHeader}
+            onClick={toggleGroup}
+            aria-expanded={groupOpen}
+          >
+            <span>
+              {groupOpen ? <ChevronDown size={15} /> : <ChevronRight size={15} />}
+              <strong>{group.label}</strong>
+            </span>
+            <small>{group.fields.length}</small>
+          </button>
+        ) : (
+          <div className={styles.groupHeader} data-static="true">
+            <span>
+              <strong>{group.label}</strong>
+            </span>
+            <small>{group.fields.length}</small>
+          </div>
+        )}
+        {groupOpen ? (
+          <div className={styles.fields}>
+            {group.fields.map(renderFieldControl)}
+          </div>
+        ) : null}
+      </section>
+    )
+  }
+
+  return (
+    <section
+      className={cn(styles.panel, className)}
+      data-cfp-variant={surface}
+      data-cfp-compact={compact ? 'true' : undefined}
+    >
       {catalogLoading ? (
         <div className={styles.loading} role="status" aria-live="polite">
           <Loader2 size={16} className={styles.spin} />
@@ -683,77 +743,21 @@ export function ContactCustomFieldsPanel({
       ) : catalogError ? (
         <p className={styles.errorText}>{catalogError}</p>
       ) : groups.length === 0 ? (
-        <p className={styles.emptyText}>{emptyText}</p>
+        <div className={styles.group}>
+          <div className={styles.groupHeader} data-static="true">
+            <span>
+              <strong>{title}</strong>
+            </span>
+            <small>0</small>
+          </div>
+          <p className={styles.emptyText}>{emptyText}</p>
+        </div>
       ) : (
         <div className={styles.groupList}>
-          {groups.map(group => {
-            const groupOpen = expandedGroups.has(group.id)
-            return (
-              <section key={group.id} className={styles.group}>
-                <button
-                  type="button"
-                  className={styles.groupHeader}
-                  onClick={() => {
-                    setExpandedGroups(current => {
-                      const next = new Set(current)
-                      if (next.has(group.id)) next.delete(group.id)
-                      else next.add(group.id)
-                      return next
-                    })
-                  }}
-                  aria-expanded={groupOpen}
-                >
-                  <span>
-                    {groupOpen ? <ChevronDown size={15} /> : <ChevronRight size={15} />}
-                    <strong>{group.label}</strong>
-                  </span>
-                  <small>{group.fields.length}</small>
-                </button>
-                {groupOpen ? (
-                  <div className={styles.fields}>
-                    {group.fields.map(renderFieldControl)}
-                  </div>
-                ) : null}
-              </section>
-            )
-          })}
+          {groups.map(renderGroupSection)}
         </div>
       )}
       {fieldError ? <p className={styles.errorText}>{fieldError}</p> : null}
-    </div>
-  )
-
-  return (
-    <section
-      className={cn(styles.panel, className)}
-      data-cfp-variant={surface}
-      data-cfp-compact={compact ? 'true' : undefined}
-    >
-      {collapsible ? (
-        <>
-          <button
-            type="button"
-            className={styles.panelHeader}
-            onClick={() => setExpanded(current => !current)}
-            aria-expanded={expanded}
-          >
-            <span>
-              {expanded ? <ChevronDown size={15} /> : <ChevronRight size={15} />}
-              <strong>{title}</strong>
-            </span>
-            <small>{editableFields.length}</small>
-          </button>
-          {expanded ? content : null}
-        </>
-      ) : (
-        <>
-          <div className={styles.staticHeader}>
-            <strong>{title}</strong>
-            <small>{editableFields.length}</small>
-          </div>
-          {content}
-        </>
-      )}
     </section>
   )
 }
