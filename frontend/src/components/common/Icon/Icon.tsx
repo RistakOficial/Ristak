@@ -38,6 +38,7 @@ const iconMap: Record<string, React.FC<any>> = {
   'chevron-right': LucideIcons.ChevronRight,
   'arrow-right': LucideIcons.ArrowRight,
   'arrow-left': LucideIcons.ArrowLeft,
+  'arrow-down': LucideIcons.ArrowDown,
   'file-text': LucideIcons.FileText,
   'hash': LucideIcons.Hash,
   'layers': LucideIcons.Layers,
