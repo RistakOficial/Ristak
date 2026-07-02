@@ -6,6 +6,7 @@ import { db, setAppConfig } from '../src/config/database.js'
 import { API_URLS } from '../src/config/constants.js'
 import {
   buildMetaPublicPurchasePixelEvent,
+  triggerWhatsappAppointmentBookedEvent,
   triggerMetaPaymentPurchaseEvent,
   triggerMetaPurchaseEventForPaymentRow
 } from '../src/services/metaConversionEventsService.js'
@@ -212,7 +213,32 @@ async function insertMetaPixelConfig({
 async function deletePaymentMetaTestContact(contactId) {
   await db.run('DELETE FROM meta_conversion_event_logs WHERE contact_id = ?', [contactId]).catch(() => undefined)
   await db.run('DELETE FROM whatsapp_attribution WHERE contact_id = ?', [contactId]).catch(() => undefined)
+  await db.run('DELETE FROM meta_social_contacts WHERE contact_id = ?', [contactId]).catch(() => undefined)
   await db.run('DELETE FROM contacts WHERE id = ?', [contactId]).catch(() => undefined)
+}
+
+async function insertMetaSocialContact({
+  contactId,
+  platform = 'messenger',
+  senderId = `sender_${contactId}`,
+  pageId = `page_${contactId}`,
+  instagramAccountId = ''
+}) {
+  await db.run(
+    `INSERT INTO meta_social_contacts (
+       id, contact_id, platform, sender_id, recipient_id, page_id, instagram_account_id,
+       first_seen_at, last_seen_at, message_count, updated_at
+     ) VALUES (?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, 1, CURRENT_TIMESTAMP)`,
+    [
+      `meta_social_${contactId}_${platform}`,
+      contactId,
+      platform,
+      senderId,
+      platform === 'instagram' ? instagramAccountId : pageId,
+      pageId || null,
+      instagramAccountId || null
+    ]
+  )
 }
 
 async function cleanupQrPaymentLabelFixture(phoneNumberId) {
@@ -1006,6 +1032,162 @@ test('payment smart default sends WhatsApp Business Messaging data when attribut
   }
 })
 
+test('payment smart default sends Messenger Business Messaging data when social identity exists', async () => {
+  const previousMetaGraphDescriptor = Object.getOwnPropertyDescriptor(API_URLS, 'META_GRAPH')
+  const contactId = 'contact_meta_purchase_smart_messenger'
+  const metaCalls = []
+  let metaServer
+
+  try {
+    await initializeMasterKey()
+
+    await snapshotMetaConfig(async () => {
+      await snapshotAppConfig(APP_CONFIG_KEYS, async () => {
+        await deletePaymentMetaTestContact(contactId)
+        await db.run(
+          `INSERT INTO contacts (id, email, full_name, source, created_at, updated_at)
+           VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+          [contactId, 'msg-buyer@example.test', 'Messenger Buyer', 'messenger']
+        )
+        await insertMetaSocialContact({
+          contactId,
+          platform: 'messenger',
+          senderId: 'psid-purchase-123',
+          pageId: 'page-purchase-msg-123'
+        })
+
+        await insertMetaPixelConfig({ pageId: 'page-meta-fallback-msg' })
+        await saveAccountLocaleSettings({ countryCode: 'US', currency: 'USD', dialCode: '1' })
+        await setAppConfig('meta_payment_purchase_event_config', JSON.stringify({
+          enabled: true,
+          channel: 'smart',
+          eventName: 'Purchase',
+          parameters: {
+            sendValue: true,
+            value: '',
+            predictedLtv: '',
+            custom: [{ key: 'checkout_source', value: 'messenger_dm' }]
+          }
+        }))
+
+        metaServer = await startMetaCaptureServer(metaCalls)
+
+        const result = await triggerMetaPaymentPurchaseEvent(contactId, {
+          id: 'payment_meta_purchase_smart_msg',
+          amount: 321.25,
+          status: 'paid',
+          eventSourceUrl: 'https://checkout.example.test/pay/payment_meta_purchase_smart_msg'
+        })
+
+        assert.equal(result.sent, true)
+        assert.equal(metaCalls.length, 1)
+
+        const payload = JSON.parse(metaCalls[0].body)
+        assert.equal(payload.data[0].event_name, 'Purchase')
+        assert.equal(payload.data[0].action_source, 'business_messaging')
+        assert.equal(payload.data[0].messaging_channel, 'messenger')
+        assert.equal(payload.data[0].event_source_url, undefined)
+        assert.equal(payload.data[0].user_data.page_id, 'page-purchase-msg-123')
+        assert.equal(payload.data[0].user_data.page_scoped_user_id, 'psid-purchase-123')
+        assert.equal(payload.data[0].custom_data.value, 321.25)
+        assert.equal(payload.data[0].custom_data.currency, 'USD')
+        assert.equal(payload.data[0].custom_data.payment_id, 'payment_meta_purchase_smart_msg')
+        assert.equal(payload.data[0].custom_data.checkout_source, 'messenger_dm')
+      })
+    })
+  } finally {
+    if (metaServer) await new Promise(resolve => metaServer.close(resolve))
+    if (previousMetaGraphDescriptor) Object.defineProperty(API_URLS, 'META_GRAPH', previousMetaGraphDescriptor)
+    await deletePaymentMetaTestContact(contactId)
+  }
+})
+
+test('calendar appointment Business Messaging events support Messenger and Instagram identities', async () => {
+  const previousMetaGraphDescriptor = Object.getOwnPropertyDescriptor(API_URLS, 'META_GRAPH')
+  const messengerContactId = 'contact_meta_calendar_messenger'
+  const instagramContactId = 'contact_meta_calendar_instagram'
+  const metaCalls = []
+  let metaServer
+
+  try {
+    await initializeMasterKey()
+
+    await snapshotMetaConfig(async () => {
+      await snapshotAppConfig(APP_CONFIG_KEYS, async () => {
+        await deletePaymentMetaTestContact(messengerContactId)
+        await deletePaymentMetaTestContact(instagramContactId)
+        await db.run(
+          `INSERT INTO contacts (id, email, full_name, source, created_at, updated_at)
+           VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+          [messengerContactId, 'appt-msg@example.test', 'Messenger Appointment', 'messenger']
+        )
+        await db.run(
+          `INSERT INTO contacts (id, email, full_name, source, created_at, updated_at)
+           VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+          [instagramContactId, 'appt-ig@example.test', 'Instagram Appointment', 'instagram']
+        )
+        await insertMetaSocialContact({
+          contactId: messengerContactId,
+          platform: 'messenger',
+          senderId: 'psid-appointment-123',
+          pageId: 'page-appointment-msg-123'
+        })
+        await insertMetaSocialContact({
+          contactId: instagramContactId,
+          platform: 'instagram',
+          senderId: 'igsid-appointment-456',
+          instagramAccountId: 'ig-account-appointment-456'
+        })
+
+        await insertMetaPixelConfig({ pageId: 'page-calendar-fallback' })
+        metaServer = await startMetaCaptureServer(metaCalls)
+
+        const messengerResult = await triggerWhatsappAppointmentBookedEvent(messengerContactId, {
+          calendarId: 'calendar_msg',
+          calendarName: 'Calendario Messenger',
+          appointmentId: 'appointment_msg_123',
+          customEvents: { enabled: true, channel: 'messenger', eventName: 'Schedule' }
+        })
+        const instagramResult = await triggerWhatsappAppointmentBookedEvent(instagramContactId, {
+          calendarId: 'calendar_ig',
+          calendarName: 'Calendario Instagram',
+          appointmentId: 'appointment_ig_456',
+          customEvents: { enabled: true, channel: 'instagram', eventName: 'Schedule' }
+        })
+
+        assert.equal(messengerResult.sent, true)
+        assert.equal(instagramResult.sent, true)
+        assert.equal(metaCalls.length, 2)
+
+        const messengerPayload = JSON.parse(metaCalls[0].body)
+        assert.equal(messengerPayload.data[0].event_name, 'LeadSubmitted')
+        assert.equal(messengerPayload.data[0].action_source, 'business_messaging')
+        assert.equal(messengerPayload.data[0].messaging_channel, 'messenger')
+        assert.equal(messengerPayload.data[0].user_data.page_id, 'page-appointment-msg-123')
+        assert.equal(messengerPayload.data[0].user_data.page_scoped_user_id, 'psid-appointment-123')
+        assert.equal(messengerPayload.data[0].custom_data.source, 'messenger')
+        assert.equal(messengerPayload.data[0].custom_data.messaging_channel, 'messenger')
+        assert.equal(messengerPayload.data[0].custom_data.appointment_id, 'appointment_msg_123')
+
+        const instagramPayload = JSON.parse(metaCalls[1].body)
+        assert.equal(instagramPayload.data[0].event_name, 'LeadSubmitted')
+        assert.equal(instagramPayload.data[0].action_source, 'business_messaging')
+        assert.equal(instagramPayload.data[0].messaging_channel, 'instagram')
+        assert.equal(instagramPayload.data[0].user_data.ig_account_id, 'ig-account-appointment-456')
+        assert.equal(instagramPayload.data[0].user_data.ig_scoped_user_id, 'igsid-appointment-456')
+        assert.equal(instagramPayload.data[0].custom_data.source, 'instagram')
+        assert.equal(instagramPayload.data[0].custom_data.messaging_channel, 'instagram')
+        assert.equal(instagramPayload.data[0].custom_data.appointment_id, 'appointment_ig_456')
+      })
+    })
+  } finally {
+    if (metaServer) await new Promise(resolve => metaServer.close(resolve))
+    if (previousMetaGraphDescriptor) Object.defineProperty(API_URLS, 'META_GRAPH', previousMetaGraphDescriptor)
+    await deletePaymentMetaTestContact(messengerContactId)
+    await deletePaymentMetaTestContact(instagramContactId)
+  }
+})
+
 test('payment smart default falls back to website Purchase data without WhatsApp attribution', async () => {
   const previousMetaGraphDescriptor = Object.getOwnPropertyDescriptor(API_URLS, 'META_GRAPH')
   const contactId = 'contact_meta_purchase_smart_site'
@@ -1188,6 +1370,62 @@ test('public payment pixel event is skipped for smart WhatsApp-attributed paymen
           payment_mode: 'live',
           public_payment_id: 'public_pixel_wa',
           payment_url: 'https://checkout.example.test/pay/public_pixel_wa'
+        })
+
+        assert.equal(event, null)
+      })
+    })
+  } finally {
+    await deletePaymentMetaTestContact(contactId)
+  }
+})
+
+test('public payment pixel event is skipped for smart Meta social-attributed payments', async () => {
+  const contactId = 'contact_meta_public_pixel_messenger'
+
+  try {
+    await initializeMasterKey()
+
+    await snapshotMetaConfig(async () => {
+      await snapshotAppConfig(APP_CONFIG_KEYS, async () => {
+        await deletePaymentMetaTestContact(contactId)
+        await db.run(
+          `INSERT INTO contacts (id, email, full_name, source, created_at, updated_at)
+           VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+          [contactId, 'pixel-msg-buyer@example.test', 'Pixel Messenger Buyer', 'messenger']
+        )
+        await insertMetaSocialContact({
+          contactId,
+          platform: 'messenger',
+          senderId: 'psid-public-payment-123',
+          pageId: 'page-public-payment-msg'
+        })
+
+        await insertMetaPixelConfig({ pixelId: 'pixel-public-payment-msg-123', pageId: 'page-public-payment-msg' })
+        await saveAccountLocaleSettings({ countryCode: 'MX', currency: 'MXN', dialCode: '52' })
+        await setAppConfig('meta_payment_purchase_event_config', JSON.stringify({
+          enabled: true,
+          channel: 'smart',
+          eventName: 'Purchase',
+          parameters: {
+            sendValue: true,
+            usePaymentPlanTotalValue: false,
+            value: '',
+            predictedLtv: '',
+            custom: []
+          }
+        }))
+
+        const event = await buildMetaPublicPurchasePixelEvent({
+          id: 'payment_meta_public_pixel_msg',
+          contact_id: contactId,
+          amount: 725,
+          status: 'paid',
+          payment_provider: 'stripe',
+          payment_method: 'stripe',
+          payment_mode: 'live',
+          public_payment_id: 'public_pixel_msg',
+          payment_url: 'https://checkout.example.test/pay/public_pixel_msg'
         })
 
         assert.equal(event, null)

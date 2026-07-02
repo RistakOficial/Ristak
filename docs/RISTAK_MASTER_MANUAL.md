@@ -346,6 +346,12 @@ Reglas base:
 - Si Meta esta configurado con dataset/pixel y token guardado, los calendarios
   locales nuevos activan `customEvents.enabled` por default para mandar `Schedule`
   al agendar. Ediciones posteriores respetan el apagado manual del usuario.
+- Si el contacto que agenda viene de una conversacion Meta, el canal `smart`
+  manda la conversion por CAPI con `action_source=business_messaging`: WhatsApp
+  usa `ctwa_clid`, Messenger usa `page_scoped_user_id` + `page_id` e Instagram
+  usa `ig_scoped_user_id` + `ig_account_id`. En esos canales de mensajeria el
+  evento de cita se normaliza a `LeadSubmitted`; el evento web sigue usando
+  `Schedule`.
 
 Documentacion especifica:
 
@@ -421,6 +427,10 @@ Implementacion esperada:
   Meta Test Events.
 - El pixel publico de navegador para checkout no debe usarse para pagos test si
   no hay aislamiento equivalente al `test_event_code` de CAPI.
+- En compras con canal `smart`, si el contacto tiene atribucion de WhatsApp,
+  Messenger o Instagram, la conversion se manda server-side como
+  `business_messaging` y el pixel publico del checkout no se genera para evitar
+  doble conteo.
 - Tests: `backend/test/metaPaymentPurchaseEvent.test.mjs`.
 
 Esta regla existe para que los reportes de Meta no se contaminen con compras de
@@ -446,6 +456,11 @@ Ristak usa Meta en varias areas:
   con eventos Meta encendidos por default: Sites/landings usan `ViewContent` al
   aterrizar, formularios usan `Lead` al enviar y calendarios usan `Schedule` al
   agendar. El usuario puede apagarlos manualmente despues.
+- Las conversiones server-side de mensajeria Meta comparten el mismo servicio:
+  WhatsApp, Messenger e Instagram usan `action_source=business_messaging` con
+  `messaging_channel` segun el canal real. `Purchase` conserva `event_name=Purchase`
+  y toma `currency` desde la cuenta; las citas de mensajeria usan
+  `LeadSubmitted`.
 - Social messaging.
 - Business Messaging events.
 - Campaign Builder en modo preview/validacion segun entorno.

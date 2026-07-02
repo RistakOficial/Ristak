@@ -28,7 +28,7 @@ const DEFAULT_EVENT_COLOR = '#3b82f6'
 const DEFAULT_BOOKING_COMPLETION_MESSAGE = 'Listo. Tu cita quedo agendada.'
 const DEFAULT_CALENDAR_META_EVENT_NAME = 'Schedule'
 const DEFAULT_CALENDAR_WHATSAPP_EVENT_NAME = 'LeadSubmitted'
-const CALENDAR_CUSTOM_EVENT_CHANNELS = new Set(['site', 'whatsapp', 'smart'])
+const CALENDAR_CUSTOM_EVENT_CHANNELS = new Set(['site', 'whatsapp', 'messenger', 'instagram', 'smart'])
 const CALENDAR_BOOKING_LAYOUTS = new Set(['classic', 'compact', 'stacked'])
 const CALENDAR_BOOKING_FONT_FAMILIES = new Set(['system', 'modern', 'serif', 'mono'])
 const CALENDAR_BOOKING_WIDGET_THEMES = new Set(['ristak', 'night', 'agenda', 'minimal'])
@@ -521,7 +521,7 @@ export function normalizeCalendarCustomEventsConfig(value = {}) {
       false
     ),
     channel,
-    eventName: channel === 'whatsapp' ? whatsappEventName : siteEventName,
+    eventName: ['whatsapp', 'messenger', 'instagram'].includes(channel) ? whatsappEventName : siteEventName,
     parameters: normalizeCalendarCustomEventParameters(
       eventSource.parameters ||
       eventSource.eventParameters ||

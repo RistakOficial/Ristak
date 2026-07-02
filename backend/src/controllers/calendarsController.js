@@ -6,7 +6,7 @@ import { logger } from '../utils/logger.js';
 import GHLClient, { getGHLClient } from '../services/ghlClient.js';
 import { db } from '../config/database.js';
 import { getAccountTimezone } from '../utils/dateUtils.js';
-import { triggerWhatsappAppointmentBookedEvent } from '../services/metaWhatsappEventsService.js';
+import { getSocialMessagingIdentity, triggerWhatsappAppointmentBookedEvent } from '../services/metaWhatsappEventsService.js';
 import { sendAppointmentConfirmationNotification, sendAppointmentStatusNotification, sendCalendarAppointmentNotification } from '../services/pushNotificationsService.js';
 import {
   getRequestHost,
@@ -398,6 +398,28 @@ function sourceLooksLikeWeb(value = '') {
   ));
 }
 
+function detectMetaSocialMessagingChannel(value = '') {
+  const normalized = cleanString(value).toLowerCase();
+  if (!normalized) return '';
+  if (
+    normalized.includes('instagram') ||
+    normalized.includes('ig_dm') ||
+    normalized.includes('instagram_dm') ||
+    normalized.includes('ig direct')
+  ) {
+    return 'instagram';
+  }
+  if (
+    normalized.includes('messenger') ||
+    normalized.includes('facebook_messenger') ||
+    normalized.includes('fb_messenger') ||
+    normalized.includes('m.me')
+  ) {
+    return 'messenger';
+  }
+  return '';
+}
+
 async function getFirstCalendarContactWebSession(contact = {}) {
   const conditions = [];
   const params = [];
@@ -490,8 +512,21 @@ async function resolveCalendarSmartEventChannel(contactId) {
     return new Map();
   });
   const whatsappAttribution = whatsappAttributions.get(contactId) || null;
+  const socialIdentity = await getSocialMessagingIdentity(contactId).catch(error => {
+    logger.warn(`[Calendars Controller] No se pudo leer identidad Meta social del contacto ${contactId}: ${error.message}`);
+    return null;
+  });
   const webTime = parseAttributionTime(firstWebSession?.started_at || firstWebSession?.created_at);
   const whatsappTime = parseAttributionTime(whatsappAttribution?.created_at);
+  const socialTime = parseAttributionTime(
+    socialIdentity?.firstSeenAt ||
+    socialIdentity?.createdAt ||
+    socialIdentity?.lastSeenAt ||
+    socialIdentity?.updatedAt
+  );
+  const contactSocialChannel = detectMetaSocialMessagingChannel(contact.source) ||
+    detectMetaSocialMessagingChannel(contact.attribution_session_source) ||
+    detectMetaSocialMessagingChannel(contact.attribution_url);
   const hasWebSignal = Boolean(firstWebSession) ||
     sourceLooksLikeWeb(contact.source) ||
     sourceLooksLikeWeb(contact.attribution_session_source) ||
@@ -516,6 +551,20 @@ async function resolveCalendarSmartEventChannel(contactId) {
     }
   }
 
+  if (socialIdentity) {
+    if (hasWebSignal && webTime && socialTime) {
+      return {
+        channel: socialTime < webTime ? socialIdentity.channel : 'site',
+        reason: socialTime < webTime ? `${socialIdentity.channel}_first_touch` : 'web_first_touch',
+        contact
+      };
+    }
+
+    if (!hasWebSignal || contactSocialChannel === socialIdentity.channel) {
+      return { channel: socialIdentity.channel, reason: `${socialIdentity.channel}_identity`, contact };
+    }
+  }
+
   return {
     channel: 'site',
     reason: hasWebSignal ? 'web_attribution' : 'fallback_site',
@@ -524,8 +573,8 @@ async function resolveCalendarSmartEventChannel(contactId) {
 }
 
 async function resolveCalendarCustomEventChannel({ customEvents, contactId }) {
-  const configuredChannel = customEvents?.channel === 'whatsapp'
-    ? 'whatsapp'
+  const configuredChannel = ['whatsapp', 'messenger', 'instagram'].includes(customEvents?.channel)
+    ? customEvents.channel
     : customEvents?.channel === 'smart'
       ? 'smart'
       : 'site';
@@ -542,7 +591,7 @@ function getCustomEventsForResolvedChannel(customEvents = {}, channel = 'site') 
   return {
     ...customEvents,
     channel,
-    eventName: channel === 'whatsapp' ? 'LeadSubmitted' : customEvents.eventName
+    eventName: channel === 'site' ? customEvents.eventName : 'LeadSubmitted'
   };
 }
 

@@ -55,6 +55,7 @@ const META_ACTION_SOURCES = new Set([
   'system_generated',
   'website'
 ])
+const BUSINESS_MESSAGING_EVENT_CHANNELS = new Set(['whatsapp', 'messenger', 'instagram'])
 
 const CONTACT_SENT_FIELDS = {
   [EVENT_TYPES.schedule]: {
@@ -113,7 +114,7 @@ function normalizeCalendarWhatsappCustomEvents(value = {}) {
 
   return {
     enabled: parseBoolean(eventSource.enabled, false),
-    channel: channel === 'whatsapp' ? 'whatsapp' : channel === 'smart' ? 'smart' : 'site',
+    channel: BUSINESS_MESSAGING_EVENT_CHANNELS.has(channel) ? channel : channel === 'smart' ? 'smart' : 'site',
     eventName: eventName || DEFAULT_CALENDAR_WHATSAPP_EVENT_NAME
   }
 }
@@ -836,7 +837,7 @@ export async function buildMetaPublicPurchasePixelEvent(payment = {}, options = 
   if (!contactId) return null
 
   const paymentMetaConfig = await getPaymentMetaPurchaseEventConfig()
-  if (!paymentMetaConfig.enabled || paymentMetaConfig.channel === 'whatsapp') return null
+  if (!paymentMetaConfig.enabled || BUSINESS_MESSAGING_EVENT_CHANNELS.has(paymentMetaConfig.channel)) return null
 
   const metaConfig = await getMetaCapiConfig()
   if (!metaConfig.datasetId) return null
@@ -847,7 +848,10 @@ export async function buildMetaPublicPurchasePixelEvent(payment = {}, options = 
   const contact = await getContactForMetaEvent(contactId)
   if (
     paymentMetaConfig.channel === 'smart' &&
-    hasWhatsappAttributionSignal(await getLatestWhatsappAttribution(contact))
+    (
+      hasWhatsappAttributionSignal(await getLatestWhatsappAttribution(contact)) ||
+      Boolean(await getSocialMessagingIdentity(contactId))
+    )
   ) {
     return null
   }
@@ -984,10 +988,11 @@ function buildBusinessMessagingUserData(contact, metaConfig, whatsappAttribution
 // Identidad de mensajería social (Messenger/Instagram) de un contacto, para CAPI.
 // Excluye contactos que solo comentaron (senderId sintético 'fb_comment:'/'ig_comment:'):
 // esos no tienen PSID/IGSID real y no deben atribuir un evento.
-async function getSocialMessagingIdentity(contactId) {
+export async function getSocialMessagingIdentity(contactId) {
   if (!contactId) return null
   const row = await db.get(
-    `SELECT platform, sender_id, page_id, instagram_account_id
+    `SELECT platform, sender_id, page_id, instagram_account_id,
+            first_seen_at, last_seen_at, created_at, updated_at
      FROM meta_social_contacts
      WHERE contact_id = ? AND COALESCE(sender_id, '') NOT LIKE '%comment:%'
      ORDER BY updated_at DESC, last_seen_at DESC
@@ -1000,7 +1005,11 @@ async function getSocialMessagingIdentity(contactId) {
     channel,
     senderId: cleanString(row.sender_id),
     pageId: cleanString(row.page_id),
-    igAccountId: cleanString(row.instagram_account_id)
+    igAccountId: cleanString(row.instagram_account_id),
+    firstSeenAt: row.first_seen_at || null,
+    lastSeenAt: row.last_seen_at || null,
+    createdAt: row.created_at || null,
+    updatedAt: row.updated_at || null
   }
 }
 
@@ -1656,8 +1665,8 @@ export async function triggerWhatsappAppointmentBookedEvent(contactId, options =
     : await getCalendarCustomEvents(calendarId)
   const usesCalendarConfig = Boolean(calendarCustomEvents?.enabled)
 
-  if (usesCalendarConfig && calendarCustomEvents.channel !== 'whatsapp') {
-    return { sent: false, reason: 'calendar_channel_not_whatsapp' }
+  if (usesCalendarConfig && !BUSINESS_MESSAGING_EVENT_CHANNELS.has(calendarCustomEvents.channel) && calendarCustomEvents.channel !== 'smart') {
+    return { sent: false, reason: 'calendar_channel_not_business_messaging' }
   }
 
   if (!usesCalendarConfig && !await getConfigBoolean(CONFIG_KEYS.scheduleEnabled, false)) {
@@ -1685,30 +1694,40 @@ export async function triggerWhatsappAppointmentBookedEvent(contactId, options =
     ? `schedule_appointment_${appointmentId}`
     : `schedule_contact_${contactId}`
 
-  const scheduleArgs = {
+  const buildScheduleArgs = (channel = 'whatsapp') => ({
     contactId,
     eventType: EVENT_TYPES.schedule,
     metaEventName,
     eventId,
     customData: {
-      source: 'whatsapp',
+      source: channel,
+      messaging_channel: channel,
       conversion_type: EVENT_TYPES.schedule,
       appointment_id: appointmentId,
       calendar_id: calendarCustomEvents?.calendarId || calendarId || '',
       calendar_name: calendarCustomEvents?.calendarName || options.calendarName || ''
     }
-  }
+  })
   const isConversionResult = (r) => Boolean(r) && (r.sent || r.reason === 'already_sent' || r.reason === 'meta_error')
+
+  if (calendarCustomEvents?.channel === 'messenger' || calendarCustomEvents?.channel === 'instagram') {
+    const socialIdentity = await getSocialMessagingIdentity(contactId)
+    return sendMetaWhatsappEvent({
+      ...buildScheduleArgs(calendarCustomEvents.channel),
+      channel: calendarCustomEvents.channel,
+      socialIdentity: socialIdentity?.channel === calendarCustomEvents.channel ? socialIdentity : null
+    })
+  }
 
   // WhatsApp primero (comportamiento actual). Si no hay señal WhatsApp para
   // atribuir (contacto sin teléfono/ctwa) e proviene de Messenger/Instagram,
   // disparamos el LeadSubmitted por ese canal con su identidad (PSID/IGSID).
-  const whatsappResult = await sendMetaWhatsappEvent({ ...scheduleArgs, channel: 'whatsapp' })
+  const whatsappResult = await sendMetaWhatsappEvent({ ...buildScheduleArgs('whatsapp'), channel: 'whatsapp' })
   if (isConversionResult(whatsappResult)) return whatsappResult
 
   const socialIdentity = await getSocialMessagingIdentity(contactId)
   if (socialIdentity) {
-    const socialResult = await sendMetaWhatsappEvent({ ...scheduleArgs, channel: socialIdentity.channel, socialIdentity })
+    const socialResult = await sendMetaWhatsappEvent({ ...buildScheduleArgs(socialIdentity.channel), channel: socialIdentity.channel, socialIdentity })
     if (isConversionResult(socialResult)) return socialResult
   }
 
