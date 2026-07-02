@@ -2280,6 +2280,92 @@ export async function uploadMediaAssetFromDataUrl(input = {}) {
   })
 }
 
+// Tope de tamaño para imágenes remotas rehospedadas (avatares, creativos…). Los
+// avatares pesan KB; 8 MB es margen de sobra sin arriesgar la RAM del proceso.
+const REMOTE_IMAGE_MAX_BYTES = Math.max(
+  256 * 1024,
+  Number(process.env.REMOTE_IMAGE_MAX_BYTES || 8 * 1024 * 1024) || 8 * 1024 * 1024
+)
+const REMOTE_IMAGE_DOWNLOAD_TIMEOUT_MS = Math.max(
+  3000,
+  Number(process.env.REMOTE_IMAGE_DOWNLOAD_TIMEOUT_MS || 15000) || 15000
+)
+
+// Descarga una URL remota a un Buffer con tope de tamaño y timeout. Devuelve
+// { buffer, mimeType } o null si falla, se pasa de tamaño o no responde bien.
+async function downloadRemoteMedia(url, { maxBytes = REMOTE_IMAGE_MAX_BYTES, timeoutMs = REMOTE_IMAGE_DOWNLOAD_TIMEOUT_MS } = {}) {
+  try {
+    const response = await fetch(url, { redirect: 'follow', signal: AbortSignal.timeout(timeoutMs) })
+    if (!response.ok) return null
+    const declaredLength = Number(response.headers.get('content-length') || 0)
+    if (declaredLength && declaredLength > maxBytes) return null
+    const buffer = Buffer.from(await response.arrayBuffer())
+    if (!buffer.length || buffer.length > maxBytes) return null
+    const headerMime = mimeBase(response.headers.get('content-type') || '')
+    const detected = await detectMimeType(buffer, headerMime, url).catch(() => null)
+    const mimeType = detected?.mimeType || headerMime || 'application/octet-stream'
+    return { buffer, mimeType }
+  } catch {
+    return null
+  }
+}
+
+// Rehospeda una imagen remota (que caduca, p.ej. avatar de Meta/WhatsApp) al Bunny
+// central y devuelve la URL permanente. BEST-EFFORT: devuelve null si no se pudo,
+// para que el caller conserve la URL cruda y NUNCA pierda la imagen. Si la URL ya
+// es de nuestro Bunny, no re-hospeda (dedup barato).
+export async function rehostRemoteImageToBunny({
+  url,
+  module = 'avatars',
+  subFolder = '',
+  filename = '',
+  clientAccountId = '',
+  businessId = '',
+  metadata = {},
+  requireImage = true,
+  maxBytes = REMOTE_IMAGE_MAX_BYTES
+} = {}) {
+  const cleanUrl = cleanString(url)
+  if (!cleanUrl || !/^https?:\/\//i.test(cleanUrl)) return null
+
+  const config = await getStorageRuntimeConfig().catch(() => null)
+  // Dedup: si ya apunta a nuestro CDN de Bunny, no hay nada que rehospedar.
+  const cdnBase = cleanString(config?.bunnyCdnBaseUrl)
+  if (cdnBase && cleanUrl.startsWith(cdnBase)) {
+    return { publicUrl: cleanUrl, reused: true }
+  }
+  // Sin Bunny configurado no tiene sentido intentar (dejamos la URL cruda).
+  if (!config?.bunnyConfigured) return null
+
+  const downloaded = await downloadRemoteMedia(cleanUrl, { maxBytes })
+  if (!downloaded) return null
+  // Por si la URL respondió una página de error en vez de una imagen.
+  if (requireImage && !mimeBase(downloaded.mimeType).startsWith('image/')) return null
+
+  try {
+    const asset = await uploadMediaAsset({
+      buffer: downloaded.buffer,
+      mimeType: downloaded.mimeType,
+      filename: cleanString(filename) || 'imagen',
+      module,
+      subFolder,
+      clientAccountId,
+      businessId,
+      isPublic: true,
+      skipCompression: true,
+      metadata: {
+        ...metadata,
+        source: metadata.source || 'rehosted_remote_image',
+        originalUrl: cleanUrl
+      }
+    })
+    return { publicUrl: asset.publicUrl, assetId: asset.id, reused: false }
+  } catch (err) {
+    logger.warn(`[MediaStorage] No se pudo rehospedar imagen remota: ${err?.message || err}`)
+    return null
+  }
+}
+
 function normalizeStreamChart(chart = {}) {
   const source = chart && typeof chart === 'object' ? chart : {}
   return Object.entries(source)
