@@ -19,6 +19,7 @@ import {
   Copy,
   CreditCard,
   DollarSign,
+  ExternalLink,
   FileText,
   Forward,
   Globe2,
@@ -1017,6 +1018,8 @@ interface ChatMessage {
   // Comentarios FB/IG: globo distinto + contexto de la publicación comentada.
   isComment?: boolean
   commentReplyMode?: 'public' | 'private'
+  commentId?: string
+  commentPlatform?: 'instagram' | 'messenger'
   commentPost?: {
     message?: string
     imageUrl?: string
@@ -1592,7 +1595,12 @@ function getContactName(contact?: Partial<Contact> | null) {
 }
 
 function getContactDetail(contact?: Partial<Contact> | null) {
-  return contact?.phone || contact?.email || 'Sin teléfono guardado'
+  // Teléfono si hay; si no, el @usuario de la red social; si no, correo; y como
+  // último recurso, un estado genérico.
+  if (contact?.phone) return contact.phone
+  const username = String(contact?.socialUsername || '').trim().replace(/^@+/, '')
+  if (username) return `@${username}`
+  return contact?.email || 'Sin datos de contacto'
 }
 
 function contactMatchesQuery(contact: Partial<Contact>, query: string) {
@@ -2578,6 +2586,8 @@ function getJourneyMessage(event: JourneyEvent, index: number): ChatMessage | nu
     messageType,
     isComment: messageType === 'comment' || messageType === 'comment_reply_public' || messageType === 'comment_reply_private',
     commentReplyMode: messageType === 'comment_reply_public' ? 'public' : messageType === 'comment_reply_private' ? 'private' : undefined,
+    commentId: String(eventData.comment_id || eventData.commentId || '').trim() || undefined,
+    commentPlatform: String(eventData.social_platform || eventData.platform || '').toLowerCase() === 'instagram' ? 'instagram' : 'messenger',
     commentPost: (messageType.startsWith('comment') && (eventData.post_message || eventData.post_image_url || eventData.post_permalink))
       ? {
           message: String(eventData.post_message || '').trim(),
@@ -2710,10 +2720,22 @@ function normalizeChannelProbe(value?: string | null) {
   return String(value || '').trim().toLowerCase().replace(/[\s-]+/g, '_')
 }
 
-// Un chat es "comentario" cuando su último mensaje es de tipo comment (feed de
-// Facebook u objeto de comentarios de Instagram). No se mezclan con los DMs.
+// Un chat es "comentario" por IDENTIDAD (el backend marca socialKind='comment'
+// según el sender_id, no por el último mensaje). Fallback por tipo de último
+// mensaje cubre 'comment' y las respuestas ('comment_reply_public/private') para
+// que un contacto-comentario no se "descomente" al responderle.
 function isCommentContact(contact?: unknown): boolean {
-  return String((contact as Record<string, unknown> | null)?.lastMessageType || '').toLowerCase() === 'comment'
+  const record = contact as Record<string, unknown> | null
+  const kind = String(record?.socialKind || '').toLowerCase()
+  if (kind === 'comment') return true
+  if (kind === 'dm') return false
+  return String(record?.lastMessageType || '').toLowerCase().startsWith('comment')
+}
+
+// Contacto-comentario cuya MISMA persona ya tiene chat privado (DM). No debe
+// aparecer en ninguna bandeja: su historial se ve dentro del chat privado.
+function commentContactHasLinkedDm(contact?: unknown): boolean {
+  return Boolean((contact as Record<string, unknown> | null)?.hasLinkedDmContact)
 }
 
 function getCommentPlatform(contact?: unknown): 'facebook' | 'instagram' {
@@ -3806,8 +3828,10 @@ export const PhoneChat: React.FC = () => {
   const [chatFilter, setChatFilter] = useState<ChatFilter>('all')
   const [commentsView, setCommentsView] = useState(false)
   const [commentsPlatform, setCommentsPlatform] = useState<'all' | 'facebook' | 'instagram'>('all')
-  // Responder comentarios FB/IG: modo (público/privado) + perfil social enlazado.
-  const [commentReplyMode, setCommentReplyMode] = useState<'public' | 'private'>('public')
+  // La barra SIEMPRE manda privado. Responder PÚBLICO a un comentario es una
+  // acción explícita: el botón de la tarjeta fija este target y la barra entra en
+  // modo "respuesta pública" (con banner cancelable).
+  const [commentReplyTarget, setCommentReplyTarget] = useState<{ messageId: string; commentId: string; platform: 'instagram' | 'messenger'; preview: string } | null>(null)
   const [socialProfiles, setSocialProfiles] = useState<LinkedSocialProfile[]>([])
   const [linkedSocialContacts, setLinkedSocialContacts] = useState<LinkedSocialContact[]>([])
   const [facebookCommentsEnabled] = useAppConfig<boolean>('meta_facebook_comments_enabled', false)
@@ -5103,14 +5127,19 @@ export const PhoneChat: React.FC = () => {
 
     const chipFilteredChats = phoneFilteredChats.filter((contact) => {
       const isComment = isCommentContact(contact)
-      // Vista de Comentarios: aparte, solo comentarios (opcional por red social).
+      // Vista de Comentarios: bandeja aparte SOLO para perfiles que únicamente
+      // comentaron y aún no tienen chat privado. Si ya existe un DM enlazado de la
+      // misma persona, el registro-comentario se oculta (su historial se ve dentro
+      // del chat privado, en la vista normal).
       if (commentsView) {
         if (!isComment) return false
+        if (commentContactHasLinkedDm(contact)) return false
         if (commentsPlatform === 'facebook') return getCommentPlatform(contact) === 'facebook'
         if (commentsPlatform === 'instagram') return getCommentPlatform(contact) === 'instagram'
         return true
       }
-      // Vista normal de mensajes: nunca mostrar comentarios (no se mezclan).
+      // Vista normal de mensajes: nunca mostrar registros-comentario (no se mezclan;
+      // el perfil con DM aparece por su registro DM separado).
       if (isComment) return false
       if (chatFilter === 'agent') return true
       if (chatFilter === 'unread') return Number(contact.unreadCount || 0) > 0
@@ -5221,6 +5250,11 @@ export const PhoneChat: React.FC = () => {
       })
       .catch(() => undefined)
     return () => { cancelled = true }
+  }, [activeContactId])
+
+  // Al cambiar de conversación, salir del modo "respuesta pública" al comentario.
+  useEffect(() => {
+    setCommentReplyTarget(null)
   }, [activeContactId])
 
   // (Social enlazado) Abre el contacto vinculado. Como es un registro SEPARADO,
@@ -9739,7 +9773,13 @@ export const PhoneChat: React.FC = () => {
       return
     }
 
-    if (isCommentContact(activeContact)) {
+    // Respuesta a un COMENTARIO. Dos caminos:
+    //  - commentReplyTarget (botón "Responder" en la tarjeta) → respuesta PÚBLICA
+    //    en el post, apuntando a ese comentario exacto (commentId).
+    //  - contacto que SOLO comentó (aún sin DM) → la barra manda respuesta PRIVADA
+    //    al comentario (inicia el chat privado).
+    // Un contacto con DM ya existente NO entra aquí por la barra (cae al DM normal).
+    if (commentReplyTarget || isCommentContact(activeContact)) {
       if (!text) {
         showToast('warning', 'Escribe algo', 'Escribe tu respuesta al comentario.')
         return
@@ -9749,8 +9789,10 @@ export const PhoneChat: React.FC = () => {
         return
       }
 
-      const commentPlatform = getCommentPlatform(activeContact) === 'instagram' ? 'instagram' : 'messenger'
-      const replyType = commentReplyMode
+      const replyType: 'public' | 'private' = commentReplyTarget ? 'public' : 'private'
+      const commentPlatform = commentReplyTarget
+        ? commentReplyTarget.platform
+        : (getCommentPlatform(activeContact) === 'instagram' ? 'instagram' : 'messenger')
       const optimisticId = `local-comment-${Date.now()}`
       const sentAt = new Date().toISOString()
 
@@ -9796,8 +9838,10 @@ export const PhoneChat: React.FC = () => {
           contactId: activeContact.id,
           platform: commentPlatform,
           message: text,
-          replyType
+          replyType,
+          commentId: commentReplyTarget?.commentId
         })
+        setCommentReplyTarget(null)
         setMessages((current) => current.map((message) => (
           message.id === optimisticId ? { ...message, status: 'sent' } : message
         )))
@@ -12612,6 +12656,7 @@ export const PhoneChat: React.FC = () => {
                     {message.isComment && (
                       <div className={styles.commentContext}>
                         <span className={styles.commentContextLabel}>
+                          <MessageCircle size={13} aria-hidden="true" />
                           {message.commentReplyMode === 'public'
                             ? 'Respuesta pública al comentario'
                             : message.commentReplyMode === 'private'
@@ -12619,30 +12664,38 @@ export const PhoneChat: React.FC = () => {
                               : 'Comentó en tu publicación'}
                         </span>
                         {message.commentPost && (message.commentPost.imageUrl || message.commentPost.message) ? (
-                          message.commentPost.permalink ? (
-                            <a
-                              className={styles.commentPostChip}
-                              href={message.commentPost.permalink}
-                              target="_blank"
-                              rel="noopener noreferrer"
-                            >
-                              {message.commentPost.imageUrl ? (
-                                <img src={message.commentPost.imageUrl} alt="" className={styles.commentPostThumb} loading="lazy" />
-                              ) : null}
-                              {message.commentPost.message ? (
-                                <span className={styles.commentPostText}>{message.commentPost.message}</span>
-                              ) : null}
-                            </a>
-                          ) : (
-                            <div className={`${styles.commentPostChip} ${styles.commentPostChipStatic}`}>
-                              {message.commentPost.imageUrl ? (
-                                <img src={message.commentPost.imageUrl} alt="" className={styles.commentPostThumb} loading="lazy" />
-                              ) : null}
-                              {message.commentPost.message ? (
-                                <span className={styles.commentPostText}>{message.commentPost.message}</span>
-                              ) : null}
-                            </div>
-                          )
+                          (() => {
+                            const post = message.commentPost!
+                            const postInner = (
+                              <>
+                                {post.imageUrl ? (
+                                  <img src={post.imageUrl} alt="" className={styles.commentPostThumb} loading="lazy" />
+                                ) : (
+                                  <span className={styles.commentPostThumbPlaceholder}><ImageIcon size={18} aria-hidden="true" /></span>
+                                )}
+                                <span className={styles.commentPostMeta}>
+                                  <span className={styles.commentPostKind}>Publicación</span>
+                                  {post.message ? (
+                                    <span className={styles.commentPostText}>{post.message}</span>
+                                  ) : (
+                                    <span className={styles.commentPostTextMuted}>Ver publicación</span>
+                                  )}
+                                </span>
+                                {post.permalink ? (
+                                  <ExternalLink size={15} className={styles.commentPostExternal} aria-hidden="true" />
+                                ) : null}
+                              </>
+                            )
+                            return post.permalink ? (
+                              <a className={styles.commentPostChip} href={post.permalink} target="_blank" rel="noopener noreferrer">
+                                {postInner}
+                              </a>
+                            ) : (
+                              <div className={`${styles.commentPostChip} ${styles.commentPostChipStatic}`}>
+                                {postInner}
+                              </div>
+                            )
+                          })()
                         ) : null}
                       </div>
                     )}
@@ -12676,6 +12729,21 @@ export const PhoneChat: React.FC = () => {
                       <small className={styles.messageRoutingNote}>{getMessageRoutingReason(message)}</small>
                     )}
                     {!isAudioMessage && renderMessageMeta(message)}
+                    {message.isComment && message.direction === 'inbound' && !message.commentReplyMode && message.commentId ? (
+                      <button
+                        type="button"
+                        className={styles.commentReplyButton}
+                        onClick={() => setCommentReplyTarget({
+                          messageId: message.id,
+                          commentId: message.commentId as string,
+                          platform: message.commentPlatform || 'messenger',
+                          preview: String(message.text || '').replace(/\s+/g, ' ').trim().slice(0, 60)
+                        })}
+                      >
+                        <MessageCircle size={13} aria-hidden="true" />
+                        Responder en la publicación
+                      </button>
+                    ) : null}
                     </div>
                   </div>
                 </div>
@@ -12687,31 +12755,41 @@ export const PhoneChat: React.FC = () => {
     )
   }
 
-  // Barra de modo de respuesta para comentarios FB/IG: público (en el post) o
-  // privado (DM). Solo aparece cuando el chat activo es un comentario.
-  const renderCommentReplyModeBar = () => {
-    if (!activeContact || !isCommentContact(activeContact)) return null
+  // Banner de "respuesta pública al comentario" (cancelable). La barra manda
+  // privado por defecto; el modo público se activa desde el botón de la tarjeta.
+  const renderCommentReplyBanner = () => {
+    if (!commentReplyTarget) return null
     return (
-      <div className={styles.commentReplyModeBar} role="group" aria-label="Modo de respuesta al comentario">
+      <div className={styles.commentReplyBanner}>
+        <span className={styles.commentReplyBannerLabel}>
+          <MessageCircle size={13} aria-hidden="true" />
+          <span>Respondiendo <strong>público</strong> al comentario</span>
+          {commentReplyTarget.preview ? (
+            <span className={styles.commentReplyBannerPreview}>“{commentReplyTarget.preview}”</span>
+          ) : null}
+        </span>
         <button
           type="button"
-          className={`${styles.commentReplyModeButton} ${commentReplyMode === 'public' ? styles.commentReplyModeButtonActive : ''}`}
-          onClick={() => setCommentReplyMode('public')}
-          aria-pressed={commentReplyMode === 'public'}
+          className={styles.commentReplyBannerClose}
+          onClick={() => setCommentReplyTarget(null)}
+          aria-label="Cancelar respuesta pública"
         >
-          <Globe2 size={15} />
-          Público
-        </button>
-        <button
-          type="button"
-          className={`${styles.commentReplyModeButton} ${commentReplyMode === 'private' ? styles.commentReplyModeButtonActive : ''}`}
-          onClick={() => setCommentReplyMode('private')}
-          aria-pressed={commentReplyMode === 'private'}
-        >
-          <MessageCircle size={15} />
-          Privado
+          <X size={16} />
         </button>
       </div>
+    )
+  }
+
+  // Aviso: la barra manda privado (se muestra cuando hay comentarios en la
+  // conversación, para que quede claro a dónde va lo que escribes).
+  const renderComposerPrivateHint = () => {
+    if (commentReplyTarget || !activeContact) return null
+    const hasComments = isCommentContact(activeContact) || messages.some((message) => message.isComment)
+    if (!hasComments) return null
+    return (
+      <span className={styles.composerPrivateHint}>
+        Mensaje privado — para responder en la publicación usa “Responder” en el comentario.
+      </span>
     )
   }
 
@@ -17907,7 +17985,8 @@ export const PhoneChat: React.FC = () => {
                   {!composerTemplateOnlyMode && renderAISuggestionBar()}
                   {!composerTemplateOnlyMode && renderReplyPreviewBar()}
                   {!composerTemplateOnlyMode && renderDraftAttachments()}
-                  {!composerTemplateOnlyMode && renderCommentReplyModeBar()}
+                  {!composerTemplateOnlyMode && renderCommentReplyBanner()}
+                  {!composerTemplateOnlyMode && renderComposerPrivateHint()}
                   <div className={`${styles.composer} ${hasComposerContent ? styles.composerHasContent : ''} ${composerTemplateOnlyMode ? styles.composerTemplateOnly : ''} ${voicePanelActive ? styles.composerVoiceMode : ''}`}>
                     {voicePanelActive ? (
                       renderVoiceComposerPanel()
