@@ -462,7 +462,7 @@
   color: var(--rstk-block-text, var(--rstk-ink));
   border: var(--rstk-block-border-width, 1px) solid var(--rstk-block-border, var(--rstk-border));
   border-radius: var(--rstk-block-radius, var(--rstk-radius-lg));
-  box-shadow: var(--rstk-shadow, none);
+  box-shadow: none;
   text-align: var(--rstk-checkout-align, var(--rstk-block-align, left));
 }
 .rstkCanvas .rstk-checkout-card *,

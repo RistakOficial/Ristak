@@ -19961,7 +19961,7 @@ const RSTK_BASE_CSS = `
     margin-right:var(--rstk-media-margin-right,auto);
   }
 
-  .rstk-checkout-card{box-sizing:border-box;width:100%;max-width:var(--rstk-checkout-width,504px);margin-inline:auto;padding:var(--rstk-block-pad,22px);background:var(--rstk-block-bg,var(--rstk-surface));color:var(--rstk-block-text,var(--rstk-ink));border:var(--rstk-block-border-width,1px) solid var(--rstk-block-border,var(--rstk-border));border-radius:var(--rstk-block-radius,var(--rstk-radius-lg));box-shadow:var(--rstk-shadow,none);text-align:var(--rstk-checkout-align,var(--rstk-block-align,left))}
+  .rstk-checkout-card{box-sizing:border-box;width:100%;max-width:var(--rstk-checkout-width,504px);margin-inline:auto;padding:var(--rstk-block-pad,22px);background:var(--rstk-block-bg,var(--rstk-surface));color:var(--rstk-block-text,var(--rstk-ink));border:var(--rstk-block-border-width,1px) solid var(--rstk-block-border,var(--rstk-border));border-radius:var(--rstk-block-radius,var(--rstk-radius-lg));box-shadow:none;text-align:var(--rstk-checkout-align,var(--rstk-block-align,left))}
   .rstk-checkout-card *,.rstk-checkout-card *::before,.rstk-checkout-card *::after{box-sizing:border-box}
   .rstk-checkout-inner{box-sizing:border-box;width:100%;max-width:var(--rstk-checkout-content-width,456px);margin-inline:auto;min-width:0;display:grid;gap:16px}
   .rstk-block-style:has(> .rstk-payment-block){background:transparent;border:0;padding:0;box-shadow:none}
