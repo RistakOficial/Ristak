@@ -289,9 +289,10 @@ disponible desde las rutas dedicadas de Ristak AI en el menu lateral.
 
 En `/chat` y en el chat movil bajo `/movil`, el historial de conversacion acepta
 drag and drop de archivos. Mientras el usuario arrastra archivos sobre el area de
-mensajes, la superficie se cubre con un overlay borroso con el texto `Suelta tu
-archivo aqui`; al soltar, los archivos se agregan como adjuntos del composer
-antes de enviar, para que el usuario pueda escribir texto o agregar mas archivos.
+mensajes, la superficie se cubre con un overlay borroso con borde punteado y el
+texto `Suelta aquí tu contenido multimedia`; al soltar, los archivos se agregan
+como adjuntos del composer antes de enviar, para que el usuario pueda escribir
+texto o agregar mas archivos.
 El correo queda fuera de este flujo hasta que su manejo de adjuntos se cierre en
 la superficie de email.
 

@@ -18293,7 +18293,7 @@ export const PhoneChat: React.FC = () => {
 
           <div
             ref={messagesPaneRef}
-            className={styles.messagesPane}
+            className={`${styles.messagesPane} ${draggingFilesOverChat ? styles.messagesPaneDropActive : ''}`}
             data-phone-chat-scrollable="true"
             onScroll={handleMessagesPaneScroll}
             onDragEnter={handleChatDragEnter}
@@ -18305,8 +18305,8 @@ export const PhoneChat: React.FC = () => {
               <div className={styles.chatDropOverlay} aria-hidden="true">
                 <div className={styles.chatDropOverlayCard}>
                   <UploadCloud size={26} />
-                  <strong>Suelta tu archivo aqui</strong>
-                  <span>Se agregará al mensaje antes de enviarlo.</span>
+                  <strong>Suelta aquí tu contenido multimedia</strong>
+                  <span>Se agregará a la caja del mensaje antes de enviarlo.</span>
                 </div>
               </div>
             )}

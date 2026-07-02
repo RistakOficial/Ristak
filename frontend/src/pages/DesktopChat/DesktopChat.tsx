@@ -4196,34 +4196,42 @@ export const DesktopChat: React.FC = () => {
     setDraggingFilesOverChat(false)
   }, [])
 
+  const hasDraggedFiles = useCallback((event: React.DragEvent<HTMLElement>) => (
+    Array.from(event.dataTransfer?.types || []).includes('Files')
+  ), [])
+
   const handleChatDragEnter = useCallback((event: React.DragEvent<HTMLElement>) => {
-    if (!event.dataTransfer?.types.includes('Files') || isEmailComposer) return
+    if (!hasDraggedFiles(event) || isEmailComposer) return
     event.preventDefault()
+    event.stopPropagation()
     dragDepthRef.current += 1
     setDraggingFilesOverChat(true)
-  }, [isEmailComposer])
+  }, [hasDraggedFiles, isEmailComposer])
 
   const handleChatDragOver = useCallback((event: React.DragEvent<HTMLElement>) => {
-    if (!event.dataTransfer?.types.includes('Files') || isEmailComposer) return
+    if (!hasDraggedFiles(event) || isEmailComposer) return
     event.preventDefault()
+    event.stopPropagation()
     event.dataTransfer.dropEffect = 'copy'
     setDraggingFilesOverChat(true)
-  }, [isEmailComposer])
+  }, [hasDraggedFiles, isEmailComposer])
 
   const handleChatDragLeave = useCallback((event: React.DragEvent<HTMLElement>) => {
-    if (!event.dataTransfer?.types.includes('Files')) return
+    if (!hasDraggedFiles(event)) return
     event.preventDefault()
+    event.stopPropagation()
     dragDepthRef.current = Math.max(0, dragDepthRef.current - 1)
     if (dragDepthRef.current === 0) setDraggingFilesOverChat(false)
-  }, [])
+  }, [hasDraggedFiles])
 
   const handleChatDrop = useCallback((event: React.DragEvent<HTMLElement>) => {
-    if (!event.dataTransfer?.types.includes('Files')) return
+    if (!hasDraggedFiles(event)) return
     event.preventDefault()
+    event.stopPropagation()
     const files = Array.from(event.dataTransfer.files || [])
     resetChatDragState()
     void addFilesToDraft(files, 'drop')
-  }, [addFilesToDraft, resetChatDragState])
+  }, [addFilesToDraft, hasDraggedFiles, resetChatDragState])
 
   const closeComposerAgentMenu = useCallback(() => {
     setAgentComposerMenuOpen(false)
@@ -7076,15 +7084,15 @@ export const DesktopChat: React.FC = () => {
 
               <ChatMessageSurface
                 ref={messagePaneRef}
-                className={styles.messagePane}
+                className={`${styles.messagePane} ${draggingFilesOverChat ? styles.messagePaneDropActive : ''}`}
                 onScroll={updateMessagePaneBottomLock}
               >
                 {draggingFilesOverChat ? (
                   <div className={styles.chatDropOverlay} aria-live="polite">
                     <div className={styles.chatDropOverlayCard}>
                       <Plus size={28} aria-hidden="true" />
-                      <strong>Suelta tu archivo aqui</strong>
-                      <span>Lo dejamos listo en la caja para agregar texto o más archivos.</span>
+                      <strong>Suelta aquí tu contenido multimedia</strong>
+                      <span>Se agregará a la caja del mensaje antes de enviarlo.</span>
                     </div>
                   </div>
                 ) : null}
