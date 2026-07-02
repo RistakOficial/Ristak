@@ -258,6 +258,12 @@ export declare function getSectionColumns(block?: SiteBlockLike | null): number
 export declare function normalizeLegacyLandingBlockSettings(block?: SiteBlockLike | null): Record<string, unknown>
 export declare function buildBlockStyleVars(block?: SiteBlockLike | null, ctx?: BlockStyleContext): CssVarMap
 export declare function buildBlockStyleClassName(block: SiteBlockLike): string
+export type ResponsiveDevice = 'desktop' | 'tablet' | 'mobile'
+export declare const RESPONSIVE_DEVICE_MAX_WIDTH: Record<'tablet' | 'mobile', number>
+export declare function resolveDeviceBlockSettings(settings?: Record<string, unknown>, device?: ResponsiveDevice): Record<string, unknown>
+export interface ResponsiveCssOptions { queryType?: 'media' | 'container'; containerName?: string }
+export declare function buildBlockResponsiveCss(block?: SiteBlockLike | null, options?: ResponsiveCssOptions, ctx?: BlockStyleContext): string
+export declare function buildBlocksResponsiveCss(blocks?: SiteBlockLike[], options?: ResponsiveCssOptions, ctx?: BlockStyleContext): string
 export declare function blockHasBackgroundVideo(block?: SiteBlockLike | null): boolean
 export declare function blockIsUserHidden(block?: SiteBlockLike | null): boolean
 export declare function blockHasStyleWrapper(block?: SiteBlockLike | null, ctx?: BlockStyleContext): boolean

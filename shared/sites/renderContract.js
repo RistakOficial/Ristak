@@ -2375,6 +2375,75 @@ function buildBlockStyleVars(block, ctx = {}) {
   return vars
 }
 
+// --- Responsive por dispositivo (overrides por bloque) ---
+//
+// Modelo de datos RETROCOMPATIBLE: los valores actuales de settings son el DESKTOP
+// (base). Los overrides por dispositivo viven anidados en settings.responsive:
+//   settings.responsive = { tablet: { fontSize: 20 }, mobile: { fontSize: 16 } }
+// Un sitio sin settings.responsive se comporta EXACTO como antes (0 migración).
+// La cascada es desktop -> tablet -> mobile (cada uno hereda del anterior).
+const RESPONSIVE_DEVICES = ['tablet', 'mobile']
+// Breakpoints (max-width). El canvas del editor usa @container rstk-canvas con el
+// mismo ancho; el sitio publicado usa @media. Mismo valor en ambos = paridad.
+const RESPONSIVE_DEVICE_MAX_WIDTH = { tablet: 1024, mobile: 640 }
+
+function isPlainObject(value) {
+  return Boolean(value) && typeof value === 'object' && !Array.isArray(value)
+}
+
+// Devuelve los settings efectivos para un dispositivo aplicando la cascada
+// desktop -> tablet -> mobile sobre settings.responsive. Puro y testeable.
+function resolveDeviceBlockSettings(settings = {}, device = 'desktop') {
+  const base = isPlainObject(settings) ? settings : {}
+  if (device === 'desktop') return { ...base }
+  const responsive = isPlainObject(base.responsive) ? base.responsive : {}
+  const tablet = isPlainObject(responsive.tablet) ? responsive.tablet : {}
+  const mobile = isPlainObject(responsive.mobile) ? responsive.mobile : {}
+  if (device === 'tablet') return { ...base, ...tablet }
+  // mobile hereda de tablet (que hereda de desktop)
+  return { ...base, ...tablet, ...mobile }
+}
+
+// Emite el CSS de overrides responsive de UN bloque. Reutiliza buildBlockStyleVars
+// (misma normalización/clamps/variables que el desktop => cero divergencia) y solo
+// emite las variables que CAMBIAN respecto al desktop, dentro de la media/container
+// query del dispositivo, apuntando al bloque por su data-rstk-block-id.
+//   queryType 'media'     -> sitio publicado (@media)
+//   queryType 'container' -> canvas del editor (@container rstk-canvas)
+function buildBlockResponsiveCss(block, { queryType = 'media', containerName = 'rstk-canvas' } = {}, ctx = {}) {
+  if (!block || !isPlainObject(block.settings) || !isPlainObject(block.settings.responsive)) return ''
+  const blockId = cleanString(block.id)
+  if (!blockId) return ''
+  const baseVars = buildBlockStyleVars(block, ctx)
+  const blocks = []
+  for (const device of RESPONSIVE_DEVICES) {
+    const overrides = block.settings.responsive[device]
+    if (!isPlainObject(overrides) || !Object.keys(overrides).length) continue
+    const deviceSettings = resolveDeviceBlockSettings(block.settings, device)
+    const deviceVars = buildBlockStyleVars({ ...block, settings: deviceSettings }, ctx)
+    const decls = []
+    for (const [name, value] of Object.entries(deviceVars)) {
+      if (baseVars[name] !== value) decls.push(`${name}:${value}`)
+    }
+    if (!decls.length) continue
+    const maxWidth = RESPONSIVE_DEVICE_MAX_WIDTH[device]
+    const query = queryType === 'container'
+      ? `@container ${containerName} (max-width:${maxWidth}px)`
+      : `@media (max-width:${maxWidth}px)`
+    blocks.push(`${query}{[data-rstk-block-id="${blockId}"]{${decls.join(';')}}}`)
+  }
+  return blocks.join('\n')
+}
+
+// Emite el CSS responsive de TODOS los bloques de una lista (helper para el render).
+function buildBlocksResponsiveCss(blocks = [], options = {}, ctx = {}) {
+  if (!Array.isArray(blocks)) return ''
+  return blocks
+    .map(block => buildBlockResponsiveCss(block, options, ctx))
+    .filter(Boolean)
+    .join('\n')
+}
+
 // --- Clases del wrapper de bloque ---
 
 function blockHasExplicitBg(settings) {
@@ -2440,6 +2509,12 @@ function blockIsUserHidden(block) {
   return false
 }
 
+function blockHasResponsiveOverrides(block) {
+  const responsive = block?.settings?.responsive
+  if (!isPlainObject(responsive)) return false
+  return RESPONSIVE_DEVICES.some(device => isPlainObject(responsive[device]) && Object.keys(responsive[device]).length)
+}
+
 function blockHasStyleWrapper(block, ctx = {}) {
   if (!block) return false
   const settings = block.settings || {}
@@ -2449,6 +2524,9 @@ function blockHasStyleWrapper(block, ctx = {}) {
     settings.blockFullWidth === true ||
     blockHasBackgroundVideo(block) ||
     blockIsUserHidden(block) ||
+    // Con overrides responsive el bloque necesita su wrapper + data-rstk-block-id
+    // para que el CSS por dispositivo ([data-rstk-block-id="X"]) lo alcance.
+    blockHasResponsiveOverrides(block) ||
     ctx.hasActionTarget
   )
 }
@@ -2965,6 +3043,11 @@ export {
   normalizeLegacyLandingBlockSettings,
   buildBlockStyleVars,
   buildBlockStyleClassName,
+  resolveDeviceBlockSettings,
+  buildBlockResponsiveCss,
+  buildBlocksResponsiveCss,
+  blockHasResponsiveOverrides,
+  RESPONSIVE_DEVICE_MAX_WIDTH,
   blockHasBackgroundVideo,
   blockIsUserHidden,
   blockHasStyleWrapper

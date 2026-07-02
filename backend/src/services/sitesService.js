@@ -143,7 +143,8 @@ import {
   blockTextListStyle,
   getSectionColumns,
   buildBlockStyleVars,
-  buildBlockStyleClassName
+  buildBlockStyleClassName,
+  buildBlocksResponsiveCss
 } from '../../../shared/sites/renderContract.js'
 
 // FIELD_BLOCK_TYPES vive en el contrato compartido; se re-exporta para los
@@ -20305,6 +20306,10 @@ export async function renderPublicSiteHtml(site, { pageId, pagePath, trackingEna
   const bodyBlocks = isLandingType
     ? renderLandingBlocks(blocks, renderContext)
     : blocks.map(block => renderPublicBlock(block, renderContext)).join('\n')
+  // Overrides responsive por bloque (settings.responsive) → @media en el sitio
+  // publicado. Aditivo: cadena vacía si ningún bloque define overrides. Mismo
+  // contrato que el canvas del editor (que usa @container), así que paridad.
+  const responsiveCss = buildBlocksResponsiveCss(blocks, { queryType: 'media' }, renderContext)
   const fieldBlockPageMap = isStandardFormType || isLandingType
     ? Object.fromEntries(collectFieldBlockPageEntries(isStandardFormType ? (Array.isArray(site.blocks) ? site.blocks : []) : blocks, pages))
     : {}
@@ -20373,6 +20378,7 @@ export async function renderPublicSiteHtml(site, { pageId, pagePath, trackingEna
   <meta name="description" content="${escapeHtml(site.description || '')}">
   <link href="${RSTK_SITE_FONTS_CSS_PATH}" rel="stylesheet">
   <style>${styleSheet}</style>
+  ${responsiveCss ? `<style data-rstk-responsive>${responsiveCss}</style>` : ''}
   ${siteNavHtml ? `<style>${SITE_NAV_STYLES}</style>` : ''}
   ${metaPixel.head}
   ${headerTrackingCode}
