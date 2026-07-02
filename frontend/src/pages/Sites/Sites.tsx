@@ -7198,16 +7198,9 @@ function FormEmbedEditorPanel({
     if (!activeField) return
     onPatchFieldSettings(activeField, patch)
   }
-  const activeFieldTypographyControls = showActiveFieldTypographyInEdit && activeField ? (
-    <InlineBlockStyleControls
-      site={site}
-      block={activeField}
-      blocks={fields}
-      mode="typography"
-      onPatchSettings={patchActiveFieldSettings}
-      onSave={onSave}
-    />
-  ) : null
+  // Tipografía del campo activo del formulario embebido: también va SIEMPRE a Diseño
+  // (mode="all" abajo), no a Editar. Consistente con el resto de bloques.
+  const activeFieldTypographyControls = null
   const changeActiveFieldType = (nextType: SiteBlockType) => {
     if (!activeField || !activeBlockIsField || activeFieldSystemPreset) return
     const nextSettings = {
@@ -7680,7 +7673,7 @@ function FormEmbedEditorPanel({
         site={site}
         block={activeField}
         blocks={fields}
-        mode={showActiveFieldTypographyInEdit ? 'design' : 'all'}
+        mode="all"
         onPatchSettings={patchActiveFieldSettings}
         onSave={onSave}
       />
@@ -29679,14 +29672,10 @@ const TypographyFormatInspector: React.FC<{
             <Strikethrough size={14} />
           </button>
         </div>
-        <div className={styles.typographyMiniMenu} aria-label="Opciones tipográficas">
-          <Type size={14} />
-          <ChevronDown size={13} />
-        </div>
       </div>
 
       <label className={styles.typographySelectRow}>
-        <span>Estilos</span>
+        <span>Transformar texto</span>
         <CustomSelect
           value={getSettingString(settings, textTransformKey)}
           onChange={(event) => patchAndSave({ [textTransformKey]: event.target.value })}
@@ -29727,16 +29716,8 @@ const TypographyFormatInspector: React.FC<{
         })}
       </div>
 
-      {supportsList && (
-        <div className={styles.typographyIndentGrid} aria-label="Sangría">
-          <button type="button" disabled><List size={14} /></button>
-          <button type="button" disabled><ListOrdered size={14} /></button>
-          <button type="button" disabled><ChevronRight size={14} /></button>
-        </div>
-      )}
-
       <label className={styles.typographySelectRow}>
-        <span>Espaciado</span>
+        <span>Interlineado</span>
         <CustomSelect
           value={lineHeightValue}
           onChange={(event) => patchAndSave({ [lineHeightKey]: event.target.value })}
@@ -36111,16 +36092,12 @@ const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
       <input value={block.label} onChange={(event) => onPatchBlock({ label: event.target.value })} onBlur={onSave} />
     </label>
   )
-  const editTypographyControls = showTypographyInEdit ? (
-    <InlineBlockStyleControls
-      site={site}
-      block={block}
-      blocks={blocks}
-      mode="typography"
-      onPatchSettings={onPatchSettings}
-      onSave={onSave}
-    />
-  ) : null
+  // Tipografía (fuente/tamaño/peso/color/alineación/interlineado/contorno) es 100%
+  // visual → SIEMPRE vive en Diseño, para TODOS los tipos de bloque. Antes se metía
+  // en Editar para 10 tipos (headline/title/text/benefits/...), dejando el mismo
+  // control en pestaña distinta según el bloque. Ahora Diseño la pinta vía mode="all".
+  // (showTypographyInEdit se conserva solo para la posición del nombre del bloque.)
+  const editTypographyControls = null
   const contentField = showContentField ? (
     <label className={styles.field}>
       <span>{contentLabel}</span>
@@ -36393,7 +36370,7 @@ const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
         site={site}
         block={block}
         blocks={blocks}
-        mode={showTypographyInEdit ? 'design' : 'all'}
+        mode="all"
         onPatchSettings={onPatchSettings}
         onSave={onSave}
       />
@@ -37976,13 +37953,8 @@ const LandingBlockSettings: React.FC<LandingBlockSettingsProps> = ({ site, block
   if (block.blockType === SECTION_BLOCK_TYPE) {
     return (
       <AccordionSection id="landing-franja" title="Tipo de franja">
-        <ColorField
-          label="Fondo de franja"
-          value={getSettingPaint(settings, 'blockBg', 'transparent')}
-          allowGradient
-          onChange={(value) => onPatchSettings({ blockBg: value })}
-          onCommit={onSave}
-        />
+        {/* 'Fondo de franja' se eliminó: era un duplicado EXACTO de 'Color de la
+            franja' en Diseño (misma key blockBg). El control de fondo vive en Diseño. */}
         <label className={styles.field}>
           <span>Columnas</span>
           <CustomSelect
