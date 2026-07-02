@@ -5,7 +5,7 @@ delete process.env.DATABASE_URL
 
 const [{ db }, migration] = await Promise.all([
   import('../src/config/database.js'),
-  import('../scripts/reorganize-storage-taxonomy.mjs')
+  import('../src/services/storageTaxonomyMigration.js')
 ])
 const { reRootPath, planMoves, updateAssetRow, rewriteReferences } = migration
 

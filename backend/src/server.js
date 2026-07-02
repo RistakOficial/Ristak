@@ -24,6 +24,7 @@ import { verifyAndUpdateWebhooks } from './startup/webhookVerification.js'
 import { runVersionedMigrations } from './startup/runMigrations.js'
 import { repairPendingPaymentFlows } from './services/paymentFlowService.js'
 import { ensureBunnyStreamRuntimeConfigured } from './services/mediaStorageService.js'
+import { scheduleStartupStorageTaxonomyMigration } from './services/storageTaxonomyMigration.js'
 import { repairDefaultMessageTemplatesForCurrentConnection } from './services/messageTemplatesService.js'
 import { shutdownWhatsAppQrService } from './services/whatsappQrService.js'
 
@@ -395,6 +396,15 @@ async function startRuntimeServices() {
     'startup:media-runtime-config',
     ensureBunnyStreamRuntimeConfigured,
     'No se pudo preparar Bunny Stream al arrancar'
+  )
+
+  // Auto-migración de taxonomía del Bunny: re-enraíza lo viejo a accounts/<slug>
+  // una sola vez por instalación, en segundo plano y SIN borrar lo viejo (respaldo
+  // intacto). No bloquea el arranque. Desactivable con STORAGE_TAXONOMY_AUTOMIGRATE=off.
+  runStartupDrainTask(
+    'startup:storage-taxonomy-migration',
+    scheduleStartupStorageTaxonomyMigration,
+    'No se pudo agendar la migración de taxonomía de storage'
   )
 
   runStartupDrainTask(

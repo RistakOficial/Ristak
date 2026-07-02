@@ -1875,7 +1875,11 @@ async function initTables() {
       // account_slug = nombre de la carpeta raíz del cliente (p.ej. "alexis-fitness-a1b2c3").
       // account_label = nombre bonito del negocio para documentar los _LEEME.txt.
       ['account_slug', 'TEXT'],
-      ['account_label', 'TEXT']
+      ['account_label', 'TEXT'],
+      // Marca de cuándo esta instalación ya corrió la auto-migración de taxonomía
+      // (re-enraizado de lo viejo a accounts/<slug>). Se corre una sola vez.
+      ['taxonomy_migrated_at', 'DATETIME'],
+      ['taxonomy_migration_note', 'TEXT']
     ]) {
       try {
         if (usePostgres) {
