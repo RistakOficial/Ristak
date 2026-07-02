@@ -1128,22 +1128,12 @@ const TRIGGERS: NodeDefinition[] = [
     defaultConfig: () => ({
       post: '',
       keywords: [],
-      match: 'contains',
       allowedComments: 'all',
       avoidDuplicates: true
     }),
     fields: [
       { key: 'post', label: 'Publicación', type: 'postSelect', platform: 'facebook', help: 'Elige una publicación o deja "Todas" para disparar con cualquier comentario.' },
-      { key: 'keywords', label: 'Palabras clave (opcional)', type: 'keywords', placeholder: 'Escribe y presiona Enter', advanced: true },
-      {
-        key: 'match',
-        label: 'Regla de coincidencia',
-        type: 'select',
-        options: [
-          { value: 'contains', label: 'Contiene' },
-          { value: 'exact', label: 'Coincidencia exacta' }
-        ]
-      },
+      { key: 'keywords', label: 'Palabras clave (opcional)', type: 'keywords', placeholder: 'Escribe y presiona Enter', help: 'Dispara solo si el comentario contiene alguna de estas palabras. Déjalo vacío para disparar con cualquier comentario.' },
       {
         key: 'allowedComments',
         label: 'Comentarios permitidos',
@@ -1182,21 +1172,11 @@ const TRIGGERS: NodeDefinition[] = [
     defaultConfig: () => ({
       post: '',
       keywords: [],
-      match: 'contains',
       allowedComments: 'all'
     }),
     fields: [
       { key: 'post', label: 'Publicación o reel', type: 'postSelect', platform: 'instagram', help: 'Elige una publicación o reel, o deja "Todas" para disparar con cualquier comentario.' },
-      { key: 'keywords', label: 'Palabras clave (opcional)', type: 'keywords', placeholder: 'Escribe y presiona Enter', advanced: true },
-      {
-        key: 'match',
-        label: 'Regla de coincidencia',
-        type: 'select',
-        options: [
-          { value: 'contains', label: 'Contiene' },
-          { value: 'exact', label: 'Coincidencia exacta' }
-        ]
-      },
+      { key: 'keywords', label: 'Palabras clave (opcional)', type: 'keywords', placeholder: 'Escribe y presiona Enter', help: 'Dispara solo si el comentario contiene alguna de estas palabras. Déjalo vacío para disparar con cualquier comentario.' },
       {
         key: 'allowedComments',
         label: 'Comentarios permitidos',
