@@ -142,6 +142,7 @@ const metaTestEventOptions = [
   { value: 'Lead', label: 'Lead' },
   { value: 'Schedule', label: 'Schedule' },
   { value: 'Purchase', label: 'Purchase' },
+  { value: 'WhatsAppPurchase', label: 'Purchase (WhatsApp)' },
   { value: 'FormSubmitted', label: 'FormSubmitted' },
   { value: 'CompleteRegistration', label: 'CompleteRegistration' },
   { value: 'ViewContent', label: 'ViewContent' },
@@ -151,7 +152,7 @@ const metaTestEventOptions = [
 ]
 
 const defaultMetaTestEventName = 'Lead'
-const serverOnlyMetaTestEvents = new Set(['LeadSubmitted'])
+const serverOnlyMetaTestEvents = new Set(['LeadSubmitted', 'WhatsAppPurchase'])
 const META_AD_UTM_PARAMETERS = [
   'utm_source=fb_ad',
   'utm_medium={{adset.name}}',
@@ -199,6 +200,7 @@ const metaTestEventParameterFields: Record<string, MetaTestParameterFieldKey[]> 
   Lead: ['value', 'predictedLtv', 'currency', 'status'],
   Schedule: ['value', 'predictedLtv', 'currency', 'status'],
   Purchase: ['value', 'currency', 'orderId', 'contentIds', 'contentName', 'contentType', 'numItems'],
+  WhatsAppPurchase: ['value', 'ctwaClid'],
   FormSubmitted: ['value', 'predictedLtv', 'currency', 'status'],
   CompleteRegistration: ['value', 'predictedLtv', 'currency', 'status'],
   Contact: ['value', 'predictedLtv', 'currency', 'status'],
@@ -212,7 +214,11 @@ const getMetaTestEventFieldsForEvent = (eventName?: string): MetaTestParameterFi
 }
 
 const isWhatsappBusinessMetaTestEvent = (eventName?: string) => {
-  return String(eventName || '').trim() === 'LeadSubmitted'
+  return ['LeadSubmitted', 'WhatsAppPurchase'].includes(String(eventName || '').trim())
+}
+
+const isWhatsappPurchaseMetaTestEvent = (eventName?: string) => {
+  return String(eventName || '').trim() === 'WhatsAppPurchase'
 }
 
 const createDefaultMetaTestCustomParameter = (): MetaTestCustomParameter => ({
@@ -1270,8 +1276,15 @@ export const MetaAdsIntegration: React.FC = () => {
     }
 
     if (isWhatsappBusinessMetaTestEvent(eventName)) {
+      const whatsappEventLabel = isWhatsappPurchaseMetaTestEvent(eventName) ? 'Purchase de WhatsApp' : 'LeadSubmitted de WhatsApp'
       if (!hasPageId) {
-        showToast('warning', 'Facebook Page requerida', 'Selecciona una Facebook Page antes de probar LeadSubmitted de WhatsApp')
+        showToast('warning', 'Facebook Page requerida', `Selecciona una Facebook Page antes de probar ${whatsappEventLabel}`)
+        return
+      }
+
+      if (isWhatsappPurchaseMetaTestEvent(eventName) && !cleanMetaTestParameterString(eventParameters.value)) {
+        setIsMetaTestParametersOpen(true)
+        showToast('warning', 'Valor requerido', 'Agrega el valor de compra para probar Purchase de WhatsApp')
         return
       }
 

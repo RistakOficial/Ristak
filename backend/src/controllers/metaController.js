@@ -137,6 +137,7 @@ const metaTestEventParameterFields = {
   Lead: ['value', 'predictedLtv', 'currency', 'status'],
   Schedule: ['value', 'predictedLtv', 'currency', 'status'],
   Purchase: ['value', 'currency', 'orderId', 'contentIds', 'contentName', 'contentType', 'numItems'],
+  WhatsAppPurchase: ['value', 'ctwaClid'],
   FormSubmitted: ['value', 'predictedLtv', 'currency', 'status'],
   CompleteRegistration: ['value', 'predictedLtv', 'currency', 'status'],
   Contact: ['value', 'predictedLtv', 'currency', 'status'],
@@ -144,6 +145,12 @@ const metaTestEventParameterFields = {
   AddPaymentInfo: ['value', 'predictedLtv', 'currency', 'status'],
   LeadSubmitted: ['value', 'predictedLtv', 'currency', 'status', 'ctwaClid']
 }
+
+const WHATSAPP_PURCHASE_TEST_EVENT_NAME = 'WhatsAppPurchase';
+const WHATSAPP_BUSINESS_MESSAGING_TEST_EVENTS = new Set([
+  'LeadSubmitted',
+  WHATSAPP_PURCHASE_TEST_EVENT_NAME
+]);
 
 function getMetaTestEventFieldsForEvent(eventName) {
   return metaTestEventParameterFields[eventName] || [];
@@ -294,8 +301,21 @@ function buildMetaTestCustomData(parameters = {}, eventName = 'LeadSubmitted') {
   return customData;
 }
 
+function normalizeMetaCurrency(value) {
+  const currency = cleanMetaTestString(value).toUpperCase().slice(0, 3);
+  return /^[A-Z]{3}$/.test(currency) ? currency : '';
+}
+
+function getOutboundMetaTestEventName(eventName = '') {
+  return cleanString(eventName) === WHATSAPP_PURCHASE_TEST_EVENT_NAME ? 'Purchase' : eventName;
+}
+
 function isWhatsappBusinessMessagingTestEvent(eventName = '') {
-  return cleanString(eventName) === 'LeadSubmitted';
+  return WHATSAPP_BUSINESS_MESSAGING_TEST_EVENTS.has(cleanString(eventName));
+}
+
+function isWhatsappPurchaseTestEvent(eventName = '') {
+  return cleanString(eventName) === WHATSAPP_PURCHASE_TEST_EVENT_NAME;
 }
 
 function buildMetaTestUserData({ req, eventSourceUrl, datasetId, eventParameters = {}, metaConfig = {}, eventName = '' }) {
@@ -327,6 +347,28 @@ function getRequestIp(req) {
 
 function normalizeMetaAdAccountId(value) {
   return cleanString(value).replace(/^act_/i, '');
+}
+
+async function resolveMetaAdAccountCurrency({ metaConfig = {}, accessToken = '' } = {}) {
+  const localCurrency = normalizeMetaCurrency(metaConfig?.account_currency || metaConfig?.currency);
+  if (localCurrency) return localCurrency;
+
+  const adAccountId = normalizeMetaAdAccountId(metaConfig?.ad_account_id || process.env.META_AD_ACCOUNT_ID);
+  if (!adAccountId || !accessToken) return '';
+
+  try {
+    const url = `${API_URLS.META_GRAPH}/act_${encodeURIComponent(adAccountId)}?fields=currency&access_token=${encodeURIComponent(accessToken)}`;
+    const response = await fetch(url);
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok || data?.error) {
+      logger.warn(`No se pudo obtener currency de Meta Ads: ${data?.error?.message || `HTTP ${response.status}`}`);
+      return '';
+    }
+    return normalizeMetaCurrency(data?.currency);
+  } catch (error) {
+    logger.warn(`Error obteniendo currency de cuenta Meta: ${error.message}`);
+    return '';
+  }
 }
 
 function getPublicBaseUrl(req) {
@@ -733,6 +775,9 @@ async function performMetaCapiTestEvent({ req, metaConfig, eventName, eventParam
 
   const normalizedEventParameters = normalizeMetaTestEventParameters(eventParameters);
   const isBusinessMessaging = isWhatsappBusinessMessagingTestEvent(eventName);
+  const isWhatsappPurchase = isWhatsappPurchaseTestEvent(eventName);
+  const outboundEventName = getOutboundMetaTestEventName(eventName);
+  const whatsappEventLabel = isWhatsappPurchase ? 'Purchase de WhatsApp' : 'LeadSubmitted de WhatsApp';
   const userData = buildMetaTestUserData({
     req,
     eventSourceUrl,
@@ -744,22 +789,41 @@ async function performMetaCapiTestEvent({ req, metaConfig, eventName, eventParam
 
   if (isBusinessMessaging) {
     if (!userData.ctwa_clid) {
-      return { ok: false, status: 400, error: 'Pega un ctwa_clid real para probar LeadSubmitted de WhatsApp', eventId, eventName };
+      return { ok: false, status: 400, error: `Pega un ctwa_clid real para probar ${whatsappEventLabel}`, eventId, eventName };
     }
     if (!userData.page_id) {
-      return { ok: false, status: 400, error: 'Configura una Facebook Page antes de probar LeadSubmitted de WhatsApp', eventId, eventName };
+      return { ok: false, status: 400, error: `Configura una Facebook Page antes de probar ${whatsappEventLabel}`, eventId, eventName };
     }
   }
 
+  if (isWhatsappPurchase) {
+    if (normalizeMetaTestNumber(normalizedEventParameters.value) === null) {
+      return { ok: false, status: 400, error: 'Agrega un valor para probar Purchase de WhatsApp', eventId, eventName };
+    }
+
+    const accountCurrency = await resolveMetaAdAccountCurrency({ metaConfig, accessToken });
+    if (!accountCurrency) {
+      return {
+        ok: false,
+        status: 400,
+        error: 'No se pudo resolver la moneda de la cuenta publicitaria de Meta para Purchase de WhatsApp',
+        eventId,
+        eventName
+      };
+    }
+
+    normalizedEventParameters.currency = accountCurrency;
+  }
+
   const eventPayload = {
-    event_name: eventName,
+    event_name: outboundEventName,
     event_time: Math.floor(Date.now() / 1000),
     event_id: eventId,
     user_data: userData,
     custom_data: {
       source: 'ristak_settings',
       conversion_type: 'settings_test_event',
-      ...buildMetaTestCustomData(normalizedEventParameters, eventName)
+      ...buildMetaTestCustomData(normalizedEventParameters, outboundEventName)
     }
   };
 
@@ -787,12 +851,12 @@ async function performMetaCapiTestEvent({ req, metaConfig, eventName, eventParam
     });
     const responsePayload = await response.json().catch(() => ({}));
     if (!response.ok || responsePayload?.error) {
-      return { ok: false, status: response.ok ? 400 : response.status, error: responsePayload?.error?.message || `Meta CAPI ${response.status}`, eventId, eventName, responsePayload };
+      return { ok: false, status: response.ok ? 400 : response.status, error: responsePayload?.error?.message || `Meta CAPI ${response.status}`, eventId, eventName: outboundEventName, responsePayload };
     }
-    return { ok: true, eventId, eventName, testEventCode, responsePayload };
+    return { ok: true, eventId, eventName: outboundEventName, testEventCode, responsePayload };
   } catch (error) {
     logger.error(`Error enviando evento CAPI de prueba: ${error.message}`);
-    return { ok: false, status: 500, error: 'Error al enviar evento de prueba a Meta', eventId, eventName };
+    return { ok: false, status: 500, error: 'Error al enviar evento de prueba a Meta', eventId, eventName: outboundEventName };
   }
 }
 
