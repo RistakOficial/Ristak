@@ -878,18 +878,28 @@ async function upsertLocalSocialContact({ socialMessage, profile }) {
   ])
   const customFieldsPlaceholder = process.env.DATABASE_URL ? '?::jsonb' : '?'
 
+  // Atribución de anuncio (CTM/CTI): si el DM llegó desde un anuncio de
+  // Click-to-Messenger/Instagram, el referral trae ad_id + título. Lo guardamos en
+  // el contacto para que el evento de CAPI quede atribuido al anuncio (paridad con
+  // WhatsApp). Los comentarios no traen referral → queda vacío (sin efecto).
+  const referral = socialMessage.referral || {}
+  const adId = cleanString(referral.ad_id)
+  const adName = cleanString(referral.ads_context_data?.ad_title || referral.ref)
+
   await db.run(`
     INSERT INTO contacts (
       id, full_name, first_name, source,
-      attribution_session_source, attribution_medium, custom_fields,
+      attribution_session_source, attribution_medium, attribution_ad_id, attribution_ad_name, custom_fields,
       created_at, updated_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ${customFieldsPlaceholder}, ?, CURRENT_TIMESTAMP)
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ${customFieldsPlaceholder}, ?, CURRENT_TIMESTAMP)
     ON CONFLICT (id) DO UPDATE SET
       full_name = COALESCE(NULLIF(contacts.full_name, ''), excluded.full_name),
       first_name = COALESCE(NULLIF(contacts.first_name, ''), excluded.first_name),
       source = COALESCE(NULLIF(contacts.source, ''), excluded.source),
       attribution_session_source = COALESCE(NULLIF(contacts.attribution_session_source, ''), excluded.attribution_session_source),
       attribution_medium = COALESCE(NULLIF(contacts.attribution_medium, ''), excluded.attribution_medium),
+      attribution_ad_id = COALESCE(NULLIF(contacts.attribution_ad_id, ''), excluded.attribution_ad_id),
+      attribution_ad_name = COALESCE(NULLIF(contacts.attribution_ad_name, ''), excluded.attribution_ad_name),
       custom_fields = COALESCE(contacts.custom_fields, excluded.custom_fields),
       updated_at = CURRENT_TIMESTAMP
   `, [
@@ -899,6 +909,8 @@ async function upsertLocalSocialContact({ socialMessage, profile }) {
     platformLabel,
     socialMessage.platform,
     'dm',
+    adId || null,
+    adName || null,
     customFieldsValue,
     socialMessage.messageTimestamp
   ])
