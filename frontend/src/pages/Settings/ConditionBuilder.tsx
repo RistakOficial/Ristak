@@ -65,11 +65,20 @@ interface SummaryHelpers {
   customFieldLabel: (key?: string) => string
 }
 
+const COMMENT_CONDITION_CHANNELS = new Set(['facebook_comment', 'instagram_comment'])
+const COMMENT_REPLY_MODE_OPTIONS: Array<{ value: string; label: string }> = [
+  { value: 'public', label: 'Responder en el comentario' },
+  { value: 'private', label: 'Responder por privado (DM)' },
+  { value: 'public_then_private', label: 'Responder comentario y seguir por privado' }
+]
+
 const CHANNEL_OPTIONS: Array<{ value: string; label: string }> = [
   { value: 'chat', label: 'Chats y SMS' },
   { value: 'whatsapp', label: 'WhatsApp' },
   { value: 'instagram', label: 'Instagram DM' },
   { value: 'messenger', label: 'Messenger' },
+  { value: 'facebook_comment', label: 'Comentario de Facebook' },
+  { value: 'instagram_comment', label: 'Comentario de Instagram' },
   { value: 'sms', label: 'SMS' },
   { value: 'webchat', label: 'Chat web' },
   { value: 'email', label: 'Correo' }
@@ -822,15 +831,29 @@ export const ConditionBuilder: React.FC<ConditionBuilderProps> = ({ groups, cale
     switch (operator.valueKind) {
       case 'channel':
         return (
-          <select
-            className={styles.ruleSelect}
-            value={param.value || 'chat'}
-            onChange={(event) => updateParam(groupIndex, conditionIndex, paramIndex, { value: event.target.value })}
-          >
-            {CHANNEL_OPTIONS.map((option) => (
-              <option key={option.value} value={option.value}>{option.label}</option>
-            ))}
-          </select>
+          <>
+            <select
+              className={styles.ruleSelect}
+              value={param.value || 'chat'}
+              onChange={(event) => updateParam(groupIndex, conditionIndex, paramIndex, { value: event.target.value })}
+            >
+              {CHANNEL_OPTIONS.map((option) => (
+                <option key={option.value} value={option.value}>{option.label}</option>
+              ))}
+            </select>
+            {COMMENT_CONDITION_CHANNELS.has(param.value || '') ? (
+              <select
+                className={styles.ruleSelect}
+                aria-label="Cómo responde el agente al comentario"
+                value={param.replyMode || 'private'}
+                onChange={(event) => updateParam(groupIndex, conditionIndex, paramIndex, { replyMode: event.target.value })}
+              >
+                {COMMENT_REPLY_MODE_OPTIONS.map((option) => (
+                  <option key={option.value} value={option.value}>{option.label}</option>
+                ))}
+              </select>
+            ) : null}
+          </>
         )
       case 'text':
         return (

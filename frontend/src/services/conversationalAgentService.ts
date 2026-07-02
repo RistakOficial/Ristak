@@ -238,6 +238,9 @@ export interface AgentConditionParam {
   timeStart?: string
   timeEnd?: string
   fieldKey?: string
+  // Solo para canales de comentario (facebook_comment/instagram_comment): cómo
+  // responde el agente — 'public' | 'private' | 'public_then_private'.
+  replyMode?: string
 }
 
 /**

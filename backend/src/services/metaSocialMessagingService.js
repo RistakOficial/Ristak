@@ -1363,9 +1363,7 @@ export async function processMetaSocialWebhook({ payload = {}, rawBody = '', sig
 
             // Automatizaciones de comentarios: evento AISLADO 'comment-received'.
             // Va por su propio carril (NO handleIncomingMessage), así que las
-            // automatizaciones de DM nunca se disparan con comentarios. Sigue SIN
-            // push y SIN agente (el agente se conecta aparte, por condiciones de
-            // ingreso, más adelante).
+            // automatizaciones de DM nunca se disparan con comentarios. Sigue SIN push.
             import('./automationEngine.js')
               .then(engine => engine.handleAutomationEvent('comment-received', {
                 contactId: localContact.id,
@@ -1380,6 +1378,21 @@ export async function processMetaSocialWebhook({ payload = {}, rawBody = '', sig
               }))
               .catch(error => {
                 logger.warn(`[Automatizaciones] Comentario no procesado: ${error.message}`)
+              })
+
+            // Agente conversacional en comentarios: canal aislado
+            // 'facebook_comment'/'instagram_comment'. Solo actúa si un agente tiene
+            // esa condición de ingreso (matchAgentForMessage devuelve null si no) →
+            // barato y sin efecto cuando no hay agente de comentarios configurado.
+            const commentAgentChannel = comment.platform === 'instagram' ? 'instagram_comment' : 'facebook_comment'
+            import('../agents/conversational/runner.js')
+              .then(runner => runner.handleInboundConversationalChatMessage({
+                contactId: localContact.id,
+                messageId: savedComment.messageId,
+                channel: commentAgentChannel
+              }))
+              .catch(error => {
+                logger.warn(`[Agente conversacional] Comentario no atendido: ${error.message}`)
               })
           }
         } catch (error) {

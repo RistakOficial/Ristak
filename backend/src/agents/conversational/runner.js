@@ -84,8 +84,35 @@ const runningContacts = new Set()
 const pendingContactReruns = new Map()
 const followUpTimers = new Map()
 
-const CHAT_CONVERSATIONAL_CHANNELS = new Set(['whatsapp', 'instagram', 'messenger', 'sms', 'webchat'])
+const CHAT_CONVERSATIONAL_CHANNELS = new Set(['whatsapp', 'instagram', 'messenger', 'sms', 'webchat', 'facebook_comment', 'instagram_comment'])
 const SOCIAL_CHAT_CHANNELS = new Set(['instagram', 'messenger'])
+// Canales de COMENTARIO (FB/IG): el agente responde con sendMetaSocialCommentReply,
+// no con un DM. Se mantienen distintos de los canales de DM a propósito.
+const COMMENT_CHAT_CHANNELS = new Set(['facebook_comment', 'instagram_comment'])
+function commentChannelToPlatform(channel) {
+  return channel === 'instagram_comment' ? 'instagram' : 'messenger'
+}
+function normalizeCommentReplyMode(value) {
+  const v = String(value || '').trim().toLowerCase()
+  return v === 'public' || v === 'private' || v === 'public_then_private' ? v : 'private'
+}
+// Extrae el modo de respuesta a comentarios de la condición de ingreso del agente
+// que empató este canal de comentario (param.replyMode en la condición 'channel').
+// Default 'private' (lo más seguro: mueve la conversación a DM).
+function getCommentReplyModeForAgent(agentConfig, channel) {
+  const groups = agentConfig?.filters?.entry?.groups || []
+  for (const group of groups) {
+    for (const cond of group?.conditions || []) {
+      if (cond?.category !== 'channel') continue
+      for (const param of cond?.params || []) {
+        if (String(param?.value || '').trim().toLowerCase() === channel) {
+          return normalizeCommentReplyMode(param.replyMode)
+        }
+      }
+    }
+  }
+  return 'private'
+}
 const HIGHLEVEL_CHAT_CHANNELS = new Set(['instagram', 'messenger', 'sms', 'webchat'])
 const HIGHLEVEL_WHATSAPP_TRANSPORTS = new Set(['ghl_whatsapp'])
 const HIGHLEVEL_WHATSAPP_CHANNEL_ALIASES = new Set(['ghl_whatsapp'])
@@ -684,6 +711,21 @@ function rowToConversationalMessage(row, channel = 'whatsapp') {
 
 async function loadConversationRows(contactId, channel = 'whatsapp', { inboundOnly = false, limit = HISTORY_LIMIT } = {}) {
   const normalizedChannel = normalizeConversationalChannel(channel)
+  if (COMMENT_CHAT_CHANNELS.has(normalizedChannel)) {
+    const platform = commentChannelToPlatform(normalizedChannel)
+    const rows = await db.all(`
+      SELECT id, direction, message_type, message_text, media_url, media_mime_type,
+             NULL AS media_filename, NULL AS media_duration_ms, message_timestamp, created_at,
+             platform, raw_payload_json
+      FROM meta_social_messages
+      WHERE contact_id = ? AND platform = ?
+        AND message_type IN ('comment', 'comment_reply_public', 'comment_reply_private')
+        ${inboundOnly ? "AND LOWER(COALESCE(direction, 'inbound')) = 'inbound'" : ''}
+      ORDER BY COALESCE(message_timestamp, created_at) DESC
+      LIMIT ?
+    `, [contactId, platform, limit])
+    return rows.reverse().map((row) => rowToConversationalMessage(row, normalizedChannel))
+  }
   if (SOCIAL_CHAT_CHANNELS.has(normalizedChannel)) {
     const rows = await db.all(`
       SELECT id, direction, message_type, message_text, media_url, media_mime_type,
@@ -691,6 +733,7 @@ async function loadConversationRows(contactId, channel = 'whatsapp', { inboundOn
              platform, raw_payload_json
       FROM meta_social_messages
       WHERE contact_id = ? AND platform = ?
+        AND message_type NOT IN ('comment', 'comment_reply_public', 'comment_reply_private')
         ${inboundOnly ? "AND LOWER(COALESCE(direction, 'inbound')) = 'inbound'" : ''}
       ORDER BY COALESCE(message_timestamp, created_at) DESC
       LIMIT ?
@@ -763,6 +806,18 @@ async function loadLatestInboundMessage(contactId, channel = 'whatsapp') {
 
 async function loadInboundMessageById(contactId, messageId, channel = 'whatsapp') {
   const normalizedChannel = normalizeConversationalChannel(channel)
+  if (COMMENT_CHAT_CHANNELS.has(normalizedChannel)) {
+    const platform = commentChannelToPlatform(normalizedChannel)
+    const row = await db.get(`
+      SELECT id, direction, message_type, message_text, media_url, media_mime_type,
+             NULL AS media_filename, NULL AS media_duration_ms, message_timestamp, created_at,
+             platform, raw_payload_json
+      FROM meta_social_messages
+      WHERE id = ? AND contact_id = ? AND platform = ?
+      LIMIT 1
+    `, [messageId, contactId, platform])
+    return row ? rowToConversationalMessage(row, normalizedChannel) : null
+  }
   if (SOCIAL_CHAT_CHANNELS.has(normalizedChannel)) {
     const row = await db.get(`
       SELECT id, direction, message_type, message_text, media_url, media_mime_type,
@@ -801,6 +856,22 @@ async function loadInboundMessageById(contactId, messageId, channel = 'whatsapp'
 
 async function loadRecentInboundMessagesForRecovery(channel = 'whatsapp', limit = PENDING_RECOVERY_SCAN_LIMIT) {
   const normalizedChannel = normalizeConversationalChannel(channel)
+  if (COMMENT_CHAT_CHANNELS.has(normalizedChannel)) {
+    const platform = commentChannelToPlatform(normalizedChannel)
+    const rows = await db.all(`
+      SELECT id, contact_id, direction, message_type, message_text, media_url, media_mime_type,
+             NULL AS media_filename, NULL AS media_duration_ms, message_timestamp, created_at,
+             platform, raw_payload_json
+      FROM meta_social_messages
+      WHERE platform = ?
+        AND message_type = 'comment'
+        AND LOWER(COALESCE(direction, 'inbound')) = 'inbound'
+        AND contact_id IS NOT NULL
+      ORDER BY COALESCE(message_timestamp, created_at) DESC
+      LIMIT ?
+    `, [platform, limit]).catch(() => [])
+    return rows.map((row) => ({ ...rowToConversationalMessage(row, normalizedChannel), contact_id: row.contact_id }))
+  }
   if (SOCIAL_CHAT_CHANNELS.has(normalizedChannel)) {
     const rows = await db.all(`
       SELECT id, contact_id, direction, message_type, message_text, media_url, media_mime_type,
@@ -1107,9 +1178,31 @@ async function sendConversationalChannelTextMessage({
   latest = {},
   phone,
   text,
-  externalId
+  externalId,
+  commentReplyMode = 'private'
 } = {}) {
   const normalizedChannel = normalizeConversationalChannel(channel || latest.channel)
+
+  // Canal de COMENTARIO: el agente responde con sendMetaSocialCommentReply, no un DM.
+  // 'public_then_private' responde público en el post Y manda el mismo texto por DM.
+  if (COMMENT_CHAT_CHANNELS.has(normalizedChannel)) {
+    const platform = commentChannelToPlatform(normalizedChannel)
+    const { sendMetaSocialCommentReply } = await import('../../services/metaSocialMessagingService.js')
+    const mode = normalizeCommentReplyMode(commentReplyMode)
+    if (mode === 'public_then_private') {
+      await sendMetaSocialCommentReply({ contactId, platform, message: text, replyType: 'public', externalId })
+        .catch((error) => { logger.warn(`[Agente] Respuesta pública a comentario falló: ${error.message}`) })
+      return sendMetaSocialCommentReply({ contactId, platform, message: text, replyType: 'private', externalId })
+    }
+    return sendMetaSocialCommentReply({
+      contactId,
+      platform,
+      message: text,
+      replyType: mode === 'public' ? 'public' : 'private',
+      externalId
+    })
+  }
+
   if (normalizedChannel === EMAIL_CONVERSATIONAL_CHANNEL) {
     const { sendEmailToContact } = await import('../../services/emailService.js')
     return sendEmailToContact({
@@ -1359,7 +1452,8 @@ export async function sendReplyParts({
     contactId,
     latest,
     phone,
-    channel: normalizedChannel
+    channel: normalizedChannel,
+    commentReplyMode: getCommentReplyModeForAgent(agentConfig, normalizedChannel)
   }))
 
   const delivery = normalizeAgentReplyDelivery(agentConfig.replyDelivery)

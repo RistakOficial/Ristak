@@ -817,7 +817,11 @@ export const CONDITION_SCHEMA = {
 }
 
 const CHAT_CONDITION_CHANNELS = new Set(['whatsapp', 'instagram', 'messenger', 'webchat', 'sms'])
-const CONDITION_CHANNELS = new Set(['chat', ...CHAT_CONDITION_CHANNELS, 'email'])
+// facebook_comment / instagram_comment son canales de COMENTARIO (el agente
+// responde en el comentario o por DM según el replyMode de la condición de ingreso).
+const CONDITION_CHANNELS = new Set(['chat', ...CHAT_CONDITION_CHANNELS, 'email', 'facebook_comment', 'instagram_comment'])
+const COMMENT_CONDITION_CHANNELS = new Set(['facebook_comment', 'instagram_comment'])
+const COMMENT_REPLY_MODES = new Set(['public', 'private', 'public_then_private'])
 const OFFSET_UNITS = new Set(['minutes', 'hours', 'days'])
 const WEEKDAY_KEYS = new Set(['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun'])
 
@@ -865,6 +869,11 @@ function normalizeParam(category, param) {
 
   if (field === 'channel') {
     base.value = CONDITION_CHANNELS.has(param.value) ? param.value : 'chat'
+    // Canal de comentario: preservar el modo de respuesta del agente (público /
+    // privado / público-luego-privado).
+    if (COMMENT_CONDITION_CHANNELS.has(base.value)) {
+      base.replyMode = COMMENT_REPLY_MODES.has(param.replyMode) ? param.replyMode : 'private'
+    }
   } else if (field === 'date') {
     base.date = cleanDate(param.date)
     if (operator === 'between') base.dateEnd = cleanDate(param.dateEnd)
