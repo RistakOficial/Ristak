@@ -2405,6 +2405,24 @@ export async function resolveAvatarForPersist({
   return { url: incoming, rehosted: false, kept: false }
 }
 
+// ── Helpers expuestos para el script de migración de taxonomía (Fase D) ──────────
+// El contexto de cuenta actual (con el slug/rootPath destino de la nueva taxonomía).
+export async function getCurrentClientAccountContext() {
+  return resolveClientAccountContext({})
+}
+// URL de la API de Storage de Bunny para un objeto (para GET/PUT/DELETE directos).
+export function resolveBunnyObjectUrl(config, objectPath) {
+  return bunnyObjectUrl(config, objectPath)
+}
+// URL pública (CDN) de un objeto, tal como se guarda en las referencias.
+export function resolveBunnyPublicUrl(config, objectPath) {
+  return bunnyPublicUrl(config, objectPath)
+}
+// Borra un objeto del Storage de Bunny (idempotente: 404 no es error).
+export async function deleteBunnyObject(config, objectPath) {
+  return deleteFromBunny({ config, objectPath })
+}
+
 function normalizeStreamChart(chart = {}) {
   const source = chart && typeof chart === 'object' ? chart : {}
   return Object.entries(source)
