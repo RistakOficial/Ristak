@@ -16,6 +16,7 @@ proposito y una razon clara para existir.
 - Documentos de control: reglas obligatorias que no deben fusionarse dentro del
   manual porque bloquean cambios peligrosos.
   - `docs/DATE_TIME_GUIDELINES.md`
+  - `docs/CURRENCY_GUIDELINES.md`
   - `docs/DESIGN_SYSTEM.md`
   - `docs/INTEGRATION_CRON_RULES.md`
 - Documentos especializados: integraciones o superficies con suficiente detalle
@@ -44,6 +45,7 @@ decirlo explicitamente.
 | Producto completo, mapa de app, backend, frontend, datos, permisos, licencias, seguridad | `docs/RISTAK_MASTER_MANUAL.md` |
 | Nuevas rutas o reorganizacion de docs | `docs/README.md` y `docs/DOCUMENTATION_SYSTEM.md` |
 | Fechas de negocio, zonas horarias, calendarios, citas, reportes por rango, pagos programados | `docs/DATE_TIME_GUIDELINES.md` |
+| Moneda, currency, importes, precios, productos, pagos, reportes financieros y conversiones con monto | `docs/CURRENCY_GUIDELINES.md` |
 | Pantallas desktop, componentes comunes, estilos, tokens, auditoria visual | `docs/DESIGN_SYSTEM.md` |
 | Integraciones con crons, watchdogs, polling, jobs de sincronizacion | `docs/INTEGRATION_CRON_RULES.md` |
 | Deploy Render | `docs/DEPLOY-RENDER.md` |
@@ -112,6 +114,8 @@ Antes de cerrar una tarea:
 
 - `git diff --check` no debe reportar whitespace roto.
 - Si tocaste UI desktop, `cd frontend && npm run design:audit`.
+- Si tocaste moneda/currency/importes, confirma que los defaults salgan de
+  `account_currency` segun `docs/CURRENCY_GUIDELINES.md`.
 - Si tocaste TypeScript frontend, `cd frontend && npm run typecheck`.
 - Si tocaste backend compartido o servicios, corre los tests relevantes de
   backend.

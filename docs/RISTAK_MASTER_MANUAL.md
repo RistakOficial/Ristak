@@ -370,6 +370,30 @@ El modo de pasarelas puede ser `test` o `live`. Ese modo debe viajar con el pago
 en `payment_mode` o metadata equivalente para evitar mezclar pruebas con dinero
 real.
 
+### Moneda de cuenta
+
+La moneda default de Ristak siempre es la configurada en la cuenta. La fuente de
+verdad es `app_config.account_currency`, expuesta en Configuracion > Cuenta y
+resuelta con `backend/src/utils/accountLocale.js` y
+`frontend/src/hooks/useAccountCurrency.ts`.
+
+Reglas:
+
+- Registros nuevos con importe usan la moneda de la cuenta si el usuario no
+  selecciono otra moneda explicitamente.
+- Registros existentes conservan su moneda guardada; cambiar la moneda de la
+  cuenta no reescribe historicos automaticamente.
+- Frontend debe formatear importes con moneda explicita:
+  `formatCurrency(amount, record.currency || accountCurrency)`.
+- Backend debe usar `getAccountCurrency()` o helpers existentes basados en ese
+  helper. `DEFAULT_CURRENCY` es fallback defensivo, no default de negocio para
+  codigo nuevo.
+- No agregues env vars o secrets para moneda default. Si una pasarela guarda una
+  moneda propia, debe inicializarse o sincronizarse desde la moneda de cuenta
+  cuando aplique.
+
+Documento obligatorio: `docs/CURRENCY_GUIDELINES.md`.
+
 ### Regla pagos test y Meta
 
 Los pagos en modo `test` no deben generar conversiones reales de Meta.
@@ -597,6 +621,7 @@ Registro de ubicacion:
 | HighLevel | `highlevel_config` y servicios HighLevel | No | Tokens deben estar cifrados o gestionados internamente |
 | Meta Ads/Dataset | `meta_config`, `app_config`, env fallback | No | CAPI usa System User Token; `meta_test_event_code` activa Test Events |
 | Pagos | config interna de pagos y metadata por provider | No | Modo `test/live` debe persistir por pago |
+| Moneda de cuenta | `app_config.account_currency` | No | Default obligatorio para importes nuevos; no crear env/secret de moneda |
 | Bunny/media | `storage_settings`, env fallback, licencia central | No | API keys nunca en docs |
 | Push web/movil | env VAPID/FCM/APNS o configuracion segura | No | Provider puede exigir secrets externos |
 | Licencia central | env `LICENSE_*`/`RISTAK_*` | En instalaciones managed | No exponer valores |
@@ -606,6 +631,8 @@ Registro de ubicacion:
 ## Reglas criticas antes de tocar codigo
 
 - Fechas/horas: lee `docs/DATE_TIME_GUIDELINES.md`.
+- Moneda/currency/importes: lee `docs/CURRENCY_GUIDELINES.md` y usa la moneda de
+  cuenta como default.
 - UI desktop: lee `docs/DESIGN_SYSTEM.md`, usa componentes comunes y corre
   `cd frontend && npm run design:audit`.
 - Crons de integraciones: lee `docs/INTEGRATION_CRON_RULES.md`.

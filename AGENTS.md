@@ -13,6 +13,22 @@
   `DateTime.now().toISODate()` ni conversiones manuales para fechas de negocio.
   Usa `backend/src/utils/dateUtils.js` y `frontend/src/utils/timezone.ts`.
 
+## Moneda y currency — OBLIGATORIO
+
+- **ALTO antes de tocar moneda.** Antes de crear o modificar cualquier lógica de
+  currency, moneda, importes, precios, productos, pagos, planes, suscripciones,
+  reportes, Sites/formularios, tracking, Meta/CAPI, automatizaciones o prompts de
+  IA relacionados con dinero, lee **`docs/CURRENCY_GUIDELINES.md`** completo.
+- Regla base: la moneda default SIEMPRE es la configurada en la cuenta
+  (`account_currency`). No la infieras del navegador, pais, pasarela, Meta,
+  ejemplos de docs ni hardcodees `MXN`/`USD` como default de negocio.
+- Frontend: usa `useAccountCurrency()` o `ACCOUNT_CURRENCY_CONFIG_KEY`, y pasa la
+  moneda explicita a `formatCurrency(value, currency)`. No uses
+  `formatCurrency(value)` desnudo para importes de negocio de la cuenta.
+- Backend: usa `getAccountCurrency()` desde `backend/src/utils/accountLocale.js`
+  o helpers existentes que lo envuelvan. `DEFAULT_CURRENCY` solo es fallback de
+  normalizacion/seguridad, no la fuente de verdad para funciones nuevas.
+
 ## UI / diseño — OBLIGATORIO
 
 - **ALTO antes de tocar UI.** Antes de crear o modificar CUALQUIER pantalla,

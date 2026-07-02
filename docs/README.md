@@ -13,6 +13,7 @@ correcto. Si de verdad hace falta un documento nuevo, debe quedar enlazado aqui.
 | La app completa, modulos, runtime, datos, integraciones y reglas criticas | [RISTAK_MASTER_MANUAL.md](./RISTAK_MASTER_MANUAL.md) |
 | Como debe mantenerse la documentacion en cada cambio | [DOCUMENTATION_SYSTEM.md](./DOCUMENTATION_SYSTEM.md) |
 | Reglas obligatorias para fechas, horarios, citas, rangos, reportes y pagos programados | [DATE_TIME_GUIDELINES.md](./DATE_TIME_GUIDELINES.md) |
+| Reglas obligatorias para moneda, currency, importes, pagos, precios y reportes financieros | [CURRENCY_GUIDELINES.md](./CURRENCY_GUIDELINES.md) |
 | Reglas obligatorias de UI desktop | [DESIGN_SYSTEM.md](./DESIGN_SYSTEM.md) |
 | Reglas obligatorias para crons/jobs de integraciones externas | [INTEGRATION_CRON_RULES.md](./INTEGRATION_CRON_RULES.md) |
 
@@ -23,6 +24,7 @@ correcto. Si de verdad hace falta un documento nuevo, debe quedar enlazado aqui.
 | Arquitectura general, rutas principales, dominios, flujos de usuario, cambios cross-module | [RISTAK_MASTER_MANUAL.md](./RISTAK_MASTER_MANUAL.md) |
 | Cambios al sistema de documentacion o nuevas rutas de docs | [DOCUMENTATION_SYSTEM.md](./DOCUMENTATION_SYSTEM.md) y este indice |
 | Fechas, horas, rangos, citas, crons por fecha, pagos programados, reportes por periodo | [DATE_TIME_GUIDELINES.md](./DATE_TIME_GUIDELINES.md) |
+| Moneda, currency, importes, precios, productos, pagos, reportes financieros, Meta CAPI con compras | [CURRENCY_GUIDELINES.md](./CURRENCY_GUIDELINES.md) |
 | UI desktop, componentes, estilos, tokens, auditoria visual | [DESIGN_SYSTEM.md](./DESIGN_SYSTEM.md) |
 | Jobs periodicos, polling, watchdogs o crons de integraciones externas | [INTEGRATION_CRON_RULES.md](./INTEGRATION_CRON_RULES.md) |
 | Render/deploy | [DEPLOY-RENDER.md](./DEPLOY-RENDER.md) y [../DEPLOYMENT.md](../DEPLOYMENT.md) |
