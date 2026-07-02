@@ -77,6 +77,7 @@
   justify-content: flex-start;
   gap: var(--spacing-sm);
   width: 100%;
+  min-width: 0;
 }
 
 .tableSelectionToolbar {
@@ -84,15 +85,17 @@
   align-items: center;
   gap: var(--spacing-sm);
   width: 100%;
+  min-width: 0;
   color: var(--text-dim, var(--color-text-secondary));
   font-size: var(--font-size-sm);
   font-weight: 500;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
 }
 
 .tableSelectionCount {
-  margin-right: auto;
+  flex: 0 0 auto;
   color: var(--text, var(--color-text-primary));
+  white-space: nowrap;
 }
 
 .tableSelectionToolbarActions {
@@ -100,7 +103,29 @@
   align-items: center;
   justify-content: flex-end;
   gap: var(--spacing-sm);
-  flex-wrap: wrap;
+  flex: 1 1 auto;
+  min-width: 0;
+  flex-wrap: nowrap;
+  overflow-x: auto;
+  overflow-y: visible;
+  padding-block: 2px;
+  margin-block: -2px;
+  scrollbar-width: thin;
+}
+
+.tableSelectionToolbarActionItem {
+  display: inline-flex;
+  align-items: center;
+  flex: 0 0 auto;
+  min-width: 0;
+}
+
+.tableSelectionToolbarActions .tableSelectionToolbarActionItem > * {
+  width: auto;
+}
+
+.tableSelectionToolbarActionItem :global([data-ristak-dropdown-trigger]) {
+  min-width: clamp(180px, 22vw, 300px);
 }
 
 .actionGroup {
@@ -480,7 +505,6 @@ body.light input.selectionCheckbox:checked:hover::after {
   }
 
   .tableSelectionToolbarActions {
-    width: 100%;
     justify-content: flex-start;
   }
 }

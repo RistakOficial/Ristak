@@ -28,18 +28,27 @@ export const TableSelectionToolbar: React.FC<TableSelectionToolbarProps> = ({
         {count} {count === 1 ? singularLabel : pluralLabel}
       </span>
       <div className={styles.tableSelectionToolbarActions}>
-        {children}
+        {React.Children.map(children, (child) => {
+          if (child === null || child === undefined || typeof child === 'boolean') return null
+          return (
+            <span className={styles.tableSelectionToolbarActionItem}>
+              {child}
+            </span>
+          )
+        })}
         {onClearSelection && (
-          <Button
-            type="button"
-            variant="ghost"
-            size="sm"
-            iconOnly
-            onClick={onClearSelection}
-            aria-label={clearLabel}
-            title={clearLabel}
-            leftIcon={<X size={16} />}
-          />
+          <span className={styles.tableSelectionToolbarActionItem}>
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              iconOnly
+              onClick={onClearSelection}
+              aria-label={clearLabel}
+              title={clearLabel}
+              leftIcon={<X size={16} />}
+            />
+          </span>
         )}
       </div>
     </div>
