@@ -1464,7 +1464,14 @@
 }
 
 .mediaAttachmentImage {
-  aspect-ratio: 4 / 3;
+  display: inline-block;
+  width: fit-content;
+  max-width: min(360px, 54vw, 100%);
+  height: auto;
+  aspect-ratio: auto;
+  background: transparent;
+  line-height: 0;
+  vertical-align: top;
 }
 
 .mediaAttachmentVideo {
@@ -1478,6 +1485,16 @@
   height: 100%;
   object-fit: contain;
   background: var(--color-background-secondary);
+}
+
+.mediaAttachmentImage img {
+  width: auto;
+  height: auto;
+  max-width: min(360px, 54vw, 100%);
+  max-height: min(420px, 56vh);
+  object-fit: contain;
+  background: transparent;
+  border-radius: inherit;
 }
 
 .audioAttachment {
