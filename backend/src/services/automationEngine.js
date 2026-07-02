@@ -3514,6 +3514,35 @@ function evaluateGoalMet(config, ctx) {
   }
 }
 
+// Nodo de acción: responder un comentario (público en el post o DM privado) a
+// mitad de un flujo. Usa ctx.commentId/ctx.platform del disparo de comentario;
+// si no vienen (flujo disparado por otra cosa), el servicio resuelve el último
+// comentario entrante del contacto.
+async function sendCommentReplyFromNode(node, ctx, replyType) {
+  const config = node.config || {}
+  const contactId = ctx.contact?.id
+  if (!contactId) throw new Error('Falta el contacto para responder el comentario')
+
+  const platform = str(ctx.platform) === 'instagram' ? 'instagram' : 'messenger'
+  const blocks = Array.isArray(config.messageBlocks) ? config.messageBlocks : []
+  const textBlock = blocks.find((block) => block.type === 'text')
+  const raw = textBlock ? (textBlock.compiledText || textBlock.text || textBlock.message) : (config.message || config.text)
+  const text = renderTemplate(str(raw), ctx, { preserveUnknown: true }).trim()
+  if (!text) throw new Error('El mensaje de respuesta al comentario está vacío')
+
+  const { sendMetaSocialCommentReply } = await import('./metaSocialMessagingService.js')
+  await sendMetaSocialCommentReply({
+    contactId,
+    platform,
+    message: text,
+    replyType,
+    commentId: str(ctx.commentId),
+    postId: str(ctx.postId),
+    externalId: `${ctx.automationId || 'automation'}:${ctx.enrollmentId || ''}:${node.id}`
+  })
+  return { detail: `Respuesta ${replyType === 'public' ? 'pública' : 'por privado'} al comentario enviada` }
+}
+
 /**
  * Ejecuta un nodo. Devuelve:
  *  { handle, detail }            → continuar por esa salida
@@ -3582,6 +3611,26 @@ async function executeNode(node, ctx, enrollment) {
           fecha_envio: nowIso()
         },
         outputBaseId: 'enviar_instagram'
+      }
+    }
+
+    case 'channel-comment-public-reply': {
+      const sendResult = await sendCommentReplyFromNode(node, ctx, 'public')
+      return {
+        handle: 'out',
+        detail: sendResult.detail,
+        output: { estado: 'enviado', canal: 'comentario_publico', fecha_envio: nowIso() },
+        outputBaseId: 'responder_comentario_publico'
+      }
+    }
+
+    case 'channel-comment-dm-reply': {
+      const sendResult = await sendCommentReplyFromNode(node, ctx, 'private')
+      return {
+        handle: 'out',
+        detail: sendResult.detail,
+        output: { estado: 'enviado', canal: 'comentario_privado', fecha_envio: nowIso() },
+        outputBaseId: 'responder_comentario_privado'
       }
     }
 

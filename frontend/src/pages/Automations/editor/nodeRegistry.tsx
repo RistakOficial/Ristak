@@ -1534,7 +1534,55 @@ const CHANNEL_NODES: NodeDefinition[] = [
     supportsQuickReplies: true,
     senderKey: 'account',
     senderLabel: 'Cuenta de Instagram (opcional)'
-  })
+  }),
+  {
+    // Responder un comentario (FB/IG) a mitad de un flujo. Agnóstico de plataforma:
+    // usa el comentario del contacto en curso. Público = en el post; DM = privado.
+    type: 'channel-comment-public-reply',
+    kind: 'action',
+    label: 'Responder comentario (público)',
+    brand: 'Facebook',
+    category: 'action-content',
+    description: 'Responde el comentario en la publicación (visible para todos)',
+    icon: MessageCircleReply,
+    accent: 'green',
+    addButtonLabel: 'Agregar respuesta',
+    allowedChannels: ['messenger', 'instagram'],
+    configComponent: 'message',
+    supportsMessageBlocks: true,
+    supportsQuickReplies: false,
+    supportsMultipleBranches: false,
+    supportsVariables: true,
+    supportsEmoji: true,
+    defaultConfig: () => ({ messageBlocks: [] }),
+    fields: [],
+    outputs: () => SINGLE_OUTPUT,
+    validate: validateMessageBlocks,
+    summary: (config) => ({ box: firstTextBlock(config) || undefined, empty: 'Agrega la respuesta pública' })
+  },
+  {
+    type: 'channel-comment-dm-reply',
+    kind: 'action',
+    label: 'Responder por privado (DM)',
+    brand: 'Messenger',
+    category: 'action-content',
+    description: 'Manda un mensaje privado (DM) a quien comentó',
+    icon: MessageSquareText,
+    accent: 'blue',
+    addButtonLabel: 'Agregar mensaje',
+    allowedChannels: ['messenger', 'instagram'],
+    configComponent: 'message',
+    supportsMessageBlocks: true,
+    supportsQuickReplies: false,
+    supportsMultipleBranches: false,
+    supportsVariables: true,
+    supportsEmoji: true,
+    defaultConfig: () => ({ messageBlocks: [] }),
+    fields: [],
+    outputs: () => SINGLE_OUTPUT,
+    validate: validateMessageBlocks,
+    summary: (config) => ({ box: firstTextBlock(config) || undefined, empty: 'Agrega el mensaje privado' })
+  }
 ]
 
 // ---------------------------------------------------------------------------
