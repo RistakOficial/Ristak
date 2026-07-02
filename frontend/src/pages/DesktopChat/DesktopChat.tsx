@@ -7,6 +7,7 @@ import {
   CalendarDays,
   CheckCheck,
   ChevronLeft,
+  ChevronRight,
   CircleAlert,
   Clock,
   CreditCard,
@@ -197,6 +198,14 @@ interface DesktopChatMessage {
   businessPhoneNumberId?: string
   transport?: string
   routingReason?: string
+  // Comentarios de FB/IG: globo distinto + contexto de la publicación comentada.
+  isComment?: boolean
+  commentReplyMode?: 'public' | 'private'
+  commentPost?: {
+    message?: string
+    imageUrl?: string
+    permalink?: string
+  }
   attachment?: {
     type: ChatAttachmentType
     url?: string
@@ -214,6 +223,28 @@ interface ConversationCacheSnapshot {
   agentCompletions: ConversationalAgentCompletionEvent[]
   contactInfo: Contact | null
   agentState: ConversationAgentState | null
+}
+
+// Perfil social del contacto + contacto ENLAZADO (misma persona en el mismo
+// canal, viviendo como registro separado: DM ↔ comentario).
+interface LinkedSocialProfile {
+  platform: string
+  platformLabel: string
+  kind: 'dm' | 'comment'
+  name: string | null
+  username: string | null
+  photo: string | null
+  metaUserId: string | null
+}
+
+interface LinkedSocialContact {
+  contactId: string
+  platform: string
+  platformLabel: string
+  kind: 'dm' | 'comment'
+  name: string | null
+  username: string | null
+  photo: string | null
 }
 
 type DesktopConversationTimelineItem =
@@ -1788,6 +1819,15 @@ function getJourneyMessage(event: JourneyEvent, index: number): DesktopChatMessa
     businessPhoneNumberId: String(data.business_phone_number_id || data.businessPhoneNumberId || '').trim(),
     transport: String(data.transport || data.channel || data.provider || '').trim(),
     routingReason: String(data.routing_reason || data.routingReason || data.fallbackReason || '').trim(),
+    isComment: messageType === 'comment' || messageType === 'comment_reply_public' || messageType === 'comment_reply_private',
+    commentReplyMode: messageType === 'comment_reply_public' ? 'public' : messageType === 'comment_reply_private' ? 'private' : undefined,
+    commentPost: (messageType.startsWith('comment') && (data.post_message || data.post_image_url || data.post_permalink))
+      ? {
+          message: String(data.post_message || '').trim(),
+          imageUrl: String(data.post_image_url || '').trim(),
+          permalink: String(data.post_permalink || data.permalink || '').trim()
+        }
+      : undefined,
     attachment
   }
 }
@@ -2211,6 +2251,9 @@ export const DesktopChat: React.FC = () => {
   // (Asignación) Responsable del contacto: lista de usuarios y asignado actual.
   const [assignableUsers, setAssignableUsers] = useState<{ id: string; name: string }[]>([])
   const [assignedUserId, setAssignedUserId] = useState<string>('')
+  // (Social enlazado) Perfil social del contacto + contacto vinculado (DM ↔ comentario).
+  const [socialProfiles, setSocialProfiles] = useState<LinkedSocialProfile[]>([])
+  const [linkedSocialContacts, setLinkedSocialContacts] = useState<LinkedSocialContact[]>([])
   const [contactInfoLoading, setContactInfoLoading] = useState(false)
   const [savingPrimaryPhone, setSavingPrimaryPhone] = useState<string | null>(null)
   const [infoPanelView, setInfoPanelView] = useState<InfoPanelView>('summary')
@@ -3501,6 +3544,25 @@ export const DesktopChat: React.FC = () => {
     return () => { cancelled = true }
   }, [activeContactId])
 
+  // (Social enlazado) Perfil social del contacto + contacto vinculado al abrir/cambiar.
+  useEffect(() => {
+    if (!activeContactId) {
+      setSocialProfiles([])
+      setLinkedSocialContacts([])
+      return
+    }
+    let cancelled = false
+    fetch(`/api/contacts/${encodeURIComponent(activeContactId)}/linked-social`)
+      .then((response) => (response.ok ? response.json() : null))
+      .then((data) => {
+        if (cancelled || !data?.success) return
+        setSocialProfiles(Array.isArray(data.profiles) ? (data.profiles as LinkedSocialProfile[]) : [])
+        setLinkedSocialContacts(Array.isArray(data.linked) ? (data.linked as LinkedSocialContact[]) : [])
+      })
+      .catch(() => undefined)
+    return () => { cancelled = true }
+  }, [activeContactId])
+
   const handleAssignContact = useCallback(async (userId: string) => {
     if (!activeContactId) return
     const nextUserId = userId || ''
@@ -4556,6 +4618,23 @@ export const DesktopChat: React.FC = () => {
       persistChatsRead([contact.id])
     }
   }, [acknowledgeAgentPriorityOnOpen, markChatsReadLocally, persistChatsRead])
+
+  // (Social enlazado) Abre el contacto vinculado (DM ↔ comentario). Como es un
+  // registro SEPARADO, puede no estar en la página de chats ya cargada; si no
+  // está, lo inyectamos (deduplicado) para que `activeContact` resuelva y el
+  // panel no quede en blanco. loadConversation lo hidrata después.
+  const handleOpenLinkedContact = useCallback((link: LinkedSocialContact) => {
+    const injected = {
+      id: link.contactId,
+      name: link.name || 'Contacto vinculado',
+      source: link.platform,
+      profilePhotoUrl: link.photo || null,
+      lastMessageType: link.kind === 'comment' ? 'comment' : undefined,
+      lastMessageChannel: link.platform
+    } as DesktopChatContact
+    setChats((current) => dedupeChatsById([...current, injected]))
+    handleSelectChat(injected)
+  }, [handleSelectChat])
 
   const handleToggleAgentAssignedView = useCallback(() => {
     setArchivedViewOpen(false)
@@ -6674,8 +6753,45 @@ export const DesktopChat: React.FC = () => {
                       return (
                         <article
                           key={item.id}
-                          className={`${styles.messageBubble} ${message.direction === 'outbound' ? styles.messageOutbound : message.direction === 'system' ? styles.messageSystem : styles.messageInbound} ${isMessageScheduled(message) ? styles.messageScheduled : ''}`}
+                          className={`${styles.messageBubble} ${message.direction === 'outbound' ? styles.messageOutbound : message.direction === 'system' ? styles.messageSystem : styles.messageInbound} ${isMessageScheduled(message) ? styles.messageScheduled : ''} ${message.isComment ? styles.messageComment : ''}`}
                         >
+	                          {message.isComment ? (
+	                            <div className={styles.commentContext}>
+	                              <span className={styles.commentContextLabel}>
+	                                {message.commentReplyMode === 'public'
+	                                  ? 'Respuesta pública al comentario'
+	                                  : message.commentReplyMode === 'private'
+	                                    ? 'Respuesta por privado'
+	                                    : 'Comentó en tu publicación'}
+	                              </span>
+	                              {message.commentPost && (message.commentPost.imageUrl || message.commentPost.message) ? (
+	                                message.commentPost.permalink ? (
+	                                  <a
+	                                    className={styles.commentPostChip}
+	                                    href={message.commentPost.permalink}
+	                                    target="_blank"
+	                                    rel="noopener noreferrer"
+	                                  >
+	                                    {message.commentPost.imageUrl ? (
+	                                      <img src={message.commentPost.imageUrl} alt="" className={styles.commentPostThumb} loading="lazy" />
+	                                    ) : null}
+	                                    {message.commentPost.message ? (
+	                                      <span className={styles.commentPostText}>{message.commentPost.message}</span>
+	                                    ) : null}
+	                                  </a>
+	                                ) : (
+	                                  <div className={`${styles.commentPostChip} ${styles.commentPostChipStatic}`}>
+	                                    {message.commentPost.imageUrl ? (
+	                                      <img src={message.commentPost.imageUrl} alt="" className={styles.commentPostThumb} loading="lazy" />
+	                                    ) : null}
+	                                    {message.commentPost.message ? (
+	                                      <span className={styles.commentPostText}>{message.commentPost.message}</span>
+	                                    ) : null}
+	                                  </div>
+	                                )
+	                              ) : null}
+	                            </div>
+	                          ) : null}
 	                          {renderAttachment(message)}
 	                          {message.subject ? <strong className={styles.emailMessageSubject}>{message.subject}</strong> : null}
 	                          {message.text ? <p>{message.text}</p> : null}
@@ -7011,6 +7127,62 @@ export const DesktopChat: React.FC = () => {
                   </button>
                 </div>
               </div>
+
+              {(socialProfiles.length > 0 || linkedSocialContacts.length > 0) ? (
+                <div className={styles.infoSection}>
+                  <h3>Perfil social</h3>
+                  {socialProfiles.length > 0 ? (
+                    <dl className={styles.detailList}>
+                      {socialProfiles.map((profile) => (
+                        <div key={`${profile.platform}-${profile.kind}`}>
+                          <dt>
+                            {profile.platform === 'instagram'
+                              ? <FaInstagram aria-hidden="true" />
+                              : profile.kind === 'comment'
+                                ? <FaFacebook aria-hidden="true" />
+                                : <FaFacebookMessenger aria-hidden="true" />}
+                            {profile.platformLabel}
+                            {' · '}
+                            {profile.kind === 'comment' ? 'Comentarios' : 'Mensajes directos'}
+                          </dt>
+                          <dd>
+                            {profile.name ? (
+                              <span className={styles.socialProfileName}>{profile.name}</span>
+                            ) : null}
+                            {profile.username ? (
+                              <span className={styles.socialProfileHandle}>@{profile.username}</span>
+                            ) : null}
+                          </dd>
+                        </div>
+                      ))}
+                    </dl>
+                  ) : null}
+                  {linkedSocialContacts.length > 0 ? (
+                    <div className={styles.linkedContacts}>
+                      <span className={styles.linkedContactsLabel}>Mismo contacto en otro canal</span>
+                      {linkedSocialContacts.map((link) => (
+                        <button
+                          key={link.contactId}
+                          type="button"
+                          className={styles.linkedContactButton}
+                          onClick={() => handleOpenLinkedContact(link)}
+                        >
+                          <span className={styles.linkedContactAvatar}>
+                            {link.photo
+                              ? <img src={link.photo} alt="" loading="lazy" />
+                              : (link.name || '?').slice(0, 1).toUpperCase()}
+                          </span>
+                          <span className={styles.linkedContactBody}>
+                            <strong>{link.name || 'Contacto vinculado'}</strong>
+                            <small>{link.kind === 'comment' ? 'Comentarios' : 'Mensajes directos'} · {link.platformLabel}</small>
+                          </span>
+                          <ChevronRight size={15} aria-hidden="true" />
+                        </button>
+                      ))}
+                    </div>
+                  ) : null}
+                </div>
+              ) : null}
 
               {infoPanelView === 'summary' ? (
                 <>

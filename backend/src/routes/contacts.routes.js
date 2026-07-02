@@ -38,6 +38,7 @@ import {
   getContactAssignment,
   setContactAssignment
 } from '../controllers/contactAssignmentController.js'
+import { getContactLinkedSocial } from '../controllers/contactSocialProfileController.js'
 import { requireAuth } from '../middleware/authMiddleware.js'
 import { requireModuleAccess } from '../middleware/userAccessMiddleware.js'
 
@@ -82,6 +83,10 @@ router.get('/:id', getContactById)
 router.get('/:id/journey', getContactJourney)
 router.get('/:id/whatsapp-routing-events', getContactWhatsAppRoutingEvents)
 router.get('/:id/assignment', getContactAssignment)
+// (ACL-001) Datos de chat: el perfil social + enlace DM↔comentario solo los
+// consume el panel del chat, así que exige acceso al módulo 'chat' (no basta
+// con 'contacts'), igual que las rutas /chats*.
+router.get('/:id/linked-social', requireModuleAccess('chat'), getContactLinkedSocial)
 router.put('/:id/assignment', setContactAssignment)
 router.put('/:id', updateContact)
 router.delete('/:id', deleteContact)
