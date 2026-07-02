@@ -8,7 +8,7 @@ const [{ db }, mediaStorageService] = await Promise.all([
   import('../src/config/database.js'),
   import('../src/services/mediaStorageService.js')
 ])
-const { resolveAccountSlug, resetAccountSlugCache } = mediaStorageService
+const { resolveAccountSlug, resetAccountSlugCache, buildAccountReadmeContent } = mediaStorageService
 
 async function clearPersistedSlug() {
   await db.run('UPDATE storage_settings SET account_slug = NULL, account_label = NULL WHERE id = 1').catch(() => {})
@@ -25,6 +25,28 @@ async function setBusinessName(name) {
   }
   resetAccountSlugCache()
 }
+
+test('_LEEME.txt documenta la cuenta y la leyenda de categorías', async () => {
+  const content = buildAccountReadmeContent({
+    id: 'loc_mexico',
+    slug: 'cafe-alexis-a1b2c3',
+    label: 'Café Alexis MX'
+  })
+  assert.match(content, /BODEGA RISTAK/)
+  assert.match(content, /Cuenta: Café Alexis MX/)
+  assert.match(content, /accounts\/cafe-alexis-a1b2c3\//)
+  assert.match(content, /id interno: loc_mexico/)
+  // La leyenda lista las categorías legibles (incluidas las nuevas).
+  for (const folder of ['avatars/', 'sites/', 'forms/', 'chat/', 'ad_creatives/']) {
+    assert.ok(content.includes(folder), `falta la categoría ${folder}`)
+  }
+})
+
+test('_LEEME.txt cae al slug/id cuando no hay label', async () => {
+  const content = buildAccountReadmeContent({ id: 'loc_solo', slug: 'loc_solo' })
+  assert.match(content, /Cuenta: loc_solo/)
+  assert.match(content, /accounts\/loc_solo\//)
+})
 
 // El SQLite de test es un archivo compartido entre procesos; dejamos el estado
 // limpio para no contaminar el slug/negocio de otras suites (p.ej. las de storage).

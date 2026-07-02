@@ -88,6 +88,8 @@ const MEDIA_MODULES = new Set([
   'documents',
   'automations',
   'whatsapp',
+  'avatars',        // fotos de perfil de contactos rehospedadas (subcarpeta por canal)
+  'ad_creatives',   // creativos de anuncios (Meta Ads) rehospedados
   'other'
 ])
 
@@ -276,6 +278,63 @@ function normalizeClientAccountContext(input = {}) {
 function normalizeModule(value = '') {
   const clean = cleanString(value).toLowerCase().replace(/[^a-z0-9_]+/g, '_')
   return MEDIA_MODULES.has(clean) ? clean : 'other'
+}
+
+// ── _LEEME.txt por cuenta: documenta la bodega (orden total + docs, como se pidió) ──
+// Se escribe una vez por cuenta y por proceso, best-effort: jamás debe tumbar ni
+// frenar una subida real. Es solo un archivo de texto para que al navegar el Bunny
+// se entienda de quién es la carpeta y qué hay en cada categoría.
+const accountReadmeWritten = new Set()
+
+export function resetAccountReadmeCache() {
+  accountReadmeWritten.clear()
+}
+
+const STORAGE_CATEGORY_LEGEND = [
+  ['avatars', 'Fotos de perfil de los contactos (subcarpeta por canal: whatsapp/ instagram/ messenger/)'],
+  ['sites', 'Imágenes y videos de las páginas/sitios'],
+  ['forms', 'Archivos subidos en formularios'],
+  ['products', 'Fotos de productos'],
+  ['chat', 'Adjuntos de las conversaciones (WhatsApp, etc.)'],
+  ['automations', 'Adjuntos de las automatizaciones'],
+  ['ad_creatives', 'Creativos de los anuncios (Meta Ads)'],
+  ['business_settings', 'Logos y branding del negocio'],
+  ['documents', 'Documentos varios'],
+  ['courses', 'Material de cursos'],
+  ['appointments', 'Archivos de citas/agenda']
+]
+
+export function buildAccountReadmeContent(clientAccount = {}) {
+  const label = cleanString(clientAccount.label) || cleanString(clientAccount.slug) || cleanString(clientAccount.id) || 'Cuenta'
+  const slug = cleanString(clientAccount.slug) || normalizeClientAccountId(clientAccount.id)
+  const lines = [
+    'BODEGA RISTAK',
+    `Cuenta: ${label}`,
+    `Carpeta: accounts/${slug}/   (id interno: ${cleanString(clientAccount.id) || 'default'})`,
+    '',
+    'Todo lo que Ristak guarda de esta cuenta vive aquí, ordenado por categoría.',
+    'Generado automáticamente por Ristak — no lo edites ni lo borres a mano.',
+    '',
+    'Categorías (aparecen solo cuando hay archivos):',
+    ...STORAGE_CATEGORY_LEGEND.map(([folder, desc]) => `  ${`${folder}/`.padEnd(20)} ${desc}`),
+    ''
+  ]
+  return lines.join('\n')
+}
+
+async function ensureAccountReadme(config, clientAccount) {
+  try {
+    if (!config?.bunnyConfigured) return
+    const rootPath = cleanString(clientAccount?.rootPath) || buildClientAccountRootPath(clientAccount?.id)
+    if (accountReadmeWritten.has(rootPath)) return
+    const objectPath = `${rootPath}/_LEEME.txt`
+    const buffer = Buffer.from(buildAccountReadmeContent(clientAccount), 'utf8')
+    await uploadToBunny({ config, objectPath, buffer, mimeType: 'text/plain; charset=utf-8' })
+    accountReadmeWritten.add(rootPath)
+  } catch (err) {
+    // Documentación best-effort: si falla, se reintenta en la siguiente subida.
+    logger.warn(`[MediaStorage] No se pudo escribir _LEEME.txt: ${err?.message || err}`)
+  }
 }
 
 function sanitizeFilename(filename = 'archivo') {
@@ -1598,14 +1657,18 @@ async function getMediaStorageDateKey() {
   return businessTodayDateOnly(timezone).replace(/-/g, '/')
 }
 
-function buildObjectPath({ businessId, clientAccount, mediaType, module, id, filename, extension, variant = '', dateKey = '' }) {
+function buildObjectPath({ businessId, clientAccount, mediaType, module, id, filename, extension, variant = '', dateKey = '', subFolder = '' }) {
   const day = dateKey || businessTodayDateOnly(DEFAULT_TIMEZONE).replace(/-/g, '/')
   const folder = module && module !== 'other' ? module : `${mediaType}s`
   const suffix = variant ? `-${variant}` : ''
   const rootPath = clientAccount?.rootPath || buildClientAccountRootPath(businessId)
+  // subFolder opcional (p.ej. el canal en avatars/whatsapp/) va entre la categoría
+  // y el bucket de fecha: accounts/<slug>/<categoría>/<subFolder>/<fecha>/<archivo>.
+  const sub = normalizeMediaFolderPath(subFolder)
   return [
     rootPath,
     folder,
+    ...(sub ? sub.split('/') : []),
     day,
     `${id}-${filenameBase(filename)}${suffix}.${extension}`
   ].join('/')
@@ -1841,6 +1904,7 @@ export async function uploadMediaAsset(input = {}) {
     const userId = input.userId ? String(input.userId) : null
     const module = normalizeModule(input.module)
     const moduleEntityId = input.moduleEntityId ? String(input.moduleEntityId) : null
+    const subFolder = normalizeMediaFolderPath(input.subFolder || input.subfolder || '')
     const isPublic = input.isPublic !== undefined ? boolValue(input.isPublic) : true
     const clientUploadId = normalizeClientUploadId(
       input.clientUploadId ||
@@ -1920,7 +1984,8 @@ export async function uploadMediaAsset(input = {}) {
       id,
       filename: originalFilename,
       extension,
-      dateKey
+      dateKey,
+      subFolder
     })
     const thumbnailPath = thumbnail ? buildObjectPath({
       businessId,
@@ -1931,7 +1996,8 @@ export async function uploadMediaAsset(input = {}) {
       filename: originalFilename,
       extension: thumbnail.extension,
       variant: 'thumb',
-      dateKey
+      dateKey,
+      subFolder
     }) : ''
 
     let storageProvider = 'local'
@@ -1968,6 +2034,7 @@ export async function uploadMediaAsset(input = {}) {
       }
       storageProvider = 'bunny'
       publicUrl = bunnyPublicUrl(config, objectPath)
+      await ensureAccountReadme(config, clientAccount)
     } else {
       if (config.provider === 'bunny' && config.requireBunny) {
         throw errorWithStatus(`Bunny.net está activo pero falta configuración: ${config.missingEnvironment.join(', ')}`, 503, 'bunny_not_configured')
@@ -2080,6 +2147,7 @@ async function finalizeStreamingMediaUpload({
   const id = createRistakId('media')
   const storedFilename = `${id}-${filenameBase(originalFilename)}.${extension}`
   const dateKey = await getMediaStorageDateKey()
+  const subFolder = normalizeMediaFolderPath(input.subFolder || input.subfolder || '')
   const objectPath = buildObjectPath({
     businessId,
     clientAccount,
@@ -2088,7 +2156,8 @@ async function finalizeStreamingMediaUpload({
     id,
     filename: originalFilename,
     extension,
-    dateKey
+    dateKey,
+    subFolder
   })
 
   let storageProvider = 'local'
@@ -2116,6 +2185,7 @@ async function finalizeStreamingMediaUpload({
     await uploadFileToBunny({ config, objectPath, filePath: tempFilePath, size: sizeBytes, mimeType: finalMimeType })
     storageProvider = 'bunny'
     publicUrl = bunnyPublicUrl(config, objectPath)
+    await ensureAccountReadme(config, clientAccount)
   } else {
     if (config.provider === 'bunny' && config.requireBunny) {
       throw errorWithStatus(`Bunny.net está activo pero falta configuración: ${config.missingEnvironment.join(', ')}`, 503, 'bunny_not_configured')
