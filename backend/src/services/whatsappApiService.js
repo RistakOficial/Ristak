@@ -1299,6 +1299,44 @@ async function uploadPreparedMediaToYCloud({ config, fromPhone, media, type } = 
   }
 }
 
+async function savePreparedMediaForChatPreview(media = {}, { type = '', mediaLabel = 'media' } = {}) {
+  if (!Buffer.isBuffer(media?.buffer) || !media.buffer.length || !media.mimeType) return null
+
+  try {
+    const { uploadMediaAsset } = await import('./mediaStorageService.js')
+    const asset = await uploadMediaAsset({
+      buffer: media.buffer,
+      mimeType: media.mimeType,
+      filename: media.filename || `whatsapp-${type || 'media'}.${inferWhatsAppMediaExtension(media.mimeType)}`,
+      module: 'chat',
+      isPublic: true,
+      skipCompression: true,
+      metadata: {
+        ...(isPlainObject(media.metadata) ? media.metadata : {}),
+        whatsappProviderPreview: true,
+        uploadType: type || 'media'
+      }
+    })
+    const publicUrl = cleanString(asset.publicUrl || asset.url)
+    if (!publicUrl) return null
+
+    return {
+      publicUrl,
+      mediaUrl: publicUrl,
+      url: publicUrl,
+      link: publicUrl,
+      mimeType: cleanString(asset.mimeType || media.mimeType),
+      filename: cleanString(asset.storedFilename || asset.filename || asset.originalFilename || media.filename),
+      mediaAssetId: cleanString(asset.id),
+      storage: cleanString(asset.storageProvider || 'media_storage'),
+      storageProvider: cleanString(asset.storageProvider || '')
+    }
+  } catch (error) {
+    logger.warn(`[WhatsApp API] No se pudo guardar preview de ${mediaLabel}: ${error.message}`)
+    return null
+  }
+}
+
 function buildPreparedMediaDataUrl(media = {}) {
   if (!Buffer.isBuffer(media.buffer) || !media.buffer.length || !media.mimeType) return ''
   return `data:${media.mimeType};base64,${media.buffer.toString('base64')}`
@@ -8544,6 +8582,7 @@ export async function sendWhatsAppApiImageMessage({
 
   let link = cleanImageUrl
   let providerImage = null
+  let providerPreviewImage = null
 
   if (cleanTransport === 'qr') {
     return sendImageViaQrFallback({
@@ -8597,6 +8636,10 @@ export async function sendWhatsAppApiImageMessage({
       media: preparedImage,
       type: 'image'
     })
+    providerPreviewImage = await savePreparedMediaForChatPreview(preparedImage, {
+      type: 'image',
+      mediaLabel: 'foto de WhatsApp API'
+    })
   }
 
   if (cleanTransport !== 'qr' && link && !/^https:\/\//i.test(link)) {
@@ -8619,6 +8662,15 @@ export async function sendWhatsAppApiImageMessage({
       storage: providerImage.storage,
       storageProvider: providerImage.storageProvider,
       metadata: providerImage.metadata
+    } : {}),
+    ...(providerPreviewImage ? {
+      mediaUrl: providerPreviewImage.mediaUrl,
+      publicUrl: providerPreviewImage.publicUrl,
+      url: providerPreviewImage.url,
+      link: providerPreviewImage.link,
+      previewMediaAssetId: providerPreviewImage.mediaAssetId,
+      previewStorage: providerPreviewImage.storage,
+      previewStorageProvider: providerPreviewImage.storageProvider
     } : {})
   }
   const requestBody = {

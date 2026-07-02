@@ -19,6 +19,22 @@ const ONE_PIXEL_PNG_DATA_URL = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAA
 const PDF_DATA_URL = 'data:application/pdf;base64,JVBERi0xLjQKJcTl8uXrp/Og0MTGCjEgMCBvYmoKPDwvVHlwZSAvQ2F0YWxvZyAvUGFnZXMgMiAwIFI+PgplbmRvYmoKMiAwIG9iago8PC9UeXBlIC9QYWdlcyAvQ291bnQgMD4+CmVuZG9iago='
 const OGG_OPUS_DATA_URL = `data:audio/ogg;codecs=opus;base64,${Buffer.from('OggSprovider-media-test').toString('base64')}`
 const WEBM_VIDEO_DATA_URL = `data:video/webm;base64,${Buffer.from('webm-provider-media-test').toString('base64')}`
+const MEDIA_STORAGE_ENV_KEYS = [
+  'MEDIA_STORAGE_PROVIDER',
+  'MEDIA_STORAGE_REQUIRE_BUNNY',
+  'BUNNY_STORAGE_ZONE',
+  'BUNNY_STORAGE_REGION',
+  'BUNNY_STORAGE_ENDPOINT',
+  'BUNNY_STORAGE_API_KEY',
+  'BUNNY_CDN_BASE_URL',
+  'LICENSE_SERVER_URL',
+  'CLIENT_ID',
+  'LICENSE_KEY',
+  'INSTALLATION_ID',
+  'WHATSAPP_LOCAL_MEDIA_FALLBACK',
+  'RENDER_EXTERNAL_URL',
+  'PUBLIC_URL'
+]
 
 function ycloudJsonResponse(body, { status = 200, statusText = 'OK' } = {}) {
   return {
@@ -51,6 +67,34 @@ async function withFakeFfmpeg(callback) {
     else process.env.FFMPEG_PATH = previousPath
     await fs.rm(folder, { recursive: true, force: true })
   }
+}
+
+function snapshotMediaStorageEnv() {
+  return Object.fromEntries(MEDIA_STORAGE_ENV_KEYS.map((key) => [key, process.env[key]]))
+}
+
+function restoreMediaStorageEnv(snapshot) {
+  for (const key of MEDIA_STORAGE_ENV_KEYS) {
+    if (snapshot[key] === undefined) delete process.env[key]
+    else process.env[key] = snapshot[key]
+  }
+}
+
+function forceLocalMediaStorageForProviderPreview() {
+  process.env.MEDIA_STORAGE_PROVIDER = 'local'
+  process.env.MEDIA_STORAGE_REQUIRE_BUNNY = 'false'
+  delete process.env.BUNNY_STORAGE_ZONE
+  delete process.env.BUNNY_STORAGE_REGION
+  delete process.env.BUNNY_STORAGE_ENDPOINT
+  delete process.env.BUNNY_STORAGE_API_KEY
+  delete process.env.BUNNY_CDN_BASE_URL
+  delete process.env.LICENSE_SERVER_URL
+  delete process.env.CLIENT_ID
+  delete process.env.LICENSE_KEY
+  delete process.env.INSTALLATION_ID
+  delete process.env.WHATSAPP_LOCAL_MEDIA_FALLBACK
+  delete process.env.RENDER_EXTERNAL_URL
+  delete process.env.PUBLIC_URL
 }
 
 async function snapshotAppConfig(keys = [], callback) {
@@ -86,6 +130,7 @@ async function snapshotAppConfig(keys = [], callback) {
 
 async function withYCloudProviderMediaCapture(callback) {
   await initializeMasterKey()
+  const previousMediaStorageEnv = snapshotMediaStorageEnv()
   const keys = getWhatsAppApiConfigKeys()
   const configKeys = [
     keys.enabled,
@@ -102,63 +147,66 @@ async function withYCloudProviderMediaCapture(callback) {
   }
 
   return snapshotAppConfig(configKeys, async () => {
-    await setAppConfig(keys.enabled, '1')
-    await setAppConfig(keys.apiKey, encrypt('ycloud_provider_media_secret'))
-    await setAppConfig(keys.senderPhone, '+526561234567')
-    await setAppConfig(keys.phoneNumberId, 'phone_ycloud_provider_media_test')
-    await setAppConfig(keys.wabaId, 'waba_ycloud_provider_media_test')
-    await setAppConfig(keys.provider, 'ycloud')
-    await setAppConfig(keys.lastError, '')
-
-    setYCloudFetchForTest(async (url, options = {}) => {
-      const parsed = new URL(String(url))
-      const path = parsed.pathname.replace(/^\/v2/, '')
-      const method = String(options.method || 'GET').toUpperCase()
-
-      if (method === 'POST' && /^\/whatsapp\/media\/.+\/upload$/.test(path)) {
-        const file = options.body?.get?.('file')
-        const bytes = file?.arrayBuffer ? Buffer.from(await file.arrayBuffer()) : Buffer.alloc(0)
-        const mediaId = `provider_media_${captures.uploads.length + 1}`
-        captures.uploads.push({
-          mediaId,
-          phone: decodeURIComponent(path.match(/^\/whatsapp\/media\/(.+)\/upload$/)?.[1] || ''),
-          apiKey: options.headers?.['X-API-Key'],
-          filename: file?.name || '',
-          mimeType: file?.type || '',
-          size: bytes.length
-        })
-        return ycloudJsonResponse({ id: mediaId })
-      }
-
-      if (path === '/whatsapp/messages' && method === 'POST') {
-        const body = JSON.parse(options.body || '{}')
-        captures.messages.push(body)
-        return ycloudJsonResponse({
-          id: `ycloud_provider_message_${captures.messages.length}`,
-          from: body.from,
-          to: body.to,
-          type: body.type,
-          status: 'sent',
-          [body.type]: body[body.type]
-        })
-      }
-
-      return ycloudJsonResponse({ ok: true })
-    })
-
+    forceLocalMediaStorageForProviderPreview()
     try {
+      await setAppConfig(keys.enabled, '1')
+      await setAppConfig(keys.apiKey, encrypt('ycloud_provider_media_secret'))
+      await setAppConfig(keys.senderPhone, '+526561234567')
+      await setAppConfig(keys.phoneNumberId, 'phone_ycloud_provider_media_test')
+      await setAppConfig(keys.wabaId, 'waba_ycloud_provider_media_test')
+      await setAppConfig(keys.provider, 'ycloud')
+      await setAppConfig(keys.lastError, '')
+
+      setYCloudFetchForTest(async (url, options = {}) => {
+        const parsed = new URL(String(url))
+        const path = parsed.pathname.replace(/^\/v2/, '')
+        const method = String(options.method || 'GET').toUpperCase()
+
+        if (method === 'POST' && /^\/whatsapp\/media\/.+\/upload$/.test(path)) {
+          const file = options.body?.get?.('file')
+          const bytes = file?.arrayBuffer ? Buffer.from(await file.arrayBuffer()) : Buffer.alloc(0)
+          const mediaId = `provider_media_${captures.uploads.length + 1}`
+          captures.uploads.push({
+            mediaId,
+            phone: decodeURIComponent(path.match(/^\/whatsapp\/media\/(.+)\/upload$/)?.[1] || ''),
+            apiKey: options.headers?.['X-API-Key'],
+            filename: file?.name || '',
+            mimeType: file?.type || '',
+            size: bytes.length
+          })
+          return ycloudJsonResponse({ id: mediaId })
+        }
+
+        if (path === '/whatsapp/messages' && method === 'POST') {
+          const body = JSON.parse(options.body || '{}')
+          captures.messages.push(body)
+          return ycloudJsonResponse({
+            id: `ycloud_provider_message_${captures.messages.length}`,
+            from: body.from,
+            to: body.to,
+            type: body.type,
+            status: 'sent',
+            [body.type]: body[body.type]
+          })
+        }
+
+        return ycloudJsonResponse({ ok: true })
+      })
+
       return await callback(captures)
     } finally {
       setYCloudFetchForTest(null)
+      restoreMediaStorageEnv(previousMediaStorageEnv)
     }
   })
 }
 
-test('envío API de imagen sube media al proveedor y manda por media id sin Bunny', async () => {
+test('envío API de imagen sube media al proveedor y conserva preview interno sin mandar link a yCloud', async () => {
   await withYCloudProviderMediaCapture(async (captures) => {
     const suffix = randomUUID()
     const to = `+52156${Date.now().toString().slice(-8)}`
     const externalId = `provider-image-${suffix}`
+    let previewMediaAssetId = ''
 
     try {
       const response = await sendWhatsAppApiImageMessage({
@@ -183,6 +231,7 @@ test('envío API de imagen sube media al proveedor y manda por media id sin Bunn
       assert.equal(response.image.mediaId, 'provider_media_1')
       assert.equal(response.image.storage, 'provider')
       assert.equal(response.image.storageProvider, 'ycloud')
+      assert.match(response.image.link, /^\/media\/assets\/.+\/file$/)
 
       const row = await db.get(
         `SELECT media_url, media_mime_type, media_filename, raw_payload_json
@@ -191,15 +240,22 @@ test('envío API de imagen sube media al proveedor y manda por media id sin Bunn
         ['ycloud_provider_message_1']
       )
       assert.ok(row)
-      assert.equal(row.media_url, null)
+      assert.match(row.media_url, /^\/media\/assets\/.+\/file$/)
       assert.equal(row.media_mime_type, 'image/jpeg')
       assert.equal(row.media_filename, 'whatsapp-image.jpg')
       const raw = JSON.parse(row.raw_payload_json)
       assert.equal(raw.image.id, 'provider_media_1')
       assert.equal(raw.image.providerMediaId, 'provider_media_1')
       assert.equal(raw.image.storageProvider, 'ycloud')
+      assert.equal(raw.image.link, row.media_url)
+      assert.equal(raw.image.publicUrl, row.media_url)
+      assert.match(raw.image.previewMediaAssetId, /^rstk_media_[A-Za-z0-9]{20}$/)
+      previewMediaAssetId = raw.image.previewMediaAssetId
     } finally {
       await db.run('DELETE FROM whatsapp_api_messages WHERE ycloud_message_id = ? OR to_phone = ?', ['ycloud_provider_message_1', to])
+      if (previewMediaAssetId) {
+        await db.run('DELETE FROM media_assets WHERE id = ?', [previewMediaAssetId]).catch(() => undefined)
+      }
       await db.run('DELETE FROM whatsapp_api_contacts WHERE phone = ?', [to])
       await db.run('DELETE FROM contacts WHERE phone = ?', [to])
     }

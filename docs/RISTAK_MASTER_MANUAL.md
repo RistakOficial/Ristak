@@ -302,6 +302,12 @@ debe usar WhatsApp QR/Baileys directamente cuando exista un QR usable. Las
 plantillas quedan fuera de este bloqueo porque son el camino permitido por
 WhatsApp cuando la conversacion esta cerrada.
 
+Cuando una foto se envia por WhatsApp API/YCloud usando media ID del proveedor,
+Ristak debe guardar una copia de preview en `mediaStorageService` y persistir su
+`media_url` en `whatsapp_api_messages`. WhatsApp no debe recibir ese link si el
+proveedor acepta media ID, pero el historial interno si lo necesita para pintar
+la imagen en la burbuja del chat en vez de mostrar solo el nombre del archivo.
+
 Cuando un envio saliente intenta WhatsApp API/YCloud y la API lo rechaza por una
 restriccion recuperable o por la ventana de 24 horas, `whatsappApiService` debe
 usar WhatsApp QR/Baileys como respaldo si el numero tiene QR habilitado y
