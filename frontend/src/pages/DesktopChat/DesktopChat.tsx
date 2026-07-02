@@ -7152,7 +7152,7 @@ export const DesktopChat: React.FC = () => {
 	                                      {message.commentPost.imageUrl ? (
 	                                        <img src={message.commentPost.imageUrl} alt="" className={styles.commentPostThumb} loading="lazy" />
 	                                      ) : (
-	                                        <span className={styles.commentPostThumbPlaceholder}><ImageIcon size={18} aria-hidden="true" /></span>
+	                                        <span className={styles.commentPostThumbPlaceholder}><ImageIcon size={30} aria-hidden="true" /></span>
 	                                      )}
 	                                      <span className={styles.commentPostMeta}>
 	                                        <span className={styles.commentPostKind}>Publicación</span>

@@ -12981,7 +12981,7 @@ export const PhoneChat: React.FC = () => {
                                 {post.imageUrl ? (
                                   <img src={post.imageUrl} alt="" className={styles.commentPostThumb} loading="lazy" />
                                 ) : (
-                                  <span className={styles.commentPostThumbPlaceholder}><ImageIcon size={18} aria-hidden="true" /></span>
+                                  <span className={styles.commentPostThumbPlaceholder}><ImageIcon size={28} aria-hidden="true" /></span>
                                 )}
                                 <span className={styles.commentPostMeta}>
                                   <span className={styles.commentPostKind}>Publicación</span>
