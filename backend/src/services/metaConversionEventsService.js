@@ -985,8 +985,10 @@ function buildBusinessMessagingUserData(contact, metaConfig, whatsappAttribution
 }
 
 // Identidad de mensajería social (Messenger/Instagram) de un contacto, para CAPI.
-// Excluye contactos que solo comentaron (senderId sintético 'fb_comment:'/'ig_comment:'):
-// esos no tienen PSID/IGSID real y no deben atribuir un evento.
+// Solo atribuye si el contacto tiene una conversación privada REAL (algún mensaje
+// no-comentario): alguien que solo comentó no debe disparar un evento de
+// mensajería. Se condiciona por message_type, no por el senderId (que tras la
+// fusión es el PSID/IGSID real tanto para comentario como para DM).
 export async function getSocialMessagingIdentity(contactId, platform = '') {
   if (!contactId) return null
   const normalizedPlatform = ['messenger', 'instagram'].includes(cleanString(platform).toLowerCase())
@@ -1001,10 +1003,15 @@ export async function getSocialMessagingIdentity(contactId, platform = '') {
     `SELECT platform, sender_id, page_id, instagram_account_id,
             first_seen_at, last_seen_at, created_at, updated_at
      FROM meta_social_contacts
-     WHERE contact_id = ? AND COALESCE(sender_id, '') NOT LIKE '%comment:%'${platformFilter}
+     WHERE contact_id = ?${platformFilter}
+       AND EXISTS (
+         SELECT 1 FROM meta_social_messages m
+         WHERE m.contact_id = ?
+           AND COALESCE(m.message_type, '') NOT IN ('comment', 'comment_reply_public', 'comment_reply_private')
+       )
      ORDER BY updated_at DESC, last_seen_at DESC
      LIMIT 1`,
-    [contactId]
+    [contactId, contactId]
   ).catch(() => null)
   if (!row || !cleanString(row.sender_id)) return null
   const channel = cleanString(row.platform).toLowerCase() === 'instagram' ? 'instagram' : 'messenger'

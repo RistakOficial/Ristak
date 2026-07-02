@@ -795,6 +795,139 @@ async function migrateWhatsAppContactIdsToRistak() {
   }
 }
 
+// chat_read_states tiene PK (user_id, contact_id): al fusionar many->one hay que
+// resolver la colisión manualmente (la fila del destino gana) antes del repunte
+// genérico, que no maneja este UNIQUE.
+async function mergeChatReadStatesForContact(fromContact, toContact) {
+  let rows = []
+  try {
+    rows = await db.all('SELECT user_id FROM chat_read_states WHERE contact_id = ?', [fromContact])
+  } catch {
+    return
+  }
+  for (const r of rows) {
+    try {
+      const existing = await db.get(
+        'SELECT 1 FROM chat_read_states WHERE user_id = ? AND contact_id = ?',
+        [r.user_id, toContact]
+      )
+      if (existing) {
+        await db.run('DELETE FROM chat_read_states WHERE user_id = ? AND contact_id = ?', [r.user_id, fromContact])
+      } else {
+        await db.run('UPDATE chat_read_states SET contact_id = ? WHERE user_id = ? AND contact_id = ?', [toContact, r.user_id, fromContact])
+      }
+    } catch (err) {
+      logger.warn(`Fusión social: chat_read_states user ${r.user_id}: ${err.message}`)
+    }
+  }
+}
+
+// MIGRACIÓN idempotente: fusiona los contactos-comentario ya partidos (senderId
+// con prefijo 'fb_comment:'/'ig_comment:') con el contacto DM de la MISMA persona
+// (mismo platform + id crudo). Modelo nuevo: cada persona = un contacto por red;
+// comentario vs DM vive en message_type. IG vs Facebook se quedan separados (no
+// comparten id). Sin transacción (updateContactReferences usa el db global y prod
+// es Postgres con pool): secuencial + ordenado (repuntar refs, borrar al final);
+// re-ejecutable — una vez fusionado no quedan filas con el prefijo.
+async function mergeSplitSocialCommentContacts() {
+  let commentRows = []
+  try {
+    commentRows = await db.all(
+      `SELECT id, platform, sender_id, meta_user_id, contact_id, profile_name, username
+         FROM meta_social_contacts
+        WHERE sender_id LIKE '%comment:%'`
+    )
+  } catch {
+    return
+  }
+  if (!commentRows.length) return
+
+  const referenceTables = await getContactReferenceTables()
+  let mergedIntoDm = 0
+  let convertedInPlace = 0
+
+  for (const row of commentRows) {
+    const rawId = String(row.sender_id || '').replace(/^(fb|ig)_comment:/, '')
+    if (!rawId || rawId === String(row.sender_id || '')) continue
+    const platform = row.platform
+
+    try {
+      // ¿Existe el registro DM (mismo platform, id crudo, sin prefijo)?
+      const dm = await db.get(
+        `SELECT id, contact_id FROM meta_social_contacts
+          WHERE platform = ? AND sender_id = ? AND COALESCE(sender_id, '') NOT LIKE '%comment:%'
+          LIMIT 1`,
+        [platform, rawId]
+      )
+
+      if (dm && dm.contact_id && row.contact_id) {
+        // CASO A: la persona ya tiene contacto DM → fusionar el comentario ahí.
+        const fromContact = row.contact_id
+        const toContact = dm.contact_id
+
+        // Reapuntar los mensajes al perfil social del DM.
+        await db.run(
+          'UPDATE meta_social_messages SET meta_social_contact_id = ? WHERE meta_social_contact_id = ?',
+          [dm.id, row.id]
+        )
+
+        if (fromContact !== toContact) {
+          // chat_read_states primero (colisión de PK), luego el repunte genérico.
+          await mergeChatReadStatesForContact(fromContact, toContact)
+          for (const reference of referenceTables) {
+            try {
+              await db.run(`UPDATE ${reference.table} SET contact_id = ? WHERE contact_id = ?`, [toContact, fromContact])
+            } catch (err) {
+              if (reference.deleteOnConflict) {
+                await db.run(`DELETE FROM ${reference.table} WHERE contact_id = ?`, [fromContact])
+                continue
+              }
+              logger.warn(`Fusión social: no se pudo repuntar ${reference.table}.contact_id: ${err.message}`)
+            }
+          }
+          await db.run('DELETE FROM contacts WHERE id = ?', [fromContact])
+          mergedIntoDm += 1
+        }
+        // Quitar el meta_social_contacts prefijado (redundante) al final.
+        await db.run('DELETE FROM meta_social_contacts WHERE id = ?', [row.id])
+      } else if (!dm) {
+        // CASO B: no hay DM → convertir el registro-comentario en el contacto persona
+        // reescribiendo el senderId al id crudo (si no choca con un DM existente).
+        const clash = await db.get(
+          `SELECT id FROM meta_social_contacts WHERE platform = ? AND sender_id = ? AND id <> ? LIMIT 1`,
+          [platform, rawId, row.id]
+        )
+        if (clash) continue
+        await db.run(
+          `UPDATE meta_social_contacts
+              SET sender_id = ?, meta_user_id = COALESCE(NULLIF(meta_user_id, ''), ?), updated_at = CURRENT_TIMESTAMP
+            WHERE id = ?`,
+          [rawId, rawId, row.id]
+        )
+        // Nombre: si el full_name es sintético (@usuario o vacío), poner el real.
+        const realName = String(row.profile_name || '').trim()
+        if (row.contact_id && realName) {
+          const c = await db.get('SELECT full_name FROM contacts WHERE id = ?', [row.contact_id])
+          const stored = String(c?.full_name || '').trim()
+          const uname = String(row.username || '').trim().toLowerCase()
+          const looksSynthetic = !stored || stored.startsWith('@') || (uname && stored.toLowerCase() === `@${uname}`)
+          if (looksSynthetic) {
+            await db.run('UPDATE contacts SET full_name = ? WHERE id = ?', [realName, row.contact_id])
+          }
+        }
+        convertedInPlace += 1
+      }
+      // dm existe pero mismo contact_id (ya fusionado) → nada que hacer.
+    } catch (err) {
+      logger.warn(`Fusión social: no se pudo procesar ${row.id}: ${err.message}`)
+    }
+  }
+
+  if (mergedIntoDm || convertedInPlace) {
+    logger.success(`✅ Fusión de contactos sociales: ${mergedIntoDm} comentario→DM, ${convertedInPlace} convertidos en su lugar.`)
+  }
+}
+
 function parseStoredDate(value) {
   if (!value) return ''
   const parsed = Date.parse(String(value))
@@ -5457,6 +5590,12 @@ async function initTables() {
       await migrateWhatsAppContactIdsToRistak()
     } catch (err) {
       logger.warn('Advertencia al migrar IDs de contactos WhatsApp a Ristak:', err.message)
+    }
+
+    try {
+      await mergeSplitSocialCommentContacts()
+    } catch (err) {
+      logger.warn('Advertencia al fusionar contactos de comentario/DM de Meta:', err.message)
     }
 
     try {

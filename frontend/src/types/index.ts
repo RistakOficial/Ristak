@@ -181,12 +181,14 @@ export interface Contact {
   ad_id?: string
   preferredWhatsAppPhoneNumberId?: string | null
   preferred_whatsapp_phone_number_id?: string | null
-  // Identidad social (Meta): nombre real del perfil + @usuario + tipo de canal
-  // (comentario vs DM) + si el contacto-comentario tiene un DM enlazado.
+  // Identidad social (Meta): nombre real del perfil + @usuario. La distinción
+  // comentario/DM ya NO es de contacto (misma persona = un contacto por red);
+  // vive a nivel mensaje. Flags derivados: tiene comentarios / tiene DM privado.
+  // "Solo comentó" = hasCommentMessage && !hasPrivateDm.
   socialProfileName?: string | null
   socialUsername?: string | null
-  socialKind?: 'comment' | 'dm' | null
-  hasLinkedDmContact?: boolean
+  hasCommentMessage?: boolean
+  hasPrivateDm?: boolean
   notes?: string
   normalizedPhone?: string | null
   duplicateCount?: number

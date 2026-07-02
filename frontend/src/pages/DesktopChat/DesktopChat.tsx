@@ -839,24 +839,23 @@ function getContactChannelKind(contact: DesktopChatContact): AdvancedChannelFilt
 // feed de Facebook o del objeto de comentarios de Instagram). Los comentarios NO
 // se mezclan con los DMs: viven en su propia vista de filtro.
 function isCommentContact(contact?: DesktopChatContact | Contact | null): boolean {
-  // Identidad primero: el backend marca socialKind='comment' para contactos que
-  // vienen de un comentario (por sender_id, no por el último mensaje). Fallback
-  // por tipo de último mensaje cubre 'comment' y las respuestas a comentario
-  // ('comment_reply_public/private') para que un contacto-comentario NO se
-  // "descomente" cuando el negocio ya respondió (evita que se filtre a los tabs
-  // normales).
+  // Misma persona = UN contacto por red; la distinción vive a nivel mensaje. Un
+  // contacto es "de comentario" (va al tab Comentarios) cuando SOLO ha comentado
+  // y aún NO tiene chat privado: hasCommentMessage && !hasPrivateDm. En cuanto
+  // llega un DM (hasPrivateDm) pasa solo a los tabs normales, con sus comentarios
+  // fusionados dentro. Fallback por último mensaje para filas optimistas/inyectadas
+  // que aún no traen los flags.
   const record = contact as unknown as Record<string, unknown>
-  const kind = String(record?.socialKind || '').toLowerCase()
-  if (kind === 'comment') return true
-  if (kind === 'dm') return false
+  if (record?.hasCommentMessage !== undefined) {
+    return Boolean(record.hasCommentMessage) && !record.hasPrivateDm
+  }
   return String(record?.lastMessageType || '').toLowerCase().startsWith('comment')
 }
 
-// Un contacto-comentario cuya MISMA persona ya tiene un chat privado (DM). En ese
-// caso NO debe aparecer en ninguna bandeja: su historial se fusiona dentro del
-// chat privado (el registro DM lo representa en los tabs normales).
+// (Obsoleto tras la fusión: ya no hay un contacto-comentario separado.) Se conserva
+// el nombre para no tocar el filtro; equivale a "el contacto ya tiene DM privado".
 function commentContactHasLinkedDm(contact?: DesktopChatContact | Contact | null): boolean {
-  return Boolean((contact as unknown as Record<string, unknown>)?.hasLinkedDmContact)
+  return Boolean((contact as unknown as Record<string, unknown>)?.hasPrivateDm)
 }
 
 function getCommentPlatform(contact?: DesktopChatContact | Contact | null): 'facebook' | 'instagram' {
@@ -2645,9 +2644,9 @@ export const DesktopChat: React.FC = () => {
           if (commentsPlatform === 'instagram') return getCommentPlatform(contact) === 'instagram'
           return true
         }
-        // Vista normal de mensajes: nunca mostrar registros-comentario. El perfil
-        // que también tiene DM aparece por su registro DM (separado, socialKind
-        // 'dm'); el perfil que solo comentó vive únicamente en Comentarios.
+        // Vista normal: nunca mostrar los "solo comentario". En cuanto la persona
+        // tiene un DM (hasPrivateDm) deja de ser "solo comentario" y aparece aquí,
+        // con sus comentarios fusionados dentro de su conversación.
         if (isComment) return false
         if (chatFilter === 'agent') return true
         if (chatFilter === 'unread') return Number(contact.unreadCount || 0) > 0

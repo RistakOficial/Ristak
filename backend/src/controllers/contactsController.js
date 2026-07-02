@@ -266,41 +266,30 @@ const CONTACT_META_PROFILE_SELECT = `
           WHERE contact_id = c.id
           ORDER BY updated_at DESC
           LIMIT 1
-        ) AS meta_social_username,
-        (
-          SELECT CASE WHEN COALESCE(sender_id, '') LIKE '%comment:%' THEN 'comment' ELSE 'dm' END
-          FROM meta_social_contacts
-          WHERE contact_id = c.id
-          ORDER BY updated_at DESC
-          LIMIT 1
-        ) AS meta_social_kind`
+        ) AS meta_social_username`
 
-// Solo bandeja de chat: ¿este contacto de COMENTARIO tiene un contacto de DM
-// enlazado (misma persona: mismo platform + meta_user_id) que YA tuvo mensajes
-// privados reales? Si sí, el registro-comentario se oculta de todas las vistas
-// (su historial se fusiona dentro del chat privado). meta_user_id vacío nunca
-// enlaza (evita agrupar contactos sin id).
-const CONTACT_META_LINK_SELECT = `
+// Comentario vs DM ya NO es identidad de contacto (la misma persona = un solo
+// contacto por red). La distinción vive a NIVEL MENSAJE (message_type). Dos flags
+// para la bandeja de chat:
+//  - has_comment_message: el contacto tiene algún comentario.
+//  - has_private_dm: el contacto tiene algún mensaje privado real (no-comentario).
+// "Solo comentario" (va al tab Comentarios) = has_comment_message && !has_private_dm.
+const COMMENT_MESSAGE_TYPES_SQL = `('comment', 'comment_reply_public', 'comment_reply_private')`
+const CONTACT_META_MESSAGE_FLAGS_SELECT = `
         (
           SELECT CASE WHEN EXISTS (
-            SELECT 1
-            FROM meta_social_contacts self_sc
-            JOIN meta_social_contacts dm_sc
-              ON dm_sc.platform = self_sc.platform
-             AND dm_sc.meta_user_id = self_sc.meta_user_id
-            WHERE self_sc.contact_id = c.id
-              AND COALESCE(self_sc.sender_id, '') LIKE '%comment:%'
-              AND COALESCE(self_sc.meta_user_id, '') <> ''
-              AND COALESCE(dm_sc.sender_id, '') NOT LIKE '%comment:%'
-              AND dm_sc.contact_id IS NOT NULL
-              AND dm_sc.contact_id <> c.id
-              AND EXISTS (
-                SELECT 1 FROM meta_social_messages m
-                WHERE m.contact_id = dm_sc.contact_id
-                  AND m.message_type NOT IN ('comment', 'comment_reply_public', 'comment_reply_private')
-              )
+            SELECT 1 FROM meta_social_messages m
+            WHERE m.contact_id = c.id
+              AND m.message_type IN ${COMMENT_MESSAGE_TYPES_SQL}
           ) THEN 1 ELSE 0 END
-        ) AS meta_has_linked_dm`
+        ) AS meta_has_comment_message,
+        (
+          SELECT CASE WHEN EXISTS (
+            SELECT 1 FROM meta_social_messages m
+            WHERE m.contact_id = c.id
+              AND COALESCE(m.message_type, '') NOT IN ${COMMENT_MESSAGE_TYPES_SQL}
+          ) THEN 1 ELSE 0 END
+        ) AS meta_has_private_dm`
 
 const cleanString = (value) => String(value || '').trim()
 const hasOwn = (object, key) => Object.prototype.hasOwnProperty.call(object || {}, key)
@@ -1644,7 +1633,6 @@ const mapContactRowForResponse = (contact = {}) => {
     customFields: parseContactCustomFields(contact.custom_fields),
     socialProfileName: cleanString(contact.meta_social_profile_name) || null,
     socialUsername: cleanString(contact.meta_social_username).replace(/^@+/, '') || null,
-    socialKind: cleanString(contact.meta_social_kind) || null,
     notes: ''
   }
 }
@@ -1665,7 +1653,8 @@ const mapChatContactRowForResponse = (contact = {}) => ({
   lastMessageTransport: contact.last_message_transport || '',
   messageCount: Number(contact.message_count || 0),
   unreadCount: Number(contact.unread_count || 0),
-  hasLinkedDmContact: Boolean(Number(contact.meta_has_linked_dm || 0))
+  hasCommentMessage: Boolean(Number(contact.meta_has_comment_message || 0)),
+  hasPrivateDm: Boolean(Number(contact.meta_has_private_dm || 0))
 })
 
 const CHAT_CONTACTS_DEFAULT_LIMIT = 50
@@ -2304,7 +2293,7 @@ export const getChatContacts = async (req, res) => {
         c.tags,
 ${CONTACT_WHATSAPP_PROFILE_SELECTS},
 ${CONTACT_META_PROFILE_SELECT},
-${CONTACT_META_LINK_SELECT},
+${CONTACT_META_MESSAGE_FLAGS_SELECT},
         COALESCE(ps.total_paid, 0) AS total_paid,
         COALESCE(ps.purchases_count, 0) AS purchases_count,
         ps.last_purchase_date AS last_purchase_date,

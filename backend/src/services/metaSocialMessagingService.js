@@ -226,10 +226,12 @@ function extractSocialMessage({ objectType, entry, messaging, config }) {
 }
 
 // Normaliza un comentario (FB 'feed' item=comment / IG 'comments') al mismo shape
-// que un DM, más campos de comentario. CLAVE: el senderId lleva un prefijo
-// sintético ("fb_comment:"/"ig_comment:") para NO colisionar con el PSID de los
-// DMs (Meta usa espacios de ID distintos para la misma persona). Los nombres
-// vienen en el propio payload, así que no hace falta pedir perfil.
+// que un DM, más campos de comentario. CLAVE: el authorId del comentario ES el
+// mismo PSID/IGSID que el sender de los DMs de la misma persona (verificado en
+// prod), así que el senderId es el id crudo — comentario y DM CONVERGEN en un solo
+// contacto. La distinción comentario/DM vive en message_type, no en el contacto.
+// Solo si Meta oculta el from.id (privacidad FB) se cae al commentId, que no
+// puede fusionar y queda como un contacto de comentario suelto.
 function extractCommentEvent({ objectType, entry, change, config = {} }) {
   const field = cleanString(change?.field).toLowerCase()
   const value = change?.value || {}
@@ -256,8 +258,10 @@ function extractCommentEvent({ objectType, entry, change, config = {} }) {
   const direction = isEcho ? 'outbound' : 'inbound'
   const verb = cleanString(value.verb).toLowerCase() || 'add' // IG no manda verb
 
-  const authorKey = authorId || commentId
-  const senderId = `${platform === 'instagram' ? 'ig' : 'fb'}_comment:${authorKey}`
+  // id crudo del autor = mismo PSID/IGSID que su DM → converge en un contacto.
+  // Fallback al commentId solo si Meta ocultó el from.id (no fusiona, pero nunca
+  // deja el sender_id NULL).
+  const senderId = authorId || commentId
 
   const text = cleanString(value.message || value.text)
   const rawTs = Number(value.created_time || entry?.time || Date.now())

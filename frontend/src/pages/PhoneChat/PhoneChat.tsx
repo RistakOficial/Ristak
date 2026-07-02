@@ -2759,22 +2759,23 @@ function normalizeChannelProbe(value?: string | null) {
   return String(value || '').trim().toLowerCase().replace(/[\s-]+/g, '_')
 }
 
-// Un chat es "comentario" por IDENTIDAD (el backend marca socialKind='comment'
-// según el sender_id, no por el último mensaje). Fallback por tipo de último
-// mensaje cubre 'comment' y las respuestas ('comment_reply_public/private') para
-// que un contacto-comentario no se "descomente" al responderle.
+// Misma persona = UN contacto por red; la distinción comentario/DM vive a nivel
+// mensaje. Un chat es "de comentario" (va al tab Comentarios) cuando SOLO comentó
+// y aún NO tiene chat privado: hasCommentMessage && !hasPrivateDm. En cuanto llega
+// un DM pasa a los tabs normales con sus comentarios fusionados. Fallback por
+// último mensaje para filas optimistas/inyectadas sin los flags.
 function isCommentContact(contact?: unknown): boolean {
   const record = contact as Record<string, unknown> | null
-  const kind = String(record?.socialKind || '').toLowerCase()
-  if (kind === 'comment') return true
-  if (kind === 'dm') return false
+  if (record?.hasCommentMessage !== undefined) {
+    return Boolean(record.hasCommentMessage) && !record.hasPrivateDm
+  }
   return String(record?.lastMessageType || '').toLowerCase().startsWith('comment')
 }
 
-// Contacto-comentario cuya MISMA persona ya tiene chat privado (DM). No debe
-// aparecer en ninguna bandeja: su historial se ve dentro del chat privado.
+// (Obsoleto tras la fusión: ya no hay contacto-comentario separado.) Se conserva
+// el nombre para no tocar el filtro; equivale a "el contacto ya tiene DM privado".
 function commentContactHasLinkedDm(contact?: unknown): boolean {
-  return Boolean((contact as Record<string, unknown> | null)?.hasLinkedDmContact)
+  return Boolean((contact as Record<string, unknown> | null)?.hasPrivateDm)
 }
 
 function getCommentPlatform(contact?: unknown): 'facebook' | 'instagram' {
