@@ -10,7 +10,14 @@ const [{ db }, mediaStorageService] = await Promise.all([
 ])
 const { resolveAccountSlug, resetAccountSlugCache, buildAccountReadmeContent } = mediaStorageService
 
+const IDENTITY_ENV = ['RISTAK_ACCOUNT_SLUG', 'ACCOUNT_SLUG', 'RENDER_EXTERNAL_URL', 'PUBLIC_URL', 'APP_URL']
+function clearIdentityEnv() {
+  for (const k of IDENTITY_ENV) delete process.env[k]
+}
+clearIdentityEnv()
+
 async function clearPersistedSlug() {
+  clearIdentityEnv()
   await db.run('UPDATE storage_settings SET account_slug = NULL, account_label = NULL WHERE id = 1').catch(() => {})
   resetAccountSlugCache()
 }
@@ -48,9 +55,38 @@ test('_LEEME.txt cae al slug/id cuando no hay label', async () => {
   assert.match(content, /accounts\/loc_solo\//)
 })
 
+test('RISTAK_ACCOUNT_SLUG (installer) manda sobre business_name y sin sufijo', async () => {
+  await clearPersistedSlug()
+  await setBusinessName('Café Alexis MX') // habría dado cafe-alexis-mx-<hash>...
+  process.env.RISTAK_ACCOUNT_SLUG = 'marcomaxilofacial' // ...pero la env explícita gana
+  resetAccountSlugCache()
+  const { slug, label } = await resolveAccountSlug('loc_test')
+  assert.equal(slug, 'marcomaxilofacial') // único de por sí → sin sufijo
+  assert.equal(label, 'Café Alexis MX')
+})
+
+test('subdominio del install (RENDER_EXTERNAL_URL) se usa si no hay env explícita', async () => {
+  await clearPersistedSlug()
+  await setBusinessName(undefined)
+  process.env.RENDER_EXTERNAL_URL = 'https://marcomaxilofacial.onrender.com'
+  resetAccountSlugCache()
+  const { slug } = await resolveAccountSlug('loc_test')
+  assert.equal(slug, 'marcomaxilofacial')
+})
+
+test('subdominios genéricos (app/www) se ignoran y cae a business_name', async () => {
+  await clearPersistedSlug()
+  await setBusinessName('Clinica Fisio')
+  process.env.RENDER_EXTERNAL_URL = 'https://app.ristak.com' // subdominio genérico
+  resetAccountSlugCache()
+  const { slug } = await resolveAccountSlug('loc_test')
+  assert.match(slug, /^clinica-fisio-[0-9a-f]{6}$/) // usa el negocio, no 'app'
+})
+
 // El SQLite de test es un archivo compartido entre procesos; dejamos el estado
 // limpio para no contaminar el slug/negocio de otras suites (p.ej. las de storage).
 after(async () => {
+  clearIdentityEnv()
   await db.run('DELETE FROM users').catch(() => {})
   await db.run('UPDATE storage_settings SET account_slug = NULL, account_label = NULL WHERE id = 1').catch(() => {})
   resetAccountSlugCache()

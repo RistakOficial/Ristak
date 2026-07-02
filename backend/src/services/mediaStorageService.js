@@ -206,6 +206,23 @@ function shortAccountSuffix(accountId = '') {
   return crypto.createHash('sha1').update(seed).digest('hex').slice(0, 6)
 }
 
+// El subdominio del install (RENDER_EXTERNAL_URL) ES el app_name único que el
+// installer le asignó: marcomaxilofacial.onrender.com → "marcomaxilofacial".
+// Legible y único por instalación, sin depender de la base del cliente.
+function slugFromInstallHost() {
+  const url = cleanString(process.env.RENDER_EXTERNAL_URL || process.env.PUBLIC_URL || process.env.APP_URL)
+  if (!url) return ''
+  try {
+    const host = new URL(/^https?:\/\//i.test(url) ? url : `https://${url}`).hostname
+    const sub = host.split('.')[0]
+    // Subdominios genéricos no identifican al cliente.
+    if (!sub || ['www', 'app', 'localhost', '127', 'staging'].includes(sub.toLowerCase())) return ''
+    return slugifyAccountName(sub)
+  } catch {
+    return ''
+  }
+}
+
 export async function resolveAccountSlug(accountId = DEFAULT_CLIENT_ACCOUNT_ID) {
   const key = normalizeClientAccountId(accountId)
   const cached = accountSlugCache.get(key)
@@ -224,28 +241,43 @@ export async function resolveAccountSlug(accountId = DEFAULT_CLIENT_ACCOUNT_ID) 
       let label = cleanString(row?.account_label)
 
       if (!slug) {
-        // 2) Derivar SOLO del nombre del negocio (users.business_name). El nombre
-        //    de la persona o el email no sirven de carpeta: queremos el negocio.
+        // Fuente del slug, en cascada (de más confiable a menos):
         const userRow = await db
           .get('SELECT business_name FROM users ORDER BY id ASC LIMIT 1')
           .catch(() => null)
         const businessName = cleanString(userRow?.business_name)
+        // 2) Env explícita que el installer puede inyectar (app_name). Ya única.
+        const envSlug = slugifyAccountName(process.env.RISTAK_ACCOUNT_SLUG || process.env.ACCOUNT_SLUG || '')
+        // 3) Subdominio del propio install. Ya único y legible.
+        const hostSlug = slugFromInstallHost()
+        // 4) Nombre del negocio (puede repetirse entre clientes → + sufijo).
         const nameBase = slugifyAccountName(businessName)
-        if (nameBase) {
-          // Nombre real del negocio → carpeta legible + sufijo anti-colisión (dos
-          // negocios homónimos en el Bunny compartido jamás se pisan). Se fija.
-          label = businessName
+
+        let persist = true
+        if (envSlug) {
+          slug = envSlug
+          label = businessName || envSlug
+        } else if (hostSlug) {
+          slug = hostSlug
+          label = businessName || hostSlug
+        } else if (nameBase) {
+          // Homónimos en el Bunny compartido jamás se pisan gracias al sufijo.
           slug = `${nameBase}-${shortAccountSuffix(accountId)}`
+          label = businessName
+        } else {
+          // Sin nada legible → id técnico tal cual (ya es único). No se persiste
+          // para que se "cure" al slug legible en cuanto haya identidad.
+          slug = normalizeClientAccountId(accountId)
+          persist = false
+        }
+
+        if (persist) {
           await db
             .run(
               'UPDATE storage_settings SET account_slug = ?, account_label = ?, updated_at = CURRENT_TIMESTAMP WHERE id = 1',
-              [slug, label]
+              [normalizeClientAccountId(slug), label]
             )
             .catch(() => {})
-        } else {
-          // Aún sin nombre de negocio → usamos el id técnico tal cual (ya es único)
-          // sin persistir, para que se "cure" al slug legible al configurarlo.
-          slug = normalizeClientAccountId(accountId)
         }
       }
 
