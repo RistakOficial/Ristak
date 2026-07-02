@@ -4163,8 +4163,131 @@ function normalizeMessageTextObject(value) {
   return isPlainObject(value) ? value : null
 }
 
+function appendReadableMessagePart(parts, value) {
+  if (value && typeof value === 'object') return
+  const text = cleanString(value)
+  if (text && text !== 'null' && text !== 'undefined' && !parts.includes(text)) parts.push(text)
+}
+
+function cleanStructuredPrimitive(value) {
+  return value && typeof value === 'object' ? '' : cleanString(value)
+}
+
+function readStructuredMessageText(value, keys = []) {
+  if (typeof value === 'string' || typeof value === 'number') return cleanString(value)
+  if (!isPlainObject(value)) return ''
+
+  for (const key of keys) {
+    const direct = cleanStructuredPrimitive(value[key])
+    if (direct) return direct
+  }
+
+  for (const key of ['text', 'body', 'displayText', 'display_text', 'title', 'caption', 'contentText']) {
+    const candidate = value[key]
+    if (!candidate) continue
+    const direct = cleanStructuredPrimitive(candidate)
+    if (direct) return direct
+    const nested = readStructuredMessageText(candidate, keys)
+    if (nested) return nested
+  }
+
+  return ''
+}
+
+function parseStructuredButtonParams(button = {}) {
+  const value = button.buttonParamsJson || button.paramsJson || button.button_params_json
+  if (!value) return null
+  return parseJsonValue(value, null)
+}
+
+function getStructuredButtonLabel(button = {}) {
+  const params = parseStructuredButtonParams(button)
+  const paramsLabel = readStructuredMessageText(params, [
+    'display_text',
+    'displayText',
+    'cta_display_name',
+    'text',
+    'title',
+    'label'
+  ])
+  if (paramsLabel) return paramsLabel
+
+  for (const key of ['reply', 'buttonText', 'quickReplyButton', 'urlButton', 'callButton', 'copyCodeButton']) {
+    const label = readStructuredMessageText(button[key], [
+      'displayText',
+      'display_text',
+      'text',
+      'title',
+      'label'
+    ])
+    if (label) return label
+  }
+
+  return readStructuredMessageText(button, [
+    'displayText',
+    'display_text',
+    'text',
+    'title',
+    'label'
+  ])
+}
+
+function formatStructuredMessage(parts = [], buttons = []) {
+  const bodyParts = []
+  for (const part of parts) appendReadableMessagePart(bodyParts, part)
+
+  const actionLines = buttons
+    .map(getStructuredButtonLabel)
+    .filter(Boolean)
+    .map(label => `- ${label}`)
+
+  return [...bodyParts, ...(actionLines.length ? [actionLines.join('\n')] : [])].join('\n\n')
+}
+
+function extractInteractiveMessageText(interactive = {}) {
+  if (!isPlainObject(interactive)) return ''
+  const parts = [
+    readStructuredMessageText(interactive.header, ['title', 'subtitle', 'text']),
+    readStructuredMessageText(interactive.body, ['text', 'body']),
+    readStructuredMessageText(interactive.footer, ['text', 'footer'])
+  ]
+  const buttons = [
+    ...(Array.isArray(interactive.action?.buttons) ? interactive.action.buttons : []),
+    ...(Array.isArray(interactive.nativeFlowMessage?.buttons) ? interactive.nativeFlowMessage.buttons : [])
+  ]
+  return formatStructuredMessage(parts, buttons)
+}
+
+function extractTemplateMessageText(template = {}) {
+  if (!isPlainObject(template)) return ''
+  const parts = [
+    readStructuredMessageText(template.header, ['text', 'title']),
+    readStructuredMessageText(template.body, ['text', 'body']),
+    readStructuredMessageText(template.footer, ['text', 'footer']),
+    readStructuredMessageText(template, ['text', 'body', 'contentText'])
+  ]
+  const buttons = []
+
+  const components = Array.isArray(template.components) ? template.components : []
+  for (const component of components) {
+    const type = cleanString(component?.type).toLowerCase()
+    if (type === 'header' || type === 'body' || type === 'footer') {
+      appendReadableMessagePart(parts, readStructuredMessageText(component, ['text', 'body']))
+    }
+    if (type === 'button' || type === 'buttons') {
+      if (Array.isArray(component.buttons)) buttons.push(...component.buttons)
+      else buttons.push(component)
+    }
+  }
+
+  if (Array.isArray(template.buttons)) buttons.push(...template.buttons)
+  return formatStructuredMessage(parts, buttons)
+}
+
 function extractMessageText(message = {}) {
   const text = normalizeMessageTextObject(message.text)
+  const interactiveText = extractInteractiveMessageText(message.interactive)
+  const templateText = extractTemplateMessageText(message.template)
 
   return cleanString(
     text?.body ||
@@ -4172,9 +4295,11 @@ function extractMessageText(message = {}) {
     message.interactive?.button_reply?.title ||
     message.interactive?.list_reply?.title ||
     message.interactive?.nfm_reply?.body ||
+    interactiveText ||
     message.image?.caption ||
     message.video?.caption ||
     message.document?.caption ||
+    templateText ||
     message.template?.name ||
     message.location?.name ||
     message.location?.address ||

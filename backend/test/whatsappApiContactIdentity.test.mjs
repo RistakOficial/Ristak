@@ -275,6 +275,75 @@ test('webhook entrante de YCloud reemplaza WhatsApp_API por customerProfile.name
   }
 })
 
+test('webhook entrante guarda cuerpo y botones de mensajes interactivos', async () => {
+  const id = randomUUID()
+  const phone = `+52998${Date.now().toString().slice(-7)}`
+  const contactId = `rstk_contact_interactive_${id}`
+  const apiContactId = `waapi_contact_interactive_${id}`
+  const messageId = `ycloud_interactive_${id}`
+  const eventId = `evt_interactive_${id}`
+  const messageAt = '2024-04-05T06:07:08.000Z'
+
+  await cleanup({ contactId, apiContactId, messageId, phone, eventId })
+
+  try {
+    const payload = {
+      id: eventId,
+      type: 'whatsapp.inbound_message.received',
+      apiVersion: 'v2',
+      createTime: messageAt,
+      whatsappInboundMessage: {
+        id: messageId,
+        wamid: `wamid.${id}`,
+        wabaId: 'WABA-ID',
+        from: phone,
+        customerProfile: {
+          name: 'Facebook'
+        },
+        to: '+526561000000',
+        sendTime: messageAt,
+        type: 'interactive',
+        interactive: {
+          type: 'button',
+          body: {
+            text: 'Use 096984 for two-factor authentication on Facebook.'
+          },
+          action: {
+            buttons: [
+              { reply: { id: 'copy_code', title: 'Copy code' } },
+              { reply: { id: 'not_me', title: "I didn't request a code" } }
+            ]
+          }
+        }
+      }
+    }
+
+    await processYCloudWhatsAppWebhook({
+      payload,
+      rawBody: JSON.stringify(payload),
+      signatureHeader: '',
+      endpointId: ''
+    })
+
+    const row = await db.get(
+      `SELECT message_type, message_text
+       FROM whatsapp_api_messages
+       WHERE ycloud_message_id = ?
+       LIMIT 1`,
+      [messageId]
+    )
+
+    assert.equal(row.message_type, 'interactive')
+    assert.equal(
+      row.message_text,
+      "Use 096984 for two-factor authentication on Facebook.\n\n- Copy code\n- I didn't request a code"
+    )
+    assert.notEqual(row.message_text, 'Mensaje')
+  } finally {
+    await cleanup({ contactId, apiContactId, messageId, phone, eventId })
+  }
+})
+
 test('webhook saliente respeta contactId existente aunque el teléfono todavía no esté guardado', async () => {
   const id = randomUUID()
   const phone = `+52996${Date.now().toString().slice(-7)}`

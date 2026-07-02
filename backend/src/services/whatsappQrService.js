@@ -770,9 +770,196 @@ function unwrapBaileysMessageContent(content = {}) {
     if (current.viewOnceMessage?.message) { current = current.viewOnceMessage.message; continue }
     if (current.viewOnceMessageV2?.message) { current = current.viewOnceMessageV2.message; continue }
     if (current.documentWithCaptionMessage?.message) { current = current.documentWithCaptionMessage.message; continue }
+    if (current.deviceSentMessage?.message) { current = current.deviceSentMessage.message; continue }
+    if (current.editedMessage?.message) { current = current.editedMessage.message; continue }
+    if (current.protocolMessage?.editedMessage) { current = current.protocolMessage.editedMessage; continue }
     break
   }
   return current || {}
+}
+
+function normalizeBaileysDisplayText(value) {
+  if (value && typeof value === 'object') return ''
+  const text = cleanString(value)
+  if (!text || text === 'null' || text === 'undefined') return ''
+  return text
+    .replace(/\r\n/g, '\n')
+    .split('\n')
+    .map(line => line.trim())
+    .filter(Boolean)
+    .join('\n')
+}
+
+function parseQrJsonObject(value) {
+  if (!value) return null
+  if (typeof value === 'object' && !Array.isArray(value)) return value
+  if (typeof value !== 'string') return null
+  try {
+    const parsed = JSON.parse(value)
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : null
+  } catch {
+    return null
+  }
+}
+
+function appendUniqueText(parts, value) {
+  const text = normalizeBaileysDisplayText(value)
+  if (text && !parts.includes(text)) parts.push(text)
+}
+
+function readStructuredText(value, keys = []) {
+  if (typeof value === 'string' || typeof value === 'number') return normalizeBaileysDisplayText(value)
+  if (!value || typeof value !== 'object') return ''
+
+  for (const key of keys) {
+    const direct = normalizeBaileysDisplayText(value[key])
+    if (direct) return direct
+  }
+
+  for (const key of ['text', 'body', 'displayText', 'display_text', 'title', 'caption', 'contentText']) {
+    const candidate = value[key]
+    if (!candidate) continue
+    const direct = normalizeBaileysDisplayText(candidate)
+    if (direct) return direct
+    const nested = readStructuredText(candidate, keys)
+    if (nested) return nested
+  }
+
+  return ''
+}
+
+function looksLikeMachineButtonName(value = '') {
+  const text = cleanString(value)
+  return Boolean(text && /^[a-z0-9_.:-]+$/i.test(text) && !/\s/.test(text))
+}
+
+function extractBaileysButtonLabel(button = {}) {
+  const params = parseQrJsonObject(button.buttonParamsJson || button.paramsJson || button.button_params_json)
+  const paramsLabel = readStructuredText(params, [
+    'display_text',
+    'displayText',
+    'cta_display_name',
+    'text',
+    'title',
+    'label'
+  ])
+  if (paramsLabel) return paramsLabel
+
+  for (const key of [
+    'buttonText',
+    'quickReplyButton',
+    'urlButton',
+    'callButton',
+    'copyCodeButton',
+    'reply',
+    'nativeFlowInfo',
+    'singleSelectReply'
+  ]) {
+    const label = readStructuredText(button[key], [
+      'displayText',
+      'display_text',
+      'text',
+      'title',
+      'label'
+    ])
+    if (label) return label
+  }
+
+  const direct = readStructuredText(button, [
+    'displayText',
+    'display_text',
+    'text',
+    'title',
+    'label'
+  ])
+  if (direct) return direct
+
+  const name = normalizeBaileysDisplayText(button.name)
+  return name && !looksLikeMachineButtonName(name) ? name : ''
+}
+
+function formatStructuredWhatsAppMessage(parts = [], buttons = []) {
+  const bodyParts = []
+  for (const part of parts) appendUniqueText(bodyParts, part)
+
+  const actionLines = buttons
+    .map(extractBaileysButtonLabel)
+    .filter(Boolean)
+    .map(label => `- ${label}`)
+
+  return [...bodyParts, ...(actionLines.length ? [actionLines.join('\n')] : [])].join('\n\n')
+}
+
+function describeBaileysTemplateMessage(templateMessage = {}) {
+  const candidates = [
+    templateMessage.hydratedTemplate,
+    templateMessage.hydratedFourRowTemplate,
+    templateMessage.fourRowTemplate,
+    templateMessage
+  ].filter(value => value && typeof value === 'object')
+
+  const parts = []
+  const buttons = []
+
+  for (const candidate of candidates) {
+    appendUniqueText(parts, readStructuredText(candidate, ['hydratedTitleText', 'title', 'headerText']))
+    appendUniqueText(parts, readStructuredText(candidate, ['hydratedContentText', 'contentText', 'bodyText', 'text', 'description']))
+    appendUniqueText(parts, readStructuredText(candidate, ['hydratedFooterText', 'footerText', 'footer']))
+    if (Array.isArray(candidate.hydratedButtons)) buttons.push(...candidate.hydratedButtons)
+    if (Array.isArray(candidate.buttons)) buttons.push(...candidate.buttons)
+  }
+
+  return formatStructuredWhatsAppMessage(parts, buttons)
+}
+
+function describeBaileysButtonsMessage(buttonsMessage = {}) {
+  const parts = [
+    readStructuredText(buttonsMessage, ['title', 'headerText']),
+    readStructuredText(buttonsMessage, ['contentText', 'text', 'bodyText', 'description']),
+    readStructuredText(buttonsMessage, ['footerText', 'footer'])
+  ]
+  return formatStructuredWhatsAppMessage(parts, Array.isArray(buttonsMessage.buttons) ? buttonsMessage.buttons : [])
+}
+
+function describeBaileysListMessage(listMessage = {}) {
+  const parts = [
+    readStructuredText(listMessage, ['title']),
+    readStructuredText(listMessage, ['description', 'text', 'contentText']),
+    readStructuredText(listMessage, ['buttonText']),
+    readStructuredText(listMessage, ['footerText', 'footer'])
+  ]
+  return formatStructuredWhatsAppMessage(parts)
+}
+
+function describeBaileysInteractiveMessage(interactiveMessage = {}) {
+  const header = interactiveMessage.header || {}
+  const body = interactiveMessage.body || {}
+  const footer = interactiveMessage.footer || {}
+  const nativeFlow = interactiveMessage.nativeFlowMessage || {}
+  const action = interactiveMessage.action || {}
+  const parts = [
+    readStructuredText(header, ['title', 'subtitle', 'text']),
+    readStructuredText(body, ['text', 'body']),
+    readStructuredText(footer, ['text', 'footer'])
+  ]
+  const buttons = [
+    ...(Array.isArray(nativeFlow.buttons) ? nativeFlow.buttons : []),
+    ...(Array.isArray(action.buttons) ? action.buttons : [])
+  ]
+  return formatStructuredWhatsAppMessage(parts, buttons)
+}
+
+function getBaileysReplyText(replyMessage = {}) {
+  return readStructuredText(replyMessage, [
+    'selectedDisplayText',
+    'selected_display_text',
+    'title',
+    'description',
+    'body',
+    'text',
+    'selectedButtonId',
+    'selectedRowId'
+  ])
 }
 
 function describeBaileysMessageContent(content) {
@@ -781,6 +968,14 @@ function describeBaileysMessageContent(content) {
 
   if (cleanString(unwrapped.conversation)) return { type: 'text', text: cleanString(unwrapped.conversation) }
   if (cleanString(unwrapped.extendedTextMessage?.text)) return { type: 'text', text: cleanString(unwrapped.extendedTextMessage.text) }
+  if (unwrapped.templateButtonReplyMessage) return { type: 'button_reply', text: getBaileysReplyText(unwrapped.templateButtonReplyMessage) }
+  if (unwrapped.buttonsResponseMessage) return { type: 'button_reply', text: getBaileysReplyText(unwrapped.buttonsResponseMessage) }
+  if (unwrapped.listResponseMessage) return { type: 'list_reply', text: getBaileysReplyText(unwrapped.listResponseMessage) }
+  if (unwrapped.interactiveResponseMessage) return { type: 'interactive_reply', text: getBaileysReplyText(unwrapped.interactiveResponseMessage) }
+  if (unwrapped.templateMessage) return { type: 'template', text: describeBaileysTemplateMessage(unwrapped.templateMessage) }
+  if (unwrapped.buttonsMessage) return { type: 'interactive', text: describeBaileysButtonsMessage(unwrapped.buttonsMessage) }
+  if (unwrapped.listMessage) return { type: 'interactive', text: describeBaileysListMessage(unwrapped.listMessage) }
+  if (unwrapped.interactiveMessage) return { type: 'interactive', text: describeBaileysInteractiveMessage(unwrapped.interactiveMessage) }
   if (unwrapped.imageMessage) return { type: 'image', text: cleanString(unwrapped.imageMessage.caption) }
   if (unwrapped.videoMessage) return { type: 'video', text: cleanString(unwrapped.videoMessage.caption) }
   if (unwrapped.audioMessage) return { type: 'audio', text: '' }

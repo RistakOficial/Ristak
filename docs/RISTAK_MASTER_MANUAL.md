@@ -335,6 +335,13 @@ Ristak debe guardar una copia de preview en `mediaStorageService` y persistir su
 proveedor acepta media ID, pero el historial interno si lo necesita para pintar
 la imagen en la burbuja del chat en vez de mostrar solo el nombre del archivo.
 
+Los mensajes entrantes estructurados de WhatsApp (plantillas, botones, listas,
+OTP/copy-code e interactivos) no deben degradarse a la etiqueta generica
+`Mensaje`. En WhatsApp QR/Baileys y WhatsApp API/YCloud, el backend debe extraer
+el cuerpo visible, footer y acciones legibles y persistirlos en
+`whatsapp_api_messages.message_text` para que `/chat` y `/movil` pinten el mismo
+contenido que el usuario ve en WhatsApp.
+
 Cuando un envio saliente intenta WhatsApp API/YCloud y la API lo rechaza por una
 restriccion recuperable o por la ventana de 24 horas, `whatsappApiService` debe
 usar WhatsApp QR/Baileys como respaldo si el numero tiene QR habilitado y
