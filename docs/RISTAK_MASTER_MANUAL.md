@@ -286,6 +286,23 @@ propia y no debe montar el globo global del Asistente Personal AI, para no tapar
 el historial, composer ni acciones rapidas del chat. El asistente interno sigue
 disponible desde las rutas dedicadas de Ristak AI en el menu lateral.
 
+En `/chat` y en el chat movil bajo `/movil`, el historial de conversacion acepta
+drag and drop de archivos. Mientras el usuario arrastra archivos sobre el area de
+mensajes, la superficie se cubre con un overlay borroso con el texto `Suelta tu
+archivo aqui`; al soltar, los archivos se agregan como adjuntos del composer
+antes de enviar, para que el usuario pueda escribir texto o agregar mas archivos.
+El correo queda fuera de este flujo hasta que su manejo de adjuntos se cierre en
+la superficie de email.
+
+Los adjuntos manuales del chat soportan imagenes, videos, audios y documentos
+compatibles. Si un video o audio cabe como media directa, la UI pregunta si debe
+mandarse como video/nota de voz o como archivo. Si excede el limite de media
+directa pero cabe como documento, se clasifica automaticamente como archivo. En
+WhatsApp API/QR los adjuntos usan las rutas nativas de imagen, video, audio o
+documento segun esa decision. En Messenger/Instagram nativo el chat conserva
+texto solamente; si HighLevel esta conectado, los adjuntos se publican primero
+como URLs publicas y se envian por `attachments` de HighLevel.
+
 La lista de chats se carga por lotes de 50 conversaciones. Al abrir una
 conversacion, el frontend pide solo los ultimos 50 mensajes combinados del hilo
 (`chatMessagesOnly` + `messageLimit`) y conserva el historial ya visible durante

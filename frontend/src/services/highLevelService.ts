@@ -16,11 +16,22 @@ interface HighLevelConfig {
 
 export type HighLevelChatChannel = 'whatsapp_api' | 'sms_qr' | 'messenger' | 'instagram' | 'email'
 
+export interface HighLevelAttachmentDataUrl {
+  dataUrl: string
+  filename?: string
+  name?: string
+  mimeType?: string
+  type?: string
+  kind?: 'image' | 'video' | 'audio' | 'document' | 'file'
+  attachmentType?: 'image' | 'video' | 'audio' | 'document' | 'file'
+}
+
 export interface HighLevelConversationMessagePayload {
   contactId: string
   channel: HighLevelChatChannel
   message: string
   attachments?: string[]
+  attachmentDataUrls?: HighLevelAttachmentDataUrl[]
   audioDataUrl?: string
   audioUrl?: string
   durationMs?: number
@@ -65,6 +76,13 @@ export interface HighLevelConversationMessageResponse {
       mimeType?: string
       filename?: string
     } | null
+    localAttachments?: Array<{
+      publicUrl?: string
+      publicPath?: string
+      mimeType?: string
+      filename?: string
+      kind?: string
+    }>
   }
   messageId?: string
   conversationId?: string
@@ -96,6 +114,13 @@ export interface HighLevelConversationMessageResponse {
     mimeType?: string
     filename?: string
   } | null
+  localAttachments?: Array<{
+    publicUrl?: string
+    publicPath?: string
+    mimeType?: string
+    filename?: string
+    kind?: string
+  }>
 }
 
 class HighLevelService {

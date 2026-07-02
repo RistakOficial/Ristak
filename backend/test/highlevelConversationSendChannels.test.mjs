@@ -154,3 +154,80 @@ test('HighLevel conversation sender supports WhatsApp, Messenger, Instagram and 
     }
   })
 })
+
+test('HighLevel conversation sender keeps requested media attachments as files', async () => {
+  const marker = randomUUID().replace(/-/g, '')
+  const contactId = `contact_send_file_attachment_${marker}`
+  const sentPayloads = []
+
+  await cleanupContact(contactId, marker)
+
+  await snapshotHighLevelConfig(async () => {
+    await db.run(
+      `INSERT INTO contacts (id, ghl_contact_id, phone, email, full_name, source, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, 'test', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+      [contactId, `ghl_send_file_attachment_${marker}`, `+52656${marker.slice(0, 10).replace(/[a-f]/g, '8')}`, `archivo-${marker}@example.com`, 'Cliente Archivo']
+    )
+
+    mock.method(GHLClient.prototype, 'sendConversationMessage', async function sendConversationMessage(payload) {
+      sentPayloads.push(payload)
+      return {
+        messageId: `remote_send_${marker}_file`,
+        status: 'pending'
+      }
+    })
+
+    let mediaAssetId = ''
+    try {
+      const result = await sendHighLevelConversationMessageCore({
+        contactId,
+        channel: 'messenger',
+        message: 'Te mando el video como archivo',
+        attachmentDataUrls: [{
+          dataUrl: `data:video/mp4;base64,${Buffer.from('fake mp4 payload').toString('base64')}`,
+          filename: 'video-pesado.mp4',
+          mimeType: 'video/mp4',
+          kind: 'document'
+        }]
+      }, {
+        markHumanTakeover: false,
+        req: {
+          protocol: 'https',
+          headers: { host: 'ristak.test' },
+          body: {},
+          get(name) {
+            return String(name || '').toLowerCase() === 'host' ? 'ristak.test' : ''
+          }
+        }
+      })
+
+      mediaAssetId = result.localAttachments?.[0]?.mediaAssetId || ''
+
+      assert.equal(sentPayloads.length, 1)
+      assert.equal(sentPayloads[0].type, 'FB')
+      assert.equal(sentPayloads[0].message, 'Te mando el video como archivo')
+      assert.equal(sentPayloads[0].attachments.length, 1)
+      assert.match(sentPayloads[0].attachments[0], /^https?:\/\//)
+      assert.equal(result.localAttachments?.[0]?.kind, 'document')
+      assert.equal(result.localAttachments?.[0]?.mimeType, 'video/mp4')
+      assert.equal(result.localAttachments?.[0]?.filename, 'video-pesado.mp4')
+
+      const rawPayloadRow = await db.get(
+        `SELECT raw_payload_json
+         FROM meta_social_messages
+         WHERE contact_id = ? AND direction = 'outbound'
+         ORDER BY message_timestamp DESC
+         LIMIT 1`,
+        [contactId]
+      )
+      const rawPayload = JSON.parse(rawPayloadRow.raw_payload_json)
+      assert.deepEqual(rawPayload.request.attachments, sentPayloads[0].attachments)
+    } finally {
+      mock.restoreAll()
+      if (mediaAssetId) {
+        await db.run('DELETE FROM media_assets WHERE id = ?', [mediaAssetId]).catch(() => undefined)
+      }
+      await cleanupContact(contactId, marker)
+    }
+  })
+})

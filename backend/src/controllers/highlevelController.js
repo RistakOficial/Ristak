@@ -22,7 +22,13 @@ import {
   linkContactToGhl,
   resolveContactIdByGhlId
 } from '../services/contactIdentityService.js';
-import { buildLocalMediaUrl, saveWhatsAppAudioDataUrl } from '../services/whatsappApiService.js';
+import {
+  buildLocalMediaUrl,
+  saveWhatsAppAudioDataUrl,
+  saveWhatsAppDocumentDataUrl,
+  saveWhatsAppImageDataUrl,
+  saveWhatsAppVideoDataUrl
+} from '../services/whatsappApiService.js';
 import {
   DEFAULT_TIMEZONE as ACCOUNT_DEFAULT_TIMEZONE,
   businessTodayDateOnly,
@@ -378,6 +384,64 @@ async function prepareHighLevelVoiceAttachment({ audioDataUrl, audioUrl, duratio
       size: savedAudio.size,
       originalMimeType: savedAudio.originalMimeType
     }
+  };
+}
+
+function normalizeHighLevelAttachmentKind(value = '', mimeType = '') {
+  const cleanKind = cleanString(value).toLowerCase();
+  const cleanMime = cleanString(mimeType).toLowerCase();
+  if (cleanKind === 'document' || cleanKind === 'file') return 'document';
+  if (cleanKind === 'image' || cleanMime.startsWith('image/')) return 'image';
+  if (cleanKind === 'video' || cleanMime.startsWith('video/')) return 'video';
+  if (cleanKind === 'audio' || cleanMime.startsWith('audio/')) return 'audio';
+  return 'document';
+}
+
+async function prepareHighLevelFileAttachments({ attachmentDataUrls = [], req } = {}) {
+  if (!Array.isArray(attachmentDataUrls) || attachmentDataUrls.length === 0) {
+    return { urls: [], localMedia: [] };
+  }
+
+  const publicBaseUrl = getPublicBaseUrl(req);
+  const prepared = [];
+
+  for (const item of attachmentDataUrls) {
+    const dataUrl = cleanString(item?.dataUrl);
+    if (!dataUrl) continue;
+
+    const filename = cleanString(item?.filename || item?.name);
+    const mimeType = cleanString(item?.mimeType || item?.type);
+    const kind = normalizeHighLevelAttachmentKind(item?.kind || item?.attachmentType, mimeType);
+    const saved = kind === 'image'
+      ? await saveWhatsAppImageDataUrl(dataUrl)
+      : kind === 'video'
+        ? await saveWhatsAppVideoDataUrl(dataUrl)
+        : kind === 'audio'
+          ? await saveWhatsAppAudioDataUrl(dataUrl)
+          : await saveWhatsAppDocumentDataUrl(dataUrl, filename, mimeType);
+    const publicUrl = buildLocalMediaUrl(saved, publicBaseUrl);
+
+    if (!/^https?:\/\//i.test(publicUrl)) {
+      throw new Error('HighLevel necesita un enlace público para mandar archivos desde este canal.');
+    }
+
+    prepared.push({
+      url: publicUrl,
+      localMedia: {
+        publicUrl,
+        publicPath: saved.publicPath,
+        mimeType: saved.mimeType,
+        filename: saved.filename || saved.storedFilename || filename,
+        size: saved.size,
+        mediaAssetId: saved.mediaAssetId,
+        kind
+      }
+    });
+  }
+
+  return {
+    urls: prepared.map(item => item.url),
+    localMedia: prepared.map(item => item.localMedia)
   };
 }
 
@@ -2584,6 +2648,7 @@ export async function sendHighLevelConversationMessageCore(payload = {}, { req, 
     channel,
     message,
     attachments,
+    attachmentDataUrls,
     audioDataUrl,
     audioUrl,
     durationMs,
@@ -2606,6 +2671,10 @@ export async function sendHighLevelConversationMessageCore(payload = {}, { req, 
     throw createHighLevelChatError('Ese canal no está permitido para enviar desde el chat.');
   }
 
+  const preparedFileAttachments = await prepareHighLevelFileAttachments({
+    attachmentDataUrls,
+    req
+  });
   const voiceAttachment = await prepareHighLevelVoiceAttachment({
     audioDataUrl,
     audioUrl,
@@ -2614,6 +2683,7 @@ export async function sendHighLevelConversationMessageCore(payload = {}, { req, 
   });
   const resolvedAttachmentUrls = [
     ...attachmentUrls,
+    ...preparedFileAttachments.urls,
     ...(voiceAttachment?.url ? [voiceAttachment.url] : [])
   ];
 
@@ -2757,7 +2827,10 @@ export async function sendHighLevelConversationMessageCore(payload = {}, { req, 
     replyWindowSource: channelResolution.replyWindowSource,
     lastInboundAt: channelResolution.lastInboundAt,
     ...(voiceAttachment?.audio ? { audio: voiceAttachment.audio } : {}),
-    ...(voiceAttachment?.localMedia ? { localMedia: voiceAttachment.localMedia } : {})
+    ...(voiceAttachment?.localMedia || preparedFileAttachments.localMedia[0]
+      ? { localMedia: voiceAttachment?.localMedia || preparedFileAttachments.localMedia[0] }
+      : {}),
+    ...(preparedFileAttachments.localMedia.length ? { localAttachments: preparedFileAttachments.localMedia } : {})
   };
 }
 

@@ -4042,6 +4042,48 @@
     var(--phone-chat-conversation-bg);
 }
 
+.chatDropOverlay {
+  position: absolute;
+  inset: 8px;
+  z-index: 12;
+  display: grid;
+  place-items: center;
+  border: 1px solid color-mix(in srgb, var(--phone-chat-accent) 42%, var(--phone-chat-border));
+  border-radius: 24px;
+  background: color-mix(in srgb, var(--phone-chat-conversation-bg) 58%, transparent);
+  backdrop-filter: blur(9px) saturate(1.08);
+  pointer-events: none;
+}
+
+.chatDropOverlayCard {
+  display: grid;
+  justify-items: center;
+  gap: 7px;
+  min-width: min(260px, 80%);
+  padding: 18px 20px;
+  border: 1px solid color-mix(in srgb, var(--phone-chat-accent) 36%, var(--phone-chat-border));
+  border-radius: 20px;
+  color: var(--phone-chat-text);
+  background: color-mix(in srgb, var(--phone-chat-surface) 86%, transparent);
+  box-shadow: 0 22px 54px rgba(var(--phone-chat-primary-rgb), 0.2);
+  text-align: center;
+}
+
+.chatDropOverlayCard svg {
+  color: var(--phone-chat-accent);
+}
+
+.chatDropOverlayCard strong {
+  font-size: 15px;
+  font-weight: 850;
+}
+
+.chatDropOverlayCard span {
+  color: var(--phone-chat-muted);
+  font-size: 12px;
+  font-weight: 700;
+}
+
 .messagesContent {
   display: flex;
   flex-direction: column;
@@ -9329,6 +9371,58 @@
     animation-duration: 1ms;
     transition-duration: 1ms !important;
   }
+}
+
+.mediaDeliveryPrompt {
+  display: grid;
+  gap: 12px;
+  padding: 2px 0 0;
+}
+
+.mediaDeliveryPrompt p {
+  margin: 0;
+  color: var(--phone-chat-text);
+  font-size: 14px;
+  line-height: 1.45;
+}
+
+.mediaDeliveryPrompt span {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--phone-chat-muted);
+  font-size: 12px;
+  font-weight: 720;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mediaDeliveryActions {
+  display: grid;
+  gap: 8px;
+}
+
+.mediaDeliveryActions button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 42px;
+  border: 1px solid var(--phone-chat-border);
+  border-radius: 14px;
+  color: var(--phone-chat-text);
+  background: var(--phone-chat-surface);
+  font-size: 14px;
+  font-weight: 820;
+}
+
+.mediaDeliveryActions .mediaDeliveryPrimary {
+  border-color: color-mix(in srgb, var(--phone-chat-accent) 72%, var(--phone-chat-border));
+  color: var(--phone-chat-text-on-primary);
+  background: var(--phone-chat-accent);
+}
+
+.mediaDeliveryActions .mediaDeliveryGhost {
+  color: var(--phone-chat-muted);
+  background: transparent;
 }
 
 .numberIssueBody {

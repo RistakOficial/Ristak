@@ -712,8 +712,13 @@ function parseAudioDataUrl(value = '') {
   return { buffer, mimeType, params, extension }
 }
 
+function getDocumentSendExtension(mimeType = '') {
+  const cleanMime = cleanMimeType(mimeType)
+  return DOCUMENT_EXTENSION_BY_MIME[cleanMime] || VIDEO_EXTENSION_BY_MIME[cleanMime] || AUDIO_EXTENSION_BY_MIME[cleanMime] || 'bin'
+}
+
 function sanitizeDocumentFilename(value = '', mimeType = '') {
-  const extension = DOCUMENT_EXTENSION_BY_MIME[mimeType] || 'pdf'
+  const extension = getDocumentSendExtension(mimeType)
   const rawName = cleanString(value).split(/[\\/]/).pop() || `documento-${Date.now()}.${extension}`
   const withoutControlChars = rawName.replace(/[\u0000-\u001f\u007f]/g, '')
   const sanitized = withoutControlChars.replace(/[<>:"/\\|?*]+/g, '_').replace(/\s+/g, ' ').trim()
@@ -730,14 +735,14 @@ function parseDocumentDataUrl(value = '', filename = '', providedMimeType = '') 
   const extension = cleanString(filename).toLowerCase().split('.').pop()
   const directMimeType = cleanString(providedMimeType).toLowerCase()
   const dataUrlMimeType = cleanString(match[1]).toLowerCase()
-  const mimeType = DOCUMENT_EXTENSION_BY_MIME[directMimeType]
+  const mimeType = DOCUMENT_EXTENSION_BY_MIME[directMimeType] || VIDEO_EXTENSION_BY_MIME[directMimeType] || AUDIO_EXTENSION_BY_MIME[directMimeType]
     ? directMimeType
-    : DOCUMENT_EXTENSION_BY_MIME[dataUrlMimeType]
+    : DOCUMENT_EXTENSION_BY_MIME[dataUrlMimeType] || VIDEO_EXTENSION_BY_MIME[dataUrlMimeType] || AUDIO_EXTENSION_BY_MIME[dataUrlMimeType]
       ? dataUrlMimeType
-      : DOCUMENT_MIME_BY_EXTENSION[extension]
+      : DOCUMENT_MIME_BY_EXTENSION[extension] || VIDEO_MIME_BY_EXTENSION[extension] || AUDIO_MIME_BY_EXTENSION[extension]
 
   if (!mimeType) {
-    throw new Error('El documento debe ser PDF, Word, Excel, PowerPoint, TXT o CSV.')
+    throw new Error('El archivo debe ser PDF, Word, Excel, PowerPoint, TXT, CSV, audio o video compatible.')
   }
 
   const buffer = Buffer.from(match[2].replace(/\s/g, ''), 'base64')
@@ -752,7 +757,7 @@ function parseDocumentDataUrl(value = '', filename = '', providedMimeType = '') 
   return {
     buffer,
     mimeType,
-    extension: DOCUMENT_EXTENSION_BY_MIME[mimeType],
+    extension: getDocumentSendExtension(mimeType),
     filename: sanitizeDocumentFilename(filename, mimeType)
   }
 }
@@ -1120,7 +1125,7 @@ export async function saveWhatsAppVideoDataUrl(dataUrl = '') {
   }
 }
 
-async function saveWhatsAppDocumentDataUrl(dataUrl = '', filename = '', mimeType = '') {
+export async function saveWhatsAppDocumentDataUrl(dataUrl = '', filename = '', mimeType = '') {
   const parsed = parseDocumentDataUrl(dataUrl, filename, mimeType)
   try {
     const { uploadMediaAsset } = await import('./mediaStorageService.js')

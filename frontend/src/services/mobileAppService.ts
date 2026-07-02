@@ -53,6 +53,8 @@ export interface MobileAppNotificationDetail {
   url: string
 }
 
+export type MobileAttachmentDeliveryMode = 'media' | 'document' | 'voice'
+
 export interface MobilePhotoAttachment {
   id: string
   name: string
@@ -61,6 +63,7 @@ export interface MobilePhotoAttachment {
   attachmentType: 'image'
   source: PhotoSource
   size?: number
+  deliveryMode?: MobileAttachmentDeliveryMode
 }
 
 export interface MobileVideoAttachment {
@@ -71,6 +74,18 @@ export interface MobileVideoAttachment {
   attachmentType: 'video'
   source: PhotoSource
   size: number
+  deliveryMode?: MobileAttachmentDeliveryMode
+}
+
+export interface MobileAudioAttachment {
+  id: string
+  name: string
+  type: string
+  dataUrl: string
+  attachmentType: 'audio'
+  source: DocumentSource
+  size: number
+  deliveryMode?: MobileAttachmentDeliveryMode
 }
 
 export interface MobileDocumentAttachment {
@@ -81,9 +96,10 @@ export interface MobileDocumentAttachment {
   attachmentType: 'document'
   source: DocumentSource
   size: number
+  deliveryMode?: MobileAttachmentDeliveryMode
 }
 
-export type MobileChatAttachment = MobilePhotoAttachment | MobileVideoAttachment | MobileDocumentAttachment
+export type MobileChatAttachment = MobilePhotoAttachment | MobileVideoAttachment | MobileAudioAttachment | MobileDocumentAttachment
 
 let shellConfigured = false
 let notificationListenersConfigured = false

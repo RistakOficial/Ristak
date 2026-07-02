@@ -122,7 +122,8 @@ type AdvancedStageFilter = 'all' | 'lead' | 'appointment' | 'customer'
 type AdvancedActivityFilter = 'all' | 'payments' | 'appointments' | 'with_source' | 'no_phone'
 type ComposerStatus = 'idle' | 'sending'
 type ChatAttachmentType = 'image' | 'audio' | 'video' | 'document' | 'file'
-type DraftAttachmentKind = 'image' | 'document'
+type DraftAttachmentKind = 'image' | 'video' | 'audio' | 'document'
+type DraftAttachmentDeliveryMode = 'media' | 'document' | 'voice'
 type InfoPanelView = 'summary' | 'journey'
 type BulkChatConfirmAction = 'archive' | 'remove'
 type BulkAgentSelectionAction = Extract<ConversationStateAction, 'activate' | 'pause' | 'take_over' | 'skip'>
@@ -258,9 +259,16 @@ type DesktopConversationTimelineItem =
 interface DesktopDraftAttachment {
   id: string
   kind: DraftAttachmentKind
+  deliveryMode: DraftAttachmentDeliveryMode
   name: string
   mimeType: string
   dataUrl: string
+  size: number
+}
+
+interface MediaDeliveryPromptState {
+  kind: 'video' | 'audio'
+  name: string
   size: number
 }
 
@@ -344,7 +352,10 @@ const BULK_CHAT_ARCHIVE_CONFIRM_WORD = 'ARCHIVAR'
 const BULK_CHAT_RESTORE_CONFIRM_WORD = 'RESTAURAR'
 const BULK_CHAT_REMOVE_CONFIRM_WORD = 'ELIMINAR'
 const MAX_IMAGE_ATTACHMENT_BYTES = 8 * 1024 * 1024
+const MAX_MEDIA_MESSAGE_BYTES = 16 * 1024 * 1024
 const MAX_DOCUMENT_ATTACHMENT_BYTES = 20 * 1024 * 1024
+const MAX_VIDEO_ATTACHMENT_BYTES = 25 * 1024 * 1024
+const MAX_DRAFT_ATTACHMENTS = 4
 const DOCUMENT_ATTACHMENT_ACCEPT = [
   '.pdf',
   '.doc',
@@ -355,6 +366,15 @@ const DOCUMENT_ATTACHMENT_ACCEPT = [
   '.pptx',
   '.txt',
   '.csv',
+  '.aac',
+  '.amr',
+  '.m4a',
+  '.mp3',
+  '.oga',
+  '.ogg',
+  '.opus',
+  '.wav',
+  '.webm',
   'application/pdf',
   'application/msword',
   'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
@@ -363,7 +383,8 @@ const DOCUMENT_ATTACHMENT_ACCEPT = [
   'application/vnd.ms-powerpoint',
   'application/vnd.openxmlformats-officedocument.presentationml.presentation',
   'text/plain',
-  'text/csv'
+  'text/csv',
+  'audio/*'
 ].join(',')
 const DOCUMENT_MIME_BY_EXTENSION: Record<string, string> = {
   pdf: 'application/pdf',
@@ -375,6 +396,26 @@ const DOCUMENT_MIME_BY_EXTENSION: Record<string, string> = {
   pptx: 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
   txt: 'text/plain',
   csv: 'text/csv'
+}
+const VIDEO_MIME_BY_EXTENSION: Record<string, string> = {
+  mp4: 'video/mp4',
+  m4v: 'video/mp4',
+  mov: 'video/quicktime',
+  qt: 'video/quicktime',
+  webm: 'video/webm',
+  '3gp': 'video/3gpp',
+  '3gpp': 'video/3gpp'
+}
+const AUDIO_MIME_BY_EXTENSION: Record<string, string> = {
+  aac: 'audio/aac',
+  amr: 'audio/amr',
+  m4a: 'audio/mp4',
+  mp3: 'audio/mpeg',
+  oga: 'audio/ogg',
+  ogg: 'audio/ogg',
+  opus: 'audio/ogg',
+  wav: 'audio/wav',
+  webm: 'audio/webm'
 }
 
 const DEFAULT_ADVANCED_FILTERS: AdvancedChatFilters = {
@@ -638,6 +679,30 @@ function getDocumentMimeType(file: File) {
   return DOCUMENT_MIME_BY_EXTENSION[extension] || fileType || 'application/octet-stream'
 }
 
+function getVideoMimeType(file: File) {
+  const fileType = String(file.type || '').trim().toLowerCase()
+  const extension = getFileExtension(file.name)
+  if (VIDEO_MIME_BY_EXTENSION[extension]) return VIDEO_MIME_BY_EXTENSION[extension]
+  return fileType.startsWith('video/') ? fileType : ''
+}
+
+function getAudioMimeType(file: File) {
+  const fileType = String(file.type || '').trim().toLowerCase()
+  const extension = getFileExtension(file.name)
+  if (AUDIO_MIME_BY_EXTENSION[extension]) return AUDIO_MIME_BY_EXTENSION[extension]
+  return fileType.startsWith('audio/') ? fileType : ''
+}
+
+function isSupportedVideoFile(file: File) {
+  const mimeType = getVideoMimeType(file)
+  return Boolean(VIDEO_MIME_BY_EXTENSION[getFileExtension(file.name)] || Object.values(VIDEO_MIME_BY_EXTENSION).includes(mimeType))
+}
+
+function isSupportedAudioFile(file: File) {
+  const mimeType = getAudioMimeType(file)
+  return Boolean(AUDIO_MIME_BY_EXTENSION[getFileExtension(file.name)] || Object.values(AUDIO_MIME_BY_EXTENSION).includes(mimeType))
+}
+
 function isSupportedDocumentFile(file: File) {
   const extension = getFileExtension(file.name)
   const mimeType = getDocumentMimeType(file)
@@ -649,15 +714,45 @@ function normalizeDataUrlMimeType(dataUrl: string, mimeType: string) {
   return dataUrl.replace(/^data:[^;,]*(;[^,]*)?,/i, (_match, params = '') => `data:${mimeType}${params || ';base64'},`)
 }
 
+function readFileAsDataUrl(file: File, mimeType: string): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader()
+    reader.onload = () => {
+      const dataUrl = typeof reader.result === 'string' ? normalizeDataUrlMimeType(reader.result, mimeType) : ''
+      if (!dataUrl) {
+        reject(new Error('No se pudo leer el archivo.'))
+        return
+      }
+      resolve(dataUrl)
+    }
+    reader.onerror = () => reject(reader.error || new Error('No se pudo leer el archivo.'))
+    reader.readAsDataURL(file)
+  })
+}
+
 function getDraftAttachmentMessageType(attachment: DesktopDraftAttachment): ChatAttachmentType {
-  return attachment.kind === 'image' ? 'image' : 'document'
+  if (attachment.deliveryMode === 'document') return 'document'
+  if (attachment.kind === 'image') return 'image'
+  if (attachment.kind === 'video') return 'video'
+  if (attachment.kind === 'audio') return 'audio'
+  return 'document'
+}
+
+function getDraftAttachmentLabel(attachment: DesktopDraftAttachment) {
+  if (attachment.deliveryMode === 'document') return 'Archivo'
+  if (attachment.kind === 'image') return 'Foto'
+  if (attachment.kind === 'video') return 'Video'
+  if (attachment.kind === 'audio') return attachment.deliveryMode === 'voice' ? 'Nota de voz' : 'Audio'
+  return 'Documento'
 }
 
 function getAttachmentPreviewText(attachments: DesktopDraftAttachment[], fallbackText = '') {
   if (!attachments.length) return fallbackText
-  const hasDocument = attachments.some((attachment) => attachment.kind === 'document')
-  if (attachments.length > 1) return hasDocument ? 'Archivos' : 'Fotos'
-  return hasDocument ? 'Documento' : 'Foto'
+  const hasFile = attachments.some((attachment) => attachment.deliveryMode === 'document' || attachment.kind === 'document')
+  const hasVideo = attachments.some((attachment) => attachment.kind === 'video' && attachment.deliveryMode !== 'document')
+  const hasAudio = attachments.some((attachment) => attachment.kind === 'audio' && attachment.deliveryMode !== 'document')
+  if (attachments.length > 1) return hasFile ? 'Archivos' : hasVideo ? 'Fotos y videos' : hasAudio ? 'Audios' : 'Fotos'
+  return getDraftAttachmentLabel(attachments[0])
 }
 
 function formatAttachmentSize(size?: number) {
@@ -2318,6 +2413,8 @@ export const DesktopChat: React.FC = () => {
   const [schedulingMessage, setSchedulingMessage] = useState(false)
   const [cancelingScheduledMessageId, setCancelingScheduledMessageId] = useState<string | null>(null)
   const [draftAttachments, setDraftAttachments] = useState<DesktopDraftAttachment[]>([])
+  const [draggingFilesOverChat, setDraggingFilesOverChat] = useState(false)
+  const [mediaDeliveryPrompt, setMediaDeliveryPrompt] = useState<MediaDeliveryPromptState | null>(null)
   const [voiceDraft, setVoiceDraft] = useState<VoiceDraftAttachment | null>(null)
   const [voiceRecording, setVoiceRecording] = useState(false)
   const [voiceProcessing, setVoiceProcessing] = useState(false)
@@ -2351,6 +2448,8 @@ export const DesktopChat: React.FC = () => {
   const [automationsLoading, setAutomationsLoading] = useState(false)
   const [selectedAutomationId, setSelectedAutomationId] = useState('')
   const [automationSubmitting, setAutomationSubmitting] = useState(false)
+  const mediaDeliveryPromptResolveRef = useRef<((mode: DraftAttachmentDeliveryMode | 'cancel') => void) | null>(null)
+  const dragDepthRef = useRef(0)
 
   const activeContact = useMemo(
     () => chats.find((contact) => contact.id === activeContactId) || null,
@@ -3913,95 +4012,209 @@ export const DesktopChat: React.FC = () => {
     })
   }, [isChatQueryActive, loadChats, normalizedChatQuery])
 
+  const resolveMediaDeliveryPrompt = useCallback((mode: DraftAttachmentDeliveryMode | 'cancel') => {
+    const resolve = mediaDeliveryPromptResolveRef.current
+    mediaDeliveryPromptResolveRef.current = null
+    setMediaDeliveryPrompt(null)
+    resolve?.(mode)
+  }, [])
+
+  const askMediaDeliveryMode = useCallback((file: File, kind: 'video' | 'audio') => (
+    new Promise<DraftAttachmentDeliveryMode | 'cancel'>((resolve) => {
+      mediaDeliveryPromptResolveRef.current = resolve
+      setMediaDeliveryPrompt({
+        kind,
+        name: file.name || (kind === 'video' ? 'video' : 'audio'),
+        size: file.size
+      })
+    })
+  ), [])
+
   const addDraftAttachment = useCallback((attachment: DesktopDraftAttachment) => {
-    setDraftAttachments((current) => [attachment, ...current].slice(0, 4))
-    showToast('success', attachment.kind === 'image' ? 'Foto lista' : 'Documento listo', 'Revisa la vista previa y manda el mensaje.')
+    setDraftAttachments((current) => [...current, attachment].slice(0, MAX_DRAFT_ATTACHMENTS))
+    showToast('success', `${getDraftAttachmentLabel(attachment)} listo`, 'Revisa la vista previa y manda el mensaje.')
   }, [showToast])
 
-  const readImageFile = useCallback((file: File, source: 'photos') => {
-    if (!file.type.startsWith('image/')) {
-      showToast('error', 'Archivo no válido', 'Elige una foto JPG, PNG o WebP.')
+  const readAttachmentFile = useCallback(async (
+    file: File,
+    kind: DraftAttachmentKind,
+    mimeType: string,
+    deliveryMode: DraftAttachmentDeliveryMode,
+    source: string
+  ) => {
+    const dataUrl = await readFileAsDataUrl(file, mimeType)
+    addDraftAttachment({
+      id: `${source}-${kind}-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+      kind,
+      deliveryMode,
+      name: file.name || `${kind}-${Date.now()}`,
+      mimeType,
+      dataUrl,
+      size: file.size
+    })
+  }, [addDraftAttachment])
+
+  const addFilesToDraft = useCallback(async (files: File[], source = 'drop') => {
+    if (!files.length) return
+    if (isEmailComposer) {
+      showToast('info', 'Adjuntos en correo', 'Por ahora arrastra archivos en WhatsApp, Messenger o Instagram; correo lo dejamos fuera hasta amarrar bien el flujo.')
+      return
+    }
+    if (voiceDraft || voiceRecording || voiceProcessing) {
+      showToast('warning', 'Audio en progreso', 'Termina o elimina la nota de voz antes de agregar archivos.')
       return
     }
 
-    if (file.size > MAX_IMAGE_ATTACHMENT_BYTES) {
-      showToast('error', 'La foto pesa demasiado', 'Elige una foto de menos de 8 MB.')
+    const availableSlots = Math.max(0, MAX_DRAFT_ATTACHMENTS - draftAttachments.length)
+    if (availableSlots === 0) {
+      showToast('warning', 'Límite de archivos', `Puedes mandar hasta ${MAX_DRAFT_ATTACHMENTS} adjuntos por mensaje.`)
       return
     }
 
-    const reader = new FileReader()
-    reader.onload = () => {
-      const dataUrl = typeof reader.result === 'string' ? reader.result : ''
-      if (!dataUrl) {
-        showToast('error', 'No se pudo leer', 'Intenta elegir la foto otra vez.')
-        return
+    const selectedFiles = files.slice(0, availableSlots)
+    if (files.length > selectedFiles.length) {
+      showToast('info', 'Solo se agregaron algunos', `El mensaje admite ${MAX_DRAFT_ATTACHMENTS} adjuntos.`)
+    }
+
+    for (const file of selectedFiles) {
+      try {
+        const fileType = String(file.type || '').toLowerCase()
+        const image = fileType.startsWith('image/')
+        const videoMimeType = getVideoMimeType(file)
+        const audioMimeType = getAudioMimeType(file)
+
+        if (image) {
+          if (file.size > MAX_IMAGE_ATTACHMENT_BYTES) {
+            showToast('error', 'La foto pesa demasiado', 'Elige una foto de menos de 8 MB.')
+            continue
+          }
+          await readAttachmentFile(file, 'image', file.type || 'image/jpeg', 'media', source)
+          continue
+        }
+
+        if (videoMimeType) {
+          if (!isSupportedVideoFile(file)) {
+            showToast('error', 'Video no válido', 'Usa MP4, MOV, WebM o 3GP.')
+            continue
+          }
+
+          let deliveryMode: DraftAttachmentDeliveryMode = 'media'
+          if (file.size > MAX_VIDEO_ATTACHMENT_BYTES) {
+            showToast('error', 'Video muy pesado', 'El video debe pesar menos de 25 MB para que Ristak lo pueda preparar.')
+            continue
+          }
+          if (file.size > MAX_MEDIA_MESSAGE_BYTES && file.size <= MAX_DOCUMENT_ATTACHMENT_BYTES) {
+            deliveryMode = 'document'
+          } else if (file.size <= MAX_MEDIA_MESSAGE_BYTES) {
+            const answer = await askMediaDeliveryMode(file, 'video')
+            if (answer === 'cancel') continue
+            deliveryMode = answer === 'document' ? 'document' : 'media'
+          }
+
+          await readAttachmentFile(file, 'video', videoMimeType, deliveryMode, source)
+          continue
+        }
+
+        if (audioMimeType) {
+          if (!isSupportedAudioFile(file)) {
+            showToast('error', 'Audio no válido', 'Usa MP3, M4A, OGG, WAV, AAC, AMR o WebM.')
+            continue
+          }
+          if (file.size > MAX_DOCUMENT_ATTACHMENT_BYTES) {
+            showToast('error', 'Audio muy pesado', 'El audio debe pesar menos de 20 MB para mandarlo desde el chat.')
+            continue
+          }
+
+          let deliveryMode: DraftAttachmentDeliveryMode = file.size > MAX_MEDIA_MESSAGE_BYTES ? 'document' : 'voice'
+          if (file.size <= MAX_MEDIA_MESSAGE_BYTES) {
+            const answer = await askMediaDeliveryMode(file, 'audio')
+            if (answer === 'cancel') continue
+            deliveryMode = answer === 'document' ? 'document' : 'voice'
+          }
+
+          await readAttachmentFile(file, 'audio', audioMimeType, deliveryMode, source)
+          continue
+        }
+
+        if (!isSupportedDocumentFile(file)) {
+          showToast('error', 'Archivo no válido', 'Elige un PDF, Word, Excel, PowerPoint, TXT o CSV.')
+          continue
+        }
+
+        if (file.size > MAX_DOCUMENT_ATTACHMENT_BYTES) {
+          showToast('error', 'Archivo muy pesado', 'Elige un documento de menos de 20 MB.')
+          continue
+        }
+
+        await readAttachmentFile(file, 'document', getDocumentMimeType(file), 'document', source)
+      } catch (error) {
+        showToast('error', 'No se pudo leer', getErrorMessage(error, 'Intenta elegir el archivo otra vez.'))
       }
-
-      addDraftAttachment({
-        id: `${source}-${Date.now()}`,
-        kind: 'image',
-        name: file.name || `foto-${Date.now()}`,
-        mimeType: file.type || 'image/jpeg',
-        dataUrl,
-        size: file.size
-      })
     }
-    reader.onerror = () => showToast('error', 'No se pudo leer', 'Intenta elegir la foto otra vez.')
-    reader.readAsDataURL(file)
-  }, [addDraftAttachment, showToast])
-
-  const readDocumentFile = useCallback((file: File) => {
-    if (!isSupportedDocumentFile(file)) {
-      showToast('error', 'Archivo no válido', 'Elige un PDF, Word, Excel, PowerPoint, TXT o CSV.')
-      return
-    }
-
-    if (file.size > MAX_DOCUMENT_ATTACHMENT_BYTES) {
-      showToast('error', 'Archivo muy pesado', 'Elige un documento de menos de 20 MB.')
-      return
-    }
-
-    const mimeType = getDocumentMimeType(file)
-    const reader = new FileReader()
-    reader.onload = () => {
-      const dataUrl = typeof reader.result === 'string' ? normalizeDataUrlMimeType(reader.result, mimeType) : ''
-      if (!dataUrl) {
-        showToast('error', 'No se pudo leer', 'Intenta elegir el documento otra vez.')
-        return
-      }
-
-      addDraftAttachment({
-        id: `document-${Date.now()}`,
-        kind: 'document',
-        name: file.name || `documento-${Date.now()}`,
-        mimeType,
-        dataUrl,
-        size: file.size
-      })
-    }
-    reader.onerror = () => showToast('error', 'No se pudo leer', 'Intenta elegir el documento otra vez.')
-    reader.readAsDataURL(file)
-  }, [addDraftAttachment, showToast])
+  }, [
+    askMediaDeliveryMode,
+    draftAttachments.length,
+    isEmailComposer,
+    readAttachmentFile,
+    showToast,
+    voiceDraft,
+    voiceProcessing,
+    voiceRecording
+  ])
 
   const handleImageSelected = useCallback((source: 'photos', event: React.ChangeEvent<HTMLInputElement>) => {
-    const file = event.target.files?.[0]
+    const files = Array.from(event.target.files || [])
     event.target.value = ''
-    if (!file) return
-    readImageFile(file, source)
+    if (!files.length) return
+    void addFilesToDraft(files, source)
     setComposerMenuOpen(false)
-  }, [readImageFile])
+  }, [addFilesToDraft])
 
   const handleDocumentSelected = useCallback((event: React.ChangeEvent<HTMLInputElement>) => {
-    const file = event.target.files?.[0]
+    const files = Array.from(event.target.files || [])
     event.target.value = ''
-    if (!file) return
-    readDocumentFile(file)
+    if (!files.length) return
+    void addFilesToDraft(files, 'document')
     setComposerMenuOpen(false)
-  }, [readDocumentFile])
+  }, [addFilesToDraft])
 
   const removeDraftAttachment = useCallback((attachmentId: string) => {
     setDraftAttachments((current) => current.filter((attachment) => attachment.id !== attachmentId))
   }, [])
+
+  const resetChatDragState = useCallback(() => {
+    dragDepthRef.current = 0
+    setDraggingFilesOverChat(false)
+  }, [])
+
+  const handleChatDragEnter = useCallback((event: React.DragEvent<HTMLElement>) => {
+    if (!event.dataTransfer?.types.includes('Files') || isEmailComposer) return
+    event.preventDefault()
+    dragDepthRef.current += 1
+    setDraggingFilesOverChat(true)
+  }, [isEmailComposer])
+
+  const handleChatDragOver = useCallback((event: React.DragEvent<HTMLElement>) => {
+    if (!event.dataTransfer?.types.includes('Files') || isEmailComposer) return
+    event.preventDefault()
+    event.dataTransfer.dropEffect = 'copy'
+    setDraggingFilesOverChat(true)
+  }, [isEmailComposer])
+
+  const handleChatDragLeave = useCallback((event: React.DragEvent<HTMLElement>) => {
+    if (!event.dataTransfer?.types.includes('Files')) return
+    event.preventDefault()
+    dragDepthRef.current = Math.max(0, dragDepthRef.current - 1)
+    if (dragDepthRef.current === 0) setDraggingFilesOverChat(false)
+  }, [])
+
+  const handleChatDrop = useCallback((event: React.DragEvent<HTMLElement>) => {
+    if (!event.dataTransfer?.types.includes('Files')) return
+    event.preventDefault()
+    const files = Array.from(event.dataTransfer.files || [])
+    resetChatDragState()
+    void addFilesToDraft(files, 'drop')
+  }, [addFilesToDraft, resetChatDragState])
 
   const closeComposerAgentMenu = useCallback(() => {
     setAgentComposerMenuOpen(false)
@@ -5204,6 +5417,16 @@ export const DesktopChat: React.FC = () => {
 	      return
 	    }
 
+    const sendAttachmentsThroughHighLevel = attachmentsToSend.length > 0 && highLevelConnected && (
+      composerChannel === 'messenger' ||
+      composerChannel === 'instagram' ||
+      (composerChannel === 'whatsapp' && !whatsappConnected)
+    )
+    const sendAttachmentsThroughNativeMeta = attachmentsToSend.length > 0 && (
+      (composerChannel === 'messenger' && metaMessengerConnected && !sendAttachmentsThroughHighLevel) ||
+      (composerChannel === 'instagram' && metaInstagramConnected && !sendAttachmentsThroughHighLevel)
+    )
+
 	    if (voiceToSend) {
       if (!activeContact.phone) {
         showToast('error', 'Falta el teléfono', 'Guarda el número del contacto antes de mandar audio por WhatsApp.')
@@ -5213,7 +5436,10 @@ export const DesktopChat: React.FC = () => {
         showToast('warning', 'Conecta WhatsApp para audio', 'Los mensajes de voz salen por WhatsApp API.')
         return
       }
-    } else if (attachmentsToSend.length > 0) {
+    } else if (sendAttachmentsThroughNativeMeta) {
+      showToast('warning', 'Solo texto por ahora', 'Messenger e Instagram nativo todavía no mandan archivos desde este chat. Con HighLevel conectado sí salen como adjuntos.')
+      return
+    } else if (attachmentsToSend.length > 0 && !sendAttachmentsThroughHighLevel) {
       if (!activeContact.phone) {
         showToast('error', 'Falta el teléfono', 'Guarda el número del contacto antes de mandar archivos por WhatsApp.')
         return
@@ -5239,7 +5465,7 @@ export const DesktopChat: React.FC = () => {
           status: 'enviando',
           businessPhone: selectedBusinessPhoneValue,
           businessPhoneNumberId: selectedBusinessPhone?.id || '',
-          transport: 'api',
+          transport: sendAttachmentsThroughHighLevel ? activeConversationChannel : 'api',
           attachment: {
             type: 'audio',
             dataUrl: voiceToSend.dataUrl,
@@ -5258,7 +5484,7 @@ export const DesktopChat: React.FC = () => {
           status: 'enviando',
           businessPhone: selectedBusinessPhoneValue,
           businessPhoneNumberId: selectedBusinessPhone?.id || '',
-          transport: 'api',
+          transport: sendAttachmentsThroughHighLevel ? activeConversationChannel : 'api',
           attachment: {
             type: getDraftAttachmentMessageType(attachment),
             dataUrl: attachment.dataUrl,
@@ -5335,9 +5561,37 @@ export const DesktopChat: React.FC = () => {
           : message
         ))
       } else if (attachmentsToSend.length > 0) {
-        const results = await Promise.all(attachmentsToSend.map((attachment, index) => (
-          attachment.kind === 'image'
-            ? whatsappApiService.sendImage({
+        if (sendAttachmentsThroughHighLevel) {
+          const result = await highLevelService.sendConversationMessage({
+            contactId: activeContact.id,
+            channel: activeConversationChannel,
+            message: text,
+            attachmentDataUrls: attachmentsToSend.map((attachment) => ({
+              dataUrl: attachment.dataUrl,
+              filename: attachment.name,
+              mimeType: attachment.mimeType,
+              kind: attachment.deliveryMode === 'document' ? 'document' : attachment.kind
+            })),
+            fromNumber: selectedBusinessPhoneValue || undefined,
+            toNumber: activeContact.phone || undefined,
+            externalId: optimisticId
+          })
+          const data = result.data || result
+          setMessages((current) => current.map((message) => (
+            message.id.startsWith(`${optimisticId}-attachment-`)
+              ? {
+                  ...message,
+                  id: message.id === `${optimisticId}-attachment-0` && data.localMessageId ? data.localMessageId : message.id,
+                  status: data.status || 'pending',
+                  transport: data.transport || activeConversationChannel
+                }
+              : message
+          )))
+        } else {
+          const results = await Promise.all(attachmentsToSend.map((attachment, index) => {
+            const attachmentType = getDraftAttachmentMessageType(attachment)
+            if (attachmentType === 'image') {
+              return whatsappApiService.sendImage({
                 to: activeContact.phone || '',
                 from: selectedBusinessPhoneValue,
                 contactId: activeContact.id,
@@ -5348,45 +5602,76 @@ export const DesktopChat: React.FC = () => {
                 phoneNumberId: selectedBusinessPhone?.id || undefined,
                 messageOrigin: 'manual_chat'
               })
-            : whatsappApiService.sendDocument({
+            }
+
+            if (attachmentType === 'video') {
+              return whatsappApiService.sendVideo({
                 to: activeContact.phone || '',
                 from: selectedBusinessPhoneValue,
                 contactId: activeContact.id,
-                documentDataUrl: attachment.dataUrl,
-                filename: attachment.name,
-                mimeType: attachment.mimeType,
+                videoDataUrl: attachment.dataUrl,
                 caption: index === 0 ? text : '',
                 externalId: `${optimisticId}-attachment-${index}`,
                 transport: 'api',
                 phoneNumberId: selectedBusinessPhone?.id || undefined,
                 messageOrigin: 'manual_chat'
               })
-        )))
-        setMessages((current) => current.map((message) => (
-          message.id.startsWith(`${optimisticId}-attachment-`)
-            ? (() => {
-                const result = results[Number(message.id.replace(`${optimisticId}-attachment-`, ''))]
-                const resultMedia = result?.document || result?.image || null
-                const mediaUrl = resultMedia?.link || resultMedia?.url || result?.localMedia?.publicUrl || ''
-                const mediaMimeType = resultMedia?.mimeType || resultMedia?.mimetype || result?.localMedia?.mimeType || ''
-                const mediaFilename = result?.document?.filename || result?.document?.fileName || result?.localMedia?.filename || ''
-                return {
-                  ...message,
-                  status: result?.status || 'sent',
-                  transport: result?.transport || message.transport,
-                  routingReason: result?.routingReason || result?.fallbackReason || message.routingReason,
-                  attachment: message.attachment
-                    ? {
-                        ...message.attachment,
-                        ...(mediaUrl ? { url: mediaUrl } : {}),
-                        ...(mediaMimeType ? { mimeType: mediaMimeType } : {}),
-                        ...(mediaFilename ? { name: mediaFilename } : {})
-                      }
-                    : message.attachment
-                }
-              })()
-            : message
-        )))
+            }
+
+            if (attachmentType === 'audio') {
+              return whatsappApiService.sendAudio({
+                to: activeContact.phone || '',
+                from: selectedBusinessPhoneValue,
+                audioDataUrl: attachment.dataUrl,
+                durationMs: undefined,
+                voice: attachment.deliveryMode === 'voice',
+                externalId: `${optimisticId}-attachment-${index}`,
+                transport: 'api',
+                phoneNumberId: selectedBusinessPhone?.id || undefined,
+                messageOrigin: 'manual_chat'
+              })
+            }
+
+            return whatsappApiService.sendDocument({
+              to: activeContact.phone || '',
+              from: selectedBusinessPhoneValue,
+              contactId: activeContact.id,
+              documentDataUrl: attachment.dataUrl,
+              filename: attachment.name,
+              mimeType: attachment.mimeType,
+              caption: index === 0 ? text : '',
+              externalId: `${optimisticId}-attachment-${index}`,
+              transport: 'api',
+              phoneNumberId: selectedBusinessPhone?.id || undefined,
+              messageOrigin: 'manual_chat'
+            })
+          }))
+          setMessages((current) => current.map((message) => (
+            message.id.startsWith(`${optimisticId}-attachment-`)
+              ? (() => {
+                  const result = results[Number(message.id.replace(`${optimisticId}-attachment-`, ''))]
+                  const resultMedia = result?.document || result?.image || result?.video || result?.audio || null
+                  const mediaUrl = resultMedia?.link || resultMedia?.url || result?.localMedia?.publicUrl || ''
+                  const mediaMimeType = resultMedia?.mimeType || resultMedia?.mimetype || result?.localMedia?.mimeType || ''
+                  const mediaFilename = result?.document?.filename || result?.document?.fileName || result?.video?.filename || result?.localMedia?.filename || ''
+                  return {
+                    ...message,
+                    status: result?.status || 'sent',
+                    transport: result?.transport || message.transport,
+                    routingReason: result?.routingReason || result?.fallbackReason || message.routingReason,
+                    attachment: message.attachment
+                      ? {
+                          ...message.attachment,
+                          ...(mediaUrl ? { url: mediaUrl } : {}),
+                          ...(mediaMimeType ? { mimeType: mediaMimeType } : {}),
+                          ...(mediaFilename ? { name: mediaFilename } : {})
+                        }
+                      : message.attachment
+                  }
+                })()
+              : message
+          )))
+        }
       } else if (whatsappConnected && activeContact.phone) {
         const result = await whatsappApiService.sendText({
           to: activeContact.phone,
@@ -6750,7 +7035,14 @@ export const DesktopChat: React.FC = () => {
           </div>
         </aside>
 
-        <main className={styles.conversationPanel} aria-label="Conversación">
+        <main
+          className={styles.conversationPanel}
+          aria-label="Conversación"
+          onDragEnter={handleChatDragEnter}
+          onDragOver={handleChatDragOver}
+          onDragLeave={handleChatDragLeave}
+          onDrop={handleChatDrop}
+        >
           {activeContact ? (
             <>
               <header className={styles.conversationHeader}>
@@ -6778,6 +7070,15 @@ export const DesktopChat: React.FC = () => {
                 className={styles.messagePane}
                 onScroll={updateMessagePaneBottomLock}
               >
+                {draggingFilesOverChat ? (
+                  <div className={styles.chatDropOverlay} aria-live="polite">
+                    <div className={styles.chatDropOverlayCard}>
+                      <Plus size={28} aria-hidden="true" />
+                      <strong>Suelta tu archivo aqui</strong>
+                      <span>Lo dejamos listo en la caja para agregar texto o más archivos.</span>
+                    </div>
+                  </div>
+                ) : null}
                 {olderMessagesLoading ? (
                   <div className={styles.cacheRefreshPill} role="status" aria-live="polite">
                     <Loader2 size={13} className={styles.spin} aria-hidden="true" />
@@ -6917,8 +7218,9 @@ export const DesktopChat: React.FC = () => {
                 <input
                   ref={photoInputRef}
                   type="file"
-                  accept="image/*"
+                  accept="image/*,video/*"
                   className={styles.hiddenFileInput}
+                  multiple
                   onChange={(event) => handleImageSelected('photos', event)}
                   tabIndex={-1}
                 />
@@ -6927,6 +7229,7 @@ export const DesktopChat: React.FC = () => {
                   type="file"
                   accept={DOCUMENT_ATTACHMENT_ACCEPT}
                   className={styles.hiddenFileInput}
+                  multiple
                   onChange={handleDocumentSelected}
                   tabIndex={-1}
                 />
@@ -6935,11 +7238,19 @@ export const DesktopChat: React.FC = () => {
 	                    {draftAttachments.map((attachment) => (
 	                      <div key={attachment.id} className={styles.draftAttachment}>
                         <span className={styles.draftAttachmentIcon}>
-                          {attachment.kind === 'image' ? <ImageIcon size={16} /> : <FileText size={16} />}
+                          {attachment.deliveryMode === 'document'
+                            ? <FileText size={16} />
+                            : attachment.kind === 'image'
+                              ? <ImageIcon size={16} />
+                              : attachment.kind === 'video'
+                                ? <Video size={16} />
+                                : attachment.kind === 'audio'
+                                  ? <Mic size={16} />
+                                  : <FileText size={16} />}
                         </span>
                         <span className={styles.draftAttachmentText}>
                           <strong>{attachment.name}</strong>
-                          <small>{formatAttachmentSize(attachment.size)}</small>
+                          <small>{getDraftAttachmentLabel(attachment)} · {formatAttachmentSize(attachment.size)}</small>
                         </span>
                         <button type="button" onClick={() => removeDraftAttachment(attachment.id)} aria-label={`Quitar ${attachment.name}`}>
                           <Trash2 size={14} />
@@ -7080,7 +7391,7 @@ export const DesktopChat: React.FC = () => {
 	                            </button>
 	                            <button type="button" role="menuitem" onClick={() => handleComposerMenuAction('photos')}>
 	                              <ImageIcon size={16} />
-	                              <span>Fotos</span>
+	                              <span>Fotos y videos</span>
 	                            </button>
 	                            <button type="button" role="menuitem" onClick={() => handleComposerMenuAction('documents')}>
 	                              <FileText size={16} />
@@ -7519,6 +7830,55 @@ export const DesktopChat: React.FC = () => {
         onSave={handleSaveAppointment}
         onDelete={editingAppointmentEvent ? handleDeleteAppointment : undefined}
       />
+
+      <Modal
+        isOpen={Boolean(mediaDeliveryPrompt)}
+        onClose={() => resolveMediaDeliveryPrompt('cancel')}
+        title={mediaDeliveryPrompt?.kind === 'audio' ? 'Enviar audio' : 'Enviar video'}
+        size="sm"
+        closeOnBackdropClick={false}
+      >
+        <div className={styles.mediaDeliveryPrompt}>
+          <p>
+            {mediaDeliveryPrompt?.kind === 'audio'
+              ? 'Este audio puede salir como nota de voz o como archivo.'
+              : 'Este video puede salir como video reproducible o como archivo.'}
+          </p>
+          {mediaDeliveryPrompt ? (
+            <span>
+              {mediaDeliveryPrompt.name} · {formatAttachmentSize(mediaDeliveryPrompt.size)}
+            </span>
+          ) : null}
+          <div className={styles.mediaDeliveryActions}>
+            <Button
+              type="button"
+              variant="primary"
+              size="sm"
+              leftIcon={mediaDeliveryPrompt?.kind === 'audio' ? <Mic size={15} /> : <Video size={15} />}
+              onClick={() => resolveMediaDeliveryPrompt(mediaDeliveryPrompt?.kind === 'audio' ? 'voice' : 'media')}
+            >
+              {mediaDeliveryPrompt?.kind === 'audio' ? 'Nota de voz' : 'Video'}
+            </Button>
+            <Button
+              type="button"
+              variant="secondary"
+              size="sm"
+              leftIcon={<FileText size={15} />}
+              onClick={() => resolveMediaDeliveryPrompt('document')}
+            >
+              Archivo
+            </Button>
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              onClick={() => resolveMediaDeliveryPrompt('cancel')}
+            >
+              Cancelar
+            </Button>
+          </div>
+        </div>
+      </Modal>
 
       <Modal
         isOpen={Boolean(manualAgentSendPrompt)}
