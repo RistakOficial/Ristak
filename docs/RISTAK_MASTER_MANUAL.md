@@ -386,12 +386,20 @@ Reglas base:
 - Si Meta esta configurado con dataset/pixel y token guardado, los calendarios
   locales nuevos activan `customEvents.enabled` por default para mandar `Schedule`
   al agendar. Ediciones posteriores respetan el apagado manual del usuario.
-- Si el contacto que agenda viene de una conversacion Meta, el canal `smart`
-  manda la conversion por CAPI con `action_source=business_messaging`: WhatsApp
-  usa `ctwa_clid`, Messenger usa `page_scoped_user_id` + `page_id` e Instagram
-  usa `ig_sid` + `ig_account_id`. En esos canales de mensajeria el
-  evento de cita se normaliza a `LeadSubmitted`; el evento web sigue usando
-  `Schedule`.
+- El canal `smart` de eventos de calendario se resuelve por la SUPERFICIE REAL
+  de la conversion, no por la atribucion del contacto (ver
+  `docs/CONVERSION_ATTRIBUTION.md`): un booking en la pagina/widget publico es
+  `website` siempre; una cita creada desde el admin/webhook/agente usa el canal
+  de la conversacion mas reciente del contacto (WhatsApp/Messenger/Instagram) y
+  cae a `website` si no hay mensajeria. WhatsApp usa `ctwa_clid` cuando existe
+  (sin ctwa se manda igual con matching por telefono), Messenger usa
+  `page_scoped_user_id` + `page_id` e Instagram usa `ig_sid` + `ig_account_id`.
+  En canales de mensajeria el evento de cita se normaliza a `LeadSubmitted`; el
+  evento web sigue usando `Schedule`. Un canal explicito (whatsapp/messenger/
+  instagram/site) en la config del calendario es override forzado.
+- La atribucion interna de la cita (ultimo paid touch valido del contacto) se
+  guarda como snapshot en `appointments.attribution_*` + `conversion_surface`
+  al crearse, independiente del payload que se mande a Meta.
 
 Documentacion especifica:
 
@@ -467,11 +475,20 @@ Implementacion esperada:
   Meta Test Events.
 - El pixel publico de navegador para checkout no debe usarse para pagos test si
   no hay aislamiento equivalente al `test_event_code` de CAPI.
-- En compras con canal `smart`, si el contacto tiene atribucion de WhatsApp,
-  Messenger o Instagram, la conversion se manda server-side como
-  `business_messaging` y el pixel publico del checkout no se genera para evitar
-  doble conteo.
-- Tests: `backend/test/metaPaymentPurchaseEvent.test.mjs`.
+- En compras con canal `smart`, el `action_source` lo decide la SUPERFICIE REAL
+  de la conversion (ver `docs/CONVERSION_ATTRIBUTION.md`): un pago con URL de
+  checkout es `website` aunque el contacto tenga atribucion de mensajeria; un
+  pago sin checkout usa el canal de la conversacion mas reciente
+  (WhatsApp/Messenger/Instagram) y cae a website/system_generated si no hay
+  mensajeria. La atribucion interna (ultimo paid touch) se guarda en
+  `payments.attribution_*` + `conversion_surface` y viaja como metadata en
+  `custom_data` (ad_id, ad_name, attribution_channel).
+- El pixel publico del checkout SIEMPRE se genera para pagos de checkout (la
+  superficie es website); comparte `event_id` con el evento server-side para
+  que Meta deduplique. Solo se suprime si el canal configurado es un override
+  explicito de mensajeria (whatsapp/messenger/instagram).
+- Tests: `backend/test/metaPaymentPurchaseEvent.test.mjs` y
+  `backend/test/conversionAttribution.test.mjs`.
 
 Esta regla existe para que los reportes de Meta no se contaminen con compras de
 prueba. No la debilites por comodidad.
@@ -504,6 +521,11 @@ Ristak usa Meta en varias areas:
   `messaging_channel` segun el canal real. `Purchase` conserva `event_name=Purchase`
   y toma `currency` desde la cuenta; las citas de mensajeria usan
   `LeadSubmitted`.
+- Atribucion interna y payload de Meta son dos conceptos SEPARADOS: la
+  atribucion la decide el ultimo paid/ad touch valido del contacto
+  (`backend/src/services/conversionAttributionService.js`) y el payload CAPI lo
+  decide la superficie real donde ocurrio la conversion. Nunca se falsifica
+  `action_source`. Detalle completo en `docs/CONVERSION_ATTRIBUTION.md`.
 - Social messaging.
 - Business Messaging events.
 - Campaign Builder en modo preview/validacion segun entorno.

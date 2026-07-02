@@ -213,8 +213,106 @@ async function insertMetaPixelConfig({
 async function deletePaymentMetaTestContact(contactId) {
   await db.run('DELETE FROM meta_conversion_event_logs WHERE contact_id = ?', [contactId]).catch(() => undefined)
   await db.run('DELETE FROM whatsapp_attribution WHERE contact_id = ?', [contactId]).catch(() => undefined)
+  await db.run('DELETE FROM whatsapp_api_messages WHERE contact_id = ?', [contactId]).catch(() => undefined)
+  await db.run('DELETE FROM meta_social_messages WHERE contact_id = ?', [contactId]).catch(() => undefined)
   await db.run('DELETE FROM meta_social_contacts WHERE contact_id = ?', [contactId]).catch(() => undefined)
+  await db.run('DELETE FROM sessions WHERE contact_id = ?', [contactId]).catch(() => undefined)
+  await db.run('DELETE FROM payments WHERE contact_id = ?', [contactId]).catch(() => undefined)
+  await db.run('DELETE FROM appointments WHERE contact_id = ?', [contactId]).catch(() => undefined)
   await db.run('DELETE FROM contacts WHERE id = ?', [contactId]).catch(() => undefined)
+}
+
+async function insertMetaSocialDmMessage({
+  contactId,
+  platform = 'messenger',
+  senderId = `sender_${contactId}`,
+  pageId = `page_${contactId}`,
+  instagramAccountId = '',
+  referral = null,
+  messageTimestamp = new Date().toISOString()
+}) {
+  await db.run(
+    `INSERT INTO meta_social_messages (
+       id, platform, contact_id, sender_id, recipient_id, page_id, instagram_account_id,
+       direction, status, message_type, message_text, message_timestamp, referral_json, created_at, updated_at
+     ) VALUES (?, ?, ?, ?, ?, ?, ?, 'inbound', 'received', 'text', 'hola', ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+    [
+      `meta_social_msg_${contactId}_${platform}_${Math.random().toString(16).slice(2)}`,
+      platform,
+      contactId,
+      senderId,
+      platform === 'instagram' ? instagramAccountId : pageId,
+      pageId || null,
+      instagramAccountId || null,
+      messageTimestamp,
+      referral ? JSON.stringify(referral) : null
+    ]
+  )
+}
+
+async function insertWhatsappInboundMessage({
+  contactId,
+  phone,
+  ctwaClid = '',
+  sourceId = '',
+  headline = '',
+  messageTimestamp = new Date().toISOString()
+}) {
+  await db.run(
+    `INSERT INTO whatsapp_api_messages (
+       id, provider, contact_id, phone, from_phone, direction, message_type, message_text,
+       message_timestamp, detected_ctwa_clid, detected_source_id, detected_headline, created_at, updated_at
+     ) VALUES (?, 'ycloud', ?, ?, ?, 'inbound', 'text', 'hola', ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+    [
+      `wa_msg_${contactId}_${Math.random().toString(16).slice(2)}`,
+      contactId,
+      phone,
+      phone,
+      messageTimestamp,
+      ctwaClid || null,
+      sourceId || null,
+      headline || null
+    ]
+  )
+}
+
+async function insertWebSession({
+  contactId,
+  email = '',
+  fbclid = '',
+  fbc = '',
+  fbp = '',
+  adId = '',
+  campaignId = '',
+  adsetId = '',
+  adName = '',
+  utmMedium = '',
+  pageUrl = 'https://site.example.test/landing',
+  startedAt = new Date().toISOString()
+}) {
+  await db.run(
+    `INSERT INTO sessions (
+       session_id, visitor_id, contact_id, email, event_name, started_at, created_at,
+       page_url, utm_medium, fbclid, fbc, fbp, campaign_id, adset_id, ad_id, ad_name
+     ) VALUES (?, ?, ?, ?, 'page_view', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    [
+      `session_${contactId}_${Math.random().toString(16).slice(2)}`,
+      `visitor_${contactId}`,
+      contactId,
+      email || null,
+      startedAt,
+      startedAt,
+      pageUrl,
+      utmMedium || null,
+      fbclid || null,
+      fbc || null,
+      fbp || null,
+      campaignId || null,
+      adsetId || null,
+      adId || null,
+      adName || null
+    ]
+  )
 }
 
 async function insertMetaSocialContact({
@@ -946,7 +1044,7 @@ test('payment plan Purchase uses total plan value once by default', async () => 
   }
 })
 
-test('payment smart default sends WhatsApp Business Messaging data when attribution exists', async () => {
+test('payment smart sends website Purchase for checkout payments even with WhatsApp ad attribution', async () => {
   const previousMetaGraphDescriptor = Object.getOwnPropertyDescriptor(API_URLS, 'META_GRAPH')
   const contactId = 'contact_meta_purchase_smart_whatsapp'
   const metaCalls = []
@@ -1005,24 +1103,24 @@ test('payment smart default sends WhatsApp Business Messaging data when attribut
         assert.equal(result.sent, true)
         assert.equal(metaCalls.length, 1)
 
+        // La compra ocurrió en un checkout web: el payload es website aunque
+        // la atribución interna venga del anuncio de WhatsApp (último paid touch).
         const payload = JSON.parse(metaCalls[0].body)
         assert.equal(payload.data[0].event_name, 'Purchase')
-        assert.equal(payload.data[0].action_source, 'business_messaging')
-        assert.equal(payload.data[0].messaging_channel, 'whatsapp')
+        assert.equal(payload.data[0].action_source, 'website')
+        assert.equal(payload.data[0].messaging_channel, undefined)
+        assert.equal(payload.data[0].event_source_url, 'https://checkout.example.test/pay/payment_meta_purchase_smart_wa')
         assert.equal(payload.data[0].event_id, `purchase_contact_${contactId}`)
-        assert.equal(payload.data[0].user_data.ctwa_clid, 'ctwa-smart-payment-123')
-        assert.equal(payload.data[0].user_data.page_id, 'page-smart-123')
         assert.equal(payload.data[0].custom_data.value, 777.5)
         assert.equal(payload.data[0].custom_data.currency, 'MXN')
         assert.equal(payload.data[0].custom_data.predicted_ltv, 5400)
         assert.equal(payload.data[0].custom_data.payment_id, 'payment_meta_purchase_smart_wa')
         assert.equal(payload.data[0].custom_data.payment_status, 'paid')
         assert.equal(payload.data[0].custom_data.checkout_source, 'smart_default')
+        // La atribución interna (crédito) sí viaja en custom_data desde el touch.
         assert.equal(payload.data[0].custom_data.ad_id, 'ad-smart-77')
         assert.equal(payload.data[0].custom_data.ad_name, 'Smart payment ad')
-        assert.equal(payload.data[0].custom_data.referral_source_type, 'ad')
-        assert.equal(payload.data[0].custom_data.referral_source_url, 'https://fb.example.test/ad/77')
-        assert.equal(payload.data[0].custom_data.attribution_source, 'legacy')
+        assert.equal(payload.data[0].custom_data.attribution_channel, 'whatsapp')
       })
     })
   } finally {
@@ -1032,7 +1130,7 @@ test('payment smart default sends WhatsApp Business Messaging data when attribut
   }
 })
 
-test('payment smart default sends Messenger Business Messaging data when social identity exists', async () => {
+test('payment smart sends Messenger Business Messaging when the conversation lives in Messenger', async () => {
   const previousMetaGraphDescriptor = Object.getOwnPropertyDescriptor(API_URLS, 'META_GRAPH')
   const contactId = 'contact_meta_purchase_smart_messenger'
   const metaCalls = []
@@ -1055,6 +1153,13 @@ test('payment smart default sends Messenger Business Messaging data when social 
           senderId: 'psid-purchase-123',
           pageId: 'page-purchase-msg-123'
         })
+        // La conversación real vive en Messenger: hay actividad de DM previa.
+        await insertMetaSocialDmMessage({
+          contactId,
+          platform: 'messenger',
+          senderId: 'psid-purchase-123',
+          pageId: 'page-purchase-msg-123'
+        })
 
         await insertMetaPixelConfig({ pageId: 'page-meta-fallback-msg' })
         await saveAccountLocaleSettings({ countryCode: 'US', currency: 'USD', dialCode: '1' })
@@ -1072,11 +1177,11 @@ test('payment smart default sends Messenger Business Messaging data when social 
 
         metaServer = await startMetaCaptureServer(metaCalls)
 
+        // Pago sin URL de checkout: la conversión se cerró en el DM.
         const result = await triggerMetaPaymentPurchaseEvent(contactId, {
           id: 'payment_meta_purchase_smart_msg',
           amount: 321.25,
-          status: 'paid',
-          eventSourceUrl: 'https://checkout.example.test/pay/payment_meta_purchase_smart_msg'
+          status: 'paid'
         })
 
         assert.equal(result.sent, true)
@@ -1315,7 +1420,7 @@ test('public payment pixel event is built for smart website Purchase without Wha
   }
 })
 
-test('public payment pixel event is skipped for smart WhatsApp-attributed payments', async () => {
+test('public payment pixel event is built for smart WhatsApp-attributed checkout payments', async () => {
   const contactId = 'contact_meta_public_pixel_whatsapp'
 
   try {
@@ -1361,6 +1466,9 @@ test('public payment pixel event is skipped for smart WhatsApp-attributed paymen
           }
         }))
 
+        // Un pago de checkout ES superficie website: el pixel del navegador
+        // dispara siempre y comparte event_id con el evento server-side para
+        // que Meta deduplique (antes se suprimía por atribución de WhatsApp).
         const event = await buildMetaPublicPurchasePixelEvent({
           id: 'payment_meta_public_pixel_wa',
           contact_id: contactId,
@@ -1373,7 +1481,11 @@ test('public payment pixel event is skipped for smart WhatsApp-attributed paymen
           payment_url: 'https://checkout.example.test/pay/public_pixel_wa'
         })
 
-        assert.equal(event, null)
+        assert.ok(event)
+        assert.equal(event.pixelId, 'pixel-public-payment-wa-123')
+        assert.equal(event.eventName, 'Purchase')
+        assert.equal(event.eventId, `purchase_contact_${contactId}`)
+        assert.equal(event.customData.value, 650)
       })
     })
   } finally {
@@ -1381,7 +1493,7 @@ test('public payment pixel event is skipped for smart WhatsApp-attributed paymen
   }
 })
 
-test('public payment pixel event is skipped for smart Meta social-attributed payments', async () => {
+test('public payment pixel event is built for smart Meta social-attributed checkout payments', async () => {
   const contactId = 'contact_meta_public_pixel_messenger'
 
   try {
@@ -1429,7 +1541,11 @@ test('public payment pixel event is skipped for smart Meta social-attributed pay
           payment_url: 'https://checkout.example.test/pay/public_pixel_msg'
         })
 
-        assert.equal(event, null)
+        assert.ok(event)
+        assert.equal(event.pixelId, 'pixel-public-payment-msg-123')
+        assert.equal(event.eventName, 'Purchase')
+        assert.equal(event.eventId, `purchase_contact_${contactId}`)
+        assert.equal(event.customData.value, 725)
       })
     })
   } finally {

@@ -9593,7 +9593,10 @@ async function executeCreateHighLevelAppointment(args = {}, highLevelConnection 
     appointmentStatus
   })
 
-  await triggerWhatsappAppointmentBookedEvent(resolvedContact.contact.id, { calendarId: calendarResult.calendarId })
+  await triggerWhatsappAppointmentBookedEvent(resolvedContact.contact.id, {
+    calendarId: calendarResult.calendarId,
+    appointmentId: appointment?.id
+  })
   await refreshAppointmentContactStats(resolvedContact.contact.id)
 
   return {
