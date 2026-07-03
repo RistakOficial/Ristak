@@ -3,7 +3,16 @@ import assert from 'node:assert/strict'
 import crypto from 'node:crypto'
 
 import { db, getAppConfig, setAppConfig } from '../src/config/database.js'
-import { createBlock, createSite, createSubmissionFromRequest, deleteSite, renderPublicSiteHtml, restoreBlocks } from '../src/services/sitesService.js'
+import {
+  createBlock,
+  createSite,
+  createSubmissionFromRequest,
+  deleteSite,
+  initSitePaymentCheckout,
+  renderPublicSiteHtml,
+  restoreBlocks,
+  updateSite
+} from '../src/services/sitesService.js'
 import { parseContactCustomFields } from '../src/utils/contactCustomFields.js'
 
 const DOMAIN_KEYS = {
@@ -11,6 +20,12 @@ const DOMAIN_KEYS = {
   verified: 'sites_public_domain_verified',
   checkedAt: 'sites_public_domain_checked_at',
   error: 'sites_public_domain_error'
+}
+const STRIPE_TEST_CONFIG_KEYS = {
+  publishableKey: 'stripe_publishable_key',
+  secretKey: 'stripe_secret_key_encrypted',
+  webhookSecret: 'stripe_webhook_secret_encrypted',
+  manualModeConnections: 'stripe_manual_mode_connections'
 }
 
 async function waitForAutomationEnrollments(automationIds, timeoutMs = 1500) {
@@ -175,7 +190,6 @@ test('landing funnel form submission ignores payment blocks from later pages and
     await setAppConfig(DOMAIN_KEYS.verified, '1')
     await setAppConfig(DOMAIN_KEYS.checkedAt, new Date().toISOString())
     await setAppConfig(DOMAIN_KEYS.error, '')
-
     site = await createSite({
       name: 'Funnel formulario calendario pago',
       slug: `funnel-form-pay-${suffix}`,
@@ -268,6 +282,146 @@ test('landing funnel form submission ignores payment blocks from later pages and
     await setAppConfig(DOMAIN_KEYS.verified, previousConfig.verified)
     await setAppConfig(DOMAIN_KEYS.checkedAt, previousConfig.checkedAt)
     await setAppConfig(DOMAIN_KEYS.error, previousConfig.error)
+  }
+})
+
+test('site checkout requests must identify the payment block and match its page', async () => {
+  const previousConfig = {
+    domain: await getAppConfig(DOMAIN_KEYS.domain),
+    verified: await getAppConfig(DOMAIN_KEYS.verified),
+    checkedAt: await getAppConfig(DOMAIN_KEYS.checkedAt),
+    error: await getAppConfig(DOMAIN_KEYS.error)
+  }
+  const previousStripeConfig = {
+    publishableKey: await getAppConfig(STRIPE_TEST_CONFIG_KEYS.publishableKey),
+    secretKey: await getAppConfig(STRIPE_TEST_CONFIG_KEYS.secretKey),
+    webhookSecret: await getAppConfig(STRIPE_TEST_CONFIG_KEYS.webhookSecret),
+    manualModeConnections: await getAppConfig(STRIPE_TEST_CONFIG_KEYS.manualModeConnections)
+  }
+  const suffix = crypto.randomUUID()
+  const crossPaymentId = `payment_cross_page_${suffix}`
+  const crossPublicPaymentId = `rstk_pay_cross_page_${suffix}`
+  let site
+
+  try {
+    await setAppConfig(DOMAIN_KEYS.domain, 'example.test')
+    await setAppConfig(DOMAIN_KEYS.verified, '1')
+    await setAppConfig(DOMAIN_KEYS.checkedAt, new Date().toISOString())
+    await setAppConfig(DOMAIN_KEYS.error, '')
+    await setAppConfig(STRIPE_TEST_CONFIG_KEYS.publishableKey, '')
+    await setAppConfig(STRIPE_TEST_CONFIG_KEYS.secretKey, '')
+    await setAppConfig(STRIPE_TEST_CONFIG_KEYS.webhookSecret, '')
+    await setAppConfig(STRIPE_TEST_CONFIG_KEYS.manualModeConnections, JSON.stringify({ test: {}, live: {} }))
+
+    site = await createSite({
+      name: 'Checkout aislado por pagina',
+      slug: `checkout-page-scope-${suffix}`,
+      siteType: 'landing_page',
+      status: 'published',
+      blankCanvas: true,
+      theme: {
+        pages: [
+          { id: 'page-a', title: 'A', sortOrder: 0 },
+          { id: 'page-b', title: 'B', sortOrder: 1 }
+        ]
+      }
+    })
+
+    const siteWithFirstPayment = await createBlock(site.id, {
+      blockType: 'payment',
+      label: 'Pago A',
+      settings: {
+        pageId: 'page-a',
+        paymentGate: { enabled: true, gateway: 'stripe', amount: 100, currency: 'MXN', productName: 'Pago A' }
+      }
+    })
+    const firstPaymentBlock = siteWithFirstPayment.blocks.find(block => block.label === 'Pago A')
+    await createBlock(site.id, {
+      blockType: 'payment',
+      label: 'Pago B',
+      settings: {
+        pageId: 'page-b',
+        paymentGate: { enabled: true, gateway: 'stripe', amount: 200, currency: 'MXN', productName: 'Pago B' }
+      }
+    })
+
+    const req = {
+      headers: { host: 'example.test', 'user-agent': 'node-test' },
+      get(name) {
+        return this.headers[String(name || '').toLowerCase()] || ''
+      },
+      protocol: 'https',
+      hostname: 'example.test',
+      path: `/${site.slug}`,
+      ip: '127.0.0.1',
+      socket: { remoteAddress: '127.0.0.1' }
+    }
+
+    await assert.rejects(
+      () => initSitePaymentCheckout(req, { siteId: site.id, pageId: 'page-a' }),
+      error => error.status === 400 && /bloque de pago/i.test(error.message)
+    )
+    await assert.rejects(
+      () => initSitePaymentCheckout(req, { siteId: site.id, blockId: firstPaymentBlock.id, pageId: 'page-b' }),
+      error => error.status === 409 && /pagina solicitada/i.test(error.message)
+    )
+
+    await db.run(
+      `INSERT INTO payments (
+        id, amount, currency, status, payment_method, payment_provider,
+        reference, title, public_payment_id, payment_url, paid_at,
+        metadata_json, date, created_at, updated_at
+      ) VALUES (?, 100, 'MXN', 'paid', 'stripe', 'stripe', ?, 'Pago cruzado',
+        ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+      [
+        crossPaymentId,
+        crossPublicPaymentId,
+        crossPublicPaymentId,
+        `https://example.test/pay/${crossPublicPaymentId}`,
+        new Date().toISOString(),
+        JSON.stringify({
+          siteId: site.id,
+          pageId: 'page-b',
+          blockPageId: 'page-b',
+          paymentBlockId: firstPaymentBlock.id,
+          paymentGate: {
+            source: 'site_checkout',
+            siteId: site.id,
+            pageId: 'page-b',
+            blockPageId: 'page-b',
+            paymentBlockId: firstPaymentBlock.id
+          }
+        }),
+        new Date().toISOString()
+      ]
+    )
+    const crossResume = await initSitePaymentCheckout(req, {
+      siteId: site.id,
+      blockId: firstPaymentBlock.id,
+      pageId: 'page-a',
+      paymentPublicId: crossPublicPaymentId
+    })
+    assert.notEqual(crossResume.paid, true)
+    assert.equal(crossResume.publicPaymentId, '')
+
+    const result = await initSitePaymentCheckout(req, { siteId: site.id, blockId: firstPaymentBlock.id, pageId: 'page-a' })
+    assert.equal(result.blockId, firstPaymentBlock.id)
+    assert.equal(result.blockPageId, 'page-a')
+    assert.equal(result.amount, 100)
+    assert.equal(result.productName, 'Pago A')
+  } finally {
+    if (site?.id) {
+      await deleteSite(site.id).catch(() => undefined)
+    }
+    await db.run('DELETE FROM payments WHERE id = ?', [crossPaymentId]).catch(() => undefined)
+    await setAppConfig(DOMAIN_KEYS.domain, previousConfig.domain)
+    await setAppConfig(DOMAIN_KEYS.verified, previousConfig.verified)
+    await setAppConfig(DOMAIN_KEYS.checkedAt, previousConfig.checkedAt)
+    await setAppConfig(DOMAIN_KEYS.error, previousConfig.error)
+    await setAppConfig(STRIPE_TEST_CONFIG_KEYS.publishableKey, previousStripeConfig.publishableKey)
+    await setAppConfig(STRIPE_TEST_CONFIG_KEYS.secretKey, previousStripeConfig.secretKey)
+    await setAppConfig(STRIPE_TEST_CONFIG_KEYS.webhookSecret, previousStripeConfig.webhookSecret)
+    await setAppConfig(STRIPE_TEST_CONFIG_KEYS.manualModeConnections, previousStripeConfig.manualModeConnections)
   }
 })
 
@@ -1237,6 +1391,90 @@ test('site blocks keep the editor provided id when manually saved', async () => 
     })
 
     assert.ok(siteWithBlock.blocks.some(block => block.id === blockId))
+  } finally {
+    if (site?.id) {
+      await deleteSite(site.id).catch(() => undefined)
+    }
+  }
+})
+
+test('site pages keep unique ids when saved with missing or repeated page ids', async () => {
+  let site
+
+  try {
+    site = await createSite({
+      name: 'Sitio paginas únicas',
+      slug: `unique-page-ids-${Date.now()}`,
+      siteType: 'landing_page',
+      status: 'draft',
+      blankCanvas: true,
+      theme: {
+        pages: [
+          { id: 'page-1', title: 'Formulario', sortOrder: 0 },
+          { id: 'page-1', title: 'Pago', sortOrder: 1 },
+          { title: 'Gracias', sortOrder: 2 }
+        ]
+      }
+    })
+
+    assert.deepEqual(site.theme.pages.map(page => page.id), ['page-1', 'page-1-2', 'page-3'])
+
+    const updated = await updateSite(site.id, {
+      theme: {
+        ...site.theme,
+        pages: [
+          { id: 'paso', title: 'Paso A', sortOrder: 0 },
+          { id: 'paso', title: 'Paso B', sortOrder: 1 },
+          { title: 'Paso C', sortOrder: 2 }
+        ]
+      }
+    })
+
+    assert.deepEqual(updated.theme.pages.map(page => page.id), ['paso', 'paso-2', 'page-3'])
+  } finally {
+    if (site?.id) {
+      await deleteSite(site.id).catch(() => undefined)
+    }
+  }
+})
+
+test('restored site blocks receive unique ids instead of overwriting duplicate editor ids', async () => {
+  const blockId = crypto.randomUUID()
+  let site
+
+  try {
+    site = await createSite({
+      name: 'Sitio bloques únicos',
+      slug: `unique-block-ids-${Date.now()}`,
+      siteType: 'landing_page',
+      status: 'draft',
+      blankCanvas: true
+    })
+
+    const restored = await restoreBlocks(site.id, [
+      {
+        id: blockId,
+        blockType: 'text',
+        label: 'Bloque A',
+        content: 'Uno',
+        sortOrder: 0,
+        settings: { pageId: 'page-1' }
+      },
+      {
+        id: blockId,
+        blockType: 'text',
+        label: 'Bloque B',
+        content: 'Dos',
+        sortOrder: 1,
+        settings: { pageId: 'page-1' }
+      }
+    ])
+
+    const restoredBlocks = restored.blocks.filter(block => ['Bloque A', 'Bloque B'].includes(block.label))
+    assert.equal(restoredBlocks.length, 2)
+    assert.equal(new Set(restoredBlocks.map(block => block.id)).size, 2)
+    assert.ok(restoredBlocks.some(block => block.id === blockId && block.label === 'Bloque A'))
+    assert.ok(restoredBlocks.some(block => block.id !== blockId && block.label === 'Bloque B'))
   } finally {
     if (site?.id) {
       await deleteSite(site.id).catch(() => undefined)

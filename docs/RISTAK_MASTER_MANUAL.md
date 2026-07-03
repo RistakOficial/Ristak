@@ -693,6 +693,17 @@ excepcion son pagos anidados dentro de un formulario/video gate: esos siguen
 protegiendo el formulario que los contiene porque forman parte de la misma
 experiencia de envio.
 
+El checkout publico de Sites se resuelve por identidad completa:
+`siteId + pageId + paymentBlockId`. Los requests de checkout deben incluir el
+ID del bloque; si el `pageId` enviado no coincide con la pagina persistida del
+bloque, el backend rechaza la peticion. Un `publicPaymentId` ya pagado solo puede
+reanudar o desbloquear el envio cuando su metadata coincide con el mismo sitio,
+pagina y bloque de pago; no puede pagar ni desbloquear otra pagina del embudo.
+Al crear o actualizar Sites, las paginas sin ID o con ID repetido se normalizan
+a IDs estables y unicos. Al restaurar bloques desde el editor, un bloque sin ID,
+duplicado o colisionado con otro site recibe un ID nuevo antes de persistirse,
+para evitar que dos elementos compartan identidad o se pisen entre si.
+
 ### Paridad de render editor/preview/publicado (contrato compartido)
 
 Editor (canvas React), preview autenticado, preview-session publico y sitio

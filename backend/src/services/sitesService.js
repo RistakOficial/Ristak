@@ -43,7 +43,6 @@ import {
   collectMetaParameterSignals
 } from './metaParameterManagerService.js'
 import {
-  assertPaidPaymentGate,
   createPaymentGateLink,
   createPaymentGateCharge,
   getPaymentGateCheckoutKeys,
@@ -734,6 +733,19 @@ function normalizeSiteMetaEventName(value, { allowNone = false, fallback = 'Lead
 function normalizeSiteMetaTrigger(value) {
   const trigger = cleanString(value)
   return SITE_META_TRIGGERS.has(trigger) ? trigger : 'page_view'
+}
+
+function buildUniqueSitePageId(value = '', index = 0, usedIds = new Set()) {
+  const fallback = index === 0 ? DEFAULT_FUNNEL_PAGE_ID : `page-${index + 1}`
+  const base = cleanString(value) || fallback
+  let candidate = base
+  let suffix = 2
+  while (usedIds.has(candidate)) {
+    candidate = `${base}-${suffix}`
+    suffix += 1
+  }
+  usedIds.add(candidate)
+  return candidate
 }
 
 function getMetaParameterFieldsForEvent(eventName) {
@@ -8486,6 +8498,7 @@ export async function createSite(input = {}) {
     calendarSurfaceIds
   })
   theme = metaDefaults.theme
+  theme.pages = normalizeSitePages({ siteType, theme })
   const initialMetaEventName = metaDefaults.metaEventName
   const initialMetaEventParameters = pruneSiteMetaEventParametersForEvent(
     theme.metaEventParameters || theme.meta_event_parameters,
@@ -10715,6 +10728,7 @@ export async function updateSite(siteId, input = {}) {
       siteType: nextSiteType
     })
   }
+  nextTheme.pages = normalizeSitePages({ siteType: nextSiteType, theme: nextTheme })
   const nextMetaEventName = normalizeSiteMetaEventName(input.metaEventName || current.metaEventName, { allowNone: true })
   const nextAntiTrackingEnabled = input.antiTrackingEnabled === undefined && input.anti_tracking_enabled === undefined
     ? normalizeBoolean(current.antiTrackingEnabled)
@@ -10948,6 +10962,27 @@ export async function deleteBlock(siteId, blockId) {
   return getSite(siteId, { includeBlocks: true, includeSubmissions: true })
 }
 
+async function resolveRestoredSiteBlockId(siteId, requestedId, reservedIds = new Set()) {
+  const requested = cleanString(requestedId)
+  if (requested && !reservedIds.has(requested)) {
+    const existing = await db.get(
+      'SELECT site_id FROM public_site_blocks WHERE id = ?',
+      [requested]
+    )
+    if (!existing || existing.site_id === siteId) {
+      reservedIds.add(requested)
+      return requested
+    }
+  }
+
+  let id = createRistakId('site_block')
+  while (reservedIds.has(id) || await db.get('SELECT id FROM public_site_blocks WHERE id = ?', [id])) {
+    id = createRistakId('site_block')
+  }
+  reservedIds.add(id)
+  return id
+}
+
 export async function restoreBlocks(siteId, inputBlocks = []) {
   const site = await getSite(siteId, { includeBlocks: false, includeSubmissions: false })
   if (!site) return null
@@ -10958,8 +10993,9 @@ export async function restoreBlocks(siteId, inputBlocks = []) {
   }
   await assertUniqueSystemFieldsForRestore(siteId, site, blocks)
 
+  const reservedBlockIds = new Set()
   for (const input of blocks) {
-    const id = cleanString(input.id) || createRistakId('site_block')
+    const id = await resolveRestoredSiteBlockId(siteId, input.id, reservedBlockIds)
     const blockType = validateBlockType(input.blockType || input.block_type)
     const isField = FIELD_BLOCK_TYPES.has(blockType)
     const sortOrder = Number(input.sortOrder ?? input.sort_order)
@@ -14692,7 +14728,7 @@ function sanitizePageHierarchy(pages) {
 
 function normalizePageList(rawPages = []) {
   const sourcePages = Array.isArray(rawPages) ? rawPages : []
-  const seen = new Set()
+  const usedIds = new Set()
   const pages = sourcePages
     .map((page, index) => {
       const importedAssetPath = normalizeImportedAssetPath(page?.importedAssetPath || page?.imported_asset_path)
@@ -14731,7 +14767,7 @@ function normalizePageList(rawPages = []) {
       const buttonSubtitle = cleanString(page?.buttonSubtitle || page?.button_subtitle)
 
       return {
-        id: cleanString(page?.id) || `${DEFAULT_FUNNEL_PAGE_ID}-${index + 1}`,
+        id: buildUniqueSitePageId(page?.id, index, usedIds),
         title: cleanString(page?.title) || `Página ${index + 1}`,
         sortOrder: Number.isFinite(Number(page?.sortOrder)) ? Number(page.sortOrder) : index,
         metaCapiEnabled: !legacyCalendarTrigger && Boolean(normalizeBoolean(page?.metaCapiEnabled ?? page?.meta_capi_enabled)),
@@ -14750,11 +14786,6 @@ function normalizePageList(rawPages = []) {
         ...(importedOriginalTitle ? { importedOriginalTitle } : {}),
         ...(headerTrackingCode ? { headerTrackingCode } : {})
       }
-    })
-    .filter(page => {
-      if (!page.id || seen.has(page.id)) return false
-      seen.add(page.id)
-      return true
     })
     .sort((a, b) => a.sortOrder - b.sortOrder)
     .map((page, index) => ({ ...page, sortOrder: index }))
@@ -21975,12 +22006,24 @@ export async function renderPublicSiteHtml(site, { pageId, pagePath, trackingEna
         }
         return data && data.data ? data.data : {};
       };
+      const findCheckoutBlockForPayment = (payment = {}, { requirePublicId = false } = {}) => {
+        const paymentBlockId = String(payment.paymentBlockId || payment.payment_block_id || '').trim();
+        const paymentPageId = String(payment.blockPageId || payment.block_page_id || payment.pageId || payment.page_id || payment.submittedPageId || payment.submitted_page_id || getCurrentPageId()).trim();
+        return Array.from(document.querySelectorAll('[data-rstk-checkout]')).find((node) => {
+          if (requirePublicId && !node.getAttribute('data-checkout-public-id')) return false;
+          const nodeBlockId = node.getAttribute('data-payment-block-id') || '';
+          const nodePageId = node.getAttribute('data-payment-page-id') || '';
+          if (paymentBlockId && nodeBlockId !== paymentBlockId) return false;
+          if (paymentPageId && nodePageId && nodePageId !== paymentPageId) return false;
+          return true;
+        }) || null;
+      };
 
       const waitForPaymentGate = (payment) => new Promise((resolve, reject) => {
         // Unificación pagar-para-enviar: si hay un checkout embebido inline en la página,
         // el cliente paga AHÍ (sin abrir otra pestaña). Esperamos su confirmación real y
         // devolvemos SU publicPaymentId para completar el envío.
-        const checkoutBlock = document.querySelector('[data-rstk-checkout]');
+        const checkoutBlock = findCheckoutBlockForPayment(payment);
         if (checkoutBlock) {
           const finishInline = () => {
             const cid = checkoutBlock.getAttribute('data-checkout-public-id') || (payment && payment.publicPaymentId) || '';
@@ -22102,7 +22145,7 @@ export async function renderPublicSiteHtml(site, { pageId, pagePath, trackingEna
           // Unificación pagar-para-enviar: si hay un checkout embebido con su pago ya
           // iniciado, mándalo desde el primer submit para que el servidor reutilice ESE
           // link (sin crear otro) y complete el envío cuando quede pagado.
-          const inlineCheckoutEl = document.querySelector('[data-rstk-checkout][data-checkout-public-id]');
+          const inlineCheckoutEl = findCheckoutBlockForPayment({ pageId: getCurrentPageId() }, { requirePublicId: true });
           const inlineCheckoutId = inlineCheckoutEl ? (inlineCheckoutEl.getAttribute('data-checkout-public-id') || '') : '';
           if (inlineCheckoutId) {
             requestBody.paymentPublicId = inlineCheckoutId;
@@ -24633,6 +24676,29 @@ function findEnabledPaymentBlockById(blocks = [], site = {}, blockId = '', paren
   return null
 }
 
+function validatePaymentBlockRequestContext(context = {}, { blockId = '', pageId = '' } = {}) {
+  const requestedBlockId = cleanString(blockId)
+  const requestedPageId = cleanString(pageId)
+  const contextBlockId = cleanString(context.blockId)
+  const contextPageId = cleanString(context.blockPageId)
+
+  if (!requestedBlockId) {
+    const error = new Error('Falta identificar el bloque de pago.')
+    error.status = 400
+    throw error
+  }
+  if (contextBlockId !== requestedBlockId) {
+    const error = new Error('El bloque de pago no pertenece a este site.')
+    error.status = 404
+    throw error
+  }
+  if (requestedPageId && contextPageId && requestedPageId !== contextPageId) {
+    const error = new Error('El bloque de pago no pertenece a la pagina solicitada.')
+    error.status = 409
+    throw error
+  }
+}
+
 function resolveSitePaymentGateConfig(site = {}, contexts = {}) {
   const blockCandidates = [
     contexts.submissionBlocks,
@@ -24700,6 +24766,19 @@ function paymentGateMatchesAnySiteContext(status, expected = {}) {
     ? status.metadata.paymentGate
     : {}
   const matchKey = (key) => cleanString(gate[key] || status?.metadata?.[key])
+  const expectedPageIds = [
+    expected.pageId,
+    expected.submittedPageId,
+    expected.blockPageId
+  ].map(cleanString).filter(Boolean)
+  const actualPageIds = [
+    gate.pageId,
+    gate.submittedPageId,
+    gate.blockPageId,
+    status?.metadata?.pageId,
+    status?.metadata?.submittedPageId,
+    status?.metadata?.blockPageId
+  ].map(cleanString).filter(Boolean)
   // Solo se validan las claves presentes en expected: así un pago hecho por el checkout
   // embebido inline (source 'site_checkout') satisface un gate de formulario del mismo
   // sitio+bloque. El monto es autoritativo del bloque persistido, así que es seguro.
@@ -24707,6 +24786,7 @@ function paymentGateMatchesAnySiteContext(status, expected = {}) {
   if (expected.siteId && matchKey('siteId') !== expected.siteId) return false
   if (expected.formSiteId && matchKey('formSiteId') !== expected.formSiteId) return false
   if (expected.paymentBlockId && matchKey('paymentBlockId') !== expected.paymentBlockId) return false
+  if (expectedPageIds.length && actualPageIds.length && !expectedPageIds.some(pageId => actualPageIds.includes(pageId))) return false
   return true
 }
 
@@ -24724,27 +24804,38 @@ function buildSitePaymentRequiredResponse(paymentGate, paymentStatus = {}) {
     buttonText: paymentGate.buttonText,
     pendingMessage: paymentGate.pendingMessage,
     paidMessage: paymentGate.paidMessage,
+    paymentBlockId: cleanString(paymentGate.blockId),
+    blockPageId: cleanString(paymentGate.blockPageId),
     message: paymentGate.pendingMessage || 'Completa el pago para continuar.'
   }
 }
 
 async function resolveSitePaymentGate({ req, body, site, paymentGate, contact, nativeFormContext, submittedPageId }) {
+  const paymentPageId = cleanString(paymentGate.blockPageId || submittedPageId)
   const expected = {
     source: 'site_form',
     siteId: site.id,
     formSiteId: nativeFormContext.formSiteId || site.id,
+    pageId: paymentPageId,
+    submittedPageId,
+    blockPageId: paymentPageId,
     paymentBlockId: cleanString(paymentGate.blockId)
   }
   // Para ACEPTAR un pago ya realizado basta con que sea del mismo sitio + bloque: el
   // checkout embebido inline crea su link con source 'site_checkout', no 'site_form'.
-  const matchExpected = { siteId: site.id, paymentBlockId: cleanString(paymentGate.blockId) }
+  const matchExpected = {
+    siteId: site.id,
+    pageId: paymentPageId,
+    blockPageId: paymentPageId,
+    paymentBlockId: cleanString(paymentGate.blockId)
+  }
   const existingPublicPaymentId = getBodyPaymentPublicId(body)
 
   if (existingPublicPaymentId) {
-    const status = await assertPaidPaymentGate(existingPublicPaymentId, matchExpected)
-    if (status) return { paid: true, status }
-
     const pendingStatus = await getPaymentGateStatus(existingPublicPaymentId)
+    if (pendingStatus?.paid && paymentGateMatchesAnySiteContext(pendingStatus, matchExpected)) {
+      return { paid: true, status: pendingStatus }
+    }
     if (pendingStatus && paymentGateMatchesAnySiteContext(pendingStatus, matchExpected)) {
       return {
         paid: false,
@@ -24761,7 +24852,9 @@ async function resolveSitePaymentGate({ req, body, site, paymentGate, contact, n
       siteId: site.id,
       formSiteId: nativeFormContext.formSiteId || site.id,
       formSiteName: nativeFormContext.formSiteName || site.name || '',
+      pageId: paymentPageId,
       submittedPageId,
+      blockPageId: paymentPageId,
       paymentBlockId: cleanString(paymentGate.blockId),
       paymentGate: expected
     }
@@ -24845,8 +24938,10 @@ async function resolveSiteCheckoutBlock(req, body = {}) {
   site.blocks = await hydrateEmbeddedForms(await listSiteBlocks(site.id))
 
   const blockId = cleanString(body.blockId || body.block_id || body.meta?.blockId)
+  const pageId = cleanString(body.pageId || body.page_id || body.meta?.pageId || body.meta?.page_id)
   const context = findEnabledPaymentBlockById(site.blocks, site, blockId)
   if (!context) { const error = new Error('Bloque de pago no encontrado o deshabilitado'); error.status = 404; throw error }
+  validatePaymentBlockRequestContext(context, { blockId, pageId })
 
   return { site, context, paymentGate: context.paymentGate, baseUrl: getRequestBaseUrl(req), expectedBlockId: cleanString(context.blockId) }
 }
@@ -24862,10 +24957,13 @@ export async function initSitePaymentCheckout(req, body = {}) {
   const existing = getBodyPaymentPublicId(body)
   if (existing) {
     const pending = await getPaymentGateStatus(existing)
-    const sameBlock = pending && cleanString(
-      pending.metadata?.paymentGate?.paymentBlockId || pending.metadata?.paymentBlockId
-    ) === expectedBlockId
-    if (pending && pending.paid && sameBlock) {
+    const sameContext = paymentGateMatchesAnySiteContext(pending, {
+      siteId: site.id,
+      pageId: cleanString(context.blockPageId),
+      blockPageId: cleanString(context.blockPageId),
+      paymentBlockId: expectedBlockId
+    })
+    if (pending && pending.paid && sameContext) {
       return buildSiteCheckoutMountResponse(paymentGate, context, { paid: true, publicPaymentId: existing, status: pending.status })
     }
   }
@@ -24893,9 +24991,16 @@ export async function paySiteCheckout(req, body = {}) {
     metadata: {
       siteId: site.id,
       siteName: site.name || '',
-      pageId: cleanString(body.pageId || body.page_id || context.blockPageId),
+      pageId: cleanString(context.blockPageId),
+      blockPageId: cleanString(context.blockPageId),
       paymentBlockId: expectedBlockId,
-      paymentGate: { source: 'site_checkout', siteId: site.id, paymentBlockId: expectedBlockId }
+      paymentGate: {
+        source: 'site_checkout',
+        siteId: site.id,
+        pageId: cleanString(context.blockPageId),
+        blockPageId: cleanString(context.blockPageId),
+        paymentBlockId: expectedBlockId
+      }
     }
   })
   const publicPaymentId = result.publicPaymentId
