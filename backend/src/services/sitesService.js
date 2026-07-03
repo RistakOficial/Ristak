@@ -13284,6 +13284,44 @@ function buildVideoFormGateRuntimeScript(blocks = []) {
         if (digits.startsWith(countryCode) && digits.length > countryCode.length + 6) return '+' + digits;
         return '+' + countryCode + digits;
       };
+      const getPhoneOptionDialCode = option => phoneDigits(option ? option.dataset.dialCode || option.getAttribute('data-dial-code') : '').slice(0, 4);
+      const getSelectedPhoneOption = select => select && select.selectedOptions && select.selectedOptions[0] ? select.selectedOptions[0] : null;
+      const getSelectedPhoneDialCode = select => getPhoneOptionDialCode(getSelectedPhoneOption(select));
+      const findPhoneOptionByDialPrefix = (select, digits) => {
+        const options = Array.from(select && select.options ? select.options : [])
+          .map(option => ({ option, dialCode: getPhoneOptionDialCode(option) }))
+          .filter(item => item.dialCode && digits.startsWith(item.dialCode) && digits.length > item.dialCode.length + 6)
+          .sort((a, b) => b.dialCode.length - a.dialCode.length);
+        return options.length ? options[0] : null;
+      };
+      const stripDialCodeForInput = (digits, dialCode) => {
+        const countryCode = phoneDigits(dialCode).slice(0, 4);
+        if (!countryCode) return digits;
+        if (countryCode === '52') {
+          if (digits.startsWith('521') && digits.length >= 13) return digits.slice(3).slice(-10);
+          if (digits.startsWith('52') && digits.length >= 12) return digits.slice(2).slice(-10);
+        }
+        if (digits.startsWith(countryCode) && digits.length > countryCode.length + 6) return digits.slice(countryCode.length);
+        return digits;
+      };
+      const splitPhonePrefillValue = (value, select) => {
+        const raw = clean(value);
+        const digits = stripInternationalPrefix(phoneDigits(raw));
+        if (!digits) return { countryValue: '', number: '' };
+        const selectedDialCode = getSelectedPhoneDialCode(select);
+        if (selectedDialCode) {
+          const selectedNumber = stripDialCodeForInput(digits, selectedDialCode);
+          if (selectedNumber !== digits) return { countryValue: '', number: selectedNumber };
+        }
+        const matched = findPhoneOptionByDialPrefix(select, digits);
+        if (!matched) return { countryValue: '', number: digits };
+        const number = stripDialCodeForInput(digits, matched.dialCode);
+        const keepSelectedCountry = selectedDialCode && matched.dialCode === '1' && selectedDialCode !== '1';
+        return {
+          countryValue: keepSelectedCountry ? '' : matched.option.value,
+          number
+        };
+      };
       const readFieldValue = field => {
         const type = field.getAttribute('data-field-type');
         if (type === 'checkboxes') {
@@ -16695,9 +16733,23 @@ function buildNativeSiteTrackingScript(context) {
         const select = field ? field.querySelector('[data-phone-country-select]') : null;
         const option = select && select.selectedOptions && select.selectedOptions[0] ? select.selectedOptions[0] : null;
         const dialCode = cleanContactText(option ? option.dataset.dialCode || option.getAttribute('data-dial-code') : '').replace(/\\D/g, '');
-        const digits = value.replace(/[^0-9+]/g, '');
-        if (!dialCode || digits.charAt(0) === '+') return value;
-        return '+' + dialCode + digits.replace(/^0+/, '');
+        return composePhoneValue(value, dialCode) || value;
+      };
+
+      const setPhonePrefillValue = (field, value) => {
+        const input = field ? field.querySelector('[data-phone-number-input]') || field.querySelector('input[type="tel"], input') : null;
+        const select = field ? field.querySelector('[data-phone-country-select]') : null;
+        if (!input || String(input.value || '').trim()) return false;
+        const parsed = splitPhonePrefillValue(value, select);
+        if (!parsed.number) return false;
+        if (select && parsed.countryValue && select.value !== parsed.countryValue) {
+          select.value = parsed.countryValue;
+          select.dispatchEvent(new Event('change', { bubbles: true }));
+        }
+        input.value = parsed.number;
+        input.dispatchEvent(new Event('input', { bubbles: true }));
+        input.dispatchEvent(new Event('change', { bubbles: true }));
+        return true;
       };
 
       const setContactPrefillValue = (target, value) => {
@@ -16715,7 +16767,8 @@ function buildNativeSiteTrackingScript(context) {
         if (!input || !('value' in input) || String(input.value || '').trim()) return false;
         const inputType = String(input.type || '').toLowerCase();
         if (['radio', 'checkbox', 'hidden', 'file', 'submit', 'button', 'reset', 'image'].includes(inputType)) return false;
-        input.value = fieldType === 'phone' ? text.replace(/^\\+/, '') : text;
+        if (fieldType === 'phone') return setPhonePrefillValue(field, text);
+        input.value = text;
         input.dispatchEvent(new Event('input', { bubbles: true }));
         input.dispatchEvent(new Event('change', { bubbles: true }));
         return true;
@@ -21583,6 +21636,52 @@ export async function renderPublicSiteHtml(site, { pageId, pagePath, trackingEna
         if (digits.startsWith(countryCode) && digits.length > countryCode.length + 6) return '+' + digits;
         return '+' + countryCode + digits;
       };
+      const getPhoneOptionDialCode = (option) => phoneDigits(option ? option.dataset.dialCode || option.getAttribute('data-dial-code') : '').slice(0, 4);
+      const getSelectedPhoneOption = (select) => select && select.selectedOptions && select.selectedOptions[0] ? select.selectedOptions[0] : null;
+      const getSelectedPhoneDialCode = (select) => getPhoneOptionDialCode(getSelectedPhoneOption(select));
+      const findPhoneOptionByDialPrefix = (select, digits) => {
+        const options = Array.from(select && select.options ? select.options : [])
+          .map(option => ({ option, dialCode: getPhoneOptionDialCode(option) }))
+          .filter(item => item.dialCode && digits.startsWith(item.dialCode) && digits.length > item.dialCode.length + 6)
+          .sort((a, b) => b.dialCode.length - a.dialCode.length);
+        return options.length ? options[0] : null;
+      };
+      const stripDialCodeForInput = (digits, dialCode) => {
+        const countryCode = phoneDigits(dialCode).slice(0, 4);
+        if (!countryCode) return digits;
+        if (countryCode === '52') {
+          if (digits.startsWith('521') && digits.length >= 13) return digits.slice(3).slice(-10);
+          if (digits.startsWith('52') && digits.length >= 12) return digits.slice(2).slice(-10);
+        }
+        if (digits.startsWith(countryCode) && digits.length > countryCode.length + 6) return digits.slice(countryCode.length);
+        return digits;
+      };
+      const splitPhonePrefillValue = (value, select) => {
+        const raw = String(value || '').trim();
+        const digits = stripInternationalPrefix(phoneDigits(raw));
+        if (!digits) return { countryValue: '', number: '' };
+        const selectedDialCode = getSelectedPhoneDialCode(select);
+        if (selectedDialCode) {
+          const selectedNumber = stripDialCodeForInput(digits, selectedDialCode);
+          if (selectedNumber !== digits) return { countryValue: '', number: selectedNumber };
+        }
+        const matched = findPhoneOptionByDialPrefix(select, digits);
+        if (!matched) return { countryValue: '', number: digits };
+        const number = stripDialCodeForInput(digits, matched.dialCode);
+        const keepSelectedCountry = selectedDialCode && matched.dialCode === '1' && selectedDialCode !== '1';
+        return {
+          countryValue: keepSelectedCountry ? '' : matched.option.value,
+          number
+        };
+      };
+      const writePhoneFieldValue = (field, value) => {
+        const input = field.querySelector('[data-phone-number-input]') || field.querySelector('input[type="tel"], input');
+        const select = field.querySelector('[data-phone-country-select]');
+        if (!input) return;
+        const parsed = splitPhonePrefillValue(value, select);
+        if (select && parsed.countryValue && select.value !== parsed.countryValue) select.value = parsed.countryValue;
+        input.value = parsed.number || '';
+      };
       const optionExists = (select, countryCode) => Boolean(countryCode && select && select.querySelector('option[value="' + String(countryCode).replace(/["\\\\]/g, '\\\\$&') + '"]'));
       const detectPhoneCountry = (select) => {
         const locales = navigator.languages && navigator.languages.length ? navigator.languages : [navigator.language];
@@ -21645,8 +21744,7 @@ export async function renderPublicSiteHtml(site, { pageId, pagePath, trackingEna
           return;
         }
         if (type === 'phone') {
-          const input = field.querySelector('[data-phone-number-input]') || field.querySelector('input[type="tel"], input');
-          if (input) input.value = String(value || '').replace(/^\\+/, '');
+          writePhoneFieldValue(field, value);
           return;
         }
         const input = field.querySelector('input, textarea, select');

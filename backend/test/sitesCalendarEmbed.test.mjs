@@ -296,6 +296,9 @@ test('default public calendar form asks email before phone and renders country d
     assert.match(html, /<option value="US" data-dial-code="1"[^>]*selected/)
     assert.match(html, /data-phone-number-input/)
     assert.match(html, /composePhoneValue/)
+    assert.match(html, /splitPhonePrefillValue/)
+    assert.match(html, /setPhonePrefillValue/)
+    assert.match(html, /keepSelectedCountry = selectedDialCode && matched\.dialCode === '1' && selectedDialCode !== '1'/)
   } finally {
     await setAppConfig(ACCOUNT_COUNTRY_CONFIG_KEY, previousCountry)
     await setAppConfig(ACCOUNT_DIAL_CODE_CONFIG_KEY, previousDialCode)

@@ -2948,6 +2948,62 @@ export function renderPublicCalendarHtml(calendar, { host = '', embedded = false
         if (digits.startsWith(countryCode) && digits.length > countryCode.length + 6) return '+' + digits;
         return '+' + countryCode + digits;
       };
+      const getPhoneOptionDialCode = (option) => phoneDigits(option ? option.dataset.dialCode || option.getAttribute('data-dial-code') : '').slice(0, 4);
+      const getSelectedPhoneOption = (select) => select && select.selectedOptions && select.selectedOptions[0] ? select.selectedOptions[0] : null;
+      const getSelectedPhoneDialCode = (select) => getPhoneOptionDialCode(getSelectedPhoneOption(select));
+      const findPhoneOptionByDialPrefix = (select, digits) => {
+        const options = Array.from(select && select.options ? select.options : [])
+          .map(option => ({ option, dialCode: getPhoneOptionDialCode(option) }))
+          .filter(item => item.dialCode && digits.startsWith(item.dialCode) && digits.length > item.dialCode.length + 6)
+          .sort((a, b) => b.dialCode.length - a.dialCode.length);
+        return options.length ? options[0] : null;
+      };
+      const stripDialCodeForInput = (digits, dialCode) => {
+        const countryCode = phoneDigits(dialCode).slice(0, 4);
+        if (!countryCode) return digits;
+        if (countryCode === '52') {
+          if (digits.startsWith('521') && digits.length >= 13) return digits.slice(3).slice(-10);
+          if (digits.startsWith('52') && digits.length >= 12) return digits.slice(2).slice(-10);
+        }
+        if (digits.startsWith(countryCode) && digits.length > countryCode.length + 6) return digits.slice(countryCode.length);
+        return digits;
+      };
+      const splitPhonePrefillValue = (value, select) => {
+        const raw = String(value || '').trim();
+        const digits = stripInternationalPrefix(phoneDigits(raw));
+        if (!digits) return { countryValue: '', number: '' };
+        const selectedDialCode = getSelectedPhoneDialCode(select);
+        if (selectedDialCode) {
+          const selectedNumber = stripDialCodeForInput(digits, selectedDialCode);
+          if (selectedNumber !== digits) return { countryValue: '', number: selectedNumber };
+        }
+        const matched = findPhoneOptionByDialPrefix(select, digits);
+        if (!matched) return { countryValue: '', number: digits };
+        const number = stripDialCodeForInput(digits, matched.dialCode);
+        // Legacy/autofill values often carried an accidental +1 before a LATAM local
+        // number. Do not flip the account-selected LADA to +1; strip it from the input.
+        const keepSelectedCountry = selectedDialCode && matched.dialCode === '1' && selectedDialCode !== '1';
+        return {
+          countryValue: keepSelectedCountry ? '' : matched.option.value,
+          number
+        };
+      };
+      const setPhonePrefillValue = (field, value) => {
+        const input = field ? field.querySelector('[data-phone-number-input]') || field.querySelector('input[type="tel"], input') : null;
+        const select = field ? field.querySelector('[data-phone-country-select]') : null;
+        if (!input || String(input.value || '').trim()) return false;
+        const parsed = splitPhonePrefillValue(value, select);
+        if (!parsed.number) return false;
+        if (select && parsed.countryValue && select.value !== parsed.countryValue) {
+          select.value = parsed.countryValue;
+          select.dispatchEvent(new Event('change', { bubbles: true }));
+        }
+        input.value = parsed.number;
+        input.dispatchEvent(new Event('input', { bubbles: true }));
+        input.dispatchEvent(new Event('change', { bubbles: true }));
+        validateField(field);
+        return true;
+      };
       const optionExists = (select, countryCode) => Boolean(countryCode && select && select.querySelector('option[value="' + String(countryCode).replace(/["\\\\]/g, '\\\\$&') + '"]'));
       const detectPhoneCountry = (select) => {
         const locales = navigator.languages && navigator.languages.length ? navigator.languages : [navigator.language];
@@ -3155,6 +3211,7 @@ export function renderPublicCalendarHtml(calendar, { host = '', embedded = false
         return '';
       };
       const setPrefillValue = (field, value) => {
+        if (field && (field.getAttribute('data-field-type') || '') === 'phone') return setPhonePrefillValue(field, value);
         const input = field ? field.querySelector('input:not([type="radio"]):not([type="checkbox"]), textarea') : null;
         const text = cleanPrefillText(value);
         if (!input || !text || String(input.value || '').trim()) return false;

@@ -412,6 +412,9 @@ Reglas base:
   despues telefono. Los campos de telefono de calendario deben mostrar selector
   de pais/lada y normalizar el valor con la region elegida; si el visitante no la
   cambia, se usa region detectada o la configurada en la cuenta como respaldo.
+  Cuando el contacto se autopobla desde otro formulario, la lada queda en el
+  selector y el campo visible conserva solo el numero nacional, sin prefijos tipo
+  `+52`, `52` o `+1` duplicados dentro del input.
 - Si Meta esta configurado con dataset/pixel y token guardado, los calendarios
   locales nuevos y los calendarios remotos espejados por primera vez activan
   `customEvents.enabled` por default para mandar `Schedule` al agendar. Ediciones

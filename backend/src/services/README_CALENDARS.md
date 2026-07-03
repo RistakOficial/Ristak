@@ -59,8 +59,11 @@ El formulario publico predeterminado de calendario pregunta primero nombre,
 despues correo y despues telefono. Todo campo de telefono de calendario debe
 mostrar selector de pais/lada y guardar el valor normalizado con la lada elegida;
 si el visitante no cambia la region, se usa la region detectada o la configurada
-en la cuenta como respaldo. No vuelvas a renderizar telefono como un `type="tel"`
-simple sin selector de pais.
+en la cuenta como respaldo. Al autopoblar desde un contacto o desde otro
+formulario, la lada se separa en el selector y el input visible conserva solo el
+numero nacional; no debe aparecer `+52`, `52`, `+1` ni otro prefijo dentro del
+campo de numero. No vuelvas a renderizar telefono como un `type="tel"` simple
+sin selector de pais.
 
 ## Funciones Del Servicio
 
