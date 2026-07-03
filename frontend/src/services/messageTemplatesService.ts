@@ -72,6 +72,7 @@ export interface MessageTemplate {
   variables: string[]
   variableExamples: Record<string, string>
   variableBindings: MessageTemplateVariableBindings
+  ycloudTemplateName?: string | null
   ycloudTemplateId?: string | null
   ycloudStatus?: string | null
   ycloudReason?: string | null

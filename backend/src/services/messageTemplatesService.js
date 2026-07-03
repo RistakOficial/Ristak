@@ -4,6 +4,7 @@ import {
   createWhatsAppApiTemplate,
   deleteWhatsAppApiTemplate,
   deleteWhatsAppApiTemplateSnapshot,
+  editWhatsAppApiTemplate,
   retrieveWhatsAppApiTemplate,
   sendWhatsAppApiTemplateMessage,
   syncWhatsAppApiTemplatesFromYCloud,
@@ -844,6 +845,7 @@ function normalizeYCloudTemplateStatus(value) {
 }
 
 const TEMPLATE_LOCKED_REVIEW_STATES = new Set(['PENDING', 'IN_APPEAL', 'IN_REVIEW', 'UNDER_REVIEW', 'PENDING_REVIEW'])
+const TEMPLATE_PROVIDER_EDITABLE_STATES = new Set(['APPROVED', 'REJECTED', 'PAUSED'])
 
 function isTemplateLockedForEditing(status) {
   return TEMPLATE_LOCKED_REVIEW_STATES.has(normalizeYCloudTemplateStatus(status))
@@ -876,6 +878,58 @@ function getYCloudTemplateName(template = {}) {
     ? template.ycloudRawPayload
     : {}
   return cleanString(template.ycloudTemplateName || raw.name || template.name)
+}
+
+function getYCloudTemplateProviderIdentity(template = {}) {
+  const raw = template.ycloudRawPayload && typeof template.ycloudRawPayload === 'object'
+    ? template.ycloudRawPayload
+    : {}
+  return {
+    wabaId: cleanString(raw.wabaId || raw.waba_id),
+    officialTemplateId: cleanString(template.ycloudTemplateId || raw.officialTemplateId || raw.id)
+  }
+}
+
+function hasYCloudTemplateProviderFootprint(template = {}) {
+  const raw = template.ycloudRawPayload && typeof template.ycloudRawPayload === 'object'
+    ? template.ycloudRawPayload
+    : {}
+  return Boolean(
+    cleanString(template.ycloudTemplateId) ||
+    cleanString(template.ycloudStatus) ||
+    cleanString(template.ycloudSubmittedAt) ||
+    cleanString(raw.officialTemplateId || raw.id || raw.name)
+  )
+}
+
+function shouldEditExistingYCloudTemplate(template = {}) {
+  if (!hasYCloudTemplateProviderFootprint(template)) return false
+
+  const status = normalizeYCloudTemplateStatus(template.ycloudStatus)
+  if (isTemplateLockedForEditing(status)) {
+    throw new Error('Esta plantilla ya está en revisión en Meta/YCloud. Espera el resultado antes de reenviarla.')
+  }
+  if (status === 'ARCHIVED') {
+    throw new Error('Esta plantilla está archivada en Meta/YCloud y no se puede editar. Crea una nueva con otro nombre.')
+  }
+  if (status && !TEMPLATE_PROVIDER_EDITABLE_STATES.has(status)) {
+    throw new Error(`Esta plantilla está en estado ${status} en Meta/YCloud y no se puede editar. Crea una nueva con otro nombre.`)
+  }
+
+  return true
+}
+
+function isYCloudTemplateAlreadyExistsError(error) {
+  const text = [
+    error?.message,
+    error?.ycloud?.message,
+    error?.ycloud?.error?.message,
+    error?.ycloud?.error?.error_user_msg,
+    error?.ycloud?.error?.error_data,
+    stableJson(error?.ycloud || {})
+  ].filter(Boolean).join(' ').toLowerCase()
+
+  return text.includes('already exists') || text.includes('ya existe')
 }
 
 function getButtonValueTarget(index) {
@@ -1214,6 +1268,7 @@ async function getMessageTemplateById(id) {
 
 async function applyYCloudTemplateResponse(id, record = {}, { submitted = false } = {}) {
   const normalized = normalizeYCloudTemplateResponse(record)
+  const nextStatus = normalized.status || (submitted ? 'PENDING' : null)
   await db.run(`
     UPDATE whatsapp_message_templates
     SET
@@ -1232,7 +1287,7 @@ async function applyYCloudTemplateResponse(id, record = {}, { submitted = false 
   `, [
     normalized.officialTemplateId,
     normalized.name,
-    normalized.status,
+    nextStatus,
     normalized.reason,
     normalized.statusUpdateEvent,
     normalized.qualityRating,
@@ -1314,7 +1369,12 @@ export async function updateMessageTemplate(id, payload = {}) {
     throw error
   }
 
-  const template = normalizeTemplatePayload(payload)
+  const template = normalizeTemplatePayload({
+    ...payload,
+    ycloudTemplateName: payload.ycloudTemplateName ?? existing.ycloud_template_name,
+    ycloudTemplateId: payload.ycloudTemplateId ?? existing.ycloud_template_id,
+    ycloudStatus: payload.ycloudStatus ?? existing.ycloud_status
+  })
   assertTemplateReviewLockAllowsUpdate(existing, template)
   await assertFolderExists(template.folderId)
 
@@ -1826,15 +1886,39 @@ export async function repairDefaultMessageTemplatesForCurrentConnection({ public
 export async function submitMessageTemplateToYCloud(id) {
   const template = await getMessageTemplateById(id)
   const ycloudPayload = buildYCloudTemplatePayload(template)
+  const providerIdentity = getYCloudTemplateProviderIdentity(template)
+  const editPayload = {
+    ...ycloudPayload,
+    ...providerIdentity
+  }
+  let shouldEdit = false
 
   try {
-    const response = await createWhatsAppApiTemplate(ycloudPayload)
+    shouldEdit = shouldEditExistingYCloudTemplate(template)
+    const response = shouldEdit
+      ? await editWhatsAppApiTemplate(editPayload)
+      : await createWhatsAppApiTemplate(ycloudPayload)
     return {
       template: await applyYCloudTemplateResponse(id, response, { submitted: true }),
       ycloud: response,
-      message: 'Plantilla enviada a revisión de Meta por YCloud.'
+      message: shouldEdit
+        ? 'Plantilla existente actualizada y reenviada a revisión de Meta por YCloud.'
+        : 'Plantilla enviada a revisión de Meta por YCloud.'
     }
   } catch (error) {
+    if (!shouldEdit && isYCloudTemplateAlreadyExistsError(error)) {
+      try {
+        const response = await editWhatsAppApiTemplate(editPayload)
+        return {
+          template: await applyYCloudTemplateResponse(id, response, { submitted: true }),
+          ycloud: response,
+          message: 'La plantilla ya existía en Meta/YCloud; Ristak la actualizó y la reenvió a revisión.'
+        }
+      } catch (editError) {
+        const message = await saveTemplateLastError(id, editError)
+        throw new Error(message)
+      }
+    }
     const message = await saveTemplateLastError(id, error)
     throw new Error(message)
   }

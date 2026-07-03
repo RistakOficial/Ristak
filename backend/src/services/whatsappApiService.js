@@ -7474,6 +7474,56 @@ export async function createWhatsAppApiTemplate(templatePayload = {}) {
   return response
 }
 
+export async function editWhatsAppApiTemplate(templatePayload = {}) {
+  const config = await loadConfig({ includeSecrets: true })
+  if (!config.enabled || !config.apiKey) {
+    throw new Error('WhatsApp Business no está conectado con WhatsApp API')
+  }
+
+  const cleanWabaId = cleanString(templatePayload.wabaId || config.wabaId)
+  const cleanName = cleanString(templatePayload.name)
+  const cleanLanguage = cleanString(templatePayload.language)
+  const components = Array.isArray(templatePayload.components) ? templatePayload.components : []
+
+  if (!cleanWabaId) throw new Error('Falta el WABA ID de WhatsApp Business para editar la plantilla')
+  if (!cleanName) throw new Error('Falta el nombre de la plantilla')
+  if (!cleanLanguage) throw new Error('Falta el idioma de la plantilla')
+  if (!components.length) throw new Error('Faltan los componentes de la plantilla')
+
+  const body = { components }
+  if (Number.isFinite(Number(templatePayload.messageSendTtlSeconds))) {
+    body.messageSendTtlSeconds = Number(templatePayload.messageSendTtlSeconds)
+  }
+  if (typeof templatePayload.ctaUrlLinkTrackingOptedOut === 'boolean') {
+    body.ctaUrlLinkTrackingOptedOut = templatePayload.ctaUrlLinkTrackingOptedOut
+  }
+
+  const response = await ycloudRequest(
+    `/whatsapp/templates/${encodeURIComponent(cleanWabaId)}/${encodeURIComponent(cleanName)}/${encodeURIComponent(cleanLanguage)}`,
+    {
+      apiKey: config.apiKey,
+      method: 'PATCH',
+      body
+    }
+  )
+  const enrichedResponse = {
+    ...(response && typeof response === 'object' ? response : {}),
+    wabaId: cleanString(response?.wabaId) || cleanWabaId,
+    name: cleanString(response?.name) || cleanName,
+    language: cleanString(response?.language) || cleanLanguage,
+    category: cleanString(response?.category) || cleanString(templatePayload.category),
+    status: cleanString(response?.status).toUpperCase() || 'PENDING',
+    officialTemplateId: cleanString(response?.officialTemplateId || response?.id || templatePayload.officialTemplateId),
+    components: Array.isArray(response?.components) && response.components.length ? response.components : components
+  }
+  if (!cleanString(enrichedResponse.id) && cleanString(enrichedResponse.officialTemplateId)) {
+    enrichedResponse.id = cleanString(enrichedResponse.officialTemplateId)
+  }
+
+  await syncTemplates([enrichedResponse], { eventType: 'manual_template_edit' })
+  return enrichedResponse
+}
+
 export async function deleteWhatsAppApiTemplate({ wabaId, name, language } = {}) {
   const config = await loadConfig({ includeSecrets: true })
   if (!config.enabled || !config.apiKey) {

@@ -159,6 +159,7 @@ function createEmptyDraft(folderId: string | null): MessageTemplateDraft {
     buttons: [],
     variableExamples: {},
     variableBindings: { headerText: {}, bodyText: {} },
+    ycloudTemplateName: null,
     ycloudTemplateId: null,
     ycloudStatus: null
   }
@@ -182,6 +183,7 @@ function templateToDraft(template: MessageTemplate): MessageTemplateDraft {
     buttons: template.buttons || [],
     variableExamples: template.variableExamples || {},
     variableBindings: template.variableBindings || { headerText: {}, bodyText: {} },
+    ycloudTemplateName: template.ycloudTemplateName || null,
     ycloudTemplateId: template.ycloudTemplateId || null,
     ycloudStatus: template.ycloudStatus || null,
     ycloudReason: template.ycloudReason || null,
@@ -211,6 +213,7 @@ function templateToPayload(template: MessageTemplate, folderId: string | null): 
     buttons: template.buttons || [],
     variableExamples: template.variableExamples || {},
     variableBindings: template.variableBindings || { headerText: {}, bodyText: {} },
+    ycloudTemplateName: template.ycloudTemplateName || null,
     ycloudTemplateId: template.ycloudTemplateId || null,
     ycloudStatus: template.ycloudStatus || null
   }
