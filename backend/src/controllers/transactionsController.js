@@ -883,6 +883,18 @@ export const getTransactions = async (req, res) => {
       )
     `)
 
+    // Ocultar intentos de checkout de SITIO (site_checkout / site_form) que NUNCA se
+    // completaron. Un visitante que abre el checkout, escribe su correo o abandona sin
+    // terminar el pago NO debe aparecer como "pago incompleto" en el CRM: solo importan
+    // los pagos reales (paid) o los rechazos reales (failed). Los enlaces de pago del
+    // panel (otro origen) sí muestran su estado 'sent'/'pending' porque son intencionales.
+    filters.push(`
+      NOT (
+        (COALESCE(p.metadata_json, '') LIKE '%site_checkout%' OR COALESCE(p.metadata_json, '') LIKE '%site_form%')
+        AND LOWER(COALESCE(p.status, '')) IN ('sent', 'pending', 'processing', 'requires_action', 'requires_payment_method', 'incomplete', 'draft', 'initiated')
+      )
+    `)
+
     if (hasSearch) {
       const contactSearch = buildContactSearchClause('c', searchTerm, { includeSource: true })
       const paymentSearch = `(

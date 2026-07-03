@@ -2950,6 +2950,11 @@ ${CONTACT_META_PROFILE_SELECT},
       `SELECT * FROM payments
        WHERE contact_id = ?
        AND LOWER(COALESCE(status, '')) != 'deleted'
+       -- Ocultar intentos de checkout de sitio no completados (solo paid/failed reales)
+       AND NOT (
+         (COALESCE(metadata_json, '') LIKE '%site_checkout%' OR COALESCE(metadata_json, '') LIKE '%site_form%')
+         AND LOWER(COALESCE(status, '')) IN ('sent', 'pending', 'processing', 'requires_action', 'requires_payment_method', 'incomplete', 'draft', 'initiated')
+       )
        ORDER BY ${paymentDateSort} DESC, ${paymentCreatedSort} DESC, id DESC`,
       [id]
     )
