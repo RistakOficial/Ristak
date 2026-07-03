@@ -347,6 +347,18 @@ enviarla como ejemplo al crear la plantilla en YCloud/Meta. Cada boton web acept
 maximo una variable dinamica. Los botones de telefono guardan un numero estatico
 en formato internacional y los botones WhatsApp call no llevan variable de URL.
 
+Al conectar WhatsApp API, Ristak crea y repara seis plantillas default en las
+carpetas `Recordatorios` y `Pagos`: `cita_programada`,
+`recordatorio_cita_un_dia_antes`, `confirmacion_cita_dia_anterior`,
+`recordatorio_pago_pendiente`, `comprobante_pago_recibido` y
+`pago_fallido_reintento`. El backfill de arranque compara esas plantillas contra
+la definicion vigente del sistema; si una copia existente esta editable, actualiza
+el copy/variables/botones y la reenvia a revision como edicion. Si Meta/YCloud la
+tiene en revision, Ristak no la pisa y espera el resultado. Las plantillas de pago
+usan botones web `PUBLIC_URL/pay/{{1}}`; el ejemplo dinamico del boton sale de
+`payment.public_id` o `payment.receipt_path` segun corresponda, nunca de una URL
+fija de otra instalacion.
+
 Al reenviar a revision una plantilla que ya existe en Meta/YCloud, Ristak debe
 editarla por `wabaId + name + language` en vez de intentar crear otra con el
 mismo nombre. Si la copia local no tiene la identidad remota pero YCloud responde

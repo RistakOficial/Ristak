@@ -5,6 +5,7 @@ import { encrypt, initializeMasterKey } from '../src/utils/encryption.js'
 import {
   buildDefaultMessageTemplateSendComponents,
   ensureDefaultAppointmentMessageTemplates,
+  ensureDefaultPaymentMessageTemplates,
   ensureDefaultWhatsAppApiMessageTemplates,
   getMessageTemplateBundle,
   repairDefaultAppointmentMessageTemplatesForCurrentConnection
@@ -150,10 +151,10 @@ test('crea plantillas default de citas y las manda a revisión una sola vez', as
       const scheduledTemplate = captures.find((capture) => capture.name === 'cita_programada')
       assert.ok(scheduledTemplate)
       assert.equal(scheduledTemplate.components[0].type, 'HEADER')
-      assert.equal(scheduledTemplate.components[0].text, 'Cita agendada')
-      assert.equal(scheduledTemplate.components[1].text, 'Hola {{1}}, tu cita quedó agendada para {{2}}. Te enviaremos recordatorios relacionados con esta cita.')
-      assert.equal(scheduledTemplate.components[1].example.body_text[0][1], 'viernes, 19 de junio de 2026 9:00')
-      assert.equal(scheduledTemplate.components[2].text, 'Esto es un mensaje automático.')
+      assert.equal(scheduledTemplate.components[0].text, 'Cita programada para {{1}}')
+      assert.equal(scheduledTemplate.components[0].example.header_text[0], 'viernes, 19 de junio de 2026 9:00')
+      assert.equal(scheduledTemplate.components[1].text, 'Hola {{1}}.\n\n*🔔 Importante:* Te llegarán *varios* recordatorios para *NO* olvidar que tienes una cita programada.\n\nTe pedimos de la manera más atenta que *respondas* los mensajes cuando se te solicite, para mantener una comunicación clara y evitar cualquier confusión con las citas.\n\n¡Gracias!')
+      assert.deepEqual(scheduledTemplate.components.map((component) => component.type), ['HEADER', 'BODY'])
 
       const bundle = await getMessageTemplateBundle()
       const folder = bundle.folders.find((item) => item.id === DEFAULT_FOLDER_ID)
@@ -164,7 +165,7 @@ test('crea plantillas default de citas y las manda a revisión una sola vez', as
       assert.ok(localTemplate)
       assert.equal(localTemplate.folderId, DEFAULT_FOLDER_ID)
       assert.equal(localTemplate.ycloudStatus, 'PENDING')
-      assert.equal(localTemplate.footerText, 'Esto es un mensaje automático.')
+      assert.equal(localTemplate.footerText, 'Esto es un mensaje automático')
       assert.equal(localTemplate.variableBindings.bodyText['1'].variableKey, 'contact.first_name')
       assert.equal(localTemplate.variableBindings.bodyText['2'].variableKey, 'cita.fecha')
       assert.equal(localTemplate.variableBindings.bodyText['3'].variableKey, 'cita.hora')
@@ -178,7 +179,7 @@ test('crea plantillas default de citas y las manda a revisión una sola vez', as
       )
       assert.equal(apiTemplate.status, 'PENDING')
       const components = JSON.parse(apiTemplate.components_json)
-      assert.deepEqual(components.map((component) => component.type), ['BODY', 'FOOTER'])
+      assert.deepEqual(components.map((component) => component.type), ['BODY'])
 
       const secondRun = await ensureDefaultAppointmentMessageTemplates({ submitToYCloud: true })
       assert.equal(secondRun.submitted, 0)
@@ -235,24 +236,28 @@ test('crea plantillas default de pagos con botones dinamicos de pago y comproban
       assert.deepEqual(paymentCaptures.map((capture) => capture.name).sort(), [...DEFAULT_PAYMENT_TEMPLATE_NAMES].sort())
 
       const beforePayment = paymentCaptures.find((capture) => capture.name === 'recordatorio_pago_pendiente')
-      assert.equal(beforePayment.components[0].text, 'Pago pendiente')
-      assert.equal(beforePayment.components[1].text, 'Hola {{1}}, tienes pendiente el pago de {{2}} por {{3}}. Toca el botón para pagar de forma segura.')
+      assert.equal(beforePayment.components[0].type, 'BODY')
+      assert.equal(beforePayment.components[0].text, '*Pago pendiente* ⏳\nHola {{1}}, tienes pendiente el pago de {{2}} por {{3}}. Toca el botón para realizarlo. 👇')
+      assert.equal(beforePayment.components[1].text, 'Mensaje automático de Ristak')
       const beforeButtons = beforePayment.components.find((component) => component.type === 'BUTTONS').buttons
       assert.equal(beforeButtons[0].type, 'URL')
-      assert.equal(beforeButtons[0].text, 'Pagar aquí')
+      assert.equal(beforeButtons[0].text, 'Realizar pago')
       assert.equal(beforeButtons[0].url, 'https://pagos.ristak.test/pay/{{1}}')
-      assert.deepEqual(beforeButtons[0].example, ['rstk_pay_3NfL8dZ9xQ2aB6mP7KcR'])
+      assert.deepEqual(beforeButtons[0].example, ['pay_3NfL8dZ9xQ2aB6mP'])
 
       const receiptTemplate = paymentCaptures.find((capture) => capture.name === 'comprobante_pago_recibido')
+      assert.equal(receiptTemplate.components[0].text, '*Pago confirmado* ✅ \nHola {{1}}, recibimos tu pago de {{2}} por {{3}}. Gracias. Puedes descargar tu comprobante desde el botón. 👇')
       const receiptButtons = receiptTemplate.components.find((component) => component.type === 'BUTTONS').buttons
       assert.equal(receiptButtons[0].text, 'Descargar comprobante')
       assert.equal(receiptButtons[0].url, 'https://pagos.ristak.test/pay/{{1}}')
-      assert.deepEqual(receiptButtons[0].example, ['rstk_pay_3NfL8dZ9xQ2aB6mP7KcR?receipt=1'])
+      assert.deepEqual(receiptButtons[0].example, ['pay_3NfL8dZ9xQ2aB6mP?receipt=1'])
 
       const failedTemplate = paymentCaptures.find((capture) => capture.name === 'pago_fallido_reintento')
+      assert.equal(failedTemplate.components[0].text, '❌ *Cobro fallido*\nHola {{1}}, no pudimos procesar tu pago de {{2}} por {{3}}. Puedes intentar nuevamente desde el botón.')
       const failedButtons = failedTemplate.components.find((component) => component.type === 'BUTTONS').buttons
-      assert.equal(failedButtons[0].text, 'Intentar pago')
+      assert.equal(failedButtons[0].text, 'Reintentar pago')
       assert.equal(failedButtons[0].url, 'https://pagos.ristak.test/pay/{{1}}')
+      assert.deepEqual(failedButtons[0].example, ['pay_3NfL8dZ9xQ2aB6mP'])
 
       const bundle = await getMessageTemplateBundle()
       const folder = bundle.folders.find((item) => item.id === DEFAULT_PAYMENT_FOLDER_ID)
@@ -275,7 +280,7 @@ test('crea plantillas default de pagos con botones dinamicos de pago y comproban
             'contact.first_name': 'Ana',
             'payment.product': 'Plan anual',
             'payment.amount': '$2,000 MXN',
-            'payment.receipt_path': 'rstk_pay_test_123?receipt=1'
+            'payment.receipt_path': 'pay_test_123?receipt=1'
           }
         }
       })
@@ -293,7 +298,7 @@ test('crea plantillas default de pagos con botones dinamicos de pago y comproban
           sub_type: 'url',
           index: '0',
           parameters: [
-            { type: 'text', text: 'rstk_pay_test_123?receipt=1' }
+            { type: 'text', text: 'pay_test_123?receipt=1' }
           ]
         }
       ])
@@ -344,6 +349,126 @@ test('arma parámetros de pago fallido aunque falte el snapshot local de la plan
   } finally {
     await deleteDefaultPaymentTemplates()
   }
+})
+
+test('backfill actualiza pago fallido aprobado con binding dinamico del boton y sin doble renglon', async () => {
+  await initializeMasterKey()
+  const keys = getWhatsAppApiConfigKeys()
+  const wabaId = 'waba_payment_default_backfill_test'
+  const requests = []
+
+  await snapshotAppConfig([keys.enabled, keys.apiKey, keys.wabaId], async () => {
+    await deleteDefaultPaymentTemplates()
+    await setAppConfig(keys.enabled, '1')
+    await setAppConfig(keys.apiKey, encrypt('ycloud_payment_default_backfill_secret'))
+    await setAppConfig(keys.wabaId, wabaId)
+
+    setYCloudFetchForTest(async (url, options = {}) => {
+      const parsed = new URL(String(url))
+      const path = parsed.pathname.replace(/^\/v2/, '')
+      const method = String(options.method || 'GET').toUpperCase()
+      requests.push({ method, path, body: options.body ? JSON.parse(options.body) : null })
+
+      if (path === `/whatsapp/templates/${wabaId}/pago_fallido_reintento/es_MX` && method === 'PATCH') {
+        const body = JSON.parse(options.body || '{}')
+        return ycloudJsonResponse({
+          id: 'official_payout_failed_backfill',
+          officialTemplateId: 'official_payout_failed_backfill',
+          wabaId,
+          name: 'pago_fallido_reintento',
+          language: 'es_MX',
+          category: 'UTILITY',
+          status: 'PENDING',
+          components: body.components
+        })
+      }
+
+      return ycloudJsonResponse({ ok: true })
+    })
+
+    try {
+      await ensureDefaultPaymentMessageTemplates({
+        submitToYCloud: false,
+        publicBaseUrl: 'https://pagos.ristak.test'
+      })
+      await db.run(`
+        UPDATE whatsapp_message_templates
+        SET ycloud_status = 'APPROVED',
+            ycloud_template_id = 'official_' || name,
+            ycloud_template_name = name,
+            ycloud_raw_payload_json = ?
+        WHERE name IN ('recordatorio_pago_pendiente', 'comprobante_pago_recibido', 'pago_fallido_reintento')
+      `, [JSON.stringify({ wabaId, status: 'APPROVED' })])
+      await db.run(`
+        UPDATE whatsapp_message_templates
+        SET body_text = ?,
+            buttons_json = ?,
+            variable_bindings_json = ?
+        WHERE name = 'pago_fallido_reintento'
+      `, [
+        '❌ *Cobro fallido* \n\nHola {{1}}, no pudimos procesar tu pago de {{2}} por {{3}}. Puedes intentar nuevamente desde el botón.',
+        JSON.stringify([{
+          id: 'tmpl_btn_failed_without_binding',
+          type: 'website',
+          label: 'Reintentar pago',
+          value: 'https://pagos.ristak.test/pay/{{1}}'
+        }]),
+        JSON.stringify({
+          headerText: {},
+          bodyText: {
+            1: {
+              variableKey: 'contact.first_name',
+              mergeField: '{{contact.first_name}}',
+              label: 'Primer nombre',
+              example: 'Raúl'
+            },
+            2: {
+              variableKey: 'payment.product',
+              mergeField: '{{payment.product}}',
+              label: 'Concepto del pago',
+              example: 'Plan mensual'
+            },
+            3: {
+              variableKey: 'payment.amount',
+              mergeField: '{{payment.amount}}',
+              label: 'Monto del pago',
+              example: '$1,499 MXN'
+            }
+          }
+        })
+      ])
+
+      const result = await ensureDefaultPaymentMessageTemplates({
+        submitToYCloud: true,
+        publicBaseUrl: 'https://pagos.ristak.test'
+      })
+
+      assert.equal(result.submitted, 1)
+      assert.deepEqual(
+        requests.map((request) => `${request.method} ${request.path}`),
+        [`PATCH /whatsapp/templates/${wabaId}/pago_fallido_reintento/es_MX`]
+      )
+      const failedBody = requests[0].body.components.find((component) => component.type === 'BODY')
+      assert.equal(failedBody.text, '❌ *Cobro fallido*\nHola {{1}}, no pudimos procesar tu pago de {{2}} por {{3}}. Puedes intentar nuevamente desde el botón.')
+      const failedButton = requests[0].body.components.find((component) => component.type === 'BUTTONS').buttons[0]
+      assert.equal(failedButton.text, 'Reintentar pago')
+      assert.equal(failedButton.url, 'https://pagos.ristak.test/pay/{{1}}')
+      assert.deepEqual(failedButton.example, ['pay_3NfL8dZ9xQ2aB6mP'])
+
+      const stored = await db.get(`
+        SELECT body_text, variable_bindings_json, ycloud_status
+        FROM whatsapp_message_templates
+        WHERE name = 'pago_fallido_reintento'
+      `)
+      assert.equal(stored.body_text.includes('\n\n'), false)
+      assert.equal(stored.ycloud_status, 'PENDING')
+      const bindings = JSON.parse(stored.variable_bindings_json)
+      assert.equal(bindings['buttons.0.value']['1'].variableKey, 'payment.public_id')
+    } finally {
+      setYCloudFetchForTest(null)
+      await deleteDefaultPaymentTemplates()
+    }
+  })
 })
 
 test('repara defaults existentes sin enviar y manda solo los pendientes', async () => {
@@ -405,10 +530,10 @@ test('repara defaults existentes sin enviar y manda solo los pendientes', async 
       )
 
       const scheduledTemplate = captures.find((capture) => capture.name === 'cita_programada')
-      assert.equal(scheduledTemplate.components[0].text, 'Cita agendada')
-      assert.equal(scheduledTemplate.components[1].text, 'Hola {{1}}, tu cita quedó agendada para {{2}}. Te enviaremos recordatorios relacionados con esta cita.')
+      assert.equal(scheduledTemplate.components[0].text, 'Cita programada para {{1}}')
+      assert.equal(scheduledTemplate.components[1].text, 'Hola {{1}}.\n\n*🔔 Importante:* Te llegarán *varios* recordatorios para *NO* olvidar que tienes una cita programada.\n\nTe pedimos de la manera más atenta que *respondas* los mensajes cuando se te solicite, para mantener una comunicación clara y evitar cualquier confusión con las citas.\n\n¡Gracias!')
       const confirmationTemplate = captures.find((capture) => capture.name === 'confirmacion_cita_dia_anterior')
-      assert.equal(confirmationTemplate.components[0].text, 'Hola {{1}}, tu cita es mañana a las {{2}}. Responde este mensaje para confirmar tu asistencia.')
+      assert.equal(confirmationTemplate.components[0].text, 'Hola {{1}}, solo para confirmar tu cita mañana a las {{2}}. ¿Confirmamos?')
 
       const bundle = await getMessageTemplateBundle()
       const byName = new Map(bundle.templates.map((template) => [template.name, template]))
@@ -501,7 +626,7 @@ test('recrea una plantilla default atorada en revisión después de seis horas',
         ]
       )
       assert.equal(requests[1].body.name, retryName)
-      assert.equal(requests[1].body.components[1].text, 'Hola {{1}}, te recordamos tu cita de mañana {{2}} a las {{3}}. Responde si necesitas hacer algún cambio.')
+      assert.equal(requests[1].body.components[0].text, '*Recordatorio* ⏰\nHola {{1}}, tienes una cita programada para dentro de 1 día, el {{2}} a las {{3}}. Recuerda estar al pendiente. 😄')
 
       const row = await db.get(
         'SELECT name, ycloud_template_name, ycloud_status, ycloud_template_id, ycloud_review_retry_count, ycloud_review_retry_last_at FROM whatsapp_message_templates WHERE name = ?',
@@ -600,8 +725,8 @@ test('reintenta una plantilla default rechazada con nombre técnico nuevo sin du
         ]
       )
       assert.equal(requests[1].body.name, retryName)
-      assert.equal(requests[1].body.components[0].text, 'Hola {{1}}, tu cita es mañana a las {{2}}. Responde este mensaje para confirmar tu asistencia.')
-      assert.equal(requests[1].body.components[1].text, 'Esto es un mensaje automático.')
+      assert.equal(requests[1].body.components[0].text, 'Hola {{1}}, solo para confirmar tu cita mañana a las {{2}}. ¿Confirmamos?')
+      assert.equal(requests[1].body.components.length, 1)
 
       const localRows = await db.all(
         'SELECT name, ycloud_template_name, ycloud_status, ycloud_template_id FROM whatsapp_message_templates WHERE name = ?',

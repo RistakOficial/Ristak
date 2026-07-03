@@ -66,7 +66,7 @@ const BASE_APPOINTMENT_VARIABLES = [
 
 const BASE_PAYMENT_VARIABLES = [
   ['ID del pago', 'payment.id', 'rstk_payment_3NfL8dZ9xQ2aB6mP7KcR'],
-  ['ID publico del pago', 'payment.public_id', 'rstk_pay_3NfL8dZ9xQ2aB6mP7KcR'],
+  ['ID publico del pago', 'payment.public_id', 'pay_3NfL8dZ9xQ2aB6mP'],
   ['Concepto del pago', 'payment.product', 'Plan mensual'],
   ['Monto del pago', 'payment.amount', '$1,499 MXN'],
   ['Moneda del pago', 'payment.currency', 'MXN'],
@@ -76,9 +76,9 @@ const BASE_PAYMENT_VARIABLES = [
   ['Referencia del pago', 'payment.receipt', 'REC-1048'],
   ['Numero de comprobante', 'payment.invoice_number', 'COMP-1048'],
   ['Fecha del pago', 'payment.date', '20 de junio de 2026'],
-  ['URL de pago', 'payment.url', 'https://app.ristak.com/pay/rstk_pay_3NfL8dZ9xQ2aB6mP7KcR'],
-  ['URL de comprobante', 'payment.receipt_url', 'https://app.ristak.com/pay/rstk_pay_3NfL8dZ9xQ2aB6mP7KcR?receipt=1'],
-  ['Ruta dinamica de comprobante', 'payment.receipt_path', 'rstk_pay_3NfL8dZ9xQ2aB6mP7KcR?receipt=1']
+  ['URL de pago', 'payment.url', 'https://app.ristak.com/pay/pay_3NfL8dZ9xQ2aB6mP'],
+  ['URL de comprobante', 'payment.receipt_url', 'https://app.ristak.com/pay/pay_3NfL8dZ9xQ2aB6mP?receipt=1'],
+  ['Ruta dinamica de comprobante', 'payment.receipt_path', 'pay_3NfL8dZ9xQ2aB6mP?receipt=1']
 ].map(([label, key, example]) => ({
   key,
   label,
@@ -114,28 +114,29 @@ const DEFAULT_APPOINTMENT_MESSAGE_TEMPLATES = [
     status: 'active',
     headerEnabled: true,
     headerType: 'text',
-    headerText: 'Cita agendada',
-    bodyText: 'Hola {{1}}, tu cita quedó agendada para {{2}}. Te enviaremos recordatorios relacionados con esta cita.',
-    footerText: 'Esto es un mensaje automático.',
+    headerText: 'Cita programada para {{1}}',
+    bodyText: 'Hola {{1}}.\n\n*🔔 Importante:* Te llegarán *varios* recordatorios para *NO* olvidar que tienes una cita programada.\n\nTe pedimos de la manera más atenta que *respondas* los mensajes cuando se te solicite, para mantener una comunicación clara y evitar cualquier confusión con las citas.\n\n¡Gracias!',
+    footerText: '',
     buttons: [],
     variableExamples: {
       '{{cita.fecha_hora}}': 'viernes, 19 de junio de 2026 9:00',
       '{{contact.first_name}}': 'María'
     },
     variableBindings: {
-      headerText: {},
+      headerText: {
+        1: {
+          variableKey: 'cita.fecha_hora',
+          mergeField: '{{cita.fecha_hora}}',
+          label: 'Fecha y hora de cita',
+          example: 'viernes, 19 de junio de 2026 9:00'
+        }
+      },
       bodyText: {
         1: {
           variableKey: 'contact.first_name',
           mergeField: '{{contact.first_name}}',
           label: 'Primer nombre',
           example: 'María'
-        },
-        2: {
-          variableKey: 'cita.fecha_hora',
-          mergeField: '{{cita.fecha_hora}}',
-          label: 'Fecha y hora de cita',
-          example: 'viernes, 19 de junio de 2026 9:00'
         }
       }
     }
@@ -146,11 +147,11 @@ const DEFAULT_APPOINTMENT_MESSAGE_TEMPLATES = [
     category: 'utility',
     language: DEFAULT_APPOINTMENT_TEMPLATE_LANGUAGE,
     status: 'active',
-    headerEnabled: true,
-    headerType: 'text',
-    headerText: 'Recordatorio',
-    bodyText: 'Hola {{1}}, te recordamos tu cita de mañana {{2}} a las {{3}}. Responde si necesitas hacer algún cambio.',
-    footerText: 'Esto es un mensaje automático.',
+    headerEnabled: false,
+    headerType: 'none',
+    headerText: '',
+    bodyText: '*Recordatorio* ⏰\nHola {{1}}, tienes una cita programada para dentro de 1 día, el {{2}} a las {{3}}. Recuerda estar al pendiente. 😄',
+    footerText: 'Esto es un mensaje automático',
     buttons: [],
     variableExamples: {
       '{{contact.first_name}}': 'María',
@@ -190,8 +191,8 @@ const DEFAULT_APPOINTMENT_MESSAGE_TEMPLATES = [
     headerEnabled: false,
     headerType: 'none',
     headerText: '',
-    bodyText: 'Hola {{1}}, tu cita es mañana a las {{2}}. Responde este mensaje para confirmar tu asistencia.',
-    footerText: 'Esto es un mensaje automático.',
+    bodyText: 'Hola {{1}}, solo para confirmar tu cita mañana a las {{2}}. ¿Confirmamos?',
+    footerText: '',
     buttons: [],
     variableExamples: {
       '{{contact.first_name}}': 'María',
@@ -251,8 +252,8 @@ function paymentButtonBinding({ hasPublicBaseUrl, receipt = false } = {}) {
       mergeField: receipt ? '{{payment.receipt_url}}' : '{{payment.url}}',
       label: receipt ? 'URL de comprobante' : 'URL de pago',
       example: receipt
-        ? 'https://app.ristak.com/pay/rstk_pay_3NfL8dZ9xQ2aB6mP7KcR?receipt=1'
-        : 'https://app.ristak.com/pay/rstk_pay_3NfL8dZ9xQ2aB6mP7KcR'
+        ? 'https://app.ristak.com/pay/pay_3NfL8dZ9xQ2aB6mP?receipt=1'
+        : 'https://app.ristak.com/pay/pay_3NfL8dZ9xQ2aB6mP'
     }
   }
 
@@ -260,7 +261,7 @@ function paymentButtonBinding({ hasPublicBaseUrl, receipt = false } = {}) {
     variableKey: receipt ? 'payment.receipt_path' : 'payment.public_id',
     mergeField: receipt ? '{{payment.receipt_path}}' : '{{payment.public_id}}',
     label: receipt ? 'Ruta dinamica de comprobante' : 'ID publico del pago',
-    example: receipt ? 'rstk_pay_3NfL8dZ9xQ2aB6mP7KcR?receipt=1' : 'rstk_pay_3NfL8dZ9xQ2aB6mP7KcR'
+    example: receipt ? 'pay_3NfL8dZ9xQ2aB6mP?receipt=1' : 'pay_3NfL8dZ9xQ2aB6mP'
   }
 }
 
@@ -277,15 +278,15 @@ function getDefaultPaymentMessageTemplates({ publicBaseUrl = '' } = {}) {
       category: 'utility',
       language: DEFAULT_PAYMENT_TEMPLATE_LANGUAGE,
       status: 'active',
-      headerEnabled: true,
-      headerType: 'text',
-      headerText: 'Pago pendiente',
-      bodyText: 'Hola {{1}}, tienes pendiente el pago de {{2}} por {{3}}. Toca el botón para pagar de forma segura.',
-      footerText: 'Esto es un mensaje automático.',
+      headerEnabled: false,
+      headerType: 'none',
+      headerText: '',
+      bodyText: '*Pago pendiente* ⏳\nHola {{1}}, tienes pendiente el pago de {{2}} por {{3}}. Toca el botón para realizarlo. 👇',
+      footerText: 'Mensaje automático de Ristak',
       buttons: [
         {
           type: 'website',
-          label: 'Pagar aquí',
+          label: 'Realizar pago',
           value: buttonUrl
         }
       ],
@@ -293,8 +294,8 @@ function getDefaultPaymentMessageTemplates({ publicBaseUrl = '' } = {}) {
         '{{contact.first_name}}': 'Maria',
         '{{payment.product}}': 'Plan mensual',
         '{{payment.amount}}': '$1,499 MXN',
-        '{{payment.public_id}}': 'rstk_pay_3NfL8dZ9xQ2aB6mP7KcR',
-        '{{payment.url}}': 'https://app.ristak.com/pay/rstk_pay_3NfL8dZ9xQ2aB6mP7KcR'
+        '{{payment.public_id}}': 'pay_3NfL8dZ9xQ2aB6mP',
+        '{{payment.url}}': 'https://app.ristak.com/pay/pay_3NfL8dZ9xQ2aB6mP'
       },
       variableBindings: {
         headerText: {},
@@ -329,11 +330,11 @@ function getDefaultPaymentMessageTemplates({ publicBaseUrl = '' } = {}) {
       category: 'utility',
       language: DEFAULT_PAYMENT_TEMPLATE_LANGUAGE,
       status: 'active',
-      headerEnabled: true,
-      headerType: 'text',
-      headerText: 'Pago confirmado',
-      bodyText: 'Hola {{1}}, recibimos tu pago de {{2}} por {{3}}. Gracias. Puedes descargar tu comprobante desde el botón.',
-      footerText: 'Esto es un mensaje automático.',
+      headerEnabled: false,
+      headerType: 'none',
+      headerText: '',
+      bodyText: '*Pago confirmado* ✅ \nHola {{1}}, recibimos tu pago de {{2}} por {{3}}. Gracias. Puedes descargar tu comprobante desde el botón. 👇',
+      footerText: 'Mensaje automático de Ristak',
       buttons: [
         {
           type: 'website',
@@ -345,9 +346,9 @@ function getDefaultPaymentMessageTemplates({ publicBaseUrl = '' } = {}) {
         '{{contact.first_name}}': 'Maria',
         '{{payment.product}}': 'Plan mensual',
         '{{payment.amount}}': '$1,499 MXN',
-        '{{payment.public_id}}': 'rstk_pay_3NfL8dZ9xQ2aB6mP7KcR',
-        '{{payment.receipt_path}}': 'rstk_pay_3NfL8dZ9xQ2aB6mP7KcR?receipt=1',
-        '{{payment.receipt_url}}': 'https://app.ristak.com/pay/rstk_pay_3NfL8dZ9xQ2aB6mP7KcR?receipt=1'
+        '{{payment.public_id}}': 'pay_3NfL8dZ9xQ2aB6mP',
+        '{{payment.receipt_path}}': 'pay_3NfL8dZ9xQ2aB6mP?receipt=1',
+        '{{payment.receipt_url}}': 'https://app.ristak.com/pay/pay_3NfL8dZ9xQ2aB6mP?receipt=1'
       },
       variableBindings: {
         headerText: {},
@@ -382,15 +383,15 @@ function getDefaultPaymentMessageTemplates({ publicBaseUrl = '' } = {}) {
       category: 'utility',
       language: DEFAULT_PAYMENT_TEMPLATE_LANGUAGE,
       status: 'active',
-      headerEnabled: true,
-      headerType: 'text',
-      headerText: 'Cobro fallido',
-      bodyText: 'Hola {{1}}, no pudimos procesar tu pago de {{2}} por {{3}}. Puedes intentar nuevamente desde el botón.',
-      footerText: 'Esto es un mensaje automático.',
+      headerEnabled: false,
+      headerType: 'none',
+      headerText: '',
+      bodyText: '❌ *Cobro fallido*\nHola {{1}}, no pudimos procesar tu pago de {{2}} por {{3}}. Puedes intentar nuevamente desde el botón.',
+      footerText: 'Mensaje automático de Ristak',
       buttons: [
         {
           type: 'website',
-          label: 'Intentar pago',
+          label: 'Reintentar pago',
           value: buttonUrl
         }
       ],
@@ -398,8 +399,8 @@ function getDefaultPaymentMessageTemplates({ publicBaseUrl = '' } = {}) {
         '{{contact.first_name}}': 'Maria',
         '{{payment.product}}': 'Plan mensual',
         '{{payment.amount}}': '$1,499 MXN',
-        '{{payment.public_id}}': 'rstk_pay_3NfL8dZ9xQ2aB6mP7KcR',
-        '{{payment.url}}': 'https://app.ristak.com/pay/rstk_pay_3NfL8dZ9xQ2aB6mP7KcR'
+        '{{payment.public_id}}': 'pay_3NfL8dZ9xQ2aB6mP',
+        '{{payment.url}}': 'https://app.ristak.com/pay/pay_3NfL8dZ9xQ2aB6mP'
       },
       variableBindings: {
         headerText: {},
@@ -1447,6 +1448,42 @@ async function findMessageTemplateByNameLanguage(name, language) {
   return row ? mapTemplate(row) : null
 }
 
+function comparableDefaultTemplate(template = {}) {
+  const buttons = Array.isArray(template.buttons) ? template.buttons : []
+  return {
+    folderId: normalizeOptionalString(template.folderId),
+    description: clampText(template.description, 240),
+    category: normalizeCategory(template.category),
+    language: normalizeLanguage(template.language),
+    status: normalizeStatus(template.status),
+    headerEnabled: Boolean(template.headerEnabled),
+    headerType: normalizeHeaderType(template.headerType, Boolean(template.headerEnabled)),
+    headerText: clampText(template.headerText, 60),
+    headerMediaUrl: clampText(template.headerMediaUrl, 2048),
+    headerLocation: normalizeLocation(template.headerLocation),
+    bodyText: clampText(template.bodyText, 1024),
+    footerText: clampText(template.footerText, 60),
+    buttons: buttons.map((button) => ({
+      type: cleanString(button?.type),
+      label: clampText(button?.label, 25),
+      value: clampText(button?.value, cleanString(button?.type) === 'website' ? 2048 : 80)
+    })),
+    variableExamples: normalizeVariableExamples(template.variableExamples),
+    variableBindings: normalizeVariableBindings(template.variableBindings)
+  }
+}
+
+function shouldRefreshDefaultMessageTemplate(existing, definition, folderId) {
+  const desired = normalizeTemplatePayload({
+    ...definition,
+    folderId,
+    name: normalizeTemplateName(definition.name),
+    language: normalizeLanguage(definition.language)
+  })
+
+  return stableJson(comparableDefaultTemplate(existing)) !== stableJson(comparableDefaultTemplate(desired))
+}
+
 async function ensureTemplateFolder(folderDefinition, sortOrder = -100) {
   const existing = await db.get(
     'SELECT * FROM whatsapp_template_folders WHERE id = ?',
@@ -1489,34 +1526,48 @@ async function ensureDefaultMessageTemplate(definition, folderId) {
   const language = normalizeLanguage(definition.language)
   const existing = await findMessageTemplateByNameLanguage(name, language)
   if (existing) {
-    const ycloudStatus = normalizeYCloudTemplateStatus(existing.ycloudStatus)
-    const shouldRefreshUnsubmittedDefault = !ycloudStatus && !existing.ycloudTemplateId
-    if (shouldRefreshUnsubmittedDefault) {
-      return updateMessageTemplate(existing.id, {
-        ...definition,
-        folderId,
-        name,
-        language
-      })
+    let template = existing
+    let refreshed = false
+    let refreshSkippedLocked = false
+    const shouldRefreshDefault = shouldRefreshDefaultMessageTemplate(existing, definition, folderId)
+
+    if (shouldRefreshDefault) {
+      if (isTemplateLockedForEditing(existing.ycloudStatus)) {
+        refreshSkippedLocked = true
+      } else {
+        template = await updateMessageTemplate(existing.id, {
+          ...definition,
+          folderId,
+          name,
+          language
+        })
+        refreshed = true
+      }
     }
 
-    if (folderId && existing.folderId !== folderId) {
+    if (folderId && template.folderId !== folderId) {
       await db.run(`
         UPDATE whatsapp_message_templates
         SET folder_id = ?, updated_at = CURRENT_TIMESTAMP
         WHERE id = ?
-      `, [folderId, existing.id])
-      return getMessageTemplateById(existing.id)
+      `, [folderId, template.id])
+      template = await getMessageTemplateById(template.id)
     }
-    return existing
+
+    return { template, refreshed, refreshSkippedLocked, created: false }
   }
 
-  return createMessageTemplate({
-    ...definition,
-    folderId,
-    name,
-    language
-  })
+  return {
+    template: await createMessageTemplate({
+      ...definition,
+      folderId,
+      name,
+      language
+    }),
+    refreshed: true,
+    refreshSkippedLocked: false,
+    created: true
+  }
 }
 
 const TEMPLATE_REVIEW_STATES = new Set(['APPROVED', 'PENDING', 'IN_APPEAL', 'IN_REVIEW', 'UNDER_REVIEW', 'PENDING_REVIEW'])
@@ -1727,29 +1778,43 @@ async function shouldSubmitDefaultAppointmentTemplates() {
 export async function ensureDefaultAppointmentMessageTemplates({ submitToYCloud = false } = {}) {
   const results = []
   const folder = await ensureDefaultTemplateFolder()
-  const templates = []
+  const ensuredTemplates = []
 
   for (const definition of DEFAULT_APPOINTMENT_MESSAGE_TEMPLATES) {
-    templates.push(await ensureDefaultMessageTemplate(definition, folder.id))
+    ensuredTemplates.push(await ensureDefaultMessageTemplate(definition, folder.id))
   }
+  const templates = ensuredTemplates.map((ensured) => ensured.template)
 
   for (let index = 0; index < templates.length; index += 1) {
     let template = templates[index]
+    const ensured = ensuredTemplates[index]
     const ycloudStatus = normalizeYCloudTemplateStatus(template.ycloudStatus)
     let submitted = false
     let retried = false
     let retryAlerted = false
     let error = null
 
-    if (submitToYCloud && ycloudStatus === 'APPROVED') {
-      await resolveDefaultAppointmentReviewRetryAlert(template)
-    }
-
-    if (submitToYCloud && !TEMPLATE_REVIEW_STATES.has(ycloudStatus) && !template.ycloudTemplateId) {
+    if (submitToYCloud && ensured.refreshed && !isTemplateLockedForEditing(ycloudStatus)) {
       try {
         const result = await submitMessageTemplateToYCloud(template.id)
         template = result.template
         templates[index] = template
+        ensuredTemplates[index] = { ...ensured, template }
+        submitted = true
+      } catch (submitError) {
+        error = getTemplateErrorMessage(submitError, 'No se pudo enviar a revisión')
+        logger.warn(`No se pudo reenviar plantilla default ${template.name}/${template.language} a revisión después del backfill: ${error}`)
+      }
+    } else if (submitToYCloud && ycloudStatus === 'APPROVED') {
+      await resolveDefaultAppointmentReviewRetryAlert(template)
+    }
+
+    if (!submitted && submitToYCloud && !TEMPLATE_REVIEW_STATES.has(ycloudStatus) && !template.ycloudTemplateId) {
+      try {
+        const result = await submitMessageTemplateToYCloud(template.id)
+        template = result.template
+        templates[index] = template
+        ensuredTemplates[index] = { ...ensuredTemplates[index], template }
         submitted = true
       } catch (submitError) {
         error = getTemplateErrorMessage(submitError, 'No se pudo enviar a revisión')
@@ -1790,6 +1855,8 @@ export async function ensureDefaultAppointmentMessageTemplates({ submitToYCloud 
       language: template.language,
       ycloudStatus: template.ycloudStatus || null,
       reviewRetryCount: template.ycloudReviewRetryCount || 0,
+      refreshed: ensured.refreshed,
+      refreshSkippedLocked: ensured.refreshSkippedLocked,
       submitted,
       retried,
       retryAlerted,
@@ -1808,24 +1875,38 @@ export async function ensureDefaultAppointmentMessageTemplates({ submitToYCloud 
 export async function ensureDefaultPaymentMessageTemplates({ submitToYCloud = false, publicBaseUrl = '' } = {}) {
   const results = []
   const folder = await ensureTemplateFolder(DEFAULT_PAYMENT_TEMPLATE_FOLDER, -90)
-  const templates = []
+  const ensuredTemplates = []
   const canSubmitToYCloud = submitToYCloud && Boolean(normalizePublicBaseUrl(publicBaseUrl))
 
   for (const definition of getDefaultPaymentMessageTemplates({ publicBaseUrl })) {
-    templates.push(await ensureDefaultMessageTemplate(definition, folder.id))
+    ensuredTemplates.push(await ensureDefaultMessageTemplate(definition, folder.id))
   }
+  const templates = ensuredTemplates.map((ensured) => ensured.template)
 
   for (let index = 0; index < templates.length; index += 1) {
     let template = templates[index]
+    const ensured = ensuredTemplates[index]
     const ycloudStatus = normalizeYCloudTemplateStatus(template.ycloudStatus)
     let submitted = false
     let error = null
 
-    if (canSubmitToYCloud && !TEMPLATE_REVIEW_STATES.has(ycloudStatus) && !template.ycloudTemplateId) {
+    if (canSubmitToYCloud && ensured.refreshed && !isTemplateLockedForEditing(ycloudStatus)) {
       try {
         const result = await submitMessageTemplateToYCloud(template.id)
         template = result.template
         templates[index] = template
+        ensuredTemplates[index] = { ...ensured, template }
+        submitted = true
+      } catch (submitError) {
+        error = getTemplateErrorMessage(submitError, 'No se pudo enviar a revisión')
+        logger.warn(`No se pudo reenviar plantilla default de pago ${template.name}/${template.language} a revisión después del backfill: ${error}`)
+      }
+    } else if (canSubmitToYCloud && !TEMPLATE_REVIEW_STATES.has(ycloudStatus) && !template.ycloudTemplateId) {
+      try {
+        const result = await submitMessageTemplateToYCloud(template.id)
+        template = result.template
+        templates[index] = template
+        ensuredTemplates[index] = { ...ensured, template }
         submitted = true
       } catch (submitError) {
         error = getTemplateErrorMessage(submitError, 'No se pudo enviar a revisión')
@@ -1839,6 +1920,8 @@ export async function ensureDefaultPaymentMessageTemplates({ submitToYCloud = fa
       language: template.language,
       ycloudStatus: template.ycloudStatus || null,
       reviewRetryCount: template.ycloudReviewRetryCount || 0,
+      refreshed: ensured.refreshed,
+      refreshSkippedLocked: ensured.refreshSkippedLocked,
       submitted,
       retried: false,
       retryAlerted: false,
