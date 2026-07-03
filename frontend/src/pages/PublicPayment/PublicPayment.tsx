@@ -364,6 +364,21 @@ function buildStripeCardNumberElementOptions() {
   }
 }
 
+function isStripeMissingAdditionalCardDetails(error?: { code?: string; message?: string } | null) {
+  const blob = `${error?.code || ''} ${error?.message || ''}`.toLowerCase()
+  return (
+    blob.includes('incomplete_expiry') ||
+    blob.includes('incomplete_cvc') ||
+    blob.includes('expiration') ||
+    blob.includes('expiry') ||
+    blob.includes('cvc') ||
+    blob.includes('security code') ||
+    blob.includes('caducidad') ||
+    blob.includes('código de seguridad') ||
+    blob.includes('codigo de seguridad')
+  )
+}
+
 function stripeControlledInstallmentsEnabled(payment?: PublicStripePayment | null) {
   return Boolean(
     payment?.stripeInstallments?.enabled &&
@@ -1370,6 +1385,7 @@ const PublicStripeInstallmentPaymentForm: React.FC<{
   const [paymentIntentId, setPaymentIntentId] = useState('')
   const [availablePlans, setAvailablePlans] = useState<StripeInstallmentPlan[] | null>(null)
   const [selectedInstallments, setSelectedInstallments] = useState<number | null>(null)
+  const [numberTriggeredPrepareAttempted, setNumberTriggeredPrepareAttempted] = useState(false)
   const cardNumberOptions = useMemo(() => buildStripeCardNumberElementOptions(), [])
   const cardFieldOptions = useMemo(() => buildStripeSplitElementOptions(), [])
   const submitAmount = Number(payment.amount || 0) > 0 ? ` ${formatCurrency(payment.amount, payment.currency)}` : ''
@@ -1377,6 +1393,7 @@ const PublicStripeInstallmentPaymentForm: React.FC<{
   const showSecureNotice = payment.settings?.checkout?.showSecureBadge !== false
   const isTestMode = payment.paymentMode === 'test' || String(payment.publishableKey || '').startsWith('pk_test_')
   const savePaymentMethod = Boolean(payment.contact?.id || payment.paymentPlan?.cardSetupRequired)
+  const cardNumberComplete = cardFields.number
   const cardComplete = cardFields.number && cardFields.expiry && cardFields.cvc
   const hasPreparedCard = installmentStatus === 'ready' && Boolean(paymentIntentId)
   const showInstallmentSelector = Boolean(hasPreparedCard && availablePlans?.length)
@@ -1393,6 +1410,7 @@ const PublicStripeInstallmentPaymentForm: React.FC<{
 
   const resetCardSelection = () => {
     setCardFields({ number: false, expiry: false, cvc: false })
+    setNumberTriggeredPrepareAttempted(false)
     resetPreparedCard()
     elements?.getElement(CardNumberElement)?.clear()
     elements?.getElement(CardExpiryElement)?.clear()
@@ -1409,6 +1427,9 @@ const PublicStripeInstallmentPaymentForm: React.FC<{
     }))
 
     const hasPreparedState = Boolean(paymentIntentId || availablePlans || installmentStatus === 'ready' || installmentStatus === 'error')
+    if (field === 'number') {
+      setNumberTriggeredPrepareAttempted(false)
+    }
     if (!event.complete || hasPreparedState) {
       resetPreparedCard()
       return
@@ -1418,7 +1439,7 @@ const PublicStripeInstallmentPaymentForm: React.FC<{
     setMessageKind('info')
   }, [availablePlans, installmentStatus, paymentIntentId, resetPreparedCard])
 
-  const preparePlans = useCallback(async () => {
+  const preparePlans = useCallback(async (options: { quietIncompleteCardDetails?: boolean } = {}) => {
     if (!stripe || !elements || installmentStatus === 'checking') return
     const card = elements.getElement(CardNumberElement)
     if (!card) {
@@ -1445,6 +1466,12 @@ const PublicStripeInstallmentPaymentForm: React.FC<{
       })
 
       if (paymentMethod.error || !paymentMethod.paymentMethod?.id) {
+        if (options.quietIncompleteCardDetails && isStripeMissingAdditionalCardDetails(paymentMethod.error)) {
+          setMessage('')
+          setMessageKind('info')
+          setInstallmentStatus('idle')
+          return
+        }
         setMessageKind('error')
         setMessage(paymentMethod.error?.message || 'Revisa los datos de la tarjeta e intenta otra vez.')
         setInstallmentStatus('error')
@@ -1524,6 +1551,12 @@ const PublicStripeInstallmentPaymentForm: React.FC<{
     }
     await finishPayment()
   }
+
+  useEffect(() => {
+    if (!cardNumberComplete || numberTriggeredPrepareAttempted || installmentStatus !== 'idle' || paymentIntentId) return
+    setNumberTriggeredPrepareAttempted(true)
+    void preparePlans({ quietIncompleteCardDetails: true })
+  }, [cardNumberComplete, installmentStatus, numberTriggeredPrepareAttempted, paymentIntentId, preparePlans])
 
   useEffect(() => {
     if (!cardComplete || installmentStatus !== 'idle' || paymentIntentId) return
