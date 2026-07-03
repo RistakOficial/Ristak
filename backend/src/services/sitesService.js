@@ -16140,6 +16140,14 @@ function buildPaymentCheckoutRuntimeScript() {
         cardNumber.mount(cardNumberHost);
         cardExpiry.mount(cardExpiryHost);
         cardCvc.mount(cardCvcHost);
+        // País: los meses sin intereses son exclusivos de México, así que se muestra fijo
+        // (como el checkout normal de Stripe: número, vencimiento, CVC y país).
+        var paisHost = makeStripeSplitField('País', true);
+        paisHost.style.display = 'flex';
+        paisHost.style.alignItems = 'center';
+        paisHost.style.color = fieldTextTok || 'inherit';
+        paisHost.style.fontSize = '15px';
+        paisHost.textContent = 'México';
         els.pay.hidden = false; showLoading(false);
 
         var pmId = null, paymentIntentId = '', publicPaymentId = '', availablePlans = [], selectedInstallments = null;
@@ -16205,7 +16213,7 @@ function buildPaymentCheckoutRuntimeScript() {
           if (preparing || !cardNumberComplete || !identityReady()) return;
           preparing = true; prepareError = false; setMessage('', ''); refreshLabel();
           var payer = collectPayer();
-          stripe.createPaymentMethod({ type: 'card', card: cardNumber, billing_details: { email: payer.email || undefined, phone: payer.phone || undefined } }).then(function (res) {
+          stripe.createPaymentMethod({ type: 'card', card: cardNumber, billing_details: { email: payer.email || undefined, phone: payer.phone || undefined, address: { country: 'MX' } } }).then(function (res) {
             if (res.error || !(res.paymentMethod && res.paymentMethod.id)) {
               if (opts.quietIncompleteCardDetails && isMissingAdditionalCardDetails(res.error)) {
                 preparing = false; prepareError = false; refreshLabel(); return null;
