@@ -15731,7 +15731,7 @@ function buildPaymentCheckoutRuntimeScript() {
         if (!identityActive()) return true;
         if (idVal(identityEmail) || idVal(identityPhone)) { if (identityErr) identityErr.hidden = true; return true; }
         if (identityErr) identityErr.hidden = false;
-        setMessage('error', 'Escribe tu correo o telefono para continuar.');
+        setMessage('error', 'Escribe tu correo o teléfono para continuar.');
         return false;
       }
 
@@ -18362,9 +18362,9 @@ function renderPaymentBlock(block = {}, context = {}) {
               <span>Cargando pago seguro…</span>
             </div>
             ${showIdentityFields ? `<div class="rstk-checkout-identity" data-rstk-checkout-identity style="display:grid;gap:10px;margin-bottom:12px" hidden>
-              ${collectEmail ? `<input type="email" inputmode="email" autocomplete="email" data-rstk-identity-email placeholder="Correo electronico" aria-label="Correo electronico" style="${identityInputStyle}" />` : ''}
-              ${collectPhone ? `<input type="tel" inputmode="tel" autocomplete="tel" data-rstk-identity-phone placeholder="Telefono" aria-label="Telefono" style="${identityInputStyle}" />` : ''}
-              <p class="rstk-checkout-message" data-rstk-identity-error role="alert" hidden style="margin:0" data-kind="error">Escribe tu correo o telefono para continuar.</p>
+              ${collectEmail ? `<input type="email" inputmode="email" autocomplete="email" data-rstk-identity-email placeholder="Correo electrónico" aria-label="Correo electrónico" style="${identityInputStyle}" />` : ''}
+              ${collectPhone ? `<input type="tel" inputmode="tel" autocomplete="tel" data-rstk-identity-phone placeholder="Teléfono" aria-label="Teléfono" style="${identityInputStyle}" />` : ''}
+              <p class="rstk-checkout-message" data-rstk-identity-error role="alert" hidden style="margin:0" data-kind="error">Escribe tu correo o teléfono para continuar.</p>
             </div>` : ''}
             <div class="rstk-checkout-fields" data-rstk-checkout-fields hidden></div>
             <div class="rstk-checkout-installments" data-rstk-checkout-installments hidden></div>
