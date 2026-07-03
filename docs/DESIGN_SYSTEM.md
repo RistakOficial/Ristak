@@ -122,6 +122,7 @@ legacy identificada; no es permiso para copiar ese estilo en pantallas nuevas.
 | Tabs de sub-sección (underline) | `<SegmentTabs>` (recipe `[data-segdir]`) | un nav a mano |
 | Switch / toggle | `<Switch>` (recipe `[data-sw]`) | un checkbox estilizado a mano |
 | Select enriquecido | `<CustomSelect>` | — |
+| Campo numérico | `<NumberInput>`; en primitivas móviles, `type="text"` + `inputMode="numeric\|decimal"` | `<input type="number">` nativo o controles con flechas subir/bajar |
 | Ruta / slug con prefijo fijo | `<PathInput prefix="…">` | un wrapper con prefijo + `<input className={styles.input}>` que crea doble contenedor |
 | Menú | `<DropdownMenu>` | — |
 | Modal / overlay | `<Modal>` (recipe `[data-overlay]`/`[data-modal]`) | un `position:fixed` a mano |
@@ -268,6 +269,12 @@ suelto de `showConfirm`. Para `<Modal>` inline es el prop `typeToConfirm="ELIMIN
     `stroke: none; stroke-width: 0` en el glifo de marca. **Verifica íconos
     móviles corriendo la app real (no renders aislados):** un SVG suelto se ve
     fino porque no arrastra esa cascada del contenedor.
+13. **Campos numéricos con steppers nativos.** Prohibido `<input type="number">`
+    nativo, flechas de subir/bajar del navegador o pseudo-botones equivalentes
+    en cualquier superficie de Ristak. Los números se teclean: usa `<NumberInput>`
+    en escritorio o una primitiva que renderice `type="text"` con
+    `inputMode="numeric"`/`inputMode="decimal"` en móvil. `design:audit` debe
+    fallar si aparece un `<input type="number">` nuevo.
 
 ---
 
@@ -321,4 +328,6 @@ una isla.
    `showConfirm`/`<Modal type="confirm">`, palabra en MAYÚSCULAS = verbo, copia y
    botón estándar, `typeToConfirm` por riesgo. Cero `window.confirm` y cero modales
    de borrado a mano.
-12. No tocaste `Phone*`, Automatizaciones, ni el layout/flujo.
+13. Los campos numéricos no usan `<input type="number">` nativo ni muestran
+    flechas de subir/bajar.
+14. No tocaste `Phone*`, Automatizaciones, ni el layout/flujo.

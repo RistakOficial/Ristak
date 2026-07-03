@@ -42,9 +42,10 @@
 .rstkCanvas :where(button, input[type='button'], input[type='reset'], input[type='submit']) { appearance: revert; background-color: revert; background-image: revert; }
 .rstkCanvas :where(input, textarea)::placeholder { opacity: revert; color: revert; }
 .rstkCanvas :where(option, optgroup) { background: revert; color: revert; padding: revert; }
-.rstkCanvas :where(input[type='number']) { appearance: revert; -webkit-appearance: revert; -moz-appearance: revert; }
+/* Los campos numericos no regresan al user-agent: las flechas nativas estan prohibidas en Ristak. */
+.rstkCanvas :where(input[type='number']) { appearance: textfield; -webkit-appearance: none; -moz-appearance: textfield; }
 .rstkCanvas :where(input[type='number'])::-webkit-outer-spin-button,
-.rstkCanvas :where(input[type='number'])::-webkit-inner-spin-button { margin: revert; -webkit-appearance: revert; }
+.rstkCanvas :where(input[type='number'])::-webkit-inner-spin-button { display: none; margin: 0; appearance: none; -webkit-appearance: none; }
 .rstkCanvas :where(input[type='date'], input[type='time'], input[type='datetime-local'], input[type='month'], input[type='week'])::-webkit-calendar-picker-indicator { all: revert; }
 /* El transition:all del checkbox/radio global del CRM (0,1,1) necesita un pelo
    más de especificidad; el orden del bundle (este archivo va después de

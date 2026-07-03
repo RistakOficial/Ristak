@@ -36937,8 +36937,7 @@ const FieldRulesControls: React.FC<{
   const numberField = (key: string, label: string, extra?: { min?: string; step?: string }) => (
     <label className={styles.field}>
       <span>{label}</span>
-      <input
-        type="number"
+      <NumberInput
         min={extra?.min}
         step={extra?.step}
         value={settingText(key)}

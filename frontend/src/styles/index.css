@@ -231,15 +231,17 @@ body.dark {
   }
 
   input[type='number'] {
-    appearance: textfield;
-    -webkit-appearance: none;
-    -moz-appearance: textfield;
+    appearance: textfield !important;
+    -webkit-appearance: none !important;
+    -moz-appearance: textfield !important;
   }
 
   input[type='number']::-webkit-outer-spin-button,
   input[type='number']::-webkit-inner-spin-button {
-    margin: 0;
-    -webkit-appearance: none;
+    display: none !important;
+    margin: 0 !important;
+    appearance: none !important;
+    -webkit-appearance: none !important;
   }
 
   select option {

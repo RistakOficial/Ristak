@@ -73,16 +73,16 @@ const checks = [
   },
 ]
 
-async function collectFiles(dir) {
+async function collectFiles(dir, { includeExcluded = false } = {}) {
   const entries = await readdir(dir, { withFileTypes: true })
   const files = []
 
   for (const entry of entries) {
     const absolutePath = path.join(dir, entry.name)
-    if (excludedPathParts.some((part) => absolutePath.includes(part))) continue
+    if (!includeExcluded && excludedPathParts.some((part) => absolutePath.includes(part))) continue
 
     if (entry.isDirectory()) {
-      files.push(...await collectFiles(absolutePath))
+      files.push(...await collectFiles(absolutePath, { includeExcluded }))
       continue
     }
 
@@ -127,6 +127,29 @@ for (const file of files) {
         hint: check.hint,
       })
     }
+  }
+}
+
+const allFiles = await collectFiles(srcRoot, { includeExcluded: true })
+const nativeNumberInputPattern = /<input\b[^>]*\btype\s*=\s*(?:"number"|'number'|\{\s*["']number["']\s*\})[^>]*>/gis
+
+for (const file of allFiles) {
+  const relativePath = toRelative(file)
+  const extension = path.extname(file)
+  if (!['.tsx', '.ts'].includes(extension)) continue
+
+  const source = await readFile(file, 'utf8')
+  nativeNumberInputPattern.lastIndex = 0
+
+  let match
+  while ((match = nativeNumberInputPattern.exec(source)) !== null) {
+    violations.push({
+      file: relativePath,
+      line: lineNumberForIndex(source, match.index),
+      check: 'Input numerico nativo prohibido',
+      value: '<input type="number">',
+      hint: 'Usa NumberInput en escritorio o un input type="text" con inputMode numerico en primitivas moviles. Los steppers nativos estan prohibidos.',
+    })
   }
 }
 

@@ -54,6 +54,11 @@
   corre `cd frontend && npm run design:audit`. Si falla, migra al componente
   global correcto. No agregues archivos a la allowlist del auditor salvo que sea
   deuda legacy ya existente y quede explícitamente justificado en el cambio.
+- **Campos numéricos sin steppers.** Está prohibido crear `<input type="number">`
+  nativo o cualquier campo numérico con flechas de subir/bajar del navegador. Los
+  números se teclean: usa `NumberInput` en escritorio o primitivas móviles que
+  rendericen `type="text"` con `inputMode="numeric"`/`decimal`. `design:audit`
+  debe bloquear inputs numéricos nativos.
 - **Responsive sí importa.** Mantén layouts fluidos para compus chicas usando
   `flex`, `grid`, `minmax`, `clamp`, `min-width: 0`, container/media queries y
   variables del componente. No confundas responsive con inventar otra identidad
