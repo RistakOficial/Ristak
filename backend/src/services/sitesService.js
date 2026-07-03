@@ -54,6 +54,7 @@ import { renderTemplate } from './automationEngine.js'
 import { getVariableFieldValueMap } from './variableFieldsService.js'
 import { createRistakId } from '../utils/idGenerator.js'
 import { resolveConversionAttribution, persistAppointmentConversionAttribution } from './conversionAttributionService.js'
+import { getPaymentTestGuide } from '../../../shared/sites/paymentTestGuides.js'
 // Contrato de render compartido con el editor (fuente única de templates,
 // variables --rstk-*, stylesheet público y helpers de tema/color).
 import {
@@ -15797,9 +15798,47 @@ function buildPaymentCheckoutRuntimeScript() {
         els.message.textContent = text || '';
         els.message.setAttribute('data-kind', kind || 'info');
       }
+      function copyText(value) {
+        value = String(value || '');
+        if (!value) return Promise.resolve(false);
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+          return navigator.clipboard.writeText(value).then(function () { return true; }).catch(function () { return false; });
+        }
+        return new Promise(function (resolve) {
+          try {
+            var input = document.createElement('input');
+            input.value = value;
+            input.setAttribute('readonly', 'readonly');
+            input.style.position = 'fixed';
+            input.style.left = '-9999px';
+            document.body.appendChild(input);
+            input.select();
+            var ok = document.execCommand('copy');
+            document.body.removeChild(input);
+            resolve(!!ok);
+          } catch (e) {
+            resolve(false);
+          }
+        });
+      }
+      function setupTestCopyButtons() {
+        root.addEventListener('click', function (event) {
+          var node = event.target;
+          while (node && node !== root && !(node.getAttribute && node.getAttribute('data-rstk-test-copy') !== null)) node = node.parentNode;
+          if (!node || node === root) return;
+          var value = node.getAttribute('data-copy-value') || '';
+          var previousText = node.textContent || 'Copiar';
+          copyText(value).then(function (copied) {
+            if (!copied) return;
+            node.textContent = 'Copiado';
+            window.setTimeout(function () { node.textContent = previousText; }, 1400);
+          });
+        });
+      }
       function showLoading(on) { if (els.loading) els.loading.hidden = !on; }
       function setPayBusy(busy) { if (els.pay) { els.pay.disabled = busy; els.pay.setAttribute('data-busy', busy ? 'true' : 'false'); } }
       function payLabel(amount, currency) { if (els.payLabel) els.payLabel.textContent = cfg.buttonText + ' · ' + money(amount, currency); }
+      setupTestCopyButtons();
 
       function runPostAction() {
         if (done) return; done = true;
@@ -18342,6 +18381,91 @@ function resolvePaymentPostAction(settings = {}, paymentGate = {}, block = {}, c
 // frontend/src/pages/Sites/Sites.tsx para que preview y checkout vivo sean idénticos.
 const PAYMENT_SECURE_NOTE_DEFAULT = 'Pago seguro. La tarjeta se captura en campos cifrados del proveedor.'
 
+function renderPaymentTestCopyValue(value = '', label = 'Copiar') {
+  const cleanValue = cleanString(value, 120)
+  if (!cleanValue) return ''
+  return `
+    <span class="rstk-checkout-test-copy-value">
+      <span>${escapeHtml(cleanValue)}</span>
+      <button type="button" class="rstk-checkout-test-copy" data-rstk-test-copy data-copy-value="${escapeHtml(cleanValue)}" aria-label="${escapeHtml(label)}">Copiar</button>
+    </span>
+  `
+}
+
+function renderPaymentTestGuide(provider = '') {
+  const guide = getPaymentTestGuide(provider)
+  if (!guide?.cards?.length) return ''
+
+  const cardRows = guide.cards.map((card = {}) => `
+    <tr>
+      <td>${escapeHtml(cleanString(card.kind, 40))}</td>
+      <td>${escapeHtml(cleanString(card.brand, 80))}</td>
+      <td>${renderPaymentTestCopyValue(card.number, 'Copiar numero')}</td>
+      <td>${renderPaymentTestCopyValue(card.cvc, 'Copiar CVV')}</td>
+      <td>${renderPaymentTestCopyValue(card.expiry, 'Copiar vencimiento')}</td>
+      <td>${escapeHtml(cleanString(card.result || 'Segun titular', 120))}</td>
+    </tr>
+  `).join('')
+
+  const scenarioRows = Array.isArray(guide.scenarios) && guide.scenarios.length
+    ? `
+      <div class="rstk-checkout-test-section">
+        <strong>Escenarios por titular</strong>
+        <div class="rstk-checkout-test-scroll">
+          <table class="rstk-checkout-test-table">
+            <thead>
+              <tr>
+                <th>Nombre del titular</th>
+                <th>Estado que simula</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${guide.scenarios.map((scenario = {}) => `
+                <tr>
+                  <td>${renderPaymentTestCopyValue(scenario.holder, 'Copiar titular')}</td>
+                  <td>${escapeHtml(cleanString(scenario.result, 120))}</td>
+                </tr>
+              `).join('')}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    `
+    : ''
+
+  return `
+    <details class="rstk-checkout-test-helper">
+      <summary>
+        <span>${escapeHtml(cleanString(guide.title, 120))}</span>
+        <span class="rstk-checkout-test-chevron" aria-hidden="true"></span>
+      </summary>
+      <div class="rstk-checkout-test-body">
+        <p>${escapeHtml(cleanString(guide.description, 300))}</p>
+        <div class="rstk-checkout-test-hint">${escapeHtml(cleanString(guide.emailHint, 220))}</div>
+        <div class="rstk-checkout-test-section">
+          <strong>Tarjetas</strong>
+          <div class="rstk-checkout-test-scroll">
+            <table class="rstk-checkout-test-table">
+              <thead>
+                <tr>
+                  <th>Tipo</th>
+                  <th>Bandera</th>
+                  <th>Numero</th>
+                  <th>CVV</th>
+                  <th>Vence</th>
+                  <th>Resultado</th>
+                </tr>
+              </thead>
+              <tbody>${cardRows}</tbody>
+            </table>
+          </div>
+        </div>
+        ${scenarioRows}
+      </div>
+    </details>
+  `
+}
+
 function renderPaymentBlock(block = {}, context = {}) {
   const settings = block.settings || {}
   const paymentGate = getPaymentGateFromBlock(block)
@@ -18356,6 +18480,7 @@ function renderPaymentBlock(block = {}, context = {}) {
   const amountText = formatPaymentAmount(paymentGate.amount, paymentGate.currency)
   const post = resolvePaymentPostAction(settings, paymentGate, block, context)
   const isTestBlock = paymentGate.mode === 'test'
+  const paymentTestGuide = isTestBlock ? renderPaymentTestGuide(paymentGate.gateway) : ''
   // Personalización de diseño del checkout (todas con default = comportamiento actual).
   const showKicker = settings.paymentShowGatewayName !== false
   const showSecure = settings.paymentShowSecureNote !== false
@@ -18432,6 +18557,7 @@ function renderPaymentBlock(block = {}, context = {}) {
               ${renderSubmitButtonContent(`${buttonLabel} · ${amountText}`, '', settings, { labelAttr: ' data-rstk-checkout-pay-label' })}
             </button>
             <p class="rstk-checkout-message" data-rstk-checkout-message role="status" hidden></p>
+            ${paymentTestGuide}
             ${showSecure ? `<p class="rstk-checkout-secure">${escapeHtml(secureNote)}</p>` : ''}
           </div>
           <div class="rstk-checkout-success" data-rstk-checkout-success hidden></div>

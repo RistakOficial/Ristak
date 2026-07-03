@@ -230,6 +230,48 @@ test('payment #1 (control): an enabled gate DOES render the block markup', async
   assert.match(html, /<strong class="rstk-checkout-title">Curso<\/strong>/)
 })
 
+test('payment test helper renders below checkout messages on published Sites checkout', async () => {
+  const html = await renderPublicSiteHtml(paymentSite({
+    paymentGate: {
+      enabled: true,
+      gateway: 'mercadopago',
+      mode: 'test',
+      amount: 500,
+      currency: 'MXN',
+      productName: 'Curso',
+      buttonText: 'Pagar'
+    }
+  }), { pageId: 'page-1', trackingEnabled: false, preview: true })
+
+  assert.match(html, /<p class="rstk-checkout-testbadge">Modo prueba/)
+  assert.match(html, /<details class="rstk-checkout-test-helper">/)
+  assert.match(html, /Ayuda para pruebas de Mercado Pago/)
+  assert.match(html, /data-rstk-test-copy/)
+  assert.match(html, /5474 9254 3267 0366/)
+
+  const messageIndex = html.indexOf('<p class="rstk-checkout-message" data-rstk-checkout-message')
+  const helperIndex = html.indexOf('<details class="rstk-checkout-test-helper">')
+  assert.ok(messageIndex >= 0, 'checkout message node should render')
+  assert.ok(helperIndex > messageIndex, 'test helper should render after checkout message')
+})
+
+test('payment test helper is hidden on live Sites checkout', async () => {
+  const html = await renderPublicSiteHtml(paymentSite({
+    paymentGate: {
+      enabled: true,
+      gateway: 'mercadopago',
+      mode: 'live',
+      amount: 500,
+      currency: 'MXN',
+      productName: 'Curso',
+      buttonText: 'Pagar'
+    }
+  }), { pageId: 'page-1', trackingEnabled: false, preview: true })
+
+  assert.doesNotMatch(html, /<details class="rstk-checkout-test-helper">/)
+  assert.doesNotMatch(html, /Ayuda para pruebas/)
+})
+
 // Nota: el runtime embebido menciona los selectores [data-rstk-identity-*] y
 // [data-rstk-checkout-identity], así que aserimos sobre el MARKUP renderizado
 // (<div class="rstk-checkout-identity">, <input ... data-rstk-identity-*>) y sobre

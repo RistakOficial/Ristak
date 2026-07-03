@@ -760,14 +760,17 @@ y frontend (`frontend/src/pages/Sites/*`) lo importan; el `Dockerfile` copia
   `msiEligibility`; Stripe en `/pay` usa MSI controlado por backend cuando el link
   trae `stripeInstallments.maxInstallments`; Mercado Pago y CLIP resuelven meses
   dentro de su widget/SDK; boton de pago con icono; badge "No visible en el sitio
-  publicado" cuando el gate esta deshabilitado). Stripe, Conekta, Mercado Pago y
-  CLIP usan el mismo contrato de `paymentGate`; CLIP monta el SDK oficial en el
-  checkout publicado, requiere email/telefono para procesar el cargo y puede
-  habilitar MSI con `terms.enabled` si el bloque lo permite. El selector de
-  pasarela del inspector debe persistir inmediatamente el bloque para que el modo
-  vivo no monte una pasarela anterior; el HTML publicado, `/checkout/init` y el
-  cargo deben usar siempre el mismo `paymentGate.gateway`. El toggle "guardar
-  tarjeta" se retiro (Stripe Link no es ocultable por codigo).
+  publicado" cuando el gate esta deshabilitado). En modo test, el preview y el
+  checkout publicado muestran el helper de tarjetas de prueba del proveedor debajo
+  del mensaje de checkout, de modo que cualquier error/rechazo queda visible antes
+  del acordeon de ayuda. Stripe, Conekta, Mercado Pago y CLIP usan el mismo contrato
+  de `paymentGate`; CLIP monta el SDK oficial en el checkout publicado, requiere
+  email/telefono para procesar el cargo y puede habilitar MSI con `terms.enabled`
+  si el bloque lo permite. El selector de pasarela del inspector debe persistir
+  inmediatamente el bloque para que el modo vivo no monte una pasarela anterior; el
+  HTML publicado, `/checkout/init` y el cargo deben usar siempre el mismo
+  `paymentGate.gateway`. El toggle "guardar tarjeta" se retiro (Stripe Link no es
+  ocultable por codigo).
 - Diferencias permitidas entre superficies: SOLO auth, tracking/pixel, param
   preservation y `headerTrackingCode` (nunca corren en editor/preview por
   seguridad), y el chrome de edicion. NO se permite divergencia en CSS visual,

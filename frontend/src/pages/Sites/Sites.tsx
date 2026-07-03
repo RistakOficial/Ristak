@@ -249,6 +249,7 @@ import {
 } from '../../../../shared/sites/renderContract.js'
 import type { SiteLike, SiteBlockLike } from '../../../../shared/sites/renderContract.js'
 import { msiEligibility } from '../../../../shared/sites/paymentGateContract.js'
+import { getPaymentTestGuide } from '../../../../shared/sites/paymentTestGuides.js'
 
 type SitesSection = 'landings' | 'forms' | 'analytics' | 'domains'
 type DeviceMode = 'desktop' | 'mobile'
@@ -32102,6 +32103,7 @@ const CanvasPreviewBlock: React.FC<CanvasPreviewBlockProps> = ({
       msi: paymentGate.msi
     })
     const isTest = paymentGate.mode === 'test'
+    const paymentTestGuide = isTest ? getPaymentTestGuide(paymentGate.gateway) : null
     const isStripe = paymentGate.gateway === 'stripe'
     const isConekta = paymentGate.gateway === 'conekta'
     const isMercadoPago = paymentGate.gateway === 'mercadopago'
@@ -32237,6 +32239,75 @@ const CanvasPreviewBlock: React.FC<CanvasPreviewBlockProps> = ({
                 <button type="button" className="rstk-button-link rstk-checkout-pay" disabled>
                   <SubmitButtonContent label={`${buttonLabel} · ${amountText}`} settings={settings} />
                 </button>
+              )}
+              {paymentTestGuide && (
+                <details className="rstk-checkout-test-helper">
+                  <summary>
+                    <span>{paymentTestGuide.title}</span>
+                    <span className="rstk-checkout-test-chevron" aria-hidden="true" />
+                  </summary>
+                  <div className="rstk-checkout-test-body">
+                    <p>{paymentTestGuide.description}</p>
+                    <div className="rstk-checkout-test-hint">{paymentTestGuide.emailHint}</div>
+                    <div className="rstk-checkout-test-section">
+                      <strong>Tarjetas</strong>
+                      <div className="rstk-checkout-test-scroll">
+                        <table className="rstk-checkout-test-table">
+                          <thead>
+                            <tr>
+                              <th>Tipo</th>
+                              <th>Bandera</th>
+                              <th>Numero</th>
+                              <th>CVV</th>
+                              <th>Vence</th>
+                              <th>Resultado</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {paymentTestGuide.cards.map((card, cardIndex) => (
+                              <tr key={`${card.number}-${cardIndex}`}>
+                                <td>{card.kind}</td>
+                                <td>{card.brand}</td>
+                                <td>
+                                  <span className="rstk-checkout-test-copy-value">
+                                    <span>{card.number}</span>
+                                    <button type="button" className="rstk-checkout-test-copy" disabled>Copiar</button>
+                                  </span>
+                                </td>
+                                <td>{card.cvc}</td>
+                                <td>{card.expiry}</td>
+                                <td>{card.result || 'Segun titular'}</td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    </div>
+                    {paymentTestGuide.scenarios?.length ? (
+                      <div className="rstk-checkout-test-section">
+                        <strong>Escenarios por titular</strong>
+                        <div className="rstk-checkout-test-scroll">
+                          <table className="rstk-checkout-test-table">
+                            <thead>
+                              <tr>
+                                <th>Nombre del titular</th>
+                                <th>Estado que simula</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {paymentTestGuide.scenarios.map((scenario) => (
+                                <tr key={scenario.holder}>
+                                  <td>{scenario.holder}</td>
+                                  <td>{scenario.result}</td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </div>
+                      </div>
+                    ) : null}
+                  </div>
+                </details>
               )}
               {showSecureNote && <p className="rstk-checkout-secure">{secureNoteText}</p>}
             </div>
