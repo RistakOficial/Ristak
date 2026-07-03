@@ -16102,20 +16102,35 @@ function buildPaymentCheckoutRuntimeScript() {
         els.pay.hidden = false; showLoading(false);
 
         var pmId = null, paymentIntentId = '', publicPaymentId = '', availablePlans = [], selectedInstallments = null;
-        var cardComplete = false, prepared = false, preparing = false, sel = null;
+        var cardComplete = false, prepared = false, preparing = false, confirming = false, prepareError = false, sel = null;
         try { publicPaymentId = sessionStorage.getItem(storageKey) || ''; } catch (e) {}
 
+        // La identidad (correo/tel) debe estar lista ANTES del prepare para ligar el pago al
+        // contacto (Purchase de Meta). Si el bloque la exige y falta, el checkout la pide.
+        function identityReady() { var p = collectPayer(); return !identityActive() || !!(p.email || p.phone); }
+
+        // Estado del botón CENTRALIZADO. El pago es AUTOMÁTICO: NO hay botón de "ver meses";
+        // el botón queda deshabilitado avisando el estado hasta que los meses estén listos, y
+        // solo entonces se habilita para cobrar. Los meses salen solos al terminar la tarjeta.
         function refreshLabel() {
           if (!els.payLabel) return;
           var suffix = ' · ' + money(d.amount, d.currency);
-          if (!cardComplete) { els.payLabel.textContent = 'Completa los datos de tu tarjeta'; return; }
-          if (preparing) { els.payLabel.textContent = 'Revisando meses…'; return; }
-          if (!prepared) { els.payLabel.textContent = 'Ver meses disponibles' + suffix; return; }
-          var plan = selectedInstallments ? (selectedInstallments + ' meses sin intereses') : 'Un solo pago';
-          els.payLabel.textContent = cfg.buttonText + ' · ' + plan + suffix;
+          var enabled = false, busy = false, text;
+          if (confirming) { text = 'Procesando…'; busy = true; }
+          else if (!cardComplete) { text = 'Completa los datos de tu tarjeta'; }
+          else if (!identityReady()) { text = 'Escribe tu correo o teléfono para continuar'; }
+          else if (preparing) { text = 'Revisando meses disponibles…'; busy = true; }
+          else if (prepareError) { text = 'Reintentar'; enabled = true; }
+          else if (!prepared) { text = 'Revisando meses disponibles…'; busy = true; }
+          else {
+            var plan = selectedInstallments ? (selectedInstallments + ' meses sin intereses') : 'Un solo pago';
+            text = cfg.buttonText + ' · ' + plan + suffix; enabled = true;
+          }
+          els.payLabel.textContent = text;
+          if (els.pay) { els.pay.disabled = !enabled; els.pay.setAttribute('data-busy', busy ? 'true' : 'false'); }
         }
         function resetPrepared() {
-          prepared = false; paymentIntentId = ''; availablePlans = []; selectedInstallments = null; sel = null;
+          prepared = false; prepareError = false; paymentIntentId = ''; availablePlans = []; selectedInstallments = null; sel = null;
           if (els.installments) { els.installments.hidden = true; els.installments.innerHTML = ''; }
         }
         function renderSelector() {
@@ -16133,15 +16148,12 @@ function buildPaymentCheckoutRuntimeScript() {
           availablePlans.forEach(function (p) { var o = document.createElement('option'); o.value = String(p.count); o.textContent = p.count + ' meses sin intereses'; sel.appendChild(o); });
           sel.addEventListener('change', function () { selectedInstallments = sel.value ? Number(sel.value) : null; refreshLabel(); });
           els.installments.appendChild(sel);
+          setMessage('', '');
           refreshLabel();
         }
-        // La identidad (correo/tel) debe estar lista ANTES de crear la fila en prepare, para
-        // que el pago quede ligado al contacto (Purchase de Meta). Si el bloque la exige y aún
-        // no está, el auto-prepare espera; el clic en "pagar" la valida y dispara el prepare.
-        function identityReady() { var p = collectPayer(); return !identityActive() || !!(p.email || p.phone); }
         function preparePlans() {
           if (preparing || !cardComplete || !identityReady()) return;
-          preparing = true; setPayBusy(true); setMessage('info', 'Revisando los meses de tu tarjeta…'); refreshLabel();
+          preparing = true; prepareError = false; setMessage('info', 'Revisando los meses de tu tarjeta…'); refreshLabel();
           var payer = collectPayer();
           stripe.createPaymentMethod({ type: 'card', card: card, billing_details: { email: payer.email || undefined, phone: payer.phone || undefined } }).then(function (res) {
             if (res.error || !(res.paymentMethod && res.paymentMethod.id)) throw new Error((res.error && res.error.message) || 'Revisa los datos de la tarjeta.');
@@ -16154,41 +16166,48 @@ function buildPaymentCheckoutRuntimeScript() {
             if (publicPaymentId) { try { sessionStorage.setItem(storageKey, publicPaymentId); } catch (e) {} root.setAttribute('data-checkout-public-id', publicPaymentId); }
             paymentIntentId = r.paymentIntentId || '';
             availablePlans = (r.availablePlans || []).filter(function (p) { return p && Number(p.count) <= maxInstallments; });
-            selectedInstallments = null; prepared = true; preparing = false;
-            setMessage('', ''); renderSelector(); setPayBusy(false); refreshLabel();
-          }).catch(function (e) { preparing = false; setPayBusy(false); resetPrepared(); setMessage('error', (e && e.message) || 'No se pudieron consultar los meses.'); refreshLabel(); });
+            selectedInstallments = null; prepared = true; preparing = false; prepareError = false;
+            setMessage('', ''); renderSelector();
+          }).catch(function (e) { preparing = false; resetPrepared(); prepareError = true; setMessage('error', (e && e.message) || 'No se pudieron consultar los meses.'); refreshLabel(); });
         }
         function confirmPay() {
           if (!paymentIntentId || !publicPaymentId) { resetPrepared(); setMessage('error', 'Vuelve a revisar tu tarjeta.'); refreshLabel(); return; }
-          setPayBusy(true); setMessage('info', 'Procesando…');
+          confirming = true; setMessage('info', 'Procesando…'); refreshLabel();
           postJson(STRIPE_MSI_CONFIRM_URL + encodeURIComponent(publicPaymentId) + '/installment-confirm', { paymentIntentId: paymentIntentId, selectedInstallments: selectedInstallments, returnUrl: window.location.href }).then(function (r) {
             var status = r && r.status;
             if (status === 'requires_action' && r.clientSecret) {
               return stripe.handleNextAction({ clientSecret: r.clientSecret }).then(function (action) {
-                if (action.error) { setPayBusy(false); setMessage('error', action.error.message || 'El banco no completó la autenticación.'); return; }
+                if (action.error) { confirming = false; refreshLabel(); setMessage('error', action.error.message || 'El banco no completó la autenticación.'); return; }
                 var st = action.paymentIntent && action.paymentIntent.status;
                 if (st === 'succeeded' || st === 'processing') onChargeResult(publicPaymentId, 'paid');
-                else { setPayBusy(false); setMessage('info', 'Stripe necesita una acción adicional.'); }
+                else { confirming = false; refreshLabel(); setMessage('info', 'Stripe necesita una acción adicional.'); }
               });
             }
             if (status === 'succeeded' || status === 'processing') { onChargeResult(publicPaymentId, 'paid'); return; }
-            setPayBusy(false); setMessage('info', 'Stripe necesita una acción adicional. Sigue las instrucciones del banco.');
-          }).catch(function (e) { setPayBusy(false); setMessage('error', (e && e.message) || 'No se pudo completar el pago.'); });
+            confirming = false; refreshLabel(); setMessage('info', 'Stripe necesita una acción adicional. Sigue las instrucciones del banco.');
+          }).catch(function (e) { confirming = false; refreshLabel(); setMessage('error', (e && e.message) || 'No se pudo completar el pago.'); });
+        }
+        // AUTO: en cuanto la tarjeta esté completa y haya identidad, consulta los meses solo.
+        function maybeAutoPrepare() {
+          if (cardComplete && identityReady() && !prepared && !preparing && !confirming && !prepareError) preparePlans();
         }
         card.on('change', function (ev) {
           var nowComplete = !!(ev && ev.complete && !ev.error);
-          if (ev && ev.error) setMessage('error', ev.error.message || ''); else setMessage('', '');
+          if (ev && ev.error) setMessage('error', ev.error.message || '');
+          else if (!prepared && !preparing) setMessage('', '');
           // Editar la tarjeta invalida los planes ya consultados (otra tarjeta = otros plazos).
-          if (prepared || paymentIntentId) resetPrepared();
+          if (prepared || paymentIntentId || prepareError) resetPrepared();
           cardComplete = nowComplete;
-          if (cardComplete && !prepared && !preparing) preparePlans();
           refreshLabel();
+          maybeAutoPrepare();
         });
-        payLabel(d.amount, d.currency); refreshLabel();
+        // Si la identidad se completa DESPUÉS de la tarjeta, dispara el prepare (auto).
+        if (identityEmail) identityEmail.addEventListener('input', function () { refreshLabel(); maybeAutoPrepare(); });
+        if (identityPhone) identityPhone.addEventListener('input', function () { refreshLabel(); maybeAutoPrepare(); });
+        refreshLabel();
         els.pay.addEventListener('click', function () {
           if (els.pay.disabled) return;
-          if (!validateIdentity()) return;
-          if (!prepared) { if (cardComplete) preparePlans(); else setMessage('error', 'Completa los datos de tu tarjeta.'); return; }
+          if (prepareError) { prepareError = false; refreshLabel(); preparePlans(); return; }
           confirmPay();
         });
       }

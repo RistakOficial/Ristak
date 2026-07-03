@@ -903,6 +903,7 @@ export async function publicSiteHostMiddleware(req, res, next) {
       req.path === '/api/sites/public/submit' ||
       req.path === '/api/sites/public/checkout/init' ||
       req.path === '/api/sites/public/checkout/pay' ||
+      req.path === '/api/sites/public/checkout/prepare-installments' ||
       req.path === '/api/sites/public/meta-event' ||
       req.path.startsWith('/api/sites/public/payments/') ||
       req.path === '/api/sites/public/fonts.css' ||
