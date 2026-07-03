@@ -6735,6 +6735,15 @@
   gap: 10px;
 }
 
+/* Checklist de páginas del menú del panel (header/footer): filas de checkbox
+   apiladas, sin caja extra, alineadas con el resto del inspector. */
+.panelPageList {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 2px 0;
+}
+
 /* El editor de opciones/reglas vive también en la caja flotante (sin las
    protecciones del shell enfocado); min-width:0 evita que las tarjetas se
    salgan del contenedor por una etiqueta larga del CustomSelect. */

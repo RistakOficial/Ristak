@@ -1878,6 +1878,52 @@ function safeHref(value, fallback = '#') {
   return safeUrl(raw) || fallback
 }
 
+// Enlaces del header/footer panel (fuente única editor↔publicado). Un enlace
+// puede apuntar a una PÁGINA real del sitio (pageId) o a una URL/ancla libre.
+// - Si trae pageId y la página existe: se conserva; su label por defecto es el
+//   título vivo de la página (así, renombrar la página actualiza el menú).
+// - Si el pageId apunta a una página que ya NO existe: se descarta (evita
+//   enlaces del menú que no llevan a ningún lado — el bug reportado).
+// - Enlaces sin pageId (URL/ancla, retrocompat) se conservan tal cual.
+// Devuelve [{ label, url, pageId }] ya filtrado y con label resuelto; el href
+// final lo calcula cada superficie (backend: buildPageHref; editor: no navega).
+function resolvePanelNavLinks(rawLinks, pages = []) {
+  const list = Array.isArray(rawLinks) ? rawLinks : []
+  const pageById = new Map(
+    (Array.isArray(pages) ? pages : [])
+      .filter(page => page && cleanString(page.id))
+      .map(page => [cleanString(page.id), page])
+  )
+
+  const resolved = []
+  for (const item of list) {
+    let label = ''
+    let url = '#'
+    let pageId = ''
+
+    if (item && typeof item === 'object') {
+      label = cleanString(item.label || item.title || item.name)
+      url = cleanString(item.url || item.href || '#') || '#'
+      pageId = cleanString(item.pageId || item.page_id)
+    } else {
+      const [rawLabel, rawUrl] = cleanString(item).split('|').map(part => cleanString(part))
+      label = rawLabel
+      url = rawUrl || '#'
+    }
+
+    if (pageId) {
+      const page = pageById.get(pageId)
+      if (!page) continue // enlace a página inexistente -> se descarta
+      resolved.push({ label: label || cleanString(page.title) || 'Página', url: '', pageId })
+      continue
+    }
+
+    if (label) resolved.push({ label, url, pageId: '' })
+  }
+
+  return resolved
+}
+
 function safePublicMediaUrl(value, kind = 'image') {
   const raw = cleanString(value)
   if (!raw) return ''
@@ -3031,6 +3077,7 @@ export {
   buildVideoFrameStyleVars,
   safeUrl,
   safeHref,
+  resolvePanelNavLinks,
   safePublicMediaUrl,
   isSocialTemplate,
   isSupportedSocialPlatform,

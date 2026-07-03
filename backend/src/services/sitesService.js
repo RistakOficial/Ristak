@@ -124,6 +124,7 @@ import {
   buildVideoFrameStyleVars,
   safeUrl,
   safeHref,
+  resolvePanelNavLinks,
   safePublicMediaUrl,
   isSocialTemplate,
   isSupportedSocialPlatform,
@@ -14539,23 +14540,6 @@ function getItems(settings = {}, fallback = []) {
     .filter(item => item.title || item.text)
 }
 
-function getPanelLinks(settings = {}) {
-  const links = Array.isArray(settings.panelLinks) ? settings.panelLinks : []
-  return links
-    .map(item => {
-      if (item && typeof item === 'object') {
-        return {
-          label: cleanString(item.label || item.title || item.name),
-          url: cleanString(item.url || item.href || '#') || '#'
-        }
-      }
-
-      const [label, url] = cleanString(item).split('|').map(part => cleanString(part))
-      return { label, url: url || '#' }
-    })
-    .filter(item => item.label)
-}
-
 function collectFieldBlocks(blocks = []) {
   const fields = []
 
@@ -18040,14 +18024,21 @@ function renderContentBlock(block, context = {}) {
 
   if (block.blockType === 'header_panel' || block.blockType === 'footer_panel') {
     const isHeader = block.blockType === 'header_panel'
-    const links = getPanelLinks(settings)
+    // El menú del panel apunta a páginas reales del sitio: resolvePanelNavLinks
+    // descarta enlaces a páginas inexistentes y usa el título vivo de la página
+    // como label por defecto; el href sale de buildPageHref (respeta el modo de
+    // enlace path/query del sitio).
+    const links = resolvePanelNavLinks(settings.panelLinks, normalizeSitePages(context.site))
     const copy = content || (isHeader ? escapeHtml(block.label || 'Tu marca') : 'Tu información esta protegida.')
     return `
       <div class="rstk-site-panel ${isHeader ? 'rstk-site-panel-header' : 'rstk-site-panel-footer'}">
         ${isHeader ? `<strong class="rstk-site-panel-copy">${copy}</strong>` : `<p class="rstk-site-panel-copy">${copy}</p>`}
         ${links.length ? `
           <nav class="rstk-site-panel-links" aria-label="${isHeader ? 'Enlaces superiores' : 'Enlaces inferiores'}">
-            ${links.map(link => `<a href="${escapeHtml(safeHref(link.url, '#'))}">${escapeHtml(link.label)}</a>`).join('')}
+            ${links.map(link => {
+              const href = link.pageId ? buildPageHref(link.pageId, context) : safeHref(link.url, '#')
+              return `<a href="${escapeHtml(href)}">${escapeHtml(link.label)}</a>`
+            }).join('')}
           </nav>
         ` : ''}
       </div>

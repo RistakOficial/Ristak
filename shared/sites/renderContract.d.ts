@@ -237,6 +237,11 @@ export declare function shouldUseDefaultPortraitMediaWidth(settings?: Record<str
 export declare function buildVideoFrameStyleVars(settings?: Record<string, unknown>, detectedOrientation?: string): CssVarMap
 export declare function safeUrl(value?: unknown): string
 export declare function safeHref(value?: unknown, fallback?: string): string
+export interface PanelNavLink { label: string; url: string; pageId: string }
+export declare function resolvePanelNavLinks(
+  rawLinks?: unknown,
+  pages?: Array<{ id?: unknown; title?: unknown }>
+): PanelNavLink[]
 export declare function safePublicMediaUrl(value?: unknown, kind?: 'image' | 'video'): string
 export declare function isSocialTemplate(value?: unknown): boolean
 export declare function isSupportedSocialPlatform(value?: unknown): boolean

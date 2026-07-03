@@ -242,6 +242,7 @@ import {
   normalizeSocialPlatform as normalizeSharedSocialPlatform,
   normalizeVideoOrientation,
   parseCountdownTargetDate,
+  resolvePanelNavLinks,
   safeHref,
   safeUrl as safeAbsoluteUrl,
   wistiaEmbedIframeUrl
@@ -5550,33 +5551,44 @@ const parseItems = (value: string) => value
     return { title, text: text || '', author: author || '' }
   })
 
-const getPanelLinks = (settings: Record<string, unknown>) => {
+interface PanelLink { label: string; url: string; pageId: string }
+
+// Lista cruda de enlaces del panel (sin filtrar). Distingue enlaces a página
+// (pageId) de enlaces libres (url). El canvas usa resolvePanelNavLinks para
+// filtrar páginas inexistentes; el editor usa esta lista para separar ambos.
+const getPanelLinks = (settings: Record<string, unknown>): PanelLink[] => {
   const links = Array.isArray(settings.panelLinks) ? settings.panelLinks : []
   return links
-    .map(item => {
+    .map((item): PanelLink => {
       if (item && typeof item === 'object') {
         const record = item as Record<string, unknown>
         return {
           label: String(record.label || record.title || record.name || '').trim(),
-          url: String(record.url || record.href || '#').trim() || '#'
+          url: String(record.url || record.href || '#').trim() || '#',
+          pageId: String(record.pageId || record.page_id || '').trim()
         }
       }
       const [label, url] = String(item || '').split('|').map(part => part.trim())
-      return { label, url: url || '#' }
+      return { label, url: url || '#', pageId: '' }
     })
-    .filter(item => item.label)
+    .filter(item => item.label || item.pageId)
 }
 
-const stringifyPanelLinks = (settings: Record<string, unknown>) =>
-  getPanelLinks(settings).map(item => `${item.label} | ${item.url}`).join('\n')
+// Enlaces del panel que NO apuntan a una página (URL/ancla libre). Se editan
+// en la caja de "Enlaces personalizados".
+const getPanelCustomLinks = (settings: Record<string, unknown>) =>
+  getPanelLinks(settings).filter(link => !link.pageId)
 
-const parsePanelLinks = (value: string) => value
+const stringifyPanelCustomLinks = (settings: Record<string, unknown>) =>
+  getPanelCustomLinks(settings).map(item => `${item.label} | ${item.url}`).join('\n')
+
+const parsePanelCustomLinks = (value: string): PanelLink[] => value
   .split('\n')
   .map(line => line.trim())
   .filter(Boolean)
   .map(line => {
     const [label, url] = line.split('|').map(part => part.trim())
-    return { label, url: url || '#' }
+    return { label, url: url || '#', pageId: '' }
   })
 
 interface CanvasItem { title: string; text: string; author: string }
@@ -31829,7 +31841,11 @@ const CanvasPreviewBlock: React.FC<CanvasPreviewBlockProps> = ({
   }
 
   if (block.blockType === HEADER_PANEL_BLOCK_TYPE || block.blockType === FOOTER_PANEL_BLOCK_TYPE) {
-    const links = getPanelLinks(settings)
+    // Mismo contrato que el publicado: los enlaces a página se resuelven contra
+    // las páginas reales del sitio (título vivo como label, se descartan páginas
+    // inexistentes). En el canvas el href no navega (href="#").
+    const navPages = normalizePageList(Array.isArray(site?.theme?.pages) ? (site!.theme!.pages as SitePage[]) : [])
+    const links = resolvePanelNavLinks(settings.panelLinks, navPages)
     const isHeader = block.blockType === HEADER_PANEL_BLOCK_TYPE
     return (
       <div className={`rstk-site-panel ${isHeader ? 'rstk-site-panel-header' : 'rstk-site-panel-footer'}`}>
@@ -31847,7 +31863,7 @@ const CanvasPreviewBlock: React.FC<CanvasPreviewBlockProps> = ({
         {links.length > 0 && (
           <nav className="rstk-site-panel-links" aria-label={isHeader ? 'Enlaces superiores' : 'Enlaces inferiores'}>
             {links.map((link, index) => (
-              <a key={`${link.label}-${index}`} href={safeHref(link.url, '#')}>{link.label}</a>
+              <a key={`${link.pageId || link.label}-${index}`} href={link.pageId ? '#' : safeHref(link.url, '#')}>{link.label}</a>
             ))}
           </nav>
         )}
@@ -37992,19 +38008,54 @@ const LandingBlockSettings: React.FC<LandingBlockSettingsProps> = ({ site, block
     const panelTitle = block.blockType === HEADER_PANEL_BLOCK_TYPE
       ? getHeaderScope(block) === HEADER_SCOPE_GLOBAL ? 'Header global' : 'Header de esta página'
       : 'Panel inferior'
+    // El menú del panel se arma con las páginas REALES del sitio (las mismas del
+    // selector de páginas): marcar una página la agrega como enlace que lleva a
+    // ella y usa su nombre. Los enlaces libres (externos/anclas) viven aparte.
+    const selectedPageIds = new Set(getPanelLinks(settings).filter(link => link.pageId).map(link => link.pageId))
+    const togglePanelPage = (pageId: string) => {
+      const next = new Set(selectedPageIds)
+      if (next.has(pageId)) next.delete(pageId)
+      else next.add(pageId)
+      const pageLinks = pages
+        .filter(page => next.has(page.id))
+        .map(page => ({ pageId: page.id, label: '', url: '' }))
+      onPatchSettings({ panelLinks: [...pageLinks, ...getPanelCustomLinks(settings)] })
+      window.setTimeout(onSave, 0)
+    }
     return (
       <AccordionSection id="landing-panel" title={panelTitle}>
+        {pages.length > 0 && (
+          <div className={styles.field}>
+            <span>Páginas en el menú</span>
+            <div className={styles.panelPageList}>
+              {pages.map(page => (
+                <label key={page.id} className={styles.checkboxLabel}>
+                  <input
+                    type="checkbox"
+                    checked={selectedPageIds.has(page.id)}
+                    onChange={() => togglePanelPage(page.id)}
+                  />
+                  <span>{page.title || 'Página'}</span>
+                </label>
+              ))}
+            </div>
+            <p className={styles.muted}>Marca las páginas que quieres en el menú. Cada enlace lleva a esa página y toma su nombre.</p>
+          </div>
+        )}
         <label className={styles.field}>
-          <span>Enlaces del panel</span>
+          <span>Enlaces personalizados</span>
           <textarea
-            rows={4}
-            value={stringifyPanelLinks(settings)}
-            placeholder="Nombre del enlace | https://..."
-            onChange={(event) => onPatchSettings({ panelLinks: parsePanelLinks(event.target.value) })}
+            rows={3}
+            value={stringifyPanelCustomLinks(settings)}
+            placeholder="WhatsApp | https://wa.me/..."
+            onChange={(event) => {
+              const pageLinks = getPanelLinks(settings).filter(link => link.pageId)
+              onPatchSettings({ panelLinks: [...pageLinks, ...parsePanelCustomLinks(event.target.value)] })
+            }}
             onBlur={onSave}
           />
         </label>
-        <p className={styles.muted}>Escribe un enlace por línea. Si no quieres enlaces, deja esta caja vacía.</p>
+        <p className={styles.muted}>Opcional. Un enlace por línea con formato «Nombre | https://…» para enlaces externos o anclas.</p>
       </AccordionSection>
     )
   }
