@@ -243,6 +243,7 @@ import {
   normalizeVideoOrientation,
   parseCountdownTargetDate,
   resolvePanelNavLinks,
+  getNativeFieldRulesAttributes,
   safeHref,
   safeUrl as safeAbsoluteUrl,
   wistiaEmbedIframeUrl
@@ -7547,6 +7548,8 @@ function FormEmbedEditorPanel({
                   <span>Mostrar país y lada</span>
                 </label>
               )}
+
+              <FieldRulesControls block={activeField} onPatchSettings={patchActiveFieldSettings} onSave={onSave} />
             </AccordionSection>
 
             <CustomFieldBindingControl
@@ -32719,7 +32722,15 @@ const FieldControlPreview: React.FC<{ block: SiteBlock; selected?: boolean }> = 
     : block.blockType === 'phone'
       ? 'Número'
       : ''
-  return <input type={getFieldPreviewInputType(block)} readOnly placeholder={block.placeholder || fallbackPlaceholder} />
+  // Reglas nativas (min/max/step/decimales) desde el MISMO contrato que el
+  // publicado, para que el preview refleje exactamente los atributos en vivo.
+  const rules = getNativeFieldRulesAttributes(block)
+  const ruleProps: React.InputHTMLAttributes<HTMLInputElement> = {}
+  if (rules.inputmode) ruleProps.inputMode = rules.inputmode as React.InputHTMLAttributes<HTMLInputElement>['inputMode']
+  if (rules.min !== undefined) ruleProps.min = rules.min
+  if (rules.max !== undefined) ruleProps.max = rules.max
+  if (rules.step !== undefined) ruleProps.step = rules.step
+  return <input type={getFieldPreviewInputType(block)} readOnly placeholder={block.placeholder || fallbackPlaceholder} {...ruleProps} />
 }
 
 // Read-only field preview (rstk markup) for embedded form fields on the canvas.
@@ -36318,6 +36329,8 @@ const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
             <span>Mostrar país y lada</span>
           </label>
         )}
+
+        <FieldRulesControls block={block} onPatchSettings={onPatchSettings} onSave={onSave} />
       </AccordionSection>
 
       <CustomFieldBindingControl
@@ -36903,6 +36916,85 @@ interface LandingBlockSettingsProps {
   onPatchBlock: (patch: Partial<SiteBlock>) => void
   onPatchSettings: (patch: Record<string, unknown>) => void
   onSave: () => void
+}
+
+// Reglas nativas de campo (number/currency/date). Un solo componente lo comparten
+// los dos inspectores (standalone + embebido) para no divergir. Guarda en settings
+// (numberMin/Max/Step, currencyMin/Max/Decimals, dateMin/Max) y el render las lee
+// vía getNativeFieldRulesAttributes del contrato compartido (editor y publicado).
+const FieldRulesControls: React.FC<{
+  block: SiteBlock
+  onPatchSettings: (patch: Record<string, unknown>) => void
+  onSave: () => void
+}> = ({ block, onPatchSettings, onSave }) => {
+  const settings = block.settings || {}
+  const numberField = (key: string, label: string, extra?: { min?: string; step?: string }) => (
+    <label className={styles.field}>
+      <span>{label}</span>
+      <input
+        type="number"
+        min={extra?.min}
+        step={extra?.step}
+        value={getSettingString(settings, key)}
+        placeholder="—"
+        onChange={(event) => onPatchSettings({ [key]: event.target.value })}
+        onBlur={onSave}
+      />
+    </label>
+  )
+
+  if (block.blockType === 'number') {
+    return (
+      <>
+        <div className={styles.twoColumn}>
+          {numberField('numberMin', 'Mínimo')}
+          {numberField('numberMax', 'Máximo')}
+        </div>
+        {numberField('numberStep', 'Paso', { min: '0' })}
+      </>
+    )
+  }
+
+  if (block.blockType === 'currency') {
+    return (
+      <>
+        <div className={styles.twoColumn}>
+          {numberField('currencyMin', 'Mínimo', { min: '0' })}
+          {numberField('currencyMax', 'Máximo')}
+        </div>
+        <label className={styles.field}>
+          <span>Decimales</span>
+          <CustomSelect
+            value={getSettingString(settings, 'currencyDecimals') || '2'}
+            onChange={(event) => onPatchSettings({ currencyDecimals: event.target.value })}
+            onBlur={onSave}
+          >
+            <option value="0">0 (enteros)</option>
+            <option value="1">1</option>
+            <option value="2">2</option>
+            <option value="3">3</option>
+          </CustomSelect>
+        </label>
+      </>
+    )
+  }
+
+  if (block.blockType === 'date') {
+    return (
+      <div className={styles.twoColumn}>
+        <label className={styles.field}>
+          <span>Desde</span>
+          <input type="date" value={getSettingString(settings, 'dateMin')} onChange={(event) => onPatchSettings({ dateMin: event.target.value })} onBlur={onSave} />
+        </label>
+        <label className={styles.field}>
+          <span>Hasta</span>
+          <input type="date" value={getSettingString(settings, 'dateMax')} onChange={(event) => onPatchSettings({ dateMax: event.target.value })} onBlur={onSave} />
+        </label>
+      </div>
+    )
+  }
+
+  return null
 }
 
 const ButtonActionFields: React.FC<{

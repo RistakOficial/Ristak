@@ -125,6 +125,7 @@ import {
   safeUrl,
   safeHref,
   resolvePanelNavLinks,
+  getNativeFieldRulesAttributes,
   safePublicMediaUrl,
   isSocialTemplate,
   isSupportedSocialPlatform,
@@ -18437,6 +18438,16 @@ function getNativeFieldValidation(block = {}) {
   return ''
 }
 
+// Serializa las reglas nativas del contrato compartido en atributos HTML, en
+// orden fijo (inputmode, min, max, step) para paridad byte-a-byte con el canvas.
+function nativeFieldRulesAttrString(block) {
+  const attrs = getNativeFieldRulesAttributes(block)
+  return ['inputmode', 'min', 'max', 'step']
+    .filter(key => attrs[key] !== undefined && attrs[key] !== null)
+    .map(key => ` ${key}="${escapeHtml(String(attrs[key]))}"`)
+    .join('')
+}
+
 function renderFieldInput(block, context = {}) {
   const id = escapeHtml(block.id)
   const placeholder = escapeHtml(block.placeholder)
@@ -18450,11 +18461,11 @@ function renderFieldInput(block, context = {}) {
   }
 
   if (block.blockType === 'currency') {
-    return `<input id="${id}" name="${id}" type="number" inputmode="decimal" min="0" step="0.01" placeholder="${placeholder || '0.00'}" ${required}>`
+    return `<input id="${id}" name="${id}" type="number"${nativeFieldRulesAttrString(block)} placeholder="${placeholder || '0.00'}" ${required}>`
   }
 
   if (block.blockType === 'number') {
-    return `<input id="${id}" name="${id}" type="number" inputmode="decimal" placeholder="${placeholder}" ${required}>`
+    return `<input id="${id}" name="${id}" type="number"${nativeFieldRulesAttrString(block)} placeholder="${placeholder}" ${required}>`
   }
 
   if (block.blockType === 'email') {
@@ -18487,7 +18498,7 @@ function renderFieldInput(block, context = {}) {
   }
 
   if (block.blockType === 'date') {
-    return `<input id="${id}" name="${id}" type="date" placeholder="${placeholder}" ${required}>`
+    return `<input id="${id}" name="${id}" type="date"${nativeFieldRulesAttrString(block)} placeholder="${placeholder}" ${required}>`
   }
 
   if (validation === 'email') {

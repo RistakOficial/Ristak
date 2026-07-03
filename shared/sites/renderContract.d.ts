@@ -242,6 +242,16 @@ export declare function resolvePanelNavLinks(
   rawLinks?: unknown,
   pages?: Array<{ id?: unknown; title?: unknown }>
 ): PanelNavLink[]
+export interface NativeFieldRulesAttributes {
+  inputmode?: string
+  min?: number | string
+  max?: number | string
+  step?: number
+}
+export declare function getNativeFieldRulesAttributes(block?: {
+  blockType?: string
+  settings?: Record<string, unknown>
+}): NativeFieldRulesAttributes
 export declare function safePublicMediaUrl(value?: unknown, kind?: 'image' | 'video'): string
 export declare function isSocialTemplate(value?: unknown): boolean
 export declare function isSupportedSocialPlatform(value?: unknown): boolean

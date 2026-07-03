@@ -1933,6 +1933,47 @@ function resolvePanelNavLinks(rawLinks, pages = []) {
   return resolved
 }
 
+// Reglas nativas de campo (number/currency/date) como atributos HTML — fuente
+// única editor↔publicado. Devuelve un objeto { inputmode?, min?, max?, step? }
+// SOLO con las claves presentes. Retrocompat exacta: sin settings, currency
+// mantiene inputmode="decimal" min="0" step="0.01", number mantiene
+// inputmode="decimal", date no emite nada (idéntico al render histórico).
+function getNativeFieldRulesAttributes(block = {}) {
+  const settings = (block && block.settings) || {}
+  const attrs = {}
+  const finiteNumber = (value) => {
+    // null/undefined/'' NO son 0: un setting vacío o ausente = sin regla.
+    if (value === null || value === undefined || value === '') return null
+    const n = Number(value)
+    return Number.isFinite(n) ? n : null
+  }
+
+  if (block.blockType === 'number') {
+    const min = finiteNumber(settings.numberMin)
+    const max = finiteNumber(settings.numberMax)
+    const step = finiteNumber(settings.numberStep)
+    attrs.inputmode = 'decimal'
+    if (min !== null) attrs.min = min
+    if (max !== null) attrs.max = max
+    if (step !== null && step > 0) attrs.step = step
+  } else if (block.blockType === 'currency') {
+    const min = finiteNumber(settings.currencyMin)
+    const max = finiteNumber(settings.currencyMax)
+    const rawDecimals = finiteNumber(settings.currencyDecimals)
+    const decimals = rawDecimals !== null ? Math.min(4, Math.max(0, Math.round(rawDecimals))) : 2
+    attrs.inputmode = 'decimal'
+    attrs.min = min !== null ? min : 0
+    if (max !== null) attrs.max = max
+    attrs.step = decimals === 0 ? 1 : Number((1 / Math.pow(10, decimals)).toFixed(decimals))
+  } else if (block.blockType === 'date') {
+    const isIsoDate = (value) => typeof value === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(value.trim())
+    if (isIsoDate(settings.dateMin)) attrs.min = settings.dateMin.trim()
+    if (isIsoDate(settings.dateMax)) attrs.max = settings.dateMax.trim()
+  }
+
+  return attrs
+}
+
 function safePublicMediaUrl(value, kind = 'image') {
   const raw = cleanString(value)
   if (!raw) return ''
@@ -3087,6 +3128,7 @@ export {
   safeUrl,
   safeHref,
   resolvePanelNavLinks,
+  getNativeFieldRulesAttributes,
   safePublicMediaUrl,
   isSocialTemplate,
   isSupportedSocialPlatform,
