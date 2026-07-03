@@ -32191,12 +32191,51 @@ const CanvasPreviewBlock: React.FC<CanvasPreviewBlockProps> = ({
         )}
       </div>
     )
-    // Paridad payment #7: en vivo, Mercado Pago monta su Brick (formulario + botón
-    // propios) y OCULTA el botón de pago con tema. El editor muestra un placeholder
-    // neutral y también oculta el botón, en vez del mock de tarjeta genérico.
-    const mpPlaceholder = (
-      <div className="rstk-checkout-fields rstk-checkout-mp-placeholder" aria-hidden="true">
-        <span className="rstk-mock-ph">Formulario de Mercado Pago (se muestra al publicar)</span>
+    // Paridad payment #7: en vivo, Mercado Pago monta su Brick `cardPayment` (formulario
+    // + botón propios) y OCULTA el botón de pago con tema. El editor emula ese Brick con
+    // total fidelidad: MP lo renderiza SIEMPRE con su tema claro (fondo blanco, bordes
+    // grises, botón azul MP), independientemente del color de la página — por eso este
+    // preview usa una paleta FIJA de MP (ALLOWED-DIVERGENCE) y NO los tokens del bloque.
+    // Los campos son un mock no interactivo; el botón "Pagar" es el del propio Brick.
+    const mpBrickPreview = (
+      <div className="rstk-checkout-fields rstk-mp-brick" aria-hidden="true">
+        <div className="rstk-mp-field">
+          <span className="rstk-mp-lbl">Número de tarjeta</span>
+          <div className="rstk-mp-input"><span className="rstk-mp-ph">1234 1234 1234 1234</span></div>
+        </div>
+        <div className="rstk-mp-cols">
+          <div className="rstk-mp-field">
+            <span className="rstk-mp-lbl">Vencimiento</span>
+            <div className="rstk-mp-input"><span className="rstk-mp-ph">MM/AA</span></div>
+          </div>
+          <div className="rstk-mp-field">
+            <span className="rstk-mp-lbl">Código de seguridad</span>
+            <div className="rstk-mp-input">
+              <span className="rstk-mp-ph">Ej.: 123</span>
+              <svg className="rstk-mp-cardicon" viewBox="0 0 24 24" width="22" height="16" aria-hidden="true">
+                <rect x="2" y="5" width="20" height="14" rx="2.5" fill="#e6e9ef" />
+                <rect x="2" y="8" width="20" height="3" fill="#c7ccd6" />
+                <circle cx="17.5" cy="15" r="2" fill="#c7ccd6" />
+              </svg>
+            </div>
+          </div>
+        </div>
+        <div className="rstk-mp-field">
+          <span className="rstk-mp-lbl">Nombre del titular como aparece en la tarjeta</span>
+          <div className="rstk-mp-input"><span className="rstk-mp-ph">María Clara López Roldán</span></div>
+        </div>
+        <span className="rstk-mp-section">Completa tu información</span>
+        <div className="rstk-mp-field">
+          <span className="rstk-mp-lbl">E-mail</span>
+          <div className="rstk-mp-input"><span className="rstk-mp-ph">ejemplo@email.com</span></div>
+        </div>
+        <button type="button" className="rstk-mp-pay" disabled>
+          <svg className="rstk-mp-lock" viewBox="0 0 24 24" width="14" height="14" aria-hidden="true">
+            <rect x="5" y="11" width="14" height="9" rx="2" fill="currentColor" />
+            <path d="M8 11V8a4 4 0 0 1 8 0v3" stroke="currentColor" strokeWidth="2" fill="none" />
+          </svg>
+          Pagar
+        </button>
       </div>
     )
     return (
@@ -32223,8 +32262,9 @@ const CanvasPreviewBlock: React.FC<CanvasPreviewBlockProps> = ({
                   carga Stripe.js sin razón (el preview no es interactivo). Usamos el
                   emulador (mockFields), tematizado con los MISMOS tokens de campo que
                   el checkout real, así que se ve igual. El sitio PUBLICADO sí monta el
-                  Stripe real con su modo test/live verdadero. Solo afecta a Stripe. */}
-              {isMercadoPago ? mpPlaceholder : mockFields}
+                  Stripe real con su modo test/live verdadero. Solo afecta a Stripe.
+                  Mercado Pago usa su propio emulador fiel del Brick (mpBrickPreview). */}
+              {isMercadoPago ? mpBrickPreview : mockFields}
               {/* Fila de meses standalone: SOLO Conekta la tiene en vivo (Stripe/MP
                   resuelven los meses dentro de su propio widget). Estado inicial = "Un
                   solo pago", igual que el <select> que arma mountConekta. */}

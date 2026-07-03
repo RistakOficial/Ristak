@@ -214,18 +214,55 @@ html body .rstkCanvas .rstk-checkout-pay:disabled { opacity: 1; cursor: default;
    de Stripe (globo que se pegaba en document.body) nunca se inyecta y no se carga
    Stripe.js en el lienzo. El modo test/live real vive en el sitio publicado. */
 
-/* ALLOWED-DIVERGENCE (editor): Mercado Pago monta su Brick en vivo. El editor
-   muestra un placeholder neutral (no interactivo) con el mismo alto aproximado. */
-.rstkCanvas .rstk-checkout-mp-placeholder {
+/* ALLOWED-DIVERGENCE (editor): emulación fiel del Brick `cardPayment` de Mercado
+   Pago. MP lo renderiza SIEMPRE con su tema claro (fondo/inputs blancos, bordes
+   grises, botón azul MP) sin importar el color de la página, así que la paleta es
+   FIJA de MP (no usa tokens del bloque). El contenedor es transparente para que el
+   color de la página se vea alrededor, igual que el Brick real. No interactivo. */
+.rstkCanvas .rstk-mp-brick {
   display: grid;
-  place-items: center;
-  min-height: 132px;
-  padding: 18px;
-  text-align: center;
-  border: 1px dashed var(--rstk-input-border, var(--rstk-border));
-  border-radius: var(--rstk-radius);
-  background: var(--rstk-input-bg, var(--rstk-surface));
+  gap: 14px;
+  font-family: 'Proxima Nova', -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+  text-align: left;
 }
+.rstkCanvas .rstk-mp-field { display: grid; gap: 6px; min-width: 0; }
+.rstkCanvas .rstk-mp-lbl { font-size: .82rem; line-height: 1.25; color: #333; font-weight: 400; }
+.rstkCanvas .rstk-mp-input {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 46px;
+  min-width: 0;
+  padding: 0 14px;
+  background: #fff;
+  border: 1px solid #e0e0e0;
+  border-radius: 6px;
+  box-shadow: 0 1px 1px rgba(0, 0, 0, .04);
+}
+.rstkCanvas .rstk-mp-ph { flex: 1; min-width: 0; color: #999; font-size: .95rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.rstkCanvas .rstk-mp-cardicon { flex: 0 0 auto; }
+.rstkCanvas .rstk-mp-cols { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 12px; }
+.rstkCanvas .rstk-mp-section { margin-top: 6px; font-size: .98rem; font-weight: 700; color: #1a1a1a; }
+.rstkCanvas .rstk-mp-pay {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  margin-top: 8px;
+  width: 100%;
+  min-height: 48px;
+  padding: 0 16px;
+  border: 0;
+  border-radius: 6px;
+  background: #3483fa;
+  color: #fff;
+  font-size: 1rem;
+  font-weight: 600;
+  font-family: inherit;
+  cursor: default;
+}
+html body .rstkCanvas .rstk-mp-pay:disabled { opacity: 1; }
+.rstkCanvas .rstk-mp-lock { flex: 0 0 auto; }
 
 /* ALLOWED-DIVERGENCE (editor): el bloque de pago deshabilitado NO se publica; el
    badge avisa al editor sin alterar el layout (posición absoluta, sin ocupar flujo). */
