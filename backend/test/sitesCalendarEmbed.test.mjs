@@ -726,6 +726,49 @@ test('calendar embeds created on funnel landings default to next page on booking
   }
 })
 
+test('calendar embeds created on the final funnel page keep calendar rules by default', async () => {
+  const site = await createSite({
+    siteType: 'landing_page',
+    name: 'Agenda final default',
+    slug: 'agenda-final-default',
+    blankCanvas: true,
+    theme: {
+      pageMode: 'funnel',
+      pages: [
+        { id: 'page-1', title: 'Pagina 1', sortOrder: 0 },
+        { id: 'page-2', title: 'Pagina final', sortOrder: 1 }
+      ]
+    }
+  })
+
+  try {
+    const updated = await createBlock(site.id, {
+      blockType: 'calendar_embed',
+      label: 'Calendario',
+      settings: {
+        pageId: 'page-2',
+        calendarSlug: 'agenda-final-default',
+        calendarName: 'Agenda final default'
+      }
+    })
+
+    const block = findCalendarBlock(updated, 'agenda-final-default')
+    assert.equal(block?.settings?.calendarCompletionAction, undefined)
+
+    const html = await renderPublicSiteHtml(updated, {
+      pageId: 'page-2',
+      trackingEnabled: false,
+      preview: true
+    })
+
+    assert.doesNotMatch(html, /data-rstk-calendar-redirect=/)
+    const url = getCalendarFrameUrl(html)
+    assert.equal(url.searchParams.get('bookingBridge'), null)
+  } finally {
+    await deleteSite(site.id).catch(() => undefined)
+  }
+})
+
 test('calendar embed creation preserves explicit calendar completion rules', async () => {
   const site = await createSite({
     siteType: 'landing_page',

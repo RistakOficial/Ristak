@@ -1052,13 +1052,22 @@ function hasFormEmbedCompletionAction(settings = {}) {
   return Boolean(cleanString(settings.completionAction || settings.completion_action))
 }
 
-function shouldDefaultLandingEmbedToNextPage(site) {
-  return site?.siteType === 'landing_page' && !isImportedHtmlSite(site) && getSitePageMode(site) === 'funnel'
+function hasForwardPageForBlockSettings(site, settings = {}) {
+  const pages = normalizeSitePages(site)
+  const pageId = getBlockPageId({ settings }, pages)
+  return Boolean(getNextPage(site, pageId))
+}
+
+function shouldDefaultLandingBlockToNextPage(site, settings = {}) {
+  return site?.siteType === 'landing_page' &&
+    !isImportedHtmlSite(site) &&
+    getSitePageMode(site) === 'funnel' &&
+    hasForwardPageForBlockSettings(site, settings)
 }
 
 function applyFormEmbedCreateDefaults(site, settings = {}) {
   const next = isPlainObject(settings) ? { ...settings } : {}
-  if (shouldDefaultLandingEmbedToNextPage(site) && !hasFormEmbedCompletionAction(next)) {
+  if (shouldDefaultLandingBlockToNextPage(site, next) && !hasFormEmbedCompletionAction(next)) {
     next.completionAction = 'next_page'
   }
   return next
@@ -1068,14 +1077,32 @@ function hasCalendarCompletionAction(settings = {}) {
   return Boolean(cleanString(settings.calendarCompletionAction || settings.calendar_completion_action))
 }
 
-function shouldDefaultCalendarEmbedToNextPage(site) {
-  return shouldDefaultLandingEmbedToNextPage(site)
-}
-
 function applyCalendarEmbedCreateDefaults(site, settings = {}) {
   const next = isPlainObject(settings) ? { ...settings } : {}
-  if (shouldDefaultCalendarEmbedToNextPage(site) && !hasCalendarCompletionAction(next)) {
+  if (shouldDefaultLandingBlockToNextPage(site, next) && !hasCalendarCompletionAction(next)) {
     next.calendarCompletionAction = 'next_page'
+  }
+  return next
+}
+
+function hasPaymentPostAction(settings = {}) {
+  const source = settings.postPayment && typeof settings.postPayment === 'object'
+    ? settings.postPayment
+    : settings.post_payment && typeof settings.post_payment === 'object'
+      ? settings.post_payment
+      : {}
+  return Boolean(cleanString(source.action))
+}
+
+function applyPaymentBlockCreateDefaults(site, settings = {}) {
+  const next = isPlainObject(settings) ? { ...settings } : {}
+  if (shouldDefaultLandingBlockToNextPage(site, next) && !hasPaymentPostAction(next)) {
+    next.postPayment = {
+      action: 'next_page',
+      message: '',
+      pageId: '',
+      url: ''
+    }
   }
   return next
 }
@@ -10878,6 +10905,8 @@ export async function createBlock(siteId, input = {}) {
     }
   } else if (blockType === 'calendar_embed') {
     settings = applyCalendarEmbedCreateDefaults(site, settings)
+  } else if (blockType === 'payment') {
+    settings = applyPaymentBlockCreateDefaults(site, settings)
   }
   await assertUniqueSystemFieldForInput(siteId, site, { settings }, blockType)
 

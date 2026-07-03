@@ -5509,9 +5509,23 @@ const getCalendarCompletionAction = (settings: Record<string, unknown>): Calenda
   return action === 'next_page' || action === 'redirect' ? action : 'calendar_default'
 }
 
-const shouldDefaultFunnelEmbedToNextPage = (site?: PublicSite | null, siteType?: SiteType) => {
+const getForwardFunnelPage = (site?: PublicSite | null, activePageId = ''): SitePage | null => {
+  const pages = normalizeFunnelPages(site)
+  const resolvedPageId = pages.some(page => page.id === activePageId)
+    ? activePageId
+    : ''
+  if (!resolvedPageId) return null
+  const index = pages.findIndex(page => page.id === resolvedPageId)
+  return index >= 0 ? pages[index + 1] || null : null
+}
+
+const shouldDefaultFunnelBlockToNextPage = (site?: PublicSite | null, siteType?: SiteType, activePageId = '') => {
   const resolvedSiteType = site?.siteType || siteType
-  return resolvedSiteType === 'landing_page' && (!site || (!isImportedHtmlSite(site) && getSitePageMode(site) === 'funnel'))
+  return resolvedSiteType === 'landing_page' &&
+    Boolean(site) &&
+    !isImportedHtmlSite(site) &&
+    getSitePageMode(site) === 'funnel' &&
+    Boolean(getForwardFunnelPage(site, activePageId))
 }
 
 const normalizeOption = (option: string | SiteBlockOption, index: number): SiteBlockOption => {
@@ -6170,7 +6184,7 @@ const withUniqueBlockIdentity = (
   }
 }
 
-const defaultBlockPayload = (blockType: SiteBlockType, siteOrId: PublicSite | string, siteType?: SiteType) => {
+const defaultBlockPayload = (blockType: SiteBlockType, siteOrId: PublicSite | string, siteType?: SiteType, activePageId = '') => {
   const site = typeof siteOrId === 'string' ? null : siteOrId
   const resolvedSiteType = site?.siteType || siteType
   const isField = fieldBlockTypes.has(blockType)
@@ -6193,11 +6207,15 @@ const defaultBlockPayload = (blockType: SiteBlockType, siteOrId: PublicSite | st
     : '#111827'
   const calendarMutedDefault = siteIsDark ? 'rgba(255, 255, 255, 0.72)' : '#6b7280'
   const calendarLineDefault = siteIsDark ? 'rgba(255, 255, 255, 0.22)' : '#e5e7eb'
-  const formCompletionDefaults = shouldDefaultFunnelEmbedToNextPage(site, resolvedSiteType)
+  const shouldDefaultToForwardPage = shouldDefaultFunnelBlockToNextPage(site, resolvedSiteType, activePageId)
+  const formCompletionDefaults = shouldDefaultToForwardPage
     ? { completionAction: 'next_page' }
     : {}
-  const calendarCompletionDefaults = shouldDefaultFunnelEmbedToNextPage(site, resolvedSiteType)
+  const calendarCompletionDefaults = shouldDefaultToForwardPage
     ? { calendarCompletionAction: 'next_page' }
+    : {}
+  const paymentPostCompletionDefaults = shouldDefaultToForwardPage
+    ? { postPayment: normalizePaymentPostAction({ action: 'next_page' }) }
     : {}
 
   if (blockType === 'hero') {
@@ -6320,6 +6338,7 @@ const defaultBlockPayload = (blockType: SiteBlockType, siteOrId: PublicSite | st
       settings: blockSettings({
         paymentGate: defaultPaymentGateConfig(localeDefaults.currency || 'MXN'),
         paymentLayout: 'card',
+        ...paymentPostCompletionDefaults,
         // Identidad del comprador: pedir correo y teléfono (mínimo uno) para poder
         // ligar el pago a un contacto y disparar el Purchase de Meta.
         paymentCollectEmail: true,
@@ -6489,7 +6508,7 @@ const defaultBlockPayload = (blockType: SiteBlockType, siteOrId: PublicSite | st
 }
 
 const makePreviewBlock = (blockType: SiteBlockType, site: PublicSite, pageId?: string, initialSettings: Record<string, unknown> = {}): SiteBlock => {
-  const payload = applySystemFormFieldPreset(defaultBlockPayload(blockType, site), initialSettings)
+  const payload = applySystemFormFieldPreset(defaultBlockPayload(blockType, site, undefined, pageId), initialSettings)
   return {
     id: '__palette-preview__',
     siteId: site.id,
@@ -11174,7 +11193,10 @@ export const Sites: React.FC = () => {
         options.initialSettings || {},
         connectedSocialProfiles
       )
-      const payload = applySystemFormFieldPreset(defaultBlockPayload(blockType, siteForAdd), initialSettings)
+      const payload = applySystemFormFieldPreset(
+        defaultBlockPayload(blockType, siteForAdd, undefined, hasEditablePages(siteForAdd) ? activePage?.id : undefined),
+        initialSettings
+      )
       const duplicateSystemPreset = isFormSite(siteForAdd)
         ? getDuplicateSystemFormFieldPreset(payload, siteForAdd.blocks || [])
         : null

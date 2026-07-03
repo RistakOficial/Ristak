@@ -764,6 +764,66 @@ test('form embeds created on funnel landings default to next page on submit', as
   }
 })
 
+test('form embeds created on the final funnel page keep form rules by default', async () => {
+  const site = await createSite({
+    siteType: 'landing_page',
+    name: 'Formulario final default',
+    slug: 'formulario-final-default',
+    blankCanvas: true,
+    theme: {
+      pageMode: 'funnel',
+      pages: [
+        { id: 'page-1', title: 'Pagina 1', sortOrder: 0 },
+        { id: 'page-2', title: 'Pagina final', sortOrder: 1 }
+      ]
+    }
+  })
+
+  try {
+    const updated = await createBlock(site.id, {
+      blockType: 'form_embed',
+      label: 'Formulario',
+      settings: {
+        pageId: 'page-2',
+        embeddedTheme: {
+          template: 'ristak',
+          formCompletionAction: 'redirect_qualified',
+          formQualifiedRedirectUrl: 'https://example.test/califica'
+        },
+        embeddedPages: [{ id: 'form-step', title: 'Formulario', sortOrder: 0, buttonText: 'Enviar' }],
+        embeddedBlocks: [
+          {
+            id: 'final-default-email',
+            siteId: site.id,
+            blockType: 'email',
+            label: 'Correo',
+            content: '',
+            placeholder: 'correo@example.test',
+            required: true,
+            options: [],
+            sortOrder: 0,
+            settings: { pageId: 'form-step' }
+          }
+        ]
+      }
+    })
+
+    const block = findFormEmbedBlock(updated)
+    assert.equal(block?.settings?.completionAction, undefined)
+
+    const html = await renderPublicSiteHtml(updated, {
+      pageId: 'page-2',
+      trackingEnabled: false,
+      preview: true
+    })
+
+    assert.match(html, /const completionAction = "redirect_qualified";/)
+    assert.match(html, /const completionUsesFormRules = true;/)
+  } finally {
+    await deleteSite(site.id).catch(() => undefined)
+  }
+})
+
 test('form embed creation preserves explicit completion rules', async () => {
   const site = await createSite({
     siteType: 'landing_page',

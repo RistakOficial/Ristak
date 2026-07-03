@@ -11,7 +11,7 @@ import {
   msiEligibility,
   buildStripeAppearanceVariables
 } from '../../shared/sites/paymentGateContract.js'
-import { renderPublicSiteHtml } from '../src/services/sitesService.js'
+import { createBlock, createSite, deleteSite, renderPublicSiteHtml } from '../src/services/sitesService.js'
 
 test('MSI constants stay in lockstep with the runtime', () => {
   assert.deepEqual(MSI_INSTALLMENT_CHOICES, [3, 6, 9, 12, 18, 24])
@@ -109,6 +109,92 @@ function paymentSite(overrides = {}) {
     ]
   }
 }
+
+function findPaymentBlock(site) {
+  return site.blocks.find(block => block.blockType === 'payment')
+}
+
+test('payment blocks created on funnel landings default to next page after payment', async () => {
+  const site = await createSite({
+    siteType: 'landing_page',
+    name: 'Pago funnel default',
+    slug: 'pago-funnel-default',
+    blankCanvas: true,
+    theme: {
+      pageMode: 'funnel',
+      pages: [
+        { id: 'page-1', title: 'Pago', sortOrder: 0 },
+        { id: 'page-2', title: 'Gracias', sortOrder: 1 }
+      ]
+    }
+  })
+
+  try {
+    const updated = await createBlock(site.id, {
+      blockType: 'payment',
+      label: 'Pago',
+      settings: {
+        pageId: 'page-1',
+        paymentGate: { enabled: true, gateway: 'stripe', amount: 500, currency: 'MXN', productName: 'Curso', buttonText: 'Pagar' }
+      }
+    })
+
+    const block = findPaymentBlock(updated)
+    assert.equal(block?.settings?.postPayment?.action, 'next_page')
+
+    const html = await renderPublicSiteHtml(updated, {
+      pageId: 'page-1',
+      trackingEnabled: false,
+      preview: true
+    })
+
+    assert.match(html, /data-post-action="next_page"/)
+    assert.match(html, /data-post-url="\?page=page-2"/)
+  } finally {
+    await deleteSite(site.id).catch(() => undefined)
+  }
+})
+
+test('payment blocks created on the final funnel page keep success message by default', async () => {
+  const site = await createSite({
+    siteType: 'landing_page',
+    name: 'Pago final default',
+    slug: 'pago-final-default',
+    blankCanvas: true,
+    theme: {
+      pageMode: 'funnel',
+      pages: [
+        { id: 'page-1', title: 'Paso 1', sortOrder: 0 },
+        { id: 'page-2', title: 'Pago final', sortOrder: 1 }
+      ]
+    }
+  })
+
+  try {
+    const updated = await createBlock(site.id, {
+      blockType: 'payment',
+      label: 'Pago',
+      settings: {
+        pageId: 'page-2',
+        paymentGate: { enabled: true, gateway: 'stripe', amount: 500, currency: 'MXN', productName: 'Curso', buttonText: 'Pagar' }
+      }
+    })
+
+    const block = findPaymentBlock(updated)
+    assert.equal(block?.settings?.postPayment, undefined)
+
+    const html = await renderPublicSiteHtml(updated, {
+      pageId: 'page-2',
+      trackingEnabled: false,
+      preview: true
+    })
+
+    assert.match(html, /data-post-action="success_message"/)
+    assert.match(html, /data-post-url=""/)
+  } finally {
+    await deleteSite(site.id).catch(() => undefined)
+  }
+})
 
 test('E3: pay button renders the configured icon on the published page', async () => {
   const html = await renderPublicSiteHtml(paymentSite({ buttonIcon: 'arrowRight', buttonIconSide: 'right' }), {

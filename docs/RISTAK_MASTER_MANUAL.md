@@ -700,15 +700,14 @@ nativos/importados/creados por IA encienden `Lead` al enviar. Los bloques de
 calendario embebido nuevos nacen con `Schedule`. Las actualizaciones de sitios
 existentes no reactivan eventos que el usuario apago manualmente.
 
-En landings en modo embudo, un bloque nuevo de calendario embebido nace con
-`Al agendar -> Ir a la siguiente pagina`. Ese default solo se aplica al crear el
-bloque; si el usuario cambia la accion a reglas del calendario o redireccion, se
-respeta su configuracion guardada.
-
-En landings en modo embudo, un bloque nuevo de formulario embebido nace con
-`Al enviar -> Ir a la siguiente pagina`. Ese default solo se aplica al crear el
-bloque; si el usuario cambia la accion a reglas del formulario, una pagina
-especifica o redireccion, se respeta su configuracion guardada.
+En landings en modo embudo, los bloques nuevos que ejecutan una accion posterior
+al evento (`calendario embebido`, `formulario embebido` y `pago`) nacen apuntando
+a `Ir a la siguiente pagina` solo si la pagina actual tiene otra pagina por
+delante. Si el bloque se crea en la ultima pagina, o no existe un destino
+posterior real, conserva el comportamiento original del elemento: reglas del
+calendario, reglas del formulario o mensaje de exito del pago. Ese default solo
+se aplica al crear el bloque; si el usuario cambia la accion a reglas propias,
+pagina especifica o redireccion, se respeta su configuracion guardada.
 
 En embudos multipagina, los bloques de pago top-level solo bloquean el submit de
 la pagina donde viven. Un formulario en una pagina anterior debe crear contacto y
