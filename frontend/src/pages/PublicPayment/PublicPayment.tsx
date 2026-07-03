@@ -1,7 +1,7 @@
-import React, { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { flushSync } from 'react-dom'
 import { CardElement, Elements, PaymentElement, useElements, useStripe } from '@stripe/react-stripe-js'
-import { loadStripe, type StripeElementsOptions, type StripePaymentElementOptions } from '@stripe/stripe-js'
+import { loadStripe, type StripeCardElementChangeEvent, type StripeElementsOptions, type StripePaymentElementOptions } from '@stripe/stripe-js'
 import { AlertCircle, CheckCircle2, ChevronDown, Copy, CreditCard, Download, ExternalLink, Info, Loader2, ShieldCheck } from 'lucide-react'
 import { useParams, useSearchParams } from 'react-router-dom'
 import { Badge, Button, type BadgeVariant } from '@/components/common'
@@ -1343,6 +1343,8 @@ const PublicStripeInstallmentPaymentForm: React.FC<{
   const [submitting, setSubmitting] = useState(false)
   const [message, setMessage] = useState('')
   const [messageKind, setMessageKind] = useState<'info' | 'success' | 'error'>('info')
+  const [cardComplete, setCardComplete] = useState(false)
+  const [installmentStatus, setInstallmentStatus] = useState<'idle' | 'checking' | 'ready' | 'error'>('idle')
   const [paymentIntentId, setPaymentIntentId] = useState('')
   const [availablePlans, setAvailablePlans] = useState<StripeInstallmentPlan[] | null>(null)
   const [selectedInstallments, setSelectedInstallments] = useState<number | null>(null)
@@ -1352,27 +1354,48 @@ const PublicStripeInstallmentPaymentForm: React.FC<{
   const showSecureNotice = payment.settings?.checkout?.showSecureBadge !== false
   const isTestMode = payment.paymentMode === 'test' || String(payment.publishableKey || '').startsWith('pk_test_')
   const savePaymentMethod = Boolean(payment.contact?.id || payment.paymentPlan?.cardSetupRequired)
-  const hasPreparedPlans = availablePlans !== null
+  const hasPreparedCard = installmentStatus === 'ready' && Boolean(paymentIntentId)
+  const showInstallmentSelector = Boolean(hasPreparedCard && availablePlans?.length)
+  const canSubmitPayment = Boolean(stripe && elements && hasPreparedCard && !submitting)
 
-  const resetCardSelection = () => {
+  const resetPreparedCard = useCallback(() => {
     setPaymentIntentId('')
     setAvailablePlans(null)
     setSelectedInstallments(null)
     setMessage('')
     setMessageKind('info')
+    setInstallmentStatus('idle')
+  }, [])
+
+  const resetCardSelection = () => {
+    setCardComplete(false)
+    resetPreparedCard()
     elements?.getElement(CardElement)?.clear()
   }
 
-  const preparePlans = async () => {
-    if (!stripe || !elements) return
+  const handleCardChange = useCallback((event: StripeCardElementChangeEvent) => {
+    setCardComplete(event.complete)
+
+    if (!event.complete) {
+      resetPreparedCard()
+      return
+    }
+
+    setMessage('')
+    setMessageKind('info')
+  }, [resetPreparedCard])
+
+  const preparePlans = useCallback(async () => {
+    if (!stripe || !elements || installmentStatus === 'checking') return
     const card = elements.getElement(CardElement)
     if (!card) {
       setMessageKind('error')
       setMessage('No pudimos cargar el campo seguro de tarjeta. Recarga la página e intenta otra vez.')
+      setInstallmentStatus('error')
       return
     }
 
-    setSubmitting(true)
+    setInstallmentStatus('checking')
     setMessage('')
     try {
       const paymentMethod = await stripe.createPaymentMethod({
@@ -1388,6 +1411,7 @@ const PublicStripeInstallmentPaymentForm: React.FC<{
       if (paymentMethod.error || !paymentMethod.paymentMethod?.id) {
         setMessageKind('error')
         setMessage(paymentMethod.error?.message || 'Revisa los datos de la tarjeta e intenta otra vez.')
+        setInstallmentStatus('error')
         return
       }
 
@@ -1398,18 +1422,16 @@ const PublicStripeInstallmentPaymentForm: React.FC<{
       const plans = (prepared.availablePlans || []).filter((plan) => plan.count <= maxInstallments)
       setPaymentIntentId(prepared.paymentIntentId)
       setAvailablePlans(plans)
-      setSelectedInstallments(plans[0]?.count ?? null)
+      setSelectedInstallments(null)
       setMessageKind('info')
-      setMessage(plans.length
-        ? 'Elige el plazo que quieres usar. Ristak sólo muestra los meses aprobados por Stripe para esta tarjeta.'
-        : 'Esta tarjeta no ofrece meses sin intereses para este cobro. Todavía puedes pagar de contado.')
+      setMessage('')
+      setInstallmentStatus('ready')
     } catch (error: any) {
       setMessageKind('error')
       setMessage(error.message || 'No se pudieron consultar los meses disponibles con Stripe.')
-    } finally {
-      setSubmitting(false)
+      setInstallmentStatus('error')
     }
-  }
+  }, [elements, installmentStatus, maxInstallments, payment.contact?.email, payment.contact?.id, payment.contact?.name, payment.contact?.phone, payment.paymentPlan?.cardSetupRequired, payment.publicPaymentId, savePaymentMethod, stripe])
 
   const finishPayment = async () => {
     if (!stripe || !paymentIntentId) return
@@ -1458,20 +1480,27 @@ const PublicStripeInstallmentPaymentForm: React.FC<{
   const handleSubmit = async (event: React.FormEvent) => {
     event.preventDefault()
     if (!stripe || !elements || submitting) return
-    if (!hasPreparedPlans) {
-      await preparePlans()
+    if (!hasPreparedCard) {
+      if (cardComplete && installmentStatus === 'idle') {
+        await preparePlans()
+      }
       return
     }
     await finishPayment()
   }
 
+  useEffect(() => {
+    if (!cardComplete || installmentStatus !== 'idle' || paymentIntentId) return
+    void preparePlans()
+  }, [cardComplete, installmentStatus, paymentIntentId, preparePlans])
+
   return (
     <form className={styles.stripeBox} onSubmit={handleSubmit}>
       <div className={styles.stripeCardElementShell}>
-        <CardElement options={cardOptions} />
+        <CardElement options={cardOptions} onChange={handleCardChange} />
       </div>
 
-      {hasPreparedPlans && (
+      {showInstallmentSelector && (
         <div className={styles.stripeInstallmentSelector}>
           <div className={styles.stripeInstallmentSelectorHeader}>
             <span>Meses sin intereses</span>
@@ -1489,7 +1518,7 @@ const PublicStripeInstallmentPaymentForm: React.FC<{
             <strong>{formatCurrency(payment.amount, payment.currency)}</strong>
           </button>
 
-          {availablePlans.map((plan) => (
+          {(availablePlans || []).map((plan) => (
             <button
               key={plan.count}
               type="button"
@@ -1514,6 +1543,13 @@ const PublicStripeInstallmentPaymentForm: React.FC<{
         </div>
       )}
 
+      {installmentStatus === 'checking' && (
+        <p className={styles.providerMessage}>
+          <Loader2 size={16} className={styles.spin} />
+          <span>Revisando si tu tarjeta tiene meses sin intereses...</span>
+        </p>
+      )}
+
       {message && (
         <p className={`${styles.providerMessage} ${messageKind === 'success' ? styles.messageSuccess : messageKind === 'error' ? styles.messageError : ''}`}>
           {messageKind === 'success' ? <CheckCircle2 size={16} /> : messageKind === 'error' ? <AlertCircle size={16} /> : <Info size={16} />}
@@ -1527,28 +1563,25 @@ const PublicStripeInstallmentPaymentForm: React.FC<{
           variant="primary"
           fullWidth
           className={styles.payButton}
-          disabled={!stripe || !elements || submitting}
+          disabled={!canSubmitPayment}
           leftIcon={submitting ? <Loader2 size={16} className={styles.spin} /> : <CreditCard size={16} />}
         >
           {submitting
             ? 'Procesando'
-            : hasPreparedPlans
+            : hasPreparedCard
               ? `${selectedInstallments ? `Pagar a ${selectedInstallments} meses` : 'Pagar de contado'}${submitAmount}`
-              : 'Ver meses disponibles'}
+              : installmentStatus === 'checking'
+                ? 'Revisando tarjeta'
+                : 'Completa la tarjeta'}
         </Button>
       </div>
 
       {showSecureNotice && (
         <p className={styles.cardAuthorizationNotice}>
           <ShieldCheck size={16} />
-          <span>La tarjeta se captura en campos seguros de Stripe. Ristak sólo muestra los plazos compatibles y confirma el plan permitido.</span>
+          <span>La tarjeta se captura en campos seguros de Stripe. Si califica, los meses sin intereses aparecen automáticamente antes de pagar.</span>
         </p>
       )}
-
-      <p className={styles.cardAuthorizationNotice}>
-        <Info size={16} />
-        <span>Si la tarjeta califica, podrás elegir hasta {maxInstallments} meses sin intereses antes de pagar.</span>
-      </p>
 
       {isTestMode && <PaymentTestHelper provider="stripe" />}
     </form>
