@@ -1063,6 +1063,18 @@
   margin: 0;
 }
 
+/* El header del TagPicker trae su propio .chipHeaderLabel con
+   text-transform: uppercase; lo forzamos al eyebrow del sistema (mayor
+   especificidad) para que "Etiquetas" case con los demas titulos de seccion. */
+.contactTagHeader .contactTagTitle {
+  font-family: var(--label-font);
+  font-size: 0.6875rem;
+  font-weight: 600;
+  color: var(--text-mute);
+  text-transform: var(--label-transform);
+  letter-spacing: var(--label-spacing);
+}
+
 .detailSectionContent {
   display: flex;
   flex-direction: column;
@@ -1180,6 +1192,13 @@
 }
 
 .customFieldsToggle:hover {
+  color: var(--text);
+}
+
+/* Toggle de titulo de seccion: el anillo/caja de foco global se desactiva con
+   data-ristak-unstyled en el boton (JSX); aqui solo un foco sutil por color. */
+.customFieldsToggle:focus-visible {
+  outline: none;
   color: var(--text);
 }
 

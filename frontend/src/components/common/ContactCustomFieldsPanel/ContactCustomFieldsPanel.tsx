@@ -705,6 +705,7 @@ export function ContactCustomFieldsPanel({
             className={styles.groupHeader}
             onClick={toggleGroup}
             aria-expanded={groupOpen}
+            data-ristak-unstyled
           >
             <span>
               {groupOpen ? <ChevronDown size={15} /> : <ChevronRight size={15} />}

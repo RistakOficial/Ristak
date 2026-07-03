@@ -2263,6 +2263,7 @@ export function ContactDetailsModal({
                     className={styles.customFieldsToggle}
                     onClick={() => setAutomationsExpanded(prev => !prev)}
                     aria-expanded={automationsExpanded}
+                    data-ristak-unstyled
                   >
                     <span className={styles.customFieldsToggleLabel}>
                       <Icon name={automationsExpanded ? 'chevron-down' : 'chevron-right'} size={14} />

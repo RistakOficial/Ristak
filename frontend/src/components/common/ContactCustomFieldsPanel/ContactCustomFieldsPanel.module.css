@@ -94,6 +94,14 @@
   color: var(--text);
 }
 
+/* Es un toggle de titulo de seccion, no un control de formulario. El anillo/caja
+   de foco global se desactiva con data-ristak-unstyled en el boton (JSX); aqui
+   solo dejamos un indicador de foco sutil por color. */
+.groupHeader:focus-visible {
+  outline: none;
+  color: var(--text);
+}
+
 .groupHeader > span {
   display: inline-flex;
   align-items: center;
