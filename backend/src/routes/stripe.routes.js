@@ -9,6 +9,8 @@ import {
   getPublicStripePaymentView,
   getStripeConfigView,
   getStripeSavedPaymentMethodsView,
+  confirmPublicStripeInstallmentPaymentView,
+  preparePublicStripeInstallmentPlansView,
   saveStripeConfigView,
   stripeWebhookView,
   testStripeConfigView
@@ -24,6 +26,8 @@ const requireSubscriptionsFeature = requireFeature('subscriptions')
 router.post('/webhook', stripeWebhookView)
 router.get('/public/payments/:publicPaymentId', getPublicStripePaymentView)
 router.post('/public/payments/:publicPaymentId/intent', createPublicStripePaymentIntentView)
+router.post('/public/payments/:publicPaymentId/installment-plans', preparePublicStripeInstallmentPlansView)
+router.post('/public/payments/:publicPaymentId/installment-confirm', confirmPublicStripeInstallmentPaymentView)
 router.post('/public/payments/:publicPaymentId/subscription-checkout', requireSubscriptionsFeature, createPublicStripeSubscriptionCheckoutView)
 
 router.use(requireAuth)

@@ -459,6 +459,85 @@
   padding: 0;
 }
 
+.stripeCardElementShell {
+  min-width: 0;
+  padding: 15px 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-ctl);
+  background: var(--surface);
+}
+
+.stripeInstallmentSelector {
+  display: grid;
+  gap: 10px;
+  min-width: 0;
+}
+
+.stripeInstallmentSelectorHeader {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  min-width: 0;
+}
+
+.stripeInstallmentSelectorHeader span {
+  font: var(--label-font);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: var(--label-spacing);
+  text-transform: var(--label-transform);
+  color: var(--text-mute);
+}
+
+.stripeInstallmentSelectorHeader strong {
+  color: var(--accent);
+  font-size: 13px;
+  font-weight: 700;
+  text-align: right;
+}
+
+.stripeInstallmentOption {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  min-height: 54px;
+  padding: 12px 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-ctl);
+  background: var(--surface);
+  color: var(--text);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: border-color .16s ease, background .16s ease, box-shadow .16s ease;
+}
+
+.stripeInstallmentOption:hover,
+.stripeInstallmentOption[data-selected='true'] {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+  box-shadow: var(--shadow-xs);
+}
+
+.stripeInstallmentOption span {
+  min-width: 0;
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1.3;
+}
+
+.stripeInstallmentOption strong {
+  color: var(--text-dim);
+  font-family: var(--num-font);
+  font-size: 12px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
 .mercadoPagoBrickShell {
   position: relative;
   min-height: 410px;

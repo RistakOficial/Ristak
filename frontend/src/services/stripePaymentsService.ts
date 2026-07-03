@@ -80,6 +80,7 @@ export interface StripePaymentLinkPayload {
   lineItems?: Array<Record<string, unknown>>
   installments?: {
     enabled?: boolean
+    maxInstallments?: number
   }
 }
 
@@ -171,6 +172,8 @@ export interface PublicStripePayment {
   stripeInstallments?: {
     enabled: boolean
     minAmount?: number
+    maxInstallments?: number
+    allowedCounts?: number[]
     label?: string
     provider?: 'stripe'
     selectionMode?: string
@@ -203,6 +206,32 @@ export interface StripePaymentIntentResponse {
   publishableKey: string
   stripeAccountId?: string
   status: string
+}
+
+export interface StripeInstallmentPlan {
+  type: 'fixed_count'
+  interval: 'month'
+  count: number
+}
+
+export interface StripeInstallmentPlansResponse {
+  paymentIntentId: string
+  clientSecret: string
+  publishableKey: string
+  stripeAccountId?: string
+  status: string
+  maxInstallments: number
+  availablePlans: StripeInstallmentPlan[]
+}
+
+export interface StripeInstallmentConfirmResponse {
+  paymentIntentId: string
+  clientSecret: string
+  publishableKey: string
+  stripeAccountId?: string
+  status: string
+  selectedPlan?: StripeInstallmentPlan | null
+  availablePlans?: StripeInstallmentPlan[]
 }
 
 export interface StripeSubscriptionCheckoutResponse {
@@ -404,6 +433,35 @@ export const stripePaymentsService = {
       body: JSON.stringify(payload)
     })
     return parseApiResponse<StripePaymentIntentResponse>(response)
+  },
+
+  async preparePublicInstallmentPlans(publicPaymentId: string, payload: {
+    paymentMethodId: string
+    savePaymentMethod?: boolean
+  }): Promise<StripeInstallmentPlansResponse> {
+    const response = await fetch(apiUrl(`/api/stripe/public/payments/${encodeURIComponent(publicPaymentId)}/installment-plans`), {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify(payload)
+    })
+    return parseApiResponse<StripeInstallmentPlansResponse>(response)
+  },
+
+  async confirmPublicInstallmentPayment(publicPaymentId: string, payload: {
+    paymentIntentId: string
+    selectedInstallments?: number | null
+    returnUrl?: string
+  }): Promise<StripeInstallmentConfirmResponse> {
+    const response = await fetch(apiUrl(`/api/stripe/public/payments/${encodeURIComponent(publicPaymentId)}/installment-confirm`), {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify(payload)
+    })
+    return parseApiResponse<StripeInstallmentConfirmResponse>(response)
   },
 
   async createPublicSubscriptionCheckout(publicPaymentId: string): Promise<StripeSubscriptionCheckoutResponse> {

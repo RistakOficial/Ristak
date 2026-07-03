@@ -127,6 +127,7 @@ type RemainingFrequency = 'custom' | 'daily' | 'weekly' | 'biweekly' | 'monthly'
 type StripePlanCardSource = 'new_card' | 'saved_card'
 type SendMethod = 'whatsapp' | 'sms' | 'email' | 'email_whatsapp' | 'email_sms' | 'all'
 type InvoiceSendMethod = 'email' | 'sms' | 'both'
+type StripeInstallmentChoice = '3' | '6' | '9' | '12' | '18' | '24'
 type MercadoPagoInstallmentChoice = 'none' | '2' | '3' | '6' | '9' | '12' | '18' | '24'
 type ConektaInstallmentChoice = 'none' | '3' | '6' | '9' | '12' | '18' | '24'
 type InstallmentChargeMode = 'single' | 'installments'
@@ -199,6 +200,15 @@ const STRIPE_INSTALLMENT_MIN_AMOUNT = 300
 const CLIP_INSTALLMENT_MIN_AMOUNT = 300
 const CLIP_INSTALLMENT_MAX_MONTHS = 24
 
+const STRIPE_INSTALLMENT_OPTIONS: Array<{ value: StripeInstallmentChoice; label: string }> = [
+  { value: '3', label: 'Hasta 3 meses' },
+  { value: '6', label: 'Hasta 6 meses' },
+  { value: '9', label: 'Hasta 9 meses' },
+  { value: '12', label: 'Hasta 12 meses' },
+  { value: '18', label: 'Hasta 18 meses' },
+  { value: '24', label: 'Hasta 24 meses' }
+]
+
 const CONEKTA_INSTALLMENT_TERMS: Array<{ value: ConektaInstallmentChoice; months: number; minAmount: number; issuer?: string }> = [
   { value: '3', months: 3, minAmount: 300 },
   { value: '6', months: 6, minAmount: 600 },
@@ -212,6 +222,11 @@ const getMercadoPagoInstallmentLimit = (choice: MercadoPagoInstallmentChoice) =>
   if (choice === 'none') return 1
   const parsed = Number(choice)
   return Number.isFinite(parsed) ? Math.max(1, Math.trunc(parsed)) : 1
+}
+
+const getStripeInstallmentLimit = (choice: StripeInstallmentChoice) => {
+  const parsed = Number(choice)
+  return Number.isFinite(parsed) ? Math.max(3, Math.trunc(parsed)) : 3
 }
 
 const getConektaInstallmentLimit = (choice: ConektaInstallmentChoice) => {
@@ -740,6 +755,7 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
   const [paymentOption, setPaymentOption] = useState<PaymentOption>('send')
   const [sendMethod, setSendMethod] = useState<SendMethod>(DEFAULT_SEND_METHOD)
   const [installmentChargeMode, setInstallmentChargeMode] = useState<InstallmentChargeMode>('single')
+  const [stripeInstallmentChoice, setStripeInstallmentChoice] = useState<StripeInstallmentChoice>('24')
   const [mercadoPagoInstallmentChoice, setMercadoPagoInstallmentChoice] = useState<MercadoPagoInstallmentChoice>('none')
   const [conektaInstallmentChoice, setConektaInstallmentChoice] = useState<ConektaInstallmentChoice>('none')
   const [conektaSavedCardGatewayConfirmed, setConektaSavedCardGatewayConfirmed] = useState(false)
@@ -1035,8 +1051,12 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
   const stripeInstallmentsCurrencyAvailable = (invoiceSummary?.currency || accountCurrency || 'MXN').toUpperCase() === 'MXN'
   const stripeInstallmentsAmountAvailable = Number(invoiceSummary?.amount || 0) >= STRIPE_INSTALLMENT_MIN_AMOUNT
   const stripeInstallmentsAvailable = Boolean(invoiceSummary && stripeInstallmentsCurrencyAvailable && stripeInstallmentsAmountAvailable)
+  const stripeInstallmentLimit = getStripeInstallmentLimit(stripeInstallmentChoice)
   const stripeMsiEnabled = installmentChargeMode === 'installments' && stripeInstallmentsAvailable
-  const stripeInstallmentPaymentLabel = stripeInstallmentsAvailable ? 'Stripe lo mostrará si aplica' : `Desde ${formatCurrency(STRIPE_INSTALLMENT_MIN_AMOUNT, 'MXN')}`
+  const stripeInstallmentPaymentLabel = stripeInstallmentsAvailable ? `Hasta ${stripeInstallmentLimit} meses` : `Desde ${formatCurrency(STRIPE_INSTALLMENT_MIN_AMOUNT, 'MXN')}`
+  const stripeInstallmentEstimate = invoiceSummary && stripeMsiEnabled
+    ? normalizeAmount(invoiceSummary.amount / stripeInstallmentLimit)
+    : 0
   const mercadoPagoInstallmentLimit = getMercadoPagoInstallmentLimit(mercadoPagoInstallmentChoice)
   const mercadoPagoInstallmentEnabled = mercadoPagoInstallmentLimit > 1
   const mercadoPagoMsiEnabled = installmentChargeMode === 'installments' && mercadoPagoInstallmentEnabled
@@ -1075,6 +1095,7 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
 
   const resetInstallmentChargeMode = () => {
     setInstallmentChargeMode('single')
+    setStripeInstallmentChoice('24')
     setMercadoPagoInstallmentChoice('none')
     setConektaInstallmentChoice('none')
   }
@@ -1087,6 +1108,7 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
   const openStripeInstallmentConfiguration = () => {
     if (!stripeInstallmentsAvailable) return
     setInstallmentChargeMode('installments')
+    setStripeInstallmentChoice((current) => current || '24')
   }
 
   const openClipInstallmentConfiguration = () => {
@@ -1313,6 +1335,7 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
     setPaymentOption(getDefaultPaymentOption())
     setSendMethod(resolvedInitialContact ? getDefaultSendMethod(getSendMethodOptions(resolvedInitialContact)) : DEFAULT_SEND_METHOD)
     setInstallmentChargeMode('single')
+    setStripeInstallmentChoice('24')
     setMercadoPagoInstallmentChoice('none')
     setConektaInstallmentChoice('none')
     setManualPaymentData(defaultManualPaymentData(timezone))
@@ -2736,7 +2759,8 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
           source: 'record_payment_modal',
           lineItems: Array.isArray(invoicePayload.items) ? invoicePayload.items : [],
           installments: {
-            enabled: stripeMsiEnabled
+            enabled: stripeMsiEnabled,
+            maxInstallments: stripeMsiEnabled ? stripeInstallmentLimit : undefined
           }
         })
 
@@ -2744,7 +2768,7 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
           kind: 'single',
           title: 'Enlace de pago listo',
           description: stripeMsiEnabled
-            ? 'Comparte este enlace para que el cliente pague con Stripe. Si su tarjeta aplica, Stripe mostrará meses sin intereses dentro del formulario seguro.'
+            ? `Comparte este enlace para que el cliente pague con Stripe. Ristak mostrará sólo los plazos disponibles hasta ${stripeInstallmentLimit} meses.`
             : 'Comparte este enlace para que el cliente pague con tarjeta desde la página pública segura.',
           provider: 'stripe',
           paymentUrl: result.paymentUrl,
@@ -2758,7 +2782,7 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
           'success',
           'Link de Stripe creado',
           stripeMsiEnabled
-            ? 'El enlace público quedó listo con meses sin intereses habilitado en Stripe.'
+            ? `El enlace público quedó listo con MSI hasta ${stripeInstallmentLimit} meses.`
             : 'El enlace público está listo para copiar o enviar.'
         )
         onSuccess?.(LINK_READY_SUCCESS_CONTEXT)
@@ -4268,7 +4292,7 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
         ? 'Stripe sólo ofrece meses sin intereses en MXN.'
         : !stripeInstallmentsAmountAvailable
           ? `Disponible desde ${formatCurrency(STRIPE_INSTALLMENT_MIN_AMOUNT, 'MXN')}.`
-          : 'Stripe mostrará los planes compatibles dentro del formulario seguro.'
+          : 'Configura hasta cuántos meses podrá elegir el cliente en el link.'
       : paymentOption === 'clip'
         ? !clipCurrencyAvailable
           ? 'CLIP sólo ofrece meses sin intereses en MXN.'
@@ -4718,10 +4742,19 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
 
         {showStripeInstallmentPanel && invoiceSummary && (
           <div className={styles.mercadoPagoInstallmentsPanel}>
-            <div className={styles.mercadoPagoInstallmentsHeader}>
-              <div>
+            <div className={`${styles.mercadoPagoInstallmentsHeader} ${styles.conektaInstallmentsHeader}`}>
+              <div className={styles.conektaInstallmentIntro}>
                 <span>Stripe</span>
                 <p>Meses sin intereses</p>
+                <div className={styles.conektaInstallmentSelectField}>
+                  <label>Máximo de meses</label>
+                  {renderPaymentSelect({
+                    value: stripeInstallmentChoice,
+                    onChange: (value) => setStripeInstallmentChoice(value as StripeInstallmentChoice),
+                    options: STRIPE_INSTALLMENT_OPTIONS,
+                    title: 'Máximo de meses'
+                  })}
+                </div>
               </div>
               <strong>{stripeInstallmentPaymentLabel}</strong>
             </div>
@@ -4732,8 +4765,8 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
                 <strong>{formatCurrency(invoiceSummary.amount, invoiceSummary.currency)}</strong>
               </div>
               <div>
-                <span>Forma de pago</span>
-                <strong>Stripe decide planes</strong>
+                <span>Referencia mensual</span>
+                <strong>{formatCurrency(stripeInstallmentEstimate, invoiceSummary.currency)} x {stripeInstallmentLimit}</strong>
               </div>
               <div>
                 <span>Ristak registra</span>
@@ -4742,7 +4775,7 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
             </div>
 
             <p className={styles.mercadoPagoInstallmentsNote}>
-              Stripe mostrará meses sin intereses sólo si la cuenta es de México, el cobro está en MXN y la tarjeta de crédito del cliente es compatible. Los plazos disponibles se controlan desde Stripe y por el banco emisor.
+              Ristak mostrará sólo los plazos que Stripe confirme para la tarjeta del cliente y nunca más de {stripeInstallmentLimit} meses. La cuenta, el cobro en MXN y el banco emisor todavía deben ser compatibles.
             </p>
           </div>
         )}

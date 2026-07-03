@@ -4,9 +4,11 @@ import assert from 'node:assert/strict'
 import { db } from '../src/config/database.js'
 import { savePaymentSettings } from '../src/services/paymentSettingsService.js'
 import {
+  confirmPublicStripeInstallmentPayment,
   createStripePaymentIntent,
   createStripePaymentLink,
   getPublicStripePayment,
+  preparePublicStripeInstallmentPlans,
   saveStripePaymentConfig,
   setStripeFactoryForTest
 } from '../src/services/stripePaymentService.js'
@@ -111,6 +113,8 @@ test('Stripe habilita meses sin intereses en PaymentIntent cuando el link lo pid
       })
       assert.equal(publicPayment.stripeInstallments.enabled, true)
       assert.equal(publicPayment.stripeInstallments.minAmount, 300)
+      assert.equal(publicPayment.stripeInstallments.maxInstallments, 24)
+      assert.equal(publicPayment.stripeInstallments.selectionMode, 'stripe_controlled_installments')
 
       const msiIntent = await createStripePaymentIntent(msiLink.publicPaymentId, {
         savePaymentMethod: false
@@ -133,6 +137,107 @@ test('Stripe habilita meses sin intereses en PaymentIntent cuando el link lo pid
       })
       assert.equal(createCalls.length, 2)
       assert.equal(createCalls[1].params.payment_method_options, undefined)
+    } finally {
+      await cleanupPublicPayments(createdPublicIds)
+    }
+  })
+})
+
+test('Stripe MSI controlado filtra planes por maxInstallments y confirma el plazo elegido', async () => {
+  await snapshotPaymentConfig(async () => {
+    await configureStripeInstallmentTest()
+
+    const createCalls = []
+    const confirmCalls = []
+    let preparedIntent = null
+    setStripeFactoryForTest(() => ({
+      paymentIntents: {
+        create: async (params, requestOptions) => {
+          createCalls.push({ params, requestOptions })
+          preparedIntent = {
+            id: 'pi_controlled_msi',
+            client_secret: 'pi_controlled_msi_secret_test',
+            status: 'requires_confirmation',
+            amount: params.amount,
+            currency: params.currency,
+            metadata: params.metadata,
+            payment_method_options: {
+              card: {
+                installments: {
+                  available_plans: [
+                    { type: 'fixed_count', interval: 'month', count: 3 },
+                    { type: 'fixed_count', interval: 'month', count: 6 },
+                    { type: 'fixed_count', interval: 'month', count: 12 },
+                    { type: 'fixed_count', interval: 'month', count: 24 }
+                  ]
+                }
+              }
+            }
+          }
+          return preparedIntent
+        },
+        retrieve: async () => preparedIntent,
+        confirm: async (paymentIntentId, params, requestOptions) => {
+          confirmCalls.push({ paymentIntentId, params, requestOptions })
+          return {
+            ...preparedIntent,
+            status: 'succeeded',
+            amount_received: preparedIntent.amount,
+            latest_charge: 'ch_controlled_msi'
+          }
+        }
+      }
+    }))
+
+    const createdPublicIds = []
+    try {
+      const msiLink = await createStripePaymentLink({
+        amount: 600,
+        currency: 'MXN',
+        applyTax: false,
+        title: 'Pago Stripe MSI controlado',
+        description: 'Pago con meses limitados por Ristak',
+        installments: { enabled: true, maxInstallments: 6 }
+      }, { baseUrl: 'https://app.example.test' })
+      createdPublicIds.push(msiLink.publicPaymentId)
+
+      const publicPayment = await getPublicStripePayment(msiLink.publicPaymentId, {
+        baseUrl: 'https://app.example.test'
+      })
+      assert.equal(publicPayment.stripeInstallments.enabled, true)
+      assert.equal(publicPayment.stripeInstallments.maxInstallments, 6)
+      assert.deepEqual(publicPayment.stripeInstallments.allowedCounts, [3, 6])
+
+      const plans = await preparePublicStripeInstallmentPlans(msiLink.publicPaymentId, {
+        paymentMethodId: 'pm_controlled_msi',
+        savePaymentMethod: false
+      })
+      assert.equal(plans.paymentIntentId, 'pi_controlled_msi')
+      assert.deepEqual(plans.availablePlans.map((plan) => plan.count), [3, 6])
+      assert.equal(createCalls[0].params.payment_method, 'pm_controlled_msi')
+      assert.equal(createCalls[0].params.payment_method_options.card.installments.enabled, true)
+
+      await assert.rejects(
+        () => confirmPublicStripeInstallmentPayment(msiLink.publicPaymentId, {
+          paymentIntentId: plans.paymentIntentId,
+          selectedInstallments: 12
+        }),
+        /máximo 6 meses/
+      )
+      assert.equal(confirmCalls.length, 0)
+
+      const confirmed = await confirmPublicStripeInstallmentPayment(msiLink.publicPaymentId, {
+        paymentIntentId: plans.paymentIntentId,
+        selectedInstallments: 6
+      })
+      assert.equal(confirmed.status, 'succeeded')
+      assert.equal(confirmCalls.length, 1)
+      assert.equal(confirmCalls[0].params.payment_method_options.card.installments.plan.count, 6)
+
+      const row = await db.get('SELECT status, stripe_payment_intent_id, stripe_charge_id FROM payments WHERE public_payment_id = ?', [msiLink.publicPaymentId])
+      assert.equal(row.status, 'paid')
+      assert.equal(row.stripe_payment_intent_id, 'pi_controlled_msi')
+      assert.equal(row.stripe_charge_id, 'ch_controlled_msi')
     } finally {
       await cleanupPublicPayments(createdPublicIds)
     }
