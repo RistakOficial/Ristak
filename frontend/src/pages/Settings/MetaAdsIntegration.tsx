@@ -70,7 +70,8 @@ type MetaTestParameterFieldKey =
 
 type SecretTokenField = 'accessToken'
 type MetaMessagingPlatform = 'messenger' | 'instagram'
-type MetaConnectedTab = 'cuenta' | 'mensajes' | 'rastreo' | 'pruebas'
+const metaConnectedTabIds = ['cuenta', 'mensajes', 'rastreo', 'pruebas'] as const
+type MetaConnectedTab = typeof metaConnectedTabIds[number]
 type MetaTestMessagingChannel = 'whatsapp' | 'messenger' | 'instagram'
 type MetaTestIdentityParameterKey =
   | 'ctwaClid'
@@ -97,14 +98,22 @@ const metaConnectedTabs: Array<{ id: MetaConnectedTab; label: string; icon: Reac
 const MASKED_SECRET_PREFIX = '***'
 const SECRET_MASK_FILL = '*'.repeat(180)
 const metaStepSlugs = ['token', 'ad-account', 'pixel', 'pages'] as const
-const parseMetaStep = (pathname: string) => {
+const getMetaAdsRouteSegment = (pathname: string) => {
   const segments = pathname.replace(/^\/+|\/+$/g, '').split('/').filter(Boolean)
   const metaIndex = segments.indexOf('meta-ads')
-  const step = metaIndex >= 0 ? segments[metaIndex + 1] : ''
+  return metaIndex >= 0 ? segments[metaIndex + 1] : ''
+}
+const parseMetaStep = (pathname: string) => {
+  const step = getMetaAdsRouteSegment(pathname)
   const index = metaStepSlugs.indexOf(step as typeof metaStepSlugs[number])
   return index >= 0 ? index : 0
 }
+const parseMetaConnectedTab = (pathname: string): MetaConnectedTab | null => {
+  const tab = getMetaAdsRouteSegment(pathname)
+  return metaConnectedTabIds.includes(tab as MetaConnectedTab) ? tab as MetaConnectedTab : null
+}
 const buildMetaAdsSettingsPath = (stepIndex: number) => `/settings/meta-ads/${metaStepSlugs[Math.max(0, Math.min(stepIndex, metaStepSlugs.length - 1))]}`
+const buildMetaAdsConnectedTabPath = (tab: MetaConnectedTab) => `/settings/meta-ads/${tab}`
 
 const isMaskedSecretValue = (value = '') => value.trim().startsWith(MASKED_SECRET_PREFIX)
 
@@ -422,6 +431,7 @@ export const MetaAdsIntegration: React.FC = () => {
   const navigate = useNavigate()
   const location = useLocation()
   const routeStep = parseMetaStep(location.pathname)
+  const routeConnectedTab = parseMetaConnectedTab(location.pathname)
   const [isLoading, setIsLoading] = useState(true)
   const [credentials, setCredentials] = useState<MetaCredentials>({
     adAccountId: '',
@@ -468,7 +478,7 @@ export const MetaAdsIntegration: React.FC = () => {
   const [metaTestResult, setMetaTestResult] = useState<MetaTestEventResponse | null>(null)
   const [activeStep, setActiveStep] = useState(routeStep)
   const [wizardRefreshNonce, setWizardRefreshNonce] = useState(0)
-  const [activeMetaTab, setActiveMetaTab] = useState<MetaConnectedTab>('cuenta')
+  const [activeMetaTab, setActiveMetaTab] = useState<MetaConnectedTab>(routeConnectedTab || 'cuenta')
   const [metaWebhookInfo, setMetaWebhookInfo] = useState<MetaWebhookInfo | null>(null)
   const accessTokenInputRef = useRef<HTMLInputElement>(null)
 
@@ -528,6 +538,12 @@ export const MetaAdsIntegration: React.FC = () => {
     setActiveStep(current => current === routeStep ? current : routeStep)
   }, [routeStep])
 
+  useEffect(() => {
+    if (routeConnectedTab) {
+      setActiveMetaTab(current => current === routeConnectedTab ? current : routeConnectedTab)
+    }
+  }, [routeConnectedTab])
+
   // El código de prueba vive inline (sin modal): siembra el borrador con el
   // código guardado en la carga inicial y cada vez que cambie el guardado.
   useEffect(() => {
@@ -565,6 +581,11 @@ export const MetaAdsIntegration: React.FC = () => {
 
   const requestWizardRefresh = () => {
     setWizardRefreshNonce(current => current + 1)
+  }
+
+  const handleSelectMetaTab = (tab: MetaConnectedTab) => {
+    setActiveMetaTab(tab)
+    navigate(buildMetaAdsConnectedTabPath(tab))
   }
 
   const loadCredentials = async () => {
@@ -1105,11 +1126,11 @@ export const MetaAdsIntegration: React.FC = () => {
   const saveMetaWizardConfig = async () => {
     if (!credentials.adAccountId) {
       showToast('warning', 'Falta cuenta de anuncios', 'Selecciona una cuenta de anuncios para guardar Meta')
-      return false
+      return { saved: false, syncStarted: false }
     }
 
     const accessToken = await getUsableAccessToken({ silent: false })
-    if (!accessToken) return false
+    if (!accessToken) return { saved: false, syncStarted: false }
 
     setIsSavingWizardConfig(true)
 
@@ -1147,15 +1168,14 @@ export const MetaAdsIntegration: React.FC = () => {
           setCredentials(prev => ({ ...prev, pixelId: nextPixelId }))
         }
         await loadCredentials()
-        showToast('success', 'Meta guardado', 'La configuración quedó lista')
-        return true
+        return { saved: true, syncStarted: data.data?.syncStarted === true }
       } else {
         showToast('error', 'Error', data.error || 'No se pudo guardar Meta')
-        return false
+        return { saved: false, syncStarted: false }
       }
     } catch {
       showToast('error', 'Error', 'No se pudo guardar Meta')
-      return false
+      return { saved: false, syncStarted: false }
     } finally {
       setIsSavingWizardConfig(false)
     }
@@ -1167,11 +1187,19 @@ export const MetaAdsIntegration: React.FC = () => {
       return
     }
 
-    const saved = await saveMetaWizardConfig()
-    if (!saved) return
+    const result = await saveMetaWizardConfig()
+    if (!result.saved) return
 
     setIsEditingMetaConfig(false)
-    goToMetaStep(0, { replace: true })
+    setActiveMetaTab('mensajes')
+    navigate(buildMetaAdsConnectedTabPath('mensajes'), { replace: true })
+    showToast(
+      'success',
+      'Meta conectado',
+      result.syncStarted
+        ? 'Los anuncios ya se están sincronizando. Ahora termina mensajes y comentarios.'
+        : 'Ahora termina mensajes y comentarios.'
+    )
   }
 
   const handleEditMetaConfig = () => {
@@ -2209,7 +2237,7 @@ export const MetaAdsIntegration: React.FC = () => {
                 className={styles.metaTabs}
                 tabs={metaConnectedTabs}
                 value={activeMetaTab}
-                onChange={(id) => setActiveMetaTab(id as MetaConnectedTab)}
+                onChange={(id) => handleSelectMetaTab(id as MetaConnectedTab)}
               />
             )}
             {!shouldShowWizard && activeMetaTab === 'cuenta' && (

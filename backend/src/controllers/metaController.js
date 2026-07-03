@@ -57,6 +57,43 @@ const REFUND_PAYMENT_STATUSES = new Set(['refunded', 'refund']);
 const isPostgres = Boolean(process.env.DATABASE_URL);
 const MASKED_SECRET_PREFIX = '***';
 
+function buildMetaAdsHistoricalSyncStartDate() {
+  const startDate = new Date();
+  startDate.setMonth(startDate.getMonth() - 35);
+  return formatDate(startDate);
+}
+
+function startMetaAdsSyncAfterConnection(reason = 'meta-connected') {
+  const historicalStartDate = buildMetaAdsHistoricalSyncStartDate();
+
+  logger.info(`Meta Ads: iniciando sincronización automática post-conexión (${reason})`);
+
+  (async () => {
+    const recentResult = await updateRecentAds();
+
+    if (!recentResult.success) {
+      if (recentResult.message === 'Sync completo en progreso') {
+        logger.info('Meta Ads: ya hay una sincronización completa en progreso; no se inicia otra.');
+        return;
+      }
+
+      logger.warn(`Meta Ads: no se pudo actualizar el rango reciente automáticamente: ${recentResult.error || recentResult.message || 'error desconocido'}`);
+      return;
+    }
+
+    logger.info(`Meta Ads: actualización reciente automática lista (${recentResult.count || 0} filas). Iniciando histórico desde ${historicalStartDate}`);
+
+    await syncMetaAds(historicalStartDate);
+  })().catch(error => {
+    logger.error(`Error en sincronización automática post-conexión de Meta Ads: ${error.message}`);
+  });
+
+  return {
+    syncStarted: true,
+    historicalStartDate
+  };
+}
+
 // META-007: Caché en memoria del recálculo de atribución (DB + API HighLevel).
 // getCampaigns llamaba a getContactsWithAppointmentsHybrid / getContactsWithShowedAppointmentsHybrid
 // en CADA request -> lento/costoso (golpea DB + API HL siempre). Estas dos funciones devuelven
@@ -1643,9 +1680,7 @@ export const updateRecent = async (req, res) => {
       });
     }
 
-    const startDate = new Date();
-    startDate.setMonth(startDate.getMonth() - 35);
-    const startDateStr = formatDate(startDate);
+    const startDateStr = buildMetaAdsHistoricalSyncStartDate();
 
     logger.info(`Actualización reciente completada. Iniciando sincronización histórica de Meta Ads (35 meses) desde: ${startDateStr}`);
 
@@ -3306,17 +3341,8 @@ export const saveAndSyncMeta = async (req, res) => {
       logger.info('Sin integración opcional de HighLevel; Meta se guardó en Ristak.');
     }
 
-    // 5. Iniciar sincronización de anuncios (últimos 7 días)
-    const startDate = new Date();
-    startDate.setDate(startDate.getDate() - 7);
-    const startDateStr = formatDate(startDate);
-
-    logger.info(`Iniciando sincronización de anuncios desde: ${startDateStr}`);
-
-    // No esperar a que termine la sincronización (es async)
-    syncMetaAds(startDateStr).catch(error => {
-      logger.error(`Error en sincronización de Meta Ads: ${error.message}`);
-    });
+    // 5. Iniciar sincronización automática de anuncios sin bloquear el wizard.
+    const adsSync = startMetaAdsSyncAfterConnection('wizard-complete');
 
     // 8. Sincronizar el snippet de Web Tracking con el Meta Pixel automáticamente.
     // El snippet se inyecta en el SITIO del cliente (su dominio de rastreo), no en
@@ -3376,7 +3402,8 @@ export const saveAndSyncMeta = async (req, res) => {
         pixelId: effectivePixelId,
         instagramAccountId: normalizedInstagramAccountId,
         tokenValid: validation.valid,
-        syncStarted: true
+        syncStarted: adsSync.syncStarted,
+        adsSync
       }
     });
 
@@ -3457,17 +3484,8 @@ export const syncFromHighLevel = async (req, res) => {
 
     logger.info('Credenciales de Meta validadas exitosamente');
 
-    // 5. Iniciar sincronización de anuncios (últimos 7 días)
-    const startDate = new Date();
-    startDate.setDate(startDate.getDate() - 7);
-    const startDateStr = formatDate(startDate);
-
-    logger.info(`Iniciando sincronización de anuncios desde: ${startDateStr}`);
-
-    // No esperar a que termine la sincronización (es async)
-    syncMetaAds(startDateStr).catch(error => {
-      logger.error(`Error en sincronización de Meta Ads: ${error.message}`);
-    });
+    // 5. Iniciar sincronización automática de anuncios sin bloquear la respuesta.
+    const adsSync = startMetaAdsSyncAfterConnection('highlevel-import');
 
     res.json({
       success: true,
@@ -3475,7 +3493,8 @@ export const syncFromHighLevel = async (req, res) => {
       data: {
         adAccountId: metaConfig.ad_account_id,
         tokenValid: validation.valid,
-        syncStarted: true,
+        syncStarted: adsSync.syncStarted,
+        adsSync,
         reconciliation
       }
     });

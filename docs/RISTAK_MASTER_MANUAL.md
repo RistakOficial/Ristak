@@ -614,7 +614,10 @@ Ristak usa Meta en varias areas:
   asignados en Meta Business. Las selecciones dentro del wizard son borrador:
   elegir cuenta, dataset, Facebook Page o Instagram no dispara guardado ni
   sincronizacion inmediata; Ristak persiste la configuracion una sola vez al
-  terminar el wizard.
+  terminar el wizard. Al terminarlo, Ristak arranca automaticamente la
+  sincronizacion de anuncios de Meta en segundo plano y lleva al usuario a
+  `Configuracion > Meta > Mensajes` para activar Messenger, Instagram DM y
+  comentarios si quiere recibirlos en la bandeja.
 - Cuando Meta ya tiene dataset/pixel y token guardado, las nuevas superficies nacen
   con eventos Meta encendidos por default: Sites/landings usan `ViewContent` al
   aterrizar, paginas nuevas agregadas al editor heredan ese default, formularios
