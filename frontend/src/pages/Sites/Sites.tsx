@@ -214,7 +214,6 @@ import styles from './Sites.module.css'
 import customFieldModalStyles from '../Settings/CustomFields.module.css'
 import './sitesCanvas.css'
 import { buildCanvasTheme } from './sitesCanvasTheme'
-import { StripePaymentElementPreview } from './StripePaymentElementPreview'
 import { SITE_FONT_OPTIONS, normalizeSiteFontFamily } from './siteFonts'
 // Contrato de bloques compartido con el renderer público (Paquete C): las
 // variables/clases por bloque y los helpers de paridad vienen de UNA copia.
@@ -32098,15 +32097,14 @@ const CanvasPreviewBlock: React.FC<CanvasPreviewBlockProps> = ({
             </div>
             {isTest && <p className="rstk-checkout-testbadge">Modo prueba · no es un cobro real</p>}
             <div className="rstk-checkout-body">
-              {isStripe ? (
-                <StripePaymentElementPreview
-                  amount={paymentGate.amount}
-                  currency={paymentGate.currency}
-                  fieldTextColor={fieldTextColor || undefined}
-                  showCountry={showCountry}
-                  fallback={mockFields}
-                />
-              ) : isMercadoPago ? mpPlaceholder : mockFields}
+              {/* En el EDITOR nunca montamos el Payment Element REAL de Stripe: en modo
+                  test Stripe inyecta su "helper" de tarjetas de prueba (un globo que
+                  se queda pegado en document.body aun al salir del editor) y además
+                  carga Stripe.js sin razón (el preview no es interactivo). Usamos el
+                  emulador (mockFields), tematizado con los MISMOS tokens de campo que
+                  el checkout real, así que se ve igual. El sitio PUBLICADO sí monta el
+                  Stripe real con su modo test/live verdadero. Solo afecta a Stripe. */}
+              {isMercadoPago ? mpPlaceholder : mockFields}
               {/* Fila de meses standalone: SOLO Conekta la tiene en vivo (Stripe/MP
                   resuelven los meses dentro de su propio widget). Estado inicial = "Un
                   solo pago", igual que el <select> que arma mountConekta. */}
