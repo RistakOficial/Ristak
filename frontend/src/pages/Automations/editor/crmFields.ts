@@ -126,6 +126,8 @@ export const CRM_FIELDS: CrmField[] = [
   // Comentarios FB/IG (disponibles cuando el flujo lo disparó un comentario)
   { id: 'comment-text', label: 'Texto del comentario', category: 'comment', type: 'text' },
   { id: 'comment-platform', label: 'Red social del comentario', category: 'comment', type: 'select', options: [{ value: 'facebook', label: 'Facebook' }, { value: 'instagram', label: 'Instagram' }] },
+  { id: 'comment-post-fb', label: 'Publicación de Facebook', category: 'comment', type: 'text' },
+  { id: 'comment-post-ig', label: 'Publicación de Instagram', category: 'comment', type: 'text' },
 
   // Citas
   { id: 'appt-has', label: 'Tiene cita', category: 'appointments', type: 'boolean' },

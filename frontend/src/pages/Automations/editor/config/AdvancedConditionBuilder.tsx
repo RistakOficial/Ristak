@@ -1,6 +1,7 @@
 import React from 'react'
 import { Braces, Plus, Trash2, Type } from 'lucide-react'
 import { cn } from '@/utils/cn'
+import { MetaPostSelector } from '@/components/MetaPostSelector/MetaPostSelector'
 import { CustomSelect } from './configPrimitives'
 import {
   CRM_FIELDS,
@@ -185,7 +186,17 @@ export const AdvancedConditionBuilder: React.FC<AdvancedConditionBuilderProps> =
 
     let input: React.ReactNode
 
-    if (field.valueCatalog) {
+    if (field.id === 'comment-post-fb' || field.id === 'comment-post-ig') {
+      input = (
+        <MetaPostSelector
+          platform={field.id === 'comment-post-ig' ? 'instagram' : 'facebook'}
+          value={rule.value || ''}
+          valueLabel={rule.valueLabel || ''}
+          onChange={(next, label) => set({ value: next, valueLabel: label })}
+          aria-label="Publicación del comentario"
+        />
+      )
+    } else if (field.valueCatalog) {
       input = (
         <CatalogSelect
           catalog={field.valueCatalog}

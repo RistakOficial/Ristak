@@ -1866,6 +1866,8 @@ function ruleFieldValue(rule, ctx) {
     case 'conv-replied': return ctx.messageText ? 'true' : 'false'
     case 'comment-text': return ctx.messageText || ''
     case 'comment-platform': return ctx.platform || ''
+    case 'comment-post-fb': return ctx.postId || ''
+    case 'comment-post-ig': return ctx.mediaId || ''
     case 'pay-has': return (ctx.paymentId || ctx.payment_id || ctx.amount || ctx.status || ctx.paymentStatus) ? 'true' : 'false'
     case 'pay-status': return ctx.paymentStatus || ctx.payment_status || ctx.status || ''
     case 'pay-amount': return ctx.amount ?? ''
