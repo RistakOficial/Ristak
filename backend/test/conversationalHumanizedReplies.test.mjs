@@ -72,10 +72,13 @@ import {
 } from '../src/agents/conversational/messageSplitter.js'
 import {
   DEFAULT_CLOSING_STRATEGY,
+  LIGHT_DIRECT_CLOSING_STRATEGY,
   buildBusinessAdaptiveClosingSection,
   buildClosingStrategyTemplateParameters,
   buildConversationalInstructions,
-  renderClosingStrategyTemplate
+  renderClosingStrategyTemplate,
+  resolveDefaultClosingStrategyBase,
+  usesLightDirectClosingBase
 } from '../src/agents/conversational/prompt.js'
 import {
   buildBusinessProfilePromptParameters,
@@ -2754,6 +2757,129 @@ test('estrategia de fabrica conserva reglas anti-molde y anti-asuncion', () => {
   assert.match(DEFAULT_CLOSING_STRATEGY, /Cuándo NO te quedes callado/)
   assert.match(DEFAULT_CLOSING_STRATEGY, /El PRIMER regreso es el más delicado/)
   assert.match(DEFAULT_CLOSING_STRATEGY, /dosis EXTRA de calidez/)
+})
+
+test('base ligera y directa existe y es mas ligera que la fabrica', () => {
+  assert.match(LIGHT_DIRECT_CLOSING_STRATEGY, /ASISTENTE CONVERSACIONAL EN MODO LIGERO Y DIRECTO/)
+  assert.match(LIGHT_DIRECT_CLOSING_STRATEGY, /CÓMO OPERAS \(ligero y directo\)/)
+  // La esencia directa: dar info, no rebotar/esconder como la biblia de fabrica.
+  assert.match(LIGHT_DIRECT_CLOSING_STRATEGY, /Responde lo que te preguntan, claro y al grano/)
+  assert.match(LIGHT_DIRECT_CLOSING_STRATEGY, /GIROS SENSIBLES/)
+  assert.doesNotMatch(LIGHT_DIRECT_CLOSING_STRATEGY, /AGENTE CONVERSACIONAL DE CIERRE/)
+  // Debe ser sustancialmente mas corta que la biblia de fabrica.
+  assert.ok(LIGHT_DIRECT_CLOSING_STRATEGY.length * 3 < DEFAULT_CLOSING_STRATEGY.length)
+})
+
+test('usesLightDirectClosingBase cubre la matriz persuasion x lenguaje', () => {
+  const persuasions = ['low', 'medium', 'high']
+  const languages = ['professional', 'intermediate', 'colloquial']
+  const factoryQuadrant = new Set([
+    'medium|intermediate', 'medium|colloquial',
+    'high|intermediate', 'high|colloquial'
+  ])
+  for (const persuasionLevel of persuasions) {
+    for (const languageLevel of languages) {
+      const config = { persuasionLevel, languageLevel }
+      const expectedLight = !factoryQuadrant.has(`${persuasionLevel}|${languageLevel}`)
+      assert.equal(
+        usesLightDirectClosingBase(config),
+        expectedLight,
+        `combinacion ${persuasionLevel} x ${languageLevel} deberia usar base ${expectedLight ? 'ligera' : 'fabrica'}`
+      )
+      const base = resolveDefaultClosingStrategyBase(config)
+      assert.equal(base === LIGHT_DIRECT_CLOSING_STRATEGY, expectedLight)
+      assert.equal(base === DEFAULT_CLOSING_STRATEGY, !expectedLight)
+    }
+  }
+  // Anfitrion (low) SIEMPRE ligera; Ejecutivo (professional) SIEMPRE ligera.
+  assert.equal(usesLightDirectClosingBase({ persuasionLevel: 'low', languageLevel: 'colloquial' }), true)
+  assert.equal(usesLightDirectClosingBase({ persuasionLevel: 'high', languageLevel: 'professional' }), true)
+  // Default de fabrica (Cerrador + Complice) se queda con la biblia.
+  assert.equal(usesLightDirectClosingBase({ persuasionLevel: 'high', languageLevel: 'intermediate' }), false)
+})
+
+test('instrucciones montan la base correcta y sus moduladores por combinacion', () => {
+  const commonContext = {
+    businessContext: 'Vendemos consultas.',
+    brandVoice: '',
+    businessName: 'Clinica Norte',
+    timezone: 'America/Mexico_City',
+    nowIso: 'miércoles, 17 de junio de 2026, 14:00',
+    contactName: 'Ana',
+    channel: 'whatsapp',
+    accountLocale: { countryCode: 'MX', currency: 'MXN', dialCode: '52' }
+  }
+  const build = (persuasionLevel, languageLevel) => buildConversationalInstructions({
+    config: {
+      persuasionLevel,
+      languageLevel,
+      objective: 'ventas',
+      successAction: 'ready_to_buy',
+      requiredData: '',
+      closingStrategyMode: 'system'
+    },
+    ...commonContext
+  })
+
+  // Cuadrante de fabrica: biblia pesada, sin marca ligera.
+  const factory = build('high', 'intermediate')
+  assert.match(factory, /AGENTE CONVERSACIONAL DE CIERRE/)
+  assert.doesNotMatch(factory, /ASISTENTE CONVERSACIONAL EN MODO LIGERO Y DIRECTO/)
+
+  // Anfitrion + Callejero: base ligera + modulador Anfitrion + modulador Callejero.
+  const anfitrionCallejero = build('low', 'colloquial')
+  assert.match(anfitrionCallejero, /ASISTENTE CONVERSACIONAL EN MODO LIGERO Y DIRECTO/)
+  assert.doesNotMatch(anfitrionCallejero, /AGENTE CONVERSACIONAL DE CIERRE/)
+  assert.match(anfitrionCallejero, /Intensidad de persuasión: ANFITRIÓN/)
+  assert.match(anfitrionCallejero, /Registro de lenguaje: CALLEJERO/)
+
+  // Cerrador + Ejecutivo: base ligera (por Ejecutivo) + modulador Ejecutivo, sin modulador de persuasion.
+  const cerradorEjecutivo = build('high', 'professional')
+  assert.match(cerradorEjecutivo, /ASISTENTE CONVERSACIONAL EN MODO LIGERO Y DIRECTO/)
+  assert.match(cerradorEjecutivo, /Registro de lenguaje: EJECUTIVO/)
+  assert.doesNotMatch(cerradorEjecutivo, /Intensidad de persuasión: (ANFITRIÓN|ESTRATEGA)/)
+
+  // La base ligera NO monta la maquinaria de cierre avanzado; la fabrica ni el placeholder crudo se filtran.
+  assert.doesNotMatch(anfitrionCallejero, /Parámetros internos de cierre avanzado/)
+  assert.doesNotMatch(anfitrionCallejero, /dato pendiente de configurar/)
+  assert.doesNotMatch(anfitrionCallejero, /\[(?:NOMBRE_DEL_NEGOCIO|CANAL_DE_CONVERSACION|OBJETIVO_FINAL|HERRAMIENTA_INTERNA_DE_AVANCE)\]/)
+
+  // Los moduladores de persuasion sobre base ligera NO refieren la "estrategia de cierre"
+  // de la fabrica (esa referencia solo aplica cuando corre la biblia).
+  assert.doesNotMatch(anfitrionCallejero, /estrategia de cierre de arriba/)
+  const estrategaEjecutivo = build('medium', 'professional') // base ligera
+  assert.match(estrategaEjecutivo, /ajusta la intensidad de arriba/)
+  assert.doesNotMatch(estrategaEjecutivo, /recalibra la estrategia de cierre de arriba/)
+  const estrategaComplice = build('medium', 'intermediate') // base fabrica
+  assert.match(estrategaComplice, /recalibra la estrategia de cierre de arriba/)
+})
+
+test('update_closing_context solo se instruye con la biblia de fabrica activa', () => {
+  const commonContext = {
+    businessContext: 'Vendemos consultas.',
+    brandVoice: '',
+    businessName: 'Clinica Norte',
+    timezone: 'America/Mexico_City',
+    nowIso: 'miércoles, 17 de junio de 2026, 14:00',
+    contactName: 'Ana',
+    channel: 'whatsapp',
+    accountLocale: { countryCode: 'MX', currency: 'MXN', dialCode: '52' }
+  }
+  const build = (persuasionLevel, languageLevel, closingStrategyMode = 'system', closingStrategyCustom = '') =>
+    buildConversationalInstructions({
+      config: { persuasionLevel, languageLevel, objective: 'ventas', successAction: 'ready_to_buy', requiredData: '', closingStrategyMode, closingStrategyCustom },
+      ...commonContext
+    })
+
+  // Cuadrante de fabrica: SI se pide update_closing_context.
+  assert.match(build('high', 'intermediate'), /update_closing_context/)
+  assert.match(build('medium', 'colloquial'), /update_closing_context/)
+  // Base ligera (Anfitrion o Ejecutivo): NO se pide, porque se omite su marco de contexto.
+  assert.doesNotMatch(build('low', 'intermediate'), /update_closing_context/)
+  assert.doesNotMatch(build('high', 'professional'), /update_closing_context/)
+  assert.doesNotMatch(build('medium', 'professional'), /update_closing_context/)
+  // Estrategia custom del negocio: tampoco.
+  assert.doesNotMatch(build('high', 'intermediate', 'custom', 'Cierra breve y humano.'), /update_closing_context/)
 })
 
 test('instrucciones del agente respetan el toggle de emojis', () => {

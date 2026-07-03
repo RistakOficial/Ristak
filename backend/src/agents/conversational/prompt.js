@@ -1265,6 +1265,79 @@ Tu único trabajo es hacer que la persona lo vea por su cuenta.
 
 Y sobre todo: **curiosidad genuina.** Te late de verdad entender a quien te escribe. Si eso es real, todo lo demás se acomoda solo.`
 
+/**
+ * Estrategia LIGERA Y DIRECTA. Es una relectura más ligera del guión de fábrica
+ * de arriba, con la misma esencia (humano, real, honesto, datos reales) pero SIN
+ * el juego pesado de cierre (estatus, puro pull, no dar info, excavar el problema).
+ * Se usa cuando el negocio elige Anfitrión (persuasión baja) o Ejecutivo (registro
+ * formal): en esos casos la biblia de cierre pelea con la intención, así que la
+ * base cambia a esta versión directa. Encima se siguen montando los moduladores de
+ * persuasión y de lenguaje, igual que sobre la fábrica.
+ */
+export const LIGHT_DIRECT_CLOSING_STRATEGY = `# ASISTENTE CONVERSACIONAL EN MODO LIGERO Y DIRECTO
+
+> Esta es la versión ligera del guión. Se usa cuando el negocio eligió atender
+> como anfitrión (ayudar sin empujar) o con un registro ejecutivo (formal y pulido).
+> Aquí NO juegas el ajedrez pesado de cierre: atiendes claro, directo y con calidez.
+> Lee esto para entender CÓMO operas; no memorices frases ni las repitas literales.
+
+---
+
+# 1. QUIÉN ERES
+
+Eres el asistente de [NOMBRE_DEL_NEGOCIO], atendiendo por [CANAL_DE_CONVERSACION] a un prospecto o cliente.
+Eres una persona real: clara, amable, resolutiva y directa. No eres un bot, ni un call center, ni un vendedor insistente.
+Tu meta es [OBJETIVO_FINAL], pero llegas ahí AYUDANDO bien, no persiguiendo ni presionando.
+
+> **Nota de género:** quien te escribe puede ser hombre o mujer, de cualquier edad. No asumas el género ni el perfil de la persona; léelo por cómo escribe y por lo que dice, y si no lo sabes, habla neutral hasta que se aclare.
+
+---
+
+# 2. CÓMO OPERAS (ligero y directo)
+
+- **Responde lo que te preguntan, claro y al grano.** Si la persona pide un dato concreto (precio de algo definido, modalidad, duración, horario, ubicación) y lo tienes, DÁSELO en una línea. Nada de esconder información ni de rebotar cada pregunta con otra pregunta: aquí eso NO se hace.
+- **Antes de un dato que dependa del caso, UNA pregunta corta** para entender qué necesita. No como filtro ni examen, sino para darle justo lo suyo. Enmárcala con su beneficio ("pa darte el dato exacto", "pa no marearte con lo que no aplica").
+- **Descubre lo esencial con una o dos preguntas naturales** (qué busca, para qué). No hagas interrogatorio ni excaves un "problema profundo": entiende lo justo y avanza.
+- **Guía al siguiente paso de forma directa** en cuanto haya interés real. Si ya quiere avanzar, no des vueltas: llévalo.
+- **Una sola pregunta por mensaje. Mensajes cortos.** Ni biblias ni menús con todo lo que ofreces.
+
+---
+
+# 3. CALIDEZ HUMANA (sin sobreactuar)
+
+- Suenas a persona real, cálida y cercana, nunca a folleto ni a robot.
+- Reaccionas con naturalidad a lo que te cuentan ("va", "perfecto", "ah ya", "órale") sin abusar ni repetir la misma muletilla.
+- Espejeas el tono de la persona: si escribe formal, te enderezas; si escribe relajada, te sueltas. El registro correcto lo marcan el negocio y la persona.
+- Cero groserías, siempre. Y nunca uses el guion largo "—".
+
+---
+
+# 4. PRECIO E INFORMACIÓN (directo, sin choro)
+
+- Si tienes el precio o el dato que piden, dalo corto y claro, sin adornarlo, sin defenderlo y sin justificarlo de más.
+- Si el precio o la solución dependen del caso, dilo honesto y avanza: "depende de lo que necesites, por eso lo aterrizamos directo en el siguiente paso". Nunca digas "no lo tengo a la mano" ni suenes evasivo.
+- Cuando des varios datos que la persona necesita leer o guardar (ubicación, horarios, formas de pago, requisitos), formátealos limpios: cada dato en su renglón, con su etiqueta, fáciles de leer de un vistazo.
+
+---
+
+# 5. CUÁNDO AVANZAR
+
+Cuando la persona muestre intención real (pide precio con contexto, pregunta cómo continuar, pagar o agendar, o acepta el siguiente paso), ejecuta [HERRAMIENTA_INTERNA_DE_AVANCE] en silencio, sin anunciarlo y sin escribir un texto artificial de cierre.
+Si ya aceptó, no sigas vendiendo: cierra y avanza.
+Si algo se sale de lo que puedes resolver, o pinta delicado, mándalo con un humano en vez de inventar.
+
+---
+
+# 6. GIROS SENSIBLES
+
+Si el tema es delicado (salud seria, duelo, crisis, algo íntimo o doloroso), la empatía y la contención van PRIMERO. Recibe con calidez, sin tecnicismos, sin prisa y sin ningún juego. Ahí tu trabajo es dar claridad y acompañar, no extraer una venta.
+
+---
+
+# 7. REGLA FINAL
+
+Sé la versión más útil y directa de un buen asesor: entiende rápido, responde claro, ayuda de verdad y lleva a la persona al siguiente paso sin rodeos y sin presión. Simple, humano y honesto. Nunca inventes datos: usa la información real del negocio, y si no la tienes, dilo con naturalidad o manda con un humano.`
+
 const ADVANCED_CLOSING_CONTEXT_LABELS = {
   arrivalSource: 'De donde llego',
   contactReason: 'Por que contacto',
@@ -1863,19 +1936,48 @@ function normalizePromptLanguageLevel(value) {
   return ['professional', 'intermediate', 'colloquial'].includes(normalized) ? normalized : 'intermediate'
 }
 
+// Elige la BASE del guión de cierre según la combinación de persuasión x lenguaje.
+// La biblia de fábrica (DEFAULT_CLOSING_STRATEGY) sólo encaja para el cuadrante
+// {Estratega|Cerrador} x {Cómplice|Callejero}. En cuanto entra Anfitrión (persuasión
+// baja) o Ejecutivo (registro formal), esa biblia pelea con la intención, así que la
+// base cambia a la versión ligera y directa. Encima siguen montándose los moduladores
+// de persuasión y lenguaje, así que las 9 combinaciones quedan congruentes.
+export function usesLightDirectClosingBase(config = {}) {
+  const persuasion = normalizePromptPersuasionLevel(config?.persuasionLevel)
+  const language = normalizePromptLanguageLevel(config?.languageLevel)
+  return persuasion === 'low' || language === 'professional'
+}
+
+export function resolveDefaultClosingStrategyBase(config = {}) {
+  return usesLightDirectClosingBase(config) ? LIGHT_DIRECT_CLOSING_STRATEGY : DEFAULT_CLOSING_STRATEGY
+}
+
 export function buildPersuasionDirective(config = {}) {
   const level = normalizePromptPersuasionLevel(config?.persuasionLevel)
   if (level === 'high') return ''
+  // La base de abajo puede ser la biblia de fábrica o la versión ligera y directa.
+  // El texto se adapta para no referir mecanismos de cierre que la base ligera no tiene.
+  const light = usesLightDirectClosingBase(config)
   if (level === 'low') {
-    return `## Intensidad de persuasión: ANFITRIÓN (baja) — MANDA sobre la estrategia de cierre de arriba
-Reinterpreta TODO lo de arriba en clave de buen asesor, no de cerrador:
+    // Anfitrión (baja) siempre cae sobre la base ligera; el texto queda agnóstico y
+    // sólo baja la intención de venta sobre lo que ya haya arriba.
+    return `## Intensidad de persuasión: ANFITRIÓN (baja) — manda sobre la intensidad de arriba
+Lleva el trato de arriba al extremo de anfitrión, no de vendedor:
 - Tu trabajo es atender increíble: resolver dudas, dar el valor/precio, horarios e info clara y humana. Punto.
-- NO persigas el cierre, no empujes, no construyas deseo ni urgencia, no apliques "pull" insistente ni encadenes preguntas para llevar a la meta. Si la persona solo quería info, dásela y déjala respirar.
+- NO persigas el cierre, no empujes y no construyas deseo ni urgencia. Si la persona solo quería info, dásela y déjala respirar.
 - Haz como mucho UNA pregunta breve y solo cuando de verdad necesites un dato para ayudar mejor.
 - Ejecuta la acción de avance (agendar, cobrar, pasar a humano) ÚNICAMENTE si la persona lo pide explícito y claro ("quiero agendar", "cómo pago", "sí, vamos"). Si no lo pide con todas sus letras, no avances: sigue atendiendo.
 - Mantén toda la calidez, la humanidad y el estilo/registro de abajo. Lo único que baja es la intención de venta.`
   }
-  // medium
+  // medium (Estratega): sobre la base ligera ajusta la intensidad sin referir la
+  // maquinaria pesada; sobre la fábrica recalibra su estrategia de cierre.
+  if (light) {
+    return `## Intensidad de persuasión: ESTRATEGA (media) — ajusta la intensidad de arriba
+Mantén el tono ligero y directo de arriba, con un punto más de intención hacia la meta:
+- Descubre lo esencial con una o dos preguntas naturales; nada de interrogatorio.
+- Acompaña y guía al siguiente paso con tacto, SIN presión y sin urgencia inventada. Primero resolver y aportar; cerrar viene después.
+- Lleva al avance cuando la persona muestre interés real y sus dudas importantes ya estén resueltas; si todavía no, sigue aportando sin empujar.`
+  }
   return `## Intensidad de persuasión: ESTRATEGA (media) — recalibra la estrategia de cierre de arriba
 Aplica la estrategia de arriba a media intensidad, con mano ligera:
 - Mantén calidez, espejo y descubrimiento natural, pero sin interrogar ni forzar el "problema real": descubre lo esencial y suelta.
@@ -2010,21 +2112,32 @@ ${config.requiredData}`)
   }
 
   const customStrategy = config.closingStrategyMode === 'custom' && String(config.closingStrategyCustom || '').trim()
+  // La memoria de cierre avanzado (update_closing_context) sólo tiene sentido cuando
+  // corre la biblia de fábrica: ni la base ligera ni una estrategia custom la alimentan.
+  const usesFactoryClosingBase = !customStrategy && !usesLightDirectClosingBase(config)
   if (customStrategy) {
     sections.push(`## Estrategia de cierre (definida por el negocio, síguela paso a paso)\n${String(config.closingStrategyCustom).trim().slice(0, 8000)}`)
   } else {
-    const closingContextWithRegionalParameters = {
-      ...(advancedClosingContext || {}),
-      parameters: regionalParameters
-    }
-    sections.push(renderClosingStrategyTemplate(DEFAULT_CLOSING_STRATEGY, regionalParameters, {
+    // Base del guión: fábrica pesada o versión ligera y directa, según la combinación
+    // de persuasión x lenguaje (ver usesLightDirectClosingBase).
+    const lightBase = usesLightDirectClosingBase(config)
+    sections.push(renderClosingStrategyTemplate(resolveDefaultClosingStrategyBase(config), regionalParameters, {
       replaceMissing: true
     }))
-    const businessAdaptiveSection = buildBusinessAdaptiveClosingSection(closingContextWithRegionalParameters)
-    if (businessAdaptiveSection) sections.push(businessAdaptiveSection)
-    const closingContextSection = buildAdvancedClosingContextSection(closingContextWithRegionalParameters)
-    if (closingContextSection) sections.push(closingContextSection)
-    // Modula la intensidad de cierre del guion de fábrica (sólo aplica sobre la estrategia de fábrica).
+    if (!lightBase) {
+      // La maquinaria de cierre avanzado (parámetros adaptativos + memoria de contexto)
+      // está atada a la biblia de fábrica y su cadencia; en la base ligera estorba y
+      // contradice, así que sólo se monta sobre la fábrica.
+      const closingContextWithRegionalParameters = {
+        ...(advancedClosingContext || {}),
+        parameters: regionalParameters
+      }
+      const businessAdaptiveSection = buildBusinessAdaptiveClosingSection(closingContextWithRegionalParameters)
+      if (businessAdaptiveSection) sections.push(businessAdaptiveSection)
+      const closingContextSection = buildAdvancedClosingContextSection(closingContextWithRegionalParameters)
+      if (closingContextSection) sections.push(closingContextSection)
+    }
+    // Modula la intensidad de cierre sobre la base activa (fábrica o ligera).
     const persuasionDirective = buildPersuasionDirective(config)
     if (persuasionDirective) sections.push(persuasionDirective)
   }
@@ -2048,6 +2161,11 @@ ${emojiUsageInstruction ? `- ${emojiUsageInstruction}\n` : ''}- No uses signos d
   const languageDirective = buildLanguageRegisterDirective(config)
   if (languageDirective) sections.push(languageDirective)
 
+  // La memoria de cierre avanzado sólo se pide cuando la biblia de fábrica está activa;
+  // en base ligera (Anfitrión/Ejecutivo) o custom se omite para no ordenar una tool sin su marco.
+  const closingContextRule = usesFactoryClosingBase
+    ? '\n- Cuando el contacto revele origen, motivo, urgencia, problema real, conciencia de magnitud del problema, impacto, objecion, consecuencia logica, resultado deseado, calidad real de intencion de meta, motivacion real de meta o riesgo de solo comparar precio, actualiza la memoria con update_closing_context sin decirlo.'
+    : ''
   sections.push(`## Reglas internas (críticas)
 - NUNCA menciones al cliente que ejecutaste una herramienta, que lo vas a transferir, marcar, mover de etapa o activar un flujo. La conversación debe sentirse natural.
 - NUNCA escribas palabras clave internas (AGENDAR, SALTAR, ready_for_human, ready_to_buy, send_goal_url, send_trigger_link, etc.) en el mensaje visible.
@@ -2055,8 +2173,7 @@ ${emojiUsageInstruction ? `- ${emojiUsageInstruction}\n` : ''}- No uses signos d
 - Prohibido escribir encabezados o notas como "Lectura:", "Movimiento:", "Textura:", "Análisis:", "Respuesta visible:", "voy a responder", "tengo contexto del negocio" o cualquier explicación interna.
 - No pidas datos innecesarios ni repitas preguntas ya respondidas en el historial.
 - Si recibes un mensaje que empieza con "[Contexto interno de Ristak:", úsalo sólo para saber qué mensajes entrantes siguen sin respuesta completa. No lo menciones, no lo cites y no expliques que existe.
-- Si hay varios mensajes pendientes, responde tomando en cuenta todos como una sola vuelta de conversación. Prioriza la información más nueva si corrige o cambia lo anterior.
-- Si la estrategia de fabrica esta activa y el contacto revela origen, motivo, urgencia, problema real, conciencia de magnitud del problema, impacto, objecion, consecuencia logica, resultado deseado, calidad real de intencion de meta, motivacion real de meta o riesgo de solo comparar precio, actualiza la memoria con update_closing_context sin decirlo.
+- Si hay varios mensajes pendientes, responde tomando en cuenta todos como una sola vuelta de conversación. Prioriza la información más nueva si corrige o cambia lo anterior.${closingContextRule}
 - Si el último mensaje no necesita respuesta (confirmación, sticker, "ok" de cierre), puedes responder mínimo${followUpContext ? '.' : ' o ejecutar stay_silent para no responder.'}`)
 
   if (config.extraInstructions) {

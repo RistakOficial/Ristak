@@ -33,10 +33,11 @@ import {
 import { getAccountLocaleSettings } from '../utils/accountLocale.js'
 import { runConversationalAgentPreview } from '../agents/conversational/runner.js'
 import {
-  DEFAULT_CLOSING_STRATEGY,
   buildClosingStrategyTemplateParameters,
   buildBusinessAdaptiveClosingSection,
-  renderClosingStrategyTemplate
+  renderClosingStrategyTemplate,
+  resolveDefaultClosingStrategyBase,
+  usesLightDirectClosingBase
 } from '../agents/conversational/prompt.js'
 
 function buildBusinessPromptStateFromProfile(businessProfile, agentConfig = {}, accountLocale = {}) {
@@ -73,12 +74,15 @@ function buildBusinessPromptStateFromProfile(businessProfile, agentConfig = {}, 
     extractionStatus === 'ready' &&
     visibleParameters.ADAPTACION_CONVERSACIONAL_DEL_NEGOCIO
   )
-  const renderedStrategy = renderClosingStrategyTemplate(DEFAULT_CLOSING_STRATEGY, visibleParameters, {
+  // La estrategia visible refleja la MISMA base que usará el agente en runtime:
+  // fábrica pesada o versión ligera y directa, según persuasión x lenguaje.
+  const lightBase = usesLightDirectClosingBase(agentConfig)
+  const renderedStrategy = renderClosingStrategyTemplate(resolveDefaultClosingStrategyBase(agentConfig), visibleParameters, {
     replaceMissing: true
   })
   const adaptedStrategy = [
     renderedStrategy,
-    ready ? buildBusinessAdaptiveClosingSection({ enabled: true, parameters: visibleParameters }) : ''
+    ready && !lightBase ? buildBusinessAdaptiveClosingSection({ enabled: true, parameters: visibleParameters }) : ''
   ].filter(Boolean).join('\n\n')
 
   return {
