@@ -15731,6 +15731,48 @@ function buildPaymentCheckoutRuntimeScript() {
       });
     }
     function readToken(name) { try { return getComputedStyle(document.body).getPropertyValue(name).trim(); } catch (e) { return ''; } }
+    // Stripe Elements (CardElement / appearance) NO acepta color-mix(), var() ni otras
+    // funciones CSS en sus colores: si le pasas una, el elemento NO inicializa (no dispara
+    // 'ready' y queda muerto, imposible escribir). Los tokens del sitio (p.ej. --rstk-muted)
+    // suelen ser color-mix(...). Resolvemos cualquier color CSS a un rgb() concreto antes de
+    // dárselo a Stripe. Devuelve '' si el valor es inválido (Stripe usa su color por defecto).
+    function resolveColor(value) {
+      value = String(value || '').trim();
+      if (!value) return '';
+      var head = value.slice(0, 4).toLowerCase();
+      if (value.charAt(0) === '#' || head.indexOf('rgb') === 0) return value; // ya aceptado por Stripe
+      var c = '';
+      try {
+        var probe = document.createElement('span');
+        probe.style.color = '';
+        probe.style.color = value; // valor inválido => queda ''
+        if (!probe.style.color) return '';
+        probe.style.position = 'fixed'; probe.style.left = '-9999px'; probe.style.top = '0'; probe.style.pointerEvents = 'none';
+        document.body.appendChild(probe);
+        c = getComputedStyle(probe).color || '';
+        document.body.removeChild(probe);
+      } catch (e) { return ''; }
+      // getComputedStyle devuelve color(srgb r g b) cuando el origen fue color-mix in srgb;
+      // lo pasamos a rgb() (sin regex, por el escaping del template) para máxima compatibilidad.
+      if (c.indexOf('color(srgb') === 0) {
+        var inner = c.slice(c.indexOf('srgb') + 4, c.indexOf(')'));
+        var parts = inner.split(' ').filter(function (x) { return x !== ''; });
+        if (parts.length >= 3) {
+          return 'rgb(' + Math.round(parseFloat(parts[0]) * 255) + ', ' + Math.round(parseFloat(parts[1]) * 255) + ', ' + Math.round(parseFloat(parts[2]) * 255) + ')';
+        }
+      }
+      return c;
+    }
+    // Copia de una appearance de Stripe con TODAS sus variables de color resueltas a rgb.
+    function sanitizeAppearanceColors(ap) {
+      if (!ap || !ap.variables) return ap;
+      var out = { theme: ap.theme, variables: {} };
+      for (var k in ap.variables) {
+        var val = ap.variables[k];
+        out.variables[k] = (k.indexOf('color') === 0) ? (resolveColor(val) || undefined) : val;
+      }
+      return out;
+    }
     function isDark() { return !!(document.body && document.body.classList && document.body.classList.contains('rstk-dark')); }
     // Brillo de un color rgb/rgba (0=negro, 1=blanco). Transparente => se trata como claro.
     function luminanceOf(color) {
@@ -16034,12 +16076,15 @@ function buildPaymentCheckoutRuntimeScript() {
       function mountStripeMsi(d, stripe, appearance) {
         var maxInstallments = Math.trunc(Number(d.installments && d.installments.maxInstallments) || 0);
         var rootCs = getComputedStyle(root);
-        var fieldTextTok = rootCs.getPropertyValue('--rstk-checkout-field-text').trim() || rootCs.getPropertyValue('--rstk-block-text').trim() || readToken('--rstk-ink') || undefined;
-        var mutedTok = readToken('--rstk-muted') || undefined;
-        var elements = stripe.elements({ appearance: appearance, locale: 'es' });
+        // Colores RESUELTOS a rgb (los tokens del sitio son color-mix() y Stripe no los parsea:
+        // si le llega uno, el CardElement queda muerto y no deja escribir la tarjeta).
+        var fieldTextTok = resolveColor(rootCs.getPropertyValue('--rstk-checkout-field-text').trim() || rootCs.getPropertyValue('--rstk-block-text').trim() || readToken('--rstk-ink')) || undefined;
+        var mutedTok = resolveColor(readToken('--rstk-muted')) || undefined;
+        var negTok = resolveColor(readToken('--rstk-neg')) || undefined;
+        var elements = stripe.elements({ appearance: sanitizeAppearanceColors(appearance), locale: 'es' });
         var card = elements.create('card', {
           hidePostalCode: true,
-          style: { base: { color: fieldTextTok, fontSize: '15px', fontWeight: '500', '::placeholder': { color: mutedTok } }, invalid: { color: readToken('--rstk-neg') || undefined } }
+          style: { base: { color: fieldTextTok, fontSize: '15px', fontWeight: '500', '::placeholder': { color: mutedTok } }, invalid: { color: negTok } }
         });
         // El CardElement es un input "pelón": necesita su propia caja visible (borde +
         // padding + fondo), a diferencia del Payment Element que trae la suya. Le damos el
