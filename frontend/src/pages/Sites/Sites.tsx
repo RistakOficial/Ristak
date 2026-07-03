@@ -36928,6 +36928,12 @@ const FieldRulesControls: React.FC<{
   onSave: () => void
 }> = ({ block, onPatchSettings, onSave }) => {
   const settings = block.settings || {}
+  // Lee string|number: si una regla llegó como número (import/API), el input debe
+  // mostrarla igual (getSettingString solo devuelve strings).
+  const settingText = (key: string) => {
+    const value = (settings as Record<string, unknown>)[key]
+    return typeof value === 'number' ? String(value) : typeof value === 'string' ? value : ''
+  }
   const numberField = (key: string, label: string, extra?: { min?: string; step?: string }) => (
     <label className={styles.field}>
       <span>{label}</span>
@@ -36935,7 +36941,7 @@ const FieldRulesControls: React.FC<{
         type="number"
         min={extra?.min}
         step={extra?.step}
-        value={getSettingString(settings, key)}
+        value={settingText(key)}
         placeholder="—"
         onChange={(event) => onPatchSettings({ [key]: event.target.value })}
         onBlur={onSave}
@@ -36965,7 +36971,7 @@ const FieldRulesControls: React.FC<{
         <label className={styles.field}>
           <span>Decimales</span>
           <CustomSelect
-            value={getSettingString(settings, 'currencyDecimals') || '2'}
+            value={settingText('currencyDecimals') || '2'}
             onChange={(event) => onPatchSettings({ currencyDecimals: event.target.value })}
             onBlur={onSave}
           >
@@ -36984,11 +36990,11 @@ const FieldRulesControls: React.FC<{
       <div className={styles.twoColumn}>
         <label className={styles.field}>
           <span>Desde</span>
-          <input type="date" value={getSettingString(settings, 'dateMin')} onChange={(event) => onPatchSettings({ dateMin: event.target.value })} onBlur={onSave} />
+          <input type="date" value={settingText('dateMin')} onChange={(event) => onPatchSettings({ dateMin: event.target.value })} onBlur={onSave} />
         </label>
         <label className={styles.field}>
           <span>Hasta</span>
-          <input type="date" value={getSettingString(settings, 'dateMax')} onChange={(event) => onPatchSettings({ dateMax: event.target.value })} onBlur={onSave} />
+          <input type="date" value={settingText('dateMax')} onChange={(event) => onPatchSettings({ dateMax: event.target.value })} onBlur={onSave} />
         </label>
       </div>
     )
