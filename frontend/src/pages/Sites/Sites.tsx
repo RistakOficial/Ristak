@@ -4874,6 +4874,26 @@ const ensureWebsiteSlugs = (pages: SitePage[]): SitePage[] => {
   })
 }
 
+// Segmento de slug efectivo de una página para el preview de ruta: slug propio, o
+// derivado del título, o 'pagina'. Espeja pageSlugFor del backend.
+const getPageSlugSegment = (page: SitePage): string =>
+  normalizeRouteInput(page.slug || '') || normalizeRouteInput(page.title || '') || 'pagina'
+
+// Cadena de slugs desde la raíz hasta la página (incluida), siguiendo parentPageId.
+// Se usa para construir el preview de la URL (jerárquica) en modo "Sitio web".
+const getPageSlugChain = (pages: SitePage[], page: SitePage): string[] => {
+  const byId = new Map(pages.map(p => [p.id, p]))
+  const chain: string[] = []
+  const seen = new Set<string>()
+  let current: SitePage | undefined = page
+  while (current && !seen.has(current.id)) {
+    seen.add(current.id)
+    chain.unshift(getPageSlugSegment(current))
+    current = current.parentPageId ? byId.get(current.parentPageId) : undefined
+  }
+  return chain
+}
+
 const getBlockPageId = (block: SiteBlock, pages: SitePage[]) => {
   const pageId = getSettingString(block.settings || {}, 'pageId')
   return pages.some(page => page.id === pageId) ? pageId : pages[0]?.id || DEFAULT_FUNNEL_PAGE_ID
@@ -10595,8 +10615,25 @@ export const Sites: React.FC = () => {
     const cleanTitle = title.trim()
     if (!cleanTitle) return
     const websiteMode = getSitePageMode(selectedSite) === 'website'
-    const nextPages = pages.map((page, index) => page.id === pageId
-      ? { ...page, title: cleanTitle || `Página ${index + 1}`, ...(websiteMode ? { slug: undefined } : {}) }
+    const nextPages = pages.map((page, index) => {
+      if (page.id !== pageId) return page
+      const nextTitle = cleanTitle || `Página ${index + 1}`
+      if (!websiteMode) return { ...page, title: nextTitle }
+      // La ruta sigue al título MIENTRAS no se haya editado a mano; si el usuario
+      // ya personalizó el slug, se respeta (no se pisa al renombrar).
+      const slugWasAuto = !page.slug || page.slug === normalizeRouteInput(page.title || '')
+      const nextSlug = slugWasAuto ? (normalizeRouteInput(nextTitle) || undefined) : page.slug
+      return { ...page, title: nextTitle, slug: nextSlug }
+    })
+    void persistFunnelPages(nextPages, activePageId)
+  }
+
+  const handleRenamePageSlug = (pageId: string, slug: string) => {
+    if (!selectedSite || !canManagePages(selectedSite)) return
+    if (getSitePageMode(selectedSite) !== 'website') return
+    const cleanSlug = normalizeRouteInput(slug)
+    const nextPages = pages.map(page => page.id === pageId
+      ? { ...page, slug: cleanSlug || undefined }
       : page
     )
     void persistFunnelPages(nextPages, activePageId)
@@ -12632,6 +12669,8 @@ export const Sites: React.FC = () => {
       onDeletePage={handleDeletePage}
       onReorderPages={handleReorderPages}
       onRenamePage={handleRenamePage}
+      onRenamePageSlug={handleRenamePageSlug}
+      sitePathPrefix={`${getPublicDomainPreview(domainConfig)}/${normalizeRouteInput(editorSite.slug || '')}`}
       onPatchTheme={patchSiteTheme}
       onSaveSite={() => handleSaveSite(undefined, { silent: true })}
     />
@@ -27495,6 +27534,8 @@ interface FunnelPagesPanelProps {
   onDeletePage: (pageId: string) => void
   onReorderPages: (sourcePageId: string, targetPageId: string, orderedPageIds?: string[]) => void
   onRenamePage: (pageId: string, title: string) => void
+  onRenamePageSlug?: (pageId: string, slug: string) => void
+  sitePathPrefix?: string
   onPatchTheme?: (patch: Partial<SiteTheme>) => void
   onSaveSite?: () => void
 }
@@ -27520,6 +27561,8 @@ const FunnelPagesPanel: React.FC<FunnelPagesPanelProps> = ({
   onDeletePage,
   onReorderPages,
   onRenamePage,
+  onRenamePageSlug,
+  sitePathPrefix = '',
   onPatchTheme,
   onSaveSite
 }) => {
@@ -27532,6 +27575,11 @@ const FunnelPagesPanel: React.FC<FunnelPagesPanelProps> = ({
   const activePage = pages.find(page => page.id === activePageId) || pages[0] || null
   const hasFixedPageSection = colorFinalPages
   const websiteMode = pageMode === 'website' && !hasFixedPageSection
+  // Página principal = primera página de nivel superior (su slug NO va en la URL,
+  // mapea a la ruta base del sitio). Se usa para el editor de ruta por página.
+  const homePageId = websiteMode
+    ? (pages.filter(page => !page.parentPageId).sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0))[0]?.id || '')
+    : ''
   const movablePages = hasFixedPageSection ? pages.filter(page => !isFixedPage(page)) : pages
   const fixedPages = hasFixedPageSection ? pages.filter(isFixedPage) : []
   // In website mode render an indented tree (top page → subpages); otherwise a flat list.
@@ -27755,6 +27803,16 @@ const FunnelPagesPanel: React.FC<FunnelPagesPanelProps> = ({
                     : colorFinalPages && page.id === FORM_DISQUALIFIED_PAGE_ID
                       ? styles.pagesDropdownItemDisqualified
                       : ''
+                  // Preview + editor de ruta por página (solo modo "Sitio web").
+                  const isHomePage = websiteMode && page.id === homePageId
+                  const slugChain = websiteMode ? getPageSlugChain(pages, page) : []
+                  const routePreview = websiteMode
+                    ? (isHomePage ? sitePathPrefix : `${sitePathPrefix}/${slugChain.join('/')}`)
+                    : ''
+                  // Prefijo compacto para el input (relativo); la ruta absoluta va en el preview.
+                  const slugPrefix = websiteMode
+                    ? `/${slugChain.slice(0, -1).map(segment => `${segment}/`).join('')}`
+                    : ''
 
                   return (
                     <FunnelPageDropdownItem
@@ -27789,6 +27847,11 @@ const FunnelPagesPanel: React.FC<FunnelPagesPanelProps> = ({
                         onDeletePage(page.id)
                       }}
                       onRenamePage={onRenamePage}
+                      onRenamePageSlug={onRenamePageSlug}
+                      routePreview={routePreview}
+                      slugPrefix={slugPrefix}
+                      slugValue={page.slug || ''}
+                      isHomePage={isHomePage}
                       onDoneRename={() => setRenamingPageId(null)}
                     />
                   )
@@ -27868,6 +27931,11 @@ interface FunnelPageDropdownItemProps {
   onDuplicate: () => void
   onDelete: () => void
   onRenamePage: (pageId: string, title: string) => void
+  onRenamePageSlug?: (pageId: string, slug: string) => void
+  routePreview?: string
+  slugPrefix?: string
+  slugValue?: string
+  isHomePage?: boolean
   onDoneRename: () => void
 }
 
@@ -27895,10 +27963,19 @@ const FunnelPageDropdownItem: React.FC<FunnelPageDropdownItemProps> = ({
   onDuplicate,
   onDelete,
   onRenamePage,
+  onRenamePageSlug,
+  routePreview = '',
+  slugPrefix = '',
+  slugValue = '',
+  isHomePage = false,
   onDoneRename
 }) => {
   const [menuOpen, setMenuOpen] = useState(false)
+  const [slugDraft, setSlugDraft] = useState(slugValue)
+  useEffect(() => { setSlugDraft(slugValue) }, [slugValue, renaming])
   const title = page.title || `Página ${index + 1}`
+  const showRouteEditor = websiteMode && !fixedPage
+  const canEditSlug = showRouteEditor && !isHomePage && Boolean(onRenamePageSlug)
   const dragDisabled = locked || fixedPage
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
     id: page.id,
@@ -27941,6 +28018,17 @@ const FunnelPageDropdownItem: React.FC<FunnelPageDropdownItemProps> = ({
               onRename={onRenamePage}
               onDone={onDoneRename}
             />
+            {canEditSlug && (
+              <PathInput
+                prefix={slugPrefix}
+                prefixTitle={routePreview}
+                value={slugDraft}
+                aria-label={`Ruta de ${title}`}
+                placeholder={normalizeRouteInput(title) || 'pagina'}
+                onChange={(value) => setSlugDraft(value)}
+                onBlur={() => { onRenamePageSlug?.(page.id, slugDraft) }}
+              />
+            )}
           </div>
         ) : (
           <button type="button" className={styles.pagesDropdownSelectButton} onClick={onSelect}>
@@ -27989,7 +28077,7 @@ const FunnelPageDropdownItem: React.FC<FunnelPageDropdownItemProps> = ({
                     onStartRename()
                   }}
                 >
-                  Cambiar nombre
+                  {canEditSlug ? 'Nombre y ruta' : 'Cambiar nombre'}
                 </DropdownMenuItem>
                 <DropdownMenuItem
                   className={styles.pagesDropdownActionItem}
@@ -28056,6 +28144,16 @@ const FunnelPageDropdownItem: React.FC<FunnelPageDropdownItemProps> = ({
           </div>
         )}
       </div>
+      {showRouteEditor && !renaming && routePreview && (
+        <div
+          className={styles.editorSettingsRoutePreview}
+          style={depth ? { marginLeft: depth * 18 } : undefined}
+          title={isHomePage ? 'Página principal (ruta del sitio)' : undefined}
+        >
+          <ExternalLink size={12} />
+          <span>{routePreview}</span>
+        </div>
+      )}
     </div>
   )
 }
