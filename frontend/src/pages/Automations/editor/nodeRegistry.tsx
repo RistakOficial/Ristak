@@ -1127,13 +1127,11 @@ const TRIGGERS: NodeDefinition[] = [
     allowedChannels: ['messenger'],
     defaultConfig: () => ({
       post: '',
-      keywords: [],
       allowedComments: 'all',
       avoidDuplicates: true
     }),
     fields: [
       { key: 'post', label: 'Publicación', type: 'postSelect', platform: 'facebook', help: 'Elige una publicación o deja "Todas" para disparar con cualquier comentario.' },
-      { key: 'keywords', label: 'Palabras clave (opcional)', type: 'keywords', placeholder: 'Escribe y presiona Enter', help: 'Dispara solo si el comentario contiene alguna de estas palabras. Déjalo vacío para disparar con cualquier comentario.' },
       {
         key: 'allowedComments',
         label: 'Comentarios permitidos',
@@ -1171,12 +1169,10 @@ const TRIGGERS: NodeDefinition[] = [
     allowedChannels: ['instagram'],
     defaultConfig: () => ({
       post: '',
-      keywords: [],
       allowedComments: 'all'
     }),
     fields: [
       { key: 'post', label: 'Publicación o reel', type: 'postSelect', platform: 'instagram', help: 'Elige una publicación o reel, o deja "Todas" para disparar con cualquier comentario.' },
-      { key: 'keywords', label: 'Palabras clave (opcional)', type: 'keywords', placeholder: 'Escribe y presiona Enter', help: 'Dispara solo si el comentario contiene alguna de estas palabras. Déjalo vacío para disparar con cualquier comentario.' },
       {
         key: 'allowedComments',
         label: 'Comentarios permitidos',
