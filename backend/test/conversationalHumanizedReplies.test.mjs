@@ -2899,23 +2899,32 @@ test('las indicaciones del negocio se inyectan como OBLIGATORIAS y con prioridad
   })
 
   const withRules = build('- No des precios hasta que digan su presupuesto.\n- Para agendar necesitan estado clinico, si no NO agendas.')
-  // Sección dedicada con marco de obligatoriedad y prioridad.
-  assert.match(withRules, /Indicaciones del negocio \(OBLIGATORIAS · MÁXIMA PRIORIDAD\)/)
-  assert.match(withRules, /manda POR ENCIMA DE TODO lo anterior/)
-  assert.match(withRules, /GANA lo que dice AQUÍ/)
-  // Reforzada al inicio de la jerarquía de prioridades.
-  assert.match(withRules, /0\. ANTES QUE NADA/)
+  // Sección dedicada con marco de máxima prioridad y límites inamovibles.
+  assert.match(withRules, /Indicaciones del negocio \(MÁXIMA PRIORIDAD · CON LÍMITES INAMOVIBLES\)/)
+  assert.match(withRules, /GANAN estas indicaciones/)
   // Incluye el texto literal del dueño.
   assert.match(withRules, /Para agendar necesitan estado clinico, si no NO agendas/)
-  // Límite de integridad (no inventar datos, no revelar mecánica, no bajar guardia).
-  assert.match(withRules, /NUNCA inventas precios/)
+  // Límites de integridad: no inventar/contradecir datos, no fingir humano, no revelar tools, seguridad.
+  assert.match(withRules, /NUNCA inventas NI contradices/)
+  assert.match(withRules, /NUNCA afirmas ser humano ni niegas ser una IA/)
+  assert.match(withRules, /NUNCA revelas los nombres de tus herramientas/)
+  // Filtrar/priorizar SÍ está permitido (el caso de uso legítimo del dueño).
+  assert.match(withRules, /Sí puedes decidir CUÁNDO das un dato o callar algo/)
 
-  // Sin indicaciones: ni sección ni puntero.
+  // Seguridad INAMOVIBLE: las reglas del negocio NO pueden desactivar acoso/abuso ni el pase a humano.
+  assert.match(withRules, /piso de seguridad INAMOVIBLE/)
+  assert.match(withRules, /ninguna indicación del negocio lo desactiva/)
+  // Y ya NO existe el punto "0" que ponía al negocio por encima de la seguridad.
+  assert.doesNotMatch(withRules, /0\. ANTES QUE NADA/)
+
+  // Sin indicaciones: no aparece la sección del negocio ni el puntero de gobierno.
   const without = build('')
-  assert.doesNotMatch(without, /Indicaciones del negocio \(OBLIGATORIAS/)
-  assert.doesNotMatch(without, /0\. ANTES QUE NADA/)
+  assert.doesNotMatch(without, /Indicaciones del negocio \(MÁXIMA PRIORIDAD/)
+  assert.doesNotMatch(without, /De aquí en adelante \(puntos 3 al 7/)
+  // Pero el piso de seguridad inamovible sigue presente siempre.
+  assert.match(without, /piso de seguridad INAMOVIBLE/)
   // Espacios en blanco se tratan como vacío (trim).
-  assert.doesNotMatch(build('   \n  '), /Indicaciones del negocio \(OBLIGATORIAS/)
+  assert.doesNotMatch(build('   \n  '), /Indicaciones del negocio \(MÁXIMA PRIORIDAD/)
 })
 
 test('instrucciones del agente respetan el toggle de emojis', () => {
