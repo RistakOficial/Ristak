@@ -1127,21 +1127,20 @@ const TRIGGERS: NodeDefinition[] = [
     allowedChannels: ['messenger'],
     defaultConfig: () => ({
       post: '',
-      allowedComments: 'all',
-      avoidDuplicates: true
+      allowedComments: 'all'
     }),
     fields: [
       { key: 'post', label: 'Publicación', type: 'postSelect', platform: 'facebook', help: 'Elige una publicación o deja "Todas" para disparar con cualquier comentario.' },
       {
         key: 'allowedComments',
-        label: 'Comentarios permitidos',
+        label: '¿Con qué comentarios dispara?',
         type: 'select',
+        help: 'Si una misma persona deja varios comentarios en tu publicación: "Con todos" arranca la automatización cada vez que comenta; "Solo el primero" arranca una sola vez con esa persona e ignora sus comentarios siguientes en ese post.',
         options: [
-          { value: 'all', label: 'Todos los comentarios' },
-          { value: 'first_only', label: 'Solo el primer comentario de cada persona' }
+          { value: 'all', label: 'Con todos los comentarios' },
+          { value: 'first_only', label: 'Solo con el primer comentario de cada persona' }
         ]
-      },
-      { key: 'avoidDuplicates', label: 'Evitar disparos duplicados', type: 'toggle', help: 'Si esta persona ya está corriendo en esta automatización, no la vuelvas a inscribir aunque comente otra vez.' }
+      }
     ],
     outputs: () => SINGLE_OUTPUT,
     variableOutput: () => ({
@@ -1175,11 +1174,12 @@ const TRIGGERS: NodeDefinition[] = [
       { key: 'post', label: 'Publicación o reel', type: 'postSelect', platform: 'instagram', help: 'Elige una publicación o reel, o deja "Todas" para disparar con cualquier comentario.' },
       {
         key: 'allowedComments',
-        label: 'Comentarios permitidos',
+        label: '¿Con qué comentarios dispara?',
         type: 'select',
+        help: 'Si una misma persona deja varios comentarios en tu publicación: "Con todos" arranca la automatización cada vez que comenta; "Solo el primero" arranca una sola vez con esa persona e ignora sus comentarios siguientes en ese post.',
         options: [
-          { value: 'all', label: 'Todos los comentarios' },
-          { value: 'first_only', label: 'Solo el primer comentario de cada persona' }
+          { value: 'all', label: 'Con todos los comentarios' },
+          { value: 'first_only', label: 'Solo con el primer comentario de cada persona' }
         ]
       }
     ],
