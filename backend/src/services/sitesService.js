@@ -15874,7 +15874,14 @@ function buildPaymentCheckoutRuntimeScript() {
               } };
           // Modo DIFERIDO: monta el formulario SIN crear un PaymentIntent (sin fila). El
           // intent y la fila se crean solo al cobrar (payCharge), tras validar la tarjeta.
-          var elements = stripe.elements({ mode: 'payment', amount: Math.max(1, Math.round((Number(d.amount) || 1) * 100)), currency: (d.currency || 'mxn').toLowerCase(), appearance: appearance, locale: 'es' });
+          // Si el checkout captura identidad (correo/telefono => se creara un Stripe
+          // Customer server-side), la tarjeta se guarda: hay que declarar
+          // setupFutureUsage AQUI para que coincida con el setup_future_usage del
+          // PaymentIntent (flujo diferido); si no, Stripe rechaza al confirmar.
+          var willSaveCard = root.getAttribute('data-collect-email') === 'true' || root.getAttribute('data-collect-phone') === 'true';
+          var elementsOpts = { mode: 'payment', amount: Math.max(1, Math.round((Number(d.amount) || 1) * 100)), currency: (d.currency || 'mxn').toLowerCase(), appearance: appearance, locale: 'es' };
+          if (willSaveCard) elementsOpts.setupFutureUsage = 'off_session';
+          var elements = stripe.elements(elementsOpts);
           var paymentElement = elements.create('payment', { layout: 'tabs', fields: { billingDetails: { address: { country: showCountry ? 'auto' : 'never' } } } });
           paymentElement.mount(els.fields);
           els.fields.hidden = false; els.pay.hidden = false; showLoading(false);
