@@ -21,6 +21,13 @@ export interface CrmField {
   options?: Array<{ value: string; label: string }>
   /** Pide subcampo extra (p. ej. cuál campo personalizado) */
   needsCustomKey?: boolean
+  /**
+   * Contextos de evento donde el campo tiene datos que revisar. Sin lista =
+   * dato del contacto (siempre disponible). Con lista = solo se ofrece cuando
+   * el disparador del flujo produce ese contexto (mensaje, pago, cita…). Espeja
+   * `TriggerFilterField.appliesTo`.
+   */
+  appliesTo?: string[]
 }
 
 export interface CrmFieldCategory {
@@ -36,9 +43,7 @@ export const CRM_FIELD_CATEGORIES: CrmFieldCategory[] = [
   { id: 'appointments', label: 'Citas' },
   { id: 'payments', label: 'Pagos' },
   { id: 'forms', label: 'Formularios' },
-  { id: 'links', label: 'Clics de disparo' },
-  { id: 'ads', label: 'Ads / campañas' },
-  { id: 'automations', label: 'Automatizaciones' }
+  { id: 'links', label: 'Clics de disparo' }
 ]
 
 const CHANNEL_FIELD_OPTIONS = [
@@ -93,7 +98,8 @@ const triggerFilterDisplayValue = (field: TriggerFilterField | undefined, filter
   field?.catalog === 'tags' ? tagValueLabel(filter.value, filter.valueLabel) : filter.valueLabel || filter.value || ''
 
 export const CRM_FIELDS: CrmField[] = [
-  // Contacto (el email es dato del CRM, nunca canal de envío)
+  // Contacto — estado del contacto: siempre disponible (sin appliesTo).
+  // El email es dato del CRM, nunca canal de envío.
   { id: 'contact-first-name', label: 'Nombre', category: 'contact', type: 'text' },
   { id: 'contact-last-name', label: 'Apellido', category: 'contact', type: 'text' },
   { id: 'contact-phone', label: 'Teléfono', category: 'contact', type: 'text' },
@@ -104,68 +110,50 @@ export const CRM_FIELDS: CrmField[] = [
   { id: 'contact-assigned-user', label: 'Usuario asignado', category: 'contact', type: 'select', valueCatalog: 'users' },
   { id: 'contact-stage', label: 'Etapa / pipeline', category: 'contact', type: 'text' },
   { id: 'contact-custom-field', label: 'Campo personalizado…', category: 'contact', type: 'text', needsCustomKey: true },
-  { id: 'contact-last-activity', label: 'Última actividad', category: 'contact', type: 'date' },
-  { id: 'contact-last-channel', label: 'Último canal de contacto', category: 'contact', type: 'select', options: CHANNEL_FIELD_OPTIONS },
 
-  // Etiquetas
+  // Etiquetas — estado del contacto: siempre disponible.
   { id: 'tag-has', label: 'Tiene etiqueta', category: 'tags', type: 'tags', valueCatalog: 'tags' },
   { id: 'tag-not-has', label: 'No tiene etiqueta', category: 'tags', type: 'tags', valueCatalog: 'tags' },
-  { id: 'tag-received', label: 'Recibió etiqueta', category: 'tags', type: 'tags', valueCatalog: 'tags' },
-  { id: 'tag-lost', label: 'Perdió etiqueta', category: 'tags', type: 'tags', valueCatalog: 'tags' },
   { id: 'tag-any-of', label: 'Contiene cualquiera de estas etiquetas', category: 'tags', type: 'tags', valueCatalog: 'tags' },
   { id: 'tag-all-of', label: 'Contiene todas estas etiquetas', category: 'tags', type: 'tags', valueCatalog: 'tags' },
 
-  // Conversación (WhatsApp, Messenger, Instagram Direct y disparos de correo)
-  { id: 'conv-last-received', label: 'Último mensaje recibido', category: 'conversation', type: 'text' },
-  { id: 'conv-last-sent', label: 'Último mensaje enviado', category: 'conversation', type: 'text' },
-  { id: 'conv-replied', label: 'Respondió', category: 'conversation', type: 'boolean' },
-  { id: 'conv-channel', label: 'Canal de conversación', category: 'conversation', type: 'select', options: CHANNEL_FIELD_OPTIONS },
-  { id: 'conv-keyword', label: 'Contiene palabra clave', category: 'conversation', type: 'text' },
-  { id: 'conv-last-reply-age', label: 'Tiempo desde la última respuesta', category: 'conversation', type: 'duration' },
+  // Conversación — solo con disparadores de mensaje (WhatsApp, Messenger,
+  // Instagram Direct, correo y "el cliente respondió").
+  { id: 'conv-last-received', label: 'Último mensaje recibido', category: 'conversation', type: 'text', appliesTo: ['message'] },
+  { id: 'conv-replied', label: 'Respondió', category: 'conversation', type: 'boolean', appliesTo: ['message'] },
+  { id: 'conv-channel', label: 'Canal de conversación', category: 'conversation', type: 'select', options: CHANNEL_FIELD_OPTIONS, appliesTo: ['message'] },
+  { id: 'conv-keyword', label: 'Contiene palabra clave', category: 'conversation', type: 'text', appliesTo: ['message'] },
 
-  // Comentarios FB/IG (disponibles cuando el flujo lo disparó un comentario)
-  { id: 'comment-text', label: 'Texto del comentario', category: 'comment', type: 'text' },
-  { id: 'comment-platform', label: 'Red social del comentario', category: 'comment', type: 'select', options: [{ value: 'facebook', label: 'Facebook' }, { value: 'instagram', label: 'Instagram' }] },
-  { id: 'comment-post-fb', label: 'Publicación de Facebook', category: 'comment', type: 'text' },
-  { id: 'comment-post-ig', label: 'Publicación de Instagram', category: 'comment', type: 'text' },
+  // Comentarios FB/IG — solo cuando el flujo lo disparó un comentario.
+  { id: 'comment-text', label: 'Texto del comentario', category: 'comment', type: 'text', appliesTo: ['comment'] },
+  { id: 'comment-platform', label: 'Red social del comentario', category: 'comment', type: 'select', options: [{ value: 'facebook', label: 'Facebook' }, { value: 'instagram', label: 'Instagram' }], appliesTo: ['comment'] },
+  { id: 'comment-post-fb', label: 'Publicación de Facebook', category: 'comment', type: 'text', appliesTo: ['comment'] },
+  { id: 'comment-post-ig', label: 'Publicación de Instagram', category: 'comment', type: 'text', appliesTo: ['comment'] },
 
-  // Citas
-  { id: 'appt-has', label: 'Tiene cita', category: 'appointments', type: 'boolean' },
-  { id: 'appt-status', label: 'Estado de la cita', category: 'appointments', type: 'select', options: APPOINTMENT_STATUS_OPTIONS },
-  { id: 'appt-calendar', label: 'Calendario', category: 'appointments', type: 'select', valueCatalog: 'calendars' },
-  { id: 'appt-date', label: 'Fecha de la cita', category: 'appointments', type: 'date' },
-  { id: 'appt-created', label: 'Fecha de creación de la cita', category: 'appointments', type: 'date' },
+  // Citas — solo con disparadores de cita (agendada / cambio de estado).
+  { id: 'appt-has', label: 'Tiene cita activa', category: 'appointments', type: 'boolean', appliesTo: ['appointment'] },
+  { id: 'appt-status', label: 'Estado de la cita', category: 'appointments', type: 'select', options: APPOINTMENT_STATUS_OPTIONS, appliesTo: ['appointment'] },
+  { id: 'appt-calendar', label: 'Calendario', category: 'appointments', type: 'select', valueCatalog: 'calendars', appliesTo: ['appointment'] },
+  { id: 'appt-date', label: 'Fecha de la cita', category: 'appointments', type: 'date', appliesTo: ['appointment'] },
 
-  // Pagos
-  { id: 'pay-has', label: 'Tiene pago', category: 'payments', type: 'boolean' },
-  { id: 'pay-status', label: 'Estado de pago', category: 'payments', type: 'select', options: PAYMENT_STATUS_OPTIONS },
-  { id: 'pay-amount', label: 'Monto pagado', category: 'payments', type: 'number' },
-  { id: 'pay-product', label: 'Producto comprado', category: 'payments', type: 'select', valueCatalog: 'products' },
-  { id: 'pay-currency', label: 'Moneda', category: 'payments', type: 'text' },
-  { id: 'pay-date', label: 'Fecha de pago', category: 'payments', type: 'date' },
+  // Pagos — solo con disparadores de pago (pago recibido / reembolso).
+  { id: 'pay-has', label: 'Tiene pago', category: 'payments', type: 'boolean', appliesTo: ['payment'] },
+  { id: 'pay-status', label: 'Estado de pago', category: 'payments', type: 'select', options: PAYMENT_STATUS_OPTIONS, appliesTo: ['payment'] },
+  { id: 'pay-amount', label: 'Monto pagado', category: 'payments', type: 'number', appliesTo: ['payment'] },
+  { id: 'pay-product', label: 'Producto comprado', category: 'payments', type: 'select', valueCatalog: 'products', appliesTo: ['payment'] },
+  { id: 'pay-currency', label: 'Moneda', category: 'payments', type: 'text', appliesTo: ['payment'] },
+  { id: 'pay-date', label: 'Fecha de pago', category: 'payments', type: 'date', appliesTo: ['payment'] },
 
-  // Formularios
-  { id: 'form-submitted', label: 'Formulario enviado', category: 'forms', type: 'boolean' },
-  { id: 'form-specific', label: 'Formulario específico', category: 'forms', type: 'select', valueCatalog: 'forms' },
-  { id: 'form-field-value', label: 'Campo del formulario contiene', category: 'forms', type: 'text', needsCustomKey: true },
-  { id: 'form-date', label: 'Fecha de envío', category: 'forms', type: 'date' },
+  // Formularios — solo cuando el flujo lo disparó un envío de formulario.
+  { id: 'form-submitted', label: 'Formulario enviado', category: 'forms', type: 'boolean', appliesTo: ['form'] },
+  { id: 'form-specific', label: 'Formulario específico', category: 'forms', type: 'select', valueCatalog: 'forms', appliesTo: ['form'] },
+  { id: 'form-field-value', label: 'Campo del formulario contiene', category: 'forms', type: 'text', needsCustomKey: true, appliesTo: ['form'] },
+  { id: 'form-date', label: 'Fecha de envío', category: 'forms', type: 'date', appliesTo: ['form'] },
 
-  // Clics de disparo
-  { id: 'link-clicked', label: 'Recibió clic de disparo', category: 'links', type: 'boolean' },
-  { id: 'link-specific', label: 'Clic de disparo específico', category: 'links', type: 'select', valueCatalog: 'links' },
-  { id: 'link-date', label: 'Fecha del clic de disparo', category: 'links', type: 'date' },
-
-  // Ads
-  { id: 'ads-fb-click', label: 'Clic en anuncio de Facebook', category: 'ads', type: 'boolean' },
-  { id: 'ads-ctwa', label: 'Mensaje desde anuncio de WhatsApp', category: 'ads', type: 'boolean' },
-  { id: 'ads-campaign', label: 'Campaña', category: 'ads', type: 'select', valueCatalog: 'campaigns' },
-  { id: 'ads-source', label: 'Fuente de campaña', category: 'ads', type: 'text' },
-
-  // Automatizaciones
-  { id: 'auto-in', label: 'Está en automatización', category: 'automations', type: 'boolean' },
-  { id: 'auto-entered', label: 'Entró a automatización', category: 'automations', type: 'boolean' },
-  { id: 'auto-exited', label: 'Salió de automatización', category: 'automations', type: 'boolean' },
-  { id: 'auto-goal-met', label: 'Objetivo cumplido', category: 'automations', type: 'boolean' }
+  // Clics de disparo — solo con el disparador de enlace de activación.
+  { id: 'link-clicked', label: 'Recibió clic de disparo', category: 'links', type: 'boolean', appliesTo: ['link'] },
+  { id: 'link-specific', label: 'Clic de disparo específico', category: 'links', type: 'select', valueCatalog: 'links', appliesTo: ['link'] },
+  { id: 'link-date', label: 'Fecha del clic de disparo', category: 'links', type: 'date', appliesTo: ['link'] }
 ]
 
 const fieldsById = new Map(CRM_FIELDS.map((field) => [field.id, field]))
@@ -797,6 +785,49 @@ export function filterFieldsFor(contextKey?: string, excludedFieldIds: string[] 
     (field) =>
       !excluded.has(field.id) &&
       (!field.appliesTo || field.appliesTo.some((context) => contexts.includes(context)))
+  )
+}
+
+// ---------------------------------------------------------------------------
+// Congruencia del nodo Condición
+// ---------------------------------------------------------------------------
+
+/**
+ * Contextos de evento que cada disparador hace disponibles al nodo Condición.
+ * Espeja `TRIGGER_FILTER_CONTEXTS` y añade el contexto de clic de disparo, que
+ * los filtros del disparador no necesitaban pero las condiciones sí (campos
+ * `link-*`). Los objetivos (`goal-*`) no aplican: un objetivo nunca es el
+ * disparador de arranque de un flujo.
+ */
+export const CONDITION_TRIGGER_CONTEXTS: Record<string, string[]> = {
+  ...TRIGGER_FILTER_CONTEXTS,
+  'trigger-activation-link': ['link'],
+  'trigger-link-clicked': ['link']
+}
+
+/**
+ * Unión de contextos de evento que un conjunto de disparadores hace
+ * disponibles a las condiciones del flujo (un flujo puede tener varios
+ * disparadores conectados al mismo nodo Condición).
+ */
+export function eventContextsForTriggerTypes(types: string[]): string[] {
+  const contexts = new Set<string>()
+  types.forEach((type) => {
+    (CONDITION_TRIGGER_CONTEXTS[type] || []).forEach((context) => contexts.add(context))
+  })
+  return [...contexts]
+}
+
+/**
+ * Campos CRM congruentes para el nodo Condición: los universales (estado del
+ * contacto, sin `appliesTo`) más los de evento cuyo contexto produce alguno de
+ * los disparadores del flujo. Evita ofrecer condiciones que el backend no puede
+ * resolver (quedarían en "No" en silencio).
+ */
+export function conditionFieldsFor(eventContexts: string[]): CrmField[] {
+  const available = new Set(eventContexts)
+  return CRM_FIELDS.filter(
+    (field) => !field.appliesTo || field.appliesTo.some((context) => available.has(context))
   )
 }
 

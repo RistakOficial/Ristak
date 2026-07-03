@@ -4,12 +4,13 @@ import { cn } from '@/utils/cn'
 import { MetaPostSelector } from '@/components/MetaPostSelector/MetaPostSelector'
 import { CustomSelect } from './configPrimitives'
 import {
-  CRM_FIELDS,
   CRM_FIELD_CATEGORIES,
+  conditionFieldsFor,
   conditionVariableFieldId,
   emptyConditionBranch,
   emptyConditionGroup,
   getConditionField,
+  getCrmField,
   getOperatorsForConditionRule,
   operatorNeedsValueForRule,
   type AdvancedConditionConfig,
@@ -110,20 +111,42 @@ export const AdvancedConditionBuilder: React.FC<AdvancedConditionBuilderProps> =
     return map
   }, [flowVariables])
 
-  const fieldGroups = React.useMemo(
-    () => [
-      ...CRM_FIELD_CATEGORIES.map((category) => ({
+  // Campos ya referenciados por reglas guardadas: se conservan visibles aunque
+  // hoy no sean congruentes, para no dejar una regla existente en blanco.
+  const usedFieldIds = React.useMemo(() => {
+    const ids = new Set<string>()
+    config.branches.forEach((branch) =>
+      branch.groups.forEach((group) =>
+        group.rules.forEach((rule) => {
+          if (rule.field) ids.add(rule.field)
+        })
+      )
+    )
+    return ids
+  }, [config])
+
+  const fieldGroups = React.useMemo(() => {
+    // Solo campos congruentes con lo que el disparador del flujo puede detectar:
+    // universales (estado del contacto) + los de evento del contexto disponible.
+    const shownFields = conditionFieldsFor(flowVariables.eventContexts)
+    usedFieldIds.forEach((id) => {
+      if (!shownFields.some((field) => field.id === id)) {
+        const field = getCrmField(id)
+        if (field) shownFields.push(field)
+      }
+    })
+    const usableCategories = new Set(shownFields.map((field) => field.category))
+    return [
+      ...CRM_FIELD_CATEGORIES.filter((category) => usableCategories.has(category.id)).map((category) => ({
         id: category.id,
         label: category.label,
-        items: CRM_FIELDS.filter((candidate) => candidate.category === category.id).map((candidate) => ({
-          value: candidate.id,
-          label: candidate.label
-        }))
+        items: shownFields
+          .filter((candidate) => candidate.category === category.id)
+          .map((candidate) => ({ value: candidate.id, label: candidate.label }))
       })),
       ...previousVariableGroups
-    ],
-    [previousVariableGroups]
-  )
+    ]
+  }, [previousVariableGroups, flowVariables.eventContexts, usedFieldIds])
 
   const updateBranch = (branchIndex: number, patch: Partial<ConditionBranch>) => {
     onChange({

@@ -14,6 +14,7 @@ import {
   type VariableValueType
 } from './nodeRegistry'
 import { getStartTriggers, hasPath, isStartNode } from './flowUtils'
+import { eventContextsForTriggerTypes } from './crmFields'
 
 /**
  * Catálogo de variables insertables en mensajes, prompts, webhooks y campos
@@ -48,11 +49,18 @@ export interface FlowVariableCategory {
 export interface FlowVariableCatalog {
   categories: FlowVariableCategory[]
   variables: FlowVariable[]
+  /**
+   * Contextos de evento disponibles en este punto del flujo (unión de los
+   * disparadores que alcanzan el nodo). Alimenta la congruencia del nodo
+   * Condición. Ver `conditionFieldsFor` en crmFields.
+   */
+  eventContexts: string[]
 }
 
 export const FlowVariablesContext = React.createContext<FlowVariableCatalog>({
   categories: [],
-  variables: []
+  variables: [],
+  eventContexts: []
 })
 
 export const VARIABLE_CATEGORIES: FlowVariableCategory[] = [
@@ -326,7 +334,7 @@ function outputToVariables(
   config: Record<string, unknown>,
   sourceId: string,
   occurrence: number
-): FlowVariableCatalog {
+): { categories: FlowVariableCategory[]; variables: FlowVariable[] } {
   const root = outputRoot(output, occurrence)
 
   const category: FlowVariableCategory = {
@@ -397,7 +405,8 @@ export function buildFlowVariableCatalog(
     variables.push(...catalog.variables)
   }
 
-  startTriggersForTarget(nodes, edges, targetNodeId).forEach((trigger) => {
+  const reachingTriggers = startTriggersForTarget(nodes, edges, targetNodeId)
+  reachingTriggers.forEach((trigger) => {
     const definition = getNodeDefinition(trigger.type)
     appendOutput(definition?.variableOutput?.(trigger.config || {}), trigger.config || {}, trigger.id)
   })
@@ -407,7 +416,11 @@ export function buildFlowVariableCatalog(
     appendOutput(definition?.variableOutput?.(node.config || {}), node.config || {}, node.id)
   })
 
-  return { categories, variables }
+  return {
+    categories,
+    variables,
+    eventContexts: eventContextsForTriggerTypes(reachingTriggers.map((trigger) => trigger.type))
+  }
 }
 
 // ---------------------------------------------------------------------------

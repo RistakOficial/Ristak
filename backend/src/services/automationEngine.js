@@ -1858,34 +1858,56 @@ function ruleFieldValue(rule, ctx) {
   }
   const contact = ctx.contact || {}
   switch (rule.field) {
+    // Contacto — estado del contacto (siempre disponible)
     case 'contact-first-name': return contact.firstName || ''
     case 'contact-last-name': return contact.lastName || ''
     case 'contact-phone': return contact.phone || ''
     case 'contact-email': return contact.email || ''
     case 'contact-source': return contact.source || ''
+    case 'contact-stage': return contact.stage || ''
+    case 'contact-assigned-user': return contact.assignedUser || ''
+    case 'contact-created': return contact.createdAt || ''
+    case 'contact-updated': return contact.updatedAt || ''
     case 'contact-custom-field': return String((contact.customFields || {})[rule.customKey] ?? '')
+    // Etiquetas — la lógica (cualquiera/todas/ninguna) la aplica el operador
+    case 'tag-has':
+    case 'tag-any-of':
+    case 'tag-not-has':
+    case 'tag-all-of':
+      return (contact.tagKeys || contact.tags || []).join(' , ')
+    // Conversación — del evento de mensaje
     case 'conv-last-received': return ctx.messageText || ''
     case 'conv-keyword': return ctx.messageText || ''
     case 'conv-replied': return ctx.messageText ? 'true' : 'false'
+    case 'conv-channel': return ctx.channel || ''
+    // Comentario — del evento de comentario
     case 'comment-text': return ctx.messageText || ''
     case 'comment-platform': return ctx.platform || ''
     case 'comment-post-fb': return ctx.postId || ''
     case 'comment-post-ig': return ctx.mediaId || ''
+    // Citas — agregados de la cita activa del contacto
+    case 'appt-has': return contact.hasActiveAppointment ? 'true' : 'false'
+    case 'appt-status': return contact.activeAppointmentStatus || ''
+    case 'appt-calendar': return contact.activeAppointmentCalendarId || ''
+    case 'appt-date': return contact.activeAppointmentDate || ''
+    // Pagos — del evento de pago
     case 'pay-has': return (ctx.paymentId || ctx.payment_id || ctx.amount || ctx.status || ctx.paymentStatus) ? 'true' : 'false'
     case 'pay-status': return ctx.paymentStatus || ctx.payment_status || ctx.status || ''
     case 'pay-amount': return ctx.amount ?? ''
     case 'pay-product': return paymentProductCandidatesFromContext(ctx)[0] || ctx.product || ctx.title || ctx.description || ''
     case 'pay-currency': return ctx.currency || ''
     case 'pay-date': return ctx.paymentDate || ctx.date || ctx.createdAt || ''
+    // Formularios — del evento de envío
     case 'form-submitted': return (ctx.submissionId || ctx.submission_id || primaryFormIdFromContext(ctx)) ? 'true' : 'false'
     case 'form-specific': return primaryFormIdFromContext(ctx)
     case 'form-date': return ctx.submittedAt || ctx.submitted_at || ctx.createdAt || ctx.created_at || ''
     case 'form_disqualified': return boolText(formDisqualifiedFromContext(ctx))
     case 'form-field-value':
     case 'form_field': return formResponseValue(ctx, rule.customKey || rule.custom_key || rule.fieldKey || rule.field_key)
-    case 'tag-has':
-    case 'tag-any-of':
-      return (contact.tagKeys || contact.tags || []).join(' , ')
+    // Clics de disparo — del evento del enlace de activación
+    case 'link-clicked': return (ctx.triggerLinkId || ctx.triggerLinkPublicId) ? 'true' : 'false'
+    case 'link-specific': return ctx.triggerLinkId || ''
+    case 'link-date': return ctx.clickedAt || ''
     default: return null
   }
 }
