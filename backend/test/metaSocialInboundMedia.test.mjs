@@ -4,6 +4,7 @@ import {
   rehostMetaSocialMedia,
   isMetaHostedMediaUrl,
   normalizeSocialMediaType,
+  extractCommentMedia,
   setMetaSocialMediaTransportForTest
 } from '../src/services/metaSocialMessagingService.js'
 
@@ -116,6 +117,57 @@ test('rehostMetaSocialMedia rechaza adjuntos que exceden el límite de tamaño',
       }),
       /excede el tamaño máximo/
     )
+  } finally {
+    setMetaSocialMediaTransportForTest({})
+  }
+})
+
+test('extractCommentMedia extrae foto/video/attachment de comentarios de Facebook', () => {
+  assert.deepEqual(
+    extractCommentMedia({ photo: 'https://scontent.xx.fbcdn.net/comment-foto.jpg' }),
+    { mediaUrl: 'https://scontent.xx.fbcdn.net/comment-foto.jpg', mediaType: 'image' }
+  )
+  assert.deepEqual(
+    extractCommentMedia({ video: 'https://video.xx.fbcdn.net/comment-video.mp4' }),
+    { mediaUrl: 'https://video.xx.fbcdn.net/comment-video.mp4', mediaType: 'video' }
+  )
+  assert.deepEqual(
+    extractCommentMedia({ attachment: { type: 'photo', media: { image: { src: 'https://scontent.xx.fbcdn.net/att.jpg' } } } }),
+    { mediaUrl: 'https://scontent.xx.fbcdn.net/att.jpg', mediaType: 'image' }
+  )
+  assert.deepEqual(
+    extractCommentMedia({ attachment: { type: 'video_inline', url: 'https://video.xx.fbcdn.net/att.mp4' } }),
+    { mediaUrl: 'https://video.xx.fbcdn.net/att.mp4', mediaType: 'video' }
+  )
+  // Comentario de solo texto → sin media
+  assert.deepEqual(extractCommentMedia({ message: 'hola' }), { mediaUrl: '', mediaType: '' })
+  assert.deepEqual(extractCommentMedia({}), { mediaUrl: '', mediaType: '' })
+})
+
+test('rehostMetaSocialMedia usa mediaType para rehospedar la foto de un comentario', async () => {
+  const uploads = []
+  setMetaSocialMediaTransportForTest({
+    downloader: async () => ({ buffer: Buffer.from('foto-comentario'), mimeType: 'image/jpeg' }),
+    uploader: async (input) => { uploads.push(input); return { id: 'a1', publicUrl: BUNNY_URL, mimeType: 'image/jpeg' } }
+  })
+
+  try {
+    // messageType='comment' pero el adjunto es imagen: debe rehospedarse como imagen (.jpg),
+    // no como documento (.bin), gracias al mediaType explícito.
+    const result = await rehostMetaSocialMedia({
+      socialMessage: {
+        platform: 'messenger',
+        messageType: 'comment',
+        mediaType: 'image',
+        mediaUrl: 'https://scontent.xx.fbcdn.net/comment-foto.jpg',
+        metaMessageId: 'comment_123'
+      },
+      config: {}
+    })
+
+    assert.equal(result.mediaUrl, BUNNY_URL)
+    assert.equal(uploads.length, 1)
+    assert.match(uploads[0].filename, /^messenger-image-.*\.jpg$/)
   } finally {
     setMetaSocialMediaTransportForTest({})
   }

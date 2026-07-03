@@ -232,6 +232,38 @@ function extractSocialMessage({ objectType, entry, messaging, config }) {
 // contacto. La distinción comentario/DM vive en message_type, no en el contacto.
 // Solo si Meta oculta el from.id (privacidad FB) se cae al commentId, que no
 // puede fusionar y queda como un contacto de comentario suelto.
+// Extrae la media adjunta de un comentario de Facebook. FB manda la foto/video del
+// comentario como URL directa (value.photo / value.video) o dentro de un attachment
+// estructurado. Instagram no adjunta media del autor en comentarios (value.media es el
+// post comentado, no un adjunto), así que ahí no aplica.
+export function extractCommentMedia(value = {}) {
+  const photo = cleanString(value.photo)
+  if (photo) return { mediaUrl: photo, mediaType: 'image' }
+  const video = cleanString(value.video)
+  if (video) return { mediaUrl: video, mediaType: 'video' }
+
+  const attachment = value.attachment ||
+    (Array.isArray(value.attachments?.data) ? value.attachments.data[0] : null)
+  if (attachment) {
+    const type = cleanString(attachment.type).toLowerCase()
+    const url = cleanString(
+      attachment.media?.image?.src ||
+      attachment.media?.source ||
+      attachment.url ||
+      attachment.payload?.url
+    )
+    if (url) {
+      const mediaType = type.includes('video')
+        ? 'video'
+        : type.includes('audio')
+          ? 'audio'
+          : 'image'
+      return { mediaUrl: url, mediaType }
+    }
+  }
+  return { mediaUrl: '', mediaType: '' }
+}
+
 function extractCommentEvent({ objectType, entry, change, config = {} }) {
   const field = cleanString(change?.field).toLowerCase()
   const value = change?.value || {}
@@ -269,6 +301,9 @@ function extractCommentEvent({ objectType, entry, change, config = {} }) {
     ? new Date(rawTs > 9999999999 ? rawTs : rawTs * 1000).toISOString()
     : new Date().toISOString()
 
+  // Adjunto del comentario (solo FB): se rehospeda en nuestro storage igual que los DMs.
+  const commentMedia = isFacebookComment ? extractCommentMedia(value) : { mediaUrl: '', mediaType: '' }
+
   return {
     platform,
     direction,
@@ -279,7 +314,8 @@ function extractCommentEvent({ objectType, entry, change, config = {} }) {
     metaMessageId: commentId, // dedup natural (edits/reenvíos llegan con el mismo id)
     messageType: 'comment',
     messageText: text || '(comentario sin texto)',
-    mediaUrl: '',
+    mediaUrl: commentMedia.mediaUrl,
+    mediaType: commentMedia.mediaType,
     mediaMimeType: '',
     postbackPayload: '',
     referral: null,
@@ -1382,7 +1418,9 @@ export async function rehostMetaSocialMedia({ socialMessage, config, existingMed
     return { mediaUrl: existingMediaUrl, mediaMimeType: cleanString(socialMessage.mediaMimeType) }
   }
 
-  const messageType = normalizeSocialMediaType(socialMessage.messageType)
+  // Para comentarios el messageType es 'comment' pero el adjunto es imagen/video: usa
+  // mediaType explícito si viene, cayendo al messageType para los DMs.
+  const messageType = normalizeSocialMediaType(socialMessage.mediaType || socialMessage.messageType)
   const limitBytes = getSocialMediaLimitBytes(messageType)
 
   const token = await resolveMetaPageTokenSafe(config)
