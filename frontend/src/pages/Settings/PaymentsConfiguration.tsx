@@ -3970,7 +3970,7 @@ export const PaymentsConfiguration: React.FC = () => {
                         ) : (
                           <>
                             <ShieldCheck size={15} />
-                            Validar SDK
+                            Validar conexión
                           </>
                         )}
                       </Button>
