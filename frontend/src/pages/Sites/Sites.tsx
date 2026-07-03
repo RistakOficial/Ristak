@@ -32097,7 +32097,12 @@ const CanvasPreviewBlock: React.FC<CanvasPreviewBlockProps> = ({
     const mediaUrl = safePublicMediaUrl(rawImageUrl, 'image')
     return mediaUrl
       ? <figure className="rstk-media" data-rstk-selection-surface="true"><img src={mediaUrl} alt={block.label || 'Imagen'} loading="lazy" /></figure>
-      : <div className="rstk-media rstk-media-empty" data-rstk-selection-surface="true">Imagen sin URL</div>
+      : (
+        <div className="rstk-media rstk-media-empty rstk-media-empty-mock" data-rstk-selection-surface="true">
+          <span className="rstk-media-empty-icon" aria-hidden="true"><Image size={26} /></span>
+          <span>Agrega una imagen</span>
+        </div>
+      )
   }
 
   if (block.blockType === 'video') {
@@ -32151,7 +32156,12 @@ const CanvasPreviewBlock: React.FC<CanvasPreviewBlockProps> = ({
               <iframe src={appendEditorNoTrackParam(videoUrl)} title={block.label || 'Video'} loading="lazy" allow={DEFAULT_EMBED_ALLOW} allowFullScreen sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-presentation" />
             </div>
           )
-      : <div className="rstk-media rstk-media-empty" data-rstk-selection-surface="true"><span className="rstk-play"><Play size={22} /></span>Agrega la URL del video</div>
+      : (
+        <div className="rstk-media rstk-media-empty rstk-media-empty-mock rstk-media-empty-video" data-rstk-selection-surface="true">
+          <span className="rstk-play"><Play size={22} /></span>
+          <span>Agrega la URL del video</span>
+        </div>
+      )
   }
 
   if (block.blockType === 'button') {
