@@ -8,6 +8,7 @@ import { getStripePaymentConfig } from '../services/stripePaymentService.js';
 import { getMercadoPagoPaymentConfig } from '../services/mercadoPagoPaymentService.js';
 import { getConektaPaymentConfig } from '../services/conektaPaymentService.js';
 import { getClipPaymentConfig } from '../services/clipPaymentService.js';
+import { getRebillPaymentConfig } from '../services/rebillPaymentService.js';
 
 // La verificación del token contra la API de HighLevel es costosa y este
 // endpoint se consulta varias veces por carga de página. Se cachea el
@@ -215,6 +216,22 @@ export const getStatus = async (req, res) => {
       logger.warn(`Error obteniendo estado de CLIP: ${error.message}`);
     }
 
+    // Rebill
+    let rebillStatus = { configured: false, connected: false };
+    try {
+      const rebillConfig = await getRebillPaymentConfig();
+      rebillStatus = {
+        configured: Boolean(rebillConfig?.configured),
+        connected: Boolean(rebillConfig?.configured),
+        mode: rebillConfig?.mode || 'test',
+        publicKey: rebillConfig?.publicKey || null,
+        accountLabel: rebillConfig?.accountLabel || null,
+        webhookConfigured: Boolean(rebillConfig?.webhookConfigured)
+      };
+    } catch (error) {
+      logger.warn(`Error obteniendo estado de Rebill: ${error.message}`);
+    }
+
     // Respuesta con estructura mejorada
     res.json({
       highlevel: highlevelStatus,
@@ -225,7 +242,8 @@ export const getStatus = async (req, res) => {
       stripe: stripeStatus,
       mercadopago: mercadoPagoStatus,
       conekta: conektaStatus,
-      clip: clipStatus
+      clip: clipStatus,
+      rebill: rebillStatus
     });
 
   } catch (error) {
@@ -248,6 +266,7 @@ export const getStatus = async (req, res) => {
       mercadopago: { configured: false, connected: false },
       conekta: { configured: false, connected: false },
       clip: { configured: false, connected: false },
+      rebill: { configured: false, connected: false },
       error: 'Error al obtener estado de integraciones'
     });
   }

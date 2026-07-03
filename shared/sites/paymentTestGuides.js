@@ -67,6 +67,18 @@ export const PAYMENT_TEST_GUIDES = {
       { kind: 'Debito', brand: 'Amex MX', number: '377770520127013', cvc: '1234', expiry: '12/34', result: 'Do not honor' },
       { kind: 'Debito', brand: 'Amex US', number: '349028833584288', cvc: '1234', expiry: '12/34', result: 'Pago aprobado' }
     ]
+  },
+  rebill: {
+    title: 'Ayuda para pruebas de Rebill',
+    description: 'En sandbox usa una tarjeta de Rebill, vencimiento 01/2099 y CVV 123. El resultado lo define el numero de tarjeta.',
+    emailHint: 'Correo: cualquier correo con formato valido. Rebill puede pedir datos extra segun pais y metodo.',
+    cards: [
+      { kind: 'Credito', brand: 'Visa MX', number: '4539 6722 9047 6389', cvc: '123', expiry: '01/99', result: 'Pago aprobado' },
+      { kind: 'Credito', brand: 'Mastercard MX', number: '5555 0020 4444 0000', cvc: '123', expiry: '01/99', result: 'Pago aprobado' },
+      { kind: 'Credito', brand: 'Visa MX', number: '4485 5500 9000 0001', cvc: '123', expiry: '01/99', result: 'Rechazo generico' },
+      { kind: 'Credito', brand: 'Visa MX', number: '4244 4482 8478 2108', cvc: '123', expiry: '01/99', result: 'CVC invalido' },
+      { kind: 'Credito', brand: 'Mastercard MX', number: '5512 0022 3704 7986', cvc: '123', expiry: '01/99', result: 'Banco rechaza' }
+    ]
   }
 }
 
@@ -75,5 +87,6 @@ export function getPaymentTestGuide(provider = '') {
   if (normalized.includes('mercado')) return PAYMENT_TEST_GUIDES.mercadopago
   if (normalized.includes('conekta')) return PAYMENT_TEST_GUIDES.conekta
   if (normalized.includes('clip')) return PAYMENT_TEST_GUIDES.clip
+  if (normalized.includes('rebill')) return PAYMENT_TEST_GUIDES.rebill
   return PAYMENT_TEST_GUIDES.stripe
 }

@@ -39,7 +39,7 @@ interface SubscriptionDraft {
   startDate: string
 }
 
-type SubscriptionGatewayProvider = Exclude<PaymentGatewayProvider, 'clip'>
+type SubscriptionGatewayProvider = Exclude<PaymentGatewayProvider, 'clip' | 'rebill'>
 
 const PROVIDER_LABELS: Record<SubscriptionGatewayProvider, string> = {
   stripe: 'Stripe',
@@ -118,7 +118,7 @@ function getMercadoPagoAuthorizationLink(subscription: PaymentSubscription) {
 }
 
 function isSubscriptionGatewayProvider(provider: PaymentGatewayProvider): provider is SubscriptionGatewayProvider {
-  return provider !== 'clip'
+  return provider !== 'clip' && provider !== 'rebill'
 }
 
 function getSubscriptionActivationLink(subscription: PaymentSubscription, provider: SubscriptionGatewayProvider) {

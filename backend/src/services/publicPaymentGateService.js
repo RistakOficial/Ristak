@@ -7,6 +7,7 @@ export { preparePublicStripeInstallmentPlans } from './stripePaymentService.js'
 import { createConektaPaymentLink, getPublicConektaPayment, getConektaPaymentConfig, createPublicConektaCardPayment } from './conektaPaymentService.js'
 import { createMercadoPagoPaymentLink, getPublicMercadoPagoPayment, getMercadoPagoPaymentConfig, createPublicMercadoPagoCardPayment } from './mercadoPagoPaymentService.js'
 import { createClipPaymentLink, getPublicClipPayment, getClipPaymentConfig, createPublicClipCardPayment } from './clipPaymentService.js'
+import { createRebillPaymentLink, getPublicRebillPayment, getRebillPaymentConfig, confirmPublicRebillPayment } from './rebillPaymentService.js'
 import {
   PAYMENT_GATEWAYS,
   MSI_INSTALLMENT_CHOICES,
@@ -83,6 +84,7 @@ function normalizeGateway(value) {
     .replace(/[\u0300-\u036f]/g, '')
     .replace(/[^a-z0-9]/g, '')
   if (compact.startsWith('clip')) return 'clip'
+  if (compact.startsWith('rebill')) return 'rebill'
   if (compact.startsWith('conekta')) return 'conekta'
   if (compact.startsWith('mercadopago') || compact === 'mp') return 'mercadopago'
   if (compact.startsWith('stripe')) return 'stripe'
@@ -259,6 +261,9 @@ export async function createPaymentGateLink(configInput = {}, {
   if (config.gateway === 'clip') {
     return createClipPaymentLink(payload, { baseUrl: paymentBaseUrl, mode: forcedMode })
   }
+  if (config.gateway === 'rebill') {
+    return createRebillPaymentLink(payload, { baseUrl: paymentBaseUrl, mode: forcedMode })
+  }
   return createStripePaymentLink(payload, { baseUrl: paymentBaseUrl, mode: forcedMode })
 }
 
@@ -362,6 +367,18 @@ export async function getPaymentGateCheckoutDescriptor(publicPaymentId, { baseUr
     }
   }
 
+  if (status.provider === 'rebill') {
+    const payment = await getPublicRebillPayment(publicPaymentId, { baseUrl })
+    return {
+      ...base,
+      provider: 'rebill',
+      publicKey: payment?.publicKey || '',
+      paymentMode: payment?.paymentMode || '',
+      instantProduct: payment?.instantProduct || null,
+      customerInformation: payment?.customerInformation || null
+    }
+  }
+
   return base
 }
 
@@ -380,6 +397,10 @@ export async function getPaymentGateCheckoutKeys(gateway, mode = '') {
   if (g === 'clip') {
     const config = await getClipPaymentConfig({ includeSecrets: true, mode })
     return { provider: 'clip', apiKey: config.apiKey || '', paymentMode: config.mode || '', configured: Boolean(config.configured) }
+  }
+  if (g === 'rebill') {
+    const config = await getRebillPaymentConfig({ mode })
+    return { provider: 'rebill', publicKey: config.publicKey || '', paymentMode: config.mode || '', configured: Boolean(config.configured) }
   }
   const config = await getStripePaymentConfig({ mode })
   return { provider: 'stripe', publishableKey: config.publishableKey || '', paymentMode: config.mode || '', configured: Boolean(config.configured) }
@@ -437,6 +458,18 @@ export async function createPaymentGateCharge(publicPaymentId, gateway, chargeIn
       statusDetail: cleanString(res?.statusDetail),
       clipPaymentId: cleanString(res?.clipPaymentId),
       pendingAction: res?.pendingAction || null
+    }
+  }
+  if (g === 'rebill') {
+    const res = await confirmPublicRebillPayment(publicPaymentId, {
+      rebillPaymentId: chargeInput.rebillPaymentId || chargeInput.rebill_payment_id || chargeInput.paymentId || chargeInput.payment_id
+    }, { baseUrl })
+    return {
+      provider: 'rebill',
+      publicPaymentId,
+      status: cleanString(res?.payment?.status || res?.status),
+      statusDetail: res?.statusDetail || null,
+      rebillPaymentId: cleanString(res?.rebillPaymentId)
     }
   }
   const error = new Error('Pasarela no soportada.')

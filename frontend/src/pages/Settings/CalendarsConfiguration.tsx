@@ -11,6 +11,7 @@ import {
   PaymentGateControls,
   normalizePaymentGateConfig,
   type PaymentGateConfig,
+  type PaymentGateGateway,
   PathInput,
   Switch,
   Loading,
@@ -65,6 +66,7 @@ import {
   type CalendarBookingPaymentConfig,
   type CalendarBookingPaymentPosition,
   type CalendarBookingLayout,
+  type CalendarPaymentGateway,
   type CalendarBookingWidgetTheme,
   type CalendarCustomEventChannel,
   type CalendarCustomEventParameter,
@@ -505,6 +507,12 @@ const createDefaultCalendarBookingCompletion = (): CalendarBookingCompletionConf
   message: CALENDAR_DEFAULT_COMPLETION_MESSAGE,
   redirectUrl: ''
 })
+
+const CALENDAR_PAYMENT_GATEWAY_OPTIONS: PaymentGateGateway[] = ['stripe', 'conekta', 'mercadopago', 'clip']
+const CALENDAR_PAYMENT_GATEWAYS = new Set<CalendarPaymentGateway>(CALENDAR_PAYMENT_GATEWAY_OPTIONS as CalendarPaymentGateway[])
+
+const isCalendarPaymentGateway = (gateway: PaymentGateGateway): gateway is CalendarPaymentGateway =>
+  CALENDAR_PAYMENT_GATEWAYS.has(gateway as CalendarPaymentGateway)
 
 const normalizeCalendarBookingCompletion = (value?: Partial<CalendarBookingCompletionConfig> | null): CalendarBookingCompletionConfig => {
   const redirectUrl = String(value?.redirectUrl || '').trim()
@@ -2233,7 +2241,10 @@ export const CalendarsConfiguration: React.FC = () => {
     }
 
     const updateBookingPaymentConfig = (nextConfig: PaymentGateConfig) => {
-      const normalizedPayment = normalizeCalendarBookingPayment(nextConfig)
+      const normalizedPayment = normalizeCalendarBookingPayment({
+        ...nextConfig,
+        gateway: isCalendarPaymentGateway(nextConfig.gateway) ? nextConfig.gateway : 'stripe'
+      })
       if (normalizedPayment.enabled && selectedCustomFormHasPayment) {
         showToast(
           'error',
@@ -3213,6 +3224,7 @@ export const CalendarsConfiguration: React.FC = () => {
                         description="La cita se crea hasta confirmar el pago."
                         onChange={updateBookingPaymentConfig}
                         onCommit={() => {}}
+                        availableGateways={CALENDAR_PAYMENT_GATEWAY_OPTIONS}
                         currencyFallback={accountCurrency}
                       />
                     </div>

@@ -838,6 +838,8 @@ function paymentDataFromContext(ctx = {}) {
     'conekta_event_id',
     'clipEventId',
     'clip_event_id',
+    'rebillEventId',
+    'rebill_event_id',
     'payload.id',
     'payload.eventId',
     'payload.event_id',
@@ -909,6 +911,10 @@ function paymentDataFromContext(ctx = {}) {
   )
   const clipPaymentId = firstPaymentContextValue(ctx, 'clipPaymentId', 'clip_payment_id', 'clip.paymentId', 'clip.payment_id', 'clip.id')
   const clipReceiptNo = firstPaymentContextValue(ctx, 'clipReceiptNo', 'clip_receipt_no', 'receiptNo', 'receipt_no', 'clip.receiptNo', 'clip.receipt_no')
+  const rebillPaymentId = firstPaymentContextValue(ctx, 'rebillPaymentId', 'rebill_payment_id', 'rebill.paymentId', 'rebill.payment_id', 'rebill.id')
+  const rebillSubscriptionId = firstPaymentContextValue(ctx, 'rebillSubscriptionId', 'rebill_subscription_id', 'rebill.subscriptionId', 'rebill.subscription_id')
+  const rebillCustomerId = firstPaymentContextValue(ctx, 'rebillCustomerId', 'rebill_customer_id', 'rebill.customerId', 'rebill.customer_id')
+  const rebillCardId = firstPaymentContextValue(ctx, 'rebillCardId', 'rebill_card_id', 'rebill.cardId', 'rebill.card_id')
   const paidAt = firstPaymentContextValue(ctx, 'paidAt', 'paid_at', 'fulfilledAt', 'fulfilled_at')
   const paymentDate = firstPaymentContextValue(ctx, 'paymentDate', 'payment_date', 'date', 'createdAt', 'created_at')
   const dueDate = firstPaymentContextValue(ctx, 'dueDate', 'due_date')
@@ -954,6 +960,10 @@ function paymentDataFromContext(ctx = {}) {
     id_conekta_fuente_pago: conektaPaymentSourceId,
     id_clip_pago: clipPaymentId,
     id_clip_recibo: clipReceiptNo,
+    id_rebill_pago: rebillPaymentId,
+    id_rebill_suscripcion: rebillSubscriptionId,
+    id_rebill_cliente: rebillCustomerId,
+    id_rebill_tarjeta: rebillCardId,
     fecha: paymentDate,
     fecha_pago: paidAt,
     fecha_vencimiento: dueDate,
@@ -1213,6 +1223,10 @@ function buildVariableMap(ctx) {
     map['payment.conekta_payment_source_id'] = String(payment.id_conekta_fuente_pago ?? '')
     map['payment.clip_payment_id'] = String(payment.id_clip_pago ?? '')
     map['payment.clip_receipt_no'] = String(payment.id_clip_recibo ?? '')
+    map['payment.rebill_payment_id'] = String(payment.id_rebill_pago ?? '')
+    map['payment.rebill_subscription_id'] = String(payment.id_rebill_suscripcion ?? '')
+    map['payment.rebill_customer_id'] = String(payment.id_rebill_cliente ?? '')
+    map['payment.rebill_card_id'] = String(payment.id_rebill_tarjeta ?? '')
     map['payment.date'] = String(payment.fecha ?? '')
     map['payment.paid_at'] = String(payment.fecha_pago ?? '')
     map['payment.due_date'] = String(payment.fecha_vencimiento ?? '')
@@ -1387,6 +1401,10 @@ function paymentTriggerFieldValue(field, ctx = {}) {
         'mercadopago_event_id',
         'conektaEventId',
         'conekta_event_id',
+        'clipEventId',
+        'clip_event_id',
+        'rebillEventId',
+        'rebill_event_id',
         'payload.id',
         'payload.eventId',
         'payload.event_id',
@@ -1480,6 +1498,14 @@ function paymentTriggerFieldValue(field, ctx = {}) {
       return firstPaymentContextValue(ctx, 'clipPaymentId', 'clip_payment_id', 'clip.paymentId', 'clip.payment_id', 'clip.id')
     case 'clip_receipt_no':
       return firstPaymentContextValue(ctx, 'clipReceiptNo', 'clip_receipt_no', 'receiptNo', 'receipt_no', 'clip.receiptNo', 'clip.receipt_no')
+    case 'rebill_payment_id':
+      return firstPaymentContextValue(ctx, 'rebillPaymentId', 'rebill_payment_id', 'rebill.paymentId', 'rebill.payment_id', 'rebill.id')
+    case 'rebill_subscription_id':
+      return firstPaymentContextValue(ctx, 'rebillSubscriptionId', 'rebill_subscription_id', 'rebill.subscriptionId', 'rebill.subscription_id')
+    case 'rebill_customer_id':
+      return firstPaymentContextValue(ctx, 'rebillCustomerId', 'rebill_customer_id', 'rebill.customerId', 'rebill.customer_id')
+    case 'rebill_card_id':
+      return firstPaymentContextValue(ctx, 'rebillCardId', 'rebill_card_id', 'rebill.cardId', 'rebill.card_id')
     case 'paid_at':
       return firstPaymentContextValue(ctx, 'paidAt', 'paid_at', 'fulfilledAt', 'fulfilled_at')
     case 'payment_date':
@@ -1568,6 +1594,10 @@ function filterFieldValue(filter, ctx) {
     case 'conekta_payment_source_id':
     case 'clip_payment_id':
     case 'clip_receipt_no':
+    case 'rebill_payment_id':
+    case 'rebill_subscription_id':
+    case 'rebill_customer_id':
+    case 'rebill_card_id':
     case 'paid_at':
     case 'payment_date':
     case 'due_date':

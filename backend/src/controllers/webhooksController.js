@@ -325,6 +325,7 @@ function buildAutomationPaymentPayload(input = {}) {
   const mercadoPagoMeta = metadata.mercadoPago || metadata.mercado_pago || metadata.mercadopago || {};
   const conektaMeta = metadata.conekta || {};
   const clipMeta = metadata.clip || {};
+  const rebillMeta = metadata.rebill || {};
   const status = firstValue(input.paymentStatus, input.status) || '';
   const paymentId = firstValue(input.paymentId, input.payment_id, input.id) || '';
   const invoiceId = firstValue(input.invoiceId, input.invoice_id, input.ghl_invoice_id) || '';
@@ -355,6 +356,8 @@ function buildAutomationPaymentPayload(input = {}) {
     input.conekta_event_id,
     input.clipEventId,
     input.clip_event_id,
+    input.rebillEventId,
+    input.rebill_event_id,
     metadata.eventId,
     metadata.event_id,
     metadata.webhookEventId,
@@ -370,6 +373,8 @@ function buildAutomationPaymentPayload(input = {}) {
     metadata.conekta_event_id,
     metadata.clipEventId,
     metadata.clip_event_id,
+    metadata.rebillEventId,
+    metadata.rebill_event_id,
     stripeMeta.eventId,
     stripeMeta.event_id,
     mercadoPagoMeta.eventId,
@@ -377,7 +382,9 @@ function buildAutomationPaymentPayload(input = {}) {
     conektaMeta.eventId,
     conektaMeta.event_id,
     clipMeta.eventId,
-    clipMeta.event_id
+    clipMeta.event_id,
+    rebillMeta.eventId,
+    rebillMeta.event_id
   ) || '';
   const stripePaymentIntentId = firstValue(
     input.stripePaymentIntentId,
@@ -442,6 +449,10 @@ function buildAutomationPaymentPayload(input = {}) {
   ) || '';
   const clipPaymentId = firstValue(input.clipPaymentId, input.clip_payment_id, metadata.clipPaymentId, metadata.clip_payment_id, clipMeta.paymentId, clipMeta.payment_id, clipMeta.id) || '';
   const clipReceiptNo = firstValue(input.clipReceiptNo, input.clip_receipt_no, input.receiptNo, input.receipt_no, metadata.clipReceiptNo, metadata.clip_receipt_no, clipMeta.receiptNo, clipMeta.receipt_no) || '';
+  const rebillPaymentId = firstValue(input.rebillPaymentId, input.rebill_payment_id, metadata.rebillPaymentId, metadata.rebill_payment_id, rebillMeta.paymentId, rebillMeta.payment_id, rebillMeta.id) || '';
+  const rebillSubscriptionId = firstValue(input.rebillSubscriptionId, input.rebill_subscription_id, metadata.rebillSubscriptionId, metadata.rebill_subscription_id, rebillMeta.subscriptionId, rebillMeta.subscription_id) || '';
+  const rebillCustomerId = firstValue(input.rebillCustomerId, input.rebill_customer_id, metadata.rebillCustomerId, metadata.rebill_customer_id, rebillMeta.customerId, rebillMeta.customer_id) || '';
+  const rebillCardId = firstValue(input.rebillCardId, input.rebill_card_id, metadata.rebillCardId, metadata.rebill_card_id, rebillMeta.cardId, rebillMeta.card_id) || '';
   const paidAt = firstValue(input.paidAt, input.paid_at, input.fulfilledAt, input.fulfilled_at, metadata.paidAt, metadata.paid_at) || '';
   const dueDate = firstValue(input.dueDate, input.due_date, metadata.dueDate, metadata.due_date) || '';
   const sentAt = firstValue(input.sentAt, input.sent_at, metadata.sentAt, metadata.sent_at) || '';
@@ -478,6 +489,10 @@ function buildAutomationPaymentPayload(input = {}) {
     conektaPaymentSourceId,
     clipPaymentId,
     clipReceiptNo,
+    rebillPaymentId,
+    rebillSubscriptionId,
+    rebillCustomerId,
+    rebillCardId,
     paidAt,
     dueDate,
     sentAt,
@@ -519,6 +534,10 @@ function buildAutomationPaymentPayloadFromRow(row = {}, overrides = {}) {
     conektaPaymentSourceId: row.conekta_payment_source_id,
     clipPaymentId: row.clip_payment_id,
     clipReceiptNo: row.clip_receipt_no,
+    rebillPaymentId: row.rebill_payment_id,
+    rebillSubscriptionId: row.rebill_subscription_id,
+    rebillCustomerId: row.rebill_customer_id,
+    rebillCardId: row.rebill_card_id,
     paidAt: row.paid_at,
     dueDate: row.due_date,
     sentAt: row.sent_at,
@@ -2069,6 +2088,7 @@ export const handleInvoiceWebhook = async (req, res) => {
                 p.stripe_payment_intent_id, p.stripe_charge_id, p.mercadopago_payment_id,
                 p.mercadopago_preference_id, p.conekta_order_id, p.conekta_charge_id,
                 p.conekta_payment_source_id, p.clip_payment_id, p.clip_receipt_no,
+                p.rebill_payment_id, p.rebill_subscription_id, p.rebill_customer_id, p.rebill_card_id,
                 p.paid_at, p.due_date, p.sent_at, p.metadata_json,
                 p.date, p.created_at, p.updated_at, p.ghl_invoice_id, p.invoice_number,
                 c.full_name AS contact_name, c.email AS contact_email, c.phone AS contact_phone

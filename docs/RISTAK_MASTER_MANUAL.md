@@ -42,7 +42,7 @@ El producto combina:
 | Base de datos produccion | PostgreSQL en Render cuando existe `DATABASE_URL` |
 | Movil nativo | Capacitor |
 | Deploy | Render Blueprint / web service |
-| Pagos | Stripe, Conekta, Mercado Pago, CLIP, HighLevel invoices |
+| Pagos | Stripe, Conekta, Mercado Pago, CLIP, Rebill, HighLevel invoices |
 | IA | OpenAI Agents / providers configurables |
 
 Comandos principales:
@@ -107,7 +107,7 @@ Rutas protegidas por auth y/o feature flags:
 - `/api/transactions`: pagos/transacciones.
 - `/api/products`: productos y precios.
 - `/api/subscriptions`: suscripciones.
-- `/api/stripe`, `/api/conekta`, `/api/mercadopago`, `/api/clip`: pasarelas.
+- `/api/stripe`, `/api/conekta`, `/api/mercadopago`, `/api/clip`, `/api/rebill`: pasarelas.
 - `/api/highlevel`: conexion, sync, invoices, productos, calendarios y conversaciones.
 - `/api/meta`: Meta Ads, pixel, CAPI, social messaging y campaign builder.
 - `/api/automations`: carpetas, flujos, ejecuciones y assets.
@@ -470,6 +470,7 @@ Ristak soporta:
 - Conekta.
 - Mercado Pago.
 - CLIP.
+- Rebill.
 - HighLevel invoices.
 - Productos/precios.
 - Planes de pago.
@@ -543,6 +544,8 @@ Reglas:
   cuando aplique.
 - CLIP Checkout Transparente solo acepta `MXN`; Ristak debe bloquear cobros CLIP
   en otra moneda en vez de convertir o inferir moneda.
+- Rebill Checkout acepta `ARS`, `BRL`, `CLP`, `COP`, `MXN` y `USD`; Ristak debe
+  bloquear cobros Rebill en otras monedas en vez de convertir o inferir moneda.
 
 Documento obligatorio: `docs/CURRENCY_GUIDELINES.md`.
 
@@ -622,6 +625,47 @@ Restricciones operativas:
   pasarela, usar Stripe, Conekta o Mercado Pago. El backend rechaza intentos de
   crear suscripciones con `payment_provider=clip`, `payment_method=clip`,
   `clip_link` o `clip_payment_link`.
+
+### Rebill Checkout
+
+Rebill vive como pasarela manual administrada desde Configuracion > Pagos >
+Rebill. Las credenciales de prueba y en vivo se guardan en `app_config` bajo
+claves `rebill_*`; la public key `pk_` se entrega al checkout publico porque el
+SDK la necesita y la secret key `sk_` queda cifrada en base de datos. No requiere
+env vars nuevas para arrancar el servicio.
+
+Alcance:
+
+- Cobros unicos por link publico `/pay/:publicPaymentId`.
+- Checkout de Sites con el web component oficial `rebill-checkout`.
+- Rebill no se ofrece para suscripciones, planes de pago ni MSI en Ristak en esta
+  integracion. Solo se usa para pagos unicos; si se necesita recurrencia
+  automatica real o cargos futuros administrados por Ristak, usar Stripe,
+  Conekta o Mercado Pago.
+- Webhook publico `/api/rebill/webhook`; como la documentacion publica de Rebill
+  no declara firma verificable para webhooks, Ristak no confia en el payload para
+  marcar pagado. Cada evento extrae el `paymentId` y consulta el pago real con
+  `GET /v3/payments/:id` usando la `sk_` del backend antes de actualizar la fila.
+- El evento `success` del web component tampoco da acceso por si solo. El frontend
+  manda el `paymentId` a `POST /api/rebill/public/payments/:publicPaymentId/confirm`
+  y el backend vuelve a consultar Rebill antes de marcar `payments.status='paid'`.
+- Configuracion > Pagos > Rebill valida la organizacion con
+  `GET /v3/organizations/me` y, si la app tiene URL publica HTTPS, intenta crear o
+  actualizar automaticamente el webhook con eventos `payment.created` y
+  `payment.updated`. Si la URL publica no existe, queda en estado
+  `pending_public_url` y la UI muestra las rutas que deben copiarse.
+- Variables de automatizacion: `payment.rebill_payment_id`,
+  `payment.rebill_subscription_id`, `payment.rebill_customer_id` y
+  `payment.rebill_card_id`.
+
+Persistencia:
+
+- `payments.payment_provider='rebill'` y `payments.payment_method='rebill_checkout'`.
+- IDs de proveedor en `payments.rebill_payment_id`,
+  `payments.rebill_subscription_id`, `payments.rebill_customer_id` y
+  `payments.rebill_card_id`.
+- `installment_payments.rebill_payment_id` existe solo para sincronizar
+  referencias si un pago local queda ligado a un flujo; no habilita planes Rebill.
 
 ### Regla pagos test y Meta
 
@@ -820,14 +864,17 @@ y frontend (`frontend/src/pages/Sites/*`) lo importan; el `Dockerfile` copia
   lo que el vivo mostraria (fila de meses standalone solo Conekta via
   `msiEligibility`; Stripe en `/pay` usa MSI controlado por backend cuando el link
   trae `stripeInstallments.maxInstallments`; Mercado Pago y CLIP resuelven meses
-  dentro de su widget/SDK; boton de pago con icono; badge "No visible en el sitio
+  dentro de su widget/SDK; Rebill monta el web component oficial sin MSI; boton de
+  pago con icono; badge "No visible en el sitio
   publicado" cuando el gate esta deshabilitado). En modo test, el preview y el
   checkout publicado muestran el helper de tarjetas de prueba del proveedor debajo
   del mensaje de checkout, de modo que cualquier error/rechazo queda visible antes
-  del acordeon de ayuda. Stripe, Conekta, Mercado Pago y CLIP usan el mismo contrato
-  de `paymentGate`; CLIP monta el SDK oficial en el checkout publicado, requiere
-  email/telefono para procesar el cargo y puede habilitar MSI con `terms.enabled`
-  si el bloque lo permite. El selector de pasarela del inspector debe persistir
+  del acordeon de ayuda. Stripe, Conekta, Mercado Pago, CLIP y Rebill usan el mismo
+  contrato de `paymentGate`; CLIP monta el SDK oficial en el checkout publicado,
+  requiere email/telefono para procesar el cargo y puede habilitar MSI con
+  `terms.enabled` si el bloque lo permite; Rebill prepara primero el pago local y
+  luego confirma server-side el `paymentId` devuelto por el SDK. El selector de
+  pasarela del inspector debe persistir
   inmediatamente el bloque para que el modo vivo no monte una pasarela anterior; el
   HTML publicado, `/checkout/init` y el cargo deben usar siempre el mismo
   `paymentGate.gateway`. Si un visitante abandona el checkout antes de pagar, el

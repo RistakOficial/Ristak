@@ -1913,6 +1913,7 @@ function getCalendarPaymentGatewayLabel(gateway = '') {
   if (raw === 'mercadopago') return 'Mercado Pago'
   if (raw === 'conekta') return 'Conekta'
   if (raw === 'clip') return 'CLIP'
+  if (raw === 'rebill') return 'Rebill'
   return 'Stripe'
 }
 

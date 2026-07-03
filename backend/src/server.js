@@ -67,6 +67,7 @@ import stripeRoutes from './routes/stripe.routes.js'
 import mercadoPagoRoutes from './routes/mercadopago.routes.js'
 import conektaRoutes from './routes/conekta.routes.js'
 import clipRoutes from './routes/clip.routes.js'
+import rebillRoutes from './routes/rebill.routes.js'
 import sitesRoutes from './routes/sites.routes.js'
 import mediaRoutes from './routes/media.routes.js'
 import internalStorageRoutes from './routes/internalStorage.routes.js'
@@ -297,6 +298,7 @@ app.use('/api/stripe', stripeRoutes)
 app.use('/api/mercadopago', mercadoPagoRoutes)
 app.use('/api/conekta', conektaRoutes)
 app.use('/api/clip', clipRoutes)
+app.use('/api/rebill', rebillRoutes)
 // Página de prueba del Meta Pixel (navegador + servidor). Pública pero protegida
 // por un token corto firmado; va antes del router autenticado para que se pueda
 // abrir en una pestaña nueva sin el header Authorization.

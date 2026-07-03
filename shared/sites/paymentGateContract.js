@@ -4,7 +4,7 @@
 // que el preview del bloque de pago no invente filas ni colores que el vivo no muestra.
 // No cambia flujos de negocio (cobro, tokens, webhooks): solo describe qué se ve.
 
-export const PAYMENT_GATEWAYS = new Set(['stripe', 'conekta', 'mercadopago', 'clip'])
+export const PAYMENT_GATEWAYS = new Set(['stripe', 'conekta', 'mercadopago', 'clip', 'rebill'])
 
 // Opciones de meses ofrecidas en el panel. El monto y la pasarela filtran cuáles
 // aplican realmente (ver msiEligibility / conektaInstallmentMonths).

@@ -164,6 +164,28 @@ export async function isClipConnected() {
   return legacyMode === mode && Boolean(cleanString(raw.clip_api_key_encrypted))
 }
 
+export async function isRebillConnected() {
+  const mode = await getActivePaymentMode()
+  const raw = await getAppConfigRows([
+    'rebill_enabled',
+    'rebill_mode',
+    'rebill_public_key',
+    'rebill_secret_key_encrypted',
+    'rebill_mode_connections'
+  ])
+
+  if (!enabledFlag(raw.rebill_enabled, true)) return false
+
+  const active = getModeConnection(raw.rebill_mode_connections, mode)
+  const activePublicKey = cleanString(active.publicKey || active.public_key)
+  const activeSecretKey = cleanString(active.secretKey || active.secret_key)
+  if (activePublicKey && activeSecretKey) return true
+
+  const legacyMode = normalizeMode(raw.rebill_mode)
+  return legacyMode === mode &&
+    Boolean(cleanString(raw.rebill_public_key) && cleanString(raw.rebill_secret_key_encrypted))
+}
+
 export async function isWhatsAppQrConnected() {
   const row = await db.get(`
     SELECT s.id

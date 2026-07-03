@@ -66,6 +66,15 @@ export interface ClipStatus {
   hasApiKey?: boolean
 }
 
+export interface RebillStatus {
+  configured: boolean
+  connected: boolean
+  mode?: 'test' | 'live'
+  publicKey?: string | null
+  accountLabel?: string | null
+  webhookConfigured?: boolean
+}
+
 export interface IntegrationsStatus {
   highlevel: HighLevelStatus
   meta: MetaStatus
@@ -76,6 +85,7 @@ export interface IntegrationsStatus {
   mercadopago?: MercadoPagoStatus
   conekta?: ConektaStatus
   clip?: ClipStatus
+  rebill?: RebillStatus
 }
 
 // El estado de integraciones se consulta desde muchos componentes al montar

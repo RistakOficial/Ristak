@@ -70,6 +70,7 @@ import {
 import { conektaPaymentsService, type ConektaPaymentConfig, type SaveConektaPaymentConfigPayload } from '@/services/conektaPaymentsService'
 import { clipPaymentsService, type ClipPaymentConfig, type SaveClipPaymentConfigPayload } from '@/services/clipPaymentsService'
 import { mercadoPagoPaymentsService, type MercadoPagoPaymentConfig } from '@/services/mercadoPagoPaymentsService'
+import { rebillPaymentsService, type RebillPaymentConfig, type SaveRebillPaymentConfigPayload } from '@/services/rebillPaymentsService'
 import { stripePaymentsService, type SaveStripePaymentConfigPayload, type StripePaymentConfig } from '@/services/stripePaymentsService'
 import { whatsappApiService, type WhatsAppApiTemplate } from '@/services/whatsappApiService'
 import {
@@ -103,7 +104,7 @@ import {
 import styles from './PaymentsConfiguration.module.css'
 
 type PaymentsSectionId = 'checkout' | 'receipt' | 'meta' | 'automations' | 'gateways' | 'taxes'
-type PaymentGatewayId = 'highlevel' | 'stripe' | 'conekta' | 'mercadopago' | 'clip'
+type PaymentGatewayId = 'highlevel' | 'stripe' | 'conekta' | 'mercadopago' | 'clip' | 'rebill'
 type AutoSaveState = 'idle' | 'saving' | 'saved' | 'error'
 type PaymentAutomationTemplateKind = 'reminder' | 'receipt' | 'failed'
 type StripeModeId = 'test' | 'live'
@@ -147,6 +148,12 @@ interface ClipModeCredentials {
   accountLabel: string
 }
 
+interface RebillModeCredentials {
+  publicKey: string
+  secretKey: string
+  accountLabel: string
+}
+
 interface MercadoPagoSubscriptionTestCredentials {
   publicKey: string
   accessToken: string
@@ -169,8 +176,8 @@ interface WebhookEventGuideItem {
 interface GatewayAutomaticConnectionStatus {
   configured?: boolean
   webhookConfigured?: boolean
-  webhookStatus?: string
-  webhookLastError?: string
+  webhookStatus?: string | null
+  webhookLastError?: string | null
 }
 
 const gatewayStatusCopy: Record<PaymentGatewayOption['status'], { label: string; variant: 'success' | 'neutral' }> = {
@@ -188,7 +195,7 @@ const sectionItems: Array<{ id: PaymentsSectionId; label: string; icon: React.Re
 ]
 
 const sectionIds = sectionItems.map((item) => item.id)
-const gatewayIds: PaymentGatewayId[] = ['highlevel', 'stripe', 'conekta', 'mercadopago', 'clip']
+const gatewayIds: PaymentGatewayId[] = ['highlevel', 'stripe', 'conekta', 'mercadopago', 'clip', 'rebill']
 const GIGSTACK_API_URL = 'https://gigstack.pro/api-facturacion'
 const stripeModeIds: StripeModeId[] = ['test', 'live']
 const emptyStripeModeCredentials: Record<StripeModeId, StripeModeCredentials> = {
@@ -202,6 +209,10 @@ const emptyConektaModeCredentials: Record<StripeModeId, ConektaModeCredentials> 
 const emptyClipModeCredentials: Record<StripeModeId, ClipModeCredentials> = {
   test: { apiKey: '', accountLabel: '' },
   live: { apiKey: '', accountLabel: '' }
+}
+const emptyRebillModeCredentials: Record<StripeModeId, RebillModeCredentials> = {
+  test: { publicKey: '', secretKey: '', accountLabel: '' },
+  live: { publicKey: '', secretKey: '', accountLabel: '' }
 }
 const emptyMercadoPagoSubscriptionTestCredentials: MercadoPagoSubscriptionTestCredentials = {
   publicKey: '',
@@ -264,6 +275,17 @@ const mercadoPagoSubscriptionWebhookEvents: WebhookEventGuideItem[] = [
   }
 ]
 const mercadoPagoSubscriptionWebhookEventNames = mercadoPagoSubscriptionWebhookEvents.map((item) => item.event).join('\n')
+const rebillWebhookEvents: WebhookEventGuideItem[] = [
+  {
+    event: 'payment.created',
+    description: 'Recibe el pago creado por el checkout embebido.'
+  },
+  {
+    event: 'payment.updated',
+    description: 'Sincroniza aprobaciones, rechazos, reembolsos y contracargos.'
+  }
+]
+const rebillWebhookEventNames = rebillWebhookEvents.map((item) => item.event).join('\n')
 const PAYMENT_META_DEFAULT_PURCHASE_EVENT_NAME = 'Purchase'
 const PAYMENT_META_DEFAULT_EVENT_CHANNEL: PaymentMetaPurchaseEventChannel = 'smart'
 const PAYMENT_META_PARAMETER_VARIABLE_CATEGORIES = new Set([
@@ -332,12 +354,28 @@ const clipModeLabels: Record<StripeModeId, { title: string; description: string;
     apiKeyPlaceholder: 'Clave API en vivo'
   }
 }
+const rebillModeLabels: Record<StripeModeId, { title: string; description: string; publicPlaceholder: string; secretPlaceholder: string }> = {
+  test: {
+    title: 'Modo prueba',
+    description: 'Para montar el checkout sandbox de Rebill sin mover dinero real.',
+    publicPlaceholder: 'pk_...',
+    secretPlaceholder: 'sk_...'
+  },
+  live: {
+    title: 'Modo en vivo',
+    description: 'Para aceptar pagos reales con tu organizacion productiva de Rebill.',
+    publicPlaceholder: 'pk_...',
+    secretPlaceholder: 'sk_...'
+  }
+}
 const looksLikeClipSdkApiKey = (value: string) => {
   const clean = value.trim()
   if (!clean || clean.includes('•') || clean.includes('*')) return false
   return /^(test|live)_[a-z0-9-]{16,}$/i.test(clean) ||
     /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(clean)
 }
+const looksLikeRebillPublicKey = (value: string) => /^pk_[a-z0-9_ -]{16,}$/i.test(value.trim())
+const looksLikeRebillSecretKey = (value: string) => /^sk_[a-z0-9_ -]{16,}$/i.test(value.trim())
 const parseBooleanLike = (value: unknown, fallback = false) => {
   if (typeof value === 'boolean') return value
   if (typeof value === 'number') return value === 1
@@ -632,6 +670,26 @@ const getClipModeCredentialsFromConfig = (config?: ClipPaymentConfig | null): Re
   return nextCredentials
 }
 
+const getRebillModeCredentialsFromConfig = (config?: RebillPaymentConfig | null): Record<StripeModeId, RebillModeCredentials> => {
+  if (!config) return emptyRebillModeCredentials
+
+  const nextCredentials: Record<StripeModeId, RebillModeCredentials> = {
+    test: { ...emptyRebillModeCredentials.test },
+    live: { ...emptyRebillModeCredentials.live }
+  }
+
+  stripeModeIds.forEach((mode) => {
+    const modeConfig = config.modeConnections?.[mode]
+    nextCredentials[mode] = {
+      publicKey: modeConfig?.publicKey || (config.mode === mode ? config.publicKey || '' : ''),
+      secretKey: modeConfig?.secretKeyPreview || (config.mode === mode ? config.secretKeyPreview || '' : ''),
+      accountLabel: modeConfig?.accountLabel || (config.mode === mode ? config.accountLabel || '' : '')
+    }
+  })
+
+  return nextCredentials
+}
+
 const getMercadoPagoSubscriptionTestCredentialsFromConfig = (config?: MercadoPagoPaymentConfig | null): MercadoPagoSubscriptionTestCredentials => ({
   publicKey: config?.subscriptionTestCredentials?.publicKey || '',
   accessToken: config?.subscriptionTestCredentials?.accessTokenPreview || '',
@@ -712,6 +770,13 @@ export const PaymentsConfiguration: React.FC = () => {
   const [testingClipMode, setTestingClipMode] = useState<StripeModeId | null>(null)
   const [clipConnectionFailed, setClipConnectionFailed] = useState(false)
   const [disconnectingClipMode, setDisconnectingClipMode] = useState<StripeModeId | null>(null)
+  const [rebillConfig, setRebillConfig] = useState<RebillPaymentConfig | null>(null)
+  const [rebillManualCredentials, setRebillManualCredentials] = useState<Record<StripeModeId, RebillModeCredentials>>(emptyRebillModeCredentials)
+  const [loadingRebillConfig, setLoadingRebillConfig] = useState(false)
+  const [savingRebillMode, setSavingRebillMode] = useState<StripeModeId | null>(null)
+  const [testingRebillMode, setTestingRebillMode] = useState<StripeModeId | null>(null)
+  const [rebillConnectionFailed, setRebillConnectionFailed] = useState(false)
+  const [disconnectingRebillMode, setDisconnectingRebillMode] = useState<StripeModeId | null>(null)
   const [mercadoPagoConfig, setMercadoPagoConfig] = useState<MercadoPagoPaymentConfig | null>(null)
   const [mercadoPagoSubscriptionTestCredentials, setMercadoPagoSubscriptionTestCredentials] = useState<MercadoPagoSubscriptionTestCredentials>(emptyMercadoPagoSubscriptionTestCredentials)
   const [loadingMercadoPagoConfig, setLoadingMercadoPagoConfig] = useState(false)
@@ -831,6 +896,7 @@ export const PaymentsConfiguration: React.FC = () => {
     loadConektaConfig()
     loadMercadoPagoConfig()
     loadClipConfig()
+    loadRebillConfig()
     loadWhatsAppAvailability()
     loadPaymentWhatsappTemplates()
   }, [])
@@ -908,6 +974,16 @@ export const PaymentsConfiguration: React.FC = () => {
     status: clipConfig?.configured ? 'connected' : 'available'
   }), [clipConfig?.configured, clipConfig?.mode])
 
+  const rebillGatewayOption: PaymentGatewayOption = useMemo(() => ({
+    id: 'rebill',
+    name: 'Rebill',
+    logo: 'rebill',
+    description: rebillConfig?.configured
+      ? `Listo para checkout Rebill en ${rebillConfig.mode === 'live' ? 'modo en vivo' : 'modo prueba'}.`
+      : 'Configura Rebill para pagos únicos con checkout embebido y webhooks automáticos.',
+    status: rebillConfig?.configured ? 'connected' : 'available'
+  }), [rebillConfig?.configured, rebillConfig?.mode])
+
   const gatewayOptions: PaymentGatewayOption[] = [
     ...(highLevelConnected
       ? [{
@@ -928,15 +1004,18 @@ export const PaymentsConfiguration: React.FC = () => {
         : `Conecta Mercado Pago para usar ${paymentMode === 'live' ? 'cobros reales' : 'tarjetas de prueba en links de pago'}.`,
       status: mercadoPagoConfig?.configured ? 'connected' : 'available'
     },
-    clipGatewayOption
+    clipGatewayOption,
+    rebillGatewayOption
   ]
 
   const mercadoPagoWebhookEndpoints = mercadoPagoConfig?.webhookEndpoints || []
   const clipWebhookEndpoints = clipConfig?.webhookEndpoints || []
+  const rebillWebhookEndpoints = rebillConfig?.webhookEndpoints || []
   const stripeConnected = Boolean(stripeConfig?.configured)
   const conektaConnected = Boolean(conektaConfig?.configured)
   const mercadoPagoConnected = Boolean(mercadoPagoConfig?.configured)
   const clipConnected = Boolean(clipConfig?.configured)
+  const rebillConnected = Boolean(rebillConfig?.configured)
   const stripeModeIsComplete = (mode: StripeModeId) => {
     const values = stripeManualCredentials[mode]
     return Boolean(values.publishableKey.trim() && values.secretKey.trim())
@@ -993,6 +1072,25 @@ export const PaymentsConfiguration: React.FC = () => {
     if (loadingClipConfig) return { label: 'Cargando', variant: 'warning' as const, icon: <Loader2 size={14} className={styles.spinIcon} /> }
     if (clipConfigurationStatus === 'connection_failed') return { label: 'Revisar clave', variant: 'warning' as const, icon: <AlertTriangle size={14} /> }
     if (clipActiveModeConfigured) return { label: 'Configurado', variant: 'success' as const, icon: <ShieldCheck size={14} /> }
+    return { label: 'Sin configurar', variant: 'neutral' as const, icon: <KeyRound size={14} /> }
+  })()
+  const rebillModeIsComplete = (mode: StripeModeId) => {
+    const values = rebillManualCredentials[mode]
+    return Boolean(values.publicKey.trim() && values.secretKey.trim())
+  }
+  const rebillModeIsSaved = (mode: StripeModeId) => Boolean(
+    rebillConfig?.modeConnections?.[mode]?.configured ||
+    (rebillConfig?.configured && rebillConfig.mode === mode)
+  )
+  const rebillModeCanSave = (mode: StripeModeId) => rebillModeIsComplete(mode)
+  const rebillActiveModeConfigured = rebillModeIsSaved(paymentMode)
+  const rebillConfigurationStatus = rebillConnectionFailed
+    ? 'connection_failed'
+    : rebillConnected ? 'configured_manually' : 'not_configured'
+  const rebillStatusBadge = (() => {
+    if (loadingRebillConfig) return { label: 'Cargando', variant: 'warning' as const, icon: <Loader2 size={14} className={styles.spinIcon} /> }
+    if (rebillConfigurationStatus === 'connection_failed') return { label: 'Revisar llaves', variant: 'warning' as const, icon: <AlertTriangle size={14} /> }
+    if (rebillActiveModeConfigured) return { label: 'Configurado', variant: 'success' as const, icon: <ShieldCheck size={14} /> }
     return { label: 'Sin configurar', variant: 'neutral' as const, icon: <KeyRound size={14} /> }
   })()
   const mercadoPagoModeIsConnected = (mode: PaymentModeId) => Boolean(
@@ -1491,6 +1589,25 @@ export const PaymentsConfiguration: React.FC = () => {
     }
   }
 
+  const applyRebillConfig = (config: RebillPaymentConfig) => {
+    setRebillConfig(config)
+    setRebillManualCredentials(getRebillModeCredentialsFromConfig(config))
+    setRebillConnectionFailed(false)
+  }
+
+  const loadRebillConfig = async () => {
+    setLoadingRebillConfig(true)
+    try {
+      const config = await rebillPaymentsService.getConfig()
+      applyRebillConfig(config)
+    } catch {
+      setRebillConfig(null)
+      setRebillManualCredentials(emptyRebillModeCredentials)
+    } finally {
+      setLoadingRebillConfig(false)
+    }
+  }
+
   const handlePaymentModeChange = async (nextMode: PaymentModeId) => {
     if (nextMode === paymentMode || savingPaymentMode) return
 
@@ -1519,7 +1636,8 @@ export const PaymentsConfiguration: React.FC = () => {
         loadStripeConfig(),
         loadConektaConfig(),
         loadMercadoPagoConfig(),
-        loadClipConfig()
+        loadClipConfig(),
+        loadRebillConfig()
       ])
       invalidateIntegrationsStatus()
       showToast('success', 'Modo de pasarelas actualizado', `Los nuevos cobros usarán ${paymentModeLabels[nextMode].title.toLowerCase()}.`)
@@ -1608,8 +1726,29 @@ export const PaymentsConfiguration: React.FC = () => {
     }))
   }
 
+  const buildRebillModeConfigPayload = (mode: StripeModeId, modeValues: RebillModeCredentials = rebillManualCredentials[mode]): SaveRebillPaymentConfigPayload => {
+    return {
+      enabled: true,
+      mode,
+      defaultCurrency: accountCurrency,
+      accountLabel: modeValues.accountLabel.trim(),
+      publicKey: modeValues.publicKey.trim(),
+      secretKey: modeValues.secretKey.trim()
+    }
+  }
+
+  const updateRebillModeCredential = (mode: StripeModeId, key: keyof RebillModeCredentials, value: string) => {
+    setRebillManualCredentials((current) => ({
+      ...current,
+      [mode]: {
+        ...current[mode],
+        [key]: value
+      }
+    }))
+  }
+
   const getGatewaySaveMessage = (
-    gatewayName: 'Stripe' | 'Conekta',
+    gatewayName: 'Stripe' | 'Conekta' | 'Rebill',
     modeTitle: string,
     connection?: GatewayAutomaticConnectionStatus | null
   ) => {
@@ -1809,6 +1948,65 @@ export const PaymentsConfiguration: React.FC = () => {
       showToast('error', 'No se pudo desconectar CLIP', error.message || 'Intenta de nuevo.')
     } finally {
       setDisconnectingClipMode(null)
+    }
+  }
+
+  const handleSaveRebillModeConfig = async (mode: StripeModeId) => {
+    setSavingRebillMode(mode)
+    try {
+      const config = await rebillPaymentsService.saveConfig(buildRebillModeConfigPayload(mode))
+      applyRebillConfig(config)
+      invalidateIntegrationsStatus()
+      showToast('success', 'Rebill guardado', getGatewaySaveMessage('Rebill', rebillModeLabels[mode].title, config.modeConnections?.[mode]))
+    } catch (error: any) {
+      setRebillConnectionFailed(true)
+      showToast('error', 'No se pudo guardar Rebill', error.message || 'Revisa las llaves pk_ y sk_ de Rebill.')
+    } finally {
+      setSavingRebillMode(null)
+    }
+  }
+
+  const handleTestRebillModeConfig = async (mode: StripeModeId) => {
+    setTestingRebillMode(mode)
+    try {
+      const result = await rebillPaymentsService.testConfig(buildRebillModeConfigPayload(mode))
+      setRebillConnectionFailed(false)
+      showToast('success', 'Rebill respondió', `${result.organization?.name || 'La organizacion'} quedó validada en modo ${result.mode === 'live' ? 'en vivo' : 'prueba'}.`)
+    } catch (error: any) {
+      setRebillConnectionFailed(true)
+      showToast('error', 'No se pudo validar Rebill', error.message || 'Revisa que la secret key sea sk_ y pertenezca a Rebill.')
+    } finally {
+      setTestingRebillMode(null)
+    }
+  }
+
+  const handleDisconnectRebillMode = (mode: StripeModeId) => {
+    showConfirm(
+      'Desconectar Rebill',
+      `Se borrarán las llaves de ${rebillModeLabels[mode].title.toLowerCase()} y Rebill dejará de usarse para nuevos cobros en ese modo. Esta acción no se puede deshacer.`,
+      () => disconnectRebillMode(mode),
+      'Desconectar',
+      'Cancelar',
+      undefined,
+      { typeToConfirm: 'DESCONECTAR' }
+    )
+  }
+
+  const disconnectRebillMode = async (mode: StripeModeId) => {
+    setDisconnectingRebillMode(mode)
+    try {
+      const config = await rebillPaymentsService.saveConfig({
+        mode,
+        enabled: false,
+        disconnectMode: true
+      })
+      applyRebillConfig(config)
+      invalidateIntegrationsStatus()
+      showToast('success', 'Rebill desconectado', `${rebillModeLabels[mode].title} dejó de usarse para nuevos cobros.`)
+    } catch (error: any) {
+      showToast('error', 'No se pudo desconectar Rebill', error.message || 'Intenta de nuevo.')
+    } finally {
+      setDisconnectingRebillMode(null)
     }
   }
 
@@ -4051,6 +4249,233 @@ export const PaymentsConfiguration: React.FC = () => {
                   <span>Publica Ristak en una URL HTTPS para generar el endpoint que CLIP pueda llamar.</span>
                 </div>
               )}
+            </div>
+          </div>
+        </Card>
+      )}
+
+      {activeGatewayRoute === 'rebill' && (
+        <Card className={styles.sectionCard}>
+          <div className={styles.sectionHeader}>
+            <div className={styles.gatewaySectionTitle}>
+              <PaymentPlatformLogo platform="rebill" size="lg" decorative />
+              <div>
+                <h2>Rebill</h2>
+                <p>Configura Rebill para pagos únicos con checkout embebido, confirmación server-side y webhooks automáticos.</p>
+              </div>
+            </div>
+            <Badge variant={rebillStatusBadge.variant}>
+              {rebillStatusBadge.icon}
+              {rebillStatusBadge.label}
+            </Badge>
+          </div>
+
+          <div className={styles.stripePanel}>
+            <div className={styles.inlineWarning}>
+              <Info size={16} />
+              <span>La public key pk_ se usa en el checkout del navegador. La secret key sk_ se guarda cifrada en la base de datos y sólo el backend la usa para validar pagos con Rebill.</span>
+            </div>
+
+            <div className={styles.stripeModeGrid}>
+              {stripeModeIds.map((mode) => {
+                const modeCopy = rebillModeLabels[mode]
+                const values = rebillManualCredentials[mode]
+                const savedMode = rebillConfig?.modeConnections?.[mode]
+                const modeSaved = rebillModeIsSaved(mode)
+                const modeIsSaving = savingRebillMode === mode
+                const modeIsTesting = testingRebillMode === mode
+                const modeIsDisconnecting = disconnectingRebillMode === mode
+                const webhookStatus = savedMode?.webhookConfigured
+                  ? 'Configurado'
+                  : savedMode?.webhookStatus === 'pending_public_url'
+                    ? 'Pendiente HTTPS'
+                    : savedMode?.webhookStatus === 'error'
+                      ? 'Revisar'
+                      : 'Pendiente'
+
+                return (
+                  <div key={mode} className={styles.stripeModePanel}>
+                    <div className={styles.stripeModeHeader}>
+                      <div>
+                        <h3>{modeCopy.title}</h3>
+                        <p>{modeCopy.description}</p>
+                      </div>
+                    </div>
+
+                    {modeSaved && (
+                      <div className={styles.connectionSummary}>
+                        <div>
+                          <span>Cuenta</span>
+                          <strong>{savedMode?.accountLabel || rebillConfig?.accountLabel || 'Rebill'}</strong>
+                        </div>
+                        <div>
+                          <span>Public key</span>
+                          <strong>{savedMode?.publicKey || rebillConfig?.publicKey || 'Guardada'}</strong>
+                        </div>
+                        <div>
+                          <span>Secret key</span>
+                          <strong>{savedMode?.secretKeyPreview || rebillConfig?.secretKeyPreview || 'Guardada'}</strong>
+                        </div>
+                        <div>
+                          <span>Webhook</span>
+                          <strong>{webhookStatus}</strong>
+                        </div>
+                      </div>
+                    )}
+
+                    <div className={styles.formGrid}>
+                      {renderField(
+                        'Nombre de la cuenta',
+                        <input
+                          type="text"
+                          value={values.accountLabel}
+                          onChange={(event) => updateRebillModeCredential(mode, 'accountLabel', event.target.value)}
+                          placeholder={mode === 'live' ? 'Rebill en vivo' : 'Rebill prueba'}
+                          autoComplete="off"
+                          spellCheck={false}
+                        />,
+                        'Sólo sirve para identificar esta conexión dentro de Ristak.'
+                      )}
+                      {renderField(
+                        'Public key',
+                        <input
+                          type="text"
+                          value={values.publicKey}
+                          onChange={(event) => updateRebillModeCredential(mode, 'publicKey', event.target.value)}
+                          placeholder={savedMode?.hasPublicKey ? savedMode.publicKey : modeCopy.publicPlaceholder}
+                          autoComplete="off"
+                          spellCheck={false}
+                        />,
+                        'Debe empezar con pk_. Esta llave sí viaja al checkout embebido.'
+                      )}
+                      {renderField(
+                        'Secret key',
+                        <input
+                          type="password"
+                          value={values.secretKey}
+                          onChange={(event) => updateRebillModeCredential(mode, 'secretKey', event.target.value)}
+                          onFocus={(event) => {
+                            if (savedMode?.secretKeyPreview && values.secretKey === savedMode.secretKeyPreview) event.currentTarget.select()
+                          }}
+                          placeholder={savedMode?.hasSecretKey ? savedMode.secretKeyPreview : modeCopy.secretPlaceholder}
+                          autoComplete="new-password"
+                          spellCheck={false}
+                        />,
+                        'Debe empezar con sk_. Ristak la cifra en base de datos y nunca la manda al navegador.'
+                      )}
+                    </div>
+
+                    <div className={styles.stripeModeActions}>
+                      <Button
+                        type="button"
+                        variant="secondary"
+                        size="sm"
+                        onClick={() => handleTestRebillModeConfig(mode)}
+                        disabled={modeIsTesting || modeIsSaving || !rebillModeCanSave(mode)}
+                      >
+                        {modeIsTesting ? (
+                          <>
+                            <Loader2 size={15} className={styles.spinIcon} />
+                            Validando...
+                          </>
+                        ) : (
+                          <>
+                            <ShieldCheck size={15} />
+                            Validar conexión
+                          </>
+                        )}
+                      </Button>
+                      <Button
+                        type="button"
+                        size="sm"
+                        onClick={() => handleSaveRebillModeConfig(mode)}
+                        disabled={modeIsSaving || Boolean(disconnectingRebillMode) || !rebillModeCanSave(mode)}
+                      >
+                        {modeIsSaving ? (
+                          <>
+                            <Loader2 size={15} className={styles.spinIcon} />
+                            Guardando...
+                          </>
+                        ) : (
+                          modeSaved ? 'Guardar cambios' : 'Guardar configuración'
+                        )}
+                      </Button>
+                      {modeSaved && (
+                        <Button
+                          type="button"
+                          variant="secondary"
+                          size="sm"
+                          onClick={() => handleDisconnectRebillMode(mode)}
+                          disabled={modeIsDisconnecting || Boolean(savingRebillMode)}
+                        >
+                          {modeIsDisconnecting ? (
+                            <>
+                              <Loader2 size={15} className={styles.spinIcon} />
+                              Desconectando...
+                            </>
+                          ) : (
+                            <>
+                              <Unplug size={15} />
+                              Desconectar
+                            </>
+                          )}
+                        </Button>
+                      )}
+                    </div>
+                  </div>
+                )
+              })}
+            </div>
+
+            <div className={styles.mercadoPagoMiniSection}>
+              <div className={styles.mercadoPagoMiniTitle}>
+                <Webhook size={16} />
+                <strong>Webhook automático</strong>
+              </div>
+              <p className={styles.mercadoPagoTestGuideNote}>
+                Al guardar llaves válidas, Ristak intenta registrar este webhook en Rebill. Si la app aún no tiene URL HTTPS pública, queda pendiente y se muestra la URL para configurarla manualmente.
+              </p>
+              {rebillWebhookEndpoints.length > 0 ? (
+                <div className={styles.endpointList}>
+                  {rebillWebhookEndpoints.map((endpoint) => (
+                    <div key={`${endpoint.source}-${endpoint.url}`} className={styles.endpointItem}>
+                      <div>
+                        <strong>{endpoint.label}</strong>
+                        <span>{endpoint.url}</span>
+                      </div>
+                      <Button
+                        type="button"
+                        variant="secondary"
+                        size="sm"
+                        leftIcon={<Copy size={15} />}
+                        onClick={() => handleCopyGatewayText(endpoint.url, 'Webhook', 'Rebill')}
+                      >
+                        Copiar
+                      </Button>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <div className={styles.inlineInfo}>
+                  <Info size={16} />
+                  <span>Publica Ristak en una URL HTTPS para que Rebill pueda mandar confirmaciones al backend.</span>
+                </div>
+              )}
+              <div className={styles.mercadoPagoEventStrip}>
+                <div>
+                  <strong>Eventos</strong>
+                  <span>{rebillWebhookEvents.map((item) => item.event).join(', ')}</span>
+                </div>
+                <Button
+                  type="button"
+                  variant="secondary"
+                  size="sm"
+                  leftIcon={<Copy size={15} />}
+                  onClick={() => handleCopyGatewayText(rebillWebhookEventNames, 'Eventos', 'Rebill')}
+                >
+                  Copiar eventos
+                </Button>
+              </div>
             </div>
           </div>
         </Card>

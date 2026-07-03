@@ -28,6 +28,10 @@ import {
   type PublicClipPayment
 } from '@/services/clipPaymentsService'
 import {
+  rebillPaymentsService,
+  type PublicRebillPayment
+} from '@/services/rebillPaymentsService'
+import {
   stripePaymentsService,
   type PublicStripePayment,
   type StripeInstallmentPlan,
@@ -44,7 +48,7 @@ import { DEFAULT_TIMEZONE } from '@/utils/timezone'
 import styles from './PublicPayment.module.css'
 
 type StripePromise = ReturnType<typeof loadStripe>
-type PublicPaymentData = PublicStripePayment | PublicMercadoPagoPayment | PublicConektaPayment | PublicClipPayment
+type PublicPaymentData = PublicStripePayment | PublicMercadoPagoPayment | PublicConektaPayment | PublicClipPayment | PublicRebillPayment
 type DocumentThemeMode = 'light' | 'dark'
 type MercadoPagoBrickController = { unmount?: () => void }
 type MetaPixelFn = ((...args: unknown[]) => void) & {
@@ -101,6 +105,9 @@ type ClipSdkInstance = {
   }
 }
 type ClipSdkConstructor = new (apiKey: string) => ClipSdkInstance
+type RebillCheckoutElement = HTMLElement & {
+  submit?: () => Promise<void>
+}
 type SuccessDetailRow = {
   label: string
   value: React.ReactNode
@@ -168,6 +175,7 @@ const STRIPE_PAYMENT_ELEMENT_OPTIONS: StripePaymentElementOptions = {
 let mercadoPagoSdkPromise: Promise<void> | null = null
 let conektaCheckoutSdkPromise: Promise<void> | null = null
 let clipSdkPromise: Promise<void> | null = null
+let rebillSdkPromise: Promise<void> | null = null
 let metaPixelSdkPromise: Promise<void> | null = null
 const STRIPE_SPANISH_COUNTRIES = new Set([
   'AR', 'BO', 'CL', 'CO', 'CR', 'CU', 'DO', 'EC', 'ES', 'GT', 'HN', 'MX', 'NI', 'PA', 'PE', 'PR', 'PY', 'SV', 'UY', 'VE'
@@ -185,7 +193,7 @@ const printTemplateClassById: Record<PaymentInvoiceTemplateId, string> = {
   ledger: 'printThemeLedger'
 }
 
-type PaymentTestProvider = 'stripe' | 'conekta' | 'mercadopago' | 'clip'
+type PaymentTestProvider = 'stripe' | 'conekta' | 'mercadopago' | 'clip' | 'rebill'
 type PaymentTestCardRow = {
   kind: string
   brand: string
@@ -269,6 +277,7 @@ function resolveGatewayProvider(provider?: string | null): { label: string; logo
   if (normalized.includes('mercado')) return { label: 'Mercado Pago', logo: 'mercadopago' }
   if (normalized.includes('conekta')) return { label: 'Conekta', logo: 'conekta' }
   if (normalized.includes('clip')) return { label: 'CLIP', logo: 'clip' }
+  if (normalized.includes('rebill')) return { label: 'Rebill', logo: 'rebill' }
   return { label: 'Stripe', logo: 'stripe' }
 }
 
@@ -651,6 +660,15 @@ function loadClipSdk() {
   return clipSdkPromise
 }
 
+function loadRebillSdk() {
+  if (typeof window === 'undefined') return Promise.reject(new Error('Rebill solo se puede cargar en el navegador.'))
+  if (window.customElements?.get('rebill-checkout')) return Promise.resolve()
+  if (!rebillSdkPromise) {
+    rebillSdkPromise = import('rebill').then(() => undefined)
+  }
+  return rebillSdkPromise
+}
+
 function ensureMetaPixelStub() {
   if (typeof window === 'undefined') return
   if (window.fbq) return
@@ -803,6 +821,44 @@ function normalizeClipStatusMessage(status?: string, statusDetail?: unknown, pen
 function normalizeClipErrorMessage(error: unknown) {
   const message = String((error as any)?.message || error || '').trim()
   return message || 'No se pudo completar el pago con CLIP. Revisa los datos e intenta otra vez.'
+}
+
+function isRebillPaidStatus(status?: string) {
+  return ['approved', 'paid', 'succeeded', 'success', 'completed', 'complete', 'fulfilled']
+    .includes(String(status || '').toLowerCase())
+}
+
+function isRebillPendingStatus(status?: string) {
+  return ['pending', 'authorized', 'processing', 'pending_customer_charge']
+    .includes(String(status || '').toLowerCase())
+}
+
+function normalizeRebillStatusMessage(status?: string, statusDetail?: unknown) {
+  const normalized = String(status || '').toLowerCase()
+  if (isRebillPaidStatus(normalized)) {
+    return { kind: 'info' as const, text: 'Confirmando tu pago…' }
+  }
+  if (isRebillPendingStatus(normalized)) {
+    return { kind: 'info' as const, text: 'Rebill está procesando el pago. Esta página se actualizará cuando se confirme.' }
+  }
+
+  const detailText = typeof statusDetail === 'string'
+    ? statusDetail
+    : typeof statusDetail === 'object' && statusDetail
+      ? String((statusDetail as any).message || (statusDetail as any).code || '').trim()
+      : ''
+
+  return {
+    kind: 'error' as const,
+    text: detailText
+      ? `Rebill rechazó el pago: ${detailText}. Revisa los datos o intenta con otra tarjeta.`
+      : 'Rebill rechazó el pago. Revisa los datos o intenta con otra tarjeta.'
+  }
+}
+
+function normalizeRebillErrorMessage(error: unknown) {
+  const message = String((error as any)?.message || error || '').trim()
+  return message || 'No se pudo completar el pago con Rebill. Revisa los datos e intenta otra vez.'
 }
 
 function normalizeMercadoPagoCardErrorMessage(error: unknown) {
@@ -2346,6 +2402,193 @@ const ClipCardPaymentForm: React.FC<{
   )
 }
 
+const RebillCheckoutForm: React.FC<{
+  payment: PublicRebillPayment
+  onPaid: () => Promise<void>
+}> = ({ payment, onPaid }) => {
+  const checkoutRef = useRef<RebillCheckoutElement | null>(null)
+  const onPaidRef = useRef(onPaid)
+  const [loadingCheckout, setLoadingCheckout] = useState(Boolean(payment.publicKey))
+  const [submitting, setSubmitting] = useState(false)
+  const [message, setMessage] = useState('')
+  const [messageKind, setMessageKind] = useState<'info' | 'success' | 'error'>('info')
+  const showSecureNotice = payment.settings?.checkout?.showSecureBadge !== false
+  const isTestMode = payment.paymentMode === 'test'
+
+  useEffect(() => {
+    onPaidRef.current = onPaid
+  }, [onPaid])
+
+  useEffect(() => {
+    if (!payment.publicKey) {
+      setLoadingCheckout(false)
+      setMessageKind('error')
+      setMessage('Rebill no devolvió una public key para montar el checkout seguro.')
+      return
+    }
+
+    let cancelled = false
+    setLoadingCheckout(true)
+    setMessage('')
+
+    loadRebillSdk()
+      .then(() => {
+        if (!cancelled) setLoadingCheckout(false)
+      })
+      .catch((error) => {
+        if (cancelled) return
+        setLoadingCheckout(false)
+        setMessageKind('error')
+        setMessage(normalizeRebillErrorMessage(error))
+      })
+
+    return () => {
+      cancelled = true
+    }
+  }, [payment.publicKey])
+
+  useEffect(() => {
+    if (loadingCheckout) return undefined
+    const element = checkoutRef.current
+    if (!element) return undefined
+
+    const handleReady = () => {
+      setLoadingCheckout(false)
+    }
+
+    const handleSuccess = async (event: Event) => {
+      const detail = (event as CustomEvent<any>).detail || {}
+      const result = detail?.data?.result || detail?.result || {}
+      const rebillPaymentId = String(result.paymentId || result.payment_id || '').trim()
+
+      if (!rebillPaymentId) {
+        setMessageKind('error')
+        setMessage('Rebill aprobó el intento, pero no devolvió el paymentId para confirmar el pago.')
+        return
+      }
+
+      setSubmitting(true)
+      setMessageKind('info')
+      setMessage('Rebill autorizó el pago. Confirmando contra el servidor antes de cerrar.')
+
+      try {
+        const response = await rebillPaymentsService.confirmPublicPayment(payment.publicPaymentId, {
+          rebillPaymentId
+        })
+        const confirmedStatus = response.payment?.status || response.status
+        const statusMessage = normalizeRebillStatusMessage(confirmedStatus, response.statusDetail)
+        setMessageKind(statusMessage.kind)
+        setMessage(statusMessage.text)
+        if (isRebillPaidStatus(confirmedStatus) || isRebillPendingStatus(confirmedStatus)) {
+          await onPaidRef.current()
+        }
+      } catch (confirmError) {
+        setMessageKind('error')
+        setMessage(normalizeRebillErrorMessage(confirmError))
+      } finally {
+        setSubmitting(false)
+      }
+    }
+
+    const handleError = (event: Event) => {
+      const detail = (event as CustomEvent<any>).detail || {}
+      const reason = detail?.data?.result?.statusDetail ||
+        detail?.data?.error?.error?.message ||
+        detail?.error?.message ||
+        detail?.message
+      setMessageKind('error')
+      setMessage(normalizeRebillErrorMessage(reason))
+    }
+
+    const handleSuccessRedirect = () => {
+      setMessageKind('info')
+      setMessage('Rebill está abriendo una validación externa. Al volver, esta página refrescará el estado del pago.')
+    }
+
+    element.addEventListener('ready', handleReady)
+    element.addEventListener('success', handleSuccess)
+    element.addEventListener('error', handleError)
+    element.addEventListener('successRedirect', handleSuccessRedirect)
+
+    return () => {
+      element.removeEventListener('ready', handleReady)
+      element.removeEventListener('success', handleSuccess)
+      element.removeEventListener('error', handleError)
+      element.removeEventListener('successRedirect', handleSuccessRedirect)
+    }
+  }, [loadingCheckout, payment.publicPaymentId])
+
+  const messageClassName = [
+    styles.providerMessage,
+    messageKind === 'success' ? styles.messageSuccess : '',
+    messageKind === 'error' ? styles.messageError : ''
+  ].filter(Boolean).join(' ')
+  const instantProduct = payment.instantProduct || {
+    name: [{ language: 'es' as const, text: payment.title || 'Pago Ristak' }],
+    description: payment.description ? [{ language: 'es' as const, text: payment.description }] : [],
+    amount: payment.amount,
+    currency: payment.currency,
+    metadata: {
+      publicPaymentId: payment.publicPaymentId,
+      provider: 'rebill'
+    }
+  }
+  const display = {
+    successPage: false,
+    sandboxMode: isTestMode
+  }
+  const checkoutProps: Record<string, unknown> = {
+    ref: checkoutRef,
+    'public-key': payment.publicKey || '',
+    'instant-product': JSON.stringify(instantProduct),
+    language: 'es',
+    display: JSON.stringify(display),
+    'one-click-checkout': 'true'
+  }
+  if (payment.customerInformation) {
+    checkoutProps['customer-information'] = JSON.stringify(payment.customerInformation)
+  }
+
+  return (
+    <div className={styles.stripeBox}>
+      <div className={styles.clipCardShell}>
+        {loadingCheckout && (
+          <div className={styles.brickLoading}>
+            <Loader2 size={18} className={styles.spin} />
+            <span>Cargando checkout seguro</span>
+          </div>
+        )}
+        <div className={styles.clipCardFrame}>
+          {React.createElement('rebill-checkout', checkoutProps)}
+        </div>
+      </div>
+
+      {showSecureNotice && (
+        <p className={styles.cardAuthorizationNotice}>
+          <ShieldCheck size={16} />
+          <span>Rebill captura los datos sensibles en su checkout seguro. Ristak confirma el pago con la API antes de marcarlo como cobrado.</span>
+        </p>
+      )}
+
+      {message && (
+        <p className={messageClassName}>
+          {messageKind === 'error' ? <AlertCircle size={16} /> : messageKind === 'success' ? <CheckCircle2 size={16} /> : <Loader2 size={16} className={styles.spin} />}
+          <span>{message}</span>
+        </p>
+      )}
+
+      {submitting && (
+        <p className={styles.providerMessage}>
+          <Loader2 size={16} className={styles.spin} />
+          <span>Validando el resultado con Rebill.</span>
+        </p>
+      )}
+
+      {isTestMode && <PaymentTestHelper provider="rebill" />}
+    </div>
+  )
+}
+
 export const PublicPaymentGatewayReturn: React.FC = () => {
   const [searchParams] = useSearchParams()
   const { theme } = useTheme()
@@ -2451,14 +2694,15 @@ export const PublicPayment: React.FC = () => {
   const isMercadoPagoPayment = payment?.provider === 'mercadopago'
   const isConektaPayment = payment?.provider === 'conekta'
   const isClipPayment = payment?.provider === 'clip'
+  const isRebillPayment = payment?.provider === 'rebill'
   const stripePayment = payment?.provider === 'stripe' ? payment : null
   const paymentPlan = stripePayment?.paymentPlan || null
   const subscriptionStart = payment && 'subscriptionStart' in payment ? payment.subscriptionStart : null
   const isSubscriptionStart = Boolean(subscriptionStart?.subscriptionId)
   const shouldSavePaymentMethod = Boolean(stripePayment?.contact?.id || paymentPlan?.cardSetupRequired)
   const isControlledStripeInstallments = Boolean(stripePayment && stripeControlledInstallmentsEnabled(stripePayment) && !isSubscriptionStart && !paymentPlan?.cardSetupRequired)
-  const providerLabel = isMercadoPagoPayment ? 'Mercado Pago' : isConektaPayment ? 'Conekta' : isClipPayment ? 'CLIP' : 'Stripe'
-  const providerLogo: PaymentPlatformLogoId = isMercadoPagoPayment ? 'mercadopago' : isConektaPayment ? 'conekta' : isClipPayment ? 'clip' : 'stripe'
+  const providerLabel = isMercadoPagoPayment ? 'Mercado Pago' : isConektaPayment ? 'Conekta' : isClipPayment ? 'CLIP' : isRebillPayment ? 'Rebill' : 'Stripe'
+  const providerLogo: PaymentPlatformLogoId = isMercadoPagoPayment ? 'mercadopago' : isConektaPayment ? 'conekta' : isClipPayment ? 'clip' : isRebillPayment ? 'rebill' : 'stripe'
 
   const stripePromise = useMemo<StripePromise | null>(() => {
     if (!stripePayment) return null
@@ -2506,7 +2750,11 @@ export const PublicPayment: React.FC = () => {
           try {
             return await clipPaymentsService.getPublicPayment(id)
           } catch {
-            throw stripeError
+            try {
+              return await rebillPaymentsService.getPublicPayment(id)
+            } catch {
+              throw stripeError
+            }
           }
         }
       }
@@ -3033,6 +3281,8 @@ export const PublicPayment: React.FC = () => {
                         ? (isSubscriptionStart
                             ? 'Captura la tarjeta en el formulario seguro de CLIP para pagar el inicio de la suscripción.'
                             : 'Captura la tarjeta en el formulario seguro de CLIP sin salir de esta página.')
+                        : isRebillPayment
+                          ? 'Completa el checkout seguro de Rebill sin salir de esta página.'
                       : isCardSetupPlan
                         ? 'Stripe abrirá el formulario seguro para autorizar el calendario mostrado.'
                         : isSubscriptionStart
@@ -3089,6 +3339,11 @@ export const PublicPayment: React.FC = () => {
               />
             ) : isClipPayment ? (
               <ClipCardPaymentForm
+                payment={payment}
+                onPaid={handlePaid}
+              />
+            ) : isRebillPayment ? (
+              <RebillCheckoutForm
                 payment={payment}
                 onPaid={handlePaid}
               />

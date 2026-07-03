@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { getIntegrationsStatus, readCachedIntegrationsStatus, type IntegrationsStatus } from '@/services/integrationsService'
 
-export type PaymentGatewayProvider = 'stripe' | 'conekta' | 'mercadopago' | 'clip'
+export type PaymentGatewayProvider = 'stripe' | 'conekta' | 'mercadopago' | 'clip' | 'rebill'
 
 interface PaymentGatewayCapabilities {
   loading: boolean
@@ -10,6 +10,7 @@ interface PaymentGatewayCapabilities {
   conektaConnected: boolean
   mercadoPagoConnected: boolean
   clipConnected: boolean
+  rebillConnected: boolean
   hasConnectedPaymentGateway: boolean
   canUsePaymentPlans: boolean
   canUseSubscriptions: boolean
@@ -24,6 +25,7 @@ interface PaymentGatewayConnectionState {
   conektaConnected: boolean
   mercadoPagoConnected: boolean
   clipConnected: boolean
+  rebillConnected: boolean
 }
 
 function getConnectionStateFromStatus(status: IntegrationsStatus | null, loading: boolean): PaymentGatewayConnectionState {
@@ -33,7 +35,8 @@ function getConnectionStateFromStatus(status: IntegrationsStatus | null, loading
     stripeConnected: Boolean(status?.stripe?.connected),
     conektaConnected: Boolean(status?.conekta?.connected),
     mercadoPagoConnected: Boolean(status?.mercadopago?.connected),
-    clipConnected: Boolean(status?.clip?.connected)
+    clipConnected: Boolean(status?.clip?.connected),
+    rebillConnected: Boolean(status?.rebill?.connected)
   }
 }
 
@@ -72,7 +75,8 @@ export function usePaymentGatewayCapabilities(): PaymentGatewayCapabilities {
       stripeConnected,
       conektaConnected,
       mercadoPagoConnected,
-      clipConnected
+      clipConnected,
+      rebillConnected
     } = connectionState
     const planProviders: PaymentGatewayProvider[] = [
       ...(stripeConnected ? ['stripe' as const] : []),
@@ -91,7 +95,8 @@ export function usePaymentGatewayCapabilities(): PaymentGatewayCapabilities {
       conektaConnected,
       mercadoPagoConnected,
       clipConnected,
-      hasConnectedPaymentGateway: stripeConnected || conektaConnected || mercadoPagoConnected || clipConnected,
+      rebillConnected,
+      hasConnectedPaymentGateway: stripeConnected || conektaConnected || mercadoPagoConnected || clipConnected || rebillConnected,
       canUsePaymentPlans: highLevelConnected || planProviders.length > 0,
       canUseSubscriptions: subscriptionProviders.length > 0,
       planProviders,

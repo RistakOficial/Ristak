@@ -111,6 +111,13 @@ export const BASE_VARIABLES: FlowVariable[] = [
   { fieldId: 'payment.status', label: 'Estado de pago', category: 'payment' },
   { fieldId: 'payment.date', label: 'Fecha de pago', category: 'payment' },
   { fieldId: 'payment.id', label: 'ID de pago', category: 'payment' },
+  { fieldId: 'payment.provider', label: 'Pasarela de pago', category: 'payment' },
+  { fieldId: 'payment.public_payment_id', label: 'ID público del pago', category: 'payment' },
+  { fieldId: 'payment.payment_url', label: 'URL del pago', category: 'payment' },
+  { fieldId: 'payment.rebill_payment_id', label: 'Rebill payment ID', category: 'payment' },
+  { fieldId: 'payment.rebill_subscription_id', label: 'Rebill subscription ID', category: 'payment' },
+  { fieldId: 'payment.rebill_customer_id', label: 'Rebill customer ID', category: 'payment' },
+  { fieldId: 'payment.rebill_card_id', label: 'Rebill card ID', category: 'payment' },
 
   // Formularios
   { fieldId: 'form.name', label: 'Nombre del formulario', category: 'form' },

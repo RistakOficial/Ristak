@@ -16,6 +16,7 @@ import { createStripePaymentLink, createStripePaymentPlan, getStripePaymentConfi
 import { createMercadoPagoPaymentLink, getMercadoPagoPaymentConfig } from './mercadoPagoPaymentService.js'
 import { createConektaPaymentLink, createConektaPaymentPlan, getConektaPaymentConfig } from './conektaPaymentService.js'
 import { createClipPaymentLink, getClipPaymentConfig } from './clipPaymentService.js'
+import { createRebillPaymentLink, getRebillPaymentConfig } from './rebillPaymentService.js'
 import { recordAttendanceAttributionSignal } from './appointmentsMerge.js'
 import { triggerWhatsappAppointmentBookedEvent } from './metaWhatsappEventsService.js'
 import { PAYMENT_MODE_LIVE, PAYMENT_MODE_TEST, normalizePaymentMode, nonTestPaymentCondition } from '../utils/paymentMode.js'
@@ -1511,7 +1512,8 @@ const AGENT_PAYMENT_GATEWAY_LABELS = {
   stripe: 'Stripe',
   conekta: 'Conekta',
   mercadopago: 'Mercado Pago',
-  clip: 'CLIP'
+  clip: 'CLIP',
+  rebill: 'Rebill'
 }
 
 const AGENT_PAYMENT_GATEWAY_CAPABILITY_LABELS = {
@@ -1527,6 +1529,7 @@ function normalizeAgentPaymentGatewayId(value) {
   if (normalized === 'conekta') return 'conekta'
   if (['mercadopago', 'mp', 'checkoutpro'].includes(normalized)) return 'mercadopago'
   if (normalized === 'clip') return 'clip'
+  if (normalized === 'rebill') return 'rebill'
   return ''
 }
 
@@ -1560,7 +1563,7 @@ async function getAgentPaymentBaseUrl() {
 
 function mapAgentPaymentGatewayStatus({ id, connected, mode = null, accountLabel = '', issue = '' }) {
   const capabilities = {
-    paymentLinks: id === 'highlevel' || id === 'stripe' || id === 'conekta' || id === 'mercadopago' || id === 'clip',
+    paymentLinks: id === 'highlevel' || id === 'stripe' || id === 'conekta' || id === 'mercadopago' || id === 'clip' || id === 'rebill',
     installmentPlans: id === 'highlevel' || id === 'stripe' || id === 'conekta'
   }
 
@@ -1576,18 +1579,20 @@ function mapAgentPaymentGatewayStatus({ id, connected, mode = null, accountLabel
 }
 
 async function getAgentPaymentGatewaySnapshot() {
-  const [highLevelResult, stripeResult, conektaResult, mercadoPagoResult, clipResult] = await Promise.allSettled([
+  const [highLevelResult, stripeResult, conektaResult, mercadoPagoResult, clipResult, rebillResult] = await Promise.allSettled([
     getHighLevelConfig(),
     getStripePaymentConfig(),
     getConektaPaymentConfig(),
     getMercadoPagoPaymentConfig(),
-    getClipPaymentConfig()
+    getClipPaymentConfig(),
+    getRebillPaymentConfig()
   ])
   const highLevelConfig = highLevelResult.status === 'fulfilled' ? highLevelResult.value : null
   const stripeConfig = stripeResult.status === 'fulfilled' ? stripeResult.value : null
   const conektaConfig = conektaResult.status === 'fulfilled' ? conektaResult.value : null
   const mercadoPagoConfig = mercadoPagoResult.status === 'fulfilled' ? mercadoPagoResult.value : null
   const clipConfig = clipResult.status === 'fulfilled' ? clipResult.value : null
+  const rebillConfig = rebillResult.status === 'fulfilled' ? rebillResult.value : null
   const gateways = [
     mapAgentPaymentGatewayStatus({
       id: 'highlevel',
@@ -1623,6 +1628,13 @@ async function getAgentPaymentGatewaySnapshot() {
       mode: clipConfig?.mode || null,
       accountLabel: clipConfig?.accountLabel || '',
       issue: clipResult.status === 'rejected' ? clipResult.reason?.message : ''
+    }),
+    mapAgentPaymentGatewayStatus({
+      id: 'rebill',
+      connected: Boolean(rebillConfig?.configured),
+      mode: rebillConfig?.mode || null,
+      accountLabel: rebillConfig?.accountLabel || '',
+      issue: rebillResult.status === 'rejected' ? rebillResult.reason?.message : ''
     })
   ]
 
@@ -1641,7 +1653,7 @@ async function selectAgentPaymentGateway(requestedGateway, capability) {
   if (requested && requested !== 'auto') {
     const gateway = snapshot.byId[requested]
     if (!gateway) {
-      return { ok: false, error: 'Pasarela no reconocida. Usa Stripe, Conekta, Mercado Pago, CLIP o GoHighLevel opcional.', snapshot }
+      return { ok: false, error: 'Pasarela no reconocida. Usa Stripe, Conekta, Mercado Pago, CLIP, Rebill o GoHighLevel opcional.', snapshot }
     }
     if (!gateway.capabilities[capability]) {
       return { ok: false, error: `${gateway.label} no soporta ${capabilityLabel} en Ristak todavía.`, snapshot }
@@ -1663,7 +1675,7 @@ async function selectAgentPaymentGateway(requestedGateway, capability) {
       error: `No hay pasarelas conectadas para ${capabilityLabel}. Conecta ${
         capability === 'installmentPlans'
           ? 'Stripe, Conekta o GoHighLevel opcional'
-          : 'Stripe, Conekta, Mercado Pago, CLIP o GoHighLevel opcional'
+          : 'Stripe, Conekta, Mercado Pago, CLIP, Rebill o GoHighLevel opcional'
       } en Configuración > Pagos.`,
       snapshot
     }
@@ -11032,7 +11044,9 @@ async function executeCreateSinglePaymentLink(args = {}, highLevelConnection, co
         ? await createConektaPaymentLink(paymentPayload, { baseUrl })
         : selectedGateway.gateway.id === 'clip'
           ? await createClipPaymentLink(paymentPayload, { baseUrl })
-          : await createMercadoPagoPaymentLink(paymentPayload, { baseUrl })
+          : selectedGateway.gateway.id === 'rebill'
+            ? await createRebillPaymentLink(paymentPayload, { baseUrl })
+            : await createMercadoPagoPaymentLink(paymentPayload, { baseUrl })
     const payment = result.payment || {}
 
     return {
@@ -12184,8 +12198,8 @@ function buildOperationalTools(highLevelConnection, options = {}) {
           productPrice: { type: ['number', 'null'], description: 'Precio del producto seleccionado si el usuario quiere cobrar el precio guardado.' },
           priceAmount: { type: ['number', 'null'], description: 'Alias de productPrice.' },
           priceCurrency: { type: ['string', 'null'], description: 'Moneda del precio seleccionado.' },
-          gateway: { type: ['string', 'null'], enum: ['auto', 'stripe', 'conekta', 'mercadopago', 'clip', 'highlevel', null], description: 'Pasarela solicitada por el usuario. Usa auto/null si no dijo cuál.' },
-          provider: { type: ['string', 'null'], enum: ['auto', 'stripe', 'conekta', 'mercadopago', 'clip', 'highlevel', null], description: 'Alias de gateway.' },
+          gateway: { type: ['string', 'null'], enum: ['auto', 'stripe', 'conekta', 'mercadopago', 'clip', 'rebill', 'highlevel', null], description: 'Pasarela solicitada por el usuario. Usa auto/null si no dijo cuál.' },
+          provider: { type: ['string', 'null'], enum: ['auto', 'stripe', 'conekta', 'mercadopago', 'clip', 'rebill', 'highlevel', null], description: 'Alias de gateway.' },
           dueDate: { type: ['string', 'null'], description: 'Fecha límite YYYY-MM-DD. Si es hoy, usa la fecha local actual.' },
           paymentMethod: { type: ['string', 'null'], enum: ['card', 'payment_link', 'direct_card', 'saved_card', null], description: 'Método de cobro con tarjeta. Usa saved_card sólo si el usuario eligió explícitamente cobrar la tarjeta guardada.' },
           method: { type: ['string', 'null'], enum: ['card', 'payment_link', 'direct_card', 'saved_card', null], description: 'Alias de paymentMethod.' },

@@ -18,7 +18,7 @@ import {
 } from '../../../../../shared/sites/paymentGateContract.js'
 import styles from './PaymentGateControls.module.css'
 
-export type PaymentGateGateway = 'stripe' | 'conekta' | 'mercadopago' | 'clip'
+export type PaymentGateGateway = 'stripe' | 'conekta' | 'mercadopago' | 'clip' | 'rebill'
 
 // Modo por bloque SEGURO: solo puede forzar 'test' (probar sin cobrar aunque la
 // plataforma esté en live). 'inherit' = usa el modo global. Nunca 'live' → imposible
@@ -54,6 +54,7 @@ interface PaymentGateControlsProps {
   value?: Partial<PaymentGateConfig> | null
   onChange: (nextConfig: PaymentGateConfig) => void
   onCommit?: () => void
+  availableGateways?: PaymentGateGateway[]
   title?: string
   description?: string
   currencyFallback?: string
@@ -63,7 +64,8 @@ const gatewayOptions: Array<{ value: PaymentGateGateway; label: string; logo: Pa
   { value: 'stripe', label: 'Stripe', logo: 'stripe' },
   { value: 'conekta', label: 'Conekta', logo: 'conekta' },
   { value: 'mercadopago', label: 'Mercado Pago', logo: 'mercadopago' },
-  { value: 'clip', label: 'CLIP', logo: 'clip' }
+  { value: 'clip', label: 'CLIP', logo: 'clip' },
+  { value: 'rebill', label: 'Rebill', logo: 'rebill' }
 ]
 
 const gatewayValues = new Set<PaymentGateGateway>(gatewayOptions.map(option => option.value))
@@ -142,7 +144,9 @@ const isGatewayConnected = (status: IntegrationsStatus | null, gateway: PaymentG
       ? status.conekta
       : gateway === 'mercadopago'
         ? status.mercadopago
-        : status.clip
+        : gateway === 'clip'
+          ? status.clip
+          : status.rebill
   return Boolean(gatewayStatus?.connected || gatewayStatus?.configured)
 }
 
@@ -150,13 +154,39 @@ export const PaymentGateControls: React.FC<PaymentGateControlsProps> = ({
   value,
   onChange,
   onCommit,
+  availableGateways,
   title = 'Cobro requerido',
   description = 'La persona paga antes de avanzar.',
   currencyFallback = 'MXN'
 }) => {
   const [integrationsStatus, setIntegrationsStatus] = useState<IntegrationsStatus | null>(() => readCachedIntegrationsStatus())
-  const config = useMemo(() => normalizePaymentGateConfig(value, currencyFallback), [currencyFallback, value])
-  const selectedGateway = gatewayOptions.find(option => option.value === config.gateway) || gatewayOptions[0]
+  const allowedGatewayOptions = useMemo(() => {
+    const requested = Array.isArray(availableGateways)
+      ? availableGateways.filter(gateway => gatewayValues.has(gateway))
+      : gatewayOptions.map(option => option.value)
+    const requestedSet = new Set(requested)
+    const filtered = gatewayOptions.filter(option => requestedSet.has(option.value))
+    return filtered.length ? filtered : gatewayOptions
+  }, [availableGateways])
+  const allowedGatewayValues = useMemo(
+    () => new Set<PaymentGateGateway>(allowedGatewayOptions.map(option => option.value)),
+    [allowedGatewayOptions]
+  )
+  const normalizeAllowedGateway = useCallback((gateway: unknown): PaymentGateGateway => {
+    const normalized = normalizeGateway(gateway)
+    return allowedGatewayValues.has(normalized) ? normalized : allowedGatewayOptions[0].value
+  }, [allowedGatewayOptions, allowedGatewayValues])
+  const normalizeAllowedPaymentGateConfig = useCallback((source?: Partial<PaymentGateConfig> | null) => {
+    const normalized = normalizePaymentGateConfig(source, currencyFallback)
+    const gateway = normalizeAllowedGateway(normalized.gateway)
+    return {
+      ...normalized,
+      gateway,
+      msi: MSI_GATEWAYS.has(gateway) ? normalized.msi : { enabled: false, maxInstallments: 0 }
+    }
+  }, [currencyFallback, normalizeAllowedGateway])
+  const config = useMemo(() => normalizeAllowedPaymentGateConfig(value), [normalizeAllowedPaymentGateConfig, value])
+  const selectedGateway = allowedGatewayOptions.find(option => option.value === config.gateway) || allowedGatewayOptions[0]
   const clipControlsMsi = config.gateway === 'clip'
 
   useEffect(() => {
@@ -172,7 +202,7 @@ export const PaymentGateControls: React.FC<PaymentGateControlsProps> = ({
   }, [])
 
   const patchConfig = (patch: Partial<PaymentGateConfig>) => {
-    onChange(normalizePaymentGateConfig({ ...config, ...patch }, currencyFallback))
+    onChange(normalizeAllowedPaymentGateConfig({ ...config, ...patch }))
   }
 
   const commitSoon = () => {
@@ -295,11 +325,11 @@ export const PaymentGateControls: React.FC<PaymentGateControlsProps> = ({
               <CustomSelect
                 value={config.gateway}
                 onValueChange={(gateway) => {
-                  patchConfig({ gateway: normalizeGateway(gateway) })
+                  patchConfig({ gateway: normalizeAllowedGateway(gateway) })
                   commitSoon()
                 }}
                 onBlur={onCommit}
-                options={gatewayOptions.map(option => ({
+                options={allowedGatewayOptions.map(option => ({
                   value: option.value,
                   label: `${option.label} · ${isGatewayConnected(integrationsStatus, option.value) ? 'Conectado' : 'Sin conectar'}`,
                   icon: <PaymentPlatformLogo platform={option.logo} size="sm" decorative className={styles.gatewayLogo} />

@@ -4153,12 +4153,12 @@ const getPaymentGateFromSettings = (settings: Record<string, unknown> = {}, curr
 }
 
 const getPaymentGatewayLabel = (gateway: CommonPaymentGateConfig['gateway']) => (
-  gateway === 'mercadopago' ? 'Mercado Pago' : gateway === 'conekta' ? 'Conekta' : gateway === 'clip' ? 'CLIP' : 'Stripe'
+  gateway === 'mercadopago' ? 'Mercado Pago' : gateway === 'conekta' ? 'Conekta' : gateway === 'clip' ? 'CLIP' : gateway === 'rebill' ? 'Rebill' : 'Stripe'
 )
 
 // Espejo de isPaymentGateEnabled del backend (publicPaymentGateService):
 // habilitado + monto > 0 + pasarela conocida.
-const PAYMENT_GATE_GATEWAYS = new Set<CommonPaymentGateConfig['gateway']>(['stripe', 'conekta', 'mercadopago', 'clip'])
+const PAYMENT_GATE_GATEWAYS = new Set<CommonPaymentGateConfig['gateway']>(['stripe', 'conekta', 'mercadopago', 'clip', 'rebill'])
 
 const isPaymentGateConfigEnabled = (config: CommonPaymentGateConfig) =>
   Boolean(config.enabled && config.amount > 0 && PAYMENT_GATE_GATEWAYS.has(config.gateway))

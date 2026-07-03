@@ -914,6 +914,7 @@ export async function publicSiteHostMiddleware(req, res, next) {
       req.path.startsWith('/api/conekta/public/payments/') ||
       req.path.startsWith('/api/mercadopago/public/payments/') ||
       req.path.startsWith('/api/clip/public/payments/') ||
+      req.path.startsWith('/api/rebill/public/payments/') ||
       req.path === '/snip.js' ||
       req.path === '/collect' ||
       req.path === '/video-event' ||

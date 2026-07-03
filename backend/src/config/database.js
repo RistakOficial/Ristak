@@ -1258,6 +1258,13 @@ const PAYMENT_CLIP_COLUMNS = [
   ['clip_receipt_no', 'TEXT']
 ]
 
+const PAYMENT_REBILL_COLUMNS = [
+  ['rebill_payment_id', 'TEXT'],
+  ['rebill_subscription_id', 'TEXT'],
+  ['rebill_customer_id', 'TEXT'],
+  ['rebill_card_id', 'TEXT']
+]
+
 function isExistingColumnError(err) {
   const message = String(err?.message || '')
   return message.includes('duplicate column') || message.includes('already exists')
@@ -2627,6 +2634,10 @@ async function initTables() {
         conekta_payment_source_id TEXT,
         clip_payment_id TEXT,
         clip_receipt_no TEXT,
+        rebill_payment_id TEXT,
+        rebill_subscription_id TEXT,
+        rebill_customer_id TEXT,
+        rebill_card_id TEXT,
         paid_at DATETIME,
         metadata_json TEXT,
         date DATETIME,
@@ -3880,6 +3891,7 @@ async function initTables() {
         conekta_order_id TEXT,
         conekta_charge_id TEXT,
         clip_payment_id TEXT,
+        rebill_payment_id TEXT,
         notes TEXT,
         created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
         updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
@@ -3968,6 +3980,7 @@ async function initTables() {
         ['conekta_charge_id', 'TEXT'],
         ['conekta_payment_source_id', 'TEXT'],
         ...PAYMENT_CLIP_COLUMNS,
+        ...PAYMENT_REBILL_COLUMNS,
         ['paid_at', 'DATETIME'],
         ['metadata_json', 'TEXT']
       ]
@@ -4026,6 +4039,8 @@ async function initTables() {
         await db.run('CREATE INDEX IF NOT EXISTS idx_payments_conekta_order ON payments(conekta_order_id)')
         await db.run('CREATE INDEX IF NOT EXISTS idx_payments_conekta_charge ON payments(conekta_charge_id)')
         await db.run('CREATE INDEX IF NOT EXISTS idx_payments_clip_payment ON payments(clip_payment_id)')
+        await db.run('CREATE INDEX IF NOT EXISTS idx_payments_rebill_payment ON payments(rebill_payment_id)')
+        await db.run('CREATE INDEX IF NOT EXISTS idx_payments_rebill_subscription ON payments(rebill_subscription_id)')
       } catch (err) {
         if (!err.message.includes('already exists') && !err.message.includes('no such column')) {
           throw err
@@ -4478,6 +4493,14 @@ async function initTables() {
       }
 
       try {
+        await db.run('ALTER TABLE installment_payments ADD COLUMN rebill_payment_id TEXT')
+      } catch (err) {
+        if (!err.message.includes('duplicate column') && !err.message.includes('already exists')) {
+          throw err
+        }
+      }
+
+      try {
         await db.run('ALTER TABLE installment_payments ADD COLUMN notes TEXT')
       } catch (err) {
         if (!err.message.includes('duplicate column') && !err.message.includes('already exists')) {
@@ -4499,6 +4522,7 @@ async function initTables() {
         await db.run('CREATE INDEX IF NOT EXISTS idx_installment_payments_mercadopago_preference ON installment_payments(mercadopago_preference_id)')
         await db.run('CREATE INDEX IF NOT EXISTS idx_installment_payments_conekta_order ON installment_payments(conekta_order_id)')
         await db.run('CREATE INDEX IF NOT EXISTS idx_installment_payments_clip_payment ON installment_payments(clip_payment_id)')
+        await db.run('CREATE INDEX IF NOT EXISTS idx_installment_payments_rebill_payment ON installment_payments(rebill_payment_id)')
       } catch (err) {
         if (!err.message.includes('already exists') && !err.message.includes('no such column') && !err.message.includes('does not exist')) {
           throw err

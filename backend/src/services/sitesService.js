@@ -46,6 +46,7 @@ import {
 import {
   createPaymentGateLink,
   createPaymentGateCharge,
+  getPaymentGateCheckoutDescriptor,
   getPaymentGateCheckoutKeys,
   getPaymentGateStatus,
   isPaymentGateEnabled,
@@ -15705,10 +15706,11 @@ function buildPaymentCheckoutRuntimeScript() {
   <script>
   (function () {
     var STRIPE_JS = 'https://js.stripe.com/v3/';
-    var MP_SDK = 'https://sdk.mercadopago.com/js/v2';
-    var CONEKTA_SDK = 'https://pay.conekta.com/v1.0/js/conekta-checkout.min.js';
-    var CLIP_SDK = 'https://sdk.clip.mx/js/clip-sdk.js';
-    var STATUS_URL = '/api/sites/public/payments/';
+	    var MP_SDK = 'https://sdk.mercadopago.com/js/v2';
+	    var CONEKTA_SDK = 'https://pay.conekta.com/v1.0/js/conekta-checkout.min.js';
+	    var CLIP_SDK = 'https://sdk.clip.mx/js/clip-sdk.js';
+	    var REBILL_SDK = 'https://unpkg.com/rebill@1.17.28/dist/rebill/rebill.esm.js';
+	    var STATUS_URL = '/api/sites/public/payments/';
     var INIT_URL = '/api/sites/public/checkout/init';
     var PAY_URL = '/api/sites/public/checkout/pay';
     // MSI controlado de Stripe: prepare crea/reusa la fila y trae los meses reales de la
@@ -15727,9 +15729,18 @@ function buildPaymentCheckoutRuntimeScript() {
         if (src === CONEKTA_SDK) s.crossOrigin = 'anonymous';
         s.addEventListener('load', done, { once: true });
         s.addEventListener('error', fail, { once: true });
-        document.head.appendChild(s);
-      });
-    }
+	        document.head.appendChild(s);
+	      });
+	    }
+	    function loadRebillSdk() {
+	      if (window.customElements && window.customElements.get('rebill-checkout')) return Promise.resolve();
+	      if (!window.__rstkRebillSdkPromise) {
+	        window.__rstkRebillSdkPromise = import(REBILL_SDK).then(function () {
+	          if (!window.customElements || !window.customElements.get('rebill-checkout')) throw new Error('No se pudo cargar Rebill.');
+	        });
+	      }
+	      return window.__rstkRebillSdkPromise;
+	    }
     function readToken(name) { try { return getComputedStyle(document.body).getPropertyValue(name).trim(); } catch (e) { return ''; } }
     // Stripe Elements (CardElement / appearance) NO acepta color-mix(), var() ni otras
     // funciones CSS en sus colores: si le pasas una, el elemento NO inicializa (no dispara
@@ -15982,10 +15993,11 @@ function buildPaymentCheckoutRuntimeScript() {
       // pagado, corre la acción de éxito.
       postJson(INIT_URL, { siteId: cfg.siteId, blockId: cfg.blockId, pageId: cfg.pageId, paymentPublicId: stored }).then(function (d) {
         if (d.paid) { showLoading(false); if (d.publicPaymentId) root.setAttribute('data-checkout-public-id', d.publicPaymentId); runPostAction(); return; }
-        if (d.provider === 'conekta') return mountConekta(d);
-        if (d.provider === 'mercadopago') return mountMercadoPago(d);
-        if (d.provider === 'clip') return mountClip(d);
-        return mountStripe(d);
+	        if (d.provider === 'conekta') return mountConekta(d);
+	        if (d.provider === 'mercadopago') return mountMercadoPago(d);
+	        if (d.provider === 'clip') return mountClip(d);
+	        if (d.provider === 'rebill') return mountRebill(d);
+	        return mountStripe(d);
       }).catch(function (err) {
         showLoading(false);
         setMessage('error', (err && err.message) || 'No se pudo preparar el pago. Recarga la página.');
@@ -16423,8 +16435,8 @@ function buildPaymentCheckoutRuntimeScript() {
         close.addEventListener('click', function () { cleanup(); setPayBusy(false); setMessage('info', 'Validacion bancaria cerrada. Puedes intentar de nuevo.'); });
         window.addEventListener('message', handleMessage);
       }
-      function mountClip(d) {
-        return loadScript(CLIP_SDK, function () { return !!window.ClipSDK; }).then(function () {
+	      function mountClip(d) {
+	        return loadScript(CLIP_SDK, function () { return !!window.ClipSDK; }).then(function () {
           if (!d.apiKey) throw new Error('CLIP no esta configurado en esta cuenta.');
           var safe = (cfg.blockId || 'clip').replace(/[^a-zA-Z0-9_-]/g, '') || 'clip';
           els.fields.innerHTML = '';
@@ -16477,10 +16489,112 @@ function buildPaymentCheckoutRuntimeScript() {
               onChargeResult(r.publicPaymentId, r.status);
             }).catch(function (e) { setPayBusy(false); setMessage('error', (e && e.message) || 'No se pudo cobrar con CLIP.'); });
           });
-        });
-      }
+	        });
+	      }
 
-      function mountMercadoPago(d) {
+	      function extractRebillPaymentId(event) {
+	        var detail = event && event.detail ? event.detail : {};
+	        var data = detail.data || detail;
+	        var result = data.result || detail.result || {};
+	        var candidates = [
+	          result.paymentId,
+	          result.payment_id,
+	          data.paymentId,
+	          data.payment_id,
+	          data.id,
+	          detail.paymentId,
+	          detail.payment_id
+	        ];
+	        for (var i = 0; i < candidates.length; i++) {
+	          var value = String(candidates[i] || '').trim();
+	          if (value) return value;
+	        }
+	        return '';
+	      }
+	      function mountPreparedRebillCheckout(d, publicPaymentId) {
+	        return loadRebillSdk().then(function () {
+	          if (!d || !d.publicKey || !d.instantProduct) throw new Error('Rebill no devolvio un checkout valido.');
+	          els.fields.innerHTML = '';
+	          var checkout = document.createElement('rebill-checkout');
+	          var display = { successPage: false, sandboxMode: String(d.paymentMode || '').toLowerCase() !== 'live' };
+	          checkout.setAttribute('public-key', d.publicKey);
+	          checkout.setAttribute('language', 'es');
+	          checkout.setAttribute('instant-product', JSON.stringify(d.instantProduct));
+	          checkout.setAttribute('display', JSON.stringify(display));
+	          checkout.setAttribute('one-click-checkout', 'true');
+	          checkout.publicKey = d.publicKey;
+	          checkout.language = 'es';
+	          checkout.instantProduct = d.instantProduct;
+	          checkout.display = display;
+	          checkout.oneClickCheckout = true;
+	          if (d.customerInformation) {
+	            checkout.setAttribute('customer-information', JSON.stringify(d.customerInformation));
+	            checkout.customerInformation = d.customerInformation;
+	          }
+	          checkout.addEventListener('ready', function () {
+	            showLoading(false);
+	            setMessage('info', '');
+	          });
+	          checkout.addEventListener('error', function (event) {
+	            setPayBusy(false);
+	            if (els.pay) els.pay.hidden = false;
+	            var detail = event && event.detail ? event.detail : {};
+	            setMessage('error', detail.message || detail.error || 'Rebill no pudo procesar el pago.');
+	          });
+	          checkout.addEventListener('successRedirect', function (event) {
+	            event.preventDefault && event.preventDefault();
+	          });
+	          checkout.addEventListener('success', function (event) {
+	            var rebillPaymentId = extractRebillPaymentId(event);
+	            if (!rebillPaymentId) {
+	              setPayBusy(false);
+	              setMessage('error', 'Rebill no devolvio un paymentId para confirmar.');
+	              return;
+	            }
+	            setMessage('info', 'Confirmando el pago con Rebill.');
+	            postJson('/api/rebill/public/payments/' + encodeURIComponent(publicPaymentId) + '/confirm', { rebillPaymentId: rebillPaymentId }).then(function (r) {
+	              var status = (r && r.payment && r.payment.status) || r.status;
+	              onChargeResult(publicPaymentId, status);
+	            }).catch(function (e) {
+	              setPayBusy(false);
+	              setMessage('error', (e && e.message) || 'No se pudo confirmar el pago con Rebill.');
+	            });
+	          });
+	          els.fields.appendChild(checkout);
+	          els.fields.hidden = false;
+	          if (els.pay) els.pay.hidden = true;
+	          showLoading(false);
+	        });
+	      }
+      function mountRebill(d) {
+        if (d && d.publicPaymentId && d.instantProduct) {
+          try { sessionStorage.setItem(storageKey, d.publicPaymentId); } catch (e) {}
+          root.setAttribute('data-checkout-public-id', d.publicPaymentId);
+          setMessage('info', 'Reanudando checkout seguro con Rebill.');
+          return mountPreparedRebillCheckout(d, d.publicPaymentId);
+        }
+        showLoading(false);
+        els.fields.hidden = true;
+        els.pay.hidden = false;
+	        payLabel(d.amount, d.currency);
+	        els.pay.addEventListener('click', function () {
+	          if (els.pay.disabled) return;
+	          if (!validateIdentity()) return;
+	          setPayBusy(true);
+	          setMessage('info', 'Preparando checkout seguro con Rebill.');
+	          payCharge({ payer: collectPayer() }).then(function (r) {
+	            var checkout = (r && r.rebillCheckout) || {};
+	            var publicPaymentId = String((r && r.publicPaymentId) || checkout.publicPaymentId || '').trim();
+	            if (!publicPaymentId) throw new Error('No se pudo crear el pago local para Rebill.');
+	            return mountPreparedRebillCheckout(checkout, publicPaymentId);
+	          }).catch(function (e) {
+	            setPayBusy(false);
+	            setMessage('error', (e && e.message) || 'No se pudo abrir Rebill.');
+	          });
+	        });
+	      }
+
+	      function mountMercadoPago(d) {
         return loadScript(MP_SDK, function () { return !!window.MercadoPago; }).then(function () {
           els.fields.hidden = false; showLoading(false);
           if (els.pay) els.pay.hidden = true;
@@ -25561,6 +25675,8 @@ function buildSiteCheckoutMountResponse(paymentGate = {}, context = {}, keys = {
     publicKey: cleanString(keys.publicKey),
     apiKey: cleanString(keys.apiKey),
     paymentMode: cleanString(keys.paymentMode),
+    instantProduct: keys.instantProduct || null,
+    customerInformation: keys.customerInformation || null,
     // Reanudación: si un pago previo (misma sesión) ya está pagado.
     paid: Boolean(keys.paid),
     publicPaymentId: cleanString(keys.publicPaymentId),
@@ -25607,7 +25723,7 @@ async function resolveSiteCheckoutBlock(req, body = {}) {
 // la fila se crea únicamente al cobrar (paySiteCheckout). Si el runtime re-manda un pago
 // previo (misma sesión) ya pagado, responde con el estado para correr la acción de éxito.
 export async function initSitePaymentCheckout(req, body = {}) {
-  const { site, context, paymentGate, expectedBlockId } = await resolveSiteCheckoutBlock(req, body)
+  const { site, context, paymentGate, baseUrl, expectedBlockId } = await resolveSiteCheckoutBlock(req, body)
   enforcePublicSubmitRateLimit(req, `checkout-init:${site.id}:${expectedBlockId}`)
 
   const existing = getBodyPaymentPublicId(body)
@@ -25621,6 +25737,17 @@ export async function initSitePaymentCheckout(req, body = {}) {
     })
     if (pending && pending.paid && sameContext) {
       return buildSiteCheckoutMountResponse(paymentGate, context, { paid: true, publicPaymentId: existing, status: pending.status })
+    }
+    if (pending && !pending.paid && sameContext && paymentGate.gateway === 'rebill') {
+      const rebillCheckout = await getPaymentGateCheckoutDescriptor(existing, { baseUrl })
+      if (rebillCheckout) {
+        return buildSiteCheckoutMountResponse(paymentGate, context, {
+          ...rebillCheckout,
+          provider: 'rebill',
+          publicPaymentId: existing,
+          status: pending.status
+        })
+      }
     }
   }
 
@@ -25716,11 +25843,23 @@ export async function paySiteCheckout(req, body = {}) {
   })
   const publicPaymentId = result.publicPaymentId
 
+  if (paymentGate.gateway === 'rebill' && !cleanString(body.rebillPaymentId || body.rebill_payment_id || body.paymentId || body.payment_id)) {
+    const rebillCheckout = await getPaymentGateCheckoutDescriptor(publicPaymentId, { baseUrl })
+    return {
+      publicPaymentId,
+      provider: 'rebill',
+      status: cleanString(rebillCheckout?.status || 'pending'),
+      rebillCheckout,
+      paidMessage: paymentGate.paidMessage
+    }
+  }
+
   let charge
   try {
     charge = await createPaymentGateCharge(publicPaymentId, paymentGate.gateway, {
       tokenId: cleanString(body.tokenId || body.token_id),
       token: cleanString(body.token),
+      rebillPaymentId: cleanString(body.rebillPaymentId || body.rebill_payment_id || body.paymentId || body.payment_id),
       paymentMethodId: cleanString(body.paymentMethodId || body.payment_method_id),
       issuerId: cleanString(body.issuerId || body.issuer_id),
       installments: body.installments,
@@ -25740,6 +25879,7 @@ export async function paySiteCheckout(req, body = {}) {
     provider: charge.provider,
     clientSecret: cleanString(charge.clientSecret),
     clipPaymentId: cleanString(charge.clipPaymentId),
+    rebillPaymentId: cleanString(charge.rebillPaymentId),
     pendingAction: charge.pendingAction || null,
     status: cleanString(charge.status),
     statusDetail: cleanString(charge.statusDetail),
