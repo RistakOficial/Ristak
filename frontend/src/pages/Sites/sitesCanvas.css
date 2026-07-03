@@ -137,39 +137,10 @@ html body .rstkCanvas.rstkPopupEditorHost {
 .rstkCanvas.rstk-kind-landing .rstk-form { gap: 0; }
 .rstkCanvas.rstk-kind-form .rstk-form { font-family: var(--rstk-form-font, var(--rstk-font)); }
 
-/* ============================================================
- * Mockup de media vacía (imagen / video sin URL) — SOLO en el editor.
- * ALLOWED-DIVERGENCE: da un placeholder profesional (marco punteado + ícono)
- * mientras el usuario no ha puesto la imagen/video, en vez de un texto pelón.
- * ============================================================ */
-.rstkCanvas .rstk-media-empty-mock {
-  min-height: 0;
-  aspect-ratio: 16 / 9;
-  width: 100%;
-  display: grid;
-  place-content: center;
-  justify-items: center;
-  gap: 10px;
-  padding: 24px;
-  border: 2px dashed var(--rstk-input-border, var(--rstk-border));
-  border-radius: var(--rstk-media-radius, var(--rstk-block-radius, var(--rstk-radius)));
-  background: color-mix(in srgb, var(--rstk-ink) 4%, transparent);
-  color: var(--rstk-muted);
-  font-size: .9rem;
-  font-weight: 500;
-}
-.rstkCanvas .rstk-media-empty-mock .rstk-media-empty-icon {
-  display: grid;
-  place-items: center;
-  width: 56px;
-  height: 56px;
-  border-radius: 14px;
-  background: color-mix(in srgb, var(--rstk-accent) 12%, transparent);
-  color: var(--rstk-accent);
-}
-/* El video reusa el círculo .rstk-play (ya con fondo de acento); solo ajustamos el
-   marco a 16:9 con el mismo look punteado. */
-.rstkCanvas .rstk-media-empty-video .rstk-play { box-shadow: 0 8px 22px color-mix(in srgb, var(--rstk-accent) 30%, transparent); }
+/* Mockup de media vacía (imagen / video sin URL): las reglas
+ * .rstk-media-empty-mock / -icon / -video viven ahora en RSTK_BASE_CSS
+ * (shared/sites/renderContract.js) para que apliquen IGUAL en editor y
+ * publicado; el editor las recibe rescopeadas a .rstkCanvas. */
 
 /* ============================================================
  * Checkout: mocks del editor (el publicado monta el Payment Element real)

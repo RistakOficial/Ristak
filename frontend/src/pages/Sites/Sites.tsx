@@ -2032,6 +2032,12 @@ const blockIcons: Partial<Record<SiteBlockType, React.ReactNode>> = {
 const isChoiceBlock = (blockType: SiteBlockType) =>
   blockType === 'dropdown' || blockType === 'radio' || blockType === 'checkboxes'
 
+// Campos cuyo render NO usa block.placeholder: radio/checkboxes (opciones) y
+// date (<input type=date> ignora placeholder en todos los navegadores). El
+// dropdown SÍ lo usa (texto de la opción vacía "Selecciona una opción").
+const fieldUsesPlaceholder = (blockType: SiteBlockType) =>
+  blockType !== 'radio' && blockType !== 'checkboxes' && blockType !== 'date'
+
 const nativeBorderBlockTypes = new Set<SiteBlockType>(['hero', 'section', 'cta', 'benefits', 'testimonials', 'services', 'faq', 'form_embed', 'image', 'video', 'countdown', 'embed', 'calendar_embed', 'payment'])
 const surfaceSelectionBlockTypes = new Set<SiteBlockType>(['form_embed', 'calendar_embed', 'embed', 'image', 'video'])
 
@@ -6441,7 +6447,14 @@ const defaultBlockPayload = (blockType: SiteBlockType, siteOrId: PublicSite | st
     blockType,
     label,
     content: isField ? '' : label,
-    placeholder: isField ? (blockType === 'dropdown' ? 'Selecciona una opción' : 'Escribe aquí') : '',
+    // Campos con fallback tipado en el render (phone→'Número', currency→'0.00',
+    // etc.) nacen con placeholder VACÍO para no pisar ese hint; el resto usa
+    // 'Escribe aquí' y el dropdown su opción vacía.
+    placeholder: isField
+      ? (blockType === 'dropdown'
+        ? 'Selecciona una opción'
+        : ['currency', 'phone', 'number', 'date'].includes(blockType) ? '' : 'Escribe aquí')
+      : '',
     // Los campos del formulario nacen obligatorios por defecto (el autor puede
     // desmarcar "Campo requerido"). Los bloques de contenido ignoran este flag.
     required: isField,
@@ -7444,7 +7457,7 @@ function FormEmbedEditorPanel({
                 </label>
               )}
 
-              {!isChoiceBlock(activeField.blockType) && (
+              {fieldUsesPlaceholder(activeField.blockType) && (
                 <label className={styles.field}>
                   <span>Texto dentro del campo</span>
                   <input value={activeField.placeholder} onChange={(event) => patchActiveField({ placeholder: event.target.value })} onBlur={onSave} />
@@ -29683,9 +29696,9 @@ const TypographyFormatInspector: React.FC<{
         </CustomSelect>
         <DimensionField
           label=""
-          value={getSettingNumber(settings, fontSizeKey, fontSizeFallback, isButton ? 10 : 10, isButton ? 48 : 120)}
-          min={isButton ? 10 : 10}
-          max={isButton ? 48 : 120}
+          value={getSettingNumber(settings, fontSizeKey, fontSizeFallback, isButton ? 11 : 10, isButton ? 32 : 120)}
+          min={isButton ? 11 : 10}
+          max={isButton ? 32 : 120}
           unit="px"
           onChange={(value) => onPatchSettings({ [fontSizeKey]: value })}
           onCommit={onSave}
@@ -29818,9 +29831,12 @@ const InlineBlockStyleControls: React.FC<{
   const supportsField = showDesignControls && !surfaceOnly && fieldBlockTypes.has(block.blockType)
   const isHardEmbed = block.blockType === 'embed' || block.blockType === 'calendar_embed'
   const isCalendarEmbed = block.blockType === 'calendar_embed'
-  const supportsTextStyle = showTypographyControls && !surfaceOnly && (fieldBlockTypes.has(block.blockType) || isSection || ['headline', 'title', 'subheading', 'subtitle', 'description', 'text', 'countdown', 'hero', 'cta', 'benefits', 'testimonials', 'services', 'faq', 'form_embed', 'social_profile', 'payment'].includes(block.blockType))
+  const supportsTextStyle = showTypographyControls && !surfaceOnly && (fieldBlockTypes.has(block.blockType) || isSection || ['headline', 'title', 'subheading', 'subtitle', 'description', 'text', 'countdown', 'hero', 'cta', 'benefits', 'testimonials', 'services', 'faq', 'form_embed', 'social_profile', 'payment', 'header_panel', 'footer_panel'].includes(block.blockType))
   const supportsMedia = showDesignControls && !surfaceOnly && (block.blockType === 'image' || block.blockType === 'video')
-  const supportsCards = showDesignControls && !surfaceOnly && ['benefits', 'testimonials', 'services', 'faq'].includes(block.blockType)
+  // benefits se renderiza como checklist (.rstk-check-*), que NO consume las card
+  // vars (--rstk-list-columns/--rstk-card-*): dejarlo aquí pintaba 6 controles
+  // inertes. Solo los que se pintan como grid de tarjetas los usan.
+  const supportsCards = showDesignControls && !surfaceOnly && ['testimonials', 'services', 'faq'].includes(block.blockType)
   const supportsCountdown = showDesignControls && !surfaceOnly && block.blockType === 'countdown'
   const textSectionTitle = mode === 'typography' ? 'Formato' : 'Texto'
   const defaultBorderWidth = getBlockBorderWidthFallback(site, block)
@@ -29955,11 +29971,11 @@ const InlineBlockStyleControls: React.FC<{
               onCommit={onSave}
             />
             <DimensionField
-              label="Tamano texto"
-              value={getSettingNumber(settings, 'buttonFontSize', 16, 11, 32)}
-              min={11}
-              max={32}
-              onChange={(value) => onPatchSettings({ buttonFontSize: value })}
+              label="Alto botón"
+              value={getSettingNumber(settings, 'buttonHeight', 54, 34, 88)}
+              min={34}
+              max={88}
+              onChange={(value) => onPatchSettings({ buttonHeight: value })}
               onCommit={onSave}
             />
           </div>
@@ -30230,7 +30246,21 @@ const InlineBlockStyleControls: React.FC<{
             onChange={onPatchSettings}
             onCommit={onSave}
           />
-          {!isHardEmbed && (
+          {block.blockType === 'embed' && (
+            <DimensionField
+              label="Alto"
+              value={getSettingNumber(settings, 'embedHeight', 360, EMBED_MIN_HEIGHT, EMBED_MAX_HEIGHT)}
+              min={EMBED_MIN_HEIGHT}
+              max={EMBED_MAX_HEIGHT}
+              unit="px"
+              onChange={(value) => onPatchSettings({ embedHeight: value })}
+              onCommit={onSave}
+            />
+          )}
+          {/* El embed genérico SÍ consume fondo/borde/esquinas (.rstk-embed en el
+              contrato); antes se ocultaban por !isHardEmbed. calendar_embed tiene
+              sus propios controles (CalendarEmbedDesignControls). */}
+          {!isCalendarEmbed && (
             <>
               <ColorField
                 label={isSection ? 'Color de la franja' : 'Color de fondo'}
@@ -31854,7 +31884,7 @@ const CanvasPreviewBlock: React.FC<CanvasPreviewBlockProps> = ({
           className="rstk-site-panel-copy"
           multiline={!isHeader}
           value={block.content}
-          placeholder={isHeader ? (block.label || 'Tu marca') : 'Tu información esta protegida.'}
+          placeholder={isHeader ? (block.label || 'Tu marca') : 'Tu información está protegida.'}
           placeholderAsContent
           disabled={!editable}
           onChange={(value) => patchBlock({ content: value })}
@@ -31900,7 +31930,7 @@ const CanvasPreviewBlock: React.FC<CanvasPreviewBlockProps> = ({
 
   if (['subheading', 'subtitle', 'description'].includes(block.blockType)) {
     return (
-      <InlineEditable as="p" className="rstk-subheading" multiline value={block.content} placeholder={block.label || 'Subtítulo'} placeholderAsContent={Boolean(block.label)} disabled={!editable} onChange={(value) => patchBlock({ content: value })} onCommit={save} />
+      <InlineEditable as="p" className="rstk-subheading" multiline value={block.content} placeholder={block.label || (block.blockType === 'description' ? 'Descripción' : 'Subtítulo')} placeholderAsContent={Boolean(block.label)} disabled={!editable} onChange={(value) => patchBlock({ content: value })} onCommit={save} />
     )
   }
 
@@ -32201,7 +32231,7 @@ const CanvasPreviewBlock: React.FC<CanvasPreviewBlockProps> = ({
     const items = getCanvasItems(settings)
     return (
       <section className="rstk-section-list rstk-checklist">
-        <InlineEditable as="h2" value={block.content} placeholder={block.label || 'Título de seccion'} disabled={!editable} onChange={(value) => patchBlock({ content: value })} onCommit={save} />
+        <InlineEditable as="h2" value={block.content} placeholder={block.label || 'Título de sección'} placeholderAsContent={Boolean(block.label)} disabled={!editable} onChange={(value) => patchBlock({ content: value })} onCommit={save} />
         <ul className="rstk-check-list">
           {(items.length ? items : [{ title: 'Agrega elementos en el panel', text: '', author: '' }]).map((item, index) => {
             const tone = getItemTone(item)
@@ -32209,7 +32239,7 @@ const CanvasPreviewBlock: React.FC<CanvasPreviewBlockProps> = ({
             const text = stripToneMarker(item.text)
             return (
               <li key={index} className={`rstk-check rstk-check-${tone}`}>
-                <span className="rstk-check-icon" aria-hidden="true">{tone === 'con' ? <X size={15} /> : <Check size={15} />}</span>
+                <span className="rstk-check-icon" aria-hidden="true">{tone === 'con' ? <X size={16} strokeWidth={2.6} /> : <Check size={16} strokeWidth={2.6} />}</span>
                 <span className="rstk-check-body">
                   {title && <strong>{title}</strong>}
                   {text && <span>{text}</span>}
@@ -32226,7 +32256,7 @@ const CanvasPreviewBlock: React.FC<CanvasPreviewBlockProps> = ({
     const items = getCanvasItems(settings)
     return (
       <section className="rstk-section-list">
-        <InlineEditable as="h2" value={block.content} placeholder={block.label || 'Título de seccion'} disabled={!editable} onChange={(value) => patchBlock({ content: value })} onCommit={save} />
+        <InlineEditable as="h2" value={block.content} placeholder={block.label || 'Título de sección'} placeholderAsContent={Boolean(block.label)} disabled={!editable} onChange={(value) => patchBlock({ content: value })} onCommit={save} />
         <div className="rstk-list-grid">
           {(items.length ? items : [{ title: 'Elemento', text: 'Agrega elementos en el panel', author: '' }]).map((item, index) => (
             <article key={index}>
@@ -36138,7 +36168,7 @@ const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
           : block.blockType === 'cta'
             ? 'Título'
             : hasListCopy
-              ? 'Título de seccion'
+              ? 'Título de sección'
               : block.blockType === 'countdown'
                 ? 'Título del contador'
               : isPrimaryTextBlock
@@ -36184,11 +36214,13 @@ const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
     <>
       <AccordionSection id="field-campo" title="Campo">
         {systemFieldPreset ? (
-          <label className={styles.field}>
-            <span>Texto dentro del campo</span>
-            <input value={block.placeholder} onChange={(event) => onPatchBlock({ placeholder: event.target.value })} onBlur={onSave} />
-          </label>
-        ) : (
+          fieldUsesPlaceholder(block.blockType) ? (
+            <label className={styles.field}>
+              <span>Texto dentro del campo</span>
+              <input value={block.placeholder} onChange={(event) => onPatchBlock({ placeholder: event.target.value })} onBlur={onSave} />
+            </label>
+          ) : null
+        ) : fieldUsesPlaceholder(block.blockType) ? (
           <div className={styles.twoColumn}>
             <label className={styles.field}>
               <span>Texto dentro del campo</span>
@@ -36203,6 +36235,15 @@ const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
               />
             </label>
           </div>
+        ) : (
+          <label className={styles.field}>
+            <span>Nombre interno</span>
+            <input
+              value={getSettingString(settings, 'internalName')}
+              onChange={(event) => onPatchSettings({ internalName: event.target.value })}
+              onBlur={onSave}
+            />
+          </label>
         )}
 
         {blockAutomaticValidation ? (

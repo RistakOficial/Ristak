@@ -4541,7 +4541,7 @@ function buildDefaultBlocks(siteId, siteType, template, siteContext = {}) {
   }
   const makeLandingPanel = (kind, sortOrder) => {
     const isHeader = kind === 'header'
-    return makeBlock(isHeader ? 'header_panel' : 'footer_panel', isHeader ? 'Panel superior' : 'Panel inferior', isHeader ? 'Tu marca' : 'Tu información esta protegida.', {
+    return makeBlock(isHeader ? 'header_panel' : 'footer_panel', isHeader ? 'Panel superior' : 'Panel inferior', isHeader ? 'Tu marca' : 'Tu información está protegida.', {
       sortOrder,
       settings: {
         ...getLandingSpacing(isHeader ? 'header_panel' : 'footer_panel'),
@@ -17002,6 +17002,7 @@ const RSTK_ICONS = {
   verified: '<svg class="rstk-verified" viewBox="0 0 24 24" width="15" height="15" aria-hidden="true"><path fill="currentColor" d="M12 2.2l2.3 1.7 2.85.05.95 2.7 2.25 1.8-.95 2.75.95 2.75-2.25 1.8-.95 2.7L14.3 18.6 12 20.3l-2.3-1.7-2.85-.05-.95-2.7-2.25-1.8.95-2.75-.95-2.75 2.25-1.8.95-2.7L9.7 3.9z"/><path d="M8.4 12.3l2.4 2.4 4.8-4.9" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>',
   globe: '<svg viewBox="0 0 24 24" width="12" height="12" aria-hidden="true"><circle cx="12" cy="12" r="9" fill="none" stroke="currentColor" stroke-width="1.7"/><path d="M3 12h18M12 3c3.2 3 3.2 15 0 18M12 3c-3.2 3-3.2 15 0 18" fill="none" stroke="currentColor" stroke-width="1.5"/></svg>',
   camera: '<svg viewBox="0 0 24 24" width="24" height="24" aria-hidden="true"><rect x="3" y="3" width="18" height="18" rx="5.4" fill="none" stroke="currentColor" stroke-width="1.8"/><circle cx="12" cy="12" r="4.2" fill="none" stroke="currentColor" stroke-width="1.8"/><circle cx="17.6" cy="6.4" r="1.25" fill="currentColor"/></svg>',
+  image: '<svg viewBox="0 0 24 24" width="26" height="26" aria-hidden="true"><rect x="3" y="3" width="18" height="18" rx="2.4" fill="none" stroke="currentColor" stroke-width="1.8"/><circle cx="8.5" cy="8.5" r="1.6" fill="currentColor"/><path d="M21 15l-5-5L5 21" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>',
   music: '<svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><path fill="currentColor" d="M9 17.2a3.1 3.1 0 1 1-2-2.9V5l9-2v9.2a3.1 3.1 0 1 1-2-2.9V6.6L9 7.8z"/></svg>',
   lock: '<svg viewBox="0 0 24 24" width="13" height="13" aria-hidden="true"><rect x="4.5" y="10.5" width="15" height="10" rx="2.4" fill="none" stroke="currentColor" stroke-width="1.7"/><path d="M8 10.5V8a4 4 0 0 1 8 0v2.5" fill="none" stroke="currentColor" stroke-width="1.7"/></svg>'
 }
@@ -18029,7 +18030,11 @@ function renderContentBlock(block, context = {}) {
     // como label por defecto; el href sale de buildPageHref (respeta el modo de
     // enlace path/query del sitio).
     const links = resolvePanelNavLinks(settings.panelLinks, normalizeSitePages(context.site))
-    const copy = content || (isHeader ? escapeHtml(block.label || 'Tu marca') : 'Tu información esta protegida.')
+    // El footer es multilínea en el editor: sus saltos de línea se publican como
+    // <br> (igual que headline/subheading/text). El header es de una sola línea.
+    const copy = isHeader
+      ? (content || escapeHtml(block.label || 'Tu marca'))
+      : (content.replace(/\n/g, '<br>') || 'Tu información está protegida.')
     return `
       <div class="rstk-site-panel ${isHeader ? 'rstk-site-panel-header' : 'rstk-site-panel-footer'}">
         ${isHeader ? `<strong class="rstk-site-panel-copy">${copy}</strong>` : `<p class="rstk-site-panel-copy">${copy}</p>`}
@@ -18058,7 +18063,7 @@ function renderContentBlock(block, context = {}) {
   if (block.blockType === 'section') {
     return `
       <section class="rstk-section-break">
-        <h2>${content || escapeHtml(block.label || 'Nueva seccion')}</h2>
+        <h2>${content || escapeHtml(block.label || 'Nueva sección')}</h2>
         ${settings.subtitle ? `<p>${escapeHtml(settings.subtitle)}</p>` : ''}
       </section>
     `
@@ -18087,7 +18092,7 @@ function renderContentBlock(block, context = {}) {
     const imageUrl = safePublicMediaUrl(settings.mediaUrl || block.content, 'image')
     return imageUrl
       ? `<figure class="rstk-media"><img src="${escapeHtml(imageUrl)}" alt="${escapeHtml(block.label || 'Imagen')}" loading="lazy"></figure>`
-      : `<div class="rstk-media rstk-media-empty">Imagen sin URL</div>`
+      : `<div class="rstk-media rstk-media-empty rstk-media-empty-mock"><span class="rstk-media-empty-icon" aria-hidden="true">${RSTK_ICONS.image}</span><span>Agrega una imagen</span></div>`
   }
 
   if (block.blockType === 'video') {
@@ -18135,7 +18140,7 @@ function renderContentBlock(block, context = {}) {
       return `<div class="rstk-video rstk-video-embed-frame rstk-video-${iframeOrientation}" style="${renderVideoFrameStyle(settings, iframeOrientation)}"><iframe src="${escapeHtml(embedVideoUrl)}" loading="lazy" allow="${escapeHtml(DEFAULT_EMBED_ALLOW)}" allowfullscreen sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-presentation"></iframe></div>`
     }
 
-    return `<div class="rstk-media rstk-media-empty"><span class="rstk-play">${RSTK_ICONS.play}</span>Agrega la URL del video</div>`
+    return `<div class="rstk-media rstk-media-empty rstk-media-empty-mock rstk-media-empty-video"><span class="rstk-play">${RSTK_ICONS.play}</span><span>Agrega la URL del video</span></div>`
   }
 
   if (block.blockType === 'countdown') {
@@ -18181,9 +18186,12 @@ function renderContentBlock(block, context = {}) {
 
   if (['testimonials', 'services', 'faq'].includes(block.blockType)) {
     const items = getItems(settings)
+    // Guarda contra <h2></h2> vacío cuando no hay título ni nombre interno
+    // (mismo patrón que benefits): evita reservar espacio por el gap del grid.
+    const heading = content || escapeHtml(block.label)
     return `
       <section class="rstk-section-list">
-        <h2>${content || escapeHtml(block.label)}</h2>
+        ${heading ? `<h2>${heading}</h2>` : ''}
         <div class="rstk-list-grid">
           ${items.map(item => `
             <article>
@@ -18641,7 +18649,7 @@ function renderLegalFooter(brand) {
   return `
     <p class="rstk-footer">
       <span class="rstk-lock" aria-hidden="true">${RSTK_ICONS.lock}</span>
-      Tu información esta protegida. ${escapeHtml(brand.name)} no la comparte con terceros.
+      Tu información está protegida. ${escapeHtml(brand.name)} no la comparte con terceros.
     </p>
   `
 }
