@@ -1864,6 +1864,7 @@ function ruleFieldValue(rule, ctx) {
     case 'contact-phone': return contact.phone || ''
     case 'contact-email': return contact.email || ''
     case 'contact-source': return contact.source || ''
+    case 'contact-country': return contact.country || ''
     case 'contact-stage': return contact.stage || ''
     case 'contact-assigned-user': return contact.assignedUser || ''
     case 'contact-created': return contact.createdAt || ''
@@ -1875,6 +1876,31 @@ function ruleFieldValue(rule, ctx) {
     case 'tag-not-has':
     case 'tag-all-of':
       return (contact.tagKeys || contact.tags || []).join(' , ')
+    // Citas — agregados de la cita activa del contacto (estado, siempre)
+    case 'appt-has': return contact.hasActiveAppointment ? 'true' : 'false'
+    case 'appt-status': return contact.activeAppointmentStatus || ''
+    case 'appt-calendar': return contact.activeAppointmentCalendarId || ''
+    case 'appt-date': return contact.activeAppointmentDate || ''
+    // Pagos — historial del contacto (estado, siempre) + el pago del evento
+    case 'pay-has':
+      return (Number(contact.paymentsCount) > 0
+        || ctx.paymentId || ctx.payment_id || ctx.amount || ctx.status || ctx.paymentStatus)
+        ? 'true' : 'false'
+    case 'pay-total': return contact.totalPaid ?? 0
+    case 'pay-last-date': return contact.lastPurchaseDate || ''
+    case 'pay-status': return ctx.paymentStatus || ctx.payment_status || ctx.status || ''
+    case 'pay-amount': return ctx.amount ?? ''
+    case 'pay-product': return paymentProductCandidatesFromContext(ctx)[0] || ctx.product || ctx.title || ctx.description || ''
+    case 'pay-currency': return ctx.currency || ''
+    case 'pay-date': return ctx.paymentDate || ctx.date || ctx.createdAt || ''
+    // Anuncio / atribución — de dónde vino el contacto (estado, siempre)
+    case 'ads-ad': return contact.adName || contact.adId || ''
+    case 'ads-ad-id': return contact.adId || ''
+    case 'ads-medium': return contact.attributionMedium || contact.source || ''
+    case 'ads-url': return contact.attributionUrl || ''
+    // Automatizaciones — membresía del contacto (estado, siempre). El operador
+    // (cualquiera/ninguna) decide "está en" / "no está en".
+    case 'auto-enrolled': return (contact.activeAutomationIds || []).join(' , ')
     // Conversación — del evento de mensaje
     case 'conv-last-received': return ctx.messageText || ''
     case 'conv-keyword': return ctx.messageText || ''
@@ -1885,18 +1911,6 @@ function ruleFieldValue(rule, ctx) {
     case 'comment-platform': return ctx.platform || ''
     case 'comment-post-fb': return ctx.postId || ''
     case 'comment-post-ig': return ctx.mediaId || ''
-    // Citas — agregados de la cita activa del contacto
-    case 'appt-has': return contact.hasActiveAppointment ? 'true' : 'false'
-    case 'appt-status': return contact.activeAppointmentStatus || ''
-    case 'appt-calendar': return contact.activeAppointmentCalendarId || ''
-    case 'appt-date': return contact.activeAppointmentDate || ''
-    // Pagos — del evento de pago
-    case 'pay-has': return (ctx.paymentId || ctx.payment_id || ctx.amount || ctx.status || ctx.paymentStatus) ? 'true' : 'false'
-    case 'pay-status': return ctx.paymentStatus || ctx.payment_status || ctx.status || ''
-    case 'pay-amount': return ctx.amount ?? ''
-    case 'pay-product': return paymentProductCandidatesFromContext(ctx)[0] || ctx.product || ctx.title || ctx.description || ''
-    case 'pay-currency': return ctx.currency || ''
-    case 'pay-date': return ctx.paymentDate || ctx.date || ctx.createdAt || ''
     // Formularios — del evento de envío
     case 'form-submitted': return (ctx.submissionId || ctx.submission_id || primaryFormIdFromContext(ctx)) ? 'true' : 'false'
     case 'form-specific': return primaryFormIdFromContext(ctx)
@@ -4026,11 +4040,12 @@ async function loadContactMetrics(contactId, row = {}) {
       appointmentsCount: 0,
       activeAppointmentsCount: 0,
       attendedAppointmentsCount: 0,
-      hasActiveAppointment: false
+      hasActiveAppointment: false,
+      activeAutomationIds: []
     }
   }
 
-  const [paymentAgg, appointmentAgg, activeAppointment] = await Promise.all([
+  const [paymentAgg, appointmentAgg, activeAppointment, enrollmentRows] = await Promise.all([
     db.get(`
       SELECT
         COUNT(*) AS payments_count,
@@ -4055,7 +4070,12 @@ async function loadContactMetrics(contactId, row = {}) {
         AND LOWER(COALESCE(appointment_status, status, '')) NOT IN ('cancelled', 'canceled', 'no_show', 'no-show', 'noshow', 'deleted')
       ORDER BY CASE WHEN start_time >= CURRENT_TIMESTAMP THEN 0 ELSE 1 END, start_time ASC
       LIMIT 1
-    `, [contactId]).catch(() => null)
+    `, [contactId]).catch(() => null),
+    db.all(`
+      SELECT DISTINCT automation_id
+      FROM automation_enrollments
+      WHERE contact_id = ? AND status IN ('active', 'waiting')
+    `, [contactId]).catch(() => [])
   ])
 
   const totalPaid = Number(paymentAgg?.successful_total ?? row?.total_paid ?? 0) || 0
@@ -4078,7 +4098,10 @@ async function loadContactMetrics(contactId, row = {}) {
     activeAppointmentStatus: activeAppointment?.appointment_status || activeAppointment?.status || '',
     activeAppointmentCalendarId: activeAppointment?.calendar_id || '',
     activeAppointmentAssignedUserId: activeAppointment?.assigned_user_id || '',
-    activeAppointmentDate: activeAppointment?.start_time || ''
+    activeAppointmentDate: activeAppointment?.start_time || '',
+    activeAutomationIds: (Array.isArray(enrollmentRows) ? enrollmentRows : [])
+      .map((enrollmentRow) => enrollmentRow?.automation_id)
+      .filter(Boolean)
   }
 }
 

@@ -36,12 +36,16 @@ export interface CrmFieldCategory {
 }
 
 export const CRM_FIELD_CATEGORIES: CrmFieldCategory[] = [
+  // Estado del contacto (siempre disponible, sin importar el disparador)
   { id: 'contact', label: 'Contacto' },
   { id: 'tags', label: 'Etiquetas' },
-  { id: 'conversation', label: 'Conversación' },
-  { id: 'comment', label: 'Comentario' },
   { id: 'appointments', label: 'Citas' },
   { id: 'payments', label: 'Pagos' },
+  { id: 'ads', label: 'Anuncio / atribución' },
+  { id: 'automations', label: 'Automatizaciones' },
+  // Del evento (solo aparecen cuando el disparador produce ese contexto)
+  { id: 'conversation', label: 'Conversación' },
+  { id: 'comment', label: 'Comentario' },
   { id: 'forms', label: 'Formularios' },
   { id: 'links', label: 'Clics de disparo' }
 ]
@@ -105,6 +109,7 @@ export const CRM_FIELDS: CrmField[] = [
   { id: 'contact-phone', label: 'Teléfono', category: 'contact', type: 'text' },
   { id: 'contact-email', label: 'Email (dato de contacto)', category: 'contact', type: 'text' },
   { id: 'contact-source', label: 'Fuente', category: 'contact', type: 'text' },
+  { id: 'contact-country', label: 'País', category: 'contact', type: 'text' },
   { id: 'contact-created', label: 'Fecha de creación', category: 'contact', type: 'date' },
   { id: 'contact-updated', label: 'Fecha de actualización', category: 'contact', type: 'date' },
   { id: 'contact-assigned-user', label: 'Usuario asignado', category: 'contact', type: 'select', valueCatalog: 'users' },
@@ -116,6 +121,34 @@ export const CRM_FIELDS: CrmField[] = [
   { id: 'tag-not-has', label: 'No tiene etiqueta', category: 'tags', type: 'tags', valueCatalog: 'tags' },
   { id: 'tag-any-of', label: 'Contiene cualquiera de estas etiquetas', category: 'tags', type: 'tags', valueCatalog: 'tags' },
   { id: 'tag-all-of', label: 'Contiene todas estas etiquetas', category: 'tags', type: 'tags', valueCatalog: 'tags' },
+
+  // Citas — estado del contacto (su cita activa): siempre disponible.
+  // Ej. "se le añadió una etiqueta Y además tiene una cita agendada".
+  { id: 'appt-has', label: 'Tiene cita activa', category: 'appointments', type: 'boolean' },
+  { id: 'appt-status', label: 'Estado de la cita activa', category: 'appointments', type: 'select', options: APPOINTMENT_STATUS_OPTIONS },
+  { id: 'appt-calendar', label: 'Calendario de la cita activa', category: 'appointments', type: 'select', valueCatalog: 'calendars' },
+  { id: 'appt-date', label: 'Fecha de la cita activa', category: 'appointments', type: 'date' },
+
+  // Pagos — el historial del contacto (¿ya compró?, cuánto) es estado siempre
+  // disponible; los datos de UN pago puntual solo existen con disparador de pago.
+  { id: 'pay-has', label: 'Tiene algún pago', category: 'payments', type: 'boolean' },
+  { id: 'pay-total', label: 'Total pagado (histórico)', category: 'payments', type: 'number' },
+  { id: 'pay-last-date', label: 'Fecha del último pago', category: 'payments', type: 'date' },
+  { id: 'pay-status', label: 'Estado de este pago', category: 'payments', type: 'select', options: PAYMENT_STATUS_OPTIONS, appliesTo: ['payment'] },
+  { id: 'pay-amount', label: 'Monto de este pago', category: 'payments', type: 'number', appliesTo: ['payment'] },
+  { id: 'pay-product', label: 'Producto de este pago', category: 'payments', type: 'select', valueCatalog: 'products', appliesTo: ['payment'] },
+  { id: 'pay-currency', label: 'Moneda de este pago', category: 'payments', type: 'text', appliesTo: ['payment'] },
+  { id: 'pay-date', label: 'Fecha de este pago', category: 'payments', type: 'date', appliesTo: ['payment'] },
+
+  // Anuncio / atribución — de dónde vino el contacto: estado siempre disponible.
+  { id: 'ads-ad', label: 'Anuncio de origen', category: 'ads', type: 'select', valueCatalog: 'ads' },
+  { id: 'ads-ad-id', label: 'ID del anuncio', category: 'ads', type: 'select', valueCatalog: 'adIds' },
+  { id: 'ads-medium', label: 'Fuente de atribución', category: 'ads', type: 'text' },
+  { id: 'ads-url', label: 'URL de origen', category: 'ads', type: 'text' },
+
+  // Automatizaciones — membresía del contacto: estado siempre disponible.
+  // Ej. "envíalo solo si NO está ya en la automatización de Bienvenida".
+  { id: 'auto-enrolled', label: 'Está en la automatización', category: 'automations', type: 'tags', valueCatalog: 'automations' },
 
   // Conversación — solo con disparadores de mensaje (WhatsApp, Messenger,
   // Instagram Direct, correo y "el cliente respondió").
@@ -129,20 +162,6 @@ export const CRM_FIELDS: CrmField[] = [
   { id: 'comment-platform', label: 'Red social del comentario', category: 'comment', type: 'select', options: [{ value: 'facebook', label: 'Facebook' }, { value: 'instagram', label: 'Instagram' }], appliesTo: ['comment'] },
   { id: 'comment-post-fb', label: 'Publicación de Facebook', category: 'comment', type: 'text', appliesTo: ['comment'] },
   { id: 'comment-post-ig', label: 'Publicación de Instagram', category: 'comment', type: 'text', appliesTo: ['comment'] },
-
-  // Citas — solo con disparadores de cita (agendada / cambio de estado).
-  { id: 'appt-has', label: 'Tiene cita activa', category: 'appointments', type: 'boolean', appliesTo: ['appointment'] },
-  { id: 'appt-status', label: 'Estado de la cita', category: 'appointments', type: 'select', options: APPOINTMENT_STATUS_OPTIONS, appliesTo: ['appointment'] },
-  { id: 'appt-calendar', label: 'Calendario', category: 'appointments', type: 'select', valueCatalog: 'calendars', appliesTo: ['appointment'] },
-  { id: 'appt-date', label: 'Fecha de la cita', category: 'appointments', type: 'date', appliesTo: ['appointment'] },
-
-  // Pagos — solo con disparadores de pago (pago recibido / reembolso).
-  { id: 'pay-has', label: 'Tiene pago', category: 'payments', type: 'boolean', appliesTo: ['payment'] },
-  { id: 'pay-status', label: 'Estado de pago', category: 'payments', type: 'select', options: PAYMENT_STATUS_OPTIONS, appliesTo: ['payment'] },
-  { id: 'pay-amount', label: 'Monto pagado', category: 'payments', type: 'number', appliesTo: ['payment'] },
-  { id: 'pay-product', label: 'Producto comprado', category: 'payments', type: 'select', valueCatalog: 'products', appliesTo: ['payment'] },
-  { id: 'pay-currency', label: 'Moneda', category: 'payments', type: 'text', appliesTo: ['payment'] },
-  { id: 'pay-date', label: 'Fecha de pago', category: 'payments', type: 'date', appliesTo: ['payment'] },
 
   // Formularios — solo cuando el flujo lo disparó un envío de formulario.
   { id: 'form-submitted', label: 'Formulario enviado', category: 'forms', type: 'boolean', appliesTo: ['form'] },

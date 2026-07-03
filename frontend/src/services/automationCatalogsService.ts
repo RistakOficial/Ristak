@@ -11,6 +11,7 @@ import { campaignsService, type ConnectedSocialProfile } from './campaignsServic
 import { triggerLinksService } from './triggerLinksService'
 import { userAccessService } from './userAccessService'
 import { productsService, type ProductItem } from './productsService'
+import { automationsService } from './automationsService'
 
 /**
  * Catálogos de datos reales del CRM para los selectores del editor de
@@ -46,6 +47,7 @@ export type CatalogKind =
   | 'adIds'
   | 'messengerPages'
   | 'instagramAccounts'
+  | 'automations'
 
 // ---------------------------------------------------------------------------
 // Cargadores reales
@@ -207,6 +209,23 @@ async function loadTriggerLinks(): Promise<CatalogOption[]> {
     .map((link) => ({
       value: link.id,
       label: link.name
+    }))
+}
+
+const AUTOMATION_STATUS_META: Record<string, string> = {
+  published: 'Publicada',
+  paused: 'Pausada',
+  draft: 'Borrador',
+  archived: 'Archivada'
+}
+
+async function loadAutomations(): Promise<CatalogOption[]> {
+  const overview = await automationsService.getOverview({ suppressFeatureNotAvailableToast: true })
+  return (overview?.automations || [])
+    .map((automation) => ({
+      value: automation.id,
+      label: automation.name || automation.id,
+      meta: AUTOMATION_STATUS_META[automation.status]
     }))
 }
 
@@ -392,7 +411,8 @@ const loaders: Record<CatalogKind, () => Promise<CatalogOption[]>> = {
   ads: loadAds,
   adIds: loadAdIds,
   messengerPages: loadMessengerPages,
-  instagramAccounts: loadInstagramAccounts
+  instagramAccounts: loadInstagramAccounts,
+  automations: loadAutomations
 }
 
 const fallbacks: Partial<Record<CatalogKind, CatalogOption[]>> = {
@@ -412,7 +432,8 @@ const fallbacks: Partial<Record<CatalogKind, CatalogOption[]>> = {
   ads: [],
   adIds: [],
   messengerPages: [],
-  instagramAccounts: []
+  instagramAccounts: [],
+  automations: []
 }
 
 const cache = new Map<CatalogKind, Promise<CatalogOption[]>>()
