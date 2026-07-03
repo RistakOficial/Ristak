@@ -15693,14 +15693,11 @@ function buildPaymentCheckoutRuntimeScript() {
       var identityEmail = identityBox ? identityBox.querySelector('[data-rstk-identity-email]') : null;
       var identityPhone = identityBox ? identityBox.querySelector('[data-rstk-identity-phone]') : null;
       var identityErr = identityBox ? identityBox.querySelector('[data-rstk-identity-error]') : null;
-      var funnelContactId = '';
-      var identitySatisfiedByFunnel = false;
       function readFunnelIdentity() {
-        var out = { contactId: '', email: '', phone: '' };
+        var out = { email: '', phone: '' };
         try {
           if (typeof window.ristakNativeIdentity === 'function') {
             var ni = window.ristakNativeIdentity() || {};
-            out.contactId = String(ni.contactId || ni.contact_id || '');
             out.email = String(ni.email || ni.contact_email || '');
             out.phone = String(ni.phone || ni.contact_phone || '');
           }
@@ -15709,7 +15706,6 @@ function buildPaymentCheckoutRuntimeScript() {
           var raw = window.localStorage ? window.localStorage.getItem('ristak') : '';
           if (raw) {
             var st = JSON.parse(raw) || {};
-            out.contactId = out.contactId || String(st.contact_id || st.contactId || '');
             out.email = out.email || String(st.contact_email || st.contactEmail || st.email || '');
             out.phone = out.phone || String(st.contact_phone || st.contactPhone || st.phone || '');
           }
@@ -15717,16 +15713,16 @@ function buildPaymentCheckoutRuntimeScript() {
         return out;
       }
       (function initIdentity() {
+        // Los campos SIEMPRE se muestran (paridad con el editor). Si el embudo
+        // (formulario/calendario previos) ya trae el dato, lo PRE-LLENAMOS para que
+        // el cliente no lo reescriba; el contacto se liga por correo/telefono.
         var fi = readFunnelIdentity();
-        funnelContactId = fi.contactId || '';
         if (identityEmail && fi.email) identityEmail.value = fi.email;
         if (identityPhone && fi.phone) identityPhone.value = fi.phone;
-        if (funnelContactId || fi.email || fi.phone) identitySatisfiedByFunnel = true;
       })();
-      function identityActive() { return !!(identityBox && (identityEmail || identityPhone) && !identitySatisfiedByFunnel); }
-      function showIdentity() { if (identityActive()) identityBox.hidden = false; }
+      function identityActive() { return !!(identityBox && (identityEmail || identityPhone)); }
       function idVal(el) { return el ? String(el.value || '').trim() : ''; }
-      function collectPayer() { return { email: idVal(identityEmail), phone: idVal(identityPhone), contactId: funnelContactId }; }
+      function collectPayer() { return { email: idVal(identityEmail), phone: idVal(identityPhone) }; }
       function validateIdentity() {
         if (!identityActive()) return true;
         if (idVal(identityEmail) || idVal(identityPhone)) { if (identityErr) identityErr.hidden = true; return true; }
@@ -15848,7 +15844,6 @@ function buildPaymentCheckoutRuntimeScript() {
           var paymentElement = elements.create('payment', { layout: 'tabs', fields: { billingDetails: { address: { country: showCountry ? 'auto' : 'never' } } } });
           paymentElement.mount(els.fields);
           els.fields.hidden = false; els.pay.hidden = false; showLoading(false);
-          showIdentity();
           payLabel(d.amount, d.currency);
           els.pay.addEventListener('click', function () {
             if (els.pay.disabled) return;
@@ -15911,7 +15906,7 @@ function buildPaymentCheckoutRuntimeScript() {
           window.ConektaCheckoutComponents.Card({
             config: { targetIFrame: '#' + els.fields.id, publicKey: d.publicKey, locale: 'es', useExternalSubmit: true },
             callbacks: {
-              onUpdateSubmitTrigger: function (fn) { submitTrigger = fn; els.fields.hidden = false; els.pay.hidden = false; showLoading(false); showIdentity(); payLabel(d.amount, d.currency); },
+              onUpdateSubmitTrigger: function (fn) { submitTrigger = fn; els.fields.hidden = false; els.pay.hidden = false; showLoading(false); payLabel(d.amount, d.currency); },
               onCreateTokenSucceeded: function (token) {
                 var tokenId = typeof token === 'string' ? token : String((token && token.id) || '');
                 if (!tokenId) { setPayBusy(false); setMessage('error', 'Conekta no devolvió un token válido.'); return; }
@@ -18361,7 +18356,7 @@ function renderPaymentBlock(block = {}, context = {}) {
               <span class="rstk-checkout-spinner" aria-hidden="true"></span>
               <span>Cargando pago seguro…</span>
             </div>
-            ${showIdentityFields ? `<div class="rstk-checkout-identity" data-rstk-checkout-identity style="display:grid;gap:10px;margin-bottom:12px" hidden>
+            ${showIdentityFields ? `<div class="rstk-checkout-identity" data-rstk-checkout-identity style="display:grid;gap:10px;margin-bottom:12px">
               ${collectEmail ? `<input type="email" inputmode="email" autocomplete="email" data-rstk-identity-email placeholder="Correo electrónico" aria-label="Correo electrónico" style="${identityInputStyle}" />` : ''}
               ${collectPhone ? `<input type="tel" inputmode="tel" autocomplete="tel" data-rstk-identity-phone placeholder="Teléfono" aria-label="Teléfono" style="${identityInputStyle}" />` : ''}
               <p class="rstk-checkout-message" data-rstk-identity-error role="alert" hidden style="margin:0" data-kind="error">Escribe tu correo o teléfono para continuar.</p>
