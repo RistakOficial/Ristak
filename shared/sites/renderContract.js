@@ -1033,7 +1033,11 @@ const RSTK_BASE_CSS = `
 	  .rstk-kind-form.rstk-input-soft .rstk-field > textarea,.rstk-input-soft .rstk-embedded-form .rstk-field > textarea{border-radius:20px;border-color:transparent;background:color-mix(in srgb,var(--rstk-muted) 8%,transparent)}
 	  input::placeholder,textarea::placeholder{color:color-mix(in srgb,var(--rstk-muted) 80%,transparent)}
 	  .rstk-kind-form input::placeholder,.rstk-kind-form textarea::placeholder,.rstk-embedded-form input::placeholder,.rstk-embedded-form textarea::placeholder{color:var(--rstk-form-placeholder,color-mix(in srgb,var(--rstk-muted) 80%,transparent))}
-	  input:not([type='radio']):not([type='checkbox']):focus,textarea:focus,select:focus{border-color:var(--rstk-accent);box-shadow:0 0 0 4px var(--rstk-ring)}
+	  /* Foco de campos al RESPONDER: nada de borde/anillo de acento (se veía como un
+     "seleccionado" de color). Se deja una pista neutra y sutil (halo gris tenue,
+     sin color) que respeta la accesibilidad sin resaltar el campo. El borde
+     conserva su color normal según el estilo de campo (default/soft/underline). */
+  input:not([type='radio']):not([type='checkbox']):focus,textarea:focus,select:focus{box-shadow:0 0 0 3px color-mix(in srgb,var(--rstk-muted) 20%,transparent)}
 	  select{appearance:none;-webkit-appearance:none;background-image:linear-gradient(45deg,transparent 50%,var(--rstk-muted) 50%),linear-gradient(135deg,var(--rstk-muted) 50%,transparent 50%);background-position:calc(100% - 20px) calc(50% - 3px),calc(100% - 15px) calc(50% - 3px);background-size:5px 5px,5px 5px;background-repeat:no-repeat;padding-right:42px}
 	  .rstk-kind-form.rstk-select-filled .rstk-field select,.rstk-select-filled .rstk-embedded-form select{background-color:color-mix(in srgb,var(--rstk-form-field-bg,transparent) 88%,var(--rstk-accent) 12%)}
 	  .rstk-kind-form.rstk-select-underline .rstk-field select,.rstk-select-underline .rstk-embedded-form select{border-width:0 0 var(--rstk-form-field-border-width,1px);border-radius:0;background-color:transparent;padding-left:0;padding-right:36px}
