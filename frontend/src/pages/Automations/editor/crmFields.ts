@@ -103,11 +103,11 @@ const triggerFilterDisplayValue = (field: TriggerFilterField | undefined, filter
 
 export const CRM_FIELDS: CrmField[] = [
   // Contacto — estado del contacto: siempre disponible (sin appliesTo).
-  // El email es dato del CRM, nunca canal de envío.
+  // El correo es dato del CRM, nunca canal de envío.
   { id: 'contact-first-name', label: 'Nombre', category: 'contact', type: 'text' },
   { id: 'contact-last-name', label: 'Apellido', category: 'contact', type: 'text' },
   { id: 'contact-phone', label: 'Teléfono', category: 'contact', type: 'text' },
-  { id: 'contact-email', label: 'Email (dato de contacto)', category: 'contact', type: 'text' },
+  { id: 'contact-email', label: 'Correo (dato de contacto)', category: 'contact', type: 'text' },
   { id: 'contact-source', label: 'Fuente', category: 'contact', type: 'text' },
   { id: 'contact-country', label: 'País', category: 'contact', type: 'text' },
   { id: 'contact-created', label: 'Fecha de creación', category: 'contact', type: 'date' },
@@ -734,7 +734,7 @@ export const TRIGGER_FILTER_FIELDS: TriggerFilterField[] = [
   { id: 'tag', label: 'Etiqueta', phrase: 'la etiqueta', catalog: 'tags', category: 'Contacto' },
   { id: 'stage', label: 'Pipeline / etapa', phrase: 'la etapa', category: 'Contacto' },
   { id: 'country', label: 'País', phrase: 'el país', category: 'Contacto' },
-  { id: 'email', label: 'Email (dato de contacto)', phrase: 'el email', category: 'Contacto' },
+  { id: 'email', label: 'Correo (dato de contacto)', phrase: 'el correo', category: 'Contacto' },
   { id: 'phone', label: 'Teléfono', phrase: 'el teléfono', category: 'Contacto' },
   { id: 'assigned', label: 'Usuario asignado', phrase: 'el usuario asignado', catalog: 'users', category: 'Contacto' },
   { id: 'preferred_whatsapp_number', label: 'Número de WhatsApp asignado', phrase: 'el número de WhatsApp asignado', catalog: 'whatsappNumbers', category: 'Contacto' },

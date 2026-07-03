@@ -70,7 +70,7 @@ export const RichEmailEditorModal: React.FC<RichEmailEditorModalProps> = ({
             <Mail size={18} />
           </span>
           <div>
-            <strong>Contenido del email</strong>
+            <strong>Contenido del correo</strong>
             <p>Este editor es solo para correos: puedes dar formato, pegar HTML, subir imágenes y usar variables.</p>
           </div>
         </div>

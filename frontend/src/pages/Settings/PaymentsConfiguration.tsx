@@ -506,14 +506,14 @@ function calculatePreviewTax(baseAmount: number, taxes: PaymentTaxSettings) {
 
 const channelOptions = [
   { value: 'whatsapp', label: 'WhatsApp API' },
-  { value: 'email', label: 'Email' },
-  { value: 'both', label: 'WhatsApp API y email' }
+  { value: 'email', label: 'Correo electrónico' },
+  { value: 'both', label: 'WhatsApp API y correo electrónico' }
 ]
 
 const channelLabelById: Record<PaymentAutomationSettings['reminderChannel'], string> = {
   whatsapp: 'WhatsApp API',
-  email: 'email',
-  both: 'WhatsApp API y email'
+  email: 'correo electrónico',
+  both: 'WhatsApp API y correo electrónico'
 }
 
 const afterPaymentActionLabelById: Record<PaymentAutomationSettings['afterPaymentAction'], string> = {
@@ -2202,7 +2202,7 @@ export const PaymentsConfiguration: React.FC = () => {
 
         {renderBusinessProfileSource(
           'Usar logo y soporte de Cuenta',
-          'El logo, email y teléfono de soporte salen de Configuración > Cuenta > Datos del negocio.',
+          'El logo, correo y teléfono de soporte salen de Configuración > Cuenta > Datos del negocio.',
           checkout.useBusinessProfile !== false,
           (next) => setCheckoutValue('useBusinessProfile', next)
         )}
@@ -2289,7 +2289,7 @@ export const PaymentsConfiguration: React.FC = () => {
             />
           )}
           {renderField(
-            'Email de soporte',
+            'Correo de soporte',
               <input
                 type="email"
                 value={effectiveCheckout.supportEmail}
@@ -2335,7 +2335,7 @@ export const PaymentsConfiguration: React.FC = () => {
               />
             )}
             {renderField(
-              'Email del negocio',
+              'Correo del negocio',
               <input
                 type="email"
                 value={effectiveReceipt.businessEmail}
@@ -2749,7 +2749,7 @@ export const PaymentsConfiguration: React.FC = () => {
               />
             )}
             {renderField(
-              'Email del negocio',
+              'Correo del negocio',
               <input
                 type="email"
                 value={effectiveReceipt.businessEmail}
@@ -2810,7 +2810,7 @@ export const PaymentsConfiguration: React.FC = () => {
 
           <div className={styles.switchStack}>
             {renderSwitchRow('Mostrar datos del negocio', 'Incluye nombre, contacto y dirección en la hoja.', receipt.showBusinessInfo, (next) => setReceiptValue('showBusinessInfo', next))}
-            {renderSwitchRow('Mostrar datos del cliente', 'Incluye nombre, email y referencia del pago.', receipt.showCustomerInfo, (next) => setReceiptValue('showCustomerInfo', next))}
+            {renderSwitchRow('Mostrar datos del cliente', 'Incluye nombre, correo y referencia del pago.', receipt.showCustomerInfo, (next) => setReceiptValue('showCustomerInfo', next))}
             {renderSwitchRow('Mostrar términos', 'Agrega términos al final del comprobante descargable.', receipt.showTerms, (next) => setReceiptValue('showTerms', next))}
           </div>
 
@@ -3890,7 +3890,7 @@ export const PaymentsConfiguration: React.FC = () => {
           <div className={styles.stripePanel}>
             <div className={styles.inlineWarning}>
               <Info size={16} />
-              <span>Usa la Clave API visible del panel de CLIP; la clave secreta no se necesita para el SDK. El cobro real se hace cuando el cliente paga y requiere email/teléfono.</span>
+              <span>Usa la Clave API visible del panel de CLIP; la clave secreta no se necesita para el SDK. El cobro real se hace cuando el cliente paga y requiere correo/teléfono.</span>
             </div>
 
             <div className={styles.stripeModeGrid}>

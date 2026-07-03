@@ -462,6 +462,26 @@ El modo de pasarelas puede ser `test` o `live`. Ese modo debe viajar con el pago
 en `payment_mode` o metadata equivalente para evitar mezclar pruebas con dinero
 real.
 
+### Automatizaciones de pago
+
+Configuracion > Pagos > Automatizaciones controla recordatorios, comprobantes y
+avisos de cobro fallido desde `payments_settings.automations`.
+
+- Canales soportados: WhatsApp API, correo electronico o ambos.
+- WhatsApp usa plantillas aprobadas y registra el despacho en
+  `payment_automation_dispatches` con `channel='whatsapp'`.
+- Correo electronico usa la conexion SMTP guardada en Configuracion > Integraciones
+  > Correos. El password vive cifrado en `app_config.email_smtp_password`; no se
+  agrega env var nueva para arrancar el servicio.
+- Cada canal tiene su propio despacho idempotente por pago, tipo de automatizacion
+  y canal. Un envio por WhatsApp no bloquea el envio por correo, y viceversa.
+- El comprobante posterior al pago incluye un enlace al checkout publico con
+  `?receipt=1`; cuando el pago esta confirmado, esa pagina muestra el comprobante
+  y activa la descarga/impresion del PDF.
+- Si falta contacto de correo, telefono, conexion del canal o URL publica de pago,
+  el despacho se omite o queda fallido con razon explicita; no se inventan datos ni
+  se manda un comprobante sin enlace descargable.
+
 ### Planes de pago locales
 
 En Stripe, Conekta y Mercado Pago, el calendario editable muestra y guarda cada
@@ -942,6 +962,7 @@ Registro de ubicacion:
 | HighLevel | `highlevel_config` y servicios HighLevel | No | Tokens deben estar cifrados o gestionados internamente |
 | Meta Ads/Dataset | `meta_config`, `app_config`, env fallback | No | CAPI usa System User Token; `meta_test_event_code` activa Test Events |
 | Pagos | config interna de pagos y metadata por provider | No | Modo `test/live` debe persistir por pago |
+| Correo SMTP | `app_config.email_smtp_config` y `app_config.email_smtp_password` | No | Password cifrado; requerido solo para enviar correos |
 | Moneda de cuenta | `app_config.account_currency` | No | Default obligatorio para importes nuevos; no crear env/secret de moneda |
 | Bunny/media | `storage_settings`, env fallback, licencia central | No | API keys nunca en docs |
 | Push web/movil | env VAPID/FCM/APNS o configuracion segura | No | Provider puede exigir secrets externos |

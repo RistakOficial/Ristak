@@ -7,8 +7,10 @@ import {
   resolveTimezone
 } from '../utils/dateUtils.js'
 import { getPaymentSettings } from './paymentSettingsService.js'
+import { getAccountCurrency } from '../utils/accountLocale.js'
 import { buildDefaultMessageTemplateSendComponents } from './messageTemplatesService.js'
 import { sendWhatsAppApiTemplateMessage } from './whatsappApiService.js'
+import { sendEmailToContact } from './emailService.js'
 
 const HOUR_MS = 60 * 60 * 1000
 const DEFAULT_LANGUAGE = 'es_MX'
@@ -68,6 +70,11 @@ function cleanString(value, maxLength = 1000) {
 function channelUsesWhatsApp(channel = '') {
   const normalized = cleanString(channel, 40).toLowerCase()
   return normalized === 'whatsapp' || normalized === 'both'
+}
+
+function channelUsesEmail(channel = '') {
+  const normalized = cleanString(channel, 40).toLowerCase()
+  return normalized === 'email' || normalized === 'both'
 }
 
 function safeJson(value) {
@@ -163,10 +170,28 @@ function buildPaymentUrl(payment = {}, explicitBaseUrl = '') {
   return rawUrl
 }
 
-function formatPaymentAmount(amount, currency = 'MXN') {
+function escapeHtml(value) {
+  return cleanString(value)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;')
+}
+
+function stripHtml(value) {
+  return cleanString(value)
+    .replace(/<br\s*\/?>/gi, '\n')
+    .replace(/<\/p>/gi, '\n\n')
+    .replace(/<[^>]+>/g, '')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim()
+}
+
+function formatPaymentAmount(amount, currency = '') {
   const parsed = Number(amount)
   if (!Number.isFinite(parsed)) return ''
-  const cleanCurrency = cleanString(currency, 8).toUpperCase() || 'MXN'
+  const cleanCurrency = cleanString(currency, 8).toUpperCase()
   try {
     return new Intl.NumberFormat('es-MX', {
       style: 'currency',
@@ -242,13 +267,13 @@ async function loadPaymentWithContact(paymentInput) {
   }
 }
 
-function buildPaymentVariableMap(payment = {}, { publicBaseUrl = '', timezone = DEFAULT_TIMEZONE } = {}) {
+function buildPaymentVariableMap(payment = {}, { publicBaseUrl = '', timezone = DEFAULT_TIMEZONE, fallbackCurrency = '' } = {}) {
   const baseUrl = resolvePublicBaseUrl(payment, publicBaseUrl)
   const paymentUrl = buildPaymentUrl(payment, baseUrl)
   const publicPaymentId = cleanString(payment.public_payment_id || payment.publicPaymentId, 200)
   const receiptUrl = appendReceiptQuery(paymentUrl)
   const contact = contactFromPaymentRow(payment)
-  const currency = cleanString(payment.currency, 8).toUpperCase() || 'MXN'
+  const currency = cleanString(payment.currency, 8).toUpperCase() || cleanString(fallbackCurrency, 8).toUpperCase()
   const product = cleanString(payment.title || payment.description || payment.product || 'Pago', 240)
 
   return {
@@ -295,14 +320,53 @@ function getDispatchId(paymentId, automationType, channel = 'whatsapp') {
   return `payment_auto_${automationType}_${channel}_${cleanString(paymentId, 160).replace(/[^a-zA-Z0-9_-]+/g, '_')}`
 }
 
-async function claimDispatch({ paymentId, automationType, templateId, templateName }) {
-  const id = getDispatchId(paymentId, automationType)
+function getLegacyDispatchId(paymentId, automationType) {
+  return `payment_auto_${automationType}_${cleanString(paymentId, 160).replace(/[^a-zA-Z0-9_-]+/g, '_')}`
+}
+
+async function claimDispatch({ paymentId, automationType, channel = 'whatsapp', templateId, templateName }) {
+  const cleanChannel = cleanString(channel, 40).toLowerCase() || 'whatsapp'
+  const id = getDispatchId(paymentId, automationType, cleanChannel)
+
+  if (cleanChannel === 'whatsapp') {
+    const legacyId = getLegacyDispatchId(paymentId, automationType)
+    const legacy = legacyId === id
+      ? null
+      : await db.get(
+        'SELECT id, status FROM payment_automation_dispatches WHERE id = ? LIMIT 1',
+        [legacyId]
+      )
+
+    if (legacy?.status === 'failed') {
+      await db.run(`
+        UPDATE payment_automation_dispatches
+        SET status = 'sending',
+            channel = ?,
+            template_id = ?,
+            template_name = ?,
+            error_message = NULL,
+            raw_response_json = NULL,
+            updated_at = CURRENT_TIMESTAMP
+        WHERE id = ?
+      `, [cleanChannel, templateId || null, templateName || null, legacyId])
+      return { claimed: true, id: legacyId }
+    }
+
+    if (legacy) {
+      return {
+        claimed: false,
+        id: legacyId,
+        reason: legacy.status === 'sent' ? 'already_sent' : 'already_claimed'
+      }
+    }
+  }
+
   const result = await db.run(`
     INSERT INTO payment_automation_dispatches (
       id, payment_id, automation_type, channel, status, template_id, template_name, updated_at
-    ) VALUES (?, ?, ?, 'whatsapp', 'sending', ?, ?, CURRENT_TIMESTAMP)
+    ) VALUES (?, ?, ?, ?, 'sending', ?, ?, CURRENT_TIMESTAMP)
     ON CONFLICT(id) DO NOTHING
-  `, [id, paymentId, automationType, templateId || null, templateName || null])
+  `, [id, paymentId, automationType, cleanChannel, templateId || null, templateName || null])
 
   if (Number(result?.changes || 0) > 0) return { claimed: true, id }
 
@@ -315,13 +379,14 @@ async function claimDispatch({ paymentId, automationType, templateId, templateNa
     await db.run(`
       UPDATE payment_automation_dispatches
       SET status = 'sending',
+          channel = ?,
           template_id = ?,
           template_name = ?,
           error_message = NULL,
           raw_response_json = NULL,
           updated_at = CURRENT_TIMESTAMP
       WHERE id = ?
-    `, [templateId || null, templateName || null, id])
+    `, [cleanChannel, templateId || null, templateName || null, id])
     return { claimed: true, id }
   }
 
@@ -357,35 +422,146 @@ function shouldRequirePaymentLink(type) {
   return type === 'reminder' || type === 'receipt' || type === 'failed'
 }
 
-export async function sendPaymentAutomationMessage(type, paymentInput, options = {}) {
-  const settings = options.settings || await getPaymentSettings()
-  const timezone = options.timezone || await getAccountTimezone().catch(() => DEFAULT_TIMEZONE)
-  const definition = getAutomationDefinition(type, settings)
-  if (!definition) return { sent: false, skipped: true, reason: 'unknown_type' }
-  if (!definition.enabled) return { sent: false, skipped: true, reason: 'disabled' }
-  if (!channelUsesWhatsApp(definition.channel)) return { sent: false, skipped: true, reason: 'channel_not_whatsapp' }
+function buildPaymentAutomationEmail(type, payment = {}, variables = {}, settings = {}) {
+  const receipt = settings.receipt || {}
+  const automations = settings.automations || {}
+  const businessName = cleanString(receipt.businessName || receipt.business_name || settings.checkout?.businessName || 'Ristak', 160)
+  const logoUrl = cleanString(receipt.logoUrl || receipt.logo_url || settings.checkout?.logoUrl, 2000)
+  const contactName = variables['contact.first_name'] || variables['contact.name'] || 'Hola'
+  const product = variables['payment.product'] || 'Pago'
+  const amount = variables['payment.amount'] || ''
+  const paymentDate = variables['payment.date'] || ''
+  const receiptReference = variables['payment.receipt'] || variables['payment.public_id'] || variables['payment.id'] || ''
+  const paymentUrl = variables['payment.url'] || ''
+  const receiptUrl = variables['payment.receipt_url'] || paymentUrl
+  const intro = cleanString(receipt.intro || '', 500)
+  const terms = receipt.showTerms === false ? '' : cleanString(receipt.terms || '', 1200)
+  const footer = cleanString(receipt.footer || '', 500)
 
-  const payment = await loadPaymentWithContact(paymentInput)
-  const paymentId = cleanString(payment.id, 200)
-  if (!paymentId) return { sent: false, skipped: true, reason: 'missing_payment' }
-
-  const contact = contactFromPaymentRow(payment)
-  if (!contact.phone) return { sent: false, skipped: true, reason: 'missing_phone' }
-
-  const publicBaseUrl = resolvePublicBaseUrl(payment, options.publicBaseUrl)
-  const extraVariables = buildPaymentVariableMap(payment, { publicBaseUrl, timezone })
-  const hasPaymentTarget = Boolean(extraVariables['payment.public_id'] || /^https?:\/\//i.test(extraVariables['payment.url']))
-  if (shouldRequirePaymentLink(type) && !hasPaymentTarget) {
-    return { sent: false, skipped: true, reason: 'missing_payment_url' }
+  const contentByType = {
+    receipt: {
+      badge: 'Pago confirmado',
+      subject: `Comprobante de pago - ${product}`,
+      title: receipt.title || 'Tu pago quedo confirmado',
+      lead: automations.afterPaymentMessage || intro || 'Recibimos tu pago correctamente. Te compartimos tu comprobante para que puedas descargarlo cuando lo necesites.',
+      cta: 'Descargar comprobante PDF',
+      url: receiptUrl,
+      note: 'El enlace abre tu comprobante y activa la descarga del PDF desde la pagina segura de pago.'
+    },
+    reminder: {
+      badge: 'Recordatorio de pago',
+      subject: `Recordatorio de pago - ${product}`,
+      title: 'Tienes un pago por vencer',
+      lead: 'Te compartimos el enlace para revisar el detalle y completar tu pago antes del vencimiento.',
+      cta: 'Abrir enlace de pago',
+      url: paymentUrl,
+      note: 'Si ya realizaste este pago, puedes ignorar este correo.'
+    },
+    failed: {
+      badge: 'Pago no procesado',
+      subject: `No pudimos procesar tu pago - ${product}`,
+      title: 'Necesitamos reintentar tu pago',
+      lead: 'El cobro no se pudo completar. Puedes abrir el enlace para revisar el pago e intentarlo de nuevo.',
+      cta: 'Reintentar pago',
+      url: paymentUrl,
+      note: 'Si necesitas ayuda, responde este correo y el equipo te apoya.'
+    }
   }
+
+  const copy = contentByType[type] || contentByType.receipt
+  const details = [
+    ['Concepto', product],
+    ['Monto', amount],
+    ['Fecha', paymentDate],
+    ['Referencia', receiptReference]
+  ].filter(([, value]) => cleanString(value))
+
+  const safeUrl = /^https?:\/\//i.test(copy.url) ? copy.url : ''
+  const detailsHtml = details.map(([label, value]) => `
+              <tr>
+                <td style="padding: 10px 0; color: #64748b; font-size: 13px;">${escapeHtml(label)}</td>
+                <td style="padding: 10px 0; color: #0f172a; font-size: 13px; font-weight: 700; text-align: right;">${escapeHtml(value)}</td>
+              </tr>
+  `).join('')
+
+  const html = `
+    <div style="margin: 0; padding: 0; background: #f4f7fb; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Arial, sans-serif; color: #0f172a;">
+      <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border-collapse: collapse; background: #f4f7fb;">
+        <tr>
+          <td align="center" style="padding: 28px 16px;">
+            <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width: 620px; border-collapse: collapse; background: #ffffff; border: 1px solid #dbe3ef; border-radius: 22px; overflow: hidden;">
+              <tr>
+                <td style="padding: 26px 28px 18px; background: #0f172a; color: #ffffff;">
+                  ${logoUrl ? `<img src="${escapeHtml(logoUrl)}" alt="" width="44" height="44" style="display: block; width: 44px; height: 44px; object-fit: contain; border-radius: 12px; margin-bottom: 16px;">` : ''}
+                  <div style="font-size: 12px; font-weight: 800; letter-spacing: .08em; text-transform: uppercase; color: #93c5fd;">${escapeHtml(copy.badge)}</div>
+                  <h1 style="margin: 8px 0 0; font-size: 26px; line-height: 1.18; font-weight: 800;">${escapeHtml(copy.title)}</h1>
+                  <p style="margin: 8px 0 0; font-size: 14px; line-height: 1.6; color: #cbd5e1;">${escapeHtml(businessName)}</p>
+                </td>
+              </tr>
+              <tr>
+                <td style="padding: 28px;">
+                  <p style="margin: 0 0 14px; font-size: 16px; line-height: 1.65;">${escapeHtml(contactName)},</p>
+                  <p style="margin: 0; font-size: 15px; line-height: 1.65; color: #334155;">${escapeHtml(copy.lead)}</p>
+                  ${detailsHtml ? `
+                    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin: 24px 0; border-collapse: collapse; border-top: 1px solid #e2e8f0; border-bottom: 1px solid #e2e8f0;">
+                      ${detailsHtml}
+                    </table>
+                  ` : ''}
+                  ${safeUrl ? `
+                    <table role="presentation" cellpadding="0" cellspacing="0" style="margin: 26px 0 18px;">
+                      <tr>
+                        <td style="border-radius: 999px; background: #2563eb;">
+                          <a href="${escapeHtml(safeUrl)}" style="display: inline-block; padding: 13px 22px; color: #ffffff; text-decoration: none; font-size: 14px; font-weight: 800;">${escapeHtml(copy.cta)}</a>
+                        </td>
+                      </tr>
+                    </table>
+                    <p style="margin: 0; font-size: 12px; line-height: 1.6; color: #64748b;">${escapeHtml(copy.note)}</p>
+                    <p style="margin: 10px 0 0; font-size: 12px; line-height: 1.6; color: #64748b; word-break: break-all;">${escapeHtml(safeUrl)}</p>
+                  ` : ''}
+                  ${terms ? `<p style="margin: 24px 0 0; padding-top: 18px; border-top: 1px solid #e2e8f0; font-size: 12px; line-height: 1.6; color: #64748b;">${escapeHtml(terms)}</p>` : ''}
+                  ${footer ? `<p style="margin: 18px 0 0; font-size: 13px; line-height: 1.6; color: #475569;">${escapeHtml(footer)}</p>` : ''}
+                </td>
+              </tr>
+            </table>
+          </td>
+        </tr>
+      </table>
+    </div>
+  `
+
+  const textLines = [
+    `${copy.title}`,
+    '',
+    `${contactName},`,
+    stripHtml(copy.lead),
+    '',
+    ...details.map(([label, value]) => `${label}: ${value}`),
+    '',
+    safeUrl ? `${copy.cta}: ${safeUrl}` : '',
+    terms ? `Terminos: ${stripHtml(terms)}` : '',
+    footer ? stripHtml(footer) : ''
+  ].filter((line, index, array) => line || array[index - 1])
+
+  return {
+    subject: copy.subject,
+    text: textLines.join('\n').trim(),
+    html
+  }
+}
+
+async function sendPaymentWhatsAppAutomationMessage(type, payment, definition, { publicBaseUrl, extraVariables }) {
+  const paymentId = cleanString(payment.id, 200)
+  const contact = contactFromPaymentRow(payment)
+  if (!contact.phone) return { sent: false, skipped: true, type, channel: 'whatsapp', reason: 'missing_phone' }
 
   const claim = await claimDispatch({
     paymentId,
     automationType: type,
+    channel: 'whatsapp',
     templateId: definition.templateId,
     templateName: definition.templateName
   })
-  if (!claim.claimed) return { sent: false, skipped: true, reason: claim.reason, dispatchId: claim.id }
+  if (!claim.claimed) return { sent: false, skipped: true, type, channel: 'whatsapp', reason: claim.reason, dispatchId: claim.id }
 
   try {
     const components = await buildDefaultMessageTemplateSendComponents({
@@ -417,21 +593,117 @@ export async function sendPaymentAutomationMessage(type, paymentInput, options =
     return {
       sent: true,
       type,
+      channel: 'whatsapp',
       dispatchId: claim.id,
       templateName: definition.templateName,
       response
     }
   } catch (error) {
     await markDispatchFailed(claim.id, error)
-    logger.warn(`[Pagos] No se pudo enviar ${definition.label} ${paymentId}: ${error.message}`)
+    logger.warn(`[Pagos] No se pudo enviar ${definition.label} por WhatsApp ${paymentId}: ${error.message}`)
     return {
       sent: false,
       type,
+      channel: 'whatsapp',
       dispatchId: claim.id,
       templateName: definition.templateName,
       error: error.message
     }
   }
+}
+
+async function sendPaymentEmailAutomationMessage(type, payment, definition, { settings, extraVariables }) {
+  const paymentId = cleanString(payment.id, 200)
+  const contact = contactFromPaymentRow(payment)
+  if (!contact.email) return { sent: false, skipped: true, type, channel: 'email', reason: 'missing_email' }
+
+  const claim = await claimDispatch({
+    paymentId,
+    automationType: type,
+    channel: 'email',
+    templateName: `${definition.templateName}:email`
+  })
+  if (!claim.claimed) return { sent: false, skipped: true, type, channel: 'email', reason: claim.reason, dispatchId: claim.id }
+
+  try {
+    const message = buildPaymentAutomationEmail(type, payment, extraVariables, settings)
+    const response = await sendEmailToContact({
+      contactId: contact.id,
+      to: contact.email,
+      subject: message.subject,
+      text: message.text,
+      html: message.html,
+      externalId: claim.id,
+      includeSignature: true
+    })
+
+    await markDispatchSent(claim.id, response)
+    return {
+      sent: true,
+      type,
+      channel: 'email',
+      dispatchId: claim.id,
+      response
+    }
+  } catch (error) {
+    await markDispatchFailed(claim.id, error)
+    logger.warn(`[Pagos] No se pudo enviar ${definition.label} por correo ${paymentId}: ${error.message}`)
+    return {
+      sent: false,
+      type,
+      channel: 'email',
+      dispatchId: claim.id,
+      error: error.message
+    }
+  }
+}
+
+function summarizeDispatchResults(type, results = []) {
+  const sentResults = results.filter((result) => result?.sent)
+  const first = sentResults[0] || results[0] || { sent: false, skipped: true, reason: 'no_channel' }
+
+  return {
+    ...first,
+    sent: sentResults.length > 0,
+    skipped: sentResults.length === 0 && results.every((result) => result?.skipped),
+    type,
+    channels: sentResults.map((result) => result.channel).filter(Boolean),
+    results
+  }
+}
+
+export async function sendPaymentAutomationMessage(type, paymentInput, options = {}) {
+  const settings = options.settings || await getPaymentSettings()
+  const timezone = options.timezone || await getAccountTimezone().catch(() => DEFAULT_TIMEZONE)
+  const fallbackCurrency = options.currency || await getAccountCurrency().catch(() => '')
+  const definition = getAutomationDefinition(type, settings)
+  if (!definition) return { sent: false, skipped: true, reason: 'unknown_type' }
+  if (!definition.enabled) return { sent: false, skipped: true, reason: 'disabled' }
+  const sendWhatsApp = channelUsesWhatsApp(definition.channel)
+  const sendEmail = channelUsesEmail(definition.channel)
+  if (!sendWhatsApp && !sendEmail) return { sent: false, skipped: true, reason: 'channel_not_supported' }
+
+  const payment = await loadPaymentWithContact(paymentInput)
+  const paymentId = cleanString(payment.id, 200)
+  if (!paymentId) return { sent: false, skipped: true, reason: 'missing_payment' }
+
+  const publicBaseUrl = resolvePublicBaseUrl(payment, options.publicBaseUrl)
+  const extraVariables = buildPaymentVariableMap(payment, { publicBaseUrl, timezone, fallbackCurrency })
+  const hasPaymentTarget = Boolean(extraVariables['payment.public_id'] || /^https?:\/\//i.test(extraVariables['payment.url']))
+  if (shouldRequirePaymentLink(type) && !hasPaymentTarget) {
+    return { sent: false, skipped: true, reason: 'missing_payment_url' }
+  }
+
+  const results = []
+  if (sendWhatsApp) {
+    results.push(await sendPaymentWhatsAppAutomationMessage(type, payment, definition, { publicBaseUrl, extraVariables }))
+  }
+
+  if (sendEmail) {
+    results.push(await sendPaymentEmailAutomationMessage(type, payment, definition, { settings, extraVariables }))
+  }
+
+  return summarizeDispatchResults(type, results)
 }
 
 export function queuePaymentAutomationMessage(type, paymentInput, options = {}) {
@@ -500,7 +772,7 @@ export async function processDuePaymentAutomations({ now = new Date(), limit = 1
   const results = []
 
   const reminderDefinition = getAutomationDefinition('reminder', settings)
-  if (reminderDefinition?.enabled && channelUsesWhatsApp(reminderDefinition.channel)) {
+  if (reminderDefinition?.enabled && (channelUsesWhatsApp(reminderDefinition.channel) || channelUsesEmail(reminderDefinition.channel))) {
     const reminders = await getReminderCandidates(settings, now, limit, paymentIds, timezone)
     for (const payment of reminders) {
       results.push(await sendPaymentAutomationMessage('reminder', payment, { settings, timezone }))
@@ -508,7 +780,7 @@ export async function processDuePaymentAutomations({ now = new Date(), limit = 1
   }
 
   const failedDefinition = getAutomationDefinition('failed', settings)
-  if (failedDefinition?.enabled && channelUsesWhatsApp(failedDefinition.channel)) {
+  if (failedDefinition?.enabled && (channelUsesWhatsApp(failedDefinition.channel) || channelUsesEmail(failedDefinition.channel))) {
     const failed = await getFailedCandidates(settings, now, limit, paymentIds)
     for (const payment of failed) {
       results.push(await sendPaymentAutomationMessage('failed', payment, { settings, timezone }))

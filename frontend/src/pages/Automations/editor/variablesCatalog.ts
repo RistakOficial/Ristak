@@ -76,12 +76,12 @@ export const VARIABLE_CATEGORIES: FlowVariableCategory[] = [
 ]
 
 export const BASE_VARIABLES: FlowVariable[] = [
-  // Contacto (el email es dato CRM, no canal)
+  // Contacto (el correo es dato CRM, no canal)
   { fieldId: 'contact.first_name', label: 'Primer nombre', category: 'contact' },
   { fieldId: 'contact.last_name', label: 'Apellido', category: 'contact' },
   { fieldId: 'contact.full_name', label: 'Nombre completo', category: 'contact' },
   { fieldId: 'contact.phone', label: 'Teléfono', category: 'contact' },
-  { fieldId: 'contact.email', label: 'Email (dato de contacto)', category: 'contact' },
+  { fieldId: 'contact.email', label: 'Correo (dato de contacto)', category: 'contact' },
   { fieldId: 'contact.source', label: 'Fuente', category: 'contact' },
   { fieldId: 'contact.created_at', label: 'Fecha de creación', category: 'contact' },
   { fieldId: 'contact.updated_at', label: 'Fecha de actualización', category: 'contact' },

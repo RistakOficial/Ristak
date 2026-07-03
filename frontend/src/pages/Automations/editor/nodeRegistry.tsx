@@ -361,7 +361,7 @@ export const CONTACT_VARIABLES = [
   '{{respuesta_ia}}'
 ]
 
-/** Canales conversacionales disponibles para acciones de chat (sin SMS ni Email) */
+/** Canales conversacionales disponibles para acciones de chat (sin SMS ni correo) */
 export const ALLOWED_CHANNELS = ['whatsapp', 'messenger', 'instagram'] as const
 
 export const CHANNEL_OPTIONS: ConfigFieldOption[] = [
@@ -509,7 +509,7 @@ const FORM_FIELDS: VariableSchemaField[] = [
   field('Nombre del formulario', 'nombre_formulario'),
   field('Nombre', 'nombre'),
   field('Teléfono', 'telefono'),
-  field('Email', 'email'),
+  field('Correo', 'email'),
   field('Estado', 'estado'),
   field('Descalificado', 'descalificado', 'boolean'),
   field('ID del envío', 'id_envio'),
@@ -539,7 +539,7 @@ const CONTACT_OUTPUT_FIELDS: VariableSchemaField[] = [
   field('ID del contacto', 'id_contacto'),
   field('Nombre', 'nombre'),
   field('Teléfono', 'telefono'),
-  field('Email', 'email'),
+  field('Correo', 'email'),
   field('Etiquetas', 'etiquetas', 'array'),
   field('Campos personalizados', 'campos_personalizados', 'object', [
     field('Interés', 'interes'),
@@ -552,7 +552,7 @@ const CONTACT_UPDATED_FIELDS: VariableSchemaField[] = [
   field('ID del contacto', 'id_contacto'),
   field('Nombre', 'nombre'),
   field('Teléfono', 'telefono'),
-  field('Email', 'email'),
+  field('Correo', 'email'),
   field('ID del número de WhatsApp preferido', 'id_numero_whatsapp_preferido'),
   field('Estado de actualización', 'estado_actualizacion')
 ]
@@ -871,7 +871,7 @@ const TRIGGERS: NodeDefinition[] = [
         key: 'samplePayload',
         label: 'Ejemplo de payload',
         type: 'info',
-        text: '{\n  "contacto": {\n    "nombre": "Ana",\n    "telefono": "+52 55 0000 0000",\n    "email": "ana@ejemplo.com"\n  },\n  "datos": { "origen": "mi-sistema" }\n}'
+        text: '{\n  "contacto": {\n    "nombre": "Ana",\n    "telefono": "+52 55 0000 0000",\n    "correo": "ana@ejemplo.com"\n  },\n  "datos": { "origen": "mi-sistema" }\n}'
       }
     ],
     outputs: () => SINGLE_OUTPUT,
@@ -1426,7 +1426,7 @@ const CHANNEL_NODES: NodeDefinition[] = [
 	    type: 'channel-email',
 	    kind: 'action',
 	    label: 'Correo',
-	    brand: 'Email',
+	    brand: 'Correo',
 	    category: 'action-content',
 	    description: 'Envía un correo al contacto',
 	    icon: Mail,
@@ -1568,7 +1568,7 @@ const CONTACT_ACTIONS: NodeDefinition[] = [
       { key: 'firstName', label: 'Nombre', type: 'text', placeholder: '{{contact.first_name}}', showVariables: true },
       { key: 'lastName', label: 'Apellido', type: 'text', placeholder: '{{contact.last_name}}', showVariables: true },
       { key: 'phone', label: 'Teléfono', type: 'text', placeholder: '{{contact.phone}}', required: true, showVariables: true },
-      { key: 'email', label: 'Email (dato de contacto, opcional)', type: 'text', placeholder: '{{contact.email}}', showVariables: true },
+      { key: 'email', label: 'Correo (dato de contacto, opcional)', type: 'text', placeholder: '{{contact.email}}', showVariables: true },
       { key: 'source', label: 'Fuente (opcional)', type: 'text', placeholder: '{{automation.name}}', showVariables: true },
       { key: 'tags', label: 'Etiquetas iniciales', type: 'catalogTags', catalog: 'tags' },
       { key: 'assignedUser', label: 'Usuario asignado (opcional)', type: 'catalogSelect', catalog: 'users', advanced: true },
@@ -1613,7 +1613,7 @@ const CONTACT_ACTIONS: NodeDefinition[] = [
         required: true,
         options: [
           { value: 'phone', label: 'Teléfono' },
-          { value: 'email', label: 'Email (dato de contacto)' },
+          { value: 'email', label: 'Correo (dato de contacto)' },
           { value: 'id', label: 'ID del contacto' }
         ]
       },
@@ -3147,7 +3147,7 @@ export function validateNodeConfig(definition: NodeDefinition, config: Record<st
     errors.push(`Máximo ${definition.maxBranches || MAX_BRANCHES} ramas por paso`)
   }
 
-  // Canales: nunca permitir SMS/Email u otros canales no soportados
+  // Canales: nunca permitir SMS/correo u otros canales no soportados
   const channelKeys = ['channel', 'replyChannel', 'conversationChannel', 'actionChannel']
   channelKeys.forEach((key) => {
     const value = str(obj(config)[key])

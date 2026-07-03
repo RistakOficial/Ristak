@@ -11,6 +11,11 @@ import {
   setYCloudFetchForTest
 } from '../src/services/whatsappApiService.js'
 import {
+  connectEmail,
+  setEmailMxResolverForTest,
+  setEmailTransportFactoryForTest
+} from '../src/services/emailService.js'
+import {
   processDuePaymentAutomations,
   sendPaymentAutomationMessage
 } from '../src/services/paymentAutomationsService.js'
@@ -20,6 +25,9 @@ import {
 } from '../src/utils/dateUtils.js'
 
 const PAYMENT_SETTINGS_CONFIG_KEY = 'payments_settings'
+const EMAIL_CONFIG_KEY = 'email_smtp_config'
+const EMAIL_PASSWORD_KEY = 'email_smtp_password'
+const EMAIL_SIGNATURE_CONFIG_KEY = 'email_signature_config'
 const PUBLIC_BASE_URL = 'https://pagos.example.test'
 
 function ycloudJsonResponse(body, { status = 200, statusText = 'OK' } = {}) {
@@ -113,6 +121,47 @@ async function withYCloudCapture(callback) {
       return await callback(captures)
     } finally {
       setYCloudFetchForTest(null)
+    }
+  })
+}
+
+async function withEmailCapture(callback) {
+  await initializeMasterKey()
+  const configKeys = [
+    PAYMENT_SETTINGS_CONFIG_KEY,
+    EMAIL_CONFIG_KEY,
+    EMAIL_PASSWORD_KEY,
+    EMAIL_SIGNATURE_CONFIG_KEY
+  ]
+  const captures = []
+
+  return snapshotAppConfig(configKeys, async () => {
+    setEmailMxResolverForTest(async () => [
+      { exchange: 'aspmx.l.google.com.', priority: 1 }
+    ])
+    setEmailTransportFactoryForTest(() => ({
+      verify: async () => true,
+      sendMail: async (message) => {
+        captures.push(message)
+        return {
+          messageId: `smtp-payment-auto-${captures.length}`,
+          accepted: [message.to],
+          rejected: []
+        }
+      }
+    }))
+
+    try {
+      await connectEmail({
+        fromEmail: 'pagos@ristak.test',
+        fromName: 'Ristak Pagos',
+        password: 'smtp-payment-secret'
+      })
+      captures.length = 0
+      return await callback(captures)
+    } finally {
+      setEmailTransportFactoryForTest(null)
+      setEmailMxResolverForTest(null)
     }
   })
 }
@@ -247,6 +296,135 @@ test('envia comprobante de pago por WhatsApp solo cuando el switch esta activo',
     } finally {
       await cleanupFixtures([sentFixture.paymentId, disabledFixture.paymentId])
     }
+  })
+})
+
+test('envia comprobante de pago por correo con boton de PDF descargable', async () => {
+  await withEmailCapture(async (captures) => {
+    const fixture = await createPaymentFixture({ status: 'paid', suffix: 'emailreceipt1' })
+
+    try {
+      await setAppConfig(PAYMENT_SETTINGS_CONFIG_KEY, {
+        receipt: {
+          title: 'Comprobante de pago',
+          intro: 'Tu pago fue recibido correctamente.',
+          businessName: 'Clinica Demo',
+          showTerms: true,
+          terms: 'Conserva este comprobante para cualquier aclaracion.'
+        },
+        automations: {
+          receiptDeliveryEnabled: true,
+          receiptDeliveryChannel: 'email',
+          afterPaymentMessage: 'Gracias, recibimos tu pago. Te compartimos tu comprobante.'
+        }
+      })
+
+      const result = await sendPaymentAutomationMessage('receipt', fixture.paymentId)
+      assert.equal(result.sent, true)
+      assert.deepEqual(result.channels, ['email'])
+      assert.equal(captures.length, 1)
+      assert.equal(captures[0].to, `${fixture.contactId}@example.test`)
+      assert.equal(captures[0].subject, 'Comprobante de pago - Plan mensual')
+      assert.match(captures[0].html, /Descargar comprobante PDF/)
+      assert.match(captures[0].html, new RegExp(`${PUBLIC_BASE_URL}/pay/pay_auto_emailreceipt1\\?receipt=1`))
+      assert.match(captures[0].text, /Descargar comprobante PDF:/)
+
+      const dispatch = await db.get(
+        'SELECT channel, status FROM payment_automation_dispatches WHERE payment_id = ? AND automation_type = ?',
+        [fixture.paymentId, 'receipt']
+      )
+      assert.equal(dispatch.channel, 'email')
+      assert.equal(dispatch.status, 'sent')
+
+      const storedEmail = await db.get(
+        'SELECT status, subject, html_body FROM email_messages WHERE contact_id = ? ORDER BY created_at DESC LIMIT 1',
+        [fixture.contactId]
+      )
+      assert.equal(storedEmail.status, 'sent')
+      assert.equal(storedEmail.subject, 'Comprobante de pago - Plan mensual')
+      assert.match(storedEmail.html_body, /Descargar comprobante PDF/)
+    } finally {
+      await db.run('DELETE FROM email_messages WHERE contact_id = ?', [fixture.contactId])
+      await cleanupFixtures([fixture.paymentId])
+    }
+  })
+})
+
+test('canal ambos envia WhatsApp API y correo sin pisar despachos', async () => {
+  await withYCloudCapture(async (whatsappCaptures) => {
+    await withEmailCapture(async (emailCaptures) => {
+      const fixture = await createPaymentFixture({ status: 'paid', suffix: 'bothreceipt1' })
+
+      try {
+        await setAppConfig(PAYMENT_SETTINGS_CONFIG_KEY, {
+          automations: {
+            receiptDeliveryEnabled: true,
+            receiptDeliveryChannel: 'both',
+            receiptTemplateName: 'comprobante_pago_recibido',
+            receiptTemplateLanguage: 'es_MX'
+          }
+        })
+
+        const result = await sendPaymentAutomationMessage('receipt', fixture.paymentId)
+        assert.equal(result.sent, true)
+        assert.deepEqual(result.channels.sort(), ['email', 'whatsapp'])
+        assert.equal(whatsappCaptures.length, 1)
+        assert.equal(emailCaptures.length, 1)
+
+        const dispatches = await db.all(
+          'SELECT channel, status FROM payment_automation_dispatches WHERE payment_id = ? AND automation_type = ? ORDER BY channel',
+          [fixture.paymentId, 'receipt']
+        )
+        assert.deepEqual(dispatches.map((dispatch) => dispatch.channel), ['email', 'whatsapp'])
+        assert.deepEqual(dispatches.map((dispatch) => dispatch.status), ['sent', 'sent'])
+      } finally {
+        await db.run('DELETE FROM email_messages WHERE contact_id = ?', [fixture.contactId])
+        await cleanupFixtures([fixture.paymentId])
+      }
+    })
+  })
+})
+
+test('canal ambos respeta despacho legacy de WhatsApp y solo envia correo faltante', async () => {
+  await withYCloudCapture(async (whatsappCaptures) => {
+    await withEmailCapture(async (emailCaptures) => {
+      const fixture = await createPaymentFixture({ status: 'paid', suffix: 'legacysent1' })
+      const legacyDispatchId = `payment_auto_receipt_${fixture.paymentId}`
+
+      try {
+        await db.run(`
+          INSERT INTO payment_automation_dispatches (
+            id, payment_id, automation_type, channel, status, template_name, updated_at
+          ) VALUES (?, ?, 'receipt', 'whatsapp', 'sent', 'comprobante_pago_recibido', CURRENT_TIMESTAMP)
+        `, [legacyDispatchId, fixture.paymentId])
+
+        await setAppConfig(PAYMENT_SETTINGS_CONFIG_KEY, {
+          automations: {
+            receiptDeliveryEnabled: true,
+            receiptDeliveryChannel: 'both',
+            receiptTemplateName: 'comprobante_pago_recibido',
+            receiptTemplateLanguage: 'es_MX'
+          }
+        })
+
+        const result = await sendPaymentAutomationMessage('receipt', fixture.paymentId)
+        assert.equal(result.sent, true)
+        assert.deepEqual(result.channels, ['email'])
+        assert.equal(whatsappCaptures.length, 0)
+        assert.equal(emailCaptures.length, 1)
+
+        const dispatches = await db.all(
+          'SELECT id, channel, status FROM payment_automation_dispatches WHERE payment_id = ? AND automation_type = ? ORDER BY id',
+          [fixture.paymentId, 'receipt']
+        )
+        assert.equal(dispatches.length, 2)
+        assert.ok(dispatches.some((dispatch) => dispatch.id === legacyDispatchId && dispatch.channel === 'whatsapp' && dispatch.status === 'sent'))
+        assert.ok(dispatches.some((dispatch) => dispatch.channel === 'email' && dispatch.status === 'sent'))
+      } finally {
+        await db.run('DELETE FROM email_messages WHERE contact_id = ?', [fixture.contactId])
+        await cleanupFixtures([fixture.paymentId])
+      }
+    })
   })
 })
 
