@@ -480,8 +480,9 @@ Alcance:
 
 - Cobros unicos por link publico `/pay/:publicPaymentId`.
 - Checkout de Sites con SDK oficial `https://sdk.clip.mx/js/clip-sdk.js`.
-- Cobro inicial de suscripciones: al aprobarse el pago CLIP, Ristak activa la
-  suscripcion interna. No se registra como cobro recurrente automatico de CLIP.
+- CLIP no se ofrece para suscripciones ni planes de pago en Ristak. Solo se usa
+  para pagos unicos, porque el flujo disponible no guarda tarjeta ni autoriza
+  cargos recurrentes/off-session administrados por Ristak.
 - Webhook publico `/api/clip/webhook`; cada notificacion consulta el pago real
   con `GET /payments/{payment_id}` antes de actualizar Ristak.
 - Configuracion > Pagos > CLIP muestra, debajo de las credenciales de prueba y
@@ -506,8 +507,9 @@ Restricciones operativas:
   no estar habilitadas para la credencial. El cobro real sigue usando el token
   generado por el SDK y `POST /payments` contra CLIP cuando el cliente paga.
 - Si se necesita recurrencia automatica real con cargo futuro gestionado por la
-  pasarela, usar Stripe, Conekta o Mercado Pago mientras CLIP no tenga un flujo
-  publico equivalente integrado en Ristak.
+  pasarela, usar Stripe, Conekta o Mercado Pago. El backend rechaza intentos de
+  crear suscripciones con `payment_provider=clip`, `payment_method=clip`,
+  `clip_link` o `clip_payment_link`.
 
 ### Regla pagos test y Meta
 
@@ -719,8 +721,8 @@ Crons de integracion que deben pasar por registry y detector local:
 - Meta sync/version.
 - Google Calendar sync.
 - WhatsApp QR watchdog.
-- Stripe/Conekta/Mercado Pago payment plans. CLIP no registra cron de cobro
-  recurrente; solo confirma pagos con webhook/refresh del checkout.
+- Stripe/Conekta/Mercado Pago payment plans. CLIP queda fuera de planes de pago
+  y suscripciones; solo confirma pagos unicos con webhook/refresh del checkout.
 
 Regla: un cron de integracion externa no arranca solo porque el backend arranco.
 Debe activarse por estado local de conexion y sincronizarse al conectar,

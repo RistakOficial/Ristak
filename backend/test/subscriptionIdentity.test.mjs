@@ -75,6 +75,44 @@ test('suscripciones: dos filas del mismo contacto conservan identidad independie
   }
 })
 
+test('suscripciones: CLIP no se puede usar como pasarela recurrente', async () => {
+  await assert.rejects(
+    () => createSubscription({
+      name: 'Suscripción CLIP no soportada',
+      amount: 1000,
+      intervalType: 'monthly',
+      intervalCount: 1,
+      startDate: '2099-01-01',
+      nextRunAt: '2099-01-01',
+      paymentMethod: 'clip_link',
+      paymentProvider: 'clip'
+    }),
+    (error) => {
+      assert.equal(error.status, 400)
+      assert.match(error.message, /CLIP solo está disponible para pagos únicos/)
+      return true
+    }
+  )
+
+  await assert.rejects(
+    () => createSubscription({
+      name: 'Suscripción con método CLIP disfrazado',
+      amount: 1000,
+      intervalType: 'monthly',
+      intervalCount: 1,
+      startDate: '2099-01-01',
+      nextRunAt: '2099-01-01',
+      paymentMethod: 'clip_payment_link',
+      paymentProvider: 'stripe'
+    }),
+    (error) => {
+      assert.equal(error.status, 400)
+      assert.match(error.message, /CLIP solo está disponible para pagos únicos/)
+      return true
+    }
+  )
+})
+
 test('frontend: apiClient no deduplica payloads completos por telefono o email', () => {
   const frontendSrcPath = fileURLToPath(new URL('../../frontend/src', import.meta.url))
   const contactDedupPath = fileURLToPath(new URL('../../frontend/src/utils/contactDedup.ts', import.meta.url))

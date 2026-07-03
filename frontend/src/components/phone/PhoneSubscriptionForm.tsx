@@ -39,18 +39,18 @@ interface SubscriptionDraft {
   startDate: string
 }
 
-const PROVIDER_LABELS: Record<PaymentGatewayProvider, string> = {
+type SubscriptionGatewayProvider = Exclude<PaymentGatewayProvider, 'clip'>
+
+const PROVIDER_LABELS: Record<SubscriptionGatewayProvider, string> = {
   stripe: 'Stripe',
   conekta: 'Conekta',
-  mercadopago: 'Mercado Pago',
-  clip: 'CLIP'
+  mercadopago: 'Mercado Pago'
 }
 
-const PROVIDER_DESCRIPTIONS: Record<PaymentGatewayProvider, string> = {
+const PROVIDER_DESCRIPTIONS: Record<SubscriptionGatewayProvider, string> = {
   stripe: 'Suscripciones con Stripe.',
   conekta: 'Domiciliación con tarjeta guardada.',
-  mercadopago: 'Autorización por enlace de Mercado Pago.',
-  clip: 'Pago inicial por link CLIP.'
+  mercadopago: 'Autorización por enlace de Mercado Pago.'
 }
 
 const INTERVAL_OPTIONS: Array<PhoneSelectOption & { value: SubscriptionInterval }> = [
@@ -117,16 +117,18 @@ function getMercadoPagoAuthorizationLink(subscription: PaymentSubscription) {
   return subscription.mercadoPagoInitPoint || subscription.mercadoPagoSandboxInitPoint || ''
 }
 
-function getSubscriptionActivationLink(subscription: PaymentSubscription, provider: PaymentGatewayProvider) {
+function isSubscriptionGatewayProvider(provider: PaymentGatewayProvider): provider is SubscriptionGatewayProvider {
+  return provider !== 'clip'
+}
+
+function getSubscriptionActivationLink(subscription: PaymentSubscription, provider: SubscriptionGatewayProvider) {
   if (provider === 'mercadopago') return getMercadoPagoAuthorizationLink(subscription)
-  if (provider === 'clip') return subscription.subscriptionStartUrl || ''
   return ''
 }
 
-function getPaymentMethodForProvider(provider: PaymentGatewayProvider) {
+function getPaymentMethodForProvider(provider: SubscriptionGatewayProvider) {
   if (provider === 'mercadopago') return 'mercadopago_subscription'
   if (provider === 'conekta') return 'conekta_subscription'
-  if (provider === 'clip') return 'clip_link'
   return 'stripe_saved_card'
 }
 
@@ -147,19 +149,20 @@ export const PhoneSubscriptionForm: React.FC<PhoneSubscriptionFormProps> = ({
   onSaved
 }) => {
   const { showToast } = useNotification()
+  const subscriptionProviders = useMemo(() => providers.filter(isSubscriptionGatewayProvider), [providers])
   const providerOptions = useMemo<PhoneSelectOption[]>(() => (
-    providers.map((provider) => ({
+    subscriptionProviders.map((provider) => ({
       value: provider,
       label: PROVIDER_LABELS[provider],
       description: PROVIDER_DESCRIPTIONS[provider]
     }))
-  ), [providers])
+  ), [subscriptionProviders])
   const [selectedContact, setSelectedContact] = useState<Contact | null>(null)
   const [contactPickerOpen, setContactPickerOpen] = useState(false)
   const [contactQuery, setContactQuery] = useState('')
   const [contactResults, setContactResults] = useState<Contact[]>([])
   const [contactSearching, setContactSearching] = useState(false)
-  const [provider, setProvider] = useState<PaymentGatewayProvider>(() => providers[0] || 'stripe')
+  const [provider, setProvider] = useState<SubscriptionGatewayProvider>(() => subscriptionProviders[0] || 'stripe')
   const [providerStepOpen, setProviderStepOpen] = useState(false)
   const [draft, setDraft] = useState<SubscriptionDraft>(() => createDraft())
   const [saving, setSaving] = useState(false)
@@ -172,9 +175,9 @@ export const PhoneSubscriptionForm: React.FC<PhoneSubscriptionFormProps> = ({
   const resolvedContactName = getContactName(resolvedContact)
   const resolvedContactEmail = resolvedContact?.email || ''
   const resolvedContactPhone = resolvedContact?.phone || ''
-  const selectedProvider = providers.includes(provider) ? provider : providers[0] || 'stripe'
+  const selectedProvider = subscriptionProviders.includes(provider) ? provider : subscriptionProviders[0] || 'stripe'
   const providerNeedsStoredContact = providerStepOpen && (selectedProvider === 'stripe' || selectedProvider === 'conekta')
-  const knownProviderForDetails = providerOptions.length === 1 ? providers[0] : providerStepOpen ? selectedProvider : null
+  const knownProviderForDetails = providerOptions.length === 1 ? subscriptionProviders[0] : providerStepOpen ? selectedProvider : null
   const amount = normalizeAmount(draft.amount)
   const providerLabel = providerStepOpen ? PROVIDER_LABELS[selectedProvider] || 'Pasarela' : 'Sin pasarela'
   const intervalSummary = getIntervalSummary(draft.intervalType, draft.intervalCount)
@@ -185,10 +188,10 @@ export const PhoneSubscriptionForm: React.FC<PhoneSubscriptionFormProps> = ({
   }
 
   useEffect(() => {
-    if (providers.length > 0 && !providers.includes(provider)) {
-      setProvider(providers[0])
+    if (subscriptionProviders.length > 0 && !subscriptionProviders.includes(provider)) {
+      setProvider(subscriptionProviders[0])
     }
-  }, [provider, providers])
+  }, [provider, subscriptionProviders])
 
   useEffect(() => {
     if (knownProviderForDetails === 'conekta' && draft.intervalType === 'daily') {
@@ -273,9 +276,9 @@ export const PhoneSubscriptionForm: React.FC<PhoneSubscriptionFormProps> = ({
     if (savedSubscription) onSaved?.(savedSubscription)
   }
 
-  const validateDraft = (targetProvider?: PaymentGatewayProvider) => {
+  const validateDraft = (targetProvider?: SubscriptionGatewayProvider) => {
     if (!providerOptions.length) {
-      showToast('warning', 'Pasarela no conectada', 'Conecta Stripe, Conekta, Mercado Pago o CLIP para crear suscripciones.')
+      showToast('warning', 'Pasarela no conectada', 'Conecta Stripe, Conekta o Mercado Pago para crear suscripciones.')
       return false
     }
     if (!draft.name.trim()) {
@@ -295,14 +298,6 @@ export const PhoneSubscriptionForm: React.FC<PhoneSubscriptionFormProps> = ({
       showToast('warning', 'Falta el email', 'Mercado Pago necesita email para que el cliente autorice la suscripción.')
       return false
     }
-    if (targetProvider === 'clip' && String(currency || '').toUpperCase() !== 'MXN') {
-      showToast('warning', 'Moneda no soportada', 'CLIP solo acepta MXN para crear el pago inicial.')
-      return false
-    }
-    if (targetProvider === 'clip' && (!resolvedContactEmail || !resolvedContactPhone)) {
-      showToast('warning', 'Faltan datos del cliente', 'CLIP necesita email y teléfono para crear el pago inicial.')
-      return false
-    }
     if (targetProvider === 'conekta' && draft.intervalType === 'daily') {
       showToast('warning', 'Frecuencia no soportada', 'Conekta no acepta suscripciones diarias.')
       return false
@@ -311,7 +306,7 @@ export const PhoneSubscriptionForm: React.FC<PhoneSubscriptionFormProps> = ({
     return true
   }
 
-  const createSubscriptionWithProvider = async (targetProvider: PaymentGatewayProvider) => {
+  const createSubscriptionWithProvider = async (targetProvider: SubscriptionGatewayProvider) => {
     if (!validateDraft(targetProvider)) return
 
     setSaving(true)
@@ -324,13 +319,13 @@ export const PhoneSubscriptionForm: React.FC<PhoneSubscriptionFormProps> = ({
         contactPhone: resolvedContactPhone || null,
         name: draft.name.trim(),
         description: draft.description.trim(),
-        status: targetProvider === 'mercadopago' || targetProvider === 'clip' ? 'incomplete' : 'active',
+        status: targetProvider === 'mercadopago' ? 'incomplete' : 'active',
         amount,
         currency,
         intervalType: draft.intervalType,
         intervalCount: Math.max(1, Number(draft.intervalCount) || 1),
         startDate: draft.startDate || getTodayInputValue(),
-        nextRunAt: targetProvider === 'mercadopago' || targetProvider === 'clip' ? null : draft.startDate || getTodayInputValue(),
+        nextRunAt: targetProvider === 'mercadopago' ? null : draft.startDate || getTodayInputValue(),
         paymentMethod,
         paymentProvider: targetProvider
       })
@@ -563,7 +558,7 @@ export const PhoneSubscriptionForm: React.FC<PhoneSubscriptionFormProps> = ({
       >
         <div className={styles.providerChoices}>
           {providerOptions.map((option) => {
-            const value = option.value as PaymentGatewayProvider
+            const value = option.value as SubscriptionGatewayProvider
             const active = selectedProvider === value
             return (
               <button

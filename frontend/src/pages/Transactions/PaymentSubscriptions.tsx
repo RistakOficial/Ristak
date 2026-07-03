@@ -173,15 +173,6 @@ const PAYMENT_METHOD_OPTIONS: Array<{
     description: 'Crea un plan de suscripción en Mercado Pago y entrega su link de autorización.',
     requirement: 'El cliente captura o confirma sus datos al autorizar el link en Mercado Pago.',
     result: 'Mercado Pago activa la suscripción cuando el cliente autoriza el link.'
-  },
-  {
-    value: 'clip_link',
-    label: 'CLIP - link de inicio',
-    provider: 'clip',
-    modeLabel: 'Link de inicio',
-    description: 'Genera un link de Ristak con Checkout Transparente de CLIP para cobrar el inicio de la suscripción.',
-    requirement: 'Requiere contacto con email y teléfono. CLIP solo acepta MXN.',
-    result: 'Ristak activa la suscripción cuando CLIP confirma el pago inicial.'
   }
 ]
 
@@ -195,9 +186,7 @@ const LINK_PAYMENT_METHODS = new Set<string>([
   'stripe_payment_link',
   'conekta_link',
   'conekta_payment_link',
-  'mercadopago_subscription',
-  'clip_link',
-  'clip_payment_link'
+  'mercadopago_subscription'
 ])
 const SAVED_CARD_PAYMENT_METHODS = new Set<SubscriptionPaymentMethod>(['stripe_saved_card', 'conekta_subscription'])
 
@@ -381,7 +370,7 @@ function getPaymentMethodLabel(value?: string | null) {
   if (normalized === 'conekta_link') return 'Link de suscripción Conekta'
   if (normalized === 'mercadopago_checkout') return 'Link de pago Mercado Pago'
   if (normalized === 'mercadopago_subscription') return 'Suscripción Mercado Pago'
-  if (normalized === 'clip_link') return 'Link de inicio CLIP'
+  if (normalized === 'clip_link') return 'Pago único CLIP vinculado'
   if (normalized === 'manual') return 'Manual'
   return value || 'Sin método'
 }
@@ -471,6 +460,7 @@ function buildSubscriptionPaymentLinkPanel(
   if (!paymentUrl) return null
   const isMercadoPagoSubscription = paymentMethod === 'mercadopago_subscription'
   const isClipSubscription = paymentMethod === 'clip_link' || subscription.paymentProvider === 'clip'
+  if (isClipSubscription) return null
 
   const contactId = subscription.contactId || fallback.contact?.id || fallback.payload?.contactId || ''
   const contactName = subscription.contactName || fallback.contact?.name || fallback.payload?.contactName || 'Contacto'
@@ -488,10 +478,8 @@ function buildSubscriptionPaymentLinkPanel(
     title: 'Link de suscripción listo',
     description: isMercadoPagoSubscription
       ? 'Comparte este enlace de Mercado Pago para que el cliente autorice la suscripción.'
-      : isClipSubscription
-        ? 'Comparte este enlace de CLIP para que el cliente pague el inicio de la suscripción.'
       : 'Comparte este enlace de la pasarela para que el cliente autorice la suscripción.',
-    linkLabel: isMercadoPagoSubscription ? 'Enlace de suscripción Mercado Pago' : isClipSubscription ? 'Enlace de inicio CLIP' : 'Enlace de suscripción',
+    linkLabel: isMercadoPagoSubscription ? 'Enlace de suscripción Mercado Pago' : 'Enlace de suscripción',
     provider,
     paymentUrl,
     amount: Number(subscription.amount || fallback.payload?.amount || 0),
@@ -512,8 +500,6 @@ function getSubscriptionPaymentLinkShareText(link: PaymentLinkReadyData) {
   const amountText = link.amount > 0 ? ` por ${formatCurrency(link.amount, link.currency)}` : ''
   const activationText = link.provider === 'mercadopago'
     ? 'Al autorizarlo, Mercado Pago activará tu suscripción.'
-    : link.provider === 'clip'
-      ? 'Al pagarlo, Ristak activará tu suscripción.'
     : 'Al autorizarlo, la pasarela activará los cobros recurrentes de tu suscripción.'
 
   return `Hola ${contactName}, te comparto el enlace para autorizar tu suscripción${amountText}. ${activationText}\n${link.paymentUrl}`
@@ -572,7 +558,6 @@ export const PaymentSubscriptions: React.FC = () => {
   const [stripeConnected, setStripeConnected] = useState(false)
   const [conektaConnected, setConektaConnected] = useState(false)
   const [mercadoPagoConnected, setMercadoPagoConnected] = useState(false)
-  const [clipConnected, setClipConnected] = useState(false)
   const [integrationsLoading, setIntegrationsLoading] = useState(true)
   const [savedPaymentMethods, setSavedPaymentMethods] = useState<StripeSavedPaymentMethod[]>([])
   const [savedConektaPaymentSources, setSavedConektaPaymentSources] = useState<ConektaSavedPaymentSource[]>([])
@@ -625,14 +610,12 @@ export const PaymentSubscriptions: React.FC = () => {
         setStripeConnected(Boolean(data?.stripe?.connected))
         setConektaConnected(Boolean(data?.conekta?.connected))
         setMercadoPagoConnected(Boolean(data?.mercadopago?.connected))
-        setClipConnected(Boolean(data?.clip?.connected))
       })
       .catch(() => {
         if (cancelled) return
         setStripeConnected(false)
         setConektaConnected(false)
         setMercadoPagoConnected(false)
-        setClipConnected(false)
       })
       .finally(() => {
         if (!cancelled) setIntegrationsLoading(false)
@@ -699,11 +682,9 @@ export const PaymentSubscriptions: React.FC = () => {
         ? stripeConnected
         : option.provider === 'conekta'
           ? conektaConnected
-          : option.provider === 'mercadopago'
-            ? mercadoPagoConnected
-            : clipConnected
+          : mercadoPagoConnected
     ))
-  ), [clipConnected, conektaConnected, mercadoPagoConnected, stripeConnected])
+  ), [conektaConnected, mercadoPagoConnected, stripeConnected])
   const availableLinkPaymentMethodOptions = useMemo(() => (
     availablePaymentMethodOptions.filter((option) => isLinkPaymentMethod(option.value))
   ), [availablePaymentMethodOptions])
@@ -767,7 +748,7 @@ export const PaymentSubscriptions: React.FC = () => {
   useEffect(() => {
     if (integrationsLoading || hasSubscriptionGateway) return
 
-    showToast('warning', 'Suscripciones no disponibles', 'Conecta Stripe, Conekta, Mercado Pago o CLIP para crear suscripciones.')
+    showToast('warning', 'Suscripciones no disponibles', 'Conecta Stripe, Conekta o Mercado Pago para crear suscripciones.')
     navigate('/transactions', { replace: true })
   }, [hasSubscriptionGateway, integrationsLoading, navigate, showToast])
 
@@ -1090,17 +1071,6 @@ export const PaymentSubscriptions: React.FC = () => {
       return null
     }
 
-    if (startByLink && provider === 'clip') {
-      if (!contactEmail || !contactPhone) {
-        showToast('warning', 'Faltan datos del cliente', 'CLIP necesita email y teléfono para crear el link de inicio de suscripción.')
-        return null
-      }
-      if (accountCurrency !== 'MXN') {
-        showToast('warning', 'Moneda no soportada', 'CLIP Checkout Transparente solo acepta MXN. Usa otra pasarela o cambia la moneda de la cuenta.')
-        return null
-      }
-    }
-
     const stripeSavedCardId = selectedStripePaymentMethod?.stripePaymentMethodId || selectedStripePaymentMethodId || editingSubscription?.stripePaymentMethodId || null
     const conektaSavedCardId = selectedConektaPaymentSource?.conektaPaymentSourceId || selectedConektaPaymentSourceId || editingSubscription?.conektaPaymentSourceId || null
 
@@ -1164,7 +1134,7 @@ export const PaymentSubscriptions: React.FC = () => {
       if (form.startMode === 'link') {
         const fallback = availableLinkPaymentMethodOptions[0]
         if (!fallback) {
-          showToast('warning', 'No hay pasarela de link', 'Conecta Stripe, Conekta, Mercado Pago o CLIP para generar un link de suscripción.')
+          showToast('warning', 'No hay pasarela de link', 'Conecta Stripe, Conekta o Mercado Pago para generar un link de suscripción.')
           return
         }
 
@@ -1193,7 +1163,7 @@ export const PaymentSubscriptions: React.FC = () => {
     if (formMode === 'create' && formStep === 'gateway' && !availableLinkPaymentMethodOptions.some((option) => option.value === form.paymentMethod)) {
       const fallback = availableLinkPaymentMethodOptions[0]
       if (!fallback) {
-        showToast('warning', 'No hay pasarela de link', 'Conecta Stripe, Conekta, Mercado Pago o CLIP para crear un link de suscripción.')
+        showToast('warning', 'No hay pasarela de link', 'Conecta Stripe, Conekta o Mercado Pago para crear un link de suscripción.')
         return
       }
       applyPaymentMethod(fallback)
@@ -2069,7 +2039,7 @@ export const PaymentSubscriptions: React.FC = () => {
                         ? 'Conekta generará su link hospedado para autorizar la tarjeta y crear la suscripción.'
                         : 'Para cobros automáticos con Conekta, el contacto debe tener una tarjeta guardada. Ristak usará la tarjeta predeterminada del contacto.'
                       : isClipSelected
-                        ? 'CLIP cobrará el inicio desde el checkout transparente de Ristak. Ristak activa la suscripción al confirmarse el pago inicial.'
+                        ? 'CLIP ya no está disponible para suscripciones. Este registro se conserva solo como historial; usa Stripe, Conekta o Mercado Pago para nuevos cobros recurrentes.'
                       : form.paymentMethod === 'stripe_link'
                         ? 'Stripe abrirá Checkout para que el cliente autorice y active la suscripción.'
                         : 'Para cobros automáticos con Stripe, el contacto debe tener una tarjeta guardada. Ristak usará la tarjeta predeterminada del contacto.'}

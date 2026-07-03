@@ -81,8 +81,7 @@ export function usePaymentGatewayCapabilities(): PaymentGatewayCapabilities {
     const subscriptionProviders: PaymentGatewayProvider[] = [
       ...(stripeConnected ? ['stripe' as const] : []),
       ...(conektaConnected ? ['conekta' as const] : []),
-      ...(mercadoPagoConnected ? ['mercadopago' as const] : []),
-      ...(clipConnected ? ['clip' as const] : [])
+      ...(mercadoPagoConnected ? ['mercadopago' as const] : [])
     ]
 
     return {

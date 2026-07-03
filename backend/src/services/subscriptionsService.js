@@ -27,7 +27,6 @@ import {
   resumeConektaRecurringSubscription,
   updateConektaRecurringSubscription
 } from './conektaPaymentService.js'
-import { getClipPaymentConfig } from './clipPaymentService.js'
 import { getSubscriptionAuditSummary, hardDeleteTestSubscription } from './paymentRecordSafetyService.js'
 import { getAccountCurrency } from '../utils/accountLocale.js'
 import { createEntityId, createPublicPaymentId, createRistakId } from '../utils/idGenerator.js'
@@ -48,7 +47,8 @@ const DEFAULT_PAYMENT_TIMEZONE = ACCOUNT_DEFAULT_TIMEZONE
 const ACTIVE_STATUSES = new Set(['active', 'trialing'])
 const PAUSED_STATUSES = new Set(['paused'])
 const PAST_DUE_STATUSES = new Set(['past_due', 'incomplete'])
-const PUBLIC_PAYMENT_LINK_METHODS = new Set(['stripe_link', 'stripe_payment_link', 'conekta_link', 'conekta_payment_link', 'clip_link', 'clip_payment_link'])
+const PUBLIC_PAYMENT_LINK_METHODS = new Set(['stripe_link', 'stripe_payment_link', 'conekta_link', 'conekta_payment_link'])
+const UNSUPPORTED_CLIP_SUBSCRIPTION_METHODS = new Set(['clip', 'clip_link', 'clip_payment_link', 'clip_card'])
 const MERCADOPAGO_LEGACY_LINK_METHODS = new Set(['mercadopago_checkout', 'mercadopago_payment_link'])
 
 function makeId() {
@@ -260,6 +260,16 @@ function defaultNextRunAt({ startDate, nextRunAt, intervalType, intervalCount })
 
 function isPublicPaymentLinkMethod(paymentMethod) {
   return PUBLIC_PAYMENT_LINK_METHODS.has(cleanString(paymentMethod))
+}
+
+function assertClipIsNotUsedForSubscription(row = {}) {
+  const provider = cleanString(row.payment_provider).toLowerCase()
+  const method = cleanString(row.payment_method).toLowerCase()
+  if (provider !== 'clip' && !UNSUPPORTED_CLIP_SUBSCRIPTION_METHODS.has(method)) return
+
+  const error = new Error('CLIP solo está disponible para pagos únicos. Usa Stripe, Conekta o Mercado Pago para suscripciones.')
+  error.status = 400
+  throw error
 }
 
 function calculateMrr(row) {
@@ -564,7 +574,6 @@ function getSubscriptionStartPaymentMethod(row = {}) {
   const provider = cleanString(row.payment_provider).toLowerCase()
   if (provider === 'mercadopago') return 'mercadopago_subscription'
   if (provider === 'conekta') return 'conekta'
-  if (provider === 'clip') return 'clip_card'
   return 'stripe'
 }
 
@@ -638,29 +647,6 @@ async function createSubscriptionStartPaymentLinkIfNeeded(row, payload = {}) {
     const error = new Error('Conekta no acepta suscripciones diarias. Usa semanal, mensual o anual.')
     error.status = 400
     throw error
-  }
-
-  if (row.payment_provider === 'clip') {
-    const clipConfig = await getClipPaymentConfig()
-    if (!clipConfig?.configured) {
-      const error = new Error('CLIP no está configurado para crear links de suscripción.')
-      error.status = 400
-      throw error
-    }
-    if (row.currency !== 'MXN') {
-      const error = new Error('CLIP solo acepta MXN. Cambia la moneda de la cuenta a MXN o usa otra pasarela para esta suscripción.')
-      error.status = 400
-      throw error
-    }
-    if (!row.contact_email || !row.contact_phone) {
-      const error = new Error('CLIP requiere email y teléfono del contacto para autorizar la suscripción por link.')
-      error.status = 400
-      throw error
-    }
-    row = {
-      ...row,
-      payment_mode: clipConfig.mode || row.payment_mode
-    }
   }
 
   const currentMetadata = parseJson(row.metadata_json, {})
@@ -761,29 +747,6 @@ async function createSubscriptionStartPaymentLinkIfNeeded(row, payload = {}) {
         }
       }),
       raw_json: mergeRawJson(row.raw_json, 'conektaCheckout', checkout.raw || checkout)
-    }
-  }
-
-  if (row.payment_provider === 'clip') {
-    return {
-      ...row,
-      status: 'incomplete',
-      metadata_json: jsonOrNull({
-        ...currentMetadata,
-        clipCheckout: {
-          url: startPayment.paymentUrl,
-          status: 'pending_checkout',
-          createdAt: new Date().toISOString()
-        },
-        subscriptionStartPayment: {
-          ...startPayment,
-          paymentUrl: startPayment.paymentUrl,
-          publicPaymentUrl: startPayment.paymentUrl,
-          provider: 'clip',
-          status: 'pending_checkout',
-          createdAt: startPayment.createdAt || new Date().toISOString()
-        }
-      })
     }
   }
 
@@ -1059,6 +1022,7 @@ export async function createSubscription(payload = {}) {
 
   if (!row.name) throw new Error('El nombre de la suscripción es obligatorio.')
   if (!row.amount || row.amount <= 0) throw new Error('El monto de la suscripción debe ser mayor a cero.')
+  assertClipIsNotUsedForSubscription(row)
   assertSubscriptionDatesNotInPast(row, accountTimezone)
   row = await createSubscriptionStartPaymentLinkIfNeeded(row, payload)
   row = await attachStripeSubscriptionIfNeeded(row, payload)
@@ -1174,6 +1138,7 @@ export async function updateSubscription(subscriptionId, payload = {}) {
 
   if (!row.name) throw new Error('El nombre de la suscripción es obligatorio.')
   if (!row.amount || row.amount <= 0) throw new Error('El monto de la suscripción debe ser mayor a cero.')
+  assertClipIsNotUsedForSubscription(row)
   assertSubscriptionDatesNotInPast(row, accountTimezone)
   row = await createSubscriptionStartPaymentLinkIfNeeded(row, payload)
   row = await syncStripeSubscriptionUpdateIfNeeded(row, existing)
