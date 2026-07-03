@@ -570,8 +570,13 @@ class CampaignsService {
     error?: string
   }> {
     try {
+      const { accessToken, ...profileParams } = params
+      const cleanParams = Object.fromEntries(
+        Object.entries(profileParams).filter(([, value]) => Boolean(value))
+      ) as Record<string, string>
       const data = await apiClient.get('/meta/social-profiles', {
-        params
+        params: cleanParams,
+        ...(accessToken ? { headers: { 'X-Meta-Access-Token': accessToken } } : {})
       }) as {
         connected?: boolean
         updatedAt?: string

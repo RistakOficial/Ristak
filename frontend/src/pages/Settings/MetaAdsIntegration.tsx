@@ -50,6 +50,10 @@ interface FetchCollectionResult {
   count: number
 }
 
+interface MetaWizardRefreshOptions {
+  silent?: boolean
+}
+
 type MetaTestParameterFieldKey =
   | 'value'
   | 'predictedLtv'
@@ -109,6 +113,12 @@ const getMaskedSecretTail = (value = '') => (
     ? value.trim().slice(MASKED_SECRET_PREFIX.length)
     : value.trim()
 )
+
+const normalizeMetaAdAccountIdForLookup = (adAccountId = '') => {
+  const cleanAdAccountId = adAccountId.trim()
+  if (!cleanAdAccountId) return ''
+  return cleanAdAccountId.startsWith('act_') ? cleanAdAccountId : `act_${cleanAdAccountId}`
+}
 
 const tokenSetupGuideSteps = [
   {
@@ -458,6 +468,7 @@ export const MetaAdsIntegration: React.FC = () => {
   const [isOpeningMetaPixelTest, setIsOpeningMetaPixelTest] = useState(false)
   const [metaTestResult, setMetaTestResult] = useState<MetaTestEventResponse | null>(null)
   const [activeStep, setActiveStep] = useState(routeStep)
+  const [wizardRefreshNonce, setWizardRefreshNonce] = useState(0)
   const [activeMetaTab, setActiveMetaTab] = useState<MetaConnectedTab>('cuenta')
   const [metaWebhookInfo, setMetaWebhookInfo] = useState<MetaWebhookInfo | null>(null)
   const accessTokenInputRef = useRef<HTMLInputElement>(null)
@@ -553,6 +564,10 @@ export const MetaAdsIntegration: React.FC = () => {
     navigate(buildMetaAdsSettingsPath(nextStep), { replace: options?.replace })
   }
 
+  const requestWizardRefresh = () => {
+    setWizardRefreshNonce(current => current + 1)
+  }
+
   const loadCredentials = async () => {
     setIsLoading(true)
     try {
@@ -587,9 +602,7 @@ export const MetaAdsIntegration: React.FC = () => {
           await fetchInstagramAccounts(tokenToUse, data.data.instagramAccountId, { silent: true })
 
           if (data.data.adAccountId) {
-            const accountIdWithPrefix = data.data.adAccountId.startsWith('act_')
-              ? data.data.adAccountId
-              : `act_${data.data.adAccountId}`
+            const accountIdWithPrefix = normalizeMetaAdAccountIdForLookup(data.data.adAccountId)
             await fetchPixels(accountIdWithPrefix, tokenToUse, data.data.pixelId, { silent: true })
           }
         }
@@ -779,7 +792,7 @@ export const MetaAdsIntegration: React.FC = () => {
   const fetchInstagramAccounts = async (
     token: string,
     savedInstagramAccountId?: string,
-    options: { silent?: boolean } = {}
+    options: MetaWizardRefreshOptions & { pageId?: string } = {}
   ): Promise<FetchCollectionResult> => {
     if (!token) {
       if (!options.silent) {
@@ -792,7 +805,7 @@ export const MetaAdsIntegration: React.FC = () => {
     try {
       const result = await campaignsService.getConnectedSocialProfiles({
         accessToken: token,
-        pageId: credentials.pageId || savedPageId,
+        pageId: options.pageId ?? (credentials.pageId || savedPageId),
         instagramAccountId: savedInstagramAccountId
       })
       const accounts = result.profiles.filter(profile => profile.platform === 'instagram')
@@ -833,6 +846,87 @@ export const MetaAdsIntegration: React.FC = () => {
     }
   }
 
+  const getUsableAccessToken = async (options: MetaWizardRefreshOptions = {}) => {
+    const typedToken = !isMaskedSecretValue(credentials.accessToken)
+      ? credentials.accessToken.trim()
+      : ''
+
+    if (typedToken && typedToken !== realAccessToken) return typedToken
+    if (realAccessToken) return realAccessToken
+    if (typedToken) return typedToken
+    if (!isMaskedSecretValue(credentials.accessToken)) return ''
+
+    setIsRevealingAccessToken(true)
+    try {
+      const response = await fetch('/api/meta/config/reveal/access_token')
+      const data = await response.json()
+      const revealedToken = data.accessToken || ''
+
+      if (!data.success || !revealedToken) {
+        throw new Error(data.error || 'Token no disponible')
+      }
+
+      setRealAccessToken(revealedToken)
+      return revealedToken
+    } catch {
+      if (!options.silent) {
+        showToast(
+          'error',
+          'No se pudo revelar',
+          'No se pudo cargar el Access Token original'
+        )
+      }
+      return ''
+    } finally {
+      setIsRevealingAccessToken(false)
+    }
+  }
+
+  const refreshMetaWizardStep = async (
+    stepIndex = activeStep,
+    options: MetaWizardRefreshOptions = {}
+  ) => {
+    const token = await getUsableAccessToken(options)
+    if (!token) return
+
+    const step = Math.max(0, Math.min(stepIndex, metaStepSlugs.length - 1))
+    const currentAdAccountId = credentials.adAccountId
+    const currentPixelId = credentials.pixelId
+    const currentPageId = credentials.pageId || savedPageId
+    const currentInstagramAccountId = credentials.instagramAccountId || savedInstagramAccountId
+    const adAccountIdForLookup = normalizeMetaAdAccountIdForLookup(currentAdAccountId)
+
+    if (step === 0) {
+      await Promise.all([
+        fetchAdAccounts(token, currentAdAccountId, options),
+        fetchPages(token, currentPageId, options),
+        fetchInstagramAccounts(token, currentInstagramAccountId, { ...options, pageId: currentPageId }),
+        adAccountIdForLookup
+          ? fetchPixels(adAccountIdForLookup, token, currentPixelId, options)
+          : Promise.resolve({ success: false, count: 0 })
+      ])
+      return
+    }
+
+    if (step === 1) {
+      await fetchAdAccounts(token, currentAdAccountId, options)
+      return
+    }
+
+    if (step === 2) {
+      if (!adAccountIdForLookup) return
+      await fetchPixels(adAccountIdForLookup, token, currentPixelId, options)
+      return
+    }
+
+    if (step === 3) {
+      await Promise.all([
+        fetchPages(token, currentPageId, options),
+        fetchInstagramAccounts(token, currentInstagramAccountId, { ...options, pageId: currentPageId })
+      ])
+    }
+  }
+
   const handleSelectAdAccount = (account: AdAccount) => {
     handleSelectAndSaveAccount(account)
   }
@@ -870,21 +964,25 @@ export const MetaAdsIntegration: React.FC = () => {
       }))
       setPixels([])
       goToMetaStep(1, { replace: true })
+      requestWizardRefresh()
     } else if (field === 'pixelId') {
       setCredentials(prev => ({
         ...prev,
         pixelId: ''
       }))
       goToMetaStep(2, { replace: true })
+      requestWizardRefresh()
     } else if (field === 'pageId') {
       setCredentials(prev => ({ ...prev, pageId: '' }))
       setSavedPageId('')
       void setMessengerMessagingEnabled(false)
       void setInstagramMessagingEnabled(false)
+      requestWizardRefresh()
     } else if (field === 'instagramAccountId') {
       setCredentials(prev => ({ ...prev, instagramAccountId: '' }))
       setSavedInstagramAccountId('')
       void setInstagramMessagingEnabled(false)
+      requestWizardRefresh()
     } else {
       setCredentials(prev => ({ ...prev, [field]: '' }))
     }
@@ -907,31 +1005,8 @@ export const MetaAdsIntegration: React.FC = () => {
   }
 
   const handleEditStoredSecret = async (field: SecretTokenField) => {
-    let revealedToken = realAccessToken
-
-    if (!revealedToken) {
-      setIsRevealingAccessToken(true)
-
-      try {
-        const response = await fetch('/api/meta/config/reveal/access_token')
-        const data = await response.json()
-
-        revealedToken = data.accessToken
-
-        if (!data.success || !revealedToken) {
-          throw new Error(data.error || 'Token no disponible')
-        }
-      } catch {
-        showToast(
-          'error',
-          'No se pudo revelar',
-          'No se pudo cargar el Access Token original'
-        )
-        return
-      } finally {
-        setIsRevealingAccessToken(false)
-      }
-    }
+    const revealedToken = await getUsableAccessToken({ silent: false })
+    if (!revealedToken) return
 
     setRealAccessToken(revealedToken)
 
@@ -1004,7 +1079,10 @@ export const MetaAdsIntegration: React.FC = () => {
       }
 
       await fetchPages(credentials.accessToken, credentials.pageId, { silent: true })
-      await fetchInstagramAccounts(credentials.accessToken, credentials.instagramAccountId, { silent: true })
+      await fetchInstagramAccounts(credentials.accessToken, credentials.instagramAccountId, {
+        silent: true,
+        pageId: credentials.pageId || savedPageId
+      })
 
       if (accountsResult.count > 0) {
         showToast('success', 'Token válido', 'Selecciona tu cuenta de anuncios')
@@ -1193,11 +1271,13 @@ export const MetaAdsIntegration: React.FC = () => {
 
     setIsEditingMetaConfig(false)
     goToMetaStep(0, { replace: true })
+    void loadCredentials()
   }
 
   const handleEditMetaConfig = () => {
     setIsEditingMetaConfig(true)
     goToMetaStep(0, { replace: true })
+    requestWizardRefresh()
   }
 
   const handleDisconnectMetaConfig = async () => {
@@ -1734,6 +1814,11 @@ export const MetaAdsIntegration: React.FC = () => {
     !isLoadingAccounts
   )
 
+  useEffect(() => {
+    if (!shouldShowWizard || isLoading) return
+    void refreshMetaWizardStep(activeStep, { silent: true })
+  }, [activeStep, isEditingMetaConfig, wizardRefreshNonce, shouldShowWizard, isLoading])
+
   const getSelectedAdAccountLabel = () => {
     if (!credentials.adAccountId) return 'Pendiente'
     const normalizedId = credentials.adAccountId.replace(/^act_/, '')
@@ -2129,7 +2214,7 @@ export const MetaAdsIntegration: React.FC = () => {
                     <Button
                       type="button"
                       variant="secondary"
-                      onClick={() => fetchPages(realAccessToken || credentials.accessToken)}
+                      onClick={() => void refreshMetaWizardStep(3, { silent: false })}
                       disabled={isLoadingPages || !(realAccessToken || credentials.accessToken)}
                     >
                       <RefreshCw size={16} className={isLoadingPages ? styles.spinning : ''} />
@@ -2187,7 +2272,7 @@ export const MetaAdsIntegration: React.FC = () => {
                     <Button
                       type="button"
                       variant="secondary"
-                      onClick={() => fetchInstagramAccounts(realAccessToken || credentials.accessToken, credentials.instagramAccountId)}
+                      onClick={() => void refreshMetaWizardStep(3, { silent: false })}
                       disabled={isLoadingInstagramAccounts || !(realAccessToken || credentials.accessToken)}
                     >
                       <RefreshCw size={16} className={isLoadingInstagramAccounts ? styles.spinning : ''} />

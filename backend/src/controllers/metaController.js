@@ -3751,7 +3751,7 @@ export const getPages = async (req, res) => {
 export const getSocialProfiles = async (req, res) => {
   try {
     const result = await getConnectedMetaSocialProfiles({
-      accessToken: req.query?.accessToken,
+      accessToken: extractMetaAccessToken(req) || req.query?.accessToken,
       pageId: req.query?.pageId,
       instagramAccountId: req.query?.instagramAccountId
     });

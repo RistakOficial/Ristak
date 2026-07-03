@@ -600,6 +600,11 @@ Ristak usa Meta en varias areas:
 - Conversions API usa siempre el System User Access Token guardado en
   `meta_config.access_token` (o `META_ACCESS_TOKEN` como fallback). No hay un
   token separado para CAPI: no se pide, no se genera y no se sincroniza.
+- En Configuracion > Meta, al editar el wizard o moverse entre sus pasos, la UI
+  vuelve a consultar cuentas de anuncios, datasets/pixeles, Facebook Pages e
+  Instagram disponibles con el System User Access Token guardado. El usuario no
+  debe borrar y pegar de nuevo el token solo para que aparezcan activos recien
+  asignados en Meta Business.
 - Cuando Meta ya tiene dataset/pixel y token guardado, las nuevas superficies nacen
   con eventos Meta encendidos por default: Sites/landings usan `ViewContent` al
   aterrizar, formularios usan `Lead` al enviar y calendarios usan `Schedule` al
