@@ -81,7 +81,7 @@
   padding: 0;
   border: 0;
   background: transparent;
-  color: var(--text-mute);
+  color: var(--text-dim);
   text-align: left;
   cursor: pointer;
 }
@@ -113,7 +113,7 @@
   min-width: 0;
   color: inherit;
   font-family: var(--label-font);
-  font-size: 11px;
+  font-size: 13px;
   font-weight: 600;
   text-transform: var(--label-transform);
   letter-spacing: var(--label-spacing);
@@ -143,8 +143,8 @@
   gap: 8px;
   min-width: 0;
   color: var(--text-dim);
-  font-size: 12px;
-  font-weight: 600;
+  font-size: 13px;
+  font-weight: 500;
   line-height: 1.35;
 }
 
@@ -287,6 +287,13 @@
 [data-cfp-variant='phone'] .choiceOption,
 [data-cfp-variant='phone'] .booleanOption {
   color: var(--cfp-text);
+}
+
+/* El movil conserva su tipografia previa de etiqueta (el ajuste de escala de
+   13px/500 es solo para escritorio). */
+[data-cfp-variant='phone'] .fieldLabel {
+  font-size: 12px;
+  font-weight: 600;
 }
 
 [data-cfp-variant='phone'] .fieldLabel > small,

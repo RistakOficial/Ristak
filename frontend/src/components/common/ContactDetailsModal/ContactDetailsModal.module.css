@@ -1046,9 +1046,9 @@
 
 .detailSectionTitle {
   font-family: var(--label-font);
-  font-size: 0.6875rem;
+  font-size: 0.8125rem;
   font-weight: 600;
-  color: var(--text-mute);
+  color: var(--text-dim);
   text-transform: var(--label-transform);
   letter-spacing: var(--label-spacing);
   margin: 0 0 0.5rem 0;
@@ -1068,9 +1068,9 @@
    especificidad) para que "Etiquetas" case con los demas titulos de seccion. */
 .contactTagHeader .contactTagTitle {
   font-family: var(--label-font);
-  font-size: 0.6875rem;
+  font-size: 0.8125rem;
   font-weight: 600;
-  color: var(--text-mute);
+  color: var(--text-dim);
   text-transform: var(--label-transform);
   letter-spacing: var(--label-spacing);
 }
@@ -1186,7 +1186,7 @@
   padding: 0;
   border: none;
   background: transparent;
-  color: var(--text-mute);
+  color: var(--text-dim);
   cursor: pointer;
   text-align: left;
 }
@@ -1208,7 +1208,7 @@
   gap: 0.375rem;
   min-width: 0;
   font-family: var(--label-font);
-  font-size: 0.6875rem;
+  font-size: 0.8125rem;
   font-weight: 600;
   text-transform: var(--label-transform);
   letter-spacing: var(--label-spacing);
