@@ -282,6 +282,19 @@
   padding: 0;
 }
 
+/* En dispositivos táctiles (móvil/tablet) el teclado puede tapar campos del
+   modal. En rutas de la app móvil `--phone-visual-viewport-height` está en vivo,
+   así que acotamos el alto al área visible; en tablet con vista escritorio la var
+   no existe y se conserva el 90vh de siempre (el guardián global de teclado se
+   encarga de desplazar el campo dentro de `.content`, que ya es scrollable). El
+   scroll-padding reserva aire bajo el último campo por encima del teclado. */
+@media (pointer: coarse) {
+  .content {
+    max-height: min(calc(90vh - 160px), calc(var(--phone-visual-viewport-height, 200vh) - 120px));
+    scroll-padding-bottom: calc(env(safe-area-inset-bottom, 0px) + var(--phone-keyboard-inset, 0px) + 20px);
+  }
+}
+
 .message {
   font-size: 14px;
   color: var(--color-text-secondary);

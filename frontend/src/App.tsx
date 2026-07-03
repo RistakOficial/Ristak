@@ -71,6 +71,8 @@ import {
   hasModuleAccess,
   type PermissionKey
 } from '@/utils/accessControl'
+import { installKeyboardFocusScroll } from '@/utils/keyboardFocusScroll'
+import { isNativeAppRuntime } from '@/services/apiBaseUrl'
 
 type RouteLocationState = {
   from?: RedirectLocation
@@ -691,6 +693,43 @@ const PhoneHomeRouteRedirect: React.FC = () => {
   return <Navigate to={`${PHONE_APP_HOME_PATH}${location.search}${location.hash}`} replace />
 }
 
+/**
+ * Instala una sola vez el guardián de teclado (keyboardFocusScroll) que mantiene
+ * cualquier campo de texto enfocado por encima del teclado en pantallas táctiles.
+ * Solo se activa en la app nativa o en dispositivos de puntero grueso (móvil /
+ * tablet). En escritorio ni se instala, y aunque se instalara sería un no-op
+ * porque el teclado físico no encoge el visual viewport.
+ */
+const KeyboardFocusScrollEffect: React.FC = () => {
+  React.useEffect(() => {
+    if (typeof window === 'undefined' || !window.visualViewport) return
+
+    const coarsePointer = window.matchMedia?.('(pointer: coarse)')
+    let dispose: (() => void) | null = null
+
+    const sync = () => {
+      const shouldInstall = isNativeAppRuntime() || !!coarsePointer?.matches
+      if (shouldInstall && !dispose) {
+        dispose = installKeyboardFocusScroll()
+      } else if (!shouldInstall && dispose) {
+        dispose()
+        dispose = null
+      }
+    }
+
+    sync()
+    coarsePointer?.addEventListener('change', sync)
+
+    return () => {
+      coarsePointer?.removeEventListener('change', sync)
+      dispose?.()
+      dispose = null
+    }
+  }, [])
+
+  return null
+}
+
 const AppWithNotifications: React.FC = () => {
   const { toasts, removeToast, modal, closeModal } = useNotification()
 
@@ -698,6 +737,7 @@ const AppWithNotifications: React.FC = () => {
     <>
       <BrowserRouter>
         <PhoneRouteEffects />
+        <KeyboardFocusScrollEffect />
         <NativeIosMobileRouteGate />
         <CellphoneRouteGate />
         <TabletViewPreferenceGate />

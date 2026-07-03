@@ -1,10 +1,17 @@
 .screen {
+  /* Igual que el login: anclado al viewport visible para que al subir el teclado
+     el panel se achique y pueda hacer scroll, en vez de quedar oculto detrás. */
   min-height: 100vh;
   min-height: 100dvh;
+  height: var(--phone-visual-viewport-height, 100dvh);
+  max-height: var(--phone-visual-viewport-height, 100dvh);
   display: flex;
-  align-items: center;
+  /* `safe center`: se puede scrollear al tope cuando el contenido no cabe. */
+  align-items: safe center;
   justify-content: center;
-  padding: max(22px, env(safe-area-inset-top)) 20px max(24px, env(safe-area-inset-bottom));
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  padding: max(22px, env(safe-area-inset-top)) 20px calc(max(24px, env(safe-area-inset-bottom)) + var(--phone-keyboard-inset, 0px));
   background:
     linear-gradient(145deg, rgba(9, 12, 16, 0.96), rgba(20, 24, 29, 0.92)),
     #0b0f14;

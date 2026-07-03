@@ -70,7 +70,7 @@
   overflow-y: auto;
   overscroll-behavior: contain;
   overscroll-behavior-x: none;
-  scroll-padding-bottom: calc(136px + env(safe-area-inset-bottom, 0px));
+  scroll-padding-bottom: calc(max(136px, var(--phone-keyboard-inset, 0px) + 20px) + env(safe-area-inset-bottom, 0px));
   scrollbar-width: none;
   touch-action: pan-y;
   -webkit-overflow-scrolling: touch;
