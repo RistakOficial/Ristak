@@ -652,6 +652,10 @@ export const TRIGGER_FILTER_FIELDS: TriggerFilterField[] = [
   },
   { id: 'message', label: 'Mensaje', phrase: 'el mensaje', category: 'Mensaje', appliesTo: ['message'] },
   { id: 'channel', label: 'Canal del mensaje', phrase: 'el canal', options: CHANNEL_FIELD_OPTIONS, category: 'Mensaje', appliesTo: ['message'] },
+  // Comentarios FB/IG (el flujo lo disparó un comentario)
+  { id: 'comment_text', label: 'Texto del comentario', phrase: 'el texto del comentario', category: 'Comentario', appliesTo: ['comment'], operators: ['contains', 'not_contains', 'is', 'not', 'starts_with', 'ends_with', 'empty', 'not_empty'] },
+  { id: 'comment_platform', label: 'Red social', phrase: 'la red social', options: [{ value: 'facebook', label: 'Facebook' }, { value: 'instagram', label: 'Instagram' }], category: 'Comentario', appliesTo: ['comment'], operators: ['is', 'not'] },
+  { id: 'comment_post', label: 'Publicación comentada', phrase: 'la publicación', category: 'Comentario', appliesTo: ['comment'], operators: ['is', 'not'] },
   { id: 'calendar', label: 'Calendario', phrase: 'el calendario', catalog: 'calendars', category: 'Cita', appliesTo: ['appointment'] },
   { id: 'appointment_type', label: 'Tipo de cita', phrase: 'el tipo de cita', category: 'Cita', appliesTo: ['appointment'] },
   { id: 'payment_status', label: 'Status del pago', phrase: 'el status del pago', options: PAYMENT_STATUS_OPTIONS, category: 'Pago', appliesTo: ['payment'] },
@@ -759,8 +763,8 @@ const TRIGGER_FILTER_CONTEXTS: Record<string, string[]> = {
   'trigger-form-submitted': ['form'],
   'trigger-facebook-ad-click': ['ads'],
   'trigger-click-to-whatsapp': ['ads', 'message'],
-  'trigger-facebook-comment': ['message'],
-  'trigger-instagram-comment': ['message'],
+  'trigger-facebook-comment': ['comment'],
+  'trigger-instagram-comment': ['comment'],
   // Tipos de objetivo (reutilizan el mismo sistema de filtros)
   'goal-payment': ['payment'],
   'goal-appointment': ['appointment'],

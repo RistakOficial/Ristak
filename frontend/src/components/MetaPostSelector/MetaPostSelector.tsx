@@ -115,7 +115,7 @@ export function MetaPostSelector({
       </button>
 
       {open && createPortal(
-        <div className={styles.panel} role="listbox" ref={panelRef} style={portalStyle} data-placement={placement}>
+        <div className={styles.panel} role="listbox" ref={panelRef} style={portalStyle} data-placement={placement} data-ristak-dropdown-panel>
           <div className={styles.searchRow}>
             <SearchField
               value={search}
