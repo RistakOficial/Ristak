@@ -1456,7 +1456,7 @@ export const CalendarsConfiguration: React.FC = () => {
 
     try {
       await setAttributionCalendarIds(newSelection)
-      showToast('success', 'Calendarios de atribución actualizados', `${newSelection.length} calendario${newSelection.length !== 1 ? 's' : ''} seleccionado${newSelection.length !== 1 ? 's' : ''}`)
+      showToast('success', 'Reportes comerciales actualizados', `${newSelection.length} calendario${newSelection.length !== 1 ? 's' : ''} incluido${newSelection.length !== 1 ? 's' : ''}`)
     } catch (error: any) {
       showToast('error', 'Error al guardar', error.message)
     }
@@ -2739,23 +2739,23 @@ export const CalendarsConfiguration: React.FC = () => {
                       </div>
 
                       <div className={pageStyles.editorField}>
-                        <span>Conversión</span>
+                        <span>Reportes comerciales</span>
                         <div className={styles.toggleContainer}>
                           <button
                             type="button"
                             className={`${styles.toggle} ${selectedCalendarAttributed ? styles.toggleActive : ''}`}
                             onClick={() => handleAttributionToggle(selectedCalendar.id)}
                             aria-pressed={selectedCalendarAttributed}
-                            aria-label={selectedCalendarAttributed ? 'Quitar calendario de conversión' : 'Marcar calendario como conversión'}
+                            aria-label={selectedCalendarAttributed ? 'Quitar calendario de reportes comerciales' : 'Incluir calendario en reportes comerciales'}
                           >
                             <span className={styles.toggleThumb} />
                           </button>
                           <span className={`${styles.toggleLabel} ${selectedCalendarAttributed ? styles.toggleLabelActive : ''}`}>
-                            {selectedCalendarAttributed ? 'Cuenta como conversión' : 'No cuenta como conversión'}
+                            {selectedCalendarAttributed ? 'Incluido en reportes comerciales' : 'Incluir en reportes comerciales'}
                           </span>
                         </div>
                         <small>
-                          Enciéndelo para que las citas de este calendario alimenten reportes, campañas y eventos de Meta/WhatsApp. Si no marcas ninguno, Ristak toma todos los calendarios.
+                          Actívalo para que las citas de este calendario entren en reportes comerciales, campañas y eventos de Meta/WhatsApp. Si no eliges calendarios específicos, Ristak incluye todos.
                         </small>
                       </div>
                     </div>
