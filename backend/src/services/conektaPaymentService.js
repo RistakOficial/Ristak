@@ -2588,6 +2588,18 @@ function buildConektaPlanInstallmentPaymentMetadata(flow, installment, sequence,
   }
 }
 
+function getVisiblePlanPaymentNumber(sequence, hasFirstPayment) {
+  const normalizedSequence = Number(sequence || 1)
+  const safeSequence = Number.isFinite(normalizedSequence) && normalizedSequence > 0
+    ? normalizedSequence
+    : 1
+  return safeSequence + (hasFirstPayment ? 1 : 0)
+}
+
+function buildPlanInstallmentPaymentTitle(baseTitle, sequence, hasFirstPayment) {
+  return `${baseTitle} - pago ${getVisiblePlanPaymentNumber(sequence, hasFirstPayment)}`
+}
+
 async function persistConektaPaymentPlanMirror(flowId, extra = {}) {
   const cleanFlowId = cleanString(flowId)
   if (!cleanFlowId) return null
@@ -3205,8 +3217,8 @@ export async function createConektaPaymentPlan(input = {}, { baseUrl } = {}) {
       currency: plan.currency,
       status: hasSavedCard ? 'scheduled' : 'pending',
       paymentMethod: 'conekta_scheduled_card',
-      title: `${plan.title} - pago ${payment.sequence}`,
-      description: `${plan.description} - pago ${payment.sequence}`,
+      title: buildPlanInstallmentPaymentTitle(plan.title, payment.sequence, plan.firstPayment.enabled),
+      description: buildPlanInstallmentPaymentTitle(plan.description, payment.sequence, plan.firstPayment.enabled),
       dueDate: payment.dueDate,
       metadata: {
         conektaMode: config.mode,
@@ -3660,6 +3672,17 @@ export async function updateConektaPaymentPlanSchedule(flowId, input = {}) {
     : Array.isArray(input.remainingPayments)
       ? input.remainingPayments
       : []
+  const hasFirstPaymentInput = Object.prototype.hasOwnProperty.call(input, 'firstPayment')
+  const firstPayment = hasFirstPaymentInput && input.firstPayment && typeof input.firstPayment === 'object' ? input.firstPayment : null
+  const firstPaymentStatus = cleanString(flow.first_payment_status).toLowerCase()
+  const firstPaymentLocked = LOCKED_PLAN_PAYMENT_STATUSES.has(firstPaymentStatus) || ['registered', 'paid'].includes(firstPaymentStatus)
+  const existingFirstPaymentForNumbering = Number(flow.first_payment_amount || 0) > 0 && firstPaymentStatus !== 'not_required'
+  const submittedFirstPaymentForNumbering = Boolean(firstPayment && firstPayment.remove !== true && Number(firstPayment.amount || 0) > 0)
+  const hasFirstPaymentForNumbering = firstPaymentLocked
+    ? existingFirstPaymentForNumbering
+    : hasFirstPaymentInput
+      ? submittedFirstPaymentForNumbering
+      : existingFirstPaymentForNumbering
 
   const existingInstallments = await db.all(
     `SELECT i.*, p.status AS payment_status, p.payment_mode AS payment_mode
@@ -3721,7 +3744,7 @@ export async function updateConektaPaymentPlanSchedule(flowId, input = {}) {
     const installmentId = existing?.id || createId('conekta_installment')
     const paymentId = existing?.payment_id || createId('conekta_plan_payment')
     const paymentMode = existing?.payment_mode || metadata.conektaMode || metadata.paymentMode || 'test'
-    const title = `${nextConcept} - pago ${nextSequence}`
+    const title = buildPlanInstallmentPaymentTitle(nextConcept, nextSequence, hasFirstPaymentForNumbering)
     const notes = method.automatic
       ? hasSavedCard
         ? `Programado para cobrarse con ${flow.conekta_payment_source_label || 'tarjeta guardada'}`
@@ -3853,13 +3876,9 @@ export async function updateConektaPaymentPlanSchedule(flowId, input = {}) {
     }
   }
 
-  const hasFirstPaymentInput = Object.prototype.hasOwnProperty.call(input, 'firstPayment')
-  const firstPayment = hasFirstPaymentInput && input.firstPayment && typeof input.firstPayment === 'object' ? input.firstPayment : null
   let firstPaymentAmount = Number(flow.first_payment_amount || 0)
   let firstPaymentDate = flow.first_payment_date || null
   let firstPaymentMethod = flow.first_payment_method || null
-  const firstPaymentStatus = cleanString(flow.first_payment_status).toLowerCase()
-  const firstPaymentLocked = LOCKED_PLAN_PAYMENT_STATUSES.has(firstPaymentStatus) || ['registered', 'paid'].includes(firstPaymentStatus)
 
   if (hasFirstPaymentInput && !firstPaymentLocked) {
     const firstPaymentInputAmount = firstPayment

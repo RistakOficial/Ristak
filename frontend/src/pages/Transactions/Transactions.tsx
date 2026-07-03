@@ -369,6 +369,12 @@ const normalizeDraftAmount = (value?: number | string | null) => {
   return Number.isFinite(amount) && amount > 0 ? String(Math.round(amount * 100) / 100) : ''
 }
 
+const getPlanPaymentLabel = (paymentNumber: number) => `Pago ${paymentNumber}`
+
+const getInstallmentPlanPaymentNumber = (zeroBasedIndex: number, hasFirstPayment: boolean) => (
+  zeroBasedIndex + (hasFirstPayment ? 2 : 1)
+)
+
 const getDefaultScheduleTime = () => '09:00'
 
 const normalizeScheduleTime = (value: string) => {
@@ -738,7 +744,7 @@ export const Transactions: React.FC = () => {
     setStripePlanFirstPaymentDraft(firstAmount > 0 ? {
       localId: 'stripe_first_payment',
       id: 'stripe_first_payment',
-      label: 'Primer pago',
+      label: getPlanPaymentLabel(1),
       amount: normalizeDraftAmount(firstAmount),
       dueDate: getEditablePlanDate(firstPayment?.date || firstPayment?.dueDate || plan.startDate, firstMethod, firstLocked, timezone),
       method: firstMethod,
@@ -757,7 +763,7 @@ export const Transactions: React.FC = () => {
       return {
         localId: id,
         id: item.id ? String(item.id) : undefined,
-        label: `Pago ${Number(item.sequence || index + 1)}`,
+        label: getPlanPaymentLabel(getInstallmentPlanPaymentNumber(index, firstAmount > 0)),
         amount: normalizeDraftAmount(item.amount),
         dueDate: getEditablePlanDate(item.dueDate || item.date || item.scheduledAt || plan.nextRunAt, method, locked, timezone),
         method,
@@ -1118,7 +1124,7 @@ export const Transactions: React.FC = () => {
     setStripePlanFirstPaymentDraft({
       localId: 'stripe_first_payment',
       id: 'stripe_first_payment',
-      label: 'Primer pago',
+      label: getPlanPaymentLabel(1),
       amount: '',
       dueDate: clampDateToToday(toDateInputValue(paymentPlanModal.plan?.startDate || paymentPlanModal.plan?.nextRunAt, timezone), timezone),
       method: getDefaultPlanMethod(provider),
@@ -1145,14 +1151,14 @@ export const Transactions: React.FC = () => {
   const addStripeInstallmentDraft = () => {
     setStripePlanInstallmentDrafts(prev => {
       const provider = getLocalCheckoutPlanProvider(paymentPlanModal.plan)
-      const nextIndex = prev.length + 1
+      const nextPaymentNumber = getInstallmentPlanPaymentNumber(prev.length, Boolean(stripePlanFirstPaymentDraft))
       const nextDueDate = clampDateToToday(getNextPlanDueDate(prev, paymentPlanModal.plan?.nextRunAt || paymentPlanModal.plan?.startDate, timezone), timezone)
 
       return [
         ...prev,
         {
           localId: createStripePlanDraftId(),
-          label: `Pago ${nextIndex}`,
+          label: getPlanPaymentLabel(nextPaymentNumber),
           amount: '',
           dueDate: nextDueDate,
           method: getDefaultPlanMethod(provider),
@@ -2637,7 +2643,7 @@ export const Transactions: React.FC = () => {
 
   const renderStripePaymentDraftRow = (
     draft: StripePlanPaymentDraft,
-    _index: number,
+    paymentNumber: number,
     options: {
       provider: LocalCheckoutPlanProvider
       kind: 'first' | 'installment'
@@ -2649,6 +2655,7 @@ export const Transactions: React.FC = () => {
     const methodLabel = getStripePlanMethodLabel(draft.method, options.provider)
     const methodOptions = getPlanMethodOptions(options.provider)
     const defaultMethod = getDefaultPlanMethod(options.provider)
+    const paymentLabel = getPlanPaymentLabel(paymentNumber)
 
     return (
       <div
@@ -2656,7 +2663,7 @@ export const Transactions: React.FC = () => {
         className={`${styles.stripePlanPaymentRow} ${locked ? styles.stripePlanPaymentLocked : ''}`}
       >
         <div className={styles.stripePlanPaymentMeta}>
-          <strong>{draft.label}</strong>
+          <strong>{paymentLabel}</strong>
         </div>
 
         <div className={styles.stripePlanPaymentFields}>
@@ -2772,14 +2779,14 @@ export const Transactions: React.FC = () => {
             </div>
           )}
 
-          {stripePlanFirstPaymentDraft && renderStripePaymentDraftRow(stripePlanFirstPaymentDraft, 0, {
+          {stripePlanFirstPaymentDraft && renderStripePaymentDraftRow(stripePlanFirstPaymentDraft, 1, {
             provider,
             kind: 'first',
             onUpdate: updateStripeFirstPaymentDraft,
             onRemove: removeStripeFirstPaymentDraft
           })}
 
-          {stripePlanInstallmentDrafts.map((draft, index) => renderStripePaymentDraftRow(draft, index, {
+          {stripePlanInstallmentDrafts.map((draft, index) => renderStripePaymentDraftRow(draft, getInstallmentPlanPaymentNumber(index, Boolean(stripePlanFirstPaymentDraft)), {
             provider,
             kind: 'installment',
             onUpdate: (updates) => updateStripeInstallmentDraft(draft.localId, updates),

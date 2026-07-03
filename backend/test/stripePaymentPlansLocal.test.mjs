@@ -620,6 +620,7 @@ test('permite sumar un primer pago pendiente a un plan Stripe local', async () =
       [ids.flowId]
     )
     const firstPayment = await db.get('SELECT amount, status, payment_method FROM payments WHERE id = ?', [flow.first_payment_invoice_id])
+    const remainingPayment = await db.get('SELECT title, description FROM payments WHERE id = ?', [ids.installmentPaymentId])
 
     assert.equal(flow.total_amount, 1100)
     assert.equal(flow.first_payment_amount, 125)
@@ -629,6 +630,8 @@ test('permite sumar un primer pago pendiente a un plan Stripe local', async () =
     assert.equal(firstPayment.amount, 125)
     assert.equal(firstPayment.status, 'pending')
     assert.equal(firstPayment.payment_method, 'stripe_pending_card')
+    assert.equal(remainingPayment.title, 'Plan local Stripe con primer pago - pago 2')
+    assert.equal(remainingPayment.description, 'Plan local Stripe con primer pago - pago 2')
   } finally {
     await cleanup(ids)
   }

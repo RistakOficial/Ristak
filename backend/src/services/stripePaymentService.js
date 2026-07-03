@@ -3658,6 +3658,18 @@ function buildPlanInstallmentPaymentMetadata(flow, installment, sequence, paymen
   }
 }
 
+function getVisiblePlanPaymentNumber(sequence, hasFirstPayment) {
+  const normalizedSequence = Number(sequence || 1)
+  const safeSequence = Number.isFinite(normalizedSequence) && normalizedSequence > 0
+    ? normalizedSequence
+    : 1
+  return safeSequence + (hasFirstPayment ? 1 : 0)
+}
+
+function buildPlanInstallmentPaymentTitle(baseTitle, sequence, hasFirstPayment) {
+  return `${baseTitle} - pago ${getVisiblePlanPaymentNumber(sequence, hasFirstPayment)}`
+}
+
 async function persistStripePaymentPlanMirror(flowId, extra = {}) {
   const cleanFlowId = cleanString(flowId)
   if (!cleanFlowId) return null
@@ -3833,6 +3845,17 @@ export async function updateStripePaymentPlanSchedule(flowId, input = {}) {
     : Array.isArray(input.remainingPayments)
       ? input.remainingPayments
       : []
+  const hasFirstPaymentInput = Object.prototype.hasOwnProperty.call(input, 'firstPayment')
+  const firstPayment = hasFirstPaymentInput && input.firstPayment && typeof input.firstPayment === 'object' ? input.firstPayment : null
+  const firstPaymentStatus = cleanString(flow.first_payment_status).toLowerCase()
+  const firstPaymentLocked = LOCKED_PLAN_PAYMENT_STATUSES.has(firstPaymentStatus) || ['registered', 'paid'].includes(firstPaymentStatus)
+  const existingFirstPaymentForNumbering = Number(flow.first_payment_amount || 0) > 0 && firstPaymentStatus !== 'not_required'
+  const submittedFirstPaymentForNumbering = Boolean(firstPayment && firstPayment.remove !== true && Number(firstPayment.amount || 0) > 0)
+  const hasFirstPaymentForNumbering = firstPaymentLocked
+    ? existingFirstPaymentForNumbering
+    : hasFirstPaymentInput
+      ? submittedFirstPaymentForNumbering
+      : existingFirstPaymentForNumbering
 
   const existingInstallments = await db.all(
     `SELECT i.*, p.status AS payment_status, p.payment_mode AS payment_mode
@@ -3895,7 +3918,7 @@ export async function updateStripePaymentPlanSchedule(flowId, input = {}) {
     const installmentId = existing?.id || createId('stripe_installment')
     const paymentId = existing?.payment_id || createId('stripe_plan_payment')
     const paymentMode = existing?.payment_mode || metadata.stripeMode || metadata.paymentMode || 'test'
-    const title = `${nextConcept} - pago ${nextSequence}`
+    const title = buildPlanInstallmentPaymentTitle(nextConcept, nextSequence, hasFirstPaymentForNumbering)
     const notes = method.automatic
       ? hasSavedCard
         ? `Programado para cobrarse con ${flow.stripe_payment_method_label || 'tarjeta guardada'}`
@@ -4033,13 +4056,9 @@ export async function updateStripePaymentPlanSchedule(flowId, input = {}) {
     }
   }
 
-  const hasFirstPaymentInput = Object.prototype.hasOwnProperty.call(input, 'firstPayment')
-  const firstPayment = hasFirstPaymentInput && input.firstPayment && typeof input.firstPayment === 'object' ? input.firstPayment : null
   let firstPaymentAmount = Number(flow.first_payment_amount || 0)
   let firstPaymentDate = flow.first_payment_date || null
   let firstPaymentMethod = flow.first_payment_method || null
-  const firstPaymentStatus = cleanString(flow.first_payment_status).toLowerCase()
-  const firstPaymentLocked = LOCKED_PLAN_PAYMENT_STATUSES.has(firstPaymentStatus) || ['registered', 'paid'].includes(firstPaymentStatus)
 
   if (hasFirstPaymentInput && !firstPaymentLocked) {
     const firstPaymentInputAmount = firstPayment
@@ -5024,8 +5043,8 @@ export async function createStripePaymentPlan(input = {}, { baseUrl } = {}) {
       currency: plan.currency,
       status: hasSavedCard ? 'scheduled' : 'pending',
       paymentMethod: 'stripe_scheduled_card',
-      title: `${plan.title} - pago ${payment.sequence}`,
-      description: `${plan.description} - pago ${payment.sequence}`,
+      title: buildPlanInstallmentPaymentTitle(plan.title, payment.sequence, plan.firstPayment.enabled),
+      description: buildPlanInstallmentPaymentTitle(plan.description, payment.sequence, plan.firstPayment.enabled),
       dueDate: payment.dueDate,
       metadata: {
         stripeMode: config.mode,

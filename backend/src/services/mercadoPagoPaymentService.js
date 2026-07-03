@@ -1690,6 +1690,18 @@ function buildPlanInstallmentPaymentMetadata(flow, installment, sequence, paymen
   }
 }
 
+function getVisiblePlanPaymentNumber(sequence, hasFirstPayment) {
+  const normalizedSequence = Number(sequence || 1)
+  const safeSequence = Number.isFinite(normalizedSequence) && normalizedSequence > 0
+    ? normalizedSequence
+    : 1
+  return safeSequence + (hasFirstPayment ? 1 : 0)
+}
+
+function buildPlanInstallmentPaymentTitle(baseTitle, sequence, hasFirstPayment) {
+  return `${baseTitle} - pago ${getVisiblePlanPaymentNumber(sequence, hasFirstPayment)}`
+}
+
 export async function updateMercadoPagoPaymentPlanSchedule(flowId, input = {}, { baseUrl = '' } = {}) {
   const cleanFlowId = cleanString(flowId)
   if (!cleanFlowId) {
@@ -1714,6 +1726,22 @@ export async function updateMercadoPagoPaymentPlanSchedule(flowId, input = {}, {
     : Array.isArray(input.remainingPayments)
       ? input.remainingPayments
       : []
+  const hasFirstPaymentInput = Object.prototype.hasOwnProperty.call(input, 'firstPayment')
+  const firstPayment = hasFirstPaymentInput && input.firstPayment && typeof input.firstPayment === 'object' ? input.firstPayment : null
+  let firstPaymentLink = flow.card_setup_payment_link || null
+  const firstPaymentStatus = cleanString(flow.first_payment_status).toLowerCase()
+  const firstPaymentRow = flow.first_payment_invoice_id
+    ? await db.get('SELECT * FROM payments WHERE id = ?', [flow.first_payment_invoice_id])
+    : null
+  const firstPaymentLocked = LOCKED_PLAN_PAYMENT_STATUSES.has(firstPaymentStatus)
+    || Boolean(cleanString(firstPaymentRow?.mercadopago_preference_id))
+  const existingFirstPaymentForNumbering = Number(flow.first_payment_amount || 0) > 0 && firstPaymentStatus !== 'not_required'
+  const submittedFirstPaymentForNumbering = Boolean(firstPayment && firstPayment.remove !== true && Number(firstPayment.amount || 0) > 0)
+  const hasFirstPaymentForNumbering = firstPaymentLocked
+    ? existingFirstPaymentForNumbering
+    : hasFirstPaymentInput
+      ? submittedFirstPaymentForNumbering
+      : existingFirstPaymentForNumbering
 
   const existingInstallments = await db.all(
     `SELECT i.*, p.status AS payment_status, p.payment_mode, p.mercadopago_preference_id, p.payment_url
@@ -1763,7 +1791,7 @@ export async function updateMercadoPagoPaymentPlanSchedule(flowId, input = {}, {
     const installmentId = existing?.id || createId('mp_installment')
     const paymentId = existing?.payment_id || createId('mp_plan_payment')
     const paymentMode = existing?.payment_mode || metadata.mercadoPagoMode || metadata.paymentMode || 'test'
-    const title = `${nextConcept} - pago ${nextSequence}`
+    const title = buildPlanInstallmentPaymentTitle(nextConcept, nextSequence, hasFirstPaymentForNumbering)
 
     if (existing) {
       await db.run(
@@ -1887,18 +1915,9 @@ export async function updateMercadoPagoPaymentPlanSchedule(flowId, input = {}, {
     }
   }
 
-  const hasFirstPaymentInput = Object.prototype.hasOwnProperty.call(input, 'firstPayment')
-  const firstPayment = hasFirstPaymentInput && input.firstPayment && typeof input.firstPayment === 'object' ? input.firstPayment : null
   let firstPaymentAmount = Number(flow.first_payment_amount || 0)
   let firstPaymentDate = flow.first_payment_date || null
   let firstPaymentMethod = flow.first_payment_method || null
-  let firstPaymentLink = flow.card_setup_payment_link || null
-  const firstPaymentStatus = cleanString(flow.first_payment_status).toLowerCase()
-  const firstPaymentRow = flow.first_payment_invoice_id
-    ? await db.get('SELECT * FROM payments WHERE id = ?', [flow.first_payment_invoice_id])
-    : null
-  const firstPaymentLocked = LOCKED_PLAN_PAYMENT_STATUSES.has(firstPaymentStatus)
-    || Boolean(cleanString(firstPaymentRow?.mercadopago_preference_id))
 
   if (hasFirstPaymentInput && !firstPaymentLocked) {
     const firstPaymentInputAmount = firstPayment
@@ -2338,8 +2357,8 @@ export async function createMercadoPagoPaymentPlan(input = {}, { baseUrl } = {})
       currency: plan.currency,
       status: 'scheduled',
       paymentMethod: 'mercadopago_checkout',
-      title: `${plan.title} - pago ${payment.sequence}`,
-      description: `${plan.description} - pago ${payment.sequence}`,
+      title: buildPlanInstallmentPaymentTitle(plan.title, payment.sequence, plan.firstPayment.enabled),
+      description: buildPlanInstallmentPaymentTitle(plan.description, payment.sequence, plan.firstPayment.enabled),
       dueDate: payment.dueDate,
       metadata: {
         mercadoPagoMode: config.mode,
