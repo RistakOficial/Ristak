@@ -154,6 +154,10 @@ Rutas publicas:
 - `/login`, `/sso`, `/reset-password`.
 - `/license-blocked`.
 - `/pay/success` y `/pay/:publicPaymentId`.
+- El estado exitoso de `/pay/:publicPaymentId` muestra un comprobante centrado
+  con icono de confirmacion de contorno, titulo del resultado, monto, pasarela,
+  concepto, detalles del pago, descarga de PDF y datos del negocio cuando estan
+  configurados.
 - rutas moviles de tenant/login.
 
 Shell movil:

@@ -2,7 +2,7 @@ import React, { useEffect, useLayoutEffect, useMemo, useRef, useState } from 're
 import { flushSync } from 'react-dom'
 import { CardElement, Elements, PaymentElement, useElements, useStripe } from '@stripe/react-stripe-js'
 import { loadStripe, type StripeElementsOptions, type StripePaymentElementOptions } from '@stripe/stripe-js'
-import { AlertCircle, CheckCircle2, ChevronDown, Copy, CreditCard, Download, ExternalLink, Info, Loader2, ShieldCheck, Sparkles } from 'lucide-react'
+import { AlertCircle, CheckCircle2, ChevronDown, Copy, CreditCard, Download, ExternalLink, Info, Loader2, ShieldCheck } from 'lucide-react'
 import { useParams, useSearchParams } from 'react-router-dom'
 import { Badge, Button, type BadgeVariant } from '@/components/common'
 import { PaymentPlatformLogo, type PaymentPlatformLogoId } from '@/components/common/PaymentPlatformLogo'
@@ -1237,16 +1237,10 @@ const PaymentSuccessExperience: React.FC<PaymentSuccessExperienceProps> = ({
 
       <div className={styles.successHero}>
         <div className={styles.successSeal} aria-hidden="true">
-          <span />
-          <span />
-          <CheckCircle2 size={40} strokeWidth={2.4} />
+          <CheckCircle2 size={74} strokeWidth={1.8} />
         </div>
 
         <div className={styles.successHeroCopy}>
-          <span className={styles.successKicker}>
-            <Sparkles size={13} />
-            Pago exitoso
-          </span>
           <h3>{title}</h3>
           <p>{description}</p>
         </div>
