@@ -301,7 +301,12 @@ export async function getPaymentGateCheckoutDescriptor(publicPaymentId, { baseUr
   if (status.paid) return base
 
   if (status.provider === 'stripe') {
-    const intent = await createStripePaymentIntent(publicPaymentId, {})
+    // Checkout de sitio = pago de UNA sola vez: NO guardamos la tarjeta. Si se
+    // guardara (setup_future_usage:'off_session', que se activa al haber Stripe
+    // Customer) chocaria con Stripe Elements del runtime embebido (mode:'payment'
+    // sin setupFutureUsage) -> 'setup_future_usage does not match'. Los planes/links
+    // que SI guardan tarjeta usan otro flujo (no este runtime diferido).
+    const intent = await createStripePaymentIntent(publicPaymentId, { savePaymentMethod: false })
     return {
       ...base,
       provider: 'stripe',
@@ -372,7 +377,12 @@ export async function getPaymentGateCheckoutKeys(gateway, mode = '') {
 export async function createPaymentGateCharge(publicPaymentId, gateway, chargeInput = {}, { baseUrl = '' } = {}) {
   const g = normalizeGateway(gateway)
   if (g === 'stripe') {
-    const intent = await createStripePaymentIntent(publicPaymentId, {})
+    // Checkout de sitio = pago de UNA sola vez: NO guardamos la tarjeta. Si se
+    // guardara (setup_future_usage:'off_session', que se activa al haber Stripe
+    // Customer) chocaria con Stripe Elements del runtime embebido (mode:'payment'
+    // sin setupFutureUsage) -> 'setup_future_usage does not match'. Los planes/links
+    // que SI guardan tarjeta usan otro flujo (no este runtime diferido).
+    const intent = await createStripePaymentIntent(publicPaymentId, { savePaymentMethod: false })
     return {
       provider: 'stripe',
       publicPaymentId,
