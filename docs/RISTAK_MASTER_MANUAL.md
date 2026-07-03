@@ -506,15 +506,17 @@ intereses con control por link:
   minimo de `300 MXN`.
 - Stripe debe tener MSI habilitado en su Dashboard; Ristak no crea ni modifica
   reglas globales de Stripe.
-- El checkout publico usa un flujo controlado con tarjeta: crea el PaymentMethod,
-  pide a Stripe los `available_plans`, filtra cualquier plan por encima del
-  maximo guardado en `metadata.stripeInstallments.maxInstallments` y confirma el
+- El checkout publico usa un flujo controlado con tarjeta: cuando el cliente
+  termina de capturar una tarjeta valida, Ristak crea el PaymentMethod, pide a
+  Stripe los `available_plans`, filtra cualquier plan por encima del maximo
+  guardado en `metadata.stripeInstallments.maxInstallments` y confirma el
   PaymentIntent desde backend con el `plan.count` elegido.
 - El backend vuelve a validar el plazo antes de confirmar. Si el cliente intenta
   mandar mas meses que el maximo del link, o la tarjeta no ofrece ese plazo,
   Stripe no se confirma.
-- Si la tarjeta no ofrece MSI, el checkout permite pagar de contado sin mostrar
-  meses inventados.
+- Si la tarjeta no ofrece MSI, el checkout no muestra el selector de meses y
+  permite pagar de contado sin mostrar plazos inventados ni pedir un paso manual
+  de consulta.
 
 ### CLIP Checkout Transparente
 
