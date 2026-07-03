@@ -380,6 +380,9 @@
   top: 24px;
   padding: clamp(22px, 3vw, 30px);
   background: var(--surface-solid, var(--surface));
+  /* Ancla del morph: la tarjeta de pago viaja al centro y se transforma en la
+     pantalla de éxito (que comparte este mismo view-transition-name). */
+  view-transition-name: ristak-paycard;
 }
 
 .payHeader {
@@ -901,6 +904,38 @@
   background: var(--surface-solid, var(--surface));
   box-shadow: var(--shadow-card);
   text-align: center;
+  /* Destino del morph: comparte el ancla con la tarjeta de pago para que el
+     navegador anime el viaje + el cambio de contenido. */
+  view-transition-name: ristak-paycard;
+}
+
+/* Coreografía del cambio checkout -> pago exitoso (View Transitions API).
+   El navegador anima la tarjeta desde su posición en el checkout hasta el
+   centro, mientras el resto de la página (resumen de la izquierda) se desvanece.
+   Van en :global porque los pseudo-elementos los genera el navegador en el root. */
+:global(::view-transition-group(ristak-paycard)) {
+  animation-duration: 620ms;
+  animation-timing-function: cubic-bezier(0.32, 0.72, 0, 1);
+}
+
+:global(::view-transition-old(ristak-paycard)),
+:global(::view-transition-new(ristak-paycard)) {
+  /* Cross-fade del contenido (formulario -> comprobante) durante el viaje. */
+  animation-duration: 520ms;
+  animation-timing-function: cubic-bezier(0.32, 0.72, 0, 1);
+  height: 100%;
+}
+
+/* El fondo (encabezado + resumen izquierdo) se despeja un poco antes, de modo
+   que se lee como "se oculta lo de la izquierda y la tarjeta se centra". */
+:global(::view-transition-old(root)) {
+  animation-duration: 340ms;
+  animation-timing-function: ease-in;
+}
+
+:global(::view-transition-new(root)) {
+  animation-duration: 460ms;
+  animation-timing-function: ease-out;
 }
 
 /* Confetti a pantalla completa disparado al cargar la pantalla de éxito.

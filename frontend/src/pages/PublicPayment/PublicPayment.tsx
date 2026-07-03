@@ -1,4 +1,5 @@
 import React, { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { flushSync } from 'react-dom'
 import { Elements, PaymentElement, useElements, useStripe } from '@stripe/react-stripe-js'
 import { loadStripe, type StripeElementsOptions, type StripePaymentElementOptions } from '@stripe/stripe-js'
 import { AlertCircle, CheckCircle2, ChevronDown, Copy, CreditCard, Download, ExternalLink, Info, Loader2, ShieldCheck, Sparkles } from 'lucide-react'
@@ -102,6 +103,7 @@ type PaymentSuccessExperienceProps = {
   businessDetails?: string[]
   action?: React.ReactNode
   reference?: string
+  confettiDelay?: number
 }
 type MercadoPagoCardSubmitData = {
   token?: string
@@ -990,7 +992,7 @@ type ConfettiParticle = {
 // Ráfaga de confetti dibujada en canvas con física real (cañones desde las
 // esquinas + lluvia superior, gravedad, fricción y aleteo). Sin dependencias
 // externas y se apaga sola tras la celebración. Respeta prefers-reduced-motion.
-const SuccessConfettiBurst: React.FC = () => {
+const SuccessConfettiBurst: React.FC<{ delayMs?: number }> = ({ delayMs = 0 }) => {
   const canvasRef = useRef<HTMLCanvasElement | null>(null)
   const reducedMotion = usePrefersReducedMotion()
 
@@ -1110,13 +1112,19 @@ const SuccessConfettiBurst: React.FC = () => {
       }
     }
 
-    raf = window.requestAnimationFrame(frame)
+    // Retrasamos el estallido lo justo para que, cuando venimos de la transición
+    // de la tarjeta al centro, el confetti aparezca al aterrizar (y no oculto tras
+    // el overlay de la View Transition).
+    const startTimer = window.setTimeout(() => {
+      raf = window.requestAnimationFrame(frame)
+    }, Math.max(0, delayMs))
     window.addEventListener('resize', resize)
     return () => {
+      window.clearTimeout(startTimer)
       window.cancelAnimationFrame(raf)
       window.removeEventListener('resize', resize)
     }
-  }, [reducedMotion])
+  }, [reducedMotion, delayMs])
 
   if (reducedMotion) return null
   return <canvas ref={canvasRef} className={styles.confettiCanvas} aria-hidden="true" />
@@ -1134,13 +1142,14 @@ const PaymentSuccessExperience: React.FC<PaymentSuccessExperienceProps> = ({
   details = [],
   businessDetails = [],
   action,
-  reference
+  reference,
+  confettiDelay = 0
 }) => {
   const visibleBusinessDetails = businessDetails.filter(Boolean)
 
   return (
     <div className={styles.successExperience}>
-      <SuccessConfettiBurst />
+      <SuccessConfettiBurst delayMs={confettiDelay} />
 
       <div className={styles.successHero}>
         <div className={styles.successSeal} aria-hidden="true">
@@ -2087,6 +2096,9 @@ export const PublicPayment: React.FC = () => {
     }
   }, [intent?.clientSecret, stripePayment])
 
+  const reducedMotion = usePrefersReducedMotion()
+  const animatedRef = useRef(false)
+
   const loadPayment = async (sync = false) => {
     if (!publicPaymentId) return
     const data = await loadPublicPayment(publicPaymentId, sync)
@@ -2110,6 +2122,46 @@ export const PublicPayment: React.FC = () => {
           }
         }
       }
+    }
+  }
+
+  const isPaidStatus = (value?: string) =>
+    ['paid', 'succeeded', 'completed'].includes(String(value || '').toLowerCase())
+
+  // Aplica la actualización del pago. Si el pago acaba de completarse en vivo y el
+  // navegador soporta View Transitions (y no hay reduce-motion), envolvemos el cambio
+  // para que la tarjeta de pago viaje al centro y se transforme en la pantalla de
+  // éxito con un morph suave, en vez de un corte abrupto. Cualquier fallo cae al
+  // cambio directo, sin afectar el registro del pago.
+  const applyPaymentUpdate = (data: PublicPaymentData) => {
+    const startViewTransition = typeof document !== 'undefined'
+      ? (document as any).startViewTransition?.bind(document)
+      : undefined
+    const shouldAnimate = isPaidStatus(data.status)
+      && !isPaid
+      && !reducedMotion
+      && typeof startViewTransition === 'function'
+
+    if (shouldAnimate) {
+      animatedRef.current = true
+      try {
+        startViewTransition(() => {
+          flushSync(() => setPayment(data))
+        })
+        return
+      } catch {
+        // Si la transición falla, seguimos con el cambio directo.
+      }
+    }
+    setPayment(data)
+  }
+
+  const handlePaid = async () => {
+    try {
+      const data = await loadPublicPayment(publicPaymentId, true)
+      applyPaymentUpdate(data)
+    } catch {
+      await loadPayment(true)
     }
   }
 
@@ -2393,6 +2445,7 @@ export const PublicPayment: React.FC = () => {
               details={successDetails}
               businessDetails={successBusinessDetails}
               reference={payment.publicPaymentId}
+              confettiDelay={animatedRef.current ? 720 : 240}
               action={(
                 <Button
                   type="button"
@@ -2633,23 +2686,23 @@ export const PublicPayment: React.FC = () => {
             ) : isMercadoPagoPayment ? (
               <MercadoPagoCardPaymentForm
                 payment={payment}
-                onPaid={() => loadPayment(true)}
+                onPaid={handlePaid}
                 onFallback={startPayment}
                 fallbackLoading={startingPayment}
               />
             ) : isConektaPayment ? (
               <ConektaCardTokenizerForm
                 payment={payment}
-                onPaid={() => loadPayment(true)}
+                onPaid={handlePaid}
               />
             ) : isClipPayment ? (
               <ClipCardPaymentForm
                 payment={payment}
-                onPaid={() => loadPayment(true)}
+                onPaid={handlePaid}
               />
             ) : isStripePayment && stripePromise && elementsOptions ? (
               <Elements stripe={stripePromise} options={elementsOptions}>
-                <PublicPaymentForm payment={payment} onPaid={() => loadPayment(true)} />
+                <PublicPaymentForm payment={payment} onPaid={handlePaid} />
               </Elements>
             ) : (
               <div className={styles.stripeBox}>
