@@ -1048,12 +1048,28 @@ function normalizeFormDisqualifiedCompletionAction(value, fallback = 'disqualifi
   return ['disqualified_page', 'redirect_url'].includes(action) ? action : fallback
 }
 
+function hasFormEmbedCompletionAction(settings = {}) {
+  return Boolean(cleanString(settings.completionAction || settings.completion_action))
+}
+
+function shouldDefaultLandingEmbedToNextPage(site) {
+  return site?.siteType === 'landing_page' && !isImportedHtmlSite(site) && getSitePageMode(site) === 'funnel'
+}
+
+function applyFormEmbedCreateDefaults(site, settings = {}) {
+  const next = isPlainObject(settings) ? { ...settings } : {}
+  if (shouldDefaultLandingEmbedToNextPage(site) && !hasFormEmbedCompletionAction(next)) {
+    next.completionAction = 'next_page'
+  }
+  return next
+}
+
 function hasCalendarCompletionAction(settings = {}) {
   return Boolean(cleanString(settings.calendarCompletionAction || settings.calendar_completion_action))
 }
 
 function shouldDefaultCalendarEmbedToNextPage(site) {
-  return site?.siteType === 'landing_page' && !isImportedHtmlSite(site) && getSitePageMode(site) === 'funnel'
+  return shouldDefaultLandingEmbedToNextPage(site)
 }
 
 function applyCalendarEmbedCreateDefaults(site, settings = {}) {
@@ -10847,6 +10863,7 @@ export async function createBlock(siteId, input = {}) {
   const options = Array.isArray(input.options) ? input.options : []
   let settings = isPlainObject(input.settings) ? input.settings : {}
   if (blockType === 'form_embed') {
+    settings = applyFormEmbedCreateDefaults(site, settings)
     settings = {
       ...settings,
       embeddedTheme: {

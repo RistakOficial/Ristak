@@ -5509,7 +5509,7 @@ const getCalendarCompletionAction = (settings: Record<string, unknown>): Calenda
   return action === 'next_page' || action === 'redirect' ? action : 'calendar_default'
 }
 
-const shouldDefaultCalendarEmbedToNextPage = (site?: PublicSite | null, siteType?: SiteType) => {
+const shouldDefaultFunnelEmbedToNextPage = (site?: PublicSite | null, siteType?: SiteType) => {
   const resolvedSiteType = site?.siteType || siteType
   return resolvedSiteType === 'landing_page' && (!site || (!isImportedHtmlSite(site) && getSitePageMode(site) === 'funnel'))
 }
@@ -6193,7 +6193,10 @@ const defaultBlockPayload = (blockType: SiteBlockType, siteOrId: PublicSite | st
     : '#111827'
   const calendarMutedDefault = siteIsDark ? 'rgba(255, 255, 255, 0.72)' : '#6b7280'
   const calendarLineDefault = siteIsDark ? 'rgba(255, 255, 255, 0.22)' : '#e5e7eb'
-  const calendarCompletionDefaults = shouldDefaultCalendarEmbedToNextPage(site, resolvedSiteType)
+  const formCompletionDefaults = shouldDefaultFunnelEmbedToNextPage(site, resolvedSiteType)
+    ? { completionAction: 'next_page' }
+    : {}
+  const calendarCompletionDefaults = shouldDefaultFunnelEmbedToNextPage(site, resolvedSiteType)
     ? { calendarCompletionAction: 'next_page' }
     : {}
 
@@ -6389,6 +6392,7 @@ const defaultBlockPayload = (blockType: SiteBlockType, siteOrId: PublicSite | st
       settings: blockSettings({
         description: '',
         formSiteId: '',
+        ...formCompletionDefaults,
         embeddedTheme: createDefaultEmbeddedFormThemeOverride()
       })
     }

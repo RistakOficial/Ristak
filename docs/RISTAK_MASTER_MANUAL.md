@@ -689,6 +689,11 @@ En landings en modo embudo, un bloque nuevo de calendario embebido nace con
 bloque; si el usuario cambia la accion a reglas del calendario o redireccion, se
 respeta su configuracion guardada.
 
+En landings en modo embudo, un bloque nuevo de formulario embebido nace con
+`Al enviar -> Ir a la siguiente pagina`. Ese default solo se aplica al crear el
+bloque; si el usuario cambia la accion a reglas del formulario, una pagina
+especifica o redireccion, se respeta su configuracion guardada.
+
 En embudos multipagina, los bloques de pago top-level solo bloquean el submit de
 la pagina donde viven. Un formulario en una pagina anterior debe crear contacto y
 submission aunque exista un bloque de pago habilitado en una pagina posterior. La
