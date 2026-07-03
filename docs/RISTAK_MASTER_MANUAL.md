@@ -648,6 +648,10 @@ El motor principal vive en `backend/src/services/automationEngine.js`.
 Los cambios de fechas/delays deben obedecer `DATE_TIME_GUIDELINES.md`.
 Los crons de integraciones externas deben obedecer `INTEGRATION_CRON_RULES.md`.
 
+En el editor visual, la libreria lateral de automatizaciones es responsiva: en
+ventanas normales o chicas mantiene un ancho compacto y no se expande al hover.
+La expansion por hover solo aplica en pantallas muy amplias con mouse/trackpad.
+
 Regla de prueba desde el editor: el botón **Probar** usa la última versión
 guardada del flujo y no exige que la automatización esté publicada. Si hay
 cambios locales sin guardar, primero debe guardarse. Las inscripciones manuales
