@@ -1024,6 +1024,128 @@ function getBaileysMessageTimestampIso(message = {}) {
   return seconds > 0 ? new Date(seconds * 1000).toISOString() : nowIso()
 }
 
+// Tipos de mensaje QR que traen un archivo descargable (el audio de voz llega como 'audio').
+const QR_DOWNLOADABLE_MEDIA_TYPES = new Set(['image', 'video', 'audio', 'document', 'sticker'])
+
+// Logger mínimo compatible con Baileys para `downloadMediaMessage` (evita ruido y crashes
+// si el paquete intenta usar métodos de pino que nuestro logger no expone).
+const BAILEYS_MEDIA_LOGGER = {
+  level: 'silent',
+  child() { return BAILEYS_MEDIA_LOGGER },
+  trace() {}, debug() {}, info() {}, warn() {}, error() {}, fatal() {}
+}
+
+function longLikeToNumber(value) {
+  if (value == null) return 0
+  if (typeof value === 'number') return Number.isFinite(value) ? value : 0
+  if (typeof value === 'bigint') return Number(value)
+  if (typeof value === 'string') { const n = Number(value); return Number.isFinite(n) ? n : 0 }
+  if (typeof value.toNumber === 'function') { try { return value.toNumber() } catch { return 0 } }
+  if (typeof value.low === 'number') {
+    const high = typeof value.high === 'number' ? value.high : 0
+    return high * 4294967296 + (value.low >>> 0)
+  }
+  return 0
+}
+
+function fallbackMimeForMediaType(type) {
+  switch (type) {
+    case 'image': return 'image/jpeg'
+    case 'video': return 'video/mp4'
+    case 'audio': return 'audio/ogg'
+    case 'sticker': return 'image/webp'
+    default: return 'application/octet-stream'
+  }
+}
+
+// Extrae el nodo multimedia del contenido Baileys (ya desenvuelto de ephemeral/viewOnce/etc.).
+function getBaileysMediaNode(content) {
+  const c = unwrapBaileysMessageContent(content)
+  if (c.imageMessage) return { type: 'image', node: c.imageMessage }
+  if (c.videoMessage) return { type: 'video', node: c.videoMessage }
+  if (c.audioMessage) return { type: 'audio', node: c.audioMessage }
+  if (c.documentMessage) return { type: 'document', node: c.documentMessage }
+  if (c.stickerMessage) return { type: 'sticker', node: c.stickerMessage }
+  return null
+}
+
+// Descarga (desencripta) la media de un mensaje de WhatsApp Web y la rehospeda en nuestro
+// storage (Bunny) bajo el módulo 'chat'. Devuelve el descriptor listo para persistir, o null
+// si no hay media, excede límites o falla la descarga (el mensaje se guarda sin archivo).
+async function downloadAndStoreQrInboundMedia({ phone, message, content, messageType, wamid }) {
+  const mediaInfo = getBaileysMediaNode(content)
+  if (!mediaInfo?.node) return null
+  const { type, node } = mediaInfo
+
+  const runtime = await loadBaileys()
+  const downloadMediaMessage = runtime?.downloadMediaMessage
+  if (typeof downloadMediaMessage !== 'function') {
+    logger.warn('[WhatsApp QR] El paquete de QR no expone downloadMediaMessage; se omite la media entrante')
+    return null
+  }
+
+  const api = await loadWhatsAppApiService()
+  const limitBytes = api.getInboundMediaLimitBytes(type)
+  const declaredSize = longLikeToNumber(node.fileLength)
+  if (declaredSize && declaredSize > limitBytes) {
+    logger.warn(`[WhatsApp QR] Media entrante ${wamid} excede el límite permitido (${declaredSize} > ${limitBytes}); se omite`)
+    return null
+  }
+
+  const sock = liveSessions.get(phone.id)?.sock || null
+  const buffer = await downloadMediaMessage(
+    message,
+    'buffer',
+    {},
+    {
+      logger: BAILEYS_MEDIA_LOGGER,
+      reuploadRequest: typeof sock?.updateMediaMessage === 'function'
+        ? sock.updateMediaMessage.bind(sock)
+        : undefined
+    }
+  )
+
+  if (!buffer?.length) return null
+  if (buffer.length > limitBytes) {
+    logger.warn(`[WhatsApp QR] Media entrante ${wamid} supera el límite tras descargar (${buffer.length} > ${limitBytes}); se omite`)
+    return null
+  }
+
+  const mimeType = cleanString(node.mimetype) || fallbackMimeForMediaType(type)
+  const filename = api.buildInboundMediaFilename({
+    mediaId: wamid,
+    messageType: type,
+    mimeType,
+    filename: cleanString(node.fileName)
+  })
+  const seconds = longLikeToNumber(node.seconds)
+  const durationMs = seconds > 0 ? seconds * 1000 : null
+
+  const { uploadMediaAsset } = await import('./mediaStorageService.js')
+  const asset = await uploadMediaAsset({
+    buffer,
+    mimeType,
+    filename,
+    module: 'chat',
+    isPublic: true,
+    skipCompression: true,
+    metadata: {
+      source: 'whatsapp_qr_inbound_media',
+      whatsappMessageType: type,
+      qrPhoneNumberId: phone.id,
+      wamid
+    }
+  })
+
+  return {
+    mediaUrl: asset.publicUrl,
+    mediaMimeType: asset.mimeType || mimeType,
+    mediaFilename: asset.originalFilename || asset.storedFilename || filename,
+    mediaDurationMs: durationMs,
+    mediaAssetId: asset.id
+  }
+}
+
 async function handleQrIncomingMessages(phone, upsert = {}) {
   const type = cleanString(upsert.type)
   if (type && type !== 'notify' && type !== 'append') return
@@ -1059,7 +1181,19 @@ async function handleQrIncomingMessages(phone, upsert = {}) {
         text: content.text,
         profileName: cleanString(message.pushName),
         contactPhone,
-        timestamp: getBaileysMessageTimestampIso(message)
+        timestamp: getBaileysMessageTimestampIso(message),
+        // Solo se ejecuta si el número NO tiene WhatsApp API operativa (lo decide
+        // captureQrChatMessage tras su guard). Con API activa la media la hospeda el
+        // proveedor y no gastamos nuestro storage.
+        resolveInboundMedia: QR_DOWNLOADABLE_MEDIA_TYPES.has(content.type)
+          ? () => downloadAndStoreQrInboundMedia({
+              phone,
+              message,
+              content: message?.message,
+              messageType: content.type,
+              wamid
+            })
+          : null
       })
 
       if (!result?.skipped && result?.isNew) {
@@ -1361,6 +1495,7 @@ async function loadBaileys() {
       fetchLatestWaWebVersion: baileys.fetchLatestWaWebVersion,
       initAuthCreds: baileys.initAuthCreds,
       makeCacheableSignalKeyStore: baileys.makeCacheableSignalKeyStore,
+      downloadMediaMessage: baileys.downloadMediaMessage,
       proto: baileys.proto
     }
     return baileysRuntime

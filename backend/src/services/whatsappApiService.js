@@ -4426,7 +4426,18 @@ function getMessageMediaId(message = {}) {
   )
 }
 
-function getInboundMediaLimitBytes(messageType = '') {
+const QR_MEDIA_MESSAGE_TYPES = new Set(['image', 'video', 'audio', 'voice', 'document', 'sticker'])
+
+// Traduce el tipo de mensaje a la clave que `extractMessageMedia` sabe leer en el objeto
+// del mensaje (message.image / message.audio / etc.).
+function normalizeQrMediaKey(messageType = '') {
+  const type = cleanString(messageType).toLowerCase()
+  if (type === 'voice') return 'audio'
+  if (QR_MEDIA_MESSAGE_TYPES.has(type)) return type
+  return 'media'
+}
+
+export function getInboundMediaLimitBytes(messageType = '') {
   const type = cleanString(messageType).toLowerCase()
   if (type === 'audio' || type === 'voice') return MAX_WHATSAPP_AUDIO_BYTES
   if (type === 'image' || type === 'sticker') return MAX_WHATSAPP_IMAGE_INPUT_BYTES
@@ -4435,7 +4446,7 @@ function getInboundMediaLimitBytes(messageType = '') {
   return MAX_WHATSAPP_DOCUMENT_BYTES
 }
 
-function getInboundMediaExtension({ messageType = '', mimeType = '', filename = '' } = {}) {
+export function getInboundMediaExtension({ messageType = '', mimeType = '', filename = '' } = {}) {
   const cleanMime = cleanMimeType(mimeType)
   const currentExtension = cleanString(filename).toLowerCase().split('.').pop()
   if (/^[a-z0-9]{2,8}$/.test(currentExtension)) return currentExtension
@@ -5619,7 +5630,8 @@ export async function captureQrChatMessage({
   profileName = '',
   contactPhone,
   timestamp,
-  raw = null
+  raw = null,
+  resolveInboundMedia = null
 } = {}) {
   const cleanDirection = direction === 'outbound' ? 'outbound' : 'inbound'
   const cleanBusinessPhone = normalizePhoneForStorage(businessPhone) || cleanString(businessPhone)
@@ -5734,8 +5746,44 @@ export async function captureQrChatMessage({
     Number(phoneRow.api_send_enabled ?? 1) === 1 &&
     !(await getOfficialApiRestrictionReason({ phoneRow, config }))
   if (officialApiOperational) {
+    // El número usa WhatsApp API (YCloud/oficial): la media llega hospedada por el
+    // proveedor a través del webhook, así que NO descargamos ni rehospedamos en Bunny.
     return { skipped: true, reason: 'official_api_active' }
   }
+
+  // Llegados aquí el número vive de la sesión QR (Baileys): el proveedor no guarda la
+  // media por nosotros, así que la descargamos y la persistimos en nuestro storage.
+  // Se resuelve de forma perezosa para no descargar nada si el mensaje se descarta arriba.
+  let inboundMedia = null
+  if (typeof resolveInboundMedia === 'function' && QR_MEDIA_MESSAGE_TYPES.has(cleanString(messageType).toLowerCase())) {
+    // Evita re-descargar/re-subir si el mensaje ya tiene su media rehospedada (p. ej. una
+    // resincronización de historial de WhatsApp Web reenvía el mismo wamid).
+    const alreadyStored = await db.get(
+      `SELECT 1 FROM whatsapp_api_messages WHERE wamid = ? AND COALESCE(media_url, '') != '' LIMIT 1`,
+      [cleanWamid]
+    ).catch(() => null)
+    if (!alreadyStored) {
+      inboundMedia = await Promise.resolve()
+        .then(() => resolveInboundMedia())
+        .catch(error => {
+          logger.warn(`[WhatsApp QR] No se pudo guardar la media entrante ${cleanWamid}: ${error.message}`)
+          return null
+        })
+    }
+  }
+
+  const mediaKey = normalizeQrMediaKey(messageType)
+  const mediaNode = inboundMedia?.mediaUrl
+    ? {
+        link: inboundMedia.mediaUrl,
+        url: inboundMedia.mediaUrl,
+        publicUrl: inboundMedia.mediaUrl,
+        ...(inboundMedia.mediaMimeType ? { mimeType: inboundMedia.mediaMimeType } : {}),
+        ...(inboundMedia.mediaFilename ? { filename: inboundMedia.mediaFilename } : {}),
+        ...(inboundMedia.mediaDurationMs ? { durationMs: inboundMedia.mediaDurationMs } : {}),
+        ...(inboundMedia.mediaAssetId ? { mediaAssetId: inboundMedia.mediaAssetId } : {})
+      }
+    : null
 
   const result = await upsertMessage({
     payload: {
@@ -5752,6 +5800,7 @@ export async function captureQrChatMessage({
       to: cleanDirection === 'inbound' ? cleanBusinessPhone : cleanContactPhone,
       type: messageType,
       ...(messageText ? { text: { body: messageText } } : {}),
+      ...(mediaNode ? { [mediaKey]: mediaNode } : {}),
       ...(cleanDirection === 'inbound' && profileName ? { profileName } : {}),
       transport: 'qr',
       sendTime: messageTimestamp,
