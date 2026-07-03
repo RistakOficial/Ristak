@@ -68,9 +68,11 @@ const DRAG_DATA_TYPE = 'application/x-ristak-template-manager'
 const VARIABLE_PATTERN = /{{\s*([a-zA-Z0-9_.-]+)\s*}}/g
 const META_VARIABLE_PATTERN = /{{\s*(\d+)\s*}}/g
 type TemplateFolderFilter = 'all' | 'unfiled' | string
+type VariablePickerDirection = 'above' | 'below'
 
 const getButtonValueTarget = (index: number): MessageTemplateVariableTarget => `buttons.${index}.value`
 const BUTTON_VALUE_TARGET_PATTERN = /^buttons\.(\d+)\.value$/
+const VARIABLE_PICKER_MIN_SPACE = 300
 
 interface VariablePickerGroup {
   id: string
@@ -565,6 +567,7 @@ export const MessageTemplates: React.FC<MessageTemplatesProps> = ({
   const [bulkWorking, setBulkWorking] = useState(false)
   const [dragging, setDragging] = useState<{ templateIds: string[]; folderIds: string[] } | null>(null)
   const [activeVariablePicker, setActiveVariablePicker] = useState<string | null>(null)
+  const [variablePickerDirections, setVariablePickerDirections] = useState<Record<string, VariablePickerDirection>>({})
   const [variableSearchDrafts, setVariableSearchDrafts] = useState<Record<string, string>>({})
   const [expandedVariableCategories, setExpandedVariableCategories] = useState<Set<string>>(() => new Set())
   const [dropTargetFolderId, setDropTargetFolderId] = useState<string | null>(null)
@@ -1350,6 +1353,20 @@ export const MessageTemplates: React.FC<MessageTemplatesProps> = ({
     }))
   }
 
+  const openVariablePicker = (pickerKey: string, trigger: HTMLElement) => {
+    const bounds = trigger.getBoundingClientRect()
+    const spaceBelow = window.innerHeight - bounds.bottom
+    const spaceAbove = bounds.top
+    const direction: VariablePickerDirection = spaceBelow < VARIABLE_PICKER_MIN_SPACE && spaceAbove > spaceBelow
+      ? 'above'
+      : 'below'
+
+    setVariablePickerDirections((current) => (
+      current[pickerKey] === direction ? current : { ...current, [pickerKey]: direction }
+    ))
+    setActiveVariablePicker(pickerKey)
+  }
+
   const toggleVariableCategory = (categoryId: string) => {
     setExpandedVariableCategories((current) => {
       const next = new Set(current)
@@ -1406,6 +1423,7 @@ export const MessageTemplates: React.FC<MessageTemplatesProps> = ({
           const pickerGroups = buildVariablePickerGroups(bundle.variables, searchValue)
           const pickerMatches = pickerGroups.flatMap((group) => group.items)
           const pickerOpen = activeVariablePicker === pickerKey && !selectedVariable
+          const pickerDirection = variablePickerDirections[pickerKey] || 'below'
           const selectVariable = (variable: MessageTemplateVariable) => {
             updateVariableBinding(target, index, {
               label: variable.label,
@@ -1448,9 +1466,9 @@ export const MessageTemplates: React.FC<MessageTemplatesProps> = ({
                         <input
                           type="text"
                           value={searchValue}
-                          onFocus={() => setActiveVariablePicker(pickerKey)}
+                          onFocus={(event) => openVariablePicker(pickerKey, event.currentTarget)}
                           onChange={(event) => {
-                            setActiveVariablePicker(pickerKey)
+                            openVariablePicker(pickerKey, event.currentTarget)
                             setVariableSearchDrafts((current) => ({ ...current, [pickerKey]: event.target.value }))
                           }}
                           onKeyDown={(event) => {
@@ -1474,7 +1492,10 @@ export const MessageTemplates: React.FC<MessageTemplatesProps> = ({
                         />
                       </div>
                       {pickerOpen && (
-                        <div className={styles.variablePickerMenu} data-ristak-dropdown-panel>
+                        <div
+                          className={`${styles.variablePickerMenu} ${pickerDirection === 'above' ? styles.variablePickerMenuAbove : ''}`}
+                          data-ristak-dropdown-panel
+                        >
                           {pickerGroups.length ? (
                             pickerGroups.map((group) => {
                               const expanded = isSearchingVariables || expandedVariableCategories.has(group.id)

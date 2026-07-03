@@ -1144,13 +1144,37 @@
   top: calc(100% + 6px);
   left: 0;
   right: 0;
-  max-height: 260px;
+  max-height: min(320px, calc(100vh - 128px));
   overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-color: var(--border-strong) transparent;
+  scrollbar-gutter: stable;
   border: 1px solid var(--ristak-dropdown-border);
   border-radius: var(--ristak-dropdown-radius);
   background: var(--ristak-dropdown-panel-bg, var(--surface-solid, var(--surface)));
   box-shadow: var(--ristak-dropdown-panel-shadow);
   padding: 6px;
+  -webkit-overflow-scrolling: touch;
+}
+
+.variablePickerMenuAbove {
+  top: auto;
+  bottom: calc(100% + 6px);
+}
+
+.variablePickerMenu::-webkit-scrollbar {
+  width: 8px;
+}
+
+.variablePickerMenu::-webkit-scrollbar-thumb {
+  border: 2px solid transparent;
+  border-radius: var(--radius-pill);
+  background: var(--border-strong);
+  background-clip: padding-box;
+}
+
+.variablePickerMenu::-webkit-scrollbar-track {
+  background: transparent;
 }
 
 .variablePickerMenu button {
