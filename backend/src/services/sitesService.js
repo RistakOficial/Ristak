@@ -16236,7 +16236,13 @@ function buildPaymentCheckoutRuntimeScript() {
           var mpMuted = readToken('--rstk-muted');
           if (mpMuted) { mpVars.textSecondaryColor = mpMuted; }
           if (mpVars.textPrimaryColor || mpVars.textSecondaryColor) customization.visual.style.customVariables = mpVars;
-          if (maxInst > 1) customization.paymentMethods = { minInstallments: 1, maxInstallments: maxInst };
+          // MSI OFF (maxInst=1): SIEMPRE restringimos el Brick a un solo pago. Si NO se
+          // setea paymentMethods, el cardPayment Brick ofrece por default TODOS los meses
+          // que el emisor soporte — aunque el bloque tenga MSI apagado (bug). Con
+          // min/maxInstallments=1 el Brick queda en "1 solo pago". MSI ON => 1..N. El
+          // candado REAL vive en el servidor (buildCardPaymentPayload clampa a maxInst),
+          // así que aunque el Brick fallara al limitar, el cobro nunca excede lo permitido.
+          customization.paymentMethods = { minInstallments: 1, maxInstallments: maxInst };
           builder.create('cardPayment', els.fields.id, {
             initialization: { amount: Number(d.amount || 0) },
             customization: customization,

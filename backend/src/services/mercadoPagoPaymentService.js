@@ -1068,17 +1068,23 @@ function buildCardPaymentPayload(row, input = {}, { baseUrl = '' } = {}) {
   const installmentOptions = normalizeMercadoPagoInstallmentOptions(metadata.mercadoPagoInstallments, { emptyAsNull: true })
   const requestedInstallments = normalizeInstallments(input.installments)
 
-  if (installmentOptions && requestedInstallments > installmentOptions.maxInstallments) {
-    const error = new Error(`Este link permite máximo ${installmentOptions.maxInstallments} ${installmentOptions.maxInstallments === 1 ? 'cuota' : 'cuotas'} en Mercado Pago.`)
+  // MSI OFF (sin opciones MSI persistidas en la fila) => se cobra SIEMPRE de contado,
+  // aunque el Brick o un request forjado manden meses. Este es el candado REAL del bug de
+  // "meses cuando no los pedimos": no depende del comportamiento del Brick en el front.
+  // MSI ON => se rechaza pedir MÁS de N cuotas (manipulación) y se clampa por seguridad.
+  const maxAllowedInstallments = installmentOptions ? installmentOptions.maxInstallments : 1
+  if (installmentOptions && requestedInstallments > maxAllowedInstallments) {
+    const error = new Error(`Este link permite máximo ${maxAllowedInstallments} ${maxAllowedInstallments === 1 ? 'cuota' : 'cuotas'} en Mercado Pago.`)
     error.status = 400
     throw error
   }
+  const finalInstallments = Math.min(requestedInstallments, maxAllowedInstallments)
 
   return {
     transaction_amount: Math.round(amount * 100) / 100,
     token,
     description,
-    installments: requestedInstallments,
+    installments: finalInstallments,
     payment_method_id: paymentMethodId,
     ...(issuerId ? { issuer_id: issuerId } : {}),
     payer: buildCardPaymentPayer(row, metadata, input.payer),

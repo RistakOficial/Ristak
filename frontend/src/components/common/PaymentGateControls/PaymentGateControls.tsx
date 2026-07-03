@@ -377,6 +377,40 @@ export const PaymentGateControls: React.FC<PaymentGateControlsProps> = ({
               />
             </label>
 
+            {MSI_GATEWAYS.has(config.gateway) && (
+              <div className={`${styles.field} ${styles.fieldWide}`}>
+                <div className={styles.toggleRow}>
+                  <div className={styles.toggleCopy}>
+                    <strong>Meses sin intereses</strong>
+                    <span>
+                      {clipControlsMsi
+                        ? `CLIP muestra los plazos dentro de su formulario si la cuenta y tarjeta califican. Mínimo ${CLIP_MSI_MIN_AMOUNT} MXN.`
+                        : `Ofrece diferido a meses en ${selectedGateway.label}.`}
+                    </span>
+                  </div>
+                  <Switch
+                    checked={config.msi.enabled}
+                    onChange={(enabled) => {
+                      patchConfig({ msi: { enabled, maxInstallments: enabled ? (clipControlsMsi ? 24 : (config.msi.maxInstallments || 12)) : 0 } })
+                      window.setTimeout(() => { onCommit?.() }, 0)
+                    }}
+                    aria-label={config.msi.enabled ? 'Desactivar meses sin intereses' : 'Activar meses sin intereses'}
+                  />
+                </div>
+                {config.msi.enabled && !clipControlsMsi && (
+                  <label className={styles.field}>
+                    <span>Diferir hasta</span>
+                    <CustomSelect
+                      value={String(config.msi.maxInstallments || 12)}
+                      onValueChange={(value) => patchConfig({ msi: { enabled: true, maxInstallments: Number(value) } })}
+                      onBlur={onCommit}
+                      options={MSI_INSTALLMENT_CHOICES.map(months => ({ value: String(months), label: `${months} meses` }))}
+                    />
+                  </label>
+                )}
+              </div>
+            )}
+
             <label className={`${styles.field} ${styles.fieldWide}`}>
               <span>Descripción</span>
               <textarea
@@ -415,40 +449,6 @@ export const PaymentGateControls: React.FC<PaymentGateControlsProps> = ({
               />
             </label>
           </div>
-
-          {MSI_GATEWAYS.has(config.gateway) && (
-            <div className={styles.field}>
-              <div className={styles.toggleRow}>
-                <div className={styles.toggleCopy}>
-                  <strong>Meses sin intereses</strong>
-                  <span>
-                    {clipControlsMsi
-                      ? `CLIP muestra los plazos dentro de su formulario si la cuenta y tarjeta califican. Mínimo ${CLIP_MSI_MIN_AMOUNT} MXN.`
-                      : `Ofrece diferido a meses en ${selectedGateway.label}.`}
-                  </span>
-                </div>
-                <Switch
-                  checked={config.msi.enabled}
-                  onChange={(enabled) => {
-                    patchConfig({ msi: { enabled, maxInstallments: enabled ? (clipControlsMsi ? 24 : (config.msi.maxInstallments || 12)) : 0 } })
-                    window.setTimeout(() => { onCommit?.() }, 0)
-                  }}
-                  aria-label={config.msi.enabled ? 'Desactivar meses sin intereses' : 'Activar meses sin intereses'}
-                />
-              </div>
-              {config.msi.enabled && !clipControlsMsi && (
-                <label className={styles.field}>
-                  <span>Diferir hasta</span>
-                  <CustomSelect
-                    value={String(config.msi.maxInstallments || 12)}
-                    onValueChange={(value) => patchConfig({ msi: { enabled: true, maxInstallments: Number(value) } })}
-                    onBlur={onCommit}
-                    options={MSI_INSTALLMENT_CHOICES.map(months => ({ value: String(months), label: `${months} meses` }))}
-                  />
-                </label>
-              )}
-            </div>
-          )}
 
         </div>
       )}
