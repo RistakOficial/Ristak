@@ -2882,6 +2882,42 @@ test('update_closing_context solo se instruye con la biblia de fabrica activa', 
   assert.doesNotMatch(build('high', 'intermediate', 'custom', 'Cierra breve y humano.'), /update_closing_context/)
 })
 
+test('las indicaciones del negocio se inyectan como OBLIGATORIAS y con prioridad', () => {
+  const commonContext = {
+    businessContext: 'Vendemos consultas.',
+    brandVoice: '',
+    businessName: 'Clinica Norte',
+    timezone: 'America/Mexico_City',
+    nowIso: 'miércoles, 17 de junio de 2026, 14:00',
+    contactName: 'Ana',
+    channel: 'whatsapp',
+    accountLocale: { countryCode: 'MX', currency: 'MXN', dialCode: '52' }
+  }
+  const build = (extraInstructions) => buildConversationalInstructions({
+    config: { persuasionLevel: 'high', languageLevel: 'intermediate', objective: 'citas', successAction: 'book_appointment', requiredData: '', closingStrategyMode: 'system', extraInstructions },
+    ...commonContext
+  })
+
+  const withRules = build('- No des precios hasta que digan su presupuesto.\n- Para agendar necesitan estado clinico, si no NO agendas.')
+  // Sección dedicada con marco de obligatoriedad y prioridad.
+  assert.match(withRules, /Indicaciones del negocio \(OBLIGATORIAS · MÁXIMA PRIORIDAD\)/)
+  assert.match(withRules, /manda POR ENCIMA DE TODO lo anterior/)
+  assert.match(withRules, /GANA lo que dice AQUÍ/)
+  // Reforzada al inicio de la jerarquía de prioridades.
+  assert.match(withRules, /0\. ANTES QUE NADA/)
+  // Incluye el texto literal del dueño.
+  assert.match(withRules, /Para agendar necesitan estado clinico, si no NO agendas/)
+  // Límite de integridad (no inventar datos, no revelar mecánica, no bajar guardia).
+  assert.match(withRules, /NUNCA inventas precios/)
+
+  // Sin indicaciones: ni sección ni puntero.
+  const without = build('')
+  assert.doesNotMatch(without, /Indicaciones del negocio \(OBLIGATORIAS/)
+  assert.doesNotMatch(without, /0\. ANTES QUE NADA/)
+  // Espacios en blanco se tratan como vacío (trim).
+  assert.doesNotMatch(build('   \n  '), /Indicaciones del negocio \(OBLIGATORIAS/)
+})
+
 test('instrucciones del agente respetan el toggle de emojis', () => {
   const baseConfig = {
     objective: 'citas',

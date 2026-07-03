@@ -3197,11 +3197,11 @@ const AgentCard: React.FC<AgentCardProps> = ({ agent, aiProviders, calendars, pr
               </QuestionSelectRow>
 
               <QuestionSelectRow
-                question="¿Quieres darle algún tip extra?"
-                helper="Aquí pones cosas que debe recordar. Ejemplo: mencionar una promo sólo si preguntan precio."
+                question="¿Tus indicaciones obligatorias?"
+                helper="Reglas del negocio que SIEMPRE debe cumplir. Mandan por encima de todo lo demás: si contradicen cómo trae configurado el asistente, ganan las tuyas. Ej: no dar precios hasta que digan su presupuesto, no agendar sin estado clínico, mencionar la promo del mes."
                 value={extraInstructionsConfigOpen ? 'yes' : 'no'}
                 options={binaryChoiceOptions}
-                selectLabel="Tips del negocio"
+                selectLabel="Indicaciones del negocio"
                 onChange={(value) => {
                   const enabled = value === 'yes'
                   setGuidanceOpen((current) => ({ ...current, extraInstructions: enabled }))
@@ -3212,9 +3212,9 @@ const AgentCard: React.FC<AgentCardProps> = ({ agent, aiProviders, calendars, pr
                   <textarea
                     className={styles.textarea}
                     value={agent.extraInstructions}
-                    placeholder="Ejemplo: menciona la promo de junio sólo si preguntan por precio."
+                    placeholder={'Ejemplo:\n- No des precios hasta que digan su presupuesto\n- Menciona la promoción de fin de mes\n- Si preguntan por el color rosa, di que no hay\n- Para agendar cita, primero deben decir si tienen estado clínico; si no, NO los agendas'}
                     onChange={(event) => onChange({ extraInstructions: event.target.value })}
-                    rows={3}
+                    rows={5}
                   />
                 )}
               </QuestionSelectRow>

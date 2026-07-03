@@ -86,7 +86,7 @@ const actionChoicesByObjective: Record<ConversationalObjective, Array<Choice<Con
 
 type StepId =
   | 'welcome' | 'name' | 'objective' | 'identity' | 'persuasion' | 'language'
-  | 'action' | 'calendar' | 'payment' | 'data' | 'scope' | 'recap' | 'test'
+  | 'action' | 'calendar' | 'payment' | 'data' | 'scope' | 'instructions' | 'recap' | 'test'
 
 interface Props {
   isOpen: boolean
@@ -128,7 +128,7 @@ export function AgentCreationWizard({ isOpen, onClose, onComplete, onSkipToManua
       'welcome', 'name', 'objective', 'identity', 'persuasion', 'language', 'action',
       ...(showCalendar ? ['calendar'] as StepId[] : []),
       ...(showPayment ? ['payment'] as StepId[] : []),
-      'data', 'scope', 'recap', 'test'
+      'data', 'scope', 'instructions', 'recap', 'test'
     ]
   }, [draft.objective, draft.successAction])
 
@@ -388,6 +388,20 @@ export function AgentCreationWizard({ isOpen, onClose, onComplete, onSkipToManua
             </>
           )}
 
+          {step === 'instructions' && (
+            <>
+              <h2 className={styles.title}>Tus indicaciones para el asistente</h2>
+              <p className={styles.help}>Nosotros le dimos el alma para que suene humano; aquí <strong>tú mandas</strong>. Escribe las reglas del negocio que <strong>siempre</strong> debe cumplir. Si algo aquí contradice cómo trae configurado el asistente, <strong>ganan tus indicaciones</strong>. <strong>Puedes dejarlo en blanco</strong> y agregarlo luego.</p>
+              <textarea
+                className={styles.textarea}
+                value={draft.extraInstructions}
+                rows={6}
+                placeholder={'Ejemplo:\n- No des precios hasta que digan su presupuesto\n- Menciona la promoción de fin de mes\n- Si preguntan por el color rosa, di que no hay\n- Para agendar cita, primero deben decir si tienen estado clínico; si no, NO los agendas'}
+                onChange={(e) => patch({ extraInstructions: e.target.value })}
+              />
+            </>
+          )}
+
           {step === 'recap' && (
             <>
               <h2 className={styles.title}>¡Así quedó tu asistente! 🚀</h2>
@@ -405,6 +419,7 @@ export function AgentCreationWizard({ isOpen, onClose, onComplete, onSkipToManua
                 {cobroRecap && <RecapRow label="Cobro" value={cobroRecap} />}
                 <RecapRow label="Atiende a" value={draft.contactScope === 'new_only' ? 'Solo contactos nuevos' : 'Todos (nuevos y actuales)'} />
                 <RecapRow label="Pide datos" value={draft.requiredData.trim() ? 'Sí' : 'No por ahora'} />
+                <RecapRow label="Tus indicaciones" value={draft.extraInstructions.trim() ? 'Sí, con reglas propias' : 'Ninguna por ahora'} />
               </div>
             </>
           )}

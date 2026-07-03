@@ -27,6 +27,7 @@ export interface AgentWizardDraft {
   askDeposit: boolean
   depositAmount: number | null
   contactScope: ConversationalContactScope
+  extraInstructions: string
 }
 
 export function buildInitialAgentWizardDraft(defaultName: string): AgentWizardDraft {
@@ -44,7 +45,8 @@ export function buildInitialAgentWizardDraft(defaultName: string): AgentWizardDr
     paymentMode: 'full_payment',
     askDeposit: false,
     depositAmount: null,
-    contactScope: 'all'
+    contactScope: 'all',
+    extraInstructions: ''
   }
 }
 
@@ -101,6 +103,7 @@ export function buildOverridesFromDraft(
     requiredData: draft.requiredData.trim(),
     persuasionLevel: draft.persuasionLevel,
     languageLevel: draft.languageLevel,
+    extraInstructions: draft.extraInstructions.trim(),
     goalWorkflow: buildGoalWorkflowFromDraft(draft, accountCurrency),
     defaultCalendarId: isAgentWizardCitasBooking(draft) ? draft.calendarId : null,
     contactScope: draft.contactScope,
