@@ -11,6 +11,7 @@ import { queuePaymentAutomationMessage } from './paymentAutomationsService.js'
 import { registerGigstackPaymentForTransactionInBackground } from './gigstackInvoiceService.js'
 import { dispatchProductPostWebhooksForPaymentInBackground } from './productPostWebhookService.js'
 import { sendPaymentNotification } from './pushNotificationsService.js'
+import { mapGatewayPaymentStatus } from './paymentGatewayStatusPolicy.js'
 import {
   buildMetaPublicPurchasePixelEvent,
   triggerMetaPaymentPurchaseEvent
@@ -1527,9 +1528,11 @@ export async function createStripePaymentIntent(publicPaymentId, options = {}) {
       }, requestOptions)
     : cleanString(row.contact_stripe_customer_id)
 
+  let replacePaymentIntentId = ''
   if (row.stripe_payment_intent_id) {
     const existing = await stripe.paymentIntents.retrieve(row.stripe_payment_intent_id, requestOptions)
-    if (['requires_payment_method', 'requires_confirmation', 'requires_action', 'processing'].includes(existing.status)) {
+    const existingStatus = cleanString(existing.status).toLowerCase()
+    if (['requires_payment_method', 'requires_confirmation', 'requires_action', 'processing'].includes(existingStatus)) {
       if (savePaymentMethod && stripeCustomerId && existing.status === 'requires_payment_method') {
         const updated = await stripe.paymentIntents.update(
           existing.id,
@@ -1559,6 +1562,9 @@ export async function createStripePaymentIntent(publicPaymentId, options = {}) {
         stripeAccountId: '',
         status: existing.status
       }
+    }
+    if (['canceled', 'cancelled'].includes(existingStatus)) {
+      replacePaymentIntentId = cleanString(existing.id || row.stripe_payment_intent_id)
     }
   }
 
@@ -1594,7 +1600,7 @@ export async function createStripePaymentIntent(publicPaymentId, options = {}) {
   const createIntentTimezone = await getAccountTimezone().catch(() => DEFAULT_PAYMENT_TIMEZONE)
   const createIntentDayBucket = businessTodayDateOnly(createIntentTimezone)
   const createIntentIdempotencyKey =
-    `ristak:${row.id}:create-intent:${toStripeAmount(row.amount, currency)}:${currency}:${createIntentDayBucket}`
+    `ristak:${row.id}:create-intent:${toStripeAmount(row.amount, currency)}:${currency}:${createIntentDayBucket}${replacePaymentIntentId ? `:replace:${replacePaymentIntentId}` : ''}`
 
   const intent = await stripe.paymentIntents.create(
     {
@@ -1739,8 +1745,16 @@ export async function preparePublicStripeInstallmentPlans(publicPaymentId, optio
   const metadata = buildPublicStripePaymentIntentMetadata(row, publicPaymentId, stripeCustomerId, savePaymentMethod)
   const createIntentTimezone = await getAccountTimezone().catch(() => DEFAULT_PAYMENT_TIMEZONE)
   const createIntentDayBucket = businessTodayDateOnly(createIntentTimezone)
+  let replacePaymentIntentId = ''
+  if (row.stripe_payment_intent_id) {
+    const existing = await stripe.paymentIntents.retrieve(row.stripe_payment_intent_id, requestOptions)
+    const existingStatus = cleanString(existing.status).toLowerCase()
+    if (['canceled', 'cancelled'].includes(existingStatus)) {
+      replacePaymentIntentId = cleanString(existing.id || row.stripe_payment_intent_id)
+    }
+  }
   const createIntentIdempotencyKey =
-    `ristak:${row.id}:prepare-msi:${paymentMethodId}:${toStripeAmount(row.amount, currency)}:${currency}:${createIntentDayBucket}`
+    `ristak:${row.id}:prepare-msi:${paymentMethodId}:${toStripeAmount(row.amount, currency)}:${currency}:${createIntentDayBucket}${replacePaymentIntentId ? `:replace:${replacePaymentIntentId}` : ''}`
 
   const intent = await stripe.paymentIntents.create(
     {
@@ -1880,15 +1894,16 @@ function hasStripePaymentAttemptFailure(intent = {}, stripeContext = null) {
   )
 }
 
-function mapStripePaymentIntentStatus(intent = {}, stripeContext = null) {
+export function mapStripePaymentIntentStatus(intent = {}, stripeContext = null) {
   const status = cleanString(intent?.status).toLowerCase()
-  if (status === 'succeeded') return 'paid'
-  if (status === 'processing' || status === 'requires_action') return 'pending'
   if (status === 'requires_payment_method') {
     return hasStripePaymentAttemptFailure(intent, stripeContext) ? 'failed' : 'pending'
   }
-  if (status === 'canceled') return 'void'
-  return 'pending'
+  return mapGatewayPaymentStatus(status, {
+    paidStatuses: ['succeeded'],
+    pendingStatuses: ['processing', 'requires_action', 'requires_confirmation', 'canceled', 'cancelled'],
+    voidStatuses: ['void', 'voided']
+  })
 }
 
 async function updatePaymentFromIntent(intent, stripeContext = null) {

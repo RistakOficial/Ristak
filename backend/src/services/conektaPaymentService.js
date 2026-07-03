@@ -12,6 +12,7 @@ import { registerGigstackPaymentForTransactionInBackground } from './gigstackInv
 import { dispatchProductPostWebhooksForPaymentInBackground } from './productPostWebhookService.js'
 import { sendPaymentNotification } from './pushNotificationsService.js'
 import { getPaymentPlanAuditSummary, hardDeleteTestPaymentPlan } from './paymentRecordSafetyService.js'
+import { mapGatewayPaymentStatus } from './paymentGatewayStatusPolicy.js'
 import {
   buildMetaPublicPurchasePixelEvent,
   triggerMetaPaymentPurchaseEvent
@@ -1149,13 +1150,16 @@ function extractCharge(order = {}) {
   return charges || null
 }
 
-function mapOrderStatus(order = {}) {
+export function mapOrderStatus(order = {}) {
   const charge = extractCharge(order)
   const status = cleanString(order.payment_status || charge?.status || order.status).toLowerCase()
-  if (['paid', 'succeeded', 'completed', 'captured'].includes(status)) return 'paid'
-  if (['declined', 'failed', 'payment_failed', 'charged_back', 'canceled', 'cancelled'].includes(status)) return 'failed'
-  if (['void', 'refunded'].includes(status)) return status
-  return 'pending'
+  return mapGatewayPaymentStatus(status, {
+    paidStatuses: ['paid', 'succeeded', 'completed', 'captured'],
+    pendingStatuses: ['pending_payment', 'expired', 'canceled', 'cancelled'],
+    failedStatuses: ['declined', 'failed', 'payment_failed', 'charged_back'],
+    refundedStatuses: ['refunded'],
+    voidStatuses: ['void']
+  })
 }
 
 function extractConektaSubscriptionFromEvent(event = {}) {
@@ -1885,6 +1889,7 @@ async function activateConektaSubscriptionFromStartPayment(paymentRow = {}, save
 
 async function updatePaymentFromOrder(order, row, { paymentSourceId = '' } = {}) {
   const nextStatus = mapOrderStatus(order)
+  const statusChanged = cleanString(row.status).toLowerCase() !== cleanString(nextStatus).toLowerCase()
   const charge = extractCharge(order)
   const paidAt = nextStatus === 'paid' ? new Date().toISOString() : null
   const chargeId = cleanString(charge?.id)
@@ -1916,16 +1921,14 @@ async function updatePaymentFromOrder(order, row, { paymentSourceId = '' } = {})
   )
 
   const updated = await findPaymentById(row.id)
-  if (updated?.id) {
+  if (updated?.id && statusChanged) {
     dispatchProductPostWebhooksForPaymentInBackground(updated.id, {
       status: nextStatus,
       previousStatus: row.status || ''
     })
-    if (cleanString(row.status).toLowerCase() !== cleanString(nextStatus).toLowerCase()) {
-      sendPaymentNotification({ ...updated, status: nextStatus, previousStatus: row.status || '' }).catch((error) => {
-        logger.warn(`No se pudo enviar push de pago Conekta ${updated.id}: ${error.message}`)
-      })
-    }
+    sendPaymentNotification({ ...updated, status: nextStatus, previousStatus: row.status || '' }).catch((error) => {
+      logger.warn(`No se pudo enviar push de pago Conekta ${updated.id}: ${error.message}`)
+    })
   }
   if (updated?.contact_id && nextStatus === 'paid') {
     updateSingleContactStats(updated.contact_id).catch((error) => {

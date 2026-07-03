@@ -9,6 +9,7 @@ import { registerGigstackPaymentForTransactionInBackground } from './gigstackInv
 import { dispatchProductPostWebhooksForPaymentInBackground } from './productPostWebhookService.js'
 import { sendPaymentNotification } from './pushNotificationsService.js'
 import { queuePaymentAutomationMessage } from './paymentAutomationsService.js'
+import { mapGatewayPaymentStatus } from './paymentGatewayStatusPolicy.js'
 import {
   buildMetaPublicPurchasePixelEvent,
   triggerMetaPaymentPurchaseEvent
@@ -824,14 +825,15 @@ function buildClipPaymentPayload(row, input = {}, { baseUrl = '' } = {}) {
   }
 }
 
-function mapClipStatus(status) {
+export function mapClipStatus(status) {
   const normalized = cleanString(status).toLowerCase()
-  if (normalized === 'approved') return 'paid'
-  if (normalized === 'refunded') return 'refunded'
-  if (normalized === 'cancelled' || normalized === 'canceled') return 'void'
-  if (normalized === 'rejected') return 'failed'
-  if (normalized === 'authorized' || normalized === 'pending') return 'pending'
-  return normalized || 'pending'
+  return mapGatewayPaymentStatus(normalized, {
+    paidStatuses: ['approved'],
+    pendingStatuses: ['authorized', 'pending', 'cancelled', 'canceled', 'expired'],
+    refundedStatuses: ['refunded'],
+    failedStatuses: ['rejected'],
+    voidStatuses: ['void', 'voided']
+  })
 }
 
 function shouldIgnorePendingRegression(payment = {}, nextStatus = '') {

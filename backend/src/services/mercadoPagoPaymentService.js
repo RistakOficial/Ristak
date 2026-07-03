@@ -17,6 +17,7 @@ import { dispatchProductPostWebhooksForPaymentInBackground } from './productPost
 import { sendPaymentNotification } from './pushNotificationsService.js'
 // (PAY2-003) Encolar el comprobante automático tras un pago de Mercado Pago (igual que Conekta).
 import { queuePaymentAutomationMessage } from './paymentAutomationsService.js'
+import { mapGatewayPaymentStatus } from './paymentGatewayStatusPolicy.js'
 import {
   buildMetaPublicPurchasePixelEvent,
   triggerMetaPaymentPurchaseEvent
@@ -2606,14 +2607,15 @@ function getWebhookDataId(body = {}, query = {}) {
     || cleanString(body?.id)
 }
 
-function mapMercadoPagoStatus(status) {
+export function mapMercadoPagoStatus(status) {
   const normalized = cleanString(status).toLowerCase()
-  if (normalized === 'approved' || normalized === 'accredited') return 'paid'
-  if (['pending', 'in_process', 'in_mediation', 'authorized'].includes(normalized)) return 'pending'
-  if (['cancelled', 'canceled'].includes(normalized)) return 'void'
-  if (['refunded', 'charged_back'].includes(normalized)) return 'refunded'
-  if (['rejected'].includes(normalized)) return 'failed'
-  return 'pending'
+  return mapGatewayPaymentStatus(normalized, {
+    paidStatuses: ['approved', 'accredited'],
+    pendingStatuses: ['pending', 'in_process', 'in_mediation', 'authorized', 'cancelled', 'canceled', 'expired'],
+    refundedStatuses: ['refunded', 'charged_back'],
+    failedStatuses: ['rejected'],
+    voidStatuses: ['void', 'voided']
+  })
 }
 
 function mapMercadoPagoPreapprovalStatus(status) {

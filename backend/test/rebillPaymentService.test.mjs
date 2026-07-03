@@ -7,6 +7,7 @@ import {
   confirmPublicRebillPayment,
   createRebillPaymentLink,
   getRebillPaymentConfig,
+  mapRebillStatus,
   saveRebillPaymentConfig,
   setRebillFetchForTest,
   testRebillPaymentConfig
@@ -94,6 +95,15 @@ function installRebillConfigFetchMock(calls = []) {
     return jsonTextResponse({ message: `Ruta Rebill no esperada: ${method} ${parsed.pathname}` }, 404)
   })
 }
+
+test('Rebill estados: cancelado o expirado queda reintentable y rechazo real falla', () => {
+  assert.equal(mapRebillStatus('canceled'), 'pending')
+  assert.equal(mapRebillStatus('cancelled'), 'pending')
+  assert.equal(mapRebillStatus('expired'), 'pending')
+  assert.equal(mapRebillStatus('rejected'), 'failed')
+  assert.equal(mapRebillStatus('declined'), 'failed')
+  assert.equal(mapRebillStatus('approved'), 'paid')
+})
 
 test('Rebill guarda llaves por modo cifradas, valida organización y configura webhook', async () => {
   await initializeMasterKey()

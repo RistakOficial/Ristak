@@ -131,6 +131,76 @@ test('Stripe mantiene pendiente un link abandonado si el PaymentIntent no tiene 
   })
 })
 
+test('Stripe permite reintentar un link cuyo PaymentIntent fue cancelado sin fallo real', async () => {
+  await snapshotPaymentConfig(async () => {
+    await configureStripeInstallmentTest()
+
+    const createCalls = []
+    const intentMetadata = new Map()
+    setStripeFactoryForTest(() => ({
+      paymentIntents: {
+        create: async (params, requestOptions) => {
+          const id = createCalls.length === 0 ? 'pi_canceled_old' : 'pi_canceled_retry'
+          createCalls.push({ params, requestOptions })
+          intentMetadata.set(id, params.metadata)
+          return {
+            id,
+            client_secret: `${id}_secret_test`,
+            status: 'requires_payment_method'
+          }
+        },
+        retrieve: async (paymentIntentId) => ({
+          id: paymentIntentId,
+          status: paymentIntentId === 'pi_canceled_old' ? 'canceled' : 'requires_payment_method',
+          amount: 60000,
+          amount_received: 0,
+          currency: 'mxn',
+          metadata: intentMetadata.get(paymentIntentId) || createCalls[0]?.params?.metadata || {}
+        })
+      }
+    }))
+
+    const createdPublicIds = []
+    try {
+      const paymentLink = await createStripePaymentLink({
+        amount: 600,
+        currency: 'MXN',
+        applyTax: false,
+        title: 'Pago cancelado sin fallo',
+        description: 'Link que debe permitir reintento'
+      }, { baseUrl: 'https://app.example.test' })
+      createdPublicIds.push(paymentLink.publicPaymentId)
+
+      await createStripePaymentIntent(paymentLink.publicPaymentId, {
+        savePaymentMethod: false
+      })
+
+      const synced = await getPublicStripePayment(paymentLink.publicPaymentId, {
+        baseUrl: 'https://app.example.test',
+        sync: true
+      })
+      assert.equal(synced.status, 'pending')
+
+      const retryIntent = await createStripePaymentIntent(paymentLink.publicPaymentId, {
+        savePaymentMethod: false
+      })
+      assert.equal(retryIntent.status, 'requires_payment_method')
+      assert.equal(createCalls.length, 2)
+      assert.doesNotMatch(createCalls[0].requestOptions.idempotencyKey, /:replace:/)
+      assert.match(createCalls[1].requestOptions.idempotencyKey, /:replace:pi_canceled_old$/)
+
+      const row = await db.get(
+        'SELECT status, stripe_payment_intent_id FROM payments WHERE public_payment_id = ?',
+        [paymentLink.publicPaymentId]
+      )
+      assert.equal(row.status, 'pending')
+      assert.equal(row.stripe_payment_intent_id, 'pi_canceled_retry')
+    } finally {
+      await cleanupPublicPayments(createdPublicIds)
+    }
+  })
+})
+
 test('Stripe mantiene pendiente un checkout MSI de Sites abandonado antes de confirmar', async () => {
   await snapshotPaymentConfig(async () => {
     await configureStripeInstallmentTest()

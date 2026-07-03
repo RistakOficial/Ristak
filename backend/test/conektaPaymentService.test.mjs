@@ -303,6 +303,106 @@ test('Conekta manual: al guardar llaves crea webhook, llave de firma y verifica 
   })
 })
 
+test('Conekta pagos: expirado o cancelado queda reintentable y solo rechazo real falla', async () => {
+  const suffix = `${Date.now()}_${Math.random().toString(36).slice(2, 8)}`
+  const contactId = `contact_conekta_abandon_${suffix}`
+  const paymentId = `payment_conekta_abandon_${suffix}`
+  const publicPaymentId = `pay_conekta_abandon_${suffix}`
+  const orderId = `ord_conekta_abandon_${suffix}`
+  const chargeId = `charge_conekta_abandon_${suffix}`
+
+  try {
+    await db.run(
+      `INSERT INTO contacts (id, email, full_name, phone, created_at, updated_at)
+       VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+      [contactId, `conekta-abandon-${suffix}@example.test`, 'Cliente Conekta Abandono', '5555555555']
+    )
+
+    await db.run(
+      `INSERT INTO payments (
+        id, contact_id, amount, currency, status, payment_method, payment_mode,
+        payment_provider, title, description, public_payment_id, payment_url,
+        conekta_order_id, conekta_charge_id, date, created_at, updated_at
+      ) VALUES (?, ?, 500, 'MXN', 'pending', 'conekta_card', 'test',
+        'conekta', 'Link Conekta pendiente', 'Link Conekta pendiente', ?, ?,
+        ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+      [
+        paymentId,
+        contactId,
+        publicPaymentId,
+        `https://app.example.test/pay/${publicPaymentId}`,
+        orderId,
+        chargeId
+      ]
+    )
+
+    const expiredWebhookResult = await reconcileConektaOrderFromWebhook({
+      type: 'order.expired',
+      data: {
+        object: {
+          id: orderId,
+          payment_status: 'expired',
+          charges: {
+            data: [{ id: chargeId, status: 'expired' }]
+          }
+        }
+      }
+    })
+
+    assert.equal(expiredWebhookResult.matched, true)
+    assert.equal(expiredWebhookResult.changed, false)
+    assert.equal(expiredWebhookResult.status, 'pending')
+
+    const expiredRow = await db.get(
+      'SELECT status, public_payment_id, payment_url FROM payments WHERE id = ?',
+      [paymentId]
+    )
+    assert.equal(expiredRow.status, 'pending')
+    assert.equal(expiredRow.public_payment_id, publicPaymentId)
+    assert.equal(expiredRow.payment_url, `https://app.example.test/pay/${publicPaymentId}`)
+
+    const canceledWebhookResult = await reconcileConektaOrderFromWebhook({
+      type: 'order.canceled',
+      data: {
+        object: {
+          id: orderId,
+          payment_status: 'canceled',
+          charges: {
+            data: [{ id: chargeId, status: 'canceled' }]
+          }
+        }
+      }
+    })
+
+    assert.equal(canceledWebhookResult.matched, true)
+    assert.equal(canceledWebhookResult.changed, false)
+    assert.equal(canceledWebhookResult.status, 'pending')
+
+    const declinedWebhookResult = await reconcileConektaOrderFromWebhook({
+      type: 'order.declined',
+      data: {
+        object: {
+          id: orderId,
+          payment_status: 'declined',
+          charges: {
+            data: [{ id: chargeId, status: 'declined' }]
+          }
+        }
+      }
+    })
+
+    assert.equal(declinedWebhookResult.matched, true)
+    assert.equal(declinedWebhookResult.changed, true)
+    assert.equal(declinedWebhookResult.status, 'failed')
+
+    const declinedRow = await db.get('SELECT status FROM payments WHERE id = ?', [paymentId])
+    assert.equal(declinedRow.status, 'failed')
+  } finally {
+    await db.run('DELETE FROM payments WHERE id = ?', [paymentId]).catch(() => undefined)
+    await db.run('DELETE FROM contacts WHERE id = ?', [contactId]).catch(() => undefined)
+  }
+})
+
 test('Conekta payment flow: crea link, guarda payment_source y cobra tarjeta guardada', async () => {
   await initializeMasterKey()
 

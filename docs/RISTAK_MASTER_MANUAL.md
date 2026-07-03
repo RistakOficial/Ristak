@@ -488,10 +488,20 @@ real.
 
 Crear o enviar un link de pago no significa que el cobro fallo si el cliente no
 paga. Ristak mantiene esos links como `sent`/`pending` hasta que exista una
-confirmacion real de la pasarela. En Stripe, `requires_payment_method` solo se
-convierte en `failed` si el `PaymentIntent` trae `last_payment_error` o llega el
-evento `payment_intent.payment_failed`; sin esa evidencia es abandono o pago aun
-no completado. Los rechazos reales de tarjeta siguen visibles como `failed`.
+confirmacion real de la pasarela. Esta regla aplica a Stripe, Conekta, Mercado
+Pago, CLIP, Rebill y cualquier pasarela futura: abandono, expiracion,
+`canceled`, `cancelled`, `requires_payment_method` sin error real, o estados
+equivalentes no deben marcarse como `failed` ni cerrar el link local. El pago
+debe quedar reintentable mientras no exista una fecha limite o una accion manual
+que lo archive.
+
+Los rechazos reales de tarjeta o proveedor siguen visibles como `failed`. Una
+pasarela solo puede marcar `failed` cuando el payload externo trae una senal
+explicita de rechazo/fallo, por ejemplo `declined`, `rejected`, `payment_failed`,
+`charged_back`, `last_payment_error` en Stripe o el evento
+`payment_intent.payment_failed`. Las integraciones nuevas deben mapear estados
+con `backend/src/services/paymentGatewayStatusPolicy.js` y cubrir en pruebas el
+caso de abandono/reintento y el caso de rechazo real.
 
 ### Automatizaciones de pago
 

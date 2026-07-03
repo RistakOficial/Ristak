@@ -9,6 +9,7 @@ import { registerGigstackPaymentForTransactionInBackground } from './gigstackInv
 import { dispatchProductPostWebhooksForPaymentInBackground } from './productPostWebhookService.js'
 import { sendPaymentNotification } from './pushNotificationsService.js'
 import { queuePaymentAutomationMessage } from './paymentAutomationsService.js'
+import { mapGatewayPaymentStatus } from './paymentGatewayStatusPolicy.js'
 import {
   buildMetaPublicPurchasePixelEvent,
   triggerMetaPaymentPurchaseEvent
@@ -820,14 +821,15 @@ export async function getPublicRebillPayment(publicPaymentId, { baseUrl } = {}) 
   )
 }
 
-function mapRebillStatus(status) {
+export function mapRebillStatus(status) {
   const normalized = cleanString(status, 80).toLowerCase()
-  if (['approved', 'paid', 'succeeded', 'success', 'completed', 'complete', 'fulfilled'].includes(normalized)) return 'paid'
-  if (['pending', 'processing', 'in_process', 'authorized', 'pending_customer_charge'].includes(normalized)) return 'pending'
-  if (['rejected', 'failed', 'failure', 'declined', 'error'].includes(normalized)) return 'failed'
-  if (['cancelled', 'canceled', 'expired'].includes(normalized)) return 'void'
-  if (['refunded', 'partially_refunded', 'chargeback'].includes(normalized)) return 'refunded'
-  return normalized || 'pending'
+  return mapGatewayPaymentStatus(normalized, {
+    paidStatuses: ['approved', 'paid', 'succeeded', 'success', 'completed', 'complete', 'fulfilled'],
+    pendingStatuses: ['pending', 'processing', 'in_process', 'authorized', 'pending_customer_charge', 'cancelled', 'canceled', 'expired'],
+    failedStatuses: ['rejected', 'failed', 'failure', 'declined', 'error'],
+    refundedStatuses: ['refunded', 'partially_refunded', 'chargeback'],
+    voidStatuses: ['void', 'voided']
+  })
 }
 
 function shouldIgnoreRegression(payment = {}, nextStatus = '') {
