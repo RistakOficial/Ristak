@@ -105,6 +105,19 @@ test('breakpoints declarados', () => {
   assert.equal(RESPONSIVE_DEVICE_MAX_WIDTH.mobile, 640)
 })
 
+test('contraste de texto grande: los títulos usan umbral 3.0 (WCAG large text)', () => {
+  const ctx = { site: { theme: { backgroundColor: '#0f0f10' } }, pageBg: '#0f0f10' }
+  const b = (blockType, blockText) => ({ id: 'x', blockType, label: 'T', content: 'T', options: [], settings: { blockText } })
+  // #ff3366 sobre oscuro tiene contraste ~3.86: pasa 3.0 (título) pero no 4.5 (texto normal).
+  assert.equal(buildBlockStyleVars(b('title', '#ff3366'), ctx)['--rstk-block-text'], '#ff3366', 'el título conserva el color legible como large text')
+  assert.equal(buildBlockStyleVars(b('hero', '#ff3366'), ctx)['--rstk-block-text'], '#ff3366', 'el hero también')
+  // un color realmente ilegible (contraste ~1.3) sí se voltea, incluso en título
+  assert.equal(buildBlockStyleVars(b('title', '#333333'), ctx)['--rstk-block-text'], '#f4f4f6', 'color ilegible sí se corrige')
+  // un texto grande por fontSize>=24 aunque no sea tipo heading
+  const bigText = { id: 'y', blockType: 'text', label: 'T', content: 'T', options: [], settings: { blockText: '#ff3366', fontSize: 28 } }
+  assert.equal(buildBlockStyleVars(bigText, ctx)['--rstk-block-text'], '#ff3366', 'texto con fontSize>=24 cuenta como large text')
+})
+
 test('render público: un bloque con override responsive emite @media + wrapper con data-rstk-block-id', async () => {
   const { renderPublicSiteHtml } = await import('../src/services/sitesService.js')
   const site = {

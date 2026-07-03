@@ -21,6 +21,11 @@ const DEFAULT_THEME = {
   textColor: '#111827'
 }
 const MIN_TEXT_CONTRAST_RATIO = 4.5
+// WCAG AA para TEXTO GRANDE (>=24px o >=18.66px bold) permite 3.0. Los títulos son
+// texto grande, así que un color legible en un título ya no se voltea por usar el
+// umbral de texto normal (4.5). Evita "puse un color en el título y salió blanco".
+const MIN_LARGE_TEXT_CONTRAST_RATIO = 3.0
+const LARGE_TEXT_BLOCK_TYPES = new Set(['title', 'headline', 'hero', 'cta', 'subtitle', 'subheading'])
 const AUTO_DARK_TEXT = '#0f172a'
 const AUTO_LIGHT_TEXT = '#f4f4f6'
 const EMBEDDED_FORM_DEFAULT_THEME = {
@@ -1371,10 +1376,10 @@ function contrastRatio(foreground, background) {
   return (Math.max(fg, bg) + 0.05) / (Math.min(fg, bg) + 0.05)
 }
 
-function readableTextOnBackground(paint, background, fallback = AUTO_DARK_TEXT) {
+function readableTextOnBackground(paint, background, fallback = AUTO_DARK_TEXT, minRatio = MIN_TEXT_CONTRAST_RATIO) {
   const textColor = paintFallbackColor(paint, fallback)
   if (!isCssColor(textColor) || !isCssColor(background)) return textColor
-  if (contrastRatio(textColor, background) >= MIN_TEXT_CONTRAST_RATIO) return textColor
+  if (contrastRatio(textColor, background) >= minRatio) return textColor
   return relLuminance(background) < 0.5 ? AUTO_LIGHT_TEXT : AUTO_DARK_TEXT
 }
 
@@ -2241,7 +2246,11 @@ function buildBlockStyleVars(block, ctx = {}) {
     }
   }
   if (blockText) {
-    vars['--rstk-block-text'] = readableTextOnBackground(blockText, textContrastBackground, '#111827')
+    // Títulos / texto grande: umbral de contraste 3.0 (WCAG AA large text) en vez de
+    // 4.5, para no voltear colores legibles que el usuario eligió a propósito.
+    const isLargeText = LARGE_TEXT_BLOCK_TYPES.has(block.blockType) || (Number.isFinite(fontSize) && fontSize >= 24)
+    const textMinRatio = isLargeText ? MIN_LARGE_TEXT_CONTRAST_RATIO : MIN_TEXT_CONTRAST_RATIO
+    vars['--rstk-block-text'] = readableTextOnBackground(blockText, textContrastBackground, '#111827', textMinRatio)
     if (isCssGradient(blockText)) vars['--rstk-block-text-paint'] = blockText
   }
   if (!isCalendarEmbed && blockBorder) vars['--rstk-block-border'] = paintFallbackColor(blockBorder, '#dbe3ef')
