@@ -5617,9 +5617,12 @@ async function persistFailedOutboundApiMessage({ fromPhone, toPhone, type = 'tex
 }
 
 // Persiste en el historial unificado un mensaje visto por la sesión de WhatsApp Web (Baileys).
-// Solo captura cuando la API oficial de ese número no está operando (desactivada, restringida o
-// sin configurar); si la API está sana, el webhook de YCloud ya registra el mensaje y guardarlo
-// aquí duplicaría el chat.
+// Para el INBOUND: si la API oficial de ese número está sana, el webhook de YCloud ya registra el
+// mensaje y guardarlo aquí duplicaría el chat, así que se omite. Para el OUTBOUND escrito
+// directamente en el teléfono (eco fromMe de Baileys) NO existe webhook equivalente —la API oficial
+// solo reporta lo que se envía A TRAVÉS de ella— por lo que la sesión QR es su única fuente y debe
+// capturarse SIEMPRE, incluso con la API operativa. El dedupe difuso de abajo evita duplicar cuando
+// Ristak además lo envió por la API.
 export async function captureQrChatMessage({
   phoneNumberId,
   businessPhone,
@@ -5745,8 +5748,11 @@ export async function captureQrChatMessage({
     Boolean(phoneRow?.id) &&
     Number(phoneRow.api_send_enabled ?? 1) === 1 &&
     !(await getOfficialApiRestrictionReason({ phoneRow, config }))
-  if (officialApiOperational) {
-    // El número usa WhatsApp API (YCloud/oficial): la media llega hospedada por el
+  // Solo el inbound lo cubre de forma redundante el webhook de YCloud. Un mensaje saliente
+  // escrito directamente en el teléfono llega únicamente como eco fromMe de Baileys y no tiene
+  // copia por webhook, así que jamás debe omitirse aquí: es su única fuente para el chat.
+  if (officialApiOperational && cleanDirection === 'inbound') {
+    // El número usa WhatsApp API (YCloud/oficial): la media entrante llega hospedada por el
     // proveedor a través del webhook, así que NO descargamos ni rehospedamos en Bunny.
     return { skipped: true, reason: 'official_api_active' }
   }

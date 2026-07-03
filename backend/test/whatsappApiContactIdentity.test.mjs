@@ -616,6 +616,104 @@ test('eco QR repara un globo API fallido duplicado', async () => {
   }
 })
 
+test('eco QR saliente escrito en el teléfono se captura aunque la API oficial esté operativa', async () => {
+  // Regresión: la API oficial NO reporta por webhook los mensajes que el operador escribe
+  // directamente en el teléfono; su único origen es el eco fromMe de Baileys. El skip
+  // 'official_api_active' solo debe aplicar al inbound (que el webhook sí cubre).
+  const id = randomUUID()
+  const suffix = Date.now().toString().slice(-7)
+  const phone = `+52993${suffix}`
+  const businessPhone = `+52655${suffix}`
+  const phoneNumberId = `phone_qr_outbound_echo_${id}`
+  const contactId = `rstk_contact_qr_outbound_echo_${id}`
+  const outboundWamid = `qr_outbound_echo_${id}`
+  const inboundWamid = `qr_inbound_echo_${id}`
+  const outboundBody = `Respuesta escrita en el teléfono ${id}`
+  const inboundBody = `Mensaje entrante del cliente ${id}`
+  const messageAt = '2024-06-01T10:20:30.000Z'
+  const keys = getWhatsAppApiConfigKeys()
+  const configKeys = [keys.enabled, keys.apiKey, keys.senderPhone, keys.phoneNumberId, keys.wabaId, keys.provider]
+
+  await cleanup({ contactId, messageId: outboundWamid, phone })
+  await db.run('DELETE FROM whatsapp_api_messages WHERE wamid IN (?, ?)', [outboundWamid, inboundWamid]).catch(() => undefined)
+  await db.run('DELETE FROM whatsapp_api_phone_numbers WHERE id = ?', [phoneNumberId]).catch(() => undefined)
+
+  try {
+    await snapshotAppConfig(configKeys, async () => {
+      await initializeMasterKey()
+      await setAppConfig(keys.enabled, '1')
+      await setAppConfig(keys.apiKey, encrypt('ycloud_qr_outbound_echo_secret'))
+      await setAppConfig(keys.senderPhone, businessPhone)
+      await setAppConfig(keys.phoneNumberId, phoneNumberId)
+      await setAppConfig(keys.wabaId, 'waba_qr_outbound_echo_test')
+      await setAppConfig(keys.provider, 'ycloud')
+
+      // API oficial totalmente operativa (enabled + apiKey + api_send_enabled=1 + CONNECTED, sin alertas bloqueantes).
+      await db.run(`
+        INSERT INTO whatsapp_api_phone_numbers (
+          id, provider, waba_id, phone_number, display_phone_number, verified_name,
+          is_default_sender, api_send_enabled, qr_send_enabled, qr_status, qr_connected_phone, status
+        ) VALUES (?, 'ycloud', 'waba_qr_outbound_echo_test', ?, ?, 'QR Outbound Echo Test', 1, 1, 1, 'connected', ?, 'CONNECTED')
+      `, [phoneNumberId, businessPhone, businessPhone, businessPhone])
+
+      await db.run(`
+        INSERT INTO contacts (
+          id, phone, full_name, first_name, source, created_at, updated_at
+        ) VALUES (?, ?, 'Cliente Eco Saliente', 'Cliente', 'WhatsApp_API', ?, ?)
+      `, [contactId, phone, messageAt, messageAt])
+
+      // Saliente escrito en el teléfono: sin fila API previa que dedupear -> debe capturarse.
+      const outboundResult = await captureQrChatMessage({
+        phoneNumberId,
+        businessPhone,
+        direction: 'outbound',
+        wamid: outboundWamid,
+        messageType: 'text',
+        text: outboundBody,
+        contactPhone: phone,
+        timestamp: messageAt
+      })
+
+      assert.equal(outboundResult.skipped, false)
+      assert.equal(outboundResult.isNew, true)
+
+      const outboundRow = await db.get(`
+        SELECT direction, transport, origin, routing_reason, message_text, wamid
+        FROM whatsapp_api_messages
+        WHERE wamid = ?
+      `, [outboundWamid])
+      assert.ok(outboundRow, 'el eco saliente debe persistirse')
+      assert.equal(outboundRow.direction, 'outbound')
+      assert.equal(outboundRow.transport, 'qr')
+      assert.equal(outboundRow.origin, 'whatsapp.qr.message.synced')
+      assert.equal(outboundRow.routing_reason, 'Capturado desde la sesión de WhatsApp Web.')
+      assert.equal(outboundRow.message_text, outboundBody)
+
+      // Entrante con la misma config: SÍ se omite porque el webhook de YCloud ya lo registra.
+      const inboundResult = await captureQrChatMessage({
+        phoneNumberId,
+        businessPhone,
+        direction: 'inbound',
+        wamid: inboundWamid,
+        messageType: 'text',
+        text: inboundBody,
+        contactPhone: phone,
+        timestamp: messageAt
+      })
+
+      assert.equal(inboundResult.skipped, true)
+      assert.equal(inboundResult.reason, 'official_api_active')
+
+      const inboundRow = await db.get('SELECT id FROM whatsapp_api_messages WHERE wamid = ?', [inboundWamid])
+      assert.ok(!inboundRow, 'el entrante no debe persistirse por QR cuando la API oficial está operativa')
+    })
+  } finally {
+    await db.run('DELETE FROM whatsapp_api_messages WHERE wamid IN (?, ?)', [outboundWamid, inboundWamid]).catch(() => undefined)
+    await db.run('DELETE FROM whatsapp_api_phone_numbers WHERE id = ?', [phoneNumberId]).catch(() => undefined)
+    await cleanup({ contactId, messageId: outboundWamid, phone })
+  }
+})
+
 test('envio API fallido inmediato responde y persiste el respaldo QR limpio', async () => {
   const id = randomUUID()
   const phone = `+52994${Date.now().toString().slice(-7)}`
