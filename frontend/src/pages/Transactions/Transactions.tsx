@@ -2111,6 +2111,7 @@ export const Transactions: React.FC = () => {
     if (provider === 'mercadopago' || method.startsWith('mercadopago')) return 'mercadopago'
     if (provider === 'conekta' || method.startsWith('conekta')) return 'conekta'
     if (provider === 'stripe' || method.startsWith('stripe') || Boolean(transaction.stripePaymentIntentId)) return 'stripe'
+    if (provider === 'clip' || method.startsWith('clip')) return 'clip'
     if (provider === 'gigstack' || method.startsWith('gigstack')) return 'gigstack'
     return null
   }
@@ -2150,6 +2151,10 @@ export const Transactions: React.FC = () => {
       case 'mercadopago':
       case 'mercadopago_checkout': return 'Mercado Pago'
       case 'mercadopago_subscription': return 'Suscripción Mercado Pago'
+      case 'clip': return 'CLIP'
+      case 'clip_card': return 'CLIP Card'
+      case 'clip_link':
+      case 'clip_payment_link': return 'Link de CLIP'
       case 'bank_transfer':
       case 'transfer': return 'Transferencia'
       case 'cash': return 'Efectivo'
