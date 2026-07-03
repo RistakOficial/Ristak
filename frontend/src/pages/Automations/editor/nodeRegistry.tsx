@@ -1141,7 +1141,7 @@ const TRIGGERS: NodeDefinition[] = [
           { value: 'first_only', label: 'Solo el primer comentario de cada persona' }
         ]
       },
-      { key: 'avoidDuplicates', label: 'Evitar disparos duplicados', type: 'toggle', help: 'No vuelvas a disparar por el mismo comentario.' }
+      { key: 'avoidDuplicates', label: 'Evitar disparos duplicados', type: 'toggle', help: 'Si esta persona ya está corriendo en esta automatización, no la vuelvas a inscribir aunque comente otra vez.' }
     ],
     outputs: () => SINGLE_OUTPUT,
     variableOutput: () => ({

@@ -4440,6 +4440,46 @@ export async function handleIncomingMessage({
   }
 }
 
+// Controles del disparador de comentario que necesitan la BD (no caben en el
+// triggerMatches síncrono): "Solo el primer comentario de cada persona" (ignora
+// comentarios posteriores del mismo autor en la misma publicación) y "Evitar
+// disparos duplicados" (no crea otro enrollment si la persona ya tiene uno activo
+// en esta automatización). El comentario idéntico repetido ya se bloquea al
+// recibirse (isNew), así que aquí cubrimos los casos por-persona.
+async function commentTriggerShouldSkip(automation, trigger, ctx) {
+  const config = trigger.config || {}
+  const contactId = ctx.contact?.id
+  if (!contactId) return false
+  const platform = str(ctx.platform) === 'instagram' ? 'instagram' : 'messenger'
+  const postId = str(ctx.postId) || str(ctx.mediaId)
+  const commentId = str(ctx.commentId)
+
+  if (str(config.allowedComments) === 'first_only' && postId) {
+    const earlier = await db.get(
+      `SELECT 1 FROM meta_social_messages
+       WHERE contact_id = ? AND platform = ? AND message_type = 'comment'
+         AND LOWER(COALESCE(direction, '')) = 'inbound'
+         AND COALESCE(post_id, '') = ?
+         AND COALESCE(comment_id, '') <> '' AND comment_id <> ?
+       LIMIT 1`,
+      [contactId, platform, postId, commentId]
+    ).catch(() => null)
+    if (earlier) return true
+  }
+
+  if (config.avoidDuplicates) {
+    const active = await db.get(
+      `SELECT id FROM automation_enrollments
+       WHERE automation_id = ? AND contact_id = ? AND status IN ('active', 'waiting')
+       LIMIT 1`,
+      [automation.id, contactId]
+    ).catch(() => null)
+    if (active) return true
+  }
+
+  return false
+}
+
 async function enrollMatching(automations, eventType, baseCtx) {
   const contact = baseCtx.contact || {}
   for (const automation of automations) {
@@ -4452,6 +4492,11 @@ async function enrollMatching(automations, eventType, baseCtx) {
     // La respuesta al comentario ya NO se configura en el disparador: se hace con
     // los nodos de acción "Responder comentario (público)" / "Responder por
     // privado (DM)" dentro del flujo.
+
+    // Controles del disparador de comentario ("Evitar disparos duplicados" y
+    // "Solo el primer comentario de cada persona"): consultan la BD, por eso van
+    // aquí y no en el triggerMatches síncrono.
+    if (eventType === 'comment-received' && await commentTriggerShouldSkip(automation, matched, baseCtx)) continue
 
     const settings = flow.settings || {}
     if (contact.id && settings.preventDuplicateActiveEnrollment !== false) {
