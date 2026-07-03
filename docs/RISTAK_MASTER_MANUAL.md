@@ -340,6 +340,13 @@ backtick, listas con `- ` o `* `, listas numeradas con `1. ` y citas con `> `.
 La plantilla se guarda con los marcadores originales; el formato se aplica solo
 en la vista previa para mostrarle al usuario como se vera en WhatsApp.
 
+Los botones web de plantillas pueden usar URL fija o URL dinamica. Cuando el URL
+incluye `{{1}}`, el editor debe mostrar el selector de dato dinamico y el ejemplo
+para Meta en el target `buttons.N.value`, conservar esa binding al guardar y
+enviarla como ejemplo al crear la plantilla en YCloud/Meta. Cada boton web acepta
+maximo una variable dinamica. Los botones de telefono guardan un numero estatico
+en formato internacional y los botones WhatsApp call no llevan variable de URL.
+
 Cuando una foto se envia por WhatsApp API/YCloud usando media ID del proveedor,
 Ristak debe guardar una copia de preview en `mediaStorageService` y persistir su
 `media_url` en `whatsapp_api_messages`. WhatsApp no debe recibir ese link si el

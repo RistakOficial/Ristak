@@ -1268,11 +1268,22 @@
   gap: 9px;
 }
 
+.buttonEditorBlock {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+}
+
 .buttonEditorRow {
   display: grid;
   grid-template-columns: 140px minmax(0, 0.8fr) minmax(0, 1fr) auto;
   gap: 8px;
   align-items: center;
+}
+
+.buttonVariableActions {
+  display: flex;
+  justify-content: flex-end;
 }
 
 .editorSide {

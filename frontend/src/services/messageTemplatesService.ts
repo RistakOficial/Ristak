@@ -4,7 +4,10 @@ export type MessageTemplateCategory = 'utility' | 'marketing' | 'authentication'
 export type MessageTemplateStatus = 'draft' | 'active' | 'archived'
 export type MessageTemplateHeaderType = 'none' | 'text' | 'image' | 'video' | 'document' | 'location'
 export type MessageTemplateButtonType = 'quick_reply' | 'website' | 'phone' | 'whatsapp_call'
-export type MessageTemplateVariableTarget = 'headerText' | 'bodyText'
+export type MessageTemplateTextVariableTarget = 'headerText' | 'bodyText'
+export type MessageTemplateButtonValueTarget = `buttons.${number}.value`
+export type MessageTemplateVariableTarget = MessageTemplateTextVariableTarget | MessageTemplateButtonValueTarget
+export type MessageTemplateVariableBindings = Record<string, Record<string, MessageTemplateVariableBinding>>
 
 export interface MessageTemplateFolder {
   id: string
@@ -68,7 +71,7 @@ export interface MessageTemplate {
   buttons: MessageTemplateButton[]
   variables: string[]
   variableExamples: Record<string, string>
-  variableBindings: Record<MessageTemplateVariableTarget, Record<string, MessageTemplateVariableBinding>>
+  variableBindings: MessageTemplateVariableBindings
   ycloudTemplateId?: string | null
   ycloudStatus?: string | null
   ycloudReason?: string | null

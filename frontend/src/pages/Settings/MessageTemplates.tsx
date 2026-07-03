@@ -50,6 +50,8 @@ import {
   type MessageTemplatePayload,
   type MessageTemplateVariable,
   type MessageTemplateVariableBinding,
+  type MessageTemplateVariableBindings,
+  type MessageTemplateTextVariableTarget,
   type MessageTemplateVariableTarget
 } from '@/services/messageTemplatesService'
 import { whatsappApiService, type WhatsAppApiPhoneNumber } from '@/services/whatsappApiService'
@@ -66,6 +68,9 @@ const DRAG_DATA_TYPE = 'application/x-ristak-template-manager'
 const VARIABLE_PATTERN = /{{\s*([a-zA-Z0-9_.-]+)\s*}}/g
 const META_VARIABLE_PATTERN = /{{\s*(\d+)\s*}}/g
 type TemplateFolderFilter = 'all' | 'unfiled' | string
+
+const getButtonValueTarget = (index: number): MessageTemplateVariableTarget => `buttons.${index}.value`
+const BUTTON_VALUE_TARGET_PATTERN = /^buttons\.(\d+)\.value$/
 
 interface VariablePickerGroup {
   id: string
@@ -250,6 +255,42 @@ function appendMetaVariable(text: string | undefined) {
   const current = text || ''
   const variable = `{{${getNextMetaVariable(current)}}}`
   return current ? `${current} ${variable}` : variable
+}
+
+function appendUrlMetaVariable(text: string | undefined) {
+  const current = String(text || '').trim()
+  const variable = `{{${getNextMetaVariable(current)}}}`
+  if (!current) return variable
+
+  return `${current}${/[/?#=&]$/.test(current) ? '' : '/'}${variable}`
+}
+
+function shiftButtonVariableBindingsAfterRemoval(
+  bindings: MessageTemplateVariableBindings | undefined,
+  removedIndex: number
+): MessageTemplateVariableBindings {
+  const nextBindings: MessageTemplateVariableBindings = {}
+
+  for (const [target, targetBindings] of Object.entries(bindings || {})) {
+    const buttonMatch = target.match(BUTTON_VALUE_TARGET_PATTERN)
+    if (!buttonMatch) {
+      nextBindings[target] = targetBindings
+      continue
+    }
+
+    const buttonIndex = Number(buttonMatch[1])
+    if (buttonIndex < removedIndex) {
+      nextBindings[target] = targetBindings
+    } else if (buttonIndex > removedIndex) {
+      nextBindings[getButtonValueTarget(buttonIndex - 1)] = targetBindings
+    }
+  }
+
+  return {
+    headerText: nextBindings.headerText || {},
+    bodyText: nextBindings.bodyText || {},
+    ...nextBindings
+  }
 }
 
 function getCategoryLabel(category: MessageTemplateCategory) {
@@ -797,21 +838,31 @@ export const MessageTemplates: React.FC<MessageTemplatesProps> = ({
   }, [bundle.templates, loading, location.search])
 
   const cleanBindingsForPayload = (payload: MessageTemplatePayload): MessageTemplatePayload => {
-    const cleanTarget = (target: MessageTemplateVariableTarget) => {
-      const indexes = extractMetaVariableIndexes(String(payload[target] || ''))
+    const cleanTarget = (target: MessageTemplateVariableTarget, text: string | undefined) => {
+      const indexes = extractMetaVariableIndexes(String(text || ''))
       const current = payload.variableBindings?.[target] || {}
       return Object.fromEntries(indexes.map((index) => {
         const key = String(index)
         return [key, current[key] || {}]
       }))
     }
+    const variableBindings: MessageTemplateVariableBindings = {
+      headerText: cleanTarget('headerText', payload.headerText),
+      bodyText: cleanTarget('bodyText', payload.bodyText)
+    }
+
+    for (const [index, button] of (payload.buttons || []).entries()) {
+      if (button.type !== 'website') continue
+      const target = getButtonValueTarget(index)
+      const cleanedButtonBindings = cleanTarget(target, button.value)
+      if (Object.keys(cleanedButtonBindings).length) {
+        variableBindings[target] = cleanedButtonBindings
+      }
+    }
 
     return {
       ...payload,
-      variableBindings: {
-        headerText: cleanTarget('headerText'),
-        bodyText: cleanTarget('bodyText')
-      }
+      variableBindings
     }
   }
 
@@ -851,14 +902,31 @@ export const MessageTemplates: React.FC<MessageTemplatesProps> = ({
       }
     }
 
-    const targets: Array<{ key: MessageTemplateVariableTarget; section: string; enabled: boolean }> = [
-      { key: 'headerText', section: 'el encabezado', enabled: draft.headerEnabled && draft.headerType === 'text' },
-      { key: 'bodyText', section: 'el cuerpo', enabled: true }
+    const targets: Array<{ key: MessageTemplateVariableTarget; section: string; text: string | undefined; enabled: boolean }> = [
+      { key: 'headerText', section: 'el encabezado', text: draft.headerText, enabled: draft.headerEnabled && draft.headerType === 'text' },
+      { key: 'bodyText', section: 'el cuerpo', text: draft.bodyText, enabled: true }
     ]
+
+    for (const [index, button] of (draft.buttons || []).entries()) {
+      const buttonLabel = String(button.label || '').trim()
+      if (button.type !== 'website' || !buttonLabel) continue
+      targets.push({
+        key: getButtonValueTarget(index),
+        section: `la URL del botón "${buttonLabel}"`,
+        text: button.value,
+        enabled: true
+      })
+    }
 
     for (const target of targets) {
       if (!target.enabled) continue
-      const indexes = extractMetaVariableIndexes(String(draft[target.key] || ''))
+      const indexes = extractMetaVariableIndexes(String(target.text || ''))
+      if (target.key.startsWith('buttons.') && indexes.length > 1) {
+        return {
+          title: 'URL dinámica inválida',
+          message: `${target.section} sólo puede usar una variable dinámica.`
+        }
+      }
       for (const index of indexes) {
         const binding = draft.variableBindings?.[target.key]?.[String(index)]
         if (!binding?.variableKey || !variableByKey.has(binding.variableKey)) {
@@ -1216,7 +1284,7 @@ export const MessageTemplates: React.FC<MessageTemplatesProps> = ({
     )
   }
 
-  const addMetaVariable = (target: MessageTemplateVariableTarget) => {
+  const addMetaVariable = (target: MessageTemplateTextVariableTarget) => {
     setDraft((current) => {
       const nextText = appendMetaVariable(String(current[target] || ''))
       const index = String(getNextMetaVariable(String(current[target] || '')))
@@ -1228,6 +1296,31 @@ export const MessageTemplates: React.FC<MessageTemplatesProps> = ({
           [target]: {
             ...(current.variableBindings?.[target] || {}),
             [index]: current.variableBindings?.[target]?.[index] || {}
+          }
+        }
+      }
+    })
+  }
+
+  const addButtonUrlVariable = (index: number) => {
+    setDraft((current) => {
+      const buttons = [...(current.buttons || [])]
+      const button = buttons[index]
+      if (!button || button.type !== 'website') return current
+
+      const nextValue = appendUrlMetaVariable(button.value)
+      const variableIndex = String(getNextMetaVariable(button.value))
+      const target = getButtonValueTarget(index)
+      buttons[index] = { ...button, value: nextValue }
+
+      return {
+        ...current,
+        buttons,
+        variableBindings: {
+          ...(current.variableBindings || { headerText: {}, bodyText: {} }),
+          [target]: {
+            ...(current.variableBindings?.[target] || {}),
+            [variableIndex]: current.variableBindings?.[target]?.[variableIndex] || {}
           }
         }
       }
@@ -1287,7 +1380,11 @@ export const MessageTemplates: React.FC<MessageTemplatesProps> = ({
   }
 
   const removeButton = (index: number) => {
-    updateDraft('buttons', (draft.buttons || []).filter((_, buttonIndex) => buttonIndex !== index))
+    setDraft((current) => ({
+      ...current,
+      buttons: (current.buttons || []).filter((_, buttonIndex) => buttonIndex !== index),
+      variableBindings: shiftButtonVariableBindingsAfterRemoval(current.variableBindings, index)
+    }))
   }
 
   const renderVariableBindings = (target: MessageTemplateVariableTarget, text: string | undefined) => {
@@ -2069,26 +2166,42 @@ export const MessageTemplates: React.FC<MessageTemplatesProps> = ({
           </div>
           {(draft.buttons || []).length ? (
             <div className={styles.buttonsEditor}>
-              {(draft.buttons || []).map((button, index) => (
-                <div key={button.id || index} className={styles.buttonEditorRow}>
-                  <CustomSelect value={button.type} onChange={(event) => updateButton(index, { type: event.target.value as MessageTemplateButtonType })}>
-                    {buttonTypeOptions.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
-                  </CustomSelect>
-                  <input
-                    value={button.label}
-                    onChange={(event) => updateButton(index, { label: event.target.value.slice(0, 25) })}
-                    placeholder="Texto"
-                  />
-                  <input
-                    value={button.value || ''}
-                    onChange={(event) => updateButton(index, { value: event.target.value })}
-                    placeholder={button.type === 'website' ? 'https://...' : button.type === 'phone' ? '+526561234567' : 'Valor'}
-                  />
-                  <button type="button" className={styles.iconButton} onClick={() => removeButton(index)} aria-label="Eliminar botón" title="Eliminar">
-                    <Trash2 size={15} />
-                  </button>
-                </div>
-              ))}
+              {(draft.buttons || []).map((button, index) => {
+                const urlVariableIndexes = button.type === 'website' ? extractMetaVariableIndexes(button.value) : []
+                const buttonValueTarget = getButtonValueTarget(index)
+
+                return (
+                  <div key={button.id || index} className={styles.buttonEditorBlock}>
+                    <div className={styles.buttonEditorRow}>
+                      <CustomSelect value={button.type} onChange={(event) => updateButton(index, { type: event.target.value as MessageTemplateButtonType })}>
+                        {buttonTypeOptions.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
+                      </CustomSelect>
+                      <input
+                        value={button.label}
+                        onChange={(event) => updateButton(index, { label: event.target.value.slice(0, 25) })}
+                        placeholder="Texto"
+                      />
+                      <input
+                        value={button.value || ''}
+                        onChange={(event) => updateButton(index, { value: event.target.value })}
+                        placeholder={button.type === 'website' ? 'https://...' : button.type === 'phone' ? '+526561234567' : 'Valor'}
+                      />
+                      <button type="button" className={styles.iconButton} onClick={() => removeButton(index)} aria-label="Eliminar botón" title="Eliminar">
+                        <Trash2 size={15} />
+                      </button>
+                    </div>
+                    {button.type === 'website' && !urlVariableIndexes.length && (
+                      <div className={styles.buttonVariableActions}>
+                        <Button variant="secondary" size="sm" onClick={() => addButtonUrlVariable(index)}>
+                          <Plus size={15} />
+                          Añadir variable
+                        </Button>
+                      </div>
+                    )}
+                    {button.type === 'website' && renderVariableBindings(buttonValueTarget, button.value)}
+                  </div>
+                )
+              })}
             </div>
           ) : (
             <div className={styles.subtleEmpty}>Sin botones</div>
