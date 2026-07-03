@@ -964,6 +964,9 @@
 }
 
 .loadingState {
+  display: flex;
+  align-items: center;
+  justify-content: center;
   padding: 34px 16px;
   color: var(--color-text-secondary);
   text-align: center;
@@ -1214,6 +1217,10 @@
   color: var(--color-text-secondary);
   background: rgba(148, 163, 184, 0.06);
   font-size: 13px;
+}
+
+.inlineStatusCentered {
+  align-self: center;
 }
 
 .emptyPagesState {

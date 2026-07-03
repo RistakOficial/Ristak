@@ -604,7 +604,10 @@ Ristak usa Meta en varias areas:
   vuelve a consultar cuentas de anuncios, datasets/pixeles, Facebook Pages e
   Instagram disponibles con el System User Access Token guardado. El usuario no
   debe borrar y pegar de nuevo el token solo para que aparezcan activos recien
-  asignados en Meta Business.
+  asignados en Meta Business. Las selecciones dentro del wizard son borrador:
+  elegir cuenta, dataset, Facebook Page o Instagram no dispara guardado ni
+  sincronizacion inmediata; Ristak persiste la configuracion una sola vez al
+  terminar el wizard.
 - Cuando Meta ya tiene dataset/pixel y token guardado, las nuevas superficies nacen
   con eventos Meta encendidos por default: Sites/landings usan `ViewContent` al
   aterrizar, formularios usan `Lead` al enviar y calendarios usan `Schedule` al
