@@ -38464,34 +38464,21 @@ const LandingBlockSettings: React.FC<LandingBlockSettingsProps> = ({ site, block
   if (block.blockType === 'calendar_embed') {
     const selectedCalendarId = getSettingString(settings, 'calendarId')
     const selectedCalendar = calendars.find(calendar => calendar.id === selectedCalendarId)
+    const selectedCalendarName = selectedCalendar?.name || getSettingString(settings, 'calendarName')
+    const calendarStatus = selectedCalendar
+      ? selectedCalendar.publicUrlEnabled
+        ? `Se mostrará como iframe usando ${selectedCalendar.publicBookingPath || '/calendar/...'}`
+        : selectedCalendar.publicUrlUnavailableReason || 'Conecta el dominio público general para que funcione publicamente.'
+      : selectedCalendarName
+        ? 'Se usará la configuración pública guardada para este calendario.'
+        : 'Sin calendario seleccionado.'
 
     return (
       <div className={styles.settingsGroup}>
-        <label className={styles.field}>
-          <span>Calendario a embeber</span>
-          <CustomSelect
-            value={selectedCalendarId}
-            onChange={(event) => {
-              const calendar = calendars.find(item => item.id === event.target.value)
-              onPatchSettings(getCalendarEmbedSelectionPatch(calendar))
-            }}
-            onBlur={onSave}
-          >
-            <option value="">Selecciona un calendario</option>
-            {calendars.map(calendar => (
-              <option key={calendar.id} value={calendar.id}>{calendar.name}</option>
-            ))}
-          </CustomSelect>
-        </label>
-        {selectedCalendar ? (
-          <p className={styles.muted}>
-            {selectedCalendar.publicUrlEnabled
-              ? `Se mostrará como iframe usando ${selectedCalendar.publicBookingPath || '/calendar/...'}`
-              : selectedCalendar.publicUrlUnavailableReason || 'Conecta el dominio público general para que funcione publicamente.'}
-          </p>
-        ) : (
-          <p className={styles.muted}>Este bloque usa la URL pública del calendario en el mismo dominio del site.</p>
-        )}
+        <p className={styles.muted}>
+          {selectedCalendarName ? `Calendario seleccionado: ${selectedCalendarName}. ` : ''}
+          {calendarStatus}
+        </p>
       </div>
     )
   }

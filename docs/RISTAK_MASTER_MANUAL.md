@@ -654,6 +654,11 @@ Sites es el constructor/publicador de paginas. Incluye:
 - Eventos Meta y tracking.
 - AI create/edit para contenido.
 
+En el editor visual, los bloques de calendario embebido eligen el calendario y
+la accion posterior a la cita desde la barra superior del editor. El inspector
+derecho solo muestra el estado del calendario seleccionado y los controles de
+diseno/estilo, para no duplicar la misma decision en dos superficies.
+
 La ruta publica puede depender de dominio, slug, host o rutas internas. Cualquier
 cambio a Sites debe revisar editor, renderer publico, submissions y tracking.
 Cuando Meta ya tiene dataset/pixel y token guardado, los sitios nuevos activan
