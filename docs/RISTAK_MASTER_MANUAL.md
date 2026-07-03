@@ -483,6 +483,15 @@ El modo de pasarelas puede ser `test` o `live`. Ese modo debe viajar con el pago
 en `payment_mode` o metadata equivalente para evitar mezclar pruebas con dinero
 real.
 
+### Estados de links de pago
+
+Crear o enviar un link de pago no significa que el cobro fallo si el cliente no
+paga. Ristak mantiene esos links como `sent`/`pending` hasta que exista una
+confirmacion real de la pasarela. En Stripe, `requires_payment_method` solo se
+convierte en `failed` si el `PaymentIntent` trae `last_payment_error` o llega el
+evento `payment_intent.payment_failed`; sin esa evidencia es abandono o pago aun
+no completado. Los rechazos reales de tarjeta siguen visibles como `failed`.
+
 ### Automatizaciones de pago
 
 Configuracion > Pagos > Automatizaciones controla recordatorios, comprobantes y
@@ -559,6 +568,9 @@ intereses con control por link:
 - Si la tarjeta no ofrece MSI, el checkout no muestra el selector de meses y
   permite pagar de contado sin mostrar plazos inventados ni pedir un paso manual
   de consulta.
+- Si el cliente abandona despues de consultar los meses pero antes de confirmar,
+  el pago queda pendiente; no se marca como fallido salvo que Stripe reporte un
+  rechazo real.
 
 ### CLIP Checkout Transparente
 
@@ -816,8 +828,10 @@ y frontend (`frontend/src/pages/Sites/*`) lo importan; el `Dockerfile` copia
   si el bloque lo permite. El selector de pasarela del inspector debe persistir
   inmediatamente el bloque para que el modo vivo no monte una pasarela anterior; el
   HTML publicado, `/checkout/init` y el cargo deben usar siempre el mismo
-  `paymentGate.gateway`. El toggle "guardar tarjeta" se retiro (Stripe Link no es
-  ocultable por codigo).
+  `paymentGate.gateway`. Si un visitante abandona el checkout antes de pagar, el
+  registro queda pendiente/oculto y no genera error; solo un rechazo real de la
+  pasarela se muestra como `failed`. El toggle "guardar tarjeta" se retiro
+  (Stripe Link no es ocultable por codigo).
 - Diferencias permitidas entre superficies: SOLO auth, tracking/pixel, param
   preservation y `headerTrackingCode` (nunca corren en editor/preview por
   seguridad), y el chrome de edicion. NO se permite divergencia en CSS visual,

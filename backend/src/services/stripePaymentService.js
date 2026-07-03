@@ -1866,6 +1866,31 @@ export async function confirmPublicStripeInstallmentPayment(publicPaymentId, opt
   }
 }
 
+function hasStripePaymentAttemptFailure(intent = {}, stripeContext = null) {
+  if (cleanString(stripeContext?.eventType).toLowerCase() === 'payment_intent.payment_failed') return true
+
+  const error = intent?.last_payment_error
+  if (!error || typeof error !== 'object') return false
+
+  return Boolean(
+    cleanString(error.code) ||
+    cleanString(error.decline_code) ||
+    cleanString(error.message) ||
+    cleanString(error.type)
+  )
+}
+
+function mapStripePaymentIntentStatus(intent = {}, stripeContext = null) {
+  const status = cleanString(intent?.status).toLowerCase()
+  if (status === 'succeeded') return 'paid'
+  if (status === 'processing' || status === 'requires_action') return 'pending'
+  if (status === 'requires_payment_method') {
+    return hasStripePaymentAttemptFailure(intent, stripeContext) ? 'failed' : 'pending'
+  }
+  if (status === 'canceled') return 'void'
+  return 'pending'
+}
+
 async function updatePaymentFromIntent(intent, stripeContext = null) {
   const paymentId = cleanString(intent?.metadata?.ristak_payment_id)
   const publicPaymentId = cleanString(intent?.metadata?.public_payment_id)
@@ -1875,17 +1900,11 @@ async function updatePaymentFromIntent(intent, stripeContext = null) {
 
   const currency = normalizeCurrency(intent.currency)
   const amount = fromStripeAmount(intent.amount_received || intent.amount, currency)
-  const statusMap = {
-    succeeded: 'paid',
-    processing: 'pending',
-    requires_payment_method: 'failed',
-    requires_action: 'pending',
-    canceled: 'void'
-  }
-  const nextStatus = statusMap[intent.status] || 'pending'
+  const nextStatus = mapStripePaymentIntentStatus(intent, stripeContext)
   const existingRow = await db.get(`SELECT * FROM payments WHERE ${whereColumn} = ?`, [whereValue])
   const ignorePendingRegression = shouldIgnorePendingWebhookRegression(existingRow, nextStatus)
   const persistedStatus = ignorePendingRegression ? cleanString(existingRow?.status) || 'paid' : nextStatus
+  const statusChanged = cleanString(existingRow?.status).toLowerCase() !== cleanString(persistedStatus).toLowerCase()
   const paidAt = intent.status === 'succeeded' ? new Date().toISOString() : null
   const latestChargeId = typeof intent.latest_charge === 'string'
     ? intent.latest_charge
@@ -1929,16 +1948,14 @@ async function updatePaymentFromIntent(intent, stripeContext = null) {
      WHERE p.${whereColumn} = ?`,
     [whereValue]
   )
-  if (row?.id && !ignorePendingRegression) {
+  if (row?.id && !ignorePendingRegression && statusChanged) {
     dispatchProductPostWebhooksForPaymentInBackground(row.id, {
       status: persistedStatus,
       previousStatus: existingRow?.status || ''
     })
-    if (cleanString(existingRow?.status).toLowerCase() !== cleanString(persistedStatus).toLowerCase()) {
-      sendPaymentNotification({ ...row, status: persistedStatus, previousStatus: existingRow?.status || '' }).catch((error) => {
-        logger.warn(`No se pudo enviar push de pago Stripe ${row.id}: ${error.message}`)
-      })
-    }
+    sendPaymentNotification({ ...row, status: persistedStatus, previousStatus: existingRow?.status || '' }).catch((error) => {
+      logger.warn(`No se pudo enviar push de pago Stripe ${row.id}: ${error.message}`)
+    })
   }
   if (row?.contact_id && nextStatus === 'paid') {
     updateSingleContactStats(row.contact_id).catch((error) => {
@@ -1997,6 +2014,8 @@ async function updatePaymentFromIntent(intent, stripeContext = null) {
 
   if (ignorePendingRegression) {
     logger.info(`[Stripe webhook] Ignorado estado pending tardío para pago ya pagado ${row?.id || whereValue} (intent ${intent.id})`)
+  } else if (cleanString(intent.status).toLowerCase() === 'requires_payment_method' && persistedStatus === 'pending') {
+    logger.info(`[Stripe payment] Intent pendiente sin intento fallido para pago ${row?.id || whereValue} (intent ${intent.id})`)
   }
 
   return persistedStatus
@@ -5462,7 +5481,7 @@ export async function handleStripeWebhookEvent(rawBody, signature) {
   const object = event?.data?.object
 
   if (object?.object === 'payment_intent') {
-    await updatePaymentFromIntent(object, { stripe, config, requestOptions })
+    await updatePaymentFromIntent(object, { stripe, config, requestOptions, eventType: event.type })
   } else if (event.type === 'checkout.session.completed' && object?.object === 'checkout.session') {
     await updateSubscriptionFromStripeCheckoutSession(object, { stripe, requestOptions })
   } else if (event.type === 'invoice.payment_succeeded' && object?.object === 'invoice') {
