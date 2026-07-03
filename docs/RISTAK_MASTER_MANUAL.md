@@ -400,8 +400,10 @@ Reglas base:
 - Fechas de calendario se interpretan en zona del negocio.
 - No dependas del timezone del navegador para datos CRM.
 - Si Meta esta configurado con dataset/pixel y token guardado, los calendarios
-  locales nuevos activan `customEvents.enabled` por default para mandar `Schedule`
-  al agendar. Ediciones posteriores respetan el apagado manual del usuario.
+  locales nuevos y los calendarios remotos espejados por primera vez activan
+  `customEvents.enabled` por default para mandar `Schedule` al agendar. Ediciones
+  posteriores y sincronizaciones de calendarios ya existentes respetan el apagado
+  manual del usuario.
 - El canal `smart` de eventos de calendario se resuelve por la SUPERFICIE REAL
   de la conversion, no por la atribucion del contacto (ver
   `docs/CONVERSION_ATTRIBUTION.md`): un booking en la pagina/widget publico es
@@ -610,8 +612,10 @@ Ristak usa Meta en varias areas:
   terminar el wizard.
 - Cuando Meta ya tiene dataset/pixel y token guardado, las nuevas superficies nacen
   con eventos Meta encendidos por default: Sites/landings usan `ViewContent` al
-  aterrizar, formularios usan `Lead` al enviar y calendarios usan `Schedule` al
-  agendar. El usuario puede apagarlos manualmente despues.
+  aterrizar, paginas nuevas agregadas al editor heredan ese default, formularios
+  usan `Lead` al enviar y calendarios usan `Schedule` al agendar. Bloques de
+  calendario embebido tambien crean su trigger `Schedule` al agregarse. El
+  usuario puede apagarlos manualmente despues.
 - Las conversiones server-side de mensajeria Meta comparten el mismo servicio:
   WhatsApp, Messenger e Instagram usan `action_source=business_messaging` con
   `messaging_channel` segun el canal real. `Purchase` conserva `event_name=Purchase`
@@ -667,7 +671,9 @@ cambio a Sites debe revisar editor, renderer publico, submissions y tracking.
 Cuando Meta ya tiene dataset/pixel y token guardado, los sitios nuevos activan
 Meta CAPI por default. Las landings nuevas encienden `ViewContent` al aterrizar
 la pagina; los formularios nativos/importados/creados por IA encienden `Lead` al
-enviar. Las actualizaciones de sitios existentes no reactivan eventos que el
+enviar. Las paginas nuevas creadas dentro de una landing existente tambien nacen
+con `ViewContent`, y los bloques de calendario embebido nuevos nacen con
+`Schedule`. Las actualizaciones de sitios existentes no reactivan eventos que el
 usuario apago manualmente.
 
 ### Paridad de render editor/preview/publicado (contrato compartido)

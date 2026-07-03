@@ -5,8 +5,8 @@ import http from 'node:http'
 import { db, getAppConfig, setAppConfig } from '../src/config/database.js'
 import { API_URLS } from '../src/config/constants.js'
 import { saveMetaConfig } from '../src/services/metaAdsService.js'
-import { createLocalCalendar } from '../src/services/localCalendarService.js'
-import { createSite } from '../src/services/sitesService.js'
+import { createLocalCalendar, updateLocalCalendar, upsertLocalCalendar } from '../src/services/localCalendarService.js'
+import { createBlock, createSite, updateSite } from '../src/services/sitesService.js'
 import { initializeMasterKey } from '../src/utils/encryption.js'
 
 const EVENT_CONFIG_KEYS = [
@@ -211,6 +211,38 @@ test('creating Sites, forms and calendars defaults Meta events on when dataset i
         assert.equal(landingSite.theme.pages[0].metaEventName, 'ViewContent')
         assert.equal(landingSite.theme.pages[0].metaTrigger, 'page_view')
 
+        const landingSiteWithNewPage = await updateSite(landingSite.id, {
+          theme: {
+            ...landingSite.theme,
+            pages: [
+              ...landingSite.theme.pages,
+              {
+                id: 'page-added-after-create',
+                title: 'Nueva pagina',
+                sortOrder: landingSite.theme.pages.length,
+                metaCapiEnabled: false,
+                metaEventName: 'none',
+                metaTrigger: 'page_view'
+              }
+            ]
+          },
+          metaCapiEnabled: landingSite.metaCapiEnabled
+        })
+        const addedPage = landingSiteWithNewPage.theme.pages.find(page => page.id === 'page-added-after-create')
+        assert.equal(addedPage.metaCapiEnabled, true)
+        assert.equal(addedPage.metaEventName, 'ViewContent')
+        assert.equal(addedPage.metaTrigger, 'page_view')
+
+        const landingSiteWithCalendarBlock = await createBlock(landingSite.id, {
+          blockType: 'calendar_embed',
+          label: 'Agenda',
+          settings: {}
+        })
+        const calendarBlock = landingSiteWithCalendarBlock.blocks.find(block => block.blockType === 'calendar_embed')
+        assert.ok(calendarBlock)
+        assert.equal(landingSiteWithCalendarBlock.theme.metaCalendarEvents[calendarBlock.id].enabled, true)
+        assert.equal(landingSiteWithCalendarBlock.theme.metaCalendarEvents[calendarBlock.id].eventName, 'Schedule')
+
         const calendar = await createLocalCalendar({
           name: `Meta default calendar ${suffix}`,
           customEvents: {
@@ -230,6 +262,50 @@ test('creating Sites, forms and calendars defaults Meta events on when dataset i
         assert.deepEqual(calendar.customEvents.parameters.custom, [
           { id: 'param-1', key: 'source', value: 'calendar' }
         ])
+
+        const remoteCalendar = await upsertLocalCalendar({
+          id: `ghl_meta_default_${suffix}`,
+          name: `Remote Meta default calendar ${suffix}`,
+          slug: `remote-meta-default-${suffix}`,
+          widgetSlug: `remote-meta-default-${suffix}`
+        }, {
+          source: 'ghl',
+          ghlCalendarId: `ghl_meta_default_${suffix}`,
+          syncStatus: 'synced',
+          rawJson: {
+            id: `ghl_meta_default_${suffix}`,
+            name: `Remote Meta default calendar ${suffix}`
+          }
+        })
+        createdCalendarIds.push(remoteCalendar.id)
+        assert.equal(remoteCalendar.customEvents.enabled, true)
+        assert.equal(remoteCalendar.customEvents.channel, 'site')
+        assert.equal(remoteCalendar.customEvents.eventName, 'Schedule')
+
+        const disabledRemoteCalendar = await updateLocalCalendar(remoteCalendar.id, {
+          customEvents: {
+            enabled: false,
+            channel: 'site',
+            eventName: 'Schedule'
+          }
+        })
+        assert.equal(disabledRemoteCalendar.customEvents.enabled, false)
+
+        const resyncedRemoteCalendar = await upsertLocalCalendar({
+          id: `ghl_meta_default_${suffix}`,
+          name: `Remote Meta default calendar resynced ${suffix}`,
+          slug: `remote-meta-default-${suffix}`,
+          widgetSlug: `remote-meta-default-${suffix}`
+        }, {
+          source: 'ghl',
+          ghlCalendarId: `ghl_meta_default_${suffix}`,
+          syncStatus: 'synced',
+          rawJson: {
+            id: `ghl_meta_default_${suffix}`,
+            name: `Remote Meta default calendar resynced ${suffix}`
+          }
+        })
+        assert.equal(resyncedRemoteCalendar.customEvents.enabled, false)
       })
     })
   } finally {

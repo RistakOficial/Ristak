@@ -414,6 +414,9 @@ const metaEventOptions = [
   { value: 'Contact', label: 'Contact' }
 ]
 
+const CONNECTED_META_DEFAULT_PAGE_VIEW_EVENT = 'ViewContent'
+const CONNECTED_META_DEFAULT_CALENDAR_EVENT = 'Schedule'
+
 const metaSubmitConditionOptions: Array<{ value: SiteMetaSubmitCondition; label: string }> = [
   { value: 'always', label: 'Enviar al terminar formulario' },
   { value: 'qualified_only', label: 'Solo "CALIFICADOS"' }
@@ -10158,9 +10161,54 @@ export const Sites: React.FC = () => {
     })
   }
 
+  const shouldApplyConnectedMetaDefaults = (site?: PublicSite | null) =>
+    Boolean(metaPixelConnected && site?.metaCapiEnabled)
+
+  const withConnectedMetaDefaultsForNewPage = (site: PublicSite, page: SitePage): SitePage => {
+    if (!shouldApplyConnectedMetaDefaults(site) || !isLanding(site)) return page
+
+    const eventName = normalizeMetaEventName(page.metaEventName, 'none')
+    return {
+      ...page,
+      metaCapiEnabled: true,
+      metaEventName: eventName === 'none' ? CONNECTED_META_DEFAULT_PAGE_VIEW_EVENT : eventName,
+      metaTrigger: 'page_view'
+    }
+  }
+
+  const withConnectedMetaDefaultsForCalendarSurface = (site: PublicSite, surfaceId: string): PublicSite => {
+    if (!surfaceId || !shouldApplyConnectedMetaDefaults(site)) return site
+    const rawEvents = site.theme?.metaCalendarEvents
+    const currentEvents = rawEvents && typeof rawEvents === 'object' && !Array.isArray(rawEvents)
+      ? rawEvents
+      : {}
+    const existing = currentEvents[surfaceId] && typeof currentEvents[surfaceId] === 'object'
+      ? currentEvents[surfaceId]
+      : {}
+    const eventName = normalizeMetaEventName(existing.eventName, 'none')
+
+    return {
+      ...site,
+      theme: {
+        ...(site.theme || {}),
+        metaCalendarEvents: {
+          ...currentEvents,
+          [surfaceId]: {
+            ...existing,
+            enabled: true,
+            eventName: eventName === 'none' ? CONNECTED_META_DEFAULT_CALENDAR_EVENT : eventName
+          }
+        }
+      }
+    }
+  }
+
   const handleAddPage = () => {
     if (!selectedSite || !hasEditablePages(selectedSite) || !canManagePages(selectedSite)) return
-    const nextPage = makeFunnelPage(isStandardForm(selectedSite) ? getFormContentPages(pages).length : pages.length)
+    const nextPage = withConnectedMetaDefaultsForNewPage(
+      selectedSite,
+      makeFunnelPage(isStandardForm(selectedSite) ? getFormContentPages(pages).length : pages.length)
+    )
     const insertIndex = getFormAddPageIndex(selectedSite, pages)
     const nextPages = [
       ...pages.slice(0, insertIndex),
@@ -10175,7 +10223,10 @@ export const Sites: React.FC = () => {
     if (getSitePageMode(selectedSite) !== 'website') return
     const parent = pages.find(page => page.id === parentId)
     if (!parent || getPageDepth(parent, pages) >= MAX_WEBSITE_PAGE_DEPTH) return
-    const nextPage = makeFunnelPage(pages.length, { parentPageId: parentId })
+    const nextPage = withConnectedMetaDefaultsForNewPage(
+      selectedSite,
+      makeFunnelPage(pages.length, { parentPageId: parentId })
+    )
     nextPage.title = 'Subpagina'
     // Insert right after the parent's existing subtree so the flat order keeps subtrees contiguous.
     const descendants = new Set(getDescendantPageIds(parentId, pages))
@@ -11279,6 +11330,16 @@ export const Sites: React.FC = () => {
       let nextSite = {
         ...siteForAdd,
         blocks: [...(siteForAdd.blocks || []), ...blocksToAdd]
+      }
+      if (added.blockType === 'calendar_embed') {
+        const siteWithMetaDefaults = withConnectedMetaDefaultsForCalendarSurface(nextSite, added.id)
+        if (siteWithMetaDefaults !== nextSite) {
+          pendingSiteSaveRef.current = true
+          nextSite = {
+            ...siteWithMetaDefaults,
+            blocks: siteWithMetaDefaults.blocks || nextSite.blocks
+          }
+        }
       }
 
       if (Number.isFinite(options.insertIndex)) {

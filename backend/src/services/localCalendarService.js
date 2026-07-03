@@ -267,6 +267,28 @@ function parseJson(value, fallback) {
   }
 }
 
+function applyConnectedMetaDefaultsToCalendarRawJson(rawJson = {}) {
+  const source = rawJson && typeof rawJson === 'object' && !Array.isArray(rawJson)
+    ? rawJson
+    : {}
+  const customEvents = normalizeCalendarCustomEventsConfig(
+    source.customEvents ||
+    source.custom_events ||
+    source.metaEvent ||
+    source.meta_event ||
+    {}
+  )
+
+  return {
+    ...source,
+    customEvents: {
+      ...customEvents,
+      enabled: true,
+      eventName: customEvents.eventName || DEFAULT_CALENDAR_META_EVENT_NAME
+    }
+  }
+}
+
 function normalizeCalendarBookingDefaultFields(value = {}) {
   const source = value && typeof value === 'object' && !Array.isArray(value) ? value : {}
   const phoneEnabled = source.phoneEnabled ?? source.phone?.enabled ?? source.phone !== false
@@ -1202,12 +1224,21 @@ export async function upsertLocalCalendar(raw = {}, options = {}) {
   if (existingByGhl?.id) {
     normalized.id = existingByGhl.id
   }
+  const existingById = existingByGhl?.id
+    ? existingByGhl
+    : await db.get('SELECT * FROM calendars WHERE id = ?', [normalized.id])
 
   if (normalizeCalendarSource(normalized.source) === 'ristak') {
     normalized.slug = await ensureUniqueRistakPublicSlug(normalized.slug, normalized.id)
     normalized.widgetSlug = normalized.widgetSlugWasExplicit
       ? await ensureUniqueRistakPublicSlug(normalized.widgetSlug, normalized.id)
       : normalized.slug
+  }
+
+  if (!existingById && await hasConnectedMetaDatasetConfig()) {
+    normalized.rawJson = jsonOrNull(applyConnectedMetaDefaultsToCalendarRawJson(
+      parseJson(normalized.rawJson, {})
+    ))
   }
 
   await db.run(`

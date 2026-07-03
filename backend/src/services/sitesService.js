@@ -1104,6 +1104,65 @@ function applyConnectedMetaDefaultsToTheme(theme = {}, { enabled = false, siteTy
   return nextTheme
 }
 
+function applyConnectedMetaDefaultsToNewThemePages(currentTheme = {}, nextTheme = {}, { enabled = false, siteType = 'landing_page' } = {}) {
+  if (!enabled || !shouldDefaultSitePageViewMetaEvent(siteType) || !Array.isArray(nextTheme?.pages)) return nextTheme
+
+  const existingPageIds = new Set((Array.isArray(currentTheme?.pages) ? currentTheme.pages : [])
+    .map(page => cleanString(page?.id))
+    .filter(Boolean))
+  let changed = false
+  const pages = nextTheme.pages.map(page => {
+    const pageId = cleanString(page?.id)
+    if (!pageId || existingPageIds.has(pageId)) return page
+
+    const eventName = normalizeSiteMetaEventName(
+      page?.metaEventName || page?.meta_event_name,
+      { allowNone: true, fallback: SITE_META_NO_EVENT }
+    )
+    changed = true
+    return {
+      ...page,
+      metaCapiEnabled: true,
+      metaEventName: eventName === SITE_META_NO_EVENT ? DEFAULT_SITE_META_PAGE_VIEW_EVENT_NAME : eventName,
+      metaTrigger: 'page_view'
+    }
+  })
+
+  return changed ? { ...nextTheme, pages } : nextTheme
+}
+
+async function ensureConnectedMetaCalendarSurfaceDefault(site = {}, surfaceId = '') {
+  const normalizedSurfaceId = cleanString(surfaceId)
+  if (!normalizedSurfaceId || !normalizeBoolean(site?.metaCapiEnabled)) return false
+  if (!await hasConnectedMetaDatasetConfig()) return false
+
+  const theme = { ...(site.theme || {}) }
+  const currentEvents = normalizeThemeMetaCalendarEvents(theme)
+  const existing = currentEvents[normalizedSurfaceId] && typeof currentEvents[normalizedSurfaceId] === 'object'
+    ? currentEvents[normalizedSurfaceId]
+    : {}
+  const eventName = normalizeSiteMetaEventName(
+    existing.eventName || existing.event_name,
+    { allowNone: true, fallback: SITE_META_NO_EVENT }
+  )
+
+  theme.metaCalendarEvents = {
+    ...currentEvents,
+    [normalizedSurfaceId]: {
+      ...existing,
+      enabled: true,
+      eventName: eventName === SITE_META_NO_EVENT ? DEFAULT_SITE_META_CALENDAR_EVENT_NAME : eventName
+    }
+  }
+  delete theme.meta_calendar_events
+
+  await db.run(
+    'UPDATE public_sites SET theme_json = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?',
+    [jsonString(theme), site.id]
+  )
+  return true
+}
+
 async function resolveConnectedMetaSiteCreateDefaults(input = {}, { siteType = 'landing_page', theme = {}, hasDetectedForms = false, calendarSurfaceIds = [] } = {}) {
   const connectedMetaDataset = await hasConnectedMetaDatasetConfig()
   const requestedMetaEventName = normalizeSiteMetaEventName(input.metaEventName, {
@@ -10622,7 +10681,10 @@ export async function updateSite(siteId, input = {}) {
     ? current.slug
     : await ensureUniqueSlug(slugify(input.slug), siteId)
   const domainChanged = false
-  const nextTheme = { ...DEFAULT_THEME, ...(input.theme || current.theme || {}) }
+  let nextTheme = { ...DEFAULT_THEME, ...(input.theme || current.theme || {}) }
+  const nextMetaCapiEnabled = input.metaCapiEnabled === undefined
+    ? normalizeBoolean(current.metaCapiEnabled)
+    : normalizeBoolean(input.metaCapiEnabled)
   if (nextSiteType === 'standard_form') {
     nextTheme.pages = normalizeSitePages({ siteType: nextSiteType, theme: nextTheme })
     nextTheme.formCompletionAction = normalizeFormCompletionAction(nextTheme.formCompletionAction || nextTheme.form_completion_action, 'next_page_if_qualified')
@@ -10630,6 +10692,12 @@ export async function updateSite(siteId, input = {}) {
     delete nextTheme.submit_incomplete_on_exit
   } else if (nextSiteType === 'interactive_form' && (!Array.isArray(nextTheme.pages) || nextTheme.pages.length === 0)) {
     nextTheme.pages = normalizeSitePages({ siteType: nextSiteType, theme: nextTheme })
+  }
+  if (input.theme !== undefined && nextMetaCapiEnabled && await hasConnectedMetaDatasetConfig()) {
+    nextTheme = applyConnectedMetaDefaultsToNewThemePages(current.theme || {}, nextTheme, {
+      enabled: true,
+      siteType: nextSiteType
+    })
   }
   const nextMetaEventName = normalizeSiteMetaEventName(input.metaEventName || current.metaEventName, { allowNone: true })
   const nextAntiTrackingEnabled = input.antiTrackingEnabled === undefined && input.anti_tracking_enabled === undefined
@@ -10688,7 +10756,7 @@ export async function updateSite(siteId, input = {}) {
     input.description === undefined ? current.description : cleanString(input.description) || null,
     jsonString(nextTheme),
     nextAntiTrackingEnabled,
-    input.metaCapiEnabled === undefined ? normalizeBoolean(current.metaCapiEnabled) : normalizeBoolean(input.metaCapiEnabled),
+    nextMetaCapiEnabled,
     nextMetaEventName,
     domainChanged ? 1 : 0,
     domainChanged ? 1 : 0,
@@ -10775,6 +10843,10 @@ export async function createBlock(siteId, input = {}) {
     Number(last?.max_order || -1) + 1
   ])
 
+  if (blockType === 'calendar_embed') {
+    await ensureConnectedMetaCalendarSurfaceDefault(site, id)
+  }
+
   return getSite(siteId, { includeBlocks: true, includeSubmissions: true })
 }
 
@@ -10818,6 +10890,10 @@ export async function updateBlock(siteId, blockId, input = {}) {
     blockId,
     siteId
   ])
+
+  if (blockType === 'calendar_embed' && existing.block_type !== 'calendar_embed') {
+    await ensureConnectedMetaCalendarSurfaceDefault(site, blockId)
+  }
 
   return getSite(siteId, { includeBlocks: true, includeSubmissions: true })
 }
