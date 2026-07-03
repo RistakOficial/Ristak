@@ -55,7 +55,7 @@ export interface CalendarBookingCompletionConfig {
   redirectUrl: string;
 }
 
-export type CalendarPaymentGateway = 'stripe' | 'conekta' | 'mercadopago';
+export type CalendarPaymentGateway = 'stripe' | 'conekta' | 'mercadopago' | 'clip';
 
 export interface CalendarBookingPaymentConfig {
   enabled: boolean;

@@ -4,7 +4,7 @@
 // que el preview del bloque de pago no invente filas ni colores que el vivo no muestra.
 // No cambia flujos de negocio (cobro, tokens, webhooks): solo describe qué se ve.
 
-export const PAYMENT_GATEWAYS = new Set(['stripe', 'conekta', 'mercadopago'])
+export const PAYMENT_GATEWAYS = new Set(['stripe', 'conekta', 'mercadopago', 'clip'])
 
 // Opciones de meses ofrecidas en el panel. El monto y la pasarela filtran cuáles
 // aplican realmente (ver msiEligibility / conektaInstallmentMonths).
@@ -48,9 +48,11 @@ export function msiEligibility({ gateway = '', currency = '', amount = 0, msi = 
   if (gateway === 'mercadopago') {
     return { ...none, insideBrick: true }
   }
-  // stripe
-  const eligible = String(currency || '').toUpperCase() === 'MXN' && Number(amount) >= STRIPE_MSI_MIN_AMOUNT
-  return { ...none, insideElement: eligible }
+  if (gateway === 'stripe') {
+    const eligible = String(currency || '').toUpperCase() === 'MXN' && Number(amount) >= STRIPE_MSI_MIN_AMOUNT
+    return { ...none, insideElement: eligible }
+  }
+  return none
 }
 
 // Apariencia de Stripe Elements a partir de tokens del bloque. UNA sola fórmula para

@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { getIntegrationsStatus, readCachedIntegrationsStatus, type IntegrationsStatus } from '@/services/integrationsService'
 
-export type PaymentGatewayProvider = 'stripe' | 'conekta' | 'mercadopago'
+export type PaymentGatewayProvider = 'stripe' | 'conekta' | 'mercadopago' | 'clip'
 
 interface PaymentGatewayCapabilities {
   loading: boolean
@@ -9,6 +9,7 @@ interface PaymentGatewayCapabilities {
   stripeConnected: boolean
   conektaConnected: boolean
   mercadoPagoConnected: boolean
+  clipConnected: boolean
   hasConnectedPaymentGateway: boolean
   canUsePaymentPlans: boolean
   canUseSubscriptions: boolean
@@ -22,6 +23,7 @@ interface PaymentGatewayConnectionState {
   stripeConnected: boolean
   conektaConnected: boolean
   mercadoPagoConnected: boolean
+  clipConnected: boolean
 }
 
 function getConnectionStateFromStatus(status: IntegrationsStatus | null, loading: boolean): PaymentGatewayConnectionState {
@@ -30,7 +32,8 @@ function getConnectionStateFromStatus(status: IntegrationsStatus | null, loading
     highLevelConnected: Boolean(status?.highlevel?.connected),
     stripeConnected: Boolean(status?.stripe?.connected),
     conektaConnected: Boolean(status?.conekta?.connected),
-    mercadoPagoConnected: Boolean(status?.mercadopago?.connected)
+    mercadoPagoConnected: Boolean(status?.mercadopago?.connected),
+    clipConnected: Boolean(status?.clip?.connected)
   }
 }
 
@@ -68,7 +71,8 @@ export function usePaymentGatewayCapabilities(): PaymentGatewayCapabilities {
       highLevelConnected,
       stripeConnected,
       conektaConnected,
-      mercadoPagoConnected
+      mercadoPagoConnected,
+      clipConnected
     } = connectionState
     const planProviders: PaymentGatewayProvider[] = [
       ...(stripeConnected ? ['stripe' as const] : []),
@@ -77,7 +81,8 @@ export function usePaymentGatewayCapabilities(): PaymentGatewayCapabilities {
     const subscriptionProviders: PaymentGatewayProvider[] = [
       ...(stripeConnected ? ['stripe' as const] : []),
       ...(conektaConnected ? ['conekta' as const] : []),
-      ...(mercadoPagoConnected ? ['mercadopago' as const] : [])
+      ...(mercadoPagoConnected ? ['mercadopago' as const] : []),
+      ...(clipConnected ? ['clip' as const] : [])
     ]
 
     return {
@@ -86,7 +91,8 @@ export function usePaymentGatewayCapabilities(): PaymentGatewayCapabilities {
       stripeConnected,
       conektaConnected,
       mercadoPagoConnected,
-      hasConnectedPaymentGateway: stripeConnected || conektaConnected || mercadoPagoConnected,
+      clipConnected,
+      hasConnectedPaymentGateway: stripeConnected || conektaConnected || mercadoPagoConnected || clipConnected,
       canUsePaymentPlans: highLevelConnected || planProviders.length > 0,
       canUseSubscriptions: subscriptionProviders.length > 0,
       planProviders,

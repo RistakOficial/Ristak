@@ -36,7 +36,7 @@ function normalizeGigstackUnitKey(value, fallback = 'E48') {
 
 function resolvePaymentMethod(method = '', fallback = '99') {
   const normalized = cleanString(method).toLowerCase()
-  if (['card', 'credit_card', 'stripe', 'stripe_saved_card', 'conekta', 'conekta_saved_card', 'mercadopago', 'mercadopago_checkout'].includes(normalized)) return '04'
+  if (['card', 'credit_card', 'stripe', 'stripe_saved_card', 'conekta', 'conekta_saved_card', 'mercadopago', 'mercadopago_checkout', 'clip', 'clip_card'].includes(normalized)) return '04'
   if (['debit_card'].includes(normalized)) return '28'
   if (['bank_transfer', 'transfer', 'spei'].includes(normalized)) return '03'
   if (['cash', 'deposit'].includes(normalized)) return '01'

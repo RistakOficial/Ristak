@@ -5,6 +5,7 @@ import { db, setAppConfig } from '../src/config/database.js'
 import { initializeMasterKey } from '../src/utils/encryption.js'
 import {
   isConektaConnected,
+  isClipConnected,
   isGoogleCalendarConnected,
   isHighLevelConnected,
   isMercadoPagoConnected,
@@ -24,6 +25,7 @@ const APP_CONFIG_WHERE = `
      OR config_key = 'meta_config_disconnected'
      OR config_key LIKE 'stripe_%'
      OR config_key LIKE 'conekta_%'
+     OR config_key LIKE 'clip_%'
      OR config_key LIKE 'mercadopago_%'
 `
 
@@ -102,6 +104,7 @@ test('detectores de crons de integración solo se activan con conexión local v�
     assert.equal(await isMetaConnected(), false)
     assert.equal(await isStripeConnected(), false)
     assert.equal(await isConektaConnected(), false)
+    assert.equal(await isClipConnected(), false)
     assert.equal(await isMercadoPagoConnected(), false)
     assert.equal(await isWhatsAppQrConnected(), false)
 
@@ -170,6 +173,27 @@ test('detectores de crons de integración solo se activan con conexión local v�
     assert.equal(await isConektaConnected(), false)
     await setAppConfig('payments_settings', { paymentMode: 'test' })
     assert.equal(await isConektaConnected(), true)
+
+    await setAppConfig('clip_enabled', '1')
+    await setAppConfig('clip_mode_connections', {
+      test: { apiKey: 'clip_test_cron_gate' },
+      live: {}
+    })
+    assert.equal(await isClipConnected(), true)
+    await setAppConfig('payments_settings', { paymentMode: 'live' })
+    assert.equal(await isClipConnected(), false)
+    await setAppConfig('payments_settings', { paymentMode: 'test' })
+    await setAppConfig('clip_enabled', '0')
+    assert.equal(await isClipConnected(), false)
+
+    await setAppConfig('clip_enabled', '1')
+    await setAppConfig('clip_mode_connections', { test: {}, live: {} })
+    await setAppConfig('clip_mode', 'test')
+    await setAppConfig('clip_api_key_encrypted', 'clip_legacy_cron_gate')
+    await setAppConfig('payments_settings', { paymentMode: 'live' })
+    assert.equal(await isClipConnected(), false)
+    await setAppConfig('payments_settings', { paymentMode: 'test' })
+    assert.equal(await isClipConnected(), true)
 
     await setAppConfig('mercadopago_enabled', '1')
     await setAppConfig('mercadopago_mode_connections', {

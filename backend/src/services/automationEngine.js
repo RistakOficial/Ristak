@@ -836,6 +836,8 @@ function paymentDataFromContext(ctx = {}) {
     'mercadopago_event_id',
     'conektaEventId',
     'conekta_event_id',
+    'clipEventId',
+    'clip_event_id',
     'payload.id',
     'payload.eventId',
     'payload.event_id',
@@ -905,6 +907,8 @@ function paymentDataFromContext(ctx = {}) {
     'conekta.paymentSourceId',
     'conekta.payment_source_id'
   )
+  const clipPaymentId = firstPaymentContextValue(ctx, 'clipPaymentId', 'clip_payment_id', 'clip.paymentId', 'clip.payment_id', 'clip.id')
+  const clipReceiptNo = firstPaymentContextValue(ctx, 'clipReceiptNo', 'clip_receipt_no', 'receiptNo', 'receipt_no', 'clip.receiptNo', 'clip.receipt_no')
   const paidAt = firstPaymentContextValue(ctx, 'paidAt', 'paid_at', 'fulfilledAt', 'fulfilled_at')
   const paymentDate = firstPaymentContextValue(ctx, 'paymentDate', 'payment_date', 'date', 'createdAt', 'created_at')
   const dueDate = firstPaymentContextValue(ctx, 'dueDate', 'due_date')
@@ -948,6 +952,8 @@ function paymentDataFromContext(ctx = {}) {
     id_conekta_order: conektaOrderId,
     id_conekta_charge: conektaChargeId,
     id_conekta_fuente_pago: conektaPaymentSourceId,
+    id_clip_pago: clipPaymentId,
+    id_clip_recibo: clipReceiptNo,
     fecha: paymentDate,
     fecha_pago: paidAt,
     fecha_vencimiento: dueDate,
@@ -1205,6 +1211,8 @@ function buildVariableMap(ctx) {
     map['payment.conekta_order_id'] = String(payment.id_conekta_order ?? '')
     map['payment.conekta_charge_id'] = String(payment.id_conekta_charge ?? '')
     map['payment.conekta_payment_source_id'] = String(payment.id_conekta_fuente_pago ?? '')
+    map['payment.clip_payment_id'] = String(payment.id_clip_pago ?? '')
+    map['payment.clip_receipt_no'] = String(payment.id_clip_recibo ?? '')
     map['payment.date'] = String(payment.fecha ?? '')
     map['payment.paid_at'] = String(payment.fecha_pago ?? '')
     map['payment.due_date'] = String(payment.fecha_vencimiento ?? '')
@@ -1468,6 +1476,10 @@ function paymentTriggerFieldValue(field, ctx = {}) {
         'conekta.paymentSourceId',
         'conekta.payment_source_id'
       )
+    case 'clip_payment_id':
+      return firstPaymentContextValue(ctx, 'clipPaymentId', 'clip_payment_id', 'clip.paymentId', 'clip.payment_id', 'clip.id')
+    case 'clip_receipt_no':
+      return firstPaymentContextValue(ctx, 'clipReceiptNo', 'clip_receipt_no', 'receiptNo', 'receipt_no', 'clip.receiptNo', 'clip.receipt_no')
     case 'paid_at':
       return firstPaymentContextValue(ctx, 'paidAt', 'paid_at', 'fulfilledAt', 'fulfilled_at')
     case 'payment_date':
@@ -1554,6 +1566,8 @@ function filterFieldValue(filter, ctx) {
     case 'conekta_order_id':
     case 'conekta_charge_id':
     case 'conekta_payment_source_id':
+    case 'clip_payment_id':
+    case 'clip_receipt_no':
     case 'paid_at':
     case 'payment_date':
     case 'due_date':

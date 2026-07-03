@@ -7,6 +7,7 @@ import { getGoogleCalendarConfig } from '../services/googleCalendarService.js';
 import { getStripePaymentConfig } from '../services/stripePaymentService.js';
 import { getMercadoPagoPaymentConfig } from '../services/mercadoPagoPaymentService.js';
 import { getConektaPaymentConfig } from '../services/conektaPaymentService.js';
+import { getClipPaymentConfig } from '../services/clipPaymentService.js';
 
 // La verificación del token contra la API de HighLevel es costosa y este
 // endpoint se consulta varias veces por carga de página. Se cachea el
@@ -199,6 +200,21 @@ export const getStatus = async (req, res) => {
       logger.warn(`Error obteniendo estado de Conekta: ${error.message}`);
     }
 
+    // CLIP
+    let clipStatus = { configured: false, connected: false };
+    try {
+      const clipConfig = await getClipPaymentConfig();
+      clipStatus = {
+        configured: Boolean(clipConfig?.configured),
+        connected: Boolean(clipConfig?.configured),
+        mode: clipConfig?.mode || 'test',
+        accountLabel: clipConfig?.accountLabel || null,
+        hasApiKey: Boolean(clipConfig?.hasApiKey)
+      };
+    } catch (error) {
+      logger.warn(`Error obteniendo estado de CLIP: ${error.message}`);
+    }
+
     // Respuesta con estructura mejorada
     res.json({
       highlevel: highlevelStatus,
@@ -208,7 +224,8 @@ export const getStatus = async (req, res) => {
       googleCalendar: googleCalendarStatus,
       stripe: stripeStatus,
       mercadopago: mercadoPagoStatus,
-      conekta: conektaStatus
+      conekta: conektaStatus,
+      clip: clipStatus
     });
 
   } catch (error) {
@@ -230,6 +247,7 @@ export const getStatus = async (req, res) => {
       googleCalendar: { configured: false, connected: false },
       mercadopago: { configured: false, connected: false },
       conekta: { configured: false, connected: false },
+      clip: { configured: false, connected: false },
       error: 'Error al obtener estado de integraciones'
     });
   }

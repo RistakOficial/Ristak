@@ -372,7 +372,8 @@ function getMetaPaymentMode(payment = {}) {
     metadata.stripeMode,
     metadata.conektaMode,
     metadata.mercadoPagoMode,
-    metadata.mercadopagoMode
+    metadata.mercadopagoMode,
+    metadata.clipMode
   ]), PAYMENT_MODE_LIVE)
 }
 
@@ -488,12 +489,19 @@ function buildPaymentOrderId(payment = {}, metadata = {}) {
     payment.mercadoPagoPaymentId,
     payment.mercadopago_preference_id,
     payment.mercadoPagoPreferenceId,
+    payment.clip_payment_id,
+    payment.clipPaymentId,
+    payment.clip_receipt_no,
+    payment.clipReceiptNo,
     payment.ghl_invoice_id,
     payment.invoice_number,
     metadata.orderId,
     metadata.order_id,
     metadata.public_payment_id,
     metadata.ristak_payment_id,
+    metadata.clipPaymentId,
+    metadata.clip?.paymentId,
+    metadata.clip?.receiptNo,
     metadata.invoiceId,
     metadata.invoice_id
   ])

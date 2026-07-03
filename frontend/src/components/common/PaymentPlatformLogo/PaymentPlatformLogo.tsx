@@ -1,4 +1,5 @@
 import React from 'react'
+import clipLogo from '@/assets/payment-platforms/clip.svg'
 import conektaLogo from '@/assets/payment-platforms/conekta.webp'
 import gigstackLogo from '@/assets/payment-platforms/gigstack.webp'
 import mercadoPagoLogo from '@/assets/payment-platforms/mercadopago.webp'
@@ -6,7 +7,7 @@ import stripeLogo from '@/assets/payment-platforms/stripe.svg'
 import { cn } from '@/utils/cn'
 import styles from './PaymentPlatformLogo.module.css'
 
-export type PaymentPlatformLogoId = 'stripe' | 'conekta' | 'mercadopago' | 'gigstack'
+export type PaymentPlatformLogoId = 'stripe' | 'conekta' | 'mercadopago' | 'clip' | 'gigstack'
 
 type PaymentPlatformLogoSize = 'sm' | 'md' | 'lg' | 'xl'
 
@@ -14,6 +15,7 @@ const platformLogos: Record<PaymentPlatformLogoId, { label: string; src: string 
   stripe: { label: 'Stripe', src: stripeLogo },
   conekta: { label: 'Conekta', src: conektaLogo },
   mercadopago: { label: 'Mercado Pago', src: mercadoPagoLogo },
+  clip: { label: 'CLIP', src: clipLogo },
   gigstack: { label: 'Gigstack', src: gigstackLogo }
 }
 

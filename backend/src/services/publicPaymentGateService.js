@@ -2,6 +2,7 @@ import { db, getAppConfig } from '../config/database.js'
 import { createStripePaymentLink, createStripePaymentIntent, getStripePaymentConfig } from './stripePaymentService.js'
 import { createConektaPaymentLink, getPublicConektaPayment, getConektaPaymentConfig, createPublicConektaCardPayment } from './conektaPaymentService.js'
 import { createMercadoPagoPaymentLink, getPublicMercadoPagoPayment, getMercadoPagoPaymentConfig, createPublicMercadoPagoCardPayment } from './mercadoPagoPaymentService.js'
+import { createClipPaymentLink, getPublicClipPayment, getClipPaymentConfig, createPublicClipCardPayment } from './clipPaymentService.js'
 import {
   PAYMENT_GATEWAYS,
   MSI_INSTALLMENT_CHOICES,
@@ -233,6 +234,9 @@ export async function createPaymentGateLink(configInput = {}, {
   if (config.gateway === 'mercadopago') {
     return createMercadoPagoPaymentLink(payload, { baseUrl: paymentBaseUrl, mode: forcedMode })
   }
+  if (config.gateway === 'clip') {
+    return createClipPaymentLink(payload, { baseUrl: paymentBaseUrl, mode: forcedMode })
+  }
   return createStripePaymentLink(payload, { baseUrl: paymentBaseUrl, mode: forcedMode })
 }
 
@@ -320,6 +324,17 @@ export async function getPaymentGateCheckoutDescriptor(publicPaymentId, { baseUr
     }
   }
 
+  if (status.provider === 'clip') {
+    const payment = await getPublicClipPayment(publicPaymentId, { baseUrl })
+    return {
+      ...base,
+      provider: 'clip',
+      apiKey: payment?.apiKey || '',
+      paymentMode: payment?.paymentMode || '',
+      pendingAction: payment?.pendingAction || null
+    }
+  }
+
   return base
 }
 
@@ -334,6 +349,10 @@ export async function getPaymentGateCheckoutKeys(gateway, mode = '') {
   if (g === 'mercadopago') {
     const config = await getMercadoPagoPaymentConfig({ mode })
     return { provider: 'mercadopago', publicKey: config.publicKey || '', paymentMode: config.mode || '', configured: Boolean(config.configured) }
+  }
+  if (g === 'clip') {
+    const config = await getClipPaymentConfig({ includeSecrets: true, mode })
+    return { provider: 'clip', apiKey: config.apiKey || '', paymentMode: config.mode || '', configured: Boolean(config.configured) }
   }
   const config = await getStripePaymentConfig({ mode })
   return { provider: 'stripe', publishableKey: config.publishableKey || '', paymentMode: config.mode || '', configured: Boolean(config.configured) }
@@ -369,6 +388,24 @@ export async function createPaymentGateCharge(publicPaymentId, gateway, chargeIn
       payer: chargeInput.payer
     }, { baseUrl })
     return { provider: 'mercadopago', publicPaymentId, status: cleanString(res?.payment?.status || res?.status), statusDetail: cleanString(res?.statusDetail) }
+  }
+  if (g === 'clip') {
+    const payer = chargeInput.payer && typeof chargeInput.payer === 'object' ? chargeInput.payer : {}
+    const res = await createPublicClipCardPayment(publicPaymentId, {
+      tokenId: chargeInput.tokenId || chargeInput.token || chargeInput.cardTokenId,
+      email: cleanString(chargeInput.email || payer.email),
+      phone: cleanString(chargeInput.phone || payer.phone),
+      customerName: cleanString(chargeInput.customerName || payer.name || payer.fullName),
+      installments: chargeInput.installments
+    }, { baseUrl })
+    return {
+      provider: 'clip',
+      publicPaymentId,
+      status: cleanString(res?.payment?.status || res?.status),
+      statusDetail: cleanString(res?.statusDetail),
+      clipPaymentId: cleanString(res?.clipPaymentId),
+      pendingAction: res?.pendingAction || null
+    }
   }
   const error = new Error('Pasarela no soportada.')
   error.status = 400

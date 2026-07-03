@@ -13,7 +13,7 @@ export type SiteType = 'standard_form' | 'interactive_form' | 'landing_page'
 export type SiteStatus = 'draft' | 'published' | 'archived'
 export type SiteMetaTrigger = 'page_view' | 'form_submit' | 'calendar_schedule'
 export type SiteMetaSubmitCondition = 'always' | 'qualified_only'
-export type PaymentGateGateway = 'stripe' | 'conekta' | 'mercadopago'
+export type PaymentGateGateway = 'stripe' | 'conekta' | 'mercadopago' | 'clip'
 export interface PaymentGateConfig {
   enabled: boolean
   gateway: PaymentGateGateway

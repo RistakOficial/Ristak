@@ -42,7 +42,7 @@ El producto combina:
 | Base de datos produccion | PostgreSQL en Render cuando existe `DATABASE_URL` |
 | Movil nativo | Capacitor |
 | Deploy | Render Blueprint / web service |
-| Pagos | Stripe, Conekta, Mercado Pago, HighLevel invoices |
+| Pagos | Stripe, Conekta, Mercado Pago, CLIP, HighLevel invoices |
 | IA | OpenAI Agents / providers configurables |
 
 Comandos principales:
@@ -107,7 +107,7 @@ Rutas protegidas por auth y/o feature flags:
 - `/api/transactions`: pagos/transacciones.
 - `/api/products`: productos y precios.
 - `/api/subscriptions`: suscripciones.
-- `/api/stripe`, `/api/conekta`, `/api/mercadopago`: pasarelas.
+- `/api/stripe`, `/api/conekta`, `/api/mercadopago`, `/api/clip`: pasarelas.
 - `/api/highlevel`: conexion, sync, invoices, productos, calendarios y conversaciones.
 - `/api/meta`: Meta Ads, pixel, CAPI, social messaging y campaign builder.
 - `/api/automations`: carpetas, flujos, ejecuciones y assets.
@@ -430,6 +430,7 @@ Ristak soporta:
 - Stripe.
 - Conekta.
 - Mercado Pago.
+- CLIP.
 - HighLevel invoices.
 - Productos/precios.
 - Planes de pago.
@@ -464,8 +465,40 @@ Reglas:
 - No agregues env vars o secrets para moneda default. Si una pasarela guarda una
   moneda propia, debe inicializarse o sincronizarse desde la moneda de cuenta
   cuando aplique.
+- CLIP Checkout Transparente solo acepta `MXN`; Ristak debe bloquear cobros CLIP
+  en otra moneda en vez de convertir o inferir moneda.
 
 Documento obligatorio: `docs/CURRENCY_GUIDELINES.md`.
+
+### CLIP Checkout Transparente
+
+CLIP vive como pasarela manual administrada desde Configuracion > Pagos. Sus
+credenciales de prueba y en vivo se guardan cifradas en `app_config` bajo claves
+`clip_*`; no requiere env vars nuevas para arrancar el servicio.
+
+Alcance:
+
+- Cobros unicos por link publico `/pay/:publicPaymentId`.
+- Checkout de Sites con SDK oficial `https://sdk.clip.mx/js/clip-sdk.js`.
+- Cobro inicial de suscripciones: al aprobarse el pago CLIP, Ristak activa la
+  suscripcion interna. No se registra como cobro recurrente automatico de CLIP.
+- Webhook publico `/api/clip/webhook`; cada notificacion consulta el pago real
+  con `GET /payments/{payment_id}` antes de actualizar Ristak.
+- Autenticacion 3DS: si CLIP responde `pending_action.url`, el frontend abre el
+  iframe de validacion y luego refresca el estado contra el backend.
+- Variables de automatizacion: `payment.clip_payment_id` y
+  `payment.clip_receipt_no`.
+
+Restricciones operativas:
+
+- Moneda obligatoria: `MXN`.
+- Cliente obligatorio: email y telefono.
+- El API Key se expone al SDK publico porque asi lo requiere CLIP para
+  tokenizar tarjeta; Ristak lo conserva cifrado del lado servidor y solo lo
+  entrega al checkout publico necesario.
+- Si se necesita recurrencia automatica real con cargo futuro gestionado por la
+  pasarela, usar Stripe, Conekta o Mercado Pago mientras CLIP no tenga un flujo
+  publico equivalente integrado en Ristak.
 
 ### Regla pagos test y Meta
 
@@ -616,8 +649,10 @@ y frontend (`frontend/src/pages/Sites/*`) lo importan; el `Dockerfile` copia
 - Pago: el shell del checkout comparte estilos; el preview del editor solo muestra
   lo que el vivo mostraria (fila de meses standalone solo Conekta via
   `msiEligibility`, boton de pago con icono, badge "No visible en el sitio
-  publicado" cuando el gate esta deshabilitado). El toggle "guardar tarjeta" se
-  retiro (Stripe Link no es ocultable por codigo).
+  publicado" cuando el gate esta deshabilitado). Stripe, Conekta, Mercado Pago y
+  CLIP usan el mismo contrato de `paymentGate`; CLIP monta el SDK oficial en el
+  checkout publicado y requiere email/telefono para procesar el cargo. El toggle
+  "guardar tarjeta" se retiro (Stripe Link no es ocultable por codigo).
 - Diferencias permitidas entre superficies: SOLO auth, tracking/pixel, param
   preservation y `headerTrackingCode` (nunca corren en editor/preview por
   seguridad), y el chrome de edicion. NO se permite divergencia en CSS visual,
@@ -675,7 +710,8 @@ Crons de integracion que deben pasar por registry y detector local:
 - Meta sync/version.
 - Google Calendar sync.
 - WhatsApp QR watchdog.
-- Stripe/Conekta/Mercado Pago payment plans.
+- Stripe/Conekta/Mercado Pago payment plans. CLIP no registra cron de cobro
+  recurrente; solo confirma pagos con webhook/refresh del checkout.
 
 Regla: un cron de integracion externa no arranca solo porque el backend arranco.
 Debe activarse por estado local de conexion y sincronizarse al conectar,

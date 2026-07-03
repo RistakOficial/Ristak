@@ -58,6 +58,14 @@ export interface ConektaStatus {
   accountLabel?: string | null
 }
 
+export interface ClipStatus {
+  configured: boolean
+  connected: boolean
+  mode?: 'test' | 'live'
+  accountLabel?: string | null
+  hasApiKey?: boolean
+}
+
 export interface IntegrationsStatus {
   highlevel: HighLevelStatus
   meta: MetaStatus
@@ -67,6 +75,7 @@ export interface IntegrationsStatus {
   stripe?: StripeStatus
   mercadopago?: MercadoPagoStatus
   conekta?: ConektaStatus
+  clip?: ClipStatus
 }
 
 // El estado de integraciones se consulta desde muchos componentes al montar

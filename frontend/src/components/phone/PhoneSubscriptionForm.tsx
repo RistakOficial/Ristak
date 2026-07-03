@@ -42,13 +42,15 @@ interface SubscriptionDraft {
 const PROVIDER_LABELS: Record<PaymentGatewayProvider, string> = {
   stripe: 'Stripe',
   conekta: 'Conekta',
-  mercadopago: 'Mercado Pago'
+  mercadopago: 'Mercado Pago',
+  clip: 'CLIP'
 }
 
 const PROVIDER_DESCRIPTIONS: Record<PaymentGatewayProvider, string> = {
   stripe: 'Suscripciones con Stripe.',
   conekta: 'Domiciliación con tarjeta guardada.',
-  mercadopago: 'Autorización por enlace de Mercado Pago.'
+  mercadopago: 'Autorización por enlace de Mercado Pago.',
+  clip: 'Pago inicial por link CLIP.'
 }
 
 const INTERVAL_OPTIONS: Array<PhoneSelectOption & { value: SubscriptionInterval }> = [
@@ -115,9 +117,16 @@ function getMercadoPagoAuthorizationLink(subscription: PaymentSubscription) {
   return subscription.mercadoPagoInitPoint || subscription.mercadoPagoSandboxInitPoint || ''
 }
 
+function getSubscriptionActivationLink(subscription: PaymentSubscription, provider: PaymentGatewayProvider) {
+  if (provider === 'mercadopago') return getMercadoPagoAuthorizationLink(subscription)
+  if (provider === 'clip') return subscription.subscriptionStartUrl || ''
+  return ''
+}
+
 function getPaymentMethodForProvider(provider: PaymentGatewayProvider) {
   if (provider === 'mercadopago') return 'mercadopago_subscription'
   if (provider === 'conekta') return 'conekta_subscription'
+  if (provider === 'clip') return 'clip_link'
   return 'stripe_saved_card'
 }
 
@@ -266,7 +275,7 @@ export const PhoneSubscriptionForm: React.FC<PhoneSubscriptionFormProps> = ({
 
   const validateDraft = (targetProvider?: PaymentGatewayProvider) => {
     if (!providerOptions.length) {
-      showToast('warning', 'Pasarela no conectada', 'Conecta Stripe, Conekta o Mercado Pago para crear suscripciones.')
+      showToast('warning', 'Pasarela no conectada', 'Conecta Stripe, Conekta, Mercado Pago o CLIP para crear suscripciones.')
       return false
     }
     if (!draft.name.trim()) {
@@ -284,6 +293,14 @@ export const PhoneSubscriptionForm: React.FC<PhoneSubscriptionFormProps> = ({
     }
     if (targetProvider === 'mercadopago' && !resolvedContactEmail) {
       showToast('warning', 'Falta el email', 'Mercado Pago necesita email para que el cliente autorice la suscripción.')
+      return false
+    }
+    if (targetProvider === 'clip' && String(currency || '').toUpperCase() !== 'MXN') {
+      showToast('warning', 'Moneda no soportada', 'CLIP solo acepta MXN para crear el pago inicial.')
+      return false
+    }
+    if (targetProvider === 'clip' && (!resolvedContactEmail || !resolvedContactPhone)) {
+      showToast('warning', 'Faltan datos del cliente', 'CLIP necesita email y teléfono para crear el pago inicial.')
       return false
     }
     if (targetProvider === 'conekta' && draft.intervalType === 'daily') {
@@ -307,23 +324,23 @@ export const PhoneSubscriptionForm: React.FC<PhoneSubscriptionFormProps> = ({
         contactPhone: resolvedContactPhone || null,
         name: draft.name.trim(),
         description: draft.description.trim(),
-        status: targetProvider === 'mercadopago' ? 'incomplete' : 'active',
+        status: targetProvider === 'mercadopago' || targetProvider === 'clip' ? 'incomplete' : 'active',
         amount,
         currency,
         intervalType: draft.intervalType,
         intervalCount: Math.max(1, Number(draft.intervalCount) || 1),
         startDate: draft.startDate || getTodayInputValue(),
-        nextRunAt: targetProvider === 'mercadopago' ? null : draft.startDate || getTodayInputValue(),
+        nextRunAt: targetProvider === 'mercadopago' || targetProvider === 'clip' ? null : draft.startDate || getTodayInputValue(),
         paymentMethod,
         paymentProvider: targetProvider
       })
-      const link = targetProvider === 'mercadopago' ? getMercadoPagoAuthorizationLink(subscription) : ''
+      const link = getSubscriptionActivationLink(subscription, targetProvider)
       setSavedSubscription(subscription)
       setAuthorizationLink(link)
       setProviderStepOpen(false)
 
       if (link) {
-        showToast('success', 'Autorización lista', 'Copia el link para que el cliente active la suscripción.')
+        showToast('success', 'Link listo', 'Copia el enlace para que el cliente active la suscripción.')
         return
       }
 
@@ -496,7 +513,7 @@ export const PhoneSubscriptionForm: React.FC<PhoneSubscriptionFormProps> = ({
     return (
       <PhonePaymentFormShell
         title="Suscripción lista"
-        subtitle="Envíale el link al cliente para que active los cobros recurrentes."
+        subtitle="Envíale el link al cliente para que active la suscripción."
         icon={<Repeat2 size={22} aria-hidden="true" />}
         ariaLabel="Autorización de suscripción lista"
         onBack={finishSavedSubscription}
@@ -509,7 +526,7 @@ export const PhoneSubscriptionForm: React.FC<PhoneSubscriptionFormProps> = ({
       >
         <div className={styles.successCopy}>
           <strong>Autorización pendiente</strong>
-          <span>Cuando el cliente complete el enlace, la suscripción quedará activa para sus cobros recurrentes.</span>
+          <span>Cuando el cliente complete el enlace, la suscripción quedará activa.</span>
         </div>
         <div className={styles.authorizationLink}>{authorizationLink}</div>
         <div className={styles.linkActions}>

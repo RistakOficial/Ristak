@@ -16,6 +16,10 @@ import {
   type PublicConektaPayment
 } from '@/services/conektaPaymentsService'
 import {
+  clipPaymentsService,
+  type PublicClipPayment
+} from '@/services/clipPaymentsService'
+import {
   stripePaymentsService,
   type PublicStripePayment,
   type StripePaymentIntentResponse
@@ -30,7 +34,7 @@ import { DEFAULT_TIMEZONE } from '@/utils/timezone'
 import styles from './PublicPayment.module.css'
 
 type StripePromise = ReturnType<typeof loadStripe>
-type PublicPaymentData = PublicStripePayment | PublicMercadoPagoPayment | PublicConektaPayment
+type PublicPaymentData = PublicStripePayment | PublicMercadoPagoPayment | PublicConektaPayment | PublicClipPayment
 type DocumentThemeMode = 'light' | 'dark'
 type MercadoPagoBrickController = { unmount?: () => void }
 type MetaPixelFn = ((...args: unknown[]) => void) & {
@@ -70,6 +74,17 @@ type ConektaCheckoutComponents = {
     options?: Record<string, unknown>
   }) => void
 }
+type ClipCardElement = {
+  mount: (containerId: string) => void
+  cardToken: () => Promise<{ id?: string }>
+  unmount?: () => void
+}
+type ClipSdkInstance = {
+  element: {
+    create: (type: 'Card', options?: { theme?: 'light' | 'dark'; locale?: 'es' | 'en' }) => ClipCardElement
+  }
+}
+type ClipSdkConstructor = new (apiKey: string) => ClipSdkInstance
 type SuccessDetailRow = {
   label: string
   value: React.ReactNode
@@ -109,6 +124,7 @@ declare global {
   interface Window {
     MercadoPago?: MercadoPagoConstructor
     ConektaCheckoutComponents?: ConektaCheckoutComponents
+    ClipSDK?: ClipSdkConstructor
     fbq?: MetaPixelFn
     _fbq?: MetaPixelFn
   }
@@ -116,6 +132,7 @@ declare global {
 
 const MERCADOPAGO_SDK_SRC = 'https://sdk.mercadopago.com/js/v2'
 const CONEKTA_CHECKOUT_SDK_SRC = 'https://pay.conekta.com/v1.0/js/conekta-checkout.min.js'
+const CLIP_SDK_SRC = 'https://sdk.clip.mx/js/clip-sdk.js'
 const META_PIXEL_SDK_SRC = 'https://connect.facebook.net/en_US/fbevents.js'
 const MERCADOPAGO_TEST_CARD_HELP = 'Modo prueba de Mercado Pago: usa cualquier correo con formato valido y elige el resultado con el nombre del titular, por ejemplo APRO para aprobar o FUND para fondos insuficientes.'
 const STRIPE_PAYMENT_ELEMENT_OPTIONS: StripePaymentElementOptions = {
@@ -128,6 +145,7 @@ const STRIPE_PAYMENT_ELEMENT_OPTIONS: StripePaymentElementOptions = {
 }
 let mercadoPagoSdkPromise: Promise<void> | null = null
 let conektaCheckoutSdkPromise: Promise<void> | null = null
+let clipSdkPromise: Promise<void> | null = null
 let metaPixelSdkPromise: Promise<void> | null = null
 const STRIPE_SPANISH_COUNTRIES = new Set([
   'AR', 'BO', 'CL', 'CO', 'CR', 'CU', 'DO', 'EC', 'ES', 'GT', 'HN', 'MX', 'NI', 'PA', 'PE', 'PR', 'PY', 'SV', 'UY', 'VE'
@@ -142,7 +160,7 @@ const printTemplateClassById: Record<PaymentInvoiceTemplateId, string> = {
   ledger: 'printThemeLedger'
 }
 
-type PaymentTestProvider = 'stripe' | 'conekta' | 'mercadopago'
+type PaymentTestProvider = 'stripe' | 'conekta' | 'mercadopago' | 'clip'
 type PaymentTestCardRow = {
   kind: string
   brand: string
@@ -221,6 +239,17 @@ const PAYMENT_TEST_GUIDES: Record<PaymentTestProvider, PaymentTestGuide> = {
       { kind: 'Credito', brand: 'American Express', number: '3782 822463 10005', cvc: '1234', expiry: '12/34', result: 'Pago aprobado' },
       { kind: 'Credito', brand: 'Visa', number: '4000 0000 0000 0002', cvc: '123', expiry: '12/34', result: 'Pago rechazado' }
     ]
+  },
+  clip: {
+    title: 'Ayuda para pruebas de CLIP',
+    description: 'En modo prueba usa una tarjeta de la tabla, cualquier CVV y una fecha posterior al día actual. CLIP define el resultado por PAN.',
+    emailHint: 'Correo y teléfono: el link debe tener ambos datos del cliente para que CLIP procese el cargo.',
+    cards: [
+      { kind: 'Debito', brand: 'Amex MX', number: '377770358335399', cvc: '1234', expiry: '12/34', result: 'Pago aprobado' },
+      { kind: 'Debito', brand: 'Amex MX', number: '377770541774520', cvc: '1234', expiry: '12/34', result: 'Fondos insuficientes' },
+      { kind: 'Debito', brand: 'Amex MX', number: '377770520127013', cvc: '1234', expiry: '12/34', result: 'Do not honor' },
+      { kind: 'Debito', brand: 'Amex US', number: '349028833584288', cvc: '1234', expiry: '12/34', result: 'Pago aprobado' }
+    ]
   }
 }
 
@@ -284,6 +313,7 @@ function resolveGatewayProvider(provider?: string | null): { label: string; logo
   const normalized = String(provider || '').trim().toLowerCase()
   if (normalized.includes('mercado')) return { label: 'Mercado Pago', logo: 'mercadopago' }
   if (normalized.includes('conekta')) return { label: 'Conekta', logo: 'conekta' }
+  if (normalized.includes('clip')) return { label: 'CLIP', logo: 'clip' }
   return { label: 'Stripe', logo: 'stripe' }
 }
 
@@ -534,6 +564,39 @@ function loadConektaCheckoutSdk() {
   return conektaCheckoutSdkPromise
 }
 
+function loadClipSdk() {
+  if (typeof window === 'undefined') return Promise.reject(new Error('CLIP solo se puede cargar en el navegador.'))
+  if (window.ClipSDK) return Promise.resolve()
+  if (clipSdkPromise) return clipSdkPromise
+
+  clipSdkPromise = new Promise((resolve, reject) => {
+    const existingScript = document.querySelector<HTMLScriptElement>(`script[src="${CLIP_SDK_SRC}"]`)
+    const handleReady = () => {
+      if (window.ClipSDK) {
+        resolve()
+      } else {
+        reject(new Error('No se pudo cargar el SDK de CLIP.'))
+      }
+    }
+
+    if (existingScript) {
+      existingScript.addEventListener('load', handleReady, { once: true })
+      existingScript.addEventListener('error', () => reject(new Error('No se pudo cargar el SDK de CLIP.')), { once: true })
+      window.setTimeout(handleReady, 0)
+      return
+    }
+
+    const script = document.createElement('script')
+    script.src = CLIP_SDK_SRC
+    script.async = true
+    script.addEventListener('load', handleReady, { once: true })
+    script.addEventListener('error', () => reject(new Error('No se pudo cargar el SDK de CLIP.')), { once: true })
+    document.head.appendChild(script)
+  })
+
+  return clipSdkPromise
+}
+
 function ensureMetaPixelStub() {
   if (typeof window === 'undefined') return
   if (window.fbq) return
@@ -652,6 +715,34 @@ function normalizeMercadoPagoStatusMessage(status?: string, statusDetail?: strin
       ? `Mercado Pago rechazó el pago: ${detail}. Revisa los datos o intenta con otra tarjeta.`
       : 'Mercado Pago rechazó el pago. Revisa los datos o intenta con otra tarjeta.'
   }
+}
+
+function normalizeClipStatusMessage(status?: string, statusDetail?: unknown, pendingAction?: { url?: string } | null) {
+  const normalized = String(status || '').toLowerCase()
+  if (['approved', 'paid', 'succeeded', 'completed'].includes(normalized)) {
+    return { kind: 'success' as const, text: 'Pago recibido. Gracias.' }
+  }
+  if (pendingAction?.url || ['pending', 'authorized', 'processing'].includes(normalized)) {
+    return { kind: 'info' as const, text: pendingAction?.url ? 'CLIP necesita validar este pago con 3DS.' : 'CLIP está procesando el pago. Esta página se actualizará cuando se confirme.' }
+  }
+
+  const detailText = typeof statusDetail === 'string'
+    ? statusDetail
+    : typeof statusDetail === 'object' && statusDetail
+      ? String((statusDetail as any).message || (statusDetail as any).code || '').trim()
+      : ''
+
+  return {
+    kind: 'error' as const,
+    text: detailText
+      ? `CLIP rechazó el pago: ${detailText}. Revisa los datos o intenta con otra tarjeta.`
+      : 'CLIP rechazó el pago. Revisa los datos o intenta con otra tarjeta.'
+  }
+}
+
+function normalizeClipErrorMessage(error: unknown) {
+  const message = String((error as any)?.message || error || '').trim()
+  return message || 'No se pudo completar el pago con CLIP. Revisa los datos e intenta otra vez.'
 }
 
 function normalizeMercadoPagoCardErrorMessage(error: unknown) {
@@ -1442,6 +1533,248 @@ const ConektaCardTokenizerForm: React.FC<{
   )
 }
 
+const ClipCardPaymentForm: React.FC<{
+  payment: PublicClipPayment
+  onPaid: () => Promise<void>
+}> = ({ payment, onPaid }) => {
+  const containerId = useMemo(
+    () => `clip-card-${payment.publicPaymentId.replace(/[^a-zA-Z0-9_-]/g, '')}`,
+    [payment.publicPaymentId]
+  )
+  const onPaidRef = useRef(onPaid)
+  const cardRef = useRef<ClipCardElement | null>(null)
+  const [loadingCard, setLoadingCard] = useState(Boolean(payment.apiKey))
+  const [submitting, setSubmitting] = useState(false)
+  const [message, setMessage] = useState('')
+  const [messageKind, setMessageKind] = useState<'info' | 'success' | 'error'>('info')
+  const [threeDsUrl, setThreeDsUrl] = useState('')
+  const [threeDsPaymentId, setThreeDsPaymentId] = useState('')
+  const showSecureNotice = payment.settings?.checkout?.showSecureBadge !== false
+  const isTestMode = payment.paymentMode === 'test' || String(payment.apiKey || '').startsWith('test_')
+  const isSubscriptionStart = Boolean(payment.subscriptionStart?.subscriptionId)
+
+  useEffect(() => {
+    onPaidRef.current = onPaid
+  }, [onPaid])
+
+  useEffect(() => {
+    if (!payment.apiKey) {
+      setLoadingCard(false)
+      setMessage('CLIP no devolvió una API Key para montar el formulario seguro.')
+      setMessageKind('error')
+      return
+    }
+
+    let cancelled = false
+    const mountCard = async () => {
+      setLoadingCard(true)
+      setMessage('')
+
+      try {
+        await loadClipSdk()
+        if (cancelled || !window.ClipSDK) return
+
+        const container = document.getElementById(containerId)
+        if (container) container.innerHTML = ''
+
+        const clip = new window.ClipSDK(payment.apiKey || '')
+        const card = clip.element.create('Card', {
+          theme: 'light',
+          locale: 'es'
+        })
+        card.mount(containerId)
+        cardRef.current = card
+        setLoadingCard(false)
+      } catch (clipError: any) {
+        if (cancelled) return
+        setLoadingCard(false)
+        setMessageKind('error')
+        setMessage(normalizeClipErrorMessage(clipError))
+      }
+    }
+
+    mountCard()
+
+    return () => {
+      cancelled = true
+      cardRef.current?.unmount?.()
+      cardRef.current = null
+      const container = document.getElementById(containerId)
+      if (container) container.innerHTML = ''
+    }
+  }, [containerId, payment.apiKey])
+
+  useEffect(() => {
+    if (!threeDsUrl) return undefined
+
+    const expectedOrigin = (() => {
+      try {
+        return new URL(threeDsUrl).origin
+      } catch {
+        return ''
+      }
+    })()
+
+    const handleMessage = async (event: MessageEvent) => {
+      if (expectedOrigin && event.origin !== expectedOrigin) return
+      const returnedPaymentId = String((event.data as any)?.paymentId || (event.data as any)?.payment_id || threeDsPaymentId || '').trim()
+      if (!returnedPaymentId) return
+
+      setSubmitting(true)
+      setMessageKind('info')
+      setMessage('Validación recibida. Confirmando el pago con CLIP.')
+      try {
+        const result = await clipPaymentsService.refreshPublicPayment(payment.publicPaymentId, returnedPaymentId)
+        const statusMessage = normalizeClipStatusMessage(result.payment?.status || result.status, result.statusDetail, result.pendingAction)
+        setMessageKind(statusMessage.kind)
+        setMessage(isSubscriptionStart && statusMessage.kind === 'success'
+          ? 'Suscripción autorizada. Gracias.'
+          : statusMessage.text)
+        setThreeDsUrl('')
+        await onPaidRef.current()
+      } catch (refreshError: any) {
+        setMessageKind('error')
+        setMessage(normalizeClipErrorMessage(refreshError))
+      } finally {
+        setSubmitting(false)
+      }
+    }
+
+    window.addEventListener('message', handleMessage)
+    return () => window.removeEventListener('message', handleMessage)
+  }, [isSubscriptionStart, payment.publicPaymentId, threeDsPaymentId, threeDsUrl])
+
+  const handleSubmit = async (event: React.FormEvent) => {
+    event.preventDefault()
+    if (submitting) return
+
+    const card = cardRef.current
+    if (!card) {
+      setMessageKind('error')
+      setMessage('El formulario seguro de CLIP todavía no está listo. Espera un momento e intenta de nuevo.')
+      return
+    }
+
+    setSubmitting(true)
+    setMessage('')
+    setThreeDsUrl('')
+
+    try {
+      const cardToken = await card.cardToken()
+      const tokenId = String(cardToken?.id || '').trim()
+      if (!tokenId) {
+        throw new Error('CLIP no devolvió un token válido. Intenta nuevamente.')
+      }
+
+      const result = await clipPaymentsService.createPublicCardPayment(payment.publicPaymentId, {
+        cardTokenId: tokenId,
+        email: payment.contact?.email || '',
+        phone: payment.contact?.phone || ''
+      })
+      const statusMessage = normalizeClipStatusMessage(result.payment?.status || result.status, result.statusDetail, result.pendingAction)
+      setMessageKind(statusMessage.kind)
+      setMessage(isSubscriptionStart && statusMessage.kind === 'success'
+        ? 'Suscripción autorizada. Gracias.'
+        : statusMessage.text)
+
+      if (result.pendingAction?.url) {
+        setThreeDsPaymentId(result.clipPaymentId || result.payment?.clipPaymentId || '')
+        setThreeDsUrl(result.pendingAction.url)
+      }
+
+      await onPaidRef.current()
+    } catch (submitError: any) {
+      setMessageKind('error')
+      setMessage(normalizeClipErrorMessage(submitError))
+    } finally {
+      setSubmitting(false)
+    }
+  }
+
+  const messageClassName = [
+    styles.providerMessage,
+    messageKind === 'success' ? styles.messageSuccess : '',
+    messageKind === 'error' ? styles.messageError : ''
+  ].filter(Boolean).join(' ')
+
+  return (
+    <form className={styles.stripeBox} onSubmit={handleSubmit}>
+      <div className={styles.clipCardShell}>
+        {loadingCard && (
+          <div className={styles.brickLoading}>
+            <Loader2 size={18} className={styles.spin} />
+            <span>Cargando campos seguros</span>
+          </div>
+        )}
+        <div id={containerId} className={styles.clipCardFrame} />
+      </div>
+
+      <Button
+        type="submit"
+        variant="primary"
+        className={styles.conektaSubmitButton}
+        loading={submitting}
+        disabled={loadingCard}
+        leftIcon={!submitting ? <ShieldCheck size={16} /> : undefined}
+      >
+        {submitting
+          ? (isSubscriptionStart ? 'Autorizando' : 'Procesando pago')
+          : isSubscriptionStart
+            ? `Autorizar suscripción ${formatCurrency(payment.amount, payment.currency)}`
+            : `Pagar ${formatCurrency(payment.amount, payment.currency)}`}
+      </Button>
+
+      {showSecureNotice && (
+        <p className={styles.cardAuthorizationNotice}>
+          <ShieldCheck size={16} />
+          <span>
+            {isSubscriptionStart
+              ? 'La tarjeta se captura en campos seguros de CLIP. Ristak solo recibe el resultado del pago inicial.'
+              : 'La tarjeta se captura en campos seguros de CLIP. Ristak solo recibe el resultado del cobro.'}
+          </span>
+        </p>
+      )}
+
+      {isTestMode && <PaymentTestHelper provider="clip" />}
+
+      {message && (
+        <p className={messageClassName}>
+          {messageKind === 'success' ? <CheckCircle2 size={16} /> : <AlertCircle size={16} />}
+          <span>{message}</span>
+        </p>
+      )}
+
+      {threeDsUrl && (
+        <div className={styles.threeDsOverlay} role="dialog" aria-modal="true" aria-label="Validación bancaria">
+          <div className={styles.threeDsPanel}>
+            <div className={styles.threeDsHeader}>
+              <div>
+                <span className={styles.eyebrow}>Validación bancaria</span>
+                <strong>Confirma el pago con tu banco</strong>
+              </div>
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                onClick={() => setThreeDsUrl('')}
+                disabled={submitting}
+              >
+                Cerrar
+              </Button>
+            </div>
+            <iframe
+              title="Validación 3DS CLIP"
+              src={threeDsUrl}
+              className={styles.threeDsFrame}
+              allow="payment *"
+            />
+          </div>
+        </div>
+      )}
+    </form>
+  )
+}
+
 export const PublicPaymentGatewayReturn: React.FC = () => {
   const [searchParams] = useSearchParams()
   const { theme } = useTheme()
@@ -1544,13 +1877,14 @@ export const PublicPayment: React.FC = () => {
   const isStripePayment = payment?.provider === 'stripe'
   const isMercadoPagoPayment = payment?.provider === 'mercadopago'
   const isConektaPayment = payment?.provider === 'conekta'
+  const isClipPayment = payment?.provider === 'clip'
   const stripePayment = payment?.provider === 'stripe' ? payment : null
   const paymentPlan = stripePayment?.paymentPlan || null
   const subscriptionStart = payment && 'subscriptionStart' in payment ? payment.subscriptionStart : null
   const isSubscriptionStart = Boolean(subscriptionStart?.subscriptionId)
   const shouldSavePaymentMethod = Boolean(stripePayment?.contact?.id || paymentPlan?.cardSetupRequired)
-  const providerLabel = isMercadoPagoPayment ? 'Mercado Pago' : isConektaPayment ? 'Conekta' : 'Stripe'
-  const providerLogo: PaymentPlatformLogoId = isMercadoPagoPayment ? 'mercadopago' : isConektaPayment ? 'conekta' : 'stripe'
+  const providerLabel = isMercadoPagoPayment ? 'Mercado Pago' : isConektaPayment ? 'Conekta' : isClipPayment ? 'CLIP' : 'Stripe'
+  const providerLogo: PaymentPlatformLogoId = isMercadoPagoPayment ? 'mercadopago' : isConektaPayment ? 'conekta' : isClipPayment ? 'clip' : 'stripe'
 
   const stripePromise = useMemo<StripePromise | null>(() => {
     if (!stripePayment) return null
@@ -1584,7 +1918,11 @@ export const PublicPayment: React.FC = () => {
         try {
           return await conektaPaymentsService.getPublicPayment(id)
         } catch {
-          throw stripeError
+          try {
+            return await clipPaymentsService.getPublicPayment(id)
+          } catch {
+            throw stripeError
+          }
         }
       }
     }
@@ -2049,6 +2387,10 @@ export const PublicPayment: React.FC = () => {
                       ? (isSubscriptionStart
                           ? 'Captura la tarjeta en el tokenizador seguro de Conekta para autorizar la suscripción.'
                           : 'Captura la tarjeta en el tokenizador seguro de Conekta sin salir de esta página.')
+                      : isClipPayment
+                        ? (isSubscriptionStart
+                            ? 'Captura la tarjeta en el formulario seguro de CLIP para pagar el inicio de la suscripción.'
+                            : 'Captura la tarjeta en el formulario seguro de CLIP sin salir de esta página.')
                       : isCardSetupPlan
                         ? 'Stripe abrirá el formulario seguro para autorizar el calendario mostrado.'
                         : isSubscriptionStart
@@ -2121,6 +2463,11 @@ export const PublicPayment: React.FC = () => {
               />
             ) : isConektaPayment ? (
               <ConektaCardTokenizerForm
+                payment={payment}
+                onPaid={() => loadPayment(true)}
+              />
+            ) : isClipPayment ? (
+              <ClipCardPaymentForm
                 payment={payment}
                 onPaid={() => loadPayment(true)}
               />

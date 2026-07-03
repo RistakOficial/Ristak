@@ -14,7 +14,7 @@ import { ProductFormModal } from '@/components/common/ProductFormModal/ProductFo
 import { MSI_INSTALLMENT_CHOICES as SHARED_MSI_INSTALLMENT_CHOICES } from '../../../../../shared/sites/paymentGateContract.js'
 import styles from './PaymentGateControls.module.css'
 
-export type PaymentGateGateway = 'stripe' | 'conekta' | 'mercadopago'
+export type PaymentGateGateway = 'stripe' | 'conekta' | 'mercadopago' | 'clip'
 
 // Modo por bloque SEGURO: solo puede forzar 'test' (probar sin cobrar aunque la
 // plataforma esté en live). 'inherit' = usa el modo global. Nunca 'live' → imposible
@@ -40,11 +40,9 @@ export interface PaymentGateConfig {
   msi: PaymentGateMsi
 }
 
-// Meses sin intereses: Stripe (Payment Element, solo MXN y monto ≥ 300), Conekta y
-// Mercado Pago. En Stripe, si el bloque no cumple MXN/≥300 se cobra de contado sin romper.
-// El toggle se ofrece para las tres, pero la fila standalone que ve el visitante es
-// exclusiva de Conekta (Stripe/MP resuelven los meses dentro de su propio widget) —
-// esa lógica vive en msiEligibility del contrato compartido.
+// Meses sin intereses: Stripe (Payment Element, solo MXN y monto >= 300), Conekta y
+// Mercado Pago. CLIP queda como cobro normal porque el contrato publico actual no expone
+// recurrencia/MSI equivalente dentro de Ristak.
 export const MSI_GATEWAYS = new Set<PaymentGateGateway>(['stripe', 'conekta', 'mercadopago'])
 // Lista de opciones en el contrato compartido para no divergir con el backend/runtime.
 export const MSI_INSTALLMENT_CHOICES = SHARED_MSI_INSTALLMENT_CHOICES
@@ -61,7 +59,8 @@ interface PaymentGateControlsProps {
 const gatewayOptions: Array<{ value: PaymentGateGateway; label: string; logo: PaymentPlatformLogoId }> = [
   { value: 'stripe', label: 'Stripe', logo: 'stripe' },
   { value: 'conekta', label: 'Conekta', logo: 'conekta' },
-  { value: 'mercadopago', label: 'Mercado Pago', logo: 'mercadopago' }
+  { value: 'mercadopago', label: 'Mercado Pago', logo: 'mercadopago' },
+  { value: 'clip', label: 'CLIP', logo: 'clip' }
 ]
 
 const gatewayValues = new Set<PaymentGateGateway>(gatewayOptions.map(option => option.value))
@@ -138,7 +137,9 @@ const isGatewayConnected = (status: IntegrationsStatus | null, gateway: PaymentG
     ? status.stripe
     : gateway === 'conekta'
       ? status.conekta
-      : status.mercadopago
+      : gateway === 'mercadopago'
+        ? status.mercadopago
+        : status.clip
   return Boolean(gatewayStatus?.connected || gatewayStatus?.configured)
 }
 

@@ -68,6 +68,7 @@ import {
   type PaymentTaxSettings
 } from '@/services/paymentSettingsService'
 import { conektaPaymentsService, type ConektaPaymentConfig, type SaveConektaPaymentConfigPayload } from '@/services/conektaPaymentsService'
+import { clipPaymentsService, type ClipPaymentConfig, type SaveClipPaymentConfigPayload } from '@/services/clipPaymentsService'
 import { mercadoPagoPaymentsService, type MercadoPagoPaymentConfig } from '@/services/mercadoPagoPaymentsService'
 import { stripePaymentsService, type SaveStripePaymentConfigPayload, type StripePaymentConfig } from '@/services/stripePaymentsService'
 import { whatsappApiService, type WhatsAppApiTemplate } from '@/services/whatsappApiService'
@@ -102,7 +103,7 @@ import {
 import styles from './PaymentsConfiguration.module.css'
 
 type PaymentsSectionId = 'checkout' | 'receipt' | 'meta' | 'automations' | 'gateways' | 'taxes'
-type PaymentGatewayId = 'highlevel' | 'stripe' | 'conekta' | 'mercadopago'
+type PaymentGatewayId = 'highlevel' | 'stripe' | 'conekta' | 'mercadopago' | 'clip'
 type AutoSaveState = 'idle' | 'saving' | 'saved' | 'error'
 type PaymentAutomationTemplateKind = 'reminder' | 'receipt' | 'failed'
 type StripeModeId = 'test' | 'live'
@@ -139,6 +140,11 @@ interface StripeModeCredentials {
 interface ConektaModeCredentials {
   publicKey: string
   privateKey: string
+}
+
+interface ClipModeCredentials {
+  apiKey: string
+  accountLabel: string
 }
 
 interface MercadoPagoSubscriptionTestCredentials {
@@ -182,7 +188,7 @@ const sectionItems: Array<{ id: PaymentsSectionId; label: string; icon: React.Re
 ]
 
 const sectionIds = sectionItems.map((item) => item.id)
-const gatewayIds: PaymentGatewayId[] = ['highlevel', 'stripe', 'conekta', 'mercadopago']
+const gatewayIds: PaymentGatewayId[] = ['highlevel', 'stripe', 'conekta', 'mercadopago', 'clip']
 const GIGSTACK_API_URL = 'https://gigstack.pro/api-facturacion'
 const stripeModeIds: StripeModeId[] = ['test', 'live']
 const emptyStripeModeCredentials: Record<StripeModeId, StripeModeCredentials> = {
@@ -192,6 +198,10 @@ const emptyStripeModeCredentials: Record<StripeModeId, StripeModeCredentials> = 
 const emptyConektaModeCredentials: Record<StripeModeId, ConektaModeCredentials> = {
   test: { publicKey: '', privateKey: '' },
   live: { publicKey: '', privateKey: '' }
+}
+const emptyClipModeCredentials: Record<StripeModeId, ClipModeCredentials> = {
+  test: { apiKey: '', accountLabel: '' },
+  live: { apiKey: '', accountLabel: '' }
 }
 const emptyMercadoPagoSubscriptionTestCredentials: MercadoPagoSubscriptionTestCredentials = {
   publicKey: '',
@@ -307,6 +317,19 @@ const conektaModeLabels: Record<StripeModeId, { title: string; description: stri
     description: 'Para aceptar pagos reales con tu cuenta de Conekta.',
     publicPlaceholder: 'key_...',
     privatePlaceholder: 'key_...'
+  }
+}
+
+const clipModeLabels: Record<StripeModeId, { title: string; description: string; apiKeyPlaceholder: string }> = {
+  test: {
+    title: 'Modo prueba',
+    description: 'Para validar Checkout Transparente de CLIP sin mover dinero real.',
+    apiKeyPlaceholder: 'API Key de prueba'
+  },
+  live: {
+    title: 'Modo en vivo',
+    description: 'Para aceptar pagos reales con CLIP Checkout Transparente.',
+    apiKeyPlaceholder: 'API Key en vivo'
   }
 }
 const parseBooleanLike = (value: unknown, fallback = false) => {
@@ -584,6 +607,25 @@ const getConektaModeCredentialsFromConfig = (config?: ConektaPaymentConfig | nul
   return nextCredentials
 }
 
+const getClipModeCredentialsFromConfig = (config?: ClipPaymentConfig | null): Record<StripeModeId, ClipModeCredentials> => {
+  if (!config) return emptyClipModeCredentials
+
+  const nextCredentials: Record<StripeModeId, ClipModeCredentials> = {
+    test: { ...emptyClipModeCredentials.test },
+    live: { ...emptyClipModeCredentials.live }
+  }
+
+  stripeModeIds.forEach((mode) => {
+    const modeConfig = config.modeConnections?.[mode]
+    nextCredentials[mode] = {
+      apiKey: modeConfig?.apiKeyPreview || (config.mode === mode ? config.apiKeyPreview || '' : ''),
+      accountLabel: modeConfig?.accountLabel || (config.mode === mode ? config.accountLabel || '' : '')
+    }
+  })
+
+  return nextCredentials
+}
+
 const getMercadoPagoSubscriptionTestCredentialsFromConfig = (config?: MercadoPagoPaymentConfig | null): MercadoPagoSubscriptionTestCredentials => ({
   publicKey: config?.subscriptionTestCredentials?.publicKey || '',
   accessToken: config?.subscriptionTestCredentials?.accessTokenPreview || '',
@@ -657,6 +699,13 @@ export const PaymentsConfiguration: React.FC = () => {
   const [savingConektaMode, setSavingConektaMode] = useState<StripeModeId | null>(null)
   const [conektaConnectionFailed, setConektaConnectionFailed] = useState(false)
   const [disconnectingConektaMode, setDisconnectingConektaMode] = useState<StripeModeId | null>(null)
+  const [clipConfig, setClipConfig] = useState<ClipPaymentConfig | null>(null)
+  const [clipManualCredentials, setClipManualCredentials] = useState<Record<StripeModeId, ClipModeCredentials>>(emptyClipModeCredentials)
+  const [loadingClipConfig, setLoadingClipConfig] = useState(false)
+  const [savingClipMode, setSavingClipMode] = useState<StripeModeId | null>(null)
+  const [testingClipMode, setTestingClipMode] = useState<StripeModeId | null>(null)
+  const [clipConnectionFailed, setClipConnectionFailed] = useState(false)
+  const [disconnectingClipMode, setDisconnectingClipMode] = useState<StripeModeId | null>(null)
   const [mercadoPagoConfig, setMercadoPagoConfig] = useState<MercadoPagoPaymentConfig | null>(null)
   const [mercadoPagoSubscriptionTestCredentials, setMercadoPagoSubscriptionTestCredentials] = useState<MercadoPagoSubscriptionTestCredentials>(emptyMercadoPagoSubscriptionTestCredentials)
   const [loadingMercadoPagoConfig, setLoadingMercadoPagoConfig] = useState(false)
@@ -775,6 +824,7 @@ export const PaymentsConfiguration: React.FC = () => {
     loadStripeConfig()
     loadConektaConfig()
     loadMercadoPagoConfig()
+    loadClipConfig()
     loadWhatsAppAvailability()
     loadPaymentWhatsappTemplates()
   }, [])
@@ -842,6 +892,16 @@ export const PaymentsConfiguration: React.FC = () => {
     status: conektaConfig?.configured ? 'connected' : 'available'
   }), [conektaConfig?.configured, conektaConfig?.mode])
 
+  const clipGatewayOption: PaymentGatewayOption = useMemo(() => ({
+    id: 'clip',
+    name: 'CLIP',
+    logo: 'clip',
+    description: clipConfig?.configured
+      ? `Listo para cobros en MXN con Checkout Transparente en ${clipConfig.mode === 'live' ? 'modo en vivo' : 'modo prueba'}.`
+      : 'Configura CLIP para pagos únicos y pago inicial de suscripciones internas.',
+    status: clipConfig?.configured ? 'connected' : 'available'
+  }), [clipConfig?.configured, clipConfig?.mode])
+
   const gatewayOptions: PaymentGatewayOption[] = [
     ...(highLevelConnected
       ? [{
@@ -861,13 +921,15 @@ export const PaymentsConfiguration: React.FC = () => {
         ? `Listo para links y suscripciones en ${mercadoPagoConfig.mode === 'live' ? 'modo en vivo' : 'modo prueba'}.`
         : `Conecta Mercado Pago para usar ${paymentMode === 'live' ? 'cobros reales' : 'tarjetas de prueba en links de pago'}.`,
       status: mercadoPagoConfig?.configured ? 'connected' : 'available'
-    }
+    },
+    clipGatewayOption
   ]
 
   const mercadoPagoWebhookEndpoints = mercadoPagoConfig?.webhookEndpoints || []
   const stripeConnected = Boolean(stripeConfig?.configured)
   const conektaConnected = Boolean(conektaConfig?.configured)
   const mercadoPagoConnected = Boolean(mercadoPagoConfig?.configured)
+  const clipConnected = Boolean(clipConfig?.configured)
   const stripeModeIsComplete = (mode: StripeModeId) => {
     const values = stripeManualCredentials[mode]
     return Boolean(values.publishableKey.trim() && values.secretKey.trim())
@@ -905,6 +967,22 @@ export const PaymentsConfiguration: React.FC = () => {
     if (loadingConektaConfig) return { label: 'Cargando', variant: 'warning' as const, icon: <Loader2 size={14} className={styles.spinIcon} /> }
     if (conektaConfigurationStatus === 'connection_failed') return { label: 'Conexión fallida', variant: 'warning' as const, icon: <AlertTriangle size={14} /> }
     if (conektaActiveModeConfigured) return { label: 'Configurado', variant: 'success' as const, icon: <ShieldCheck size={14} /> }
+    return { label: 'Sin configurar', variant: 'neutral' as const, icon: <KeyRound size={14} /> }
+  })()
+  const clipModeIsComplete = (mode: StripeModeId) => Boolean(clipManualCredentials[mode].apiKey.trim())
+  const clipModeIsSaved = (mode: StripeModeId) => Boolean(
+    clipConfig?.modeConnections?.[mode]?.configured ||
+    (clipConfig?.configured && clipConfig.mode === mode)
+  )
+  const clipModeCanSave = (mode: StripeModeId) => clipModeIsComplete(mode)
+  const clipActiveModeConfigured = clipModeIsSaved(paymentMode)
+  const clipConfigurationStatus = clipConnectionFailed
+    ? 'connection_failed'
+    : clipConnected ? 'configured_manually' : 'not_configured'
+  const clipStatusBadge = (() => {
+    if (loadingClipConfig) return { label: 'Cargando', variant: 'warning' as const, icon: <Loader2 size={14} className={styles.spinIcon} /> }
+    if (clipConfigurationStatus === 'connection_failed') return { label: 'Conexión fallida', variant: 'warning' as const, icon: <AlertTriangle size={14} /> }
+    if (clipActiveModeConfigured) return { label: 'Configurado', variant: 'success' as const, icon: <ShieldCheck size={14} /> }
     return { label: 'Sin configurar', variant: 'neutral' as const, icon: <KeyRound size={14} /> }
   })()
   const mercadoPagoModeIsConnected = (mode: PaymentModeId) => Boolean(
@@ -1384,6 +1462,25 @@ export const PaymentsConfiguration: React.FC = () => {
     }
   }
 
+  const applyClipConfig = (config: ClipPaymentConfig) => {
+    setClipConfig(config)
+    setClipManualCredentials(getClipModeCredentialsFromConfig(config))
+    setClipConnectionFailed(false)
+  }
+
+  const loadClipConfig = async () => {
+    setLoadingClipConfig(true)
+    try {
+      const config = await clipPaymentsService.getConfig()
+      applyClipConfig(config)
+    } catch {
+      setClipConfig(null)
+      setClipManualCredentials(emptyClipModeCredentials)
+    } finally {
+      setLoadingClipConfig(false)
+    }
+  }
+
   const handlePaymentModeChange = async (nextMode: PaymentModeId) => {
     if (nextMode === paymentMode || savingPaymentMode) return
 
@@ -1411,7 +1508,8 @@ export const PaymentsConfiguration: React.FC = () => {
       await Promise.all([
         loadStripeConfig(),
         loadConektaConfig(),
-        loadMercadoPagoConfig()
+        loadMercadoPagoConfig(),
+        loadClipConfig()
       ])
       invalidateIntegrationsStatus()
       showToast('success', 'Modo de pasarelas actualizado', `Los nuevos cobros usarán ${paymentModeLabels[nextMode].title.toLowerCase()}.`)
@@ -1468,6 +1566,23 @@ export const PaymentsConfiguration: React.FC = () => {
 
   const updateConektaModeCredential = (mode: StripeModeId, key: keyof ConektaModeCredentials, value: string) => {
     setConektaManualCredentials((current) => ({
+      ...current,
+      [mode]: {
+        ...current[mode],
+        [key]: value
+      }
+    }))
+  }
+
+  const buildClipModeConfigPayload = (mode: StripeModeId, modeValues: ClipModeCredentials = clipManualCredentials[mode]): SaveClipPaymentConfigPayload => ({
+    enabled: true,
+    mode,
+    accountLabel: modeValues.accountLabel.trim(),
+    apiKey: modeValues.apiKey.trim()
+  })
+
+  const updateClipModeCredential = (mode: StripeModeId, key: keyof ClipModeCredentials, value: string) => {
+    setClipManualCredentials((current) => ({
       ...current,
       [mode]: {
         ...current[mode],
@@ -1618,6 +1733,64 @@ export const PaymentsConfiguration: React.FC = () => {
       showToast('error', 'No se pudo desconectar Conekta', error.message || 'Intenta de nuevo.')
     } finally {
       setDisconnectingConektaMode(null)
+    }
+  }
+
+  const handleSaveClipModeConfig = async (mode: StripeModeId) => {
+    setSavingClipMode(mode)
+    try {
+      const config = await clipPaymentsService.saveConfig(buildClipModeConfigPayload(mode))
+      applyClipConfig(config)
+      invalidateIntegrationsStatus()
+      showToast('success', 'CLIP guardado', `${clipModeLabels[mode].title} quedó listo para Checkout Transparente.`)
+    } catch (error: any) {
+      setClipConnectionFailed(true)
+      showToast('error', 'No se pudo guardar CLIP', error.message || 'Revisa la API Key de CLIP.')
+    } finally {
+      setSavingClipMode(null)
+    }
+  }
+
+  const handleTestClipModeConfig = async (mode: StripeModeId) => {
+    setTestingClipMode(mode)
+    try {
+      const result = await clipPaymentsService.testConfig(buildClipModeConfigPayload(mode))
+      showToast('success', 'CLIP respondió correctamente', `Conexión ${result.mode === 'live' ? 'en vivo' : 'de prueba'} validada con la API de CLIP.`)
+    } catch (error: any) {
+      setClipConnectionFailed(true)
+      showToast('error', 'CLIP rechazó la conexión', error.message || 'Verifica la API Key y el modo.')
+    } finally {
+      setTestingClipMode(null)
+    }
+  }
+
+  const handleDisconnectClipMode = (mode: StripeModeId) => {
+    showConfirm(
+      'Desconectar CLIP',
+      `Se borrará la API Key de ${clipModeLabels[mode].title.toLowerCase()} y CLIP dejará de usarse para nuevos cobros en ese modo. Esta acción no se puede deshacer.`,
+      () => disconnectClipMode(mode),
+      'Desconectar',
+      'Cancelar',
+      undefined,
+      { typeToConfirm: 'DESCONECTAR' }
+    )
+  }
+
+  const disconnectClipMode = async (mode: StripeModeId) => {
+    setDisconnectingClipMode(mode)
+    try {
+      const config = await clipPaymentsService.saveConfig({
+        mode,
+        enabled: false,
+        disconnectMode: true
+      })
+      applyClipConfig(config)
+      invalidateIntegrationsStatus()
+      showToast('success', 'CLIP desconectado', `${clipModeLabels[mode].title} dejó de usarse para nuevos cobros.`)
+    } catch (error: any) {
+      showToast('error', 'No se pudo desconectar CLIP', error.message || 'Intenta de nuevo.')
+    } finally {
+      setDisconnectingClipMode(null)
     }
   }
 
@@ -3676,6 +3849,153 @@ export const PaymentsConfiguration: React.FC = () => {
                 </div>
               )
             })()}
+          </div>
+        </Card>
+      )}
+
+      {activeGatewayRoute === 'clip' && (
+        <Card className={styles.sectionCard}>
+          <div className={styles.sectionHeader}>
+            <div className={styles.gatewaySectionTitle}>
+              <PaymentPlatformLogo platform="clip" size="lg" decorative />
+              <div>
+                <h2>CLIP</h2>
+                <p>Configura Checkout Transparente de CLIP para pagos únicos en MXN y pago inicial de suscripciones internas.</p>
+              </div>
+            </div>
+            <Badge variant={clipStatusBadge.variant}>
+              {clipStatusBadge.icon}
+              {clipStatusBadge.label}
+            </Badge>
+          </div>
+
+          <div className={styles.stripePanel}>
+            <div className={styles.inlineWarning}>
+              <Info size={16} />
+              <span>CLIP Checkout Transparente opera en MXN y requiere email/teléfono del cliente al cobrar. Las suscripciones se activan en Ristak cuando el pago inicial queda confirmado por CLIP.</span>
+            </div>
+
+            <div className={styles.stripeModeGrid}>
+              {stripeModeIds.map((mode) => {
+                const modeCopy = clipModeLabels[mode]
+                const values = clipManualCredentials[mode]
+                const savedMode = clipConfig?.modeConnections?.[mode]
+                const modeSaved = clipModeIsSaved(mode)
+                const modeIsSaving = savingClipMode === mode
+                const modeIsTesting = testingClipMode === mode
+                const modeIsDisconnecting = disconnectingClipMode === mode
+
+                return (
+                  <div key={mode} className={styles.stripeModePanel}>
+                    <div className={styles.stripeModeHeader}>
+                      <div>
+                        <h3>{modeCopy.title}</h3>
+                        <p>{modeCopy.description}</p>
+                      </div>
+                    </div>
+
+                    {modeSaved && (
+                      <div className={styles.connectionSummary}>
+                        <div>
+                          <span>Cuenta</span>
+                          <strong>{savedMode?.accountLabel || clipConfig?.accountLabel || 'CLIP'}</strong>
+                        </div>
+                        <div>
+                          <span>API Key</span>
+                          <strong>{savedMode?.apiKeyPreview || clipConfig?.apiKeyPreview || 'Guardada'}</strong>
+                        </div>
+                      </div>
+                    )}
+
+                    <div className={styles.formGrid}>
+                      {renderField(
+                        'Etiqueta de cuenta',
+                        <input
+                          type="text"
+                          value={values.accountLabel}
+                          onChange={(event) => updateClipModeCredential(mode, 'accountLabel', event.target.value)}
+                          placeholder={mode === 'live' ? 'CLIP en vivo' : 'CLIP prueba'}
+                          autoComplete="off"
+                          spellCheck={false}
+                        />
+                      )}
+                      {renderField(
+                        'API Key',
+                        <input
+                          type="password"
+                          value={values.apiKey}
+                          onChange={(event) => updateClipModeCredential(mode, 'apiKey', event.target.value)}
+                          onFocus={(event) => {
+                            if (savedMode?.apiKeyPreview && values.apiKey === savedMode.apiKeyPreview) event.currentTarget.select()
+                          }}
+                          placeholder={savedMode?.hasApiKey ? savedMode.apiKeyPreview : modeCopy.apiKeyPlaceholder}
+                          autoComplete="new-password"
+                          spellCheck={false}
+                        />
+                      )}
+                    </div>
+
+                    <div className={styles.stripeModeActions}>
+                      <Button
+                        type="button"
+                        variant="secondary"
+                        size="sm"
+                        onClick={() => handleTestClipModeConfig(mode)}
+                        disabled={modeIsTesting || modeIsSaving || !clipModeCanSave(mode)}
+                      >
+                        {modeIsTesting ? (
+                          <>
+                            <Loader2 size={15} className={styles.spinIcon} />
+                            Probando...
+                          </>
+                        ) : (
+                          <>
+                            <ShieldCheck size={15} />
+                            Probar conexión
+                          </>
+                        )}
+                      </Button>
+                      <Button
+                        type="button"
+                        size="sm"
+                        onClick={() => handleSaveClipModeConfig(mode)}
+                        disabled={modeIsSaving || Boolean(disconnectingClipMode) || !clipModeCanSave(mode)}
+                      >
+                        {modeIsSaving ? (
+                          <>
+                            <Loader2 size={15} className={styles.spinIcon} />
+                            Guardando...
+                          </>
+                        ) : (
+                          modeSaved ? 'Guardar cambios' : 'Guardar configuración'
+                        )}
+                      </Button>
+                      {modeSaved && (
+                        <Button
+                          type="button"
+                          variant="secondary"
+                          size="sm"
+                          onClick={() => handleDisconnectClipMode(mode)}
+                          disabled={modeIsDisconnecting || Boolean(savingClipMode)}
+                        >
+                          {modeIsDisconnecting ? (
+                            <>
+                              <Loader2 size={15} className={styles.spinIcon} />
+                              Desconectando...
+                            </>
+                          ) : (
+                            <>
+                              <Unplug size={15} />
+                              Desconectar
+                            </>
+                          )}
+                        </Button>
+                      )}
+                    </div>
+                  </div>
+                )
+              })}
+            </div>
           </div>
         </Card>
       )}

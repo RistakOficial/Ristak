@@ -20,6 +20,10 @@ import {
   getMercadoPagoPaymentConfig
 } from '../../services/mercadoPagoPaymentService.js'
 import {
+  createClipPaymentLink,
+  getClipPaymentConfig
+} from '../../services/clipPaymentService.js'
+import {
   createConektaPaymentLink,
   createConektaPaymentPlan,
   createConektaSavedCardPayment,
@@ -39,7 +43,7 @@ import {
 const PAYMENT_GATEWAY_CAPABILITIES = {
   paymentLinks: 'links de pago',
   installmentPlans: 'planes de pago',
-  subscriptions: 'suscripciones automáticas',
+  subscriptions: 'suscripciones',
   savedCardCharges: 'cobros con tarjeta guardada'
 }
 
@@ -47,12 +51,13 @@ const PAYMENT_GATEWAY_LABELS = {
   highlevel: 'GoHighLevel',
   stripe: 'Stripe',
   conekta: 'Conekta',
-  mercadopago: 'Mercado Pago'
+  mercadopago: 'Mercado Pago',
+  clip: 'CLIP'
 }
 
-const GATEWAY_PARAM = z.enum(['auto', 'highlevel', 'stripe', 'conekta', 'mercadopago'])
+const GATEWAY_PARAM = z.enum(['auto', 'highlevel', 'stripe', 'conekta', 'mercadopago', 'clip'])
   .nullable()
-  .describe('Pasarela a usar: auto, highlevel, stripe, conekta o mercadopago. Si hay varias conectadas, pregunta al usuario cuál prefiere antes de crear el cobro.')
+  .describe('Pasarela a usar: auto, highlevel, stripe, conekta, mercadopago o clip. Si hay varias conectadas, pregunta al usuario cuál prefiere antes de crear el cobro.')
 
 const CHANNEL_PARAM = z.enum(['email', 'whatsapp', 'sms', 'all'])
   .describe('Canal por el que se envía el link cuando la pasarela requiere envío.')
@@ -105,6 +110,7 @@ function normalizeGatewayId(value) {
   if (normalized === 'stripe') return 'stripe'
   if (normalized === 'conekta') return 'conekta'
   if (['mercadopago', 'mp', 'checkoutpro'].includes(normalized)) return 'mercadopago'
+  if (normalized === 'clip') return 'clip'
   return ''
 }
 
@@ -138,9 +144,9 @@ async function getPaymentBaseUrl() {
 
 function mapGatewayStatus({ id, connected, mode = null, accountLabel = '', issue = '' }) {
   const capabilities = {
-    paymentLinks: id === 'highlevel' || id === 'stripe' || id === 'conekta' || id === 'mercadopago',
+    paymentLinks: id === 'highlevel' || id === 'stripe' || id === 'conekta' || id === 'mercadopago' || id === 'clip',
     installmentPlans: id === 'highlevel' || id === 'stripe' || id === 'conekta',
-    subscriptions: id === 'stripe' || id === 'conekta' || id === 'mercadopago',
+    subscriptions: id === 'stripe' || id === 'conekta' || id === 'mercadopago' || id === 'clip',
     savedCardCharges: id === 'stripe' || id === 'conekta'
   }
 
@@ -156,17 +162,19 @@ function mapGatewayStatus({ id, connected, mode = null, accountLabel = '', issue
 }
 
 async function getPaymentGatewaySnapshot() {
-  const [highLevelResult, stripeResult, conektaResult, mercadoPagoResult] = await Promise.allSettled([
+  const [highLevelResult, stripeResult, conektaResult, mercadoPagoResult, clipResult] = await Promise.allSettled([
     getHighLevelConfig(),
     getStripePaymentConfig(),
     getConektaPaymentConfig(),
-    getMercadoPagoPaymentConfig()
+    getMercadoPagoPaymentConfig(),
+    getClipPaymentConfig()
   ])
 
   const highLevelConfig = highLevelResult.status === 'fulfilled' ? highLevelResult.value : null
   const stripeConfig = stripeResult.status === 'fulfilled' ? stripeResult.value : null
   const conektaConfig = conektaResult.status === 'fulfilled' ? conektaResult.value : null
   const mercadoPagoConfig = mercadoPagoResult.status === 'fulfilled' ? mercadoPagoResult.value : null
+  const clipConfig = clipResult.status === 'fulfilled' ? clipResult.value : null
 
   const gateways = [
     mapGatewayStatus({
@@ -196,6 +204,13 @@ async function getPaymentGatewaySnapshot() {
       mode: mercadoPagoConfig?.mode || null,
       accountLabel: mercadoPagoConfig?.accountLabel || mercadoPagoConfig?.userId || '',
       issue: mercadoPagoResult.status === 'rejected' ? mercadoPagoResult.reason?.message : ''
+    }),
+    mapGatewayStatus({
+      id: 'clip',
+      connected: Boolean(clipConfig?.configured),
+      mode: clipConfig?.mode || null,
+      accountLabel: clipConfig?.accountLabel || '',
+      issue: clipResult.status === 'rejected' ? clipResult.reason?.message : ''
     })
   ]
 
@@ -215,7 +230,7 @@ async function selectPaymentGateway(requestedGateway, capability) {
   if (requested && requested !== 'auto') {
     const gateway = snapshot.byId[requested]
     if (!gateway) {
-      return { ok: false, error: 'Pasarela no reconocida. Usa Stripe, Conekta, Mercado Pago o GoHighLevel.', snapshot }
+      return { ok: false, error: 'Pasarela no reconocida. Usa Stripe, Conekta, Mercado Pago, CLIP o GoHighLevel.', snapshot }
     }
     if (!gateway.capabilities[capability]) {
       return { ok: false, error: `${gateway.label} no soporta ${capabilityLabel} en Ristak todavía.`, snapshot }
@@ -238,10 +253,10 @@ async function selectPaymentGateway(requestedGateway, capability) {
         capability === 'installmentPlans'
           ? 'Stripe, Conekta o GoHighLevel opcional'
           : capability === 'subscriptions'
-            ? 'Stripe o Mercado Pago'
+            ? 'Stripe, Conekta, Mercado Pago o CLIP'
             : capability === 'savedCardCharges'
               ? 'Stripe o Conekta'
-              : 'Stripe, Conekta, Mercado Pago o GoHighLevel opcional'
+              : 'Stripe, Conekta, Mercado Pago, CLIP o GoHighLevel opcional'
       } en Configuración > Pagos.`,
       snapshot
     }
@@ -460,6 +475,21 @@ export const createPaymentLinkTool = tool({
 
       if (selected.gateway.id === 'conekta') {
         const result = await createConektaPaymentLink(paymentPayload, { baseUrl: await getPaymentBaseUrl() })
+        return {
+          ok: true,
+          gateway: selected.gateway.id,
+          gatewayLabel: selected.gateway.label,
+          paymentId: result.payment?.id || null,
+          publicPaymentId: result.publicPaymentId || null,
+          paymentLink: result.paymentUrl || result.payment?.paymentUrl || '',
+          amount: result.payment?.amount || amount,
+          currency: result.payment?.currency || currency || null,
+          status: result.payment?.status || 'sent'
+        }
+      }
+
+      if (selected.gateway.id === 'clip') {
+        const result = await createClipPaymentLink(paymentPayload, { baseUrl: await getPaymentBaseUrl() })
         return {
           ok: true,
           gateway: selected.gateway.id,
@@ -711,7 +741,7 @@ export const listSubscriptionsTool = tool({
 
 export const createSubscriptionTool = tool({
   name: 'create_subscription',
-  description: 'Crea una suscripción recurrente. En Ristak las suscripciones automáticas por pasarela usan Stripe o Conekta con tarjeta guardada, o Mercado Pago con autorización/preapproval. Para Stripe/Conekta, si no hay tarjeta guardada, usa list_saved_payment_methods o pide conectar/guardar tarjeta. Confirma todo antes de llamar.',
+  description: 'Crea una suscripción recurrente. En Ristak las suscripciones automáticas por pasarela usan Stripe o Conekta con tarjeta guardada, o Mercado Pago con autorización/preapproval. CLIP sólo cobra el pago inicial y activa la suscripción interna de Ristak al confirmarse. Para Stripe/Conekta, si no hay tarjeta guardada, usa list_saved_payment_methods o pide conectar/guardar tarjeta. Confirma todo antes de llamar.',
   parameters: z.object({
     contactId: z.string().describe('ID del contacto'),
     name: z.string().describe('Nombre de la suscripción'),
@@ -721,7 +751,7 @@ export const createSubscriptionTool = tool({
     intervalCount: z.number().int().min(1).max(24).nullable().describe('Cada cuántos intervalos se cobra (default 1)'),
     startDate: z.string().nullable().describe('Fecha de inicio ISO 8601 o YYYY-MM-DD (opcional)'),
     paymentMethodId: z.string().nullable().describe('ID de tarjeta guardada de Stripe/Conekta; para Mercado Pago puede ir null porque se genera autorización de suscripción.'),
-    gateway: z.enum(['auto', 'stripe', 'conekta', 'mercadopago']).nullable().describe('Pasarela para la suscripción: auto, stripe, conekta o mercadopago.'),
+    gateway: z.enum(['auto', 'stripe', 'conekta', 'mercadopago', 'clip']).nullable().describe('Pasarela para la suscripción: auto, stripe, conekta, mercadopago o clip.'),
     confirm: z.boolean().describe('true solo si el usuario ya confirmó explícitamente la suscripción')
   }),
   execute: async ({ contactId, name, description, amount, intervalType, intervalCount, startDate, paymentMethodId, gateway, confirm }) => {
@@ -746,7 +776,9 @@ export const createSubscriptionTool = tool({
           ? 'mercadopago_subscription'
           : selected.gateway.id === 'conekta'
             ? 'conekta_subscription'
-            : 'stripe_saved_card',
+            : selected.gateway.id === 'clip'
+              ? 'clip_link'
+              : 'stripe_saved_card',
         paymentMethodId: selected.gateway.id === 'stripe' ? paymentMethodId || undefined : undefined,
         stripePaymentMethodId: selected.gateway.id === 'stripe' ? paymentMethodId || undefined : undefined,
         conektaPaymentSourceId: selected.gateway.id === 'conekta' ? paymentMethodId || undefined : undefined,

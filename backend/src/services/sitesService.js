@@ -15483,6 +15483,7 @@ function buildPaymentCheckoutRuntimeScript() {
     var STRIPE_JS = 'https://js.stripe.com/v3/';
     var MP_SDK = 'https://sdk.mercadopago.com/js/v2';
     var CONEKTA_SDK = 'https://pay.conekta.com/v1.0/js/conekta-checkout.min.js';
+    var CLIP_SDK = 'https://sdk.clip.mx/js/clip-sdk.js';
     var STATUS_URL = '/api/sites/public/payments/';
     var INIT_URL = '/api/sites/public/checkout/init';
     var PAY_URL = '/api/sites/public/checkout/pay';
@@ -15628,6 +15629,7 @@ function buildPaymentCheckoutRuntimeScript() {
         if (d.paid) { showLoading(false); if (d.publicPaymentId) root.setAttribute('data-checkout-public-id', d.publicPaymentId); runPostAction(); return; }
         if (d.provider === 'conekta') return mountConekta(d);
         if (d.provider === 'mercadopago') return mountMercadoPago(d);
+        if (d.provider === 'clip') return mountClip(d);
         return mountStripe(d);
       }).catch(function (err) {
         showLoading(false);
@@ -15736,6 +15738,146 @@ function buildPaymentCheckoutRuntimeScript() {
             if (els.pay.disabled || !submitTrigger) return;
             setPayBusy(true); setMessage('info', 'Procesando…');
             submitTrigger();
+          });
+        });
+      }
+
+      function styleClipInput(input) {
+        input.style.width = '100%';
+        input.style.boxSizing = 'border-box';
+        input.style.border = '1px solid color-mix(in srgb, var(--rstk-muted, CanvasText) 28%, transparent)';
+        input.style.borderRadius = 'var(--rstk-radius, 12px)';
+        input.style.background = 'var(--rstk-input-bg, color-mix(in srgb, var(--rstk-surface, Canvas) 86%, transparent))';
+        input.style.color = 'var(--rstk-checkout-field-text, var(--rstk-block-text, var(--rstk-ink, CanvasText)))';
+        input.style.padding = '12px 13px';
+        input.style.font = 'inherit';
+        input.style.minWidth = '0';
+      }
+      function createClipContactField(type, placeholder, autocomplete) {
+        var input = document.createElement('input');
+        input.type = type;
+        input.placeholder = placeholder;
+        input.autocomplete = autocomplete;
+        input.required = true;
+        styleClipInput(input);
+        return input;
+      }
+      function startClip3ds(url, publicPaymentId, clipPaymentId) {
+        var overlay = document.createElement('div');
+        overlay.style.position = 'fixed';
+        overlay.style.inset = '0';
+        overlay.style.zIndex = '2147483647';
+        overlay.style.background = 'color-mix(in srgb, var(--rstk-ink, CanvasText) 66%, transparent)';
+        overlay.style.display = 'grid';
+        overlay.style.placeItems = 'center';
+        overlay.style.padding = '16px';
+        var panel = document.createElement('div');
+        panel.style.width = 'min(720px, 100%)';
+        panel.style.height = 'min(720px, 88vh)';
+        panel.style.background = 'var(--rstk-surface, Canvas)';
+        panel.style.borderRadius = 'var(--rstk-radius-lg, 16px)';
+        panel.style.overflow = 'hidden';
+        panel.style.display = 'grid';
+        panel.style.gridTemplateRows = 'auto 1fr';
+        var header = document.createElement('div');
+        header.style.display = 'flex';
+        header.style.justifyContent = 'space-between';
+        header.style.alignItems = 'center';
+        header.style.gap = '12px';
+        header.style.padding = '12px 14px';
+        header.style.borderBottom = '1px solid color-mix(in srgb, var(--rstk-ink, CanvasText) 12%, transparent)';
+        var title = document.createElement('strong');
+        title.textContent = 'Validacion bancaria';
+        title.style.color = 'var(--rstk-ink, CanvasText)';
+        var close = document.createElement('button');
+        close.type = 'button';
+        close.textContent = 'Cerrar';
+        close.style.border = '0';
+        close.style.background = 'transparent';
+        close.style.cursor = 'pointer';
+        close.style.font = 'inherit';
+        close.style.color = 'var(--rstk-ink, CanvasText)';
+        var frame = document.createElement('iframe');
+        frame.src = url;
+        frame.title = 'Validacion 3DS CLIP';
+        frame.allow = 'payment *';
+        frame.style.width = '100%';
+        frame.style.height = '100%';
+        frame.style.border = '0';
+        header.appendChild(title);
+        header.appendChild(close);
+        panel.appendChild(header);
+        panel.appendChild(frame);
+        overlay.appendChild(panel);
+        document.body.appendChild(overlay);
+        var expectedOrigin = '';
+        try { expectedOrigin = new URL(url).origin; } catch (e) {}
+        function cleanup() {
+          window.removeEventListener('message', handleMessage);
+          if (overlay.parentNode) overlay.parentNode.removeChild(overlay);
+        }
+        function handleMessage(event) {
+          if (expectedOrigin && event.origin !== expectedOrigin) return;
+          var returned = event && event.data ? (event.data.paymentId || event.data.payment_id || clipPaymentId) : clipPaymentId;
+          returned = String(returned || '').trim();
+          if (!returned) return;
+          cleanup();
+          setMessage('info', 'Validacion recibida. Confirmando el pago con CLIP.');
+          postJson('/api/clip/public/payments/' + encodeURIComponent(publicPaymentId) + '/refresh', { clipPaymentId: returned }).then(function (r) {
+            var status = (r && r.payment && r.payment.status) || r.status;
+            onChargeResult(publicPaymentId, status);
+          }).catch(function (e) {
+            setPayBusy(false);
+            setMessage('error', (e && e.message) || 'No se pudo confirmar el pago con CLIP.');
+          });
+        }
+        close.addEventListener('click', function () { cleanup(); setPayBusy(false); setMessage('info', 'Validacion bancaria cerrada. Puedes intentar de nuevo.'); });
+        window.addEventListener('message', handleMessage);
+      }
+      function mountClip(d) {
+        return loadScript(CLIP_SDK, function () { return !!window.ClipSDK; }).then(function () {
+          if (!d.apiKey) throw new Error('CLIP no esta configurado en esta cuenta.');
+          var safe = (cfg.blockId || 'clip').replace(/[^a-zA-Z0-9_-]/g, '') || 'clip';
+          els.fields.innerHTML = '';
+          var contact = document.createElement('div');
+          contact.style.display = 'grid';
+          contact.style.gridTemplateColumns = 'repeat(auto-fit, minmax(180px, 1fr))';
+          contact.style.gap = '10px';
+          contact.style.marginBottom = '12px';
+          var email = createClipContactField('email', 'Email del cliente', 'email');
+          var phone = createClipContactField('tel', 'Telefono del cliente', 'tel');
+          contact.appendChild(email);
+          contact.appendChild(phone);
+          var cardHost = document.createElement('div');
+          cardHost.id = 'rstk-clip-card-' + safe;
+          els.fields.appendChild(contact);
+          els.fields.appendChild(cardHost);
+          var clip = new window.ClipSDK(d.apiKey);
+          var card = clip.element.create('Card', { theme: isDark() ? 'dark' : 'light', locale: 'es' });
+          card.mount(cardHost.id);
+          els.fields.hidden = false; els.pay.hidden = false; showLoading(false);
+          payLabel(d.amount, d.currency);
+          els.pay.addEventListener('click', function () {
+            if (els.pay.disabled) return;
+            var emailValue = String(email.value || '').trim();
+            var phoneValue = String(phone.value || '').trim();
+            if (!emailValue || !phoneValue) { setMessage('error', 'CLIP requiere email y telefono para procesar el pago.'); return; }
+            setPayBusy(true); setMessage('info', 'Procesando…');
+            card.cardToken().then(function (token) {
+              var tokenId = String((token && token.id) || '').trim();
+              if (!tokenId) throw new Error('CLIP no devolvio un token valido.');
+              return payCharge({
+                tokenId: tokenId,
+                payer: { email: emailValue, phone: phoneValue }
+              });
+            }).then(function (r) {
+              if (r && r.pendingAction && r.pendingAction.url) {
+                setMessage('info', 'Tu banco pide validacion adicional.');
+                startClip3ds(r.pendingAction.url, r.publicPaymentId, r.clipPaymentId);
+                return;
+              }
+              onChargeResult(r.publicPaymentId, r.status);
+            }).catch(function (e) { setPayBusy(false); setMessage('error', (e && e.message) || 'No se pudo cobrar con CLIP.'); });
           });
         });
       }
@@ -24540,6 +24682,7 @@ function buildSiteCheckoutMountResponse(paymentGate = {}, context = {}, keys = {
     // Stripe se monta en modo diferido y el intent se crea al cobrar.
     publishableKey: cleanString(keys.publishableKey),
     publicKey: cleanString(keys.publicKey),
+    apiKey: cleanString(keys.apiKey),
     paymentMode: cleanString(keys.paymentMode),
     // Reanudación: si un pago previo (misma sesión) ya está pagado.
     paid: Boolean(keys.paid),
@@ -24609,9 +24752,15 @@ export async function initSitePaymentCheckout(req, body = {}) {
 export async function paySiteCheckout(req, body = {}) {
   const { site, context, paymentGate, baseUrl, expectedBlockId } = await resolveSiteCheckoutBlock(req, body)
   enforcePublicSubmitRateLimit(req, `checkout-pay:${site.id}:${expectedBlockId}`)
+  const payer = body.payer && typeof body.payer === 'object' ? body.payer : {}
 
   const result = await createPaymentGateLink(paymentGate, {
     baseUrl,
+    contact: {
+      name: cleanString(payer.name || payer.fullName),
+      email: cleanString(payer.email),
+      phone: cleanString(payer.phone)
+    },
     source: 'site_checkout',
     metadata: {
       siteId: site.id,
@@ -24629,13 +24778,18 @@ export async function paySiteCheckout(req, body = {}) {
     paymentMethodId: cleanString(body.paymentMethodId || body.payment_method_id),
     issuerId: cleanString(body.issuerId || body.issuer_id),
     installments: body.installments,
-    payer: body.payer && typeof body.payer === 'object' ? body.payer : {}
+    email: cleanString(payer.email),
+    phone: cleanString(payer.phone),
+    customerName: cleanString(payer.name || payer.fullName),
+    payer
   }, { baseUrl })
 
   return {
     publicPaymentId,
     provider: charge.provider,
     clientSecret: cleanString(charge.clientSecret),
+    clipPaymentId: cleanString(charge.clipPaymentId),
+    pendingAction: charge.pendingAction || null,
     status: cleanString(charge.status),
     statusDetail: cleanString(charge.statusDetail),
     paidMessage: paymentGate.paidMessage

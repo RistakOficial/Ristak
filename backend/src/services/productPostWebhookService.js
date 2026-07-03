@@ -213,6 +213,8 @@ function serializePayment(row = {}, metadata = {}) {
     mercadoPagoPreferenceId: row.mercadopago_preference_id || '',
     conektaOrderId: row.conekta_order_id || '',
     conektaChargeId: row.conekta_charge_id || '',
+    clipPaymentId: row.clip_payment_id || '',
+    clipReceiptNo: row.clip_receipt_no || '',
     metadata,
     createdAt: row.created_at || '',
     updatedAt: row.updated_at || ''

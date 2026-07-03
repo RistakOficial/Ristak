@@ -63,7 +63,9 @@ function hasModeSignal(value, modePredicate, livemodeValue, depth = 0, seen = ne
     value.conekta_mode,
     value.mercadoPagoMode,
     value.mercadopagoMode,
-    value.mercadopago_mode
+    value.mercadopago_mode,
+    value.clipMode,
+    value.clip_mode
   ]
 
   if (modeFields.some(modePredicate)) return true
@@ -115,9 +117,13 @@ export function paymentHasLedgerActivity(payment = {}) {
     cleanString(payment.stripe_charge_id) ||
     cleanString(payment.mercadopago_payment_id) ||
     cleanString(payment.mercadopago_preference_id) ||
+    cleanString(payment.clip_payment_id) ||
+    cleanString(payment.clip_receipt_no) ||
     cleanString(metadata.stripePaymentIntentId) ||
     cleanString(metadata.stripeChargeId) ||
-    cleanString(metadata.mercadoPagoPaymentId)
+    cleanString(metadata.mercadoPagoPaymentId) ||
+    cleanString(metadata.clipPaymentId) ||
+    cleanString(metadata.clip?.paymentId)
   )
 }
 
@@ -133,9 +139,13 @@ export function paymentHasExternalArtifact(payment = {}) {
     cleanString(payment.stripe_charge_id) ||
     cleanString(payment.mercadopago_payment_id) ||
     cleanString(payment.mercadopago_preference_id) ||
-    ['stripe', 'highlevel', 'mercadopago'].includes(provider) ||
+    cleanString(payment.clip_payment_id) ||
+    cleanString(payment.clip_receipt_no) ||
+    ['stripe', 'highlevel', 'mercadopago', 'conekta', 'clip'].includes(provider) ||
     method.startsWith('stripe') ||
-    method.startsWith('mercadopago')
+    method.startsWith('mercadopago') ||
+    method.startsWith('conekta') ||
+    method.startsWith('clip')
   )
 }
 

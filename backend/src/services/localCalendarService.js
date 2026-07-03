@@ -1778,6 +1778,7 @@ function getCalendarPaymentGatewayLabel(gateway = '') {
   const raw = cleanString(gateway).toLowerCase()
   if (raw === 'mercadopago') return 'Mercado Pago'
   if (raw === 'conekta') return 'Conekta'
+  if (raw === 'clip') return 'CLIP'
   return 'Stripe'
 }
 

@@ -145,6 +145,25 @@ export async function isMercadoPagoConnected() {
     Boolean(cleanString(raw.mercadopago_user_id) && cleanString(raw.mercadopago_access_token_encrypted))
 }
 
+export async function isClipConnected() {
+  const mode = await getActivePaymentMode()
+  const raw = await getAppConfigRows([
+    'clip_enabled',
+    'clip_mode',
+    'clip_api_key_encrypted',
+    'clip_mode_connections'
+  ])
+
+  if (!enabledFlag(raw.clip_enabled, true)) return false
+
+  const active = getModeConnection(raw.clip_mode_connections, mode)
+  const activeApiKey = cleanString(active.apiKey || active.api_key)
+  if (activeApiKey) return true
+
+  const legacyMode = normalizeMode(raw.clip_mode)
+  return legacyMode === mode && Boolean(cleanString(raw.clip_api_key_encrypted))
+}
+
 export async function isWhatsAppQrConnected() {
   const row = await db.get(`
     SELECT s.id

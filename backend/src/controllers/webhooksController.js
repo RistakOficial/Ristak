@@ -324,6 +324,7 @@ function buildAutomationPaymentPayload(input = {}) {
   const stripeMeta = metadata.stripe || metadata.stripePayment || {};
   const mercadoPagoMeta = metadata.mercadoPago || metadata.mercado_pago || metadata.mercadopago || {};
   const conektaMeta = metadata.conekta || {};
+  const clipMeta = metadata.clip || {};
   const status = firstValue(input.paymentStatus, input.status) || '';
   const paymentId = firstValue(input.paymentId, input.payment_id, input.id) || '';
   const invoiceId = firstValue(input.invoiceId, input.invoice_id, input.ghl_invoice_id) || '';
@@ -352,6 +353,8 @@ function buildAutomationPaymentPayload(input = {}) {
     input.mercadopago_event_id,
     input.conektaEventId,
     input.conekta_event_id,
+    input.clipEventId,
+    input.clip_event_id,
     metadata.eventId,
     metadata.event_id,
     metadata.webhookEventId,
@@ -365,12 +368,16 @@ function buildAutomationPaymentPayload(input = {}) {
     metadata.mercadopago_event_id,
     metadata.conektaEventId,
     metadata.conekta_event_id,
+    metadata.clipEventId,
+    metadata.clip_event_id,
     stripeMeta.eventId,
     stripeMeta.event_id,
     mercadoPagoMeta.eventId,
     mercadoPagoMeta.event_id,
     conektaMeta.eventId,
-    conektaMeta.event_id
+    conektaMeta.event_id,
+    clipMeta.eventId,
+    clipMeta.event_id
   ) || '';
   const stripePaymentIntentId = firstValue(
     input.stripePaymentIntentId,
@@ -433,6 +440,8 @@ function buildAutomationPaymentPayload(input = {}) {
     conektaMeta.paymentSourceId,
     conektaMeta.payment_source_id
   ) || '';
+  const clipPaymentId = firstValue(input.clipPaymentId, input.clip_payment_id, metadata.clipPaymentId, metadata.clip_payment_id, clipMeta.paymentId, clipMeta.payment_id, clipMeta.id) || '';
+  const clipReceiptNo = firstValue(input.clipReceiptNo, input.clip_receipt_no, input.receiptNo, input.receipt_no, metadata.clipReceiptNo, metadata.clip_receipt_no, clipMeta.receiptNo, clipMeta.receipt_no) || '';
   const paidAt = firstValue(input.paidAt, input.paid_at, input.fulfilledAt, input.fulfilled_at, metadata.paidAt, metadata.paid_at) || '';
   const dueDate = firstValue(input.dueDate, input.due_date, metadata.dueDate, metadata.due_date) || '';
   const sentAt = firstValue(input.sentAt, input.sent_at, metadata.sentAt, metadata.sent_at) || '';
@@ -467,6 +476,8 @@ function buildAutomationPaymentPayload(input = {}) {
     conektaOrderId,
     conektaChargeId,
     conektaPaymentSourceId,
+    clipPaymentId,
+    clipReceiptNo,
     paidAt,
     dueDate,
     sentAt,
@@ -506,6 +517,8 @@ function buildAutomationPaymentPayloadFromRow(row = {}, overrides = {}) {
     conektaOrderId: row.conekta_order_id,
     conektaChargeId: row.conekta_charge_id,
     conektaPaymentSourceId: row.conekta_payment_source_id,
+    clipPaymentId: row.clip_payment_id,
+    clipReceiptNo: row.clip_receipt_no,
     paidAt: row.paid_at,
     dueDate: row.due_date,
     sentAt: row.sent_at,
@@ -2055,7 +2068,8 @@ export const handleInvoiceWebhook = async (req, res) => {
                 p.payment_provider, p.reference, p.title, p.description, p.public_payment_id, p.payment_url,
                 p.stripe_payment_intent_id, p.stripe_charge_id, p.mercadopago_payment_id,
                 p.mercadopago_preference_id, p.conekta_order_id, p.conekta_charge_id,
-                p.conekta_payment_source_id, p.paid_at, p.due_date, p.sent_at, p.metadata_json,
+                p.conekta_payment_source_id, p.clip_payment_id, p.clip_receipt_no,
+                p.paid_at, p.due_date, p.sent_at, p.metadata_json,
                 p.date, p.created_at, p.updated_at, p.ghl_invoice_id, p.invoice_number,
                 c.full_name AS contact_name, c.email AS contact_email, c.phone AS contact_phone
          FROM payments p
