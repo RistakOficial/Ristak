@@ -34,6 +34,7 @@ const CLIP_API_BASE = 'https://api.payclip.com'
 const CLIP_SDK_SCRIPT_URL = 'https://sdk.clip.mx/js/clip-sdk.js'
 const CLIP_WEBHOOK_PATH = '/api/clip/webhook'
 const CLIP_INSTALLMENT_MONTHS = new Set([3, 6, 9, 12, 18, 24])
+const CLIP_INSTALLMENT_MIN_AMOUNT = 300
 const SUCCESSFUL_PAYMENT_STATUSES = new Set(['paid', 'succeeded', 'completed', 'complete', 'fulfilled', 'success', 'approved'])
 const CLOSED_PAYMENT_STATUSES = new Set(['paid', 'succeeded', 'completed', 'refunded', 'void', 'deleted'])
 
@@ -506,6 +507,10 @@ function mapPublicPayment(row, config, baseUrl = '', settings = null, timezone =
   const tax = metadata.tax && typeof metadata.tax === 'object' ? metadata.tax : null
   const subscriptionStart = getPublicSubscriptionStart(metadata)
   const publicPaymentId = row.public_payment_id
+  const clipInstallments = normalizeClipInstallmentOptions(metadata.clipInstallments, {
+    amount: row.amount,
+    emptyAsNull: true
+  })
 
   return {
     id: row.id,
@@ -534,6 +539,7 @@ function mapPublicPayment(row, config, baseUrl = '', settings = null, timezone =
     pendingAction: metadata.clip?.pendingAction || null,
     apiKey: config?.apiKey || '',
     subscriptionStart,
+    clipInstallments,
     tax,
     settings: settings || null
   }
@@ -589,6 +595,10 @@ export async function createClipPaymentLink(input = {}, { baseUrl, mode = '' } =
     error.status = 400
     throw error
   }
+  const clipInstallments = normalizeClipInstallmentOptions(input.installments || input.clipInstallments, {
+    amount: chargeAmount,
+    emptyAsNull: true
+  })
   const metadata = {
     contactName: contact.name,
     contactEmail: contact.email,
@@ -596,6 +606,7 @@ export async function createClipPaymentLink(input = {}, { baseUrl, mode = '' } =
     source: cleanString(input.source || 'ristak'),
     lineItems: Array.isArray(input.lineItems) ? input.lineItems : [],
     ...(input.metadata && typeof input.metadata === 'object' ? input.metadata : {}),
+    ...(clipInstallments ? { clipInstallments } : {}),
     ...(tax ? { tax } : {})
   }
 
@@ -685,11 +696,89 @@ function normalizeClipInstallments(value) {
   throw error
 }
 
+function normalizeClipInstallmentOptions(input, { amount = null, emptyAsNull = false } = {}) {
+  if (input === undefined || input === null || input === '' || input === false) {
+    return emptyAsNull ? null : {
+      enabled: false,
+      maxInstallments: 1,
+      minAmount: CLIP_INSTALLMENT_MIN_AMOUNT,
+      options: []
+    }
+  }
+
+  const source = typeof input === 'object' && !Array.isArray(input)
+    ? input
+    : { enabled: true, maxInstallments: input }
+  const enabled = normalizeBoolean(source.enabled, Boolean(source.maxInstallments || source.months || source.installments))
+
+  if (!enabled) {
+    return emptyAsNull ? null : {
+      enabled: false,
+      maxInstallments: 1,
+      minAmount: CLIP_INSTALLMENT_MIN_AMOUNT,
+      options: []
+    }
+  }
+
+  const months = normalizeClipInstallments(source.maxInstallments || source.months || source.installments || 24)
+  if (months <= 1) {
+    return emptyAsNull ? null : {
+      enabled: false,
+      maxInstallments: 1,
+      minAmount: CLIP_INSTALLMENT_MIN_AMOUNT,
+      options: []
+    }
+  }
+
+  const parsedAmount = Number(amount)
+  if (Number.isFinite(parsedAmount) && parsedAmount < CLIP_INSTALLMENT_MIN_AMOUNT) {
+    const error = new Error(`Para ofrecer meses sin intereses en CLIP, el monto mínimo es ${CLIP_INSTALLMENT_MIN_AMOUNT} MXN.`)
+    error.status = 400
+    throw error
+  }
+
+  return {
+    enabled: true,
+    maxInstallments: months,
+    minAmount: CLIP_INSTALLMENT_MIN_AMOUNT,
+    label: 'Meses sin intereses en CLIP',
+    options: [...CLIP_INSTALLMENT_MONTHS]
+      .filter((available) => available <= months)
+      .map((available) => ({
+        months: available,
+        minAmount: CLIP_INSTALLMENT_MIN_AMOUNT
+      }))
+  }
+}
+
+function normalizeClipChargeInstallments(input, configuredOptions = null) {
+  const parsed = normalizeClipInstallments(input)
+  if (parsed <= 1) return 1
+
+  if (!configuredOptions?.enabled) {
+    const error = new Error('Este cobro de CLIP no tiene meses sin intereses habilitados.')
+    error.status = 400
+    throw error
+  }
+
+  if (parsed > Number(configuredOptions.maxInstallments || 1)) {
+    const error = new Error(`Este cobro de CLIP permite hasta ${configuredOptions.maxInstallments} meses sin intereses.`)
+    error.status = 400
+    throw error
+  }
+
+  return parsed
+}
+
 function buildClipPaymentPayload(row, input = {}, { baseUrl = '' } = {}) {
   const metadata = parseJson(row.metadata_json, {})
   const token = cleanString(input.token || input.cardTokenId || input.card_token_id || input.tokenId || input.token_id)
   const amount = Number(row.amount)
   const currency = assertClipCurrency(row.currency)
+  const clipInstallments = normalizeClipInstallmentOptions(metadata.clipInstallments, {
+    amount,
+    emptyAsNull: true
+  })
 
   if (!token) {
     const error = new Error('CLIP no devolvió el token de la tarjeta.')
@@ -721,7 +810,7 @@ function buildClipPaymentPayload(row, input = {}, { baseUrl = '' } = {}) {
     description: sanitizeClipText(row.description || row.title || 'Pago Ristak'),
     external_reference: sanitizeExternalReference(row.public_payment_id || row.id),
     capture_method: 'automatic',
-    installments: normalizeClipInstallments(input.installments),
+    installments: normalizeClipChargeInstallments(input.installments, clipInstallments),
     payment_method: {
       token
     },

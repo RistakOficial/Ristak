@@ -13,7 +13,7 @@ export const MSI_INSTALLMENT_CHOICES = [3, 6, 9, 12, 18, 24]
 // Pasarelas que aceptan diferido a meses en el link/checkout HOSTED simple
 // (createPaymentGateLink). Stripe se maneja aparte (solo MXN y monto >= 300 vía
 // Payment Element), por eso NO está aquí.
-export const MSI_LINK_GATEWAYS = new Set(['conekta', 'mercadopago'])
+export const MSI_LINK_GATEWAYS = new Set(['conekta', 'mercadopago', 'clip'])
 
 // Predicado de "gate habilitado" sobre una config YA normalizada. Espejo exacto de
 // isPaymentGateEnabled (backend) e isPaymentGateConfigEnabled (frontend).
@@ -37,6 +37,7 @@ export function conektaInstallmentMonths({ maxInstallments = 0, amount = 0 } = {
 // - Stripe: dentro del Payment Element (solo MXN y monto >= 300; Stripe decide).
 // El editor usa esto para mostrar SOLO la fila que el vivo mostraría.
 export const STRIPE_MSI_MIN_AMOUNT = 300
+export const CLIP_MSI_MIN_AMOUNT = 300
 
 export function msiEligibility({ gateway = '', currency = '', amount = 0, msi = null } = {}) {
   const enabled = Boolean(msi && msi.enabled) && Number(msi.maxInstallments) > 1
@@ -50,6 +51,10 @@ export function msiEligibility({ gateway = '', currency = '', amount = 0, msi = 
   }
   if (gateway === 'stripe') {
     const eligible = String(currency || '').toUpperCase() === 'MXN' && Number(amount) >= STRIPE_MSI_MIN_AMOUNT
+    return { ...none, insideElement: eligible }
+  }
+  if (gateway === 'clip') {
+    const eligible = String(currency || '').toUpperCase() === 'MXN' && Number(amount) >= CLIP_MSI_MIN_AMOUNT
     return { ...none, insideElement: eligible }
   }
   return none

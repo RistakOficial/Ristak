@@ -2,6 +2,7 @@ export const PAYMENT_GATEWAYS: Set<string>
 export const MSI_INSTALLMENT_CHOICES: number[]
 export const MSI_LINK_GATEWAYS: Set<string>
 export const STRIPE_MSI_MIN_AMOUNT: number
+export const CLIP_MSI_MIN_AMOUNT: number
 
 export interface NormalizedPaymentGateLike {
   enabled?: boolean

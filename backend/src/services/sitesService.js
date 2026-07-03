@@ -15700,6 +15700,20 @@ function buildPaymentCheckoutRuntimeScript() {
         [3, 6, 9, 12, 18, 24].forEach(function (m) { if (m <= max && amount >= m * 100) out.push(m); });
         return out;
       }
+      function clipInstallmentsEnabled(d) {
+        var c = d.installments;
+        return !!(c && c.enabled && Number(c.maxInstallments || 0) > 1 && String(d.currency || '').toUpperCase() === 'MXN' && Number(d.amount || 0) >= 300);
+      }
+      function normalizeClipInstallmentSelection(value) {
+        var source = value;
+        if (value && typeof value === 'object') source = value.installments || value.installment || value.months || value.value;
+        var parsed = Math.trunc(Number(source || 1));
+        return [3, 6, 9, 12, 18, 24].indexOf(parsed) >= 0 ? parsed : 1;
+      }
+      function readClipInstallments(card, enabled) {
+        if (!enabled || !card || typeof card.installments !== 'function') return Promise.resolve(1);
+        return card.installments().then(normalizeClipInstallmentSelection).catch(function () { return 1; });
+      }
       function mountConekta(d) {
         return loadScript(CONEKTA_SDK, function () { return !!window.ConektaCheckoutComponents; }).then(function () {
           var conektaCs = getComputedStyle(root);
@@ -15853,7 +15867,13 @@ function buildPaymentCheckoutRuntimeScript() {
           els.fields.appendChild(contact);
           els.fields.appendChild(cardHost);
           var clip = new window.ClipSDK(d.apiKey);
-          var card = clip.element.create('Card', { theme: isDark() ? 'dark' : 'light', locale: 'es' });
+          var clipMsiEnabled = clipInstallmentsEnabled(d);
+          var cardOptions = { theme: isDark() ? 'dark' : 'light', locale: 'es' };
+          if (clipMsiEnabled) {
+            cardOptions.paymentAmount = Math.round((Number(d.amount || 0)) * 100) / 100;
+            cardOptions.terms = { enabled: true };
+          }
+          var card = clip.element.create('Card', cardOptions);
           card.mount(cardHost.id);
           els.fields.hidden = false; els.pay.hidden = false; showLoading(false);
           payLabel(d.amount, d.currency);
@@ -15866,9 +15886,12 @@ function buildPaymentCheckoutRuntimeScript() {
             card.cardToken().then(function (token) {
               var tokenId = String((token && token.id) || '').trim();
               if (!tokenId) throw new Error('CLIP no devolvio un token valido.');
-              return payCharge({
-                tokenId: tokenId,
-                payer: { email: emailValue, phone: phoneValue }
+              return readClipInstallments(card, clipMsiEnabled).then(function (selectedInstallments) {
+                return payCharge({
+                  tokenId: tokenId,
+                  installments: selectedInstallments,
+                  payer: { email: emailValue, phone: phoneValue }
+                });
               });
             }).then(function (r) {
               if (r && r.pendingAction && r.pendingAction.url) {

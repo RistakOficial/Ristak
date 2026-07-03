@@ -483,6 +483,11 @@ Alcance:
 - CLIP no se ofrece para suscripciones ni planes de pago en Ristak. Solo se usa
   para pagos unicos, porque el flujo disponible no guarda tarjeta ni autoriza
   cargos recurrentes/off-session administrados por Ristak.
+- Meses sin intereses en cobros unicos: Ristak habilita `terms.enabled` en el
+  objeto `Card` del SDK, usa `paymentAmount` igual al monto del cobro y envia a
+  `POST /payments` el valor devuelto por `card.installments()`. CLIP solo muestra
+  MSI si la cuenta los tiene activos en su Dashboard, el monto cumple el minimo
+  configurado y la tarjeta/banco califican.
 - Webhook publico `/api/clip/webhook`; cada notificacion consulta el pago real
   con `GET /payments/{payment_id}` antes de actualizar Ristak.
 - Configuracion > Pagos > CLIP muestra, debajo de las credenciales de prueba y
@@ -497,6 +502,9 @@ Restricciones operativas:
 
 - Moneda obligatoria: `MXN`.
 - Cliente obligatorio: email y telefono.
+- MSI requiere `MXN`, monto minimo de `300 MXN` y configuracion activa en CLIP.
+  Ristak no crea reglas MSI dentro de CLIP; solo habilita el dropdown del SDK y
+  valida que el link local tenga MSI activado antes de aceptar `installments`.
 - La Clave API visible de CLIP se expone al SDK publico porque asi lo requiere
   CLIP para tokenizar tarjeta; Ristak la conserva cifrada del lado servidor y
   solo la entrega al checkout publico necesario. La clave secreta de CLIP no se
@@ -659,11 +667,13 @@ y frontend (`frontend/src/pages/Sites/*`) lo importan; el `Dockerfile` copia
   `.rstk-field-width-set` (solo con `fieldWidth`).
 - Pago: el shell del checkout comparte estilos; el preview del editor solo muestra
   lo que el vivo mostraria (fila de meses standalone solo Conekta via
-  `msiEligibility`, boton de pago con icono, badge "No visible en el sitio
-  publicado" cuando el gate esta deshabilitado). Stripe, Conekta, Mercado Pago y
-  CLIP usan el mismo contrato de `paymentGate`; CLIP monta el SDK oficial en el
-  checkout publicado y requiere email/telefono para procesar el cargo. El toggle
-  "guardar tarjeta" se retiro (Stripe Link no es ocultable por codigo).
+  `msiEligibility`; Stripe, Mercado Pago y CLIP resuelven meses dentro de su
+  widget/SDK; boton de pago con icono; badge "No visible en el sitio publicado"
+  cuando el gate esta deshabilitado). Stripe, Conekta, Mercado Pago y CLIP usan
+  el mismo contrato de `paymentGate`; CLIP monta el SDK oficial en el checkout
+  publicado, requiere email/telefono para procesar el cargo y puede habilitar MSI
+  con `terms.enabled` si el bloque lo permite. El toggle "guardar tarjeta" se
+  retiro (Stripe Link no es ocultable por codigo).
 - Diferencias permitidas entre superficies: SOLO auth, tracking/pixel, param
   preservation y `headerTrackingCode` (nunca corren en editor/preview por
   seguridad), y el chrome de edicion. NO se permite divergencia en CSS visual,

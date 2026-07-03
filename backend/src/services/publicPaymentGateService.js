@@ -7,7 +7,8 @@ import {
   PAYMENT_GATEWAYS,
   MSI_INSTALLMENT_CHOICES,
   MSI_LINK_GATEWAYS,
-  STRIPE_MSI_MIN_AMOUNT
+  STRIPE_MSI_MIN_AMOUNT,
+  CLIP_MSI_MIN_AMOUNT
 } from '../../../shared/sites/paymentGateContract.js'
 
 const PAID_STATUSES = new Set(['paid', 'succeeded', 'success', 'completed', 'complete', 'fulfilled'])
@@ -86,8 +87,9 @@ function normalizeAmount(value) {
   return Math.round(amount * 100) / 100
 }
 
-// Meses sin intereses: solo Conekta y Mercado Pago soportan diferido a meses en el
-// cobro simple. Stripe (cobro one-off en MX) no, así que ahí se ignora.
+// Meses sin intereses: Conekta, Mercado Pago y CLIP soportan diferido a meses en
+// el cobro simple. Stripe se valida aparte porque lo muestra dentro del Payment
+// Element y solo aplica en MXN con monto minimo.
 // Constantes en el contrato compartido (shared/sites/paymentGateContract.js) para
 // que backend, runtime publicado y preview del editor usen la misma lista.
 const MSI_GATEWAYS = MSI_LINK_GATEWAYS
@@ -187,7 +189,14 @@ export async function createPaymentGateLink(configInput = {}, {
   const stripeMsiEligible = config.gateway === 'stripe'
     && String(config.currency || '').toUpperCase() === 'MXN'
     && Number(config.amount) >= STRIPE_MSI_MIN_AMOUNT
-  const installments = msiRequested && (MSI_GATEWAYS.has(config.gateway) || stripeMsiEligible)
+  const clipMsiEligible = config.gateway === 'clip'
+    && String(config.currency || '').toUpperCase() === 'MXN'
+    && Number(config.amount) >= CLIP_MSI_MIN_AMOUNT
+  const installments = msiRequested && (
+    (MSI_GATEWAYS.has(config.gateway) && config.gateway !== 'clip') ||
+    stripeMsiEligible ||
+    clipMsiEligible
+  )
     ? { enabled: true, maxInstallments: config.msi.maxInstallments }
     : null
 

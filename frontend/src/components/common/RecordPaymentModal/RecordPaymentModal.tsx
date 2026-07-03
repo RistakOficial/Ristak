@@ -196,6 +196,8 @@ const MERCADOPAGO_INSTALLMENT_OPTIONS: Array<{ value: MercadoPagoInstallmentChoi
 ]
 
 const STRIPE_INSTALLMENT_MIN_AMOUNT = 300
+const CLIP_INSTALLMENT_MIN_AMOUNT = 300
+const CLIP_INSTALLMENT_MAX_MONTHS = 24
 
 const CONEKTA_INSTALLMENT_TERMS: Array<{ value: ConektaInstallmentChoice; months: number; minAmount: number; issuer?: string }> = [
   { value: '3', months: 3, minAmount: 300 },
@@ -1023,6 +1025,12 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
   const clipCurrency = (invoiceSummary?.currency || accountCurrency || 'MXN').toUpperCase()
   const clipCurrencyAvailable = clipCurrency === 'MXN'
   const clipContactReady = Boolean(clipContactEmail && clipContactPhone)
+  const clipInstallmentsAmountAvailable = Number(invoiceSummary?.amount || 0) >= CLIP_INSTALLMENT_MIN_AMOUNT
+  const clipInstallmentsAvailable = Boolean(invoiceSummary && clipCurrencyAvailable && clipInstallmentsAmountAvailable)
+  const clipMsiEnabled = installmentChargeMode === 'installments' && clipInstallmentsAvailable
+  const clipInstallmentPaymentLabel = clipInstallmentsAvailable
+    ? 'CLIP lo mostrará si aplica'
+    : `Desde ${formatCurrency(CLIP_INSTALLMENT_MIN_AMOUNT, 'MXN')}`
 
   const stripeInstallmentsCurrencyAvailable = (invoiceSummary?.currency || accountCurrency || 'MXN').toUpperCase() === 'MXN'
   const stripeInstallmentsAmountAvailable = Number(invoiceSummary?.amount || 0) >= STRIPE_INSTALLMENT_MIN_AMOUNT
@@ -1081,6 +1089,11 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
     setInstallmentChargeMode('installments')
   }
 
+  const openClipInstallmentConfiguration = () => {
+    if (!clipInstallmentsAvailable) return
+    setInstallmentChargeMode('installments')
+  }
+
   const openConektaInstallmentConfiguration = () => {
     const fallback = conektaInstallmentOptions.find((option) => !option.disabled)?.value as ConektaInstallmentChoice | undefined
 
@@ -1096,7 +1109,7 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
     (
       singlePaymentAction === 'payment_link' &&
       singlePaymentOptionsStage === 'gateway_config' &&
-      (paymentOption === 'stripe' || paymentOption === 'conekta' || paymentOption === 'mercadopago')
+      (paymentOption === 'stripe' || paymentOption === 'conekta' || paymentOption === 'mercadopago' || paymentOption === 'clip')
     ) ||
     (
       singlePaymentAction === 'saved_card' &&
@@ -1112,6 +1125,10 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
     paymentOption === 'stripe' &&
     installmentChargeMode === 'installments' &&
     !stripeMsiEnabled
+  const needsClipInstallmentAvailability = isSinglePaymentInstallmentContext &&
+    paymentOption === 'clip' &&
+    installmentChargeMode === 'installments' &&
+    !clipMsiEnabled
 
   const goToSavedCardOptions = () => {
     const nextPaymentOption = getDefaultSavedCardOption()
@@ -2430,6 +2447,15 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
       return
     }
 
+    if (needsClipInstallmentAvailability) {
+      showToast(
+        'error',
+        'CLIP no puede mostrar MSI',
+        'Los meses sin intereses de CLIP requieren MXN y un monto mínimo de 300 MXN.'
+      )
+      return
+    }
+
     const effectiveSendMethod = sendMethod
     let processedInvoiceId: string | undefined
 
@@ -2899,13 +2925,19 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
           description: invoiceSummary.description,
           dueDate: invoicePayload.dueDate,
           source: 'record_payment_modal_clip',
-          lineItems: Array.isArray(invoicePayload.items) ? invoicePayload.items : []
+          lineItems: Array.isArray(invoicePayload.items) ? invoicePayload.items : [],
+          installments: {
+            enabled: clipMsiEnabled,
+            maxInstallments: CLIP_INSTALLMENT_MAX_MONTHS
+          }
         })
 
         showPaymentLinkReady({
           kind: 'single',
           title: 'Enlace CLIP listo',
-          description: 'Comparte este enlace para que el cliente pague con tarjeta en el checkout transparente de CLIP.',
+          description: clipMsiEnabled
+            ? 'Comparte este enlace para que el cliente pague con CLIP. Si su tarjeta aplica, CLIP mostrará meses sin intereses dentro del formulario seguro.'
+            : 'Comparte este enlace para que el cliente pague con tarjeta en el checkout transparente de CLIP.',
           provider: 'clip',
           paymentUrl: result.paymentUrl,
           amount: invoiceSummary.amount,
@@ -2914,7 +2946,13 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
           paymentId: result.payment?.id,
           publicPaymentId: result.publicPaymentId
         })
-        showToast('success', 'Link de CLIP creado', 'El enlace público está listo para copiar o enviar.')
+        showToast(
+          'success',
+          'Link de CLIP creado',
+          clipMsiEnabled
+            ? 'El enlace público quedó listo con meses sin intereses habilitado en CLIP.'
+            : 'El enlace público está listo para copiar o enviar.'
+        )
         onSuccess?.(LINK_READY_SUCCESS_CONTEXT)
       } catch (clipError: any) {
         showToast('error', 'No se pudo crear el link de CLIP', clipError.message || 'Revisa la configuración de CLIP.')
@@ -4214,19 +4252,29 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
       ? 'Mercado Pago'
       : paymentOption === 'stripe'
         ? 'Stripe'
-        : 'Conekta'
+        : paymentOption === 'clip'
+          ? 'CLIP'
+          : 'Conekta'
     const installmentModeIsSavedCard = paymentOption === 'conekta_saved_card'
     const installmentModeMsiAvailable = paymentOption === 'stripe'
       ? stripeInstallmentsAvailable
-      : paymentOption === 'mercadopago' ||
-        paymentOption === 'conekta' ||
-        paymentOption === 'conekta_saved_card'
+      : paymentOption === 'clip'
+        ? clipInstallmentsAvailable
+        : paymentOption === 'mercadopago' ||
+          paymentOption === 'conekta' ||
+          paymentOption === 'conekta_saved_card'
     const installmentModeMsiDescription = paymentOption === 'stripe'
       ? !stripeInstallmentsCurrencyAvailable
         ? 'Stripe sólo ofrece meses sin intereses en MXN.'
         : !stripeInstallmentsAmountAvailable
           ? `Disponible desde ${formatCurrency(STRIPE_INSTALLMENT_MIN_AMOUNT, 'MXN')}.`
           : 'Stripe mostrará los planes compatibles dentro del formulario seguro.'
+      : paymentOption === 'clip'
+        ? !clipCurrencyAvailable
+          ? 'CLIP sólo ofrece meses sin intereses en MXN.'
+          : !clipInstallmentsAmountAvailable
+            ? `Disponible desde ${formatCurrency(CLIP_INSTALLMENT_MIN_AMOUNT, 'MXN')}.`
+            : 'CLIP mostrará los planes disponibles dentro del formulario seguro.'
       : paymentOption === 'mercadopago'
         ? 'Configura cuántos meses podrá elegir el cliente en el link.'
         : 'Consulta mínimos y selecciona un plazo disponible.'
@@ -4238,6 +4286,11 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
 
       if (paymentOption === 'mercadopago') {
         openMercadoPagoInstallmentConfiguration()
+        return
+      }
+
+      if (paymentOption === 'clip') {
+        openClipInstallmentConfiguration()
         return
       }
 
@@ -4257,7 +4310,7 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
           : defaultPaymentLinkOption === 'mercadopago'
             ? 'Configura meses sin intereses antes de crear el enlace.'
             : defaultPaymentLinkOption === 'clip'
-              ? 'Crea un link con Checkout Transparente de CLIP.'
+              ? 'Elige contado o meses sin intereses antes de crear el enlace.'
               : defaultPaymentLinkOption === 'send'
                 ? 'Usa la integración conectada para enviar el enlace al cliente.'
                 : 'Conecta una pasarela para enviar enlaces de pago.'
@@ -4456,7 +4509,7 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
                       </div>
                       <div>
                         <p>CLIP</p>
-                        <span>Genera una página pública con Checkout Transparente de CLIP.</span>
+                        <span>Genera una página pública con Checkout Transparente y MSI si aplica.</span>
                       </div>
                     </div>
                     {paymentOption === 'clip' && <Check size={18} className={styles.optionCheck} />}
@@ -4631,15 +4684,19 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
             <div className={styles.mercadoPagoInstallmentsHeader}>
               <div>
                 <span>CLIP</span>
-                <p>Checkout Transparente</p>
+                <p>{clipMsiEnabled ? 'Meses sin intereses' : 'Checkout Transparente'}</p>
               </div>
-              <strong>{clipCurrencyAvailable ? 'MXN' : 'Moneda no soportada'}</strong>
+              <strong>{clipCurrencyAvailable ? (clipMsiEnabled ? clipInstallmentPaymentLabel : 'MXN') : 'Moneda no soportada'}</strong>
             </div>
 
             <div className={styles.mercadoPagoInstallmentTotals}>
               <div>
                 <span>Cliente paga</span>
                 <strong>{formatCurrency(invoiceSummary.amount, invoiceSummary.currency)}</strong>
+              </div>
+              <div>
+                <span>Forma de pago</span>
+                <strong>{clipMsiEnabled ? 'CLIP decide planes' : 'Pago de contado'}</strong>
               </div>
               <div>
                 <span>Datos requeridos</span>
@@ -4652,7 +4709,9 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
             </div>
 
             <p className={styles.mercadoPagoInstallmentsNote}>
-              CLIP procesa el pago con tarjeta en campos seguros y Ristak actualiza el cobro cuando CLIP lo confirma. Esta pasarela solo está disponible para cobros en MXN y requiere email y teléfono del cliente.
+              {clipMsiEnabled
+                ? 'CLIP mostrará meses sin intereses dentro del formulario seguro si la cuenta, el monto y la tarjeta califican. Los plazos disponibles se configuran en el Dashboard de CLIP.'
+                : 'CLIP procesa el pago con tarjeta en campos seguros y Ristak actualiza el cobro cuando CLIP lo confirma. Esta pasarela solo está disponible para cobros en MXN y requiere email y teléfono del cliente.'}
             </p>
           </div>
         )}
@@ -5031,6 +5090,7 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
                 lacksClipContact ||
                 lacksClipCurrency ||
                 needsStripeInstallmentAvailability ||
+                needsClipInstallmentAvailability ||
                 needsConektaInstallmentSelection
               }
               title={
@@ -5056,6 +5116,8 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
                     ? 'CLIP solo acepta cobros en MXN'
                   : needsStripeInstallmentAvailability
                     ? 'Stripe requiere MXN y mínimo 300 MXN para meses sin intereses'
+                  : needsClipInstallmentAvailability
+                    ? 'CLIP requiere MXN y mínimo 300 MXN para meses sin intereses'
                   : needsConektaInstallmentSelection
                     ? 'Selecciona un plazo disponible para Conekta'
                   : undefined

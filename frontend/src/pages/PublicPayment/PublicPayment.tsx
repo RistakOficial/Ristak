@@ -78,11 +78,17 @@ type ConektaCheckoutComponents = {
 type ClipCardElement = {
   mount: (containerId: string) => void
   cardToken: () => Promise<{ id?: string }>
+  installments?: () => Promise<unknown>
   unmount?: () => void
 }
 type ClipSdkInstance = {
   element: {
-    create: (type: 'Card', options?: { theme?: 'light' | 'dark'; locale?: 'es' | 'en' }) => ClipCardElement
+    create: (type: 'Card', options?: {
+      theme?: 'light' | 'dark'
+      locale?: 'es' | 'en'
+      paymentAmount?: number
+      terms?: { enabled?: boolean }
+    }) => ClipCardElement
   }
 }
 type ClipSdkConstructor = new (apiKey: string) => ClipSdkInstance
@@ -140,6 +146,8 @@ const CONEKTA_CHECKOUT_SDK_SRC = 'https://pay.conekta.com/v1.0/js/conekta-checko
 const CLIP_SDK_SRC = 'https://sdk.clip.mx/js/clip-sdk.js'
 const META_PIXEL_SDK_SRC = 'https://connect.facebook.net/en_US/fbevents.js'
 const MERCADOPAGO_TEST_CARD_HELP = 'Modo prueba de Mercado Pago: usa cualquier correo con formato valido y elige el resultado con el nombre del titular, por ejemplo APRO para aprobar o FUND para fondos insuficientes.'
+const CLIP_INSTALLMENT_MIN_AMOUNT = 300
+const CLIP_INSTALLMENT_MONTHS = new Set([3, 6, 9, 12, 18, 24])
 const STRIPE_PAYMENT_ELEMENT_OPTIONS: StripePaymentElementOptions = {
   terms: {
     card: 'never'
@@ -421,6 +429,36 @@ function getAvailableConektaInstallmentOptions(payment: PublicConektaPayment) {
       amount >= option.minAmount
     ))
     .sort((left, right) => left.months - right.months)
+}
+
+function clipInstallmentsEnabledForPayment(payment: PublicClipPayment) {
+  const configured = payment.clipInstallments
+  return Boolean(
+    configured?.enabled &&
+    Number(configured.maxInstallments || 0) > 1 &&
+    String(payment.currency || '').toUpperCase() === 'MXN' &&
+    Number(payment.amount || 0) >= CLIP_INSTALLMENT_MIN_AMOUNT
+  )
+}
+
+function normalizeClipInstallmentSelection(value: unknown) {
+  const source = value && typeof value === 'object'
+    ? (value as Record<string, unknown>).installments ??
+      (value as Record<string, unknown>).installment ??
+      (value as Record<string, unknown>).months ??
+      (value as Record<string, unknown>).value
+    : value
+  const parsed = Math.trunc(Number(source || 1))
+  return CLIP_INSTALLMENT_MONTHS.has(parsed) ? parsed : 1
+}
+
+async function readClipSelectedInstallments(card: ClipCardElement, enabled: boolean) {
+  if (!enabled || typeof card.installments !== 'function') return 1
+  try {
+    return normalizeClipInstallmentSelection(await card.installments())
+  } catch {
+    return 1
+  }
 }
 
 function buildMercadoPagoCustomization(payment?: PublicMercadoPagoPayment | null) {
@@ -1744,6 +1782,7 @@ const ClipCardPaymentForm: React.FC<{
   const showSecureNotice = payment.settings?.checkout?.showSecureBadge !== false
   const isTestMode = payment.paymentMode === 'test' || String(payment.apiKey || '').startsWith('test_')
   const isSubscriptionStart = Boolean(payment.subscriptionStart?.subscriptionId)
+  const clipInstallmentsEnabled = !isSubscriptionStart && clipInstallmentsEnabledForPayment(payment)
 
   useEffect(() => {
     onPaidRef.current = onPaid
@@ -1772,7 +1811,13 @@ const ClipCardPaymentForm: React.FC<{
         const clip = new window.ClipSDK(payment.apiKey || '')
         const card = clip.element.create('Card', {
           theme: 'light',
-          locale: 'es'
+          locale: 'es',
+          ...(clipInstallmentsEnabled
+            ? {
+                paymentAmount: Math.round(Number(payment.amount || 0) * 100) / 100,
+                terms: { enabled: true }
+              }
+            : {})
         })
         card.mount(containerId)
         cardRef.current = card
@@ -1794,7 +1839,7 @@ const ClipCardPaymentForm: React.FC<{
       const container = document.getElementById(containerId)
       if (container) container.innerHTML = ''
     }
-  }, [containerId, payment.apiKey])
+  }, [clipInstallmentsEnabled, containerId, payment.amount, payment.apiKey])
 
   useEffect(() => {
     if (!threeDsUrl) return undefined
@@ -1857,11 +1902,13 @@ const ClipCardPaymentForm: React.FC<{
       if (!tokenId) {
         throw new Error('CLIP no devolvió un token válido. Intenta nuevamente.')
       }
+      const selectedInstallments = await readClipSelectedInstallments(card, clipInstallmentsEnabled)
 
       const result = await clipPaymentsService.createPublicCardPayment(payment.publicPaymentId, {
         cardTokenId: tokenId,
         email: payment.contact?.email || '',
-        phone: payment.contact?.phone || ''
+        phone: payment.contact?.phone || '',
+        installments: selectedInstallments
       })
       const statusMessage = normalizeClipStatusMessage(result.payment?.status || result.status, result.statusDetail, result.pendingAction)
       setMessageKind(statusMessage.kind)
@@ -1900,6 +1947,13 @@ const ClipCardPaymentForm: React.FC<{
         )}
         <div id={containerId} className={styles.clipCardFrame} />
       </div>
+
+      {clipInstallmentsEnabled && (
+        <p className={styles.cardAuthorizationNotice}>
+          <CreditCard size={16} />
+          <span>Si tu tarjeta califica, CLIP mostrará meses sin intereses dentro del formulario seguro.</span>
+        </p>
+      )}
 
       <Button
         type="submit"

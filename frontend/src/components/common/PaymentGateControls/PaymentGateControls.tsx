@@ -11,7 +11,10 @@ import {
 } from '@/services/integrationsService'
 import { productsService, type ProductItem, type ProductPrice } from '@/services/productsService'
 import { ProductFormModal } from '@/components/common/ProductFormModal/ProductFormModal'
-import { MSI_INSTALLMENT_CHOICES as SHARED_MSI_INSTALLMENT_CHOICES } from '../../../../../shared/sites/paymentGateContract.js'
+import {
+  CLIP_MSI_MIN_AMOUNT,
+  MSI_INSTALLMENT_CHOICES as SHARED_MSI_INSTALLMENT_CHOICES
+} from '../../../../../shared/sites/paymentGateContract.js'
 import styles from './PaymentGateControls.module.css'
 
 export type PaymentGateGateway = 'stripe' | 'conekta' | 'mercadopago' | 'clip'
@@ -40,10 +43,9 @@ export interface PaymentGateConfig {
   msi: PaymentGateMsi
 }
 
-// Meses sin intereses: Stripe (Payment Element, solo MXN y monto >= 300), Conekta y
-// Mercado Pago. CLIP queda como cobro normal porque el contrato publico actual no expone
-// recurrencia/MSI equivalente dentro de Ristak.
-export const MSI_GATEWAYS = new Set<PaymentGateGateway>(['stripe', 'conekta', 'mercadopago'])
+// Meses sin intereses: Stripe/CLIP los muestran dentro de su SDK, Mercado Pago
+// dentro del Brick y Conekta usa selector propio.
+export const MSI_GATEWAYS = new Set<PaymentGateGateway>(['stripe', 'conekta', 'mercadopago', 'clip'])
 // Lista de opciones en el contrato compartido para no divergir con el backend/runtime.
 export const MSI_INSTALLMENT_CHOICES = SHARED_MSI_INSTALLMENT_CHOICES
 
@@ -154,6 +156,7 @@ export const PaymentGateControls: React.FC<PaymentGateControlsProps> = ({
   const [integrationsStatus, setIntegrationsStatus] = useState<IntegrationsStatus | null>(() => readCachedIntegrationsStatus())
   const config = useMemo(() => normalizePaymentGateConfig(value, currencyFallback), [currencyFallback, value])
   const selectedGateway = gatewayOptions.find(option => option.value === config.gateway) || gatewayOptions[0]
+  const clipControlsMsi = config.gateway === 'clip'
 
   useEffect(() => {
     let active = true
@@ -411,18 +414,22 @@ export const PaymentGateControls: React.FC<PaymentGateControlsProps> = ({
               <div className={styles.toggleRow}>
                 <div className={styles.toggleCopy}>
                   <strong>Meses sin intereses</strong>
-                  <span>Ofrece diferido a meses en {selectedGateway.label}.</span>
+                  <span>
+                    {clipControlsMsi
+                      ? `CLIP muestra los plazos dentro de su formulario si la cuenta y tarjeta califican. Mínimo ${CLIP_MSI_MIN_AMOUNT} MXN.`
+                      : `Ofrece diferido a meses en ${selectedGateway.label}.`}
+                  </span>
                 </div>
                 <Switch
                   checked={config.msi.enabled}
                   onChange={(enabled) => {
-                    patchConfig({ msi: { enabled, maxInstallments: enabled ? (config.msi.maxInstallments || 12) : 0 } })
+                    patchConfig({ msi: { enabled, maxInstallments: enabled ? (clipControlsMsi ? 24 : (config.msi.maxInstallments || 12)) : 0 } })
                     window.setTimeout(() => { onCommit?.() }, 0)
                   }}
                   aria-label={config.msi.enabled ? 'Desactivar meses sin intereses' : 'Activar meses sin intereses'}
                 />
               </div>
-              {config.msi.enabled && (
+              {config.msi.enabled && !clipControlsMsi && (
                 <label className={styles.field}>
                   <span>Diferir hasta</span>
                   <CustomSelect

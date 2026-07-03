@@ -256,10 +256,105 @@ test('CLIP procesa token del SDK, guarda pago aprobado y usa approved_at como fe
       assert.ok(postCall)
       assert.equal(postCall.authorization, 'Bearer clip_test_secret_charge')
       assert.equal(postCall.body.currency, 'MXN')
+      assert.equal(postCall.body.installments, 1)
       assert.equal(postCall.body.customer.email, 'cliente@example.test')
       assert.equal(postCall.body.customer.phone, '+525512345678')
       assert.equal(postCall.body.payment_method.token, 'clip_card_token_test')
       assert.equal(postCall.body.webhook_url, 'https://app.example.test/api/clip/webhook')
+    } finally {
+      await cleanupPublicPayment(publicPaymentId)
+    }
+  })
+})
+
+test('CLIP envia installments seleccionados cuando el link habilita MSI', async () => {
+  await initializeMasterKey()
+
+  await snapshotClipConfig(async () => {
+    await saveClipPaymentConfig({
+      enabled: true,
+      mode: 'test',
+      accountLabel: 'CLIP Test',
+      apiKey: 'clip_test_secret_installments'
+    })
+
+    const calls = []
+    setClipFetchForTest(async (url, options = {}) => {
+      const parsed = new URL(url)
+      const body = options.body ? JSON.parse(options.body) : null
+      calls.push({
+        method: options.method || 'GET',
+        path: parsed.pathname,
+        body
+      })
+
+      if (parsed.pathname === '/payments' && (options.method || 'GET') === 'POST') {
+        return jsonResponse({
+          id: 'clip_pay_installments_test',
+          amount: body.amount,
+          currency: body.currency,
+          external_reference: body.external_reference,
+          receipt_no: 'clip_receipt_installments_test',
+          status: 'approved',
+          status_detail: { code: 'AP-PAI01', message: 'paid' },
+          approved_at: '2026-07-02T19:30:00.000Z',
+          installments: body.installments,
+          installment_amount: body.amount / body.installments,
+          payment_method: {
+            type: 'credit_card',
+            token: body.payment_method.token,
+            card: { last_digits: '4242' }
+          }
+        }, 201)
+      }
+
+      return jsonResponse({ error_code: 'not_found', message: 'No esperado' }, 404)
+    })
+
+    let publicPaymentId = ''
+    try {
+      const link = await createClipPaymentLink({
+        amount: 900,
+        currency: 'MXN',
+        title: 'Pago CLIP MSI',
+        description: 'Pago CLIP MSI',
+        email: 'cliente@example.test',
+        phone: '+525512345678',
+        installments: {
+          enabled: true,
+          maxInstallments: 12
+        },
+        metadata: { testSource: 'clipPaymentService.installments.test' }
+      }, {
+        baseUrl: 'https://app.example.test',
+        mode: 'test'
+      })
+      publicPaymentId = link.publicPaymentId
+
+      assert.equal(link.payment.clipInstallments.enabled, true)
+      assert.equal(link.payment.clipInstallments.maxInstallments, 12)
+      assert.deepEqual(
+        link.payment.clipInstallments.options.map((option) => option.months),
+        [3, 6, 9, 12]
+      )
+
+      const result = await createPublicClipCardPayment(publicPaymentId, {
+        tokenId: 'clip_card_token_installments_test',
+        email: 'cliente@example.test',
+        phone: '+525512345678',
+        installments: 6
+      }, {
+        baseUrl: 'https://app.example.test'
+      })
+
+      assert.equal(result.status, 'approved')
+      assert.equal(result.clipPaymentId, 'clip_pay_installments_test')
+
+      const postCall = calls.find((call) => call.method === 'POST' && call.path === '/payments')
+      assert.ok(postCall)
+      assert.equal(postCall.body.installments, 6)
+      assert.equal(postCall.body.amount, 900)
+      assert.equal(postCall.body.payment_method.token, 'clip_card_token_installments_test')
     } finally {
       await cleanupPublicPayment(publicPaymentId)
     }

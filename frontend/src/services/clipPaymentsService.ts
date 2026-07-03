@@ -68,6 +68,10 @@ export interface ClipPaymentLinkPayload {
   source?: string
   lineItems?: Array<Record<string, unknown>>
   metadata?: Record<string, unknown>
+  installments?: {
+    enabled?: boolean
+    maxInstallments?: number
+  } | number
 }
 
 export interface PublicClipSubscriptionStart {
@@ -110,6 +114,16 @@ export interface PublicClipPayment {
     url?: string
   } | null
   apiKey?: string
+  clipInstallments?: {
+    enabled: boolean
+    maxInstallments: number
+    minAmount?: number
+    label?: string
+    options?: Array<{
+      months: number
+      minAmount?: number
+    }>
+  } | null
   subscriptionStart?: PublicClipSubscriptionStart | null
   tax?: {
     enabled: boolean
