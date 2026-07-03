@@ -43,6 +43,16 @@ export interface SaveClipPaymentConfigPayload {
   disconnectMode?: boolean
 }
 
+export interface ClipPaymentConfigTestResult {
+  ok: boolean
+  mode: 'test' | 'live'
+  accountLabel?: string
+  apiKeyPreview?: string
+  validationMode?: 'sdk_credentials' | string
+  sdkScriptUrl?: string
+  message?: string
+}
+
 export interface ClipPaymentLinkPayload {
   contactId?: string
   contactName?: string
@@ -177,7 +187,7 @@ export const clipPaymentsService = {
     return parseResponse<ClipPaymentConfig>(response)
   },
 
-  async testConfig(payload: Partial<SaveClipPaymentConfigPayload> = {}): Promise<{ ok: boolean; mode: 'test' | 'live'; accountLabel?: string; apiKeyPreview?: string }> {
+  async testConfig(payload: Partial<SaveClipPaymentConfigPayload> = {}): Promise<ClipPaymentConfigTestResult> {
     const response = await fetch(apiUrl('/api/clip/config/test'), {
       method: 'POST',
       credentials: 'include',

@@ -31,6 +31,7 @@ const CONFIG_KEYS = {
 
 const DEFAULT_CURRENCY = 'MXN'
 const CLIP_API_BASE = 'https://api.payclip.com'
+const CLIP_SDK_SCRIPT_URL = 'https://sdk.clip.mx/js/clip-sdk.js'
 const CLIP_WEBHOOK_PATH = '/api/clip/webhook'
 const CLIP_INSTALLMENT_MONTHS = new Set([3, 6, 9, 12, 18, 24])
 const SUCCESSFUL_PAYMENT_STATUSES = new Set(['paid', 'succeeded', 'completed', 'complete', 'fulfilled', 'success', 'approved'])
@@ -147,6 +148,33 @@ function previewSecret(value = '') {
 function isMaskedSecret(value = '') {
   const clean = cleanString(value)
   return Boolean(clean && (clean.includes('•') || clean.includes('*') || /^x+$/i.test(clean)))
+}
+
+function looksLikeClipSdkApiKey(value = '') {
+  const clean = cleanString(value)
+  if (!clean || isMaskedSecret(clean)) return false
+  return /^(test|live)_[a-z0-9-]{16,}$/i.test(clean) ||
+    /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(clean)
+}
+
+function resolveClipCredentialInput(input = {}, previous = {}, requestedMode = 'test') {
+  const submittedAccountLabel = cleanString(input.accountLabel || input.account_label)
+  const submittedApiKey = cleanString(input.apiKey || input.api_key)
+  const accountLabelLooksLikeApiKey = looksLikeClipSdkApiKey(submittedAccountLabel)
+  const apiKeyLooksLikeApiKey = looksLikeClipSdkApiKey(submittedApiKey)
+  const apiKeyFromLabel = accountLabelLooksLikeApiKey && !apiKeyLooksLikeApiKey
+  const usableSubmittedApiKey = submittedApiKey && !isMaskedSecret(submittedApiKey) ? submittedApiKey : ''
+  const apiKey = apiKeyFromLabel
+    ? submittedAccountLabel
+    : usableSubmittedApiKey || cleanString(previous.apiKey)
+  const accountLabel = apiKeyFromLabel
+    ? cleanString(previous.accountLabel) || (normalizeMode(requestedMode) === 'live' ? 'CLIP en vivo' : 'CLIP prueba')
+    : cleanString(submittedAccountLabel || previous.accountLabel)
+
+  return {
+    apiKey,
+    accountLabel
+  }
 }
 
 function normalizePositiveAmount(value, fallback = 25) {
@@ -306,20 +334,18 @@ export async function saveClipPaymentConfig(input = {}) {
   }
 
   const previous = getModeConnection(raw, requestedMode)
-  const submittedApiKey = cleanString(input.apiKey || input.api_key)
-  const apiKey = submittedApiKey && !isMaskedSecret(submittedApiKey)
-    ? submittedApiKey
-    : cleanString(previous.apiKey)
+  const credentialInput = resolveClipCredentialInput(input, previous, requestedMode)
+  const apiKey = cleanString(credentialInput.apiKey)
 
   if (enabled && !apiKey) {
-    const error = new Error('Agrega la API Key de CLIP para conectar la pasarela.')
+    const error = new Error('Agrega la Clave API visible de CLIP para conectar el SDK de Checkout Transparente.')
     error.status = 400
     throw error
   }
 
   connections[requestedMode] = {
     mode: requestedMode,
-    accountLabel: cleanString(input.accountLabel || input.account_label || previous.accountLabel),
+    accountLabel: cleanString(credentialInput.accountLabel),
     apiKey: apiKey ? encryptOptionalSecret(apiKey) : '',
     connectedAt: previous.connectedAt || now,
     updatedAt: now
@@ -391,23 +417,25 @@ async function clipApiRequest(path, { method = 'GET', body = null, config: confi
 }
 
 export async function testClipPaymentConfig(input = null) {
-  const submittedApiKey = cleanString(input?.apiKey || input?.api_key)
   const mode = normalizeMode(input?.mode || await getPaymentGatewayMode())
-  const config = submittedApiKey && !isMaskedSecret(submittedApiKey)
-    ? { ...(await getClipPaymentConfig({ includeSecrets: true, mode })), apiKey: submittedApiKey, mode }
-    : await getClipClientConfig(mode)
+  const previous = await getClipPaymentConfig({ includeSecrets: true, mode })
+  const credentialInput = resolveClipCredentialInput(input || {}, previous, mode)
+  const apiKey = cleanString(credentialInput.apiKey)
 
-  const to = new Date()
-  const from = new Date(to.getTime() - 24 * 60 * 60 * 1000)
-  await clipApiRequest(`/payments?from=${encodeURIComponent(from.toISOString())}&to=${encodeURIComponent(to.toISOString())}`, {
-    config
-  })
+  if (!apiKey) {
+    const error = new Error('Agrega la Clave API visible de CLIP para validar el SDK de Checkout Transparente.')
+    error.status = 400
+    throw error
+  }
 
   return {
     ok: true,
     mode,
-    accountLabel: cleanString(input?.accountLabel || input?.account_label || config.accountLabel),
-    apiKeyPreview: previewSecret(config.apiKey)
+    accountLabel: cleanString(credentialInput.accountLabel || previous.accountLabel),
+    apiKeyPreview: previewSecret(apiKey),
+    validationMode: 'sdk_credentials',
+    sdkScriptUrl: CLIP_SDK_SCRIPT_URL,
+    message: 'Clave API lista para inicializar el SDK de Checkout Transparente de CLIP.'
   }
 }
 

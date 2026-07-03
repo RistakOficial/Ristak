@@ -8,7 +8,8 @@ import {
   createPublicClipCardPayment,
   getClipPaymentConfig,
   saveClipPaymentConfig,
-  setClipFetchForTest
+  setClipFetchForTest,
+  testClipPaymentConfig
 } from '../src/services/clipPaymentService.js'
 
 async function snapshotClipConfig(callback) {
@@ -125,6 +126,42 @@ test('CLIP rechaza links fuera de MXN antes de crear pagos locales', async () =>
       }),
       /solo acepta MXN/
     )
+  })
+})
+
+test('CLIP valida credencial SDK sin llamar endpoints de Payments', async () => {
+  await initializeMasterKey()
+
+  await snapshotClipConfig(async () => {
+    let calls = 0
+    setClipFetchForTest(async () => {
+      calls += 1
+      throw new Error('La validacion SDK no debe llamar a CLIP Payments')
+    })
+
+    const apiKey = 'test_f5688896-335f-4e71-9438-43eeb72b0382'
+    const result = await testClipPaymentConfig({
+      mode: 'test',
+      accountLabel: apiKey,
+      apiKey: 'clip_secret_not_required_for_sdk'
+    })
+
+    assert.equal(result.ok, true)
+    assert.equal(result.mode, 'test')
+    assert.equal(result.validationMode, 'sdk_credentials')
+    assert.equal(result.sdkScriptUrl, 'https://sdk.clip.mx/js/clip-sdk.js')
+    assert.equal(result.apiKeyPreview, 'test_f****0382')
+    assert.equal(calls, 0)
+
+    await saveClipPaymentConfig({
+      enabled: true,
+      mode: 'test',
+      accountLabel: apiKey,
+      apiKey: 'clip_secret_not_required_for_sdk'
+    })
+    const saved = await getClipPaymentConfig({ includeSecrets: true, mode: 'test' })
+    assert.equal(saved.apiKey, apiKey)
+    assert.equal(saved.accountLabel, 'CLIP prueba')
   })
 })
 

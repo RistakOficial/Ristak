@@ -493,9 +493,15 @@ Restricciones operativas:
 
 - Moneda obligatoria: `MXN`.
 - Cliente obligatorio: email y telefono.
-- El API Key se expone al SDK publico porque asi lo requiere CLIP para
-  tokenizar tarjeta; Ristak lo conserva cifrado del lado servidor y solo lo
-  entrega al checkout publico necesario.
+- La Clave API visible de CLIP se expone al SDK publico porque asi lo requiere
+  CLIP para tokenizar tarjeta; Ristak la conserva cifrada del lado servidor y
+  solo la entrega al checkout publico necesario. La clave secreta de CLIP no se
+  usa para inicializar el SDK.
+- La validacion de Configuracion > Pagos > CLIP solo comprueba que exista una
+  Clave API utilizable para montar el SDK oficial. No consulta listas de
+  transacciones ni prueba endpoints de Payments, porque esas capacidades pueden
+  no estar habilitadas para la credencial. El cobro real sigue usando el token
+  generado por el SDK y `POST /payments` contra CLIP cuando el cliente paga.
 - Si se necesita recurrencia automatica real con cargo futuro gestionado por la
   pasarela, usar Stripe, Conekta o Mercado Pago mientras CLIP no tenga un flujo
   publico equivalente integrado en Ristak.

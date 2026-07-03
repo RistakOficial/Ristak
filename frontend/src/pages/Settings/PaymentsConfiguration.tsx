@@ -323,14 +323,20 @@ const conektaModeLabels: Record<StripeModeId, { title: string; description: stri
 const clipModeLabels: Record<StripeModeId, { title: string; description: string; apiKeyPlaceholder: string }> = {
   test: {
     title: 'Modo prueba',
-    description: 'Para validar Checkout Transparente de CLIP sin mover dinero real.',
-    apiKeyPlaceholder: 'API Key de prueba'
+    description: 'Para montar el SDK de Checkout Transparente de CLIP sin mover dinero real.',
+    apiKeyPlaceholder: 'test_...'
   },
   live: {
     title: 'Modo en vivo',
-    description: 'Para aceptar pagos reales con CLIP Checkout Transparente.',
-    apiKeyPlaceholder: 'API Key en vivo'
+    description: 'Para aceptar pagos reales con el SDK de Checkout Transparente de CLIP.',
+    apiKeyPlaceholder: 'Clave API en vivo'
   }
+}
+const looksLikeClipSdkApiKey = (value: string) => {
+  const clean = value.trim()
+  if (!clean || clean.includes('•') || clean.includes('*')) return false
+  return /^(test|live)_[a-z0-9-]{16,}$/i.test(clean) ||
+    /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(clean)
 }
 const parseBooleanLike = (value: unknown, fallback = false) => {
   if (typeof value === 'boolean') return value
@@ -969,7 +975,10 @@ export const PaymentsConfiguration: React.FC = () => {
     if (conektaActiveModeConfigured) return { label: 'Configurado', variant: 'success' as const, icon: <ShieldCheck size={14} /> }
     return { label: 'Sin configurar', variant: 'neutral' as const, icon: <KeyRound size={14} /> }
   })()
-  const clipModeIsComplete = (mode: StripeModeId) => Boolean(clipManualCredentials[mode].apiKey.trim())
+  const clipModeIsComplete = (mode: StripeModeId) => {
+    const values = clipManualCredentials[mode]
+    return Boolean(values.apiKey.trim() || looksLikeClipSdkApiKey(values.accountLabel))
+  }
   const clipModeIsSaved = (mode: StripeModeId) => Boolean(
     clipConfig?.modeConnections?.[mode]?.configured ||
     (clipConfig?.configured && clipConfig.mode === mode)
@@ -981,7 +990,7 @@ export const PaymentsConfiguration: React.FC = () => {
     : clipConnected ? 'configured_manually' : 'not_configured'
   const clipStatusBadge = (() => {
     if (loadingClipConfig) return { label: 'Cargando', variant: 'warning' as const, icon: <Loader2 size={14} className={styles.spinIcon} /> }
-    if (clipConfigurationStatus === 'connection_failed') return { label: 'Conexión fallida', variant: 'warning' as const, icon: <AlertTriangle size={14} /> }
+    if (clipConfigurationStatus === 'connection_failed') return { label: 'Revisar clave', variant: 'warning' as const, icon: <AlertTriangle size={14} /> }
     if (clipActiveModeConfigured) return { label: 'Configurado', variant: 'success' as const, icon: <ShieldCheck size={14} /> }
     return { label: 'Sin configurar', variant: 'neutral' as const, icon: <KeyRound size={14} /> }
   })()
@@ -1574,12 +1583,19 @@ export const PaymentsConfiguration: React.FC = () => {
     }))
   }
 
-  const buildClipModeConfigPayload = (mode: StripeModeId, modeValues: ClipModeCredentials = clipManualCredentials[mode]): SaveClipPaymentConfigPayload => ({
-    enabled: true,
-    mode,
-    accountLabel: modeValues.accountLabel.trim(),
-    apiKey: modeValues.apiKey.trim()
-  })
+  const buildClipModeConfigPayload = (mode: StripeModeId, modeValues: ClipModeCredentials = clipManualCredentials[mode]): SaveClipPaymentConfigPayload => {
+    const accountLabel = modeValues.accountLabel.trim()
+    const apiKey = modeValues.apiKey.trim()
+    const accountLabelHasApiKey = looksLikeClipSdkApiKey(accountLabel)
+    const apiKeyHasApiKey = looksLikeClipSdkApiKey(apiKey)
+
+    return {
+      enabled: true,
+      mode,
+      accountLabel: accountLabelHasApiKey && !apiKeyHasApiKey ? '' : accountLabel,
+      apiKey: accountLabelHasApiKey && !apiKeyHasApiKey ? accountLabel : apiKey
+    }
+  }
 
   const updateClipModeCredential = (mode: StripeModeId, key: keyof ClipModeCredentials, value: string) => {
     setClipManualCredentials((current) => ({
@@ -1742,10 +1758,10 @@ export const PaymentsConfiguration: React.FC = () => {
       const config = await clipPaymentsService.saveConfig(buildClipModeConfigPayload(mode))
       applyClipConfig(config)
       invalidateIntegrationsStatus()
-      showToast('success', 'CLIP guardado', `${clipModeLabels[mode].title} quedó listo para Checkout Transparente.`)
+      showToast('success', 'CLIP guardado', `${clipModeLabels[mode].title} quedó listo para montar el SDK de Checkout Transparente.`)
     } catch (error: any) {
       setClipConnectionFailed(true)
-      showToast('error', 'No se pudo guardar CLIP', error.message || 'Revisa la API Key de CLIP.')
+      showToast('error', 'No se pudo guardar CLIP', error.message || 'Pega la Clave API visible de CLIP; la clave secreta no se usa para el SDK.')
     } finally {
       setSavingClipMode(null)
     }
@@ -1755,10 +1771,11 @@ export const PaymentsConfiguration: React.FC = () => {
     setTestingClipMode(mode)
     try {
       const result = await clipPaymentsService.testConfig(buildClipModeConfigPayload(mode))
-      showToast('success', 'CLIP respondió correctamente', `Conexión ${result.mode === 'live' ? 'en vivo' : 'de prueba'} validada con la API de CLIP.`)
+      setClipConnectionFailed(false)
+      showToast('success', 'Clave API lista para SDK', `Ristak puede montar Checkout Transparente de CLIP en modo ${result.mode === 'live' ? 'en vivo' : 'prueba'}. El cargo real se confirma cuando el cliente paga.`)
     } catch (error: any) {
       setClipConnectionFailed(true)
-      showToast('error', 'CLIP rechazó la conexión', error.message || 'Verifica la API Key y el modo.')
+      showToast('error', 'No se pudo validar la Clave API', error.message || 'Pega la Clave API visible de CLIP, no la clave secreta.')
     } finally {
       setTestingClipMode(null)
     }
@@ -3860,7 +3877,7 @@ export const PaymentsConfiguration: React.FC = () => {
               <PaymentPlatformLogo platform="clip" size="lg" decorative />
               <div>
                 <h2>CLIP</h2>
-                <p>Configura Checkout Transparente de CLIP para pagos únicos en MXN y pago inicial de suscripciones internas.</p>
+                <p>Configura el SDK de Checkout Transparente de CLIP para pagos únicos en MXN y pago inicial de suscripciones internas.</p>
               </div>
             </div>
             <Badge variant={clipStatusBadge.variant}>
@@ -3872,7 +3889,7 @@ export const PaymentsConfiguration: React.FC = () => {
           <div className={styles.stripePanel}>
             <div className={styles.inlineWarning}>
               <Info size={16} />
-              <span>CLIP Checkout Transparente opera en MXN y requiere email/teléfono del cliente al cobrar. Las suscripciones se activan en Ristak cuando el pago inicial queda confirmado por CLIP.</span>
+              <span>Usa la Clave API visible del panel de CLIP; la clave secreta no se necesita para el SDK. El cobro real se hace cuando el cliente paga y requiere email/teléfono.</span>
             </div>
 
             <div className={styles.stripeModeGrid}>
@@ -3901,7 +3918,7 @@ export const PaymentsConfiguration: React.FC = () => {
                           <strong>{savedMode?.accountLabel || clipConfig?.accountLabel || 'CLIP'}</strong>
                         </div>
                         <div>
-                          <span>API Key</span>
+                          <span>Clave API</span>
                           <strong>{savedMode?.apiKeyPreview || clipConfig?.apiKeyPreview || 'Guardada'}</strong>
                         </div>
                       </div>
@@ -3909,7 +3926,22 @@ export const PaymentsConfiguration: React.FC = () => {
 
                     <div className={styles.formGrid}>
                       {renderField(
-                        'Etiqueta de cuenta',
+                        'Clave API de CLIP',
+                        <input
+                          type="text"
+                          value={values.apiKey}
+                          onChange={(event) => updateClipModeCredential(mode, 'apiKey', event.target.value)}
+                          onFocus={(event) => {
+                            if (savedMode?.apiKeyPreview && values.apiKey === savedMode.apiKeyPreview) event.currentTarget.select()
+                          }}
+                          placeholder={savedMode?.hasApiKey ? savedMode.apiKeyPreview : modeCopy.apiKeyPlaceholder}
+                          autoComplete="off"
+                          spellCheck={false}
+                        />,
+                        'Pega la Clave API visible. No pegues la clave secreta.'
+                      )}
+                      {renderField(
+                        'Etiqueta interna',
                         <input
                           type="text"
                           value={values.accountLabel}
@@ -3917,21 +3949,8 @@ export const PaymentsConfiguration: React.FC = () => {
                           placeholder={mode === 'live' ? 'CLIP en vivo' : 'CLIP prueba'}
                           autoComplete="off"
                           spellCheck={false}
-                        />
-                      )}
-                      {renderField(
-                        'API Key',
-                        <input
-                          type="password"
-                          value={values.apiKey}
-                          onChange={(event) => updateClipModeCredential(mode, 'apiKey', event.target.value)}
-                          onFocus={(event) => {
-                            if (savedMode?.apiKeyPreview && values.apiKey === savedMode.apiKeyPreview) event.currentTarget.select()
-                          }}
-                          placeholder={savedMode?.hasApiKey ? savedMode.apiKeyPreview : modeCopy.apiKeyPlaceholder}
-                          autoComplete="new-password"
-                          spellCheck={false}
-                        />
+                        />,
+                        'Solo sirve para identificar esta credencial dentro de Ristak.'
                       )}
                     </div>
 
@@ -3946,12 +3965,12 @@ export const PaymentsConfiguration: React.FC = () => {
                         {modeIsTesting ? (
                           <>
                             <Loader2 size={15} className={styles.spinIcon} />
-                            Probando...
+                            Validando...
                           </>
                         ) : (
                           <>
                             <ShieldCheck size={15} />
-                            Probar conexión
+                            Validar SDK
                           </>
                         )}
                       </Button>
