@@ -676,6 +676,11 @@ con `ViewContent`, y los bloques de calendario embebido nuevos nacen con
 `Schedule`. Las actualizaciones de sitios existentes no reactivan eventos que el
 usuario apago manualmente.
 
+En landings en modo embudo, un bloque nuevo de calendario embebido nace con
+`Al agendar -> Ir a la siguiente pagina`. Ese default solo se aplica al crear el
+bloque; si el usuario cambia la accion a reglas del calendario o redireccion, se
+respeta su configuracion guardada.
+
 ### Paridad de render editor/preview/publicado (contrato compartido)
 
 Editor (canvas React), preview autenticado, preview-session publico y sitio

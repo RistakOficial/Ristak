@@ -52,6 +52,10 @@ function getCalendarFrameUrl(html) {
   return new URL(match[1].replace(/&amp;/g, '&'), 'https://example.test')
 }
 
+function findCalendarBlock(site, slug) {
+  return site.blocks.find(block => block.blockType === 'calendar_embed' && block.settings?.calendarSlug === slug)
+}
+
 test('site calendar preview is interactive but flagged as non-booking preview', async () => {
   const html = await renderPublicSiteHtml(calendarSite({
     calendarDesignMode: 'original',
@@ -624,6 +628,136 @@ test('calendar embed bridges to the next funnel page on booking', async () => {
   assert.match(html, /data-rstk-calendar-redirect="[^"]*page-2[^"]*"/)
   const url = getCalendarFrameUrl(html)
   assert.equal(url.searchParams.get('bookingBridge'), '1')
+})
+
+test('calendar embeds created on funnel landings default to next page on booking', async () => {
+  const site = await createSite({
+    siteType: 'landing_page',
+    name: 'Agenda funnel default',
+    slug: 'agenda-funnel-default',
+    blankCanvas: true,
+    theme: {
+      pageMode: 'funnel',
+      pages: [
+        { id: 'page-1', title: 'Pagina 1', sortOrder: 0 },
+        { id: 'page-2', title: 'Pagina 2', sortOrder: 1 }
+      ]
+    }
+  })
+
+  try {
+    const updated = await createBlock(site.id, {
+      blockType: 'calendar_embed',
+      label: 'Calendario',
+      settings: {
+        pageId: 'page-1',
+        calendarSlug: 'agenda-funnel-default',
+        calendarName: 'Agenda funnel default'
+      }
+    })
+
+    const block = findCalendarBlock(updated, 'agenda-funnel-default')
+    assert.equal(block?.settings?.calendarCompletionAction, 'next_page')
+
+    const html = await renderPublicSiteHtml(updated, {
+      pageId: 'page-1',
+      trackingEnabled: false,
+      preview: true
+    })
+
+    assert.match(html, /data-rstk-calendar-redirect="[^"]*page-2[^"]*"/)
+    const url = getCalendarFrameUrl(html)
+    assert.equal(url.searchParams.get('bookingBridge'), '1')
+  } finally {
+    await deleteSite(site.id).catch(() => undefined)
+  }
+})
+
+test('calendar embed creation preserves explicit calendar completion rules', async () => {
+  const site = await createSite({
+    siteType: 'landing_page',
+    name: 'Agenda explicit default',
+    slug: 'agenda-explicit-default',
+    blankCanvas: true,
+    theme: {
+      pageMode: 'funnel',
+      pages: [
+        { id: 'page-1', title: 'Pagina 1', sortOrder: 0 },
+        { id: 'page-2', title: 'Pagina 2', sortOrder: 1 }
+      ]
+    }
+  })
+
+  try {
+    const updated = await createBlock(site.id, {
+      blockType: 'calendar_embed',
+      label: 'Calendario',
+      settings: {
+        pageId: 'page-1',
+        calendarSlug: 'agenda-explicit-default',
+        calendarName: 'Agenda explicit default',
+        calendarCompletionAction: 'calendar_default'
+      }
+    })
+
+    const block = findCalendarBlock(updated, 'agenda-explicit-default')
+    assert.equal(block?.settings?.calendarCompletionAction, 'calendar_default')
+
+    const html = await renderPublicSiteHtml(updated, {
+      pageId: 'page-1',
+      trackingEnabled: false,
+      preview: true
+    })
+
+    assert.doesNotMatch(html, /data-rstk-calendar-redirect=/)
+    const url = getCalendarFrameUrl(html)
+    assert.equal(url.searchParams.get('bookingBridge'), null)
+  } finally {
+    await deleteSite(site.id).catch(() => undefined)
+  }
+})
+
+test('calendar embeds created on website landings keep calendar rules by default', async () => {
+  const site = await createSite({
+    siteType: 'landing_page',
+    name: 'Agenda website default',
+    slug: 'agenda-website-default',
+    blankCanvas: true,
+    theme: {
+      pageMode: 'website',
+      pages: [
+        { id: 'page-1', title: 'Inicio', slug: 'inicio', sortOrder: 0 },
+        { id: 'page-2', title: 'Gracias', slug: 'gracias', sortOrder: 1 }
+      ]
+    }
+  })
+
+  try {
+    const updated = await createBlock(site.id, {
+      blockType: 'calendar_embed',
+      label: 'Calendario',
+      settings: {
+        pageId: 'page-1',
+        calendarSlug: 'agenda-website-default',
+        calendarName: 'Agenda website default'
+      }
+    })
+
+    const block = findCalendarBlock(updated, 'agenda-website-default')
+    assert.equal(block?.settings?.calendarCompletionAction, undefined)
+
+    const html = await renderPublicSiteHtml(updated, {
+      pageId: 'page-1',
+      trackingEnabled: false,
+      preview: true
+    })
+
+    assert.doesNotMatch(html, /data-rstk-calendar-redirect=/)
+    const url = getCalendarFrameUrl(html)
+    assert.equal(url.searchParams.get('bookingBridge'), null)
+  } finally {
+    await deleteSite(site.id).catch(() => undefined)
+  }
 })
 
 test('calendar embed uses its own rules by default (no bridge)', async () => {

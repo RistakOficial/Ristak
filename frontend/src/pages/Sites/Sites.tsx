@@ -5509,6 +5509,11 @@ const getCalendarCompletionAction = (settings: Record<string, unknown>): Calenda
   return action === 'next_page' || action === 'redirect' ? action : 'calendar_default'
 }
 
+const shouldDefaultCalendarEmbedToNextPage = (site?: PublicSite | null, siteType?: SiteType) => {
+  const resolvedSiteType = site?.siteType || siteType
+  return resolvedSiteType === 'landing_page' && (!site || (!isImportedHtmlSite(site) && getSitePageMode(site) === 'funnel'))
+}
+
 const normalizeOption = (option: string | SiteBlockOption, index: number): SiteBlockOption => {
   if (typeof option === 'string') {
     return {
@@ -6188,6 +6193,9 @@ const defaultBlockPayload = (blockType: SiteBlockType, siteOrId: PublicSite | st
     : '#111827'
   const calendarMutedDefault = siteIsDark ? 'rgba(255, 255, 255, 0.72)' : '#6b7280'
   const calendarLineDefault = siteIsDark ? 'rgba(255, 255, 255, 0.22)' : '#e5e7eb'
+  const calendarCompletionDefaults = shouldDefaultCalendarEmbedToNextPage(site, resolvedSiteType)
+    ? { calendarCompletionAction: 'next_page' }
+    : {}
 
   if (blockType === 'hero') {
     return {
@@ -6441,6 +6449,7 @@ const defaultBlockPayload = (blockType: SiteBlockType, siteOrId: PublicSite | st
         calendarFieldText: pageTextDefault,
         calendarFieldBorder: calendarLineDefault,
         calendarButtonText: '#ffffff',
+        ...calendarCompletionDefaults,
         embedHeight: CALENDAR_EMBED_DEFAULT_HEIGHT
       })
     }

@@ -1034,6 +1034,22 @@ function normalizeFormDisqualifiedCompletionAction(value, fallback = 'disqualifi
   return ['disqualified_page', 'redirect_url'].includes(action) ? action : fallback
 }
 
+function hasCalendarCompletionAction(settings = {}) {
+  return Boolean(cleanString(settings.calendarCompletionAction || settings.calendar_completion_action))
+}
+
+function shouldDefaultCalendarEmbedToNextPage(site) {
+  return site?.siteType === 'landing_page' && !isImportedHtmlSite(site) && getSitePageMode(site) === 'funnel'
+}
+
+function applyCalendarEmbedCreateDefaults(site, settings = {}) {
+  const next = isPlainObject(settings) ? { ...settings } : {}
+  if (shouldDefaultCalendarEmbedToNextPage(site) && !hasCalendarCompletionAction(next)) {
+    next.calendarCompletionAction = 'next_page'
+  }
+  return next
+}
+
 function normalizeSiteMetaSubmitCondition(value, fallback = 'always') {
   const condition = cleanString(value)
   return SITE_META_SUBMIT_CONDITIONS.has(condition) ? condition : fallback
@@ -10822,6 +10838,8 @@ export async function createBlock(siteId, input = {}) {
         ...(isPlainObject(settings.embeddedTheme) ? settings.embeddedTheme : {})
       }
     }
+  } else if (blockType === 'calendar_embed') {
+    settings = applyCalendarEmbedCreateDefaults(site, settings)
   }
   await assertUniqueSystemFieldForInput(siteId, site, { settings }, blockType)
 
