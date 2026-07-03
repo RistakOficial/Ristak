@@ -470,6 +470,26 @@ Reglas:
 
 Documento obligatorio: `docs/CURRENCY_GUIDELINES.md`.
 
+### Stripe MSI controlado
+
+En links publicos `/pay/:publicPaymentId`, Stripe puede ofrecer meses sin
+intereses con control por link:
+
+- El modal de cobro permite elegir el maximo local permitido para Stripe
+  (`3, 6, 9, 12, 18 o 24` meses) cuando el cobro esta en `MXN` y cumple el
+  minimo de `300 MXN`.
+- Stripe debe tener MSI habilitado en su Dashboard; Ristak no crea ni modifica
+  reglas globales de Stripe.
+- El checkout publico usa un flujo controlado con tarjeta: crea el PaymentMethod,
+  pide a Stripe los `available_plans`, filtra cualquier plan por encima del
+  maximo guardado en `metadata.stripeInstallments.maxInstallments` y confirma el
+  PaymentIntent desde backend con el `plan.count` elegido.
+- El backend vuelve a validar el plazo antes de confirmar. Si el cliente intenta
+  mandar mas meses que el maximo del link, o la tarjeta no ofrece ese plazo,
+  Stripe no se confirma.
+- Si la tarjeta no ofrece MSI, el checkout permite pagar de contado sin mostrar
+  meses inventados.
+
 ### CLIP Checkout Transparente
 
 CLIP vive como pasarela manual administrada desde Configuracion > Pagos. Sus
@@ -667,13 +687,14 @@ y frontend (`frontend/src/pages/Sites/*`) lo importan; el `Dockerfile` copia
   `.rstk-field-width-set` (solo con `fieldWidth`).
 - Pago: el shell del checkout comparte estilos; el preview del editor solo muestra
   lo que el vivo mostraria (fila de meses standalone solo Conekta via
-  `msiEligibility`; Stripe, Mercado Pago y CLIP resuelven meses dentro de su
-  widget/SDK; boton de pago con icono; badge "No visible en el sitio publicado"
-  cuando el gate esta deshabilitado). Stripe, Conekta, Mercado Pago y CLIP usan
-  el mismo contrato de `paymentGate`; CLIP monta el SDK oficial en el checkout
-  publicado, requiere email/telefono para procesar el cargo y puede habilitar MSI
-  con `terms.enabled` si el bloque lo permite. El toggle "guardar tarjeta" se
-  retiro (Stripe Link no es ocultable por codigo).
+  `msiEligibility`; Stripe en `/pay` usa MSI controlado por backend cuando el link
+  trae `stripeInstallments.maxInstallments`; Mercado Pago y CLIP resuelven meses
+  dentro de su widget/SDK; boton de pago con icono; badge "No visible en el sitio
+  publicado" cuando el gate esta deshabilitado). Stripe, Conekta, Mercado Pago y
+  CLIP usan el mismo contrato de `paymentGate`; CLIP monta el SDK oficial en el
+  checkout publicado, requiere email/telefono para procesar el cargo y puede
+  habilitar MSI con `terms.enabled` si el bloque lo permite. El toggle "guardar
+  tarjeta" se retiro (Stripe Link no es ocultable por codigo).
 - Diferencias permitidas entre superficies: SOLO auth, tracking/pixel, param
   preservation y `headerTrackingCode` (nunca corren en editor/preview por
   seguridad), y el chrome de edicion. NO se permite divergencia en CSS visual,

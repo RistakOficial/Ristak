@@ -81,6 +81,8 @@ const TIMED_PLAN_FREQUENCY = 'scheduled_time'
 const TIMED_PLAN_FREQUENCY_ALIASES = new Set([TIMED_PLAN_FREQUENCY, 'scheduled-time', 'scheduledat', 'scheduled_at', 'timed', 'datetime'])
 const PLAN_FREQUENCIES = new Set(['custom', 'daily', 'weekly', 'biweekly', 'monthly', 'yearly', TIMED_PLAN_FREQUENCY])
 const STRIPE_INSTALLMENT_MIN_AMOUNT = 300
+const STRIPE_INSTALLMENT_COUNTS = [3, 6, 9, 12, 18, 24]
+const STRIPE_INSTALLMENT_COUNT_SET = new Set(STRIPE_INSTALLMENT_COUNTS)
 const ZERO_DECIMAL_CURRENCIES = new Set([
   'bif', 'clp', 'djf', 'gnf', 'jpy', 'kmf', 'krw', 'mga', 'pyg', 'rwf',
   'ugx', 'vnd', 'vuv', 'xaf', 'xof', 'xpf'
@@ -417,6 +419,13 @@ function normalizePositiveAmount(value, fallback = 25) {
   return Math.round(Number(fallback || 25) * 100) / 100
 }
 
+function normalizeStripeInstallmentCount(value, fallback = 24) {
+  const parsed = Math.trunc(Number(value || fallback))
+  const source = Number.isFinite(parsed) ? parsed : fallback
+  const allowed = STRIPE_INSTALLMENT_COUNTS.filter((count) => count <= source)
+  return allowed.length ? allowed[allowed.length - 1] : STRIPE_INSTALLMENT_COUNTS[0]
+}
+
 function normalizeStripeInstallmentOptions(input, { amount = null, currency = DEFAULT_CURRENCY, emptyAsNull = false } = {}) {
   if (input === undefined || input === null || input === '' || input === false) {
     return emptyAsNull ? null : {
@@ -451,13 +460,44 @@ function normalizeStripeInstallmentOptions(input, { amount = null, currency = DE
     throw error
   }
 
+  const maxInstallments = normalizeStripeInstallmentCount(
+    source.maxInstallments || source.max_installments || source.months || source.count || source.installments,
+    24
+  )
+
   return {
     enabled: true,
     minAmount: STRIPE_INSTALLMENT_MIN_AMOUNT,
+    maxInstallments,
+    allowedCounts: STRIPE_INSTALLMENT_COUNTS.filter((count) => count <= maxInstallments),
     label: 'Meses sin intereses',
     provider: 'stripe',
-    selectionMode: 'stripe_payment_element'
+    selectionMode: 'stripe_controlled_installments'
   }
+}
+
+function normalizeStripeAvailableInstallmentPlans(plans, stripeInstallments = null) {
+  const maxInstallments = normalizeStripeInstallmentCount(stripeInstallments?.maxInstallments || 24, 24)
+  return (Array.isArray(plans) ? plans : [])
+    .map((plan) => ({
+      type: cleanString(plan?.type || 'fixed_count') || 'fixed_count',
+      interval: cleanString(plan?.interval || 'month') || 'month',
+      count: Math.trunc(Number(plan?.count || 0))
+    }))
+    .filter((plan) => (
+      plan.type === 'fixed_count' &&
+      plan.interval === 'month' &&
+      STRIPE_INSTALLMENT_COUNT_SET.has(plan.count) &&
+      plan.count <= maxInstallments
+    ))
+    .sort((left, right) => left.count - right.count)
+}
+
+function getStripeIntentAvailablePlans(intent, stripeInstallments = null) {
+  return normalizeStripeAvailableInstallmentPlans(
+    intent?.payment_method_options?.card?.installments?.available_plans,
+    stripeInstallments
+  )
 }
 
 function extractStripeObjectId(value) {
@@ -1595,6 +1635,234 @@ export async function createStripePaymentIntent(publicPaymentId, options = {}) {
     publishableKey: config.publishableKey,
     stripeAccountId: '',
     status: intent.status
+  }
+}
+
+function assertPublicStripePaymentCanCharge(row) {
+  if (!row || row.payment_provider !== 'stripe') {
+    const error = new Error('Pago no encontrado.')
+    error.status = 404
+    throw error
+  }
+
+  if (['paid', 'refunded', 'void', 'deleted'].includes(cleanString(row.status).toLowerCase())) {
+    const error = new Error('Este pago ya no acepta nuevos cobros.')
+    error.status = 409
+    throw error
+  }
+}
+
+function getStripeInstallmentsForPaymentRow(row, config) {
+  const currency = normalizeCurrency(row.currency || config?.defaultCurrency)
+  const metadata = parseJson(row.metadata_json, {})
+  return normalizeStripeInstallmentOptions(metadata.stripeInstallments, {
+    amount: row.amount,
+    currency,
+    emptyAsNull: true
+  })
+}
+
+function normalizeStripeReturnUrl(value) {
+  const clean = cleanString(value)
+  if (!clean) return ''
+  try {
+    const parsed = new URL(clean)
+    if (!['http:', 'https:'].includes(parsed.protocol)) return ''
+    return parsed.toString()
+  } catch {
+    return ''
+  }
+}
+
+function normalizeStripeSelectedInstallmentCount(value) {
+  if (value === undefined || value === null || value === '' || value === false || value === 'single') return null
+  const parsed = Math.trunc(Number(value))
+  return STRIPE_INSTALLMENT_COUNT_SET.has(parsed) ? parsed : NaN
+}
+
+async function ensurePublicStripeCustomer(stripe, row, config, requestOptions, savePaymentMethod = true) {
+  if (row.contact_id) {
+    return ensureStripeCustomerForContact(stripe, row.contact_id, {
+      contactName: row.contact_name,
+      contactEmail: row.contact_email,
+      contactPhone: row.contact_phone,
+      stripeMode: config.mode
+    }, requestOptions)
+  }
+
+  return savePaymentMethod ? cleanString(row.contact_stripe_customer_id) : ''
+}
+
+function buildPublicStripePaymentIntentMetadata(row, publicPaymentId, stripeCustomerId, savePaymentMethod) {
+  const rowMetadata = parseJson(row.metadata_json, {})
+  const paymentPlanMetadata = rowMetadata.paymentPlan && typeof rowMetadata.paymentPlan === 'object'
+    ? rowMetadata.paymentPlan
+    : null
+
+  return {
+    ristak_payment_id: row.id,
+    public_payment_id: publicPaymentId,
+    contact_id: row.contact_id || '',
+    stripe_customer_id: stripeCustomerId || '',
+    save_payment_method: savePaymentMethod && stripeCustomerId ? '1' : '0',
+    payment_method_setup_source: savePaymentMethod && stripeCustomerId ? 'public_payment_link' : '',
+    ...(paymentPlanMetadata?.flowId ? { ristak_flow_id: cleanString(paymentPlanMetadata.flowId) } : {}),
+    ...(paymentPlanMetadata?.installmentId ? { ristak_installment_id: cleanString(paymentPlanMetadata.installmentId) } : {}),
+    ...(paymentPlanMetadata?.trigger ? { ristak_plan_trigger: cleanString(paymentPlanMetadata.trigger) } : {})
+  }
+}
+
+export async function preparePublicStripeInstallmentPlans(publicPaymentId, options = {}) {
+  const row = await findPaymentByPublicId(publicPaymentId)
+  assertPublicStripePaymentCanCharge(row)
+
+  const { stripe, config, requestOptions } = await getStripeClient(row.payment_mode || '')
+  const stripeInstallments = getStripeInstallmentsForPaymentRow(row, config)
+  if (!stripeInstallments?.enabled) {
+    const error = new Error('Este link de Stripe no tiene meses sin intereses habilitados.')
+    error.status = 400
+    throw error
+  }
+
+  const paymentMethodId = cleanString(options.paymentMethodId || options.payment_method_id)
+  if (!paymentMethodId) {
+    const error = new Error('Falta la tarjeta segura de Stripe para consultar los meses disponibles.')
+    error.status = 400
+    throw error
+  }
+
+  const savePaymentMethod = normalizeBoolean(options.savePaymentMethod, true)
+  const stripeCustomerId = await ensurePublicStripeCustomer(stripe, row, config, requestOptions, savePaymentMethod)
+  const currency = normalizeCurrency(row.currency || config.defaultCurrency)
+  const paymentSettings = await getPaymentSettings()
+  const shouldSendReceipt = shouldSendStripeReceiptEmail(paymentSettings)
+  const metadata = buildPublicStripePaymentIntentMetadata(row, publicPaymentId, stripeCustomerId, savePaymentMethod)
+  const createIntentTimezone = await getAccountTimezone().catch(() => DEFAULT_PAYMENT_TIMEZONE)
+  const createIntentDayBucket = businessTodayDateOnly(createIntentTimezone)
+  const createIntentIdempotencyKey =
+    `ristak:${row.id}:prepare-msi:${paymentMethodId}:${toStripeAmount(row.amount, currency)}:${currency}:${createIntentDayBucket}`
+
+  const intent = await stripe.paymentIntents.create(
+    {
+      amount: toStripeAmount(row.amount, currency),
+      currency: currency.toLowerCase(),
+      payment_method: paymentMethodId,
+      payment_method_types: ['card'],
+      payment_method_options: {
+        card: {
+          installments: {
+            enabled: true
+          }
+        }
+      },
+      ...(stripeCustomerId ? { customer: stripeCustomerId } : {}),
+      ...(savePaymentMethod && stripeCustomerId ? { setup_future_usage: 'off_session' } : {}),
+      description: row.title || row.description || 'Pago Ristak',
+      receipt_email: shouldSendReceipt ? row.contact_email || undefined : undefined,
+      metadata
+    },
+    stripeRequestOptionsWithIdempotency(requestOptions, createIntentIdempotencyKey)
+  )
+
+  await db.run(
+    `UPDATE payments
+     SET stripe_payment_intent_id = ?,
+         status = CASE WHEN status = 'sent' THEN 'pending' ELSE status END,
+         updated_at = CURRENT_TIMESTAMP
+     WHERE id = ?`,
+    [intent.id, row.id]
+  )
+
+  return {
+    paymentIntentId: intent.id,
+    clientSecret: intent.client_secret,
+    publishableKey: config.publishableKey,
+    stripeAccountId: '',
+    status: intent.status,
+    maxInstallments: stripeInstallments.maxInstallments,
+    availablePlans: getStripeIntentAvailablePlans(intent, stripeInstallments)
+  }
+}
+
+export async function confirmPublicStripeInstallmentPayment(publicPaymentId, options = {}) {
+  const row = await findPaymentByPublicId(publicPaymentId)
+  assertPublicStripePaymentCanCharge(row)
+
+  const { stripe, config, requestOptions } = await getStripeClient(row.payment_mode || '')
+  const stripeInstallments = getStripeInstallmentsForPaymentRow(row, config)
+  if (!stripeInstallments?.enabled) {
+    const error = new Error('Este link de Stripe no tiene meses sin intereses habilitados.')
+    error.status = 400
+    throw error
+  }
+
+  const paymentIntentId = cleanString(options.paymentIntentId || options.payment_intent_id || row.stripe_payment_intent_id)
+  if (!paymentIntentId || paymentIntentId !== cleanString(row.stripe_payment_intent_id)) {
+    const error = new Error('El intento de pago no corresponde a este link.')
+    error.status = 409
+    throw error
+  }
+
+  const selectedCount = normalizeStripeSelectedInstallmentCount(
+    options.selectedInstallments ??
+    options.installments ??
+    options.selectedPlan?.count ??
+    options.plan?.count
+  )
+  if (Number.isNaN(selectedCount)) {
+    const error = new Error('Selecciona un plazo válido de meses sin intereses.')
+    error.status = 400
+    throw error
+  }
+
+  const intent = await stripe.paymentIntents.retrieve(paymentIntentId, requestOptions)
+  const availablePlans = getStripeIntentAvailablePlans(intent, stripeInstallments)
+  if (selectedCount && !availablePlans.some((plan) => plan.count === selectedCount)) {
+    const error = new Error(`Este link permite máximo ${stripeInstallments.maxInstallments} meses y la tarjeta no ofrece el plazo seleccionado.`)
+    error.status = 400
+    throw error
+  }
+
+  const returnUrl = normalizeStripeReturnUrl(options.returnUrl || options.return_url)
+  const confirmParams = {
+    ...(returnUrl ? { return_url: returnUrl } : {}),
+    ...(selectedCount
+      ? {
+          payment_method_options: {
+            card: {
+              installments: {
+                plan: {
+                  type: 'fixed_count',
+                  interval: 'month',
+                  count: selectedCount
+                }
+              }
+            }
+          }
+        }
+      : {})
+  }
+  const confirmed = await stripe.paymentIntents.confirm(
+    paymentIntentId,
+    confirmParams,
+    stripeRequestOptionsWithIdempotency(
+      requestOptions,
+      `ristak:${row.id}:confirm-msi:${paymentIntentId}:${selectedCount || 'single'}`
+    )
+  )
+
+  await updatePaymentFromIntent(confirmed, { stripe, config, requestOptions })
+
+  return {
+    paymentIntentId: confirmed.id,
+    clientSecret: confirmed.client_secret || intent.client_secret,
+    publishableKey: config.publishableKey,
+    stripeAccountId: '',
+    status: confirmed.status,
+    selectedPlan: selectedCount
+      ? { type: 'fixed_count', interval: 'month', count: selectedCount }
+      : null,
+    availablePlans
   }
 }
 

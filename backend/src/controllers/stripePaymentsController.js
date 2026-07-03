@@ -1,6 +1,8 @@
 import {
+  confirmPublicStripeInstallmentPayment,
   createStripePaymentPlan,
   createStripeSavedCardPayment,
+  preparePublicStripeInstallmentPlans,
   createPublicStripeSubscriptionCheckout,
   createStripePaymentIntent,
   createStripePaymentLink,
@@ -232,6 +234,26 @@ export async function createPublicStripePaymentIntentView(req, res) {
   } catch (error) {
     logger.error(`Error creando PaymentIntent público Stripe: ${error.message}`)
     sendStripeError(res, error, 'No se pudo iniciar el pago con Stripe')
+  }
+}
+
+export async function preparePublicStripeInstallmentPlansView(req, res) {
+  try {
+    const result = await preparePublicStripeInstallmentPlans(req.params.publicPaymentId, req.body || {})
+    res.json({ success: true, data: result })
+  } catch (error) {
+    logger.error(`Error consultando MSI público Stripe: ${error.message}`)
+    sendStripeError(res, error, 'No se pudieron consultar los meses sin intereses con Stripe')
+  }
+}
+
+export async function confirmPublicStripeInstallmentPaymentView(req, res) {
+  try {
+    const result = await confirmPublicStripeInstallmentPayment(req.params.publicPaymentId, req.body || {})
+    res.json({ success: true, data: result })
+  } catch (error) {
+    logger.error(`Error confirmando MSI público Stripe: ${error.message}`)
+    sendStripeError(res, error, 'No se pudo confirmar el pago con meses sin intereses')
   }
 }
 
