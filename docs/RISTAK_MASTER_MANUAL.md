@@ -619,11 +619,11 @@ Ristak usa Meta en varias areas:
   `Configuracion > Meta > Mensajes` para activar Messenger, Instagram DM y
   comentarios si quiere recibirlos en la bandeja.
 - Cuando Meta ya tiene dataset/pixel y token guardado, las nuevas superficies nacen
-  con eventos Meta encendidos por default: Sites/landings usan `ViewContent` al
-  aterrizar, paginas nuevas agregadas al editor heredan ese default, formularios
-  usan `Lead` al enviar y calendarios usan `Schedule` al agendar. Bloques de
-  calendario embebido tambien crean su trigger `Schedule` al agregarse. El
-  usuario puede apagarlos manualmente despues.
+  con Meta encendido por default: Sites/landings y paginas nuevas usan solo el
+  `PageView` base al aterrizar (browser Pixel + CAPI server-side, sin `ViewContent`
+  ni otra conversion extra), formularios usan `Lead` al enviar y calendarios usan
+  `Schedule` al agendar. Bloques de calendario embebido tambien crean su trigger
+  `Schedule` al agregarse. El usuario puede apagarlos manualmente despues.
 - Las conversiones server-side de mensajeria Meta comparten el mismo servicio:
   WhatsApp, Messenger e Instagram usan `action_source=business_messaging` con
   `messaging_channel` segun el canal real. `Purchase` conserva `event_name=Purchase`
@@ -677,12 +677,12 @@ diseno/estilo, para no duplicar la misma decision en dos superficies.
 La ruta publica puede depender de dominio, slug, host o rutas internas. Cualquier
 cambio a Sites debe revisar editor, renderer publico, submissions y tracking.
 Cuando Meta ya tiene dataset/pixel y token guardado, los sitios nuevos activan
-Meta CAPI por default. Las landings nuevas encienden `ViewContent` al aterrizar
-la pagina; los formularios nativos/importados/creados por IA encienden `Lead` al
-enviar. Las paginas nuevas creadas dentro de una landing existente tambien nacen
-con `ViewContent`, y los bloques de calendario embebido nuevos nacen con
-`Schedule`. Las actualizaciones de sitios existentes no reactivan eventos que el
-usuario apago manualmente.
+Meta CAPI por default. Las landings nuevas y las paginas nuevas creadas dentro de
+una landing existente nacen con solo `PageView` al aterrizar la pagina (browser
+Pixel + CAPI server-side, sin `ViewContent` por default); los formularios
+nativos/importados/creados por IA encienden `Lead` al enviar. Los bloques de
+calendario embebido nuevos nacen con `Schedule`. Las actualizaciones de sitios
+existentes no reactivan eventos que el usuario apago manualmente.
 
 En landings en modo embudo, un bloque nuevo de calendario embebido nace con
 `Al agendar -> Ir a la siguiente pagina`. Ese default solo se aplica al crear el

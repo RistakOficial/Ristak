@@ -139,3 +139,34 @@ test('standard form public pages render global/page headers and page Meta Pixel 
     }
   }
 })
+
+test('page Meta default renders base browser PageView and server CAPI PageView only', async () => {
+  const previousPixelId = process.env.META_PIXEL_ID
+  process.env.META_PIXEL_ID = '1234567890'
+
+  try {
+    const site = makeStandardFormSite()
+    site.theme.pages[0] = {
+      ...site.theme.pages[0],
+      metaEventName: 'none',
+      metaEventParameters: undefined
+    }
+
+    const html = await renderPublicSiteHtml(site, {
+      pageId: 'page-1',
+      trackingEnabled: true,
+      preview: false
+    })
+
+    assert.match(html, /fbq\('track', 'PageView'\)/)
+    assert.doesNotMatch(html, /window\.ristakMetaTrackSiteEvent\("PageView"/)
+    assert.match(html, /eventName: "PageView"/)
+    assert.match(html, /fetch\('\/api\/sites\/public\/meta-event'/)
+  } finally {
+    if (previousPixelId === undefined) {
+      delete process.env.META_PIXEL_ID
+    } else {
+      process.env.META_PIXEL_ID = previousPixelId
+    }
+  }
+})

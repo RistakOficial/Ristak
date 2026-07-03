@@ -414,7 +414,7 @@ const metaEventOptions = [
   { value: 'Contact', label: 'Contact' }
 ]
 
-const CONNECTED_META_DEFAULT_PAGE_VIEW_EVENT = 'ViewContent'
+const CONNECTED_META_DEFAULT_PAGE_VIEW_EVENT = 'none'
 const CONNECTED_META_DEFAULT_CALENDAR_EVENT = 'Schedule'
 
 const metaSubmitConditionOptions: Array<{ value: SiteMetaSubmitCondition; label: string }> = [
@@ -26541,7 +26541,7 @@ const MetaPageConversionSettingsPanel: React.FC<{
   const activePageEventName = activePage.metaCapiEnabled
     ? normalizeMetaEventName(activePage.metaEventName, 'none')
     : 'none'
-  const activePageHasConversion = activePageEventName !== 'none'
+  const activePageViewEnabled = Boolean(activePage.metaCapiEnabled && normalizeMetaTrigger(activePage.metaTrigger) === 'page_view')
   const submitEventName = metaEnabled
     ? normalizeMetaEventName(site.metaEventName, 'none')
     : 'none'
@@ -26552,7 +26552,7 @@ const MetaPageConversionSettingsPanel: React.FC<{
   }))
   const activeCalendarCount = calendarConfigs.filter(item => item.config.eventName !== 'none').length
   const configuredCount = [
-    activePageHasConversion,
+    activePageViewEnabled,
     formSurfaces.length > 0 && submitActive,
     activeCalendarCount > 0,
     paymentSurfaces.length > 0 && paymentPurchaseEnabled
@@ -26600,7 +26600,7 @@ const MetaPageConversionSettingsPanel: React.FC<{
     patchActivePage({
       metaTrigger: 'page_view',
       metaEventName,
-      metaCapiEnabled: metaEventName !== 'none',
+      metaCapiEnabled: true,
       metaEventParameters: undefined
     })
     saveSoon()

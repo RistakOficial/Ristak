@@ -562,6 +562,14 @@ test('page view meta event endpoint enriches browser match data', async () => {
               contentName: 'Pagina vista',
               status: 'page_view_match'
             }
+          },
+          {
+            id: 'page-2',
+            title: 'Pagina 2',
+            sortOrder: 1,
+            metaCapiEnabled: true,
+            metaTrigger: 'page_view',
+            metaEventName: 'none'
           }
         ]
       }
@@ -602,6 +610,37 @@ test('page view meta event endpoint enriches browser match data', async () => {
     assert.match(payload.data[0].user_data.external_id, /^[a-f0-9]{64}\.[A-Za-z0-9]{8}$/)
     assert.equal(payload.data[0].custom_data.conversion_type, 'page_view')
     assert.equal(payload.data[0].custom_data.content_name, 'Pagina vista')
+
+    const pageViewResult = await createMetaPageEventFromRequest(
+      {
+        headers: { host: 'example.test', 'user-agent': 'node-test' },
+        hostname: 'example.test',
+        path: `/${site.slug}`,
+        ip: '127.0.0.1',
+        socket: { remoteAddress: '127.0.0.1' }
+      },
+      {
+        siteId: site.id,
+        pageId: 'page-2',
+        eventId: 'site_page_view_default_event',
+        meta: {
+          pageUrl: 'https://example.test/landing/page-2?fbclid=fbclid-page-view-default',
+          eventTime: 1700000010000,
+          visitorId: 'visitor-page-view-default',
+          fbp: 'fbp-page-default'
+        }
+      }
+    )
+
+    assert.equal(pageViewResult.sent, true)
+    assert.equal(pageViewResult.eventName, 'PageView')
+    assert.equal(metaCalls.length, 2)
+    const pageViewPayload = JSON.parse(metaCalls[1].body)
+    assert.equal(pageViewPayload.data[0].event_name, 'PageView')
+    assert.equal(pageViewPayload.data[0].event_time, 1700000010)
+    assert.equal(pageViewPayload.data[0].event_id, 'site_page_view_default_event')
+    assert.equal(pageViewPayload.data[0].custom_data.conversion_type, 'page_view')
+    assert.equal(pageViewPayload.data[0].custom_data.content_name, 'Pagina 2')
   } finally {
     if (metaServer) await new Promise(resolve => metaServer.close(resolve))
     if (previousMetaGraphDescriptor) Object.defineProperty(API_URLS, 'META_GRAPH', previousMetaGraphDescriptor)

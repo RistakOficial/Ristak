@@ -208,7 +208,7 @@ test('creating Sites, forms and calendars defaults Meta events on when dataset i
         assert.equal(landingSite.metaCapiEnabled, true)
         assert.equal(landingSite.metaEventName, 'none')
         assert.equal(landingSite.theme.pages[0].metaCapiEnabled, true)
-        assert.equal(landingSite.theme.pages[0].metaEventName, 'ViewContent')
+        assert.equal(landingSite.theme.pages[0].metaEventName, 'none')
         assert.equal(landingSite.theme.pages[0].metaTrigger, 'page_view')
 
         const landingSiteWithNewPage = await updateSite(landingSite.id, {
@@ -230,7 +230,7 @@ test('creating Sites, forms and calendars defaults Meta events on when dataset i
         })
         const addedPage = landingSiteWithNewPage.theme.pages.find(page => page.id === 'page-added-after-create')
         assert.equal(addedPage.metaCapiEnabled, true)
-        assert.equal(addedPage.metaEventName, 'ViewContent')
+        assert.equal(addedPage.metaEventName, 'none')
         assert.equal(addedPage.metaTrigger, 'page_view')
 
         const landingSiteWithCalendarBlock = await createBlock(landingSite.id, {

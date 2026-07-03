@@ -301,12 +301,13 @@ const FORM_DISQUALIFIED_PRESET_BLOCKS = [
   }
 ]
 const SITE_META_NO_EVENT = 'none'
-const SITE_META_EVENTS = new Set(['Lead', 'Schedule', 'Purchase', 'FormSubmitted', 'ViewContent', 'CompleteRegistration', 'Contact'])
-const META_STANDARD_PIXEL_EVENTS = new Set(['Lead', 'Schedule', 'Purchase', 'ViewContent', 'CompleteRegistration', 'Contact'])
+const SITE_META_PAGE_VIEW_EVENT_NAME = 'PageView'
+const SITE_META_EVENTS = new Set(['Lead', 'Schedule', 'Purchase', 'FormSubmitted', 'ViewContent', 'CompleteRegistration', 'Contact', SITE_META_PAGE_VIEW_EVENT_NAME])
+const META_STANDARD_PIXEL_EVENTS = new Set(['Lead', 'Schedule', 'Purchase', 'ViewContent', 'CompleteRegistration', 'Contact', SITE_META_PAGE_VIEW_EVENT_NAME])
 const SITE_META_TRIGGERS = new Set(['page_view', 'form_submit', 'calendar_schedule'])
 const SITE_META_SUBMIT_CONDITIONS = new Set(['always', 'qualified_only'])
 const SITE_TYPES_WITH_PAGE_META = new Set(['landing_page', 'interactive_form', 'standard_form'])
-const DEFAULT_SITE_META_PAGE_VIEW_EVENT_NAME = 'ViewContent'
+const DEFAULT_SITE_META_PAGE_VIEW_EVENT_NAME = SITE_META_NO_EVENT
 const DEFAULT_SITE_META_FORM_SUBMIT_EVENT_NAME = 'Lead'
 const DEFAULT_SITE_META_CALENDAR_EVENT_NAME = 'Schedule'
 const SITE_META_PARAMETER_FIELDS = {
@@ -316,6 +317,7 @@ const SITE_META_PARAMETER_FIELDS = {
   CompleteRegistration: ['value', 'predictedLtv'],
   Contact: ['value', 'predictedLtv'],
   Purchase: ['value', 'orderId', 'contentIds', 'contentName', 'contentType', 'numItems'],
+  PageView: [],
   ViewContent: ['value', 'contentName', 'contentCategory', 'contentIds', 'contentType']
 }
 const SITE_META_LEGACY_SYSTEM_PARAMETER_FIELDS = ['currency', 'status']
@@ -15184,14 +15186,18 @@ function getPageMetaConfig(site, pageId) {
   if (!site || !SITE_TYPES_WITH_PAGE_META.has(site.siteType)) return null
   const page = getSitePage(site, pageId)
   if (!page || !page.metaCapiEnabled) return null
+  const trigger = normalizeSiteMetaTrigger(page.metaTrigger)
   const eventName = normalizeSiteMetaEventName(page.metaEventName, { allowNone: true, fallback: SITE_META_NO_EVENT })
-  if (eventName === SITE_META_NO_EVENT) return null
+  if (eventName === SITE_META_NO_EVENT && trigger !== 'page_view') return null
+  const resolvedEventName = eventName === SITE_META_NO_EVENT ? SITE_META_PAGE_VIEW_EVENT_NAME : eventName
 
   return {
     page,
-    eventName,
-    trigger: normalizeSiteMetaTrigger(page.metaTrigger),
-    parameters: pruneSiteMetaEventParametersForEvent(page.metaEventParameters, eventName)
+    eventName: resolvedEventName,
+    trigger,
+    parameters: eventName === SITE_META_NO_EVENT
+      ? {}
+      : pruneSiteMetaEventParametersForEvent(page.metaEventParameters, resolvedEventName)
   }
 }
 
@@ -19166,6 +19172,7 @@ async function buildMetaPixelSnippet(site, trackingEnabled, activePage = null, p
   const submitCondition = getFormSubmitMetaCondition(site)
   const pageMeta = getPageMetaConfig(site, activePage?.id)
   const pageViewEventName = pageMeta?.trigger === 'page_view' ? pageMeta.eventName : ''
+  const trackPageViewInBrowser = Boolean(pageViewEventName && pageViewEventName !== SITE_META_PAGE_VIEW_EVENT_NAME)
   const submitConfiguredCustomData = buildSiteMetaConfiguredCustomData(
     getFormSubmitMetaEventParameters(site, activePage?.id, submitEventName),
     submitEventName
@@ -19291,7 +19298,9 @@ async function buildMetaPixelSnippet(site, trackingEnabled, activePage = null, p
         public_page_title: ${JSON.stringify(activePage?.title || '')}
       };
       Object.assign(pageData, ${scriptJson(pageConfiguredCustomData)});
+      ${trackPageViewInBrowser ? `
       window.ristakMetaTrackSiteEvent(${JSON.stringify(pageViewEventName)}, pageEventId, pageData);
+      ` : ''}
       window.ristakMetaSendServerEvent({
         siteId: ${JSON.stringify(site.id)},
         pageId: ${JSON.stringify(activePage?.id || '')},
