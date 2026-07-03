@@ -333,6 +333,13 @@ debe usar WhatsApp QR/Baileys directamente cuando exista un QR usable. Las
 plantillas quedan fuera de este bloqueo porque son el camino permitido por
 WhatsApp cuando la conversacion esta cerrada.
 
+En Configuracion > WhatsApp > Plantillas, el preview del editor debe respetar la
+sintaxis visual que WhatsApp aplica al mensaje enviado a revision: `*negritas*`,
+`_italicas_`, `~tachado~`, monospace con triple backtick, inline code con
+backtick, listas con `- ` o `* `, listas numeradas con `1. ` y citas con `> `.
+La plantilla se guarda con los marcadores originales; el formato se aplica solo
+en la vista previa para mostrarle al usuario como se vera en WhatsApp.
+
 Cuando una foto se envia por WhatsApp API/YCloud usando media ID del proveedor,
 Ristak debe guardar una copia de preview en `mediaStorageService` y persistir su
 `media_url` en `whatsapp_api_messages`. WhatsApp no debe recibir ese link si el

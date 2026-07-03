@@ -53,6 +53,12 @@ import {
   type MessageTemplateVariableTarget
 } from '@/services/messageTemplatesService'
 import { whatsappApiService, type WhatsAppApiPhoneNumber } from '@/services/whatsappApiService'
+import {
+  parseWhatsAppFormattedText,
+  parseWhatsAppInlineText,
+  type WhatsAppFormattedLine,
+  type WhatsAppInlineSegment
+} from '@/utils/whatsappTextFormatting'
 import styles from './MessageTemplates.module.css'
 
 const ROOT_FOLDER_KEY = '__root__'
@@ -402,6 +408,75 @@ function buildVariablePickerGroups(variables: MessageTemplateVariable[], query: 
   }
 
   return Array.from(groups.values())
+}
+
+function renderWhatsAppInlineSegments(segments: WhatsAppInlineSegment[], keyPrefix: string): React.ReactNode[] {
+  return segments.map((segment, index) => {
+    const key = `${keyPrefix}-${index}`
+
+    if (segment.type === 'text') return segment.text
+    if (segment.type === 'bold') return <strong key={key}>{renderWhatsAppInlineSegments(segment.children, key)}</strong>
+    if (segment.type === 'italic') return <em key={key}>{renderWhatsAppInlineSegments(segment.children, key)}</em>
+    if (segment.type === 'strikethrough') return <s key={key}>{renderWhatsAppInlineSegments(segment.children, key)}</s>
+    if (segment.type === 'inlineCode') return <code key={key} className={styles.whatsappInlineCode}>{segment.text}</code>
+    return <code key={key} className={styles.whatsappMonospace}>{segment.text}</code>
+  })
+}
+
+function renderWhatsAppLine(line: WhatsAppFormattedLine, index: number) {
+  const content = line.segments.length
+    ? renderWhatsAppInlineSegments(line.segments, `wa-line-${index}`)
+    : '\u00a0'
+
+  if (line.type === 'bullet') {
+    return (
+      <span key={`line-${index}`} className={`${styles.whatsappFormatLine} ${styles.whatsappFormatListLine}`}>
+        <span className={styles.whatsappFormatMarker} aria-hidden="true">•</span>
+        <span>{content}</span>
+      </span>
+    )
+  }
+
+  if (line.type === 'numbered') {
+    return (
+      <span key={`line-${index}`} className={`${styles.whatsappFormatLine} ${styles.whatsappFormatListLine}`}>
+        <span className={styles.whatsappFormatMarker} aria-hidden="true">{line.marker}.</span>
+        <span>{content}</span>
+      </span>
+    )
+  }
+
+  if (line.type === 'quote') {
+    return (
+      <span key={`line-${index}`} className={`${styles.whatsappFormatLine} ${styles.whatsappFormatQuoteLine}`}>
+        {content}
+      </span>
+    )
+  }
+
+  return (
+    <span key={`line-${index}`} className={styles.whatsappFormatLine}>
+      {content}
+    </span>
+  )
+}
+
+function renderWhatsAppFormattedText(text: string) {
+  const lines = parseWhatsAppFormattedText(text)
+
+  return (
+    <div className={styles.whatsappFormattedText}>
+      {lines.map(renderWhatsAppLine)}
+    </div>
+  )
+}
+
+function renderWhatsAppFormattedInline(text: string) {
+  return (
+    <span className={styles.whatsappFormattedInline}>
+      {renderWhatsAppInlineSegments(parseWhatsAppInlineText(text), 'wa-inline')}
+    </span>
+  )
 }
 
 interface MessageTemplatesProps {
@@ -1369,7 +1444,9 @@ export const MessageTemplates: React.FC<MessageTemplatesProps> = ({
     if (!draft.headerEnabled || draft.headerType === 'none') return null
 
     if (draft.headerType === 'text') {
-      return preview.headerText ? <strong className={styles.previewHeaderText}>{preview.headerText}</strong> : null
+      return preview.headerText
+        ? <strong className={styles.previewHeaderText}>{renderWhatsAppFormattedInline(preview.headerText)}</strong>
+        : null
     }
 
     if (draft.headerType === 'location') {
@@ -1401,7 +1478,7 @@ export const MessageTemplates: React.FC<MessageTemplatesProps> = ({
       id: 'template-preview',
       direction: 'inbound',
       header: renderPreviewHeader(),
-      body: preview.bodyText || 'El mensaje aparecerá aquí',
+      body: preview.bodyText.trim() ? renderWhatsAppFormattedText(preview.bodyText) : 'El mensaje aparecerá aquí',
       footer: preview.footerText || undefined,
       time: '11:48',
       buttons: preview.buttons.map((button, index) => ({
