@@ -16,6 +16,7 @@ import {
   getPublicSitePaymentStatus,
   initSitePaymentCheckout,
   paySiteCheckout,
+  prepareSiteCheckoutInstallments,
   getSitesFontCss,
   getSitesFontFile,
   getSite,
@@ -827,6 +828,19 @@ export async function sitePaymentCheckoutPayHandler(req, res) {
   } catch (error) {
     logger.warn(`Cobro de checkout embebido rechazado: ${error.message}`)
     sendError(res, error, 'No se pudo procesar el pago')
+  }
+}
+
+// Paso 1 del MSI controlado de Stripe en sitios: crea/reusa la fila y devuelve los meses
+// que la tarjeta ofrece (available_plans) filtrados al máximo del bloque. El confirm lo
+// hace el runtime contra la ruta pública de Stripe /installment-confirm.
+export async function sitePaymentCheckoutPrepareHandler(req, res) {
+  try {
+    const result = await prepareSiteCheckoutInstallments(req, req.body || {})
+    res.status(200).json({ success: true, data: result })
+  } catch (error) {
+    logger.warn(`Consulta de meses (checkout embebido) rechazada: ${error.message}`)
+    sendError(res, error, 'No se pudieron consultar los meses sin intereses')
   }
 }
 

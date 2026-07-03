@@ -32265,10 +32265,11 @@ const CanvasPreviewBlock: React.FC<CanvasPreviewBlockProps> = ({
                   Stripe real con su modo test/live verdadero. Solo afecta a Stripe.
                   Mercado Pago usa su propio emulador fiel del Brick (mpBrickPreview). */}
               {isMercadoPago ? mpBrickPreview : mockFields}
-              {/* Fila de meses standalone: SOLO Conekta la tiene en vivo (Stripe/MP
-                  resuelven los meses dentro de su propio widget). Estado inicial = "Un
-                  solo pago", igual que el <select> que arma mountConekta. */}
-              {isConekta && msiInfo.standaloneMonths.length > 0 && (
+              {/* Fila de meses standalone: Conekta la arma en vivo, y Stripe con MSI
+                  CONTROLADO también muestra su propio <select> (mountStripeMsi consulta los
+                  plazos reales de la tarjeta y los limita al máximo del bloque). MP resuelve
+                  los meses dentro de su Brick. Estado inicial = "Un solo pago". */}
+              {((isConekta && msiInfo.standaloneMonths.length > 0) || (isStripe && msiInfo.insideElement)) && (
                 <div className="rstk-checkout-installments">
                   <div className="rstk-checkout-select rstk-mock-select" aria-hidden="true">
                     <span>Un solo pago</span>

@@ -49,8 +49,10 @@ import {
   getPaymentGateCheckoutKeys,
   getPaymentGateStatus,
   isPaymentGateEnabled,
-  normalizePaymentGateConfig
+  normalizePaymentGateConfig,
+  preparePublicStripeInstallmentPlans
 } from './publicPaymentGateService.js'
+import { msiEligibility } from '../../../shared/sites/paymentGateContract.js'
 import { renderTemplate } from './automationEngine.js'
 import { getVariableFieldValueMap } from './variableFieldsService.js'
 import { createRistakId } from '../utils/idGenerator.js'
@@ -15709,6 +15711,10 @@ function buildPaymentCheckoutRuntimeScript() {
     var STATUS_URL = '/api/sites/public/payments/';
     var INIT_URL = '/api/sites/public/checkout/init';
     var PAY_URL = '/api/sites/public/checkout/pay';
+    // MSI controlado de Stripe: prepare crea/reusa la fila y trae los meses reales de la
+    // tarjeta; confirm reusa la ruta PÚBLICA de Stripe (misma que los links de pago).
+    var PREPARE_URL = '/api/sites/public/checkout/prepare-installments';
+    var STRIPE_MSI_CONFIRM_URL = '/api/stripe/public/payments/';
 
     function loadScript(src, ready) {
       return new Promise(function (resolve, reject) {
@@ -15973,6 +15979,11 @@ function buildPaymentCheckoutRuntimeScript() {
                 colorBackground: readToken('--rstk-input-bg') || undefined,
                 borderRadius: readToken('--rstk-radius') || undefined
               } };
+          // MSI CONTROLADO de Stripe: si el bloque ofrece meses sin intereses y es elegible
+          // (MXN + monto >= 300), usamos el flujo de 3 pasos (tarjeta -> planes REALES de la
+          // tarjeta -> confirm con fixed_count), clon del checkout de links. Fuera de ese
+          // caso sigue EXACTO el Payment Element diferido de siempre (ni una línea cambia).
+          if (stripeMsiEligible(d)) return mountStripeMsi(d, stripe, appearance);
           // Modo DIFERIDO: monta el formulario SIN crear un PaymentIntent (sin fila). El
           // intent y la fila se crean solo al cobrar (payCharge), tras validar la tarjeta.
           // Si el checkout captura identidad (correo/telefono => se creara un Stripe
@@ -16004,6 +16015,124 @@ function buildPaymentCheckoutRuntimeScript() {
               });
             }).catch(function (e) { setPayBusy(false); setMessage('error', (e && e.message) || 'No se pudo completar el pago.'); });
           });
+        });
+      }
+
+      // ¿El bloque Stripe ofrece meses sin intereses de verdad? Misma regla que el backend
+      // (msiEligibility.insideElement): MXN + monto >= 300 + msi on. Si no, contado normal.
+      function stripeMsiEligible(d) {
+        return !!(d.installments && d.installments.enabled && Number(d.installments.maxInstallments) > 1
+          && String(d.currency || '').toUpperCase() === 'MXN' && Number(d.amount || 0) >= 300);
+      }
+
+      // MSI CONTROLADO de Stripe (elegir hasta N meses). Clon del flujo probado en los links
+      // (PublicPayment.tsx): capturamos la tarjeta con un CardElement, preguntamos a Stripe
+      // qué plazos REALES ofrece esa tarjeta (available_plans, filtrados al máximo del bloque),
+      // el cliente elige, y confirmamos server-side con plan fixed_count. NO usa Payment
+      // Element ni /pay: usa /checkout/prepare-installments (crea la fila) + la ruta pública
+      // /installment-confirm de Stripe.
+      function mountStripeMsi(d, stripe, appearance) {
+        var maxInstallments = Math.trunc(Number(d.installments && d.installments.maxInstallments) || 0);
+        var rootCs = getComputedStyle(root);
+        var fieldTextTok = rootCs.getPropertyValue('--rstk-checkout-field-text').trim() || rootCs.getPropertyValue('--rstk-block-text').trim() || readToken('--rstk-ink') || undefined;
+        var mutedTok = readToken('--rstk-muted') || undefined;
+        var elements = stripe.elements({ appearance: appearance, locale: 'es' });
+        var card = elements.create('card', {
+          hidePostalCode: true,
+          style: { base: { color: fieldTextTok, fontSize: '15px', fontWeight: '500', '::placeholder': { color: mutedTok } }, invalid: { color: readToken('--rstk-neg') || undefined } }
+        });
+        card.mount(els.fields);
+        els.fields.hidden = false; els.pay.hidden = false; showLoading(false);
+
+        var pmId = null, paymentIntentId = '', publicPaymentId = '', availablePlans = [], selectedInstallments = null;
+        var cardComplete = false, prepared = false, preparing = false, sel = null;
+        try { publicPaymentId = sessionStorage.getItem(storageKey) || ''; } catch (e) {}
+
+        function refreshLabel() {
+          if (!els.payLabel) return;
+          var suffix = ' · ' + money(d.amount, d.currency);
+          if (!cardComplete) { els.payLabel.textContent = 'Completa los datos de tu tarjeta'; return; }
+          if (preparing) { els.payLabel.textContent = 'Revisando meses…'; return; }
+          if (!prepared) { els.payLabel.textContent = 'Ver meses disponibles' + suffix; return; }
+          var plan = selectedInstallments ? (selectedInstallments + ' meses sin intereses') : 'Un solo pago';
+          els.payLabel.textContent = cfg.buttonText + ' · ' + plan + suffix;
+        }
+        function resetPrepared() {
+          prepared = false; paymentIntentId = ''; availablePlans = []; selectedInstallments = null; sel = null;
+          if (els.installments) { els.installments.hidden = true; els.installments.innerHTML = ''; }
+        }
+        function renderSelector() {
+          if (!els.installments) return;
+          els.installments.innerHTML = '';
+          if (!availablePlans.length) {
+            els.installments.hidden = true; selectedInstallments = null;
+            setMessage('info', 'Tu tarjeta no ofrece meses sin intereses; se cobrará de contado.');
+            refreshLabel(); return;
+          }
+          els.installments.hidden = false;
+          sel = document.createElement('select');
+          sel.className = 'rstk-checkout-select';
+          var base = document.createElement('option'); base.value = ''; base.textContent = 'Un solo pago'; sel.appendChild(base);
+          availablePlans.forEach(function (p) { var o = document.createElement('option'); o.value = String(p.count); o.textContent = p.count + ' meses sin intereses'; sel.appendChild(o); });
+          sel.addEventListener('change', function () { selectedInstallments = sel.value ? Number(sel.value) : null; refreshLabel(); });
+          els.installments.appendChild(sel);
+          refreshLabel();
+        }
+        // La identidad (correo/tel) debe estar lista ANTES de crear la fila en prepare, para
+        // que el pago quede ligado al contacto (Purchase de Meta). Si el bloque la exige y aún
+        // no está, el auto-prepare espera; el clic en "pagar" la valida y dispara el prepare.
+        function identityReady() { var p = collectPayer(); return !identityActive() || !!(p.email || p.phone); }
+        function preparePlans() {
+          if (preparing || !cardComplete || !identityReady()) return;
+          preparing = true; setPayBusy(true); setMessage('info', 'Revisando los meses de tu tarjeta…'); refreshLabel();
+          var payer = collectPayer();
+          stripe.createPaymentMethod({ type: 'card', card: card, billing_details: { email: payer.email || undefined, phone: payer.phone || undefined } }).then(function (res) {
+            if (res.error || !(res.paymentMethod && res.paymentMethod.id)) throw new Error((res.error && res.error.message) || 'Revisa los datos de la tarjeta.');
+            pmId = res.paymentMethod.id;
+            var body = { siteId: cfg.siteId, blockId: cfg.blockId, pageId: cfg.pageId, paymentMethodId: pmId, payer: payer };
+            if (publicPaymentId) body.paymentPublicId = publicPaymentId;
+            return postJson(PREPARE_URL, body);
+          }).then(function (r) {
+            publicPaymentId = r.publicPaymentId || publicPaymentId;
+            if (publicPaymentId) { try { sessionStorage.setItem(storageKey, publicPaymentId); } catch (e) {} root.setAttribute('data-checkout-public-id', publicPaymentId); }
+            paymentIntentId = r.paymentIntentId || '';
+            availablePlans = (r.availablePlans || []).filter(function (p) { return p && Number(p.count) <= maxInstallments; });
+            selectedInstallments = null; prepared = true; preparing = false;
+            setMessage('', ''); renderSelector(); setPayBusy(false); refreshLabel();
+          }).catch(function (e) { preparing = false; setPayBusy(false); resetPrepared(); setMessage('error', (e && e.message) || 'No se pudieron consultar los meses.'); refreshLabel(); });
+        }
+        function confirmPay() {
+          if (!paymentIntentId || !publicPaymentId) { resetPrepared(); setMessage('error', 'Vuelve a revisar tu tarjeta.'); refreshLabel(); return; }
+          setPayBusy(true); setMessage('info', 'Procesando…');
+          postJson(STRIPE_MSI_CONFIRM_URL + encodeURIComponent(publicPaymentId) + '/installment-confirm', { paymentIntentId: paymentIntentId, selectedInstallments: selectedInstallments, returnUrl: window.location.href }).then(function (r) {
+            var status = r && r.status;
+            if (status === 'requires_action' && r.clientSecret) {
+              return stripe.handleNextAction({ clientSecret: r.clientSecret }).then(function (action) {
+                if (action.error) { setPayBusy(false); setMessage('error', action.error.message || 'El banco no completó la autenticación.'); return; }
+                var st = action.paymentIntent && action.paymentIntent.status;
+                if (st === 'succeeded' || st === 'processing') onChargeResult(publicPaymentId, 'paid');
+                else { setPayBusy(false); setMessage('info', 'Stripe necesita una acción adicional.'); }
+              });
+            }
+            if (status === 'succeeded' || status === 'processing') { onChargeResult(publicPaymentId, 'paid'); return; }
+            setPayBusy(false); setMessage('info', 'Stripe necesita una acción adicional. Sigue las instrucciones del banco.');
+          }).catch(function (e) { setPayBusy(false); setMessage('error', (e && e.message) || 'No se pudo completar el pago.'); });
+        }
+        card.on('change', function (ev) {
+          var nowComplete = !!(ev && ev.complete && !ev.error);
+          if (ev && ev.error) setMessage('error', ev.error.message || ''); else setMessage('', '');
+          // Editar la tarjeta invalida los planes ya consultados (otra tarjeta = otros plazos).
+          if (prepared || paymentIntentId) resetPrepared();
+          cardComplete = nowComplete;
+          if (cardComplete && !prepared && !preparing) preparePlans();
+          refreshLabel();
+        });
+        payLabel(d.amount, d.currency); refreshLabel();
+        els.pay.addEventListener('click', function () {
+          if (els.pay.disabled) return;
+          if (!validateIdentity()) return;
+          if (!prepared) { if (cardComplete) preparePlans(); else setMessage('error', 'Completa los datos de tu tarjeta.'); return; }
+          confirmPay();
         });
       }
 
@@ -25485,6 +25614,116 @@ export async function paySiteCheckout(req, body = {}) {
     status: cleanString(charge.status),
     statusDetail: cleanString(charge.statusDetail),
     paidMessage: paymentGate.paidMessage
+  }
+}
+
+// Paso 1 del MSI CONTROLADO de Stripe en el checkout de sitios (elegir hasta N meses).
+// A diferencia de /pay (que crea fila + cobra de un golpe), aquí primero se crea la fila
+// (que nace MSI-ready: createPaymentGateLink persiste stripeInstallments cuando el bloque
+// es Stripe elegible) y se le pregunta a Stripe qué plazos REALES ofrece la tarjeta
+// (available_plans), filtrados al máximo del bloque. Reusa el MISMO backend probado de los
+// links (preparePublicStripeInstallmentPlans). El "confirm" del runtime pega directo a la
+// ruta pública de Stripe /installment-confirm con este publicPaymentId. NO toca /pay ni el
+// flujo de Stripe sin MSI ni las otras pasarelas.
+export async function prepareSiteCheckoutInstallments(req, body = {}) {
+  const { site, context, paymentGate, baseUrl, expectedBlockId } = await resolveSiteCheckoutBlock(req, body)
+  enforcePublicSubmitRateLimit(req, `checkout-prepare:${site.id}:${expectedBlockId}`)
+
+  // Solo Stripe con MSI elegible (MXN + monto mínimo + msi on) ofrece este flujo. Fuente
+  // de verdad = helper compartido (misma regla que el preview del editor y el runtime).
+  const eligibility = msiEligibility({
+    gateway: paymentGate.gateway,
+    currency: paymentGate.currency,
+    amount: paymentGate.amount,
+    msi: paymentGate.msi
+  })
+  if (paymentGate.gateway !== 'stripe' || !eligibility.insideElement) {
+    const error = new Error('Este bloque no ofrece meses sin intereses con Stripe.')
+    error.status = 400
+    throw error
+  }
+
+  const paymentMethodId = cleanString(body.paymentMethodId || body.payment_method_id)
+  if (!paymentMethodId) {
+    const error = new Error('Falta la tarjeta para consultar los meses disponibles.')
+    error.status = 400
+    throw error
+  }
+
+  const payer = body.payer && typeof body.payer === 'object' ? body.payer : {}
+
+  // Liga el pago a un contacto (idéntico a paySiteCheckout) para guardar la tarjeta
+  // off_session y poder disparar el Purchase de Meta.
+  let checkoutContactId = cleanString(body.contactId || payer.contactId || payer.contact_id)
+  if (!checkoutContactId && (cleanString(payer.email) || cleanString(payer.phone))) {
+    const upserted = await upsertContactFromSubmissionWithResult({
+      site,
+      contact: {
+        email: cleanString(payer.email),
+        phone: cleanString(payer.phone),
+        fullName: cleanString(payer.name || payer.fullName)
+      },
+      meta: {
+        pageUrl: cleanString(body.pageUrl || body.page_url),
+        visitorId: cleanString(body.visitorId || body.visitor_id)
+      }
+    }).catch(() => null)
+    checkoutContactId = upserted?.contactId || ''
+  }
+
+  // Idempotencia de fila: si el runtime reenvía un publicPaymentId previo del MISMO bloque
+  // aún NO pagado, lo reusamos (evita filas huérfanas al reintentar o cambiar de tarjeta).
+  let publicPaymentId = ''
+  const existing = getBodyPaymentPublicId(body)
+  if (existing) {
+    const pending = await getPaymentGateStatus(existing)
+    const sameContext = paymentGateMatchesAnySiteContext(pending, {
+      siteId: site.id,
+      pageId: cleanString(context.blockPageId),
+      blockPageId: cleanString(context.blockPageId),
+      paymentBlockId: expectedBlockId
+    })
+    if (pending && !pending.paid && sameContext) publicPaymentId = existing
+  }
+
+  if (!publicPaymentId) {
+    const result = await createPaymentGateLink(paymentGate, {
+      baseUrl,
+      contact: {
+        contactId: checkoutContactId,
+        name: cleanString(payer.name || payer.fullName),
+        email: cleanString(payer.email),
+        phone: cleanString(payer.phone)
+      },
+      source: 'site_checkout',
+      metadata: {
+        siteId: site.id,
+        siteName: site.name || '',
+        pageId: cleanString(context.blockPageId),
+        blockPageId: cleanString(context.blockPageId),
+        paymentBlockId: expectedBlockId,
+        paymentGate: {
+          source: 'site_checkout',
+          siteId: site.id,
+          pageId: cleanString(context.blockPageId),
+          blockPageId: cleanString(context.blockPageId),
+          paymentBlockId: expectedBlockId
+        }
+      }
+    })
+    publicPaymentId = result.publicPaymentId
+  }
+
+  const prepared = await preparePublicStripeInstallmentPlans(publicPaymentId, {
+    paymentMethodId,
+    savePaymentMethod: true
+  })
+
+  return {
+    publicPaymentId,
+    paymentIntentId: prepared.paymentIntentId,
+    maxInstallments: prepared.maxInstallments,
+    availablePlans: prepared.availablePlans
   }
 }
 
