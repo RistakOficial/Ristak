@@ -24676,11 +24676,20 @@ function shouldRequireSitePaymentGate({ site, paymentGate, ruleEvaluation, isRul
   if (!isPaymentGateEnabled(paymentGate)) return false
   if (ruleEvaluation?.status === 'disqualified' || ruleEvaluation?.disqualified === true) return false
   if (isRuleSubmit) return false
+  const paymentPageId = cleanString(paymentGate.blockPageId)
+  const currentPageId = cleanString(submittedPageId)
+  const isNestedPaymentBlock = Boolean(cleanString(paymentGate.parentBlockId))
+  const topLevelPaymentBlockIsOnAnotherPage = Boolean(
+    paymentPageId &&
+    currentPageId &&
+    paymentPageId !== currentPageId &&
+    !isNestedPaymentBlock
+  )
   if (site.siteType === 'standard_form') {
-    const paymentPageId = cleanString(paymentGate.blockPageId)
-    if (paymentPageId && submittedPageId && paymentPageId === submittedPageId) return true
+    if (paymentPageId && currentPageId && paymentPageId === currentPageId) return true
     return Boolean(isFinalStandardFormSubmit)
   }
+  if (topLevelPaymentBlockIsOnAnotherPage) return false
   return site.siteType === 'interactive_form' || site.siteType === 'landing_page'
 }
 

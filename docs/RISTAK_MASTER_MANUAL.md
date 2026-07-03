@@ -686,6 +686,13 @@ En landings en modo embudo, un bloque nuevo de calendario embebido nace con
 bloque; si el usuario cambia la accion a reglas del calendario o redireccion, se
 respeta su configuracion guardada.
 
+En embudos multipagina, los bloques de pago top-level solo bloquean el submit de
+la pagina donde viven. Un formulario en una pagina anterior debe crear contacto y
+submission aunque exista un bloque de pago habilitado en una pagina posterior. La
+excepcion son pagos anidados dentro de un formulario/video gate: esos siguen
+protegiendo el formulario que los contiene porque forman parte de la misma
+experiencia de envio.
+
 ### Paridad de render editor/preview/publicado (contrato compartido)
 
 Editor (canvas React), preview autenticado, preview-session publico y sitio

@@ -159,6 +159,118 @@ test('native form system fields save to contact and locked system fields', async
   }
 })
 
+test('landing funnel form submission ignores payment blocks from later pages and creates the contact', async () => {
+  const previousConfig = {
+    domain: await getAppConfig(DOMAIN_KEYS.domain),
+    verified: await getAppConfig(DOMAIN_KEYS.verified),
+    checkedAt: await getAppConfig(DOMAIN_KEYS.checkedAt),
+    error: await getAppConfig(DOMAIN_KEYS.error)
+  }
+  const suffix = crypto.randomUUID()
+  const email = `landing-funnel-${suffix}@example.test`
+  let site
+
+  try {
+    await setAppConfig(DOMAIN_KEYS.domain, 'example.test')
+    await setAppConfig(DOMAIN_KEYS.verified, '1')
+    await setAppConfig(DOMAIN_KEYS.checkedAt, new Date().toISOString())
+    await setAppConfig(DOMAIN_KEYS.error, '')
+
+    site = await createSite({
+      name: 'Funnel formulario calendario pago',
+      slug: `funnel-form-pay-${suffix}`,
+      siteType: 'landing_page',
+      status: 'published',
+      blankCanvas: true,
+      theme: {
+        pages: [
+          { id: 'page-1', title: 'Formulario', sortOrder: 0 },
+          { id: 'page-2', title: 'Calendario', sortOrder: 1 },
+          { id: 'page-3', title: 'Pago', sortOrder: 2 }
+        ]
+      }
+    })
+
+    const siteWithName = await createBlock(site.id, {
+      blockType: 'short_text',
+      label: 'Nombre completo',
+      required: true,
+      settings: { pageId: 'page-1', systemFieldKey: 'full_name', internalName: 'full_name' }
+    })
+    const nameBlock = siteWithName.blocks.find(block => block.label === 'Nombre completo')
+
+    const siteWithEmail = await createBlock(site.id, {
+      blockType: 'email',
+      label: 'Correo electronico',
+      required: true,
+      settings: { pageId: 'page-1', systemFieldKey: 'email', internalName: 'email', validation: 'email' }
+    })
+    const emailBlock = siteWithEmail.blocks.find(block => block.label === 'Correo electronico')
+
+    await createBlock(site.id, {
+      blockType: 'calendar_embed',
+      label: 'Agenda',
+      settings: { pageId: 'page-2', calendarId: 'calendar-test', calendarSlug: 'calendar-test' }
+    })
+    await createBlock(site.id, {
+      blockType: 'payment',
+      label: 'Pago',
+      settings: {
+        pageId: 'page-3',
+        paymentGate: {
+          enabled: true,
+          gateway: 'stripe',
+          amount: 1200,
+          currency: 'MXN',
+          productName: 'Programa',
+          buttonText: 'Pagar'
+        }
+      }
+    })
+
+    const result = await createSubmissionFromRequest(
+      {
+        headers: { host: 'example.test', 'user-agent': 'node-test' },
+        hostname: 'example.test',
+        path: `/${site.slug}`,
+        ip: '127.0.0.1',
+        socket: { remoteAddress: '127.0.0.1' }
+      },
+      {
+        siteId: site.id,
+        pageId: 'page-1',
+        responses: {
+          [nameBlock.id]: 'Raul Gomez',
+          [emailBlock.id]: email
+        }
+      }
+    )
+
+    assert.notEqual(result.status, 'payment_pending')
+    assert.equal(result.paymentRequired, undefined)
+    assert.ok(result.contactId)
+    assert.ok(result.submissionId)
+
+    const contact = await db.get('SELECT email, full_name, source FROM contacts WHERE id = ?', [result.contactId])
+    assert.equal(contact.email, email)
+    assert.equal(contact.full_name, 'Raul Gomez')
+    assert.equal(contact.source, `ristak_site:${site.slug}`)
+
+    const submission = await db.get('SELECT contact_id, status FROM public_site_submissions WHERE id = ?', [result.submissionId])
+    assert.equal(submission.contact_id, result.contactId)
+    assert.equal(submission.status, 'received')
+  } finally {
+    await db.run('DELETE FROM contacts WHERE email = ?', [email]).catch(() => undefined)
+    if (site?.id) {
+      await deleteSite(site.id).catch(() => undefined)
+    }
+    await setAppConfig(DOMAIN_KEYS.domain, previousConfig.domain)
+    await setAppConfig(DOMAIN_KEYS.verified, previousConfig.verified)
+    await setAppConfig(DOMAIN_KEYS.checkedAt, previousConfig.checkedAt)
+    await setAppConfig(DOMAIN_KEYS.error, previousConfig.error)
+  }
+})
+
 test('native form URL validation renders a real URL validator', async () => {
   let site
 
