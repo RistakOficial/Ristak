@@ -1,7 +1,14 @@
 import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { flushSync } from 'react-dom'
-import { CardElement, Elements, PaymentElement, useElements, useStripe } from '@stripe/react-stripe-js'
-import { loadStripe, type StripeCardElementChangeEvent, type StripeElementsOptions, type StripePaymentElementOptions } from '@stripe/stripe-js'
+import { CardCvcElement, CardExpiryElement, CardNumberElement, Elements, PaymentElement, useElements, useStripe } from '@stripe/react-stripe-js'
+import {
+  loadStripe,
+  type StripeCardCvcElementChangeEvent,
+  type StripeCardExpiryElementChangeEvent,
+  type StripeCardNumberElementChangeEvent,
+  type StripeElementsOptions,
+  type StripePaymentElementOptions
+} from '@stripe/stripe-js'
 import { AlertCircle, CheckCircle2, ChevronDown, Copy, CreditCard, Download, ExternalLink, Info, Loader2, ShieldCheck } from 'lucide-react'
 import { useParams, useSearchParams } from 'react-router-dom'
 import { Badge, Button, type BadgeVariant } from '@/components/common'
@@ -323,22 +330,37 @@ function buildStripeAppearance() {
 }
 
 function buildStripeCardElementOptions() {
+  const style = {
+    base: {
+      color: readToken('--text'),
+      fontFamily: readToken('--font-body'),
+      fontSize: '15px',
+      fontWeight: '500',
+      '::placeholder': {
+        color: readToken('--text-mute')
+      }
+    },
+    invalid: {
+      color: readToken('--neg')
+    }
+  }
+
   return {
     hidePostalCode: true,
-    style: {
-      base: {
-        color: readToken('--text'),
-        fontFamily: readToken('--font-body'),
-        fontSize: '15px',
-        fontWeight: '500',
-        '::placeholder': {
-          color: readToken('--text-mute')
-        }
-      },
-      invalid: {
-        color: readToken('--neg')
-      }
-    }
+    style
+  }
+}
+
+function buildStripeSplitElementOptions() {
+  return {
+    style: buildStripeCardElementOptions().style
+  }
+}
+
+function buildStripeCardNumberElementOptions() {
+  return {
+    ...buildStripeSplitElementOptions(),
+    showIcon: true
   }
 }
 
@@ -1343,17 +1365,19 @@ const PublicStripeInstallmentPaymentForm: React.FC<{
   const [submitting, setSubmitting] = useState(false)
   const [message, setMessage] = useState('')
   const [messageKind, setMessageKind] = useState<'info' | 'success' | 'error'>('info')
-  const [cardComplete, setCardComplete] = useState(false)
+  const [cardFields, setCardFields] = useState({ number: false, expiry: false, cvc: false })
   const [installmentStatus, setInstallmentStatus] = useState<'idle' | 'checking' | 'ready' | 'error'>('idle')
   const [paymentIntentId, setPaymentIntentId] = useState('')
   const [availablePlans, setAvailablePlans] = useState<StripeInstallmentPlan[] | null>(null)
   const [selectedInstallments, setSelectedInstallments] = useState<number | null>(null)
-  const cardOptions = useMemo(() => buildStripeCardElementOptions(), [])
+  const cardNumberOptions = useMemo(() => buildStripeCardNumberElementOptions(), [])
+  const cardFieldOptions = useMemo(() => buildStripeSplitElementOptions(), [])
   const submitAmount = Number(payment.amount || 0) > 0 ? ` ${formatCurrency(payment.amount, payment.currency)}` : ''
   const maxInstallments = getStripeInstallmentMax(payment)
   const showSecureNotice = payment.settings?.checkout?.showSecureBadge !== false
   const isTestMode = payment.paymentMode === 'test' || String(payment.publishableKey || '').startsWith('pk_test_')
   const savePaymentMethod = Boolean(payment.contact?.id || payment.paymentPlan?.cardSetupRequired)
+  const cardComplete = cardFields.number && cardFields.expiry && cardFields.cvc
   const hasPreparedCard = installmentStatus === 'ready' && Boolean(paymentIntentId)
   const showInstallmentSelector = Boolean(hasPreparedCard && availablePlans?.length)
   const canSubmitPayment = Boolean(stripe && elements && hasPreparedCard && !submitting)
@@ -1368,29 +1392,38 @@ const PublicStripeInstallmentPaymentForm: React.FC<{
   }, [])
 
   const resetCardSelection = () => {
-    setCardComplete(false)
+    setCardFields({ number: false, expiry: false, cvc: false })
     resetPreparedCard()
-    elements?.getElement(CardElement)?.clear()
+    elements?.getElement(CardNumberElement)?.clear()
+    elements?.getElement(CardExpiryElement)?.clear()
+    elements?.getElement(CardCvcElement)?.clear()
   }
 
-  const handleCardChange = useCallback((event: StripeCardElementChangeEvent) => {
-    setCardComplete(event.complete)
+  const handleSplitCardChange = useCallback((
+    field: 'number' | 'expiry' | 'cvc',
+    event: StripeCardNumberElementChangeEvent | StripeCardExpiryElementChangeEvent | StripeCardCvcElementChangeEvent
+  ) => {
+    setCardFields((current) => ({
+      ...current,
+      [field]: event.complete
+    }))
 
-    if (!event.complete) {
+    const hasPreparedState = Boolean(paymentIntentId || availablePlans || installmentStatus === 'ready' || installmentStatus === 'error')
+    if (!event.complete || hasPreparedState) {
       resetPreparedCard()
       return
     }
 
     setMessage('')
     setMessageKind('info')
-  }, [resetPreparedCard])
+  }, [availablePlans, installmentStatus, paymentIntentId, resetPreparedCard])
 
   const preparePlans = useCallback(async () => {
     if (!stripe || !elements || installmentStatus === 'checking') return
-    const card = elements.getElement(CardElement)
+    const card = elements.getElement(CardNumberElement)
     if (!card) {
       setMessageKind('error')
-      setMessage('No pudimos cargar el campo seguro de tarjeta. Recarga la página e intenta otra vez.')
+      setMessage('No pudimos cargar los campos seguros de tarjeta. Recarga la página e intenta otra vez.')
       setInstallmentStatus('error')
       return
     }
@@ -1404,7 +1437,10 @@ const PublicStripeInstallmentPaymentForm: React.FC<{
         billing_details: {
           name: payment.contact?.name || undefined,
           email: payment.contact?.email || undefined,
-          phone: payment.contact?.phone || undefined
+          phone: payment.contact?.phone || undefined,
+          address: {
+            country: 'MX'
+          }
         }
       })
 
@@ -1496,8 +1532,51 @@ const PublicStripeInstallmentPaymentForm: React.FC<{
 
   return (
     <form className={styles.stripeBox} onSubmit={handleSubmit}>
-      <div className={styles.stripeCardElementShell}>
-        <CardElement options={cardOptions} onChange={handleCardChange} />
+      <div className={styles.stripeExpandedCardForm}>
+        <div className={styles.stripeCardMethodHeader}>
+          <CreditCard size={16} />
+          <span>Tarjeta</span>
+        </div>
+
+        <div className={styles.stripeFormField}>
+          <label>Número de tarjeta</label>
+          <div className={styles.stripeSplitElementShell}>
+            <CardNumberElement
+              options={cardNumberOptions}
+              onChange={(event) => handleSplitCardChange('number', event)}
+            />
+          </div>
+        </div>
+
+        <div className={styles.stripeSplitGrid}>
+          <div className={styles.stripeFormField}>
+            <label>Fecha de caducidad</label>
+            <div className={styles.stripeSplitElementShell}>
+              <CardExpiryElement
+                options={cardFieldOptions}
+                onChange={(event) => handleSplitCardChange('expiry', event)}
+              />
+            </div>
+          </div>
+
+          <div className={styles.stripeFormField}>
+            <label>Código de seguridad</label>
+            <div className={styles.stripeSplitElementShell}>
+              <CardCvcElement
+                options={cardFieldOptions}
+                onChange={(event) => handleSplitCardChange('cvc', event)}
+              />
+            </div>
+          </div>
+        </div>
+
+        <div className={styles.stripeFormField}>
+          <label>País</label>
+          <div className={styles.stripeCountryField} aria-label="País México">
+            <span>México</span>
+            <ChevronDown size={16} aria-hidden="true" />
+          </div>
+        </div>
       </div>
 
       {showInstallmentSelector && (
@@ -1543,13 +1622,6 @@ const PublicStripeInstallmentPaymentForm: React.FC<{
         </div>
       )}
 
-      {installmentStatus === 'checking' && (
-        <p className={styles.providerMessage}>
-          <Loader2 size={16} className={styles.spin} />
-          <span>Revisando si tu tarjeta tiene meses sin intereses...</span>
-        </p>
-      )}
-
       {message && (
         <p className={`${styles.providerMessage} ${messageKind === 'success' ? styles.messageSuccess : messageKind === 'error' ? styles.messageError : ''}`}>
           {messageKind === 'success' ? <CheckCircle2 size={16} /> : messageKind === 'error' ? <AlertCircle size={16} /> : <Info size={16} />}
@@ -1564,22 +1636,18 @@ const PublicStripeInstallmentPaymentForm: React.FC<{
           fullWidth
           className={styles.payButton}
           disabled={!canSubmitPayment}
-          leftIcon={submitting ? <Loader2 size={16} className={styles.spin} /> : <CreditCard size={16} />}
+          leftIcon={(submitting || installmentStatus === 'checking') ? <Loader2 size={16} className={styles.spin} /> : <CreditCard size={16} />}
         >
           {submitting
             ? 'Procesando'
-            : hasPreparedCard
-              ? `${selectedInstallments ? `Pagar a ${selectedInstallments} meses` : 'Pagar de contado'}${submitAmount}`
-              : installmentStatus === 'checking'
-                ? 'Revisando tarjeta'
-                : 'Completa la tarjeta'}
+            : `Pagar ahora${submitAmount}`}
         </Button>
       </div>
 
       {showSecureNotice && (
         <p className={styles.cardAuthorizationNotice}>
           <ShieldCheck size={16} />
-          <span>La tarjeta se captura en campos seguros de Stripe. Si califica, los meses sin intereses aparecen automáticamente antes de pagar.</span>
+          <span>La tarjeta se captura en campos seguros de Stripe. Ristak sólo recibe el resultado del cobro.</span>
         </p>
       )}
 
