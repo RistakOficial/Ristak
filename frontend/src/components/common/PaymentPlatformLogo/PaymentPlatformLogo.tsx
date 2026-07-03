@@ -1,5 +1,5 @@
 import React from 'react'
-import clipLogo from '@/assets/payment-platforms/clip.svg'
+import clipLogo from '@/assets/payment-platforms/clip.webp'
 import conektaLogo from '@/assets/payment-platforms/conekta.webp'
 import gigstackLogo from '@/assets/payment-platforms/gigstack.webp'
 import mercadoPagoLogo from '@/assets/payment-platforms/mercadopago.webp'
