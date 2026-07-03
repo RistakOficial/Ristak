@@ -734,7 +734,9 @@ function createPaymentAttemptKey(publicPaymentId: string) {
 function normalizeConektaStatusMessage(status?: string) {
   const normalized = String(status || '').toLowerCase()
   if (['paid', 'succeeded', 'completed'].includes(normalized)) {
-    return { kind: 'success' as const, text: 'Pago recibido. Gracias.' }
+    // No anunciamos el éxito aquí: la pantalla de éxito animada es la que revela
+    // el resultado (mantener el elemento sorpresa). Solo un estado neutral.
+    return { kind: 'info' as const, text: 'Confirmando tu pago…' }
   }
   if (['pending', 'pending_payment', 'processing', 'in_process'].includes(normalized)) {
     return { kind: 'info' as const, text: 'Conekta está procesando el pago. Esta página se actualizará cuando se confirme.' }
@@ -748,7 +750,9 @@ function normalizeConektaStatusMessage(status?: string) {
 function normalizeMercadoPagoStatusMessage(status?: string, statusDetail?: string) {
   const normalized = String(status || '').toLowerCase()
   if (['approved', 'paid', 'succeeded', 'completed'].includes(normalized)) {
-    return { kind: 'success' as const, text: 'Pago recibido. Gracias.' }
+    // No anunciamos el éxito aquí: la pantalla de éxito animada es la que revela
+    // el resultado (mantener el elemento sorpresa). Solo un estado neutral.
+    return { kind: 'info' as const, text: 'Confirmando tu pago…' }
   }
   if (['pending', 'in_process', 'authorized'].includes(normalized)) {
     return { kind: 'info' as const, text: 'Mercado Pago está procesando el pago. Esta página se actualizará cuando se confirme.' }
@@ -766,7 +770,9 @@ function normalizeMercadoPagoStatusMessage(status?: string, statusDetail?: strin
 function normalizeClipStatusMessage(status?: string, statusDetail?: unknown, pendingAction?: { url?: string } | null) {
   const normalized = String(status || '').toLowerCase()
   if (['approved', 'paid', 'succeeded', 'completed'].includes(normalized)) {
-    return { kind: 'success' as const, text: 'Pago recibido. Gracias.' }
+    // No anunciamos el éxito aquí: la pantalla de éxito animada es la que revela
+    // el resultado (mantener el elemento sorpresa). Solo un estado neutral.
+    return { kind: 'info' as const, text: 'Confirmando tu pago…' }
   }
   if (pendingAction?.url || ['pending', 'authorized', 'processing'].includes(normalized)) {
     return { kind: 'info' as const, text: pendingAction?.url ? 'CLIP necesita validar este pago con 3DS.' : 'CLIP está procesando el pago. Esta página se actualizará cuando se confirme.' }
@@ -1268,7 +1274,7 @@ const PublicPaymentForm: React.FC<{
   const elements = useElements()
   const [submitting, setSubmitting] = useState(false)
   const [message, setMessage] = useState('')
-  const [success, setSuccess] = useState(false)
+  const [errored, setErrored] = useState(false)
   const isCardSetupPlan = Boolean(payment.paymentPlan?.cardSetupRequired || payment.paymentPlan?.trigger === 'card_setup')
   const submitLabel = isCardSetupPlan
     ? 'Autorizar tarjeta'
@@ -1283,6 +1289,7 @@ const PublicPaymentForm: React.FC<{
     if (!stripe || !elements || submitting) return
 
     setSubmitting(true)
+    setErrored(false)
     setMessage('')
 
     const result = await stripe.confirmPayment({
@@ -1294,15 +1301,19 @@ const PublicPaymentForm: React.FC<{
     })
 
     if (result.error) {
+      setErrored(true)
       setMessage(result.error.message || 'No se pudo completar el pago. Revisa los datos e intenta otra vez.')
       setSubmitting(false)
       return
     }
 
     if (result.paymentIntent?.status === 'succeeded') {
-      setSuccess(true)
-      setMessage('Pago recibido. Gracias.')
+      // Sin aviso de "pago exitoso": dejamos el spinner y un "Confirmando…"
+      // neutral, y que la pantalla de éxito animada sea la que revele el
+      // resultado (mantener el elemento sorpresa). No reactivamos el botón.
+      setMessage('Confirmando tu pago…')
       await onPaid()
+      return
     } else if (result.paymentIntent?.status === 'processing') {
       setMessage('Stripe está procesando el pago. Esta página se actualizará cuando se confirme.')
       await onPaid()
@@ -1320,8 +1331,8 @@ const PublicPaymentForm: React.FC<{
       </div>
 
       {message && (
-        <p className={`${styles.providerMessage} ${success ? styles.messageSuccess : styles.messageError}`}>
-          {success ? <CheckCircle2 size={16} /> : <AlertCircle size={16} />}
+        <p className={`${styles.providerMessage} ${errored ? styles.messageError : ''}`}>
+          {errored ? <AlertCircle size={16} /> : <Loader2 size={16} className={styles.spin} />}
           <span>{message}</span>
         </p>
       )}
@@ -1500,7 +1511,7 @@ const MercadoPagoCardPaymentForm: React.FC<{
 
       {message && (
         <p className={messageClassName}>
-          {messageKind === 'success' ? <CheckCircle2 size={16} /> : <AlertCircle size={16} />}
+          {messageKind === 'error' ? <AlertCircle size={16} /> : messageKind === 'success' ? <CheckCircle2 size={16} /> : <Loader2 size={16} className={styles.spin} />}
           <span>{message}</span>
         </p>
       )}
@@ -1621,9 +1632,7 @@ const ConektaCardTokenizerForm: React.FC<{
                     })
                 const statusMessage = normalizeConektaStatusMessage(result.payment?.status || result.status)
                 setMessageKind(statusMessage.kind)
-                setMessage(isSubscriptionStart && statusMessage.kind === 'success'
-                  ? 'Suscripción autorizada. Gracias.'
-                  : statusMessage.text)
+                setMessage(statusMessage.text)
                 await onPaidRef.current()
               } catch (submitError: any) {
                 setMessageKind('error')
@@ -1755,7 +1764,7 @@ const ConektaCardTokenizerForm: React.FC<{
 
       {message && (
         <p className={messageClassName}>
-          {messageKind === 'success' ? <CheckCircle2 size={16} /> : <AlertCircle size={16} />}
+          {messageKind === 'error' ? <AlertCircle size={16} /> : messageKind === 'success' ? <CheckCircle2 size={16} /> : <Loader2 size={16} className={styles.spin} />}
           <span>{message}</span>
         </p>
       )}
@@ -1864,9 +1873,7 @@ const ClipCardPaymentForm: React.FC<{
         const result = await clipPaymentsService.refreshPublicPayment(payment.publicPaymentId, returnedPaymentId)
         const statusMessage = normalizeClipStatusMessage(result.payment?.status || result.status, result.statusDetail, result.pendingAction)
         setMessageKind(statusMessage.kind)
-        setMessage(isSubscriptionStart && statusMessage.kind === 'success'
-          ? 'Suscripción autorizada. Gracias.'
-          : statusMessage.text)
+        setMessage(statusMessage.text)
         setThreeDsUrl('')
         await onPaidRef.current()
       } catch (refreshError: any) {
@@ -1912,9 +1919,7 @@ const ClipCardPaymentForm: React.FC<{
       })
       const statusMessage = normalizeClipStatusMessage(result.payment?.status || result.status, result.statusDetail, result.pendingAction)
       setMessageKind(statusMessage.kind)
-      setMessage(isSubscriptionStart && statusMessage.kind === 'success'
-        ? 'Suscripción autorizada. Gracias.'
-        : statusMessage.text)
+      setMessage(statusMessage.text)
 
       if (result.pendingAction?.url) {
         setThreeDsPaymentId(result.clipPaymentId || result.payment?.clipPaymentId || '')
@@ -1985,7 +1990,7 @@ const ClipCardPaymentForm: React.FC<{
 
       {message && (
         <p className={messageClassName}>
-          {messageKind === 'success' ? <CheckCircle2 size={16} /> : <AlertCircle size={16} />}
+          {messageKind === 'error' ? <AlertCircle size={16} /> : messageKind === 'success' ? <CheckCircle2 size={16} /> : <Loader2 size={16} className={styles.spin} />}
           <span>{message}</span>
         </p>
       )}
