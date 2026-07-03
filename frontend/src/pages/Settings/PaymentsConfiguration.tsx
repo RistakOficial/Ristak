@@ -3926,6 +3926,18 @@ export const PaymentsConfiguration: React.FC = () => {
 
                     <div className={styles.formGrid}>
                       {renderField(
+                        'Nombre de la clave',
+                        <input
+                          type="text"
+                          value={values.accountLabel}
+                          onChange={(event) => updateClipModeCredential(mode, 'accountLabel', event.target.value)}
+                          placeholder={mode === 'live' ? 'CLIP en vivo' : 'CLIP prueba'}
+                          autoComplete="off"
+                          spellCheck={false}
+                        />,
+                        'Ponle un nombre para reconocer esta clave dentro de Ristak.'
+                      )}
+                      {renderField(
                         'Clave API de CLIP',
                         <input
                           type="text"
@@ -3939,18 +3951,6 @@ export const PaymentsConfiguration: React.FC = () => {
                           spellCheck={false}
                         />,
                         'Pega la Clave API visible. No pegues la clave secreta.'
-                      )}
-                      {renderField(
-                        'Etiqueta interna',
-                        <input
-                          type="text"
-                          value={values.accountLabel}
-                          onChange={(event) => updateClipModeCredential(mode, 'accountLabel', event.target.value)}
-                          placeholder={mode === 'live' ? 'CLIP en vivo' : 'CLIP prueba'}
-                          autoComplete="off"
-                          spellCheck={false}
-                        />,
-                        'Solo sirve para identificar esta credencial dentro de Ristak.'
                       )}
                     </div>
 
