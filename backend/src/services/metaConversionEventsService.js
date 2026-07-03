@@ -1426,11 +1426,6 @@ async function sendMetaWhatsappEvent({
     return { sent: false, reason: 'missing_phone' }
   }
 
-  if (!skipContactDedupe && contactAlreadySent(contact, eventType)) {
-    return { sent: false, reason: 'already_sent' }
-  }
-
-  const whatsappAttribution = isWhatsapp ? await getLatestWhatsappAttribution(contact) : null
   const metaConfig = await getMetaCapiConfig()
   if (!metaConfig.datasetId || !metaConfig.accessToken) {
     await logMetaEvent({
@@ -1443,6 +1438,25 @@ async function sendMetaWhatsappEvent({
     })
     return { sent: false, reason: 'missing_meta_config' }
   }
+
+  // Modo test (código de Test Events activo): NO deduplicamos por contacto ni
+  // marcamos la bandera, para que el usuario pueda re-disparar el mismo evento
+  // y verlo en Test Events. El evento real (dataset en vivo) se enviará luego.
+  const metaTestModeActive = Boolean(metaConfig.testEventCode)
+
+  if (!skipContactDedupe && !metaTestModeActive && contactAlreadySent(contact, eventType)) {
+    await logMetaEvent({
+      contactId,
+      eventType,
+      metaEventName,
+      eventId,
+      status: 'skipped',
+      errorMessage: 'Evento ya enviado previamente para este contacto (dedupe)'
+    })
+    return { sent: false, reason: 'already_sent' }
+  }
+
+  const whatsappAttribution = isWhatsapp ? await getLatestWhatsappAttribution(contact) : null
 
   const userData = buildBusinessMessagingUserData(contact, metaConfig, whatsappAttribution, cleanChannel, socialIdentity, attributionTouch)
 
@@ -1503,7 +1517,9 @@ async function sendMetaWhatsappEvent({
       payload
     })
 
-    await markContactEventSent(contactId, eventType, eventId)
+    if (!metaTestModeActive) {
+      await markContactEventSent(contactId, eventType, eventId)
+    }
     await logMetaEvent({
       contactId,
       eventType,
@@ -1559,10 +1575,6 @@ async function sendMetaSiteEvent({
     return { sent: false, reason: 'contact_not_found' }
   }
 
-  if (!skipContactDedupe && contactAlreadySent(contact, eventType)) {
-    return { sent: false, reason: 'already_sent' }
-  }
-
   const metaConfig = await getMetaCapiConfig()
   if (!metaConfig.datasetId || !metaConfig.accessToken) {
     await logMetaEvent({
@@ -1574,6 +1586,24 @@ async function sendMetaSiteEvent({
       errorMessage: 'Falta META_PIXEL_ID/DATASET_ID o System User Access Token'
     })
     return { sent: false, reason: 'missing_meta_config' }
+  }
+
+  // Modo test (código de Test Events activo): NO deduplicamos por contacto ni
+  // marcamos la bandera. Así el usuario puede re-disparar el mismo evento las
+  // veces que quiera para verlo en la pestaña Test Events, y el evento real (al
+  // dataset en vivo) sigue pudiéndose enviar después, cuando el modo test expire.
+  const metaTestModeActive = Boolean(metaConfig.testEventCode)
+
+  if (!skipContactDedupe && !metaTestModeActive && contactAlreadySent(contact, eventType)) {
+    await logMetaEvent({
+      contactId,
+      eventType,
+      metaEventName,
+      eventId,
+      status: 'skipped',
+      errorMessage: 'Evento ya enviado previamente para este contacto (dedupe)'
+    })
+    return { sent: false, reason: 'already_sent' }
   }
 
   const userData = buildUserData(contact)
@@ -1641,7 +1671,9 @@ async function sendMetaSiteEvent({
       payload
     })
 
-    await markContactEventSent(contactId, eventType, eventId)
+    if (!metaTestModeActive) {
+      await markContactEventSent(contactId, eventType, eventId)
+    }
     await logMetaEvent({
       contactId,
       eventType,
@@ -1890,17 +1922,36 @@ export async function triggerMetaPaymentPurchaseEvent(contactId, payment = {}) {
   const metaConfig = await getMetaCapiConfig()
   const hasDataset = Boolean(metaConfig.datasetId)
   const paymentMode = getMetaPaymentMode(payment)
+  // Id de evento para dejar rastro en el log AUN cuando el envío se omite (antes
+  // estos skips desaparecían sin registro y parecía que el pixel "no jalaba").
+  const purchaseSkipEventId = `purchase_${firstPaymentValue([paymentRowId, payment.id, contactId]) || 'unknown'}`
 
   if (!hasDataset && paymentMode === PAYMENT_MODE_TEST) {
     return { sent: false, reason: 'test_payment' }
   }
 
   if (hasDataset && await shouldSkipTestPaymentForMeta(payment)) {
-    return { sent: false, reason: 'test_payment' }
+    await logMetaEvent({
+      contactId,
+      eventType: EVENT_TYPES.purchase,
+      metaEventName: DEFAULT_PAYMENT_EVENT_NAME,
+      eventId: purchaseSkipEventId,
+      status: 'skipped',
+      errorMessage: 'Pago en modo prueba omitido: activa el código de Test Events de Meta ANTES de pagar para verlo en la pestaña Test Events'
+    })
+    return { sent: false, reason: 'test_payment', eventId: purchaseSkipEventId }
   }
 
   if (!paymentMetaConfig.enabled && hasDataset) {
-    return { sent: false, reason: 'disabled' }
+    await logMetaEvent({
+      contactId,
+      eventType: EVENT_TYPES.purchase,
+      metaEventName: DEFAULT_PAYMENT_EVENT_NAME,
+      eventId: purchaseSkipEventId,
+      status: 'skipped',
+      errorMessage: 'Evento de compra (Purchase) desactivado en Ajustes → Meta'
+    })
+    return { sent: false, reason: 'disabled', eventId: purchaseSkipEventId }
   }
 
   const effectivePaymentMetaConfig = paymentMetaConfig.enabled

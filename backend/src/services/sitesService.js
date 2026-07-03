@@ -23917,7 +23917,9 @@ export async function sendCalendarBookingSiteMetaEvent({ calendar, appointment, 
     // Marca el dedup de agenda a nivel contacto: si más tarde llega un echo
     // (webhook GHL de la misma cita) por el trigger de business_messaging,
     // el flag evita una SEGUNDA conversión con otro event_id.
-    if (contactId) {
+    // En modo test no marcamos la bandera: una cita de prueba no debe bloquear
+    // el evento real (ni el re-test) de ese mismo contacto.
+    if (contactId && !testModeActive) {
       await db.run(
         `UPDATE contacts
          SET meta_schedule_event_sent = 1,
@@ -24432,7 +24434,7 @@ async function createImportedSubmissionFromRequest({ req, body, site, host, prev
   const responseMessage = importedDisqualified
     ? cleanString(meta.importedDisqualifiedMessage || meta.imported_disqualified_message) || 'Gracias. Por ahora esta solicitud no califica.'
     : 'Listo. Recibimos tu información.'
-  if (shouldSkipTracking({ req, body, meta, previewContext })) {
+  if (shouldSkipTracking({ req, body, meta, previewContext }) && (Boolean(previewContext) || !(await isMetaTestModeActive()))) {
     return {
       submissionId: createRistakId('site_preview_submission'),
       siteId: site.id,
@@ -25124,7 +25126,7 @@ export async function createSubmissionFromRequest(req, body = {}, options = {}) 
     defaultSubmissionBlocks,
     allBlocks: blocks
   })
-  if (shouldSkipTracking({ req, body, meta, previewContext })) {
+  if (shouldSkipTracking({ req, body, meta, previewContext }) && (Boolean(previewContext) || !(await isMetaTestModeActive()))) {
     return {
       submissionId: createRistakId('site_preview_submission'),
       siteId: site.id,
