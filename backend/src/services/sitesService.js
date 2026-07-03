@@ -7833,22 +7833,27 @@ async function ensureCalendarBookingSystemForm() {
       settings: { pageId: DEFAULT_FUNNEL_PAGE_ID, systemFieldKey: 'full_name' }
     },
     {
-      id: `${CALENDAR_DEFAULT_FORM_SITE_ID}-phone`,
-      blockType: 'phone',
-      label: 'Telefono / WhatsApp',
-      placeholder: '10 digitos',
-      required: 1,
-      sortOrder: 1,
-      settings: { pageId: DEFAULT_FUNNEL_PAGE_ID, systemFieldKey: 'phone', validation: 'phone' }
-    },
-    {
       id: `${CALENDAR_DEFAULT_FORM_SITE_ID}-email`,
       blockType: 'email',
       label: 'Correo',
       placeholder: 'tu@email.com',
       required: 0,
-      sortOrder: 2,
+      sortOrder: 1,
       settings: { pageId: DEFAULT_FUNNEL_PAGE_ID, systemFieldKey: 'email', validation: 'email' }
+    },
+    {
+      id: `${CALENDAR_DEFAULT_FORM_SITE_ID}-phone`,
+      blockType: 'phone',
+      label: 'Telefono / WhatsApp',
+      placeholder: '10 digitos',
+      required: 1,
+      sortOrder: 2,
+      settings: {
+        pageId: DEFAULT_FUNNEL_PAGE_ID,
+        systemFieldKey: 'phone',
+        validation: 'phone',
+        phoneCountrySelectorEnabled: true
+      }
     }
   ]
 

@@ -3099,18 +3099,18 @@ export const CalendarsConfiguration: React.FC = () => {
                     <label>
                       <input
                         type="checkbox"
-                        checked={bookingFormConfig.defaultFields.phone.enabled}
-                        onChange={(event) => handleDefaultBookingFieldToggle('phone', event.target.checked)}
-                      />
-                      Teléfono / WhatsApp
-                    </label>
-                    <label>
-                      <input
-                        type="checkbox"
                         checked={bookingFormConfig.defaultFields.email.enabled}
                         onChange={(event) => handleDefaultBookingFieldToggle('email', event.target.checked)}
                       />
                       Correo electrónico
+                    </label>
+                    <label>
+                      <input
+                        type="checkbox"
+                        checked={bookingFormConfig.defaultFields.phone.enabled}
+                        onChange={(event) => handleDefaultBookingFieldToggle('phone', event.target.checked)}
+                      />
+                      Teléfono / WhatsApp
                     </label>
                     <label>
                       <input

@@ -7,6 +7,11 @@ import {
   normalizeCalendarCustomEventsConfig,
   renderPublicCalendarHtml
 } from '../src/services/localCalendarService.js'
+import { getAppConfig, setAppConfig } from '../src/config/database.js'
+import {
+  ACCOUNT_COUNTRY_CONFIG_KEY,
+  ACCOUNT_DIAL_CODE_CONFIG_KEY
+} from '../src/utils/accountLocale.js'
 import { createBlock, createSite, deleteSite, renderPublicSiteHtml } from '../src/services/sitesService.js'
 
 function calendarSite(settings = {}) {
@@ -247,6 +252,54 @@ test('public calendar renders configured widget themes and per-embed theme overr
   assert.match(agendaTheme, /body\.rstk-calendar-theme-agenda \.day\{width:50px;height:50px/)
   assert.ok(agendaTheme.includes('.day,body.rstk-calendar-theme-agenda .day{width:40px;height:40px;max-width:100%}'))
   assert.ok(agendaTheme.includes('.day,body.rstk-calendar-theme-agenda .day{width:38px;height:38px;max-width:100%}'))
+})
+
+test('default public calendar form asks email before phone and renders country dial selector', async () => {
+  const previousCountry = await getAppConfig(ACCOUNT_COUNTRY_CONFIG_KEY)
+  const previousDialCode = await getAppConfig(ACCOUNT_DIAL_CODE_CONFIG_KEY)
+
+  try {
+    await setAppConfig(ACCOUNT_COUNTRY_CONFIG_KEY, 'US')
+    await setAppConfig(ACCOUNT_DIAL_CODE_CONFIG_KEY, '1')
+
+    const bookingForm = await getCalendarBookingFormDefinition({
+      id: 'calendar-default-phone-lada',
+      slug: 'agenda-lada',
+      name: 'Agenda lada',
+      bookingForm: {
+        defaultFields: {
+          phone: { enabled: true, required: true },
+          email: { enabled: true, required: true }
+        }
+      }
+    })
+
+    assert.deepEqual(
+      bookingForm.fields.map(field => field.id).slice(0, 3),
+      ['calendar_name', 'calendar_email', 'calendar_phone']
+    )
+
+    const phoneField = bookingForm.fields.find(field => field.id === 'calendar_phone')
+    assert.equal(phoneField.settings.phoneCountrySelectorEnabled, true)
+    assert.equal(phoneField.settings.defaultCountryCode, 'US')
+    assert.equal(phoneField.settings.defaultDialCode, '1')
+
+    const html = renderPublicCalendarHtml({
+      id: 'calendar-default-phone-lada',
+      slug: 'agenda-lada',
+      name: 'Agenda lada',
+      slotDuration: 30,
+      eventColor: '#146FC5'
+    }, { bookingForm })
+
+    assert.match(html, /data-phone-country-select/)
+    assert.match(html, /<option value="US" data-dial-code="1"[^>]*selected/)
+    assert.match(html, /data-phone-number-input/)
+    assert.match(html, /composePhoneValue/)
+  } finally {
+    await setAppConfig(ACCOUNT_COUNTRY_CONFIG_KEY, previousCountry)
+    await setAppConfig(ACCOUNT_DIAL_CODE_CONFIG_KEY, previousDialCode)
+  }
 })
 
 test('public calendar asks for timezone after date selection when visitor timezone is enabled', () => {

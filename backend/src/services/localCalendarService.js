@@ -14,7 +14,13 @@ import {
   prepareContactPhoneUpsert,
   finalizePreparedPhoneUpsert
 } from './contactIdentityService.js'
-import { normalizePhoneForAccount } from '../utils/accountLocale.js' // (GCAL-006)
+import {
+  COUNTRY_OPTIONS,
+  getAccountLocaleSettings,
+  getCountryDefaults,
+  getCountryFlagEmoji,
+  normalizePhoneForAccount
+} from '../utils/accountLocale.js' // (GCAL-006)
 import GHLClient from './ghlClient.js'
 import * as highlevelCalendarService from './highlevelCalendarService.js'
 import { getCalendarPublicBaseUrlStatus } from './sitesService.js'
@@ -90,6 +96,7 @@ const CALENDAR_FORM_FIELD_TYPES = new Set([
 const CALENDAR_FORM_CONTENT_BLOCK_TYPES = new Set(['title', 'subtitle', 'text', 'image', 'video', 'payment'])
 const CALENDAR_FORM_ALL_BLOCK_TYPES = new Set([...CALENDAR_FORM_FIELD_TYPES, ...CALENDAR_FORM_CONTENT_BLOCK_TYPES])
 const CALENDAR_SLUG_MAX_LENGTH = 80
+const DEFAULT_CALENDAR_PHONE_LOCALE = { countryCode: 'MX', dialCode: '52' }
 
 function makeId(prefix) {
   return createEntityId(prefix)
@@ -97,6 +104,60 @@ function makeId(prefix) {
 
 function cleanString(value) {
   return String(value ?? '').trim()
+}
+
+function normalizePhoneDialCode(value) {
+  return cleanString(value).replace(/\D/g, '').slice(0, 4)
+}
+
+function getCalendarPhoneCountryOption(countryCode) {
+  const normalized = cleanString(countryCode).toUpperCase()
+  return COUNTRY_OPTIONS.find(country => country.value === normalized) || null
+}
+
+function getCalendarPhoneCountryOptionByDialCode(dialCode) {
+  const normalized = normalizePhoneDialCode(dialCode)
+  return COUNTRY_OPTIONS.find(country => country.dialCode === normalized) || null
+}
+
+function normalizeCalendarPhoneLocale(locale = {}) {
+  const dialCode = normalizePhoneDialCode(locale.dialCode || locale.dial_code)
+  const country = getCalendarPhoneCountryOption(locale.countryCode || locale.country_code || locale.country)
+    || getCalendarPhoneCountryOptionByDialCode(dialCode)
+    || getCountryDefaults(DEFAULT_CALENDAR_PHONE_LOCALE.countryCode)
+
+  return {
+    countryCode: country.value,
+    dialCode: dialCode || country.dialCode || DEFAULT_CALENDAR_PHONE_LOCALE.dialCode
+  }
+}
+
+async function getCalendarPhoneLocale() {
+  return normalizeCalendarPhoneLocale(
+    await getAccountLocaleSettings().catch(() => DEFAULT_CALENDAR_PHONE_LOCALE)
+  )
+}
+
+function applyCalendarPhoneLocaleDefaults(field = {}, phoneLocale = DEFAULT_CALENDAR_PHONE_LOCALE) {
+  if (field.blockType !== 'phone') return field
+
+  const settings = field.settings && typeof field.settings === 'object' && !Array.isArray(field.settings)
+    ? field.settings
+    : {}
+  const locale = normalizeCalendarPhoneLocale({
+    countryCode: settings.defaultCountryCode || settings.countryCode || phoneLocale.countryCode,
+    dialCode: settings.defaultDialCode || settings.dialCode || phoneLocale.dialCode
+  })
+
+  return {
+    ...field,
+    settings: {
+      ...settings,
+      phoneCountrySelectorEnabled: settings.phoneCountrySelectorEnabled ?? true,
+      defaultCountryCode: cleanString(settings.defaultCountryCode || settings.countryCode || locale.countryCode).toUpperCase(),
+      defaultDialCode: normalizePhoneDialCode(settings.defaultDialCode || settings.dialCode || locale.dialCode)
+    }
+  }
 }
 
 function parseBoolean(value, defaultValue = false) {
@@ -1535,9 +1596,10 @@ function normalizeCalendarResultContentBlock(row = {}, targetPageId = '') {
   }
 }
 
-function getDefaultCalendarBookingFields(config = {}) {
+function getDefaultCalendarBookingFields(config = {}, phoneLocale = DEFAULT_CALENDAR_PHONE_LOCALE) {
   const fields = []
   const defaults = normalizeCalendarBookingDefaultFields(config)
+  const locale = normalizeCalendarPhoneLocale(phoneLocale)
 
   fields.push({
     id: 'calendar_name',
@@ -1552,21 +1614,6 @@ function getDefaultCalendarBookingFields(config = {}) {
     sortOrder: 0
   })
 
-  if (defaults.phone.enabled) {
-    fields.push({
-      id: 'calendar_phone',
-      blockType: 'phone',
-      label: 'Telefono / WhatsApp',
-      placeholder: '10 digitos',
-      required: Boolean(defaults.phone.required),
-      content: '',
-      options: [],
-      settings: { systemFieldKey: 'phone', validation: 'phone' },
-      pageId: CALENDAR_DEFAULT_PAGE_ID,
-      sortOrder: 1
-    })
-  }
-
   if (defaults.email.enabled) {
     fields.push({
       id: 'calendar_email',
@@ -1577,6 +1624,27 @@ function getDefaultCalendarBookingFields(config = {}) {
       content: '',
       options: [],
       settings: { systemFieldKey: 'email', validation: 'email' },
+      pageId: CALENDAR_DEFAULT_PAGE_ID,
+      sortOrder: 1
+    })
+  }
+
+  if (defaults.phone.enabled) {
+    fields.push({
+      id: 'calendar_phone',
+      blockType: 'phone',
+      label: 'Telefono / WhatsApp',
+      placeholder: '10 digitos',
+      required: Boolean(defaults.phone.required),
+      content: '',
+      options: [],
+      settings: {
+        systemFieldKey: 'phone',
+        validation: 'phone',
+        phoneCountrySelectorEnabled: true,
+        defaultCountryCode: locale.countryCode,
+        defaultDialCode: locale.dialCode
+      },
       pageId: CALENDAR_DEFAULT_PAGE_ID,
       sortOrder: 2
     })
@@ -1602,6 +1670,7 @@ function getDefaultCalendarBookingFields(config = {}) {
 
 export async function getCalendarBookingFormDefinition(calendar = {}) {
   const config = normalizeCalendarBookingFormConfig(calendar.bookingForm || calendar.booking_form || {})
+  const phoneLocale = await getCalendarPhoneLocale()
 
   if (config.useCustomForm && config.customFormId) {
     const site = await db.get(`
@@ -1642,6 +1711,7 @@ export async function getCalendarBookingFormDefinition(calendar = {}) {
       const fields = rows
         .map(row => normalizeCalendarFormBlock(row, pages))
         .filter(Boolean)
+        .map(field => applyCalendarPhoneLocaleDefaults(field, phoneLocale))
         .sort((a, b) => {
           const pageA = pages.findIndex(page => page.id === a.pageId)
           const pageB = pages.findIndex(page => page.id === b.pageId)
@@ -1675,7 +1745,7 @@ export async function getCalendarBookingFormDefinition(calendar = {}) {
     formName: 'Formulario de calendario',
     siteType: 'standard_form',
     pages: [{ id: CALENDAR_DEFAULT_PAGE_ID, title: 'Tus datos', sortOrder: 0 }],
-    fields: getDefaultCalendarBookingFields(config.defaultFields),
+    fields: getDefaultCalendarBookingFields(config.defaultFields, phoneLocale),
     paymentGate: normalizePaymentGateConfig({}),
     defaultFields: config.defaultFields
   }
@@ -1692,11 +1762,30 @@ function getCalendarFieldValidation(field = {}) {
   return ''
 }
 
+function isCalendarPhoneCountrySelectorEnabled(field = {}) {
+  const settings = field.settings || {}
+  return settings.phoneCountrySelectorEnabled !== false &&
+    settings.countrySelectorEnabled !== false &&
+    settings.phoneCountrySelector !== false
+}
+
+function renderCalendarPhoneCountryOptions(defaultCountryCode) {
+  const selectedCountry = getCalendarPhoneCountryOption(defaultCountryCode)
+    || getCountryDefaults(DEFAULT_CALENDAR_PHONE_LOCALE.countryCode)
+
+  return COUNTRY_OPTIONS.map(country => {
+    const selected = country.value === selectedCountry.value ? 'selected' : ''
+    const label = `${getCountryFlagEmoji(country.value)} +${country.dialCode}`
+    return `<option value="${escapeHtml(country.value)}" data-dial-code="${escapeHtml(country.dialCode)}" data-timezones="${escapeHtml((country.timezones || []).join(','))}" ${selected}>${escapeHtml(label)}</option>`
+  }).join('')
+}
+
 function renderCalendarFieldInput(field = {}) {
   const id = escapeHtml(field.id)
   const placeholder = escapeHtml(field.placeholder || '')
   const required = field.required ? 'required' : ''
   const options = Array.isArray(field.options) ? field.options : []
+  const settings = field.settings || {}
   const validation = getCalendarFieldValidation(field)
   // (CAL-QUAL) Adjunta la regla de descalificación a cada opción que la tenga, para que el
   // cliente la evalúe al seleccionarla. El servidor SIEMPRE revalida (no confía en el cliente).
@@ -1717,7 +1806,21 @@ function renderCalendarFieldInput(field = {}) {
     return `<input id="${id}" name="${id}" type="email" inputmode="email" autocomplete="email" placeholder="${placeholder}" ${required}>`
   }
   if (field.blockType === 'phone') {
-    return `<input id="${id}" name="${id}" type="tel" inputmode="tel" autocomplete="tel" placeholder="${placeholder}" ${required}>`
+    const selectorEnabled = isCalendarPhoneCountrySelectorEnabled(field)
+    const locale = normalizeCalendarPhoneLocale({
+      countryCode: settings.defaultCountryCode || settings.countryCode || DEFAULT_CALENDAR_PHONE_LOCALE.countryCode,
+      dialCode: settings.defaultDialCode || settings.dialCode || DEFAULT_CALENDAR_PHONE_LOCALE.dialCode
+    })
+    const hiddenAttr = selectorEnabled ? '' : ' data-phone-country-hidden'
+    const selectHiddenAttrs = selectorEnabled ? '' : ' aria-hidden="true" tabindex="-1"'
+    return `
+      <div class="rstk-phone-input" data-phone-country-field${hiddenAttr}>
+        <select id="${id}__country" name="${id}__country" data-phone-country-select aria-label="Pais y lada"${selectHiddenAttrs}>
+          ${renderCalendarPhoneCountryOptions(locale.countryCode)}
+        </select>
+        <input id="${id}" name="${id}" type="tel" inputmode="tel" autocomplete="tel-national" placeholder="${placeholder || 'Numero'}" data-phone-number-input ${required}>
+      </div>
+    `
   }
   if (field.blockType === 'date') {
     return `<input id="${id}" name="${id}" type="date" placeholder="${placeholder}" ${required}>`
@@ -2333,6 +2436,11 @@ export function renderPublicCalendarHtml(calendar, { host = '', embedded = false
     .requiredMark{color:var(--accent);margin-left:3px;font-weight:500}
     label{display:block;font-size:.8rem;font-weight:500;letter-spacing:0;color:var(--heading)}
     input,textarea,select{width:100%;border:1px solid var(--field-border);border-radius:var(--field-radius);background:var(--field-bg);color:var(--field-text);font-size:.95rem;padding:12px 14px;min-height:46px;outline:none;transition:border-color .15s,box-shadow .15s}
+    .rstk-phone-input{display:grid;grid-template-columns:minmax(94px,116px) minmax(0,1fr);gap:8px;align-items:stretch}
+    .rstk-phone-input select,.rstk-phone-input input{min-width:0}
+    .rstk-phone-input select{padding-left:10px;padding-right:10px}
+    .rstk-phone-input[data-phone-country-hidden]{grid-template-columns:minmax(0,1fr)}
+    .rstk-phone-input[data-phone-country-hidden] select{position:absolute;width:1px;height:1px;opacity:0;pointer-events:none}
     .timezoneStep .timezoneControl select{appearance:none;-webkit-appearance:none;padding-right:42px;line-height:1.2;background-image:linear-gradient(45deg,transparent 50%,var(--field-text) 50%),linear-gradient(135deg,var(--field-text) 50%,transparent 50%);background-position:calc(100% - 16px) calc(50% - 2px),calc(100% - 11px) calc(50% - 2px);background-size:5px 5px,5px 5px;background-repeat:no-repeat}
     textarea{resize:vertical}
     input:not([type='radio']):not([type='checkbox']):focus,textarea:focus,select:focus{border-color:var(--accent);box-shadow:0 0 0 3px color-mix(in srgb,var(--accent) 16%,transparent)}
@@ -2408,7 +2516,7 @@ export function renderPublicCalendarHtml(calendar, { host = '', embedded = false
     body.rstk-calendar-theme-minimal .day.selected{background:transparent;color:var(--accent);box-shadow:inset 0 -2px 0 var(--accent)}
     body.rstk-calendar-theme-minimal .slot,body.rstk-calendar-theme-minimal input,body.rstk-calendar-theme-minimal textarea,body.rstk-calendar-theme-minimal select,body.rstk-calendar-theme-minimal .option{border-color:var(--line);border-radius:999px;background:transparent}
     @media (max-width:1100px){.shell,.shell.dateSelected,.shell.bookingActive{grid-template-columns:300px minmax(0,1fr)}.shell.noIntro,.shell.noIntro.dateSelected,.shell.noIntro.bookingActive{grid-template-columns:minmax(0,1fr)}.shell.dateSelected .calendarPane{display:none}.timesPane{border-left:1px solid var(--line);border-top:0;max-width:none;width:auto}.shell.dateSelected .timesPane{padding:clamp(28px,3vw,38px) clamp(24px,2.5vw,30px)}.slotList{grid-template-columns:repeat(auto-fill,minmax(150px,1fr))}}
-    @media (max-width:760px){.page{width:100%;padding:0;place-items:stretch}.shell,.shell.dateSelected,.shell.bookingActive,.shell.noIntro,.shell.noIntro.dateSelected,.shell.noIntro.bookingActive{grid-template-columns:1fr;min-height:100vh;border:0;border-radius:0;box-shadow:none}.shell.dateSelected .intro,.shell.dateSelected .calendarPane,.shell.bookingActive .intro,.shell.bookingActive .calendarPane{display:none}.shell.dateSelected .timesPane,.shell.bookingActive .timesPane{grid-column:auto;border-top:0}.intro,.calendarPane,.timesPane{padding:26px 22px;border-right:0;border-left:0}.intro{gap:14px}.calendarPane,.timesPane{border-top:1px solid var(--line)}.avatar{width:72px;height:72px;font-size:2rem;border-radius:16px}.days{gap:6px 2px}.day,body.rstk-calendar-theme-agenda .day{width:40px;height:40px;max-width:100%}.slotList{grid-template-columns:repeat(auto-fill,minmax(118px,1fr));max-height:none}input,textarea,select{font-size:16px;min-height:48px}.calPaymentBlock{grid-template-columns:1fr}.formActions button.submit{flex:1 1 100%}}
+    @media (max-width:760px){.page{width:100%;padding:0;place-items:stretch}.shell,.shell.dateSelected,.shell.bookingActive,.shell.noIntro,.shell.noIntro.dateSelected,.shell.noIntro.bookingActive{grid-template-columns:1fr;min-height:100vh;border:0;border-radius:0;box-shadow:none}.shell.dateSelected .intro,.shell.dateSelected .calendarPane,.shell.bookingActive .intro,.shell.bookingActive .calendarPane{display:none}.shell.dateSelected .timesPane,.shell.bookingActive .timesPane{grid-column:auto;border-top:0}.intro,.calendarPane,.timesPane{padding:26px 22px;border-right:0;border-left:0}.intro{gap:14px}.calendarPane,.timesPane{border-top:1px solid var(--line)}.avatar{width:72px;height:72px;font-size:2rem;border-radius:16px}.days{gap:6px 2px}.day,body.rstk-calendar-theme-agenda .day{width:40px;height:40px;max-width:100%}.slotList{grid-template-columns:repeat(auto-fill,minmax(118px,1fr));max-height:none}input,textarea,select{font-size:16px;min-height:48px}.rstk-phone-input{grid-template-columns:minmax(0,1fr)}.calPaymentBlock{grid-template-columns:1fr}.formActions button.submit{flex:1 1 100%}}
     @media (max-width:430px){.page{padding:0}.intro,.calendarPane,.timesPane{padding:22px 18px}.day,body.rstk-calendar-theme-agenda .day{width:38px;height:38px;max-width:100%}.weekdays{font-size:.66rem}.slotList{grid-template-columns:1fr}h1{font-size:1.5rem}h2{font-size:1.2rem}}
     .shell.bookingActive,.shell.formGate{width:min(100%,640px);min-height:0;grid-template-columns:minmax(0,1fr);align-content:start;justify-content:center;overflow:visible}
     body.rstk-calendar-embedded .shell.bookingActive,body.rstk-calendar-embedded .shell.formGate{min-height:0}
@@ -2820,10 +2928,63 @@ export function renderPublicCalendarHtml(calendar, { host = '', embedded = false
         try { window.scrollTo({ top: 0, behavior: 'smooth' }); } catch (err) {}
       };
 
+      const phoneDigits = (value) => String(value || '').replace(/\\D/g, '');
+      const stripInternationalPrefix = (digits) => digits.startsWith('00') ? digits.slice(2) : digits;
+      const normalizeMexicoPhoneDigits = (digits) => {
+        const national = digits.slice(-10);
+        if (national.length !== 10) return '';
+        if (digits.startsWith('521') && digits.length >= 13) return '52' + national;
+        if (digits.startsWith('52') && digits.length >= 12) return '52' + national;
+        return '';
+      };
+      const composePhoneValue = (value, dialCode) => {
+        const raw = String(value || '').trim();
+        const digits = stripInternationalPrefix(phoneDigits(raw));
+        const countryCode = phoneDigits(dialCode).slice(0, 4);
+        if (digits.length < 7) return '';
+        const mexicoPhone = countryCode === '52' ? normalizeMexicoPhoneDigits(digits) : '';
+        if (mexicoPhone) return '+' + mexicoPhone;
+        if (!countryCode || raw.startsWith('+') || raw.startsWith('00')) return '+' + digits;
+        if (digits.startsWith(countryCode) && digits.length > countryCode.length + 6) return '+' + digits;
+        return '+' + countryCode + digits;
+      };
+      const optionExists = (select, countryCode) => Boolean(countryCode && select && select.querySelector('option[value="' + String(countryCode).replace(/["\\\\]/g, '\\\\$&') + '"]'));
+      const detectPhoneCountry = (select) => {
+        const locales = navigator.languages && navigator.languages.length ? navigator.languages : [navigator.language];
+        for (const locale of locales) {
+          const match = String(locale || '').match(/[-_]([A-Za-z]{2})\\b/);
+          const country = match && match[1] ? match[1].toUpperCase() : '';
+          if (optionExists(select, country)) return country;
+        }
+        const timezone = typeof Intl !== 'undefined' && Intl.DateTimeFormat ? Intl.DateTimeFormat().resolvedOptions().timeZone : '';
+        if (!timezone) return '';
+        for (const option of Array.from(select.options || [])) {
+          const timezones = String(option.dataset.timezones || '').split(',').filter(Boolean);
+          if (timezones.indexOf(timezone) >= 0) return option.value;
+        }
+        return '';
+      };
+      const initPhoneCountryFields = () => {
+        Array.from(form ? form.querySelectorAll('.calendarQuestion[data-field-type="phone"]') : []).forEach((field) => {
+          const select = field.querySelector('[data-phone-country-select]');
+          if (!select) return;
+          const detectedCountry = detectPhoneCountry(select);
+          if (detectedCountry) select.value = detectedCountry;
+        });
+      };
+
       const getFieldValue = (field) => {
         const type = field.getAttribute('data-field-type') || '';
         if (type === 'checkboxes') {
           return Array.from(field.querySelectorAll('input[type="checkbox"]:checked')).map(input => input.value);
+        }
+        if (type === 'phone') {
+          const input = field.querySelector('[data-phone-number-input]') || field.querySelector('input[type="tel"], input');
+          const select = field.querySelector('[data-phone-country-select]');
+          const dialCode = select && select.selectedOptions && select.selectedOptions[0]
+            ? select.selectedOptions[0].dataset.dialCode || ''
+            : '';
+          return composePhoneValue(input ? input.value : '', dialCode);
         }
         const checked = field.querySelector('input[type="radio"]:checked');
         if (checked) return checked.value;
@@ -2831,7 +2992,7 @@ export function renderPublicCalendarHtml(calendar, { host = '', embedded = false
         return input ? input.value : '';
       };
 
-      const digits = (value) => String(value || '').replace(/\\D/g, '');
+      const digits = phoneDigits;
       const isValidValue = (validation, value) => {
         const text = Array.isArray(value) ? value.join(',') : String(value || '').trim();
         if (!text) return true;
@@ -3643,6 +3804,7 @@ export function renderPublicCalendarHtml(calendar, { host = '', embedded = false
       });
 
       renderTimezoneControl();
+      initPhoneCountryFields();
       initContactPrefill();
       loadSlots();
       // (CAL-FLOW) Si el formulario va primero, mostramos el gate al cargar.

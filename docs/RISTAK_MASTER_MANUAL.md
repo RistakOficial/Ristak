@@ -408,6 +408,10 @@ Reglas base:
   telefono del formulario coincida con otro registro. Esto evita errores por el
   indice unico de email y permite que un cliente existente vuelva a agendar desde
   un sitio sin cambiar de correo.
+- El formulario publico predeterminado de calendario pregunta nombre, correo y
+  despues telefono. Los campos de telefono de calendario deben mostrar selector
+  de pais/lada y normalizar el valor con la region elegida; si el visitante no la
+  cambia, se usa region detectada o la configurada en la cuenta como respaldo.
 - Si Meta esta configurado con dataset/pixel y token guardado, los calendarios
   locales nuevos y los calendarios remotos espejados por primera vez activan
   `customEvents.enabled` por default para mandar `Schedule` al agendar. Ediciones
