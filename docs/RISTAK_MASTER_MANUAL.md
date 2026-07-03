@@ -547,7 +547,8 @@ intereses con control por link:
   minimo de `300 MXN`.
 - Stripe debe tener MSI habilitado en su Dashboard; Ristak no crea ni modifica
   reglas globales de Stripe.
-- El checkout publico usa un flujo controlado con tarjeta: cuando el cliente
+- El checkout publico muestra desde el inicio un formulario abierto de tarjeta
+  (numero, vencimiento, CVC y pais) con un solo boton de pago. Cuando el cliente
   termina de capturar una tarjeta valida, Ristak crea el PaymentMethod, pide a
   Stripe los `available_plans`, filtra cualquier plan por encima del maximo
   guardado en `metadata.stripeInstallments.maxInstallments` y confirma el
