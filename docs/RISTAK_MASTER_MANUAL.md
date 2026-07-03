@@ -756,7 +756,10 @@ y frontend (`frontend/src/pages/Sites/*`) lo importan; el `Dockerfile` copia
   publicado" cuando el gate esta deshabilitado). Stripe, Conekta, Mercado Pago y
   CLIP usan el mismo contrato de `paymentGate`; CLIP monta el SDK oficial en el
   checkout publicado, requiere email/telefono para procesar el cargo y puede
-  habilitar MSI con `terms.enabled` si el bloque lo permite. El toggle "guardar
+  habilitar MSI con `terms.enabled` si el bloque lo permite. El selector de
+  pasarela del inspector debe persistir inmediatamente el bloque para que el modo
+  vivo no monte una pasarela anterior; el HTML publicado, `/checkout/init` y el
+  cargo deben usar siempre el mismo `paymentGate.gateway`. El toggle "guardar
   tarjeta" se retiro (Stripe Link no es ocultable por codigo).
 - Diferencias permitidas entre superficies: SOLO auth, tracking/pixel, param
   preservation y `headerTrackingCode` (nunca corren en editor/preview por

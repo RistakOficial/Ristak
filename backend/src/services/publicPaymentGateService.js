@@ -72,8 +72,17 @@ function normalizeBoolean(value) {
 }
 
 function normalizeGateway(value) {
-  const gateway = cleanString(value, 40).toLowerCase()
-  return PAYMENT_GATEWAYS.has(gateway) ? gateway : 'stripe'
+  const gateway = cleanString(value, 80).toLowerCase()
+  if (PAYMENT_GATEWAYS.has(gateway)) return gateway
+  const compact = gateway
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^a-z0-9]/g, '')
+  if (compact.startsWith('clip')) return 'clip'
+  if (compact.startsWith('conekta')) return 'conekta'
+  if (compact.startsWith('mercadopago') || compact === 'mp') return 'mercadopago'
+  if (compact.startsWith('stripe')) return 'stripe'
+  return 'stripe'
 }
 
 function normalizeCurrency(value) {

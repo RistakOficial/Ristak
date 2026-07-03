@@ -174,6 +174,10 @@ export const PaymentGateControls: React.FC<PaymentGateControlsProps> = ({
     onChange(normalizePaymentGateConfig({ ...config, ...patch }, currencyFallback))
   }
 
+  const commitSoon = () => {
+    window.setTimeout(() => { onCommit?.() }, 0)
+  }
+
   const enablePaymentGate = (enabled: boolean) => {
     patchConfig({
       enabled,
@@ -181,7 +185,7 @@ export const PaymentGateControls: React.FC<PaymentGateControlsProps> = ({
       productName: config.productName || 'Pago requerido',
       description: config.description || config.productName || 'Pago requerido'
     })
-    window.setTimeout(() => { onCommit?.() }, 0)
+    commitSoon()
   }
 
   // Catálogo opcional: sincroniza nombre + precio de un producto de la DB (editable).
@@ -289,7 +293,10 @@ export const PaymentGateControls: React.FC<PaymentGateControlsProps> = ({
               <span>Pasarela</span>
               <CustomSelect
                 value={config.gateway}
-                onValueChange={(gateway) => patchConfig({ gateway: normalizeGateway(gateway) })}
+                onValueChange={(gateway) => {
+                  patchConfig({ gateway: normalizeGateway(gateway) })
+                  commitSoon()
+                }}
                 onBlur={onCommit}
                 options={gatewayOptions.map(option => ({
                   value: option.value,

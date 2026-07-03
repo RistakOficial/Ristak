@@ -425,6 +425,88 @@ test('site checkout requests must identify the payment block and match its page'
   }
 })
 
+test('site checkout init preserves CLIP as the live payment provider', async () => {
+  const previousConfig = {
+    domain: await getAppConfig(DOMAIN_KEYS.domain),
+    verified: await getAppConfig(DOMAIN_KEYS.verified),
+    checkedAt: await getAppConfig(DOMAIN_KEYS.checkedAt),
+    error: await getAppConfig(DOMAIN_KEYS.error)
+  }
+  const suffix = crypto.randomUUID()
+  let site
+
+  try {
+    await setAppConfig(DOMAIN_KEYS.domain, 'example.test')
+    await setAppConfig(DOMAIN_KEYS.verified, '1')
+    await setAppConfig(DOMAIN_KEYS.checkedAt, new Date().toISOString())
+    await setAppConfig(DOMAIN_KEYS.error, '')
+
+    site = await createSite({
+      name: 'Checkout CLIP provider',
+      slug: `checkout-clip-provider-${suffix}`,
+      siteType: 'landing_page',
+      status: 'published',
+      blankCanvas: true,
+      theme: {
+        pages: [{ id: 'page-clip', title: 'Pago', sortOrder: 0 }]
+      }
+    })
+
+    const siteWithPayment = await createBlock(site.id, {
+      blockType: 'payment',
+      label: 'Pago CLIP',
+      settings: {
+        pageId: 'page-clip',
+        paymentGate: {
+          enabled: true,
+          gateway: 'clip',
+          amount: 100,
+          currency: 'MXN',
+          productName: 'Pago requerido',
+          buttonText: 'Completar pago',
+          mode: 'test'
+        }
+      }
+    })
+    const paymentBlock = siteWithPayment.blocks.find(block => block.label === 'Pago CLIP')
+    assert.ok(paymentBlock)
+
+    const req = {
+      headers: { host: 'example.test', 'user-agent': 'node-test' },
+      get(name) {
+        return this.headers[String(name || '').toLowerCase()] || ''
+      },
+      protocol: 'https',
+      hostname: 'example.test',
+      path: `/${site.slug}`,
+      ip: '127.0.0.1',
+      socket: { remoteAddress: '127.0.0.1' }
+    }
+
+    const result = await initSitePaymentCheckout(req, {
+      siteId: site.id,
+      blockId: paymentBlock.id,
+      pageId: 'page-clip'
+    })
+
+    assert.equal(result.provider, 'clip')
+    assert.equal(result.blockId, paymentBlock.id)
+    assert.equal(result.blockPageId, 'page-clip')
+    assert.equal(result.amount, 100)
+    assert.equal(result.currency, 'MXN')
+    assert.equal(result.publishableKey, '')
+    assert.equal(result.publicKey, '')
+  } finally {
+    if (site?.id) {
+      await deleteSite(site.id).catch(() => undefined)
+    }
+    await setAppConfig(DOMAIN_KEYS.domain, previousConfig.domain)
+    await setAppConfig(DOMAIN_KEYS.verified, previousConfig.verified)
+    await setAppConfig(DOMAIN_KEYS.checkedAt, previousConfig.checkedAt)
+    await setAppConfig(DOMAIN_KEYS.error, previousConfig.error)
+  }
+})
+
 test('native form URL validation renders a real URL validator', async () => {
   let site
 

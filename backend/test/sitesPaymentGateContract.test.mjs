@@ -20,7 +20,7 @@ test('MSI constants stay in lockstep with the runtime', () => {
   assert.ok(MSI_LINK_GATEWAYS.has('conekta') && MSI_LINK_GATEWAYS.has('mercadopago'))
   assert.ok(!MSI_LINK_GATEWAYS.has('stripe'))
   assert.equal(STRIPE_MSI_MIN_AMOUNT, 300)
-  assert.ok(PAYMENT_GATEWAYS.has('stripe') && PAYMENT_GATEWAYS.has('conekta') && PAYMENT_GATEWAYS.has('mercadopago'))
+  assert.ok(PAYMENT_GATEWAYS.has('stripe') && PAYMENT_GATEWAYS.has('conekta') && PAYMENT_GATEWAYS.has('mercadopago') && PAYMENT_GATEWAYS.has('clip'))
 })
 
 test('isNormalizedPaymentGateEnabled mirrors backend/frontend predicate', () => {
@@ -167,8 +167,13 @@ test('identity: only the configured field renders (phone off => no phone input, 
 
 test('identity: CLIP/MercadoPago do NOT get the shared block (they collect identity in their own SDK)', async () => {
   const clip = await renderPublicSiteHtml(paymentSite({ paymentGate: { enabled: true, gateway: 'clip', amount: 500, currency: 'MXN', productName: 'Curso', buttonText: 'Pagar' } }), { pageId: 'page-1', trackingEnabled: false, preview: true })
+  assert.match(clip, /data-provider="clip"/)
+  assert.match(clip, /<span class="rstk-payment-kicker">CLIP<\/span>/)
   assert.doesNotMatch(clip, /<div class="rstk-checkout-identity"/)
   assert.match(clip, /data-collect-email="false"/)
+  const clipAlias = await renderPublicSiteHtml(paymentSite({ paymentGate: { enabled: true, gateway: 'CLIP · Conectado', amount: 500, currency: 'MXN', productName: 'Curso', buttonText: 'Pagar' } }), { pageId: 'page-1', trackingEnabled: false, preview: true })
+  assert.match(clipAlias, /data-provider="clip"/)
+  assert.match(clipAlias, /<span class="rstk-payment-kicker">CLIP<\/span>/)
   const both = await renderPublicSiteHtml(paymentSite({ paymentCollectEmail: false, paymentCollectPhone: false }), { pageId: 'page-1', trackingEnabled: false, preview: true })
   assert.doesNotMatch(both, /<div class="rstk-checkout-identity"/)
 })
