@@ -3893,42 +3893,6 @@ export const PaymentsConfiguration: React.FC = () => {
               <span>Usa la Clave API visible del panel de CLIP; la clave secreta no se necesita para el SDK. El cobro real se hace cuando el cliente paga y requiere email/teléfono.</span>
             </div>
 
-            <div className={styles.mercadoPagoMiniSection}>
-              <div className={styles.mercadoPagoMiniTitle}>
-                <Webhook size={16} />
-                <strong>Postback Webhook</strong>
-              </div>
-              <p className={styles.mercadoPagoTestGuideNote}>
-                Copia esta URL en el Postback Webhook del panel de CLIP para que Ristak reciba confirmaciones y actualice pagos aunque el cliente cierre la página.
-              </p>
-              {clipWebhookEndpoints.length > 0 ? (
-                <div className={styles.endpointList}>
-                  {clipWebhookEndpoints.map((endpoint) => (
-                    <div key={`${endpoint.source}-${endpoint.url}`} className={styles.endpointItem}>
-                      <div>
-                        <strong>{endpoint.label}</strong>
-                        <span>{endpoint.url}</span>
-                      </div>
-                      <Button
-                        type="button"
-                        variant="secondary"
-                        size="sm"
-                        leftIcon={<Copy size={15} />}
-                        onClick={() => handleCopyGatewayText(endpoint.url, 'Postback Webhook', 'CLIP')}
-                      >
-                        Copiar
-                      </Button>
-                    </div>
-                  ))}
-                </div>
-              ) : (
-                <div className={styles.inlineInfo}>
-                  <Info size={16} />
-                  <span>Publica Ristak en una URL HTTPS para generar el endpoint que CLIP pueda llamar.</span>
-                </div>
-              )}
-            </div>
-
             <div className={styles.stripeModeGrid}>
               {stripeModeIds.map((mode) => {
                 const modeCopy = clipModeLabels[mode]
@@ -4051,6 +4015,42 @@ export const PaymentsConfiguration: React.FC = () => {
                   </div>
                 )
               })}
+            </div>
+
+            <div className={styles.mercadoPagoMiniSection}>
+              <div className={styles.mercadoPagoMiniTitle}>
+                <Webhook size={16} />
+                <strong>Postback Webhook</strong>
+              </div>
+              <p className={styles.mercadoPagoTestGuideNote}>
+                Copia esta URL en el Postback Webhook del panel de CLIP para que Ristak reciba confirmaciones y actualice pagos aunque el cliente cierre la página.
+              </p>
+              {clipWebhookEndpoints.length > 0 ? (
+                <div className={styles.endpointList}>
+                  {clipWebhookEndpoints.map((endpoint) => (
+                    <div key={`${endpoint.source}-${endpoint.url}`} className={styles.endpointItem}>
+                      <div>
+                        <strong>{endpoint.label}</strong>
+                        <span>{endpoint.url}</span>
+                      </div>
+                      <Button
+                        type="button"
+                        variant="secondary"
+                        size="sm"
+                        leftIcon={<Copy size={15} />}
+                        onClick={() => handleCopyGatewayText(endpoint.url, 'Postback Webhook', 'CLIP')}
+                      >
+                        Copiar
+                      </Button>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <div className={styles.inlineInfo}>
+                  <Info size={16} />
+                  <span>Publica Ristak en una URL HTTPS para generar el endpoint que CLIP pueda llamar.</span>
+                </div>
+              )}
             </div>
           </div>
         </Card>

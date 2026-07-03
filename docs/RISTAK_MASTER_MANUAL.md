@@ -484,8 +484,9 @@ Alcance:
   suscripcion interna. No se registra como cobro recurrente automatico de CLIP.
 - Webhook publico `/api/clip/webhook`; cada notificacion consulta el pago real
   con `GET /payments/{payment_id}` antes de actualizar Ristak.
-- Configuracion > Pagos > CLIP muestra las URLs disponibles para copiar el
-  Postback Webhook y pegarlo en el dashboard de CLIP.
+- Configuracion > Pagos > CLIP muestra, debajo de las credenciales de prueba y
+  en vivo, las URLs disponibles para copiar el Postback Webhook y pegarlo en el
+  dashboard de CLIP.
 - Autenticacion 3DS: si CLIP responde `pending_action.url`, el frontend abre el
   iframe de validacion y luego refresca el estado contra el backend.
 - Variables de automatizacion: `payment.clip_payment_id` y
