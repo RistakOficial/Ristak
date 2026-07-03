@@ -36371,6 +36371,7 @@ const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
           activePageId={activePageId}
           connectedSocialProfiles={connectedSocialProfiles}
           loadingSocialProfiles={loadingSocialProfiles}
+          onPatchBlock={onPatchBlock}
           onPatchSettings={onPatchSettings}
           onSave={onSave}
         />
@@ -36899,6 +36900,7 @@ interface LandingBlockSettingsProps {
   activePageId: string
   connectedSocialProfiles: ConnectedSocialProfile[]
   loadingSocialProfiles: boolean
+  onPatchBlock: (patch: Partial<SiteBlock>) => void
   onPatchSettings: (patch: Record<string, unknown>) => void
   onSave: () => void
 }
@@ -38042,7 +38044,7 @@ const VideoFormGateSettingsPanel: React.FC<{
   )
 }
 
-const LandingBlockSettings: React.FC<LandingBlockSettingsProps> = ({ site, block, blocks, forms, calendars, pages, activePageId, connectedSocialProfiles, loadingSocialProfiles, onPatchSettings, onSave }) => {
+const LandingBlockSettings: React.FC<LandingBlockSettingsProps> = ({ site, block, blocks, forms, calendars, pages, activePageId, connectedSocialProfiles, loadingSocialProfiles, onPatchBlock, onPatchSettings, onSave }) => {
   const settings = block.settings || {}
 
   if (isPanelBlock(block)) {
@@ -38106,6 +38108,30 @@ const LandingBlockSettings: React.FC<LandingBlockSettingsProps> = ({ site, block
       <AccordionSection id="landing-franja" title="Tipo de franja">
         {/* 'Fondo de franja' se eliminó: era un duplicado EXACTO de 'Color de la
             franja' en Diseño (misma key blockBg). El control de fondo vive en Diseño. */}
+        {/* Encabezado opcional de la franja: se pinta arriba de las columnas
+            (rstk-section-heading). El título es block.content; el subtítulo es
+            settings.subtitle. Ambos opcionales, idénticos en editor y publicado. */}
+        <label className={styles.field}>
+          <span>Título de la franja (opcional)</span>
+          <input
+            value={block.content || ''}
+            placeholder="Sin encabezado"
+            onChange={(event) => onPatchBlock({ content: event.target.value })}
+            onBlur={onSave}
+          />
+        </label>
+        <label className={styles.field}>
+          <span>Subtítulo (opcional)</span>
+          {/* Input de una línea: el render de la franja (canvas y publicado) pinta
+              settings.subtitle sin conversión de saltos de línea; una sola línea
+              evita divergencia editor↔publicado. */}
+          <input
+            value={getSettingString(settings, 'subtitle')}
+            placeholder="Texto breve bajo el título"
+            onChange={(event) => onPatchSettings({ subtitle: event.target.value })}
+            onBlur={onSave}
+          />
+        </label>
         <label className={styles.field}>
           <span>Columnas</span>
           <CustomSelect
