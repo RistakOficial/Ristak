@@ -5,6 +5,7 @@ import JSZip from 'jszip'
 import fetch from 'node-fetch'
 import { Agent, Runner, OpenAIProvider } from '@openai/agents'
 import { db, getAppConfig, setAppConfig } from '../config/database.js'
+import { sendPaymentNotification } from './pushNotificationsService.js'
 import { API_URLS } from '../config/constants.js'
 import { logger } from '../utils/logger.js'
 import { NO_TRACK_REASON, shouldSkipTracking } from '../utils/noTracking.js'
@@ -25371,6 +25372,40 @@ export async function initSitePaymentCheckout(req, body = {}) {
 // Crea el registro de pago (fila) y COBRA — SOLO cuando el cliente intenta pagar de verdad.
 // El monto viene del bloque persistido (nunca del cliente). Stripe devuelve clientSecret para
 // confirmar en el cliente; Conekta/MP cobran con el token recibido.
+// Un RECHAZO real de tarjeta (banco/pasarela dice "no": fondos, robada, etc.) es una
+// senal de venta que SI queremos ver en el CRM. Un error de sistema/config/red o un
+// abandono NO: solo ensuciaria la tabla (un visitante podria reintentar decenas de
+// veces). Lo distinguimos por el status/payload que la pasarela adjunta al error.
+function isCardDeclineError(error) {
+  if (!error) return false
+  if (Number(error.status) === 402) return true
+  const parts = [cleanString(error?.message)]
+  try { parts.push(JSON.stringify(error?.payload || {})) } catch (_) {}
+  const blob = parts.join(' ').toLowerCase()
+  return /(declin|rechaz|rejected|insufficient|fondos insuficientes|do_not_honor|do not honor|card_declined|lost_card|stolen_card|expired_card|expirada|incorrect_(cvc|number|zip|pin)|invalid_cvc|fraud|pickup_card|card_not_supported|not_permitted|denied_by)/.test(blob)
+}
+
+// El cargo del checkout de sitio no se concreto. La fila se crea ANTES del cargo (lo
+// exige el flujo diferido de Stripe), asi que aqui decidimos su destino: si fue un
+// RECHAZO real de tarjeta la dejamos 'failed' (visible + notificacion); si fue un error
+// de sistema/config/red o un abandono, BORRAMOS la fila recien creada para no acumular
+// basura en la tabla de pagos. Solo aplica a filas aun no resueltas.
+async function finalizeFailedSiteCheckout(publicPaymentId, error) {
+  const pubId = cleanString(publicPaymentId)
+  if (!pubId) return
+  const row = await db.get('SELECT * FROM payments WHERE public_payment_id = ?', [pubId]).catch(() => null)
+  if (!row) return
+  const status = cleanString(row.status).toLowerCase()
+  const NON_TERMINAL = ['', 'sent', 'pending', 'processing', 'requires_action', 'requires_payment_method', 'incomplete', 'draft', 'initiated']
+  if (!NON_TERMINAL.includes(status)) return
+  if (isCardDeclineError(error)) {
+    await db.run("UPDATE payments SET status = 'failed', updated_at = CURRENT_TIMESTAMP WHERE id = ?", [row.id]).catch(() => {})
+    await sendPaymentNotification({ ...row, status: 'failed', previousStatus: row.status || '' }).catch(() => {})
+  } else {
+    await db.run('DELETE FROM payments WHERE id = ?', [row.id]).catch(() => {})
+  }
+}
+
 export async function paySiteCheckout(req, body = {}) {
   const { site, context, paymentGate, baseUrl, expectedBlockId } = await resolveSiteCheckoutBlock(req, body)
   enforcePublicSubmitRateLimit(req, `checkout-pay:${site.id}:${expectedBlockId}`)
@@ -25422,17 +25457,24 @@ export async function paySiteCheckout(req, body = {}) {
   })
   const publicPaymentId = result.publicPaymentId
 
-  const charge = await createPaymentGateCharge(publicPaymentId, paymentGate.gateway, {
-    tokenId: cleanString(body.tokenId || body.token_id),
-    token: cleanString(body.token),
-    paymentMethodId: cleanString(body.paymentMethodId || body.payment_method_id),
-    issuerId: cleanString(body.issuerId || body.issuer_id),
-    installments: body.installments,
-    email: cleanString(payer.email),
-    phone: cleanString(payer.phone),
-    customerName: cleanString(payer.name || payer.fullName),
-    payer
-  }, { baseUrl })
+  let charge
+  try {
+    charge = await createPaymentGateCharge(publicPaymentId, paymentGate.gateway, {
+      tokenId: cleanString(body.tokenId || body.token_id),
+      token: cleanString(body.token),
+      paymentMethodId: cleanString(body.paymentMethodId || body.payment_method_id),
+      issuerId: cleanString(body.issuerId || body.issuer_id),
+      installments: body.installments,
+      email: cleanString(payer.email),
+      phone: cleanString(payer.phone),
+      customerName: cleanString(payer.name || payer.fullName),
+      payer
+    }, { baseUrl })
+  } catch (error) {
+    // Rechazo real -> 'failed' (se ve); error/abandono -> se borra la fila. Nunca truena.
+    await finalizeFailedSiteCheckout(publicPaymentId, error).catch(() => {})
+    throw error
+  }
 
   return {
     publicPaymentId,
