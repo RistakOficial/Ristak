@@ -211,7 +211,7 @@
   overflow-x: hidden;
   overflow-y: scroll;
   overscroll-behavior-y: contain;
-  scroll-padding-bottom: calc(220px + env(safe-area-inset-bottom, 0px));
+  scroll-padding-bottom: calc(max(220px, var(--phone-keyboard-inset, 0px) + 24px) + env(safe-area-inset-bottom, 0px));
   scrollbar-width: none;
   touch-action: pan-y;
   -webkit-overflow-scrolling: touch;
@@ -544,7 +544,7 @@
   overflow-x: hidden;
   overflow-y: scroll;
   overscroll-behavior-y: contain;
-  scroll-padding-bottom: calc(168px + env(safe-area-inset-bottom, 0px));
+  scroll-padding-bottom: calc(max(168px, var(--phone-keyboard-inset, 0px) + 24px) + env(safe-area-inset-bottom, 0px));
   touch-action: pan-y;
   -webkit-overflow-scrolling: touch;
 }

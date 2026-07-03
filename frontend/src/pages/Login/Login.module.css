@@ -8,7 +8,13 @@
 }
 
 .phoneContainer {
+  /* Anclamos al viewport VISIBLE (no a 100dvh, que en iOS/Body no se encoge con
+     el teclado). Así el contenedor se achica cuando sube el teclado y el input
+     nunca queda debajo. Fallback a 100dvh donde la var no está sincronizada. */
   min-height: 100dvh;
+  min-height: var(--phone-visual-viewport-height, 100dvh);
+  height: var(--phone-visual-viewport-height, 100dvh);
+  max-height: var(--phone-visual-viewport-height, 100dvh);
   align-items: stretch;
   padding: 0;
   background: #ffffff;
@@ -27,11 +33,17 @@
 
 .phoneLoginBox {
   display: grid;
-  align-content: center;
+  /* `safe center`: centra cuando cabe, pero cae a inicio (start) cuando el
+     contenido no cabe, para que SÍ se pueda hacer scroll hasta arriba (el
+     `center` normal recorta el tope y lo vuelve inalcanzable). */
+  align-content: safe center;
   width: 100%;
   max-width: none;
-  min-height: 100dvh;
-  padding: calc(env(safe-area-inset-top) + 42px) 24px calc(env(safe-area-inset-bottom) + 32px);
+  min-height: 0;
+  height: 100%;
+  /* Reservamos abajo el alto del teclado para que el último campo tenga hacia
+     dónde desplazarse por encima de él. */
+  padding: calc(env(safe-area-inset-top) + 42px) 24px calc(env(safe-area-inset-bottom) + 32px + var(--phone-keyboard-inset, 0px));
   border: 0;
   border-radius: 0 !important;
   color: #111111;
@@ -341,7 +353,9 @@ body.light .error {
 }
 
 .phoneLoginBox .recoverySection {
-  max-height: 38dvh;
+  /* Nunca más alto que el área visible menos el bloque de campos, para que con
+     el teclado abierto no desborde detrás de él. */
+  max-height: min(38dvh, calc(var(--phone-visual-viewport-height, 100dvh) - 200px));
   overflow-y: auto;
   -webkit-overflow-scrolling: touch;
 }
