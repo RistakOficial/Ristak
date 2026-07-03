@@ -9,6 +9,7 @@ import {
   type TriggerFilter
 } from '../crmFields'
 import { CatalogSelect, TextInput, CustomSelect } from './configPrimitives'
+import { MetaPostSelector } from '@/components/MetaPostSelector/MetaPostSelector'
 import { DrillSelect, type DrillGroup } from './DrillSelect'
 import styles from '../AutomationEditor.module.css'
 
@@ -141,7 +142,15 @@ export const TriggerFiltersEditor: React.FC<{
                 </div>
                 {needsValue && (
                   <div className={styles.filterStep}>
-                    {field?.options ? (
+                    {field?.id === 'comment_post' ? (
+                      <MetaPostSelector
+                        platform={contextKey === 'trigger-instagram-comment' ? 'instagram' : 'facebook'}
+                        value={filter.value || ''}
+                        valueLabel={filter.valueLabel || ''}
+                        onChange={(next, label) => update(index, { value: next, valueLabel: label })}
+                        aria-label="Publicación del comentario"
+                      />
+                    ) : field?.options ? (
                       <CustomSelect
                         options={field.options}
                         value={filter.value}
