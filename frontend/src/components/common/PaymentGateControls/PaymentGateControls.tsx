@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react'
-import { FlaskConical, Plus } from 'lucide-react'
+import { FlaskConical, Info, Plus } from 'lucide-react'
 import { CustomSelect } from '../CustomSelect'
 import { NumberInput } from '../NumberInput'
 import { Switch } from '../Switch'
@@ -13,6 +13,7 @@ import { productsService, type ProductItem, type ProductPrice } from '@/services
 import { ProductFormModal } from '@/components/common/ProductFormModal/ProductFormModal'
 import {
   CLIP_MSI_MIN_AMOUNT,
+  STRIPE_MSI_MIN_AMOUNT,
   MSI_INSTALLMENT_CHOICES as SHARED_MSI_INSTALLMENT_CHOICES
 } from '../../../../../shared/sites/paymentGateContract.js'
 import styles from './PaymentGateControls.module.css'
@@ -407,6 +408,12 @@ export const PaymentGateControls: React.FC<PaymentGateControlsProps> = ({
                       options={MSI_INSTALLMENT_CHOICES.map(months => ({ value: String(months), label: `${months} meses` }))}
                     />
                   </label>
+                )}
+                {config.gateway === 'stripe' && config.msi.enabled && Number(config.amount) < STRIPE_MSI_MIN_AMOUNT && (
+                  <p className={styles.testNote}>
+                    <Info size={15} />
+                    Stripe requiere un monto mínimo de {STRIPE_MSI_MIN_AMOUNT} MXN para ofrecer meses sin intereses. Con {Number(config.amount) > 0 ? `$${config.amount}` : 'este monto'} se cobrará de contado.
+                  </p>
                 )}
               </div>
             )}

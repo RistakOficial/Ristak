@@ -16041,8 +16041,20 @@ function buildPaymentCheckoutRuntimeScript() {
           hidePostalCode: true,
           style: { base: { color: fieldTextTok, fontSize: '15px', fontWeight: '500', '::placeholder': { color: mutedTok } }, invalid: { color: readToken('--rstk-neg') || undefined } }
         });
+        // El CardElement es un input "pelón": necesita su propia caja visible (borde +
+        // padding + fondo), a diferencia del Payment Element que trae la suya. Le damos el
+        // mismo look que los campos del sitio. Y lo DESOCULTAMOS antes de montar: Stripe mide
+        // el alto al montar; si el contenedor está hidden (display:none) el iframe queda en 0
+        // y "no aparece la tarjeta".
+        els.fields.hidden = false;
+        els.fields.style.padding = '15px 14px';
+        els.fields.style.minHeight = '48px';
+        els.fields.style.boxSizing = 'border-box';
+        els.fields.style.border = '1px solid var(--rstk-input-border, var(--rstk-border, rgba(0,0,0,.15)))';
+        els.fields.style.borderRadius = 'var(--rstk-radius, 12px)';
+        els.fields.style.background = 'var(--rstk-input-bg, var(--rstk-surface, #fff))';
         card.mount(els.fields);
-        els.fields.hidden = false; els.pay.hidden = false; showLoading(false);
+        els.pay.hidden = false; showLoading(false);
 
         var pmId = null, paymentIntentId = '', publicPaymentId = '', availablePlans = [], selectedInstallments = null;
         var cardComplete = false, prepared = false, preparing = false, sel = null;
