@@ -18668,24 +18668,37 @@ function rewriteSitesFontCss(css) {
   })
 }
 
+const RSTK_FONT_FETCH_TIMEOUT_MS = 4000
+const RSTK_FONT_CSS_FALLBACK = '/* Ristak Sites font stylesheet (fallback: origen de fuentes no disponible) */\n'
+
 export async function getSitesFontCss() {
   const now = Date.now()
   if (rstkFontCssCache.css && rstkFontCssCache.expiresAt > now) return rstkFontCssCache.css
 
-  const response = await fetch(RSTK_GOOGLE_FONTS_HREF, {
-    headers: {
-      'user-agent': 'Mozilla/5.0 Ristak Sites Font Loader'
-    }
-  })
-  if (!response.ok) {
-    const error = new Error('No se pudo cargar la hoja de fuentes de Sites')
-    error.status = 502
-    throw error
+  // Timeout + fallback: si Google Fonts va lento o no responde, NO colgamos la
+  // hoja (el <link> del sitio bloquearía el evento load de la página). Servimos un
+  // stylesheet vacío — las font-family stacks ya traen fallback de sistema — y
+  // reintentamos pronto.
+  const controller = new AbortController()
+  const timeout = setTimeout(() => controller.abort(), RSTK_FONT_FETCH_TIMEOUT_MS)
+  try {
+    const response = await fetch(RSTK_GOOGLE_FONTS_HREF, {
+      headers: {
+        'user-agent': 'Mozilla/5.0 Ristak Sites Font Loader'
+      },
+      signal: controller.signal
+    })
+    if (!response.ok) throw new Error(`Google Fonts respondió ${response.status}`)
+    const css = `/* Ristak Sites font stylesheet */\n${rewriteSitesFontCss(await response.text())}`
+    rstkFontCssCache = { css, expiresAt: now + RSTK_FONT_CSS_CACHE_TTL_MS }
+    return css
+  } catch (error) {
+    logger.warn(`Fuentes de Sites no disponibles (${error.message}); usando fallback de sistema.`)
+    rstkFontCssCache = { css: RSTK_FONT_CSS_FALLBACK, expiresAt: now + 60_000 }
+    return RSTK_FONT_CSS_FALLBACK
+  } finally {
+    clearTimeout(timeout)
   }
-
-  const css = `/* Ristak Sites font stylesheet */\n${rewriteSitesFontCss(await response.text())}`
-  rstkFontCssCache = { css, expiresAt: now + RSTK_FONT_CSS_CACHE_TTL_MS }
-  return css
 }
 
 export async function getSitesFontFile(urlValue) {
