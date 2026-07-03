@@ -118,14 +118,21 @@ test('public calendar widget can prefill contact fields from a previous site sub
   assert.match(sitesSource, /WHERE visitor_id = \?/)
   assert.match(calendarSource, /data-system-field-key=/)
   assert.match(calendarSource, /contact-prefill\?/)
-  assert.match(calendarSource, /if \(!stored\.contactId && !stored\.visitorId && !stored\.sessionId\) return/)
-  assert.match(calendarSource, /applyContactPrefill\(payload\.data\)/)
+  assert.match(calendarSource, /if \(urlHasContact && !stored\.contactId\) return/)
+  assert.match(calendarSource, /const resolved = urlHasContact/)
+  assert.match(calendarSource, /applyContactPrefill\(resolved\)/)
   assert.match(calendarSource, /rememberCalendarContact\(payload\.data\?\.contact\)/)
+  assert.match(calendarSource, /contactId: activeContact\.contactId \|\| ''/)
+  assert.match(calendarSource, /visitorId: activeContact\.visitorId \|\| ''/)
+  assert.match(calendarSource, /sessionId: activeContact\.sessionId \|\| ''/)
+  assert.match(controllerSource, /resolveTrustedPublicCalendarContactId/)
   assert.match(sitesRoutesSource, /router\.get\('\/public\/contact-prefill'/)
   assert.match(sitesControllerSource, /export async function publicSiteContactPrefillHandler/)
   assert.match(sitesSource, /const readUrlContact = \(\) =>/)
   assert.match(sitesSource, /const rememberContactDraftFromRoot = \(root\) =>/)
   assert.match(sitesSource, /window\.ristakNativeRememberContactDraft = rememberContactDraftFromRoot/)
+  assert.match(sitesSource, /const resolved = urlHasContact/)
+  assert.match(sitesSource, /if \(target\.searchParams\.get\(key\) === text\) return/)
   assert.match(sitesSource, /addParam\('full_name', contact\.fullName \|\| contact\.name\)/)
   assert.match(sitesSource, /addParam\('phone_number', contact\.phone\)/)
   assert.match(sitesSource, /window\.ristakNativeInitContactPrefill/)
@@ -232,5 +239,97 @@ test('public calendar booking reuses an existing email contact when phone belong
     await db.run('DELETE FROM contact_phone_numbers WHERE contact_id IN (?, ?)', contactIds).catch(() => undefined)
     await db.run('DELETE FROM contacts WHERE id IN (?, ?)', contactIds).catch(() => undefined)
     await db.run('DELETE FROM contacts WHERE email = ?', [email]).catch(() => undefined)
+  }
+})
+
+test('public calendar booking keeps the active form contact when calendar email changes', async () => {
+  const suffix = randomUUID()
+  const calendarSlug = `public-active-contact-${suffix}`
+  const contactId = `active_form_contact_${suffix}`
+  const visitorId = `visitor_active_contact_${suffix}`
+  const oldEmail = `active-old-${suffix}@example.test`
+  const newEmail = `active-new-${suffix}@example.test`
+  const phoneInput = '6565558800'
+  const normalizedPhone = '+526565558800'
+  const calendarIds = []
+  const baseDay = DateTime.utc().plus({ days: 35 }).startOf('day')
+  const nextTuesday = baseDay.plus({ days: (2 - baseDay.weekday + 7) % 7 })
+  const slotStart = nextTuesday.set({ hour: 11, minute: 0 })
+
+  try {
+    const calendar = await createLocalCalendar({
+      slug: calendarSlug,
+      widgetSlug: calendarSlug,
+      name: 'Calendario contacto activo',
+      slotDuration: 60,
+      slotInterval: 60,
+      autoConfirm: true,
+      openHours: [
+        {
+          daysOfTheWeek: [2],
+          hours: [{ openHour: 11, openMinute: 0, closeHour: 13, closeMinute: 0 }]
+        }
+      ]
+    })
+    calendarIds.push(calendar.id)
+
+    await db.run(
+      'INSERT INTO contacts (id, email, full_name, visitor_id, source, created_at, updated_at) VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)',
+      [contactId, oldEmail, 'Contacto desde formulario', visitorId, 'ristak_site:formulario']
+    )
+
+    const req = {
+      params: { slug: calendarSlug },
+      query: {},
+      body: {
+        startTime: slotStart.toISO(),
+        timezone: 'UTC',
+        contactId,
+        visitorId,
+        name: 'Contacto Corregido',
+        phone: phoneInput,
+        email: newEmail,
+        sourceUrl: `http://localhost:3001/calendar/${calendarSlug}`,
+        meta: { contactId, visitorId }
+      },
+      headers: {
+        host: 'localhost:3001',
+        'user-agent': 'node-test'
+      },
+      hostname: 'localhost',
+      ip: '127.0.0.1',
+      socket: { remoteAddress: '127.0.0.1' }
+    }
+    const res = createJsonResponse()
+
+    await createPublicAppointment(req, res)
+
+    assert.equal(res.statusCode, 201)
+    assert.equal(res.body?.success, true)
+    assert.equal(res.body?.data?.appointment?.contactId, contactId)
+    assert.equal(res.body?.data?.contact?.contactId, contactId)
+    assert.equal(res.body?.data?.contact?.email, newEmail)
+
+    const storedContact = await db.get(
+      'SELECT id, email, phone, full_name FROM contacts WHERE id = ?',
+      [contactId]
+    )
+    assert.equal(storedContact.email, newEmail)
+    assert.equal(storedContact.phone, normalizedPhone)
+    assert.equal(storedContact.full_name, 'Contacto Corregido')
+
+    const appointments = await db.all(
+      'SELECT id FROM appointments WHERE calendar_id = ? AND contact_id = ?',
+      [calendar.id, contactId]
+    )
+    assert.equal(appointments.length, 1)
+  } finally {
+    for (const calendarId of calendarIds) {
+      await db.run('DELETE FROM appointments WHERE calendar_id = ?', [calendarId]).catch(() => undefined)
+      await db.run('DELETE FROM calendars WHERE id = ?', [calendarId]).catch(() => undefined)
+    }
+    await db.run('DELETE FROM contact_phone_numbers WHERE contact_id = ?', [contactId]).catch(() => undefined)
+    await db.run('DELETE FROM contacts WHERE id = ?', [contactId]).catch(() => undefined)
+    await db.run('DELETE FROM contacts WHERE email IN (?, ?)', [oldEmail, newEmail]).catch(() => undefined)
   }
 })

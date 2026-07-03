@@ -13983,7 +13983,7 @@ function buildVideoFormGateRuntimeScript(blocks = []) {
               }
             }
             if (window.ristakNativeRememberContact && submission.contactId) {
-              window.ristakNativeRememberContact({
+              window.ristakNativeRememberContact(submission.contact || {
                 contactId: submission.contactId,
                 fullName: submission.contactName || '',
                 email: submission.contactEmail || '',
@@ -17035,17 +17035,29 @@ function buildNativeSiteTrackingScript(context) {
         const local = readJson(localStorage, 'ristak');
         const session = readJson(sessionStorage, 'ristak');
         const urlContact = readUrlContact();
+        const urlHasContact = hasContactDraft(urlContact);
+        const sessionContact = {
+          contactId: cleanContactText(session.contact_id || session.contactId),
+          fullName: cleanContactText(session.contact_name || session.contactName || session.fullName || session.name),
+          firstName: cleanContactText(session.contact_first_name || session.contactFirstName || session.firstName),
+          lastName: cleanContactText(session.contact_last_name || session.contactLastName || session.lastName),
+          email: cleanContactText(session.contact_email || session.contactEmail || session.email),
+          phone: cleanContactText(session.contact_phone || session.contactPhone || session.phone)
+        };
+        const source = urlHasContact
+          ? urlContact
+          : (hasContactDraft(sessionContact) ? sessionContact : local);
         const visitorId = normalizeIdentityValue(local.visitor_id || local.visitorId) || getVisitorId();
         const sessionId = normalizeIdentityValue(session.session_id || session.sessionId) || getSessionId();
-        const fullName = cleanContactText(urlContact.name || local.contact_name || local.contactName || local.fullName || local.name);
+        const fullName = cleanContactText(source.name || source.contact_name || source.contactName || source.fullName || source.full_name || source.name);
         return {
-          contactId: cleanContactText(urlContact.contactId || local.contact_id || local.contactId),
+          contactId: cleanContactText(source.contactId || source.contact_id || source.contactId),
           name: fullName,
           fullName,
-          firstName: cleanContactText(urlContact.firstName || local.contact_first_name || local.contactFirstName || local.firstName),
-          lastName: cleanContactText(urlContact.lastName || local.contact_last_name || local.contactLastName || local.lastName),
-          email: cleanContactText(urlContact.email || local.contact_email || local.contactEmail || local.email),
-          phone: cleanContactText(urlContact.phone || local.contact_phone || local.contactPhone || local.phone),
+          firstName: cleanContactText(source.firstName || source.first_name || source.contact_first_name || source.contactFirstName || source.firstName),
+          lastName: cleanContactText(source.lastName || source.last_name || source.contact_last_name || source.contactLastName || source.lastName),
+          email: cleanContactText(source.email || source.contact_email || source.contactEmail),
+          phone: cleanContactText(source.phone || source.contact_phone || source.contactPhone),
           visitorId,
           sessionId
         };
@@ -17055,33 +17067,46 @@ function buildNativeSiteTrackingScript(context) {
       const rememberContact = (contact) => {
         if (!hasContactDraft(contact)) return;
         const data = readJson(localStorage, 'ristak');
+        const sessionData = readJson(sessionStorage, 'ristak');
         const contactId = cleanContactText(contact.contactId || contact.contact_id);
         const sameContact = contactId && data.contact_id === contactId;
+        const sameSessionContact = contactId && sessionData.contact_id === contactId;
         const fullName = cleanContactText(contact.fullName || contact.name || contact.full_name);
         const firstName = cleanContactText(contact.firstName || contact.first_name);
         const lastName = cleanContactText(contact.lastName || contact.last_name);
         const email = cleanContactText(contact.email);
         const phone = cleanContactText(contact.phone);
-        if (contactId) data.contact_id = contactId;
-        if (email) data.contact_email = email;
-        else if (contactId && !sameContact) data.contact_email = null;
-        if (fullName) data.contact_name = fullName;
-        else if (contactId && !sameContact) data.contact_name = null;
-        if (firstName) data.contact_first_name = firstName;
-        else if (contactId && !sameContact) data.contact_first_name = null;
-        if (lastName) data.contact_last_name = lastName;
-        else if (contactId && !sameContact) data.contact_last_name = null;
-        if (phone) data.contact_phone = phone;
-        else if (contactId && !sameContact) data.contact_phone = null;
-        if (contactId) data.contact_synced_at = new Date().toISOString();
-        data.contact_draft_at = new Date().toISOString();
+        const apply = (target, same) => {
+          if (contactId) target.contact_id = contactId;
+          if (email) target.contact_email = email;
+          else if (contactId && !same) target.contact_email = null;
+          if (fullName) target.contact_name = fullName;
+          else if (contactId && !same) target.contact_name = null;
+          if (firstName) target.contact_first_name = firstName;
+          else if (contactId && !same) target.contact_first_name = null;
+          if (lastName) target.contact_last_name = lastName;
+          else if (contactId && !same) target.contact_last_name = null;
+          if (phone) target.contact_phone = phone;
+          else if (contactId && !same) target.contact_phone = null;
+          if (contactId) target.contact_synced_at = new Date().toISOString();
+          target.contact_draft_at = new Date().toISOString();
+        };
+        apply(data, sameContact);
+        apply(sessionData, sameSessionContact);
         writeJson(localStorage, 'ristak', data);
+        writeJson(sessionStorage, 'ristak', sessionData);
         contactPrefillPromise = null;
       };
 
       const loadContactPrefill = () => {
         if (contactPrefillPromise) return contactPrefillPromise;
         const stored = readSavedContact();
+        const urlContact = readUrlContact();
+        const urlHasContact = hasContactDraft(urlContact);
+        if (urlHasContact && !stored.contactId) {
+          contactPrefillPromise = Promise.resolve(stored);
+          return contactPrefillPromise;
+        }
         if (!stored.contactId && !stored.visitorId && !stored.sessionId) {
           contactPrefillPromise = Promise.resolve(stored);
           return contactPrefillPromise;
@@ -17097,8 +17122,11 @@ function buildNativeSiteTrackingScript(context) {
           .then(response => response.json().catch(() => ({})).then(payload => ({ response, payload })))
           .then(({ response, payload }) => {
             if (!response.ok || payload.success === false || !payload.data) return stored;
-            rememberContact(payload.data);
-            return Object.assign({}, stored, payload.data);
+            const resolved = urlHasContact
+              ? Object.assign({}, payload.data, stored)
+              : Object.assign({}, stored, payload.data);
+            rememberContact(resolved);
+            return resolved;
           })
           .catch(() => stored);
         return contactPrefillPromise;
@@ -17304,7 +17332,14 @@ function buildNativeSiteTrackingScript(context) {
         let changed = false;
         const addParam = (key, value) => {
           const text = cleanContactText(value);
-          if (!text || target.searchParams.has(key)) return;
+          if (!text) {
+            if (target.searchParams.has(key)) {
+              target.searchParams.delete(key);
+              changed = true;
+            }
+            return;
+          }
+          if (target.searchParams.get(key) === text) return;
           target.searchParams.set(key, text);
           changed = true;
         };
@@ -20363,7 +20398,7 @@ function buildImportedFormCaptureScript(site, imported, { pageId = DEFAULT_FUNNE
               }, submission.capi && submission.capi.eventName);
             }
             if (window.ristakNativeRememberContact && submission.contactId) {
-              window.ristakNativeRememberContact({
+              window.ristakNativeRememberContact(submission.contact || {
                 contactId: submission.contactId,
                 fullName: submission.contactName || '',
                 email: submission.contactEmail || '',
@@ -23015,7 +23050,7 @@ export async function renderPublicSiteHtml(site, { pageId, pagePath, trackingEna
             if (navigateAway(nextAfterPayment)) return;
           }
           if (window.ristakNativeRememberContact && submission.contactId) {
-            window.ristakNativeRememberContact({
+            window.ristakNativeRememberContact(submission.contact || {
               contactId: submission.contactId,
               fullName: submission.contactName || '',
               email: submission.contactEmail || '',
@@ -23241,6 +23276,21 @@ function mapPublicPrefillContact(row = {}) {
     lastName: cleanString(row.last_name),
     email: cleanString(row.email),
     phone: cleanString(row.phone)
+  }
+}
+
+function buildPublicContactPayload(contactId, contact = {}) {
+  const fullName = cleanString(contact.fullName || contact.name || contact.full_name) ||
+    [contact.firstName || contact.first_name, contact.lastName || contact.last_name].map(cleanString).filter(Boolean).join(' ')
+
+  return {
+    contactId: cleanString(contactId),
+    name: fullName,
+    fullName,
+    firstName: cleanString(contact.firstName || contact.first_name),
+    lastName: cleanString(contact.lastName || contact.last_name),
+    email: cleanString(contact.email),
+    phone: cleanString(contact.phone)
   }
 }
 
@@ -25454,13 +25504,16 @@ async function createImportedSubmissionFromRequest({ req, body, site, host, prev
     logger.warn(`No se pudo registrar conversion nativa de HTML importado ${site.id}: ${error.message}`)
   })
 
+  const responseContact = buildPublicContactPayload(contactId, contact)
+
   return {
     submissionId,
     siteId: site.id,
     contactId,
-    contactName: contact.fullName,
-    contactEmail: contact.email,
-    contactPhone: contact.phone,
+    contact: responseContact,
+    contactName: responseContact.fullName,
+    contactEmail: responseContact.email,
+    contactPhone: responseContact.phone,
     status: submissionStatus,
     message: responseMessage,
     rawFields: layers.rawFields,
@@ -26509,13 +26562,16 @@ export async function createSubmissionFromRequest(req, body = {}, options = {}) 
     logger.warn(`No se pudo registrar conversion nativa de site ${site.id}: ${error.message}`)
   })
 
+  const responseContact = buildPublicContactPayload(contactId, inferredContact)
+
   return {
     submissionId,
     siteId: site.id,
     contactId,
-    contactName: inferredContact.fullName || '',
-    contactEmail: inferredContact.email || '',
-    contactPhone: inferredContact.phone || '',
+    contact: responseContact,
+    contactName: responseContact.fullName,
+    contactEmail: responseContact.email,
+    contactPhone: responseContact.phone,
     status: ruleEvaluation.status,
     message: getSiteFinalMessage(finalMessageSite, ruleEvaluation),
     redirectUrl: submissionRedirectUrl,

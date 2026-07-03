@@ -869,7 +869,28 @@ export async function deleteGoogleCalendarIntegration(req, res) {
   }
 }
 
-async function upsertPublicCalendarContact({ calendar, contact, host, sourceUrl }) {
+function getPublicCalendarContactIdentity(body = {}) {
+  const meta = body.meta && typeof body.meta === 'object' && !Array.isArray(body.meta) ? body.meta : {};
+  return {
+    contactId: cleanString(body.contactId || body.contact_id || meta.contactId || meta.contact_id),
+    visitorId: cleanString(body.visitorId || body.visitor_id || meta.visitorId || meta.visitor_id),
+    sessionId: cleanString(body.sessionId || body.session_id || meta.sessionId || meta.session_id)
+  };
+}
+
+async function resolveTrustedPublicCalendarContactId(body = {}) {
+  const identity = getPublicCalendarContactIdentity(body);
+  if (!identity.contactId) return '';
+
+  const resolved = await resolvePublicPrefillContact(identity).catch(error => {
+    logger.warn(`[Calendars Controller] No se pudo validar contactId público ${identity.contactId}: ${error.message}`);
+    return null;
+  });
+
+  return resolved?.contactId === identity.contactId ? identity.contactId : '';
+}
+
+async function upsertPublicCalendarContact({ calendar, contact, host, sourceUrl, explicitContactId = '' }) {
   const fullName = cleanString(contact.name || contact.fullName);
   const email = normalizeEmail(contact.email);
   const rawPhone = cleanString(contact.phone);
@@ -887,11 +908,19 @@ async function upsertPublicCalendarContact({ calendar, contact, host, sourceUrl 
     throw error;
   }
 
-  const byEmail = email
+  const explicitContact = explicitContactId
+    ? await db.get('SELECT id FROM contacts WHERE id = ? LIMIT 1', [explicitContactId]).catch(() => null)
+    : null;
+  const byEmail = !explicitContact && email
     ? await db.get('SELECT id FROM contacts WHERE LOWER(email) = LOWER(?) ORDER BY updated_at DESC LIMIT 1', [email]).catch(() => null)
     : null;
-  const byPhone = !byEmail && phone ? await findContactByPhoneCandidates(phone).catch(() => null) : null;
-  const contactId = byEmail?.id || byPhone?.id || generateContactId();
+  const byPhone = !explicitContact && !byEmail && phone ? await findContactByPhoneCandidates(phone).catch(() => null) : null;
+  const contactId = explicitContact?.id || byEmail?.id || byPhone?.id || generateContactId();
+  const overwriteContactFields = Boolean(explicitContact?.id);
+  const emailConflict = overwriteContactFields && email
+    ? await db.get('SELECT id FROM contacts WHERE LOWER(email) = LOWER(?) AND id != ? LIMIT 1', [email, contactId]).catch(() => null)
+    : null;
+  const emailForStorage = emailConflict ? '' : email;
   const names = splitName(fullName);
   const phoneUpsert = phone ? await prepareContactPhoneUpsert({ contactId, phone }) : { phone: null };
 
@@ -901,11 +930,11 @@ async function upsertPublicCalendarContact({ calendar, contact, host, sourceUrl 
       attribution_url, attribution_session_source, created_at, updated_at
     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
     ON CONFLICT(id) DO UPDATE SET
-      phone = COALESCE(NULLIF(contacts.phone, ''), excluded.phone),
-      email = COALESCE(NULLIF(contacts.email, ''), excluded.email),
-      full_name = COALESCE(NULLIF(contacts.full_name, ''), excluded.full_name),
-      first_name = COALESCE(NULLIF(contacts.first_name, ''), excluded.first_name),
-      last_name = COALESCE(NULLIF(contacts.last_name, ''), excluded.last_name),
+      phone = CASE WHEN ? = 1 AND excluded.phone IS NOT NULL THEN excluded.phone ELSE COALESCE(NULLIF(contacts.phone, ''), excluded.phone) END,
+      email = CASE WHEN ? = 1 AND excluded.email IS NOT NULL THEN excluded.email ELSE COALESCE(NULLIF(contacts.email, ''), excluded.email) END,
+      full_name = CASE WHEN ? = 1 AND excluded.full_name IS NOT NULL THEN excluded.full_name ELSE COALESCE(NULLIF(contacts.full_name, ''), excluded.full_name) END,
+      first_name = CASE WHEN ? = 1 AND excluded.first_name IS NOT NULL THEN excluded.first_name ELSE COALESCE(NULLIF(contacts.first_name, ''), excluded.first_name) END,
+      last_name = CASE WHEN ? = 1 AND excluded.last_name IS NOT NULL THEN excluded.last_name ELSE COALESCE(NULLIF(contacts.last_name, ''), excluded.last_name) END,
       source = COALESCE(NULLIF(contacts.source, ''), excluded.source),
       attribution_url = COALESCE(NULLIF(contacts.attribution_url, ''), excluded.attribution_url),
       attribution_session_source = COALESCE(NULLIF(contacts.attribution_session_source, ''), excluded.attribution_session_source),
@@ -913,13 +942,18 @@ async function upsertPublicCalendarContact({ calendar, contact, host, sourceUrl 
   `, [
     contactId,
     phoneUpsert.phone || phone || null,
-    email || null,
+    emailForStorage || null,
     fullName,
     names.firstName || null,
     names.lastName || null,
     `ristak_calendar:${calendar.slug || calendar.id}`,
     cleanString(sourceUrl) || `https://${host}/calendar/${calendar.slug || calendar.id}`,
-    'public_calendar'
+    'public_calendar',
+    overwriteContactFields ? 1 : 0,
+    overwriteContactFields ? 1 : 0,
+    overwriteContactFields ? 1 : 0,
+    overwriteContactFields ? 1 : 0,
+    overwriteContactFields ? 1 : 0
   ]);
 
   if (phone) await finalizePreparedPhoneUpsert(phoneUpsert, contactId);
@@ -1411,11 +1445,13 @@ export async function createPublicAppointment(req, res) {
       paymentGateStatus = paymentResult.status;
     }
 
+    const trustedContactId = await resolveTrustedPublicCalendarContactId(body);
     const contactId = await upsertPublicCalendarContact({
       calendar,
       host,
       sourceUrl: body.sourceUrl || body.source_url,
-      contact: bookingSubmission.contact
+      contact: bookingSubmission.contact,
+      explicitContactId: trustedContactId
     });
 
     const durationMinutes = Math.max(1, Number(calendar.slotDuration || 60));

@@ -593,7 +593,9 @@ test('public calendar normalizes custom Meta events for site appointments', () =
   assert.equal(customEvents.eventName, 'Schedule')
   assert.equal(customEvents.parameters.currency, 'MXN')
   assert.match(html, /window\.ristakMetaTrackCalendarEvent/)
-  assert.match(html, /meta: getMetaEventPayload\(\)/)
+  assert.match(html, /meta: Object\.assign\(\{\}, getMetaEventPayload\(\), \{/)
+  assert.match(html, /contactId: activeContact\.contactId \|\| ''/)
+  assert.match(html, /visitorId: activeContact\.visitorId \|\| ''/)
   assert.match(html, /trackCalendarMetaEvent\(payload\.data\?\.metaEvent\)/)
 })
 

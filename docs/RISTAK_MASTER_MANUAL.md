@@ -468,6 +468,12 @@ Reglas base:
   Cuando el contacto se autopobla desde otro formulario, la lada queda en el
   selector y el campo visible conserva solo el numero nacional, sin prefijos tipo
   `+52`, `52` o `+1` duplicados dentro del input.
+- Si el visitante llega desde un formulario/Site con `contactId` validado por la
+  misma sesion/visitor, el calendario debe tratar ese registro como contacto
+  activo del flujo. Si la persona corrige nombre, telefono o correo al agendar,
+  se actualiza ese contacto activo en lugar de crear o escoger otro por datos
+  viejos del navegador. Si no hay identidad activa validable, se conserva la
+  regla de reutilizar por correo y luego por telefono.
 - Si Meta esta configurado con dataset/pixel y token guardado, los calendarios
   locales nuevos y los calendarios remotos espejados por primera vez activan
   `customEvents.enabled` por default para mandar `Schedule` al agendar. Ediciones
@@ -1017,6 +1023,15 @@ submission aunque exista un bloque de pago habilitado en una pagina posterior. L
 excepcion son pagos anidados dentro de un formulario/video gate: esos siguen
 protegiendo el formulario que los contiene porque forman parte de la misma
 experiencia de envio.
+
+El prefill entre formularios, paginas de Sites y calendarios publicos debe usar
+el contacto activo mas reciente del flujo. Al completar un formulario o cita se
+guardan `contactId`, nombre, correo, telefono, `visitorId` y `sessionId` en la
+sesion del navegador, y los links/redirecciones sobrescriben los parametros de
+contacto anteriores. Si una URL trae datos de contacto explicitos, esos datos
+ganan sobre `localStorage`; `localStorage` solo es respaldo cuando no hay una
+sesion/URL activa. Esto evita que un test o visitante nuevo vea autocompletado
+con el contacto viejo.
 
 El checkout publico de Sites se resuelve por identidad completa:
 `siteId + pageId + paymentBlockId`. Los requests de checkout deben incluir el

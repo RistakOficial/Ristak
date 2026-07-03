@@ -2157,7 +2157,12 @@ export function normalizeCalendarBookingSubmission(bookingForm = {}, body = {}) 
     .filter(Boolean)
 
   return {
-    contact: { name: fullName, phone, email },
+    contact: {
+      contactId: cleanString(body.contactId || body.contact_id || body.meta?.contactId || body.meta?.contact_id),
+      name: fullName,
+      phone,
+      email
+    },
     notes,
     responses: normalizedResponses,
     responseSummary: responseLines.join('\n'),
@@ -3144,11 +3149,21 @@ export function renderPublicCalendarHtml(calendar, { host = '', embedded = false
         const local = readStoredJson(window.localStorage, 'ristak');
         const session = readStoredJson(window.sessionStorage, 'ristak');
         const urlContact = readUrlContact();
+        const urlHasContact = hasContactDraft(urlContact);
+        const sessionContact = {
+          contactId: cleanPrefillText(session.contact_id || session.contactId),
+          name: cleanPrefillText(session.contact_name || session.contactName || session.fullName || session.name),
+          email: cleanPrefillText(session.contact_email || session.contactEmail || session.email),
+          phone: cleanPrefillText(session.contact_phone || session.contactPhone || session.phone)
+        };
+        const source = urlHasContact
+          ? urlContact
+          : (hasContactDraft(sessionContact) ? sessionContact : local);
         return {
-          contactId: cleanPrefillText(urlContact.contactId || local.contact_id || local.contactId),
-          name: cleanPrefillText(urlContact.name || local.contact_name || local.contactName || local.fullName || local.name),
-          email: cleanPrefillText(urlContact.email || local.contact_email || local.contactEmail || local.email),
-          phone: cleanPrefillText(urlContact.phone || local.contact_phone || local.contactPhone || local.phone),
+          contactId: cleanPrefillText(source.contactId || source.contact_id || source.contactId),
+          name: cleanPrefillText(source.name || source.contact_name || source.contactName || source.fullName || source.full_name),
+          email: cleanPrefillText(source.email || source.contact_email || source.contactEmail),
+          phone: cleanPrefillText(source.phone || source.contact_phone || source.contactPhone),
           visitorId: cleanPrefillText(local.visitor_id || local.visitorId || session.visitor_id || session.visitorId),
           sessionId: cleanPrefillText(session.session_id || session.sessionId)
         };
@@ -3156,21 +3171,28 @@ export function renderPublicCalendarHtml(calendar, { host = '', embedded = false
       const rememberCalendarContact = (contact) => {
         if (!hasContactDraft(contact)) return;
         const local = readStoredJson(window.localStorage, 'ristak');
+        const session = readStoredJson(window.sessionStorage, 'ristak');
         const contactId = cleanPrefillText(contact.contactId || contact.contact_id);
         const sameContact = contactId && local.contact_id === contactId;
+        const sameSessionContact = contactId && session.contact_id === contactId;
         const name = cleanPrefillText(contact.name || contact.fullName || contact.full_name);
         const email = cleanPrefillText(contact.email);
         const phone = cleanPrefillText(contact.phone);
-        if (contactId) local.contact_id = contactId;
-        if (name) local.contact_name = name;
-        else if (contactId && !sameContact) local.contact_name = null;
-        if (email) local.contact_email = email;
-        else if (contactId && !sameContact) local.contact_email = null;
-        if (phone) local.contact_phone = phone;
-        else if (contactId && !sameContact) local.contact_phone = null;
-        if (contactId) local.contact_synced_at = new Date().toISOString();
-        local.contact_draft_at = new Date().toISOString();
+        const apply = (target, same) => {
+          if (contactId) target.contact_id = contactId;
+          if (name) target.contact_name = name;
+          else if (contactId && !same) target.contact_name = null;
+          if (email) target.contact_email = email;
+          else if (contactId && !same) target.contact_email = null;
+          if (phone) target.contact_phone = phone;
+          else if (contactId && !same) target.contact_phone = null;
+          if (contactId) target.contact_synced_at = new Date().toISOString();
+          target.contact_draft_at = new Date().toISOString();
+        };
+        apply(local, sameContact);
+        apply(session, sameSessionContact);
         writeStoredJson(window.localStorage, 'ristak', local);
+        writeStoredJson(window.sessionStorage, 'ristak', session);
       };
       const getPrefillKeyForField = (field) => {
         if (!field) return '';
@@ -3273,7 +3295,14 @@ export function renderPublicCalendarHtml(calendar, { host = '', embedded = false
         let changed = false;
         const addParam = (key, value) => {
           const text = cleanPrefillText(value);
-          if (!text || target.searchParams.has(key)) return;
+          if (!text) {
+            if (target.searchParams.has(key)) {
+              target.searchParams.delete(key);
+              changed = true;
+            }
+            return;
+          }
+          if (target.searchParams.get(key) === text) return;
           target.searchParams.set(key, text);
           changed = true;
         };
@@ -3293,10 +3322,12 @@ export function renderPublicCalendarHtml(calendar, { host = '', embedded = false
       };
       const initContactPrefill = async () => {
         const urlContact = readUrlContact();
-        if (hasContactDraft(urlContact)) rememberCalendarContact(urlContact);
+        const urlHasContact = hasContactDraft(urlContact);
+        if (urlHasContact) rememberCalendarContact(urlContact);
         rememberCalendarContactDraft();
         const stored = readStoredContact();
         applyContactPrefill(stored);
+        if (urlHasContact && !stored.contactId) return;
         if (!stored.contactId && !stored.visitorId && !stored.sessionId) return;
 
         const params = new URLSearchParams();
@@ -3311,8 +3342,11 @@ export function renderPublicCalendarHtml(calendar, { host = '', embedded = false
           });
           const payload = await response.json().catch(() => ({}));
           if (!response.ok || payload.success === false || !payload.data) return;
-          rememberCalendarContact(payload.data);
-          applyContactPrefill(payload.data);
+          const resolved = urlHasContact
+            ? Object.assign({}, payload.data, stored)
+            : Object.assign({}, stored, payload.data);
+          rememberCalendarContact(resolved);
+          applyContactPrefill(resolved);
         } catch (_) {}
       };
 
@@ -3778,10 +3812,14 @@ export function renderPublicCalendarHtml(calendar, { host = '', embedded = false
         setMessage('');
 
         try {
+          const activeContact = readStoredContact();
           const appointmentPayload = {
             startTime: selectedSlot,
             timezone,
             sourceUrl: window.location.href,
+            contactId: activeContact.contactId || '',
+            visitorId: activeContact.visitorId || '',
+            sessionId: activeContact.sessionId || '',
             name: formData.get('name'),
             phone: formData.get('phone'),
             email: formData.get('email'),
@@ -3789,7 +3827,11 @@ export function renderPublicCalendarHtml(calendar, { host = '', embedded = false
             responses,
             formId: calendar.bookingForm?.formId || '',
             formName: calendar.bookingForm?.formName || '',
-            meta: getMetaEventPayload()
+            meta: Object.assign({}, getMetaEventPayload(), {
+              contactId: activeContact.contactId || '',
+              visitorId: activeContact.visitorId || '',
+              sessionId: activeContact.sessionId || ''
+            })
           };
           const postAppointment = async (payloadInput) => {
             const response = await fetch('/api/calendars/public/' + encodeURIComponent(calendar.slug) + '/appointments', {
