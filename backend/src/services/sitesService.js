@@ -15684,6 +15684,57 @@ function buildPaymentCheckoutRuntimeScript() {
         success: root.querySelector('[data-rstk-checkout-success]')
       };
       if (els.fields && !els.fields.id) els.fields.id = 'rstk-checkout-fields-' + safeId;
+
+      // Identidad del comprador (correo/telefono) para LIGAR el pago a un contacto
+      // y poder disparar el Purchase de Meta. Si el embudo (un formulario o el
+      // calendario ANTES en el flujo) ya la capturo, la reusamos y no la volvemos
+      // a pedir; si no, la exigimos (al menos correo o telefono).
+      var identityBox = root.querySelector('[data-rstk-checkout-identity]');
+      var identityEmail = identityBox ? identityBox.querySelector('[data-rstk-identity-email]') : null;
+      var identityPhone = identityBox ? identityBox.querySelector('[data-rstk-identity-phone]') : null;
+      var identityErr = identityBox ? identityBox.querySelector('[data-rstk-identity-error]') : null;
+      var funnelContactId = '';
+      var identitySatisfiedByFunnel = false;
+      function readFunnelIdentity() {
+        var out = { contactId: '', email: '', phone: '' };
+        try {
+          if (typeof window.ristakNativeIdentity === 'function') {
+            var ni = window.ristakNativeIdentity() || {};
+            out.contactId = String(ni.contactId || ni.contact_id || '');
+            out.email = String(ni.email || ni.contact_email || '');
+            out.phone = String(ni.phone || ni.contact_phone || '');
+          }
+        } catch (e) {}
+        try {
+          var raw = window.localStorage ? window.localStorage.getItem('ristak') : '';
+          if (raw) {
+            var st = JSON.parse(raw) || {};
+            out.contactId = out.contactId || String(st.contact_id || st.contactId || '');
+            out.email = out.email || String(st.contact_email || st.contactEmail || st.email || '');
+            out.phone = out.phone || String(st.contact_phone || st.contactPhone || st.phone || '');
+          }
+        } catch (e) {}
+        return out;
+      }
+      (function initIdentity() {
+        var fi = readFunnelIdentity();
+        funnelContactId = fi.contactId || '';
+        if (identityEmail && fi.email) identityEmail.value = fi.email;
+        if (identityPhone && fi.phone) identityPhone.value = fi.phone;
+        if (funnelContactId || fi.email || fi.phone) identitySatisfiedByFunnel = true;
+      })();
+      function identityActive() { return !!(identityBox && (identityEmail || identityPhone) && !identitySatisfiedByFunnel); }
+      function showIdentity() { if (identityActive()) identityBox.hidden = false; }
+      function idVal(el) { return el ? String(el.value || '').trim() : ''; }
+      function collectPayer() { return { email: idVal(identityEmail), phone: idVal(identityPhone), contactId: funnelContactId }; }
+      function validateIdentity() {
+        if (!identityActive()) return true;
+        if (idVal(identityEmail) || idVal(identityPhone)) { if (identityErr) identityErr.hidden = true; return true; }
+        if (identityErr) identityErr.hidden = false;
+        setMessage('error', 'Escribe tu correo o telefono para continuar.');
+        return false;
+      }
+
       var storageKey = 'rstk-checkout:' + cfg.siteId + ':' + cfg.blockId;
       var done = false;
 
@@ -15797,13 +15848,15 @@ function buildPaymentCheckoutRuntimeScript() {
           var paymentElement = elements.create('payment', { layout: 'tabs', fields: { billingDetails: { address: { country: showCountry ? 'auto' : 'never' } } } });
           paymentElement.mount(els.fields);
           els.fields.hidden = false; els.pay.hidden = false; showLoading(false);
+          showIdentity();
           payLabel(d.amount, d.currency);
           els.pay.addEventListener('click', function () {
             if (els.pay.disabled) return;
+            if (!validateIdentity()) return;
             setPayBusy(true); setMessage('info', 'Procesando…');
             elements.submit().then(function (sub) {
               if (sub && sub.error) { setPayBusy(false); setMessage('error', sub.error.message || 'Revisa los datos de la tarjeta.'); return; }
-              return payCharge({}).then(function (r) {
+              return payCharge({ payer: collectPayer() }).then(function (r) {
                 if (!r || !r.clientSecret) throw new Error('No se pudo iniciar el pago.');
                 return stripe.confirmPayment({ elements: elements, clientSecret: r.clientSecret, confirmParams: { return_url: window.location.href }, redirect: 'if_required' }).then(function (result) {
                   if (result.error) { setPayBusy(false); setMessage('error', result.error.message || 'No se pudo completar el pago.'); return; }
@@ -15858,12 +15911,12 @@ function buildPaymentCheckoutRuntimeScript() {
           window.ConektaCheckoutComponents.Card({
             config: { targetIFrame: '#' + els.fields.id, publicKey: d.publicKey, locale: 'es', useExternalSubmit: true },
             callbacks: {
-              onUpdateSubmitTrigger: function (fn) { submitTrigger = fn; els.fields.hidden = false; els.pay.hidden = false; showLoading(false); payLabel(d.amount, d.currency); },
+              onUpdateSubmitTrigger: function (fn) { submitTrigger = fn; els.fields.hidden = false; els.pay.hidden = false; showLoading(false); showIdentity(); payLabel(d.amount, d.currency); },
               onCreateTokenSucceeded: function (token) {
                 var tokenId = typeof token === 'string' ? token : String((token && token.id) || '');
                 if (!tokenId) { setPayBusy(false); setMessage('error', 'Conekta no devolvió un token válido.'); return; }
                 // Crea la fila + cobra recién ahora (intento real), con el token.
-                payCharge({ tokenId: tokenId, installments: selectedInstallments }).then(function (r) {
+                payCharge({ tokenId: tokenId, installments: selectedInstallments, payer: collectPayer() }).then(function (r) {
                   onChargeResult(r.publicPaymentId, r.status);
                 }).catch(function (e) { setPayBusy(false); setMessage('error', (e && e.message) || 'No se pudo cobrar con Conekta.'); });
               },
@@ -15875,6 +15928,7 @@ function buildPaymentCheckoutRuntimeScript() {
           els.pay.hidden = false; payLabel(d.amount, d.currency);
           els.pay.addEventListener('click', function () {
             if (els.pay.disabled || !submitTrigger) return;
+            if (!validateIdentity()) return;
             setPayBusy(true); setMessage('info', 'Procesando…');
             submitTrigger();
           });
@@ -18247,6 +18301,16 @@ function renderPaymentBlock(block = {}, context = {}) {
   const showSecure = settings.paymentShowSecureNote !== false
   const secureNote = cleanString(settings.paymentSecureNote) || PAYMENT_SECURE_NOTE_DEFAULT
   const showCountry = settings.paymentShowCountry !== false
+  // Captura de identidad del comprador (correo/telefono) para poder LIGAR el pago a
+  // un contacto y asi disparar el evento Purchase de Meta. CLIP y MercadoPago ya la
+  // piden en su propio SDK, asi que el bloque compartido solo se inyecta para
+  // Stripe/Conekta. El comprador debe dar al menos uno (correo o telefono).
+  const paymentGateway = cleanString(paymentGate.gateway)
+  const providerCollectsIdentity = paymentGateway === 'clip' || paymentGateway === 'mercadopago'
+  const collectEmail = settings.paymentCollectEmail !== false
+  const collectPhone = settings.paymentCollectPhone !== false
+  const showIdentityFields = !providerCollectsIdentity && (collectEmail || collectPhone)
+  const identityInputStyle = 'width:100%;box-sizing:border-box;border:1px solid color-mix(in srgb, var(--rstk-muted, CanvasText) 28%, transparent);border-radius:var(--rstk-radius, 12px);background:var(--rstk-input-bg, color-mix(in srgb, var(--rstk-surface, Canvas) 86%, transparent));color:var(--rstk-checkout-field-text, var(--rstk-block-text, var(--rstk-ink, CanvasText)));padding:12px 13px;font:inherit;min-width:0;'
   const checkoutAlign = blockHorizontalAlign(settings, 'paymentTextAlign', 'left')
   // Se permite '/' para colores CSS modernos (p. ej. rgb(0 0 0 / 50%)) sin romper la
   // apariencia de la pasarela; el resto de caracteres peligrosos se siguen filtrando.
@@ -18280,6 +18344,8 @@ function renderPaymentBlock(block = {}, context = {}) {
       data-post-url="${escapeHtml(post.url)}"
       data-post-message="${escapeHtml(post.message)}"
       data-show-country="${showCountry ? 'true' : 'false'}"
+      data-collect-email="${showIdentityFields && collectEmail ? 'true' : 'false'}"
+      data-collect-phone="${showIdentityFields && collectPhone ? 'true' : 'false'}"
       ${isTestBlock ? 'data-test-mode="true"' : ''}>
       <div class="rstk-checkout-card">
         <div class="rstk-checkout-inner">
@@ -18295,6 +18361,11 @@ function renderPaymentBlock(block = {}, context = {}) {
               <span class="rstk-checkout-spinner" aria-hidden="true"></span>
               <span>Cargando pago seguro…</span>
             </div>
+            ${showIdentityFields ? `<div class="rstk-checkout-identity" data-rstk-checkout-identity style="display:grid;gap:10px;margin-bottom:12px" hidden>
+              ${collectEmail ? `<input type="email" inputmode="email" autocomplete="email" data-rstk-identity-email placeholder="Correo electronico" aria-label="Correo electronico" style="${identityInputStyle}" />` : ''}
+              ${collectPhone ? `<input type="tel" inputmode="tel" autocomplete="tel" data-rstk-identity-phone placeholder="Telefono" aria-label="Telefono" style="${identityInputStyle}" />` : ''}
+              <p class="rstk-checkout-message" data-rstk-identity-error role="alert" hidden style="margin:0" data-kind="error">Escribe tu correo o telefono para continuar.</p>
+            </div>` : ''}
             <div class="rstk-checkout-fields" data-rstk-checkout-fields hidden></div>
             <div class="rstk-checkout-installments" data-rstk-checkout-installments hidden></div>
             <button type="button" class="rstk-button-link rstk-checkout-pay" data-rstk-checkout-pay hidden>
@@ -24980,9 +25051,30 @@ export async function paySiteCheckout(req, body = {}) {
   enforcePublicSubmitRateLimit(req, `checkout-pay:${site.id}:${expectedBlockId}`)
   const payer = body.payer && typeof body.payer === 'object' ? body.payer : {}
 
+  // Liga el pago a un contacto: si el checkout (o el embudo) trae correo/telefono,
+  // resolvemos/creamos el contacto con el MISMO helper que usan los formularios,
+  // para que payments.contact_id no quede null y el Purchase de Meta pueda dispararse.
+  let checkoutContactId = cleanString(body.contactId || payer.contactId || payer.contact_id)
+  if (!checkoutContactId && (cleanString(payer.email) || cleanString(payer.phone))) {
+    const upserted = await upsertContactFromSubmissionWithResult({
+      site,
+      contact: {
+        email: cleanString(payer.email),
+        phone: cleanString(payer.phone),
+        fullName: cleanString(payer.name || payer.fullName)
+      },
+      meta: {
+        pageUrl: cleanString(body.pageUrl || body.page_url),
+        visitorId: cleanString(body.visitorId || body.visitor_id)
+      }
+    }).catch(() => null)
+    checkoutContactId = upserted?.contactId || ''
+  }
+
   const result = await createPaymentGateLink(paymentGate, {
     baseUrl,
     contact: {
+      contactId: checkoutContactId,
       name: cleanString(payer.name || payer.fullName),
       email: cleanString(payer.email),
       phone: cleanString(payer.phone)

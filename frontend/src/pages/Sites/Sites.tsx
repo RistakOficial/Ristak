@@ -6317,6 +6317,10 @@ const defaultBlockPayload = (blockType: SiteBlockType, siteOrId: PublicSite | st
       settings: blockSettings({
         paymentGate: defaultPaymentGateConfig(localeDefaults.currency || 'MXN'),
         paymentLayout: 'card',
+        // Identidad del comprador: pedir correo y teléfono (mínimo uno) para poder
+        // ligar el pago a un contacto y disparar el Purchase de Meta.
+        paymentCollectEmail: true,
+        paymentCollectPhone: true,
         textAlign: 'left',
         ...DEFAULT_BUTTON_SETTINGS,
         buttonAlign: 'right',
@@ -32078,6 +32082,11 @@ const CanvasPreviewBlock: React.FC<CanvasPreviewBlockProps> = ({
     const showKicker = getSettingBoolean(settings, 'paymentShowGatewayName', true)
     const showCountry = getSettingBoolean(settings, 'paymentShowCountry', true)
     const showSecureNote = getSettingBoolean(settings, 'paymentShowSecureNote', true)
+    // Identidad del comprador (correo/teléfono). En vivo solo se inyecta para
+    // Stripe/Conekta (CLIP y Mercado Pago ya la piden en su SDK); el mock espeja eso.
+    const collectEmail = getSettingBoolean(settings, 'paymentCollectEmail', true)
+    const collectPhone = getSettingBoolean(settings, 'paymentCollectPhone', true)
+    const showIdentityFields = (isStripe || isConekta) && (collectEmail || collectPhone)
     const secureNoteText = getSettingString(settings, 'paymentSecureNote') || PAYMENT_SECURE_NOTE_DEFAULT
     const paymentTextAlign = getHorizontalAlign(settings, 'paymentTextAlign', 'left')
     // Paridad payment #5: SOLO el ajuste manual explícito fija --rstk-checkout-field-text
@@ -32102,6 +32111,19 @@ const CanvasPreviewBlock: React.FC<CanvasPreviewBlockProps> = ({
     // para que se vea IDÉNTICO al vivo; en otros proveedores usamos el mock de tarjeta.
     const mockFields = (
       <div className="rstk-checkout-fields rstk-checkout-fields-mock" aria-hidden="true">
+        {/* Identidad del comprador (correo/teléfono), arriba de la tarjeta. */}
+        {showIdentityFields && collectEmail && (
+          <>
+            <span className="rstk-mock-lbl">Correo electrónico</span>
+            <div className="rstk-mock-input"><span className="rstk-mock-ph">tu@correo.com</span></div>
+          </>
+        )}
+        {showIdentityFields && collectPhone && (
+          <>
+            <span className="rstk-mock-lbl">Teléfono</span>
+            <div className="rstk-mock-input"><span className="rstk-mock-ph">55 1234 5678</span></div>
+          </>
+        )}
         {/* Conekta captura también el nombre del titular en su tokenizer. */}
         {isConekta && (
           <>
@@ -36624,6 +36646,41 @@ const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
               checked={getSettingBoolean(settings, 'paymentShowCountry', true)}
               onChange={(checked) => { onPatchSettings({ paymentShowCountry: checked }); window.setTimeout(() => { onSave() }, 0) }}
               aria-label="Mostrar campo País"
+            />
+          </div>
+
+          {/* Datos de contacto del comprador: correo/teléfono para ligar el pago a un
+              contacto (y disparar el Purchase de Meta). Al menos uno debe quedar activo.
+              CLIP y Mercado Pago ya los piden en su propio formulario. */}
+          <div className={styles.videoFormGateSwitchRow}>
+            <div>
+              <strong>Pedir correo</strong>
+              <span>Campo de correo en el checkout (Stripe/Conekta).</span>
+            </div>
+            <Switch
+              checked={getSettingBoolean(settings, 'paymentCollectEmail', true)}
+              onChange={(checked) => {
+                const phoneOn = getSettingBoolean(settings, 'paymentCollectPhone', true)
+                onPatchSettings({ paymentCollectEmail: checked, paymentCollectPhone: checked ? phoneOn : true })
+                window.setTimeout(() => { onSave() }, 0)
+              }}
+              aria-label="Pedir correo"
+            />
+          </div>
+
+          <div className={styles.videoFormGateSwitchRow}>
+            <div>
+              <strong>Pedir teléfono</strong>
+              <span>Campo de teléfono en el checkout (Stripe/Conekta).</span>
+            </div>
+            <Switch
+              checked={getSettingBoolean(settings, 'paymentCollectPhone', true)}
+              onChange={(checked) => {
+                const emailOn = getSettingBoolean(settings, 'paymentCollectEmail', true)
+                onPatchSettings({ paymentCollectPhone: checked, paymentCollectEmail: checked ? emailOn : true })
+                window.setTimeout(() => { onSave() }, 0)
+              }}
+              aria-label="Pedir teléfono"
             />
           </div>
 

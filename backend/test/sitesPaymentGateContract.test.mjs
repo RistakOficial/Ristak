@@ -144,6 +144,35 @@ test('payment #1 (control): an enabled gate DOES render the block markup', async
   assert.match(html, /<strong class="rstk-checkout-title">Curso<\/strong>/)
 })
 
+// Nota: el runtime embebido menciona los selectores [data-rstk-identity-*] y
+// [data-rstk-checkout-identity], así que aserimos sobre el MARKUP renderizado
+// (<div class="rstk-checkout-identity">, <input ... data-rstk-identity-*>) y sobre
+// los atributos data-collect-* de la <section>, que solo existen en el bloque.
+test('identity: Stripe checkout renders email/phone capture by default (to link the contact)', async () => {
+  const html = await renderPublicSiteHtml(paymentSite(), { pageId: 'page-1', trackingEnabled: false, preview: true })
+  assert.match(html, /<div class="rstk-checkout-identity"/)
+  assert.match(html, /<input[^>]+data-rstk-identity-email/)
+  assert.match(html, /<input[^>]+data-rstk-identity-phone/)
+  assert.match(html, /data-collect-email="true"/)
+  assert.match(html, /data-collect-phone="true"/)
+})
+
+test('identity: only the configured field renders (phone off => no phone input, ≥1 stays)', async () => {
+  const html = await renderPublicSiteHtml(paymentSite({ paymentCollectPhone: false }), { pageId: 'page-1', trackingEnabled: false, preview: true })
+  assert.match(html, /<input[^>]+data-rstk-identity-email/)
+  assert.doesNotMatch(html, /<input[^>]+data-rstk-identity-phone/)
+  assert.match(html, /data-collect-email="true"/)
+  assert.match(html, /data-collect-phone="false"/)
+})
+
+test('identity: CLIP/MercadoPago do NOT get the shared block (they collect identity in their own SDK)', async () => {
+  const clip = await renderPublicSiteHtml(paymentSite({ paymentGate: { enabled: true, gateway: 'clip', amount: 500, currency: 'MXN', productName: 'Curso', buttonText: 'Pagar' } }), { pageId: 'page-1', trackingEnabled: false, preview: true })
+  assert.doesNotMatch(clip, /<div class="rstk-checkout-identity"/)
+  assert.match(clip, /data-collect-email="false"/)
+  const both = await renderPublicSiteHtml(paymentSite({ paymentCollectEmail: false, paymentCollectPhone: false }), { pageId: 'page-1', trackingEnabled: false, preview: true })
+  assert.doesNotMatch(both, /<div class="rstk-checkout-identity"/)
+})
+
 test('E4: field text color sanitizer allows modern rgb(... / ...) values', async () => {
   const html = await renderPublicSiteHtml(paymentSite({ paymentFieldTextColor: 'rgb(0 0 0 / 50%)' }), {
     pageId: 'page-1', trackingEnabled: false, preview: true
