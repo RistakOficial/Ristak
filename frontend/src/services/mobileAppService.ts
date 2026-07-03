@@ -458,7 +458,15 @@ export const mobileAppService = {
 
     if (getPlatform() === 'ios') {
       await Keyboard.setAccessoryBarVisible({ isVisible: false }).catch(() => undefined)
-      await Keyboard.setResizeMode({ mode: KeyboardResize.Body }).catch(() => undefined)
+      // El chat monta .phoneChatPage como position:fixed dimensionado a
+      // --phone-visual-viewport-height (window.visualViewport.height). Ese layout
+      // SOLO deja el composer arriba del teclado si el WKWebView encoge su frame
+      // al abrirlo. El modo Body no encoge el frame (solo el <body>), asi que el
+      // root fijo se queda a pantalla completa y el composer (ultima fila del grid)
+      // queda debajo del teclado. Native encoge el webview -> visualViewport.height
+      // baja -> el root se ajusta y el composer queda visible. Debe coincidir con
+      // capacitor.config.ts (Keyboard.resize: 'native').
+      await Keyboard.setResizeMode({ mode: KeyboardResize.Native }).catch(() => undefined)
     }
 
     await App.addListener('appUrlOpen', (event) => {
