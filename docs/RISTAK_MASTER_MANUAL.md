@@ -1624,6 +1624,16 @@ no romper configuraciones existentes. En el editor de Automatizaciones se muestr
 los equivalentes bajo `{{formulario.respuestas.<clave>.value}}` y
 `{{formulario.respuestas.<clave>.text}}`.
 
+Los parametros configurables de eventos Meta en Sites y Automatizaciones exponen
+las respuestas reales del formulario. Para preguntas con opciones se conserva el
+valor interno enviado por el formulario en `{{form.responses.<clave>.value}}`
+(por ejemplo `3500`) y el texto visible de la opcion en
+`{{form.responses.<clave>.text}}` (por ejemplo `3,500 a 5,000 pesos`). El token
+historico `{{form.responses.<clave>}}` sigue resolviendo al valor interno para
+no romper configuraciones existentes. En el editor de Automatizaciones se muestran
+los equivalentes bajo `{{formulario.respuestas.<clave>.value}}` y
+`{{formulario.respuestas.<clave>.text}}`.
+
 ### Paridad de render editor/preview/publicado (contrato compartido)
 
 Editor (canvas React), preview autenticado, preview-session publico y sitio
