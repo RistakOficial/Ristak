@@ -8,7 +8,14 @@ import {
 // Definición única de las secciones de Configuración.
 // La consume la página de Configuración y debe mantenerse en sincronía con las
 // rutas declaradas en Settings.tsx.
-export type SettingsNavGroup = 'Cuenta' | 'Integraciones' | 'Datos y rastreo' | 'Personalización' | 'Avanzado'
+export type SettingsNavGroup =
+  | 'Cuenta'
+  | 'Agenda'
+  | 'Cobros'
+  | 'Plataformas conectadas'
+  | 'Datos y rastreo'
+  | 'Personalización'
+  | 'Avanzado'
 
 export interface SettingsNavItem {
   to: string
@@ -22,12 +29,12 @@ export const settingsNavigation: SettingsNavItem[] = [
   { to: '/settings/users-access', label: 'Usuarios', group: 'Cuenta', permissionKey: 'settings_users' },
   { to: '/settings/notifications', label: 'Notificaciones', group: 'Cuenta', permissionKey: 'settings_account' },
   { to: '/settings/mobile-app', label: 'Aplicación móvil', group: 'Cuenta', permissionKey: 'settings_mobile' },
-  { to: '/settings/highlevel', label: 'HighLevel', group: 'Integraciones', permissionKey: 'settings_integrations' },
-  { to: '/settings/meta-ads', label: 'Meta', group: 'Integraciones', permissionKey: 'campaigns' },
-  { to: '/settings/whatsapp', label: 'WhatsApp', group: 'Integraciones', permissionKey: 'settings_whatsapp' },
-  { to: '/settings/email', label: 'Correos', group: 'Integraciones', permissionKey: 'settings_email' },
-  { to: '/settings/payments', label: 'Pagos', group: 'Integraciones', permissionKey: 'settings_payments' },
-  { to: '/settings/calendars', label: 'Calendarios', group: 'Integraciones', permissionKey: 'settings_calendars' },
+  { to: '/settings/calendars', label: 'Calendarios', group: 'Agenda', permissionKey: 'settings_calendars' },
+  { to: '/settings/payments', label: 'Pagos', group: 'Cobros', permissionKey: 'settings_payments' },
+  { to: '/settings/highlevel', label: 'HighLevel', group: 'Plataformas conectadas', permissionKey: 'settings_integrations' },
+  { to: '/settings/meta-ads', label: 'Meta', group: 'Plataformas conectadas', permissionKey: 'campaigns' },
+  { to: '/settings/whatsapp', label: 'WhatsApp', group: 'Plataformas conectadas', permissionKey: 'settings_whatsapp' },
+  { to: '/settings/email', label: 'Correos', group: 'Plataformas conectadas', permissionKey: 'settings_email' },
   { to: '/settings/tracking', label: 'Rastreo Web', group: 'Datos y rastreo', permissionKey: 'settings_tracking' },
   { to: '/settings/domains', label: 'Dominios', group: 'Datos y rastreo', permissionKey: 'settings_domains' },
   { to: '/settings/costs', label: 'Costos', group: 'Datos y rastreo', permissionKey: 'settings_costs' },
@@ -41,7 +48,9 @@ export const settingsNavigation: SettingsNavItem[] = [
 
 export const settingsGroupOrder: SettingsNavGroup[] = [
   'Cuenta',
-  'Integraciones',
+  'Agenda',
+  'Cobros',
+  'Plataformas conectadas',
   'Datos y rastreo',
   'Personalización',
   'Avanzado'
