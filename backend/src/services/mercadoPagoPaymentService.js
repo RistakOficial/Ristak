@@ -1698,8 +1698,52 @@ function getVisiblePlanPaymentNumber(sequence, hasFirstPayment) {
   return safeSequence + (hasFirstPayment ? 1 : 0)
 }
 
-function buildPlanInstallmentPaymentTitle(baseTitle, sequence, hasFirstPayment) {
-  return `${baseTitle} - pago ${getVisiblePlanPaymentNumber(sequence, hasFirstPayment)}`
+function getPlanPaymentTotal(hasFirstPayment, installmentCount) {
+  const normalizedCount = Math.trunc(Number(installmentCount || 0))
+  const safeCount = Number.isFinite(normalizedCount) && normalizedCount > 0 ? normalizedCount : 0
+  const total = safeCount + (hasFirstPayment ? 1 : 0)
+  return total > 0 ? total : 1
+}
+
+function normalizePlanPaymentTotal(totalPayments, fallbackPaymentNumber = 1) {
+  const normalizedTotal = Math.trunc(Number(totalPayments || 0))
+  if (Number.isFinite(normalizedTotal) && normalizedTotal > 0) return normalizedTotal
+  return fallbackPaymentNumber > 0 ? fallbackPaymentNumber : 1
+}
+
+function buildPlanPaymentTitle(baseTitle, paymentNumber, totalPayments) {
+  const normalizedPaymentNumber = Math.trunc(Number(paymentNumber || 1))
+  const safePaymentNumber = Number.isFinite(normalizedPaymentNumber) && normalizedPaymentNumber > 0
+    ? normalizedPaymentNumber
+    : 1
+  const safeTotal = normalizePlanPaymentTotal(totalPayments, safePaymentNumber)
+  return `${cleanString(baseTitle) || 'Plan de pagos'} - Pago ${safePaymentNumber}/${safeTotal}`
+}
+
+function buildPlanFirstPaymentTitle(baseTitle, totalPayments) {
+  return buildPlanPaymentTitle(baseTitle, 1, totalPayments)
+}
+
+function buildPlanInstallmentPaymentTitle(baseTitle, sequence, hasFirstPayment, totalPayments) {
+  return buildPlanPaymentTitle(
+    baseTitle,
+    getVisiblePlanPaymentNumber(sequence, hasFirstPayment),
+    totalPayments
+  )
+}
+
+async function updatePlanPaymentTitle(paymentId, title, description = title) {
+  const cleanPaymentId = cleanString(paymentId)
+  if (!cleanPaymentId) return
+
+  await db.run(
+    `UPDATE payments
+     SET title = ?,
+         description = ?,
+         updated_at = CURRENT_TIMESTAMP
+     WHERE id = ?`,
+    [title, description, cleanPaymentId]
+  )
 }
 
 export async function updateMercadoPagoPaymentPlanSchedule(flowId, input = {}, { baseUrl = '' } = {}) {
@@ -1753,6 +1797,18 @@ export async function updateMercadoPagoPaymentPlanSchedule(flowId, input = {}, {
     [cleanFlowId]
   )
   const existingById = new Map((existingInstallments || []).map(installment => [installment.id, installment]))
+  const submittedExistingIdValues = new Set(
+    submittedInstallments
+      .map(installment => cleanString(installment?.id))
+      .filter(Boolean)
+  )
+  const lockedUnsubmittedInstallmentCount = (existingInstallments || []).filter((installment) => (
+    !submittedExistingIdValues.has(installment.id) && isMercadoPagoInstallmentLocked(installment)
+  )).length
+  const planPaymentTotalForNumbering = getPlanPaymentTotal(
+    hasFirstPaymentForNumbering,
+    submittedInstallments.length + lockedUnsubmittedInstallmentCount
+  )
   const submittedExistingIds = new Set()
   let nextSequence = 1
   let remainingTotal = 0
@@ -1764,6 +1820,11 @@ export async function updateMercadoPagoPaymentPlanSchedule(flowId, input = {}, {
     if (existing?.id) submittedExistingIds.add(existing.id)
 
     if (isMercadoPagoInstallmentLocked(existing)) {
+      await updatePlanPaymentTitle(
+        existing?.payment_id,
+        buildPlanInstallmentPaymentTitle(nextConcept, nextSequence, hasFirstPaymentForNumbering, planPaymentTotalForNumbering),
+        buildPlanInstallmentPaymentTitle(nextConcept, nextSequence, hasFirstPaymentForNumbering, planPaymentTotalForNumbering)
+      )
       remainingTotal += Number(existing.amount || 0)
       nextSequence += 1
       continue
@@ -1791,7 +1852,7 @@ export async function updateMercadoPagoPaymentPlanSchedule(flowId, input = {}, {
     const installmentId = existing?.id || createId('mp_installment')
     const paymentId = existing?.payment_id || createId('mp_plan_payment')
     const paymentMode = existing?.payment_mode || metadata.mercadoPagoMode || metadata.paymentMode || 'test'
-    const title = buildPlanInstallmentPaymentTitle(nextConcept, nextSequence, hasFirstPaymentForNumbering)
+    const title = buildPlanInstallmentPaymentTitle(nextConcept, nextSequence, hasFirstPaymentForNumbering, planPaymentTotalForNumbering)
 
     if (existing) {
       await db.run(
@@ -1891,6 +1952,11 @@ export async function updateMercadoPagoPaymentPlanSchedule(flowId, input = {}, {
     if (submittedExistingIds.has(existing.id)) continue
 
     if (isMercadoPagoInstallmentLocked(existing)) {
+      await updatePlanPaymentTitle(
+        existing.payment_id,
+        buildPlanInstallmentPaymentTitle(nextConcept, existing.sequence, hasFirstPaymentForNumbering, planPaymentTotalForNumbering),
+        buildPlanInstallmentPaymentTitle(nextConcept, existing.sequence, hasFirstPaymentForNumbering, planPaymentTotalForNumbering)
+      )
       remainingTotal += Number(existing.amount || 0)
       continue
     }
@@ -1918,6 +1984,7 @@ export async function updateMercadoPagoPaymentPlanSchedule(flowId, input = {}, {
   let firstPaymentAmount = Number(flow.first_payment_amount || 0)
   let firstPaymentDate = flow.first_payment_date || null
   let firstPaymentMethod = flow.first_payment_method || null
+  let firstPaymentPaymentIdForLabel = hasFirstPaymentForNumbering ? flow.first_payment_invoice_id : null
 
   if (hasFirstPaymentInput && !firstPaymentLocked) {
     const firstPaymentInputAmount = firstPayment
@@ -1930,6 +1997,7 @@ export async function updateMercadoPagoPaymentPlanSchedule(flowId, input = {}, {
       firstPaymentDate = null
       firstPaymentMethod = null
       firstPaymentLink = null
+      firstPaymentPaymentIdForLabel = null
 
       await db.run(
         `UPDATE payment_flows
@@ -1971,6 +2039,7 @@ export async function updateMercadoPagoPaymentPlanSchedule(flowId, input = {}, {
       let firstPaymentStatusNext = firstPaymentStatus && firstPaymentStatus !== 'not_required'
         ? firstPaymentStatus
         : normalizedFirstPaymentMethod.flowStatus
+      const firstPaymentTitle = buildPlanFirstPaymentTitle(nextConcept, planPaymentTotalForNumbering)
 
       if (!firstPaymentPaymentId) {
         const created = await insertPaymentRow({
@@ -1984,8 +2053,8 @@ export async function updateMercadoPagoPaymentPlanSchedule(flowId, input = {}, {
           currency: flow.currency || DEFAULT_CURRENCY,
           status: normalizedFirstPaymentMethod.createPreference ? 'sent' : firstPaymentStatusNext,
           paymentMethod: normalizedFirstPaymentMethod.paymentMethod,
-          title: `${nextConcept} - primer pago`,
-          description: `${nextConcept} - primer pago`,
+          title: firstPaymentTitle,
+          description: firstPaymentTitle,
           dueDate: firstPaymentDate,
           metadata: {
             mercadoPagoMode: metadata.mercadoPagoMode || metadata.paymentMode || 'test',
@@ -2005,6 +2074,7 @@ export async function updateMercadoPagoPaymentPlanSchedule(flowId, input = {}, {
         firstPaymentLink = created.paymentUrl || null
         firstPaymentStatusNext = normalizedFirstPaymentMethod.createPreference ? 'pending' : firstPaymentStatusNext
       }
+      firstPaymentPaymentIdForLabel = firstPaymentPaymentId
 
       await db.run(
         `UPDATE payment_flows
@@ -2054,6 +2124,11 @@ export async function updateMercadoPagoPaymentPlanSchedule(flowId, input = {}, {
         )
       }
     }
+  }
+
+  if (hasFirstPaymentForNumbering && firstPaymentPaymentIdForLabel) {
+    const firstPaymentTitle = buildPlanFirstPaymentTitle(nextConcept, planPaymentTotalForNumbering)
+    await updatePlanPaymentTitle(firstPaymentPaymentIdForLabel, firstPaymentTitle, firstPaymentTitle)
   }
 
   const nextTotal = Math.round((remainingTotal + Number(firstPaymentAmount || 0)) * 100) / 100
@@ -2287,6 +2362,9 @@ export async function createMercadoPagoPaymentPlan(input = {}, { baseUrl } = {})
     firstPaymentPaymentId: null,
     scheduledPayments: []
   }
+  const planPaymentTotal = getPlanPaymentTotal(plan.firstPayment.enabled, plan.remainingPayments.length)
+  const firstPaymentTitle = buildPlanFirstPaymentTitle(plan.title, planPaymentTotal)
+  const firstPaymentDescription = buildPlanFirstPaymentTitle(plan.description, planPaymentTotal)
 
   if (plan.firstPayment.enabled) {
     if (firstPaymentIsOffline) {
@@ -2296,8 +2374,8 @@ export async function createMercadoPagoPaymentPlan(input = {}, { baseUrl } = {})
         currency: plan.currency,
         status: 'paid',
         paymentMethod: plan.firstPayment.method,
-        title: `${plan.title} - primer pago`,
-        description: `${plan.description} - primer pago`,
+        title: firstPaymentTitle,
+        description: firstPaymentDescription,
         dueDate: plan.firstPayment.date,
         metadata: {
           source: 'mercadopago_payment_plan_first_offline',
@@ -2327,8 +2405,8 @@ export async function createMercadoPagoPaymentPlan(input = {}, { baseUrl } = {})
         phone: plan.contact.phone,
         amount: plan.firstPayment.amount,
         currency: plan.currency,
-        title: `${plan.title} - primer pago`,
-        description: `${plan.description} - primer pago`,
+        title: firstPaymentTitle,
+        description: firstPaymentDescription,
         dueDate: plan.firstPayment.date,
         source: 'mercadopago_payment_plan_first_link',
         lineItems: plan.lineItems,
@@ -2357,8 +2435,8 @@ export async function createMercadoPagoPaymentPlan(input = {}, { baseUrl } = {})
       currency: plan.currency,
       status: 'scheduled',
       paymentMethod: 'mercadopago_checkout',
-      title: buildPlanInstallmentPaymentTitle(plan.title, payment.sequence, plan.firstPayment.enabled),
-      description: buildPlanInstallmentPaymentTitle(plan.description, payment.sequence, plan.firstPayment.enabled),
+      title: buildPlanInstallmentPaymentTitle(plan.title, payment.sequence, plan.firstPayment.enabled, planPaymentTotal),
+      description: buildPlanInstallmentPaymentTitle(plan.description, payment.sequence, plan.firstPayment.enabled, planPaymentTotal),
       dueDate: payment.dueDate,
       metadata: {
         mercadoPagoMode: config.mode,

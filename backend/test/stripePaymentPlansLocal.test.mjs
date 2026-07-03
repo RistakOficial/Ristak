@@ -619,7 +619,7 @@ test('permite sumar un primer pago pendiente a un plan Stripe local', async () =
        WHERE id = ?`,
       [ids.flowId]
     )
-    const firstPayment = await db.get('SELECT amount, status, payment_method FROM payments WHERE id = ?', [flow.first_payment_invoice_id])
+    const firstPayment = await db.get('SELECT amount, status, payment_method, title, description FROM payments WHERE id = ?', [flow.first_payment_invoice_id])
     const remainingPayment = await db.get('SELECT title, description FROM payments WHERE id = ?', [ids.installmentPaymentId])
 
     assert.equal(flow.total_amount, 1100)
@@ -630,8 +630,65 @@ test('permite sumar un primer pago pendiente a un plan Stripe local', async () =
     assert.equal(firstPayment.amount, 125)
     assert.equal(firstPayment.status, 'pending')
     assert.equal(firstPayment.payment_method, 'stripe_pending_card')
-    assert.equal(remainingPayment.title, 'Plan local Stripe con primer pago - pago 2')
-    assert.equal(remainingPayment.description, 'Plan local Stripe con primer pago - pago 2')
+    assert.equal(firstPayment.title, 'Plan local Stripe con primer pago - Pago 1/2')
+    assert.equal(firstPayment.description, 'Plan local Stripe con primer pago - Pago 1/2')
+    assert.equal(remainingPayment.title, 'Plan local Stripe con primer pago - Pago 2/2')
+    assert.equal(remainingPayment.description, 'Plan local Stripe con primer pago - Pago 2/2')
+
+    const extendedRes = createResponse()
+    await updateInvoiceSchedule({
+      params: { scheduleId: ids.flowId },
+      body: {
+        payload: {
+          name: 'Plan local Stripe ampliado',
+          remainingFrequency: 'monthly',
+          firstPayment: {
+            amount: 125,
+            dueDate: '2098-12-01',
+            method: 'stripe_auto'
+          },
+          installments: [
+            {
+              id: ids.installmentId,
+              amount: 500,
+              dueDate: '2099-01-01',
+              method: 'stripe_auto'
+            },
+            {
+              amount: 475,
+              dueDate: '2099-02-01',
+              method: 'stripe_auto'
+            }
+          ]
+        }
+      }
+    }, extendedRes)
+
+    assert.equal(extendedRes.statusCode, 200)
+    assert.equal(extendedRes.payload.success, true)
+    assert.equal(extendedRes.payload.data.total, 1100)
+
+    const extendedFirstPayment = await db.get('SELECT title, description FROM payments WHERE id = ?', [flow.first_payment_invoice_id])
+    const extendedInstallments = await db.all(
+      `SELECT i.sequence, p.title, p.description
+       FROM installment_payments i
+       JOIN payments p ON p.id = i.payment_id
+       WHERE i.flow_id = ?
+         AND LOWER(COALESCE(i.status, 'pending')) NOT IN ('deleted', 'cancelled', 'canceled', 'void')
+       ORDER BY i.sequence ASC`,
+      [ids.flowId]
+    )
+
+    assert.equal(extendedFirstPayment.title, 'Plan local Stripe ampliado - Pago 1/3')
+    assert.equal(extendedFirstPayment.description, 'Plan local Stripe ampliado - Pago 1/3')
+    assert.deepEqual(extendedInstallments.map(row => row.title), [
+      'Plan local Stripe ampliado - Pago 2/3',
+      'Plan local Stripe ampliado - Pago 3/3'
+    ])
+    assert.deepEqual(extendedInstallments.map(row => row.description), [
+      'Plan local Stripe ampliado - Pago 2/3',
+      'Plan local Stripe ampliado - Pago 3/3'
+    ])
   } finally {
     await cleanup(ids)
   }

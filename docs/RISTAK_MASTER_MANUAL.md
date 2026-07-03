@@ -459,6 +459,14 @@ El modo de pasarelas puede ser `test` o `live`. Ese modo debe viajar con el pago
 en `payment_mode` o metadata equivalente para evitar mezclar pruebas con dinero
 real.
 
+### Planes de pago locales
+
+En Stripe, Conekta y Mercado Pago, el calendario editable muestra y guarda cada
+pago como `Pago N/M`, donde `N` es la posicion visible del pago y `M` es el total
+actual del plan. Si el calendario se edita, por ejemplo de 3 a 6 pagos, Ristak
+actualiza tambien los `title`/`description` de pagos existentes de `1/3` a `1/6`
+sin cambiar importes, fechas ni estados ya registrados.
+
 ### Moneda de cuenta
 
 La moneda default de Ristak siempre es la configurada en la cuenta. La fuente de

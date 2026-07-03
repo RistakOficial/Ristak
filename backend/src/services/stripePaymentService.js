@@ -3666,8 +3666,52 @@ function getVisiblePlanPaymentNumber(sequence, hasFirstPayment) {
   return safeSequence + (hasFirstPayment ? 1 : 0)
 }
 
-function buildPlanInstallmentPaymentTitle(baseTitle, sequence, hasFirstPayment) {
-  return `${baseTitle} - pago ${getVisiblePlanPaymentNumber(sequence, hasFirstPayment)}`
+function getPlanPaymentTotal(hasFirstPayment, installmentCount) {
+  const normalizedCount = Math.trunc(Number(installmentCount || 0))
+  const safeCount = Number.isFinite(normalizedCount) && normalizedCount > 0 ? normalizedCount : 0
+  const total = safeCount + (hasFirstPayment ? 1 : 0)
+  return total > 0 ? total : 1
+}
+
+function normalizePlanPaymentTotal(totalPayments, fallbackPaymentNumber = 1) {
+  const normalizedTotal = Math.trunc(Number(totalPayments || 0))
+  if (Number.isFinite(normalizedTotal) && normalizedTotal > 0) return normalizedTotal
+  return fallbackPaymentNumber > 0 ? fallbackPaymentNumber : 1
+}
+
+function buildPlanPaymentTitle(baseTitle, paymentNumber, totalPayments) {
+  const normalizedPaymentNumber = Math.trunc(Number(paymentNumber || 1))
+  const safePaymentNumber = Number.isFinite(normalizedPaymentNumber) && normalizedPaymentNumber > 0
+    ? normalizedPaymentNumber
+    : 1
+  const safeTotal = normalizePlanPaymentTotal(totalPayments, safePaymentNumber)
+  return `${cleanString(baseTitle) || 'Plan de pagos'} - Pago ${safePaymentNumber}/${safeTotal}`
+}
+
+function buildPlanFirstPaymentTitle(baseTitle, totalPayments) {
+  return buildPlanPaymentTitle(baseTitle, 1, totalPayments)
+}
+
+function buildPlanInstallmentPaymentTitle(baseTitle, sequence, hasFirstPayment, totalPayments) {
+  return buildPlanPaymentTitle(
+    baseTitle,
+    getVisiblePlanPaymentNumber(sequence, hasFirstPayment),
+    totalPayments
+  )
+}
+
+async function updatePlanPaymentTitle(paymentId, title, description = title) {
+  const cleanPaymentId = cleanString(paymentId)
+  if (!cleanPaymentId) return
+
+  await db.run(
+    `UPDATE payments
+     SET title = ?,
+         description = ?,
+         updated_at = CURRENT_TIMESTAMP
+     WHERE id = ?`,
+    [title, description, cleanPaymentId]
+  )
 }
 
 async function persistStripePaymentPlanMirror(flowId, extra = {}) {
@@ -3867,6 +3911,20 @@ export async function updateStripePaymentPlanSchedule(flowId, input = {}) {
     [cleanFlowId]
   )
   const existingById = new Map((existingInstallments || []).map(installment => [installment.id, installment]))
+  const submittedExistingIdValues = new Set(
+    submittedInstallments
+      .map(installment => cleanString(installment?.id))
+      .filter(Boolean)
+  )
+  const lockedUnsubmittedInstallmentCount = (existingInstallments || []).filter((installment) => {
+    if (submittedExistingIdValues.has(installment.id)) return false
+    const status = cleanString(installment.status || installment.payment_status).toLowerCase()
+    return LOCKED_PLAN_PAYMENT_STATUSES.has(status)
+  }).length
+  const planPaymentTotalForNumbering = getPlanPaymentTotal(
+    hasFirstPaymentForNumbering,
+    submittedInstallments.length + lockedUnsubmittedInstallmentCount
+  )
   const submittedExistingIds = new Set()
   const addedInstallments = []
   let nextSequence = 1
@@ -3880,6 +3938,11 @@ export async function updateStripePaymentPlanSchedule(flowId, input = {}) {
     if (existing?.id) submittedExistingIds.add(existing.id)
 
     if (LOCKED_PLAN_PAYMENT_STATUSES.has(existingStatus)) {
+      await updatePlanPaymentTitle(
+        existing?.payment_id,
+        buildPlanInstallmentPaymentTitle(nextConcept, nextSequence, hasFirstPaymentForNumbering, planPaymentTotalForNumbering),
+        buildPlanInstallmentPaymentTitle(nextConcept, nextSequence, hasFirstPaymentForNumbering, planPaymentTotalForNumbering)
+      )
       remainingTotal += Number(existing.amount || 0)
       nextSequence += 1
       continue
@@ -3918,7 +3981,7 @@ export async function updateStripePaymentPlanSchedule(flowId, input = {}) {
     const installmentId = existing?.id || createId('stripe_installment')
     const paymentId = existing?.payment_id || createId('stripe_plan_payment')
     const paymentMode = existing?.payment_mode || metadata.stripeMode || metadata.paymentMode || 'test'
-    const title = buildPlanInstallmentPaymentTitle(nextConcept, nextSequence, hasFirstPaymentForNumbering)
+    const title = buildPlanInstallmentPaymentTitle(nextConcept, nextSequence, hasFirstPaymentForNumbering, planPaymentTotalForNumbering)
     const notes = method.automatic
       ? hasSavedCard
         ? `Programado para cobrarse con ${flow.stripe_payment_method_label || 'tarjeta guardada'}`
@@ -4032,6 +4095,11 @@ export async function updateStripePaymentPlanSchedule(flowId, input = {}) {
     const existingStatus = cleanString(existing.status || existing.payment_status).toLowerCase()
 
     if (LOCKED_PLAN_PAYMENT_STATUSES.has(existingStatus)) {
+      await updatePlanPaymentTitle(
+        existing.payment_id,
+        buildPlanInstallmentPaymentTitle(nextConcept, existing.sequence, hasFirstPaymentForNumbering, planPaymentTotalForNumbering),
+        buildPlanInstallmentPaymentTitle(nextConcept, existing.sequence, hasFirstPaymentForNumbering, planPaymentTotalForNumbering)
+      )
       remainingTotal += Number(existing.amount || 0)
       continue
     }
@@ -4059,6 +4127,7 @@ export async function updateStripePaymentPlanSchedule(flowId, input = {}) {
   let firstPaymentAmount = Number(flow.first_payment_amount || 0)
   let firstPaymentDate = flow.first_payment_date || null
   let firstPaymentMethod = flow.first_payment_method || null
+  let firstPaymentPaymentIdForLabel = hasFirstPaymentForNumbering ? flow.first_payment_invoice_id : null
 
   if (hasFirstPaymentInput && !firstPaymentLocked) {
     const firstPaymentInputAmount = firstPayment
@@ -4070,6 +4139,7 @@ export async function updateStripePaymentPlanSchedule(flowId, input = {}) {
       firstPaymentAmount = 0
       firstPaymentDate = null
       firstPaymentMethod = null
+      firstPaymentPaymentIdForLabel = null
 
       await db.run(
         `UPDATE payment_flows
@@ -4112,6 +4182,7 @@ export async function updateStripePaymentPlanSchedule(flowId, input = {}) {
         ? firstPaymentStatus
         : normalizedFirstPaymentMethod.flowStatus
       let firstPaymentPaymentId = flow.first_payment_invoice_id || null
+      const firstPaymentTitle = buildPlanFirstPaymentTitle(nextConcept, planPaymentTotalForNumbering)
 
       if (!firstPaymentPaymentId) {
         firstPaymentPaymentId = await createStripePlanPaymentRow({
@@ -4125,8 +4196,8 @@ export async function updateStripePaymentPlanSchedule(flowId, input = {}) {
           currency: flow.currency || DEFAULT_CURRENCY,
           status: nextFirstPaymentStatus,
           paymentMethod: normalizedFirstPaymentMethod.paymentMethod,
-          title: `${nextConcept} - primer pago`,
-          description: `${nextConcept} - primer pago`,
+          title: firstPaymentTitle,
+          description: firstPaymentTitle,
           dueDate: firstPaymentDate,
           metadata: {
             stripeMode: metadata.stripeMode || metadata.paymentMode || 'test',
@@ -4141,6 +4212,7 @@ export async function updateStripePaymentPlanSchedule(flowId, input = {}) {
           }
         })
       }
+      firstPaymentPaymentIdForLabel = firstPaymentPaymentId
 
       await db.run(
         `UPDATE payment_flows
@@ -4188,6 +4260,11 @@ export async function updateStripePaymentPlanSchedule(flowId, input = {}) {
         )
       }
     }
+  }
+
+  if (hasFirstPaymentForNumbering && firstPaymentPaymentIdForLabel) {
+    const firstPaymentTitle = buildPlanFirstPaymentTitle(nextConcept, planPaymentTotalForNumbering)
+    await updatePlanPaymentTitle(firstPaymentPaymentIdForLabel, firstPaymentTitle, firstPaymentTitle)
   }
 
   const nextTotal = Math.round((remainingTotal + Number(firstPaymentAmount || 0)) * 100) / 100
@@ -4862,6 +4939,9 @@ export async function createStripePaymentPlan(input = {}, { baseUrl } = {}) {
     savedPaymentMethod: hasSavedCard ? mapStripePaymentMethod(savedMethod) : null,
     scheduledPayments: []
   }
+  const planPaymentTotal = getPlanPaymentTotal(plan.firstPayment.enabled, plan.remainingPayments.length)
+  const firstPaymentTitle = buildPlanFirstPaymentTitle(plan.title, planPaymentTotal)
+  const firstPaymentDescription = buildPlanFirstPaymentTitle(plan.description, planPaymentTotal)
 
   if (plan.firstPayment.enabled && firstPaymentIsOffline) {
     const paymentId = await createStripePlanPaymentRow({
@@ -4871,8 +4951,8 @@ export async function createStripePaymentPlan(input = {}, { baseUrl } = {}) {
       status: 'paid',
       paymentMethod: plan.firstPayment.method,
       provider: 'manual',
-      title: `${plan.title} - primer pago`,
-      description: `${plan.description} - primer pago`,
+      title: firstPaymentTitle,
+      description: firstPaymentDescription,
       dueDate: plan.firstPayment.date,
       metadata: {
         paymentMode: config.mode,
@@ -4908,8 +4988,8 @@ export async function createStripePaymentPlan(input = {}, { baseUrl } = {}) {
       currency: plan.currency,
       status: firstPaymentDueNow ? 'pending' : 'scheduled',
       paymentMethod: 'stripe_saved_card',
-      title: `${plan.title} - primer pago`,
-      description: `${plan.description} - primer pago`,
+      title: firstPaymentTitle,
+      description: firstPaymentDescription,
       dueDate: plan.firstPayment.date,
       metadata: {
         stripeMode: config.mode,
@@ -4965,8 +5045,8 @@ export async function createStripePaymentPlan(input = {}, { baseUrl } = {}) {
       phone: plan.contact.phone,
       amount: plan.firstPayment.amount,
       currency: plan.currency,
-      title: `${plan.title} - primer pago`,
-      description: `${plan.description} - primer pago`,
+      title: firstPaymentTitle,
+      description: firstPaymentDescription,
       dueDate: plan.firstPayment.date,
       source: 'stripe_payment_plan_first_link',
       lineItems: plan.lineItems,
@@ -5043,8 +5123,8 @@ export async function createStripePaymentPlan(input = {}, { baseUrl } = {}) {
       currency: plan.currency,
       status: hasSavedCard ? 'scheduled' : 'pending',
       paymentMethod: 'stripe_scheduled_card',
-      title: buildPlanInstallmentPaymentTitle(plan.title, payment.sequence, plan.firstPayment.enabled),
-      description: buildPlanInstallmentPaymentTitle(plan.description, payment.sequence, plan.firstPayment.enabled),
+      title: buildPlanInstallmentPaymentTitle(plan.title, payment.sequence, plan.firstPayment.enabled, planPaymentTotal),
+      description: buildPlanInstallmentPaymentTitle(plan.description, payment.sequence, plan.firstPayment.enabled, planPaymentTotal),
       dueDate: payment.dueDate,
       metadata: {
         stripeMode: config.mode,
