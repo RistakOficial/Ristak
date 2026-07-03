@@ -96,9 +96,12 @@ type PaymentSuccessExperienceProps = {
   description: string
   amountLabel?: string
   amountValue?: React.ReactNode
+  conceptTitle?: string
+  conceptDescription?: string
   details?: SuccessDetailRow[]
   businessDetails?: string[]
   action?: React.ReactNode
+  reference?: string
 }
 type MercadoPagoCardSubmitData = {
   token?: string
@@ -151,7 +154,10 @@ const STRIPE_SPANISH_COUNTRIES = new Set([
   'AR', 'BO', 'CL', 'CO', 'CR', 'CU', 'DO', 'EC', 'ES', 'GT', 'HN', 'MX', 'NI', 'PA', 'PE', 'PR', 'PY', 'SV', 'UY', 'VE'
 ])
 const PUBLIC_PAYMENT_LIGHT_MODE_FLAG = 'publicPaymentLightMode'
-const SUCCESS_CONFETTI_PIECES = Array.from({ length: 18 }, (_, index) => index)
+// Colores de marca para el confetti de la pantalla de éxito. Se leen en vivo desde
+// los tokens del tema del negocio, así el confetti siempre combina con su acento.
+const CONFETTI_COLOR_TOKENS = ['--accent', '--accent-2', '--pos', '--warn', '--info'] as const
+const CONFETTI_COLOR_FALLBACK = ['#2f6fed', '#4c8dff', '#1f9d57', '#c98a1e', '#1f8aa0']
 
 const printTemplateClassById: Record<PaymentInvoiceTemplateId, string> = {
   classic: 'printThemeClassic',
@@ -953,6 +959,169 @@ function buildMercadoPagoCardPayload(payment: PublicMercadoPagoPayment, formData
   }
 }
 
+function usePrefersReducedMotion() {
+  const [reduced, setReduced] = useState(false)
+  useEffect(() => {
+    if (typeof window === 'undefined' || typeof window.matchMedia !== 'function') return undefined
+    const query = window.matchMedia('(prefers-reduced-motion: reduce)')
+    const update = () => setReduced(query.matches)
+    update()
+    query.addEventListener?.('change', update)
+    return () => query.removeEventListener?.('change', update)
+  }, [])
+  return reduced
+}
+
+type ConfettiParticle = {
+  x: number
+  y: number
+  vx: number
+  vy: number
+  rot: number
+  vr: number
+  size: number
+  ratio: number
+  color: string
+  round: boolean
+  drift: number
+  phase: number
+}
+
+// Ráfaga de confetti dibujada en canvas con física real (cañones desde las
+// esquinas + lluvia superior, gravedad, fricción y aleteo). Sin dependencias
+// externas y se apaga sola tras la celebración. Respeta prefers-reduced-motion.
+const SuccessConfettiBurst: React.FC = () => {
+  const canvasRef = useRef<HTMLCanvasElement | null>(null)
+  const reducedMotion = usePrefersReducedMotion()
+
+  useEffect(() => {
+    if (reducedMotion) return undefined
+    const canvas = canvasRef.current
+    if (!canvas || typeof window === 'undefined') return undefined
+    const ctx = canvas.getContext('2d')
+    if (!ctx) return undefined
+
+    const dpr = Math.min(window.devicePixelRatio || 1, 2)
+    let width = window.innerWidth
+    let height = window.innerHeight
+    const resize = () => {
+      width = window.innerWidth
+      height = window.innerHeight
+      canvas.width = Math.floor(width * dpr)
+      canvas.height = Math.floor(height * dpr)
+      canvas.style.width = `${width}px`
+      canvas.style.height = `${height}px`
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
+    }
+    resize()
+
+    const colors = CONFETTI_COLOR_TOKENS.map((token) => readToken(token)).filter(Boolean)
+    if (!colors.length) colors.push(...CONFETTI_COLOR_FALLBACK)
+
+    const rand = (min: number, max: number) => min + Math.random() * (max - min)
+    const pick = () => colors[Math.floor(Math.random() * colors.length)]
+    const particles: ConfettiParticle[] = []
+
+    const launch = (originX: number, originY: number, angle: number, count: number) => {
+      for (let i = 0; i < count; i += 1) {
+        const dir = angle + rand(-0.45, 0.45)
+        const power = rand(10, 19)
+        particles.push({
+          x: originX,
+          y: originY,
+          vx: Math.cos(dir) * power,
+          vy: Math.sin(dir) * power,
+          rot: rand(0, Math.PI * 2),
+          vr: rand(-0.26, 0.26),
+          size: rand(7, 13),
+          ratio: rand(0.42, 1),
+          color: pick(),
+          round: Math.random() > 0.76,
+          drift: rand(-0.7, 0.7),
+          phase: rand(0, Math.PI * 2)
+        })
+      }
+    }
+
+    // Dos cañones que disparan hacia arriba y al centro desde las esquinas.
+    launch(width * 0.14, height * 0.62, -Math.PI / 2.35, 58)
+    launch(width * 0.86, height * 0.62, -Math.PI / 1.76, 58)
+    // Lluvia superior para llenar el cuadro.
+    for (let i = 0; i < 46; i += 1) {
+      particles.push({
+        x: rand(0, width),
+        y: rand(-height * 0.2, -12),
+        vx: rand(-1.6, 1.6),
+        vy: rand(2, 5.5),
+        rot: rand(0, Math.PI * 2),
+        vr: rand(-0.22, 0.22),
+        size: rand(6, 12),
+        ratio: rand(0.42, 1),
+        color: pick(),
+        round: Math.random() > 0.8,
+        drift: rand(-0.8, 0.8),
+        phase: rand(0, Math.PI * 2)
+      })
+    }
+
+    const gravity = 0.34
+    const drag = 0.99
+    const totalMs = 3000
+    const fadeStart = totalMs - 800
+    let raf = 0
+    let startTs = 0
+
+    const frame = (now: number) => {
+      if (!startTs) startTs = now
+      const elapsed = now - startTs
+      ctx.clearRect(0, 0, width, height)
+      const fade = elapsed > fadeStart ? Math.max(0, 1 - (elapsed - fadeStart) / 800) : 1
+      let onScreen = 0
+
+      for (const p of particles) {
+        p.vy += gravity
+        p.vx *= drag
+        p.vy *= drag
+        p.phase += 0.12
+        p.x += p.vx + Math.sin(p.phase) * p.drift
+        p.y += p.vy
+        p.rot += p.vr
+        if (p.y > height + 40 || fade <= 0) continue
+        onScreen += 1
+        ctx.save()
+        ctx.translate(p.x, p.y)
+        ctx.rotate(p.rot)
+        ctx.globalAlpha = fade
+        ctx.fillStyle = p.color
+        if (p.round) {
+          ctx.beginPath()
+          ctx.arc(0, 0, p.size * 0.5, 0, Math.PI * 2)
+          ctx.fill()
+        } else {
+          ctx.fillRect(-p.size * 0.5, -p.size * p.ratio * 0.5, p.size, p.size * p.ratio)
+        }
+        ctx.restore()
+      }
+
+      if (onScreen > 0 && elapsed < totalMs) {
+        raf = window.requestAnimationFrame(frame)
+      } else {
+        ctx.clearRect(0, 0, width, height)
+      }
+    }
+
+    raf = window.requestAnimationFrame(frame)
+    window.addEventListener('resize', resize)
+    return () => {
+      window.cancelAnimationFrame(raf)
+      window.removeEventListener('resize', resize)
+    }
+  }, [reducedMotion])
+
+  if (reducedMotion) return null
+  return <canvas ref={canvasRef} className={styles.confettiCanvas} aria-hidden="true" />
+}
+
 const PaymentSuccessExperience: React.FC<PaymentSuccessExperienceProps> = ({
   providerLogo,
   providerLabel,
@@ -960,29 +1129,29 @@ const PaymentSuccessExperience: React.FC<PaymentSuccessExperienceProps> = ({
   description,
   amountLabel,
   amountValue,
+  conceptTitle,
+  conceptDescription,
   details = [],
   businessDetails = [],
-  action
+  action,
+  reference
 }) => {
   const visibleBusinessDetails = businessDetails.filter(Boolean)
 
   return (
     <div className={styles.successExperience}>
-      <div className={styles.successConfetti} aria-hidden="true">
-        {SUCCESS_CONFETTI_PIECES.map((piece) => (
-          <span key={piece} />
-        ))}
-      </div>
+      <SuccessConfettiBurst />
 
       <div className={styles.successHero}>
         <div className={styles.successSeal} aria-hidden="true">
           <span />
-          <CheckCircle2 size={42} />
+          <span />
+          <CheckCircle2 size={40} strokeWidth={2.4} />
         </div>
 
         <div className={styles.successHeroCopy}>
           <span className={styles.successKicker}>
-            <Sparkles size={14} />
+            <Sparkles size={13} />
             Pago exitoso
           </span>
           <h3>{title}</h3>
@@ -994,13 +1163,20 @@ const PaymentSuccessExperience: React.FC<PaymentSuccessExperienceProps> = ({
         <div className={styles.successAmount}>
           <span>{amountLabel || 'Total pagado'}</span>
           <strong>{amountValue}</strong>
+          <div className={styles.successProvider}>
+            <PaymentPlatformLogo platform={providerLogo} size="sm" decorative />
+            <span>{providerLabel}</span>
+          </div>
         </div>
       )}
 
-      <div className={styles.successProvider}>
-        <PaymentPlatformLogo platform={providerLogo} size="md" decorative />
-        <span>{providerLabel}</span>
-      </div>
+      {conceptTitle && (
+        <div className={styles.successConcept}>
+          <span className={styles.eyebrow}>Concepto</span>
+          <strong>{conceptTitle}</strong>
+          {conceptDescription && <p>{conceptDescription}</p>}
+        </div>
+      )}
 
       {details.length > 0 && (
         <div className={styles.successRows}>
@@ -1019,11 +1195,18 @@ const PaymentSuccessExperience: React.FC<PaymentSuccessExperienceProps> = ({
         </div>
       )}
 
-      {visibleBusinessDetails.length > 0 && (
-        <div className={styles.successBusinessInfo}>
-          {visibleBusinessDetails.map((detail, index) => (
-            <span key={`${detail}-${index}`}>{detail}</span>
-          ))}
+      {(visibleBusinessDetails.length > 0 || reference) && (
+        <div className={styles.successFooter}>
+          {visibleBusinessDetails.length > 0 && (
+            <div className={styles.successBusinessInfo}>
+              {visibleBusinessDetails.map((detail, index) => (
+                <span key={`${detail}-${index}`}>{detail}</span>
+              ))}
+            </div>
+          )}
+          {reference && (
+            <span className={styles.successReference}>Referencia {reference}</span>
+          )}
         </div>
       )}
     </div>
@@ -1802,7 +1985,7 @@ export const PublicPaymentGatewayReturn: React.FC = () => {
 
   return (
     <main className={styles.page}>
-      <div className={`${styles.shell} ${styles.gatewayReturnShell}`}>
+      <div className={styles.shell}>
         <header className={styles.header}>
           <div className={styles.brandLockup}>
             <div>
@@ -1816,7 +1999,7 @@ export const PublicPaymentGatewayReturn: React.FC = () => {
           </Badge>
         </header>
 
-        <section className={`${styles.payPanel} ${styles.gatewayReturnPanel}`} aria-label="Resultado del checkout">
+        <section className={styles.successStage} aria-label="Resultado del checkout">
           {isSuccess ? (
             <PaymentSuccessExperience
               providerLogo={provider.logo}
@@ -1830,17 +2013,19 @@ export const PublicPaymentGatewayReturn: React.FC = () => {
               ]}
             />
           ) : (
-            <div className={styles.gatewayReturnNotice}>
-              <div className={styles.gatewayReturnIcon} aria-hidden="true">
-                {isPending ? <ShieldCheck size={34} /> : <AlertCircle size={34} />}
-              </div>
-              <div className={styles.gatewayReturnCopy}>
-                <span className={styles.successKicker}>
-                  <PaymentPlatformLogo platform={provider.logo} size="sm" decorative />
-                  {provider.label}
-                </span>
-                <h1>{title}</h1>
-                <p>{description}</p>
+            <div className={styles.noticeCard}>
+              <div className={styles.gatewayReturnNotice}>
+                <div className={styles.gatewayReturnIcon} aria-hidden="true">
+                  {isPending ? <ShieldCheck size={34} /> : <AlertCircle size={34} />}
+                </div>
+                <div className={styles.gatewayReturnCopy}>
+                  <span className={styles.eyebrow}>
+                    <PaymentPlatformLogo platform={provider.logo} size="sm" decorative />
+                    {provider.label}
+                  </span>
+                  <h1>{title}</h1>
+                  <p>{description}</p>
+                </div>
               </div>
             </div>
           )}
@@ -2153,31 +2338,14 @@ export const PublicPayment: React.FC = () => {
       : []),
     {
       label: 'Fecha de pago',
-      value: formatDate(payment.paidAt || new Date().toISOString())
-    },
-    {
-      label: 'Vencimiento',
-      value: formatDate(payment.dueDate)
+      value: formatDate(payment.paidAt || new Date().toISOString(), publicTimezone)
     },
     ...(hasTaxBreakdown
       ? [{
           label: 'Impuesto',
           value: formatCurrency(taxAmount, payment.currency)
         }]
-      : []),
-    {
-      label: 'Pasarela',
-      value: (
-        <span className={styles.providerValue}>
-          <PaymentPlatformLogo platform={providerLogo} size="sm" decorative />
-          <span>{providerLabel} · {paymentModeLabel}</span>
-        </span>
-      )
-    },
-    {
-      label: 'Referencia',
-      value: payment.publicPaymentId
-    }
+      : [])
   ]
   const successBusinessDetails = showBusinessInfo && receiptSettings
     ? [
@@ -2207,6 +2375,37 @@ export const PublicPayment: React.FC = () => {
           </Badge>
         </header>
 
+        {isPaid ? (
+          <section className={styles.successStage} aria-label="Comprobante del pago">
+            <PaymentSuccessExperience
+              providerLogo={providerLogo}
+              providerLabel={`${providerLabel} · ${paymentModeLabel}`}
+              title={isSubscriptionStart ? 'Suscripción autorizada' : '¡Pago confirmado!'}
+              description={isSubscriptionStart
+                ? 'Tu suscripción quedó autorizada correctamente. Ya puedes cerrar esta ventana con tranquilidad.'
+                : 'Recibimos tu pago y quedó confirmado. Guarda o descarga tu comprobante cuando lo necesites.'}
+              amountLabel={isSubscriptionStart ? 'Monto autorizado' : 'Total pagado'}
+              amountValue={isCardSetupPlan && Number(totalAmount || 0) <= 0
+                ? 'Sin cargo inmediato'
+                : formatCurrency(totalAmount, payment.currency)}
+              conceptTitle={payment.title || 'Pago'}
+              conceptDescription={payment.description || undefined}
+              details={successDetails}
+              businessDetails={successBusinessDetails}
+              reference={payment.publicPaymentId}
+              action={(
+                <Button
+                  type="button"
+                  variant="secondary"
+                  leftIcon={<Download size={16} />}
+                  onClick={handleDownloadPdf}
+                >
+                  Descargar comprobante PDF
+                </Button>
+              )}
+            />
+          </section>
+        ) : (
         <section className={styles.checkoutLayout}>
           <section className={styles.summaryPane} aria-label="Resumen del pago">
             <div className={styles.summaryIntro}>
@@ -2406,30 +2605,7 @@ export const PublicPayment: React.FC = () => {
               </p>
             )}
 
-            {isPaid ? (
-              <PaymentSuccessExperience
-                providerLogo={providerLogo}
-                providerLabel={`${providerLabel} · ${paymentModeLabel}`}
-                title={isSubscriptionStart ? 'Suscripción autorizada' : 'Pago confirmado'}
-                description={isSubscriptionStart
-                  ? 'Tu suscripción quedó autorizada correctamente. Ya puedes cerrar esta ventana con tranquilidad.'
-                  : 'Tu pago quedó recibido y confirmado. Puedes cerrar esta ventana o descargar tu comprobante cuando lo necesites.'}
-                amountLabel={isSubscriptionStart ? 'Monto autorizado' : 'Total pagado'}
-                amountValue={formatCurrency(totalAmount, payment.currency)}
-                details={successDetails}
-                businessDetails={successBusinessDetails}
-                action={(
-                  <Button
-                    type="button"
-                    variant="secondary"
-                    leftIcon={<Download size={16} />}
-                    onClick={handleDownloadPdf}
-                  >
-                    Descargar PDF
-                  </Button>
-                )}
-              />
-            ) : isClosed ? (
+            {isClosed ? (
               <p className={`${styles.message} ${styles.messageError}`}>
                 <AlertCircle size={16} />
                 <span>Este link ya no está disponible para cobrar.</span>
@@ -2500,6 +2676,7 @@ export const PublicPayment: React.FC = () => {
             )}
           </section>
         </section>
+        )}
       </div>
 
       {isPaid && (
