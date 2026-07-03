@@ -12634,9 +12634,7 @@ function buildVideoActionsRuntimeScript(blocks = [], options = {}) {
       const redirectTo = action => {
         const targetUrl = String(action.targetUrl || action.redirectUrl || '');
         if (!targetUrl) return;
-        // Deja salir el evento de navegador (video-action) antes de navegar.
-        const go = function(){ window.location.href = preserveUrl(targetUrl); };
-        if (typeof window.ristakMetaAwaitLastEvent === 'function') { window.ristakMetaAwaitLastEvent(go); } else { go(); }
+        window.location.href = preserveUrl(targetUrl);
       };
       const waitForFormCompletion = (state, action) => {
         if (action.pauseUntilComplete === false || state.completedForms.has(action.id) || state.blockedForms.has(action.id)) return;
@@ -13849,8 +13847,7 @@ function buildVideoFormGateRuntimeScript(blocks = []) {
         };
         const applyCompletionAction = (submission = {}, options = {}) => {
           if (completionAction === 'redirect' && completionRedirectUrl && options.remembered !== true) {
-            const go = function(){ window.location.href = preserveUrl(completionRedirectUrl); };
-            if (typeof window.ristakMetaAwaitLastEvent === 'function') { window.ristakMetaAwaitLastEvent(go); } else { go(); }
+            window.location.href = preserveUrl(completionRedirectUrl);
             return true;
           }
           if (completionAction === 'show_targets') {
@@ -13868,9 +13865,7 @@ function buildVideoFormGateRuntimeScript(blocks = []) {
         };
         const redirectToRule = rule => {
           const targetUrl = getRuleRedirectUrl(rule);
-          if (!targetUrl) return;
-          const go = function(){ window.location.href = targetUrl; };
-          if (typeof window.ristakMetaAwaitLastEvent === 'function') { window.ristakMetaAwaitLastEvent(go); } else { go(); }
+          if (targetUrl) window.location.href = targetUrl;
         };
         initGateContactPrefill();
         const storedCompletion = readStoredGateCompletion(gate);
@@ -13963,8 +13958,7 @@ function buildVideoFormGateRuntimeScript(blocks = []) {
               return true;
             }
             if (completionAction === 'continue_video' && submission.redirectUrl) {
-              const go = function(){ window.location.href = preserveUrl(submission.redirectUrl); };
-              if (typeof window.ristakMetaAwaitLastEvent === 'function') { window.ristakMetaAwaitLastEvent(go); } else { go(); }
+              window.location.href = preserveUrl(submission.redirectUrl);
               return true;
             }
             applyCompletionAction(submission);
@@ -19214,6 +19208,28 @@ function buildMetaPixelBaseScript(pixelId) {
     (window, document,'script','https://connect.facebook.net/en_US/fbevents.js');
     fbq('init', ${JSON.stringify(pixelId)});
     fbq('track', 'PageView');
+    (function(){
+      var KEY = 'rstk_meta_deferred';
+      var STD = ['Lead','Schedule','Purchase','ViewContent','CompleteRegistration','Contact'];
+      // Guarda un evento de conversión para re-emitirlo en la página siguiente,
+      // por si un redirect canceló su beacon en la página donde ocurrió la acción.
+      window.ristakMetaStashDeferredEvent = function(name, id, data){
+        try { sessionStorage.setItem(KEY, JSON.stringify({ name: name, id: id, data: data || {}, ts: Date.now() })); } catch (e) {}
+      };
+      // Al cargar la página: si venimos de una conversión reciente, la re-emitimos
+      // con el MISMO event_id (Meta deduplica -> cuenta una sola vez). One-shot + 90s.
+      try {
+        var raw = sessionStorage.getItem(KEY);
+        if (raw) {
+          sessionStorage.removeItem(KEY);
+          var ev = JSON.parse(raw);
+          if (ev && ev.id && ev.name && (Date.now() - (ev.ts || 0)) < 90000 && window.fbq) {
+            var m = STD.indexOf(ev.name) >= 0 ? 'track' : 'trackCustom';
+            window.fbq(m, ev.name, ev.data || {}, { eventID: ev.id });
+          }
+        }
+      } catch (e) {}
+    })();
   </script>
   <noscript><img height="1" width="1" style="display:none" src="https://www.facebook.com/tr?id=${encodeURIComponent(pixelId)}&ev=PageView&noscript=1"/></noscript>`
 }
@@ -19311,18 +19327,6 @@ async function buildMetaPixelSnippet(site, trackingEnabled, activePage = null, p
         return value === true || String(value || '').toLowerCase() === 'true' || String(value || '') === '1';
       });
     };
-    // Espera (acotada) a que el ÚLTIMO evento de navegador haya tenido margen para
-    // salir antes de navegar. fbq no expone un callback confiable, así que el tope
-    // de tiempo es la garantía: nunca cuelga el redirect. Si no hay pixel/evento
-    // pendiente, ejecuta de inmediato.
-    window.ristakMetaAwaitLastEvent = window.ristakMetaAwaitLastEvent || function(cb) {
-      const run = typeof cb === 'function' ? cb : function(){};
-      try {
-        const p = window.__ristakMetaPendingEvent;
-        if (p && typeof p.then === 'function') { p.then(run, run); return; }
-      } catch (e) {}
-      run();
-    };
     window.ristakMetaTrackSiteEvent = function(eventName, eventId, customData) {
       if (!window.fbq) return;
       const normalizedEventName = eventName || ${JSON.stringify(submitEventName)};
@@ -19334,15 +19338,18 @@ async function buildMetaPixelSnippet(site, trackingEnabled, activePage = null, p
         site_name: ${JSON.stringify(site.name || '')},
         content_name: ${JSON.stringify(site.title || site.name || '')}
       }, customData || {});
-      // Damos al beacon del pixel un margen ACOTADO (tope duro 600ms) para salir
-      // antes de un posible redirect; si fbq respeta eventCallback, resolvemos antes.
-      let settled = false;
-      let resolveFlush = function(){};
-      window.__ristakMetaPendingEvent = new Promise(function(res){ resolveFlush = res; });
-      const finishFlush = function(){ if (settled) return; settled = true; try { resolveFlush(); } catch (e) {} };
-      setTimeout(finishFlush, 600);
-      const options = Object.assign(eventId ? { eventID: eventId } : {}, { eventCallback: finishFlush });
-      window.fbq(method, normalizedEventName, data, options);
+      const options = eventId ? { eventID: eventId } : undefined;
+      if (options) {
+        window.fbq(method, normalizedEventName, data, options);
+      } else {
+        window.fbq(method, normalizedEventName, data);
+      }
+      // Diferido: guarda el evento para RE-disparalo al cargar la página siguiente
+      // (si un redirect canceló este beacon). Mismo event_id => Meta deduplica y
+      // cuenta una sola vez. Solo con event_id (la llave de dedup).
+      if (eventId && window.ristakMetaStashDeferredEvent) {
+        window.ristakMetaStashDeferredEvent(normalizedEventName, eventId, data);
+      }
     };
     window.ristakMetaTrackSiteSubmit = function(eventId, customData, eventName) {
       const submitCustomData = Object.assign({}, ${scriptJson(submitConfiguredCustomData)}, customData || {});
@@ -19497,6 +19504,10 @@ export async function buildCalendarMetaPixelSnippet(calendar = {}, { trackingEna
         window.fbq(method, normalizedEventName, data, options);
       } else {
         window.fbq(method, normalizedEventName, data);
+      }
+      // Diferido: re-emite en la página siguiente con el mismo event_id (dedup).
+      if (eventId && window.ristakMetaStashDeferredEvent) {
+        window.ristakMetaStashDeferredEvent(normalizedEventName, eventId, data);
       }
     };
   </script>`
@@ -22273,11 +22284,7 @@ export async function renderPublicSiteHtml(site, { pageId, pagePath, trackingEna
           if (!targetUrl) return false;
           isNavigatingAway = true;
           pauseMediaIn(document);
-          // Espera (acotada) a que el evento de navegador del submit salga antes de
-          // cambiar de página, para no cancelar el beacon del pixel y que deduplique
-          // con el evento de servidor. Si no hay pixel, navega de inmediato.
-          const go = function(){ window.location.href = preserveUrl(targetUrl); };
-          if (typeof window.ristakMetaAwaitLastEvent === 'function') { window.ristakMetaAwaitLastEvent(go); } else { go(); }
+          window.location.href = preserveUrl(targetUrl);
           return true;
         };
 
