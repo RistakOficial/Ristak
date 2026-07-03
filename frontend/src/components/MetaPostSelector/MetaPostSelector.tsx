@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 import { Check, ChevronDown, Image as ImageIcon, RefreshCw } from 'lucide-react'
 import { SearchField } from '../common/SearchField/SearchField'
+import { useAnchoredPortal } from '@/hooks/useAnchoredPortal'
 import { whatsappApiService, type MetaSocialPost } from '../../services/whatsappApiService'
 import styles from './MetaPostSelector.module.css'
 
@@ -37,6 +39,9 @@ export function MetaPostSelector({
   const [offset, setOffset] = useState(0)
   const [hasMore, setHasMore] = useState(false)
   const rootRef = useRef<HTMLDivElement>(null)
+  const panelRef = useRef<HTMLDivElement>(null)
+  // Portal: el panel se monta en <body> y siempre queda por delante (sin recortes).
+  const { style: portalStyle, placement } = useAnchoredPortal(rootRef, open, { minWidth: 320, maxHeight: 360 })
 
   useEffect(() => {
     const t = window.setTimeout(() => setDebounced(search.trim()), 300)
@@ -75,7 +80,9 @@ export function MetaPostSelector({
   useEffect(() => {
     if (!open) return
     const onDoc = (event: MouseEvent) => {
-      if (rootRef.current && !rootRef.current.contains(event.target as Node)) setOpen(false)
+      const target = event.target as Node
+      if (rootRef.current?.contains(target) || panelRef.current?.contains(target)) return
+      setOpen(false)
     }
     document.addEventListener('mousedown', onDoc)
     return () => document.removeEventListener('mousedown', onDoc)
@@ -107,8 +114,8 @@ export function MetaPostSelector({
         <ChevronDown size={16} className={styles.chevron} aria-hidden="true" />
       </button>
 
-      {open && (
-        <div className={styles.panel} role="listbox">
+      {open && createPortal(
+        <div className={styles.panel} role="listbox" ref={panelRef} style={portalStyle} data-placement={placement}>
           <div className={styles.searchRow}>
             <SearchField
               value={search}
@@ -168,7 +175,8 @@ export function MetaPostSelector({
               </button>
             )}
           </div>
-        </div>
+        </div>,
+        document.body
       )}
     </div>
   )

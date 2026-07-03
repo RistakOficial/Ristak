@@ -51,15 +51,10 @@
   color: var(--text-mute);
 }
 
+/* position/top/left/width/z-index los aplica useAnchoredPortal (portal en <body>). */
 .panel {
-  position: absolute;
-  z-index: 40;
-  top: calc(100% + 6px);
-  left: 0;
-  right: 0;
   display: flex;
   flex-direction: column;
-  max-height: 340px;
   border: 1px solid var(--border);
   border-radius: var(--radius-card);
   background: var(--surface);
