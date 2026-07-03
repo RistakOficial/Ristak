@@ -1269,13 +1269,184 @@ async function upsertMetaSocialContact({ contactId, socialMessage, profile }) {
   return socialContactId
 }
 
-async function upsertMetaSocialMessage({ socialContactId, contactId, socialMessage }) {
+// ─── Rehospedaje de media entrante de Messenger/Instagram ───
+// Las URLs de adjuntos que manda Meta en el webhook son temporales y caducan (CDN
+// firmado de Facebook/Instagram). Si las guardáramos tal cual, el historial de fotos/
+// audios/videos/documentos se "pudre": al abrir un chat viejo el archivo ya no carga.
+// Por eso descargamos el binario y lo rehospedamos en nuestro storage (Bunny, módulo
+// 'chat'), igual que hacemos con WhatsApp Cloud API y con el canal QR.
+
+const SOCIAL_MEDIA_DOWNLOAD_TIMEOUT_MS = 20000
+
+function isMetaHostedMediaUrl(url) {
+  const u = cleanString(url).toLowerCase()
+  if (!u) return false
+  // Dominios de CDN de Meta cuyas URLs caducan. Cualquier otra (p. ej. nuestro Bunny)
+  // se considera ya persistida y no se vuelve a descargar.
+  return /(fbcdn\.net|fbsbx\.com|lookaside\.|cdninstagram\.com|scontent)/.test(u)
+}
+
+function normalizeSocialMediaType(type) {
+  const t = cleanString(type).toLowerCase()
+  if (t === 'image') return 'image'
+  if (t === 'video') return 'video'
+  if (t === 'audio') return 'audio'
+  if (t === 'file' || t === 'document') return 'document'
+  return 'document'
+}
+
+function getSocialMediaLimitBytes(mediaType) {
+  switch (normalizeSocialMediaType(mediaType)) {
+    case 'image': return Number(process.env.META_SOCIAL_IMAGE_MAX_BYTES || 25 * 1024 * 1024)
+    case 'video': return Number(process.env.META_SOCIAL_VIDEO_MAX_BYTES || 64 * 1024 * 1024)
+    case 'audio': return Number(process.env.META_SOCIAL_AUDIO_MAX_BYTES || 25 * 1024 * 1024)
+    default: return Number(process.env.META_SOCIAL_DOCUMENT_MAX_BYTES || 50 * 1024 * 1024)
+  }
+}
+
+const SOCIAL_EXTENSION_BY_MIME = {
+  'image/jpeg': 'jpg', 'image/png': 'png', 'image/gif': 'gif', 'image/webp': 'webp',
+  'video/mp4': 'mp4', 'video/quicktime': 'mov', 'video/webm': 'webm',
+  'audio/mpeg': 'mp3', 'audio/mp4': 'm4a', 'audio/aac': 'aac', 'audio/ogg': 'ogg', 'audio/wav': 'wav',
+  'application/pdf': 'pdf'
+}
+
+function fallbackSocialMime(mediaType) {
+  switch (normalizeSocialMediaType(mediaType)) {
+    case 'image': return 'image/jpeg'
+    case 'video': return 'video/mp4'
+    case 'audio': return 'audio/mpeg'
+    default: return 'application/octet-stream'
+  }
+}
+
+function buildSocialMediaFilename({ platform, messageType, mimeType, seed }) {
+  const type = normalizeSocialMediaType(messageType)
+  const extension = SOCIAL_EXTENSION_BY_MIME[cleanMimeType(mimeType)] ||
+    (type === 'image' ? 'jpg' : type === 'video' ? 'mp4' : type === 'audio' ? 'mp3' : 'bin')
+  const suffix = cleanString(seed).replace(/[^a-z0-9]/gi, '').slice(-12) || String(Date.now())
+  return `${cleanString(platform) || 'meta'}-${type}-${suffix}.${extension}`
+}
+
+function cleanMimeType(value) {
+  return cleanString(value).split(';')[0].toLowerCase()
+}
+
+async function downloadMetaAttachmentBuffer(url, token) {
+  const controller = new AbortController()
+  const timer = setTimeout(() => controller.abort(), SOCIAL_MEDIA_DOWNLOAD_TIMEOUT_MS)
+  try {
+    let response = await fetch(url, { redirect: 'follow', signal: controller.signal })
+    if ((response.status === 401 || response.status === 403) && cleanString(token)) {
+      response = await fetch(url, {
+        redirect: 'follow',
+        signal: controller.signal,
+        headers: { Authorization: `Bearer ${cleanString(token)}` }
+      })
+    }
+    if (!response.ok) throw new Error(`Meta respondió ${response.status} al descargar el adjunto`)
+    const buffer = Buffer.from(await response.arrayBuffer())
+    const mimeType = cleanMimeType(response.headers.get('content-type'))
+    return { buffer, mimeType }
+  } finally {
+    clearTimeout(timer)
+  }
+}
+
+async function defaultSocialMediaUploader(input) {
+  const { uploadMediaAsset } = await import('./mediaStorageService.js')
+  return uploadMediaAsset(input)
+}
+
+// Transporte inyectable (descarga + subida) para poder probar el rehospedaje sin red ni
+// Bunny reales. En producción usa node-fetch + uploadMediaAsset.
+let socialMediaDownloader = downloadMetaAttachmentBuffer
+let socialMediaUploader = defaultSocialMediaUploader
+
+export function setMetaSocialMediaTransportForTest(overrides = {}) {
+  socialMediaDownloader = typeof overrides.downloader === 'function' ? overrides.downloader : downloadMetaAttachmentBuffer
+  socialMediaUploader = typeof overrides.uploader === 'function' ? overrides.uploader : defaultSocialMediaUploader
+}
+
+export { isMetaHostedMediaUrl, normalizeSocialMediaType }
+
+// Descarga la media de Meta y la sube a Bunny. Devuelve { mediaUrl, mediaMimeType } con
+// la URL persistida, o null si no aplica / falla (en cuyo caso se conserva la URL de Meta).
+export async function rehostMetaSocialMedia({ socialMessage, config, existingMediaUrl = '' }) {
+  const sourceUrl = cleanString(socialMessage.mediaUrl)
+  if (!sourceUrl || !isMetaHostedMediaUrl(sourceUrl)) return null
+
+  // Idempotencia: si ya guardamos una versión rehospedada, reutilizarla sin re-descargar
+  // (p. ej. si el webhook reenvía el mismo mensaje).
+  if (existingMediaUrl && !isMetaHostedMediaUrl(existingMediaUrl)) {
+    return { mediaUrl: existingMediaUrl, mediaMimeType: cleanString(socialMessage.mediaMimeType) }
+  }
+
+  const messageType = normalizeSocialMediaType(socialMessage.messageType)
+  const limitBytes = getSocialMediaLimitBytes(messageType)
+
+  const token = await resolveMetaPageTokenSafe(config)
+  const { buffer, mimeType: downloadedMime } = await socialMediaDownloader(sourceUrl, token)
+  if (!buffer?.length) throw new Error('Meta devolvió un adjunto vacío')
+  if (buffer.length > limitBytes) {
+    throw new Error(`El adjunto excede el tamaño máximo permitido (${buffer.length} > ${limitBytes})`)
+  }
+
+  const mimeType = cleanString(socialMessage.mediaMimeType) || downloadedMime || fallbackSocialMime(messageType)
+  const filename = buildSocialMediaFilename({
+    platform: socialMessage.platform,
+    messageType,
+    mimeType,
+    seed: socialMessage.metaMessageId || sourceUrl
+  })
+
+  const asset = await socialMediaUploader({
+    buffer,
+    mimeType,
+    filename,
+    module: 'chat',
+    isPublic: true,
+    skipCompression: true,
+    metadata: {
+      source: 'meta_social_inbound_media',
+      platform: socialMessage.platform,
+      metaMessageId: cleanString(socialMessage.metaMessageId),
+      whatsappMessageType: messageType
+    }
+  })
+
+  return {
+    mediaUrl: asset.publicUrl,
+    mediaMimeType: asset.mimeType || mimeType
+  }
+}
+
+async function upsertMetaSocialMessage({ socialContactId, contactId, socialMessage, config = null }) {
   const messageId = hashId(
     'meta_social_msg',
     socialMessage.metaMessageId ||
       `${socialMessage.platform}:${socialMessage.senderId}:${socialMessage.messageTimestamp}:${socialMessage.messageText}:${socialMessage.messageType}`
   )
-  const existing = await db.get('SELECT id FROM meta_social_messages WHERE id = ?', [messageId]).catch(() => null)
+  const existing = await db.get('SELECT id, media_url FROM meta_social_messages WHERE id = ?', [messageId]).catch(() => null)
+
+  // Rehospeda la media temporal de Meta en nuestro storage para que el historial no
+  // caduque. Falla suave: si no se puede, conservamos la URL de Meta (comportamiento previo).
+  let resolvedMediaUrl = socialMessage.mediaUrl || null
+  let resolvedMediaMime = socialMessage.mediaMimeType || null
+  if (cleanString(socialMessage.mediaUrl)) {
+    const rehosted = await rehostMetaSocialMedia({
+      socialMessage,
+      config,
+      existingMediaUrl: cleanString(existing?.media_url)
+    }).catch(error => {
+      logger.warn(`[Meta social] No se pudo rehospedar la media de ${socialMessage.platform} ${messageId}: ${error.message}`)
+      return null
+    })
+    if (rehosted?.mediaUrl) {
+      resolvedMediaUrl = rehosted.mediaUrl
+      resolvedMediaMime = rehosted.mediaMimeType || resolvedMediaMime
+    }
+  }
 
   await db.run(`
     INSERT INTO meta_social_messages (
@@ -1320,8 +1491,8 @@ async function upsertMetaSocialMessage({ socialContactId, contactId, socialMessa
     socialMessage.direction,
     socialMessage.messageType || 'message',
     socialMessage.messageText || null,
-    socialMessage.mediaUrl || null,
-    socialMessage.mediaMimeType || null,
+    resolvedMediaUrl,
+    resolvedMediaMime,
     socialMessage.postbackPayload || null,
     socialMessage.messageTimestamp,
     safeJson(socialMessage.raw),
@@ -1490,7 +1661,8 @@ export async function processMetaSocialWebhook({ payload = {}, rawBody = '', sig
         const savedMessage = await upsertMetaSocialMessage({
           socialContactId,
           contactId: localContact.id,
-          socialMessage
+          socialMessage,
+          config
         })
 
         const result = {
@@ -1620,7 +1792,7 @@ export async function processMetaSocialWebhook({ payload = {}, rawBody = '', sig
           }
           const localContact = await upsertLocalSocialContact({ socialMessage: comment, profile })
           const socialContactId = await upsertMetaSocialContact({ contactId: localContact.id, socialMessage: comment, profile })
-          const savedComment = await upsertMetaSocialMessage({ socialContactId, contactId: localContact.id, socialMessage: comment })
+          const savedComment = await upsertMetaSocialMessage({ socialContactId, contactId: localContact.id, socialMessage: comment, config })
 
           results.push({
             messageId: savedComment.messageId,
