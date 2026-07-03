@@ -552,16 +552,26 @@ test('formularios exponen respuestas no guardadas para variables, filtros y cond
     submittedAt: '2026-06-17T20:00:00.000Z',
     formResponses: {
       answers: [
-        { id: 'field_budget', key: 'presupuesto', label: 'Presupuesto mensual', value: '5000', type: 'currency' },
+        { id: 'field_budget', key: 'presupuesto', label: 'Presupuesto mensual', value: '3500', text: '3,500 a 5,000 pesos', type: 'radio' },
         { id: 'field_need', key: 'necesidad', label: 'Necesidad', value: 'Seguimiento por WhatsApp', type: 'text' }
       ]
     }
   }
 
-  assert.equal(renderTemplate('{{form.answers}}', formCtx), 'Presupuesto mensual: 5000\nNecesidad: Seguimiento por WhatsApp')
-  assert.equal(renderTemplate('{{formulario.respuestas.presupuesto}}', formCtx), '5000')
-  assert.equal(renderTemplate('{{formulario.respuestas_por_id.field_budget}}', formCtx), '5000')
-  assert.equal(filtersMatch([{ field: 'form-field-value', customKey: 'presupuesto', match: 'is', value: '5000' }], formCtx), true)
+  assert.equal(renderTemplate('{{form.answers}}', formCtx), 'Presupuesto mensual: 3,500 a 5,000 pesos\nNecesidad: Seguimiento por WhatsApp')
+  assert.equal(renderTemplate('{{formulario.respuestas.presupuesto}}', formCtx), '3500')
+  assert.equal(renderTemplate('{{formulario.respuestas.presupuesto.value}}', formCtx), '3500')
+  assert.equal(renderTemplate('{{formulario.respuestas.presupuesto.text}}', formCtx), '3,500 a 5,000 pesos')
+  assert.equal(renderTemplate('{{formulario.respuestas.presupuesto.valor}}', formCtx), '3500')
+  assert.equal(renderTemplate('{{formulario.respuestas.presupuesto.texto}}', formCtx), '3,500 a 5,000 pesos')
+  assert.equal(renderTemplate('{{formulario.respuestas_por_id.field_budget}}', formCtx), '3500')
+  assert.equal(renderTemplate('{{formulario.respuestas_por_id.field_budget.value}}', formCtx), '3500')
+  assert.equal(renderTemplate('{{formulario.respuestas_por_id.field_budget.text}}', formCtx), '3,500 a 5,000 pesos')
+  assert.equal(renderTemplate('{{form.responses.presupuesto.value}}', formCtx), '3500')
+  assert.equal(renderTemplate('{{form.responses.presupuesto.text}}', formCtx), '3,500 a 5,000 pesos')
+  assert.equal(renderTemplate('{{form.answers_by_id.field_budget.value}}', formCtx), '3500')
+  assert.equal(renderTemplate('{{form.answers_by_id.field_budget.text}}', formCtx), '3,500 a 5,000 pesos')
+  assert.equal(filtersMatch([{ field: 'form-field-value', customKey: 'presupuesto', match: 'is', value: '3500' }], formCtx), true)
   assert.equal(filtersMatch([{ field: 'form-field-value', match: 'contains', value: 'WhatsApp' }], formCtx), true)
 
   const condition = {
@@ -575,7 +585,7 @@ test('formularios exponen respuestas no guardadas para variables, filtros y cond
           rules: [{
             field: 'var:formulario.respuestas.presupuesto',
             operator: 'gte',
-            value: '4000'
+            value: '3000'
           }]
         }]
       }

@@ -277,6 +277,77 @@ test('standalone forms still send browser-matched CAPI submit events', async () 
   })
 })
 
+test('standalone forms can map option response value and text into CAPI parameters', async () => {
+  const suffix = `${Date.now()}_${Math.random().toString(16).slice(2)}`
+  const email = `option-meta-${suffix}@example.test`
+  let sourceForm
+  let emailBlock
+  let budgetBlock
+
+  await withPublicDomain(async () => {
+    await withMetaGraphMock(async metaCalls => {
+      try {
+        ;({ site: sourceForm, emailBlock } = await createLeadForm({ suffix, name: 'Formulario Valor Meta' }))
+        sourceForm = {
+          ...sourceForm,
+          theme: {
+            ...(sourceForm.theme || {}),
+            metaEventParameters: {
+              ...(sourceForm.theme?.metaEventParameters || {}),
+              value: '{{form.responses.presupuesto.value}}',
+              custom: [
+                ...(sourceForm.theme?.metaEventParameters?.custom || []),
+                { key: 'budget_text', value: '{{form.responses.presupuesto.text}}' }
+              ]
+            }
+          }
+        }
+        await db.run('UPDATE public_sites SET theme_json = ? WHERE id = ?', [JSON.stringify(sourceForm.theme), sourceForm.id])
+        sourceForm = await createBlock(sourceForm.id, {
+          blockType: 'radio',
+          label: 'Presupuesto mensual',
+          required: true,
+          options: [
+            { label: '3,500 a 5,000 pesos', value: '3500' },
+            { label: '5,000 pesos o más', value: '5000' }
+          ],
+          settings: { pageId: 'page-1', customFieldKey: 'presupuesto' }
+        })
+        budgetBlock = sourceForm.blocks.find(block => block.blockType === 'radio')
+        assert.ok(budgetBlock, 'lead form should include budget field')
+
+        const result = await createSubmissionFromRequest(
+          publicReq(`/${sourceForm.slug}`),
+          {
+            siteId: sourceForm.id,
+            pageId: 'page-1',
+            finalSubmit: true,
+            responses: {
+              [emailBlock.id]: email,
+              [budgetBlock.id]: '3500'
+            },
+            meta: {
+              pageUrl: `https://example.test/${sourceForm.slug}?fbclid=option-click`,
+              eventTime: 1700000030000,
+              visitorId: 'visitor-option-meta',
+              fbp: 'fb.1.1700000030.246813579'
+            }
+          }
+        )
+
+        assert.equal(result.capi.sent, true)
+        assert.equal(metaCalls.length, 1)
+        const payload = JSON.parse(metaCalls[0].body)
+        assert.equal(payload.data[0].custom_data.value, 3500)
+        assert.equal(payload.data[0].custom_data.budget_text, '3,500 a 5,000 pesos')
+      } finally {
+        if (sourceForm?.id) await deleteSite(sourceForm.id).catch(() => undefined)
+        await db.run('DELETE FROM contacts WHERE email = ?', [email]).catch(() => undefined)
+      }
+    })
+  })
+})
+
 test('public calendars render browser pixel helper for site and smart Meta events', async () => {
   const previousPixelId = process.env.META_PIXEL_ID
   try {

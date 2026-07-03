@@ -44,12 +44,12 @@ import automationsService, {
   type AutomationViewport,
   type FlowSettings
 } from '@/services/automationsService'
-import { resetCatalogCache } from '@/services/automationCatalogsService'
+import { getFormFieldCatalog, resetCatalogCache, type CatalogOption } from '@/services/automationCatalogsService'
 import { AutomationCanvas, type PendingEdge, type PickerRequest } from './AutomationCanvas'
 import { StepPickerBubble } from './StepPickerBubble'
 import { NodeConfigBubble } from './NodeConfigBubble'
 import { VariableCategoriesContext } from './composer/MessageComposer'
-import { FlowVariablesContext, buildFlowVariableCatalog } from './variablesCatalog'
+import { FlowVariablesContext, buildFlowVariableCatalog, type FlowFormFieldCatalogMap } from './variablesCatalog'
 import { Settings as SettingsIcon } from 'lucide-react'
 import {
   getNodeDefinition,
@@ -272,9 +272,11 @@ export const AutomationEditor: React.FC = () => {
   useEffect(() => {
     configRef.current = config
   }, [config])
+  const [formFieldCatalogs, setFormFieldCatalogs] = useState<FlowFormFieldCatalogMap>({})
 
   useEffect(() => {
     resetCatalogCache()
+    setFormFieldCatalogs({})
   }, [automationId])
 
   const [nodeErrors, setNodeErrors] = useState<Record<string, string[]>>({})
@@ -321,6 +323,39 @@ export const AutomationEditor: React.FC = () => {
   }, [automation])
 
   const { nodes, edges } = state.present
+
+  const selectedTriggerFormIds = useMemo(() => {
+    const startNode = nodes.find(isStartNode)
+    if (!startNode) return []
+    const ids = new Set<string>()
+    getStartTriggers(startNode).forEach((trigger) => {
+      if (trigger.type !== 'trigger-form-submitted') return
+      const formId = String(trigger.config?.form || '').trim()
+      if (formId) ids.add(formId)
+    })
+    return [...ids]
+  }, [nodes])
+  const selectedTriggerFormIdsKey = selectedTriggerFormIds.join('\n')
+
+  useEffect(() => {
+    const formIds = selectedTriggerFormIdsKey.split('\n').filter(Boolean)
+    const missingIds = formIds.filter((formId) => !Object.prototype.hasOwnProperty.call(formFieldCatalogs, formId))
+    if (!missingIds.length) return
+    let cancelled = false
+    void Promise.all(
+      missingIds.map(async (formId): Promise<[string, CatalogOption[]]> => [formId, await getFormFieldCatalog(formId)])
+    ).then((entries) => {
+      if (cancelled) return
+      setFormFieldCatalogs((current) => {
+        const next = { ...current }
+        entries.forEach(([formId, fields]) => {
+          next[formId] = fields
+        })
+        return next
+      })
+    })
+    return () => { cancelled = true }
+  }, [formFieldCatalogs, selectedTriggerFormIdsKey])
 
   const currentContentSignature = useMemo(
     () => automationContentSignature(name, nodes, edges, flowSettings),
@@ -378,8 +413,10 @@ export const AutomationEditor: React.FC = () => {
   }, [nodes])
 
   const flowVariableCatalog = useMemo(
-    () => buildFlowVariableCatalog(nodes, edges, config?.triggerId ? null : config?.nodeId || null),
-    [config?.nodeId, config?.triggerId, edges, nodes]
+    () => buildFlowVariableCatalog(nodes, edges, config?.triggerId ? null : config?.nodeId || null, {
+      formFieldsByFormId: formFieldCatalogs
+    }),
+    [config?.nodeId, config?.triggerId, edges, formFieldCatalogs, nodes]
   )
 
   const hasUnpublishedChanges = Boolean(automation?.hasUnpublishedChanges)
@@ -1341,7 +1378,9 @@ export const AutomationEditor: React.FC = () => {
     if (!current || statusBusy) return
 
     if (status === 'published') {
-      const validation = validateAutomationFlow(stateRef.current.present.nodes, stateRef.current.present.edges)
+      const validation = validateAutomationFlow(stateRef.current.present.nodes, stateRef.current.present.edges, {
+        formFieldsByFormId: formFieldCatalogs
+      })
       if (!validation.valid) {
         setNodeErrors(validation.nodeErrors)
         const summary = validation.issues.slice(0, 3).map((issue) => issue.message).join('. ')
@@ -1660,7 +1699,9 @@ export const AutomationEditor: React.FC = () => {
       return
     }
 
-    const validation = validateAutomationFlow(stateRef.current.present.nodes, stateRef.current.present.edges)
+    const validation = validateAutomationFlow(stateRef.current.present.nodes, stateRef.current.present.edges, {
+      formFieldsByFormId: formFieldCatalogs
+    })
     if (!validation.valid) {
       setNodeErrors(validation.nodeErrors)
       const summary = validation.issues.slice(0, 3).map((issue) => issue.message).join('. ')

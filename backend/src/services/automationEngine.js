@@ -238,19 +238,40 @@ function answerComparableValue(value) {
   return cleanString(value)
 }
 
-function setAnswerAlias(target, key, value) {
+function setAnswerAlias(target, key, value, { overwrite = false } = {}) {
   const directKey = cleanString(key)
   const normalizedKey = normalizeAnswerLookupKey(directKey)
-  if (directKey && target[directKey] === undefined) target[directKey] = value
-  if (normalizedKey && target[normalizedKey] === undefined) target[normalizedKey] = value
+  if (directKey && (overwrite || target[directKey] === undefined)) target[directKey] = value
+  if (normalizedKey && (overwrite || target[normalizedKey] === undefined)) target[normalizedKey] = value
+}
+
+function answerProperty(answer, keys, fallback = undefined) {
+  for (const key of keys) {
+    if (Object.prototype.hasOwnProperty.call(answer, key)) return answer[key]
+  }
+  return fallback
 }
 
 function addFormAnswer(normalized, answer = {}, index = 0) {
-  const value = Object.prototype.hasOwnProperty.call(answer, 'value')
-    ? answer.value
-    : Object.prototype.hasOwnProperty.call(answer, 'answer')
-      ? answer.answer
-      : ''
+  const value = answerProperty(answer, [
+    'value',
+    'answer',
+    'fieldValue',
+    'field_value',
+    'rawValue',
+    'raw_value'
+  ], '')
+  const text = answerProperty(answer, [
+    'text',
+    'displayText',
+    'display_text',
+    'displayValue',
+    'display_value',
+    'labelValue',
+    'label_value',
+    'answerText',
+    'answer_text'
+  ], value)
   const id = cleanString(answer.id || answer.fieldId || answer.field_id || answer.blockId || answer.block_id)
   const key = cleanString(answer.key || answer.fieldKey || answer.field_key || answer.name || answer.internalName || answer.internal_name)
   const label = cleanString(answer.label || answer.question || answer.title || answer.name || key || id || `Respuesta ${index + 1}`)
@@ -259,6 +280,7 @@ function addFormAnswer(normalized, answer = {}, index = 0) {
     key: key || normalizeAnswerLookupKey(label || id || `respuesta_${index + 1}`),
     label,
     value,
+    text,
     type: cleanString(answer.type || answer.blockType || answer.block_type || '')
   }
 
@@ -266,6 +288,12 @@ function addFormAnswer(normalized, answer = {}, index = 0) {
   setAnswerAlias(normalized.byId, id, value)
   setAnswerAlias(normalized.byKey, entry.key, value)
   setAnswerAlias(normalized.byLabel, label, value)
+  setAnswerAlias(normalized.valueById, id, value)
+  setAnswerAlias(normalized.valueByKey, entry.key, value)
+  setAnswerAlias(normalized.valueByLabel, label, value)
+  setAnswerAlias(normalized.textById, id, text)
+  setAnswerAlias(normalized.textByKey, entry.key, text)
+  setAnswerAlias(normalized.textByLabel, label, text)
 }
 
 function normalizeFormResponses(raw) {
@@ -274,6 +302,12 @@ function normalizeFormResponses(raw) {
     byId: {},
     byKey: {},
     byLabel: {},
+    valueById: {},
+    valueByKey: {},
+    valueByLabel: {},
+    textById: {},
+    textByKey: {},
+    textByLabel: {},
     summary: ''
   }
   const source = parseJson(raw, raw)
@@ -286,11 +320,30 @@ function normalizeFormResponses(raw) {
   const bags = [
     ['byId', source.byId || source.by_id],
     ['byKey', source.byKey || source.by_key],
-    ['byLabel', source.byLabel || source.by_label]
+    ['byLabel', source.byLabel || source.by_label],
+    ['valueById', source.valueById || source.value_by_id],
+    ['valueByKey', source.valueByKey || source.value_by_key],
+    ['valueByLabel', source.valueByLabel || source.value_by_label],
+    ['textById', source.textById || source.text_by_id],
+    ['textByKey', source.textByKey || source.text_by_key],
+    ['textByLabel', source.textByLabel || source.text_by_label]
   ]
   for (const [targetKey, bag] of bags) {
     if (!isPlainObject(bag)) continue
-    Object.entries(bag).forEach(([key, value]) => setAnswerAlias(normalized[targetKey], key, value))
+    Object.entries(bag).forEach(([key, value]) => {
+      const overwrite = targetKey.startsWith('text') || targetKey.startsWith('value')
+      setAnswerAlias(normalized[targetKey], key, value, { overwrite })
+      if (targetKey === 'byId') {
+        setAnswerAlias(normalized.valueById, key, value)
+        setAnswerAlias(normalized.textById, key, value)
+      } else if (targetKey === 'byKey') {
+        setAnswerAlias(normalized.valueByKey, key, value)
+        setAnswerAlias(normalized.textByKey, key, value)
+      } else if (targetKey === 'byLabel') {
+        setAnswerAlias(normalized.valueByLabel, key, value)
+        setAnswerAlias(normalized.textByLabel, key, value)
+      }
+    })
   }
 
   for (const section of ['standard', 'custom', 'system', 'ignored', 'raw']) {
@@ -299,6 +352,10 @@ function normalizeFormResponses(raw) {
     Object.entries(bag).forEach(([key, value]) => {
       setAnswerAlias(normalized.byKey, key, value)
       setAnswerAlias(normalized.byKey, `${section}.${key}`, value)
+      setAnswerAlias(normalized.valueByKey, key, value)
+      setAnswerAlias(normalized.valueByKey, `${section}.${key}`, value)
+      setAnswerAlias(normalized.textByKey, key, value)
+      setAnswerAlias(normalized.textByKey, `${section}.${key}`, value)
     })
   }
 
@@ -310,6 +367,18 @@ function normalizeFormResponses(raw) {
     'by_key',
     'byLabel',
     'by_label',
+    'valueById',
+    'value_by_id',
+    'valueByKey',
+    'value_by_key',
+    'valueByLabel',
+    'value_by_label',
+    'textById',
+    'text_by_id',
+    'textByKey',
+    'text_by_key',
+    'textByLabel',
+    'text_by_label',
     'summary',
     'text',
     'standard',
@@ -321,11 +390,13 @@ function normalizeFormResponses(raw) {
   Object.entries(source).forEach(([key, value]) => {
     if (knownEnvelopeKeys.has(key)) return
     setAnswerAlias(normalized.byKey, key, value)
+    setAnswerAlias(normalized.valueByKey, key, value)
+    setAnswerAlias(normalized.textByKey, key, value)
   })
 
   normalized.summary = cleanString(source.summary || source.text) || normalized.answers
     .filter(answer => answer.label || answer.key)
-    .map(answer => `${answer.label || answer.key}: ${answerComparableValue(answer.value)}`)
+    .map(answer => `${answer.label || answer.key}: ${answerComparableValue(answer.text ?? answer.value)}`)
     .filter(line => cleanString(line.replace(/^[^:]+:\s*$/, '')))
     .join('\n')
 
@@ -355,8 +426,31 @@ function hasFormResponses(responses) {
     responses.answers.length ||
     Object.keys(responses.byId).length ||
     Object.keys(responses.byKey).length ||
-    Object.keys(responses.byLabel).length
+    Object.keys(responses.byLabel).length ||
+    Object.keys(responses.valueById).length ||
+    Object.keys(responses.valueByKey).length ||
+    Object.keys(responses.valueByLabel).length ||
+    Object.keys(responses.textById).length ||
+    Object.keys(responses.textByKey).length ||
+    Object.keys(responses.textByLabel).length
   )
+}
+
+function setFormResponseDetailVariables(map, prefix, valueBag = {}, textBag = {}, { valueKey = 'value', textKey = 'text' } = {}) {
+  const values = valueBag || {}
+  const texts = textBag || {}
+  const keys = new Set([
+    ...Object.keys(values),
+    ...Object.keys(texts)
+  ])
+  keys.forEach((key) => {
+    const cleanKey = cleanString(key)
+    if (!cleanKey) return
+    const value = Object.prototype.hasOwnProperty.call(values, key) ? values[key] : texts[key]
+    const text = Object.prototype.hasOwnProperty.call(texts, key) ? texts[key] : value
+    map[`${prefix}.${cleanKey}.${valueKey}`] = answerComparableValue(value)
+    map[`${prefix}.${cleanKey}.${textKey}`] = answerComparableValue(text)
+  })
 }
 
 function formResponseValue(ctx = {}, key = '') {
@@ -1036,8 +1130,14 @@ function formDataFromContext(ctx = {}) {
     id_envio: ctx.submissionId || ctx.submission_id || '',
     fecha_de_envio: ctx.submittedAt || ctx.submitted_at || ctx.createdAt || ctx.created_at || '',
     respuestas: responses.byKey,
+    respuestas_valor: responses.valueByKey,
+    respuestas_texto: responses.textByKey,
     respuestas_por_id: responses.byId,
+    respuestas_por_id_valor: responses.valueById,
+    respuestas_por_id_texto: responses.textById,
     respuestas_por_etiqueta: responses.byLabel,
+    respuestas_por_etiqueta_valor: responses.valueByLabel,
+    respuestas_por_etiqueta_texto: responses.textByLabel,
     resumen_respuestas: responses.summary
   }
 }
@@ -1266,6 +1366,20 @@ function buildVariableMap(ctx) {
       map['formulario.resumen_respuestas'] = formResponses.summary
       setDeepVariable(map, 'form.responses', formResponses.byKey)
       setDeepVariable(map, 'form.answers_by_id', formResponses.byId)
+      setDeepVariable(map, 'form.response_values', formResponses.valueByKey)
+      setDeepVariable(map, 'form.response_text', formResponses.textByKey)
+      setDeepVariable(map, 'form.answer_values_by_id', formResponses.valueById)
+      setDeepVariable(map, 'form.answer_text_by_id', formResponses.textById)
+      setFormResponseDetailVariables(map, 'form.responses', formResponses.valueByKey, formResponses.textByKey)
+      setFormResponseDetailVariables(map, 'form.answers_by_id', formResponses.valueById, formResponses.textById)
+      setFormResponseDetailVariables(map, 'formulario.respuestas', formResponses.valueByKey, formResponses.textByKey)
+      setFormResponseDetailVariables(map, 'formulario_1.respuestas', formResponses.valueByKey, formResponses.textByKey)
+      setFormResponseDetailVariables(map, 'formulario.respuestas_por_id', formResponses.valueById, formResponses.textById)
+      setFormResponseDetailVariables(map, 'formulario_1.respuestas_por_id', formResponses.valueById, formResponses.textById)
+      setFormResponseDetailVariables(map, 'formulario.respuestas', formResponses.valueByKey, formResponses.textByKey, { valueKey: 'valor', textKey: 'texto' })
+      setFormResponseDetailVariables(map, 'formulario_1.respuestas', formResponses.valueByKey, formResponses.textByKey, { valueKey: 'valor', textKey: 'texto' })
+      setFormResponseDetailVariables(map, 'formulario.respuestas_por_id', formResponses.valueById, formResponses.textById, { valueKey: 'valor', textKey: 'texto' })
+      setFormResponseDetailVariables(map, 'formulario_1.respuestas_por_id', formResponses.valueById, formResponses.textById, { valueKey: 'valor', textKey: 'texto' })
     }
   }
   const appointment = appointmentDataFromContext(ctx)

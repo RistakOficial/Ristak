@@ -6,7 +6,8 @@ import {
   BASE_VARIABLES,
   buildFlowVariableCatalog,
   extractTokens,
-  isDynamicToken
+  isDynamicToken,
+  type FlowVariableCatalogOptions
 } from './variablesCatalog'
 
 export interface FlowValidationIssue {
@@ -73,9 +74,10 @@ function collectConditionVariableFields(value: unknown, output: ConditionVariabl
 function unavailableDynamicTokens(
   node: AutomationNode,
   nodes: AutomationNode[],
-  edges: AutomationEdge[]
+  edges: AutomationEdge[],
+  options: FlowVariableCatalogOptions = {}
 ): string[] {
-  const catalog = buildFlowVariableCatalog(nodes, edges, node.id)
+  const catalog = buildFlowVariableCatalog(nodes, edges, node.id, options)
   const available = new Set([
     ...BASE_VARIABLES.map((variable) => variable.fieldId),
     ...catalog.variables.map((variable) => variable.fieldId)
@@ -87,9 +89,10 @@ function unavailableDynamicTokens(
 function unavailableConditionVariableFields(
   node: AutomationNode,
   nodes: AutomationNode[],
-  edges: AutomationEdge[]
+  edges: AutomationEdge[],
+  options: FlowVariableCatalogOptions = {}
 ): ConditionVariableReference[] {
-  const catalog = buildFlowVariableCatalog(nodes, edges, node.id)
+  const catalog = buildFlowVariableCatalog(nodes, edges, node.id, options)
   const available = new Set(catalog.variables.map((variable) => variable.fieldId))
   const seen = new Set<string>()
   return collectConditionVariableFields(node.config || []).filter((reference) => {
@@ -126,7 +129,8 @@ function validateWaitReplyMessageSource(
  */
 export function validateAutomationFlow(
   nodes: AutomationNode[],
-  edges: AutomationEdge[]
+  edges: AutomationEdge[],
+  options: FlowVariableCatalogOptions = {}
 ): FlowValidationResult {
   const result: FlowValidationResult = { valid: true, issues: [], nodeErrors: {} }
 
@@ -163,10 +167,10 @@ export function validateAutomationFlow(
     validateNodeConfig(definition, node.config || {}).forEach((error) => {
       pushNodeError(result, node.id, error)
     })
-    unavailableDynamicTokens(node, nodes, edges).forEach((token) => {
+    unavailableDynamicTokens(node, nodes, edges, options).forEach((token) => {
       pushNodeError(result, node.id, `La variable {{${token}}} ya no está disponible`)
     })
-    unavailableConditionVariableFields(node, nodes, edges).forEach((reference) => {
+    unavailableConditionVariableFields(node, nodes, edges, options).forEach((reference) => {
       pushNodeError(result, node.id, `El dato "${reference.label}" ya no está disponible para esta condición`)
     })
     validateWaitReplyMessageSource(node, nodes, edges, result)

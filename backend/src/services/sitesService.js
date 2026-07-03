@@ -23685,15 +23685,16 @@ function automationAnswerText(value) {
   return cleanString(value)
 }
 
-function setAutomationAnswerAlias(target, key, value) {
+function setAutomationAnswerAlias(target, key, value, { overwrite = false } = {}) {
   const directKey = cleanString(key)
   const normalizedKey = automationAnswerKey(directKey, '')
-  if (directKey && target[directKey] === undefined) target[directKey] = value
-  if (normalizedKey && target[normalizedKey] === undefined) target[normalizedKey] = value
+  if (directKey && (overwrite || target[directKey] === undefined)) target[directKey] = value
+  if (normalizedKey && (overwrite || target[normalizedKey] === undefined)) target[normalizedKey] = value
 }
 
 function addAutomationAnswer(output, answer = {}) {
   const value = Object.prototype.hasOwnProperty.call(answer, 'value') ? answer.value : ''
+  const text = Object.prototype.hasOwnProperty.call(answer, 'text') ? answer.text : value
   const id = cleanString(answer.id || answer.fieldId || answer.blockId)
   const label = cleanString(answer.label || answer.question || answer.name || id)
   const key = automationAnswerKey(answer.key || answer.fieldKey || answer.internalName || label || id, id || 'respuesta')
@@ -23702,17 +23703,24 @@ function addAutomationAnswer(output, answer = {}) {
     key,
     label: label || key,
     type: cleanString(answer.type || answer.blockType || ''),
-    value
+    value,
+    text
   }
   output.answers.push(entry)
   setAutomationAnswerAlias(output.byId, id, value)
   setAutomationAnswerAlias(output.byKey, key, value)
   setAutomationAnswerAlias(output.byLabel, entry.label, value)
+  setAutomationAnswerAlias(output.valueById, id, value)
+  setAutomationAnswerAlias(output.valueByKey, key, value)
+  setAutomationAnswerAlias(output.valueByLabel, entry.label, value)
+  setAutomationAnswerAlias(output.textById, id, text)
+  setAutomationAnswerAlias(output.textByKey, key, text)
+  setAutomationAnswerAlias(output.textByLabel, entry.label, text)
 }
 
 function finishAutomationResponses(output) {
   output.summary = output.answers
-    .map(answer => `${answer.label || answer.key}: ${automationAnswerText(answer.value)}`)
+    .map(answer => `${answer.label || answer.key}: ${automationAnswerText(answer.text ?? answer.value)}`)
     .filter(line => !/:\s*$/.test(line))
     .join('\n')
   return output
@@ -23724,8 +23732,30 @@ function makeEmptyAutomationResponses() {
     byId: {},
     byKey: {},
     byLabel: {},
+    valueById: {},
+    valueByKey: {},
+    valueByLabel: {},
+    textById: {},
+    textByKey: {},
+    textByLabel: {},
     summary: ''
   }
+}
+
+function resolveBlockResponseText(block = {}, value) {
+  if (!['dropdown', 'radio', 'checkboxes'].includes(block.blockType)) return value
+
+  const labelsByValue = new Map(
+    getBlockOptions(block).map(option => [option.value, option.label || option.value])
+  )
+  const resolveOne = (item) => {
+    const cleanValue = cleanString(item)
+    return labelsByValue.get(cleanValue) || cleanValue
+  }
+
+  return Array.isArray(value)
+    ? value.map(resolveOne).filter(Boolean)
+    : resolveOne(value)
 }
 
 function buildNativeAutomationFormResponses({ blocks = [], responses = {} } = {}) {
@@ -23741,7 +23771,8 @@ function buildNativeAutomationFormResponses({ blocks = [], responses = {} } = {}
       key: settings.customFieldKey || settings.internalName || settings.systemFieldKey || block.id,
       label: block.label || settings.customFieldLabel || settings.internalName || block.id,
       type: block.blockType,
-      value
+      value,
+      text: resolveBlockResponseText(block, value)
     })
   }
   return finishAutomationResponses(output)

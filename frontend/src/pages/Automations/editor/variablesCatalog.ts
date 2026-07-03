@@ -57,6 +57,18 @@ export interface FlowVariableCatalog {
   eventContexts: string[]
 }
 
+export interface FlowFormFieldCatalogOption {
+  value: string
+  label: string
+  meta?: string
+}
+
+export type FlowFormFieldCatalogMap = Record<string, FlowFormFieldCatalogOption[]>
+
+export interface FlowVariableCatalogOptions {
+  formFieldsByFormId?: FlowFormFieldCatalogMap
+}
+
 export const FlowVariablesContext = React.createContext<FlowVariableCatalog>({
   categories: [],
   variables: [],
@@ -336,11 +348,39 @@ function outputCategoryLabel(output: NodeVariableOutput, config: Record<string, 
   return customTitle ? `${root} - ${customTitle}` : root
 }
 
+function formQuestionVariableFields(
+  config: Record<string, unknown>,
+  options: FlowVariableCatalogOptions = {}
+): VariableSchemaField[] {
+  const formId = String(config.form || '').trim()
+  if (!formId) return []
+  const fields = options.formFieldsByFormId?.[formId] || []
+  return fields.reduce<VariableSchemaField[]>((output, fieldOption) => {
+    const fieldKey = tokenSegment(String(fieldOption.value || '').trim())
+    const label = String(fieldOption.label || fieldOption.value || '').trim()
+    if (!fieldKey || !label) return output
+    output.push(
+      {
+        label: `${label} - valor interno`,
+        path: `respuestas.${fieldKey}.value`,
+        type: 'string' as VariableValueType
+      },
+      {
+        label: `${label} - texto visible`,
+        path: `respuestas.${fieldKey}.text`,
+        type: 'string' as VariableValueType
+      }
+    )
+    return output
+  }, [])
+}
+
 function outputToVariables(
   output: NodeVariableOutput,
   config: Record<string, unknown>,
   sourceId: string,
-  occurrence: number
+  occurrence: number,
+  options: FlowVariableCatalogOptions = {}
 ): { categories: FlowVariableCategory[]; variables: FlowVariable[] } {
   const root = outputRoot(output, occurrence)
 
@@ -357,12 +397,15 @@ function outputToVariables(
   const fields = output.fields && output.fields.length > 0
     ? output.fields
     : fieldsFromSample(output.sampleResponse)
+  const resolvedFields = output.baseId === 'formulario'
+    ? [...fields, ...formQuestionVariableFields(config, options)]
+    : fields
 
-  const variables = flattenFields(fields, root, category, sourceId)
+  const variables = flattenFields(resolvedFields, root, category, sourceId)
   if (output.baseId === 'http_request') {
     const legacyRoot = `${output.baseId}_${occurrence}`
     variables.push(
-      ...flattenFields(fields, legacyRoot, { ...category, id: legacyRoot }, sourceId)
+      ...flattenFields(resolvedFields, legacyRoot, { ...category, id: legacyRoot }, sourceId)
         .map((variable) => ({ ...variable, hiddenFromPicker: true }))
     )
   }
@@ -393,7 +436,8 @@ function previousNodesForTarget(nodes: AutomationNode[], edges: AutomationEdge[]
 export function buildFlowVariableCatalog(
   nodes: AutomationNode[],
   edges: AutomationEdge[],
-  targetNodeId: string | null
+  targetNodeId: string | null,
+  options: FlowVariableCatalogOptions = {}
 ): FlowVariableCatalog {
   const categories: FlowVariableCategory[] = []
   const variables: FlowVariable[] = []
@@ -407,7 +451,7 @@ export function buildFlowVariableCatalog(
     if (!output) return
     const nextOccurrence = (occurrences.get(output.baseId) || 0) + 1
     occurrences.set(output.baseId, nextOccurrence)
-    const catalog = outputToVariables(output, config, sourceId, nextOccurrence)
+    const catalog = outputToVariables(output, config, sourceId, nextOccurrence, options)
     categories.push(...catalog.categories)
     variables.push(...catalog.variables)
   }

@@ -595,20 +595,45 @@ const getMetaFormFieldVariableKey = (block: SiteBlock) => {
   )
 }
 
-const collectMetaFormFieldBlocks = (blocks: SiteBlock[] = []): SiteBlock[] => {
+const findMetaFormSource = (forms: PublicSite[] = [], sourceId?: string) => (
+  sourceId ? forms.find(form => form.id === sourceId) || null : null
+)
+
+const collectSiteMetaFormFieldBlocks = (
+  site?: PublicSite | null,
+  forms: PublicSite[] = [],
+  visitedFormIds = new Set<string>()
+): SiteBlock[] => {
   const output: SiteBlock[] = []
-  blocks.forEach((block) => {
-    if (fieldBlockTypes.has(block.blockType)) output.push(block)
-    const nestedBlocks = Array.isArray(block.settings?.embeddedBlocks)
-      ? block.settings.embeddedBlocks as SiteBlock[]
-      : []
-    if (nestedBlocks.length) output.push(...collectMetaFormFieldBlocks(nestedBlocks))
-  })
+  const visitBlocks = (blocks: SiteBlock[] = []) => {
+    blocks.forEach((block) => {
+      if (fieldBlockTypes.has(block.blockType)) output.push(block)
+
+      const nestedBlocks = Array.isArray(block.settings?.embeddedBlocks)
+        ? block.settings.embeddedBlocks as SiteBlock[]
+        : []
+      if (nestedBlocks.length) visitBlocks(nestedBlocks)
+
+      const linkedFormId = block.blockType === 'form_embed'
+        ? getEmbeddedFormSourceId(block)
+        : block.blockType === 'video'
+          ? getVideoFormGateSourceId(block)
+          : ''
+      if (!linkedFormId || visitedFormIds.has(linkedFormId)) return
+
+      const linkedForm = findMetaFormSource(forms, linkedFormId)
+      if (!linkedForm) return
+      visitedFormIds.add(linkedFormId)
+      visitBlocks(linkedForm.blocks || [])
+    })
+  }
+
+  visitBlocks(site?.blocks || [])
   return output
 }
 
-const buildSiteFormMetaParameterVariables = (site?: PublicSite | null): MetaParameterVariable[] => (
-  collectMetaFormFieldBlocks(site?.blocks || [])
+const buildSiteFormMetaParameterVariables = (site?: PublicSite | null, forms: PublicSite[] = []): MetaParameterVariable[] => (
+  collectSiteMetaFormFieldBlocks(site, forms)
     .sort((left, right) => Number(left.sortOrder || 0) - Number(right.sortOrder || 0))
     .flatMap((block) => {
       const label = String(block.label || block.content || block.placeholder || blockLabels[block.blockType] || 'Campo').trim()
@@ -618,11 +643,31 @@ const buildSiteFormMetaParameterVariables = (site?: PublicSite | null): MetaPara
         label: `Respuesta: ${label}`,
         category: 'form',
         categoryLabel: 'Formulario'
+      }, {
+        fieldId: `form.responses.${fieldKey}.value`,
+        label: `Valor interno: ${label}`,
+        category: 'form',
+        categoryLabel: 'Formulario'
+      }, {
+        fieldId: `form.responses.${fieldKey}.text`,
+        label: `Texto visible: ${label}`,
+        category: 'form',
+        categoryLabel: 'Formulario'
       }]
       if (block.id) {
         variables.push({
           fieldId: `form.answers_by_id.${block.id}`,
           label: `${label} (ID)`,
+          category: 'form',
+          categoryLabel: 'Formulario'
+        }, {
+          fieldId: `form.answers_by_id.${block.id}.value`,
+          label: `Valor interno: ${label} (ID)`,
+          category: 'form',
+          categoryLabel: 'Formulario'
+        }, {
+          fieldId: `form.answers_by_id.${block.id}.text`,
+          label: `Texto visible: ${label} (ID)`,
           category: 'form',
           categoryLabel: 'Formulario'
         })
@@ -631,7 +676,7 @@ const buildSiteFormMetaParameterVariables = (site?: PublicSite | null): MetaPara
     })
 )
 
-const useMetaParameterVariables = (site?: PublicSite | null) => {
+const useMetaParameterVariables = (site?: PublicSite | null, forms: PublicSite[] = []) => {
   const [loadedVariables, setLoadedVariables] = useState<FlowVariable[]>(BASE_VARIABLES)
 
   useEffect(() => {
@@ -647,7 +692,7 @@ const useMetaParameterVariables = (site?: PublicSite | null) => {
       ...loadedVariables
         .filter(variable => metaParameterVariableCategories.has(variable.category))
         .map(toMetaParameterVariable),
-      ...buildSiteFormMetaParameterVariables(site)
+      ...buildSiteFormMetaParameterVariables(site, forms)
     ]
     const seen = new Set<string>()
     return variables.filter((variable) => {
@@ -655,7 +700,7 @@ const useMetaParameterVariables = (site?: PublicSite | null) => {
       seen.add(variable.fieldId)
       return true
     })
-  }, [loadedVariables, site])
+  }, [forms, loadedVariables, site])
 }
 
 const ruleActions: Array<{ value: SiteOptionAction; label: string }> = [
@@ -12885,6 +12930,7 @@ export const Sites: React.FC = () => {
                       )}
                       <EditorSettingsDropdown
                         site={editorToolbarSettingsSite}
+                        forms={forms}
                         pages={editorToolbarSettingsPages}
                         activePage={editorToolbarSettingsActivePage}
                         domainConfig={domainConfig}
@@ -13022,6 +13068,7 @@ export const Sites: React.FC = () => {
               ) : (
                 <SiteSettingsPanelContent
                   site={librarySettingsSite}
+                  forms={forms}
                   pages={librarySettingsPages}
                   activePage={librarySettingsActivePage}
                   domainConfig={domainConfig}
@@ -13209,6 +13256,7 @@ export const Sites: React.FC = () => {
               ) : isImportedHtmlSite(editorSite) ? (
                 <ImportedHtmlEditorPanel
                   site={editorSite}
+                  forms={forms}
                   pages={pages}
                   activePageId={activePage?.id || DEFAULT_FUNNEL_PAGE_ID}
                   domainConfig={domainConfig}
@@ -18272,6 +18320,7 @@ function getImportedCodeDiagnostics(value: string, language = 'html') {
 
 const ImportedHtmlEditorPanel: React.FC<{
   site: PublicSite
+  forms: PublicSite[]
   pages: SitePage[]
   activePageId: string
   domainConfig: SitesDomainConfig
@@ -18299,6 +18348,7 @@ const ImportedHtmlEditorPanel: React.FC<{
   onDelete: () => void
 }> = ({
   site,
+  forms,
   pages,
   activePageId,
   device,
@@ -20884,6 +20934,7 @@ const ImportedHtmlEditorPanel: React.FC<{
                 activePageId={activeImportedPage?.id || DEFAULT_FUNNEL_PAGE_ID}
                 importedPopupDetected={importedHtmlHasPopup(importData || undefined)}
                 metaPixelConnected={metaPixelConnected}
+                forms={forms}
                 onPatchSite={onPatchSite}
                 onSaveSite={onSaveSite}
                 onPatchSettings={(patch) => {
@@ -21076,6 +21127,7 @@ const ImportedHtmlEditorPanel: React.FC<{
                 activePageId={activeImportedPage?.id || DEFAULT_FUNNEL_PAGE_ID}
                 importedPopupDetected={importedHtmlHasPopup(importData || undefined)}
                 metaPixelConnected={metaPixelConnected}
+                forms={forms}
                 onPatchSite={onPatchSite}
                 onSaveSite={onSaveSite}
                 onPatchSettings={(patch) => {
@@ -26583,6 +26635,7 @@ const getCalendarSurfaceMetaConfig = (
 
 const MetaPageConversionSettingsPanel: React.FC<{
   site: PublicSite
+  forms?: PublicSite[]
   pages: SitePage[]
   activePage: SitePage
   disabled?: boolean
@@ -26594,6 +26647,7 @@ const MetaPageConversionSettingsPanel: React.FC<{
   onSaveSite: () => void | Promise<void>
 }> = ({
   site,
+  forms = [],
   pages,
   activePage,
   disabled,
@@ -26607,7 +26661,7 @@ const MetaPageConversionSettingsPanel: React.FC<{
   const [detailsOpen, setDetailsOpen] = useState(false)
   const [calendarParamsOpen, setCalendarParamsOpen] = useState<Record<string, boolean>>({})
   const [paymentMetaPurchaseEventConfigRaw] = useAppConfig('meta_payment_purchase_event_config', { enabled: false })
-  const metaParameterVariables = useMetaParameterVariables(site)
+  const metaParameterVariables = useMetaParameterVariables(site, forms)
   const metaEnabled = Boolean(site.metaCapiEnabled)
   const paymentPurchaseEnabled = isPaymentPurchaseMetaEnabled(paymentMetaPurchaseEventConfigRaw)
   const activePageEventName = activePage.metaCapiEnabled
@@ -27120,6 +27174,7 @@ const MetaVideoEventSettings: React.FC<{
 
 const SiteSettingsPanelContent: React.FC<{
   site: PublicSite
+  forms?: PublicSite[]
   pages: SitePage[]
   activePage: SitePage | null
   domainConfig: SitesDomainConfig
@@ -27142,6 +27197,7 @@ const SiteSettingsPanelContent: React.FC<{
   onBeforeOpenNested?: () => void
 }> = ({
   site,
+  forms = [],
   pages,
   activePage,
   domainConfig,
@@ -27250,6 +27306,7 @@ const SiteSettingsPanelContent: React.FC<{
           {hasEditablePages(site) && activePage ? (
             <MetaPageConversionSettingsPanel
               site={site}
+              forms={forms}
               pages={pages}
               activePage={activePage}
               disabled={disabled}
@@ -27292,6 +27349,7 @@ const SiteSettingsPanelContent: React.FC<{
 
 const EditorSettingsDropdown: React.FC<{
   site: PublicSite
+  forms?: PublicSite[]
   pages: SitePage[]
   activePage: SitePage | null
   domainConfig: SitesDomainConfig
@@ -35806,7 +35864,7 @@ const VideoActionsPanel: React.FC<{
   onVideoFormGateSubmitSelect
 }) => {
   const settings = block.settings || {}
-  const metaParameterVariables = useMetaParameterVariables(site)
+  const metaParameterVariables = useMetaParameterVariables(site, forms)
   const allRules = useMemo(() => getVideoActionRules(settings), [settings])
   const rules = useMemo(
     () => allRules.filter(rule => (
@@ -37699,7 +37757,7 @@ const VideoFormGateSettingsPanel: React.FC<{
     ...videoGateSite,
     blocks: questions
   }), [questions, videoGateSite])
-  const metaParameterVariables = useMetaParameterVariables(videoGateMetaVariableSite)
+  const metaParameterVariables = useMetaParameterVariables(videoGateMetaVariableSite, forms)
   const selectQuestion = (fieldId: string) => {
     onActiveBlockChange?.(fieldId)
     if (activeBlockId === undefined) setActiveQuestionId(fieldId)
