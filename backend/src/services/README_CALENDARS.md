@@ -39,6 +39,22 @@ app.use('/api/calendars', calendarsRoutes)
 
 El orden importa: rutas específicas como `/events` y `/block-slots` van antes de `/:id`.
 
+## Calendarios Publicos Y Contactos
+
+El endpoint `POST /api/calendars/public/:slug/appointments` crea citas desde la
+URL publica del calendario o desde un calendario embebido en Sites. Antes de
+crear la cita, el backend resuelve el contacto local con esta prioridad:
+
+1. Correo normalizado existente en `contacts`.
+2. Telefono existente.
+3. Contacto nuevo.
+
+Si el correo ya existe y el telefono pertenece a otro contacto, el correo manda:
+la cita se agenda sobre el contacto del correo y el helper de identidad resuelve
+el telefono sin romper el indice unico `contacts.email`. No cambies esto a
+"telefono primero"; en formularios publicos eso puede provocar
+`contacts_email_key` cuando un cliente existente vuelve a agendar desde un sitio.
+
 ## Funciones Del Servicio
 
 ### `getCalendars(locationId, accessToken)`

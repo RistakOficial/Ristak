@@ -399,6 +399,11 @@ Reglas base:
 - La base guarda instantes en UTC.
 - Fechas de calendario se interpretan en zona del negocio.
 - No dependas del timezone del navegador para datos CRM.
+- Los calendarios publicos/embebidos reutilizan contactos existentes: si el
+  correo ya existe en `contacts`, la cita se agenda sobre ese contacto aunque el
+  telefono del formulario coincida con otro registro. Esto evita errores por el
+  indice unico de email y permite que un cliente existente vuelva a agendar desde
+  un sitio sin cambiar de correo.
 - Si Meta esta configurado con dataset/pixel y token guardado, los calendarios
   locales nuevos y los calendarios remotos espejados por primera vez activan
   `customEvents.enabled` por default para mandar `Schedule` al agendar. Ediciones

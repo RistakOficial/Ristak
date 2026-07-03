@@ -887,11 +887,11 @@ async function upsertPublicCalendarContact({ calendar, contact, host, sourceUrl 
     throw error;
   }
 
-  const byPhone = phone ? await findContactByPhoneCandidates(phone).catch(() => null) : null;
-  const byEmail = !byPhone && email
+  const byEmail = email
     ? await db.get('SELECT id FROM contacts WHERE LOWER(email) = LOWER(?) ORDER BY updated_at DESC LIMIT 1', [email]).catch(() => null)
     : null;
-  const contactId = byPhone?.id || byEmail?.id || generateContactId();
+  const byPhone = !byEmail && phone ? await findContactByPhoneCandidates(phone).catch(() => null) : null;
+  const contactId = byEmail?.id || byPhone?.id || generateContactId();
   const names = splitName(fullName);
   const phoneUpsert = phone ? await prepareContactPhoneUpsert({ contactId, phone }) : { phone: null };
 
@@ -901,11 +901,11 @@ async function upsertPublicCalendarContact({ calendar, contact, host, sourceUrl 
       attribution_url, attribution_session_source, created_at, updated_at
     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
     ON CONFLICT(id) DO UPDATE SET
-      phone = COALESCE(excluded.phone, contacts.phone),
-      email = COALESCE(excluded.email, contacts.email),
-      full_name = COALESCE(NULLIF(excluded.full_name, ''), contacts.full_name),
-      first_name = COALESCE(NULLIF(excluded.first_name, ''), contacts.first_name),
-      last_name = COALESCE(NULLIF(excluded.last_name, ''), contacts.last_name),
+      phone = COALESCE(NULLIF(contacts.phone, ''), excluded.phone),
+      email = COALESCE(NULLIF(contacts.email, ''), excluded.email),
+      full_name = COALESCE(NULLIF(contacts.full_name, ''), excluded.full_name),
+      first_name = COALESCE(NULLIF(contacts.first_name, ''), excluded.first_name),
+      last_name = COALESCE(NULLIF(contacts.last_name, ''), excluded.last_name),
       source = COALESCE(NULLIF(contacts.source, ''), excluded.source),
       attribution_url = COALESCE(NULLIF(contacts.attribution_url, ''), excluded.attribution_url),
       attribution_session_source = COALESCE(NULLIF(contacts.attribution_session_source, ''), excluded.attribution_session_source),

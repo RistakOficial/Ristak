@@ -1,11 +1,32 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
+import { randomUUID } from 'node:crypto'
 import { readFile } from 'node:fs/promises'
 import { fileURLToPath } from 'node:url'
 import { dirname, join } from 'node:path'
+import { DateTime } from 'luxon'
+import { db } from '../src/config/database.js'
+import { createPublicAppointment } from '../src/controllers/calendarsController.js'
+import { createLocalCalendar } from '../src/services/localCalendarService.js'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const backendRoot = join(__dirname, '..')
+
+function createJsonResponse() {
+  const response = {
+    statusCode: 200,
+    body: null,
+    status(code) {
+      this.statusCode = code
+      return this
+    },
+    json(payload) {
+      this.body = payload
+      return this
+    }
+  }
+  return response
+}
 
 test('public calendar booking routes stay behind the calendar feature gate', async () => {
   const serverSource = await readFile(join(backendRoot, 'src/server.js'), 'utf8')
@@ -121,4 +142,95 @@ test('public calendar widget can prefill contact fields from a previous site sub
   assert.match(sitesSource, /phone: pick\(\['phone_number', 'phoneNumber', 'phone-number', 'phone', 'telefono', 'celular', 'whatsapp', 'contact_phone', 'contactPhone', 'rstk_phone'\]\)/)
   assert.match(calendarSource, /phone_number/)
   assert.match(sitesSource, /phone: submission\.contactPhone \|\| ''/)
+})
+
+test('public calendar booking reuses an existing email contact when phone belongs to another contact', async () => {
+  const suffix = randomUUID()
+  const calendarSlug = `public-email-existing-${suffix}`
+  const calendarIds = []
+  const contactIds = [
+    `manual_contact_email_${suffix}`,
+    `manual_contact_phone_${suffix}`
+  ]
+  const email = `public-calendar-existing-${suffix}@example.test`
+  const phoneInput = '6567426612'
+  const normalizedPhone = '+526567426612'
+  const baseDay = DateTime.utc().plus({ days: 30 }).startOf('day')
+  const nextMonday = baseDay.plus({ days: (1 - baseDay.weekday + 7) % 7 })
+  const slotStart = nextMonday.set({ hour: 15, minute: 0 })
+
+  try {
+    const calendar = await createLocalCalendar({
+      slug: calendarSlug,
+      widgetSlug: calendarSlug,
+      name: 'Calendario contacto existente',
+      slotDuration: 60,
+      slotInterval: 60,
+      autoConfirm: true,
+      openHours: [
+        {
+          daysOfTheWeek: [1],
+          hours: [{ openHour: 15, openMinute: 0, closeHour: 17, closeMinute: 0 }]
+        }
+      ]
+    })
+    calendarIds.push(calendar.id)
+
+    await db.run(
+      'INSERT INTO contacts (id, email, full_name, source, created_at, updated_at) VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)',
+      [contactIds[0], email, 'Contacto por correo', 'manual']
+    )
+    await db.run(
+      'INSERT INTO contacts (id, phone, full_name, source, created_at, updated_at) VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)',
+      [contactIds[1], normalizedPhone, 'Contacto por telefono', 'manual']
+    )
+
+    const req = {
+      params: { slug: calendarSlug },
+      query: {},
+      body: {
+        startTime: slotStart.toISO(),
+        timezone: 'UTC',
+        name: 'RAUL GOMEZ',
+        phone: phoneInput,
+        email,
+        sourceUrl: `http://localhost:3001/calendar/${calendarSlug}`
+      },
+      headers: {
+        host: 'localhost:3001',
+        'user-agent': 'node-test'
+      },
+      hostname: 'localhost',
+      ip: '127.0.0.1',
+      socket: { remoteAddress: '127.0.0.1' }
+    }
+    const res = createJsonResponse()
+
+    await createPublicAppointment(req, res)
+
+    assert.equal(res.statusCode, 201)
+    assert.equal(res.body?.success, true)
+    assert.equal(res.body?.data?.appointment?.contactId, contactIds[0])
+
+    const storedEmailContact = await db.get(
+      'SELECT id, email, phone FROM contacts WHERE id = ?',
+      [contactIds[0]]
+    )
+    assert.equal(storedEmailContact.email, email)
+    assert.equal(storedEmailContact.phone, normalizedPhone)
+
+    const appointments = await db.all(
+      'SELECT id FROM appointments WHERE calendar_id = ? AND contact_id = ?',
+      [calendar.id, contactIds[0]]
+    )
+    assert.equal(appointments.length, 1)
+  } finally {
+    for (const calendarId of calendarIds) {
+      await db.run('DELETE FROM appointments WHERE calendar_id = ?', [calendarId]).catch(() => undefined)
+      await db.run('DELETE FROM calendars WHERE id = ?', [calendarId]).catch(() => undefined)
+    }
+    await db.run('DELETE FROM contact_phone_numbers WHERE contact_id IN (?, ?)', contactIds).catch(() => undefined)
+    await db.run('DELETE FROM contacts WHERE id IN (?, ?)', contactIds).catch(() => undefined)
+    await db.run('DELETE FROM contacts WHERE email = ?', [email]).catch(() => undefined)
+  }
 })
