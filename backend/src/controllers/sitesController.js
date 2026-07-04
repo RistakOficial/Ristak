@@ -831,8 +831,8 @@ export async function sitePaymentCheckoutPayHandler(req, res) {
   }
 }
 
-// Paso 1 del MSI de Stripe en sitios: crea/reusa la fila y devuelve un clientSecret
-// de PaymentIntent con installments habilitado para montar Payment Element nativo.
+// Paso 1 del MSI de Stripe en sitios: crea/reusa la fila, consulta los planes reales
+// con un PaymentMethod seguro y devuelve available_plans filtrados por el bloque.
 export async function sitePaymentCheckoutPrepareHandler(req, res) {
   try {
     const result = await prepareSiteCheckoutInstallments(req, req.body || {})

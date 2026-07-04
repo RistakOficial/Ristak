@@ -596,18 +596,25 @@ minimo de `300 MXN`:
   (`3, 6, 9, 12, 18 o 24` meses).
 - Stripe debe tener MSI habilitado en su Dashboard; Ristak no crea ni modifica
   reglas globales de Stripe.
-- En `/pay`, Ristak usa el flujo controlado por backend: consulta
-  `available_plans`, filtra por `metadata.stripeInstallments.maxInstallments` y
-  confirma el PaymentIntent desde backend con el `plan.count` elegido.
-- En el checkout embebido de Sites, Ristak usa Payment Element nativo con
-  `payment_method_options.card.installments.enabled=true`. El formulario aparece
-  abierto con un solo boton de pago y Stripe muestra los meses automaticamente
-  dentro del elemento cuando el numero de tarjeta califica. No hay boton
-  adicional para consultar meses ni selector propio fuera de Stripe.
-- En Sites, los plazos visibles dentro del Payment Element obedecen la
-  configuracion de MSI del Dashboard de Stripe. Ristak guarda el maximo local del
-  bloque para preview/metadata, pero no puede ocultar meses individuales dentro
-  del iframe de Stripe sin perder la aparicion automatica por numero de tarjeta.
+- En `/pay`, Ristak usa el flujo controlado por backend: crea un PaymentMethod
+  seguro con Stripe, consulta `available_plans`, filtra por
+  `metadata.stripeInstallments.maxInstallments` y confirma el PaymentIntent desde
+  backend con el `plan.count` elegido.
+- En el checkout embebido de Sites, Stripe MSI usa el mismo flujo controlado que
+  `/pay`: Elements separados para tarjeta, endpoint
+  `/api/sites/public/checkout/prepare-installments`, `available_plans` filtrados
+  por el maximo local del bloque y confirmacion server-side con `fixed_count`.
+  No hay boton adicional de "ver meses"; el checkout consulta automaticamente
+  cuando Stripe ya puede crear la tarjeta segura.
+- Si Stripe Dashboard ofrece hasta 24 meses pero el bloque de Sites dice "diferir
+  hasta 9 meses", el vivo solo debe renderizar los planes de Stripe con `count`
+  menor o igual a 9. El selector nativo del Payment Element no se usa en Sites
+  porque no permite ocultar meses por bloque.
+- La fila/PaymentIntent pendiente guardada en `sessionStorage` solo se reutiliza
+  si sigue coincidiendo con el bloque actual en sitio, pagina, bloque, monto,
+  moneda, pasarela, modo y maximo MSI. Si cambias de 3 a 9 meses, o de $500 a
+  $5,000, Ristak ignora el pago viejo y crea uno nuevo para no enseñar planes
+  obsoletos.
 - El editor de Sites usa un preview no interactivo del mismo estado: cuando el
   bloque Stripe es elegible para MSI, muestra la tarjeta con numero elegible y
   las opciones de meses debajo del numero, no una fila fija de contado desde el
@@ -931,8 +938,8 @@ y frontend (`frontend/src/pages/Sites/*`) lo importan; el `Dockerfile` copia
   `.rstk-field-width-set` (solo con `fieldWidth`).
 - Pago: el shell del checkout comparte estilos; el preview del editor solo muestra
   lo que el vivo mostraria (fila de meses standalone solo Conekta via
-  `msiEligibility`; Stripe en `/pay` usa MSI controlado por backend cuando el link
-  trae `stripeInstallments.maxInstallments`; Mercado Pago, CLIP y Rebill resuelven
+  `msiEligibility`; Stripe en `/pay` y Sites usa MSI controlado por backend cuando
+  el cobro trae `stripeInstallments.maxInstallments`; Mercado Pago, CLIP y Rebill resuelven
   installments dentro de su widget/SDK cuando la cuenta/tarjeta califica; boton de
   pago con icono; badge "No visible en el sitio
   publicado" cuando el gate esta deshabilitado). En modo test, el preview y el

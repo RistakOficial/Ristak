@@ -16,7 +16,7 @@ import { createBlock, createSite, deleteSite, renderPublicSiteHtml } from '../sr
 test('MSI constants stay in lockstep with the runtime', () => {
   assert.deepEqual(MSI_INSTALLMENT_CHOICES, [3, 6, 9, 12, 18, 24])
   // La fila standalone (hosted-link) es solo Conekta / Mercado Pago; Stripe se
-  // maneja aparte dentro del Payment Element.
+  // maneja aparte con prepare/confirm controlado por backend.
   assert.ok(MSI_LINK_GATEWAYS.has('conekta') && MSI_LINK_GATEWAYS.has('mercadopago'))
   assert.ok(!MSI_LINK_GATEWAYS.has('stripe'))
   assert.equal(STRIPE_MSI_MIN_AMOUNT, 300)
@@ -53,7 +53,7 @@ test('msiEligibility routes per gateway exactly like the live runtime', () => {
     msiEligibility({ gateway: 'mercadopago', currency: 'MXN', amount: 900, msi }),
     { enabled: true, standaloneMonths: [], insideElement: false, insideBrick: true }
   )
-  // Stripe MXN >= 300: dentro del Payment Element
+  // Stripe MXN >= 300: Elements controlado por Ristak + selector filtrado
   assert.deepEqual(
     msiEligibility({ gateway: 'stripe', currency: 'MXN', amount: 300, msi }),
     { enabled: true, standaloneMonths: [], insideElement: true, insideBrick: false }
@@ -321,7 +321,7 @@ test('E4 guard: the checkout runtime builds the same Stripe appearance variable 
   }
 })
 
-test('Stripe MSI Sites runtime mounts native Payment Element, not split card fields', async () => {
+test('Stripe MSI Sites runtime uses controlled split Elements and backend-filtered plans', async () => {
   const html = await renderPublicSiteHtml(paymentSite({
     paymentGate: {
       enabled: true,
@@ -338,9 +338,13 @@ test('Stripe MSI Sites runtime mounts native Payment Element, not split card fie
   assert.ok(start > -1 && end > start, 'runtime should include Stripe MSI function')
   const msiRuntime = html.slice(start, end)
 
-  assert.match(msiRuntime, /stripe\.elements\(\{ clientSecret: clientSecret/)
-  assert.match(msiRuntime, /elements\.create\('payment'/)
-  assert.match(msiRuntime, /payment_method_data: \{ billing_details: billingDetails\(\) \}/)
-  assert.doesNotMatch(msiRuntime, /elements\.create\('cardNumber'/)
-  assert.doesNotMatch(msiRuntime, /paymentMethodId/)
+  assert.match(msiRuntime, /elements\.create\('cardNumber'/)
+  assert.match(msiRuntime, /elements\.create\('cardExpiry'/)
+  assert.match(msiRuntime, /elements\.create\('cardCvc'/)
+  assert.match(msiRuntime, /paymentMethodId: pmId/)
+  assert.match(msiRuntime, /installment-confirm/)
+  assert.match(msiRuntime, /Number\(p\.count\) <= maxInstallments/)
+  assert.doesNotMatch(msiRuntime, /stripe\.elements\(\{ clientSecret: clientSecret/)
+  assert.doesNotMatch(msiRuntime, /elements\.create\('payment'/)
+  assert.doesNotMatch(msiRuntime, /payment_method_data: \{ billing_details: billingDetails\(\) \}/)
 })

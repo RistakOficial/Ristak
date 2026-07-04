@@ -11,8 +11,8 @@ export const PAYMENT_GATEWAYS = new Set(['stripe', 'conekta', 'mercadopago', 'cl
 export const MSI_INSTALLMENT_CHOICES = [3, 6, 9, 12, 18, 24]
 
 // Pasarelas que aceptan diferido a meses en el link/checkout HOSTED simple
-// (createPaymentGateLink). Stripe se maneja aparte (solo MXN y monto >= 300 vía
-// Payment Element), por eso NO está aquí.
+// (createPaymentGateLink). Stripe se maneja aparte con el flujo controlado por
+// backend (solo MXN y monto >= 300), por eso NO está aquí.
 export const MSI_LINK_GATEWAYS = new Set(['conekta', 'mercadopago', 'clip'])
 
 // Predicado de "gate habilitado" sobre una config YA normalizada. Espejo exacto de
@@ -34,8 +34,8 @@ export function conektaInstallmentMonths({ maxInstallments = 0, amount = 0 } = {
 // Dónde vive el diferido a meses por pasarela en el checkout EMBEBIDO:
 // - Conekta: fila propia (standalone) con un <select> de meses filtrados por monto.
 // - Mercado Pago: dentro del Brick (no hay fila propia).
-// - Stripe: dentro del Payment Element nativo despues de que el numero de tarjeta califica
-//   (solo MXN y monto >= 300; Stripe decide y muestra los planes disponibles).
+// - Stripe: Elements separados + selector controlado por Ristak; el backend consulta
+//   available_plans de Stripe y filtra por el maximo local del bloque.
 // El editor usa esto para mostrar SOLO la fila que el vivo mostraría.
 export const STRIPE_MSI_MIN_AMOUNT = 300
 export const CLIP_MSI_MIN_AMOUNT = 300
