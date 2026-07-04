@@ -4854,9 +4854,13 @@ const buildOrderedPageTree = (pages: SitePage[]): Array<{ page: SitePage; depth:
   return result
 }
 
+// Segmentos reservados que NO pueden ser slug de una página: chocarían con el
+// marcador de bypass /test o con rutas internas del sitio público.
+const RESERVED_PAGE_SLUGS = new Set(['test', 'preview', 'api', 'webhook', 'pay', 'collect', 'assets'])
+
 // Ensure every page has a slug unique among its siblings (same parent). Pages
 // whose slug is empty get one derived from their title. Used before saving a
-// website-mode site so hierarchical URLs stay valid.
+// routable landing (funnel o website) so las URLs limpias por página sean válidas.
 const ensureWebsiteSlugs = (pages: SitePage[]): SitePage[] => {
   const usedByParent = new Map<string, Set<string>>()
   return pages.map(page => {
@@ -4864,7 +4868,7 @@ const ensureWebsiteSlugs = (pages: SitePage[]): SitePage[] => {
     if (!usedByParent.has(parentKey)) usedByParent.set(parentKey, new Set())
     const used = usedByParent.get(parentKey) as Set<string>
     let slug = normalizeRouteInput(page.slug || '') || normalizeRouteInput(page.title || '') || 'pagina'
-    if (used.has(slug)) {
+    if (used.has(slug) || RESERVED_PAGE_SLUGS.has(slug)) {
       let i = 2
       while (used.has(`${slug}-${i}`)) i += 1
       slug = `${slug}-${i}`
@@ -10186,7 +10190,7 @@ export const Sites: React.FC = () => {
     if (!site || !hasEditablePages(site)) return
     const beforePages = normalizeFunnelPages(site)
     const orderedPages = getOrderedPagesForSite(site, nextPages)
-    const finalPages = getSitePageMode(site) === 'website' ? ensureWebsiteSlugs(orderedPages) : orderedPages
+    const finalPages = (isLanding(site) && !isImportedHtmlSite(site)) ? ensureWebsiteSlugs(orderedPages) : orderedPages
     const normalizedBeforePages = normalizePagesForSave(beforePages)
     const normalizedAfterPages = normalizePagesForSave(finalPages)
     const targetPageId = nextActivePageId || activePageId
@@ -10614,11 +10618,11 @@ export const Sites: React.FC = () => {
     if (!selectedSite || !canManagePages(selectedSite)) return
     const cleanTitle = title.trim()
     if (!cleanTitle) return
-    const websiteMode = getSitePageMode(selectedSite) === 'website'
+    const routable = isLanding(selectedSite) && !isImportedHtmlSite(selectedSite)
     const nextPages = pages.map((page, index) => {
       if (page.id !== pageId) return page
       const nextTitle = cleanTitle || `Página ${index + 1}`
-      if (!websiteMode) return { ...page, title: nextTitle }
+      if (!routable) return { ...page, title: nextTitle }
       // La ruta sigue al título MIENTRAS no se haya editado a mano; si el usuario
       // ya personalizó el slug, se respeta (no se pisa al renombrar).
       const slugWasAuto = !page.slug || page.slug === normalizeRouteInput(page.title || '')
@@ -10630,7 +10634,7 @@ export const Sites: React.FC = () => {
 
   const handleRenamePageSlug = (pageId: string, slug: string) => {
     if (!selectedSite || !canManagePages(selectedSite)) return
-    if (getSitePageMode(selectedSite) !== 'website') return
+    if (!isLanding(selectedSite) || isImportedHtmlSite(selectedSite)) return
     const cleanSlug = normalizeRouteInput(slug)
     const nextPages = pages.map(page => page.id === pageId
       ? { ...page, slug: cleanSlug || undefined }
@@ -12670,7 +12674,9 @@ export const Sites: React.FC = () => {
       onReorderPages={handleReorderPages}
       onRenamePage={handleRenamePage}
       onRenamePageSlug={handleRenamePageSlug}
-      sitePathPrefix={`${getPublicDomainPreview(domainConfig)}/${normalizeRouteInput(editorSite.slug || '')}`}
+      sitePathPrefix={(isLanding(editorSite) && !isImportedHtmlSite(editorSite))
+        ? `${getPublicDomainPreview(domainConfig)}/${normalizeRouteInput(editorSite.slug || '')}`
+        : undefined}
       onPatchTheme={patchSiteTheme}
       onSaveSite={() => handleSaveSite(undefined, { silent: true })}
     />
@@ -27575,9 +27581,14 @@ const FunnelPagesPanel: React.FC<FunnelPagesPanelProps> = ({
   const activePage = pages.find(page => page.id === activePageId) || pages[0] || null
   const hasFixedPageSection = colorFinalPages
   const websiteMode = pageMode === 'website' && !hasFixedPageSection
+  // Editor de ruta por página: aplica a landings ruteables (embudo Y sitio web),
+  // NUNCA a formularios (el panel de forms no pasa sitePathPrefix/onRenamePageSlug).
+  // Es independiente de websiteMode: los embudos siguen siendo lista plana (sin
+  // árbol/subpáginas), pero cada paso tiene su ruta editable.
+  const routeEditable = !hasFixedPageSection && Boolean(sitePathPrefix) && Boolean(onRenamePageSlug)
   // Página principal = primera página de nivel superior (su slug NO va en la URL,
   // mapea a la ruta base del sitio). Se usa para el editor de ruta por página.
-  const homePageId = websiteMode
+  const homePageId = routeEditable
     ? (pages.filter(page => !page.parentPageId).sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0))[0]?.id || '')
     : ''
   const movablePages = hasFixedPageSection ? pages.filter(page => !isFixedPage(page)) : pages
@@ -27803,14 +27814,14 @@ const FunnelPagesPanel: React.FC<FunnelPagesPanelProps> = ({
                     : colorFinalPages && page.id === FORM_DISQUALIFIED_PAGE_ID
                       ? styles.pagesDropdownItemDisqualified
                       : ''
-                  // Preview + editor de ruta por página (solo modo "Sitio web").
-                  const isHomePage = websiteMode && page.id === homePageId
-                  const slugChain = websiteMode ? getPageSlugChain(pages, page) : []
-                  const routePreview = websiteMode
+                  // Preview + editor de ruta por página (landings ruteables: embudo y web).
+                  const isHomePage = routeEditable && page.id === homePageId
+                  const slugChain = routeEditable ? getPageSlugChain(pages, page) : []
+                  const routePreview = routeEditable
                     ? (isHomePage ? sitePathPrefix : `${sitePathPrefix}/${slugChain.join('/')}`)
                     : ''
                   // Prefijo compacto para el input (relativo); la ruta absoluta va en el preview.
-                  const slugPrefix = websiteMode
+                  const slugPrefix = routeEditable
                     ? `/${slugChain.slice(0, -1).map(segment => `${segment}/`).join('')}`
                     : ''
 
@@ -27830,6 +27841,7 @@ const FunnelPagesPanel: React.FC<FunnelPagesPanelProps> = ({
                       canDuplicate={pageCanDuplicate}
                       showAddSubpage={canAddSubpage}
                       websiteMode={websiteMode}
+                      routeEditable={routeEditable}
                       canPromote={pageCanPromote}
                       canDemote={pageCanDemote}
                       onAddSubpage={onAddSubpage ? () => { onAddSubpage(page.id) } : undefined}
@@ -27921,6 +27933,7 @@ interface FunnelPageDropdownItemProps {
   canDuplicate: boolean
   showAddSubpage?: boolean
   websiteMode?: boolean
+  routeEditable?: boolean
   canPromote?: boolean
   canDemote?: boolean
   onAddSubpage?: () => void
@@ -27953,6 +27966,7 @@ const FunnelPageDropdownItem: React.FC<FunnelPageDropdownItemProps> = ({
   canDuplicate,
   showAddSubpage = false,
   websiteMode = false,
+  routeEditable = false,
   canPromote = false,
   canDemote = false,
   onAddSubpage,
@@ -27974,7 +27988,7 @@ const FunnelPageDropdownItem: React.FC<FunnelPageDropdownItemProps> = ({
   const [slugDraft, setSlugDraft] = useState(slugValue)
   useEffect(() => { setSlugDraft(slugValue) }, [slugValue, renaming])
   const title = page.title || `Página ${index + 1}`
-  const showRouteEditor = websiteMode && !fixedPage
+  const showRouteEditor = routeEditable && !fixedPage
   const canEditSlug = showRouteEditor && !isHomePage && Boolean(onRenamePageSlug)
   const dragDisabled = locked || fixedPage
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({

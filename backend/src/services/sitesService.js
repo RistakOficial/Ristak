@@ -21299,12 +21299,15 @@ export async function renderPublicSiteHtml(site, { pageId, pagePath, trackingEna
   const isStandardFormType = site.siteType === 'standard_form'
   const pages = normalizeSitePages(site)
   const websiteMode = getSitePageMode(site) === 'website'
-  // Published website-mode pages link via real paths; preview & funnels use ?page=.
-  const linkStyle = (websiteMode && !preview) ? 'path' : 'query'
+  // Sitios ruteables = landings (embudo Y sitio web), NO formularios ni HTML
+  // importado. Publicados usan rutas limpias por página (/sitio/paso-02); en
+  // preview y en formularios se mantiene ?page=.
+  const routableSite = site.siteType === 'landing_page' && !isImportedHtmlSite(site)
+  const linkStyle = (routableSite && !preview) ? 'path' : 'query'
   const requestedPageId = cleanString(pageId)
-  // Page resolution order: explicit ?page= wins everywhere; then (website mode)
-  // the hierarchical URL path; otherwise the home / first page.
-  const pathPage = websiteMode && !requestedPageId ? resolvePageByPathSegments(site, pagePath) : null
+  // Orden de resolución: ?page= explícito gana SIEMPRE (fallback compatible con
+  // links viejos); luego la ruta limpia jerárquica; si no, home / primera página.
+  const pathPage = routableSite && !requestedPageId ? resolvePageByPathSegments(site, pagePath) : null
   const activePage = pages.find(page => page.id === requestedPageId)
     || pathPage
     || (websiteMode ? (getSiteHomePage(site) || pages[0]) : pages[0])
