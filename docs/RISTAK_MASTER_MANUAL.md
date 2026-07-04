@@ -774,18 +774,16 @@ Alcance:
   mismo paso de decision que Stripe, Conekta, Mercado Pago y CLIP: contado o MSI.
   Si se elige MSI, Ristak pide el maximo de meses (3, 6, 9, 12, 18 o 24), guarda
   `metadata.rebillInstallments.maxInstallments` y conserva
-  `enabledInstallments`. Como el SDK `instant-product` de Rebill no acepta
-  `installmentsSettings`, los links con MSI no montan el checkout embebido:
-  Ristak crea un Payment Link hosted de Rebill tipo `instant` con
-  `paymentMethods=[{ methods:['card'], currency }]`, `showCoupon=false`,
-  `isSingleUse=true` e `installmentsSettings` por moneda. La URL hosted queda en
-  `metadata.rebillHostedPaymentLink` y la pagina publica de Ristak redirige al
-  portal de Rebill; si Rebill regresa al usuario a `/pay/:id?rebill_return=...`,
-  Ristak evita loops y espera la confirmacion por webhook/API. El webhook ubica
-  el pago local por `metadata.publicPaymentId`/`metadata.localPaymentId` y guarda
-  el numero real de mensualidades como
-  `metadata.rebillInstallments.selectedInstallments`. En contado se conserva el
-  checkout embebido con `instant-product`, tarjeta unicamente y one-click default.
+  `enabledInstallments`. Para la prueba operativa actual,
+  `REBILL_USE_HOSTED_PAYMENT_LINKS=false`, asi que la pagina publica conserva el
+  checkout embebido con `instant-product`, tarjeta unicamente,
+  `display.discountCode=false`, `display.logo=false` y `one-click-checkout=false`
+  cuando MSI esta activo. La integracion hosted de Rebill permanece en el backend
+  como alternativa, pero el frontend no redirige mientras ese flag siga apagado.
+  En sandbox, Rebill muestra la lista inicial de mensualidades configuradas, pero
+  al validar el BIN de la tarjeta puede bloquear el selector si el emisor/pais no
+  devuelve MSI; para Mexico, probar con tarjetas que el endpoint de Rebill marque
+  como credito MX y con `installments` disponibles.
 - Tarjetas sandbox Rebill Mexico: la ayuda visible debe usar la tabla oficial
   vigente del SDK: Visa debito `4111 1111 1111 1111`, Visa credito
   `4242 4242 4242 4242`, Mastercard debito `5555 5555 5555 4444`,
