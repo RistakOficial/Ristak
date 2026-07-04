@@ -57,7 +57,7 @@ import {
   getPostAuthRedirectPath,
   isCellphoneDevice,
   isPhoneAppPath,
-  isPublicPaymentPath,
+  isPublicCustomerExperiencePath,
   isTabletDevice,
   readTabletViewPreference,
   toCanonicalPhoneAppPath,
@@ -510,7 +510,7 @@ const CellphoneRouteGate: React.FC = () => {
   const location = useLocation()
   const isCellphone = useCellphoneAccessState()
 
-  if (!isCellphone || isPhoneAppPath(location.pathname) || isPublicPaymentPath(location.pathname) || location.pathname === SETUP_PATH) {
+  if (!isCellphone || isPhoneAppPath(location.pathname) || isPublicCustomerExperiencePath(location.pathname) || location.pathname === SETUP_PATH) {
     return null
   }
 
@@ -557,11 +557,14 @@ const TabletViewPreferenceGate: React.FC = () => {
   const navigate = useNavigate()
   const { isTablet, preference, setPreference } = useTabletViewPreferenceState()
   const isPhoneRoute = isPhoneAppPath(location.pathname)
+  const isPublicCustomerRoute = isPublicCustomerExperiencePath(location.pathname)
   // En la app nativa iOS el shell siempre es la vista de teléfono/tablet: ofrecer
   // "Versión para computadora" no aplica y provoca un loop con el gate nativo,
   // además de tapar el login con un overlay. No mostramos el modal ahí.
+  // Las experiencias publicas de cliente tampoco deben heredar decisiones del
+  // shell interno: un checkout o sitio publicado tiene que abrir limpio.
   const canApplyTabletPreference =
-    isTablet && location.pathname !== SETUP_PATH && !mobileAppService.isIosMobileShell()
+    isTablet && location.pathname !== SETUP_PATH && !isPublicCustomerRoute && !mobileAppService.isIosMobileShell()
 
   React.useEffect(() => {
     if (!canApplyTabletPreference || !preference) return

@@ -10,7 +10,7 @@ import { StatusBar, Style } from '@capacitor/status-bar'
 import { hasRuntimeApiBaseUrl } from './apiBaseUrl'
 import apiClient from './apiClient'
 import type { PushSubscriptionResult } from './pushNotificationsService'
-import { isPublicPaymentPath } from '@/utils/phoneAccess'
+import { isPublicCustomerExperiencePath } from '@/utils/phoneAccess'
 
 type NativePlatform = 'ios' | 'android' | 'web'
 type PhotoSource = 'camera' | 'photos'
@@ -169,7 +169,7 @@ function getIosMobileRedirectPath(value = typeof window !== 'undefined' ? `${win
   if (!hasRuntimeApiBaseUrl()) {
     return normalizedPathname === IOS_MOBILE_TENANT_PATH ? '' : IOS_MOBILE_TENANT_PATH
   }
-  if (isPublicPaymentPath(normalizedPathname)) return ''
+  if (isPublicCustomerExperiencePath(normalizedPathname)) return ''
   if (isIosMobileAppAllowedPath(normalizedPathname)) return ''
   if (normalizedPathname === '/login') return IOS_MOBILE_LOGIN_PATH
   return IOS_MOBILE_HOME_PATH

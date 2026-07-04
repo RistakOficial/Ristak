@@ -154,6 +154,10 @@ Rutas publicas:
 - `/login`, `/sso`, `/reset-password`.
 - `/license-blocked`.
 - `/pay/success` y `/pay/:publicPaymentId`.
+- Las superficies publicas de cliente no aplican el selector global de vista
+  tablet/computadora del CRM. Checkout, Sites, calendarios publicos, tracking y
+  endpoints publicos de pasarelas deben abrir como experiencia de visitante, sin
+  redirigir al shell movil ni mostrar el modal "Tablet detectada".
 - El estado exitoso de `/pay/:publicPaymentId` muestra un comprobante centrado
   con icono de confirmacion de contorno, titulo del resultado, monto, pasarela,
   concepto, detalles del pago, descarga de PDF y datos del negocio cuando estan

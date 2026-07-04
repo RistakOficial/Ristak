@@ -14,6 +14,16 @@ export const LEGACY_PHONE_APP_LOGIN_PATH = `${LEGACY_PHONE_APP_PREFIX}/login`
 export const LEGACY_PHONE_APP_TENANT_PATH = `${LEGACY_PHONE_APP_PREFIX}/tenant`
 export const DESKTOP_LOGIN_PATH = '/login'
 export const PUBLIC_PAYMENT_PATH_PREFIX = '/pay/'
+const PUBLIC_SITE_API_PATH_PREFIX = '/api/sites/public/'
+const PUBLIC_CALENDAR_API_PATH_PREFIX = '/api/calendars/public/'
+const PUBLIC_CUSTOMER_EXACT_PATHS = new Set(['/snip.js', '/collect', '/video-event', '/sync-visitor', '/link-visitor'])
+const PUBLIC_GATEWAY_PAYMENT_PATH_PREFIXES = [
+  '/api/stripe/public/payments/',
+  '/api/conekta/public/payments/',
+  '/api/mercadopago/public/payments/',
+  '/api/clip/public/payments/',
+  '/api/rebill/public/payments/'
+]
 export const SETUP_PATH = '/setup'
 export const TABLET_VIEW_PREFERENCE_KEY = 'ristak.tabletViewPreference.v1'
 export const TABLET_VIEW_PREFERENCE_EVENT = 'ristak:tablet-view-preference'
@@ -43,6 +53,14 @@ export function isPhoneAppPath(pathname = '') {
 
 export function isPublicPaymentPath(pathname = '') {
   return pathname.startsWith(PUBLIC_PAYMENT_PATH_PREFIX) && pathname.length > PUBLIC_PAYMENT_PATH_PREFIX.length
+}
+
+export function isPublicCustomerExperiencePath(pathname = '') {
+  if (isPublicPaymentPath(pathname)) return true
+  if (pathname.startsWith(PUBLIC_SITE_API_PATH_PREFIX)) return true
+  if (pathname.startsWith(PUBLIC_CALENDAR_API_PATH_PREFIX)) return true
+  if (PUBLIC_CUSTOMER_EXACT_PATHS.has(pathname)) return true
+  return PUBLIC_GATEWAY_PAYMENT_PATH_PREFIXES.some(prefix => pathname.startsWith(prefix))
 }
 
 export function toCanonicalPhoneAppPath(pathname = '') {
