@@ -698,6 +698,11 @@
   background: color-mix(in srgb, var(--accent-soft) 52%, var(--surface));
 }
 
+.contactChatEmail {
+  width: min(84%, 36rem);
+  max-width: min(84%, 36rem);
+}
+
 .contactChatSystem {
   align-self: center;
   max-width: 86%;

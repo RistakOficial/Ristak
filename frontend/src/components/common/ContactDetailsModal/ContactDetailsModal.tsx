@@ -11,14 +11,18 @@ import {
   ContactPhoneSelector,
   CustomSelect,
   EmailRichTextEditor,
+  EmailChatMessageBubble,
   InlineEditableText,
   Switch,
   TagPicker,
   WhatsAppFormattedText,
+  buildEmailChatMessageData,
   emailHtmlToPlainText,
+  hasEmailChatMessageContent,
   plainTextToEmailHtml,
   sanitizeEmailRichHtmlForEditor,
   type BadgeVariant,
+  type EmailChatMessageData,
   type EmailRichTextVariable
 } from '@/components/common'
 import { ContactJourney } from '@/components/common/ContactJourney'
@@ -172,6 +176,7 @@ interface ContactChatMessage {
   businessPhoneNumberId?: string
   transport?: string
   channel?: ContactChatComposerChannel
+  email?: EmailChatMessageData
 }
 
 type ContactChatTimelineItem =
@@ -494,7 +499,6 @@ const getJourneyChatMessage = (event: JourneyEvent, index: number): ContactChatM
   const messageType = String(data.message_type || data.messageType || data.type || '').trim()
   const subject = String(data.subject || '').trim()
   const text = pickChatText(data)
-  if (!text && !messageType && !subject) return null
   const inferredChannel = inferContactChatChannel([
     data.transport,
     data.channel,
@@ -503,6 +507,27 @@ const getJourneyChatMessage = (event: JourneyEvent, index: number): ContactChatM
     data.platform,
     event.type
   ]) || (event.type === 'email_message' ? 'email' : event.type === 'whatsapp_message' ? 'whatsapp' : '')
+  const direction = normalizeBusinessMessageDirection(data.direction || data.message_direction || data.from_type)
+  const rawEmailHtml = event.type === 'email_message'
+    ? String(data.html_body || data.htmlBody || '').trim()
+    : ''
+  const emailBodyText = event.type === 'email_message' && !text && rawEmailHtml
+    ? emailHtmlToPlainText(rawEmailHtml)
+    : ''
+  const effectiveText = text || emailBodyText
+  const status = String(data.status || data.message_status || '').trim()
+  const errorReason = String(data.error_message || data.errorMessage || data.error_reason || data.errorReason || '').trim()
+  const transport = String(data.transport || data.channel || data.provider || inferredChannel || '').trim()
+  const email = event.type === 'email_message'
+    ? buildEmailChatMessageData(data, {
+        bodyText: effectiveText,
+        direction,
+        status,
+        errorReason,
+        transport
+      })
+    : undefined
+  if (!effectiveText && !messageType && !subject && !hasEmailChatMessageContent(email)) return null
 
   return {
     id: String(
@@ -518,16 +543,17 @@ const getJourneyChatMessage = (event: JourneyEvent, index: number): ContactChatM
       data.id ||
       `${event.type}-${event.date}-${index}`
     ),
-    text: text || getChatMessageTypeLabel(messageType),
+    text: effectiveText || getChatMessageTypeLabel(messageType),
     subject,
     date: pickChatTimestamp(data, ['date', 'timestamp', 'created_at', 'createdAt', 'message_timestamp', 'messageTimestamp']) || event.date,
-    direction: normalizeBusinessMessageDirection(data.direction || data.message_direction || data.from_type),
-    status: String(data.status || data.message_status || '').trim(),
-    errorReason: String(data.error_message || data.errorMessage || data.error_reason || data.errorReason || '').trim(),
+    direction,
+    status,
+    errorReason,
     businessPhone: String(data.business_phone || data.businessPhone || data.from_phone || data.fromPhone || data.to_phone || data.toPhone || '').trim(),
     businessPhoneNumberId: String(data.business_phone_number_id || data.businessPhoneNumberId || data.phone_number_id || data.phoneNumberId || '').trim(),
-    transport: String(data.transport || data.channel || data.provider || inferredChannel || '').trim(),
-    channel: inferredChannel || undefined
+    transport,
+    channel: inferredChannel || undefined,
+    email
   }
 }
 
@@ -1812,11 +1838,17 @@ export function ContactDetailsModal({
                           : message.direction === 'system'
                           ? styles.contactChatSystem
                           : styles.contactChatInbound
-                      } ${scheduled ? styles.contactChatScheduled : ''}`}
+                      } ${scheduled ? styles.contactChatScheduled : ''} ${message.email ? styles.contactChatEmail : ''}`}
                     >
-                      {message.subject ? <strong className={styles.contactChatSubject}>{message.subject}</strong> : null}
-                      {message.text ? <WhatsAppFormattedText text={message.text} className={styles.contactChatText} /> : null}
-                      {message.errorReason ? <small className={styles.contactChatError}>{message.errorReason}</small> : null}
+                      {message.email ? (
+                        <EmailChatMessageBubble email={message.email} compact />
+                      ) : (
+                        <>
+                          {message.subject ? <strong className={styles.contactChatSubject}>{message.subject}</strong> : null}
+                          {message.text ? <WhatsAppFormattedText text={message.text} className={styles.contactChatText} /> : null}
+                        </>
+                      )}
+                      {message.errorReason && !message.email ? <small className={styles.contactChatError}>{message.errorReason}</small> : null}
                       {message.scheduledAt ? (
                         <small className={styles.contactChatScheduledText}>
                           Programado para {formatLocalDateTime(message.scheduledAt)}

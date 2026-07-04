@@ -1157,6 +1157,11 @@
   color: var(--color-text-primary);
 }
 
+.messageEmail {
+  width: min(86%, 620px);
+  max-width: min(86%, 620px);
+}
+
 .messageSystem {
   align-self: center;
   max-width: 86%;

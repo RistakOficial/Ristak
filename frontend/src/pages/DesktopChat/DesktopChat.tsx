@@ -52,6 +52,7 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
   EmailRichTextEditor,
+  EmailChatMessageBubble,
   Icon,
   InlineEditableText,
   Modal,
@@ -60,9 +61,12 @@ import {
   Switch,
   TagPicker,
   WhatsAppFormattedText,
+  buildEmailChatMessageData,
   emailHtmlToPlainText,
+  hasEmailChatMessageContent,
   plainTextToEmailHtml,
   sanitizeEmailRichHtmlForEditor,
+  type EmailChatMessageData,
   type EmailRichTextVariable
 } from '@/components/common'
 import { ContactJourney } from '@/components/common/ContactJourney'
@@ -216,6 +220,7 @@ interface DesktopChatMessage {
     imageUrl?: string
     permalink?: string
   }
+  email?: EmailChatMessageData
   attachment?: {
     type: ChatAttachmentType
     url?: string
@@ -1938,9 +1943,28 @@ function getJourneyMessage(event: JourneyEvent, index: number): DesktopChatMessa
   const text = cleanAttachmentMessageText(pickMessageText(data), attachment)
   const messageType = String(data.message_type || data.messageType || data.type || '').trim()
   const subject = String(data.subject || '').trim()
-  if (!text && !attachment && !messageType && !subject) return null
   const direction = normalizeWhatsAppBusinessDirection(data.direction || data.message_direction || data.from_type)
   const date = pickMessageTimestamp(data, ['date', 'timestamp', 'created_at', 'createdAt', 'message_timestamp', 'messageTimestamp']) || event.date
+  const rawEmailHtml = event.type === 'email_message'
+    ? String(data.html_body || data.htmlBody || '').trim()
+    : ''
+  const emailBodyText = event.type === 'email_message' && !text && rawEmailHtml
+    ? emailHtmlToPlainText(rawEmailHtml)
+    : ''
+  const effectiveText = text || emailBodyText
+  const status = String(data.status || data.message_status || '').trim()
+  const errorReason = String(data.error_message || data.errorMessage || data.error_reason || data.errorReason || '').trim()
+  const transport = String(data.transport || data.channel || data.provider || '').trim()
+  const email = event.type === 'email_message'
+    ? buildEmailChatMessageData(data, {
+        bodyText: effectiveText,
+        direction,
+        status,
+        errorReason,
+        transport
+      })
+    : undefined
+  if (!effectiveText && !attachment && !messageType && !subject && !hasEmailChatMessageContent(email)) return null
   const fallbackText = attachment
     ? (['audio', 'image', 'video'].includes(attachment.type) ? '' : getMessageTypeLabel(attachment.type, 'Archivo'))
     : getMessageTypeLabel(messageType)
@@ -1958,18 +1982,18 @@ function getJourneyMessage(event: JourneyEvent, index: number): DesktopChatMessa
       data.id ||
       `${event.type}-${event.date}-${index}`
     ),
-    text: text || fallbackText,
+    text: effectiveText || fallbackText,
     subject,
     date,
     direction,
-    status: String(data.status || data.message_status || '').trim(),
-    errorReason: String(data.error_message || data.errorMessage || data.error_reason || data.errorReason || '').trim(),
+    status,
+    errorReason,
     sentAt: pickMessageTimestamp(data, ['sent_at', 'sentAt']),
     deliveredAt: pickMessageTimestamp(data, ['delivered_at', 'deliveredAt']),
     readAt: pickMessageTimestamp(data, ['read_at', 'readAt']),
     businessPhone: String(data.business_phone || data.businessPhone || data.from || '').trim(),
     businessPhoneNumberId: String(data.business_phone_number_id || data.businessPhoneNumberId || '').trim(),
-    transport: String(data.transport || data.channel || data.provider || '').trim(),
+    transport,
     routingReason: String(data.routing_reason || data.routingReason || data.fallbackReason || '').trim(),
     isComment: messageType === 'comment' || messageType === 'comment_reply_public' || messageType === 'comment_reply_private',
     commentReplyMode: messageType === 'comment_reply_public' ? 'public' : messageType === 'comment_reply_private' ? 'private' : undefined,
@@ -1982,6 +2006,7 @@ function getJourneyMessage(event: JourneyEvent, index: number): DesktopChatMessa
           permalink: String(data.post_permalink || data.permalink || '').trim()
         }
       : undefined,
+    email,
     attachment
   }
 }
@@ -7285,7 +7310,7 @@ export const DesktopChat: React.FC = () => {
                         return (
                           <article
                             key={item.id}
-                            className={`${styles.messageBubble} ${message.direction === 'outbound' ? styles.messageOutbound : message.direction === 'system' ? styles.messageSystem : styles.messageInbound} ${isMessageScheduled(message) ? styles.messageScheduled : ''} ${message.isComment ? styles.messageComment : ''}`}
+                            className={`${styles.messageBubble} ${message.direction === 'outbound' ? styles.messageOutbound : message.direction === 'system' ? styles.messageSystem : styles.messageInbound} ${isMessageScheduled(message) ? styles.messageScheduled : ''} ${message.isComment ? styles.messageComment : ''} ${message.email ? styles.messageEmail : ''}`}
                           >
 	                            {message.isComment ? (
 	                              <div className={styles.commentCard}>
@@ -7350,13 +7375,19 @@ export const DesktopChat: React.FC = () => {
 	                              </div>
 	                            ) : (
 	                              <>
-	                                {renderAttachment(message)}
-	                                {message.subject ? <strong className={styles.emailMessageSubject}>{message.subject}</strong> : null}
-	                                {message.text ? <WhatsAppFormattedText text={message.text} className={styles.messageText} /> : null}
+	                                {message.email ? (
+	                                  <EmailChatMessageBubble email={message.email} />
+	                                ) : (
+	                                  <>
+	                                    {renderAttachment(message)}
+	                                    {message.subject ? <strong className={styles.emailMessageSubject}>{message.subject}</strong> : null}
+	                                    {message.text ? <WhatsAppFormattedText text={message.text} className={styles.messageText} /> : null}
+	                                  </>
+	                                )}
 	                              </>
 	                            )}
                             {routingDetails.reason ? <small className={styles.messageRoutingNote}>{routingDetails.reason}</small> : null}
-                            {message.errorReason ? <small className={styles.errorText}>{message.errorReason}</small> : null}
+                            {message.errorReason && !message.email ? <small className={styles.errorText}>{message.errorReason}</small> : null}
                             {message.scheduledAt ? <small className={styles.scheduledText}>Programado para {formatLocalDateTime(message.scheduledAt)}</small> : null}
                             {renderScheduledMessageActions(message)}
                             {!message.isComment ? renderMessageMeta(message, routingDetails.label) : null}

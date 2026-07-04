@@ -316,6 +316,14 @@ texto o agregar mas archivos.
 El correo queda fuera de este flujo hasta que su manejo de adjuntos se cierre en
 la superficie de email.
 
+Los mensajes de correo dentro del historial del chat desktop y del modal de
+contacto deben renderizarse como globo desplegable de email, no como texto plano
+mezclado con WhatsApp/Meta. El resumen muestra icono de correo, direccion
+enviado/recibido, asunto y destinatario principal. Al desplegar, el globo debe
+mostrar los campos estructurados del correo, incluyendo `Asunto`, `Remitente`,
+`Destinatarios`, `Responder a`, `Estado`, `Transporte` cuando existan y el
+`Cuerpo` completo a partir de `message_text` o `html_body` sanitizado.
+
 Los adjuntos manuales del chat soportan imagenes, videos, audios y documentos
 compatibles. Si un video o audio cabe como media directa, la UI pregunta si debe
 mandarse como video/nota de voz o como archivo. Si excede el limite de media

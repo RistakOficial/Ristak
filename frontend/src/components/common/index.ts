@@ -59,6 +59,12 @@ export type { BadgeVariant } from './Badge'
 export { ChatMessageSurface } from './ChatMessageSurface'
 export type { ChatMessageSurfaceProps } from './ChatMessageSurface'
 export {
+  EmailChatMessageBubble,
+  buildEmailChatMessageData,
+  hasEmailChatMessageContent,
+  type EmailChatMessageData
+} from './EmailChatMessageBubble/EmailChatMessageBubble'
+export {
   WhatsAppFormattedInlineText,
   WhatsAppFormattedText
 } from './WhatsAppFormattedText'

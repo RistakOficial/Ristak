@@ -1,0 +1,231 @@
+.emailBubble {
+  display: block;
+  width: 100%;
+  min-width: 0;
+  color: inherit;
+}
+
+.emailBubble summary {
+  list-style: none;
+}
+
+.emailBubble summary::-webkit-details-marker {
+  display: none;
+}
+
+.summary {
+  display: grid;
+  grid-template-columns: 1.75rem minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 0.625rem;
+  min-width: 0;
+  cursor: pointer;
+  outline: none;
+}
+
+.summary:focus-visible {
+  border-radius: var(--radius-ctl);
+  box-shadow: var(--ristak-focus-ring);
+}
+
+.iconWrap {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.75rem;
+  height: 1.75rem;
+  border: 1px solid color-mix(in srgb, currentColor 18%, transparent);
+  border-radius: var(--radius-pill);
+  background: color-mix(in srgb, var(--accent-soft) 46%, transparent);
+  color: var(--accent);
+}
+
+.summaryCopy {
+  display: grid;
+  gap: 0.125rem;
+  min-width: 0;
+}
+
+.summaryCopy strong,
+.summaryCopy small,
+.eyebrow {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.eyebrow {
+  color: var(--text-mute);
+  font: var(--label-font);
+  font-size: 0.625rem;
+  font-weight: 600;
+}
+
+.summaryCopy strong {
+  color: var(--text);
+  font-size: 0.8125rem;
+  font-weight: 650;
+  line-height: 1.25;
+}
+
+.summaryCopy small {
+  color: var(--text-dim);
+  font-size: 0.75rem;
+  font-weight: 500;
+  line-height: 1.2;
+}
+
+.chevron {
+  color: var(--text-mute);
+  transition: transform 160ms ease;
+}
+
+.emailBubble[open] .chevron {
+  transform: rotate(180deg);
+}
+
+.content {
+  display: grid;
+  gap: 0.75rem;
+  min-width: 0;
+  margin-top: 0.75rem;
+  padding-top: 0.75rem;
+  border-top: 1px solid color-mix(in srgb, currentColor 16%, transparent);
+}
+
+.fieldList {
+  display: grid;
+  gap: 0.375rem;
+  margin: 0;
+  min-width: 0;
+}
+
+.fieldRow {
+  display: grid;
+  grid-template-columns: minmax(6.75rem, auto) minmax(0, 1fr);
+  gap: 0.625rem;
+  min-width: 0;
+  align-items: baseline;
+}
+
+.fieldRow dt {
+  color: var(--text-mute);
+  font-size: 0.6875rem;
+  font-weight: 650;
+  line-height: 1.35;
+}
+
+.fieldRow dd {
+  margin: 0;
+  min-width: 0;
+  color: var(--text-dim);
+  font-size: 0.75rem;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+}
+
+.bodySection {
+  display: grid;
+  gap: 0.375rem;
+  min-width: 0;
+}
+
+.bodyLabel {
+  color: var(--text-mute);
+  font-size: 0.6875rem;
+  font-weight: 650;
+  line-height: 1.35;
+}
+
+.bodyText,
+.bodyHtml {
+  min-width: 0;
+  color: var(--text);
+  font-size: 0.8125rem;
+  line-height: 1.48;
+  overflow-wrap: anywhere;
+}
+
+.bodyText {
+  white-space: pre-wrap;
+}
+
+.bodyHtml {
+  display: block;
+  max-width: 100%;
+}
+
+.bodyHtml :global(*) {
+  max-width: 100%;
+}
+
+.bodyHtml :global(p),
+.bodyHtml :global(div),
+.bodyHtml :global(blockquote),
+.bodyHtml :global(ul),
+.bodyHtml :global(ol),
+.bodyHtml :global(table) {
+  margin-top: 0;
+  margin-bottom: 0.5rem;
+}
+
+.bodyHtml :global(p:last-child),
+.bodyHtml :global(div:last-child),
+.bodyHtml :global(blockquote:last-child),
+.bodyHtml :global(ul:last-child),
+.bodyHtml :global(ol:last-child),
+.bodyHtml :global(table:last-child) {
+  margin-bottom: 0;
+}
+
+.bodyHtml :global(a) {
+  color: var(--accent);
+  text-decoration: underline;
+  text-underline-offset: 0.125rem;
+}
+
+.bodyHtml :global(img) {
+  display: block;
+  max-width: 100%;
+  height: auto;
+  border-radius: var(--radius-ctl);
+}
+
+.bodyHtml :global(table) {
+  width: 100%;
+  border-collapse: collapse;
+  overflow: hidden;
+}
+
+.bodyHtml :global(td),
+.bodyHtml :global(th) {
+  border: 1px solid color-mix(in srgb, currentColor 14%, transparent);
+  padding: 0.375rem;
+  text-align: left;
+  vertical-align: top;
+}
+
+.errorText {
+  margin: 0;
+  color: var(--neg);
+  font-size: 0.75rem;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+}
+
+.emailBubble[data-compact='true'] .summary {
+  grid-template-columns: 1.625rem minmax(0, 1fr) auto;
+  gap: 0.5rem;
+}
+
+.emailBubble[data-compact='true'] .iconWrap {
+  width: 1.625rem;
+  height: 1.625rem;
+}
+
+@media (max-width: 720px) {
+  .fieldRow {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 0.125rem;
+  }
+}
