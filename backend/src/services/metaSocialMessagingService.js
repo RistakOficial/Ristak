@@ -509,9 +509,82 @@ function getFallbackContactName(platform, senderId) {
   return suffix ? `${getPlatformLabel(platform)} ${suffix}` : getPlatformLabel(platform)
 }
 
-function createMetaSocialMessageError(message, statusCode = 400) {
+function createMetaSocialMessageError(message, statusCode = 400, meta = null) {
   const error = new Error(message)
   error.statusCode = statusCode
+  if (meta && typeof meta === 'object') error.meta = meta
+  return error
+}
+
+function normalizeMetaGraphCode(value) {
+  const numeric = Number(value)
+  return Number.isFinite(numeric) ? numeric : null
+}
+
+function createMetaSocialGraphError(data = {}, statusCode = 400, { path = '', method = 'GET' } = {}) {
+  const graphError = data?.error || {}
+  const originalMessage = cleanString(graphError.message) || `Meta Graph respondió ${statusCode}`
+  return createMetaSocialMessageError(originalMessage, statusCode, {
+    provider: 'meta',
+    graphError: {
+      code: normalizeMetaGraphCode(graphError.code),
+      subcode: normalizeMetaGraphCode(graphError.error_subcode),
+      type: cleanString(graphError.type),
+      message: originalMessage,
+      fbtraceId: cleanString(graphError.fbtrace_id),
+      path: cleanString(path),
+      method: cleanString(method).toUpperCase() || 'GET'
+    }
+  })
+}
+
+function isMetaCapabilityError(error) {
+  const code = normalizeMetaGraphCode(error?.meta?.graphError?.code)
+  const message = cleanString(error?.message)
+  return code === 3 || /application does not have the capability/i.test(message)
+}
+
+function isMetaPermissionError(error) {
+  const code = normalizeMetaGraphCode(error?.meta?.graphError?.code)
+  const message = cleanString(error?.message)
+  return code === 10 ||
+    code === 200 ||
+    code === 230 ||
+    /requires .*permission|missing permission|permission to/i.test(message)
+}
+
+function createMetaSocialCapabilityMessage(platform) {
+  if (platform === 'instagram') {
+    return 'Meta bloqueó Instagram DM: falta aprobar Instagram Messaging API (instagram_manage_messages) en la app de Meta. Apruébalo, pon la app en Live si respondes a clientes reales y reconecta Meta en Ristak para regenerar el token. Detalle: (#3).'
+  }
+
+  return 'Meta bloqueó Messenger: falta aprobar pages_messaging en la app de Meta. Apruébalo, pon la app en Live si respondes a clientes reales y reconecta Meta en Ristak para regenerar el token. Detalle: (#3).'
+}
+
+function createMetaSocialPermissionMessage(platform) {
+  if (platform === 'instagram') {
+    return 'Meta rechazó Instagram DM por permisos insuficientes. Revisa que el token de la Página incluya instagram_manage_messages y que la persona/cuenta tenga acceso de mensajería sobre la Página e Instagram conectados.'
+  }
+
+  return 'Meta rechazó Messenger por permisos insuficientes. Revisa que el token de la Página incluya pages_messaging y que la persona/cuenta tenga acceso de mensajería sobre la Página conectada.'
+}
+
+function normalizeMetaSocialSendError(error, platform) {
+  const cleanPlatform = platform === 'instagram' ? 'instagram' : 'messenger'
+  if (isMetaCapabilityError(error)) {
+    return createMetaSocialMessageError(createMetaSocialCapabilityMessage(cleanPlatform), error.statusCode || 400, {
+      ...(error.meta || {}),
+      actionRequired: 'meta_app_capability'
+    })
+  }
+
+  if (isMetaPermissionError(error)) {
+    return createMetaSocialMessageError(createMetaSocialPermissionMessage(cleanPlatform), error.statusCode || 400, {
+      ...(error.meta || {}),
+      actionRequired: 'meta_permissions'
+    })
+  }
+
   return error
 }
 
@@ -537,7 +610,7 @@ async function metaSocialGraphRequest(path, { method = 'GET', token, query, body
   const data = await response.json().catch(() => ({}))
 
   if (!response.ok) {
-    throw createMetaSocialMessageError(data?.error?.message || `Meta Graph respondió ${response.status}`, response.status)
+    throw createMetaSocialGraphError(data, response.status, { path, method })
   }
 
   return data
@@ -982,12 +1055,16 @@ export async function sendMetaSocialTextMessage({ contactId, platform, message, 
     })
   } catch (error) {
     const looksLikeTokenIssue = error?.statusCode === 401 || /oauth|access token|\b190\b/i.test(error?.message || '')
-    if (!looksLikeTokenIssue) throw error
-    response = await metaSocialGraphRequest(`/${encodeURIComponent(businessId)}/messages`, {
-      method: 'POST',
-      token: await resolveMetaPageAccessToken({ config, forceRefresh: true }),
-      body: sendPayload
-    })
+    if (!looksLikeTokenIssue) throw normalizeMetaSocialSendError(error, cleanPlatform)
+    try {
+      response = await metaSocialGraphRequest(`/${encodeURIComponent(businessId)}/messages`, {
+        method: 'POST',
+        token: await resolveMetaPageAccessToken({ config, forceRefresh: true }),
+        body: sendPayload
+      })
+    } catch (retryError) {
+      throw normalizeMetaSocialSendError(retryError, cleanPlatform)
+    }
   }
 
   const sent = await saveMetaSocialOutboundMessage({
@@ -1126,12 +1203,16 @@ export async function sendMetaSocialCommentReply({ contactId, platform, message,
     })
   } catch (error) {
     const looksLikeTokenIssue = error?.statusCode === 401 || /oauth|access token|\b190\b/i.test(error?.message || '')
-    if (!looksLikeTokenIssue) throw error
-    response = await metaSocialGraphRequest(path, {
-      method: 'POST',
-      token: await resolveMetaPageAccessToken({ config, forceRefresh: true }),
-      body: payload
-    })
+    if (!looksLikeTokenIssue) throw normalizeMetaSocialSendError(error, cleanPlatform)
+    try {
+      response = await metaSocialGraphRequest(path, {
+        method: 'POST',
+        token: await resolveMetaPageAccessToken({ config, forceRefresh: true }),
+        body: payload
+      })
+    } catch (retryError) {
+      throw normalizeMetaSocialSendError(retryError, cleanPlatform)
+    }
   }
 
   const sent = await saveMetaSocialOutboundMessage({

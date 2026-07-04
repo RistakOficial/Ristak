@@ -835,7 +835,14 @@ Ristak usa Meta en varias areas:
   (`backend/src/services/conversionAttributionService.js`) y el payload CAPI lo
   decide la superficie real donde ocurrio la conversion. Nunca se falsifica
   `action_source`. Detalle completo en `docs/CONVERSION_ATTRIBUTION.md`.
-- Social messaging.
+- Social messaging nativo envia DMs de Messenger/Instagram por Graph API usando
+  el token de Pagina derivado de `meta_config.access_token` y los switches
+  `meta_messenger_messaging_enabled` / `meta_instagram_messaging_enabled`. Si
+  Meta responde `(#3) Application does not have the capability...`, Ristak debe
+  tratarlo como bloqueo de capability/App Review, no como fallo generico:
+  Messenger requiere `pages_messaging`; Instagram DM requiere Instagram
+  Messaging API con `instagram_manage_messages` y normalmente reconectar Meta
+  para regenerar el token de Pagina despues de aprobar el permiso.
 - Business Messaging events.
 - Campaign Builder en modo preview/validacion segun entorno.
 - Test Events desde Configuracion > Meta.
