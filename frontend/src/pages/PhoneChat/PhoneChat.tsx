@@ -2895,31 +2895,14 @@ function getAvatarChannelBadgeClass(kind: ContactChannelBadgeKind) {
   return styles.avatarChannelBadgeWhatsapp
 }
 
-function isBusinessPhoneApiEnabled(phone?: WhatsAppApiStatus['phoneNumbers'][number] | null, status?: WhatsAppApiStatus | null) {
-  return Boolean(status?.connected) && Number(phone?.api_send_enabled ?? 1) !== 0
-}
-
-function getMessageBusinessPhone(message: ChatMessage, status?: WhatsAppApiStatus | null) {
-  const phones = status?.phoneNumbers || []
-  if (message.businessPhoneNumberId) {
-    const byId = phones.find((phone) => phone.id === message.businessPhoneNumberId)
-    if (byId) return byId
-  }
-  return phones.find((phone) => (
-    phoneLooksSame(phone.phone_number, message.businessPhone) ||
-    phoneLooksSame(phone.display_phone_number, message.businessPhone) ||
-    phoneLooksSame(phone.qr_connected_phone, message.businessPhone)
-  )) || null
-}
-
-function getMessageTransportBadge(message: ChatMessage, status?: WhatsAppApiStatus | null) {
+function getMessageTransportBadge(message: ChatMessage) {
   const raw = String(message.transport || '').trim().toLowerCase()
-  const phone = getMessageBusinessPhone(message, status)
-  const dualConnection = Boolean(phone && isBusinessPhoneApiEnabled(phone, status) && isBusinessPhoneQrReady(phone))
-  if (dualConnection && raw === 'qr') return 'QR'
-  if (dualConnection && (raw === 'api' || raw === 'whatsapp_api')) return 'API'
-  if (raw === 'qr' || raw === 'api' || raw === 'whatsapp_api') return ''
-  return getHighLevelChatChannelLabel(raw)
+  const normalized = normalizeGhlChatChannelValue(raw)
+  if (normalized === 'instagram') return 'IG'
+  if (normalized === 'messenger') return 'FB'
+  if (normalized === 'sms_qr') return 'QR'
+  if (normalized === 'whatsapp_api') return 'API'
+  return ''
 }
 
 function isQrTransport(value?: string | null) {
@@ -12003,7 +11986,7 @@ export const PhoneChat: React.FC = () => {
     const pending = message.direction === 'outbound' && !failed && !scheduled && isMessagePending(message)
     const receiptStatus = getMessageReceiptStatus(message)
     const receiptLabel = getMessageReceiptLabel(receiptStatus)
-    const transportBadge = options?.showTransport === false ? '' : getMessageTransportBadge(message, whatsappStatus)
+    const transportBadge = options?.showTransport === false ? '' : getMessageTransportBadge(message)
 
     return (
       <span className={className}>

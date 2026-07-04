@@ -756,17 +756,6 @@
   background: color-mix(in srgb, var(--phone-chat-accent-soft) 78%, var(--phone-chat-bg) 22%);
 }
 
-.chatItemUnread::before {
-  content: "";
-  position: absolute;
-  top: 12px;
-  bottom: 12px;
-  left: 0;
-  width: 3px;
-  border-radius: 0 999px 999px 0;
-  background: var(--phone-chat-accent);
-}
-
 .chatItemUnread::after {
   background: color-mix(in srgb, var(--phone-chat-accent) 28%, var(--phone-chat-border));
 }
@@ -862,23 +851,6 @@
 .phoneChatPage:is([data-phone-chat-device="tablet"], [data-phone-chat-device="desktop"])[data-phone-chat-tone="dark"] .chatItemActive .chatMain small,
 .phoneChatPage:is([data-phone-chat-device="tablet"], [data-phone-chat-device="desktop"])[data-phone-chat-tone="dark"] .chatItemActive .chatMeta small {
   color: var(--phone-chat-text);
-}
-
-.phoneChatPage:is([data-phone-chat-device="tablet"], [data-phone-chat-device="desktop"]) .chatItemActive::before,
-.phoneChatPage:is([data-phone-chat-device="tablet"], [data-phone-chat-device="desktop"]) .chatSwipeRowActive .chatSwipeContent::before {
-  content: "";
-  position: absolute;
-  top: 12px;
-  bottom: 12px;
-  left: 0;
-  width: 3px;
-  border-radius: 0 999px 999px 0;
-  background: color-mix(in srgb, var(--phone-chat-muted) 62%, var(--phone-chat-border) 38%);
-}
-
-.phoneChatPage:is([data-phone-chat-device="tablet"], [data-phone-chat-device="desktop"])[data-phone-chat-tone="dark"] .chatItemActive::before,
-.phoneChatPage:is([data-phone-chat-device="tablet"], [data-phone-chat-device="desktop"])[data-phone-chat-tone="dark"] .chatSwipeRowActive .chatSwipeContent::before {
-  background: color-mix(in srgb, var(--phone-chat-muted) 78%, var(--phone-chat-border) 22%);
 }
 
 @media (hover: hover) and (pointer: fine) {
@@ -5040,16 +5012,17 @@
 .messageTransport {
   display: inline-flex;
   align-items: center;
-  min-height: 13px;
-  padding: 0 4px;
-  border: 1px solid currentColor;
-  border-radius: 999px;
+  min-height: 10px;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
   color: currentColor;
   font-style: normal;
-  font-size: 8.5px;
-  font-weight: 760;
+  font-size: 7px;
+  font-weight: 780;
   letter-spacing: 0;
-  opacity: 0.78;
+  line-height: 1;
+  opacity: 0.62;
 }
 
 .messageRow_outbound .messageTransport {
@@ -5363,7 +5336,7 @@
   min-width: 0;
   margin: 6px 9px 0 46px;
   padding: 7px 8px 7px 9px;
-  border-left: 3px solid var(--phone-chat-accent);
+  border: 1px solid color-mix(in srgb, var(--phone-chat-accent) 24%, var(--phone-chat-border) 76%);
   border-radius: 10px;
   color: var(--phone-chat-text);
   background: color-mix(in srgb, var(--phone-chat-surface) 92%, var(--phone-chat-accent) 8%);
@@ -10488,13 +10461,10 @@
   box-sizing: border-box;
   max-width: 100%;
   min-width: min(100%, 260px);
-  border-left: 3px solid var(--phone-chat-accent);
   background: color-mix(in srgb, var(--phone-chat-accent-soft) 55%, var(--phone-chat-inbound));
 }
 
 .messageRow_outbound .messageComment {
-  border-left: 0;
-  border-right: 3px solid var(--phone-chat-accent);
   background: color-mix(in srgb, var(--phone-chat-accent-soft) 40%, var(--phone-chat-outbound));
 }
 

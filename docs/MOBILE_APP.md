@@ -99,6 +99,12 @@ vivir en el aro exterior del avatar (`--avatar-ring-color`) y en el badge/icono
 de canal (`.avatarChannelBadge*`). No vuelvas a usar verde WhatsApp, rosa
 Instagram o azul Messenger como relleno completo del avatar.
 
+En la conversación móvil no uses rails/barras verticales pegadas al lado
+izquierdo como indicador visual de foco, comentario o chat no leído. Los estados
+de no leído/activo deben resolverse con fondo, tipografía y badge, no con una
+franja lateral. Las etiquetas de canal dentro de los globos (`messageTransport`)
+son micro-etiquetas sin contorno y con abreviaturas: `IG`, `FB`, `API` y `QR`.
+
 ## Variables de servidor
 
 Web/PWA:
