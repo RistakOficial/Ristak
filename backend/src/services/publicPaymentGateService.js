@@ -1,9 +1,8 @@
 import { db, getAppConfig } from '../config/database.js'
 import { createStripePaymentLink, createStripePaymentIntent, getStripePaymentConfig } from './stripePaymentService.js'
-// Re-exporta el paso "prepare" del MSI controlado de Stripe (definido en
-// stripePaymentService) para que sitesService lo consuma por este hub de pasarelas,
-// igual que createPaymentGateLink/Charge. El "confirm" reusa la ruta pública de Stripe.
-export { preparePublicStripeInstallmentPlans } from './stripePaymentService.js'
+// Re-exporta helpers públicos de Stripe para que sitesService consuma Stripe por este
+// hub de pasarelas, igual que createPaymentGateLink/Charge.
+export { createStripePaymentIntent, preparePublicStripeInstallmentPlans } from './stripePaymentService.js'
 import { createConektaPaymentLink, getPublicConektaPayment, getConektaPaymentConfig, createPublicConektaCardPayment } from './conektaPaymentService.js'
 import { createMercadoPagoPaymentLink, getPublicMercadoPagoPayment, getMercadoPagoPaymentConfig, createPublicMercadoPagoCardPayment } from './mercadoPagoPaymentService.js'
 import { createClipPaymentLink, getPublicClipPayment, getClipPaymentConfig, createPublicClipCardPayment } from './clipPaymentService.js'

@@ -1549,6 +1549,7 @@ export async function createStripePaymentIntent(publicPaymentId, options = {}) {
           requestOptions
         )
         return {
+          paymentIntentId: updated.id,
           clientSecret: updated.client_secret,
           publishableKey: config.publishableKey,
           stripeAccountId: '',
@@ -1557,6 +1558,7 @@ export async function createStripePaymentIntent(publicPaymentId, options = {}) {
       }
 
       return {
+        paymentIntentId: existing.id,
         clientSecret: existing.client_secret,
         publishableKey: config.publishableKey,
         stripeAccountId: '',
@@ -1637,6 +1639,7 @@ export async function createStripePaymentIntent(publicPaymentId, options = {}) {
   )
 
   return {
+    paymentIntentId: intent.id,
     clientSecret: intent.client_secret,
     publishableKey: config.publishableKey,
     stripeAccountId: '',
