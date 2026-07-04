@@ -853,6 +853,14 @@ Ristak usa Meta en varias areas:
   `instagram_business_basic` e `instagram_business_manage_messages`, app en Live
   para clientes reales, Advanced Access cuando aplique y token regenerado despues
   de aprobar los permisos.
+- El enriquecimiento de contactos Meta usa el mismo contrato separado:
+  Messenger lee perfil/conversaciones por Facebook Graph con Page token;
+  Instagram lee perfiles de DMs y autores de comentarios por Instagram Graph con
+  el Instagram User access token (`name,username,profile_pic`). Si el perfil
+  directo no trae nombre, Instagram cae al endpoint de conversaciones del IG
+  account, nunca al Page ID. Las fotos recibidas se rehospedan best-effort antes
+  de guardarse en `meta_social_contacts.profile_picture_url`; si Meta no entrega
+  foto o permisos, Ristak conserva el mejor nombre disponible y no inventa avatar.
 - Business Messaging events.
 - Campaign Builder en modo preview/validacion segun entorno.
 - Test Events desde Configuracion > Meta.

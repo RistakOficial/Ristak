@@ -346,18 +346,17 @@ async function softRemoveComment(comment) {
   )
 }
 
-// El webhook de comentarios trae from.{id,name} pero NO la foto. Para FB la
-// obtenemos consultando el propio comment_id (from{picture}) con el token de
-// Página. IG no expone foto del comentarista por esta vía (se queda con username).
-async function fetchMetaCommentAuthorProfile({ platform, commentId, authorId, accessToken }) {
+// El webhook de comentarios trae from.{id,name} pero NO siempre trae foto. Para
+// FB hacemos best-effort desde el comment_id. Para IG, si Meta entrega el IGSID,
+// lo consultamos igual que un DM por Instagram Graph (name, username, profile_pic).
+async function fetchMetaCommentAuthorProfile({ platform, commentId, authorId, accessToken, baseUrl = getMetaSocialGraphBaseUrl(platform) }) {
   if (!accessToken) return {}
   try {
     if (platform === 'instagram') {
-      // IG: el autor del comentario se consulta por su id (IGSID) igual que un DM
-      // de IG (name,username,profile_pic). El comment_id/from no trae foto en IG.
       if (!authorId) return {}
       const data = await metaSocialGraphRequest(`/${encodeURIComponent(authorId)}`, {
         token: accessToken,
+        baseUrl,
         query: { fields: 'name,username,profile_pic' }
       })
       return {
@@ -372,6 +371,7 @@ async function fetchMetaCommentAuthorProfile({ platform, commentId, authorId, ac
     if (!commentId) return {}
     const data = await metaSocialGraphRequest(`/${encodeURIComponent(commentId)}`, {
       token: accessToken,
+      baseUrl,
       query: { fields: 'from{id,name,picture}' }
     })
     const from = data?.from || {}
@@ -396,10 +396,11 @@ async function fetchAndCacheSocialPost(comment, accessToken) {
   if (existing) return
 
   try {
+    const baseUrl = getMetaSocialGraphBaseUrl(platform)
     const fields = platform === 'instagram'
       ? 'caption,media_type,media_url,thumbnail_url,permalink,timestamp'
       : 'message,permalink_url,created_time,full_picture'
-    const data = await metaSocialGraphRequest(`/${encodeURIComponent(postId)}`, { token: accessToken, query: { fields } })
+    const data = await metaSocialGraphRequest(`/${encodeURIComponent(postId)}`, { token: accessToken, baseUrl, query: { fields } })
     const message = platform === 'instagram' ? cleanString(data?.caption) : cleanString(data?.message)
     const imageUrl = platform === 'instagram'
       ? cleanString(data?.thumbnail_url || data?.media_url)
@@ -424,27 +425,23 @@ async function fetchAndCacheSocialPost(comment, accessToken) {
   }
 }
 
-// Nombre del participante vía el endpoint de CONVERSACIONES. El perfil directo
-// (GET /{psid}) está restringido para usuarios que NO son rol de la app (Meta lo
-// rechaza con #100/33), pero el NOMBRE sí viene por conversaciones (verificado en
-// prod: "Berenice Chacon" salía aquí aunque el perfil directo fallaba). La foto NO
-// se obtiene por ningún lado para no-roles (eso sí es límite de Meta: requiere app
-// en modo Live + Acceso Avanzado de pages_messaging).
-async function fetchMetaConversationParticipantName({ platform, senderId, pageId, accessToken }) {
-  if (!senderId || !pageId || !accessToken) return ''
+// Nombre del participante vía el endpoint de conversaciones cuando el perfil
+// directo viene restringido. La llamada conserva el contrato por plataforma:
+// Messenger usa Page/Facebook Graph; Instagram usa IG account/Instagram Graph.
+// La foto no sale por este fallback, solo el nombre.
+async function fetchMetaConversationParticipantName({ platform, senderId, businessId, pageId, accessToken, baseUrl = getMetaSocialGraphBaseUrl(platform) }) {
+  const conversationOwnerId = cleanString(businessId || pageId)
+  if (!senderId || !conversationOwnerId || !accessToken) return ''
   try {
-    const params = new URLSearchParams({
-      platform: platform === 'instagram' ? 'instagram' : 'messenger',
-      user_id: senderId,
-      fields: 'participants',
-      access_token: accessToken
+    const data = await metaSocialGraphRequest(`/${encodeURIComponent(conversationOwnerId)}/conversations`, {
+      token: accessToken,
+      baseUrl,
+      query: {
+        platform: platform === 'instagram' ? 'instagram' : 'messenger',
+        user_id: senderId,
+        fields: 'participants'
+      }
     })
-    const response = await fetch(`${API_URLS.META_GRAPH}/${encodeURIComponent(pageId)}/conversations?${params.toString()}`)
-    const data = await response.json()
-    if (data.error) {
-      logger.warn(`Meta conversaciones no dio nombre ${platform} ${senderId}: ${data.error.message}`)
-      return ''
-    }
     for (const conversation of data.data || []) {
       for (const participant of conversation.participants?.data || []) {
         if (cleanString(participant.id) === cleanString(senderId)) {
@@ -459,7 +456,7 @@ async function fetchMetaConversationParticipantName({ platform, senderId, pageId
   }
 }
 
-async function fetchMetaSenderProfile({ platform, senderId, pageId = '', accessToken }) {
+async function fetchMetaSenderProfile({ platform, senderId, pageId = '', businessId = '', accessToken, baseUrl = getMetaSocialGraphBaseUrl(platform) }) {
   if (!senderId || !accessToken) return {}
 
   // OJO Instagram: un IGSID NO tiene el campo `profile_picture_url` — pedirlo
@@ -472,23 +469,16 @@ async function fetchMetaSenderProfile({ platform, senderId, pageId = '', accessT
 
   let result = {}
   try {
-    const params = new URLSearchParams({
-      fields,
-      access_token: accessToken
+    const data = await metaSocialGraphRequest(`/${encodeURIComponent(senderId)}`, {
+      token: accessToken,
+      baseUrl,
+      query: { fields }
     })
-    const response = await fetch(`${API_URLS.META_GRAPH}/${encodeURIComponent(senderId)}?${params.toString()}`)
-    const data = await response.json()
-
-    if (data.error) {
-      // Común para usuarios que no son rol de la app; caemos al fallback de nombre.
-      logger.warn(`Meta no dejo leer perfil ${platform} ${senderId}: ${data.error.message}`)
-    } else {
-      result = {
-        name: compactName(data.name) || compactName(data.first_name, data.last_name),
-        username: cleanString(data.username),
-        profilePictureUrl: cleanString(data.profile_picture_url || data.profile_pic),
-        raw: data
-      }
+    result = {
+      name: compactName(data.name) || compactName(data.first_name, data.last_name),
+      username: cleanString(data.username),
+      profilePictureUrl: cleanString(data.profile_picture_url || data.profile_pic),
+      raw: data
     }
   } catch (error) {
     logger.warn(`No se pudo leer perfil ${platform} ${senderId}: ${error.message}`)
@@ -497,7 +487,13 @@ async function fetchMetaSenderProfile({ platform, senderId, pageId = '', accessT
   // Fallback de NOMBRE: si el perfil directo no dio nombre (usuario no-rol), lo
   // sacamos de las conversaciones (ahí Meta sí lo entrega). La foto queda vacía.
   if (!cleanString(result.name)) {
-    const conversationName = await fetchMetaConversationParticipantName({ platform, senderId, pageId, accessToken })
+    const conversationName = await fetchMetaConversationParticipantName({
+      platform,
+      senderId,
+      businessId: businessId || pageId,
+      accessToken,
+      baseUrl
+    })
     if (conversationName) result.name = conversationName
   }
 
@@ -675,6 +671,27 @@ async function resolveMetaPageTokenSafe(config) {
   })
 }
 
+function isInstagramPlatform(platform = '') {
+  return cleanString(platform).toLowerCase() === 'instagram'
+}
+
+function getMetaSocialGraphBaseUrl(platform = '') {
+  return isInstagramPlatform(platform) ? API_URLS.INSTAGRAM_GRAPH : API_URLS.META_GRAPH
+}
+
+async function resolveMetaSocialGraphToken(platform, config, { forceRefresh = false, safe = false } = {}) {
+  if (isInstagramPlatform(platform)) {
+    const token = cleanString(config?.access_token)
+    if (!token && !safe) {
+      throw createMetaSocialMessageError('Conecta Meta Ads para operar Instagram.', 409)
+    }
+    return token
+  }
+
+  if (safe) return resolveMetaPageTokenSafe(config)
+  return resolveMetaPageAccessToken({ config, forceRefresh })
+}
+
 // ─── Listado de publicaciones para el selector de disparadores/condiciones ───
 // Trae las publicaciones de la Página (FB published_posts) o de la cuenta (IG
 // media) paginando contra Graph, las cachea en meta_social_posts, y luego sirve
@@ -691,11 +708,12 @@ function normalizeSocialPostPlatform(platform) {
   return String(platform || '').toLowerCase() === 'instagram' ? 'instagram' : 'facebook'
 }
 
-async function syncMetaSocialPostsFromGraph(platform, config, pageToken, { maxPages = Infinity } = {}) {
+async function syncMetaSocialPostsFromGraph(platform, config, graphToken, { maxPages = Infinity } = {}) {
   const isIg = platform === 'instagram'
   const businessId = isIg ? cleanString(config?.instagram_account_id) : cleanString(config?.page_id)
   if (!businessId) return 0
   const edge = isIg ? 'media' : 'published_posts'
+  const baseUrl = getMetaSocialGraphBaseUrl(platform)
   const fields = isIg
     ? 'id,caption,media_type,media_url,thumbnail_url,permalink,timestamp'
     : 'id,message,story,full_picture,permalink_url,created_time'
@@ -709,7 +727,7 @@ async function syncMetaSocialPostsFromGraph(platform, config, pageToken, { maxPa
     if (after) query.after = after
     let data
     try {
-      data = await metaSocialGraphRequest(`/${encodeURIComponent(businessId)}/${edge}`, { token: pageToken, query })
+      data = await metaSocialGraphRequest(`/${encodeURIComponent(businessId)}/${edge}`, { token: graphToken, baseUrl, query })
     } catch (error) {
       if (!rows.length) throw error // primer batch falla (permiso/token) → propaga
       logger.warn(`[Meta posts] paginación cortada en ${platform}: ${error.message}`)
@@ -768,8 +786,8 @@ async function syncPostsOnce(platform, config, { maxPages = Infinity } = {}) {
   if (postsSyncing.has(platform)) return 0
   postsSyncing.add(platform)
   try {
-    const pageToken = await resolveMetaPageAccessToken({ config })
-    const n = await syncMetaSocialPostsFromGraph(platform, config, pageToken, { maxPages })
+    const graphToken = await resolveMetaSocialGraphToken(platform, config)
+    const n = await syncMetaSocialPostsFromGraph(platform, config, graphToken, { maxPages })
     if (maxPages === Infinity) postsSyncState.set(platform, Date.now())
     logger.info(`[Meta posts] ${platform}: ${n} publicaciones sincronizadas`)
     return n
@@ -807,8 +825,8 @@ export async function listMetaSocialPosts({ platform = 'facebook', search = '', 
   if (cachedCount === 0) {
     // Sin caché: trae SOLO la primera página de forma síncrona para responder ya,
     // y completa el resto en segundo plano (el dropdown ya muestra publicaciones).
-    const pageToken = await resolveMetaPageAccessToken({ config })
-    await syncMetaSocialPostsFromGraph(cleanPlatform, config, pageToken, { maxPages: POSTS_QUICK_PAGES })
+    const graphToken = await resolveMetaSocialGraphToken(cleanPlatform, config)
+    await syncMetaSocialPostsFromGraph(cleanPlatform, config, graphToken, { maxPages: POSTS_QUICK_PAGES })
     void syncPostsOnce(cleanPlatform, config).catch(() => {})
   } else if (refresh) {
     // Refresco manual: el usuario lo pidió, esperamos la pasada completa.
@@ -1212,11 +1230,13 @@ export async function sendMetaSocialCommentReply({ contactId, platform, message,
       : { recipient: { comment_id: targetCommentId }, message: { text: body } }
   }
 
+  const graphBaseUrl = getMetaSocialGraphBaseUrl(cleanPlatform)
   let response
   try {
     response = await metaSocialGraphRequest(path, {
       method: 'POST',
-      token: await resolveMetaPageAccessToken({ config }),
+      token: await resolveMetaSocialGraphToken(cleanPlatform, config),
+      baseUrl: graphBaseUrl,
       body: payload
     })
   } catch (error) {
@@ -1225,7 +1245,8 @@ export async function sendMetaSocialCommentReply({ contactId, platform, message,
     try {
       response = await metaSocialGraphRequest(path, {
         method: 'POST',
-        token: await resolveMetaPageAccessToken({ config, forceRefresh: true }),
+        token: await resolveMetaSocialGraphToken(cleanPlatform, config, { forceRefresh: true }),
+        baseUrl: graphBaseUrl,
         body: payload
       })
     } catch (retryError) {
@@ -1522,7 +1543,7 @@ export async function rehostMetaSocialMedia({ socialMessage, config, existingMed
   const messageType = normalizeSocialMediaType(socialMessage.mediaType || socialMessage.messageType)
   const limitBytes = getSocialMediaLimitBytes(messageType)
 
-  const token = await resolveMetaPageTokenSafe(config)
+  const token = await resolveMetaSocialGraphToken(socialMessage.platform, config, { safe: true })
   const { buffer, mimeType: downloadedMime } = await socialMediaDownloader(sourceUrl, token)
   if (!buffer?.length) throw new Error('Meta devolvió un adjunto vacío')
   if (buffer.length > limitBytes) {
@@ -1783,11 +1804,17 @@ export async function processMetaSocialWebhook({ payload = {}, rawBody = '', sig
           continue
         }
 
+        const profileAccessToken = await resolveMetaSocialGraphToken(socialMessage.platform, config, { safe: true })
+        const profileBusinessId = getMetaSocialBusinessId(socialMessage.platform, config, {
+          page_id: socialMessage.pageId,
+          instagram_account_id: socialMessage.instagramAccountId
+        })
         const profile = await fetchMetaSenderProfile({
           platform: socialMessage.platform,
           senderId: socialMessage.senderId,
-          pageId: cleanString(config?.page_id),
-          accessToken: await resolveMetaPageTokenSafe(config)
+          businessId: profileBusinessId,
+          accessToken: profileAccessToken,
+          baseUrl: getMetaSocialGraphBaseUrl(socialMessage.platform)
         })
         const localContact = await upsertLocalSocialContact({ socialMessage, profile })
         const socialContactId = await upsertMetaSocialContact({
@@ -1915,11 +1942,13 @@ export async function processMetaSocialWebhook({ payload = {}, rawBody = '', sig
             continue
           }
 
+          const commentAccessToken = await resolveMetaSocialGraphToken(comment.platform, config, { safe: true })
           const commentAuthor = await fetchMetaCommentAuthorProfile({
             platform: comment.platform,
             commentId: comment.commentId,
             authorId: comment.authorId,
-            accessToken: await resolveMetaPageTokenSafe(config)
+            accessToken: commentAccessToken,
+            baseUrl: getMetaSocialGraphBaseUrl(comment.platform)
           })
           const profile = {
             name: commentAuthor.name || comment.authorName,
@@ -1960,7 +1989,7 @@ export async function processMetaSocialWebhook({ payload = {}, rawBody = '', sig
               })
 
             // Cachear el contenido de la publicación comentada (no bloquea el flujo).
-            resolveMetaPageTokenSafe(config)
+            resolveMetaSocialGraphToken(comment.platform, config, { safe: true })
               .then(token => fetchAndCacheSocialPost(comment, token))
               .catch(error => logger.warn(`[Comentario] publicación no cacheada: ${error.message}`))
 

@@ -1,11 +1,19 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
+import crypto from 'node:crypto'
 import http from 'node:http'
 
 import { db, setAppConfig } from '../src/config/database.js'
 import { API_URLS } from '../src/config/constants.js'
 import { encrypt, initializeMasterKey } from '../src/utils/encryption.js'
-import { sendMetaSocialTextMessage } from '../src/services/metaSocialMessagingService.js'
+import {
+  processMetaSocialWebhook,
+  sendMetaSocialTextMessage
+} from '../src/services/metaSocialMessagingService.js'
+
+function hashTestId(prefix, value) {
+  return `${prefix}_${crypto.createHash('sha256').update(String(value || '')).digest('hex').slice(0, 32)}`
+}
 
 async function snapshotMetaConfig(callback) {
   const previousRows = await db.all('SELECT * FROM meta_config')
@@ -52,6 +60,58 @@ async function startMetaSendServer(calls) {
       if (req.method === 'GET' && req.url.startsWith('/page-send-test')) {
         res.writeHead(200, { 'Content-Type': 'application/json' })
         res.end(JSON.stringify({ access_token: 'page-token-send-test' }))
+        return
+      }
+
+      if (req.method === 'GET' && req.url.startsWith('/igsid-profile-test')) {
+        res.writeHead(200, { 'Content-Type': 'application/json' })
+        res.end(JSON.stringify({
+          id: 'igsid-profile-test',
+          name: 'Cliente Correcto',
+          username: 'cliente.correcto',
+          profile_pic: 'https://cdn.example.test/ig-profile.jpg'
+        }))
+        return
+      }
+
+      if (req.method === 'GET' && req.url.startsWith('/igsid-comment-test')) {
+        res.writeHead(200, { 'Content-Type': 'application/json' })
+        res.end(JSON.stringify({
+          id: 'igsid-comment-test',
+          name: 'Comentarista Real',
+          username: 'comentarista.real',
+          profile_pic: 'https://cdn.example.test/ig-comment-profile.jpg'
+        }))
+        return
+      }
+
+      if (req.method === 'GET' && req.url.startsWith('/igsid-fallback-test')) {
+        res.writeHead(400, { 'Content-Type': 'application/json' })
+        res.end(JSON.stringify({
+          error: {
+            message: 'Profile blocked for test',
+            type: 'OAuthException',
+            code: 200
+          }
+        }))
+        return
+      }
+
+      if (req.method === 'GET' && req.url.startsWith('/ig-business-send-test/conversations')) {
+        res.writeHead(200, { 'Content-Type': 'application/json' })
+        res.end(JSON.stringify({
+          data: [
+            {
+              id: 'conversation-fallback-test',
+              participants: {
+                data: [
+                  { id: 'ig-business-send-test', name: 'Ristak IG' },
+                  { id: 'igsid-fallback-test', name: 'Nombre Por Conversacion' }
+                ]
+              }
+            }
+          ]
+        }))
         return
       }
 
@@ -146,6 +206,322 @@ async function seedMessengerContact({ contactId, metaContactId }) {
     ]
   )
 }
+
+async function seedMetaConfigForInstagramTests() {
+  await db.run(`
+    INSERT INTO meta_config (
+      ad_account_id, access_token, pixel_id, page_id, instagram_account_id,
+      timezone_id, timezone_name, timezone_offset_hours_utc
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+  `, [
+    'act-send-test',
+    encrypt('user-token-send-test'),
+    null,
+    'page-send-test',
+    'ig-business-send-test',
+    null,
+    null,
+    null
+  ])
+}
+
+async function cleanupSocialRows({ senderId, metaMessageId }) {
+  const contactId = hashTestId('meta_social_contact', `instagram:${senderId}`)
+  await db.run('DELETE FROM meta_social_messages WHERE sender_id = ? OR meta_message_id = ?', [senderId, metaMessageId]).catch(() => undefined)
+  await db.run('DELETE FROM meta_social_contacts WHERE sender_id = ?', [senderId]).catch(() => undefined)
+  await db.run('DELETE FROM contacts WHERE id = ?', [contactId]).catch(() => undefined)
+  await db.run('DELETE FROM meta_social_webhook_events WHERE raw_payload_json LIKE ?', [`%${metaMessageId}%`]).catch(() => undefined)
+}
+
+test('processMetaSocialWebhook enriquece DMs de Instagram con Instagram Graph y token directo', async () => {
+  const previousMetaGraphDescriptor = Object.getOwnPropertyDescriptor(API_URLS, 'META_GRAPH')
+  const previousInstagramGraphDescriptor = Object.getOwnPropertyDescriptor(API_URLS, 'INSTAGRAM_GRAPH')
+  const calls = []
+  let metaServer
+  const senderId = 'igsid-profile-test'
+  const metaMessageId = 'mid-profile-test'
+  const messageTimestamp = '2026-07-03T22:38:10.003Z'
+
+  try {
+    await initializeMasterKey()
+    metaServer = await startMetaSendServer(calls)
+    Object.defineProperty(API_URLS, 'META_GRAPH', {
+      value: `http://127.0.0.1:${metaServer.address().port}/facebook`,
+      configurable: true
+    })
+    Object.defineProperty(API_URLS, 'INSTAGRAM_GRAPH', {
+      value: `http://127.0.0.1:${metaServer.address().port}`,
+      configurable: true
+    })
+
+    await snapshotMetaConfig(async () => {
+      await snapshotAppConfig(['meta_instagram_messaging_enabled'], async () => {
+        try {
+          await cleanupSocialRows({ senderId, metaMessageId })
+          await seedMetaConfigForInstagramTests()
+          await setAppConfig('meta_instagram_messaging_enabled', '1')
+
+          await db.run(`
+            INSERT INTO meta_social_messages (
+              id, platform, meta_message_id, sender_id, recipient_id, page_id, instagram_account_id,
+              direction, message_type, message_text, message_timestamp, raw_payload_json, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+          `, [
+            hashTestId('meta_social_msg', metaMessageId),
+            'instagram',
+            metaMessageId,
+            senderId,
+            'ig-business-send-test',
+            'page-send-test',
+            'ig-business-send-test',
+            'inbound',
+            'text',
+            'Hola',
+            messageTimestamp,
+            '{}'
+          ])
+
+          await processMetaSocialWebhook({
+            payload: {
+              object: 'instagram',
+              entry: [
+                {
+                  id: 'ig-business-send-test',
+                  time: 1783108690,
+                  messaging: [
+                    {
+                      sender: { id: senderId },
+                      recipient: { id: 'ig-business-send-test' },
+                      timestamp: Date.parse(messageTimestamp),
+                      message: { mid: metaMessageId, text: 'Hola' }
+                    }
+                  ]
+                }
+              ]
+            }
+          })
+
+          const profile = await db.get(
+            'SELECT profile_name, username, profile_picture_url, meta_user_id FROM meta_social_contacts WHERE platform = ? AND sender_id = ?',
+            ['instagram', senderId]
+          )
+          assert.equal(profile.profile_name, 'Cliente Correcto')
+          assert.equal(profile.username, 'cliente.correcto')
+          assert.equal(profile.profile_picture_url, 'https://cdn.example.test/ig-profile.jpg')
+          assert.equal(profile.meta_user_id, senderId)
+
+          const profileCall = calls.find(call => call.method === 'GET' && call.url.startsWith(`/${senderId}?`))
+          assert.ok(profileCall)
+          assert.equal(profileCall.authorization, 'Bearer user-token-send-test')
+          assert.match(profileCall.url, /fields=name%2Cusername%2Cprofile_pic/)
+          assert.equal(calls.some(call => call.url.startsWith('/page-send-test?')), false)
+          assert.equal(calls.some(call => call.url.startsWith('/facebook/')), false)
+        } finally {
+          await cleanupSocialRows({ senderId, metaMessageId })
+        }
+      })
+    })
+  } finally {
+    if (metaServer) await new Promise(resolve => metaServer.close(resolve))
+    if (previousMetaGraphDescriptor) Object.defineProperty(API_URLS, 'META_GRAPH', previousMetaGraphDescriptor)
+    if (previousInstagramGraphDescriptor) Object.defineProperty(API_URLS, 'INSTAGRAM_GRAPH', previousInstagramGraphDescriptor)
+  }
+})
+
+test('processMetaSocialWebhook enriquece comentarios de Instagram con perfil del autor', async () => {
+  const previousMetaGraphDescriptor = Object.getOwnPropertyDescriptor(API_URLS, 'META_GRAPH')
+  const previousInstagramGraphDescriptor = Object.getOwnPropertyDescriptor(API_URLS, 'INSTAGRAM_GRAPH')
+  const calls = []
+  let metaServer
+  const senderId = 'igsid-comment-test'
+  const metaMessageId = 'ig-comment-profile-test'
+  const messageTimestamp = '2026-07-03T23:00:00.000Z'
+
+  try {
+    await initializeMasterKey()
+    metaServer = await startMetaSendServer(calls)
+    Object.defineProperty(API_URLS, 'META_GRAPH', {
+      value: `http://127.0.0.1:${metaServer.address().port}/facebook`,
+      configurable: true
+    })
+    Object.defineProperty(API_URLS, 'INSTAGRAM_GRAPH', {
+      value: `http://127.0.0.1:${metaServer.address().port}`,
+      configurable: true
+    })
+
+    await snapshotMetaConfig(async () => {
+      await snapshotAppConfig(['meta_instagram_comments_enabled'], async () => {
+        try {
+          await cleanupSocialRows({ senderId, metaMessageId })
+          await seedMetaConfigForInstagramTests()
+          await setAppConfig('meta_instagram_comments_enabled', '1')
+
+          await db.run(`
+            INSERT INTO meta_social_messages (
+              id, platform, meta_message_id, sender_id, recipient_id, instagram_account_id,
+              direction, message_type, message_text, message_timestamp, raw_payload_json, comment_id, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+          `, [
+            hashTestId('meta_social_msg', metaMessageId),
+            'instagram',
+            metaMessageId,
+            senderId,
+            'ig-business-send-test',
+            'ig-business-send-test',
+            'inbound',
+            'comment',
+            'Me interesa',
+            messageTimestamp,
+            '{}',
+            metaMessageId
+          ])
+
+          await processMetaSocialWebhook({
+            payload: {
+              object: 'instagram',
+              entry: [
+                {
+                  id: 'ig-business-send-test',
+                  time: 1783110000,
+                  changes: [
+                    {
+                      field: 'comments',
+                      value: {
+                        id: metaMessageId,
+                        from: { id: senderId, name: 'Nombre Webhook', username: 'nombre.webhook' },
+                        text: 'Me interesa',
+                        media: { id: 'ig-media-test' },
+                        created_time: Math.floor(Date.parse(messageTimestamp) / 1000)
+                      }
+                    }
+                  ]
+                }
+              ]
+            }
+          })
+
+          const profile = await db.get(
+            'SELECT profile_name, username, profile_picture_url, meta_user_id FROM meta_social_contacts WHERE platform = ? AND sender_id = ?',
+            ['instagram', senderId]
+          )
+          assert.equal(profile.profile_name, 'Comentarista Real')
+          assert.equal(profile.username, 'comentarista.real')
+          assert.equal(profile.profile_picture_url, 'https://cdn.example.test/ig-comment-profile.jpg')
+          assert.equal(profile.meta_user_id, senderId)
+
+          const profileCall = calls.find(call => call.method === 'GET' && call.url.startsWith(`/${senderId}?`))
+          assert.ok(profileCall)
+          assert.equal(profileCall.authorization, 'Bearer user-token-send-test')
+          assert.equal(calls.some(call => call.url.startsWith('/page-send-test?')), false)
+          assert.equal(calls.some(call => call.url.startsWith('/facebook/')), false)
+        } finally {
+          await cleanupSocialRows({ senderId, metaMessageId })
+        }
+      })
+    })
+  } finally {
+    if (metaServer) await new Promise(resolve => metaServer.close(resolve))
+    if (previousMetaGraphDescriptor) Object.defineProperty(API_URLS, 'META_GRAPH', previousMetaGraphDescriptor)
+    if (previousInstagramGraphDescriptor) Object.defineProperty(API_URLS, 'INSTAGRAM_GRAPH', previousInstagramGraphDescriptor)
+  }
+})
+
+test('processMetaSocialWebhook usa conversaciones de Instagram como fallback de nombre sin Page token', async () => {
+  const previousMetaGraphDescriptor = Object.getOwnPropertyDescriptor(API_URLS, 'META_GRAPH')
+  const previousInstagramGraphDescriptor = Object.getOwnPropertyDescriptor(API_URLS, 'INSTAGRAM_GRAPH')
+  const calls = []
+  let metaServer
+  const senderId = 'igsid-fallback-test'
+  const metaMessageId = 'mid-fallback-test'
+  const messageTimestamp = '2026-07-03T23:15:00.000Z'
+
+  try {
+    await initializeMasterKey()
+    metaServer = await startMetaSendServer(calls)
+    Object.defineProperty(API_URLS, 'META_GRAPH', {
+      value: `http://127.0.0.1:${metaServer.address().port}/facebook`,
+      configurable: true
+    })
+    Object.defineProperty(API_URLS, 'INSTAGRAM_GRAPH', {
+      value: `http://127.0.0.1:${metaServer.address().port}`,
+      configurable: true
+    })
+
+    await snapshotMetaConfig(async () => {
+      await snapshotAppConfig(['meta_instagram_messaging_enabled'], async () => {
+        try {
+          await cleanupSocialRows({ senderId, metaMessageId })
+          await seedMetaConfigForInstagramTests()
+          await setAppConfig('meta_instagram_messaging_enabled', '1')
+
+          await db.run(`
+            INSERT INTO meta_social_messages (
+              id, platform, meta_message_id, sender_id, recipient_id, page_id, instagram_account_id,
+              direction, message_type, message_text, message_timestamp, raw_payload_json, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+          `, [
+            hashTestId('meta_social_msg', metaMessageId),
+            'instagram',
+            metaMessageId,
+            senderId,
+            'ig-business-send-test',
+            'page-send-test',
+            'ig-business-send-test',
+            'inbound',
+            'text',
+            'Hola',
+            messageTimestamp,
+            '{}'
+          ])
+
+          await processMetaSocialWebhook({
+            payload: {
+              object: 'instagram',
+              entry: [
+                {
+                  id: 'ig-business-send-test',
+                  time: 1783110900,
+                  messaging: [
+                    {
+                      sender: { id: senderId },
+                      recipient: { id: 'ig-business-send-test' },
+                      timestamp: Date.parse(messageTimestamp),
+                      message: { mid: metaMessageId, text: 'Hola' }
+                    }
+                  ]
+                }
+              ]
+            }
+          })
+
+          const profile = await db.get(
+            'SELECT profile_name, username, profile_picture_url, meta_user_id FROM meta_social_contacts WHERE platform = ? AND sender_id = ?',
+            ['instagram', senderId]
+          )
+          assert.equal(profile.profile_name, 'Nombre Por Conversacion')
+          assert.equal(profile.username || '', '')
+          assert.equal(profile.profile_picture_url || '', '')
+          assert.equal(profile.meta_user_id, senderId)
+
+          const conversationCall = calls.find(call => call.method === 'GET' && call.url.startsWith('/ig-business-send-test/conversations?'))
+          assert.ok(conversationCall)
+          assert.equal(conversationCall.authorization, 'Bearer user-token-send-test')
+          assert.match(conversationCall.url, /platform=instagram/)
+          assert.match(conversationCall.url, /user_id=igsid-fallback-test/)
+          assert.equal(calls.some(call => call.url.startsWith('/page-send-test/conversations')), false)
+          assert.equal(calls.some(call => call.url.startsWith('/page-send-test?')), false)
+          assert.equal(calls.some(call => call.url.startsWith('/facebook/')), false)
+        } finally {
+          await cleanupSocialRows({ senderId, metaMessageId })
+        }
+      })
+    })
+  } finally {
+    if (metaServer) await new Promise(resolve => metaServer.close(resolve))
+    if (previousMetaGraphDescriptor) Object.defineProperty(API_URLS, 'META_GRAPH', previousMetaGraphDescriptor)
+    if (previousInstagramGraphDescriptor) Object.defineProperty(API_URLS, 'INSTAGRAM_GRAPH', previousInstagramGraphDescriptor)
+  }
+})
 
 test('sendMetaSocialTextMessage explica el bloqueo de capability de Instagram DM', async () => {
   const previousMetaGraphDescriptor = Object.getOwnPropertyDescriptor(API_URLS, 'META_GRAPH')
