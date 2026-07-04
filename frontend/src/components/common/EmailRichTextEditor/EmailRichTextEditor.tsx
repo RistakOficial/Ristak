@@ -179,6 +179,57 @@ function normalizeEditorHtmlInput(value: string) {
   return value.replace(ENCODED_NBSP_PATTERN, '&nbsp;')
 }
 
+function getEditorSelectionTextOffset(editor: HTMLElement) {
+  const selection = window.getSelection()
+  if (!selection || selection.rangeCount === 0) return null
+
+  const range = selection.getRangeAt(0)
+  if (!editor.contains(range.commonAncestorContainer)) return null
+
+  const leadingRange = range.cloneRange()
+  leadingRange.selectNodeContents(editor)
+  leadingRange.setEnd(range.endContainer, range.endOffset)
+  return leadingRange.toString().length
+}
+
+function restoreEditorSelectionTextOffset(editor: HTMLElement, offset: number) {
+  editor.focus()
+
+  const range = document.createRange()
+  const walker = document.createTreeWalker(editor, window.NodeFilter.SHOW_TEXT)
+  let currentOffset = 0
+  let lastTextNode: Text | null = null
+
+  while (true) {
+    const node = walker.nextNode() as Text | null
+    if (!node) break
+
+    lastTextNode = node
+    const nodeLength = node.textContent?.length || 0
+    const nextOffset = currentOffset + nodeLength
+    if (offset <= nextOffset) {
+      range.setStart(node, Math.max(0, Math.min(offset - currentOffset, nodeLength)))
+      range.collapse(true)
+      const selection = window.getSelection()
+      selection?.removeAllRanges()
+      selection?.addRange(range)
+      return range
+    }
+    currentOffset = nextOffset
+  }
+
+  if (lastTextNode) {
+    range.setStart(lastTextNode, lastTextNode.textContent?.length || 0)
+  } else {
+    range.selectNodeContents(editor)
+  }
+  range.collapse(false)
+  const selection = window.getSelection()
+  selection?.removeAllRanges()
+  selection?.addRange(range)
+  return range
+}
+
 function isSafeEditorUrl(value: string, type: 'href' | 'src' = 'href') {
   const url = value.trim()
   if (!url || /[\u0000-\u001f<>"`]/.test(url)) return false
@@ -411,7 +462,17 @@ export const EmailRichTextEditor: React.FC<EmailRichTextEditorProps> = ({
   }, [setEditorHtml, value])
 
   const syncFromEditor = useCallback(() => {
-    const html = sanitizeEmailRichHtmlForEditor(editorRef.current?.innerHTML || EMPTY_HTML)
+    const editor = editorRef.current
+    const rawHtml = editor?.innerHTML || EMPTY_HTML
+    const html = sanitizeEmailRichHtmlForEditor(rawHtml)
+    if (editor && rawHtml !== html) {
+      const selectionOffset = getEditorSelectionTextOffset(editor)
+      editor.innerHTML = html
+      if (selectionOffset !== null) {
+        const restoredRange = restoreEditorSelectionTextOffset(editor, selectionOffset)
+        savedRangeRef.current = restoredRange.cloneRange()
+      }
+    }
     emit(html)
   }, [emit])
 
