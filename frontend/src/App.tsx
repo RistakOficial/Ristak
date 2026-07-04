@@ -405,13 +405,15 @@ const PhoneRouteEffects: React.FC = () => {
     let lastVisualViewportHeight = ''
     let lastVisualViewportTop = ''
     let lastKeyboardInset = ''
-    // --phone-visual-viewport-height/-top/--phone-keyboard-inset: sincronizados desde
-    // visualViewport para payments/sheets/modales. El chat y login dependen del resize
-    // nativo del WebView, asi que no escribimos una segunda altura manual del teclado.
-    const setPhoneViewportVars = (visibleHeight: number, viewportTop: number, inset: number) => {
+    let lastKeyboardLiveInset = ''
+    let keyboardLiveActive = false
+    // visualViewport alimenta payments/sheets/modales. En el chat de iOS,
+    // MainViewController es la unica fuente para la altura real del teclado.
+    const setPhoneViewportVars = (visibleHeight: number, viewportTop: number, inset: number, liveInset: number) => {
       const nextVisualViewportHeight = `${Math.round(visibleHeight)}px`
       const nextVisualViewportTop = `${Math.round(viewportTop)}px`
       const nextKeyboardInset = `${Math.round(inset)}px`
+      const nextKeyboardLiveInset = `${Math.round(liveInset)}px`
       if (lastVisualViewportHeight !== nextVisualViewportHeight) {
         root.style.setProperty('--phone-visual-viewport-height', nextVisualViewportHeight)
         lastVisualViewportHeight = nextVisualViewportHeight
@@ -424,6 +426,19 @@ const PhoneRouteEffects: React.FC = () => {
         root.style.setProperty('--phone-keyboard-inset', nextKeyboardInset)
         lastKeyboardInset = nextKeyboardInset
       }
+      if (lastKeyboardLiveInset !== nextKeyboardLiveInset) {
+        root.style.setProperty('--phone-keyboard-live-inset', nextKeyboardLiveInset)
+        lastKeyboardLiveInset = nextKeyboardLiveInset
+      }
+      const nextKeyboardLiveActive = liveInset > 0
+      if (keyboardLiveActive !== nextKeyboardLiveActive) {
+        keyboardLiveActive = nextKeyboardLiveActive
+        if (nextKeyboardLiveActive) {
+          root.dataset.phoneKeyboardLive = 'true'
+        } else {
+          delete root.dataset.phoneKeyboardLive
+        }
+      }
     }
     const syncPhoneViewport = () => {
       const visualViewport = window.visualViewport
@@ -431,8 +446,9 @@ const PhoneRouteEffects: React.FC = () => {
       const visibleHeight = visualViewport?.height ?? window.innerHeight
       const viewportTop = visualViewport?.offsetTop ?? 0
       const keyboardInset = Math.max(0, layoutHeight - visibleHeight - viewportTop)
+      const liveKeyboardInset = keyboardInset > 2 ? Math.round(keyboardInset) : 0
       const roundedInset = keyboardInset > 48 ? Math.round(keyboardInset) : 0
-      setPhoneViewportVars(visibleHeight, viewportTop, roundedInset)
+      setPhoneViewportVars(visibleHeight, viewportTop, roundedInset, liveKeyboardInset)
     }
     const schedulePhoneViewportSync = () => {
       if (viewportFrame) window.cancelAnimationFrame(viewportFrame)
@@ -448,9 +464,11 @@ const PhoneRouteEffects: React.FC = () => {
       root.style.removeProperty('--phone-visual-viewport-height')
       root.style.removeProperty('--phone-visual-viewport-top')
       root.style.removeProperty('--phone-keyboard-inset')
+      root.style.removeProperty('--phone-keyboard-live-inset')
       root.style.removeProperty('--phone-kb')
       root.style.removeProperty('--phone-kb-dur')
       root.style.removeProperty('--phone-kb-ease')
+      delete root.dataset.phoneKeyboardLive
     }
 
     return () => {
@@ -461,9 +479,11 @@ const PhoneRouteEffects: React.FC = () => {
       root.style.removeProperty('--phone-visual-viewport-height')
       root.style.removeProperty('--phone-visual-viewport-top')
       root.style.removeProperty('--phone-keyboard-inset')
+      root.style.removeProperty('--phone-keyboard-live-inset')
       root.style.removeProperty('--phone-kb')
       root.style.removeProperty('--phone-kb-dur')
       root.style.removeProperty('--phone-kb-ease')
+      delete root.dataset.phoneKeyboardLive
 
       if (previousBodyPhoneApp !== undefined) {
         body.dataset.phoneApp = previousBodyPhoneApp

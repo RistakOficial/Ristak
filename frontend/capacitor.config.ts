@@ -32,9 +32,9 @@ const config: CapacitorConfig = {
       overlaysWebView: true
     },
     Keyboard: {
-      // 'native': iOS redimensiona el WKWebView junto con el teclado. Asi el chat
-      // depende del viewport nativo en vez de mover el composer con un puente JS.
-      resize: 'native',
+      // 'none': desactiva el resize tardio del plugin; MainViewController publica
+      // la altura real del teclado y el chat empuja su superficie con transform.
+      resize: 'none',
       style: 'light',
       resizeOnFullScreen: true
     }

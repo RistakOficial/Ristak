@@ -9,8 +9,13 @@
 
 .phoneContainer {
   min-height: 100dvh;
-  height: 100dvh;
-  max-height: 100dvh;
+  min-height: calc(100dvh - var(--phone-kb, 0px));
+  height: calc(100dvh - var(--phone-kb, 0px));
+  max-height: calc(100dvh - var(--phone-kb, 0px));
+  transition:
+    height var(--phone-kb-dur, 0.25s) var(--phone-kb-ease, cubic-bezier(0.38, 0.7, 0.125, 1)),
+    min-height var(--phone-kb-dur, 0.25s) var(--phone-kb-ease, cubic-bezier(0.38, 0.7, 0.125, 1)),
+    max-height var(--phone-kb-dur, 0.25s) var(--phone-kb-ease, cubic-bezier(0.38, 0.7, 0.125, 1));
   align-items: stretch;
   padding: 0;
   background: #ffffff;

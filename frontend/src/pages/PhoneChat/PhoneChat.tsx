@@ -3922,6 +3922,24 @@ export const PhoneChat: React.FC = () => {
   const [deviceMode, setDeviceMode] = useState<PhoneChatDeviceMode>(getPhoneChatDeviceMode)
   const [accessState, setAccessState] = useState<AccessState>(() => getAccessState(deviceMode))
   const isWideChatDevice = deviceMode === 'tablet' || deviceMode === 'desktop'
+  const phoneChatRootRef = useRef<HTMLElement | null>(null)
+
+  useEffect(() => {
+    mobileAppService.setShellTheme(resolvedPhoneChatTheme).catch(() => undefined)
+  }, [resolvedPhoneChatTheme])
+
+  useLayoutEffect(() => {
+    const syncBackground = () => {
+      mobileAppService.syncShellBackgroundFromElement(phoneChatRootRef.current, resolvedPhoneChatTheme)
+    }
+
+    syncBackground()
+    const frame = window.requestAnimationFrame(syncBackground)
+    return () => {
+      window.cancelAnimationFrame(frame)
+    }
+  }, [resolvedPhoneChatTheme])
+
   const [wideRailSection, setWideRailSection] = useState<PhoneSection>('chat')
   const [wideSidebarMode, setWideSidebarMode] = useState<WideSidebarMode>('chats')
   const [wideAppointmentDefaults, setWideAppointmentDefaults] = useState<PhoneCalendarCreateRequest | null>(null)
@@ -6548,6 +6566,19 @@ export const PhoneChat: React.FC = () => {
     body.style.overscrollBehavior = 'none'
     body.style.setProperty('-webkit-text-size-adjust', '100%')
 
+    const blurComposerFocus = () => {
+      const active = document.activeElement
+      if (active instanceof HTMLElement && active.closest('[data-phone-chat-composer="true"]')) {
+        active.blur()
+      }
+    }
+    const clearNativeKeyboardState = () => {
+      html.removeAttribute('data-phone-chat-keyboard')
+      html.style.setProperty('--phone-kb-dur', '0ms')
+      html.style.setProperty('--phone-kb-ease', 'linear')
+      html.style.setProperty('--phone-kb', '0px')
+    }
+
     const keepViewportStable = (input?: boolean | Event) => {
       const force = input === true
       if (!force && html.getAttribute('data-phone-chat-keyboard') !== 'true') return
@@ -6570,16 +6601,6 @@ export const PhoneChat: React.FC = () => {
       }
     }
 
-    const resetViewportAfterKeyboard = () => {
-      window.clearTimeout(keyboardScrollTimeout)
-      window.setTimeout(() => {
-        html.removeAttribute('data-phone-chat-keyboard')
-        window.scrollTo({ top: 0, left: 0, behavior: 'auto' })
-        html.scrollTop = 0
-        body.scrollTop = 0
-      }, 90)
-    }
-
     const getScrollableElement = (target: EventTarget | null) => {
       if (!(target instanceof Element)) return null
       const scrollable = target.closest(SCROLLABLE_CHAT_SELECTOR)
@@ -6589,6 +6610,11 @@ export const PhoneChat: React.FC = () => {
     const handleTouchStart = (event: TouchEvent) => {
       startX = event.touches[0]?.clientX || 0
       startY = event.touches[0]?.clientY || 0
+
+      if (!(event.target instanceof Element)) return
+      if (!event.target.closest('[data-phone-chat-composer="true"]')) {
+        blurComposerFocus()
+      }
     }
 
     const handleTouchMove = (event: TouchEvent) => {
@@ -6627,36 +6653,29 @@ export const PhoneChat: React.FC = () => {
       if (!(event.target instanceof Element)) return
       if (!event.target.closest('[data-phone-chat-composer="true"]')) return
 
-      html.setAttribute('data-phone-chat-keyboard', 'true')
       keepViewportStable(true)
-    }
-
-    const handleFocusOut = (event: FocusEvent) => {
-      if (!(event.target instanceof Element)) return
-      if (!event.target.closest('[data-phone-chat-composer="true"]')) return
-
-      resetViewportAfterKeyboard()
     }
 
     window.addEventListener('touchstart', handleTouchStart, { passive: false })
     window.addEventListener('touchmove', handleTouchMove, { passive: false })
     window.addEventListener('focusin', handleFocusIn)
-    window.addEventListener('focusout', handleFocusOut)
-    window.visualViewport?.addEventListener('resize', keepViewportStable)
-    // NO escuchamos 'scroll' del visual viewport: bajo KeyboardResize.Native el
-    // scroll del usuario en el hilo dispara este evento y keepViewportStable
-    // hacía scrollTo(0,0) en cada frame, peleando con el dedo (lag brutal). El
-    // 'resize' basta para re-anclar el composer al abrir/cerrar el teclado.
+    const handleViewportResize = (event: Event) => {
+      keepViewportStable(event)
+    }
+
+    window.visualViewport?.addEventListener('resize', handleViewportResize)
+    // NO escuchamos 'scroll' del visual viewport: el scroll del usuario en el hilo
+    // dispara este evento y keepViewportStable hacia scrollTo(0,0) en cada frame,
+    // peleando con el dedo. El 'resize' basta al abrir/cerrar el teclado.
 
     return () => {
       window.removeEventListener('touchstart', handleTouchStart)
       window.removeEventListener('touchmove', handleTouchMove)
       window.removeEventListener('focusin', handleFocusIn)
-      window.removeEventListener('focusout', handleFocusOut)
-      window.visualViewport?.removeEventListener('resize', keepViewportStable)
+      window.visualViewport?.removeEventListener('resize', handleViewportResize)
       if (keyboardFrame) window.cancelAnimationFrame(keyboardFrame)
       window.clearTimeout(keyboardScrollTimeout)
-      html.removeAttribute('data-phone-chat-keyboard')
+      clearNativeKeyboardState()
       if (viewportMeta) {
         viewportMeta.setAttribute('content', previousViewportContent)
       }
@@ -18042,6 +18061,7 @@ export const PhoneChat: React.FC = () => {
 
   return (
     <main
+      ref={phoneChatRootRef}
       className={`${styles.phoneChatPage} ${conversationVisible ? styles.conversationOpen : ''} ${sheet ? styles.sheetOpen : ''}`}
       data-phone-chat-tone={resolvedPhoneChatTheme}
       data-phone-chat-mode={safeChatThemePreference}
@@ -18361,73 +18381,74 @@ export const PhoneChat: React.FC = () => {
 
           {renderConversationSearchBar()}
 
-          <div
-            ref={messagesPaneRef}
-            className={`${styles.messagesPane} ${draggingFilesOverChat ? styles.messagesPaneDropActive : ''}`}
-            data-phone-chat-scrollable="true"
-            onScroll={handleMessagesPaneScroll}
-            onDragEnter={handleChatDragEnter}
-            onDragOver={handleChatDragOver}
-            onDragLeave={handleChatDragLeave}
-            onDrop={handleChatDrop}
-          >
-            {draggingFilesOverChat && (
-              <div className={styles.chatDropOverlay} aria-hidden="true">
-                <div className={styles.chatDropOverlayCard}>
-                  <UploadCloud size={26} />
-                  <strong>Suelta aquí tu contenido multimedia</strong>
-                  <span>Se agregará a la caja del mensaje antes de enviarlo.</span>
+          <div className={styles.conversationKeyboardSurface} data-phone-chat-keyboard-surface="true">
+            <div
+              ref={messagesPaneRef}
+              className={`${styles.messagesPane} ${draggingFilesOverChat ? styles.messagesPaneDropActive : ''}`}
+              data-phone-chat-scrollable="true"
+              onScroll={handleMessagesPaneScroll}
+              onDragEnter={handleChatDragEnter}
+              onDragOver={handleChatDragOver}
+              onDragLeave={handleChatDragLeave}
+              onDrop={handleChatDrop}
+            >
+              {draggingFilesOverChat && (
+                <div className={styles.chatDropOverlay} aria-hidden="true">
+                  <div className={styles.chatDropOverlayCard}>
+                    <UploadCloud size={26} />
+                    <strong>Suelta aquí tu contenido multimedia</strong>
+                    <span>Se agregará a la caja del mensaje antes de enviarlo.</span>
+                  </div>
                 </div>
+              )}
+              <div ref={messagesContentRef} className={styles.messagesContent} data-phone-elastic-target="true">
+                {renderMessages()}
               </div>
-            )}
-            <div ref={messagesContentRef} className={styles.messagesContent} data-phone-elastic-target="true">
-              {renderMessages()}
             </div>
-          </div>
 
-          {(aiAgentConversationOpen || activeContact) && !actionFormSheetOpen && (
-            <div className={styles.composerShell} data-phone-chat-composer="true">
-              {aiAgentConversationOpen ? (
-                renderAIAgentComposer()
-              ) : (
-                <>
-                  {!composerTemplateOnlyMode && renderAISuggestionBar()}
-                  {!composerTemplateOnlyMode && renderReplyPreviewBar()}
-                  {!composerTemplateOnlyMode && renderDraftAttachments()}
-                  {!composerTemplateOnlyMode && renderCommentReplyBanner()}
-                  {!composerTemplateOnlyMode && renderComposerPrivateHint()}
-                  <div className={`${styles.composer} ${hasComposerContent ? styles.composerHasContent : ''} ${composerTemplateOnlyMode ? styles.composerTemplateOnly : ''} ${voicePanelActive ? styles.composerVoiceMode : ''}`}>
-                    {voicePanelActive ? (
-                      renderVoiceComposerPanel()
-                    ) : composerTemplateOnlyMode ? (
-                      <>
-                        {renderComposerChannelPicker()}
-                        <div className={`${styles.messageInputWrap} ${styles.messageInputWrapWithSchedule} ${styles.templateOnlyInputWrap}`}>
+            {(aiAgentConversationOpen || activeContact) && !actionFormSheetOpen && (
+              <div className={styles.composerShell} data-phone-chat-composer="true">
+                {aiAgentConversationOpen ? (
+                  renderAIAgentComposer()
+                ) : (
+                  <>
+                    {!composerTemplateOnlyMode && renderAISuggestionBar()}
+                    {!composerTemplateOnlyMode && renderReplyPreviewBar()}
+                    {!composerTemplateOnlyMode && renderDraftAttachments()}
+                    {!composerTemplateOnlyMode && renderCommentReplyBanner()}
+                    {!composerTemplateOnlyMode && renderComposerPrivateHint()}
+                    <div className={`${styles.composer} ${hasComposerContent ? styles.composerHasContent : ''} ${composerTemplateOnlyMode ? styles.composerTemplateOnly : ''} ${voicePanelActive ? styles.composerVoiceMode : ''}`}>
+                      {voicePanelActive ? (
+                        renderVoiceComposerPanel()
+                      ) : composerTemplateOnlyMode ? (
+                        <>
+                          {renderComposerChannelPicker()}
+                          <div className={`${styles.messageInputWrap} ${styles.messageInputWrapWithSchedule} ${styles.templateOnlyInputWrap}`}>
+                            <button
+                              type="button"
+                              className={styles.templateOnlyButton}
+                              onClick={handleOpenTemplatesSheet}
+                              aria-label="Mandar plantilla"
+                            >
+                              <FileText size={16} />
+                              Mandar plantilla
+                            </button>
+                            <button
+                              type="button"
+                              ref={composerScheduleRef}
+                              className={styles.composerScheduleButton}
+                              onClick={handleOpenTemplateSchedulePicker}
+                              aria-label="Programar plantilla"
+                              title="Programar plantilla"
+                            >
+                              <Clock size={18} />
+                            </button>
+                          </div>
+                        </>
+                      ) : (
+                        <>
+                          {renderComposerChannelPicker()}
                           <button
-                            type="button"
-                            className={styles.templateOnlyButton}
-                            onClick={handleOpenTemplatesSheet}
-                            aria-label="Mandar plantilla"
-                          >
-                            <FileText size={16} />
-                            Mandar plantilla
-                          </button>
-                          <button
-                            type="button"
-                            ref={composerScheduleRef}
-                            className={styles.composerScheduleButton}
-                            onClick={handleOpenTemplateSchedulePicker}
-                            aria-label="Programar plantilla"
-                            title="Programar plantilla"
-                          >
-                            <Clock size={18} />
-                          </button>
-                        </div>
-                      </>
-                    ) : (
-                      <>
-                        {renderComposerChannelPicker()}
-                        <button
                           type="button"
                           ref={composerPlusRef}
                           className={styles.composerPlus}
@@ -18508,6 +18529,7 @@ export const PhoneChat: React.FC = () => {
               )}
             </div>
           )}
+          </div>
         </section>
         ) : renderWideRailPanel()}
 
