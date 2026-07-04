@@ -35,6 +35,15 @@ import {
   upsertContactCustomFieldDefinition
 } from '../services/contactCustomFieldDefinitionsService.js'
 import {
+  buildContactListPaymentStatsCte,
+  buildContactListWhere,
+  getContactAdvancedSort,
+  getContactListSortExpression,
+  normalizeContactAdvancedFilters,
+  normalizeContactListQuickFilter,
+  normalizeContactListTrackingFilters
+} from '../services/contactListFilterService.js'
+import {
   buildHighLevelCustomFieldsPayload,
   mergeContactCustomFields,
   parseContactCustomFields,
@@ -2460,13 +2469,18 @@ export const getContacts = async (req, res) => {
       sortBy = 'created_at',
       sortOrder = 'DESC',
       startDate,
-      endDate
+      endDate,
+      filter = 'all'
     } = req.query
 
     const pageNumber = Number(page) || 1
     const limitNumber = Math.min(Number(limit) || 50, 500)
     const offset = Math.max((pageNumber - 1) * limitNumber, 0)
     const shouldWarmProfilePictures = isTruthyQueryValue(req.query.warmProfilePictures || req.query.warmProfiles)
+    const quickFilter = normalizeContactListQuickFilter(filter)
+    const trackingFilters = normalizeContactListTrackingFilters(req.query.trackingFilters || req.query.filters)
+    const advancedFilterConfig = normalizeContactAdvancedFilters(req.query.advancedFilters || req.query.conditions)
+    const advancedSort = getContactAdvancedSort(advancedFilterConfig)
 
     const range = await resolveDateRangeWithGHLTimezone({ startDate, endDate })
     const rangeLabel = range.isFiltered
@@ -2475,82 +2489,39 @@ export const getContacts = async (req, res) => {
 
     logger.info(`Obteniendo contactos - página ${pageNumber}, límite ${limitNumber}, rango: ${rangeLabel}`)
 
-    // Query base
-    const params = []
-
-    // Construir WHERE clause para filtros (para COUNT query - sin alias)
-    const conditions = []
-
-    if (search) {
-      const searchClause = buildContactSearchClause('contacts', search)
-      conditions.push(searchClause.condition)
-      params.push(...searchClause.params)
-    }
-
-    if (range.startUtc) {
-      conditions.push('created_at >= ?')
-      params.push(range.startUtc)
-    }
-
-    if (range.endUtc) {
-      conditions.push('created_at <= ?')
-      params.push(range.endUtc)
-    }
-
     // Aplicar filtro de contactos ocultos (para COUNT - sin alias)
     const hiddenFilters = await getHiddenContactFilters()
     const hiddenCondition = buildHiddenContactsCondition(hiddenFilters, 'contacts', false)
-    if (hiddenCondition) {
-      conditions.push(hiddenCondition)
-    }
-    // (CNT-007) Excluir contactos en la papelera (soft-delete) de la lista y el conteo.
-    conditions.push('contacts.deleted_at IS NULL')
-
-    const whereClause = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : ''
+    const countWhere = buildContactListWhere({
+      alias: 'contacts',
+      search,
+      range,
+      hiddenCondition,
+      quickFilter,
+      trackingFilters,
+      advancedFilters: advancedFilterConfig
+    })
 
     // Obtener el total de contactos
-    const countQuery = `SELECT COUNT(*) as total FROM contacts ${whereClause}`
-    const countResult = await db.get(countQuery, params)
+    const countQuery = `SELECT COUNT(*) as total FROM contacts ${countWhere.whereClause}`
+    const countResult = await db.get(countQuery, countWhere.params)
     const totalContacts = countResult.total
 
     // Construir WHERE clause para query principal (con alias 'c')
-    const mainConditions = []
-
-    if (search) {
-      mainConditions.push(buildContactSearchClause('c', search).condition)
-    }
-
-    if (range.startUtc) {
-      mainConditions.push('c.created_at >= ?')
-    }
-
-    if (range.endUtc) {
-      mainConditions.push('c.created_at <= ?')
-    }
-
-    // (CNT-007) Excluir contactos en la papelera (soft-delete) de la query principal.
-    mainConditions.push('c.deleted_at IS NULL')
-
-    // Aplicar filtro de contactos ocultos (con alias 'c')
     const hiddenConditionAlias = buildHiddenContactsCondition(hiddenFilters, 'c', false)
-    if (hiddenConditionAlias) {
-      mainConditions.push(hiddenConditionAlias)
-    }
-
-    const mainWhereClause = mainConditions.length > 0 ? `WHERE ${mainConditions.join(' AND ')}` : ''
+    const mainWhere = buildContactListWhere({
+      alias: 'c',
+      search,
+      range,
+      hiddenCondition: hiddenConditionAlias,
+      quickFilter,
+      trackingFilters,
+      advancedFilters: advancedFilterConfig
+    })
 
     // Obtener los contactos
-    const createdAtSortExpression = timestampSortExpression('c.created_at')
-    const sortableMap = {
-      created_at: createdAtSortExpression,
-      full_name: 'c.full_name',
-      email: 'c.email',
-      phone: 'c.phone',
-      total_paid: 'COALESCE(ps.total_paid, 0)',
-      purchases_count: 'COALESCE(ps.purchases_count, 0)'
-    }
-    const safeSortBy = sortableMap[sortBy] || createdAtSortExpression
-    const orderDirection = String(sortOrder).toUpperCase() === 'ASC' ? 'ASC' : 'DESC'
+    const safeSortBy = getContactListSortExpression(advancedSort?.by || sortBy, 'c', 'ps')
+    const orderDirection = String(advancedSort?.order || sortOrder).toUpperCase() === 'ASC' ? 'ASC' : 'DESC'
 
     const searchRank = search ? buildContactSearchRank('c', search) : null
     const orderBy = searchRank
@@ -2558,24 +2529,7 @@ export const getContacts = async (req, res) => {
       : `${safeSortBy} ${orderDirection}, c.id ${orderDirection}`
 
     const contactsQuery = `
-      WITH payment_stats AS (
-        SELECT
-          contact_id,
-          SUM(CASE
-                WHEN amount > 0 AND LOWER(status) IN ('succeeded', 'paid', 'completed', 'complete', 'fulfilled', 'success')
-                AND ${nonTestPaymentCondition()}
-                THEN amount ELSE 0 END) AS total_paid,
-          SUM(CASE
-                WHEN amount > 0 AND LOWER(status) IN ('succeeded', 'paid', 'completed', 'complete', 'fulfilled', 'success')
-                AND ${nonTestPaymentCondition()}
-                THEN 1 ELSE 0 END) AS purchases_count,
-          MAX(CASE
-                WHEN amount > 0 AND LOWER(status) IN ('succeeded', 'paid', 'completed', 'complete', 'fulfilled', 'success')
-                AND ${nonTestPaymentCondition()}
-                THEN date ELSE NULL END) AS last_purchase_date
-        FROM payments
-        GROUP BY contact_id
-      )
+      WITH ${buildContactListPaymentStatsCte()}
       SELECT
         c.id,
         c.phone,
@@ -2597,7 +2551,9 @@ export const getContacts = async (req, res) => {
 ${CONTACT_WHATSAPP_PROFILE_SELECTS},
 ${CONTACT_META_PROFILE_SELECT},
         COALESCE(ps.total_paid, 0) AS total_paid,
+        COALESCE(ps.payments_count, 0) AS payments_count,
         COALESCE(ps.purchases_count, 0) AS purchases_count,
+        COALESCE(ps.failed_payments_count, 0) AS failed_payments_count,
         ps.last_purchase_date AS last_purchase_date,
         c.appointment_date,
         c.created_at,
@@ -2629,12 +2585,12 @@ ${CONTACT_META_PROFILE_SELECT},
         ) AS has_confirmation_badge
       FROM contacts c
       LEFT JOIN payment_stats ps ON ps.contact_id = c.id
-      ${mainWhereClause}
+      ${mainWhere.whereClause}
       ORDER BY ${orderBy}
       LIMIT ? OFFSET ?
     `
 
-    const contactsParams = [...params, ...(searchRank?.params ?? []), limitNumber, offset]
+    const contactsParams = [...mainWhere.params, ...(searchRank?.params ?? []), limitNumber, offset]
     const contacts = await db.all(contactsQuery, contactsParams)
     const hydratedContacts = shouldWarmProfilePictures
       ? await warmWhatsAppProfilePicturesForRows(contacts, {
@@ -2757,6 +2713,9 @@ ${CONTACT_META_PROFILE_SELECT},
         status,
         lastPurchase: c.last_purchase_date,
         purchases: c.purchases_count || 0,
+        paymentsCount: c.payments_count || 0,
+        successfulPaymentsCount: c.purchases_count || 0,
+        failedPaymentsCount: c.failed_payments_count || 0,
         hasAppointments: Boolean(c.has_appointments),
         hasShowedAppointment: Boolean(c.has_showed_appointment),
         hasAttendedAppointment: Boolean(c.has_showed_appointment),

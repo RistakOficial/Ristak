@@ -94,6 +94,9 @@ interface ContactsPageParams {
   search?: string
   sortBy?: string
   sortOrder?: 'ASC' | 'DESC'
+  filter?: string
+  trackingFilters?: Record<string, string[]>
+  advancedFilters?: unknown
   signal?: AbortSignal
 }
 
@@ -195,6 +198,9 @@ const requestContactsPage = async ({
   search,
   sortBy = 'created_at',
   sortOrder = 'DESC',
+  filter,
+  trackingFilters,
+  advancedFilters,
   signal
 }: ContactsPageParams = {}): Promise<ContactsPageResult> => {
   const params = new URLSearchParams()
@@ -205,6 +211,13 @@ const requestContactsPage = async ({
   if (startDate) params.append('startDate', startDate)
   if (endDate) params.append('endDate', endDate)
   if (search) params.append('search', search)
+  if (filter && filter !== 'all') params.append('filter', filter)
+  if (trackingFilters && Object.values(trackingFilters).some(values => values.length > 0)) {
+    params.append('trackingFilters', JSON.stringify(trackingFilters))
+  }
+  if (advancedFilters) {
+    params.append('advancedFilters', JSON.stringify(advancedFilters))
+  }
 
   const url = apiUrl(`/api/contacts?${params.toString()}`)
   const response = await fetch(url, {

@@ -277,6 +277,15 @@ Capacidades:
   automatizaciones.
 - Telefonos normalizados.
 - Filtros ocultos.
+- Filtros avanzados combinables en la lista de contactos. El endpoint
+  `/api/contacts` aplica del lado servidor los filtros rapidos (todos, leads,
+  citados, asistencias, clientes), los filtros de tracking existentes
+  (paginas, fuentes, dispositivos, navegadores, sistemas, placements/anuncios) y
+  condiciones avanzadas por grupos AND/OR sobre etiquetas, campos
+  personalizados, fechas de creacion/actualizacion, citas, asistencias, pagos,
+  tracking y automatizaciones. Las fechas de negocio se interpretan en la zona
+  horaria de la cuenta y los pagos usan estados live/exitosos/fallidos
+  normalizados.
 - Acciones masivas con job propio.
 - Atribucion por UTMs, click IDs, WhatsApp referrals, Meta y tracking identity.
 - El Viaje del Cliente en la ficha debe mostrar cada actividad con una etiqueta

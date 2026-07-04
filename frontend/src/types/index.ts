@@ -166,6 +166,9 @@ export interface Contact {
   status: 'lead' | 'appointment' | 'customer'
   lastPurchase?: string
   purchases: number
+  paymentsCount?: number
+  successfulPaymentsCount?: number
+  failedPaymentsCount?: number
   source?: string
   profilePhotoUrl?: string | null
   avatarUrl?: string | null

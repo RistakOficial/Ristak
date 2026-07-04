@@ -18,7 +18,8 @@ import {
   MessageSquare,
   Workflow,
   Tags,
-  ListPlus
+  ListPlus,
+  SlidersHorizontal
 } from 'lucide-react'
 import { useDateRange } from '@/contexts/DateRangeContext'
 import { useTimezone } from '@/contexts/TimezoneContext'
@@ -27,7 +28,7 @@ import { useUrlDateRangeSync, useUrlFilterState } from '@/hooks'
 import { formatCurrency, formatDateToISO, formatEndDateToISO, formatNumber, formatUrlParameter, parseLocalDateString } from '@/utils/format'
 import { parseSortableDateValue } from '@/utils/dateSort'
 import { contactsService, type Contact, type ContactStats } from '@/services/contactsService'
-import { contactTagsService } from '@/services/contactTagsService'
+import { contactTagsService, type ContactTag } from '@/services/contactTagsService'
 import { whatsappApiService, type WhatsAppApiPhoneNumber } from '@/services/whatsappApiService'
 import { calendarsService, type CalendarEvent } from '@/services/calendarsService'
 import type { ContactAppointment, ContactCustomField, ContactCustomFieldDefinition, ContactPayment, ContactPhoneNumber } from '@/types'
@@ -53,6 +54,17 @@ import {
 import { ContactBulkActionModals } from './ContactBulkActionModals'
 import { ContactBulkActionProgress } from './ContactBulkActionProgress'
 import { ContactBulkPropertyModals } from './ContactBulkPropertyModals'
+import { ContactAdvancedFiltersModal } from './ContactAdvancedFiltersModal'
+import {
+  CONTACT_ADVANCED_FILTERS_URL_PARAM,
+  countContactAdvancedRules,
+  createDefaultContactAdvancedConfig,
+  hasActiveContactAdvancedConfig,
+  normalizeContactAdvancedConfig,
+  parseContactAdvancedConfig,
+  serializeContactAdvancedConfig,
+  type ContactAdvancedFilterConfig
+} from './contactAdvancedFilters'
 
 const APPOINTMENT_CANCELED_STATUSES = new Set([
   'cancelled',
@@ -641,16 +653,55 @@ const ContactsTable: React.FC = () => {
     const cachedTags = contactTagsService.getCachedTags({ includeSystem: true }) || contactTagsService.getCachedTags()
     return cachedTags ? createTagLabelMap(cachedTags) : {}
   })
+  const [contactTags, setContactTags] = useState<ContactTag[]>(() => {
+    return contactTagsService.getCachedTags({ includeSystem: true }) || contactTagsService.getCachedTags() || []
+  })
   const [customFieldDefinitions, setCustomFieldDefinitions] = useState<ContactCustomFieldDefinition[]>([])
   const [hasLoadedContacts, setHasLoadedContacts] = useState(false)
   const [contactSearchTerm, setContactSearchTerm] = useState('')
   const [debouncedContactSearch, setDebouncedContactSearch] = useState('')
+  const [advancedFiltersOpen, setAdvancedFiltersOpen] = useState(false)
+  const [advancedFilterConfig, setAdvancedFilterConfig] = useState<ContactAdvancedFilterConfig>(() =>
+    parseContactAdvancedConfig(searchParams.get(CONTACT_ADVANCED_FILTERS_URL_PARAM))
+  )
   const handledOpenContactRef = useRef<string | null>(null)
   const fetchRequestRef = useRef(0)
 
   const navigateContactsPath = useCallback((pathname: string, options?: { replace?: boolean }) => {
     navigate({ pathname, search: location.search }, options)
   }, [location.search, navigate])
+
+  const advancedFilterRuleCount = useMemo(
+    () => countContactAdvancedRules(advancedFilterConfig),
+    [advancedFilterConfig]
+  )
+  const advancedFiltersActive = useMemo(
+    () => hasActiveContactAdvancedConfig(advancedFilterConfig),
+    [advancedFilterConfig]
+  )
+
+  const writeAdvancedFiltersToUrl = useCallback((nextConfig: ContactAdvancedFilterConfig) => {
+    const normalized = normalizeContactAdvancedConfig(nextConfig)
+    setAdvancedFilterConfig(normalized)
+
+    const nextParams = new URLSearchParams(searchParams)
+    const serialized = serializeContactAdvancedConfig(normalized)
+    if (serialized) {
+      nextParams.set(CONTACT_ADVANCED_FILTERS_URL_PARAM, serialized)
+    } else {
+      nextParams.delete(CONTACT_ADVANCED_FILTERS_URL_PARAM)
+    }
+    setSearchParams(nextParams, { replace: true })
+  }, [searchParams, setSearchParams])
+
+  const applyAdvancedFilters = useCallback((nextConfig: ContactAdvancedFilterConfig) => {
+    writeAdvancedFiltersToUrl(nextConfig)
+    setAdvancedFiltersOpen(false)
+  }, [writeAdvancedFiltersToUrl])
+
+  const resetAdvancedFilters = useCallback(() => {
+    writeAdvancedFiltersToUrl(createDefaultContactAdvancedConfig())
+  }, [writeAdvancedFiltersToUrl])
 
   useUrlDateRangeSync({
     dateRange,
@@ -748,7 +799,7 @@ const ContactsTable: React.FC = () => {
 
   useEffect(() => {
     fetchData()
-  }, [dateRange, viewMode, debouncedContactSearch])
+  }, [dateRange, viewMode, debouncedContactSearch, filter, selectedFilters, advancedFilterConfig])
 
   useEffect(() => {
     setShowNewContactModal(routeState.create)
@@ -811,7 +862,9 @@ const ContactsTable: React.FC = () => {
     contactTagsService.getTags({ includeSystem: true })
       .then((tags) => {
         if (!cancelled) {
-          setContactTagLabels(createTagLabelMap(Array.isArray(tags) ? tags : []))
+          const list = Array.isArray(tags) ? tags : []
+          setContactTags(list)
+          setContactTagLabels(createTagLabelMap(list))
         }
       })
       .catch(() => {
@@ -822,6 +875,15 @@ const ContactsTable: React.FC = () => {
       cancelled = true
     }
   }, [])
+
+  useEffect(() => {
+    const nextConfig = parseContactAdvancedConfig(searchParams.get(CONTACT_ADVANCED_FILTERS_URL_PARAM))
+    setAdvancedFilterConfig(current => {
+      const currentSerialized = serializeContactAdvancedConfig(current)
+      const nextSerialized = serializeContactAdvancedConfig(nextConfig)
+      return currentSerialized === nextSerialized ? current : nextConfig
+    })
+  }, [searchParams])
 
   useEffect(() => {
     let cancelled = false
@@ -1199,6 +1261,18 @@ const ContactsTable: React.FC = () => {
     const requestId = fetchRequestRef.current + 1
     fetchRequestRef.current = requestId
     const normalizedSearch = debouncedContactSearch.trim()
+    const serializedAdvancedFilters = serializeContactAdvancedConfig(advancedFilterConfig)
+    const activeAdvancedFilters = serializedAdvancedFilters
+      ? normalizeContactAdvancedConfig(advancedFilterConfig)
+      : undefined
+    const activeSort = activeAdvancedFilters?.sort || null
+    const contactsQueryOptions = {
+      filter,
+      trackingFilters: selectedFilters,
+      advancedFilters: activeAdvancedFilters,
+      sortBy: activeSort?.by || 'created_at',
+      sortOrder: activeSort?.order || 'DESC' as const
+    }
     setLoading(true)
     try {
       let startDate: string | undefined
@@ -1228,8 +1302,7 @@ const ContactsTable: React.FC = () => {
         endDate,
         page: 1,
         limit: CONTACTS_PAGE_SIZE,
-        sortBy: 'created_at',
-        sortOrder: 'DESC',
+        ...contactsQueryOptions,
         ...(normalizedSearch ? { search: normalizedSearch } : {})
       })
 
@@ -1259,8 +1332,7 @@ const ContactsTable: React.FC = () => {
               endDate,
               page,
               limit: CONTACTS_PAGE_SIZE,
-              sortBy: 'created_at',
-              sortOrder: 'DESC',
+              ...contactsQueryOptions,
               ...(normalizedSearch ? { search: normalizedSearch } : {})
             })
 
@@ -1509,132 +1581,8 @@ const ContactsTable: React.FC = () => {
   }, [contacts])
 
   const filteredContacts = useMemo(() => {
-    const stageFilteredContacts = contacts.filter(contact => {
-      if (filter === 'all') return true
-      if (filter === 'leads') return contact.status === 'lead'
-      if (filter === 'customers') return contact.status === 'customer'
-      if (filter === 'attendances') {
-        if (contact.status === 'customer' || (contact.purchases || 0) > 0) {
-          return true
-        }
-
-        const hasShowedInCalendar = allEvents.some(event =>
-          event.contactId === contact.id &&
-          isAttendedAppointmentStatus(event.appointmentStatus || (event as any).status)
-        )
-        const hasShowedAppointment =
-          contact.hasShowedAppointment ||
-          contact.appointments?.some(appointment =>
-            isAttendedAppointmentStatus(appointment.appointment_status || appointment.status)
-          )
-
-        return hasShowedInCalendar || Boolean(hasShowedAppointment)
-      }
-
-      // Citados: Tienen cita pero NO son clientes
-      if (filter === 'appointments') {
-        const isNotCustomer = contact.status !== 'customer'
-        if (!isNotCustomer) return false
-
-        // Buscar el contacto en los eventos de calendarios
-        const hasAppointmentInCalendar = allEvents.some(event => {
-          // Buscar por contactId del evento
-          return event.contactId === contact.id && isActiveAppointment(event)
-        })
-
-        // Si hay eventos de calendario, confiar en esa data
-        if (allEvents.length > 0) {
-          return hasAppointmentInCalendar || contact.status === 'appointment'
-        }
-
-        // Fallback: usar datos locales si no se cargaron eventos
-        const hasAppointments =
-          contact.status === 'appointment' ||
-          Boolean(contact.appointments?.some(isActiveAppointment)) ||
-          (!contact.appointments && contact.firstAppointmentDate !== null && contact.firstAppointmentDate !== undefined)
-
-        return hasAppointments
-      }
-
-      return false
-    })
-
-    const hasActiveTreeFilters = Object.values(selectedFilters).some(values => values.length > 0)
-    if (!hasActiveTreeFilters) {
-      return stageFilteredContacts
-    }
-
-    return stageFilteredContacts.filter(contact => {
-      const tracking = getContactTrackingData(contact)
-
-      for (const [field, values] of Object.entries(selectedFilters)) {
-        if (values.length === 0) continue
-
-        let fieldMatch = false
-
-        for (const value of values) {
-          switch (field) {
-            case 'landing_url':
-            case 'page_url': {
-              const pageName = getContactPageName(tracking.page_url)
-              if (pageName === value) fieldMatch = true
-              break
-            }
-            case 'utm_campaign': {
-              const campaignValue = tracking.utm_campaign || tracking.campaign_name
-              if (decodeAdName(campaignValue) === value) fieldMatch = true
-              break
-            }
-            case 'utm_medium': {
-              const adsetValue = tracking.utm_medium || tracking.adset_name
-              const decodedAdset = isUsableTrackingValue(adsetValue)
-                ? decodeAdName(adsetValue)
-                : 'sin_conjunto'
-              if (decodedAdset === value) fieldMatch = true
-              break
-            }
-            case 'utm_content': {
-              const adValue = tracking.utm_content || tracking.ad_name
-              const decodedAd = isUsableTrackingValue(adValue)
-                ? decodeAdName(adValue)
-                : 'sin_anuncio'
-              if (decodedAd === value) fieldMatch = true
-              break
-            }
-            case 'utm_source': {
-              const normalizedSource = normalizeTrafficSource({
-                referrer_url: tracking.referrer_url,
-                site_source_name: tracking.site_source_name,
-                utm_source: tracking.utm_source,
-                source_platform: tracking.source_platform
-              })
-              if (normalizedSource.toLowerCase() === value.toLowerCase()) fieldMatch = true
-              break
-            }
-            case 'device_type':
-              if (tracking.device_type === value) fieldMatch = true
-              break
-            case 'browser':
-              if (tracking.browser === value) fieldMatch = true
-              break
-            case 'os':
-              if (tracking.os === value) fieldMatch = true
-              break
-            case 'placement':
-              if (formatPlacementName(tracking.placement || '') === value) fieldMatch = true
-              break
-            case 'ad_id':
-              if (tracking.ad_id === value) fieldMatch = true
-              break
-          }
-        }
-
-        if (!fieldMatch) return false
-      }
-
-      return true
-    })
-  }, [contacts, filter, allEvents, selectedFilters])
+    return contacts
+  }, [contacts])
 
   const selectedContacts = useMemo(() => {
     if (selectedContactIds.length === 0) return []
@@ -2265,6 +2213,31 @@ const ContactsTable: React.FC = () => {
             setFilter(value)
             navigateContactsPath(buildContactsPath(viewMode, value))
           }}
+          toolbarStart={
+            <div className={styles.contactConditionsToolbar}>
+              <Button
+                type="button"
+                variant={advancedFiltersActive ? 'primary' : 'secondary'}
+                size="sm"
+                onClick={() => setAdvancedFiltersOpen(true)}
+              >
+                <SlidersHorizontal size={16} />
+                {advancedFilterRuleCount > 0 ? `Condiciones (${advancedFilterRuleCount})` : 'Condiciones'}
+              </Button>
+              {advancedFiltersActive && (
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  iconOnly
+                  aria-label="Limpiar condiciones"
+                  onClick={resetAdvancedFilters}
+                >
+                  <X size={16} />
+                </Button>
+              )}
+            </div>
+          }
           tableId="contacts_v2"
           selectionActions={contactSelectionToolbar}
           rowSelection={{
@@ -2275,6 +2248,15 @@ const ContactsTable: React.FC = () => {
           }}
         />
       </Card>
+
+      <ContactAdvancedFiltersModal
+        isOpen={advancedFiltersOpen}
+        value={advancedFilterConfig}
+        tags={contactTags}
+        customFieldDefinitions={customFieldDefinitions}
+        onClose={() => setAdvancedFiltersOpen(false)}
+        onApply={applyAdvancedFilters}
+      />
 
       {isClient && (
         <ContactBulkPropertyModals

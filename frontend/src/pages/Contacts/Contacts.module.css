@@ -477,6 +477,186 @@
   transition: width var(--transition-normal);
 }
 
+.contactConditionsModalContent {
+  padding: var(--spacing-lg) var(--spacing-xl);
+}
+
+.contactConditionsShell {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-lg);
+  min-width: 0;
+}
+
+.contactConditionsTopbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--spacing-md);
+  padding-bottom: var(--spacing-md);
+  border-bottom: 1px solid var(--color-border-subtle);
+}
+
+.contactConditionsSummary,
+.contactConditionsSort,
+.contactConditionGroupMeta,
+.contactConditionToggle,
+.contactConditionsFooter,
+.contactConditionsFooterActions {
+  display: flex;
+  align-items: center;
+}
+
+.contactConditionsSummary {
+  gap: var(--spacing-sm);
+  min-height: var(--design-control-height);
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-sm);
+}
+
+.contactConditionsSummary svg {
+  color: var(--color-text-primary);
+}
+
+.contactConditionsToolbar {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-xs);
+  min-width: 0;
+}
+
+.contactConditionsSort {
+  gap: var(--spacing-sm);
+  min-width: 280px;
+  justify-content: flex-end;
+}
+
+.contactConditionsSort > span {
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-sm);
+}
+
+.contactConditionGroups {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-md);
+  max-height: min(58vh, 620px);
+  overflow: auto;
+  padding-right: var(--spacing-xs);
+}
+
+.contactConditionGroup {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-md);
+  padding: var(--spacing-md);
+  border: 1px solid var(--color-border-subtle);
+  border-radius: var(--radius-md);
+  background: var(--color-surface);
+}
+
+.contactConditionGroupHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--spacing-md);
+}
+
+.contactConditionGroupMeta {
+  gap: var(--spacing-sm);
+  min-width: 0;
+  flex-wrap: wrap;
+}
+
+.contactConditionGroupMeta > span {
+  color: var(--color-text-primary);
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-semibold);
+}
+
+.contactConditionToggle {
+  gap: var(--spacing-xs);
+  min-height: var(--design-control-height);
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-sm);
+  cursor: pointer;
+}
+
+.contactConditionToggle input {
+  width: 16px;
+  height: 16px;
+  accent-color: var(--color-primary);
+}
+
+.contactConditionRules {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-sm);
+}
+
+.contactConditionRule {
+  display: grid;
+  grid-template-columns: minmax(190px, 1.1fr) minmax(150px, 0.8fr) minmax(220px, 1.4fr) auto;
+  gap: var(--spacing-sm);
+  align-items: center;
+  min-width: 0;
+}
+
+.contactConditionValue {
+  min-width: 0;
+}
+
+.conditionValuePair {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--spacing-sm);
+}
+
+.contactConditionValue input,
+.conditionValuePair input {
+  width: 100%;
+  min-width: 0;
+  height: var(--design-control-height);
+  padding: 0 var(--spacing-sm);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-background);
+  color: var(--color-text-primary);
+  font: inherit;
+  font-size: var(--font-size-sm);
+}
+
+.contactConditionValue input:focus,
+.conditionValuePair input:focus {
+  border-color: var(--color-primary);
+  outline: none;
+  box-shadow: 0 0 0 2px var(--accent-soft);
+}
+
+.conditionValueNote {
+  min-height: var(--design-control-height);
+  display: flex;
+  align-items: center;
+  padding: 0 var(--spacing-sm);
+  border: 1px solid var(--color-border-subtle);
+  border-radius: var(--radius-md);
+  color: var(--color-text-tertiary);
+  font-size: var(--font-size-sm);
+}
+
+.contactConditionsFooter {
+  justify-content: space-between;
+  gap: var(--spacing-md);
+  padding-top: var(--spacing-md);
+  border-top: 1px solid var(--color-border-subtle);
+}
+
+.contactConditionsFooterActions {
+  justify-content: flex-end;
+  gap: var(--spacing-sm);
+  flex-wrap: wrap;
+}
+
 /* Responsive */
 @media (max-width: 1200px) {
   .kpiRow {
@@ -512,6 +692,25 @@
 
   .modal {
     padding: var(--spacing-lg);
+  }
+
+  .contactConditionsTopbar,
+  .contactConditionsFooter {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .contactConditionsSort {
+    min-width: 0;
+    justify-content: flex-start;
+  }
+
+  .contactConditionRule {
+    grid-template-columns: 1fr;
+  }
+
+  .contactConditionRules {
+    gap: var(--spacing-md);
   }
 }
 
