@@ -2163,13 +2163,13 @@
 }
 
 .aiAgentHubStatusOn {
-  color: #059669;
-  text-shadow: 0 0 18px rgba(16, 185, 129, 0.26);
+  color: var(--phone-chat-primary);
+  text-shadow: 0 0 18px rgba(var(--phone-chat-primary-rgb), 0.26);
   animation: aiAgentHubStatusGlow 3.8s ease-in-out infinite;
 }
 
 .aiAgentHubStatusOn::before {
-  box-shadow: 0 0 0 5px rgba(16, 185, 129, 0.12);
+  box-shadow: 0 0 0 5px rgba(var(--phone-chat-primary-rgb), 0.12);
 }
 
 .aiAgentHubStatusOff {
@@ -9519,7 +9519,7 @@
   color: #fff;
   background:
     radial-gradient(circle at 28% 22%, rgba(255, 255, 255, 0.98), rgba(255, 255, 255, 0) 23%),
-    linear-gradient(145deg, #143fba 0%, #2563eb 48%, #19c37d 100%);
+    linear-gradient(145deg, #143fba 0%, #2563eb 48%, var(--phone-chat-accent) 100%);
   box-shadow:
     0 0 0 1px rgba(255, 255, 255, 0.38) inset,
     0 8px 18px rgba(37, 99, 235, 0.24);
@@ -9539,7 +9539,7 @@
   inset: -7px;
   z-index: -2;
   background:
-    radial-gradient(circle, rgba(34, 197, 94, 0.3), rgba(37, 99, 235, 0.18) 45%, rgba(37, 99, 235, 0) 70%);
+    radial-gradient(circle, rgba(var(--phone-chat-accent-rgb), 0.28), rgba(var(--phone-chat-primary-rgb), 0.18) 45%, rgba(var(--phone-chat-primary-rgb), 0) 70%);
   animation: agentBotAura 2.8s ease-in-out infinite;
 }
 
@@ -9569,28 +9569,18 @@
   min-width: 0;
   min-height: 31px;
   padding: 4px 9px 4px 10px;
-  border: 1px solid rgba(20, 184, 166, 0.18);
+  border: 0;
   border-radius: 16px;
   background:
-    linear-gradient(135deg, rgba(255, 255, 255, 0.98), rgba(238, 253, 247, 0.94));
-  box-shadow: 0 8px 24px rgba(15, 23, 42, 0.1);
+    linear-gradient(
+      135deg,
+      color-mix(in srgb, var(--phone-chat-surface) 94%, var(--phone-chat-accent) 6%),
+      color-mix(in srgb, var(--phone-chat-accent-soft) 76%, var(--phone-chat-surface) 24%)
+    );
+  box-shadow: 0 8px 22px rgba(var(--phone-chat-primary-rgb), 0.13);
   pointer-events: none;
   transform: translateY(-50%);
   animation: agentBubbleIn 340ms cubic-bezier(0.2, 0.8, 0.2, 1) both;
-}
-
-.agentStatusBubble::before {
-  content: "";
-  position: absolute;
-  top: 50%;
-  left: -4px;
-  width: 9px;
-  height: 9px;
-  border-bottom-left-radius: 3px;
-  background: rgba(255, 255, 255, 0.98);
-  border-left: 1px solid rgba(20, 184, 166, 0.16);
-  border-bottom: 1px solid rgba(20, 184, 166, 0.16);
-  transform: translateY(-50%) rotate(45deg);
 }
 
 .agentStatusLabel {
@@ -9600,8 +9590,8 @@
   gap: 3px;
   padding: 3px 5px 3px 4px;
   border-radius: 999px;
-  background: rgba(34, 197, 94, 0.12);
-  color: #047857;
+  background: rgba(var(--phone-chat-primary-rgb), 0.11);
+  color: var(--phone-chat-primary);
   font-size: 8px;
   font-weight: 850;
   letter-spacing: 0;
@@ -9614,8 +9604,10 @@
   width: 4px;
   height: 4px;
   border-radius: 999px;
-  background: #22c55e;
-  box-shadow: 0 0 0 2px rgba(34, 197, 94, 0.14), 0 0 8px rgba(34, 197, 94, 0.72);
+  background: var(--phone-chat-accent);
+  box-shadow:
+    0 0 0 2px rgba(var(--phone-chat-accent-rgb), 0.14),
+    0 0 8px rgba(var(--phone-chat-accent-rgb), 0.68);
   animation: agentStatusDotPulse 1.6s ease-in-out infinite;
 }
 
@@ -9635,15 +9627,13 @@
 }
 
 .phoneChatPage[data-phone-chat-tone="dark"] .agentStatusBubble {
-  border-color: rgba(94, 234, 212, 0.2);
   background:
-    linear-gradient(135deg, rgba(15, 23, 42, 0.98), rgba(18, 45, 58, 0.96));
-  box-shadow: 0 10px 26px rgba(0, 0, 0, 0.32);
-}
-
-.phoneChatPage[data-phone-chat-tone="dark"] .agentStatusBubble::before {
-  background: rgba(15, 23, 42, 0.98);
-  border-color: rgba(94, 234, 212, 0.18);
+    linear-gradient(
+      135deg,
+      color-mix(in srgb, var(--phone-chat-surface) 88%, var(--phone-chat-accent) 12%),
+      color-mix(in srgb, var(--phone-chat-surface-soft) 86%, var(--phone-chat-accent) 14%)
+    );
+  box-shadow: 0 10px 26px rgba(0, 0, 0, 0.28);
 }
 
 .phoneChatPage[data-phone-chat-tone="dark"] .agentStatusPhrase {
@@ -9682,14 +9672,14 @@
 
 @keyframes aiAgentHubStatusGlow {
   0%, 100% {
-    color: #059669;
+    color: var(--phone-chat-primary);
     opacity: 0.9;
-    text-shadow: 0 0 10px rgba(16, 185, 129, 0.18);
+    text-shadow: 0 0 10px rgba(var(--phone-chat-primary-rgb), 0.18);
   }
   50% {
-    color: #16a34a;
+    color: var(--phone-chat-accent);
     opacity: 1;
-    text-shadow: 0 0 22px rgba(34, 197, 94, 0.36);
+    text-shadow: 0 0 22px rgba(var(--phone-chat-accent-rgb), 0.36);
   }
 }
 
@@ -10335,9 +10325,9 @@
 }
 
 .agentDetailStatusOn {
-  border-color: rgba(16, 185, 129, 0.28);
-  color: #047857;
-  background: rgba(16, 185, 129, 0.1);
+  border-color: rgba(var(--phone-chat-primary-rgb), 0.28);
+  color: var(--phone-chat-primary);
+  background: rgba(var(--phone-chat-primary-rgb), 0.1);
 }
 
 .agentNumberGrid {
