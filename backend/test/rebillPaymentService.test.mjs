@@ -376,7 +376,15 @@ test('Rebill cobra tarjeta guardada enviando customer como objeto en checkout', 
         return jsonTextResponse({ id: 'wh_rebill_saved_card', url: body.url, events: body.events, active: true }, 201)
       }
       if (parsed.pathname === '/v3/checkout' && method === 'POST') {
-        assert.deepEqual(body.customer, { id: customerId })
+        assert.deepEqual(body.customer, {
+          firstName: 'Cliente',
+          lastName: 'Saved Rebill',
+          email: `${contactId}@example.test`,
+          phone: {
+            number: '5563896389',
+            countryCode: 'MX'
+          }
+        })
         assert.equal(body.cardId, cardId)
         assert.equal(body.transaction.amount, 100)
         assert.equal(body.transaction.currency, 'MXN')
@@ -411,7 +419,7 @@ test('Rebill cobra tarjeta guardada enviando customer como objeto en checkout', 
       await db.run(
         `INSERT INTO contacts (id, full_name, email, phone, source, created_at, updated_at)
          VALUES (?, ?, ?, ?, 'test', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
-        [contactId, 'Cliente Saved Rebill', `${contactId}@example.test`, '+525563896389']
+        [contactId, 'Cliente 123 Saved Rebill', `${contactId}@example.test`, '+525563896389']
       )
       await db.run(
         `INSERT INTO rebill_payment_sources (
@@ -428,7 +436,7 @@ test('Rebill cobra tarjeta guardada enviando customer como objeto en checkout', 
         currency: 'MXN',
         title: 'Pago directo Rebill',
         description: 'Pago directo Rebill',
-        contactName: 'Cliente Saved Rebill',
+        contactName: 'Cliente 123 Saved Rebill',
         email: `${contactId}@example.test`,
         phone: '+525563896389'
       }, {
@@ -525,7 +533,15 @@ test('Rebill crea planes con reloj de Ristak, guarda tarjeta y cobra parcialidad
         })
       }
       if (parsed.pathname === '/v3/checkout' && method === 'POST') {
-        assert.deepEqual(body.customer, { id: 'cus_rebill_plan_saved' })
+        assert.deepEqual(body.customer, {
+          firstName: 'Cliente',
+          lastName: 'Plan Rebill',
+          email: contact.email,
+          phone: {
+            number: '5512345678',
+            countryCode: 'MX'
+          }
+        })
         assert.equal(body.cardId, 'card_rebill_plan_saved')
         assert.equal(body.transaction.amount, 800)
         assert.equal(body.transaction.currency, 'MXN')

@@ -1320,9 +1320,60 @@ function buildRebillCheckoutTransaction(row, metadata = {}) {
   }
 }
 
-function buildRebillCheckoutCustomer(sourceRow = {}) {
-  const customerId = cleanString(sourceRow.rebill_customer_id || sourceRow.customerId || sourceRow.customer_id, 180)
-  return customerId ? { id: customerId } : null
+function isValidEmail(value = '') {
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(cleanString(value, 180))
+}
+
+function sanitizeRebillCustomerNamePart(value = '', fallback = 'Cliente') {
+  const clean = cleanString(value, 80).replace(/\d+/g, ' ').replace(/\s+/g, ' ').trim()
+  return clean || fallback
+}
+
+function deriveRebillCustomerName(fullName = '', email = '') {
+  const cleanFullName = cleanString(fullName, 140).replace(/\d+/g, ' ').replace(/\s+/g, ' ').trim()
+  const parts = cleanFullName.split(/\s+/).filter(Boolean)
+  if (parts.length > 1) {
+    return {
+      firstName: sanitizeRebillCustomerNamePart(parts[0], 'Cliente'),
+      lastName: sanitizeRebillCustomerNamePart(parts.slice(1).join(' '), 'Ristak')
+    }
+  }
+
+  if (parts.length === 1) {
+    return {
+      firstName: sanitizeRebillCustomerNamePart(parts[0], 'Cliente'),
+      lastName: 'Ristak'
+    }
+  }
+
+  const emailName = cleanString(email.split('@')[0], 80)
+    .replace(/[._-]+/g, ' ')
+    .replace(/\d+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+  return {
+    firstName: sanitizeRebillCustomerNamePart(emailName, 'Cliente'),
+    lastName: 'Ristak'
+  }
+}
+
+function buildRebillCheckoutCustomer(row = {}, metadata = {}, sourceRow = {}) {
+  const email = cleanString(row.contact_email || metadata.contactEmail || metadata.email, 180).toLowerCase()
+  if (!isValidEmail(email)) {
+    const error = new Error('El contacto necesita un email válido para cobrar con tarjeta guardada de Rebill.')
+    error.status = 400
+    throw error
+  }
+
+  const { firstName, lastName } = deriveRebillCustomerName(
+    row.contact_name || metadata.contactName || sourceRow.name,
+    email
+  )
+  const customer = { firstName, lastName, email }
+  const phone = cleanString(row.contact_phone || metadata.contactPhone || metadata.phone, 80)
+  const phoneNumber = getRebillPhoneInformation(phone)
+  if (phoneNumber) customer.phone = phoneNumber
+  return customer
 }
 
 function normalizeRebillCheckoutResult(payload = {}, row = {}, savedSource = {}) {
@@ -1431,7 +1482,7 @@ async function chargeRebillPaymentRowWithSavedSource({
           amount,
           currency
         }, nextMetadata),
-        customer: buildRebillCheckoutCustomer(sourceRow),
+        customer: buildRebillCheckoutCustomer(chargeRow, nextMetadata, sourceRow),
         cardId: sourceRow.rebill_card_id
       }
     })

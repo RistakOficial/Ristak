@@ -688,7 +688,8 @@ Alcance:
 
 - Cobros unicos por link publico `/pay/:publicPaymentId`.
 - Cobros unicos con tarjeta Rebill guardada: Ristak usa el `cardId` guardado y
-  llama `POST /v3/checkout` desde backend con `customer: { id }`, `cardId` y
+  llama `POST /v3/checkout` desde backend con `customer` estructurado
+  (`firstName`, `lastName`, `email` y `phone` si existe), `cardId` y
   `x-idempotency-key`; no guarda PAN, CVV ni datos sensibles de tarjeta.
 - Planes de pago administrados por Ristak: `payment_flows.payment_provider='rebill'`
   y `payment_plans.source='rebill'`. Rebill solo procesa cada checkout; Ristak es
@@ -724,8 +725,8 @@ Alcance:
   solo se activa si Rebill esta conectado en el modo de pago activo. Revisa
   primeros pagos y parcialidades vencidas segun la zona horaria de la cuenta. Si
   el flujo ya tiene `rebill_card_id`, cobra con `POST /v3/checkout` usando
-  `customer: { id }` + `cardId`; si el primer pago estaba programado y aun no hay
-  tarjeta, libera su link publico.
+  el `customer` estructurado del contacto + `cardId`; si el primer pago estaba
+  programado y aun no hay tarjeta, libera su link publico.
   No delega el calendario a Rebill.
 - Webhook publico `/api/rebill/webhook`; como la documentacion publica de Rebill
   no declara firma verificable para webhooks, Ristak no confia en el payload para
