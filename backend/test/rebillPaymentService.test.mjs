@@ -189,6 +189,27 @@ test('Rebill guarda llaves por modo cifradas, valida organización y configura w
     const selectedTest = await getRebillPaymentConfig({ includeSecrets: true, mode: 'test' })
     assert.equal(selectedTest.secretKey, secretKey)
     assert.equal(selectedTest.publicKey, publicKey)
+
+    const legacyLabel = await saveRebillPaymentConfig({
+      enabled: true,
+      mode: 'test',
+      accountLabel: 'Etiqueta vieja',
+      publicKey,
+      secretKey
+    }, {
+      baseUrl: 'https://app.example.test'
+    })
+    assert.equal(legacyLabel.accountLabel, 'Etiqueta vieja')
+
+    const refreshedLabel = await saveRebillPaymentConfig({
+      enabled: true,
+      mode: 'test',
+      publicKey,
+      secretKey
+    }, {
+      baseUrl: 'https://app.example.test'
+    })
+    assert.equal(refreshedLabel.accountLabel, 'Rebill Test Org')
   })
 })
 

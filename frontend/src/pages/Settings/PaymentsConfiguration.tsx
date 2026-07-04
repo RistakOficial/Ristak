@@ -151,7 +151,6 @@ interface ClipModeCredentials {
 interface RebillModeCredentials {
   publicKey: string
   secretKey: string
-  accountLabel: string
 }
 
 interface MercadoPagoSubscriptionTestCredentials {
@@ -211,8 +210,8 @@ const emptyClipModeCredentials: Record<StripeModeId, ClipModeCredentials> = {
   live: { apiKey: '', accountLabel: '' }
 }
 const emptyRebillModeCredentials: Record<StripeModeId, RebillModeCredentials> = {
-  test: { publicKey: '', secretKey: '', accountLabel: '' },
-  live: { publicKey: '', secretKey: '', accountLabel: '' }
+  test: { publicKey: '', secretKey: '' },
+  live: { publicKey: '', secretKey: '' }
 }
 const emptyMercadoPagoSubscriptionTestCredentials: MercadoPagoSubscriptionTestCredentials = {
   publicKey: '',
@@ -682,8 +681,7 @@ const getRebillModeCredentialsFromConfig = (config?: RebillPaymentConfig | null)
     const modeConfig = config.modeConnections?.[mode]
     nextCredentials[mode] = {
       publicKey: modeConfig?.publicKey || (config.mode === mode ? config.publicKey || '' : ''),
-      secretKey: modeConfig?.secretKeyPreview || (config.mode === mode ? config.secretKeyPreview || '' : ''),
-      accountLabel: modeConfig?.accountLabel || (config.mode === mode ? config.accountLabel || '' : '')
+      secretKey: modeConfig?.secretKeyPreview || (config.mode === mode ? config.secretKeyPreview || '' : '')
     }
   })
 
@@ -1731,7 +1729,6 @@ export const PaymentsConfiguration: React.FC = () => {
       enabled: true,
       mode,
       defaultCurrency: accountCurrency,
-      accountLabel: modeValues.accountLabel.trim(),
       publicKey: modeValues.publicKey.trim(),
       secretKey: modeValues.secretKey.trim()
     }
@@ -4305,7 +4302,7 @@ export const PaymentsConfiguration: React.FC = () => {
                     {modeSaved && (
                       <div className={styles.connectionSummary}>
                         <div>
-                          <span>Cuenta</span>
+                          <span>Organización</span>
                           <strong>{savedMode?.accountLabel || rebillConfig?.accountLabel || 'Rebill'}</strong>
                         </div>
                         <div>
@@ -4324,18 +4321,6 @@ export const PaymentsConfiguration: React.FC = () => {
                     )}
 
                     <div className={styles.formGrid}>
-                      {renderField(
-                        'Nombre de la cuenta',
-                        <input
-                          type="text"
-                          value={values.accountLabel}
-                          onChange={(event) => updateRebillModeCredential(mode, 'accountLabel', event.target.value)}
-                          placeholder={mode === 'live' ? 'Rebill en vivo' : 'Rebill prueba'}
-                          autoComplete="off"
-                          spellCheck={false}
-                        />,
-                        'Sólo sirve para identificar esta conexión dentro de Ristak.'
-                      )}
                       {renderField(
                         'Public key',
                         <input

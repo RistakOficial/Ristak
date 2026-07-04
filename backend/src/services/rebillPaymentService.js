@@ -577,7 +577,7 @@ function resolveCredentialInput(input = {}, previous = {}) {
     secretKey: submittedSecretKey && !isMaskedSecret(submittedSecretKey)
       ? submittedSecretKey
       : cleanString(previous.secretKey, 5000),
-    accountLabel: cleanString(input.accountLabel || input.account_label || previous.accountLabel, 180)
+    accountLabel: cleanString(input.accountLabel || input.account_label, 180)
   }
 }
 

@@ -680,7 +680,9 @@ Rebill vive como pasarela manual administrada desde Configuracion > Pagos >
 Rebill. Las credenciales de prueba y en vivo se guardan en `app_config` bajo
 claves `rebill_*`; la public key `pk_` se entrega al checkout publico porque el
 SDK la necesita y la secret key `sk_` queda cifrada en base de datos. No requiere
-env vars nuevas para arrancar el servicio.
+env vars nuevas para arrancar el servicio. La UI solo pide `pk_` y `sk_`; el
+nombre visible de la organizacion se deriva de `GET /v3/organizations/me` o del
+modo configurado, no de un campo manual.
 
 Alcance:
 

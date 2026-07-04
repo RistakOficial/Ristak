@@ -55,7 +55,6 @@ export interface SaveRebillPaymentConfigPayload {
   enabled?: boolean
   mode: 'test' | 'live'
   defaultCurrency?: string
-  accountLabel?: string
   publicKey?: string
   secretKey?: string
   disconnectMode?: boolean
