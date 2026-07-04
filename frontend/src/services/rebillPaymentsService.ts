@@ -108,6 +108,9 @@ export interface RebillPaymentLinkPayload {
   dueDate?: string
   source?: string
   lineItems?: Array<Record<string, unknown>>
+  installments?: {
+    enabled?: boolean
+  }
   metadata?: Record<string, unknown>
 }
 
@@ -206,6 +209,11 @@ export interface PublicRebillPayment {
   publicKey?: string
   rebillPaymentId?: string | null
   rebillSubscriptionId?: string | null
+  rebillInstallments?: {
+    enabled?: boolean
+    selectionMode?: string
+    selectedInstallments?: number | null
+  } | null
   instantProduct?: RebillInstantProduct | null
   customerInformation?: RebillCustomerInformation | null
   tax?: {
@@ -232,6 +240,7 @@ export interface PublicRebillPayment {
 export interface RebillConfirmPaymentPayload {
   rebillPaymentId?: string
   paymentId?: string
+  installments?: number | string | null
 }
 
 export interface RebillSavedCardPaymentPayload {

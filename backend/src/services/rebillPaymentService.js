@@ -86,6 +86,35 @@ function normalizeBoolean(value, fallback = true) {
   return !['0', 'false', 'off', 'no'].includes(cleanString(value, 20).toLowerCase())
 }
 
+function normalizeRebillSelectedInstallments(value) {
+  const source = value && typeof value === 'object'
+    ? value.installments ?? value.installment ?? value.selectedInstallments ?? value.months ?? value.count ?? value.value
+    : value
+  const installments = Math.trunc(Number(source))
+  return Number.isFinite(installments) && installments > 1 && installments <= 36 ? installments : null
+}
+
+function normalizeRebillInstallmentOptions(input = {}) {
+  const raw = input.installments ?? input.rebillInstallments ?? input.rebill_installments
+  if (raw === undefined || raw === null || raw === '') return null
+
+  if (typeof raw === 'boolean') {
+    return {
+      enabled: raw,
+      selectionMode: 'rebill_checkout_automatic'
+    }
+  }
+
+  if (typeof raw !== 'object') return null
+
+  const selectedInstallments = normalizeRebillSelectedInstallments(raw)
+  return {
+    enabled: normalizeBoolean(raw.enabled ?? raw.requested ?? raw.msi, false),
+    selectionMode: cleanString(raw.selectionMode || raw.selection_mode || 'rebill_checkout_automatic', 80),
+    ...(selectedInstallments ? { selectedInstallments } : {})
+  }
+}
+
 function normalizeCurrency(value) {
   const currency = cleanString(value || DEFAULT_CURRENCY, 3).toUpperCase()
   return /^[A-Z]{3}$/.test(currency) ? currency : DEFAULT_CURRENCY
@@ -783,6 +812,9 @@ function sanitizeLocalizedText(value, fallback = 'Pago Ristak', maxLength = 180)
 function buildInstantProduct(row, metadata = {}) {
   const title = sanitizeLocalizedText(row.title || metadata.title || 'Pago Ristak', 'Pago Ristak', 140)
   const description = sanitizeLocalizedText(row.description || title, title, 300)
+  const rebillInstallments = metadata.rebillInstallments && typeof metadata.rebillInstallments === 'object'
+    ? metadata.rebillInstallments
+    : null
   return {
     name: [{ language: 'es', text: title }],
     description: description ? [{ language: 'es', text: description }] : [],
@@ -792,7 +824,13 @@ function buildInstantProduct(row, metadata = {}) {
       ristakPaymentId: cleanString(row.id, 180),
       publicPaymentId: cleanString(row.public_payment_id, 180),
       provider: 'rebill',
-      source: cleanString(metadata.source || 'ristak', 120)
+      source: cleanString(metadata.source || 'ristak', 120),
+      ...(rebillInstallments
+        ? {
+            rebillInstallmentsRequested: Boolean(rebillInstallments.enabled),
+            rebillInstallmentsMode: cleanString(rebillInstallments.selectionMode || 'rebill_checkout_automatic', 80)
+          }
+        : {})
     }
   }
 }
@@ -1721,6 +1759,7 @@ function mapPublicPayment(row, config, baseUrl = '', settings = null, timezone =
     publicKey: config?.publicKey || '',
     rebillPaymentId: row.rebill_payment_id || metadata.rebill?.paymentId || null,
     rebillSubscriptionId: row.rebill_subscription_id || metadata.rebill?.subscriptionId || null,
+    rebillInstallments: metadata.rebillInstallments && typeof metadata.rebillInstallments === 'object' ? metadata.rebillInstallments : null,
     instantProduct: buildInstantProduct(row, metadata),
     customerInformation: buildCustomerInformation(row, metadata),
     tax,
@@ -1772,6 +1811,7 @@ export async function createRebillPaymentLink(input = {}, { baseUrl, mode = '' }
     email: cleanString(input.email, 180),
     phone: cleanString(input.phone, 80)
   }
+  const rebillInstallments = normalizeRebillInstallmentOptions(input)
   const metadata = {
     contactName: contact.name,
     contactEmail: contact.email,
@@ -1779,6 +1819,7 @@ export async function createRebillPaymentLink(input = {}, { baseUrl, mode = '' }
     source: cleanString(input.source || 'ristak', 120),
     lineItems: Array.isArray(input.lineItems) ? input.lineItems : [],
     ...(input.metadata && typeof input.metadata === 'object' ? input.metadata : {}),
+    ...(rebillInstallments ? { rebillInstallments } : {}),
     ...(tax ? { tax } : {})
   }
 
@@ -2704,8 +2745,20 @@ async function updatePaymentFromRebillPayment(rebillPayment = {}) {
   const wasPaid = SUCCESSFUL_PAYMENT_STATUSES.has(previousStatus) || Boolean(row.paid_at)
   const becamePaid = nextStatus === 'paid' && !wasPaid
   const rebillMetadata = extractRebillMetadata(rebillPayment)
+  const currentMetadata = parseJson(row.metadata_json, {})
+  const selectedInstallments = normalizeRebillSelectedInstallments(rebillPayment.installments)
+  const currentInstallments = currentMetadata.rebillInstallments && typeof currentMetadata.rebillInstallments === 'object'
+    ? currentMetadata.rebillInstallments
+    : null
+  const nextRebillInstallments = currentInstallments || selectedInstallments
+    ? {
+        ...(currentInstallments || {}),
+        ...(selectedInstallments ? { selectedInstallments } : {})
+      }
+    : null
   const nextMetadata = {
-    ...parseJson(row.metadata_json, {}),
+    ...currentMetadata,
+    ...(nextRebillInstallments ? { rebillInstallments: nextRebillInstallments } : {}),
     rebill: rebillMetadata
   }
   const nextPaymentMethod = REBILL_STORED_CARD_METHODS.has(cleanString(row.payment_method, 80).toLowerCase()) ||
@@ -2822,8 +2875,10 @@ export async function confirmPublicRebillPayment(publicPaymentId, input = {}, { 
   const { payload } = await rebillApiRequest(`/v3/payments/${encodeURIComponent(rebillPaymentId)}`, { config })
   const payloadMetadata = payload?.metadata && typeof payload.metadata === 'object' ? payload.metadata : {}
   const payloadPublicPaymentId = cleanString(payloadMetadata.publicPaymentId || payloadMetadata.public_payment_id, 180)
+  const selectedInstallments = normalizeRebillSelectedInstallments(input.installments || input.selectedInstallments || input.selected_installments)
   const updated = await updatePaymentFromRebillPayment({
     ...payload,
+    installments: payload?.installments || selectedInstallments || undefined,
     metadata: {
       ...payloadMetadata,
       publicPaymentId: payloadPublicPaymentId || row.public_payment_id

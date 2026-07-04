@@ -1128,6 +1128,8 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
   const conektaInstallmentEstimate = invoiceSummary && conektaInstallmentEnabled
     ? normalizeAmount(invoiceSummary.amount / conektaInstallmentLimit)
     : 0
+  const rebillMsiEnabled = installmentChargeMode === 'installments'
+  const rebillInstallmentPaymentLabel = rebillMsiEnabled ? 'MSI si aplica' : 'Pago de contado'
   const conektaSavedCardDescription = conektaInstallmentsAvailable
     ? 'Elige cobro único o meses sin intereses antes de cobrar.'
     : 'Se cobrará de contado; MSI requiere monto mínimo.'
@@ -1164,6 +1166,10 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
     setInstallmentChargeMode('installments')
   }
 
+  const openRebillInstallmentConfiguration = () => {
+    setInstallmentChargeMode('installments')
+  }
+
   const openConektaInstallmentConfiguration = () => {
     const fallback = conektaInstallmentOptions.find((option) => !option.disabled)?.value as ConektaInstallmentChoice | undefined
 
@@ -1179,7 +1185,7 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
     (
       singlePaymentAction === 'payment_link' &&
       singlePaymentOptionsStage === 'gateway_config' &&
-      (paymentOption === 'stripe' || paymentOption === 'conekta' || paymentOption === 'mercadopago' || paymentOption === 'clip')
+      (paymentOption === 'stripe' || paymentOption === 'conekta' || paymentOption === 'mercadopago' || paymentOption === 'clip' || paymentOption === 'rebill')
     ) ||
     (
       singlePaymentAction === 'saved_card' &&
@@ -3239,13 +3245,18 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
           description: invoiceSummary.description,
           dueDate: invoicePayload.dueDate,
           source: 'record_payment_modal_rebill',
-          lineItems: Array.isArray(invoicePayload.items) ? invoicePayload.items : []
+          lineItems: Array.isArray(invoicePayload.items) ? invoicePayload.items : [],
+          installments: {
+            enabled: rebillMsiEnabled
+          }
         })
 
         showPaymentLinkReady({
           kind: 'single',
           title: 'Enlace Rebill listo',
-          description: 'Comparte este enlace para que el cliente pague en el checkout seguro de Rebill. Si aplica, Rebill mostrará installments dentro del checkout.',
+          description: rebillMsiEnabled
+            ? 'Comparte este enlace para que el cliente pague con Rebill. Si su país, cuenta y tarjeta aplican, Rebill mostrará meses sin intereses dentro del checkout.'
+            : 'Comparte este enlace para que el cliente pague de contado en el checkout seguro de Rebill.',
           provider: 'rebill',
           paymentUrl: result.paymentUrl,
           amount: invoiceSummary.amount,
@@ -3257,7 +3268,9 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
         showToast(
           'success',
           'Link de Rebill creado',
-          'El enlace público está listo para copiar o enviar.'
+          rebillMsiEnabled
+            ? 'El enlace público quedó listo con meses sin intereses solicitado en Rebill.'
+            : 'El enlace público está listo para copiar o enviar.'
         )
         onSuccess?.(LINK_READY_SUCCESS_CONTEXT)
       } catch (rebillError: any) {
@@ -4617,12 +4630,16 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
         ? 'Stripe'
         : paymentOption === 'clip'
           ? 'CLIP'
-          : 'Conekta'
+          : paymentOption === 'rebill'
+            ? 'Rebill'
+            : 'Conekta'
     const installmentModeIsSavedCard = paymentOption === 'conekta_saved_card'
     const installmentModeMsiAvailable = paymentOption === 'stripe'
       ? stripeInstallmentsAvailable
       : paymentOption === 'clip'
         ? clipInstallmentsAvailable
+        : paymentOption === 'rebill'
+          ? true
         : paymentOption === 'mercadopago' ||
           paymentOption === 'conekta' ||
           paymentOption === 'conekta_saved_card'
@@ -4638,6 +4655,8 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
           : !clipInstallmentsAmountAvailable
             ? `Disponible desde ${formatCurrency(CLIP_INSTALLMENT_MIN_AMOUNT, 'MXN')}.`
             : 'CLIP mostrará los planes disponibles dentro del formulario seguro.'
+      : paymentOption === 'rebill'
+        ? 'Rebill mostrará los meses disponibles dentro del checkout cuando la cuenta, país y tarjeta califiquen.'
       : paymentOption === 'mercadopago'
         ? 'Configura cuántos meses podrá elegir el cliente en el link.'
         : 'Consulta mínimos y selecciona un plazo disponible.'
@@ -4654,6 +4673,11 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
 
       if (paymentOption === 'clip') {
         openClipInstallmentConfiguration()
+        return
+      }
+
+      if (paymentOption === 'rebill') {
+        openRebillInstallmentConfiguration()
         return
       }
 
@@ -4675,7 +4699,7 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
             : defaultPaymentLinkOption === 'clip'
               ? 'Elige contado o meses sin intereses antes de crear el enlace.'
               : defaultPaymentLinkOption === 'rebill'
-                ? 'Rebill mostrará installments dentro de su checkout cuando apliquen.'
+                ? 'Elige contado o meses sin intereses antes de crear el enlace.'
               : defaultPaymentLinkOption === 'send'
                 ? 'Usa la integración conectada para enviar el enlace al cliente.'
                 : 'Conecta una pasarela para enviar enlaces de pago.'
@@ -4896,7 +4920,7 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
                       </div>
                       <div>
                         <p>Rebill</p>
-                        <span>Genera una página pública con checkout seguro; Rebill mostrará installments si aplican.</span>
+                        <span>Genera una página pública con checkout seguro y opción de meses sin intereses si aplica.</span>
                       </div>
                     </div>
                     {paymentOption === 'rebill' && <Check size={18} className={styles.optionCheck} />}
@@ -5126,9 +5150,9 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
             <div className={styles.mercadoPagoInstallmentsHeader}>
               <div>
                 <span>Rebill</span>
-                <p>Checkout seguro</p>
+                <p>{rebillMsiEnabled ? 'Meses sin intereses' : 'Checkout seguro'}</p>
               </div>
-              <strong>{invoiceSummary.currency}</strong>
+              <strong>{rebillMsiEnabled ? 'MSI automático' : invoiceSummary.currency}</strong>
             </div>
 
             <div className={styles.mercadoPagoInstallmentTotals}>
@@ -5138,11 +5162,11 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
               </div>
               <div>
                 <span>Forma de pago</span>
-                <strong>Checkout Rebill</strong>
+                <strong>{rebillInstallmentPaymentLabel}</strong>
               </div>
               <div>
-                <span>Installments</span>
-                <strong>Según Rebill</strong>
+                <span>Meses</span>
+                <strong>{rebillMsiEnabled ? 'Según Rebill' : 'No solicitado'}</strong>
               </div>
               <div>
                 <span>Ristak registra</span>
@@ -5151,7 +5175,9 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
             </div>
 
             <p className={styles.mercadoPagoInstallmentsNote}>
-              Rebill mostrará opciones de installments dentro de su checkout cuando la cuenta, el país y la tarjeta califiquen. Ristak confirma el paymentId con backend antes de marcar el cobro como pagado.
+              {rebillMsiEnabled
+                ? 'Ristak marcará este link como MSI solicitado. Rebill mostrará los meses disponibles dentro del checkout cuando la cuenta, país, monto y tarjeta califiquen.'
+                : 'Ristak creará el link como pago de contado. Rebill procesa la tarjeta y Ristak confirma el paymentId con backend antes de marcar el cobro como pagado.'}
             </p>
           </div>
         )}
@@ -5495,7 +5521,7 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
         : paymentOption === 'clip'
           ? 'Crear link CLIP'
         : paymentOption === 'rebill'
-          ? 'Crear link Rebill'
+          ? (rebillMsiEnabled ? 'Crear link Rebill con MSI' : 'Crear link Rebill')
         : paymentOption === 'send'
           ? activePaymentMode === 'partial' ? 'Crear y enviar enlace' : 'Enviar enlace'
           : 'Registrar pago'
@@ -5786,7 +5812,7 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
               : activePaymentMode !== 'partial' && singlePaymentOptionsStage === 'gateway_config' && paymentOption === 'clip'
                 ? 'Configura CLIP'
               : activePaymentMode !== 'partial' && singlePaymentOptionsStage === 'gateway_config' && paymentOption === 'rebill'
-                ? 'Confirmar Rebill'
+                ? 'Configura Rebill'
                 : 'Elige cómo cobrar'
           : activePaymentMode === 'partial' ? 'Registrar cobro parcial' : 'Registrar nuevo cobro'
       }

@@ -904,6 +904,39 @@ function extractRebillPaymentId(event: Event) {
     .find(Boolean) || ''
 }
 
+function extractRebillInstallments(event: Event) {
+  const detail = (event as CustomEvent<any>).detail || {}
+  const data = detail.data || detail
+  const result = data.result || detail.result || {}
+  const candidates = [
+    result.installments,
+    result.installment,
+    result.selectedInstallments,
+    result.months,
+    data.installments,
+    data.installment,
+    data.selectedInstallments,
+    data.months,
+    detail.installments,
+    detail.installment
+  ]
+  const parsed = candidates
+    .map((candidate) => {
+      const source = candidate && typeof candidate === 'object'
+        ? (candidate as Record<string, unknown>).installments ??
+          (candidate as Record<string, unknown>).installment ??
+          (candidate as Record<string, unknown>).selectedInstallments ??
+          (candidate as Record<string, unknown>).months ??
+          (candidate as Record<string, unknown>).count ??
+          (candidate as Record<string, unknown>).value
+        : candidate
+      return Math.trunc(Number(source))
+    })
+    .find((candidate) => Number.isFinite(candidate) && candidate > 1)
+
+  return parsed || null
+}
+
 function normalizeMercadoPagoCardErrorMessage(error: unknown) {
   const message = String((error as any)?.message || error || '').trim()
   const lowerMessage = message.toLowerCase()
@@ -2570,6 +2603,7 @@ const RebillCheckoutForm: React.FC<{
 
     const handleSuccess = async (event: Event) => {
       const rebillPaymentId = extractRebillPaymentId(event)
+      const installments = extractRebillInstallments(event)
 
       if (!rebillPaymentId) {
         setMessageKind('error')
@@ -2583,7 +2617,8 @@ const RebillCheckoutForm: React.FC<{
 
       try {
         const response = await rebillPaymentsService.confirmPublicPayment(payment.publicPaymentId, {
-          rebillPaymentId
+          rebillPaymentId,
+          installments
         })
         const confirmedStatus = response.payment?.status || response.status
         const statusMessage = normalizeRebillStatusMessage(confirmedStatus, response.statusDetail)

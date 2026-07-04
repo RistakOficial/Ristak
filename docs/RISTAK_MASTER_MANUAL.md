@@ -713,10 +713,15 @@ Alcance:
   `US`, etc.) y `phoneNumber.number` recibe solo digitos nacionales. No mandes
   `+52`, `52` o `521` dentro de `number`, porque el selector de region del SDK ya
   resuelve la lada y la duplicaria en pantalla.
-- Meses/installments en cobros unicos: Ristak no selecciona plazos locales para
-  Rebill. El checkout de Rebill muestra installments cuando la cuenta, pais,
-  moneda, monto y tarjeta califican. Ristak guarda el pago total local y confirma
-  el `paymentId` contra backend antes de marcarlo pagado.
+- Meses/installments en cobros unicos: en el modal de cobro, Rebill entra al
+  mismo paso de decision que Stripe, Conekta, Mercado Pago y CLIP: contado o MSI.
+  Ristak guarda la preferencia en `metadata.rebillInstallments.enabled` y la
+  expone al checkout publico. Ristak no selecciona plazos locales ni fuerza el
+  maximo de meses para Rebill; el checkout del proveedor muestra los plazos
+  reales cuando la cuenta, pais, moneda, monto y tarjeta califican. Si el SDK
+  reporta el numero elegido en `data.installments`, Ristak lo conserva como
+  `metadata.rebillInstallments.selectedInstallments`. El pago total local se
+  confirma contra backend con el `paymentId` antes de marcarlo pagado.
 - Suscripciones Rebill (`instant-plan`) existen en la documentacion del proveedor,
   pero no estan cableadas como flujo de suscripciones de Ristak en esta
   superficie. No se deben presentar como listas hasta implementar UI/API,

@@ -283,6 +283,7 @@ test('Rebill confirma pago público consultando el paymentId en backend antes de
         description: 'Pago Rebill test',
         email: 'cliente@example.test',
         phone: '+525512345678',
+        installments: { enabled: true },
         metadata: { testSource: 'rebillPaymentService.test' }
       }, {
         baseUrl: 'https://app.example.test',
@@ -295,6 +296,11 @@ test('Rebill confirma pago público consultando el paymentId en backend antes de
       assert.equal(link.payment.publicKey, publicKey)
       assert.equal(link.payment.instantProduct.currency, 'MXN')
       assert.equal(link.payment.instantProduct.metadata.publicPaymentId, publicPaymentId)
+      assert.equal(link.payment.instantProduct.metadata.rebillInstallmentsRequested, true)
+      assert.deepEqual(link.payment.rebillInstallments, {
+        enabled: true,
+        selectionMode: 'rebill_checkout_automatic'
+      })
       assert.deepEqual(link.payment.customerInformation.phoneNumber, {
         number: '5512345678',
         countryCode: 'MX'
@@ -305,7 +311,8 @@ test('Rebill confirma pago público consultando el paymentId en backend antes de
       assert.equal(beforeConfirm.rebill_payment_id, null)
 
       const result = await confirmPublicRebillPayment(publicPaymentId, {
-        rebillPaymentId: 'pay_rebill_service_test'
+        rebillPaymentId: 'pay_rebill_service_test',
+        installments: 3
       }, {
         baseUrl: 'https://app.example.test'
       })
@@ -314,10 +321,11 @@ test('Rebill confirma pago público consultando el paymentId en backend antes de
       assert.equal(result.status, 'approved')
       assert.equal(result.payment.status, 'paid')
       assert.equal(result.payment.rebillPaymentId, 'pay_rebill_service_test')
+      assert.equal(result.payment.rebillInstallments.selectedInstallments, 3)
 
       const row = await db.get(
         `SELECT status, amount, currency, payment_provider, payment_method, rebill_payment_id,
-                rebill_subscription_id, rebill_customer_id, rebill_card_id, paid_at
+                rebill_subscription_id, rebill_customer_id, rebill_card_id, paid_at, metadata_json
            FROM payments
           WHERE public_payment_id = ?`,
         [publicPaymentId]
@@ -332,6 +340,10 @@ test('Rebill confirma pago público consultando el paymentId en backend antes de
       assert.equal(row.rebill_customer_id, 'cus_rebill_service_test')
       assert.equal(row.rebill_card_id, 'card_rebill_service_test')
       assert.equal(row.paid_at, '2026-07-03T18:30:00.000Z')
+      const metadata = JSON.parse(row.metadata_json)
+      assert.equal(metadata.rebillInstallments.enabled, true)
+      assert.equal(metadata.rebillInstallments.selectedInstallments, 3)
+      assert.equal(metadata.rebill.installments, 3)
 
       const paymentFetch = calls.find((call) => call.path === '/v3/payments/pay_rebill_service_test')
       assert.ok(paymentFetch)
