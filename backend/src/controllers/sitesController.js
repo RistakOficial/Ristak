@@ -746,7 +746,10 @@ export async function removeSitesDomainHandler(req, res) {
 
 export async function setSitesDefaultRouteHandler(req, res) {
   try {
-    const result = await setSitesPublicDefaultRoute(req.body?.siteId || req.body?.site_id || '')
+    const result = await setSitesPublicDefaultRoute(
+      req.body?.siteId || req.body?.site_id || '',
+      req.body?.pageId || req.body?.page_id || ''
+    )
     res.json({ success: true, data: result })
   } catch (error) {
     logger.error(`Error configurando ruta predeterminada de Sites: ${error.message}`)
@@ -991,17 +994,18 @@ export async function publicSiteHostMiddleware(req, res, next) {
         return sendDomainError(req, res, 404, 'Ruta no disponible en este dominio público')
       }
 
-      // First path segment is the site slug; the rest is the page path used by
-      // website-mode sites to resolve a (sub)page. Drop a trailing /test bypass marker.
+      // Legacy URLs may include the site slug as the first segment. New page
+      // routes can live directly at domain root; use the resolver's page path
+      // when it already matched a concrete page route.
       const pathSegments = String(req.path || '').split('/').map(segment => decodePathSegment(segment)).filter(Boolean)
-      const pagePath = pathSegments.slice(1)
+      const pagePath = Array.isArray(resolution.pagePath) ? [...resolution.pagePath] : pathSegments.slice(1)
       if (pagePath.length && pagePath[pagePath.length - 1].toLowerCase() === 'test') pagePath.pop()
 
       // No cachear el HTML público: cambios de pixel/tracking deben reflejarse
       // siempre tras un refresh (los assets sí se cachean por separado).
       res.set('Cache-Control', 'no-store')
       return res.status(200).type('html').send(await renderPublicSiteHtml(resolution.site, {
-        pageId: req.query?.page,
+        pageId: req.query?.page || resolution.pageId,
         pagePath,
         trackingEnabled: !isTrackingBypassRequest(req)
       }))

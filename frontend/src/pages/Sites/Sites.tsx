@@ -2531,6 +2531,11 @@ const getDefaultPublicRouteSiteId = (domainConfig: SitesDomainConfig) =>
 const isDefaultPublicRoute = (site: PublicSite, domainConfig: SitesDomainConfig) =>
   Boolean(site.id && site.id === getDefaultPublicRouteSiteId(domainConfig))
 
+const getDefaultPublicRoutePageId = (site: PublicSite | null | undefined, domainConfig: SitesDomainConfig) =>
+  site?.id && site.id === getDefaultPublicRouteSiteId(domainConfig)
+    ? domainConfig.defaultRoute?.pageId || ''
+    : ''
+
 const getPublicDomainPreview = (domainConfig: SitesDomainConfig) => {
   const domain = domainConfig.domain.trim().replace(/^https?:\/\//i, '').replace(/\/+$/, '')
   return domain || 'www.ejemplo-de-tu-dominio.com'
@@ -4941,6 +4946,28 @@ const getPageSlugChain = (pages: SitePage[], page: SitePage): string[] => {
     current = current.parentPageId ? byId.get(current.parentPageId) : undefined
   }
   return chain
+}
+
+const getPageRoutePath = (pages: SitePage[], page: SitePage): string => {
+  const chain = getPageSlugChain(pages, page)
+  return `/${(chain.length ? chain : [getPageSlugSegment(page)]).join('/')}`
+}
+
+const getPageRoutePrefix = (pages: SitePage[], page: SitePage): string => {
+  const chain = getPageSlugChain(pages, page)
+  const parentSegments = chain.slice(0, -1)
+  return parentSegments.length ? `/${parentSegments.join('/')}/` : '/'
+}
+
+const buildLivePublicPageUrl = (
+  site: PublicSite,
+  domainConfig: SitesDomainConfig,
+  pages: SitePage[],
+  page: SitePage,
+  options: { noTrack?: boolean } = {}
+) => {
+  const url = domainConfig.domain ? `https://${domainConfig.domain}${getPageRoutePath(pages, page)}` : ''
+  return options.noTrack ? appendNoTrackToUrl(url) : url
 }
 
 const getBlockPageId = (block: SiteBlock, pages: SitePage[]) => {
@@ -11223,6 +11250,65 @@ export const Sites: React.FC = () => {
     }
   }
 
+  const handleSetDefaultDomainPageRoute = async (pageId: string) => {
+    const siteToUpdate = selectedSiteRef.current || selectedSite
+    if (!siteToUpdate || !hasEditablePages(siteToUpdate)) return
+
+    const saved = await flushPendingEditorSaves({ silent: true, forceSite: true })
+    if (!saved) return
+
+    const currentSite = selectedSiteRef.current || siteToUpdate
+    const currentPages = normalizeFunnelPages(currentSite)
+    const page = currentPages.find(item => item.id === pageId)
+    if (!page) {
+      showToast('error', 'Página no encontrada', 'Guarda o recarga el sitio antes de marcarla como predeterminada.')
+      return
+    }
+
+    try {
+      const result = await sitesService.setDefaultDomainRoute(currentSite.id, page.id)
+      setDomainConfig(result)
+      showToast('success', 'Ruta predeterminada actualizada', `${page.title || currentSite.name} abrirá al entrar al dominio principal.`)
+    } catch (error) {
+      showToast('error', 'Error', error instanceof Error ? error.message : 'No se pudo establecer la página como predeterminada')
+    }
+  }
+
+  const handleOpenEditorPageRoute = async (pageId: string) => {
+    const siteToOpen = selectedSiteRef.current || editorSite
+    if (!siteToOpen) return
+    if (!isPublicSiteLive(siteToOpen, domainConfig)) {
+      showToast('warning', 'Ruta no publicada', 'Publica el sitio y verifica el dominio para abrir esta ruta.')
+      return
+    }
+
+    const liveWindow = window.open('', '_blank')
+    if (!liveWindow) {
+      showToast('error', 'Ventana bloqueada', 'Permite popups para abrir el sitio en vivo.')
+      return
+    }
+    liveWindow.opener = null
+
+    const saved = await flushPendingEditorSaves({ silent: true, forceSite: true })
+    if (!saved) {
+      liveWindow.close()
+      return
+    }
+
+    const currentSite = selectedSiteRef.current || siteToOpen
+    const currentPages = normalizeFunnelPages(currentSite)
+    const page = currentPages.find(item => item.id === pageId)
+    if (!page) {
+      liveWindow.close()
+      showToast('error', 'Página no encontrada', 'Guarda o recarga el sitio antes de abrir esta ruta.')
+      return
+    }
+
+    liveWindow.location.href = buildLivePublicPageUrl(currentSite, domainConfig, currentPages, page, {
+      noTrack: shouldOpenSiteWithoutTracking(currentSite)
+    })
+  }
+
   const handleDeleteSite = async (siteToDelete = selectedSite) => {
     if (!siteToDelete) return
     showConfirm(
@@ -12719,9 +12805,11 @@ export const Sites: React.FC = () => {
       onReorderPages={handleReorderPages}
       onRenamePage={handleRenamePage}
       onRenamePageSlug={handleRenamePageSlug}
-      sitePathPrefix={(isLanding(editorSite) && !isImportedHtmlSite(editorSite))
-        ? `${getPublicDomainPreview(domainConfig)}/${normalizeRouteInput(editorSite.slug || '')}`
-        : undefined}
+      site={editorSite}
+      domainConfig={domainConfig}
+      onOpenPageRoute={handleOpenEditorPageRoute}
+      onSetDefaultPageRoute={handleSetDefaultDomainPageRoute}
+      sitePathPrefix={(isLanding(editorSite) && !isImportedHtmlSite(editorSite)) ? '/' : undefined}
       onPatchTheme={patchSiteTheme}
       onSaveSite={() => handleSaveSite(undefined, { silent: true })}
     />
@@ -27600,6 +27688,10 @@ interface FunnelPagesPanelProps {
   onRenamePage: (pageId: string, title: string) => void
   onRenamePageSlug?: (pageId: string, slug: string) => void
   sitePathPrefix?: string
+  site?: PublicSite | null
+  domainConfig?: SitesDomainConfig
+  onOpenPageRoute?: (pageId: string) => void
+  onSetDefaultPageRoute?: (pageId: string) => void
   onPatchTheme?: (patch: Partial<SiteTheme>) => void
   onSaveSite?: () => void
 }
@@ -27627,6 +27719,10 @@ const FunnelPagesPanel: React.FC<FunnelPagesPanelProps> = ({
   onRenamePage,
   onRenamePageSlug,
   sitePathPrefix = '',
+  site,
+  domainConfig,
+  onOpenPageRoute,
+  onSetDefaultPageRoute,
   onPatchTheme,
   onSaveSite
 }) => {
@@ -27644,11 +27740,13 @@ const FunnelPagesPanel: React.FC<FunnelPagesPanelProps> = ({
   // Es independiente de websiteMode: los embudos siguen siendo lista plana (sin
   // árbol/subpáginas), pero cada paso tiene su ruta editable.
   const routeEditable = !hasFixedPageSection && Boolean(sitePathPrefix) && Boolean(onRenamePageSlug)
-  // Página principal = primera página de nivel superior (su slug NO va en la URL,
-  // mapea a la ruta base del sitio). Se usa para el editor de ruta por página.
+  // Página principal = primera página de nivel superior. Ahora también tiene
+  // ruta editable propia; sólo se usa aquí para marcar defaults legacy de sitio.
   const homePageId = routeEditable
     ? (pages.filter(page => !page.parentPageId).sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0))[0]?.id || '')
     : ''
+  const defaultRoutePageId = site && domainConfig ? getDefaultPublicRoutePageId(site, domainConfig) : ''
+  const siteDefaultWithoutPage = Boolean(site && domainConfig && isDefaultPublicRoute(site, domainConfig) && !defaultRoutePageId)
   const movablePages = hasFixedPageSection ? pages.filter(page => !isFixedPage(page)) : pages
   const fixedPages = hasFixedPageSection ? pages.filter(isFixedPage) : []
   // In website mode render an indented tree (top page → subpages); otherwise a flat list.
@@ -27874,14 +27972,13 @@ const FunnelPagesPanel: React.FC<FunnelPagesPanelProps> = ({
                       : ''
                   // Preview + editor de ruta por página (landings ruteables: embudo y web).
                   const isHomePage = routeEditable && page.id === homePageId
-                  const slugChain = routeEditable ? getPageSlugChain(pages, page) : []
-                  const routePreview = routeEditable
-                    ? (isHomePage ? sitePathPrefix : `${sitePathPrefix}/${slugChain.join('/')}`)
-                    : ''
-                  // Prefijo compacto para el input (relativo); la ruta absoluta va en el preview.
-                  const slugPrefix = routeEditable
-                    ? `/${slugChain.slice(0, -1).map(segment => `${segment}/`).join('')}`
-                    : ''
+                  const routePreview = routeEditable ? getPageRoutePath(pages, page) : ''
+                  const slugPrefix = routeEditable ? getPageRoutePrefix(pages, page) : ''
+                  const isDefaultRoutePage = routeEditable && (
+                    defaultRoutePageId
+                      ? page.id === defaultRoutePageId
+                      : siteDefaultWithoutPage && isHomePage
+                  )
 
                   return (
                     <FunnelPageDropdownItem
@@ -27922,6 +28019,11 @@ const FunnelPagesPanel: React.FC<FunnelPagesPanelProps> = ({
                       slugPrefix={slugPrefix}
                       slugValue={page.slug || ''}
                       isHomePage={isHomePage}
+                      isDefaultRoutePage={isDefaultRoutePage}
+                      canOpenRoute={Boolean(onOpenPageRoute)}
+                      canSetDefaultRoute={Boolean(onSetDefaultPageRoute)}
+                      onOpenRoute={onOpenPageRoute ? () => { onOpenPageRoute(page.id) } : undefined}
+                      onSetDefaultRoute={onSetDefaultPageRoute ? () => { onSetDefaultPageRoute(page.id) } : undefined}
                       onDoneRename={() => setRenamingPageId(null)}
                     />
                   )
@@ -28007,6 +28109,11 @@ interface FunnelPageDropdownItemProps {
   slugPrefix?: string
   slugValue?: string
   isHomePage?: boolean
+  isDefaultRoutePage?: boolean
+  canOpenRoute?: boolean
+  canSetDefaultRoute?: boolean
+  onOpenRoute?: () => void
+  onSetDefaultRoute?: () => void
   onDoneRename: () => void
 }
 
@@ -28040,6 +28147,11 @@ const FunnelPageDropdownItem: React.FC<FunnelPageDropdownItemProps> = ({
   slugPrefix = '',
   slugValue = '',
   isHomePage = false,
+  isDefaultRoutePage = false,
+  canOpenRoute = false,
+  canSetDefaultRoute = false,
+  onOpenRoute,
+  onSetDefaultRoute,
   onDoneRename
 }) => {
   const [menuOpen, setMenuOpen] = useState(false)
@@ -28047,7 +28159,7 @@ const FunnelPageDropdownItem: React.FC<FunnelPageDropdownItemProps> = ({
   useEffect(() => { setSlugDraft(slugValue) }, [slugValue, renaming])
   const title = page.title || `Página ${index + 1}`
   const showRouteEditor = routeEditable && !fixedPage
-  const canEditSlug = showRouteEditor && !isHomePage && Boolean(onRenamePageSlug)
+  const canEditSlug = showRouteEditor && Boolean(onRenamePageSlug)
   const dragDisabled = locked || fixedPage
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
     id: page.id,
@@ -28200,6 +28312,19 @@ const FunnelPageDropdownItem: React.FC<FunnelPageDropdownItemProps> = ({
                     Bajar de nivel
                   </DropdownMenuItem>
                 )}
+                {showRouteEditor && canSetDefaultRoute && (
+                  <DropdownMenuItem
+                    className={styles.pagesDropdownActionItem}
+                    disabled={isDefaultRoutePage}
+                    onSelect={(event) => {
+                      event.stopPropagation()
+                      if (!isDefaultRoutePage) onSetDefaultRoute?.()
+                    }}
+                  >
+                    <Star size={14} fill={isDefaultRoutePage ? 'currentColor' : 'none'} />
+                    {isDefaultRoutePage ? 'Ya es predeterminada' : 'Hacer predeterminada'}
+                  </DropdownMenuItem>
+                )}
                 <DropdownMenuItem
                   className={`${styles.pagesDropdownActionItem} ${styles.pagesDropdownActionDanger}`}
                   disabled={!canDelete}
@@ -28218,12 +28343,29 @@ const FunnelPageDropdownItem: React.FC<FunnelPageDropdownItemProps> = ({
       </div>
       {showRouteEditor && !renaming && routePreview && (
         <div
-          className={styles.editorSettingsRoutePreview}
+          className={styles.pagesDropdownRoutePreview}
           style={depth ? { marginLeft: depth * 18 } : undefined}
-          title={isHomePage ? 'Página principal (ruta del sitio)' : undefined}
+          title={isHomePage ? 'Página principal' : undefined}
         >
-          <ExternalLink size={12} />
+          <button
+            type="button"
+            className={styles.pagesDropdownRouteOpenButton}
+            onClick={(event) => {
+              event.stopPropagation()
+              onOpenRoute?.()
+            }}
+            disabled={!canOpenRoute}
+            aria-label={`Abrir ruta ${routePreview}`}
+            title={`Abrir ${routePreview}`}
+          >
+            <ExternalLink size={12} />
+          </button>
           <span>{routePreview}</span>
+          {isDefaultRoutePage && (
+            <span className={styles.pagesDropdownRouteDefaultIcon} title="Ruta predeterminada">
+              <Star size={12} fill="currentColor" />
+            </span>
+          )}
         </div>
       )}
     </div>

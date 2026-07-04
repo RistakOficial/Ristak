@@ -352,6 +352,7 @@ const SITES_PUBLIC_DOMAIN_CONFIG_KEYS = {
   error: 'sites_public_domain_error'
 }
 const SITES_PUBLIC_DEFAULT_ROUTE_CONFIG_KEY = 'sites_public_default_route_site_id'
+const SITES_PUBLIC_DEFAULT_ROUTE_PAGE_CONFIG_KEY = 'sites_public_default_route_page_id'
 const SITES_APP_DOMAIN_CONFIG_KEYS = {
   domain: 'sites_app_domain',
   verified: 'sites_app_domain_verified',
@@ -4136,17 +4137,21 @@ function mapSite(row) {
   }
 }
 
-function buildPublicDefaultRoute(site) {
+function buildPublicDefaultRoute(site, pageIdValue = '') {
   if (!site) return null
 
   const slug = cleanString(site.slug)
+  const pageId = cleanString(pageIdValue)
+  const page = pageId ? normalizeSitePages(site).find(item => item.id === pageId) || null : null
+  const pagePath = page ? buildPublicPageRoutePath(site, page.id) : ''
   return {
     siteId: site.id,
     name: site.name || site.title || 'Ruta predeterminada',
     slug,
     siteType: site.siteType || 'standard_form',
     status: site.status || 'draft',
-    path: slug ? `/${slug}` : '/'
+    ...(page ? { pageId: page.id, pageTitle: page.title || 'Página' } : {}),
+    path: pagePath || (slug ? `/${slug}` : '/')
   }
 }
 
@@ -10867,7 +10872,10 @@ export async function deleteSite(siteId) {
   await deleteImportedSiteMediaAssets(siteId)
   await db.run('DELETE FROM public_sites WHERE id = ?', [siteId])
   if (cleanString(await getAppConfig(SITES_PUBLIC_DEFAULT_ROUTE_CONFIG_KEY)) === cleanString(siteId)) {
-    await setAppConfig(SITES_PUBLIC_DEFAULT_ROUTE_CONFIG_KEY, null)
+    await Promise.all([
+      setAppConfig(SITES_PUBLIC_DEFAULT_ROUTE_CONFIG_KEY, null),
+      setAppConfig(SITES_PUBLIC_DEFAULT_ROUTE_PAGE_CONFIG_KEY, null)
+    ])
   }
   return true
 }
@@ -11241,15 +11249,34 @@ export async function getSitesPublicDomain() {
   return getSitesPublicDomainConfig()
 }
 
-async function getConfiguredDefaultPublicSite({ clearMissing = false } = {}) {
+async function getConfiguredDefaultPublicRoute({ clearMissing = false } = {}) {
   const siteId = cleanString(await getAppConfig(SITES_PUBLIC_DEFAULT_ROUTE_CONFIG_KEY))
   if (!siteId) return null
 
   const site = await getSite(siteId, { includeBlocks: false, includeSubmissions: false })
   if (!site && clearMissing) {
-    await setAppConfig(SITES_PUBLIC_DEFAULT_ROUTE_CONFIG_KEY, null)
+    await Promise.all([
+      setAppConfig(SITES_PUBLIC_DEFAULT_ROUTE_CONFIG_KEY, null),
+      setAppConfig(SITES_PUBLIC_DEFAULT_ROUTE_PAGE_CONFIG_KEY, null)
+    ])
   }
-  return site
+  if (!site) return null
+
+  const configuredPageId = cleanString(await getAppConfig(SITES_PUBLIC_DEFAULT_ROUTE_PAGE_CONFIG_KEY))
+  if (!configuredPageId) return { site, pageId: '' }
+
+  if (site.siteType !== 'landing_page' || isImportedHtmlSite(site)) {
+    if (clearMissing) await setAppConfig(SITES_PUBLIC_DEFAULT_ROUTE_PAGE_CONFIG_KEY, null)
+    return { site, pageId: '' }
+  }
+
+  const pageExists = normalizeSitePages(site).some(page => page.id === configuredPageId)
+  if (!pageExists) {
+    if (clearMissing) await setAppConfig(SITES_PUBLIC_DEFAULT_ROUTE_PAGE_CONFIG_KEY, null)
+    return { site, pageId: '' }
+  }
+
+  return { site, pageId: configuredPageId }
 }
 
 export async function getSitesDomainSettings({
@@ -11257,15 +11284,16 @@ export async function getSitesDomainSettings({
   appConfig = null,
   verification = undefined,
   appVerification = undefined,
-  defaultRouteSite = undefined
+  defaultRouteSite = undefined,
+  defaultRoutePageId = undefined
 } = {}) {
   const [publicDomainConfig, appDomainConfig] = await Promise.all([
     publicConfig || getSitesPublicDomainConfig(),
     appConfig || getSitesAppDomainConfig()
   ])
-  const resolvedDefaultRouteSite = defaultRouteSite === undefined
-    ? await getConfiguredDefaultPublicSite({ clearMissing: true })
-    : defaultRouteSite
+  const configuredDefaultRoute = defaultRouteSite === undefined
+    ? await getConfiguredDefaultPublicRoute({ clearMissing: true })
+    : { site: defaultRouteSite, pageId: cleanString(defaultRoutePageId) }
   const nextVerification = verification ?? publicDomainConfig.verification
   const nextAppVerification = appVerification ?? appDomainConfig.verification
 
@@ -11280,7 +11308,7 @@ export async function getSitesDomainSettings({
     appDomainCheckedAt: appDomainConfig.renderDomainCheckedAt,
     appDomainError: appDomainConfig.renderDomainError,
     ...(nextAppVerification ? { appVerification: nextAppVerification } : {}),
-    defaultRoute: buildPublicDefaultRoute(resolvedDefaultRouteSite)
+    defaultRoute: buildPublicDefaultRoute(configuredDefaultRoute?.site, configuredDefaultRoute?.pageId)
   }
 }
 
@@ -11303,15 +11331,20 @@ export async function removeSitesPublicDomain() {
     setAppConfig(SITES_PUBLIC_DOMAIN_CONFIG_KEYS.verified, null),
     setAppConfig(SITES_PUBLIC_DOMAIN_CONFIG_KEYS.checkedAt, null),
     setAppConfig(SITES_PUBLIC_DOMAIN_CONFIG_KEYS.error, null),
-    setAppConfig(SITES_PUBLIC_DEFAULT_ROUTE_CONFIG_KEY, null)
+    setAppConfig(SITES_PUBLIC_DEFAULT_ROUTE_CONFIG_KEY, null),
+    setAppConfig(SITES_PUBLIC_DEFAULT_ROUTE_PAGE_CONFIG_KEY, null)
   ])
   return getSitesPublicDomainConfig()
 }
 
-export async function setSitesPublicDefaultRoute(siteIdValue) {
+export async function setSitesPublicDefaultRoute(siteIdValue, pageIdValue = '') {
   const siteId = cleanString(siteIdValue)
+  const pageId = cleanString(pageIdValue)
   if (!siteId) {
-    await setAppConfig(SITES_PUBLIC_DEFAULT_ROUTE_CONFIG_KEY, null)
+    await Promise.all([
+      setAppConfig(SITES_PUBLIC_DEFAULT_ROUTE_CONFIG_KEY, null),
+      setAppConfig(SITES_PUBLIC_DEFAULT_ROUTE_PAGE_CONFIG_KEY, null)
+    ])
     return getSitesDomainSettings({ defaultRouteSite: null })
   }
 
@@ -11322,8 +11355,24 @@ export async function setSitesPublicDefaultRoute(siteIdValue) {
     throw error
   }
 
-  await setAppConfig(SITES_PUBLIC_DEFAULT_ROUTE_CONFIG_KEY, site.id)
-  return getSitesDomainSettings({ defaultRouteSite: site })
+  if (pageId) {
+    if (site.siteType !== 'landing_page' || isImportedHtmlSite(site)) {
+      const error = new Error('Solo las landings ruteables pueden usar una página como ruta predeterminada')
+      error.status = 400
+      throw error
+    }
+    if (!normalizeSitePages(site).some(page => page.id === pageId)) {
+      const error = new Error('Página del sitio no encontrada')
+      error.status = 404
+      throw error
+    }
+  }
+
+  await Promise.all([
+    setAppConfig(SITES_PUBLIC_DEFAULT_ROUTE_CONFIG_KEY, site.id),
+    setAppConfig(SITES_PUBLIC_DEFAULT_ROUTE_PAGE_CONFIG_KEY, pageId || null)
+  ])
+  return getSitesDomainSettings({ defaultRouteSite: site, defaultRoutePageId: pageId })
 }
 
 export async function removeSitesAppDomain() {
@@ -11694,6 +11743,25 @@ function normalizePublicRouteSlug(pathValue) {
     .replace(/^-+|-+$/g, '')
 }
 
+function normalizePublicRouteSegments(pathValue) {
+  const path = cleanString(pathValue || '/')
+    .split('?')[0]
+    .split('#')[0]
+
+  return path
+    .split('/')
+    .filter(Boolean)
+    .map(segment => {
+      try {
+        return decodeURIComponent(segment)
+      } catch {
+        return segment
+      }
+    })
+    .map(segment => slugifyPageSegment(segment))
+    .filter(Boolean)
+}
+
 async function findSiteByRoutePath(pathValue) {
   const slug = normalizePublicRouteSlug(pathValue)
   if (!slug) return null
@@ -11704,6 +11772,29 @@ async function findSiteByRoutePath(pathValue) {
   )
 
   return mapSite(row)
+}
+
+async function findSitePageByRoutePath(pathValue) {
+  let segments = normalizePublicRouteSegments(pathValue)
+  if (segments.length && segments[segments.length - 1] === 'test') {
+    segments = segments.slice(0, -1)
+  }
+  if (!segments.length) return null
+
+  const rows = await db.all(`
+    SELECT * FROM public_sites
+    WHERE status = 'published' AND site_type = 'landing_page'
+    ORDER BY COALESCE(published_at, updated_at) DESC
+  `)
+
+  for (const row of rows) {
+    const site = mapSite(row)
+    if (!site || isImportedHtmlSite(site)) continue
+    const page = resolvePageByPathSegments(site, segments)
+    if (page) return { site, pageId: page.id, pagePath: segments }
+  }
+
+  return null
 }
 
 // Para la raiz del dominio (sin slug) servimos el site publicado mas
@@ -11722,8 +11813,10 @@ async function findDefaultPublishedSite() {
 }
 
 async function findRootPublicSite() {
-  const configuredDefault = await getConfiguredDefaultPublicSite({ clearMissing: true })
-  return configuredDefault || findDefaultPublishedSite()
+  const configuredDefault = await getConfiguredDefaultPublicRoute({ clearMissing: true })
+  if (configuredDefault?.site) return configuredDefault
+  const site = await findDefaultPublishedSite()
+  return site ? { site, pageId: '' } : null
 }
 
 function stripWwwPrefix(hostValue) {
@@ -11897,10 +11990,25 @@ export async function resolvePublicSiteForHost(hostValue, { forceRefresh = false
   const domainResolution = await resolveConnectedPublicDomainForHost(host, { forceRefresh })
   if (!domainResolution.ok) return domainResolution
 
+  const routeSegments = normalizePublicRouteSegments(path)
   let site = await findSiteByRoutePath(path)
-  if (!site && !normalizePublicRouteSlug(path)) {
-    site = await findRootPublicSite()
+  let pageId = ''
+  let pagePath = routeSegments.slice(1)
+
+  if (!site && !routeSegments.length) {
+    const rootRoute = await findRootPublicSite()
+    site = rootRoute?.site || null
+    pageId = rootRoute?.pageId || ''
+    pagePath = []
   }
+
+  if (!site && routeSegments.length) {
+    const pageRoute = await findSitePageByRoutePath(path)
+    site = pageRoute?.site || null
+    pageId = pageRoute?.pageId || ''
+    pagePath = pageRoute?.pagePath || []
+  }
+
   if (!site) {
     return { ok: false, status: 404, reason: 'route_not_configured', message: 'Ruta pública no configurada' }
   }
@@ -11911,7 +12019,7 @@ export async function resolvePublicSiteForHost(hostValue, { forceRefresh = false
 
   site.blocks = await hydrateEmbeddedForms(await ensureSocialProfileBlock(site, await listSiteBlocks(site.id)))
   site.domain = domainResolution.domain || host
-  return { ok: true, site, host, domain: domainResolution.domain || host, path }
+  return { ok: true, site, pageId, pagePath, host, domain: domainResolution.domain || host, path }
 }
 
 function normalizePublicPreviewContext(context = {}) {
@@ -14986,6 +15094,11 @@ function getPageSlugPath(site, pageId) {
   return segments
 }
 
+function buildPublicPageRoutePath(site, pageId) {
+  const segments = getPageSlugPath(site, pageId)
+  return segments.length ? `/${segments.join('/')}` : '/'
+}
+
 function getBlockPageId(block, pages) {
   const pageId = cleanString(block?.settings?.pageId || block?.settings?.page_id)
   return pages.some(page => page.id === pageId) ? pageId : pages[0]?.id || DEFAULT_FUNNEL_PAGE_ID
@@ -15255,17 +15368,13 @@ function pageHref(pageId) {
   return `?page=${encodeURIComponent(pageId)}`
 }
 
-// In website mode (published) links use real hierarchical paths
-// (/<site-slug>/<parent>/<child>); everywhere else they use ?page= as before.
+// In published routable landings, page links use their own public route
+// (/<page> or /<parent>/<child>) instead of being forced under the site slug.
+// Everywhere else they use ?page= as before.
 function buildPageHref(pageId, context = {}) {
   const site = context.site
   if (context.linkStyle === 'path' && site) {
-    const siteSlug = slugifyPageSegment(site.slug) || slugifyPageSegment(site.name)
-    const base = siteSlug ? `/${siteSlug}` : ''
-    const home = getSiteHomePage(site)
-    if (home && cleanString(pageId) === home.id) return base || '/'
-    const segments = getPageSlugPath(site, pageId)
-    return segments.length ? `${base}/${segments.join('/')}` : (base || '/')
+    return buildPublicPageRoutePath(site, pageId)
   }
   return pageHref(pageId)
 }

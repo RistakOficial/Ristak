@@ -750,6 +750,8 @@ export interface SitesDomainConfig {
   }
   defaultRoute: {
     siteId: string
+    pageId?: string
+    pageTitle?: string
     name: string
     slug: string
     siteType: SiteType
@@ -1223,8 +1225,11 @@ export const sitesService = {
     return apiClient.delete<SitesDomainConfig>('/sites/domain')
   },
 
-  setDefaultDomainRoute(siteId?: string | null) {
-    return apiClient.post<SitesDomainConfig>('/sites/domain/default-route', { siteId: siteId || '' })
+  setDefaultDomainRoute(siteId?: string | null, pageId?: string | null) {
+    return apiClient.post<SitesDomainConfig>('/sites/domain/default-route', {
+      siteId: siteId || '',
+      pageId: pageId || ''
+    })
   },
 
   verifyAppDomain(domain: string) {

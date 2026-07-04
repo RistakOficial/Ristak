@@ -16573,6 +16573,59 @@
   color: var(--color-text-primary);
 }
 
+.pagesDropdownRoutePreview {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  color: var(--color-text-secondary);
+  padding: 0 4px;
+  font-size: 12px;
+  font-weight: var(--font-weight-semibold, 600);
+  line-height: 1.25;
+}
+
+.pagesDropdownRoutePreview span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.pagesDropdownRouteOpenButton {
+  width: 20px;
+  height: 20px;
+  flex: 0 0 auto;
+  display: inline-grid;
+  place-items: center;
+  border: 1px solid var(--color-border-subtle);
+  border-radius: 6px;
+  background: var(--surface);
+  color: var(--color-text-secondary);
+  padding: 0;
+  cursor: pointer;
+}
+
+.pagesDropdownRouteOpenButton:hover,
+.pagesDropdownRouteOpenButton:focus-visible {
+  border-color: var(--color-primary);
+  color: var(--color-primary);
+  outline: none;
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
+
+.pagesDropdownRouteOpenButton:disabled {
+  cursor: not-allowed;
+  opacity: 0.48;
+}
+
+.pagesDropdownRouteDefaultIcon {
+  flex: 0 0 auto;
+  display: inline-grid;
+  place-items: center;
+  color: var(--color-primary);
+}
+
 .pagesDropdownActionMenu {
   z-index: var(--z-index-tooltip) !important;
   min-width: 206px;

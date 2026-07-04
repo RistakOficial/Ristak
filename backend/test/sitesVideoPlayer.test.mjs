@@ -446,8 +446,8 @@ test('video actions render public target state and runtime', async () => {
   assert.match(html, /&quot;pauseUntilComplete&quot;:true/)
   assert.match(html, /&quot;targetPageId&quot;:&quot;page-2&quot;/)
   // Landing PUBLICADO ahora rutea limpio por paso: el target del video-action usa
-  // la ruta limpia /landing-video/oferta en vez de ?page=page-2 (funnel clean routes).
-  assert.match(html, /&quot;targetUrl&quot;:&quot;\/landing-video\/oferta&quot;/)
+  // la ruta directa /oferta en vez de quedar bajo el slug del sitio o usar ?page=.
+  assert.match(html, /&quot;targetUrl&quot;:&quot;\/oferta&quot;/)
   assert.match(html, /&quot;id&quot;:&quot;meta-event-at-420&quot;/)
   assert.match(html, /&quot;action&quot;:&quot;meta_event&quot;/)
   assert.match(html, /&quot;metaEventName&quot;:&quot;ViewContent&quot;/)

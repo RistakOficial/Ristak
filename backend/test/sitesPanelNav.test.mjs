@@ -104,14 +104,15 @@ test('render público: funnel PUBLICADO usa rutas limpias por paso y ?page= sigu
       createdAt: '', updatedAt: ''
     }]
   }
-  // Publicado (preview:false): links limpios /sitio (home colapsa) y /sitio/contacto, sin ?page=
+  // Publicado (preview:false): links limpios directos por página, sin quedar
+  // forzados bajo el slug del sitio ni usar ?page=.
   const htmlHome = await renderPublicSiteHtml(site, { pagePath: [], trackingEnabled: false, preview: false })
-  assert.match(htmlHome, /<a href="\/sitio">Inicio<\/a>/)
-  assert.match(htmlHome, /<a href="\/sitio\/contacto">Contacto<\/a>/)
+  assert.match(htmlHome, /<a href="\/inicio">Inicio<\/a>/)
+  assert.match(htmlHome, /<a href="\/contacto">Contacto<\/a>/)
   // Ningún enlace de navegación (<a>) usa ?page= (el helper client-side pageUrl del
   // branching de formularios sí lo usa a propósito, pero no es un <a> de nav).
   assert.doesNotMatch(htmlHome, /<a href="\?page=/)
-  // La ruta limpia /sitio/contacto resuelve al paso 2 sin caer al home ni crashear
+  // La ruta limpia /contacto resuelve al paso 2 sin caer al home ni crashear
   // (usa el mismo resolvePageByPathSegments que website mode; aquí solo cambió el gate).
   const htmlStep2 = await renderPublicSiteHtml(site, { pagePath: ['contacto'], trackingEnabled: false, preview: false })
   assert.ok(typeof htmlStep2 === 'string' && htmlStep2.length > 0)

@@ -1120,6 +1120,14 @@ diseno/estilo, para no duplicar la misma decision en dos superficies.
 
 La ruta publica puede depender de dominio, slug, host o rutas internas. Cualquier
 cambio a Sites debe revisar editor, renderer publico, submissions y tracking.
+En landings ruteables, cada pagina puede tener su propia ruta publica del dominio
+sin quedar obligada a vivir debajo del slug del sitio: una pagina principal puede
+usar `/promo`, `/agenda` o cualquier slug valido, y las subpaginas usan la
+jerarquia de su pagina padre (`/promo/detalles`). La ruta legacy del sitio
+`/<site-slug>` se conserva por compatibilidad y abre la landing como antes. La
+ruta predeterminada del dominio puede apuntar a un sitio completo o a una pagina
+especifica (`siteId + pageId`), configurada desde el editor con la estrella del
+menu de tres puntos de la pagina.
 Cuando Meta ya tiene dataset/pixel y token guardado, los sitios nuevos activan
 Meta CAPI por default. Las landings nuevas y las paginas nuevas creadas dentro de
 una landing existente nacen con solo `PageView` al aterrizar la pagina (browser
