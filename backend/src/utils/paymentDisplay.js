@@ -106,7 +106,7 @@ const LINK_METHODS = new Set([
 ])
 
 const CARD_DEFAULT_CHANNELS = new Set(['stripe', 'conekta', 'clip', 'rebill'])
-const MSI_CHANNELS = new Set(['stripe', 'conekta', 'clip'])
+const MSI_CHANNELS = new Set(['stripe', 'conekta', 'mercadopago', 'clip'])
 
 const cleanString = (value) => String(value || '').trim()
 
@@ -340,9 +340,55 @@ const getInstallmentCount = (row = {}, metadata = {}) => firstPositiveInt(
   row.monthlyInstallments
 )
 
-const buildInstallmentPaymentType = (count, channelId) => {
-  if (MSI_CHANNELS.has(channelId)) return `${count} MSI`
-  if (channelId === 'mercadopago') return `${count} meses`
+const hasMsiSignal = (metadata = {}) => {
+  const msiFlag = firstClean(
+    metadata.msi,
+    metadata.isMsi,
+    metadata.is_msi,
+    metadata.interestFree,
+    metadata.interest_free,
+    metadata.noInterest,
+    metadata.no_interest,
+    getPath(metadata, 'installments.msi'),
+    getPath(metadata, 'installments.interestFree'),
+    getPath(metadata, 'installments.interest_free'),
+    getPath(metadata, 'stripe.installments.msi'),
+    getPath(metadata, 'stripe.installments.interestFree'),
+    getPath(metadata, 'mercadoPago.installments.msi'),
+    getPath(metadata, 'mercadoPago.installments.interestFree'),
+    getPath(metadata, 'conekta.installments.msi'),
+    getPath(metadata, 'conekta.installments.interestFree'),
+    getPath(metadata, 'clip.installments.msi'),
+    getPath(metadata, 'clip.installments.interestFree')
+  )
+  const msiMode = normalizeToken(firstClean(
+    metadata.installmentMode,
+    metadata.installment_mode,
+    metadata.installmentType,
+    metadata.installment_type,
+    metadata.selectionMode,
+    metadata.selection_mode,
+    getPath(metadata, 'installments.mode'),
+    getPath(metadata, 'installments.type'),
+    getPath(metadata, 'stripe.installments.mode'),
+    getPath(metadata, 'stripe.installments.type'),
+    getPath(metadata, 'mercadoPago.installments.mode'),
+    getPath(metadata, 'mercadoPago.installments.type'),
+    getPath(metadata, 'conekta.installments.mode'),
+    getPath(metadata, 'conekta.installments.type'),
+    getPath(metadata, 'clip.installments.mode'),
+    getPath(metadata, 'clip.installments.type')
+  ))
+
+  return ['1', 'true', 'yes', 'si', 'msi', 'interest_free', 'no_interest', 'sin_intereses', 'meses_sin_intereses'].includes(normalizeToken(msiFlag)) ||
+    ['msi', 'interest_free', 'no_interest', 'sin_intereses', 'meses_sin_intereses'].includes(msiMode) ||
+    msiMode.includes('msi') ||
+    msiMode.includes('interest_free') ||
+    msiMode.includes('sin_intereses')
+}
+
+const buildInstallmentPaymentType = (count, channelId, metadata = {}) => {
+  if (MSI_CHANNELS.has(channelId) || hasMsiSignal(metadata)) return `${count} MSI`
   return `${count} pagos`
 }
 
@@ -351,7 +397,7 @@ const resolvePaymentTypeLabel = (row = {}, metadata = getPaymentMetadata(row), c
   if (hasCardSetupSignal(row, metadata)) return 'Autorización de tarjeta'
 
   const installmentCount = getInstallmentCount(row, metadata)
-  if (installmentCount > 1) return buildInstallmentPaymentType(installmentCount, channelId)
+  if (installmentCount > 1) return buildInstallmentPaymentType(installmentCount, channelId, metadata)
 
   if (hasDeferredPaymentSignal(row, metadata)) return 'Pago diferido'
 

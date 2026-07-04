@@ -63,6 +63,58 @@ test('payment display uses Mercado Pago payment_type_id for debit card', () => {
   assert.equal(display.paymentChannel, 'Mercado Pago')
 })
 
+test('payment display reports Mercado Pago installments as MSI', () => {
+  const display = buildPaymentDisplay({
+    status: 'paid',
+    payment_method: 'credit_card',
+    payment_provider: 'mercadopago',
+    metadata_json: JSON.stringify({
+      mercadoPago: {
+        paymentMethodId: 'visa',
+        paymentTypeId: 'credit_card',
+        installments: 6
+      }
+    })
+  })
+
+  assert.equal(display.paymentMethodCategory, 'Tarjeta de crédito')
+  assert.equal(display.paymentType, '6 MSI')
+  assert.equal(display.paymentChannel, 'Mercado Pago')
+})
+
+test('payment display reports explicit interest-free metadata as MSI', () => {
+  const display = buildPaymentDisplay({
+    status: 'paid',
+    payment_method: 'card',
+    payment_provider: 'openpay',
+    metadata_json: JSON.stringify({
+      installments: {
+        count: 9,
+        mode: 'interest_free'
+      }
+    })
+  })
+
+  assert.equal(display.paymentType, '9 MSI')
+  assert.equal(display.paymentChannel, 'Openpay')
+})
+
+test('payment display keeps generic installments as payments when they are not MSI', () => {
+  const display = buildPaymentDisplay({
+    status: 'paid',
+    payment_method: 'rebill',
+    payment_provider: 'rebill',
+    metadata_json: JSON.stringify({
+      rebill: {
+        installments: 3
+      }
+    })
+  })
+
+  assert.equal(display.paymentType, '3 pagos')
+  assert.equal(display.paymentChannel, 'Rebill')
+})
+
 test('payment display keeps SPEI as the method category', () => {
   const display = buildPaymentDisplay({
     status: 'paid',
