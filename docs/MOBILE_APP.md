@@ -104,9 +104,6 @@ izquierdo como indicador visual de foco, comentario o chat no leído. Los estado
 de no leído/activo deben resolverse con fondo, tipografía y badge, no con una
 franja lateral. Las etiquetas de canal dentro de los globos (`messageTransport`)
 son micro-etiquetas sin contorno y con abreviaturas: `IG`, `FB`, `API` y `QR`.
-El globo/status del agente IA (`agentStatusBubble`) también pertenece a la
-identidad móvil de Ristak: debe ser azul/cian, plano, sin piquito lateral y sin
-verde de estado salvo que sea una marca/canal externo real.
 
 ## Variables de servidor
 
