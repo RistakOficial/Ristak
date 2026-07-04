@@ -673,13 +673,13 @@
 }
 
 .chatSwipeMore {
-  color: #ffffff;
-  background: #5c5f62;
+  color: var(--phone-chat-surface);
+  background: color-mix(in srgb, var(--phone-chat-text) 64%, var(--phone-chat-surface) 36%);
 }
 
 .chatSwipeArchive {
-  color: #07140d;
-  background: #58c46e;
+  color: var(--phone-chat-text-on-primary);
+  background: var(--phone-chat-primary);
 }
 
 .chatSwipeContent {

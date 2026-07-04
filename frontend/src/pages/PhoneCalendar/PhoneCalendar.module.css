@@ -1,8 +1,8 @@
 .phonePage {
-  --phone-frame-bg: var(--phone-chat-surface, var(--phone-chat-bg, #ffffff));
+  --phone-frame-bg: var(--phone-chat-bg, #f8fbff);
   --phone-calendar-surface: var(--phone-chat-surface, #ffffff);
-  --phone-calendar-soft: var(--phone-chat-surface-soft, #f7f6f2);
-  --phone-calendar-panel: var(--phone-chat-panel, #f7f6f2);
+  --phone-calendar-soft: var(--phone-chat-surface-soft, #edf6ff);
+  --phone-calendar-panel: var(--phone-chat-panel, #eef6ff);
   --phone-calendar-text: var(--phone-chat-text, #111111);
   --phone-calendar-muted: var(--phone-chat-muted, #8e8e93);
   --apple-red: var(--phone-chat-primary, #0068f8);
@@ -1006,8 +1006,8 @@
   padding: 0 10px;
   border: 0;
   border-radius: 999px;
-  color: #111827;
-  background: #f7f6f2;
+  color: var(--phone-calendar-text);
+  background: var(--phone-calendar-soft);
   font-size: 12px;
   font-weight: 790;
 }
@@ -1280,13 +1280,16 @@
   display: grid;
   grid-template-rows: auto auto minmax(0, 1fr);
   width: 100%;
-  max-height: min(82dvh, 720px);
-  padding: 8px 14px calc(env(safe-area-inset-bottom) + 18px);
-  border: 1px solid rgba(229, 231, 235, 0.9);
+  max-height: min(var(--phone-visual-viewport-height, 84dvh), 84dvh, 720px);
+  box-sizing: border-box;
+  padding: 8px 14px max(18px, env(safe-area-inset-bottom));
+  border: 1px solid var(--line);
   border-bottom: 0;
   border-radius: 24px 24px 0 0;
-  background: #f7f6f2;
-  box-shadow: 0 -24px 60px rgba(15, 23, 42, 0.24);
+  color: var(--phone-calendar-text);
+  background: var(--phone-calendar-panel);
+  box-shadow: var(--phone-chat-sheet-shadow, 0 -24px 60px rgba(15, 23, 42, 0.22));
+  overflow: hidden;
   touch-action: pan-y;
   animation: sheetRise 280ms cubic-bezier(0.22, 1, 0.36, 1) both;
   will-change: transform;
@@ -1302,9 +1305,9 @@
   width: min(540px, 100%);
   height: min(76dvh, 640px);
   max-height: calc(100% - clamp(36px, 6vw, 76px));
-  border: 1px solid rgba(229, 231, 235, 0.9);
+  border: 1px solid var(--line);
   border-radius: 26px;
-  box-shadow: 0 28px 82px rgba(15, 23, 42, 0.22);
+  box-shadow: var(--phone-chat-sheet-shadow, 0 28px 82px rgba(15, 23, 42, 0.22));
   transform-origin: center;
   animation: sheetModalIn 240ms cubic-bezier(0.22, 1, 0.36, 1) both;
 }
@@ -1349,7 +1352,7 @@
 
 .sheetHeader h2 {
   margin: 0;
-  color: #050505;
+  color: var(--phone-calendar-text);
   font-size: 24px;
   font-weight: 850;
   letter-spacing: 0;
@@ -1365,8 +1368,8 @@
   height: 42px;
   border: 0;
   border-radius: 999px;
-  color: #111827;
-  background: #ffffff;
+  color: var(--phone-calendar-text);
+  background: var(--phone-calendar-surface);
 }
 
 .sheetHeaderSpacer {
@@ -1379,8 +1382,10 @@
 .searchPanel,
 .settingsPanel {
   min-height: 0;
+  padding-bottom: max(18px, env(safe-area-inset-bottom));
   overflow-y: auto;
   overscroll-behavior: contain;
+  scroll-padding-bottom: max(18px, env(safe-area-inset-bottom));
   -webkit-overflow-scrolling: touch;
 }
 
@@ -1401,8 +1406,8 @@
   padding: 15px;
   border: 0;
   border-radius: 18px;
-  background: #ffffff;
-  color: #050505;
+  background: var(--phone-calendar-surface);
+  color: var(--phone-calendar-text);
   text-align: left;
 }
 
@@ -1425,7 +1430,7 @@
 .calendarOption strong,
 .searchResult strong {
   overflow: hidden;
-  color: #050505;
+  color: var(--phone-calendar-text);
   font-size: 16px;
   font-weight: 800;
   text-overflow: ellipsis;
@@ -1437,7 +1442,7 @@
 .settingRow small,
 .settingBlockHeader span,
 .permissionBox span {
-  color: #8e8e93;
+  color: var(--phone-calendar-muted);
   font-size: 13px;
   line-height: 1.35;
 }
@@ -1453,16 +1458,16 @@
   place-items: center;
   gap: 6px;
   min-height: 76px;
-  border: 1px solid rgba(229, 231, 235, 0.9);
+  border: 1px solid var(--line);
   border-radius: 18px;
-  color: #4b5563;
-  background: #ffffff;
+  color: var(--phone-calendar-muted);
+  background: var(--phone-calendar-surface);
   font-size: 13px;
   font-weight: 780;
 }
 
 .viewChoiceActive {
-  color: #ffffff;
+  color: var(--phone-chat-text-on-primary, #ffffff);
   border-color: var(--apple-red);
   background: var(--apple-red);
 }
@@ -1484,7 +1489,7 @@
   border: 1px solid var(--line);
   border-radius: 999px;
   background: var(--phone-calendar-surface);
-  color: #4b5563;
+  color: var(--phone-calendar-muted);
 }
 
 .searchBox input,
@@ -1493,7 +1498,7 @@
   border: 0;
   outline: none;
   background: transparent;
-  color: #050505;
+  color: var(--phone-calendar-text);
   font-size: 16px;
   font-weight: 650;
   user-select: text;
@@ -1509,7 +1514,7 @@
   height: 40px;
   border: 0;
   border-radius: 999px;
-  color: #4b5563;
+  color: var(--phone-calendar-muted);
   background: transparent;
 }
 
@@ -1524,8 +1529,10 @@
 
 .contactList {
   min-height: 0;
+  padding-bottom: max(28px, env(safe-area-inset-bottom));
   overflow-y: auto;
   overscroll-behavior: contain;
+  scroll-padding-bottom: max(28px, env(safe-area-inset-bottom));
   -webkit-overflow-scrolling: touch;
 }
 
@@ -1538,9 +1545,9 @@
   min-height: 72px;
   padding: 8px 4px;
   border: 0;
-  border-bottom: 1px solid rgba(17, 17, 17, 0.08);
+  border-bottom: 1px solid var(--soft-line);
   border-radius: 0 !important;
-  color: #050505;
+  color: var(--phone-calendar-text);
   background: transparent !important;
   box-shadow: none !important;
   text-align: left;
@@ -1583,7 +1590,7 @@
 
 .contactOption strong {
   overflow: hidden;
-  color: #050505;
+  color: var(--phone-calendar-text);
   font-size: 17px;
   font-weight: 830;
   line-height: 1.12;
@@ -1593,7 +1600,7 @@
 
 .contactOption small {
   overflow: hidden;
-  color: #7a7a7a;
+  color: var(--phone-calendar-muted);
   font-size: 14px;
   font-weight: 620;
   line-height: 1.2;
@@ -1607,19 +1614,19 @@
   gap: 8px;
   min-height: 220px;
   padding: 22px;
-  color: #8e8e93;
+  color: var(--phone-calendar-muted);
   text-align: center;
 }
 
 .contactListState strong {
-  color: #050505;
+  color: var(--phone-calendar-text);
   font-size: 18px;
   font-weight: 850;
 }
 
 .contactListState span {
   max-width: 260px;
-  color: #8e8e93;
+  color: var(--phone-calendar-muted);
   font-size: 14px;
   line-height: 1.35;
 }
@@ -1630,8 +1637,8 @@
   padding: 0 15px;
   border: 0;
   border-radius: 999px;
-  color: #ffffff;
-  background: #111827;
+  color: var(--phone-chat-text-on-primary, #ffffff);
+  background: var(--phone-chat-primary, #0068f8);
   font-size: 13px;
   font-weight: 800;
 }

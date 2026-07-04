@@ -118,6 +118,11 @@ Regla de criterio: el verde se reserva para marca WhatsApp
 (`--phone-channel-whatsapp`, `PhoneMessageChannelIcon`, iconos/canal WhatsApp) o
 para estados semánticos de éxito. Botones, tabs, badges, loaders, inputs,
 gráficas y defaults visuales de la app deben usar el azul/cian de Ristak.
+Las acciones laterales por swipe y los menús/bottom sheets móviles también deben
+usar `--phone-chat-primary`, `--phone-chat-text-on-primary`,
+`--phone-chat-surface`, `--phone-chat-panel`, `--phone-chat-border` y
+`--phone-chat-sheet-shadow`; no uses verdes heredados ni fondos beige/verdosos
+fijos para paneles como "Agendar con".
 
 Los avatares de contacto son parte de la identidad de Ristak: si el contacto
 tiene foto real de la red social, se respeta esa foto; si no tiene foto, el
