@@ -274,17 +274,6 @@ const mercadoPagoSubscriptionWebhookEvents: WebhookEventGuideItem[] = [
   }
 ]
 const mercadoPagoSubscriptionWebhookEventNames = mercadoPagoSubscriptionWebhookEvents.map((item) => item.event).join('\n')
-const rebillWebhookEvents: WebhookEventGuideItem[] = [
-  {
-    event: 'payment.created',
-    description: 'Recibe el pago creado por el checkout embebido.'
-  },
-  {
-    event: 'payment.updated',
-    description: 'Sincroniza aprobaciones, rechazos, reembolsos y contracargos.'
-  }
-]
-const rebillWebhookEventNames = rebillWebhookEvents.map((item) => item.event).join('\n')
 const PAYMENT_META_DEFAULT_PURCHASE_EVENT_NAME = 'Purchase'
 const PAYMENT_META_DEFAULT_EVENT_CHANNEL: PaymentMetaPurchaseEventChannel = 'smart'
 const PAYMENT_META_PARAMETER_VARIABLE_CATEGORIES = new Set([
@@ -1008,7 +997,6 @@ export const PaymentsConfiguration: React.FC = () => {
 
   const mercadoPagoWebhookEndpoints = mercadoPagoConfig?.webhookEndpoints || []
   const clipWebhookEndpoints = clipConfig?.webhookEndpoints || []
-  const rebillWebhookEndpoints = rebillConfig?.webhookEndpoints || []
   const stripeConnected = Boolean(stripeConfig?.configured)
   const conektaConnected = Boolean(conektaConfig?.configured)
   const mercadoPagoConnected = Boolean(mercadoPagoConfig?.configured)
@@ -1081,6 +1069,18 @@ export const PaymentsConfiguration: React.FC = () => {
     (rebillConfig?.configured && rebillConfig.mode === mode)
   )
   const rebillModeCanSave = (mode: StripeModeId) => rebillModeIsComplete(mode)
+  const rebillWebhookNeedsAttention = stripeModeIds.some((mode) => {
+    if (!rebillModeIsSaved(mode)) return false
+    const connection = rebillConfig?.modeConnections?.[mode]
+    const status = String(connection?.webhookStatus || '').toLowerCase()
+    return !connection?.webhookConfigured && ['pending_public_url', 'error'].includes(status)
+  })
+  const rebillWebhookAttentionStatus = stripeModeIds
+    .map((mode) => rebillConfig?.modeConnections?.[mode])
+    .find((connection) => {
+      const status = String(connection?.webhookStatus || '').toLowerCase()
+      return connection?.configured && !connection?.webhookConfigured && ['pending_public_url', 'error'].includes(status)
+    })?.webhookStatus?.toLowerCase()
   const rebillActiveModeConfigured = rebillModeIsSaved(paymentMode)
   const rebillConfigurationStatus = rebillConnectionFailed
     ? 'connection_failed'
@@ -4258,7 +4258,7 @@ export const PaymentsConfiguration: React.FC = () => {
               <PaymentPlatformLogo platform="rebill" size="lg" decorative />
               <div>
                 <h2>Rebill</h2>
-                <p>Configura Rebill para pagos únicos con checkout embebido, confirmación server-side y webhooks automáticos.</p>
+                <p>Configura Rebill para recibir pagos y confirmarlos automáticamente en Ristak.</p>
               </div>
             </div>
             <Badge variant={rebillStatusBadge.variant}>
@@ -4268,11 +4268,6 @@ export const PaymentsConfiguration: React.FC = () => {
           </div>
 
           <div className={styles.stripePanel}>
-            <div className={styles.inlineWarning}>
-              <Info size={16} />
-              <span>La public key pk_ se usa en el checkout del navegador. La secret key sk_ se guarda cifrada en la base de datos y sólo el backend la usa para validar pagos con Rebill.</span>
-            </div>
-
             <div className={styles.stripeModeGrid}>
               {stripeModeIds.map((mode) => {
                 const modeCopy = rebillModeLabels[mode]
@@ -4331,7 +4326,7 @@ export const PaymentsConfiguration: React.FC = () => {
                           autoComplete="off"
                           spellCheck={false}
                         />,
-                        'Debe empezar con pk_. Esta llave sí viaja al checkout embebido.'
+                        'Copia aquí la Public key de tu organización en Rebill.'
                       )}
                       {renderField(
                         'Secret key',
@@ -4346,7 +4341,7 @@ export const PaymentsConfiguration: React.FC = () => {
                           autoComplete="new-password"
                           spellCheck={false}
                         />,
-                        'Debe empezar con sk_. Ristak la cifra en base de datos y nunca la manda al navegador.'
+                        'Copia aquí la Secret key de tu organización en Rebill.'
                       )}
                     </div>
 
@@ -4412,56 +4407,22 @@ export const PaymentsConfiguration: React.FC = () => {
               })}
             </div>
 
-            <div className={styles.mercadoPagoMiniSection}>
-              <div className={styles.mercadoPagoMiniTitle}>
-                <Webhook size={16} />
-                <strong>Webhook automático</strong>
-              </div>
-              <p className={styles.mercadoPagoTestGuideNote}>
-                Al guardar llaves válidas, Ristak intenta registrar este webhook en Rebill. Si la app aún no tiene URL HTTPS pública, queda pendiente y se muestra la URL para configurarla manualmente.
-              </p>
-              {rebillWebhookEndpoints.length > 0 ? (
-                <div className={styles.endpointList}>
-                  {rebillWebhookEndpoints.map((endpoint) => (
-                    <div key={`${endpoint.source}-${endpoint.url}`} className={styles.endpointItem}>
-                      <div>
-                        <strong>{endpoint.label}</strong>
-                        <span>{endpoint.url}</span>
-                      </div>
-                      <Button
-                        type="button"
-                        variant="secondary"
-                        size="sm"
-                        leftIcon={<Copy size={15} />}
-                        onClick={() => handleCopyGatewayText(endpoint.url, 'Webhook', 'Rebill')}
-                      >
-                        Copiar
-                      </Button>
-                    </div>
-                  ))}
+            {rebillWebhookNeedsAttention && (
+              <div className={styles.mercadoPagoMiniSection}>
+                <div className={styles.mercadoPagoMiniTitle}>
+                  <Webhook size={16} />
+                  <strong>Webhook automático</strong>
                 </div>
-              ) : (
                 <div className={styles.inlineInfo}>
                   <Info size={16} />
-                  <span>Publica Ristak en una URL HTTPS para que Rebill pueda mandar confirmaciones al backend.</span>
+                  <span>
+                    {rebillWebhookAttentionStatus === 'error'
+                      ? 'Ristak no pudo terminar la conexión automática con Rebill. Revisa la URL pública de la app y vuelve a guardar las llaves.'
+                      : 'Ristak necesita estar publicado con una URL HTTPS para terminar la conexión automática con Rebill.'}
+                  </span>
                 </div>
-              )}
-              <div className={styles.mercadoPagoEventStrip}>
-                <div>
-                  <strong>Eventos</strong>
-                  <span>{rebillWebhookEvents.map((item) => item.event).join(', ')}</span>
-                </div>
-                <Button
-                  type="button"
-                  variant="secondary"
-                  size="sm"
-                  leftIcon={<Copy size={15} />}
-                  onClick={() => handleCopyGatewayText(rebillWebhookEventNames, 'Eventos', 'Rebill')}
-                >
-                  Copiar eventos
-                </Button>
               </div>
-            </div>
+            )}
           </div>
         </Card>
       )}

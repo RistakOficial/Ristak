@@ -722,7 +722,8 @@ Alcance:
   `GET /v3/organizations/me` y, si la app tiene URL publica HTTPS, intenta crear o
   actualizar automaticamente el webhook con eventos `payment.created` y
   `payment.updated`. Si la URL publica no existe, queda en estado
-  `pending_public_url` y la UI muestra las rutas que deben copiarse.
+  `pending_public_url` y la UI muestra un aviso simple; no expone botones para
+  copiar URL o eventos porque la configuracion normal es automatica.
 - Variables de automatizacion: `payment.rebill_payment_id`,
   `payment.rebill_subscription_id`, `payment.rebill_customer_id` y
   `payment.rebill_card_id`.
