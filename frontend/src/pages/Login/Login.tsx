@@ -1,7 +1,8 @@
 import React, { useState, FormEvent, useLayoutEffect, useRef } from 'react'
 import { Navigate, useLocation, useNavigate } from 'react-router-dom'
 import { Terminal, Copy, Check } from 'lucide-react'
-import { Button, Logo } from '@/components/common'
+import { Button, AppStartupLoader, RistakAppMark } from '@/components/common'
+import { PhoneStartupLoader } from '@/components/phone/PhoneStartupLoader'
 import { useAuth } from '@/contexts/AuthContext'
 import { apiUrl, clearRuntimeApiBaseUrl, getRuntimeApiBaseUrl, getRuntimeTenant, isNativeAppRuntime } from '@/services/apiBaseUrl'
 import { mobileAppService } from '@/services/mobileAppService'
@@ -24,10 +25,10 @@ function isValidLoginEmail(value: string) {
 const RENDER_PASSWORD_RESET_COMMAND = `node -e "const crypto = require('crypto'); const { Pool } = require('pg'); const pool = new Pool({ connectionString: process.env.DATABASE_URL, ssl: { rejectUnauthorized: false } }); async function reset() { const result = await pool.query('SELECT id, email FROM users ORDER BY id LIMIT 1'); const user = result.rows[0]; if (!user) throw new Error('No hay usuarios en la base de datos.'); const email = String(user.email || '').trim().toLowerCase(); if (!email) throw new Error('El usuario no tiene correo de login guardado. Actualiza users.email antes de resetear contraseña.'); const newPassword = crypto.randomBytes(12).toString('base64').replace(/[+/=]/g, '').slice(0, 16); const salt = crypto.randomBytes(16).toString('hex'); const hash = crypto.pbkdf2Sync(newPassword, salt, 100000, 64, 'sha512').toString('hex'); const passwordHash = salt + ':' + hash; await pool.query('UPDATE users SET password_hash = $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2', [passwordHash, user.id]); process.stdout.write('✅ Contraseña reseteada. Correo: ' + email + ' · Contraseña temporal: ' + newPassword + '\\n'); } reset().catch((error) => { console.error('❌ ' + error.message); process.exitCode = 1; }).finally(() => pool.end());"`
 
 const LoginBrandLogo: React.FC<{ isPhoneLogin: boolean }> = ({ isPhoneLogin }) => (
-  <Logo
-    size="2xl"
-    variant={isPhoneLogin ? 'black' : 'auto'}
-    className={`${styles.brandLogo} ${isPhoneLogin ? styles.phoneBrandLogo : ''}`}
+  <RistakAppMark
+    size={isPhoneLogin ? 'xl' : 'lg'}
+    className={`${styles.brandMark} ${isPhoneLogin ? styles.phoneBrandMark : ''}`}
+    decorative
   />
 )
 
@@ -75,24 +76,9 @@ export const Login: React.FC = () => {
   }, [isPhoneLogin, showRecovery, tenant?.name])
 
   if (isAuthLoading) {
-    return (
-      <div className={`${styles.container} ${isPhoneLogin ? styles.phoneContainer : ''}`}>
-        <div
-          ref={isPhoneLogin ? phoneLoginSurfaceRef : undefined}
-          className={`${styles.loginBox} ${isPhoneLogin ? styles.phoneLoginBox : ''}`}
-          data-phone-keyboard-theme-surface={isPhoneLogin ? 'true' : undefined}
-          data-phone-scrollable={isPhoneLogin ? 'true' : undefined}
-        >
-          <div className={styles.header}>
-            <div className={styles.logoContainer}>
-              <LoginBrandLogo isPhoneLogin={isPhoneLogin} />
-            </div>
-            <h1 className={`${styles.title} ${styles.visuallyHidden}`}>Ristak</h1>
-            <p className={styles.subtitle}>Revisando tu acceso...</p>
-          </div>
-        </div>
-      </div>
-    )
+    return isPhoneLogin
+      ? <PhoneStartupLoader message="Revisando tu acceso" />
+      : <AppStartupLoader message="Revisando tu acceso" />
   }
 
   if (needsSetup) {
@@ -239,13 +225,13 @@ export const Login: React.FC = () => {
           <div className={styles.logoContainer}>
             <LoginBrandLogo isPhoneLogin={isPhoneLogin} />
           </div>
-          <h1 className={`${styles.title} ${styles.visuallyHidden}`}>Ristak</h1>
+          <h1 className={styles.title}>Ristak</h1>
           <p className={styles.subtitle}>
             {isPhoneLogin
               ? tenant?.name
-                ? `Entra a ${tenant.name}`
-                : 'Entra para ver tus chats, pagos y citas desde el celular.'
-              : 'Ingresa a tu cuenta'}
+                ? `Inicia sesión para entrar a ${tenant.name}.`
+                : 'Inicia sesión para ver chats, pagos y citas desde el celular.'
+              : 'Inicia sesión para gestionar chats, pagos, citas y automatizaciones.'}
           </p>
         </div>
 

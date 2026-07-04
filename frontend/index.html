@@ -2,7 +2,7 @@
 <html lang="es">
   <head>
     <meta charset="UTF-8" />
-    <link rel="icon" type="image/svg+xml" href="/logo.svg" />
+    <link rel="icon" type="image/png" href="/ristak-icon-192.png" />
     <link rel="manifest" href="/manifest.webmanifest" />
     <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
@@ -32,8 +32,15 @@
           : isPhoneRoute
             ? '/ristak-chat-apple-touch-icon.png'
             : '/apple-touch-icon.png'
+        var favicon = isMobileHomeRoute
+          ? '/ristak-chat-home-icon-192.png'
+          : isPhoneRoute
+            ? '/ristak-chat-icon-192.png'
+            : '/ristak-icon-192.png'
 
         document.title = title
+        document.querySelector('link[rel="icon"]').setAttribute('type', 'image/png')
+        document.querySelector('link[rel="icon"]').setAttribute('href', favicon)
         document.querySelector('link[rel="manifest"]').setAttribute('href', manifest)
         document.querySelector('link[rel="apple-touch-icon"]').setAttribute('href', icon)
         document.querySelector('meta[name="theme-color"]').setAttribute('content', themeColor)

@@ -29,6 +29,8 @@
     'Ubuntu', 'Cantarell', 'Fira Sans', 'Droid Sans', 'Helvetica Neue', sans-serif;
   --font-display: var(--font-app);
   --font-mono: 'SF Mono', 'Consolas', 'Monaco', monospace;
+  --brand-ristak-blue: #0078f8;
+  --brand-ristak-blue-rgb: 0, 120, 248;
   --color-bg-primary: var(--color-background-primary);
   --app-page-max: 104rem;
   --app-page-wide-max: var(--app-page-max);

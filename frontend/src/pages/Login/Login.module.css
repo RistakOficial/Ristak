@@ -67,23 +67,21 @@ body.light .phoneLoginBox {
 
 .header {
   text-align: center;
-  margin-bottom: 2rem;
+  margin-bottom: 1.75rem;
 }
 
 .logoContainer {
   display: flex;
   justify-content: center;
-  margin-bottom: 0.5rem;
+  margin-bottom: 0.85rem;
 }
 
-.logoContainer .brandLogo {
-  --ristak-logo-width: 104px;
-  --ristak-logo-height: 32px;
+.brandMark {
+  --ristak-app-mark-size: 96px;
 }
 
-.logoContainer .phoneBrandLogo {
-  --ristak-logo-width: 104px;
-  --ristak-logo-height: 32px;
+.phoneBrandMark {
+  --ristak-app-mark-size: 118px;
 }
 
 .logo {
@@ -102,7 +100,7 @@ body.light .phoneLoginBox {
   font-weight: 700;
   color: var(--color-text-primary);
   margin: 0 0 0.5rem 0;
-  letter-spacing: -0.02em;
+  letter-spacing: 0;
 }
 
 .visuallyHidden {
@@ -286,12 +284,12 @@ body.light .error {
 }
 
 .phoneLoginBox .header {
-  margin-bottom: 2.5rem;
+  margin-bottom: 2.25rem;
 }
 
 .phoneLoginBox .title {
   color: #111111;
-  font-size: clamp(2.35rem, 12vw, 3.3rem);
+  font-size: clamp(2.25rem, 11vw, 3rem);
   font-weight: 760;
   letter-spacing: 0;
   line-height: 0.98;

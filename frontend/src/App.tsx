@@ -90,8 +90,8 @@ type AppBranding = {
 const ROUTE_BRANDING: Record<'ristak' | 'phone' | 'phoneChat', AppBranding> = {
   ristak: {
     title: 'Ristak',
-    favicon: '/logo.svg',
-    faviconType: 'image/svg+xml',
+    favicon: '/ristak-icon-192.png',
+    faviconType: 'image/png',
     manifest: '/manifest.webmanifest',
     appleTouchIcon: '/apple-touch-icon.png',
     themeColor: '#ffffff'

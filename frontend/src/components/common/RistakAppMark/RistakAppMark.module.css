@@ -1,0 +1,73 @@
+.mark {
+  --ristak-app-mark-size: 76px;
+
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: var(--ristak-app-mark-size);
+  height: var(--ristak-app-mark-size);
+  line-height: 1;
+}
+
+.image {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+
+.auto .whiteImage {
+  display: none;
+}
+
+:global(body.dark) .auto .blueImage {
+  display: none;
+}
+
+:global(body.dark) .auto .whiteImage {
+  display: block;
+}
+
+:global(body.light) .auto .blueImage {
+  display: block;
+}
+
+:global(body.light) .auto .whiteImage {
+  display: none;
+}
+
+:global(body[data-phone-chat-tone='dark']) .auto .blueImage {
+  display: none;
+}
+
+:global(body[data-phone-chat-tone='dark']) .auto .whiteImage {
+  display: block;
+}
+
+:global(body[data-phone-chat-tone='light']) .auto .blueImage {
+  display: block;
+}
+
+:global(body[data-phone-chat-tone='light']) .auto .whiteImage {
+  display: none;
+}
+
+.sm {
+  --ristak-app-mark-size: 48px;
+}
+
+.md {
+  --ristak-app-mark-size: 76px;
+}
+
+.lg {
+  --ristak-app-mark-size: 104px;
+}
+
+.xl {
+  --ristak-app-mark-size: 132px;
+}
+
+.size2xl {
+  --ristak-app-mark-size: 164px;
+}

@@ -80,6 +80,7 @@ Texto:        --text  --text-dim  --text-mute   (on-accent: --on-accent)
 Bordes:       --border  --border-strong
 Acento:       --accent  --accent-2  --accent-soft   (rgb: --accent-rgb)
 Semántico:    --pos --pos-soft   --neg --neg-soft   --warn --warn-soft   --info --info-soft
+Marca:        --brand-ristak-blue  --brand-ristak-blue-rgb
 Forma:        --radius-card  --radius-ctl  --radius-pill
 Sombra:       --shadow-card  --shadow-xs  --shadow-pop
 Tipografía:   --font-display  --font-body  --font-mono  --num-font  --label-font

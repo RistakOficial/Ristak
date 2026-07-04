@@ -97,6 +97,10 @@ inicio":
   fondos adaptive en `frontend/android/app/src/main/res/values*/ic_launcher_background.xml`.
   Las notificaciones Android usan `@drawable/ic_stat_ristak` como small icon
   del sistema y el backend FCM debe mandar `icon: 'ic_stat_ristak'`.
+- Web/PWA general: `frontend/public/ristak-icon-192.png`,
+  `frontend/public/ristak-icon-512.png`, `frontend/public/apple-touch-icon.png`
+  y las variantes transparentes `frontend/public/ristak-app-mark-*.webp` usadas
+  por login y pantallas de carga.
 - Web/PWA móvil: `frontend/public/ristak-chat-icon-*`,
   `frontend/public/ristak-chat-home-icon-*` y los `apple-touch-icon` móviles.
 

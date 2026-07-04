@@ -1,5 +1,5 @@
 import React from 'react'
-import { Loader2 } from 'lucide-react'
+import { RistakAppMark } from '@/components/common/RistakAppMark'
 import styles from './AppStartupLoader.module.css'
 
 interface AppStartupLoaderProps {
@@ -23,10 +23,10 @@ export const AppStartupLoader: React.FC<AppStartupLoaderProps> = ({
       aria-live="polite"
       aria-label={ariaMessage}
     >
-      <div className={styles.loadingWrapper}>
-        <Loader2 className={styles.spinner} aria-hidden="true" />
-        <p className={styles.message}>{ariaMessage}</p>
+      <div className={styles.brandStage}>
+        <RistakAppMark size="xl" className={styles.brandMark} decorative />
       </div>
+      <p className={styles.brandName}>Ristak</p>
     </main>
   )
 }

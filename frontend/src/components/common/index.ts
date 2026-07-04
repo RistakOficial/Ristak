@@ -4,6 +4,7 @@ export { Card } from './Card'
 export { Modal } from './Modal'
 export { TabList } from './TabList'
 export { Logo } from './Logo'
+export { RistakAppMark } from './RistakAppMark'
 export { PageContainer } from './PageContainer'
 export { PageHeader } from './PageHeader'
 

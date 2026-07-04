@@ -1,31 +1,42 @@
 .loader {
-  --phone-loader-bg: var(--phone-chat-bg, #fbfaf6);
-  --phone-loader-text: var(--phone-chat-text, #0b0b0d);
-  --phone-loader-muted: var(--phone-chat-muted, #77736c);
+  --phone-loader-bg: var(--phone-chat-bg, var(--bg));
+  --phone-loader-text: var(--phone-chat-text, var(--text));
+  --phone-loader-accent: var(--phone-chat-accent, var(--brand-ristak-blue, var(--accent)));
 
   position: fixed;
   inset: 0;
   z-index: 1;
   display: grid;
+  grid-template-rows: 1fr auto;
   width: 100vw;
   min-height: 100dvh;
   padding: calc(env(safe-area-inset-top) + 24px) 24px calc(env(safe-area-inset-bottom) + 24px);
   color: var(--phone-loader-text);
   background: var(--phone-loader-bg);
-  place-items: center;
 }
 
-.spinner {
-  width: 34px;
-  height: 34px;
-  border: 3px solid color-mix(in srgb, var(--phone-chat-accent, #0078f8) 20%, transparent);
-  border-top-color: var(--phone-chat-accent, #0078f8);
-  border-radius: 999px;
-  animation: spin 0.8s linear infinite;
+.brandStage {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 0;
 }
 
-@keyframes spin {
-  to {
-    transform: rotate(360deg);
-  }
+.brandMark {
+  --ristak-app-mark-size: clamp(106px, 28vw, 142px);
+}
+
+.brandName {
+  margin: 0;
+  color: var(--phone-loader-accent);
+  font-size: 1.05rem;
+  font-weight: 650;
+  letter-spacing: 0;
+  line-height: 1;
+  text-align: center;
+}
+
+:global(body.dark) .brandName,
+:global(body[data-phone-chat-tone='dark']) .brandName {
+  color: var(--phone-loader-text);
 }
