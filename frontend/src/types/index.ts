@@ -181,6 +181,12 @@ export interface Contact {
   ad_id?: string
   preferredWhatsAppPhoneNumberId?: string | null
   preferred_whatsapp_phone_number_id?: string | null
+  lastBusinessPhone?: string
+  lastBusinessPhoneNumberId?: string
+  lastInboundBusinessPhone?: string
+  lastInboundBusinessPhoneNumberId?: string
+  firstInboundBusinessPhone?: string
+  firstInboundBusinessPhoneNumberId?: string
   // Identidad social (Meta): nombre real del perfil + @usuario. La distinción
   // comentario/DM ya NO es de contacto (misma persona = un contacto por red);
   // vive a nivel mensaje. Flags derivados: tiene comentarios / tiene DM privado.

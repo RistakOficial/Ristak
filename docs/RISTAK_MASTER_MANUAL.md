@@ -452,6 +452,14 @@ fila de ese numero para conservar la validacion estricta. En numeros de
 WhatsApp API ligados con QR, el QR escaneado debe coincidir con el numero
 oficial esperado; si no coincide, se rechaza como `number_mismatch`.
 
+En la pagina desktop de Chat, el panel derecho del contacto permite elegir el
+WhatsApp de respuesta del contacto. El modo automatico usa el numero por donde
+llego la conversacion o, si no hay historial, el principal actual; si el usuario
+elige un numero fijo, Ristak guarda `preferred_whatsapp_phone_number_id` en el
+contacto y el composer empieza a enviar desde ese remitente por default. El
+selector del composer puede seguir cambiando el envio puntual, pero el panel
+derecho es la fuente visible para decidir el remitente preferido del contacto.
+
 En las listas y separadores del chat, los mensajes del dia actual muestran hora
 o `Hoy`, los del dia anterior muestran `Ayer`, y los anteriores usan fecha
 compacta sin `de` (`29 junio`, agregando año solo si no pertenece al año actual).

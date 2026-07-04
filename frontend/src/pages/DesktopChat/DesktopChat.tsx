@@ -163,6 +163,10 @@ interface DesktopChatContact extends Contact {
   lastMessageDirection?: string
   lastBusinessPhone?: string
   lastBusinessPhoneNumberId?: string
+  lastInboundBusinessPhone?: string
+  lastInboundBusinessPhoneNumberId?: string
+  firstInboundBusinessPhone?: string
+  firstInboundBusinessPhoneNumberId?: string
   messageCount?: number
   unreadCount?: number
   profilePhotoUrl?: string | null
@@ -2212,11 +2216,42 @@ function getSelectedBusinessPhone(status?: WhatsAppApiStatus | null): WhatsAppAp
 }
 
 function getBusinessPhoneValue(phone?: WhatsAppApiPhoneNumber | null) {
-  return phone?.display_phone_number || phone?.phone_number || ''
+  return phone?.display_phone_number || phone?.phone_number || phone?.qr_connected_phone || ''
 }
 
 function getBusinessPhoneLabel(phone?: WhatsAppApiPhoneNumber | null) {
-  return phone?.label || phone?.verified_name || phone?.display_phone_number || phone?.phone_number || 'WhatsApp'
+  return phone?.label || phone?.verified_name || getBusinessPhoneValue(phone) || 'WhatsApp'
+}
+
+function getBusinessPhoneDisplay(phone?: WhatsAppApiPhoneNumber | null) {
+  const value = getBusinessPhoneValue(phone)
+  const label = getBusinessPhoneLabel(phone)
+  if (!value) return label
+  return label && label !== value ? `${label} · ${value}` : value
+}
+
+function getPreferredWhatsAppPhoneNumberId(contact?: Contact | DesktopChatContact | null) {
+  return String(contact?.preferredWhatsAppPhoneNumberId || contact?.preferred_whatsapp_phone_number_id || '').trim()
+}
+
+function findBusinessPhoneByRoute(
+  phones: WhatsAppApiPhoneNumber[],
+  phoneNumberId?: string | null,
+  businessPhone?: string | null
+) {
+  const cleanPhoneNumberId = String(phoneNumberId || '').trim()
+  const cleanBusinessPhone = String(businessPhone || '').trim()
+  if (cleanPhoneNumberId) {
+    const byId = phones.find((phone) => phone.id === cleanPhoneNumberId)
+    if (byId) return byId
+  }
+  if (!cleanBusinessPhone) return null
+
+  return phones.find((phone) => (
+    phoneValueMatches(phone.phone_number, cleanBusinessPhone) ||
+    phoneValueMatches(phone.display_phone_number, cleanBusinessPhone) ||
+    phoneValueMatches(phone.qr_connected_phone, cleanBusinessPhone)
+  )) || null
 }
 
 function renderComposerChannelIcon(channel: ComposerChannel) {
@@ -2471,6 +2506,8 @@ export const DesktopChat: React.FC = () => {
   const [editingAppointmentEvent, setEditingAppointmentEvent] = useState<CalendarEvent | null>(null)
   const [paymentOpen, setPaymentOpen] = useState(false)
   const [savingTags, setSavingTags] = useState(false)
+  const [savingWhatsAppPreference, setSavingWhatsAppPreference] = useState(false)
+  const [whatsappPreferenceError, setWhatsappPreferenceError] = useState('')
   const [automationModalOpen, setAutomationModalOpen] = useState(false)
   const [automations, setAutomations] = useState<AutomationSummary[]>([])
   const [automationsLoading, setAutomationsLoading] = useState(false)
@@ -2483,9 +2520,16 @@ export const DesktopChat: React.FC = () => {
     () => chats.find((contact) => contact.id === activeContactId) || null,
     [activeContactId, chats]
   )
+  const activeInfoContact = useMemo<Contact | DesktopChatContact | null>(() => {
+    if (!activeContact && !contactInfoData) return null
+    return {
+      ...(activeContact || {}),
+      ...(contactInfoData || {})
+    } as Contact | DesktopChatContact
+  }, [activeContact, contactInfoData])
   const activeContactPhones = useMemo(
-    () => getContactPhoneEntries(contactInfoData || activeContact),
-    [activeContact, contactInfoData]
+    () => getContactPhoneEntries(activeInfoContact),
+    [activeInfoContact]
   )
   const businessPhones = useMemo(() => whatsappStatus?.phoneNumbers || [], [whatsappStatus?.phoneNumbers])
   const defaultComposerBusinessPhone = useMemo(() => getComposerBusinessPhone(whatsappStatus, activeContact), [activeContact, whatsappStatus])
@@ -2494,6 +2538,41 @@ export const DesktopChat: React.FC = () => {
     defaultComposerBusinessPhone ||
     null
   ), [businessPhones, composerBusinessPhoneId, defaultComposerBusinessPhone])
+  const preferredWhatsAppPhoneNumberId = getPreferredWhatsAppPhoneNumberId(activeInfoContact)
+  const automaticWhatsAppRoutePhone = useMemo(() => {
+    const routedMessage = [...messages]
+      .reverse()
+      .find((message) => message.direction === 'inbound' && Boolean(message.businessPhoneNumberId || message.businessPhone))
+    return findBusinessPhoneByRoute(
+      businessPhones,
+      routedMessage?.businessPhoneNumberId ||
+        activeInfoContact?.lastInboundBusinessPhoneNumberId ||
+        activeInfoContact?.lastBusinessPhoneNumberId ||
+        '',
+      routedMessage?.businessPhone ||
+        activeInfoContact?.lastInboundBusinessPhone ||
+        activeInfoContact?.lastBusinessPhone ||
+        ''
+    )
+  }, [activeInfoContact, businessPhones, messages])
+  const selectedWhatsAppPreferencePhone = preferredWhatsAppPhoneNumberId
+    ? businessPhones.find((phone) => phone.id === preferredWhatsAppPhoneNumberId) || null
+    : null
+  const whatsappPreferenceRoutePhone = selectedWhatsAppPreferencePhone ||
+    automaticWhatsAppRoutePhone ||
+    defaultComposerBusinessPhone ||
+    getSelectedBusinessPhone(whatsappStatus)
+  const whatsappPreferenceRouteMode = preferredWhatsAppPhoneNumberId
+    ? 'Responde desde'
+    : automaticWhatsAppRoutePhone
+    ? 'Último mensaje'
+    : 'Principal actual'
+  const whatsappPreferenceDescription = preferredWhatsAppPhoneNumberId
+    ? 'Número fijo para este contacto.'
+    : 'Automático: usa el número por donde llegó.'
+  const whatsappPreferenceRouteDisplay = whatsappPreferenceRoutePhone
+    ? getBusinessPhoneDisplay(whatsappPreferenceRoutePhone)
+    : 'Sin número configurado'
   const selectedBusinessPhoneValue = getBusinessPhoneValue(selectedBusinessPhone)
   const whatsappConnected = Boolean(whatsappStatus?.connected && selectedBusinessPhoneValue)
   useEffect(() => {
@@ -4524,6 +4603,61 @@ export const DesktopChat: React.FC = () => {
       throw error
     }
   }, [activeContact, contactInfoData, showToast])
+
+  const handleUpdatePreferredWhatsAppPhoneNumber = useCallback(async (phoneNumberId: string) => {
+    const contactId = activeContact?.id || ''
+    const previousContact = contactInfoData || activeContact
+    if (!contactId || savingWhatsAppPreference) return
+
+    const previousPreferredId = getPreferredWhatsAppPhoneNumberId(previousContact)
+    const nextPreferredId = String(phoneNumberId || '').trim()
+    if (previousPreferredId === nextPreferredId) return
+    const patch = {
+      preferredWhatsAppPhoneNumberId: nextPreferredId,
+      preferred_whatsapp_phone_number_id: nextPreferredId
+    } as Partial<Contact>
+
+    setWhatsappPreferenceError('')
+    setSavingWhatsAppPreference(true)
+    setComposerBusinessPhoneId(nextPreferredId)
+    setContactInfoData((current) => current?.id === contactId ? { ...current, ...patch } : current)
+    setChats((current) => current.map((contact) => contact.id === contactId ? { ...contact, ...patch } : contact))
+
+    try {
+      const updatedContact = await contactsService.updateContact(contactId, {
+        ...patch,
+        routingReason: nextPreferredId
+          ? 'Cambio desde panel derecho del chat'
+          : 'Automático desde panel derecho del chat',
+        routingSource: 'manual'
+      } as Partial<Contact> & Record<string, unknown>)
+      const nextPatch = {
+        ...updatedContact,
+        ...patch
+      }
+      setContactInfoData((current) => current?.id === contactId ? { ...current, ...nextPatch } : current)
+      setChats((current) => current.map((contact) => contact.id === contactId ? { ...contact, ...nextPatch } : contact))
+      showToast(
+        'success',
+        nextPreferredId ? 'WhatsApp de respuesta actualizado' : 'Respuesta automática activada',
+        nextPreferredId
+          ? 'Este contacto quedará ligado a ese número para responder por WhatsApp.'
+          : 'Ristak volverá a usar el número por donde llegó la conversación.'
+      )
+    } catch (error: any) {
+      const rollbackPatch = {
+        preferredWhatsAppPhoneNumberId: previousPreferredId,
+        preferred_whatsapp_phone_number_id: previousPreferredId
+      } as Partial<Contact>
+      setComposerBusinessPhoneId(previousPreferredId)
+      setContactInfoData((current) => current?.id === contactId ? { ...current, ...rollbackPatch } : current)
+      setChats((current) => current.map((contact) => contact.id === contactId ? { ...contact, ...rollbackPatch } : contact))
+      setWhatsappPreferenceError(error?.message || 'No se pudo guardar el número de respuesta.')
+      showToast('error', 'No se guardó el WhatsApp de respuesta', error?.message || 'Intenta otra vez.')
+    } finally {
+      setSavingWhatsAppPreference(false)
+    }
+  }, [activeContact, contactInfoData, savingWhatsAppPreference, showToast])
 
   const handleMakePrimaryPhone = useCallback(async (phone: string) => {
     const nextPhone = String(phone || '').trim()
@@ -7543,6 +7677,35 @@ export const DesktopChat: React.FC = () => {
                       />
                     </dd>
                   </div>
+                  {businessPhones.length > 0 ? (
+                    <div>
+                      <dt><FaWhatsapp aria-hidden="true" /> WhatsApp de respuesta</dt>
+                      <dd>
+                        <CustomSelect
+                          value={preferredWhatsAppPhoneNumberId}
+                          options={[
+                            { value: '', label: 'Automático: usar el número por donde llegó' },
+                            ...businessPhones.map((phone) => ({
+                              value: phone.id,
+                              label: `${getBusinessPhoneDisplay(phone)}${phone.is_default_sender ? ' · Principal' : ''}`,
+                              disabled: !getBusinessPhoneValue(phone)
+                            }))
+                          ]}
+                          onValueChange={handleUpdatePreferredWhatsAppPhoneNumber}
+                          disabled={savingWhatsAppPreference}
+                          portal
+                          dropdownMinWidth={280}
+                          aria-label="WhatsApp de respuesta del contacto"
+                        />
+                        <p className={styles.mutedLine}>{whatsappPreferenceDescription}</p>
+                        <p className={styles.mutedLine}>
+                          <strong>{whatsappPreferenceRouteMode}:</strong> {whatsappPreferenceRouteDisplay}
+                        </p>
+                        {savingWhatsAppPreference ? <p className={styles.mutedLine}>Guardando cambio...</p> : null}
+                        {whatsappPreferenceError ? <p className={styles.errorText}>{whatsappPreferenceError}</p> : null}
+                      </dd>
+                    </div>
+                  ) : null}
                   <div>
                     <dt><Mail size={14} /> Correo</dt>
                     <dd>
