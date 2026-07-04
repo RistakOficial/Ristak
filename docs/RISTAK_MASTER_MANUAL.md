@@ -765,8 +765,21 @@ Alcance:
   confirma contra backend con el `paymentId` antes de marcarlo pagado. El
   checkout publico muestra fuera del SDK el desglose estimado por mes para las
   opciones configuradas, con texto condicional porque Rebill sigue decidiendo si
-  la tarjeta califica. Para imponer `installmentsSettings` de verdad habria que
-  usar la API hosted de Payment Links de Rebill, no el SDK instantaneo embebido.
+  la tarjeta califica. Cuando el link pide MSI, Ristak monta `rebill-checkout`
+  con `one-click-checkout=false` para forzar captura normal de tarjeta y permitir
+  que Rebill evalue mensualidades por BIN de tarjeta de credito; en contado se
+  conserva el valor default de one-click. Para imponer `installmentsSettings` de
+  verdad habria que usar la API hosted de Payment Links de Rebill, no el SDK
+  instantaneo embebido.
+- Tarjetas sandbox Rebill Mexico: la ayuda visible debe usar la tabla oficial
+  vigente del SDK: Visa debito `4111 1111 1111 1111`, Visa credito
+  `4242 4242 4242 4242`, Mastercard debito `5555 5555 5555 4444`,
+  Mastercard credito `5105 1051 0510 5100`, AmericanExpress credito
+  `3456 7800 0000 007`, `3411 1111 1111 111`, `3434 3434 3434 343`,
+  y Carnet credito `5062 5416 0000 5232`, `5064 0501 0000 0063`,
+  `5064 5100 0030 0020`; todas vencen `10/29`, usan CVV `123` salvo
+  AmericanExpress con `1234`. Para probar MSI hay que usar tarjetas de credito;
+  debito no debe prometer mensualidades.
 - Suscripciones Rebill (`instant-plan`) existen en la documentacion del proveedor,
   pero no estan cableadas como flujo de suscripciones de Ristak en esta
   superficie. No se deben presentar como listas hasta implementar UI/API,

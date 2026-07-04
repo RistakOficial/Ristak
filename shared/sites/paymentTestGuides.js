@@ -70,14 +70,19 @@ export const PAYMENT_TEST_GUIDES = {
   },
   rebill: {
     title: 'Ayuda para pruebas de Rebill',
-    description: 'En sandbox usa una tarjeta de Rebill, vencimiento 01/2099 y CVV 123. El resultado lo define el numero de tarjeta.',
+    description: 'En sandbox usa las tarjetas oficiales de Mexico de Rebill. Para probar meses sin intereses usa una tarjeta de credito; las de debito no muestran mensualidades.',
     emailHint: 'Correo: cualquier correo con formato valido. Rebill puede pedir datos extra segun pais y metodo.',
     cards: [
-      { kind: 'Credito', brand: 'Visa MX', number: '4539 6722 9047 6389', cvc: '123', expiry: '01/99', result: 'Pago aprobado' },
-      { kind: 'Credito', brand: 'Mastercard MX', number: '5555 0020 4444 0000', cvc: '123', expiry: '01/99', result: 'Pago aprobado' },
-      { kind: 'Credito', brand: 'Visa MX', number: '4485 5500 9000 0001', cvc: '123', expiry: '01/99', result: 'Rechazo generico' },
-      { kind: 'Credito', brand: 'Visa MX', number: '4244 4482 8478 2108', cvc: '123', expiry: '01/99', result: 'CVC invalido' },
-      { kind: 'Credito', brand: 'Mastercard MX', number: '5512 0022 3704 7986', cvc: '123', expiry: '01/99', result: 'Banco rechaza' }
+      { kind: 'Debito', brand: 'Visa MX', number: '4111 1111 1111 1111', cvc: '123', expiry: '10/29', result: 'Pago aprobado' },
+      { kind: 'Credito', brand: 'Visa MX', number: '4242 4242 4242 4242', cvc: '123', expiry: '10/29', result: 'Pago aprobado / MSI si Rebill lo habilita' },
+      { kind: 'Debito', brand: 'Mastercard MX', number: '5555 5555 5555 4444', cvc: '123', expiry: '10/29', result: 'Pago aprobado' },
+      { kind: 'Credito', brand: 'Mastercard MX', number: '5105 1051 0510 5100', cvc: '123', expiry: '10/29', result: 'Pago aprobado / MSI si Rebill lo habilita' },
+      { kind: 'Credito', brand: 'AmericanExpress MX', number: '3456 7800 0000 007', cvc: '1234', expiry: '10/29', result: 'Pago aprobado / MSI si Rebill lo habilita' },
+      { kind: 'Credito', brand: 'AmericanExpress MX', number: '3411 1111 1111 111', cvc: '1234', expiry: '10/29', result: 'Pago aprobado / MSI si Rebill lo habilita' },
+      { kind: 'Credito', brand: 'AmericanExpress MX', number: '3434 3434 3434 343', cvc: '1234', expiry: '10/29', result: 'Pago aprobado / MSI si Rebill lo habilita' },
+      { kind: 'Credito', brand: 'Carnet MX', number: '5062 5416 0000 5232', cvc: '123', expiry: '10/29', result: 'Pago aprobado / MSI si Rebill lo habilita' },
+      { kind: 'Credito', brand: 'Carnet MX', number: '5064 0501 0000 0063', cvc: '123', expiry: '10/29', result: 'Pago aprobado / MSI si Rebill lo habilita' },
+      { kind: 'Credito', brand: 'Carnet MX', number: '5064 5100 0030 0020', cvc: '123', expiry: '10/29', result: 'Pago aprobado / MSI si Rebill lo habilita' }
     ]
   }
 }

@@ -2582,6 +2582,7 @@ const RebillCheckoutForm: React.FC<{
     payment.title
   ])
   const customerInformation = payment.customerInformation || null
+  const oneClickCheckoutEnabled = payment.rebillInstallments?.enabled !== true
   const display = useMemo<RebillCheckoutDisplay>(() => ({
     checkoutSummary: false,
     successPage: false,
@@ -2646,13 +2647,13 @@ const RebillCheckoutForm: React.FC<{
     element.setAttribute('instant-product', instantProductJson)
     element.setAttribute('display', displayJson)
     element.setAttribute('css', REBILL_CHECKOUT_CSS)
-    element.setAttribute('one-click-checkout', 'true')
+    element.setAttribute('one-click-checkout', oneClickCheckoutEnabled ? 'true' : 'false')
     element.publicKey = payment.publicKey
     element.language = 'es'
     element.instantProduct = instantProduct
     element.display = display
     element.css = REBILL_CHECKOUT_CSS
-    element.oneClickCheckout = true
+    element.oneClickCheckout = oneClickCheckoutEnabled
 
     if (customerInformation) {
       element.setAttribute('customer-information', customerInformationJson)
@@ -2669,6 +2670,7 @@ const RebillCheckoutForm: React.FC<{
     instantProduct,
     instantProductJson,
     loadingCheckout,
+    oneClickCheckoutEnabled,
     payment.publicKey
   ])
 
@@ -2756,7 +2758,7 @@ const RebillCheckoutForm: React.FC<{
     language: 'es',
     display: displayJson,
     css: REBILL_CHECKOUT_CSS,
-    'one-click-checkout': 'true'
+    'one-click-checkout': oneClickCheckoutEnabled ? 'true' : 'false'
   }
   if (customerInformationJson) {
     checkoutProps['customer-information'] = customerInformationJson
