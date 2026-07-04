@@ -214,9 +214,9 @@ const REBILL_CARD_ONLY_EXCLUDED_PAYMENT_METHODS: RebillExcludedPaymentMethod[] =
 const REBILL_CHECKOUT_CSS = [
   '.rebill-submit-button { border-radius: 14px; font-weight: 700; }',
   '.rebill-checkout.full-width-layout { min-height: 0 !important; overflow: visible !important; }',
-  '.rebill-checkout.full-width-layout .left-section { width: 100% !important; justify-content: stretch !important; }',
-  '.rebill-checkout.full-width-layout .left-section-container { width: 100% !important; max-width: 100% !important; min-width: 0 !important; margin: 0 !important; }',
-  '.rebill-checkout.full-width-layout .checkout-form-section { gap: 20px !important; }',
+  '.rebill-checkout.full-width-layout .left-section { width: 100% !important; justify-content: stretch !important; background: transparent !important; }',
+  '.rebill-checkout.full-width-layout .left-section-container { width: 100% !important; max-width: 100% !important; min-width: 0 !important; margin: 0 !important; background: transparent !important; }',
+  '.rebill-checkout.full-width-layout .checkout-form-section { gap: 20px !important; background: transparent !important; }',
   '.rebill-checkout.full-width-layout .payment-button-container { margin-bottom: 0 !important; }',
   '.rebill-checkout.full-width-layout .country-dropdown, .rebill-checkout.full-width-layout .select-dropdown { max-width: 100% !important; }',
   '@media (max-width: 1024px) { .rebill-checkout.full-width-layout { padding: 0 !important; } }'
