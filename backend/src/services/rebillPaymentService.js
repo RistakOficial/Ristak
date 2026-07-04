@@ -1320,6 +1320,11 @@ function buildRebillCheckoutTransaction(row, metadata = {}) {
   }
 }
 
+function buildRebillCheckoutCustomer(sourceRow = {}) {
+  const customerId = cleanString(sourceRow.rebill_customer_id || sourceRow.customerId || sourceRow.customer_id, 180)
+  return customerId ? { id: customerId } : null
+}
+
 function normalizeRebillCheckoutResult(payload = {}, row = {}, savedSource = {}) {
   const result = payload?.result && typeof payload.result === 'object' ? payload.result : payload
   const paymentId = cleanString(result.paymentId || result.payment_id || result.id, 180)
@@ -1345,6 +1350,7 @@ function normalizeRebillCheckoutResult(payload = {}, row = {}, savedSource = {})
     approvedAt: payload.date || result.approvedAt || result.approved_at || result.createdAt || result.created_at,
     metadata: {
       ...parseJson(row.metadata_json, {}),
+      localPaymentId: row.id,
       publicPaymentId: row.public_payment_id
     },
     traceId: cleanString(payload.traceId || result.traceId || result.trace_id, 180),
@@ -1425,6 +1431,7 @@ async function chargeRebillPaymentRowWithSavedSource({
           amount,
           currency
         }, nextMetadata),
+        customer: buildRebillCheckoutCustomer(sourceRow),
         cardId: sourceRow.rebill_card_id
       }
     })
@@ -2627,7 +2634,9 @@ async function updatePaymentFromRebillPayment(rebillPayment = {}) {
 
   let row = await findPaymentByRebillPaymentId(rebillPaymentId)
   const metadata = rebillPayment.metadata && typeof rebillPayment.metadata === 'object' ? rebillPayment.metadata : {}
+  const localPaymentId = cleanString(metadata.localPaymentId || metadata.local_payment_id || metadata.paymentId || metadata.payment_id, 180)
   const publicPaymentId = cleanString(metadata.publicPaymentId || metadata.public_payment_id, 180)
+  if (!row && localPaymentId) row = await findPaymentById(localPaymentId)
   if (!row && publicPaymentId) row = await findPaymentByPublicId(publicPaymentId)
   if (!row) return null
 

@@ -7,6 +7,7 @@ import {
   confirmPublicRebillPayment,
   createRebillPaymentLink,
   createRebillPaymentPlan,
+  createRebillSavedCardPayment,
   getRebillPaymentConfig,
   mapRebillStatus,
   processDueRebillPaymentPlanCharges,
@@ -341,6 +342,126 @@ test('Rebill confirma pago público consultando el paymentId en backend antes de
   })
 })
 
+test('Rebill cobra tarjeta guardada enviando customer como objeto en checkout', async () => {
+  await initializeMasterKey()
+
+  await snapshotRebillConfig(async () => {
+    const calls = []
+    const publicKey = 'pk_test_saved_card_abcdef1234567890'
+    const secretKey = 'sk_test_saved_card_abcdef1234567890'
+    const suffix = uniqueSuffix('rebill_saved_card')
+    const contactId = `contact_${suffix}`
+    const customerId = `cus_${suffix}`
+    const cardId = `card_${suffix}`
+
+    setRebillFetchForTest(async (url, options = {}) => {
+      const parsed = new URL(url)
+      const method = options.method || 'GET'
+      const body = options.body ? JSON.parse(String(options.body)) : null
+      calls.push({
+        method,
+        path: parsed.pathname,
+        apiKey: options.headers?.['x-api-key'],
+        idempotencyKey: options.headers?.['x-idempotency-key'],
+        body
+      })
+
+      if (parsed.pathname === '/v3/organizations/me' && method === 'GET') {
+        return jsonTextResponse({ id: 'org_rebill_saved_card', name: 'Rebill Saved Card Org', status: 'active' })
+      }
+      if (parsed.pathname === '/v3/webhooks/search' && method === 'POST') {
+        return jsonTextResponse({ records: [] })
+      }
+      if (parsed.pathname === '/v3/webhooks' && method === 'POST') {
+        return jsonTextResponse({ id: 'wh_rebill_saved_card', url: body.url, events: body.events, active: true }, 201)
+      }
+      if (parsed.pathname === '/v3/checkout' && method === 'POST') {
+        assert.deepEqual(body.customer, { id: customerId })
+        assert.equal(body.cardId, cardId)
+        assert.equal(body.transaction.amount, 100)
+        assert.equal(body.transaction.currency, 'MXN')
+        assert.equal(body.transaction.quantity, 1)
+        return jsonTextResponse({
+          traceId: 'trace_rebill_saved_card_direct',
+          date: '2026-07-03T20:30:00.000Z',
+          result: {
+            paymentId: 'pay_rebill_saved_card_direct',
+            status: 'approved',
+            cardId,
+            cardLastFour: '6389',
+            customerId
+          }
+        }, 201)
+      }
+
+      return jsonTextResponse({ message: `Ruta Rebill no esperada: ${method} ${parsed.pathname}` }, 404)
+    })
+
+    try {
+      await cleanupContact(contactId)
+      await saveRebillPaymentConfig({
+        enabled: true,
+        mode: 'test',
+        publicKey,
+        secretKey
+      }, {
+        baseUrl: 'https://app.example.test'
+      })
+
+      await db.run(
+        `INSERT INTO contacts (id, full_name, email, phone, source, created_at, updated_at)
+         VALUES (?, ?, ?, ?, 'test', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+        [contactId, 'Cliente Saved Rebill', `${contactId}@example.test`, '+525563896389']
+      )
+      await db.run(
+        `INSERT INTO rebill_payment_sources (
+           id, contact_id, rebill_customer_id, rebill_card_id,
+           brand, last4, name, mode, is_default, created_at, updated_at
+         ) VALUES (?, ?, ?, ?, 'visa', '6389', 'Cliente Saved Rebill', 'test', 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+        [`rebill_source_${suffix}`, contactId, customerId, cardId]
+      )
+
+      const result = await createRebillSavedCardPayment({
+        contactId,
+        paymentSourceId: cardId,
+        amount: 100,
+        currency: 'MXN',
+        title: 'Pago directo Rebill',
+        description: 'Pago directo Rebill',
+        contactName: 'Cliente Saved Rebill',
+        email: `${contactId}@example.test`,
+        phone: '+525563896389'
+      }, {
+        mode: 'test'
+      })
+
+      assert.equal(result.payment.status, 'paid')
+      assert.equal(result.payment.rebillPaymentId, 'pay_rebill_saved_card_direct')
+
+      const row = await db.get(
+        `SELECT status, payment_method, rebill_payment_id, rebill_customer_id, rebill_card_id, paid_at
+           FROM payments
+          WHERE contact_id = ? AND payment_method = 'rebill_saved_card'
+          ORDER BY created_at DESC
+          LIMIT 1`,
+        [contactId]
+      )
+      assert.equal(row.status, 'paid')
+      assert.equal(row.rebill_payment_id, 'pay_rebill_saved_card_direct')
+      assert.equal(row.rebill_customer_id, customerId)
+      assert.equal(row.rebill_card_id, cardId)
+      assert.equal(row.paid_at, '2026-07-03T20:30:00.000Z')
+
+      const checkoutCall = calls.find((call) => call.path === '/v3/checkout' && call.method === 'POST')
+      assert.ok(checkoutCall)
+      assert.match(checkoutCall.idempotencyKey, /^ristak:rebill:/)
+      assert.equal(checkoutCall.apiKey, secretKey)
+    } finally {
+      await cleanupContact(contactId)
+    }
+  })
+})
+
 test('Rebill crea planes con reloj de Ristak, guarda tarjeta y cobra parcialidades con cardId', async () => {
   await initializeMasterKey()
 
@@ -404,6 +525,7 @@ test('Rebill crea planes con reloj de Ristak, guarda tarjeta y cobra parcialidad
         })
       }
       if (parsed.pathname === '/v3/checkout' && method === 'POST') {
+        assert.deepEqual(body.customer, { id: 'cus_rebill_plan_saved' })
         assert.equal(body.cardId, 'card_rebill_plan_saved')
         assert.equal(body.transaction.amount, 800)
         assert.equal(body.transaction.currency, 'MXN')
