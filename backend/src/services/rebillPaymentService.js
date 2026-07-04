@@ -2080,12 +2080,10 @@ export async function createRebillPaymentLink(input = {}, { baseUrl, mode = '' }
   )
 
   const row = await findPaymentById(id)
-  let hostedPaymentLink = null
   let mappedRow = row
   if (rebillInstallments?.enabled) {
     try {
       const ensured = await ensureRebillHostedPaymentLink(row, config, baseUrl)
-      hostedPaymentLink = ensured.hostedPaymentLink
       mappedRow = ensured.row || row
     } catch (error) {
       await db.run(
@@ -2107,7 +2105,7 @@ export async function createRebillPaymentLink(input = {}, { baseUrl, mode = '' }
 
   return {
     payment: mapPublicPayment(mappedRow, config, baseUrl, paymentSettings),
-    paymentUrl: hostedPaymentLink?.url || paymentUrl,
+    paymentUrl,
     publicPaymentId
   }
 }

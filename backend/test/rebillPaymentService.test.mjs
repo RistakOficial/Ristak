@@ -319,7 +319,7 @@ test('Rebill confirma pago público consultando el paymentId en backend antes de
       assert.match(publicPaymentId, /^rstk_pay_[A-Za-z0-9]{20}$/)
       assert.equal(link.payment.provider, 'rebill')
       assert.equal(link.payment.publicKey, publicKey)
-      assert.equal(link.paymentUrl, 'https://pay.rebill.com/acme/pl_rebill_service_test')
+      assert.equal(link.paymentUrl, `https://app.example.test/pay/${publicPaymentId}`)
       assert.equal(link.payment.hostedPaymentUrl, 'https://pay.rebill.com/acme/pl_rebill_service_test')
       assert.equal(link.payment.rebillHostedPaymentLink.id, 'pl_rebill_service_test')
       assert.equal(link.payment.instantProduct.currency, 'MXN')

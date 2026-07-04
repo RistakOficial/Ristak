@@ -787,7 +787,9 @@ Alcance:
   checkout embebido con `instant-product`, tarjeta unicamente,
   `display.discountCode=false`, `display.logo=false` y `one-click-checkout=false`
   cuando MSI esta activo. La integracion hosted de Rebill permanece en el backend
-  como alternativa, pero el frontend no redirige mientras ese flag siga apagado.
+  como alternativa, pero el frontend no redirige y la respuesta de creacion de link
+  sigue entregando la URL local `/pay/:publicPaymentId` mientras ese flag siga
+  apagado.
   En sandbox, Rebill muestra la lista inicial de mensualidades configuradas, pero
   al validar el BIN de la tarjeta puede bloquear el selector si el emisor/pais no
   devuelve MSI; para Mexico, probar con tarjetas que el endpoint de Rebill marque
