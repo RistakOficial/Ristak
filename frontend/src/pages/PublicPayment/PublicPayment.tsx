@@ -29,7 +29,9 @@ import {
 } from '@/services/clipPaymentsService'
 import {
   rebillPaymentsService,
-  type PublicRebillPayment
+  type PublicRebillPayment,
+  type RebillCustomerInformation,
+  type RebillInstantProduct
 } from '@/services/rebillPaymentsService'
 import {
   stripePaymentsService,
@@ -107,6 +109,16 @@ type ClipSdkInstance = {
 type ClipSdkConstructor = new (apiKey: string) => ClipSdkInstance
 type RebillCheckoutElement = HTMLElement & {
   submit?: () => Promise<void>
+  publicKey?: string
+  language?: 'en' | 'es' | 'pt'
+  instantProduct?: RebillInstantProduct
+  customerInformation?: RebillCustomerInformation
+  display?: RebillCheckoutDisplay
+  oneClickCheckout?: boolean
+}
+type RebillCheckoutDisplay = {
+  successPage: boolean
+  sandboxMode: boolean
 }
 type SuccessDetailRow = {
   label: string
@@ -862,6 +874,24 @@ function normalizeRebillStatusMessage(status?: string, statusDetail?: unknown) {
 function normalizeRebillErrorMessage(error: unknown) {
   const message = String((error as any)?.message || error || '').trim()
   return message || 'No se pudo completar el pago con Rebill. Revisa los datos e intenta otra vez.'
+}
+
+function extractRebillPaymentId(event: Event) {
+  const detail = (event as CustomEvent<any>).detail || {}
+  const data = detail.data || detail
+  const result = data.result || detail.result || {}
+  const candidates = [
+    result.paymentId,
+    result.payment_id,
+    data.paymentId,
+    data.payment_id,
+    data.id,
+    detail.paymentId,
+    detail.payment_id
+  ]
+  return candidates
+    .map((candidate) => String(candidate || '').trim())
+    .find(Boolean) || ''
 }
 
 function normalizeMercadoPagoCardErrorMessage(error: unknown) {
@@ -2417,6 +2447,34 @@ const RebillCheckoutForm: React.FC<{
   const [messageKind, setMessageKind] = useState<'info' | 'success' | 'error'>('info')
   const showSecureNotice = payment.settings?.checkout?.showSecureBadge !== false
   const isTestMode = payment.paymentMode === 'test'
+  const instantProduct = useMemo<RebillInstantProduct>(() => payment.instantProduct || {
+    name: [{ language: 'es', text: payment.title || 'Pago Ristak' }],
+    description: payment.description ? [{ language: 'es', text: payment.description }] : [],
+    amount: payment.amount,
+    currency: payment.currency,
+    metadata: {
+      publicPaymentId: payment.publicPaymentId,
+      provider: 'rebill'
+    }
+  }, [
+    payment.amount,
+    payment.currency,
+    payment.description,
+    payment.instantProduct,
+    payment.publicPaymentId,
+    payment.title
+  ])
+  const customerInformation = payment.customerInformation || null
+  const display = useMemo<RebillCheckoutDisplay>(() => ({
+    successPage: false,
+    sandboxMode: isTestMode
+  }), [isTestMode])
+  const instantProductJson = useMemo(() => JSON.stringify(instantProduct), [instantProduct])
+  const customerInformationJson = useMemo(
+    () => customerInformation ? JSON.stringify(customerInformation) : '',
+    [customerInformation]
+  )
+  const displayJson = useMemo(() => JSON.stringify(display), [display])
 
   useEffect(() => {
     onPaidRef.current = onPaid
@@ -2451,6 +2509,40 @@ const RebillCheckoutForm: React.FC<{
   }, [payment.publicKey])
 
   useEffect(() => {
+    if (loadingCheckout) return
+    const element = checkoutRef.current
+    if (!element || !payment.publicKey) return
+
+    element.setAttribute('public-key', payment.publicKey)
+    element.setAttribute('language', 'es')
+    element.setAttribute('instant-product', instantProductJson)
+    element.setAttribute('display', displayJson)
+    element.setAttribute('one-click-checkout', 'true')
+    element.publicKey = payment.publicKey
+    element.language = 'es'
+    element.instantProduct = instantProduct
+    element.display = display
+    element.oneClickCheckout = true
+
+    if (customerInformation) {
+      element.setAttribute('customer-information', customerInformationJson)
+      element.customerInformation = customerInformation
+    } else {
+      element.removeAttribute('customer-information')
+      element.customerInformation = undefined
+    }
+  }, [
+    customerInformation,
+    customerInformationJson,
+    display,
+    displayJson,
+    instantProduct,
+    instantProductJson,
+    loadingCheckout,
+    payment.publicKey
+  ])
+
+  useEffect(() => {
     if (loadingCheckout) return undefined
     const element = checkoutRef.current
     if (!element) return undefined
@@ -2460,9 +2552,7 @@ const RebillCheckoutForm: React.FC<{
     }
 
     const handleSuccess = async (event: Event) => {
-      const detail = (event as CustomEvent<any>).detail || {}
-      const result = detail?.data?.result || detail?.result || {}
-      const rebillPaymentId = String(result.paymentId || result.payment_id || '').trim()
+      const rebillPaymentId = extractRebillPaymentId(event)
 
       if (!rebillPaymentId) {
         setMessageKind('error')
@@ -2526,42 +2616,29 @@ const RebillCheckoutForm: React.FC<{
     messageKind === 'success' ? styles.messageSuccess : '',
     messageKind === 'error' ? styles.messageError : ''
   ].filter(Boolean).join(' ')
-  const instantProduct = payment.instantProduct || {
-    name: [{ language: 'es' as const, text: payment.title || 'Pago Ristak' }],
-    description: payment.description ? [{ language: 'es' as const, text: payment.description }] : [],
-    amount: payment.amount,
-    currency: payment.currency,
-    metadata: {
-      publicPaymentId: payment.publicPaymentId,
-      provider: 'rebill'
-    }
-  }
-  const display = {
-    successPage: false,
-    sandboxMode: isTestMode
-  }
   const checkoutProps: Record<string, unknown> = {
+    key: payment.publicPaymentId,
     ref: checkoutRef,
     'public-key': payment.publicKey || '',
-    'instant-product': JSON.stringify(instantProduct),
+    'instant-product': instantProductJson,
     language: 'es',
-    display: JSON.stringify(display),
+    display: displayJson,
     'one-click-checkout': 'true'
   }
-  if (payment.customerInformation) {
-    checkoutProps['customer-information'] = JSON.stringify(payment.customerInformation)
+  if (customerInformationJson) {
+    checkoutProps['customer-information'] = customerInformationJson
   }
 
   return (
-    <div className={styles.stripeBox}>
-      <div className={styles.clipCardShell}>
+    <div className={styles.rebillBox}>
+      <div className={styles.rebillCheckoutShell}>
         {loadingCheckout && (
           <div className={styles.brickLoading}>
             <Loader2 size={18} className={styles.spin} />
             <span>Cargando checkout seguro</span>
           </div>
         )}
-        <div className={styles.clipCardFrame}>
+        <div className={styles.rebillCheckoutHost}>
           {React.createElement('rebill-checkout', checkoutProps)}
         </div>
       </div>
@@ -2569,7 +2646,7 @@ const RebillCheckoutForm: React.FC<{
       {showSecureNotice && (
         <p className={styles.cardAuthorizationNotice}>
           <ShieldCheck size={16} />
-          <span>Rebill captura los datos sensibles en su checkout seguro. Ristak confirma el pago con la API antes de marcarlo como cobrado.</span>
+          <span>Rebill protege los datos de la tarjeta. Ristak confirma el resultado antes de marcar el pago como cobrado.</span>
         </p>
       )}
 
@@ -3102,7 +3179,7 @@ export const PublicPayment: React.FC = () => {
             />
           </section>
         ) : (
-        <section className={styles.checkoutLayout}>
+        <section className={[styles.checkoutLayout, isRebillPayment ? styles.rebillCheckoutLayout : ''].filter(Boolean).join(' ')}>
           <section className={styles.summaryPane} aria-label="Resumen del pago">
             <div className={styles.summaryIntro}>
               <span className={styles.eyebrow}>{isPaid ? 'Comprobante listo' : hasPlanSummary ? 'Plan de pagos' : 'Checkout seguro'}</span>
@@ -3264,7 +3341,7 @@ export const PublicPayment: React.FC = () => {
             )}
           </section>
 
-          <section className={styles.payPanel} aria-label="Formulario de pago">
+          <section className={[styles.payPanel, isRebillPayment ? styles.rebillPayPanel : ''].filter(Boolean).join(' ')} aria-label="Formulario de pago">
             <div className={styles.payHeader}>
               <div className={styles.payHeaderTop}>
                 <PaymentPlatformLogo platform={providerLogo} size="lg" decorative />
