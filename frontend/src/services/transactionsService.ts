@@ -13,6 +13,11 @@ export interface Transaction {
   status: 'draft' | 'sent' | 'paid' | 'pending' | 'overdue' | 'partial' | 'void' | 'refunded' | 'failed' | 'deleted'
   paymentMode?: 'live' | 'test'
   paymentProvider?: 'manual' | 'highlevel' | 'stripe' | 'conekta' | 'mercadopago' | 'clip' | 'rebill' | 'gigstack' | string
+  paymentMethodCategory?: string
+  paymentMethodCategoryId?: string
+  paymentType?: string
+  paymentChannel?: string
+  paymentChannelId?: string
   reference?: string
   title?: string
   description?: string

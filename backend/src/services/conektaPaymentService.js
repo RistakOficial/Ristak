@@ -1894,7 +1894,30 @@ async function updatePaymentFromOrder(order, row, { paymentSourceId = '' } = {})
   const paidAt = nextStatus === 'paid' ? new Date().toISOString() : null
   const chargeId = cleanString(charge?.id)
   const orderId = cleanString(order?.id)
-  const sourceId = cleanString(paymentSourceId || charge?.payment_method?.payment_source_id)
+  const chargePaymentMethod = charge?.payment_method && typeof charge.payment_method === 'object'
+    ? charge.payment_method
+    : {}
+  const sourceId = cleanString(paymentSourceId || chargePaymentMethod.payment_source_id)
+  const monthlyInstallments = Math.trunc(Number(
+    chargePaymentMethod.monthly_installments ||
+    chargePaymentMethod.monthlyInstallments ||
+    order?.monthly_installments ||
+    0
+  ))
+  const currentMetadata = parseJson(row.metadata_json, {})
+  const metadata = {
+    ...currentMetadata,
+    conekta: {
+      ...(currentMetadata.conekta && typeof currentMetadata.conekta === 'object'
+        ? currentMetadata.conekta
+        : {}),
+      orderId,
+      chargeId,
+      paymentMethodType: cleanString(chargePaymentMethod.type || 'card'),
+      paymentSourceId: sourceId,
+      monthlyInstallments: monthlyInstallments > 1 ? monthlyInstallments : null
+    }
+  }
 
   await db.run(
     `UPDATE payments
@@ -1906,6 +1929,7 @@ async function updatePaymentFromOrder(order, row, { paymentSourceId = '' } = {})
          conekta_payment_source_id = COALESCE(?, conekta_payment_source_id),
          paid_at = COALESCE(?, paid_at),
          date = COALESCE(?, date),
+         metadata_json = ?,
          updated_at = CURRENT_TIMESTAMP
      WHERE id = ?`,
     [
@@ -1916,6 +1940,7 @@ async function updatePaymentFromOrder(order, row, { paymentSourceId = '' } = {})
       sourceId || null,
       paidAt,
       paidAt,
+      JSON.stringify(metadata),
       row.id
     ]
   )

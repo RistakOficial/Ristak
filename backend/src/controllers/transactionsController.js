@@ -31,6 +31,7 @@ import { getAccountCurrency, normalizePhoneForAccount } from '../utils/accountLo
 import { buildContactSearchClause, containsPattern, normalizePhoneDigits } from '../utils/searchText.js'
 import { createRistakPaymentEntityId } from '../utils/idGenerator.js'
 import { timestampSortExpression } from '../utils/sqlTimestampSort.js'
+import { buildPaymentDisplay } from '../utils/paymentDisplay.js'
 
 const SUCCESS_PAYMENT_STATUSES = new Set(['succeeded', 'paid', 'completed', 'complete', 'fulfilled', 'success'])
 const CLOSED_PAYMENT_STATUSES = new Set(['paid', 'succeeded', 'completed', 'complete', 'fulfilled', 'success', 'refunded', 'void', 'deleted', 'failed'])
@@ -462,6 +463,7 @@ const mapTransactionRow = (t, baseUrl = '') => ({
   status: normalizeStatus(t.status),
   paymentMode: t.payment_mode || 'live',
   paymentProvider: t.payment_provider || (t.ghl_invoice_id ? 'highlevel' : 'manual'),
+  ...buildPaymentDisplay(t),
   reference: t.reference,
   title: t.title || t.description || 'Pago',
   description: t.description,
@@ -622,6 +624,7 @@ const getTransactionByIdForResponse = async (id, baseUrl = '') => {
       p.rebill_customer_id,
       p.rebill_card_id,
       p.paid_at,
+      p.metadata_json,
       c.full_name as contact_name,
       c.email as contact_email,
       c.phone as contact_phone
@@ -994,6 +997,7 @@ export const getTransactions = async (req, res) => {
         p.rebill_customer_id,
         p.rebill_card_id,
         p.paid_at,
+        p.metadata_json,
         c.full_name as contact_name,
         c.email as contact_email,
         c.phone as contact_phone

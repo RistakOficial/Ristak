@@ -17,6 +17,7 @@ import {
 } from '../services/manualBusinessExpensesService.js'
 import { nonTestPaymentCondition } from '../utils/paymentMode.js'
 import { timestampSortExpression } from '../utils/sqlTimestampSort.js'
+import { buildPaymentDisplay } from '../utils/paymentDisplay.js'
 // (ACL-002) Excluir contactos ocultos en la lista de transacciones de reportes (LEFT JOIN expone PII).
 import { getHiddenContactFilters, buildHiddenContactsCondition } from '../utils/hiddenContactsFilter.js'
 
@@ -387,9 +388,12 @@ export const getTransactionsList = async (req, res) => {
         c.email as contact_email,
         c.phone as contact_phone,
         p.amount,
+        p.currency,
         p.status,
         p.date,
+        p.payment_provider,
         p.payment_method,
+        p.metadata_json,
         p.description
       FROM payments p
       LEFT JOIN contacts c ON c.id = p.contact_id
@@ -398,7 +402,19 @@ export const getTransactionsList = async (req, res) => {
       LIMIT ? OFFSET ?
     `
 
-    const transactions = await db.all(query, [...params, limitNumber, offset])
+    const rows = await db.all(query, [...params, limitNumber, offset])
+    const transactions = rows.map((row) => {
+      const display = buildPaymentDisplay(row)
+      const { metadata_json: _metadataJson, ...publicRow } = row
+      return {
+        ...publicRow,
+        payment_method_category: display.paymentMethodCategory,
+        payment_method_category_id: display.paymentMethodCategoryId,
+        payment_type: display.paymentType,
+        payment_channel: display.paymentChannel,
+        payment_channel_id: display.paymentChannelId
+      }
+    })
 
     logger.info(`Lista de transacciones generada: ${transactions.length} de ${total} registros (página ${pageNumber}, límite ${limitNumber})`)
 

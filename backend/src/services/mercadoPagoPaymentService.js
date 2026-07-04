@@ -2969,6 +2969,7 @@ async function updatePaymentFromMercadoPagoPayment(mpPayment) {
       statusDetail: cleanString(mpPayment.status_detail),
       paymentMethodId: cleanString(mpPayment.payment_method_id),
       paymentTypeId: cleanString(mpPayment.payment_type_id),
+      installments: Number(mpPayment.installments || 0) > 1 ? Math.trunc(Number(mpPayment.installments)) : null,
       preferenceId: cleanString(mpPayment.preference_id)
     }
   }

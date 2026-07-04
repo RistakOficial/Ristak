@@ -15,6 +15,7 @@ import {
   DollarSign,
   CheckCircle,
   Receipt,
+  Landmark,
   RotateCcw,
   MoreVertical,
   Clock,
@@ -1966,7 +1967,7 @@ export const Transactions: React.FC = () => {
   const handleRefundTransaction = async (transaction: Transaction) => {
     showConfirm(
       'Reembolsar pago',
-      `¿Confirmas el reembolso de ${formatCurrency(transaction.amount)}? El pago quedará como reembolsado y ya no contará al contacto como cliente.`,
+      `¿Confirmas el reembolso de ${formatCurrency(transaction.amount, transaction.currency || accountCurrency)}? El pago quedará como reembolsado y ya no contará al contacto como cliente.`,
       async () => {
         try {
           await transactionsService.refundTransaction(transaction.id)
@@ -1987,7 +1988,7 @@ export const Transactions: React.FC = () => {
   const handleMarkAsPaid = async (transaction: Transaction) => {
     showConfirm(
       'Marcar como pagado',
-      `¿Confirmas que el pago de ${formatCurrency(transaction.amount)} fue recibido?`,
+      `¿Confirmas que el pago de ${formatCurrency(transaction.amount, transaction.currency || accountCurrency)} fue recibido?`,
       async () => {
         try {
           await transactionsService.recordPayment(transaction.id, {
@@ -2126,7 +2127,7 @@ export const Transactions: React.FC = () => {
   }
 
   const getPaymentProviderLogo = (transaction: Transaction): PaymentPlatformLogoId | null => {
-    const provider = String(transaction.paymentProvider || '').toLowerCase()
+    const provider = String(transaction.paymentChannelId || transaction.paymentProvider || '').toLowerCase()
     const method = String(transaction.method || '').toLowerCase()
 
     if (provider === 'mercadopago' || method.startsWith('mercadopago')) return 'mercadopago'
@@ -2142,13 +2143,18 @@ export const Transactions: React.FC = () => {
     const normalized = String(method || '').toLowerCase()
 
     switch(normalized) {
+      case 'credit_card':
+      case 'debit_card':
+      case 'prepaid_card':
       case 'card': return <CreditCard size={16} />
-      case 'mercadopago':
-      case 'mercadopago_checkout': return <CreditCard size={16} />
+      case 'spei':
       case 'bank_transfer':
-      case 'transfer': return <RefreshCw size={16} />
+      case 'transfer': return <Landmark size={16} />
       case 'cash': return <Banknote size={16} />
+      case 'deposit': return <Banknote size={16} />
       case 'check': return <Receipt size={16} />
+      case 'wallet':
+      case 'account_money':
       case 'paypal': return <DollarSign size={16} />
       default: return <DollarSign size={16} />
     }
@@ -2158,38 +2164,72 @@ export const Transactions: React.FC = () => {
     const normalized = String(method || '').toLowerCase()
 
     switch(normalized) {
-      case 'card': return 'Tarjeta'
-      case 'direct_card': return 'Tarjeta'
+      case 'credit_card': return 'Tarjeta de crédito'
+      case 'debit_card': return 'Tarjeta de débito'
+      case 'prepaid_card': return 'Tarjeta prepagada'
+      case 'card':
+      case 'direct_card':
+      case 'stripe':
+      case 'stripe_saved_card':
+      case 'stripe_scheduled_card':
+      case 'stripe_subscription':
+      case 'conekta':
+      case 'conekta_auto':
+      case 'conekta_saved_card':
+      case 'conekta_scheduled_card':
+      case 'conekta_subscription':
+      case 'clip':
+      case 'clip_card':
+      case 'rebill':
+      case 'rebill_checkout':
+      case 'rebill_saved_card':
+      case 'rebill_scheduled_card':
+        return 'Tarjeta'
       case 'saved_card': return 'Tarjeta guardada'
-      case 'payment_link': return 'Link de pago'
-      case 'stripe': return 'Stripe'
-      case 'stripe_saved_card': return 'Tarjeta guardada'
+      case 'payment_link':
       case 'stripe_link':
-      case 'stripe_payment_link': return 'Link de Stripe'
-      case 'stripe_subscription': return 'Stripe Subscription'
-      case 'conekta': return 'Conekta'
-      case 'conekta_saved_card': return 'Conekta domiciliado'
-      case 'conekta_subscription': return 'Conekta Subscription'
-      case 'mercadopago':
-      case 'mercadopago_checkout': return 'Mercado Pago'
-      case 'mercadopago_subscription': return 'Suscripción Mercado Pago'
-      case 'clip': return 'CLIP'
-      case 'clip_card': return 'CLIP Card'
+      case 'stripe_payment_link':
       case 'clip_link':
-      case 'clip_payment_link': return 'Link de CLIP'
-      case 'rebill': return 'Rebill'
-      case 'rebill_checkout': return 'Rebill Checkout'
-      case 'rebill_saved_card': return 'Rebill domiciliado'
+      case 'clip_payment_link':
+      case 'mercadopago':
+      case 'mercadopago_checkout':
+        return 'Pendiente de selección'
+      case 'mercadopago_subscription': return 'Método no especificado'
       case 'bank_transfer':
-      case 'transfer': return 'Transferencia'
+      case 'transfer': return 'Transferencia bancaria'
+      case 'spei': return 'SPEI'
       case 'cash': return 'Efectivo'
+      case 'deposit': return 'Depósito'
       case 'check': return 'Cheque'
       case 'paypal': return 'PayPal'
+      case 'wallet': return 'Billetera digital'
+      case 'account_money': return 'Saldo Mercado Pago'
+      case 'pending_selection': return 'Pendiente de selección'
+      case 'unspecified': return 'Método no especificado'
       case 'other': return 'Otro'
       default: return normalized
         ? normalized.replace(/[_-]+/g, ' ').replace(/\b\w/g, (match) => match.toUpperCase())
         : 'Sin método'
     }
+  }
+
+  const getPaymentMethodCategoryLabel = (transaction: Transaction) => (
+    transaction.paymentMethodCategory || getMethodLabel(transaction.paymentMethodCategoryId || transaction.method)
+  )
+
+  const getPaymentTypeLabel = (transaction: Transaction) => transaction.paymentType || 'Pago único'
+
+  const getPaymentChannelLabel = (transaction: Transaction) => {
+    if (transaction.paymentChannel) return transaction.paymentChannel
+    const provider = String(transaction.paymentProvider || '').toLowerCase()
+    if (provider === 'stripe') return 'Stripe'
+    if (provider === 'conekta') return 'Conekta'
+    if (provider === 'mercadopago') return 'Mercado Pago'
+    if (provider === 'clip') return 'CLIP'
+    if (provider === 'rebill') return 'Rebill'
+    if (provider === 'gigstack') return 'Gigstack'
+    if (provider === 'highlevel' || provider === 'ghl' || provider === 'gohighlevel') return 'HighLevel'
+    return 'Ristak'
   }
 
   const getStatusBadge = (status: string) => {
@@ -2225,7 +2265,7 @@ export const Transactions: React.FC = () => {
     {
       key: 'amount',
       header: 'Monto',
-      render: (value) => formatCurrency(value),
+      render: (value, item) => formatCurrency(value, item.currency || accountCurrency),
       sortable: true
     },
     {
@@ -2238,15 +2278,44 @@ export const Transactions: React.FC = () => {
       key: 'method',
       header: 'Método de pago',
       render: (value, item) => {
-        const providerLogo = getPaymentProviderLogo(item)
+        const methodCategoryId = item.paymentMethodCategoryId || value
+        const methodLabel = getPaymentMethodCategoryLabel(item)
 
         return (
           <div className={styles.methodCell}>
-            {providerLogo ? <PaymentPlatformLogo platform={providerLogo} size="sm" decorative /> : getMethodIcon(value)}
-            <span>{getMethodLabel(value)}</span>
+            {getMethodIcon(methodCategoryId)}
+            <span>{methodLabel}</span>
           </div>
         )
       },
+      searchValue: (_value, item) => [item.method, item.paymentMethodCategory, item.paymentMethodCategoryId],
+      sortValue: (_value, item) => getPaymentMethodCategoryLabel(item),
+      sortable: true
+    },
+    {
+      key: 'paymentType',
+      header: 'Tipo de pago',
+      render: (_value, item) => getPaymentTypeLabel(item),
+      searchValue: (_value, item) => getPaymentTypeLabel(item),
+      sortValue: (_value, item) => getPaymentTypeLabel(item),
+      sortable: true
+    },
+    {
+      key: 'paymentChannel',
+      header: 'Canal',
+      render: (_value, item) => {
+        const providerLogo = getPaymentProviderLogo(item)
+        const channelLabel = getPaymentChannelLabel(item)
+
+        return (
+          <div className={styles.methodCell}>
+            {providerLogo ? <PaymentPlatformLogo platform={providerLogo} size="sm" decorative /> : <Receipt size={16} />}
+            <span>{channelLabel}</span>
+          </div>
+        )
+      },
+      searchValue: (_value, item) => [getPaymentChannelLabel(item), item.paymentProvider, item.paymentChannelId],
+      sortValue: (_value, item) => getPaymentChannelLabel(item),
       sortable: true
     },
     {
@@ -2676,6 +2745,7 @@ export const Transactions: React.FC = () => {
     const methodOptions = getPlanMethodOptions(options.provider)
     const defaultMethod = getDefaultPlanMethod(options.provider)
     const paymentLabel = getPlanPaymentLabel(paymentNumber, totalPayments)
+    const paymentPlanCurrency = paymentPlanModal.plan?.currency || accountCurrency
 
     return (
       <div
@@ -2690,7 +2760,7 @@ export const Transactions: React.FC = () => {
           <div className={styles.formGroup}>
             <label>Monto</label>
             {locked ? (
-              <div className={styles.stripePlanReadonlyValue}>{formatCurrency(Number(draft.amount || 0))}</div>
+              <div className={styles.stripePlanReadonlyValue}>{formatCurrency(Number(draft.amount || 0), paymentPlanCurrency)}</div>
             ) : (
               <div className={styles.inputWithIcon}>
                 <span className={styles.inputIcon}>$</span>
@@ -2760,6 +2830,7 @@ export const Transactions: React.FC = () => {
     const provider = getLocalCheckoutPlanProvider(plan)
     const isCardSetupProvider = provider === 'stripe' || provider === 'conekta'
     const schedule = getStripePlanSchedulePayload(plan)
+    const planCurrency = plan.currency || accountCurrency
     const cardSetupRequired = Boolean(schedule.cardSetupRequired)
     const cardSetupAmount = Number(schedule.cardSetupAmount || 0)
     const cardSetupStatus = String(schedule.cardSetupStatus || '').toLowerCase()
@@ -2787,7 +2858,7 @@ export const Transactions: React.FC = () => {
               <div className={`${styles.stripePlanPaymentFields} ${styles.stripePlanPaymentFieldsCompact}`}>
                 <div className={styles.formGroup}>
                   <label>Monto</label>
-                  <div className={styles.stripePlanReadonlyValue}>{cardSetupAmount > 0 ? formatCurrency(cardSetupAmount) : 'Autorización'}</div>
+                  <div className={styles.stripePlanReadonlyValue}>{cardSetupAmount > 0 ? formatCurrency(cardSetupAmount, planCurrency) : 'Autorización'}</div>
                 </div>
                 <div className={styles.formGroup}>
                   <label>Forma de cobro</label>
@@ -2863,7 +2934,7 @@ export const Transactions: React.FC = () => {
     {
       key: 'total',
       header: 'Monto',
-      render: (value) => formatCurrency(Number(value || 0)),
+      render: (value, item) => formatCurrency(Number(value || 0), item.currency || accountCurrency),
       sortable: true
     },
     {
@@ -3186,7 +3257,7 @@ export const Transactions: React.FC = () => {
           <div className={styles.kpiRow}>
             <KpiCard
               title="Ingresos Netos"
-              value={formatCurrency(totals.ingresos)}
+              value={formatCurrency(totals.ingresos, accountCurrency)}
               delta={totals.ingresosChange}
               deltaLabel="vs periodo anterior"
               loading={transactionsRefreshing}
@@ -3202,7 +3273,7 @@ export const Transactions: React.FC = () => {
             />
             <KpiCard
               title="Ticket Promedio"
-              value={formatCurrency(totals.ticketPromedio)}
+              value={formatCurrency(totals.ticketPromedio, accountCurrency)}
               delta={totals.ticketChange}
               deltaLabel="vs periodo anterior"
               loading={transactionsRefreshing}
@@ -3811,11 +3882,11 @@ export const Transactions: React.FC = () => {
                 <div className={styles.planSummaryGrid}>
                   <div className={styles.planSummaryItem}>
                     <span>Total del plan</span>
-                    <strong>{formatCurrency(selectedPaymentPlanDisplayTotal)}</strong>
+                    <strong>{formatCurrency(selectedPaymentPlanDisplayTotal, paymentPlanModal.plan.currency || accountCurrency)}</strong>
                   </div>
                   <div className={styles.planSummaryItem}>
                     <span>Saldo pendiente</span>
-                    <strong>{formatCurrency(selectedPaymentPlanRemainingTotal)}</strong>
+                    <strong>{formatCurrency(selectedPaymentPlanRemainingTotal, paymentPlanModal.plan.currency || accountCurrency)}</strong>
                   </div>
                   <div className={styles.planSummaryItem}>
                     <span>Contacto</span>
@@ -3944,7 +4015,7 @@ export const Transactions: React.FC = () => {
               {stripeCardSetupLinkModal.amount > 0 && (
                 <div className={styles.cardSetupLinkSummary}>
                   <span>Domiciliación</span>
-                  <strong>{formatCurrency(stripeCardSetupLinkModal.amount)}</strong>
+                  <strong>{formatCurrency(stripeCardSetupLinkModal.amount, accountCurrency)}</strong>
                 </div>
               )}
               <div className={styles.cardSetupLinkBox}>

@@ -501,6 +501,56 @@ function getStripeIntentAvailablePlans(intent, stripeInstallments = null) {
   )
 }
 
+function buildStripePaymentMetadataPatch(intent = {}, savedMethod = null) {
+  const paymentMethodId = extractStripeObjectId(intent?.payment_method)
+  const installmentPlan = intent?.payment_method_options?.card?.installments?.plan
+  const cleanPlanCount = Math.trunc(Number(installmentPlan?.count || 0))
+  const paymentMethodType = cleanString(
+    intent?.payment_method?.type ||
+    (intent?.payment_method_types?.includes?.('card') ? 'card' : intent?.payment_method_types?.[0])
+  )
+  const patch = {
+    paymentIntentId: cleanString(intent?.id),
+    paymentMethodId,
+    paymentMethodType
+  }
+
+  if (cleanPlanCount > 1) {
+    patch.installments = {
+      plan: {
+        type: cleanString(installmentPlan?.type || 'fixed_count'),
+        interval: cleanString(installmentPlan?.interval || 'month'),
+        count: cleanPlanCount
+      }
+    }
+  }
+
+  if (savedMethod) {
+    patch.paymentMethodId = cleanString(savedMethod.stripe_payment_method_id || paymentMethodId)
+    patch.paymentMethodType = 'card'
+    patch.cardBrand = cleanString(savedMethod.brand)
+    patch.cardLast4 = cleanString(savedMethod.last4)
+    patch.cardFunding = cleanString(savedMethod.funding)
+    patch.cardCountry = cleanString(savedMethod.country)
+  }
+
+  Object.keys(patch).forEach((key) => {
+    if (patch[key] === undefined || patch[key] === null || patch[key] === '') delete patch[key]
+  })
+
+  return patch
+}
+
+function mergeStripePaymentMetadata(metadata = {}, intent = {}, savedMethod = null) {
+  return {
+    ...metadata,
+    stripe: {
+      ...(metadata.stripe && typeof metadata.stripe === 'object' ? metadata.stripe : {}),
+      ...buildStripePaymentMetadataPatch(intent, savedMethod)
+    }
+  }
+}
+
 function extractStripeObjectId(value) {
   if (!value) return ''
   if (typeof value === 'string') return cleanString(value)
@@ -1927,6 +1977,8 @@ async function updatePaymentFromIntent(intent, stripeContext = null) {
   const latestChargeId = typeof intent.latest_charge === 'string'
     ? intent.latest_charge
     : intent.latest_charge?.id || null
+  const currentMetadata = parseJson(existingRow?.metadata_json, {})
+  const nextMetadata = mergeStripePaymentMetadata(currentMetadata, intent)
 
   await db.run(
     `UPDATE payments
@@ -1944,6 +1996,7 @@ async function updatePaymentFromIntent(intent, stripeContext = null) {
          stripe_charge_id = COALESCE(?, stripe_charge_id),
          paid_at = COALESCE(${timestampPlaceholder()}, paid_at),
          date = COALESCE(${timestampPlaceholder()}, date),
+         metadata_json = ?,
          updated_at = CURRENT_TIMESTAMP
      WHERE ${whereColumn} = ?`,
     [
@@ -1955,6 +2008,7 @@ async function updatePaymentFromIntent(intent, stripeContext = null) {
       latestChargeId,
       paidAt,
       paidAt,
+      JSON.stringify(nextMetadata),
       whereValue
     ]
   )
@@ -1990,6 +2044,17 @@ async function updatePaymentFromIntent(intent, stripeContext = null) {
         context.config,
         context.requestOptions
       )
+      if (savedMethod?.stripe_payment_method_id) {
+        const metadataWithCard = mergeStripePaymentMetadata(parseJson(row.metadata_json, nextMetadata), intent, savedMethod)
+        await db.run(
+          `UPDATE payments
+           SET metadata_json = ?,
+               updated_at = CURRENT_TIMESTAMP
+           WHERE id = ?`,
+          [JSON.stringify(metadataWithCard), row.id]
+        )
+        row.metadata_json = JSON.stringify(metadataWithCard)
+      }
       await syncStripePlanFromPayment(
         { ...row, status: nextStatus, stripe_payment_intent_id: intent.id },
         savedMethod,

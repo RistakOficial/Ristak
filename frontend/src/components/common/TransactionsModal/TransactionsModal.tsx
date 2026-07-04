@@ -1,6 +1,7 @@
 import React from 'react'
 import { Modal } from '../Modal'
 import { useTimezone } from '@/contexts/TimezoneContext'
+import { useAccountCurrency } from '@/hooks'
 import { formatCurrency } from '@/utils/format'
 import styles from './TransactionsModal.module.css'
 
@@ -11,9 +12,13 @@ interface Transaction {
   contact_email: string
   contact_phone: string
   amount: number
+  currency?: string
   status: string
   date: string
   payment_method?: string
+  payment_method_category?: string
+  payment_type?: string
+  payment_channel?: string
   description?: string
 }
 
@@ -35,6 +40,7 @@ export const TransactionsModal: React.FC<TransactionsModalProps> = ({
   loading = false
 }) => {
   const { formatLocalDateShort } = useTimezone()
+  const [accountCurrency] = useAccountCurrency()
 
   if (!isOpen) return null
 
@@ -94,7 +100,7 @@ export const TransactionsModal: React.FC<TransactionsModalProps> = ({
               <div className={styles.summaryItem}>
                 <span className={styles.summaryLabel}>Monto Total</span>
                 <span className={styles.summaryValue}>
-                  {formatCurrency(totalAmount)}
+                  {formatCurrency(totalAmount, accountCurrency)}
                 </span>
               </div>
             </div>
@@ -115,7 +121,7 @@ export const TransactionsModal: React.FC<TransactionsModalProps> = ({
                       </div>
                     </div>
                     <div className={styles.amountSection}>
-                      <span className={styles.amount}>{formatCurrency(transaction.amount)}</span>
+                      <span className={styles.amount}>{formatCurrency(transaction.amount, transaction.currency || accountCurrency)}</span>
                       <span className={`${styles.status} ${getStatusColor(transaction.status)}`}>
                         {getStatusLabel(transaction.status)}
                       </span>
@@ -129,10 +135,22 @@ export const TransactionsModal: React.FC<TransactionsModalProps> = ({
                         {formatLocalDateShort(transaction.date)}
                       </span>
                     </div>
-                    {transaction.payment_method && (
+                    {(transaction.payment_method_category || transaction.payment_method) && (
                       <div className={styles.detailItem}>
                         <span className={styles.detailLabel}>Método</span>
-                        <span className={styles.detailValue}>{transaction.payment_method}</span>
+                        <span className={styles.detailValue}>{transaction.payment_method_category || transaction.payment_method}</span>
+                      </div>
+                    )}
+                    {transaction.payment_type && (
+                      <div className={styles.detailItem}>
+                        <span className={styles.detailLabel}>Tipo</span>
+                        <span className={styles.detailValue}>{transaction.payment_type}</span>
+                      </div>
+                    )}
+                    {transaction.payment_channel && (
+                      <div className={styles.detailItem}>
+                        <span className={styles.detailLabel}>Canal</span>
+                        <span className={styles.detailValue}>{transaction.payment_channel}</span>
                       </div>
                     )}
                     {transaction.description && (

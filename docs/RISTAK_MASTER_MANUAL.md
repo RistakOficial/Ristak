@@ -516,6 +516,31 @@ El modo de pasarelas puede ser `test` o `live`. Ese modo debe viajar con el pago
 en `payment_mode` o metadata equivalente para evitar mezclar pruebas con dinero
 real.
 
+### Tabla de transacciones
+
+La tabla principal de `/transactions` separa tres conceptos que antes podian
+mezclarse en `payment_method`:
+
+- Metodo de pago: la categoria real usada por el cliente, por ejemplo tarjeta de
+  credito, tarjeta de debito, efectivo, transferencia bancaria, SPEI, wallet o
+  metodo pendiente de seleccion si el link aun no se paga.
+- Tipo de pago: la modalidad del cobro, por ejemplo pago unico, pago diferido,
+  MSI, suscripcion o autorizacion de tarjeta.
+- Canal: la plataforma o integracion que proceso el cobro, por ejemplo Ristak,
+  Stripe, Conekta, Mercado Pago, CLIP, Rebill, Openpay o HighLevel.
+
+La fuente canonica para construir esos labels es
+`backend/src/utils/paymentDisplay.js`, usando `payments.payment_method`,
+`payments.payment_provider`, IDs de proveedor y `payments.metadata_json`. Las
+pasarelas deben guardar solo metadata no sensible para enriquecer la clasificacion
+del metodo real (por ejemplo `cardFunding`, `paymentTypeId`, `installments`,
+`monthlyInstallments`, marca y ultimos 4 si ya se almacenaban como fuente de pago).
+No se deben guardar PAN, CVV, tokens secretos, llaves de API ni datos que permitan
+cobrar fuera de la pasarela. Si una transaccion historica no tiene suficiente
+metadata para distinguir credito/debito u otra categoria fina, la UI debe mostrar
+un fallback honesto como `Tarjeta`, `Pendiente de seleccion` o
+`Metodo no especificado`; no debe inventar una categoria.
+
 ### Estados de links de pago
 
 Crear o enviar un link de pago no significa que el cobro fallo si el cliente no
