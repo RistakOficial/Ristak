@@ -1,7 +1,13 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 
-import { db } from '../src/config/database.js'
+import { db, getAppConfig, setAppConfig } from '../src/config/database.js'
+import {
+  createBlock,
+  createSite,
+  deleteSite,
+  prepareSiteCheckoutInstallments
+} from '../src/services/sitesService.js'
 import { savePaymentSettings } from '../src/services/paymentSettingsService.js'
 import {
   confirmPublicStripeInstallmentPayment,
@@ -74,6 +80,20 @@ async function cleanupPublicPayments(publicPaymentIds = []) {
      WHERE public_payment_id IN (${ids.map(() => '?').join(', ')})`,
     ids
   ).catch(() => undefined)
+}
+
+function buildPublicSiteReq(host, slug) {
+  return {
+    headers: { host, 'user-agent': 'node-test' },
+    get(name) {
+      return this.headers[String(name || '').toLowerCase()] || ''
+    },
+    protocol: 'https',
+    hostname: host,
+    path: `/${slug}`,
+    ip: '127.0.0.1',
+    socket: { remoteAddress: '127.0.0.1' }
+  }
 }
 
 test('Stripe mantiene pendiente un link abandonado si el PaymentIntent no tiene fallo real', async () => {
@@ -279,6 +299,103 @@ test('Stripe mantiene pendiente un checkout MSI de Sites abandonado antes de con
   })
 })
 
+test('Sites prepara Stripe MSI con Payment Element sin exigir PaymentMethod', async () => {
+  await snapshotPaymentConfig(async () => {
+    await configureStripeInstallmentTest()
+
+    const previousDomain = {
+      domain: await getAppConfig('sites_public_domain'),
+      verified: await getAppConfig('sites_public_domain_verified'),
+      checkedAt: await getAppConfig('sites_public_domain_checked_at'),
+      error: await getAppConfig('sites_public_domain_error')
+    }
+    const createCalls = []
+    let site
+    const createdPublicIds = []
+
+    setStripeFactoryForTest(() => ({
+      paymentIntents: {
+        create: async (params, requestOptions) => {
+          createCalls.push({ params, requestOptions })
+          return {
+            id: 'pi_site_payment_element_msi',
+            client_secret: 'pi_site_payment_element_msi_secret_test',
+            status: 'requires_payment_method'
+          }
+        }
+      }
+    }))
+
+    try {
+      await setAppConfig('sites_public_domain', 'example.test')
+      await setAppConfig('sites_public_domain_verified', '1')
+      await setAppConfig('sites_public_domain_checked_at', new Date().toISOString())
+      await setAppConfig('sites_public_domain_error', '')
+
+      site = await createSite({
+        name: 'Checkout Sites Payment Element MSI',
+        slug: `checkout-sites-msi-${Date.now()}`,
+        siteType: 'landing_page',
+        status: 'published',
+        blankCanvas: true,
+        theme: {
+          pages: [{ id: 'page-pay', title: 'Pago', sortOrder: 0 }]
+        }
+      })
+      const siteWithPayment = await createBlock(site.id, {
+        blockType: 'payment',
+        label: 'Pago Stripe MSI',
+        settings: {
+          pageId: 'page-pay',
+          paymentGate: {
+            enabled: true,
+            gateway: 'stripe',
+            amount: 2000,
+            currency: 'MXN',
+            productName: 'Pago requerido',
+            buttonText: 'Completar pago',
+            mode: 'test',
+            msi: { enabled: true, maxInstallments: 12 }
+          }
+        }
+      })
+      const paymentBlock = siteWithPayment.blocks.find(block => block.label === 'Pago Stripe MSI')
+      assert.ok(paymentBlock)
+
+      const prepared = await prepareSiteCheckoutInstallments(
+        buildPublicSiteReq('example.test', site.slug),
+        { siteId: site.id, blockId: paymentBlock.id, pageId: 'page-pay' }
+      )
+      createdPublicIds.push(prepared.publicPaymentId)
+
+      assert.equal(prepared.paymentIntentId, 'pi_site_payment_element_msi')
+      assert.equal(prepared.clientSecret, 'pi_site_payment_element_msi_secret_test')
+      assert.equal(prepared.maxInstallments, 12)
+      assert.equal(createCalls.length, 1)
+      assert.equal(createCalls[0].params.payment_method, undefined)
+      assert.equal(createCalls[0].params.automatic_payment_methods.enabled, true)
+      assert.equal(createCalls[0].params.payment_method_options.card.installments.enabled, true)
+
+      const row = await db.get(
+        'SELECT status, stripe_payment_intent_id, metadata_json FROM payments WHERE public_payment_id = ?',
+        [prepared.publicPaymentId]
+      )
+      assert.equal(row.status, 'pending')
+      assert.equal(row.stripe_payment_intent_id, 'pi_site_payment_element_msi')
+      const metadata = JSON.parse(row.metadata_json)
+      assert.equal(metadata.paymentGate.source, 'site_checkout')
+      assert.equal(metadata.stripeInstallments.maxInstallments, 12)
+    } finally {
+      await cleanupPublicPayments(createdPublicIds)
+      if (site?.id) await deleteSite(site.id).catch(() => undefined)
+      await setAppConfig('sites_public_domain', previousDomain.domain)
+      await setAppConfig('sites_public_domain_verified', previousDomain.verified)
+      await setAppConfig('sites_public_domain_checked_at', previousDomain.checkedAt)
+      await setAppConfig('sites_public_domain_error', previousDomain.error)
+    }
+  })
+})
+
 test('Stripe conserva failed cuando requires_payment_method trae rechazo real', async () => {
   await snapshotPaymentConfig(async () => {
     await configureStripeInstallmentTest()
@@ -385,6 +502,7 @@ test('Stripe habilita meses sin intereses en PaymentIntent cuando el link lo pid
       const msiIntent = await createStripePaymentIntent(msiLink.publicPaymentId, {
         savePaymentMethod: false
       })
+      assert.equal(msiIntent.paymentIntentId, 'pi_installments_1')
       assert.equal(msiIntent.status, 'requires_payment_method')
       assert.equal(createCalls.length, 1)
       assert.equal(createCalls[0].params.payment_method_options.card.installments.enabled, true)

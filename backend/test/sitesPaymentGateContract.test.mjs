@@ -320,3 +320,27 @@ test('E4 guard: the checkout runtime builds the same Stripe appearance variable 
     assert.ok(html.includes(key), `runtime script debe declarar la variable de apariencia ${key}`)
   }
 })
+
+test('Stripe MSI Sites runtime mounts native Payment Element, not split card fields', async () => {
+  const html = await renderPublicSiteHtml(paymentSite({
+    paymentGate: {
+      enabled: true,
+      gateway: 'stripe',
+      amount: 2000,
+      currency: 'MXN',
+      productName: 'Curso',
+      buttonText: 'Pagar',
+      msi: { enabled: true, maxInstallments: 12 }
+    }
+  }), { pageId: 'page-1', trackingEnabled: false, preview: true })
+  const start = html.indexOf('function mountStripeMsi')
+  const end = html.indexOf('function conektaInstallmentMonths')
+  assert.ok(start > -1 && end > start, 'runtime should include Stripe MSI function')
+  const msiRuntime = html.slice(start, end)
+
+  assert.match(msiRuntime, /stripe\.elements\(\{ clientSecret: clientSecret/)
+  assert.match(msiRuntime, /elements\.create\('payment'/)
+  assert.match(msiRuntime, /payment_method_data: \{ billing_details: billingDetails\(\) \}/)
+  assert.doesNotMatch(msiRuntime, /elements\.create\('cardNumber'/)
+  assert.doesNotMatch(msiRuntime, /paymentMethodId/)
+})

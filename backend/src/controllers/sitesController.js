@@ -831,9 +831,8 @@ export async function sitePaymentCheckoutPayHandler(req, res) {
   }
 }
 
-// Paso 1 del MSI controlado de Stripe en sitios: crea/reusa la fila y devuelve los meses
-// que la tarjeta ofrece (available_plans) filtrados al máximo del bloque. El confirm lo
-// hace el runtime contra la ruta pública de Stripe /installment-confirm.
+// Paso 1 del MSI de Stripe en sitios: crea/reusa la fila y devuelve un clientSecret
+// de PaymentIntent con installments habilitado para montar Payment Element nativo.
 export async function sitePaymentCheckoutPrepareHandler(req, res) {
   try {
     const result = await prepareSiteCheckoutInstallments(req, req.body || {})

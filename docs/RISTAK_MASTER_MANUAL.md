@@ -586,35 +586,33 @@ Reglas:
 
 Documento obligatorio: `docs/CURRENCY_GUIDELINES.md`.
 
-### Stripe MSI controlado
+### Stripe MSI en links y Sites
 
 En links publicos `/pay/:publicPaymentId` y checkouts embebidos de Sites, Stripe
-puede ofrecer meses sin intereses con control por link/bloque:
+puede ofrecer meses sin intereses cuando el cobro esta en `MXN` y cumple el
+minimo de `300 MXN`:
 
 - El modal de cobro permite elegir el maximo local permitido para Stripe
-  (`3, 6, 9, 12, 18 o 24` meses) cuando el cobro esta en `MXN` y cumple el
-  minimo de `300 MXN`.
+  (`3, 6, 9, 12, 18 o 24` meses).
 - Stripe debe tener MSI habilitado en su Dashboard; Ristak no crea ni modifica
   reglas globales de Stripe.
-- El checkout publico muestra desde el inicio un formulario abierto de tarjeta
-  (numero, vencimiento, CVC y pais) con un solo boton de pago. En cuanto el
-  numero de tarjeta queda completo, Ristak intenta preparar la consulta de MSI
-  con Stripe sin pedir un paso manual; si Stripe devuelve `available_plans`, los
-  filtra por el maximo guardado en `metadata.stripeInstallments.maxInstallments`
-  y confirma el PaymentIntent desde backend con el `plan.count` elegido. El
-  vencimiento y CVC solo son parte de la captura necesaria para terminar el
-  cobro.
-- El backend vuelve a validar el plazo antes de confirmar. Si el cliente intenta
-  mandar mas meses que el maximo del link, o la tarjeta no ofrece ese plazo,
-  Stripe no se confirma.
-- Si la tarjeta no ofrece MSI, el checkout no muestra el selector de meses y
-  permite pagar de contado sin mostrar plazos inventados ni pedir un paso manual
-  de consulta.
+- En `/pay`, Ristak usa el flujo controlado por backend: consulta
+  `available_plans`, filtra por `metadata.stripeInstallments.maxInstallments` y
+  confirma el PaymentIntent desde backend con el `plan.count` elegido.
+- En el checkout embebido de Sites, Ristak usa Payment Element nativo con
+  `payment_method_options.card.installments.enabled=true`. El formulario aparece
+  abierto con un solo boton de pago y Stripe muestra los meses automaticamente
+  dentro del elemento cuando el numero de tarjeta califica. No hay boton
+  adicional para consultar meses ni selector propio fuera de Stripe.
+- En Sites, los plazos visibles dentro del Payment Element obedecen la
+  configuracion de MSI del Dashboard de Stripe. Ristak guarda el maximo local del
+  bloque para preview/metadata, pero no puede ocultar meses individuales dentro
+  del iframe de Stripe sin perder la aparicion automatica por numero de tarjeta.
 - El editor de Sites usa un preview no interactivo del mismo estado: cuando el
   bloque Stripe es elegible para MSI, muestra la tarjeta con numero elegible y
   las opciones de meses debajo del numero, no una fila fija de contado desde el
   inicio.
-- Si el cliente abandona despues de consultar los meses pero antes de confirmar,
+- Si el cliente abandona despues de preparar el intento MSI pero antes de confirmar,
   el pago queda pendiente; no se marca como fallido salvo que Stripe reporte un
   rechazo real.
 
