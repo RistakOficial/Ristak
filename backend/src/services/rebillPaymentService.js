@@ -902,7 +902,10 @@ function buildCustomerInformation(row, metadata = {}) {
   if (fullName && !/\d/.test(fullName)) customer.fullName = fullName
   if (phone) {
     const phoneNumber = getRebillPhoneInformation(phone)
-    if (phoneNumber) customer.phoneNumber = phoneNumber
+    if (phoneNumber) {
+      customer.phoneNumber = phoneNumber
+      customer.countryCode = phoneNumber.countryCode
+    }
   }
   return Object.keys(customer).length ? customer : null
 }

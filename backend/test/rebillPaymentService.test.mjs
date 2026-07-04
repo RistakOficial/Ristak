@@ -309,6 +309,7 @@ test('Rebill confirma pago público consultando el paymentId en backend antes de
         number: '5512345678',
         countryCode: 'MX'
       })
+      assert.equal(link.payment.customerInformation.countryCode, 'MX')
 
       const beforeConfirm = await db.get('SELECT status, rebill_payment_id FROM payments WHERE public_payment_id = ?', [publicPaymentId])
       assert.equal(beforeConfirm.status, 'sent')

@@ -703,17 +703,24 @@ Alcance:
   `display.excludePaymentMethods=['cash','bank_transfer']` para aceptar solo
   tarjeta. SPEI, PSE/transferencias bancarias y efectivo no deben aparecer en
   estos links porque el flujo local espera confirmar cobros de tarjeta.
-- En links publicos activos de Rebill, la pagina no duplica el resumen de
-  Ristak alrededor del web component. Se monta el checkout de Rebill como
-  experiencia principal, sin cupon (`display.discountCode=false`), sin logo ni
-  footer del proveedor (`display.logo=false`, `display.footer=false`) y con CSS
-  minimo del SDK para redondear el boton. Los estados pagado, programado, cerrado
-  o con error siguen usando las pantallas explicativas de Ristak.
+- En links publicos activos de Rebill, la pagina mantiene el layout Ristak de
+  dos columnas: resumen, logo, negocio, soporte, producto, vencimiento y total
+  quedan en la columna izquierda; el web component de Rebill queda en la columna
+  derecha. Para que no se duplique ni se desborde el resumen interno del
+  proveedor, Ristak manda `display.checkoutSummary=false`,
+  `display.discountCode=false`, `display.logo=false` y `display.footer=false`.
+  El SDK decide su breakpoint con `window.innerWidth`, no con el ancho del
+  contenedor, asi que Ristak no fuerza modo movil; en su lugar limita la columna
+  y deja el formulario full-width dentro de esa columna. Los estados pagado,
+  programado, cerrado o con error siguen usando las pantallas explicativas de
+  Ristak.
 - El prefill de telefono en `customer-information` debe separar el numero
   nacional de la region: `phoneNumber.countryCode` recibe ISO alpha-2 (`MX`,
   `US`, etc.) y `phoneNumber.number` recibe solo digitos nacionales. No mandes
   `+52`, `52` o `521` dentro de `number`, porque el selector de region del SDK ya
-  resuelve la lada y la duplicaria en pantalla.
+  resuelve la lada y la duplicaria en pantalla. Ademas Ristak manda
+  `countryCode` top-level con el mismo ISO alpha-2 para que el selector visual de
+  Rebill no caiga al pais calculado por la sesion instantanea del SDK.
 - Meses/installments en cobros unicos: en el modal de cobro, Rebill entra al
   mismo paso de decision que Stripe, Conekta, Mercado Pago y CLIP: contado o MSI.
   Si se elige MSI, Ristak pide el maximo de meses (3, 6, 9, 12, 18 o 24), guarda
@@ -726,9 +733,11 @@ Alcance:
   moneda, monto y tarjeta califican. Si el SDK reporta el numero elegido en
   `data.installments`, Ristak lo conserva como
   `metadata.rebillInstallments.selectedInstallments`. El pago total local se
-  confirma contra backend con el `paymentId` antes de marcarlo pagado. Para
-  imponer `installmentsSettings` de verdad habria que usar la API hosted de
-  Payment Links de Rebill, no el SDK instantaneo embebido.
+  confirma contra backend con el `paymentId` antes de marcarlo pagado. El
+  checkout publico muestra fuera del SDK el desglose estimado por mes para las
+  opciones configuradas, con texto condicional porque Rebill sigue decidiendo si
+  la tarjeta califica. Para imponer `installmentsSettings` de verdad habria que
+  usar la API hosted de Payment Links de Rebill, no el SDK instantaneo embebido.
 - Suscripciones Rebill (`instant-plan`) existen en la documentacion del proveedor,
   pero no estan cableadas como flujo de suscripciones de Ristak en esta
   superficie. No se deben presentar como listas hasta implementar UI/API,

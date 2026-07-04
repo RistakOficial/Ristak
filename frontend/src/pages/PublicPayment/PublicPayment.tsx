@@ -119,11 +119,18 @@ type RebillCheckoutElement = HTMLElement & {
 }
 type RebillExcludedPaymentMethod = 'cash' | 'bank_transfer'
 type RebillCheckoutDisplay = {
+  checkoutSummary: boolean
   successPage: boolean
   sandboxMode: boolean
+  submitButton: boolean
+  billingAddress: boolean
+  customerInformation: boolean
   discountCode: boolean
   logo: boolean
   footer: boolean
+  processingPayment: boolean
+  errorMessage: boolean
+  useAddressSearch: boolean
   excludePaymentMethods: RebillExcludedPaymentMethod[]
 }
 type SuccessDetailRow = {
@@ -205,8 +212,16 @@ const CONFETTI_COLOR_TOKENS = ['--accent', '--accent-2', '--pos', '--warn', '--i
 const CONFETTI_COLOR_FALLBACK = ['#2f6fed', '#4c8dff', '#1f9d57', '#c98a1e', '#1f8aa0']
 const REBILL_CARD_ONLY_EXCLUDED_PAYMENT_METHODS: RebillExcludedPaymentMethod[] = ['cash', 'bank_transfer']
 const REBILL_CHECKOUT_CSS = [
-  '.rebill-submit-button { border-radius: 14px; font-weight: 700; }'
+  '.rebill-submit-button { border-radius: 14px; font-weight: 700; }',
+  '.rebill-checkout.full-width-layout { min-height: 0 !important; overflow: visible !important; }',
+  '.rebill-checkout.full-width-layout .left-section { width: 100% !important; justify-content: stretch !important; }',
+  '.rebill-checkout.full-width-layout .left-section-container { width: 100% !important; max-width: 100% !important; min-width: 0 !important; margin: 0 !important; }',
+  '.rebill-checkout.full-width-layout .checkout-form-section { gap: 20px !important; }',
+  '.rebill-checkout.full-width-layout .payment-button-container { margin-bottom: 0 !important; }',
+  '.rebill-checkout.full-width-layout .country-dropdown, .rebill-checkout.full-width-layout .select-dropdown { max-width: 100% !important; }',
+  '@media (max-width: 1024px) { .rebill-checkout.full-width-layout { padding: 0 !important; } }'
 ].join('\n')
+const REBILL_INSTALLMENT_MONTHS = [3, 6, 9, 12, 18, 24]
 
 const printTemplateClassById: Record<PaymentInvoiceTemplateId, string> = {
   classic: 'printThemeClassic',
@@ -935,6 +950,64 @@ function extractRebillInstallments(event: Event) {
     .find((candidate) => Number.isFinite(candidate) && candidate > 1)
 
   return parsed || null
+}
+
+function getRebillInstallmentMonths(payment: PublicRebillPayment) {
+  const config = payment.rebillInstallments
+  if (!config?.enabled) return []
+
+  const configuredMonths = Array.isArray(config.enabledInstallments)
+    ? config.enabledInstallments
+        .map((month) => Math.trunc(Number(month)))
+        .filter((month) => Number.isFinite(month) && month > 1)
+    : []
+  const maxInstallments = Math.trunc(Number(config.maxInstallments || 0))
+  const fallbackMonths = maxInstallments > 1
+    ? REBILL_INSTALLMENT_MONTHS.filter((month) => month <= maxInstallments)
+    : []
+
+  return Array.from(new Set([...configuredMonths, ...fallbackMonths]))
+    .sort((left, right) => left - right)
+}
+
+function getRebillInstallmentBreakdown(payment: PublicRebillPayment, totalAmount: number) {
+  const amount = Number(totalAmount || payment.amount || 0)
+  if (!Number.isFinite(amount) || amount <= 0) return []
+  return getRebillInstallmentMonths(payment).map((months) => ({
+    months,
+    amountLabel: formatCurrency(amount / months, payment.currency)
+  }))
+}
+
+function formatRebillInstallmentOptions(months: number[]) {
+  if (!months.length) return ''
+  if (months.length === 1) return `${months[0]} meses`
+  return `${months.slice(0, -1).join(', ')} y ${months[months.length - 1]} meses`
+}
+
+const RebillInstallmentPreview: React.FC<{
+  payment: PublicRebillPayment
+  totalAmount: number
+}> = ({ payment, totalAmount }) => {
+  const breakdown = getRebillInstallmentBreakdown(payment, totalAmount)
+  if (!breakdown.length) return null
+
+  return (
+    <div className={styles.rebillInstallmentPreview}>
+      <div className={styles.rebillInstallmentPreviewHeader}>
+        <span className={styles.eyebrow}>Meses sin intereses</span>
+        <p>Si tu tarjeta aplica, Rebill puede mostrar estas opciones al pagar.</p>
+      </div>
+      <div className={styles.rebillInstallmentRows}>
+        {breakdown.map((item) => (
+          <div key={item.months}>
+            <span>{item.months} meses</span>
+            <strong>{item.amountLabel} por mes</strong>
+          </div>
+        ))}
+      </div>
+    </div>
+  )
 }
 
 function normalizeMercadoPagoCardErrorMessage(error: unknown) {
@@ -2480,16 +2553,16 @@ const ClipCardPaymentForm: React.FC<{
 
 const RebillCheckoutForm: React.FC<{
   payment: PublicRebillPayment
+  totalAmount: number
   onPaid: () => Promise<void>
-  minimal?: boolean
-}> = ({ payment, onPaid, minimal = false }) => {
+}> = ({ payment, totalAmount, onPaid }) => {
   const checkoutRef = useRef<RebillCheckoutElement | null>(null)
   const onPaidRef = useRef(onPaid)
   const [loadingCheckout, setLoadingCheckout] = useState(Boolean(payment.publicKey))
   const [submitting, setSubmitting] = useState(false)
   const [message, setMessage] = useState('')
   const [messageKind, setMessageKind] = useState<'info' | 'success' | 'error'>('info')
-  const showSecureNotice = !minimal && payment.settings?.checkout?.showSecureBadge !== false
+  const showSecureNotice = payment.settings?.checkout?.showSecureBadge !== false
   const isTestMode = payment.paymentMode === 'test'
   const instantProduct = useMemo<RebillInstantProduct>(() => payment.instantProduct || {
     name: [{ language: 'es', text: payment.title || 'Pago Ristak' }],
@@ -2510,11 +2583,18 @@ const RebillCheckoutForm: React.FC<{
   ])
   const customerInformation = payment.customerInformation || null
   const display = useMemo<RebillCheckoutDisplay>(() => ({
+    checkoutSummary: false,
     successPage: false,
     sandboxMode: isTestMode,
+    submitButton: true,
+    billingAddress: true,
+    customerInformation: true,
     discountCode: false,
     logo: false,
     footer: false,
+    processingPayment: true,
+    errorMessage: true,
+    useAddressSearch: true,
     excludePaymentMethods: REBILL_CARD_ONLY_EXCLUDED_PAYMENT_METHODS
   }), [isTestMode])
   const instantProductJson = useMemo(() => JSON.stringify(instantProduct), [instantProduct])
@@ -2684,6 +2764,8 @@ const RebillCheckoutForm: React.FC<{
 
   return (
     <div className={styles.rebillBox}>
+      <RebillInstallmentPreview payment={payment} totalAmount={totalAmount} />
+
       <div className={styles.rebillCheckoutShell}>
         {loadingCheckout && (
           <div className={styles.brickLoading}>
@@ -2717,7 +2799,7 @@ const RebillCheckoutForm: React.FC<{
         </p>
       )}
 
-      {!minimal && isTestMode && <PaymentTestHelper provider="rebill" />}
+      {isTestMode && <PaymentTestHelper provider="rebill" />}
     </div>
   )
 }
@@ -2829,7 +2911,6 @@ export const PublicPayment: React.FC = () => {
   const isConektaPayment = payment?.provider === 'conekta'
   const isClipPayment = payment?.provider === 'clip'
   const isRebillPayment = payment?.provider === 'rebill'
-  const useRebillOnlyCheckout = Boolean(isRebillPayment && !isPaid && !isScheduled && !isClosed)
   const stripePayment = payment?.provider === 'stripe' ? payment : null
   const paymentPlan = stripePayment?.paymentPlan || null
   const subscriptionStart = payment && 'subscriptionStart' in payment ? payment.subscriptionStart : null
@@ -3122,6 +3203,10 @@ export const PublicPayment: React.FC = () => {
   const subtotalAmount = hasTaxBreakdown ? taxDetails?.subtotalAmount || 0 : payment.amount
   const taxAmount = hasTaxBreakdown ? taxDetails?.taxAmount || 0 : 0
   const totalAmount = hasTaxBreakdown ? taxDetails?.totalAmount || payment.amount : payment.amount
+  const rebillInstallmentMonths = isRebillPayment ? getRebillInstallmentMonths(payment) : []
+  const rebillInstallmentSummary = rebillInstallmentMonths.length
+    ? `${formatRebillInstallmentOptions(rebillInstallmentMonths)} si tu tarjeta aplica`
+    : ''
   const invoiceDesign = resolveInvoiceDesign(receiptSettings)
   const invoiceStyleVars = buildInvoiceStyleVars(receiptSettings)
   const printSheetClassName = [
@@ -3183,9 +3268,8 @@ export const PublicPayment: React.FC = () => {
     : []
 
   return (
-    <main className={[styles.page, useRebillOnlyCheckout ? styles.rebillOnlyPage : ''].filter(Boolean).join(' ')}>
-      <div className={[styles.shell, useRebillOnlyCheckout ? styles.rebillOnlyShell : ''].filter(Boolean).join(' ')}>
-        {!useRebillOnlyCheckout && (
+    <main className={styles.page}>
+      <div className={styles.shell}>
         <header className={styles.header}>
           <div className={styles.brandLockup}>
             {logoUrl && (
@@ -3201,7 +3285,6 @@ export const PublicPayment: React.FC = () => {
             {status.label}
           </Badge>
         </header>
-        )}
 
         {isPaid ? (
           <section className={styles.successStage} aria-label="Comprobante del pago">
@@ -3235,8 +3318,7 @@ export const PublicPayment: React.FC = () => {
             />
           </section>
         ) : (
-        <section className={[styles.checkoutLayout, isRebillPayment ? styles.rebillCheckoutLayout : '', useRebillOnlyCheckout ? styles.rebillOnlyLayout : ''].filter(Boolean).join(' ')}>
-          {!useRebillOnlyCheckout && (
+        <section className={[styles.checkoutLayout, isRebillPayment ? styles.rebillCheckoutLayout : ''].filter(Boolean).join(' ')}>
           <section className={styles.summaryPane} aria-label="Resumen del pago">
             <div className={styles.summaryIntro}>
               <span className={styles.eyebrow}>{isPaid ? 'Comprobante listo' : hasPlanSummary ? 'Plan de pagos' : 'Checkout seguro'}</span>
@@ -3291,6 +3373,12 @@ export const PublicPayment: React.FC = () => {
                   <span>{isSubscriptionStart ? 'Monto recurrente' : 'Total'}</span>
                   <strong>{formatCurrency(totalAmount, payment.currency)}</strong>
                 </div>
+                {rebillInstallmentSummary && (
+                  <div>
+                    <span>Meses sin intereses</span>
+                    <strong>{rebillInstallmentSummary}</strong>
+                  </div>
+                )}
                 <div>
                   <span>Referencia</span>
                   <strong>{payment.publicPaymentId}</strong>
@@ -3397,10 +3485,8 @@ export const PublicPayment: React.FC = () => {
               </div>
             )}
           </section>
-          )}
 
-          <section className={[styles.payPanel, isRebillPayment ? styles.rebillPayPanel : '', useRebillOnlyCheckout ? styles.rebillOnlyPanel : ''].filter(Boolean).join(' ')} aria-label="Formulario de pago">
-            {!useRebillOnlyCheckout && (
+          <section className={[styles.payPanel, isRebillPayment ? styles.rebillPayPanel : ''].filter(Boolean).join(' ')} aria-label="Formulario de pago">
             <div className={styles.payHeader}>
               <div className={styles.payHeaderTop}>
                 <PaymentPlatformLogo platform={providerLogo} size="lg" decorative />
@@ -3435,7 +3521,6 @@ export const PublicPayment: React.FC = () => {
                           : 'Los datos se capturan en el formulario seguro de Stripe.'}
               </p>
             </div>
-            )}
 
             {error && (
               <p className={`${styles.message} ${styles.messageError}`}>
@@ -3494,8 +3579,8 @@ export const PublicPayment: React.FC = () => {
             ) : isRebillPayment ? (
               <RebillCheckoutForm
                 payment={payment}
+                totalAmount={totalAmount}
                 onPaid={handlePaid}
-                minimal={useRebillOnlyCheckout}
               />
             ) : isStripePayment && isControlledStripeInstallments && stripePromise && cardElementsOptions ? (
               <Elements stripe={stripePromise} options={cardElementsOptions}>

@@ -87,6 +87,7 @@ export interface RebillInstantProduct {
 export interface RebillCustomerInformation {
   email?: string
   fullName?: string
+  countryCode?: string
   phoneNumber?: {
     number?: string
     countryCode?: string
