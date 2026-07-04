@@ -114,12 +114,16 @@ type RebillCheckoutElement = HTMLElement & {
   instantProduct?: RebillInstantProduct
   customerInformation?: RebillCustomerInformation
   display?: RebillCheckoutDisplay
+  css?: string
   oneClickCheckout?: boolean
 }
 type RebillExcludedPaymentMethod = 'cash' | 'bank_transfer'
 type RebillCheckoutDisplay = {
   successPage: boolean
   sandboxMode: boolean
+  discountCode: boolean
+  logo: boolean
+  footer: boolean
   excludePaymentMethods: RebillExcludedPaymentMethod[]
 }
 type SuccessDetailRow = {
@@ -200,6 +204,10 @@ const PUBLIC_PAYMENT_LIGHT_MODE_FLAG = 'publicPaymentLightMode'
 const CONFETTI_COLOR_TOKENS = ['--accent', '--accent-2', '--pos', '--warn', '--info'] as const
 const CONFETTI_COLOR_FALLBACK = ['#2f6fed', '#4c8dff', '#1f9d57', '#c98a1e', '#1f8aa0']
 const REBILL_CARD_ONLY_EXCLUDED_PAYMENT_METHODS: RebillExcludedPaymentMethod[] = ['cash', 'bank_transfer']
+const REBILL_CHECKOUT_CSS = [
+  '.rebill-submit-button { border-radius: 14px; font-weight: 700; }',
+  'button, input, select, textarea { border-radius: 12px; }'
+].join('\n')
 
 const printTemplateClassById: Record<PaymentInvoiceTemplateId, string> = {
   classic: 'printThemeClassic',
@@ -2441,14 +2449,15 @@ const ClipCardPaymentForm: React.FC<{
 const RebillCheckoutForm: React.FC<{
   payment: PublicRebillPayment
   onPaid: () => Promise<void>
-}> = ({ payment, onPaid }) => {
+  minimal?: boolean
+}> = ({ payment, onPaid, minimal = false }) => {
   const checkoutRef = useRef<RebillCheckoutElement | null>(null)
   const onPaidRef = useRef(onPaid)
   const [loadingCheckout, setLoadingCheckout] = useState(Boolean(payment.publicKey))
   const [submitting, setSubmitting] = useState(false)
   const [message, setMessage] = useState('')
   const [messageKind, setMessageKind] = useState<'info' | 'success' | 'error'>('info')
-  const showSecureNotice = payment.settings?.checkout?.showSecureBadge !== false
+  const showSecureNotice = !minimal && payment.settings?.checkout?.showSecureBadge !== false
   const isTestMode = payment.paymentMode === 'test'
   const instantProduct = useMemo<RebillInstantProduct>(() => payment.instantProduct || {
     name: [{ language: 'es', text: payment.title || 'Pago Ristak' }],
@@ -2471,6 +2480,9 @@ const RebillCheckoutForm: React.FC<{
   const display = useMemo<RebillCheckoutDisplay>(() => ({
     successPage: false,
     sandboxMode: isTestMode,
+    discountCode: false,
+    logo: false,
+    footer: false,
     excludePaymentMethods: REBILL_CARD_ONLY_EXCLUDED_PAYMENT_METHODS
   }), [isTestMode])
   const instantProductJson = useMemo(() => JSON.stringify(instantProduct), [instantProduct])
@@ -2521,11 +2533,13 @@ const RebillCheckoutForm: React.FC<{
     element.setAttribute('language', 'es')
     element.setAttribute('instant-product', instantProductJson)
     element.setAttribute('display', displayJson)
+    element.setAttribute('css', REBILL_CHECKOUT_CSS)
     element.setAttribute('one-click-checkout', 'true')
     element.publicKey = payment.publicKey
     element.language = 'es'
     element.instantProduct = instantProduct
     element.display = display
+    element.css = REBILL_CHECKOUT_CSS
     element.oneClickCheckout = true
 
     if (customerInformation) {
@@ -2627,6 +2641,7 @@ const RebillCheckoutForm: React.FC<{
     'instant-product': instantProductJson,
     language: 'es',
     display: displayJson,
+    css: REBILL_CHECKOUT_CSS,
     'one-click-checkout': 'true'
   }
   if (customerInformationJson) {
@@ -2668,7 +2683,7 @@ const RebillCheckoutForm: React.FC<{
         </p>
       )}
 
-      {isTestMode && <PaymentTestHelper provider="rebill" />}
+      {!minimal && isTestMode && <PaymentTestHelper provider="rebill" />}
     </div>
   )
 }
@@ -2780,6 +2795,7 @@ export const PublicPayment: React.FC = () => {
   const isConektaPayment = payment?.provider === 'conekta'
   const isClipPayment = payment?.provider === 'clip'
   const isRebillPayment = payment?.provider === 'rebill'
+  const useRebillOnlyCheckout = Boolean(isRebillPayment && !isPaid && !isScheduled && !isClosed)
   const stripePayment = payment?.provider === 'stripe' ? payment : null
   const paymentPlan = stripePayment?.paymentPlan || null
   const subscriptionStart = payment && 'subscriptionStart' in payment ? payment.subscriptionStart : null
@@ -3133,8 +3149,9 @@ export const PublicPayment: React.FC = () => {
     : []
 
   return (
-    <main className={styles.page}>
-      <div className={styles.shell}>
+    <main className={[styles.page, useRebillOnlyCheckout ? styles.rebillOnlyPage : ''].filter(Boolean).join(' ')}>
+      <div className={[styles.shell, useRebillOnlyCheckout ? styles.rebillOnlyShell : ''].filter(Boolean).join(' ')}>
+        {!useRebillOnlyCheckout && (
         <header className={styles.header}>
           <div className={styles.brandLockup}>
             {logoUrl && (
@@ -3150,6 +3167,7 @@ export const PublicPayment: React.FC = () => {
             {status.label}
           </Badge>
         </header>
+        )}
 
         {isPaid ? (
           <section className={styles.successStage} aria-label="Comprobante del pago">
@@ -3183,7 +3201,8 @@ export const PublicPayment: React.FC = () => {
             />
           </section>
         ) : (
-        <section className={[styles.checkoutLayout, isRebillPayment ? styles.rebillCheckoutLayout : ''].filter(Boolean).join(' ')}>
+        <section className={[styles.checkoutLayout, isRebillPayment ? styles.rebillCheckoutLayout : '', useRebillOnlyCheckout ? styles.rebillOnlyLayout : ''].filter(Boolean).join(' ')}>
+          {!useRebillOnlyCheckout && (
           <section className={styles.summaryPane} aria-label="Resumen del pago">
             <div className={styles.summaryIntro}>
               <span className={styles.eyebrow}>{isPaid ? 'Comprobante listo' : hasPlanSummary ? 'Plan de pagos' : 'Checkout seguro'}</span>
@@ -3344,8 +3363,10 @@ export const PublicPayment: React.FC = () => {
               </div>
             )}
           </section>
+          )}
 
-          <section className={[styles.payPanel, isRebillPayment ? styles.rebillPayPanel : ''].filter(Boolean).join(' ')} aria-label="Formulario de pago">
+          <section className={[styles.payPanel, isRebillPayment ? styles.rebillPayPanel : '', useRebillOnlyCheckout ? styles.rebillOnlyPanel : ''].filter(Boolean).join(' ')} aria-label="Formulario de pago">
+            {!useRebillOnlyCheckout && (
             <div className={styles.payHeader}>
               <div className={styles.payHeaderTop}>
                 <PaymentPlatformLogo platform={providerLogo} size="lg" decorative />
@@ -3380,6 +3401,7 @@ export const PublicPayment: React.FC = () => {
                           : 'Los datos se capturan en el formulario seguro de Stripe.'}
               </p>
             </div>
+            )}
 
             {error && (
               <p className={`${styles.message} ${styles.messageError}`}>
@@ -3439,6 +3461,7 @@ export const PublicPayment: React.FC = () => {
               <RebillCheckoutForm
                 payment={payment}
                 onPaid={handlePaid}
+                minimal={useRebillOnlyCheckout}
               />
             ) : isStripePayment && isControlledStripeInstallments && stripePromise && cardElementsOptions ? (
               <Elements stripe={stripePromise} options={cardElementsOptions}>

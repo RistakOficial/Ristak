@@ -701,6 +701,12 @@ Alcance:
   `display.excludePaymentMethods=['cash','bank_transfer']` para aceptar solo
   tarjeta. SPEI, PSE/transferencias bancarias y efectivo no deben aparecer en
   estos links porque el flujo local espera confirmar cobros de tarjeta.
+- En links publicos activos de Rebill, la pagina no duplica el resumen de
+  Ristak alrededor del web component. Se monta el checkout de Rebill como
+  experiencia principal, sin cupon (`display.discountCode=false`), sin logo ni
+  footer del proveedor (`display.logo=false`, `display.footer=false`) y con CSS
+  minimo del SDK para redondear boton/campos. Los estados pagado, programado,
+  cerrado o con error siguen usando las pantallas explicativas de Ristak.
 - Meses/installments en cobros unicos: Ristak no selecciona plazos locales para
   Rebill. El checkout de Rebill muestra installments cuando la cuenta, pais,
   moneda, monto y tarjeta califican. Ristak guarda el pago total local y confirma

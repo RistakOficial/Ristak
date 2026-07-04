@@ -19,6 +19,10 @@
   z-index: 0;
 }
 
+.rebillOnlyPage::before {
+  height: clamp(180px, 32vw, 300px);
+}
+
 .shell {
   position: relative;
   z-index: 1;
@@ -27,6 +31,11 @@
   margin: 0 auto;
   padding: clamp(20px, 4vw, 40px) clamp(16px, 5vw, 40px) clamp(40px, 7vw, 72px);
   box-sizing: border-box;
+}
+
+.rebillOnlyShell {
+  max-width: 1180px;
+  padding-top: clamp(16px, 3vw, 32px);
 }
 
 .header {
@@ -96,6 +105,11 @@
 .rebillCheckoutLayout {
   grid-template-columns: minmax(0, 1fr);
   gap: 32px;
+}
+
+.rebillOnlyLayout {
+  display: block;
+  padding-top: 0;
 }
 
 .rebillCheckoutLayout .summaryPane {
@@ -404,6 +418,14 @@
   padding: clamp(22px, 2.6vw, 30px);
 }
 
+.rebillOnlyPanel {
+  width: 100%;
+  padding: 0;
+  border: 0;
+  background: none;
+  box-shadow: none;
+}
+
 .payHeader {
   display: flex;
   flex-direction: column;
@@ -467,14 +489,14 @@
   position: relative;
   width: 100%;
   min-width: 0;
-  min-height: clamp(640px, 74vh, 820px);
+  min-height: clamp(640px, 78vh, 900px);
   overflow: visible;
 }
 
 .rebillCheckoutHost {
   width: 100%;
   min-width: 0;
-  min-height: clamp(640px, 74vh, 820px);
+  min-height: clamp(640px, 78vh, 900px);
   overflow: visible;
 }
 
@@ -1635,6 +1657,14 @@
     width: 100%;
     max-width: 620px;
     justify-self: center;
+  }
+
+  .rebillOnlyShell {
+    max-width: 680px;
+  }
+
+  .rebillOnlyPanel {
+    max-width: none;
   }
 }
 
