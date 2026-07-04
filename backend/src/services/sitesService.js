@@ -16262,7 +16262,12 @@ function buildPaymentCheckoutRuntimeScript() {
         }
         function handleSplitCardChange(kind, ev) {
           var nowComplete = !!(ev && ev.complete && !ev.error);
-          if (ev && ev.error) setMessage('error', ev.error.message || '');
+          // Los errores de "campo incompleto" (mientras el cliente aún escribe, o los que
+          // dispara el intento automático en segundo plano) NO se muestran: son ruido. Solo
+          // se muestran errores REALES de tarjeta (número inválido, rechazada, etc.). El campo
+          // ya se marca solo. Los incompletos se validan hasta que el cliente intenta pagar.
+          var errIncomplete = ev && ev.error && String(ev.error.code || '').indexOf('incomplete') >= 0;
+          if (ev && ev.error && !errIncomplete) setMessage('error', ev.error.message || '');
           else if (!prepared && !preparing) setMessage('', '');
           if (kind === 'number') { cardNumberComplete = nowComplete; numberPrepareAttempted = false; }
           else if (kind === 'expiry') cardExpiryComplete = nowComplete;
