@@ -81,6 +81,10 @@ export interface RebillInstantProduct {
   description?: Array<{ language: 'en' | 'es' | 'pt'; text: string }>
   amount: number
   currency: string
+  installmentsSettings?: Array<{
+    currency: string
+    enabledInstallments: number[]
+  }>
   metadata?: Record<string, string | number | boolean | null>
 }
 
@@ -110,6 +114,7 @@ export interface RebillPaymentLinkPayload {
   lineItems?: Array<Record<string, unknown>>
   installments?: {
     enabled?: boolean
+    maxInstallments?: number
   }
   metadata?: Record<string, unknown>
 }
@@ -212,6 +217,8 @@ export interface PublicRebillPayment {
   rebillInstallments?: {
     enabled?: boolean
     selectionMode?: string
+    maxInstallments?: number | null
+    enabledInstallments?: number[]
     selectedInstallments?: number | null
   } | null
   instantProduct?: RebillInstantProduct | null

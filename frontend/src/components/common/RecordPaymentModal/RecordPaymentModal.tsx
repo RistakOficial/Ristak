@@ -131,6 +131,7 @@ type InvoiceSendMethod = 'email' | 'sms' | 'both'
 type StripeInstallmentChoice = '3' | '6' | '9' | '12' | '18' | '24'
 type MercadoPagoInstallmentChoice = 'none' | '2' | '3' | '6' | '9' | '12' | '18' | '24'
 type ConektaInstallmentChoice = 'none' | '3' | '6' | '9' | '12' | '18' | '24'
+type RebillInstallmentChoice = '3' | '6' | '9' | '12' | '18' | '24'
 type InstallmentChargeMode = 'single' | 'installments'
 type PaymentSegmentedOption = { value: string; label: string }
 type PaymentSelectOption = { value: string; label: string; description?: string; disabled?: boolean }
@@ -210,6 +211,15 @@ const STRIPE_INSTALLMENT_OPTIONS: Array<{ value: StripeInstallmentChoice; label:
   { value: '24', label: 'Hasta 24 meses' }
 ]
 
+const REBILL_INSTALLMENT_OPTIONS: Array<{ value: RebillInstallmentChoice; label: string }> = [
+  { value: '3', label: 'Hasta 3 meses' },
+  { value: '6', label: 'Hasta 6 meses' },
+  { value: '9', label: 'Hasta 9 meses' },
+  { value: '12', label: 'Hasta 12 meses' },
+  { value: '18', label: 'Hasta 18 meses' },
+  { value: '24', label: 'Hasta 24 meses' }
+]
+
 const CONEKTA_INSTALLMENT_TERMS: Array<{ value: ConektaInstallmentChoice; months: number; minAmount: number; issuer?: string }> = [
   { value: '3', months: 3, minAmount: 300 },
   { value: '6', months: 6, minAmount: 600 },
@@ -226,6 +236,11 @@ const getMercadoPagoInstallmentLimit = (choice: MercadoPagoInstallmentChoice) =>
 }
 
 const getStripeInstallmentLimit = (choice: StripeInstallmentChoice) => {
+  const parsed = Number(choice)
+  return Number.isFinite(parsed) ? Math.max(3, Math.trunc(parsed)) : 3
+}
+
+const getRebillInstallmentLimit = (choice: RebillInstallmentChoice) => {
   const parsed = Number(choice)
   return Number.isFinite(parsed) ? Math.max(3, Math.trunc(parsed)) : 3
 }
@@ -771,6 +786,7 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
   const [stripeInstallmentChoice, setStripeInstallmentChoice] = useState<StripeInstallmentChoice>('24')
   const [mercadoPagoInstallmentChoice, setMercadoPagoInstallmentChoice] = useState<MercadoPagoInstallmentChoice>('none')
   const [conektaInstallmentChoice, setConektaInstallmentChoice] = useState<ConektaInstallmentChoice>('none')
+  const [rebillInstallmentChoice, setRebillInstallmentChoice] = useState<RebillInstallmentChoice>('12')
   const [conektaSavedCardGatewayConfirmed, setConektaSavedCardGatewayConfirmed] = useState(false)
   const [manualPaymentData, setManualPaymentData] = useState<ManualPaymentData>(() => defaultManualPaymentData(timezone))
   const [transferInfoUrl, setTransferInfoUrl] = useState<string | null>(null)
@@ -1128,8 +1144,12 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
   const conektaInstallmentEstimate = invoiceSummary && conektaInstallmentEnabled
     ? normalizeAmount(invoiceSummary.amount / conektaInstallmentLimit)
     : 0
-  const rebillMsiEnabled = installmentChargeMode === 'installments'
-  const rebillInstallmentPaymentLabel = rebillMsiEnabled ? 'MSI si aplica' : 'Pago de contado'
+  const rebillInstallmentLimit = getRebillInstallmentLimit(rebillInstallmentChoice)
+  const rebillMsiEnabled = installmentChargeMode === 'installments' && rebillInstallmentLimit > 1
+  const rebillInstallmentPaymentLabel = rebillMsiEnabled ? `Hasta ${rebillInstallmentLimit} meses` : 'Pago de contado'
+  const rebillInstallmentEstimate = invoiceSummary && rebillMsiEnabled
+    ? normalizeAmount(invoiceSummary.amount / rebillInstallmentLimit)
+    : 0
   const conektaSavedCardDescription = conektaInstallmentsAvailable
     ? 'Elige cobro único o meses sin intereses antes de cobrar.'
     : 'Se cobrará de contado; MSI requiere monto mínimo.'
@@ -1148,6 +1168,7 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
     setStripeInstallmentChoice('24')
     setMercadoPagoInstallmentChoice('none')
     setConektaInstallmentChoice('none')
+    setRebillInstallmentChoice('12')
   }
 
   const openMercadoPagoInstallmentConfiguration = () => {
@@ -1168,6 +1189,7 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
 
   const openRebillInstallmentConfiguration = () => {
     setInstallmentChargeMode('installments')
+    setRebillInstallmentChoice((current) => current || '12')
   }
 
   const openConektaInstallmentConfiguration = () => {
@@ -3247,7 +3269,8 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
           source: 'record_payment_modal_rebill',
           lineItems: Array.isArray(invoicePayload.items) ? invoicePayload.items : [],
           installments: {
-            enabled: rebillMsiEnabled
+            enabled: rebillMsiEnabled,
+            maxInstallments: rebillMsiEnabled ? rebillInstallmentLimit : undefined
           }
         })
 
@@ -3255,7 +3278,7 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
           kind: 'single',
           title: 'Enlace Rebill listo',
           description: rebillMsiEnabled
-            ? 'Comparte este enlace para que el cliente pague con Rebill. Si su país, cuenta y tarjeta aplican, Rebill mostrará meses sin intereses dentro del checkout.'
+            ? `Comparte este enlace para que el cliente pague con Rebill. Si su país, cuenta y tarjeta aplican, Rebill mostrará meses sin intereses hasta ${rebillInstallmentLimit} meses.`
             : 'Comparte este enlace para que el cliente pague de contado en el checkout seguro de Rebill.',
           provider: 'rebill',
           paymentUrl: result.paymentUrl,
@@ -3269,7 +3292,7 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
           'success',
           'Link de Rebill creado',
           rebillMsiEnabled
-            ? 'El enlace público quedó listo con meses sin intereses solicitado en Rebill.'
+            ? `El enlace público quedó listo con MSI hasta ${rebillInstallmentLimit} meses en Rebill.`
             : 'El enlace público está listo para copiar o enviar.'
         )
         onSuccess?.(LINK_READY_SUCCESS_CONTEXT)
@@ -4656,7 +4679,7 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
             ? `Disponible desde ${formatCurrency(CLIP_INSTALLMENT_MIN_AMOUNT, 'MXN')}.`
             : 'CLIP mostrará los planes disponibles dentro del formulario seguro.'
       : paymentOption === 'rebill'
-        ? 'Rebill mostrará los meses disponibles dentro del checkout cuando la cuenta, país y tarjeta califiquen.'
+        ? 'Configura hasta cuántos meses podrá elegir el cliente si Rebill lo permite.'
       : paymentOption === 'mercadopago'
         ? 'Configura cuántos meses podrá elegir el cliente en el link.'
         : 'Consulta mínimos y selecciona un plazo disponible.'
@@ -5147,12 +5170,23 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
 
         {showRebillCheckoutPanel && invoiceSummary && (
           <div className={styles.mercadoPagoInstallmentsPanel}>
-            <div className={styles.mercadoPagoInstallmentsHeader}>
-              <div>
+            <div className={`${styles.mercadoPagoInstallmentsHeader} ${styles.conektaInstallmentsHeader}`}>
+              <div className={styles.conektaInstallmentIntro}>
                 <span>Rebill</span>
                 <p>{rebillMsiEnabled ? 'Meses sin intereses' : 'Checkout seguro'}</p>
+                {rebillMsiEnabled && (
+                  <div className={styles.conektaInstallmentSelectField}>
+                    <label>Máximo de meses</label>
+                    {renderPaymentSelect({
+                      value: rebillInstallmentChoice,
+                      onChange: (value) => setRebillInstallmentChoice(value as RebillInstallmentChoice),
+                      options: REBILL_INSTALLMENT_OPTIONS,
+                      title: 'Máximo de meses'
+                    })}
+                  </div>
+                )}
               </div>
-              <strong>{rebillMsiEnabled ? 'MSI automático' : invoiceSummary.currency}</strong>
+              <strong>{rebillMsiEnabled ? rebillInstallmentPaymentLabel : invoiceSummary.currency}</strong>
             </div>
 
             <div className={styles.mercadoPagoInstallmentTotals}>
@@ -5165,8 +5199,12 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
                 <strong>{rebillInstallmentPaymentLabel}</strong>
               </div>
               <div>
-                <span>Meses</span>
-                <strong>{rebillMsiEnabled ? 'Según Rebill' : 'No solicitado'}</strong>
+                <span>{rebillMsiEnabled ? 'Referencia mensual' : 'Meses'}</span>
+                <strong>
+                  {rebillMsiEnabled
+                    ? formatCurrency(rebillInstallmentEstimate, invoiceSummary.currency)
+                    : 'No solicitado'}
+                </strong>
               </div>
               <div>
                 <span>Ristak registra</span>
@@ -5176,7 +5214,7 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
 
             <p className={styles.mercadoPagoInstallmentsNote}>
               {rebillMsiEnabled
-                ? 'Ristak marcará este link como MSI solicitado. Rebill mostrará los meses disponibles dentro del checkout cuando la cuenta, país, monto y tarjeta califiquen.'
+                ? `Ristak enviará a Rebill la configuración de plazos hasta ${rebillInstallmentLimit} meses. El checkout mostrará únicamente los meses que realmente apliquen según cuenta, país, moneda, monto y tarjeta.`
                 : 'Ristak creará el link como pago de contado. Rebill procesa la tarjeta y Ristak confirma el paymentId con backend antes de marcar el cobro como pagado.'}
             </p>
           </div>
@@ -5521,7 +5559,7 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
         : paymentOption === 'clip'
           ? 'Crear link CLIP'
         : paymentOption === 'rebill'
-          ? (rebillMsiEnabled ? 'Crear link Rebill con MSI' : 'Crear link Rebill')
+          ? (rebillMsiEnabled ? `Crear link Rebill hasta ${rebillInstallmentLimit} meses` : 'Crear link Rebill')
         : paymentOption === 'send'
           ? activePaymentMode === 'partial' ? 'Crear y enviar enlace' : 'Enviar enlace'
           : 'Registrar pago'

@@ -283,7 +283,7 @@ test('Rebill confirma pago público consultando el paymentId en backend antes de
         description: 'Pago Rebill test',
         email: 'cliente@example.test',
         phone: '+525512345678',
-        installments: { enabled: true },
+        installments: { enabled: true, maxInstallments: 12 },
         metadata: { testSource: 'rebillPaymentService.test' }
       }, {
         baseUrl: 'https://app.example.test',
@@ -297,9 +297,15 @@ test('Rebill confirma pago público consultando el paymentId en backend antes de
       assert.equal(link.payment.instantProduct.currency, 'MXN')
       assert.equal(link.payment.instantProduct.metadata.publicPaymentId, publicPaymentId)
       assert.equal(link.payment.instantProduct.metadata.rebillInstallmentsRequested, true)
+      assert.equal(link.payment.instantProduct.metadata.rebillMaxInstallments, 12)
+      assert.deepEqual(link.payment.instantProduct.installmentsSettings, [
+        { currency: 'MXN', enabledInstallments: [1, 3, 6, 9, 12] }
+      ])
       assert.deepEqual(link.payment.rebillInstallments, {
         enabled: true,
-        selectionMode: 'rebill_checkout_automatic'
+        selectionMode: 'rebill_checkout_configured',
+        maxInstallments: 12,
+        enabledInstallments: [1, 3, 6, 9, 12]
       })
       assert.deepEqual(link.payment.customerInformation.phoneNumber, {
         number: '5512345678',

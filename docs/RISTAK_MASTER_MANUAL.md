@@ -715,10 +715,11 @@ Alcance:
   resuelve la lada y la duplicaria en pantalla.
 - Meses/installments en cobros unicos: en el modal de cobro, Rebill entra al
   mismo paso de decision que Stripe, Conekta, Mercado Pago y CLIP: contado o MSI.
-  Ristak guarda la preferencia en `metadata.rebillInstallments.enabled` y la
-  expone al checkout publico. Ristak no selecciona plazos locales ni fuerza el
-  maximo de meses para Rebill; el checkout del proveedor muestra los plazos
-  reales cuando la cuenta, pais, moneda, monto y tarjeta califican. Si el SDK
+  Si se elige MSI, Ristak pide el maximo de meses (3, 6, 9, 12, 18 o 24), guarda
+  `metadata.rebillInstallments.maxInstallments` y manda al `instant-product` del
+  SDK `installmentsSettings=[{ currency, enabledInstallments: [1,...meses] }]`
+  para limitar el checkout hasta ese maximo. Rebill aun decide cuales plazos
+  muestra realmente segun cuenta, pais, moneda, monto y tarjeta. Si el SDK
   reporta el numero elegido en `data.installments`, Ristak lo conserva como
   `metadata.rebillInstallments.selectedInstallments`. El pago total local se
   confirma contra backend con el `paymentId` antes de marcarlo pagado.

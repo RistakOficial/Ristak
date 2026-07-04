@@ -41,6 +41,7 @@ const REBILL_API_BASE = 'https://api.rebill.com'
 const REBILL_WEBHOOK_PATH = '/api/rebill/webhook'
 const REBILL_WEBHOOK_EVENTS = ['payment.created', 'payment.updated']
 const REBILL_SUPPORTED_CURRENCIES = new Set(['ARS', 'BRL', 'CLP', 'COP', 'MXN', 'USD'])
+const REBILL_SUPPORTED_INSTALLMENT_MONTHS = [3, 6, 9, 12, 18, 24]
 const SUCCESSFUL_PAYMENT_STATUSES = new Set(['paid', 'succeeded', 'completed', 'complete', 'fulfilled', 'success', 'approved'])
 const CLOSED_PAYMENT_STATUSES = new Set(['paid', 'succeeded', 'completed', 'complete', 'fulfilled', 'success', 'approved', 'refunded', 'void', 'deleted', 'chargeback'])
 const REBILL_PLAN_STATES = {
@@ -94,23 +95,47 @@ function normalizeRebillSelectedInstallments(value) {
   return Number.isFinite(installments) && installments > 1 && installments <= 36 ? installments : null
 }
 
+function normalizeRebillMaxInstallments(value, fallback = 12) {
+  const maxInstallments = Math.trunc(Number(value))
+  if (!Number.isFinite(maxInstallments) || maxInstallments <= 1) return fallback
+  if (REBILL_SUPPORTED_INSTALLMENT_MONTHS.includes(maxInstallments)) return maxInstallments
+
+  const lowerSupportedMonth = [...REBILL_SUPPORTED_INSTALLMENT_MONTHS]
+    .reverse()
+    .find((month) => month <= maxInstallments)
+
+  return lowerSupportedMonth || fallback
+}
+
+function buildRebillEnabledInstallments(maxInstallments = 12) {
+  const normalizedMax = normalizeRebillMaxInstallments(maxInstallments, 12)
+  return [1, ...REBILL_SUPPORTED_INSTALLMENT_MONTHS.filter((month) => month <= normalizedMax)]
+}
+
 function normalizeRebillInstallmentOptions(input = {}) {
   const raw = input.installments ?? input.rebillInstallments ?? input.rebill_installments
   if (raw === undefined || raw === null || raw === '') return null
 
   if (typeof raw === 'boolean') {
+    const maxInstallments = raw ? 12 : null
     return {
       enabled: raw,
-      selectionMode: 'rebill_checkout_automatic'
+      selectionMode: 'rebill_checkout_configured',
+      ...(maxInstallments ? { maxInstallments, enabledInstallments: buildRebillEnabledInstallments(maxInstallments) } : { enabledInstallments: [1] })
     }
   }
 
   if (typeof raw !== 'object') return null
 
+  const enabled = normalizeBoolean(raw.enabled ?? raw.requested ?? raw.msi, false)
+  const maxInstallments = enabled
+    ? normalizeRebillMaxInstallments(raw.maxInstallments ?? raw.max_installments ?? raw.maximumInstallments ?? raw.months ?? raw.count, 12)
+    : null
   const selectedInstallments = normalizeRebillSelectedInstallments(raw)
   return {
-    enabled: normalizeBoolean(raw.enabled ?? raw.requested ?? raw.msi, false),
-    selectionMode: cleanString(raw.selectionMode || raw.selection_mode || 'rebill_checkout_automatic', 80),
+    enabled,
+    selectionMode: cleanString(raw.selectionMode || raw.selection_mode || 'rebill_checkout_configured', 80),
+    ...(maxInstallments ? { maxInstallments, enabledInstallments: buildRebillEnabledInstallments(maxInstallments) } : { enabledInstallments: [1] }),
     ...(selectedInstallments ? { selectedInstallments } : {})
   }
 }
@@ -815,11 +840,34 @@ function buildInstantProduct(row, metadata = {}) {
   const rebillInstallments = metadata.rebillInstallments && typeof metadata.rebillInstallments === 'object'
     ? metadata.rebillInstallments
     : null
+  const currency = assertRebillCurrency(row.currency)
+  let enabledInstallments = null
+  if (rebillInstallments) {
+    enabledInstallments = [1]
+    if (rebillInstallments.enabled) {
+      enabledInstallments = Array.isArray(rebillInstallments.enabledInstallments) && rebillInstallments.enabledInstallments.length
+        ? rebillInstallments.enabledInstallments
+            .map((value) => Math.trunc(Number(value)))
+            .filter((value) => Number.isFinite(value) && value >= 1)
+        : buildRebillEnabledInstallments(rebillInstallments.maxInstallments || 12)
+    }
+  }
+
   return {
     name: [{ language: 'es', text: title }],
     description: description ? [{ language: 'es', text: description }] : [],
     amount: normalizePositiveAmount(row.amount),
-    currency: assertRebillCurrency(row.currency),
+    currency,
+    ...(rebillInstallments
+      ? {
+          installmentsSettings: [
+            {
+              currency,
+              enabledInstallments: enabledInstallments?.length ? enabledInstallments : [1]
+            }
+          ]
+        }
+      : {}),
     metadata: {
       ristakPaymentId: cleanString(row.id, 180),
       publicPaymentId: cleanString(row.public_payment_id, 180),
@@ -828,7 +876,8 @@ function buildInstantProduct(row, metadata = {}) {
       ...(rebillInstallments
         ? {
             rebillInstallmentsRequested: Boolean(rebillInstallments.enabled),
-            rebillInstallmentsMode: cleanString(rebillInstallments.selectionMode || 'rebill_checkout_automatic', 80)
+            rebillInstallmentsMode: cleanString(rebillInstallments.selectionMode || 'rebill_checkout_configured', 80),
+            ...(rebillInstallments.maxInstallments ? { rebillMaxInstallments: Number(rebillInstallments.maxInstallments) } : {})
           }
         : {})
     }
