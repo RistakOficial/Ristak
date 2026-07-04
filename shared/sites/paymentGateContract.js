@@ -34,7 +34,8 @@ export function conektaInstallmentMonths({ maxInstallments = 0, amount = 0 } = {
 // Dónde vive el diferido a meses por pasarela en el checkout EMBEBIDO:
 // - Conekta: fila propia (standalone) con un <select> de meses filtrados por monto.
 // - Mercado Pago: dentro del Brick (no hay fila propia).
-// - Stripe: dentro del Payment Element (solo MXN y monto >= 300; Stripe decide).
+// - Stripe: selector propio despues de que el numero de tarjeta califica
+//   (solo MXN y monto >= 300; Stripe confirma los available_plans).
 // El editor usa esto para mostrar SOLO la fila que el vivo mostraría.
 export const STRIPE_MSI_MIN_AMOUNT = 300
 export const CLIP_MSI_MIN_AMOUNT = 300
