@@ -788,8 +788,24 @@ const RSTK_BASE_CSS = `
   .rstk-checkout-spinner{width:18px;height:18px;border-radius:50%;border:2px solid color-mix(in srgb,var(--rstk-ink) 20%,transparent);border-top-color:var(--rstk-accent);animation:rstk-checkout-spin .7s linear infinite}
   @keyframes rstk-checkout-spin{to{transform:rotate(360deg)}}
   .rstk-checkout-fields{display:grid;gap:10px;min-height:20px;min-width:0;max-width:100%}
-  .rstk-checkout-installments{display:grid;gap:6px}
+  .rstk-checkout-installments{display:grid;gap:8px;min-width:0}
   .rstk-checkout-select{width:100%;min-height:44px;padding:0 12px;background:var(--rstk-input-bg);color:var(--rstk-input-ink,var(--rstk-ink));border:1px solid var(--rstk-input-border);border-radius:var(--rstk-radius);font:inherit;font-size:.92rem}
+  .rstk-checkout-msi{display:grid;gap:8px;min-width:0}
+  .rstk-checkout-msi-toggle{display:inline-flex;align-items:center;gap:8px;justify-self:start;color:var(--rstk-checkout-field-text,var(--rstk-block-text,var(--rstk-ink)));font-size:.92rem;line-height:1.25;font-weight:500;cursor:pointer;user-select:none}
+  .rstk-checkout-msi-checkbox{position:absolute;inline-size:1px;block-size:1px;opacity:0;pointer-events:none}
+  .rstk-checkout-msi-check{position:relative;display:inline-flex;align-items:center;justify-content:center;width:18px;height:18px;flex:0 0 auto;border-radius:5px;border:1px solid var(--rstk-input-border,var(--rstk-border));background:var(--rstk-input-bg,var(--rstk-surface));color:var(--rstk-on-accent);box-shadow:0 1px 2px color-mix(in srgb,var(--rstk-ink) 12%,transparent)}
+  .rstk-checkout-msi-checkbox:checked + .rstk-checkout-msi-check,.rstk-checkout-msi-check-preview{background:var(--rstk-block-text,var(--rstk-ink));border-color:var(--rstk-block-text,var(--rstk-ink))}
+  .rstk-checkout-msi-checkbox:checked + .rstk-checkout-msi-check::after,.rstk-checkout-msi-check-preview::after{content:"";width:8px;height:4px;border-left:2px solid currentColor;border-bottom:2px solid currentColor;transform:rotate(-45deg) translate(1px,-1px)}
+  .rstk-checkout-msi-checkbox:focus-visible + .rstk-checkout-msi-check{outline:2px solid color-mix(in srgb,var(--rstk-accent) 45%,transparent);outline-offset:2px}
+  .rstk-checkout-msi-title{margin:0;color:var(--rstk-checkout-field-text,var(--rstk-block-text,var(--rstk-ink)));font-size:.92rem;line-height:1.25;font-weight:500}
+  .rstk-checkout-msi-options{display:grid;gap:8px;min-width:0}
+  .rstk-checkout-msi-option{display:grid;gap:3px;width:100%;min-height:58px;padding:10px 12px;text-align:left;border:1px solid var(--rstk-input-border,var(--rstk-border));border-radius:var(--rstk-radius);background:var(--rstk-input-bg,var(--rstk-surface));color:var(--rstk-checkout-field-text,var(--rstk-block-text,var(--rstk-ink)));font:inherit;cursor:pointer;box-shadow:0 1px 2px color-mix(in srgb,var(--rstk-ink) 6%,transparent);transition:border-color .15s ease,box-shadow .15s ease,background .15s ease,opacity .15s ease}
+  .rstk-checkout-msi-option:hover:not(:disabled){border-color:color-mix(in srgb,var(--rstk-block-text,var(--rstk-ink)) 38%,var(--rstk-input-border,var(--rstk-border)))}
+  .rstk-checkout-msi-option[data-selected="true"]{border-color:var(--rstk-block-text,var(--rstk-ink));box-shadow:0 0 0 1px var(--rstk-block-text,var(--rstk-ink))}
+  .rstk-checkout-msi-option:focus-visible{outline:2px solid color-mix(in srgb,var(--rstk-accent) 45%,transparent);outline-offset:2px}
+  .rstk-checkout-msi-option:disabled{opacity:.55;cursor:default}
+  .rstk-checkout-msi-option-name{display:block;min-width:0;overflow-wrap:anywhere;font-size:.9rem;line-height:1.25;font-weight:500}
+  .rstk-checkout-msi-option-total{display:block;min-width:0;color:var(--rstk-muted);font-size:.82rem;line-height:1.25;font-weight:400}
   /* El botón de pago consume las MISMAS variables de diseño de botón que el resto de
      bloques (--rstk-button-*): fondo, texto, borde, radio, padding, tipografía, sombra
      y hover. Los fallbacks reproducen el look anterior si el bloque no define nada. */

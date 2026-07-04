@@ -32231,21 +32231,24 @@ const CanvasPreviewBlock: React.FC<CanvasPreviewBlockProps> = ({
       ? MSI_INSTALLMENT_CHOICES.filter(months => months <= stripeMsiMax)
       : []
     const stripeMsiPreview = stripeMsiPreviewMonths.length > 0 ? (
-      <div className="rstk-stripe-msi-preview" aria-hidden="true">
-        <div className="rstk-stripe-msi-preview-head">
-          <span>Meses sin intereses</span>
-          <strong>Máximo {stripeMsiMax} meses</strong>
-        </div>
-        <div className="rstk-stripe-msi-option" data-selected="true">
-          <span>Pago de contado</span>
-          <strong>{amountText}</strong>
-        </div>
-        {stripeMsiPreviewMonths.map(months => (
-          <div className="rstk-stripe-msi-option" key={months}>
-            <span>{months} pagos de {formatPaymentAmount(Math.round((Number(paymentGate.amount || 0) / months) * 100) / 100, paymentGate.currency)}</span>
-            <strong>Total {amountText}</strong>
+      <div className="rstk-checkout-installments" aria-hidden="true">
+        <div className="rstk-checkout-msi">
+          <div className="rstk-checkout-msi-toggle">
+            <span className="rstk-checkout-msi-check rstk-checkout-msi-check-preview" />
+            <span>Pagar en cuotas (meses sin intereses)</span>
           </div>
-        ))}
+          <p className="rstk-checkout-msi-title">Planes de cuotas</p>
+          <div className="rstk-checkout-msi-options">
+            {stripeMsiPreviewMonths.map((months, index) => (
+              <div className="rstk-checkout-msi-option" data-selected={index === 0 ? 'true' : 'false'} key={months}>
+                <span className="rstk-checkout-msi-option-name">
+                  {months} pagos de {formatPaymentAmount(Math.round((Number(paymentGate.amount || 0) / months) * 100) / 100, paymentGate.currency)}
+                </span>
+                <span className="rstk-checkout-msi-option-total">Total: {amountText}</span>
+              </div>
+            ))}
+          </div>
+        </div>
       </div>
     ) : null
     const paymentSectionStyle: Record<string, string> = {
