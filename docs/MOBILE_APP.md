@@ -140,6 +140,22 @@ usar `--phone-chat-primary`, `--phone-chat-text-on-primary`,
 `--phone-chat-sheet-shadow`; no uses verdes heredados ni fondos beige/verdosos
 fijos para paneles como "Agendar con".
 
+## Remitente de WhatsApp en chat movil
+
+En `/movil`, el boton de canal del composer debe listar cada WhatsApp conectado
+como opcion separada cuando la cuenta tiene mas de un remitente. Elegir
+`WhatsApp · <nombre/numero>` cambia el envio puntual del chat abierto y el
+mensaje sale con ese `phoneNumberId`; no debe obligar al usuario a ir al
+desktop para elegir entre WhatsApp 1, WhatsApp 2, etc.
+
+La info del contacto muestra "Contactando desde". Ese sheet es el control
+persistente del contacto: `Automatico` limpia `preferred_whatsapp_phone_number_id`
+para usar el numero por donde llego la conversacion o el principal actual; elegir
+un numero fijo guarda `preferred_whatsapp_phone_number_id` en el contacto. Si el
+numero mostrado por automatico coincide con el que el usuario toca, igual debe
+guardarse como fijo; no cierres el sheet solo porque visualmente ya era el
+numero activo.
+
 Los avatares de contacto son parte de la identidad de Ristak: si el contacto
 tiene foto real de la red social, se respeta esa foto; si no tiene foto, el
 fallback muestra iniciales sobre `--phone-chat-avatar-fill` azul/cian Ristak. El

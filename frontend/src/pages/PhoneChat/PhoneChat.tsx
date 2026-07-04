@@ -1025,6 +1025,7 @@ const GHL_CHAT_CHANNEL_LABELS: Record<HighLevelChatChannel, string> = {
   email: 'Correo'
 }
 type ComposerMessageChannelValue = HighLevelChatChannel | 'email'
+type ComposerMessageRouteValue = ComposerMessageChannelValue | `whatsapp:${string}`
 const COMPOSER_MESSAGE_CHANNEL_OPTIONS: Array<{
   value: ComposerMessageChannelValue
   label: string
@@ -3603,7 +3604,7 @@ function phoneLooksSame(left?: string | null, right?: string | null) {
 }
 
 function getBusinessPhoneValue(phone?: WhatsAppApiStatus['phoneNumbers'][number] | null) {
-  return phone?.phone_number || phone?.display_phone_number || ''
+  return phone?.phone_number || phone?.display_phone_number || phone?.qr_connected_phone || ''
 }
 
 function getBusinessPhoneProfilePhoto(phone?: WhatsAppApiStatus['phoneNumbers'][number] | null) {
@@ -3622,7 +3623,30 @@ function isBusinessPhoneQrReady(phone?: WhatsAppApiStatus['phoneNumbers'][number
 }
 
 function getBusinessPhoneLabel(phone?: WhatsAppApiStatus['phoneNumbers'][number] | null) {
-  return phone?.label || phone?.display_phone_number || phone?.phone_number || 'WhatsApp'
+  return phone?.label || phone?.verified_name || getBusinessPhoneValue(phone) || 'WhatsApp'
+}
+
+function getBusinessPhoneDisplay(phone?: WhatsAppApiStatus['phoneNumbers'][number] | null) {
+  const value = getBusinessPhoneValue(phone)
+  const label = getBusinessPhoneLabel(phone)
+  if (!value) return label
+  return label && label !== value ? `${label} · ${value}` : value
+}
+
+function isWhatsAppComposerRoute(value: ComposerMessageRouteValue): value is 'whatsapp_api' | `whatsapp:${string}` {
+  return value === 'whatsapp_api' || String(value).startsWith('whatsapp:')
+}
+
+function getComposerRoutePhoneId(value: ComposerMessageRouteValue) {
+  return String(value).startsWith('whatsapp:') ? String(value).slice('whatsapp:'.length) : ''
+}
+
+function getComposerRouteChannel(value: ComposerMessageRouteValue): ComposerMessageChannelValue {
+  return isWhatsAppComposerRoute(value) ? 'whatsapp_api' : value
+}
+
+function getComposerRouteDataChannel(value: ComposerMessageRouteValue) {
+  return isWhatsAppComposerRoute(value) ? 'whatsapp_api' : value
 }
 
 function isInsideReplyWindow(date?: string | null) {
@@ -3875,7 +3899,7 @@ export const PhoneChat: React.FC = () => {
   const requestedActionParam = searchParams.get('action')
   const { locationId, accessToken, user } = useAuth()
   const hasEmailAccess = hasLicenseFeature(user, ['email'])
-  const composerMessageChannelOptions = useMemo(
+  const baseComposerMessageChannelOptions = useMemo(
     () => COMPOSER_MESSAGE_CHANNEL_OPTIONS.filter((option) => option.value !== 'email' || hasEmailAccess),
     [hasEmailAccess]
   )
@@ -4014,6 +4038,7 @@ export const PhoneChat: React.FC = () => {
   const [contactsLoading, setContactsLoading] = useState(false)
   const [activeContactId, setActiveContactId] = useState<string | null>(null)
   const [contactHighLevelChannelOverrides, setContactHighLevelChannelOverrides] = useState<Record<string, HighLevelChatChannel>>({})
+  const [contactBusinessPhoneOverrides, setContactBusinessPhoneOverrides] = useState<Record<string, string>>({})
   const [conversationOpen, setConversationOpen] = useState(false)
   const [messages, setMessages] = useState<ChatMessage[]>([])
   const [agentCompletionEvents, setAgentCompletionEvents] = useState<ConversationalAgentCompletionEvent[]>([])
@@ -4820,6 +4845,29 @@ export const PhoneChat: React.FC = () => {
   const whatsappConnected = Boolean(whatsappStatus?.connected && whatsappStatus?.configured)
   const businessPhones = whatsappStatus?.phoneNumbers || []
   const chatPhoneFilterEnabled = whatsappNumberMode === 'separated' && businessPhones.length > 1
+  const activeContactBusinessPhoneOverrideId = activeContact?.id ? contactBusinessPhoneOverrides[activeContact.id] || '' : ''
+  const composerMessageChannelOptions = useMemo<Array<{
+    value: ComposerMessageRouteValue
+    label: string
+    description: string
+  }>>(() => {
+    const whatsappOptions = businessPhones.length > 0
+      ? businessPhones.map((phone, index) => ({
+          value: `whatsapp:${phone.id}` as ComposerMessageRouteValue,
+          label: `WhatsApp · ${getBusinessPhoneLabel(phone) || `Número ${index + 1}`}`,
+          description: getBusinessPhoneValue(phone) || phone.verified_name || 'Número conectado'
+        }))
+      : [{
+          value: 'whatsapp_api' as ComposerMessageRouteValue,
+          label: 'WhatsApp',
+          description: 'Mensaje por WhatsApp conectado.'
+        }]
+
+    return [
+      ...whatsappOptions,
+      ...baseComposerMessageChannelOptions.filter((option) => option.value !== 'whatsapp_api')
+    ]
+  }, [baseComposerMessageChannelOptions, businessPhones])
   const selectedChatPhone = useMemo(() => (
     businessPhones.find((phone) => phone.id === selectedChatPhoneId) || null
   ), [businessPhones, selectedChatPhoneId])
@@ -4827,6 +4875,9 @@ export const PhoneChat: React.FC = () => {
   const effectiveSelectedChatPhoneId = selectedChatPhoneFilterActive ? selectedChatPhoneId : 'all'
   const effectiveSelectedChatPhone = selectedChatPhoneFilterActive ? selectedChatPhone : null
   const selectedBusinessPhone = useMemo(() => {
+    const fromComposerOverride = activeContactBusinessPhoneOverrideId
+      ? businessPhones.find((phone) => phone.id === activeContactBusinessPhoneOverrideId)
+      : null
     const preferredBusinessPhoneId = activeContact?.preferredWhatsAppPhoneNumberId ||
       activeContact?.preferred_whatsapp_phone_number_id ||
       ''
@@ -4866,7 +4917,8 @@ export const PhoneChat: React.FC = () => {
       ? businessPhones.find((phone) => phoneLooksSame(getBusinessPhoneValue(phone), activeContact.lastBusinessPhone))
       : null
 
-    return fromContactPreference ||
+    return fromComposerOverride ||
+      fromContactPreference ||
       fromInboundMessageId ||
       fromInboundMessagePhone ||
       fromChatInboundId ||
@@ -4886,6 +4938,7 @@ export const PhoneChat: React.FC = () => {
     activeContact?.lastBusinessPhoneNumberId,
     activeContact?.preferredWhatsAppPhoneNumberId,
     activeContact?.preferred_whatsapp_phone_number_id,
+    activeContactBusinessPhoneOverrideId,
     businessPhones,
     messages,
     whatsappStatus?.selectedPhone
@@ -9990,33 +10043,56 @@ export const PhoneChat: React.FC = () => {
   // Número nuestro desde el que contactamos al contacto abierto en la info
   const contactInfoPreferredPhoneId = (contactInfoData as ChatContact | null)?.preferredWhatsAppPhoneNumberId ||
     (contactInfoData as Record<string, unknown> | null)?.preferred_whatsapp_phone_number_id as string | undefined
+  const contactInfoHasFixedOurPhone = Boolean(contactInfoPreferredPhoneId)
   const contactInfoOurPhone = businessPhones.find((phone) => phone.id === contactInfoPreferredPhoneId) ||
     (contactInfoData?.id === activeContact?.id ? selectedBusinessPhone : null) ||
     businessPhones.find((phone) => phone.is_default_sender) ||
     businessPhones[0] ||
     null
 
-  const handleSelectOurNumber = async (targetPhone: WhatsAppApiPhoneNumber) => {
-    if (!contactInfoData || !targetPhone?.id) return
-    if (targetPhone.id === contactInfoOurPhone?.id) {
+  const handleSelectOurNumber = async (targetPhone: WhatsAppApiPhoneNumber | null) => {
+    if (!contactInfoData) return
+    if (!targetPhone && !contactInfoPreferredPhoneId) {
       setOurNumberSheetOpen(false)
       return
     }
 
-    const targetLabel = targetPhone.display_phone_number || targetPhone.phone_number || 'el otro número'
-    setChangingOurNumberId(targetPhone.id)
+    if (targetPhone?.id && contactInfoPreferredPhoneId === targetPhone.id) {
+      setOurNumberSheetOpen(false)
+      return
+    }
+
+    const targetLabel = targetPhone ? getBusinessPhoneDisplay(targetPhone) : 'automático'
+    setChangingOurNumberId(targetPhone?.id || '__automatic__')
     try {
       await contactsService.updateContact(contactInfoData.id, {
-        preferredWhatsAppPhoneNumberId: targetPhone.id,
+        preferredWhatsAppPhoneNumberId: targetPhone?.id || '',
         routingSource: 'manual',
-        routingReason: 'Cambio manual desde la info del contacto'
+        routingReason: targetPhone
+          ? 'Cambio manual desde la info del contacto'
+          : 'Cambio a automático desde la info del contacto'
       } as Partial<Contact>)
       applyContactInfoPatch({
-        preferredWhatsAppPhoneNumberId: targetPhone.id,
-        preferred_whatsapp_phone_number_id: targetPhone.id
+        preferredWhatsAppPhoneNumberId: targetPhone?.id || '',
+        preferred_whatsapp_phone_number_id: targetPhone?.id || ''
       } as Partial<Contact>)
+      setContactBusinessPhoneOverrides((current) => {
+        const next = { ...current }
+        if (targetPhone?.id) {
+          next[contactInfoData.id] = targetPhone.id
+        } else {
+          delete next[contactInfoData.id]
+        }
+        return next
+      })
       setOurNumberSheetOpen(false)
-      showToast('success', 'Número cambiado', `Ahora contactas a este ${customerSentenceLabel} desde ${targetLabel}.`)
+      showToast(
+        'success',
+        targetPhone ? 'Número cambiado' : 'Automático activado',
+        targetPhone
+          ? `Ahora contactas a este ${customerSentenceLabel} desde ${targetLabel}.`
+          : `Ristak volverá a elegir el WhatsApp de este ${customerSentenceLabel} según la conversación.`
+      )
     } catch (error: any) {
       showToast('error', 'No se pudo cambiar', getErrorMessage(error, 'Intenta otra vez.'))
     } finally {
@@ -13343,20 +13419,26 @@ export const PhoneChat: React.FC = () => {
   // El color de marca lo pone el contenedor ([data-channel]). OJO: el contorno
   // grueso venia de stroke-width en .composerChannelButton/.avatarChannelBadge svg
   // (los react-icons traen stroke="currentColor"); eso ya se quito en el CSS.
-  const renderComposerMessageChannelIcon = (value: ComposerMessageChannelValue) => {
-    if (value === 'whatsapp_api') {
+  const renderComposerMessageChannelIcon = (value: ComposerMessageRouteValue) => {
+    if (isWhatsAppComposerRoute(value)) {
       return <FaWhatsapp className={styles.channelIconGlyph} aria-hidden="true" />
     }
 
     return <PhoneMessageChannelIcon channel={value} size={20} className={styles.channelIconGlyph} />
   }
 
-  const getComposerMessageChannelDisabledReason = (value: ComposerMessageChannelValue) => {
+  const getComposerMessageChannelDisabledReason = (value: ComposerMessageRouteValue) => {
     if (!activeContact) return 'Abre un chat para elegir canal.'
     if (value === 'email') return 'El correo electrónico se envía desde la vista completa de chats.'
-    if (value === 'whatsapp_api') {
+    if (isWhatsAppComposerRoute(value)) {
+      const routePhoneId = getComposerRoutePhoneId(value)
+      const routePhone = routePhoneId
+        ? businessPhones.find((phone) => phone.id === routePhoneId)
+        : selectedBusinessPhone
       if (!activeContact.phone) return 'Este contacto no tiene teléfono guardado.'
-      if (!sendingThroughHighLevel && !whatsappConnected && !selectedQrReady) return 'Conecta WhatsApp API o QR para responder.'
+      if (routePhoneId && !routePhone) return 'Ese número de WhatsApp ya no está disponible.'
+      if (routePhone && !getBusinessPhoneValue(routePhone) && !highLevelConnected) return 'Ese WhatsApp todavía no tiene número detectado.'
+      if (!sendingThroughHighLevel && !whatsappConnected && !isBusinessPhoneQrReady(routePhone || selectedBusinessPhone)) return 'Conecta WhatsApp API o QR para responder.'
       return ''
     }
     if (value === 'sms_qr') {
@@ -13373,7 +13455,7 @@ export const PhoneChat: React.FC = () => {
     return ''
   }
 
-  const handleComposerMessageChannelSelect = (value: ComposerMessageChannelValue) => {
+  const handleComposerMessageChannelSelect = (value: ComposerMessageRouteValue) => {
     if (value === 'email') {
       showToast('info', 'Correo electrónico', 'Para enviar correos usa la vista completa de chats.')
       return
@@ -13386,18 +13468,39 @@ export const PhoneChat: React.FC = () => {
       return
     }
 
+    const nextChannel = getComposerRouteChannel(value)
     setContactHighLevelChannelOverrides((current) => ({
       ...current,
-      [activeContact.id]: value
+      [activeContact.id]: nextChannel as HighLevelChatChannel
     }))
-    saveConfigPreference(setSelectedHighLevelChatChannel, value)
+    if (isWhatsAppComposerRoute(value)) {
+      const routePhoneId = getComposerRoutePhoneId(value)
+      setContactBusinessPhoneOverrides((current) => {
+        if (!routePhoneId) {
+          const next = { ...current }
+          delete next[activeContact.id]
+          return next
+        }
+        return {
+          ...current,
+          [activeContact.id]: routePhoneId
+        }
+      })
+      saveConfigPreference(setSelectedHighLevelChatChannel, 'whatsapp_api')
+    } else {
+      saveConfigPreference(setSelectedHighLevelChatChannel, nextChannel as HighLevelChatChannel)
+    }
     setComposerChannelPickerOpen(false)
   }
 
   const renderComposerChannelPicker = () => {
     if (!activeContact || aiAgentConversationOpen) return null
 
-    const activeValue: ComposerMessageChannelValue = (sendingThroughHighLevel || sendingThroughMetaSocial) ? activeHighLevelChatChannel : 'whatsapp_api'
+    const activeValue: ComposerMessageRouteValue = activeHighLevelChatChannel === 'whatsapp_api'
+      ? selectedBusinessPhone?.id
+        ? `whatsapp:${selectedBusinessPhone.id}`
+        : 'whatsapp_api'
+      : activeHighLevelChatChannel
     const activeLabel = activeValue === 'sms_qr'
       ? 'SMS'
       : composerMessageChannelOptions.find((option) => option.value === activeValue)?.label || 'WhatsApp'
@@ -13407,7 +13510,7 @@ export const PhoneChat: React.FC = () => {
         <button
           type="button"
           className={`${styles.composerChannelButton} ${composerChannelPickerOpen ? styles.composerChannelButtonOpen : ''}`}
-          data-channel={activeValue}
+          data-channel={getComposerRouteDataChannel(activeValue)}
           onClick={() => {
             actionSheetDismiss.requestClose()
             closeConversationSearch()
@@ -13439,7 +13542,7 @@ export const PhoneChat: React.FC = () => {
                   role="menuitem"
                   title={disabledReason || option.description}
                 >
-                  <span className={styles.composerChannelOptionIcon} data-channel={option.value}>
+                  <span className={styles.composerChannelOptionIcon} data-channel={getComposerRouteDataChannel(option.value)}>
                     {renderComposerMessageChannelIcon(option.value)}
                   </span>
                   <span>
@@ -13983,7 +14086,7 @@ export const PhoneChat: React.FC = () => {
                   <small>Contactando desde</small>
                   <strong>
                     {contactInfoOurPhone
-                      ? (contactInfoOurPhone.display_phone_number || contactInfoOurPhone.phone_number || contactInfoOurPhone.id)
+                      ? `${contactInfoHasFixedOurPhone ? '' : 'Auto · '}${getBusinessPhoneDisplay(contactInfoOurPhone)}`
                       : 'Sin número conectado'}
                   </strong>
                 </span>
@@ -18911,8 +19014,22 @@ export const PhoneChat: React.FC = () => {
         subtitle={contactInfoData ? getContactName(contactInfoData) : undefined}
       >
         <div className={styles.ourNumberList} role="listbox" aria-label="Números disponibles para contactar">
+          <button
+            type="button"
+            role="option"
+            aria-selected={!contactInfoPreferredPhoneId}
+            className={`${styles.ourNumberOption} ${!contactInfoPreferredPhoneId ? styles.ourNumberOptionActive : ''}`}
+            disabled={Boolean(changingOurNumberId)}
+            onClick={() => { void handleSelectOurNumber(null) }}
+          >
+            <span>
+              <strong>Automático</strong>
+              <small>Usar el número por donde llegó la conversación o el predeterminado.</small>
+            </span>
+            {changingOurNumberId === '__automatic__' ? <Loader2 size={18} className={styles.spinIcon} /> : !contactInfoPreferredPhoneId ? <Check size={18} /> : null}
+          </button>
           {businessPhones.map((phone) => {
-            const active = phone.id === contactInfoOurPhone?.id
+            const active = contactInfoPreferredPhoneId === phone.id
             const unavailable = Boolean(phone.availability && !phone.availability.available)
             const changing = changingOurNumberId === phone.id
 
@@ -18927,10 +19044,10 @@ export const PhoneChat: React.FC = () => {
                 onClick={() => { void handleSelectOurNumber(phone) }}
               >
                 <span>
-                  <strong>{phone.display_phone_number || phone.phone_number || phone.id}</strong>
+                  <strong>{getBusinessPhoneDisplay(phone)}</strong>
                   <small>
                     {[
-                      phone.verified_name,
+                      phone.label && phone.label !== getBusinessPhoneValue(phone) ? null : phone.verified_name,
                       unavailable
                         ? (isBusinessPhoneQrReady(phone) ? 'API no disponible · respaldo QR listo' : 'No disponible ahora')
                         : 'Disponible'
