@@ -36,10 +36,8 @@
   bottom: auto;
   left: 0;
   width: 100vw;
-  /* Pantalla COMPLETA y estable (el teclado se sobrepone; no encogemos la pagina).
-     El composer se eleva con transform GPU (ver .composerShell) y los mensajes
-     reservan --phone-kb de padding abajo. Asi el movimiento es acelerado por
-     compositor (seco, como nativo), no por layout. */
+  /* iOS/Android redimensionan el viewport nativo cuando aparece el teclado; el grid
+     se achica y el composer queda en la ultima fila sin moverlo con JS/CSS manual. */
   height: 100dvh;
   min-height: 100dvh;
   max-height: 100dvh;
@@ -4032,9 +4030,7 @@
   position: relative;
   grid-row: 3;
   min-height: 0;
-  /* Reserva abajo el alto del teclado: el composer se eleva --phone-kb y tapa esa
-     franja; con este padding ningun mensaje queda debajo del composer elevado. */
-  padding: 8px 8px calc(8px + var(--phone-kb, 0px));
+  padding: 8px;
   overflow-x: hidden;
   overflow-y: auto;
   overscroll-behavior-y: contain;
@@ -5299,12 +5295,6 @@
   min-width: 0;
   background: var(--phone-chat-composer-bg);
   -webkit-text-size-adjust: 100%;
-  /* El composer se ELEVA con transform (compositor/GPU) para quedar sobre el teclado,
-     con la duracion y curva REALES del teclado de iOS (--phone-kb-dur/-ease, fijadas
-     por MainViewController). Movimiento seco como nativo, sin reflow de layout. */
-  transform: translateY(calc(-1 * var(--phone-kb, 0px)));
-  transition: transform var(--phone-kb-dur, 0.25s) var(--phone-kb-ease, cubic-bezier(0.38, 0.7, 0.125, 1));
-  will-change: transform;
 }
 
 .aiSuggestionBar {

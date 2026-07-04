@@ -2,10 +2,10 @@
  * keyboardFocusScroll — mantiene el campo de texto enfocado SIEMPRE por encima
  * del teclado en pantallas táctiles (app móvil Capacitor + tablets + web móvil).
  *
- * Por qué existe: con `Keyboard.setResizeMode(Body)` la unidad `100dvh` NO se
- * encoge cuando sube el teclado (solo el visual viewport lo hace), y las
- * pantallas con contenido centrado vertical (login, "cambiar empresa") dejaban el
- * input debajo del teclado: escribías a ciegas.
+ * Por qué existe: segun el modo de teclado/plataforma, el viewport visible puede
+ * no coincidir con la caja scrollable de la pantalla. Las pantallas con contenido
+ * centrado vertical (login, "cambiar empresa") dejaban el input debajo del teclado:
+ * escribías a ciegas.
  *
  * Qué hace: al enfocar cualquier input/textarea/contenteditable, espera a que el
  * teclado se asiente y desplaza SOLO el contenedor scrollable más cercano
