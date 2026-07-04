@@ -334,6 +334,16 @@ completo de todas las conversaciones de la bandeja. Al insertar mensajes antiguo
 arriba del hilo, la UI debe conservar la posicion visible del usuario y nunca
 forzar scroll al ultimo mensaje.
 
+Las fotos de perfil de contactos WhatsApp se guardan en
+`whatsapp_api_contacts.profile_picture_url`, no en el perfil del numero de
+negocio. Cuando entra un mensaje nuevo del contacto, el backend intenta refrescar
+ese avatar de forma oportunista y best-effort: primero reusa la ruta API/YCloud
+si trae perfil, y si no alcanza usa WhatsApp QR/Baileys para consultar
+`profilePictureUrl` del JID del contacto. La lectura respeta un cache minimo de
+24 horas por contacto (`profile_picture_updated_at`) para no golpear WhatsApp en
+cada mensaje; si la privacidad del contacto, la sesion QR o el proveedor no
+entregan foto, Ristak conserva el avatar anterior o cae a iniciales.
+
 Antes de mandar mensajes libres por WhatsApp API/YCloud, `whatsappApiService`
 debe revisar la ultima respuesta entrante del cliente para ese contacto y numero
 de negocio. Si la ventana de 24 horas ya esta cerrada, no debe intentar YCloud:

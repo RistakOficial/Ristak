@@ -20,7 +20,8 @@ import {
   sendWhatsAppQrImageMessage,
   sendWhatsAppQrVideoMessage,
   sendWhatsAppQrTextMessage,
-  startWhatsAppQrConnection
+  startWhatsAppQrConnection,
+  warmWhatsAppQrProfilePictures
 } from './whatsappQrService.js'
 import { getWhatsAppQrDripSettings } from './whatsappQrDripService.js'
 import { decrypt, encrypt } from '../utils/encryption.js'
@@ -5206,6 +5207,131 @@ export async function warmWhatsAppApiProfilePictures(contacts = [], {
   return results
 }
 
+async function getWhatsAppProfilePictureRefreshContact({ contactId, phone, profileName } = {}) {
+  const cleanContactId = cleanString(contactId)
+  const canonicalPhone = normalizePhoneForStorage(phone) || cleanString(phone)
+  if (!cleanContactId && !canonicalPhone) return null
+
+  const row = await db.get(`
+    SELECT
+      c.id,
+      c.phone,
+      c.full_name,
+      c.first_name,
+      (
+        SELECT profile_picture_url
+        FROM whatsapp_api_contacts
+        WHERE contact_id = c.id
+           OR phone = ?
+           OR phone = c.phone
+        ORDER BY CASE WHEN NULLIF(profile_picture_url, '') IS NULL THEN 1 ELSE 0 END,
+                 profile_picture_updated_at DESC,
+                 updated_at DESC
+        LIMIT 1
+      ) AS whatsapp_profile_picture_url,
+      (
+        SELECT profile_picture_updated_at
+        FROM whatsapp_api_contacts
+        WHERE contact_id = c.id
+           OR phone = ?
+           OR phone = c.phone
+        ORDER BY profile_picture_updated_at DESC, updated_at DESC
+        LIMIT 1
+      ) AS whatsapp_profile_picture_updated_at,
+      (
+        SELECT raw_profile_json
+        FROM whatsapp_api_contacts
+        WHERE contact_id = c.id
+           OR phone = ?
+           OR phone = c.phone
+        ORDER BY updated_at DESC
+        LIMIT 1
+      ) AS whatsapp_raw_profile_json
+    FROM contacts c
+    WHERE (? != '' AND c.id = ?)
+       OR (? != '' AND c.phone = ?)
+       OR (? != '' AND c.id = (
+         SELECT contact_id
+         FROM contact_phone_numbers
+         WHERE phone = ?
+         ORDER BY is_primary DESC, updated_at DESC
+         LIMIT 1
+       ))
+    ORDER BY CASE WHEN c.id = ? THEN 0 ELSE 1 END
+    LIMIT 1
+  `, [
+    canonicalPhone,
+    canonicalPhone,
+    canonicalPhone,
+    cleanContactId,
+    cleanContactId,
+    canonicalPhone,
+    canonicalPhone,
+    canonicalPhone,
+    canonicalPhone,
+    cleanContactId
+  ]).catch(() => null)
+
+  if (row) {
+    return {
+      ...row,
+      name: cleanString(row.full_name || row.first_name || profileName),
+      phone: normalizePhoneForStorage(row.phone || canonicalPhone) || cleanString(row.phone || canonicalPhone)
+    }
+  }
+
+  if (!canonicalPhone) return null
+  return {
+    id: cleanContactId,
+    phone: canonicalPhone,
+    full_name: cleanString(profileName),
+    name: cleanString(profileName),
+    whatsapp_profile_picture_url: '',
+    whatsapp_profile_picture_updated_at: null,
+    whatsapp_raw_profile_json: null
+  }
+}
+
+export async function refreshInboundWhatsAppContactProfilePicture(result = {}) {
+  if (result?.direction && result.direction !== 'inbound') return { refreshed: false, reason: 'not_inbound' }
+  if (result?.isNew === false) return { refreshed: false, reason: 'existing_message' }
+
+  const contact = await getWhatsAppProfilePictureRefreshContact({
+    contactId: result.contactId,
+    phone: result.phone,
+    profileName: result.profileName || result.contactName
+  })
+  if (!contact?.phone) return { refreshed: false, reason: 'missing_contact' }
+
+  const key = cleanString(contact.id) || cleanString(contact.phone)
+  let profileContact = contact
+  const apiPictures = await warmWhatsAppApiProfilePictures([profileContact], { limit: 1 })
+  const apiUrl = apiPictures.get(key)
+  if (apiUrl) {
+    profileContact = {
+      ...profileContact,
+      whatsapp_profile_picture_url: apiUrl,
+      whatsapp_profile_picture_updated_at: nowIso()
+    }
+  }
+
+  const qrPictures = await warmWhatsAppQrProfilePictures([profileContact], { limit: 1 })
+  const qrUrl = qrPictures.get(key)
+  const refreshedUrl = qrUrl || apiUrl || ''
+
+  return refreshedUrl
+    ? { refreshed: true, url: refreshedUrl, source: qrUrl ? 'qr' : 'api' }
+    : { refreshed: false, reason: 'not_available' }
+}
+
+function scheduleInboundWhatsAppContactProfilePictureRefresh(result = {}, source = 'whatsapp') {
+  if (!result?.contactId || !result?.phone || result?.direction !== 'inbound' || result?.isNew === false) return
+
+  refreshInboundWhatsAppContactProfilePicture(result).catch(error => {
+    logger.warn(`[WhatsApp] No se pudo refrescar avatar de contacto (${source}) ${result.contactId || result.phone || ''}: ${error.message}`)
+  })
+}
+
 function normalizeWebhookMessage(rawMessage = {}) {
   if (!isPlainObject(rawMessage)) return rawMessage
 
@@ -5869,6 +5995,8 @@ export async function captureQrChatMessage({
   }
 
   if (cleanDirection === 'inbound' && result.isNew) {
+    scheduleInboundWhatsAppContactProfilePictureRefresh(result, 'whatsapp_qr')
+
     // Ventana de confirmación con IA: registrar mensaje y determinar si se deben
     // pausar otros agentes/automatizaciones durante la espera de 3 minutos.
     let confirmWindow = { windowActive: false, bypassAutomations: false }
@@ -6638,10 +6766,12 @@ export async function processYCloudWhatsAppWebhook({ payload, rawBody, signature
       ? await processWhatsAppMessageEventPayload({ payload, businessPhoneHints })
       : []
 
+    const inboundResults = messageResults.filter(result => result?.direction === 'inbound' && result?.isNew !== false)
+    inboundResults.forEach(result => scheduleInboundWhatsAppContactProfilePictureRefresh(result, 'ycloud_webhook'))
+
     // Ventanas de confirmación con IA: registrar mensajes y obtener estado de bypass.
     const confirmWindows = new Map()
-    await Promise.all(messageResults
-      .filter(result => result?.direction === 'inbound' && result?.isNew !== false)
+    await Promise.all(inboundResults
       .map(result => handleInboundForConfirmation({
         contactId: result.contactId,
         text: result.messageText
@@ -6650,8 +6780,7 @@ export async function processYCloudWhatsAppWebhook({ payload, rawBody, signature
           logger.warn(`[Citas] Error en ventana de confirmación: ${error.message}`)
         })))
 
-    await Promise.all(messageResults
-      .filter(result => result?.direction === 'inbound' && result?.isNew !== false)
+    await Promise.all(inboundResults
       .map(result => {
         const win = confirmWindows.get(result.contactId)
         if (win?.windowActive) return Promise.resolve()
@@ -6665,8 +6794,7 @@ export async function processYCloudWhatsAppWebhook({ payload, rawBody, signature
 
     // Motor de automatizaciones: disparar/reanudar flujos con cada mensaje
     // entrante (import dinámico para evitar dependencia circular)
-    Promise.all(messageResults
-      .filter(result => result?.direction === 'inbound' && result?.isNew !== false)
+    Promise.all(inboundResults
       .filter(result => {
         const win = confirmWindows.get(result.contactId)
         return !(win?.windowActive && win?.bypassAutomations)
@@ -6691,8 +6819,8 @@ export async function processYCloudWhatsAppWebhook({ payload, rawBody, signature
 
     // Agente conversacional: atiende la conversación si está activado
     // (import dinámico para evitar dependencia circular)
-    Promise.all(messageResults
-      .filter(result => result?.direction === 'inbound' && result?.isNew !== false && result?.contactId)
+    Promise.all(inboundResults
+      .filter(result => result?.contactId)
       .filter(result => {
         const win = confirmWindows.get(result.contactId)
         return !(win?.windowActive && win?.bypassAutomations)
@@ -6707,8 +6835,7 @@ export async function processYCloudWhatsAppWebhook({ payload, rawBody, signature
           logger.warn(`[Agente conversacional] No se pudo atender el mensaje entrante: ${error.message}`)
         }))).catch(() => {})
 
-    await Promise.all(messageResults
-      .filter(result => result?.direction === 'inbound' && result?.isNew !== false)
+    await Promise.all(inboundResults
       .map(result => sendChatMessageNotification({
         contactId: result.contactId,
         contactName: result.contactName,
@@ -7198,6 +7325,7 @@ export async function processMetaDirectWebhookRelay({ payload = {}, rawBody = ''
   try {
     const messageResults = await processMetaDirectWebhookPayload({ payload, eventRowId })
     const inboundResults = messageResults.filter(result => result?.direction === 'inbound' && result?.isNew !== false)
+    inboundResults.forEach(result => scheduleInboundWhatsAppContactProfilePictureRefresh(result, 'meta_direct_webhook'))
     const confirmWindows = new Map()
 
     await Promise.all(inboundResults.map(result => handleInboundForConfirmation({
