@@ -2133,6 +2133,7 @@ export const Transactions: React.FC = () => {
     if (provider === 'conekta' || method.startsWith('conekta')) return 'conekta'
     if (provider === 'stripe' || method.startsWith('stripe') || Boolean(transaction.stripePaymentIntentId)) return 'stripe'
     if (provider === 'clip' || method.startsWith('clip')) return 'clip'
+    if (provider === 'rebill' || method.startsWith('rebill')) return 'rebill'
     if (provider === 'gigstack' || method.startsWith('gigstack')) return 'gigstack'
     return null
   }
@@ -2176,6 +2177,9 @@ export const Transactions: React.FC = () => {
       case 'clip_card': return 'CLIP Card'
       case 'clip_link':
       case 'clip_payment_link': return 'Link de CLIP'
+      case 'rebill': return 'Rebill'
+      case 'rebill_checkout': return 'Rebill Checkout'
+      case 'rebill_saved_card': return 'Rebill domiciliado'
       case 'bank_transfer':
       case 'transfer': return 'Transferencia'
       case 'cash': return 'Efectivo'
