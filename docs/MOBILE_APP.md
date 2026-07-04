@@ -95,8 +95,20 @@ inicio":
 - Android: `frontend/android/app/src/main/res/mipmap-*/ic_launcher*.png`,
   `frontend/android/app/src/main/res/mipmap-night-*/ic_launcher*.png` y los
   fondos adaptive en `frontend/android/app/src/main/res/values*/ic_launcher_background.xml`.
+  Las notificaciones Android usan `@drawable/ic_stat_ristak` como small icon
+  del sistema y el backend FCM debe mandar `icon: 'ic_stat_ristak'`.
 - Web/PWA móvil: `frontend/public/ristak-chat-icon-*`,
   `frontend/public/ristak-chat-home-icon-*` y los `apple-touch-icon` móviles.
+
+Las push de mensajes, citas y pagos deben intentar mostrar el avatar del
+contacto cuando el payload pertenece a exactamente un contacto y existe una foto
+publica (`contactAvatarUrl` / `notificationImageUrl`). Si no hay foto, son varios
+contactos o la alerta es general, se usa el isotipo de Ristak. En Android el
+avatar viaja como imagen de la notificacion; el small icon del sistema sigue
+siendo `ic_stat_ristak` porque Android exige un icono monocromatico de la app.
+En iOS/APNs el payload incluye `mutable-content` y la URL de imagen cuando existe
+avatar; sin una Notification Service Extension activa, iOS muestra el AppIcon
+instalado de `frontend/ios/App/App/Assets.xcassets/AppIcon.appiconset/`.
 
 ## Tema visual móvil
 

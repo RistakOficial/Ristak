@@ -1,4 +1,4 @@
-const CACHE_NAME = 'ristak-branding-v27'
+const CACHE_NAME = 'ristak-branding-v28'
 const DEFAULT_NOTIFICATION_TITLE = 'Notificación nueva'
 const DEFAULT_NOTIFICATION_BODY = 'Tienes una notificación nueva.'
 const LATEST_NOTIFICATION_TAG = 'ristak-latest-notification'
@@ -177,13 +177,31 @@ function getNotificationBody(payload) {
 }
 
 function getNotificationData(payload) {
+  const imageUrl = getNotificationImageUrl(payload)
   return {
     url: payload?.url || '/movil',
     category: payload?.category || 'ristak',
     tag: payload?.tag || 'ristak-chat',
     sourceTag: payload?.tag || '',
     messageId: payload?.messageId || '',
-    contactId: payload?.contactId || ''
+    contactId: payload?.contactId || '',
+    contactAvatarUrl: imageUrl,
+    notificationImageUrl: imageUrl
+  }
+}
+
+function getNotificationImageUrl(payload) {
+  const raw = String(
+    payload?.contactAvatarUrl ||
+    payload?.notificationImageUrl ||
+    ''
+  ).trim()
+  if (!raw || /^data:/i.test(raw) || /^file:/i.test(raw)) return ''
+  try {
+    const parsed = new URL(raw, self.location.origin)
+    return (parsed.protocol === 'https:' || parsed.protocol === 'http:') ? parsed.href : ''
+  } catch {
+    return ''
   }
 }
 
@@ -216,13 +234,15 @@ self.addEventListener('push', (event) => {
   }
 
   const notificationData = getNotificationData(payload)
+  const notificationImageUrl = getNotificationImageUrl(payload)
 
   event.waitUntil(
     Promise.all([
       notifyOpenClients(payload),
       self.registration.showNotification(getNotificationTitle(payload), {
         body: getNotificationBody(payload),
-        icon: '/ristak-chat-icon-192.png',
+        icon: notificationImageUrl || '/ristak-chat-icon-192.png',
+        ...(notificationImageUrl ? { image: notificationImageUrl } : {}),
         badge: '/ristak-chat-icon-192.png',
         tag: LATEST_NOTIFICATION_TAG,
         renotify: true,

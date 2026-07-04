@@ -34,6 +34,7 @@ const APNS_PRIVATE_KEY_FILE = process.env.APNS_PRIVATE_KEY_FILE || ''
 const APNS_ENV = String(process.env.APNS_ENV || process.env.NODE_ENV || 'production').toLowerCase()
 const DEFAULT_NOTIFICATION_TITLE = 'Notificación nueva'
 const DEFAULT_NOTIFICATION_BODY = 'Tienes una notificación nueva.'
+const FALLBACK_MOBILE_NOTIFICATION_ICON = 'ic_stat_ristak'
 const ANDROID_CHANNELS = {
   alerts: 'ristak_alerts',
   sound: 'ristak_sound',
@@ -465,6 +466,7 @@ async function getApnsJwt() {
 }
 
 function getNotificationData(payload = {}) {
+  const imageUrl = getNotificationImageUrl(payload)
   return Object.fromEntries(
     Object.entries({
       url: payload.url || '/movil',
@@ -473,7 +475,9 @@ function getNotificationData(payload = {}) {
       threadId: payload.threadId || payload.tag || payload.category || 'ristak',
       eventKey: payload.eventKey || '',
       messageId: payload.messageId || '',
-      contactId: payload.contactId || ''
+      contactId: payload.contactId || '',
+      contactAvatarUrl: imageUrl,
+      notificationImageUrl: imageUrl
     }).map(([key, value]) => [key, String(value || '')])
   )
 }
@@ -529,6 +533,178 @@ export function normalizeNotificationPayload(payload = {}) {
     ...payload,
     title: getNotificationTitle(payload),
     body: getNotificationBody(payload)
+  }
+}
+
+function cleanPublicImageUrl(value = '') {
+  const raw = cleanNotificationText(value)
+  if (!raw || /^data:/i.test(raw) || /^file:/i.test(raw)) return ''
+  try {
+    const parsed = new URL(raw)
+    return (parsed.protocol === 'https:' || parsed.protocol === 'http:') ? parsed.href : ''
+  } catch {
+    return ''
+  }
+}
+
+function getNotificationImageUrl(payload = {}) {
+  return cleanPublicImageUrl(
+    payload.contactAvatarUrl ||
+    payload.notificationImageUrl ||
+    ''
+  )
+}
+
+function getPayloadContactImageCandidateUrl(payload = {}) {
+  return cleanPublicImageUrl(
+    payload.contactAvatarUrl ||
+    payload.notificationImageUrl ||
+    payload.imageUrl ||
+    payload.profilePictureUrl ||
+    payload.profile_picture_url ||
+    payload.avatarUrl ||
+    payload.avatar_url ||
+    payload.photoUrl ||
+    payload.photo_url ||
+    payload.pictureUrl ||
+    payload.picture_url ||
+    ''
+  )
+}
+
+function normalizePayloadContactIds(payload = {}) {
+  const values = []
+  const append = (value) => {
+    if (Array.isArray(value)) {
+      value.forEach(append)
+      return
+    }
+    const raw = String(value || '').trim()
+    if (!raw) return
+    raw.split(',').map((item) => item.trim()).filter(Boolean).forEach((item) => values.push(item))
+  }
+
+  append(payload.contactIds)
+  append(payload.contact_ids)
+  append(payload.contactId)
+  append(payload.contact_id)
+
+  return [...new Set(values)]
+}
+
+function findProfilePictureUrlInValue(value) {
+  if (!value) return ''
+  let parsed = value
+  if (typeof value === 'string') {
+    const clean = value.trim()
+    if (!clean) return ''
+    try {
+      parsed = JSON.parse(clean)
+    } catch {
+      return cleanPublicImageUrl(clean)
+    }
+  }
+  if (!parsed || typeof parsed !== 'object') return ''
+
+  const keys = [
+    'profilePictureUrl',
+    'profile_picture_url',
+    'profilePhotoUrl',
+    'profile_photo_url',
+    'pictureUrl',
+    'picture_url',
+    'avatarUrl',
+    'avatar_url',
+    'photoUrl',
+    'photo_url',
+    'displayPictureUrl',
+    'display_picture_url'
+  ]
+  for (const key of keys) {
+    const candidate = cleanPublicImageUrl(parsed[key])
+    if (candidate) return candidate
+  }
+  for (const nested of Object.values(parsed)) {
+    if (nested && typeof nested === 'object') {
+      const candidate = findProfilePictureUrlInValue(nested)
+      if (candidate) return candidate
+    }
+  }
+  return ''
+}
+
+async function getContactNotificationAvatarUrl(contactId = '') {
+  const id = String(contactId || '').trim()
+  if (!id) return ''
+
+  const contact = await db.get(`
+    SELECT
+      c.id,
+      c.phone,
+      (
+        SELECT profile_picture_url
+        FROM whatsapp_api_contacts
+        WHERE contact_id = c.id
+           OR phone = c.phone
+           OR phone IN (SELECT phone FROM contact_phone_numbers WHERE contact_id = c.id)
+        ORDER BY CASE WHEN NULLIF(profile_picture_url, '') IS NULL THEN 1 ELSE 0 END,
+                 profile_picture_updated_at DESC,
+                 updated_at DESC
+        LIMIT 1
+      ) AS whatsapp_profile_picture_url,
+      (
+        SELECT raw_profile_json
+        FROM whatsapp_api_contacts
+        WHERE contact_id = c.id
+           OR phone = c.phone
+           OR phone IN (SELECT phone FROM contact_phone_numbers WHERE contact_id = c.id)
+        ORDER BY updated_at DESC
+        LIMIT 1
+      ) AS whatsapp_raw_profile_json,
+      (
+        SELECT profile_picture_url
+        FROM meta_social_contacts
+        WHERE contact_id = c.id
+        ORDER BY CASE WHEN NULLIF(profile_picture_url, '') IS NULL THEN 1 ELSE 0 END,
+                 updated_at DESC
+        LIMIT 1
+      ) AS meta_social_profile_picture_url
+    FROM contacts c
+    WHERE c.id = ?
+    LIMIT 1
+  `, [id]).catch((error) => {
+    logger.warn(`[Push] No se pudo resolver avatar de contacto para notificación: ${error.message}`)
+    return null
+  })
+
+  return cleanPublicImageUrl(contact?.whatsapp_profile_picture_url) ||
+    cleanPublicImageUrl(contact?.meta_social_profile_picture_url) ||
+    findProfilePictureUrlInValue(contact?.whatsapp_raw_profile_json)
+}
+
+async function enrichNotificationPayloadForDelivery(payload = {}) {
+  const normalized = normalizeNotificationPayload(payload)
+  const contactIds = normalizePayloadContactIds(normalized)
+  if (contactIds.length !== 1) return normalized
+
+  const directImageUrl = getPayloadContactImageCandidateUrl(normalized)
+  if (directImageUrl) {
+    return {
+      ...normalized,
+      contactId: normalized.contactId || contactIds[0],
+      contactAvatarUrl: directImageUrl,
+      notificationImageUrl: directImageUrl
+    }
+  }
+
+  const contactAvatarUrl = await getContactNotificationAvatarUrl(contactIds[0])
+  if (!contactAvatarUrl) return normalized
+
+  return {
+    ...normalized,
+    contactId: normalized.contactId || contactIds[0],
+    contactAvatarUrl,
+    notificationImageUrl: contactAvatarUrl
   }
 }
 
@@ -1079,6 +1255,7 @@ async function sendFcmNotification(row, payload = {}, experience = {}) {
 
   const notificationTitle = getNotificationTitle(payload)
   const notificationBody = getNotificationBody(payload)
+  const notificationImageUrl = getNotificationImageUrl(payload)
   const channelId = getAndroidChannelId(experience)
   const accessToken = await getFcmAccessToken()
   const response = await fetch(`https://fcm.googleapis.com/v1/projects/${encodeURIComponent(FCM_PROJECT_ID)}/messages:send`, {
@@ -1092,7 +1269,8 @@ async function sendFcmNotification(row, payload = {}, experience = {}) {
         token: row.token,
         notification: {
           title: notificationTitle,
-          body: notificationBody
+          body: notificationBody,
+          ...(notificationImageUrl ? { image: notificationImageUrl } : {})
         },
         data: getNotificationData(payload),
         android: {
@@ -1100,7 +1278,8 @@ async function sendFcmNotification(row, payload = {}, experience = {}) {
           notification: {
             channel_id: channelId,
             click_action: 'OPEN_RISTAK',
-            icon: 'ic_stat_whatsapp',
+            icon: FALLBACK_MOBILE_NOTIFICATION_ICON,
+            ...(notificationImageUrl ? { image: notificationImageUrl } : {}),
             tag: payload.tag || undefined,
             notification_priority: 'PRIORITY_HIGH',
             default_sound: Boolean(experience.soundEnabled),
@@ -1141,6 +1320,9 @@ async function sendApnsNotification(row, payload = {}, experience = {}) {
     },
     'thread-id': getNotificationThreadId(payload),
     category: getApnsCategory(payload)
+  }
+  if (getNotificationImageUrl(payload)) {
+    aps['mutable-content'] = 1
   }
   if (experience.soundEnabled) {
     aps.sound = 'default'
@@ -1316,7 +1498,7 @@ async function filterRowsByUserPreference(rows, { enabledKey = '', calendarId = 
 // (MOB-006) enabledKey: clave on/off del evento para resolver la preferencia POR
 // usuario destinatario (con fallback al global). Si se omite, no se filtra por usuario.
 export async function sendAppNotificationPayload(payload = {}, { calendarId = '', userIds = null, enabledKey = '', excludeUserIds = null } = {}) {
-  const normalizedPayload = normalizeNotificationPayload(payload)
+  const normalizedPayload = await enrichNotificationPayloadForDelivery(payload)
   if (appNotificationPayloadSenderForTest) {
     return appNotificationPayloadSenderForTest(normalizedPayload, { calendarId, userIds, enabledKey, excludeUserIds })
   }

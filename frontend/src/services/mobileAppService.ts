@@ -48,6 +48,7 @@ const IOS_MOBILE_APP_ALLOWED_PATH_PREFIXES = [
 export interface MobileAppNotificationDetail {
   category: string
   contactId: string
+  contactAvatarUrl: string
   messageId: string
   source: 'received' | 'action'
   url: string
@@ -380,6 +381,9 @@ function dispatchMobileNotificationEvent(
   const detail: MobileAppNotificationDetail = {
     category: typeof data.category === 'string' ? data.category : '',
     contactId: getNotificationContactId(data, url),
+    contactAvatarUrl: typeof data.contactAvatarUrl === 'string'
+      ? data.contactAvatarUrl
+      : (typeof data.notificationImageUrl === 'string' ? data.notificationImageUrl : ''),
     messageId: typeof data.messageId === 'string' ? data.messageId : '',
     source,
     url

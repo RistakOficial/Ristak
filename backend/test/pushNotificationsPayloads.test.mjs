@@ -1,9 +1,13 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
+import { randomUUID } from 'node:crypto'
 
+import { db } from '../src/config/database.js'
 import {
   buildPaymentNotificationPayload,
-  normalizeNotificationPayload
+  normalizeNotificationPayload,
+  sendAppNotificationPayload,
+  setAppNotificationPayloadSenderForTest
 } from '../src/services/pushNotificationsService.js'
 
 test('normaliza payloads push para no usar Ristak/Reistack como titulo', () => {
@@ -95,4 +99,79 @@ test('construye titulos semanticos para pagos', () => {
   })
 
   assert.equal(refunded.title, '↩️ Pago reembolsado')
+})
+
+test('push de contacto unico usa avatar del contacto cuando existe foto publica', async () => {
+  const suffix = randomUUID()
+  const contactId = `push_avatar_contact_${suffix}`
+  const apiContactId = `push_avatar_api_${suffix}`
+  const phone = `+52155${Date.now().toString().slice(-8)}`
+  const avatarUrl = `https://cdn.example.test/avatars/${suffix}.jpg`
+  const sentPayloads = []
+
+  setAppNotificationPayloadSenderForTest(async (payload) => {
+    sentPayloads.push(payload)
+    return { sent: 1, skipped: false }
+  })
+
+  try {
+    await db.run(`
+      INSERT INTO contacts (id, phone, full_name, source, created_at, updated_at)
+      VALUES (?, ?, 'Ana Avatar', 'test', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+    `, [contactId, phone])
+    await db.run(`
+      INSERT INTO whatsapp_api_contacts (
+        id, contact_id, phone, profile_name, profile_picture_url,
+        profile_picture_source, profile_picture_updated_at, created_at, updated_at
+      ) VALUES (?, ?, ?, 'Ana Avatar', ?, 'test', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+    `, [apiContactId, contactId, phone, avatarUrl])
+
+    await sendAppNotificationPayload({
+      title: 'Ana Avatar',
+      body: 'Hola',
+      category: 'chat',
+      contactId
+    })
+
+    assert.equal(sentPayloads.length, 1)
+    assert.equal(sentPayloads[0].contactAvatarUrl, avatarUrl)
+    assert.equal(sentPayloads[0].notificationImageUrl, avatarUrl)
+  } finally {
+    setAppNotificationPayloadSenderForTest(null)
+    await db.run('DELETE FROM whatsapp_api_contacts WHERE id = ?', [apiContactId]).catch(() => undefined)
+    await db.run('DELETE FROM contacts WHERE id = ?', [contactId]).catch(() => undefined)
+  }
+})
+
+test('push general o de multiples contactos no usa imagen aunque llegue imageUrl', async () => {
+  const sentPayloads = []
+  setAppNotificationPayloadSenderForTest(async (payload) => {
+    sentPayloads.push(payload)
+    return { sent: 1, skipped: false }
+  })
+
+  try {
+    await sendAppNotificationPayload({
+      title: 'Resumen',
+      body: 'Varias personas agendaron',
+      category: 'appointment_booked',
+      contactIds: ['contact_a', 'contact_b'],
+      imageUrl: 'https://cdn.example.test/avatars/nope.jpg'
+    })
+
+    await sendAppNotificationPayload({
+      title: 'Actualizacion',
+      body: 'Nueva version lista',
+      category: 'system',
+      imageUrl: 'https://cdn.example.test/avatars/nope.jpg'
+    })
+
+    assert.equal(sentPayloads.length, 2)
+    assert.equal(sentPayloads[0].contactAvatarUrl, undefined)
+    assert.equal(sentPayloads[0].notificationImageUrl, undefined)
+    assert.equal(sentPayloads[1].contactAvatarUrl, undefined)
+    assert.equal(sentPayloads[1].notificationImageUrl, undefined)
+  } finally {
+    setAppNotificationPayloadSenderForTest(null)
+  }
 })
