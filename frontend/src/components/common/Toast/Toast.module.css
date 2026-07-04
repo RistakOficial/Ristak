@@ -274,7 +274,7 @@
 }
 
 :global(body[data-phone-app='active']) .success .icon {
-  background: var(--phone-chat-accent, #25d366);
+  background: var(--phone-chat-accent, #0078f8);
 }
 
 :global(body[data-phone-app='active']) .error .icon {
@@ -286,5 +286,5 @@
 }
 
 :global(body[data-phone-app='active']) .info .icon {
-  background: #128c7e;
+  background: var(--phone-chat-primary, #0068f8);
 }

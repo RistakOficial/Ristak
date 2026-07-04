@@ -611,7 +611,7 @@
 .mobileSheetContainer .input:focus,
 .mobileSheetContainer .select:focus,
 .mobileSheetContainer .textarea:focus {
-  border-color: color-mix(in srgb, var(--phone-chat-accent, #25d366) 54%, var(--phone-field-border, var(--appointment-mobile-border)) 46%);
+  border-color: color-mix(in srgb, var(--phone-chat-accent, #0078f8) 54%, var(--phone-field-border, var(--appointment-mobile-border)) 46%);
   box-shadow: none;
   outline: none;
 }
@@ -753,7 +753,7 @@
   border: 0 !important;
   border-radius: 999px !important;
   color: var(--appointment-mobile-text-on-primary, #07140d) !important;
-  background: var(--phone-chat-accent, #25d366) !important;
+  background: var(--phone-chat-accent, #0078f8) !important;
   box-shadow: 0 12px 24px rgba(0, 0, 0, 0.18) !important;
   font-size: 16px !important;
   font-weight: 850 !important;
@@ -954,9 +954,9 @@
 }
 
 .mobileSheetContainer .guestToggleChips .guestToggleChipActive {
-  color: var(--badge-primary-text, #165c40);
-  border-color: rgba(var(--phone-chat-accent-rgb, 37, 211, 102), 0.32);
-  background: var(--phone-chat-accent-soft, rgba(37, 211, 102, 0.16));
+  color: var(--badge-primary-text, #0052d6);
+  border-color: rgba(var(--phone-chat-accent-rgb, 0, 120, 248), 0.32);
+  background: var(--phone-chat-accent-soft, rgba(0, 120, 248, 0.16));
 }
 
 .guestAddButton {
@@ -997,7 +997,7 @@
 .mobileSheetContainer .selectedContact {
   border-color: var(--appointment-mobile-border);
   border-radius: 12px;
-  background: color-mix(in srgb, var(--phone-chat-accent, #25d366) 14%, var(--appointment-mobile-bg) 86%);
+  background: color-mix(in srgb, var(--phone-chat-accent, #0078f8) 14%, var(--appointment-mobile-bg) 86%);
 }
 
 .guestItem span {

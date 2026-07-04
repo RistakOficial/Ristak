@@ -426,7 +426,7 @@
   height: 44px;
   border-radius: 999px;
   color: #ffffff;
-  background: #00a884;
+  background: var(--phone-chat-accent, #0078f8);
   font-size: 15px;
   font-weight: 750;
   overflow: hidden;
@@ -2481,7 +2481,7 @@ body.dark .tooltipInfo {
 
 .embeddedTotalRow strong {
   flex: 0 0 auto;
-  color: var(--phone-chat-accent, #25d366);
+  color: var(--phone-chat-accent, #0078f8);
   font-size: 24px;
   font-weight: 900;
   letter-spacing: -0.3px;
@@ -2499,7 +2499,7 @@ body.dark .tooltipInfo {
   border: 0 !important;
   border-radius: 999px !important;
   color: var(--phone-chat-text-on-primary, #07140d) !important;
-  background: var(--phone-chat-accent, #25d366) !important;
+  background: var(--phone-chat-accent, #0078f8) !important;
   box-shadow: none !important;
   font-size: 16px !important;
   font-weight: 850 !important;
@@ -2535,7 +2535,7 @@ body.dark .tooltipInfo {
 
 .embeddedRoot .input:focus,
 .embeddedRoot .textArea:focus {
-  border-color: color-mix(in srgb, var(--phone-chat-accent, #25d366) 54%, var(--record-payment-control-border) 46%);
+  border-color: color-mix(in srgb, var(--phone-chat-accent, #0078f8) 54%, var(--record-payment-control-border) 46%);
   box-shadow: none;
   outline: none;
 }
@@ -2788,8 +2788,8 @@ body.dark .tooltipInfo {
 }
 
 .embeddedRoot .selectedContact {
-  background: color-mix(in srgb, var(--phone-chat-accent, #25d366) 14%, var(--record-payment-embedded-bg) 86%);
-  border-color: color-mix(in srgb, var(--phone-chat-accent, #25d366) 34%, var(--record-payment-embedded-border) 66%);
+  background: color-mix(in srgb, var(--phone-chat-accent, #0078f8) 14%, var(--record-payment-embedded-bg) 86%);
+  border-color: color-mix(in srgb, var(--phone-chat-accent, #0078f8) 34%, var(--record-payment-embedded-border) 66%);
 }
 
 .embeddedRoot .label,
@@ -3105,8 +3105,8 @@ body.dark .tooltipInfo {
 
 .embeddedRoot .optionIcon {
   border-radius: 999px;
-  color: var(--phone-chat-accent, #25d366);
-  background: color-mix(in srgb, var(--phone-chat-accent, #25d366) 14%, var(--record-payment-embedded-bg) 86%);
+  color: var(--phone-chat-accent, #0078f8);
+  background: color-mix(in srgb, var(--phone-chat-accent, #0078f8) 14%, var(--record-payment-embedded-bg) 86%);
 }
 
 .embeddedRoot .manualFields {
