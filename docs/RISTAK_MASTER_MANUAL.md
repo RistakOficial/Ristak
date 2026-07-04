@@ -697,6 +697,10 @@ Alcance:
   con `cardId`; si falta tarjeta, el primer pago o la domiciliacion guardan la
   tarjeta antes de activar los cobros futuros.
 - Checkout de Sites con el web component oficial `rebill-checkout`.
+- En checkouts publicos y Sites, Ristak configura el SDK de Rebill con
+  `display.excludePaymentMethods=['cash','bank_transfer']` para aceptar solo
+  tarjeta. SPEI, PSE/transferencias bancarias y efectivo no deben aparecer en
+  estos links porque el flujo local espera confirmar cobros de tarjeta.
 - Meses/installments en cobros unicos: Ristak no selecciona plazos locales para
   Rebill. El checkout de Rebill muestra installments cuando la cuenta, pais,
   moneda, monto y tarjeta califican. Ristak guarda el pago total local y confirma

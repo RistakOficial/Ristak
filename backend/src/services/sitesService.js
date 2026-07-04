@@ -16572,7 +16572,7 @@ function buildPaymentCheckoutRuntimeScript() {
 	          if (!d || !d.publicKey || !d.instantProduct) throw new Error('Rebill no devolvio un checkout valido.');
 	          els.fields.innerHTML = '';
 	          var checkout = document.createElement('rebill-checkout');
-	          var display = { successPage: false, sandboxMode: String(d.paymentMode || '').toLowerCase() !== 'live' };
+	          var display = { successPage: false, sandboxMode: String(d.paymentMode || '').toLowerCase() !== 'live', excludePaymentMethods: ['cash', 'bank_transfer'] };
 	          checkout.setAttribute('public-key', d.publicKey);
 	          checkout.setAttribute('language', 'es');
 	          checkout.setAttribute('instant-product', JSON.stringify(d.instantProduct));

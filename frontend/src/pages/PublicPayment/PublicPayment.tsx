@@ -116,9 +116,11 @@ type RebillCheckoutElement = HTMLElement & {
   display?: RebillCheckoutDisplay
   oneClickCheckout?: boolean
 }
+type RebillExcludedPaymentMethod = 'cash' | 'bank_transfer'
 type RebillCheckoutDisplay = {
   successPage: boolean
   sandboxMode: boolean
+  excludePaymentMethods: RebillExcludedPaymentMethod[]
 }
 type SuccessDetailRow = {
   label: string
@@ -197,6 +199,7 @@ const PUBLIC_PAYMENT_LIGHT_MODE_FLAG = 'publicPaymentLightMode'
 // los tokens del tema del negocio, así el confetti siempre combina con su acento.
 const CONFETTI_COLOR_TOKENS = ['--accent', '--accent-2', '--pos', '--warn', '--info'] as const
 const CONFETTI_COLOR_FALLBACK = ['#2f6fed', '#4c8dff', '#1f9d57', '#c98a1e', '#1f8aa0']
+const REBILL_CARD_ONLY_EXCLUDED_PAYMENT_METHODS: RebillExcludedPaymentMethod[] = ['cash', 'bank_transfer']
 
 const printTemplateClassById: Record<PaymentInvoiceTemplateId, string> = {
   classic: 'printThemeClassic',
@@ -2467,7 +2470,8 @@ const RebillCheckoutForm: React.FC<{
   const customerInformation = payment.customerInformation || null
   const display = useMemo<RebillCheckoutDisplay>(() => ({
     successPage: false,
-    sandboxMode: isTestMode
+    sandboxMode: isTestMode,
+    excludePaymentMethods: REBILL_CARD_ONLY_EXCLUDED_PAYMENT_METHODS
   }), [isTestMode])
   const instantProductJson = useMemo(() => JSON.stringify(instantProduct), [instantProduct])
   const customerInformationJson = useMemo(
