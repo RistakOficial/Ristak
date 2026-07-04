@@ -44,13 +44,21 @@ npx -p node@22 -p @capacitor/cli@8.4.0 cap sync
 
 ## Icono de instalación
 
-El icono público de la app móvil usa el isotipo de Ristak. Los assets nativos y
-PWA deben mantenerse sincronizados para que el icono sea el mismo en App Store,
-Play Store, Android launcher y "Agregar a pantalla de inicio":
+El icono público de la app móvil usa el isotipo de Ristak. iOS usa variantes
+nativas por apariencia: `AppIcon-light-1024.png` para modo claro,
+`AppIcon-dark-1024.png` para modo oscuro y `AppIcon-tinted-1024.png` alineado al
+icono claro mientras no exista un asset tinted dedicado. Android usa el icono
+claro como launcher base y mantiene recursos `mipmap-night-*` para el icono
+oscuro cuando el sistema/launcher respeta recursos nocturnos.
+
+Los assets nativos y PWA deben mantenerse sincronizados para que el icono sea
+consistente en App Store, Play Store, Android launcher y "Agregar a pantalla de
+inicio":
 
 - iOS: `frontend/ios/App/App/Assets.xcassets/AppIcon.appiconset/`.
-- Android: `frontend/android/app/src/main/res/mipmap-*/ic_launcher*.png` y el
-  fondo adaptive en `frontend/android/app/src/main/res/values/ic_launcher_background.xml`.
+- Android: `frontend/android/app/src/main/res/mipmap-*/ic_launcher*.png`,
+  `frontend/android/app/src/main/res/mipmap-night-*/ic_launcher*.png` y los
+  fondos adaptive en `frontend/android/app/src/main/res/values*/ic_launcher_background.xml`.
 - Web/PWA móvil: `frontend/public/ristak-chat-icon-*`,
   `frontend/public/ristak-chat-home-icon-*` y los `apple-touch-icon` móviles.
 
