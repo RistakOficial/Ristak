@@ -104,6 +104,65 @@ export type MobileChatAttachment = MobilePhotoAttachment | MobileVideoAttachment
 let shellConfigured = false
 let notificationListenersConfigured = false
 
+function getShellBackgroundFallback(theme: MobileShellTheme) {
+  return theme === 'dark' ? '#081a4e' : '#eef6ff'
+}
+
+function clampColorChannel(value: number) {
+  return Math.max(0, Math.min(255, Math.round(value)))
+}
+
+function colorChannelToHex(value: number) {
+  return clampColorChannel(value).toString(16).padStart(2, '0')
+}
+
+function parseCssColorChannel(value: string) {
+  const trimmed = value.trim()
+  if (!trimmed) return null
+  if (trimmed.endsWith('%')) {
+    const percentage = Number.parseFloat(trimmed.slice(0, -1))
+    return Number.isFinite(percentage) ? (percentage / 100) * 255 : null
+  }
+
+  const number = Number.parseFloat(trimmed)
+  return Number.isFinite(number) ? number : null
+}
+
+function normalizeCssColorToHex(value?: string | null) {
+  const color = value?.trim()
+  if (!color) return null
+
+  const hexMatch = color.match(/^#([0-9a-f]{3}|[0-9a-f]{6})$/i)
+  if (hexMatch) {
+    const hex = hexMatch[1]
+    if (hex.length === 3) {
+      return `#${hex.split('').map((part) => `${part}${part}`).join('')}`.toLowerCase()
+    }
+    return `#${hex}`.toLowerCase()
+  }
+
+  const rgbMatch = color.match(/^rgba?\((.+)\)$/i)
+  if (rgbMatch) {
+    const channels = rgbMatch[1].split(/[,\s/]+/).filter(Boolean).slice(0, 3).map(parseCssColorChannel)
+    if (channels.length === 3 && channels.every((channel): channel is number => channel !== null)) {
+      return `#${channels.map(colorChannelToHex).join('')}`
+    }
+  }
+
+  const srgbMatch = color.match(/^color\(\s*srgb\s+(.+)\)$/i)
+  if (srgbMatch) {
+    const channels = srgbMatch[1].split(/[,\s/]+/).filter(Boolean).slice(0, 3).map((part) => {
+      const parsed = Number.parseFloat(part)
+      return Number.isFinite(parsed) ? parsed * 255 : null
+    })
+    if (channels.length === 3 && channels.every((channel): channel is number => channel !== null)) {
+      return `#${channels.map(colorChannelToHex).join('')}`
+    }
+  }
+
+  return null
+}
+
 function getPlatform(): NativePlatform {
   return Capacitor.getPlatform() as NativePlatform
 }
@@ -189,6 +248,15 @@ function ensureIosMobileRoute() {
   if (redirectPath) replaceInternalPath(redirectPath)
 }
 
+function postNativeShellMessage(payload: Record<string, unknown>) {
+  if (typeof window === 'undefined' || !Capacitor.isNativePlatform() || getPlatform() !== 'ios') return
+
+  const handler = (window as unknown as {
+    webkit?: { messageHandlers?: { ristakShell?: { postMessage?: (message: Record<string, unknown>) => void } } }
+  }).webkit?.messageHandlers?.ristakShell
+  handler?.postMessage?.(payload)
+}
+
 async function applyShellTheme(theme: MobileShellTheme) {
   if (!Capacitor.isNativePlatform()) return
 
@@ -196,6 +264,31 @@ async function applyShellTheme(theme: MobileShellTheme) {
   await StatusBar.setBackgroundColor({ color: theme === 'dark' ? '#0b0f14' : '#ffffff' }).catch(() => undefined)
   // El teclado tambien sigue el tema del chat: en modo noche va oscuro, de dia claro.
   await Keyboard.setStyle({ style: theme === 'dark' ? KeyboardStyle.Dark : KeyboardStyle.Light }).catch(() => undefined)
+  postNativeShellMessage({
+    type: 'setWindowBackground',
+    color: getShellBackgroundFallback(theme)
+  })
+}
+
+function syncShellBackgroundFromElement(element: Element | null | undefined, theme: MobileShellTheme) {
+  if (!isIosMobileShell()) return
+
+  const computedStyle = element ? window.getComputedStyle(element) : null
+  const composerColor = computedStyle?.getPropertyValue('--phone-chat-composer-bg')
+  const backgroundColor = computedStyle?.backgroundColor
+  const color = normalizeCssColorToHex(composerColor) ||
+    normalizeCssColorToHex(backgroundColor) ||
+    getShellBackgroundFallback(theme)
+
+  postNativeShellMessage({
+    type: 'setWindowBackground',
+    color
+  })
+}
+
+function getInitialShellTheme(): MobileShellTheme {
+  if (typeof window === 'undefined') return 'light'
+  return window.matchMedia?.('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'
 }
 
 function openInternalPath(value?: string | null) {
@@ -455,14 +548,14 @@ export const mobileAppService = {
 
     ensureIosMobileRoute()
     await SplashScreen.hide().catch(() => undefined)
-    await applyShellTheme('light')
+    await applyShellTheme(getInitialShellTheme())
     await StatusBar.setOverlaysWebView({ overlay: true }).catch(() => undefined)
 
     if (getPlatform() === 'ios') {
       await Keyboard.setAccessoryBarVisible({ isVisible: false }).catch(() => undefined)
-      // Deja que iOS redimensione el WKWebView con la animacion nativa del teclado.
-      // Esto evita mover el composer desde JS despues de recibir eventos del puente.
-      await Keyboard.setResizeMode({ mode: KeyboardResize.Native }).catch(() => undefined)
+      // Evita el resize tardio del plugin. MainViewController publica la altura
+      // real del teclado y el chat empuja su superficie con transform.
+      await Keyboard.setResizeMode({ mode: KeyboardResize.None }).catch(() => undefined)
     } else if (getPlatform() === 'android') {
       // Android usa el ajuste nativo del sistema; resizeOnFullScreen y
       // windowSoftInputMode=adjustResize cubren el caso fullscreen/edge-to-edge.
@@ -486,6 +579,8 @@ export const mobileAppService = {
   async setShellTheme(theme: MobileShellTheme) {
     await applyShellTheme(theme)
   },
+
+  syncShellBackgroundFromElement,
 
   async getPushPermissionStatus(): Promise<'granted' | 'denied' | 'prompt' | 'unsupported'> {
     if (!Capacitor.isNativePlatform()) return 'unsupported'
