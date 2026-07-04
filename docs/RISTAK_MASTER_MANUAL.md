@@ -604,6 +604,10 @@ puede ofrecer meses sin intereses con control por link/bloque:
 - Si la tarjeta no ofrece MSI, el checkout no muestra el selector de meses y
   permite pagar de contado sin mostrar plazos inventados ni pedir un paso manual
   de consulta.
+- El editor de Sites usa un preview no interactivo del mismo estado: cuando el
+  bloque Stripe es elegible para MSI, muestra la tarjeta con numero elegible y
+  las opciones de meses debajo del numero, no una fila fija de contado desde el
+  inicio.
 - Si el cliente abandona despues de consultar los meses pero antes de confirmar,
   el pago queda pendiente; no se marca como fallido salvo que Stripe reporte un
   rechazo real.

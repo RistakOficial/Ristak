@@ -248,7 +248,7 @@ import {
   wistiaEmbedIframeUrl
 } from '../../../../shared/sites/renderContract.js'
 import type { SiteLike, SiteBlockLike } from '../../../../shared/sites/renderContract.js'
-import { msiEligibility } from '../../../../shared/sites/paymentGateContract.js'
+import { MSI_INSTALLMENT_CHOICES, msiEligibility } from '../../../../shared/sites/paymentGateContract.js'
 import { getPaymentTestGuide } from '../../../../shared/sites/paymentTestGuides.js'
 
 type SitesSection = 'landings' | 'forms' | 'analytics' | 'domains'
@@ -32226,15 +32226,37 @@ const CanvasPreviewBlock: React.FC<CanvasPreviewBlockProps> = ({
     const payButtonWidthPct = Number(settings.buttonWidth)
     const payWidth = payButtonAlign === 'full' || !(payButtonWidthPct > 0) ? '100%' : `${Math.min(100, Math.max(10, Math.round(payButtonWidthPct)))}%`
     const payJustify = payWidth === '100%' ? 'stretch' : (payButtonAlign === 'left' ? 'start' : payButtonAlign === 'right' ? 'end' : 'center')
+    const stripeMsiMax = Math.trunc(Number(paymentGate.msi?.maxInstallments || 0))
+    const stripeMsiPreviewMonths = isStripe && msiInfo.insideElement
+      ? MSI_INSTALLMENT_CHOICES.filter(months => months <= stripeMsiMax)
+      : []
+    const stripeMsiPreview = stripeMsiPreviewMonths.length > 0 ? (
+      <div className="rstk-stripe-msi-preview" aria-hidden="true">
+        <div className="rstk-stripe-msi-preview-head">
+          <span>Meses sin intereses</span>
+          <strong>Máximo {stripeMsiMax} meses</strong>
+        </div>
+        <div className="rstk-stripe-msi-option" data-selected="true">
+          <span>Pago de contado</span>
+          <strong>{amountText}</strong>
+        </div>
+        {stripeMsiPreviewMonths.map(months => (
+          <div className="rstk-stripe-msi-option" key={months}>
+            <span>{months} pagos de {formatPaymentAmount(Math.round((Number(paymentGate.amount || 0) / months) * 100) / 100, paymentGate.currency)}</span>
+            <strong>Total {amountText}</strong>
+          </div>
+        ))}
+      </div>
+    ) : null
     const paymentSectionStyle: Record<string, string> = {
       '--rstk-checkout-align': paymentTextAlign,
       '--rstk-checkout-pay-width': payWidth,
       '--rstk-checkout-pay-justify': payJustify
     }
     if (fieldTextColor) paymentSectionStyle['--rstk-checkout-field-text'] = fieldTextColor
-    // Preview WYSIWYG: clon fiel del checkout real (Stripe Elements / tokenizer). Los campos
-    // son un mock no interactivo; en Stripe montamos el Payment Element REAL (diferido)
-    // para que se vea IDÉNTICO al vivo; en otros proveedores usamos el mock de tarjeta.
+    // Preview WYSIWYG: clon visual del checkout real (Stripe Elements / tokenizer). Los
+    // campos son un mock no interactivo; en Stripe MSI el mock enseña los plazos justo
+    // después del número de tarjeta, que es el disparador del flujo publicado.
     const mockFields = (
       <div className="rstk-checkout-fields rstk-checkout-fields-mock" aria-hidden="true">
         {/* Identidad del comprador (correo/teléfono), arriba de la tarjeta. */}
@@ -32259,13 +32281,14 @@ const CanvasPreviewBlock: React.FC<CanvasPreviewBlockProps> = ({
         )}
         <span className="rstk-mock-lbl">Número de tarjeta</span>
         <div className="rstk-mock-input rstk-mock-card">
-          <span className="rstk-mock-ph">1234 1234 1234 1234</span>
+          <span className="rstk-mock-ph">{stripeMsiPreview ? '4000 0048 4000 0008' : '1234 1234 1234 1234'}</span>
           <span className="rstk-mock-brands">
             <span className="rstk-mock-brand rstk-mock-visa">VISA</span>
             <span className="rstk-mock-brand rstk-mock-mc"><span /><span /></span>
             <span className="rstk-mock-brand rstk-mock-amex">AMEX</span>
           </span>
         </div>
+        {stripeMsiPreview}
         <div className="rstk-mock-cols">
           <div className="rstk-mock-col">
             <span className="rstk-mock-lbl">Fecha de caducidad</span>
@@ -32354,20 +32377,18 @@ const CanvasPreviewBlock: React.FC<CanvasPreviewBlockProps> = ({
             </div>
             {isTest && <p className="rstk-checkout-testbadge">Modo prueba · no es un cobro real</p>}
             <div className="rstk-checkout-body">
-              {/* En el EDITOR nunca montamos el Payment Element REAL de Stripe: en modo
+              {/* En el EDITOR nunca montamos Stripe.js real: en modo
                   test Stripe inyecta su "helper" de tarjetas de prueba (un globo que
                   se queda pegado en document.body aun al salir del editor) y además
                   carga Stripe.js sin razón (el preview no es interactivo). Usamos el
                   emulador (mockFields), tematizado con los MISMOS tokens de campo que
-                  el checkout real, así que se ve igual. El sitio PUBLICADO sí monta el
+                  el checkout real, así que se ve igual. El sitio PUBLICADO sí monta
                   Stripe real con su modo test/live verdadero. Solo afecta a Stripe.
                   Mercado Pago usa su propio emulador fiel del Brick (mpBrickPreview). */}
               {isMercadoPago ? mpBrickPreview : mockFields}
-              {/* Fila de meses standalone: Conekta la arma en vivo, y Stripe con MSI
-                  CONTROLADO también muestra su propio <select> (mountStripeMsi consulta los
-                  plazos reales de la tarjeta y los limita al máximo del bloque). MP resuelve
-                  los meses dentro de su Brick. Estado inicial = "Un solo pago". */}
-              {((isConekta && msiInfo.standaloneMonths.length > 0) || (isStripe && msiInfo.insideElement)) && (
+              {/* Fila standalone: Conekta la arma en vivo. Stripe MSI se muestra dentro
+                  del mock de tarjeta justo después del número, que es su disparador. */}
+              {isConekta && msiInfo.standaloneMonths.length > 0 && (
                 <div className="rstk-checkout-installments">
                   <div className="rstk-checkout-select rstk-mock-select" aria-hidden="true">
                     <span>Un solo pago</span>
