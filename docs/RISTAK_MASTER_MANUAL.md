@@ -760,23 +760,18 @@ Alcance:
   mismo paso de decision que Stripe, Conekta, Mercado Pago y CLIP: contado o MSI.
   Si se elige MSI, Ristak pide el maximo de meses (3, 6, 9, 12, 18 o 24), guarda
   `metadata.rebillInstallments.maxInstallments` y conserva
-  `enabledInstallments` como preferencia local. El SDK `instant-product` de Rebill
-  no acepta `installmentsSettings`; ese campo pertenece a la API de Payment Links
-  hosted y rompe `POST /v3/sessions/sdk` con `400`. Por eso el checkout embebido
-  solo recibe los campos permitidos por Instant Checkout (`name`, `description`,
-  `amount`, `currency` y `metadata`) y Rebill muestra MSI solo si la cuenta, pais,
-  moneda, monto y tarjeta califican. Si el SDK reporta el numero elegido en
-  `data.installments`, Ristak lo conserva como
-  `metadata.rebillInstallments.selectedInstallments`. El pago total local se
-  confirma contra backend con el `paymentId` antes de marcarlo pagado. El
-  checkout publico muestra fuera del SDK el desglose estimado por mes para las
-  opciones configuradas, con texto condicional porque Rebill sigue decidiendo si
-  la tarjeta califica. Cuando el link pide MSI, Ristak monta `rebill-checkout`
-  con `one-click-checkout=false` para forzar captura normal de tarjeta y permitir
-  que Rebill evalue mensualidades por BIN de tarjeta de credito; en contado se
-  conserva el valor default de one-click. Para imponer `installmentsSettings` de
-  verdad habria que usar la API hosted de Payment Links de Rebill, no el SDK
-  instantaneo embebido.
+  `enabledInstallments`. Como el SDK `instant-product` de Rebill no acepta
+  `installmentsSettings`, los links con MSI no montan el checkout embebido:
+  Ristak crea un Payment Link hosted de Rebill tipo `instant` con
+  `paymentMethods=[{ methods:['card'], currency }]`, `showCoupon=false`,
+  `isSingleUse=true` e `installmentsSettings` por moneda. La URL hosted queda en
+  `metadata.rebillHostedPaymentLink` y la pagina publica de Ristak redirige al
+  portal de Rebill; si Rebill regresa al usuario a `/pay/:id?rebill_return=...`,
+  Ristak evita loops y espera la confirmacion por webhook/API. El webhook ubica
+  el pago local por `metadata.publicPaymentId`/`metadata.localPaymentId` y guarda
+  el numero real de mensualidades como
+  `metadata.rebillInstallments.selectedInstallments`. En contado se conserva el
+  checkout embebido con `instant-product`, tarjeta unicamente y one-click default.
 - Tarjetas sandbox Rebill Mexico: la ayuda visible debe usar la tabla oficial
   vigente del SDK: Visa debito `4111 1111 1111 1111`, Visa credito
   `4242 4242 4242 4242`, Mastercard debito `5555 5555 5555 4444`,

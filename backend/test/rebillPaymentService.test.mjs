@@ -8,6 +8,7 @@ import {
   createRebillPaymentLink,
   createRebillPaymentPlan,
   createRebillSavedCardPayment,
+  getPublicRebillPayment,
   getRebillPaymentConfig,
   mapRebillStatus,
   processDueRebillPaymentPlanCharges,
@@ -242,6 +243,30 @@ test('Rebill confirma pago público consultando el paymentId en backend antes de
       if (parsed.pathname === '/v3/webhooks' && method === 'POST') {
         return jsonTextResponse({ id: 'wh_rebill_charge', url: body.url, events: body.events, active: true }, 201)
       }
+      if (parsed.pathname === '/v3/payment-links' && method === 'POST') {
+        assert.deepEqual(body.paymentMethods, [{ methods: ['card'], currency: 'MXN' }])
+        assert.deepEqual(body.installmentsSettings, [
+          { currency: 'MXN', enabledInstallments: [1, 3, 6, 9, 12] }
+        ])
+        assert.equal(body.showCoupon, false)
+        assert.equal(body.isSingleUse, true)
+        assert.equal(body.prices[0].amount, 499.5)
+        assert.equal(body.prices[0].currency, 'MXN')
+        assert.equal(body.metadata.provider, 'rebill')
+        assert.match(body.metadata.publicPaymentId, /^rstk_pay_[A-Za-z0-9]{20}$/)
+        assert.match(body.metadata.localPaymentId, /^rstk_payment_/)
+        assert.equal(body.prefilledFields.customer.email, 'cliente@example.test')
+        assert.equal(body.prefilledFields.customer.phoneNumber, '5512345678')
+        assert.equal(body.prefilledFields.customer.countryCode, '+52')
+        assert.equal(body.redirectUrls.approved, `https://app.example.test/pay/${body.metadata.publicPaymentId}?rebill_return=approved`)
+        assert.equal(body.redirectUrls.rejected, `https://app.example.test/pay/${body.metadata.publicPaymentId}?rebill_return=rejected`)
+        assert.equal(body.redirectUrls.pending, `https://app.example.test/pay/${body.metadata.publicPaymentId}?rebill_return=pending`)
+        return jsonTextResponse({
+          id: 'pl_rebill_service_test',
+          url: 'https://pay.rebill.com/acme/pl_rebill_service_test',
+          status: 'active'
+        }, 201)
+      }
       if (parsed.pathname === '/v3/payments/pay_rebill_service_test' && method === 'GET') {
         return jsonTextResponse({
           id: 'pay_rebill_service_test',
@@ -294,6 +319,9 @@ test('Rebill confirma pago público consultando el paymentId en backend antes de
       assert.match(publicPaymentId, /^rstk_pay_[A-Za-z0-9]{20}$/)
       assert.equal(link.payment.provider, 'rebill')
       assert.equal(link.payment.publicKey, publicKey)
+      assert.equal(link.paymentUrl, 'https://pay.rebill.com/acme/pl_rebill_service_test')
+      assert.equal(link.payment.hostedPaymentUrl, 'https://pay.rebill.com/acme/pl_rebill_service_test')
+      assert.equal(link.payment.rebillHostedPaymentLink.id, 'pl_rebill_service_test')
       assert.equal(link.payment.instantProduct.currency, 'MXN')
       assert.equal(link.payment.instantProduct.metadata.publicPaymentId, publicPaymentId)
       assert.equal(link.payment.instantProduct.metadata.rebillInstallmentsRequested, true)
@@ -311,9 +339,18 @@ test('Rebill confirma pago público consultando el paymentId en backend antes de
       })
       assert.equal(link.payment.customerInformation.countryCode, 'MX')
 
-      const beforeConfirm = await db.get('SELECT status, rebill_payment_id FROM payments WHERE public_payment_id = ?', [publicPaymentId])
+      const beforeConfirm = await db.get('SELECT status, payment_method, rebill_payment_id, metadata_json FROM payments WHERE public_payment_id = ?', [publicPaymentId])
       assert.equal(beforeConfirm.status, 'sent')
+      assert.equal(beforeConfirm.payment_method, 'rebill_payment_link')
       assert.equal(beforeConfirm.rebill_payment_id, null)
+      const beforeMetadata = JSON.parse(beforeConfirm.metadata_json)
+      assert.equal(beforeMetadata.rebillHostedPaymentLink.id, 'pl_rebill_service_test')
+      assert.deepEqual(beforeMetadata.rebillHostedPaymentLink.paymentMethods, [{ methods: ['card'], currency: 'MXN' }])
+
+      const publicPayment = await getPublicRebillPayment(publicPaymentId, {
+        baseUrl: 'https://app.example.test'
+      })
+      assert.equal(publicPayment.hostedPaymentUrl, 'https://pay.rebill.com/acme/pl_rebill_service_test')
 
       const result = await confirmPublicRebillPayment(publicPaymentId, {
         rebillPaymentId: 'pay_rebill_service_test',

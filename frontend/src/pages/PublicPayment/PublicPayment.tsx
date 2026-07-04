@@ -269,6 +269,7 @@ const MERCADOPAGO_RETURN_PARAMS = [
 function isPaymentReturn(params: URLSearchParams) {
   const paymentParam = params.get('payment')
   if (paymentParam === 'return' || paymentParam === 'success') return true
+  if (params.has('rebill_return')) return true
   if (params.has('status')) return true
   return MERCADOPAGO_RETURN_PARAMS.some((key) => params.has(key))
 }
@@ -2806,6 +2807,100 @@ const RebillCheckoutForm: React.FC<{
   )
 }
 
+const RebillHostedPaymentRedirect: React.FC<{
+  payment: PublicRebillPayment
+  totalAmount: number
+  returnedFromRebill: boolean
+  onRefresh: () => Promise<void>
+}> = ({ payment, totalAmount, returnedFromRebill, onRefresh }) => {
+  const hostedPaymentUrl = payment.hostedPaymentUrl || payment.rebillHostedPaymentLink?.url || ''
+  const [redirecting, setRedirecting] = useState(Boolean(hostedPaymentUrl && !returnedFromRebill))
+  const [refreshing, setRefreshing] = useState(false)
+
+  useEffect(() => {
+    if (!hostedPaymentUrl || returnedFromRebill || typeof window === 'undefined') return undefined
+    const timer = window.setTimeout(() => {
+      window.location.assign(hostedPaymentUrl)
+    }, 650)
+    return () => window.clearTimeout(timer)
+  }, [hostedPaymentUrl, returnedFromRebill])
+
+  const openHostedPayment = () => {
+    if (!hostedPaymentUrl || typeof window === 'undefined') return
+    setRedirecting(true)
+    window.location.assign(hostedPaymentUrl)
+  }
+
+  const refreshStatus = async () => {
+    setRefreshing(true)
+    try {
+      await onRefresh()
+    } finally {
+      setRefreshing(false)
+    }
+  }
+
+  if (!hostedPaymentUrl) {
+    return (
+      <div className={styles.rebillBox}>
+        <p className={`${styles.providerMessage} ${styles.messageError}`}>
+          <AlertCircle size={16} />
+          <span>Rebill no devolvió el link hospedado para completar este pago.</span>
+        </p>
+      </div>
+    )
+  }
+
+  return (
+    <div className={styles.rebillBox}>
+      <RebillInstallmentPreview payment={payment} totalAmount={totalAmount} />
+
+      <p className={styles.providerMessage}>
+        {returnedFromRebill
+          ? (refreshing ? <Loader2 size={16} className={styles.spin} /> : <ShieldCheck size={16} />)
+          : <Loader2 size={16} className={styles.spin} />}
+        <span>
+          {returnedFromRebill
+            ? 'Estamos confirmando el resultado con Rebill. Si ya terminaste el pago, el estado se actualizará en cuanto Rebill avise.'
+            : 'Te estamos llevando al checkout seguro de Rebill para completar el pago con tarjeta.'}
+        </span>
+      </p>
+
+      <div className={styles.actions}>
+        {returnedFromRebill ? (
+          <Button
+            type="button"
+            variant="secondary"
+            fullWidth
+            className={styles.payButton}
+            onClick={refreshStatus}
+            disabled={refreshing}
+            leftIcon={refreshing ? <Loader2 size={16} className={styles.spin} /> : <ShieldCheck size={16} />}
+          >
+            {refreshing ? 'Revisando' : 'Actualizar estado'}
+          </Button>
+        ) : null}
+        <Button
+          type="button"
+          variant={returnedFromRebill ? 'primary' : 'secondary'}
+          fullWidth
+          className={styles.payButton}
+          onClick={openHostedPayment}
+          disabled={redirecting && !returnedFromRebill}
+          leftIcon={(redirecting && !returnedFromRebill) ? <Loader2 size={16} className={styles.spin} /> : <ExternalLink size={16} />}
+        >
+          {(redirecting && !returnedFromRebill) ? 'Abriendo Rebill' : returnedFromRebill ? 'Volver a Rebill' : 'Abrir checkout Rebill'}
+        </Button>
+      </div>
+
+      <p className={styles.cardAuthorizationNotice}>
+        <ShieldCheck size={16} />
+        <span>Rebill procesa la tarjeta en su portal seguro. Ristak confirma el resultado con webhooks antes de marcar el pago como cobrado.</span>
+      </p>
+    </div>
+  )
+}
+
 export const PublicPaymentGatewayReturn: React.FC = () => {
   const [searchParams] = useSearchParams()
   const { theme } = useTheme()
@@ -2912,7 +3007,10 @@ export const PublicPayment: React.FC = () => {
   const isMercadoPagoPayment = payment?.provider === 'mercadopago'
   const isConektaPayment = payment?.provider === 'conekta'
   const isClipPayment = payment?.provider === 'clip'
-  const isRebillPayment = payment?.provider === 'rebill'
+  const rebillPayment = payment?.provider === 'rebill' ? payment : null
+  const isRebillPayment = Boolean(rebillPayment)
+  const isRebillHostedPayment = Boolean(rebillPayment?.hostedPaymentUrl || rebillPayment?.rebillHostedPaymentLink?.url)
+  const returnedFromRebill = Boolean(rebillPayment && searchParams.has('rebill_return'))
   const stripePayment = payment?.provider === 'stripe' ? payment : null
   const paymentPlan = stripePayment?.paymentPlan || null
   const subscriptionStart = payment && 'subscriptionStart' in payment ? payment.subscriptionStart : null
@@ -3064,6 +3162,15 @@ export const PublicPayment: React.FC = () => {
         return
       }
 
+      if (payment.provider === 'rebill') {
+        const paymentUrl = payment.hostedPaymentUrl || payment.rebillHostedPaymentLink?.url || payment.paymentUrl
+        if (!paymentUrl) {
+          throw new Error('Rebill no devolvió un link de pago.')
+        }
+        window.location.assign(paymentUrl)
+        return
+      }
+
       if (payment.provider === 'stripe' && isSubscriptionStart) {
         const checkout = await stripePaymentsService.createPublicSubscriptionCheckout(payment.publicPaymentId)
         if (checkout.alreadyActive) {
@@ -3205,7 +3312,7 @@ export const PublicPayment: React.FC = () => {
   const subtotalAmount = hasTaxBreakdown ? taxDetails?.subtotalAmount || 0 : payment.amount
   const taxAmount = hasTaxBreakdown ? taxDetails?.taxAmount || 0 : 0
   const totalAmount = hasTaxBreakdown ? taxDetails?.totalAmount || payment.amount : payment.amount
-  const rebillInstallmentMonths = isRebillPayment ? getRebillInstallmentMonths(payment) : []
+  const rebillInstallmentMonths = rebillPayment ? getRebillInstallmentMonths(rebillPayment) : []
   const rebillInstallmentSummary = rebillInstallmentMonths.length
     ? `${formatRebillInstallmentOptions(rebillInstallmentMonths)} si tu tarjeta aplica`
     : ''
@@ -3584,9 +3691,16 @@ export const PublicPayment: React.FC = () => {
                 payment={payment}
                 onPaid={handlePaid}
               />
-            ) : isRebillPayment ? (
+            ) : rebillPayment && isRebillHostedPayment ? (
+              <RebillHostedPaymentRedirect
+                payment={rebillPayment}
+                totalAmount={totalAmount}
+                returnedFromRebill={returnedFromRebill}
+                onRefresh={handlePaid}
+              />
+            ) : rebillPayment ? (
               <RebillCheckoutForm
-                payment={payment}
+                payment={rebillPayment}
                 totalAmount={totalAmount}
                 onPaid={handlePaid}
               />

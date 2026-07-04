@@ -211,6 +211,14 @@ export interface PublicRebillPayment {
   publicKey?: string
   rebillPaymentId?: string | null
   rebillSubscriptionId?: string | null
+  hostedPaymentUrl?: string | null
+  rebillHostedPaymentLink?: {
+    id?: string | null
+    url?: string | null
+    status?: string | null
+    createdAt?: string | null
+    source?: string | null
+  } | null
   rebillInstallments?: {
     enabled?: boolean
     selectionMode?: string

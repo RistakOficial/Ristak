@@ -279,6 +279,25 @@ function buildPaymentUrl(baseUrl, publicPaymentId) {
   return cleanBase ? `${cleanBase}/pay/${encodeURIComponent(publicPaymentId)}` : ''
 }
 
+function buildPaymentReturnUrl(baseUrl, publicPaymentId, status) {
+  const cleanBase = normalizeWebhookBaseUrl(baseUrl)
+  const cleanPublicPaymentId = cleanString(publicPaymentId, 180)
+  if (!cleanBase || !cleanPublicPaymentId) return ''
+  const url = new URL(`${cleanBase}/pay/${encodeURIComponent(cleanPublicPaymentId)}`)
+  url.searchParams.set('rebill_return', cleanString(status, 40) || 'return')
+  return url.toString()
+}
+
+function buildRebillPaymentLinkRedirectUrls(baseUrl, publicPaymentId) {
+  const approved = buildPaymentReturnUrl(baseUrl, publicPaymentId, 'approved')
+  if (!approved) return null
+  return {
+    approved,
+    rejected: buildPaymentReturnUrl(baseUrl, publicPaymentId, 'rejected'),
+    pending: buildPaymentReturnUrl(baseUrl, publicPaymentId, 'pending')
+  }
+}
+
 function normalizeWebhookBaseUrl(value) {
   const clean = cleanString(value, 2000).replace(/\/+$/, '')
   if (!clean) return ''
@@ -822,6 +841,29 @@ async function findPaymentByRebillPaymentId(rebillPaymentId) {
   )
 }
 
+async function findPaymentByRebillPaymentLinkId(rebillPaymentLinkId) {
+  const cleanPaymentLinkId = cleanString(rebillPaymentLinkId, 180)
+  if (!cleanPaymentLinkId) return null
+  const rows = await db.all(
+    `SELECT
+      p.*,
+      c.full_name AS contact_name,
+      c.email AS contact_email,
+      c.phone AS contact_phone
+     FROM payments p
+     LEFT JOIN contacts c ON c.id = p.contact_id
+     WHERE p.payment_provider = 'rebill'
+       AND p.metadata_json LIKE ?`,
+    [`%${cleanPaymentLinkId}%`]
+  ).catch(() => [])
+
+  return (rows || []).find((row) => {
+    const metadata = parseJson(row.metadata_json, {})
+    return cleanString(metadata.rebillHostedPaymentLink?.id, 180) === cleanPaymentLinkId ||
+      cleanString(metadata.rebill?.paymentLinkId || metadata.rebill?.payment_link_id, 180) === cleanPaymentLinkId
+  }) || null
+}
+
 function timestampToIso(value) {
   const clean = cleanString(value, 120)
   if (!clean) return null
@@ -832,6 +874,159 @@ function timestampToIso(value) {
 function sanitizeLocalizedText(value, fallback = 'Pago Ristak', maxLength = 180) {
   const raw = cleanString(value || fallback, maxLength).replace(/\s+/g, ' ').trim()
   return raw || fallback
+}
+
+function getRebillHostedPaymentLink(metadata = {}) {
+  const link = metadata.rebillHostedPaymentLink && typeof metadata.rebillHostedPaymentLink === 'object'
+    ? metadata.rebillHostedPaymentLink
+    : null
+  const url = cleanString(link?.url || link?.paymentUrl || link?.payment_url, 2000)
+  return url
+    ? {
+        id: cleanString(link?.id || link?.paymentLinkId || link?.payment_link_id, 180),
+        url,
+        status: cleanString(link?.status, 80),
+        createdAt: cleanString(link?.createdAt || link?.created_at, 80),
+        source: cleanString(link?.source || 'rebill_payment_links_api', 120)
+      }
+    : null
+}
+
+function shouldUseRebillHostedPaymentLink(row = {}, metadata = {}) {
+  if (CLOSED_PAYMENT_STATUSES.has(cleanString(row.status, 80).toLowerCase()) || row.paid_at) return false
+  const rebillInstallments = metadata.rebillInstallments && typeof metadata.rebillInstallments === 'object'
+    ? metadata.rebillInstallments
+    : null
+  return Boolean(rebillInstallments?.enabled)
+}
+
+function getRebillHostedEnabledInstallments(metadata = {}) {
+  const rebillInstallments = metadata.rebillInstallments && typeof metadata.rebillInstallments === 'object'
+    ? metadata.rebillInstallments
+    : null
+  if (!rebillInstallments?.enabled) return []
+  const source = Array.isArray(rebillInstallments.enabledInstallments)
+    ? rebillInstallments.enabledInstallments
+    : buildRebillEnabledInstallments(rebillInstallments.maxInstallments || 12)
+  return Array.from(new Set(source
+    .map((value) => Math.trunc(Number(value)))
+    .filter((value) => Number.isFinite(value) && value >= 1 && value <= 36)))
+    .sort((left, right) => left - right)
+}
+
+function getDialCodeForCountry(value = '') {
+  const countryCode = cleanString(value, 2).toUpperCase()
+  const country = COUNTRY_OPTIONS.find((option) => cleanString(option.value, 2).toUpperCase() === countryCode)
+  const dialCode = cleanString(country?.dialCode, 8).replace(/\D/g, '')
+  return dialCode ? `+${dialCode}` : ''
+}
+
+function isValidRebillPaymentLinkFullName(value = '') {
+  const parts = cleanString(value, 160).replace(/\s+/g, ' ').trim().split(' ').filter(Boolean)
+  return parts.length >= 2 && parts.every((part) => part.length >= 2)
+}
+
+function buildRebillPaymentLinkPrefilledFields(row = {}, metadata = {}) {
+  const customer = {}
+  const email = cleanString(row.contact_email || metadata.contactEmail || metadata.email, 180).toLowerCase()
+  if (isValidEmail(email)) customer.email = email
+
+  const rawFullName = cleanString(row.contact_name || metadata.contactName, 160).replace(/\s+/g, ' ').trim()
+  if (isValidRebillPaymentLinkFullName(rawFullName)) {
+    customer.fullName = rawFullName
+  } else if (email) {
+    const derived = deriveRebillCustomerName(rawFullName, email)
+    customer.fullName = `${derived.firstName} ${derived.lastName}`.trim()
+  }
+
+  const phone = getRebillPhoneInformation(row.contact_phone || metadata.contactPhone || metadata.phone)
+  if (phone) {
+    customer.phoneNumber = phone.number
+    const dialCode = getDialCodeForCountry(phone.countryCode)
+    if (dialCode) customer.countryCode = dialCode
+  }
+
+  customer.language = 'es'
+  return Object.keys(customer).length ? { customer } : null
+}
+
+async function ensureRebillHostedPaymentLink(row = {}, config = null, baseUrl = '') {
+  const metadata = parseJson(row.metadata_json, {})
+  if (!shouldUseRebillHostedPaymentLink(row, metadata)) return { row, hostedPaymentLink: null }
+
+  const existing = getRebillHostedPaymentLink(metadata)
+  if (existing?.url) return { row, hostedPaymentLink: existing }
+
+  const currency = assertRebillCurrency(row.currency || config?.defaultCurrency)
+  const enabledInstallments = getRebillHostedEnabledInstallments(metadata)
+  if (!enabledInstallments.length) return { row, hostedPaymentLink: null }
+
+  const title = sanitizeLocalizedText(row.title || metadata.title || 'Pago Ristak', 'Pago Ristak', 140)
+  const description = sanitizeLocalizedText(row.description || title, title, 300)
+  const redirectUrls = buildRebillPaymentLinkRedirectUrls(baseUrl, row.public_payment_id)
+  const prefilledFields = buildRebillPaymentLinkPrefilledFields(row, metadata)
+  const paymentLinkMetadata = {
+    ristakPaymentId: cleanString(row.id, 180),
+    localPaymentId: cleanString(row.id, 180),
+    publicPaymentId: cleanString(row.public_payment_id, 180),
+    provider: 'rebill',
+    source: cleanString(metadata.source || 'ristak', 120),
+    rebillInstallmentsRequested: true,
+    rebillMaxInstallments: Math.max(...enabledInstallments)
+  }
+
+  const { payload } = await rebillApiRequest('/v3/payment-links', {
+    method: 'POST',
+    config,
+    idempotencyKey: `ristak:rebill-payment-link:${row.id}`,
+    body: {
+      title: [{ language: 'es', text: title }],
+      ...(description ? { description: [{ language: 'es', text: description }] } : {}),
+      paymentMethods: [{ methods: ['card'], currency }],
+      prices: [{ amount: normalizePositiveAmount(row.amount, 0), currency, isDefault: true }],
+      installmentsSettings: [{ currency, enabledInstallments }],
+      isSingleUse: true,
+      showCoupon: false,
+      metadata: paymentLinkMetadata,
+      ...(prefilledFields ? { prefilledFields } : {}),
+      ...(redirectUrls ? { redirectUrls } : {})
+    }
+  })
+
+  const hostedPaymentLink = {
+    id: cleanString(payload?.id, 180),
+    url: cleanString(payload?.url, 2000),
+    status: cleanString(payload?.status || 'active', 80),
+    createdAt: new Date().toISOString(),
+    source: 'rebill_payment_links_api',
+    installmentsSettings: [{ currency, enabledInstallments }],
+    paymentMethods: [{ methods: ['card'], currency }]
+  }
+
+  if (!hostedPaymentLink.url) {
+    const error = new Error('Rebill creó el Payment Link, pero no devolvió URL hospedada.')
+    error.status = 502
+    throw error
+  }
+
+  const nextMetadata = {
+    ...metadata,
+    rebillHostedPaymentLink: hostedPaymentLink
+  }
+
+  await db.run(
+    `UPDATE payments
+     SET payment_method = 'rebill_payment_link',
+         metadata_json = ?,
+         updated_at = CURRENT_TIMESTAMP
+     WHERE id = ?`,
+    [JSON.stringify(nextMetadata), row.id]
+  )
+
+  return {
+    row: await findPaymentById(row.id),
+    hostedPaymentLink
+  }
 }
 
 function buildInstantProduct(row, metadata = {}) {
@@ -1764,11 +1959,14 @@ function mapPublicPayment(row, config, baseUrl = '', settings = null, timezone =
   const metadata = parseJson(row.metadata_json, {})
   const tax = metadata.tax && typeof metadata.tax === 'object' ? metadata.tax : null
   const publicPaymentId = row.public_payment_id
+  const hostedPaymentLink = getRebillHostedPaymentLink(metadata)
 
   return {
     id: row.id,
     publicPaymentId,
     paymentUrl: publicPaymentId && baseUrl ? buildPaymentUrl(baseUrl, publicPaymentId) : row.payment_url || '',
+    hostedPaymentUrl: hostedPaymentLink?.url || null,
+    rebillHostedPaymentLink: hostedPaymentLink,
     status: row.status || 'pending',
     amount: Number(row.amount || 0),
     currency: row.currency || config?.defaultCurrency || DEFAULT_CURRENCY,
@@ -1882,9 +2080,34 @@ export async function createRebillPaymentLink(input = {}, { baseUrl, mode = '' }
   )
 
   const row = await findPaymentById(id)
+  let hostedPaymentLink = null
+  let mappedRow = row
+  if (rebillInstallments?.enabled) {
+    try {
+      const ensured = await ensureRebillHostedPaymentLink(row, config, baseUrl)
+      hostedPaymentLink = ensured.hostedPaymentLink
+      mappedRow = ensured.row || row
+    } catch (error) {
+      await db.run(
+        `UPDATE payments
+         SET metadata_json = ?,
+             updated_at = CURRENT_TIMESTAMP
+         WHERE id = ?`,
+        [
+          JSON.stringify({
+            ...metadata,
+            rebillHostedPaymentLinkError: cleanString(error.message, 500)
+          }),
+          id
+        ]
+      ).catch(() => undefined)
+      throw error
+    }
+  }
+
   return {
-    payment: mapPublicPayment(row, config, baseUrl, paymentSettings),
-    paymentUrl,
+    payment: mapPublicPayment(mappedRow, config, baseUrl, paymentSettings),
+    paymentUrl: hostedPaymentLink?.url || paymentUrl,
     publicPaymentId
   }
 }
@@ -2564,10 +2787,16 @@ export async function processDueRebillPaymentPlanCharges({ limit = 25, baseUrl =
 }
 
 export async function getPublicRebillPayment(publicPaymentId, { baseUrl } = {}) {
-  const row = await findPaymentByPublicId(publicPaymentId)
+  let row = await findPaymentByPublicId(publicPaymentId)
   if (!row || row.payment_provider !== 'rebill') return null
 
   const config = await getRebillPaymentConfig({ includeSecrets: true, mode: row.payment_mode || '' })
+  const metadata = parseJson(row.metadata_json, {})
+  if (shouldUseRebillHostedPaymentLink(row, metadata) && !getRebillHostedPaymentLink(metadata)?.url) {
+    const ensured = await ensureRebillHostedPaymentLink(row, config, baseUrl)
+    row = ensured.row || row
+  }
+
   const paymentSettings = await getPublicPaymentSettings()
   const timezone = await getAccountTimezone().catch(() => ACCOUNT_DEFAULT_TIMEZONE)
   return attachMetaPublicPurchaseEvent(
@@ -2759,8 +2988,16 @@ async function updatePaymentFromRebillPayment(rebillPayment = {}) {
   const metadata = rebillPayment.metadata && typeof rebillPayment.metadata === 'object' ? rebillPayment.metadata : {}
   const localPaymentId = cleanString(metadata.localPaymentId || metadata.local_payment_id || metadata.paymentId || metadata.payment_id, 180)
   const publicPaymentId = cleanString(metadata.publicPaymentId || metadata.public_payment_id, 180)
+  const paymentLinkId = cleanString(
+    rebillPayment.paymentLinkId ||
+    rebillPayment.payment_link_id ||
+    rebillPayment.paymentLink?.id ||
+    rebillPayment.payment_link?.id,
+    180
+  )
   if (!row && localPaymentId) row = await findPaymentById(localPaymentId)
   if (!row && publicPaymentId) row = await findPaymentByPublicId(publicPaymentId)
+  if (!row && paymentLinkId) row = await findPaymentByRebillPaymentLinkId(paymentLinkId)
   if (!row) return null
 
   const amount = Number(rebillPayment.amount || row.amount)
