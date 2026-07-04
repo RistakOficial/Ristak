@@ -14,6 +14,21 @@ export interface EmailStatus {
     usernameMasked: string
     hasPassword: boolean
   }
+  inbound: {
+    enabled: boolean
+    connected: boolean
+    configured: boolean
+    host: string
+    port: number
+    security: EmailSmtpSecurity
+    usernameMasked: string
+    mailbox: string
+    lastSeenUid?: number | null
+    lastSyncAt?: string | null
+    lastVerifiedAt?: string | null
+    lastMessageAt?: string | null
+    lastError?: string | null
+  }
   sender: {
     fromName: string
     fromEmail: string
@@ -40,6 +55,14 @@ export interface EmailConnectPayload {
     security: EmailSmtpSecurity
     username: string
   }
+  inbound?: {
+    enabled: boolean
+    host: string
+    port: number
+    security: EmailSmtpSecurity
+    username: string
+    mailbox?: string
+  }
 }
 
 export interface EmailProviderDetection {
@@ -58,6 +81,14 @@ export interface EmailProviderDetection {
     username: string
     usernameMasked: string
   }
+  imap: {
+    host: string
+    port: number
+    security: EmailSmtpSecurity
+    username: string
+    usernameMasked: string
+    mailbox: string
+  }
   mx: {
     checked: boolean
     found: boolean
@@ -73,6 +104,26 @@ export interface EmailTestResult {
   messageId?: string | null
   accepted: string[]
   rejected: string[]
+}
+
+export interface EmailInboundTestResult {
+  connected: boolean
+  host: string
+  port: number
+  security: EmailSmtpSecurity
+  mailbox: string
+  exists: number
+  uidNext?: number | null
+  testedAt?: string | null
+}
+
+export interface EmailInboundSyncResult {
+  skipped: boolean
+  reason: string
+  imported: number
+  seen?: number
+  lastSeenUid?: number | null
+  lastSyncAt?: string | null
 }
 
 export interface EmailSendPayload {
@@ -109,6 +160,8 @@ export const emailService = {
   connect: (payload: EmailConnectPayload) => apiClient.post<EmailStatus>('/email/connect', payload),
   send: (payload: EmailSendPayload) => apiClient.post<EmailSendResult>('/email/send', payload),
   sendTest: (to: string) => apiClient.post<EmailTestResult>('/email/test', { to }),
+  testInbound: () => apiClient.post<EmailInboundTestResult>('/email/inbound/test'),
+  syncInbound: () => apiClient.post<EmailInboundSyncResult>('/email/inbound/sync'),
   getSignature: () => apiClient.get<EmailSignatureConfig>('/email/signature'),
   saveSignature: (payload: EmailSignatureConfig) => apiClient.post<EmailSignatureConfig>('/email/signature', payload),
   disconnect: () => apiClient.post<EmailStatus>('/email/disconnect')

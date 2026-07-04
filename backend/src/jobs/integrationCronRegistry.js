@@ -1,5 +1,6 @@
 import {
   isConektaConnected,
+  isEmailInboundConnected,
   isGoogleCalendarConnected,
   isHighLevelConnected,
   isMercadoPagoConnected,
@@ -9,6 +10,7 @@ import {
   isWhatsAppQrConnected
 } from '../services/integrationConnectionStateService.js'
 import { startConektaPaymentPlansCron, stopConektaPaymentPlansCron } from './conektaPaymentPlans.cron.js'
+import { startEmailInboundSyncCron, stopEmailInboundSyncCron } from './emailInboundSync.cron.js'
 import { startGoogleCalendarSyncCron, stopGoogleCalendarSyncCron } from './googleCalendarSync.cron.js'
 import { startHighLevelSyncCron, stopHighLevelSyncCron } from './highlevelSync.cron.js'
 import { startMercadoPagoPaymentPlansCron, stopMercadoPagoPaymentPlansCron } from './mercadoPagoPaymentPlans.cron.js'
@@ -108,6 +110,15 @@ export function registerIntegrationCrons() {
     isEnabled: isWhatsAppQrConnected,
     start: startWhatsAppQrWatchdogCron,
     stop: stopWhatsAppQrWatchdogCron
+  })
+
+  registerIntegrationCron({
+    name: 'email-inbound-sync',
+    label: 'Correo entrante IMAP',
+    provider: 'email',
+    isEnabled: isEmailInboundConnected,
+    start: startEmailInboundSyncCron,
+    stop: stopEmailInboundSyncCron
   })
 }
 

@@ -5,6 +5,7 @@ import { db, setAppConfig } from '../src/config/database.js'
 import { initializeMasterKey } from '../src/utils/encryption.js'
 import {
   isConektaConnected,
+  isEmailInboundConnected,
   isClipConnected,
   isGoogleCalendarConnected,
   isHighLevelConnected,
@@ -24,6 +25,7 @@ const APP_CONFIG_WHERE = `
   WHERE config_key = 'payments_settings'
      OR config_key = 'google_calendar_service_account_config'
      OR config_key = 'meta_config_disconnected'
+     OR config_key IN ('email_smtp_config', 'email_smtp_password')
      OR config_key LIKE 'stripe_%'
      OR config_key LIKE 'conekta_%'
      OR config_key LIKE 'clip_%'
@@ -107,6 +109,7 @@ test('detectores de crons de integración solo se activan con conexión local v�
     assert.equal(await isStripeConnected(), false)
     assert.equal(await isConektaConnected(), false)
     assert.equal(await isClipConnected(), false)
+    assert.equal(await isEmailInboundConnected(), false)
     assert.equal(await isMercadoPagoConnected(), false)
     assert.equal(await isRebillConnected(), false)
     assert.equal(await isWhatsAppQrConnected(), false)
@@ -116,6 +119,30 @@ test('detectores de crons de integración solo se activan con conexión local v�
       refreshTokenEncrypted: 'encrypted_google_refresh_token'
     })
     assert.equal(await isGoogleCalendarConnected(), true)
+
+    await setAppConfig('email_smtp_config', {
+      connected: true,
+      host: 'smtp.example.test',
+      username: 'hola@example.test',
+      inbound: {
+        enabled: true,
+        host: 'imap.example.test',
+        username: 'hola@example.test'
+      }
+    })
+    await setAppConfig('email_smtp_password', 'encrypted_email_password_cron_gate')
+    assert.equal(await isEmailInboundConnected(), true)
+    await setAppConfig('email_smtp_config', {
+      connected: true,
+      host: 'smtp.example.test',
+      username: 'hola@example.test',
+      inbound: {
+        enabled: false,
+        host: 'imap.example.test',
+        username: 'hola@example.test'
+      }
+    })
+    assert.equal(await isEmailInboundConnected(), false)
 
     await db.run(`
       INSERT INTO highlevel_config (location_id, api_token, location_data)

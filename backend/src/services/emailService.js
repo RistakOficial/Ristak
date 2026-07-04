@@ -1,10 +1,15 @@
+import { createHash } from 'node:crypto'
 import { promises as dns } from 'node:dns'
+import { ImapFlow } from 'imapflow'
 import nodemailer from 'nodemailer'
+import PostalMime from 'postal-mime'
 import { db, getAppConfig, setAppConfig } from '../config/database.js'
 import { decrypt, encrypt } from '../utils/encryption.js'
 import { logger } from '../utils/logger.js'
 import { clearEmailIntegrationCredentials } from './integrationCredentialsCleanupService.js'
 import { publishChatMessageEvent } from './chatLiveEventsService.js'
+import { recordInboundChatUnread } from './chatReadStateService.js'
+import { sendChatMessageNotification } from './pushNotificationsService.js'
 import { createRistakId } from '../utils/idGenerator.js'
 
 // Configuración del remitente de correo de la cuenta.
@@ -15,12 +20,17 @@ const EMAIL_SIGNATURE_CONFIG_KEY = 'email_signature_config'
 
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
 const SMTP_SECURITY_TYPES = new Set(['starttls', 'ssl', 'none'])
+const IMAP_SECURITY_TYPES = new Set(['starttls', 'ssl', 'none'])
 const SIGNATURE_HTML_LIMIT = 70000
 const SIGNATURE_TEXT_LIMIT = 8000
 const SIGNATURE_IMAGE_LIMIT = 2 * 1024 * 1024
 const EMAIL_SUBJECT_LIMIT = 998
 const EMAIL_TEXT_LIMIT = 120000
 const EMAIL_HTML_LIMIT = 240000
+const EMAIL_INBOUND_DEFAULT_MAILBOX = 'INBOX'
+const EMAIL_INBOUND_FIRST_SYNC_LOOKBACK = 50
+const EMAIL_INBOUND_FETCH_LIMIT = 50
+const EMAIL_INBOUND_SOURCE_LIMIT = 1024 * 1024
 const ALLOWED_SIGNATURE_TAGS = new Set([
   'a',
   'b',
@@ -93,74 +103,85 @@ const EMAIL_PROVIDER_DEFINITIONS = [
     label: 'Google Gmail / Workspace',
     domainPatterns: [/^(gmail|googlemail)\.com$/i],
     mxPatterns: [/google\.com$/i, /googlemail\.com$/i],
-    smtp: { host: 'smtp.gmail.com', port: 587, security: 'starttls' }
+    smtp: { host: 'smtp.gmail.com', port: 587, security: 'starttls' },
+    imap: { host: 'imap.gmail.com', port: 993, security: 'ssl' }
   },
   {
     id: 'microsoft',
     label: 'Microsoft 365 / Outlook',
     domainPatterns: [/^(outlook|hotmail|live|msn)\.com$/i],
     mxPatterns: [/protection\.outlook\.com$/i, /outlook\.com$/i],
-    smtp: { host: 'smtp.office365.com', port: 587, security: 'starttls' }
+    smtp: { host: 'smtp.office365.com', port: 587, security: 'starttls' },
+    imap: { host: 'outlook.office365.com', port: 993, security: 'ssl' }
   },
   {
     id: 'yahoo',
     label: 'Yahoo Mail',
     domainPatterns: [/^(yahoo|ymail|rocketmail)\.com$/i],
     mxPatterns: [/yahoodns\.net$/i, /yahoo\.com$/i],
-    smtp: { host: 'smtp.mail.yahoo.com', port: 465, security: 'ssl' }
+    smtp: { host: 'smtp.mail.yahoo.com', port: 465, security: 'ssl' },
+    imap: { host: 'imap.mail.yahoo.com', port: 993, security: 'ssl' }
   },
   {
     id: 'icloud',
     label: 'iCloud Mail',
     domainPatterns: [/^(icloud|me|mac)\.com$/i],
     mxPatterns: [/mail\.icloud\.com$/i],
-    smtp: { host: 'smtp.mail.me.com', port: 587, security: 'starttls' }
+    smtp: { host: 'smtp.mail.me.com', port: 587, security: 'starttls' },
+    imap: { host: 'imap.mail.me.com', port: 993, security: 'ssl' }
   },
   {
     id: 'zoho',
     label: 'Zoho Mail',
     domainPatterns: [/^zoho\.[a-z.]+$/i],
     mxPatterns: [/zoho\.[a-z.]+$/i, /zohomail\.[a-z.]+$/i],
-    smtp: { host: 'smtp.zoho.com', port: 465, security: 'ssl' }
+    smtp: { host: 'smtp.zoho.com', port: 465, security: 'ssl' },
+    imap: { host: 'imap.zoho.com', port: 993, security: 'ssl' }
   },
   {
     id: 'godaddy',
     label: 'GoDaddy / Microsoft email',
     mxPatterns: [/secureserver\.net$/i],
-    smtp: { host: 'smtpout.secureserver.net', port: 465, security: 'ssl' }
+    smtp: { host: 'smtpout.secureserver.net', port: 465, security: 'ssl' },
+    imap: { host: 'imap.secureserver.net', port: 993, security: 'ssl' }
   },
   {
     id: 'titan',
     label: 'Titan Email',
     mxPatterns: [/titan\.email$/i],
-    smtp: { host: 'smtp.titan.email', port: 465, security: 'ssl' }
+    smtp: { host: 'smtp.titan.email', port: 465, security: 'ssl' },
+    imap: { host: 'imap.titan.email', port: 993, security: 'ssl' }
   },
   {
     id: 'privateemail',
     label: 'Namecheap Private Email',
     mxPatterns: [/privateemail\.com$/i],
-    smtp: { host: 'mail.privateemail.com', port: 465, security: 'ssl' }
+    smtp: { host: 'mail.privateemail.com', port: 465, security: 'ssl' },
+    imap: { host: 'mail.privateemail.com', port: 993, security: 'ssl' }
   },
   {
     id: 'fastmail',
     label: 'Fastmail',
     domainPatterns: [/^fastmail\.[a-z.]+$/i],
     mxPatterns: [/messagingengine\.com$/i],
-    smtp: { host: 'smtp.fastmail.com', port: 465, security: 'ssl' }
+    smtp: { host: 'smtp.fastmail.com', port: 465, security: 'ssl' },
+    imap: { host: 'imap.fastmail.com', port: 993, security: 'ssl' }
   },
   {
     id: 'aol',
     label: 'AOL Mail',
     domainPatterns: [/^aol\.com$/i],
     mxPatterns: [/aol\.com$/i],
-    smtp: { host: 'smtp.aol.com', port: 465, security: 'ssl' }
+    smtp: { host: 'smtp.aol.com', port: 465, security: 'ssl' },
+    imap: { host: 'imap.aol.com', port: 993, security: 'ssl' }
   },
   {
     id: 'yandex',
     label: 'Yandex Mail',
     domainPatterns: [/^yandex\.[a-z.]+$/i],
     mxPatterns: [/yandex\.[a-z.]+$/i],
-    smtp: { host: 'smtp.yandex.com', port: 465, security: 'ssl' }
+    smtp: { host: 'smtp.yandex.com', port: 465, security: 'ssl' },
+    imap: { host: 'imap.yandex.com', port: 993, security: 'ssl' }
   }
 ]
 
@@ -169,6 +190,12 @@ let cachedTransporter = null
 let cachedTransporterSignature = ''
 let smtpTransportFactory = (options) => nodemailer.createTransport(options)
 let emailMxResolver = (domain) => dns.resolveMx(domain)
+let imapClientFactory = (options) => new ImapFlow(options)
+let emailMimeParser = (source) => PostalMime.parse(source, {
+  attachmentEncoding: 'arraybuffer',
+  maxNestingDepth: 3,
+  maxHeadersSize: 256 * 1024
+})
 
 function cleanString(value) {
   if (value === null || value === undefined) return ''
@@ -242,6 +269,12 @@ function normalizeSecurity(value, port) {
   return Number(port) === 465 ? 'ssl' : 'starttls'
 }
 
+function normalizeImapSecurity(value, port) {
+  const security = cleanString(value).toLowerCase()
+  if (IMAP_SECURITY_TYPES.has(security)) return security
+  return Number(port) === 993 ? 'ssl' : 'starttls'
+}
+
 function getEmailDomain(email) {
   const value = cleanString(email).toLowerCase()
   const atIndex = value.lastIndexOf('@')
@@ -302,12 +335,14 @@ function buildFallbackProvider(domain, mxRecords) {
   )
   const firstMailMx = mxRecords.find(record => record.exchange.startsWith('mail.'))
   const host = domainMx?.exchange || firstMailMx?.exchange || `smtp.${domain}`
+  const imapHost = host.startsWith('smtp.') ? `imap.${domain}` : host
 
   return {
     id: 'custom_smtp',
     label: 'SMTP del dominio',
     detectedBy: mxRecords.length ? 'mx' : 'domain',
-    smtp: { host, port: 587, security: 'starttls' }
+    smtp: { host, port: 587, security: 'starttls' },
+    imap: { host: imapHost, port: 993, security: 'ssl' }
   }
 }
 
@@ -325,7 +360,9 @@ function buildDetectionResponse({ email, domain, mxRecords, mxError, match }) {
         detectedBy: mxRecords.length ? 'mx' : 'domain',
         confidence: 'medium'
       }
-  const smtp = match?.provider.smtp || buildFallbackProvider(domain, mxRecords).smtp
+  const fallbackProvider = buildFallbackProvider(domain, mxRecords)
+  const smtp = match?.provider.smtp || fallbackProvider.smtp
+  const imap = match?.provider.imap || fallbackProvider.imap
 
   return {
     email,
@@ -337,6 +374,14 @@ function buildDetectionResponse({ email, domain, mxRecords, mxError, match }) {
       security: normalizeSecurity(smtp.security, smtp.port),
       username: email,
       usernameMasked: maskUsername(email)
+    },
+    imap: {
+      host: imap.host,
+      port: Number(imap.port) || 993,
+      security: normalizeImapSecurity(imap.security, imap.port),
+      username: email,
+      usernameMasked: maskUsername(email),
+      mailbox: EMAIL_INBOUND_DEFAULT_MAILBOX
     },
     mx: {
       checked: true,
@@ -743,6 +788,507 @@ async function saveEmailMessageRow(row) {
   ])
 }
 
+function safeJsonStringify(value) {
+  try {
+    return JSON.stringify(value)
+  } catch {
+    return '{}'
+  }
+}
+
+function toPort(value, fallback) {
+  const port = Number(value) || fallback
+  if (!Number.isInteger(port) || port < 1 || port > 65535) return 0
+  return port
+}
+
+function getStoredInboundConfig(config) {
+  return config?.inbound && typeof config.inbound === 'object' ? config.inbound : {}
+}
+
+function normalizeMailbox(value) {
+  return cleanString(value) || EMAIL_INBOUND_DEFAULT_MAILBOX
+}
+
+function normalizeInboundCandidate({
+  inboundPayload = {},
+  previous = null,
+  detection = null,
+  fromEmail,
+  smtpUsername
+} = {}) {
+  const previousInbound = getStoredInboundConfig(previous)
+  const hasInboundPayload = inboundPayload && typeof inboundPayload === 'object' && Object.keys(inboundPayload).length > 0
+  const enabled = hasInboundPayload
+    ? toBoolean(inboundPayload.enabled, false)
+    : toBoolean(previousInbound.enabled, false)
+
+  if (!enabled) {
+    return {
+      ...previousInbound,
+      enabled: false
+    }
+  }
+
+  const fallbackDomain = getEmailDomain(fromEmail)
+  const fallbackHost = fallbackDomain ? `imap.${fallbackDomain}` : ''
+  const host = normalizeHostname(inboundPayload.host || previousInbound.host || detection?.imap?.host || fallbackHost)
+  const port = toPort(inboundPayload.port || previousInbound.port || detection?.imap?.port, 993)
+  const security = normalizeImapSecurity(inboundPayload.security || previousInbound.security || detection?.imap?.security, port)
+  const username = cleanString(inboundPayload.username || previousInbound.username || detection?.imap?.username || smtpUsername || fromEmail).toLowerCase()
+  const mailbox = normalizeMailbox(inboundPayload.mailbox || previousInbound.mailbox)
+
+  if (!host) throw httpError(400, 'No se pudo definir el servidor IMAP para recibir correos')
+  if (!port) throw httpError(400, 'El puerto IMAP no es válido')
+  if (!username) throw httpError(400, 'No se pudo definir el usuario IMAP')
+  if (!mailbox) throw httpError(400, 'No se pudo definir la bandeja IMAP')
+
+  return {
+    enabled: true,
+    host,
+    port,
+    security,
+    username,
+    usernameMasked: maskUsername(username),
+    mailbox,
+    lastSeenUid: Number(previousInbound.lastSeenUid) > 0 ? Number(previousInbound.lastSeenUid) : null,
+    lastSyncAt: previousInbound.lastSyncAt || null,
+    lastVerifiedAt: previousInbound.lastVerifiedAt || null,
+    lastMessageAt: previousInbound.lastMessageAt || null,
+    lastError: null
+  }
+}
+
+function buildImapClientOptions(inboundConfig, password) {
+  const security = normalizeImapSecurity(inboundConfig.security, inboundConfig.port)
+  return {
+    host: inboundConfig.host,
+    port: Number(inboundConfig.port) || 993,
+    secure: security === 'ssl',
+    doSTARTTLS: security === 'starttls' ? true : (security === 'none' ? false : undefined),
+    auth: {
+      user: inboundConfig.username,
+      pass: password
+    },
+    logger: false
+  }
+}
+
+async function closeImapClient(client) {
+  if (!client || typeof client.logout !== 'function') return
+  await client.logout().catch(() => undefined)
+}
+
+function friendlyImapError(error, host) {
+  const code = String(error?.code || '').toUpperCase()
+  const response = cleanString(error?.response || error?.message)
+
+  if (code === 'EAUTH' || /AUTHENTICATIONFAILED|AUTHENTICATE|LOGIN|Invalid credentials|authentication/i.test(response)) {
+    return 'IMAP rechazó el usuario o app password. Revisa que IMAP esté habilitado en tu proveedor y que el app password tenga acceso al correo.'
+  }
+
+  if (code === 'ENOTFOUND' || /ENOTFOUND/i.test(response)) {
+    return `El servidor IMAP "${host}" no existe. Revisa la configuración de recepción en Avanzado.`
+  }
+
+  if (code === 'ECONNREFUSED' || code === 'ETIMEDOUT' || /timeout|timed out|ECONNREFUSED/i.test(response)) {
+    return `No se pudo abrir IMAP en "${host}". Revisa host, puerto y seguridad.`
+  }
+
+  if (error?.tlsFailed || /certificate|TLS|SSL/i.test(response)) {
+    return `IMAP respondió con error de TLS/SSL en "${host}". Revisa si debe ser SSL/TLS o STARTTLS.`
+  }
+
+  return `No se pudo conectar IMAP en "${host}": ${response || 'error desconocido'}`
+}
+
+async function verifyInboundConnection(inboundConfig, password) {
+  if (!inboundConfig?.enabled) return null
+  if (!password) throw httpError(400, 'Escribe el password o app password para probar IMAP')
+
+  const client = imapClientFactory(buildImapClientOptions(inboundConfig, password))
+  try {
+    await client.connect()
+    const mailbox = await client.mailboxOpen(normalizeMailbox(inboundConfig.mailbox), { readOnly: true })
+    await closeImapClient(client)
+    return {
+      mailbox: mailbox?.path || inboundConfig.mailbox || EMAIL_INBOUND_DEFAULT_MAILBOX,
+      exists: Number(mailbox?.exists) || 0,
+      uidNext: Number(mailbox?.uidNext) || null,
+      verifiedAt: new Date().toISOString()
+    }
+  } catch (error) {
+    await closeImapClient(client)
+    throw httpError(400, friendlyImapError(error, inboundConfig.host))
+  }
+}
+
+function getInitialInboundCursor(verification, previousInbound = {}) {
+  const stored = Number(previousInbound.lastSeenUid) || 0
+  if (stored > 0) return stored
+
+  const uidNext = Number(verification?.uidNext) || 0
+  if (uidNext > 1) return Math.max(0, uidNext - EMAIL_INBOUND_FIRST_SYNC_LOOKBACK - 1)
+
+  return null
+}
+
+function hashInboundMessageId(input = {}) {
+  const basis = [
+    input.mailbox,
+    input.uid,
+    input.messageId,
+    input.emailId,
+    input.fromEmail,
+    input.subject,
+    input.messageTimestamp
+  ].map(cleanString).join('|')
+  return `email_in_${createHash('sha256').update(basis || String(Date.now())).digest('hex').slice(0, 32)}`
+}
+
+function flattenEmailAddresses(value) {
+  const input = Array.isArray(value) ? value : (value ? [value] : [])
+  const result = []
+
+  for (const item of input) {
+    if (!item) continue
+    if (Array.isArray(item.group)) {
+      result.push(...flattenEmailAddresses(item.group))
+      continue
+    }
+
+    const address = cleanString(item.address).toLowerCase()
+    if (EMAIL_PATTERN.test(address)) {
+      result.push({
+        name: cleanString(item.name),
+        address
+      })
+    }
+  }
+
+  return result
+}
+
+function parseEmailDate(parsed, internalDate) {
+  const parsedDate = Date.parse(cleanString(parsed?.date))
+  if (Number.isFinite(parsedDate)) return new Date(parsedDate).toISOString()
+
+  const internalTime = internalDate ? new Date(internalDate).getTime() : NaN
+  if (Number.isFinite(internalTime)) return new Date(internalTime).toISOString()
+
+  return new Date().toISOString()
+}
+
+function splitContactName(name) {
+  const clean = limitString(name, 180)
+  if (!clean) return { firstName: '', lastName: '' }
+  const parts = clean.split(/\s+/).filter(Boolean)
+  if (parts.length <= 1) return { firstName: clean, lastName: '' }
+  return {
+    firstName: parts.slice(0, -1).join(' '),
+    lastName: parts.slice(-1).join(' ')
+  }
+}
+
+async function findOrCreateContactForInboundEmail({ email, name }) {
+  const cleanEmail = cleanString(email).toLowerCase()
+  if (!EMAIL_PATTERN.test(cleanEmail)) return null
+
+  const existing = await db.get(
+    `SELECT id, full_name, first_name, last_name, email, phone, source
+     FROM contacts
+     WHERE LOWER(email) = LOWER(?)
+       AND deleted_at IS NULL
+     LIMIT 1`,
+    [cleanEmail]
+  )
+  if (existing?.id) return { contact: existing, created: false }
+
+  const id = createRistakId('contact')
+  const fullName = limitString(name, 180) || cleanEmail
+  const { firstName, lastName } = splitContactName(fullName === cleanEmail ? '' : fullName)
+
+  try {
+    await db.run(`
+      INSERT INTO contacts (
+        id, email, full_name, first_name, last_name, source, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+    `, [
+      id,
+      cleanEmail,
+      fullName,
+      firstName || null,
+      lastName || null,
+      'email_inbound'
+    ])
+  } catch (error) {
+    const duplicate = await db.get(
+      `SELECT id, full_name, first_name, last_name, email, phone, source
+       FROM contacts
+       WHERE LOWER(email) = LOWER(?)
+       LIMIT 1`,
+      [cleanEmail]
+    ).catch(() => null)
+    if (duplicate?.id) return { contact: duplicate, created: false }
+    throw error
+  }
+
+  const contact = await db.get(
+    `SELECT id, full_name, first_name, last_name, email, phone, source
+     FROM contacts
+     WHERE id = ?`,
+    [id]
+  )
+  return { contact, created: true }
+}
+
+function pickInboundBody(parsed) {
+  const text = limitString(parsed?.text || '', EMAIL_TEXT_LIMIT)
+  const html = limitString(parsed?.html || '', EMAIL_HTML_LIMIT)
+
+  if (text || html) return { text, html }
+
+  return {
+    text: '',
+    html: ''
+  }
+}
+
+async function saveInboundEmailFromImap({ imapMessage, parsed, config }) {
+  const mailbox = normalizeMailbox(config?.inbound?.mailbox)
+  const fromAddresses = flattenEmailAddresses(parsed?.from)
+  const toAddresses = flattenEmailAddresses(parsed?.to)
+  const replyToAddresses = flattenEmailAddresses(parsed?.replyTo)
+  const from = fromAddresses[0]
+  if (!from?.address) return { saved: 0, skipped: true, reason: 'missing_from' }
+
+  const contactResult = await findOrCreateContactForInboundEmail({
+    email: from.address,
+    name: from.name
+  })
+  const contact = contactResult?.contact
+  if (!contact?.id) return { saved: 0, skipped: true, reason: 'missing_contact' }
+
+  const messageTimestamp = parseEmailDate(parsed, imapMessage.internalDate)
+  const subject = limitString(parsed?.subject || '', EMAIL_SUBJECT_LIMIT)
+  const { text, html } = pickInboundBody(parsed)
+  const messageId = cleanString(parsed?.messageId)
+  const localMessageId = hashInboundMessageId({
+    mailbox,
+    uid: imapMessage.uid,
+    messageId,
+    emailId: imapMessage.emailId,
+    fromEmail: from.address,
+    subject,
+    messageTimestamp
+  })
+  const existing = await db.get('SELECT id FROM email_messages WHERE id = ?', [localMessageId])
+  const isNew = !existing
+  const rawPayload = safeJsonStringify({
+    provider: 'imap',
+    source: 'email_inbound_sync',
+    mailbox,
+    uid: imapMessage.uid || null,
+    emailId: imapMessage.emailId || null,
+    threadId: imapMessage.threadId || null,
+    flags: imapMessage.flags ? [...imapMessage.flags] : [],
+    messageId,
+    attachments: Array.isArray(parsed?.attachments) ? parsed.attachments.length : 0,
+    sourceTruncated: Buffer.isBuffer(imapMessage.source) && imapMessage.source.length >= EMAIL_INBOUND_SOURCE_LIMIT
+  })
+
+  await saveEmailMessageRow({
+    id: localMessageId,
+    contactId: contact.id,
+    direction: 'inbound',
+    status: 'delivered',
+    toEmail: toAddresses.map(item => item.address).join(', '),
+    fromEmail: from.address,
+    replyTo: replyToAddresses.map(item => item.address).join(', '),
+    subject,
+    text,
+    html,
+    smtpMessageId: messageId,
+    messageTimestamp,
+    rawPayloadJson: rawPayload
+  })
+
+  if (isNew) {
+    recordInboundChatUnread({
+      contactId: contact.id,
+      messageTimestamp
+    }).catch(error => {
+      logger.warn(`[Correo IMAP] No se pudo incrementar unread ${localMessageId}: ${error.message}`)
+    })
+
+    sendChatMessageNotification({
+      contactId: contact.id,
+      contactName: contact.full_name || from.name || from.address,
+      text: text || subject || 'Nuevo correo',
+      messageType: 'email',
+      messageId: localMessageId,
+      timestamp: messageTimestamp
+    }).catch(error => {
+      logger.warn(`[Correo IMAP] No se pudo notificar ${localMessageId}: ${error.message}`)
+    })
+
+    import('../agents/conversational/runner.js')
+      .then(runner => runner.handleInboundConversationalEmailMessage({
+        contactId: contact.id,
+        messageId: localMessageId
+      }))
+      .catch(error => {
+        logger.warn(`[Agente conversacional] Correo IMAP no atendido: ${error.message}`)
+      })
+  }
+
+  publishChatMessageEvent({
+    contactId: contact.id,
+    messageId: localMessageId,
+    channel: 'email',
+    provider: 'imap',
+    transport: 'imap',
+    direction: 'inbound',
+    messageType: 'email',
+    messageTimestamp,
+    isNew
+  })
+
+  return {
+    saved: 1,
+    isNew,
+    contactId: contact.id,
+    messageId: localMessageId,
+    uid: Number(imapMessage.uid) || null,
+    messageTimestamp
+  }
+}
+
+async function setInboundConfigPatch(patch = {}) {
+  const config = await readStoredConfig()
+  if (!config) return null
+
+  const inbound = {
+    ...getStoredInboundConfig(config),
+    ...patch
+  }
+  await setAppConfig(EMAIL_CONFIG_KEY, { ...config, inbound })
+  return inbound
+}
+
+let inboundSyncRunning = false
+
+export async function syncInboundEmailOnce({ reason = 'manual' } = {}) {
+  if (inboundSyncRunning) {
+    return { skipped: true, reason: 'already_running', imported: 0 }
+  }
+
+  inboundSyncRunning = true
+  const startedAt = new Date().toISOString()
+
+  try {
+    const config = await readStoredConfig()
+    const inbound = getStoredInboundConfig(config)
+    const password = await readStoredPassword()
+
+    if (!config?.connected || !inbound?.enabled || !inbound.host || !inbound.username || !password) {
+      return { skipped: true, reason: 'not_configured', imported: 0 }
+    }
+
+    const client = imapClientFactory(buildImapClientOptions(inbound, password))
+    let imported = 0
+    let seen = 0
+    let maxUid = Number(inbound.lastSeenUid) || 0
+    let lastMessageAt = inbound.lastMessageAt || null
+
+    try {
+      await client.connect()
+      const mailbox = await client.mailboxOpen(normalizeMailbox(inbound.mailbox), { readOnly: true })
+      const uidNext = Number(mailbox?.uidNext) || 0
+      const currentLastSeen = Number(inbound.lastSeenUid) || 0
+      const startUid = currentLastSeen > 0
+        ? currentLastSeen + 1
+        : Math.max(1, uidNext - EMAIL_INBOUND_FIRST_SYNC_LOOKBACK)
+      const endUid = uidNext > 1 ? uidNext - 1 : '*'
+
+      if (uidNext > 1 && startUid > endUid) {
+        await setInboundConfigPatch({
+          ...inbound,
+          mailbox: mailbox?.path || inbound.mailbox,
+          lastSyncAt: new Date().toISOString(),
+          lastVerifiedAt: inbound.lastVerifiedAt || startedAt,
+          lastError: null
+        })
+        await closeImapClient(client)
+        return { skipped: false, reason, imported: 0, seen: 0, lastSeenUid: currentLastSeen }
+      }
+
+      const range = `${startUid}:*`
+      const messages = []
+      for await (const message of client.fetch(range, {
+        uid: true,
+        emailId: true,
+        threadId: true,
+        flags: true,
+        internalDate: true,
+        source: { start: 0, maxLength: EMAIL_INBOUND_SOURCE_LIMIT }
+      }, { uid: true })) {
+        messages.push(message)
+        if (messages.length >= EMAIL_INBOUND_FETCH_LIMIT) break
+      }
+
+      await closeImapClient(client)
+
+      for (const message of messages) {
+        const uid = Number(message.uid) || 0
+        if (uid > maxUid) maxUid = uid
+        if (!message.source) continue
+
+        const parsed = await emailMimeParser(message.source)
+        const result = await saveInboundEmailFromImap({
+          imapMessage: message,
+          parsed,
+          config: { ...config, inbound: { ...inbound, mailbox: mailbox?.path || inbound.mailbox } }
+        })
+        seen += 1
+        imported += result?.isNew ? 1 : 0
+        if (result?.messageTimestamp) lastMessageAt = result.messageTimestamp
+      }
+
+      await setInboundConfigPatch({
+        ...inbound,
+        mailbox: mailbox?.path || inbound.mailbox,
+        lastSeenUid: maxUid || currentLastSeen || null,
+        lastSyncAt: new Date().toISOString(),
+        lastVerifiedAt: inbound.lastVerifiedAt || startedAt,
+        lastMessageAt,
+        lastError: null
+      })
+
+      return {
+        skipped: false,
+        reason,
+        imported,
+        seen,
+        lastSeenUid: maxUid || currentLastSeen || null,
+        lastSyncAt: new Date().toISOString()
+      }
+    } catch (error) {
+      await closeImapClient(client)
+      const friendly = friendlyImapError(error, inbound.host)
+      await setInboundConfigPatch({
+        ...inbound,
+        lastSyncAt: new Date().toISOString(),
+        lastError: friendly
+      })
+      logger.warn(`[Correo IMAP] Sincronización fallida (${reason}): ${friendly}`)
+      throw httpError(error.status || 502, friendly)
+    }
+  } finally {
+    inboundSyncRunning = false
+  }
+}
+
 async function sendConnectionTestEmail(transporter, config, testTo) {
   const recipient = cleanString(testTo).toLowerCase() || config.fromEmail || config.username
   if (!EMAIL_PATTERN.test(recipient)) throw httpError(400, 'El correo de prueba no es válido')
@@ -771,6 +1317,22 @@ export function setEmailMxResolverForTest(resolver) {
   emailMxResolver = typeof resolver === 'function'
     ? resolver
     : (domain) => dns.resolveMx(domain)
+}
+
+export function setEmailImapClientFactoryForTest(factory) {
+  imapClientFactory = typeof factory === 'function'
+    ? factory
+    : (options) => new ImapFlow(options)
+}
+
+export function setEmailMimeParserForTest(parser) {
+  emailMimeParser = typeof parser === 'function'
+    ? parser
+    : (source) => PostalMime.parse(source, {
+        attachmentEncoding: 'arraybuffer',
+        maxNestingDepth: 3,
+        maxHeadersSize: 256 * 1024
+      })
 }
 
 export async function detectEmailProvider(payload = {}) {
@@ -804,6 +1366,8 @@ export async function getEmailStatus() {
 
   const configured = Boolean(config?.host && config?.username && hasPassword)
   const connected = Boolean(configured && config?.connected)
+  const inbound = getStoredInboundConfig(config)
+  const inboundConfigured = Boolean(inbound?.enabled && inbound.host && inbound.username && hasPassword)
 
   return {
     provider: config?.providerId || 'smtp',
@@ -821,6 +1385,21 @@ export async function getEmailStatus() {
       fromName: config?.fromName || '',
       fromEmail: config?.fromEmail || '',
       replyTo: config?.replyTo || ''
+    },
+    inbound: {
+      enabled: Boolean(inbound?.enabled),
+      connected: Boolean(connected && inboundConfigured && !inbound.lastError),
+      configured: inboundConfigured,
+      host: inbound?.host || '',
+      port: Number(inbound?.port) || 993,
+      security: normalizeImapSecurity(inbound?.security, inbound?.port),
+      usernameMasked: maskUsername(inbound?.username),
+      mailbox: inbound?.mailbox || EMAIL_INBOUND_DEFAULT_MAILBOX,
+      lastSeenUid: Number(inbound?.lastSeenUid) || null,
+      lastSyncAt: inbound?.lastSyncAt || null,
+      lastVerifiedAt: inbound?.lastVerifiedAt || null,
+      lastMessageAt: inbound?.lastMessageAt || null,
+      lastError: inbound?.lastError || null
     },
     timestamps: {
       connectedAt: config?.connectedAt || null,
@@ -938,13 +1517,38 @@ export async function connectEmail(payload = {}) {
     providerId,
     providerLabel
   }
+  const inboundCandidate = normalizeInboundCandidate({
+    inboundPayload: payload.inbound && typeof payload.inbound === 'object' ? payload.inbound : {},
+    previous,
+    detection,
+    fromEmail,
+    smtpUsername: username
+  })
   const transporter = buildTransporter(candidate, password)
+  let inboundVerification = null
 
   try {
     await transporter.verify()
-    await sendConnectionTestEmail(transporter, candidate, payload.testTo)
   } catch (error) {
     logger.warn(`Verificación SMTP fallida para ${host}: ${error.message}`)
+    if (error.status) throw error
+    throw httpError(400, friendlySmtpError(error, host))
+  }
+
+  if (inboundCandidate.enabled) {
+    try {
+      inboundVerification = await verifyInboundConnection(inboundCandidate, password)
+    } catch (error) {
+      logger.warn(`Verificación IMAP fallida para ${inboundCandidate.host}: ${error.message}`)
+      if (error.status) throw error
+      throw httpError(400, friendlyImapError(error, inboundCandidate.host))
+    }
+  }
+
+  try {
+    await sendConnectionTestEmail(transporter, candidate, payload.testTo)
+  } catch (error) {
+    logger.warn(`Correo de prueba SMTP fallido para ${host}: ${error.message}`)
     if (error.status) throw error
     throw httpError(400, friendlySmtpError(error, host))
   }
@@ -962,6 +1566,20 @@ export async function connectEmail(payload = {}) {
     lastTestAt: now,
     detectedDomain: detection?.domain || getEmailDomain(fromEmail),
     mxRecords: detection?.mx?.records || previous?.mxRecords || [],
+    inbound: inboundCandidate.enabled
+      ? {
+          ...inboundCandidate,
+          mailbox: inboundVerification?.mailbox || inboundCandidate.mailbox,
+          lastSeenUid: getInitialInboundCursor(inboundVerification, getStoredInboundConfig(previous)),
+          lastVerifiedAt: inboundVerification?.verifiedAt || now,
+          lastSyncAt: getStoredInboundConfig(previous).lastSyncAt || null,
+          lastMessageAt: getStoredInboundConfig(previous).lastMessageAt || null,
+          lastError: null
+        }
+      : {
+          ...inboundCandidate,
+          lastError: null
+        },
     lastError: null
   })
   invalidateTransporter()
@@ -1149,6 +1767,35 @@ export async function sendTestEmail(to) {
   }
 
   return result
+}
+
+export async function testInboundEmailConnection() {
+  const config = await readStoredConfig()
+  const inbound = getStoredInboundConfig(config)
+  const password = await readStoredPassword()
+
+  if (!config?.connected || !inbound?.enabled || !inbound.host || !inbound.username || !password) {
+    throw httpError(409, 'La recepción de correo no está conectada. Actívala en Configuración > Correos.')
+  }
+
+  const verification = await verifyInboundConnection(inbound, password)
+  await setInboundConfigPatch({
+    ...inbound,
+    mailbox: verification?.mailbox || inbound.mailbox,
+    lastVerifiedAt: verification?.verifiedAt || new Date().toISOString(),
+    lastError: null
+  })
+
+  return {
+    connected: true,
+    host: inbound.host,
+    port: Number(inbound.port) || 993,
+    security: normalizeImapSecurity(inbound.security, inbound.port),
+    mailbox: verification?.mailbox || inbound.mailbox,
+    exists: verification?.exists || 0,
+    uidNext: verification?.uidNext || null,
+    testedAt: verification?.verifiedAt || new Date().toISOString()
+  }
 }
 
 export async function disconnectEmail() {

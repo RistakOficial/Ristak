@@ -3,9 +3,11 @@ import {
   AtSign,
   CheckCircle2,
   ChevronDown,
+  Inbox,
   KeyRound,
   Mail,
   Pencil,
+  RefreshCw,
   Save,
   Send,
   Server,
@@ -57,9 +59,12 @@ export const EmailSettings: React.FC = () => {
   const [editing, setEditing] = useState(false)
   const [connecting, setConnecting] = useState(false)
   const [testing, setTesting] = useState(false)
+  const [testingInbound, setTestingInbound] = useState(false)
+  const [syncingInbound, setSyncingInbound] = useState(false)
   const [disconnecting, setDisconnecting] = useState(false)
   const [advancedOpen, setAdvancedOpen] = useState(false)
   const [advancedDirty, setAdvancedDirty] = useState(false)
+  const [inboundDirty, setInboundDirty] = useState(false)
   const [detailsOpen, setDetailsOpen] = useState(false)
 
   const [fromEmail, setFromEmail] = useState('')
@@ -72,6 +77,13 @@ export const EmailSettings: React.FC = () => {
   const [port, setPort] = useState('587')
   const [security, setSecurity] = useState<EmailSmtpSecurity>('starttls')
   const [username, setUsername] = useState('')
+
+  const [inboundEnabled, setInboundEnabled] = useState(true)
+  const [inboundHost, setInboundHost] = useState('')
+  const [inboundPort, setInboundPort] = useState('993')
+  const [inboundSecurity, setInboundSecurity] = useState<EmailSmtpSecurity>('ssl')
+  const [inboundUsername, setInboundUsername] = useState('')
+  const [inboundMailbox, setInboundMailbox] = useState('INBOX')
 
   const [detection, setDetection] = useState<EmailProviderDetection | null>(null)
   const [detecting, setDetecting] = useState(false)
@@ -94,13 +106,16 @@ export const EmailSettings: React.FC = () => {
   )
   const usesAdvancedSmtp = advancedOpen || advancedDirty
   const validPort = Number.isInteger(Number(port)) && Number(port) > 0 && Number(port) <= 65535
+  const validInboundPort = Number.isInteger(Number(inboundPort)) && Number(inboundPort) > 0 && Number(inboundPort) <= 65535
   const advancedValid = !usesAdvancedSmtp || Boolean(host.trim() && validPort && (username.trim() || fromEmailValue))
+  const inboundValid = !inboundEnabled || Boolean(inboundHost.trim() && validInboundPort && (inboundUsername.trim() || fromEmailValue) && inboundMailbox.trim())
   const canSubmit = Boolean(
     EMAIL_PATTERN.test(fromEmailValue) &&
     fromName.trim() &&
     (password.trim() || canReuseStoredPassword) &&
     (!replyToValue || EMAIL_PATTERN.test(replyToValue)) &&
-    advancedValid
+    advancedValid &&
+    inboundValid
   )
 
   const applyStatusToForm = (nextStatus: EmailStatus) => {
@@ -111,11 +126,18 @@ export const EmailSettings: React.FC = () => {
     setPort(String(nextStatus.smtp.port || 587))
     setSecurity(nextStatus.smtp.security || 'starttls')
     setUsername('')
+    setInboundEnabled(nextStatus.connected ? Boolean(nextStatus.inbound?.enabled) : true)
+    setInboundHost(nextStatus.inbound?.host || '')
+    setInboundPort(String(nextStatus.inbound?.port || 993))
+    setInboundSecurity(nextStatus.inbound?.security || 'ssl')
+    setInboundUsername('')
+    setInboundMailbox(nextStatus.inbound?.mailbox || 'INBOX')
     setPassword('')
     setTestTo(nextStatus.sender.fromEmail || '')
     setDetection(null)
     setDetectionError('')
     setAdvancedDirty(false)
+    setInboundDirty(false)
     setAdvancedOpen(false)
     setDetailsOpen(false)
   }
@@ -125,6 +147,17 @@ export const EmailSettings: React.FC = () => {
     setPort(String(nextDetection.smtp.port || 587))
     setSecurity(nextDetection.smtp.security || 'starttls')
     setUsername(nextDetection.smtp.username || nextDetection.email)
+    applyDetectionToInbound(nextDetection)
+  }
+
+  const applyDetectionToInbound = (nextDetection: EmailProviderDetection) => {
+    if (!inboundDirty) {
+      setInboundHost(nextDetection.imap.host)
+      setInboundPort(String(nextDetection.imap.port || 993))
+      setInboundSecurity(nextDetection.imap.security || 'ssl')
+      setInboundUsername(nextDetection.imap.username || nextDetection.email)
+      setInboundMailbox(nextDetection.imap.mailbox || 'INBOX')
+    }
   }
 
   const setSignatureEditorHtml = (html: string) => {
@@ -189,6 +222,8 @@ export const EmailSettings: React.FC = () => {
         setDetectionError('')
         if (!advancedDirty) {
           applyDetectionToAdvanced(nextDetection)
+        } else if (!inboundDirty) {
+          applyDetectionToInbound(nextDetection)
         }
       } catch (error) {
         if (!cancelled) {
@@ -203,10 +238,14 @@ export const EmailSettings: React.FC = () => {
       cancelled = true
       window.clearTimeout(timer)
     }
-  }, [fromEmail, connected, editing, advancedDirty])
+  }, [fromEmail, connected, editing, advancedDirty, inboundDirty])
 
   const markAdvancedDirty = () => {
     setAdvancedDirty(true)
+  }
+
+  const markInboundDirty = () => {
+    setInboundDirty(true)
   }
 
   const connectEmail = async (event?: React.FormEvent) => {
@@ -223,6 +262,23 @@ export const EmailSettings: React.FC = () => {
             username: username.trim() || fromEmailValue
           }
         : undefined
+      const inbound = inboundEnabled
+        ? {
+            enabled: true,
+            host: inboundHost.trim(),
+            port: Number(inboundPort),
+            security: inboundSecurity,
+            username: inboundUsername.trim() || fromEmailValue,
+            mailbox: inboundMailbox.trim() || 'INBOX'
+          }
+        : {
+            enabled: false,
+            host: inboundHost.trim(),
+            port: Number(inboundPort) || 993,
+            security: inboundSecurity,
+            username: inboundUsername.trim() || fromEmailValue,
+            mailbox: inboundMailbox.trim() || 'INBOX'
+          }
 
       const nextStatus = await emailService.connect({
         fromEmail: fromEmailValue,
@@ -230,7 +286,8 @@ export const EmailSettings: React.FC = () => {
         fromName: fromName.trim(),
         replyTo: replyToValue,
         testTo: fromEmailValue,
-        smtp
+        smtp,
+        inbound
       })
       setStatus(nextStatus)
       applyStatusToForm(nextStatus)
@@ -240,6 +297,40 @@ export const EmailSettings: React.FC = () => {
       showToast('error', 'No se pudo conectar', error instanceof Error ? error.message : 'Revisa el correo y el app password e intenta de nuevo')
     } finally {
       setConnecting(false)
+    }
+  }
+
+  const testInbound = async () => {
+    if (testingInbound) return
+    setTestingInbound(true)
+    try {
+      const result = await emailService.testInbound()
+      const nextStatus = await emailService.getStatus()
+      setStatus(nextStatus)
+      showToast('success', 'Recepción conectada', `IMAP abrió ${result.mailbox || 'INBOX'} correctamente`)
+    } catch (error) {
+      showToast('error', 'No se pudo probar recepción', error instanceof Error ? error.message : 'Revisa la configuración IMAP')
+    } finally {
+      setTestingInbound(false)
+    }
+  }
+
+  const syncInbound = async () => {
+    if (syncingInbound) return
+    setSyncingInbound(true)
+    try {
+      const result = await emailService.syncInbound()
+      const nextStatus = await emailService.getStatus()
+      setStatus(nextStatus)
+      if (result.skipped) {
+        showToast('info', 'Sincronización omitida', result.reason === 'already_running' ? 'Ya hay una sincronización en curso' : 'La recepción no está configurada')
+      } else {
+        showToast('success', 'Correos sincronizados', `Importados: ${result.imported || 0}`)
+      }
+    } catch (error) {
+      showToast('error', 'No se pudo sincronizar', error instanceof Error ? error.message : 'Intenta nuevamente')
+    } finally {
+      setSyncingInbound(false)
     }
   }
 
@@ -408,6 +499,115 @@ export const EmailSettings: React.FC = () => {
     </div>
   )
 
+  const renderInboundFields = () => (
+    <div className={styles.inboundBlock}>
+      <div className={styles.inboundHeader}>
+        <div className={styles.inboundTitle}>
+          <span className={styles.inboundIcon}><Inbox size={17} /></span>
+          <div>
+            <strong>Recepción de correos</strong>
+            <span>IMAP revisa INBOX y guarda cada correo recibido en el chat del contacto.</span>
+          </div>
+        </div>
+        <label className={styles.switchRow}>
+          <Switch
+            checked={inboundEnabled}
+            onChange={(checked) => {
+              markInboundDirty()
+              setInboundEnabled(checked)
+            }}
+            aria-label="Activar recepción de correos por IMAP"
+          />
+          <span>{inboundEnabled ? 'Activa' : 'Desactivada'}</span>
+        </label>
+      </div>
+
+      {inboundEnabled && (
+        <div className={styles.advancedFields}>
+          <div className={styles.formRow}>
+            <label className={styles.fieldLabel}>
+              <span>Servidor IMAP</span>
+              <div className={styles.inputWrap} data-ristak-unstyled>
+                <Server size={17} />
+                <input
+                  value={inboundHost}
+                  onChange={(event) => {
+                    markInboundDirty()
+                    setInboundHost(event.target.value)
+                  }}
+                  placeholder="imap.tudominio.com"
+                  autoComplete="off"
+                />
+              </div>
+            </label>
+            <label className={styles.fieldLabel}>
+              <span>Puerto IMAP</span>
+              <div className={styles.inputWrap} data-ristak-unstyled>
+                <input
+                  value={inboundPort}
+                  onChange={(event) => {
+                    markInboundDirty()
+                    setInboundPort(event.target.value.replace(/[^0-9]/g, ''))
+                  }}
+                  placeholder="993"
+                  inputMode="numeric"
+                  autoComplete="off"
+                />
+              </div>
+            </label>
+          </div>
+
+          <div className={styles.formRow}>
+            <label className={styles.fieldLabel}>
+              <span>Seguridad IMAP</span>
+              <CustomSelect
+                value={inboundSecurity}
+                options={SECURITY_OPTIONS}
+                onValueChange={(value) => {
+                  markInboundDirty()
+                  setInboundSecurity(value as EmailSmtpSecurity)
+                }}
+              />
+            </label>
+            <label className={styles.fieldLabel}>
+              <span>Usuario IMAP</span>
+              <div className={styles.inputWrap} data-ristak-unstyled>
+                <User size={17} />
+                <input
+                  value={inboundUsername}
+                  onChange={(event) => {
+                    markInboundDirty()
+                    setInboundUsername(event.target.value)
+                  }}
+                  placeholder={status?.inbound?.usernameMasked || fromEmailValue || 'usuario@dominio.com'}
+                  autoComplete="off"
+                />
+              </div>
+            </label>
+          </div>
+
+          <label className={styles.fieldLabel}>
+            <span>Bandeja</span>
+            <div className={styles.inputWrap} data-ristak-unstyled>
+              <Inbox size={17} />
+              <input
+                value={inboundMailbox}
+                onChange={(event) => {
+                  markInboundDirty()
+                  setInboundMailbox(event.target.value)
+                }}
+                placeholder="INBOX"
+                autoComplete="off"
+              />
+            </div>
+          </label>
+        </div>
+      )}
+
+      {status?.inbound?.lastError && inboundEnabled && <p className={styles.errorText}>{status.inbound.lastError}</p>}
+    </div>
+  )
+
   const renderForm = () => (
     <form className={styles.connectForm} onSubmit={connectEmail}>
       <div className={styles.formRow}>
@@ -483,6 +683,8 @@ export const EmailSettings: React.FC = () => {
         {advancedOpen && renderAdvancedFields()}
       </div>
 
+      {renderInboundFields()}
+
       <div className={styles.formActions}>
         <Button type="submit" loading={connecting} disabled={!canSubmit}>
           <Mail size={18} />
@@ -521,8 +723,8 @@ export const EmailSettings: React.FC = () => {
         <li>
           <span>3</span>
           <div>
-            <strong>Recibe la prueba</strong>
-            <p>Al conectar, Ristak envía un correo de prueba automáticamente.</p>
+            <strong>Prueba envío y recepción</strong>
+            <p>Ristak valida SMTP, abre IMAP y deja listo el sync de INBOX.</p>
           </div>
         </li>
       </ol>
@@ -532,9 +734,9 @@ export const EmailSettings: React.FC = () => {
   const renderConnectStage = () => (
     <section className={styles.connectPanel}>
       <div className={styles.connectCopy}>
-        <p className={styles.eyebrow}>Correo de salida</p>
-        <h3>Conecta tu correo sin tocar SMTP</h3>
-        <span>Ristak detecta el proveedor y prepara la conexión por debajo.</span>
+        <p className={styles.eyebrow}>Correo</p>
+        <h3>Conecta envío y recepción</h3>
+        <span>Ristak detecta el proveedor y prepara SMTP + IMAP por debajo.</span>
       </div>
       {status?.lastError && <p className={styles.errorText}>{status.lastError}</p>}
       <div className={styles.connectContent}>
@@ -546,6 +748,11 @@ export const EmailSettings: React.FC = () => {
 
   const renderConnectedStage = () => {
     if (!status) return null
+    const inboundState = status.inbound?.connected
+      ? { label: 'Recepción activa', variant: 'success' as const }
+      : status.inbound?.enabled
+        ? { label: 'Recepción con error', variant: 'warning' as const }
+        : { label: 'Solo envío', variant: 'neutral' as const }
 
     if (editing) {
       return (
@@ -574,10 +781,16 @@ export const EmailSettings: React.FC = () => {
                 <span>{status.sender.fromEmail}</span>
               </div>
             </div>
-            <Badge variant="success" className={styles.inlineBadge}>
-              <ShieldCheck size={14} />
-              Conectado
-            </Badge>
+            <div className={styles.summaryBadges}>
+              <Badge variant="success" className={styles.inlineBadge}>
+                <ShieldCheck size={14} />
+                Envío conectado
+              </Badge>
+              <Badge variant={inboundState.variant} className={styles.inlineBadge}>
+                <Inbox size={14} />
+                {inboundState.label}
+              </Badge>
+            </div>
           </div>
 
           <dl className={styles.summaryList}>
@@ -590,8 +803,16 @@ export const EmailSettings: React.FC = () => {
               <dd>{status.sender.replyTo || status.sender.fromEmail}</dd>
             </div>
             <div>
+              <dt>Recepción</dt>
+              <dd>{status.inbound?.enabled ? `${status.inbound.host}:${status.inbound.port}` : 'Desactivada'}</dd>
+            </div>
+            <div>
               <dt>Última verificación</dt>
               <dd>{formatDateTime(status.timestamps.lastVerifiedAt)}</dd>
+            </div>
+            <div>
+              <dt>Último sync IMAP</dt>
+              <dd>{formatDateTime(status.inbound?.lastSyncAt)}</dd>
             </div>
             <div>
               <dt>Última prueba</dt>
@@ -624,6 +845,26 @@ export const EmailSettings: React.FC = () => {
                   <dt>Usuario</dt>
                   <dd>{status.smtp.usernameMasked || 'Sin usuario'}</dd>
                 </div>
+                {status.inbound?.enabled && (
+                  <>
+                    <div>
+                      <dt>Servidor IMAP</dt>
+                      <dd>{status.inbound.host}:{status.inbound.port}</dd>
+                    </div>
+                    <div>
+                      <dt>Seguridad IMAP</dt>
+                      <dd>{getSecurityLabel(status.inbound.security)}</dd>
+                    </div>
+                    <div>
+                      <dt>Usuario IMAP</dt>
+                      <dd>{status.inbound.usernameMasked || 'Sin usuario'}</dd>
+                    </div>
+                    <div>
+                      <dt>Bandeja</dt>
+                      <dd>{status.inbound.mailbox || 'INBOX'}</dd>
+                    </div>
+                  </>
+                )}
               </dl>
             )}
           </div>
@@ -643,8 +884,8 @@ export const EmailSettings: React.FC = () => {
         <section className={styles.testCard}>
           <div className={styles.testCopy}>
             <p className={styles.eyebrow}>Prueba</p>
-            <h3>Enviar otra prueba</h3>
-            <span>Usa esto cuando quieras confirmar la entrega a otro correo.</span>
+            <h3>Probar correo</h3>
+            <span>Confirma envío SMTP y recepción IMAP sin salir de esta pantalla.</span>
           </div>
           <form className={styles.testForm} onSubmit={sendTest}>
             <div className={styles.inputWrap} data-ristak-unstyled>
@@ -662,7 +903,37 @@ export const EmailSettings: React.FC = () => {
               Enviar prueba
             </Button>
           </form>
+          <div className={styles.testDivider} />
+          <div className={styles.inboundTestBlock}>
+            <div>
+              <strong>Recepción IMAP</strong>
+              <span>Último correo recibido: {formatDateTime(status.inbound?.lastMessageAt)}</span>
+            </div>
+            <div className={styles.testActions}>
+              <Button
+                type="button"
+                variant="outline"
+                onClick={testInbound}
+                loading={testingInbound}
+                disabled={!status.inbound?.enabled}
+              >
+                <Inbox size={16} />
+                Probar recepción
+              </Button>
+              <Button
+                type="button"
+                variant="secondary"
+                onClick={syncInbound}
+                loading={syncingInbound}
+                disabled={!status.inbound?.enabled}
+              >
+                <RefreshCw size={16} />
+                Sincronizar ahora
+              </Button>
+            </div>
+          </div>
           {status.lastError && <p className={styles.errorText}>{status.lastError}</p>}
+          {status.inbound?.lastError && <p className={styles.errorText}>{status.inbound.lastError}</p>}
         </section>
       </div>
     )
@@ -738,7 +1009,7 @@ export const EmailSettings: React.FC = () => {
       <PageHeader
         eyebrow="Sistema"
         title="Correos"
-        subtitle="Conecta el remitente que usará tu cuenta para enviar correos."
+        subtitle="Conecta el remitente que usará tu cuenta para enviar y recibir correos."
       />
 
       <div className={styles.stage}>

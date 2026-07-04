@@ -178,6 +178,55 @@
   padding-top: 14px;
 }
 
+.inboundBlock {
+  display: grid;
+  gap: 14px;
+  border-top: 1px solid var(--border);
+  padding-top: 16px;
+}
+
+.inboundHeader {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 14px;
+}
+
+.inboundTitle {
+  display: flex;
+  min-width: 0;
+  gap: 10px;
+}
+
+.inboundIcon {
+  display: inline-flex;
+  width: 34px;
+  height: 34px;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-ctl);
+  background: var(--surface);
+  color: var(--text);
+}
+
+.inboundTitle strong {
+  display: block;
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 1.25;
+}
+
+.inboundTitle span:not(.inboundIcon) {
+  display: block;
+  margin-top: 3px;
+  color: var(--text-dim);
+  font-size: 12px;
+  line-height: 1.4;
+}
+
 .formActions {
   display: flex;
   flex-wrap: wrap;
@@ -261,6 +310,13 @@
   align-items: center;
   justify-content: space-between;
   gap: 14px;
+}
+
+.summaryBadges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  justify-content: flex-end;
 }
 
 .summaryIdentity {
@@ -349,6 +405,38 @@
 
 .testForm {
   display: grid;
+  gap: 10px;
+}
+
+.testDivider {
+  height: 1px;
+  background: var(--border);
+}
+
+.inboundTestBlock {
+  display: grid;
+  gap: 12px;
+}
+
+.inboundTestBlock strong {
+  display: block;
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 1.25;
+}
+
+.inboundTestBlock span {
+  display: block;
+  margin-top: 4px;
+  color: var(--text-dim);
+  font-size: 12px;
+  line-height: 1.35;
+}
+
+.testActions {
+  display: flex;
+  flex-wrap: wrap;
   gap: 10px;
 }
 
@@ -665,6 +753,10 @@
     flex-direction: column;
   }
 
+  .summaryBadges {
+    justify-content: flex-start;
+  }
+
   .summaryList > div,
   .advancedSummary > div {
     grid-template-columns: 1fr;
@@ -681,7 +773,8 @@
   }
 
   .signatureHeader,
-  .signatureFooter {
+  .signatureFooter,
+  .inboundHeader {
     align-items: flex-start;
     flex-direction: column;
   }

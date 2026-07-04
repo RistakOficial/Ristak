@@ -2,6 +2,8 @@ import { db, getAppConfig } from '../config/database.js'
 
 const PAYMENT_SETTINGS_CONFIG_KEY = 'payments_settings'
 const GOOGLE_CALENDAR_CONFIG_KEY = 'google_calendar_service_account_config'
+const EMAIL_CONFIG_KEY = 'email_smtp_config'
+const EMAIL_PASSWORD_KEY = 'email_smtp_password'
 
 function cleanString(value) {
   return String(value || '').trim()
@@ -196,4 +198,20 @@ export async function isWhatsAppQrConnected() {
     LIMIT 1
   `).catch(() => null)
   return Boolean(row?.id)
+}
+
+export async function isEmailInboundConnected() {
+  const rows = await getAppConfigRows([EMAIL_CONFIG_KEY, EMAIL_PASSWORD_KEY])
+  const config = parseJson(rows[EMAIL_CONFIG_KEY], null)
+  const inbound = config?.inbound && typeof config.inbound === 'object' ? config.inbound : {}
+
+  return Boolean(
+    config?.connected &&
+    cleanString(config.host) &&
+    cleanString(config.username) &&
+    cleanString(rows[EMAIL_PASSWORD_KEY]) &&
+    inbound.enabled === true &&
+    cleanString(inbound.host) &&
+    cleanString(inbound.username)
+  )
 }

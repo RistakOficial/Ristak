@@ -327,6 +327,30 @@ mostrar los campos estructurados del correo, incluyendo `Asunto`, `Remitente`,
 `Destinatarios`, `Responder a`, `Estado`, `Transporte` cuando existan y el
 `Cuerpo` completo a partir de `message_text` o `html_body` sanitizado.
 
+### Correo electronico
+
+Configuracion > Integraciones > Correos conecta envio por SMTP y recepcion por
+IMAP. La configuracion vive en `app_config.email_smtp_config`; el app password se
+guarda cifrado en `app_config.email_smtp_password` y se reutiliza para SMTP e
+IMAP cuando el proveedor lo permite. No se agregan secrets ni env vars nuevas
+para recibir correo.
+
+La recepcion IMAP se configura dentro de
+`app_config.email_smtp_config.inbound` (`enabled`, `host`, `port`, `security`,
+`username`, `mailbox`, cursor `lastSeenUid` y timestamps). Al conectar, Ristak
+valida SMTP y, si la recepcion esta activa, tambien abre la bandeja IMAP antes de
+marcarla como conectada. La pantalla permite probar recepcion y sincronizar de
+forma manual con `/api/email/inbound/test` y `/api/email/inbound/sync`.
+
+El job `email-inbound-sync` esta registrado como cron de integracion externa y
+solo arranca cuando el detector local confirma correo conectado, app password
+guardado e IMAP activo. El sync lee `INBOX` por UID, mantiene cursor incremental,
+importa una ventana reciente en la primera ejecucion para no volcar buzones
+historicos completos, crea el contacto si el remitente no existe con
+`source='email_inbound'`, guarda el correo en `email_messages` con
+`direction='inbound'` y `provider='imap'`, y publica el evento live del chat para
+que aparezca en la bandeja y en el modal del contacto.
+
 Los adjuntos manuales del chat soportan imagenes, videos, audios y documentos
 compatibles. Si un video o audio cabe como media directa, la UI pregunta si debe
 mandarse como video/nota de voz o como archivo. Si excede el limite de media
@@ -1334,7 +1358,7 @@ Registro de ubicacion:
 | HighLevel | `highlevel_config` y servicios HighLevel | No | Tokens deben estar cifrados o gestionados internamente |
 | Meta Ads/Dataset | `meta_config`, `app_config`, env fallback | No | CAPI usa System User Token; `meta_test_event_code` activa Test Events |
 | Pagos | config interna de pagos y metadata por provider | No | Modo `test/live` debe persistir por pago |
-| Correo SMTP | `app_config.email_smtp_config` y `app_config.email_smtp_password` | No | Password cifrado; requerido solo para enviar correos |
+| Correo SMTP/IMAP | `app_config.email_smtp_config` y `app_config.email_smtp_password` | No | App password cifrado; requerido para enviar y recibir correos cuando la integracion esta activa |
 | Moneda de cuenta | `app_config.account_currency` | No | Default obligatorio para importes nuevos; no crear env/secret de moneda |
 | Bunny/media | `storage_settings`, env fallback, licencia central | No | API keys nunca en docs |
 | Push web/movil | env VAPID/FCM/APNS o configuracion segura | No | Provider puede exigir secrets externos |
