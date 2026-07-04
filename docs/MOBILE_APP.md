@@ -104,6 +104,9 @@ izquierdo como indicador visual de foco, comentario o chat no leído. Los estado
 de no leído/activo deben resolverse con fondo, tipografía y badge, no con una
 franja lateral. Las etiquetas de canal dentro de los globos (`messageTransport`)
 son micro-etiquetas sin contorno y con abreviaturas: `IG`, `FB`, `API` y `QR`.
+El globo de texto del agente IA (`agentStatusBubble`) conserva su forma, pero su
+color debe salir de `--phone-chat-primary`/`--phone-chat-accent`, no de verdes
+tipo estado o WhatsApp.
 
 ## Variables de servidor
 
