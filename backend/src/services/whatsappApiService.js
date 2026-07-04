@@ -6053,6 +6053,7 @@ export async function captureQrChatMessage({
       profileName: result.profileName,
       text: result.messageText,
       messageType: result.messageType,
+      mediaUrl: result.mediaUrl || result.media_url || '',
       messageId: result.messageId,
       timestamp: result.messageTimestamp
     }).catch(error => {
@@ -6843,6 +6844,7 @@ export async function processYCloudWhatsAppWebhook({ payload, rawBody, signature
         profileName: result.profileName,
         text: result.messageText,
         messageType: result.messageType,
+        mediaUrl: result.mediaUrl || result.media_url || '',
         messageId: result.messageId,
         timestamp: result.messageTimestamp
       }).catch(error => {
@@ -7386,6 +7388,7 @@ export async function processMetaDirectWebhookRelay({ payload = {}, rawBody = ''
       profileName: result.profileName,
       text: result.messageText,
       messageType: result.messageType,
+      mediaUrl: result.mediaUrl || result.media_url || '',
       messageId: result.messageId,
       timestamp: result.messageTimestamp
     }).catch(error => {

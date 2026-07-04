@@ -138,7 +138,56 @@ test('push de contacto unico usa avatar del contacto cuando existe foto publica'
     assert.equal(sentPayloads.length, 1)
     assert.equal(sentPayloads[0].contactName, 'Ana Avatar')
     assert.equal(sentPayloads[0].contactAvatarUrl, avatarUrl)
-    assert.equal(sentPayloads[0].notificationImageUrl, avatarUrl)
+    assert.equal(sentPayloads[0].senderAvatarUrl, avatarUrl)
+    assert.equal(sentPayloads[0].notificationImageUrl, undefined)
+  } finally {
+    setAppNotificationPayloadSenderForTest(null)
+    await db.run('DELETE FROM whatsapp_api_contacts WHERE id = ?', [apiContactId]).catch(() => undefined)
+    await db.run('DELETE FROM contacts WHERE id = ?', [contactId]).catch(() => undefined)
+  }
+})
+
+test('push de chat con multimedia separa avatar del contacto y attachment del mensaje', async () => {
+  const suffix = randomUUID()
+  const contactId = `push_media_contact_${suffix}`
+  const apiContactId = `push_media_api_${suffix}`
+  const phone = `+52156${Date.now().toString().slice(-8)}`
+  const avatarUrl = `https://cdn.example.test/avatars/${suffix}.jpg`
+  const mediaUrl = `https://cdn.example.test/messages/${suffix}.jpg`
+  const sentPayloads = []
+
+  setAppNotificationPayloadSenderForTest(async (payload) => {
+    sentPayloads.push(payload)
+    return { sent: 1, skipped: false }
+  })
+
+  try {
+    await db.run(`
+      INSERT INTO contacts (id, phone, full_name, source, created_at, updated_at)
+      VALUES (?, ?, 'Ana Media', 'test', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+    `, [contactId, phone])
+    await db.run(`
+      INSERT INTO whatsapp_api_contacts (
+        id, contact_id, phone, profile_name, profile_picture_url,
+        profile_picture_source, profile_picture_updated_at, created_at, updated_at
+      ) VALUES (?, ?, ?, 'Ana Media', ?, 'test', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+    `, [apiContactId, contactId, phone, avatarUrl])
+
+    await sendAppNotificationPayload({
+      title: 'Ana Media',
+      body: 'Foto',
+      category: 'chat',
+      contactName: 'Ana Media',
+      contactId,
+      notificationImageUrl: mediaUrl,
+      notificationAttachmentUrl: mediaUrl
+    })
+
+    assert.equal(sentPayloads.length, 1)
+    assert.equal(sentPayloads[0].contactAvatarUrl, avatarUrl)
+    assert.equal(sentPayloads[0].senderAvatarUrl, avatarUrl)
+    assert.equal(sentPayloads[0].notificationImageUrl, mediaUrl)
+    assert.equal(sentPayloads[0].notificationAttachmentUrl, mediaUrl)
   } finally {
     setAppNotificationPayloadSenderForTest(null)
     await db.run('DELETE FROM whatsapp_api_contacts WHERE id = ?', [apiContactId]).catch(() => undefined)

@@ -66,6 +66,16 @@ main app profile can be manually named or Xcode-managed. CI detects Xcode-manage
 profiles and switches the archive/export to automatic signing so the profile is
 not forced as a manual signing profile.
 
+OJO para avatares en push iOS: el app bundle `com.ristak.app` debe tener
+activadas las capabilities Push Notifications y Communication Notifications. El
+perfil App Store del app principal debe incluir el entitlement
+`com.apple.developer.usernotifications.communication`; si ese perfil se queda
+viejo, el archive puede fallar al firmar o iOS puede mostrar el avatar como
+attachment normal en vez de avatar de remitente. Cuando cambien capabilities,
+regenera/descarga el perfil App Store del app principal y verifica que el perfil
+de `com.ristak.app.NotificationService` siga vigente para la Notification
+Service Extension.
+
 Android:
 
 - Android release keystore encoded as base64
@@ -128,6 +138,13 @@ Get the App Store Connect API key from App Store Connect > Users and Access >
 Integrations > App Store Connect API. Get the distribution certificate and App
 Store provisioning profiles from Apple Developer. Both profiles must include the
 same distribution certificate used for signing.
+
+El perfil de `com.ristak.app` tambien debe incluir el entitlement
+`com.apple.developer.usernotifications.communication` para que las push de chat,
+citas y pagos puedan pintar el avatar del contacto con Communication
+Notifications. Si Apple Developer muestra capabilities pendientes o el perfil
+fue creado antes de activar esa capability, descarga uno nuevo y actualiza el
+archivo/local vault o el campo correspondiente en Ristak Installer.
 
 Android:
 

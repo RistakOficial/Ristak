@@ -1943,6 +1943,7 @@ export async function processMetaSocialWebhook({ payload = {}, rawBody = '', sig
             profileName: result.contactName,
             text: result.messageText,
             messageType: result.messageType,
+            mediaUrl: result.mediaUrl || result.media_url || '',
             messageId: result.messageId,
             timestamp: result.timestamp
           }).catch(error => {

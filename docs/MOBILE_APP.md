@@ -106,14 +106,28 @@ inicio":
 
 Las push de mensajes, citas y pagos deben intentar mostrar el avatar del
 contacto cuando el payload pertenece a exactamente un contacto y existe una foto
-publica (`contactAvatarUrl` / `notificationImageUrl`). Si no hay foto, son varios
-contactos o la alerta es general, se usa el isotipo de Ristak. En Android el
-avatar viaja como imagen de la notificacion; el small icon del sistema sigue
-siendo `ic_stat_ristak` porque Android exige un icono monocromatico de la app.
-En iOS/APNs el payload incluye `mutable-content` y la URL de imagen cuando existe
-avatar. La extension `RistakNotificationService` descarga esa imagen y la adjunta
-a la notificacion antes de mostrarla. Si el avatar no existe, la descarga falla,
-hay varios contactos o la alerta es general, iOS muestra el AppIcon instalado de
+publica. El avatar del contacto viaja solo en `contactAvatarUrl` y
+`senderAvatarUrl`; no debe copiarse a `notificationImageUrl`. Si no hay foto,
+son varios contactos o la alerta es general, se usa el isotipo de Ristak.
+
+`notificationImageUrl` y `notificationAttachmentUrl` quedan reservados para
+contenido multimedia real del mensaje, por ejemplo una foto, video o gif que el
+contacto mando. En ese caso iOS puede mostrar el preview como attachment de la
+notificacion y, al mismo tiempo, mostrar el avatar del contacto como remitente.
+No uses esos campos para avatares: iOS los pinta como miniatura lateral de
+media, no como foto del contacto.
+
+En Android el small icon del sistema sigue siendo `ic_stat_ristak` porque
+Android exige un icono monocromatico de la app; las previews multimedia usan
+`notificationImageUrl` cuando existe media real. En iOS/APNs el payload incluye
+`mutable-content` cuando existe `contactAvatarUrl`/`senderAvatarUrl` o media
+real. La extension `RistakNotificationService` usa Communication Notifications
+con `INSendMessageIntent` para que el avatar sea la identidad del remitente, y
+solo adjunta `notificationImageUrl` / `notificationAttachmentUrl` como media
+del mensaje. La app principal debe tener el entitlement
+`com.apple.developer.usernotifications.communication` y los perfiles de firma
+deben incluir esa capability. Si el avatar no existe, la descarga falla, hay
+varios contactos o la alerta es general, iOS muestra el AppIcon instalado de
 `frontend/ios/App/App/Assets.xcassets/AppIcon.appiconset/`.
 
 ## Tema visual móvil

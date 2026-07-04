@@ -712,6 +712,7 @@ async function upsertWhatsAppRow({ message, contact, transport, direction, notif
       contactName: contact.full_name || contact.first_name || contactPhone,
       text: text || 'Nuevo mensaje',
       messageType: attachments.length ? inferAttachmentMessageType(attachments[0]) : 'text',
+      mediaUrl: attachments[0] || '',
       messageId: remoteMessageId,
       timestamp: messageTimestamp
     }).catch(error => {
@@ -943,7 +944,8 @@ async function upsertMetaRow({ message, contact, platform, direction, notifyNewI
       contactId: contact.id,
       contactName: contact.full_name || contact.first_name || platform,
       text: text || 'Nuevo mensaje',
-      messageType: 'message',
+      messageType: attachments.length ? inferAttachmentMessageType(attachments[0]) : 'message',
+      mediaUrl: attachments[0] || '',
       messageId: remoteMessageId,
       timestamp: messageTimestamp
     }).catch(error => {

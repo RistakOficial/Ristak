@@ -466,7 +466,8 @@ async function getApnsJwt() {
 }
 
 function getNotificationData(payload = {}) {
-  const imageUrl = getNotificationImageUrl(payload)
+  const contactAvatarUrl = getNotificationContactAvatarUrl(payload)
+  const notificationImageUrl = getNotificationImageUrl(payload)
   const contactName = getNotificationContactName(payload)
   return Object.fromEntries(
     Object.entries({
@@ -478,8 +479,10 @@ function getNotificationData(payload = {}) {
       messageId: payload.messageId || '',
       contactId: payload.contactId || '',
       contactName,
-      contactAvatarUrl: imageUrl,
-      notificationImageUrl: imageUrl
+      contactAvatarUrl,
+      senderAvatarUrl: contactAvatarUrl,
+      notificationImageUrl,
+      notificationAttachmentUrl: notificationImageUrl
     }).map(([key, value]) => [key, String(value || '')])
   )
 }
@@ -551,10 +554,36 @@ function cleanPublicImageUrl(value = '') {
 
 function getNotificationImageUrl(payload = {}) {
   return cleanPublicImageUrl(
-    payload.contactAvatarUrl ||
     payload.notificationImageUrl ||
+    payload.notification_image_url ||
+    payload.notificationAttachmentUrl ||
+    payload.notification_attachment_url ||
+    payload.mediaAttachmentUrl ||
+    payload.media_attachment_url ||
     ''
   )
+}
+
+function getNotificationContactAvatarUrl(payload = {}) {
+  return cleanPublicImageUrl(
+    payload.contactAvatarUrl ||
+    payload.contact_avatar_url ||
+    payload.senderAvatarUrl ||
+    payload.sender_avatar_url ||
+    payload.avatarUrl ||
+    payload.avatar_url ||
+    payload.profilePictureUrl ||
+    payload.profile_picture_url ||
+    payload.photoUrl ||
+    payload.photo_url ||
+    payload.pictureUrl ||
+    payload.picture_url ||
+    ''
+  )
+}
+
+function shouldUseNotificationServiceExtension(payload = {}) {
+  return Boolean(getNotificationContactAvatarUrl(payload) || getNotificationImageUrl(payload))
 }
 
 function getNotificationContactName(payload = {}) {
@@ -582,20 +611,8 @@ function getNotificationContactName(payload = {}) {
 }
 
 function getPayloadContactImageCandidateUrl(payload = {}) {
-  return cleanPublicImageUrl(
-    payload.contactAvatarUrl ||
-    payload.notificationImageUrl ||
-    payload.imageUrl ||
-    payload.profilePictureUrl ||
-    payload.profile_picture_url ||
-    payload.avatarUrl ||
-    payload.avatar_url ||
-    payload.photoUrl ||
-    payload.photo_url ||
-    payload.pictureUrl ||
-    payload.picture_url ||
-    ''
-  )
+  return getNotificationContactAvatarUrl(payload) ||
+    cleanPublicImageUrl(payload.imageUrl || payload.image_url || '')
 }
 
 function normalizePayloadContactIds(payload = {}) {
@@ -719,7 +736,7 @@ async function enrichNotificationPayloadForDelivery(payload = {}) {
       ...normalized,
       contactId: normalized.contactId || contactIds[0],
       contactAvatarUrl: directImageUrl,
-      notificationImageUrl: directImageUrl
+      senderAvatarUrl: directImageUrl
     }
   }
 
@@ -730,7 +747,7 @@ async function enrichNotificationPayloadForDelivery(payload = {}) {
     ...normalized,
     contactId: normalized.contactId || contactIds[0],
     contactAvatarUrl,
-    notificationImageUrl: contactAvatarUrl
+    senderAvatarUrl: contactAvatarUrl
   }
 }
 
@@ -774,6 +791,42 @@ function getChatMessageBody(message = {}) {
   }
 
   return typeLabels[type] || 'Mensaje'
+}
+
+function getFirstArrayValue(value) {
+  return Array.isArray(value) ? value.find(item => cleanNotificationText(item)) : ''
+}
+
+function isChatMediaPreviewType(type = '') {
+  return ['image', 'photo', 'picture', 'video', 'gif'].includes(String(type || '').trim().toLowerCase())
+}
+
+function getChatNotificationMediaUrl(message = {}) {
+  const type = String(message.messageType || message.type || '').trim().toLowerCase()
+  const candidates = [
+    message.notificationImageUrl,
+    message.notification_image_url,
+    message.notificationAttachmentUrl,
+    message.notification_attachment_url,
+    message.mediaAttachmentUrl,
+    message.media_attachment_url,
+    message.mediaUrl,
+    message.media_url,
+    message.attachmentUrl,
+    message.attachment_url,
+    getFirstArrayValue(message.attachments),
+    isChatMediaPreviewType(type) ? message.imageUrl : '',
+    isChatMediaPreviewType(type) ? message.image_url : '',
+    isChatMediaPreviewType(type) ? message.videoUrl : '',
+    isChatMediaPreviewType(type) ? message.video_url : ''
+  ]
+
+  for (const candidate of candidates) {
+    const url = cleanPublicImageUrl(candidate)
+    if (url && isChatMediaPreviewType(type)) return url
+  }
+
+  return ''
 }
 
 async function getBooleanPushConfig(key, fallback = false) {
@@ -1347,7 +1400,7 @@ async function sendApnsNotification(row, payload = {}, experience = {}) {
     'thread-id': getNotificationThreadId(payload),
     category: getApnsCategory(payload)
   }
-  if (getNotificationImageUrl(payload)) {
+  if (shouldUseNotificationServiceExtension(payload)) {
     aps['mutable-content'] = 1
   }
   if (experience.soundEnabled) {
@@ -1810,6 +1863,7 @@ export async function sendChatMessageNotification(message = {}) {
 
   const senderName = getChatSenderName(message)
   const bodyText = getChatMessageBody(message)
+  const mediaAttachmentUrl = getChatNotificationMediaUrl(message)
   const messageKey = cleanNotificationText(message.messageId || message.timestamp || `${senderName}-${bodyText}-${Date.now()}`)
   const payload = {
     title: senderName,
@@ -1820,7 +1874,11 @@ export async function sendChatMessageNotification(message = {}) {
     contactName: senderName,
     contactId: message.contactId || '',
     url: `/movil?contact=${encodeURIComponent(message.contactId || '')}`,
-    category: 'chat'
+    category: 'chat',
+    ...(mediaAttachmentUrl ? {
+      notificationImageUrl: mediaAttachmentUrl,
+      notificationAttachmentUrl: mediaAttachmentUrl
+    } : {})
   }
 
   // (MOB-006) enabledKey => on/off de chat por usuario destinatario (fallback global).

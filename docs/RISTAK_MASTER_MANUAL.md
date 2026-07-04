@@ -1361,7 +1361,11 @@ credenciales o archivos faltantes sin imprimir valores sensibles.
 En iOS hay dos bundles que se firman para App Store: la app
 `com.ristak.app` y la extension de notificaciones
 `com.ristak.app.NotificationService`. Cada uno necesita su propio provisioning
-profile App Store, ambos ligados al mismo certificado Apple Distribution.
+profile App Store, ambos ligados al mismo certificado Apple Distribution. El
+perfil de la app principal debe incluir Push Notifications y Communication
+Notifications (`com.apple.developer.usernotifications.communication`) para que
+las push puedan mostrar el avatar del contacto como remitente; la extension
+mantiene su propio perfil para modificar el payload antes de mostrarlo.
 
 ## Licenciamiento y distribucion
 
