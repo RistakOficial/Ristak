@@ -102,8 +102,8 @@ function normalizeAmount(value) {
 }
 
 // Meses sin intereses: Conekta, Mercado Pago y CLIP soportan diferido a meses en
-// el cobro simple. Stripe se valida aparte porque lo muestra dentro del Payment
-// Element y solo aplica en MXN con monto minimo.
+// el cobro simple. Stripe se valida aparte porque usa el flujo controlado por
+// backend y solo aplica en MXN con monto minimo.
 // Constantes en el contrato compartido (shared/sites/paymentGateContract.js) para
 // que backend, runtime publicado y preview del editor usen la misma lista.
 const MSI_GATEWAYS = MSI_LINK_GATEWAYS
@@ -195,8 +195,8 @@ export async function createPaymentGateLink(configInput = {}, {
   const forcedMode = config.mode === 'test' ? 'test' : ''
 
   // MSI: Conekta / Mercado Pago lo aceptan siempre (normalizeConektaInstallmentOptions /
-  // normalizeMercadoPagoInstallmentOptions). Stripe también lo soporta vía Payment Element,
-  // pero SOLO en MXN y con monto >= 300 (STRIPE_INSTALLMENT_MIN_AMOUNT); fuera de eso su
+  // normalizeMercadoPagoInstallmentOptions). Stripe tambien lo soporta con prepare/confirm
+  // controlado, pero SOLO en MXN y con monto >= 300 (STRIPE_INSTALLMENT_MIN_AMOUNT); fuera de eso su
   // normalizador lanza error. Guardamos ese caso para que un bloque mal configurado NUNCA
   // rompa el cobro: si no aplica, simplemente se cobra de contado.
   const msiRequested = config.msi?.enabled && config.msi.maxInstallments > 1

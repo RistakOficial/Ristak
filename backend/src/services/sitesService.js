@@ -51,7 +51,6 @@ import {
   getPaymentGateStatus,
   isPaymentGateEnabled,
   normalizePaymentGateConfig,
-  createStripePaymentIntent,
   preparePublicStripeInstallmentPlans
 } from './publicPaymentGateService.js'
 import { msiEligibility } from '../../../shared/sites/paymentGateContract.js'
@@ -15714,9 +15713,11 @@ function buildPaymentCheckoutRuntimeScript() {
 	    var STATUS_URL = '/api/sites/public/payments/';
     var INIT_URL = '/api/sites/public/checkout/init';
     var PAY_URL = '/api/sites/public/checkout/pay';
-    // MSI en Stripe Sites: prepare crea/reusa la fila y devuelve un PaymentIntent con
-    // installments habilitado para montar el Payment Element nativo.
+    // MSI controlado de Stripe: prepare crea/reusa la fila y trae los meses reales
+    // de la tarjeta filtrados por el maximo del bloque; confirm usa la ruta publica
+    // de Stripe para fijar el plan.
     var PREPARE_URL = '/api/sites/public/checkout/prepare-installments';
+    var STRIPE_MSI_CONFIRM_URL = '/api/stripe/public/payments/';
 
     function loadScript(src, ready) {
       return new Promise(function (resolve, reject) {
@@ -16033,9 +16034,8 @@ function buildPaymentCheckoutRuntimeScript() {
                 colorBackground: readToken('--rstk-input-bg') || undefined,
                 borderRadius: readToken('--rstk-radius') || undefined
               } };
-          // MSI de Stripe en Sites: si el bloque es elegible (MXN + monto >= 300),
-          // montamos Payment Element con un PaymentIntent MSI-ready para que Stripe
-          // muestre los meses automáticamente al terminar el número de tarjeta.
+          // MSI controlado de Stripe: si el bloque es elegible (MXN + monto >= 300),
+          // usamos el mismo flujo que /pay para respetar el maximo local del bloque.
           if (stripeMsiEligible(d)) return mountStripeMsi(d, stripe, appearance);
           // Modo DIFERIDO: monta el formulario SIN crear un PaymentIntent (sin fila). El
           // intent y la fila se crean solo al cobrar (payCharge), tras validar la tarjeta.
@@ -16078,12 +16078,74 @@ function buildPaymentCheckoutRuntimeScript() {
           && String(d.currency || '').toUpperCase() === 'MXN' && Number(d.amount || 0) >= 300);
       }
 
-      // Stripe MSI en Sites usa Payment Element nativo. Ese es el único flujo en el que
-      // Stripe puede mostrar los meses automáticamente al terminar el número de tarjeta.
+      // MSI CONTROLADO de Stripe (elegir hasta N meses). Igual que los links de pago:
+      // capturamos tarjeta con Elements separados, consultamos available_plans en backend,
+      // filtramos por el maximo del bloque y confirmamos server-side con fixed_count.
       function mountStripeMsi(d, stripe, appearance) {
-        var paymentIntentId = '', publicPaymentId = '', clientSecret = '';
-        var elements = null, paymentElement = null;
+        var maxInstallments = Math.trunc(Number(d.installments && d.installments.maxInstallments) || 0);
+        var rootCs = getComputedStyle(root);
+        var fieldTextTok = resolveColor(rootCs.getPropertyValue('--rstk-checkout-field-text').trim() || rootCs.getPropertyValue('--rstk-block-text').trim() || readToken('--rstk-ink')) || undefined;
+        var mutedTok = resolveColor(readToken('--rstk-muted')) || undefined;
+        var negTok = resolveColor(readToken('--rstk-neg')) || undefined;
+        var elements = stripe.elements({ appearance: sanitizeAppearanceColors(appearance), locale: 'es' });
+        var stripeCardStyle = { base: { color: fieldTextTok, fontSize: '15px', fontWeight: '500', '::placeholder': { color: mutedTok } }, invalid: { color: negTok } };
+        var cardNumber = elements.create('cardNumber', { showIcon: true, style: stripeCardStyle });
+        var cardExpiry = elements.create('cardExpiry', { style: stripeCardStyle });
+        var cardCvc = elements.create('cardCvc', { style: stripeCardStyle });
+
+        function makeStripeSplitField(labelText, wide) {
+          var wrap = document.createElement('label');
+          wrap.className = 'rstk-checkout-stripe-field';
+          if (wide) wrap.style.gridColumn = '1 / -1';
+          var label = document.createElement('span');
+          label.textContent = labelText;
+          label.style.display = 'block';
+          label.style.fontSize = '12px';
+          label.style.fontWeight = '600';
+          label.style.marginBottom = '8px';
+          label.style.color = 'var(--rstk-muted, CanvasText)';
+          var host = document.createElement('div');
+          host.style.padding = '13px 14px';
+          host.style.minHeight = '46px';
+          host.style.boxSizing = 'border-box';
+          host.style.border = '1px solid var(--rstk-input-border, var(--rstk-border, rgba(0,0,0,.15)))';
+          host.style.borderRadius = 'var(--rstk-radius, 12px)';
+          host.style.background = 'var(--rstk-input-bg, var(--rstk-surface, #fff))';
+          wrap.appendChild(label);
+          wrap.appendChild(host);
+          els.fields.appendChild(wrap);
+          return host;
+        }
+
+        els.fields.hidden = false;
+        els.fields.innerHTML = '';
+        els.fields.style.display = 'grid';
+        els.fields.style.gridTemplateColumns = 'minmax(0, 1fr) minmax(0, 1fr)';
+        els.fields.style.gap = '12px';
+        els.fields.style.padding = '0';
+        els.fields.style.minHeight = '0';
+        els.fields.style.boxSizing = 'border-box';
+        els.fields.style.border = '0';
+        els.fields.style.borderRadius = '0';
+        els.fields.style.background = 'transparent';
+        var cardNumberHost = makeStripeSplitField('Número de tarjeta', true);
+        var cardExpiryHost = makeStripeSplitField('Fecha de caducidad', false);
+        var cardCvcHost = makeStripeSplitField('Código de seguridad', false);
+        cardNumber.mount(cardNumberHost);
+        cardExpiry.mount(cardExpiryHost);
+        cardCvc.mount(cardCvcHost);
+        var paisHost = makeStripeSplitField('País', true);
+        paisHost.style.display = 'flex';
+        paisHost.style.alignItems = 'center';
+        paisHost.style.color = fieldTextTok || 'inherit';
+        paisHost.style.fontSize = '15px';
+        paisHost.textContent = 'México';
+        els.pay.hidden = false; showLoading(false);
+
+        var pmId = null, paymentIntentId = '', publicPaymentId = '', availablePlans = [], selectedInstallments = null;
+        var cardNumberComplete = false, cardExpiryComplete = false, cardCvcComplete = false, numberPrepareAttempted = false;
         var prepared = false, preparing = false, confirming = false, prepareError = false;
+        var sel = null;
         try { publicPaymentId = sessionStorage.getItem(storageKey) || ''; } catch (e) {}
 
         function identityReady() { var p = collectPayer(); return !identityActive() || !!(p.email || p.phone); }
@@ -16091,108 +16153,127 @@ function buildPaymentCheckoutRuntimeScript() {
         function refreshLabel() {
           if (!els.payLabel) return;
           var suffix = ' · ' + money(d.amount, d.currency);
-          var enabled = !!(prepared || prepareError) && !preparing && !confirming;
-          var busy = false, text = cfg.buttonText + suffix;
+          var enabled = false, busy = false, text;
           if (confirming) { text = 'Procesando…'; busy = true; }
-          else if (preparing) { busy = true; }
+          else if (!identityReady()) { text = 'Escribe tu correo o teléfono para continuar'; }
+          else if (preparing) { text = cfg.buttonText + suffix; busy = true; }
+          else if (prepareError) { text = cfg.buttonText + suffix; enabled = true; }
+          else if (!prepared) { text = cfg.buttonText + suffix; }
+          else {
+            var plan = selectedInstallments ? (selectedInstallments + ' meses sin intereses') : 'Un solo pago';
+            text = cfg.buttonText + ' · ' + plan + suffix; enabled = true;
+          }
           els.payLabel.textContent = text;
           if (els.pay) { els.pay.disabled = !enabled; els.pay.setAttribute('data-busy', busy ? 'true' : 'false'); }
         }
 
-        function preparePaymentElement() {
-          if (prepared || preparing || !identityReady()) return Promise.resolve(null);
-          preparing = true; prepareError = false; setMessage('', ''); refreshLabel();
-          var payer = collectPayer();
-          var body = { siteId: cfg.siteId, blockId: cfg.blockId, pageId: cfg.pageId, payer: payer };
-          if (publicPaymentId) body.paymentPublicId = publicPaymentId;
-          return postJson(PREPARE_URL, body).then(function (r) {
-            publicPaymentId = r.publicPaymentId || publicPaymentId;
-            paymentIntentId = r.paymentIntentId || '';
-            clientSecret = r.clientSecret || '';
-            if (!clientSecret) throw new Error('No se pudo iniciar el pago seguro.');
-            if (publicPaymentId) { try { sessionStorage.setItem(storageKey, publicPaymentId); } catch (e) {} root.setAttribute('data-checkout-public-id', publicPaymentId); }
-
-            elements = stripe.elements({ clientSecret: clientSecret, appearance: sanitizeAppearanceColors(appearance), locale: 'es' });
-            paymentElement = elements.create('payment', {
-              layout: 'tabs',
-              fields: {
-                billingDetails: {
-                  name: 'never',
-                  email: 'never',
-                  phone: 'never',
-                  address: { country: 'never' }
-                }
-              },
-              terms: { card: 'never' }
-            });
-            if (els.installments) { els.installments.hidden = true; els.installments.innerHTML = ''; }
-            els.fields.innerHTML = '';
-            els.fields.style.display = '';
-            els.fields.style.gridTemplateColumns = '';
-            els.fields.style.gap = '';
-            els.fields.style.padding = '';
-            els.fields.style.minHeight = '';
-            els.fields.style.boxSizing = '';
-            els.fields.style.border = '';
-            els.fields.style.borderRadius = '';
-            els.fields.style.background = '';
-            paymentElement.mount(els.fields);
-            els.fields.hidden = false;
-            els.pay.hidden = false;
-            prepared = true; preparing = false; prepareError = false; showLoading(false); refreshLabel();
-            return r;
-          }).catch(function (e) {
-            preparing = false; prepareError = true; showLoading(false); setMessage('error', (e && e.message) || 'No se pudo preparar el pago seguro.'); refreshLabel();
-            return null;
-          });
+        function resetPrepared() {
+          prepared = false; prepareError = false; paymentIntentId = ''; availablePlans = []; selectedInstallments = null; sel = null;
+          if (els.installments) { els.installments.hidden = true; els.installments.innerHTML = ''; }
         }
 
-        function billingDetails() {
+        function isMissingAdditionalCardDetails(error) {
+          var blob = String((error && error.code) || '') + ' ' + String((error && error.message) || '');
+          blob = blob.toLowerCase();
+          return blob.indexOf('incomplete_expiry') >= 0 || blob.indexOf('incomplete_cvc') >= 0
+            || blob.indexOf('expiration') >= 0 || blob.indexOf('expiry') >= 0 || blob.indexOf('cvc') >= 0
+            || blob.indexOf('security code') >= 0 || blob.indexOf('caducidad') >= 0
+            || blob.indexOf('código de seguridad') >= 0 || blob.indexOf('codigo de seguridad') >= 0;
+        }
+
+        function renderSelector() {
+          if (!els.installments) return;
+          els.installments.innerHTML = '';
+          if (!availablePlans.length) {
+            els.installments.hidden = true; selectedInstallments = null;
+            setMessage('info', 'Tu tarjeta no ofrece meses sin intereses; se cobrará de contado.');
+            refreshLabel(); return;
+          }
+          els.installments.hidden = false;
+          sel = document.createElement('select');
+          sel.className = 'rstk-checkout-select';
+          var base = document.createElement('option'); base.value = ''; base.textContent = 'Un solo pago'; sel.appendChild(base);
+          availablePlans.forEach(function (p) { var o = document.createElement('option'); o.value = String(p.count); o.textContent = p.count + ' meses sin intereses'; sel.appendChild(o); });
+          sel.addEventListener('change', function () { selectedInstallments = sel.value ? Number(sel.value) : null; refreshLabel(); });
+          els.installments.appendChild(sel);
+          setMessage('', '');
+          refreshLabel();
+        }
+
+        function preparePlans(opts) {
+          opts = opts || {};
+          if (preparing || !cardNumberComplete || !identityReady()) return;
+          preparing = true; prepareError = false; setMessage('', ''); refreshLabel();
           var payer = collectPayer();
-          return {
-            email: payer.email || undefined,
-            phone: payer.phone || undefined,
-            address: { country: 'MX' }
-          };
+          stripe.createPaymentMethod({ type: 'card', card: cardNumber, billing_details: { email: payer.email || undefined, phone: payer.phone || undefined, address: { country: 'MX' } } }).then(function (res) {
+            if (res.error || !(res.paymentMethod && res.paymentMethod.id)) {
+              if (opts.quietIncompleteCardDetails && isMissingAdditionalCardDetails(res.error)) {
+                preparing = false; prepareError = false; refreshLabel(); return null;
+              }
+              throw new Error((res.error && res.error.message) || 'Revisa los datos de la tarjeta.');
+            }
+            pmId = res.paymentMethod.id;
+            var body = { siteId: cfg.siteId, blockId: cfg.blockId, pageId: cfg.pageId, paymentMethodId: pmId, payer: payer };
+            if (publicPaymentId) body.paymentPublicId = publicPaymentId;
+            return postJson(PREPARE_URL, body);
+          }).then(function (r) {
+            if (!r) return;
+            publicPaymentId = r.publicPaymentId || publicPaymentId;
+            paymentIntentId = r.paymentIntentId || '';
+            if (publicPaymentId) { try { sessionStorage.setItem(storageKey, publicPaymentId); } catch (e) {} root.setAttribute('data-checkout-public-id', publicPaymentId); }
+            availablePlans = (r.availablePlans || []).filter(function (p) { return p && Number(p.count) <= maxInstallments; });
+            selectedInstallments = null; prepared = true; preparing = false; prepareError = false;
+            setMessage('', ''); renderSelector();
+          }).catch(function (e) { preparing = false; resetPrepared(); prepareError = true; setMessage('error', (e && e.message) || 'No se pudieron consultar los meses.'); refreshLabel(); });
         }
 
         function confirmPay() {
-          if (!validateIdentity()) return;
-          if (!prepared || !elements || !clientSecret || !publicPaymentId) {
-            preparePaymentElement().then(function () { if (prepared) confirmPay(); });
-            return;
-          }
+          if (!paymentIntentId || !publicPaymentId) { resetPrepared(); setMessage('error', 'Vuelve a revisar tu tarjeta.'); refreshLabel(); return; }
           confirming = true; setMessage('info', 'Procesando…'); refreshLabel();
-          elements.submit().then(function (sub) {
-            if (sub && sub.error) { confirming = false; refreshLabel(); setMessage('error', sub.error.message || 'Revisa los datos de la tarjeta.'); return; }
-            return stripe.confirmPayment({
-              elements: elements,
-              clientSecret: clientSecret,
-              confirmParams: {
-                return_url: window.location.href,
-                payment_method_data: { billing_details: billingDetails() }
-              },
-              redirect: 'if_required'
-            }).then(function (result) {
-              if (result.error) { confirming = false; refreshLabel(); setMessage('error', result.error.message || 'No se pudo completar el pago.'); return; }
-              var st = result.paymentIntent && result.paymentIntent.status;
-              if (st === 'succeeded' || st === 'processing') { onChargeResult(publicPaymentId, 'paid'); return; }
-              confirming = false; refreshLabel(); setMessage('info', 'Tu banco pide una acción adicional. Sigue las instrucciones.');
-            });
+          postJson(STRIPE_MSI_CONFIRM_URL + encodeURIComponent(publicPaymentId) + '/installment-confirm', { paymentIntentId: paymentIntentId, selectedInstallments: selectedInstallments, returnUrl: window.location.href }).then(function (r) {
+            var status = r && r.status;
+            if (status === 'requires_action' && r.clientSecret) {
+              return stripe.handleNextAction({ clientSecret: r.clientSecret }).then(function (action) {
+                if (action.error) { confirming = false; refreshLabel(); setMessage('error', action.error.message || 'El banco no completó la autenticación.'); return; }
+                var st = action.paymentIntent && action.paymentIntent.status;
+                if (st === 'succeeded' || st === 'processing') onChargeResult(publicPaymentId, 'paid');
+                else { confirming = false; refreshLabel(); setMessage('info', 'Stripe necesita una acción adicional.'); }
+              });
+            }
+            if (status === 'succeeded' || status === 'processing') { onChargeResult(publicPaymentId, 'paid'); return; }
+            confirming = false; refreshLabel(); setMessage('info', 'Stripe necesita una acción adicional. Sigue las instrucciones del banco.');
           }).catch(function (e) { confirming = false; refreshLabel(); setMessage('error', (e && e.message) || 'No se pudo completar el pago.'); });
         }
 
-        function maybePrepareAfterIdentity() { refreshLabel(); if (identityReady()) preparePaymentElement(); }
-        if (identityEmail) identityEmail.addEventListener('input', maybePrepareAfterIdentity);
-        if (identityPhone) identityPhone.addEventListener('input', maybePrepareAfterIdentity);
-        els.fields.hidden = true;
-        els.pay.hidden = false;
-        showLoading(false);
+        function cardComplete() { return !!(cardNumberComplete && cardExpiryComplete && cardCvcComplete); }
+        function maybeAutoPrepare() {
+          if (cardNumberComplete && identityReady() && !numberPrepareAttempted && !prepared && !preparing && !confirming && !prepareError) {
+            numberPrepareAttempted = true; preparePlans({ quietIncompleteCardDetails: true });
+          } else if (cardComplete() && identityReady() && !prepared && !preparing && !confirming && !prepareError) {
+            preparePlans();
+          }
+        }
+        function handleSplitCardChange(kind, ev) {
+          var nowComplete = !!(ev && ev.complete && !ev.error);
+          var errIncomplete = ev && ev.error && String(ev.error.code || '').indexOf('incomplete') >= 0;
+          if (ev && ev.error && !errIncomplete) setMessage('error', ev.error.message || '');
+          else if (!prepared && !preparing) setMessage('', '');
+          if (kind === 'number') { cardNumberComplete = nowComplete; numberPrepareAttempted = false; }
+          else if (kind === 'expiry') cardExpiryComplete = nowComplete;
+          else if (kind === 'cvc') cardCvcComplete = nowComplete;
+          if (prepared || paymentIntentId || prepareError) resetPrepared();
+          refreshLabel();
+          maybeAutoPrepare();
+        }
+        cardNumber.on('change', function (ev) { handleSplitCardChange('number', ev); });
+        cardExpiry.on('change', function (ev) { handleSplitCardChange('expiry', ev); });
+        cardCvc.on('change', function (ev) { handleSplitCardChange('cvc', ev); });
+        if (identityEmail) identityEmail.addEventListener('input', function () { refreshLabel(); maybeAutoPrepare(); });
+        if (identityPhone) identityPhone.addEventListener('input', function () { refreshLabel(); maybeAutoPrepare(); });
         refreshLabel();
-        preparePaymentElement();
         els.pay.addEventListener('click', function () {
           if (els.pay.disabled) return;
-          if (prepareError) { preparePaymentElement(); return; }
+          if (prepareError) { prepareError = false; refreshLabel(); preparePlans(); return; }
           confirmPay();
         });
       }
@@ -25470,13 +25551,63 @@ function paymentGateMatchesAnySiteContext(status, expected = {}) {
   ].map(cleanString).filter(Boolean)
   // Solo se validan las claves presentes en expected: así un pago hecho por el checkout
   // embebido inline (source 'site_checkout') satisface un gate de formulario del mismo
-  // sitio+bloque. El monto es autoritativo del bloque persistido, así que es seguro.
+  // sitio+bloque. La vigencia de monto/moneda/pasarela/MSI se valida aparte.
   if (expected.source && matchKey('source') !== expected.source) return false
   if (expected.siteId && matchKey('siteId') !== expected.siteId) return false
   if (expected.formSiteId && matchKey('formSiteId') !== expected.formSiteId) return false
   if (expected.paymentBlockId && matchKey('paymentBlockId') !== expected.paymentBlockId) return false
   if (expectedPageIds.length && actualPageIds.length && !expectedPageIds.some(pageId => actualPageIds.includes(pageId))) return false
   return true
+}
+
+function normalizeMoneyCents(value) {
+  const amount = Number(value)
+  return Number.isFinite(amount) ? Math.round(amount * 100) : 0
+}
+
+function normalizePaymentMsiSnapshot(value) {
+  if (!value || typeof value !== 'object') return { enabled: false, maxInstallments: 0 }
+  const maxInstallments = Math.trunc(Number(value.maxInstallments || value.max_installments || value.months || value.installments || 0))
+  const enabled = Boolean(value.enabled) && maxInstallments > 1
+  return {
+    enabled,
+    maxInstallments: enabled ? maxInstallments : 0
+  }
+}
+
+function paymentGateMatchesCurrentSnapshot(status, paymentGate = {}) {
+  if (!status) return false
+
+  const metadata = status.metadata && typeof status.metadata === 'object' ? status.metadata : {}
+  const metadataGate = metadata.paymentGate && typeof metadata.paymentGate === 'object'
+    ? metadata.paymentGate
+    : {}
+  const expectedGateway = cleanString(paymentGate.gateway).toLowerCase()
+  const actualGateway = cleanString(metadataGate.gateway || status.provider).toLowerCase()
+  if (expectedGateway && actualGateway && actualGateway !== expectedGateway) return false
+
+  if (normalizeMoneyCents(status.amount) !== normalizeMoneyCents(paymentGate.amount)) return false
+
+  const expectedCurrency = cleanString(paymentGate.currency).toUpperCase()
+  const actualCurrency = cleanString(status.currency || metadataGate.currency).toUpperCase()
+  if (expectedCurrency && actualCurrency && actualCurrency !== expectedCurrency) return false
+
+  const expectedMode = cleanString(paymentGate.mode).toLowerCase()
+  const recordedMode = cleanString(metadataGate.mode).toLowerCase()
+  if (recordedMode && recordedMode !== expectedMode) return false
+
+  const expectedMsi = normalizePaymentMsiSnapshot(paymentGate.msi)
+  const recordedMsi = normalizePaymentMsiSnapshot(metadataGate.msi || metadata.stripeInstallments)
+  if (expectedMsi.enabled || recordedMsi.enabled) {
+    if (expectedMsi.enabled !== recordedMsi.enabled) return false
+    if (expectedMsi.maxInstallments !== recordedMsi.maxInstallments) return false
+  }
+
+  return true
+}
+
+function paymentGateMatchesCurrentSitePayment(status, expected = {}, paymentGate = {}) {
+  return paymentGateMatchesAnySiteContext(status, expected) && paymentGateMatchesCurrentSnapshot(status, paymentGate)
 }
 
 function buildSitePaymentRequiredResponse(paymentGate, paymentStatus = {}) {
@@ -25522,10 +25653,10 @@ async function resolveSitePaymentGate({ req, body, site, paymentGate, contact, n
 
   if (existingPublicPaymentId) {
     const pendingStatus = await getPaymentGateStatus(existingPublicPaymentId)
-    if (pendingStatus?.paid && paymentGateMatchesAnySiteContext(pendingStatus, matchExpected)) {
+    if (pendingStatus?.paid && paymentGateMatchesCurrentSitePayment(pendingStatus, matchExpected, paymentGate)) {
       return { paid: true, status: pendingStatus }
     }
-    if (pendingStatus && paymentGateMatchesAnySiteContext(pendingStatus, matchExpected)) {
+    if (pendingStatus && paymentGateMatchesCurrentSitePayment(pendingStatus, matchExpected, paymentGate)) {
       return {
         paid: false,
         response: buildSitePaymentRequiredResponse(paymentGate, pendingStatus)
@@ -25648,12 +25779,12 @@ export async function initSitePaymentCheckout(req, body = {}) {
   const existing = getBodyPaymentPublicId(body)
   if (existing) {
     const pending = await getPaymentGateStatus(existing)
-    const sameContext = paymentGateMatchesAnySiteContext(pending, {
+    const sameContext = paymentGateMatchesCurrentSitePayment(pending, {
       siteId: site.id,
       pageId: cleanString(context.blockPageId),
       blockPageId: cleanString(context.blockPageId),
       paymentBlockId: expectedBlockId
-    })
+    }, paymentGate)
     if (pending && pending.paid && sameContext) {
       return buildSiteCheckoutMountResponse(paymentGate, context, { paid: true, publicPaymentId: existing, status: pending.status })
     }
@@ -25806,11 +25937,9 @@ export async function paySiteCheckout(req, body = {}) {
   }
 }
 
-// Prepara MSI de Stripe en el checkout embebido de Sites. El runtime nuevo usa
-// Payment Element nativo: crea/reusa la fila MSI-ready, crea un PaymentIntent con
-// installments habilitado y devuelve el clientSecret para que Stripe muestre los meses
-// al completar el número de tarjeta. Si un cliente viejo manda paymentMethodId, se
-// conserva el prepare controlado por available_plans para compatibilidad.
+// Prepara MSI controlado de Stripe en el checkout embebido de Sites: crea/reusa
+// la fila MSI-ready, crea un PaymentIntent con el PaymentMethod seguro de Stripe,
+// y devuelve available_plans ya filtrados por el maximo local del bloque.
 export async function prepareSiteCheckoutInstallments(req, body = {}) {
   const { site, context, paymentGate, baseUrl, expectedBlockId } = await resolveSiteCheckoutBlock(req, body)
   enforcePublicSubmitRateLimit(req, `checkout-prepare:${site.id}:${expectedBlockId}`)
@@ -25851,17 +25980,18 @@ export async function prepareSiteCheckoutInstallments(req, body = {}) {
   }
 
   // Idempotencia de fila: si el runtime reenvía un publicPaymentId previo del MISMO bloque
-  // aún NO pagado, lo reusamos (evita filas huérfanas al reintentar o cambiar de tarjeta).
+  // aún NO pagado y con el mismo snapshot de pago, lo reusamos. Si el monto/moneda/MSI
+  // cambió en el editor, se ignora y se crea uno nuevo.
   let publicPaymentId = ''
   const existing = getBodyPaymentPublicId(body)
   if (existing) {
     const pending = await getPaymentGateStatus(existing)
-    const sameContext = paymentGateMatchesAnySiteContext(pending, {
+    const sameContext = paymentGateMatchesCurrentSitePayment(pending, {
       siteId: site.id,
       pageId: cleanString(context.blockPageId),
       blockPageId: cleanString(context.blockPageId),
       paymentBlockId: expectedBlockId
-    })
+    }, paymentGate)
     if (pending && !pending.paid && sameContext) publicPaymentId = existing
   }
 
@@ -25894,35 +26024,25 @@ export async function prepareSiteCheckoutInstallments(req, body = {}) {
   }
 
   const paymentMethodId = cleanString(body.paymentMethodId || body.payment_method_id)
-  if (paymentMethodId) {
-    const prepared = await preparePublicStripeInstallmentPlans(publicPaymentId, {
-      paymentMethodId,
-      savePaymentMethod: true
-    })
-
-    return {
-      publicPaymentId,
-      paymentIntentId: prepared.paymentIntentId,
-      clientSecret: prepared.clientSecret,
-      publishableKey: prepared.publishableKey,
-      status: prepared.status,
-      maxInstallments: prepared.maxInstallments,
-      availablePlans: prepared.availablePlans
-    }
+  if (!paymentMethodId) {
+    const error = new Error('Falta la tarjeta segura de Stripe para consultar los meses disponibles.')
+    error.status = 400
+    throw error
   }
 
-  const intent = await createStripePaymentIntent(publicPaymentId, {
+  const prepared = await preparePublicStripeInstallmentPlans(publicPaymentId, {
+    paymentMethodId,
     savePaymentMethod: true
   })
 
   return {
     publicPaymentId,
-    paymentIntentId: intent.paymentIntentId,
-    clientSecret: intent.clientSecret,
-    publishableKey: intent.publishableKey,
-    status: intent.status,
-    maxInstallments: paymentGate.msi?.maxInstallments || null,
-    availablePlans: []
+    paymentIntentId: prepared.paymentIntentId,
+    clientSecret: prepared.clientSecret,
+    publishableKey: prepared.publishableKey,
+    status: prepared.status,
+    maxInstallments: prepared.maxInstallments,
+    availablePlans: prepared.availablePlans
   }
 }
 
