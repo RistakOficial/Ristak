@@ -39,8 +39,7 @@ import type { ContactCustomFieldDefinition } from '@/types'
 import { PHONE_APP_LOGIN_PATH, PHONE_APP_TENANT_PATH } from '@/utils/phoneAccess'
 import styles from './PhoneSettings.module.css'
 
-type SettingsSection = 'numbers' | 'templates' | 'agent' | 'chats' | 'custom-fields' | 'appearance' | 'notifications' | null
-type WhatsAppNumberMode = 'merged' | 'separated'
+type SettingsSection = 'templates' | 'agent' | 'chats' | 'custom-fields' | 'appearance' | 'notifications' | null
 type ConversationSortMode = 'recent' | 'unread'
 type PhoneNotificationPermission = NotificationPermission | 'native_granted' | 'native_denied' | 'native_prompt' | 'unsupported' | 'checking'
 type BusinessVoiceState = 'idle' | 'recording' | 'processing'
@@ -129,7 +128,6 @@ export const PhoneSettings: React.FC = () => {
   const { locationId, accessToken, logout } = useAuth()
   const { showToast, showConfirm } = useNotification()
   const [defaultCalendarId] = useAppConfig<string>('default_calendar_id', '')
-  const [whatsappNumberMode, setWhatsappNumberMode] = useAppConfig<WhatsAppNumberMode>('mobile_chat_whatsapp_number_mode', 'merged')
   const [aiAgentChatEnabled, setAiAgentChatEnabled] = useAppConfig<boolean>('mobile_chat_ai_agent_enabled', true)
   const [aiReplySuggestionsEnabled, setAiReplySuggestionsEnabled] = useAppConfig<boolean>('mobile_chat_ai_reply_suggestions_enabled', false)
   const aiAvailability = useAIAgentAvailability()
@@ -592,7 +590,6 @@ export const PhoneSettings: React.FC = () => {
       Icon: LucideIcon
       tone: 'green' | 'black' | 'blue' | 'gold' | 'red'
     }> = [
-      { id: 'numbers', title: 'Números de WhatsApp', description: 'Cómo se muestran tus líneas.', meta: whatsappNumberMode === 'merged' ? 'Juntos' : 'Separados', Icon: Smartphone, tone: 'green' },
       { id: 'templates', title: 'Plantillas', description: 'Crear y revisar estados de Meta.', meta: templates.length ? `${templates.length} guardadas` : 'Revisar', Icon: FileText, tone: 'black' },
       { id: 'agent', title: PERSONAL_ASSISTANT_AI_LABEL, mobileTitle: PERSONAL_ASSISTANT_AI_LABEL, description: 'Chat fijo y sugerencias.', meta: aiAvailability.configured ? aiAgentChatEnabled ? 'Activo' : 'Apagado' : 'Sin OpenAI', Icon: Bot, tone: 'blue' },
       { id: 'chats', title: 'Lista de chats', mobileTitle: 'Lista de chat', description: 'Orden, archivados y vista previa.', meta: conversationSortMode === 'recent' ? 'Recientes' : 'No leídas', Icon: MessageCircle, tone: 'green' },
@@ -628,27 +625,6 @@ export const PhoneSettings: React.FC = () => {
       </>
     )
   }
-
-  const renderNumbers = () => (
-    <section className={styles.settingsSection}>
-      <div className={styles.sectionTitle}>
-        <Smartphone size={18} />
-        <span>
-          <strong>Vista de conversaciones</strong>
-          <small>Elige cómo ver los chats cuando tengas más de un número conectado.</small>
-        </span>
-      </div>
-      <div className={styles.segmented} role="group" aria-label="Modo de números de WhatsApp">
-        <button type="button" className={whatsappNumberMode === 'merged' ? styles.segmentActive : ''} onClick={() => saveConfigPreference(setWhatsappNumberMode, 'merged')}>
-          Todos juntos
-        </button>
-        <button type="button" className={whatsappNumberMode === 'separated' ? styles.segmentActive : ''} onClick={() => saveConfigPreference(setWhatsappNumberMode, 'separated')}>
-          Separados
-        </button>
-      </div>
-      <p className={styles.hint}>Si eliges separados, en Chats podrás revisar cada número por su cuenta.</p>
-    </section>
-  )
 
   const renderTemplates = () => (
     <>
@@ -932,7 +908,6 @@ export const PhoneSettings: React.FC = () => {
   )
 
   const sectionTitle = useMemo(() => {
-    if (activeSection === 'numbers') return 'Números de WhatsApp'
     if (activeSection === 'templates') return 'Plantillas'
     if (activeSection === 'agent') return PERSONAL_ASSISTANT_AI_LABEL
     if (activeSection === 'chats') return 'Lista de chats'
@@ -949,7 +924,6 @@ export const PhoneSettings: React.FC = () => {
   }, [activeSection, sectionTitle])
 
   const renderSection = () => {
-    if (activeSection === 'numbers') return renderNumbers()
     if (activeSection === 'templates') return renderTemplates()
     if (activeSection === 'agent') return renderAgent()
     if (activeSection === 'chats') return renderChats()

@@ -386,6 +386,17 @@ completo de todas las conversaciones de la bandeja. Al insertar mensajes antiguo
 arriba del hilo, la UI debe conservar la posicion visible del usuario y nunca
 forzar scroll al ultimo mensaje.
 
+En el chat movil bajo `/movil`, los filtros de la bandeja viven en la fila de
+chips bajo el buscador. No debe existir un dropdown aparte de `Numero / Ver
+todos` ni una preferencia de ajustes para juntar/separar numeros. El chip `+`
+administra los filtros predeterminados visibles, incluyendo filtros rapidos,
+comentarios, cada WhatsApp conectado y los filtros avanzados equivalentes a
+desktop (canal, origen, red social, etapa y actividad). El filtro por numero
+sigue mandando `businessPhoneNumberId`/`businessPhone` a `/contacts/chats`; solo
+cambia la superficie desde donde el usuario lo controla. `Comentarios` debe ir
+separado visualmente de `Interesados` con la misma linea divisoria que usa la
+bandeja desktop.
+
 Las fotos de perfil de contactos WhatsApp se guardan en
 `whatsapp_api_contacts.profile_picture_url`, no en el perfil del numero de
 negocio. Cuando entra un mensaje nuevo del contacto, el backend intenta refrescar

@@ -378,7 +378,7 @@ type ComposerStatus = 'idle' | 'sending'
 type MessageAudioRate = typeof MESSAGE_AUDIO_RATE_OPTIONS[number]
 type PaymentMode = 'single' | 'partial' | 'subscription'
 type PaymentSheetStep = 'choice' | 'form'
-type ActionSheet = 'attachments' | 'templates' | 'clabe' | 'payment' | 'appointment' | 'settings' | 'newChat' | 'chatMore' | 'schedule' | 'agentMenu' | 'tag' | null
+type ActionSheet = 'attachments' | 'templates' | 'clabe' | 'payment' | 'appointment' | 'settings' | 'newChat' | 'chatMore' | 'schedule' | 'agentMenu' | 'tag' | 'filters' | null
 type WideSidebarMode = 'chats' | 'newChat' | 'appointment'
 type ChatMoreMode = 'default' | 'agentControls'
 type AgentMenuSection = 'menu' | 'agents' | 'agent_detail' | 'create_agent' | 'provider_key' | 'ready_human'
@@ -386,9 +386,21 @@ type ChatFilter = 'all' | 'agent' | 'unread' | 'appointments' | 'customers' | 'l
 type AIAgentHubStatusFilter = 'active' | 'completed' | 'paused' | 'skipped' | 'unassigned'
 type TemplateMode = 'choice' | 'send' | 'create'
 type TemplatePickIntent = 'send' | 'schedule'
-type ChatSettingsSection = 'appearance' | 'templates' | 'numbers' | 'notifications' | 'agent' | 'chats' | 'display' | null
-type WhatsAppNumberMode = 'merged' | 'separated'
+type ChatSettingsSection = 'appearance' | 'templates' | 'notifications' | 'agent' | 'chats' | 'display' | null
 type ConversationSortMode = 'recent' | 'unread'
+type AdvancedChannelFilter = 'all' | 'whatsapp' | 'messenger' | 'instagram' | 'webchat' | 'sms' | 'email'
+type AdvancedOriginFilter = 'all' | 'meta' | 'site' | 'organic' | 'trigger' | 'unknown'
+type AdvancedSocialFilter = 'all' | 'facebook' | 'instagram' | 'messenger' | 'whatsapp' | 'google' | 'unknown'
+type AdvancedStageFilter = 'all' | 'lead' | 'appointment' | 'customer'
+type AdvancedActivityFilter = 'all' | 'payments' | 'appointments' | 'with_source' | 'no_phone'
+type AdvancedFilterGroupId = 'channel' | 'origin' | 'social' | 'stage' | 'activity'
+interface AdvancedChatFilters {
+  channel: AdvancedChannelFilter
+  origin: AdvancedOriginFilter
+  social: AdvancedSocialFilter
+  stage: AdvancedStageFilter
+  activity: AdvancedActivityFilter
+}
 type PhotoPickDestination = 'chat' | 'cameraShare'
 type AddDraftAttachmentOptions = { showReadyToast?: boolean }
 type MobileCameraAttachment = MobilePhotoAttachment | MobileVideoAttachment
@@ -433,6 +445,80 @@ const AI_AGENT_HUB_STATUS_FILTERS: Array<{ id: AIAgentHubStatusFilter; label: st
   { id: 'skipped', label: 'Omitidos' },
   { id: 'unassigned', label: 'No asignados' }
 ]
+
+const DEFAULT_ADVANCED_CHAT_FILTERS: AdvancedChatFilters = {
+  channel: 'all',
+  origin: 'all',
+  social: 'all',
+  stage: 'all',
+  activity: 'all'
+}
+const DEFAULT_PHONE_CHAT_FILTER_CHIPS = ['all', 'unread', 'appointments', 'customers', 'leads', 'comments']
+const PHONE_CHAT_FILTERS_MORE_VALUE = '__filters_more__'
+const PHONE_CHAT_COMMENTS_FILTER_ID = 'comments'
+const PHONE_CHAT_PHONE_FILTER_PREFIX = 'phone:'
+const PHONE_CHAT_ADVANCED_FILTER_PREFIX = 'advanced:'
+const CHANNEL_FILTER_OPTIONS: Array<{ value: AdvancedChannelFilter; label: string }> = [
+  { value: 'all', label: 'Todos los canales' },
+  { value: 'whatsapp', label: 'WhatsApp' },
+  { value: 'messenger', label: 'Messenger' },
+  { value: 'instagram', label: 'Instagram Direct' },
+  { value: 'webchat', label: 'Webchat / sitio' },
+  { value: 'sms', label: 'SMS' },
+  { value: 'email', label: 'Email' }
+]
+const ORIGIN_FILTER_OPTIONS: Array<{ value: AdvancedOriginFilter; label: string }> = [
+  { value: 'all', label: 'Todos los orígenes' },
+  { value: 'meta', label: 'Meta / red social' },
+  { value: 'site', label: 'Sitio o formulario' },
+  { value: 'organic', label: 'Orgánico / directo' },
+  { value: 'trigger', label: 'Enlace de disparo' },
+  { value: 'unknown', label: 'Sin origen' }
+]
+const SOCIAL_FILTER_OPTIONS: Array<{ value: AdvancedSocialFilter; label: string }> = [
+  { value: 'all', label: 'Todas las redes' },
+  { value: 'facebook', label: 'Facebook' },
+  { value: 'instagram', label: 'Instagram' },
+  { value: 'messenger', label: 'Messenger' },
+  { value: 'whatsapp', label: 'WhatsApp' },
+  { value: 'google', label: 'Google' },
+  { value: 'unknown', label: 'Sin red detectada' }
+]
+const STAGE_FILTER_OPTIONS: Array<{ value: AdvancedStageFilter; label: string }> = [
+  { value: 'all', label: 'Todas las etapas' },
+  { value: 'lead', label: 'Interesados' },
+  { value: 'appointment', label: 'Con cita' },
+  { value: 'customer', label: 'Clientes' }
+]
+const ACTIVITY_FILTER_OPTIONS: Array<{ value: AdvancedActivityFilter; label: string }> = [
+  { value: 'all', label: 'Toda la actividad' },
+  { value: 'payments', label: 'Con pagos' },
+  { value: 'appointments', label: 'Con citas' },
+  { value: 'with_source', label: 'Con origen detectado' },
+  { value: 'no_phone', label: 'Sin teléfono' }
+]
+
+interface PhoneChatFilterPreset {
+  id: string
+  label: string
+  description: string
+  section: string
+  kind: 'quick' | 'comments' | 'phone' | 'advanced'
+  quickFilter?: Exclude<ChatFilter, 'agent'>
+  phoneId?: string
+  advancedGroup?: AdvancedFilterGroupId
+  advancedValue?: string
+  separatorBefore?: boolean
+  locked?: boolean
+}
+
+function makePhoneChatPhoneFilterId(phoneId: string) {
+  return `${PHONE_CHAT_PHONE_FILTER_PREFIX}${phoneId}`
+}
+
+function makePhoneChatAdvancedFilterId(group: AdvancedFilterGroupId, value: string) {
+  return `${PHONE_CHAT_ADVANCED_FILTER_PREFIX}${group}:${value}`
+}
 
 const DEFAULT_PHONE_AGENT_REPLY_DELIVERY: AgentReplyDeliveryConfig = {
   mode: 'split',
@@ -1152,6 +1238,120 @@ interface ChatContact extends Contact {
   photoUrl?: string | null
   pictureUrl?: string | null
   profile_picture_url?: string | null
+}
+
+function normalizeFilterProbe(values: unknown[]) {
+  return values
+    .map((value) => String(value || '').trim().toLowerCase())
+    .filter(Boolean)
+    .join(' ')
+}
+
+function getPhoneContactChannelKind(contact: ChatContact): AdvancedChannelFilter | '' {
+  const badge = getContactChannelBadge(contact)
+  if (badge?.kind === 'whatsapp') return 'whatsapp'
+  if (badge?.kind === 'messenger' || badge?.kind === 'facebook_comment') return 'messenger'
+  if (badge?.kind === 'instagram' || badge?.kind === 'instagram_comment') return 'instagram'
+  if (badge?.kind === 'email') return 'email'
+  if (badge?.kind === 'sms') return 'sms'
+
+  const firstSession = contact.firstSession || null
+  const probe = normalizeFilterProbe([
+    contact.lastMessageChannel,
+    contact.lastMessageTransport,
+    contact.source,
+    contact.attribution_session_source,
+    firstSession?.source_platform,
+    firstSession?.site_source_name,
+    firstSession?.page_url,
+    firstSession?.landing_page
+  ])
+
+  if (probe.includes('webchat') || probe.includes('site') || probe.includes('form') || probe.includes('landing')) return 'webchat'
+  return ''
+}
+
+function getPhoneContactSocialKind(contact: ChatContact): AdvancedSocialFilter | '' {
+  const firstSession = contact.firstSession || null
+  const probe = normalizeFilterProbe([
+    contact.lastMessageChannel,
+    contact.source,
+    contact.whatsappAttributionPlatform,
+    contact.attribution_session_source,
+    contact.ad_name,
+    contact.ad_id,
+    contact.attribution_url,
+    firstSession?.utm_source,
+    firstSession?.source_platform,
+    firstSession?.site_source_name,
+    firstSession?.placement
+  ])
+
+  if (!probe) return 'unknown'
+  if (probe.includes('instagram') || probe.includes('ig_')) return 'instagram'
+  if (probe.includes('messenger')) return 'messenger'
+  if (probe.includes('facebook') || probe.includes('fb_')) return 'facebook'
+  if (probe.includes('whatsapp') || probe.includes('ctwa')) return 'whatsapp'
+  if (probe.includes('google') || probe.includes('gclid')) return 'google'
+  return ''
+}
+
+function getPhoneContactOriginKind(contact: ChatContact): AdvancedOriginFilter | '' {
+  const firstSession = contact.firstSession || null
+  const probe = normalizeFilterProbe([
+    contact.source,
+    contact.attribution_session_source,
+    contact.whatsappAttributionPlatform,
+    contact.ad_name,
+    contact.ad_id,
+    contact.attribution_url,
+    firstSession?.utm_source,
+    firstSession?.utm_medium,
+    firstSession?.utm_campaign,
+    firstSession?.source_platform,
+    firstSession?.page_url,
+    firstSession?.landing_page
+  ])
+
+  if (!probe) return 'unknown'
+  if (probe.includes('trigger') || probe.includes('disparo') || probe.includes('public_id')) return 'trigger'
+  if (probe.includes('facebook') || probe.includes('instagram') || probe.includes('meta') || probe.includes('ctwa') || probe.includes('ad_') || probe.includes('campaign')) return 'meta'
+  if (probe.includes('web') || probe.includes('site') || probe.includes('landing') || probe.includes('form') || probe.includes('page')) return 'site'
+  if (probe.includes('organic') || probe.includes('direct') || probe.includes('google') || probe.includes('referral')) return 'organic'
+  return ''
+}
+
+function phoneContactHasSource(contact: ChatContact) {
+  return Boolean(contact.source || contact.attribution_session_source || contact.whatsappAttributionPlatform || contact.ad_name || contact.firstSession)
+}
+
+function contactHasSuccessfulPayment(contact: ChatContact) {
+  return Boolean((contact.payments || []).some((payment) => {
+    const amount = Number(payment.amount || 0)
+    const status = String(payment.status || '').toLowerCase()
+    return amount > 0 && (!status || SUCCESS_PAYMENT_STATUSES.has(status))
+  }))
+}
+
+function contactMatchesPhoneAdvancedFilters(contact: ChatContact, filters: AdvancedChatFilters) {
+  if (filters.channel !== 'all' && getPhoneContactChannelKind(contact) !== filters.channel) return false
+  if (filters.social !== 'all' && getPhoneContactSocialKind(contact) !== filters.social) return false
+  if (filters.origin !== 'all' && getPhoneContactOriginKind(contact) !== filters.origin) return false
+  if (filters.stage !== 'all' && contact.status !== filters.stage) return false
+
+  if (filters.activity === 'payments') {
+    const hasPayments = Number(contact.ltv || 0) > 0 || Number(contact.purchases || 0) > 0 || contactHasSuccessfulPayment(contact)
+    if (!hasPayments) return false
+  }
+  if (filters.activity === 'appointments' && !contact.hasAppointments && !contact.nextAppointmentDate) return false
+  if (filters.activity === 'with_source' && !phoneContactHasSource(contact)) return false
+  if (filters.activity === 'no_phone' && contact.phone) return false
+
+  return true
+}
+
+function countAdvancedChatFilters(filters: AdvancedChatFilters) {
+  return Object.values(filters).filter((value) => value !== 'all').length
 }
 
 // Perfil social del contacto + contacto ENLAZADO (misma persona en el mismo
@@ -4002,8 +4202,8 @@ export const PhoneChat: React.FC = () => {
   const [notificationSoundEnabled, setNotificationSoundEnabled] = useUserConfig<boolean>('push_notification_sound_enabled', true) // MOB-006
   const [notificationVibrationEnabled, setNotificationVibrationEnabled] = useUserConfig<boolean>('push_notification_vibration_enabled', true) // MOB-006
   const [pushCalendarIds] = useUserConfig<string[]>('calendar_push_notification_calendar_ids', []) // MOB-006
-  const [whatsappNumberMode, setWhatsappNumberMode] = useAppConfig<WhatsAppNumberMode>('mobile_chat_whatsapp_number_mode', 'merged')
   const [selectedChatPhoneId, setSelectedChatPhoneId] = useAppConfig<string>('mobile_chat_selected_whatsapp_phone_id', 'all')
+  const [visibleChatFilterIds, setVisibleChatFilterIds] = useAppConfig<string[]>('mobile_chat_filter_chip_ids', DEFAULT_PHONE_CHAT_FILTER_CHIPS)
   const [selectedHighLevelChatChannel, setSelectedHighLevelChatChannel] = useAppConfig<HighLevelChatChannel>('mobile_chat_highlevel_channel', 'whatsapp_api')
   const [aiAgentChatEnabled, setAiAgentChatEnabled] = useAppConfig<boolean>('mobile_chat_ai_agent_enabled', true)
   const aiAvailability = useAIAgentAvailability()
@@ -4059,6 +4259,8 @@ export const PhoneChat: React.FC = () => {
   const [chatsError, setChatsError] = useState('')
   const [chatQuery, setChatQuery] = useState('')
   const [chatFilter, setChatFilter] = useState<ChatFilter>('all')
+  const [advancedChatFilters, setAdvancedChatFilters] = useState<AdvancedChatFilters>(DEFAULT_ADVANCED_CHAT_FILTERS)
+  const [visibleFilterDraftIds, setVisibleFilterDraftIds] = useState<string[]>([])
   const [commentsView, setCommentsView] = useState(false)
   const [commentsPlatform, setCommentsPlatform] = useState<'all' | 'facebook' | 'instagram'>('all')
   // La barra SIEMPRE manda privado. Responder PÚBLICO a un comentario es una
@@ -4926,7 +5128,7 @@ export const PhoneChat: React.FC = () => {
   const appointmentSheetTitle = wideAppointmentDefaults?.title || appointmentSheetInitialContact?.name || ''
   const whatsappConnected = Boolean(whatsappStatus?.connected && whatsappStatus?.configured)
   const businessPhones = whatsappStatus?.phoneNumbers || []
-  const chatPhoneFilterEnabled = whatsappNumberMode === 'separated' && businessPhones.length > 1
+  const chatPhoneFilterEnabled = businessPhones.length > 1
   const activeContactBusinessPhoneOverrideId = activeContact?.id ? contactBusinessPhoneOverrides[activeContact.id] || '' : ''
   const composerMessageChannelOptions = useMemo<Array<{
     value: ComposerMessageRouteValue
@@ -4956,6 +5158,132 @@ export const PhoneChat: React.FC = () => {
   const selectedChatPhoneFilterActive = Boolean(chatPhoneFilterEnabled && selectedChatPhoneId !== 'all' && selectedChatPhone)
   const effectiveSelectedChatPhoneId = selectedChatPhoneFilterActive ? selectedChatPhoneId : 'all'
   const effectiveSelectedChatPhone = selectedChatPhoneFilterActive ? selectedChatPhone : null
+  const availableChatFilterPresets = useMemo<PhoneChatFilterPreset[]>(() => {
+    const quickPresets: PhoneChatFilterPreset[] = [
+      {
+        id: 'all',
+        label: 'Todos',
+        description: 'Muestra todas las conversaciones activas.',
+        section: 'Rápidos',
+        kind: 'quick',
+        quickFilter: 'all',
+        locked: true
+      },
+      {
+        id: 'unread',
+        label: 'No leídos',
+        description: 'Sólo conversaciones con mensajes pendientes.',
+        section: 'Rápidos',
+        kind: 'quick',
+        quickFilter: 'unread'
+      },
+      {
+        id: 'appointments',
+        label: 'Agendados',
+        description: 'Contactos con cita guardada.',
+        section: 'Rápidos',
+        kind: 'quick',
+        quickFilter: 'appointments'
+      },
+      {
+        id: 'customers',
+        label: customersLabel,
+        description: 'Contactos marcados como clientes o con compras.',
+        section: 'Rápidos',
+        kind: 'quick',
+        quickFilter: 'customers'
+      },
+      {
+        id: 'leads',
+        label: leadsLabel,
+        description: 'Contactos interesados que todavía no son clientes ni citados.',
+        section: 'Rápidos',
+        kind: 'quick',
+        quickFilter: 'leads'
+      }
+    ]
+
+    const commentsPreset: PhoneChatFilterPreset[] = commentsFeatureEnabled
+      ? [{
+          id: PHONE_CHAT_COMMENTS_FILTER_ID,
+          label: 'Comentarios',
+          description: 'Abre la bandeja de comentarios de Facebook e Instagram.',
+          section: 'Rápidos',
+          kind: 'comments',
+          separatorBefore: true
+        }]
+      : []
+
+    const phonePresets: PhoneChatFilterPreset[] = chatPhoneFilterEnabled
+      ? businessPhones.map((phone, index) => {
+          const label = getBusinessPhoneLabel(phone) || `Número ${index + 1}`
+          const value = getBusinessPhoneValue(phone)
+          return {
+            id: makePhoneChatPhoneFilterId(phone.id),
+            label: `Número: ${label}`,
+            description: value || phone.verified_name || 'Filtra por este WhatsApp conectado.',
+            section: 'Números',
+            kind: 'phone' as const,
+            phoneId: phone.id
+          }
+        })
+      : []
+
+    const advancedGroups: Array<{
+      id: AdvancedFilterGroupId
+      section: string
+      options: Array<{ value: string; label: string }>
+    }> = [
+      { id: 'channel', section: 'Canal', options: CHANNEL_FILTER_OPTIONS },
+      { id: 'origin', section: 'Origen', options: ORIGIN_FILTER_OPTIONS },
+      { id: 'social', section: 'Red social', options: SOCIAL_FILTER_OPTIONS },
+      { id: 'stage', section: 'Etapa', options: STAGE_FILTER_OPTIONS },
+      { id: 'activity', section: 'Actividad', options: ACTIVITY_FILTER_OPTIONS }
+    ]
+    const advancedPresets = advancedGroups.flatMap((group) => (
+      group.options
+        .filter((option) => option.value !== 'all')
+        .map((option) => ({
+          id: makePhoneChatAdvancedFilterId(group.id, option.value),
+          label: `${group.section}: ${option.label}`,
+          description: `Filtro avanzado de ${group.section.toLowerCase()}.`,
+          section: group.section,
+          kind: 'advanced' as const,
+          advancedGroup: group.id,
+          advancedValue: option.value
+        }))
+    ))
+
+    return [...quickPresets, ...commentsPreset, ...phonePresets, ...advancedPresets]
+  }, [businessPhones, chatPhoneFilterEnabled, commentsFeatureEnabled, customersLabel, leadsLabel])
+  const availableChatFilterPresetMap = useMemo(() => (
+    new Map(availableChatFilterPresets.map((preset) => [preset.id, preset]))
+  ), [availableChatFilterPresets])
+  const normalizedVisibleChatFilterIds = useMemo(() => {
+    const availableIds = new Set(availableChatFilterPresets.map((preset) => preset.id))
+    const sourceIds = Array.isArray(visibleChatFilterIds) && visibleChatFilterIds.length > 0
+      ? visibleChatFilterIds
+      : DEFAULT_PHONE_CHAT_FILTER_CHIPS
+    const next = sourceIds.filter((id, index, list) => availableIds.has(id) && list.indexOf(id) === index)
+    if (!next.includes('all')) next.unshift('all')
+    return next
+  }, [availableChatFilterPresets, visibleChatFilterIds])
+  const visibleChatFilterPresets = useMemo(() => (
+    normalizedVisibleChatFilterIds
+      .map((id) => availableChatFilterPresetMap.get(id))
+      .filter((preset): preset is PhoneChatFilterPreset => Boolean(preset))
+  ), [availableChatFilterPresetMap, normalizedVisibleChatFilterIds])
+  const activeAdvancedChatFilterCount = useMemo(() => countAdvancedChatFilters(advancedChatFilters), [advancedChatFilters])
+  const activeAdvancedChatFilterPresetId = useMemo(() => {
+    const entries = Object.entries(advancedChatFilters) as Array<[AdvancedFilterGroupId, string]>
+    const active = entries.find(([, value]) => value !== 'all')
+    return active ? makePhoneChatAdvancedFilterId(active[0], active[1]) : ''
+  }, [advancedChatFilters])
+  const activeChatFilterPresetId = commentsView
+    ? PHONE_CHAT_COMMENTS_FILTER_ID
+    : selectedChatPhoneFilterActive
+      ? makePhoneChatPhoneFilterId(effectiveSelectedChatPhoneId)
+      : activeAdvancedChatFilterPresetId || chatFilter
   const selectedBusinessPhone = useMemo(() => {
     const fromComposerOverride = activeContactBusinessPhoneOverrideId
       ? businessPhones.find((phone) => phone.id === activeContactBusinessPhoneOverrideId)
@@ -5396,7 +5724,11 @@ export const PhoneChat: React.FC = () => {
         })
       : sourceChats
 
-    const chipFilteredChats = phoneFilteredChats.filter((contact) => {
+    const advancedFilteredChats = activeAdvancedChatFilterCount > 0
+      ? phoneFilteredChats.filter((contact) => contactMatchesPhoneAdvancedFilters(contact, advancedChatFilters))
+      : phoneFilteredChats
+
+    const chipFilteredChats = advancedFilteredChats.filter((contact) => {
       const isComment = isCommentContact(contact)
       // LENTE de Comentarios: muestra a CUALQUIER contacto que haya comentado,
       // aunque también tenga chat privado. Al abrirlo aquí solo se ven sus
@@ -5427,6 +5759,8 @@ export const PhoneChat: React.FC = () => {
     })
   }, [
     agentActiveChatIdSet,
+    activeAdvancedChatFilterCount,
+    advancedChatFilters,
     archivedChatIdSet,
     chatFilter,
     commentsView,
@@ -6465,6 +6799,118 @@ export const PhoneChat: React.FC = () => {
     setter(value).catch(() => showToast('error', 'No se guardó la configuración', 'Intenta otra vez.'))
   }, [showToast])
 
+  const resetChatPresetFilters = useCallback((options: { keepPhone?: boolean } = {}) => {
+    setCommentsView(false)
+    setCommentsPlatform('all')
+    setAdvancedChatFilters(DEFAULT_ADVANCED_CHAT_FILTERS)
+    if (!options.keepPhone && selectedChatPhoneId !== 'all') {
+      saveConfigPreference(setSelectedChatPhoneId, 'all')
+    }
+  }, [saveConfigPreference, selectedChatPhoneId, setSelectedChatPhoneId])
+
+  const openChatFilterManager = useCallback(() => {
+    setVisibleFilterDraftIds(normalizedVisibleChatFilterIds)
+    setSheet('filters')
+  }, [normalizedVisibleChatFilterIds])
+
+  const applyChatFilterPreset = useCallback((presetId: string) => {
+    if (presetId === PHONE_CHAT_FILTERS_MORE_VALUE) {
+      openChatFilterManager()
+      return
+    }
+
+    const preset = availableChatFilterPresetMap.get(presetId)
+    if (!preset) return
+
+    setArchivedViewOpen(false)
+    setAgentPriorityViewOpen(false)
+
+    if (preset.kind === 'comments') {
+      if (selectedChatPhoneId !== 'all') saveConfigPreference(setSelectedChatPhoneId, 'all')
+      setAdvancedChatFilters(DEFAULT_ADVANCED_CHAT_FILTERS)
+      setChatFilter('all')
+      setCommentsPlatform('all')
+      setCommentsView(true)
+      return
+    }
+
+    if (preset.kind === 'phone' && preset.phoneId) {
+      resetChatPresetFilters({ keepPhone: true })
+      setChatFilter('all')
+      saveConfigPreference(setSelectedChatPhoneId, preset.phoneId)
+      return
+    }
+
+    if (preset.kind === 'advanced' && preset.advancedGroup && preset.advancedValue) {
+      resetChatPresetFilters()
+      setChatFilter('all')
+      setAdvancedChatFilters(() => {
+        const next = { ...DEFAULT_ADVANCED_CHAT_FILTERS }
+        if (preset.advancedGroup === 'channel') next.channel = preset.advancedValue as AdvancedChannelFilter
+        if (preset.advancedGroup === 'origin') next.origin = preset.advancedValue as AdvancedOriginFilter
+        if (preset.advancedGroup === 'social') next.social = preset.advancedValue as AdvancedSocialFilter
+        if (preset.advancedGroup === 'stage') next.stage = preset.advancedValue as AdvancedStageFilter
+        if (preset.advancedGroup === 'activity') next.activity = preset.advancedValue as AdvancedActivityFilter
+        return next
+      })
+      return
+    }
+
+    resetChatPresetFilters()
+    setChatFilter(preset.quickFilter || 'all')
+  }, [
+    availableChatFilterPresetMap,
+    openChatFilterManager,
+    resetChatPresetFilters,
+    saveConfigPreference,
+    selectedChatPhoneId,
+    setSelectedChatPhoneId
+  ])
+
+  const toggleVisibleFilterDraft = useCallback((preset: PhoneChatFilterPreset) => {
+    if (preset.locked) return
+
+    setVisibleFilterDraftIds((current) => {
+      const source = current.length > 0 ? current : normalizedVisibleChatFilterIds
+      if (source.includes(preset.id)) {
+        return source.filter((id) => id !== preset.id)
+      }
+      return [...source, preset.id]
+    })
+  }, [normalizedVisibleChatFilterIds])
+
+  const saveVisibleFilterPresets = useCallback(async () => {
+    const availableIds = new Set(availableChatFilterPresets.map((preset) => preset.id))
+    const next = (visibleFilterDraftIds.length > 0 ? visibleFilterDraftIds : normalizedVisibleChatFilterIds)
+      .filter((id, index, list) => availableIds.has(id) && list.indexOf(id) === index)
+    if (!next.includes('all')) next.unshift('all')
+
+    try {
+      await setVisibleChatFilterIds(next)
+      if (activeChatFilterPresetId !== 'all' && !next.includes(activeChatFilterPresetId)) {
+        setCommentsView(false)
+        setCommentsPlatform('all')
+        setAdvancedChatFilters(DEFAULT_ADVANCED_CHAT_FILTERS)
+        setChatFilter('all')
+        if (selectedChatPhoneId !== 'all') await setSelectedChatPhoneId('all')
+      }
+      showToast('success', 'Filtros guardados', 'Tus filtros predeterminados del chat móvil quedaron actualizados.')
+      actionSheetDismiss.requestClose()
+    } catch {
+      showToast('error', 'No se guardaron los filtros', 'Intenta otra vez.')
+    }
+  }, [
+    actionSheetDismiss,
+    activeChatFilterPresetId,
+    availableChatFilterPresets,
+    normalizedVisibleChatFilterIds,
+    selectedChatPhoneId,
+    setSelectedChatPhoneId,
+    setVisibleChatFilterIds,
+    showToast,
+    visibleFilterDraftIds
+  ])
+
   useEffect(() => {
     document.title = aiAgentHubOpen || aiAgentHubClosing
       ? 'Inteligencia artificial | Ristak'
@@ -6517,7 +6963,7 @@ export const PhoneChat: React.FC = () => {
     setOpenSwipeChatId(null)
     setDraggingSwipe(null)
     clearClosingSwipeActions()
-  }, [agentPickerOpen, aiAgentHubOpen, archivedViewOpen, chatFilter, chatQuery, selectedChatPhoneId, clearClosingSwipeActions])
+  }, [activeChatFilterPresetId, agentPickerOpen, aiAgentHubOpen, archivedViewOpen, chatFilter, chatQuery, selectedChatPhoneId, clearClosingSwipeActions])
 
   useEffect(() => {
     if (selectedChatIds.length === 0) {
@@ -14952,39 +15398,6 @@ export const PhoneChat: React.FC = () => {
       ))
     }
 
-    if (activeSettingsSection === 'numbers') {
-      return renderSettingsDetail('Números de WhatsApp', (
-        <section className={styles.settingsSection}>
-          <div className={styles.settingsSectionTitle}>
-            <Smartphone size={18} />
-            <span>
-              <strong>Vista de conversaciones</strong>
-              <small>Elige cómo quieres ver los chats cuando tengas más de un número conectado.</small>
-            </span>
-          </div>
-          <div className={styles.settingsSegmented} role="group" aria-label="Modo de números de WhatsApp">
-            <button
-              type="button"
-              className={whatsappNumberMode === 'merged' ? styles.settingsSegmentActive : ''}
-              onClick={() => saveConfigPreference(setWhatsappNumberMode, 'merged')}
-            >
-              Todos juntos
-            </button>
-            <button
-              type="button"
-              className={whatsappNumberMode === 'separated' ? styles.settingsSegmentActive : ''}
-              onClick={() => saveConfigPreference(setWhatsappNumberMode, 'separated')}
-            >
-              Separados
-            </button>
-          </div>
-          {businessPhones.length <= 1 && (
-            <p className={styles.settingsHint}>Cuando conectes otro número, aparecerá el selector junto al título Chats.</p>
-          )}
-        </section>
-      ))
-    }
-
     if (activeSettingsSection === 'notifications') {
       const NotificationDeviceIcon = !mobileAppService.isNative() && getPortableDeviceMode() === 'desktop'
         ? Monitor
@@ -15215,7 +15628,6 @@ export const PhoneChat: React.FC = () => {
             Icon: Globe2
           }]
         : []),
-      { id: 'numbers', title: 'Números de WhatsApp', description: 'Cómo se muestran tus líneas.', meta: whatsappNumberMode === 'merged' ? 'Juntos' : 'Separados', Icon: Smartphone },
       { id: 'templates', title: 'Plantillas', description: 'Crear y revisar estados de Meta.', meta: `${templates.length} guardadas`, Icon: FileText },
       { id: 'agent', title: AI_AGENT_CHAT_DISPLAY_NAME, description: 'Chat fijo y sugerencias.', meta: openAIConfigured ? aiAgentChatEnabled ? 'Activo' : 'Apagado' : 'Sin OpenAI', Icon: Bot },
       { id: 'chats', title: 'Lista de chats', description: 'Orden, archivados y vista previa.', meta: conversationSortMode === 'recent' ? 'Recientes' : 'No leídas', Icon: MessageCircle },
@@ -15696,6 +16108,84 @@ export const PhoneChat: React.FC = () => {
             <strong>{label}</strong>
           </button>
         ))}
+      </div>
+    )
+  }
+
+  const renderFilterManagerSheet = () => {
+    const draftIds = visibleFilterDraftIds.length > 0 ? visibleFilterDraftIds : normalizedVisibleChatFilterIds
+    const draftSet = new Set(draftIds)
+    const groupedPresets = availableChatFilterPresets.reduce<Array<{ section: string; presets: PhoneChatFilterPreset[] }>>((groups, preset) => {
+      const existing = groups.find((group) => group.section === preset.section)
+      if (existing) {
+        existing.presets.push(preset)
+      } else {
+        groups.push({ section: preset.section, presets: [preset] })
+      }
+      return groups
+    }, [])
+    const selectedCount = draftIds.filter((id) => availableChatFilterPresetMap.has(id)).length
+
+    return (
+      <div className={styles.filterManagerStack} data-phone-chat-scrollable="true">
+        <section className={styles.filterManagerSummary}>
+          <span>
+            <strong>{selectedCount} filtro{selectedCount === 1 ? '' : 's'} visible{selectedCount === 1 ? '' : 's'}</strong>
+            <small>Los chips marcados aparecerán en la barra del chat móvil.</small>
+          </span>
+          <button type="button" onClick={() => setVisibleFilterDraftIds(DEFAULT_PHONE_CHAT_FILTER_CHIPS)}>
+            Restaurar
+          </button>
+        </section>
+
+        {groupedPresets.map((group) => (
+          <section key={group.section} className={styles.filterManagerGroup}>
+            <h3>{group.section}</h3>
+            <div className={styles.filterManagerList}>
+              {group.presets.map((preset) => {
+                const checked = draftSet.has(preset.id)
+                return (
+                  <button
+                    key={preset.id}
+                    type="button"
+                    className={`${styles.filterManagerOption} ${checked ? styles.filterManagerOptionSelected : ''}`}
+                    onClick={() => toggleVisibleFilterDraft(preset)}
+                    disabled={preset.locked}
+                    aria-pressed={checked}
+                  >
+                    <span className={styles.filterManagerOptionText}>
+                      <strong>{preset.label}</strong>
+                      <small>{preset.description}</small>
+                    </span>
+                    <span className={styles.filterManagerOptionAction}>
+                      {preset.locked ? (
+                        <>
+                          <Check size={15} />
+                          Fijo
+                        </>
+                      ) : checked ? (
+                        <>
+                          <Trash2 size={15} />
+                          Quitar
+                        </>
+                      ) : (
+                        <>
+                          <Plus size={15} />
+                          Agregar
+                        </>
+                      )}
+                    </span>
+                  </button>
+                )
+              })}
+            </div>
+          </section>
+        ))}
+
+        <button type="button" className={styles.filterManagerSaveButton} onClick={() => { void saveVisibleFilterPresets() }}>
+          <Check size={17} />
+          Guardar predeterminados
+        </button>
       </div>
     )
   }
@@ -18378,28 +18868,6 @@ export const PhoneChat: React.FC = () => {
                 <h1>{sidebarTitle}</h1>
                 {isWideChatDevice && wideSidebarMode === 'chats' && renderTabletNewChatAction()}
               </div>
-              <div className={styles.chatTitleRight}>
-                {chatPhoneFilterEnabled && wideSidebarMode === 'chats' && (
-                  <label className={styles.chatPhoneSelector}>
-                    <span>Número</span>
-                    <PhoneSelect
-                      value={effectiveSelectedChatPhoneId}
-                      onChange={(value) => saveConfigPreference(setSelectedChatPhoneId, value)}
-                      ariaLabel="Elegir número de WhatsApp para ver chats"
-                      options={[
-                        { value: 'all', label: 'Ver todos' },
-                        ...businessPhones.map((phone, index) => ({
-                          value: phone.id,
-                          label: `Ver chats de ${getBusinessPhoneLabel(phone) || `número ${index + 1}`}`
-                        }))
-                      ]}
-                      title="Número"
-                      placeholder="Número"
-                      buttonClassName={styles.chatPhoneSelect}
-                    />
-                  </label>
-                )}
-              </div>
             </div>
             <div className={styles.searchBox}>
               <Search size={22} />
@@ -18443,9 +18911,14 @@ export const PhoneChat: React.FC = () => {
                     { value: '__comments_exit__', label: 'Comentarios', tone: 'comments' },
                     { value: 'all', label: 'Todas' },
                     ...(facebookCommentsEnabled === true ? [{ value: 'facebook', label: 'Facebook' }] : []),
-                    ...(instagramCommentsEnabled === true ? [{ value: 'instagram', label: 'Instagram' }] : [])
+                    ...(instagramCommentsEnabled === true ? [{ value: 'instagram', label: 'Instagram' }] : []),
+                    { value: PHONE_CHAT_FILTERS_MORE_VALUE, label: <Plus size={17} />, ariaLabel: 'Más filtros' }
                   ]}
                   onChange={(next) => {
+                    if (next === PHONE_CHAT_FILTERS_MORE_VALUE) {
+                      openChatFilterManager()
+                      return
+                    }
                     if (next === '__comments_exit__') {
                       setCommentsView(false)
                       return
@@ -18459,25 +18932,19 @@ export const PhoneChat: React.FC = () => {
                   ariaLabel="Filtros de chat"
                   hidden={sidebarSearchExpanded}
                   wrapOnWide
-                  value={chatFilter}
+                  value={activeChatFilterPresetId}
                   options={[
-                    { value: 'all', label: 'Todos' },
-                    { value: 'unread', label: unreadTotal > 0 ? `No leídos ${unreadTotal > 99 ? '99+' : unreadTotal}` : 'No leídos' },
-                    { value: 'appointments', label: 'Agendados' },
-                    { value: 'customers', label: customersLabel },
-                    { value: 'leads', label: leadsLabel },
-                    ...(commentsFeatureEnabled ? [{ value: '__comments_enter__', label: 'Comentarios' }] : [])
+                    ...visibleChatFilterPresets.map((preset) => ({
+                      value: preset.id,
+                      label: preset.label,
+                      ariaLabel: preset.label,
+                      count: preset.id === 'unread' && unreadTotal > 0 ? (unreadTotal > 99 ? '99+' : unreadTotal) : undefined,
+                      tone: preset.kind === 'comments' ? 'comments' as const : undefined,
+                      separatorBefore: preset.separatorBefore
+                    })),
+                    { value: PHONE_CHAT_FILTERS_MORE_VALUE, label: <Plus size={17} />, ariaLabel: 'Más filtros' }
                   ]}
-                  onChange={(next) => {
-                    setArchivedViewOpen(false)
-                    setAgentPriorityViewOpen(false)
-                    if (next === '__comments_enter__') {
-                      setCommentsPlatform('all')
-                      setCommentsView(true)
-                      return
-                    }
-                    setChatFilter(next as ChatFilter)
-                  }}
+                  onChange={applyChatFilterPreset}
                 />
               )
             )}
@@ -18819,12 +19286,12 @@ export const PhoneChat: React.FC = () => {
 
       {sheet && (
           <div
-            className={`${styles.sheetBackdrop} ${actionSheetDragging && !centeredActionFormSheet ? styles.sheetBackdropInteractive : ''} ${sheet === 'settings' ? styles.settingsSheetBackdrop : ''} ${sheet === 'payment' || sheet === 'appointment' || sheet === 'settings' || sheet === 'chatMore' || sheet === 'clabe' || sheet === 'schedule' || sheet === 'tag' ? styles.darkSheetBackdrop : ''} ${actionFormSheetOpen ? styles.actionFormSheetBackdrop : ''} ${sheet === 'appointment' ? styles.appointmentActionSheetBackdrop : ''} ${sheet === 'attachments' ? styles.attachmentsSheetBackdrop : ''} ${sheet === 'schedule' ? styles.scheduleSheetBackdrop : ''} ${sheet === 'chatMore' ? styles.chatMoreSheetBackdrop : ''} ${actionSheetDismiss.closing ? styles.sheetBackdropClosing : ''}`}
+            className={`${styles.sheetBackdrop} ${actionSheetDragging && !centeredActionFormSheet ? styles.sheetBackdropInteractive : ''} ${sheet === 'settings' ? styles.settingsSheetBackdrop : ''} ${sheet === 'payment' || sheet === 'appointment' || sheet === 'settings' || sheet === 'chatMore' || sheet === 'clabe' || sheet === 'schedule' || sheet === 'tag' || sheet === 'filters' ? styles.darkSheetBackdrop : ''} ${actionFormSheetOpen ? styles.actionFormSheetBackdrop : ''} ${sheet === 'appointment' ? styles.appointmentActionSheetBackdrop : ''} ${sheet === 'attachments' ? styles.attachmentsSheetBackdrop : ''} ${sheet === 'schedule' ? styles.scheduleSheetBackdrop : ''} ${sheet === 'chatMore' ? styles.chatMoreSheetBackdrop : ''} ${actionSheetDismiss.closing ? styles.sheetBackdropClosing : ''}`}
           style={sheetBackdropStyle}
           onClick={actionSheetDismiss.requestClose}
         >
           <section
-            className={`${styles.sheetPanel} ${actionSheetMoving && !centeredActionFormSheet ? styles.sheetPanelInteractive : ''} ${actionFormSheetOpen ? styles.actionFormSheet : ''} ${sheet === 'appointment' ? styles.appointmentActionSheet : ''} ${sheet === 'attachments' ? styles.attachmentsSheet : ''} ${sheet === 'templates' ? styles.templatesSheet : ''} ${sheet === 'clabe' ? styles.clabeSheet : ''} ${sheet === 'settings' ? styles.settingsSheet : ''} ${sheet === 'newChat' ? styles.newChatSheet : ''} ${sheet === 'chatMore' ? styles.chatMoreSheet : ''} ${sheet === 'schedule' ? styles.scheduleSheet : ''} ${sheet === 'tag' ? styles.tagSheet : ''} ${actionSheetDismiss.closing ? styles.sheetPanelClosing : ''}`}
+            className={`${styles.sheetPanel} ${actionSheetMoving && !centeredActionFormSheet ? styles.sheetPanelInteractive : ''} ${actionFormSheetOpen ? styles.actionFormSheet : ''} ${sheet === 'appointment' ? styles.appointmentActionSheet : ''} ${sheet === 'attachments' ? styles.attachmentsSheet : ''} ${sheet === 'templates' ? styles.templatesSheet : ''} ${sheet === 'clabe' ? styles.clabeSheet : ''} ${sheet === 'settings' ? styles.settingsSheet : ''} ${sheet === 'newChat' ? styles.newChatSheet : ''} ${sheet === 'chatMore' ? styles.chatMoreSheet : ''} ${sheet === 'schedule' ? styles.scheduleSheet : ''} ${sheet === 'tag' ? styles.tagSheet : ''} ${sheet === 'filters' ? styles.filtersSheet : ''} ${actionSheetDismiss.closing ? styles.sheetPanelClosing : ''}`}
             style={popoverSheetUsesCssClose ? undefined : actionSheetDismiss.sheetStyle}
             onClick={(event) => event.stopPropagation()}
             aria-label="Acciones del chat"
@@ -18848,6 +19315,7 @@ export const PhoneChat: React.FC = () => {
                     {sheet === 'clabe' && 'CLABE'}
                     {sheet === 'settings' && 'Ajustes del chat'}
                     {sheet === 'newChat' && 'Nuevo chat'}
+                    {sheet === 'filters' && 'Filtros del chat'}
                     {sheet === 'chatMore' && (chatMoreMode === 'agentControls' ? 'Acciones del agente conversacional' : 'Más acciones')}
                     {sheet === 'tag' && 'Agregar etiqueta'}
                     {sheet === 'agentMenu' && (
@@ -18876,6 +19344,7 @@ export const PhoneChat: React.FC = () => {
             {sheet === 'settings' && renderChatSettingsSheet()}
             {sheet === 'chatMore' && renderChatMoreSheet()}
             {sheet === 'tag' && renderTagSheet()}
+            {sheet === 'filters' && renderFilterManagerSheet()}
             {sheet === 'agentMenu' && renderAgentMenuSheet()}
             {sheet === 'schedule' && renderScheduleSheet()}
 

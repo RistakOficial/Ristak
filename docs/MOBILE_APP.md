@@ -158,6 +158,23 @@ numero mostrado por automatico coincide con el que el usuario toca, igual debe
 guardarse como fijo; no cierres el sheet solo porque visualmente ya era el
 numero activo.
 
+## Filtros de la bandeja del chat movil
+
+La bandeja de `/movil` no debe volver a mostrar el dropdown `Numero / Ver todos`
+ni el ajuste separado de "Números de WhatsApp". La fuente visible para filtrar la
+lista son los chips bajo el buscador. El chip `+` abre el administrador de filtros
+predeterminados y guarda en `app_config.mobile_chat_filter_chip_ids` que chips
+quedan visibles para ese entorno.
+
+Ese administrador debe incluir los filtros rapidos del chat movil, la entrada de
+`Comentarios`, cada WhatsApp conectado cuando hay mas de un numero y las familias
+avanzadas equivalentes a desktop: canal, origen, red social, etapa y actividad.
+Los filtros por numero siguen usando `mobile_chat_selected_whatsapp_phone_id` y
+mandando `businessPhoneNumberId`/`businessPhone` a `/contacts/chats`; solo cambio
+la superficie de control. El chip `Comentarios` va separado de `Interesados` con
+una linea divisoria, igual que la bandeja desktop separa comentarios de filtros
+normales.
+
 Los avatares de contacto son parte de la identidad de Ristak: si el contacto
 tiene foto real de la red social, se respeta esa foto; si no tiene foto, el
 fallback muestra iniciales sobre `--phone-chat-avatar-fill` azul/cian Ristak. El

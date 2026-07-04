@@ -376,33 +376,6 @@
   background: var(--phone-chat-surface);
 }
 
-.chatPhoneSelector {
-  display: grid;
-  flex: 0 1 176px;
-  min-width: 128px;
-  gap: 2px;
-}
-
-.chatPhoneSelector span {
-  color: var(--phone-chat-muted);
-  font-size: 10px;
-  font-weight: 820;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
-}
-
-.chatPhoneSelect {
-  width: 100%;
-  min-height: 32px;
-  padding: 0 10px;
-  border: 1px solid var(--phone-chat-border);
-  border-radius: 999px;
-  color: var(--phone-chat-text);
-  background: var(--phone-chat-surface-soft);
-  font-size: 12px;
-  font-weight: 760;
-}
-
 .tabletAgentInboxButton {
   display: none;
   flex: 0 0 auto;
@@ -6643,6 +6616,14 @@
   background: var(--phone-chat-panel);
 }
 
+.filtersSheet {
+  grid-template-rows: auto auto minmax(0, 1fr);
+  align-content: stretch;
+  height: min(82dvh, 720px);
+  min-height: 0;
+  background: var(--phone-chat-panel);
+}
+
 .scheduleSheet {
   min-height: 316px;
   background: var(--phone-chat-panel);
@@ -6847,6 +6828,151 @@
   grid-template-rows: auto minmax(0, 1fr);
   gap: 12px;
   min-height: 0;
+}
+
+.filterManagerStack {
+  display: grid;
+  align-content: start;
+  gap: 12px;
+  min-height: 0;
+  padding: 0 0 8px;
+}
+
+.filterManagerSummary {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  padding: 11px 12px;
+  border: 1px solid var(--phone-chat-border);
+  border-radius: 16px;
+  background: var(--phone-chat-surface);
+}
+
+.filterManagerSummary span,
+.filterManagerOptionText {
+  display: grid;
+  min-width: 0;
+  gap: 3px;
+}
+
+.filterManagerSummary strong,
+.filterManagerOptionText strong {
+  color: var(--phone-chat-text);
+  font-size: 14px;
+  font-weight: 840;
+}
+
+.filterManagerSummary small,
+.filterManagerOptionText small {
+  color: var(--phone-chat-muted);
+  font-size: 12px;
+  line-height: 1.35;
+}
+
+.filterManagerSummary button,
+.filterManagerSaveButton {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-height: 34px;
+  padding: 0 12px;
+  border: 0;
+  border-radius: 999px;
+  color: var(--phone-chat-text);
+  background: var(--phone-chat-surface-soft);
+  font-size: 12px;
+  font-weight: 820;
+}
+
+.filterManagerGroup {
+  display: grid;
+  gap: 7px;
+}
+
+.filterManagerGroup h3 {
+  margin: 0;
+  color: var(--phone-chat-muted);
+  font-size: 12px;
+  font-weight: 850;
+  letter-spacing: 0.02em;
+}
+
+.filterManagerList {
+  display: grid;
+  overflow: hidden;
+  border: 1px solid var(--phone-chat-border);
+  border-radius: 16px;
+  background: var(--phone-chat-surface);
+}
+
+.filterManagerOption {
+  position: relative;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  min-height: 58px;
+  padding: 10px 12px;
+  border: 0;
+  color: var(--phone-chat-text);
+  background: transparent;
+  text-align: left;
+}
+
+.filterManagerOption::after {
+  content: '';
+  position: absolute;
+  right: 12px;
+  bottom: 0;
+  left: 12px;
+  height: 1px;
+  background: var(--phone-chat-border);
+}
+
+.filterManagerOption:last-child::after {
+  display: none;
+}
+
+.filterManagerOptionSelected {
+  background: color-mix(in srgb, var(--phone-chat-accent-soft) 72%, var(--phone-chat-surface));
+}
+
+.filterManagerOption:disabled {
+  opacity: 1;
+}
+
+.filterManagerOptionAction {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  min-width: 76px;
+  min-height: 30px;
+  padding: 0 9px;
+  border-radius: 999px;
+  color: var(--phone-chat-muted);
+  background: var(--phone-chat-surface-soft);
+  font-size: 11px;
+  font-weight: 830;
+}
+
+.filterManagerOptionSelected .filterManagerOptionAction {
+  color: var(--phone-chat-text);
+  background: color-mix(in srgb, var(--phone-chat-accent) 16%, var(--phone-chat-surface));
+}
+
+.filterManagerSaveButton {
+  position: sticky;
+  bottom: 0;
+  z-index: 1;
+  width: 100%;
+  min-height: 44px;
+  color: var(--phone-chat-text-on-primary);
+  background: var(--phone-chat-primary);
+  box-shadow: 0 -10px 22px color-mix(in srgb, var(--phone-chat-panel) 78%, transparent);
 }
 
 .tagSearchBox {
@@ -9449,15 +9575,6 @@
 
   .chatTitleRow {
     align-items: end;
-  }
-
-  .chatPhoneSelector {
-    flex-basis: 150px;
-    min-width: 116px;
-  }
-
-  .chatPhoneSelect {
-    font-size: 11px;
   }
 
   .searchBox input,

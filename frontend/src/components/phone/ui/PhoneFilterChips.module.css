@@ -54,6 +54,16 @@
     background 160ms ease;
 }
 
+.separator {
+  align-self: center;
+  flex: 0 0 auto;
+  width: 1px;
+  height: 24px;
+  margin: 0 2px;
+  border-radius: 999px;
+  background: var(--phone-chat-border);
+}
+
 .chip:focus-visible {
   outline: 2px solid rgba(var(--phone-chat-accent-rgb), 0.38);
   outline-offset: 2px;
