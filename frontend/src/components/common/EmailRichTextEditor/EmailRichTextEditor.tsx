@@ -73,6 +73,8 @@ const BLOCK_OPTIONS = [
 const EMPTY_HTML = ''
 const MAX_EDITOR_IMAGE_BYTES = 2 * 1024 * 1024
 const CODE_LIMIT = 70000
+const HTML_ENTITY_PATTERN = /&(?:[a-z][a-z0-9]+|#[0-9]+|#x[a-f0-9]+);/i
+const ENCODED_NBSP_PATTERN = /&(?:amp;)+(?:nbsp|#160|#xa0);/gi
 const ALLOWED_TAGS = new Set([
   'a',
   'b',
@@ -173,6 +175,10 @@ function decodeHtmlEntities(value: string) {
     .replace(/&#39;/gi, "'")
 }
 
+function normalizeEditorHtmlInput(value: string) {
+  return value.replace(ENCODED_NBSP_PATTERN, '&nbsp;')
+}
+
 function isSafeEditorUrl(value: string, type: 'href' | 'src' = 'href') {
   const url = value.trim()
   if (!url || /[\u0000-\u001f<>"`]/.test(url)) return false
@@ -223,10 +229,10 @@ function legacyFontSizeToCss(value: string) {
 }
 
 export function sanitizeEmailRichHtmlForEditor(rawHtml: string) {
-  const raw = String(rawHtml || '').slice(0, CODE_LIMIT).trim()
+  const raw = normalizeEditorHtmlInput(String(rawHtml || '').slice(0, CODE_LIMIT)).trim()
   if (!raw) return EMPTY_HTML
 
-  if (!raw.includes('<')) {
+  if (!raw.includes('<') && !HTML_ENTITY_PATTERN.test(raw)) {
     return escapeHtml(raw).replace(/\r?\n/g, '<br>')
   }
 
@@ -405,7 +411,7 @@ export const EmailRichTextEditor: React.FC<EmailRichTextEditorProps> = ({
   }, [setEditorHtml, value])
 
   const syncFromEditor = useCallback(() => {
-    const html = editorRef.current?.innerHTML || EMPTY_HTML
+    const html = sanitizeEmailRichHtmlForEditor(editorRef.current?.innerHTML || EMPTY_HTML)
     emit(html)
   }, [emit])
 
