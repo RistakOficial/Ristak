@@ -1333,56 +1333,9 @@
   font-size: 0.94rem;
 }
 
-.whatsappFormattedText {
-  display: grid;
-  gap: 3px;
-  min-width: 0;
-  color: inherit;
+.previewMessageText {
   font-size: 15px;
   line-height: 1.3;
-  letter-spacing: 0;
-  overflow-wrap: anywhere;
-}
-
-.whatsappFormattedInline {
-  color: inherit;
-  font: inherit;
-  letter-spacing: 0;
-  overflow-wrap: anywhere;
-}
-
-.whatsappFormatLine {
-  min-width: 0;
-}
-
-.whatsappFormatListLine {
-  display: grid;
-  grid-template-columns: 18px minmax(0, 1fr);
-  align-items: start;
-  gap: 4px;
-}
-
-.whatsappFormatMarker {
-  color: inherit;
-  font-variant-numeric: tabular-nums;
-  text-align: right;
-}
-
-.whatsappFormatQuoteLine {
-  border-left: 3px solid color-mix(in srgb, currentColor 34%, transparent);
-  padding-left: 8px;
-}
-
-.whatsappInlineCode,
-.whatsappMonospace {
-  border-radius: 4px;
-  font-family: var(--font-mono);
-  font-size: 0.94em;
-}
-
-.whatsappInlineCode {
-  padding: 0 4px;
-  background: color-mix(in srgb, currentColor 10%, transparent);
 }
 
 .previewMedia,

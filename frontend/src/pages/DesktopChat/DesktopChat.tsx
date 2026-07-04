@@ -59,6 +59,7 @@ import {
   SearchField,
   Switch,
   TagPicker,
+  WhatsAppFormattedText,
   emailHtmlToPlainText,
   plainTextToEmailHtml,
   sanitizeEmailRichHtmlForEditor,
@@ -7195,7 +7196,7 @@ export const DesktopChat: React.FC = () => {
 	                                    )
 	                                  })()
 	                                ) : null}
-	                                {message.text ? <p className={styles.commentBody}>{message.text}</p> : null}
+	                                {message.text ? <WhatsAppFormattedText text={message.text} className={styles.commentBody} /> : null}
 	                                {renderMessageMeta(message, routingDetails.label)}
 	                                {message.direction === 'inbound' && !message.commentReplyMode && message.commentId ? (
 	                                  <button
@@ -7217,7 +7218,7 @@ export const DesktopChat: React.FC = () => {
 	                              <>
 	                                {renderAttachment(message)}
 	                                {message.subject ? <strong className={styles.emailMessageSubject}>{message.subject}</strong> : null}
-	                                {message.text ? <p>{message.text}</p> : null}
+	                                {message.text ? <WhatsAppFormattedText text={message.text} className={styles.messageText} /> : null}
 	                              </>
 	                            )}
                             {routingDetails.reason ? <small className={styles.messageRoutingNote}>{routingDetails.reason}</small> : null}

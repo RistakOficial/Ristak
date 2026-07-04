@@ -14,6 +14,7 @@ import {
   InlineEditableText,
   Switch,
   TagPicker,
+  WhatsAppFormattedText,
   emailHtmlToPlainText,
   plainTextToEmailHtml,
   sanitizeEmailRichHtmlForEditor,
@@ -1814,7 +1815,7 @@ export function ContactDetailsModal({
                       } ${scheduled ? styles.contactChatScheduled : ''}`}
                     >
                       {message.subject ? <strong className={styles.contactChatSubject}>{message.subject}</strong> : null}
-                      {message.text ? <p>{message.text}</p> : null}
+                      {message.text ? <WhatsAppFormattedText text={message.text} className={styles.contactChatText} /> : null}
                       {message.errorReason ? <small className={styles.contactChatError}>{message.errorReason}</small> : null}
                       {message.scheduledAt ? (
                         <small className={styles.contactChatScheduledText}>

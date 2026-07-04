@@ -339,12 +339,13 @@ rechazadas, pausadas, archivadas, pendientes o en apelacion pueden mostrarse en
 las vistas de revision/estado, pero no deben aparecer como opcion seleccionable
 en el flujo de envio.
 
-En Configuracion > WhatsApp > Plantillas, el preview del editor debe respetar la
-sintaxis visual que WhatsApp aplica al mensaje enviado a revision: `*negritas*`,
-`_italicas_`, `~tachado~`, monospace con triple backtick, inline code con
-backtick, listas con `- ` o `* `, listas numeradas con `1. ` y citas con `> `.
-La plantilla se guarda con los marcadores originales; el formato se aplica solo
-en la vista previa para mostrarle al usuario como se vera en WhatsApp.
+En Configuracion > WhatsApp > Plantillas y en las burbujas del chat desktop,
+modal de contacto, preview telefonico y chat movil, el texto debe respetar la
+sintaxis visual que WhatsApp aplica al mensaje: `*negritas*`, `_italicas_`,
+`~tachado~`, monospace con triple backtick, inline code con backtick, listas con
+`- ` o `* `, listas numeradas con `1. ` y citas con `> `. El texto se guarda y
+se copia con los marcadores originales; el formato se aplica solo al pintar el
+mensaje para que el humano no lea los delimitadores crudos.
 
 Los botones web de plantillas pueden usar URL fija o URL dinamica. Cuando el URL
 incluye `{{1}}`, el editor debe mostrar el selector de dato dinamico y el ejemplo

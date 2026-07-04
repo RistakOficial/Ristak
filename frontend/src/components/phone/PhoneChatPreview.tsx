@@ -14,6 +14,7 @@ import {
   Trash2,
   Video
 } from 'lucide-react'
+import { WhatsAppFormattedText } from '@/components/common'
 import { PhoneMessageChannelIcon } from './PhoneMessageChannelIcon'
 import styles from './PhoneChatPreview.module.css'
 
@@ -663,7 +664,7 @@ export const PhoneChatPreview: React.FC<PhoneChatPreviewProps> = ({
                       ) : null}
                       {hasTextBody ? (
                         <div className={styles.messageBody}>
-                          {typeof message.body === 'string' ? <p>{message.body}</p> : message.body}
+                          {typeof message.body === 'string' ? <WhatsAppFormattedText text={message.body} className={styles.messageText} /> : message.body}
                         </div>
                       ) : null}
                       {(message.footer || message.time) && (

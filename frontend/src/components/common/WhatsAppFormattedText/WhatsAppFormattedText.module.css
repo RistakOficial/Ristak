@@ -1,0 +1,51 @@
+.formattedText {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+  color: inherit;
+  font: inherit;
+  line-height: inherit;
+  letter-spacing: 0;
+  overflow-wrap: anywhere;
+}
+
+.formattedInline {
+  color: inherit;
+  font: inherit;
+  letter-spacing: 0;
+  overflow-wrap: anywhere;
+}
+
+.line {
+  min-width: 0;
+}
+
+.listLine {
+  display: grid;
+  grid-template-columns: 18px minmax(0, 1fr);
+  align-items: start;
+  gap: 4px;
+}
+
+.marker {
+  color: inherit;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+
+.quoteLine {
+  border-left: 3px solid color-mix(in srgb, currentColor 34%, transparent);
+  padding-left: 8px;
+}
+
+.inlineCode,
+.monospace {
+  border-radius: 4px;
+  font-family: var(--font-mono);
+  font-size: 0.94em;
+}
+
+.inlineCode {
+  padding: 0 4px;
+  background: color-mix(in srgb, currentColor 10%, transparent);
+}

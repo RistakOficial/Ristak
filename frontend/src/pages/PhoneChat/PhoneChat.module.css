@@ -4535,6 +4535,14 @@
   white-space: pre-wrap;
 }
 
+.messageText {
+  margin: 0;
+  word-break: normal;
+  font-size: 16px;
+  line-height: 1.28;
+  letter-spacing: 0;
+}
+
 .aiMessageBubble {
   max-width: min(82%, 580px);
 }

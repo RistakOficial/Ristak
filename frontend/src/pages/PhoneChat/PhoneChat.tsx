@@ -63,7 +63,14 @@ import {
 } from 'lucide-react'
 import { FaFacebook, FaFacebookMessenger, FaInstagram, FaMicrophone, FaWhatsapp } from 'react-icons/fa'
 import { MdArchive } from 'react-icons/md'
-import { AppointmentModal, ContactCustomFieldsPanel, Icon, Modal, RecordPaymentModal } from '@/components/common'
+import {
+  AppointmentModal,
+  ContactCustomFieldsPanel,
+  Icon,
+  Modal,
+  RecordPaymentModal,
+  WhatsAppFormattedText
+} from '@/components/common'
 import { AgentRobot } from '@/components/ai'
 import { PhoneEcosystemNav } from '@/components/phone/PhoneEcosystemNav'
 import { PhoneMessageChannelIcon } from '@/components/phone/PhoneMessageChannelIcon'
@@ -12565,7 +12572,7 @@ export const PhoneChat: React.FC = () => {
                     {previewAttachmentLabel}
                   </span>
                 )}
-                <p>{previewText}</p>
+                <WhatsAppFormattedText text={previewText} className={styles.messageText} />
                 {renderMessageMeta(message)}
               </div>
             </div>
@@ -12651,8 +12658,8 @@ export const PhoneChat: React.FC = () => {
             Mensaje de voz
           </span>
         )}
-        {!hasRichAttachment && message.text && <p>{message.text}</p>}
-        {hasRichAttachment && message.text && <p>{message.text}</p>}
+        {!hasRichAttachment && message.text && <WhatsAppFormattedText text={message.text} className={styles.messageText} />}
+        {hasRichAttachment && message.text && <WhatsAppFormattedText text={message.text} className={styles.messageText} />}
         <span className={styles.messageActionPreviewMeta}>
           {starred && (
             <span className={styles.messageStarBadge} aria-label="Mensaje destacado">
@@ -13114,8 +13121,8 @@ export const PhoneChat: React.FC = () => {
                     {isFileMessage && renderMessageFile(message)}
                     {isAudioMessage && renderAudioMessage(message)}
                     {isAudioAttachment && !isAudioMessage && renderAudioUnavailableMessage(message)}
-                    {!hasRichAttachment && message.text && <p>{message.text}</p>}
-                    {hasRichAttachment && !isAudioMessage && message.text && <p>{message.text}</p>}
+                    {!hasRichAttachment && message.text && <WhatsAppFormattedText text={message.text} className={styles.messageText} />}
+                    {hasRichAttachment && !isAudioMessage && message.text && <WhatsAppFormattedText text={message.text} className={styles.messageText} />}
                     {starredMessageIdSet.has(message.id) && (
                       <span className={styles.messageStarBadge} aria-label="Mensaje destacado">
                         <Star size={12} fill="currentColor" />

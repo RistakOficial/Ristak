@@ -681,6 +681,12 @@
   line-height: 1.45;
 }
 
+.contactChatText {
+  margin: 0;
+  font-size: 0.8125rem;
+  line-height: 1.45;
+}
+
 .contactChatInbound {
   align-self: flex-start;
 }

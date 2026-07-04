@@ -1129,6 +1129,12 @@
   line-height: 1.45;
 }
 
+.messageText {
+  margin: 0;
+  font-size: var(--font-size-sm);
+  line-height: 1.45;
+}
+
 .emailMessageSubject {
   display: block;
   margin-bottom: 5px;
