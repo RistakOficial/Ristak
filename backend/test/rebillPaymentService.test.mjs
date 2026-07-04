@@ -298,9 +298,7 @@ test('Rebill confirma pago público consultando el paymentId en backend antes de
       assert.equal(link.payment.instantProduct.metadata.publicPaymentId, publicPaymentId)
       assert.equal(link.payment.instantProduct.metadata.rebillInstallmentsRequested, true)
       assert.equal(link.payment.instantProduct.metadata.rebillMaxInstallments, 12)
-      assert.deepEqual(link.payment.instantProduct.installmentsSettings, [
-        { currency: 'MXN', enabledInstallments: [1, 3, 6, 9, 12] }
-      ])
+      assert.equal(Object.hasOwn(link.payment.instantProduct, 'installmentsSettings'), false)
       assert.deepEqual(link.payment.rebillInstallments, {
         enabled: true,
         selectionMode: 'rebill_checkout_configured',

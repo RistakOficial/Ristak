@@ -81,10 +81,6 @@ export interface RebillInstantProduct {
   description?: Array<{ language: 'en' | 'es' | 'pt'; text: string }>
   amount: number
   currency: string
-  installmentsSettings?: Array<{
-    currency: string
-    enabledInstallments: number[]
-  }>
   metadata?: Record<string, string | number | boolean | null>
 }
 

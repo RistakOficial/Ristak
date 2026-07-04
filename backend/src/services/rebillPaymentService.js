@@ -841,33 +841,12 @@ function buildInstantProduct(row, metadata = {}) {
     ? metadata.rebillInstallments
     : null
   const currency = assertRebillCurrency(row.currency)
-  let enabledInstallments = null
-  if (rebillInstallments) {
-    enabledInstallments = [1]
-    if (rebillInstallments.enabled) {
-      enabledInstallments = Array.isArray(rebillInstallments.enabledInstallments) && rebillInstallments.enabledInstallments.length
-        ? rebillInstallments.enabledInstallments
-            .map((value) => Math.trunc(Number(value)))
-            .filter((value) => Number.isFinite(value) && value >= 1)
-        : buildRebillEnabledInstallments(rebillInstallments.maxInstallments || 12)
-    }
-  }
 
   return {
     name: [{ language: 'es', text: title }],
     description: description ? [{ language: 'es', text: description }] : [],
     amount: normalizePositiveAmount(row.amount),
     currency,
-    ...(rebillInstallments
-      ? {
-          installmentsSettings: [
-            {
-              currency,
-              enabledInstallments: enabledInstallments?.length ? enabledInstallments : [1]
-            }
-          ]
-        }
-      : {}),
     metadata: {
       ristakPaymentId: cleanString(row.id, 180),
       publicPaymentId: cleanString(row.public_payment_id, 180),

@@ -716,13 +716,18 @@ Alcance:
 - Meses/installments en cobros unicos: en el modal de cobro, Rebill entra al
   mismo paso de decision que Stripe, Conekta, Mercado Pago y CLIP: contado o MSI.
   Si se elige MSI, Ristak pide el maximo de meses (3, 6, 9, 12, 18 o 24), guarda
-  `metadata.rebillInstallments.maxInstallments` y manda al `instant-product` del
-  SDK `installmentsSettings=[{ currency, enabledInstallments: [1,...meses] }]`
-  para limitar el checkout hasta ese maximo. Rebill aun decide cuales plazos
-  muestra realmente segun cuenta, pais, moneda, monto y tarjeta. Si el SDK
-  reporta el numero elegido en `data.installments`, Ristak lo conserva como
+  `metadata.rebillInstallments.maxInstallments` y conserva
+  `enabledInstallments` como preferencia local. El SDK `instant-product` de Rebill
+  no acepta `installmentsSettings`; ese campo pertenece a la API de Payment Links
+  hosted y rompe `POST /v3/sessions/sdk` con `400`. Por eso el checkout embebido
+  solo recibe los campos permitidos por Instant Checkout (`name`, `description`,
+  `amount`, `currency` y `metadata`) y Rebill muestra MSI solo si la cuenta, pais,
+  moneda, monto y tarjeta califican. Si el SDK reporta el numero elegido en
+  `data.installments`, Ristak lo conserva como
   `metadata.rebillInstallments.selectedInstallments`. El pago total local se
-  confirma contra backend con el `paymentId` antes de marcarlo pagado.
+  confirma contra backend con el `paymentId` antes de marcarlo pagado. Para
+  imponer `installmentsSettings` de verdad habria que usar la API hosted de
+  Payment Links de Rebill, no el SDK instantaneo embebido.
 - Suscripciones Rebill (`instant-plan`) existen en la documentacion del proveedor,
   pero no estan cableadas como flujo de suscripciones de Ristak en esta
   superficie. No se deben presentar como listas hasta implementar UI/API,

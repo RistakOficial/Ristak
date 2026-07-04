@@ -4679,7 +4679,7 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
             ? `Disponible desde ${formatCurrency(CLIP_INSTALLMENT_MIN_AMOUNT, 'MXN')}.`
             : 'CLIP mostrará los planes disponibles dentro del formulario seguro.'
       : paymentOption === 'rebill'
-        ? 'Configura hasta cuántos meses podrá elegir el cliente si Rebill lo permite.'
+        ? 'Guarda el máximo deseado; Rebill mostrará MSI solo si la cuenta y la tarjeta califican.'
       : paymentOption === 'mercadopago'
         ? 'Configura cuántos meses podrá elegir el cliente en el link.'
         : 'Consulta mínimos y selecciona un plazo disponible.'
@@ -5214,7 +5214,7 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
 
             <p className={styles.mercadoPagoInstallmentsNote}>
               {rebillMsiEnabled
-                ? `Ristak enviará a Rebill la configuración de plazos hasta ${rebillInstallmentLimit} meses. El checkout mostrará únicamente los meses que realmente apliquen según cuenta, país, moneda, monto y tarjeta.`
+                ? `Ristak guardará la preferencia hasta ${rebillInstallmentLimit} meses. El checkout de Rebill mostrará MSI solo cuando la cuenta, país, moneda, monto y tarjeta califiquen.`
                 : 'Ristak creará el link como pago de contado. Rebill procesa la tarjeta y Ristak confirma el paymentId con backend antes de marcar el cobro como pagado.'}
             </p>
           </div>
