@@ -864,11 +864,14 @@ Alcance:
   al Payment Link hospedado cuando existe.
   Al crear el Payment Link hospedado, Ristak manda solo tarjeta en
   `paymentMethods`, conserva `showCoupon=false`, agrega `installmentsSettings` y
-  enriquece `title`, `description` y `metadata` con la informacion publica del
-  negocio configurada en Pagos/recibos (nombre, email, telefono, web, direccion,
-  soporte y URL publica del logo). Rebill muestra el logo del hosted checkout con
-  el branding de la organizacion configurado en Rebill; la API de Payment Links no
-  sube un archivo de logo por link desde Ristak.
+  mantiene el `title` como el concepto visible del cobro. `description` solo se
+  manda cuando el usuario configuro una descripcion real distinta del titulo; no
+  debe usarse para meter datos del negocio porque Rebill la muestra dentro del
+  resumen del producto y se ve saturado. La informacion publica del negocio
+  configurada en Pagos/recibos (nombre, email, telefono, web, direccion, soporte y
+  URL publica del logo) se conserva en `metadata` para trazabilidad. Rebill muestra
+  el logo del hosted checkout con el branding de la organizacion configurado en
+  Rebill; la API de Payment Links no sube un archivo de logo por link desde Ristak.
   En sandbox, Rebill muestra la lista inicial de mensualidades configuradas, pero
   al validar el BIN de la tarjeta puede bloquear el selector si el emisor/pais no
   devuelve MSI; para Mexico, probar con tarjetas que el endpoint de Rebill marque

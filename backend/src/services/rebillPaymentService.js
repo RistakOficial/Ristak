@@ -900,33 +900,6 @@ function buildRebillHostedBusinessMetadata(paymentSettings = {}) {
   }
 }
 
-function buildRebillHostedPaymentLinkDescription(row = {}, metadata = {}, paymentSettings = {}) {
-  const baseDescription = sanitizeLocalizedText(row.description || metadata.description || row.title || metadata.title || 'Pago', 'Pago', 300)
-  const business = buildRebillHostedBusinessMetadata(paymentSettings)
-  const details = []
-  const seenValues = new Set()
-
-  function addDetail(label, value) {
-    const cleanValue = cleanString(value, 500)
-    const key = cleanValue.toLowerCase()
-    if (!cleanValue || seenValues.has(key)) return
-    seenValues.add(key)
-    details.push(`${label}: ${cleanValue}`)
-  }
-
-  addDetail('Negocio', business.businessName)
-  addDetail('Email', business.businessEmail)
-  addDetail('Telefono', business.businessPhone)
-  addDetail('Sitio', business.businessWebsite)
-  addDetail('Direccion', business.businessAddress)
-  addDetail('Soporte', [
-    business.supportEmail && business.supportEmail !== business.businessEmail ? business.supportEmail : '',
-    business.supportPhone && business.supportPhone !== business.businessPhone ? business.supportPhone : ''
-  ].filter(Boolean).join(' / '))
-
-  return sanitizeLocalizedText([baseDescription, ...details].filter(Boolean).join(' · '), baseDescription, 900)
-}
-
 function getRebillHostedPaymentLink(metadata = {}) {
   const link = metadata.rebillHostedPaymentLink && typeof metadata.rebillHostedPaymentLink === 'object'
     ? metadata.rebillHostedPaymentLink
@@ -1013,7 +986,10 @@ async function ensureRebillHostedPaymentLink(row = {}, config = null, baseUrl = 
   if (!enabledInstallments.length) return { row, hostedPaymentLink: null }
 
   const title = sanitizeLocalizedText(row.title || metadata.title || 'Pago Ristak', 'Pago Ristak', 140)
-  const description = buildRebillHostedPaymentLinkDescription(row, metadata, paymentSettings)
+  const rawDescription = cleanString(row.description || metadata.description, 300)
+  const description = rawDescription && rawDescription.toLowerCase() !== title.toLowerCase()
+    ? sanitizeLocalizedText(rawDescription, '', 300)
+    : ''
   const redirectUrls = buildRebillPaymentLinkRedirectUrls(baseUrl, row.public_payment_id)
   const prefilledFields = buildRebillPaymentLinkPrefilledFields(row, metadata)
   const businessMetadata = buildRebillHostedBusinessMetadata(paymentSettings)
