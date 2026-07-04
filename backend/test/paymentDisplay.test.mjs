@@ -86,6 +86,30 @@ test('payment display reports Mercado Pago installments as MSI', () => {
   assert.equal(display.paymentChannel, 'Mercado Pago')
 })
 
+test('payment display uses paid MSI count instead of configured maximum', () => {
+  const display = buildPaymentDisplay({
+    status: 'paid',
+    payment_method: 'credit_card',
+    payment_provider: 'mercadopago',
+    metadata_json: JSON.stringify({
+      installments: 12,
+      mercadoPagoInstallments: {
+        enabled: true,
+        maxInstallments: 12
+      },
+      mercadoPago: {
+        paymentMethodId: 'visa',
+        paymentTypeId: 'credit_card',
+        installments: 3
+      }
+    })
+  })
+
+  assert.equal(display.paymentMethodCategory, 'Tarjeta de crédito')
+  assert.equal(display.paymentType, '3 MSI')
+  assert.equal(display.paymentChannel, 'Mercado Pago')
+})
+
 test('payment display reports Conekta monthly installments as MSI', () => {
   const display = buildPaymentDisplay({
     status: 'paid',

@@ -628,10 +628,12 @@ sin intereses configurados por Ristak o confirmados por la pasarela, por ejemplo
 `stripeInstallments`, `mercadoPagoInstallments`, `conektaInstallments`,
 `clipInstallments`, `rebillInstallments`, `stripe.installments.plan`,
 `conekta.monthlyInstallments` o metadata explicita `msi`/`interestFree`. No se
-debe convertir cualquier `installments` generico en MSI: si la fila pertenece a
-un plan de pagos interno (`paymentPlan`, cobro programado o `*_scheduled_card`)
-debe seguir mostrando `Pago diferido` salvo que tambien exista una senal MSI
-explicita del gateway.
+debe convertir cualquier `installments` generico en MSI ni usar el maximo
+configurado como si fuera el plazo pagado: si Ristak permite hasta 12 MSI pero la
+respuesta real del gateway confirma 3 MSI, la tabla debe mostrar `3 MSI`. Si la
+fila pertenece a un plan de pagos interno (`paymentPlan`, cobro programado o
+`*_scheduled_card`) debe seguir mostrando `Pago diferido` salvo que tambien
+exista una senal MSI explicita del gateway.
 No se deben guardar PAN, CVV, tokens secretos, llaves de API ni datos que permitan
 cobrar fuera de la pasarela. Si una transaccion historica no tiene suficiente
 metadata para distinguir credito/debito u otra categoria fina, la UI debe mostrar
