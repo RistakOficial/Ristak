@@ -42,7 +42,7 @@ import { transactionsService } from '@/services/transactionsService'
 import { conektaPaymentsService, type ConektaSavedPaymentSource } from '@/services/conektaPaymentsService'
 import { clipPaymentsService } from '@/services/clipPaymentsService'
 import { mercadoPagoPaymentsService } from '@/services/mercadoPagoPaymentsService'
-import { rebillPaymentsService } from '@/services/rebillPaymentsService'
+import { rebillPaymentsService, type RebillSavedPaymentSource } from '@/services/rebillPaymentsService'
 import { stripePaymentsService, type StripeSavedPaymentMethod } from '@/services/stripePaymentsService'
 import { suppressContactAutofill } from '@/utils/browserAutofill'
 import {
@@ -118,7 +118,7 @@ const calculateConfiguredTax = (
   }
 }
 
-type PaymentOption = 'send' | 'manual' | 'stripe' | 'stripe_saved_card' | 'mercadopago' | 'conekta' | 'conekta_saved_card' | 'clip' | 'rebill'
+type PaymentOption = 'send' | 'manual' | 'stripe' | 'stripe_saved_card' | 'mercadopago' | 'conekta' | 'conekta_saved_card' | 'clip' | 'rebill' | 'rebill_saved_card'
 type PaymentMode = 'single' | 'partial'
 type SinglePaymentAction = 'payment_link' | 'saved_card' | 'manual'
 type SinglePaymentOptionsStage = 'method' | 'saved_cards' | 'gateway' | 'gateway_config' | 'confirm'
@@ -362,6 +362,18 @@ const getSavedConektaCardDescription = (source?: ConektaSavedPaymentSource | nul
 
 const getSavedConektaPaymentSourceId = (source?: ConektaSavedPaymentSource | null) => (
   source?.conektaPaymentSourceId || source?.id || ''
+)
+
+const getSavedRebillCardLabel = (source?: RebillSavedPaymentSource | null) => {
+  if (!source) return 'Tarjeta guardada'
+  const brand = source.brand ? source.brand.toUpperCase() : 'Rebill'
+  return `${brand} •••• ${source.last4 || '----'}`
+}
+
+const getSavedRebillCardDescription = (source?: RebillSavedPaymentSource | null) => getSavedRebillCardLabel(source)
+
+const getSavedRebillPaymentSourceId = (source?: RebillSavedPaymentSource | null) => (
+  source?.rebillCardId || source?.id || ''
 )
 
 const EMAIL_SEND_METHODS = new Set<SendMethod>(['email', 'email_whatsapp', 'email_sms', 'all'])
@@ -766,6 +778,8 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
   const [selectedSavedPaymentMethodId, setSelectedSavedPaymentMethodId] = useState('')
   const [savedConektaPaymentSources, setSavedConektaPaymentSources] = useState<ConektaSavedPaymentSource[]>([])
   const [selectedConektaPaymentSourceId, setSelectedConektaPaymentSourceId] = useState('')
+  const [savedRebillPaymentSources, setSavedRebillPaymentSources] = useState<RebillSavedPaymentSource[]>([])
+  const [selectedRebillPaymentSourceId, setSelectedRebillPaymentSourceId] = useState('')
   const [stripePlanCardSource, setStripePlanCardSource] = useState<StripePlanCardSource>('new_card')
   const [createdPaymentLink, setCreatedPaymentLink] = useState<CreatedPaymentLink | null>(null)
 
@@ -899,11 +913,23 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
   const selectedConektaPaymentSource = savedConektaPaymentSources.find((source) => (
     getSavedConektaPaymentSourceId(source) === selectedConektaPaymentSourceId
   )) || null
+  const savedRebillPaymentSourceOptions = useMemo(() => (
+    savedRebillPaymentSources.flatMap((source) => {
+      const value = getSavedRebillPaymentSourceId(source)
+      return value ? [{ value, label: getSavedRebillCardDescription(source) }] : []
+    })
+  ), [savedRebillPaymentSources])
+  const selectedRebillPaymentSource = savedRebillPaymentSources.find((source) => (
+    getSavedRebillPaymentSourceId(source) === selectedRebillPaymentSourceId
+  )) || null
   const stripePlanSavedPaymentMethod = stripePlanCardSource === 'saved_card'
     ? selectedSavedPaymentMethod || savedPaymentMethods[0] || null
     : null
   const conektaPlanSavedPaymentSource = stripePlanCardSource === 'saved_card'
     ? selectedConektaPaymentSource || savedConektaPaymentSources[0] || null
+    : null
+  const rebillPlanSavedPaymentSource = stripePlanCardSource === 'saved_card'
+    ? selectedRebillPaymentSource || savedRebillPaymentSources[0] || null
     : null
   const firstPaymentCanAuthorizeStripePlan = firstPaymentEnabled && firstPaymentMethod === 'card'
   const stripePlanNeedsSetupLink = stripePlanCardSource === 'new_card' && !firstPaymentCanAuthorizeStripePlan
@@ -914,6 +940,10 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
   const conektaPlanCanBeAuthorized = stripePlanCardSource === 'saved_card'
     ? Boolean(conektaPlanSavedPaymentSource)
     : firstPaymentCanAuthorizeStripePlan || conektaPlanNeedsSetupLink
+  const rebillPlanNeedsSetupLink = stripePlanCardSource === 'new_card' && !firstPaymentCanAuthorizeStripePlan
+  const rebillPlanCanBeAuthorized = stripePlanCardSource === 'saved_card'
+    ? Boolean(rebillPlanSavedPaymentSource)
+    : firstPaymentCanAuthorizeStripePlan || rebillPlanNeedsSetupLink
   const remainingFrequencyOptions = REMAINING_FREQUENCY_OPTIONS
   const contactLocked = Boolean(lockInitialContact && initialContact?.id)
   const isEmbedded = variant === 'embedded'
@@ -965,9 +995,11 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
   const hasMultiplePaymentLinkGateways = paymentLinkGatewayCount > 1
   const hasStripeSavedCards = stripeConnected && savedPaymentMethods.length > 0
   const hasConektaSavedCards = conektaConnected && savedConektaPaymentSources.length > 0
+  const hasRebillSavedCards = rebillConnected && savedRebillPaymentSources.length > 0
   const savedCardGatewayLabels = [
     hasStripeSavedCards ? 'Stripe' : null,
-    hasConektaSavedCards ? 'Conekta' : null
+    hasConektaSavedCards ? 'Conekta' : null,
+    hasRebillSavedCards ? 'Rebill' : null
   ].filter(Boolean) as string[]
   const hasSavedCards = savedCardGatewayLabels.length > 0
   const paymentPlanGatewayLabels = [
@@ -978,7 +1010,7 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
   ].filter(Boolean) as string[]
   const hasPaymentPlanGateways = paymentPlanGatewayLabels.length > 0
   const hasMultiplePaymentPlanGateways = paymentPlanGatewayLabels.length > 1
-  const hasPaymentPlanSavedCards = hasStripeSavedCards || hasConektaSavedCards
+  const hasPaymentPlanSavedCards = hasStripeSavedCards || hasConektaSavedCards || hasRebillSavedCards
   const partialAuthorizationNotice = (() => {
     if (!hasPaymentPlanGateways) {
       return 'El plan se preparará con la pasarela conectada que elijas en el siguiente paso.'
@@ -993,7 +1025,7 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
     }
 
     if (rebillConnected && !stripeConnected && !conektaConnected && !highLevelConnected) {
-      return 'Rebill recibirá cada pago por link; Ristak mantiene el calendario y liberará cada parcialidad cuando toque.'
+      return 'Rebill guardará una tarjeta y Ristak cobrará cada parcialidad cuando toque.'
     }
 
     return `Si el contacto no tiene una tarjeta guardada, la pasarela que elijas enviará una liga de domiciliación por ${formatCurrency(cardSetupAmount, currency)}. El plan no se activa hasta que esa tarjeta quede autorizada.`
@@ -1024,7 +1056,9 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
     ? 'stripe'
     : hasConektaSavedCards
       ? 'conekta'
-      : null
+      : hasRebillSavedCards
+        ? 'rebill'
+        : null
 
   const getDefaultPaymentOption = (): PaymentOption => {
     if (stripeConnected) return 'stripe'
@@ -1038,6 +1072,7 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
   const getDefaultSavedCardOption = (): PaymentOption | null => {
     if (hasStripeSavedCards) return 'stripe_saved_card'
     if (hasConektaSavedCards) return 'conekta_saved_card'
+    if (hasRebillSavedCards) return 'rebill_saved_card'
     return null
   }
 
@@ -1226,7 +1261,7 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
     active,
     onSelect
   }: {
-    platform: 'stripe' | 'conekta'
+    platform: 'stripe' | 'conekta' | 'rebill'
     label: string
     description: string
     value: string
@@ -1356,6 +1391,8 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
     setSelectedSavedPaymentMethodId('')
     setSavedConektaPaymentSources([])
     setSelectedConektaPaymentSourceId('')
+    setSavedRebillPaymentSources([])
+    setSelectedRebillPaymentSourceId('')
     setStripePlanCardSource('new_card')
     setCreatedPaymentLink(null)
   }
@@ -1543,6 +1580,53 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
       cancelled = true
     }
   }, [isOpen, conektaConnected, selectedContact?.id, paymentOption])
+
+  useEffect(() => {
+    let cancelled = false
+
+    if (!isOpen || !rebillConnected || !selectedContact?.id) {
+      setSavedRebillPaymentSources([])
+      setSelectedRebillPaymentSourceId('')
+      if (paymentOption === 'rebill_saved_card') {
+        setSinglePaymentAction(getDefaultSinglePaymentAction())
+        setPaymentOption(getDefaultPaymentOption())
+      }
+      return () => {
+        cancelled = true
+      }
+    }
+
+    rebillPaymentsService.getSavedPaymentSources(selectedContact.id)
+      .then((sources) => {
+        if (cancelled) return
+        setSavedRebillPaymentSources(sources)
+        setSelectedRebillPaymentSourceId((current) => {
+          const stillExists = sources.some((source) => (
+            getSavedRebillPaymentSourceId(source) === current
+          ))
+          if (stillExists) return current
+          const preferred = sources.find((source) => source.isDefault) || sources[0]
+          return getSavedRebillPaymentSourceId(preferred)
+        })
+        if (!sources.length && paymentOption === 'rebill_saved_card') {
+          setSinglePaymentAction(getDefaultSinglePaymentAction())
+          setPaymentOption(getDefaultPaymentOption())
+        }
+      })
+      .catch(() => {
+        if (cancelled) return
+        setSavedRebillPaymentSources([])
+        setSelectedRebillPaymentSourceId('')
+        if (paymentOption === 'rebill_saved_card') {
+          setSinglePaymentAction(getDefaultSinglePaymentAction())
+          setPaymentOption(getDefaultPaymentOption())
+        }
+      })
+
+    return () => {
+      cancelled = true
+    }
+  }, [isOpen, rebillConnected, selectedContact?.id, paymentOption])
 
   useEffect(() => {
     if (!isOpen) {
@@ -2170,7 +2254,9 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
     })),
     paymentMethodId: provider === 'conekta'
       ? conektaPlanSavedPaymentSource?.conektaPaymentSourceId || ''
-      : stripePlanSavedPaymentMethod?.stripePaymentMethodId || '',
+      : provider === 'rebill'
+        ? rebillPlanSavedPaymentSource?.rebillCardId || ''
+        : stripePlanSavedPaymentMethod?.stripePaymentMethodId || '',
     cardSetupAmount,
     source: provider === 'rebill'
       ? 'record_payment_modal_rebill_plan'
@@ -2612,6 +2698,58 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
       return
     }
 
+    if (paymentOption === 'rebill_saved_card') {
+      if (!selectedContact) {
+        showToast('error', 'Selecciona un contacto')
+        setStep('options')
+        setLoading(false)
+        return
+      }
+
+      if (!selectedRebillPaymentSource) {
+        showToast('error', 'Selecciona una tarjeta guardada')
+        setStep('options')
+        setLoading(false)
+        return
+      }
+
+      try {
+        const result = await rebillPaymentsService.createSavedCardPayment({
+          contactId: selectedContact.id,
+          paymentSourceId: selectedRebillPaymentSource.rebillCardId,
+          contactName: invoiceSummary.contactName || selectedContact.name,
+          email: selectedContact.email || invoiceSummary.contactEmail || '',
+          phone: selectedContact.phone || '',
+          amount: invoiceSummary.taxBaseAmount,
+          currency: invoiceSummary.currency,
+          applyTax: invoiceSummary.includesTax,
+          taxCalculationMode: invoiceSummary.taxCalculationMode,
+          title: invoicePayload.title || invoicePayload.name || DEFAULT_INVOICE_TITLE,
+          description: invoiceSummary.description,
+          dueDate: invoicePayload.dueDate,
+          source: 'record_payment_modal_rebill_saved_card',
+          lineItems: Array.isArray(invoicePayload.items) ? invoicePayload.items : []
+        })
+
+        const paid = result.payment?.status === 'paid'
+        showToast(
+          'success',
+          paid ? 'Cobro realizado' : 'Cobro enviado a Rebill',
+          paid
+            ? `${getSavedRebillCardLabel(selectedRebillPaymentSource)} quedó cobrada correctamente.`
+            : 'Rebill está terminando de procesar este cobro.'
+        )
+        onSuccess?.()
+        onClose()
+      } catch (rebillError: any) {
+        showToast('error', 'No se pudo cobrar la tarjeta', rebillError.message || 'Revisa la tarjeta guardada o envía un link de Rebill.')
+        setStep('options')
+      } finally {
+        setLoading(false)
+      }
+      return
+    }
+
     if (paymentOption === 'stripe' && activePaymentMode === 'partial') {
       if (!selectedContact) {
         showToast('error', 'Selecciona un contacto')
@@ -2767,11 +2905,34 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
           buildGatewayPaymentPlanPayload(invoicePayload, invoiceSummary, 'rebill')
         )
 
+        if (result.cardSetupLink) {
+          const setupAmount = result.cardSetupAmount || cardSetupAmount
+          const manualFirstPaymentRegistered = firstPaymentEnabled && isOfflineFirstPaymentMethod(firstPaymentMethod)
+          showPaymentLinkReady({
+            kind: 'card_setup',
+            title: 'Enlace de domiciliación Rebill listo',
+            description: `${manualFirstPaymentRegistered ? 'El primer pago manual ya quedó registrado. ' : ''}Comparte este enlace para que el cliente domicilie su tarjeta. El plan se activa cuando pague y Rebill guarde la tarjeta.`,
+            provider: 'rebill',
+            paymentUrl: result.cardSetupLink,
+            amount: setupAmount,
+            currency: invoiceSummary.currency,
+            contact: selectedContact,
+            paymentId: result.cardSetupPaymentId
+          })
+          showToast(
+            'success',
+            'Plan de Rebill creado',
+            `${manualFirstPaymentRegistered ? 'El primer pago quedó registrado. ' : ''}El enlace de domiciliación por ${formatCurrency(setupAmount, invoiceSummary.currency)} está listo para compartir.`
+          )
+          await onSuccess?.(PAYMENT_PLAN_LINK_READY_SUCCESS_CONTEXT)
+          return
+        }
+
         if (result.firstPaymentLink) {
           showPaymentLinkReady({
             kind: 'first_payment',
             title: 'Primer pago Rebill listo',
-            description: 'Comparte este enlace para que el cliente pague el primer cobro. Ristak liberará las demás parcialidades con su propio calendario.',
+            description: 'Comparte este enlace para que el cliente pague el primer cobro. Al pagarlo se guarda la tarjeta y Ristak cobra las siguientes parcialidades cuando toque.',
             provider: 'rebill',
             paymentUrl: result.firstPaymentLink,
             amount: firstPaymentAmount,
@@ -2782,7 +2943,7 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
           showToast(
             'success',
             'Plan de Rebill creado',
-            'El enlace del primer pago está listo. Las demás parcialidades se liberarán cuando toque.'
+            'El enlace del primer pago está listo. Las demás parcialidades se cobrarán con la tarjeta guardada cuando toque.'
           )
           await onSuccess?.(PAYMENT_PLAN_LINK_READY_SUCCESS_CONTEXT)
           return
@@ -2791,7 +2952,7 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
         showToast(
           'success',
           'Plan de Rebill creado',
-          `${result.scheduledPayments.length} parcialidades quedaron programadas; Ristak liberará los links de Rebill cuando toque.`
+          `${result.scheduledPayments.length} parcialidades quedaron programadas con tarjeta guardada.`
         )
         await onSuccess?.(PAYMENT_PLAN_CHANGED_SUCCESS_CONTEXT)
         onClose()
@@ -4117,6 +4278,10 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
         conektaPlanSavedPaymentSource?.conektaPaymentSourceId ||
         conektaPlanSavedPaymentSource?.id ||
         ''
+      const currentRebillPlanPaymentSourceId = selectedRebillPaymentSourceId ||
+        rebillPlanSavedPaymentSource?.rebillCardId ||
+        rebillPlanSavedPaymentSource?.id ||
+        ''
       const stripeSavedCardLabel = stripePlanSavedPaymentMethod
         ? `Stripe usará ${getSavedCardDescription(stripePlanSavedPaymentMethod)} para los cobros programados.`
         : 'Selecciona una tarjeta guardada para programar este plan.'
@@ -4135,14 +4300,22 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
       const conektaAuthorizationLabel = stripePlanCardSource === 'saved_card'
         ? conektaSavedCardLabel
         : conektaNewCardLabel
+      const rebillSavedCardLabel = rebillPlanSavedPaymentSource
+        ? `Rebill usará ${getSavedRebillCardDescription(rebillPlanSavedPaymentSource)} para los cobros programados.`
+        : 'Selecciona una tarjeta guardada para programar este plan.'
+      const rebillNewCardLabel = firstPaymentEnabled && firstPaymentMethod === 'card'
+          ? 'Rebill enviará el primer link; cuando se pague, guardará la tarjeta y activará los cobros futuros.'
+          : `Rebill enviará domiciliación por ${formatCurrency(cardSetupAmount, invoiceSummary.currency)}; al pagarse, guardará la tarjeta y activará el plan.`
+      const rebillAuthorizationLabel = stripePlanCardSource === 'saved_card'
+        ? rebillSavedCardLabel
+        : rebillNewCardLabel
       const highLevelAuthorizationLabel = partialNeedsCardAuthorization
         ? `HighLevel enviará domiciliación por ${formatCurrency(cardSetupAmount, invoiceSummary.currency)} cuando haga falta autorizar tarjeta.`
         : 'El primer pago con tarjeta autoriza la tarjeta en HighLevel.'
-      const rebillAuthorizationLabel = 'Ristak programará cada parcialidad y liberará el link de Rebill cuando llegue la fecha.'
       const paymentPlanNewCardActionDescription = paymentPlanGatewayLabels.length > 1
         ? `Después eliges pasarela: ${paymentPlanGatewayLabels.join(', ')}.`
         : defaultPaymentPlanGatewayOption === 'rebill'
-          ? 'Ristak programará las parcialidades y liberará links de Rebill por fecha.'
+          ? 'Rebill guardará la tarjeta y Ristak cobrará cada parcialidad cuando toque.'
         : defaultPaymentPlanGatewayOption
           ? 'La pasarela que elijas enviará el link para autorizar una tarjeta nueva.'
           : 'Conecta una pasarela para enviar el link de autorización.'
@@ -4261,7 +4434,7 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
                       </div>
                       <div>
                         <p>Rebill</p>
-                        <span>{rebillAuthorizationLabel}</span>
+                        <span>{rebillNewCardLabel}</span>
                       </div>
                     </div>
                     {paymentOption === 'rebill' && <Check size={18} className={styles.optionCheck} />}
@@ -4345,6 +4518,23 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
                       setPaymentOption('conekta')
                       setStripePlanCardSource('saved_card')
                       setSelectedConektaPaymentSourceId(value)
+                    }
+                  })
+                )}
+
+                {hasRebillSavedCards && (
+                  renderSavedCardGatewayRow({
+                    platform: 'rebill',
+                    label: 'Rebill',
+                    description: 'Programará los cobros futuros con Rebill.',
+                    value: currentRebillPlanPaymentSourceId,
+                    options: savedRebillPaymentSourceOptions,
+                    active: paymentOption === 'rebill' && stripePlanCardSource === 'saved_card',
+                    onSelect: (value) => {
+                      setSinglePaymentAction('saved_card')
+                      setPaymentOption('rebill')
+                      setStripePlanCardSource('saved_card')
+                      setSelectedRebillPaymentSourceId(value)
                     }
                   })
                 )}
@@ -4798,6 +4988,24 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
                     }
                   })
                 )}
+
+                {hasRebillSavedCards && (
+                  renderSavedCardGatewayRow({
+                    platform: 'rebill',
+                    label: 'Rebill',
+                    description: 'Se cobrará inmediatamente con Rebill.',
+                    value: selectedRebillPaymentSourceId,
+                    options: savedRebillPaymentSourceOptions,
+                    active: paymentOption === 'rebill_saved_card',
+                    onSelect: (value) => {
+                      resetInstallmentChargeMode()
+                      setConektaSavedCardGatewayConfirmed(false)
+                      setSinglePaymentAction('saved_card')
+                      setPaymentOption('rebill_saved_card')
+                      setSelectedRebillPaymentSourceId(value)
+                    }
+                  })
+                )}
               </>
             ) : (
               <>
@@ -5222,7 +5430,8 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
       const lacksDeliveryChannel = requiresDeliveryChannel && !selectedContact?.email && !selectedContact?.phone
       const lacksSavedCard = (
         (paymentOption === 'stripe_saved_card' && !selectedSavedPaymentMethodId) ||
-        (paymentOption === 'conekta_saved_card' && !selectedConektaPaymentSourceId)
+        (paymentOption === 'conekta_saved_card' && !selectedConektaPaymentSourceId) ||
+        (paymentOption === 'rebill_saved_card' && !selectedRebillPaymentSourceId)
       )
       const lacksStripePlanSavedCard = paymentOption === 'stripe' &&
         activePaymentMode === 'partial' &&
@@ -5238,6 +5447,13 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
       const lacksConektaPlanAuthorization = paymentOption === 'conekta' &&
         activePaymentMode === 'partial' &&
         !conektaPlanCanBeAuthorized
+      const lacksRebillPlanSavedCard = paymentOption === 'rebill' &&
+        activePaymentMode === 'partial' &&
+        stripePlanCardSource === 'saved_card' &&
+        !rebillPlanSavedPaymentSource
+      const lacksRebillPlanAuthorization = paymentOption === 'rebill' &&
+        activePaymentMode === 'partial' &&
+        !rebillPlanCanBeAuthorized
       const validatingClipGateway = paymentOption === 'clip' && singlePaymentOptionsStage === 'gateway_config'
       const lacksClipContact = validatingClipGateway && !clipContactReady
       const lacksClipCurrency = validatingClipGateway && !clipCurrencyAvailable
@@ -5260,7 +5476,7 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
           ? 'Continuar'
         : paymentOption === 'conekta_saved_card' && conektaMsiEnabled
         ? `Cobrar a ${conektaInstallmentLimit} MSI`
-        : paymentOption === 'stripe_saved_card' || paymentOption === 'conekta_saved_card'
+        : paymentOption === 'stripe_saved_card' || paymentOption === 'conekta_saved_card' || paymentOption === 'rebill_saved_card'
           ? 'Cobrar tarjeta'
         : paymentOption === 'rebill' && activePaymentMode === 'partial'
           ? 'Crear plan Rebill'
@@ -5334,6 +5550,8 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
                 lacksStripePlanAuthorization ||
                 lacksConektaPlanSavedCard ||
                 lacksConektaPlanAuthorization ||
+                lacksRebillPlanSavedCard ||
+                lacksRebillPlanAuthorization ||
                 lacksClipContact ||
                 lacksClipCurrency ||
                 needsStripeInstallmentAvailability ||
@@ -5356,6 +5574,10 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
                   : lacksConektaPlanSavedCard
                     ? 'Selecciona una tarjeta guardada para el plan'
                   : lacksConektaPlanAuthorization
+                    ? 'Usa una tarjeta guardada o marca el primer pago como tarjeta/link'
+                  : lacksRebillPlanSavedCard
+                    ? 'Selecciona una tarjeta guardada para el plan'
+                  : lacksRebillPlanAuthorization
                     ? 'Usa una tarjeta guardada o marca el primer pago como tarjeta/link'
                   : lacksClipContact
                     ? 'CLIP requiere email y teléfono del cliente'
@@ -5423,6 +5645,18 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
               </div>
             )}
             {lacksConektaPlanAuthorization && (
+              <div className={styles.tooltipInfo}>
+                <AlertCircle size={14} />
+                <span>Usa tarjeta guardada o primer pago con tarjeta/link</span>
+              </div>
+            )}
+            {lacksRebillPlanSavedCard && (
+              <div className={styles.tooltipInfo}>
+                <AlertCircle size={14} />
+                <span>Selecciona una tarjeta guardada para programar</span>
+              </div>
+            )}
+            {lacksRebillPlanAuthorization && (
               <div className={styles.tooltipInfo}>
                 <AlertCircle size={14} />
                 <span>Usa tarjeta guardada o primer pago con tarjeta/link</span>

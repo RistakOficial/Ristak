@@ -48,6 +48,7 @@ async function cleanupContact(contactId) {
   await db.run('DELETE FROM payments WHERE contact_id = ?', [contactId]).catch(() => undefined)
   await db.run('DELETE FROM stripe_payment_methods WHERE contact_id = ?', [contactId]).catch(() => undefined)
   await db.run('DELETE FROM conekta_payment_sources WHERE contact_id = ?', [contactId]).catch(() => undefined)
+  await db.run('DELETE FROM rebill_payment_sources WHERE contact_id = ?', [contactId]).catch(() => undefined)
   await db.run('DELETE FROM contacts WHERE id = ?', [contactId]).catch(() => undefined)
 }
 

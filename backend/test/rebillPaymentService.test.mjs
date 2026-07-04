@@ -88,6 +88,7 @@ async function cleanupContact(contactId) {
   ).catch(() => undefined)
   await db.run('DELETE FROM payment_flows WHERE contact_id = ?', [contactId]).catch(() => undefined)
   await db.run('DELETE FROM payments WHERE contact_id = ?', [contactId]).catch(() => undefined)
+  await db.run('DELETE FROM rebill_payment_sources WHERE contact_id = ?', [contactId]).catch(() => undefined)
   await db.run('DELETE FROM contacts WHERE id = ?', [contactId]).catch(() => undefined)
 }
 
@@ -315,7 +316,7 @@ test('Rebill confirma pago público consultando el paymentId en backend antes de
   })
 })
 
-test('Rebill crea planes con reloj de Ristak, libera links vencidos y sincroniza el espejo', async () => {
+test('Rebill crea planes con reloj de Ristak, guarda tarjeta y cobra parcialidades con cardId', async () => {
   await initializeMasterKey()
 
   await snapshotRebillConfig(async () => {
@@ -342,6 +343,7 @@ test('Rebill crea planes con reloj de Ristak, libera links vencidos y sincroniza
         method,
         path: parsed.pathname,
         apiKey: options.headers?.['x-api-key'],
+        idempotencyKey: options.headers?.['x-idempotency-key'],
         body
       })
 
@@ -353,6 +355,45 @@ test('Rebill crea planes con reloj de Ristak, libera links vencidos y sincroniza
       }
       if (parsed.pathname === '/v3/webhooks' && method === 'POST') {
         return jsonTextResponse({ id: 'wh_rebill_plan', url: body.url, events: body.events, active: true }, 201)
+      }
+      if (parsed.pathname === '/v3/payments/pay_rebill_plan_first_test' && method === 'GET') {
+        const row = await db.get(
+          'SELECT public_payment_id FROM payments WHERE id = (SELECT first_payment_invoice_id FROM payment_flows WHERE id = ?)',
+          [flowId]
+        )
+        return jsonTextResponse({
+          id: 'pay_rebill_plan_first_test',
+          status: 'approved',
+          amount: 500,
+          currency: 'MXN',
+          approvedAt: '2026-07-03T18:30:00.000Z',
+          customer: { id: 'cus_rebill_plan_saved' },
+          card: {
+            id: 'card_rebill_plan_saved',
+            brand: 'visa',
+            lastFourDigits: '4242'
+          },
+          metadata: {
+            publicPaymentId: row?.public_payment_id
+          }
+        })
+      }
+      if (parsed.pathname === '/v3/checkout' && method === 'POST') {
+        assert.equal(body.cardId, 'card_rebill_plan_saved')
+        assert.equal(body.transaction.amount, 800)
+        assert.equal(body.transaction.currency, 'MXN')
+        assert.equal(body.transaction.quantity, 1)
+        return jsonTextResponse({
+          traceId: 'trace_rebill_plan_installment',
+          date: '2026-07-03T19:30:00.000Z',
+          result: {
+            paymentId: 'pay_rebill_plan_installment_test',
+            status: 'approved',
+            cardId: 'card_rebill_plan_saved',
+            cardLastFour: '4242',
+            customerId: 'cus_rebill_plan_saved'
+          }
+        }, 201)
       }
       if (parsed.pathname === '/v3/payments/pay_rebill_plan_installment_test' && method === 'GET') {
         const row = await db.get(
@@ -422,7 +463,7 @@ test('Rebill crea planes con reloj de Ristak, libera links vencidos y sincroniza
 
       assert.match(plan.firstPaymentLink, /^https:\/\/app\.example\.test\/pay\/rstk_pay_[A-Za-z0-9]{20}$/)
       assert.equal(plan.scheduledPayments.length, 1)
-      assert.equal(plan.scheduledPayments[0].status, 'scheduled')
+      assert.equal(plan.scheduledPayments[0].status, 'waiting_card_authorization')
 
       const firstPayment = await db.get('SELECT status, payment_url FROM payments WHERE id = ?', [plan.firstPaymentPaymentId])
       assert.equal(firstPayment.status, 'sent')
@@ -435,8 +476,8 @@ test('Rebill crea planes con reloj de Ristak, libera links vencidos y sincroniza
           WHERE i.flow_id = ?`,
         [plan.flowId]
       )
-      assert.equal(installment.status, 'scheduled')
-      assert.equal(installment.payment_status, 'scheduled')
+      assert.equal(installment.status, 'waiting_card_authorization')
+      assert.equal(installment.payment_status, 'pending')
       assert.equal(installment.payment_url, '')
 
       const mirror = await db.get('SELECT source, status, schedule_json FROM payment_plans WHERE id = ?', [plan.flowId])
@@ -445,49 +486,61 @@ test('Rebill crea planes con reloj de Ristak, libera links vencidos y sincroniza
       assert.equal(mirror.status, 'active')
       assert.equal(schedule.clockOwner, 'ristak')
       assert.equal(schedule.checkoutProvider, 'rebill')
+      assert.equal(schedule.savedPaymentSource, null)
+
+      const firstPaymentRow = await db.get('SELECT public_payment_id FROM payments WHERE id = ?', [plan.firstPaymentPaymentId])
+      const firstConfirmation = await confirmPublicRebillPayment(firstPaymentRow.public_payment_id, {
+        rebillPaymentId: 'pay_rebill_plan_first_test'
+      }, {
+        baseUrl: 'https://app.example.test'
+      })
+      assert.equal(firstConfirmation.payment.status, 'paid')
+
+      const savedSource = await db.get('SELECT * FROM rebill_payment_sources WHERE contact_id = ?', [contactId])
+      assert.equal(savedSource.rebill_customer_id, 'cus_rebill_plan_saved')
+      assert.equal(savedSource.rebill_card_id, 'card_rebill_plan_saved')
+      assert.equal(savedSource.last4, '4242')
+
+      const authorizedFlow = await db.get(
+        'SELECT current_state, rebill_customer_id, rebill_card_id, rebill_card_label FROM payment_flows WHERE id = ?',
+        [plan.flowId]
+      )
+      assert.equal(authorizedFlow.current_state, 'installment_plan_active')
+      assert.equal(authorizedFlow.rebill_customer_id, 'cus_rebill_plan_saved')
+      assert.equal(authorizedFlow.rebill_card_id, 'card_rebill_plan_saved')
+      assert.equal(authorizedFlow.rebill_card_label, 'VISA •••• 4242')
 
       await db.run('UPDATE installment_payments SET due_date = ? WHERE flow_id = ?', [today, plan.flowId])
       await db.run('UPDATE payments SET due_date = ? WHERE id = ?', [today, installment.payment_id])
 
-      const released = await processDueRebillPaymentPlanCharges({
+      const charged = await processDueRebillPaymentPlanCharges({
         limit: 5,
         baseUrl: 'https://app.example.test'
       })
-      assert.equal(released.filter((item) => item.generated).length, 1)
-      assert.equal(released[0].type, 'installment')
-      assert.match(released[0].paymentUrl, /^https:\/\/app\.example\.test\/pay\//)
+      assert.equal(charged.filter((item) => item.charged).length, 1)
+      assert.equal(charged[0].type, 'installment')
+      assert.equal(charged[0].status, 'paid')
 
       const releasedInstallment = await db.get(
-        `SELECT i.status, p.status AS payment_status, p.payment_url, p.public_payment_id
+        `SELECT i.status, i.rebill_payment_id, p.status AS payment_status, p.payment_url, p.public_payment_id, p.rebill_payment_id AS payment_rebill_payment_id
            FROM installment_payments i
            JOIN payments p ON p.id = i.payment_id
           WHERE i.flow_id = ?`,
         [plan.flowId]
       )
-      assert.equal(releasedInstallment.status, 'sent')
-      assert.equal(releasedInstallment.payment_status, 'sent')
-      assert.match(releasedInstallment.payment_url, /^https:\/\/app\.example\.test\/pay\//)
+      assert.equal(releasedInstallment.status, 'paid')
+      assert.equal(releasedInstallment.payment_status, 'paid')
+      assert.equal(releasedInstallment.rebill_payment_id, 'pay_rebill_plan_installment_test')
+      assert.equal(releasedInstallment.payment_rebill_payment_id, 'pay_rebill_plan_installment_test')
+      assert.equal(releasedInstallment.payment_url, '')
 
-      const confirmation = await confirmPublicRebillPayment(releasedInstallment.public_payment_id, {
-        rebillPaymentId: 'pay_rebill_plan_installment_test'
-      }, {
-        baseUrl: 'https://app.example.test'
-      })
-      assert.equal(confirmation.payment.status, 'paid')
-
-      const paidInstallment = await db.get(
-        `SELECT i.status, i.rebill_payment_id, p.status AS payment_status
-           FROM installment_payments i
-           JOIN payments p ON p.id = i.payment_id
-          WHERE i.flow_id = ?`,
-        [plan.flowId]
-      )
-      assert.equal(paidInstallment.status, 'paid')
-      assert.equal(paidInstallment.payment_status, 'paid')
-      assert.equal(paidInstallment.rebill_payment_id, 'pay_rebill_plan_installment_test')
+      const checkoutCall = calls.find((call) => call.path === '/v3/checkout' && call.method === 'POST')
+      assert.ok(checkoutCall)
+      assert.match(checkoutCall.idempotencyKey, /^ristak:rebill:/)
 
       const refreshedMirror = await db.get('SELECT schedule_json FROM payment_plans WHERE id = ?', [plan.flowId])
       const refreshedSchedule = JSON.parse(refreshedMirror.schedule_json)
+      assert.equal(refreshedSchedule.savedPaymentSource.cardId, 'card_rebill_plan_saved')
       assert.equal(refreshedSchedule.installments[0].status, 'paid')
       assert.equal(refreshedSchedule.installments[0].rebillPaymentId, 'pay_rebill_plan_installment_test')
     } finally {

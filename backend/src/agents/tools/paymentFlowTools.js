@@ -567,7 +567,7 @@ export const createPaymentLinkTool = tool({
 
 export const createInstallmentPlanTool = tool({
   name: 'create_installment_plan',
-  description: 'Crea un plan de pagos por parcialidades con las pasarelas conectadas compatibles de Ristak: Stripe, Conekta, Rebill o GoHighLevel opcional. En Rebill, Ristak mantiene el calendario y libera cada link cuando toca; Rebill no maneja el reloj del plan. Mercado Pago no soporta planes de pago en Ristak; úsalo sólo para links o suscripciones. La suma del primer pago y los restantes debe ser igual al total. Si hay varias pasarelas conectadas pregunta cuál usar. Confirma el plan completo y pasa confirm=true solo cuando ya aprobó.',
+  description: 'Crea un plan de pagos por parcialidades con las pasarelas conectadas compatibles de Ristak: Stripe, Conekta, Rebill o GoHighLevel opcional. En Rebill, Ristak mantiene el calendario; si ya hay tarjeta guardada cobra cada parcialidad con cardId y si falta tarjeta manda primer link o domiciliacion para autorizarla. Rebill no maneja el reloj del plan. Mercado Pago no soporta planes de pago en Ristak; úsalo sólo para links o suscripciones. La suma del primer pago y los restantes debe ser igual al total. Si hay varias pasarelas conectadas pregunta cuál usar. Confirma el plan completo y pasa confirm=true solo cuando ya aprobó.',
   parameters: z.object({
     contactId: z.string().describe('ID del contacto'),
     totalAmount: z.number().positive().describe('Total a cobrar (debe coincidir con la suma de los pagos)'),

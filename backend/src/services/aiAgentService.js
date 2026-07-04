@@ -16,7 +16,7 @@ import { createStripePaymentLink, createStripePaymentPlan, getStripePaymentConfi
 import { createMercadoPagoPaymentLink, getMercadoPagoPaymentConfig } from './mercadoPagoPaymentService.js'
 import { createConektaPaymentLink, createConektaPaymentPlan, getConektaPaymentConfig } from './conektaPaymentService.js'
 import { createClipPaymentLink, getClipPaymentConfig } from './clipPaymentService.js'
-import { createRebillPaymentLink, getRebillPaymentConfig } from './rebillPaymentService.js'
+import { createRebillPaymentLink, createRebillPaymentPlan, getRebillPaymentConfig } from './rebillPaymentService.js'
 import { recordAttendanceAttributionSignal } from './appointmentsMerge.js'
 import { triggerWhatsappAppointmentBookedEvent } from './metaWhatsappEventsService.js'
 import { PAYMENT_MODE_LIVE, PAYMENT_MODE_TEST, normalizePaymentMode, nonTestPaymentCondition } from '../utils/paymentMode.js'
@@ -220,7 +220,7 @@ Definiciones del dashboard:
 - Clientes nuevos: contactos con purchases_count > 0 o total_paid > 0. Si se pregunta por "nuevos", normalmente filtra por contacts.created_at salvo que el usuario pida fecha de pago.
 - Ventas o ingresos reales: payments.amount con status pagado/completado y payment_mode distinto de "test". Estados pagados: paid, succeeded, success, completed, complete.
 - Pagos en modo prueba: payment_mode = "test". No los cuentes como ingreso real, venta real, ROAS real ni LTV real salvo que el usuario pida explícitamente pruebas/sandbox.
-- Tarjeta guardada/autorizada: NO se infiere desde payments. Se confirma con tarjetas nativas en stripe_payment_methods/conekta_payment_sources o con payment_flows del mismo contact_id que tengan método guardado de Stripe, Conekta o HighLevel. Describe proveedor + marca/terminación cuando existan y respeta modo prueba/en vivo.
+- Tarjeta guardada/autorizada: NO se infiere desde payments. Se confirma con tarjetas nativas en stripe_payment_methods/conekta_payment_sources/rebill_payment_sources o con payment_flows del mismo contact_id que tengan método guardado de Stripe, Conekta, Rebill o HighLevel. Describe proveedor + marca/terminación cuando existan y respeta modo prueba/en vivo.
 - Inversión o gasto publicitario: SUM(meta_ads.spend), filtrado por meta_ads.date.
 - Facebook/Meta: normalmente meta_ads y contactos con attribution_ad_id; también puedes revisar source, attribution_session_source, utm_source, channel o source_platform cuando el usuario pregunte por origen.
 - Citas agendadas del funnel: contactos únicos con al menos una cita. Para contar citas operativas, cuenta appointments.id.
@@ -1564,7 +1564,7 @@ async function getAgentPaymentBaseUrl() {
 function mapAgentPaymentGatewayStatus({ id, connected, mode = null, accountLabel = '', issue = '' }) {
   const capabilities = {
     paymentLinks: id === 'highlevel' || id === 'stripe' || id === 'conekta' || id === 'mercadopago' || id === 'clip' || id === 'rebill',
-    installmentPlans: id === 'highlevel' || id === 'stripe' || id === 'conekta'
+    installmentPlans: id === 'highlevel' || id === 'stripe' || id === 'conekta' || id === 'rebill'
   }
 
   return {
@@ -8210,15 +8210,44 @@ async function getStoredCardStatusForContact(contactId, paymentMode = PAYMENT_MO
     }
   }
 
+  if (!requestedProvider || requestedProvider === 'rebill') {
+    const rebillRow = await safeGet(
+      `SELECT rebill_customer_id, rebill_card_id, brand, last4, mode
+       FROM rebill_payment_sources
+       WHERE contact_id = ?
+         AND rebill_customer_id IS NOT NULL
+         AND rebill_card_id IS NOT NULL
+         AND (mode IS NULL OR mode = ?)
+       ORDER BY is_default DESC, updated_at DESC, created_at DESC
+       LIMIT 1`,
+      [contactId, normalizedMode],
+      null
+    )
+
+    if (rebillRow?.rebill_customer_id && rebillRow?.rebill_card_id) {
+      return {
+        hasAuthorizedCard: true,
+        paymentMode: normalizedMode,
+        provider: 'rebill',
+        brand: rebillRow.brand || 'Rebill',
+        last4: rebillRow.last4 || null,
+        paymentMethodId: rebillRow.rebill_card_id
+      }
+    }
+  }
+
   const flowMethodWhere = requestedProvider === 'stripe'
     ? 'stripe_payment_method_id IS NOT NULL'
     : requestedProvider === 'conekta'
       ? 'conekta_payment_source_id IS NOT NULL'
+      : requestedProvider === 'rebill'
+        ? 'rebill_card_id IS NOT NULL'
       : requestedProvider === 'highlevel'
         ? '(ghl_customer_id IS NOT NULL AND ghl_payment_method_id IS NOT NULL)'
         : `(
           stripe_payment_method_id IS NOT NULL OR
           conekta_payment_source_id IS NOT NULL OR
+          rebill_card_id IS NOT NULL OR
           (ghl_customer_id IS NOT NULL AND ghl_payment_method_id IS NOT NULL)
         )`
 
@@ -8227,7 +8256,8 @@ async function getStoredCardStatusForContact(contactId, paymentMode = PAYMENT_MO
             ghl_customer_id, ghl_payment_method_id, ghl_payment_method_type,
             ghl_card_brand, ghl_card_last4, ghl_payment_live_mode,
             stripe_customer_id, stripe_payment_method_id, stripe_payment_method_label,
-            conekta_customer_id, conekta_payment_source_id, conekta_payment_source_label
+            conekta_customer_id, conekta_payment_source_id, conekta_payment_source_label,
+            rebill_customer_id, rebill_card_id, rebill_card_label
      FROM payment_flows
      WHERE contact_id = ?
        AND ${flowMethodWhere}
@@ -8257,6 +8287,17 @@ async function getStoredCardStatusForContact(contactId, paymentMode = PAYMENT_MO
       brand: flowRow.conekta_payment_source_label || 'Conekta',
       last4: extractStoredCardLast4(flowRow.conekta_payment_source_label),
       paymentMethodId: flowRow.conekta_payment_source_id
+    }
+  }
+
+  if ((!requestedProvider || requestedProvider === 'rebill') && flowRow?.rebill_card_id) {
+    return {
+      hasAuthorizedCard: true,
+      paymentMode: normalizedMode,
+      provider: 'rebill',
+      brand: flowRow.rebill_card_label || 'Rebill',
+      last4: extractStoredCardLast4(flowRow.rebill_card_label),
+      paymentMethodId: flowRow.rebill_card_id
     }
   }
 
@@ -10721,7 +10762,9 @@ async function executeCreateInstallmentPaymentFlow(args = {}, highLevelConnectio
     const baseUrl = await getAgentPaymentBaseUrl()
     const result = selectedGateway.gateway.id === 'stripe'
       ? await createStripePaymentPlan(planPayload, { baseUrl })
-      : await createConektaPaymentPlan(planPayload, { baseUrl })
+      : selectedGateway.gateway.id === 'rebill'
+        ? await createRebillPaymentPlan(planPayload, { baseUrl })
+        : await createConektaPaymentPlan(planPayload, { baseUrl })
 
     return {
       ok: true,
@@ -12246,8 +12289,8 @@ function buildOperationalTools(highLevelConnection, options = {}) {
           productPrice: { type: ['number', 'null'], description: 'Precio total del producto seleccionado si el usuario quiere usar el precio guardado como total del plan.' },
           priceAmount: { type: ['number', 'null'], description: 'Alias de productPrice.' },
           priceCurrency: { type: ['string', 'null'], description: 'Moneda del precio seleccionado.' },
-          gateway: { type: ['string', 'null'], enum: ['auto', 'stripe', 'conekta', 'highlevel', null], description: 'Pasarela solicitada por el usuario para el plan. Usa auto/null si no dijo cuál.' },
-          provider: { type: ['string', 'null'], enum: ['auto', 'stripe', 'conekta', 'highlevel', null], description: 'Alias de gateway.' },
+          gateway: { type: ['string', 'null'], enum: ['auto', 'stripe', 'conekta', 'rebill', 'highlevel', null], description: 'Pasarela solicitada por el usuario para el plan. Usa auto/null si no dijo cuál.' },
+          provider: { type: ['string', 'null'], enum: ['auto', 'stripe', 'conekta', 'rebill', 'highlevel', null], description: 'Alias de gateway.' },
           firstPayment: {
             type: ['object', 'null'],
             description: 'Primer pago o anticipo. No inventes method: card sólo porque el usuario dijo "cóbrale"; si no mencionó tarjeta/link/transferencia/depósito/manual, deja method vacío para que Ristak detecte tarjeta guardada o pida el método.',

@@ -2,10 +2,12 @@ import {
   confirmPublicRebillPayment,
   createRebillPaymentLink,
   createRebillPaymentPlan,
+  createRebillSavedCardPayment,
   deleteRebillPaymentConfig,
   getPublicRebillPayment,
   getRebillPaymentConfig,
   handleRebillWebhookEvent,
+  listRebillSavedPaymentSources,
   REBILL_WEBHOOK_ENDPOINT_PATH,
   saveRebillPaymentConfig,
   testRebillPaymentConfig
@@ -159,6 +161,26 @@ export async function createRebillPaymentPlanView(req, res) {
   } catch (error) {
     logger.error(`Error creando plan Rebill: ${error.message}`)
     sendRebillError(res, error, 'No se pudo crear el plan de pagos con Rebill')
+  }
+}
+
+export async function createRebillSavedCardPaymentView(req, res) {
+  try {
+    const result = await createRebillSavedCardPayment(req.body || {})
+    res.status(201).json({ success: true, data: result })
+  } catch (error) {
+    logger.error(`Error cobrando tarjeta guardada Rebill: ${error.message}`)
+    sendRebillError(res, error, 'No se pudo cobrar la tarjeta guardada con Rebill')
+  }
+}
+
+export async function getRebillSavedPaymentSourcesView(req, res) {
+  try {
+    const sources = await listRebillSavedPaymentSources(req.params.contactId)
+    res.json({ success: true, data: sources })
+  } catch (error) {
+    logger.error(`Error listando tarjetas Rebill: ${error.message}`)
+    sendRebillError(res, error, 'No se pudieron obtener las tarjetas guardadas de Rebill')
   }
 }
 

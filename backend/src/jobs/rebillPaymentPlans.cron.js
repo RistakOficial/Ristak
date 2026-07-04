@@ -18,10 +18,11 @@ async function runRebillPaymentPlans(source = 'interval') {
       const { ran } = await withCronLock('rebill-payment-plans', REBILL_PAYMENT_PLANS_INTERVAL_MS, async () => {
         const results = await processDueRebillPaymentPlanCharges()
         const generated = results.filter((result) => result.generated).length
+        const charged = results.filter((result) => result.charged).length
         const failed = results.filter((result) => result.error).length
 
-        if (generated || failed) {
-          logger.info(`[Rebill Planes] ${source}: ${generated} links liberados, ${failed} con error`)
+        if (generated || charged || failed) {
+          logger.info(`[Rebill Planes] ${source}: ${charged} cargos, ${generated} links de autorizacion liberados, ${failed} con error`)
         }
       })
       if (!ran) logger.info(`[Rebill Planes] ${source}: omitido (otra instancia tiene el lock)`)

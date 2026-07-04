@@ -142,7 +142,23 @@ export interface RebillPaymentPlanPayload {
     frequency?: string
     paymentMethod?: string
   }>
+  paymentMethodId?: string
+  cardSetupAmount?: number
   source?: string
+}
+
+export interface RebillSavedPaymentSource {
+  id: string
+  contactId: string
+  rebillCustomerId: string
+  rebillCardId: string
+  brand: string
+  last4: string
+  name?: string
+  mode: 'test' | 'live'
+  isDefault: boolean
+  label: string
+  expiresLabel: string
 }
 
 export interface RebillPaymentPlanResponse {
@@ -151,6 +167,10 @@ export interface RebillPaymentPlanResponse {
   paymentMode: 'test' | 'live'
   firstPaymentLink?: string | null
   firstPaymentPaymentId?: string | null
+  cardSetupLink?: string | null
+  cardSetupPaymentId?: string | null
+  cardSetupAmount?: number
+  savedPaymentSource?: RebillSavedPaymentSource | null
   scheduledPayments: Array<{
     installmentId: string
     paymentId: string
@@ -213,6 +233,23 @@ export interface PublicRebillPayment {
 export interface RebillConfirmPaymentPayload {
   rebillPaymentId?: string
   paymentId?: string
+}
+
+export interface RebillSavedCardPaymentPayload {
+  contactId: string
+  paymentSourceId: string
+  contactName?: string
+  email?: string
+  phone?: string
+  amount: number
+  currency: string
+  applyTax?: boolean
+  taxCalculationMode?: 'exclusive' | 'inclusive'
+  title?: string
+  description?: string
+  dueDate?: string
+  source?: string
+  lineItems?: Array<Record<string, unknown>>
 }
 
 export interface RebillConfirmPaymentResponse {
@@ -284,6 +321,23 @@ export const rebillPaymentsService = {
       body: JSON.stringify(payload)
     })
     return parseResponse<RebillPaymentPlanResponse>(response)
+  },
+
+  async getSavedPaymentSources(contactId: string): Promise<RebillSavedPaymentSource[]> {
+    const response = await fetch(apiUrl(`/api/rebill/contacts/${encodeURIComponent(contactId)}/payment-sources`), {
+      credentials: 'include'
+    })
+    return parseResponse<RebillSavedPaymentSource[]>(response)
+  },
+
+  async createSavedCardPayment(payload: RebillSavedCardPaymentPayload): Promise<{ payment: PublicRebillPayment }> {
+    const response = await fetch(apiUrl('/api/rebill/saved-card-payments'), {
+      method: 'POST',
+      credentials: 'include',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
+    })
+    return parseResponse<{ payment: PublicRebillPayment }>(response)
   },
 
   async getPublicPayment(publicPaymentId: string): Promise<PublicRebillPayment> {

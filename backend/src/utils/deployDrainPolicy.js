@@ -59,6 +59,7 @@ export function classifyDeployDrainRequest(req = {}) {
     /^\/api\/stripe\/webhook$/,
     /^\/api\/conekta\/webhook$/,
     /^\/api\/mercadopago\/webhook$/,
+    /^\/api\/rebill\/webhook$/,
     /^\/api\/clip\/webhook$/
   ])) {
     return 'http:payment-webhook'
@@ -90,6 +91,7 @@ export function classifyDeployDrainRequest(req = {}) {
     /^\/api\/stripe\/public\/payments\/[^/]+\/intent$/,
     /^\/api\/mercadopago\/public\/payments\/[^/]+\/(?:preference|card)$/,
     /^\/api\/conekta\/public\/payments\/[^/]+\/card$/,
+    /^\/api\/rebill\/public\/payments\/[^/]+\/confirm$/,
     /^\/api\/clip\/public\/payments\/[^/]+\/(?:card|refresh)$/
   ]) && isMutation) {
     return 'http:public-payment'
@@ -107,6 +109,9 @@ export function classifyDeployDrainRequest(req = {}) {
       '/api/conekta/payment-links',
       '/api/conekta/payment-plans',
       '/api/conekta/saved-card-payments',
+      '/api/rebill/payment-links',
+      '/api/rebill/payment-plans',
+      '/api/rebill/saved-card-payments',
       '/api/clip/payment-links',
       '/api/highlevel/invoices',
       '/api/highlevel/payment-flows',

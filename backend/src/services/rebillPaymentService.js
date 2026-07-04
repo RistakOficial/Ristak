@@ -44,6 +44,7 @@ const REBILL_SUPPORTED_CURRENCIES = new Set(['ARS', 'BRL', 'CLP', 'COP', 'MXN', 
 const SUCCESSFUL_PAYMENT_STATUSES = new Set(['paid', 'succeeded', 'completed', 'complete', 'fulfilled', 'success', 'approved'])
 const CLOSED_PAYMENT_STATUSES = new Set(['paid', 'succeeded', 'completed', 'complete', 'fulfilled', 'success', 'approved', 'refunded', 'void', 'deleted', 'chargeback'])
 const REBILL_PLAN_STATES = {
+  WAITING_CARD_AUTHORIZATION: 'waiting_card_authorization',
   ACTIVE: 'installment_plan_active',
   COMPLETED: 'completed',
   PAUSED: 'paused',
@@ -52,6 +53,8 @@ const REBILL_PLAN_STATES = {
 }
 const MANUAL_PLAN_PAYMENT_METHODS = new Set(['cash', 'bank_transfer', 'transfer', 'deposit', 'manual', 'offline', 'check', 'other'])
 const REBILL_CHECKOUT_METHODS = new Set(['card', 'payment_link', 'direct_card', 'rebill', 'rebill_checkout', 'checkout'])
+const REBILL_STORED_CARD_METHODS = new Set(['saved_card', 'stored_card', 'rebill_saved_card'])
+const REBILL_AUTOMATIC_PLAN_METHODS = new Set([...REBILL_CHECKOUT_METHODS, ...REBILL_STORED_CARD_METHODS])
 const TIMED_PLAN_FREQUENCY = 'scheduled_time'
 const PLAN_FREQUENCIES = new Set(['custom', 'daily', 'weekly', 'biweekly', 'monthly', 'yearly', TIMED_PLAN_FREQUENCY])
 const TIMED_PLAN_FREQUENCY_ALIASES = new Set([TIMED_PLAN_FREQUENCY, 'scheduled-time', 'scheduledat', 'scheduled_at', 'timed', 'datetime'])
@@ -432,7 +435,7 @@ export async function getRebillPaymentConfig({ includeSecrets = false, mode: mod
   return mapConfig(raw, { includeSecrets, mode })
 }
 
-async function rebillApiRequest(path, { method = 'GET', body = null, apiKey = '', config: configOverride = null } = {}) {
+async function rebillApiRequest(path, { method = 'GET', body = null, apiKey = '', config: configOverride = null, idempotencyKey = '' } = {}) {
   const config = configOverride || await getRebillClientConfig()
   const secretKey = cleanString(apiKey || config.secretKey, 5000)
   const url = path.startsWith('http') ? path : `${REBILL_API_BASE}${path}`
@@ -441,6 +444,7 @@ async function rebillApiRequest(path, { method = 'GET', body = null, apiKey = ''
     'x-api-key': secretKey
   }
   if (body !== null && body !== undefined) headers['Content-Type'] = 'application/json'
+  if (cleanString(idempotencyKey, 200)) headers['x-idempotency-key'] = cleanString(idempotencyKey, 200)
 
   const response = await rebillFetch()(url, {
     method,
@@ -456,11 +460,22 @@ async function rebillApiRequest(path, { method = 'GET', body = null, apiKey = ''
   }
 
   if (!response.ok) {
-    const message = cleanString(payload.message || payload.error || payload.error_message || payload.detail, 500) ||
+    const errorPayload = payload.error && typeof payload.error === 'object' ? payload.error : {}
+    const message = cleanString(
+      payload.message ||
+      errorPayload.rawMessage ||
+      errorPayload.message ||
+      payload.error_message ||
+      payload.detail ||
+      errorPayload.type ||
+      payload.error,
+      500
+    ) ||
       'Rebill no pudo completar la solicitud.'
     const error = new Error(message)
     error.status = response.status || 502
     error.payload = payload
+    error.rebillType = cleanString(errorPayload.type || payload.type, 120)
     throw error
   }
 
@@ -796,6 +811,175 @@ function buildCustomerInformation(row, metadata = {}) {
   return Object.keys(customer).length ? customer : null
 }
 
+function getRebillCardLast4(card = {}, fallback = '') {
+  return cleanString(
+    card.lastFourDigits ||
+    card.last_four_digits ||
+    card.lastFour ||
+    card.last4 ||
+    card.cardLastFour ||
+    card.card_last_four ||
+    fallback,
+    12
+  )
+}
+
+function getRebillSavedCardLabelFromRow(row = {}) {
+  const brand = cleanString(row.brand || row.card_brand, 80)
+  const last4 = cleanString(row.last4 || row.last_four || row.cardLastFour, 12)
+  return `${brand ? brand.toUpperCase() : 'Rebill'} •••• ${last4 || '----'}`
+}
+
+function mapRebillPaymentSource(row = null) {
+  if (!row) return null
+  return {
+    id: cleanString(row.id, 180),
+    contactId: cleanString(row.contact_id, 180),
+    rebillCustomerId: cleanString(row.rebill_customer_id, 180),
+    rebillCardId: cleanString(row.rebill_card_id, 180),
+    brand: cleanString(row.brand, 80),
+    last4: cleanString(row.last4, 12),
+    name: cleanString(row.name, 180),
+    mode: normalizeMode(row.mode),
+    isDefault: Boolean(row.is_default),
+    label: getRebillSavedCardLabelFromRow(row),
+    expiresLabel: ''
+  }
+}
+
+async function upsertRebillPaymentSource({
+  contactId,
+  customerId,
+  cardId,
+  card = {},
+  mode = '',
+  makeDefault = true
+} = {}) {
+  const cleanContactId = cleanString(contactId, 180)
+  const cleanCustomerId = cleanString(customerId, 180)
+  const cleanCardId = cleanString(cardId, 180)
+  if (!cleanContactId || !cleanCustomerId || !cleanCardId) return null
+
+  const normalizedMode = normalizeMode(mode)
+  if (makeDefault) {
+    await db.run(
+      `UPDATE rebill_payment_sources
+       SET is_default = 0,
+           updated_at = CURRENT_TIMESTAMP
+       WHERE contact_id = ? AND mode = ?`,
+      [cleanContactId, normalizedMode]
+    )
+  }
+
+  const existing = await db.get(
+    'SELECT id FROM rebill_payment_sources WHERE rebill_card_id = ?',
+    [cleanCardId]
+  )
+  const id = existing?.id || createId('rebill_source')
+  const brand = cleanString(card.brand || card.card_brand || card.type, 80)
+  const last4 = getRebillCardLast4(card)
+  const name = cleanString(card.name || card.cardholderName || card.card_holder_name, 180)
+
+  await db.run(
+    `INSERT INTO rebill_payment_sources (
+      id, contact_id, rebill_customer_id, rebill_card_id,
+      brand, last4, name, mode, is_default, created_at, updated_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+    ON CONFLICT(rebill_card_id) DO UPDATE SET
+      contact_id = COALESCE(?, rebill_payment_sources.contact_id),
+      rebill_customer_id = ?,
+      brand = COALESCE(NULLIF(?, ''), rebill_payment_sources.brand),
+      last4 = COALESCE(NULLIF(?, ''), rebill_payment_sources.last4),
+      name = COALESCE(NULLIF(?, ''), rebill_payment_sources.name),
+      mode = ?,
+      is_default = CASE
+        WHEN ? = 1 THEN 1
+        ELSE rebill_payment_sources.is_default
+      END,
+      updated_at = CURRENT_TIMESTAMP`,
+    [
+      id,
+      cleanContactId,
+      cleanCustomerId,
+      cleanCardId,
+      brand,
+      last4,
+      name,
+      normalizedMode,
+      makeDefault ? 1 : 0,
+      cleanContactId,
+      cleanCustomerId,
+      brand,
+      last4,
+      name,
+      normalizedMode,
+      makeDefault ? 1 : 0
+    ]
+  )
+
+  return db.get('SELECT * FROM rebill_payment_sources WHERE rebill_card_id = ?', [cleanCardId])
+}
+
+async function resolveRebillSavedSource(contactId, paymentMethodId = '', config = null) {
+  const cleanContactId = cleanString(contactId, 180)
+  const cleanPaymentMethodId = cleanString(paymentMethodId, 180)
+  const mode = normalizeMode(config?.mode || await getPaymentGatewayMode())
+
+  if (cleanContactId && cleanPaymentMethodId) {
+    const scoped = await db.get(
+      `SELECT *
+       FROM rebill_payment_sources
+       WHERE contact_id = ?
+         AND mode = ?
+         AND (id = ? OR rebill_card_id = ?)
+       ORDER BY is_default DESC, updated_at DESC, created_at DESC
+       LIMIT 1`,
+      [cleanContactId, mode, cleanPaymentMethodId, cleanPaymentMethodId]
+    )
+    if (scoped) return scoped
+  }
+
+  if (cleanContactId && !cleanPaymentMethodId) {
+    return db.get(
+      `SELECT *
+       FROM rebill_payment_sources
+       WHERE contact_id = ?
+         AND mode = ?
+       ORDER BY is_default DESC, updated_at DESC, created_at DESC
+       LIMIT 1`,
+      [cleanContactId, mode]
+    )
+  }
+
+  if (cleanPaymentMethodId) {
+    return db.get(
+      `SELECT *
+       FROM rebill_payment_sources
+       WHERE id = ? OR rebill_card_id = ?
+       ORDER BY updated_at DESC
+       LIMIT 1`,
+      [cleanPaymentMethodId, cleanPaymentMethodId]
+    )
+  }
+
+  return null
+}
+
+export async function listRebillSavedPaymentSources(contactId, { mode = '' } = {}) {
+  const cleanContactId = cleanString(contactId, 180)
+  if (!cleanContactId) return []
+  const config = await getRebillPaymentConfig({ mode })
+  const rows = await db.all(
+    `SELECT *
+     FROM rebill_payment_sources
+     WHERE contact_id = ?
+       AND mode = ?
+     ORDER BY is_default DESC, updated_at DESC, created_at DESC`,
+    [cleanContactId, normalizeMode(config.mode)]
+  )
+  return (rows || []).map(mapRebillPaymentSource)
+}
+
 function addPlanState(history = [], state) {
   return [
     ...history,
@@ -817,16 +1001,18 @@ function normalizeManualPaymentMethod(method) {
   return normalized || 'other'
 }
 
-function normalizeRebillPlanPaymentMethod(value) {
+function normalizeRebillPlanPaymentMethod(value, hasSavedCard = false, cardLabel = '') {
   const method = cleanString(value || 'rebill_checkout', 80).toLowerCase()
-  if (REBILL_CHECKOUT_METHODS.has(method)) {
+  if (REBILL_AUTOMATIC_PLAN_METHODS.has(method)) {
     return {
       automatic: 1,
-      installmentMethod: 'rebill_checkout',
-      paymentMethod: 'rebill_checkout',
-      status: 'scheduled',
-      paymentStatus: 'scheduled',
-      notes: 'Ristak liberará el link de Rebill cuando llegue la fecha programada.'
+      installmentMethod: hasSavedCard ? 'rebill_saved_card' : 'rebill_pending_card',
+      paymentMethod: 'rebill_scheduled_card',
+      status: hasSavedCard ? 'scheduled' : REBILL_PLAN_STATES.WAITING_CARD_AUTHORIZATION,
+      paymentStatus: hasSavedCard ? 'scheduled' : 'pending',
+      notes: hasSavedCard
+        ? `Programado para cobrarse con ${cardLabel || 'tarjeta guardada Rebill'}.`
+        : 'Esperando autorización de tarjeta en Rebill.'
     }
   }
 
@@ -849,7 +1035,7 @@ function normalizeRebillPlanPaymentMethod(value) {
 
 function normalizeRebillFirstPaymentMethod(value, dueNow = true) {
   const method = cleanString(value || 'rebill_checkout', 80).toLowerCase()
-  if (REBILL_CHECKOUT_METHODS.has(method)) {
+  if (REBILL_AUTOMATIC_PLAN_METHODS.has(method)) {
     return {
       flowMethod: 'payment_link',
       paymentMethod: 'rebill_checkout',
@@ -1005,6 +1191,8 @@ function validateRebillPaymentPlanPayload(input = {}, timezone = ACCOUNT_DEFAULT
     currency,
     title: cleanString(input.title || input.invoicePayload?.title || input.invoicePayload?.name || input.description || 'Plan de pagos', 180),
     description: cleanString(input.description || input.concept || input.title || 'Plan de pagos', 500),
+    paymentMethodId: cleanString(input.paymentMethodId || input.payment_method_id || input.rebillCardId || input.rebill_card_id, 180),
+    cardSetupAmount: normalizePositiveAmount(input.cardSetupAmount || input.card_setup_amount, 25),
     firstPayment: {
       enabled: firstPaymentEnabled,
       amount: Math.round(firstPaymentAmount * 100) / 100,
@@ -1091,6 +1279,158 @@ async function createRebillPlanPaymentRow({
   }
 }
 
+function buildRebillCheckoutTransaction(row, metadata = {}) {
+  const product = buildInstantProduct(row, metadata)
+  return {
+    amount: product.amount,
+    currency: product.currency,
+    quantity: 1,
+    name: product.name,
+    ...(product.description?.length ? { description: product.description } : {})
+  }
+}
+
+function normalizeRebillCheckoutResult(payload = {}, row = {}, savedSource = {}) {
+  const result = payload?.result && typeof payload.result === 'object' ? payload.result : payload
+  const paymentId = cleanString(result.paymentId || result.payment_id || result.id, 180)
+  const customerId = cleanString(result.customerId || result.customer_id || savedSource.rebill_customer_id || row.rebill_customer_id, 180)
+  const cardId = cleanString(result.cardId || result.card_id || savedSource.rebill_card_id || row.rebill_card_id, 180)
+  const cardLastFour = cleanString(result.cardLastFour || result.card_last_four || savedSource.last4, 12)
+
+  return {
+    id: paymentId,
+    status: cleanString(result.status || 'processing', 80),
+    amount: Number(row.amount || result.amount || 0),
+    currency: row.currency || result.currency || DEFAULT_CURRENCY,
+    customerId,
+    cardId,
+    card: cardId
+      ? {
+          id: cardId,
+          brand: cleanString(savedSource.brand || result.cardBrand || result.card_brand, 80),
+          lastFourDigits: cardLastFour,
+          name: cleanString(savedSource.name || result.cardName || result.card_name, 180)
+        }
+      : null,
+    approvedAt: payload.date || result.approvedAt || result.approved_at || result.createdAt || result.created_at,
+    metadata: {
+      ...parseJson(row.metadata_json, {}),
+      publicPaymentId: row.public_payment_id
+    },
+    traceId: cleanString(payload.traceId || result.traceId || result.trace_id, 180),
+    statusDetail: result.statusDetail || result.status_detail || null,
+    errorType: result.errorType || result.error_type || null
+  }
+}
+
+async function chargeRebillPaymentRowWithSavedSource({
+  paymentId,
+  savedSource,
+  source = 'rebill_saved_card_charge',
+  extraMetadata = {}
+} = {}) {
+  const row = await findPaymentById(paymentId)
+  if (!row) {
+    const error = new Error('Pago Rebill no encontrado para cobrar tarjeta guardada.')
+    error.status = 404
+    throw error
+  }
+
+  if (SUCCESSFUL_PAYMENT_STATUSES.has(cleanString(row.status, 80).toLowerCase()) || row.paid_at) {
+    return row
+  }
+
+  const sourceRow = savedSource || await resolveRebillSavedSource(row.contact_id, row.rebill_card_id, { mode: row.payment_mode })
+  if (!sourceRow?.rebill_customer_id || !sourceRow?.rebill_card_id) {
+    const error = new Error('No encontramos la tarjeta guardada de Rebill para este cobro.')
+    error.status = 400
+    throw error
+  }
+
+  const config = await getRebillClientConfig(row.payment_mode || sourceRow.mode)
+  const amount = normalizePositiveAmount(row.amount, 0)
+  const currency = assertRebillCurrency(row.currency || config.defaultCurrency)
+  const currentMetadata = parseJson(row.metadata_json, {})
+  const nextMetadata = {
+    ...currentMetadata,
+    rebill: {
+      ...(currentMetadata.rebill || {}),
+      savedCardCharge: true,
+      source,
+      idempotencyKey: `ristak:rebill:${row.id}`
+    },
+    paymentPlan: {
+      ...(currentMetadata.paymentPlan || {}),
+      ...extraMetadata
+    }
+  }
+
+  await db.run(
+    `UPDATE payments
+     SET status = 'processing',
+         payment_method = 'rebill_saved_card',
+         payment_provider = 'rebill',
+         rebill_customer_id = COALESCE(?, rebill_customer_id),
+         rebill_card_id = COALESCE(?, rebill_card_id),
+         metadata_json = ?,
+         updated_at = CURRENT_TIMESTAMP
+     WHERE id = ?`,
+    [
+      sourceRow.rebill_customer_id,
+      sourceRow.rebill_card_id,
+      JSON.stringify(nextMetadata),
+      row.id
+    ]
+  )
+
+  const chargeRow = await findPaymentById(row.id)
+  try {
+    const { payload } = await rebillApiRequest('/v3/checkout', {
+      method: 'POST',
+      config,
+      idempotencyKey: `ristak:rebill:${row.id}:${sourceRow.rebill_card_id}:${amount}:${currency}`,
+      body: {
+        transaction: buildRebillCheckoutTransaction({
+          ...chargeRow,
+          amount,
+          currency
+        }, nextMetadata),
+        cardId: sourceRow.rebill_card_id
+      }
+    })
+
+    const normalized = normalizeRebillCheckoutResult(payload, {
+      ...chargeRow,
+      amount,
+      currency,
+      metadata_json: JSON.stringify(nextMetadata)
+    }, sourceRow)
+    return updatePaymentFromRebillPayment(normalized)
+  } catch (error) {
+    const failedStatus = Number(error.status) === 417 ? 'requires_action' : 'failed'
+    await db.run(
+      `UPDATE payments
+       SET status = ?,
+           metadata_json = ?,
+           updated_at = CURRENT_TIMESTAMP
+       WHERE id = ?`,
+      [
+        failedStatus,
+        JSON.stringify({
+          ...nextMetadata,
+          rebill: {
+            ...(nextMetadata.rebill || {}),
+            savedCardChargeError: error.message,
+            savedCardChargeErrorType: error.rebillType || ''
+          }
+        }),
+        row.id
+      ]
+    )
+    throw error
+  }
+}
+
 async function releaseRebillPlanPaymentLink(paymentId, { baseUrl = '', notes = '' } = {}) {
   const cleanPaymentId = cleanString(paymentId, 180)
   if (!cleanPaymentId) return null
@@ -1159,12 +1499,26 @@ async function persistRebillPaymentPlanMirror(flowId, extra = {}) {
     remainingFrequency: metadata.remainingFrequency || 'custom',
     checkoutProvider: 'rebill',
     clockOwner: 'ristak',
+    savedPaymentSource: flow.rebill_card_id
+      ? {
+          customerId: flow.rebill_customer_id || null,
+          cardId: flow.rebill_card_id || null,
+          label: flow.rebill_card_label || null
+        }
+      : null,
     firstPayment: {
       amount: Number(flow.first_payment_amount || 0),
       date: flow.first_payment_date || null,
       method: flow.first_payment_method || null,
       status: flow.first_payment_status || null,
       paymentId: flow.first_payment_invoice_id || null,
+      paymentLink: flow.card_setup_payment_link || null
+    },
+    cardSetup: {
+      required: Boolean(flow.card_setup_required),
+      amount: Number(flow.card_setup_amount || 0),
+      status: flow.card_setup_status || null,
+      paymentId: flow.card_setup_invoice_id || null,
       paymentLink: flow.card_setup_payment_link || null
     },
     installments: visibleInstallments.map((installment) => ({
@@ -1375,13 +1729,109 @@ export async function createRebillPaymentLink(input = {}, { baseUrl, mode = '' }
   }
 }
 
+export async function createRebillSavedCardPayment(input = {}, { mode = '' } = {}) {
+  const config = await getRebillClientConfig(mode)
+  const contactId = cleanString(input.contactId || input.contact_id, 180)
+  const sourceId = cleanString(input.paymentSourceId || input.payment_source_id || input.rebillCardId || input.rebill_card_id || input.paymentMethodId || input.payment_method_id, 180)
+  const savedSource = await resolveRebillSavedSource(contactId, sourceId, config)
+  if (!savedSource) {
+    const error = new Error('No encontramos la tarjeta guardada de Rebill para este contacto.')
+    error.status = 404
+    throw error
+  }
+
+  const amount = Number(input.amount)
+  if (!Number.isFinite(amount) || amount <= 0) {
+    const error = new Error('El monto debe ser mayor a 0.')
+    error.status = 400
+    throw error
+  }
+
+  const paymentSettings = await getPublicPaymentSettings()
+  const shouldApplyTax = input.applyTax !== false
+  const taxSettings = {
+    ...paymentSettings.taxes,
+    enabled: Boolean(paymentSettings.taxes?.enabled && shouldApplyTax),
+    calculationMode: ['exclusive', 'inclusive'].includes(input.taxCalculationMode)
+      ? input.taxCalculationMode
+      : paymentSettings.taxes?.calculationMode
+  }
+  const tax = calculatePaymentTax(amount, taxSettings)
+  const chargeAmount = tax?.totalAmount || Math.round(amount * 100) / 100
+  const currency = assertRebillCurrency(input.currency || await getConfiguredCurrency())
+  const id = createId('rebill_saved_payment')
+  const now = new Date().toISOString()
+  const metadata = {
+    contactName: cleanString(input.contactName, 180),
+    contactEmail: cleanString(input.email, 180),
+    contactPhone: cleanString(input.phone, 80),
+    source: cleanString(input.source || 'ristak_rebill_saved_card', 120),
+    lineItems: Array.isArray(input.lineItems) ? input.lineItems : [],
+    rebill: {
+      savedCardCharge: true,
+      sourceId: savedSource.rebill_card_id
+    },
+    ...(tax ? { tax } : {})
+  }
+
+  await db.run(
+    `INSERT INTO payments (
+      id, contact_id, amount, currency, status, payment_method, payment_mode,
+      payment_provider, reference, title, description, date, due_date, sent_at,
+      public_payment_id, payment_url, rebill_customer_id, rebill_card_id,
+      metadata_json, created_at, updated_at
+    ) VALUES (?, ?, ?, ?, 'pending', 'rebill_saved_card', ?, 'rebill', ?, ?, ?, ?, ?, NULL, NULL, '', ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+    [
+      id,
+      contactId || null,
+      normalizePositiveAmount(chargeAmount),
+      currency,
+      config.mode,
+      id,
+      cleanString(input.title, 180) || 'Pago',
+      cleanString(input.description, 500) || cleanString(input.title, 180) || 'Pago',
+      now,
+      input.dueDate || null,
+      savedSource.rebill_customer_id,
+      savedSource.rebill_card_id,
+      JSON.stringify(metadata)
+    ]
+  )
+
+  const charged = await chargeRebillPaymentRowWithSavedSource({
+    paymentId: id,
+    savedSource,
+    source: 'rebill_saved_card_payment'
+  })
+
+  return {
+    payment: mapPublicPayment(charged || await findPaymentById(id), config, '', paymentSettings)
+  }
+}
+
 export async function createRebillPaymentPlan(input = {}, { baseUrl, mode = '' } = {}) {
   const config = await getRebillClientConfig(mode)
   const accountCurrency = await getConfiguredCurrency()
   const accountTimezone = await getAccountTimezone().catch(() => ACCOUNT_DEFAULT_TIMEZONE)
   const plan = validateRebillPaymentPlanPayload({ ...input, currency: input.currency || accountCurrency }, accountTimezone)
+  const savedSource = plan.paymentMethodId
+    ? await resolveRebillSavedSource(plan.contact.id, plan.paymentMethodId, config)
+    : null
+  const hasSavedCard = Boolean(savedSource)
+  const firstPaymentIsCard = plan.firstPayment.enabled && REBILL_AUTOMATIC_PLAN_METHODS.has(cleanString(plan.firstPayment.method, 80).toLowerCase())
+  const firstPaymentIsOffline = plan.firstPayment.enabled && isManualPlanPaymentMethod(plan.firstPayment.method)
+  const needsSeparateCardSetup = !hasSavedCard && !firstPaymentIsCard
+  const cardSetupAmount = needsSeparateCardSetup ? plan.cardSetupAmount : (firstPaymentIsCard ? plan.firstPayment.amount : 0)
   const flowId = createId('rebill_flow')
+  const flowState = hasSavedCard
+    ? REBILL_PLAN_STATES.ACTIVE
+    : REBILL_PLAN_STATES.WAITING_CARD_AUTHORIZATION
+  const stateHistory = addPlanState([], flowState)
   const now = new Date().toISOString()
+  const cardLabel = hasSavedCard ? getRebillSavedCardLabelFromRow(savedSource) : ''
+  const firstPaymentDueNow = plan.firstPayment.enabled
+    ? isPlanChargeDueNow(plan.firstPayment.date, plan.firstPayment.frequency || plan.remainingFrequency, accountTimezone)
+    : false
 
   await db.run(
     `INSERT INTO payment_flows (
@@ -1390,9 +1840,10 @@ export async function createRebillPaymentPlan(input = {}, { baseUrl, mode = '' }
       first_payment_amount, first_payment_type, first_payment_value,
       first_payment_date, first_payment_method, first_payment_status,
       remaining_automatic, card_setup_required, card_setup_amount,
-      payment_provider, current_state, state_history,
+      payment_provider, rebill_customer_id, rebill_card_id, rebill_card_label,
+      current_state, state_history, card_authorized_at,
       installment_plan_created_at, installment_plan_active_at, metadata
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'partial', ?, ?, ?, ?, ?, ?, 1, 0, 0, 'rebill', ?, ?, ?, ?, ?)`,
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'partial', ?, ?, ?, ?, ?, ?, 1, ?, ?, 'rebill', ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [
       flowId,
       plan.contact.id,
@@ -1407,11 +1858,17 @@ export async function createRebillPaymentPlan(input = {}, { baseUrl, mode = '' }
       plan.firstPayment.amount,
       plan.firstPayment.date,
       plan.firstPayment.method,
-      plan.firstPayment.enabled ? 'pending' : 'not_required',
-      REBILL_PLAN_STATES.ACTIVE,
-      JSON.stringify(addPlanState([], REBILL_PLAN_STATES.ACTIVE)),
+      plan.firstPayment.enabled ? (hasSavedCard && firstPaymentIsCard && firstPaymentDueNow ? 'processing' : 'pending') : 'not_required',
+      hasSavedCard ? 0 : 1,
+      cardSetupAmount,
+      savedSource?.rebill_customer_id || null,
+      savedSource?.rebill_card_id || null,
+      cardLabel || null,
+      flowState,
+      JSON.stringify(stateHistory),
+      hasSavedCard ? now : null,
       now,
-      now,
+      hasSavedCard ? now : null,
       JSON.stringify({
         source: plan.source,
         rebillMode: config.mode,
@@ -1420,25 +1877,136 @@ export async function createRebillPaymentPlan(input = {}, { baseUrl, mode = '' }
         remainingFrequency: plan.remainingFrequency,
         lineItems: plan.lineItems,
         checkoutProvider: 'rebill',
-        clockOwner: 'ristak'
+        clockOwner: 'ristak',
+        firstPaymentLinkRequired: !hasSavedCard && firstPaymentIsCard,
+        cardSetupLinkRequired: needsSeparateCardSetup,
+        rebillCustomerId: savedSource?.rebill_customer_id || '',
+        rebillCardId: savedSource?.rebill_card_id || '',
+        rebillCardLabel: cardLabel || ''
       })
     ]
   )
 
   const response = {
     flowId,
-    currentState: REBILL_PLAN_STATES.ACTIVE,
+    currentState: flowState,
     paymentMode: config.mode,
     firstPaymentLink: null,
     firstPaymentPaymentId: null,
+    cardSetupLink: null,
+    cardSetupPaymentId: null,
+    cardSetupAmount: needsSeparateCardSetup ? plan.cardSetupAmount : 0,
+    savedPaymentSource: hasSavedCard ? mapRebillPaymentSource(savedSource) : null,
     scheduledPayments: []
   }
   const planPaymentTotal = getPlanPaymentTotal(plan.firstPayment.enabled, plan.remainingPayments.length)
   const firstPaymentTitle = buildPlanFirstPaymentTitle(plan.title, planPaymentTotal)
   const firstPaymentDescription = buildPlanFirstPaymentTitle(plan.description, planPaymentTotal)
 
-  if (plan.firstPayment.enabled) {
-    const firstPaymentDueNow = isPlanChargeDueNow(plan.firstPayment.date, plan.firstPayment.frequency || plan.remainingFrequency, accountTimezone)
+  if (plan.firstPayment.enabled && firstPaymentIsOffline) {
+    const first = await createRebillPlanPaymentRow({
+      contact: plan.contact,
+      amount: plan.firstPayment.amount,
+      currency: plan.currency,
+      status: 'paid',
+      paymentMethod: normalizeManualPaymentMethod(plan.firstPayment.method),
+      title: firstPaymentTitle,
+      description: firstPaymentDescription,
+      dueDate: plan.firstPayment.date,
+      metadata: {
+        rebillMode: config.mode,
+        paymentMode: config.mode,
+        source: 'rebill_payment_plan_first_offline',
+        contactName: plan.contact.name,
+        contactEmail: plan.contact.email,
+        contactPhone: plan.contact.phone,
+        paymentPlan: {
+          flowId,
+          trigger: 'first_payment_offline'
+        }
+      },
+      baseUrl,
+      mode: config.mode
+    })
+
+    await db.run(
+      `UPDATE payment_flows
+       SET first_payment_status = ?,
+           first_payment_invoice_id = ?,
+           updated_at = CURRENT_TIMESTAMP
+       WHERE id = ?`,
+      ['registered', first.payment?.id || null, flowId]
+    )
+    response.firstPaymentPaymentId = first.payment?.id || null
+    updateSingleContactStats(plan.contact.id).catch((error) => {
+      logger.warn(`No se pudieron actualizar stats del contacto por primer pago Rebill ${first.payment?.id}: ${error.message}`)
+    })
+  }
+
+  if (plan.firstPayment.enabled && firstPaymentIsCard && hasSavedCard) {
+    const first = await createRebillPlanPaymentRow({
+      contact: plan.contact,
+      amount: plan.firstPayment.amount,
+      currency: plan.currency,
+      status: firstPaymentDueNow ? 'pending' : 'scheduled',
+      paymentMethod: 'rebill_saved_card',
+      title: firstPaymentTitle,
+      description: firstPaymentDescription,
+      dueDate: plan.firstPayment.date,
+      metadata: {
+        rebillMode: config.mode,
+        paymentMode: config.mode,
+        source: 'rebill_payment_plan_first_saved_card',
+        contactName: plan.contact.name,
+        contactEmail: plan.contact.email,
+        contactPhone: plan.contact.phone,
+        paymentPlan: {
+          flowId,
+          trigger: 'first_payment_saved_card'
+        }
+      },
+      baseUrl,
+      mode: config.mode
+    })
+
+    await db.run(
+      `UPDATE payment_flows
+       SET first_payment_invoice_id = ?,
+           updated_at = CURRENT_TIMESTAMP
+       WHERE id = ?`,
+      [first.payment?.id || null, flowId]
+    )
+    response.firstPaymentPaymentId = first.payment?.id || null
+
+    if (firstPaymentDueNow) {
+      try {
+        const charged = await chargeRebillPaymentRowWithSavedSource({
+          paymentId: first.payment?.id,
+          savedSource,
+          source: 'rebill_payment_plan_first_saved_card',
+          extraMetadata: { flowId, trigger: 'first_payment_saved_card' }
+        })
+        await db.run(
+          `UPDATE payment_flows
+           SET first_payment_status = ?,
+               updated_at = CURRENT_TIMESTAMP
+           WHERE id = ?`,
+          [charged?.status === 'paid' ? 'paid' : charged?.status || 'pending', flowId]
+        )
+      } catch (error) {
+        await db.run(
+          `UPDATE payment_flows
+           SET first_payment_status = ?,
+               updated_at = CURRENT_TIMESTAMP
+           WHERE id = ?`,
+          [Number(error.status) === 417 ? 'requires_action' : 'failed', flowId]
+        )
+        throw error
+      }
+    }
+  }
+
+  if (plan.firstPayment.enabled && firstPaymentIsCard && !hasSavedCard) {
     const method = normalizeRebillFirstPaymentMethod(plan.firstPayment.method, firstPaymentDueNow)
     const first = await createRebillPlanPaymentRow({
       contact: plan.contact,
@@ -1476,19 +2044,52 @@ export async function createRebillPaymentPlan(input = {}, { baseUrl, mode = '' }
     )
     response.firstPaymentPaymentId = first.payment?.id || null
     response.firstPaymentLink = first.paymentUrl || null
+  }
 
-    if (method.paymentStatus === 'paid') {
-      updateSingleContactStats(plan.contact.id).catch((error) => {
-        logger.warn(`No se pudieron actualizar stats del contacto por primer pago Rebill ${first.payment?.id}: ${error.message}`)
-      })
-    }
+  if (needsSeparateCardSetup) {
+    const setup = await createRebillPlanPaymentRow({
+      contact: plan.contact,
+      amount: plan.cardSetupAmount,
+      currency: plan.currency,
+      status: 'sent',
+      paymentMethod: 'rebill_checkout',
+      title: `${plan.title} - domiciliación de tarjeta`,
+      description: `Domiciliación de tarjeta para ${plan.description}`,
+      dueDate: todayDateOnly(accountTimezone),
+      metadata: {
+        rebillMode: config.mode,
+        paymentMode: config.mode,
+        source: 'rebill_payment_plan_card_setup',
+        contactName: plan.contact.name,
+        contactEmail: plan.contact.email,
+        contactPhone: plan.contact.phone,
+        paymentPlan: {
+          flowId,
+          trigger: 'card_setup'
+        }
+      },
+      baseUrl,
+      mode: config.mode
+    })
+
+    await db.run(
+      `UPDATE payment_flows
+       SET card_setup_status = 'pending',
+           card_setup_invoice_id = ?,
+           card_setup_payment_link = ?,
+           updated_at = CURRENT_TIMESTAMP
+       WHERE id = ?`,
+      [setup.payment?.id || null, setup.paymentUrl || null, flowId]
+    )
+    response.cardSetupPaymentId = setup.payment?.id || null
+    response.cardSetupLink = setup.paymentUrl || null
   }
 
   const flow = await db.get('SELECT * FROM payment_flows WHERE id = ?', [flowId])
   for (const payment of plan.remainingPayments) {
     const installmentId = createId('rebill_installment')
     const title = buildPlanInstallmentPaymentTitle(plan.title, payment.sequence, plan.firstPayment.enabled, planPaymentTotal)
-    const method = normalizeRebillPlanPaymentMethod(payment.paymentMethod)
+    const method = normalizeRebillPlanPaymentMethod(payment.paymentMethod, hasSavedCard, cardLabel)
     const scheduled = await createRebillPlanPaymentRow({
       contact: plan.contact,
       amount: payment.amount,
@@ -1557,31 +2158,39 @@ export async function processDueRebillPaymentPlanCharges({ limit = 25, baseUrl =
   const installmentDueSql = duePlanInstallmentCondition('i')
   const staleFirstPaymentSql = staleProcessingSql('f.updated_at')
   const staleInstallmentSql = staleProcessingSql('i.updated_at')
+  const staleFirstPaymentClaimSql = staleProcessingSql('updated_at')
+  const staleInstallmentClaimSql = staleProcessingSql('updated_at')
 
   const firstPaymentRows = await db.all(
     `SELECT
        f.id AS flow_id,
+       f.contact_id,
        f.first_payment_invoice_id AS payment_id,
        f.first_payment_date,
+       f.first_payment_status,
        f.metadata,
+       f.current_state,
+       f.rebill_customer_id,
+       f.rebill_card_id,
        p.status AS payment_status,
        p.due_date AS payment_due_date,
-       p.date AS payment_date
+       p.date AS payment_date,
+       p.payment_url
      FROM payment_flows f
      JOIN payments p ON p.id = f.first_payment_invoice_id
      WHERE f.payment_provider = 'rebill'
-       AND f.current_state = ?
+       AND f.current_state IN (?, ?)
        AND f.first_payment_invoice_id IS NOT NULL
-       AND f.first_payment_method IN ('payment_link', 'card', 'rebill_checkout')
+       AND f.first_payment_method IN ('payment_link', 'card', 'rebill_checkout', 'saved_card', 'rebill_saved_card')
        AND (
-         f.first_payment_status = 'scheduled'
+         f.first_payment_status IN ('pending', 'scheduled')
          OR (f.first_payment_status = 'processing' AND ${staleFirstPaymentSql})
        )
        AND ${firstPaymentDueSql}
-       AND p.status IN ('scheduled', 'pending', 'sent')
+       AND p.status IN ('scheduled', 'pending', 'sent', 'processing')
      ORDER BY COALESCE(f.first_payment_date, p.due_date, p.date) ASC
      LIMIT ?`,
-    [REBILL_PLAN_STATES.ACTIVE, dueTimestamp, dueDate, normalizedLimit]
+    [REBILL_PLAN_STATES.ACTIVE, REBILL_PLAN_STATES.WAITING_CARD_AUTHORIZATION, dueTimestamp, dueDate, normalizedLimit]
   )
 
   const rows = await db.all(
@@ -1592,6 +2201,9 @@ export async function processDueRebillPaymentPlanCharges({ limit = 25, baseUrl =
        i.frequency,
        i.status AS installment_status,
        f.id AS flow_id,
+       f.contact_id,
+       f.rebill_customer_id,
+       f.rebill_card_id,
        p.status AS payment_status,
        p.payment_url
      FROM installment_payments i
@@ -1599,13 +2211,14 @@ export async function processDueRebillPaymentPlanCharges({ limit = 25, baseUrl =
      LEFT JOIN payments p ON p.id = i.payment_id
      WHERE f.payment_provider = 'rebill'
        AND f.current_state = ?
+       AND f.rebill_card_id IS NOT NULL
        AND i.automatic = 1
        AND i.payment_id IS NOT NULL
        AND (
-         i.status IN ('scheduled', 'pending')
+         i.status = 'scheduled'
          OR (i.status = 'processing' AND ${staleInstallmentSql})
        )
-       AND p.status IN ('scheduled', 'pending', 'sent')
+       AND p.status IN ('scheduled', 'pending', 'processing')
        AND ${installmentDueSql}
      ORDER BY i.due_date ASC, i.sequence ASC
      LIMIT ?`,
@@ -1621,14 +2234,79 @@ export async function processDueRebillPaymentPlanCharges({ limit = 25, baseUrl =
     if (!isPlanChargeDueNow(firstPaymentDueValue, metadata.remainingFrequency, accountTimezone)) continue
 
     touchedFlowIds.add(row.flow_id)
+    const hasSavedCard = Boolean(row.rebill_card_id && row.current_state === REBILL_PLAN_STATES.ACTIVE)
+
+    if (hasSavedCard) {
+      try {
+        const claim = await db.run(
+          `UPDATE payment_flows
+           SET first_payment_status = 'processing',
+               updated_at = CURRENT_TIMESTAMP
+           WHERE id = ?
+             AND (first_payment_status IN ('pending', 'scheduled') OR (first_payment_status = 'processing' AND ${staleFirstPaymentClaimSql}))`,
+          [row.flow_id]
+        )
+        if (!(Number(claim?.changes || 0) > 0)) continue
+
+        const savedSource = await resolveRebillSavedSource(row.contact_id, row.rebill_card_id, { mode: metadata.paymentMode || metadata.rebillMode })
+        if (!savedSource) {
+          throw new Error('No encontramos la tarjeta guardada de Rebill para el primer pago programado.')
+        }
+
+        const charged = await chargeRebillPaymentRowWithSavedSource({
+          paymentId: row.payment_id,
+          savedSource,
+          source: 'rebill_payment_plan_first_scheduled_charge',
+          extraMetadata: {
+            flowId: row.flow_id,
+            trigger: 'first_payment_saved_card'
+          }
+        })
+
+        await db.run(
+          `UPDATE payment_flows
+           SET first_payment_status = ?,
+               updated_at = CURRENT_TIMESTAMP
+           WHERE id = ?`,
+          [charged?.status === 'paid' ? 'paid' : charged?.status || 'pending', row.flow_id]
+        )
+        results.push({ type: 'first_payment', flowId: row.flow_id, paymentId: row.payment_id, charged: charged?.status === 'paid', status: charged?.status })
+      } catch (error) {
+        logger.error(`[Rebill Planes] Error cobrando primer pago ${row.payment_id}: ${error.message}`)
+        await db.run(
+          `UPDATE payment_flows
+           SET first_payment_status = ?,
+               updated_at = CURRENT_TIMESTAMP
+           WHERE id = ?`,
+          [Number(error.status) === 417 ? 'requires_action' : 'failed', row.flow_id]
+        )
+        results.push({ type: 'first_payment', flowId: row.flow_id, paymentId: row.payment_id, error: error.message })
+      }
+      continue
+    }
+
+    if (cleanString(row.first_payment_status, 80) !== 'scheduled' && !(cleanString(row.first_payment_status, 80) === 'processing')) {
+      continue
+    }
+
     try {
+      const claim = await db.run(
+        `UPDATE payment_flows
+         SET first_payment_status = 'processing',
+             updated_at = CURRENT_TIMESTAMP
+         WHERE id = ?
+           AND (first_payment_status = 'scheduled' OR (first_payment_status = 'processing' AND ${staleFirstPaymentClaimSql}))`,
+        [row.flow_id]
+      )
+      if (!(Number(claim?.changes || 0) > 0)) continue
+
       const released = await releaseRebillPlanPaymentLink(row.payment_id, {
         baseUrl: resolvedBaseUrl,
         notes: 'Link de Rebill liberado automáticamente por fecha programada.'
       })
       await db.run(
         `UPDATE payment_flows
-         SET first_payment_status = CASE WHEN first_payment_status = 'scheduled' THEN 'pending' ELSE first_payment_status END,
+         SET first_payment_status = 'pending',
              card_setup_payment_link = COALESCE(NULLIF(?, ''), card_setup_payment_link),
              updated_at = CURRENT_TIMESTAMP
          WHERE id = ?`,
@@ -1652,32 +2330,67 @@ export async function processDueRebillPaymentPlanCharges({ limit = 25, baseUrl =
 
   for (const row of rows || []) {
     touchedFlowIds.add(row.flow_id)
+    if (row.payment_status === 'paid') {
+      await db.run(
+        `UPDATE installment_payments
+         SET status = 'paid',
+             updated_at = CURRENT_TIMESTAMP
+         WHERE id = ?`,
+        [row.installment_id]
+      )
+      results.push({ type: 'installment', flowId: row.flow_id, installmentId: row.installment_id, paymentId: row.payment_id, skipped: true, reason: 'already_paid' })
+      continue
+    }
+
     try {
       const claim = await db.run(
         `UPDATE installment_payments
          SET status = 'processing',
              updated_at = CURRENT_TIMESTAMP
          WHERE id = ?
-           AND status IN ('scheduled', 'pending', 'processing')`,
+           AND (status = 'scheduled' OR (status = 'processing' AND ${staleInstallmentClaimSql}))`,
         [row.installment_id]
       )
       if (!(Number(claim?.changes || 0) > 0)) continue
 
-      const released = await releaseRebillPlanPaymentLink(row.payment_id, {
-        baseUrl: resolvedBaseUrl,
-        notes: 'Link de Rebill liberado automáticamente por fecha programada.'
+      const savedSource = await resolveRebillSavedSource(row.contact_id, row.rebill_card_id)
+      if (!savedSource) {
+        throw new Error('No encontramos la tarjeta guardada de Rebill para esta parcialidad.')
+      }
+
+      const charged = await chargeRebillPaymentRowWithSavedSource({
+        paymentId: row.payment_id,
+        savedSource,
+        source: 'rebill_payment_plan_installment',
+        extraMetadata: {
+          flowId: row.flow_id,
+          installmentId: row.installment_id
+        }
       })
-      results.push({ type: 'installment', flowId: row.flow_id, installmentId: row.installment_id, paymentId: row.payment_id, generated: true, paymentUrl: released?.payment_url || '' })
+
+      await db.run(
+        `UPDATE installment_payments
+         SET status = ?,
+             rebill_payment_id = COALESCE(?, rebill_payment_id),
+             updated_at = CURRENT_TIMESTAMP
+         WHERE id = ?`,
+        [
+          charged?.status === 'paid' ? 'paid' : (charged?.status || 'processing'),
+          charged?.rebill_payment_id || null,
+          row.installment_id
+        ]
+      )
+
+      results.push({ type: 'installment', flowId: row.flow_id, installmentId: row.installment_id, paymentId: row.payment_id, charged: charged?.status === 'paid', status: charged?.status })
     } catch (error) {
-      logger.error(`[Rebill Planes] Error liberando parcialidad ${row.installment_id}: ${error.message}`)
-      const keepScheduled = /No hay URL pública configurada/i.test(error.message || '')
+      logger.error(`[Rebill Planes] Error cobrando parcialidad ${row.installment_id}: ${error.message}`)
       await db.run(
         `UPDATE installment_payments
          SET status = ?,
              notes = ?,
              updated_at = CURRENT_TIMESTAMP
          WHERE id = ?`,
-        [keepScheduled ? (row.installment_status || 'scheduled') : 'failed', error.message || 'Rebill no pudo liberar el link.', row.installment_id]
+        [Number(error.status) === 417 ? 'requires_action' : 'failed', error.message || 'Rebill no pudo completar el cobro.', row.installment_id]
       )
       results.push({ type: 'installment', flowId: row.flow_id, installmentId: row.installment_id, paymentId: row.payment_id, error: error.message })
     }
@@ -1727,24 +2440,26 @@ function extractRebillMetadata(rebillPayment = {}) {
   const card = rebillPayment.card && typeof rebillPayment.card === 'object'
     ? rebillPayment.card
     : {}
+  const cardId = cleanString(card.id || rebillPayment.cardId || rebillPayment.card_id, 180)
+  const cardLast4 = getRebillCardLast4(card, rebillPayment.cardLastFour || rebillPayment.card_last_four)
 
   return {
     paymentId: cleanString(rebillPayment.id, 180),
     subscriptionId: cleanString(rebillPayment.subscriptionId || rebillPayment.subscription_id, 180),
     customerId: cleanString(customer.id || rebillPayment.customerId || rebillPayment.customer_id, 180),
-    cardId: cleanString(card.id || rebillPayment.cardId || rebillPayment.card_id, 180),
+    cardId,
     status: cleanString(rebillPayment.status, 80),
     paymentMethodType: cleanString(rebillPayment.paymentMethodType || rebillPayment.payment_method_type, 80),
     installments: rebillPayment.installments || null,
     country: cleanString(rebillPayment.country, 2),
     processingMode: cleanString(rebillPayment.processingMode || rebillPayment.processing_mode, 80),
     traceId: cleanString(rebillPayment.traceId || rebillPayment.trace_id, 180),
-    card: card.id
+    card: cardId
       ? {
-          id: cleanString(card.id, 180),
+          id: cardId,
           brand: cleanString(card.brand, 80),
           type: cleanString(card.type, 80),
-          lastFourDigits: cleanString(card.lastFourDigits || card.last_four_digits, 12),
+          lastFourDigits: cardLast4,
           name: cleanString(card.name, 180)
         }
       : null,
@@ -1758,9 +2473,25 @@ async function syncRebillPaymentPlanFromLocalPayment(payment) {
   const touchedRows = await db.all(
     `SELECT flow_id FROM installment_payments WHERE payment_id = ?
      UNION
+     SELECT id AS flow_id FROM payment_flows WHERE card_setup_invoice_id = ?
+     UNION
      SELECT id AS flow_id FROM payment_flows WHERE first_payment_invoice_id = ?`,
-    [payment.id, payment.id]
+    [payment.id, payment.id, payment.id]
   ).catch(() => [])
+  const rebillMetadata = parseJson(payment.metadata_json, {})?.rebill || {}
+  const savedSource = status === 'paid'
+    ? await upsertRebillPaymentSource({
+        contactId: payment.contact_id,
+        customerId: payment.rebill_customer_id || rebillMetadata.customerId,
+        cardId: payment.rebill_card_id || rebillMetadata.cardId,
+        card: rebillMetadata.card || {},
+        mode: payment.payment_mode
+      }).catch((error) => {
+        logger.warn(`No se pudo guardar tarjeta Rebill para pago ${payment.id}: ${error.message}`)
+        return null
+      })
+    : null
+  const cardLabel = savedSource ? getRebillSavedCardLabelFromRow(savedSource) : ''
 
   await db.run(
     `UPDATE installment_payments
@@ -1783,7 +2514,80 @@ async function syncRebillPaymentPlanFromLocalPayment(payment) {
   ).catch(() => undefined)
 
   for (const row of touchedRows || []) {
-    if (row?.flow_id) await persistRebillPaymentPlanMirror(row.flow_id).catch(() => undefined)
+    if (!row?.flow_id) continue
+
+    if (savedSource && status === 'paid') {
+      const flow = await db.get('SELECT * FROM payment_flows WHERE id = ?', [row.flow_id]).catch(() => null)
+      if (flow?.payment_provider === 'rebill') {
+        const history = addPlanState(parseJson(flow.state_history, []), REBILL_PLAN_STATES.ACTIVE)
+        await db.run(
+          `UPDATE payment_flows
+           SET rebill_customer_id = ?,
+               rebill_card_id = ?,
+               rebill_card_label = ?,
+               card_authorized_at = COALESCE(card_authorized_at, ?),
+               installment_plan_active_at = COALESCE(installment_plan_active_at, ?),
+               current_state = ?,
+               state_history = ?,
+               card_setup_required = 0,
+               card_setup_status = CASE
+                 WHEN card_setup_invoice_id = ? THEN 'paid'
+                 ELSE card_setup_status
+               END,
+               first_payment_status = CASE
+                 WHEN first_payment_invoice_id = ? THEN 'paid'
+                 ELSE first_payment_status
+               END,
+               updated_at = CURRENT_TIMESTAMP
+           WHERE id = ?`,
+          [
+            savedSource.rebill_customer_id,
+            savedSource.rebill_card_id,
+            cardLabel,
+            new Date().toISOString(),
+            new Date().toISOString(),
+            REBILL_PLAN_STATES.ACTIVE,
+            JSON.stringify(history),
+            payment.id,
+            payment.id,
+            row.flow_id
+          ]
+        ).catch(() => undefined)
+
+        await db.run(
+          `UPDATE installment_payments
+           SET status = 'scheduled',
+               payment_method = 'rebill_saved_card',
+               notes = ?,
+               updated_at = CURRENT_TIMESTAMP
+           WHERE flow_id = ?
+             AND automatic = 1
+             AND status IN (?, 'pending')`,
+          [
+            `Programado para cobrarse con ${cardLabel}.`,
+            row.flow_id,
+            REBILL_PLAN_STATES.WAITING_CARD_AUTHORIZATION
+          ]
+        ).catch(() => undefined)
+
+        await db.run(
+          `UPDATE payments
+           SET status = CASE WHEN status IN (?, 'pending') THEN 'scheduled' ELSE status END,
+               payment_method = CASE WHEN payment_method = 'rebill_scheduled_card' THEN 'rebill_scheduled_card' ELSE payment_method END,
+               updated_at = CURRENT_TIMESTAMP
+           WHERE id IN (
+             SELECT payment_id
+             FROM installment_payments
+             WHERE flow_id = ?
+               AND automatic = 1
+               AND payment_id IS NOT NULL
+           )`,
+          [REBILL_PLAN_STATES.WAITING_CARD_AUTHORIZATION, row.flow_id]
+        ).catch(() => undefined)
+      }
+    }
+
+    await persistRebillPaymentPlanMirror(row.flow_id).catch(() => undefined)
   }
 }
 
@@ -1814,13 +2618,17 @@ async function updatePaymentFromRebillPayment(rebillPayment = {}) {
     ...parseJson(row.metadata_json, {}),
     rebill: rebillMetadata
   }
+  const nextPaymentMethod = REBILL_STORED_CARD_METHODS.has(cleanString(row.payment_method, 80).toLowerCase()) ||
+    cleanString(row.payment_method, 80).toLowerCase() === 'rebill_scheduled_card'
+    ? 'rebill_saved_card'
+    : 'rebill_checkout'
 
   await db.run(
     `UPDATE payments
      SET amount = COALESCE(?, amount),
          currency = COALESCE(?, currency),
          status = ?,
-         payment_method = 'rebill_checkout',
+         payment_method = ?,
          payment_provider = 'rebill',
          reference = COALESCE(?, reference),
          rebill_payment_id = COALESCE(?, rebill_payment_id),
@@ -1836,6 +2644,7 @@ async function updatePaymentFromRebillPayment(rebillPayment = {}) {
       Number.isFinite(amount) ? amount : null,
       currency,
       persistedStatus,
+      nextPaymentMethod,
       rebillPaymentId || null,
       rebillPaymentId || null,
       rebillMetadata.subscriptionId || null,

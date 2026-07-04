@@ -2715,6 +2715,25 @@ async function initTables() {
     await db.run('CREATE INDEX IF NOT EXISTS idx_conekta_payment_sources_contact ON conekta_payment_sources(contact_id, mode)')
     await db.run('CREATE INDEX IF NOT EXISTS idx_conekta_payment_sources_customer ON conekta_payment_sources(conekta_customer_id)')
 
+    await db.run(`
+      CREATE TABLE IF NOT EXISTS rebill_payment_sources (
+        id TEXT PRIMARY KEY,
+        contact_id TEXT,
+        rebill_customer_id TEXT NOT NULL,
+        rebill_card_id TEXT NOT NULL UNIQUE,
+        brand TEXT,
+        last4 TEXT,
+        name TEXT,
+        mode TEXT DEFAULT 'test',
+        is_default INTEGER DEFAULT 0,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (contact_id) REFERENCES contacts(id) ON DELETE CASCADE
+      )
+    `)
+    await db.run('CREATE INDEX IF NOT EXISTS idx_rebill_payment_sources_contact ON rebill_payment_sources(contact_id, mode)')
+    await db.run('CREATE INDEX IF NOT EXISTS idx_rebill_payment_sources_customer ON rebill_payment_sources(rebill_customer_id)')
+
     // Tabla local de planes de pago de Ristak.
     // Las integraciones opcionales pueden sincronizar espejos remotos, pero la
     // lectura y reportes no dependen de GoHighLevel.
@@ -3851,6 +3870,9 @@ async function initTables() {
         conekta_customer_id TEXT,
         conekta_payment_source_id TEXT,
         conekta_payment_source_label TEXT,
+        rebill_customer_id TEXT,
+        rebill_card_id TEXT,
+        rebill_card_label TEXT,
         mercadopago_user_id TEXT,
         mercadopago_preapproval_id TEXT,
         current_state TEXT NOT NULL,
@@ -4359,6 +4381,9 @@ async function initTables() {
         ['conekta_customer_id', 'TEXT'],
         ['conekta_payment_source_id', 'TEXT'],
         ['conekta_payment_source_label', 'TEXT'],
+        ['rebill_customer_id', 'TEXT'],
+        ['rebill_card_id', 'TEXT'],
+        ['rebill_card_label', 'TEXT'],
         ['mercadopago_user_id', 'TEXT'],
         ['mercadopago_preapproval_id', 'TEXT']
       ]
@@ -4375,6 +4400,31 @@ async function initTables() {
 
       await ensureTableColumns('subscriptions', SUBSCRIPTION_MERCADOPAGO_COLUMNS)
       await ensureTableColumns('subscriptions', SUBSCRIPTION_CONEKTA_COLUMNS)
+
+      try {
+        await db.run(`
+          CREATE TABLE IF NOT EXISTS rebill_payment_sources (
+            id TEXT PRIMARY KEY,
+            contact_id TEXT,
+            rebill_customer_id TEXT NOT NULL,
+            rebill_card_id TEXT NOT NULL UNIQUE,
+            brand TEXT,
+            last4 TEXT,
+            name TEXT,
+            mode TEXT DEFAULT 'test',
+            is_default INTEGER DEFAULT 0,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (contact_id) REFERENCES contacts(id) ON DELETE CASCADE
+          )
+        `)
+        await db.run('CREATE INDEX IF NOT EXISTS idx_rebill_payment_sources_contact ON rebill_payment_sources(contact_id, mode)')
+        await db.run('CREATE INDEX IF NOT EXISTS idx_rebill_payment_sources_customer ON rebill_payment_sources(rebill_customer_id)')
+      } catch (err) {
+        if (!err.message.includes('already exists')) {
+          throw err
+        }
+      }
 
       try {
         await db.run('CREATE UNIQUE INDEX IF NOT EXISTS idx_subscriptions_mercadopago_preapproval ON subscriptions(mercadopago_preapproval_id)')

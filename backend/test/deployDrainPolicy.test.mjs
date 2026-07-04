@@ -37,11 +37,13 @@ test('deploy drain policy protects conversion and tracking writes', () => {
 test('deploy drain policy protects payment and webhook callbacks', () => {
   assert.equal(classifyDeployDrainRequest(req('POST', '/api/stripe/webhook')), 'http:payment-webhook')
   assert.equal(classifyDeployDrainRequest(req('POST', '/api/mercadopago/webhook')), 'http:payment-webhook')
+  assert.equal(classifyDeployDrainRequest(req('POST', '/api/rebill/webhook')), 'http:payment-webhook')
   assert.equal(classifyDeployDrainRequest(req('POST', '/api/clip/webhook')), 'http:payment-webhook')
   assert.equal(classifyDeployDrainRequest(req('POST', '/webhook/payment')), 'http:webhook')
   assert.equal(classifyDeployDrainRequest(req('POST', '/webhooks/appointment')), 'http:webhook')
   assert.equal(classifyDeployDrainRequest(req('POST', '/api/stripe/public/payments/pay_123/intent')), 'http:public-payment')
   assert.equal(classifyDeployDrainRequest(req('POST', '/api/conekta/public/payments/pay_123/card')), 'http:public-payment')
+  assert.equal(classifyDeployDrainRequest(req('POST', '/api/rebill/public/payments/pay_123/confirm')), 'http:public-payment')
   assert.equal(classifyDeployDrainRequest(req('POST', '/api/clip/public/payments/pay_123/card')), 'http:public-payment')
   assert.equal(classifyDeployDrainRequest(req('POST', '/api/clip/public/payments/pay_123/refresh')), 'http:public-payment')
   assert.equal(classifyDeployDrainRequest(req('POST', '/api/transactions/pay_123/record-payment')), 'http:business-mutation')

@@ -3,8 +3,10 @@ import {
   confirmPublicRebillPaymentView,
   createRebillPaymentLinkView,
   createRebillPaymentPlanView,
+  createRebillSavedCardPaymentView,
   deleteRebillConfigView,
   getPublicRebillPaymentView,
+  getRebillSavedPaymentSourcesView,
   getRebillConfigView,
   rebillWebhookView,
   saveRebillConfigView,
@@ -28,6 +30,8 @@ router.post('/config', requireModuleAccess('settings_payments'), saveRebillConfi
 router.delete('/config', requireModuleAccess('settings_payments'), deleteRebillConfigView)
 router.post('/config/test', requireModuleAccess('settings_payments'), testRebillConfigView)
 router.post('/payment-links', requireModuleAccess('payments'), createRebillPaymentLinkView)
+router.get('/contacts/:contactId/payment-sources', requireModuleAccess('payments'), getRebillSavedPaymentSourcesView)
+router.post('/saved-card-payments', requireModuleAccess('payments'), createRebillSavedCardPaymentView)
 router.post('/payment-plans', requireModuleAccess('payments'), requirePaymentPlansFeature, createRebillPaymentPlanView)
 
 export default router

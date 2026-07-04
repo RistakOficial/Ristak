@@ -676,10 +676,15 @@ env vars nuevas para arrancar el servicio.
 Alcance:
 
 - Cobros unicos por link publico `/pay/:publicPaymentId`.
+- Cobros unicos con tarjeta Rebill guardada: Ristak usa el `cardId` guardado y
+  llama `POST /v3/checkout` desde backend con `x-idempotency-key`; no guarda PAN,
+  CVV ni datos sensibles de tarjeta.
 - Planes de pago administrados por Ristak: `payment_flows.payment_provider='rebill'`
   y `payment_plans.source='rebill'`. Rebill solo procesa cada checkout; Ristak es
-  dueno del calendario, vencimientos, liberacion de links y estado del plan
-  (`clockOwner='ristak'`).
+  dueno del calendario, vencimientos y estado del plan (`clockOwner='ristak'`).
+  Cuando el plan tiene tarjeta guardada, el cron cobra cada parcialidad vencida
+  con `cardId`; si falta tarjeta, el primer pago o la domiciliacion guardan la
+  tarjeta antes de activar los cobros futuros.
 - Checkout de Sites con el web component oficial `rebill-checkout`.
 - Meses/installments en cobros unicos: Ristak no selecciona plazos locales para
   Rebill. El checkout de Rebill muestra installments cuando la cuenta, pais,
@@ -691,9 +696,10 @@ Alcance:
   conciliacion y cancelacion.
 - Cron `rebill-payment-plans`: corre por el registry de crons de integracion y
   solo se activa si Rebill esta conectado en el modo de pago activo. Revisa
-  parcialidades `scheduled/pending` vencidas segun la zona horaria de la cuenta y
-  libera el link publico de cada pago cuando toca. No delega el calendario a
-  Rebill.
+  primeros pagos y parcialidades vencidas segun la zona horaria de la cuenta. Si
+  el flujo ya tiene `rebill_card_id`, cobra con `POST /v3/checkout` + `cardId`;
+  si el primer pago estaba programado y aun no hay tarjeta, libera su link publico.
+  No delega el calendario a Rebill.
 - Webhook publico `/api/rebill/webhook`; como la documentacion publica de Rebill
   no declara firma verificable para webhooks, Ristak no confia en el payload para
   marcar pagado. Cada evento extrae el `paymentId` y consulta el pago real con
@@ -713,9 +719,16 @@ Alcance:
 Persistencia:
 
 - `payments.payment_provider='rebill'` y `payments.payment_method='rebill_checkout'`.
+- Tarjetas guardadas Rebill en `rebill_payment_sources` (`contact_id`,
+  `rebill_customer_id`, `rebill_card_id`, `brand`, `last4`, `mode`, `is_default`).
+  Es metadata de fuente de pago; los datos sensibles permanecen en Rebill.
+- `payment_flows` guarda `rebill_customer_id`, `rebill_card_id` y
+  `rebill_card_label` cuando un plan queda autorizado para cobros automaticos.
 - En planes Rebill, cada parcialidad tiene una fila local en `payments` desde el
-  alta del plan. Mientras no vence, queda `status='scheduled'` y sin
-  `payment_url`; al vencer, el cron la cambia a `sent` y genera `/pay/:publicPaymentId`.
+  alta del plan. Si ya hay tarjeta, queda `status='scheduled'` y sin
+  `payment_url`; al vencer, el cron la cobra con `rebill_saved_card`. Si aun no
+  hay tarjeta, queda esperando autorizacion hasta que el primer pago o la
+  domiciliacion guarde el `cardId`.
 - IDs de proveedor en `payments.rebill_payment_id`,
   `payments.rebill_subscription_id`, `payments.rebill_customer_id` y
   `payments.rebill_card_id`.
@@ -994,8 +1007,9 @@ Crons de integracion que deben pasar por registry y detector local:
 - Meta sync/version.
 - Google Calendar sync.
 - WhatsApp QR watchdog.
-- Stripe/Conekta/Mercado Pago/Rebill payment plans. En Rebill el cron solo libera
-  links vencidos de parcialidades locales; Ristak mantiene el reloj del plan.
+- Stripe/Conekta/Mercado Pago/Rebill payment plans. En Rebill el cron cobra
+  parcialidades vencidas con tarjeta guardada (`cardId`) y solo libera link cuando
+  falta autorizar tarjeta; Ristak mantiene el reloj del plan.
   CLIP queda fuera de planes de pago y suscripciones; solo confirma pagos unicos
   con webhook/refresh del checkout.
 
