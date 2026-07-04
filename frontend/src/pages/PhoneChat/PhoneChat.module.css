@@ -1069,6 +1069,12 @@
 }
 
 .avatar {
+  --avatar-ring-color: var(--phone-chat-accent);
+  --avatar-fill: linear-gradient(
+    135deg,
+    var(--phone-chat-accent) 0%,
+    color-mix(in srgb, var(--phone-chat-accent) 72%, #69d5ff 28%) 100%
+  );
   position: relative;
   display: inline-flex;
   align-items: center;
@@ -1077,36 +1083,38 @@
   width: 44px;
   height: 44px;
   box-sizing: border-box;
-  border: 1px solid rgba(255, 255, 255, 0.24);
+  border: 2px solid color-mix(in srgb, var(--phone-chat-surface) 88%, transparent);
   border-radius: 999px;
   color: #ffffff;
-  background: var(--phone-chat-accent);
+  background: var(--avatar-fill);
   font-size: 15px;
   font-weight: 850;
   line-height: 1;
   letter-spacing: 0;
-  box-shadow: none;
+  box-shadow:
+    0 0 0 2px color-mix(in srgb, var(--avatar-ring-color) 70%, transparent),
+    0 8px 18px rgba(0, 86, 190, 0.14);
   overflow: visible;
 }
 
 .avatarWhatsapp {
-  background: #00a884;
+  --avatar-ring-color: var(--phone-channel-whatsapp);
 }
 
 .avatarMessenger {
-  background: #0084ff;
+  --avatar-ring-color: var(--phone-channel-messenger);
 }
 
 .avatarInstagram {
-  background: #c13584;
+  --avatar-ring-color: var(--phone-channel-instagram);
 }
 
 .avatarEmail {
-  background: #ea4335;
+  --avatar-ring-color: var(--phone-channel-email);
 }
 
 .avatarSms {
-  background: #475569;
+  --avatar-ring-color: var(--phone-channel-sms);
 }
 
 .avatar img {

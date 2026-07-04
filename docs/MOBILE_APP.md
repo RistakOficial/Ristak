@@ -89,9 +89,15 @@ Tokens principales:
   `--phone-chat-primary`.
 
 Regla de criterio: el verde se reserva para marca WhatsApp
-(`--phone-channel-whatsapp`, `WhatsAppBrandLogo`, iconos/canal WhatsApp) o para
-estados semánticos de éxito. Botones, tabs, badges, loaders, inputs, gráficas y
-defaults visuales de la app deben usar el azul/cian de Ristak.
+(`--phone-channel-whatsapp`, `PhoneMessageChannelIcon`, iconos/canal WhatsApp) o
+para estados semánticos de éxito. Botones, tabs, badges, loaders, inputs,
+gráficas y defaults visuales de la app deben usar el azul/cian de Ristak.
+
+Los avatares de contacto son parte de la identidad de Ristak: su relleno debe
+usar `--phone-chat-accent`/cian Ristak. El origen social del contacto sólo debe
+vivir en el aro exterior del avatar (`--avatar-ring-color`) y en el badge/icono
+de canal (`.avatarChannelBadge*`). No vuelvas a usar verde WhatsApp, rosa
+Instagram o azul Messenger como relleno completo del avatar.
 
 ## Variables de servidor
 
@@ -170,29 +176,29 @@ Hay **dos** íconos de WhatsApp distintos, con estilos separados. No los confund
 - Tamaño: `.composerChannelButton .channelIconGlyph` en `PhoneChat.module.css` (20px).
 - ⚠️ **NO** le pongas `stroke-width` en `.composerChannelButton svg`: engrosa el contorno del glifo relleno y se ve "ancho/pixelado" (ver `docs/DESIGN_SYSTEM.md` §5 #12).
 
-**2. Logo de WhatsApp de los avatares** (badge en la esquina inferior del avatar, en la lista de chats y en el header). Es el **logo oficial a 3 tonos** armado a mano.
+**2. Icono de WhatsApp de los avatares** (badge en la esquina inferior del avatar, en la lista de chats y en el header).
 
-- Componente: `WhatsAppBrandLogo` (cerca del inicio de `PhoneChat.tsx`). Dos paths:
-  `WHATSAPP_LOGO_BUBBLE_PATH` (burbuja) y `WHATSAPP_LOGO_HANDSET_PATH` (auricular).
-- Se usa en `renderChannelBadgeIcon` (rama `kind === 'whatsapp'`), con la clase `avatarWhatsappLogo`.
+- Componente: `PhoneMessageChannelIcon` (`frontend/src/components/phone/PhoneMessageChannelIcon.tsx`).
+- Se usa en `renderChannelBadgeIcon` dentro de `PhoneChat.tsx`; el badge recibe
+  `avatarChannelBadgeWhatsapp`.
+- El relleno del avatar no debe ser verde. El verde vive sólo en el aro social
+  (`avatarWhatsapp` -> `--avatar-ring-color`) y en el badge de canal.
 
 Perillas (todas con sus valores actuales):
 
 | Qué quieres cambiar | Dónde | Valor actual |
 |---|---|---|
-| **Tamaño del logo** | `.avatarChannelBadge .avatarWhatsappLogo` en `PhoneChat.module.css` → `width`/`height` (% del badge, **con `!important`**) | `90%` (~17px) |
-| **Grosor del contorno/borde blanco** | `WhatsAppBrandLogo` en `PhoneChat.tsx` → `strokeWidth` del path de la **burbuja** | `5.3` |
-| **Grosor del auricular (el "tel" de adentro)** | `WhatsAppBrandLogo` → `strokeWidth` del path del **auricular** | `0.5` |
-| **Verde / blanco** | `WhatsAppBrandLogo` → `fill`/`stroke` | `#25D366` / `#ffffff` |
+| **Tamaño del glifo en la lista** | `.phoneChatPage[data-phone-chat-device="phone"] .chatItem > .avatar .avatarChannelBadgeWhatsapp .channelIconGlyph` en `PhoneChat.module.css` | `14px` |
+| **Tamaño del glifo en el header** | `.conversationHeader .avatar .avatarChannelBadgeWhatsapp .channelIconGlyph` en `PhoneChat.module.css` | `13px` |
+| **Verde del canal** | `--phone-channel-whatsapp` en `PhoneChat.module.css` / tokens globales móviles | `#25d366` |
+| **Aro del avatar WhatsApp** | `.avatarWhatsapp` en `PhoneChat.module.css` | `--avatar-ring-color: var(--phone-channel-whatsapp)` |
 
 Reglas al tocarlo:
 
-- El tamaño **necesita `!important`**: hay reglas por dispositivo
-  (`.phoneChatPage[data-phone-chat-device="phone"] .chatItem > .avatar .avatarChannelBadge svg { width: 11px }`, etc.)
-  que le ganan en especificidad y lo encogen en la **lista de chats** si no.
-- El badge de WhatsApp va **sin fondo** (transparente, sin círculo verde ni sombra):
-  clase `.avatarChannelBadgeWhatsappLogo`, asignada en `getAvatarChannelBadgeClass`.
-  El borde blanco del propio logo es lo que lo separa del avatar.
+- El tamaño necesita selectores más específicos por dispositivo/header porque
+  `.avatarChannelBadge svg` define el tamaño base.
+- El badge de WhatsApp conserva color de canal; el relleno del avatar conserva
+  identidad Ristak.
 - Verifícalo corriendo la app en la **lista de chats** (no solo el header: el header
   no tiene las reglas por dispositivo, así que puede engañar). Si la lista local está
   vacía, revisa al menos el header + los tamaños computados.
