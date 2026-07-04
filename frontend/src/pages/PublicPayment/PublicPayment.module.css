@@ -423,6 +423,19 @@
   min-width: 0;
 }
 
+.payHeaderIcon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 34px;
+  flex: 0 0 34px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-ctl);
+  background: var(--surface);
+  color: var(--accent);
+}
+
 .payKicker {
   font: var(--label-font);
   font-size: 11px;

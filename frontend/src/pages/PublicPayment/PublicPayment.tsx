@@ -3489,7 +3489,13 @@ export const PublicPayment: React.FC = () => {
           <section className={[styles.payPanel, isRebillPayment ? styles.rebillPayPanel : ''].filter(Boolean).join(' ')} aria-label="Formulario de pago">
             <div className={styles.payHeader}>
               <div className={styles.payHeaderTop}>
-                <PaymentPlatformLogo platform={providerLogo} size="lg" decorative />
+                {isRebillPayment ? (
+                  <span className={styles.payHeaderIcon} aria-hidden="true">
+                    <CreditCard size={18} />
+                  </span>
+                ) : (
+                  <PaymentPlatformLogo platform={providerLogo} size="lg" decorative />
+                )}
                 <div>
                   <span className={styles.payKicker}>{isPaid ? 'Estado final' : isScheduled ? 'Aún no disponible' : 'Método de pago'}</span>
                   <h2>{isPaid ? (isSubscriptionStart ? 'Suscripción autorizada' : 'Pago confirmado') : isScheduled ? 'Pago programado' : isSubscriptionStart ? 'Autorizar suscripción' : isCardSetupPlan ? 'Autorizar tarjeta' : 'Pagar con tarjeta'}</h2>
