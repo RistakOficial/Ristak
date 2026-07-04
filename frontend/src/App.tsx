@@ -405,17 +405,14 @@ const PhoneRouteEffects: React.FC = () => {
     let lastVisualViewportHeight = ''
     let lastVisualViewportTop = ''
     let lastKeyboardInset = ''
-    const syncPhoneViewport = () => {
-      const visualViewport = window.visualViewport
-      const layoutHeight = Math.max(root.clientHeight, window.innerHeight)
-      const visibleHeight = visualViewport?.height ?? window.innerHeight
-      const viewportTop = visualViewport?.offsetTop ?? 0
-      const keyboardInset = Math.max(0, layoutHeight - visibleHeight - viewportTop)
-      const roundedInset = keyboardInset > 48 ? Math.round(keyboardInset) : 0
+    // --phone-visual-viewport-height/-top/--phone-keyboard-inset: sincronizados desde
+    // visualViewport (para payments/sheets/modales). El chat y el login usan aparte
+    // --phone-kb (altura del teclado), fijada por MainViewController.swift en iOS para
+    // que una transition CSS con la curva del teclado los mueva en sincronia.
+    const setPhoneViewportVars = (visibleHeight: number, viewportTop: number, inset: number) => {
       const nextVisualViewportHeight = `${Math.round(visibleHeight)}px`
       const nextVisualViewportTop = `${Math.round(viewportTop)}px`
-      const nextKeyboardInset = `${roundedInset}px`
-
+      const nextKeyboardInset = `${Math.round(inset)}px`
       if (lastVisualViewportHeight !== nextVisualViewportHeight) {
         root.style.setProperty('--phone-visual-viewport-height', nextVisualViewportHeight)
         lastVisualViewportHeight = nextVisualViewportHeight
@@ -429,11 +426,24 @@ const PhoneRouteEffects: React.FC = () => {
         lastKeyboardInset = nextKeyboardInset
       }
     }
+    const syncPhoneViewport = () => {
+      const visualViewport = window.visualViewport
+      const layoutHeight = Math.max(root.clientHeight, window.innerHeight)
+      const visibleHeight = visualViewport?.height ?? window.innerHeight
+      const viewportTop = visualViewport?.offsetTop ?? 0
+      const keyboardInset = Math.max(0, layoutHeight - visibleHeight - viewportTop)
+      const roundedInset = keyboardInset > 48 ? Math.round(keyboardInset) : 0
+      setPhoneViewportVars(visibleHeight, viewportTop, roundedInset)
+    }
     const schedulePhoneViewportSync = () => {
       if (viewportFrame) window.cancelAnimationFrame(viewportFrame)
       viewportFrame = window.requestAnimationFrame(syncPhoneViewport)
     }
 
+    // La altura del teclado (--phone-kb) + su duracion/curva (--phone-kb-dur/-ease) las
+    // fija el lado NATIVO (MainViewController.swift) leyendo del evento real del teclado,
+    // en una sola llamada por evento. Aqui no tocamos --phone-kb en iOS; solo lo limpiamos
+    // al salir de la ruta phone.
     if (isPhoneRoute) {
       syncPhoneViewport()
       window.visualViewport?.addEventListener('resize', schedulePhoneViewportSync)
@@ -453,6 +463,7 @@ const PhoneRouteEffects: React.FC = () => {
       root.style.removeProperty('--phone-visual-viewport-height')
       root.style.removeProperty('--phone-visual-viewport-top')
       root.style.removeProperty('--phone-keyboard-inset')
+      root.style.removeProperty('--phone-kb')
 
       if (previousBodyPhoneApp !== undefined) {
         body.dataset.phoneApp = previousBodyPhoneApp

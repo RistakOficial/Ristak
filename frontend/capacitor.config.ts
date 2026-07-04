@@ -7,6 +7,12 @@ const config: CapacitorConfig = {
   appName: 'Ristak',
   webDir: 'dist',
   bundledWebRuntime: false,
+  // Fondo del WebView. Sin esto usa `UIColor.systemBackground` (negro en modo
+  // oscuro del sistema). Lo fijamos al fondo claro del chat para que cualquier
+  // borde/carga combine con la app en vez de verse negro.
+  ios: {
+    backgroundColor: '#eef6ff'
+  },
   server: {
     androidScheme: 'https'
   },
@@ -26,7 +32,10 @@ const config: CapacitorConfig = {
       overlaysWebView: true
     },
     Keyboard: {
-      resize: 'native',
+      // 'none': el WebView no se redimensiona; el teclado lo anima nuestro driver
+      // nativo (MainViewController.swift) con la curva/duracion reales -> composer
+      // clavado al teclado. Debe coincidir con mobileAppService.setResizeMode(None).
+      resize: 'none',
       style: 'light',
       resizeOnFullScreen: true
     }

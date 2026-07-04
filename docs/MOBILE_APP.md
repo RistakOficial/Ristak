@@ -14,6 +14,15 @@ nativos en iOS/Android para mantener el WebView en escala `1.0`. Los inputs de l
 app movil deben conservar fuente de al menos `16px` para evitar el zoom de foco
 de iOS.
 
+Teclado iOS: el shell usa `Keyboard.resize = none` para que Capacitor no
+redimensione el WebView. `MainViewController.swift` escucha los eventos nativos
+del teclado, calcula el solape real dentro del WebView y escribe una sola vez las
+variables CSS `--phone-kb`, `--phone-kb-dur` y `--phone-kb-ease`. El composer del
+chat se eleva con `transform` usando esas variables, y el login ajusta su altura
+con el mismo driver. No vuelvas a sincronizar el composer con listeners de
+`visualViewport.scroll` ni con `scrollTo(0,0)` por frame: eso mete lag al scroll
+del chat y pelea con el dedo del usuario.
+
 ## Requisitos
 
 - Node 22 o superior para usar Capacitor 8.

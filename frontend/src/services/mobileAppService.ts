@@ -3,7 +3,7 @@ import { Camera, CameraDirection, EncodingType, MediaTypeSelection, type MediaRe
 import { Capacitor } from '@capacitor/core'
 import { Device } from '@capacitor/device'
 import { Filesystem } from '@capacitor/filesystem'
-import { Keyboard, KeyboardResize } from '@capacitor/keyboard'
+import { Keyboard, KeyboardResize, KeyboardStyle } from '@capacitor/keyboard'
 import { PushNotifications, type ActionPerformed, type Token } from '@capacitor/push-notifications'
 import { SplashScreen } from '@capacitor/splash-screen'
 import { StatusBar, Style } from '@capacitor/status-bar'
@@ -194,6 +194,8 @@ async function applyShellTheme(theme: MobileShellTheme) {
 
   await StatusBar.setStyle({ style: theme === 'dark' ? Style.Dark : Style.Light }).catch(() => undefined)
   await StatusBar.setBackgroundColor({ color: theme === 'dark' ? '#0b0f14' : '#ffffff' }).catch(() => undefined)
+  // El teclado tambien sigue el tema del chat: en modo noche va oscuro, de dia claro.
+  await Keyboard.setStyle({ style: theme === 'dark' ? KeyboardStyle.Dark : KeyboardStyle.Light }).catch(() => undefined)
 }
 
 function openInternalPath(value?: string | null) {
@@ -458,14 +460,16 @@ export const mobileAppService = {
 
     if (getPlatform() === 'ios') {
       await Keyboard.setAccessoryBarVisible({ isVisible: false }).catch(() => undefined)
-      // El chat monta .phoneChatPage como position:fixed dimensionado a
-      // --phone-visual-viewport-height (window.visualViewport.height). Ese layout
-      // SOLO deja el composer arriba del teclado si el WKWebView encoge su frame
-      // al abrirlo. El modo Body no encoge el frame (solo el <body>), asi que el
-      // root fijo se queda a pantalla completa y el composer (ultima fila del grid)
-      // queda debajo del teclado. Native encoge el webview -> visualViewport.height
-      // baja -> el root se ajusta y el composer queda visible. Debe coincidir con
-      // capacitor.config.ts (Keyboard.resize: 'native').
+      // Resize 'none': Capacitor NO redimensiona el WebView ni el <body> (el teclado solo
+      // se sobrepone). El driver nativo de iOS (MainViewController.swift) escucha los
+      // eventos reales del teclado y fija --phone-kb (altura) + duracion/curva UNA vez;
+      // el chat/login se mueven con CSS usando esos valores, sin JS por frame.
+      // Debe coincidir con capacitor.config.ts (Keyboard.resize: 'none').
+      await Keyboard.setResizeMode({ mode: KeyboardResize.None }).catch(() => undefined)
+    } else if (getPlatform() === 'android') {
+      // Android encoge el viewport de forma nativa (100dvh baja -> con --phone-kb en 0,
+      // height: calc(100dvh - 0) deja el composer arriba del teclado). No usamos el
+      // driver de iOS aqui.
       await Keyboard.setResizeMode({ mode: KeyboardResize.Native }).catch(() => undefined)
     }
 
