@@ -555,7 +555,7 @@ function isMetaPermissionError(error) {
 
 function createMetaSocialCapabilityMessage(platform) {
   if (platform === 'instagram') {
-    return 'Meta bloqueó Instagram DM: falta aprobar Instagram Messaging API (instagram_manage_messages) en la app de Meta. Apruébalo, pon la app en Live si respondes a clientes reales y reconecta Meta en Ristak para regenerar el token. Detalle: (#3).'
+    return 'Meta bloqueó Instagram DM: falta aprobar Instagram API con Instagram Login para mensajes (instagram_business_basic e instagram_business_manage_messages) en la app de Meta. Apruébalo, pon la app en Live si respondes a clientes reales y reconecta Meta en Ristak con un Instagram User access token. Detalle: (#3).'
   }
 
   return 'Meta bloqueó Messenger: falta aprobar pages_messaging en la app de Meta. Apruébalo, pon la app en Live si respondes a clientes reales y reconecta Meta en Ristak para regenerar el token. Detalle: (#3).'
@@ -563,7 +563,7 @@ function createMetaSocialCapabilityMessage(platform) {
 
 function createMetaSocialPermissionMessage(platform) {
   if (platform === 'instagram') {
-    return 'Meta rechazó Instagram DM por permisos insuficientes. Revisa que el token de la Página incluya instagram_manage_messages y que la persona/cuenta tenga acceso de mensajería sobre la Página e Instagram conectados.'
+    return 'Meta rechazó Instagram DM por permisos insuficientes. Revisa que el token sea un Instagram User access token con instagram_business_basic e instagram_business_manage_messages, generado por una persona que pueda responder desde esa cuenta profesional.'
   }
 
   return 'Meta rechazó Messenger por permisos insuficientes. Revisa que el token de la Página incluya pages_messaging y que la persona/cuenta tenga acceso de mensajería sobre la Página conectada.'
@@ -588,11 +588,11 @@ function normalizeMetaSocialSendError(error, platform) {
   return error
 }
 
-async function metaSocialGraphRequest(path, { method = 'GET', token, query, body } = {}) {
+async function metaSocialGraphRequest(path, { method = 'GET', token, query, body, baseUrl = API_URLS.META_GRAPH } = {}) {
   const cleanToken = cleanString(token)
   if (!cleanToken) throw createMetaSocialMessageError('Meta no está conectado', 409)
 
-  const url = new URL(`${API_URLS.META_GRAPH}${path}`)
+  const url = new URL(`${baseUrl}${path}`)
   Object.entries(query || {}).forEach(([key, value]) => {
     if (value !== undefined && value !== null && value !== '') {
       url.searchParams.set(key, String(value))
@@ -624,9 +624,8 @@ async function metaSocialGraphRequest(path, { method = 'GET', token, query, body
 // 'instagram' (comments/live_comments) suscrito a nivel de app en el panel de Meta.
 const META_PAGE_SUBSCRIBED_FIELDS = 'messages,messaging_postbacks,message_reactions,messaging_referrals,feed'
 
-// El token guardado en meta_config es un token de USUARIO. Para operar la Página
-// (suscribir webhooks, enviar DMs, leer perfiles) Meta exige un token de PÁGINA.
-// Lo derivamos on-demand desde el token de usuario y lo cacheamos en memoria:
+// Para Messenger y operaciones de Página, Meta exige un token de PÁGINA. Lo
+// derivamos on-demand desde el token base guardado y lo cacheamos en memoria:
 // un token de Página derivado de un token de usuario de larga duración no expira
 // mientras el de usuario siga vivo, así que cachearlo es seguro y evita una
 // llamada extra por cada mensaje. Ante un 190 (token inválido) se re-deriva.
@@ -901,6 +900,45 @@ function getMetaSocialBusinessId(platform, config = {}, profile = {}) {
   return cleanString(profile.page_id) || cleanString(config.page_id)
 }
 
+async function sendMetaMessengerTextRequest({ businessId, recipientId, body, config }) {
+  const sendPayload = {
+    messaging_type: 'RESPONSE',
+    recipient: { id: recipientId },
+    message: { text: body }
+  }
+
+  try {
+    return await metaSocialGraphRequest(`/${encodeURIComponent(businessId)}/messages`, {
+      method: 'POST',
+      token: await resolveMetaPageAccessToken({ config }),
+      body: sendPayload
+    })
+  } catch (error) {
+    const looksLikeTokenIssue = error?.statusCode === 401 || /oauth|access token|\b190\b/i.test(error?.message || '')
+    if (!looksLikeTokenIssue) throw error
+    return await metaSocialGraphRequest(`/${encodeURIComponent(businessId)}/messages`, {
+      method: 'POST',
+      token: await resolveMetaPageAccessToken({ config, forceRefresh: true }),
+      body: sendPayload
+    })
+  }
+}
+
+async function sendMetaInstagramTextRequest({ businessId, recipientId, body, config }) {
+  const instagramUserToken = cleanString(config?.access_token)
+  if (!instagramUserToken) throw createMetaSocialMessageError('Conecta Meta Ads para responder por Instagram.', 409)
+
+  return await metaSocialGraphRequest(`/${encodeURIComponent(businessId)}/messages`, {
+    method: 'POST',
+    token: instagramUserToken,
+    baseUrl: API_URLS.INSTAGRAM_GRAPH,
+    body: {
+      recipient: { id: recipientId },
+      message: { text: body }
+    }
+  })
+}
+
 async function saveMetaSocialOutboundMessage({ platform, contactId, profile, messageId, text, response, externalId, messageType = 'text', commentId = '', postId = '', parentCommentId = '' }) {
   const now = new Date().toISOString()
   const cleanPlatform = platform === 'instagram' ? 'instagram' : 'messenger'
@@ -1038,33 +1076,13 @@ export async function sendMetaSocialTextMessage({ contactId, platform, message, 
     )
   }
 
-  // Messenger/Instagram exigen el token de PÁGINA para /{id}/messages (el token
-  // de usuario da "se necesita un token de acceso a la página"). Lo derivamos y,
-  // si caducó/rotó, lo re-derivamos una vez y reintentamos.
-  const sendPayload = {
-    messaging_type: 'RESPONSE',
-    recipient: { id: recipientId },
-    message: { text: body }
-  }
   let response
   try {
-    response = await metaSocialGraphRequest(`/${encodeURIComponent(businessId)}/messages`, {
-      method: 'POST',
-      token: await resolveMetaPageAccessToken({ config }),
-      body: sendPayload
-    })
+    response = cleanPlatform === 'instagram'
+      ? await sendMetaInstagramTextRequest({ businessId, recipientId, body, config })
+      : await sendMetaMessengerTextRequest({ businessId, recipientId, body, config })
   } catch (error) {
-    const looksLikeTokenIssue = error?.statusCode === 401 || /oauth|access token|\b190\b/i.test(error?.message || '')
-    if (!looksLikeTokenIssue) throw normalizeMetaSocialSendError(error, cleanPlatform)
-    try {
-      response = await metaSocialGraphRequest(`/${encodeURIComponent(businessId)}/messages`, {
-        method: 'POST',
-        token: await resolveMetaPageAccessToken({ config, forceRefresh: true }),
-        body: sendPayload
-      })
-    } catch (retryError) {
-      throw normalizeMetaSocialSendError(retryError, cleanPlatform)
-    }
+    throw normalizeMetaSocialSendError(error, cleanPlatform)
   }
 
   const sent = await saveMetaSocialOutboundMessage({

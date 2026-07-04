@@ -37,6 +37,7 @@ export const API_URLS = {
 
   // Meta Graph API (con versión dinámica)
   get META_GRAPH() { return `https://graph.facebook.com/${META_API_VERSION}` },
+  get INSTAGRAM_GRAPH() { return `https://graph.instagram.com/${META_API_VERSION}` },
   META_AD_INSIGHTS: (accountId) => `https://graph.facebook.com/${META_API_VERSION}/act_${accountId}/insights`,
   META_TOKEN_DEBUG: 'https://graph.facebook.com/debug_token',
   get META_TOKEN_REFRESH() { return `https://graph.facebook.com/${META_API_VERSION}/oauth/access_token` },
