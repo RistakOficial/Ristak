@@ -1606,9 +1606,21 @@ const attachContactPhoneNumbers = async (contacts = []) => {
   }))
 }
 
+const getCustomerPaymentsCount = (contact = {}) => {
+  const raw = contact.customer_payments_count ??
+    contact.customerPaymentsCount ??
+    contact.successful_payments_count ??
+    contact.purchases_count ??
+    contact.purchases ??
+    0
+  const count = Number(raw)
+  return Number.isFinite(count) ? count : 0
+}
+
 const mapContactRowForResponse = (contact = {}) => {
+  const customerPaymentsCount = getCustomerPaymentsCount(contact)
   let status = 'lead'
-  if (Number(contact.purchases_count || 0) > 0) {
+  if (customerPaymentsCount > 0) {
     status = 'customer'
   } else if (contact.has_appointments || contact.appointment_date) {
     status = 'appointment'
@@ -1625,8 +1637,9 @@ const mapContactRowForResponse = (contact = {}) => {
     phone: contact.phone || '',
     ltv: parseFloat(contact.total_paid || 0),
     status,
-    lastPurchase: contact.last_purchase_date,
-    purchases: contact.purchases_count || 0,
+    lastPurchase: contact.last_customer_payment_date || contact.last_purchase_date,
+    purchases: customerPaymentsCount,
+    successfulPaymentsCount: customerPaymentsCount,
     hasAppointments: Boolean(contact.has_appointments),
     hasShowedAppointment: Boolean(contact.has_showed_appointment),
     hasAttendedAppointment: Boolean(contact.has_showed_appointment),
@@ -2279,10 +2292,16 @@ export const getChatContacts = async (req, res) => {
                 WHEN amount > 0 AND LOWER(status) IN ('succeeded', 'paid', 'completed', 'complete', 'fulfilled', 'success')
                 AND ${nonTestPaymentCondition()}
                 THEN 1 ELSE 0 END) AS purchases_count,
+          SUM(CASE
+                WHEN amount > 0 AND LOWER(status) IN ('succeeded', 'paid', 'completed', 'complete', 'fulfilled', 'success')
+                THEN 1 ELSE 0 END) AS customer_payments_count,
           MAX(CASE
                 WHEN amount > 0 AND LOWER(status) IN ('succeeded', 'paid', 'completed', 'complete', 'fulfilled', 'success')
                 AND ${nonTestPaymentCondition()}
-                THEN date ELSE NULL END) AS last_purchase_date
+                THEN date ELSE NULL END) AS last_purchase_date,
+          MAX(CASE
+                WHEN amount > 0 AND LOWER(status) IN ('succeeded', 'paid', 'completed', 'complete', 'fulfilled', 'success')
+                THEN COALESCE(paid_at, date, created_at) ELSE NULL END) AS last_customer_payment_date
         FROM payments
         JOIN ranked_chats ON ranked_chats.contact_id = payments.contact_id
         GROUP BY payments.contact_id
@@ -2305,7 +2324,9 @@ ${CONTACT_META_PROFILE_SELECT},
 ${CONTACT_META_MESSAGE_FLAGS_SELECT},
         COALESCE(ps.total_paid, 0) AS total_paid,
         COALESCE(ps.purchases_count, 0) AS purchases_count,
+        COALESCE(ps.customer_payments_count, ps.purchases_count, 0) AS customer_payments_count,
         ps.last_purchase_date AS last_purchase_date,
+        ps.last_customer_payment_date AS last_customer_payment_date,
         c.appointment_date,
         c.created_at,
         (
@@ -2315,7 +2336,7 @@ ${CONTACT_META_MESSAGE_FLAGS_SELECT},
             AND ${ACTIVE_APPOINTMENT_CONDITION}
         ) AS has_appointments,
         (
-          COALESCE(ps.purchases_count, 0) > 0
+          COALESCE(ps.customer_payments_count, ps.purchases_count, 0) > 0
           OR EXISTS (
             SELECT 1
             FROM appointment_attendance_signals aas
@@ -2553,8 +2574,10 @@ ${CONTACT_META_PROFILE_SELECT},
         COALESCE(ps.total_paid, 0) AS total_paid,
         COALESCE(ps.payments_count, 0) AS payments_count,
         COALESCE(ps.purchases_count, 0) AS purchases_count,
+        COALESCE(ps.customer_payments_count, ps.purchases_count, 0) AS customer_payments_count,
         COALESCE(ps.failed_payments_count, 0) AS failed_payments_count,
         ps.last_purchase_date AS last_purchase_date,
+        ps.last_customer_payment_date AS last_customer_payment_date,
         c.appointment_date,
         c.created_at,
         (
@@ -2564,7 +2587,7 @@ ${CONTACT_META_PROFILE_SELECT},
             AND ${ACTIVE_APPOINTMENT_CONDITION}
         ) AS has_appointments,
         (
-          COALESCE(ps.purchases_count, 0) > 0
+          COALESCE(ps.customer_payments_count, ps.purchases_count, 0) > 0
           OR EXISTS (
             SELECT 1
             FROM appointment_attendance_signals aas
@@ -2685,6 +2708,7 @@ ${CONTACT_META_PROFILE_SELECT},
 
     // Mapear campos de base de datos a nombres esperados por frontend
     const mappedContacts = contactsWithPhones.map(c => {
+      const customerPaymentsCount = getCustomerPaymentsCount(c)
       const firstSession = getFirstSessionForContact(c)
       const attributionFields = buildContactAttributionFields(c, whatsappAttributionsByContact.get(c.id))
       const adFields = getSafeContactAdFields({
@@ -2697,7 +2721,7 @@ ${CONTACT_META_PROFILE_SELECT},
 
       // Determinar status basado en la actividad del contacto
       let status = 'lead'
-      if (c.purchases_count > 0) {
+      if (customerPaymentsCount > 0) {
         status = 'customer'
       } else if (c.has_appointments) {
         status = 'appointment'
@@ -2711,10 +2735,10 @@ ${CONTACT_META_PROFILE_SELECT},
         phone: c.phone || '',
         ltv: parseFloat(c.total_paid || 0),
         status,
-        lastPurchase: c.last_purchase_date,
-        purchases: c.purchases_count || 0,
+        lastPurchase: c.last_customer_payment_date || c.last_purchase_date,
+        purchases: customerPaymentsCount,
         paymentsCount: c.payments_count || 0,
-        successfulPaymentsCount: c.purchases_count || 0,
+        successfulPaymentsCount: customerPaymentsCount,
         failedPaymentsCount: c.failed_payments_count || 0,
         hasAppointments: Boolean(c.has_appointments),
         hasShowedAppointment: Boolean(c.has_showed_appointment),
@@ -2822,10 +2846,16 @@ export const getContactById = async (req, res) => {
                 WHEN amount > 0 AND LOWER(status) IN ('succeeded', 'paid', 'completed', 'complete', 'fulfilled', 'success')
                 AND ${nonTestPaymentCondition()}
                 THEN 1 ELSE 0 END) AS purchases_count,
+          SUM(CASE
+                WHEN amount > 0 AND LOWER(status) IN ('succeeded', 'paid', 'completed', 'complete', 'fulfilled', 'success')
+                THEN 1 ELSE 0 END) AS customer_payments_count,
           MAX(CASE
                 WHEN amount > 0 AND LOWER(status) IN ('succeeded', 'paid', 'completed', 'complete', 'fulfilled', 'success')
                 AND ${nonTestPaymentCondition()}
-                THEN date ELSE NULL END) AS last_purchase_date
+                THEN date ELSE NULL END) AS last_purchase_date,
+          MAX(CASE
+                WHEN amount > 0 AND LOWER(status) IN ('succeeded', 'paid', 'completed', 'complete', 'fulfilled', 'success')
+                THEN COALESCE(paid_at, date, created_at) ELSE NULL END) AS last_customer_payment_date
         FROM payments
         WHERE contact_id = ?
         GROUP BY contact_id
@@ -2852,7 +2882,9 @@ ${CONTACT_WHATSAPP_PROFILE_SELECTS},
 ${CONTACT_META_PROFILE_SELECT},
         COALESCE(ps.total_paid, 0) AS total_paid,
         COALESCE(ps.purchases_count, 0) AS purchases_count,
+        COALESCE(ps.customer_payments_count, ps.purchases_count, 0) AS customer_payments_count,
         ps.last_purchase_date AS last_purchase_date,
+        ps.last_customer_payment_date AS last_customer_payment_date,
         c.appointment_date,
         c.created_at,
         (
@@ -2862,7 +2894,7 @@ ${CONTACT_META_PROFILE_SELECT},
             AND ${ACTIVE_APPOINTMENT_CONDITION}
         ) AS has_appointments,
         (
-          COALESCE(ps.purchases_count, 0) > 0
+          COALESCE(ps.customer_payments_count, ps.purchases_count, 0) > 0
           OR EXISTS (
             SELECT 1
             FROM appointment_attendance_signals aas
@@ -3097,8 +3129,9 @@ ${CONTACT_META_PROFILE_SELECT},
       )
 
     // Determinar status basado en la actividad del contacto
+    const customerPaymentsCount = getCustomerPaymentsCount(contact)
     let status = 'lead'
-    if (contact.purchases_count > 0) {
+    if (customerPaymentsCount > 0) {
       status = 'customer'
     } else if (contact.has_appointments) {
       status = 'appointment'
@@ -3162,8 +3195,9 @@ ${CONTACT_META_PROFILE_SELECT},
       phone: contact.phone || '',
       ltv: parseFloat(contact.total_paid || 0),
       status,
-      lastPurchase: contact.last_purchase_date,
-      purchases: contact.purchases_count || 0,
+      lastPurchase: contact.last_customer_payment_date || contact.last_purchase_date,
+      purchases: customerPaymentsCount,
+      successfulPaymentsCount: customerPaymentsCount,
       source: contact.source,
       ad_name: resolvedAdFields.ad_name,
       ad_id: resolvedAdFields.ad_id,
@@ -3266,10 +3300,16 @@ export const searchContacts = async (req, res) => {
                 WHEN amount > 0 AND LOWER(status) IN ('succeeded', 'paid', 'completed', 'complete', 'fulfilled', 'success')
                 AND ${nonTestPaymentCondition()}
                 THEN 1 ELSE 0 END) AS purchases_count,
+          SUM(CASE
+                WHEN amount > 0 AND LOWER(status) IN ('succeeded', 'paid', 'completed', 'complete', 'fulfilled', 'success')
+                THEN 1 ELSE 0 END) AS customer_payments_count,
           MAX(CASE
                 WHEN amount > 0 AND LOWER(status) IN ('succeeded', 'paid', 'completed', 'complete', 'fulfilled', 'success')
                 AND ${nonTestPaymentCondition()}
-                THEN date ELSE NULL END) AS last_purchase_date
+                THEN date ELSE NULL END) AS last_purchase_date,
+          MAX(CASE
+                WHEN amount > 0 AND LOWER(status) IN ('succeeded', 'paid', 'completed', 'complete', 'fulfilled', 'success')
+                THEN COALESCE(paid_at, date, created_at) ELSE NULL END) AS last_customer_payment_date
         FROM payments
         GROUP BY contact_id
       )
@@ -3280,8 +3320,10 @@ export const searchContacts = async (req, res) => {
         c.phone,
         COALESCE(ps.total_paid, 0) AS total_paid,
         COALESCE(ps.purchases_count, 0) AS purchases_count,
+        COALESCE(ps.customer_payments_count, ps.purchases_count, 0) AS customer_payments_count,
         c.appointment_date,
         ps.last_purchase_date AS last_purchase_date,
+        ps.last_customer_payment_date AS last_customer_payment_date,
         c.created_at,
         c.source,
         c.attribution_ad_name,
@@ -3295,7 +3337,7 @@ ${CONTACT_META_PROFILE_SELECT},
             AND ${ACTIVE_APPOINTMENT_CONDITION}
         ) AS has_appointments,
         (
-          COALESCE(ps.purchases_count, 0) > 0
+          COALESCE(ps.customer_payments_count, ps.purchases_count, 0) > 0
           OR EXISTS (
             SELECT 1
             FROM appointment_attendance_signals aas
@@ -3329,9 +3371,10 @@ ${CONTACT_META_PROFILE_SELECT},
 
     // Mapear campos de base de datos a nombres esperados por frontend
     const mappedContacts = contactsWithPhones.map(c => {
+      const customerPaymentsCount = getCustomerPaymentsCount(c)
       // Determinar status basado en la actividad del contacto
       let status = 'lead'
-      if (c.purchases_count > 0) {
+      if (customerPaymentsCount > 0) {
         status = 'customer'
       } else if (c.has_appointments) {
         status = 'appointment'
@@ -3345,8 +3388,9 @@ ${CONTACT_META_PROFILE_SELECT},
         phone: c.phone || '',
         ltv: parseFloat(c.total_paid || 0),
         status,
-        lastPurchase: c.last_purchase_date,
-        purchases: c.purchases_count || 0,
+        lastPurchase: c.last_customer_payment_date || c.last_purchase_date,
+        purchases: customerPaymentsCount,
+        successfulPaymentsCount: customerPaymentsCount,
         hasAppointments: Boolean(c.has_appointments),
         hasShowedAppointment: Boolean(c.has_showed_appointment),
         hasAttendedAppointment: Boolean(c.has_showed_appointment),

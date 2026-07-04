@@ -62,8 +62,12 @@ const lowerValue = (value) => cleanString(value).toLowerCase()
 
 const placeholderList = (values = []) => values.map(() => '?').join(', ')
 
+const paymentCustomerPredicate = (alias = 'p') => (
+  `${alias}.amount > 0 AND LOWER(COALESCE(${alias}.status, '')) IN (${sqlList(SUCCESS_PAYMENT_STATUSES)})`
+)
+
 const paymentSuccessPredicate = (alias = 'p') => (
-  `${alias}.amount > 0 AND LOWER(COALESCE(${alias}.status, '')) IN (${sqlList(SUCCESS_PAYMENT_STATUSES)}) AND ${nonTestPaymentCondition(alias)}`
+  `${paymentCustomerPredicate(alias)} AND ${nonTestPaymentCondition(alias)}`
 )
 
 const paymentFailedPredicate = (alias = 'p') => (
@@ -74,12 +78,12 @@ const paymentLivePredicate = (alias = 'p') => (
   `${alias}.amount > 0 AND ${nonTestPaymentCondition(alias)}`
 )
 
-const existsSuccessfulPayment = (contactAlias = 'c') => (
+const existsCustomerPayment = (contactAlias = 'c') => (
   `EXISTS (
     SELECT 1
-    FROM payments p_stage_success
-    WHERE p_stage_success.contact_id = ${contactAlias}.id
-      AND ${paymentSuccessPredicate('p_stage_success')}
+    FROM payments p_stage_customer
+    WHERE p_stage_customer.contact_id = ${contactAlias}.id
+      AND ${paymentCustomerPredicate('p_stage_customer')}
   )`
 )
 
@@ -111,7 +115,7 @@ const existsAttendanceSignal = (contactAlias = 'c') => (
 
 const buildQuickFilterCondition = (quickFilter = 'all', contactAlias = 'c') => {
   const filter = CONTACT_LIST_QUICK_FILTERS.has(String(quickFilter)) ? String(quickFilter) : 'all'
-  const customer = existsSuccessfulPayment(contactAlias)
+  const customer = existsCustomerPayment(contactAlias)
   const activeAppointment = existsActiveAppointment(contactAlias)
 
   if (filter === 'customers') return customer
@@ -125,7 +129,7 @@ const buildQuickFilterCondition = (quickFilter = 'all', contactAlias = 'c') => {
 
 const contactStageExpression = (contactAlias = 'c') => (
   `CASE
-    WHEN ${existsSuccessfulPayment(contactAlias)} THEN 'customer'
+    WHEN ${existsCustomerPayment(contactAlias)} THEN 'customer'
     WHEN ${existsActiveAppointment(contactAlias)} THEN 'appointment'
     ELSE 'lead'
   END`
@@ -133,7 +137,7 @@ const contactStageExpression = (contactAlias = 'c') => (
 
 export const contactListPrioritySortExpression = (contactAlias = 'c', paymentStatsAlias = 'ps') => (
   `CASE
-    WHEN COALESCE(${paymentStatsAlias}.purchases_count, 0) > 0 THEN 4
+    WHEN COALESCE(${paymentStatsAlias}.customer_payments_count, ${paymentStatsAlias}.purchases_count, 0) > 0 THEN 4
     WHEN ${existsAttendanceSignal(contactAlias)} OR ${existsAttendedAppointment(contactAlias)} THEN 3
     WHEN ${existsActiveAppointment(contactAlias)} THEN 2
     ELSE 1
@@ -184,11 +188,17 @@ export function buildContactListPaymentStatsCte() {
                 WHEN ${paymentSuccessPredicate('payments')}
                 THEN 1 ELSE 0 END) AS purchases_count,
           SUM(CASE
+                WHEN ${paymentCustomerPredicate('payments')}
+                THEN 1 ELSE 0 END) AS customer_payments_count,
+          SUM(CASE
                 WHEN ${paymentFailedPredicate('payments')}
                 THEN 1 ELSE 0 END) AS failed_payments_count,
           MAX(CASE
                 WHEN ${paymentSuccessPredicate('payments')}
-                THEN COALESCE(paid_at, date, created_at) ELSE NULL END) AS last_purchase_date
+                THEN COALESCE(paid_at, date, created_at) ELSE NULL END) AS last_purchase_date,
+          MAX(CASE
+                WHEN ${paymentCustomerPredicate('payments')}
+                THEN COALESCE(paid_at, date, created_at) ELSE NULL END) AS last_customer_payment_date
         FROM payments
         GROUP BY contact_id
       )
@@ -431,7 +441,7 @@ const paymentNumberExpression = (field, contactAlias = 'c') => {
     return `(SELECT COUNT(*) FROM payments p_num WHERE p_num.contact_id = ${contactAlias}.id AND ${paymentLivePredicate('p_num')})`
   }
   if (field === 'successful_payments_count') {
-    return `(SELECT COUNT(*) FROM payments p_num WHERE p_num.contact_id = ${contactAlias}.id AND ${paymentSuccessPredicate('p_num')})`
+    return `(SELECT COUNT(*) FROM payments p_num WHERE p_num.contact_id = ${contactAlias}.id AND ${paymentCustomerPredicate('p_num')})`
   }
   if (field === 'failed_payments_count') {
     return `(SELECT COUNT(*) FROM payments p_num WHERE p_num.contact_id = ${contactAlias}.id AND ${paymentFailedPredicate('p_num')})`
@@ -772,9 +782,9 @@ const buildAdvancedRuleCondition = (rule, contactAlias = 'c', timezone) => {
 
   if (field === 'priority') {
     const priorityMap = {
-      high: existsSuccessfulPayment(contactAlias),
+      high: existsCustomerPayment(contactAlias),
       medium: `(${existsAttendanceSignal(contactAlias)} OR ${existsAttendedAppointment(contactAlias)} OR ${existsActiveAppointment(contactAlias)})`,
-      low: `(NOT ${existsSuccessfulPayment(contactAlias)} AND NOT ${existsActiveAppointment(contactAlias)})`
+      low: `(NOT ${existsCustomerPayment(contactAlias)} AND NOT ${existsActiveAppointment(contactAlias)})`
     }
     const selected = lowerValue(normalizedRule.value)
     const condition = priorityMap[selected]
@@ -798,7 +808,7 @@ const buildAdvancedRuleCondition = (rule, contactAlias = 'c', timezone) => {
 
   if (field === 'last_payment_date') {
     return buildDateMatchCondition(
-      `(SELECT MAX(COALESCE(p_last.paid_at, p_last.date, p_last.created_at)) FROM payments p_last WHERE p_last.contact_id = ${contactAlias}.id AND ${paymentSuccessPredicate('p_last')})`,
+      `(SELECT MAX(COALESCE(p_last.paid_at, p_last.date, p_last.created_at)) FROM payments p_last WHERE p_last.contact_id = ${contactAlias}.id AND ${paymentCustomerPredicate('p_last')})`,
       operator,
       normalizedRule.value,
       normalizedRule.valueTo,
@@ -808,7 +818,7 @@ const buildAdvancedRuleCondition = (rule, contactAlias = 'c', timezone) => {
 
   const booleanConditions = {
     has_payments: `EXISTS (SELECT 1 FROM payments p_bool WHERE p_bool.contact_id = ${contactAlias}.id AND ${paymentLivePredicate('p_bool')})`,
-    has_successful_payment: existsSuccessfulPayment(contactAlias),
+    has_successful_payment: existsCustomerPayment(contactAlias),
     has_failed_payment: `EXISTS (SELECT 1 FROM payments p_bool WHERE p_bool.contact_id = ${contactAlias}.id AND ${paymentFailedPredicate('p_bool')})`,
     has_active_appointment: existsActiveAppointment(contactAlias),
     has_attended_appointment: `(${existsAttendanceSignal(contactAlias)} OR ${existsAttendedAppointment(contactAlias)})`,

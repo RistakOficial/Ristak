@@ -1,7 +1,9 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import {
+  buildContactListPaymentStatsCte,
   buildContactListWhere,
+  contactListPrioritySortExpression,
   getContactListSortExpression,
   normalizeContactAdvancedFilters,
   normalizeContactListTrackingFilters
@@ -67,7 +69,7 @@ test('buildContactListWhere combina filtros rapidos, tracking y condiciones avan
   })
 
   assert.match(where.whereClause, /c\.deleted_at IS NULL/)
-  assert.match(where.whereClause, /FROM payments p_stage_success/)
+  assert.match(where.whereClause, /FROM payments p_stage_customer/)
   assert.match(where.whereClause, /FROM sessions s_filter/)
   assert.match(where.whereClause, /FROM json_each|jsonb_array_elements/)
   assert.match(where.whereClause, /SUM\(p_num\.amount\)/)
@@ -77,6 +79,25 @@ test('buildContactListWhere combina filtros rapidos, tracking y condiciones avan
   assert.ok(where.params.includes('city'))
   assert.ok(where.params.includes('%juarez%'))
   assert.ok(where.params.includes(100))
+})
+
+test('el filtro Clientes incluye pagos exitosos test sin meterlos al total pagado', () => {
+  const where = buildContactListWhere({
+    alias: 'c',
+    quickFilter: 'customers'
+  })
+  const quickFilterPaymentClause = where.whereClause.match(/FROM payments p_stage_customer[\s\S]*?\)\)/)?.[0] || ''
+
+  assert.match(quickFilterPaymentClause, /p_stage_customer\.amount > 0/)
+  assert.match(quickFilterPaymentClause, /LOWER\(COALESCE\(p_stage_customer\.status, ''\)\)/)
+  assert.doesNotMatch(quickFilterPaymentClause, /payment_mode/)
+
+  const cte = buildContactListPaymentStatsCte()
+  assert.match(cte, /AS customer_payments_count/)
+  assert.match(cte, /AS last_customer_payment_date/)
+  assert.match(cte, /AS total_paid/)
+  assert.match(cte, /COALESCE\(payments\.payment_mode, 'live'\) != 'test'/)
+  assert.match(contactListPrioritySortExpression('c', 'ps'), /ps\.customer_payments_count/)
 })
 
 test('buildContactListWhere interpreta fechas calendario con timezone de negocio', () => {
@@ -95,6 +116,6 @@ test('buildContactListWhere interpreta fechas calendario con timezone de negocio
 })
 
 test('getContactListSortExpression solo expone ordenamientos permitidos', () => {
-  assert.match(getContactListSortExpression('priority', 'c', 'ps'), /COALESCE\(ps\.purchases_count, 0\)/)
+  assert.match(getContactListSortExpression('priority', 'c', 'ps'), /COALESCE\(ps\.customer_payments_count, ps\.purchases_count, 0\)/)
   assert.match(getContactListSortExpression('unknown_sort', 'c', 'ps'), /c\.created_at/)
 })

@@ -204,17 +204,16 @@ export async function buildContactStats ({ startDate, endDate, scope = 'all' } =
 
   const dedupExpr = buildDedupExpression('')
 
-  // Derivar estado del contacto desde datos vivos (pagos y citas reales), no desde
-  // columnas denormalizadas que pueden quedar obsoletas. Un contacto es "cliente" solo
-  // si tiene al menos un pago válido en la BD; "con cita" solo si tiene una cita activa.
+  // Derivar estado del contacto desde datos vivos, no desde columnas denormalizadas
+  // que pueden quedar obsoletas. Un contacto es "cliente" si tiene al menos un pago
+  // exitoso, incluyendo sandbox; los importes/LTV sí excluyen pagos test.
   const activePaymentList = [...ACTIVE_PAYMENT_STATUSES].map(value => `'${value}'`).join(', ')
   const inactiveAppointmentList = [...INACTIVE_APPOINTMENT_STATUSES].map(value => `'${value}'`).join(', ')
-  const validPaymentExists = `EXISTS (
+  const customerPaymentExists = `EXISTS (
     SELECT 1 FROM payments p
     WHERE p.contact_id = contacts.id
       AND p.amount > 0
       AND LOWER(p.status) IN (${activePaymentList})
-      AND ${nonTestPaymentCondition('p')}
   )`
   const activeAppointmentExists = `EXISTS (
     SELECT 1 FROM appointments a
@@ -233,7 +232,7 @@ export async function buildContactStats ({ startDate, endDate, scope = 'all' } =
     SELECT
       COUNT(DISTINCT ${dedupExpr}) as total,
       COUNT(DISTINCT CASE
-        WHEN ${validPaymentExists} THEN ${dedupExpr}
+        WHEN ${customerPaymentExists} THEN ${dedupExpr}
       END) as customers,
       COUNT(DISTINCT CASE
         WHEN ${activeAppointmentExists} THEN ${dedupExpr}
@@ -343,13 +342,20 @@ export async function buildContactTimeline ({ startDate, endDate, scope = 'all' 
 
   // Usar getGroupExpression para timezone dinámico
   const dateExpression = getGroupExpression('created_at', groupBy, timezone)
+  const activePaymentList = [...ACTIVE_PAYMENT_STATUSES].map(value => `'${value}'`).join(', ')
+  const customerPaymentExists = `EXISTS (
+    SELECT 1 FROM payments p
+    WHERE p.contact_id = contacts.id
+      AND p.amount > 0
+      AND LOWER(p.status) IN (${activePaymentList})
+  )`
 
   const timelineQuery = `
     SELECT
       ${dateExpression} as period,
       COUNT(DISTINCT ${dedupExpr}) as contacts,
       COUNT(DISTINCT CASE
-        WHEN purchases_count > 0 THEN ${dedupExpr}
+        WHEN ${customerPaymentExists} THEN ${dedupExpr}
       END) as customers
     FROM contacts
     ${whereClause}

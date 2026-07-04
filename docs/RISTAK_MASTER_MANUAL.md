@@ -283,11 +283,16 @@ Capacidades:
 - Filtros avanzados combinables en la lista de contactos. El endpoint
   `/api/contacts` aplica del lado servidor los filtros rapidos (todos, leads,
   citados, asistencias, clientes), conserva compatibilidad con filtros legacy de
-  tracking y aplica condiciones avanzadas por grupos AND/OR sobre etiquetas,
-  campos personalizados, fechas de creacion/actualizacion, citas, asistencias,
-  pagos, tracking y automatizaciones. Las fechas de negocio se interpretan en la
-  zona horaria de la cuenta y los pagos usan estados live/exitosos/fallidos
-  normalizados.
+  tracking (paginas, fuentes, dispositivos, navegadores, sistemas,
+  placements/anuncios) y aplica condiciones avanzadas por grupos AND/OR sobre
+  etiquetas, campos personalizados, fechas de creacion/actualizacion, citas,
+  asistencias, pagos, tracking y automatizaciones. Las fechas de negocio se
+  interpretan en la zona horaria de la cuenta y los pagos usan estados
+  live/exitosos/fallidos normalizados. La clasificacion CRM `Cliente` se activa
+  con cualquier pago exitoso del contacto, incluyendo `payment_mode = test`,
+  para poder probar checkouts sandbox de punta a punta. Las metricas financieras
+  de la lista (`total_paid`, LTV, conteos live y reportes de ingresos) siguen
+  excluyendo pagos test.
 - Acciones masivas con job propio.
 - Atribucion por UTMs, click IDs, WhatsApp referrals, Meta y tracking identity.
 - El Viaje del Cliente en la ficha debe mostrar cada actividad con una etiqueta
@@ -606,6 +611,11 @@ Ristak soporta:
 El modo de pasarelas puede ser `test` o `live`. Ese modo debe viajar con el pago
 en `payment_mode` o metadata equivalente para evitar mezclar pruebas con dinero
 real.
+
+Un pago exitoso en modo `test` puede clasificar al contacto como `Cliente` dentro
+del CRM y del filtro de Contactos para validar flujos sandbox. Ese mismo pago no
+debe sumar a LTV, ingresos reales, ROAS, reportes financieros ni conversiones
+reales de Meta.
 
 ### Tabla de transacciones
 
