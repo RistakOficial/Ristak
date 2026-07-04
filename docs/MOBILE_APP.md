@@ -14,15 +14,27 @@ nativos en iOS/Android para mantener el WebView en escala `1.0`. Los inputs de l
 app movil deben conservar fuente de al menos `16px` para evitar el zoom de foco
 de iOS.
 
-Teclado movil: el shell usa `Keyboard.resize = native` para que iOS redimensione
-el `WKWebView` con la animacion nativa del teclado. El composer del chat vive en
-la ultima fila del grid y no debe moverse con `transform`, variables `--phone-kb`
-ni un puente Swift/JS de altura del teclado. En Android, `resizeOnFullScreen` y
-`android:windowSoftInputMode="adjustResize"` mantienen el mismo modelo: el
-viewport disponible se achica y la UI se reacomoda por layout. No vuelvas a
-sincronizar el composer con listeners de `visualViewport.scroll` ni con
-`scrollTo(0,0)` por frame: eso mete lag al scroll del chat y pelea con el dedo
-del usuario.
+Teclado movil: en iOS el shell usa `Keyboard.resize = none` para desactivar el
+resize tardio del plugin de Capacitor. El `MainViewController.swift` lee del
+evento nativo del teclado la altura, duracion y curva reales, y publica
+`--phone-kb`, `--phone-kb-dur` y `--phone-kb-ease` una vez por evento. El chat
+mueve la superficie de conversacion completa (`messagesPane` + `composerShell`)
+con un `transform` GPU; no se debe mover solo el composer ni redimensionar el
+`WKWebView`. `PhoneChat` no inventa alturas, duraciones, curvas ni estados de
+apertura desde `touchstart`, `focusin`, `focusout`, `localStorage` o
+`visualViewport`; solo desenfoca el composer al tocar fuera y estabiliza el
+scroll. `data-phone-chat-keyboard` tambien lo controla el bridge nativo: se
+activa al abrir y se retira despues de la duracion real de cierre para que el
+fondo detras del teclado conserve el mismo color del panel del composer durante
+toda la animacion. No uses `visualViewport` con `transition: none` para mover el
+chat: en iOS puede llegar en bloque y hacer que el composer desaparezca hasta la
+posicion final. El shell iOS recibe el `--phone-chat-composer-bg` computado del
+root del chat para pintar la `UIWindow` detras del teclado con el mismo color
+real del panel del composer, sin dejar esquinas ni cortes de otro color. En
+Android, `resizeOnFullScreen` y
+`android:windowSoftInputMode="adjustResize"` mantienen el ajuste nativo del IME.
+No vuelvas a meter `scrollTo(0,0)` por frame desde `visualViewport.scroll`: eso
+mete lag al scroll del chat y pelea con el dedo del usuario.
 
 ## Requisitos
 

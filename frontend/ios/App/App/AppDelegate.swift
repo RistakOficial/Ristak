@@ -7,15 +7,16 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
     var window: UIWindow?
 
     func application(_ application: UIApplication, didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]?) -> Bool {
-        // La UIWindow es lo que queda DETRAS del WKWebView. Con KeyboardResize.Native
-        // el webview se encoge al subir el teclado y, en iOS 26 (esquinas redondeadas
-        // del teclado), se asomaba el fondo de la ventana: negro, porque por defecto
-        // es UIColor.systemBackground y el sistema esta en modo oscuro. Lo pintamos con
-        // el fondo claro del chat (#eef6ff, mismo del composer light) para que esas
-        // esquinas combinen con la app en vez de verse negras. NO forzamos
+        // La UIWindow es lo que queda DETRAS del WKWebView y del teclado. En iOS 26,
+        // las esquinas redondeadas del teclado pueden dejar asomar ese fondo. Lo
+        // iniciamos segun el modo del sistema; MainViewController luego lo actualiza
+        // al color del composer cuando React resuelve claro/oscuro.
+        // NO forzamos
         // overrideUserInterfaceStyle: eso cambiaria prefers-color-scheme dentro del
         // webview y rompe el tema "Sistema" del chat.
-        self.window?.backgroundColor = UIColor(red: 0.933, green: 0.965, blue: 1.0, alpha: 1.0)
+        let darkBackground = UIColor(red: 0.031, green: 0.102, blue: 0.306, alpha: 1.0)
+        let lightBackground = UIColor(red: 0.933, green: 0.965, blue: 1.0, alpha: 1.0)
+        self.window?.backgroundColor = UIScreen.main.traitCollection.userInterfaceStyle == .dark ? darkBackground : lightBackground
         return true
     }
 
