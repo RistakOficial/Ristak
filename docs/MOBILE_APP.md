@@ -14,14 +14,15 @@ nativos en iOS/Android para mantener el WebView en escala `1.0`. Los inputs de l
 app movil deben conservar fuente de al menos `16px` para evitar el zoom de foco
 de iOS.
 
-Teclado iOS: el shell usa `Keyboard.resize = none` para que Capacitor no
-redimensione el WebView. `MainViewController.swift` escucha los eventos nativos
-del teclado, calcula el solape real dentro del WebView y escribe una sola vez las
-variables CSS `--phone-kb`, `--phone-kb-dur` y `--phone-kb-ease`. El composer del
-chat se eleva con `transform` usando esas variables, y el login ajusta su altura
-con el mismo driver. No vuelvas a sincronizar el composer con listeners de
-`visualViewport.scroll` ni con `scrollTo(0,0)` por frame: eso mete lag al scroll
-del chat y pelea con el dedo del usuario.
+Teclado movil: el shell usa `Keyboard.resize = native` para que iOS redimensione
+el `WKWebView` con la animacion nativa del teclado. El composer del chat vive en
+la ultima fila del grid y no debe moverse con `transform`, variables `--phone-kb`
+ni un puente Swift/JS de altura del teclado. En Android, `resizeOnFullScreen` y
+`android:windowSoftInputMode="adjustResize"` mantienen el mismo modelo: el
+viewport disponible se achica y la UI se reacomoda por layout. No vuelvas a
+sincronizar el composer con listeners de `visualViewport.scroll` ni con
+`scrollTo(0,0)` por frame: eso mete lag al scroll del chat y pelea con el dedo
+del usuario.
 
 ## Requisitos
 

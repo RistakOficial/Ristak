@@ -32,10 +32,9 @@ const config: CapacitorConfig = {
       overlaysWebView: true
     },
     Keyboard: {
-      // 'none': el WebView no se redimensiona; el teclado lo anima nuestro driver
-      // nativo (MainViewController.swift) con la curva/duracion reales -> composer
-      // clavado al teclado. Debe coincidir con mobileAppService.setResizeMode(None).
-      resize: 'none',
+      // 'native': iOS redimensiona el WKWebView junto con el teclado. Asi el chat
+      // depende del viewport nativo en vez de mover el composer con un puente JS.
+      resize: 'native',
       style: 'light',
       resizeOnFullScreen: true
     }

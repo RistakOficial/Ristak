@@ -460,16 +460,12 @@ export const mobileAppService = {
 
     if (getPlatform() === 'ios') {
       await Keyboard.setAccessoryBarVisible({ isVisible: false }).catch(() => undefined)
-      // Resize 'none': Capacitor NO redimensiona el WebView ni el <body> (el teclado solo
-      // se sobrepone). El driver nativo de iOS (MainViewController.swift) escucha los
-      // eventos reales del teclado y fija --phone-kb (altura) + duracion/curva UNA vez;
-      // el chat/login se mueven con CSS usando esos valores, sin JS por frame.
-      // Debe coincidir con capacitor.config.ts (Keyboard.resize: 'none').
-      await Keyboard.setResizeMode({ mode: KeyboardResize.None }).catch(() => undefined)
+      // Deja que iOS redimensione el WKWebView con la animacion nativa del teclado.
+      // Esto evita mover el composer desde JS despues de recibir eventos del puente.
+      await Keyboard.setResizeMode({ mode: KeyboardResize.Native }).catch(() => undefined)
     } else if (getPlatform() === 'android') {
-      // Android encoge el viewport de forma nativa (100dvh baja -> con --phone-kb en 0,
-      // height: calc(100dvh - 0) deja el composer arriba del teclado). No usamos el
-      // driver de iOS aqui.
+      // Android usa el ajuste nativo del sistema; resizeOnFullScreen y
+      // windowSoftInputMode=adjustResize cubren el caso fullscreen/edge-to-edge.
       await Keyboard.setResizeMode({ mode: KeyboardResize.Native }).catch(() => undefined)
     }
 

@@ -8,19 +8,9 @@
 }
 
 .phoneContainer {
-  /* Anclamos al viewport VISIBLE (no a 100dvh, que en iOS/Body no se encoge con
-     el teclado). Así el contenedor se achica cuando sube el teclado y el input
-     nunca queda debajo. Fallback a 100dvh donde la var no está sincronizada. */
-  /* Alto = pantalla menos teclado (--phone-kb); la transition con la curva del
-     teclado de iOS lo sigue en sincronia (mismo patron que el chat). */
   min-height: 100dvh;
-  min-height: calc(100dvh - var(--phone-kb, 0px));
-  height: calc(100dvh - var(--phone-kb, 0px));
-  max-height: calc(100dvh - var(--phone-kb, 0px));
-  transition:
-    height var(--phone-kb-dur, 0.25s) var(--phone-kb-ease, cubic-bezier(0.38, 0.7, 0.125, 1)),
-    min-height var(--phone-kb-dur, 0.25s) var(--phone-kb-ease, cubic-bezier(0.38, 0.7, 0.125, 1)),
-    max-height var(--phone-kb-dur, 0.25s) var(--phone-kb-ease, cubic-bezier(0.38, 0.7, 0.125, 1));
+  height: 100dvh;
+  max-height: 100dvh;
   align-items: stretch;
   padding: 0;
   background: #ffffff;

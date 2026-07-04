@@ -406,9 +406,8 @@ const PhoneRouteEffects: React.FC = () => {
     let lastVisualViewportTop = ''
     let lastKeyboardInset = ''
     // --phone-visual-viewport-height/-top/--phone-keyboard-inset: sincronizados desde
-    // visualViewport (para payments/sheets/modales). El chat y el login usan aparte
-    // --phone-kb (altura del teclado), fijada por MainViewController.swift en iOS para
-    // que una transition CSS con la curva del teclado los mueva en sincronia.
+    // visualViewport para payments/sheets/modales. El chat y login dependen del resize
+    // nativo del WebView, asi que no escribimos una segunda altura manual del teclado.
     const setPhoneViewportVars = (visibleHeight: number, viewportTop: number, inset: number) => {
       const nextVisualViewportHeight = `${Math.round(visibleHeight)}px`
       const nextVisualViewportTop = `${Math.round(viewportTop)}px`
@@ -440,10 +439,6 @@ const PhoneRouteEffects: React.FC = () => {
       viewportFrame = window.requestAnimationFrame(syncPhoneViewport)
     }
 
-    // La altura del teclado (--phone-kb) + su duracion/curva (--phone-kb-dur/-ease) las
-    // fija el lado NATIVO (MainViewController.swift) leyendo del evento real del teclado,
-    // en una sola llamada por evento. Aqui no tocamos --phone-kb en iOS; solo lo limpiamos
-    // al salir de la ruta phone.
     if (isPhoneRoute) {
       syncPhoneViewport()
       window.visualViewport?.addEventListener('resize', schedulePhoneViewportSync)
@@ -453,6 +448,9 @@ const PhoneRouteEffects: React.FC = () => {
       root.style.removeProperty('--phone-visual-viewport-height')
       root.style.removeProperty('--phone-visual-viewport-top')
       root.style.removeProperty('--phone-keyboard-inset')
+      root.style.removeProperty('--phone-kb')
+      root.style.removeProperty('--phone-kb-dur')
+      root.style.removeProperty('--phone-kb-ease')
     }
 
     return () => {
@@ -464,6 +462,8 @@ const PhoneRouteEffects: React.FC = () => {
       root.style.removeProperty('--phone-visual-viewport-top')
       root.style.removeProperty('--phone-keyboard-inset')
       root.style.removeProperty('--phone-kb')
+      root.style.removeProperty('--phone-kb-dur')
+      root.style.removeProperty('--phone-kb-ease')
 
       if (previousBodyPhoneApp !== undefined) {
         body.dataset.phoneApp = previousBodyPhoneApp
