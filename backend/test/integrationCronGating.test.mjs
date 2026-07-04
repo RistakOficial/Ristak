@@ -10,6 +10,7 @@ import {
   isHighLevelConnected,
   isMercadoPagoConnected,
   isMetaConnected,
+  isRebillConnected,
   isStripeConnected,
   isWhatsAppQrConnected
 } from '../src/services/integrationConnectionStateService.js'
@@ -27,6 +28,7 @@ const APP_CONFIG_WHERE = `
      OR config_key LIKE 'conekta_%'
      OR config_key LIKE 'clip_%'
      OR config_key LIKE 'mercadopago_%'
+     OR config_key LIKE 'rebill_%'
 `
 
 function uniqueId(prefix) {
@@ -106,6 +108,7 @@ test('detectores de crons de integración solo se activan con conexión local v�
     assert.equal(await isConektaConnected(), false)
     assert.equal(await isClipConnected(), false)
     assert.equal(await isMercadoPagoConnected(), false)
+    assert.equal(await isRebillConnected(), false)
     assert.equal(await isWhatsAppQrConnected(), false)
 
     await setAppConfig('google_calendar_service_account_config', {
@@ -206,6 +209,28 @@ test('detectores de crons de integración solo se activan con conexión local v�
     await setAppConfig('payments_settings', { paymentMode: 'test' })
     await setAppConfig('mercadopago_enabled', '0')
     assert.equal(await isMercadoPagoConnected(), false)
+
+    await setAppConfig('rebill_enabled', '1')
+    await setAppConfig('rebill_mode_connections', {
+      test: { publicKey: 'pk_test_rebill_cron_gate_123456', secretKey: 'sk_test_rebill_cron_gate_123456' },
+      live: {}
+    })
+    assert.equal(await isRebillConnected(), true)
+    await setAppConfig('payments_settings', { paymentMode: 'live' })
+    assert.equal(await isRebillConnected(), false)
+    await setAppConfig('payments_settings', { paymentMode: 'test' })
+    await setAppConfig('rebill_enabled', '0')
+    assert.equal(await isRebillConnected(), false)
+
+    await setAppConfig('rebill_enabled', '1')
+    await setAppConfig('rebill_mode_connections', { test: {}, live: {} })
+    await setAppConfig('rebill_mode', 'test')
+    await setAppConfig('rebill_public_key', 'pk_test_rebill_legacy_cron_gate_123456')
+    await setAppConfig('rebill_secret_key_encrypted', 'encrypted_rebill_legacy_secret')
+    await setAppConfig('payments_settings', { paymentMode: 'live' })
+    assert.equal(await isRebillConnected(), false)
+    await setAppConfig('payments_settings', { paymentMode: 'test' })
+    assert.equal(await isRebillConnected(), true)
 
     await db.run(`
       INSERT INTO whatsapp_api_phone_numbers (

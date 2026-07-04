@@ -42,6 +42,7 @@ import { transactionsService } from '@/services/transactionsService'
 import { conektaPaymentsService, type ConektaSavedPaymentSource } from '@/services/conektaPaymentsService'
 import { clipPaymentsService } from '@/services/clipPaymentsService'
 import { mercadoPagoPaymentsService } from '@/services/mercadoPagoPaymentsService'
+import { rebillPaymentsService } from '@/services/rebillPaymentsService'
 import { stripePaymentsService, type StripeSavedPaymentMethod } from '@/services/stripePaymentsService'
 import { suppressContactAutofill } from '@/utils/browserAutofill'
 import {
@@ -117,7 +118,7 @@ const calculateConfiguredTax = (
   }
 }
 
-type PaymentOption = 'send' | 'manual' | 'stripe' | 'stripe_saved_card' | 'mercadopago' | 'conekta' | 'conekta_saved_card' | 'clip'
+type PaymentOption = 'send' | 'manual' | 'stripe' | 'stripe_saved_card' | 'mercadopago' | 'conekta' | 'conekta_saved_card' | 'clip' | 'rebill'
 type PaymentMode = 'single' | 'partial'
 type SinglePaymentAction = 'payment_link' | 'saved_card' | 'manual'
 type SinglePaymentOptionsStage = 'method' | 'saved_cards' | 'gateway' | 'gateway_config' | 'confirm'
@@ -775,6 +776,7 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
   const [conektaConnected, setConektaConnected] = useState(false)
   const [mercadoPagoConnected, setMercadoPagoConnected] = useState(false)
   const [clipConnected, setClipConnected] = useState(false)
+  const [rebillConnected, setRebillConnected] = useState(false)
 
   const { showToast } = useNotification()
   const [accountCurrency] = useAccountCurrency()
@@ -824,7 +826,7 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
     )
   )
 
-  const canUsePaymentPlans = highLevelConnected || stripeConnected || conektaConnected
+  const canUsePaymentPlans = highLevelConnected || stripeConnected || conektaConnected || rebillConnected
   const canChoosePaymentMode = canUsePaymentPlans && (chargeType === 'direct' || Boolean(selectedProduct && selectedPrice))
   const activePaymentMode: PaymentMode = lockPaymentMode
     ? paymentMode
@@ -955,6 +957,7 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
     conektaConnected ? 'Conekta' : null,
     mercadoPagoConnected ? 'Mercado Pago' : null,
     clipConnected ? 'CLIP' : null,
+    rebillConnected ? 'Rebill' : null,
     highLevelConnected ? 'HighLevel' : null
   ].filter(Boolean) as string[]
   const paymentLinkGatewayCount = paymentLinkGatewayLabels.length
@@ -970,6 +973,7 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
   const paymentPlanGatewayLabels = [
     stripeConnected ? 'Stripe' : null,
     conektaConnected ? 'Conekta' : null,
+    rebillConnected ? 'Rebill' : null,
     highLevelConnected ? 'HighLevel' : null
   ].filter(Boolean) as string[]
   const hasPaymentPlanGateways = paymentPlanGatewayLabels.length > 0
@@ -988,6 +992,10 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
       return 'Si el primer pago se cobra con tarjeta o link, esa autorización puede activar los cobros futuros del plan.'
     }
 
+    if (rebillConnected && !stripeConnected && !conektaConnected && !highLevelConnected) {
+      return 'Rebill recibirá cada pago por link; Ristak mantiene el calendario y liberará cada parcialidad cuando toque.'
+    }
+
     return `Si el contacto no tiene una tarjeta guardada, la pasarela que elijas enviará una liga de domiciliación por ${formatCurrency(cardSetupAmount, currency)}. El plan no se activa hasta que esa tarjeta quede autorizada.`
   })()
   const defaultPaymentLinkOption: PaymentOption | null = stripeConnected
@@ -996,18 +1004,22 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
         ? 'conekta'
         : mercadoPagoConnected
           ? 'mercadopago'
-          : clipConnected
-            ? 'clip'
-            : highLevelConnected
-              ? 'send'
-              : null
+            : clipConnected
+              ? 'clip'
+              : rebillConnected
+                ? 'rebill'
+                : highLevelConnected
+                  ? 'send'
+                  : null
   const defaultPaymentPlanGatewayOption: PaymentOption | null = stripeConnected
     ? 'stripe'
     : conektaConnected
       ? 'conekta'
-      : highLevelConnected
-        ? 'send'
-        : null
+      : rebillConnected
+        ? 'rebill'
+        : highLevelConnected
+          ? 'send'
+          : null
   const defaultPaymentPlanSavedCardOption: PaymentOption | null = hasStripeSavedCards
     ? 'stripe'
     : hasConektaSavedCards
@@ -1019,6 +1031,7 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
     if (conektaConnected) return 'conekta'
     if (mercadoPagoConnected) return 'mercadopago'
     if (clipConnected) return 'clip'
+    if (rebillConnected) return 'rebill'
     return highLevelConnected ? 'send' : 'manual'
   }
 
@@ -1034,7 +1047,7 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
     return 'manual'
   }
 
-  const paymentLinkOptionNeedsConfiguration = (option: PaymentOption | null) => option === 'stripe' || option === 'mercadopago' || option === 'conekta' || option === 'clip'
+  const paymentLinkOptionNeedsConfiguration = (option: PaymentOption | null) => option === 'stripe' || option === 'mercadopago' || option === 'conekta' || option === 'clip' || option === 'rebill'
 
   const clipContactEmail = selectedContact?.email || invoiceSummary?.contactEmail || ''
   const clipContactPhone = selectedContact?.phone || ''
@@ -1399,26 +1412,28 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
       setConektaConnected(Boolean(data?.conekta?.connected))
       setMercadoPagoConnected(Boolean(data?.mercadopago?.connected))
       setClipConnected(Boolean(data?.clip?.connected))
+      setRebillConnected(Boolean(data?.rebill?.connected))
     } catch (error) {
       setHighLevelConnected(false)
       setStripeConnected(false)
       setConektaConnected(false)
       setMercadoPagoConnected(false)
       setClipConnected(false)
+      setRebillConnected(false)
     }
   }
 
   // En modo local completo (sin pasarela) forzamos pago único manual.
-  // Stripe, Conekta y la integración opcional de HighLevel pueden manejar planes desde Ristak.
+  // Stripe, Conekta, Rebill y la integración opcional de HighLevel pueden manejar planes desde Ristak.
   // Mercado Pago maneja links y suscripciones, no parcialidades.
   useEffect(() => {
-    if (!highLevelConnected && !stripeConnected && !conektaConnected && !mercadoPagoConnected) {
+    if (!highLevelConnected && !stripeConnected && !conektaConnected && !mercadoPagoConnected && !clipConnected && !rebillConnected) {
       setPaymentMode('single')
       setSinglePaymentAction('manual')
       setSinglePaymentOptionsStage('method')
       setPaymentOption('manual')
     }
-  }, [conektaConnected, highLevelConnected, mercadoPagoConnected, stripeConnected])
+  }, [clipConnected, conektaConnected, highLevelConnected, mercadoPagoConnected, rebillConnected, stripeConnected])
 
   useEffect(() => {
     // El método del primer pago vive en la fila #1 y su default visible es
@@ -2124,7 +2139,7 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
     channels
   })
 
-  const buildGatewayPaymentPlanPayload = (payload: Record<string, any>, summary: InvoiceSummary, provider: 'stripe' | 'conekta') => ({
+  const buildGatewayPaymentPlanPayload = (payload: Record<string, any>, summary: InvoiceSummary, provider: 'stripe' | 'conekta' | 'rebill') => ({
     contact: {
       id: selectedContact?.id || '',
       name: summary.contactName || selectedContact?.name || '',
@@ -2157,7 +2172,11 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
       ? conektaPlanSavedPaymentSource?.conektaPaymentSourceId || ''
       : stripePlanSavedPaymentMethod?.stripePaymentMethodId || '',
     cardSetupAmount,
-    source: provider === 'conekta' ? 'record_payment_modal_conekta_plan' : 'record_payment_modal_stripe_plan'
+    source: provider === 'rebill'
+      ? 'record_payment_modal_rebill_plan'
+      : provider === 'conekta'
+        ? 'record_payment_modal_conekta_plan'
+        : 'record_payment_modal_stripe_plan'
   })
 
   const submitPartialFlow = async (
@@ -2735,6 +2754,56 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
       return
     }
 
+    if (paymentOption === 'rebill' && activePaymentMode === 'partial') {
+      if (!selectedContact) {
+        showToast('error', 'Selecciona un contacto')
+        setStep('options')
+        setLoading(false)
+        return
+      }
+
+      try {
+        const result = await rebillPaymentsService.createPaymentPlan(
+          buildGatewayPaymentPlanPayload(invoicePayload, invoiceSummary, 'rebill')
+        )
+
+        if (result.firstPaymentLink) {
+          showPaymentLinkReady({
+            kind: 'first_payment',
+            title: 'Primer pago Rebill listo',
+            description: 'Comparte este enlace para que el cliente pague el primer cobro. Ristak liberará las demás parcialidades con su propio calendario.',
+            provider: 'rebill',
+            paymentUrl: result.firstPaymentLink,
+            amount: firstPaymentAmount,
+            currency: invoiceSummary.currency,
+            contact: selectedContact,
+            paymentId: result.firstPaymentPaymentId
+          })
+          showToast(
+            'success',
+            'Plan de Rebill creado',
+            'El enlace del primer pago está listo. Las demás parcialidades se liberarán cuando toque.'
+          )
+          await onSuccess?.(PAYMENT_PLAN_LINK_READY_SUCCESS_CONTEXT)
+          return
+        }
+
+        showToast(
+          'success',
+          'Plan de Rebill creado',
+          `${result.scheduledPayments.length} parcialidades quedaron programadas; Ristak liberará los links de Rebill cuando toque.`
+        )
+        await onSuccess?.(PAYMENT_PLAN_CHANGED_SUCCESS_CONTEXT)
+        onClose()
+      } catch (rebillPlanError: any) {
+        showToast('error', 'No se pudo crear el plan con Rebill', rebillPlanError.message || 'Revisa la conexión de Rebill.')
+        setStep('options')
+      } finally {
+        setLoading(false)
+      }
+      return
+    }
+
     if (paymentOption === 'stripe') {
       if (!selectedContact) {
         showToast('error', 'Selecciona un contacto')
@@ -2980,6 +3049,58 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
         onSuccess?.(LINK_READY_SUCCESS_CONTEXT)
       } catch (clipError: any) {
         showToast('error', 'No se pudo crear el link de CLIP', clipError.message || 'Revisa la configuración de CLIP.')
+        setStep('options')
+      } finally {
+        setLoading(false)
+      }
+      return
+    }
+
+    if (paymentOption === 'rebill') {
+      if (!selectedContact) {
+        showToast('error', 'Selecciona un contacto')
+        setStep('options')
+        setLoading(false)
+        return
+      }
+
+      try {
+        const result = await rebillPaymentsService.createPaymentLink({
+          contactId: selectedContact.id,
+          contactName: invoiceSummary.contactName || selectedContact.name,
+          email: selectedContact.email || invoiceSummary.contactEmail || '',
+          phone: selectedContact.phone || '',
+          amount: invoiceSummary.taxBaseAmount,
+          currency: invoiceSummary.currency,
+          applyTax: invoiceSummary.includesTax,
+          taxCalculationMode: invoiceSummary.taxCalculationMode,
+          title: invoicePayload.title || invoicePayload.name || DEFAULT_INVOICE_TITLE,
+          description: invoiceSummary.description,
+          dueDate: invoicePayload.dueDate,
+          source: 'record_payment_modal_rebill',
+          lineItems: Array.isArray(invoicePayload.items) ? invoicePayload.items : []
+        })
+
+        showPaymentLinkReady({
+          kind: 'single',
+          title: 'Enlace Rebill listo',
+          description: 'Comparte este enlace para que el cliente pague en el checkout seguro de Rebill. Si aplica, Rebill mostrará installments dentro del checkout.',
+          provider: 'rebill',
+          paymentUrl: result.paymentUrl,
+          amount: invoiceSummary.amount,
+          currency: invoiceSummary.currency,
+          contact: selectedContact,
+          paymentId: result.payment?.id,
+          publicPaymentId: result.publicPaymentId
+        })
+        showToast(
+          'success',
+          'Link de Rebill creado',
+          'El enlace público está listo para copiar o enviar.'
+        )
+        onSuccess?.(LINK_READY_SUCCESS_CONTEXT)
+      } catch (rebillError: any) {
+        showToast('error', 'No se pudo crear el link de Rebill', rebillError.message || 'Revisa la conexión de Rebill.')
         setStep('options')
       } finally {
         setLoading(false)
@@ -4017,8 +4138,11 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
       const highLevelAuthorizationLabel = partialNeedsCardAuthorization
         ? `HighLevel enviará domiciliación por ${formatCurrency(cardSetupAmount, invoiceSummary.currency)} cuando haga falta autorizar tarjeta.`
         : 'El primer pago con tarjeta autoriza la tarjeta en HighLevel.'
+      const rebillAuthorizationLabel = 'Ristak programará cada parcialidad y liberará el link de Rebill cuando llegue la fecha.'
       const paymentPlanNewCardActionDescription = paymentPlanGatewayLabels.length > 1
         ? `Después eliges pasarela: ${paymentPlanGatewayLabels.join(', ')}.`
+        : defaultPaymentPlanGatewayOption === 'rebill'
+          ? 'Ristak programará las parcialidades y liberará links de Rebill por fecha.'
         : defaultPaymentPlanGatewayOption
           ? 'La pasarela que elijas enviará el link para autorizar una tarjeta nueva.'
           : 'Conecta una pasarela para enviar el link de autorización.'
@@ -4035,6 +4159,8 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
           ? stripeAuthorizationLabel
           : paymentOption === 'conekta'
             ? conektaAuthorizationLabel
+            : paymentOption === 'rebill'
+              ? rebillAuthorizationLabel
             : highLevelConnected && paymentOption === 'send'
               ? highLevelAuthorizationLabel
               : 'El primer pago con tarjeta funcionará como autorización.'
@@ -4117,6 +4243,28 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
                       </div>
                     </div>
                     {paymentOption === 'conekta' && <Check size={18} className={styles.optionCheck} />}
+                  </button>
+                )}
+
+                {rebillConnected && (
+                  <button
+                    type="button"
+                    className={`${styles.optionButton} ${paymentOption === 'rebill' ? styles.optionButtonActive : ''}`}
+                    onClick={() => {
+                      setPaymentOption('rebill')
+                      setStripePlanCardSource('new_card')
+                    }}
+                  >
+                    <div className={styles.optionInfo}>
+                      <div className={styles.optionIcon}>
+                        <PaymentPlatformLogo platform="rebill" size="md" decorative />
+                      </div>
+                      <div>
+                        <p>Rebill</p>
+                        <span>{rebillAuthorizationLabel}</span>
+                      </div>
+                    </div>
+                    {paymentOption === 'rebill' && <Check size={18} className={styles.optionCheck} />}
                   </button>
                 )}
 
@@ -4266,6 +4414,7 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
       paymentOption === 'mercadopago' &&
       installmentChargeMode === 'installments'
     const showClipCheckoutPanel = showGatewayConfiguration && paymentOption === 'clip'
+    const showRebillCheckoutPanel = showGatewayConfiguration && paymentOption === 'rebill'
     const showConektaInstallmentControls = (
       showGatewayConfiguration && paymentOption === 'conekta'
     ) || (
@@ -4335,6 +4484,8 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
             ? 'Configura meses sin intereses antes de crear el enlace.'
             : defaultPaymentLinkOption === 'clip'
               ? 'Elige contado o meses sin intereses antes de crear el enlace.'
+              : defaultPaymentLinkOption === 'rebill'
+                ? 'Rebill mostrará installments dentro de su checkout cuando apliquen.'
               : defaultPaymentLinkOption === 'send'
                 ? 'Usa la integración conectada para enviar el enlace al cliente.'
                 : 'Conecta una pasarela para enviar enlaces de pago.'
@@ -4540,6 +4691,28 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
                   </button>
                 )}
 
+                {rebillConnected && (
+                  <button
+                    type="button"
+                    className={`${styles.optionButton} ${paymentOption === 'rebill' ? styles.optionButtonActive : ''}`}
+                    onClick={() => {
+                      resetInstallmentChargeMode()
+                      setPaymentOption('rebill')
+                    }}
+                  >
+                    <div className={styles.optionInfo}>
+                      <div className={styles.optionIcon}>
+                        <PaymentPlatformLogo platform="rebill" size="md" decorative />
+                      </div>
+                      <div>
+                        <p>Rebill</p>
+                        <span>Genera una página pública con checkout seguro; Rebill mostrará installments si aplican.</span>
+                      </div>
+                    </div>
+                    {paymentOption === 'rebill' && <Check size={18} className={styles.optionCheck} />}
+                  </button>
+                )}
+
                 {highLevelConnected && (
                   <div
                     className={`${styles.optionButton} ${paymentOption === 'send' ? styles.optionButtonActive : ''}`}
@@ -4736,6 +4909,41 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
               {clipMsiEnabled
                 ? 'CLIP mostrará meses sin intereses dentro del formulario seguro si la cuenta, el monto y la tarjeta califican. Los plazos disponibles se configuran en el Dashboard de CLIP.'
                 : 'CLIP procesa el pago con tarjeta en campos seguros y Ristak actualiza el cobro cuando CLIP lo confirma. Esta pasarela solo está disponible para cobros en MXN y requiere email y teléfono del cliente.'}
+            </p>
+          </div>
+        )}
+
+        {showRebillCheckoutPanel && invoiceSummary && (
+          <div className={styles.mercadoPagoInstallmentsPanel}>
+            <div className={styles.mercadoPagoInstallmentsHeader}>
+              <div>
+                <span>Rebill</span>
+                <p>Checkout seguro</p>
+              </div>
+              <strong>{invoiceSummary.currency}</strong>
+            </div>
+
+            <div className={styles.mercadoPagoInstallmentTotals}>
+              <div>
+                <span>Cliente paga</span>
+                <strong>{formatCurrency(invoiceSummary.amount, invoiceSummary.currency)}</strong>
+              </div>
+              <div>
+                <span>Forma de pago</span>
+                <strong>Checkout Rebill</strong>
+              </div>
+              <div>
+                <span>Installments</span>
+                <strong>Según Rebill</strong>
+              </div>
+              <div>
+                <span>Ristak registra</span>
+                <strong>Al confirmar Rebill</strong>
+              </div>
+            </div>
+
+            <p className={styles.mercadoPagoInstallmentsNote}>
+              Rebill mostrará opciones de installments dentro de su checkout cuando la cuenta, el país y la tarjeta califiquen. Ristak confirma el paymentId con backend antes de marcar el cobro como pagado.
             </p>
           </div>
         )}
@@ -5041,6 +5249,8 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
         : activePaymentMode === 'partial' && singlePaymentOptionsStage === 'gateway'
           ? paymentOption === 'send'
             ? 'Crear y enviar enlace'
+            : paymentOption === 'rebill'
+              ? 'Crear plan Rebill'
             : stripePlanWillRegisterOfflineFirstPayment
               ? 'Registrar pago y enviar enlace de domiciliación'
               : 'Crear link de domiciliación'
@@ -5052,6 +5262,8 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
         ? `Cobrar a ${conektaInstallmentLimit} MSI`
         : paymentOption === 'stripe_saved_card' || paymentOption === 'conekta_saved_card'
           ? 'Cobrar tarjeta'
+        : paymentOption === 'rebill' && activePaymentMode === 'partial'
+          ? 'Crear plan Rebill'
         : (paymentOption === 'stripe' || paymentOption === 'conekta') && activePaymentMode === 'partial'
           ? stripePlanCardSource === 'saved_card'
             ? 'Programar con tarjeta'
@@ -5066,6 +5278,8 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
           ? 'Crear link Mercado Pago'
         : paymentOption === 'clip'
           ? 'Crear link CLIP'
+        : paymentOption === 'rebill'
+          ? 'Crear link Rebill'
         : paymentOption === 'send'
           ? activePaymentMode === 'partial' ? 'Crear y enviar enlace' : 'Enviar enlace'
           : 'Registrar pago'
@@ -5332,11 +5546,13 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
             : singlePaymentOptionsStage === 'gateway'
               ? 'Elige pasarela'
               : activePaymentMode === 'partial' && singlePaymentOptionsStage === 'confirm'
-                ? 'Confirmar autorización'
+                ? paymentOption === 'rebill' ? 'Confirmar plan Rebill' : 'Confirmar autorización'
               : activePaymentMode !== 'partial' && singlePaymentOptionsStage === 'gateway_config' && paymentOption === 'mercadopago'
                 ? 'Configura Mercado Pago'
               : activePaymentMode !== 'partial' && singlePaymentOptionsStage === 'gateway_config' && paymentOption === 'clip'
                 ? 'Configura CLIP'
+              : activePaymentMode !== 'partial' && singlePaymentOptionsStage === 'gateway_config' && paymentOption === 'rebill'
+                ? 'Confirmar Rebill'
                 : 'Elige cómo cobrar'
           : activePaymentMode === 'partial' ? 'Registrar cobro parcial' : 'Registrar nuevo cobro'
       }

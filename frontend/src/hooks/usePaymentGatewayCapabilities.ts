@@ -80,7 +80,8 @@ export function usePaymentGatewayCapabilities(): PaymentGatewayCapabilities {
     } = connectionState
     const planProviders: PaymentGatewayProvider[] = [
       ...(stripeConnected ? ['stripe' as const] : []),
-      ...(conektaConnected ? ['conekta' as const] : [])
+      ...(conektaConnected ? ['conekta' as const] : []),
+      ...(rebillConnected ? ['rebill' as const] : [])
     ]
     const subscriptionProviders: PaymentGatewayProvider[] = [
       ...(stripeConnected ? ['stripe' as const] : []),

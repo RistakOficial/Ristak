@@ -302,6 +302,9 @@ function getStatusCopy(status: string) {
   if (['failed', 'void', 'refunded'].includes(normalized)) {
     return { label: normalized === 'refunded' ? 'Reembolsado' : 'No disponible', variant: 'error' as BadgeVariant }
   }
+  if (normalized === 'scheduled') {
+    return { label: 'Programado', variant: 'info' as BadgeVariant }
+  }
   return { label: 'Pendiente', variant: 'info' as BadgeVariant }
 }
 
@@ -2689,6 +2692,7 @@ export const PublicPayment: React.FC = () => {
   const status = getStatusCopy(payment?.status || '')
   const isPaid = Boolean(payment && ['paid', 'succeeded', 'completed'].includes(payment.status.toLowerCase()))
   const isClosed = Boolean(payment && ['void', 'refunded', 'deleted'].includes(payment.status.toLowerCase()))
+  const isScheduled = Boolean(payment && payment.status.toLowerCase() === 'scheduled')
   const receiptDownloadRequested = searchParams.get('receipt') === '1'
   const isStripePayment = payment?.provider === 'stripe'
   const isMercadoPagoPayment = payment?.provider === 'mercadopago'
@@ -2871,7 +2875,7 @@ export const PublicPayment: React.FC = () => {
   }
 
   useEffect(() => {
-    if (!stripePayment || !stripePayment.publishableKey || intent?.clientSecret || startingPayment || isPaid || isClosed) return
+    if (!stripePayment || !stripePayment.publishableKey || intent?.clientSecret || startingPayment || isPaid || isClosed || isScheduled) return
     if (isSubscriptionStart) return
     if (isControlledStripeInstallments) return
 
@@ -2884,6 +2888,7 @@ export const PublicPayment: React.FC = () => {
     intent?.clientSecret,
     isClosed,
     isPaid,
+    isScheduled,
     stripePayment?.publicPaymentId,
     stripePayment?.publishableKey,
     shouldSavePaymentMethod,
@@ -3264,13 +3269,15 @@ export const PublicPayment: React.FC = () => {
               <div className={styles.payHeaderTop}>
                 <PaymentPlatformLogo platform={providerLogo} size="lg" decorative />
                 <div>
-                  <span className={styles.payKicker}>{isPaid ? 'Estado final' : 'Método de pago'}</span>
-                  <h2>{isPaid ? (isSubscriptionStart ? 'Suscripción autorizada' : 'Pago confirmado') : isSubscriptionStart ? 'Autorizar suscripción' : isCardSetupPlan ? 'Autorizar tarjeta' : 'Pagar con tarjeta'}</h2>
+                  <span className={styles.payKicker}>{isPaid ? 'Estado final' : isScheduled ? 'Aún no disponible' : 'Método de pago'}</span>
+                  <h2>{isPaid ? (isSubscriptionStart ? 'Suscripción autorizada' : 'Pago confirmado') : isScheduled ? 'Pago programado' : isSubscriptionStart ? 'Autorizar suscripción' : isCardSetupPlan ? 'Autorizar tarjeta' : 'Pagar con tarjeta'}</h2>
                 </div>
               </div>
               <p>
                 {isPaid
                   ? (isSubscriptionStart ? 'Esta suscripción ya quedó autorizada.' : 'Este pago ya aparece como pagado en Ristak.')
+                  : isScheduled
+                    ? 'Este cobro todavía no está disponible. Ristak habilitará el checkout cuando llegue la fecha programada.'
                   : isMercadoPagoPayment
                     ? 'Captura la tarjeta en el formulario seguro de Mercado Pago sin salir de esta página.'
                     : isConektaPayment
@@ -3304,6 +3311,11 @@ export const PublicPayment: React.FC = () => {
               <p className={`${styles.message} ${styles.messageError}`}>
                 <AlertCircle size={16} />
                 <span>Este link ya no está disponible para cobrar.</span>
+              </p>
+            ) : isScheduled ? (
+              <p className={styles.message}>
+                <Info size={16} />
+                <span>Este pago está programado y todavía no se puede cobrar. Vuelve a abrir este enlace cuando llegue la fecha indicada.</span>
               </p>
             ) : isStripePayment && isSubscriptionStart ? (
               <div className={styles.stripeBox}>

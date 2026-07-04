@@ -2,6 +2,7 @@ import express from 'express'
 import {
   confirmPublicRebillPaymentView,
   createRebillPaymentLinkView,
+  createRebillPaymentPlanView,
   deleteRebillConfigView,
   getPublicRebillPaymentView,
   getRebillConfigView,
@@ -11,8 +12,10 @@ import {
 } from '../controllers/rebillPaymentsController.js'
 import { requireAuth } from '../middleware/authMiddleware.js'
 import { requireModuleAccess } from '../middleware/userAccessMiddleware.js'
+import { requireFeature } from '../middleware/licenseMiddleware.js'
 
 const router = express.Router()
+const requirePaymentPlansFeature = requireFeature('payment_plans')
 
 router.post('/webhook', rebillWebhookView)
 router.get('/public/payments/:publicPaymentId', getPublicRebillPaymentView)
@@ -25,5 +28,6 @@ router.post('/config', requireModuleAccess('settings_payments'), saveRebillConfi
 router.delete('/config', requireModuleAccess('settings_payments'), deleteRebillConfigView)
 router.post('/config/test', requireModuleAccess('settings_payments'), testRebillConfigView)
 router.post('/payment-links', requireModuleAccess('payments'), createRebillPaymentLinkView)
+router.post('/payment-plans', requireModuleAccess('payments'), requirePaymentPlansFeature, createRebillPaymentPlanView)
 
 export default router

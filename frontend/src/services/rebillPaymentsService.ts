@@ -112,6 +112,56 @@ export interface RebillPaymentLinkPayload {
   metadata?: Record<string, unknown>
 }
 
+export interface RebillPaymentPlanPayload {
+  contact: {
+    id: string
+    name?: string
+    email?: string
+    phone?: string
+  }
+  totalAmount: number
+  currency: string
+  description?: string
+  title?: string
+  invoicePayload?: Record<string, unknown>
+  firstPayment: {
+    enabled: boolean
+    amount: number
+    date?: string
+    frequency?: string
+    method?: string
+  }
+  remainingFrequency?: string
+  remainingPayments: Array<{
+    sequence: number
+    type?: string
+    value?: number
+    amount: number
+    percentage?: number | null
+    dueDate: string
+    frequency?: string
+    paymentMethod?: string
+  }>
+  source?: string
+}
+
+export interface RebillPaymentPlanResponse {
+  flowId: string
+  currentState: string
+  paymentMode: 'test' | 'live'
+  firstPaymentLink?: string | null
+  firstPaymentPaymentId?: string | null
+  scheduledPayments: Array<{
+    installmentId: string
+    paymentId: string
+    sequence: number
+    amount: number
+    currency: string
+    dueDate: string
+    status: string
+  }>
+}
+
 export interface PublicRebillPayment {
   id: string
   publicPaymentId: string
@@ -224,6 +274,16 @@ export const rebillPaymentsService = {
       body: JSON.stringify(payload)
     })
     return parseResponse(response)
+  },
+
+  async createPaymentPlan(payload: RebillPaymentPlanPayload): Promise<RebillPaymentPlanResponse> {
+    const response = await fetch(apiUrl('/api/rebill/payment-plans'), {
+      method: 'POST',
+      credentials: 'include',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
+    })
+    return parseResponse<RebillPaymentPlanResponse>(response)
   },
 
   async getPublicPayment(publicPaymentId: string): Promise<PublicRebillPayment> {

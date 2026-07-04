@@ -4,6 +4,7 @@ import {
   isHighLevelConnected,
   isMercadoPagoConnected,
   isMetaConnected,
+  isRebillConnected,
   isStripeConnected,
   isWhatsAppQrConnected
 } from '../services/integrationConnectionStateService.js'
@@ -13,6 +14,7 @@ import { startHighLevelSyncCron, stopHighLevelSyncCron } from './highlevelSync.c
 import { startMercadoPagoPaymentPlansCron, stopMercadoPagoPaymentPlansCron } from './mercadoPagoPaymentPlans.cron.js'
 import { startMetaSyncCron, stopMetaSyncCron } from './metaSync.cron.js'
 import { startMetaVersionCron, stopMetaVersionCron } from './metaVersionCron.js'
+import { startRebillPaymentPlansCron, stopRebillPaymentPlansCron } from './rebillPaymentPlans.cron.js'
 import { startStripePaymentPlansCron, stopStripePaymentPlansCron } from './stripePaymentPlans.cron.js'
 import { startWhatsAppQrWatchdogCron, stopWhatsAppQrWatchdogCron } from './whatsappQrWatchdog.cron.js'
 import {
@@ -88,6 +90,15 @@ export function registerIntegrationCrons() {
     isEnabled: isMercadoPagoConnected,
     start: startMercadoPagoPaymentPlansCron,
     stop: stopMercadoPagoPaymentPlansCron
+  })
+
+  registerIntegrationCron({
+    name: 'rebill-payment-plans',
+    label: 'Rebill planes de pago',
+    provider: 'rebill',
+    isEnabled: isRebillConnected,
+    start: startRebillPaymentPlansCron,
+    stop: stopRebillPaymentPlansCron
   })
 
   registerIntegrationCron({

@@ -24,6 +24,11 @@ import {
   getClipPaymentConfig
 } from '../../services/clipPaymentService.js'
 import {
+  createRebillPaymentLink,
+  createRebillPaymentPlan,
+  getRebillPaymentConfig
+} from '../../services/rebillPaymentService.js'
+import {
   createConektaPaymentLink,
   createConektaPaymentPlan,
   createConektaSavedCardPayment,
@@ -52,12 +57,13 @@ const PAYMENT_GATEWAY_LABELS = {
   stripe: 'Stripe',
   conekta: 'Conekta',
   mercadopago: 'Mercado Pago',
-  clip: 'CLIP'
+  clip: 'CLIP',
+  rebill: 'Rebill'
 }
 
-const GATEWAY_PARAM = z.enum(['auto', 'highlevel', 'stripe', 'conekta', 'mercadopago', 'clip'])
+const GATEWAY_PARAM = z.enum(['auto', 'highlevel', 'stripe', 'conekta', 'mercadopago', 'clip', 'rebill'])
   .nullable()
-  .describe('Pasarela a usar: auto, highlevel, stripe, conekta, mercadopago o clip. Si hay varias conectadas, pregunta al usuario cuál prefiere antes de crear el cobro.')
+  .describe('Pasarela a usar: auto, highlevel, stripe, conekta, mercadopago, clip o rebill. Si hay varias conectadas, pregunta al usuario cuál prefiere antes de crear el cobro.')
 
 const CHANNEL_PARAM = z.enum(['email', 'whatsapp', 'sms', 'all'])
   .describe('Canal por el que se envía el link cuando la pasarela requiere envío.')
@@ -111,6 +117,7 @@ function normalizeGatewayId(value) {
   if (normalized === 'conekta') return 'conekta'
   if (['mercadopago', 'mp', 'checkoutpro'].includes(normalized)) return 'mercadopago'
   if (normalized === 'clip') return 'clip'
+  if (normalized === 'rebill') return 'rebill'
   return ''
 }
 
@@ -144,8 +151,8 @@ async function getPaymentBaseUrl() {
 
 function mapGatewayStatus({ id, connected, mode = null, accountLabel = '', issue = '' }) {
   const capabilities = {
-    paymentLinks: id === 'highlevel' || id === 'stripe' || id === 'conekta' || id === 'mercadopago' || id === 'clip',
-    installmentPlans: id === 'highlevel' || id === 'stripe' || id === 'conekta',
+    paymentLinks: id === 'highlevel' || id === 'stripe' || id === 'conekta' || id === 'mercadopago' || id === 'clip' || id === 'rebill',
+    installmentPlans: id === 'highlevel' || id === 'stripe' || id === 'conekta' || id === 'rebill',
     subscriptions: id === 'stripe' || id === 'conekta' || id === 'mercadopago' || id === 'clip',
     savedCardCharges: id === 'stripe' || id === 'conekta'
   }
@@ -162,12 +169,13 @@ function mapGatewayStatus({ id, connected, mode = null, accountLabel = '', issue
 }
 
 async function getPaymentGatewaySnapshot() {
-  const [highLevelResult, stripeResult, conektaResult, mercadoPagoResult, clipResult] = await Promise.allSettled([
+  const [highLevelResult, stripeResult, conektaResult, mercadoPagoResult, clipResult, rebillResult] = await Promise.allSettled([
     getHighLevelConfig(),
     getStripePaymentConfig(),
     getConektaPaymentConfig(),
     getMercadoPagoPaymentConfig(),
-    getClipPaymentConfig()
+    getClipPaymentConfig(),
+    getRebillPaymentConfig()
   ])
 
   const highLevelConfig = highLevelResult.status === 'fulfilled' ? highLevelResult.value : null
@@ -175,6 +183,7 @@ async function getPaymentGatewaySnapshot() {
   const conektaConfig = conektaResult.status === 'fulfilled' ? conektaResult.value : null
   const mercadoPagoConfig = mercadoPagoResult.status === 'fulfilled' ? mercadoPagoResult.value : null
   const clipConfig = clipResult.status === 'fulfilled' ? clipResult.value : null
+  const rebillConfig = rebillResult.status === 'fulfilled' ? rebillResult.value : null
 
   const gateways = [
     mapGatewayStatus({
@@ -211,6 +220,13 @@ async function getPaymentGatewaySnapshot() {
       mode: clipConfig?.mode || null,
       accountLabel: clipConfig?.accountLabel || '',
       issue: clipResult.status === 'rejected' ? clipResult.reason?.message : ''
+    }),
+    mapGatewayStatus({
+      id: 'rebill',
+      connected: Boolean(rebillConfig?.configured),
+      mode: rebillConfig?.mode || null,
+      accountLabel: rebillConfig?.accountLabel || '',
+      issue: rebillResult.status === 'rejected' ? rebillResult.reason?.message : ''
     })
   ]
 
@@ -230,7 +246,7 @@ async function selectPaymentGateway(requestedGateway, capability) {
   if (requested && requested !== 'auto') {
     const gateway = snapshot.byId[requested]
     if (!gateway) {
-      return { ok: false, error: 'Pasarela no reconocida. Usa Stripe, Conekta, Mercado Pago, CLIP o GoHighLevel.', snapshot }
+      return { ok: false, error: 'Pasarela no reconocida. Usa Stripe, Conekta, Mercado Pago, CLIP, Rebill o GoHighLevel.', snapshot }
     }
     if (!gateway.capabilities[capability]) {
       return { ok: false, error: `${gateway.label} no soporta ${capabilityLabel} en Ristak todavía.`, snapshot }
@@ -251,12 +267,12 @@ async function selectPaymentGateway(requestedGateway, capability) {
       ok: false,
       error: `No hay pasarelas conectadas para ${capabilityLabel}. Conecta ${
         capability === 'installmentPlans'
-          ? 'Stripe, Conekta o GoHighLevel opcional'
+          ? 'Stripe, Conekta, Rebill o GoHighLevel opcional'
           : capability === 'subscriptions'
             ? 'Stripe, Conekta, Mercado Pago o CLIP'
             : capability === 'savedCardCharges'
               ? 'Stripe o Conekta'
-              : 'Stripe, Conekta, Mercado Pago, CLIP o GoHighLevel opcional'
+              : 'Stripe, Conekta, Mercado Pago, CLIP, Rebill o GoHighLevel opcional'
       } en Configuración > Pagos.`,
       snapshot
     }
@@ -398,7 +414,7 @@ export const listProductsTool = tool({
 
 export const getPaymentGatewaysTool = tool({
   name: 'get_payment_gateways',
-  description: 'Detecta qué pasarelas de pago están conectadas en Ristak (Stripe, Conekta, Mercado Pago y GoHighLevel opcional) y qué puede hacer cada una: links, planes, suscripciones o cobros con tarjeta guardada. Úsala antes de crear cobros si el usuario no dijo pasarela.',
+  description: 'Detecta qué pasarelas de pago están conectadas en Ristak (Stripe, Conekta, Mercado Pago, CLIP, Rebill y GoHighLevel opcional) y qué puede hacer cada una: links, planes, suscripciones o cobros con tarjeta guardada. Úsala antes de crear cobros si el usuario no dijo pasarela.',
   parameters: z.object({}),
   execute: async () => {
     const snapshot = await getPaymentGatewaySnapshot()
@@ -418,7 +434,7 @@ export const getPaymentGatewaysTool = tool({
 
 export const createPaymentLinkTool = tool({
   name: 'create_payment_link',
-  description: 'Crea un link de pago único con la pasarela conectada correcta de Ristak (Stripe, Conekta, Mercado Pago o GoHighLevel opcional). Antes de llamarla: 1) identifica el contacto real, 2) si hay varias pasarelas conectadas pregunta cuál usar, 3) confirma monto, concepto y canal si aplica, 4) pasa confirm=true solo cuando el usuario ya aprobó el cobro.',
+  description: 'Crea un link de pago único con la pasarela conectada correcta de Ristak (Stripe, Conekta, Mercado Pago, CLIP, Rebill o GoHighLevel opcional). Antes de llamarla: 1) identifica el contacto real, 2) si hay varias pasarelas conectadas pregunta cuál usar, 3) confirma monto, concepto y canal si aplica, 4) pasa confirm=true solo cuando el usuario ya aprobó el cobro.',
   parameters: z.object({
     contactId: z.string().describe('ID del contacto a cobrar (usa search_contacts)'),
     amount: z.number().positive().describe('Monto del cobro'),
@@ -503,6 +519,21 @@ export const createPaymentLinkTool = tool({
         }
       }
 
+      if (selected.gateway.id === 'rebill') {
+        const result = await createRebillPaymentLink(paymentPayload, { baseUrl: await getPaymentBaseUrl() })
+        return {
+          ok: true,
+          gateway: selected.gateway.id,
+          gatewayLabel: selected.gateway.label,
+          paymentId: result.payment?.id || null,
+          publicPaymentId: result.publicPaymentId || null,
+          paymentLink: result.paymentUrl || result.payment?.paymentUrl || '',
+          amount: result.payment?.amount || amount,
+          currency: result.payment?.currency || currency || null,
+          status: result.payment?.status || 'sent'
+        }
+      }
+
       if (!channel) {
         return { ok: false, error: 'Para enviar el link falta elegir canal: email, WhatsApp, SMS o todos.' }
       }
@@ -536,7 +567,7 @@ export const createPaymentLinkTool = tool({
 
 export const createInstallmentPlanTool = tool({
   name: 'create_installment_plan',
-  description: 'Crea un plan de pagos por parcialidades con las pasarelas conectadas compatibles de Ristak, normalmente Stripe o Conekta y GoHighLevel sólo si está configurado como integración opcional: primer pago opcional + pagos restantes con fechas. Mercado Pago no soporta planes de pago en Ristak; úsalo sólo para links o suscripciones. La suma del primer pago y los restantes debe ser igual al total. Si hay varias pasarelas conectadas pregunta cuál usar. Confirma el plan completo y pasa confirm=true solo cuando ya aprobó.',
+  description: 'Crea un plan de pagos por parcialidades con las pasarelas conectadas compatibles de Ristak: Stripe, Conekta, Rebill o GoHighLevel opcional. En Rebill, Ristak mantiene el calendario y libera cada link cuando toca; Rebill no maneja el reloj del plan. Mercado Pago no soporta planes de pago en Ristak; úsalo sólo para links o suscripciones. La suma del primer pago y los restantes debe ser igual al total. Si hay varias pasarelas conectadas pregunta cuál usar. Confirma el plan completo y pasa confirm=true solo cuando ya aprobó.',
   parameters: z.object({
     contactId: z.string().describe('ID del contacto'),
     totalAmount: z.number().positive().describe('Total a cobrar (debe coincidir con la suma de los pagos)'),
@@ -592,6 +623,11 @@ export const createInstallmentPlanTool = tool({
 
       if (selected.gateway.id === 'conekta') {
         const result = await createConektaPaymentPlan(planPayload, { baseUrl: await getPaymentBaseUrl() })
+        return { ok: true, gateway: selected.gateway.id, gatewayLabel: selected.gateway.label, flowId: result?.flowId || null, result }
+      }
+
+      if (selected.gateway.id === 'rebill') {
+        const result = await createRebillPaymentPlan(planPayload, { baseUrl: await getPaymentBaseUrl() })
         return { ok: true, gateway: selected.gateway.id, gatewayLabel: selected.gateway.label, flowId: result?.flowId || null, result }
       }
 

@@ -1,6 +1,7 @@
 import {
   confirmPublicRebillPayment,
   createRebillPaymentLink,
+  createRebillPaymentPlan,
   deleteRebillPaymentConfig,
   getPublicRebillPayment,
   getRebillPaymentConfig,
@@ -10,6 +11,7 @@ import {
   testRebillPaymentConfig
 } from '../services/rebillPaymentService.js'
 import { getAppConfig } from '../config/database.js'
+import { syncRegisteredIntegrationCronsForProvider } from '../jobs/integrationCronRegistry.js'
 import { logger } from '../utils/logger.js'
 
 function cleanString(value) {
@@ -107,6 +109,7 @@ export async function saveRebillConfigView(req, res) {
     const config = await saveRebillPaymentConfig(req.body || {}, {
       baseUrl: getRequestBaseUrl(req)
     })
+    await syncRegisteredIntegrationCronsForProvider('rebill', { reason: 'rebill-connected' })
     res.json({ success: true, data: await withRebillWebhookEndpoints(req, config) })
   } catch (error) {
     logger.error(`Error guardando configuración Rebill: ${error.message}`)
@@ -117,6 +120,7 @@ export async function saveRebillConfigView(req, res) {
 export async function deleteRebillConfigView(req, res) {
   try {
     const config = await deleteRebillPaymentConfig()
+    await syncRegisteredIntegrationCronsForProvider('rebill', { reason: 'rebill-disconnected' })
     res.json({ success: true, data: await withRebillWebhookEndpoints(req, config) })
   } catch (error) {
     logger.error(`Error desconectando Rebill: ${error.message}`)
@@ -143,6 +147,18 @@ export async function createRebillPaymentLinkView(req, res) {
   } catch (error) {
     logger.error(`Error creando link Rebill: ${error.message}`)
     sendRebillError(res, error, 'No se pudo crear el link de pago con Rebill')
+  }
+}
+
+export async function createRebillPaymentPlanView(req, res) {
+  try {
+    const result = await createRebillPaymentPlan(req.body || {}, {
+      baseUrl: getRequestBaseUrl(req)
+    })
+    res.status(201).json({ success: true, data: result })
+  } catch (error) {
+    logger.error(`Error creando plan Rebill: ${error.message}`)
+    sendRebillError(res, error, 'No se pudo crear el plan de pagos con Rebill')
   }
 }
 

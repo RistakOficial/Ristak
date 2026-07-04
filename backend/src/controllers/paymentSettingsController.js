@@ -104,6 +104,7 @@ export async function savePaymentSettingsView(req, res) {
     await syncRegisteredIntegrationCronsForProvider('stripe', { reason: 'payment-mode-changed' })
     await syncRegisteredIntegrationCronsForProvider('conekta', { reason: 'payment-mode-changed' })
     await syncRegisteredIntegrationCronsForProvider('mercadopago', { reason: 'payment-mode-changed' })
+    await syncRegisteredIntegrationCronsForProvider('rebill', { reason: 'payment-mode-changed' })
     res.json({ success: true, data: settings })
   } catch (error) {
     logger.error(`Error guardando configuración de pagos: ${error.message}`)

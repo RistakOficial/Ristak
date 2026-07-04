@@ -659,11 +659,24 @@ env vars nuevas para arrancar el servicio.
 Alcance:
 
 - Cobros unicos por link publico `/pay/:publicPaymentId`.
+- Planes de pago administrados por Ristak: `payment_flows.payment_provider='rebill'`
+  y `payment_plans.source='rebill'`. Rebill solo procesa cada checkout; Ristak es
+  dueno del calendario, vencimientos, liberacion de links y estado del plan
+  (`clockOwner='ristak'`).
 - Checkout de Sites con el web component oficial `rebill-checkout`.
-- Rebill no se ofrece para suscripciones, planes de pago ni MSI en Ristak en esta
-  integracion. Solo se usa para pagos unicos; si se necesita recurrencia
-  automatica real o cargos futuros administrados por Ristak, usar Stripe,
-  Conekta o Mercado Pago.
+- Meses/installments en cobros unicos: Ristak no selecciona plazos locales para
+  Rebill. El checkout de Rebill muestra installments cuando la cuenta, pais,
+  moneda, monto y tarjeta califican. Ristak guarda el pago total local y confirma
+  el `paymentId` contra backend antes de marcarlo pagado.
+- Suscripciones Rebill (`instant-plan`) existen en la documentacion del proveedor,
+  pero no estan cableadas como flujo de suscripciones de Ristak en esta
+  superficie. No se deben presentar como listas hasta implementar UI/API,
+  conciliacion y cancelacion.
+- Cron `rebill-payment-plans`: corre por el registry de crons de integracion y
+  solo se activa si Rebill esta conectado en el modo de pago activo. Revisa
+  parcialidades `scheduled/pending` vencidas segun la zona horaria de la cuenta y
+  libera el link publico de cada pago cuando toca. No delega el calendario a
+  Rebill.
 - Webhook publico `/api/rebill/webhook`; como la documentacion publica de Rebill
   no declara firma verificable para webhooks, Ristak no confia en el payload para
   marcar pagado. Cada evento extrae el `paymentId` y consulta el pago real con
@@ -683,11 +696,15 @@ Alcance:
 Persistencia:
 
 - `payments.payment_provider='rebill'` y `payments.payment_method='rebill_checkout'`.
+- En planes Rebill, cada parcialidad tiene una fila local en `payments` desde el
+  alta del plan. Mientras no vence, queda `status='scheduled'` y sin
+  `payment_url`; al vencer, el cron la cambia a `sent` y genera `/pay/:publicPaymentId`.
 - IDs de proveedor en `payments.rebill_payment_id`,
   `payments.rebill_subscription_id`, `payments.rebill_customer_id` y
   `payments.rebill_card_id`.
-- `installment_payments.rebill_payment_id` existe solo para sincronizar
-  referencias si un pago local queda ligado a un flujo; no habilita planes Rebill.
+- `installment_payments.rebill_payment_id` sincroniza la referencia del pago Rebill
+  confirmado para que el espejo `payment_plans.schedule_json` refleje el estado
+  real de cada parcialidad.
 
 ### Regla pagos test y Meta
 
@@ -885,8 +902,8 @@ y frontend (`frontend/src/pages/Sites/*`) lo importan; el `Dockerfile` copia
 - Pago: el shell del checkout comparte estilos; el preview del editor solo muestra
   lo que el vivo mostraria (fila de meses standalone solo Conekta via
   `msiEligibility`; Stripe en `/pay` usa MSI controlado por backend cuando el link
-  trae `stripeInstallments.maxInstallments`; Mercado Pago y CLIP resuelven meses
-  dentro de su widget/SDK; Rebill monta el web component oficial sin MSI; boton de
+  trae `stripeInstallments.maxInstallments`; Mercado Pago, CLIP y Rebill resuelven
+  installments dentro de su widget/SDK cuando la cuenta/tarjeta califica; boton de
   pago con icono; badge "No visible en el sitio
   publicado" cuando el gate esta deshabilitado). En modo test, el preview y el
   checkout publicado muestran el helper de tarjetas de prueba del proveedor debajo
@@ -960,8 +977,10 @@ Crons de integracion que deben pasar por registry y detector local:
 - Meta sync/version.
 - Google Calendar sync.
 - WhatsApp QR watchdog.
-- Stripe/Conekta/Mercado Pago payment plans. CLIP queda fuera de planes de pago
-  y suscripciones; solo confirma pagos unicos con webhook/refresh del checkout.
+- Stripe/Conekta/Mercado Pago/Rebill payment plans. En Rebill el cron solo libera
+  links vencidos de parcialidades locales; Ristak mantiene el reloj del plan.
+  CLIP queda fuera de planes de pago y suscripciones; solo confirma pagos unicos
+  con webhook/refresh del checkout.
 
 Regla: un cron de integracion externa no arranca solo porque el backend arranco.
 Debe activarse por estado local de conexion y sincronizarse al conectar,
