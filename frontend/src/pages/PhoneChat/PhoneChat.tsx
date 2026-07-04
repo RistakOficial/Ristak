@@ -159,7 +159,7 @@ import {
 } from '@/services/mobileAppService'
 import { getPhoneDailyCacheKey, readPhoneDailyCache, writePhoneDailyCache } from '@/services/phoneDailyCache'
 import { pushNotificationsService } from '@/services/pushNotificationsService'
-import { whatsappApiService, type ScheduledChatMessage, type WhatsAppApiPendingRestore, type WhatsAppApiPhoneNumber, type WhatsAppApiStatus, type WhatsAppApiTemplate } from '@/services/whatsappApiService'
+import { filterApprovedWhatsAppApiTemplates, whatsappApiService, type ScheduledChatMessage, type WhatsAppApiPendingRestore, type WhatsAppApiPhoneNumber, type WhatsAppApiStatus, type WhatsAppApiTemplate } from '@/services/whatsappApiService'
 import type { Contact, ContactCustomField } from '@/types'
 import { formatChatDayLabel, formatChatListTimestamp, formatChatMessageTime, isChatTimestampToday } from '@/utils/chatTimestamps'
 import { mergeContactCustomFields } from '@/utils/contactCustomFields'
@@ -4978,17 +4978,18 @@ export const PhoneChat: React.FC = () => {
     })
     return alertMap
   }, [activeTemplateAlerts])
+  const sendableTemplates = useMemo(() => filterApprovedWhatsAppApiTemplates(templates), [templates])
   const filteredTemplates = useMemo(() => {
     const query = templateSearch.trim().toLowerCase()
-    if (!query) return templates
-    return templates.filter((template) => [
+    if (!query) return sendableTemplates
+    return sendableTemplates.filter((template) => [
       template.name,
       template.language,
       template.category,
       template.status,
       getTemplateBodyPreview(template)
     ].filter(Boolean).join(' ').toLowerCase().includes(query))
-  }, [templateSearch, templates])
+  }, [sendableTemplates, templateSearch])
   const hasChats = chats.length > 0
   const archivedChatIdSet = useMemo(() => new Set(archivedChatIds), [archivedChatIds])
   const mutedChatIdSet = useMemo(() => new Set(mutedChatIds), [mutedChatIds])
@@ -6269,7 +6270,7 @@ export const PhoneChat: React.FC = () => {
       const refreshedStatus = await whatsappApiService.refresh().catch(() => null)
       const [status, response] = await Promise.all([
         refreshedStatus ? Promise.resolve(refreshedStatus) : whatsappApiService.getStatus().catch(() => null),
-        whatsappApiService.getTemplates()
+        whatsappApiService.getTemplates(null)
       ])
 
       if (status) setWhatsappStatus(status)
@@ -9399,7 +9400,7 @@ export const PhoneChat: React.FC = () => {
     if (requestSheetToggleClose('templates')) return
 
     setTemplatePickIntent('send')
-    setTemplateMode(templates.length > 0 ? 'send' : 'choice')
+    setTemplateMode(sendableTemplates.length > 0 ? 'send' : 'choice')
     setTemplateSearch('')
     setSheet('templates')
   }
@@ -9422,7 +9423,7 @@ export const PhoneChat: React.FC = () => {
 
     setTemplatePickIntent('schedule')
     setScheduleTemplate(null)
-    setTemplateMode(templates.length > 0 ? 'send' : 'choice')
+    setTemplateMode(sendableTemplates.length > 0 ? 'send' : 'choice')
     setTemplateSearch('')
     setSheet('templates')
   }
@@ -14959,7 +14960,7 @@ export const PhoneChat: React.FC = () => {
       return (
         <div className={styles.templatesStack} data-phone-chat-scrollable="true">
           <div className={styles.templateChoiceGrid}>
-            {templates.length > 0 ? (
+            {sendableTemplates.length > 0 ? (
               <button type="button" onClick={() => {
                 setTemplateSearch('')
                 setTemplateMode('send')
@@ -15066,7 +15067,7 @@ export const PhoneChat: React.FC = () => {
 
         {renderTemplateAlerts()}
 
-        {templatesLoading && templates.length === 0 ? (
+        {templatesLoading && sendableTemplates.length === 0 ? (
           <div className={styles.centerState} role="status" aria-live="polite" aria-label="Cargando plantillas">
             <Loader2 size={20} className={styles.spinIcon} aria-hidden="true" />
           </div>
@@ -15077,11 +15078,11 @@ export const PhoneChat: React.FC = () => {
             <span>{templatesError}</span>
             <button type="button" onClick={loadTemplates}>Intentar otra vez</button>
           </div>
-        ) : templates.length === 0 ? (
+        ) : sendableTemplates.length === 0 ? (
           <div className={styles.emptySheetState}>
             <FileText size={24} />
-            <strong>No hay plantillas</strong>
-            <span>Crea una nueva y cuando Meta la apruebe podrás mandarla desde este chat.</span>
+            <strong>No hay plantillas aprobadas</strong>
+            <span>Crea una nueva o espera a que Meta apruebe una existente para poder mandarla desde este chat.</span>
           </div>
         ) : (
           <>

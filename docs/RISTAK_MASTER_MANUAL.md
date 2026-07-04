@@ -333,6 +333,12 @@ debe usar WhatsApp QR/Baileys directamente cuando exista un QR usable. Las
 plantillas quedan fuera de este bloqueo porque son el camino permitido por
 WhatsApp cuando la conversacion esta cerrada.
 
+En los chats desktop y movil, el selector para enviar o programar plantillas de
+WhatsApp API debe listar solo plantillas con estado `APPROVED`. Las plantillas
+rechazadas, pausadas, archivadas, pendientes o en apelacion pueden mostrarse en
+las vistas de revision/estado, pero no deben aparecer como opcion seleccionable
+en el flujo de envio.
+
 En Configuracion > WhatsApp > Plantillas, el preview del editor debe respetar la
 sintaxis visual que WhatsApp aplica al mensaje enviado a revision: `*negritas*`,
 `_italicas_`, `~tachado~`, monospace con triple backtick, inline code con

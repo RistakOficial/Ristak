@@ -68,6 +68,16 @@ export interface WhatsAppApiTemplate {
   updated_at?: string | null
 }
 
+export const WHATSAPP_API_APPROVED_TEMPLATE_STATUS = 'APPROVED'
+
+export function isApprovedWhatsAppApiTemplate(template?: Pick<WhatsAppApiTemplate, 'status'> | null) {
+  return String(template?.status || '').trim().toUpperCase() === WHATSAPP_API_APPROVED_TEMPLATE_STATUS
+}
+
+export function filterApprovedWhatsAppApiTemplates(templates?: WhatsAppApiTemplate[] | null) {
+  return Array.isArray(templates) ? templates.filter(isApprovedWhatsAppApiTemplate) : []
+}
+
 export interface WhatsAppApiAlert {
   id: string
   severity: 'critical' | 'warning' | 'info' | string
@@ -550,7 +560,7 @@ export const whatsappApiService = {
   createQrPhoneNumber: (payload: WhatsAppQrPhoneNumberPayload) => apiClient.post<WhatsAppApiPhoneNumber>('/whatsapp-api/qr/phone-numbers', payload),
   connectQr: (payload: WhatsAppQrConnectPayload) => apiClient.post<WhatsAppQrSession>('/whatsapp-api/qr/connect', payload),
   disconnectQr: (phoneNumberId: string) => apiClient.post<WhatsAppQrSession>('/whatsapp-api/qr/disconnect', { phoneNumberId }),
-  getTemplates: (status?: string) => apiClient.get<WhatsAppApiTemplatesResponse>('/whatsapp-api/templates', {
+  getTemplates: (status: string | null = WHATSAPP_API_APPROVED_TEMPLATE_STATUS) => apiClient.get<WhatsAppApiTemplatesResponse>('/whatsapp-api/templates', {
     params: status ? { status } : undefined
   }),
   getScheduledMessages: (contactId: string) => apiClient.get<ScheduledChatMessage[]>('/whatsapp-api/messages/scheduled', {
