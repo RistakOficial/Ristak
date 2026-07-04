@@ -23,6 +23,24 @@ function runFfmpeg(args) {
   })
 }
 
+function readFfmpegOutput(args) {
+  return new Promise((resolve, reject) => {
+    const child = spawn(FFMPEG, args)
+    let output = ''
+    child.stdout.on('data', chunk => {
+      output += chunk.toString()
+    })
+    child.stderr.on('data', chunk => {
+      output += chunk.toString()
+    })
+    child.on('error', reject)
+    child.on('close', code => {
+      if (code === 0) resolve(output)
+      else reject(new Error(output.trim().slice(-500) || `ffmpeg salió con código ${code}`))
+    })
+  })
+}
+
 async function hasFfmpeg() {
   try {
     await runFfmpeg(['-version'])
@@ -32,7 +50,17 @@ async function hasFfmpeg() {
   }
 }
 
+async function hasFfmpegEncoder(encoder) {
+  try {
+    const encoders = await readFfmpegOutput(['-hide_banner', '-encoders'])
+    return encoders.includes(encoder)
+  } catch {
+    return false
+  }
+}
+
 const ffmpegAvailable = await hasFfmpeg()
+const webpEncoderAvailable = ffmpegAvailable ? await hasFfmpegEncoder('libwebp') : false
 
 test('compressMediaBuffer reduce imagen, audio y video cuando ffmpeg está disponible', {
   skip: ffmpegAvailable ? false : 'ffmpeg no está instalado en este entorno'
@@ -69,8 +97,13 @@ test('compressMediaBuffer reduce imagen, audio y video cuando ffmpeg está dispo
     const compressedAudio = await compressMediaBuffer({ buffer: audio, contentType: 'audio/wav' })
     const compressedVideo = await compressMediaBuffer({ buffer: video, contentType: 'video/mp4' })
 
-    assert.equal(compressedImage.contentType, 'image/webp')
-    assert.ok(compressedImage.buffer.length < image.length)
+    if (webpEncoderAvailable) {
+      assert.equal(compressedImage.contentType, 'image/webp')
+      assert.ok(compressedImage.buffer.length < image.length)
+    } else {
+      assert.equal(compressedImage.contentType, 'image/png')
+      assert.equal(compressedImage.note, 'original')
+    }
 
     assert.equal(compressedAudio.contentType, 'audio/ogg; codecs=opus')
     assert.ok(compressedAudio.buffer.length < audio.length * 0.5)
