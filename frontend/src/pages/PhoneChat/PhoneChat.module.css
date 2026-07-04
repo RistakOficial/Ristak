@@ -15,6 +15,7 @@
   --phone-chat-accent: #0078f8;
   --phone-chat-accent-rgb: 0, 120, 248;
   --phone-chat-accent-soft: #e2f1ff;
+  --phone-chat-avatar-fill: linear-gradient(135deg, #0068f8 0%, #0078f8 54%, #00a8f8 100%);
   --phone-channel-whatsapp: #25d366;
   --phone-channel-messenger: #1877f2;
   --phone-channel-instagram: #e1306c;
@@ -70,6 +71,7 @@
   --phone-chat-accent: #00a8f8;
   --phone-chat-accent-rgb: 0, 168, 248;
   --phone-chat-accent-soft: rgba(0, 168, 248, 0.18);
+  --phone-chat-avatar-fill: linear-gradient(135deg, #0078f8 0%, #0068f8 55%, #46b9ff 100%);
   --phone-chat-inbound: #102a78;
   --phone-chat-outbound: #0745bd;
   --phone-chat-outbound-text: #f7fbff;
@@ -1063,11 +1065,7 @@
 
 .avatar {
   --avatar-ring-color: var(--phone-chat-accent);
-  --avatar-fill: linear-gradient(
-    135deg,
-    var(--phone-chat-accent) 0%,
-    color-mix(in srgb, var(--phone-chat-accent) 72%, #69d5ff 28%) 100%
-  );
+  --avatar-fill: var(--phone-chat-avatar-fill);
   position: relative;
   display: inline-flex;
   align-items: center;
@@ -1092,22 +1090,27 @@
 
 .avatarWhatsapp {
   --avatar-ring-color: var(--phone-channel-whatsapp);
+  --avatar-fill: var(--phone-chat-avatar-fill);
 }
 
 .avatarMessenger {
   --avatar-ring-color: var(--phone-channel-messenger);
+  --avatar-fill: var(--phone-chat-avatar-fill);
 }
 
 .avatarInstagram {
   --avatar-ring-color: var(--phone-channel-instagram);
+  --avatar-fill: var(--phone-chat-avatar-fill);
 }
 
 .avatarEmail {
   --avatar-ring-color: var(--phone-channel-email);
+  --avatar-fill: var(--phone-chat-avatar-fill);
 }
 
 .avatarSms {
   --avatar-ring-color: var(--phone-channel-sms);
+  --avatar-fill: var(--phone-chat-avatar-fill);
 }
 
 .avatar img {

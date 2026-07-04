@@ -105,11 +105,13 @@ Regla de criterio: el verde se reserva para marca WhatsApp
 para estados semánticos de éxito. Botones, tabs, badges, loaders, inputs,
 gráficas y defaults visuales de la app deben usar el azul/cian de Ristak.
 
-Los avatares de contacto son parte de la identidad de Ristak: su relleno debe
-usar `--phone-chat-accent`/cian Ristak. El origen social del contacto sólo debe
-vivir en el aro exterior del avatar (`--avatar-ring-color`) y en el badge/icono
-de canal (`.avatarChannelBadge*`). No vuelvas a usar verde WhatsApp, rosa
-Instagram o azul Messenger como relleno completo del avatar.
+Los avatares de contacto son parte de la identidad de Ristak: si el contacto
+tiene foto real de la red social, se respeta esa foto; si no tiene foto, el
+fallback muestra iniciales sobre `--phone-chat-avatar-fill` azul/cian Ristak. El
+origen social del contacto sólo debe vivir en el aro exterior del avatar
+(`--avatar-ring-color`) y en el badge/icono de canal (`.avatarChannelBadge*`).
+No vuelvas a usar verde WhatsApp, rosa Instagram o azul Messenger como relleno
+completo del avatar de iniciales.
 
 En la conversación móvil no uses rails/barras verticales pegadas al lado
 izquierdo como indicador visual de foco, comentario o chat no leído. Los estados
