@@ -876,6 +876,57 @@ function sanitizeLocalizedText(value, fallback = 'Pago Ristak', maxLength = 180)
   return raw || fallback
 }
 
+function buildRebillHostedBusinessMetadata(paymentSettings = {}) {
+  const checkout = paymentSettings?.checkout || {}
+  const receipt = paymentSettings?.receipt || {}
+  const businessName = cleanString(receipt.businessName, 160)
+  const businessEmail = cleanString(receipt.businessEmail, 160)
+  const businessPhone = cleanString(receipt.businessPhone, 80)
+  const businessWebsite = cleanString(receipt.businessWebsite, 250)
+  const businessAddress = cleanString(receipt.businessAddress, 500)
+  const supportEmail = cleanString(checkout.supportEmail || businessEmail, 160)
+  const supportPhone = cleanString(checkout.supportPhone || businessPhone, 80)
+  const logoUrl = cleanString(checkout.logoUrl || receipt.logoUrl, 1000)
+
+  return {
+    ...(businessName ? { businessName } : {}),
+    ...(businessEmail ? { businessEmail } : {}),
+    ...(businessPhone ? { businessPhone } : {}),
+    ...(businessWebsite ? { businessWebsite } : {}),
+    ...(businessAddress ? { businessAddress } : {}),
+    ...(supportEmail ? { supportEmail } : {}),
+    ...(supportPhone ? { supportPhone } : {}),
+    ...(logoUrl ? { businessLogoUrl: logoUrl } : {})
+  }
+}
+
+function buildRebillHostedPaymentLinkDescription(row = {}, metadata = {}, paymentSettings = {}) {
+  const baseDescription = sanitizeLocalizedText(row.description || metadata.description || row.title || metadata.title || 'Pago', 'Pago', 300)
+  const business = buildRebillHostedBusinessMetadata(paymentSettings)
+  const details = []
+  const seenValues = new Set()
+
+  function addDetail(label, value) {
+    const cleanValue = cleanString(value, 500)
+    const key = cleanValue.toLowerCase()
+    if (!cleanValue || seenValues.has(key)) return
+    seenValues.add(key)
+    details.push(`${label}: ${cleanValue}`)
+  }
+
+  addDetail('Negocio', business.businessName)
+  addDetail('Email', business.businessEmail)
+  addDetail('Telefono', business.businessPhone)
+  addDetail('Sitio', business.businessWebsite)
+  addDetail('Direccion', business.businessAddress)
+  addDetail('Soporte', [
+    business.supportEmail && business.supportEmail !== business.businessEmail ? business.supportEmail : '',
+    business.supportPhone && business.supportPhone !== business.businessPhone ? business.supportPhone : ''
+  ].filter(Boolean).join(' / '))
+
+  return sanitizeLocalizedText([baseDescription, ...details].filter(Boolean).join(' · '), baseDescription, 900)
+}
+
 function getRebillHostedPaymentLink(metadata = {}) {
   const link = metadata.rebillHostedPaymentLink && typeof metadata.rebillHostedPaymentLink === 'object'
     ? metadata.rebillHostedPaymentLink
@@ -950,7 +1001,7 @@ function buildRebillPaymentLinkPrefilledFields(row = {}, metadata = {}) {
   return Object.keys(customer).length ? { customer } : null
 }
 
-async function ensureRebillHostedPaymentLink(row = {}, config = null, baseUrl = '') {
+async function ensureRebillHostedPaymentLink(row = {}, config = null, baseUrl = '', paymentSettings = null) {
   const metadata = parseJson(row.metadata_json, {})
   if (!shouldUseRebillHostedPaymentLink(row, metadata)) return { row, hostedPaymentLink: null }
 
@@ -962,9 +1013,10 @@ async function ensureRebillHostedPaymentLink(row = {}, config = null, baseUrl = 
   if (!enabledInstallments.length) return { row, hostedPaymentLink: null }
 
   const title = sanitizeLocalizedText(row.title || metadata.title || 'Pago Ristak', 'Pago Ristak', 140)
-  const description = sanitizeLocalizedText(row.description || title, title, 300)
+  const description = buildRebillHostedPaymentLinkDescription(row, metadata, paymentSettings)
   const redirectUrls = buildRebillPaymentLinkRedirectUrls(baseUrl, row.public_payment_id)
   const prefilledFields = buildRebillPaymentLinkPrefilledFields(row, metadata)
+  const businessMetadata = buildRebillHostedBusinessMetadata(paymentSettings)
   const paymentLinkMetadata = {
     ristakPaymentId: cleanString(row.id, 180),
     localPaymentId: cleanString(row.id, 180),
@@ -972,7 +1024,8 @@ async function ensureRebillHostedPaymentLink(row = {}, config = null, baseUrl = 
     provider: 'rebill',
     source: cleanString(metadata.source || 'ristak', 120),
     rebillInstallmentsRequested: true,
-    rebillMaxInstallments: Math.max(...enabledInstallments)
+    rebillMaxInstallments: Math.max(...enabledInstallments),
+    ...businessMetadata
   }
 
   const { payload } = await rebillApiRequest('/v3/payment-links', {
@@ -2081,10 +2134,12 @@ export async function createRebillPaymentLink(input = {}, { baseUrl, mode = '' }
 
   const row = await findPaymentById(id)
   let mappedRow = row
+  let hostedPaymentLink = null
   if (rebillInstallments?.enabled) {
     try {
-      const ensured = await ensureRebillHostedPaymentLink(row, config, baseUrl)
+      const ensured = await ensureRebillHostedPaymentLink(row, config, baseUrl, paymentSettings)
       mappedRow = ensured.row || row
+      hostedPaymentLink = ensured.hostedPaymentLink || null
     } catch (error) {
       await db.run(
         `UPDATE payments
@@ -2105,7 +2160,7 @@ export async function createRebillPaymentLink(input = {}, { baseUrl, mode = '' }
 
   return {
     payment: mapPublicPayment(mappedRow, config, baseUrl, paymentSettings),
-    paymentUrl,
+    paymentUrl: hostedPaymentLink?.url || paymentUrl,
     publicPaymentId
   }
 }
@@ -2790,12 +2845,12 @@ export async function getPublicRebillPayment(publicPaymentId, { baseUrl } = {}) 
 
   const config = await getRebillPaymentConfig({ includeSecrets: true, mode: row.payment_mode || '' })
   const metadata = parseJson(row.metadata_json, {})
+  const paymentSettings = await getPublicPaymentSettings()
   if (shouldUseRebillHostedPaymentLink(row, metadata) && !getRebillHostedPaymentLink(metadata)?.url) {
-    const ensured = await ensureRebillHostedPaymentLink(row, config, baseUrl)
+    const ensured = await ensureRebillHostedPaymentLink(row, config, baseUrl, paymentSettings)
     row = ensured.row || row
   }
 
-  const paymentSettings = await getPublicPaymentSettings()
   const timezone = await getAccountTimezone().catch(() => ACCOUNT_DEFAULT_TIMEZONE)
   return attachMetaPublicPurchaseEvent(
     mapPublicPayment(row, config, baseUrl, paymentSettings, timezone),

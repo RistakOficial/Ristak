@@ -211,7 +211,7 @@ const PUBLIC_PAYMENT_LIGHT_MODE_FLAG = 'publicPaymentLightMode'
 const CONFETTI_COLOR_TOKENS = ['--accent', '--accent-2', '--pos', '--warn', '--info'] as const
 const CONFETTI_COLOR_FALLBACK = ['#2f6fed', '#4c8dff', '#1f9d57', '#c98a1e', '#1f8aa0']
 const REBILL_CARD_ONLY_EXCLUDED_PAYMENT_METHODS: RebillExcludedPaymentMethod[] = ['cash', 'bank_transfer']
-const REBILL_USE_HOSTED_PAYMENT_LINKS = false
+const REBILL_USE_HOSTED_PAYMENT_LINKS = true
 const REBILL_CHECKOUT_CSS = [
   '.rebill-submit-button { border-radius: 14px; font-weight: 700; }',
   '.rebill-checkout.full-width-layout { min-height: 0 !important; overflow: visible !important; }',

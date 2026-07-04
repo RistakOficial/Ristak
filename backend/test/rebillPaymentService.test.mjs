@@ -255,6 +255,12 @@ test('Rebill confirma pago público consultando el paymentId en backend antes de
         assert.equal(body.metadata.provider, 'rebill')
         assert.match(body.metadata.publicPaymentId, /^rstk_pay_[A-Za-z0-9]{20}$/)
         assert.match(body.metadata.localPaymentId, /^rstk_payment_/)
+        assert.equal(body.metadata.businessName, 'Negocio Rebill Test')
+        assert.equal(body.metadata.businessLogoUrl, 'https://cdn.example.test/ristak-logo.png')
+        assert.equal(body.metadata.supportEmail, 'soporte@negocio.test')
+        assert.equal(body.title[0].text, 'Pago Rebill test')
+        assert.match(body.description[0].text, /Negocio: Negocio Rebill Test/)
+        assert.match(body.description[0].text, /Soporte: soporte@negocio\.test \/ \+52 656 000 0000/)
         assert.equal(body.prefilledFields.customer.email, 'cliente@example.test')
         assert.equal(body.prefilledFields.customer.phoneNumber, '5512345678')
         assert.equal(body.prefilledFields.customer.countryCode, '+52')
@@ -298,6 +304,25 @@ test('Rebill confirma pago público consultando el paymentId en backend antes de
     }, {
       baseUrl: 'https://app.example.test'
     })
+    await setAppConfig('payments_settings', {
+      paymentMode: 'test',
+      checkout: {
+        useBusinessProfile: false,
+        logoUrl: 'https://cdn.example.test/ristak-logo.png',
+        supportEmail: 'soporte@negocio.test',
+        supportPhone: '+52 656 000 0000'
+      },
+      receipt: {
+        useBusinessProfile: false,
+        logoUrl: 'https://cdn.example.test/receipt-logo.png',
+        businessName: 'Negocio Rebill Test',
+        businessEmail: 'ventas@negocio.test',
+        businessPhone: '+52 656 111 1111',
+        businessAddress: 'Av. Prueba 123, Juarez, Chihuahua',
+        businessWebsite: 'https://negocio.example.test',
+        showBusinessInfo: true
+      }
+    })
 
     let publicPaymentId = ''
     try {
@@ -319,7 +344,7 @@ test('Rebill confirma pago público consultando el paymentId en backend antes de
       assert.match(publicPaymentId, /^rstk_pay_[A-Za-z0-9]{20}$/)
       assert.equal(link.payment.provider, 'rebill')
       assert.equal(link.payment.publicKey, publicKey)
-      assert.equal(link.paymentUrl, `https://app.example.test/pay/${publicPaymentId}`)
+      assert.equal(link.paymentUrl, 'https://pay.rebill.com/acme/pl_rebill_service_test')
       assert.equal(link.payment.hostedPaymentUrl, 'https://pay.rebill.com/acme/pl_rebill_service_test')
       assert.equal(link.payment.rebillHostedPaymentLink.id, 'pl_rebill_service_test')
       assert.equal(link.payment.instantProduct.currency, 'MXN')

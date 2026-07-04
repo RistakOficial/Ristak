@@ -807,13 +807,18 @@ Alcance:
   Si se elige MSI, Ristak pide el maximo de meses (3, 6, 9, 12, 18 o 24), guarda
   `metadata.rebillInstallments.maxInstallments` y conserva
   `enabledInstallments`. Para la prueba operativa actual,
-  `REBILL_USE_HOSTED_PAYMENT_LINKS=false`, asi que la pagina publica conserva el
-  checkout embebido con `instant-product`, tarjeta unicamente,
-  `display.discountCode=false`, `display.logo=false` y `one-click-checkout=false`
-  cuando MSI esta activo. La integracion hosted de Rebill permanece en el backend
-  como alternativa, pero el frontend no redirige y la respuesta de creacion de link
-  sigue entregando la URL local `/pay/:publicPaymentId` mientras ese flag siga
-  apagado.
+  `REBILL_USE_HOSTED_PAYMENT_LINKS=true`, asi que los links MSI de Rebill usan el
+  Checkout Landing hospedado de Rebill (`pay.rebill.com`). La pagina local
+  `/pay/:publicPaymentId` se conserva como superficie de retorno, estado, errores
+  y fallback; si alguien abre la URL local de un pago Rebill MSI, Ristak redirige
+  al Payment Link hospedado cuando existe.
+  Al crear el Payment Link hospedado, Ristak manda solo tarjeta en
+  `paymentMethods`, conserva `showCoupon=false`, agrega `installmentsSettings` y
+  enriquece `title`, `description` y `metadata` con la informacion publica del
+  negocio configurada en Pagos/recibos (nombre, email, telefono, web, direccion,
+  soporte y URL publica del logo). Rebill muestra el logo del hosted checkout con
+  el branding de la organizacion configurado en Rebill; la API de Payment Links no
+  sube un archivo de logo por link desde Ristak.
   En sandbox, Rebill muestra la lista inicial de mensualidades configuradas, pero
   al validar el BIN de la tarjeta puede bloquear el selector si el emisor/pais no
   devuelve MSI; para Mexico, probar con tarjetas que el endpoint de Rebill marque
