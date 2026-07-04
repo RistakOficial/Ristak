@@ -467,6 +467,7 @@ async function getApnsJwt() {
 
 function getNotificationData(payload = {}) {
   const imageUrl = getNotificationImageUrl(payload)
+  const contactName = getNotificationContactName(payload)
   return Object.fromEntries(
     Object.entries({
       url: payload.url || '/movil',
@@ -476,6 +477,7 @@ function getNotificationData(payload = {}) {
       eventKey: payload.eventKey || '',
       messageId: payload.messageId || '',
       contactId: payload.contactId || '',
+      contactName,
       contactAvatarUrl: imageUrl,
       notificationImageUrl: imageUrl
     }).map(([key, value]) => [key, String(value || '')])
@@ -553,6 +555,30 @@ function getNotificationImageUrl(payload = {}) {
     payload.notificationImageUrl ||
     ''
   )
+}
+
+function getNotificationContactName(payload = {}) {
+  const candidates = [
+    payload.contactName,
+    payload.contact_name,
+    payload.senderName,
+    payload.sender_name,
+    payload.customerName,
+    payload.customer_name,
+    payload.clientName,
+    payload.client_name,
+    payload.profileName,
+    payload.profile_name
+  ]
+
+  for (const candidate of candidates) {
+    const value = stripAppNameFromNotificationText(candidate)
+    if (value && !isAppNameNotificationText(value)) {
+      return value.slice(0, 90)
+    }
+  }
+
+  return ''
 }
 
 function getPayloadContactImageCandidateUrl(payload = {}) {
@@ -1603,6 +1629,7 @@ export async function sendCalendarAppointmentNotification(appointment = {}, opti
     url: `/movil/calendar?open=appointment&id=${encodeURIComponent(appointment.id || '')}`,
     category: eventKey,
     eventKey,
+    contactName,
     contactId: appointment.contactId || appointment.contact_id || ''
   }
 
@@ -1648,6 +1675,7 @@ export async function sendAppointmentStatusNotification(appointment = {}, option
     url: `/movil/calendar?open=appointment&id=${encodeURIComponent(appointmentId)}`,
     category: eventKey,
     eventKey,
+    contactName,
     contactId: appointment.contactId || appointment.contact_id || options.contactId || ''
   }
 
@@ -1707,6 +1735,7 @@ export async function sendAppointmentConfirmationNotification(appointment = {}, 
     url: `/movil/calendar?open=appointment&id=${encodeURIComponent(appointmentId)}`,
     category: 'appointment_confirmed',
     eventKey: 'appointment_confirmed',
+    contactName,
     contactId: appointment.contactId || appointment.contact_id || options.contactId || ''
   }
 
@@ -1788,6 +1817,7 @@ export async function sendChatMessageNotification(message = {}) {
     tag: `chat-${messageKey}`,
     threadId: message.contactId ? `chat-${message.contactId}` : `chat-${senderName}`,
     messageId: messageKey,
+    contactName: senderName,
     contactId: message.contactId || '',
     url: `/movil?contact=${encodeURIComponent(message.contactId || '')}`,
     category: 'chat'
@@ -1854,6 +1884,7 @@ export async function sendConversationalAgentPriorityNotification(signal = {}) {
     tag: `agent-priority-${contactId}`,
     threadId: `chat-${contactId}`,
     messageId: `agent-priority-${contactId}-${Date.now()}`,
+    contactName: senderName,
     contactId,
     url: `/movil?contact=${encodeURIComponent(contactId)}`,
     category: 'chat'
@@ -1875,6 +1906,7 @@ export function buildPaymentNotificationPayload(payment = {}) {
     url: '/movil/transactions',
     category: 'payment',
     eventKey: 'payments',
+    contactName: getPaymentContactLabel(payment),
     contactId: payment.contactId || payment.contact_id || ''
   }
 }

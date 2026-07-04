@@ -20,6 +20,7 @@ const EXPECTED_TEMPLATE_KEYS = [
   'IOS_DISTRIBUTION_CERTIFICATE_PATH',
   'IOS_DISTRIBUTION_CERTIFICATE_PASSWORD',
   'IOS_APPSTORE_PROVISIONING_PROFILE_PATH',
+  'IOS_NOTIFICATION_SERVICE_PROVISIONING_PROFILE_PATH',
   'IOS_CI_KEYCHAIN_PASSWORD',
   'IOS_EXPORT_OPTIONS_PLIST',
   'MOBILE_RELEASE_ANDROID_VERSION_NAME',
@@ -58,6 +59,10 @@ const HELP = {
   IOS_APPSTORE_PROVISIONING_PROFILE_PATH: {
     get: 'Apple Developer > Profiles. Use an App Store profile for com.ristak.app with the same distribution certificate.',
     put: 'Save it under .mobile-release/ios/RistakAppStore.mobileprovision and set IOS_APPSTORE_PROVISIONING_PROFILE_PATH.'
+  },
+  IOS_NOTIFICATION_SERVICE_PROVISIONING_PROFILE_PATH: {
+    get: 'Apple Developer > Profiles. Use an App Store profile for com.ristak.app.NotificationService with the same distribution certificate.',
+    put: 'Save it under .mobile-release/ios/RistakNotificationServiceAppStore.mobileprovision and set IOS_NOTIFICATION_SERVICE_PROVISIONING_PROFILE_PATH.'
   },
   IOS_EXPORT_OPTIONS_PLIST: {
     get: 'This repo already provides the App Store export plist.',
@@ -375,6 +380,7 @@ function validateConfig(rootDir, envFilePath, env, args) {
       requireFile(report, rootDir, env, 'IOS_DISTRIBUTION_CERTIFICATE_PATH', { extensions: ['.p12'] })
       requireVar(report, env, 'IOS_DISTRIBUTION_CERTIFICATE_PASSWORD')
       requireFile(report, rootDir, env, 'IOS_APPSTORE_PROVISIONING_PROFILE_PATH', { extensions: ['.mobileprovision'] })
+      requireFile(report, rootDir, env, 'IOS_NOTIFICATION_SERVICE_PROVISIONING_PROFILE_PATH', { extensions: ['.mobileprovision'] })
       requireFile(report, rootDir, env, 'IOS_EXPORT_OPTIONS_PLIST', { extensions: ['.plist'], private: false })
     }
 

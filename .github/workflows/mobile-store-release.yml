@@ -49,6 +49,7 @@ on:
 
 env:
   APP_BUNDLE_ID: com.ristak.app
+  NOTIFICATION_SERVICE_BUNDLE_ID: com.ristak.app.NotificationService
   APPLE_TEAM_ID: Y2L8669JNL
 
 jobs:
@@ -128,21 +129,26 @@ jobs:
           IOS_CERTIFICATE_BASE64="$(jq -r '.credentials.ios_distribution_certificate_base64 // empty' "$CREDS")"
           IOS_CERTIFICATE_PASSWORD="$(jq -r '.credentials.ios_distribution_certificate_password // empty' "$CREDS")"
           IOS_PROFILE_BASE64="$(jq -r '.credentials.ios_appstore_provisioning_profile_base64 // empty' "$CREDS")"
+          IOS_NOTIFICATION_SERVICE_PROFILE_BASE64="$(jq -r '.credentials.ios_notification_service_provisioning_profile_base64 // empty' "$CREDS")"
           KEYCHAIN_PASSWORD="$(jq -r '.credentials.ios_ci_keychain_password // empty' "$CREDS")"
           test -n "$IOS_CERTIFICATE_BASE64"
           test -n "$IOS_CERTIFICATE_PASSWORD"
           test -n "$IOS_PROFILE_BASE64"
+          test -n "$IOS_NOTIFICATION_SERVICE_PROFILE_BASE64"
           KEYCHAIN_PASSWORD="${KEYCHAIN_PASSWORD:-temporary-ci-keychain}"
 
           CERT_PATH="$RUNNER_TEMP/ios_distribution.p12"
           PROFILE_DIR="$RUNNER_TEMP/profiles"
           PROFILE_PATH="$PROFILE_DIR/RistakAppStoreCI.mobileprovision"
+          NOTIFICATION_SERVICE_PROFILE_PATH="$PROFILE_DIR/RistakNotificationServiceAppStoreCI.mobileprovision"
           PROFILE_PLIST="$RUNNER_TEMP/ristak_appstore.plist"
+          NOTIFICATION_SERVICE_PROFILE_PLIST="$RUNNER_TEMP/ristak_notification_service_appstore.plist"
           KEYCHAIN_PATH="$RUNNER_TEMP/app-signing.keychain-db"
 
           mkdir -p "$PROFILE_DIR"
           printf '%s' "$IOS_CERTIFICATE_BASE64" | base64 --decode > "$CERT_PATH"
           printf '%s' "$IOS_PROFILE_BASE64" | base64 --decode > "$PROFILE_PATH"
+          printf '%s' "$IOS_NOTIFICATION_SERVICE_PROFILE_BASE64" | base64 --decode > "$NOTIFICATION_SERVICE_PROFILE_PATH"
 
           security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
           security set-keychain-settings -lut 21600 "$KEYCHAIN_PATH"
@@ -160,42 +166,58 @@ jobs:
           fi
           test -n "$IOS_CERT_SHA1"
 
-          security cms -D -i "$PROFILE_PATH" > "$PROFILE_PLIST"
-          IOS_PROFILE_UUID="$(/usr/libexec/PlistBuddy -c 'Print UUID' "$PROFILE_PLIST")"
-          IOS_PROFILE_NAME="$(/usr/libexec/PlistBuddy -c 'Print Name' "$PROFILE_PLIST")"
-          IOS_PROFILE_TEAM_ID="$(/usr/libexec/PlistBuddy -c 'Print TeamIdentifier:0' "$PROFILE_PLIST")"
-          IOS_PROFILE_APP_ID="$(/usr/libexec/PlistBuddy -c 'Print Entitlements:application-identifier' "$PROFILE_PLIST")"
-          IOS_PROFILE_GET_TASK_ALLOW="$(/usr/libexec/PlistBuddy -c 'Print Entitlements:get-task-allow' "$PROFILE_PLIST" 2>/dev/null || true)"
-          IOS_PROFILE_IS_XCODE_MANAGED="$(/usr/libexec/PlistBuddy -c 'Print IsXcodeManaged' "$PROFILE_PLIST" 2>/dev/null || true)"
+          read_profile_metadata() {
+            local profile_path="$1"
+            local plist_path="$2"
+            local expected_bundle_id="$3"
+            local label="$4"
+            local prefix="$5"
 
-          test -n "$IOS_PROFILE_UUID"
-          test -n "$IOS_PROFILE_NAME"
-          if [ "$IOS_PROFILE_TEAM_ID" != "$APPLE_TEAM_ID" ]; then
-            echo "Provisioning profile team '$IOS_PROFILE_TEAM_ID' does not match '$APPLE_TEAM_ID'."
-            exit 1
-          fi
-          if [ "$IOS_PROFILE_APP_ID" != "${APPLE_TEAM_ID}.${APP_BUNDLE_ID}" ]; then
-            echo "Provisioning profile app id '$IOS_PROFILE_APP_ID' does not match '${APPLE_TEAM_ID}.${APP_BUNDLE_ID}'."
-            exit 1
-          fi
-          if [ "$IOS_PROFILE_GET_TASK_ALLOW" = "true" ]; then
-            echo "Provisioning profile is a development profile; App Store builds require a distribution profile."
-            exit 1
-          fi
-          if [ "$IOS_PROFILE_IS_XCODE_MANAGED" != "true" ]; then
-            case "$IOS_PROFILE_NAME" in
-              "iOS Team "*|"XC "*)
-                IOS_PROFILE_IS_XCODE_MANAGED="true"
-                ;;
-            esac
-          fi
-          if [ "$IOS_PROFILE_IS_XCODE_MANAGED" = "true" ]; then
-            IOS_SIGNING_STYLE="automatic"
-          else
-            IOS_SIGNING_STYLE="manual"
-          fi
-          export IOS_CERT_SHA1 IOS_SIGNING_IDENTITY PROFILE_PLIST
-          python3 - <<'PY'
+            security cms -D -i "$profile_path" > "$plist_path"
+            local uuid
+            local name
+            local team_id
+            local app_id
+            local get_task_allow
+            local is_xcode_managed
+            uuid="$(/usr/libexec/PlistBuddy -c 'Print UUID' "$plist_path")"
+            name="$(/usr/libexec/PlistBuddy -c 'Print Name' "$plist_path")"
+            team_id="$(/usr/libexec/PlistBuddy -c 'Print TeamIdentifier:0' "$plist_path")"
+            app_id="$(/usr/libexec/PlistBuddy -c 'Print Entitlements:application-identifier' "$plist_path")"
+            get_task_allow="$(/usr/libexec/PlistBuddy -c 'Print Entitlements:get-task-allow' "$plist_path" 2>/dev/null || true)"
+            is_xcode_managed="$(/usr/libexec/PlistBuddy -c 'Print IsXcodeManaged' "$plist_path" 2>/dev/null || true)"
+
+            test -n "$uuid"
+            test -n "$name"
+            if [ "$team_id" != "$APPLE_TEAM_ID" ]; then
+              echo "$label provisioning profile team '$team_id' does not match '$APPLE_TEAM_ID'."
+              exit 1
+            fi
+            if [ "$app_id" != "${APPLE_TEAM_ID}.${expected_bundle_id}" ]; then
+              echo "$label provisioning profile app id '$app_id' does not match '${APPLE_TEAM_ID}.${expected_bundle_id}'."
+              exit 1
+            fi
+            if [ "$get_task_allow" = "true" ]; then
+              echo "$label provisioning profile is a development profile; App Store builds require a distribution profile."
+              exit 1
+            fi
+            if [ "$is_xcode_managed" != "true" ]; then
+              case "$name" in
+                "iOS Team "*|"XC "*)
+                  is_xcode_managed="true"
+                  ;;
+              esac
+            fi
+
+            printf -v "${prefix}_UUID" '%s' "$uuid"
+            printf -v "${prefix}_NAME" '%s' "$name"
+            printf -v "${prefix}_IS_XCODE_MANAGED" '%s' "$is_xcode_managed"
+          }
+
+          validate_profile_certificate() {
+            local plist_path="$1"
+            local label="$2"
+            PROFILE_PLIST="$plist_path" PROFILE_LABEL="$label" python3 - <<'PY'
           import hashlib
           import os
           import plistlib
@@ -211,24 +233,40 @@ jobs:
           }
 
           if profile.get("ProvisionedDevices"):
-              print("Provisioning profile contains provisioned devices; App Store builds require an App Store Connect profile, not Ad Hoc.")
+              print(f"{os.environ['PROFILE_LABEL']} provisioning profile contains provisioned devices; App Store builds require an App Store Connect profile, not Ad Hoc.")
               sys.exit(1)
 
           if expected not in profile_hashes:
               profile_name = profile.get("Name", "unknown")
               identity = os.environ["IOS_SIGNING_IDENTITY"]
-              print(f"Provisioning profile '{profile_name}' does not include the imported signing certificate '{identity}'.")
+              print(f"{os.environ['PROFILE_LABEL']} provisioning profile '{profile_name}' does not include the imported signing certificate '{identity}'.")
               print("Regenerate/download the App Store profile in Apple Developer with that exact Apple Distribution certificate, then update Configuracion > Tiendas moviles with the new .mobileprovision base64.")
               sys.exit(1)
           PY
+          }
+
+          read_profile_metadata "$PROFILE_PATH" "$PROFILE_PLIST" "$APP_BUNDLE_ID" "Main app" IOS_PROFILE
+          read_profile_metadata "$NOTIFICATION_SERVICE_PROFILE_PATH" "$NOTIFICATION_SERVICE_PROFILE_PLIST" "$NOTIFICATION_SERVICE_BUNDLE_ID" "Notification Service Extension" IOS_NOTIFICATION_SERVICE_PROFILE
+
+          if [ "$IOS_PROFILE_IS_XCODE_MANAGED" = "true" ]; then
+            IOS_SIGNING_STYLE="automatic"
+          else
+            IOS_SIGNING_STYLE="manual"
+          fi
+          export IOS_CERT_SHA1 IOS_SIGNING_IDENTITY
+          validate_profile_certificate "$PROFILE_PLIST" "Main app"
+          validate_profile_certificate "$NOTIFICATION_SERVICE_PROFILE_PLIST" "Notification Service Extension"
 
           mkdir -p "$HOME/Library/MobileDevice/Provisioning Profiles"
           cp "$PROFILE_PATH" "$HOME/Library/MobileDevice/Provisioning Profiles/${IOS_PROFILE_UUID}.mobileprovision"
+          cp "$NOTIFICATION_SERVICE_PROFILE_PATH" "$HOME/Library/MobileDevice/Provisioning Profiles/${IOS_NOTIFICATION_SERVICE_PROFILE_UUID}.mobileprovision"
           gem install fastlane --no-document
           {
             echo "KEYCHAIN_PATH=$KEYCHAIN_PATH"
             echo "IOS_PROFILE_UUID=$IOS_PROFILE_UUID"
             echo "IOS_PROFILE_NAME=$IOS_PROFILE_NAME"
+            echo "IOS_NOTIFICATION_SERVICE_PROFILE_UUID=$IOS_NOTIFICATION_SERVICE_PROFILE_UUID"
+            echo "IOS_NOTIFICATION_SERVICE_PROFILE_NAME=$IOS_NOTIFICATION_SERVICE_PROFILE_NAME"
             echo "IOS_SIGNING_IDENTITY=$IOS_SIGNING_IDENTITY"
             echo "IOS_SIGNING_STYLE=$IOS_SIGNING_STYLE"
           } >> "$GITHUB_ENV"
@@ -249,28 +287,41 @@ jobs:
           require "xcodeproj"
 
           project = Xcodeproj::Project.open("ios/App/App.xcodeproj")
-          target = project.targets.find { |candidate| candidate.name == "App" }
-          raise "Target App not found" unless target
+          signing_targets = {
+            "App" => {
+              profile_uuid: "IOS_PROFILE_UUID",
+              profile_name: "IOS_PROFILE_NAME"
+            },
+            "RistakNotificationService" => {
+              profile_uuid: "IOS_NOTIFICATION_SERVICE_PROFILE_UUID",
+              profile_name: "IOS_NOTIFICATION_SERVICE_PROFILE_NAME"
+            }
+          }
 
-          release = target.build_configurations.find { |configuration| configuration.name == "Release" }
-          raise "Release configuration not found for App target" unless release
+          signing_targets.each do |target_name, env_keys|
+            target = project.targets.find { |candidate| candidate.name == target_name }
+            raise "Target #{target_name} not found" unless target
 
-          settings = release.build_settings
-          settings["DEVELOPMENT_TEAM"] = ENV.fetch("APPLE_TEAM_ID")
+            release = target.build_configurations.find { |configuration| configuration.name == "Release" }
+            raise "Release configuration not found for #{target_name} target" unless release
 
-          case ENV.fetch("IOS_SIGNING_STYLE")
-          when "automatic"
-            settings["CODE_SIGN_STYLE"] = "Automatic"
-            settings.delete("CODE_SIGN_IDENTITY")
-            settings.delete("PROVISIONING_PROFILE")
-            settings.delete("PROVISIONING_PROFILE_SPECIFIER")
-          when "manual"
-            settings["CODE_SIGN_STYLE"] = "Manual"
-            settings["CODE_SIGN_IDENTITY"] = ENV.fetch("IOS_SIGNING_IDENTITY")
-            settings["PROVISIONING_PROFILE"] = ENV.fetch("IOS_PROFILE_UUID")
-            settings["PROVISIONING_PROFILE_SPECIFIER"] = ENV.fetch("IOS_PROFILE_NAME")
-          else
-            raise "Unsupported IOS_SIGNING_STYLE=#{ENV.fetch('IOS_SIGNING_STYLE')}"
+            settings = release.build_settings
+            settings["DEVELOPMENT_TEAM"] = ENV.fetch("APPLE_TEAM_ID")
+
+            case ENV.fetch("IOS_SIGNING_STYLE")
+            when "automatic"
+              settings["CODE_SIGN_STYLE"] = "Automatic"
+              settings.delete("CODE_SIGN_IDENTITY")
+              settings.delete("PROVISIONING_PROFILE")
+              settings.delete("PROVISIONING_PROFILE_SPECIFIER")
+            when "manual"
+              settings["CODE_SIGN_STYLE"] = "Manual"
+              settings["CODE_SIGN_IDENTITY"] = ENV.fetch("IOS_SIGNING_IDENTITY")
+              settings["PROVISIONING_PROFILE"] = ENV.fetch(env_keys[:profile_uuid])
+              settings["PROVISIONING_PROFILE_SPECIFIER"] = ENV.fetch(env_keys[:profile_name])
+            else
+              raise "Unsupported IOS_SIGNING_STYLE=#{ENV.fetch('IOS_SIGNING_STYLE')}"
+            end
           end
 
           project.save
@@ -314,6 +365,7 @@ jobs:
           if signing_style == "manual":
               options["provisioningProfiles"] = {
                   os.environ["APP_BUNDLE_ID"]: os.environ["IOS_PROFILE_NAME"],
+                  os.environ["NOTIFICATION_SERVICE_BUNDLE_ID"]: os.environ["IOS_NOTIFICATION_SERVICE_PROFILE_NAME"],
               }
               options["signingCertificate"] = os.environ["IOS_SIGNING_IDENTITY"]
           with open(os.path.join(os.environ["RUNNER_TEMP"], "ExportOptions-AppStore-CI.plist"), "wb") as file:

@@ -111,8 +111,10 @@ contactos o la alerta es general, se usa el isotipo de Ristak. En Android el
 avatar viaja como imagen de la notificacion; el small icon del sistema sigue
 siendo `ic_stat_ristak` porque Android exige un icono monocromatico de la app.
 En iOS/APNs el payload incluye `mutable-content` y la URL de imagen cuando existe
-avatar; sin una Notification Service Extension activa, iOS muestra el AppIcon
-instalado de `frontend/ios/App/App/Assets.xcassets/AppIcon.appiconset/`.
+avatar. La extension `RistakNotificationService` descarga esa imagen y la adjunta
+a la notificacion antes de mostrarla. Si el avatar no existe, la descarga falla,
+hay varios contactos o la alerta es general, iOS muestra el AppIcon instalado de
+`frontend/ios/App/App/Assets.xcassets/AppIcon.appiconset/`.
 
 ## Tema visual móvil
 

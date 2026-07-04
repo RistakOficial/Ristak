@@ -50,17 +50,21 @@ iOS:
 - App Store Connect `.p8`
 - iOS Distribution Certificate `.p12` encoded as base64
 - iOS Distribution Certificate password
-- iOS App Store provisioning profile encoded as base64
+- iOS App Store provisioning profile encoded as base64 for `com.ristak.app`
+- iOS Notification Service provisioning profile encoded as base64 for
+  `com.ristak.app.NotificationService`
 - iOS CI keychain password (optional)
 
-The iOS provisioning profile must be the App Store Connect profile for
-`com.ristak.app` and must include the exact Apple Distribution certificate stored
-above. If the `.p12` certificate is rotated, regenerate/download the App Store
-profile in Apple Developer with that same certificate and update this field too.
-CI installs the stored profile directly; it does not regenerate profiles by name
-inside GitHub Actions. The profile can be manually named or Xcode-managed. CI
-detects Xcode-managed profiles and switches the archive/export to automatic
-signing so the profile is not forced as a manual signing profile.
+Both iOS provisioning profiles must be App Store Connect profiles and must
+include the exact Apple Distribution certificate stored above. One profile is for
+the app bundle `com.ristak.app`; the other is for the Notification Service
+Extension bundle `com.ristak.app.NotificationService`. If the `.p12` certificate
+is rotated, regenerate/download both App Store profiles in Apple Developer with
+that same certificate and update both fields. CI installs the stored profiles
+directly; it does not regenerate profiles by name inside GitHub Actions. The
+main app profile can be manually named or Xcode-managed. CI detects Xcode-managed
+profiles and switches the archive/export to automatic signing so the profile is
+not forced as a manual signing profile.
 
 Android:
 
@@ -114,13 +118,15 @@ iOS:
   `.p12`.
 - `IOS_APPSTORE_PROVISIONING_PROFILE_PATH`: App Store `.mobileprovision` for
   `com.ristak.app`.
+- `IOS_NOTIFICATION_SERVICE_PROVISIONING_PROFILE_PATH`: App Store
+  `.mobileprovision` for `com.ristak.app.NotificationService`.
 - `IOS_CI_KEYCHAIN_PASSWORD`: optional password for a temporary CI/local
   keychain.
 - `IOS_EXPORT_OPTIONS_PLIST`: App Store export plist path.
 
 Get the App Store Connect API key from App Store Connect > Users and Access >
 Integrations > App Store Connect API. Get the distribution certificate and App
-Store provisioning profile from Apple Developer. The profile must include the
+Store provisioning profiles from Apple Developer. Both profiles must include the
 same distribution certificate used for signing.
 
 Android:

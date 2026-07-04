@@ -73,6 +73,7 @@ test('construye titulos semanticos para pagos', () => {
   })
 
   assert.equal(received.title, '💸 Pago recibido')
+  assert.equal(received.contactName, 'Ana Pago')
   assert.match(received.body, /Ana Pago/)
   assert.match(received.body, /\$1,500\.00/)
   assert.match(received.body, /Consulta dental/)
@@ -130,10 +131,12 @@ test('push de contacto unico usa avatar del contacto cuando existe foto publica'
       title: 'Ana Avatar',
       body: 'Hola',
       category: 'chat',
+      contactName: 'Ana Avatar',
       contactId
     })
 
     assert.equal(sentPayloads.length, 1)
+    assert.equal(sentPayloads[0].contactName, 'Ana Avatar')
     assert.equal(sentPayloads[0].contactAvatarUrl, avatarUrl)
     assert.equal(sentPayloads[0].notificationImageUrl, avatarUrl)
   } finally {

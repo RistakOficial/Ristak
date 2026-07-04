@@ -1287,6 +1287,10 @@ ignoradas por Git. La fuente recomendada para produccion sigue siendo Ristak
 Installer; el archivo local guarda defaults operativos, rutas y fallback local.
 Antes de publicar, se valida con `npm run mobile:release:check` para detectar
 credenciales o archivos faltantes sin imprimir valores sensibles.
+En iOS hay dos bundles que se firman para App Store: la app
+`com.ristak.app` y la extension de notificaciones
+`com.ristak.app.NotificationService`. Cada uno necesita su propio provisioning
+profile App Store, ambos ligados al mismo certificado Apple Distribution.
 
 ## Licenciamiento y distribucion
 
