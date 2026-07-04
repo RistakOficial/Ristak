@@ -69,6 +69,10 @@ test('payment display reports Mercado Pago installments as MSI', () => {
     payment_method: 'credit_card',
     payment_provider: 'mercadopago',
     metadata_json: JSON.stringify({
+      mercadoPagoInstallments: {
+        enabled: true,
+        maxInstallments: 6
+      },
       mercadoPago: {
         paymentMethodId: 'visa',
         paymentTypeId: 'credit_card',
@@ -80,6 +84,49 @@ test('payment display reports Mercado Pago installments as MSI', () => {
   assert.equal(display.paymentMethodCategory, 'Tarjeta de crédito')
   assert.equal(display.paymentType, '6 MSI')
   assert.equal(display.paymentChannel, 'Mercado Pago')
+})
+
+test('payment display reports Conekta monthly installments as MSI', () => {
+  const display = buildPaymentDisplay({
+    status: 'paid',
+    payment_method: 'conekta',
+    payment_provider: 'conekta',
+    metadata_json: JSON.stringify({
+      conektaInstallments: {
+        enabled: true,
+        maxInstallments: 12
+      },
+      conekta: {
+        paymentMethodType: 'card',
+        monthlyInstallments: 12
+      }
+    })
+  })
+
+  assert.equal(display.paymentMethodCategory, 'Tarjeta')
+  assert.equal(display.paymentType, '12 MSI')
+  assert.equal(display.paymentChannel, 'Conekta')
+})
+
+test('payment display reports CLIP installments as MSI when Ristak enabled them', () => {
+  const display = buildPaymentDisplay({
+    status: 'paid',
+    payment_method: 'clip_card',
+    payment_provider: 'clip',
+    metadata_json: JSON.stringify({
+      clipInstallments: {
+        enabled: true,
+        maxInstallments: 9
+      },
+      clip: {
+        installments: 9
+      }
+    })
+  })
+
+  assert.equal(display.paymentMethodCategory, 'Tarjeta')
+  assert.equal(display.paymentType, '9 MSI')
+  assert.equal(display.paymentChannel, 'CLIP')
 })
 
 test('payment display reports explicit interest-free metadata as MSI', () => {
@@ -99,20 +146,39 @@ test('payment display reports explicit interest-free metadata as MSI', () => {
   assert.equal(display.paymentChannel, 'Openpay')
 })
 
-test('payment display keeps generic installments as payments when they are not MSI', () => {
+test('payment display reports Rebill checkout installments as MSI', () => {
   const display = buildPaymentDisplay({
     status: 'paid',
-    payment_method: 'rebill',
+    payment_method: 'rebill_checkout',
     payment_provider: 'rebill',
     metadata_json: JSON.stringify({
+      rebillInstallments: {
+        enabled: true,
+        selectionMode: 'rebill_checkout_configured',
+        selectedInstallments: 3
+      },
       rebill: {
         installments: 3
       }
     })
   })
 
-  assert.equal(display.paymentType, '3 pagos')
+  assert.equal(display.paymentType, '3 MSI')
   assert.equal(display.paymentChannel, 'Rebill')
+})
+
+test('payment display keeps generic installments as payments when they are not MSI', () => {
+  const display = buildPaymentDisplay({
+    status: 'paid',
+    payment_method: 'other',
+    payment_provider: 'custom_gateway',
+    metadata_json: JSON.stringify({
+      installments: 3
+    })
+  })
+
+  assert.equal(display.paymentType, '3 pagos')
+  assert.equal(display.paymentChannel, 'custom_gateway')
 })
 
 test('payment display keeps SPEI as the method category', () => {
@@ -167,4 +233,25 @@ test('payment display marks payment-plan scheduled charges as deferred payments'
   assert.equal(display.paymentMethodCategory, 'Tarjeta')
   assert.equal(display.paymentType, 'Pago diferido')
   assert.equal(display.paymentChannel, 'Stripe')
+})
+
+test('payment display does not confuse deferred payment plans with gateway MSI', () => {
+  const display = buildPaymentDisplay({
+    status: 'paid',
+    payment_method: 'rebill_saved_card',
+    payment_provider: 'rebill',
+    metadata_json: JSON.stringify({
+      paymentPlan: {
+        flowId: 'flow_123',
+        source: 'rebill_payment_plan'
+      },
+      rebill: {
+        installments: 6
+      }
+    })
+  })
+
+  assert.equal(display.paymentMethodCategory, 'Tarjeta')
+  assert.equal(display.paymentType, 'Pago diferido')
+  assert.equal(display.paymentChannel, 'Rebill')
 })

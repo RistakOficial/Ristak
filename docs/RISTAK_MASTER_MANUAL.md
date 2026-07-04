@@ -590,6 +590,15 @@ La fuente canonica para construir esos labels es
 pasarelas deben guardar solo metadata no sensible para enriquecer la clasificacion
 del metodo real (por ejemplo `cardFunding`, `paymentTypeId`, `installments`,
 `monthlyInstallments`, marca y ultimos 4 si ya se almacenaban como fuente de pago).
+`Tipo de pago` debe mostrar `N MSI` solo cuando el cobro tenga evidencia de meses
+sin intereses configurados por Ristak o confirmados por la pasarela, por ejemplo
+`stripeInstallments`, `mercadoPagoInstallments`, `conektaInstallments`,
+`clipInstallments`, `rebillInstallments`, `stripe.installments.plan`,
+`conekta.monthlyInstallments` o metadata explicita `msi`/`interestFree`. No se
+debe convertir cualquier `installments` generico en MSI: si la fila pertenece a
+un plan de pagos interno (`paymentPlan`, cobro programado o `*_scheduled_card`)
+debe seguir mostrando `Pago diferido` salvo que tambien exista una senal MSI
+explicita del gateway.
 No se deben guardar PAN, CVV, tokens secretos, llaves de API ni datos que permitan
 cobrar fuera de la pasarela. Si una transaccion historica no tiene suficiente
 metadata para distinguir credito/debito u otra categoria fina, la UI debe mostrar
