@@ -175,6 +175,13 @@ El globo de texto del agente IA (`agentStatusBubble`) conserva su forma, pero su
 color debe salir de `--phone-chat-primary`/`--phone-chat-accent`, no de verdes
 tipo estado o WhatsApp.
 
+Los correos que llegan a `email_messages` tambien deben aparecer en `/movil`
+como globos desplegables de correo. El mapper del journey movil debe aceptar
+eventos `email_message` y conservar asunto, remitente, destinatarios, responder
+a, estado, transporte y cuerpo. No los conviertas a texto plano de WhatsApp ni
+los ocultes de la conversacion movil; el usuario debe poder abrir el detalle del
+correo desde el celular.
+
 ## Variables de servidor
 
 Web/PWA:

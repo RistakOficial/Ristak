@@ -328,13 +328,14 @@ texto o agregar mas archivos.
 El correo queda fuera de este flujo hasta que su manejo de adjuntos se cierre en
 la superficie de email.
 
-Los mensajes de correo dentro del historial del chat desktop y del modal de
-contacto deben renderizarse como globo desplegable de email, no como texto plano
-mezclado con WhatsApp/Meta. El resumen muestra icono de correo, direccion
-enviado/recibido, asunto y destinatario principal. Al desplegar, el globo debe
-mostrar los campos estructurados del correo, incluyendo `Asunto`, `Remitente`,
-`Destinatarios`, `Responder a`, `Estado`, `Transporte` cuando existan y el
-`Cuerpo` completo a partir de `message_text` o `html_body` sanitizado.
+Los mensajes de correo dentro del historial del chat desktop, el modal de
+contacto y el chat movil `/movil` deben renderizarse como globo desplegable de
+email, no como texto plano mezclado con WhatsApp/Meta. El resumen muestra icono
+de correo, direccion enviado/recibido, asunto y destinatario principal. Al
+desplegar, el globo debe mostrar los campos estructurados del correo, incluyendo
+`Asunto`, `Remitente`, `Destinatarios`, `Responder a`, `Estado`, `Transporte`
+cuando existan y el `Cuerpo` completo a partir de `message_text` o `html_body`
+sanitizado.
 
 ### Correo electronico
 
@@ -358,7 +359,7 @@ importa una ventana reciente en la primera ejecucion para no volcar buzones
 historicos completos, crea el contacto si el remitente no existe con
 `source='email_inbound'`, guarda el correo en `email_messages` con
 `direction='inbound'` y `provider='imap'`, y publica el evento live del chat para
-que aparezca en la bandeja y en el modal del contacto.
+que aparezca en la bandeja, en el modal del contacto y en `/movil`.
 
 Los adjuntos manuales del chat soportan imagenes, videos, audios y documentos
 compatibles. Si un video o audio cabe como media directa, la UI pregunta si debe

@@ -1072,6 +1072,15 @@ interface ChatMessage {
     imageUrl?: string
     permalink?: string
   }
+  emailDetails?: {
+    subject: string
+    fromEmail: string
+    toEmail: string
+    replyTo: string
+    status: string
+    transport: string
+    body: string
+  }
   attachment?: {
     type: ChatAttachmentType
     dataUrl?: string
@@ -2094,6 +2103,38 @@ function getMessageReceiptLabel(status: MessageReceiptStatus) {
   return 'Enviado'
 }
 
+function normalizeEmailText(value = '') {
+  return String(value || '').replace(/\s+/g, ' ').trim()
+}
+
+function normalizeEmailBodyText(value = '') {
+  return String(value || '')
+    .replace(/\r\n?/g, '\n')
+    .replace(/[ \t]+/g, ' ')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim()
+}
+
+function htmlToPlainEmailText(html = '') {
+  const value = String(html || '').trim()
+  if (!value) return ''
+
+  if (typeof document !== 'undefined') {
+    const node = document.createElement('div')
+    node.innerHTML = value
+    return normalizeEmailBodyText(node.textContent || '')
+  }
+
+  return normalizeEmailBodyText(value.replace(/<[^>]+>/g, ' '))
+}
+
+function buildEmailMessageText(subject = '', body = '') {
+  const cleanSubject = normalizeEmailText(subject)
+  const cleanBody = normalizeEmailBodyText(body)
+  if (cleanSubject && cleanBody) return `${cleanSubject}\n${cleanBody}`
+  return cleanSubject || cleanBody || 'Correo electrónico'
+}
+
 function shouldTrackOutboundReceipt(message: ChatMessage) {
   if (message.direction !== 'outbound' || isMessageFailed(message)) return false
   if (isMessageScheduled(message)) return false
@@ -2150,6 +2191,7 @@ function areChatListsEquivalent(left: ChatContact[], right: ChatContact[]) {
 
 function getMessageSignature(message: ChatMessage) {
   const attachment = message.attachment
+  const emailDetails = message.emailDetails
   return [
     message.id,
     message.text,
@@ -2165,6 +2207,13 @@ function getMessageSignature(message: ChatMessage) {
     message.businessPhone,
     message.businessPhoneNumberId,
     message.transport,
+    emailDetails?.subject,
+    emailDetails?.fromEmail,
+    emailDetails?.toEmail,
+    emailDetails?.replyTo,
+    emailDetails?.status,
+    emailDetails?.transport,
+    emailDetails?.body,
     attachment?.type,
     attachment?.dataUrl,
     attachment?.url,
@@ -2591,6 +2640,37 @@ function getJourneyMessage(event: JourneyEvent, index: number): ChatMessage | nu
   }
 
   const isMetaMessage = event.type === 'meta_message'
+  if (event.type === 'email_message') {
+    const eventData = (event.data || {}) as Record<string, unknown>
+    const subject = String(eventData.subject || '').trim()
+    const body = normalizeEmailBodyText(String(eventData.message_text || '')) || htmlToPlainEmailText(String(eventData.html_body || ''))
+    const direction = normalizeWhatsAppBusinessDirection(eventData.direction)
+    const transport = String(eventData.transport || '').trim()
+
+    return {
+      id: String(eventData.email_message_id || eventData.smtp_message_id || `email-message-${index}`),
+      text: buildEmailMessageText(subject, body),
+      date: event.date,
+      direction,
+      status: String(eventData.status || ''),
+      errorReason: getJourneyMessageError(event),
+      sentAt: pickMessageTimestamp(eventData, ['sent_at', 'sentAt', 'created_at', 'createdAt', 'timestamp']) || event.date,
+      deliveredAt: pickMessageTimestamp(eventData, ['delivered_at', 'deliveredAt', 'message_timestamp', 'messageTimestamp']),
+      readAt: pickMessageTimestamp(eventData, ['read_at', 'readAt', 'seen_at', 'seenAt']),
+      transport: transport || 'email',
+      messageType: 'email',
+      emailDetails: {
+        subject,
+        fromEmail: String(eventData.from_email || '').trim(),
+        toEmail: String(eventData.to_email || '').trim(),
+        replyTo: String(eventData.reply_to || '').trim(),
+        status: String(eventData.status || '').trim(),
+        transport,
+        body
+      }
+    }
+  }
+
   if (event.type !== 'whatsapp_message' && !isMetaMessage) return null
   const eventData = (event.data || {}) as Record<string, unknown>
 
@@ -2898,6 +2978,8 @@ function getAvatarChannelBadgeClass(kind: ContactChannelBadgeKind) {
 
 function getMessageTransportBadge(message: ChatMessage) {
   const raw = String(message.transport || '').trim().toLowerCase()
+  if (message.emailDetails || raw === 'email') return 'Mail'
+  if (raw === 'ghl_email') return 'GHL'
   const normalized = normalizeGhlChatChannelValue(raw)
   if (normalized === 'instagram') return 'IG'
   if (normalized === 'messenger') return 'FB'
@@ -12117,6 +12199,67 @@ export const PhoneChat: React.FC = () => {
     )
   }
 
+  const renderEmailMessage = (message: ChatMessage) => {
+    const details = message.emailDetails
+    if (!details) return null
+
+    const title = details.subject || (message.direction === 'outbound' ? 'Correo enviado' : 'Correo recibido')
+    const routeLine = message.direction === 'outbound'
+      ? details.toEmail || details.fromEmail
+      : details.fromEmail || details.toEmail
+    const rows = [
+      ['Asunto', details.subject],
+      ['Remitente', details.fromEmail],
+      ['Destinatarios', details.toEmail],
+      ['Responder a', details.replyTo],
+      ['Estado', details.status],
+      ['Transporte', details.transport || message.transport || 'email']
+    ].filter(([, value]) => Boolean(String(value || '').trim()))
+
+    return (
+      <details
+        className={styles.messageEmailCard}
+        onPointerDown={(event) => event.stopPropagation()}
+        onTouchStart={(event) => event.stopPropagation()}
+        onContextMenu={(event) => event.stopPropagation()}
+      >
+        <summary className={styles.messageEmailSummary}>
+          <span className={styles.messageEmailIcon} aria-hidden="true">
+            <Mail size={15} />
+          </span>
+          <span className={styles.messageEmailHeadline}>
+            <span className={styles.messageEmailKicker}>
+              {message.direction === 'outbound' ? 'Correo enviado' : 'Correo recibido'}
+            </span>
+            <strong>{title}</strong>
+            {routeLine && <small>{routeLine}</small>}
+          </span>
+          <ChevronDown size={15} className={styles.messageEmailChevron} aria-hidden="true" />
+        </summary>
+        <div className={styles.messageEmailDetails}>
+          {rows.length > 0 && (
+            <dl className={styles.messageEmailMetaList}>
+              {rows.map(([label, value]) => (
+                <div key={label}>
+                  <dt>{label}</dt>
+                  <dd>{value}</dd>
+                </div>
+              ))}
+            </dl>
+          )}
+          <div className={styles.messageEmailBody}>
+            <span>Cuerpo</span>
+            {details.body ? (
+              <WhatsAppFormattedText text={details.body} className={styles.messageEmailBodyText} />
+            ) : (
+              <p className={styles.messageEmailBodyEmpty}>Sin cuerpo visible</p>
+            )}
+          </div>
+        </div>
+      </details>
+    )
+  }
+
   const renderMessageAudioAvatar = (imageUrl: string, fallback: string, label: string) => (
     <span className={styles.messageAudioAvatar} aria-label={label}>
       <span className={styles.messageAudioAvatarFallback}>{fallback}</span>
@@ -13088,6 +13231,7 @@ export const PhoneChat: React.FC = () => {
               const isGifVideoMessage = isVideoMessage && Boolean(message.attachment?.isGif)
               const isFileMessage = Boolean(message.attachment && ['document', 'file'].includes(message.attachment.type))
               const hasRichAttachment = isAudioAttachment || isVideoMessage || isFileMessage
+              const isEmailMessage = Boolean(message.emailDetails)
               const activeMessageSwipe = draggingMessageInfoSwipe?.messageId === message.id ? draggingMessageInfoSwipe : null
               const messageSwipeOffset = activeMessageSwipe?.offset || 0
               const messageSwipeAction = activeMessageSwipe?.action || 'info'
@@ -13106,7 +13250,7 @@ export const PhoneChat: React.FC = () => {
                   key={message.id}
                   className={`${styles.messageRow} ${styles[`messageRow_${message.direction}`]}`}
                 >
-                  <div className={`${styles.messageSwipeWrap} ${scheduled ? styles.messageSwipeWrapScheduled : ''} ${messageSwipeOffset > 0 ? styles.messageSwipeWrapActive : ''} ${messageSwipeAction === 'commentReply' ? styles.messageSwipeWrapActiveReply : ''}`}>
+                  <div className={`${styles.messageSwipeWrap} ${isEmailMessage ? styles.messageSwipeWrapEmail : ''} ${scheduled ? styles.messageSwipeWrapScheduled : ''} ${messageSwipeOffset > 0 ? styles.messageSwipeWrapActive : ''} ${messageSwipeAction === 'commentReply' ? styles.messageSwipeWrapActiveReply : ''}`}>
                     {scheduled && (
                       <span
                         className={styles.messageScheduleTimer}
@@ -13120,7 +13264,7 @@ export const PhoneChat: React.FC = () => {
                       {messageSwipeAction === 'commentReply' ? <Reply size={17} /> : <ReceiptText size={17} />}
                     </span>
                     <div
-                      className={`${styles.messageBubble} ${styles.messageBubbleActionTarget} ${scheduled ? styles.messageBubbleScheduled : ''} ${isImageMessage ? styles.messageImageBubble : ''} ${isAudioMessage ? styles.messageAudioBubble : ''} ${isFileMessage ? styles.messageFileBubble : ''} ${messageSwipeOffset > 0 ? styles.messageBubbleSwipeDragging : ''} ${isSearchMatch ? styles.messageBubbleSearchMatch : ''} ${isActiveSearchMatch ? styles.messageBubbleSearchActive : ''} ${message.isComment ? styles.messageComment : ''}`}
+                      className={`${styles.messageBubble} ${styles.messageBubbleActionTarget} ${scheduled ? styles.messageBubbleScheduled : ''} ${isImageMessage ? styles.messageImageBubble : ''} ${isAudioMessage ? styles.messageAudioBubble : ''} ${isFileMessage ? styles.messageFileBubble : ''} ${isEmailMessage ? styles.messageEmailBubble : ''} ${messageSwipeOffset > 0 ? styles.messageBubbleSwipeDragging : ''} ${isSearchMatch ? styles.messageBubbleSearchMatch : ''} ${isActiveSearchMatch ? styles.messageBubbleSearchActive : ''} ${message.isComment ? styles.messageComment : ''}`}
                       data-chat-message-id={message.id}
                       data-chat-search-id={searchTargetId}
                       style={messageSwipeTransform ? { transform: messageSwipeTransform } : undefined}
@@ -13199,8 +13343,9 @@ export const PhoneChat: React.FC = () => {
                     {isFileMessage && renderMessageFile(message)}
                     {isAudioMessage && renderAudioMessage(message)}
                     {isAudioAttachment && !isAudioMessage && renderAudioUnavailableMessage(message)}
-                    {!hasRichAttachment && message.text && <WhatsAppFormattedText text={message.text} className={styles.messageText} />}
-                    {hasRichAttachment && !isAudioMessage && message.text && <WhatsAppFormattedText text={message.text} className={styles.messageText} />}
+                    {isEmailMessage && renderEmailMessage(message)}
+                    {!isEmailMessage && !hasRichAttachment && message.text && <WhatsAppFormattedText text={message.text} className={styles.messageText} />}
+                    {!isEmailMessage && hasRichAttachment && !isAudioMessage && message.text && <WhatsAppFormattedText text={message.text} className={styles.messageText} />}
                     {starredMessageIdSet.has(message.id) && (
                       <span className={styles.messageStarBadge} aria-label="Mensaje destacado">
                         <Star size={12} fill="currentColor" />
