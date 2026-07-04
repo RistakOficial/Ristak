@@ -835,8 +835,9 @@ Ristak usa Meta en varias areas:
   sincronizacion inmediata; Ristak persiste la configuracion una sola vez al
   terminar el wizard. Al terminarlo, Ristak arranca automaticamente la
   sincronizacion de anuncios de Meta en segundo plano y lleva al usuario a
-  `Configuracion > Meta > Mensajes` para activar Messenger, Instagram DM y
-  comentarios si quiere recibirlos en la bandeja.
+  `Configuracion > Meta > Mensajes`. Las Page/Instagram nuevas o cambiadas
+  dejan encendidos por default Messenger, Instagram DM y comentarios; el usuario
+  puede apagar cada switch manualmente desde esa pantalla.
 - Cuando Meta ya tiene dataset/pixel y token guardado, las nuevas superficies nacen
   con Meta encendido por default: Sites/landings y paginas nuevas usan solo el
   `PageView` base al aterrizar (browser Pixel + CAPI server-side, sin `ViewContent`
@@ -859,7 +860,9 @@ Ristak usa Meta en varias areas:
   `graph.instagram.com/{IG_ID}/messages` con el Instagram User access token
   guardado en `meta_config.access_token`, usando el IGSID recibido por webhook.
   Los switches son `meta_messenger_messaging_enabled` /
-  `meta_instagram_messaging_enabled`. Si Meta responde `(#3) Application does
+  `meta_instagram_messaging_enabled` para DMs y
+  `meta_facebook_comments_enabled` / `meta_instagram_comments_enabled` para
+  comentarios. Si Meta responde `(#3) Application does
   not have the capability...`, Ristak debe tratarlo como bloqueo de
   capability/App Review, no como fallo generico: Messenger requiere
   `pages_messaging`; Instagram DM con Instagram Login requiere

@@ -15,6 +15,13 @@ const EVENT_CONFIG_KEYS = [
   'meta_payment_purchase_event_config'
 ]
 
+const SOCIAL_CHANNEL_CONFIG_KEYS = [
+  'meta_messenger_messaging_enabled',
+  'meta_instagram_messaging_enabled',
+  'meta_facebook_comments_enabled',
+  'meta_instagram_comments_enabled'
+]
+
 async function snapshotAppConfig(keys = [], callback) {
   const uniqueKeys = [...new Set(keys)]
   const placeholders = uniqueKeys.map(() => '?').join(', ')
@@ -134,6 +141,86 @@ test('saving Meta token with pixel enables calendar and payment conversion event
         assert.deepEqual(paymentConfig.parameters.custom, [
           { id: 'keep-me', key: 'campaign', value: 'retargeting' }
         ])
+      })
+    })
+  } finally {
+    if (metaServer) await new Promise(resolve => metaServer.close(resolve))
+    if (previousMetaGraphDescriptor) Object.defineProperty(API_URLS, 'META_GRAPH', previousMetaGraphDescriptor)
+  }
+})
+
+test('saving new Meta social profiles enables inbox message and comment switches by default', async () => {
+  const previousMetaGraphDescriptor = Object.getOwnPropertyDescriptor(API_URLS, 'META_GRAPH')
+  let metaServer
+
+  try {
+    await initializeMasterKey()
+
+    await snapshotMetaConfig(async () => {
+      await snapshotAppConfig(SOCIAL_CHANNEL_CONFIG_KEYS, async () => {
+        metaServer = http.createServer((req, res) => {
+          if (req.method === 'GET' && req.url.startsWith('/act_123456')) {
+            res.writeHead(200, { 'Content-Type': 'application/json' })
+            res.end(JSON.stringify({
+              timezone_id: 90,
+              timezone_name: 'America/Mexico_City',
+              timezone_offset_hours_utc: -6
+            }))
+            return
+          }
+
+          res.writeHead(404, { 'Content-Type': 'application/json' })
+          res.end(JSON.stringify({ error: { message: 'unexpected request' } }))
+        })
+        await new Promise(resolve => metaServer.listen(0, '127.0.0.1', resolve))
+        Object.defineProperty(API_URLS, 'META_GRAPH', {
+          value: `http://127.0.0.1:${metaServer.address().port}`,
+          configurable: true
+        })
+
+        for (const key of SOCIAL_CHANNEL_CONFIG_KEYS) {
+          await setAppConfig(key, '0')
+        }
+
+        await saveMetaConfig(
+          '123456',
+          'meta-access-token',
+          null,
+          'page-1',
+          'ig-1'
+        )
+
+        for (const key of SOCIAL_CHANNEL_CONFIG_KEYS) {
+          assert.equal(await getAppConfig(key), '1', `${key} should default on for new profiles`)
+        }
+
+        for (const key of SOCIAL_CHANNEL_CONFIG_KEYS) {
+          await setAppConfig(key, '0')
+        }
+
+        await saveMetaConfig(
+          '123456',
+          'meta-access-token',
+          null,
+          'page-1',
+          'ig-1'
+        )
+
+        for (const key of SOCIAL_CHANNEL_CONFIG_KEYS) {
+          assert.equal(await getAppConfig(key), '0', `${key} should respect manual off for the same profiles`)
+        }
+
+        await saveMetaConfig(
+          '123456',
+          'meta-access-token',
+          null,
+          'page-2',
+          'ig-2'
+        )
+
+        for (const key of SOCIAL_CHANNEL_CONFIG_KEYS) {
+          assert.equal(await getAppConfig(key), '1', `${key} should turn back on for changed profiles`)
+        }
       })
     })
   } finally {

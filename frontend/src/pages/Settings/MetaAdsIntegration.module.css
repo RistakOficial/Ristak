@@ -219,11 +219,16 @@
   border-top: 1px solid var(--border);
 }
 
-/* Bloque de switches de comentarios, separado de los DMs con un divisor. */
+/* Bloque de comentarios: se separa por aire, no con divisor visual. */
 .commentsBlock {
-  margin-top: 22px;
-  padding-top: 20px;
-  border-top: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  margin-top: 2px;
+}
+
+.commentsBlock .connectedPagesHeader {
+  margin-top: 0;
 }
 
 .webhookFields {

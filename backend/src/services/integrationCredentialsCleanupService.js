@@ -13,7 +13,11 @@ export const INTEGRATION_APP_CONFIG_KEYS = {
     'meta_webhook_verify_token',
     'meta_whatsapp_business_account_id',
     'meta_whatsapp_purchase_enabled',
-    'meta_whatsapp_schedule_enabled'
+    'meta_whatsapp_schedule_enabled',
+    'meta_messenger_messaging_enabled',
+    'meta_instagram_messaging_enabled',
+    'meta_facebook_comments_enabled',
+    'meta_instagram_comments_enabled'
   ],
   whatsappApi: [
     'whatsapp_api_ycloud_api_key_encrypted',

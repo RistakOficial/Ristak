@@ -23,6 +23,17 @@ const META_CONVERSION_EVENT_CONFIG_KEYS = {
   paymentPurchaseEventConfig: 'meta_payment_purchase_event_config'
 }
 
+const META_SOCIAL_CHANNEL_CONFIG_KEYS = {
+  page: [
+    'meta_messenger_messaging_enabled',
+    'meta_facebook_comments_enabled'
+  ],
+  instagram: [
+    'meta_instagram_messaging_enabled',
+    'meta_instagram_comments_enabled'
+  ]
+}
+
 const DEFAULT_PAYMENT_PURCHASE_EVENT_CONFIG = {
   enabled: true,
   channel: 'smart',
@@ -33,6 +44,40 @@ const DEFAULT_PAYMENT_PURCHASE_EVENT_CONFIG = {
     predictedLtv: '',
     custom: []
   }
+}
+
+function normalizeMetaProfileId(value) {
+  return String(value || '').trim()
+}
+
+async function syncMetaSocialChannelDefaults({
+  previousPageId = '',
+  nextPageId = '',
+  previousInstagramAccountId = '',
+  nextInstagramAccountId = ''
+} = {}) {
+  const oldPageId = normalizeMetaProfileId(previousPageId)
+  const newPageId = normalizeMetaProfileId(nextPageId)
+  const oldInstagramAccountId = normalizeMetaProfileId(previousInstagramAccountId)
+  const newInstagramAccountId = normalizeMetaProfileId(nextInstagramAccountId)
+  const updates = new Map()
+
+  if (newPageId && newPageId !== oldPageId) {
+    META_SOCIAL_CHANNEL_CONFIG_KEYS.page.forEach(key => updates.set(key, '1'))
+  } else if (!newPageId && oldPageId) {
+    META_SOCIAL_CHANNEL_CONFIG_KEYS.page.forEach(key => updates.set(key, '0'))
+  }
+
+  if (newInstagramAccountId && newInstagramAccountId !== oldInstagramAccountId) {
+    META_SOCIAL_CHANNEL_CONFIG_KEYS.instagram.forEach(key => updates.set(key, '1'))
+  } else if (!newInstagramAccountId && oldInstagramAccountId) {
+    META_SOCIAL_CHANNEL_CONFIG_KEYS.instagram.forEach(key => updates.set(key, '0'))
+  }
+
+  if (!updates.size) return
+
+  await Promise.all([...updates].map(([key, value]) => setAppConfig(key, value)))
+  logger.info(`Meta social: switches actualizados por perfiles conectados (${[...updates.keys()].join(', ')})`)
 }
 
 export function getMetaSyncProgress() {
@@ -689,6 +734,7 @@ export async function saveMetaConfig(adAccountId, accessToken, pixelId = null, p
     // IMPORTANTE: Solo permitir 1 configuración de Meta en la base de datos
     // Eliminar cualquier configuración existente antes de insertar la nueva
     const existingCount = await db.get('SELECT COUNT(*) as count FROM meta_config')
+    const existingMetaConfig = await db.get('SELECT page_id, instagram_account_id FROM meta_config LIMIT 1')
 
     if (existingCount && existingCount.count > 0) {
       logger.info('Eliminando configuración de Meta existente (solo se permite 1)')
@@ -711,6 +757,13 @@ export async function saveMetaConfig(adAccountId, accessToken, pixelId = null, p
     ])
 
     logger.success('Configuración de Meta guardada en BD local (System User Token + Pixel)')
+
+    await syncMetaSocialChannelDefaults({
+      previousPageId: existingMetaConfig?.page_id,
+      nextPageId: pageId,
+      previousInstagramAccountId: existingMetaConfig?.instagram_account_id,
+      nextInstagramAccountId: instagramAccountId
+    })
 
     const conversionEventsResult = await ensureMetaConversionEventsEnabledForConnectedPixel({
       accessToken,

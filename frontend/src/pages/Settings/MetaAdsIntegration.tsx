@@ -517,6 +517,40 @@ export const MetaAdsIntegration: React.FC = () => {
     }
   }
 
+  const syncConnectedMetaChannelDefaults = async ({
+    previousPageId = '',
+    nextPageId = '',
+    previousInstagramAccountId = '',
+    nextInstagramAccountId = ''
+  }: {
+    previousPageId?: string
+    nextPageId?: string
+    previousInstagramAccountId?: string
+    nextInstagramAccountId?: string
+  }) => {
+    const oldPageId = previousPageId.trim()
+    const newPageId = nextPageId.trim()
+    const oldInstagramAccountId = previousInstagramAccountId.trim()
+    const newInstagramAccountId = nextInstagramAccountId.trim()
+    const updates: Array<Promise<void>> = []
+
+    if (newPageId && newPageId !== oldPageId) {
+      updates.push(setMessengerMessagingEnabled(true), setFacebookCommentsEnabled(true))
+    } else if (!newPageId && oldPageId) {
+      updates.push(setMessengerMessagingEnabled(false), setFacebookCommentsEnabled(false))
+    }
+
+    if (newInstagramAccountId && newInstagramAccountId !== oldInstagramAccountId) {
+      updates.push(setInstagramMessagingEnabled(true), setInstagramCommentsEnabled(true))
+    } else if (!newInstagramAccountId && oldInstagramAccountId) {
+      updates.push(setInstagramMessagingEnabled(false), setInstagramCommentsEnabled(false))
+    }
+
+    if (updates.length > 0) {
+      await Promise.all(updates)
+    }
+  }
+
   // El código de Test Events se auto-desactiva 30 min después de ponerse, para que
   // al lanzar publicidad no queden conversiones reales atrapadas en modo prueba.
   const META_TEST_CODE_TTL_MS = 30 * 60 * 1000
@@ -1135,6 +1169,10 @@ export const MetaAdsIntegration: React.FC = () => {
     setIsSavingWizardConfig(true)
 
     try {
+      const previousPageId = savedPageId
+      const previousInstagramAccountId = savedInstagramAccountId
+      const nextPageId = credentials.pageId || ''
+      const nextInstagramAccountId = credentials.instagramAccountId || ''
       const response = await fetch('/api/meta/save-and-sync', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -1153,17 +1191,21 @@ export const MetaAdsIntegration: React.FC = () => {
         const autoPixelId = String(data.data?.pixelId || '').trim()
         const nextPixelId = credentials.pixelId || autoPixelId
 
-        if (savedPageId && !credentials.pageId) {
-          await Promise.all([
-            setMessengerMessagingEnabled(false),
-            setInstagramMessagingEnabled(false)
-          ])
-        } else if (savedInstagramAccountId && !credentials.instagramAccountId) {
-          await setInstagramMessagingEnabled(false)
-        }
+        await syncConnectedMetaChannelDefaults({
+          previousPageId,
+          nextPageId,
+          previousInstagramAccountId,
+          nextInstagramAccountId
+        }).catch(() => {
+          showToast(
+            'warning',
+            'Meta conectado, revisa switches',
+            'No se pudieron actualizar automáticamente todos los switches de mensajes y comentarios.'
+          )
+        })
 
-        setSavedPageId(credentials.pageId || '')
-        setSavedInstagramAccountId(credentials.instagramAccountId || '')
+        setSavedPageId(nextPageId)
+        setSavedInstagramAccountId(nextInstagramAccountId)
         if (nextPixelId && nextPixelId !== credentials.pixelId) {
           setCredentials(prev => ({ ...prev, pixelId: nextPixelId }))
         }
@@ -1223,7 +1265,9 @@ export const MetaAdsIntegration: React.FC = () => {
 
       await Promise.all([
         setMessengerMessagingEnabled(false),
-        setInstagramMessagingEnabled(false)
+        setInstagramMessagingEnabled(false),
+        setFacebookCommentsEnabled(false),
+        setInstagramCommentsEnabled(false)
       ])
 
       resetLocalMetaState()
@@ -3004,7 +3048,7 @@ export const MetaAdsIntegration: React.FC = () => {
           }
         }}
         title="Eliminar configuración de Meta"
-        message="Se eliminará el token, la cuenta de anuncios, el Dataset, la Página e Instagram, y se apagarán Messenger e Instagram DM. Esta acción no se puede deshacer."
+        message="Se eliminará el token, la cuenta de anuncios, el Dataset, la Página e Instagram, y se apagarán Messenger, Instagram DM y comentarios. Esta acción no se puede deshacer."
         type="confirm"
         typeToConfirm="ELIMINAR"
         confirmText={isDisconnectingMeta ? 'Eliminando...' : 'Eliminar'}
