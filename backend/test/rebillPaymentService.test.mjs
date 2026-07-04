@@ -294,6 +294,10 @@ test('Rebill confirma pago público consultando el paymentId en backend antes de
       assert.equal(link.payment.publicKey, publicKey)
       assert.equal(link.payment.instantProduct.currency, 'MXN')
       assert.equal(link.payment.instantProduct.metadata.publicPaymentId, publicPaymentId)
+      assert.deepEqual(link.payment.customerInformation.phoneNumber, {
+        number: '5512345678',
+        countryCode: 'MX'
+      })
 
       const beforeConfirm = await db.get('SELECT status, rebill_payment_id FROM payments WHERE public_payment_id = ?', [publicPaymentId])
       assert.equal(beforeConfirm.status, 'sent')

@@ -705,8 +705,13 @@ Alcance:
   Ristak alrededor del web component. Se monta el checkout de Rebill como
   experiencia principal, sin cupon (`display.discountCode=false`), sin logo ni
   footer del proveedor (`display.logo=false`, `display.footer=false`) y con CSS
-  minimo del SDK para redondear boton/campos. Los estados pagado, programado,
-  cerrado o con error siguen usando las pantallas explicativas de Ristak.
+  minimo del SDK para redondear el boton. Los estados pagado, programado, cerrado
+  o con error siguen usando las pantallas explicativas de Ristak.
+- El prefill de telefono en `customer-information` debe separar el numero
+  nacional de la region: `phoneNumber.countryCode` recibe ISO alpha-2 (`MX`,
+  `US`, etc.) y `phoneNumber.number` recibe solo digitos nacionales. No mandes
+  `+52`, `52` o `521` dentro de `number`, porque el selector de region del SDK ya
+  resuelve la lada y la duplicaria en pantalla.
 - Meses/installments en cobros unicos: Ristak no selecciona plazos locales para
   Rebill. El checkout de Rebill muestra installments cuando la cuenta, pais,
   moneda, monto y tarjeta califican. Ristak guarda el pago total local y confirma

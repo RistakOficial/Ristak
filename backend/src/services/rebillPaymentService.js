@@ -3,7 +3,7 @@ import { db, getAppConfig, setAppConfig } from '../config/database.js'
 import { decrypt, encrypt, isEncrypted } from '../utils/encryption.js'
 import { logger } from '../utils/logger.js'
 import { updateSingleContactStats } from '../utils/updateContactsStats.js'
-import { getAccountCurrency } from '../utils/accountLocale.js'
+import { COUNTRY_OPTIONS, getAccountCurrency } from '../utils/accountLocale.js'
 import { calculatePaymentTax, getPaymentGatewayMode, getPublicPaymentSettings } from './paymentSettingsService.js'
 import { registerGigstackPaymentForTransactionInBackground } from './gigstackInvoiceService.js'
 import { dispatchProductPostWebhooksForPaymentInBackground } from './productPostWebhookService.js'
@@ -59,6 +59,8 @@ const TIMED_PLAN_FREQUENCY = 'scheduled_time'
 const PLAN_FREQUENCIES = new Set(['custom', 'daily', 'weekly', 'biweekly', 'monthly', 'yearly', TIMED_PLAN_FREQUENCY])
 const TIMED_PLAN_FREQUENCY_ALIASES = new Set([TIMED_PLAN_FREQUENCY, 'scheduled-time', 'scheduledat', 'scheduled_at', 'timed', 'datetime'])
 const isPostgresRuntime = Boolean(process.env.DATABASE_URL)
+const PHONE_COUNTRIES_BY_DIAL_CODE = [...COUNTRY_OPTIONS]
+  .sort((left, right) => String(right.dialCode || '').length - String(left.dialCode || '').length)
 
 let rebillFetchForTest = null
 
@@ -795,6 +797,36 @@ function buildInstantProduct(row, metadata = {}) {
   }
 }
 
+function getRebillPhoneInformation(value = '') {
+  const raw = cleanString(value, 80)
+  const digits = raw.replace(/\D/g, '').replace(/^00/, '')
+  if (digits.length < 7) return null
+
+  if ((digits.startsWith('521') && digits.length >= 13) || (digits.startsWith('52') && digits.length >= 12)) {
+    return {
+      number: digits.slice(-10),
+      countryCode: 'MX'
+    }
+  }
+
+  const country = PHONE_COUNTRIES_BY_DIAL_CODE.find((option) => {
+    const dialCode = cleanString(option.dialCode, 4).replace(/\D/g, '')
+    return dialCode && digits.startsWith(dialCode) && digits.length > dialCode.length + 5
+  })
+
+  if (country) {
+    return {
+      number: digits.slice(String(country.dialCode || '').replace(/\D/g, '').length),
+      countryCode: country.value
+    }
+  }
+
+  return {
+    number: digits,
+    countryCode: 'MX'
+  }
+}
+
 function buildCustomerInformation(row, metadata = {}) {
   const fullName = cleanString(row.contact_name || metadata.contactName, 120)
   const email = cleanString(row.contact_email || metadata.contactEmail, 180)
@@ -803,10 +835,8 @@ function buildCustomerInformation(row, metadata = {}) {
   if (email) customer.email = email
   if (fullName && !/\d/.test(fullName)) customer.fullName = fullName
   if (phone) {
-    customer.phoneNumber = {
-      number: phone.replace(/[^\d+]/g, ''),
-      countryCode: ''
-    }
+    const phoneNumber = getRebillPhoneInformation(phone)
+    if (phoneNumber) customer.phoneNumber = phoneNumber
   }
   return Object.keys(customer).length ? customer : null
 }

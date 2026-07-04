@@ -205,8 +205,7 @@ const CONFETTI_COLOR_TOKENS = ['--accent', '--accent-2', '--pos', '--warn', '--i
 const CONFETTI_COLOR_FALLBACK = ['#2f6fed', '#4c8dff', '#1f9d57', '#c98a1e', '#1f8aa0']
 const REBILL_CARD_ONLY_EXCLUDED_PAYMENT_METHODS: RebillExcludedPaymentMethod[] = ['cash', 'bank_transfer']
 const REBILL_CHECKOUT_CSS = [
-  '.rebill-submit-button { border-radius: 14px; font-weight: 700; }',
-  'button, input, select, textarea { border-radius: 12px; }'
+  '.rebill-submit-button { border-radius: 14px; font-weight: 700; }'
 ].join('\n')
 
 const printTemplateClassById: Record<PaymentInvoiceTemplateId, string> = {
