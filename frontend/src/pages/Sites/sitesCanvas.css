@@ -203,56 +203,6 @@ html body .rstkCanvas.rstkPopupEditorHost {
   color: var(--rstk-ink);
   font-size: .9rem;
 }
-.rstkCanvas .rstk-stripe-msi-preview {
-  display: grid;
-  gap: 8px;
-  margin-top: 2px;
-}
-.rstkCanvas .rstk-stripe-msi-preview-head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 10px;
-  color: var(--rstk-checkout-field-text, var(--rstk-block-text, var(--rstk-ink)));
-}
-.rstkCanvas .rstk-stripe-msi-preview-head span {
-  font-size: .88rem;
-  font-weight: 650;
-}
-.rstkCanvas .rstk-stripe-msi-preview-head strong {
-  color: var(--rstk-muted);
-  font-size: .76rem;
-  font-weight: 650;
-}
-.rstkCanvas .rstk-stripe-msi-option {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  min-height: 44px;
-  padding: 9px 12px;
-  border: 1px solid var(--rstk-input-border, var(--rstk-border));
-  border-radius: var(--rstk-radius);
-  background: var(--rstk-input-bg, var(--rstk-surface));
-  color: var(--rstk-checkout-field-text, var(--rstk-block-text, var(--rstk-ink)));
-}
-.rstkCanvas .rstk-stripe-msi-option[data-selected="true"] {
-  border-color: color-mix(in srgb, var(--rstk-accent) 48%, var(--rstk-input-border, var(--rstk-border)) 52%);
-  background: color-mix(in srgb, var(--rstk-input-bg, var(--rstk-surface)) 88%, var(--rstk-accent) 12%);
-}
-.rstkCanvas .rstk-stripe-msi-option span {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font-size: .86rem;
-}
-.rstkCanvas .rstk-stripe-msi-option strong {
-  flex: 0 0 auto;
-  color: var(--rstk-muted);
-  font-size: .76rem;
-  font-weight: 650;
-}
 /* ALLOWED-DIVERGENCE: en el canvas el botón de pago vive con [disabled] solo
    para no ser clickeable; se ve a plena opacidad para que el preview muestre el
    estado normal del botón, no el de "procesando" (el publicado usa opacity .6).

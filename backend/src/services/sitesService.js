@@ -16145,7 +16145,7 @@ function buildPaymentCheckoutRuntimeScript() {
         var pmId = null, paymentIntentId = '', publicPaymentId = '', availablePlans = [], selectedInstallments = null;
         var cardNumberComplete = false, cardExpiryComplete = false, cardCvcComplete = false, numberPrepareAttempted = false;
         var prepared = false, preparing = false, confirming = false, prepareError = false;
-        var sel = null;
+        var installmentsEnabled = false;
         try { publicPaymentId = sessionStorage.getItem(storageKey) || ''; } catch (e) {}
 
         function identityReady() { var p = collectPayer(); return !identityActive() || !!(p.email || p.phone); }
@@ -16159,16 +16159,13 @@ function buildPaymentCheckoutRuntimeScript() {
           else if (preparing) { text = cfg.buttonText + suffix; busy = true; }
           else if (prepareError) { text = cfg.buttonText + suffix; enabled = true; }
           else if (!prepared) { text = cfg.buttonText + suffix; }
-          else {
-            var plan = selectedInstallments ? (selectedInstallments + ' meses sin intereses') : 'Un solo pago';
-            text = cfg.buttonText + ' · ' + plan + suffix; enabled = true;
-          }
+          else { text = cfg.buttonText + suffix; enabled = true; }
           els.payLabel.textContent = text;
           if (els.pay) { els.pay.disabled = !enabled; els.pay.setAttribute('data-busy', busy ? 'true' : 'false'); }
         }
 
         function resetPrepared() {
-          prepared = false; prepareError = false; paymentIntentId = ''; availablePlans = []; selectedInstallments = null; sel = null;
+          prepared = false; prepareError = false; paymentIntentId = ''; availablePlans = []; selectedInstallments = null; installmentsEnabled = false;
           if (els.installments) { els.installments.hidden = true; els.installments.innerHTML = ''; }
         }
 
@@ -16185,17 +16182,74 @@ function buildPaymentCheckoutRuntimeScript() {
           if (!els.installments) return;
           els.installments.innerHTML = '';
           if (!availablePlans.length) {
-            els.installments.hidden = true; selectedInstallments = null;
+            els.installments.hidden = true; selectedInstallments = null; installmentsEnabled = false;
             setMessage('info', 'Tu tarjeta no ofrece meses sin intereses; se cobrará de contado.');
             refreshLabel(); return;
           }
           els.installments.hidden = false;
-          sel = document.createElement('select');
-          sel.className = 'rstk-checkout-select';
-          var base = document.createElement('option'); base.value = ''; base.textContent = 'Un solo pago'; sel.appendChild(base);
-          availablePlans.forEach(function (p) { var o = document.createElement('option'); o.value = String(p.count); o.textContent = p.count + ' meses sin intereses'; sel.appendChild(o); });
-          sel.addEventListener('change', function () { selectedInstallments = sel.value ? Number(sel.value) : null; refreshLabel(); });
-          els.installments.appendChild(sel);
+          var wrap = document.createElement('div');
+          wrap.className = 'rstk-checkout-msi';
+
+          var toggleLabel = document.createElement('label');
+          toggleLabel.className = 'rstk-checkout-msi-toggle';
+          var toggle = document.createElement('input');
+          toggle.type = 'checkbox';
+          toggle.className = 'rstk-checkout-msi-checkbox';
+          toggle.checked = installmentsEnabled;
+          var check = document.createElement('span');
+          check.className = 'rstk-checkout-msi-check';
+          check.setAttribute('aria-hidden', 'true');
+          var toggleText = document.createElement('span');
+          toggleText.textContent = 'Pagar en cuotas (meses sin intereses)';
+          toggleLabel.appendChild(toggle);
+          toggleLabel.appendChild(check);
+          toggleLabel.appendChild(toggleText);
+          wrap.appendChild(toggleLabel);
+
+          var title = document.createElement('p');
+          title.className = 'rstk-checkout-msi-title';
+          title.textContent = 'Planes de cuotas';
+          wrap.appendChild(title);
+
+          var list = document.createElement('div');
+          list.className = 'rstk-checkout-msi-options';
+          list.setAttribute('role', 'radiogroup');
+          list.setAttribute('aria-label', 'Planes de cuotas');
+
+          availablePlans.forEach(function (p) {
+            var count = Number(p.count);
+            if (!count) return;
+            var option = document.createElement('button');
+            option.type = 'button';
+            option.className = 'rstk-checkout-msi-option';
+            option.setAttribute('role', 'radio');
+            option.setAttribute('aria-checked', installmentsEnabled && selectedInstallments === count ? 'true' : 'false');
+            option.setAttribute('data-selected', installmentsEnabled && selectedInstallments === count ? 'true' : 'false');
+            option.disabled = !installmentsEnabled;
+            var name = document.createElement('span');
+            name.className = 'rstk-checkout-msi-option-name';
+            name.textContent = count + ' pagos de ' + money((Number(d.amount) || 0) / count, d.currency);
+            var total = document.createElement('span');
+            total.className = 'rstk-checkout-msi-option-total';
+            total.textContent = 'Total: ' + money(d.amount, d.currency);
+            option.appendChild(name);
+            option.appendChild(total);
+            option.addEventListener('click', function () {
+              installmentsEnabled = true;
+              selectedInstallments = count;
+              renderSelector();
+            });
+            list.appendChild(option);
+          });
+          wrap.appendChild(list);
+
+          toggle.addEventListener('change', function () {
+            installmentsEnabled = !!toggle.checked;
+            selectedInstallments = installmentsEnabled && availablePlans[0] ? Number(availablePlans[0].count) : null;
+            renderSelector();
+          });
+
+          els.installments.appendChild(wrap);
           setMessage('', '');
           refreshLabel();
         }
@@ -16222,7 +16276,9 @@ function buildPaymentCheckoutRuntimeScript() {
             paymentIntentId = r.paymentIntentId || '';
             if (publicPaymentId) { try { sessionStorage.setItem(storageKey, publicPaymentId); } catch (e) {} root.setAttribute('data-checkout-public-id', publicPaymentId); }
             availablePlans = (r.availablePlans || []).filter(function (p) { return p && Number(p.count) <= maxInstallments; });
-            selectedInstallments = null; prepared = true; preparing = false; prepareError = false;
+            installmentsEnabled = availablePlans.length > 0;
+            selectedInstallments = installmentsEnabled && availablePlans[0] ? Number(availablePlans[0].count) : null;
+            prepared = true; preparing = false; prepareError = false;
             setMessage('', ''); renderSelector();
           }).catch(function (e) { preparing = false; resetPrepared(); prepareError = true; setMessage('error', (e && e.message) || 'No se pudieron consultar los meses.'); refreshLabel(); });
         }

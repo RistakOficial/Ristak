@@ -605,7 +605,9 @@ minimo de `300 MXN`:
   `/api/sites/public/checkout/prepare-installments`, `available_plans` filtrados
   por el maximo local del bloque y confirmacion server-side con `fixed_count`.
   No hay boton adicional de "ver meses"; el checkout consulta automaticamente
-  cuando Stripe ya puede crear la tarjeta segura.
+  cuando Stripe ya puede crear la tarjeta segura. Si hay planes disponibles, el
+  vivo muestra un checkbox "Pagar en cuotas (meses sin intereses)" y cards tipo
+  radio para cada plazo permitido; desmarcar el checkbox cobra de contado.
 - Si Stripe Dashboard ofrece hasta 24 meses pero el bloque de Sites dice "diferir
   hasta 9 meses", el vivo solo debe renderizar los planes de Stripe con `count`
   menor o igual a 9. El selector nativo del Payment Element no se usa en Sites
