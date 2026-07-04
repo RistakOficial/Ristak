@@ -9,8 +9,8 @@
   --phone-settings-border: var(--phone-chat-border, rgba(20, 20, 20, 0.09));
   --phone-settings-primary: var(--phone-chat-primary, #101010);
   --phone-settings-primary-rgb: var(--phone-chat-primary-rgb, 16, 16, 16);
-  --phone-settings-accent: var(--phone-chat-accent, #25d366);
-  --phone-settings-accent-soft: var(--phone-chat-accent-soft, #dff8e8);
+  --phone-settings-accent: var(--phone-chat-accent, #0078f8);
+  --phone-settings-accent-soft: var(--phone-chat-accent-soft, #e2f1ff);
   position: fixed;
   inset: 0;
   isolation: isolate;

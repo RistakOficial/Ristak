@@ -34,7 +34,7 @@
 
 .primary {
   color: var(--phone-chat-text-on-primary, #07140d);
-  background: var(--phone-chat-accent, #25d366);
+  background: var(--phone-chat-accent, #0078f8);
   box-shadow: 0 12px 24px rgba(0, 0, 0, 0.18);
 }
 
@@ -50,7 +50,7 @@
 }
 
 .ghost {
-  color: var(--phone-chat-accent, #25d366);
+  color: var(--phone-chat-accent, #0078f8);
   background: transparent;
 }
 

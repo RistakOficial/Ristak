@@ -62,6 +62,27 @@ inicio":
 - Web/PWA móvil: `frontend/public/ristak-chat-icon-*`,
   `frontend/public/ristak-chat-home-icon-*` y los `apple-touch-icon` móviles.
 
+## Tema visual móvil
+
+El tema de producto de `/movil` usa la paleta del isotipo móvil de Ristak: azul
+profundo para modo oscuro, azul Ristak como primario y cian como acento. El verde
+ya no debe usarse como acento global de la app porque hace que la experiencia se
+sienta como WhatsApp.
+
+Tokens principales:
+
+- Base global: `frontend/src/styles/index.css` bajo
+  `data-phone-chat-theme='active'`.
+- Chat móvil: `frontend/src/pages/PhoneChat/PhoneChat.module.css`.
+- Componentes compartidos móviles: `frontend/src/components/phone/` y
+  `frontend/src/components/phone/ui/` deben heredar `--phone-chat-accent` y
+  `--phone-chat-primary`.
+
+Regla de criterio: el verde se reserva para marca WhatsApp
+(`--phone-channel-whatsapp`, `WhatsAppBrandLogo`, iconos/canal WhatsApp) o para
+estados semánticos de éxito. Botones, tabs, badges, loaders, inputs, gráficas y
+defaults visuales de la app deben usar el azul/cian de Ristak.
+
 ## Variables de servidor
 
 Web/PWA:

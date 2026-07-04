@@ -11,8 +11,8 @@
   --pc-primary: var(--phone-chat-primary, #101010);
   --pc-primary-rgb: var(--phone-chat-primary-rgb, 16, 16, 16);
   --pc-on-primary: var(--phone-chat-text-on-primary, #ffffff);
-  --pc-accent: var(--phone-chat-accent, #25d366);
-  --pc-accent-rgb: var(--phone-chat-accent-rgb, 37, 211, 102);
+  --pc-accent: var(--phone-chat-accent, #0078f8);
+  --pc-accent-rgb: var(--phone-chat-accent-rgb, 0, 120, 248);
   --pc-accent-soft: var(--phone-chat-accent-soft, #dff8e8);
   --pc-link: var(--phone-chat-link, #0a91ff);
   --pc-inbound: var(--phone-chat-inbound, #ffffff);

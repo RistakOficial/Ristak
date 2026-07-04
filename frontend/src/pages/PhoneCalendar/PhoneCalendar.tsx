@@ -471,7 +471,7 @@ export const PhoneCalendar: React.FC<PhoneCalendarProps> = ({ embedded = false, 
   }, [timezone])
 
   const getEventColor = useCallback((_event?: CalendarEvent) => {
-    return '#25d366'
+    return '#0078f8'
   }, [])
 
   const persistLastSelectedCalendar = useCallback((calendarId: string | null) => {

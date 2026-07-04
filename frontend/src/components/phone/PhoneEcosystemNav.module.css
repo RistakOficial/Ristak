@@ -73,9 +73,9 @@
   display: block;
   width: calc((100% - (var(--dock-padding-x) * 2)) / 5);
   border-radius: 999px;
-  background: color-mix(in srgb, var(--phone-chat-accent, #25d366) 16%, var(--phone-chat-surface-soft, #ececec));
+  background: color-mix(in srgb, var(--phone-chat-accent, #0078f8) 16%, var(--phone-chat-surface-soft, #ececec));
   box-shadow:
-    inset 0 0 0 1px color-mix(in srgb, var(--phone-chat-accent, #25d366) 30%, transparent),
+    inset 0 0 0 1px color-mix(in srgb, var(--phone-chat-accent, #0078f8) 30%, transparent),
     inset 0 1px 0 color-mix(in srgb, #ffffff 52%, transparent),
     0 8px 18px rgba(var(--phone-chat-primary-rgb, 15, 23, 42), 0.08);
   pointer-events: none;
@@ -131,7 +131,7 @@
   padding: 0 5px;
   border-radius: 999px;
   color: #07140d;
-  background: var(--phone-chat-accent, #25d366);
+  background: var(--phone-chat-accent, #0078f8);
   box-shadow: 0 0 0 2px color-mix(in srgb, var(--phone-chat-surface, #ffffff) 92%, transparent);
   font-size: 11px;
   font-style: normal;
@@ -140,7 +140,7 @@
 }
 
 .active {
-  color: var(--phone-chat-accent, #25d366);
+  color: var(--phone-chat-accent, #0078f8);
 }
 
 .active .iconWrap {

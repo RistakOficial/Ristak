@@ -32,8 +32,8 @@
 }
 
 .control:focus-within {
-  border-color: var(--phone-chat-accent, #25d366);
-  box-shadow: 0 0 0 3px color-mix(in srgb, var(--phone-chat-accent, #25d366) 16%, transparent);
+  border-color: var(--phone-chat-accent, #0078f8);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--phone-chat-accent, #0078f8) 16%, transparent);
 }
 
 .leading {

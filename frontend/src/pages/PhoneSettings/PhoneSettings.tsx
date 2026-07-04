@@ -904,7 +904,7 @@ export const PhoneSettings: React.FC = () => {
                 const active = pushCalendarIds.includes(calendar.id)
                 return (
                   <button key={calendar.id} type="button" className={`${styles.calendarChip} ${active ? styles.calendarActive : ''}`} onClick={() => togglePushCalendar(calendar.id)}>
-                    <span style={{ backgroundColor: calendar.eventColor || '#25d366' }} />
+                    <span style={{ backgroundColor: calendar.eventColor || '#0078f8' }} />
                     {calendar.name}
                   </button>
                 )

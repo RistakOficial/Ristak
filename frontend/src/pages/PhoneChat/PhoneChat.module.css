@@ -1,34 +1,34 @@
 .phoneChatPage {
   --phone-chat-font: -apple-system, BlinkMacSystemFont, "SF Pro Display", "SF Pro Text", Inter, sans-serif;
-  --phone-chat-bg: #fbfaf6;
-  --phone-chat-bg-rgb: 251, 250, 246;
+  --phone-chat-bg: #f8fbff;
+  --phone-chat-bg-rgb: 248, 251, 255;
   --phone-chat-surface: #ffffff;
-  --phone-chat-surface-soft: #f5f3ee;
-  --phone-chat-conversation-bg: #f1eadf;
-  --phone-chat-text: #0b0b0d;
-  --phone-chat-muted: #77736c;
-  --phone-chat-border: rgba(20, 20, 20, 0.09);
+  --phone-chat-surface-soft: #edf6ff;
+  --phone-chat-conversation-bg: #eaf4ff;
+  --phone-chat-text: #061a3a;
+  --phone-chat-muted: #5e718f;
+  --phone-chat-border: rgba(0, 86, 190, 0.12);
   --phone-field-border: color-mix(in srgb, var(--phone-chat-text) 18%, var(--phone-chat-border) 82%);
-  --phone-chat-primary: #101010;
-  --phone-chat-primary-rgb: 16, 16, 16;
+  --phone-chat-primary: #0068f8;
+  --phone-chat-primary-rgb: 0, 104, 248;
   --phone-chat-text-on-primary: #ffffff;
-  --phone-chat-accent: #25d366;
-  --phone-chat-accent-rgb: 37, 211, 102;
-  --phone-chat-accent-soft: #dff8e8;
-  --phone-channel-whatsapp: var(--phone-chat-accent);
+  --phone-chat-accent: #0078f8;
+  --phone-chat-accent-rgb: 0, 120, 248;
+  --phone-chat-accent-soft: #e2f1ff;
+  --phone-channel-whatsapp: #25d366;
   --phone-channel-messenger: #1877f2;
   --phone-channel-instagram: #e1306c;
   --phone-channel-email: #64748b;
   --phone-channel-sms: #475569;
   --phone-chat-inbound: #ffffff;
-  --phone-chat-outbound: #d8fdd2;
-  --phone-chat-outbound-text: #0b0b0d;
-  --phone-chat-outbound-meta: #5f6b62;
+  --phone-chat-outbound: #dceeff;
+  --phone-chat-outbound-text: #061a3a;
+  --phone-chat-outbound-meta: #4c6485;
   --phone-chat-system: rgba(255, 255, 255, 0.82);
-  --phone-chat-composer-bg: #f6f2eb;
+  --phone-chat-composer-bg: #eef6ff;
   --phone-chat-input-placeholder: #8e8e93;
-  --phone-chat-panel: #f4f4f4;
-  --phone-chat-shadow: 0 18px 38px rgba(17, 24, 39, 0.1);
+  --phone-chat-panel: #eef6ff;
+  --phone-chat-shadow: 0 18px 38px rgba(0, 72, 176, 0.12);
   --phone-chat-sheet-shadow: 0 -22px 70px rgba(15, 23, 42, 0.18);
   position: fixed;
   top: var(--phone-visual-viewport-top, 0);
@@ -53,29 +53,29 @@
 }
 
 .phoneChatPage[data-phone-chat-tone="dark"] {
-  --phone-chat-bg: #0b0f14;
-  --phone-chat-bg-rgb: 11, 15, 20;
-  --phone-chat-surface: #17202a;
-  --phone-chat-surface-soft: #202b36;
-  --phone-chat-conversation-bg: #0b141a;
-  --phone-chat-text: #e9edef;
-  --phone-chat-muted: #a9b4bd;
-  --phone-chat-border: rgba(233, 237, 239, 0.1);
+  --phone-chat-bg: #06123a;
+  --phone-chat-bg-rgb: 6, 18, 58;
+  --phone-chat-surface: #0a1f5c;
+  --phone-chat-surface-soft: #102a78;
+  --phone-chat-conversation-bg: #061644;
+  --phone-chat-text: #f3f8ff;
+  --phone-chat-muted: #aac0e7;
+  --phone-chat-border: rgba(199, 226, 255, 0.14);
   --phone-field-border: color-mix(in srgb, var(--phone-chat-text) 22%, var(--phone-chat-border) 78%);
-  --phone-chat-primary: #25d366;
-  --phone-chat-primary-rgb: 37, 211, 102;
-  --phone-chat-text-on-primary: #07140d;
-  --phone-chat-accent: #25d366;
-  --phone-chat-accent-rgb: 37, 211, 102;
-  --phone-chat-accent-soft: rgba(37, 211, 102, 0.16);
-  --phone-chat-inbound: #202c33;
-  --phone-chat-outbound: #005c4b;
-  --phone-chat-outbound-text: #e9edef;
-  --phone-chat-outbound-meta: #b7c4ca;
-  --phone-chat-system: rgba(32, 44, 51, 0.86);
-  --phone-chat-composer-bg: #101820;
+  --phone-chat-primary: #46b9ff;
+  --phone-chat-primary-rgb: 70, 185, 255;
+  --phone-chat-text-on-primary: #031431;
+  --phone-chat-accent: #00a8f8;
+  --phone-chat-accent-rgb: 0, 168, 248;
+  --phone-chat-accent-soft: rgba(0, 168, 248, 0.18);
+  --phone-chat-inbound: #102a78;
+  --phone-chat-outbound: #0745bd;
+  --phone-chat-outbound-text: #f7fbff;
+  --phone-chat-outbound-meta: #bddcff;
+  --phone-chat-system: rgba(10, 31, 92, 0.86);
+  --phone-chat-composer-bg: #081a4e;
   --phone-chat-input-placeholder: #7f8b95;
-  --phone-chat-panel: #101820;
+  --phone-chat-panel: #081a4e;
   --phone-chat-shadow: 0 18px 42px rgba(0, 0, 0, 0.34);
   --phone-chat-sheet-shadow: 0 -24px 82px rgba(0, 0, 0, 0.56);
   color-scheme: dark;
@@ -1078,7 +1078,7 @@
   border: 1px solid rgba(255, 255, 255, 0.24);
   border-radius: 999px;
   color: #ffffff;
-  background: #00a884;
+  background: var(--phone-chat-accent);
   font-size: 15px;
   font-weight: 850;
   line-height: 1;
@@ -2921,12 +2921,12 @@
   margin: 8px 0 0;
   padding: 6px 14px;
   box-sizing: border-box;
-  border: 1px solid var(--phone-chat-accent, #25d366);
+  border: 1px solid var(--phone-chat-accent, #0078f8);
   border-radius: 14px;
   outline: none;
   color: var(--phone-chat-text);
   background: var(--phone-chat-surface);
-  box-shadow: 0 0 0 3px color-mix(in srgb, var(--phone-chat-accent, #25d366) 14%, transparent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--phone-chat-accent, #0078f8) 14%, transparent);
   font: inherit;
   font-size: 22px;
   font-weight: 860;
@@ -2996,7 +2996,7 @@
 }
 
 .ourNumberOptionActive {
-  color: var(--phone-chat-accent, #25d366);
+  color: var(--phone-chat-accent, #0078f8);
 }
 
 .ourNumberOptionActive svg {

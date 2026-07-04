@@ -735,7 +735,7 @@ export const PhoneAnalytics: React.FC = () => {
                     <i
                       style={{
                         width: `${((item.value || 0) / originMax) * 100}%`,
-                        background: item.color || '#25d366'
+                        background: item.color || '#0078f8'
                       }}
                     />
                   </div>

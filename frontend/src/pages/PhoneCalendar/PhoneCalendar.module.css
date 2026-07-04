@@ -5,8 +5,8 @@
   --phone-calendar-panel: var(--phone-chat-panel, #f7f6f2);
   --phone-calendar-text: var(--phone-chat-text, #111111);
   --phone-calendar-muted: var(--phone-chat-muted, #8e8e93);
-  --apple-red: var(--phone-chat-primary, #101010);
-  --chat-green: var(--phone-chat-accent, #25d366);
+  --apple-red: var(--phone-chat-primary, #0068f8);
+  --phone-calendar-accent: var(--phone-chat-accent, #0078f8);
   --line: var(--phone-chat-border, rgba(0, 0, 0, 0.1));
   --soft-line: color-mix(in srgb, var(--phone-chat-border, rgba(0, 0, 0, 0.1)) 58%, transparent);
   position: fixed;
@@ -189,7 +189,7 @@
 :global(body[data-phone-chat-tone="dark"]) .miniDayToday > span,
 :global(body[data-phone-chat-tone="dark"]) .yearButtonToday,
 :global(body[data-phone-chat-tone="dark"]) .weekDayToday strong {
-  color: var(--chat-green);
+  color: var(--phone-calendar-accent);
 }
 
 :global(body[data-phone-chat-tone="dark"]) .monthDaySelected .monthDaySelectButton > span:first-child,
@@ -402,7 +402,7 @@
 
 .titleRow p {
   margin-top: 3px;
-  color: var(--chat-green);
+  color: var(--phone-calendar-accent);
   font-size: 15px;
   font-weight: 760;
   line-height: 1.16;
@@ -543,7 +543,7 @@
 }
 
 .monthDayToday .monthDaySelectButton > span:first-child {
-  color: var(--chat-green);
+  color: var(--phone-calendar-accent);
 }
 
 .monthDaySelected .monthDaySelectButton > span:first-child {
@@ -647,7 +647,7 @@
 }
 
 .miniDayToday > span {
-  color: var(--chat-green);
+  color: var(--phone-calendar-accent);
 }
 
 .miniDaySelected > span {
@@ -809,7 +809,7 @@
 }
 
 .weekDayToday strong {
-  color: var(--chat-green);
+  color: var(--phone-calendar-accent);
 }
 
 .weekDaySelected strong {
@@ -903,9 +903,9 @@
   left: 5px;
   right: 5px;
   z-index: 3;
-  border: 1px solid color-mix(in srgb, var(--chat-green) 48%, transparent);
+  border: 1px solid color-mix(in srgb, var(--phone-calendar-accent) 48%, transparent);
   border-radius: 12px;
-  background: color-mix(in srgb, var(--chat-green) 18%, transparent);
+  background: color-mix(in srgb, var(--phone-calendar-accent) 18%, transparent);
   pointer-events: none;
 }
 
@@ -1161,8 +1161,8 @@
 
 .emptyAgenda svg {
   box-sizing: content-box;
-  color: var(--phone-chat-accent, #25d366);
-  background: var(--phone-chat-accent-soft, rgba(37, 211, 102, 0.16));
+  color: var(--phone-chat-accent, #0078f8);
+  background: var(--phone-chat-accent-soft, rgba(0, 120, 248, 0.16));
   padding: 14px;
   border-radius: 999px;
 }
@@ -1407,7 +1407,7 @@
 }
 
 .calendarOptionActive {
-  box-shadow: inset 0 0 0 2px rgba(37, 211, 102, 0.22);
+  box-shadow: inset 0 0 0 2px color-mix(in srgb, var(--phone-calendar-accent) 22%, transparent);
 }
 
 .calendarOptionDot {
@@ -1562,7 +1562,7 @@
   height: 44px;
   border-radius: 999px;
   color: #ffffff;
-  background: #00a884;
+  background: var(--phone-calendar-accent);
   font-size: 15px;
   font-weight: 850;
   overflow: hidden;

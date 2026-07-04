@@ -31,8 +31,8 @@
 
 .trigger:focus-visible {
   outline: none;
-  border-color: var(--phone-chat-accent, #25d366);
-  box-shadow: 0 0 0 3px color-mix(in srgb, var(--phone-chat-accent, #25d366) 16%, transparent);
+  border-color: var(--phone-chat-accent, #0078f8);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--phone-chat-accent, #0078f8) 16%, transparent);
 }
 
 .trigger:active:not(:disabled) {
@@ -146,7 +146,7 @@
 }
 
 .optionSelected {
-  color: var(--phone-chat-accent, #25d366);
+  color: var(--phone-chat-accent, #0078f8);
 }
 
 .optionSelected svg {

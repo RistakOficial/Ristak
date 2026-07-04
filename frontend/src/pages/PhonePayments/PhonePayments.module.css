@@ -9,7 +9,7 @@
   --phone-payments-border: var(--phone-chat-border, rgba(17, 24, 39, 0.08));
   --phone-payments-primary: var(--phone-chat-primary, #111111);
   --phone-payments-on-primary: var(--phone-chat-text-on-primary, #ffffff);
-  --phone-payments-accent: var(--phone-chat-accent, #25d366);
+  --phone-payments-accent: var(--phone-chat-accent, #0078f8);
   --phone-frame-bg: var(--phone-chat-bg, color-mix(in srgb, var(--color-background-primary) 92%, #ffffff 8%));
   position: fixed;
   top: var(--phone-visual-viewport-top, 0);
@@ -263,7 +263,7 @@
 }
 
 .choiceIconGreen {
-  color: #25d366;
+  color: var(--phone-payments-accent);
   background: transparent;
 }
 
@@ -818,7 +818,7 @@
   height: 44px;
   border-radius: 999px;
   color: #15803d;
-  background: rgba(var(--phone-chat-accent-rgb, 37, 211, 102), 0.14);
+  background: rgba(var(--phone-chat-accent-rgb, 0, 120, 248), 0.14);
   overflow: hidden;
 }
 

@@ -7,8 +7,8 @@
   --phone-analytics-muted: var(--phone-chat-muted, #77736c);
   --phone-analytics-border: var(--phone-chat-border, rgba(20, 20, 20, 0.09));
   --phone-analytics-primary: var(--phone-chat-primary, #101010);
-  --phone-analytics-accent: var(--phone-chat-accent, #25d366);
-  --phone-analytics-accent-soft: var(--phone-chat-accent-soft, #dff8e8);
+  --phone-analytics-accent: var(--phone-chat-accent, #0078f8);
+  --phone-analytics-accent-soft: var(--phone-chat-accent-soft, #e2f1ff);
   --phone-analytics-contrast-line: #101010;
   --phone-analytics-blue-line: #2563eb;
   --phone-analytics-warning-line: #f59e0b;

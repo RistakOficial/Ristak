@@ -35,8 +35,8 @@
 
 .trigger:focus-visible {
   outline: none;
-  border-color: var(--phone-chat-accent, #25d366);
-  box-shadow: 0 0 0 3px color-mix(in srgb, var(--phone-chat-accent, #25d366) 16%, transparent);
+  border-color: var(--phone-chat-accent, #0078f8);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--phone-chat-accent, #0078f8) 16%, transparent);
 }
 
 .trigger:active:not(:disabled) {
@@ -68,7 +68,7 @@
   padding: 0 13px;
   border: 0;
   border-radius: 999px;
-  color: var(--phone-chat-accent, #25d366);
+  color: var(--phone-chat-accent, #0078f8);
   background: var(--phone-chat-surface-soft, #f4f4f4);
   font-size: 14px;
   font-weight: 840;
@@ -208,10 +208,10 @@
 }
 
 .today {
-  color: var(--phone-chat-accent, #25d366) !important;
+  color: var(--phone-chat-accent, #0078f8) !important;
 }
 
 .selected {
   color: var(--phone-chat-text-on-primary, #ffffff) !important;
-  background: var(--phone-chat-accent, #25d366) !important;
+  background: var(--phone-chat-accent, #0078f8) !important;
 }
