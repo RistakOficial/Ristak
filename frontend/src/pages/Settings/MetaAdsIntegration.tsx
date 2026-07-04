@@ -2469,7 +2469,7 @@ export const MetaAdsIntegration: React.FC = () => {
                 <div className={styles.connectedPagesHeader}>
                   <h4 className={styles.connectedPagesTitle}>Redes sociales</h4>
                   <p className={styles.connectedPagesDescription}>
-                    Configura Messenger e Instagram por separado. Instagram usa su propio token directo para nombres, fotos, mensajes y comentarios.
+                    Configura Messenger e Instagram por separado. Instagram usa su propio Instagram API token para nombres, fotos, mensajes y comentarios; no uses aqui el System User token ni el Page token de Messenger.
                   </p>
                 </div>
 
@@ -2539,7 +2539,7 @@ export const MetaAdsIntegration: React.FC = () => {
                       <div className={styles.socialChannelTitleBlock}>
                         <h4 className={styles.connectedPagesTitle}>Instagram</h4>
                         <p className={styles.connectedPagesDescription}>
-                          Usa el token de Instagram Login para perfilar contactos, DMs y comentarios.
+                          Usa el Instagram User access token generado desde Instagram Login para perfilar contactos, DMs y comentarios.
                         </p>
                       </div>
                     </div>
@@ -2561,6 +2561,9 @@ export const MetaAdsIntegration: React.FC = () => {
                         rows={3}
                       />
                     </label>
+                    <p className={styles.connectedPagesDescription}>
+                      Pega aqui el token que genera Meta Developers en <strong>Configuracion de la API con inicio de sesion de empresa de Instagram</strong> → <strong>Generar tokens de acceso</strong>. Normalmente empieza con <strong>IGA...</strong>. Los tokens de System User o Page sirven para Meta Ads/Messenger, pero Instagram no los acepta para leer perfiles ni responder DMs. Para este flujo pide <strong>instagram_business_basic</strong>, <strong>instagram_business_manage_messages</strong> y, si usaras comentarios, <strong>instagram_business_manage_comments</strong>.
+                    </p>
 
                     <div className={styles.instagramTokenActions}>
                       <Badge variant={hasInstagramApiToken ? 'success' : 'warning'}>
@@ -2686,7 +2689,8 @@ export const MetaAdsIntegration: React.FC = () => {
                   <ol className={styles.webhookSteps}>
                     <li><strong>Facebook / Messenger:</strong> en Meta Developers entra a <strong>Configuración de la API con Facebook</strong> → <strong>Webhooks</strong>, pega la <strong>URL de devolución de llamada</strong> y el <strong>token de verificación</strong> de arriba, da <strong>Verificar y guardar</strong> y suscríbete a los campos.</li>
                     <li><strong>Instagram va en otro lugar:</strong> entra a <strong>Configuración de la API con inicio de sesión de empresa de Instagram</strong>.</li>
-                    <li>Ahí primero, en <strong>Generar tokens de acceso</strong>, agrega tu cuenta de Instagram: te pedirá <strong>iniciar sesión</strong> para generar el token de acceso.</li>
+                    <li>Ahí primero, en <strong>Generar tokens de acceso</strong>, agrega tu cuenta de Instagram: te pedirá <strong>iniciar sesión</strong> para generar el <strong>Instagram User access token</strong> que normalmente empieza con <strong>IGA...</strong>. Ese token se pega en el recuadro de Instagram de esta pantalla.</li>
+                    <li>No pegues ahi el <strong>System User Access Token</strong> ni el <strong>Page token</strong>: esos son para Meta Ads/Messenger. Para Instagram necesitas el token de Instagram Login con <strong>instagram_business_basic</strong>, <strong>instagram_business_manage_messages</strong> y, si usaras comentarios, <strong>instagram_business_manage_comments</strong>.</li>
                     <li>Ya con el token, en <strong>Configurar webhooks</strong> pega la <strong>misma URL</strong> y el <strong>mismo token de verificación</strong> de arriba, y suscríbete a los campos.</li>
                     <li>Si iniciaste sesión con Facebook, la suscripción de la Página suele quedar automática; en Instagram hazla manual si no aparece.</li>
                   </ol>

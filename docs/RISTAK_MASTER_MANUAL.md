@@ -873,7 +873,15 @@ Ristak usa Meta en varias areas:
   guardado en `meta_config.instagram_access_token`, usando el IGSID recibido por
   webhook. Ese token se captura visible/editable en
   `Configuracion > Meta Ads > Redes sociales > Instagram` para pruebas, pero se
-  guarda encriptado en base de datos.
+  guarda encriptado en base de datos. El valor esperado es el Instagram API /
+  Instagram User access token generado en Meta Developers desde
+  `Configuracion de la API con inicio de sesion de empresa de Instagram` >
+  `Generar tokens de acceso` (normalmente prefijo `IGA...`). No usar el System
+  User Access Token ni el Page/Messenger token aqui: esos tokens no sirven para
+  leer perfiles de Instagram ni responder Instagram DM por la API de Instagram
+  Login. Para perfil requiere `instagram_business_basic`; para DMs requiere
+  `instagram_business_manage_messages`; para comentarios/mentions requiere
+  `instagram_business_manage_comments`.
   Los switches son `meta_messenger_messaging_enabled` /
   `meta_instagram_messaging_enabled` para DMs y
   `meta_facebook_comments_enabled` / `meta_instagram_comments_enabled` para
