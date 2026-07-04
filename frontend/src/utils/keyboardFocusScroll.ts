@@ -11,7 +11,9 @@
  * teclado se asiente y desplaza SOLO el contenedor scrollable más cercano
  * (nunca la ventana ni los shells `position: fixed`) lo justo para dejar el campo
  * visible dentro del área realmente visible. Es idempotente (si ya está visible
- * no hace nada).
+ * no hace nada). El chat solo se excluye en su composer, porque su superficie se
+ * mueve con la altura nativa del teclado; el resto de formularios móviles sí
+ * debe beneficiarse de este guardián.
  *
  * Fuente de verdad = el visual viewport EN VIVO (no las CSS vars), lo que lo hace
  * correcto en AMBOS modos de teclado de Capacitor:
@@ -39,6 +41,10 @@ const NON_TEXT_INPUT_TYPES = new Set([
 // Aire que dejamos entre el campo y el borde superior del teclado.
 const COMFORT_MARGIN = 24
 
+type KeyboardFocusScrollOptions = {
+  onEditableFocus?: (target: HTMLElement) => void
+}
+
 function isEditableTarget(el: EventTarget | Element | null): el is HTMLElement {
   if (!el || !(el instanceof HTMLElement)) return false
   if (el.tagName === 'TEXTAREA') return true
@@ -51,8 +57,7 @@ function isEditableTarget(el: EventTarget | Element | null): el is HTMLElement {
 }
 
 function isOptedOut(el: HTMLElement): boolean {
-  // Mientras el chat gestiona su propio teclado, nosotros no tocamos nada.
-  if (document.documentElement.getAttribute('data-phone-chat-keyboard') === 'true') return true
+  // El composer del chat mueve su propia superficie con la altura nativa del teclado.
   if (el.closest('[data-no-focus-scroll="true"], [data-phone-chat-composer="true"]')) return true
   return false
 }
@@ -126,7 +131,7 @@ function scrollFocusedAboveKeyboard(target: HTMLElement): void {
  * Instala el guardián global. Devuelve un disposer que quita todos los listeners.
  * No-op seguro si no existe `window.visualViewport`.
  */
-export function installKeyboardFocusScroll(): () => void {
+export function installKeyboardFocusScroll(options: KeyboardFocusScrollOptions = {}): () => void {
   if (typeof window === 'undefined' || !window.visualViewport) {
     return () => {}
   }
@@ -165,6 +170,7 @@ export function installKeyboardFocusScroll(): () => void {
       pendingTarget = null
       return
     }
+    options.onEditableFocus?.(target)
     pendingTarget = target
     // El teclado aún no terminó de subir en el instante del focus. Reintentamos
     // en varios momentos: cubre "teclado ya abierto" (reenfoque entre campos, que

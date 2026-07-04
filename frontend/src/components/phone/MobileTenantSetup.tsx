@@ -1,6 +1,7 @@
 import React from 'react'
 import { Loader2 } from 'lucide-react'
 import { Logo } from '@/components/common'
+import { mobileAppService } from '@/services/mobileAppService'
 import { loginWithPortal } from '@/services/mobileTenantService'
 import { PHONE_APP_HOME_PATH } from '@/utils/phoneAccess'
 import styles from './MobileTenantSetup.module.css'
@@ -10,6 +11,17 @@ export const MobileTenantSetup: React.FC = () => {
   const [password, setPassword] = React.useState('')
   const [error, setError] = React.useState('')
   const [isSubmitting, setIsSubmitting] = React.useState(false)
+  const screenRef = React.useRef<HTMLElement | null>(null)
+
+  React.useLayoutEffect(() => {
+    const syncShell = () => {
+      mobileAppService.syncShellBackgroundFromElement(screenRef.current, 'dark')
+    }
+
+    syncShell()
+    const frame = window.requestAnimationFrame(syncShell)
+    return () => window.cancelAnimationFrame(frame)
+  }, [])
 
   // Login único: correo + contraseña. El portal resuelve el backend del
   // cliente y la app entra directo, sin una segunda pantalla.
@@ -32,7 +44,12 @@ export const MobileTenantSetup: React.FC = () => {
   }
 
   return (
-    <main className={styles.screen}>
+    <main
+      ref={screenRef}
+      className={styles.screen}
+      data-phone-keyboard-theme-surface="true"
+      data-phone-scrollable="true"
+    >
       <section className={styles.panel} aria-labelledby="mobile-login-title">
         <div className={styles.header}>
           <Logo size="xl" variant="black" className={styles.logo} />

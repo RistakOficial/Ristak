@@ -108,6 +108,10 @@ function getShellBackgroundFallback(theme: MobileShellTheme) {
   return theme === 'dark' ? '#081a4e' : '#eef6ff'
 }
 
+function getShellControlFallback(theme: MobileShellTheme) {
+  return theme === 'dark' ? '#0b0f14' : '#ffffff'
+}
+
 function clampColorChannel(value: number) {
   return Math.max(0, Math.min(255, Math.round(value)))
 }
@@ -161,6 +165,37 @@ function normalizeCssColorToHex(value?: string | null) {
   }
 
   return null
+}
+
+function parseHexColor(value: string) {
+  const hex = value.trim().replace(/^#/, '')
+  if (!/^[0-9a-f]{6}$/i.test(hex)) return null
+
+  return {
+    red: Number.parseInt(hex.slice(0, 2), 16),
+    green: Number.parseInt(hex.slice(2, 4), 16),
+    blue: Number.parseInt(hex.slice(4, 6), 16)
+  }
+}
+
+function getThemeForBackgroundColor(color: string, fallbackTheme: MobileShellTheme): MobileShellTheme {
+  const rgb = parseHexColor(color)
+  if (!rgb) return fallbackTheme
+
+  const toLinear = (channel: number) => {
+    const value = channel / 255
+    return value <= 0.03928 ? value / 12.92 : ((value + 0.055) / 1.055) ** 2.4
+  }
+  const luminance = 0.2126 * toLinear(rgb.red) + 0.7152 * toLinear(rgb.green) + 0.0722 * toLinear(rgb.blue)
+  return luminance < 0.42 ? 'dark' : 'light'
+}
+
+function getCapacitorKeyboardStyle(theme: MobileShellTheme) {
+  return theme === 'dark' ? KeyboardStyle.Dark : KeyboardStyle.Light
+}
+
+function getCapacitorStatusBarStyle(theme: MobileShellTheme) {
+  return theme === 'dark' ? Style.Dark : Style.Light
 }
 
 function getPlatform(): NativePlatform {
@@ -260,10 +295,9 @@ function postNativeShellMessage(payload: Record<string, unknown>) {
 async function applyShellTheme(theme: MobileShellTheme) {
   if (!Capacitor.isNativePlatform()) return
 
-  await StatusBar.setStyle({ style: theme === 'dark' ? Style.Dark : Style.Light }).catch(() => undefined)
-  await StatusBar.setBackgroundColor({ color: theme === 'dark' ? '#0b0f14' : '#ffffff' }).catch(() => undefined)
-  // El teclado tambien sigue el tema del chat: en modo noche va oscuro, de dia claro.
-  await Keyboard.setStyle({ style: theme === 'dark' ? KeyboardStyle.Dark : KeyboardStyle.Light }).catch(() => undefined)
+  await StatusBar.setStyle({ style: getCapacitorStatusBarStyle(theme) }).catch(() => undefined)
+  await StatusBar.setBackgroundColor({ color: getShellControlFallback(theme) }).catch(() => undefined)
+  await Keyboard.setStyle({ style: getCapacitorKeyboardStyle(theme) }).catch(() => undefined)
   postNativeShellMessage({
     type: 'setWindowBackground',
     color: getShellBackgroundFallback(theme)
@@ -279,6 +313,11 @@ function syncShellBackgroundFromElement(element: Element | null | undefined, the
   const color = normalizeCssColorToHex(composerColor) ||
     normalizeCssColorToHex(backgroundColor) ||
     getShellBackgroundFallback(theme)
+  const surfaceTheme = getThemeForBackgroundColor(color, theme)
+
+  StatusBar.setStyle({ style: getCapacitorStatusBarStyle(surfaceTheme) }).catch(() => undefined)
+  StatusBar.setBackgroundColor({ color }).catch(() => undefined)
+  Keyboard.setStyle({ style: getCapacitorKeyboardStyle(surfaceTheme) }).catch(() => undefined)
 
   postNativeShellMessage({
     type: 'setWindowBackground',

@@ -36,6 +36,20 @@ Android, `resizeOnFullScreen` y
 No vuelvas a meter `scrollTo(0,0)` por frame desde `visualViewport.scroll`: eso
 mete lag al scroll del chat y pelea con el dedo del usuario.
 
+Formularios moviles y login: fuera del composer del chat, el guardian global
+`keyboardFocusScroll` debe seguir activo aunque el bridge nativo haya marcado
+`data-phone-chat-keyboard`. Los campos de texto dentro de superficies marcadas
+con `data-phone-scrollable="true"` se desplazan dentro de su scroller local para
+quedar por encima del teclado, usando `visualViewport` y
+`--phone-keyboard-inset`; no se debe desplazar la ventana completa ni bloquear el
+scroll local del formulario. Si una pantalla movil necesita que el teclado iOS
+siga el color real de su fondo, marca la superficie con
+`data-phone-keyboard-theme-surface="true"` y sincroniza el shell con
+`mobileAppService.syncShellBackgroundFromElement(...)`. El servicio calcula la
+luminancia del fondo computado y aplica `KeyboardStyle.Dark` o
+`KeyboardStyle.Light`, ademas de status bar y fondo nativo de la ventana, para
+evitar teclados claros sobre pantallas oscuras o cortes de color detras del IME.
+
 ## Requisitos
 
 - Node 22 o superior para usar Capacitor 8.

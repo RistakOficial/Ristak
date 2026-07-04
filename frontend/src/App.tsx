@@ -727,6 +727,15 @@ const PhoneHomeRouteRedirect: React.FC = () => {
   return <Navigate to={`${PHONE_APP_HOME_PATH}${location.search}${location.hash}`} replace />
 }
 
+function syncNativeKeyboardThemeForTarget(target: HTMLElement) {
+  if (!isNativeAppRuntime()) return
+
+  const surface = target.closest('[data-phone-keyboard-theme-surface="true"]')
+  if (!surface) return
+
+  mobileAppService.syncShellBackgroundFromElement(surface, 'light')
+}
+
 /**
  * Instala una sola vez el guardián de teclado (keyboardFocusScroll) que mantiene
  * cualquier campo de texto enfocado por encima del teclado en pantallas táctiles.
@@ -744,7 +753,9 @@ const KeyboardFocusScrollEffect: React.FC = () => {
     const sync = () => {
       const shouldInstall = isNativeAppRuntime() || !!coarsePointer?.matches
       if (shouldInstall && !dispose) {
-        dispose = installKeyboardFocusScroll()
+        dispose = installKeyboardFocusScroll({
+          onEditableFocus: syncNativeKeyboardThemeForTarget
+        })
       } else if (!shouldInstall && dispose) {
         dispose()
         dispose = null

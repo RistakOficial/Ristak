@@ -1,9 +1,10 @@
-import React, { useState, FormEvent } from 'react'
+import React, { useState, FormEvent, useLayoutEffect, useRef } from 'react'
 import { Navigate, useLocation, useNavigate } from 'react-router-dom'
 import { Terminal, Copy, Check } from 'lucide-react'
 import { Button, Logo } from '@/components/common'
 import { useAuth } from '@/contexts/AuthContext'
 import { apiUrl, clearRuntimeApiBaseUrl, getRuntimeApiBaseUrl, getRuntimeTenant, isNativeAppRuntime } from '@/services/apiBaseUrl'
+import { mobileAppService } from '@/services/mobileAppService'
 import { resolveAndStoreMobileTenant } from '@/services/mobileTenantService'
 import { PHONE_APP_HOME_PATH, PHONE_APP_TENANT_PATH, getPostAuthRedirectPath, isPhoneAppPath, type RedirectLocation } from '@/utils/phoneAccess'
 import styles from './Login.module.css'
@@ -59,11 +60,29 @@ export const Login: React.FC = () => {
   const isPhoneLogin = isPhoneAppPath(location.pathname)
   const redirectPath = getPostAuthRedirectPath(fromLocation, isPhoneLogin ? PHONE_APP_HOME_PATH : '/dashboard')
   const tenant = isPhoneLogin && isNativeAppRuntime() ? getRuntimeTenant() : null
+  const phoneLoginSurfaceRef = useRef<HTMLDivElement | null>(null)
+
+  useLayoutEffect(() => {
+    if (!isPhoneLogin) return
+
+    const syncShell = () => {
+      mobileAppService.syncShellBackgroundFromElement(phoneLoginSurfaceRef.current, 'light')
+    }
+
+    syncShell()
+    const frame = window.requestAnimationFrame(syncShell)
+    return () => window.cancelAnimationFrame(frame)
+  }, [isPhoneLogin, showRecovery, tenant?.name])
 
   if (isAuthLoading) {
     return (
       <div className={`${styles.container} ${isPhoneLogin ? styles.phoneContainer : ''}`}>
-        <div className={`${styles.loginBox} ${isPhoneLogin ? styles.phoneLoginBox : ''}`}>
+        <div
+          ref={isPhoneLogin ? phoneLoginSurfaceRef : undefined}
+          className={`${styles.loginBox} ${isPhoneLogin ? styles.phoneLoginBox : ''}`}
+          data-phone-keyboard-theme-surface={isPhoneLogin ? 'true' : undefined}
+          data-phone-scrollable={isPhoneLogin ? 'true' : undefined}
+        >
           <div className={styles.header}>
             <div className={styles.logoContainer}>
               <LoginBrandLogo isPhoneLogin={isPhoneLogin} />
@@ -210,7 +229,12 @@ export const Login: React.FC = () => {
 
   return (
     <div className={`${styles.container} ${isPhoneLogin ? styles.phoneContainer : ''}`}>
-      <div className={`${styles.loginBox} ${isPhoneLogin ? styles.phoneLoginBox : ''}`}>
+      <div
+        ref={isPhoneLogin ? phoneLoginSurfaceRef : undefined}
+        className={`${styles.loginBox} ${isPhoneLogin ? styles.phoneLoginBox : ''}`}
+        data-phone-keyboard-theme-surface={isPhoneLogin ? 'true' : undefined}
+        data-phone-scrollable={isPhoneLogin ? 'true' : undefined}
+      >
         <div className={styles.header}>
           <div className={styles.logoContainer}>
             <LoginBrandLogo isPhoneLogin={isPhoneLogin} />
