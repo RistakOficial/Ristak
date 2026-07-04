@@ -371,7 +371,7 @@ export const VariableFields: React.FC = () => {
               selectedKeys: Array.from(selectedFieldIds),
               onChange: (nextSelectedIds) => setSelectedFieldIds(new Set(nextSelectedIds)),
               getRowLabel: (field) => field.label,
-              selectVisibleLabel: 'Seleccionar campos visibles'
+              selectAllLabel: 'Seleccionar todos los campos'
             }}
           />
         </main>

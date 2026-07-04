@@ -205,7 +205,10 @@ Las tablas de Configuracion que permiten seleccion multiple usan el patron
 compartido de `Table` con acciones integradas en una sola barra dentro del
 encabezado de la tabla. No deben crear barras locales separadas ni partir los
 controles de mover, sincronizar o eliminar en filas independientes; ese
-comportamiento debe reutilizar `TableSelectionToolbar`.
+comportamiento debe reutilizar `TableSelectionToolbar`. El checkbox maestro de
+seleccion selecciona todos los registros filtrados de la tabla, aunque esten en
+otras paginas de la paginacion; no debe limitarse a las filas visibles de la
+pagina actual.
 
 ## Permisos, licencia y acceso
 

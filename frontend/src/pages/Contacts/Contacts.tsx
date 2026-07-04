@@ -2271,7 +2271,7 @@ const ContactsTable: React.FC = () => {
             selectedKeys: selectedContactIds,
             onChange: setSelectedContactIds,
             getRowLabel: (item) => item.name || item.email || item.phone || 'contacto',
-            selectVisibleLabel: 'Seleccionar contactos visibles'
+            selectAllLabel: 'Seleccionar todos los contactos'
           }}
         />
       </Card>

@@ -1903,7 +1903,7 @@ export const MessageTemplates: React.FC<MessageTemplatesProps> = ({
               selectedKeys: Array.from(selectedTemplateIds),
               onChange: (nextSelectedIds) => setSelectedTemplateIds(new Set(nextSelectedIds)),
               getRowLabel: (template) => template.name,
-              selectVisibleLabel: 'Seleccionar plantillas visibles'
+              selectAllLabel: 'Seleccionar todas las plantillas'
             }}
             getRowProps={(template) => ({
               className: isTemplateUnderReviewStatus(template.ycloudStatus) ? styles.collectionRowLocked : '',

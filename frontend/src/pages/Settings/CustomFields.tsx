@@ -768,7 +768,7 @@ export const CustomFields: React.FC = () => {
               onChange: (nextSelectedIds) => setSelectedFieldIds(new Set(nextSelectedIds)),
               isRowDisabled: isSystemCustomFieldDefinition,
               getRowLabel: (field) => field.label,
-              selectVisibleLabel: 'Seleccionar campos visibles'
+              selectAllLabel: 'Seleccionar todos los campos'
             }}
             getRowProps={(field) => {
               const systemField = isSystemCustomFieldDefinition(field)

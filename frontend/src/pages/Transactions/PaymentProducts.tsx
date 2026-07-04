@@ -1187,7 +1187,7 @@ export const PaymentProducts: React.FC = () => {
               onChange: setSelectedProductIds,
               isRowDisabled: (item) => !getProductId(item),
               getRowLabel: (item) => item.name || 'producto',
-              selectVisibleLabel: 'Seleccionar productos visibles'
+              selectAllLabel: 'Seleccionar todos los productos'
             }}
           />
         </Card>

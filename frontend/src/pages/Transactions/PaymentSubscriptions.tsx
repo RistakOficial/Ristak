@@ -1713,7 +1713,7 @@ export const PaymentSubscriptions: React.FC = () => {
               selectedKeys: selectedSubscriptionIds,
               onChange: setSelectedSubscriptionIds,
               getRowLabel: (item) => item.name || 'suscripción',
-              selectVisibleLabel: 'Seleccionar suscripciones visibles'
+              selectAllLabel: 'Seleccionar todas las suscripciones'
             }}
           />
         </Card>

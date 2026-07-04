@@ -365,7 +365,7 @@ export const TriggerLinks: React.FC = () => {
               selectedKeys: Array.from(selectedLinkIds),
               onChange: (nextSelectedIds) => setSelectedLinkIds(new Set(nextSelectedIds)),
               getRowLabel: (link) => link.name,
-              selectVisibleLabel: 'Seleccionar enlaces visibles'
+              selectAllLabel: 'Seleccionar todos los enlaces'
             }}
           />
         </main>

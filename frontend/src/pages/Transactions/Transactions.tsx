@@ -3344,7 +3344,7 @@ export const Transactions: React.FC = () => {
               selectedKeys: selectedTransactionIds,
               onChange: setSelectedTransactionIds,
               getRowLabel: (item) => item.title || item.contactName || 'pago',
-              selectVisibleLabel: 'Seleccionar pagos visibles'
+              selectAllLabel: 'Seleccionar todos los pagos'
             }}
           />
         ) : (
@@ -3369,7 +3369,7 @@ export const Transactions: React.FC = () => {
               selectedKeys: selectedPaymentPlanIds,
               onChange: setSelectedPaymentPlanIds,
               getRowLabel: (item) => item.name || item.title || 'plan de pago',
-              selectVisibleLabel: 'Seleccionar planes visibles'
+              selectAllLabel: 'Seleccionar todos los planes'
             }}
           />
         )}

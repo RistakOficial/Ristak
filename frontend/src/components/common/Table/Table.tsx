@@ -40,6 +40,7 @@ interface RowSelection<T> {
   onChange: (selectedKeys: string[]) => void
   isRowDisabled?: (item: T) => boolean
   getRowLabel?: (item: T) => string
+  selectAllLabel?: string
   selectVisibleLabel?: string
 }
 
@@ -479,30 +480,30 @@ export function Table<T extends Record<string, any>>({
   const totalPages = Math.ceil(filteredData.length / pageSize)
   const totalVisibleColumns = visibleColumns.length + (rowSelection ? 1 : 0)
   const selectedKeySet = useMemo(() => new Set(rowSelection?.selectedKeys ?? []), [rowSelection?.selectedKeys])
-  const visibleSelectableRows = useMemo(() => {
+  const selectableRows = useMemo(() => {
     if (!rowSelection) return []
-    return paginatedData.filter(item => !rowSelection.isRowDisabled?.(item))
-  }, [paginatedData, rowSelection])
-  const visibleSelectableKeys = useMemo(
-    () => visibleSelectableRows.map(item => keyExtractor(item)),
-    [keyExtractor, visibleSelectableRows]
+    return filteredData.filter(item => !rowSelection.isRowDisabled?.(item))
+  }, [filteredData, rowSelection])
+  const selectableKeys = useMemo(
+    () => selectableRows.map(item => keyExtractor(item)),
+    [keyExtractor, selectableRows]
   )
-  const allVisibleRowsSelected =
-    visibleSelectableKeys.length > 0 &&
-    visibleSelectableKeys.every(key => selectedKeySet.has(key))
-  const someVisibleRowsSelected =
-    visibleSelectableKeys.some(key => selectedKeySet.has(key))
+  const allRowsSelected =
+    selectableKeys.length > 0 &&
+    selectableKeys.every(key => selectedKeySet.has(key))
+  const someRowsSelected =
+    selectableKeys.some(key => selectedKeySet.has(key))
   const hasSelectionActions = Boolean(selectionActions)
   const columnEditMode = editMode && !hasSelectionActions && showColumnEditor
 
-  const handleToggleVisibleRows = () => {
+  const handleToggleRows = () => {
     if (!rowSelection) return
 
     const nextSelected = new Set(rowSelection.selectedKeys)
-    if (allVisibleRowsSelected) {
-      visibleSelectableKeys.forEach(key => nextSelected.delete(key))
+    if (allRowsSelected) {
+      selectableKeys.forEach(key => nextSelected.delete(key))
     } else {
-      visibleSelectableKeys.forEach(key => nextSelected.add(key))
+      selectableKeys.forEach(key => nextSelected.add(key))
     }
 
     rowSelection.onChange(Array.from(nextSelected))
@@ -737,12 +738,12 @@ export function Table<T extends Record<string, any>>({
                   <th className={styles.selectionCell} style={{ width: 44 }}>
                     <IndeterminateCheckbox
                       className={styles.selectionCheckbox}
-                      aria-label={rowSelection.selectVisibleLabel || 'Seleccionar filas visibles'}
-                      checked={allVisibleRowsSelected}
-                      indeterminate={!allVisibleRowsSelected && someVisibleRowsSelected}
-                      disabled={visibleSelectableKeys.length === 0}
+                      aria-label={rowSelection.selectAllLabel || rowSelection.selectVisibleLabel || 'Seleccionar todas las filas'}
+                      checked={allRowsSelected}
+                      indeterminate={!allRowsSelected && someRowsSelected}
+                      disabled={selectableKeys.length === 0}
                       onClick={(event) => event.stopPropagation()}
-                      onChange={handleToggleVisibleRows}
+                      onChange={handleToggleRows}
                     />
                   </th>
                 )}

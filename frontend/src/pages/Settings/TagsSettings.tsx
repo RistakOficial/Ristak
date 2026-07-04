@@ -625,7 +625,7 @@ export const TagsSettings: React.FC = () => {
               onChange: (nextSelectedIds) => setSelectedTagIds(new Set(nextSelectedIds)),
               isRowDisabled: (tag) => tag.isSystem,
               getRowLabel: (tag) => tag.name,
-              selectVisibleLabel: 'Seleccionar etiquetas visibles'
+              selectAllLabel: 'Seleccionar todas las etiquetas'
             }}
             getRowProps={(tag) => {
               const dragging = draggingTagIds.includes(tag.id)
