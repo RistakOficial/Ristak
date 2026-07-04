@@ -770,14 +770,44 @@ function getChatSenderName(message = {}) {
   return 'Mensaje nuevo'
 }
 
+function getChatMessageType(message = {}) {
+  return String(message.messageType || message.type || '').trim().toLowerCase()
+}
+
+function isGenericChatMediaText(value = '', type = '') {
+  const normalized = cleanNotificationText(value)
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^a-z0-9]+/gi, ' ')
+    .trim()
+    .toLowerCase()
+
+  if (!normalized) return true
+
+  const genericByType = {
+    image: new Set(['foto', 'image', 'imagen']),
+    photo: new Set(['foto', 'photo', 'imagen']),
+    picture: new Set(['foto', 'picture', 'imagen']),
+    video: new Set(['video']),
+    gif: new Set(['gif']),
+    audio: new Set(['audio']),
+    voice: new Set(['audio', 'mensaje de voz', 'voice message']),
+    document: new Set(['documento', 'document', 'archivo', 'file']),
+    sticker: new Set(['sticker', 'pegatina'])
+  }
+
+  return genericByType[type]?.has(normalized) === true
+}
+
 function getChatMessageBody(message = {}) {
   const bodyText = cleanNotificationText(message.text)
-  if (bodyText) return bodyText.slice(0, 220)
-
-  const type = String(message.messageType || message.type || '').trim().toLowerCase()
+  const type = getChatMessageType(message)
   const typeLabels = {
-    image: 'Foto',
-    video: 'Video',
+    image: '📷 Envió una foto.',
+    photo: '📷 Envió una foto.',
+    picture: '📷 Envió una foto.',
+    video: '🎥 Envió un video.',
+    gif: 'GIF',
     audio: 'Audio',
     voice: 'Audio',
     document: 'Documento',
@@ -789,6 +819,8 @@ function getChatMessageBody(message = {}) {
     button: 'Respuesta',
     interactive: 'Respuesta'
   }
+
+  if (bodyText && !isGenericChatMediaText(bodyText, type)) return bodyText.slice(0, 220)
 
   return typeLabels[type] || 'Mensaje'
 }
@@ -802,7 +834,7 @@ function isChatMediaPreviewType(type = '') {
 }
 
 function getChatNotificationMediaUrl(message = {}) {
-  const type = String(message.messageType || message.type || '').trim().toLowerCase()
+  const type = getChatMessageType(message)
   const candidates = [
     message.notificationImageUrl,
     message.notification_image_url,
@@ -814,6 +846,10 @@ function getChatNotificationMediaUrl(message = {}) {
     message.media_url,
     message.attachmentUrl,
     message.attachment_url,
+    message.thumbnailUrl,
+    message.thumbnail_url,
+    message.previewUrl,
+    message.preview_url,
     getFirstArrayValue(message.attachments),
     isChatMediaPreviewType(type) ? message.imageUrl : '',
     isChatMediaPreviewType(type) ? message.image_url : '',

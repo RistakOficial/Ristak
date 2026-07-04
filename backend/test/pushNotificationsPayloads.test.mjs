@@ -6,6 +6,7 @@ import { db } from '../src/config/database.js'
 import {
   buildPaymentNotificationPayload,
   normalizeNotificationPayload,
+  sendChatMessageNotification,
   sendAppNotificationPayload,
   setAppNotificationPayloadSenderForTest
 } from '../src/services/pushNotificationsService.js'
@@ -184,6 +185,56 @@ test('push de chat con multimedia separa avatar del contacto y attachment del me
     })
 
     assert.equal(sentPayloads.length, 1)
+    assert.equal(sentPayloads[0].contactAvatarUrl, avatarUrl)
+    assert.equal(sentPayloads[0].senderAvatarUrl, avatarUrl)
+    assert.equal(sentPayloads[0].notificationImageUrl, mediaUrl)
+    assert.equal(sentPayloads[0].notificationAttachmentUrl, mediaUrl)
+  } finally {
+    setAppNotificationPayloadSenderForTest(null)
+    await db.run('DELETE FROM whatsapp_api_contacts WHERE id = ?', [apiContactId]).catch(() => undefined)
+    await db.run('DELETE FROM contacts WHERE id = ?', [contactId]).catch(() => undefined)
+  }
+})
+
+test('push de chat de foto usa copy tipo WhatsApp y thumbnail de la media', async () => {
+  const suffix = randomUUID()
+  const contactId = `push_photo_contact_${suffix}`
+  const apiContactId = `push_photo_api_${suffix}`
+  const phone = `+52157${Date.now().toString().slice(-8)}`
+  const avatarUrl = `https://cdn.example.test/avatars/${suffix}.jpg`
+  const mediaUrl = `https://cdn.example.test/messages/${suffix}.jpg`
+  const sentPayloads = []
+
+  setAppNotificationPayloadSenderForTest(async (payload) => {
+    sentPayloads.push(payload)
+    return { sent: 1, skipped: false }
+  })
+
+  try {
+    await db.run(`
+      INSERT INTO contacts (id, phone, full_name, source, created_at, updated_at)
+      VALUES (?, ?, 'Raul Foto', 'test', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+    `, [contactId, phone])
+    await db.run(`
+      INSERT INTO whatsapp_api_contacts (
+        id, contact_id, phone, profile_name, profile_picture_url,
+        profile_picture_source, profile_picture_updated_at, created_at, updated_at
+      ) VALUES (?, ?, ?, 'Raul Foto', ?, 'test', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+    `, [apiContactId, contactId, phone, avatarUrl])
+
+    await sendChatMessageNotification({
+      contactId,
+      contactName: 'Raul Foto',
+      text: 'Foto',
+      messageType: 'image',
+      mediaUrl,
+      messageId: `photo_${suffix}`,
+      timestamp: new Date().toISOString()
+    })
+
+    assert.equal(sentPayloads.length, 1)
+    assert.equal(sentPayloads[0].title, 'Raul Foto')
+    assert.equal(sentPayloads[0].body, '📷 Envió una foto.')
     assert.equal(sentPayloads[0].contactAvatarUrl, avatarUrl)
     assert.equal(sentPayloads[0].senderAvatarUrl, avatarUrl)
     assert.equal(sentPayloads[0].notificationImageUrl, mediaUrl)

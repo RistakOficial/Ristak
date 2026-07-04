@@ -118,6 +118,13 @@ notificacion y, al mismo tiempo, mostrar el avatar del contacto como remitente.
 No uses esos campos para avatares: iOS los pinta como miniatura lateral de
 media, no como foto del contacto.
 
+Para fotos entrantes del chat, si el proveedor manda texto generico como `Foto`,
+`Image` o `Imagen`, la push debe reemplazarlo por `📷 Envió una foto.` y mandar la
+foto real en `notificationImageUrl`/`notificationAttachmentUrl` para que iOS la
+muestre como preview lateral, estilo WhatsApp. Si el mensaje trae caption real,
+se respeta ese texto como cuerpo de la notificacion y la imagen sigue viajando
+como attachment.
+
 En Android el small icon del sistema sigue siendo `ic_stat_ristak` porque
 Android exige un icono monocromatico de la app; las previews multimedia usan
 `notificationImageUrl` cuando existe media real. En iOS/APNs el payload incluye

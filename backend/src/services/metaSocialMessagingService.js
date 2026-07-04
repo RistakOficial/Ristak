@@ -1698,6 +1698,8 @@ async function upsertMetaSocialMessage({ socialContactId, contactId, socialMessa
 
   return {
     messageId,
+    mediaUrl: resolvedMediaUrl || '',
+    mediaMimeType: resolvedMediaMime || '',
     isNew: !existing
   }
 }
