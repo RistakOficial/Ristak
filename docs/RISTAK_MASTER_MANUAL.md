@@ -276,15 +276,17 @@ Capacidades:
   como actualizacion manual del contacto y conserva el flujo normal de
   automatizaciones.
 - Telefonos normalizados.
-- Filtros ocultos.
+- La lista de contactos usa una sola entrada visible de filtros: el boton
+  "Todos" abre un modal por categorias. Primero se elige la categoria
+  (Contacto, Etiquetas y campos, Citas y asistencia, Pagos, Tracking y origen o
+  Automatizaciones) y despues se arman las condiciones del lado derecho.
 - Filtros avanzados combinables en la lista de contactos. El endpoint
   `/api/contacts` aplica del lado servidor los filtros rapidos (todos, leads,
-  citados, asistencias, clientes), los filtros de tracking existentes
-  (paginas, fuentes, dispositivos, navegadores, sistemas, placements/anuncios) y
-  condiciones avanzadas por grupos AND/OR sobre etiquetas, campos
-  personalizados, fechas de creacion/actualizacion, citas, asistencias, pagos,
-  tracking y automatizaciones. Las fechas de negocio se interpretan en la zona
-  horaria de la cuenta y los pagos usan estados live/exitosos/fallidos
+  citados, asistencias, clientes), conserva compatibilidad con filtros legacy de
+  tracking y aplica condiciones avanzadas por grupos AND/OR sobre etiquetas,
+  campos personalizados, fechas de creacion/actualizacion, citas, asistencias,
+  pagos, tracking y automatizaciones. Las fechas de negocio se interpretan en la
+  zona horaria de la cuenta y los pagos usan estados live/exitosos/fallidos
   normalizados.
 - Acciones masivas con job propio.
 - Atribucion por UTMs, click IDs, WhatsApp referrals, Meta y tracking identity.

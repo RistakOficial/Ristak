@@ -488,6 +488,99 @@
   min-width: 0;
 }
 
+.contactConditionsLayout {
+  display: grid;
+  grid-template-columns: minmax(200px, 240px) minmax(0, 1fr);
+  gap: var(--spacing-lg);
+  min-width: 0;
+}
+
+.contactFilterCategories {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-sm);
+  min-width: 0;
+  padding-right: var(--spacing-lg);
+  border-right: 1px solid var(--color-border-subtle);
+}
+
+.contactFilterCategoryTitle {
+  color: var(--color-text-tertiary);
+  font: var(--label-font);
+  font-size: var(--font-size-xs);
+  text-transform: uppercase;
+}
+
+.contactFilterCategoryList {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-xs);
+  min-width: 0;
+}
+
+.contactFilterCategoryButton {
+  justify-content: space-between;
+  gap: var(--spacing-sm);
+  height: auto;
+  min-height: 48px;
+  padding-block: var(--spacing-xs);
+  text-align: left;
+}
+
+.contactFilterCategoryButton[data-active="true"] {
+  box-shadow: var(--shadow-xs);
+}
+
+.contactFilterCategoryCopy {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.contactFilterCategoryCopy > span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.contactFilterCategoryCopy > span:first-child {
+  color: inherit;
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-semibold);
+}
+
+.contactFilterCategoryCopy > span:last-child {
+  color: var(--color-text-tertiary);
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-normal);
+}
+
+.contactFilterCategoryButton[data-active="true"] .contactFilterCategoryCopy > span:last-child {
+  color: inherit;
+}
+
+.contactFilterCategoryCount {
+  flex: 0 0 auto;
+  min-width: 22px;
+  height: 22px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--radius-pill);
+  background: var(--surface);
+  color: var(--text);
+  font: var(--label-font);
+  font-size: var(--font-size-xs);
+}
+
+.contactConditionsBuilder {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-lg);
+  min-width: 0;
+}
+
 .contactConditionsTopbar {
   display: flex;
   align-items: center;
@@ -692,6 +785,27 @@
 
   .modal {
     padding: var(--spacing-lg);
+  }
+
+  .contactConditionsLayout {
+    grid-template-columns: 1fr;
+  }
+
+  .contactFilterCategories {
+    padding-right: 0;
+    padding-bottom: var(--spacing-md);
+    border-right: 0;
+    border-bottom: 1px solid var(--color-border-subtle);
+  }
+
+  .contactFilterCategoryList {
+    flex-direction: row;
+    overflow-x: auto;
+    padding-bottom: var(--spacing-xs);
+  }
+
+  .contactFilterCategoryButton {
+    min-width: 190px;
   }
 
   .contactConditionsTopbar,

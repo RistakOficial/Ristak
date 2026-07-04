@@ -303,11 +303,11 @@ export const createContactAdvancedRule = (fieldKey = 'tags'): ContactAdvancedRul
   }
 }
 
-export const createContactAdvancedGroup = (): ContactAdvancedGroup => ({
+export const createContactAdvancedGroup = (fieldKey = 'tags'): ContactAdvancedGroup => ({
   id: `group_${Date.now()}_${idSuffix()}`,
   mode: 'all',
   negate: false,
-  rules: [createContactAdvancedRule()]
+  rules: [createContactAdvancedRule(fieldKey)]
 })
 
 export const createDefaultContactAdvancedConfig = (): ContactAdvancedFilterConfig => ({
