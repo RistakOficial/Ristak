@@ -130,6 +130,12 @@ Para enviar fotos por WhatsApp, el backend debe estar publicado en HTTPS porque 
   aislados.** Un SVG suelto se ve bien porque no arrastra la cascada del
   contenedor (tamaño, stroke, disco); el bug solo aparece dentro del chat. Levanta
   el front (`/movil`) y míralo.
+- **Las publicaciones FB/IG dentro de globos de comentario no deben ensanchar el
+  chat.** Las tarjetas que muestran la publicación comentada viven dentro del
+  ancho del globo y del panel de mensajes; usa limites relativos al contenedor
+  (`max-width: 100%`, `min-width: 0`, `box-sizing: border-box`) y evita minimos
+  basados en `vw` que puedan sumar padding/bordes y abrir scroll horizontal en
+  respuestas salientes.
 - **"No cambió nada" casi siempre es el build/deploy, no el código.** `/movil`
   corre un **build estático**: la web la sirve Render tras `push → workflow
   docker-image → deploy` (~2–3 min, ver `docs/DEPLOY-RENDER.md`), y la app nativa
