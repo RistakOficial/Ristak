@@ -43,6 +43,7 @@ import {
   AppointmentModal,
   Button,
   ChatMessageSurface,
+  ContactAvatar,
   ContactCustomFieldsPanel,
   CustomSelect,
   ContactPhoneSelector,
@@ -6362,8 +6363,13 @@ export const DesktopChat: React.FC = () => {
     const initials = getContactInitials(contact)
     const channelBadge = options.showChannelBadge ? getContactChannelBadge(contact) : null
     return (
-      <span className={`${styles.avatar} ${size === 'sm' ? styles.avatarSm : ''}`}>
-        {photo ? <img src={photo} alt={`Foto de ${getContactName(contact)}`} /> : initials}
+      <ContactAvatar
+        contact={contact}
+        className={`${styles.avatar} ${size === 'sm' ? styles.avatarSm : ''}`}
+        avatarUrl={photo}
+        initials={initials}
+        alt={`Foto de ${getContactName(contact)}`}
+      >
         {channelBadge ? (
           <span
             className={`${styles.avatarChannelBadge} ${getAvatarChannelBadgeClass(channelBadge.kind)}`}
@@ -6380,7 +6386,7 @@ export const DesktopChat: React.FC = () => {
             <Bot size={10} />
           </span>
         ) : null}
-      </span>
+      </ContactAvatar>
     )
   }
 

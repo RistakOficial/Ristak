@@ -350,7 +350,11 @@ si trae perfil, y si no alcanza usa WhatsApp QR/Baileys para consultar
 `profilePictureUrl` del JID del contacto. La lectura respeta un cache minimo de
 24 horas por contacto (`profile_picture_updated_at`) para no golpear WhatsApp en
 cada mensaje; si la privacidad del contacto, la sesion QR o el proveedor no
-entregan foto, Ristak conserva el avatar anterior o cae a iniciales.
+entregan foto, Ristak conserva el avatar anterior o cae a iniciales. Si un
+refresh QR falla y la foto guardada es una URL temporal de WhatsApp
+(`pps.whatsapp.net`), el backend la limpia para que no quede una imagen caducada
+en la base. El frontend tambien debe ocultar cualquier imagen de avatar que
+dispare `onError` y mostrar iniciales en su lugar.
 
 Antes de mandar mensajes libres por WhatsApp API/YCloud, `whatsappApiService`
 debe revisar la ultima respuesta entrante del cliente para ese contacto y numero

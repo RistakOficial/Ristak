@@ -47,7 +47,7 @@ function normalizeDigits(value = '') {
   return String(value || '').replace(/\D/g, '')
 }
 
-function createFakeBaileysRuntime({ connectedJid, profilePictureUrl, calls }) {
+function createFakeBaileysRuntime({ connectedJid, profilePictureUrl, profilePictureError = null, calls }) {
   return {
     DisconnectReason: { loggedOut: 401, restartRequired: 515 },
     BufferJSON: {
@@ -98,6 +98,7 @@ function createFakeBaileysRuntime({ connectedJid, profilePictureUrl, calls }) {
         })),
         profilePictureUrl: async (jid, type) => {
           calls.push({ jid, type })
+          if (profilePictureError) throw new Error(profilePictureError)
           return profilePictureUrl
         }
       }
@@ -275,6 +276,77 @@ test('refresh inbound avatar: si la foto tiene menos de 24h, no consulta WhatsAp
       `, [phone])
 
       assert.equal(row.profile_picture_url, 'https://old.example/avatar.jpg')
+    })
+  } finally {
+    resetWhatsAppQrServiceForTest()
+    await cleanup({ contactId, phone, phoneNumberId })
+  }
+})
+
+test('refresh inbound avatar: si QR falla, limpia URLs temporales de WhatsApp para no mostrar imagen rota', async () => {
+  const id = randomUUID()
+  const phone = `+52993${Date.now().toString().slice(-7)}`
+  const businessPhone = '+526561000022'
+  const phoneNumberId = `phone_qr_avatar_error_${id}`
+  const contactId = `rstk_contact_qr_avatar_error_${id}`
+  const calls = []
+  const keys = getWhatsAppApiConfigKeys()
+  const configKeys = [keys.enabled, keys.apiKey, keys.senderPhone, keys.phoneNumberId, keys.wabaId, keys.provider]
+
+  await cleanup({ contactId, phone, phoneNumberId })
+
+  try {
+    await snapshotAppConfig(configKeys, async () => {
+      await initializeMasterKey()
+      await setAppConfig(keys.enabled, '0')
+      await setAppConfig(keys.provider, 'ycloud')
+
+      await seedQrAvatarFixture({
+        contactId,
+        phone,
+        phoneNumberId,
+        businessPhone,
+        profileUpdatedAt: '2024-01-01T00:00:00.000Z'
+      })
+
+      await db.run(`
+        UPDATE whatsapp_api_contacts
+        SET profile_picture_url = ?,
+            profile_picture_error = NULL
+        WHERE phone = ?
+      `, [
+        'https://pps.whatsapp.net/v/t61.24694-24/avatar.jpg?oe=expired',
+        phone
+      ])
+
+      setBaileysRuntimeForTest(createFakeBaileysRuntime({
+        connectedJid: `${normalizeDigits(businessPhone)}@s.whatsapp.net`,
+        profilePictureUrl: '',
+        profilePictureError: 'Timed Out',
+        calls
+      }))
+
+      const result = await refreshInboundWhatsAppContactProfilePicture({
+        contactId,
+        phone,
+        profileName: 'Cliente Avatar',
+        direction: 'inbound',
+        isNew: true
+      })
+
+      assert.equal(result.refreshed, false)
+      assert.equal(result.reason, 'not_available')
+      assert.equal(calls.length, 1)
+
+      const row = await db.get(`
+        SELECT profile_picture_url, profile_picture_source, profile_picture_error
+        FROM whatsapp_api_contacts
+        WHERE phone = ?
+      `, [phone])
+
+      assert.equal(row.profile_picture_url, null)
+      assert.equal(row.profile_picture_source, 'baileys_qr')
+      assert.equal(row.profile_picture_error, 'Timed Out')
     })
   } finally {
     resetWhatsAppQrServiceForTest()

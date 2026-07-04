@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react'
 import { createPortal } from 'react-dom'
 import { useLocation, useNavigate, useSearchParams } from 'react-router-dom'
-import { KpiCard, Card, Button, Table, TableSelectionToolbar, DateRangePicker, PageContainer, PageHeader, TabList, Badge, DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, ContactDetailsModal, Loading, TreeFilter, CustomSelect, Modal } from '@/components/common'
+import { KpiCard, Card, Button, Table, TableSelectionToolbar, DateRangePicker, PageContainer, PageHeader, TabList, Badge, DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, ContactAvatar, ContactDetailsModal, Loading, TreeFilter, CustomSelect, Modal } from '@/components/common'
 import type { Column } from '@/components/common'
 import {
   Users,
@@ -34,7 +34,7 @@ import type { ContactAppointment, ContactCustomField, ContactCustomFieldDefiniti
 import { useNotification } from '@/contexts/NotificationContext'
 import { useAuth } from '@/contexts/AuthContext'
 import styles from './Contacts.module.css'
-import { getContactAvatarUrl, getContactDisplayName, getContactInitials } from '@/utils/contactAvatar'
+import { getContactDisplayName } from '@/utils/contactAvatar'
 import { getContactStageBadge, isAttendedAppointmentStatus } from '@/utils/contactStageBadge'
 import { normalizeTrafficSource } from '@/utils/trafficSourceNormalizer'
 import {
@@ -285,13 +285,7 @@ const getCustomFieldIdentity = (field: ContactCustomField, index: number) =>
 const cleanColumnValue = (value: unknown) => String(value ?? '').trim()
 
 const renderContactAvatar = (contact: Contact, className: string) => {
-  const avatarUrl = getContactAvatarUrl(contact)
-
-  return (
-    <span className={className} aria-hidden="true">
-      {avatarUrl ? <img src={avatarUrl} alt="" /> : getContactInitials(contact)}
-    </span>
-  )
+  return <ContactAvatar contact={contact} className={className} />
 }
 
 const createTagLabelMap = (tags: Array<{ id?: string; name?: string }>) => {

@@ -1799,6 +1799,12 @@ async function markQrProfilePictureError({ contactId, phone, profileName, errorM
     ON CONFLICT(phone) DO UPDATE SET
       contact_id = COALESCE(excluded.contact_id, whatsapp_api_contacts.contact_id),
       profile_name = COALESCE(NULLIF(excluded.profile_name, ''), whatsapp_api_contacts.profile_name),
+      profile_picture_url = CASE
+        WHEN LOWER(COALESCE(whatsapp_api_contacts.profile_picture_url, '')) LIKE 'https://pps.whatsapp.net/%'
+          OR LOWER(COALESCE(whatsapp_api_contacts.profile_picture_url, '')) LIKE 'http://pps.whatsapp.net/%'
+        THEN NULL
+        ELSE whatsapp_api_contacts.profile_picture_url
+      END,
       profile_picture_source = excluded.profile_picture_source,
       profile_picture_updated_at = excluded.profile_picture_updated_at,
       profile_picture_error = excluded.profile_picture_error,

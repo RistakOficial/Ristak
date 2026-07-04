@@ -7,6 +7,7 @@ import {
   Badge,
   Button,
   ChatMessageSurface,
+  ContactAvatar,
   ContactCustomFieldsPanel,
   ContactPhoneSelector,
   CustomSelect,
@@ -43,7 +44,7 @@ import {
   type WhatsAppApiStatus
 } from '@/services/whatsappApiService'
 import { subscribeToChatLiveEvents } from '@/services/chatLiveEventsService'
-import { getContactAvatarUrl, getContactDetailLabel, getContactDisplayName, getContactInitials } from '@/utils/contactAvatar'
+import { getContactDetailLabel, getContactDisplayName } from '@/utils/contactAvatar'
 import { normalizeTrafficSource } from '@/utils/trafficSourceNormalizer'
 import { CONTACT_STAGE_BADGE_VARIANTS, getContactStageBadge } from '@/utils/contactStageBadge'
 import { buildSearchIndex, prepareSearchQuery, searchIndexIncludes } from '@/utils/searchText'
@@ -407,13 +408,7 @@ const renderContactChatChannelIcon = (channel: ContactChatComposerChannel) => {
 }
 
 const renderContactAvatar = (contact: ContactDetail | null | undefined, className: string) => {
-  const avatarUrl = getContactAvatarUrl(contact)
-
-  return (
-    <span className={className} aria-hidden="true">
-      {avatarUrl ? <img src={avatarUrl} alt="" /> : getContactInitials(contact)}
-    </span>
-  )
+  return <ContactAvatar contact={contact} className={className} />
 }
 
 const normalizeBusinessMessageDirection = (value?: unknown): ContactChatMessage['direction'] => {
