@@ -6623,7 +6623,10 @@ export const PhoneChat: React.FC = () => {
     window.addEventListener('focusin', handleFocusIn)
     window.addEventListener('focusout', handleFocusOut)
     window.visualViewport?.addEventListener('resize', keepViewportStable)
-    window.visualViewport?.addEventListener('scroll', keepViewportStable)
+    // NO escuchamos 'scroll' del visual viewport: bajo KeyboardResize.Native el
+    // scroll del usuario en el hilo dispara este evento y keepViewportStable
+    // hacía scrollTo(0,0) en cada frame, peleando con el dedo (lag brutal). El
+    // 'resize' basta para re-anclar el composer al abrir/cerrar el teclado.
 
     return () => {
       window.removeEventListener('touchstart', handleTouchStart)
@@ -6631,7 +6634,6 @@ export const PhoneChat: React.FC = () => {
       window.removeEventListener('focusin', handleFocusIn)
       window.removeEventListener('focusout', handleFocusOut)
       window.visualViewport?.removeEventListener('resize', keepViewportStable)
-      window.visualViewport?.removeEventListener('scroll', keepViewportStable)
       if (keyboardFrame) window.cancelAnimationFrame(keyboardFrame)
       window.clearTimeout(keyboardScrollTimeout)
       html.removeAttribute('data-phone-chat-keyboard')
