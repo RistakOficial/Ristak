@@ -32,7 +32,7 @@ export const settingsNavigation: SettingsNavItem[] = [
   { to: '/settings/calendars', label: 'Calendarios', group: 'Agenda', permissionKey: 'settings_calendars' },
   { to: '/settings/payments', label: 'Pagos', group: 'Cobros', permissionKey: 'settings_payments' },
   { to: '/settings/highlevel', label: 'HighLevel', group: 'Plataformas conectadas', permissionKey: 'settings_integrations' },
-  { to: '/settings/meta-ads', label: 'Meta', group: 'Plataformas conectadas', permissionKey: 'campaigns' },
+  { to: '/settings/meta-ads', label: 'Meta Ads', group: 'Plataformas conectadas', permissionKey: 'campaigns' },
   { to: '/settings/whatsapp', label: 'WhatsApp', group: 'Plataformas conectadas', permissionKey: 'settings_whatsapp' },
   { to: '/settings/email', label: 'Correos', group: 'Plataformas conectadas', permissionKey: 'settings_email' },
   { to: '/settings/tracking', label: 'Rastreo Web', group: 'Datos y rastreo', permissionKey: 'settings_tracking' },

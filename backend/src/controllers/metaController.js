@@ -4,6 +4,7 @@ import { logger } from '../utils/logger.js';
 import { isEncrypted } from '../utils/encryption.js';
 import {
   saveMetaConfig,
+  saveMetaInstagramAccessToken,
   syncMetaAds,
   updateRecentAds,
   getMetaSyncProgress,
@@ -546,6 +547,7 @@ function toMaskedMetaCredentials(metaConfig = {}, whatsappBusinessAccountId = ''
   return {
     adAccountId: normalizeMetaAdAccountId(metaConfig.ad_account_id),
     accessToken: maskSecret(metaConfig.access_token),
+    instagramAccessToken: cleanString(metaConfig.instagram_access_token),
     pixelId: cleanString(metaConfig.pixel_id),
     pageId: cleanString(metaConfig.page_id),
     instagramAccountId: cleanString(metaConfig.instagram_account_id),
@@ -785,7 +787,8 @@ async function hydrateMissingCreativeMedia(rows = []) {
  */
 export const saveConfig = async (req, res) => {
   try {
-    const { ad_account_id, access_token, pixel_id, page_id, instagram_account_id } = req.body;
+    const { ad_account_id, access_token, pixel_id, page_id, instagram_account_id, instagram_access_token } = req.body;
+    const shouldUpdateInstagramAccessToken = Object.prototype.hasOwnProperty.call(req.body || {}, 'instagram_access_token');
 
     if (!ad_account_id || !access_token) {
       return res.status(400).json({
@@ -801,7 +804,8 @@ export const saveConfig = async (req, res) => {
       access_token,
       pixel_id || null,
       page_id || null,
-      instagram_account_id || null
+      instagram_account_id || null,
+      shouldUpdateInstagramAccessToken ? instagram_access_token || '' : undefined
     );
     await setAppConfig('meta_config_disconnected', '0');
     await syncRegisteredIntegrationCronsForProvider('meta', { reason: 'meta-connected' });
@@ -827,9 +831,10 @@ export const saveConfig = async (req, res) => {
  */
 export const getConfig = async (req, res) => {
   try {
-    const config = await db.get(
-      'SELECT ad_account_id, access_token, pixel_id, page_id, instagram_account_id, timezone_id, timezone_name, timezone_offset_hours_utc, updated_at FROM meta_config LIMIT 1'
+    const rawConfig = await db.get(
+      'SELECT access_token FROM meta_config LIMIT 1'
     );
+    const config = await getMetaConfig();
 
     if (!config) {
       return res.json({
@@ -840,14 +845,15 @@ export const getConfig = async (req, res) => {
     }
 
     // Verificar si está encriptado
-    const tokenEncrypted = isEncrypted(config.access_token);
+    const tokenEncrypted = isEncrypted(rawConfig?.access_token);
 
     res.json({
       success: true,
       configured: true,
       config: {
         adAccountId: config.ad_account_id,
-        accessToken: '***' + config.access_token.substring(config.access_token.length - 8),
+        accessToken: maskSecret(config.access_token),
+        instagramAccessToken: cleanString(config.instagram_access_token),
         pixelId: config.pixel_id || null,
         pageId: config.page_id || null,
         instagramAccountId: config.instagram_account_id || null,
@@ -1383,6 +1389,40 @@ export const revealMetaToken = async (req, res) => {
     res.status(500).json({
       success: false,
       error: 'Error al revelar el token de Meta'
+    });
+  }
+};
+
+export const saveInstagramTokenConfig = async (req, res) => {
+  try {
+    const instagramAccessToken = cleanString(req.body?.instagramAccessToken);
+
+    const metaConfig = await getMetaConfig();
+    if (!metaConfig?.id) {
+      return res.status(409).json({
+        success: false,
+        error: 'Conecta Meta Ads antes de guardar el token de Instagram.'
+      });
+    }
+
+    const updatedConfig = await saveMetaInstagramAccessToken(instagramAccessToken);
+    if (!instagramAccessToken) {
+      await Promise.all([
+        setAppConfig('meta_instagram_messaging_enabled', '0'),
+        setAppConfig('meta_instagram_comments_enabled', '0')
+      ]);
+    }
+
+    res.json({
+      success: true,
+      configured: Boolean(updatedConfig?.instagram_access_token),
+      instagramAccessToken: updatedConfig?.instagram_access_token || ''
+    });
+  } catch (error) {
+    logger.error(`Error en saveInstagramTokenConfig: ${error.message}`);
+    res.status(500).json({
+      success: false,
+      error: 'Error al guardar el token de Instagram'
     });
   }
 };
@@ -3219,7 +3259,8 @@ export const getMetaCustomValues = async (req, res) => {
  */
 export const saveAndSyncMeta = async (req, res) => {
   try {
-    const { adAccountId, accessToken, pixelId, pageId, instagramAccountId, whatsappBusinessAccountId } = req.body;
+    const { adAccountId, accessToken, pixelId, pageId, instagramAccountId, instagramAccessToken, whatsappBusinessAccountId } = req.body;
+    const shouldUpdateInstagramAccessToken = Object.prototype.hasOwnProperty.call(req.body || {}, 'instagramAccessToken');
 
     logger.info('Guardando credenciales de Meta Business...');
 
@@ -3264,6 +3305,9 @@ export const saveAndSyncMeta = async (req, res) => {
     const normalizedPixelId = cleanString(pixelId);
     const normalizedPageId = cleanString(pageId);
     const normalizedInstagramAccountId = cleanString(instagramAccountId);
+    const normalizedInstagramAccessToken = shouldUpdateInstagramAccessToken
+      ? cleanString(instagramAccessToken)
+      : undefined;
     const normalizedWhatsappBusinessAccountId = cleanString(whatsappBusinessAccountId);
 
     // 2.b Auto-asociar el Meta Pixel de la cuenta de anuncios cuando el usuario
@@ -3297,7 +3341,8 @@ export const saveAndSyncMeta = async (req, res) => {
       effectiveAccessToken,
       effectivePixelId || null,
       normalizedPageId || null,
-      normalizedInstagramAccountId || null
+      normalizedInstagramAccountId || null,
+      normalizedInstagramAccessToken
     );
     await setAppConfig('meta_config_disconnected', '0');
     await syncRegisteredIntegrationCronsForProvider('meta', { reason: 'meta-connected' });
@@ -3401,6 +3446,9 @@ export const saveAndSyncMeta = async (req, res) => {
         adAccountId: normalizedAdAccountId,
         pixelId: effectivePixelId,
         instagramAccountId: normalizedInstagramAccountId,
+        instagramTokenConfigured: shouldUpdateInstagramAccessToken
+          ? Boolean(normalizedInstagramAccessToken)
+          : Boolean(existingMetaConfig?.instagram_access_token),
         tokenValid: validation.valid,
         syncStarted: adsSync.syncStarted,
         adsSync

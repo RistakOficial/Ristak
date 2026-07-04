@@ -97,7 +97,7 @@ async function startMetaSendServer(calls) {
         return
       }
 
-      if (req.method === 'GET' && req.url.startsWith('/ig-business-send-test/conversations')) {
+      if (req.method === 'GET' && req.url.startsWith('/me/conversations')) {
         res.writeHead(200, { 'Content-Type': 'application/json' })
         res.end(JSON.stringify({
           data: [
@@ -210,12 +210,13 @@ async function seedMessengerContact({ contactId, metaContactId }) {
 async function seedMetaConfigForInstagramTests() {
   await db.run(`
     INSERT INTO meta_config (
-      ad_account_id, access_token, pixel_id, page_id, instagram_account_id,
+      ad_account_id, access_token, instagram_access_token, pixel_id, page_id, instagram_account_id,
       timezone_id, timezone_name, timezone_offset_hours_utc
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
   `, [
     'act-send-test',
     encrypt('user-token-send-test'),
+    encrypt('instagram-token-send-test'),
     null,
     'page-send-test',
     'ig-business-send-test',
@@ -312,7 +313,7 @@ test('processMetaSocialWebhook enriquece DMs de Instagram con Instagram Graph y 
 
           const profileCall = calls.find(call => call.method === 'GET' && call.url.startsWith(`/${senderId}?`))
           assert.ok(profileCall)
-          assert.equal(profileCall.authorization, 'Bearer user-token-send-test')
+          assert.equal(profileCall.authorization, 'Bearer instagram-token-send-test')
           assert.match(profileCall.url, /fields=name%2Cusername%2Cprofile_pic/)
           assert.equal(calls.some(call => call.url.startsWith('/page-send-test?')), false)
           assert.equal(calls.some(call => call.url.startsWith('/facebook/')), false)
@@ -411,7 +412,7 @@ test('processMetaSocialWebhook enriquece comentarios de Instagram con perfil del
 
           const profileCall = calls.find(call => call.method === 'GET' && call.url.startsWith(`/${senderId}?`))
           assert.ok(profileCall)
-          assert.equal(profileCall.authorization, 'Bearer user-token-send-test')
+          assert.equal(profileCall.authorization, 'Bearer instagram-token-send-test')
           assert.equal(calls.some(call => call.url.startsWith('/page-send-test?')), false)
           assert.equal(calls.some(call => call.url.startsWith('/facebook/')), false)
         } finally {
@@ -503,9 +504,9 @@ test('processMetaSocialWebhook usa conversaciones de Instagram como fallback de 
           assert.equal(profile.profile_picture_url || '', '')
           assert.equal(profile.meta_user_id, senderId)
 
-          const conversationCall = calls.find(call => call.method === 'GET' && call.url.startsWith('/ig-business-send-test/conversations?'))
+          const conversationCall = calls.find(call => call.method === 'GET' && call.url.startsWith('/me/conversations?'))
           assert.ok(conversationCall)
-          assert.equal(conversationCall.authorization, 'Bearer user-token-send-test')
+          assert.equal(conversationCall.authorization, 'Bearer instagram-token-send-test')
           assert.match(conversationCall.url, /platform=instagram/)
           assert.match(conversationCall.url, /user_id=igsid-fallback-test/)
           assert.equal(calls.some(call => call.url.startsWith('/page-send-test/conversations')), false)
@@ -552,12 +553,13 @@ test('sendMetaSocialTextMessage explica el bloqueo de capability de Instagram DM
 
           await db.run(`
             INSERT INTO meta_config (
-              ad_account_id, access_token, pixel_id, page_id, instagram_account_id,
+              ad_account_id, access_token, instagram_access_token, pixel_id, page_id, instagram_account_id,
               timezone_id, timezone_name, timezone_offset_hours_utc
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
           `, [
             'act-send-test',
             encrypt('user-token-send-test'),
+            encrypt('instagram-token-send-test'),
             null,
             'page-send-test',
             'ig-business-send-test',
@@ -578,7 +580,7 @@ test('sendMetaSocialTextMessage explica el bloqueo de capability de Instagram DM
               assert.equal(error.statusCode, 400)
               assert.match(error.message, /Meta bloqueó Instagram DM/)
               assert.match(error.message, /instagram_business_manage_messages/)
-              assert.match(error.message, /Instagram User access token/)
+              assert.match(error.message, /Instagram API token/)
               assert.equal(error.meta?.actionRequired, 'meta_app_capability')
               assert.equal(error.meta?.graphError?.code, 3)
               assert.equal(error.meta?.graphError?.type, 'OAuthException')
@@ -589,7 +591,7 @@ test('sendMetaSocialTextMessage explica el bloqueo de capability de Instagram DM
           assert.equal(calls.length, 1)
           assert.equal(calls[0].method, 'POST')
           assert.equal(calls[0].url, '/ig-business-send-test/messages')
-          assert.equal(calls[0].authorization, 'Bearer user-token-send-test')
+          assert.equal(calls[0].authorization, 'Bearer instagram-token-send-test')
           assert.deepEqual(JSON.parse(calls[0].body), {
             recipient: { id: 'igsid-send-test' },
             message: { text: 'Hola' }

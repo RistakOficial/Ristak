@@ -1291,6 +1291,10 @@ async function removeObsoleteMetaCapiColumn() {
   const columns = await db.all('PRAGMA table_info(meta_config)').catch(() => [])
   const hasColumn = columns.some(column => column.name === 'pixel_api_token')
   if (!hasColumn) return
+  const hasInstagramAccessTokenColumn = columns.some(column => column.name === 'instagram_access_token')
+  const instagramAccessTokenSelect = hasInstagramAccessTokenColumn
+    ? 'instagram_access_token'
+    : 'NULL AS instagram_access_token'
 
   await db.run('PRAGMA foreign_keys=off')
   try {
@@ -1310,17 +1314,18 @@ async function removeObsoleteMetaCapiColumn() {
         timezone_offset_hours_utc INTEGER,
         pixel_id TEXT,
         page_id TEXT,
-        instagram_account_id TEXT
+        instagram_account_id TEXT,
+        instagram_access_token TEXT
       );
       INSERT INTO meta_config_capi_cleanup (
         id, ad_account_id, access_token, app_id, app_secret, token_expires_at,
         created_at, updated_at, timezone_id, timezone_name, timezone_offset_hours_utc,
-        pixel_id, page_id, instagram_account_id
+        pixel_id, page_id, instagram_account_id, instagram_access_token
       )
       SELECT
         id, ad_account_id, access_token, app_id, app_secret, token_expires_at,
         created_at, updated_at, timezone_id, timezone_name, timezone_offset_hours_utc,
-        pixel_id, page_id, instagram_account_id
+        pixel_id, page_id, instagram_account_id, ${instagramAccessTokenSelect}
       FROM meta_config;
       DROP TABLE meta_config;
       ALTER TABLE meta_config_capi_cleanup RENAME TO meta_config;
@@ -3043,6 +3048,7 @@ async function initTables() {
         app_id TEXT,
         app_secret TEXT,
         instagram_account_id TEXT,
+        instagram_access_token TEXT,
         token_expires_at DATETIME,
         created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
         updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
@@ -4188,6 +4194,14 @@ async function initTables() {
       }
 
       try {
+        await db.run('ALTER TABLE meta_config ADD COLUMN instagram_access_token TEXT')
+      } catch (err) {
+        if (!err.message.includes('duplicate column name') && !err.message.includes('already exists')) {
+          throw err
+        }
+      }
+
+      try {
         if (usePostgres) {
           await db.run('ALTER TABLE meta_config ALTER COLUMN ad_account_id DROP NOT NULL')
         } else {
@@ -4212,17 +4226,18 @@ async function initTables() {
                 timezone_offset_hours_utc INTEGER,
                 pixel_id TEXT,
                 page_id TEXT,
-                instagram_account_id TEXT
+                instagram_account_id TEXT,
+                instagram_access_token TEXT
               );
               INSERT INTO meta_config_shared_token_migration (
                 id, ad_account_id, access_token, app_id, app_secret, token_expires_at,
                 created_at, updated_at, timezone_id, timezone_name, timezone_offset_hours_utc,
-                pixel_id, page_id, instagram_account_id
+                pixel_id, page_id, instagram_account_id, instagram_access_token
               )
               SELECT
                 id, ad_account_id, access_token, app_id, app_secret, token_expires_at,
                 created_at, updated_at, timezone_id, timezone_name, timezone_offset_hours_utc,
-                pixel_id, page_id, instagram_account_id
+                pixel_id, page_id, instagram_account_id, instagram_access_token
               FROM meta_config;
               DROP TABLE meta_config;
               ALTER TABLE meta_config_shared_token_migration RENAME TO meta_config;

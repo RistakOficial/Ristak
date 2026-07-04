@@ -3525,7 +3525,7 @@ export const getContactPaymentLinkDeliveryOptions = async (req, res) => {
             reason: !hasMessengerProfile
                 ? 'El contacto no tiene Messenger enlazado'
                 : !messengerConnected
-                  ? 'Activa Messenger en Configuración > Meta Ads'
+                  ? 'Activa Messenger en Configuración > Meta Ads > Redes sociales'
                   : ''
           },
           instagram: {
@@ -3537,7 +3537,7 @@ export const getContactPaymentLinkDeliveryOptions = async (req, res) => {
             reason: !hasInstagramProfile
               ? 'El contacto no tiene Instagram enlazado'
               : !instagramConnected
-                ? 'Activa Instagram en Configuración > Meta Ads'
+                ? 'Activa Instagram en Configuración > Meta Ads > Redes sociales'
                 : ''
           },
           email: {

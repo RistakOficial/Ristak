@@ -17,6 +17,7 @@ import styles from './MetaAdsIntegration.module.css'
 interface MetaCredentials {
   adAccountId: string
   accessToken: string
+  instagramAccessToken: string
   pixelId: string
   pageId: string
   instagramAccountId: string
@@ -70,7 +71,7 @@ type MetaTestParameterFieldKey =
 
 type SecretTokenField = 'accessToken'
 type MetaMessagingPlatform = 'messenger' | 'instagram'
-const metaConnectedTabIds = ['cuenta', 'mensajes', 'rastreo', 'pruebas'] as const
+const metaConnectedTabIds = ['cuenta', 'redes-sociales', 'rastreo', 'pruebas'] as const
 type MetaConnectedTab = typeof metaConnectedTabIds[number]
 type MetaTestMessagingChannel = 'whatsapp' | 'messenger' | 'instagram'
 type MetaTestIdentityParameterKey =
@@ -90,7 +91,7 @@ interface MetaWebhookInfo {
 
 const metaConnectedTabs: Array<{ id: MetaConnectedTab; label: string; icon: React.ReactNode }> = [
   { id: 'cuenta', label: 'Cuenta', icon: <Link2 size={16} /> },
-  { id: 'mensajes', label: 'Mensajes', icon: <MessageCircle size={16} /> },
+  { id: 'redes-sociales', label: 'Redes sociales', icon: <MessageCircle size={16} /> },
   { id: 'rastreo', label: 'Rastreo', icon: <Activity size={16} /> },
   { id: 'pruebas', label: 'Dataset Test', icon: <FlaskConical size={16} /> }
 ]
@@ -110,6 +111,7 @@ const parseMetaStep = (pathname: string) => {
 }
 const parseMetaConnectedTab = (pathname: string): MetaConnectedTab | null => {
   const tab = getMetaAdsRouteSegment(pathname)
+  if (tab === 'mensajes') return 'redes-sociales'
   return metaConnectedTabIds.includes(tab as MetaConnectedTab) ? tab as MetaConnectedTab : null
 }
 const buildMetaAdsSettingsPath = (stepIndex: number) => `/settings/meta-ads/${metaStepSlugs[Math.max(0, Math.min(stepIndex, metaStepSlugs.length - 1))]}`
@@ -436,6 +438,7 @@ export const MetaAdsIntegration: React.FC = () => {
   const [credentials, setCredentials] = useState<MetaCredentials>({
     adAccountId: '',
     accessToken: '',
+    instagramAccessToken: '',
     pixelId: '',
     pageId: '',
     instagramAccountId: ''
@@ -460,6 +463,7 @@ export const MetaAdsIntegration: React.FC = () => {
   const [isLoadingInstagramAccounts, setIsLoadingInstagramAccounts] = useState(false)
   const [realAccessToken, setRealAccessToken] = useState('')
   const [isSavingToken, setIsSavingToken] = useState(false)
+  const [isSavingInstagramToken, setIsSavingInstagramToken] = useState(false)
   const [isRevealingAccessToken, setIsRevealingAccessToken] = useState(false)
   const [isSavingWizardConfig, setIsSavingWizardConfig] = useState(false)
   const [savedPageId, setSavedPageId] = useState('')
@@ -540,9 +544,7 @@ export const MetaAdsIntegration: React.FC = () => {
       updates.push(setMessengerMessagingEnabled(false), setFacebookCommentsEnabled(false))
     }
 
-    if (newInstagramAccountId && newInstagramAccountId !== oldInstagramAccountId) {
-      updates.push(setInstagramMessagingEnabled(true), setInstagramCommentsEnabled(true))
-    } else if (!newInstagramAccountId && oldInstagramAccountId) {
+    if (!newInstagramAccountId && oldInstagramAccountId) {
       updates.push(setInstagramMessagingEnabled(false), setInstagramCommentsEnabled(false))
     }
 
@@ -573,10 +575,15 @@ export const MetaAdsIntegration: React.FC = () => {
   }, [routeStep])
 
   useEffect(() => {
+    if (getMetaAdsRouteSegment(location.pathname) === 'mensajes') {
+      navigate(buildMetaAdsConnectedTabPath('redes-sociales'), { replace: true })
+      return
+    }
+
     if (routeConnectedTab) {
       setActiveMetaTab(current => current === routeConnectedTab ? current : routeConnectedTab)
     }
-  }, [routeConnectedTab])
+  }, [location.pathname, navigate, routeConnectedTab])
 
   // El código de prueba vive inline (sin modal): siembra el borrador con el
   // código guardado en la carga inicial y cada vez que cambie el guardado.
@@ -584,7 +591,7 @@ export const MetaAdsIntegration: React.FC = () => {
     setMetaTestDraftCode(metaTestEventCode || '')
   }, [metaTestEventCode])
 
-  // Datos del webhook de Meta para el mini-tutorial de Mensajes (URL a pegar en
+  // Datos del webhook de Meta para el mini-tutorial de Redes sociales (URL a pegar en
   // Meta Developers, token de verificación y campos a suscribir).
   useEffect(() => {
     let cancelled = false
@@ -629,7 +636,14 @@ export const MetaAdsIntegration: React.FC = () => {
       const data = await response.json()
 
       if (data.success && data.data) {
-        setCredentials(data.data)
+        setCredentials({
+          adAccountId: data.data.adAccountId || '',
+          accessToken: data.data.accessToken || '',
+          instagramAccessToken: data.data.instagramAccessToken || '',
+          pixelId: data.data.pixelId || '',
+          pageId: data.data.pageId || '',
+          instagramAccountId: data.data.instagramAccountId || ''
+        })
         setSavedPageId(data.data.pageId || '')
         setSavedInstagramAccountId(data.data.instagramAccountId || '')
 
@@ -1009,6 +1023,7 @@ export const MetaAdsIntegration: React.FC = () => {
       setCredentials({
         adAccountId: '',
         accessToken: '',
+        instagramAccessToken: '',
         pixelId: '',
         pageId: '',
         instagramAccountId: ''
@@ -1105,6 +1120,7 @@ export const MetaAdsIntegration: React.FC = () => {
     setCredentials({
       adAccountId: '',
       accessToken: '',
+      instagramAccessToken: '',
       pixelId: '',
       pageId: '',
       instagramAccountId: ''
@@ -1179,6 +1195,7 @@ export const MetaAdsIntegration: React.FC = () => {
         body: JSON.stringify({
           adAccountId: credentials.adAccountId,
           accessToken,
+          instagramAccessToken: credentials.instagramAccessToken || '',
           pixelId: credentials.pixelId || '',
           pageId: credentials.pageId || '',
           instagramAccountId: credentials.instagramAccountId || ''
@@ -1233,14 +1250,14 @@ export const MetaAdsIntegration: React.FC = () => {
     if (!result.saved) return
 
     setIsEditingMetaConfig(false)
-    setActiveMetaTab('mensajes')
-    navigate(buildMetaAdsConnectedTabPath('mensajes'), { replace: true })
+    setActiveMetaTab('redes-sociales')
+    navigate(buildMetaAdsConnectedTabPath('redes-sociales'), { replace: true })
     showToast(
       'success',
       'Meta conectado',
       result.syncStarted
-        ? 'Los anuncios ya se están sincronizando. Ahora termina mensajes y comentarios.'
-        : 'Ahora termina mensajes y comentarios.'
+        ? 'Los anuncios ya se están sincronizando. Ahora termina redes sociales y comentarios.'
+        : 'Ahora termina redes sociales y comentarios.'
     )
   }
 
@@ -1589,8 +1606,79 @@ export const MetaAdsIntegration: React.FC = () => {
     }
   }
 
+  const handleSaveInstagramAccessToken = async () => {
+    const token = credentials.instagramAccessToken.trim()
+    if (!token) {
+      showToast('warning', 'Token requerido', 'Pega el API token de Instagram para guardar esta conexión')
+      return
+    }
+
+    setIsSavingInstagramToken(true)
+    try {
+      const response = await fetch('/api/meta/config/instagram-token', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ instagramAccessToken: token })
+      })
+      const data = await response.json().catch(() => ({}))
+      if (!response.ok || !data.success) {
+        throw new Error(data.error || 'No se pudo guardar el token de Instagram')
+      }
+
+      setCredentials(prev => ({
+        ...prev,
+        instagramAccessToken: data.instagramAccessToken || token
+      }))
+      showToast('success', 'Instagram guardado', 'Ristak usará este token para nombres, fotos, DMs y comentarios de Instagram.')
+    } catch (error) {
+      showToast('error', 'No se pudo guardar', error instanceof Error ? error.message : 'No se pudo guardar el token de Instagram')
+    } finally {
+      setIsSavingInstagramToken(false)
+    }
+  }
+
+  const handleClearInstagramAccessToken = async () => {
+    setIsSavingInstagramToken(true)
+    try {
+      const response = await fetch('/api/meta/config/instagram-token', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ instagramAccessToken: '' })
+      })
+      const data = await response.json().catch(() => ({}))
+      if (!response.ok || !data.success) {
+        throw new Error(data.error || 'No se pudo limpiar el token de Instagram')
+      }
+
+      setCredentials(prev => ({ ...prev, instagramAccessToken: '' }))
+      await Promise.all([
+        setInstagramMessagingEnabled(false),
+        setInstagramCommentsEnabled(false)
+      ])
+      showToast('success', 'Token limpiado', 'Instagram quedó sin API token directo.')
+    } catch (error) {
+      showToast('error', 'No se pudo limpiar', error instanceof Error ? error.message : 'No se pudo limpiar el token de Instagram')
+    } finally {
+      setIsSavingInstagramToken(false)
+    }
+  }
+
   const handleToggleMetaComments = async (platform: 'facebook' | 'instagram', newValue: boolean) => {
     const label = platform === 'instagram' ? 'Comentarios de Instagram' : 'Comentarios de Facebook'
+    const instagramTokenReady = Boolean(credentials.instagramAccessToken.trim())
+    if (newValue && platform === 'instagram' && !hasInstagramAccount) {
+      showToast('warning', 'Instagram requerido', 'Primero selecciona la cuenta de Instagram en el wizard')
+      return
+    }
+    if (newValue && platform === 'instagram' && !instagramTokenReady) {
+      showToast('warning', 'Token de Instagram requerido', 'Pega y guarda el API token de Instagram antes de activar comentarios.')
+      return
+    }
+    if (newValue && platform === 'facebook' && !hasPageId) {
+      showToast('warning', 'Facebook Page requerida', 'Primero selecciona una Facebook Page para recibir comentarios.')
+      return
+    }
+
     try {
       if (platform === 'instagram') {
         await setInstagramCommentsEnabled(newValue)
@@ -1612,12 +1700,13 @@ export const MetaAdsIntegration: React.FC = () => {
   const handleToggleMetaMessaging = async (platform: MetaMessagingPlatform, newValue: boolean) => {
     const isInstagram = platform === 'instagram'
     const platformLabel = isInstagram ? 'Instagram DM' : 'Messenger'
+    const instagramTokenReady = Boolean(credentials.instagramAccessToken.trim())
 
-    if (newValue && !hasPageId) {
+    if (newValue && !isInstagram && !hasPageId) {
       showToast(
         'warning',
         'Facebook Page requerida',
-        'Primero selecciona una Facebook Page para recibir y mandar mensajes de Meta'
+        'Primero selecciona una Facebook Page para recibir y mandar mensajes de Messenger'
       )
       return
     }
@@ -1631,6 +1720,15 @@ export const MetaAdsIntegration: React.FC = () => {
       return
     }
 
+    if (newValue && isInstagram && !instagramTokenReady) {
+      showToast(
+        'warning',
+        'Token de Instagram requerido',
+        'Pega y guarda el API token de Instagram antes de activar Instagram DM.'
+      )
+      return
+    }
+
     try {
       if (isInstagram) {
         await setInstagramMessagingEnabled(newValue)
@@ -1640,6 +1738,15 @@ export const MetaAdsIntegration: React.FC = () => {
 
       if (!newValue) {
         showToast('success', `${platformLabel} actualizado`, `${platformLabel} quedó apagado`)
+        return
+      }
+
+      if (isInstagram) {
+        showToast(
+          'success',
+          `${platformLabel} activado`,
+          'Ristak usará el token directo de Instagram para recibir nombres, fotos y responder DMs.'
+        )
         return
       }
 
@@ -1721,6 +1828,7 @@ export const MetaAdsIntegration: React.FC = () => {
   const hasPixel = Boolean(credentials.pixelId)
   const hasPageId = Boolean(credentials.pageId)
   const hasInstagramAccount = Boolean(credentials.instagramAccountId)
+  const hasInstagramApiToken = Boolean(credentials.instagramAccessToken.trim())
   const isMetaConfigured = Boolean(hasAccessToken && hasAdAccount)
   const normalizedMetaTestEventName = normalizeMetaTestEventName(metaTestEventName)
   const normalizedMetaTestEventParameters = withMetaTestDefaultsForEvent(metaTestEventParameters, normalizedMetaTestEventName)
@@ -2259,7 +2367,7 @@ export const MetaAdsIntegration: React.FC = () => {
       <PageHeader
         className={styles.metaHeader}
         eyebrow="Integración"
-        title="Meta"
+        title="Meta Ads"
         subtitle="Conecta anuncios, Página, Messenger e Instagram DM desde un solo lugar."
         actions={isMetaConfigured ? (
           <Badge variant="success">
@@ -2356,119 +2464,163 @@ export const MetaAdsIntegration: React.FC = () => {
               </section>
             )}
 
-            {!shouldShowWizard && activeMetaTab === 'mensajes' && (
+            {!shouldShowWizard && activeMetaTab === 'redes-sociales' && (
               <section className={styles.tabPanel}>
                 <div className={styles.connectedPagesHeader}>
-                  <h4 className={styles.connectedPagesTitle}>Páginas conectadas</h4>
+                  <h4 className={styles.connectedPagesTitle}>Redes sociales</h4>
                   <p className={styles.connectedPagesDescription}>
-                    Activa cada canal solo cuando quieras que Ristak reciba y mande mensajes desde esa cuenta.
+                    Configura Messenger e Instagram por separado. Instagram usa su propio token directo para nombres, fotos, mensajes y comentarios.
                   </p>
                 </div>
 
-                <div className={styles.connectedPagesList}>
-                    <div className={[
-                      styles.connectedPageCard,
-                      !hasPageId ? styles.connectedPageCardLocked : ''
-                    ].filter(Boolean).join(' ')}>
+                <div className={styles.socialChannelGrid}>
+                  <div className={styles.socialChannelPanel}>
+                    <div className={styles.socialChannelHeader}>
                       <span className={`${styles.connectedPageIcon} ${styles.connectedPageIconFacebook}`} aria-hidden="true">
                         <Icon name="facebook" size={19} />
                       </span>
-                      <div className={styles.connectedPageMain}>
-                        <strong>Messenger</strong>
-                        <span>{hasPageId ? getSelectedPageLabel() : 'Selecciona una Facebook Page'}</span>
-                      </div>
-                      <div className={styles.connectedPageControl}>
-                        <Badge variant={getMetaMessagingStatusVariant(messengerMessagingEnabled, hasPageId)}>
-                          {getMetaMessagingStatus(messengerMessagingEnabled, hasPageId)}
-                        </Badge>
-                        <Switch
-                          aria-label="Activar mensajes de Messenger"
-                          checked={messengerMessagingEnabled === true}
-                          onChange={(next) => handleToggleMetaMessaging('messenger', next)}
-                          disabled={!hasPageId || savingMessengerMessaging}
-                        />
+                      <div className={styles.socialChannelTitleBlock}>
+                        <h4 className={styles.connectedPagesTitle}>Messenger</h4>
+                        <p className={styles.connectedPagesDescription}>
+                          Usa la Facebook Page conectada para Messenger y comentarios de Facebook.
+                        </p>
                       </div>
                     </div>
 
-                    <div className={[
-                      styles.connectedPageCard,
-                      !hasInstagramAccount ? styles.connectedPageCardLocked : ''
-                    ].filter(Boolean).join(' ')}>
-                      <span className={`${styles.connectedPageIcon} ${styles.connectedPageIconInstagram}`} aria-hidden="true">
-                        <Icon name="instagram" size={19} />
-                      </span>
-                      <div className={styles.connectedPageMain}>
-                        <strong>Instagram DM</strong>
-                        <span>{hasInstagramAccount ? getSelectedInstagramLabel() : 'Selecciona una cuenta de Instagram'}</span>
+                    <div className={styles.socialAssetLine}>
+                      <span className={styles.webhookFieldLabel}>Facebook Page</span>
+                      <strong>{hasPageId ? getSelectedPageLabel() : 'Selecciona una Facebook Page'}</strong>
+                    </div>
+
+                    <div className={styles.socialSettingRows}>
+                      <div className={styles.socialSettingRow}>
+                        <div className={styles.socialSettingCopy}>
+                          <strong>Mensajes de Messenger</strong>
+                          <span>Recibir y responder DMs desde la bandeja de chat.</span>
+                        </div>
+                        <div className={styles.socialSettingControl}>
+                          <Badge variant={getMetaMessagingStatusVariant(messengerMessagingEnabled, hasPageId)}>
+                            {getMetaMessagingStatus(messengerMessagingEnabled, hasPageId)}
+                          </Badge>
+                          <Switch
+                            aria-label="Activar mensajes de Messenger"
+                            checked={messengerMessagingEnabled === true}
+                            onChange={(next) => handleToggleMetaMessaging('messenger', next)}
+                            disabled={!hasPageId || savingMessengerMessaging}
+                          />
+                        </div>
                       </div>
-                      <div className={styles.connectedPageControl}>
-                        <Badge variant={getMetaMessagingStatusVariant(instagramMessagingEnabled, hasInstagramAccount)}>
-                          {getMetaMessagingStatus(instagramMessagingEnabled, hasInstagramAccount)}
-                        </Badge>
-                        <Switch
-                          aria-label="Activar mensajes de Instagram DM"
-                          checked={instagramMessagingEnabled === true}
-                          onChange={(next) => handleToggleMetaMessaging('instagram', next)}
-                          disabled={!hasInstagramAccount || savingInstagramMessaging}
-                        />
+
+                      <div className={styles.socialSettingRow}>
+                        <div className={styles.socialSettingCopy}>
+                          <strong>Comentarios de Facebook</strong>
+                          <span>Guardar comentarios de publicaciones y anuncios.</span>
+                        </div>
+                        <div className={styles.socialSettingControl}>
+                          <Badge variant={facebookCommentsEnabled ? 'success' : hasPageId ? 'neutral' : 'warning'}>
+                            {!hasPageId ? 'Pendiente' : facebookCommentsEnabled ? 'Activo' : 'Apagado'}
+                          </Badge>
+                          <Switch
+                            aria-label="Activar comentarios de Facebook"
+                            checked={facebookCommentsEnabled === true}
+                            onChange={(next) => handleToggleMetaComments('facebook', next)}
+                            disabled={!hasPageId || savingFacebookComments}
+                          />
+                        </div>
                       </div>
                     </div>
                   </div>
 
-                <div className={styles.commentsBlock}>
-                  <div className={styles.connectedPagesHeader}>
-                    <h4 className={styles.connectedPagesTitle}>Comentarios</h4>
-                    <p className={styles.connectedPagesDescription}>
-                      Recibe en la bandeja los comentarios de tus publicaciones y anuncios. Llegan aparte de los mensajes, en el filtro "Comentarios" del chat.
-                    </p>
-                  </div>
-
-                  <div className={styles.connectedPagesList}>
-                    <div className={[
-                      styles.connectedPageCard,
-                      !hasPageId ? styles.connectedPageCardLocked : ''
-                    ].filter(Boolean).join(' ')}>
-                      <span className={`${styles.connectedPageIcon} ${styles.connectedPageIconFacebook}`} aria-hidden="true">
-                        <Icon name="facebook" size={19} />
-                      </span>
-                      <div className={styles.connectedPageMain}>
-                        <strong>Comentarios de Facebook</strong>
-                        <span>{hasPageId ? getSelectedPageLabel() : 'Selecciona una Facebook Page'}</span>
-                      </div>
-                      <div className={styles.connectedPageControl}>
-                        <Badge variant={facebookCommentsEnabled ? 'success' : 'neutral'}>
-                          {facebookCommentsEnabled ? 'Activo' : 'Apagado'}
-                        </Badge>
-                        <Switch
-                          aria-label="Activar comentarios de Facebook"
-                          checked={facebookCommentsEnabled === true}
-                          onChange={(next) => handleToggleMetaComments('facebook', next)}
-                          disabled={!hasPageId || savingFacebookComments}
-                        />
-                      </div>
-                    </div>
-
-                    <div className={[
-                      styles.connectedPageCard,
-                      !hasInstagramAccount ? styles.connectedPageCardLocked : ''
-                    ].filter(Boolean).join(' ')}>
+                  <div className={styles.socialChannelPanel}>
+                    <div className={styles.socialChannelHeader}>
                       <span className={`${styles.connectedPageIcon} ${styles.connectedPageIconInstagram}`} aria-hidden="true">
                         <Icon name="instagram" size={19} />
                       </span>
-                      <div className={styles.connectedPageMain}>
-                        <strong>Comentarios de Instagram</strong>
-                        <span>{hasInstagramAccount ? getSelectedInstagramLabel() : 'Selecciona una cuenta de Instagram'}</span>
+                      <div className={styles.socialChannelTitleBlock}>
+                        <h4 className={styles.connectedPagesTitle}>Instagram</h4>
+                        <p className={styles.connectedPagesDescription}>
+                          Usa el token de Instagram Login para perfilar contactos, DMs y comentarios.
+                        </p>
                       </div>
-                      <div className={styles.connectedPageControl}>
-                        <Badge variant={instagramCommentsEnabled ? 'success' : 'neutral'}>
-                          {instagramCommentsEnabled ? 'Activo' : 'Apagado'}
-                        </Badge>
-                        <Switch
-                          aria-label="Activar comentarios de Instagram"
-                          checked={instagramCommentsEnabled === true}
-                          onChange={(next) => handleToggleMetaComments('instagram', next)}
-                          disabled={!hasInstagramAccount || savingInstagramComments}
-                        />
+                    </div>
+
+                    <div className={styles.socialAssetLine}>
+                      <span className={styles.webhookFieldLabel}>Cuenta de Instagram</span>
+                      <strong>{hasInstagramAccount ? getSelectedInstagramLabel() : 'Selecciona una cuenta de Instagram'}</strong>
+                    </div>
+
+                    <label className={styles.instagramTokenBlock}>
+                      <span className={styles.webhookFieldLabel}>Instagram API token</span>
+                      <textarea
+                        className={styles.instagramTokenInput}
+                        value={credentials.instagramAccessToken}
+                        onChange={(event) => handleInputChange('instagramAccessToken', event.target.value)}
+                        placeholder="IGAAM..."
+                        autoComplete="off"
+                        spellCheck={false}
+                        rows={3}
+                      />
+                    </label>
+
+                    <div className={styles.instagramTokenActions}>
+                      <Badge variant={hasInstagramApiToken ? 'success' : 'warning'}>
+                        {hasInstagramApiToken ? 'Token guardable' : 'Token pendiente'}
+                      </Badge>
+                      <Button
+                        type="button"
+                        variant="secondary"
+                        onClick={() => void handleSaveInstagramAccessToken()}
+                        disabled={isSavingInstagramToken || !credentials.instagramAccessToken.trim()}
+                      >
+                        {isSavingInstagramToken ? <RefreshCw size={16} className={styles.spinning} /> : <Save size={16} />}
+                        Guardar token
+                      </Button>
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        onClick={() => void handleClearInstagramAccessToken()}
+                        disabled={isSavingInstagramToken || !hasInstagramApiToken}
+                      >
+                        <Trash2 size={16} />
+                        Limpiar
+                      </Button>
+                    </div>
+
+                    <div className={styles.socialSettingRows}>
+                      <div className={styles.socialSettingRow}>
+                        <div className={styles.socialSettingCopy}>
+                          <strong>Instagram DM</strong>
+                          <span>Nombres, fotos y respuestas usan el token directo.</span>
+                        </div>
+                        <div className={styles.socialSettingControl}>
+                          <Badge variant={getMetaMessagingStatusVariant(instagramMessagingEnabled, hasInstagramAccount && hasInstagramApiToken)}>
+                            {getMetaMessagingStatus(instagramMessagingEnabled, hasInstagramAccount && hasInstagramApiToken)}
+                          </Badge>
+                          <Switch
+                            aria-label="Activar mensajes de Instagram DM"
+                            checked={instagramMessagingEnabled === true}
+                            onChange={(next) => handleToggleMetaMessaging('instagram', next)}
+                            disabled={!hasInstagramAccount || !hasInstagramApiToken || savingInstagramMessaging}
+                          />
+                        </div>
+                      </div>
+
+                      <div className={styles.socialSettingRow}>
+                        <div className={styles.socialSettingCopy}>
+                          <strong>Comentarios de Instagram</strong>
+                          <span>Guardar autores, fotos y comentarios nuevos.</span>
+                        </div>
+                        <div className={styles.socialSettingControl}>
+                          <Badge variant={instagramCommentsEnabled ? 'success' : hasInstagramAccount && hasInstagramApiToken ? 'neutral' : 'warning'}>
+                            {!(hasInstagramAccount && hasInstagramApiToken) ? 'Pendiente' : instagramCommentsEnabled ? 'Activo' : 'Apagado'}
+                          </Badge>
+                          <Switch
+                            aria-label="Activar comentarios de Instagram"
+                            checked={instagramCommentsEnabled === true}
+                            onChange={(next) => handleToggleMetaComments('instagram', next)}
+                            disabled={!hasInstagramAccount || !hasInstagramApiToken || savingInstagramComments}
+                          />
+                        </div>
                       </div>
                     </div>
                   </div>
@@ -2575,7 +2727,7 @@ export const MetaAdsIntegration: React.FC = () => {
                       </div>
                     </div>
                     <p className={styles.connectedPagesDescription}>
-                      Para leerlos y responderlos, el token también necesita <strong>pages_read_engagement</strong> y <strong>pages_manage_engagement</strong> (Facebook) e <strong>instagram_manage_comments</strong> (Instagram). Ya vienen incluidos en el asistente del token de arriba.
+                      Para leerlos y responderlos, Facebook usa permisos de Página; Instagram usa el API token directo del recuadro de Instagram.
                     </p>
                   </div>
                 </div>

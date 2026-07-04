@@ -22,6 +22,16 @@ const SOCIAL_CHANNEL_CONFIG_KEYS = [
   'meta_instagram_comments_enabled'
 ]
 
+const PAGE_SOCIAL_CHANNEL_CONFIG_KEYS = [
+  'meta_messenger_messaging_enabled',
+  'meta_facebook_comments_enabled'
+]
+
+const INSTAGRAM_SOCIAL_CHANNEL_CONFIG_KEYS = [
+  'meta_instagram_messaging_enabled',
+  'meta_instagram_comments_enabled'
+]
+
 async function snapshotAppConfig(keys = [], callback) {
   const uniqueKeys = [...new Set(keys)]
   const placeholders = uniqueKeys.map(() => '?').join(', ')
@@ -149,7 +159,7 @@ test('saving Meta token with pixel enables calendar and payment conversion event
   }
 })
 
-test('saving new Meta social profiles enables inbox message and comment switches by default', async () => {
+test('saving new Meta social profiles enables Page switches but leaves Instagram off until token is saved', async () => {
   const previousMetaGraphDescriptor = Object.getOwnPropertyDescriptor(API_URLS, 'META_GRAPH')
   let metaServer
 
@@ -190,8 +200,11 @@ test('saving new Meta social profiles enables inbox message and comment switches
           'ig-1'
         )
 
-        for (const key of SOCIAL_CHANNEL_CONFIG_KEYS) {
-          assert.equal(await getAppConfig(key), '1', `${key} should default on for new profiles`)
+        for (const key of PAGE_SOCIAL_CHANNEL_CONFIG_KEYS) {
+          assert.equal(await getAppConfig(key), '1', `${key} should default on for new Page profiles`)
+        }
+        for (const key of INSTAGRAM_SOCIAL_CHANNEL_CONFIG_KEYS) {
+          assert.equal(await getAppConfig(key), '0', `${key} should stay off until Instagram has a direct token`)
         }
 
         for (const key of SOCIAL_CHANNEL_CONFIG_KEYS) {
@@ -218,8 +231,11 @@ test('saving new Meta social profiles enables inbox message and comment switches
           'ig-2'
         )
 
-        for (const key of SOCIAL_CHANNEL_CONFIG_KEYS) {
-          assert.equal(await getAppConfig(key), '1', `${key} should turn back on for changed profiles`)
+        for (const key of PAGE_SOCIAL_CHANNEL_CONFIG_KEYS) {
+          assert.equal(await getAppConfig(key), '1', `${key} should turn back on for changed Page profiles`)
+        }
+        for (const key of INSTAGRAM_SOCIAL_CHANNEL_CONFIG_KEYS) {
+          assert.equal(await getAppConfig(key), '0', `${key} should stay off for changed Instagram profiles without token`)
         }
       })
     })

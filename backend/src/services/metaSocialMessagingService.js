@@ -431,9 +431,13 @@ async function fetchAndCacheSocialPost(comment, accessToken) {
 // La foto no sale por este fallback, solo el nombre.
 async function fetchMetaConversationParticipantName({ platform, senderId, businessId, pageId, accessToken, baseUrl = getMetaSocialGraphBaseUrl(platform) }) {
   const conversationOwnerId = cleanString(businessId || pageId)
-  if (!senderId || !conversationOwnerId || !accessToken) return ''
+  if (!senderId || !accessToken) return ''
+  if (platform !== 'instagram' && !conversationOwnerId) return ''
   try {
-    const data = await metaSocialGraphRequest(`/${encodeURIComponent(conversationOwnerId)}/conversations`, {
+    const conversationsPath = platform === 'instagram'
+      ? '/me/conversations'
+      : `/${encodeURIComponent(conversationOwnerId)}/conversations`
+    const data = await metaSocialGraphRequest(conversationsPath, {
       token: accessToken,
       baseUrl,
       query: {
@@ -551,7 +555,7 @@ function isMetaPermissionError(error) {
 
 function createMetaSocialCapabilityMessage(platform) {
   if (platform === 'instagram') {
-    return 'Meta bloqueó Instagram DM: falta aprobar Instagram API con Instagram Login para mensajes (instagram_business_basic e instagram_business_manage_messages) en la app de Meta. Apruébalo, pon la app en Live si respondes a clientes reales y reconecta Meta en Ristak con un Instagram User access token. Detalle: (#3).'
+    return 'Meta bloqueó Instagram DM: falta aprobar Instagram API con Instagram Login para mensajes (instagram_business_basic e instagram_business_manage_messages) en la app de Meta. Apruébalo, pon la app en Live si respondes a clientes reales y guarda el Instagram API token en Configuración > Meta Ads > Redes sociales. Detalle: (#3).'
   }
 
   return 'Meta bloqueó Messenger: falta aprobar pages_messaging en la app de Meta. Apruébalo, pon la app en Live si respondes a clientes reales y reconecta Meta en Ristak para regenerar el token. Detalle: (#3).'
@@ -675,15 +679,27 @@ function isInstagramPlatform(platform = '') {
   return cleanString(platform).toLowerCase() === 'instagram'
 }
 
+function looksLikeInstagramAccessToken(token = '') {
+  return cleanString(token).toUpperCase().startsWith('IG')
+}
+
+function resolveInstagramAccessToken(config = {}) {
+  const instagramToken = cleanString(config?.instagram_access_token)
+  if (instagramToken) return instagramToken
+
+  const legacyToken = cleanString(config?.access_token)
+  return looksLikeInstagramAccessToken(legacyToken) ? legacyToken : ''
+}
+
 function getMetaSocialGraphBaseUrl(platform = '') {
   return isInstagramPlatform(platform) ? API_URLS.INSTAGRAM_GRAPH : API_URLS.META_GRAPH
 }
 
 async function resolveMetaSocialGraphToken(platform, config, { forceRefresh = false, safe = false } = {}) {
   if (isInstagramPlatform(platform)) {
-    const token = cleanString(config?.access_token)
+    const token = resolveInstagramAccessToken(config)
     if (!token && !safe) {
-      throw createMetaSocialMessageError('Conecta Meta Ads para operar Instagram.', 409)
+      throw createMetaSocialMessageError('Agrega el Instagram API token en Configuración > Meta Ads > Redes sociales para operar Instagram.', 409)
     }
     return token
   }
@@ -943,8 +959,10 @@ async function sendMetaMessengerTextRequest({ businessId, recipientId, body, con
 }
 
 async function sendMetaInstagramTextRequest({ businessId, recipientId, body, config }) {
-  const instagramUserToken = cleanString(config?.access_token)
-  if (!instagramUserToken) throw createMetaSocialMessageError('Conecta Meta Ads para responder por Instagram.', 409)
+  const instagramUserToken = resolveInstagramAccessToken(config)
+  if (!instagramUserToken) {
+    throw createMetaSocialMessageError('Agrega el Instagram API token en Configuración > Meta Ads > Redes sociales para responder por Instagram.', 409)
+  }
 
   return await metaSocialGraphRequest(`/${encodeURIComponent(businessId)}/messages`, {
     method: 'POST',
@@ -1059,15 +1077,23 @@ export async function sendMetaSocialTextMessage({ contactId, platform, message, 
 
   const enabled = await isMetaSocialMessagingEnabled(cleanPlatform)
   if (!enabled) {
-    throw createMetaSocialMessageError(`Activa ${getPlatformLabel(cleanPlatform)} en Configuración > Meta Ads para responder por este canal.`, 409)
+    throw createMetaSocialMessageError(`Activa ${getPlatformLabel(cleanPlatform)} en Configuración > Meta Ads > Redes sociales para responder por este canal.`, 409)
   }
 
   const config = await getMetaConfig().catch(error => {
     logger.warn(`No se pudo leer Meta para enviar DM: ${error.message}`)
     return null
   })
-  if (!config?.access_token) {
-    throw createMetaSocialMessageError('Conecta Meta Ads para responder por Messenger o Instagram.', 409)
+  const hasRequiredToken = cleanPlatform === 'instagram'
+    ? Boolean(resolveInstagramAccessToken(config || {}))
+    : Boolean(cleanString(config?.access_token))
+  if (!hasRequiredToken) {
+    throw createMetaSocialMessageError(
+      cleanPlatform === 'instagram'
+        ? 'Agrega el Instagram API token en Configuración > Meta Ads > Redes sociales para responder por Instagram.'
+        : 'Conecta Meta Ads para responder por Messenger.',
+      409
+    )
   }
 
   const profile = await db.get(
@@ -1142,15 +1168,23 @@ export async function sendMetaSocialCommentReply({ contactId, platform, message,
 
   const enabled = await isMetaSocialCommentsEnabled(cleanPlatform)
   if (!enabled) {
-    throw createMetaSocialMessageError(`Activa los comentarios de ${getPlatformLabel(cleanPlatform)} en Configuración > Meta Ads para responder.`, 409)
+    throw createMetaSocialMessageError(`Activa los comentarios de ${getPlatformLabel(cleanPlatform)} en Configuración > Meta Ads > Redes sociales para responder.`, 409)
   }
 
   const config = await getMetaConfig().catch(error => {
     logger.warn(`No se pudo leer Meta para responder comentario: ${error.message}`)
     return null
   })
-  if (!config?.access_token) {
-    throw createMetaSocialMessageError('Conecta Meta Ads para responder comentarios.', 409)
+  const hasRequiredToken = cleanPlatform === 'instagram'
+    ? Boolean(resolveInstagramAccessToken(config || {}))
+    : Boolean(cleanString(config?.access_token))
+  if (!hasRequiredToken) {
+    throw createMetaSocialMessageError(
+      cleanPlatform === 'instagram'
+        ? 'Agrega el Instagram API token en Configuración > Meta Ads > Redes sociales para responder comentarios de Instagram.'
+        : 'Conecta Meta Ads para responder comentarios de Facebook.',
+      409
+    )
   }
 
   // Perfil del contacto-comentario (para guardar el saliente en el mismo hilo).

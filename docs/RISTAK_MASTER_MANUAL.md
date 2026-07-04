@@ -780,10 +780,10 @@ Implementacion esperada:
   `live`, `production`.
 - `backend/src/services/metaConversionEventsService.js` bloquea eventos Purchase
   para pagos test por default.
-- Si Configuracion > Meta tiene activo `meta_test_event_code`, el backend puede
+- Si Configuracion > Meta Ads tiene activo `meta_test_event_code`, el backend puede
   mandar el evento CAPI con `test_event_code`. Eso debe entrar a Meta Test
   Events, no a conversiones reales.
-- Si no hay Dataset/Pixel conectado en Configuracion > Meta, una compra `live`
+- Si no hay Dataset/Pixel conectado en Configuracion > Meta Ads, una compra `live`
   puede usar WhatsApp QR/Baileys como fallback aplicando la etiqueta nativa
   `Paid` al chat del contacto. Esto solo aplica si el contacto tiene telefono,
   el numero QR esta conectado y Baileys ya sincronizo esa etiqueta nativa.
@@ -817,7 +817,7 @@ prueba. No la debilites por comodidad.
 Ristak usa Meta en varias areas:
 
 - Meta Ads config y sync.
-- Dataset Test en la UI de Configuracion > Meta; las rutas internas pueden
+- Dataset Test en la UI de Configuracion > Meta Ads; las rutas internas pueden
   conservar `pixel` por contrato con Meta y tracking.
 - En Dataset Test, los eventos web usan `action_source=website`; los eventos
   `LeadSubmitted (Messaging)` y `Purchase (Messaging)` usan
@@ -831,7 +831,7 @@ Ristak usa Meta en varias areas:
 - Conversions API usa siempre el System User Access Token guardado en
   `meta_config.access_token` (o `META_ACCESS_TOKEN` como fallback). No hay un
   token separado para CAPI: no se pide, no se genera y no se sincroniza.
-- En Configuracion > Meta, al editar el wizard o moverse entre sus pasos, la UI
+- En Configuracion > Meta Ads, al editar el wizard o moverse entre sus pasos, la UI
   vuelve a consultar cuentas de anuncios, datasets/pixeles, Facebook Pages e
   Instagram disponibles con el System User Access Token guardado. El usuario no
   debe borrar y pegar de nuevo el token solo para que aparezcan activos recien
@@ -840,9 +840,10 @@ Ristak usa Meta en varias areas:
   sincronizacion inmediata; Ristak persiste la configuracion una sola vez al
   terminar el wizard. Al terminarlo, Ristak arranca automaticamente la
   sincronizacion de anuncios de Meta en segundo plano y lleva al usuario a
-  `Configuracion > Meta > Mensajes`. Las Page/Instagram nuevas o cambiadas
-  dejan encendidos por default Messenger, Instagram DM y comentarios; el usuario
-  puede apagar cada switch manualmente desde esa pantalla.
+  `Configuracion > Meta Ads > Redes sociales`. Las Page nuevas dejan encendidos
+  por default Messenger y comentarios de Facebook; Instagram DM y comentarios de
+  Instagram requieren ademas `meta_config.instagram_access_token` y se controlan
+  desde la columna de Instagram.
 - Cuando Meta ya tiene dataset/pixel y token guardado, las nuevas superficies nacen
   con Meta encendido por default: Sites/landings y paginas nuevas usan solo el
   `PageView` base al aterrizar (browser Pixel + CAPI server-side, sin `ViewContent`
@@ -863,7 +864,10 @@ Ristak usa Meta en varias areas:
   `graph.facebook.com/{PAGE_ID}/messages` con token de Pagina derivado de
   `meta_config.access_token`; Instagram DM envia por
   `graph.instagram.com/{IG_ID}/messages` con el Instagram User access token
-  guardado en `meta_config.access_token`, usando el IGSID recibido por webhook.
+  guardado en `meta_config.instagram_access_token`, usando el IGSID recibido por
+  webhook. Ese token se captura visible/editable en
+  `Configuracion > Meta Ads > Redes sociales > Instagram` para pruebas, pero se
+  guarda encriptado en base de datos.
   Los switches son `meta_messenger_messaging_enabled` /
   `meta_instagram_messaging_enabled` para DMs y
   `meta_facebook_comments_enabled` / `meta_instagram_comments_enabled` para
@@ -877,14 +881,15 @@ Ristak usa Meta en varias areas:
 - El enriquecimiento de contactos Meta usa el mismo contrato separado:
   Messenger lee perfil/conversaciones por Facebook Graph con Page token;
   Instagram lee perfiles de DMs y autores de comentarios por Instagram Graph con
-  el Instagram User access token (`name,username,profile_pic`). Si el perfil
-  directo no trae nombre, Instagram cae al endpoint de conversaciones del IG
-  account, nunca al Page ID. Las fotos recibidas se rehospedan best-effort antes
-  de guardarse en `meta_social_contacts.profile_picture_url`; si Meta no entrega
-  foto o permisos, Ristak conserva el mejor nombre disponible y no inventa avatar.
+  `meta_config.instagram_access_token` (`name,username,profile_pic`). Si el
+  perfil directo no trae nombre, Instagram cae a
+  `graph.instagram.com/me/conversations`, nunca al Page ID ni al System User
+  token. Las fotos recibidas se rehospedan best-effort antes de guardarse en
+  `meta_social_contacts.profile_picture_url`; si Meta no entrega foto o permisos,
+  Ristak conserva el mejor nombre disponible y no inventa avatar.
 - Business Messaging events.
 - Campaign Builder en modo preview/validacion segun entorno.
-- Test Events desde Configuracion > Meta.
+- Test Events desde Configuracion > Meta Ads.
 
 Tracking:
 
