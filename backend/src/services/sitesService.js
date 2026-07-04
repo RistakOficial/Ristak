@@ -4150,8 +4150,8 @@ function buildPublicDefaultRoute(site, pageIdValue = '') {
     slug,
     siteType: site.siteType || 'standard_form',
     status: site.status || 'draft',
-    ...(page ? { pageId: page.id, pageTitle: page.title || 'Página' } : {}),
-    path: pagePath || (slug ? `/${slug}` : '/')
+    ...(page ? { pageId: page.id, pageTitle: page.title || 'Página', pagePath: pagePath || '/' } : {}),
+    path: page ? '/' : (slug ? `/${slug}` : '/')
   }
 }
 

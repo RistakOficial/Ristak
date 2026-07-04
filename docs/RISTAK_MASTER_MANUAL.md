@@ -1126,11 +1126,18 @@ cambio a Sites debe revisar editor, renderer publico, submissions y tracking.
 En landings ruteables, cada pagina puede tener su propia ruta publica del dominio
 sin quedar obligada a vivir debajo del slug del sitio: una pagina principal puede
 usar `/promo`, `/agenda` o cualquier slug valido, y las subpaginas usan la
-jerarquia de su pagina padre (`/promo/detalles`). La ruta legacy del sitio
+jerarquia de su pagina padre (`/promo/detalles`). Las paginas nuevas sin ruta
+manual nacen con slugs neutrales secuenciales (`/rstk01`, `/rstk02`, etc.) para
+evitar rutas automaticas tipo `/sitio-01` o colisiones entre paginas nuevas. La
+ruta legacy del sitio
 `/<site-slug>` se conserva por compatibilidad y abre la landing como antes. La
 ruta predeterminada del dominio puede apuntar a un sitio completo o a una pagina
-especifica (`siteId + pageId`), configurada desde el editor con la estrella del
-menu de tres puntos de la pagina.
+especifica (`siteId + pageId`): cuando apunta a una pagina, esa pagina abre en
+la raiz del dominio (`https://dominio/`) y su slug propio sigue resolviendo como
+ruta directa. Se puede configurar desde Dominios con el selector de pagina
+oficial, desde Ajustes del editor o con la estrella del menu de tres puntos de la
+pagina; las acciones del editor deben confirmar escribiendo la URL raiz del
+dominio.
 Cuando Meta ya tiene dataset/pixel y token guardado, los sitios nuevos activan
 Meta CAPI por default. Las landings nuevas y las paginas nuevas creadas dentro de
 una landing existente nacen con solo `PageView` al aterrizar la pagina (browser

@@ -2536,9 +2536,30 @@ const getDefaultPublicRoutePageId = (site: PublicSite | null | undefined, domain
     ? domainConfig.defaultRoute?.pageId || ''
     : ''
 
+const isDefaultPublicRoutePage = (site: PublicSite | null | undefined, domainConfig: SitesDomainConfig, pageId: string) =>
+  Boolean(pageId && getDefaultPublicRoutePageId(site, domainConfig) === pageId)
+
 const getPublicDomainPreview = (domainConfig: SitesDomainConfig) => {
   const domain = domainConfig.domain.trim().replace(/^https?:\/\//i, '').replace(/\/+$/, '')
   return domain || 'www.ejemplo-de-tu-dominio.com'
+}
+
+const getConfiguredPublicDomain = (domainConfig: SitesDomainConfig) =>
+  domainConfig.domain.trim().replace(/^https?:\/\//i, '').replace(/\/+$/, '')
+
+const getPublicDomainRootUrl = (domainConfig: SitesDomainConfig) => {
+  const domain = getConfiguredPublicDomain(domainConfig)
+  return domain ? `https://${domain}/` : ''
+}
+
+const DOMAIN_ROOT_PAGE_VALUE_SEPARATOR = '::'
+
+const encodeDomainRootPageValue = (siteId: string, pageId: string) =>
+  `${siteId}${DOMAIN_ROOT_PAGE_VALUE_SEPARATOR}${pageId}`
+
+const decodeDomainRootPageValue = (value: string) => {
+  const [siteId = '', pageId = ''] = value.split(DOMAIN_ROOT_PAGE_VALUE_SEPARATOR)
+  return { siteId, pageId }
 }
 
 const getDefaultSiteNamePrefix = (siteType: SiteType) =>
@@ -4907,24 +4928,53 @@ const buildOrderedPageTree = (pages: SitePage[]): Array<{ page: SitePage; depth:
 // Segmentos reservados que NO pueden ser slug de una página: chocarían con el
 // marcador de bypass /test o con rutas internas del sitio público.
 const RESERVED_PAGE_SLUGS = new Set(['test', 'preview', 'api', 'webhook', 'pay', 'collect', 'assets'])
+const AUTO_PAGE_ROUTE_PREFIX = 'rstk'
+
+const formatAutoPageSlug = (index: number) =>
+  `${AUTO_PAGE_ROUTE_PREFIX}${String(index).padStart(2, '0')}`
+
+const getNextAutoPageSlug = (used: Set<string>) => {
+  let index = 1
+  let slug = formatAutoPageSlug(index)
+  while (used.has(slug) || RESERVED_PAGE_SLUGS.has(slug)) {
+    index += 1
+    slug = formatAutoPageSlug(index)
+  }
+  return slug
+}
+
+const getUniqueSiblingPageSlug = (rawSlug: string, used: Set<string>) => {
+  const baseSlug = normalizeRouteInput(rawSlug) || 'pagina'
+  if (!used.has(baseSlug) && !RESERVED_PAGE_SLUGS.has(baseSlug)) return baseSlug
+
+  let index = 2
+  let slug = `${baseSlug}-${index}`
+  while (used.has(slug) || RESERVED_PAGE_SLUGS.has(slug)) {
+    index += 1
+    slug = `${baseSlug}-${index}`
+  }
+  return slug
+}
 
 // Ensure every page has a slug unique among its siblings (same parent). Pages
-// whose slug is empty get one derived from their title. Used before saving a
-// routable landing (funnel o website) so las URLs limpias por página sean válidas.
-const ensureWebsiteSlugs = (pages: SitePage[]): SitePage[] => {
+// whose slug is empty get a neutral generated route (rstk01, rstk02...). Used
+// before saving a routable landing (funnel o website) so las URLs limpias por
+// página sean válidas sin heredar /sitio-01 ni títulos cambiantes.
+const ensureWebsiteSlugs = (pages: SitePage[], rootSlugReservations = new Set<string>()): SitePage[] => {
   const usedByParent = new Map<string, Set<string>>()
   return pages.map(page => {
     const parentKey = page.parentPageId || ''
     if (!usedByParent.has(parentKey)) usedByParent.set(parentKey, new Set())
     const used = usedByParent.get(parentKey) as Set<string>
-    let slug = normalizeRouteInput(page.slug || '') || normalizeRouteInput(page.title || '') || 'pagina'
-    if (used.has(slug) || RESERVED_PAGE_SLUGS.has(slug)) {
-      let i = 2
-      while (used.has(`${slug}-${i}`)) i += 1
-      slug = `${slug}-${i}`
-    }
+    const currentSlug = normalizeRouteInput(page.slug || '')
+    const autoUsed = parentKey === ''
+      ? new Set([...used, ...rootSlugReservations])
+      : used
+    const slug = currentSlug
+      ? getUniqueSiblingPageSlug(currentSlug, used)
+      : getNextAutoPageSlug(autoUsed)
     used.add(slug)
-    return page.slug === slug ? page : { ...page, slug }
+    return normalizeRouteInput(page.slug || '') === slug ? page : { ...page, slug }
   })
 }
 
@@ -4932,6 +4982,36 @@ const ensureWebsiteSlugs = (pages: SitePage[]): SitePage[] => {
 // derivado del título, o 'pagina'. Espeja pageSlugFor del backend.
 const getPageSlugSegment = (page: SitePage): string =>
   normalizeRouteInput(page.slug || '') || normalizeRouteInput(page.title || '') || 'pagina'
+
+const getRootPageSlugReservations = (sites: PublicSite[], currentSiteId: string) => {
+  const slugs = new Set<string>()
+  sites.forEach(site => {
+    if (site.id === currentSiteId || !isLanding(site) || isImportedHtmlSite(site)) return
+    normalizeFunnelPages(site)
+      .filter(page => !page.parentPageId)
+      .forEach(page => {
+        const slug = getPageSlugSegment(page)
+        if (slug) slugs.add(slug)
+      })
+  })
+  return slugs
+}
+
+const getNextPageSlugForParent = (
+  pages: SitePage[],
+  parentPageId = '',
+  rootSlugReservations = new Set<string>()
+) => {
+  const used = new Set<string>()
+  if (!parentPageId) rootSlugReservations.forEach(slug => used.add(slug))
+  pages
+    .filter(page => (page.parentPageId || '') === parentPageId)
+    .forEach(page => {
+      const slug = normalizeRouteInput(page.slug || '')
+      if (slug) used.add(slug)
+    })
+  return getNextAutoPageSlug(used)
+}
 
 // Cadena de slugs desde la raíz hasta la página (incluida), siguiendo parentPageId.
 // Se usa para construir el preview de la URL (jerárquica) en modo "Sitio web".
@@ -4953,6 +5033,9 @@ const getPageRoutePath = (pages: SitePage[], page: SitePage): string => {
   return `/${(chain.length ? chain : [getPageSlugSegment(page)]).join('/')}`
 }
 
+const getOfficialPageRoutePath = (site: PublicSite | null | undefined, domainConfig: SitesDomainConfig, pages: SitePage[], page: SitePage): string =>
+  isDefaultPublicRoutePage(site, domainConfig, page.id) ? '/' : getPageRoutePath(pages, page)
+
 const getPageRoutePrefix = (pages: SitePage[], page: SitePage): string => {
   const chain = getPageSlugChain(pages, page)
   const parentSegments = chain.slice(0, -1)
@@ -4966,7 +5049,7 @@ const buildLivePublicPageUrl = (
   page: SitePage,
   options: { noTrack?: boolean } = {}
 ) => {
-  const url = domainConfig.domain ? `https://${domainConfig.domain}${getPageRoutePath(pages, page)}` : ''
+  const url = domainConfig.domain ? `https://${domainConfig.domain}${getOfficialPageRoutePath(site, domainConfig, pages, page)}` : ''
   return options.noTrack ? appendNoTrackToUrl(url) : url
 }
 
@@ -10257,12 +10340,18 @@ export const Sites: React.FC = () => {
     }
   }
 
+  const getPageRootSlugReservationsForSite = (site: PublicSite) =>
+    getRootPageSlugReservations(sites, site.id)
+
+  const ensureSitePageSlugs = (site: PublicSite, nextPages: SitePage[]) =>
+    ensureWebsiteSlugs(nextPages, getPageRootSlugReservationsForSite(site))
+
   const persistFunnelPages = async (nextPages: SitePage[], nextActivePageId?: string) => {
     const site = selectedSiteRef.current || selectedSite
     if (!site || !hasEditablePages(site)) return
     const beforePages = normalizeFunnelPages(site)
     const orderedPages = getOrderedPagesForSite(site, nextPages)
-    const finalPages = (isLanding(site) && !isImportedHtmlSite(site)) ? ensureWebsiteSlugs(orderedPages) : orderedPages
+    const finalPages = (isLanding(site) && !isImportedHtmlSite(site)) ? ensureSitePageSlugs(site, orderedPages) : orderedPages
     const normalizedBeforePages = normalizePagesForSave(beforePages)
     const normalizedAfterPages = normalizePagesForSave(finalPages)
     const targetPageId = nextActivePageId || activePageId
@@ -10338,9 +10427,12 @@ export const Sites: React.FC = () => {
 
   const handleAddPage = () => {
     if (!selectedSite || !hasEditablePages(selectedSite) || !canManagePages(selectedSite)) return
+    const pageSlug = isLanding(selectedSite) && !isImportedHtmlSite(selectedSite)
+      ? getNextPageSlugForParent(pages, '', getPageRootSlugReservationsForSite(selectedSite))
+      : undefined
     const nextPage = withConnectedMetaDefaultsForNewPage(
       selectedSite,
-      makeFunnelPage(isStandardForm(selectedSite) ? getFormContentPages(pages).length : pages.length)
+      makeFunnelPage(isStandardForm(selectedSite) ? getFormContentPages(pages).length : pages.length, pageSlug ? { slug: pageSlug } : undefined)
     )
     const insertIndex = getFormAddPageIndex(selectedSite, pages)
     const nextPages = [
@@ -10356,9 +10448,10 @@ export const Sites: React.FC = () => {
     if (getSitePageMode(selectedSite) !== 'website') return
     const parent = pages.find(page => page.id === parentId)
     if (!parent || getPageDepth(parent, pages) >= MAX_WEBSITE_PAGE_DEPTH) return
+    const pageSlug = getNextPageSlugForParent(pages, parentId, getPageRootSlugReservationsForSite(selectedSite))
     const nextPage = withConnectedMetaDefaultsForNewPage(
       selectedSite,
-      makeFunnelPage(pages.length, { parentPageId: parentId })
+      makeFunnelPage(pages.length, { parentPageId: parentId, slug: pageSlug })
     )
     nextPage.title = 'Subpagina'
     // Insert right after the parent's existing subtree so the flat order keeps subtrees contiguous.
@@ -10429,7 +10522,7 @@ export const Sites: React.FC = () => {
     if (!site || !isLanding(site) || isImportedHtmlSite(site)) return
     if (getSitePageMode(site) === mode) return
     const orderedPages = getOrderedPagesForSite(site, pages)
-    const finalPages = mode === 'website' ? ensureWebsiteSlugs(orderedPages) : orderedPages
+    const finalPages = mode === 'website' ? ensureSitePageSlugs(site, orderedPages) : orderedPages
     applySelectedSiteLocal({
       ...site,
       theme: {
@@ -10518,7 +10611,7 @@ export const Sites: React.FC = () => {
       ...pages.slice(endIndex)
     ]
     const orderedPages = getOrderedPagesForSite(site, nextPages)
-    const finalPages = websiteMode ? ensureWebsiteSlugs(orderedPages) : orderedPages
+    const finalPages = websiteMode ? ensureSitePageSlugs(site, orderedPages) : orderedPages
     const newRootId = idMap.get(pageId) as string
 
     const clonedBlocks: SiteBlock[] = []
@@ -10727,6 +10820,9 @@ export const Sites: React.FC = () => {
         || (siteType === 'interactive_form' ? 'interactive' : siteType === 'landing_page' ? 'ristak' : 'ristak')
       const siteIdentity = getNextSiteIdentity(siteType, sites)
       const templateDefaults = isBlank ? {} : getTemplateThemeDefaults(template, siteType)
+      const landingPages = isBlank
+        ? [makeTemplateFunnelPage(DEFAULT_FUNNEL_PAGE_ID, 'Página 1', 0)]
+        : getTemplateFunnelPages(template)
       let site = await sitesService.createSite({
         name: siteIdentity.name,
         siteType,
@@ -10752,9 +10848,7 @@ export const Sites: React.FC = () => {
                 pageMaxWidth: templateDefaults.pageMaxWidth ?? 1440,
                 pageMode: isBlank ? 'website' : 'funnel',
                 pages: normalizePagesForSave(
-                  isBlank
-                    ? [makeTemplateFunnelPage(DEFAULT_FUNNEL_PAGE_ID, 'Página 1', 0)]
-                    : getTemplateFunnelPages(template)
+                  ensureWebsiteSlugs(landingPages, getRootPageSlugReservations(sites, ''))
                 )
               }
             : siteType === 'interactive_form'
@@ -11250,7 +11344,63 @@ export const Sites: React.FC = () => {
     }
   }
 
-  const handleSetDefaultDomainPageRoute = async (pageId: string) => {
+  const applyDefaultDomainPageRoute = async (siteToUpdate: PublicSite, page: SitePage) => {
+    try {
+      const result = await sitesService.setDefaultDomainRoute(siteToUpdate.id, page.id)
+      setDomainConfig(result)
+      showToast(
+        'success',
+        'Página oficial actualizada',
+        `${page.title || siteToUpdate.name} abrirá directo en ${getPublicDomainRootUrl(result) || 'la raíz del dominio'}.`
+      )
+    } catch (error) {
+      showToast('error', 'Error', error instanceof Error ? error.message : 'No se pudo establecer la página como oficial')
+    }
+  }
+
+  const handleSetDefaultDomainPageRouteForSite = async (
+    siteToUpdate: PublicSite,
+    pageId: string,
+    options: { confirm?: boolean } = {}
+  ) => {
+    if (!siteToUpdate || !hasEditablePages(siteToUpdate)) return
+    const currentPages = normalizeFunnelPages(siteToUpdate)
+    const page = currentPages.find(item => item.id === pageId)
+    if (!page) {
+      showToast('error', 'Página no encontrada', 'Guarda o recarga el sitio antes de marcarla como oficial.')
+      return
+    }
+
+    if (isDefaultPublicRoutePage(siteToUpdate, domainConfig, page.id)) {
+      showToast('info', 'Ya es la página oficial', `${page.title || siteToUpdate.name} ya abre en la raíz del dominio.`)
+      return
+    }
+
+    if (options.confirm) {
+      const rootUrl = getPublicDomainRootUrl(domainConfig)
+      if (!rootUrl) {
+        showToast('warning', 'Dominio requerido', 'Configura el dominio público antes de elegir la página oficial.')
+        return
+      }
+
+      showConfirm(
+        'Hacer página oficial',
+        `La raíz ${rootUrl} abrirá "${page.title || siteToUpdate.name}". Las demás páginas seguirán usando rutas como /pricing, /us o /home.`,
+        async () => {
+          await applyDefaultDomainPageRoute(siteToUpdate, page)
+        },
+        'Hacer oficial',
+        'Cancelar',
+        undefined,
+        { typeToConfirm: rootUrl }
+      )
+      return
+    }
+
+    await applyDefaultDomainPageRoute(siteToUpdate, page)
+  }
+
+  const handleSetDefaultDomainPageRoute = async (pageId: string, options: { confirm?: boolean } = { confirm: true }) => {
     const siteToUpdate = selectedSiteRef.current || selectedSite
     if (!siteToUpdate || !hasEditablePages(siteToUpdate)) return
 
@@ -11258,20 +11408,16 @@ export const Sites: React.FC = () => {
     if (!saved) return
 
     const currentSite = selectedSiteRef.current || siteToUpdate
-    const currentPages = normalizeFunnelPages(currentSite)
-    const page = currentPages.find(item => item.id === pageId)
-    if (!page) {
-      showToast('error', 'Página no encontrada', 'Guarda o recarga el sitio antes de marcarla como predeterminada.')
+    await handleSetDefaultDomainPageRouteForSite(currentSite, pageId, options)
+  }
+
+  const handleSetDefaultDomainPageRouteFromDomain = async (siteId: string, pageId: string) => {
+    const siteToUpdate = sites.find(site => site.id === siteId)
+    if (!siteToUpdate) {
+      showToast('error', 'Sitio no encontrado', 'Recarga la lista antes de elegir la página oficial.')
       return
     }
-
-    try {
-      const result = await sitesService.setDefaultDomainRoute(currentSite.id, page.id)
-      setDomainConfig(result)
-      showToast('success', 'Ruta predeterminada actualizada', `${page.title || currentSite.name} abrirá al entrar al dominio principal.`)
-    } catch (error) {
-      showToast('error', 'Error', error instanceof Error ? error.message : 'No se pudo establecer la página como predeterminada')
-    }
+    await handleSetDefaultDomainPageRouteForSite(siteToUpdate, pageId)
   }
 
   const handleOpenEditorPageRoute = async (pageId: string) => {
@@ -13038,6 +13184,9 @@ export const Sites: React.FC = () => {
                         onSaveSite={saveEditorToolbarSettingsSite}
                         onOpenSeo={() => setSeoModalOpen(true)}
                         onOpenHeader={() => setHeaderModalOpen(current => !current)}
+                        onMakeActivePageOfficial={editorToolbarSettingsActivePage
+                          ? () => { void handleSetDefaultDomainPageRoute(editorToolbarSettingsActivePage.id, { confirm: true }) }
+                          : undefined}
                       />
                     </div>
                   )}
@@ -13176,6 +13325,9 @@ export const Sites: React.FC = () => {
                   onSaveSite={saveLibrarySettingsSite}
                   onOpenSeo={() => setLibrarySettingsSeoOpen(true)}
                   onOpenHeader={() => setLibrarySettingsHeaderOpen(true)}
+                  onMakeActivePageOfficial={librarySettingsActivePage
+                    ? () => { void handleSetDefaultDomainPageRouteForSite(librarySettingsSite, librarySettingsActivePage.id, { confirm: true }) }
+                    : undefined}
                   onBeforeOpenNested={() => setLibrarySettingsModalOpen(false)}
                 />
               )}
@@ -13278,6 +13430,7 @@ export const Sites: React.FC = () => {
               <DomainsPanel
                 domainConfig={domainConfig}
                 domainInput={domainInput}
+                sites={landings}
                 verifying={verifying}
                 onDomainChange={(value) => {
                   setDomainInput(value)
@@ -13289,6 +13442,7 @@ export const Sites: React.FC = () => {
                   }))
                 }}
                 onVerifyDomain={handleVerifyDomain}
+                onDefaultPageRouteChange={(siteId, pageId) => { void handleSetDefaultDomainPageRouteFromDomain(siteId, pageId) }}
               />
             ) : editorRouteLoading ? (
               <EditorRouteLoadingWorkspace
@@ -27282,6 +27436,7 @@ const SiteSettingsPanelContent: React.FC<{
   onSaveSite: () => void | Promise<void>
   onOpenSeo: () => void
   onOpenHeader: () => void
+  onMakeActivePageOfficial?: () => void
   onBeforeOpenNested?: () => void
 }> = ({
   site,
@@ -27305,10 +27460,14 @@ const SiteSettingsPanelContent: React.FC<{
   onSaveSite,
   onOpenSeo,
   onOpenHeader,
+  onMakeActivePageOfficial,
   onBeforeOpenNested
 }) => {
   const publicDomain = getPublicDomainPreview(domainConfig)
   const routePreview = `${publicDomain}/${routeValue || routePlaceholder}`
+  const rootUrl = getPublicDomainRootUrl(domainConfig)
+  const activePageIsOfficial = activePage ? isDefaultPublicRoutePage(site, domainConfig, activePage.id) : false
+  const canUseOfficialRootPage = isLanding(site) && !isImportedHtmlSite(site) && hasEditablePages(site) && Boolean(activePage)
   const antiTrackingEnabled = site.antiTrackingEnabled !== false
   const showFormSubmitMetaSettings = hasFormSubmitMetaSettings ?? (metaDetectedForms.length > 0 || isFormSite(site))
   const formSurfaces = showFormSubmitMetaSettings
@@ -27353,6 +27512,31 @@ const SiteSettingsPanelContent: React.FC<{
           <span>{routePreview}</span>
         </div>
       </section>
+
+      {canUseOfficialRootPage && (
+        <section className={styles.editorSettingsSection}>
+          <div className={styles.editorSettingsSectionHeader}>
+            <span className={styles.editorSettingsSectionIcon}><Star size={15} fill={activePageIsOfficial ? 'currentColor' : 'none'} /></span>
+            <div>
+              <strong>Página oficial</strong>
+              <small>
+                {activePageIsOfficial
+                  ? `${rootUrl || 'La raíz del dominio'} ya abre esta página`
+                  : rootUrl
+                    ? `Haz que ${rootUrl} abra esta página`
+                    : 'Configura un dominio para usar la raíz'}
+              </small>
+            </div>
+            <button
+              type="button"
+              disabled={disabled || activePageIsOfficial || !rootUrl || !onMakeActivePageOfficial}
+              onClick={onMakeActivePageOfficial}
+            >
+              {activePageIsOfficial ? 'Oficial' : 'Hacer oficial'}
+            </button>
+          </div>
+        </section>
+      )}
 
       <section className={styles.editorSettingsSection}>
         <div className={styles.editorSettingsFlatRow}>
@@ -27457,6 +27641,7 @@ const EditorSettingsDropdown: React.FC<{
   onSaveSite: () => void | Promise<void>
   onOpenSeo: () => void
   onOpenHeader: () => void
+  onMakeActivePageOfficial?: () => void
 }> = (props) => {
   const [open, setOpen] = useState(false)
   const dropdownRef = useRef<HTMLDivElement | null>(null)
@@ -27972,13 +28157,15 @@ const FunnelPagesPanel: React.FC<FunnelPagesPanelProps> = ({
                       : ''
                   // Preview + editor de ruta por página (landings ruteables: embudo y web).
                   const isHomePage = routeEditable && page.id === homePageId
-                  const routePreview = routeEditable ? getPageRoutePath(pages, page) : ''
-                  const slugPrefix = routeEditable ? getPageRoutePrefix(pages, page) : ''
                   const isDefaultRoutePage = routeEditable && (
                     defaultRoutePageId
                       ? page.id === defaultRoutePageId
                       : siteDefaultWithoutPage && isHomePage
                   )
+                  const routePreview = routeEditable
+                    ? isDefaultRoutePage ? '/' : getPageRoutePath(pages, page)
+                    : ''
+                  const slugPrefix = routeEditable ? getPageRoutePrefix(pages, page) : ''
 
                   return (
                     <FunnelPageDropdownItem
@@ -28322,7 +28509,7 @@ const FunnelPageDropdownItem: React.FC<FunnelPageDropdownItemProps> = ({
                     }}
                   >
                     <Star size={14} fill={isDefaultRoutePage ? 'currentColor' : 'none'} />
-                    {isDefaultRoutePage ? 'Ya es predeterminada' : 'Hacer predeterminada'}
+                    {isDefaultRoutePage ? 'Ya es oficial' : 'Hacer oficial'}
                   </DropdownMenuItem>
                 )}
                 <DropdownMenuItem
@@ -28362,7 +28549,7 @@ const FunnelPageDropdownItem: React.FC<FunnelPageDropdownItemProps> = ({
           </button>
           <span>{routePreview}</span>
           {isDefaultRoutePage && (
-            <span className={styles.pagesDropdownRouteDefaultIcon} title="Ruta predeterminada">
+            <span className={styles.pagesDropdownRouteDefaultIcon} title="Página oficial">
               <Star size={12} fill="currentColor" />
             </span>
           )}
@@ -40199,23 +40386,32 @@ const SitesAnalyticsPanel: React.FC<SitesAnalyticsPanelProps> = ({
 interface DomainsPanelProps {
   domainConfig: SitesDomainConfig
   domainInput: string
+  sites: PublicSite[]
   verifying: boolean
   onDomainChange: (value: string) => void
   onVerifyDomain: () => void
+  onDefaultPageRouteChange: (siteId: string, pageId: string) => void
 }
 
 const DomainsPanel: React.FC<DomainsPanelProps> = ({
   domainConfig,
   domainInput,
+  sites,
   verifying,
   onDomainChange,
-  onVerifyDomain
+  onVerifyDomain,
+  onDefaultPageRouteChange
 }) => {
   const domainStatus: { label: string; variant: BadgeVariant } = !domainConfig.domain
     ? { label: 'Sin dominio', variant: 'neutral' }
     : domainConfig.renderDomainVerified
       ? { label: 'Verificado', variant: 'success' }
       : { label: 'Pendiente', variant: 'warning' }
+  const selectedRootPageValue = domainConfig.defaultRoute?.siteId && domainConfig.defaultRoute?.pageId
+    ? encodeDomainRootPageValue(domainConfig.defaultRoute.siteId, domainConfig.defaultRoute.pageId)
+    : ''
+  const routableSites = sites.filter(site => isLanding(site) && !isImportedHtmlSite(site) && hasEditablePages(site))
+  const rootUrl = getPublicDomainRootUrl({ ...domainConfig, domain: domainInput || domainConfig.domain })
 
   return (
     <section className={styles.dataPanel}>
@@ -40236,6 +40432,36 @@ const DomainsPanel: React.FC<DomainsPanelProps> = ({
             onChange={(event) => onDomainChange(event.target.value)}
           />
         </label>
+        <label className={styles.field}>
+          <span>Página oficial del dominio</span>
+          <CustomSelect
+            value={selectedRootPageValue}
+            onChange={(event) => {
+              const { siteId, pageId } = decodeDomainRootPageValue(event.target.value)
+              if (siteId && pageId) onDefaultPageRouteChange(siteId, pageId)
+            }}
+            disabled={!domainInput.trim() || routableSites.length === 0}
+            portal
+          >
+            <option value="">Selecciona una página</option>
+            {routableSites.map(site => {
+              const sitePages = normalizeFunnelPages(site)
+              return (
+                <optgroup key={site.id} label={site.name}>
+                  {buildOrderedPageTree(sitePages).map(({ page, depth }) => (
+                    <option key={page.id} value={encodeDomainRootPageValue(site.id, page.id)}>
+                      {`${'  '.repeat(depth)}${page.title || 'Página'} · ${getPageRoutePath(sitePages, page)}`}
+                    </option>
+                  ))}
+                </optgroup>
+              )
+            })}
+          </CustomSelect>
+        </label>
+        <p className={styles.customFieldHint}>
+          La página elegida abre directo en <code>{rootUrl || 'https://www.tudominio.com/'}</code>.
+          Las demás páginas siguen usando rutas raíz como <code>/pricing</code>, <code>/us</code> o <code>/home</code>.
+        </p>
         {domainConfig.renderDomainError && <p className={styles.domainError}>{domainConfig.renderDomainError}</p>}
         <div className={styles.editorActions}>
           <Button onClick={onVerifyDomain} loading={verifying} disabled={!domainInput.trim()}>

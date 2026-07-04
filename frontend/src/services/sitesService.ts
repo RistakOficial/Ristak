@@ -752,6 +752,7 @@ export interface SitesDomainConfig {
     siteId: string
     pageId?: string
     pageTitle?: string
+    pagePath?: string
     name: string
     slug: string
     siteType: SiteType
