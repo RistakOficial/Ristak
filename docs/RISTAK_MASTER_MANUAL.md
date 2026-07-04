@@ -1374,6 +1374,11 @@ perfil de la app principal debe incluir Push Notifications y Communication
 Notifications (`com.apple.developer.usernotifications.communication`) para que
 las push puedan mostrar el avatar del contacto como remitente; la extension
 mantiene su propio perfil para modificar el payload antes de mostrarlo.
+En Android, el binario necesita `frontend/android/app/google-services.json` fuera
+de Git y el envio puede resolverse por FCM local o por Ristak Installer central.
+Si el portal central reporta Android configurado, la instalacion cliente debe
+delegar al Installer los tokens Android cuando no tenga FCM local, igual que con
+iOS/APNs central.
 
 ## Licenciamiento y distribucion
 

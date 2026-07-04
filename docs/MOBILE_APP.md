@@ -58,6 +58,7 @@ evitar teclados claros sobre pantallas oscuras o cortes de color detras del IME.
 - Web/Android de una sola instalación: `VITE_API_URL` apuntando al backend público HTTPS antes de construir el binario.
 - iOS multi-cliente: `VITE_INSTALLER_API_URL` puede apuntar al portal central; si falta usa `https://www.ristak.com`.
 - Android: `frontend/android/app/google-services.json` del proyecto Firebase.
+  Este archivo vive fuera de Git y debe pertenecer al paquete `com.ristak.app`.
 - iOS: activar la capability Push Notifications en Xcode y configurar APNs.
 
 ## Comandos
@@ -227,10 +228,22 @@ WEB_PUSH_SUBJECT=mailto:soporte@ristak.com
 
 Android nativo:
 
+En produccion managed, la ruta recomendada es que Ristak Installer concentre las
+credenciales de envio FCM y reporte `androidConfigured=true` en
+`/api/license/mobile-push/status`; entonces la instalacion cliente registra el
+token del celular y delega el envio al portal central. Si una instalacion
+standalone necesita enviar Android sin Installer, debe configurar FCM localmente
+en su backend.
+
 ```bash
 FCM_PROJECT_ID=
 FCM_SERVICE_ACCOUNT_JSON=
 ```
+
+`FCM_SERVICE_ACCOUNT_JSON` es secreto de servidor y nunca debe commitearse. El
+`google-services.json` de Android tampoco se commitea en este repo; se coloca en
+`frontend/android/app/google-services.json` antes de compilar el binario de
+tienda.
 
 iOS nativo:
 

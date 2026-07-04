@@ -222,7 +222,7 @@ if (pushConfigured) {
 }
 
 if (!nativePushConfigured) {
-  logger.warn('[Push] Push nativo local sin FCM/APNs; iPhone puede enviarse por Installer central si APNs esta configurado alla.')
+  logger.warn('[Push] Push nativo local sin FCM/APNs; los celulares pueden enviarse por Installer central si el proveedor esta configurado alla.')
 }
 
 function safeJsonParse(value, fallback) {
@@ -1503,16 +1503,21 @@ async function sendMobileNotificationRows(rows = [], payload = {}, experience = 
   let sent = 0
   const centralDevices = []
   const centralRowsById = new Map()
-  const centralIosConfigured = transport?.central?.iosConfigured === true
+
+  const shouldSendThroughCentral = (platform) => {
+    if (platform === 'ios') return !apnsConfigured && transport?.central?.iosConfigured === true
+    if (platform === 'android') return !fcmConfigured && transport?.central?.androidConfigured === true
+    return false
+  }
 
   await Promise.all(rows.map(async (row) => {
     const platform = normalizePlatform(row.platform)
     const rowExperience = await resolveExperienceForRow(experience, row) // (MOB-006) por usuario
 
-    if (platform === 'ios' && !apnsConfigured && centralIosConfigured) {
+    if (shouldSendThroughCentral(platform)) {
       centralDevices.push({
         id: row.id,
-        platform: 'ios',
+        platform,
         token: row.token,
         experience: rowExperience
       })
@@ -1544,7 +1549,7 @@ async function sendMobileNotificationRows(rows = [], payload = {}, experience = 
       sent += Number(result?.sent || 0)
       await markCentralMobileDeviceResults(centralRowsById, Array.isArray(result?.results) ? result.results : [])
     } catch (error) {
-      logger.warn(`[Push] No se pudo enviar iOS por Installer central: ${error.message}`)
+      logger.warn(`[Push] No se pudo enviar notificacion nativa por Installer central: ${error.message}`)
       await Promise.all(Array.from(centralRowsById.values()).map((row) => markMobileDeviceError(row, error)))
     }
   }

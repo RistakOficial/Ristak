@@ -48,13 +48,13 @@ function getBrowserNotificationTarget() {
 function getNativePushConfigurationError(config: WebPushPublicConfig | null) {
   const platform = mobileAppService.getPlatform()
   if (platform === 'ios' && !config?.iosConfigured) {
-    return 'El servidor todavía no tiene APNs configurado para iPhone. Revisa APNS_KEY_ID, APNS_TEAM_ID, APNS_PRIVATE_KEY y APNS_ENV en Render.'
+    return 'Las notificaciones de iPhone todavía no están preparadas para esta instalación. Avísale al administrador para terminar la configuración de la app móvil.'
   }
   if (platform === 'android' && !config?.androidConfigured) {
-    return 'El servidor todavía no tiene Firebase Cloud Messaging configurado para Android. Revisa FCM_PROJECT_ID y FCM_SERVICE_ACCOUNT_JSON en Render.'
+    return 'Las notificaciones de Android todavía no están preparadas para esta instalación. Avísale al administrador para terminar la configuración de la app móvil.'
   }
   if (!config?.nativeConfigured) {
-    return 'El servidor todavía no tiene notificaciones nativas configuradas.'
+    return 'Las notificaciones de la app móvil todavía no están preparadas para esta instalación. Avísale al administrador para terminar la configuración.'
   }
   return ''
 }
