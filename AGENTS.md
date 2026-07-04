@@ -34,9 +34,13 @@
 - **ALTO antes de tocar UI.** Antes de crear o modificar CUALQUIER pantalla,
   componente, estilo o función con interfaz del frontend de escritorio:
   1. Lee **`docs/DESIGN_SYSTEM.md`** completo (reglas estrictas / lista de rechazo).
-  2. Abre **`docs/design-reference/design-system.html`** en un navegador y mira
-     cómo se ve ese componente/pantalla (4 familias, claro/oscuro, todas las
-     pantallas y componentes). Tu UI nueva debe parecerse a eso.
+  2. Abre **`docs/design-reference/design-system.html`** en el navegador
+     interno/aislado del agente (en Codex: `browser:control-in-app-browser` /
+     Browser in-app). **No abras Google Chrome ni el navegador personal del
+     usuario** para esta revisión salvo
+     que el usuario lo pida explícitamente. Si `file://` queda bloqueado, sirve
+     `docs/design-reference/` por `127.0.0.1` desde el worktree y abre esa URL en
+     el navegador interno.
   3. Reutiliza los componentes de `frontend/src/components/common/` y los **tokens**
      de `frontend/src/styles/index.css`. No inventes estilos.
 - **No negociable** (detalle en `docs/DESIGN_SYSTEM.md`): nada de hex/rgba

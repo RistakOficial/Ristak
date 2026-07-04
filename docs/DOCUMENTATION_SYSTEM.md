@@ -113,7 +113,9 @@ de `backend/test/metaPaymentPurchaseEvent.test.mjs`.
 Antes de cerrar una tarea:
 
 - `git diff --check` no debe reportar whitespace roto.
-- Si tocaste UI desktop, `cd frontend && npm run design:audit`.
+- Si tocaste UI desktop, abre la referencia visual en el navegador interno/aislado
+  del agente (no Google Chrome ni el navegador personal del usuario) y corre
+  `cd frontend && npm run design:audit`.
 - Si tocaste moneda/currency/importes, confirma que los defaults salgan de
   `account_currency` segun `docs/CURRENCY_GUIDELINES.md`.
 - Si tocaste TypeScript frontend, `cd frontend && npm run typecheck`.

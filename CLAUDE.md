@@ -13,9 +13,13 @@ nueva DEBE usarlo — no hay excepción de "es nueva".
 
 1. Lee **[`docs/DESIGN_SYSTEM.md`](docs/DESIGN_SYSTEM.md)** completo (reglas
    estrictas + lista de rechazo en review).
-2. Abre **`docs/design-reference/design-system.html`** en un navegador y mira
-   cómo debe verse ese componente/pantalla (las 4 familias de tema
-   Aurora/Onyx/Brut/Nimbus, claro/oscuro, todos los componentes y pantallas).
+2. Abre **`docs/design-reference/design-system.html`** en el navegador
+   interno/aislado disponible para el agente; **no abras Google Chrome ni el
+   navegador personal del usuario** salvo que el usuario lo pida explícitamente.
+   Si `file://` queda bloqueado, sirve `docs/design-reference/` por `127.0.0.1`
+   desde el worktree y abre esa URL interna. Mira cómo debe verse ese
+   componente/pantalla (las 4 familias de tema Aurora/Onyx/Brut/Nimbus,
+   claro/oscuro, todos los componentes y pantallas).
    **Si tu UI no se parece a eso, está mal.**
 3. Reutiliza los componentes de `frontend/src/components/common/` y los **tokens**
    de `frontend/src/styles/index.css`. **No inventes estilos.**

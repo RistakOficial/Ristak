@@ -5,9 +5,13 @@
 > Si vas a crear o modificar **cualquier** pantalla, componente, estilo o
 > función que tenga interfaz, **es OBLIGATORIO** que:
 >
-> 1. **Abras `docs/design-reference/design-system.html`** en un navegador y veas
->    cómo se ve el componente/pantalla que vas a tocar (ahí está TODO: los 4
->    temas, todos los componentes y todas las pantallas en claro y oscuro).
+> 1. **Abras `docs/design-reference/design-system.html`** en el navegador
+>    interno/aislado del agente y veas cómo se ve el componente/pantalla que vas a
+>    tocar (ahí está TODO: los 4 temas, todos los componentes y todas las pantallas
+>    en claro y oscuro). **No uses Google Chrome ni el navegador personal del
+>    usuario** salvo que el usuario lo pida explícitamente. Si `file://` queda
+>    bloqueado, sirve `docs/design-reference/` por `127.0.0.1` desde el worktree y
+>    abre esa URL en el navegador interno.
 > 2. **Reutilices** los componentes de `frontend/src/components/common/` y los
 >    **tokens** de `frontend/src/styles/index.css`. No inventes nada.
 > 3. **Pruebes tu cambio en las 4 familias × claro/oscuro** antes de darlo por
@@ -21,7 +25,8 @@
 > de "es una función nueva": las funciones nuevas también usan el diseño global.
 
 La referencia visual vive en **[`docs/design-reference/`](design-reference/)**
-(ábrela). El código que la implementa vive en `frontend/src/styles/index.css`
+(ábrela en el navegador interno/aislado del agente). El código que la implementa
+vive en `frontend/src/styles/index.css`
 (tokens) y `frontend/src/components/common/` (componentes). **Referencia = el
 "qué/por qué"; código = el "cómo". Si tu pantalla no se parece a la referencia,
 está mal.**
@@ -53,7 +58,7 @@ con variantes de color y modo claro/oscuro. El **default es Aurora · Neutral**.
 
 | Pieza | Archivo |
 | --- | --- |
-| **Referencia visual (ÁBRELA)** | `docs/design-reference/design-system.html` |
+| **Referencia visual (ábrela en navegador interno)** | `docs/design-reference/design-system.html` |
 | Núcleo de tokens + 4 familias + capa de compatibilidad | `frontend/src/styles/index.css` (bloque "SISTEMA DE DISEÑO GLOBAL" al final) |
 | Motor de temas (familia/variante/modo) | `frontend/src/contexts/ThemeContext.tsx` |
 | Componentes compartidos | `frontend/src/components/common/` |
@@ -311,7 +316,8 @@ una isla.
 
 ## 8. Checklist antes de mergear UI nueva
 
-1. Abriste `docs/design-reference/design-system.html` y tu pantalla se le parece.
+1. Abriste `docs/design-reference/design-system.html` en el navegador
+   interno/aislado del agente y tu pantalla se le parece.
 2. `<PageContainer>` + `<PageHeader>`; secciones con `gap` ~18px.
 3. Solo componentes/recipes globales (§4). Cero `<button>`/`<table>`/modal a mano.
 4. Buscadores nuevos con `<SearchField>` o componente especializado; nada de icono

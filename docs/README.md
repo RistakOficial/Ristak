@@ -64,6 +64,9 @@ Todo agente que modifique Ristak debe:
 3. Actualizar el documento correcto en la misma rama del cambio.
 4. No escribir secretos reales, tokens, passwords ni credenciales en docs.
 5. En el resumen final, decir que documentacion se actualizo o por que no aplicaba.
+6. Si una regla pide abrir `docs/design-reference/design-system.html`, usar el
+   navegador interno/aislado del agente; no usar Google Chrome ni el navegador
+   personal del usuario salvo peticion explicita.
 
 Si se agrega un modulo nuevo y no encaja en los documentos actuales, crea una
 ruta bajo `docs/<dominio>/<tema>.md`, enlazala aqui y explica en
