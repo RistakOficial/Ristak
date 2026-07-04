@@ -4284,8 +4284,19 @@
   pointer-events: none;
 }
 
+.messageInfoSwipeCueReply {
+  right: auto;
+  left: 4px;
+  color: var(--phone-chat-text-on-primary);
+  background: var(--phone-chat-accent);
+}
+
 .messageSwipeWrapActive .messageInfoSwipeCue {
   opacity: 1;
+  transform: translateY(-50%) scale(1);
+}
+
+.messageSwipeWrapActiveReply .messageInfoSwipeCue {
   transform: translateY(-50%) scale(1);
 }
 

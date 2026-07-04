@@ -145,6 +145,11 @@ Para enviar fotos por WhatsApp, el backend debe estar publicado en HTTPS porque 
   (`max-width: 100%`, `min-width: 0`, `box-sizing: border-box`) y evita minimos
   basados en `vw` que puedan sumar padding/bordes y abrir scroll horizontal en
   respuestas salientes.
+- **Swipe de comentarios en el chat móvil:** deslizar un comentario FB/IG hacia
+  la derecha debe activar la misma respuesta publica al comentario que el boton
+  "Responder en la publicacion". El swipe hacia la izquierda conserva la ficha de
+  info del mensaje; no cruces ambos comportamientos ni uses ese gesto para mandar
+  DM privado.
 - **"No cambió nada" casi siempre es el build/deploy, no el código.** `/movil`
   corre un **build estático**: la web la sirve Render tras `push → workflow
   docker-image → deploy` (~2–3 min, ver `docs/DEPLOY-RENDER.md`), y la app nativa

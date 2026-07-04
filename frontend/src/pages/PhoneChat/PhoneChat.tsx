@@ -274,6 +274,7 @@ const MESSAGE_INFO_SWIPE_ACTION_WIDTH = 46
 const MESSAGE_INFO_SWIPE_OPEN_THRESHOLD = 38
 const MESSAGE_INFO_SWIPE_ACTIVATE_THRESHOLD = 9
 const MESSAGE_INFO_SWIPE_RENDER_STEP = 2
+type MessageSwipeAction = 'info' | 'commentReply'
 const MESSAGE_ACTION_LONG_PRESS_MS = 460
 const MESSAGE_ACTION_MOVE_TOLERANCE = 9
 const MAX_VOICE_MESSAGE_BYTES = 16 * 1024 * 1024
@@ -918,6 +919,8 @@ interface MessageInfoSwipeGesture {
   offset: number
   lastRenderedOffset: number
   active: boolean
+  action: MessageSwipeAction | null
+  commentReplyAvailable: boolean
 }
 
 interface MessageActionMenuState {
@@ -940,6 +943,13 @@ interface MessageActionPressGesture {
   startX: number
   startY: number
   timerId: number
+}
+
+interface CommentReplyTarget {
+  messageId: string
+  commentId: string
+  platform: 'instagram' | 'messenger'
+  preview: string
 }
 
 interface PhonePullReleasePayload {
@@ -2728,6 +2738,26 @@ function getMessageActionText(message: ChatMessage) {
   return getMessageAttachmentActionLabel(message) || 'Mensaje'
 }
 
+function canStartCommentPublicReply(message: ChatMessage) {
+  return Boolean(
+    message.isComment &&
+    message.direction === 'inbound' &&
+    !message.commentReplyMode &&
+    message.commentId
+  )
+}
+
+function buildCommentReplyTarget(message: ChatMessage): CommentReplyTarget | null {
+  if (!canStartCommentPublicReply(message) || !message.commentId) return null
+
+  return {
+    messageId: message.id,
+    commentId: message.commentId,
+    platform: message.commentPlatform || 'messenger',
+    preview: getMessageActionText(message).replace(/\s+/g, ' ').trim().slice(0, 60)
+  }
+}
+
 async function copyTextToClipboard(text: string) {
   if (navigator.clipboard?.writeText) {
     await navigator.clipboard.writeText(text)
@@ -3918,9 +3948,9 @@ export const PhoneChat: React.FC = () => {
   const [commentsView, setCommentsView] = useState(false)
   const [commentsPlatform, setCommentsPlatform] = useState<'all' | 'facebook' | 'instagram'>('all')
   // La barra SIEMPRE manda privado. Responder PÚBLICO a un comentario es una
-  // acción explícita: el botón de la tarjeta fija este target y la barra entra en
-  // modo "respuesta pública" (con banner cancelable).
-  const [commentReplyTarget, setCommentReplyTarget] = useState<{ messageId: string; commentId: string; platform: 'instagram' | 'messenger'; preview: string } | null>(null)
+  // acción explícita: el botón o swipe derecho en la tarjeta fijan este target y
+  // la barra entra en modo "respuesta pública" (con banner cancelable).
+  const [commentReplyTarget, setCommentReplyTarget] = useState<CommentReplyTarget | null>(null)
   const [socialProfiles, setSocialProfiles] = useState<LinkedSocialProfile[]>([])
   const [linkedSocialContacts, setLinkedSocialContacts] = useState<LinkedSocialContact[]>([])
   const [facebookCommentsEnabled] = useAppConfig<boolean>('meta_facebook_comments_enabled', false)
@@ -3989,7 +4019,7 @@ export const PhoneChat: React.FC = () => {
   const [conversationSearchIndex, setConversationSearchIndex] = useState(0)
   const [messageInfoOpen, setMessageInfoOpen] = useState(false)
   const [messageInfoMessageId, setMessageInfoMessageId] = useState<string | null>(null)
-  const [draggingMessageInfoSwipe, setDraggingMessageInfoSwipe] = useState<{ messageId: string; offset: number } | null>(null)
+  const [draggingMessageInfoSwipe, setDraggingMessageInfoSwipe] = useState<{ messageId: string; offset: number; action: MessageSwipeAction } | null>(null)
   const [messageActionMenu, setMessageActionMenu] = useState<MessageActionMenuState | null>(null)
   const [replyingToMessageId, setReplyingToMessageId] = useState<string | null>(null)
   const [messageText, setMessageText] = useState('')
@@ -8794,6 +8824,22 @@ export const PhoneChat: React.FC = () => {
     setContactInfoOpen(false)
   }, [actionSheetDismiss])
 
+  const startCommentPublicReply = useCallback((message: ChatMessage) => {
+    const target = buildCommentReplyTarget(message)
+    if (!target) return false
+
+    messageInfoSwipeGestureRef.current = null
+    setDraggingMessageInfoSwipe(null)
+    setCommentReplyTarget(target)
+    setReplyingToMessageId(null)
+    setMessageInfoOpen(false)
+    closeMessageActionMenu()
+    actionSheetDismiss.requestClose()
+    setContactInfoOpen(false)
+    window.requestAnimationFrame(() => composerInputRef.current?.focus())
+    return true
+  }, [actionSheetDismiss, closeMessageActionMenu])
+
   const handleMessageInfoTouchStart = (message: ChatMessage, event: React.TouchEvent<HTMLDivElement>) => {
     if (message.direction === 'system' || event.touches.length !== 1 || messageInfoOpen) return
 
@@ -8809,7 +8855,9 @@ export const PhoneChat: React.FC = () => {
       startY: touch.clientY,
       offset: 0,
       lastRenderedOffset: 0,
-      active: false
+      active: false,
+      action: null,
+      commentReplyAvailable: canStartCommentPublicReply(message)
     }
   }
 
@@ -8826,31 +8874,44 @@ export const PhoneChat: React.FC = () => {
     const deltaX = touch.clientX - gesture.startX
     const deltaY = touch.clientY - gesture.startY
     const horizontalDistance = Math.abs(deltaX)
+    const verticalDistance = Math.abs(deltaY)
 
     if (!gesture.active) {
-      if (deltaX >= 0 || horizontalDistance < MESSAGE_INFO_SWIPE_ACTIVATE_THRESHOLD || horizontalDistance <= Math.abs(deltaY)) return
+      if (horizontalDistance < MESSAGE_INFO_SWIPE_ACTIVATE_THRESHOLD || horizontalDistance <= verticalDistance) return
+      if (deltaX > 0 && !gesture.commentReplyAvailable) return
       gesture.active = true
+      gesture.action = deltaX > 0 ? 'commentReply' : 'info'
+      clearMessageActionPress()
     }
 
+    if (!gesture.action) return
+
     event.preventDefault()
+    const rawOffset = gesture.action === 'commentReply' ? deltaX : -deltaX
     const nextOffset = Math.round(Math.min(
       MESSAGE_INFO_SWIPE_ACTION_WIDTH,
-      Math.max(0, -deltaX)
+      Math.max(0, rawOffset)
     ))
 
     gesture.offset = nextOffset
     if (Math.abs(nextOffset - gesture.lastRenderedOffset) < MESSAGE_INFO_SWIPE_RENDER_STEP) return
     gesture.lastRenderedOffset = nextOffset
-    setDraggingMessageInfoSwipe({ messageId: gesture.messageId, offset: nextOffset })
+    setDraggingMessageInfoSwipe({ messageId: gesture.messageId, offset: nextOffset, action: gesture.action })
   }
 
   const handleMessageInfoTouchEnd = () => {
     const gesture = messageInfoSwipeGestureRef.current
     if (!gesture) return
 
-    if (gesture.active && gesture.offset >= MESSAGE_INFO_SWIPE_OPEN_THRESHOLD) {
+    if (gesture.active && gesture.offset >= MESSAGE_INFO_SWIPE_OPEN_THRESHOLD && gesture.action) {
       const message = messages.find((item) => item.id === gesture.messageId)
-      if (message) openMessageInfo(message)
+      if (message) {
+        if (gesture.action === 'commentReply') {
+          startCommentPublicReply(message)
+        } else {
+          openMessageInfo(message)
+        }
+      }
     }
 
     setDraggingMessageInfoSwipe(null)
@@ -12942,7 +13003,12 @@ export const PhoneChat: React.FC = () => {
               const isGifVideoMessage = isVideoMessage && Boolean(message.attachment?.isGif)
               const isFileMessage = Boolean(message.attachment && ['document', 'file'].includes(message.attachment.type))
               const hasRichAttachment = isAudioAttachment || isVideoMessage || isFileMessage
-              const messageSwipeOffset = draggingMessageInfoSwipe?.messageId === message.id ? draggingMessageInfoSwipe.offset : 0
+              const activeMessageSwipe = draggingMessageInfoSwipe?.messageId === message.id ? draggingMessageInfoSwipe : null
+              const messageSwipeOffset = activeMessageSwipe?.offset || 0
+              const messageSwipeAction = activeMessageSwipe?.action || 'info'
+              const messageSwipeTransform = messageSwipeOffset > 0
+                ? `translate3d(${messageSwipeAction === 'commentReply' ? '' : '-'}${messageSwipeOffset}px, 0, 0)`
+                : undefined
               const canOpenMessageInfo = message.direction !== 'system'
               const scheduled = message.direction === 'outbound' && isMessageScheduled(message)
               const scheduledCountdown = scheduled ? formatScheduledCountdown(message.scheduledAt, scheduledCountdownNow) : ''
@@ -12955,7 +13021,7 @@ export const PhoneChat: React.FC = () => {
                   key={message.id}
                   className={`${styles.messageRow} ${styles[`messageRow_${message.direction}`]}`}
                 >
-                  <div className={`${styles.messageSwipeWrap} ${scheduled ? styles.messageSwipeWrapScheduled : ''} ${messageSwipeOffset > 0 ? styles.messageSwipeWrapActive : ''}`}>
+                  <div className={`${styles.messageSwipeWrap} ${scheduled ? styles.messageSwipeWrapScheduled : ''} ${messageSwipeOffset > 0 ? styles.messageSwipeWrapActive : ''} ${messageSwipeAction === 'commentReply' ? styles.messageSwipeWrapActiveReply : ''}`}>
                     {scheduled && (
                       <span
                         className={styles.messageScheduleTimer}
@@ -12965,14 +13031,14 @@ export const PhoneChat: React.FC = () => {
                         {scheduledCountdown && <small>{scheduledCountdown}</small>}
                       </span>
                     )}
-                    <span className={styles.messageInfoSwipeCue} aria-hidden="true">
-                      <ReceiptText size={17} />
+                    <span className={`${styles.messageInfoSwipeCue} ${messageSwipeAction === 'commentReply' ? styles.messageInfoSwipeCueReply : ''}`} aria-hidden="true">
+                      {messageSwipeAction === 'commentReply' ? <Reply size={17} /> : <ReceiptText size={17} />}
                     </span>
                     <div
                       className={`${styles.messageBubble} ${styles.messageBubbleActionTarget} ${scheduled ? styles.messageBubbleScheduled : ''} ${isImageMessage ? styles.messageImageBubble : ''} ${isAudioMessage ? styles.messageAudioBubble : ''} ${isFileMessage ? styles.messageFileBubble : ''} ${messageSwipeOffset > 0 ? styles.messageBubbleSwipeDragging : ''} ${isSearchMatch ? styles.messageBubbleSearchMatch : ''} ${isActiveSearchMatch ? styles.messageBubbleSearchActive : ''} ${message.isComment ? styles.messageComment : ''}`}
                       data-chat-message-id={message.id}
                       data-chat-search-id={searchTargetId}
-                      style={messageSwipeOffset > 0 ? { transform: `translate3d(-${messageSwipeOffset}px, 0, 0)` } : undefined}
+                      style={messageSwipeTransform ? { transform: messageSwipeTransform } : undefined}
                       onPointerDown={canOpenMessageInfo ? (event) => handleMessageActionPointerDown(message, event) : undefined}
                       onPointerMove={canOpenMessageInfo ? handleMessageActionPointerMove : undefined}
                       onPointerUp={canOpenMessageInfo ? handleMessageActionPointerEnd : undefined}
@@ -13063,12 +13129,7 @@ export const PhoneChat: React.FC = () => {
                       <button
                         type="button"
                         className={styles.commentReplyButton}
-                        onClick={() => setCommentReplyTarget({
-                          messageId: message.id,
-                          commentId: message.commentId as string,
-                          platform: message.commentPlatform || 'messenger',
-                          preview: String(message.text || '').replace(/\s+/g, ' ').trim().slice(0, 60)
-                        })}
+                        onClick={() => startCommentPublicReply(message)}
                       >
                         <MessageCircle size={13} aria-hidden="true" />
                         Responder en la publicación
