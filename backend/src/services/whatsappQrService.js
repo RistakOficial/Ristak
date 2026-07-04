@@ -778,16 +778,28 @@ function unwrapBaileysMessageContent(content = {}) {
   return current || {}
 }
 
+const BAILEYS_MACHINE_TEXT_VALUES = new Set([
+  'hydratedtitletext',
+  'hydratedcontenttext',
+  'hydratedfootertext',
+  'contenttext',
+  'footertext',
+  'bodytext',
+  'headertext',
+  'displaytext'
+])
+
 function normalizeBaileysDisplayText(value) {
   if (value && typeof value === 'object') return ''
   const text = cleanString(value)
   if (!text || text === 'null' || text === 'undefined') return ''
-  return text
+  const normalized = text
     .replace(/\r\n/g, '\n')
     .split('\n')
     .map(line => line.trim())
     .filter(Boolean)
     .join('\n')
+  return BAILEYS_MACHINE_TEXT_VALUES.has(normalized.toLowerCase()) ? '' : normalized
 }
 
 function parseQrJsonObject(value) {

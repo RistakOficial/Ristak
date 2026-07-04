@@ -394,6 +394,15 @@ webhook tardio de WhatsApp API con estado `failed` para un mensaje que ya quedo
 resuelto por QR, el historial debe conservar el transporte `qr` y mantener
 limpios esos campos de error. Solo se guarda error visible cuando no existe
 respaldo QR usable o cuando el respaldo QR tambien falla.
+
+En automatizaciones de pago, si la plantilla configurada esta pendiente,
+rechazada, pausada o no sincronizada, Ristak no debe brincar directo a QR. Primero
+debe renderizar la misma plantilla como texto limpio, incluyendo el URL real de
+los botones web, y mandar ese texto por WhatsApp API/YCloud cuando la ventana de
+24 horas sigue abierta. El respaldo QR queda como ultimo recurso cuando WhatsApp
+API no puede mandar texto libre legalmente o cuando hay una restriccion
+recuperable y el fallback QR esta habilitado.
+
 Si una ruta de envio responde exitosamente pero sin payload de mensaje, el
 frontend debe tratarla como aceptada y refrescar el historial, no convertir ese
 `null` en un error local del globo.

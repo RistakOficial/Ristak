@@ -2218,6 +2218,79 @@ export async function buildDefaultMessageTemplateSendComponents({
   return components
 }
 
+async function renderDefaultTemplateTargetText(template, target, variableOptions = {}) {
+  const sourceText = cleanString(getTemplateTextForTarget(template, target), 4000)
+  if (!sourceText) return ''
+
+  const indexes = extractNumericVariableIndexes(sourceText)
+  if (!indexes.length) return sourceText
+
+  const bindings = template.variableBindings?.[target] || {}
+  const valuesByIndex = new Map()
+  for (const index of indexes) {
+    const value = await renderSendBindingValue(template, bindings[String(index)] || {}, index, variableOptions)
+    valuesByIndex.set(index, value)
+  }
+
+  return sourceText.replace(NUMERIC_VARIABLE_PATTERN, (match, index) => {
+    const value = valuesByIndex.get(Number(index))
+    return value === undefined || value === null || value === '' ? match : cleanString(value, 1000)
+  })
+}
+
+function formatFallbackTemplateButton(button = {}, renderedValue = '') {
+  const type = cleanString(button.type, 40).toLowerCase()
+  const label = cleanString(button.label || button.text || button.title, 120)
+  const value = cleanString(renderedValue || button.value || button.phoneNumber || button.phone, 2000)
+  if (!label && !value) return ''
+
+  if (type === 'website') {
+    return [label, value].filter(Boolean).join(': ')
+  }
+  if (type === 'phone') {
+    return [label, value].filter(Boolean).join(': ')
+  }
+  return label || value
+}
+
+export async function buildDefaultMessageTemplateFallbackText({
+  templateId,
+  templateName,
+  language,
+  variableOptions = {}
+} = {}) {
+  const template = await findMessageTemplateForSendDefaults({ templateId, templateName, language }) ||
+    getBuiltinDefaultMessageTemplateForSend({
+      templateName,
+      language,
+      publicBaseUrl: variableOptions.publicBaseUrl
+    })
+  if (!template) return ''
+
+  const parts = []
+  const headerText = cleanString(template.headerType).toLowerCase() === 'text'
+    ? await renderDefaultTemplateTargetText(template, 'headerText', variableOptions)
+    : ''
+  const bodyText = await renderDefaultTemplateTargetText(template, 'bodyText', variableOptions)
+  const footerText = await renderDefaultTemplateTargetText(template, 'footerText', variableOptions)
+
+  if (headerText) parts.push(headerText)
+  if (bodyText) parts.push(bodyText)
+  if (footerText) parts.push(footerText)
+
+  const buttonLines = []
+  const buttons = Array.isArray(template.buttons) ? template.buttons : []
+  for (let index = 0; index < buttons.length; index += 1) {
+    const button = buttons[index]
+    const renderedValue = await renderDefaultTemplateTargetText(template, getButtonValueTarget(index), variableOptions)
+    const line = formatFallbackTemplateButton(button, renderedValue)
+    if (line) buttonLines.push(line)
+  }
+  if (buttonLines.length) parts.push(buttonLines.join('\n'))
+
+  return parts.map(part => cleanString(part, 4000)).filter(Boolean).join('\n\n')
+}
+
 async function buildSendComponentsFromTemplate(template) {
   const components = []
   const mediaHeader = buildMediaHeaderSendComponent(template)

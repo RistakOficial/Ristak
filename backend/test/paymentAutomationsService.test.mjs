@@ -179,7 +179,7 @@ async function withAccountTimezoneForTest(timezone, callback) {
   })
 }
 
-async function upsertApprovedTemplate(name) {
+async function upsertApprovedTemplate(name, status = 'APPROVED') {
   const components = [
     { type: 'BODY', text: 'Hola {{1}}, pago {{2}} por {{3}}.' },
     {
@@ -192,9 +192,9 @@ async function upsertApprovedTemplate(name) {
     INSERT INTO whatsapp_api_templates (
       id, official_template_id, waba_id, name, language, category, status,
       components_json, raw_payload_json, updated_at
-    ) VALUES (?, ?, ?, ?, 'es_MX', 'UTILITY', 'APPROVED', ?, ?, CURRENT_TIMESTAMP)
+    ) VALUES (?, ?, ?, ?, 'es_MX', 'UTILITY', ?, ?, ?, CURRENT_TIMESTAMP)
     ON CONFLICT(waba_id, name, language) DO UPDATE SET
-      status = 'APPROVED',
+      status = excluded.status,
       components_json = excluded.components_json,
       raw_payload_json = excluded.raw_payload_json,
       updated_at = CURRENT_TIMESTAMP
@@ -203,8 +203,9 @@ async function upsertApprovedTemplate(name) {
     `official_${name}`,
     'waba_payment_automations_test',
     name,
+    status,
     JSON.stringify(components),
-    JSON.stringify({ name, status: 'APPROVED' })
+    JSON.stringify({ name, status })
   ])
 }
 
@@ -258,6 +259,7 @@ async function cleanupFixtures(ids = []) {
   await db.run(`DELETE FROM payment_automation_dispatches WHERE payment_id IN (${placeholders})`, ids)
   await db.run(`DELETE FROM payments WHERE id IN (${placeholders})`, ids)
   const contactIds = ids.map((id) => id.replace('payment_auto_', 'contact_payment_auto_'))
+  await db.run(`DELETE FROM whatsapp_api_messages WHERE contact_id IN (${placeholders})`, contactIds)
   await db.run(`DELETE FROM contacts WHERE id IN (${placeholders})`, contactIds)
 }
 
@@ -295,6 +297,65 @@ test('envia comprobante de pago por WhatsApp solo cuando el switch esta activo',
       assert.equal(captures.length, 1)
     } finally {
       await cleanupFixtures([sentFixture.paymentId, disabledFixture.paymentId])
+    }
+  })
+})
+
+test('cobro fallido usa texto API cuando la plantilla esta pendiente y la conversacion sigue abierta', async () => {
+  await withYCloudCapture(async (captures) => {
+    const fixture = await createPaymentFixture({ status: 'failed', suffix: 'failopen1' })
+
+    try {
+      const contact = await db.get('SELECT phone FROM contacts WHERE id = ?', [fixture.contactId])
+      await upsertApprovedTemplate('pago_fallido_reintento', 'PENDING')
+      await db.run(`
+        INSERT INTO whatsapp_api_messages (
+          id, provider, origin, business_phone_number_id, contact_id, phone,
+          from_phone, to_phone, business_phone, transport, direction,
+          message_type, message_text, status, message_timestamp,
+          created_at, updated_at
+        ) VALUES (?, 'ycloud', 'test_open_window', 'phone_payment_automations_test', ?, ?, ?, '+526561234567',
+          '+526561234567', 'api', 'inbound', 'text', 'Creo que si', 'received', ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+      `, [
+        `wa_in_${fixture.paymentId}`,
+        fixture.contactId,
+        contact.phone,
+        contact.phone,
+        new Date().toISOString()
+      ])
+
+      await setAppConfig(PAYMENT_SETTINGS_CONFIG_KEY, {
+        automations: {
+          failedPaymentEnabled: true,
+          failedPaymentChannel: 'whatsapp',
+          failedPaymentQrFallbackEnabled: true,
+          failedPaymentTemplateName: 'pago_fallido_reintento',
+          failedPaymentTemplateLanguage: 'es_MX'
+        }
+      })
+
+      const result = await sendPaymentAutomationMessage('failed', fixture.paymentId)
+      assert.equal(result.sent, true)
+      assert.deepEqual(result.channels, ['whatsapp'])
+      assert.equal(captures.length, 1)
+      assert.equal(captures[0].type, 'text')
+      assert.equal(captures[0].externalId, `payment:failed:${fixture.paymentId}:text-fallback`)
+      assert.match(captures[0].text.body, /Cobro fallido/)
+      assert.match(captures[0].text.body, /Reintentar pago: https:\/\/pagos\.example\.test\/pay\/pay_auto_failopen1/)
+      assert.doesNotMatch(captures[0].text.body, /hydratedTitleText/)
+
+      const storedMessage = await db.get(`
+        SELECT transport, message_type, message_text
+        FROM whatsapp_api_messages
+        WHERE contact_id = ? AND direction = 'outbound'
+        ORDER BY created_at DESC
+        LIMIT 1
+      `, [fixture.contactId])
+      assert.equal(storedMessage.transport, 'api')
+      assert.equal(storedMessage.message_type, 'text')
+      assert.match(storedMessage.message_text, /Reintentar pago:/)
+    } finally {
+      await cleanupFixtures([fixture.paymentId])
     }
   })
 })

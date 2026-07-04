@@ -219,7 +219,9 @@ test('captura texto y botones de plantillas recibidas por WhatsApp QR', async ()
         message: {
           templateMessage: {
             hydratedTemplate: {
+              hydratedTitleText: 'hydratedTitleText',
               hydratedContentText: 'Use 096984 for two-factor authentication on Facebook.',
+              hydratedFooterText: 'hydratedFooterText',
               hydratedButtons: [
                 { quickReplyButton: { displayText: 'Copy code', id: 'copy_code' } },
                 { quickReplyButton: { displayText: "I didn't request a code", id: 'not_me_1' } },

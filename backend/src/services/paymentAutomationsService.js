@@ -8,8 +8,14 @@ import {
 } from '../utils/dateUtils.js'
 import { getPaymentSettings } from './paymentSettingsService.js'
 import { getAccountCurrency } from '../utils/accountLocale.js'
-import { buildDefaultMessageTemplateSendComponents } from './messageTemplatesService.js'
-import { sendWhatsAppApiTemplateMessage } from './whatsappApiService.js'
+import {
+  buildDefaultMessageTemplateFallbackText,
+  buildDefaultMessageTemplateSendComponents
+} from './messageTemplatesService.js'
+import {
+  sendWhatsAppApiTemplateMessage,
+  sendWhatsAppApiTextMessage
+} from './whatsappApiService.js'
 import { sendEmailToContact } from './emailService.js'
 
 const HOUR_MS = 60 * 60 * 1000
@@ -324,6 +330,27 @@ function getLegacyDispatchId(paymentId, automationType) {
   return `payment_auto_${automationType}_${cleanString(paymentId, 160).replace(/[^a-zA-Z0-9_-]+/g, '_')}`
 }
 
+function shouldSendPaymentTemplateAsTextFallback(error) {
+  const text = cleanString(error?.message || error, 1200).toLowerCase()
+  if (!text) return false
+  const mentionsTemplate = text.includes('plantilla') || text.includes('template')
+  if (!mentionsTemplate) return false
+  return [
+    'approved',
+    'aprob',
+    'pending',
+    'pendiente',
+    'rejected',
+    'rechaz',
+    'paused',
+    'pausad',
+    'sincroniz',
+    'not found',
+    'not exist',
+    'no existe'
+  ].some(fragment => text.includes(fragment))
+}
+
 async function claimDispatch({ paymentId, automationType, channel = 'whatsapp', templateId, templateName }) {
   const cleanChannel = cleanString(channel, 40).toLowerCase() || 'whatsapp'
   const id = getDispatchId(paymentId, automationType, cleanChannel)
@@ -599,6 +626,53 @@ async function sendPaymentWhatsAppAutomationMessage(type, payment, definition, {
       response
     }
   } catch (error) {
+    if (shouldSendPaymentTemplateAsTextFallback(error)) {
+      try {
+        const fallbackText = await buildDefaultMessageTemplateFallbackText({
+          templateId: definition.templateId,
+          templateName: definition.templateName,
+          language: definition.language,
+          variableOptions: {
+            contactId: contact.id,
+            phone: contact.phone,
+            publicBaseUrl,
+            extraVariables
+          }
+        })
+
+        if (fallbackText) {
+          const response = await sendWhatsAppApiTextMessage({
+            to: contact.phone,
+            text: fallbackText,
+            contactId: contact.id,
+            publicBaseUrl,
+            extraVariables,
+            externalId: `payment:${type}:${paymentId}:text-fallback`,
+            allowQrFallback: definition.allowQrFallback
+          })
+
+          await markDispatchSent(claim.id, {
+            ...response,
+            templateFallback: {
+              templateName: definition.templateName,
+              reason: error.message
+            }
+          })
+          return {
+            sent: true,
+            type,
+            channel: 'whatsapp',
+            dispatchId: claim.id,
+            templateName: definition.templateName,
+            fallback: 'text',
+            response
+          }
+        }
+      } catch (fallbackError) {
+        logger.warn(`[Pagos] No se pudo enviar ${definition.label} como texto de respaldo ${paymentId}: ${fallbackError.message}`)
+      }
+    }
+
     await markDispatchFailed(claim.id, error)
     logger.warn(`[Pagos] No se pudo enviar ${definition.label} por WhatsApp ${paymentId}: ${error.message}`)
     return {
