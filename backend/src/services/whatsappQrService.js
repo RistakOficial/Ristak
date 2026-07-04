@@ -1591,14 +1591,86 @@ async function getPhoneRow(phoneNumberId) {
 
   const expectedPhone = normalizePhoneForStorage(row.phone_number || row.display_phone_number) ||
     cleanString(row.phone_number || row.display_phone_number)
+  const provider = cleanString(row.provider).toLowerCase()
+  const isQrOnlyPendingPhone = provider === 'qr' && Number(row.api_send_enabled || 0) === 0
 
-  if (!expectedPhone) {
+  if (!expectedPhone && !isQrOnlyPendingPhone) {
     throw new Error('Ese número no tiene teléfono guardado para validar el QR')
   }
 
   return {
     ...row,
     expectedPhone
+  }
+}
+
+async function findPhoneRowByConnectedPhone(phoneNumber, excludePhoneNumberId = '') {
+  const normalizedPhone = normalizePhoneForStorage(phoneNumber) || cleanString(phoneNumber)
+  if (!normalizedPhone) return null
+
+  const rows = await db.all(`
+    SELECT *
+    FROM whatsapp_api_phone_numbers
+    WHERE id != ?
+  `, [cleanString(excludePhoneNumberId)])
+
+  return (rows || []).find(row =>
+    phoneMatches(row.phone_number || row.display_phone_number || row.qr_connected_phone, normalizedPhone)
+  ) || null
+}
+
+async function promoteStandaloneQrPhone(phone, connectedPhone) {
+  const normalizedPhone = normalizePhoneForStorage(connectedPhone) || cleanString(connectedPhone)
+  if (!normalizedPhone) {
+    throw new Error('WhatsApp no entregó el número conectado. Genera otro QR e inténtalo de nuevo.')
+  }
+
+  const expectedPhone = normalizePhoneForStorage(phone.phone_number || phone.display_phone_number) ||
+    cleanString(phone.phone_number || phone.display_phone_number)
+  if (expectedPhone) {
+    return {
+      ...phone,
+      expectedPhone
+    }
+  }
+
+  if (cleanString(phone.provider).toLowerCase() !== 'qr') {
+    throw new Error('Ese número no tiene teléfono guardado para validar el QR')
+  }
+
+  const duplicate = await findPhoneRowByConnectedPhone(normalizedPhone, phone.id)
+  if (duplicate?.id) {
+    throw new Error('Ese número ya existe en WhatsApp API. Conecta su QR desde la fila del número para validar que coincida.')
+  }
+
+  const displayPhone = cleanString(connectedPhone) || normalizedPhone
+  const currentVerifiedName = cleanString(phone.verified_name)
+  await db.run(`
+    UPDATE whatsapp_api_phone_numbers
+    SET phone_number = ?,
+        display_phone_number = COALESCE(NULLIF(display_phone_number, ''), ?),
+        verified_name = COALESCE(NULLIF(verified_name, ''), 'WhatsApp QR'),
+        status = COALESCE(NULLIF(status, ''), 'QR_ONLY'),
+        raw_payload_json = ?,
+        updated_at = CURRENT_TIMESTAMP
+    WHERE id = ?
+  `, [
+    normalizedPhone,
+    displayPhone,
+    safeJson({
+      source: 'qr_detected',
+      connectedPhone: normalizedPhone,
+      detectedAt: nowIso()
+    }),
+    phone.id
+  ])
+
+  return {
+    ...phone,
+    phone_number: normalizedPhone,
+    display_phone_number: cleanString(phone.display_phone_number) || displayPhone,
+    verified_name: currentVerifiedName || 'WhatsApp QR',
+    expectedPhone: normalizedPhone
   }
 }
 
@@ -2315,15 +2387,40 @@ async function openSocket(phone, { requireConsent = true, reconnectAttempt = 0, 
 
     if (update.connection === 'open') {
       const connectedPhone = await getConnectedPhoneFromSocket(sock, state)
+      let activePhone = phone
+      let expectedPhone = cleanString(phone.expectedPhone)
 
-      if (!phoneMatches(connectedPhone, phone.expectedPhone)) {
+      if (!expectedPhone) {
+        try {
+          activePhone = await promoteStandaloneQrPhone(phone, connectedPhone)
+          expectedPhone = cleanString(activePhone.expectedPhone)
+        } catch (error) {
+          const message = error.message || 'No se pudo detectar el número conectado por QR'
+          await clearAuthState(phone.id).catch(authError => {
+            logger.warn(`[WhatsApp QR] No se pudo limpiar auth con número QR inválido ${phone.id}: ${authError.message}`)
+          })
+          await upsertSession(phone, {
+            status: 'number_mismatch',
+            connectedPhone: connectedPhone || null,
+            qrCode: null,
+            qrCodeDataUrl: null,
+            lastError: message,
+            lastDisconnectedAt: nowIso()
+          })
+          rejectCurrentOpen(new Error(message))
+          closeLiveSession(phone.id)
+          return
+        }
+      }
+
+      if (!phoneMatches(connectedPhone, expectedPhone)) {
         const message = connectedPhone
-          ? `El QR conecto ${connectedPhone}, pero esperabamos ${phone.expectedPhone}`
-          : `WhatsApp no entrego el número conectado para validar que sea ${phone.expectedPhone}. Genera otro QR e intentalo de nuevo.`
+          ? `El QR conecto ${connectedPhone}, pero esperabamos ${expectedPhone}`
+          : `WhatsApp no entrego el número conectado para validar que sea ${expectedPhone}. Genera otro QR e intentalo de nuevo.`
         await clearAuthState(phone.id).catch(error => {
           logger.warn(`[WhatsApp QR] No se pudo limpiar auth con número incorrecto ${phone.id}: ${error.message}`)
         })
-        await upsertSession(phone, {
+        await upsertSession(activePhone, {
           status: 'number_mismatch',
           connectedPhone: connectedPhone || null,
           qrCode: null,
@@ -2338,7 +2435,8 @@ async function openSocket(phone, { requireConsent = true, reconnectAttempt = 0, 
 
       if (live) live.connected = true
       currentReconnectAttempt = 0
-      await upsertSession(phone, {
+      await upsertSession(activePhone, {
+        expectedPhone,
         status: 'connected',
         connectedPhone,
         qrCode: null,

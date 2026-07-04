@@ -487,6 +487,7 @@ export async function connectWhatsAppQrView(req, res) {
 export async function createWhatsAppQrPhoneNumberView(req, res) {
   try {
     const data = await createWhatsAppQrPhoneNumber({
+      phoneNumberId: req.body?.phoneNumberId,
       phoneNumber: req.body?.phoneNumber,
       label: req.body?.label
     })

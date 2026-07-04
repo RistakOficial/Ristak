@@ -7,9 +7,11 @@ import {
   resetWhatsAppQrServiceForTest,
   resumeWhatsAppQrSessions,
   setBaileysRuntimeForTest,
+  startWhatsAppQrConnection,
   setWhatsAppQrReconnectDelayForTest,
   shutdownWhatsAppQrService
 } from '../src/services/whatsappQrService.js'
+import { createWhatsAppQrPhoneNumber } from '../src/services/whatsappApiService.js'
 
 const BUSINESS_PHONE = '+526561234567'
 const CONNECTED_JID = '526561234567@s.whatsapp.net'
@@ -60,13 +62,13 @@ function createFakeBaileysRuntime(sockets = [], options = {}) {
         }
       }
     },
-    makeWASocket: (options) => {
+    makeWASocket: (socketOptions) => {
       const listeners = new Map()
       const sock = {
-        options,
+        options: socketOptions,
         user: socketUser,
         closed: false,
-        signalRepository: options.signalRepository,
+        signalRepository: socketOptions.signalRepository,
         ev: {
           on: (eventName, handler) => {
             const eventListeners = listeners.get(eventName) || []
@@ -90,6 +92,11 @@ function createFakeBaileysRuntime(sockets = [], options = {}) {
         }
       }
       sockets.push(sock)
+      if (options.autoOpen) {
+        queueMicrotask(() => {
+          sock.emit('connection.update', { connection: 'open' }).catch(() => undefined)
+        })
+      }
       return sock
     }
   }
@@ -281,6 +288,48 @@ test('la validación del número conectado no confunde LID con el teléfono espe
     assert.equal(session.connected_phone, BUSINESS_PHONE)
     assert.equal(session.last_error, null)
   })
+})
+
+test('WhatsApp QR standalone detecta y guarda el número al escanear', async () => {
+  const sockets = []
+  const connectedJid = '526568617072@s.whatsapp.net'
+  const connectedPhone = '+526568617072'
+  const phone = await createWhatsAppQrPhoneNumber({})
+
+  try {
+    setBaileysRuntimeForTest(createFakeBaileysRuntime(sockets, {
+      user: { id: connectedJid },
+      authMe: { id: connectedJid },
+      autoOpen: true
+    }))
+
+    const session = await startWhatsAppQrConnection({
+      phoneNumberId: phone.id,
+      acceptedRisk: true,
+      acceptedBy: 'test'
+    })
+
+    const savedPhone = await db.get(
+      'SELECT phone_number, display_phone_number, qr_connected_phone, qr_status FROM whatsapp_api_phone_numbers WHERE id = ?',
+      [phone.id]
+    )
+    const savedSession = await db.get(
+      'SELECT expected_phone, connected_phone, status, last_error FROM whatsapp_qr_sessions WHERE phone_number_id = ?',
+      [phone.id]
+    )
+
+    assert.equal(session.status, 'connected')
+    assert.equal(savedPhone.phone_number, connectedPhone)
+    assert.equal(savedPhone.display_phone_number, connectedPhone)
+    assert.equal(savedPhone.qr_connected_phone, connectedPhone)
+    assert.equal(savedPhone.qr_status, 'connected')
+    assert.equal(savedSession.expected_phone, connectedPhone)
+    assert.equal(savedSession.connected_phone, connectedPhone)
+    assert.equal(savedSession.status, 'connected')
+    assert.equal(savedSession.last_error, null)
+  } finally {
+    await cleanupQrFixture(phone.id)
+  }
 })
 
 test('cierre 440 de Baileys conserva credenciales y deja la sesión reconectando', async () => {

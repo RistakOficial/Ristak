@@ -104,9 +104,22 @@ function formatCurrency(amount?: number | null, currency?: string | null) {
   }
 }
 
+function isStandaloneQrPhone(phone?: WhatsAppApiPhoneNumber | null) {
+  const provider = String(phone?.provider || '').toLowerCase()
+  const status = String(phone?.status || '').toUpperCase()
+  return provider === 'qr' || status === 'QR_ONLY'
+}
+
+function getPhoneDisplayValue(phone?: WhatsAppApiPhoneNumber | null) {
+  return phone?.display_phone_number ||
+    phone?.phone_number ||
+    phone?.qr_connected_phone ||
+    (isStandaloneQrPhone(phone) ? 'QR pendiente' : 'Número')
+}
+
 function getPhoneLabel(phone: WhatsAppApiPhoneNumber) {
-  const number = phone.display_phone_number || phone.phone_number || 'Número'
-  return phone.verified_name ? `${number} · ${phone.verified_name}` : number
+  const number = getPhoneDisplayValue(phone)
+  return phone.verified_name && phone.verified_name !== number ? `${number} · ${phone.verified_name}` : number
 }
 
 function getPhoneProfile(phone?: WhatsAppApiPhoneNumber | null) {
@@ -260,9 +273,9 @@ export const WhatsAppSettings: React.FC = () => {
   const [connectionChoice, setConnectionChoice] = useState<ConnectionChoice | null>(null)
   const [addNumberModalOpen, setAddNumberModalOpen] = useState(false)
   const [addNumberChoice, setAddNumberChoice] = useState<ConnectionChoice | null>(null)
-  const [qrStandalonePhone, setQrStandalonePhone] = useState('')
   const [qrStandaloneLabel, setQrStandaloneLabel] = useState('')
   const [qrCreatingPhone, setQrCreatingPhone] = useState(false)
+  const [qrSavingLabel, setQrSavingLabel] = useState(false)
   // El modal de QR tiene dos pasos: primero el aviso de riesgo y, al aceptar,
   // el código QR en grande dentro del mismo modal.
   const [qrModalView, setQrModalView] = useState<'consent' | 'qr'>('consent')
@@ -538,38 +551,54 @@ export const WhatsAppSettings: React.FC = () => {
 
   const openAddNumberModal = () => {
     setAddNumberChoice(null)
-    setQrStandalonePhone('')
     setQrStandaloneLabel('')
     setAddNumberModalOpen(true)
   }
 
-  const openQrConsentAfterCreate = async (phone: WhatsAppApiPhoneNumber) => {
+  const openStandaloneQrAfterCreate = async (phone: WhatsAppApiPhoneNumber) => {
     const nextStatus = await loadApiStatus()
     const hydratedPhone = nextStatus.phoneNumbers.find(item => item.id === phone.id) || phone
     setSelectedPhoneId(hydratedPhone.id)
-    setQrModalView('consent')
+    setQrModalView('qr')
     setQrConsentPhone(hydratedPhone)
+    await confirmQrConnection(hydratedPhone)
   }
 
-  const createQrNumber = async (event?: React.FormEvent) => {
-    event?.preventDefault()
-    if (!qrStandalonePhone.trim() || qrCreatingPhone) return
+  const startStandaloneQrConnection = async () => {
+    if (qrCreatingPhone) return
 
     setQrCreatingPhone(true)
     try {
-      const phone = await whatsappApiService.createQrPhoneNumber({
-        phoneNumber: qrStandalonePhone.trim(),
-        label: qrStandaloneLabel.trim() || undefined
-      })
+      const phone = await whatsappApiService.createQrPhoneNumber({})
       setAddNumberModalOpen(false)
       setConnectionChoice(null)
-      setQrStandalonePhone('')
       setQrStandaloneLabel('')
-      await openQrConsentAfterCreate(phone)
+      await openStandaloneQrAfterCreate(phone)
     } catch (error) {
       showToast('error', 'No se pudo preparar QR', error instanceof Error ? error.message : 'Intenta con otro número.')
     } finally {
       setQrCreatingPhone(false)
+    }
+  }
+
+  const saveStandaloneQrLabel = async (phone: WhatsAppApiPhoneNumber, event?: React.FormEvent) => {
+    event?.preventDefault()
+    if (!phone.id || qrSavingLabel) return
+
+    setQrSavingLabel(true)
+    try {
+      await whatsappApiService.createQrPhoneNumber({
+        phoneNumberId: phone.id,
+        label: qrStandaloneLabel.trim() || undefined
+      })
+      await loadApiStatus()
+      setQrConsentPhone(null)
+      setQrStandaloneLabel('')
+      showToast('success', 'WhatsApp QR guardado', 'El número quedó conectado y listo para usarse en Ristak.')
+    } catch (error) {
+      showToast('error', 'No se pudo guardar', error instanceof Error ? error.message : 'Intenta guardar el nombre otra vez.')
+    } finally {
+      setQrSavingLabel(false)
     }
   }
 
@@ -793,45 +822,44 @@ export const WhatsAppSettings: React.FC = () => {
         <strong>WhatsApp API</strong>
         <span>Conexión oficial para plantillas, revisión de Meta y envío estable.</span>
       </button>
-      <button type="button" className={styles.connectionCard} onClick={() => onSelect('qr')}>
+      <button type="button" className={styles.connectionCard} onClick={() => onSelect('qr')} disabled={qrCreatingPhone}>
         <QrCode size={22} />
         <strong>Mediante QR</strong>
-        <span>Conecta un número por WhatsApp Web para uso manual o respaldo.</span>
+        <span>{qrCreatingPhone ? 'Preparando el código QR...' : 'Escanea desde WhatsApp y Ristak detecta el número automáticamente.'}</span>
       </button>
     </div>
   )
 
-  const renderQrNumberForm = () => (
-    <form className={styles.qrStandaloneForm} onSubmit={createQrNumber}>
-      <label className={styles.fieldLabel}>
-        <span>Número de WhatsApp</span>
-        <div className={styles.inputWrap} data-ristak-unstyled>
-          <SiWhatsapp size={17} />
-          <input
-            value={qrStandalonePhone}
-            onChange={(event) => setQrStandalonePhone(event.target.value)}
-            placeholder="+52 656 123 4567"
-            autoComplete="tel"
-          />
+  const renderStandaloneQrLabelForm = (phone: WhatsAppApiPhoneNumber, session?: WhatsAppQrSession | null) => {
+    const detectedPhone = session?.connectedPhone || phone.qr_connected_phone || phone.display_phone_number || phone.phone_number || 'Número detectado'
+
+    return (
+      <form className={styles.qrStandaloneForm} onSubmit={(event) => saveStandaloneQrLabel(phone, event)}>
+        <div className={styles.qrDetectedNumber}>
+          <SiWhatsapp size={18} />
+          <div>
+            <span>Número detectado</span>
+            <strong>{detectedPhone}</strong>
+          </div>
         </div>
-      </label>
-      <label className={styles.fieldLabel}>
-        <span>Nombre interno</span>
-        <div className={styles.inputWrap} data-ristak-unstyled>
+        <label className={styles.fieldLabel}>
+          <span>Nombre interno</span>
+          <div className={styles.inputWrap} data-ristak-unstyled>
+            <HashIcon size={17} />
+            <input
+              value={qrStandaloneLabel}
+              onChange={(event) => setQrStandaloneLabel(event.target.value)}
+              placeholder="Recepción, ventas, soporte..."
+            />
+          </div>
+        </label>
+        <Button type="submit" loading={qrSavingLabel}>
           <HashIcon size={17} />
-          <input
-            value={qrStandaloneLabel}
-            onChange={(event) => setQrStandaloneLabel(event.target.value)}
-            placeholder="Recepción, ventas, soporte..."
-          />
-        </div>
-      </label>
-      <Button type="submit" loading={qrCreatingPhone} disabled={!qrStandalonePhone.trim()}>
-        <QrCode size={17} />
-        Conectar mediante QR
-      </Button>
-    </form>
-  )
+          Guardar nombre
+        </Button>
+      </form>
+    )
+  }
 
   const renderApiConnectionOptions = () => (
     <div className={styles.connectionOptions}>
@@ -864,7 +892,13 @@ export const WhatsAppSettings: React.FC = () => {
       return (
         <div className={styles.qrConsentBody}>
           <p>Elige cómo quieres agregar este número de WhatsApp a Ristak.</p>
-          {renderConnectionChooser(setAddNumberChoice)}
+          {renderConnectionChooser((choice) => {
+            if (choice === 'qr') {
+              startStandaloneQrConnection().catch(() => null)
+              return
+            }
+            setAddNumberChoice(choice)
+          })}
         </div>
       )
     }
@@ -885,8 +919,11 @@ export const WhatsAppSettings: React.FC = () => {
     return (
       <div className={styles.qrConsentBody}>
         {renderConnectionBack(() => setAddNumberChoice(null))}
-        <p>Agrega el número y después escanea el QR desde WhatsApp en ese mismo celular.</p>
-        {renderQrNumberForm()}
+        <p>Ristak abrirá el código QR y detectará el número cuando lo escanees desde WhatsApp.</p>
+        <Button type="button" onClick={() => startStandaloneQrConnection().catch(() => null)} loading={qrCreatingPhone}>
+          <QrCode size={17} />
+          Abrir código QR
+        </Button>
       </div>
     )
   }
@@ -905,7 +942,13 @@ export const WhatsAppSettings: React.FC = () => {
             <span>Conecta por WhatsApp API para plantillas oficiales o mediante QR para una sesión de WhatsApp Web.</span>
           </div>
           {apiStatus?.lastError && <p className={styles.errorText}>{apiStatus.lastError}</p>}
-          {renderConnectionChooser(setConnectionChoice)}
+          {renderConnectionChooser((choice) => {
+            if (choice === 'qr') {
+              startStandaloneQrConnection().catch(() => null)
+              return
+            }
+            setConnectionChoice(choice)
+          })}
         </section>
       )
     }
@@ -916,10 +959,13 @@ export const WhatsAppSettings: React.FC = () => {
           {renderConnectionBack(() => setConnectionChoice(null))}
           <div className={styles.connectCopy}>
             <p className={styles.eyebrow}>Mediante QR</p>
-            <h3>Conecta un número por QR</h3>
-            <span>Ristak validará que el QR escaneado sea de este mismo número antes de activarlo.</span>
+            <h3>Preparando QR</h3>
+            <span>Ristak abrirá el código y detectará el número cuando lo escanees desde WhatsApp.</span>
           </div>
-          {renderQrNumberForm()}
+          <Button type="button" loading disabled>
+            <QrCode size={17} />
+            Preparando código QR
+          </Button>
         </section>
       )
     }
@@ -976,6 +1022,8 @@ export const WhatsAppSettings: React.FC = () => {
       return [
         row.phone.display_phone_number,
         row.phone.phone_number,
+        row.phone.qr_connected_phone,
+        row.phone.label,
         row.phone.id,
         row.displayName,
         row.phone.quality_rating,
@@ -1106,7 +1154,7 @@ export const WhatsAppSettings: React.FC = () => {
                       <React.Fragment key={phone.id}>
                         <tr>
                           <td>
-                            <strong>{phone.display_phone_number || phone.phone_number || 'Número'}</strong>
+                            <strong>{getPhoneDisplayValue(phone)}</strong>
                             <span>{phone.id}</span>
                           </td>
                           <td>{displayName}</td>
@@ -1521,27 +1569,36 @@ export const WhatsAppSettings: React.FC = () => {
       />
 
       {(() => {
-        const qrModalSession = qrConsentPhone ? qrSessionsByPhoneId.get(qrConsentPhone.id) : null
-        const qrModalStatus = String(qrModalSession?.status || qrConsentPhone?.qr_status || '').toLowerCase()
+        const qrModalPhone = qrConsentPhone
+          ? apiStatus?.phoneNumbers.find(phone => phone.id === qrConsentPhone.id) || qrConsentPhone
+          : null
+        const qrModalStandalone = isStandaloneQrPhone(qrModalPhone)
+        const qrModalSession = qrModalPhone ? qrSessionsByPhoneId.get(qrModalPhone.id) : null
+        const qrModalStatus = String(qrModalSession?.status || qrModalPhone?.qr_status || '').toLowerCase()
         const qrModalPending = ['qr_pending', 'starting', 'restarting', 'reconnecting'].includes(qrModalStatus)
         const qrModalConnected = qrModalStatus === 'connected'
-        const qrModalGenerating = Boolean(qrConsentPhone && qrConnectingPhoneId === qrConsentPhone.id && !qrModalSession?.qrCodeDataUrl)
+        const qrModalGenerating = Boolean(qrModalPhone && qrConnectingPhoneId === qrModalPhone.id && !qrModalSession?.qrCodeDataUrl)
         const qrModalError = qrModalView === 'qr' && !qrModalPending && !qrModalConnected && !qrModalGenerating
           ? (qrModalSession?.lastError || 'WhatsApp cerró este intento. Genera otro código QR.')
           : ''
+        const qrModalTitle = qrModalView === 'consent'
+          ? 'Conectar QR de WhatsApp'
+          : qrModalConnected && qrModalStandalone
+            ? 'Nombre interno del WhatsApp'
+            : `Escanea el QR con ${qrModalPhone && !qrModalStandalone ? getPhoneLabel(qrModalPhone) : 'WhatsApp'}`
 
         return (
           <Modal
             isOpen={Boolean(qrConsentPhone)}
             onClose={() => setQrConsentPhone(null)}
-            title={qrModalView === 'consent' ? 'Conectar QR de WhatsApp' : `Escanea el QR con ${qrConsentPhone ? getPhoneLabel(qrConsentPhone) : 'tu número'}`}
+            title={qrModalTitle}
             type="custom"
             size="md"
           >
             {qrModalView === 'consent' ? (
               <div className={styles.qrConsentBody}>
                 <p>
-                  Este paso no es obligatorio. WhatsApp API sigue siendo la conexión principal; el QR solo funciona como respaldo para {qrConsentPhone ? getPhoneLabel(qrConsentPhone) : 'este número'}.
+                  Este paso no es obligatorio. WhatsApp API sigue siendo la conexión principal; el QR solo funciona como respaldo para {qrModalPhone ? getPhoneLabel(qrModalPhone) : 'este número'}.
                 </p>
                 <ul className={styles.qrConsentList}>
                   <li>Usa WhatsApp Web por QR, no la API oficial de Meta.</li>
@@ -1559,7 +1616,7 @@ export const WhatsAppSettings: React.FC = () => {
                   <Button
                     variant="primary"
                     onClick={() => {
-                      if (qrConsentPhone) confirmQrConnection(qrConsentPhone)
+                      if (qrModalPhone) confirmQrConnection(qrModalPhone)
                     }}
                   >
                     Acepto el riesgo y conectar
@@ -1573,25 +1630,31 @@ export const WhatsAppSettings: React.FC = () => {
                     <div className={styles.qrModalState}>
                       <ShieldCheck size={34} className={styles.qrModalSuccessIcon} />
                       <strong>¡QR conectado!</strong>
-                      <span>Este número ya puede mandar mensajes individuales por WhatsApp Web.</span>
+                      <span>
+                        {qrModalStandalone
+                          ? 'Detectamos el número. Ahora ponle un nombre interno para reconocerlo en Ristak.'
+                          : 'Este número ya puede mandar mensajes individuales por WhatsApp Web.'}
+                      </span>
                     </div>
-                    {renderQrDripPanel(true)}
+                    {qrModalStandalone && qrModalPhone ? renderStandaloneQrLabelForm(qrModalPhone, qrModalSession) : renderQrDripPanel(true)}
                   </>
                 ) : qrModalSession?.qrCodeDataUrl && qrModalPending ? (
                   <>
                     <div className={styles.qrModalImage}>
                       <img
                         src={qrModalSession.qrCodeDataUrl}
-                        alt={`Código QR para ${qrConsentPhone ? getPhoneLabel(qrConsentPhone) : 'WhatsApp'}`}
+                        alt={`Código QR para ${qrModalPhone && !qrModalStandalone ? getPhoneLabel(qrModalPhone) : 'WhatsApp'}`}
                       />
                     </div>
                     <ol className={styles.qrModalSteps}>
-                      <li>Abre WhatsApp en el celular con ese mismo número.</li>
+                      <li>{qrModalStandalone ? 'Abre WhatsApp en el celular que quieres conectar.' : 'Abre WhatsApp en el celular con ese mismo número.'}</li>
                       <li>Ve a Ajustes &gt; Dispositivos vinculados &gt; Vincular dispositivo.</li>
                       <li>Apunta la cámara a este código.</li>
                     </ol>
                     <p className={styles.qrModalHint}>
-                      El código se renueva solo. Esta ventana se actualizará cuando completes el escaneo.
+                      {qrModalStandalone
+                        ? 'El código se renueva solo. Ristak detectará el número cuando completes el escaneo.'
+                        : 'El código se renueva solo. Esta ventana se actualizará cuando completes el escaneo.'}
                     </p>
                   </>
                 ) : qrModalError ? (
@@ -1608,14 +1671,16 @@ export const WhatsAppSettings: React.FC = () => {
                   </div>
                 )}
                 <div className={styles.qrModalActions}>
-                  <Button variant="secondary" onClick={() => setQrConsentPhone(null)}>
-                    {qrModalConnected ? 'Listo' : 'Cerrar'}
-                  </Button>
-                  {qrModalError && qrConsentPhone && (
+                  {!(qrModalConnected && qrModalStandalone) && (
+                    <Button variant="secondary" onClick={() => setQrConsentPhone(null)}>
+                      {qrModalConnected ? 'Listo' : 'Cerrar'}
+                    </Button>
+                  )}
+                  {qrModalError && qrModalPhone && (
                     <Button
                       variant="primary"
-                      loading={qrConnectingPhoneId === qrConsentPhone.id}
-                      onClick={() => confirmQrConnection(qrConsentPhone)}
+                      loading={qrConnectingPhoneId === qrModalPhone.id}
+                      onClick={() => confirmQrConnection(qrModalPhone)}
                     >
                       Generar otro QR
                     </Button>

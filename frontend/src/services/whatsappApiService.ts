@@ -517,7 +517,8 @@ export interface WhatsAppQrConnectPayload {
 }
 
 export interface WhatsAppQrPhoneNumberPayload {
-  phoneNumber: string
+  phoneNumberId?: string
+  phoneNumber?: string
   label?: string
 }
 

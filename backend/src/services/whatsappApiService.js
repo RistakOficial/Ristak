@@ -3320,10 +3320,52 @@ async function getPhoneNumbersFromDb() {
   `)
 }
 
-export async function createWhatsAppQrPhoneNumber({ phoneNumber, label } = {}) {
+export async function createWhatsAppQrPhoneNumber({ phoneNumberId, phoneNumber, label } = {}) {
+  const cleanPhoneNumberId = cleanString(phoneNumberId)
   const normalizedPhone = normalizePhoneForStorage(phoneNumber) || cleanString(phoneNumber)
+
+  if (cleanPhoneNumberId) {
+    const existing = await db.get('SELECT * FROM whatsapp_api_phone_numbers WHERE id = ?', [cleanPhoneNumberId])
+    if (!existing) {
+      throw new Error('No encontramos ese número QR de WhatsApp')
+    }
+
+    const displayPhone = cleanString(phoneNumber) || normalizedPhone
+    await db.run(`
+      UPDATE whatsapp_api_phone_numbers
+      SET phone_number = COALESCE(NULLIF(?, ''), phone_number),
+          display_phone_number = COALESCE(NULLIF(?, ''), display_phone_number),
+          verified_name = COALESCE(NULLIF(?, ''), verified_name),
+          label = COALESCE(NULLIF(?, ''), label),
+          updated_at = CURRENT_TIMESTAMP
+      WHERE id = ?
+    `, [
+      normalizedPhone,
+      displayPhone,
+      cleanString(label),
+      cleanString(label),
+      cleanPhoneNumberId
+    ])
+
+    return db.get('SELECT * FROM whatsapp_api_phone_numbers WHERE id = ?', [cleanPhoneNumberId])
+  }
+
   if (!normalizedPhone) {
-    throw new Error('Escribe el número de WhatsApp que vas a conectar por QR')
+    const id = hashId('waqr_phone', `pending:${crypto.randomUUID()}`)
+    const verifiedName = cleanString(label) || 'WhatsApp QR'
+    await db.run(`
+      INSERT INTO whatsapp_api_phone_numbers (
+        id, provider, phone_number, display_phone_number, verified_name, label,
+        status, api_send_enabled, qr_send_enabled, qr_status, raw_payload_json, updated_at
+      ) VALUES (?, 'qr', NULL, NULL, ?, ?, 'QR_ONLY', 0, 0, 'disconnected', ?, CURRENT_TIMESTAMP)
+    `, [
+      id,
+      verifiedName,
+      cleanString(label) || null,
+      safeJson({ source: 'qr_only_pending', createdAt: nowIso() })
+    ])
+
+    return db.get('SELECT * FROM whatsapp_api_phone_numbers WHERE id = ?', [id])
   }
 
   const existingRows = await getPhoneNumbersFromDb()

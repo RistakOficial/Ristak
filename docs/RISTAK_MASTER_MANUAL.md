@@ -442,6 +442,16 @@ tecnica (`connected`, `reconnecting`, `restarting`, `connection_replaced` o
 `number_mismatch` requieren escanear un QR nuevo y no se usan como respaldo
 automatico.
 
+Al agregar un WhatsApp solo por QR desde Configuracion > WhatsApp, el usuario no
+debe capturar el numero manualmente. Ristak crea una fila QR pendiente, muestra
+el codigo, detecta el telefono conectado cuando WhatsApp Web abre la sesion y
+entonces pide el nombre interno para guardar la conexion. Ese flujo standalone no
+debe duplicar un telefono que ya existe como WhatsApp API: si el QR escaneado
+coincide con un numero oficial existente, el usuario debe conectarlo desde la
+fila de ese numero para conservar la validacion estricta. En numeros de
+WhatsApp API ligados con QR, el QR escaneado debe coincidir con el numero
+oficial esperado; si no coincide, se rechaza como `number_mismatch`.
+
 En las listas y separadores del chat, los mensajes del dia actual muestran hora
 o `Hoy`, los del dia anterior muestran `Ayer`, y los anteriores usan fecha
 compacta sin `de` (`29 junio`, agregando año solo si no pertenece al año actual).
