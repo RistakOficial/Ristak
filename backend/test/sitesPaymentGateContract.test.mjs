@@ -15,12 +15,12 @@ import { createBlock, createSite, deleteSite, renderPublicSiteHtml } from '../sr
 
 test('MSI constants stay in lockstep with the runtime', () => {
   assert.deepEqual(MSI_INSTALLMENT_CHOICES, [3, 6, 9, 12, 18, 24])
-  // La fila standalone (hosted-link) es solo Conekta / Mercado Pago; Stripe se
-  // maneja aparte con prepare/confirm controlado por backend.
-  assert.ok(MSI_LINK_GATEWAYS.has('conekta') && MSI_LINK_GATEWAYS.has('mercadopago'))
+  // La fila/link hosted simple incluye Conekta / Mercado Pago / CLIP / Rebill; Stripe
+  // se maneja aparte con prepare/confirm controlado por backend.
+  assert.ok(MSI_LINK_GATEWAYS.has('conekta') && MSI_LINK_GATEWAYS.has('mercadopago') && MSI_LINK_GATEWAYS.has('clip') && MSI_LINK_GATEWAYS.has('rebill'))
   assert.ok(!MSI_LINK_GATEWAYS.has('stripe'))
   assert.equal(STRIPE_MSI_MIN_AMOUNT, 300)
-  assert.ok(PAYMENT_GATEWAYS.has('stripe') && PAYMENT_GATEWAYS.has('conekta') && PAYMENT_GATEWAYS.has('mercadopago') && PAYMENT_GATEWAYS.has('clip'))
+  assert.ok(PAYMENT_GATEWAYS.has('stripe') && PAYMENT_GATEWAYS.has('conekta') && PAYMENT_GATEWAYS.has('mercadopago') && PAYMENT_GATEWAYS.has('clip') && PAYMENT_GATEWAYS.has('rebill'))
 })
 
 test('isNormalizedPaymentGateEnabled mirrors backend/frontend predicate', () => {
@@ -46,17 +46,22 @@ test('msiEligibility routes per gateway exactly like the live runtime', () => {
   // Conekta: fila standalone con meses filtrados
   assert.deepEqual(
     msiEligibility({ gateway: 'conekta', currency: 'MXN', amount: 900, msi }),
-    { enabled: true, standaloneMonths: [3, 6, 9], insideElement: false, insideBrick: false }
+    { enabled: true, standaloneMonths: [3, 6, 9], insideElement: false, insideBrick: false, hostedRedirect: false }
   )
   // Mercado Pago: dentro del Brick, sin fila standalone
   assert.deepEqual(
     msiEligibility({ gateway: 'mercadopago', currency: 'MXN', amount: 900, msi }),
-    { enabled: true, standaloneMonths: [], insideElement: false, insideBrick: true }
+    { enabled: true, standaloneMonths: [], insideElement: false, insideBrick: true, hostedRedirect: false }
   )
   // Stripe MXN >= 300: Elements controlado por Ristak + selector filtrado
   assert.deepEqual(
     msiEligibility({ gateway: 'stripe', currency: 'MXN', amount: 300, msi }),
-    { enabled: true, standaloneMonths: [], insideElement: true, insideBrick: false }
+    { enabled: true, standaloneMonths: [], insideElement: true, insideBrick: false, hostedRedirect: false }
+  )
+  // Rebill: Sites no monta web component; redirige al checkout hospedado.
+  assert.deepEqual(
+    msiEligibility({ gateway: 'rebill', currency: 'MXN', amount: 900, msi }),
+    { enabled: true, standaloneMonths: [], insideElement: false, insideBrick: false, hostedRedirect: true }
   )
   // Stripe MXN < 300: no elegible
   assert.equal(msiEligibility({ gateway: 'stripe', currency: 'MXN', amount: 250, msi }).insideElement, false)
@@ -64,7 +69,7 @@ test('msiEligibility routes per gateway exactly like the live runtime', () => {
   assert.equal(msiEligibility({ gateway: 'stripe', currency: 'USD', amount: 1000, msi }).insideElement, false)
   // MSI apagado: nada en ninguna pasarela
   const off = msiEligibility({ gateway: 'conekta', currency: 'MXN', amount: 900, msi: { enabled: false } })
-  assert.deepEqual(off, { enabled: false, standaloneMonths: [], insideElement: false, insideBrick: false })
+  assert.deepEqual(off, { enabled: false, standaloneMonths: [], insideElement: false, insideBrick: false, hostedRedirect: false })
 })
 
 test('buildStripeAppearanceVariables: night theme drops colorBackground, stripe theme keeps it', () => {
@@ -351,4 +356,27 @@ test('Stripe MSI Sites runtime uses controlled split Elements and backend-filter
   assert.doesNotMatch(msiRuntime, /elements\.create\('payment'/)
   assert.doesNotMatch(msiRuntime, /payment_method_data: \{ billing_details: billingDetails\(\) \}/)
   assert.doesNotMatch(msiRuntime, /document\.createElement\('select'\)/)
+})
+
+test('Rebill MSI Sites runtime uses hosted checkout redirect instead of embedded web component', async () => {
+  const html = await renderPublicSiteHtml(paymentSite({
+    paymentGate: {
+      enabled: true,
+      gateway: 'rebill',
+      amount: 3000,
+      currency: 'MXN',
+      productName: 'Curso',
+      buttonText: 'Pagar',
+      msi: { enabled: true, maxInstallments: 9 }
+    }
+  }), { pageId: 'page-1', trackingEnabled: false, preview: true })
+
+  assert.match(html, /data-provider="rebill"/)
+  assert.match(html, /function redirectToRebill\(paymentUrl\)/)
+  assert.match(html, /window\.location\.href = preserve\(target\)/)
+  assert.match(html, /checkout\.hostedPaymentUrl/)
+  assert.match(html, /checkout\.redirectUrl/)
+  assert.doesNotMatch(html, /rebill-checkout/)
+  assert.doesNotMatch(html, /unpkg\.com\/rebill/)
+  assert.doesNotMatch(html, /<div class="rstk-checkout-identity"/)
 })

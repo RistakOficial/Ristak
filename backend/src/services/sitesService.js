@@ -15803,13 +15803,13 @@ function scriptJson(value) {
 // links/navegaciones internas con TODOS los params preservados y los redirects
 // externos con los params de tracking, y expone helpers globales para el resto
 // de los runtimes (window.ristakPreserveParams / window.ristakPreservedParams).
-// Runtime del CHECKOUT EMBEBIDO. Escanea [data-rstk-checkout], pide el descriptor a
-// /api/sites/public/checkout/init, monta el SDK del proveedor (Stripe Elements /
-// Conekta tokenizer / Mercado Pago Bricks) DENTRO de la página, cobra, y solo tras
-// confirmar el pago (respuesta del proveedor + polling autoritativo al status endpoint)
-// ejecuta la acción posterior. Los campos de tarjeta viven en iframes cifrados del
-// proveedor: la tarjeta nunca toca el DOM de Ristak. Escrito en JS clásico (sin
-// template literals ni ${}) para no chocar con la interpolación del literal externo.
+// Runtime del checkout público. Escanea [data-rstk-checkout], pide el descriptor a
+// /api/sites/public/checkout/init, monta el SDK del proveedor embebible (Stripe
+// Elements / Conekta tokenizer / Mercado Pago Bricks / CLIP) o redirige a checkout
+// hospedado cuando la pasarela no conviene embebida (Rebill en Sites). Los campos de
+// tarjeta viven en iframes cifrados del proveedor: la tarjeta nunca toca el DOM de
+// Ristak. Escrito en JS clásico (sin template literals ni ${}) para no chocar con la
+// interpolación del literal externo.
 function buildPaymentCheckoutRuntimeScript() {
   return `
   <script>
@@ -15818,8 +15818,7 @@ function buildPaymentCheckoutRuntimeScript() {
 	    var MP_SDK = 'https://sdk.mercadopago.com/js/v2';
 	    var CONEKTA_SDK = 'https://pay.conekta.com/v1.0/js/conekta-checkout.min.js';
 	    var CLIP_SDK = 'https://sdk.clip.mx/js/clip-sdk.js';
-	    var REBILL_SDK = 'https://unpkg.com/rebill@1.17.28/dist/rebill/rebill.esm.js';
-	    var STATUS_URL = '/api/sites/public/payments/';
+		    var STATUS_URL = '/api/sites/public/payments/';
     var INIT_URL = '/api/sites/public/checkout/init';
     var PAY_URL = '/api/sites/public/checkout/pay';
     // MSI controlado de Stripe: prepare crea/reusa la fila y trae los meses reales
@@ -15841,15 +15840,6 @@ function buildPaymentCheckoutRuntimeScript() {
         s.addEventListener('error', fail, { once: true });
 	        document.head.appendChild(s);
 	      });
-	    }
-	    function loadRebillSdk() {
-	      if (window.customElements && window.customElements.get('rebill-checkout')) return Promise.resolve();
-	      if (!window.__rstkRebillSdkPromise) {
-	        window.__rstkRebillSdkPromise = import(REBILL_SDK).then(function () {
-	          if (!window.customElements || !window.customElements.get('rebill-checkout')) throw new Error('No se pudo cargar Rebill.');
-	        });
-	      }
-	      return window.__rstkRebillSdkPromise;
 	    }
     function readToken(name) { try { return getComputedStyle(document.body).getPropertyValue(name).trim(); } catch (e) { return ''; } }
     // Stripe Elements (CardElement / appearance) NO acepta color-mix(), var() ni otras
@@ -16657,104 +16647,41 @@ function buildPaymentCheckoutRuntimeScript() {
 	        });
 	      }
 
-	      function extractRebillPaymentId(event) {
-	        var detail = event && event.detail ? event.detail : {};
-	        var data = detail.data || detail;
-	        var result = data.result || detail.result || {};
-	        var candidates = [
-	          result.paymentId,
-	          result.payment_id,
-	          data.paymentId,
-	          data.payment_id,
-	          data.id,
-	          detail.paymentId,
-	          detail.payment_id
-	        ];
-	        for (var i = 0; i < candidates.length; i++) {
-	          var value = String(candidates[i] || '').trim();
-	          if (value) return value;
+      function redirectToRebill(paymentUrl) {
+        var target = String(paymentUrl || '').trim();
+        if (!target) throw new Error('Rebill no devolvio una URL de checkout.');
+        setMessage('info', 'Abriendo checkout seguro de Rebill.');
+        window.location.href = preserve(target);
+      }
+	      function mountRebill(d) {
+	        if (d && d.publicPaymentId && d.paymentUrl) {
+	          try { sessionStorage.setItem(storageKey, d.publicPaymentId); } catch (e) {}
+	          root.setAttribute('data-checkout-public-id', d.publicPaymentId);
+	          setMessage('info', 'Tienes un checkout de Rebill pendiente.');
 	        }
-	        return '';
-	      }
-	      function mountPreparedRebillCheckout(d, publicPaymentId) {
-	        return loadRebillSdk().then(function () {
-	          if (!d || !d.publicKey || !d.instantProduct) throw new Error('Rebill no devolvio un checkout valido.');
-	          els.fields.innerHTML = '';
-	          var checkout = document.createElement('rebill-checkout');
-	          var display = { successPage: false, sandboxMode: String(d.paymentMode || '').toLowerCase() !== 'live', excludePaymentMethods: ['cash', 'bank_transfer'] };
-	          checkout.setAttribute('public-key', d.publicKey);
-	          checkout.setAttribute('language', 'es');
-	          checkout.setAttribute('instant-product', JSON.stringify(d.instantProduct));
-	          checkout.setAttribute('display', JSON.stringify(display));
-	          checkout.setAttribute('one-click-checkout', 'true');
-	          checkout.publicKey = d.publicKey;
-	          checkout.language = 'es';
-	          checkout.instantProduct = d.instantProduct;
-	          checkout.display = display;
-	          checkout.oneClickCheckout = true;
-	          if (d.customerInformation) {
-	            checkout.setAttribute('customer-information', JSON.stringify(d.customerInformation));
-	            checkout.customerInformation = d.customerInformation;
-	          }
-	          checkout.addEventListener('ready', function () {
-	            showLoading(false);
-	            setMessage('info', '');
-	          });
-	          checkout.addEventListener('error', function (event) {
-	            setPayBusy(false);
-	            if (els.pay) els.pay.hidden = false;
-	            var detail = event && event.detail ? event.detail : {};
-	            setMessage('error', detail.message || detail.error || 'Rebill no pudo procesar el pago.');
-	          });
-	          checkout.addEventListener('successRedirect', function (event) {
-	            event.preventDefault && event.preventDefault();
-	          });
-	          checkout.addEventListener('success', function (event) {
-	            var rebillPaymentId = extractRebillPaymentId(event);
-	            if (!rebillPaymentId) {
-	              setPayBusy(false);
-	              setMessage('error', 'Rebill no devolvio un paymentId para confirmar.');
-	              return;
-	            }
-	            setMessage('info', 'Confirmando el pago con Rebill.');
-	            postJson('/api/rebill/public/payments/' + encodeURIComponent(publicPaymentId) + '/confirm', { rebillPaymentId: rebillPaymentId }).then(function (r) {
-	              var status = (r && r.payment && r.payment.status) || r.status;
-	              onChargeResult(publicPaymentId, status);
-	            }).catch(function (e) {
-	              setPayBusy(false);
-	              setMessage('error', (e && e.message) || 'No se pudo confirmar el pago con Rebill.');
-	            });
-	          });
-	          els.fields.appendChild(checkout);
-	          els.fields.hidden = false;
-	          if (els.pay) els.pay.hidden = true;
-	          showLoading(false);
-	        });
-	      }
-      function mountRebill(d) {
-        if (d && d.publicPaymentId && d.instantProduct) {
-          try { sessionStorage.setItem(storageKey, d.publicPaymentId); } catch (e) {}
-          root.setAttribute('data-checkout-public-id', d.publicPaymentId);
-          setMessage('info', 'Reanudando checkout seguro con Rebill.');
-          return mountPreparedRebillCheckout(d, d.publicPaymentId);
-        }
-        showLoading(false);
-        els.fields.hidden = true;
-        els.pay.hidden = false;
-	        payLabel(d.amount, d.currency);
-	        els.pay.addEventListener('click', function () {
-	          if (els.pay.disabled) return;
-	          if (!validateIdentity()) return;
-	          setPayBusy(true);
-	          setMessage('info', 'Preparando checkout seguro con Rebill.');
-	          payCharge({ payer: collectPayer() }).then(function (r) {
-	            var checkout = (r && r.rebillCheckout) || {};
-	            var publicPaymentId = String((r && r.publicPaymentId) || checkout.publicPaymentId || '').trim();
-	            if (!publicPaymentId) throw new Error('No se pudo crear el pago local para Rebill.');
-	            return mountPreparedRebillCheckout(checkout, publicPaymentId);
-	          }).catch(function (e) {
-	            setPayBusy(false);
-	            setMessage('error', (e && e.message) || 'No se pudo abrir Rebill.');
+	        showLoading(false);
+	        els.fields.hidden = true;
+	        els.pay.hidden = false;
+		        payLabel(d.amount, d.currency);
+		        els.pay.addEventListener('click', function () {
+		          if (els.pay.disabled) return;
+		          if (!validateIdentity()) return;
+		          setPayBusy(true);
+		          setMessage('info', 'Preparando checkout seguro con Rebill.');
+		          if (d && d.paymentUrl) {
+		            try { redirectToRebill(d.paymentUrl); } catch (e) { setPayBusy(false); setMessage('error', (e && e.message) || 'No se pudo abrir Rebill.'); }
+		            return;
+		          }
+		          payCharge({ payer: collectPayer() }).then(function (r) {
+		            var checkout = (r && r.rebillCheckout) || {};
+		            var publicPaymentId = String((r && r.publicPaymentId) || checkout.publicPaymentId || '').trim();
+		            if (!publicPaymentId) throw new Error('No se pudo crear el pago local para Rebill.');
+		            try { sessionStorage.setItem(storageKey, publicPaymentId); } catch (e) {}
+		            root.setAttribute('data-checkout-public-id', publicPaymentId);
+		            redirectToRebill((r && r.paymentUrl) || checkout.hostedPaymentUrl || checkout.paymentUrl || checkout.redirectUrl);
+		          }).catch(function (e) {
+		            setPayBusy(false);
+		            setMessage('error', (e && e.message) || 'No se pudo abrir Rebill.');
 	          });
 	        });
 	      }
@@ -19121,10 +19048,10 @@ function renderPaymentBlock(block = {}, context = {}) {
   const showCountry = settings.paymentShowCountry !== false
   // Captura de identidad del comprador (correo/telefono) para poder LIGAR el pago a
   // un contacto y asi disparar el evento Purchase de Meta. CLIP y MercadoPago ya la
-  // piden en su propio SDK, asi que el bloque compartido solo se inyecta para
-  // Stripe/Conekta. El comprador debe dar al menos uno (correo o telefono).
+  // piden en su propio SDK/checkout hospedado, asi que el bloque compartido solo se
+  // inyecta para Stripe/Conekta. El comprador debe dar al menos uno (correo o telefono).
   const paymentGateway = cleanString(paymentGate.gateway)
-  const providerCollectsIdentity = paymentGateway === 'clip' || paymentGateway === 'mercadopago'
+  const providerCollectsIdentity = paymentGateway === 'clip' || paymentGateway === 'mercadopago' || paymentGateway === 'rebill'
   const collectEmail = settings.paymentCollectEmail !== false
   const collectPhone = settings.paymentCollectPhone !== false
   const showIdentityFields = !providerCollectsIdentity && (collectEmail || collectPhone)
@@ -25976,6 +25903,9 @@ function buildSiteCheckoutMountResponse(paymentGate = {}, context = {}, keys = {
     publishableKey: cleanString(keys.publishableKey),
     publicKey: cleanString(keys.publicKey),
     apiKey: cleanString(keys.apiKey),
+    paymentUrl: cleanString(keys.paymentUrl || keys.hostedPaymentUrl || keys.redirectUrl, 2000),
+    hostedPaymentUrl: cleanString(keys.hostedPaymentUrl || keys.paymentUrl || keys.redirectUrl, 2000),
+    redirectUrl: cleanString(keys.redirectUrl || keys.hostedPaymentUrl || keys.paymentUrl, 2000),
     paymentMode: cleanString(keys.paymentMode),
     instantProduct: keys.instantProduct || null,
     customerInformation: keys.customerInformation || null,
@@ -26147,9 +26077,11 @@ export async function paySiteCheckout(req, body = {}) {
 
   if (paymentGate.gateway === 'rebill' && !cleanString(body.rebillPaymentId || body.rebill_payment_id || body.paymentId || body.payment_id)) {
     const rebillCheckout = await getPaymentGateCheckoutDescriptor(publicPaymentId, { baseUrl })
+    const paymentUrl = cleanString(result.paymentUrl || rebillCheckout?.hostedPaymentUrl || rebillCheckout?.paymentUrl || rebillCheckout?.redirectUrl, 2000)
     return {
       publicPaymentId,
       provider: 'rebill',
+      paymentUrl,
       status: cleanString(rebillCheckout?.status || 'pending'),
       rebillCheckout,
       paidMessage: paymentGate.paidMessage

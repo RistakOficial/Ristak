@@ -45,8 +45,8 @@ export interface PaymentGateConfig {
 }
 
 // Meses sin intereses: Stripe/CLIP los muestran dentro de su SDK, Mercado Pago
-// dentro del Brick y Conekta usa selector propio.
-export const MSI_GATEWAYS = new Set<PaymentGateGateway>(['stripe', 'conekta', 'mercadopago', 'clip'])
+// dentro del Brick, Conekta usa selector propio y Rebill abre su checkout hospedado.
+export const MSI_GATEWAYS = new Set<PaymentGateGateway>(['stripe', 'conekta', 'mercadopago', 'clip', 'rebill'])
 // Lista de opciones en el contrato compartido para no divergir con el backend/runtime.
 export const MSI_INSTALLMENT_CHOICES = SHARED_MSI_INSTALLMENT_CHOICES
 
@@ -188,6 +188,7 @@ export const PaymentGateControls: React.FC<PaymentGateControlsProps> = ({
   const config = useMemo(() => normalizeAllowedPaymentGateConfig(value), [normalizeAllowedPaymentGateConfig, value])
   const selectedGateway = allowedGatewayOptions.find(option => option.value === config.gateway) || allowedGatewayOptions[0]
   const clipControlsMsi = config.gateway === 'clip'
+  const rebillControlsMsi = config.gateway === 'rebill'
 
   useEffect(() => {
     let active = true
@@ -416,7 +417,9 @@ export const PaymentGateControls: React.FC<PaymentGateControlsProps> = ({
                     <span>
                       {clipControlsMsi
                         ? `CLIP muestra los plazos dentro de su formulario si la cuenta y tarjeta califican. Mínimo ${CLIP_MSI_MIN_AMOUNT} MXN.`
-                        : `Ofrece diferido a meses en ${selectedGateway.label}.`}
+                        : rebillControlsMsi
+                          ? 'Rebill abrirá su checkout seguro y mostrará hasta estos meses si la tarjeta aplica.'
+                          : `Ofrece diferido a meses en ${selectedGateway.label}.`}
                     </span>
                   </div>
                   <Switch

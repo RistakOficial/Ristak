@@ -21,6 +21,7 @@ export interface MsiEligibility {
   standaloneMonths: number[]
   insideElement: boolean
   insideBrick: boolean
+  hostedRedirect: boolean
 }
 
 export function msiEligibility(input?: {

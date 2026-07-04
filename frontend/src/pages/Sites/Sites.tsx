@@ -32419,6 +32419,7 @@ const CanvasPreviewBlock: React.FC<CanvasPreviewBlockProps> = ({
     const isStripe = paymentGate.gateway === 'stripe'
     const isConekta = paymentGate.gateway === 'conekta'
     const isMercadoPago = paymentGate.gateway === 'mercadopago'
+    const isRebill = paymentGate.gateway === 'rebill'
     const showKicker = getSettingBoolean(settings, 'paymentShowGatewayName', true)
     const showCountry = getSettingBoolean(settings, 'paymentShowCountry', true)
     const showSecureNote = getSettingBoolean(settings, 'paymentShowSecureNote', true)
@@ -32465,6 +32466,10 @@ const CanvasPreviewBlock: React.FC<CanvasPreviewBlockProps> = ({
         </div>
       </div>
     ) : null
+    const rebillMsiMax = Math.trunc(Number(paymentGate.msi?.maxInstallments || 0))
+    const rebillMsiPreviewMonths = isRebill && msiInfo.hostedRedirect
+      ? MSI_INSTALLMENT_CHOICES.filter(months => months <= rebillMsiMax)
+      : []
     const paymentSectionStyle: Record<string, string> = {
       '--rstk-checkout-align': paymentTextAlign,
       '--rstk-checkout-pay-width': payWidth,
@@ -32576,6 +32581,30 @@ const CanvasPreviewBlock: React.FC<CanvasPreviewBlockProps> = ({
         </button>
       </div>
     )
+    const rebillHostedPreview = (
+      <div className="rstk-checkout-fields rstk-checkout-fields-mock" aria-hidden="true">
+        <p className="rstk-checkout-secure">
+          Se abrirá el checkout seguro de Rebill para pagar con tarjeta.
+        </p>
+        {rebillMsiPreviewMonths.length > 0 && (
+          <div className="rstk-checkout-installments">
+            <div className="rstk-checkout-msi">
+              <p className="rstk-checkout-msi-title">Meses sin intereses</p>
+              <div className="rstk-checkout-msi-options">
+                {rebillMsiPreviewMonths.map(months => (
+                  <div className="rstk-checkout-msi-option" key={months}>
+                    <span className="rstk-checkout-msi-option-name">{months} meses si la tarjeta aplica</span>
+                    <span className="rstk-checkout-msi-option-total">
+                      {formatPaymentAmount(Math.round((Number(paymentGate.amount || 0) / months) * 100) / 100, paymentGate.currency)} por mes
+                    </span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+        )}
+      </div>
+    )
     return (
       <section
         className={`rstk-payment-block rstk-payment-${layout}`}
@@ -32601,8 +32630,10 @@ const CanvasPreviewBlock: React.FC<CanvasPreviewBlockProps> = ({
                   emulador (mockFields), tematizado con los MISMOS tokens de campo que
                   el checkout real, así que se ve igual. El sitio PUBLICADO sí monta
                   Stripe real con su modo test/live verdadero. Solo afecta a Stripe.
-                  Mercado Pago usa su propio emulador fiel del Brick (mpBrickPreview). */}
-              {isMercadoPago ? mpBrickPreview : mockFields}
+                  Mercado Pago usa su propio emulador fiel del Brick (mpBrickPreview).
+                  Rebill en Sites redirige al checkout hospedado, asi que no fingimos
+                  campos de tarjeta embebidos. */}
+              {isMercadoPago ? mpBrickPreview : isRebill ? rebillHostedPreview : mockFields}
               {/* Fila standalone: Conekta la arma en vivo. Stripe MSI se muestra dentro
                   del mock de tarjeta justo después del número, que es su disparador. */}
               {isConekta && msiInfo.standaloneMonths.length > 0 && (

@@ -918,6 +918,7 @@ function getRebillHostedPaymentLink(metadata = {}) {
 
 function shouldUseRebillHostedPaymentLink(row = {}, metadata = {}) {
   if (CLOSED_PAYMENT_STATUSES.has(cleanString(row.status, 80).toLowerCase()) || row.paid_at) return false
+  if (normalizeBoolean(metadata.rebillHostedCheckout || metadata.rebillHostedPaymentLinkRequired, false)) return true
   const rebillInstallments = metadata.rebillInstallments && typeof metadata.rebillInstallments === 'object'
     ? metadata.rebillInstallments
     : null
@@ -928,7 +929,11 @@ function getRebillHostedEnabledInstallments(metadata = {}) {
   const rebillInstallments = metadata.rebillInstallments && typeof metadata.rebillInstallments === 'object'
     ? metadata.rebillInstallments
     : null
-  if (!rebillInstallments?.enabled) return []
+  if (!rebillInstallments?.enabled) {
+    return normalizeBoolean(metadata.rebillHostedCheckout || metadata.rebillHostedPaymentLinkRequired, false)
+      ? [1]
+      : []
+  }
   const source = Array.isArray(rebillInstallments.enabledInstallments)
     ? rebillInstallments.enabledInstallments
     : buildRebillEnabledInstallments(rebillInstallments.maxInstallments || 12)
@@ -993,14 +998,18 @@ async function ensureRebillHostedPaymentLink(row = {}, config = null, baseUrl = 
   const redirectUrls = buildRebillPaymentLinkRedirectUrls(baseUrl, row.public_payment_id)
   const prefilledFields = buildRebillPaymentLinkPrefilledFields(row, metadata)
   const businessMetadata = buildRebillHostedBusinessMetadata(paymentSettings)
+  const installmentsRequested = Boolean(metadata.rebillInstallments?.enabled)
   const paymentLinkMetadata = {
     ristakPaymentId: cleanString(row.id, 180),
     localPaymentId: cleanString(row.id, 180),
     publicPaymentId: cleanString(row.public_payment_id, 180),
     provider: 'rebill',
     source: cleanString(metadata.source || 'ristak', 120),
-    rebillInstallmentsRequested: true,
-    rebillMaxInstallments: Math.max(...enabledInstallments),
+    rebillHostedCheckout: true,
+    ...(installmentsRequested ? {
+      rebillInstallmentsRequested: true,
+      rebillMaxInstallments: Math.max(...enabledInstallments)
+    } : {}),
     ...businessMetadata
   }
 
@@ -2070,13 +2079,19 @@ export async function createRebillPaymentLink(input = {}, { baseUrl, mode = '' }
     phone: cleanString(input.phone, 80)
   }
   const rebillInstallments = normalizeRebillInstallmentOptions(input)
+  const inputMetadata = input.metadata && typeof input.metadata === 'object' ? input.metadata : {}
+  const forceHostedCheckout = normalizeBoolean(
+    input.forceHostedCheckout ?? input.hostedCheckout ?? inputMetadata.rebillHostedCheckout ?? inputMetadata.rebillHostedPaymentLinkRequired,
+    false
+  )
   const metadata = {
     contactName: contact.name,
     contactEmail: contact.email,
     contactPhone: contact.phone,
     source: cleanString(input.source || 'ristak', 120),
     lineItems: Array.isArray(input.lineItems) ? input.lineItems : [],
-    ...(input.metadata && typeof input.metadata === 'object' ? input.metadata : {}),
+    ...inputMetadata,
+    ...(forceHostedCheckout ? { rebillHostedCheckout: true } : {}),
     ...(rebillInstallments ? { rebillInstallments } : {}),
     ...(tax ? { tax } : {})
   }
@@ -2111,7 +2126,7 @@ export async function createRebillPaymentLink(input = {}, { baseUrl, mode = '' }
   const row = await findPaymentById(id)
   let mappedRow = row
   let hostedPaymentLink = null
-  if (rebillInstallments?.enabled) {
+  if (rebillInstallments?.enabled || forceHostedCheckout) {
     try {
       const ensured = await ensureRebillHostedPaymentLink(row, config, baseUrl, paymentSettings)
       mappedRow = ensured.row || row

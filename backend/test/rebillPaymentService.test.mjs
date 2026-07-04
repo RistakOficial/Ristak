@@ -16,6 +16,10 @@ import {
   setRebillFetchForTest,
   testRebillPaymentConfig
 } from '../src/services/rebillPaymentService.js'
+import {
+  createPaymentGateLink,
+  getPaymentGateStatus
+} from '../src/services/publicPaymentGateService.js'
 
 async function snapshotRebillConfig(callback) {
   const previousRows = await db.all(
@@ -414,6 +418,108 @@ test('Rebill confirma pago público consultando el paymentId en backend antes de
       const paymentFetch = calls.find((call) => call.path === '/v3/payments/pay_rebill_service_test')
       assert.ok(paymentFetch)
       assert.equal(paymentFetch.apiKey, secretKey)
+    } finally {
+      await cleanupPublicPayment(publicPaymentId)
+    }
+  })
+})
+
+test('Payment Gate de Sites con Rebill devuelve checkout hospedado con MSI configurado', async () => {
+  await initializeMasterKey()
+
+  await snapshotRebillConfig(async () => {
+    const calls = []
+    const publicKey = 'pk_test_sites_rebill'
+    const secretKey = 'sk_test_sites_rebill'
+
+    setRebillFetchForTest(async (url, options = {}) => {
+      const parsed = new URL(url)
+      const method = options.method || 'GET'
+      const body = options.body ? JSON.parse(String(options.body)) : null
+      calls.push({ method, path: parsed.pathname, apiKey: options.headers?.['x-api-key'], body })
+
+      if (parsed.pathname === '/v3/organizations/me' && method === 'GET') {
+        return jsonTextResponse({ id: 'org_rebill_sites', name: 'Rebill Sites Org', status: 'active' })
+      }
+      if (parsed.pathname === '/v3/webhooks/search' && method === 'POST') {
+        return jsonTextResponse({ records: [] })
+      }
+      if (parsed.pathname === '/v3/webhooks' && method === 'POST') {
+        return jsonTextResponse({ id: 'wh_rebill_sites', url: body.url, events: body.events, active: true }, 201)
+      }
+      if (parsed.pathname === '/v3/payment-links' && method === 'POST') {
+        assert.equal(body.metadata.source, 'site_checkout')
+        assert.equal(body.metadata.rebillHostedCheckout, true)
+        assert.equal(body.metadata.rebillInstallmentsRequested, true)
+        assert.equal(body.metadata.rebillMaxInstallments, 6)
+        assert.deepEqual(body.paymentMethods, [{ methods: ['card'], currency: 'MXN' }])
+        assert.deepEqual(body.installmentsSettings, [
+          { currency: 'MXN', enabledInstallments: [1, 3, 6] }
+        ])
+        assert.equal(body.showCoupon, false)
+        assert.equal(body.isSingleUse, true)
+        assert.equal(body.prices[0].amount, 3000)
+        return jsonTextResponse({
+          id: 'pl_sites_rebill',
+          url: 'https://pay.rebill.com/sites/pl_sites_rebill',
+          status: 'active'
+        }, 201)
+      }
+
+      return jsonTextResponse({ message: `Ruta Rebill no esperada: ${method} ${parsed.pathname}` }, 404)
+    })
+
+    await saveRebillPaymentConfig({
+      enabled: true,
+      mode: 'test',
+      publicKey,
+      secretKey
+    }, {
+      baseUrl: 'https://app.example.test'
+    })
+
+    let publicPaymentId = ''
+    try {
+      const link = await createPaymentGateLink({
+        enabled: true,
+        gateway: 'rebill',
+        amount: 3000,
+        currency: 'MXN',
+        productName: 'Curso Sites',
+        description: 'Curso Sites',
+        buttonText: 'Pagar',
+        mode: 'test',
+        msi: { enabled: true, maxInstallments: 6 }
+      }, {
+        baseUrl: 'https://app.example.test',
+        source: 'site_checkout',
+        contact: {
+          email: 'cliente@example.test',
+          phone: '+526567426612'
+        },
+        metadata: {
+          siteId: 'site_rebill_msi',
+          paymentGate: {
+            siteId: 'site_rebill_msi',
+            paymentBlockId: 'block_pay_rebill'
+          }
+        }
+      })
+      publicPaymentId = link.publicPaymentId
+
+      assert.match(publicPaymentId, /^rstk_pay_[A-Za-z0-9]{20}$/)
+      assert.equal(link.paymentUrl, 'https://pay.rebill.com/sites/pl_sites_rebill')
+
+      const status = await getPaymentGateStatus(publicPaymentId)
+      assert.equal(status.paymentUrl, 'https://pay.rebill.com/sites/pl_sites_rebill')
+      assert.equal(status.metadata.rebillHostedCheckout, true)
+      assert.equal(status.metadata.paymentGate.gateway, 'rebill')
+      assert.equal(status.metadata.paymentGate.msi.maxInstallments, 6)
+      assert.equal(status.metadata.rebillInstallments.maxInstallments, 6)
+
+      const paymentLinkCall = calls.find((call) => call.path === '/v3/payment-links')
+      assert.ok(paymentLinkCall)
+      assert.equal(paymentLinkCall.apiKey, secretKey)
     } finally {
       await cleanupPublicPayment(publicPaymentId)
     }

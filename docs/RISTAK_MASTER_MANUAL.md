@@ -850,8 +850,11 @@ Alcance:
   Cuando el plan tiene tarjeta guardada, el cron cobra cada parcialidad vencida
   con `cardId`; si falta tarjeta, el primer pago o la domiciliacion guardan la
   tarjeta antes de activar los cobros futuros.
-- Checkout de Sites con el web component oficial `rebill-checkout`.
-- En checkouts publicos y Sites, Ristak configura el SDK de Rebill con
+- Checkout de Sites con redireccion al Checkout Landing hospedado de Rebill
+  (`pay.rebill.com`); Sites no monta el web component `rebill-checkout` porque el
+  Payment Gate debe abrir la superficie propia de Rebill y evitar conflictos de
+  MSI dentro del embed.
+- En checkouts publicos embebidos, Ristak configura el SDK de Rebill con
   `display.excludePaymentMethods=['cash','bank_transfer']` para aceptar solo
   tarjeta. SPEI, PSE/transferencias bancarias y efectivo no deben aparecer en
   estos links porque el flujo local espera confirmar cobros de tarjeta.
@@ -877,12 +880,12 @@ Alcance:
   mismo paso de decision que Stripe, Conekta, Mercado Pago y CLIP: contado o MSI.
   Si se elige MSI, Ristak pide el maximo de meses (3, 6, 9, 12, 18 o 24), guarda
   `metadata.rebillInstallments.maxInstallments` y conserva
-  `enabledInstallments`. Para la prueba operativa actual,
-  `REBILL_USE_HOSTED_PAYMENT_LINKS=true`, asi que los links MSI de Rebill usan el
-  Checkout Landing hospedado de Rebill (`pay.rebill.com`). La pagina local
-  `/pay/:publicPaymentId` se conserva como superficie de retorno, estado, errores
-  y fallback; si alguien abre la URL local de un pago Rebill MSI, Ristak redirige
-  al Payment Link hospedado cuando existe.
+  `enabledInstallments`. En links publicos MSI y en todos los Payment Gate de
+  Sites con Rebill, Ristak crea un Payment Link hospedado de Rebill
+  (`pay.rebill.com`) card-only; en Sites el boton del bloque crea el pago local y
+  redirige a esa URL. La pagina local `/pay/:publicPaymentId` se conserva como
+  superficie de retorno, estado, errores y fallback; si alguien abre la URL local
+  de un pago Rebill MSI, Ristak redirige al Payment Link hospedado cuando existe.
   Al crear el Payment Link hospedado, Ristak manda solo tarjeta en
   `paymentMethods`, conserva `showCoupon=false`, agrega `installmentsSettings` y
   mantiene el `title` como el concepto visible del cobro. `description` solo se
@@ -1213,8 +1216,10 @@ y frontend (`frontend/src/pages/Sites/*`) lo importan; el `Dockerfile` copia
 - Pago: el shell del checkout comparte estilos; el preview del editor solo muestra
   lo que el vivo mostraria (fila de meses standalone solo Conekta via
   `msiEligibility`; Stripe en `/pay` y Sites usa MSI controlado por backend cuando
-  el cobro trae `stripeInstallments.maxInstallments`; Mercado Pago, CLIP y Rebill resuelven
-  installments dentro de su widget/SDK cuando la cuenta/tarjeta califica; boton de
+  el cobro trae `stripeInstallments.maxInstallments`; Mercado Pago y CLIP resuelven
+  installments dentro de su widget/SDK cuando la cuenta/tarjeta califica; Rebill en
+  Sites muestra resumen de redireccion y abre el Checkout Landing hospedado
+  card-only con `installmentsSettings`; boton de
   pago con icono; badge "No visible en el sitio
   publicado" cuando el gate esta deshabilitado). En modo test, el preview y el
   checkout publicado muestran el helper de tarjetas de prueba del proveedor debajo
@@ -1223,7 +1228,8 @@ y frontend (`frontend/src/pages/Sites/*`) lo importan; el `Dockerfile` copia
   contrato de `paymentGate`; CLIP monta el SDK oficial en el checkout publicado,
   requiere email/telefono para procesar el cargo y puede habilitar MSI con
   `terms.enabled` si el bloque lo permite; Rebill prepara primero el pago local y
-  luego confirma server-side el `paymentId` devuelto por el SDK. El selector de
+  redirige a `pay.rebill.com`, dejando la confirmacion a webhooks/retorno de
+  Rebill y al status autoritativo de Ristak. El selector de
   pasarela del inspector debe persistir
   inmediatamente el bloque para que el modo vivo no monte una pasarela anterior; el
   HTML publicado, `/checkout/init` y el cargo deben usar siempre el mismo

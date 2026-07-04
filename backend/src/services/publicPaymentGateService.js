@@ -66,6 +66,13 @@ function parseJson(value, fallback = {}) {
   }
 }
 
+function getHostedPaymentUrlFromMetadata(metadata = {}) {
+  const link = metadata?.rebillHostedPaymentLink && typeof metadata.rebillHostedPaymentLink === 'object'
+    ? metadata.rebillHostedPaymentLink
+    : null
+  return cleanString(link?.url || link?.paymentUrl || link?.payment_url || metadata?.hostedPaymentUrl || metadata?.hosted_payment_url, 2000)
+}
+
 function normalizeBoolean(value) {
   if (value === true || value === 1) return true
   if (typeof value === 'string') {
@@ -194,8 +201,8 @@ export async function createPaymentGateLink(configInput = {}, {
   // 'test' = fuerza modo prueba. Nunca puede forzar live (lo garantiza normalizeGateMode).
   const forcedMode = config.mode === 'test' ? 'test' : ''
 
-  // MSI: Conekta / Mercado Pago lo aceptan siempre (normalizeConektaInstallmentOptions /
-  // normalizeMercadoPagoInstallmentOptions). Stripe tambien lo soporta con prepare/confirm
+  // MSI: Conekta / Mercado Pago / Rebill lo aceptan en link/checkout hospedado.
+  // Stripe tambien lo soporta con prepare/confirm
   // controlado, pero SOLO en MXN y con monto >= 300 (STRIPE_INSTALLMENT_MIN_AMOUNT); fuera de eso su
   // normalizador lanza error. Guardamos ese caso para que un bloque mal configurado NUNCA
   // rompa el cobro: si no aplica, simplemente se cobra de contado.
@@ -213,6 +220,7 @@ export async function createPaymentGateLink(configInput = {}, {
   )
     ? { enabled: true, maxInstallments: config.msi.maxInstallments }
     : null
+  const forceRebillHostedCheckout = config.gateway === 'rebill' && ['site_checkout', 'site_form'].includes(cleanString(source, 80))
 
   const payload = {
     amount: config.amount,
@@ -236,6 +244,7 @@ export async function createPaymentGateLink(configInput = {}, {
     ],
     metadata: {
       ...(metadata && typeof metadata === 'object' ? metadata : {}),
+      ...(forceRebillHostedCheckout ? { rebillHostedCheckout: true } : {}),
       paymentGate: {
         ...(metadata?.paymentGate && typeof metadata.paymentGate === 'object' ? metadata.paymentGate : {}),
         source,
@@ -261,7 +270,10 @@ export async function createPaymentGateLink(configInput = {}, {
     return createClipPaymentLink(payload, { baseUrl: paymentBaseUrl, mode: forcedMode })
   }
   if (config.gateway === 'rebill') {
-    return createRebillPaymentLink(payload, { baseUrl: paymentBaseUrl, mode: forcedMode })
+    return createRebillPaymentLink({
+      ...payload,
+      ...(forceRebillHostedCheckout ? { forceHostedCheckout: true } : {})
+    }, { baseUrl: paymentBaseUrl, mode: forcedMode })
   }
   return createStripePaymentLink(payload, { baseUrl: paymentBaseUrl, mode: forcedMode })
 }
@@ -282,10 +294,11 @@ export async function getPaymentGateStatus(publicPaymentId) {
 
   const status = cleanString(row.status, 40).toLowerCase()
   const metadata = parseJson(row.metadata_json, {})
+  const hostedPaymentUrl = getHostedPaymentUrlFromMetadata(metadata)
   return {
     id: row.id,
     publicPaymentId: row.public_payment_id,
-    paymentUrl: row.payment_url || '',
+    paymentUrl: hostedPaymentUrl || row.payment_url || '',
     provider: row.payment_provider || '',
     amount: Number(row.amount) || 0,
     currency: row.currency || 'MXN',
@@ -368,9 +381,13 @@ export async function getPaymentGateCheckoutDescriptor(publicPaymentId, { baseUr
 
   if (status.provider === 'rebill') {
     const payment = await getPublicRebillPayment(publicPaymentId, { baseUrl })
+    const hostedPaymentUrl = cleanString(payment?.hostedPaymentUrl || payment?.rebillHostedPaymentLink?.url || status.paymentUrl, 2000)
     return {
       ...base,
       provider: 'rebill',
+      paymentUrl: hostedPaymentUrl,
+      hostedPaymentUrl,
+      redirectUrl: hostedPaymentUrl,
       publicKey: payment?.publicKey || '',
       paymentMode: payment?.paymentMode || '',
       instantProduct: payment?.instantProduct || null,
