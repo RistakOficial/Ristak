@@ -3,6 +3,7 @@ import { Camera, CameraDirection, EncodingType, MediaTypeSelection, type MediaRe
 import { Capacitor } from '@capacitor/core'
 import { Device } from '@capacitor/device'
 import { Filesystem } from '@capacitor/filesystem'
+import { Haptics, ImpactStyle } from '@capacitor/haptics'
 import { Keyboard, KeyboardResize, KeyboardStyle } from '@capacitor/keyboard'
 import { PushNotifications, type ActionPerformed, type Token } from '@capacitor/push-notifications'
 import { SplashScreen } from '@capacitor/splash-screen'
@@ -44,6 +45,7 @@ const IOS_MOBILE_APP_ALLOWED_PATH_PREFIXES = [
   `${IOS_MOBILE_APP_PREFIX}/agent-ai`,
   `${IOS_MOBILE_APP_PREFIX}/ai-agent`
 ]
+const MOBILE_INTERACTION_HAPTIC_FALLBACK_MS = 18
 
 export interface MobileAppNotificationDetail {
   category: string
@@ -526,6 +528,25 @@ async function createAndroidNotificationChannels() {
 // window before bailing so we don't mark a failure prematurely.
 const NATIVE_PUSH_REGISTRATION_TIMEOUT_MS = 60000
 
+function triggerNavigatorVibration(durationMs = MOBILE_INTERACTION_HAPTIC_FALLBACK_MS) {
+  if (typeof navigator !== 'undefined' && typeof navigator.vibrate === 'function') {
+    navigator.vibrate(durationMs)
+  }
+}
+
+function triggerInteractionHaptic() {
+  if (typeof window === 'undefined') return
+
+  if (Capacitor.isNativePlatform()) {
+    void Haptics.impact({ style: ImpactStyle.Light }).catch(() => {
+      triggerNavigatorVibration()
+    })
+    return
+  }
+
+  triggerNavigatorVibration()
+}
+
 function waitForNativePushToken(calendarIds: string[] = []): Promise<PushSubscriptionResult> {
   return new Promise((resolve) => {
     let settled = false
@@ -593,6 +614,8 @@ export const mobileAppService = {
   isIosMobileShell,
 
   getIosMobileRedirectPath,
+
+  triggerInteractionHaptic,
 
   async configureShell() {
     if (shellConfigured || !Capacitor.isNativePlatform()) return

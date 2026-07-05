@@ -316,6 +316,12 @@ pegados al globo original: WhatsApp acepta emoji, Meta solo debe
 ofrecer/aceptar corazon (`love`) por contrato, y HighLevel/email/comentarios
 deben avisar que no hay reaccion nativa en vez de crear un mensaje falso.
 
+El feedback haptico de interaccion movil vive en `mobileAppService`. Al dejar
+pulsado un chat, `/movil` debe disparar haptic cuando entra a seleccion; al
+dejar pulsado un globo, debe dispararlo cuando abre el menu de acciones. Este
+feedback no depende de `push_notification_vibration_enabled`, porque esa
+preferencia controla alertas/notificaciones, no la respuesta tactil de la UI.
+
 ## Variables de servidor
 
 Web/PWA:

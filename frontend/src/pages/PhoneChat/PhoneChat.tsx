@@ -10764,9 +10764,7 @@ export const PhoneChat: React.FC = () => {
     closeSwipeActions()
     setChatSelectionActionsOpen(false)
     suppressNextChatClick(420)
-    if (notificationVibrationEnabled && typeof navigator !== 'undefined' && typeof navigator.vibrate === 'function') {
-      navigator.vibrate(18)
-    }
+    mobileAppService.triggerInteractionHaptic()
     setSelectedChatIds((current) => current.includes(contactId) ? current : [...current, contactId])
   }
 
@@ -10977,6 +10975,7 @@ export const PhoneChat: React.FC = () => {
       placement: 'below',
       align
     })
+    mobileAppService.triggerInteractionHaptic()
   }, [actionSheetDismiss, clearMessageActionPress, conversationVisible])
 
   const handleMessageActionPointerDown = (message: ChatMessage, event: React.PointerEvent<HTMLDivElement>) => {
