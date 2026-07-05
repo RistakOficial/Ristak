@@ -136,6 +136,52 @@ function businessDateOnlyFromValue(value, timezone = DEFAULT_TIMEZONE) {
   return parsed.toISODate()
 }
 
+function parsePaymentMetadata(payment = {}) {
+  const raw = cleanString(payment.metadata_json || payment.metadata, 5000)
+  if (!raw) return null
+
+  try {
+    const parsed = JSON.parse(raw)
+    return parsed && typeof parsed === 'object' ? parsed : null
+  } catch {
+    return null
+  }
+}
+
+function getPaymentPlanFlowId(payment = {}) {
+  const directFlowId = cleanString(
+    payment.installment_flow_id ||
+    payment.payment_flow_id ||
+    payment.flow_id,
+    200
+  )
+  if (directFlowId) return directFlowId
+
+  const metadata = parsePaymentMetadata(payment)
+  return cleanString(
+    metadata?.paymentPlan?.flowId ||
+    metadata?.paymentPlan?.flow_id ||
+    metadata?.payment_plan?.flowId ||
+    metadata?.payment_plan?.flow_id ||
+    metadata?.paymentFlowId ||
+    metadata?.payment_flow_id ||
+    metadata?.flowId ||
+    metadata?.flow_id,
+    200
+  )
+}
+
+function selectNextReminderPerPaymentPlan(rows = []) {
+  const seenFlowIds = new Set()
+  return rows.filter((row) => {
+    const flowId = getPaymentPlanFlowId(row)
+    if (!flowId) return true
+    if (seenFlowIds.has(flowId)) return false
+    seenFlowIds.add(flowId)
+    return true
+  })
+}
+
 function appendReceiptQuery(url = '') {
   const cleanUrl = cleanString(url, 2000)
   if (!cleanUrl) return ''
@@ -791,31 +837,43 @@ export function queuePaymentAutomationMessage(type, paymentInput, options = {}) 
 async function getReminderCandidates(settings, now, limit, paymentIds = [], timezone = DEFAULT_TIMEZONE) {
   const daysBefore = Math.max(1, Number(settings.automations?.reminderDaysBefore || 3))
   const todayDate = businessDateOnlyFromValue(now, timezone)
-  const targetEndDate = addDateOnlyDays(todayDate, daysBefore, timezone)
+  const targetDate = addDateOnlyDays(todayDate, daysBefore, timezone)
   const closed = [...CLOSED_PAYMENT_STATUSES]
   const placeholders = closed.map(() => '?').join(', ')
   const cleanPaymentIds = paymentIds.map((id) => cleanString(id, 200)).filter(Boolean)
   const paymentIdFilter = cleanPaymentIds.length
-    ? `AND id IN (${cleanPaymentIds.map(() => '?').join(', ')})`
+    ? `AND p.id IN (${cleanPaymentIds.map(() => '?').join(', ')})`
     : ''
   // PAY2-007: no enviar recordatorios para links sin due_date. En PostgreSQL
   // due_date es timestamp, así que no se puede usar TRIM() como en SQLite.
   // El filtro JS valida que sea una fecha parseable.
+  const queryLimit = Math.max(limit * 10, limit, cleanPaymentIds.length || 0, 200)
   const rows = await db.all(`
-    SELECT *
-    FROM payments
-    WHERE due_date IS NOT NULL
-      AND LOWER(COALESCE(status, 'pending')) NOT IN (${placeholders})
+    SELECT
+      p.*,
+      ip.flow_id AS installment_flow_id,
+      ip.sequence AS installment_sequence
+    FROM payments p
+    LEFT JOIN (
+      SELECT payment_id, MIN(flow_id) AS flow_id, MIN(sequence) AS sequence
+      FROM installment_payments
+      WHERE payment_id IS NOT NULL
+      GROUP BY payment_id
+    ) ip ON ip.payment_id = p.id
+    WHERE p.due_date IS NOT NULL
+      AND LOWER(COALESCE(p.status, 'pending')) NOT IN (${placeholders})
       ${paymentIdFilter}
-    ORDER BY due_date ASC
+    ORDER BY p.due_date ASC, p.created_at ASC, p.id ASC
     LIMIT ?
-  `, [...closed, ...cleanPaymentIds, Math.max(limit * 3, limit)])
+  `, [...closed, ...cleanPaymentIds, queryLimit])
 
-  return rows.filter((row) => {
+  const dueRows = rows.filter((row) => {
     // PAY2-007: fechas invalidas/vacias se excluyen; no se inventa vencimiento.
     const dueDate = businessDateOnlyFromValue(row.due_date, timezone)
-    return dueDate !== null && dueDate >= todayDate && dueDate <= targetEndDate
-  }).slice(0, limit)
+    return dueDate !== null && dueDate === targetDate
+  })
+
+  return selectNextReminderPerPaymentPlan(dueRows).slice(0, limit)
 }
 
 async function getFailedCandidates(settings, now, limit, paymentIds = []) {

@@ -847,6 +847,14 @@ avisos de cobro fallido desde `payments_settings.automations`.
   agrega env var nueva para arrancar el servicio.
 - Cada canal tiene su propio despacho idempotente por pago, tipo de automatizacion
   y canal. Un envio por WhatsApp no bloquea el envio por correo, y viceversa.
+- `reminderDaysBefore` es un dia exacto, no una ventana acumulada: si esta en 3,
+  el recordatorio solo se evalua para pagos que vencen exactamente tres dias
+  despues del dia de negocio actual.
+- En planes de pago locales, ese dia exacto no debe disparar varias parcialidades
+  del mismo flujo en el mismo barrido. Si dos o mas cuotas del mismo
+  `payment_flow` caen en el dia objetivo, Ristak solo envia el recordatorio de la
+  siguiente parcialidad abierta; los pagos unicos y pagos de otros flujos siguen
+  evaluandose de forma independiente.
 - El comprobante posterior al pago incluye un enlace al checkout publico con
   `?receipt=1`; cuando el pago esta confirmado, esa pagina muestra el comprobante
   y activa la descarga/impresion del PDF.

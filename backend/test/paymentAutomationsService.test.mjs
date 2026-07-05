@@ -258,6 +258,7 @@ async function cleanupFixtures(ids = []) {
   if (!ids.length) return
   const placeholders = ids.map(() => '?').join(', ')
   await db.run(`DELETE FROM payment_automation_dispatches WHERE payment_id IN (${placeholders})`, ids)
+  await db.run(`DELETE FROM installment_payments WHERE payment_id IN (${placeholders})`, ids)
   await db.run(`DELETE FROM payments WHERE id IN (${placeholders})`, ids)
   const contactIds = ids.map((id) => id.replace('payment_auto_', 'contact_payment_auto_'))
   await db.run(`DELETE FROM whatsapp_api_messages WHERE contact_id IN (${placeholders})`, contactIds)
@@ -495,7 +496,7 @@ test('cola de automatizaciones respeta recordatorios y cobros fallidos encendido
     const now = new Date('2026-06-20T18:00:00.000Z')
     const reminderFixture = await createPaymentFixture({
       status: 'sent',
-      dueDate: '2026-06-21T12:00:00.000Z',
+      dueDate: '2026-06-23T12:00:00.000Z',
       suffix: 'remind1'
     })
     const failedFixture = await createPaymentFixture({
@@ -505,7 +506,7 @@ test('cola de automatizaciones respeta recordatorios y cobros fallidos encendido
     })
     const reminderOffFixture = await createPaymentFixture({
       status: 'sent',
-      dueDate: '2026-06-21T12:00:00.000Z',
+      dueDate: '2026-06-23T12:00:00.000Z',
       suffix: 'remind2'
     })
     const failedOffFixture = await createPaymentFixture({
@@ -570,7 +571,7 @@ test('recordatorios de pago usan el dia del negocio, no el dia UTC del servidor'
       const now = new Date('2026-06-30T06:30:00.000Z') // 29 jun 2026 23:30 en Los Angeles
       const reminderFixture = await createPaymentFixture({
         status: 'sent',
-        dueDate: '2026-06-29T19:00:00.000Z',
+        dueDate: '2026-06-30T19:00:00.000Z',
         suffix: 'tzremind'
       })
 
@@ -600,6 +601,153 @@ test('recordatorios de pago usan el dia del negocio, no el dia UTC del servidor'
         await cleanupFixtures([reminderFixture.paymentId])
       }
     })
+  })
+})
+
+test('recordatorios de pago respetan exactamente los dias antes configurados', async () => {
+  await withYCloudCapture(async (captures) => {
+    const now = new Date('2026-07-05T09:16:00.000Z')
+    const tooSoonPayment = await createPaymentFixture({
+      status: 'scheduled',
+      dueDate: '2026-07-06T12:00:00.000Z',
+      suffix: 'toosoon3days'
+    })
+    const exactPayment = await createPaymentFixture({
+      status: 'scheduled',
+      dueDate: '2026-07-08T12:00:00.000Z',
+      suffix: 'exact3days'
+    })
+
+    try {
+      await setAppConfig(PAYMENT_SETTINGS_CONFIG_KEY, {
+        automations: {
+          remindersEnabled: true,
+          reminderDaysBefore: 3,
+          reminderChannel: 'whatsapp',
+          reminderTemplateName: 'recordatorio_pago_pendiente',
+          reminderTemplateLanguage: 'es_MX',
+          failedPaymentEnabled: false,
+          failedPaymentChannel: 'whatsapp'
+        }
+      })
+
+      const results = await processDuePaymentAutomations({
+        now,
+        limit: 10,
+        paymentIds: [tooSoonPayment.paymentId, exactPayment.paymentId]
+      })
+
+      assert.equal(results.filter((result) => result.sent).length, 1)
+      assert.equal(captures.length, 1)
+      assert.equal(captures[0].externalId, `payment:reminder:${exactPayment.paymentId}`)
+    } finally {
+      await cleanupFixtures([tooSoonPayment.paymentId, exactPayment.paymentId])
+    }
+  })
+})
+
+test('recordatorios de planes de pago solo envian la siguiente parcialidad pendiente del flujo', async () => {
+  await withYCloudCapture(async (captures) => {
+    const now = new Date('2026-07-05T09:16:00.000Z')
+    const flowId = 'payment_flow_reminder_next_only'
+    const nextInstallment = await createPaymentFixture({
+      status: 'scheduled',
+      dueDate: '2026-07-08T12:00:00.000Z',
+      suffix: 'planrem2'
+    })
+    const laterInstallment = await createPaymentFixture({
+      status: 'scheduled',
+      dueDate: '2026-07-08T12:00:00.000Z',
+      suffix: 'planrem3'
+    })
+    const standalonePayment = await createPaymentFixture({
+      status: 'sent',
+      dueDate: '2026-07-08T12:00:00.000Z',
+      suffix: 'singlepay'
+    })
+
+    try {
+      await db.run(`
+        INSERT INTO payment_flows (
+          id, contact_id, contact_name, contact_email, contact_phone,
+          total_amount, currency, concept, current_state, payment_provider,
+          created_at, updated_at
+        ) VALUES (?, ?, 'Maria Lopez', ?, '+5215500000000', 3000, 'MXN',
+          'Plan demo', 'installment_plan_active', 'rebill', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+      `, [flowId, nextInstallment.contactId, `${nextInstallment.contactId}@example.test`])
+
+      await db.run(`
+        INSERT INTO installment_payments (
+          id, flow_id, sequence, amount, due_date, payment_method,
+          automatic, status, payment_id, created_at, updated_at
+        ) VALUES
+          (?, ?, 1, 1000, ?, 'rebill_saved_card', 1, 'scheduled', ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
+          (?, ?, 2, 1000, ?, 'rebill_saved_card', 1, 'scheduled', ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+      `, [
+        'installment_plan_reminder_next',
+        flowId,
+        '2026-07-08T12:00:00.000Z',
+        nextInstallment.paymentId,
+        'installment_plan_reminder_later',
+        flowId,
+        '2026-07-08T12:00:00.000Z',
+        laterInstallment.paymentId
+      ])
+
+      await setAppConfig(PAYMENT_SETTINGS_CONFIG_KEY, {
+        automations: {
+          remindersEnabled: true,
+          reminderDaysBefore: 3,
+          reminderChannel: 'whatsapp',
+          reminderTemplateName: 'recordatorio_pago_pendiente',
+          reminderTemplateLanguage: 'es_MX',
+          failedPaymentEnabled: false,
+          failedPaymentChannel: 'whatsapp'
+        }
+      })
+
+      const results = await processDuePaymentAutomations({
+        now,
+        limit: 10,
+        paymentIds: [
+          nextInstallment.paymentId,
+          laterInstallment.paymentId,
+          standalonePayment.paymentId
+        ]
+      })
+
+      assert.equal(results.filter((result) => result.sent).length, 2)
+      assert.equal(captures.length, 2)
+
+      const externalIds = captures.map((capture) => capture.externalId).sort()
+      assert.deepEqual(externalIds, [
+        `payment:reminder:${nextInstallment.paymentId}`,
+        `payment:reminder:${standalonePayment.paymentId}`
+      ].sort())
+      assert.ok(!externalIds.includes(`payment:reminder:${laterInstallment.paymentId}`))
+
+      const dispatches = await db.all(
+        'SELECT payment_id, status FROM payment_automation_dispatches WHERE automation_type = ? ORDER BY payment_id',
+        ['reminder']
+      )
+      const planDispatches = dispatches.filter((dispatch) => [
+        nextInstallment.paymentId,
+        laterInstallment.paymentId,
+        standalonePayment.paymentId
+      ].includes(dispatch.payment_id))
+      assert.deepEqual(
+        planDispatches.map((dispatch) => dispatch.payment_id).sort(),
+        [nextInstallment.paymentId, standalonePayment.paymentId].sort()
+      )
+      assert.ok(planDispatches.every((dispatch) => dispatch.status === 'sent'))
+    } finally {
+      await db.run('DELETE FROM payment_flows WHERE id = ?', [flowId])
+      await cleanupFixtures([
+        nextInstallment.paymentId,
+        laterInstallment.paymentId,
+        standalonePayment.paymentId
+      ])
+    }
   })
 })
 
