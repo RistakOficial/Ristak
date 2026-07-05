@@ -428,6 +428,117 @@ test('processMetaSocialWebhook enriquece comentarios de Instagram con perfil del
   }
 })
 
+test('processMetaSocialWebhook refleja respuestas propias a comentarios en el chat del contacto', async () => {
+  const contactId = 'meta_comment_echo_contact'
+  const metaContactId = 'meta_comment_echo_profile'
+  const inboundCommentId = 'fb-comment-echo-parent'
+  const replyCommentId = 'fb-comment-echo-reply'
+
+  await initializeMasterKey()
+
+  await snapshotMetaConfig(async () => {
+    await snapshotAppConfig(['meta_facebook_comments_enabled'], async () => {
+      try {
+        await db.run('DELETE FROM meta_social_messages WHERE contact_id = ? OR meta_message_id IN (?, ?)', [contactId, inboundCommentId, replyCommentId]).catch(() => undefined)
+        await db.run('DELETE FROM meta_social_contacts WHERE contact_id = ? OR sender_id = ?', [contactId, 'page-send-test']).catch(() => undefined)
+        await db.run('DELETE FROM contacts WHERE id = ?', [contactId]).catch(() => undefined)
+
+        await db.run(`
+          INSERT INTO meta_config (
+            ad_account_id, access_token, pixel_id, page_id, instagram_account_id,
+            timezone_id, timezone_name, timezone_offset_hours_utc
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        `, [
+          'act-send-test',
+          encrypt('user-token-send-test'),
+          null,
+          'page-send-test',
+          'ig-business-send-test',
+          null,
+          null,
+          null
+        ])
+        await setAppConfig('meta_facebook_comments_enabled', '1')
+        await seedMessengerContact({ contactId, metaContactId })
+
+        await db.run(`
+          INSERT INTO meta_social_messages (
+            id, platform, meta_message_id, meta_social_contact_id, contact_id,
+            sender_id, recipient_id, page_id, direction, status, message_type,
+            message_text, message_timestamp, raw_payload_json, comment_id, post_id, updated_at
+          ) VALUES (?, 'messenger', ?, ?, ?, 'psid-send-test', 'page-send-test', 'page-send-test', 'inbound', 'received', 'comment',
+            'Quiero informes', '2026-07-04T16:00:00.000Z', '{}', ?, 'fb-post-echo-test', CURRENT_TIMESTAMP)
+        `, [
+          hashTestId('meta_social_msg', inboundCommentId),
+          inboundCommentId,
+          metaContactId,
+          contactId,
+          inboundCommentId
+        ])
+
+        const result = await processMetaSocialWebhook({
+          payload: {
+            object: 'page',
+            entry: [
+              {
+                id: 'page-send-test',
+                time: 1783180860,
+                changes: [
+                  {
+                    field: 'feed',
+                    value: {
+                      item: 'comment',
+                      verb: 'add',
+                      comment_id: replyCommentId,
+                      parent_id: inboundCommentId,
+                      post_id: 'fb-post-echo-test',
+                      from: { id: 'page-send-test', name: 'Ristak' },
+                      message: 'Claro, te mando la info.',
+                      created_time: 1783180860
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        })
+
+        assert.equal(result.messages, 1)
+
+        const stored = await db.get(
+          `SELECT contact_id, meta_social_contact_id, sender_id, recipient_id, direction, status, message_type,
+                  message_text, comment_id, parent_comment_id, post_id
+             FROM meta_social_messages
+            WHERE meta_message_id = ?`,
+          [replyCommentId]
+        )
+
+        assert.equal(stored.contact_id, contactId)
+        assert.equal(stored.meta_social_contact_id, metaContactId)
+        assert.equal(stored.sender_id, 'page-send-test')
+        assert.equal(stored.recipient_id, 'psid-send-test')
+        assert.equal(stored.direction, 'outbound')
+        assert.equal(stored.status, 'sent')
+        assert.equal(stored.message_type, 'comment_reply_public')
+        assert.equal(stored.message_text, 'Claro, te mando la info.')
+        assert.equal(stored.comment_id, inboundCommentId)
+        assert.equal(stored.parent_comment_id, inboundCommentId)
+        assert.equal(stored.post_id, 'fb-post-echo-test')
+
+        const pageContact = await db.get(
+          'SELECT id FROM meta_social_contacts WHERE platform = ? AND sender_id = ?',
+          ['messenger', 'page-send-test']
+        )
+        assert.equal(pageContact, null)
+      } finally {
+        await db.run('DELETE FROM meta_social_messages WHERE contact_id = ? OR meta_message_id IN (?, ?)', [contactId, inboundCommentId, replyCommentId]).catch(() => undefined)
+        await db.run('DELETE FROM meta_social_contacts WHERE contact_id = ? OR sender_id = ?', [contactId, 'page-send-test']).catch(() => undefined)
+        await db.run('DELETE FROM contacts WHERE id = ?', [contactId]).catch(() => undefined)
+      }
+    })
+  })
+})
+
 test('processMetaSocialWebhook usa conversaciones de Instagram como fallback de nombre sin Page token', async () => {
   const previousMetaGraphDescriptor = Object.getOwnPropertyDescriptor(API_URLS, 'META_GRAPH')
   const previousInstagramGraphDescriptor = Object.getOwnPropertyDescriptor(API_URLS, 'INSTAGRAM_GRAPH')

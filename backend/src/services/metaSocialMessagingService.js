@@ -323,7 +323,7 @@ function extractCommentEvent({ objectType, entry, change, config = {} }) {
     pageId: platform === 'messenger' ? pageId : '',
     instagramAccountId: platform === 'instagram' ? igId : '',
     metaMessageId: commentId, // dedup natural (edits/reenvíos llegan con el mismo id)
-    messageType: 'comment',
+    messageType: isEcho ? 'comment_reply_public' : 'comment',
     messageText: text || '(comentario sin texto)',
     mediaUrl: commentMedia.mediaUrl,
     mediaType: commentMedia.mediaType,
@@ -355,6 +355,103 @@ async function softRemoveComment(comment) {
      WHERE id = ?`,
     [messageId]
   )
+}
+
+async function saveOutboundCommentEcho(comment) {
+  const platform = comment.platform === 'instagram' ? 'instagram' : 'messenger'
+  const replyCommentId = cleanString(comment.commentId)
+  const targetCommentId = cleanString(comment.parentCommentId)
+
+  if (!replyCommentId || !targetCommentId) {
+    logger.info(`[Meta social] Comentario propio ${replyCommentId || '(sin id)'} ignorado: Meta no envió parent_id para enlazarlo al contacto.`)
+    return null
+  }
+
+  const target = await db.get(`
+    SELECT
+      msg.contact_id,
+      msg.meta_social_contact_id,
+      msg.sender_id AS contact_sender_id,
+      msg.recipient_id AS business_recipient_id,
+      msg.page_id,
+      msg.instagram_account_id,
+      msg.comment_id,
+      msg.post_id,
+      msg.media_id,
+      profile.id AS profile_id,
+      profile.sender_id AS profile_sender_id,
+      profile.page_id AS profile_page_id,
+      profile.instagram_account_id AS profile_instagram_account_id
+    FROM meta_social_messages msg
+    LEFT JOIN meta_social_contacts profile ON profile.id = msg.meta_social_contact_id
+    WHERE msg.platform = ?
+      AND msg.comment_id = ?
+      AND COALESCE(msg.contact_id, '') <> ''
+      AND LOWER(COALESCE(msg.direction, '')) = 'inbound'
+    ORDER BY CASE WHEN msg.message_type = 'comment' THEN 0 ELSE 1 END,
+             COALESCE(msg.message_timestamp, msg.created_at) DESC
+    LIMIT 1
+  `, [platform, targetCommentId]).catch(error => {
+    logger.warn(`[Meta social] No se pudo buscar el comentario padre ${targetCommentId}: ${error.message}`)
+    return null
+  })
+
+  if (!target?.contact_id) {
+    logger.info(`[Meta social] Respuesta propia ${replyCommentId} ignorada: no existe comentario padre ${targetCommentId} en el chat local.`)
+    return null
+  }
+
+  const profile = {
+    id: cleanString(target.profile_id || target.meta_social_contact_id),
+    sender_id: cleanString(target.profile_sender_id || target.contact_sender_id),
+    page_id: cleanString(target.profile_page_id || target.page_id || target.business_recipient_id),
+    instagram_account_id: cleanString(target.profile_instagram_account_id || target.instagram_account_id || target.business_recipient_id)
+  }
+
+  if (!profile.id || !profile.sender_id) {
+    logger.warn(`[Meta social] Respuesta propia ${replyCommentId} sin perfil social enlazado para ${target.contact_id}.`)
+    return null
+  }
+
+  const targetPostId = cleanString(target.post_id) ||
+    cleanString(target.media_id) ||
+    cleanString(comment.postId) ||
+    cleanString(comment.mediaId)
+
+  const sent = await saveMetaSocialOutboundMessage({
+    platform,
+    contactId: target.contact_id,
+    profile,
+    messageId: replyCommentId,
+    text: comment.messageText,
+    response: {
+      id: replyCommentId,
+      webhook_echo: true
+    },
+    externalId: replyCommentId,
+    messageType: 'comment_reply_public',
+    messageTimestamp: comment.messageTimestamp,
+    commentId: cleanString(target.comment_id) || targetCommentId,
+    postId: targetPostId,
+    parentCommentId: targetCommentId,
+    context: {
+      source: 'meta_comment_echo',
+      reply_comment_id: replyCommentId,
+      parent_comment_id: targetCommentId,
+      raw: comment.raw
+    }
+  })
+
+  return {
+    ...sent,
+    messageId: sent.localMessageId,
+    contactId: target.contact_id,
+    platform,
+    direction: 'outbound',
+    messageText: comment.messageText,
+    messageType: 'comment_reply_public',
+    timestamp: comment.messageTimestamp
+  }
 }
 
 // El webhook de comentarios trae from.{id,name} pero NO siempre trae foto. Para
@@ -1090,8 +1187,8 @@ async function sendMetaInstagramReactionRequest({ businessId, recipientId, react
   })
 }
 
-async function saveMetaSocialOutboundMessage({ platform, contactId, profile, messageId, text, response, externalId, messageType = 'text', commentId = '', postId = '', parentCommentId = '', context = null }) {
-  const now = new Date().toISOString()
+async function saveMetaSocialOutboundMessage({ platform, contactId, profile, messageId, text, response, externalId, messageType = 'text', messageTimestamp = '', commentId = '', postId = '', parentCommentId = '', context = null }) {
+  const now = cleanString(messageTimestamp) || new Date().toISOString()
   const cleanPlatform = platform === 'instagram' ? 'instagram' : 'messenger'
   const cleanMessageType = cleanString(messageType) || 'text'
   const remoteMessageId = cleanString(
@@ -1113,6 +1210,7 @@ async function saveMetaSocialOutboundMessage({ platform, contactId, profile, mes
     response,
     ...(context ? { context } : {})
   })
+  const existing = await db.get('SELECT id FROM meta_social_messages WHERE id = ?', [localMessageId]).catch(() => null)
 
   await db.run(`
     INSERT INTO meta_social_messages (
@@ -1171,7 +1269,7 @@ async function saveMetaSocialOutboundMessage({ platform, contactId, profile, mes
     direction: 'outbound',
     messageType: cleanMessageType,
     messageTimestamp: now,
-    isNew: true
+    isNew: !existing
   })
 
   return {
@@ -1179,7 +1277,8 @@ async function saveMetaSocialOutboundMessage({ platform, contactId, profile, mes
     status: 'sent',
     transport: cleanPlatform,
     channel: cleanPlatform,
-    remoteMessageId: remoteMessageId || null
+    remoteMessageId: remoteMessageId || null,
+    isNew: !existing
   }
 }
 
@@ -2194,11 +2293,25 @@ export async function processMetaSocialWebhook({ payload = {}, rawBody = '', sig
             continue
           }
 
-          if (comment.isEcho) continue // nuestra propia respuesta pública → no re-procesar (anti-loop)
           if (comment.verb === 'remove' || comment.verb === 'hide') {
             await softRemoveComment(comment).catch(error => {
               logger.warn(`No se pudo marcar comentario eliminado: ${error.message}`)
             })
+            continue
+          }
+          if (comment.isEcho) {
+            const savedEcho = await saveOutboundCommentEcho(comment)
+            if (savedEcho) {
+              results.push({
+                messageId: savedEcho.messageId,
+                isNew: savedEcho.isNew,
+                contactId: savedEcho.contactId,
+                platform: savedEcho.platform,
+                direction: savedEcho.direction,
+                messageType: savedEcho.messageType,
+                timestamp: savedEcho.timestamp
+              })
+            }
             continue
           }
 

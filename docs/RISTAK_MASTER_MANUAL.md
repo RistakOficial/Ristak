@@ -1145,6 +1145,11 @@ Ristak usa Meta en varias areas:
   `instagram_business_basic` e `instagram_business_manage_messages`, app en Live
   para clientes reales, Advanced Access cuando aplique y token regenerado despues
   de aprobar los permisos.
+- Los comentarios publicados por la propia Pagina de Facebook o cuenta de
+  Instagram no se descartan como anti-loop. Si llegan por webhook y tienen
+  `parent_id`, Ristak los enlaza al comentario padre ya guardado y los refleja en
+  el chat del contacto como `comment_reply_public` saliente. Esos ecos propios no
+  incrementan no leidos ni disparan automatizaciones o agente conversacional.
 - El enriquecimiento de contactos Meta usa el mismo contrato separado:
   Messenger lee perfil/conversaciones por Facebook Graph con Page token;
   Instagram lee perfiles de DMs y autores de comentarios por Instagram Graph con
