@@ -491,8 +491,19 @@ cada mensaje; si la privacidad del contacto, la sesion QR o el proveedor no
 entregan foto, Ristak conserva el avatar anterior o cae a iniciales. Si un
 refresh QR falla y la foto guardada es una URL temporal de WhatsApp
 (`pps.whatsapp.net`), el backend la limpia para que no quede una imagen caducada
-en la base. El frontend tambien debe ocultar cualquier imagen de avatar que
-dispare `onError` y mostrar iniciales en su lugar.
+en la base. Las listas de contactos y chats pueden pedir
+`warmProfilePictures=true` para hidratar y guardar avatares mientras cargan, con
+limites por pagina para no bloquear la UI. Para corregir contactos ya existentes
+sin esperar a que vuelvan a escribir, el endpoint protegido
+`POST /api/whatsapp-api/contacts/profile-pictures/backfill` ejecuta un backfill
+manual sobre el CRM completo por default (`scope: all_crm`): cualquier contacto
+activo con telefono puede intentar avatar porque la libreta conectada pertenece
+al negocio. Busca primero por API/YCloud, luego por QR/Baileys en tandas
+pequenas, y guarda el resultado en `whatsapp_api_contacts.profile_picture_url`.
+Si un operador necesita limitarlo a perfiles previamente relacionados con
+WhatsApp puede mandar `scope: whatsapp_only`, pero no es el comportamiento
+normal. El frontend tambien debe ocultar cualquier imagen de avatar que dispare
+`onError` y mostrar iniciales en su lugar.
 
 Antes de mandar mensajes libres por WhatsApp API/YCloud, `whatsappApiService`
 debe revisar la ultima respuesta entrante del cliente para ese contacto y numero

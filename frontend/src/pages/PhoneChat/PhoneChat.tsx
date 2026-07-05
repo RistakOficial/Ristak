@@ -7195,6 +7195,7 @@ export const PhoneChat: React.FC = () => {
       const params: Record<string, string> = {
         ...(trimmed ? { q: trimmed } : {}),
         ...phoneFilterParams,
+        warmProfilePictures: 'true',
         limit: String(CHAT_LIST_PAGE_SIZE),
         ...(pageOffset > 0 ? { offset: String(pageOffset) } : {})
       }

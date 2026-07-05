@@ -15,6 +15,7 @@ import {
   previewWhatsAppApiPhoneNumbers,
   processMetaDirectWebhookRelay,
   processYCloudWhatsAppWebhook,
+  backfillWhatsAppContactProfilePictures,
   refreshWhatsAppApi,
   resetWhatsAppApiCredentials,
   sendWhatsAppApiAudioMessage,
@@ -173,6 +174,25 @@ export async function refreshWhatsAppApiView(req, res) {
     res.status(400).json({
       success: false,
       error: error.message || 'No se pudo actualizar WhatsApp_API'
+    })
+  }
+}
+
+export async function backfillWhatsAppContactProfilePicturesView(req, res) {
+  try {
+    const data = await backfillWhatsAppContactProfilePictures({
+      limit: req.body?.limit,
+      force: req.body?.force === true,
+      onlyMissing: req.body?.onlyMissing === true || req.body?.only_missing === true,
+      contactIds: Array.isArray(req.body?.contactIds) ? req.body.contactIds : [],
+      scope: req.body?.scope
+    })
+    res.json({ success: true, data })
+  } catch (error) {
+    logger.error(`Error actualizando avatares WhatsApp: ${error.message}`)
+    res.status(400).json({
+      success: false,
+      error: error.message || 'No se pudieron actualizar las fotos de perfil de WhatsApp'
     })
   }
 }
