@@ -1546,6 +1546,14 @@ El modal de prueba usa un solo campo **Contacto**: el usuario puede buscar un
 contacto existente o crear uno nuevo desde el mismo selector, y la prueba corre
 sobre ese contacto elegido.
 
+La acción **Notificaciones** permite elegir canales de entrega independientes:
+campanita interna del CRM (`internal_notifications`), push a la app movil/PWA
+(`push_subscriptions` y `mobile_push_devices`) y correo interno al email del
+usuario (`users.email`) mediante la configuración SMTP de la cuenta. Las
+automatizaciones legacy sin esos flags conservan el comportamiento anterior:
+campanita + push, sin correo. Si correo o push no están configurados, el paso
+registra el canal como omitido y continúa; no debe bloquear todo el flujo.
+
 Los disparadores de comentario de Facebook e Instagram se activan solo con
 eventos reales de comentario. La respuesta no se configura como un DM suelto:
 el editor usa la acción **Responder comentario**, y dentro de esa acción el

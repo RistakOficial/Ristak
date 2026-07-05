@@ -2144,7 +2144,7 @@ const OTHER_ACTIONS: NodeDefinition[] = [
     kind: 'action',
     label: 'Notificaciones',
     category: 'action-logic',
-    description: 'Manda una notificación interna en Ristak y push al celular',
+    description: 'Manda avisos por campanita, push móvil o correo interno',
     icon: BellRing,
     accent: 'orange',
     tintedHeader: true,
@@ -2153,6 +2153,9 @@ const OTHER_ACTIONS: NodeDefinition[] = [
     defaultConfig: () => ({
       recipientMode: 'all',
       user: '',
+      deliverToBell: true,
+      deliverToPush: true,
+      deliverToEmail: false,
       contactId: '',
       pushTitle: '',
       pushBody: '',
@@ -2180,8 +2183,23 @@ const OTHER_ACTIONS: NodeDefinition[] = [
         showIf: (config) => str(config.recipientMode) === 'specific_user'
       },
       {
+        key: 'deliverToBell',
+        label: 'Mostrar en la campanita del CRM',
+        type: 'toggle'
+      },
+      {
+        key: 'deliverToPush',
+        label: 'Enviar push a la aplicación móvil',
+        type: 'toggle'
+      },
+      {
+        key: 'deliverToEmail',
+        label: 'Enviar correo interno al usuario',
+        type: 'toggle'
+      },
+      {
         key: 'pushTitle',
-        label: 'Título push',
+        label: 'Título',
         type: 'text',
         placeholder: 'Nuevo aviso de Ristak',
         required: true,
@@ -2189,7 +2207,7 @@ const OTHER_ACTIONS: NodeDefinition[] = [
       },
       {
         key: 'pushBody',
-        label: 'Cuerpo push',
+        label: 'Mensaje',
         type: 'textarea',
         placeholder: 'Describe qué necesita revisar la persona…',
         required: true,
@@ -2230,6 +2248,14 @@ const OTHER_ACTIONS: NodeDefinition[] = [
       if (str(config.recipientMode) === 'specific_user' && !str(config.user)) {
         errors.push('Selecciona el usuario que recibirá la notificación')
       }
+      const hasModernDeliveryConfig = ['deliverToBell', 'deliverToPush', 'deliverToEmail']
+        .some((key) => Object.prototype.hasOwnProperty.call(config, key))
+      const deliverToBell = hasModernDeliveryConfig ? Boolean(config.deliverToBell) : true
+      const deliverToPush = hasModernDeliveryConfig ? Boolean(config.deliverToPush) : true
+      const deliverToEmail = hasModernDeliveryConfig ? Boolean(config.deliverToEmail) : false
+      if (!deliverToBell && !deliverToPush && !deliverToEmail) {
+        errors.push('Selecciona al menos un canal de entrega')
+      }
       if (str(config.clickAction) === 'custom_url' && !str(config.customUrl).trim()) {
         errors.push('Captura la ruta interna que se abrirá al tocar la notificación')
       }
@@ -2248,8 +2274,15 @@ const OTHER_ACTIONS: NodeDefinition[] = [
         desktop_chat: 'abre chat en escritorio',
         custom_url: str(config.customUrl) || 'ruta interna'
       }
+      const hasModernDeliveryConfig = ['deliverToBell', 'deliverToPush', 'deliverToEmail']
+        .some((key) => Object.prototype.hasOwnProperty.call(config, key))
+      const channelLabels = [
+        (hasModernDeliveryConfig ? Boolean(config.deliverToBell) : true) ? 'campanita' : '',
+        (hasModernDeliveryConfig ? Boolean(config.deliverToPush) : true) ? 'push' : '',
+        (hasModernDeliveryConfig ? Boolean(config.deliverToEmail) : false) ? 'correo' : ''
+      ].filter(Boolean)
       return {
-        text: `${recipients[str(config.recipientMode)] || 'Todos'} · ${actions[str(config.clickAction)] || 'abre chat del celular'}`,
+        text: `${recipients[str(config.recipientMode)] || 'Todos'} · ${channelLabels.join(' + ') || 'sin canal'} · ${actions[str(config.clickAction)] || 'abre chat del celular'}`,
         box: str(config.pushTitle) || str(config.pushBody) || undefined,
         empty: 'Configura destinatario, título y cuerpo'
       }

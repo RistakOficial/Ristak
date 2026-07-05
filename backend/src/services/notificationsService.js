@@ -150,7 +150,9 @@ export async function createInternalNotification({
   enrollmentId = '',
   metadata = {},
   pushTitle = '',
-  pushBody = ''
+  pushBody = '',
+  createBellNotification = true,
+  sendPushNotification = true
 } = {}) {
   const cleanTitle = limitText(title || pushTitle || 'Notificación interna', 120)
   const cleanMessage = limitText(message || pushBody || '', 700)
@@ -166,47 +168,52 @@ export async function createInternalNotification({
   }
 
   const ids = []
-  for (const recipientUserId of recipientTargets) {
-    const id = makeInternalNotificationId()
-    ids.push(id)
-    await db.run(
-      `INSERT INTO internal_notifications (
-        id, recipient_user_id, source, severity, title, message, action_url, action_label,
-        category, contact_id, automation_id, automation_node_id, enrollment_id, metadata_json,
-        created_at, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
-      [
-        id,
-        recipientUserId,
-        cleanString(source) || 'Ristak',
-        SEVERITY_RANK[severity] ? severity : 'info',
-        cleanTitle,
-        cleanMessage,
-        cleanString(actionUrl),
-        cleanString(actionLabel) || 'Abrir',
-        cleanString(category) || 'internal',
-        cleanString(contactId) || null,
-        cleanString(automationId) || null,
-        cleanString(automationNodeId) || null,
-        cleanString(enrollmentId) || null,
-        JSON.stringify(metadata || {})
-      ]
-    )
+  if (createBellNotification) {
+    for (const recipientUserId of recipientTargets) {
+      const id = makeInternalNotificationId()
+      ids.push(id)
+      await db.run(
+        `INSERT INTO internal_notifications (
+          id, recipient_user_id, source, severity, title, message, action_url, action_label,
+          category, contact_id, automation_id, automation_node_id, enrollment_id, metadata_json,
+          created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+        [
+          id,
+          recipientUserId,
+          cleanString(source) || 'Ristak',
+          SEVERITY_RANK[severity] ? severity : 'info',
+          cleanTitle,
+          cleanMessage,
+          cleanString(actionUrl),
+          cleanString(actionLabel) || 'Abrir',
+          cleanString(category) || 'internal',
+          cleanString(contactId) || null,
+          cleanString(automationId) || null,
+          cleanString(automationNodeId) || null,
+          cleanString(enrollmentId) || null,
+          JSON.stringify(metadata || {})
+        ]
+      )
+    }
   }
 
-  const pushPayload = {
-    title: pushTitle || cleanTitle,
-    body: pushBody || cleanMessage || cleanTitle,
-    url: actionUrl || '/movil',
-    category,
-    tag: ids[0] || `internal-${Date.now()}`,
-    contactId: cleanString(contactId)
+  let push = { sent: 0, webSent: 0, nativeSent: 0, skipped: true, reason: 'disabled' }
+  if (sendPushNotification) {
+    const pushPayload = {
+      title: pushTitle || cleanTitle,
+      body: pushBody || cleanMessage || cleanTitle,
+      url: actionUrl || '/movil',
+      category,
+      tag: ids[0] || `internal-${Date.now()}`,
+      contactId: cleanString(contactId)
+    }
+    const pushOptions = broadcast ? {} : { userIds: normalizedRecipients }
+    push = await sendAppNotificationPayload(pushPayload, pushOptions).catch((error) => {
+      logger.warn(`[Notificaciones] No se pudo enviar push interno: ${error.message}`)
+      return { sent: 0, webSent: 0, nativeSent: 0, skipped: true, reason: 'push_error' }
+    })
   }
-  const pushOptions = broadcast ? {} : { userIds: normalizedRecipients }
-  const push = await sendAppNotificationPayload(pushPayload, pushOptions).catch((error) => {
-    logger.warn(`[Notificaciones] No se pudo enviar push interno: ${error.message}`)
-    return { sent: 0, skipped: true, reason: 'push_error' }
-  })
 
   return { created: ids.length, ids, push }
 }

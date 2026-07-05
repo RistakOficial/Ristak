@@ -3167,6 +3167,21 @@ function notificationActionLabel(config = {}) {
   return labels[str(config.clickAction)] || 'Abrir'
 }
 
+function hasOwnConfigKey(config = {}, key = '') {
+  return Object.prototype.hasOwnProperty.call(config, key)
+}
+
+function resolveNotificationDelivery(config = {}) {
+  const hasModernDeliveryConfig = ['deliverToBell', 'deliverToPush', 'deliverToEmail']
+    .some((key) => hasOwnConfigKey(config, key))
+
+  return {
+    bell: hasModernDeliveryConfig ? Boolean(config.deliverToBell) : true,
+    push: hasModernDeliveryConfig ? Boolean(config.deliverToPush) : true,
+    email: hasModernDeliveryConfig ? Boolean(config.deliverToEmail) : false
+  }
+}
+
 async function resolveNotificationContact(config = {}, ctx = {}) {
   const contactId = cleanString(renderedConfigValue(config.contactId, ctx) || ctx.contact?.id || '')
   if (!contactId) return { contactId: '', contact: ctx.contact || null }
@@ -3177,9 +3192,140 @@ async function resolveNotificationContact(config = {}, ctx = {}) {
   }
 }
 
+function normalizeNotificationUserIds(value = []) {
+  if (!Array.isArray(value)) return []
+  return [...new Set(value.map((item) => cleanString(item)).filter(Boolean))]
+}
+
+function isValidNotificationEmail(value = '') {
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(cleanString(value).toLowerCase())
+}
+
+async function getNotificationRecipientUsers({ broadcast = false, recipientUserIds = [] } = {}) {
+  if (broadcast) {
+    return db.all(`
+      SELECT id, email, full_name, username
+      FROM users
+      WHERE is_active = 1
+      ORDER BY id ASC
+    `)
+  }
+
+  const ids = normalizeNotificationUserIds(recipientUserIds)
+  if (ids.length === 0) return []
+  const placeholders = ids.map(() => '?').join(', ')
+  return db.all(
+    `SELECT id, email, full_name, username
+       FROM users
+      WHERE is_active = 1
+        AND CAST(id AS TEXT) IN (${placeholders})
+      ORDER BY id ASC`,
+    ids
+  )
+}
+
+function notificationEmailActionUrl(actionUrl = '') {
+  const cleanUrl = cleanString(actionUrl)
+  if (!cleanUrl) return ''
+  if (/^https?:\/\//i.test(cleanUrl)) return cleanUrl
+
+  const baseUrl = cleanString(
+    process.env.PUBLIC_APP_URL ||
+    process.env.FRONTEND_URL ||
+    process.env.RENDER_EXTERNAL_URL ||
+    process.env.APP_URL ||
+    ''
+  )
+  if (!baseUrl) return cleanUrl
+
+  try {
+    return new URL(cleanUrl.startsWith('/') ? cleanUrl : `/${cleanUrl}`, baseUrl).toString()
+  } catch {
+    return cleanUrl
+  }
+}
+
+function buildInternalNotificationEmailText({ title = '', message = '', actionUrl = '', actionLabel = 'Abrir' } = {}) {
+  const lines = [
+    cleanString(title) || 'Notificación de Ristak',
+    '',
+    cleanString(message),
+    '',
+    actionUrl ? `${cleanString(actionLabel) || 'Abrir'}: ${actionUrl}` : ''
+  ].filter((line, index, array) => line || (index > 0 && array[index - 1]))
+
+  return lines.join('\n').trim()
+}
+
+async function sendInternalNotificationEmails({
+  broadcast = false,
+  recipientUserIds = [],
+  title = '',
+  message = '',
+  actionUrl = '',
+  actionLabel = 'Abrir'
+} = {}) {
+  const users = await getNotificationRecipientUsers({ broadcast, recipientUserIds })
+  const recipients = users
+    .map((user) => ({
+      id: cleanString(user.id),
+      email: cleanString(user.email).toLowerCase(),
+      name: cleanString(user.full_name || user.username)
+    }))
+    .filter((user) => isValidNotificationEmail(user.email))
+
+  if (recipients.length === 0) {
+    return { sent: 0, failed: 0, skipped: true, reason: 'missing_email_recipients' }
+  }
+
+  const { sendEmail } = await import('./emailService.js')
+  const resolvedActionUrl = notificationEmailActionUrl(actionUrl)
+  const subject = cleanString(title) || 'Notificación de Ristak'
+  const text = buildInternalNotificationEmailText({
+    title: subject,
+    message,
+    actionUrl: resolvedActionUrl,
+    actionLabel
+  })
+  let sent = 0
+  let failed = 0
+  let firstError = ''
+
+  for (const recipient of recipients) {
+    try {
+      await sendEmail({
+        to: recipient.email,
+        subject,
+        text,
+        includeSignature: false
+      })
+      sent += 1
+    } catch (error) {
+      failed += 1
+      if (!firstError) firstError = error.message || 'Error enviando correo interno'
+      logger.warn(`[Automatizaciones] No se pudo enviar correo interno a ${recipient.id || recipient.email}: ${error.message}`)
+      if (error?.status === 409) break
+    }
+  }
+
+  return {
+    sent,
+    failed,
+    skipped: sent === 0,
+    reason: sent === 0 ? (firstError || 'email_error') : ''
+  }
+}
+
+function summarizeNotificationChannelResult(label, enabled, count, skippedReason = '') {
+  if (!enabled) return ''
+  if (count > 0) return `${label}: ${count}`
+  return `${label}: omitido${skippedReason ? ` (${skippedReason})` : ''}`
+}
+
 async function executeSystemNotification(node, ctx, enrollment) {
   const config = node.config || {}
   const recipientMode = str(config.recipientMode) || 'all'
+  const delivery = resolveNotificationDelivery(config)
   const { contactId, contact } = await resolveNotificationContact(config, ctx)
   const title = renderedConfigValue(config.pushTitle || config.title, ctx).slice(0, 120)
   const message = renderedConfigValue(config.pushBody || config.body, ctx).slice(0, 700)
@@ -3210,39 +3356,77 @@ async function executeSystemNotification(node, ctx, enrollment) {
     }
   }
 
-  const result = await createInternalNotification({
-    broadcast,
-    recipientUserIds,
-    source: 'Automatizaciones',
-    severity: 'info',
-    title: title || 'Notificación interna',
-    message,
-    actionUrl,
-    actionLabel: notificationActionLabel(config),
-    category: 'automation',
-    contactId,
-    automationId: enrollment?.automationId || ctx.automationId || '',
-    automationNodeId: node.id,
-    enrollmentId: enrollment?.id || '',
-    metadata: {
-      nodeLabel: nodeLabel(node),
-      automationName: ctx.automationName || ''
-    },
-    pushTitle: title,
-    pushBody: message
-  })
+  if (!delivery.bell && !delivery.push && !delivery.email) {
+    return {
+      handle: 'out',
+      detail: 'Notificación omitida: no hay canales seleccionados'
+    }
+  }
+
+  const actionLabel = notificationActionLabel(config)
+  const result = delivery.bell || delivery.push
+    ? await createInternalNotification({
+        broadcast,
+        recipientUserIds,
+        source: 'Automatizaciones',
+        severity: 'info',
+        title: title || 'Notificación interna',
+        message,
+        actionUrl,
+        actionLabel,
+        category: 'automation',
+        contactId,
+        automationId: enrollment?.automationId || ctx.automationId || '',
+        automationNodeId: node.id,
+        enrollmentId: enrollment?.id || '',
+        metadata: {
+          nodeLabel: nodeLabel(node),
+          automationName: ctx.automationName || ''
+        },
+        pushTitle: title,
+        pushBody: message,
+        createBellNotification: delivery.bell,
+        sendPushNotification: delivery.push
+      })
+    : {
+        created: 0,
+        ids: [],
+        push: { sent: 0, webSent: 0, nativeSent: 0, skipped: true, reason: 'disabled' }
+      }
+  const email = delivery.email
+    ? await sendInternalNotificationEmails({
+        broadcast,
+        recipientUserIds,
+        title: title || 'Notificación interna',
+        message,
+        actionUrl,
+        actionLabel
+      }).catch((error) => {
+        logger.warn(`[Automatizaciones] No se pudo preparar correo interno: ${error.message}`)
+        return { sent: 0, failed: 1, skipped: true, reason: 'email_error' }
+      })
+    : { sent: 0, failed: 0, skipped: true, reason: 'disabled' }
+
+  const detailParts = [
+    summarizeNotificationChannelResult('campanita', delivery.bell, result.created),
+    summarizeNotificationChannelResult('push', delivery.push, result.push?.sent || 0, result.push?.reason || ''),
+    summarizeNotificationChannelResult('correo', delivery.email, email.sent || 0, email.reason || '')
+  ].filter(Boolean)
+  const deliveredCount = Number(result.created || 0) + Number(result.push?.sent || 0) + Number(email.sent || 0)
 
   return {
     handle: 'out',
-    detail: broadcast
-      ? 'Notificación interna enviada a todos'
-      : `Notificación interna enviada a ${recipientUserIds.length} usuario${recipientUserIds.length === 1 ? '' : 's'}`,
+    detail: `${broadcast ? 'Notificación para todos' : `Notificación para ${recipientUserIds.length} usuario${recipientUserIds.length === 1 ? '' : 's'}`} · ${detailParts.join(' · ')}`,
     output: {
-      estado: result.created > 0 ? 'creada' : 'omitida',
+      estado: deliveredCount > 0 ? 'enviada' : 'omitida',
       destinatarios: broadcast ? 'todos' : recipientUserIds.join(', '),
       titulo: title,
       url: actionUrl,
-      push_enviados: result.push?.sent || 0
+      campanita_creadas: result.created || 0,
+      push_enviados: result.push?.sent || 0,
+      push_web_enviados: result.push?.webSent || 0,
+      push_nativos_enviados: result.push?.nativeSent || 0,
+      correos_enviados: email.sent || 0
     },
     outputBaseId: 'notificacion'
   }

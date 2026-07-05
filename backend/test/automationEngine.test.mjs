@@ -2107,6 +2107,246 @@ test('notificación interna desde automatización crea aviso y push para usuario
   }
 })
 
+test('notificación interna puede quedarse solo en campanita sin enviar push', async () => {
+  const suffix = randomUUID()
+  const automationId = `automation_bell_only_notification_${suffix}`
+  const contactId = `contact_bell_only_notification_${suffix}`
+  const username = `bell-only-${suffix}@example.com`
+  let userId = ''
+  const sentPushes = []
+
+  const flow = {
+    nodes: [
+      {
+        id: 'start',
+        type: 'start',
+        label: 'Cuando...',
+        config: {
+          triggers: [
+            {
+              id: 'trigger-contact-created',
+              type: 'trigger-contact-created',
+              config: {}
+            }
+          ]
+        }
+      },
+      {
+        id: 'notify-owner',
+        type: 'action-system-notification',
+        label: 'Notificaciones',
+        config: {
+          recipientMode: 'assigned_user',
+          deliverToBell: true,
+          deliverToPush: false,
+          deliverToEmail: false,
+          pushTitle: 'Solo campanita',
+          pushBody: 'Este aviso no debe salir como push',
+          clickAction: 'phone_chat'
+        }
+      }
+    ],
+    edges: [
+      { id: 'edge-start-notify', sourceNodeId: 'start', targetNodeId: 'notify-owner' }
+    ],
+    settings: {}
+  }
+
+  setAppNotificationPayloadSenderForTest(async (payload, options) => {
+    sentPushes.push({ payload, options })
+    return { sent: 1, webSent: 1, nativeSent: 0, skipped: false }
+  })
+
+  try {
+    const result = await db.run(
+      `INSERT INTO users (username, email, password_hash, full_name, role, is_active)
+       VALUES (?, ?, ?, ?, 'admin', 1)`,
+      [username, username, 'test-hash', 'Dueño Campanita']
+    )
+    userId = String(result.lastID || '')
+    if (!userId) {
+      const user = await db.get('SELECT id FROM users WHERE username = ?', [username])
+      userId = String(user.id)
+    }
+
+    await db.run(
+      `INSERT INTO contacts (id, phone, email, full_name, first_name, custom_fields)
+       VALUES (?, ?, ?, ?, ?, ?)`,
+      [
+        contactId,
+        `+1555${Date.now().toString().slice(-8)}`,
+        `bell-only-${suffix}@example.com`,
+        'Lead Campanita',
+        'Lead',
+        JSON.stringify({ assignedUser: userId, assignedUserName: 'Dueño Campanita' })
+      ]
+    )
+    await db.run(
+      `INSERT INTO automations (id, name, status, flow, published_flow, published_at)
+       VALUES (?, ?, 'published', ?, ?, CURRENT_TIMESTAMP)`,
+      [automationId, 'Test notificación solo campanita', JSON.stringify(flow), JSON.stringify(flow)]
+    )
+
+    await handleAutomationEvent('contact-created', { contactId })
+
+    const notification = await db.get(
+      'SELECT * FROM internal_notifications WHERE automation_id = ? AND automation_node_id = ?',
+      [automationId, 'notify-owner']
+    )
+    assert.equal(notification.recipient_user_id, userId)
+    assert.equal(notification.title, 'Solo campanita')
+    assert.equal(sentPushes.length, 0)
+
+    const enrollment = await db.get('SELECT * FROM automation_enrollments WHERE automation_id = ?', [automationId])
+    assert.equal(enrollment.status, 'completed')
+  } finally {
+    setAppNotificationPayloadSenderForTest(null)
+    await db.run('DELETE FROM internal_notifications WHERE automation_id = ?', [automationId]).catch(() => {})
+    await db.run('DELETE FROM automation_enrollments WHERE automation_id = ?', [automationId]).catch(() => {})
+    await db.run('DELETE FROM automations WHERE id = ?', [automationId]).catch(() => {})
+    await db.run('DELETE FROM contacts WHERE id = ?', [contactId]).catch(() => {})
+    if (userId) await db.run('DELETE FROM users WHERE id = ?', [userId]).catch(() => {})
+  }
+})
+
+test('notificación interna puede enviarse por correo interno sin campanita ni push', async () => {
+  const suffix = randomUUID()
+  const automationId = `automation_email_only_notification_${suffix}`
+  const contactId = `contact_email_only_notification_${suffix}`
+  const username = `email-only-${suffix}@example.com`
+  let userId = ''
+  const sentMessages = []
+  const sentPushes = []
+
+  const flow = {
+    nodes: [
+      {
+        id: 'start',
+        type: 'start',
+        label: 'Cuando...',
+        config: {
+          triggers: [
+            {
+              id: 'trigger-contact-created',
+              type: 'trigger-contact-created',
+              config: {}
+            }
+          ]
+        }
+      },
+      {
+        id: 'notify-user',
+        type: 'action-system-notification',
+        label: 'Notificaciones',
+        config: {
+          recipientMode: 'specific_user',
+          user: '',
+          deliverToBell: false,
+          deliverToPush: false,
+          deliverToEmail: true,
+          pushTitle: 'Correo interno para {{contact.first_name}}',
+          pushBody: 'Revisa a {{contact.full_name}} desde Ristak',
+          clickAction: 'desktop_contacts'
+        }
+      }
+    ],
+    edges: [
+      { id: 'edge-start-notify', sourceNodeId: 'start', targetNodeId: 'notify-user' }
+    ],
+    settings: {}
+  }
+
+  await withAppConfigValues({
+    [EMAIL_CONFIG_KEY]: null,
+    [EMAIL_PASSWORD_KEY]: null,
+    [EMAIL_SIGNATURE_CONFIG_KEY]: null
+  }, async () => {
+    setEmailMxResolverForTest(async () => [
+      { exchange: 'aspmx.l.google.com.', priority: 1 }
+    ])
+    setEmailTransportFactoryForTest(() => ({
+      verify: async () => true,
+      sendMail: async (message) => {
+        sentMessages.push(message)
+        return {
+          messageId: `internal-notification-${sentMessages.length}`,
+          accepted: [message.to],
+          rejected: []
+        }
+      }
+    }))
+    setAppNotificationPayloadSenderForTest(async (payload, options) => {
+      sentPushes.push({ payload, options })
+      return { sent: 1, webSent: 1, nativeSent: 0, skipped: false }
+    })
+
+    try {
+      await connectEmail({
+        fromEmail: 'avisos@clinicademo.com',
+        fromName: 'Clínica Demo',
+        password: 'app-password-demo',
+        inbound: { enabled: false }
+      })
+
+      const result = await db.run(
+        `INSERT INTO users (username, email, password_hash, full_name, role, is_active)
+         VALUES (?, ?, ?, ?, 'admin', 1)`,
+        [username, username, 'test-hash', 'Dueño Correo']
+      )
+      userId = String(result.lastID || '')
+      if (!userId) {
+        const user = await db.get('SELECT id FROM users WHERE username = ?', [username])
+        userId = String(user.id)
+      }
+      flow.nodes[1].config.user = userId
+
+      await db.run(
+        `INSERT INTO contacts (id, phone, email, full_name, first_name, custom_fields)
+         VALUES (?, ?, ?, ?, ?, ?)`,
+        [
+          contactId,
+          `+1555${Date.now().toString().slice(-8)}`,
+          `email-only-contact-${suffix}@example.com`,
+          'Lead Correo',
+          'Lead',
+          '{}'
+        ]
+      )
+      await db.run(
+        `INSERT INTO automations (id, name, status, flow, published_flow, published_at)
+         VALUES (?, ?, 'published', ?, ?, CURRENT_TIMESTAMP)`,
+        [automationId, 'Test notificación solo correo', JSON.stringify(flow), JSON.stringify(flow)]
+      )
+
+      await handleAutomationEvent('contact-created', { contactId })
+
+      const notification = await db.get(
+        'SELECT * FROM internal_notifications WHERE automation_id = ? AND automation_node_id = ?',
+        [automationId, 'notify-user']
+      )
+      assert.equal(notification, null)
+      assert.equal(sentPushes.length, 0)
+      assert.equal(sentMessages.length, 2)
+      assert.equal(sentMessages[1].to, username)
+      assert.equal(sentMessages[1].subject, 'Correo interno para Lead')
+      assert.match(sentMessages[1].text, /Revisa a Lead Correo desde Ristak/)
+      assert.match(sentMessages[1].text, /Abrir contacto: .*\/contacts\?open=contact&id=/)
+
+      const enrollment = await db.get('SELECT * FROM automation_enrollments WHERE automation_id = ?', [automationId])
+      assert.equal(enrollment.status, 'completed')
+    } finally {
+      setAppNotificationPayloadSenderForTest(null)
+      setEmailTransportFactoryForTest(null)
+      setEmailMxResolverForTest(null)
+      await db.run('DELETE FROM internal_notifications WHERE automation_id = ?', [automationId]).catch(() => {})
+      await db.run('DELETE FROM automation_enrollments WHERE automation_id = ?', [automationId]).catch(() => {})
+      await db.run('DELETE FROM automations WHERE id = ?', [automationId]).catch(() => {})
+      await db.run('DELETE FROM contacts WHERE id = ?', [contactId]).catch(() => {})
+      if (userId) await db.run('DELETE FROM users WHERE id = ?', [userId]).catch(() => {})
+    }
+  })
+})
+
 test('trigger fecha programada inscribe una sola vez por horario', async () => {
   const suffix = randomUUID()
   const automationId = `automation_schedule_trigger_${suffix}`
