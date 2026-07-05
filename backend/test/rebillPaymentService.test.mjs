@@ -438,6 +438,117 @@ test('Rebill confirma pago público consultando el paymentId en backend antes de
   })
 })
 
+test('Rebill crea pago único con checkout hospedado y prefill desde el contacto', async () => {
+  await initializeMasterKey()
+
+  await snapshotRebillConfig(async () => {
+    const calls = []
+    const publicKey = 'pk_test_onetime_hosted_abcdef1234567890'
+    const secretKey = 'sk_test_onetime_hosted_abcdef1234567890'
+    const suffix = uniqueSuffix('rebill_one_time')
+    const contactId = `contact_${suffix}`
+
+    setRebillFetchForTest(async (url, options = {}) => {
+      const parsed = new URL(url)
+      const method = options.method || 'GET'
+      const body = options.body ? JSON.parse(String(options.body)) : null
+      calls.push({
+        method,
+        path: parsed.pathname,
+        apiKey: options.headers?.['x-api-key'],
+        idempotencyKey: options.headers?.['x-idempotency-key'],
+        body
+      })
+
+      if (parsed.pathname === '/v3/organizations/me' && method === 'GET') {
+        return jsonTextResponse({ id: 'org_rebill_one_time', name: 'Rebill One Time Org', status: 'active' })
+      }
+      if (parsed.pathname === '/v3/webhooks/search' && method === 'POST') {
+        return jsonTextResponse({ records: [] })
+      }
+      if (parsed.pathname === '/v3/webhooks' && method === 'POST') {
+        return jsonTextResponse({ id: 'wh_rebill_one_time', url: body.url, events: body.events, active: true }, 201)
+      }
+      if (parsed.pathname === '/v3/payment-links' && method === 'POST') {
+        assert.equal(body.metadata.provider, 'rebill')
+        assert.equal(body.metadata.rebillHostedCheckout, true)
+        assert.equal(body.metadata.rebillInstallmentsRequested, undefined)
+        assert.deepEqual(body.paymentMethods, [{ methods: ['card'], currency: 'MXN' }])
+        assert.deepEqual(body.installmentsSettings, [
+          { currency: 'MXN', enabledInstallments: [1] }
+        ])
+        assert.equal(body.showCoupon, false)
+        assert.equal(body.isSingleUse, true)
+        assert.equal(body.prices[0].amount, 1200)
+        assert.equal(body.prefilledFields.customer.email, `${contactId}@example.test`)
+        assert.equal(body.prefilledFields.customer.fullName, 'Cliente Rebill Hosted')
+        assert.equal(body.prefilledFields.customer.phoneNumber, '6567426612')
+        assert.equal(body.prefilledFields.customer.countryCode, '+52')
+        assert.equal(body.redirectUrls.approved, `https://app.example.test/pay/${body.metadata.publicPaymentId}?rebill_return=approved`)
+        return jsonTextResponse({
+          id: 'pl_rebill_one_time_hosted',
+          url: 'https://pay.rebill.com/one-time/pl_rebill_one_time_hosted',
+          status: 'active'
+        }, 201)
+      }
+
+      return jsonTextResponse({ message: `Ruta Rebill no esperada: ${method} ${parsed.pathname}` }, 404)
+    })
+
+    let publicPaymentId = ''
+    try {
+      await cleanupContact(contactId)
+      await saveRebillPaymentConfig({
+        enabled: true,
+        mode: 'test',
+        publicKey,
+        secretKey
+      }, {
+        baseUrl: 'https://app.example.test'
+      })
+      await db.run(
+        `INSERT INTO contacts (id, full_name, email, phone, source, created_at, updated_at)
+         VALUES (?, ?, ?, ?, 'test', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+        [contactId, 'Cliente Rebill Hosted', `${contactId}@example.test`, '+526567426612']
+      )
+
+      const link = await createRebillPaymentLink({
+        contactId,
+        amount: 1200,
+        currency: 'MXN',
+        title: 'Pago único Rebill',
+        description: 'Pago único Rebill'
+      }, {
+        baseUrl: 'https://app.example.test',
+        mode: 'test'
+      })
+      publicPaymentId = link.publicPaymentId
+
+      assert.equal(link.paymentUrl, 'https://pay.rebill.com/one-time/pl_rebill_one_time_hosted')
+      assert.equal(link.payment.hostedPaymentUrl, 'https://pay.rebill.com/one-time/pl_rebill_one_time_hosted')
+
+      const row = await db.get(
+        'SELECT payment_method, payment_url, metadata_json FROM payments WHERE public_payment_id = ?',
+        [publicPaymentId]
+      )
+      assert.equal(row.payment_method, 'rebill_payment_link')
+      assert.equal(row.payment_url, 'https://pay.rebill.com/one-time/pl_rebill_one_time_hosted')
+      const metadata = JSON.parse(row.metadata_json)
+      assert.equal(metadata.rebillHostedCheckout, true)
+      assert.equal(metadata.rebillHostedPaymentLink.id, 'pl_rebill_one_time_hosted')
+      assert.equal(metadata.contactEmail, '')
+
+      const paymentLinkCall = calls.find((call) => call.path === '/v3/payment-links' && call.method === 'POST')
+      assert.ok(paymentLinkCall)
+      assert.equal(paymentLinkCall.apiKey, secretKey)
+      assert.match(paymentLinkCall.idempotencyKey, /^ristak:rebill-payment-link:rstk_payment_/)
+    } finally {
+      await cleanupPublicPayment(publicPaymentId)
+      await cleanupContact(contactId)
+    }
+  })
+})
+
 test('Payment Gate de Sites con Rebill devuelve checkout hospedado con MSI configurado', async () => {
   await initializeMasterKey()
 
@@ -708,6 +819,26 @@ test('Rebill crea planes con reloj de Ristak, guarda tarjeta y cobra parcialidad
       if (parsed.pathname === '/v3/webhooks' && method === 'POST') {
         return jsonTextResponse({ id: 'wh_rebill_plan', url: body.url, events: body.events, active: true }, 201)
       }
+      if (parsed.pathname === '/v3/payment-links' && method === 'POST') {
+        assert.equal(body.metadata.provider, 'rebill')
+        assert.equal(body.metadata.rebillHostedCheckout, true)
+        assert.deepEqual(body.installmentsSettings, [
+          { currency: 'MXN', enabledInstallments: [1] }
+        ])
+        assert.deepEqual(body.paymentMethods, [{ methods: ['card'], currency: 'MXN' }])
+        assert.equal(body.showCoupon, false)
+        assert.equal(body.isSingleUse, true)
+        assert.equal(body.prices[0].amount, 500)
+        assert.equal(body.prefilledFields.customer.email, contact.email)
+        assert.equal(body.prefilledFields.customer.fullName, contact.name)
+        assert.equal(body.prefilledFields.customer.phoneNumber, '5512345678')
+        assert.equal(body.prefilledFields.customer.countryCode, '+52')
+        return jsonTextResponse({
+          id: 'pl_rebill_plan_first_test',
+          url: 'https://pay.rebill.com/plan/pl_rebill_plan_first_test',
+          status: 'active'
+        }, 201)
+      }
       if (parsed.pathname === '/v3/payments/pay_rebill_plan_first_test' && method === 'GET') {
         const row = await db.get(
           'SELECT public_payment_id FROM payments WHERE id = (SELECT first_payment_invoice_id FROM payment_flows WHERE id = ?)',
@@ -822,13 +953,13 @@ test('Rebill crea planes con reloj de Ristak, guarda tarjeta y cobra parcialidad
       })
       flowId = plan.flowId
 
-      assert.match(plan.firstPaymentLink, /^https:\/\/app\.example\.test\/pay\/rstk_pay_[A-Za-z0-9]{20}$/)
+      assert.equal(plan.firstPaymentLink, 'https://pay.rebill.com/plan/pl_rebill_plan_first_test')
       assert.equal(plan.scheduledPayments.length, 1)
       assert.equal(plan.scheduledPayments[0].status, 'waiting_card_authorization')
 
       const firstPayment = await db.get('SELECT status, payment_url FROM payments WHERE id = ?', [plan.firstPaymentPaymentId])
       assert.equal(firstPayment.status, 'sent')
-      assert.match(firstPayment.payment_url, /^https:\/\/app\.example\.test\/pay\//)
+      assert.equal(firstPayment.payment_url, 'https://pay.rebill.com/plan/pl_rebill_plan_first_test')
 
       const installment = await db.get(
         `SELECT i.status, i.payment_id, p.status AS payment_status, p.payment_url

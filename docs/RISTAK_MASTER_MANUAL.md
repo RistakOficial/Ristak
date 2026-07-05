@@ -960,15 +960,18 @@ Restricciones operativas:
 
 Rebill vive como pasarela manual administrada desde Configuracion > Pagos >
 Rebill. Las credenciales de prueba y en vivo se guardan en `app_config` bajo
-claves `rebill_*`; la public key `pk_` se entrega al checkout publico porque el
-SDK la necesita y la secret key `sk_` queda cifrada en base de datos. No requiere
-env vars nuevas para arrancar el servicio. La UI solo pide `pk_` y `sk_`; el
-nombre visible de la organizacion se deriva de `GET /v3/organizations/me` o del
-modo configurado, no de un campo manual.
+claves `rebill_*`; la public key `pk_` queda disponible para compatibilidad con
+flujos publicos legacy y la secret key `sk_` queda cifrada en base de datos. No
+requiere env vars nuevas para arrancar el servicio. La UI solo pide `pk_` y
+`sk_`; el nombre visible de la organizacion se deriva de
+`GET /v3/organizations/me` o del modo configurado, no de un campo manual.
 
 Alcance:
 
-- Cobros unicos por link publico `/pay/:publicPaymentId`.
+- Cobros unicos por link publico: Ristak crea una fila local, crea un Payment
+  Link hospedado de Rebill (`pay.rebill.com`) y comparte esa URL como liga de
+  cobro. La ruta local `/pay/:publicPaymentId` queda como retorno, estado,
+  recibo y compatibilidad para links viejos.
 - Cobros unicos con tarjeta Rebill guardada: Ristak usa el `cardId` guardado y
   llama `POST /v3/checkout` desde backend con `customer` estructurado
   (`firstName`, `lastName`, `email` y `phone` si existe), `cardId` y
@@ -983,38 +986,28 @@ Alcance:
   (`pay.rebill.com`); Sites no monta el web component `rebill-checkout` porque el
   Payment Gate debe abrir la superficie propia de Rebill y evitar conflictos de
   MSI dentro del embed.
-- En checkouts publicos embebidos, Ristak configura el SDK de Rebill con
-  `display.excludePaymentMethods=['cash','bank_transfer']` para aceptar solo
-  tarjeta. SPEI, PSE/transferencias bancarias y efectivo no deben aparecer en
-  estos links porque el flujo local espera confirmar cobros de tarjeta.
-- En links publicos activos de Rebill, la pagina mantiene el layout Ristak de
-  dos columnas: resumen, logo, negocio, soporte, producto, vencimiento y total
-  quedan en la columna izquierda; el web component de Rebill queda en la columna
-  derecha. Para que no se duplique ni se desborde el resumen interno del
-  proveedor, Ristak manda `display.checkoutSummary=false`,
-  `display.discountCode=false`, `display.logo=false` y `display.footer=false`.
-  El SDK decide su breakpoint con `window.innerWidth`, no con el ancho del
-  contenedor, asi que Ristak no fuerza modo movil; en su lugar limita la columna
-  y deja el formulario full-width dentro de esa columna. Los estados pagado,
-  programado, cerrado o con error siguen usando las pantallas explicativas de
-  Ristak.
-- El prefill de telefono en `customer-information` debe separar el numero
-  nacional de la region: `phoneNumber.countryCode` recibe ISO alpha-2 (`MX`,
-  `US`, etc.) y `phoneNumber.number` recibe solo digitos nacionales. No mandes
-  `+52`, `52` o `521` dentro de `number`, porque el selector de region del SDK ya
-  resuelve la lada y la duplicaria en pantalla. Ademas Ristak manda
-  `countryCode` top-level con el mismo ISO alpha-2 para que el selector visual de
-  Rebill no caiga al pais calculado por la sesion instantanea del SDK.
+- Los Payment Links hospedados de Rebill se crean card-only con
+  `paymentMethods=[{ methods:['card'], currency }]`, `showCoupon=false` e
+  `isSingleUse=true`; SPEI, PSE/transferencias bancarias y efectivo no deben
+  aparecer en estos links porque el flujo local espera confirmar cobros de
+  tarjeta.
+- En Payment Links de Rebill, Ristak manda `prefilledFields.customer` con
+  `email`, `fullName`, `phoneNumber`, `countryCode` y `language='es'` cuando el
+  contacto los tiene. Para Payment Links, `phoneNumber` recibe solo digitos
+  nacionales y `countryCode` recibe la lada (`+52`, `+1`, etc.); esto replica el
+  comportamiento de suscripciones donde el cliente ya ve su identidad cargada en
+  el checkout hospedado.
 - Meses/installments en cobros unicos: en el modal de cobro, Rebill entra al
   mismo paso de decision que Stripe, Conekta, Mercado Pago y CLIP: contado o MSI.
   Si se elige MSI, Ristak pide el maximo de meses (3, 6, 9, 12, 18 o 24), guarda
   `metadata.rebillInstallments.maxInstallments` y conserva
-  `enabledInstallments`. En links publicos MSI y en todos los Payment Gate de
-  Sites con Rebill, Ristak crea un Payment Link hospedado de Rebill
-  (`pay.rebill.com`) card-only; en Sites el boton del bloque crea el pago local y
-  redirige a esa URL. La pagina local `/pay/:publicPaymentId` se conserva como
-  superficie de retorno, estado, errores y fallback; si alguien abre la URL local
-  de un pago Rebill MSI, Ristak redirige al Payment Link hospedado cuando existe.
+  `enabledInstallments`. En todos los links publicos de Rebill, contado o MSI, y
+  en todos los Payment Gate de Sites con Rebill, Ristak crea un Payment Link
+  hospedado de Rebill (`pay.rebill.com`) card-only; en Sites el boton del bloque
+  crea el pago local y redirige a esa URL. La pagina local
+  `/pay/:publicPaymentId` se conserva como superficie de retorno, estado, errores
+  y fallback; si alguien abre la URL local de un pago Rebill abierto, Ristak crea
+  o recupera el Payment Link hospedado y redirige cuando existe.
   Al crear el Payment Link hospedado, Ristak manda solo tarjeta en
   `paymentMethods`, conserva `showCoupon=false`, agrega `installmentsSettings` y
   mantiene el `title` como el concepto visible del cobro. `description` solo se
@@ -1066,15 +1059,17 @@ Alcance:
   primeros pagos y parcialidades vencidas segun la zona horaria de la cuenta. Si
   el flujo ya tiene `rebill_card_id`, cobra con `POST /v3/checkout` usando
   el `customer` estructurado del contacto + `cardId`; si el primer pago estaba
-  programado y aun no hay tarjeta, libera su link publico.
+  programado y aun no hay tarjeta, libera su Payment Link hospedado de Rebill.
   No delega el calendario a Rebill.
 - Webhook publico `/api/rebill/webhook`; como la documentacion publica de Rebill
   no declara firma verificable para webhooks, Ristak no confia en el payload para
   marcar pagado. Cada evento extrae el `paymentId` y consulta el pago real con
   `GET /v3/payments/:id` usando la `sk_` del backend antes de actualizar la fila.
-- El evento `success` del web component tampoco da acceso por si solo. El frontend
-  manda el `paymentId` a `POST /api/rebill/public/payments/:publicPaymentId/confirm`
-  y el backend vuelve a consultar Rebill antes de marcar `payments.status='paid'`.
+- El endpoint
+  `POST /api/rebill/public/payments/:publicPaymentId/confirm` queda para retorno
+  manual o compatibilidad legacy: si recibe un `paymentId`, el backend vuelve a
+  consultar Rebill antes de marcar `payments.status='paid'`. El camino normal de
+  Payment Links hospedados se confirma por webhook y consulta server-side.
 - Configuracion > Pagos > Rebill valida la organizacion con
   `GET /v3/organizations/me` y, si la app tiene URL publica HTTPS, intenta crear o
   actualizar automaticamente el webhook con eventos `payment.created`,
