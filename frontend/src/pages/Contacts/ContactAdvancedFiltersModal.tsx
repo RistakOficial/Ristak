@@ -53,8 +53,8 @@ interface ContactFilterFieldChoice {
 const EMPTY_OPTION = { value: '', label: 'Selecciona' }
 
 const groupModeOptions = [
-  { value: 'all', label: 'Todos los grupos' },
-  { value: 'any', label: 'Cualquier grupo' }
+  { value: 'all', label: 'Todos los grupos (Y)' },
+  { value: 'any', label: 'Cualquier grupo (O)' }
 ]
 
 const customFieldKey = (field: ContactCustomFieldDefinition) =>
@@ -84,8 +84,8 @@ const choiceIdForRule = (rule: ContactAdvancedRule) =>
 
 const fieldTypeLabel = (type: ContactAdvancedField['type']) => {
   if (type === 'date') return 'Fecha'
-  if (type === 'number') return 'Numero'
-  if (type === 'boolean') return 'Si / No'
+  if (type === 'number') return 'Número'
+  if (type === 'boolean') return 'Sí / No'
   if (type === 'select') return 'Lista'
   if (type === 'tags') return 'Etiquetas'
   if (type === 'custom_field') return 'Campo personalizado'
@@ -210,6 +210,9 @@ export const ContactAdvancedFiltersModal: React.FC<ContactAdvancedFiltersModalPr
   const activeRules = countContactAdvancedRules(draft)
   const isFieldPickerVisible = Boolean(fieldPickerTarget) || draft.groups.length === 0
   const groupJoinLabel = draft.groupMode === 'any' ? 'O' : 'Y'
+  const activeRulesLabel = activeRules === 1 ? '1 condición activa' : `${activeRules} condiciones activas`
+  const builderRulesLabel = activeRules === 1 ? '1 condición' : `${activeRules} condiciones`
+  const availableFieldsLabel = fieldChoices.length === 1 ? '1 campo disponible' : `${fieldChoices.length} campos disponibles`
 
   const choiceForRule = (rule: ContactAdvancedRule) => {
     const selected = choiceById.get(choiceIdForRule(rule))
@@ -522,7 +525,7 @@ export const ContactAdvancedFiltersModal: React.FC<ContactAdvancedFiltersModalPr
       <div className={styles.contactFilterPickerHeader}>
         <div>
           <span>Selecciona un campo</span>
-          <span>{fieldChoices.length} campos</span>
+          <span>{availableFieldsLabel}</span>
         </div>
         {draft.groups.length > 0 && (
           <Button type="button" variant="secondary" size="sm" onClick={() => setFieldPickerTarget(null)}>
@@ -574,11 +577,11 @@ export const ContactAdvancedFiltersModal: React.FC<ContactAdvancedFiltersModalPr
       <div className={styles.contactConditionsTopbar}>
         <div className={styles.contactConditionsSummary}>
           <ListFilter size={16} />
-          <span>{activeRules} condiciones</span>
+          <span>{builderRulesLabel}</span>
         </div>
         <div className={styles.contactConditionsToolbar}>
           <div className={styles.contactConditionsSort}>
-            <span>Grupos</span>
+            <span>Entre grupos</span>
             <CustomSelect
               value={draft.groupMode || 'all'}
               onValueChange={setConfigGroupMode}
@@ -586,7 +589,7 @@ export const ContactAdvancedFiltersModal: React.FC<ContactAdvancedFiltersModalPr
             />
           </div>
           <div className={styles.contactConditionsSort}>
-            <span>Orden</span>
+            <span>Ordenar por</span>
             <CustomSelect
               value={contactAdvancedSortValue(draft.sort)}
               onValueChange={setSort}
@@ -612,8 +615,8 @@ export const ContactAdvancedFiltersModal: React.FC<ContactAdvancedFiltersModalPr
                     value={group.mode}
                     onValueChange={(nextValue) => setGroupMode(group.id, nextValue === 'any' ? 'any' : 'all')}
                     options={[
-                      { value: 'all', label: 'Todas se cumplen' },
-                      { value: 'any', label: 'Cualquiera se cumple' }
+                      { value: 'all', label: 'Se cumplen todas' },
+                      { value: 'any', label: 'Se cumple cualquiera' }
                     ]}
                   />
                   <label className={styles.contactConditionToggle}>
@@ -622,7 +625,7 @@ export const ContactAdvancedFiltersModal: React.FC<ContactAdvancedFiltersModalPr
                       checked={Boolean(group.negate)}
                       onChange={() => toggleGroupNegate(group.id)}
                     />
-                    <span>No se cumple</span>
+                    <span>Que no se cumpla</span>
                   </label>
                 </div>
                 <Button
@@ -717,7 +720,7 @@ export const ContactAdvancedFiltersModal: React.FC<ContactAdvancedFiltersModalPr
         <header className={styles.contactFilterDrawerHeader}>
           <div>
             <h2>Filtros avanzados</h2>
-            <span>{activeRules} condiciones activas</span>
+            <span>{activeRulesLabel}</span>
           </div>
           <Button type="button" variant="ghost" size="sm" iconOnly aria-label="Cerrar filtros" onClick={onClose}>
             <X size={18} />
@@ -731,7 +734,7 @@ export const ContactAdvancedFiltersModal: React.FC<ContactAdvancedFiltersModalPr
         <footer className={styles.contactFilterDrawerFooter}>
           <Button type="button" variant="ghost" onClick={resetDraft}>
             <RotateCcw size={16} />
-            Borra todos los filtros
+            Borrar todos los filtros
           </Button>
           <div className={styles.contactFilterDrawerActions}>
             <Button type="button" variant="secondary" onClick={onClose}>

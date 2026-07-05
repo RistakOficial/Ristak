@@ -83,8 +83,8 @@ const textOperators: ContactAdvancedOption[] = [
   { value: 'is_not', label: 'no es igual a' },
   { value: 'starts_with', label: 'empieza con' },
   { value: 'ends_with', label: 'termina con' },
-  { value: 'empty', label: 'esta vacio' },
-  { value: 'not_empty', label: 'no esta vacio' }
+  { value: 'empty', label: 'está vacío' },
+  { value: 'not_empty', label: 'no está vacío' }
 ]
 
 const numberOperators: ContactAdvancedOption[] = [
@@ -94,24 +94,24 @@ const numberOperators: ContactAdvancedOption[] = [
   { value: 'gte', label: 'mayor o igual que' },
   { value: 'lt', label: 'menor que' },
   { value: 'lte', label: 'menor o igual que' },
-  { value: 'between', label: 'esta entre' },
-  { value: 'empty', label: 'esta en cero' },
-  { value: 'not_empty', label: 'no esta en cero' }
+  { value: 'between', label: 'está entre' },
+  { value: 'empty', label: 'está en cero' },
+  { value: 'not_empty', label: 'no está en cero' }
 ]
 
 const dateOperators: ContactAdvancedOption[] = [
-  { value: 'after', label: 'despues de' },
+  { value: 'after', label: 'después de' },
   { value: 'before', label: 'antes de' },
   { value: 'on', label: 'en la fecha' },
   { value: 'between', label: 'entre fechas' },
-  { value: 'last_days', label: 'en los ultimos dias' },
-  { value: 'older_days', label: 'hace mas de dias' },
-  { value: 'empty', label: 'esta vacio' },
-  { value: 'not_empty', label: 'no esta vacio' }
+  { value: 'last_days', label: 'en los últimos días' },
+  { value: 'older_days', label: 'hace más de días' },
+  { value: 'empty', label: 'está vacío' },
+  { value: 'not_empty', label: 'no está vacío' }
 ]
 
 const booleanOperators: ContactAdvancedOption[] = [
-  { value: 'yes', label: 'si' },
+  { value: 'yes', label: 'sí' },
   { value: 'no', label: 'no' }
 ]
 
@@ -126,8 +126,8 @@ const tagOperators: ContactAdvancedOption[] = [
 const selectOperators: ContactAdvancedOption[] = [
   { value: 'is', label: 'es igual a' },
   { value: 'is_not', label: 'no es igual a' },
-  { value: 'empty', label: 'esta vacio' },
-  { value: 'not_empty', label: 'no esta vacio' }
+  { value: 'empty', label: 'está vacío' },
+  { value: 'not_empty', label: 'no está vacío' }
 ]
 
 const statusOptions: ContactAdvancedOption[] = [
@@ -165,10 +165,10 @@ export const CONTACT_ADVANCED_FIELD_GROUPS: ContactAdvancedFieldGroup[] = [
       { key: 'first_name', label: 'Nombre', type: 'text' },
       { key: 'last_name', label: 'Apellidos', type: 'text' },
       { key: 'full_name', label: 'Nombre completo', type: 'text' },
-      { key: 'email', label: 'Correo electronico', type: 'text' },
-      { key: 'phone', label: 'Telefono', type: 'text' },
+      { key: 'email', label: 'Correo electrónico', type: 'text' },
+      { key: 'phone', label: 'Teléfono', type: 'text' },
       { key: 'source', label: 'Fuente de contacto', type: 'text' },
-      { key: 'status', label: 'Condicion comercial', type: 'select', options: statusOptions },
+      { key: 'status', label: 'Condición comercial', type: 'select', options: statusOptions },
       { key: 'priority', label: 'Prioridad', type: 'select', options: priorityOptions },
       { key: 'created_at', label: 'Creada', type: 'date' },
       { key: 'updated_at', label: 'Actualizado', type: 'date' },
@@ -177,7 +177,7 @@ export const CONTACT_ADVANCED_FIELD_GROUPS: ContactAdvancedFieldGroup[] = [
       { key: 'ghl_contact_id', label: 'ID de cliente potencial', type: 'text' },
       { key: 'stripe_customer_id', label: 'ID de Stripe', type: 'text' },
       { key: 'conekta_customer_id', label: 'ID de Conekta', type: 'text' },
-      { key: 'preferred_whatsapp_phone_number_id', label: 'Numero WhatsApp asignado', type: 'text' }
+      { key: 'preferred_whatsapp_phone_number_id', label: 'Número de WhatsApp asignado', type: 'text' }
     ]
   },
   {
@@ -194,16 +194,16 @@ export const CONTACT_ADVANCED_FIELD_GROUPS: ContactAdvancedFieldGroup[] = [
       { key: 'has_future_appointment', label: 'Tiene cita futura', type: 'boolean' },
       { key: 'has_past_appointment', label: 'Tiene cita vencida', type: 'boolean' },
       { key: 'has_attended_appointment', label: 'Tiene asistencia', type: 'boolean' },
-      { key: 'has_confirmation_badge', label: 'Tiene confirmacion vigente', type: 'boolean' },
+      { key: 'has_confirmation_badge', label: 'Tiene confirmación vigente', type: 'boolean' },
       { key: 'appointments_count', label: 'Cantidad de citas', type: 'number' },
       { key: 'active_appointments_count', label: 'Cantidad de citas activas', type: 'number' },
       { key: 'attended_appointments_count', label: 'Cantidad de asistencias', type: 'number' },
       { key: 'appointment_date', label: 'Fecha de cita', type: 'date' },
-      { key: 'contact_appointment_date', label: 'Ultima cita registrada', type: 'date' },
+      { key: 'contact_appointment_date', label: 'Última cita registrada', type: 'date' },
       { key: 'appointment_status', label: 'Estado de cita', type: 'text' },
       { key: 'appointment_calendar', label: 'Calendario de cita', type: 'text' },
       { key: 'appointment_assigned_user', label: 'Usuario asignado a cita', type: 'text' },
-      { key: 'appointment_title', label: 'Titulo de cita', type: 'text' }
+      { key: 'appointment_title', label: 'Título de cita', type: 'text' }
     ]
   },
   {
@@ -216,51 +216,51 @@ export const CONTACT_ADVANCED_FIELD_GROUPS: ContactAdvancedFieldGroup[] = [
       { key: 'successful_payments_count', label: 'Cantidad de pagos exitosos', type: 'number' },
       { key: 'failed_payments_count', label: 'Cantidad de pagos fallidos', type: 'number' },
       { key: 'total_paid', label: 'Total pagado', type: 'number' },
-      { key: 'last_payment_date', label: 'Ultimo pago exitoso', type: 'date' },
+      { key: 'last_payment_date', label: 'Último pago exitoso', type: 'date' },
       { key: 'payment_date', label: 'Fecha de pago', type: 'date' },
       { key: 'payment_amount', label: 'Importe de pago', type: 'number' },
       { key: 'payment_status', label: 'Estado de pago', type: 'select', options: paymentStatusOptions },
       { key: 'payment_provider', label: 'Proveedor de pago', type: 'text' },
       { key: 'payment_mode', label: 'Modo de pago', type: 'select', options: paymentModeOptions },
-      { key: 'payment_method', label: 'Metodo de pago', type: 'text' }
+      { key: 'payment_method', label: 'Método de pago', type: 'text' }
     ]
   },
   {
-    label: 'Atribucion y tracking',
+    label: 'Atribución y tracking',
     fields: [
-      { key: 'attribution_url', label: 'Primera atribucion', type: 'text' },
-      { key: 'attribution_session_source', label: 'Fuente de atribucion', type: 'text' },
-      { key: 'attribution_medium', label: 'Medio de atribucion', type: 'text' },
+      { key: 'attribution_url', label: 'Primera atribución', type: 'text' },
+      { key: 'attribution_session_source', label: 'Fuente de atribución', type: 'text' },
+      { key: 'attribution_medium', label: 'Medio de atribución', type: 'text' },
       { key: 'attribution_ctwa_clid', label: 'ID de clic de WhatsApp/Facebook', type: 'text' },
-      { key: 'attribution_ad_name', label: 'Anuncio de atribucion', type: 'text' },
-      { key: 'attribution_ad_id', label: 'ID de anuncio de atribucion', type: 'text' },
-      { key: 'landing_page', label: 'Pagina de entrada', type: 'text' },
+      { key: 'attribution_ad_name', label: 'Anuncio de atribución', type: 'text' },
+      { key: 'attribution_ad_id', label: 'ID de anuncio de atribución', type: 'text' },
+      { key: 'landing_page', label: 'Página de entrada', type: 'text' },
       { key: 'referrer_url', label: 'URL referida', type: 'text' },
       { key: 'utm_source', label: 'Fuente UTM', type: 'text' },
       { key: 'utm_medium', label: 'Medio / conjunto', type: 'text' },
-      { key: 'utm_campaign', label: 'Campana', type: 'text' },
+      { key: 'utm_campaign', label: 'Campaña', type: 'text' },
       { key: 'utm_content', label: 'Contenido / anuncio', type: 'text' },
-      { key: 'utm_term', label: 'Termino UTM', type: 'text' },
+      { key: 'utm_term', label: 'Término UTM', type: 'text' },
       { key: 'source_platform', label: 'Plataforma', type: 'text' },
       { key: 'site_source_name', label: 'Fuente del sitio', type: 'text' },
-      { key: 'campaign_name', label: 'Nombre de campana', type: 'text' },
+      { key: 'campaign_name', label: 'Nombre de campaña', type: 'text' },
       { key: 'adset_name', label: 'Nombre de conjunto', type: 'text' },
       { key: 'ad_name', label: 'Nombre de anuncio', type: 'text' },
       { key: 'ad_id', label: 'ID de anuncio', type: 'text' },
       { key: 'device_type', label: 'Dispositivo', type: 'text' },
       { key: 'browser', label: 'Navegador', type: 'text' },
       { key: 'os', label: 'Sistema operativo', type: 'text' },
-      { key: 'placement', label: 'Ubicacion del anuncio', type: 'text' },
+      { key: 'placement', label: 'Ubicación del anuncio', type: 'text' },
       { key: 'geo_city', label: 'Ciudad', type: 'text' },
-      { key: 'geo_region', label: 'Region', type: 'text' },
-      { key: 'geo_country', label: 'Pais', type: 'text' }
+      { key: 'geo_region', label: 'Región', type: 'text' },
+      { key: 'geo_country', label: 'País', type: 'text' }
     ]
   },
   {
     label: 'Automatizaciones',
     fields: [
-      { key: 'active_automation', label: 'Esta en automatizacion activa', type: 'boolean' },
-      { key: 'automation_status', label: 'Estado en automatizacion', type: 'text' }
+      { key: 'active_automation', label: 'Está en automatización activa', type: 'boolean' },
+      { key: 'automation_status', label: 'Estado en automatización', type: 'text' }
     ]
   }
 ]
@@ -269,14 +269,14 @@ export const CONTACT_ADVANCED_SORT_OPTIONS: Array<ContactAdvancedOption & { sort
   { value: '', label: 'Sin orden especial', sort: null },
   { value: 'priority_desc', label: 'Prioridad alta a menor', sort: { by: 'priority', order: 'DESC' } },
   { value: 'priority_asc', label: 'Prioridad menor a alta', sort: { by: 'priority', order: 'ASC' } },
-  { value: 'created_at_desc', label: 'Mas recientes primero', sort: { by: 'created_at', order: 'DESC' } },
-  { value: 'created_at_asc', label: 'Mas antiguos primero', sort: { by: 'created_at', order: 'ASC' } },
+  { value: 'created_at_desc', label: 'Más recientes primero', sort: { by: 'created_at', order: 'DESC' } },
+  { value: 'created_at_asc', label: 'Más antiguos primero', sort: { by: 'created_at', order: 'ASC' } },
   { value: 'total_paid_desc', label: 'Mayor total pagado', sort: { by: 'total_paid', order: 'DESC' } },
-  { value: 'purchases_count_desc', label: 'Mas pagos exitosos', sort: { by: 'purchases_count', order: 'DESC' } },
-  { value: 'payments_count_desc', label: 'Mas pagos registrados', sort: { by: 'payments_count', order: 'DESC' } },
-  { value: 'failed_payments_count_desc', label: 'Mas pagos fallidos', sort: { by: 'failed_payments_count', order: 'DESC' } },
-  { value: 'last_purchase_date_desc', label: 'Ultimo pago mas reciente', sort: { by: 'last_purchase_date', order: 'DESC' } },
-  { value: 'appointments_count_desc', label: 'Mas citas', sort: { by: 'appointments_count', order: 'DESC' } }
+  { value: 'purchases_count_desc', label: 'Más pagos exitosos', sort: { by: 'purchases_count', order: 'DESC' } },
+  { value: 'payments_count_desc', label: 'Más pagos registrados', sort: { by: 'payments_count', order: 'DESC' } },
+  { value: 'failed_payments_count_desc', label: 'Más pagos fallidos', sort: { by: 'failed_payments_count', order: 'DESC' } },
+  { value: 'last_purchase_date_desc', label: 'Último pago más reciente', sort: { by: 'last_purchase_date', order: 'DESC' } },
+  { value: 'appointments_count_desc', label: 'Más citas', sort: { by: 'appointments_count', order: 'DESC' } }
 ]
 
 const fieldMap = new Map(CONTACT_ADVANCED_FIELD_GROUPS.flatMap(group => group.fields.map(field => [field.key, field])))

@@ -631,8 +631,10 @@
   min-width: 0;
 }
 
-.contactFilterFieldButton {
+.contactFilterFieldButton.contactFilterFieldButton {
   justify-content: flex-start;
+  align-items: center;
+  width: 100%;
   height: auto;
   min-height: 48px;
   padding-inline: var(--spacing-sm);
@@ -643,8 +645,11 @@
 .contactFilterFieldCopy {
   display: flex;
   flex-direction: column;
+  align-items: flex-start;
   gap: 2px;
+  width: 100%;
   min-width: 0;
+  text-align: left;
 }
 
 .contactFilterFieldCopy span {
@@ -681,13 +686,15 @@
 }
 
 .contactConditionsTopbar {
-  justify-content: space-between;
-  gap: var(--spacing-md);
+  align-items: flex-start;
+  flex-direction: column;
+  gap: var(--spacing-sm);
   padding-bottom: var(--spacing-md);
   border-bottom: 1px solid var(--color-border-subtle);
 }
 
 .contactConditionsSummary {
+  width: 100%;
   gap: var(--spacing-sm);
   min-height: var(--design-control-height);
   color: var(--color-text-secondary);
@@ -699,19 +706,31 @@
 }
 
 .contactConditionsToolbar {
-  gap: var(--spacing-xs);
+  width: 100%;
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: var(--spacing-sm);
   min-width: 0;
 }
 
 .contactConditionsSort {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
   gap: var(--spacing-sm);
-  min-width: 280px;
-  justify-content: flex-end;
+  width: 100%;
+  min-width: 0;
+  justify-content: stretch;
 }
 
 .contactConditionsSort > span {
+  white-space: nowrap;
   color: var(--color-text-secondary);
   font-size: var(--font-size-sm);
+}
+
+.contactConditionsSort > div {
+  width: 100%;
+  min-width: 0;
 }
 
 .contactConditionGroups {
@@ -807,10 +826,11 @@
   min-width: 0;
 }
 
-.contactConditionFieldButton {
+.contactConditionFieldButton.contactConditionFieldButton {
   justify-content: space-between;
   gap: var(--spacing-sm);
   min-width: 0;
+  text-align: left;
 }
 
 .contactConditionFieldButton span {
@@ -917,9 +937,11 @@
 
   .contactConditionsToolbar {
     gap: var(--spacing-sm);
+    grid-template-columns: 1fr;
   }
 
   .contactConditionsSort {
+    grid-template-columns: 1fr;
     min-width: 0;
     justify-content: flex-start;
   }
