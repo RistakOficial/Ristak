@@ -84,13 +84,16 @@ async function cleanup(ids) {
   await db.run('DELETE FROM payments WHERE id IN (?, ?, ?)', [ids.cardSetupPaymentId, ids.firstPaymentId, ids.installmentPaymentId]).catch(() => undefined)
   await db.run('DELETE FROM payments WHERE metadata_json LIKE ?', [`%${ids.flowId}%`]).catch(() => undefined)
   await db.run('DELETE FROM stripe_payment_methods WHERE contact_id = ?', [ids.contactId]).catch(() => undefined)
-  await db.run('DELETE FROM contacts WHERE id = ?', [ids.contactId]).catch(() => undefined)
+  await db.run('DELETE FROM contacts WHERE id = ? OR email = ? OR phone = ?', [ids.contactId, ids.contactEmail || null, ids.contactPhone || null]).catch(() => undefined)
 }
 
 async function seedStripePlan() {
   const suffix = `${Date.now()}_${Math.random().toString(36).slice(2, 8)}`
+  const numericSuffix = `${String(Date.now()).slice(-7)}${Math.floor(Math.random() * 100).toString().padStart(2, '0')}`
   const ids = {
     contactId: `contact_stripe_plan_${suffix}`,
+    contactEmail: `cliente-${suffix}@example.test`,
+    contactPhone: `+521555${numericSuffix}`,
     flowId: `stripe_flow_${suffix}`,
     cardSetupPaymentId: `stripe_payment_setup_${suffix}`,
     firstPaymentId: `stripe_first_payment_${suffix}`,
@@ -103,7 +106,7 @@ async function seedStripePlan() {
   await db.run(
     `INSERT INTO contacts (id, full_name, email, phone, source, created_at, updated_at)
      VALUES (?, ?, ?, ?, 'test', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
-    [ids.contactId, 'Cliente Stripe', 'cliente@example.test', '+5215555555555']
+    [ids.contactId, 'Cliente Stripe', ids.contactEmail, ids.contactPhone]
   )
 
   await db.run(
@@ -117,8 +120,8 @@ async function seedStripePlan() {
       ids.flowId,
       ids.contactId,
       'Cliente Stripe',
-      'cliente@example.test',
-      '+5215555555555',
+      ids.contactEmail,
+      ids.contactPhone,
       1000,
       'Plan local Stripe',
       ids.cardSetupPaymentId,
@@ -181,12 +184,14 @@ async function seedStripePlan() {
       id, contact_id, contact_name, email, phone, name, title, status,
       total, currency, description, recurrence_label, start_date, next_run_at,
       item_count, source, schedule_json, raw_json, created_at, updated_at
-    ) VALUES (?, ?, 'Cliente Stripe', 'cliente@example.test', '+5215555555555', 'Plan local Stripe', 'Plan local Stripe', 'scheduled',
+    ) VALUES (?, ?, 'Cliente Stripe', ?, ?, 'Plan local Stripe', 'Plan local Stripe', 'scheduled',
       1000, 'MXN', 'Plan local Stripe', 'Mensual', CURRENT_TIMESTAMP, '2099-01-01',
       1, 'stripe', ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
     [
       ids.flowId,
       ids.contactId,
+      ids.contactEmail,
+      ids.contactPhone,
       JSON.stringify({ provider: 'stripe', flowId: ids.flowId }),
       JSON.stringify({ provider: 'stripe', paymentFlow: { id: ids.flowId } })
     ]

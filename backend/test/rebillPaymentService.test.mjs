@@ -788,11 +788,12 @@ test('Rebill crea planes con reloj de Ristak, guarda tarjeta y cobra parcialidad
     const secretKey = 'sk_test_plan_abcdef1234567890'
     const suffix = uniqueSuffix()
     const contactId = `contact_${suffix}`
+    const phoneNational = `55${String(Date.now()).slice(-8)}`
     const contact = {
       id: contactId,
       name: 'Cliente Plan Rebill',
       email: `${contactId}@example.test`,
-      phone: '+525512345678'
+      phone: `+52${phoneNational}`
     }
     const today = addDaysDateOnly(0)
     const futureDate = addDaysDateOnly(8)
@@ -831,7 +832,7 @@ test('Rebill crea planes con reloj de Ristak, guarda tarjeta y cobra parcialidad
         assert.equal(body.prices[0].amount, 500)
         assert.equal(body.prefilledFields.customer.email, contact.email)
         assert.equal(body.prefilledFields.customer.fullName, contact.name)
-        assert.equal(body.prefilledFields.customer.phoneNumber, '5512345678')
+        assert.equal(body.prefilledFields.customer.phoneNumber, phoneNational)
         assert.equal(body.prefilledFields.customer.countryCode, '+52')
         return jsonTextResponse({
           id: 'pl_rebill_plan_first_test',
@@ -867,7 +868,7 @@ test('Rebill crea planes con reloj de Ristak, guarda tarjeta y cobra parcialidad
           lastName: 'Plan Rebill',
           email: contact.email,
           phone: {
-            number: '5512345678',
+            number: phoneNational,
             countryCode: 'MX'
           }
         })

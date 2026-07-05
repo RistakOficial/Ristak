@@ -392,7 +392,11 @@ async function withQrPaymentLabelFixture(contactId, callback) {
 
 test('payment Purchase CAPI event uses real payment amount and account currency', async () => {
   const previousMetaGraphDescriptor = Object.getOwnPropertyDescriptor(API_URLS, 'META_GRAPH')
-  const contactId = 'contact_meta_purchase_currency'
+  const suffix = `${Date.now()}_${Math.random().toString(36).slice(2, 8)}`
+  const contactId = `contact_meta_purchase_currency_${suffix}`
+  const contactEmail = `buyer-${suffix}@example.test`
+  const contactPhone = `+525512${String(Date.now()).slice(-6)}${Math.floor(Math.random() * 100).toString().padStart(2, '0')}`
+  const contactPhoneQuery = contactPhone.replace(/^\+/, '')
   const metaCalls = []
   let metaServer
 
@@ -408,9 +412,9 @@ test('payment Purchase CAPI event uses real payment amount and account currency'
            VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
           [
             contactId,
-            'buyer@example.test',
+            contactEmail,
             'Buyer Demo',
-            '+525512345678',
+            contactPhone,
             'test',
             JSON.stringify({
               city: 'Ciudad Juarez',
@@ -491,7 +495,7 @@ test('payment Purchase CAPI event uses real payment amount and account currency'
               installmentId: 'installment_1'
             }
           }),
-          eventSourceUrl: 'https://checkout.example.test/pay/payment_meta_purchase_1?email=buyer@example.test&phone=525512345678&fbclid=fb.123'
+          eventSourceUrl: `https://checkout.example.test/pay/payment_meta_purchase_1?email=${contactEmail}&phone=${contactPhoneQuery}&fbclid=fb.123`
         })
 
         assert.equal(result.sent, true)
