@@ -211,6 +211,9 @@ const CHAT_CONVERSATION_MESSAGE_LIMIT = 50
 const CHAT_CONVERSATION_TOP_LOAD_GAP_PX = 96
 const OPTIMISTIC_MESSAGE_ID_PREFIXES = ['local-', 'template-', 'local-meta-', 'local-ghl-']
 const OPTIMISTIC_MESSAGE_MAX_AGE_MS = 10 * 60 * 1000
+const CHAT_REALTIME_PREVIEW_ID_PREFIX = 'realtime-preview-'
+const CHAT_REALTIME_PREVIEW_MAX_AGE_MS = 2 * 60 * 1000
+const CHAT_NOTIFICATION_PREVIEW_FALLBACK_TEXT = 'Mensaje nuevo'
 const PAYMENT_BANK_CLABES_CONFIG_KEY = 'payment_bank_clabes'
 const AI_AGENT_CHAT_ID = 'ristak-ai-agent-mobile-chat'
 const AI_AGENT_CHAT_DISPLAY_NAME = 'Asistente Personal AI'
@@ -2129,6 +2132,30 @@ function isChatNotificationPayload(payload: Partial<MobileAppNotificationDetail>
   }
 }
 
+function getMobileNotificationPreviewText(payload: Partial<MobileAppNotificationDetail> | Record<string, unknown> | null | undefined) {
+  if (!payload) return CHAT_NOTIFICATION_PREVIEW_FALLBACK_TEXT
+  const body = typeof payload.body === 'string' ? payload.body.replace(/\s+/g, ' ').trim() : ''
+  if (body && body !== 'Tienes una notificación nueva.') return body
+  return CHAT_NOTIFICATION_PREVIEW_FALLBACK_TEXT
+}
+
+function buildNotificationPreviewMessage(
+  payload: Partial<MobileAppNotificationDetail> | Record<string, unknown> | null | undefined,
+  contactId: string
+): ChatMessage | null {
+  if (!contactId) return null
+  const rawMessageId = payload && typeof payload.messageId === 'string' ? payload.messageId.trim() : ''
+  const id = rawMessageId || `${CHAT_REALTIME_PREVIEW_ID_PREFIX}${contactId}-${Date.now()}`
+  return {
+    id,
+    text: getMobileNotificationPreviewText(payload),
+    date: new Date().toISOString(),
+    direction: 'inbound',
+    status: 'syncing',
+    messageType: 'notification-preview'
+  }
+}
+
 function mapAgentStatesByContactId(states: ConversationAgentState[] = []) {
   const next: Record<string, ConversationAgentState> = {}
   for (const state of states) {
@@ -2922,6 +2949,17 @@ function isRecentOptimisticMessage(message: ChatMessage) {
   return Date.now() - timestamp < OPTIMISTIC_MESSAGE_MAX_AGE_MS
 }
 
+function isRealtimePreviewMessage(message: ChatMessage) {
+  return message.messageType === 'notification-preview' || message.id.startsWith(CHAT_REALTIME_PREVIEW_ID_PREFIX)
+}
+
+function isRecentRealtimePreviewMessage(message: ChatMessage) {
+  if (!isRealtimePreviewMessage(message)) return false
+  const timestamp = getMessageTimeValue(message.date)
+  if (!timestamp) return true
+  return Date.now() - timestamp < CHAT_REALTIME_PREVIEW_MAX_AGE_MS
+}
+
 function getMessageAttachmentMatchKey(message: ChatMessage) {
   const attachment = message.attachment
   if (!attachment) return ''
@@ -2970,6 +3008,21 @@ function messagesLookLikeSameOptimisticSend(loaded: ChatMessage, optimistic: Cha
     (!loadedTime || !optimisticTime || loadedTime >= optimisticTime - 5000)
 }
 
+function messagesLookLikeSameRealtimePreview(loaded: ChatMessage, preview: ChatMessage) {
+  if (loaded.id === preview.id) return true
+  if (loaded.direction !== 'inbound' || preview.direction !== 'inbound') return false
+
+  const loadedTime = getMessageTimeValue(loaded.date)
+  const previewTime = getMessageTimeValue(preview.date)
+  if (loadedTime && previewTime && Math.abs(loadedTime - previewTime) > CHAT_REALTIME_PREVIEW_MAX_AGE_MS) return false
+
+  const loadedText = normalizeMessageMatchText(loaded.text)
+  const previewText = normalizeMessageMatchText(preview.text)
+  if (!loadedText || !previewText || previewText === normalizeMessageMatchText(CHAT_NOTIFICATION_PREVIEW_FALLBACK_TEXT)) return false
+
+  return loadedText === previewText
+}
+
 function mergeMessagesWithOptimistic(loadedMessages: ChatMessage[], currentMessages: ChatMessage[]) {
   const merged = [...loadedMessages]
   const matchedLoadedIndexes = new Set<number>()
@@ -2979,6 +3032,29 @@ function mergeMessagesWithOptimistic(loadedMessages: ChatMessage[], currentMessa
 
     const matchIndex = loadedMessages.findIndex((loaded, index) => (
       !matchedLoadedIndexes.has(index) && messagesLookLikeSameOptimisticSend(loaded, message)
+    ))
+    if (matchIndex >= 0) {
+      matchedLoadedIndexes.add(matchIndex)
+      return
+    }
+
+    if (!merged.some((loaded) => loaded.id === message.id)) {
+      merged.push(message)
+    }
+  })
+
+  return merged.sort((left, right) => getMessageTimeValue(left.date) - getMessageTimeValue(right.date))
+}
+
+function mergeMessagesWithRealtimePreviews(loadedMessages: ChatMessage[], currentMessages: ChatMessage[]) {
+  const merged = [...loadedMessages]
+  const matchedLoadedIndexes = new Set<number>()
+
+  currentMessages.forEach((message) => {
+    if (!isRecentRealtimePreviewMessage(message)) return
+
+    const matchIndex = loadedMessages.findIndex((loaded, index) => (
+      !matchedLoadedIndexes.has(index) && messagesLookLikeSameRealtimePreview(loaded, message)
     ))
     if (matchIndex >= 0) {
       matchedLoadedIndexes.add(matchIndex)
@@ -3608,7 +3684,9 @@ function buildConversationMessages(journey: JourneyEvent[], scheduledMessages: S
 
 function mergeConversationMessagesWithCurrent(loadedMessages: ChatMessage[], currentMessages: ChatMessage[]) {
   const scheduledMessages = currentMessages.filter(isMessageScheduled)
-  return mergeMessagesWithOptimistic(mergeChatMessagesById([...loadedMessages, ...scheduledMessages]), currentMessages)
+  const withScheduled = mergeChatMessagesById([...loadedMessages, ...scheduledMessages])
+  const withOptimistic = mergeMessagesWithOptimistic(withScheduled, currentMessages)
+  return mergeMessagesWithRealtimePreviews(withOptimistic, currentMessages)
 }
 
 function getMessageTypeLabel(type = '', fallback = 'Mensaje de WhatsApp') {
@@ -5123,6 +5201,7 @@ export const PhoneChat: React.FC = () => {
   const voiceAnimationFrameRef = useRef<number | null>(null)
   const voiceLastWaveUpdateRef = useRef(0)
   const chatInboxRefreshInFlightRef = useRef(false)
+  const pendingRealtimePreviewMessagesRef = useRef<Record<string, ChatMessage>>({})
   // Si llega un evento mientras ya hay un refresh en curso, NO lo descartamos:
   // encolamos un re-run con el contactId más reciente (igual que el escritorio).
   const chatInboxRefreshQueuedRef = useRef(false)
@@ -7373,9 +7452,80 @@ export const PhoneChat: React.FC = () => {
     }
   }, [locationId, persistChatsRead, timezone]) // (MOB-007)
 
+  const applyRealtimePreviewToChatList = useCallback((contactId: string, message: ChatMessage) => {
+    if (!contactId) return
+    setChats((currentChats) => {
+      const existing = currentChats.find((contact) => contact.id === contactId)
+      if (!existing) return currentChats
+
+      const isOpenConversation = conversationOpenRef.current && activeContactIdRef.current === contactId
+      const nextContact: ChatContact = {
+        ...existing,
+        lastMessageText: message.text,
+        lastMessageType: 'text',
+        lastMessageDate: message.date,
+        lastMessageDirection: 'inbound',
+        unreadCount: isOpenConversation ? 0 : Math.max(1, Number(existing.unreadCount || 0))
+      }
+
+      return dedupeChatsById([nextContact, ...currentChats.filter((contact) => contact.id !== contactId)])
+    })
+  }, [])
+
+  const applyRealtimePreviewMessage = useCallback((contactId: string, message: ChatMessage | null) => {
+    if (!contactId || !message) return
+    if (!isRecentRealtimePreviewMessage(message)) return
+
+    const activePreviewContact = activeContactIdRef.current === contactId
+    if (activePreviewContact) {
+      delete pendingRealtimePreviewMessagesRef.current[contactId]
+    } else {
+      pendingRealtimePreviewMessagesRef.current[contactId] = message
+    }
+    applyRealtimePreviewToChatList(contactId, message)
+
+    if (!activePreviewContact) return
+
+    setMessages((currentMessages) => {
+      if (currentMessages.some((current) => current.id === message.id && !isRealtimePreviewMessage(current))) {
+        return currentMessages
+      }
+
+      const nextMessages = mergeChatMessagesById([
+        ...currentMessages.filter((current) => current.id !== message.id),
+        message
+      ])
+      return areMessagesEquivalent(currentMessages, nextMessages) ? currentMessages : nextMessages
+    })
+    setMessagesLoading(false)
+    setMessagesRefreshing(true)
+    messagesPaneNearBottomRef.current = true
+    queueMessagesPaneBottomScroll(0)
+  }, [applyRealtimePreviewToChatList, queueMessagesPaneBottomScroll])
+
+  useEffect(() => {
+    if (accessState !== 'allowed' || !conversationOpen || !activeContact?.id) return
+    const pending = pendingRealtimePreviewMessagesRef.current[activeContact.id]
+    if (!pending) return
+    delete pendingRealtimePreviewMessagesRef.current[activeContact.id]
+    applyRealtimePreviewMessage(activeContact.id, pending)
+    delete pendingRealtimePreviewMessagesRef.current[activeContact.id]
+  }, [accessState, activeContact?.id, applyRealtimePreviewMessage, conversationOpen])
+
   const refreshChatInboxNow = useCallback(async (options: { contactId?: string; showIndicator?: boolean } = {}) => {
     if (accessState !== 'allowed') return
+    const notificationContactId = options.contactId || ''
+    const openContactId = activeContactIdRef.current
+    const shouldRefreshOpenConversation = Boolean(
+      conversationOpenRef.current &&
+      openContactId &&
+      (!notificationContactId || notificationContactId === openContactId)
+    )
+
     if (chatInboxRefreshInFlightRef.current) {
+      if (shouldRefreshOpenConversation && openContactId) {
+        void loadConversation(openContactId, { silent: true, useCache: false })
+      }
       // Ya hay un refresh en curso: en vez de descartar este evento (bug que
       // hacía que un mensaje llegado a mitad de refresh nunca apareciera en el
       // hilo abierto hasta salir/entrar), lo encolamos y re-corremos al terminar
@@ -7390,14 +7540,6 @@ export const PhoneChat: React.FC = () => {
     if (showIndicator) setChatsRefreshing(true)
 
     try {
-      const notificationContactId = options.contactId || ''
-      const openContactId = activeContactIdRef.current
-      const shouldRefreshOpenConversation = Boolean(
-        conversationOpenRef.current &&
-        openContactId &&
-        (!notificationContactId || notificationContactId === openContactId)
-      )
-
       await Promise.all([
         loadChats({ silent: true, useCache: false }),
         loadAgentData({ includeDefinitions: false }),
@@ -8353,8 +8495,10 @@ export const PhoneChat: React.FC = () => {
 
     const refreshFromNotification = (payload: Partial<MobileAppNotificationDetail> | Record<string, unknown> | null | undefined) => {
       if (!isChatNotificationPayload(payload)) return
+      const contactId = getMobileNotificationContactId(payload)
+      applyRealtimePreviewMessage(contactId, buildNotificationPreviewMessage(payload, contactId))
       refreshChatInboxNow({
-        contactId: getMobileNotificationContactId(payload)
+        contactId
       }).catch(() => undefined)
     }
 
@@ -8375,7 +8519,7 @@ export const PhoneChat: React.FC = () => {
       window.removeEventListener(MOBILE_APP_NOTIFICATION_EVENT, handleNativeNotification)
       navigator.serviceWorker?.removeEventListener('message', handleServiceWorkerMessage)
     }
-  }, [accessState, refreshChatInboxNow])
+  }, [accessState, applyRealtimePreviewMessage, refreshChatInboxNow])
 
   useEffect(() => {
     if (accessState !== 'allowed') return

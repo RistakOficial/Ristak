@@ -190,11 +190,15 @@ function getNotificationBody(payload) {
 
 function getNotificationData(payload) {
   const imageUrl = getNotificationImageUrl(payload)
+  const title = getNotificationTitle(payload)
+  const body = getNotificationBody(payload)
   return {
     url: payload?.url || '/movil',
     category: payload?.category || 'ristak',
     tag: payload?.tag || 'ristak-chat',
     sourceTag: payload?.tag || '',
+    title,
+    body,
     messageId: payload?.messageId || '',
     contactId: payload?.contactId || '',
     contactAvatarUrl: imageUrl,

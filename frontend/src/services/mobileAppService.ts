@@ -49,6 +49,8 @@ export interface MobileAppNotificationDetail {
   category: string
   contactId: string
   contactAvatarUrl: string
+  title: string
+  body: string
   messageId: string
   source: 'received' | 'action'
   url: string
@@ -377,6 +379,7 @@ function dispatchMobileNotificationEvent(
   if (typeof window === 'undefined') return
 
   const data = notification?.data || {}
+  const notificationText = notification as { title?: unknown; body?: unknown }
   const url = getNotificationPath(notification)
   const detail: MobileAppNotificationDetail = {
     category: typeof data.category === 'string' ? data.category : '',
@@ -384,6 +387,12 @@ function dispatchMobileNotificationEvent(
     contactAvatarUrl: typeof data.contactAvatarUrl === 'string'
       ? data.contactAvatarUrl
       : (typeof data.notificationImageUrl === 'string' ? data.notificationImageUrl : ''),
+    title: typeof notificationText.title === 'string'
+      ? notificationText.title
+      : (typeof data.title === 'string' ? data.title : ''),
+    body: typeof notificationText.body === 'string'
+      ? notificationText.body
+      : (typeof data.body === 'string' ? data.body : ''),
     messageId: typeof data.messageId === 'string' ? data.messageId : '',
     source,
     url

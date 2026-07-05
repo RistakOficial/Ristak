@@ -393,6 +393,14 @@ completo de todas las conversaciones de la bandeja. Al insertar mensajes antiguo
 arriba del hilo, la UI debe conservar la posicion visible del usuario y nunca
 forzar scroll al ultimo mensaje.
 
+Cuando llega una push de chat o el usuario abre `/movil` desde esa notificacion,
+el cliente debe priorizar el hilo afectado sobre la bandeja completa. La push web
+o nativa propaga `contactId`, `messageId`, `title` y `body`; el chat movil pinta
+una burbuja provisional inmediata con ese texto y luego la reconcilia contra el
+refetch canonico del servidor. Si el `messageId` coincide, el mensaje real
+reemplaza el preview sin duplicarse; si aun no llega, el preview solo vive unos
+minutos y nunca se escribe en el cache diario como fuente final.
+
 En el chat movil bajo `/movil`, los filtros de la bandeja viven en la fila de
 chips bajo el buscador. No debe existir un dropdown aparte de `Numero / Ver
 todos` ni una preferencia de ajustes para juntar/separar numeros. El chip `+`
