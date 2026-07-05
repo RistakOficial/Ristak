@@ -236,11 +236,18 @@ type ComposerChannelOption = {
   disabledReason?: string;
 };
 type AppointmentScheduleMode = 'default' | 'custom';
+type AppointmentAdvancedPicker = 'date' | 'time' | 'duration' | null;
 type PendingAppointmentDefaults = {
   dateOnly: string;
   startTime: string;
   durationMinutes: number;
   title: string;
+};
+type AppointmentGuest = {
+  id: string;
+  name: string;
+  contact: string;
+  contactId?: string;
 };
 type TimelineSelectionState = {
   dateOnly: string;
@@ -324,6 +331,7 @@ type AppointmentDraft = {
   contact?: ChatContact | null;
   calendarId: string;
   assignedUserId?: string;
+  guests: AppointmentGuest[];
 };
 
 const PHONE_NAV_ITEMS: Array<{ key: PhoneSection; label: string; Icon: LucideIcon }> = [
@@ -383,15 +391,26 @@ const TIMELINE_PENDING_MOVE_CANCEL_PX = 12;
 const TIMELINE_PENDING_VERTICAL_CANCEL_PX = 30;
 const TIMELINE_TAP_MOVE_TOLERANCE_PX = 10;
 const TIMELINE_TOUCH_ANCHOR_OFFSET_PX = 18;
-const APPOINTMENT_STATUS_OPTIONS = [
-  { value: 'pending', label: 'Pendiente' },
-  { value: 'confirmed', label: 'Confirmada' },
-  { value: 'cancelled', label: 'Cancelada' },
-  { value: 'showed', label: 'Asistió' },
-  { value: 'noshow', label: 'No asistió' },
-  { value: 'rescheduled', label: 'Reprogramada' },
+const APPOINTMENT_GUESTS_NOTE_HEADER = 'Invitados:';
+const APPOINTMENT_DATE_MONTH_OPTIONS = [
+  { value: 1, label: 'Enero' },
+  { value: 2, label: 'Febrero' },
+  { value: 3, label: 'Marzo' },
+  { value: 4, label: 'Abril' },
+  { value: 5, label: 'Mayo' },
+  { value: 6, label: 'Junio' },
+  { value: 7, label: 'Julio' },
+  { value: 8, label: 'Agosto' },
+  { value: 9, label: 'Septiembre' },
+  { value: 10, label: 'Octubre' },
+  { value: 11, label: 'Noviembre' },
+  { value: 12, label: 'Diciembre' },
 ];
-const APPOINTMENT_DURATION_OPTIONS = [30, 45, 60, 90, 120];
+const APPOINTMENT_TIME_HOUR_OPTIONS = Array.from({ length: 12 }, (_, index) => index + 1);
+const APPOINTMENT_TIME_MINUTE_OPTIONS = Array.from({ length: 60 }, (_, index) => index);
+const APPOINTMENT_DURATION_HOUR_OPTIONS = Array.from({ length: 24 }, (_, index) => index + 1);
+const APPOINTMENT_DURATION_MINUTE_OPTIONS = [0, 15, 30, 45];
+const FREE_SLOT_DATE_CHIP_SPAN = 140;
 const AI_AGENT_CHAT_ID = 'ristak-ai-agent-mobile-chat';
 const AI_AGENT_CHAT_DISPLAY_NAME = 'Asistente Personal AI';
 const AI_AGENT_CHAT_SUBTITLE = 'Te ayuda dentro de Ristak';
@@ -3173,31 +3192,72 @@ function formatAppointmentDurationLabel(minutes: number) {
   return remainder ? `${hours} h ${remainder} min` : `${hours} horas`;
 }
 
-function getAppointmentStatusLabel(value: string) {
-  return APPOINTMENT_STATUS_OPTIONS.find((option) => option.value === value)?.label || 'Confirmada';
+function createAppointmentGuestId() {
+  return `guest-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 }
 
-function promptAppointmentValue(title: string, message: string, value: string, onSave: (value: string) => void) {
-  if (Platform.OS === 'ios' && typeof Alert.prompt === 'function') {
-    Alert.prompt(
-      title,
-      message,
-      [
-        { text: 'Cancelar', style: 'cancel' },
-        {
-          text: 'Guardar',
-          onPress: (text?: string) => {
-            const next = String(text || '').trim();
-            if (next) onSave(next);
-          },
-        },
-      ],
-      'plain-text',
-      value,
-    );
-    return;
+function getContactDelivery(contact?: ChatContact | null) {
+  return String(contact?.phone || contact?.email || '').trim();
+}
+
+function getDaysInMonth(year: number, month: number) {
+  if (!Number.isInteger(year) || !Number.isInteger(month) || month < 1 || month > 12) return 31;
+  return new Date(Date.UTC(year, month, 0)).getUTCDate();
+}
+
+function buildDateOnlyFromParts(year: number, month: number, day: number) {
+  const safeMonth = Math.max(1, Math.min(12, Math.round(month || 1)));
+  const safeDay = Math.max(1, Math.min(getDaysInMonth(year, safeMonth), Math.round(day || 1)));
+  return `${String(Math.round(year)).padStart(4, '0')}-${String(safeMonth).padStart(2, '0')}-${String(safeDay).padStart(2, '0')}`;
+}
+
+function buildAppointmentGuestNotes(guests: AppointmentGuest[] = []) {
+  const lines = guests
+    .map((guest) => {
+      const name = guest.name.trim();
+      const contact = guest.contact.trim();
+      return name && contact ? `- ${name}: ${contact}` : '';
+    })
+    .filter(Boolean);
+  return lines.length ? `${APPOINTMENT_GUESTS_NOTE_HEADER}\n${lines.join('\n')}` : '';
+}
+
+function splitAppointmentNotesAndGuests(value?: string | null): { notes: string; guests: AppointmentGuest[] } {
+  const raw = String(value || '').trim();
+  if (!raw) return { notes: '', guests: [] };
+  const spacedMarker = `\n\n${APPOINTMENT_GUESTS_NOTE_HEADER}\n`;
+  const directMarker = `${APPOINTMENT_GUESTS_NOTE_HEADER}\n`;
+  let markerIndex = raw.lastIndexOf(spacedMarker);
+  let notes = raw;
+  let guestBlock = '';
+  if (markerIndex >= 0) {
+    notes = raw.slice(0, markerIndex).trimEnd();
+    guestBlock = raw.slice(markerIndex + spacedMarker.length);
+  } else if (raw.startsWith(directMarker)) {
+    notes = '';
+    guestBlock = raw.slice(directMarker.length);
   }
-  Alert.alert(title, message);
+
+  if (!guestBlock) return { notes: raw, guests: [] };
+  const guests = guestBlock
+    .split('\n')
+    .map((line) => {
+      const match = line.trim().match(/^-\s*(.+?):\s*(.+)$/);
+      if (!match) return null;
+      return {
+        id: createAppointmentGuestId(),
+        name: match[1].trim(),
+        contact: match[2].trim(),
+      };
+    })
+    .filter((guest): guest is AppointmentGuest => Boolean(guest?.name && guest?.contact));
+  return { notes, guests };
+}
+
+function buildAppointmentNotesWithGuests(notes: string, guests: AppointmentGuest[] = []) {
+  const baseNotes = String(notes || '').trim();
+  const guestNotes = buildAppointmentGuestNotes(guests);
+  return [baseNotes, guestNotes].filter(Boolean).join('\n\n');
 }
 
 function triggerTimelineSelectionHaptic() {
@@ -3941,6 +4001,7 @@ function CalendarSection({ api, footer }: { api: RistakApiClient; footer?: React
       contact,
       calendarId: selectedCalendarKey,
       assignedUserId: '',
+      guests: [],
     });
     setPendingAppointmentDefaults(null);
     openSheet('appointmentForm');
@@ -3961,6 +4022,7 @@ function CalendarSection({ api, footer }: { api: RistakApiClient; footer?: React
       Alert.alert('No se puede editar', 'Esta cita no tiene un ID válido del backend.');
       return;
     }
+    const parsedNotes = splitAppointmentNotesAndGuests(String(event.notes || event.description || ''));
 
     setAppointmentMode('edit');
     setAppointmentDraft({
@@ -3971,11 +4033,12 @@ function CalendarSection({ api, footer }: { api: RistakApiClient; footer?: React
       startTime: startFields.time || getDefaultAppointmentStartTime(selectedDateOnly, businessTimezone),
       durationMinutes,
       address: String(event.address || event.location || ''),
-      notes: String(event.notes || event.description || ''),
+      notes: parsedNotes.notes,
       contactId: getEventContactId(event),
       contact: null,
       calendarId: getEventCalendarId(event) || selectedCalendarKey,
       assignedUserId: String(event.assignedUserId || event.assigned_user_id || ''),
+      guests: parsedNotes.guests,
     });
     openSheet('appointmentForm');
   }, [businessTimezone, openSheet, selectedCalendarKey, selectedDateOnly]);
@@ -4060,7 +4123,7 @@ function CalendarSection({ api, footer }: { api: RistakApiClient; footer?: React
         appointmentStatus: draft.appointmentStatus,
         startTime: startIso,
         endTime: endIso,
-        notes: draft.notes.trim(),
+        notes: buildAppointmentNotesWithGuests(draft.notes, draft.guests),
         address: draft.address.trim(),
         timeZone: businessTimezone,
       };
@@ -5150,15 +5213,24 @@ function AppointmentFormSheet({
   onClose: () => void;
   onSave: (draft: AppointmentDraft) => void;
 }) {
-  const [scheduleMode, setScheduleMode] = useState<AppointmentScheduleMode>('custom');
+  const [scheduleMode, setScheduleMode] = useState<AppointmentScheduleMode>('default');
+  const [advancedPicker, setAdvancedPicker] = useState<AppointmentAdvancedPicker>(null);
   const [freeSlots, setFreeSlots] = useState<CalendarFreeSlot[]>([]);
   const [freeSlotsLoading, setFreeSlotsLoading] = useState(false);
   const [freeSlotsError, setFreeSlotsError] = useState('');
   const [selectedSlotDate, setSelectedSlotDate] = useState('');
   const [selectedSlot, setSelectedSlot] = useState('');
+  const [guestSearchQuery, setGuestSearchQuery] = useState('');
+  const [guestContacts, setGuestContacts] = useState<ChatContact[]>([]);
+  const [guestSearching, setGuestSearching] = useState(false);
+  const [guestName, setGuestName] = useState('');
+  const [guestContact, setGuestContact] = useState('');
+  const [guestCreating, setGuestCreating] = useState(false);
   const [assignmentUsers, setAssignmentUsers] = useState<CalendarUser[]>([]);
   const [assignmentLoading, setAssignmentLoading] = useState(false);
   const [assignmentError, setAssignmentError] = useState('');
+  const freeSlotDateScrollRef = useRef<ScrollView | null>(null);
+  const preferredSlotDateRef = useRef('');
 
   const updateDraft = useCallback((updates: Partial<AppointmentDraft>) => {
     if (!draft) return;
@@ -5167,7 +5239,7 @@ function AppointmentFormSheet({
 
   const loadFreeSlots = useCallback(async () => {
     const calendarId = getCalendarKey(calendar);
-    if (!draft || !calendarId) return;
+    if (!calendarId) return;
     setFreeSlotsLoading(true);
     setFreeSlotsError('');
     try {
@@ -5175,10 +5247,11 @@ function AppointmentFormSheet({
       const endDate = addBusinessDateOnlyDays(startDate, 30);
       const response = await api.getFreeSlots(calendarId, startDate, endDate, timezone);
       const nextSlots = Array.isArray(response) ? response.filter((group) => Array.isArray(group.slots) && group.slots.length > 0) : [];
+      const preferredDate = preferredSlotDateRef.current;
       setFreeSlots(nextSlots);
       setSelectedSlotDate((current) => {
         if (current && nextSlots.some((group) => group.date === current)) return current;
-        if (nextSlots.some((group) => group.date === draft.dateOnly)) return draft.dateOnly;
+        if (preferredDate && nextSlots.some((group) => group.date === preferredDate)) return preferredDate;
         return nextSlots[0]?.date || '';
       });
     } catch (err) {
@@ -5187,7 +5260,7 @@ function AppointmentFormSheet({
     } finally {
       setFreeSlotsLoading(false);
     }
-  }, [api, calendar, draft, timezone]);
+  }, [api, calendar, timezone]);
 
   const loadAssignmentUsers = useCallback(async () => {
     const teamMemberIds = (calendar?.teamMembers || [])
@@ -5214,11 +5287,30 @@ function AppointmentFormSheet({
   }, [api, calendar]);
 
   useEffect(() => {
+    if (!open || !draft) return;
+    preferredSlotDateRef.current = draft.dateOnly;
+    setScheduleMode(mode === 'create' ? 'default' : 'custom');
+    setAdvancedPicker(null);
+    setSelectedSlot('');
+    setGuestSearchQuery('');
+    setGuestContacts([]);
+    setGuestSearching(false);
+    setGuestName('');
+    setGuestContact('');
+  }, [draft?.contactId, draft?.eventId, mode, open]);
+
+  useEffect(() => {
     if (!open || !draft) {
-      setScheduleMode('custom');
+      setScheduleMode('default');
+      setAdvancedPicker(null);
       setFreeSlots([]);
       setSelectedSlotDate('');
       setSelectedSlot('');
+      setGuestSearchQuery('');
+      setGuestContacts([]);
+      setGuestSearching(false);
+      setGuestName('');
+      setGuestContact('');
       setAssignmentUsers([]);
       setAssignmentError('');
       return;
@@ -5226,16 +5318,76 @@ function AppointmentFormSheet({
     if (scheduleMode === 'default') {
       void loadFreeSlots();
     }
-  }, [loadFreeSlots, open, scheduleMode]);
+  }, [Boolean(draft), loadFreeSlots, open, scheduleMode]);
 
   useEffect(() => {
     if (!open || !draft || (!draft.assignedUserId && !isRoundRobinCalendar(calendar))) return;
     void loadAssignmentUsers();
   }, [calendar, draft?.assignedUserId, draft?.calendarId, loadAssignmentUsers, open]);
 
-  const endFields = draft
-    ? addMinutesToBusinessDateTime(draft.dateOnly, draft.startTime, draft.durationMinutes)
-    : { dateOnly: '', time: '' };
+  useEffect(() => {
+    if (!open || !draft || !selectedSlotDate || scheduleMode !== 'default') return;
+    const index = freeSlots.findIndex((group) => group.date === selectedSlotDate);
+    if (index <= 0) return;
+    const scrollX = Math.max(0, index * FREE_SLOT_DATE_CHIP_SPAN - 22);
+    requestAnimationFrame(() => {
+      freeSlotDateScrollRef.current?.scrollTo({ x: scrollX, animated: true });
+    });
+  }, [draft, freeSlots, open, scheduleMode, selectedSlotDate]);
+
+  useEffect(() => {
+    const query = guestSearchQuery.trim();
+    if (!open || !draft || query.length < 2) {
+      setGuestContacts([]);
+      setGuestSearching(false);
+      return;
+    }
+
+    let cancelled = false;
+    const timer = setTimeout(() => {
+      setGuestSearching(true);
+      api.searchContacts(query)
+        .then((results) => {
+          if (!cancelled) setGuestContacts(Array.isArray(results) ? results.slice(0, 6) : []);
+        })
+        .catch(() => {
+          if (!cancelled) setGuestContacts([]);
+        })
+        .finally(() => {
+          if (!cancelled) setGuestSearching(false);
+        });
+    }, 160);
+
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+    };
+  }, [api, Boolean(draft), guestSearchQuery, open]);
+
+  const selectedDateParts = useMemo(() => {
+    const fallbackDateOnly = todayDateOnlyInBusinessTimezone(timezone);
+    const date = dateOnlyToCalendarDate(draft?.dateOnly || '') || dateOnlyToCalendarDate(fallbackDateOnly);
+    return {
+      year: date?.getFullYear() || Number(formatBusinessYear(fallbackDateOnly)) || 2026,
+      month: (date?.getMonth() ?? 0) + 1,
+      day: date?.getDate() || 1,
+    };
+  }, [draft?.dateOnly, timezone]);
+  const selectedTimeMinutes = parseTimeToMinutes(draft?.startTime) ?? 9 * 60;
+  const selectedTimeHour24 = Math.floor(selectedTimeMinutes / 60);
+  const selectedTimeMinute = selectedTimeMinutes % 60;
+  const selectedTimePeriod: 'AM' | 'PM' = selectedTimeHour24 >= 12 ? 'PM' : 'AM';
+  const selectedTimeHour12 = selectedTimeHour24 % 12 || 12;
+  const selectedDuration = Math.max(60, Math.min(TIMELINE_TOTAL_MINUTES, draft?.durationMinutes || 60));
+  const selectedDurationHours = Math.max(1, Math.min(24, Math.floor(selectedDuration / 60) || 1));
+  const selectedDurationMinutes = APPOINTMENT_DURATION_MINUTE_OPTIONS.includes(selectedDuration % 60) ? selectedDuration % 60 : 0;
+  const dateDayOptions = useMemo(
+    () => Array.from({ length: getDaysInMonth(selectedDateParts.year, selectedDateParts.month) }, (_, index) => index + 1),
+    [selectedDateParts.month, selectedDateParts.year],
+  );
+  const dateYearOptions = useMemo(() => (
+    Array.from({ length: 9 }, (_, index) => selectedDateParts.year - 3 + index)
+  ), [selectedDateParts.year]);
   const selectedSlotGroup = freeSlots.find((group) => group.date === selectedSlotDate) || null;
   const assignmentRequired = mode === 'create' && isRoundRobinCalendar(calendar);
   const showAssignmentPicker = Boolean(draft && (
@@ -5243,6 +5395,296 @@ function AppointmentFormSheet({
     draft.assignedUserId ||
     (isRoundRobinCalendar(calendar) && (assignmentUsers.length || assignmentLoading || assignmentError))
   ));
+
+  const setScheduleModeSafely = useCallback((nextMode: AppointmentScheduleMode) => {
+    setScheduleMode(nextMode);
+    setAdvancedPicker(null);
+  }, []);
+
+  const applyDatePart = useCallback((updates: Partial<typeof selectedDateParts>) => {
+    const year = updates.year ?? selectedDateParts.year;
+    const month = updates.month ?? selectedDateParts.month;
+    const day = updates.day ?? selectedDateParts.day;
+    updateDraft({ dateOnly: buildDateOnlyFromParts(year, month, day) });
+  }, [selectedDateParts, updateDraft]);
+
+  const applyTimePart = useCallback((updates: { hour?: number; minute?: number; period?: 'AM' | 'PM' }) => {
+    const nextHour12 = updates.hour ?? selectedTimeHour12;
+    const nextMinute = updates.minute ?? selectedTimeMinute;
+    const nextPeriod = updates.period ?? selectedTimePeriod;
+    const hour24 = nextPeriod === 'PM'
+      ? (nextHour12 % 12) + 12
+      : nextHour12 % 12;
+    updateDraft({ startTime: formatMinutesAsTime(hour24 * 60 + nextMinute) });
+  }, [selectedTimeHour12, selectedTimeMinute, selectedTimePeriod, updateDraft]);
+
+  const applyDurationPart = useCallback((hours: number, minutes: number) => {
+    const safeHours = Math.max(1, Math.min(24, Math.round(hours || 1)));
+    const safeMinutes = APPOINTMENT_DURATION_MINUTE_OPTIONS.includes(minutes) ? minutes : 0;
+    const total = Math.min(TIMELINE_TOTAL_MINUTES, safeHours * 60 + safeMinutes);
+    updateDraft({ durationMinutes: total });
+  }, [updateDraft]);
+
+  const addGuestToDraft = useCallback((guest: Omit<AppointmentGuest, 'id'> & { id?: string }) => {
+    if (!draft) return;
+    const name = guest.name.trim();
+    const contactValue = guest.contact.trim();
+    if (!name || !contactValue) {
+      Alert.alert('Invitado incompleto', 'Agrega nombre y teléfono o correo para poder invitarlo.');
+      return;
+    }
+    const normalizedContact = contactValue.toLowerCase();
+    const exists = draft.guests.some((item) => item.contact.trim().toLowerCase() === normalizedContact);
+    if (exists) return;
+    updateDraft({
+      guests: [
+        ...draft.guests,
+        {
+          id: guest.id || createAppointmentGuestId(),
+          name,
+          contact: contactValue,
+          contactId: guest.contactId,
+        },
+      ],
+    });
+  }, [draft, updateDraft]);
+
+  const selectGuestContact = useCallback((contact: ChatContact) => {
+    const delivery = getContactDelivery(contact);
+    if (!delivery) {
+      Alert.alert('Sin contacto', 'Este contacto no tiene teléfono ni correo registrado.');
+      return;
+    }
+    addGuestToDraft({
+      name: getContactName(contact),
+      contact: delivery,
+      contactId: contact.id,
+    });
+    setGuestSearchQuery('');
+    setGuestContacts([]);
+  }, [addGuestToDraft]);
+
+  const createGuestContact = useCallback(async () => {
+    const searchValue = guestSearchQuery.trim();
+    const contactValue = (guestContact.trim() || (searchValue.includes('@') || /\d/.test(searchValue) ? searchValue : '')).trim();
+    const nameValue = (guestName.trim() || (!contactValue && searchValue ? searchValue : '')).trim();
+    if (!nameValue || !contactValue) {
+      Alert.alert('Faltan datos', 'Escribe el nombre y el teléfono o correo del invitado.');
+      return;
+    }
+
+    setGuestCreating(true);
+    try {
+      const isEmail = contactValue.includes('@');
+      const created = await api.createContact({
+        name: nameValue,
+        full_name: nameValue,
+        email: isEmail ? contactValue : undefined,
+        phone: isEmail ? undefined : contactValue,
+        source: 'mobile_native_appointment_guest',
+      });
+      addGuestToDraft({
+        name: getContactName(created) || nameValue,
+        contact: getContactDelivery(created) || contactValue,
+        contactId: created.id,
+      });
+      setGuestSearchQuery('');
+      setGuestContacts([]);
+      setGuestName('');
+      setGuestContact('');
+    } catch (err) {
+      Alert.alert('No se creó el contacto', err instanceof Error ? err.message : 'Intenta de nuevo.');
+    } finally {
+      setGuestCreating(false);
+    }
+  }, [addGuestToDraft, api, guestContact, guestName, guestSearchQuery]);
+
+  const removeGuest = useCallback((guestId: string) => {
+    if (!draft) return;
+    updateDraft({ guests: draft.guests.filter((guest) => guest.id !== guestId) });
+  }, [draft, updateDraft]);
+
+  const renderPickerChip = (
+    label: string,
+    selected: boolean,
+    onPress: () => void,
+    key?: string | number,
+  ) => (
+    <Pressable
+      key={key ?? label}
+      accessibilityRole="button"
+      onPress={onPress}
+      style={({ pressed }) => [
+        styles.appointmentPickerChip,
+        selected && styles.appointmentPickerChipActive,
+        pressed && styles.pressed,
+      ]}
+    >
+      <Text style={[styles.appointmentPickerText, selected && styles.appointmentPickerTextActive]}>{label}</Text>
+    </Pressable>
+  );
+
+  const renderAdvancedPicker = () => {
+    if (!advancedPicker) return null;
+
+    if (advancedPicker === 'date') {
+      return (
+        <View style={styles.appointmentAdvancedPanel}>
+          <View style={styles.appointmentPickerGroup}>
+            <Text style={styles.appointmentPickerTitle}>Día</Text>
+            <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.appointmentPickerRow}>
+              {dateDayOptions.map((day) => renderPickerChip(String(day), selectedDateParts.day === day, () => applyDatePart({ day }), `day-${day}`))}
+            </ScrollView>
+          </View>
+          <View style={styles.appointmentPickerGroup}>
+            <Text style={styles.appointmentPickerTitle}>Mes</Text>
+            <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.appointmentPickerRow}>
+              {APPOINTMENT_DATE_MONTH_OPTIONS.map((month) => renderPickerChip(month.label, selectedDateParts.month === month.value, () => applyDatePart({ month: month.value }), `month-${month.value}`))}
+            </ScrollView>
+          </View>
+          <View style={styles.appointmentPickerGroup}>
+            <Text style={styles.appointmentPickerTitle}>Año</Text>
+            <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.appointmentPickerRow}>
+              {dateYearOptions.map((year) => renderPickerChip(String(year), selectedDateParts.year === year, () => applyDatePart({ year }), `year-${year}`))}
+            </ScrollView>
+          </View>
+        </View>
+      );
+    }
+
+    if (advancedPicker === 'time') {
+      return (
+        <View style={styles.appointmentAdvancedPanel}>
+          <View style={styles.appointmentPickerGroup}>
+            <Text style={styles.appointmentPickerTitle}>Hora</Text>
+            <View style={styles.appointmentPickerWrap}>
+              {APPOINTMENT_TIME_HOUR_OPTIONS.map((hour) => renderPickerChip(String(hour), selectedTimeHour12 === hour, () => applyTimePart({ hour }), `hour-${hour}`))}
+            </View>
+          </View>
+          <View style={styles.appointmentPickerGroup}>
+            <Text style={styles.appointmentPickerTitle}>Minutos</Text>
+            <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.appointmentPickerRow}>
+              {APPOINTMENT_TIME_MINUTE_OPTIONS.map((minute) => renderPickerChip(String(minute).padStart(2, '0'), selectedTimeMinute === minute, () => applyTimePart({ minute }), `minute-${minute}`))}
+            </ScrollView>
+          </View>
+          <View style={styles.appointmentPickerGroup}>
+            <Text style={styles.appointmentPickerTitle}>AM / PM</Text>
+            <View style={styles.appointmentPickerWrap}>
+              {(['AM', 'PM'] as const).map((period) => renderPickerChip(period, selectedTimePeriod === period, () => applyTimePart({ period }), period))}
+            </View>
+          </View>
+        </View>
+      );
+    }
+
+    return (
+      <View style={styles.appointmentAdvancedPanel}>
+        <View style={styles.appointmentPickerGroup}>
+          <Text style={styles.appointmentPickerTitle}>Horas</Text>
+          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.appointmentPickerRow}>
+            {APPOINTMENT_DURATION_HOUR_OPTIONS.map((hours) => renderPickerChip(`${hours} h`, selectedDurationHours === hours, () => applyDurationPart(hours, selectedDurationMinutes), `duration-hour-${hours}`))}
+          </ScrollView>
+        </View>
+        <View style={styles.appointmentPickerGroup}>
+          <Text style={styles.appointmentPickerTitle}>Minutos</Text>
+          <View style={styles.appointmentPickerWrap}>
+            {APPOINTMENT_DURATION_MINUTE_OPTIONS.map((minutes) => renderPickerChip(`${minutes} min`, selectedDurationMinutes === minutes, () => applyDurationPart(selectedDurationHours, minutes), `duration-minute-${minutes}`))}
+          </View>
+        </View>
+      </View>
+    );
+  };
+
+  const renderGuestsSection = () => (
+    <View style={styles.appointmentGuestSection}>
+      <View style={styles.appointmentGuestHeader}>
+        <AppointmentFieldLabel label="Invitados" />
+        {draft?.guests.length ? <Text style={styles.appointmentGuestCount}>{draft.guests.length}</Text> : null}
+      </View>
+      <View style={styles.sheetSearchBox}>
+        <Search size={18} color={COLORS.muted} strokeWidth={2.4} />
+        <TextInput
+          value={guestSearchQuery}
+          onChangeText={setGuestSearchQuery}
+          placeholder="Buscar o crear invitado"
+          placeholderTextColor={COLORS.muted}
+          autoCapitalize="words"
+          autoCorrect={false}
+          style={styles.sheetSearchInput}
+        />
+      </View>
+      {guestSearching ? (
+        <View style={styles.appointmentInlineLoading}>
+          <ActivityIndicator color={COLORS.accent} />
+          <Text style={styles.caption}>Buscando contactos...</Text>
+        </View>
+      ) : guestContacts.length ? (
+        <View style={styles.appointmentGuestResults}>
+          {guestContacts.map((contact) => (
+            <ContactPickerRow
+              key={contact.id}
+              contact={contact}
+              showSendIcon={false}
+              onPress={() => selectGuestContact(contact)}
+            />
+          ))}
+        </View>
+      ) : guestSearchQuery.trim().length >= 2 ? (
+        <Text style={styles.appointmentHint}>No aparece en contactos. Créalo aquí mismo.</Text>
+      ) : null}
+      <View style={styles.appointmentGuestManual}>
+        <AppointmentTextField
+          compact
+          label="Nombre"
+          value={guestName}
+          placeholder="Nombre del invitado"
+          onChangeText={setGuestName}
+        />
+        <AppointmentTextField
+          compact
+          label="Teléfono o correo"
+          value={guestContact}
+          placeholder="WhatsApp o email"
+          onChangeText={setGuestContact}
+        />
+      </View>
+      <Pressable
+        accessibilityRole="button"
+        disabled={guestCreating}
+        onPress={createGuestContact}
+        style={({ pressed }) => [
+          styles.appointmentGuestAddButton,
+          guestCreating && styles.disabledButton,
+          pressed && styles.pressed,
+        ]}
+      >
+        {guestCreating ? <ActivityIndicator color={COLORS.text} /> : <Plus size={18} color={COLORS.text} strokeWidth={2.6} />}
+        <Text style={styles.appointmentGuestAddText}>Agregar invitado</Text>
+      </Pressable>
+      {draft?.guests.length ? (
+        <View style={styles.appointmentGuestList}>
+          {draft.guests.map((guest) => (
+            <View key={guest.id} style={styles.appointmentGuestItem}>
+              <View style={styles.appointmentGuestAvatar}>
+                <Text style={styles.avatarText}>{guest.name.slice(0, 1).toUpperCase()}</Text>
+              </View>
+              <View style={styles.appointmentGuestCopy}>
+                <Text numberOfLines={1} style={styles.appointmentGuestName}>{guest.name}</Text>
+                <Text numberOfLines={1} style={styles.appointmentGuestContact}>{guest.contact}</Text>
+              </View>
+              <Pressable
+                accessibilityRole="button"
+                onPress={() => removeGuest(guest.id)}
+                style={({ pressed }) => [styles.appointmentGuestRemove, pressed && styles.pressed]}
+              >
+                <X size={16} color={COLORS.muted} strokeWidth={2.6} />
+              </Pressable>
+            </View>
+          ))}
+        </View>
+      ) : null}
+    </View>
+  );
 
   return (
     <BottomActionSheet
@@ -5263,15 +5705,7 @@ function AppointmentFormSheet({
             keyboardShouldPersistTaps="handled"
             showsVerticalScrollIndicator={false}
           >
-            <AppointmentSelectField
-              icon={Search}
-              label="Contacto"
-              required
-              value={draft.contact ? getContactName(draft.contact) : ''}
-              placeholder="Buscar por nombre, correo o teléfono"
-            />
-
-            {showAssignmentPicker ? (
+            {showAssignmentPicker && scheduleMode === 'custom' ? (
               <View style={styles.appointmentSection}>
                 <Text style={styles.appointmentFieldLabel}>
                   {assignmentRequired ? 'Elegir miembro del equipo' : 'Persona asignada'}
@@ -5331,22 +5765,6 @@ function AppointmentFormSheet({
             ) : null}
 
             <View style={styles.appointmentSection}>
-              <AppointmentSelectField
-                label="Estado"
-                value={getAppointmentStatusLabel(draft.appointmentStatus)}
-                onPress={() => {
-                  Alert.alert('Estado', 'Selecciona el estado de la cita.', [
-                    ...APPOINTMENT_STATUS_OPTIONS.map((option) => ({
-                      text: option.label,
-                      onPress: () => updateDraft({ appointmentStatus: option.value }),
-                    })),
-                    { text: 'Cancelar', style: 'cancel' },
-                  ]);
-                }}
-              />
-            </View>
-
-            <View style={styles.appointmentSection}>
               <AppointmentFieldLabel label="Fecha y hora" required />
               <View style={styles.appointmentSegmentedTabs}>
                 {[
@@ -5358,7 +5776,7 @@ function AppointmentFormSheet({
                     <Pressable
                       key={option.value}
                       accessibilityRole="button"
-                      onPress={() => setScheduleMode(option.value)}
+                      onPress={() => setScheduleModeSafely(option.value)}
                       style={({ pressed }) => [
                         styles.appointmentSegmentedTab,
                         selected && styles.appointmentSegmentedTabActive,
@@ -5387,7 +5805,12 @@ function AppointmentFormSheet({
                   ) : freeSlots.length ? (
                     <View style={styles.freeSlotStack}>
                       <Text style={styles.appointmentHint}>Elige una fecha disponible</Text>
-                      <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.freeSlotDateRow}>
+                      <ScrollView
+                        ref={freeSlotDateScrollRef}
+                        horizontal
+                        showsHorizontalScrollIndicator={false}
+                        contentContainerStyle={styles.freeSlotDateRow}
+                      >
                         {freeSlots.map((group) => {
                           const groupDate = group.date || '';
                           const groupSlots = group.slots || [];
@@ -5461,60 +5884,33 @@ function AppointmentFormSheet({
               ) : null}
             </View>
 
-            <View style={styles.appointmentFieldGrid}>
-              <AppointmentSelectField
-                compact
-                label="Fecha"
-                value={formatAppointmentDateField(draft.dateOnly)}
-                onPress={() => promptAppointmentValue(
-                  'Fecha',
-                  'Escribe la fecha en formato YYYY-MM-DD.',
-                  draft.dateOnly,
-                  (value) => updateDraft({ dateOnly: value }),
-                )}
-              />
-              <AppointmentSelectField
-                compact
-                label="Hora"
-                value={formatAppointmentTimeField(draft.startTime)}
-                onPress={() => promptAppointmentValue(
-                  'Hora',
-                  'Escribe la hora en formato HH:mm.',
-                  draft.startTime,
-                  (value) => updateDraft({ startTime: value }),
-                )}
-              />
-            </View>
+            {scheduleMode === 'custom' ? (
+              <View style={styles.appointmentSection}>
+                <View style={styles.appointmentFieldGrid}>
+                  <AppointmentSelectField
+                    compact
+                    label="Fecha"
+                    value={formatAppointmentDateField(draft.dateOnly)}
+                    onPress={() => setAdvancedPicker((current) => (current === 'date' ? null : 'date'))}
+                  />
+                  <AppointmentSelectField
+                    compact
+                    label="Hora"
+                    value={formatAppointmentTimeField(draft.startTime)}
+                    onPress={() => setAdvancedPicker((current) => (current === 'time' ? null : 'time'))}
+                  />
+                </View>
+                <AppointmentSelectField
+                  label="Duración"
+                  value={formatAppointmentDurationLabel(draft.durationMinutes)}
+                  onPress={() => setAdvancedPicker((current) => (current === 'duration' ? null : 'duration'))}
+                />
+                {renderAdvancedPicker()}
+              </View>
+            ) : null}
 
-            <View style={styles.appointmentSection}>
-              <AppointmentSelectField
-                value={formatAppointmentDurationLabel(draft.durationMinutes)}
-                onPress={() => {
-                  Alert.alert('Duración', 'Selecciona la duración de la cita.', [
-                    ...APPOINTMENT_DURATION_OPTIONS.map((minutes) => ({
-                      text: formatAppointmentDurationLabel(minutes),
-                      onPress: () => updateDraft({ durationMinutes: minutes }),
-                    })),
-                    { text: 'Cancelar', style: 'cancel' },
-                  ]);
-                }}
-              />
-              <Text style={styles.appointmentHint}>
-                De {formatAppointmentTimeField(draft.startTime)} a {formatAppointmentTimeField(endFields.time)} · {formatAppointmentDurationLabel(draft.durationMinutes)}
-              </Text>
-            </View>
+            {renderGuestsSection()}
 
-            <AppointmentSelectField
-              label="Zona horaria"
-              value={timezone}
-            />
-
-            <AppointmentTextField
-              label="Dirección"
-              value={draft.address}
-              placeholder="Dirección física o enlace de videollamada"
-              onChangeText={(value) => updateDraft({ address: value })}
-            />
             <AppointmentTextField
               multiline
               label="Notas"
@@ -15980,6 +16376,155 @@ const styles = StyleSheet.create({
     padding: 5,
     gap: 5,
   },
+  appointmentAdvancedPanel: {
+    borderRadius: 18,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    backgroundColor: 'rgba(255,255,255,0.025)',
+    padding: 12,
+    gap: 14,
+  },
+  appointmentPickerGroup: {
+    gap: 8,
+  },
+  appointmentPickerTitle: {
+    color: COLORS.muted,
+    fontSize: 12,
+    fontWeight: '900',
+  },
+  appointmentPickerRow: {
+    gap: 8,
+    paddingRight: 16,
+  },
+  appointmentPickerWrap: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+  },
+  appointmentPickerChip: {
+    minHeight: 34,
+    minWidth: 48,
+    borderRadius: 17,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    backgroundColor: 'rgba(16,42,120,0.58)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 12,
+  },
+  appointmentPickerChipActive: {
+    borderColor: COLORS.accent,
+    backgroundColor: COLORS.accentSoft,
+  },
+  appointmentPickerText: {
+    color: COLORS.muted,
+    fontSize: 12,
+    fontWeight: '900',
+  },
+  appointmentPickerTextActive: {
+    color: COLORS.text,
+  },
+  appointmentInlineLoading: {
+    minHeight: 38,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+  },
+  appointmentGuestSection: {
+    gap: 10,
+  },
+  appointmentGuestHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 10,
+  },
+  appointmentGuestCount: {
+    minWidth: 25,
+    height: 25,
+    borderRadius: 13,
+    backgroundColor: COLORS.accent,
+    color: COLORS.text,
+    overflow: 'hidden',
+    textAlign: 'center',
+    textAlignVertical: 'center',
+    fontSize: 12,
+    fontWeight: '900',
+  },
+  appointmentGuestResults: {
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    overflow: 'hidden',
+  },
+  appointmentGuestManual: {
+    flexDirection: 'row',
+    gap: 10,
+  },
+  appointmentGuestAddButton: {
+    minHeight: 42,
+    borderRadius: 21,
+    borderWidth: 1,
+    borderColor: 'rgba(0,168,248,0.45)',
+    backgroundColor: COLORS.accentSoft,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    paddingHorizontal: 14,
+  },
+  appointmentGuestAddText: {
+    color: COLORS.text,
+    fontSize: 14,
+    fontWeight: '900',
+  },
+  appointmentGuestList: {
+    gap: 8,
+  },
+  appointmentGuestItem: {
+    minHeight: 52,
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    backgroundColor: 'rgba(255,255,255,0.025)',
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    paddingHorizontal: 10,
+    paddingVertical: 7,
+  },
+  appointmentGuestAvatar: {
+    width: 34,
+    height: 34,
+    borderRadius: 17,
+    backgroundColor: COLORS.primary,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  appointmentGuestCopy: {
+    flex: 1,
+    minWidth: 0,
+  },
+  appointmentGuestName: {
+    color: COLORS.text,
+    fontSize: 14,
+    fontWeight: '900',
+  },
+  appointmentGuestContact: {
+    color: COLORS.muted,
+    fontSize: 12,
+    fontWeight: '700',
+    marginTop: 2,
+  },
+  appointmentGuestRemove: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: 'rgba(255,255,255,0.04)',
+  },
   calendarMiniDay: {
     width: '14.2857%',
     height: 15,
@@ -16285,7 +16830,7 @@ const styles = StyleSheet.create({
     color: COLORS.text,
   },
   freeSlotDateChip: {
-    minWidth: 132,
+    width: 132,
     minHeight: 48,
     borderRadius: 12,
     borderWidth: 1,
@@ -16301,7 +16846,8 @@ const styles = StyleSheet.create({
   },
   freeSlotDateRow: {
     gap: 8,
-    paddingRight: 4,
+    paddingLeft: 18,
+    paddingRight: 34,
   },
   freeSlotPanel: {
     borderRadius: 12,

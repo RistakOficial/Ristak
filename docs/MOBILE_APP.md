@@ -432,11 +432,17 @@ la zona horaria de la cuenta (`account_timezone`), no con la zona horaria del
 telefono.
 
 El boton `+` abre un bottom sheet nativo para buscar contactos y despues muestra
-el formulario de cita con orden de paridad movil: contacto, estado, fecha y hora,
-fecha, hora, duracion, resumen horario, zona horaria, direccion, notas y CTA de
-crear cita. Los campos se muestran como cajas/selectores con chevron cuando el
-original los presenta asi; no se deben reemplazar por chips salvo que el original
-los use. Guardar crea contra `/api/calendars/appointments`;
+el formulario de cita. El formulario abre por defecto en modo `Por defecto`, con
+flujo rapido: fechas disponibles, horarios disponibles, invitados, notas y CTA
+de crear cita. En ese modo no se muestran fecha, hora, duracion, zona horaria ni
+direccion porque la fecha y el horario salen de los slots superiores y la zona se
+hereda del calendario. Al cambiar a `Personalizado`, aparecen selectores internos
+separados para dia/mes/anio, hora/minutos/AM-PM y duracion por horas mas minutos.
+El formulario mantiene `Invitados` antes de `Notas`: busca contactos existentes,
+permite agregarlos sin icono de enviar mensaje, crea contactos nuevos dentro del
+mismo sheet cuando no existen y guarda la lista en notas con el bloque
+`Invitados:` hasta que el backend tenga un campo estructurado de asistentes.
+Guardar crea contra `/api/calendars/appointments`;
 editar y eliminar usan los endpoints reales de citas/eventos. La fecha y hora
 del formulario se interpretan en `account_timezone` y se mandan al backend como
 instantes UTC. En la vista Hoy/Semana, tocar o mantener presionado un horario del
@@ -446,16 +452,16 @@ desplazan sincronizados; la agenda no repite el anio debajo del mes porque el
 anio ya vive en la pastilla superior. La grilla mensual debe quedar libre sobre
 el fondo de la pantalla y su alto se calcula con las semanas reales del mes
 visible para que el resumen del dia quede pegado aunque el mes tenga menos filas;
-solo la fila Domingo-Sabado debe llevar capsula visual. Los numeros de la grilla
-mensual deben mantenerse compactos respecto a la bolita de seleccion; la bolita
-puede conservar mayor presencia que el texto. El swipe entre meses no
-debe mostrar de regreso el mes anterior en frames intermedios. En el sheet
-`Nueva cita`, la lista de contactos no debe mostrar icono de enviar mensaje
-porque la accion es agendar, no mandar chat.
+la fila Domingo-Sabado queda libre sobre la grilla, sin capsula visual. Los
+numeros de la grilla mensual deben mantenerse compactos respecto a la bolita de
+seleccion; la bolita puede conservar mayor presencia que el texto. El swipe
+entre meses no debe mostrar de regreso el mes anterior en frames intermedios. En
+el sheet `Nueva cita`, la lista de contactos no debe mostrar icono de enviar
+mensaje porque la accion es agendar, no mandar chat.
 Al aparecer la seleccion del timeline, la app dispara haptic y bloquea el scroll
 del listado hasta soltar el dedo para que el rango se estire verticalmente sin
 mezclarse con el desplazamiento. Brecha pendiente: replicar validacion avanzada
-de slots/bloqueos, usuarios Round Robin e invitados del modal web original.
+de slots/bloqueos y usuarios Round Robin del modal web original.
 
 ## Filtros de la bandeja del chat movil
 

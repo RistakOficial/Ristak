@@ -284,6 +284,21 @@ export class RistakApiClient {
     });
   }
 
+  createContact(payload: {
+    name?: string;
+    full_name?: string;
+    first_name?: string;
+    last_name?: string;
+    email?: string;
+    phone?: string;
+    source?: string;
+  }) {
+    return this.request<ChatContact>('/contacts', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    });
+  }
+
   getContact(contactId: string) {
     return this.request<ChatContact>(`/contacts/${encodeURIComponent(contactId)}`);
   }

@@ -116,9 +116,18 @@ Si dudas si algo debe existir, vuelve al codigo original. No confies en memoria.
     calendario movil original. Cuando el dia seleccionado no tiene citas, la
     lista inferior ahora muestra el estado vacio con icono de calendario y copy
     `No hay citas este dia`.
-  - Brechas pendientes: replicar validacion avanzada de slots/bloqueos,
-    invitados, usuarios Round Robin y el selector visual completo de fecha/hora
-    del modal original de `/movil`.
+  - Corregido 2026-07-05, sexta pasada: el sheet `Nueva cita` abre con
+    `Por defecto` seleccionado. Ese modo solo muestra fechas disponibles,
+    horarios disponibles, invitados, notas y CTA; oculta fecha, hora, duracion,
+    zona horaria y direccion. `Personalizado` concentra los selectores internos
+    de dia/mes/anio, hora/minutos/AM-PM y duracion por horas + minutos. El
+    carrusel de fechas deja un pequeno indicio lateral cuando hay fechas previas.
+    `Invitados` queda antes de `Notas`, permite buscar contactos existentes,
+    agregarlos sin icono de enviar mensaje, crear contactos nuevos dentro del
+    mismo sheet y guardar la lista en notas con bloque `Invitados:` para mantener
+    compatibilidad con el backend actual.
+  - Brechas pendientes: replicar validacion avanzada de slots/bloqueos y usuarios
+    Round Robin del modal original de `/movil`.
 - [ ] Paridad completa de Pagos.
   - Avance: la pantalla nativa de Pagos ya dejó de ser un resumen recortado.
     Ahora replica el flujo principal de `/movil/payments`: selector de tipo de
