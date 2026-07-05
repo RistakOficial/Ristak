@@ -112,7 +112,7 @@ import {
   type WhatsAppApiTemplate
 } from '@/services/whatsappApiService'
 import type { Contact, ContactAppointment, ContactCustomField, ContactPayment, ContactPhoneNumber } from '@/types'
-import { formatChatDayLabel, formatChatListTimestamp, formatChatMessageTime, isChatTimestampToday } from '@/utils/chatTimestamps'
+import { formatChatDayLabel, formatChatListTimestamp, formatChatMessageTime, getChatTimestampDayKey, isChatTimestampToday } from '@/utils/chatTimestamps'
 import { mergeContactCustomFields } from '@/utils/contactCustomFields'
 import { getContactStageBadge } from '@/utils/contactStageBadge'
 import { parseSortableDateValue } from '@/utils/dateSort'
@@ -1622,20 +1622,7 @@ function formatSchedulePreviewLabel(value?: string | null) {
 }
 
 function getConversationDayKey(value?: string | null, timeZone?: string) {
-  if (!value) return ''
-  const date = new Date(value)
-  if (Number.isNaN(date.getTime())) return ''
-  const formatter = new Intl.DateTimeFormat('en-CA', {
-    timeZone: timeZone || undefined,
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit'
-  })
-  const parts = formatter.formatToParts(date)
-  const year = parts.find((part) => part.type === 'year')?.value
-  const month = parts.find((part) => part.type === 'month')?.value
-  const day = parts.find((part) => part.type === 'day')?.value
-  return year && month && day ? `${year}-${month}-${day}` : ''
+  return getChatTimestampDayKey(value, timeZone || getStoredBusinessTimezone())
 }
 
 function getConversationDayLabel(value?: string | null, timeZone?: string) {
@@ -7181,7 +7168,7 @@ export const DesktopChat: React.FC = () => {
                       <span className={styles.chatRowBody}>
                         <span className={styles.chatRowTop}>
                           <strong>{getContactName(contact)}</strong>
-                          <small>{contact.lastMessageDate ? formatChatListTimestamp(contact.lastMessageDate) : ''}</small>
+                          <small>{contact.lastMessageDate ? formatChatListTimestamp(contact.lastMessageDate, timezone) : ''}</small>
                         </span>
                         <span className={styles.chatPreviewLine}>
                           <span className={styles.agentPriorityText}>
@@ -7238,7 +7225,7 @@ export const DesktopChat: React.FC = () => {
                       <span className={styles.chatRowBody}>
                         <span className={styles.chatRowTop}>
                           <strong>{getContactName(contact)}</strong>
-                          <small>{contact.lastMessageDate ? formatChatListTimestamp(contact.lastMessageDate) : ''}</small>
+                          <small>{contact.lastMessageDate ? formatChatListTimestamp(contact.lastMessageDate, timezone) : ''}</small>
                         </span>
                         <span className={styles.chatPreviewLine}>
                           {agentStatusLabel ? <span className={styles.agentInboxStatusText}>{agentStatusLabel}</span> : null}

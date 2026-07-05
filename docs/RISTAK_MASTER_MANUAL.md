@@ -627,8 +627,9 @@ separada, pero el panel/info del contacto es la fuente visible para decidir el
 remitente preferido del contacto.
 
 En las listas y separadores del chat, los mensajes del dia actual muestran hora
-o `Hoy`, los del dia anterior muestran `Ayer`, y los anteriores usan fecha
-compacta sin `de` (`29 junio`, agregando año solo si no pertenece al año actual).
+o `Hoy`, los del dia anterior muestran `Ayer`, del anteayer hasta antes de una
+semana muestran el dia de la semana, y a partir de 7 dias muestran fecha larga
+en espanol (`29 de junio`, agregando año solo si no pertenece al año actual).
 La bandeja desktop marca mensajes no leidos con el contador numerico y el resaltado
 del renglon, sin punto adicional antes del numero.
 

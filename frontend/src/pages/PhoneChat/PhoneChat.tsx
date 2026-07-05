@@ -90,6 +90,7 @@ import { useTimezone } from '@/contexts/TimezoneContext'
 import {
   dateOnlyToLocalDate,
   formatDateOnlyFromDate,
+  getStoredBusinessTimezone,
   localDateTimeInputToUTCISOString,
   toDateTimeLocalInputValue,
   todayDateOnlyInTimezone
@@ -183,7 +184,7 @@ import { getPhoneDailyCacheKey, readPhoneDailyCache, writePhoneDailyCache } from
 import { pushNotificationsService } from '@/services/pushNotificationsService'
 import { filterApprovedWhatsAppApiTemplates, whatsappApiService, type ScheduledChatMessage, type WhatsAppApiPendingRestore, type WhatsAppApiPhoneNumber, type WhatsAppApiStatus, type WhatsAppApiTemplate } from '@/services/whatsappApiService'
 import type { Contact, ContactCustomField } from '@/types'
-import { formatChatDayLabel, formatChatListTimestamp, formatChatMessageTime, isChatTimestampToday } from '@/utils/chatTimestamps'
+import { formatChatDayLabel, formatChatListTimestamp, formatChatMessageTime, getChatTimestampDayKey, isChatTimestampToday } from '@/utils/chatTimestamps'
 import { mergeContactCustomFields } from '@/utils/contactCustomFields'
 import { getContactStageBadge } from '@/utils/contactStageBadge'
 import { parseSortableDateValue } from '@/utils/dateSort'
@@ -2569,58 +2570,11 @@ function capitalizeFirst(value: string) {
 }
 
 function getConversationDayKey(value?: string | null, timeZone?: string) {
-  if (!value) return ''
-  const date = new Date(value)
-  if (Number.isNaN(date.getTime())) return ''
-  const safeTimeZone = timeZone || undefined
-
-  const formatter = new Intl.DateTimeFormat('en-CA', {
-    timeZone: safeTimeZone,
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit'
-  })
-  const parts = formatter.formatToParts(date)
-  const year = parts.find((part) => part.type === 'year')?.value
-  const month = parts.find((part) => part.type === 'month')?.value
-  const day = parts.find((part) => part.type === 'day')?.value
-
-  return year && month && day ? `${year}-${month}-${day}` : ''
+  return getChatTimestampDayKey(value, timeZone || getStoredBusinessTimezone())
 }
 
 function getConversationDayLabel(value?: string | null, timeZone?: string) {
-  const dayKey = getConversationDayKey(value, timeZone)
-  if (!dayKey) return ''
-
-  const todayKey = getConversationDayKey(new Date().toISOString(), timeZone)
-  const yesterday = new Date()
-  yesterday.setDate(yesterday.getDate() - 1)
-  const yesterdayKey = getConversationDayKey(yesterday.toISOString(), timeZone)
-
-  if (dayKey === todayKey) return 'Hoy'
-  if (dayKey === yesterdayKey) return 'Ayer'
-
-  const date = new Date(value || '')
-  const safeTimeZone = timeZone || undefined
-  const [year, month, day] = dayKey.split('-').map(Number)
-  const [todayYear, todayMonth, todayDay] = todayKey.split('-').map(Number)
-  const dayDistance = Math.round((Date.UTC(todayYear, todayMonth - 1, todayDay) - Date.UTC(year, month - 1, day)) / 86_400_000)
-
-  if (dayDistance > 1 && dayDistance < 7) {
-    return capitalizeFirst(new Intl.DateTimeFormat('es-MX', { weekday: 'long', timeZone: safeTimeZone }).format(date))
-  }
-
-  const formatOptions: Intl.DateTimeFormatOptions = {
-    day: 'numeric',
-    month: 'short',
-    timeZone: safeTimeZone
-  }
-
-  if (year !== todayYear) {
-    formatOptions.year = 'numeric'
-  }
-
-  return new Intl.DateTimeFormat('es-MX', formatOptions).format(date).replace('.', '')
+  return formatChatDayLabel(value, timeZone || getStoredBusinessTimezone())
 }
 
 function getSupportedVoiceMimeType() {
@@ -13849,7 +13803,7 @@ export const PhoneChat: React.FC = () => {
 
   const renderAIAgentChatButton = () => {
     const lastAiMessage = aiMessages[aiMessages.length - 1]
-    const dateLabel = formatChatListTimestamp(lastAiMessage?.createdAt)
+    const dateLabel = formatChatListTimestamp(lastAiMessage?.createdAt, timezone)
     const subtitle = showLastMessagePreview
       ? getAIAgentMessagePreview(lastAiMessage)
       : AI_AGENT_CHAT_SUBTITLE
@@ -13885,7 +13839,7 @@ export const PhoneChat: React.FC = () => {
   const renderContactButton = (contact: Contact, source: 'chat' | 'contact') => {
     const chatContact = contact as ChatContact
     const subtitle = source === 'chat' && showLastMessagePreview ? getChatPreview(chatContact) : getContactDetail(contact)
-    const dateLabel = source === 'chat' ? formatChatListTimestamp(chatContact.lastMessageDate || contact.createdAt) : ''
+    const dateLabel = source === 'chat' ? formatChatListTimestamp(chatContact.lastMessageDate || contact.createdAt, timezone) : ''
     const contactDisplayName = contact.id === AI_AGENT_CHAT_ID ? AI_AGENT_CHAT_DISPLAY_NAME : getContactName(contact)
     const unreadCount = Number(chatContact.unreadCount || 0)
     const hasUnread = showUnreadIndicators && source === 'chat' && unreadCount > 0
@@ -14020,7 +13974,7 @@ export const PhoneChat: React.FC = () => {
         : ''
     const preview = showLastMessagePreview ? getChatPreview(contact) : getContactDetail(contact)
     const subtitle = agentStatusLabel ? `${agentStatusLabel} · ${preview}` : preview
-    const dateLabel = formatChatListTimestamp(contact.lastMessageDate || contact.createdAt)
+    const dateLabel = formatChatListTimestamp(contact.lastMessageDate || contact.createdAt, timezone)
     const unreadCount = Number(contact.unreadCount || 0)
     const hasUnread = showUnreadIndicators && unreadCount > 0
     const isMuted = mutedChatIdSet.has(contact.id)
@@ -14321,7 +14275,7 @@ export const PhoneChat: React.FC = () => {
     const chatContact = contact as ChatContact
     const lastDate = chatContact.lastMessageDate || contact.createdAt
     const subtitle = chatContact.lastMessageDate
-      ? `Reciente · ${formatChatListTimestamp(lastDate)}`
+      ? `Reciente · ${formatChatListTimestamp(lastDate, timezone)}`
       : getContactDetail(contact)
 
     return (
