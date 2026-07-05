@@ -848,6 +848,110 @@ test('processMetaSocialWebhook refleja respuestas propias a comentarios en el ch
   })
 })
 
+test('processMetaSocialWebhook marca comentarios como eliminados cuando se borra la publicación', async () => {
+  const contactId = 'meta_comment_deleted_post_contact'
+  const metaContactId = 'meta_comment_deleted_post_profile'
+  const commentId = 'fb-comment-deleted-post'
+  const postId = 'fb-post-deleted-webhook-test'
+
+  await initializeMasterKey()
+
+  await snapshotMetaConfig(async () => {
+    try {
+      await db.run('DELETE FROM meta_social_messages WHERE contact_id = ? OR post_id = ?', [contactId, postId]).catch(() => undefined)
+      await db.run('DELETE FROM meta_social_posts WHERE id = ?', [postId]).catch(() => undefined)
+      await db.run('DELETE FROM meta_social_contacts WHERE contact_id = ?', [contactId]).catch(() => undefined)
+      await db.run('DELETE FROM contacts WHERE id = ?', [contactId]).catch(() => undefined)
+
+      await db.run(`
+        INSERT INTO meta_config (
+          ad_account_id, access_token, pixel_id, page_id, instagram_account_id,
+          timezone_id, timezone_name, timezone_offset_hours_utc
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      `, [
+        'act-send-test',
+        encrypt('user-token-send-test'),
+        null,
+        'page-send-test',
+        'ig-business-send-test',
+        null,
+        null,
+        null
+      ])
+      await seedMessengerContact({ contactId, metaContactId })
+
+      await db.run(`
+        INSERT INTO meta_social_posts (
+          id, platform, post_type, message, image_url, permalink, raw_json, fetched_at, updated_at
+        ) VALUES (?, 'messenger', 'post', 'Texto previo del post', '', '', '{}', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+      `, [postId])
+
+      await db.run(`
+        INSERT INTO meta_social_messages (
+          id, platform, meta_message_id, meta_social_contact_id, contact_id,
+          sender_id, recipient_id, page_id, direction, status, message_type,
+          message_text, message_timestamp, raw_payload_json, comment_id, post_id, updated_at
+        ) VALUES (?, 'messenger', ?, ?, ?, 'psid-send-test', 'page-send-test', 'page-send-test', 'inbound', 'received', 'comment',
+          'Quiero informes', '2026-07-04T16:00:00.000Z', '{}', ?, ?, CURRENT_TIMESTAMP)
+      `, [
+        hashTestId('meta_social_msg', commentId),
+        commentId,
+        metaContactId,
+        contactId,
+        commentId,
+        postId
+      ])
+
+      const result = await processMetaSocialWebhook({
+        payload: {
+          object: 'page',
+          entry: [
+            {
+              id: 'page-send-test',
+              time: 1783180860,
+              changes: [
+                {
+                  field: 'feed',
+                  value: {
+                    item: 'post',
+                    verb: 'remove',
+                    post_id: postId
+                  }
+                }
+              ]
+            }
+          ]
+        }
+      })
+
+      assert.equal(result.messages, 0)
+
+      const stored = await db.get(
+        `SELECT message_text, status
+           FROM meta_social_messages
+          WHERE meta_message_id = ?`,
+        [commentId]
+      )
+      const post = await db.get(
+        `SELECT post_type, message
+           FROM meta_social_posts
+          WHERE id = ?`,
+        [postId]
+      )
+
+      assert.equal(stored.message_text, 'Comentario eliminado')
+      assert.equal(stored.status, 'removed')
+      assert.equal(post.post_type, 'deleted')
+      assert.equal(post.message, 'Texto previo del post')
+    } finally {
+      await db.run('DELETE FROM meta_social_messages WHERE contact_id = ? OR post_id = ?', [contactId, postId]).catch(() => undefined)
+      await db.run('DELETE FROM meta_social_posts WHERE id = ?', [postId]).catch(() => undefined)
+      await db.run('DELETE FROM meta_social_contacts WHERE contact_id = ?', [contactId]).catch(() => undefined)
+      await db.run('DELETE FROM contacts WHERE id = ?', [contactId]).catch(() => undefined)
+    }
+  })
+})
+
 test('processMetaSocialWebhook usa conversaciones de Instagram como fallback de nombre sin Page token', async () => {
   const previousMetaGraphDescriptor = Object.getOwnPropertyDescriptor(API_URLS, 'META_GRAPH')
   const previousInstagramGraphDescriptor = Object.getOwnPropertyDescriptor(API_URLS, 'INSTAGRAM_GRAPH')

@@ -306,6 +306,44 @@ const isTruthyQueryValue = (value) => ['1', 'true', 'yes', 'si', 'sí'].includes
 const isExplicitFalseQueryValue = (value) => ['0', 'false', 'no', 'off'].includes(cleanString(value).toLowerCase())
 const hasTextValue = (value) => cleanString(value).length > 0
 const JOURNEY_MESSAGE_MAX_LIMIT = 500
+const META_COMMENT_DELETED_TEXT = 'Comentario eliminado'
+const META_COMMENT_EMPTY_TEXT = 'Comentario sin texto'
+const META_COMMENT_PUBLIC_REPLY_TEXT = 'Respuesta pública al comentario'
+const META_COMMENT_PRIVATE_REPLY_TEXT = 'Respuesta por privado al comentario'
+const META_POST_DELETED_TEXT = 'Publicación eliminada'
+const META_COMMENT_MESSAGE_TYPES = new Set(['comment', 'comment_reply_public', 'comment_reply_private'])
+const META_REMOVED_COMMENT_STATUSES = new Set(['removed', 'deleted', 'delete', 'remove', 'hide', 'hidden'])
+
+const isMetaCommentMessageType = (value) => META_COMMENT_MESSAGE_TYPES.has(cleanString(value).toLowerCase())
+
+const isMetaPostDeletedForChat = (row = {}) => cleanString(row.post_type).toLowerCase() === 'deleted'
+
+const getMetaCommentFallbackText = (row = {}) => {
+  const type = cleanString(row.message_type).toLowerCase()
+  if (!isMetaCommentMessageType(type)) return ''
+  const status = cleanString(row.status).toLowerCase()
+  if (META_REMOVED_COMMENT_STATUSES.has(status) || isMetaPostDeletedForChat(row)) return META_COMMENT_DELETED_TEXT
+  if (type === 'comment_reply_public') return META_COMMENT_PUBLIC_REPLY_TEXT
+  if (type === 'comment_reply_private') return META_COMMENT_PRIVATE_REPLY_TEXT
+  return META_COMMENT_EMPTY_TEXT
+}
+
+const getMetaMessageTextForChat = (row = {}) => {
+  return cleanString(row.message_text) || getMetaCommentFallbackText(row)
+}
+
+const getMetaPostMessageForChat = (row = {}) => {
+  const postMessage = cleanString(row.post_message)
+  if (postMessage) return postMessage
+  return isMetaPostDeletedForChat(row) ? META_POST_DELETED_TEXT : ''
+}
+
+const getMetaSourceLabelForChat = (platform, messageType) => {
+  const cleanPlatform = cleanString(platform).toLowerCase()
+  const isComment = isMetaCommentMessageType(messageType)
+  if (cleanPlatform === 'instagram') return isComment ? 'Instagram' : 'Instagram DM'
+  return isComment ? 'Facebook' : 'Messenger'
+}
 
 const parseJourneyMessageLimit = (value) => {
   if (value === undefined || value === null || value === '') return null
@@ -2237,7 +2275,20 @@ export const getChatContacts = async (req, res) => {
         SELECT
           meta_social_messages.contact_id,
           'meta:' || meta_social_messages.id AS message_row_id,
-          meta_social_messages.message_text,
+          CASE
+            WHEN LOWER(COALESCE(meta_social_messages.message_type, '')) IN ('comment', 'comment_reply_public', 'comment_reply_private')
+              AND (
+                LOWER(COALESCE(meta_social_messages.status, '')) IN ('removed', 'deleted', 'delete', 'remove', 'hide', 'hidden')
+                OR LOWER(COALESCE(latest_meta_post.post_type, '')) = 'deleted'
+              ) THEN 'Comentario eliminado'
+            WHEN LOWER(COALESCE(meta_social_messages.message_type, '')) = 'comment'
+              AND COALESCE(meta_social_messages.message_text, '') = '' THEN 'Comentario sin texto'
+            WHEN LOWER(COALESCE(meta_social_messages.message_type, '')) = 'comment_reply_public'
+              AND COALESCE(meta_social_messages.message_text, '') = '' THEN 'Respuesta pública al comentario'
+            WHEN LOWER(COALESCE(meta_social_messages.message_type, '')) = 'comment_reply_private'
+              AND COALESCE(meta_social_messages.message_text, '') = '' THEN 'Respuesta por privado al comentario'
+            ELSE meta_social_messages.message_text
+          END AS message_text,
           meta_social_messages.message_type,
           meta_social_messages.direction,
           NULL AS business_phone,
@@ -2248,6 +2299,8 @@ export const getChatContacts = async (req, res) => {
           meta_social_messages.platform AS message_channel
         FROM meta_social_messages
         JOIN ranked_chats ON ranked_chats.contact_id = meta_social_messages.contact_id
+        LEFT JOIN meta_social_posts latest_meta_post
+          ON latest_meta_post.id = COALESCE(NULLIF(meta_social_messages.post_id, ''), meta_social_messages.media_id)
         WHERE meta_social_messages.contact_id IS NOT NULL
         ` : ''}
         ${includeMetaSocialMessages ? `
@@ -5206,12 +5259,13 @@ export const getContactJourney = async (req, res) => {
       if (!includeBusinessMessages && isOutboundWhatsAppDirection(msg.direction)) return
 
       const platform = cleanString(msg.platform)
-      const source = platform === 'instagram' ? 'Instagram DM' : 'Messenger'
+      const source = getMetaSourceLabelForChat(platform, msg.message_type)
       const rawPayload = parseJsonObject(msg.raw_payload_json)
       const replyContextId = getMetaReplyContextId(rawPayload)
       const reactionTargetId = cleanString(msg.message_type).toLowerCase() === 'reaction'
         ? getMetaReactionTargetId(rawPayload) || cleanString(msg.meta_message_id)
         : ''
+      const postDeleted = isMetaPostDeletedForChat(msg)
 
       journey.push({
         type: 'meta_message',
@@ -5225,7 +5279,7 @@ export const getContactJourney = async (req, res) => {
           instagram_account_id: msg.instagram_account_id,
           profile_name: msg.profile_name,
           username: msg.username,
-          message_text: msg.message_text,
+          message_text: getMetaMessageTextForChat(msg),
           message_type: msg.message_type,
           media_url: msg.media_url,
           media_mime_type: msg.media_mime_type,
@@ -5250,10 +5304,11 @@ export const getContactJourney = async (req, res) => {
           meta_user_id: msg.meta_user_id || null,
           // Contenido de la publicación comentada (para mostrar "de qué publicación
           // comentó" dentro del globo): texto, imagen y link a la publicación.
-          post_message: msg.post_message || null,
+          post_message: getMetaPostMessageForChat(msg) || null,
           post_image_url: msg.post_image_url || null,
           post_permalink: msg.post_permalink || msg.permalink || null,
-          post_type: msg.post_type || null
+          post_type: msg.post_type || null,
+          post_deleted: postDeleted ? 1 : 0
         }
       })
 	    })

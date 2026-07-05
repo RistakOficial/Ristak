@@ -246,6 +246,127 @@ test('chat contacts combines channel stats before loading selected messages', as
   }
 })
 
+test('meta comment messages keep readable deleted text when the source post is gone', async () => {
+  const id = randomUUID().replace(/-/g, '')
+  const facebookContactId = `meta_deleted_fb_${id}`
+  const instagramContactId = `meta_deleted_ig_${id}`
+  const facebookPhone = `+52995${Date.now().toString().slice(-7)}`
+  const instagramPhone = `+52996${Date.now().toString().slice(-7)}`
+  const facebookPostId = `fb_post_deleted_${id}`
+  const instagramPostId = `ig_media_deleted_${id}`
+
+  await cleanup(facebookContactId, facebookPhone)
+  await cleanup(instagramContactId, instagramPhone)
+
+  try {
+    await insertRow('contacts', {
+      id: facebookContactId,
+      phone: facebookPhone,
+      full_name: 'Cliente Comentario Facebook',
+      first_name: 'Cliente',
+      source: 'manual',
+      created_at: '2099-07-03T12:00:00.000Z',
+      updated_at: '2099-07-03T12:00:00.000Z'
+    })
+    await insertRow('contacts', {
+      id: instagramContactId,
+      phone: instagramPhone,
+      full_name: 'Cliente Comentario Instagram',
+      first_name: 'Cliente',
+      source: 'manual',
+      created_at: '2099-07-03T12:00:00.000Z',
+      updated_at: '2099-07-03T12:00:00.000Z'
+    })
+
+    await insertRow('meta_social_posts', {
+      id: facebookPostId,
+      platform: 'messenger',
+      post_type: 'deleted',
+      message: '',
+      image_url: '',
+      permalink: '',
+      raw_json: '{"unavailable":true}',
+      fetched_at: '2099-07-03T12:01:00.000Z',
+      updated_at: '2099-07-03T12:01:00.000Z'
+    })
+    await insertRow('meta_social_posts', {
+      id: instagramPostId,
+      platform: 'instagram',
+      post_type: 'deleted',
+      message: '',
+      image_url: '',
+      permalink: '',
+      raw_json: '{"unavailable":true}',
+      fetched_at: '2099-07-03T12:01:00.000Z',
+      updated_at: '2099-07-03T12:01:00.000Z'
+    })
+
+    await insertRow('meta_social_messages', {
+      id: `meta_deleted_comment_fb_${id}`,
+      platform: 'messenger',
+      meta_message_id: `fb_comment_${id}`,
+      contact_id: facebookContactId,
+      sender_id: 'fb_customer',
+      recipient_id: 'fb_page',
+      page_id: 'fb_page',
+      direction: 'inbound',
+      status: 'received',
+      message_type: 'comment',
+      message_text: '',
+      post_id: facebookPostId,
+      comment_id: `fb_comment_${id}`,
+      message_timestamp: '2099-07-03T12:04:00.000Z',
+      created_at: '2099-07-03T12:04:00.000Z'
+    })
+    await insertRow('meta_social_messages', {
+      id: `meta_deleted_comment_ig_${id}`,
+      platform: 'instagram',
+      meta_message_id: `ig_comment_${id}`,
+      contact_id: instagramContactId,
+      sender_id: 'ig_customer',
+      recipient_id: 'ig_business',
+      instagram_account_id: 'ig_business',
+      direction: 'inbound',
+      status: 'received',
+      message_type: 'comment',
+      message_text: '',
+      media_id: instagramPostId,
+      comment_id: `ig_comment_${id}`,
+      message_timestamp: '2099-07-03T12:05:00.000Z',
+      created_at: '2099-07-03T12:05:00.000Z'
+    })
+
+    const facebookJourney = await readJourney(facebookContactId, { includeBusinessMessages: 'true' })
+    const instagramJourney = await readJourney(instagramContactId, { includeBusinessMessages: 'true' })
+    const facebookMessage = facebookJourney.find(event => event.type === 'meta_message')
+    const instagramMessage = instagramJourney.find(event => event.type === 'meta_message')
+
+    assert.ok(facebookMessage)
+    assert.ok(instagramMessage)
+    assert.equal(facebookMessage.data.source, 'Facebook')
+    assert.equal(instagramMessage.data.source, 'Instagram')
+    assert.equal(facebookMessage.data.message_text, 'Comentario eliminado')
+    assert.equal(instagramMessage.data.message_text, 'Comentario eliminado')
+    assert.equal(facebookMessage.data.post_message, 'Publicación eliminada')
+    assert.equal(instagramMessage.data.post_message, 'Publicación eliminada')
+    assert.equal(facebookMessage.data.post_deleted, 1)
+    assert.equal(instagramMessage.data.post_deleted, 1)
+
+    const chats = await readChatContacts({ limit: '100' })
+    const facebookChat = chats.find(item => item.id === facebookContactId)
+    const instagramChat = chats.find(item => item.id === instagramContactId)
+
+    assert.ok(facebookChat)
+    assert.ok(instagramChat)
+    assert.equal(facebookChat.lastMessageText, 'Comentario eliminado')
+    assert.equal(instagramChat.lastMessageText, 'Comentario eliminado')
+  } finally {
+    await db.run('DELETE FROM meta_social_posts WHERE id IN (?, ?)', [facebookPostId, instagramPostId]).catch(() => undefined)
+    await cleanup(facebookContactId, facebookPhone)
+    await cleanup(instagramContactId, instagramPhone)
+  }
+})
+
 test('contact journey defaults to contact-authored messages only', async () => {
   const id = randomUUID()
   const contactId = `journey_msg_${id}`

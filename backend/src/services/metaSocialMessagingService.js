@@ -22,6 +22,9 @@ const META_SOCIAL_HISTORY_MAX_CONVERSATIONS = 1000
 const META_SOCIAL_HISTORY_MAX_MESSAGES_PER_CONVERSATION = 500
 const META_SOCIAL_HISTORY_MAX_TOTAL_MESSAGES = 50000
 const META_SOCIAL_HISTORY_MESSAGE_FIELDS = 'id,message,created_time,from,to,attachments,shares'
+const COMMENT_DELETED_TEXT = 'Comentario eliminado'
+const COMMENT_EMPTY_TEXT = 'Comentario sin texto'
+const POST_DELETED_TEXT = 'Publicación eliminada'
 const metaSocialHistorySyncing = new Set()
 
 function cleanString(value) {
@@ -398,7 +401,7 @@ function extractCommentEvent({ objectType, entry, change, config = {} }) {
     instagramAccountId: platform === 'instagram' ? igId : '',
     metaMessageId: commentId, // dedup natural (edits/reenvíos llegan con el mismo id)
     messageType: isEcho ? 'comment_reply_public' : 'comment',
-    messageText: text || '(comentario sin texto)',
+    messageText: text || (verb === 'remove' || verb === 'hide' ? COMMENT_DELETED_TEXT : COMMENT_EMPTY_TEXT),
     mediaUrl: commentMedia.mediaUrl,
     mediaType: commentMedia.mediaType,
     mediaMimeType: '',
@@ -420,14 +423,72 @@ function extractCommentEvent({ objectType, entry, change, config = {} }) {
   }
 }
 
+function extractDeletedPostEvent({ objectType, change }) {
+  const field = cleanString(change?.field).toLowerCase()
+  const value = change?.value || {}
+  const object = cleanString(objectType).toLowerCase()
+  const verb = cleanString(value.verb || value.action).toLowerCase()
+  if (!['remove', 'removed', 'delete', 'deleted', 'hide', 'hidden'].includes(verb)) return null
+
+  const item = cleanString(value.item || value.object_type || value.type || field).toLowerCase()
+  if (item === 'comment' || field === 'comments' || field === 'live_comments') return null
+
+  const isPostLikeItem = ['post', 'media', 'photo', 'video', 'reel', 'story', 'status'].includes(item) ||
+    ['media', 'feed'].includes(field)
+  if (!isPostLikeItem) return null
+
+  const platform = object === 'instagram' || field === 'media' ? 'instagram' : 'messenger'
+  const postId = cleanString(value.post_id || value.media_id || value.id || value.object_id)
+  if (!postId) return null
+
+  return {
+    platform,
+    postId,
+    raw: change
+  }
+}
+
 // Marca (soft) un comentario eliminado sin borrar la fila, para no perder el hilo.
 async function softRemoveComment(comment) {
-  const messageId = hashId('meta_social_msg', comment.commentId)
+  const platform = comment.platform === 'instagram' ? 'instagram' : 'messenger'
+  const commentId = cleanString(comment.commentId)
+  const inboundMessageId = hashId('meta_social_msg', commentId)
+  const outboundMessageId = hashId('meta_social_msg', `${platform}:${commentId}:outbound`)
   await db.run(
     `UPDATE meta_social_messages
-     SET message_text = '(comentario eliminado)', status = 'removed', updated_at = CURRENT_TIMESTAMP
-     WHERE id = ?`,
-    [messageId]
+     SET message_text = ?, status = 'removed', updated_at = CURRENT_TIMESTAMP
+     WHERE platform = ?
+       AND (
+         id IN (?, ?)
+         OR COALESCE(comment_id, '') = ?
+         OR COALESCE(meta_message_id, '') = ?
+       )`,
+    [COMMENT_DELETED_TEXT, platform, inboundMessageId, outboundMessageId, commentId, commentId]
+  )
+}
+
+async function markSocialPostDeleted(event) {
+  const platform = event.platform === 'instagram' ? 'instagram' : 'messenger'
+  const postId = cleanString(event.postId)
+  if (!postId) return
+
+  await cacheDeletedSocialPost({
+    platform,
+    postId,
+    mediaId: postId,
+    raw: event.raw
+  })
+
+  await db.run(
+    `UPDATE meta_social_messages
+     SET message_text = ?, status = 'removed', updated_at = CURRENT_TIMESTAMP
+     WHERE platform = ?
+       AND message_type IN ('comment', 'comment_reply_public', 'comment_reply_private')
+       AND (
+         COALESCE(post_id, '') = ?
+         OR COALESCE(media_id, '') = ?
+       )`,
+    [COMMENT_DELETED_TEXT, platform, postId, postId]
   )
 }
 
@@ -570,6 +631,30 @@ async function fetchMetaCommentAuthorProfile({ platform, commentId, authorId, ac
 // Saca y cachea el contenido de la publicación/media comentada (texto + imagen +
 // permalink) para mostrar "de qué publicación comentó" dentro del globo. Se pide
 // una sola vez por publicación (cache en meta_social_posts).
+async function cacheDeletedSocialPost(comment, error = null) {
+  const platform = comment.platform === 'instagram' ? 'instagram' : 'messenger'
+  const postId = cleanString(comment.postId) || cleanString(comment.mediaId)
+  if (!postId) return
+  const raw = {
+    unavailable: true,
+    reason: cleanString(error?.message),
+    meta: error?.meta || null,
+    event: comment.raw || null
+  }
+  await db.run(`
+    INSERT INTO meta_social_posts (id, platform, post_type, message, image_url, permalink, raw_json, fetched_at, updated_at)
+    VALUES (?, ?, 'deleted', ?, NULL, NULL, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+    ON CONFLICT(id) DO UPDATE SET
+      platform = excluded.platform,
+      post_type = excluded.post_type,
+      message = COALESCE(NULLIF(meta_social_posts.message, ''), excluded.message),
+      raw_json = excluded.raw_json,
+      updated_at = CURRENT_TIMESTAMP
+  `, [postId, platform, POST_DELETED_TEXT, safeJson(raw)]).catch(dbError => {
+    logger.warn(`No se pudo cachear publicación eliminada ${postId}: ${dbError.message}`)
+  })
+}
+
 async function fetchAndCacheSocialPost(comment, accessToken) {
   const platform = comment.platform
   const postId = platform === 'instagram' ? cleanString(comment.mediaId) : cleanString(comment.postId)
@@ -603,6 +688,7 @@ async function fetchAndCacheSocialPost(comment, accessToken) {
         updated_at = CURRENT_TIMESTAMP
     `, [postId, platform, postType, message || null, imageUrl || null, permalink || null, safeJson(data)])
   } catch (error) {
+    await cacheDeletedSocialPost(comment, error)
     logger.warn(`No se pudo cachear la publicación comentada ${postId}: ${error.message}`)
   }
 }
@@ -1689,7 +1775,7 @@ async function sendMetaInstagramReactionRequest({ businessId, recipientId, react
   })
 }
 
-async function saveMetaSocialOutboundMessage({ platform, contactId, profile, messageId, text, response, externalId, messageType = 'text', messageTimestamp = '', commentId = '', postId = '', parentCommentId = '', context = null }) {
+async function saveMetaSocialOutboundMessage({ platform, contactId, profile, messageId, text, response, externalId, messageType = 'text', messageTimestamp = '', commentId = '', postId = '', parentCommentId = '', mediaUrl = '', mediaMimeType = '', context = null }) {
   const now = cleanString(messageTimestamp) || new Date().toISOString()
   const cleanPlatform = platform === 'instagram' ? 'instagram' : 'messenger'
   const cleanMessageType = cleanString(messageType) || 'text'
@@ -1719,9 +1805,10 @@ async function saveMetaSocialOutboundMessage({ platform, contactId, profile, mes
       id, platform, meta_message_id, meta_social_contact_id, contact_id,
       sender_id, recipient_id, page_id, instagram_account_id,
       direction, status, message_type, message_text,
+      media_url, media_mime_type,
       postback_payload, message_timestamp, raw_payload_json, referral_json,
       comment_id, post_id, parent_comment_id, updated_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
     ON CONFLICT(id) DO UPDATE SET
       meta_social_contact_id = COALESCE(excluded.meta_social_contact_id, meta_social_messages.meta_social_contact_id),
       contact_id = COALESCE(excluded.contact_id, meta_social_messages.contact_id),
@@ -1733,6 +1820,8 @@ async function saveMetaSocialOutboundMessage({ platform, contactId, profile, mes
       status = COALESCE(NULLIF(excluded.status, ''), meta_social_messages.status),
       message_type = COALESCE(NULLIF(excluded.message_type, ''), meta_social_messages.message_type),
       message_text = COALESCE(NULLIF(excluded.message_text, ''), meta_social_messages.message_text),
+      media_url = COALESCE(NULLIF(excluded.media_url, ''), meta_social_messages.media_url),
+      media_mime_type = COALESCE(NULLIF(excluded.media_mime_type, ''), meta_social_messages.media_mime_type),
       message_timestamp = COALESCE(excluded.message_timestamp, meta_social_messages.message_timestamp),
       raw_payload_json = excluded.raw_payload_json,
       comment_id = COALESCE(NULLIF(excluded.comment_id, ''), meta_social_messages.comment_id),
@@ -1753,6 +1842,8 @@ async function saveMetaSocialOutboundMessage({ platform, contactId, profile, mes
     'sent',
     cleanMessageType,
     text,
+    cleanString(mediaUrl) || null,
+    cleanString(mediaMimeType) || null,
     null,
     now,
     rawPayload,
@@ -2121,6 +2212,8 @@ export async function sendMetaSocialCommentReply({ contactId, platform, message,
     response,
     externalId,
     messageType: mode === 'public' ? 'comment_reply_public' : 'comment_reply_private',
+    mediaUrl: att?.url || '',
+    mediaMimeType: att?.type || '',
     commentId: targetCommentId,
     postId: targetPostId
   })
@@ -2790,6 +2883,14 @@ export async function processMetaSocialWebhook({ payload = {}, rawBody = '', sig
       const changeItems = Array.isArray(entry?.changes) ? entry.changes : []
       for (const change of changeItems) {
         try {
+          const deletedPost = extractDeletedPostEvent({ objectType: payload.object, change })
+          if (deletedPost) {
+            await markSocialPostDeleted(deletedPost).catch(error => {
+              logger.warn(`No se pudo marcar publicación eliminada: ${error.message}`)
+            })
+            continue
+          }
+
           const comment = extractCommentEvent({ objectType: payload.object, entry, change, config: config || {} })
           if (!comment) continue
 

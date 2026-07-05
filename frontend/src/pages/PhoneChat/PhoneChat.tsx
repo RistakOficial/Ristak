@@ -1404,6 +1404,7 @@ interface ChatMessage {
     message?: string
     imageUrl?: string
     permalink?: string
+    deleted?: boolean
   }
   emailDetails?: {
     subject: string
@@ -3132,6 +3133,12 @@ function getJourneyEventSignature(event: JourneyEvent) {
     data.location_name,
     data.location_address,
     data.location_url,
+    data.comment_id,
+    data.post_message,
+    data.post_image_url,
+    data.post_permalink,
+    data.post_type,
+    data.post_deleted,
     data.subject,
     data.amount,
     data.title,
@@ -3347,6 +3354,27 @@ function getJourneyMediaAttachment(event: JourneyEvent): ChatMessage['attachment
   }
 
   return undefined
+}
+
+function isTruthyDataFlag(value: unknown): boolean {
+  if (typeof value === 'boolean') return value
+  if (typeof value === 'number') return value === 1
+  const normalized = String(value || '').trim().toLowerCase()
+  return normalized === '1' || normalized === 'true' || normalized === 'yes' || normalized === 'si' || normalized === 'sí'
+}
+
+function isCommentMessageType(messageType = '') {
+  return ['comment', 'comment_reply_public', 'comment_reply_private'].includes(String(messageType || '').trim().toLowerCase())
+}
+
+function getCommentFallbackText(messageType = '', status: unknown = '', postDeleted = false) {
+  const normalizedType = String(messageType || '').trim().toLowerCase()
+  const normalizedStatus = String(status || '').trim().toLowerCase()
+  if (!isCommentMessageType(normalizedType)) return ''
+  if (postDeleted || ['removed', 'deleted', 'delete', 'remove', 'hide', 'hidden'].includes(normalizedStatus)) return 'Comentario eliminado'
+  if (normalizedType === 'comment_reply_public') return 'Respuesta pública al comentario'
+  if (normalizedType === 'comment_reply_private') return 'Respuesta por privado al comentario'
+  return 'Comentario sin texto'
 }
 
 function parseLocationCoordinate(value: unknown) {
@@ -3661,9 +3689,12 @@ function getJourneyMessage(event: JourneyEvent, index: number): ChatMessage | nu
     ''
   ).trim()
   const messageType = String(event.data?.message_type || '')
+  const normalizedMessageType = messageType.trim().toLowerCase()
+  const status = String(event.data?.status || '').trim()
+  const postDeleted = isTruthyDataFlag(eventData.post_deleted || eventData.postDeleted || eventData.post_removed || eventData.postRemoved || eventData.post_unavailable || eventData.postUnavailable)
   const attachment = getJourneyMediaAttachment(event)
   const location = getJourneyLocation(event)
-  const text = cleanLocationMessageText(cleanAttachmentMessageText(rawText, attachment), location)
+  const text = cleanLocationMessageText(cleanAttachmentMessageText(rawText, attachment), location) || getCommentFallbackText(messageType, status, postDeleted)
 
   if (!text && !messageType && !attachment && !location) return null
 
@@ -3679,7 +3710,7 @@ function getJourneyMessage(event: JourneyEvent, index: number): ChatMessage | nu
     text: text || (attachment || location ? '' : getMessageTypeLabel(messageType, isMetaMessage ? 'Mensaje de Meta' : 'Mensaje de WhatsApp')),
     date: event.date,
     direction,
-    status: String(event.data?.status || ''),
+    status,
     errorReason: getJourneyMessageError(event),
     sentAt: pickMessageTimestamp(eventData, [
       'sent_at',
@@ -3720,15 +3751,16 @@ function getJourneyMessage(event: JourneyEvent, index: number): ChatMessage | nu
     replyToProviderMessageId: String(event.data?.reply_to_provider_message_id || '').trim() || undefined,
     reactionEmoji: String(event.data?.reaction_emoji || '').trim() || undefined,
     reactionTargetProviderMessageId: String(event.data?.reaction_target_provider_message_id || '').trim() || undefined,
-    isComment: messageType === 'comment' || messageType === 'comment_reply_public' || messageType === 'comment_reply_private',
-    commentReplyMode: messageType === 'comment_reply_public' ? 'public' : messageType === 'comment_reply_private' ? 'private' : undefined,
+    isComment: isCommentMessageType(messageType),
+    commentReplyMode: normalizedMessageType === 'comment_reply_public' ? 'public' : normalizedMessageType === 'comment_reply_private' ? 'private' : undefined,
     commentId: String(eventData.comment_id || eventData.commentId || '').trim() || undefined,
     commentPlatform: String(eventData.social_platform || eventData.platform || '').toLowerCase() === 'instagram' ? 'instagram' : 'messenger',
-    commentPost: (messageType.startsWith('comment') && (eventData.post_message || eventData.post_image_url || eventData.post_permalink))
+    commentPost: (isCommentMessageType(messageType) && (eventData.post_message || eventData.post_image_url || eventData.post_permalink || postDeleted))
       ? {
-          message: String(eventData.post_message || '').trim(),
+          message: String(eventData.post_message || (postDeleted ? 'Publicación eliminada' : '')).trim(),
           imageUrl: String(eventData.post_image_url || '').trim(),
-          permalink: String(eventData.post_permalink || eventData.permalink || '').trim()
+          permalink: String(eventData.post_permalink || eventData.permalink || '').trim(),
+          deleted: postDeleted
         }
       : undefined,
     attachment,
@@ -15842,9 +15874,12 @@ export const PhoneChat: React.FC = () => {
                               ? 'Respuesta por privado'
                               : 'Comentó en tu publicación'}
                         </span>
-                        {message.commentPost && (message.commentPost.imageUrl || message.commentPost.message) ? (
+                        {message.commentPost ? (
                           (() => {
                             const post = message.commentPost!
+                            const visiblePostMessage = post.message && !(post.deleted && post.message === 'Publicación eliminada')
+                              ? post.message
+                              : ''
                             const postInner = (
                               <>
                                 {post.imageUrl ? (
@@ -15853,11 +15888,11 @@ export const PhoneChat: React.FC = () => {
                                   <span className={styles.commentPostThumbPlaceholder}><ImageIcon size={28} aria-hidden="true" /></span>
                                 )}
                                 <span className={styles.commentPostMeta}>
-                                  <span className={styles.commentPostKind}>Publicación</span>
-                                  {post.message ? (
-                                    <span className={styles.commentPostText}>{post.message}</span>
+                                  <span className={styles.commentPostKind}>{post.deleted ? 'Publicación eliminada' : 'Publicación'}</span>
+                                  {visiblePostMessage ? (
+                                    <span className={styles.commentPostText}>{visiblePostMessage}</span>
                                   ) : (
-                                    <span className={styles.commentPostTextMuted}>Ver publicación</span>
+                                    <span className={styles.commentPostTextMuted}>{post.deleted ? 'Comentario conservado en Ristak' : 'Ver publicación'}</span>
                                   )}
                                 </span>
                                 {post.permalink ? (
