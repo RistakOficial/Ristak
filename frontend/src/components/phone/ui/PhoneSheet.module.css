@@ -170,7 +170,7 @@
 .content,
 .contentScrollable {
   min-height: 0;
-  padding: 0 14px calc(env(safe-area-inset-bottom) + 14px);
+  padding: 0 14px calc(var(--phone-safe-area-bottom) + 14px);
   overflow-x: hidden;
 }
 

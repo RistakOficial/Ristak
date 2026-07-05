@@ -31,10 +31,10 @@
   --phone-chat-panel: #eef6ff;
   --phone-chat-shadow: 0 18px 38px rgba(0, 72, 176, 0.12);
   --phone-chat-sheet-shadow: 0 -22px 70px rgba(15, 23, 42, 0.18);
-  --phone-chat-safe-top: max(env(safe-area-inset-top, 0px), var(--phone-native-safe-area-top, 0px));
-  --phone-chat-safe-right: max(env(safe-area-inset-right, 0px), var(--phone-native-safe-area-right, 0px));
-  --phone-chat-safe-bottom: max(env(safe-area-inset-bottom, 0px), var(--phone-native-safe-area-bottom, 0px));
-  --phone-chat-safe-left: max(env(safe-area-inset-left, 0px), var(--phone-native-safe-area-left, 0px));
+  --phone-chat-safe-top: var(--phone-safe-area-top);
+  --phone-chat-safe-right: var(--phone-safe-area-right);
+  --phone-chat-safe-bottom: var(--phone-safe-area-bottom);
+  --phone-chat-safe-left: var(--phone-safe-area-left);
   --phone-chat-safe-bottom-comfort: max(10px, var(--phone-chat-safe-bottom));
   position: fixed;
   top: var(--phone-visual-viewport-top, 0);
@@ -7793,7 +7793,7 @@
   align-content: start;
   gap: 13px;
   min-height: 0;
-  padding: 0 2px max(18px, env(safe-area-inset-bottom));
+  padding: 0 2px max(18px, var(--phone-safe-area-bottom));
   overflow-x: hidden;
   overflow-y: auto;
   overscroll-behavior-y: contain;

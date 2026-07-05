@@ -12,8 +12,8 @@
   overflow-y: auto;
   -webkit-overflow-scrolling: touch;
   overscroll-behavior: contain;
-  padding: max(22px, env(safe-area-inset-top)) 20px calc(max(24px, env(safe-area-inset-bottom)) + var(--phone-keyboard-inset, 0px));
-  scroll-padding-bottom: calc(env(safe-area-inset-bottom) + var(--phone-keyboard-inset, 0px) + 28px);
+  padding: max(22px, var(--phone-safe-area-top)) 20px calc(max(24px, var(--phone-safe-area-bottom)) + var(--phone-keyboard-inset, 0px));
+  scroll-padding-bottom: calc(var(--phone-safe-area-bottom) + var(--phone-keyboard-inset, 0px) + 28px);
   background:
     linear-gradient(145deg, rgba(9, 12, 16, 0.96), rgba(20, 24, 29, 0.92)),
     #0b0f14;

@@ -1444,7 +1444,7 @@
 
 .embeddedWindow .header {
   min-height: 68px;
-  padding-top: max(12px, env(safe-area-inset-top));
+  padding-top: max(12px, var(--phone-safe-area-top));
   border-bottom: 0;
   background: #f6f2eb;
 }
@@ -1618,8 +1618,8 @@
 
   .embeddedWindow .header {
     align-items: flex-end;
-    min-height: calc(74px + env(safe-area-inset-top));
-    padding: calc(env(safe-area-inset-top) + 14px) 14px 12px;
+    min-height: calc(74px + var(--phone-safe-area-top));
+    padding: calc(var(--phone-safe-area-top) + 14px) 14px 12px;
   }
 
   .embeddedWindow .body {

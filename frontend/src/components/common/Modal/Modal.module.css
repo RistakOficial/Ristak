@@ -291,7 +291,7 @@
 @media (pointer: coarse) {
   .content {
     max-height: min(calc(90vh - 160px), calc(var(--phone-visual-viewport-height, 200vh) - 120px));
-    scroll-padding-bottom: calc(env(safe-area-inset-bottom, 0px) + var(--phone-keyboard-inset, 0px) + 20px);
+    scroll-padding-bottom: calc(var(--phone-safe-area-bottom) + var(--phone-keyboard-inset, 0px) + 20px);
   }
 }
 
@@ -531,11 +531,11 @@
 @media (max-width: 640px) {
   .backdrop {
     align-items: stretch;
-    padding: max(var(--spacing-sm), env(safe-area-inset-top)) var(--spacing-sm) max(var(--spacing-sm), env(safe-area-inset-bottom));
+    padding: max(var(--spacing-sm), var(--phone-safe-area-top)) var(--spacing-sm) max(var(--spacing-sm), var(--phone-safe-area-bottom));
   }
 
   .modal {
-    max-height: calc(100dvh - max(20px, env(safe-area-inset-top)) - max(20px, env(safe-area-inset-bottom)));
+    max-height: calc(100dvh - max(20px, var(--phone-safe-area-top)) - max(20px, var(--phone-safe-area-bottom)));
   }
 
   .modal.sm {
@@ -689,7 +689,7 @@
 @media (max-width: 640px) {
   .systemBackdrop {
     align-items: center;
-    padding: max(16px, env(safe-area-inset-top)) 16px max(16px, env(safe-area-inset-bottom));
+    padding: max(16px, var(--phone-safe-area-top)) 16px max(16px, var(--phone-safe-area-bottom));
   }
 
   .modal.confirm,

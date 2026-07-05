@@ -51,8 +51,8 @@
 /* Header content sits in the safe area without painting a separate top panel. */
 .header {
   position: absolute;
-  top: calc(env(safe-area-inset-top, 0px) + 14px);
-  left: max(14px, env(safe-area-inset-left, 0px));
+  top: calc(var(--phone-safe-area-top) + 14px);
+  left: max(14px, var(--phone-safe-area-left));
   z-index: 12;
   display: flex;
   align-items: center;
@@ -175,7 +175,7 @@
 
 /* Host del formulario embebido */
 .formHost {
-  --record-payment-embedded-top-padding: calc(env(safe-area-inset-top, 0px) + 74px);
+  --record-payment-embedded-top-padding: calc(var(--phone-safe-area-top) + 74px);
   grid-row: 1 / -1;
   min-height: 0;
   display: flex;
@@ -207,11 +207,11 @@
   gap: 10px;
   height: 100%;
   max-height: 100%;
-  padding: calc(env(safe-area-inset-top, 0px) + 24px) 16px 24px;
+  padding: calc(var(--phone-safe-area-top) + 24px) 16px 24px;
   overflow-x: hidden;
   overflow-y: scroll;
   overscroll-behavior-y: contain;
-  scroll-padding-bottom: calc(max(220px, var(--phone-keyboard-inset, 0px) + 24px) + env(safe-area-inset-bottom, 0px));
+  scroll-padding-bottom: calc(max(220px, var(--phone-keyboard-inset, 0px) + 24px) + var(--phone-safe-area-bottom));
   scrollbar-width: none;
   touch-action: pan-y;
   -webkit-overflow-scrolling: touch;
@@ -315,8 +315,8 @@
 }
 
 .selectBottomSpacer {
-  flex: 0 0 calc(220px + env(safe-area-inset-bottom, 0px));
-  min-height: calc(220px + env(safe-area-inset-bottom, 0px));
+  flex: 0 0 calc(220px + var(--phone-safe-area-bottom));
+  min-height: calc(220px + var(--phone-safe-area-bottom));
   pointer-events: none;
 }
 
@@ -539,12 +539,12 @@
   gap: 14px;
   height: 100%;
   max-height: 100%;
-  padding: calc(env(safe-area-inset-top, 0px) + 76px) 16px calc(132px + env(safe-area-inset-bottom, 0px));
+  padding: calc(var(--phone-safe-area-top) + 76px) 16px calc(132px + var(--phone-safe-area-bottom));
   background: var(--phone-frame-bg);
   overflow-x: hidden;
   overflow-y: scroll;
   overscroll-behavior-y: contain;
-  scroll-padding-bottom: calc(max(168px, var(--phone-keyboard-inset, 0px) + 24px) + env(safe-area-inset-bottom, 0px));
+  scroll-padding-bottom: calc(max(168px, var(--phone-keyboard-inset, 0px) + 24px) + var(--phone-safe-area-bottom));
   touch-action: pan-y;
   -webkit-overflow-scrolling: touch;
 }

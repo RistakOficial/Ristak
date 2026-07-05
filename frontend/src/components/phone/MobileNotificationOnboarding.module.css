@@ -1,7 +1,7 @@
 .backdrop {
   align-items: center !important;
   justify-content: center !important;
-  padding: max(18px, env(safe-area-inset-top)) 16px max(18px, env(safe-area-inset-bottom)) !important;
+  padding: max(18px, var(--phone-safe-area-top)) 16px max(18px, var(--phone-safe-area-bottom)) !important;
 }
 
 .panel {
@@ -102,7 +102,7 @@
 @media (max-width: 480px) {
   .panel {
     width: calc(100vw - 44px);
-    max-height: calc(100dvh - max(132px, calc(env(safe-area-inset-top) + env(safe-area-inset-bottom) + 52px)));
+    max-height: calc(100dvh - max(132px, calc(var(--phone-safe-area-top) + var(--phone-safe-area-bottom) + 52px)));
   }
 
   .content {

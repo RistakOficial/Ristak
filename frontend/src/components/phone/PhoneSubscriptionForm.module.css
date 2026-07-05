@@ -298,7 +298,7 @@
   align-items: flex-end;
   justify-content: center;
   box-sizing: border-box;
-  padding: 0 max(10px, env(safe-area-inset-right, 0px)) calc(10px + env(safe-area-inset-bottom, 0px)) max(10px, env(safe-area-inset-left, 0px));
+  padding: 0 max(10px, var(--phone-safe-area-right)) calc(10px + var(--phone-safe-area-bottom)) max(10px, var(--phone-safe-area-left));
   background: color-mix(in srgb, var(--phone-payment-form-text) 34%, transparent);
 }
 

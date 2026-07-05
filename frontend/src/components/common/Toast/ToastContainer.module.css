@@ -20,10 +20,10 @@
 }
 
 :global(body[data-phone-app='active']) .container {
-  top: max(10px, env(safe-area-inset-top));
-  right: max(10px, env(safe-area-inset-right));
+  top: max(10px, var(--phone-safe-area-top));
+  right: max(10px, var(--phone-safe-area-right));
   bottom: auto;
-  left: max(10px, env(safe-area-inset-left));
+  left: max(10px, var(--phone-safe-area-left));
   z-index: 12000;
   align-items: center;
   flex-direction: column;

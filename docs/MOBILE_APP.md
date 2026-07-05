@@ -76,13 +76,16 @@ Android, `resizeOnFullScreen` y
 `android:windowSoftInputMode="adjustResize"` mantienen el ajuste nativo del IME.
 El contenedor Android tambien publica los insets reales de status/navigation bar
 desde `MainActivity.java` hacia el WebView como
-`--phone-native-safe-area-top/right/bottom/left`; `PhoneChat.module.css` debe
-consumir esos valores mediante las variables `--phone-chat-safe-*` y no depender
-de `env(safe-area-inset-*)` puro, porque Android WebView puede reportarlo en
-cero aunque `StatusBar.overlaysWebView` este activo. Esos insets nativos llegan
-en pixeles fisicos de Android y deben convertirse a pixeles CSS antes de
-publicarse; si se pasan crudos, el header superior de `/movil` queda inflado en
-pantallas con densidad alta y desperdicia espacio util.
+`--phone-native-safe-area-top/right/bottom/left`; `frontend/src/styles/index.css`
+los normaliza en las variables globales `--phone-safe-area-top/right/bottom/left`.
+Todas las pantallas y componentes del shell `/movil` deben consumir esas
+variables globales, no `env(safe-area-inset-*)` directo, para que Chat, Ajustes,
+Calendario, Pagos, Analiticas, login, sheets y modales compartan el mismo
+contrato. Android WebView puede reportar `env(safe-area-inset-*)` en cero aunque
+`StatusBar.overlaysWebView` este activo. Esos insets nativos llegan en pixeles
+fisicos de Android y deben convertirse a pixeles CSS antes de publicarse; si se
+pasan crudos, el header superior de `/movil` queda inflado en pantallas con
+densidad alta y desperdicia espacio util.
 No vuelvas a meter `scrollTo(0,0)` por frame desde `visualViewport.scroll`: eso
 mete lag al scroll del chat y pelea con el dedo del usuario.
 

@@ -172,7 +172,7 @@
   min-height: 0;
   margin: 0;
   gap: 1rem;
-  padding: 0 18px calc(env(safe-area-inset-bottom) + 22px);
+  padding: 0 18px calc(var(--phone-safe-area-bottom) + 22px);
   overflow-x: hidden;
   overflow-y: auto;
   overscroll-behavior-y: contain;
@@ -741,7 +741,7 @@
 .mobileSheetContainer .actions {
   position: static;
   margin: 6px 0 0;
-  padding: 18px 0 calc(env(safe-area-inset-bottom) + 10px);
+  padding: 18px 0 calc(var(--phone-safe-area-bottom) + 10px);
   background: transparent;
   backdrop-filter: none;
   -webkit-backdrop-filter: none;

@@ -3,9 +3,9 @@
   --dock-padding-y: 6px;
 
   position: fixed;
-  right: max(10px, env(safe-area-inset-right));
-  bottom: max(8px, env(safe-area-inset-bottom));
-  left: max(10px, env(safe-area-inset-left));
+  right: max(10px, var(--phone-safe-area-right));
+  bottom: max(8px, var(--phone-safe-area-bottom));
+  left: max(10px, var(--phone-safe-area-left));
   z-index: 70;
   display: grid;
   grid-template-columns: repeat(5, minmax(0, 1fr));
@@ -222,8 +222,8 @@
   .dock {
     --dock-padding-x: 5px;
 
-    right: max(6px, env(safe-area-inset-right));
-    left: max(6px, env(safe-area-inset-left));
+    right: max(6px, var(--phone-safe-area-right));
+    left: max(6px, var(--phone-safe-area-left));
     min-height: 54px;
   }
 }

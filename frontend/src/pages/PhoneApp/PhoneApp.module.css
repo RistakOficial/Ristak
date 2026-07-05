@@ -93,8 +93,8 @@
   justify-content: space-between;
   gap: 12px;
   min-width: 0;
-  min-height: calc(74px + env(safe-area-inset-top));
-  padding: calc(env(safe-area-inset-top) + 14px) 14px 12px;
+  min-height: calc(74px + var(--phone-safe-area-top));
+  padding: calc(var(--phone-safe-area-top) + 14px) 14px 12px;
   background: transparent;
   backdrop-filter: none;
   border-bottom: 0;
@@ -313,7 +313,7 @@
   grid-row: 4;
   z-index: 1;
   min-height: 0;
-  padding: 14px 18px calc(102px + env(safe-area-inset-bottom));
+  padding: 14px 18px calc(102px + var(--phone-safe-area-bottom));
   overflow-y: auto;
   overflow-x: hidden;
   overscroll-behavior: contain;

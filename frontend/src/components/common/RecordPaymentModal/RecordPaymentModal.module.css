@@ -2301,7 +2301,7 @@ body.dark .tooltipInfo {
   --record-payment-embedded-tablist-bg: color-mix(in srgb, var(--record-payment-embedded-text) 9%, var(--record-payment-embedded-bg) 91%);
   --record-payment-embedded-tablist-border: color-mix(in srgb, var(--record-payment-embedded-text) 24%, var(--record-payment-embedded-border) 76%);
   --record-payment-embedded-tab-active-bg: color-mix(in srgb, var(--record-payment-embedded-text) 18%, var(--record-payment-embedded-bg) 82%);
-  --record-payment-embedded-top-padding: calc(env(safe-area-inset-top, 0px) + 72px);
+  --record-payment-embedded-top-padding: calc(var(--phone-safe-area-top) + 72px);
   --record-payment-control-border: var(--phone-field-border, color-mix(in srgb, var(--record-payment-embedded-text) 14%, var(--record-payment-embedded-border) 86%));
   --color-background: var(--record-payment-embedded-bg);
   --color-surface: var(--record-payment-embedded-panel);
@@ -2330,8 +2330,8 @@ body.dark .tooltipInfo {
 
 .embeddedBackButton {
   position: absolute;
-  top: calc(env(safe-area-inset-top, 0px) + 14px);
-  left: max(14px, env(safe-area-inset-left, 0px));
+  top: calc(var(--phone-safe-area-top) + 14px);
+  left: max(14px, var(--phone-safe-area-left));
   z-index: 18;
   display: inline-flex;
   align-items: center;
@@ -2454,7 +2454,7 @@ body.dark .tooltipInfo {
   box-sizing: border-box;
   width: min(100%, 430px);
   margin: 0 auto;
-  padding: 0 clamp(18px, 5vw, 24px) calc(112px + env(safe-area-inset-bottom, 0px));
+  padding: 0 clamp(18px, 5vw, 24px) calc(112px + var(--phone-safe-area-bottom));
   background: transparent;
 }
 
@@ -2641,7 +2641,7 @@ body.dark .tooltipInfo {
   display: flex;
   align-items: flex-end;
   justify-content: center;
-  padding: 0 max(10px, env(safe-area-inset-right, 0px)) calc(10px + env(safe-area-inset-bottom, 0px)) max(10px, env(safe-area-inset-left, 0px));
+  padding: 0 max(10px, var(--phone-safe-area-right)) calc(10px + var(--phone-safe-area-bottom)) max(10px, var(--phone-safe-area-left));
   background: rgba(0, 0, 0, 0.28);
 }
 

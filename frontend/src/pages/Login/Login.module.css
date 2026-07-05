@@ -39,7 +39,7 @@
   height: 100%;
   /* Reservamos abajo el alto del teclado para que el último campo tenga hacia
      dónde desplazarse por encima de él. */
-  padding: calc(env(safe-area-inset-top) + 42px) 24px calc(env(safe-area-inset-bottom) + 32px + var(--phone-keyboard-inset, 0px));
+  padding: calc(var(--phone-safe-area-top) + 42px) 24px calc(var(--phone-safe-area-bottom) + 32px + var(--phone-keyboard-inset, 0px));
   border: 0;
   border-radius: 0 !important;
   color: #111111;
@@ -48,7 +48,7 @@
   overflow-y: auto;
   -webkit-overflow-scrolling: touch;
   overscroll-behavior: contain;
-  scroll-padding-bottom: calc(env(safe-area-inset-bottom) + var(--phone-keyboard-inset, 0px) + 32px);
+  scroll-padding-bottom: calc(var(--phone-safe-area-bottom) + var(--phone-keyboard-inset, 0px) + 32px);
 }
 
 :global(html[data-phone-keyboard-live="true"]) .phoneLoginBox {
@@ -365,7 +365,7 @@ body.light .error {
    optimizada (no afecta al layout de teléfono, < 600px se mantiene igual). */
 @media (min-width: 600px) {
   .phoneLoginBox {
-    padding-block: max(env(safe-area-inset-top), 48px) max(env(safe-area-inset-bottom), 40px);
+    padding-block: max(var(--phone-safe-area-top), 48px) max(var(--phone-safe-area-bottom), 40px);
   }
 
   .phoneLoginBox .header,

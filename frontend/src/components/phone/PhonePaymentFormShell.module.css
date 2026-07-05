@@ -11,7 +11,7 @@
   --phone-payment-form-tablist-bg: color-mix(in srgb, var(--phone-payment-form-text) 9%, var(--phone-payment-form-bg) 91%);
   --phone-payment-form-tablist-border: color-mix(in srgb, var(--phone-payment-form-text) 24%, var(--phone-payment-form-border) 76%);
   --phone-payment-form-tab-active-bg: color-mix(in srgb, var(--phone-payment-form-text) 18%, var(--phone-payment-form-bg) 82%);
-  --phone-payment-form-top-padding: calc(env(safe-area-inset-top, 0px) + 72px);
+  --phone-payment-form-top-padding: calc(var(--phone-safe-area-top) + 72px);
   display: flex;
   flex-direction: column;
   position: relative;
@@ -30,8 +30,8 @@
 
 .backButton {
   position: absolute;
-  top: calc(env(safe-area-inset-top, 0px) + 14px);
-  left: max(14px, env(safe-area-inset-left, 0px));
+  top: calc(var(--phone-safe-area-top) + 14px);
+  left: max(14px, var(--phone-safe-area-left));
   z-index: 18;
   display: inline-flex;
   align-items: center;
@@ -70,7 +70,7 @@
   overflow-y: auto;
   overscroll-behavior: contain;
   overscroll-behavior-x: none;
-  scroll-padding-bottom: calc(max(136px, var(--phone-keyboard-inset, 0px) + 20px) + env(safe-area-inset-bottom, 0px));
+  scroll-padding-bottom: calc(max(136px, var(--phone-keyboard-inset, 0px) + 20px) + var(--phone-safe-area-bottom));
   scrollbar-width: none;
   touch-action: pan-y;
   -webkit-overflow-scrolling: touch;
@@ -142,7 +142,7 @@
   box-sizing: border-box;
   width: min(100%, 430px);
   margin: 0 auto;
-  padding: 0 clamp(18px, 5vw, 24px) calc(112px + env(safe-area-inset-bottom, 0px));
+  padding: 0 clamp(18px, 5vw, 24px) calc(112px + var(--phone-safe-area-bottom));
   background: transparent;
 }
 

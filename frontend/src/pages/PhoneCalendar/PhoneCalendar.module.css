@@ -37,7 +37,7 @@
   bottom: 0;
   left: 0;
   z-index: 60;
-  height: calc(168px + env(safe-area-inset-bottom));
+  height: calc(168px + var(--phone-safe-area-bottom));
   pointer-events: none;
   background: linear-gradient(
     180deg,
@@ -64,7 +64,7 @@
   flex-direction: column;
   width: 100%;
   min-height: 0;
-  padding-bottom: calc(86px + env(safe-area-inset-bottom));
+  padding-bottom: calc(86px + var(--phone-safe-area-bottom));
   background: var(--phone-calendar-surface);
   overflow-x: hidden;
   overflow-y: hidden;
@@ -78,7 +78,7 @@
 
 .phonePage[data-calendar-view="day"] .timelineWrap,
 .phonePage[data-calendar-view="week"] .timelineWrap {
-  padding-bottom: calc(128px + env(safe-area-inset-bottom));
+  padding-bottom: calc(128px + var(--phone-safe-area-bottom));
 }
 
 :global(body[data-phone-chat-tone="dark"]) .phonePage {
@@ -283,7 +283,7 @@
   display: grid;
   gap: 12px;
   flex: 0 0 auto;
-  padding: calc(env(safe-area-inset-top) + 10px) 14px 8px;
+  padding: calc(var(--phone-safe-area-top) + 10px) 14px 8px;
   background: var(--phone-calendar-surface);
 }
 
@@ -710,7 +710,7 @@
   overscroll-behavior-y: contain;
   -webkit-overflow-scrolling: touch;
   background: var(--phone-calendar-surface);
-  scroll-padding-bottom: calc(128px + env(safe-area-inset-bottom));
+  scroll-padding-bottom: calc(128px + var(--phone-safe-area-bottom));
 }
 
 .timelineScroller[data-calendar-timeline-view="week"] {
@@ -1183,7 +1183,7 @@
   position: fixed;
   left: 18px;
   right: 18px;
-  bottom: calc(78px + env(safe-area-inset-bottom));
+  bottom: calc(78px + var(--phone-safe-area-bottom));
   z-index: 8;
   display: flex;
   align-items: center;
@@ -1282,7 +1282,7 @@
   width: 100%;
   max-height: min(var(--phone-visual-viewport-height, 84dvh), 84dvh, 720px);
   box-sizing: border-box;
-  padding: 8px 14px max(18px, env(safe-area-inset-bottom));
+  padding: 8px 14px max(18px, var(--phone-safe-area-bottom));
   border: 1px solid var(--line);
   border-bottom: 0;
   border-radius: 24px 24px 0 0;
@@ -1382,10 +1382,10 @@
 .searchPanel,
 .settingsPanel {
   min-height: 0;
-  padding-bottom: max(18px, env(safe-area-inset-bottom));
+  padding-bottom: max(18px, var(--phone-safe-area-bottom));
   overflow-y: auto;
   overscroll-behavior: contain;
-  scroll-padding-bottom: max(18px, env(safe-area-inset-bottom));
+  scroll-padding-bottom: max(18px, var(--phone-safe-area-bottom));
   -webkit-overflow-scrolling: touch;
 }
 
@@ -1529,10 +1529,10 @@
 
 .contactList {
   min-height: 0;
-  padding-bottom: max(28px, env(safe-area-inset-bottom));
+  padding-bottom: max(28px, var(--phone-safe-area-bottom));
   overflow-y: auto;
   overscroll-behavior: contain;
-  scroll-padding-bottom: max(28px, env(safe-area-inset-bottom));
+  scroll-padding-bottom: max(28px, var(--phone-safe-area-bottom));
   -webkit-overflow-scrolling: touch;
 }
 
@@ -1875,12 +1875,12 @@
 
 @media (min-width: 768px) {
   .phoneFrame {
-    padding-bottom: calc(98px + env(safe-area-inset-bottom));
+    padding-bottom: calc(98px + var(--phone-safe-area-bottom));
   }
 
   .header {
     gap: 18px;
-    padding: calc(env(safe-area-inset-top) + 18px) 24px 14px;
+    padding: calc(var(--phone-safe-area-top) + 18px) 24px 14px;
   }
 
   .headerToolbar {

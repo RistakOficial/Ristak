@@ -10,7 +10,7 @@
   grid-template-rows: 1fr auto;
   width: 100vw;
   min-height: 100dvh;
-  padding: calc(env(safe-area-inset-top) + 24px) 24px calc(env(safe-area-inset-bottom) + 24px);
+  padding: calc(var(--phone-safe-area-top) + 24px) 24px calc(var(--phone-safe-area-bottom) + 24px);
   color: var(--phone-loader-text);
   background: var(--phone-loader-bg);
 }
