@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
@@ -362,6 +362,9 @@ const VIDEO_ATTACHMENT_MAX_BYTES = 25 * 1024 * 1024;
 const CALENDAR_SELECTED_ID_STORAGE_KEY = 'ristak.native.calendar.selectedCalendarId.v1';
 const CALENDAR_EVENTS_CACHE_STORAGE_KEY = 'ristak.native.calendar.eventsCache.v1';
 const CALENDAR_WEEKDAYS = ['D', 'L', 'M', 'M', 'J', 'V', 'S'];
+const CALENDAR_WEEKDAY_ROW_HEIGHT = 40;
+const CALENDAR_MONTH_GRID_TOP_PADDING = 8;
+const CALENDAR_MONTH_DAY_CELL_HEIGHT = 44;
 const CALENDAR_VIEW_OPTIONS: Array<{ view: Exclude<CalendarViewMode, 'years'>; label: string }> = [
   { view: 'day', label: 'Día' },
   { view: 'week', label: 'Semana' },
@@ -3437,7 +3440,7 @@ function CalendarSection({ api, footer }: { api: RistakApiClient; footer?: React
     setCalendarView('year');
   }, [selectedDateOnly]);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (monthSwipeWidth > 0) {
       monthSwipeTranslate.setValue(-monthSwipeWidth);
     }
@@ -3452,7 +3455,6 @@ function CalendarSection({ api, footer }: { api: RistakApiClient; footer?: React
       useNativeDriver: true,
     }).start(() => {
       movePeriod(direction);
-      monthSwipeTranslate.setValue(-monthSwipeWidth);
     });
   }, [monthSwipeTranslate, monthSwipeWidth, movePeriod]);
 
@@ -4354,16 +4356,19 @@ function CalendarMonthSwipe({
   onLayout: (event: LayoutChangeEvent) => void;
   onSelectDate: (dateOnly: string) => void;
 }) {
+  const currentPage = monthPages.find((page) => page.offset === 0) || monthPages[1] || monthPages[0];
+  const monthRowCount = Math.max(1, Math.ceil((currentPage?.cells.length || 35) / 7));
+  const monthHeight = CALENDAR_WEEKDAY_ROW_HEIGHT + CALENDAR_MONTH_GRID_TOP_PADDING + (monthRowCount * CALENDAR_MONTH_DAY_CELL_HEIGHT);
   return (
-    <View style={styles.calendarMonthSwipeViewport} onLayout={onLayout} {...panHandlers}>
+    <View style={[styles.calendarMonthSwipeViewport, { height: monthHeight }]} onLayout={onLayout} {...panHandlers}>
       <Animated.View
         style={[
           styles.calendarMonthSwipeTrack,
-          width ? { width: width * 3, transform: [{ translateX }] } : null,
+          width ? { width: width * 3, height: monthHeight, transform: [{ translateX }] } : { height: monthHeight },
         ]}
       >
         {monthPages.map((page) => (
-          <View key={page.key} style={[styles.calendarMonthSwipePage, width ? { width } : null]}>
+          <View key={page.key} style={[styles.calendarMonthSwipePage, width ? { width, height: monthHeight } : { height: monthHeight }]}>
             <CalendarMonthGrid
               cells={page.cells}
               eventsByDate={eventsByDate}
@@ -4952,7 +4957,7 @@ function AppointmentContactPickerSheet({
         ) : (
           <ScrollView contentContainerStyle={styles.contactPickerList} keyboardShouldPersistTaps="handled">
             {contacts.map((contact) => (
-              <ContactPickerRow key={contact.id} contact={contact} onPress={() => onSelect(contact)} />
+              <ContactPickerRow key={contact.id} contact={contact} showSendIcon={false} onPress={() => onSelect(contact)} />
             ))}
             {!contacts.length ? (
               <View style={styles.sheetInlineState}>
@@ -8803,7 +8808,7 @@ function ContactPickerSheet({
   );
 }
 
-function ContactPickerRow({ contact, onPress }: { contact: ChatContact; onPress: () => void }) {
+function ContactPickerRow({ contact, showSendIcon = true, onPress }: { contact: ChatContact; showSendIcon?: boolean; onPress: () => void }) {
   const avatar = getContactAvatar(contact);
   const channelKind = getContactChannelKind(contact);
   const channelColor = CHANNEL_BADGE_COLORS[channelKind];
@@ -8816,7 +8821,7 @@ function ContactPickerRow({ contact, onPress }: { contact: ChatContact; onPress:
         <Text numberOfLines={1} style={styles.contactPickerName}>{getContactName(contact)}</Text>
         <Text numberOfLines={1} style={styles.contactPickerSubtitle}>{contact.phone || contact.email || getChatPreview(contact)}</Text>
       </View>
-      <Send size={18} color={COLORS.accent} strokeWidth={2.5} />
+      {showSendIcon ? <Send size={18} color={COLORS.accent} strokeWidth={2.5} /> : null}
     </Pressable>
   );
 }
@@ -13653,7 +13658,7 @@ const styles = StyleSheet.create({
   },
   calendarWeekdayRow: {
     flexDirection: 'row',
-    minHeight: 40,
+    height: CALENDAR_WEEKDAY_ROW_HEIGHT,
     alignItems: 'center',
     paddingHorizontal: 8,
     borderRadius: 22,
@@ -13669,13 +13674,13 @@ const styles = StyleSheet.create({
   calendarMonthGrid: {
     flexDirection: 'row',
     flexWrap: 'wrap',
-    paddingTop: 8,
+    paddingTop: CALENDAR_MONTH_GRID_TOP_PADDING,
     paddingBottom: 0,
     backgroundColor: 'transparent',
   },
   calendarDayCell: {
     width: '14.2857%',
-    minHeight: 44,
+    height: CALENDAR_MONTH_DAY_CELL_HEIGHT,
     alignItems: 'center',
     justifyContent: 'center',
     gap: 3,

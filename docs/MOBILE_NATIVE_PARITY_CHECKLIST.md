@@ -98,6 +98,11 @@ Si dudas si algo debe existir, vuelve al codigo original. No confies en memoria.
     de citas del resumen son mas bajas, y la seleccion por long-press del timeline
     dispara haptic y bloquea el scroll mientras se estira el rango hacia arriba o
     hacia abajo.
+  - Corregido 2026-07-05, tercera pasada: el alto del mes visible ahora depende
+    de sus semanas reales para que meses de cinco filas no dejen huecos antes del
+    resumen del dia; el reset del swipe mensual se hace antes del pintado para
+    evitar parpadeos al cambiar de mes; y el picker de contactos de `Nueva cita`
+    ya no muestra icono de enviar mensaje.
   - Brechas pendientes: replicar validacion avanzada de slots/bloqueos,
     invitados, usuarios Round Robin y el selector visual completo de fecha/hora
     del modal original de `/movil`.

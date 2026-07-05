@@ -438,7 +438,12 @@ timeline debe abrir la creacion de cita en ese rango, manteniendo tolerancia a
 micro-movimientos verticales del dedo. La grilla mensual y el titulo del mes se
 desplazan sincronizados; la agenda no repite el anio debajo del mes porque el
 anio ya vive en la pastilla superior. La grilla mensual debe quedar libre sobre
-el fondo de la pantalla; solo la fila Domingo-Sabado debe llevar capsula visual.
+el fondo de la pantalla y su alto se calcula con las semanas reales del mes
+visible para que el resumen del dia quede pegado aunque el mes tenga menos filas;
+solo la fila Domingo-Sabado debe llevar capsula visual. El swipe entre meses no
+debe mostrar de regreso el mes anterior en frames intermedios. En el sheet
+`Nueva cita`, la lista de contactos no debe mostrar icono de enviar mensaje
+porque la accion es agendar, no mandar chat.
 Al aparecer la seleccion del timeline, la app dispara haptic y bloquea el scroll
 del listado hasta soltar el dedo para que el rango se estire verticalmente sin
 mezclarse con el desplazamiento. Brecha pendiente: replicar validacion avanzada

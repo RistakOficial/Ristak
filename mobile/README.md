@@ -18,7 +18,8 @@ Capacitor `/movil` shell and talks directly to the existing Ristak backend API.
   header, calendar selector sheet, month grid, agenda list, event details sheet,
   create/edit/delete appointment flow, timeline long-press creation, synchronized
   month-title swipe, haptic locked timeline range selection, compact agenda
-  cards, and business-timezone grouping.
+  cards, responsive visible-month height, appointment-only contact picker, and
+  business-timezone grouping.
 - Native payments, analytics, settings, bottom dock, and notification parity
   passes from the mobile migration worktrees.
 - Conversation view from `/api/contacts/:id/journey`.
